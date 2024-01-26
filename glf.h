@@ -9,7 +9,7 @@
 #include <cmrc/cmrc.hpp>
 #include "hpo_targets.h"
 #include "runners.h"
-#include "../TADAH/analytics/analytics.h"
+#include "../MLIP/analytics/analytics.h"
 #include "../CORE/utils/utils.h"
 
 class GLF {
