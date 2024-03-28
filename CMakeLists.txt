@@ -91,12 +91,12 @@ add_compile_definitions(TADAH_LAMMPS_LIB=\"lib${TADAH_LAMMPS_LIB}\")
         ${PROJECT_SOURCE_DIR}/lammps/tadah.unrelaxed_vacancy_at_p
         )
 
-file(GLOB MD_SRC CONFIGURE_DEPENDS "*.cpp" "*.h" "*.hpp")
+file(GLOB HPO_SRC CONFIGURE_DEPENDS "*.cpp" "*.h" "*.hpp")
 
 find_package(MPI REQUIRED)
 
 add_library(tadah.hpo.obj OBJECT
-    ${MD_SRC}
+    ${HPO_SRC}
     )
 target_link_libraries(tadah.hpo.obj PUBLIC config::rc)
 target_link_libraries(tadah.hpo.obj PUBLIC MPI::MPI_CXX)
@@ -119,3 +119,7 @@ if(TADAH_BUILD_TESTS)
     include(CTest) 
     add_subdirectory(tests)
 endif()
+
+set(TADAH_HPO_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/include/tadah/HPO)
+file(GLOB HPO_H CONFIGURE_DEPENDS "*.h" "*.hpp")
+install(FILES ${HPO_H} DESTINATION ${TADAH_HPO_INSTALL_DIR})
