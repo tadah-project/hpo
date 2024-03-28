@@ -105,8 +105,6 @@ target_link_libraries(tadah.hpo.obj PUBLIC hpo::rc)
 
 find_package(LAPACK)
 target_link_libraries(tadah.hpo.obj PUBLIC ${LAPACK_LIBRARIES})
-# Finalise by setting preprocessor symbol
-add_compile_definitions(TADAH_ENABLE_HPO)
 
 if(TADAH_ENABLE_OPENMP)
     find_package(OpenMP REQUIRED)
@@ -114,6 +112,7 @@ if(TADAH_ENABLE_OPENMP)
 endif()
 
 add_library(tadah.hpo $<TARGET_OBJECTS:tadah.hpo.obj>)
+target_link_libraries(tadah.hpo PUBLIC dlib::dlib)
 
 if(TADAH_BUILD_TESTS)
     include(CTest) 
