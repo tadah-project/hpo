@@ -3,8 +3,6 @@
 
 #include "../CORE/config/config.h"
 
-#include <iostream>
-
 /** Run optimisation of the hyperparameters.
  *
  *  This is experimental...

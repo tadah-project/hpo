@@ -314,10 +314,10 @@ class HyperParamOpti: public HyperParamOptiBase {
             DescriptorsCalc<> dc(config_temp,*DCS.d2b,*DCS.d3b,*DCS.dmb,
                     *DCS.c2b,*DCS.c3b,*DCS.cmb);
 
-            DM_Function_Base *fb = factory<DM_Function_Base,Config&>(
+            DM_Function_Base *fb = CONFIG::factory<DM_Function_Base,Config&>(
                     config.get<std::string>("MODEL",1),config);
 
-            M_Tadah_Base *model = factory<M_Tadah_Base,DM_Function_Base&,Config&>
+            M_Tadah_Base *model = CONFIG::factory<M_Tadah_Base,DM_Function_Base&,Config&>
                 (config_temp.get<std::string>("MODEL",0),*fb,config_temp);
 
             auto t2 = high_resolution_clock::now();
@@ -344,7 +344,7 @@ class HyperParamOpti: public HyperParamOptiBase {
             //pot_tadah.add("VERBOSE",1);
             //pot_tadah.add("FORCE","false");
             //pot_tadah.add("STRESS","false");
-            //M_Tadah_Base *modelp = factory<M_Tadah_Base,DM_Function_Base&,Config&>
+            //M_Tadah_Base *modelp = CONFIG::factory<M_Tadah_Base,DM_Function_Base&,Config&>
             //    (pot_tadah.get<std::string>("MODEL",0),*fb,pot_tadah);
             //StructureDB stpred = modelp->predict(pot_tadah,stdb,dc);
 
