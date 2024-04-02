@@ -114,6 +114,7 @@ endif()
 
 add_library(tadah.hpo $<TARGET_OBJECTS:tadah.hpo.obj>)
 target_link_libraries(tadah.hpo PUBLIC dlib::dlib)
+target_link_libraries(tadah.hpo PUBLIC "${TADAH_LAMMPS_LIB}")
 
 if(TADAH_BUILD_TESTS)
     include(CTest) 
