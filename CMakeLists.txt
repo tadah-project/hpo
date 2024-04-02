@@ -105,6 +105,7 @@ target_link_libraries(tadah.hpo.obj PUBLIC hpo::rc)
 
 find_package(LAPACK)
 target_link_libraries(tadah.hpo.obj PUBLIC ${LAPACK_LIBRARIES})
+target_link_libraries(tadah.hpo.obj PUBLIC "${TADAH_LAMMPS_LIB}")
 
 if(TADAH_ENABLE_OPENMP)
     find_package(OpenMP REQUIRED)
