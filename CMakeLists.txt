@@ -69,52 +69,79 @@ FetchContent_MakeAvailable(dlib)
 # c++ need to know which library LAMMPS will use
 # Here we only need name so for e.g. liblammps_serial.so use lammps_serial
 if(NOT DEFINED TADAH_LAMMPS_LIB)
-  set(TADAH_LAMMPS_LIB "lammps_serial")
+  if (TADAH_ENABLE_MPI)
+    set(TADAH_LAMMPS_LIB "lammps_mpi")
+  else()
+    set(TADAH_LAMMPS_LIB "lammps_serial")
+  endif()
 endif()
 add_compile_definitions(TADAH_LAMMPS_LIB=\"lib${TADAH_LAMMPS_LIB}\")
 
-    # add resource lib to the project so we can embed lammps scripts into
-    # the library project
-    # Add resources...
-    cmrc_add_resource_library(
-        hpo-resources 
-        ALIAS hpo::rc
-        NAMESPACE hpo 
-        WHENCE lammps
-        PREFIX hpo
-        ${PROJECT_SOURCE_DIR}/lammps/tadah.lata
-        ${PROJECT_SOURCE_DIR}/lammps/tadah.envol
-        ${PROJECT_SOURCE_DIR}/lammps/tadah.elastic
-        ${PROJECT_SOURCE_DIR}/lammps/tadah.surface
-        ${PROJECT_SOURCE_DIR}/lammps/tadah.usurface
-        ${PROJECT_SOURCE_DIR}/lammps/tadah.FR_vacancy_at_p
-        ${PROJECT_SOURCE_DIR}/lammps/tadah.unrelaxed_vacancy_at_p
-        )
+# add resource lib to the project so we can embed lammps scripts into
+# the library project
+# Add resources...
+cmrc_add_resource_library(
+  hpo-resources 
+  ALIAS hpo::rc
+  NAMESPACE hpo 
+  WHENCE lammps
+  PREFIX hpo
+  ${PROJECT_SOURCE_DIR}/lammps/tadah.lata
+  ${PROJECT_SOURCE_DIR}/lammps/tadah.envol
+  ${PROJECT_SOURCE_DIR}/lammps/tadah.elastic
+  ${PROJECT_SOURCE_DIR}/lammps/tadah.surface
+  ${PROJECT_SOURCE_DIR}/lammps/tadah.usurface
+  ${PROJECT_SOURCE_DIR}/lammps/tadah.FR_vacancy_at_p
+  ${PROJECT_SOURCE_DIR}/lammps/tadah.unrelaxed_vacancy_at_p
+  )
 
 file(GLOB HPO_SRC CONFIGURE_DEPENDS "*.cpp" "*.h" "*.hpp")
-
-find_package(MPI REQUIRED)
 
 add_library(tadah.hpo.obj OBJECT
     ${HPO_SRC}
     )
 target_link_libraries(tadah.hpo.obj PUBLIC config::rc)
-target_link_libraries(tadah.hpo.obj PUBLIC MPI::MPI_CXX)
 target_link_libraries(tadah.hpo.obj PUBLIC dlib::dlib)
-target_link_libraries(tadah.hpo.obj PUBLIC hpo::rc)
+#target_link_libraries(tadah.hpo.obj PUBLIC hpo::rc)
 
 find_package(LAPACK)
 target_link_libraries(tadah.hpo.obj PUBLIC ${LAPACK_LIBRARIES})
-target_link_libraries(tadah.hpo.obj PUBLIC "${TADAH_LAMMPS_LIB}")
+target_link_libraries(tadah.hpo.obj PUBLIC ${TADAH_LAMMPS_LIB})
+
 
 if(TADAH_ENABLE_OPENMP)
     find_package(OpenMP REQUIRED)
     target_link_libraries(tadah.hpo.obj PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
+if (TADAH_ENABLE_MPI AND TADAH_LAMMPS_MPI_STUBS)
+  message(FATAL_ERROR "${TADAH}: Either use:
+  -DTADAH_ENABLE_MPI=ON (preferred)
+  or
+  -DTADAH_LAMMPS_MPI_STUBS=${TADAH_LAMMPS_MPI_STUBS}")
+endif()
+
+if (TADAH_ENABLE_MPI)
+  find_package(MPI REQUIRED)
+  target_link_libraries(tadah.hpo.obj PUBLIC MPI::MPI_CXX)
+elseif (TADAH_LAMMPS_MPI_STUBS)
+  target_include_directories(tadah.hpo.obj PUBLIC ${TADAH_LAMMPS_MPI_STUBS})
+else()
+  message(FATAL_ERROR "${TADAH}: You are compiling with TADAH_ENABLE_HPO=ON
+  This option requires either:
+  -DTADAH_ENABLE_MPI=ON (preferred)
+  or providing path to lammps MPI STUBS in the lammps src directory
+  -DTADAH_LAMMPS_MPI_STUBS=/path/to/lammps/src/STUBS")
+endif()
+
 add_library(tadah.hpo $<TARGET_OBJECTS:tadah.hpo.obj>)
 target_link_libraries(tadah.hpo PUBLIC dlib::dlib)
-target_link_libraries(tadah.hpo PUBLIC "${TADAH_LAMMPS_LIB}")
+target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_LIB})
+if (TADAH_LAMMPS_MPI_STUBS)
+  target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_MPI_STUBS}/libmpi_stubs.a)
+endif()
+target_link_libraries(tadah.hpo PUBLIC hpo::rc)
+target_link_libraries(tadah.hpo PUBLIC dl)  # required by lammps
 
 if(TADAH_BUILD_TESTS)
     include(CTest) 
