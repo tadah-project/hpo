@@ -18,31 +18,31 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-if(BUILD_SHARED_LIBS)
-    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-endif()
+#if(BUILD_SHARED_LIBS)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+#endif()
 
-if (BUILD_SHARED_LIBS)
-    # Always full RPATH
-    # use, i.e. don't skip the full RPATH for the build tree
-    set(CMAKE_SKIP_BUILD_RPATH FALSE)
-
-    # when building, don't use the install RPATH already
-    # (but later on when installing)
-    set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
-
-    set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
-
-    # add the automatically determined parts of the RPATH
-    # which point to directories outside the build tree to the install RPATH
-    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
-
-    # the RPATH to be used when installing, but only if it's not a system directory
-    list(FIND CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES "${CMAKE_INSTALL_PREFIX}/lib" isSystemDir)
-    if("${isSystemDir}" STREQUAL "-1")
-        set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
-    endif("${isSystemDir}" STREQUAL "-1")
-endif()
+#if (BUILD_SHARED_LIBS)
+#    # Always full RPATH
+#    # use, i.e. don't skip the full RPATH for the build tree
+#    set(CMAKE_SKIP_BUILD_RPATH FALSE)
+#
+#    # when building, don't use the install RPATH already
+#    # (but later on when installing)
+#    set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
+#
+#    set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+#
+#    # add the automatically determined parts of the RPATH
+#    # which point to directories outside the build tree to the install RPATH
+#    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+#
+#    # the RPATH to be used when installing, but only if it's not a system directory
+#    list(FIND CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES "${CMAKE_INSTALL_PREFIX}/lib" isSystemDir)
+#    if("${isSystemDir}" STREQUAL "-1")
+#        set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+#    endif("${isSystemDir}" STREQUAL "-1")
+#endif()
 
 
 include(FetchContent)
@@ -65,20 +65,28 @@ FetchContent_Declare(dlib
 )
 FetchContent_MakeAvailable(dlib)
 
-
-# c++ need to know which library LAMMPS will use
-# Here we only need name so for e.g. liblammps_serial.so use lammps_serial
-if(NOT DEFINED TADAH_LAMMPS_LIB)
-  if (TADAH_ENABLE_MPI)
-    set(TADAH_LAMMPS_LIB "lammps_mpi")
-  else()
-    set(TADAH_LAMMPS_LIB "lammps_serial")
-  endif()
+# User must specify the root directory for lammps
+if(NOT DEFINED TADAH_LAMMPS_DIR)
+  message( FATAL_ERROR 
+    "
+    TADAH_LAMMPS_DIR is not specified.
+    example:
+    -DTADAH_LAMMPS_DIR=/path/to/lammps
+    CMake will exit." )
 endif()
-add_compile_definitions(TADAH_LAMMPS_LIB=\"lib${TADAH_LAMMPS_LIB}\")
 
-# add resource lib to the project so we can embed lammps scripts into
-# the library project
+# we need to know which LAMMPS to use
+# note that LAMMPS lib must by compiles with tadah.lammps
+if(NOT DEFINED TADAH_LAMMPS_LIB)
+  message( FATAL_ERROR 
+    "
+    TADAH_LAMMPS_LIB is not specified.
+    example:
+    DTADAH_LAMMPS_LIB=liblammps.a
+    CMake will exit." )
+endif()
+add_compile_definitions(TADAH_LAMMPS_LIB=\"${TADAH_LAMMPS_LIB}\")
+
 # Add resources...
 cmrc_add_resource_library(
   hpo-resources 
@@ -106,7 +114,8 @@ target_link_libraries(tadah.hpo.obj PUBLIC dlib::dlib)
 
 find_package(LAPACK)
 target_link_libraries(tadah.hpo.obj PUBLIC ${LAPACK_LIBRARIES})
-target_link_libraries(tadah.hpo.obj PUBLIC ${TADAH_LAMMPS_LIB})
+#target_link_directories(tadah.hpo.obj PUBLIC ${TADAH_LAMMPS_DIR}/src)
+#target_link_libraries(tadah.hpo.obj PUBLIC ${TADAH_LAMMPS_LIB})
 
 
 if(TADAH_ENABLE_OPENMP)
@@ -114,34 +123,30 @@ if(TADAH_ENABLE_OPENMP)
     target_link_libraries(tadah.hpo.obj PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
-if (TADAH_ENABLE_MPI AND TADAH_LAMMPS_MPI_STUBS)
-  message(FATAL_ERROR "${TADAH}: Either use:
-  -DTADAH_ENABLE_MPI=ON (preferred)
-  or
-  -DTADAH_LAMMPS_MPI_STUBS=${TADAH_LAMMPS_MPI_STUBS}")
-endif()
-
 if (TADAH_ENABLE_MPI)
-  find_package(MPI REQUIRED)
-  target_link_libraries(tadah.hpo.obj PUBLIC MPI::MPI_CXX)
-elseif (TADAH_LAMMPS_MPI_STUBS)
-  target_include_directories(tadah.hpo.obj PUBLIC ${TADAH_LAMMPS_MPI_STUBS})
+    find_package(MPI REQUIRED)
+    target_link_libraries(tadah.hpo.obj PUBLIC MPI::MPI_CXX)
 else()
-  message(FATAL_ERROR "${TADAH}: You are compiling with TADAH_ENABLE_HPO=ON
-  This option requires either:
-  -DTADAH_ENABLE_MPI=ON (preferred)
-  or providing path to lammps MPI STUBS in the lammps src directory
-  -DTADAH_LAMMPS_MPI_STUBS=/path/to/lammps/src/STUBS")
+    target_include_directories(tadah.hpo.obj PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS)
 endif()
 
-add_library(tadah.hpo $<TARGET_OBJECTS:tadah.hpo.obj>)
+add_library(liblammps STATIC IMPORTED)
+set_target_properties(liblammps PROPERTIES IMPORTED_LOCATION ${TADAH_LAMMPS_DIR}/src/${TADAH_LAMMPS_LIB})
+#target_link_libraries(liblammps INTERFACE ${TADAH_LAMMPS_DIR}/lib/tadah.lammps/build/libtadah.lammps.so)
+target_link_libraries(liblammps INTERFACE ${TADAH_LAMMPS_DIR}/lib/tadah.lammps/build/libtadah.lammps.a)
+target_link_libraries(liblammps INTERFACE dl)  # required by lammps
+
+add_library(tadah.hpo STATIC $<TARGET_OBJECTS:tadah.hpo.obj>)
 target_link_libraries(tadah.hpo PUBLIC dlib::dlib)
-target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_LIB})
-if (TADAH_LAMMPS_MPI_STUBS)
-  target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_MPI_STUBS}/libmpi_stubs.a)
+target_link_libraries(tadah.hpo PUBLIC liblammps)
+
+#target_link_directories(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src)
+#target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_LIB})
+target_link_libraries(tadah.hpo PUBLIC liblammps)
+if (NOT TADAH_ENABLE_MPI)
+    target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS/libmpi_stubs.a)
 endif()
 target_link_libraries(tadah.hpo PUBLIC hpo::rc)
-target_link_libraries(tadah.hpo PUBLIC dl)  # required by lammps
 
 if(TADAH_BUILD_TESTS)
     include(CTest) 
