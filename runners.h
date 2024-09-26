@@ -7,9 +7,10 @@
 #endif
 
 
-#include <lammps/lammps.h>
-#include <lammps/input.h>
-#include <lammps/variable.h>
+#include TADAH_LMPA
+#include TADAH_LMPB
+#include TADAH_LMPC
+
 /** Simple Lammps runner class
  *
  * When this file is being compiled from outside of tadah library
