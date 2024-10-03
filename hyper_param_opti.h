@@ -9,6 +9,7 @@
 #include "../MLIP/design_matrix/functions/dm_function_base.h"
 #include "../MLIP/descriptors_calc.h"
 #include "../MLIP/analytics/analytics.h"
+#include "../MLIP/trainer.h"
 #include "../CORE/utils/utils.h"
 #include "hpo_targets.h"
 #include "glf.h"
@@ -47,7 +48,7 @@ class HyperParamOptiBase {
  *     Config config("config.train");
  *     HPOTargets trg("targets");
  *     HyperParamOpti<dlib::matrix<double,0,1>> hpo(config,trg);
- *     # the object is now ready to passed to the optimiser.
+ *     # the object is ready to be passed to the optimiser.
  *
  * Supported Config keys:
  * RCUT2B,RCUTMB,CGRID2B,CGRIDMB,SGRID2B,SGRIDMB,CEMBFUNC,SEMBFUNC
@@ -98,10 +99,10 @@ class HyperParamOpti: public HyperParamOptiBase {
 
         void update_config (T &p) {
 
-
             for (auto &c : trg.configmap) {
                 config.remove(c);
             }
+
             for (size_t i=0; i<trg.configmap.size();++i) {
                 std::string s = trg.configmap[i];
                 if (s=="MPARAMS") {
@@ -132,8 +133,11 @@ class HyperParamOpti: public HyperParamOptiBase {
 
             }
         }
+
         int calc_lata(TrgData &pdata) {
+#if defined(TADAH_ENABLE_OPENMP)
 #pragma omp parallel for shared(runner,fail,pdata,trg)
+#endif
             for(size_t i = 0; i < trg.data.lata_size(); i++) {
                 auto v = trg.data.m1.begin();
                 advance(v, i);
@@ -165,7 +169,9 @@ class HyperParamOpti: public HyperParamOptiBase {
             return 0;
         }
         int calc_uvacf(TrgData &pdata) {
+#if defined(TADAH_ENABLE_OPENMP)
 #pragma omp parallel for shared(runner,fail,pdata,trg)
+#endif
             for(size_t i = 0; i < trg.data.uvacf_size(); i++) {
                 auto v = trg.data.m2.begin();
                 advance(v, i);
@@ -192,7 +198,9 @@ class HyperParamOpti: public HyperParamOptiBase {
             return 0;
         }
         int calc_usurface(TrgData &pdata) {
+#if defined(TADAH_ENABLE_OPENMP)
 #pragma omp parallel for shared(runner,fail,pdata,trg)
+#endif
             for(size_t i = 0; i < trg.data.usurf_size(); i++) {
                 auto v = trg.data.m4.begin();
                 advance(v, i);
@@ -218,7 +226,9 @@ class HyperParamOpti: public HyperParamOptiBase {
             return 0;
         }
         int calc_surface(TrgData &pdata) {
+#if defined(TADAH_ENABLE_OPENMP)
 #pragma omp parallel for shared(runner,fail,pdata,trg)
+#endif
             for(size_t i = 0; i < trg.data.surf_size(); i++) {
                 auto v = trg.data.m5.begin();
                 advance(v, i);
@@ -244,7 +254,9 @@ class HyperParamOpti: public HyperParamOptiBase {
             return 0;
         }
         int calc_envol(TrgData &pdata) {
+#if defined(TADAH_ENABLE_OPENMP)
 #pragma omp parallel for shared(runner,fail,pdata,trg)
+#endif
             for(size_t i = 0; i < trg.data.envol_size(); i++) {
                 auto v = trg.data.m7.begin();
                 advance(v, i);
@@ -273,8 +285,9 @@ class HyperParamOpti: public HyperParamOptiBase {
             trg(trg),
             glf(trg),
             config(c),
-            stdb(c)
+            stdb(c)  // TODO can't have single stdb for large datasets
     {
+        // TODO this won't work with large datasets
         NNFinder nn(config);
         nn.calc(stdb);
 
@@ -309,28 +322,26 @@ class HyperParamOpti: public HyperParamOptiBase {
             Config config_temp = config;
             config_temp.postprocess();
 
-            DC_Selector DCS(config_temp);
+            // TODO dump temp trainig config to disk such that other MPI processes
+            // can read it
 
-            DescriptorsCalc<> dc(config_temp,*DCS.d2b,*DCS.d3b,*DCS.dmb,
-                    *DCS.c2b,*DCS.c3b,*DCS.cmb);
-
-            DM_Function_Base *fb = CONFIG::factory<DM_Function_Base,Config&>(
-                    config.get<std::string>("MODEL",1),config);
-
-            M_Tadah_Base *model = CONFIG::factory<M_Tadah_Base,DM_Function_Base&,Config&>
-                (config_temp.get<std::string>("MODEL",0),*fb,config_temp);
+            // TODO broadcast location of the temp config file
+            // Train new potential with updated settings
+            Trainer tr(config_temp);
 
             auto t2 = high_resolution_clock::now();
             duration<double, std::milli> t21 = t2 - t1;
             //std::cout << "T1: " << t21.count() << "ms\n";
 
-            model->train(stdb,dc);
+            tr.model->train(stdb,dc);
+            // End of training
+
             auto t3 = high_resolution_clock::now();
             duration<double, std::milli> t32 = t3 - t2;
             //std::cout << "T2: " << t32.count() << "ms\n";
 
             // This potential will be used by LAMMPS
-            Config pot_tadah = model->get_param_file();
+            Config pot_tadah = tr.model->get_param_file();
             std::ofstream outfile;
             outfile.open ("pot.tadah");
             outfile << pot_tadah;
@@ -348,7 +359,8 @@ class HyperParamOpti: public HyperParamOptiBase {
             //    (pot_tadah.get<std::string>("MODEL",0),*fb,pot_tadah);
             //StructureDB stpred = modelp->predict(pot_tadah,stdb,dc);
 
-            StructureDB stpred = model->predict(stdb);
+            // TODO test dataset must be smaller than trainig for MPI version
+            StructureDB stpred = tr.model->predict(stdb);
 
             Analytics a(stdb,stpred);
 
@@ -358,6 +370,8 @@ class HyperParamOpti: public HyperParamOptiBase {
             }
 
             // Vacancy formation energy/enthalpy at selected pressures
+            // TODO for MPI version accumulate all scripts
+            // and distribute over workers
             if (trg.use_uEvf || trg.use_uHvf) {
                 calc_uvacf(pdata);
             }
@@ -394,10 +408,6 @@ class HyperParamOpti: public HyperParamOptiBase {
             auto t5 = high_resolution_clock::now();
             duration<double, std::milli> t54 = t5 - t4;
             //std::cout << "T4: " << t54.count() << "ms\n";
-            if(model)
-                delete model;
-            if(fb)
-                delete fb;
             return tloss;
         }
 };
