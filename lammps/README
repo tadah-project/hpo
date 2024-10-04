@@ -1,4 +1,4 @@
-This scripts will be compiled into a shared library.
-The resource compiler used: https://github.com/vector-of-bool/cmrc
+These scripts will be compiled into a shared library.
+The resource compiler used is: https://github.com/vector-of-bool/cmrc
 
 They are used by the HyperParameter Optimizer.
