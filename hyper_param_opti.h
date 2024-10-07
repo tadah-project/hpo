@@ -344,6 +344,13 @@ class HyperParamOpti: public HyperParamOptiBase {
   int ncpu;
   MPI_Comm_size(MPI_COMM_WORLD, &ncpu);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+   // New config file must be communicated to all processes before trainer object is created
+      int ready=1;
+      std::cout << "HOST CONFIG 1" << std::endl;
+      MPI_Bcast(&ready, 1, MPI_INT, 0, MPI_COMM_WORLD);
+      std::cout << "HOST CONFIG 2" << std::endl;
+
   MPI_Trainer tr(config_temp); // TODO use updated config
   tr.init(rank, ncpu);
   // HOST is waiting for workers requests
@@ -366,9 +373,9 @@ class HyperParamOpti: public HyperParamOptiBase {
     else if (tr.tag==MPI_Trainer::DATA_TAG) {
       HOST.data_tag();
     }
-    else if (tr.tag==MPI_Trainer::CONFIG_TAG) {
-      HOST.config_tag();
-    }
+    //else if (tr.tag==MPI_Trainer::CONFIG_TAG) {
+    //  HOST.config_tag();
+    //}
     else {
       throw std::runtime_error("HOST: Unexpected request from "
           + std::to_string(tr.worker));
