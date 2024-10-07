@@ -322,10 +322,10 @@ class HyperParamOpti: public HyperParamOptiBase {
             Config config_temp = config;
             config_temp.postprocess();
 
-            std::ofstream outfile;
-            outfile.open ("config.temp");
-            outfile << config_temp;
-            outfile.close();
+            std::ofstream toutfile;
+            toutfile.open ("config.temp");
+            toutfile << config_temp;
+            toutfile.close();
 
             // TODO dump temp trainig config to disk such that other MPI processes
             // can read it
