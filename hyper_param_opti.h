@@ -327,13 +327,61 @@ class HyperParamOpti: public HyperParamOptiBase {
 
             // TODO broadcast location of the temp config file
             // Train new potential with updated settings
-            Trainer tr(config_temp);
 
             auto t2 = high_resolution_clock::now();
             duration<double, std::milli> t21 = t2 - t1;
             //std::cout << "T1: " << t21.count() << "ms\n";
 
-            tr.model->train(stdb,dc);
+#ifdef TADAH_BUILD_MPI
+  int rank;
+  int ncpu;
+  MPI_Comm_size(MPI_COMM_WORLD, &ncpu);
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  MPI_Trainer tr(config);
+  tr.init(rank, ncpu);
+  // HOST is waiting for workers requests
+  MPI_Trainer_HOST HOST(tr, rank, ncpu);
+  HOST.prep_wpckgs();
+  while (true) {
+    if (!HOST.has_packages()) {
+      // no more packages, just skip remaining workers
+      // we will collect remaining data and release them outside of this loop
+      break;
+    }
+
+    // probe ANY request from ANY worker
+    tr.probe();
+
+    if (tr.tag==TadahCLI::WORK_TAG) {
+      HOST.work_tag();
+    }
+    else if (tr.tag==TadahCLI::DATA_TAG) {
+      HOST.data_tag();
+    }
+    else {
+      throw std::runtime_error("HOST1: Unexpected request from "
+          + std::to_string(tr.worker));
+    }
+  }
+
+  // work finised, collect remaining data and release all workers
+  int count=1;  // count number of release workers, skip host
+  while(true) {
+    tr.probe();
+    if (tr.tag==TadahCLI::DATA_TAG) {
+      HOST.data_tag();
+    }
+    else {
+      HOST.release_tag(count);
+    }
+    if (count==ncpu) {  break; }  // count starts from 1
+  }
+  tr.solve();
+#else 
+            Trainer tr(config_temp);
+            tr.train(stdb);
+#endif
+
             // End of training
 
             auto t3 = high_resolution_clock::now();
