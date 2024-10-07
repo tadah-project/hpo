@@ -487,6 +487,7 @@ class HyperParamOpti: public HyperParamOptiBase {
                 best_score = tloss;
                 std::ofstream outfile;
                 outfile.open ("best_pot.tadah");
+                pot_tadah.clear_internal_keys();
                 outfile << pot_tadah;
                 outfile.close();
             }
