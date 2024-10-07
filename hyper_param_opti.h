@@ -439,7 +439,7 @@ class HyperParamOpti: public HyperParamOptiBase {
             if (!pot_tadah.exist("VERBOSE"))
               pot_tadah.add("VERBOSE",0);
             DC_Selector DCS(pot_tadah);
-            StructureDB stdb(config_temp);
+            StructureDB stdb(pot_tadah);
             NNFinder nnf(pot_tadah);
             nnf.calc(stdb);
             DescriptorsCalc<> dc(pot_tadah,*DCS.d2b,*DCS.d3b,*DCS.dmb,
