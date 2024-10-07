@@ -323,6 +323,7 @@ class HyperParamOpti: public HyperParamOptiBase {
 
             std::ofstream toutfile;
             toutfile.open ("config.temp");
+            config_temp.remove("RCUTMAX");
             toutfile << config_temp;
             toutfile.close();
 
