@@ -381,9 +381,11 @@ class HyperParamOpti: public HyperParamOptiBase {
   }
   tr.solve();
 #else 
+  std::cout << "TADAH_BUILD_MPI ndef?" << it << std::endl;
             Trainer tr(config_temp);
             tr.train(stdb);
 #endif
+  std::cout << "SKIP WHOLE block?" << it << std::endl;
 
             // End of training
 
