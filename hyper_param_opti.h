@@ -332,13 +332,13 @@ class HyperParamOpti: public HyperParamOptiBase {
             duration<double, std::milli> t21 = t2 - t1;
             //std::cout << "T1: " << t21.count() << "ms\n";
 
-  std::cout << "COMMON DONE" << it << std::endl;
+  std::cout << "COMMON DONE " << it << std::endl;
 #ifdef TADAH_BUILD_MPI
+  std::cout << "HOST START: " << it << std::endl;
   int rank;
   int ncpu;
   MPI_Comm_size(MPI_COMM_WORLD, &ncpu);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  std::cout << "HOST START: " << it << std::endl;
   MPI_Trainer tr(config); // TODO use updated config
   tr.init(rank, ncpu);
   // HOST is waiting for workers requests
