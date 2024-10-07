@@ -435,7 +435,7 @@ class HyperParamOpti: public HyperParamOptiBase {
 
             std::cout << "HOST: prediction 1" << std::endl;
             pot_tadah.check_for_predict();
-            pot_tadah.add("config.temp");
+            pot_tadah.add("config.pred");
             if (!pot_tadah.exist("VERBOSE"))
               pot_tadah.add("VERBOSE",0);
             DC_Selector DCS(pot_tadah);
