@@ -449,7 +449,7 @@ class HyperParamOpti: public HyperParamOptiBase {
             //std::cout << "STDB: " << stdb;
             //StructureDB stpred = tr.model->predict(stdb);
             aed_type2 predicted_error;
-            StructureDB stpred = modelp->predict(pot_config,stdb,dc,predicted_error);
+            StructureDB stpred = modelp->predict(pot_tadah,stdb,dc,predicted_error);
             std::cout << "HOST: prediction 2" << std::endl;
 
             //Analytics a(stdb,stpred);
