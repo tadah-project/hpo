@@ -127,10 +127,15 @@ if(TADAH_ENABLE_OPENMP)
     target_link_libraries(tadah.hpo.obj PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
-if (TADAH_ENABLE_MPI)
-    find_package(MPI REQUIRED)
-    target_link_libraries(tadah.hpo.obj PUBLIC MPI::MPI_CXX)
+if (TADAH_BUILD_MPI)
+  # Dummy solution for now.
+  # Always use LAMMPS MPI STUBS
+  # THE ONLY DIFFERENCE BETWEEN MPI AND NONMPI VERSION are 
+  # compile definitions
+  #find_package(MPI REQUIRED)
+  # target_link_libraries(tadah.hpo.obj PUBLIC MPI::MPI_CXX)
     add_compile_definitions(TADAH_BUILD_MPI)
+    target_include_directories(tadah.hpo.obj PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS)
 else()
     target_include_directories(tadah.hpo.obj PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS)
 endif()
@@ -150,7 +155,8 @@ target_link_libraries(tadah.hpo PUBLIC liblammps)
 target_link_libraries(tadah.hpo PUBLIC liblammps)
 
 if (TADAH_ENABLE_MPI)
-    target_link_libraries(tadah.hpo PUBLIC MPI::MPI_CXX)
+  #target_link_libraries(tadah.hpo PUBLIC MPI::MPI_CXX)
+    target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS/libmpi_stubs.a)
     add_compile_definitions(TADAH_BUILD_MPI)
 else()
     target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS/libmpi_stubs.a)
