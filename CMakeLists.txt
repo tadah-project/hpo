@@ -132,10 +132,10 @@ if (TADAH_BUILD_MPI)
   # Always use LAMMPS MPI STUBS
   # THE ONLY DIFFERENCE BETWEEN MPI AND NONMPI VERSION are 
   # compile definitions
-  #find_package(MPI REQUIRED)
-  # target_link_libraries(tadah.hpo.obj PUBLIC MPI::MPI_CXX)
-    add_compile_definitions(TADAH_BUILD_MPI)
-    target_include_directories(tadah.hpo.obj PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS)
+  find_package(MPI REQUIRED)
+  target_link_libraries(tadah.hpo.obj PUBLIC MPI::MPI_CXX)
+  add_compile_definitions(TADAH_BUILD_MPI)
+  #target_include_directories(tadah.hpo.obj PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS)
 else()
     target_include_directories(tadah.hpo.obj PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS)
 endif()
