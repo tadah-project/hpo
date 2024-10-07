@@ -320,12 +320,13 @@ class HyperParamOpti: public HyperParamOptiBase {
             update_config(p);
 
             Config config_temp = config;
-            config_temp.postprocess();
 
             std::ofstream toutfile;
             toutfile.open ("config.temp");
             toutfile << config_temp;
             toutfile.close();
+
+            config_temp.postprocess();
 
             // TODO dump temp trainig config to disk such that other MPI processes
             // can read it
