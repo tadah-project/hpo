@@ -348,9 +348,9 @@ class HyperParamOpti: public HyperParamOptiBase {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
    // New config file must be communicated to all processes before trainer object is created
-      int ready=1;
+      int cont=1;
       std::cout << "HOST CONFIG 1" << std::endl;
-      MPI_Bcast(&ready, 1, MPI_INT, 0, MPI_COMM_WORLD);
+      MPI_Bcast(&cont, 1, MPI_INT, 0, MPI_COMM_WORLD);
       std::cout << "HOST CONFIG 2" << std::endl;
 
   MPI_Trainer tr(config_temp); // TODO use updated config
@@ -506,5 +506,6 @@ class HyperParamOpti: public HyperParamOptiBase {
             //std::cout << "T4: " << t54.count() << "ms\n";
             return tloss;
         }
+
 };
 #endif
