@@ -29,7 +29,7 @@ int hpo_run(Config &config, std::string &trg_file) {
     MPI_Bcast(&cont, 1, MPI_INT, 0, MPI_COMM_WORLD);
 #endif
 
-    std::cout << result1.x << std::endl;
-    std::cout << result1.y << std::endl;
+    // std::cout << result1.x << std::endl;
+    // std::cout << result1.y << std::endl;
     return 0;
 }
