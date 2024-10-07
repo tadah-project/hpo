@@ -317,10 +317,15 @@ class HyperParamOpti: public HyperParamOptiBase {
 
             auto t1 = high_resolution_clock::now();
             //p = std::vector<double>(args.begin(), args.end());
-            //update_config(p);
+            update_config(p);
 
             Config config_temp = config;
             config_temp.postprocess();
+
+            std::ofstream outfile;
+            outfile.open ("config.temp");
+            outfile << config_temp;
+            outfile.close();
 
             // TODO dump temp trainig config to disk such that other MPI processes
             // can read it
@@ -339,7 +344,7 @@ class HyperParamOpti: public HyperParamOptiBase {
   int ncpu;
   MPI_Comm_size(MPI_COMM_WORLD, &ncpu);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  MPI_Trainer tr(config); // TODO use updated config
+  MPI_Trainer tr(config_temp); // TODO use updated config
   tr.init(rank, ncpu);
   // HOST is waiting for workers requests
   MPI_Trainer_HOST HOST(tr, rank, ncpu);
@@ -361,6 +366,9 @@ class HyperParamOpti: public HyperParamOptiBase {
     else if (tr.tag==MPI_Trainer::DATA_TAG) {
       HOST.data_tag();
     }
+    else if (tr.tag==MPI_Trainer::CONFIG_TAG) {
+      HOST.config_tag();
+    }
     else {
       throw std::runtime_error("HOST: Unexpected request from "
           + std::to_string(tr.worker));
@@ -379,7 +387,10 @@ class HyperParamOpti: public HyperParamOptiBase {
     }
     if (count==ncpu) {  break; }  // count starts from 1
   }
+
+  std::cout << "HOST SOLVE : " << it << std::endl;
   tr.solve();
+  std::cout << "HOST SOLVE DONE: " << it << std::endl;
 #else 
   std::cout << "TADAH_BUILD_MPI ndef" << it << std::endl;
             Trainer tr(config_temp);
