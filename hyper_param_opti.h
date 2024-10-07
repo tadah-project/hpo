@@ -355,10 +355,10 @@ class HyperParamOpti: public HyperParamOptiBase {
     // probe ANY request from ANY worker
     tr.probe();
 
-    if (tr.tag==TadahCLI::WORK_TAG) {
+    if (tr.tag==MPI_Trainer::WORK_TAG) {
       HOST.work_tag();
     }
-    else if (tr.tag==TadahCLI::DATA_TAG) {
+    else if (tr.tag==MPI_Trainer::DATA_TAG) {
       HOST.data_tag();
     }
     else {
@@ -371,7 +371,7 @@ class HyperParamOpti: public HyperParamOptiBase {
   int count=1;  // count number of release workers, skip host
   while(true) {
     tr.probe();
-    if (tr.tag==TadahCLI::DATA_TAG) {
+    if (tr.tag==MPI_Trainer::DATA_TAG) {
       HOST.data_tag();
     }
     else {
@@ -385,7 +385,6 @@ class HyperParamOpti: public HyperParamOptiBase {
             Trainer tr(config_temp);
             tr.train(stdb);
 #endif
-  std::cout << "SKIP WHOLE block?" << it << std::endl;
 
             // End of training
 
