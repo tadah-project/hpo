@@ -434,6 +434,7 @@ class HyperParamOpti: public HyperParamOptiBase {
             // TODO test dataset must be smaller than trainig for MPI version
 
             std::cout << "HOST: prediction 1" << std::endl;
+            if (tr.model->trained) std::cout << "MODEL IS TRAINED" << std::endl;
             StructureDB stpred = tr.model->predict(stdb);
             std::cout << "HOST: prediction 2" << std::endl;
 
