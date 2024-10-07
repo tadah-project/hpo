@@ -337,11 +337,13 @@ class HyperParamOpti: public HyperParamOptiBase {
   int ncpu;
   MPI_Comm_size(MPI_COMM_WORLD, &ncpu);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  MPI_Trainer tr(config);
+  std::cout << "HOST START: " << it << std::endl;
+  MPI_Trainer tr(config); // TODO use updated config
   tr.init(rank, ncpu);
   // HOST is waiting for workers requests
   MPI_Trainer_HOST HOST(tr, rank, ncpu);
   HOST.prep_wpckgs();
+  std::cout << "HOST INIT DONE: " << it << std::endl;
   while (true) {
     if (!HOST.has_packages()) {
       // no more packages, just skip remaining workers
@@ -359,7 +361,7 @@ class HyperParamOpti: public HyperParamOptiBase {
       HOST.data_tag();
     }
     else {
-      throw std::runtime_error("HOST1: Unexpected request from "
+      throw std::runtime_error("HOST: Unexpected request from "
           + std::to_string(tr.worker));
     }
   }
