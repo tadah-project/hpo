@@ -297,7 +297,7 @@ class HyperParamOpti: public HyperParamOptiBase {
         }
 
         // update CONFIG - constants specific to this target
-        for (const auto p : trg.cfg) {
+        for (const auto &p : trg.cfg) {
             std::string key=p.first;
             std::string val=p.second;
             config.remove(key);
