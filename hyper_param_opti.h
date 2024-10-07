@@ -436,10 +436,10 @@ class HyperParamOpti: public HyperParamOptiBase {
             std::cout << "HOST: prediction 1" << std::endl;
             if (tr.model->trained) std::cout << "MODEL IS TRAINED" << std::endl;
             std::cout << "STDB: " << stdb;
-            StructureDB stpred = tr.model->predict(stdb);
-            std::cout << "HOST: prediction 2" << std::endl;
+            //StructureDB stpred = tr.model->predict(stdb);
+            //std::cout << "HOST: prediction 2" << std::endl;
 
-            Analytics a(stdb,stpred);
+            //Analytics a(stdb,stpred);
 
             TrgData pdata = trg.data;
             if (trg.use_lata | trg.use_ecoh | trg.use_surface) {
@@ -462,7 +462,8 @@ class HyperParamOpti: public HyperParamOptiBase {
                 calc_envol(pdata);
             }
 
-            double tloss = glf.total_loss(a,p,pdata,fail);
+            //double tloss = glf.total_loss(a,p,pdata,fail);
+            double tloss = 1;
 
             // Dump potential if best
             if (tloss<best_score) {
