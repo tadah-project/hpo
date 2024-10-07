@@ -457,7 +457,7 @@ class HyperParamOpti: public HyperParamOptiBase {
             std::cout << "HOST: prediction 2" << std::endl;
 
             //Analytics a(stdb,stpred);
-            Analytics a(stpred,stpred);
+            Analytics a(stdb,stpred);
 
             TrgData pdata = trg.data;
             if (trg.use_lata | trg.use_ecoh | trg.use_surface) {
