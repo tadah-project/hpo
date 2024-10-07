@@ -434,6 +434,7 @@ class HyperParamOpti: public HyperParamOptiBase {
             // TODO test dataset must be smaller than trainig for MPI version
 
             std::cout << "HOST: prediction 1" << std::endl;
+            DC_Selector DCS(pot_tadah);
             StructureDB stdb(config_temp);
             NNFinder nnf(pot_tadah);
             nnf.calc(stdb);
@@ -447,6 +448,7 @@ class HyperParamOpti: public HyperParamOptiBase {
             //std::cout << tr.model->weights << std::endl;
             //std::cout << "STDB: " << stdb;
             //StructureDB stpred = tr.model->predict(stdb);
+            aed_type2 predicted_error;
             StructureDB stpred = modelp->predict(pot_config,stdb,dc,predicted_error);
             std::cout << "HOST: prediction 2" << std::endl;
 
