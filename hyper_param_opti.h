@@ -339,9 +339,7 @@ class HyperParamOpti: public HyperParamOptiBase {
             duration<double, std::milli> t21 = t2 - t1;
             //std::cout << "T1: " << t21.count() << "ms\n";
 
-  std::cout << "COMMON DONE " << it << std::endl;
 #ifdef TADAH_BUILD_MPI
-  std::cout << "HOST START: " << it << std::endl;
   int rank;
   int ncpu;
   MPI_Comm_size(MPI_COMM_WORLD, &ncpu);
@@ -349,16 +347,13 @@ class HyperParamOpti: public HyperParamOptiBase {
 
    // New config file must be communicated to all processes before trainer object is created
       int cont=1;
-      std::cout << "HOST CONFIG 1" << std::endl;
       MPI_Bcast(&cont, 1, MPI_INT, 0, MPI_COMM_WORLD);
-      std::cout << "HOST CONFIG 2" << std::endl;
 
   MPI_Trainer tr(config_temp); // TODO use updated config
   tr.init(rank, ncpu);
   // HOST is waiting for workers requests
   MPI_Trainer_HOST HOST(tr, rank, ncpu);
   HOST.prep_wpckgs();
-  std::cout << "HOST INIT DONE: " << it << std::endl;
   while (true) {
     if (!HOST.has_packages()) {
       // no more packages, just skip remaining workers
@@ -397,11 +392,8 @@ class HyperParamOpti: public HyperParamOptiBase {
     if (count==ncpu) {  break; }  // count starts from 1
   }
 
-  std::cout << "HOST SOLVE : " << it << std::endl;
   tr.solve();
-  std::cout << "HOST SOLVE DONE: " << it << std::endl;
 #else 
-  std::cout << "TADAH_BUILD_MPI ndef" << it << std::endl;
             Trainer tr(config_temp);
             tr.train(stdb);
 #endif
@@ -433,7 +425,6 @@ class HyperParamOpti: public HyperParamOptiBase {
 
             // TODO test dataset must be smaller than trainig for MPI version
 
-            std::cout << "HOST: prediction 1" << std::endl;
             pot_tadah.check_for_predict();
             pot_tadah.add("config.pred");
             if (!pot_tadah.exist("VERBOSE"))
@@ -454,7 +445,6 @@ class HyperParamOpti: public HyperParamOptiBase {
             //StructureDB stpred = tr.model->predict(stdb);
             //aed_type2 predicted_error;
             StructureDB stpred = modelp->predict(pot_tadah,stdb,dc);
-            std::cout << "HOST: prediction 2" << std::endl;
 
             //Analytics a(stdb,stpred);
             Analytics a(stdb,stpred);
