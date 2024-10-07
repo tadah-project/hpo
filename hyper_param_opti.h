@@ -434,13 +434,24 @@ class HyperParamOpti: public HyperParamOptiBase {
             // TODO test dataset must be smaller than trainig for MPI version
 
             std::cout << "HOST: prediction 1" << std::endl;
-            if (tr.model->trained) std::cout << "MODEL IS TRAINED" << std::endl;
-            std::cout << tr.model->weights << std::endl;
-            std::cout << "STDB: " << stdb;
-            StructureDB stpred = tr.model->predict(stdb);
+            StructureDB stdb(config_temp);
+            NNFinder nnf(pot_tadah);
+            nnf.calc(stdb);
+            DescriptorsCalc<> dc(pot_tadah,*DCS.d2b,*DCS.d3b,*DCS.dmb,
+                *DCS.c2b,*DCS.c3b,*DCS.cmb);
+            DM_Function_Base *fb = CONFIG::factory<DM_Function_Base,Config&>(
+                pot_tadah.get<std::string>("MODEL",1),pot_tadah);
+            M_Tadah_Base *modelp = CONFIG::factory<M_Tadah_Base,DM_Function_Base&,Config&>(
+                pot_tadah.get<std::string>("MODEL",0),*fb,pot_tadah);
+            //if (tr.model->trained) std::cout << "MODEL IS TRAINED" << std::endl;
+            //std::cout << tr.model->weights << std::endl;
+            //std::cout << "STDB: " << stdb;
+            //StructureDB stpred = tr.model->predict(stdb);
+            StructureDB stpred = modelp->predict(pot_config,stdb,dc,predicted_error);
             std::cout << "HOST: prediction 2" << std::endl;
 
-            Analytics a(stdb,stpred);
+            //Analytics a(stdb,stpred);
+            Analytics a(stpred,stpred);
 
             TrgData pdata = trg.data;
             if (trg.use_lata | trg.use_ecoh | trg.use_surface) {
