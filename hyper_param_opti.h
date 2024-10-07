@@ -317,7 +317,7 @@ class HyperParamOpti: public HyperParamOptiBase {
 
             auto t1 = high_resolution_clock::now();
             //p = std::vector<double>(args.begin(), args.end());
-            update_config(p);
+            //update_config(p);
 
             Config config_temp = config;
             config_temp.postprocess();
@@ -381,7 +381,7 @@ class HyperParamOpti: public HyperParamOptiBase {
   }
   tr.solve();
 #else 
-  std::cout << "TADAH_BUILD_MPI ndef?" << it << std::endl;
+  std::cout << "TADAH_BUILD_MPI ndef" << it << std::endl;
             Trainer tr(config_temp);
             tr.train(stdb);
 #endif
