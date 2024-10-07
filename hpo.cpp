@@ -22,6 +22,14 @@ int hpo_run(Config &config, std::string &trg_file) {
             dlib::FOREVER,
             trg.eps
             );
+
+
+#ifdef TADAH_BUILD_MPI
+    // shut all workers
+    int ready=0;
+    MPI_Bcast(&ready, 1, MPI_INT, 0, MPI_COMM_WORLD);
+#endif
+
     std::cout << result1.x << std::endl;
     std::cout << result1.y << std::endl;
     return 0;
