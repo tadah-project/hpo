@@ -1,3 +1,7 @@
+# Note: 
+# For non-MPI version link serial version of LAMMPS
+# Tadah MPI version requires MPI version of LAMMPS
+
 cmake_minimum_required(VERSION 3.12)
 project(Tadah.HPO)
 
@@ -128,14 +132,9 @@ if(TADAH_ENABLE_OPENMP)
 endif()
 
 if (TADAH_BUILD_MPI)
-  # Dummy solution for now.
-  # Always use LAMMPS MPI STUBS
-  # THE ONLY DIFFERENCE BETWEEN MPI AND NONMPI VERSION are 
-  # compile definitions
   find_package(MPI REQUIRED)
   target_link_libraries(tadah.hpo.obj PUBLIC MPI::MPI_CXX)
   add_compile_definitions(TADAH_BUILD_MPI)
-  #target_include_directories(tadah.hpo.obj PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS)
 else()
     target_include_directories(tadah.hpo.obj PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS)
 endif()
@@ -155,8 +154,7 @@ target_link_libraries(tadah.hpo PUBLIC liblammps)
 target_link_libraries(tadah.hpo PUBLIC liblammps)
 
 if (TADAH_BUILD_MPI)
-  #target_link_libraries(tadah.hpo PUBLIC MPI::MPI_CXX)
-    target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS/libmpi_stubs.a)
+  target_link_libraries(tadah.hpo PUBLIC MPI::MPI_CXX)
 else()
     target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS/libmpi_stubs.a)
 endif()
