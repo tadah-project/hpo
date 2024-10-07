@@ -435,6 +435,7 @@ class HyperParamOpti: public HyperParamOptiBase {
 
             std::cout << "HOST: prediction 1" << std::endl;
             if (tr.model->trained) std::cout << "MODEL IS TRAINED" << std::endl;
+            std::cout << stdb;
             StructureDB stpred = tr.model->predict(stdb);
             std::cout << "HOST: prediction 2" << std::endl;
 
