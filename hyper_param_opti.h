@@ -432,7 +432,10 @@ class HyperParamOpti: public HyperParamOptiBase {
             //StructureDB stpred = modelp->predict(pot_tadah,stdb,dc);
 
             // TODO test dataset must be smaller than trainig for MPI version
+
+            std::cout << "HOST: prediction 1" << std::endl;
             StructureDB stpred = tr.model->predict(stdb);
+            std::cout << "HOST: prediction 2" << std::endl;
 
             Analytics a(stdb,stpred);
 
