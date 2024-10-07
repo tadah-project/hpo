@@ -332,6 +332,7 @@ class HyperParamOpti: public HyperParamOptiBase {
             duration<double, std::milli> t21 = t2 - t1;
             //std::cout << "T1: " << t21.count() << "ms\n";
 
+  std::cout << "COMMON DONE" << it << std::endl;
 #ifdef TADAH_BUILD_MPI
   int rank;
   int ncpu;
