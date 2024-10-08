@@ -320,13 +320,6 @@ class HyperParamOpti: public HyperParamOptiBase {
           update_config(p);
 
           Config config_temp = config;
-
-          // TODO broadcast updated config file
-          //std::ofstream toutfile;
-          //toutfile.open ("config.temp");
-          //config_temp.remove("RCUTMAX");
-          //toutfile << config_temp;
-          //toutfile.close();
           config_temp.postprocess();
 
           // Train new potential with updated settings
@@ -340,9 +333,7 @@ class HyperParamOpti: public HyperParamOptiBase {
           MPI_Comm_size(MPI_COMM_WORLD, &ncpu);
           MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-          // New config file must be communicated to all processes before trainer object is created
-          int cont=1;
-          MPI_Bcast(&cont, 1, MPI_INT, 0, MPI_COMM_WORLD);
+          // New config file must be communicated to all processes
           std::vector<char> cs = config_temp.serialize();
           int cs_size = cs.size();
           MPI_Bcast(&cs_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -352,11 +343,8 @@ class HyperParamOpti: public HyperParamOptiBase {
           MPI_Trainer_HOST HOST(config_temp, rank, ncpu);
           HOST.prep_wpckgs();
           while (true) {
-            if (!HOST.has_packages()) {
-              // no more packages, just skip remaining workers
-              // we will collect remaining data and release them outside of this loop
-              break;
-            }
+            // Exit loop if there are no more packages
+            if (!HOST.has_packages()) break;
 
             // probe ANY request from ANY worker
             HOST.probe();
@@ -367,9 +355,6 @@ class HyperParamOpti: public HyperParamOptiBase {
             else if (HOST.tag==MPI_Trainer::DATA_TAG) {
               HOST.data_tag();
             }
-            //else if (HOST.tag==MPI_Trainer::CONFIG_TAG) {
-            //  HOST.config_tag();
-            //}
             else {
               throw std::runtime_error("HOST: Unexpected request from "
                   + std::to_string(HOST.worker));
@@ -396,7 +381,6 @@ class HyperParamOpti: public HyperParamOptiBase {
           tr.train(stdb);
           Config pot_tadah = tr.model->get_param_file();
 #endif
-
           // End of training
 
           auto t3 = high_resolution_clock::now();
@@ -411,18 +395,13 @@ class HyperParamOpti: public HyperParamOptiBase {
 
           auto t4 = high_resolution_clock::now();
           duration<double, std::milli> t43 = t4 - t3;
-          //std::cout << "T3: " << t43.count() << "ms\n";
-
-          // Do not remove me for a while...
-          //pot_tadah.add("VERBOSE",1);
-          //pot_tadah.add("FORCE","false");
-          //pot_tadah.add("STRESS","false");
-          //M_Tadah_Base *modelp = CONFIG::factory<M_Tadah_Base,DM_Function_Base&,Config&>
-          //    (pot_tadah.get<std::string>("MODEL",0),*fb,pot_tadah);
-          //StructureDB stpred = modelp->predict(pot_tadah,stdb,dc);
 
           // TODO test dataset must be smaller than trainig for MPI version
-
+          // TODO user must be able to provide separete config file
+          // listing datasets which can be used for prediction
+          // The prediction datasets can be loaded outside of the HPO loop
+          // But NN must be calculated within the loop as we might be optimising
+          // cutoff distances
           pot_tadah.check_for_predict();
           pot_tadah.add("config.pred");
           if (!pot_tadah.exist("VERBOSE"))
@@ -444,7 +423,6 @@ class HyperParamOpti: public HyperParamOptiBase {
           //aed_type2 predicted_error;
           StructureDB stpred = modelp->predict(pot_tadah,stdb,dc);
 
-          //Analytics a(stdb,stpred);
           Analytics a(stdb,stpred);
 
           TrgData pdata = trg.data;
