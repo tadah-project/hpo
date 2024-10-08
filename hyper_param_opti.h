@@ -348,8 +348,6 @@ class HyperParamOpti: public HyperParamOptiBase {
           MPI_Bcast(&cs_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
           MPI_Bcast(cs.data(), cs_size, MPI_CHAR, 0, MPI_COMM_WORLD);
 
-
-
           // HOST is waiting for workers requests
           MPI_Trainer_HOST HOST(config_temp, rank, ncpu);
           HOST.prep_wpckgs();
