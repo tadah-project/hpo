@@ -391,9 +391,11 @@ class HyperParamOpti: public HyperParamOptiBase {
   }
 
   HOST.solve();
+  Config pot_tadah = HOST.model->get_param_file();
 #else 
             Trainer tr(config_temp);
             tr.train(stdb);
+            Config pot_tadah = tr.model->get_param_file();
 #endif
 
             // End of training
@@ -403,7 +405,6 @@ class HyperParamOpti: public HyperParamOptiBase {
             //std::cout << "T2: " << t32.count() << "ms\n";
 
             // This potential will be used by LAMMPS
-            Config pot_tadah = tr.model->get_param_file();
             std::ofstream outfile;
             outfile.open ("pot.tadah");
             outfile << pot_tadah;
