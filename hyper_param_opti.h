@@ -349,10 +349,8 @@ class HyperParamOpti: public HyperParamOptiBase {
       int cont=1;
       MPI_Bcast(&cont, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-  MPI_Trainer tr(config_temp); // TODO use updated config
-  tr.init(rank, ncpu);
   // HOST is waiting for workers requests
-  MPI_Trainer_HOST HOST(tr, rank, ncpu);
+  MPI_Trainer_HOST HOST(config_temp, rank, ncpu);
   HOST.prep_wpckgs();
   while (true) {
     if (!HOST.has_packages()) {
@@ -362,28 +360,28 @@ class HyperParamOpti: public HyperParamOptiBase {
     }
 
     // probe ANY request from ANY worker
-    tr.probe();
+    HOST.probe();
 
-    if (tr.tag==MPI_Trainer::WORK_TAG) {
+    if (HOST.tag==MPI_Trainer::WORK_TAG) {
       HOST.work_tag();
     }
-    else if (tr.tag==MPI_Trainer::DATA_TAG) {
+    else if (HOST.tag==MPI_Trainer::DATA_TAG) {
       HOST.data_tag();
     }
-    //else if (tr.tag==MPI_Trainer::CONFIG_TAG) {
+    //else if (HOST.tag==MPI_Trainer::CONFIG_TAG) {
     //  HOST.config_tag();
     //}
     else {
       throw std::runtime_error("HOST: Unexpected request from "
-          + std::to_string(tr.worker));
+          + std::to_string(HOST.worker));
     }
   }
 
   // work finised, collect remaining data and release all workers
   int count=1;  // count number of release workers, skip host
   while(true) {
-    tr.probe();
-    if (tr.tag==MPI_Trainer::DATA_TAG) {
+    HOST.probe();
+    if (HOST.tag==MPI_Trainer::DATA_TAG) {
       HOST.data_tag();
     }
     else {
@@ -392,7 +390,7 @@ class HyperParamOpti: public HyperParamOptiBase {
     if (count==ncpu) {  break; }  // count starts from 1
   }
 
-  tr.solve();
+  HOST.solve();
 #else 
             Trainer tr(config_temp);
             tr.train(stdb);
