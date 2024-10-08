@@ -307,193 +307,194 @@ class HyperParamOpti: public HyperParamOptiBase {
 
         //double operator() (T args) {
         double operator() (T p) {
-            it++;
-            using std::chrono::high_resolution_clock;
-            using std::chrono::duration_cast;
-            using std::chrono::duration;
-            using std::chrono::milliseconds;
+          it++;
+          using std::chrono::high_resolution_clock;
+          using std::chrono::duration_cast;
+          using std::chrono::duration;
+          using std::chrono::milliseconds;
 
-            fail=false;
+          fail=false;
 
-            auto t1 = high_resolution_clock::now();
-            //p = std::vector<double>(args.begin(), args.end());
-            update_config(p);
+          auto t1 = high_resolution_clock::now();
+          //p = std::vector<double>(args.begin(), args.end());
+          update_config(p);
 
-            Config config_temp = config;
+          Config config_temp = config;
 
-            std::ofstream toutfile;
-            toutfile.open ("config.temp");
-            config_temp.remove("RCUTMAX");
-            toutfile << config_temp;
-            toutfile.close();
+          // TODO broadcast updated config file
+          //std::ofstream toutfile;
+          //toutfile.open ("config.temp");
+          //config_temp.remove("RCUTMAX");
+          //toutfile << config_temp;
+          //toutfile.close();
+          config_temp.postprocess();
 
-            config_temp.postprocess();
-
-            // TODO dump temp trainig config to disk such that other MPI processes
-            // can read it
-
-            // TODO broadcast location of the temp config file
-            // Train new potential with updated settings
-
-            auto t2 = high_resolution_clock::now();
-            duration<double, std::milli> t21 = t2 - t1;
-            //std::cout << "T1: " << t21.count() << "ms\n";
+          // Train new potential with updated settings
+          auto t2 = high_resolution_clock::now();
+          duration<double, std::milli> t21 = t2 - t1;
+          //std::cout << "T1: " << t21.count() << "ms\n";
 
 #ifdef TADAH_BUILD_MPI
-  int rank;
-  int ncpu;
-  MPI_Comm_size(MPI_COMM_WORLD, &ncpu);
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+          int rank;
+          int ncpu;
+          MPI_Comm_size(MPI_COMM_WORLD, &ncpu);
+          MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-   // New config file must be communicated to all processes before trainer object is created
-      int cont=1;
-      MPI_Bcast(&cont, 1, MPI_INT, 0, MPI_COMM_WORLD);
+          // New config file must be communicated to all processes before trainer object is created
+          int cont=1;
+          MPI_Bcast(&cont, 1, MPI_INT, 0, MPI_COMM_WORLD);
+          std::vector<char> cs = config_temp.serialize();
+          int cs_size = cs.size();
+          MPI_Bcast(&cs_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+          MPI_Bcast(cs.data(), cs_size, MPI_CHAR, 0, MPI_COMM_WORLD);
 
-  // HOST is waiting for workers requests
-  MPI_Trainer_HOST HOST(config_temp, rank, ncpu);
-  HOST.prep_wpckgs();
-  while (true) {
-    if (!HOST.has_packages()) {
-      // no more packages, just skip remaining workers
-      // we will collect remaining data and release them outside of this loop
-      break;
-    }
 
-    // probe ANY request from ANY worker
-    HOST.probe();
 
-    if (HOST.tag==MPI_Trainer::WORK_TAG) {
-      HOST.work_tag();
-    }
-    else if (HOST.tag==MPI_Trainer::DATA_TAG) {
-      HOST.data_tag();
-    }
-    //else if (HOST.tag==MPI_Trainer::CONFIG_TAG) {
-    //  HOST.config_tag();
-    //}
-    else {
-      throw std::runtime_error("HOST: Unexpected request from "
-          + std::to_string(HOST.worker));
-    }
-  }
+          // HOST is waiting for workers requests
+          MPI_Trainer_HOST HOST(config_temp, rank, ncpu);
+          HOST.prep_wpckgs();
+          while (true) {
+            if (!HOST.has_packages()) {
+              // no more packages, just skip remaining workers
+              // we will collect remaining data and release them outside of this loop
+              break;
+            }
 
-  // work finised, collect remaining data and release all workers
-  int count=1;  // count number of release workers, skip host
-  while(true) {
-    HOST.probe();
-    if (HOST.tag==MPI_Trainer::DATA_TAG) {
-      HOST.data_tag();
-    }
-    else {
-      HOST.release_tag(count);
-    }
-    if (count==ncpu) {  break; }  // count starts from 1
-  }
+            // probe ANY request from ANY worker
+            HOST.probe();
 
-  HOST.solve();
-  Config pot_tadah = HOST.model->get_param_file();
+            if (HOST.tag==MPI_Trainer::WORK_TAG) {
+              HOST.work_tag();
+            }
+            else if (HOST.tag==MPI_Trainer::DATA_TAG) {
+              HOST.data_tag();
+            }
+            //else if (HOST.tag==MPI_Trainer::CONFIG_TAG) {
+            //  HOST.config_tag();
+            //}
+            else {
+              throw std::runtime_error("HOST: Unexpected request from "
+                  + std::to_string(HOST.worker));
+            }
+          }
+
+          // work finised, collect remaining data and release all workers
+          int count=1;  // count number of release workers, skip host
+          while(true) {
+            HOST.probe();
+            if (HOST.tag==MPI_Trainer::DATA_TAG) {
+              HOST.data_tag();
+            }
+            else {
+              HOST.release_tag(count);
+            }
+            if (count==ncpu) {  break; }  // count starts from 1
+          }
+
+          HOST.solve();
+          Config pot_tadah = HOST.model->get_param_file();
 #else 
-            Trainer tr(config_temp);
-            tr.train(stdb);
-            Config pot_tadah = tr.model->get_param_file();
+          Trainer tr(config_temp);
+          tr.train(stdb);
+          Config pot_tadah = tr.model->get_param_file();
 #endif
 
-            // End of training
+          // End of training
 
-            auto t3 = high_resolution_clock::now();
-            duration<double, std::milli> t32 = t3 - t2;
-            //std::cout << "T2: " << t32.count() << "ms\n";
+          auto t3 = high_resolution_clock::now();
+          duration<double, std::milli> t32 = t3 - t2;
+          //std::cout << "T2: " << t32.count() << "ms\n";
 
-            // This potential will be used by LAMMPS
+          // This potential will be used by LAMMPS
+          std::ofstream outfile;
+          outfile.open ("pot.tadah");
+          outfile << pot_tadah;
+          outfile.close();
+
+          auto t4 = high_resolution_clock::now();
+          duration<double, std::milli> t43 = t4 - t3;
+          //std::cout << "T3: " << t43.count() << "ms\n";
+
+          // Do not remove me for a while...
+          //pot_tadah.add("VERBOSE",1);
+          //pot_tadah.add("FORCE","false");
+          //pot_tadah.add("STRESS","false");
+          //M_Tadah_Base *modelp = CONFIG::factory<M_Tadah_Base,DM_Function_Base&,Config&>
+          //    (pot_tadah.get<std::string>("MODEL",0),*fb,pot_tadah);
+          //StructureDB stpred = modelp->predict(pot_tadah,stdb,dc);
+
+          // TODO test dataset must be smaller than trainig for MPI version
+
+          pot_tadah.check_for_predict();
+          pot_tadah.add("config.pred");
+          if (!pot_tadah.exist("VERBOSE"))
+            pot_tadah.add("VERBOSE",0);
+          DC_Selector DCS(pot_tadah);
+          StructureDB stdb(pot_tadah);
+          NNFinder nnf(pot_tadah);
+          nnf.calc(stdb);
+          DescriptorsCalc<> dc(pot_tadah,*DCS.d2b,*DCS.d3b,*DCS.dmb,
+              *DCS.c2b,*DCS.c3b,*DCS.cmb);
+          DM_Function_Base *fb = CONFIG::factory<DM_Function_Base,Config&>(
+              pot_tadah.get<std::string>("MODEL",1),pot_tadah);
+          M_Tadah_Base *modelp = CONFIG::factory<M_Tadah_Base,DM_Function_Base&,Config&>(
+              pot_tadah.get<std::string>("MODEL",0),*fb,pot_tadah);
+          //if (tr.model->trained) std::cout << "MODEL IS TRAINED" << std::endl;
+          //std::cout << tr.model->weights << std::endl;
+          //std::cout << "STDB: " << stdb;
+          //StructureDB stpred = tr.model->predict(stdb);
+          //aed_type2 predicted_error;
+          StructureDB stpred = modelp->predict(pot_tadah,stdb,dc);
+
+          //Analytics a(stdb,stpred);
+          Analytics a(stdb,stpred);
+
+          TrgData pdata = trg.data;
+          if (trg.use_lata | trg.use_ecoh | trg.use_surface) {
+            calc_lata(pdata);
+          }
+
+          // Vacancy formation energy/enthalpy at selected pressures
+          // TODO for MPI version accumulate all scripts
+          // and distribute over workers
+          if (trg.use_uEvf || trg.use_uHvf) {
+            calc_uvacf(pdata);
+          }
+          if (trg.use_usurface) {
+            calc_usurface(pdata);
+          }
+          if (trg.use_surface) {
+            calc_surface(pdata);
+          }
+          if (trg.use_envol) {
+            calc_envol(pdata);
+          }
+
+          double tloss = glf.total_loss(a,p,pdata,fail);
+
+          // Dump potential if best
+          if (tloss<best_score) {
+            best_score = tloss;
             std::ofstream outfile;
-            outfile.open ("pot.tadah");
+            outfile.open ("best_pot.tadah");
+            pot_tadah.clear_internal_keys();
             outfile << pot_tadah;
             outfile.close();
+          }
 
-            auto t4 = high_resolution_clock::now();
-            duration<double, std::milli> t43 = t4 - t3;
-            //std::cout << "T3: " << t43.count() << "ms\n";
+          // Dump potential pevery steps
+          // Controled by HPOEVERY
+          if (it%pevery==0) {
+            std::ofstream outfile;
+            outfile.open (pevery_dir+"/pot_"+std::to_string(it)+".tadah");
+            outfile << pot_tadah;
+            outfile.close();
+          }
 
-            // Do not remove me for a while...
-            //pot_tadah.add("VERBOSE",1);
-            //pot_tadah.add("FORCE","false");
-            //pot_tadah.add("STRESS","false");
-            //M_Tadah_Base *modelp = CONFIG::factory<M_Tadah_Base,DM_Function_Base&,Config&>
-            //    (pot_tadah.get<std::string>("MODEL",0),*fb,pot_tadah);
-            //StructureDB stpred = modelp->predict(pot_tadah,stdb,dc);
-
-            // TODO test dataset must be smaller than trainig for MPI version
-
-            pot_tadah.check_for_predict();
-            pot_tadah.add("config.pred");
-            if (!pot_tadah.exist("VERBOSE"))
-              pot_tadah.add("VERBOSE",0);
-            DC_Selector DCS(pot_tadah);
-            StructureDB stdb(pot_tadah);
-            NNFinder nnf(pot_tadah);
-            nnf.calc(stdb);
-            DescriptorsCalc<> dc(pot_tadah,*DCS.d2b,*DCS.d3b,*DCS.dmb,
-                *DCS.c2b,*DCS.c3b,*DCS.cmb);
-            DM_Function_Base *fb = CONFIG::factory<DM_Function_Base,Config&>(
-                pot_tadah.get<std::string>("MODEL",1),pot_tadah);
-            M_Tadah_Base *modelp = CONFIG::factory<M_Tadah_Base,DM_Function_Base&,Config&>(
-                pot_tadah.get<std::string>("MODEL",0),*fb,pot_tadah);
-            //if (tr.model->trained) std::cout << "MODEL IS TRAINED" << std::endl;
-            //std::cout << tr.model->weights << std::endl;
-            //std::cout << "STDB: " << stdb;
-            //StructureDB stpred = tr.model->predict(stdb);
-            //aed_type2 predicted_error;
-            StructureDB stpred = modelp->predict(pot_tadah,stdb,dc);
-
-            //Analytics a(stdb,stpred);
-            Analytics a(stdb,stpred);
-
-            TrgData pdata = trg.data;
-            if (trg.use_lata | trg.use_ecoh | trg.use_surface) {
-                calc_lata(pdata);
-            }
-
-            // Vacancy formation energy/enthalpy at selected pressures
-            // TODO for MPI version accumulate all scripts
-            // and distribute over workers
-            if (trg.use_uEvf || trg.use_uHvf) {
-                calc_uvacf(pdata);
-            }
-            if (trg.use_usurface) {
-                calc_usurface(pdata);
-            }
-            if (trg.use_surface) {
-                calc_surface(pdata);
-            }
-            if (trg.use_envol) {
-                calc_envol(pdata);
-            }
-
-            double tloss = glf.total_loss(a,p,pdata,fail);
-
-            // Dump potential if best
-            if (tloss<best_score) {
-                best_score = tloss;
-                std::ofstream outfile;
-                outfile.open ("best_pot.tadah");
-                pot_tadah.clear_internal_keys();
-                outfile << pot_tadah;
-                outfile.close();
-            }
-
-            // Dump potential pevery steps
-            // Controled by HPOEVERY
-            if (it%pevery==0) {
-                std::ofstream outfile;
-                outfile.open (pevery_dir+"/pot_"+std::to_string(it)+".tadah");
-                outfile << pot_tadah;
-                outfile.close();
-            }
-
-            auto t5 = high_resolution_clock::now();
-            duration<double, std::milli> t54 = t5 - t4;
-            //std::cout << "T4: " << t54.count() << "ms\n";
-            return tloss;
+          auto t5 = high_resolution_clock::now();
+          duration<double, std::milli> t54 = t5 - t4;
+          //std::cout << "T4: " << t54.count() << "ms\n";
+          return tloss;
         }
 
 };
