@@ -386,21 +386,15 @@ class HyperParamOpti: public HyperParamOptiBase {
 #endif
           // End of training
 
-          pot_tadah.set_defaults();
-          pot_tadah.postprocess();
-
-          //auto t3 = high_resolution_clock::now();
-          //duration<double, std::milli> t32 = t3 - t2;
-          //std::cout << "T2: " << t32.count() << "ms\n";
-
           // This potential will be used by LAMMPS
           std::ofstream outfile;
           outfile.open ("pot.tadah");
           outfile << pot_tadah;
           outfile.close();
 
-          //auto t4 = high_resolution_clock::now();
-          //duration<double, std::milli> t43 = t4 - t3;
+          //pot_tadah.set_defaults();
+          //pot_tadah.postprocess();
+          pot_tadah.add("config.val");
 
           DC_Selector DCS(pot_tadah);
           val_stdb.clear_nn();
