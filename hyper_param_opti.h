@@ -285,7 +285,7 @@ class HyperParamOpti: public HyperParamOptiBase {
         HyperParamOpti(Config c, HPOTargets &trg, std::string &val_file):
             trg(trg),
             glf(trg),
-            config(c),
+            config(c)
     {
       Config val_config(val_file);
       val_stdb.add(val_config);
