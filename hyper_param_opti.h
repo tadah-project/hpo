@@ -289,8 +289,6 @@ class HyperParamOpti: public HyperParamOptiBase {
     {
       Config val_config(val_file);
       val_stdb.add(val_config);
-      std::cout << val_stdb << std::endl;
-      std::cout << val_stdb(0) << std::endl;
 
 #ifndef TADAH_BUILD_MPI
       train_stdb.add(config);
@@ -328,8 +326,8 @@ class HyperParamOpti: public HyperParamOptiBase {
           config_temp.postprocess();
 
           // Train new potential with updated settings
-          auto t2 = high_resolution_clock::now();
-          duration<double, std::milli> t21 = t2 - t1;
+          //auto t2 = high_resolution_clock::now();
+          //duration<double, std::milli> t21 = t2 - t1;
           //std::cout << "T1: " << t21.count() << "ms\n";
 
 #ifdef TADAH_BUILD_MPI
@@ -380,9 +378,7 @@ class HyperParamOpti: public HyperParamOptiBase {
           }
 
           HOST.solve();
-          std::cout << "01" << std::endl;
           Config pot_tadah = HOST.model->get_param_file();
-          std::cout << "02" << std::endl;
 #else 
           Trainer tr(config_temp);
           tr.train(train_stdb);
@@ -392,8 +388,9 @@ class HyperParamOpti: public HyperParamOptiBase {
 
           pot_tadah.set_defaults();
           pot_tadah.postprocess();
-          auto t3 = high_resolution_clock::now();
-          duration<double, std::milli> t32 = t3 - t2;
+
+          //auto t3 = high_resolution_clock::now();
+          //duration<double, std::milli> t32 = t3 - t2;
           //std::cout << "T2: " << t32.count() << "ms\n";
 
           // This potential will be used by LAMMPS
@@ -405,31 +402,17 @@ class HyperParamOpti: public HyperParamOptiBase {
           auto t4 = high_resolution_clock::now();
           duration<double, std::milli> t43 = t4 - t3;
 
-          //pot_tadah.check_for_predict();
-
-          // TODO do we need to add config.pred to pot_tadah??
-          //pot_tadah.add("config.val");
-          //if (!pot_tadah.exist("VERBOSE"))
-          //  pot_tadah.add("VERBOSE",0);
-          std::cout << "1" << std::endl;
           DC_Selector DCS(pot_tadah);
-          std::cout << "2" << std::endl;
-          //StructureDB stdb(pot_tadah);
           NNFinder nnf(pot_tadah);
-          std::cout << "3" << std::endl;
           nnf.calc(val_stdb);
-          std::cout << "4" << std::endl;
-          DescriptorsCalc<> dc(pot_tadah,*DCS.d2b,*DCS.d3b,*DCS.dmb,
-              *DCS.c2b,*DCS.c3b,*DCS.cmb);
-          DM_Function_Base *fb = CONFIG::factory<DM_Function_Base,Config&>(
-              pot_tadah.get<std::string>("MODEL",1),pot_tadah);
-          M_Tadah_Base *modelp = CONFIG::factory<M_Tadah_Base,DM_Function_Base&,Config&>(
-              pot_tadah.get<std::string>("MODEL",0),*fb,pot_tadah);
-          //if (tr.model->trained) std::cout << "MODEL IS TRAINED" << std::endl;
-          //std::cout << tr.model->weights << std::endl;
-          //std::cout << "STDB: " << stdb;
-          //StructureDB stpred = tr.model->predict(stdb);
-          //aed_type2 predicted_error;
+          DescriptorsCalc<> dc
+            (pot_tadah,*DCS.d2b,*DCS.d3b,*DCS.dmb,*DCS.c2b,*DCS.c3b,*DCS.cmb);
+          DM_Function_Base *fb = CONFIG::factory
+            <DM_Function_Base,Config&>
+            (pot_tadah.get<std::string>("MODEL",1),pot_tadah);
+          M_Tadah_Base *modelp = CONFIG::factory
+            <M_Tadah_Base,DM_Function_Base&,Config&>
+            (pot_tadah.get<std::string>("MODEL",0),*fb,pot_tadah);
           StructureDB stpred = modelp->predict(pot_tadah,val_stdb,dc);
 
           Analytics a(val_stdb,stpred);
@@ -476,8 +459,8 @@ class HyperParamOpti: public HyperParamOptiBase {
             outfile.close();
           }
 
-          auto t5 = high_resolution_clock::now();
-          duration<double, std::milli> t54 = t5 - t4;
+          //auto t5 = high_resolution_clock::now();
+          //duration<double, std::milli> t54 = t5 - t4;
           //std::cout << "T4: " << t54.count() << "ms\n";
           return tloss;
         }
