@@ -406,7 +406,7 @@ class HyperParamOpti: public HyperParamOptiBase {
           //pot_tadah.check_for_predict();
 
           // TODO do we need to add config.pred to pot_tadah??
-          //pot_tadah.add("config.pred");
+          pot_tadah.add("config.val");
           //if (!pot_tadah.exist("VERBOSE"))
           //  pot_tadah.add("VERBOSE",0);
           std::cout << "1" << std::endl;
