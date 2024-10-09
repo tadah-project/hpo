@@ -401,16 +401,20 @@ class HyperParamOpti: public HyperParamOptiBase {
           auto t4 = high_resolution_clock::now();
           duration<double, std::milli> t43 = t4 - t3;
 
-          pot_tadah.check_for_predict();
+          //pot_tadah.check_for_predict();
 
           // TODO do we need to add config.pred to pot_tadah??
           //pot_tadah.add("config.pred");
           //if (!pot_tadah.exist("VERBOSE"))
           //  pot_tadah.add("VERBOSE",0);
+          std::cout << "1" << std::endl;
           DC_Selector DCS(pot_tadah);
+          std::cout << "2" << std::endl;
           //StructureDB stdb(pot_tadah);
           NNFinder nnf(pot_tadah);
+          std::cout << "3" << std::endl;
           nnf.calc(val_stdb);
+          std::cout << "4" << std::endl;
           DescriptorsCalc<> dc(pot_tadah,*DCS.d2b,*DCS.d3b,*DCS.dmb,
               *DCS.c2b,*DCS.c3b,*DCS.cmb);
           DM_Function_Base *fb = CONFIG::factory<DM_Function_Base,Config&>(
