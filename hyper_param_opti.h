@@ -390,6 +390,7 @@ class HyperParamOpti: public HyperParamOptiBase {
 #endif
           // End of training
 
+          pot_tadah.set_defaults();
           pot_tadah.postprocess();
           auto t3 = high_resolution_clock::now();
           duration<double, std::milli> t32 = t3 - t2;
