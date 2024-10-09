@@ -78,8 +78,10 @@ class LammpsRunner {
             RI *lmp=nullptr;
                 std::cout << "DEBUG 2" << std::endl;
             try {
-                std::cout << "DEBUG 3" << std::endl;
+                std::cout << "DEBUG 3a" << std::endl;
                 lmp = instance(logfile,args...);  // WARNING: Using I/O redirection is unreliable with parallel runs
+                std::cout << "DEBUG 3b" << std::endl;
+                std::cout << "LAMMPS version ID: " << lmp->num_ver << std::endl;
                 std::cout << "DEBUG 4a" << std::endl;
                 std::cout << script.c_str() << std::endl;
                 std::cout << "DEBUG 4b" << std::endl;
