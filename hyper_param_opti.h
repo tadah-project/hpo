@@ -380,7 +380,9 @@ class HyperParamOpti: public HyperParamOptiBase {
           }
 
           HOST.solve();
+          std::cout << "01" << std::endl;
           Config pot_tadah = HOST.model->get_param_file();
+          std::cout << "02" << std::endl;
 #else 
           Trainer tr(config_temp);
           tr.train(train_stdb);
