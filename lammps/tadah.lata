@@ -5,6 +5,7 @@
 #variable lata equal 3.3
 
 # Set wall time limit on this script
+print "=1======================================="
 timer timeout ${tout}
 variable GPa_press equal ${P}*10000
 
@@ -15,6 +16,7 @@ dimension 3
 boundary p p p 
 atom_style atomic 
 atom_modify map array
+print "=1======================================="
 
 # ---------- Create Atoms --------------------- 
 lattice 	${structure} ${lata_guess}
@@ -26,6 +28,7 @@ create_atoms 1 box
 replicate 1 1 1
 
 mass 1 1e-20    # to keep lammps happy for some potentials
+print "=1======================================="
 
 # ---------- Define Interatomic Potential --------------------- 
 
@@ -33,23 +36,35 @@ pair_style tadah/tadah
 pair_coeff * * pot.tadah ${element}
 neighbor 2.0 bin 
 neigh_modify every 1 delay 0 check yes 
+print "=1======================================="
  
 # ---------- Define Settings --------------------- 
 compute eng all pe/atom 
 compute eatoms all reduce sum c_eng 
 
+print "=1======================================="
 # ---------- Run Minimization --------------------- 
 reset_timestep 0 
+print "=1======================================="
 fix 1 all box/relax iso ${GPa_press} vmax 0.001
+print "=1======================================="
 thermo 0 
+print "=1======================================="
 thermo_style custom step pe lx ly lz press pxx pyy pzz c_eatoms 
+print "=1======================================="
 min_style cg 
+print "=1======================================="
 minimize 1e-15 1e-15 5000 10000 
+print "=1======================================="
 
 variable natoms equal "count(all)" 
+print "=1======================================="
 variable teng equal "c_eatoms"
+print "=1======================================="
 variable length equal "lx"
+print "=1======================================="
 variable ecoh equal "v_teng/v_natoms"
+print "=1======================================="
 
 print "========================================="
 print "Total energy (eV) = ${teng};"
