@@ -62,6 +62,14 @@ class LammpsRunner {
                     (char **)lmpargv, MPI_COMM_WORLD);
         }
 
+        template <typename Arg, typename... Args>
+          void doPrint(std::ostream& out, Arg&& arg, Args&&... args)
+          {
+            out << std::forward<Arg>(arg);
+            using expander = int[];
+            (void)expander{0, (void(out << ',' << std::forward<Args>(args)), 0)...};
+          }
+
         template <typename ...Args>
         RI* run(std::string script,
                 std::string logfile="log.lammps", Args...args) {
@@ -75,7 +83,7 @@ class LammpsRunner {
                 std::cout << "DEBUG 4a" << std::endl;
                 std::cout << script.c_str() << std::endl;
                 std::cout << "DEBUG 4b" << std::endl;
-                std::cout << args... << std::endl;
+                doPrint(args...);
                 lmp->input->file(script.c_str()); // terminate called after throwing an instance of 'std::length_error'  what():  basic_string::_M_create 
                 std::cout << "DEBUG 5" << std::endl;
             }
