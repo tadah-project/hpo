@@ -381,7 +381,7 @@ class HyperParamOpti: public HyperParamOptiBase {
           Config pot_tadah = HOST.model->get_param_file();
 #else 
           Trainer tr(config_temp);
-          StructureDB train_stdb(config_temp);
+          train_stdb.clear_nn();
           tr.train(train_stdb);
           Config pot_tadah = tr.model->get_param_file();
 #endif
