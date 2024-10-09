@@ -66,13 +66,20 @@ class LammpsRunner {
         RI* run(std::string script,
                 std::string logfile="log.lammps", Args...args) {
 
+                std::cout << "DEBUG 1" << std::endl;
             RI *lmp=nullptr;
+                std::cout << "DEBUG 2" << std::endl;
             try {
+                std::cout << "DEBUG 3" << std::endl;
                 lmp = instance(logfile,args...);
+                std::cout << "DEBUG 4" << std::endl;
                 lmp->input->file(script.c_str());
+                std::cout << "DEBUG 5" << std::endl;
             }
             catch (std::exception& e) {
+                std::cout << "DEBUG 6" << std::endl;
                 std::cout << e.what() << std::endl;
+                std::cout << "DEBUG 7" << std::endl;
                 delete lmp;
                 return nullptr;
             }
