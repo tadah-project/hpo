@@ -381,6 +381,7 @@ class HyperParamOpti: public HyperParamOptiBase {
           Config pot_tadah = HOST.model->get_param_file();
 #else 
           Trainer tr(config_temp);
+          StructureDB train_stdb(config_temp);
           tr.train(train_stdb);
           Config pot_tadah = tr.model->get_param_file();
 #endif
@@ -392,13 +393,11 @@ class HyperParamOpti: public HyperParamOptiBase {
           outfile << pot_tadah;
           outfile.close();
 
-          //pot_tadah.set_defaults();
-          //pot_tadah.postprocess();
-          pot_tadah.add("config.val");
+          pot_tadah.set_defaults();
+          pot_tadah.postprocess();
 
           DC_Selector DCS(pot_tadah);
-          //val_stdb.clear_nn();
-          StructureDB val_stdb(pot_tadah);
+          val_stdb.clear_nn();
           NNFinder nnf(pot_tadah);
           nnf.calc(val_stdb);
           DescriptorsCalc<> dc
