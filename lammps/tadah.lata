@@ -6,6 +6,9 @@
 
 # Set wall time limit on this script
 print "=1======================================="
+print "${structure};"
+print "${lata_guess};"
+print "${P};"
 timer timeout ${tout}
 variable GPa_press equal ${P}*10000
 
