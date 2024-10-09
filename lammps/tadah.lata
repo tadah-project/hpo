@@ -16,27 +16,35 @@ dimension 3
 boundary p p p 
 atom_style atomic 
 atom_modify map array
-print "=1======================================="
 
 # ---------- Create Atoms --------------------- 
+print "=2======================================="
 lattice 	${structure} ${lata_guess}
+print "=3======================================="
 region	box block 0 1 0 1 0 1 units lattice
+print "=4======================================="
 create_box	1 box
+print "=5======================================="
 
 lattice	${structure} ${lata_guess} orient x 1 0 0 orient y 0 1 0 orient z 0 0 1  
+print "=6======================================="
 create_atoms 1 box
+print "=7======================================="
 replicate 1 1 1
+print "=8======================================="
 
 mass 1 1e-20    # to keep lammps happy for some potentials
-print "=1======================================="
+print "=9======================================="
 
 # ---------- Define Interatomic Potential --------------------- 
 
 pair_style tadah/tadah
+print "=10======================================"
 pair_coeff * * pot.tadah ${element}
+print "=11======================================"
 neighbor 2.0 bin 
 neigh_modify every 1 delay 0 check yes 
-print "=1======================================="
+print "=12======================================"
  
 # ---------- Define Settings --------------------- 
 compute eng all pe/atom 
