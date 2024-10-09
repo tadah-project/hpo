@@ -149,10 +149,12 @@ class HyperParamOpti: public HyperParamOptiBase {
                 // until the next iteration of the GOA.
                 pdata.set_fail(P,false);
                 int thread = omp_get_thread_num();
+                std::cout << "DEBUG 1" << std::endl;
                 auto lmp = scr.run_lata(runner,P, trg.data.get_structure(P),
                         trg.data.get_lata(P), element,
                         "log.lata"+std::to_string(thread),
                         trg.MAX_TIME);
+                std::cout << "DEBUG 2" << std::endl;
                 if (!lmp) {
                     fail = true;
                     pdata.set_fail(P,true);
