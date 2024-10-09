@@ -69,7 +69,8 @@ class HyperParamOpti: public HyperParamOptiBase {
         std::string delim=" ";
         double best_score=std::numeric_limits<double>::max();
         Config config;
-        StructureDB stdb;
+        StructureDB val_stdb; // validation dataset
+        StructureDB train_stdb; // train dataset NON MPI only
         size_t it=0;    // iteration number
         size_t pevery=std::numeric_limits<size_t>::max();   // Dump potential every this steps
         std::string pevery_dir;
@@ -281,15 +282,19 @@ class HyperParamOpti: public HyperParamOptiBase {
             return 0;
         }
     public:
-        HyperParamOpti(Config c, HPOTargets &trg):
+        HyperParamOpti(Config c, HPOTargets &trg, std::string &val_file):
             trg(trg),
             glf(trg),
             config(c),
-            stdb(c)  // TODO can't have single stdb for large datasets
     {
-        // TODO this won't work with large datasets
-        NNFinder nn(config);
-        nn.calc(stdb);
+      Config val_config(val_file);
+      val_stdb.add(val_config);
+      std::cout << val_stdb << std::endl;
+      std::cout << val_stdb(0) << std::endl;
+
+#ifndef TADAH_BUILD_MPI
+      train_stdb.add(config);
+#endif
 
         if (config.exist("HPOEVERY")) {
             pevery_dir=config.get<std::string>("HPOEVERY",0);
@@ -378,7 +383,7 @@ class HyperParamOpti: public HyperParamOptiBase {
           Config pot_tadah = HOST.model->get_param_file();
 #else 
           Trainer tr(config_temp);
-          tr.train(stdb);
+          tr.train(train_stdb);
           Config pot_tadah = tr.model->get_param_file();
 #endif
           // End of training
@@ -396,20 +401,16 @@ class HyperParamOpti: public HyperParamOptiBase {
           auto t4 = high_resolution_clock::now();
           duration<double, std::milli> t43 = t4 - t3;
 
-          // TODO test dataset must be smaller than trainig for MPI version
-          // TODO user must be able to provide separete config file
-          // listing datasets which can be used for prediction
-          // The prediction datasets can be loaded outside of the HPO loop
-          // But NN must be calculated within the loop as we might be optimising
-          // cutoff distances
           pot_tadah.check_for_predict();
-          pot_tadah.add("config.pred");
-          if (!pot_tadah.exist("VERBOSE"))
-            pot_tadah.add("VERBOSE",0);
+
+          // TODO do we need to add config.pred to pot_tadah??
+          //pot_tadah.add("config.pred");
+          //if (!pot_tadah.exist("VERBOSE"))
+          //  pot_tadah.add("VERBOSE",0);
           DC_Selector DCS(pot_tadah);
-          StructureDB stdb(pot_tadah);
+          //StructureDB stdb(pot_tadah);
           NNFinder nnf(pot_tadah);
-          nnf.calc(stdb);
+          nnf.calc(val_stdb);
           DescriptorsCalc<> dc(pot_tadah,*DCS.d2b,*DCS.d3b,*DCS.dmb,
               *DCS.c2b,*DCS.c3b,*DCS.cmb);
           DM_Function_Base *fb = CONFIG::factory<DM_Function_Base,Config&>(
@@ -421,9 +422,9 @@ class HyperParamOpti: public HyperParamOptiBase {
           //std::cout << "STDB: " << stdb;
           //StructureDB stpred = tr.model->predict(stdb);
           //aed_type2 predicted_error;
-          StructureDB stpred = modelp->predict(pot_tadah,stdb,dc);
+          StructureDB stpred = modelp->predict(pot_tadah,val_stdb,dc);
 
-          Analytics a(stdb,stpred);
+          Analytics a(val_stdb,stpred);
 
           TrgData pdata = trg.data;
           if (trg.use_lata | trg.use_ecoh | trg.use_surface) {

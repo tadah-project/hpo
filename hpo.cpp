@@ -9,10 +9,10 @@
 using R = LammpsRunner;
 using D = GLF;
 using T = dlib::matrix<double,0,1>;
-int hpo_run(Config &config, std::string &trg_file) {
+int hpo_run(Config &config, std::string &trg_file, std::string &val_file) {
 
     HPOTargets trg(trg_file);
-    HyperParamOpti<T, D, R> hpo(config,trg);
+    HyperParamOpti<T, D, R> hpo(config,trg, val_file);
 
     const dlib::matrix<double,0,1> lowbound = dlib::mat(trg.configmin);
     const dlib::matrix<double,0,1> highbound = dlib::mat(trg.configmax);
