@@ -71,9 +71,10 @@ class LammpsRunner {
                 std::cout << "DEBUG 2" << std::endl;
             try {
                 std::cout << "DEBUG 3" << std::endl;
-                lmp = instance(logfile,args...);
+                lmp = instance(logfile,args...);  // WARNING: Using I/O redirection is unreliable with parallel runs
                 std::cout << "DEBUG 4" << std::endl;
-                lmp->input->file(script.c_str());
+                std::cout << script.c_str() << std::endl;
+                lmp->input->file(script.c_str()); // terminate called after throwing an instance of 'std::length_error'  what():  basic_string::_M_create 
                 std::cout << "DEBUG 5" << std::endl;
             }
             catch (std::exception& e) {
