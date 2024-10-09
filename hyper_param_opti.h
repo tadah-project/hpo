@@ -403,6 +403,7 @@ class HyperParamOpti: public HyperParamOptiBase {
           //duration<double, std::milli> t43 = t4 - t3;
 
           DC_Selector DCS(pot_tadah);
+          val_stdb.clear_nn();
           NNFinder nnf(pot_tadah);
           nnf.calc(val_stdb);
           DescriptorsCalc<> dc
