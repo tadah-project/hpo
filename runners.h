@@ -75,6 +75,7 @@ class LammpsRunner {
                 std::cout << "DEBUG 4a" << std::endl;
                 std::cout << script.c_str() << std::endl;
                 std::cout << "DEBUG 4b" << std::endl;
+                std::cout << args... << std::endl;
                 lmp->input->file(script.c_str()); // terminate called after throwing an instance of 'std::length_error'  what():  basic_string::_M_create 
                 std::cout << "DEBUG 5" << std::endl;
             }
