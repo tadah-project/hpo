@@ -318,7 +318,7 @@ class HyperParamOpti: public HyperParamOptiBase {
 
           fail=false;
 
-          auto t1 = high_resolution_clock::now();
+          //auto t1 = high_resolution_clock::now();
           //p = std::vector<double>(args.begin(), args.end());
           update_config(p);
 
@@ -399,8 +399,8 @@ class HyperParamOpti: public HyperParamOptiBase {
           outfile << pot_tadah;
           outfile.close();
 
-          auto t4 = high_resolution_clock::now();
-          duration<double, std::milli> t43 = t4 - t3;
+          //auto t4 = high_resolution_clock::now();
+          //duration<double, std::milli> t43 = t4 - t3;
 
           DC_Selector DCS(pot_tadah);
           NNFinder nnf(pot_tadah);
