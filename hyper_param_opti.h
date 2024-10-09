@@ -397,7 +397,8 @@ class HyperParamOpti: public HyperParamOptiBase {
           pot_tadah.add("config.val");
 
           DC_Selector DCS(pot_tadah);
-          val_stdb.clear_nn();
+          //val_stdb.clear_nn();
+          StructureDB val_stdb(pot_tadah);
           NNFinder nnf(pot_tadah);
           nnf.calc(val_stdb);
           DescriptorsCalc<> dc
