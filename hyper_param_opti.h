@@ -292,6 +292,7 @@ class HyperParamOpti: public HyperParamOptiBase {
 
 #ifndef TADAH_BUILD_MPI
       train_stdb.add(config);
+      std::cout << train_stdb;
 #endif
 
         if (config.exist("HPOEVERY")) {
