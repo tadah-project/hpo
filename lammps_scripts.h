@@ -52,9 +52,9 @@ class LammpsScripts {
         prep_lammps_script();
     }
         template <typename R>
-        typename R::RI* run_lata(R &runner,std::string P, std::string structure,
+        typename R::RI* run_lata(MPI_Comm &sub_comm, R &runner,std::string P, std::string structure,
                 double lata_guess, std::string element,
-                std::string log="log.lata", std::string MAX_TIME="10", MPI_Comm &sub_comm) {
+                std::string log="log.lata", std::string MAX_TIME="10") {
             auto lmp = runner.run(
                     scripts["tadah.lata"], log.c_str(),
                     "-var","lata_guess",std::to_string(lata_guess).c_str(),

@@ -48,8 +48,8 @@ class LammpsRunner {
         {}
 
         template <typename ...Args>
-        RI* instance(
-                std::string logfile="none", MPI_Comm &sub_comm=MPI_COMM_WORLD,Args...args) {
+        RI* instance(MPI_Comm &sub_comm,
+                std::string logfile="none",Args...args) {
                 //std::string logfile="log.lammps",Args...args) {
             // custom argument vector for LAMMPS library
            // const char *lmpargv[] {"liblammps","-log",
