@@ -176,7 +176,8 @@ class HyperParamOpti: public HyperParamOptiBase {
         std::map<std::string,std::string> &outvar
         )
     {
-      auto lmp = runner.run(lmp_comm);
+      auto params = std::make_tuple("Hello", 42, "World", 2023);
+      auto lmp = runner.run(lmp_comm, params);
     }
     int calc_uvacf(TrgData &pdata) {
 #if defined(TADAH_ENABLE_OPENMP)

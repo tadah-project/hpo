@@ -286,7 +286,6 @@ class HPOTargets {
 
         std::map<std::string,std::string> cfg;
 
-
         HPOTargets(std::string fn)
     {
         read(fn);
@@ -295,7 +294,7 @@ class HPOTargets {
         void read(std::string fn) {
             std::ifstream ifs(fn);
             if (!ifs.good())
-                throw std::runtime_error("Pot file does not exists.\n");
+                throw std::runtime_error("HPO target file does not exists.\n");
             std::string s;
             double a[100];
             while(std::getline(ifs,s)) {
