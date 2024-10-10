@@ -417,8 +417,8 @@ class HyperParamOpti: public HyperParamOptiBase {
 #ifdef TADAH_BUILD_MPI
 
           // create separate communicator for LAMMPS
-          int rank;
-          MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+          //int rank;
+          //MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
           // Create a group containing all even-ranked processes
           MPI_Group world_group;
