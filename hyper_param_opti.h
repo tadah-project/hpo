@@ -281,7 +281,7 @@ class HyperParamOpti: public HyperParamOptiBase {
 
             return 0;
         }
-        MPI_Comm &lmp_comm;
+        const MPI_Comm &lmp_comm;
     public:
 #ifdef TADAH_BUILD_MPI
         HyperParamOpti(Config c, HPOTargets &trg, std::string &val_file,
