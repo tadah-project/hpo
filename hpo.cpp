@@ -10,7 +10,7 @@ using R = LammpsRunner;
 using D = GLF;
 using T = dlib::matrix<double,0,1>;
 
-#ifdef TADAH_ENABLE_MPI
+#ifdef TADAH_BUILD_MPI
 int hpo_run(Config &config, std::string &trg_file,
     std::string &val_file, MPI_Comm &lmp_comm) {
 

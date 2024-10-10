@@ -4,7 +4,7 @@
 #include <iostream>
 #include <memory>
 
-#ifdef TADAH_ENABLE_MPI
+#ifdef TADAH_BUILD_MPI
 #include <mpi.h>
 #endif
 
