@@ -281,11 +281,14 @@ class HyperParamOpti: public HyperParamOptiBase {
 
             return 0;
         }
+        MPI_Comm &lmp_comm;
     public:
-        HyperParamOpti(Config c, HPOTargets &trg, std::string &val_file):
+        HyperParamOpti(Config c, HPOTargets &trg, std::string &val_file,
+            MPI_Comm &lmp_comm):
             trg(trg),
             glf(trg),
-            config(c)
+            config(c),
+            lmp_comm(lmp_comm)
     {
       Config val_config(val_file);
       val_stdb.add(val_config);
@@ -416,23 +419,6 @@ class HyperParamOpti: public HyperParamOptiBase {
 
 #ifdef TADAH_BUILD_MPI
 
-          // create separate communicator for LAMMPS
-          //int rank;
-          //MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-          // Create a group containing all even-ranked processes
-          MPI_Group world_group;
-          MPI_Comm_group(MPI_COMM_WORLD, &world_group);
-
-          std::vector<int> ranks;
-          ranks.push_back(0);
-
-          MPI_Group lmp_group;
-          MPI_Group_incl(world_group, ranks.size(), ranks.data(), &lmp_group);
-
-          MPI_Comm lmp_comm;
-          MPI_Comm_create(MPI_COMM_WORLD, lmp_group, &lmp_comm);
-
       // Do LAMMPS sims on MPI_COMM_WORLD which should be 1?
       TrgData pdata = trg.data;
       if (trg.use_lata | trg.use_ecoh | trg.use_surface) {
@@ -454,10 +440,6 @@ class HyperParamOpti: public HyperParamOptiBase {
       int temp=1;
       MPI_Bcast(&temp, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-      // Free the communicator and groups when done
-      MPI_Comm_free(&lmp_comm);
-      MPI_Group_free(&world_group);
-      MPI_Group_free(&lmp_group);
 
       // Clean up the new communicator
       //MPI_Comm_free(&sub_comm);

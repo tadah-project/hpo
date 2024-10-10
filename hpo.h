@@ -7,5 +7,5 @@
  *
  */
 int hpo_run(Config&, std::string &trg_file,
-    std::string &val_file);
+    std::string &val_file, MPI_Comm &lmp_comm);
 #endif
