@@ -7,7 +7,11 @@
 #include <mpi.h>
 #endif
 
+#include TADAH_LMPA
+#include TADAH_LMPB
+#include TADAH_LMPC
 #include TADAH_LMPD
+
 /** Run optimisation of the hyperparameters.
  *
  */
