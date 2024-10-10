@@ -11,9 +11,6 @@ class LammpsScripts {
         // allow access to embedded lammps scripts
         cmrc::embedded_filesystem hpo_fs;
 
-        // List of lammps scripts, each string will point
-        // to a temporary file which contains relavant scripts
-        std::map<std::string, std::string> scripts;
 
         /* Open file at temporary location at attach stream to it. */
         std::string open_temp(std::string path, std::ofstream& f) {
@@ -45,6 +42,9 @@ class LammpsScripts {
         }
 
     public:
+        // List of lammps scripts, each string will point
+        // to a temporary file which contains relavant scripts
+        std::map<std::string, std::string> scripts;
         LammpsScripts():
             hpo_fs(cmrc::hpo::get_filesystem())
     {
