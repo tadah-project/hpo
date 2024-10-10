@@ -194,7 +194,14 @@ class HyperParamOpti: public HyperParamOptiBase {
           "-var", "structure", structure.c_str(),
           "-var", "element", element.c_str()
           );
-      auto lmp = runner.run(lmp_comm, params);
+
+    // Additional string argument
+    std::string additional = "Processing";
+
+    auto lmp = std::apply([&lmp_comm](auto&&... args) {
+        return runner.run(lmp_comm, std::forward<decltype(args)>(args)...);
+        }, params);
+
       if (!lmp) {
         fail = true;
         pdata.set_fail(P,true);
