@@ -436,14 +436,6 @@ class HyperParamOpti: public HyperParamOptiBase {
       if (trg.use_envol) {
         calc_envol(pdata, lmp_comm);
       }
-      // Broadcast release comm
-      int temp=1;
-      MPI_Bcast(&temp, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-
-      // Clean up the new communicator
-      //MPI_Comm_free(&sub_comm);
-
 #else
       TrgData pdata = trg.data;
       if (trg.use_lata | trg.use_ecoh | trg.use_surface) {
