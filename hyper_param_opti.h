@@ -135,7 +135,7 @@ class HyperParamOpti: public HyperParamOptiBase {
             }
         }
 
-        int calc_lata(TrgData &pdata) {
+        int calc_lata(TrgData &pdata, MPI_Comm &sub_comm) {
 #if defined(TADAH_ENABLE_OPENMP)
 #pragma omp parallel for shared(runner,fail,pdata,trg)
 #endif
@@ -152,7 +152,7 @@ class HyperParamOpti: public HyperParamOptiBase {
                 auto lmp = scr.run_lata(runner,P, trg.data.get_structure(P),
                         trg.data.get_lata(P), element,
                         "log.lata"+std::to_string(thread),
-                        trg.MAX_TIME);
+                        trg.MAX_TIME, sub_comm);
                 if (!lmp) {
                     fail = true;
                     pdata.set_fail(P,true);
@@ -441,7 +441,7 @@ class HyperParamOpti: public HyperParamOptiBase {
       // Do LAMMPS sims on MPI_COMM_WORLD which should be 1?
       TrgData pdata = trg.data;
       if (trg.use_lata | trg.use_ecoh | trg.use_surface) {
-        calc_lata(pdata);
+        calc_lata(pdata, sub_comm);
       }
       // Broadcast release comm
       int temp=1;

@@ -54,14 +54,14 @@ class LammpsScripts {
         template <typename R>
         typename R::RI* run_lata(R &runner,std::string P, std::string structure,
                 double lata_guess, std::string element,
-                std::string log="log.lata", std::string MAX_TIME="10") {
+                std::string log="log.lata", std::string MAX_TIME="10", MPI_Comm &sub_comm) {
             auto lmp = runner.run(
                     scripts["tadah.lata"], log.c_str(),
                     "-var","lata_guess",std::to_string(lata_guess).c_str(),
                     "-var","P",P.c_str(),
                     "-var", "tout",MAX_TIME.c_str(),
                     "-var", "structure", structure.c_str(),
-                    "-var", "element", element.c_str());
+                    "-var", "element", element.c_str(), sub_comm);
             return lmp;
         }
         template <typename R>

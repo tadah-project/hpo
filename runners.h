@@ -49,7 +49,7 @@ class LammpsRunner {
 
         template <typename ...Args>
         RI* instance(
-                std::string logfile="none",Args...args) {
+                std::string logfile="none", MPI_Comm &sub_comm,Args...args) {
                 //std::string logfile="log.lammps",Args...args) {
             // custom argument vector for LAMMPS library
            // const char *lmpargv[] {"liblammps","-log",
@@ -59,7 +59,8 @@ class LammpsRunner {
 
             // create LAMMPS instance
             return new RI(lmpargc,
-                    (char **)lmpargv, MPI_COMM_WORLD);
+                    (char **)lmpargv, sub_comm);
+                    //(char **)lmpargv, MPI_COMM_WORLD);
         }
 
         template <typename Arg, typename... Args>
@@ -72,14 +73,14 @@ class LammpsRunner {
 
         template <typename ...Args>
         RI* run(std::string script,
-                std::string logfile="log.lammps", Args...args) {
+                std::string logfile="log.lammps", Args...args, MPI_Comm &sub_comm) {
 
                 std::cout << "DEBUG 1" << std::endl;
             RI *lmp=nullptr;
                 std::cout << "DEBUG 2" << std::endl;
             try {
                 std::cout << "DEBUG 3a" << std::endl;
-                lmp = instance(logfile,args...);  // WARNING: Using I/O redirection is unreliable with parallel runs
+                lmp = instance(logfile,sub_comm,args...);  // WARNING: Using I/O redirection is unreliable with parallel runs
                 std::cout << "DEBUG 3b" << std::endl;
                 std::cout << "LAMMPS version ID: " << lmp->num_ver << std::endl;  // works correctly
                 std::cout << "DEBUG 4a" << std::endl;
