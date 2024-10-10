@@ -378,6 +378,7 @@ class HyperParamOpti: public HyperParamOptiBase {
           }
 
           HOST.solve();
+
           Config pot_tadah = HOST.model->get_param_file();
 #else 
           Trainer tr(config_temp);
@@ -412,10 +413,49 @@ class HyperParamOpti: public HyperParamOptiBase {
 
           Analytics a(val_stdb,stpred);
 
+
+#ifdef TADAH_BUILD_MPI
+      // Split the communicator
+      int world_size, world_rank;
+
+      MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+      MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+
+      // Determine the color based on the rank: even or odd
+      int color = world_rank % 2;
+
+      // Split the communicator based on the color
+      MPI_Comm sub_comm;
+      MPI_Comm_split(MPI_COMM_WORLD, color, world_rank, &sub_comm);
+
+      // Get the rank and size of the new communicator
+      int sub_rank, sub_size;
+      MPI_Comm_size(sub_comm, &sub_size);
+      MPI_Comm_rank(sub_comm, &sub_rank);
+
+      std::cout << "World Rank: " << world_rank 
+        << " -> Sub Rank: " << sub_rank 
+        << ", Sub Size: " << sub_size 
+        << ", Color: " << color << std::endl;
+
+      // Do LAMMPS sims on MPI_COMM_WORLD which should be 1?
+      TrgData pdata = trg.data;
+      if (trg.use_lata | trg.use_ecoh | trg.use_surface) {
+        calc_lata(pdata);
+      }
+      // Broadcast release comm
+      int temp=1;
+      MPI_Bcast(&temp, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+      // Clean up the new communicator
+      MPI_Comm_free(&sub_comm);
+
+#else
           TrgData pdata = trg.data;
           if (trg.use_lata | trg.use_ecoh | trg.use_surface) {
             calc_lata(pdata);
           }
+#endif
 
           // Vacancy formation energy/enthalpy at selected pressures
           // TODO for MPI version accumulate all scripts
