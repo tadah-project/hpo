@@ -5,12 +5,10 @@
 
 #ifdef TADAH_ENABLE_MPI
 #include <mpi.h>
+#else 
+#define MPI_Comm int
 #endif
 
-#include TADAH_LMPA
-#include TADAH_LMPB
-#include TADAH_LMPC
-#include TADAH_LMPD
 
 /** Run optimisation of the hyperparameters.
  *
