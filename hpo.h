@@ -2,6 +2,7 @@
 #define TADAH_HPO_H
 
 #include "../CORE/config/config.h"
+#include <mpi.h>
 
 /** Run optimisation of the hyperparameters.
  *
