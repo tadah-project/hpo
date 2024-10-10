@@ -94,6 +94,7 @@ add_compile_definitions(TADAH_LAMMPS_LIB=\"${TADAH_LAMMPS_LIB}\")
 add_compile_definitions(TADAH_LMPA=\"${TADAH_LAMMPS_DIR}/src/lammps.h\")
 add_compile_definitions(TADAH_LMPB=\"${TADAH_LAMMPS_DIR}/src/input.h\")
 add_compile_definitions(TADAH_LMPC=\"${TADAH_LAMMPS_DIR}/src/variable.h\")
+add_compile_definitions(TADAH_LMPD=\"${TADAH_LAMMPS_DIR}/src/STUBS/mpi.h\")
 
 # Add resources...
 cmrc_add_resource_library(
