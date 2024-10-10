@@ -58,6 +58,26 @@ class LammpsRunner {
             int lmpargc = sizeof(lmpargv)/sizeof(const char *);
 
             // create LAMMPS instance
+            // TODO split communicator
+            // assume 2 cpus
+                // Determine the color based on the rank: even or odd
+            int color = world_rank % 2;
+
+            // Split the communicator based on the color
+            MPI_Comm sub_comm;
+            MPI_Comm_split(MPI_COMM_WORLD, color, world_rank, &sub_comm);
+
+            // Get the rank and size of the new communicator
+            int sub_rank, sub_size;
+            MPI_Comm_size(sub_comm, &sub_size);
+            MPI_Comm_rank(sub_comm, &sub_rank);
+
+            std::cout << "World Rank: " << world_rank 
+              << " -> Sub Rank: " << sub_rank 
+              << ", Sub Size: " << sub_size 
+              << ", Color: " << color << std::endl;
+
+            // TODO update RI communicator
             return new RI(lmpargc,
                     (char **)lmpargv, MPI_COMM_WORLD);
         }
@@ -81,7 +101,7 @@ class LammpsRunner {
                 std::cout << "DEBUG 3a" << std::endl;
                 lmp = instance(logfile,args...);  // WARNING: Using I/O redirection is unreliable with parallel runs
                 std::cout << "DEBUG 3b" << std::endl;
-                std::cout << "LAMMPS version ID: " << lmp->num_ver << std::endl;
+                std::cout << "LAMMPS version ID: " << lmp->num_ver << std::endl;  // works correctly
                 std::cout << "DEBUG 4a" << std::endl;
                 std::cout << script.c_str() << std::endl;
                 std::cout << "DEBUG 4b" << std::endl;
