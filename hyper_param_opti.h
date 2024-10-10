@@ -416,8 +416,9 @@ class HyperParamOpti: public HyperParamOptiBase {
 
 #ifdef TADAH_BUILD_MPI
 
-          int world_rank;
-          MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+          // create separate communicator for LAMMPS
+          int rank;
+          MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
           // Create a group containing all even-ranked processes
           MPI_Group world_group;
@@ -426,76 +427,63 @@ class HyperParamOpti: public HyperParamOptiBase {
           std::vector<int> ranks;
           ranks.push_back(0);
 
-          MPI_Group even_group;
-          MPI_Group_incl(world_group, ranks.size(), ranks.data(), &even_group);
+          MPI_Group lmp_group;
+          MPI_Group_incl(world_group, ranks.size(), ranks.data(), &lmp_group);
 
-          MPI_Comm even_comm;
-          MPI_Comm_create(MPI_COMM_WORLD, even_group, &even_comm);
-
-
-      //// Split the communicator
-      //int world_size, world_rank;
-
-      //MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-      //MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-
-      //// Determine the color based on the rank: even or odd
-      //int color = world_rank % 2;
-
-      //// Split the communicator based on the color
-      //MPI_Comm sub_comm;
-      //MPI_Comm_split(MPI_COMM_WORLD, color, world_rank, &sub_comm);
-
-      //// Get the rank and size of the new communicator
-      //int sub_rank, sub_size;
-      //MPI_Comm_size(sub_comm, &sub_size);
-      //MPI_Comm_rank(sub_comm, &sub_rank);
-
-      //std::cout << "World Rank: " << world_rank 
-      //  << " -> Sub Rank: " << sub_rank 
-      //  << ", Sub Size: " << sub_size 
-      //  << ", Color: " << color << std::endl;
+          MPI_Comm lmp_comm;
+          MPI_Comm_create(MPI_COMM_WORLD, lmp_group, &lmp_comm);
 
       // Do LAMMPS sims on MPI_COMM_WORLD which should be 1?
       TrgData pdata = trg.data;
       if (trg.use_lata | trg.use_ecoh | trg.use_surface) {
-        calc_lata(pdata, even_comm);
-        //calc_lata(pdata, sub_comm);
+        calc_lata(pdata, lmp_comm);
+      }
+      if (trg.use_uEvf || trg.use_uHvf) {
+        calc_uvacf(pdata, lmp_comm);
+      }
+      if (trg.use_usurface) {
+        calc_usurface(pdata, lmp_comm);
+      }
+      if (trg.use_surface) {
+        calc_surface(pdata, lmp_comm);
+      }
+      if (trg.use_envol) {
+        calc_envol(pdata, lmp_comm);
       }
       // Broadcast release comm
       int temp=1;
       MPI_Bcast(&temp, 1, MPI_INT, 0, MPI_COMM_WORLD);
-      
+
       // Free the communicator and groups when done
-      MPI_Comm_free(&even_comm);
+      MPI_Comm_free(&lmp_comm);
       MPI_Group_free(&world_group);
-      MPI_Group_free(&even_group);
+      MPI_Group_free(&lmp_group);
 
       // Clean up the new communicator
       //MPI_Comm_free(&sub_comm);
 
 #else
-          TrgData pdata = trg.data;
-          if (trg.use_lata | trg.use_ecoh | trg.use_surface) {
-            calc_lata(pdata);
-          }
+      TrgData pdata = trg.data;
+      if (trg.use_lata | trg.use_ecoh | trg.use_surface) {
+        calc_lata(pdata);
+      }
+      if (trg.use_uEvf || trg.use_uHvf) {
+        calc_uvacf(pdata);
+      }
+      if (trg.use_usurface) {
+        calc_usurface(pdata);
+      }
+      if (trg.use_surface) {
+        calc_surface(pdata);
+      }
+      if (trg.use_envol) {
+        calc_envol(pdata);
+      }
 #endif
 
           // Vacancy formation energy/enthalpy at selected pressures
           // TODO for MPI version accumulate all scripts
           // and distribute over workers
-          //if (trg.use_uEvf || trg.use_uHvf) {
-          //  calc_uvacf(pdata);
-          //}
-          //if (trg.use_usurface) {
-          //  calc_usurface(pdata);
-          //}
-          //if (trg.use_surface) {
-          //  calc_surface(pdata);
-          //}
-          //if (trg.use_envol) {
-          //  calc_envol(pdata);
-          //}
 
           double tloss = glf.total_loss(a,p,pdata,fail);
 
