@@ -62,26 +62,33 @@ class LammpsRunner {
             // assume 2 cpus
                 // Determine the color based on the rank: even or odd
 
+                std::cout << "DEBUG 0" << std::endl;
             int world_size, world_rank;
 
             MPI_Comm_size(MPI_COMM_WORLD, &world_size);
             MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
             int color = world_rank % 2;
 
+                std::cout << "DEBUG 0" << std::endl;
+
             // Split the communicator based on the color
             MPI_Comm sub_comm;
             MPI_Comm_split(MPI_COMM_WORLD, color, world_rank, &sub_comm);
+                std::cout << "DEBUG 0" << std::endl;
 
             // Get the rank and size of the new communicator
             int sub_rank, sub_size;
             MPI_Comm_size(sub_comm, &sub_size);
             MPI_Comm_rank(sub_comm, &sub_rank);
+                std::cout << "DEBUG 0" << std::endl;
 
             std::cout << "World Rank: " << world_rank 
               << " -> Sub Rank: " << sub_rank 
               << ", Sub Size: " << sub_size 
               << ", Color: " << color << std::endl;
+                std::cout << "DEBUG 0" << std::endl;
           MPI_Comm_free(&sub_comm);
+                std::cout << "DEBUG 0" << std::endl;
 
             // TODO update RI communicator
             return new RI(lmpargc,
