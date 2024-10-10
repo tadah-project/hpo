@@ -5,8 +5,11 @@
 
 #ifdef TADAH_ENABLE_MPI
 #include <mpi.h>
+int hpo_run(Config&, std::string &trg_file,
+    std::string &val_file, MPI_Comm &lmp_comm);
 #else 
-#define MPI_Comm int
+int hpo_run(Config&, std::string &trg_file,
+    std::string &val_file);
 #endif
 
 
@@ -14,6 +17,4 @@
  *
  */
 
-int hpo_run(Config&, std::string &trg_file,
-    std::string &val_file, MPI_Comm &lmp_comm);
 #endif

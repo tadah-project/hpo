@@ -283,12 +283,20 @@ class HyperParamOpti: public HyperParamOptiBase {
         }
         MPI_Comm &lmp_comm;
     public:
+#ifdef TADAH_BUILD_MPI
         HyperParamOpti(Config c, HPOTargets &trg, std::string &val_file,
             MPI_Comm &lmp_comm):
             trg(trg),
             glf(trg),
             config(c),
             lmp_comm(lmp_comm)
+#else
+        HyperParamOpti(Config c, HPOTargets &trg, std::string &val_file):
+            trg(trg),
+            glf(trg),
+            config(c),
+            lmp_comm(MPI_COMM_WORLD)
+#endif
     {
       Config val_config(val_file);
       val_stdb.add(val_config);
