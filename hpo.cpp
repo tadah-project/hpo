@@ -12,25 +12,16 @@ using T = dlib::matrix<double,0,1>;
 int hpo_run(Config &config, std::string &trg_file,
     std::string &val_file, MPI_Comm &lmp_comm) {
 
-    HPOTargets trg(trg_file);
-    HyperParamOpti<T, D, R> hpo(config,trg, val_file, lmp_comm);
+  HPOTargets trg(trg_file);
+  HyperParamOpti<T, D, R> hpo(config,trg, val_file, lmp_comm);
 
-    const dlib::matrix<double,0,1> lowbound = dlib::mat(trg.configmin);
-    const dlib::matrix<double,0,1> highbound = dlib::mat(trg.configmax);
+  const dlib::matrix<double,0,1> lowbound = dlib::mat(trg.configmin);
+  const dlib::matrix<double,0,1> highbound = dlib::mat(trg.configmax);
 
-    auto result1 = dlib::find_min_global(hpo,lowbound,highbound,
-            dlib::max_function_calls(trg.maxcalls),
-            dlib::FOREVER,
-            trg.eps
-            );
-
-#ifdef TADAH_BUILD_MPI
-    // shut all workers
-    int cont=0;
-    MPI_Bcast(&cont, 1, MPI_INT, 0, MPI_COMM_WORLD);
-#endif
-
-    // std::cout << result1.x << std::endl;
-    // std::cout << result1.y << std::endl;
-    return 0;
+  auto result1 = dlib::find_min_global(hpo,lowbound,highbound,
+      dlib::max_function_calls(trg.maxcalls),
+      dlib::FOREVER,
+      trg.eps
+      );
+  return 0;
 }
