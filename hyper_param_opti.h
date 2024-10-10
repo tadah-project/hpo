@@ -170,14 +170,43 @@ class HyperParamOpti: public HyperParamOptiBase {
 
       return 0;
     }
-    int calc_custom(
-        std::string &infile,
-        std::map<std::string,std::string> &invar,
-        std::map<std::string,std::string> &outvar
+    int calc_custom(TrgData &pdata
+        //std::string &infile
+        //std::map<std::string,std::string> &invar,
+        //std::map<std::string,std::string> &outvar
         )
     {
-      auto params = std::make_tuple("Hello", 42, "World", 2023);
+
+      std::string lata_guess="3.304";
+      std::string P="1";
+      std::string structure="fcc";
+      std::string element="Ta";
+      std::string log="log.lata";
+      std::string MAX_TIME="10";
+      std::string infile=scr.scripts["tadah.lata"];
+
+      auto params = std::make_tuple(
+          infile.c_str(),
+          log.c_str(),
+          "-var", "lata_guess", lata_guess.c_str(),
+          "-var", "P", P.c_str(),
+          "-var", "tout",MAX_TIME.c_str(),
+          "-var", "structure", structure.c_str(),
+          "-var", "element", element.c_str()
+          );
       auto lmp = runner.run(lmp_comm, params);
+      if (!lmp) {
+        fail = true;
+        pdata.set_fail(P,true);
+      }
+      else {
+        double a= stod(runner.get_variable(lmp,"length"));
+        double ecoh=stod(runner.get_variable(lmp,"ecoh"));
+
+        pdata.set_lata(P,a);
+        pdata.set_ecoh(P,ecoh);
+      }
+      if (lmp) delete lmp;
     }
     int calc_uvacf(TrgData &pdata) {
 #if defined(TADAH_ENABLE_OPENMP)
@@ -429,7 +458,7 @@ class HyperParamOpti: public HyperParamOptiBase {
       TrgData pdata = trg.data;
 
       if (trg.use_lata | trg.use_ecoh | trg.use_surface) { // usurface?
-        calc_lata(pdata);
+        calc_custom(pdata);
       }
       if (trg.use_uEvf || trg.use_uHvf) {
         calc_uvacf(pdata);
