@@ -55,64 +55,64 @@ class LammpsScripts {
         typename R::RI* run_lata(MPI_Comm &sub_comm, R &runner,std::string P, std::string structure,
                 double lata_guess, std::string element,
                 std::string log="log.lata", std::string MAX_TIME="10") {
-            auto lmp = runner.run(
+            auto lmp = runner.run(sub_comm,
                     scripts["tadah.lata"], log.c_str(),
                     "-var","lata_guess",std::to_string(lata_guess).c_str(),
                     "-var","P",P.c_str(),
                     "-var", "tout",MAX_TIME.c_str(),
                     "-var", "structure", structure.c_str(),
-                    "-var", "element", element.c_str(), sub_comm);
-            return lmp;
-        }
-        template <typename R>
-        typename R::RI*  run_uvacf(R &runner, std::string P, double lata_guess,
-                std::string log="log.uvacf", std::string MAX_TIME="10") {
-            auto lmp = runner.run(
-                    scripts["tadah.unrelaxed_vacancy_at_p"], log,
-                    "-var", "ao",std::to_string(lata_guess).c_str(),
-                    "-var", "P",P.c_str(),
-                    "-var", "tout",MAX_TIME.c_str());
-            return lmp;
-        }
-        template <typename R>
-        typename R::RI* run_usurface(R &runner, int hkl, double lata,
-                std::string structure ,std::string element,
-                std::string log="log.usurface", std::string MAX_TIME="10") {
-            auto lmp = runner.run(
-                     scripts["tadah.usurface"], log,
-                    "-var","lata",std::to_string(lata).c_str(),
-                    "-var","surface",std::to_string(hkl).c_str(),
-                    "-var", "structure", structure.c_str(),
-                    "-var", "element", element.c_str(),
-                    "-var", "tout",MAX_TIME.c_str());
-            return lmp;
-        }
-        template <typename R>
-        typename R::RI* run_surface(R &runner, int hkl, double lata,
-                std::string structure ,std::string element,
-                std::string log="log.surface", std::string MAX_TIME="10") {
-            auto lmp = runner.run(
-                     scripts["tadah.surface"], log,
-                    "-var","lata",std::to_string(lata).c_str(),
-                    "-var","surface",std::to_string(hkl).c_str(),
-                    "-var", "structure", structure.c_str(),
-                    "-var", "element", element.c_str(),
-                    "-var", "tout",MAX_TIME.c_str());
-            return lmp;
-        }
-        template <typename R>
-        typename R::RI* run_envol(R &runner,std::string lata,
-                std::string structure,
-                std::string element,
-                std::string log="log.lata", std::string MAX_TIME="10") {
-            auto lmp = runner.run(
-                    scripts["tadah.envol"], log.c_str(),
-                    "-var","lata", lata.c_str(),
-                    "-var", "tout",MAX_TIME.c_str(),
-                    "-var", "structure", structure.c_str(),
                     "-var", "element", element.c_str());
             return lmp;
         }
+        //template <typename R>
+        //typename R::RI*  run_uvacf(R &runner, std::string P, double lata_guess,
+        //        std::string log="log.uvacf", std::string MAX_TIME="10") {
+        //    auto lmp = runner.run(
+        //            scripts["tadah.unrelaxed_vacancy_at_p"], log,
+        //            "-var", "ao",std::to_string(lata_guess).c_str(),
+        //            "-var", "P",P.c_str(),
+        //            "-var", "tout",MAX_TIME.c_str());
+        //    return lmp;
+        //}
+        //template <typename R>
+        //typename R::RI* run_usurface(R &runner, int hkl, double lata,
+        //        std::string structure ,std::string element,
+        //        std::string log="log.usurface", std::string MAX_TIME="10") {
+        //    auto lmp = runner.run(
+        //             scripts["tadah.usurface"], log,
+        //            "-var","lata",std::to_string(lata).c_str(),
+        //            "-var","surface",std::to_string(hkl).c_str(),
+        //            "-var", "structure", structure.c_str(),
+        //            "-var", "element", element.c_str(),
+        //            "-var", "tout",MAX_TIME.c_str());
+        //    return lmp;
+        //}
+        //template <typename R>
+        //typename R::RI* run_surface(R &runner, int hkl, double lata,
+        //        std::string structure ,std::string element,
+        //        std::string log="log.surface", std::string MAX_TIME="10") {
+        //    auto lmp = runner.run(
+        //             scripts["tadah.surface"], log,
+        //            "-var","lata",std::to_string(lata).c_str(),
+        //            "-var","surface",std::to_string(hkl).c_str(),
+        //            "-var", "structure", structure.c_str(),
+        //            "-var", "element", element.c_str(),
+        //            "-var", "tout",MAX_TIME.c_str());
+        //    return lmp;
+        //}
+        //template <typename R>
+        //typename R::RI* run_envol(R &runner,std::string lata,
+        //        std::string structure,
+        //        std::string element,
+        //        std::string log="log.lata", std::string MAX_TIME="10") {
+        //    auto lmp = runner.run(
+        //            scripts["tadah.envol"], log.c_str(),
+        //            "-var","lata", lata.c_str(),
+        //            "-var", "tout",MAX_TIME.c_str(),
+        //            "-var", "structure", structure.c_str(),
+        //            "-var", "element", element.c_str());
+        //    return lmp;
+        //}
 
        // int run_elastic(int thread, std::string log="log.elastic") {
        //     int status = lmp_runner.run(

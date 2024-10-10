@@ -72,15 +72,15 @@ class LammpsRunner {
           }
 
         template <typename ...Args>
-        RI* run(std::string script,
-                std::string logfile="log.lammps", Args...args, MPI_Comm &sub_comm) {
+        RI* run(MPI_Comm &sub_comm, std::string script,
+                std::string logfile="log.lammps", Args...args) {
 
                 std::cout << "DEBUG 1" << std::endl;
             RI *lmp=nullptr;
                 std::cout << "DEBUG 2" << std::endl;
             try {
                 std::cout << "DEBUG 3a" << std::endl;
-                lmp = instance(logfile,sub_comm,args...);  // WARNING: Using I/O redirection is unreliable with parallel runs
+                lmp = instance(sub_comm,logfile,args...);  // WARNING: Using I/O redirection is unreliable with parallel runs
                 std::cout << "DEBUG 3b" << std::endl;
                 std::cout << "LAMMPS version ID: " << lmp->num_ver << std::endl;  // works correctly
                 std::cout << "DEBUG 4a" << std::endl;
