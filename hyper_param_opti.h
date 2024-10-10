@@ -149,7 +149,7 @@ class HyperParamOpti: public HyperParamOptiBase {
                 // until the next iteration of the GOA.
                 pdata.set_fail(P,false);
                 int thread = omp_get_thread_num();
-                auto lmp = scr.run_lata(sub_comm, runner,P, trg.data.get_structure(P),
+                auto lmp = scr.run_lata(lmp_comm, runner,P, trg.data.get_structure(P),
                         trg.data.get_lata(P), element,
                         "log.lata"+std::to_string(thread),
                         trg.MAX_TIME);
@@ -178,7 +178,7 @@ class HyperParamOpti: public HyperParamOptiBase {
                 advance(v, i);
                 const std::string P = v->first;
                 int thread = omp_get_thread_num();
-                auto lmp = scr.run_uvacf(sub_comm, runner,P,trg.data.get_lata(P),
+                auto lmp = scr.run_uvacf(lmp_comm, runner,P,trg.data.get_lata(P),
                         "log.uvacf"+std::to_string(thread),
                         trg.MAX_TIME);
                 if (!lmp) {
@@ -207,7 +207,7 @@ class HyperParamOpti: public HyperParamOptiBase {
                 advance(v, i);
                 const int hkl = v->first;
                 int thread = omp_get_thread_num();
-                auto lmp = scr.run_usurface(sub_comm, runner,hkl,
+                auto lmp = scr.run_usurface(lmp_comm, runner,hkl,
                         trg.data.get_lata("0"),
                         trg.data.get_structure("0"), element,
                         "log.lata"+std::to_string(thread),
@@ -235,7 +235,7 @@ class HyperParamOpti: public HyperParamOptiBase {
                 advance(v, i);
                 const int hkl = v->first;
                 int thread = omp_get_thread_num();
-                auto lmp = scr.run_surface(sub_comm, runner,hkl,
+                auto lmp = scr.run_surface(lmp_comm, runner,hkl,
                         trg.data.get_lata("0"),
                         trg.data.get_structure("0"), element,
                         "log.lata"+std::to_string(thread),
@@ -263,7 +263,7 @@ class HyperParamOpti: public HyperParamOptiBase {
                 advance(v, i);
                 const std::string lata = v->first;
                 int thread = omp_get_thread_num();
-                auto lmp = scr.run_envol(sub_comm, runner,lata,
+                auto lmp = scr.run_envol(lmp_comm, runner,lata,
                         trg.data.get_structure(),
                         element, "log.lata"+std::to_string(thread),
                         trg.MAX_TIME);
