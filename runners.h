@@ -6,13 +6,12 @@
 
 #ifdef TADAH_ENABLE_MPI
 #include <mpi.h>
-#else
-#include TADAH_LMPD
 #endif
 
 #include TADAH_LMPA
 #include TADAH_LMPB
 #include TADAH_LMPC
+#include TADAH_LMPD
 
 /** 
  * @class LammpsRunner
