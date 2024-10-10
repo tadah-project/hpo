@@ -169,118 +169,118 @@ class HyperParamOpti: public HyperParamOptiBase {
 
             return 0;
         }
-//        int calc_uvacf(TrgData &pdata) {
-//#if defined(TADAH_ENABLE_OPENMP)
-//#pragma omp parallel for shared(runner,fail,pdata,trg)
-//#endif
-//            for(size_t i = 0; i < trg.data.uvacf_size(); i++) {
-//                auto v = trg.data.m2.begin();
-//                advance(v, i);
-//                const std::string P = v->first;
-//                int thread = omp_get_thread_num();
-//                auto lmp = scr.run_uvacf(runner,P,trg.data.get_lata(P),
-//                        "log.uvacf"+std::to_string(thread),
-//                        trg.MAX_TIME);
-//                if (!lmp) {
-//                    fail = true;
-//                    pdata.set_fail(P,true);
-//                }
-//                else {
-//                    //double press= stod(runner.get_variable(lmp,"PRESS"));
-//                    //double a= stod(runner.get_variable(lmp,"latafinal"));
-//                    double E_v=stod(runner.get_variable(lmp,"Ev"));
-//                    double H_v=stod(runner.get_variable(lmp,"Hv"));
-//
-//                    pdata.set_uEvf(P,E_v);
-//                    pdata.set_uHvf(P,H_v);
-//                }
-//                if (lmp) delete lmp;
-//            }
-//            return 0;
-//        }
-//        int calc_usurface(TrgData &pdata) {
-//#if defined(TADAH_ENABLE_OPENMP)
-//#pragma omp parallel for shared(runner,fail,pdata,trg)
-//#endif
-//            for(size_t i = 0; i < trg.data.usurf_size(); i++) {
-//                auto v = trg.data.m4.begin();
-//                advance(v, i);
-//                const int hkl = v->first;
-//                int thread = omp_get_thread_num();
-//                auto lmp = scr.run_usurface(runner,hkl,
-//                        trg.data.get_lata("0"),
-//                        trg.data.get_structure("0"), element,
-//                        "log.lata"+std::to_string(thread),
-//                        trg.MAX_TIME);
-//                if (!lmp) {
-//                    fail = true;
-//                    pdata.set_fail("0",true);
-//                }
-//                else {
-//                    double E_hkl=stod(runner.get_variable(lmp,"E_f2"));
-//
-//                    pdata.set_usurf(hkl,E_hkl);
-//                }
-//                if (lmp) delete lmp;
-//            }
-//
-//            return 0;
-//        }
-//        int calc_surface(TrgData &pdata) {
-//#if defined(TADAH_ENABLE_OPENMP)
-//#pragma omp parallel for shared(runner,fail,pdata,trg)
-//#endif
-//            for(size_t i = 0; i < trg.data.surf_size(); i++) {
-//                auto v = trg.data.m5.begin();
-//                advance(v, i);
-//                const int hkl = v->first;
-//                int thread = omp_get_thread_num();
-//                auto lmp = scr.run_surface(runner,hkl,
-//                        trg.data.get_lata("0"),
-//                        trg.data.get_structure("0"), element,
-//                        "log.lata"+std::to_string(thread),
-//                        trg.MAX_TIME);
-//                if (!lmp) {
-//                    fail = true;
-//                    pdata.set_fail("0",true);
-//                }
-//                else {
-//                    double E_hkl=stod(runner.get_variable(lmp,"E_f2"));
-//
-//                    pdata.set_surf(hkl,E_hkl);
-//                }
-//                if (lmp) delete lmp;
-//            }
-//
-//            return 0;
-//        }
-//        int calc_envol(TrgData &pdata) {
-//#if defined(TADAH_ENABLE_OPENMP)
-//#pragma omp parallel for shared(runner,fail,pdata,trg)
-//#endif
-//            for(size_t i = 0; i < trg.data.envol_size(); i++) {
-//                auto v = trg.data.m7.begin();
-//                advance(v, i);
-//                const std::string lata = v->first;
-//                int thread = omp_get_thread_num();
-//                auto lmp = scr.run_envol(runner,lata,
-//                        trg.data.get_structure(),
-//                        element, "log.lata"+std::to_string(thread),
-//                        trg.MAX_TIME);
-//                if (!lmp) {
-//                    fail = true;
-//                    //pdata.set_fail(P,true); // this cannot fail
-//                }
-//                else {
-//                    double ecoh=stod(runner.get_variable(lmp,"ecoh"));
-//
-//                    pdata.set_envol(lata,ecoh);
-//                }
-//                if (lmp) delete lmp;
-//            }
-//
-//            return 0;
-//        }
+        int calc_uvacf(TrgData &pdata, MPI_Comm &sub_comm) {
+#if defined(TADAH_ENABLE_OPENMP)
+#pragma omp parallel for shared(runner,fail,pdata,trg)
+#endif
+            for(size_t i = 0; i < trg.data.uvacf_size(); i++) {
+                auto v = trg.data.m2.begin();
+                advance(v, i);
+                const std::string P = v->first;
+                int thread = omp_get_thread_num();
+                auto lmp = scr.run_uvacf(runner,P,trg.data.get_lata(P),
+                        "log.uvacf"+std::to_string(thread),
+                        trg.MAX_TIME);
+                if (!lmp) {
+                    fail = true;
+                    pdata.set_fail(P,true);
+                }
+                else {
+                    //double press= stod(runner.get_variable(lmp,"PRESS"));
+                    //double a= stod(runner.get_variable(lmp,"latafinal"));
+                    double E_v=stod(runner.get_variable(lmp,"Ev"));
+                    double H_v=stod(runner.get_variable(lmp,"Hv"));
+
+                    pdata.set_uEvf(P,E_v);
+                    pdata.set_uHvf(P,H_v);
+                }
+                if (lmp) delete lmp;
+            }
+            return 0;
+        }
+        int calc_usurface(TrgData &pdata, MPI_Comm &sub_comm) {
+#if defined(TADAH_ENABLE_OPENMP)
+#pragma omp parallel for shared(runner,fail,pdata,trg)
+#endif
+            for(size_t i = 0; i < trg.data.usurf_size(); i++) {
+                auto v = trg.data.m4.begin();
+                advance(v, i);
+                const int hkl = v->first;
+                int thread = omp_get_thread_num();
+                auto lmp = scr.run_usurface(runner,hkl,
+                        trg.data.get_lata("0"),
+                        trg.data.get_structure("0"), element,
+                        "log.lata"+std::to_string(thread),
+                        trg.MAX_TIME);
+                if (!lmp) {
+                    fail = true;
+                    pdata.set_fail("0",true);
+                }
+                else {
+                    double E_hkl=stod(runner.get_variable(lmp,"E_f2"));
+
+                    pdata.set_usurf(hkl,E_hkl);
+                }
+                if (lmp) delete lmp;
+            }
+
+            return 0;
+        }
+        int calc_surface(TrgData &pdata, MPI_Comm &sub_comm) {
+#if defined(TADAH_ENABLE_OPENMP)
+#pragma omp parallel for shared(runner,fail,pdata,trg)
+#endif
+            for(size_t i = 0; i < trg.data.surf_size(); i++) {
+                auto v = trg.data.m5.begin();
+                advance(v, i);
+                const int hkl = v->first;
+                int thread = omp_get_thread_num();
+                auto lmp = scr.run_surface(runner,hkl,
+                        trg.data.get_lata("0"),
+                        trg.data.get_structure("0"), element,
+                        "log.lata"+std::to_string(thread),
+                        trg.MAX_TIME);
+                if (!lmp) {
+                    fail = true;
+                    pdata.set_fail("0",true);
+                }
+                else {
+                    double E_hkl=stod(runner.get_variable(lmp,"E_f2"));
+
+                    pdata.set_surf(hkl,E_hkl);
+                }
+                if (lmp) delete lmp;
+            }
+
+            return 0;
+        }
+        int calc_envol(TrgData &pdata, MPI_Comm &sub_comm) {
+#if defined(TADAH_ENABLE_OPENMP)
+#pragma omp parallel for shared(runner,fail,pdata,trg)
+#endif
+            for(size_t i = 0; i < trg.data.envol_size(); i++) {
+                auto v = trg.data.m7.begin();
+                advance(v, i);
+                const std::string lata = v->first;
+                int thread = omp_get_thread_num();
+                auto lmp = scr.run_envol(runner,lata,
+                        trg.data.get_structure(),
+                        element, "log.lata"+std::to_string(thread),
+                        trg.MAX_TIME);
+                if (!lmp) {
+                    fail = true;
+                    //pdata.set_fail(P,true); // this cannot fail
+                }
+                else {
+                    double ecoh=stod(runner.get_variable(lmp,"ecoh"));
+
+                    pdata.set_envol(lata,ecoh);
+                }
+                if (lmp) delete lmp;
+            }
+
+            return 0;
+        }
     public:
         HyperParamOpti(Config c, HPOTargets &trg, std::string &val_file):
             trg(trg),
