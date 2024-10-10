@@ -135,7 +135,7 @@ class HyperParamOpti: public HyperParamOptiBase {
             }
         }
 
-        int calc_lata(TrgData &pdata, MPI_Comm &sub_comm) {
+        int calc_lata(TrgData &pdata) {
 #if defined(TADAH_ENABLE_OPENMP)
 #pragma omp parallel for shared(runner,fail,pdata,trg)
 #endif
@@ -169,7 +169,7 @@ class HyperParamOpti: public HyperParamOptiBase {
 
             return 0;
         }
-        int calc_uvacf(TrgData &pdata, MPI_Comm &sub_comm) {
+        int calc_uvacf(TrgData &pdata) {
 #if defined(TADAH_ENABLE_OPENMP)
 #pragma omp parallel for shared(runner,fail,pdata,trg)
 #endif
@@ -198,7 +198,7 @@ class HyperParamOpti: public HyperParamOptiBase {
             }
             return 0;
         }
-        int calc_usurface(TrgData &pdata, MPI_Comm &sub_comm) {
+        int calc_usurface(TrgData &pdata) {
 #if defined(TADAH_ENABLE_OPENMP)
 #pragma omp parallel for shared(runner,fail,pdata,trg)
 #endif
@@ -226,7 +226,7 @@ class HyperParamOpti: public HyperParamOptiBase {
 
             return 0;
         }
-        int calc_surface(TrgData &pdata, MPI_Comm &sub_comm) {
+        int calc_surface(TrgData &pdata) {
 #if defined(TADAH_ENABLE_OPENMP)
 #pragma omp parallel for shared(runner,fail,pdata,trg)
 #endif
@@ -254,7 +254,7 @@ class HyperParamOpti: public HyperParamOptiBase {
 
             return 0;
         }
-        int calc_envol(TrgData &pdata, MPI_Comm &sub_comm) {
+        int calc_envol(TrgData &pdata) {
 #if defined(TADAH_ENABLE_OPENMP)
 #pragma omp parallel for shared(runner,fail,pdata,trg)
 #endif
@@ -422,19 +422,19 @@ class HyperParamOpti: public HyperParamOptiBase {
       // Do LAMMPS sims on MPI_COMM_WORLD which should be 1?
       TrgData pdata = trg.data;
       if (trg.use_lata | trg.use_ecoh | trg.use_surface) {
-        calc_lata(pdata, lmp_comm);
+        calc_lata(pdata);
       }
       if (trg.use_uEvf || trg.use_uHvf) {
-        calc_uvacf(pdata, lmp_comm);
+        calc_uvacf(pdata);
       }
       if (trg.use_usurface) {
-        calc_usurface(pdata, lmp_comm);
+        calc_usurface(pdata);
       }
       if (trg.use_surface) {
-        calc_surface(pdata, lmp_comm);
+        calc_surface(pdata);
       }
       if (trg.use_envol) {
-        calc_envol(pdata, lmp_comm);
+        calc_envol(pdata);
       }
 #else
       TrgData pdata = trg.data;
