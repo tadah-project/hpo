@@ -75,25 +75,16 @@ class LammpsRunner {
         RI* run(MPI_Comm &sub_comm, std::string script,
                 std::string logfile="log.lammps", Args...args) {
 
-                std::cout << "DEBUG 1" << std::endl;
             RI *lmp=nullptr;
-                std::cout << "DEBUG 2" << std::endl;
             try {
-                std::cout << "DEBUG 3a" << std::endl;
-                lmp = instance(sub_comm,logfile,args...);  // WARNING: Using I/O redirection is unreliable with parallel runs
-                std::cout << "DEBUG 3b" << std::endl;
-                std::cout << "LAMMPS version ID: " << lmp->num_ver << std::endl;  // works correctly
-                std::cout << "DEBUG 4a" << std::endl;
+                lmp = instance(sub_comm,logfile,args...);
+                std::cout << "LAMMPS version ID: " << lmp->num_ver << std::endl;
                 std::cout << script.c_str() << std::endl;
-                std::cout << "DEBUG 4b" << std::endl;
                 doPrint(std::cout,args...);
-                lmp->input->file(script.c_str()); // terminate called after throwing an instance of 'std::length_error'  what():  basic_string::_M_create 
-                std::cout << "DEBUG 5" << std::endl;
+                lmp->input->file(script.c_str());
             }
             catch (std::exception& e) {
-                std::cout << "DEBUG 6" << std::endl;
                 std::cout << e.what() << std::endl;
-                std::cout << "DEBUG 7" << std::endl;
                 delete lmp;
                 return nullptr;
             }
