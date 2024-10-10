@@ -174,8 +174,9 @@ class HyperParamOpti: public HyperParamOptiBase {
         std::string &infile,
         std::map<std::string,std::string> &invar,
         std::map<std::string,std::string> &outvar
-        ) {
-        auto lmp = runner.run(lmp_comm)
+        )
+    {
+      auto lmp = runner.run(lmp_comm);
     }
     int calc_uvacf(TrgData &pdata) {
 #if defined(TADAH_ENABLE_OPENMP)
