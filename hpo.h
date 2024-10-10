@@ -6,7 +6,7 @@
 #ifdef TADAH_BUILD_MPI
 #include <mpi.h>
 #else 
-#define MPI_Comm int
+#define MPI_Comm int  // MATCH LAMMPS STUBS DEFINITION
 #endif
 
 int hpo_run(Config&, std::string &trg_file,
