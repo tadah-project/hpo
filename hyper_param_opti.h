@@ -170,30 +170,14 @@ class HyperParamOpti: public HyperParamOptiBase {
 
       return 0;
     }
-    int calc_custom(TrgData &pdata
+    template <typename Tuple>
+    int calc_custom(TrgData &pdata, Tuple && lmp_params
         //std::string &infile
         //std::map<std::string,std::string> &invar,
         //std::map<std::string,std::string> &outvar
         )
     {
 
-      std::string lata_guess="3.304";
-      std::string P="1";
-      std::string structure="fcc";
-      std::string element="Ta";
-      std::string log="log.lata";
-      std::string MAX_TIME=trg.MAX_TIME;
-      std::string infile=scr.scripts["tadah.lata"];
-
-      auto params = std::make_tuple(
-          infile.c_str(),
-          log.c_str(),
-          "-var", "lata_guess", lata_guess.c_str(),
-          "-var", "P", P.c_str(),
-          "-var", "tout",MAX_TIME.c_str(),
-          "-var", "structure", structure.c_str(),
-          "-var", "element", element.c_str()
-          );
 
       auto lmp = std::apply([this](auto&&... args) {
           return runner.run(
@@ -465,7 +449,24 @@ class HyperParamOpti: public HyperParamOptiBase {
 
       if (trg.use_lata | trg.use_ecoh | trg.use_surface) { // usurface?
         //calc_lata(pdata);
-        calc_custom(pdata);
+      std::string lata_guess="3.304";
+      std::string P="1";
+      std::string structure="fcc";
+      std::string element="Ta";
+      std::string log="log.lata";
+      std::string MAX_TIME=trg.MAX_TIME;
+      std::string infile=scr.scripts["tadah.lata"];
+
+      auto params = std::make_tuple(
+          infile.c_str(),
+          log.c_str(),
+          "-var", "lata_guess", lata_guess.c_str(),
+          "-var", "P", P.c_str(),
+          "-var", "tout",MAX_TIME.c_str(),
+          "-var", "structure", structure.c_str(),
+          "-var", "element", element.c_str()
+          );
+        calc_custom(pdata, params);
       }
       if (trg.use_uEvf || trg.use_uHvf) {
         calc_uvacf(pdata);
