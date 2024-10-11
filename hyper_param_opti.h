@@ -182,7 +182,7 @@ class HyperParamOpti: public HyperParamOptiBase {
       std::string structure="fcc";
       std::string element="Ta";
       std::string log="log.lata";
-      std::string MAX_TIME="10";
+      std::string MAX_TIME=trg.MAX_TIME;
       std::string infile=scr.scripts["tadah.lata"];
 
       auto params = std::make_tuple(
@@ -463,8 +463,8 @@ class HyperParamOpti: public HyperParamOptiBase {
       TrgData pdata = trg.data;
 
       if (trg.use_lata | trg.use_ecoh | trg.use_surface) { // usurface?
-        calc_lata(pdata);
-        //calc_custom(pdata);
+        //calc_lata(pdata);
+        calc_custom(pdata);
       }
       if (trg.use_uEvf || trg.use_uHvf) {
         calc_uvacf(pdata);
