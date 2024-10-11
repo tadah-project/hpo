@@ -195,10 +195,10 @@ class HyperParamOpti: public HyperParamOptiBase {
           "-var", "element", element.c_str()
           );
 
-    auto lmp = std::apply([this](auto&&... args) {
-        return runner.run(
-            lmp_comm, std::forward<decltype(args)>(args)...);
-        }, params);
+      auto lmp = std::apply([this](auto&&... args) {
+          return runner.run(
+              lmp_comm, std::forward<decltype(args)>(args)...);
+          }, params);
 
       if (!lmp) {
         fail = true;
@@ -212,6 +212,7 @@ class HyperParamOpti: public HyperParamOptiBase {
         pdata.set_ecoh(P,ecoh);
       }
       if (lmp) delete lmp;
+      return 0;
     }
     int calc_uvacf(TrgData &pdata) {
 #if defined(TADAH_ENABLE_OPENMP)
