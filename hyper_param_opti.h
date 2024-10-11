@@ -196,7 +196,8 @@ class HyperParamOpti: public HyperParamOptiBase {
           );
 
     auto lmp = std::apply([this](auto&&... args) {
-        return runner.run(lmp_comm, std::forward<decltype(args)>(args)...);
+        return runner.run(
+            lmp_comm, std::forward<decltype(args)>(args)...);
         }, params);
 
       if (!lmp) {
@@ -462,7 +463,8 @@ class HyperParamOpti: public HyperParamOptiBase {
       TrgData pdata = trg.data;
 
       if (trg.use_lata | trg.use_ecoh | trg.use_surface) { // usurface?
-        calc_custom(pdata);
+        calc_lata(pdata);
+        //calc_custom(pdata);
       }
       if (trg.use_uEvf || trg.use_uHvf) {
         calc_uvacf(pdata);
