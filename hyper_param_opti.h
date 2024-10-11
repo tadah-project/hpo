@@ -171,18 +171,14 @@ class HyperParamOpti: public HyperParamOptiBase {
       return 0;
     }
     template <typename Tuple>
-    int calc_custom(TrgData &pdata, Tuple && lmp_params
-        //std::string &infile
-        //std::map<std::string,std::string> &invar,
-        //std::map<std::string,std::string> &outvar
-        )
+    int calc_custom(TrgData &pdata, Tuple && lmp_params)
     {
-
 
       auto lmp = std::apply([this](auto&&... args) {
           return runner.run(
               lmp_comm, std::forward<decltype(args)>(args)...);
           }, lmp_params);
+
 
       if (!lmp) {
         fail = true;
