@@ -195,8 +195,8 @@ class HyperParamOpti: public HyperParamOptiBase {
           "-var", "element", element.c_str()
           );
 
-    auto lmp = std::apply([&this.lmp_comm](auto&&... args) {
-        return this.runner.run(this.lmp_comm, std::forward<decltype(args)>(args)...);
+    auto lmp = std::apply([this](auto&&... args) {
+        return runner.run(lmp_comm, std::forward<decltype(args)>(args)...);
         }, params);
 
       if (!lmp) {
