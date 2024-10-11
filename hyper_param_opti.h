@@ -182,7 +182,7 @@ class HyperParamOpti: public HyperParamOptiBase {
       auto lmp = std::apply([this](auto&&... args) {
           return runner.run(
               lmp_comm, std::forward<decltype(args)>(args)...);
-          }, params);
+          }, lmp_params);
 
       if (!lmp) {
         fail = true;
