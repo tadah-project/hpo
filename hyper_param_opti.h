@@ -201,10 +201,10 @@ class HyperParamOpti {
 
       Config pot_tadah = HOST.model->get_param_file();
 #else 
-      Trainer tr(config_temp);
+      Trainer HOST(config_temp);
       train_stdb.clear_nn();
-      tr.train(train_stdb);
-      Config pot_tadah = tr.model->get_param_file();
+      HOST.train(train_stdb);
+      Config pot_tadah = HOST.model->get_param_file();
 #endif
       // End of training
 
@@ -217,19 +217,20 @@ class HyperParamOpti {
       pot_tadah.set_defaults();
       pot_tadah.postprocess();
 
-      DC_Selector DCS(pot_tadah);
-      val_stdb.clear_nn();
-      NNFinder nnf(pot_tadah);
-      nnf.calc(val_stdb);
-      DescriptorsCalc<> dc
-        (pot_tadah,*DCS.d2b,*DCS.d3b,*DCS.dmb,*DCS.c2b,*DCS.c3b,*DCS.cmb);
-      DM_Function_Base *fb = CONFIG::factory
-        <DM_Function_Base,Config&>
-        (pot_tadah.get<std::string>("MODEL",1),pot_tadah);
-      M_Tadah_Base *modelp = CONFIG::factory
-        <M_Tadah_Base,DM_Function_Base&,Config&>
-        (pot_tadah.get<std::string>("MODEL",0),*fb,pot_tadah);
-      StructureDB stpred = modelp->predict(pot_tadah,val_stdb,dc);
+      //DC_Selector DCS(pot_tadah);
+      //val_stdb.clear_nn();
+      //NNFinder nnf(pot_tadah);
+      //nnf.calc(val_stdb);
+      //DescriptorsCalc<> dc
+      //  (pot_tadah,*DCS.d2b,*DCS.d3b,*DCS.dmb,*DCS.c2b,*DCS.c3b,*DCS.cmb);
+      //DM_Function_Base *fb = CONFIG::factory
+      //  <DM_Function_Base,Config&>
+      //  (pot_tadah.get<std::string>("MODEL",1),pot_tadah);
+      //M_Tadah_Base *modelp = CONFIG::factory
+      //  <M_Tadah_Base,DM_Function_Base&,Config&>
+      //  (pot_tadah.get<std::string>("MODEL",0),*fb,pot_tadah);
+      //StructureDB stpred = modelp->predict(pot_tadah,val_stdb,dc);
+      StructureDB stpred = HOST.model->predict(val_stdb);
 
       Analytics a(val_stdb,stpred);
 
