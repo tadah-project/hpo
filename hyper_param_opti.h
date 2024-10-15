@@ -228,6 +228,7 @@ class HyperParamOpti {
         // and create new comm just for them
         // Then send them ls details so they can compute
       }
+      runner.run(MPI_COMM_WORLD, LS[0].script, LS[0].invar);
 
 
       // while WORKERS are finishing LAMMPS sims

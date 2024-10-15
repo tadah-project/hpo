@@ -23,11 +23,11 @@ class LammpsSim {
   private:
     std::string cmd; // the command line from HPO config file
     std::vector<std::string> tokens;  // cmd tokenised
-    std::vector<const char*> invar;   // LAMMPS input variables
     std::vector<std::string> outvar;  // LAMMPS out variables
 
     // TODO define MPI_Comm?
   public:
+    std::vector<const char*> invar;   // LAMMPS input variables
     // Required: 
     std::string script;  // LMP script name
     std::vector<std::string> varloss; // at leat one --varloss variable
