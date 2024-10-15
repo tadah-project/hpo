@@ -37,17 +37,18 @@ class LammpsSim {
     // Optional:
     int ncpu = 1; // the number of cpus to be used, MPI only
     double weight;
-    double failscore;
     int lossfunc;
     std::string maxtime;
+    double failscore;
 
-    LammpsSim(std::string &cmd, HPOTargets &trg):
+    LammpsSim(std::string &cmd,
+        int LOSS_FUNC, std::string MAX_TIME, double FAIL_SCORE):
       cmd(cmd)
   {
     // set default values from trg
-    failscore=trg.FAIL_SCORE;
-    lossfunc=trg.LOSS_FUNC;
-    maxtime=trg.MAX_TIME;
+    lossfunc=LOSS_FUNC;
+    maxtime=MAX_TIME;
+    failscore=FAIL_SCORE;
 
     invar.push_back(TADAH_LAMMPS_LIB); // Ensure this is a string literal
     invar.push_back("-log");
@@ -262,7 +263,7 @@ class HPOTargets {
         else if (key=="LAMMPS") {
           std::string cmd;
           std::getline(iss, cmd);
-          LS.push_back(LammpsSim(cmd,this));
+          LS.push_back(LammpsSim(cmd,LOSS_FUNC, MAX_TIME, FAIL_SCORE));
         }
         else {
           throw std::runtime_error("HPO config file unknown key:\n" + line);
