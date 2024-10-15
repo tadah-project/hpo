@@ -200,6 +200,8 @@ class HyperParamOpti {
       HOST.solve();
 
       Config pot_tadah = HOST.model->get_param_file();
+
+      std::cout << HOST.model->weights << std::endl;
 #else 
       Trainer HOST(config_temp);
       train_stdb.clear_nn();
