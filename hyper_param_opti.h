@@ -198,15 +198,12 @@ class HyperParamOpti {
       }
 
       HOST.solve();
-
-      Config pot_tadah = HOST.model->get_param_file();
-
 #else 
       Trainer HOST(config_temp);
       train_stdb.clear_nn();
       HOST.train(train_stdb);
-      Config pot_tadah = HOST.model->get_param_file();
 #endif
+      Config pot_tadah = HOST.model->get_param_file();
       // End of training
 
       // This potential will be used by LAMMPS
@@ -219,9 +216,9 @@ class HyperParamOpti {
       pot_tadah.postprocess();
 
       //DC_Selector DCS(pot_tadah);
-      //val_stdb.clear_nn();
-      //NNFinder nnf(pot_tadah);
-      //nnf.calc(val_stdb);
+      val_stdb.clear_nn();
+      NNFinder nnf(pot_tadah);
+      nnf.calc(val_stdb);
       //DescriptorsCalc<> dc
       //  (pot_tadah,*DCS.d2b,*DCS.d3b,*DCS.dmb,*DCS.c2b,*DCS.c3b,*DCS.cmb);
       //DM_Function_Base *fb = CONFIG::factory
