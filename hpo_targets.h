@@ -226,7 +226,7 @@ class HPOTargets {
           double low, high;
           iss >> k >> low >> high;
           // do we know the key?
-          if (tdc.contains(k)) {
+          if (config.tdc.contains(k)) {
             const auto& ckey = toml::find(config.tdc, k);
             if (toml::find<bool>(ckey, "is_internal", 0)) {
               // is it internal key?
@@ -238,8 +238,8 @@ class HPOTargets {
             size_t size = config.size(k);
             if (k=="CGRID2B" || k=="CGRID3B" || k=="CGRIDMB" ||
                 k=="SGRID2B" || k=="SGRID3B" || k=="SGRIDMB") {
-              if(config.get<int>(k,0)==-1 || config.get<int>(k,0)==-2 )
-                size = config.get<int>(k,1)
+              if(config.get<int>(k,0)==-1 || config.get<int>(k,0)==-2)
+                size = config.get<int>(k,1);
             }
             for (size_t i=0; i<size; ++i ) {
               optim_map.push_back(k);
