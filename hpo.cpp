@@ -16,13 +16,16 @@ int hpo_run(Config &config, std::string &trg_file,
   HPOTargets trg(trg_file);
   HyperParamOpti<T, D, R> hpo(config,trg, val_file, lmp_comm);
 
-  const dlib::matrix<double,0,1> lowbound = dlib::mat(trg.configmin);
-  const dlib::matrix<double,0,1> highbound = dlib::mat(trg.configmax);
+  const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
+  const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
 
-  auto result1 = dlib::find_min_global(hpo,lowbound,highbound,
-      dlib::max_function_calls(trg.maxcalls),
+  // TODO add option for initial_function_evals 
+  // TODO add option for is_integer_variable
+
+  auto result1 = dlib::find_min_global(hpo,low,high,
+      dlib::max_function_calls(trg.MAX_CALLS),
       dlib::FOREVER,
-      trg.eps
+      trg.EPS
       );
   return 0;
 }

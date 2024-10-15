@@ -13,7 +13,6 @@
 #include "../CORE/utils/utils.h"
 #include "hpo_targets.h"
 #include "glf.h"
-#include "lammps_scripts.h"
 
 #include <chrono>
 #include <vector>
@@ -35,12 +34,7 @@ inline omp_int_t omp_get_num_threads() { return 1;}
  * - lammps must be compiled as a shared library
  * - lammps must be compiled with c++ exceptions: -DLAMMPS_EXCEPTIONS
  * - when compiling code which uses below classes link -llammps -ldlib -fopenmp
- * - The code might compile without -fopenmp but on some systems this causes
- *   numerical instabilties. This is (probably) only true for HyperParamOpti class.
  */
-
-class HyperParamOptiBase {
-};
 
 /**
  * Usage example:
@@ -58,260 +52,58 @@ class HyperParamOptiBase {
  *
  */
 template <typename T, typename GLF, typename R>
-class HyperParamOpti: public HyperParamOptiBase {
+class HyperParamOpti {
   private:
-    std::string element = "Ta";     // TODO
-    bool fail=false;
     R runner;
-    LammpsScripts scr;
     HPOTargets &trg;
-    GLF glf;
-    std::string delim=" ";
+    //GLF glf;
     double best_score=std::numeric_limits<double>::max();
-    Config config;
+    // Dump potential pevery steps
+    size_t pevery=std::numeric_limits<size_t>::max(); 
+    Config config;  // make a copy
     StructureDB val_stdb; // validation dataset
     StructureDB train_stdb; // train dataset NON MPI only
     size_t it=0;    // iteration number
-    size_t pevery=std::numeric_limits<size_t>::max();   // Dump potential every this steps
     std::string pevery_dir;
 
-    // Expand parameter pack with delim and return as string.
-    template <typename... Args>
-      std::string as_string(Args... args) {
-        std::stringstream ss;
-        using expander = int[];
-        (void)expander{0, (void(ss << std::setprecision(15) << std::forward<Args>(args) << delim), 0)...};
-        return ss.str().substr(0,ss.str().size()-delim.size()); // remove last delim
-      }
-
-    // helper method to update config cutoff
-    void rc (std::string s, double rc) {
-      config.remove(s);
-      config.add(s,rc);
-    };
-
-    // helper method to update config grid
-    template <typename... Args>
-      void grid(std::string gridname, Args ...args){
-        config.remove(gridname);
-        config.add(gridname,as_string(args...));
-      }
-
-
     void update_config (T &p) {
-
-      for (auto &c : trg.configmap) {
-        config.remove(c);
-      }
-
-      for (size_t i=0; i<trg.configmap.size();++i) {
-        std::string s = trg.configmap[i];
-        if (s=="MPARAMS") {
-          config.remove(s);
-          config.add(s,p(i));
-        }
-        if (s=="SBASIS") {
-          config.remove(s);
-          config.add(s,p(i));
-        }
-        if (s=="LAMBDA") {
-          config.remove(s);
-          config.add(s,p(i));
-        }
-        if (s=="RCUT2B" || s=="RCUTMB") rc(s,p(i));
-        if (s=="CGRID2B" || s=="CGRIDMB") config.add(s,p(i));
-        if (s=="SGRID2B" || s=="SGRIDMB") config.add(s,p(i));
-        if (s=="CEMBFUNC" || s=="SEMBFUNC") config.add(s,p(i));
-
-        if (s=="SWEIGHT") {
-          config.remove(s);
-          config.add(s,p(i));
-        }
-        if (s=="FWEIGHT") {
-          config.remove(s);
-          config.add(s,p(i));
-        }
-
+      for (size_t i=0; i<trg.optim_map.size();++i) {
+        const std::string &s = trg.optim_map[i];
+        config.remove(s);
+        config.add(s,p(i));
       }
     }
 
-    int calc_lata(TrgData &pdata) {
-#if defined(TADAH_ENABLE_OPENMP)
-#pragma omp parallel for shared(runner,fail,pdata,trg)
-#endif
-      for(size_t i = 0; i < trg.data.lata_size(); i++) {
-        auto v = trg.data.m1.begin();
-        advance(v, i);
-        const std::string P = v->first;
-        std::string structure = trg.data.get_structure(P);
-        // Only lata calculations should set this to false.
-        // When a calculation in the chain fails
-        // the flag is set to fail and should stay
-        // until the next iteration of the GOA.
-        pdata.set_fail(P,false);
-        int thread = omp_get_thread_num();
-        auto lmp = scr.run_lata(lmp_comm, runner,P, structure,
-            trg.data.get_lata(P), element,
-            "log.lata"+std::to_string(thread),
-            trg.MAX_TIME);
-        if (!lmp) {
-          fail = true;
-          pdata.set_fail(P,true);
-        }
-        else {
-          double a= stod(runner.get_variable(lmp,"length"));
-          double ecoh=stod(runner.get_variable(lmp,"ecoh"));
+    //template <typename Tuple>
+    //int calc_custom(TrgData &pdata, Tuple && lmp_params)
+    //{
 
-          pdata.set_lata(P,a);
-          pdata.set_ecoh(P,ecoh);
-        }
-        if (lmp) delete lmp;
-      }
-
-      return 0;
-    }
-    template <typename Tuple>
-    int calc_custom(TrgData &pdata, Tuple && lmp_params)
-    {
-
-      auto lmp = std::apply([this](auto&&... args) {
-          return runner.run(
-              lmp_comm, std::forward<decltype(args)>(args)...);
-          }, lmp_params);
+    //  auto lmp = std::apply([this](auto&&... args) {
+    //      return runner.run(
+    //          lmp_comm, std::forward<decltype(args)>(args)...);
+    //      }, lmp_params);
 
 
-      if (!lmp) {
-        fail = true;
-        pdata.set_fail(P,true);
-      }
-      else {
-        double a= stod(runner.get_variable(lmp,"length"));
-        double ecoh=stod(runner.get_variable(lmp,"ecoh"));
+    //  if (!lmp) {
+    //    fail = true;
+    //    pdata.set_fail(P,true);
+    //  }
+    //  else {
+    //    double a= stod(runner.get_variable(lmp,"length"));
+    //    double ecoh=stod(runner.get_variable(lmp,"ecoh"));
 
-        pdata.set_lata(P,a);
-        pdata.set_ecoh(P,ecoh);
-      }
-      if (lmp) delete lmp;
-      return 0;
-    }
-    int calc_uvacf(TrgData &pdata) {
-#if defined(TADAH_ENABLE_OPENMP)
-#pragma omp parallel for shared(runner,fail,pdata,trg)
-#endif
-      for(size_t i = 0; i < trg.data.uvacf_size(); i++) {
-        auto v = trg.data.m2.begin();
-        advance(v, i);
-        const std::string P = v->first;
-        int thread = omp_get_thread_num();
-        auto lmp = scr.run_uvacf(lmp_comm, runner,P,trg.data.get_lata(P),
-            "log.uvacf"+std::to_string(thread),
-            trg.MAX_TIME);
-        if (!lmp) {
-          fail = true;
-          pdata.set_fail(P,true);
-        }
-        else {
-          //double press= stod(runner.get_variable(lmp,"PRESS"));
-          //double a= stod(runner.get_variable(lmp,"latafinal"));
-          double E_v=stod(runner.get_variable(lmp,"Ev"));
-          double H_v=stod(runner.get_variable(lmp,"Hv"));
-
-          pdata.set_uEvf(P,E_v);
-          pdata.set_uHvf(P,H_v);
-        }
-        if (lmp) delete lmp;
-      }
-      return 0;
-    }
-    int calc_usurface(TrgData &pdata) {
-#if defined(TADAH_ENABLE_OPENMP)
-#pragma omp parallel for shared(runner,fail,pdata,trg)
-#endif
-      for(size_t i = 0; i < trg.data.usurf_size(); i++) {
-        auto v = trg.data.m4.begin();
-        advance(v, i);
-        const int hkl = v->first;
-        int thread = omp_get_thread_num();
-        auto lmp = scr.run_usurface(lmp_comm, runner,hkl,
-            trg.data.get_lata("0"),
-            trg.data.get_structure("0"), element,
-            "log.lata"+std::to_string(thread),
-            trg.MAX_TIME);
-        if (!lmp) {
-          fail = true;
-          pdata.set_fail("0",true);
-        }
-        else {
-          double E_hkl=stod(runner.get_variable(lmp,"E_f2"));
-
-          pdata.set_usurf(hkl,E_hkl);
-        }
-        if (lmp) delete lmp;
-      }
-
-      return 0;
-    }
-    int calc_surface(TrgData &pdata) {
-#if defined(TADAH_ENABLE_OPENMP)
-#pragma omp parallel for shared(runner,fail,pdata,trg)
-#endif
-      for(size_t i = 0; i < trg.data.surf_size(); i++) {
-        auto v = trg.data.m5.begin();
-        advance(v, i);
-        const int hkl = v->first;
-        int thread = omp_get_thread_num();
-        auto lmp = scr.run_surface(lmp_comm, runner,hkl,
-            trg.data.get_lata("0"),
-            trg.data.get_structure("0"), element,
-            "log.lata"+std::to_string(thread),
-            trg.MAX_TIME);
-        if (!lmp) {
-          fail = true;
-          pdata.set_fail("0",true);
-        }
-        else {
-          double E_hkl=stod(runner.get_variable(lmp,"E_f2"));
-
-          pdata.set_surf(hkl,E_hkl);
-        }
-        if (lmp) delete lmp;
-      }
-
-      return 0;
-    }
-    int calc_envol(TrgData &pdata) {
-#if defined(TADAH_ENABLE_OPENMP)
-#pragma omp parallel for shared(runner,fail,pdata,trg)
-#endif
-      for(size_t i = 0; i < trg.data.envol_size(); i++) {
-        auto v = trg.data.m7.begin();
-        advance(v, i);
-        const std::string lata = v->first;
-        int thread = omp_get_thread_num();
-        auto lmp = scr.run_envol(lmp_comm, runner,lata,
-            trg.data.get_structure(),
-            element, "log.lata"+std::to_string(thread),
-            trg.MAX_TIME);
-        if (!lmp) {
-          fail = true;
-          //pdata.set_fail(P,true); // this cannot fail
-        }
-        else {
-          double ecoh=stod(runner.get_variable(lmp,"ecoh"));
-
-          pdata.set_envol(lata,ecoh);
-        }
-        if (lmp) delete lmp;
-      }
-
-      return 0;
-    }
+    //    pdata.set_lata(P,a);
+    //    pdata.set_ecoh(P,ecoh);
+    //  }
+    //  if (lmp) delete lmp;
+    //  return 0;
+    //}
     MPI_Comm lmp_comm;
   public:
     HyperParamOpti(Config c, HPOTargets &trg, std::string &val_file,
         MPI_Comm &lmp_comm):
       trg(trg),
-      glf(trg),
+      //glf(trg),
       config(c),
       lmp_comm(lmp_comm)
   {
@@ -322,18 +114,18 @@ class HyperParamOpti: public HyperParamOptiBase {
     train_stdb.add(config);
 #endif
 
-    if (config.exist("HPOEVERY")) {
-      pevery_dir=config.get<std::string>("HPOEVERY",0);
-      pevery=config.get<size_t>("HPOEVERY",1);
-    }
+    //if (config.exist("HPOEVERY")) {
+    //  pevery_dir=config.get<std::string>("HPOEVERY",0);
+    //  pevery=config.get<size_t>("HPOEVERY",1);
+    //}
 
     // update CONFIG - constants specific to this target
-    for (const auto &p : trg.cfg) {
-      std::string key=p.first;
-      std::string val=p.second;
-      config.remove(key);
-      config.add(key,val);
-    }
+    //for (const auto &p : trg.cfg) {
+    //  std::string key=p.first;
+    //  std::string val=p.second;
+    //  config.remove(key);
+    //  config.add(key,val);
+    //}
   }
 
     //double operator() (T args) {
@@ -343,8 +135,6 @@ class HyperParamOpti: public HyperParamOptiBase {
       using std::chrono::duration_cast;
       using std::chrono::duration;
       using std::chrono::milliseconds;
-
-      fail=false;
 
       //auto t1 = high_resolution_clock::now();
       //p = std::vector<double>(args.begin(), args.end());
@@ -441,47 +231,36 @@ class HyperParamOpti: public HyperParamOptiBase {
 
       Analytics a(val_stdb,stpred);
 
-      TrgData pdata = trg.data;
+      //TrgData pdata = trg.data;
 
-      if (trg.use_lata | trg.use_ecoh | trg.use_surface) { // usurface?
-        //calc_lata(pdata);
-      std::string lata_guess="3.304";
-      std::string P="1";
-      std::string structure="fcc";
-      std::string element="Ta";
-      std::string log="log.lata";
-      std::string MAX_TIME=trg.MAX_TIME;
-      std::string infile=scr.scripts["tadah.lata"];
+      //  //calc_lata(pdata);
+      //std::string lata_guess="3.304";
+      //std::string P="1";
+      //std::string structure="fcc";
+      //std::string element="Ta";
+      //std::string log="log.lata";
+      //std::string MAX_TIME=trg.MAX_TIME;
+      //std::string infile=scr.scripts["tadah.lata"];
 
-      auto params = std::make_tuple(
-          infile.c_str(),
-          log.c_str(),
-          "-var", "lata_guess", lata_guess.c_str(),
-          "-var", "P", P.c_str(),
-          "-var", "tout",MAX_TIME.c_str(),
-          "-var", "structure", structure.c_str(),
-          "-var", "element", element.c_str()
-          );
-        calc_custom(pdata, params);
-      }
-      if (trg.use_uEvf || trg.use_uHvf) {
-        calc_uvacf(pdata);
-      }
-      if (trg.use_usurface) {
-        calc_usurface(pdata);
-      }
-      if (trg.use_surface) {
-        calc_surface(pdata);
-      }
-      if (trg.use_envol) {
-        calc_envol(pdata);
-      }
+      //auto params = std::make_tuple(
+      //    infile.c_str(),
+      //    log.c_str(),
+      //    "-var", "lata_guess", lata_guess.c_str(),
+      //    "-var", "P", P.c_str(),
+      //    "-var", "tout",MAX_TIME.c_str(),
+      //    "-var", "structure", structure.c_str(),
+      //    "-var", "element", element.c_str()
+      //    );
 
-      // Vacancy formation energy/enthalpy at selected pressures
-      // TODO for MPI version accumulate all scripts
-      // and distribute over workers
+      // Parse target file and construct a map
+      // [script_name] = [input=[], output=[]]
+      // return calculated Loss or FAILSCORE
 
-      double tloss = glf.total_loss(a,p,pdata,fail);
+      //std::unordered_map<std::string, std::vector<std::string>> lmp_scripts;
+      //double loss = calc_custom(params);
+
+      //double tloss = glf.total_loss(a,p,pdata,fail);
+      double tloss = 0.1; // TODO dummy
 
       // Dump potential if best
       if (tloss<best_score) {
@@ -495,12 +274,12 @@ class HyperParamOpti: public HyperParamOptiBase {
 
       // Dump potential pevery steps
       // Controled by HPOEVERY
-      if (it%pevery==0) {
-        std::ofstream outfile;
-        outfile.open (pevery_dir+"/pot_"+std::to_string(it)+".tadah");
-        outfile << pot_tadah;
-        outfile.close();
-      }
+      //if (it%pevery==0) {
+      //  std::ofstream outfile;
+      //  outfile.open (pevery_dir+"/pot_"+std::to_string(it)+".tadah");
+      //  outfile << pot_tadah;
+      //  outfile.close();
+      //}
 
       //auto t5 = high_resolution_clock::now();
       //duration<double, std::milli> t54 = t5 - t4;
