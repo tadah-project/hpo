@@ -45,6 +45,8 @@ class LammpsSim {
       cmd(cmd)
   {
     invar.push_back(TADAH_LAMMPS_LIB); // Ensure this is a string literal
+    invar.push_back("-log");
+    invar.push_back("none");
     tokenise();
     parse_tokens();
     
