@@ -66,9 +66,12 @@ class HyperParamOpti {
     std::string pevery_dir;
 
     void update_config (T &p) {
+      for (auto &m : trg.optim_map) {
+        config.remove(m);
+      }
+
       for (size_t i=0; i<trg.optim_map.size();++i) {
         const std::string &s = trg.optim_map[i];
-        config.remove(s);
         config.add(s,p(i));
       }
     }
