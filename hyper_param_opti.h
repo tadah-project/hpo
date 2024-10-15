@@ -201,7 +201,6 @@ class HyperParamOpti {
 
       Config pot_tadah = HOST.model->get_param_file();
 
-      std::cout << HOST.model->weights << std::endl;
 #else 
       Trainer HOST(config_temp);
       train_stdb.clear_nn();
@@ -231,8 +230,7 @@ class HyperParamOpti {
       //M_Tadah_Base *modelp = CONFIG::factory
       //  <M_Tadah_Base,DM_Function_Base&,Config&>
       //  (pot_tadah.get<std::string>("MODEL",0),*fb,pot_tadah);
-      //StructureDB stpred = modelp->predict(pot_tadah,val_stdb,dc);
-      StructureDB stpred = HOST.model->predict(val_stdb);
+      StructureDB stpred = modelp->predict(pot_tadah,val_stdb,HOST.dc);
 
       Analytics a(val_stdb,stpred);
 
