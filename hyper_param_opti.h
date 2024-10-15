@@ -30,6 +30,10 @@ inline omp_int_t omp_get_max_threads() { return 1;}
 inline omp_int_t omp_get_num_threads() { return 1;}
 #endif
 
+#ifndef TADAH_BUILD_MPI
+#define MPI_Comm int
+#endif
+
 /* General comments:
  * - lammps must be compiled as a shared library
  * - lammps must be compiled with c++ exceptions: -DLAMMPS_EXCEPTIONS
