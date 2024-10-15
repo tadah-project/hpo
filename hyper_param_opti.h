@@ -230,7 +230,7 @@ class HyperParamOpti {
       //M_Tadah_Base *modelp = CONFIG::factory
       //  <M_Tadah_Base,DM_Function_Base&,Config&>
       //  (pot_tadah.get<std::string>("MODEL",0),*fb,pot_tadah);
-      StructureDB stpred = modelp->predict(pot_tadah,val_stdb,HOST.dc);
+      StructureDB stpred = HOST.model->predict(pot_tadah,val_stdb,HOST.dc);
 
       Analytics a(val_stdb,stpred);
 
