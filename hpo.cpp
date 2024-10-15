@@ -13,7 +13,7 @@ using T = dlib::matrix<double,0,1>;
 int hpo_run(Config &config, std::string &trg_file,
     std::string &val_file, MPI_Comm &lmp_comm) {
 
-  HPOTargets trg(trg_file);
+  HPOTargets trg(config, trg_file);
   HyperParamOpti<T, R> hpo(config,trg, val_file, lmp_comm);
 
   const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
