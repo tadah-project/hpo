@@ -203,62 +203,49 @@ class HyperParamOpti {
       train_stdb.clear_nn();
       HOST.train(train_stdb);
 #endif
-      Config pot_tadah = HOST.model->get_param_file();
       // End of training
 
       // This potential will be used by LAMMPS
+      Config pot_tadah = HOST.model->get_param_file();
       std::ofstream outfile;
       outfile.open ("pot.tadah");
       outfile << pot_tadah;
       outfile.close();
 
+      // distribute LAMMPS simulation to workers
+      //
+      // Every simulation have ncpu associated with it
+      //
+      // Case 1) More workers than the sum of LAMMPS simulations ncpus
+      // Case 2) More simulations than available workers
+      // Case 3) Simulation requests ncpu which is grater than number of workers
+      
+      // This is just a test, we will need a while loop here
+      // with probing, etc...
+      for (const auto& lsim : trg.LS) {
+        std::cout << lsim.ncpu << std::endl;
+        // we need to find ncpu available workers
+        // and create new comm just for them
+        // Then send them ls details so they can compute
+      }
+
+
+      // while WORKERS are finishing LAMMPS sims
+      // HOST is predicting energy, forces and stresses.
       pot_tadah.set_defaults();
       pot_tadah.postprocess();
 
-      //DC_Selector DCS(pot_tadah);
       val_stdb.clear_nn();
       NNFinder nnf(pot_tadah);
       nnf.calc(val_stdb);
-      //DescriptorsCalc<> dc
-      //  (pot_tadah,*DCS.d2b,*DCS.d3b,*DCS.dmb,*DCS.c2b,*DCS.c3b,*DCS.cmb);
-      //DM_Function_Base *fb = CONFIG::factory
-      //  <DM_Function_Base,Config&>
-      //  (pot_tadah.get<std::string>("MODEL",1),pot_tadah);
-      //M_Tadah_Base *modelp = CONFIG::factory
-      //  <M_Tadah_Base,DM_Function_Base&,Config&>
-      //  (pot_tadah.get<std::string>("MODEL",0),*fb,pot_tadah);
       StructureDB stpred = HOST.model->predict(pot_tadah,val_stdb,HOST.dc);
 
       Analytics a(val_stdb,stpred);
 
-      //TrgData pdata = trg.data;
+      // By now we should have finished all computations
+      // It's time to calculate total loss value by GLF
 
-      //  //calc_lata(pdata);
-      //std::string lata_guess="3.304";
-      //std::string P="1";
-      //std::string structure="fcc";
-      //std::string element="Ta";
-      //std::string log="log.lata";
-      //std::string MAX_TIME=trg.MAX_TIME;
-      //std::string infile=scr.scripts["tadah.lata"];
-
-      //auto params = std::make_tuple(
-      //    infile.c_str(),
-      //    log.c_str(),
-      //    "-var", "lata_guess", lata_guess.c_str(),
-      //    "-var", "P", P.c_str(),
-      //    "-var", "tout",MAX_TIME.c_str(),
-      //    "-var", "structure", structure.c_str(),
-      //    "-var", "element", element.c_str()
-      //    );
-
-      // Parse target file and construct a map
-      // [script_name] = [input=[], output=[]]
-      // return calculated Loss or FAILSCORE
-
-      //std::unordered_map<std::string, std::vector<std::string>> lmp_scripts;
-      //double loss = calc_custom(params);
-
+      // TODO computation of tloss to be performed by GLF
       double tloss = 0;
       //double tloss = glf.total_loss(a,p,pdata,fail);
       if (trg.use_ermse) {
@@ -266,6 +253,16 @@ class HyperParamOpti {
         ermse *= 1000; // meV/atom;
         double ermse_score = ermse*trg.w_ermse;
         tloss += ermse_score;
+      }
+      if (trg.use_frmse) {
+        double frmse = a.calc_f_rmse().mean();
+        double frmse_score = frmse*trg.w_frmse;
+        tloss += frmse_score;
+      }
+      if (trg.use_srmse) {
+        double srmse = a.calc_s_rmse().mean();
+        double srmse_score = srmse*trg.w_srmse;
+        tloss += srmse_score;
       }
 
       // Dump potential if best
