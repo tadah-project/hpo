@@ -264,10 +264,10 @@ class HyperParamOpti {
       double tloss = 0;
       //double tloss = glf.total_loss(a,p,pdata,fail);
       if (trg.use_ermse) {
-      double ermse = a.calc_e_rmse().mean(); // eV/atom
-      ermse *= 1000; // meV/atom;
-      double ermse_score = ermse*trg.w_ermse;
-      double tloss += ermse_score;
+        double ermse = a.calc_e_rmse().mean(); // eV/atom
+        ermse *= 1000; // meV/atom;
+        double ermse_score = ermse*trg.w_ermse;
+        tloss += ermse_score;
       }
 
       // Dump potential if best
