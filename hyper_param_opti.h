@@ -55,7 +55,7 @@ inline omp_int_t omp_get_num_threads() { return 1;}
  * There is no error checking of the user input whatsoever.
  *
  */
-template <typename T, typename GLF, typename R>
+template <typename T, typename R>
 class HyperParamOpti {
   private:
     R runner;

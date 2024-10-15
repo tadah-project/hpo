@@ -2,19 +2,19 @@
 #include "hpo_targets.h"
 #include "runners.h"
 #include "hpo.h"
-#include "glf.h"
+//#include "glf.h"
 #include "../CORE/config/config.h"
 #include <dlib/global_optimization/find_max_global.h>
 
 using R = LammpsRunner;
-using D = GLF;
+//using D = GLF;
 using T = dlib::matrix<double,0,1>;
 
 int hpo_run(Config &config, std::string &trg_file,
     std::string &val_file, MPI_Comm &lmp_comm) {
 
   HPOTargets trg(trg_file);
-  HyperParamOpti<T, D, R> hpo(config,trg, val_file, lmp_comm);
+  HyperParamOpti<T, R> hpo(config,trg, val_file, lmp_comm);
 
   const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
   const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
