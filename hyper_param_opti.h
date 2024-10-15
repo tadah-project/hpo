@@ -205,6 +205,8 @@ class HyperParamOpti {
 #endif
       // End of training
 
+      double tloss = 0;
+
       // This potential will be used by LAMMPS
       Config pot_tadah = HOST.model->get_param_file();
       std::ofstream outfile;
@@ -223,13 +225,21 @@ class HyperParamOpti {
       // This is just a test, we will need a while loop here
       // with probing, etc...
       for (const auto& lsim : trg.LS) {
-        std::cout << lsim.ncpu << std::endl;
+        //std::cout << lsim.ncpu << std::endl;
         // we need to find ncpu available workers
         // and create new comm just for them
         // Then send them ls details so they can compute
       }
       auto *lmp = runner.run(lmp_comm, trg.LS[0].script, trg.LS[0].invar);
-
+      if (!lmp) {
+        tloss+=LS[0].failscore;
+      }
+      else {
+        for (const auto &v: LS[0].varloss) {
+          double lmp_tloss= stod(runner.get_variable(lmp,v));
+          tloss+= lmp_tloss;
+        }
+      }
       if (lmp) delete lmp;
 
 
@@ -249,7 +259,6 @@ class HyperParamOpti {
       // It's time to calculate total loss value by GLF
 
       // TODO computation of tloss to be performed by GLF
-      double tloss = 0;
       //double tloss = glf.total_loss(a,p,pdata,fail);
       if (trg.use_ermse) {
         double ermse = a.calc_e_rmse().mean(); // eV/atom
