@@ -44,15 +44,10 @@ inline omp_int_t omp_get_num_threads() { return 1;}
  * Usage example:
  *
  *     Config config("config.train");
- *     HPOTargets trg("targets");
- *     HyperParamOpti<dlib::matrix<double,0,1>> hpo(config,trg);
+ *     HPOTargets trg(config, "targets");
+ *     HyperParamOpti<dlib::matrix<double,0,1>,LammpsRunner> 
+   *     hpo(config,trg,"config_val",lmp_comm);
  *     # the object is ready to be passed to the optimiser.
- *
- * Supported Config keys:
- * RCUT2B,RCUTMB,CGRID2B,CGRIDMB,SGRID2B,SGRIDMB,CEMBFUNC,SEMBFUNC
- *
- * This class is very fragile.
- * There is no error checking of the user input whatsoever.
  *
  */
 template <typename T, typename R>
@@ -264,7 +259,7 @@ class HyperParamOpti {
       //double loss = calc_custom(params);
 
       //double tloss = glf.total_loss(a,p,pdata,fail);
-      double tloss = 0.1; // TODO dummy
+      double tloss = trg.ermse*trg.w_ermse; // TODO dummy
 
       // Dump potential if best
       if (tloss<best_score) {
