@@ -228,7 +228,9 @@ class HyperParamOpti {
         // and create new comm just for them
         // Then send them ls details so they can compute
       }
-      RI *lmp = runner.run(lmp_comm, trg.LS[0].script, trg.LS[0].invar);
+      auto *lmp = runner.run(lmp_comm, trg.LS[0].script, trg.LS[0].invar);
+
+      if (lmp) delete lmp;
 
 
       // while WORKERS are finishing LAMMPS sims
