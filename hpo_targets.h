@@ -236,11 +236,11 @@ class HPOTargets {
             // so we can push required number to optim_x
             // Here we also deal with the special case for S and C grids
             size_t size = config.size(k);
-            //if (k=="CGRID2B" || k=="CGRID3B" || k=="CGRIDMB" ||
-            //    k=="SGRID2B" || k=="SGRID3B" || k=="SGRIDMB") {
-            //  if(config.get<int>(k,0)==-1 || config.get<int>(k,0)==-2)
-            //    size = config.get<int>(k,1);
-            //}
+            if (k=="CGRID2B" || k=="CGRID3B" || k=="CGRIDMB" ||
+                k=="SGRID2B" || k=="SGRID3B" || k=="SGRIDMB") {
+              if(config.get<int>(k,0)==-1 || config.get<int>(k,0)==-2)
+                size = config.get<int>(k,1);
+            }
             for (size_t i=0; i<size; ++i ) {
               optim_map.push_back(k);
               optim_low.push_back(low);
