@@ -232,11 +232,11 @@ class HyperParamOpti {
       }
       auto *lmp = runner.run(lmp_comm, trg.LS[0].script, trg.LS[0].invar);
       if (!lmp) {
-        tloss+=LS[0].failscore;
+        tloss+=trg.LS[0].failscore;
       }
       else {
-        for (const auto &v: LS[0].varloss) {
-          double lmp_tloss= stod(runner.get_variable(lmp,v));
+        for (const auto &v: trg.LS[0].varloss) {
+          double lmp_tloss= std::stod(runner.get_variable(lmp,v));
           tloss+= lmp_tloss;
         }
       }
