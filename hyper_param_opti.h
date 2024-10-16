@@ -105,6 +105,7 @@ class HyperParamOpti {
 
     //double operator() (T args) {
     double operator() (T p) {
+      std::cout << "HOST it:" << it << std::endl;
       it++;
       using std::chrono::high_resolution_clock;
       using std::chrono::duration_cast;
@@ -139,6 +140,7 @@ class HyperParamOpti {
       // HOST is waiting for workers requests
       MPI_Trainer_HOST HOST(config_temp, rank, ncpu);
       HOST.prep_wpckgs();
+      std::cout << "HOST first loop BEGIN" << std::endl;
       while (true) {
         // Exit loop if there are no more packages
         if (!HOST.has_packages()) break;
@@ -157,9 +159,11 @@ class HyperParamOpti {
               + std::to_string(HOST.worker));
         }
       }
+      std::cout << "HOST first loop END" << std::endl;
 
       // work finised, collect remaining data and release all workers
       int count=1;  // count number of release workers, skip host
+      std::cout << "HOST second loop BEGIN" << std::endl;
       while(true) {
         HOST.probe();
         if (HOST.tag==MPI_Trainer::DATA_TAG) {
@@ -170,8 +174,10 @@ class HyperParamOpti {
         }
         if (count==ncpu) {  break; }  // count starts from 1
       }
+      std::cout << "HOST second loop END" << std::endl;
 
       HOST.solve();
+      std::cout << "HOST solve END" << std::endl;
 #else 
       Trainer HOST(config_temp);
       train_stdb.clear_nn();
@@ -207,6 +213,7 @@ class HyperParamOpti {
            than the total number of workers.\n");
       }
       std::vector<int> available_workers;
+      std::cout << "HOST LAMMPS loop BEGIN" << std::endl;
       while (true) {
         if (!wpkgs.size() && available_workers.size()==ncpu-1) {
           std::cout << "HOST: No more work packages, exiting loop..." << std::endl;
@@ -252,11 +259,13 @@ class HyperParamOpti {
           }
         } // end of WORK_TAG
       }
+      std::cout << "HOST LAMMPS loop END" << std::endl;
       for (int worker=1; worker<ncpu;++worker) {
         //MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
         std::cout << "Releasing worker: " << worker << std::endl;
       }
+      std::cout << "HOST LAMMPS release END" << std::endl;
 #else
       for (const auto& lsim : trg.LS) {
         auto *lmp = runner.run(MPI_COMM_WORLD, trg.LS[0].script, trg.LS[0].invar);
