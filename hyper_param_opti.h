@@ -215,6 +215,21 @@ class HyperParamOpti {
       std::vector<int> available_workers;
       std::cout << "HOST LAMMPS loop BEGIN" << std::endl;
       MPI_Barrier(MPI_COMM_WORLD);
+
+      int flag = 0;
+      MPI_Iprobe(source, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
+      if (flag) {
+        int count;
+        MPI_Get_count(&status, MPI_CHAR, &count);
+
+        std::vector<char> buffer(count);
+        MPI_Recv(buffer.data(), count, MPI_CHAR, source, status.MPI_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+        std::cout << "Process 0 received: " << buffer.data() << std::endl;
+      } else {
+        std::cout << "No messages available." << std::endl;
+      }
+      MPI_Barrier(MPI_COMM_WORLD);
       //while (true) {
       //  if (!wpkgs.size() && available_workers.size()==ncpu-1) {
       //    std::cout << "HOST: No more work packages, exiting loop..." << std::endl;
