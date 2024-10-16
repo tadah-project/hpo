@@ -171,6 +171,7 @@ class HyperParamOpti {
         }
         else {
           HOST.release_tag(count);
+          count++;
         }
         if (count==ncpu) {  break; }  // count starts from 1
       }
