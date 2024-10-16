@@ -235,7 +235,8 @@ class HyperParamOpti {
       // THIS IS END OF DEBUG
 
       while (true) {
-        if (!wpkgs.size() && available_workers.size()==ncpu-1) {
+        //if (!wpkgs.size() && available_workers.size()==ncpu-1) {
+        if (!wpkgs.size()) {
           std::cout << "HOST: No more work packages, exiting loop..." << std::endl;
           break;
         }
@@ -276,31 +277,39 @@ class HyperParamOpti {
         }
       }
       std::cout << "HOST LAMMPS loop END" << std::endl;
-      for (int worker=1; worker<ncpu;++worker) {
-          //MPI_Recv(NULL, 0, MPI_INT, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      int count = 1;
+      while (true) {
+        MPI_Recv(NULL, 0, MPI_INT, MPI_ANY_SOURCE, WORK_TAG, MPI_COMM_WORLD, &status);
+        int worker=status.MPI_SOURCE;
         MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
-        std::cout << "Releasing worker: " << worker << std::endl;
-        // clear after the worker is released
-        while (true) {
-          int flag = 0;
-          MPI_Iprobe(worker, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
-          if (flag) {
-            int tag = status.MPI_TAG;
-            std::cout << "WORKER: " << worker << "tag: " << tag << std::endl;
-            // Get the size of the incoming message
-            int count;
-            MPI_Get_count(&status, MPI_CHAR, &count);
-
-            // Allocate buffer of appropriate size
-            std::vector<char> buffer(count);
-
-            // Receive the message into the buffer
-            MPI_Recv(buffer.data(), count, MPI_CHAR, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            std::cout << "WORKER: " << worker << "tag: " << tag << "MSG RECEIVED" << std::endl;
-          }
-          else { break; }
-        }
+        count++;
+        if (count==ncpu) break;
       }
+      //for (int worker=1; worker<ncpu;++worker) {
+      //    //MPI_Recv(NULL, 0, MPI_INT, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      //  MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
+      //  std::cout << "Releasing worker: " << worker << std::endl;
+      //  // clear after the worker is released
+      //  while (true) {
+      //    int flag = 0;
+      //    MPI_Iprobe(worker, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
+      //    if (flag) {
+      //      int tag = status.MPI_TAG;
+      //      std::cout << "WORKER: " << worker << "tag: " << tag << std::endl;
+      //      // Get the size of the incoming message
+      //      int count;
+      //      MPI_Get_count(&status, MPI_CHAR, &count);
+
+      //      // Allocate buffer of appropriate size
+      //      std::vector<char> buffer(count);
+
+      //      // Receive the message into the buffer
+      //      MPI_Recv(buffer.data(), count, MPI_CHAR, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      //      std::cout << "WORKER: " << worker << "tag: " << tag << "MSG RECEIVED" << std::endl;
+      //    }
+      //    else { break; }
+      //  }
+      //}
       std::cout << "HOST LAMMPS release END" << std::endl;
 #else
       for (const auto& lsim : trg.LS) {
