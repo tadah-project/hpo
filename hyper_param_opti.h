@@ -252,7 +252,6 @@ class HyperParamOpti {
           }
         } // end of WORK_TAG
       }
-      // RE
       for (int worker=1; worker<ncpu;++worker) {
         //MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
