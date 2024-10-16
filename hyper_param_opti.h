@@ -217,7 +217,8 @@ class HyperParamOpti {
       MPI_Barrier(MPI_COMM_WORLD);
 
       int flag = 0;
-      MPI_Iprobe(source, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
+      MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
+      int source = status.MPI_SOURCE;
       if (flag) {
         int count;
         MPI_Get_count(&status, MPI_CHAR, &count);
