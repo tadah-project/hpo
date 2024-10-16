@@ -50,13 +50,27 @@ class LammpsSim {
     maxtime=MAX_TIME;
     failscore=FAIL_SCORE;
 
+    // provide LAMMPS library
     invar.push_back(TADAH_LAMMPS_LIB); // Ensure this is a string literal
-    invar.push_back("-log");
-    invar.push_back("none");
-    invar.push_back("-screen");
-    invar.push_back("none");
     tokenise();
+
     parse_tokens(); // overwrites default values
+
+    // search invar only as tokens may contain -l for lossfunc as well
+    // default no log file
+    auto it1 = std::find(invar.begin(), invar.end(), "-log");
+    auto it2 = std::find(invar.begin(), invar.end(), "-l");
+    if (it1 == invar.end() || it2 == invar.end()) {
+      invar.push_back("-log");
+      invar.push_back("none");
+    }
+    // default no screen output
+    auto it3 = std::find(invar.begin(), invar.end(), "-screen");
+    auto it4 = std::find(invar.begin(), invar.end(), "-sc");
+    if (it3 == invar.end() || it4 == invar.end()) {
+      invar.push_back("-screen");
+      invar.push_back("none");
+    }
     
     if (!script.length())
       throw std::runtime_error("LammpsSim object without a script!\n");
