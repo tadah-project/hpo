@@ -272,7 +272,7 @@ class HyperParamOpti {
 
             // Receive the message into the buffer
             MPI_Recv(buffer.data(), count, MPI_CHAR, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            std::cout << "WORKER: " << worker << << "tag: " << tag << "MSG RECEIVED" << std::endl;
+            std::cout << "WORKER: " << worker << "tag: " << tag << "MSG RECEIVED" << std::endl;
           }
           else { break; }
         }
