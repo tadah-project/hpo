@@ -201,7 +201,7 @@ class HyperParamOpti {
   const static int WAIT_TAG = 3;
   const static int RELEASE_TAG = 2;
   const static int DATA_TAG = 1;
-  const static int WORK_TAG = 0;
+  const static int WORK_TAG = 10;
 
   MPI_Status status;
 
