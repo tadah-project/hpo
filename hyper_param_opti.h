@@ -207,6 +207,7 @@ class HyperParamOpti {
 
       auto wpkgs = trg.LS;  // make a copy of LammpsSim vec
                             // LS is sorted
+      std::cout << "it: " << it << " wpkgs: " << wpkgs.size() << std::endl;
       if (wpkgs[0].ncpu>ncpu-1) {
         throw std::runtime_error
           ("Requested LAMMPS simulation size is bigger\n\\
