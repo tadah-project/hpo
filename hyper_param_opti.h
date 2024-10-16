@@ -46,7 +46,7 @@ inline omp_int_t omp_get_num_threads() { return 1;}
  *     Config config("config.train");
  *     HPOTargets trg(config, "targets");
  *     HyperParamOpti<dlib::matrix<double,0,1>,LammpsRunner> 
-   *     hpo(config,trg,"config_val",lmp_comm);
+   *     hpo(config,trg,"config_val");
  *     # the object is ready to be passed to the optimiser.
  *
  */
@@ -76,14 +76,11 @@ class HyperParamOpti {
       }
     }
 
-    MPI_Comm lmp_comm;
   public:
-    HyperParamOpti(Config c, HPOTargets &trg, std::string &val_file,
-        MPI_Comm &lmp_comm):
+    HyperParamOpti(Config c, HPOTargets &trg, std::string &val_file):
       trg(trg),
       //glf(trg),
-      config(c),
-      lmp_comm(lmp_comm)
+      config(c)
   {
     Config val_config(val_file);
     val_stdb.add(val_config);
@@ -257,7 +254,7 @@ class HyperParamOpti {
       }
 #else
       for (const auto& lsim : trg.LS) {
-        auto *lmp = runner.run(lmp_comm, trg.LS[0].script, trg.LS[0].invar);
+        auto *lmp = runner.run(MPI_COMM_WORLD, trg.LS[0].script, trg.LS[0].invar);
         if (!lmp) {
           tloss+=trg.LS[0].failscore;
         }
