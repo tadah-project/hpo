@@ -286,6 +286,8 @@ class HyperParamOpti {
         count2++;
         if (count2==ncpu) break;
       }
+      // THIS IS DEBUG
+      MPI_Barrier(MPI_COMM_WORLD);
       //for (int worker=1; worker<ncpu;++worker) {
       //    //MPI_Recv(NULL, 0, MPI_INT, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
       //  MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
