@@ -201,7 +201,7 @@ class HyperParamOpti {
   const static int WAIT_TAG = 3;
   const static int RELEASE_TAG = 2;
   const static int DATA_TAG = 1;
-  const static int WORK_TAG = 10;
+  const static int WORK_TAG = 0;
 
   MPI_Status status;
 
@@ -261,7 +261,7 @@ class HyperParamOpti {
       }
       std::cout << "HOST LAMMPS loop END" << std::endl;
       for (int worker=1; worker<ncpu;++worker) {
-        //MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
         std::cout << "Releasing worker: " << worker << std::endl;
       }
