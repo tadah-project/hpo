@@ -30,9 +30,9 @@ inline omp_int_t omp_get_max_threads() { return 1;}
 inline omp_int_t omp_get_num_threads() { return 1;}
 #endif
 
-#ifndef TADAH_BUILD_MPI
-#define MPI_Comm int
-#endif
+//#ifndef TADAH_BUILD_MPI
+//#define MPI_Comm int
+//#endif
 
 /* General comments:
  * - lammps must be compiled as a shared library
@@ -162,7 +162,7 @@ class HyperParamOpti {
       std::cout << "HOST first loop END" << std::endl;
 
       // work finised, collect remaining data and release all workers
-      int count=1;  // count number of release workers, skip host
+      int count=1;  // count number of released workers, skip host
       std::cout << "HOST second loop BEGIN" << std::endl;
       while(true) {
         HOST.probe();
@@ -171,7 +171,6 @@ class HyperParamOpti {
         }
         else {
           HOST.release_tag(count);
-          count++;
         }
         if (count==ncpu) {  break; }  // count starts from 1
       }
