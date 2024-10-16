@@ -203,7 +203,7 @@ class HyperParamOpti {
                             // LS is sorted
       if (wpkgs[0].ncpu>ncpu-1) {
         throw std::runtime_error
-          ("Requested LAMMPS simulation size is bigger \\
+          ("Requested LAMMPS simulation size is bigger\n\\
            than the total number of workers.\n");
       }
       std::vector<int> available_workers;
@@ -251,6 +251,12 @@ class HyperParamOpti {
             }
           }
         } // end of WORK_TAG
+      }
+      // RE
+      for (int worker=1; worker<ncpu;++worker) {
+        //MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
+        std::cout << "Releasing worker: " << worker << std::endl;
       }
 #else
       for (const auto& lsim : trg.LS) {
