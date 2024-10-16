@@ -220,44 +220,41 @@ class HyperParamOpti {
           break;
         }
 
-        MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+        //MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+        MPI_Recv(NULL, 0, MPI_INT, MPI_ANY_SOURCE, WORK_TAG, MPI_COMM_WORLD, &status);
         int worker = status.MPI_SOURCE;
         int tag = status.MPI_TAG;
 
-        if (tag==WORK_TAG) {
-          MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-          auto it = std::find(available_workers.begin(), available_workers.end(), worker);
+        auto it = std::find(available_workers.begin(), available_workers.end(), worker);
+        if (it == available_workers.end()) {  // new worker is available
+          available_workers.push_back(worker);
+          MPI_Send(NULL, 0, MPI_INT, worker, WAIT_TAG, MPI_COMM_WORLD);
+          std::cout << "HOST available_workers: " << available_workers.size() << std::endl;
+        }
+        else {
+          // There are no more new workers available at the moment.
+          // Let's find the biggest job we can fit to them
 
-          if (it == available_workers.end()) {  // new worker is available
-            available_workers.push_back(worker);
-            MPI_Send(NULL, 0, MPI_INT, worker, WAIT_TAG, MPI_COMM_WORLD);
-            std::cout << "HOST available_workers: " << available_workers.size() << std::endl;
-          }
-          else {
-            // There are no more new workers available at the moment.
-            // Let's find the biggest job we can fit to them
+          for (int j=0; j<wpkgs.size(); ++j) {
+            int job_size = wpkgs[j].ncpu;
+            if (job_size<=available_workers.size()) {
+              std::cout << "HOST the job fits available_workers: " << job_size << std::endl;
+              std::vector<int> granks(available_workers.end() - job_size, available_workers.end());
+              for (int i=0; i<job_size; ++i) {
+                int worker = available_workers.back();
+                available_workers.pop_back();
+                MPI_Send(&job_size, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                MPI_Send(granks.data(), granks.size(), MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                // send wpkgs[j].script
+                //MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1, MPI_CHAR, worker, tag, MPI_COMM_WORLD);
 
-            for (int j=0; j<wpkgs.size(); ++j) {
-              int job_size = wpkgs[j].ncpu;
-              if (job_size<=available_workers.size()) {
-                std::cout << "HOST the job fits available_workers: " << job_size << std::endl;
-                std::vector<int> granks(available_workers.end() - job_size, available_workers.end());
-                for (int i=0; i<job_size; ++i) {
-                  int worker = available_workers.back();
-                  available_workers.pop_back();
-                  MPI_Send(&job_size, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
-                  MPI_Send(granks.data(), granks.size(), MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
-                  // send wpkgs[j].script
-                  //MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1, MPI_CHAR, worker, tag, MPI_COMM_WORLD);
-
-                  // send wpkgs[j].invar
-                }
-                wpkgs.erase(wpkgs.begin() + j);
-                break; // break outer for loop
+                // send wpkgs[j].invar
               }
+              wpkgs.erase(wpkgs.begin() + j);
+              break; // break outer for loop
             }
           }
-        } // end of WORK_TAG
+        }
       }
       std::cout << "HOST LAMMPS loop END" << std::endl;
       for (int worker=1; worker<ncpu;++worker) {
