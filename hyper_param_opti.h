@@ -277,13 +277,13 @@ class HyperParamOpti {
         }
       }
       std::cout << "HOST LAMMPS loop END" << std::endl;
-      int count = 1;
+      int count2 = 1;
       while (true) {
         MPI_Recv(NULL, 0, MPI_INT, MPI_ANY_SOURCE, WORK_TAG, MPI_COMM_WORLD, &status);
         int worker=status.MPI_SOURCE;
         MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
-        count++;
-        if (count==ncpu) break;
+        count2++;
+        if (count2==ncpu) break;
       }
       //for (int worker=1; worker<ncpu;++worker) {
       //    //MPI_Recv(NULL, 0, MPI_INT, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
