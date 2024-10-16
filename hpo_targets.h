@@ -155,6 +155,9 @@ class LammpsSim {
         }
       }
     }
+    static bool greater(const LammpsSim& lhs, const LammpsSim& rhs) {
+      return lhs.ncpu > rhs.ncpu;
+    }
 };
 
 
@@ -188,6 +191,9 @@ class HPOTargets {
       config(c)
     {
       read(fn);
+      // sort LS such that the first simulation in the vector
+      // requires the greatest number of cpus
+      std::sort(LS.begin(), LS.end(), LammpsSim::greater);
     }
 
     void read(std::string fn) {

@@ -76,30 +76,6 @@ class HyperParamOpti {
       }
     }
 
-    //template <typename Tuple>
-    //int calc_custom(TrgData &pdata, Tuple && lmp_params)
-    //{
-
-    //  auto lmp = std::apply([this](auto&&... args) {
-    //      return runner.run(
-    //          lmp_comm, std::forward<decltype(args)>(args)...);
-    //      }, lmp_params);
-
-
-    //  if (!lmp) {
-    //    fail = true;
-    //    pdata.set_fail(P,true);
-    //  }
-    //  else {
-    //    double a= stod(runner.get_variable(lmp,"length"));
-    //    double ecoh=stod(runner.get_variable(lmp,"ecoh"));
-
-    //    pdata.set_lata(P,a);
-    //    pdata.set_ecoh(P,ecoh);
-    //  }
-    //  if (lmp) delete lmp;
-    //  return 0;
-    //}
     MPI_Comm lmp_comm;
   public:
     HyperParamOpti(Config c, HPOTargets &trg, std::string &val_file,
@@ -153,6 +129,7 @@ class HyperParamOpti {
 #ifdef TADAH_BUILD_MPI
       int rank;
       int ncpu;
+
       MPI_Comm_size(MPI_COMM_WORLD, &ncpu);
       MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
@@ -214,34 +191,84 @@ class HyperParamOpti {
       outfile << pot_tadah;
       outfile.close();
 
-      // distribute LAMMPS simulation to workers
-      //
-      // Every simulation have ncpu associated with it
-      //
-      // Case 1) More workers than the sum of LAMMPS simulations ncpus
-      // Case 2) More simulations than available workers
-      // Case 3) Simulation requests ncpu which is grater than number of workers
-      
-      // This is just a test, we will need a while loop here
-      // with probing, etc...
-      for (const auto& lsim : trg.LS) {
-        //std::cout << lsim.ncpu << std::endl;
-        // we need to find ncpu available workers
-        // and create new comm just for them
-        // Then send them ls details so they can compute
-      }
-      auto *lmp = runner.run(lmp_comm, trg.LS[0].script, trg.LS[0].invar);
-      if (!lmp) {
-        tloss+=trg.LS[0].failscore;
-      }
-      else {
-        for (const auto &v: trg.LS[0].varloss) {
-          double lmp_tloss= std::stod(runner.get_variable(lmp,v));
-          tloss+= lmp_tloss;
-        }
-      }
-      if (lmp) delete lmp;
 
+#ifdef TADAH_BUILD_MPI
+
+  const static int CONFIG_TAG = 4;
+  const static int WAIT_TAG = 3;
+  const static int RELEASE_TAG = 2;
+  const static int DATA_TAG = 1;
+  const static int WORK_TAG = 0;
+
+      auto wpkgs = trg.LS;  // make a copy of LammpsSim vec
+                            // LS is sorted
+      if (wpkgs[0].ncpu>ncpu-1) {
+        throw std::runtime_error
+          ("Requested LAMMPS simulation size is bigger \\
+           than the total number of workers.\n");
+      }
+      std::vector<int> available_workers;
+      while (true) {
+        if (!wpkgs.size() && available_workers.size()==ncpu-1) {
+          std::cout << "HOST: No more work packages, exiting loop..." << std::endl;
+          break;
+        }
+
+        MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+        int worker = status.MPI_SOURCE;
+        int tag = status.MPI_TAG;
+
+        if (tag==WORK_TAG) {
+          MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+          auto it = std::find(available_workers.begin(), available_workers.end(), worker);
+
+          if (it == available_workers.end()) {  // new worker is available
+            available_workers.push_back(worker);
+            MPI_Send(NULL, 0, MPI_INT, worker, WAIT_TAG, MPI_COMM_WORLD);
+            std::cout << "HOST available_workers: " << available_workers.size() << std::endl;
+          }
+          else {
+            // There are no more new workers available at the moment.
+            // Let's find the biggest job we can fit to them
+
+            for (int j=0; j<wpkgs.size(); ++j) {
+              int job_size = wpkgs[j];
+              if (job_size<=available_workers.size()) {
+                std::cout << "HOST the job fits available_workers: " << job_size << std::endl;
+                std::vector<int> granks(available_workers.end() - job_size, available_workers.end());
+                print(granks);
+                for (int i=0; i<job_size; ++i) {
+                  int worker = available_workers.back();
+                  available_workers.pop_back();
+                  //MPI_Send(&job_size, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                  MPI_Send(granks.data(), granks.size(), MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                  // send wpkgs[j].script
+                  //MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1, MPI_CHAR, worker, tag, MPI_COMM_WORLD);
+
+                  // send wpkgs[j].invar
+                }
+                wpkgs.erase(wpkgs.begin() + j);
+                break; // break outer for loop
+              }
+            }
+          }
+        } // end of WORK_TAG
+      }
+#else
+      for (const auto& lsim : trg.LS) {
+        auto *lmp = runner.run(lmp_comm, trg.LS[0].script, trg.LS[0].invar);
+        if (!lmp) {
+          tloss+=trg.LS[0].failscore;
+        }
+        else {
+          for (const auto &v: trg.LS[0].varloss) {
+            double lmp_tloss= std::stod(runner.get_variable(lmp,v));
+            tloss+= lmp_tloss;
+          }
+        }
+        if (lmp) delete lmp;
+      }
+#endif
 
       // while WORKERS are finishing LAMMPS sims
       // HOST is predicting energy, forces and stresses.
