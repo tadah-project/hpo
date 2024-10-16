@@ -232,11 +232,10 @@ class HyperParamOpti {
             // Let's find the biggest job we can fit to them
 
             for (int j=0; j<wpkgs.size(); ++j) {
-              int job_size = wpkgs[j];
+              int job_size = wpkgs[j].ncpu;
               if (job_size<=available_workers.size()) {
                 std::cout << "HOST the job fits available_workers: " << job_size << std::endl;
                 std::vector<int> granks(available_workers.end() - job_size, available_workers.end());
-                print(granks);
                 for (int i=0; i<job_size; ++i) {
                   int worker = available_workers.back();
                   available_workers.pop_back();
