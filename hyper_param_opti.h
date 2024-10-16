@@ -262,7 +262,7 @@ class HyperParamOpti {
           MPI_Iprobe(worker, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
           if (flag) {
             int tag = status.MPI_TAG;
-            std::cout << "WORKER: " << worker << << "tag: " << tag << std::endl;
+            std::cout << "WORKER: " << worker << "tag: " << tag << std::endl;
             // Get the size of the incoming message
             int count;
             MPI_Get_count(&status, MPI_CHAR, &count);
