@@ -200,6 +200,8 @@ class HyperParamOpti {
   const static int DATA_TAG = 1;
   const static int WORK_TAG = 0;
 
+  MPI_Status status;
+
       auto wpkgs = trg.LS;  // make a copy of LammpsSim vec
                             // LS is sorted
       if (wpkgs[0].ncpu>ncpu-1) {
