@@ -245,7 +245,7 @@ class HyperParamOpti {
                 for (int i=0; i<job_size; ++i) {
                   int worker = available_workers.back();
                   available_workers.pop_back();
-                  //MPI_Send(&job_size, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                  MPI_Send(&job_size, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
                   MPI_Send(granks.data(), granks.size(), MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
                   // send wpkgs[j].script
                   //MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1, MPI_CHAR, worker, tag, MPI_COMM_WORLD);
@@ -261,19 +261,22 @@ class HyperParamOpti {
       }
       std::cout << "HOST LAMMPS loop END" << std::endl;
       for (int worker=1; worker<ncpu;++worker) {
-        int flag = 0;
-        MPI_Iprobe(worker, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
-        if (flag) {
-          // Get the size of the incoming message
-          int count;
-          MPI_Get_count(&status, MPI_CHAR, &count);
+        //int flag = 0;
+        //MPI_Iprobe(worker, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
+        //if (flag) {
+        //  int tag = status.MPI_TAG;
+        //  std::cout << "WORKER: " << worker << << "tag: " << tag << std::endl;
+        //  // Get the size of the incoming message
+        //  int count;
+        //  MPI_Get_count(&status, MPI_CHAR, &count);
 
-          // Allocate buffer of appropriate size
-          std::vector<char> buffer(count);
+        //  // Allocate buffer of appropriate size
+        //  std::vector<char> buffer(count);
 
-          // Receive the message into the buffer
-          MPI_Recv(buffer.data(), count, MPI_CHAR, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        }
+        //  // Receive the message into the buffer
+        //  MPI_Recv(buffer.data(), count, MPI_CHAR, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        //  std::cout << "WORKER: " << worker << << "tag: " << tag << "MSG RECEIVED" << std::endl;
+        //}
           //MPI_Recv(NULL, 0, MPI_INT, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
         std::cout << "Releasing worker: " << worker << std::endl;
