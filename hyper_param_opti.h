@@ -214,6 +214,7 @@ class HyperParamOpti {
       }
       std::vector<int> available_workers;
       std::cout << "HOST LAMMPS loop BEGIN" << std::endl;
+      MPI_Barrier(MPI_COMM_WORLD);
       //while (true) {
       //  if (!wpkgs.size() && available_workers.size()==ncpu-1) {
       //    std::cout << "HOST: No more work packages, exiting loop..." << std::endl;
