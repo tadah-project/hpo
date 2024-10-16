@@ -214,8 +214,9 @@ class HyperParamOpti {
       }
       std::vector<int> available_workers;
       std::cout << "HOST LAMMPS loop BEGIN" << std::endl;
-      MPI_Barrier(MPI_COMM_WORLD);
 
+      // THIS IS DEBUG
+      MPI_Barrier(MPI_COMM_WORLD);
       int flag = 0;
       MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
       int source = status.MPI_SOURCE;
@@ -231,73 +232,75 @@ class HyperParamOpti {
         std::cout << "No messages available." << std::endl;
       }
       MPI_Barrier(MPI_COMM_WORLD);
-      //while (true) {
-      //  if (!wpkgs.size() && available_workers.size()==ncpu-1) {
-      //    std::cout << "HOST: No more work packages, exiting loop..." << std::endl;
-      //    break;
-      //  }
+      // THIS IS END OF DEBUG
 
-      //  //MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-      //  MPI_Recv(NULL, 0, MPI_INT, MPI_ANY_SOURCE, WORK_TAG, MPI_COMM_WORLD, &status);
-      //  int worker = status.MPI_SOURCE;
+      while (true) {
+        if (!wpkgs.size() && available_workers.size()==ncpu-1) {
+          std::cout << "HOST: No more work packages, exiting loop..." << std::endl;
+          break;
+        }
 
-      //  auto it = std::find(available_workers.begin(), available_workers.end(), worker);
-      //  if (it == available_workers.end()) {  // new worker is available
-      //    available_workers.push_back(worker);
-      //    MPI_Send(NULL, 0, MPI_INT, worker, WAIT_TAG, MPI_COMM_WORLD);
-      //    std::cout << "HOST available_workers: " << available_workers.size() << std::endl;
-      //  }
-      //  else {
-      //    // There are no more new workers available at the moment.
-      //    // Let's find the biggest job we can fit to them
+        //MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+        MPI_Recv(NULL, 0, MPI_INT, MPI_ANY_SOURCE, WORK_TAG, MPI_COMM_WORLD, &status);
+        int worker = status.MPI_SOURCE;
 
-      //    for (int j=0; j<wpkgs.size(); ++j) {
-      //      int job_size = wpkgs[j].ncpu;
-      //      if (job_size<=available_workers.size()) {
-      //        std::cout << "HOST the job fits available_workers: " << job_size << std::endl;
-      //        std::vector<int> granks(available_workers.end() - job_size, available_workers.end());
-      //        for (int i=0; i<job_size; ++i) {
-      //          int worker = available_workers.back();
-      //          available_workers.pop_back();
-      //          MPI_Send(&job_size, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
-      //          MPI_Send(granks.data(), granks.size(), MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
-      //          // send wpkgs[j].script
-      //          //MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1, MPI_CHAR, worker, tag, MPI_COMM_WORLD);
+        auto it = std::find(available_workers.begin(), available_workers.end(), worker);
+        if (it == available_workers.end()) {  // new worker is available
+          available_workers.push_back(worker);
+          MPI_Send(NULL, 0, MPI_INT, worker, WAIT_TAG, MPI_COMM_WORLD);
+          std::cout << "HOST available_workers: " << available_workers.size() << std::endl;
+        }
+        else {
+          // There are no more new workers available at the moment.
+          // Let's find the biggest job we can fit to them
 
-      //          // send wpkgs[j].invar
-      //        }
-      //        wpkgs.erase(wpkgs.begin() + j);
-      //        break; // break outer for loop
-      //      }
-      //    }
-      //  }
-      //}
-      //std::cout << "HOST LAMMPS loop END" << std::endl;
-      //for (int worker=1; worker<ncpu;++worker) {
-      //    //MPI_Recv(NULL, 0, MPI_INT, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-      //  MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
-      //  std::cout << "Releasing worker: " << worker << std::endl;
-      //  // clear after the worker is released
-      //  while (true) {
-      //    int flag = 0;
-      //    MPI_Iprobe(worker, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
-      //    if (flag) {
-      //      int tag = status.MPI_TAG;
-      //      std::cout << "WORKER: " << worker << "tag: " << tag << std::endl;
-      //      // Get the size of the incoming message
-      //      int count;
-      //      MPI_Get_count(&status, MPI_CHAR, &count);
+          for (int j=0; j<wpkgs.size(); ++j) {
+            int job_size = wpkgs[j].ncpu;
+            if (job_size<=available_workers.size()) {
+              std::cout << "HOST the job fits available_workers: " << job_size << std::endl;
+              std::vector<int> granks(available_workers.end() - job_size, available_workers.end());
+              for (int i=0; i<job_size; ++i) {
+                int worker = available_workers.back();
+                available_workers.pop_back();
+                MPI_Send(&job_size, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                MPI_Send(granks.data(), granks.size(), MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                // send wpkgs[j].script
+                //MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1, MPI_CHAR, worker, tag, MPI_COMM_WORLD);
 
-      //      // Allocate buffer of appropriate size
-      //      std::vector<char> buffer(count);
+                // send wpkgs[j].invar
+              }
+              wpkgs.erase(wpkgs.begin() + j);
+              break; // break outer for loop
+            }
+          }
+        }
+      }
+      std::cout << "HOST LAMMPS loop END" << std::endl;
+      for (int worker=1; worker<ncpu;++worker) {
+          //MPI_Recv(NULL, 0, MPI_INT, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
+        std::cout << "Releasing worker: " << worker << std::endl;
+        // clear after the worker is released
+        while (true) {
+          int flag = 0;
+          MPI_Iprobe(worker, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
+          if (flag) {
+            int tag = status.MPI_TAG;
+            std::cout << "WORKER: " << worker << "tag: " << tag << std::endl;
+            // Get the size of the incoming message
+            int count;
+            MPI_Get_count(&status, MPI_CHAR, &count);
 
-      //      // Receive the message into the buffer
-      //      MPI_Recv(buffer.data(), count, MPI_CHAR, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-      //      std::cout << "WORKER: " << worker << "tag: " << tag << "MSG RECEIVED" << std::endl;
-      //    }
-      //    else { break; }
-      //  }
-      //}
+            // Allocate buffer of appropriate size
+            std::vector<char> buffer(count);
+
+            // Receive the message into the buffer
+            MPI_Recv(buffer.data(), count, MPI_CHAR, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            std::cout << "WORKER: " << worker << "tag: " << tag << "MSG RECEIVED" << std::endl;
+          }
+          else { break; }
+        }
+      }
       std::cout << "HOST LAMMPS release END" << std::endl;
 #else
       for (const auto& lsim : trg.LS) {
