@@ -261,7 +261,10 @@ class HyperParamOpti {
       }
       std::cout << "HOST LAMMPS loop END" << std::endl;
       for (int worker=1; worker<ncpu;++worker) {
-        MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        int flag = 0;
+        MPI_Iprobe(worker, WORK_TAG, MPI_COMM_WORLD, &flag, &status);
+        if (flag)
+          MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
         std::cout << "Releasing worker: " << worker << std::endl;
       }
