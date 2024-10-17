@@ -203,6 +203,8 @@ class HyperParamOpti {
       const static int DATA_TAG = 1;
       const static int WORK_TAG = 0;
 
+      // communicate pot_file to workers
+
       MPI_Status status;
 
       auto wpkgs = trg.LS;  // make a copy of LammpsSim vec
@@ -227,10 +229,9 @@ class HyperParamOpti {
         if (it == available_workers.end()) {  // new worker is available
           available_workers.push_back(worker);
           MPI_Send(NULL, 0, MPI_INT, worker, WAIT_TAG, MPI_COMM_WORLD);
-          std::cout << "HOST available_workers: " << available_workers.size() << std::endl;
         }
         else {
-          // release eager worker as we will select a group of workers here
+          // release an eager worker as we will select a group of workers here
           MPI_Send(NULL, 0, MPI_INT, worker, WAIT_TAG, MPI_COMM_WORLD);
 
           // There are no more new workers available at the moment.
@@ -238,7 +239,6 @@ class HyperParamOpti {
           for (int j=0; j<wpkgs.size(); ++j) {
             int job_size = wpkgs[j].ncpu;
             if (job_size<=available_workers.size()) {
-              std::cout << "HOST the job fits available_workers: " << job_size << std::endl;
               std::vector<int> granks(available_workers.end() - job_size, available_workers.end());
               for (int worker: granks) {
                 MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, &status);
@@ -248,6 +248,16 @@ class HyperParamOpti {
                 MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
 
                 // send wpkgs[j].invar
+                // First, send the number of strings
+                int num_strings = wpkgs[j].invar.size();
+                MPI_Send(&num_strings, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+
+                // Send each string
+                for (const char* message : wpkgs[j].invar) {
+                  int length = strlen(message) + 1; // +1 for the null terminator
+                  MPI_Send(&length, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                  MPI_Send(message, length, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
+                }
               }
               wpkgs.erase(wpkgs.begin() + j);
               break; // break outer for loop
@@ -255,7 +265,6 @@ class HyperParamOpti {
           }
         }
       }
-      std::cout << "HOST LAMMPS loop END" << std::endl;
       int count2 = 1;
       while (true) {
         MPI_Recv(NULL, 0, MPI_INT, MPI_ANY_SOURCE, WORK_TAG, MPI_COMM_WORLD, &status);
