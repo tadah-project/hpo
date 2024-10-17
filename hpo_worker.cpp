@@ -61,24 +61,24 @@ void HPO_Worker::run() {
       // Perform LAMMPS simulation
       //for (const auto &tt: invar) std::cout << tt << " ";
       //std::cout << std::endl;
-      //std::cout << "D0" << rank << std::endl;
-      //auto *lmp = runner.run(work_comm, script, invar);
-      //int tloss = 0;
-      //std::cout << "D1" << rank << std::endl;
-      //if (!lmp) {
-      //std::cout << "D2" << rank << std::endl;
-      //  //tloss+=trg.LS[0].failscore;
-      //}
-      //else {
-      //std::cout << "D3" << rank << std::endl;
-      //  //for (const auto &v: trg.LS[0].varloss) {
-      //  //  double lmp_tloss= std::stod(runner.get_variable(lmp,v));
-      //  //  tloss+= lmp_tloss;
-      //  //}
-      //}
-      //std::cout << "D4" << rank << std::endl;
-      //if (lmp) delete lmp;
-      //std::cout << "D5" << rank << std::endl;
+      std::cout << "D0 " << rank << std::endl;
+      auto *lmp = runner.run(work_comm, script, invar);
+      int tloss = 0;
+      std::cout << "D1 " << rank << std::endl;
+      if (!lmp) {
+      std::cout << "D2 " << rank << std::endl;
+        //tloss+=trg.LS[0].failscore;
+      }
+      else {
+      std::cout << "D3 " << rank << std::endl;
+        //for (const auto &v: trg.LS[0].varloss) {
+        //  double lmp_tloss= std::stod(runner.get_variable(lmp,v));
+        //  tloss+= lmp_tloss;
+        //}
+      }
+      std::cout << "D4 " << rank << std::endl;
+      if (lmp) delete lmp;
+      std::cout << "D5 " << rank << std::endl;
 
       // Release 
       //MPI_Barrier(work_comm);
