@@ -57,18 +57,18 @@ void HPO_Worker::run() {
       // Perform LAMMPS simulation
       for (auto tt: invar) std::cout << tt << " ";
       std::cout << std::endl;
-      auto *lmp = runner.run(work_comm, script, invar);
-      int tloss = 0;
-      if (!lmp) {
-        //tloss+=trg.LS[0].failscore;
-      }
-      else {
-        //for (const auto &v: trg.LS[0].varloss) {
-        //  double lmp_tloss= std::stod(runner.get_variable(lmp,v));
-        //  tloss+= lmp_tloss;
-        //}
-      }
-      if (lmp) delete lmp;
+      //auto *lmp = runner.run(work_comm, script, invar);
+      //int tloss = 0;
+      //if (!lmp) {
+      //  //tloss+=trg.LS[0].failscore;
+      //}
+      //else {
+      //  //for (const auto &v: trg.LS[0].varloss) {
+      //  //  double lmp_tloss= std::stod(runner.get_variable(lmp,v));
+      //  //  tloss+= lmp_tloss;
+      //  //}
+      //}
+      //if (lmp) delete lmp;
 
       // Release 
       MPI_Group_free(&work_group);
