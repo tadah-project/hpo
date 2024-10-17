@@ -72,7 +72,7 @@ class LammpsRunner {
         }
         catch (std::exception& e) {
           std::cout << "LAMMPS Exception: " << e.what() << std::endl;
-          if (lmp) delete lmp;
+          delete lmp;
           return nullptr;
         }
         return lmp;
@@ -92,7 +92,7 @@ class LammpsRunner {
         lmp->input->file(script.c_str());
       } catch (std::exception& e) {
         std::cout << "LAMMPS Exception: " << e.what() << std::endl;
-        if (lmp) delete lmp;
+        delete lmp;
         return nullptr;
       }
       return lmp;
