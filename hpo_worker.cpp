@@ -53,12 +53,13 @@ void HPO_Worker::run() {
         char* buffer = new char[length];
         MPI_Recv(buffer, length, MPI_CHAR, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         sinvar.push_back(std::string(buffer));
-        invar.push_back(sinvar.back().c_str());
         delete[] buffer;
       }
-      std::cout << std::endl;
+      for (const auto& str : sinvar) {
+        invar.push_back(str.c_str());
+      }
       // Perform LAMMPS simulation
-      for (auto tt: invar) std::cout << tt << " ";
+      for (const auto &tt: invar) std::cout << tt << " ";
       std::cout << std::endl;
       //auto *lmp = runner.run(work_comm, script, invar);
       //int tloss = 0;
