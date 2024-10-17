@@ -1,11 +1,11 @@
 #include "hpo_worker.h"
 HPO_Worker::HPO_Worker(int rank, int ncpu, MPI_Group &world_group):
-    rank(rank),
-    ncpu(ncpu),
-    world_group(world_group)
-  {};
+  rank(rank),
+  ncpu(ncpu),
+  world_group(world_group)
+{};
 
-HPO_Worker::void run() {
+void HPO_Worker::run() {
   MPI_Status status;
   while (true) {
     MPI_Send(NULL, 0, MPI_INT, 0, WORK_TAG, MPI_COMM_WORLD);
