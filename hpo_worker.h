@@ -16,7 +16,7 @@ class HPO_Worker {
   MPI_Group &world_group;
   public:
   HPO_Worker(int rank, int ncpu, MPI_Group &world_group):
-    rannk(rank),
+    rank(rank),
     ncpu(ncpu),
     world_group(world_group)
   {}
