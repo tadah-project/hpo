@@ -6,13 +6,23 @@
 #endif
 
 class HPO_Worker {
+  const static int CONFIG_TAG = 4;
+  const static int WAIT_TAG = 3;
+  const static int RELEASE_TAG = 2;
+  const static int DATA_TAG = 1;
+  const static int WORK_TAG = 0;
   int rank;
   int ncpu;
-  HPO_Worker(int rank, int ncpu):
+  MPI_Group &world_group;
+  public:
+  HPO_Worker(int rank, int ncpu, MPI_Group &world_group):
     rannk(rank),
-    ncpu(ncpu)
+    ncpu(ncpu),
+    world_group(world_group)
   {}
+
   void run() {
+    MPI_Status status;
     while (true) {
       MPI_Send(NULL, 0, MPI_INT, 0, WORK_TAG, MPI_COMM_WORLD);
 
