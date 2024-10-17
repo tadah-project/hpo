@@ -53,7 +53,7 @@ void HPO_Worker::run() {
         char* buffer = new char[length];
         MPI_Recv(buffer, length, MPI_CHAR, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         sinvar.push_back(std::string(buffer));
-        invar.push_back(sinvar.back());
+        invar.push_back(sinvar.back().c_str());
         delete[] buffer;
       }
       std::cout << std::endl;
