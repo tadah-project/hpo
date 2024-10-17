@@ -4,7 +4,6 @@
 #ifdef TADAH_BUILD_MPI
 #include <mpi.h>
 #endif
-#include "runners.h"
 
 class HPO_Worker {
   const static int CONFIG_TAG = 4;
@@ -14,7 +13,6 @@ class HPO_Worker {
   const static int WORK_TAG = 0;
   int rank;
   int ncpu;
-  LammpsRunner runner;
   MPI_Group &world_group;
   public:
   HPO_Worker(int rank, int ncpu, MPI_Group &world_group);
