@@ -44,6 +44,7 @@ void HPO_Worker::run() {
       MPI_Recv(&num_strings, 1, MPI_INT, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
       std::vector<const char*> invar;
+      //std::vector<std::string> invar;
 
       // Receive each string
       for (int i = 0; i < num_strings; i++) {
@@ -51,11 +52,8 @@ void HPO_Worker::run() {
         MPI_Recv(&length, 1, MPI_INT, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         char* buffer = new char[length];
         MPI_Recv(buffer, length, MPI_CHAR, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        invar.push_back(buffer);
-      std::cout << buffer << " ";
-      std::cout << invar.back() << " ";
+        invar.push_back(std::string(buffer).c_str());
         delete[] buffer;
-      std::cout << invar.back() << " ";
       }
       std::cout << std::endl;
       // Perform LAMMPS simulation
