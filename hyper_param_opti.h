@@ -253,6 +253,8 @@ class HyperParamOpti {
           std::cout << "HOST available_workers: " << available_workers.size() << std::endl;
         }
         else {
+          // release eager worker as we will select a group of workers here
+          MPI_Send(NULL, 0, MPI_INT, worker, WAIT_TAG, MPI_COMM_WORLD);
           // There are no more new workers available at the moment.
           // Let's find the biggest job we can fit to them
 
@@ -261,11 +263,13 @@ class HyperParamOpti {
             if (job_size<=available_workers.size()) {
               std::cout << "HOST the job fits available_workers: " << job_size << std::endl;
               std::vector<int> granks(available_workers.end() - job_size, available_workers.end());
-              for (int i=0; i<job_size; ++i) {
-                int worker = available_workers.back();
-                available_workers.pop_back();
-                MPI_Send(&job_size, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+              //for (int i=0; i<job_size; ++i) {
+              for (int worker: granks) {
+                //int worker = available_workers.back();
+                //MPI_Send(&job_size, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, &status);
                 MPI_Send(granks.data(), granks.size(), MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                available_workers.pop_back();
                 // send wpkgs[j].script
                 //MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1, MPI_CHAR, worker, tag, MPI_COMM_WORLD);
 
@@ -282,6 +286,7 @@ class HyperParamOpti {
       while (true) {
         MPI_Recv(NULL, 0, MPI_INT, MPI_ANY_SOURCE, WORK_TAG, MPI_COMM_WORLD, &status);
         int worker=status.MPI_SOURCE;
+        int tag = status.MPI_TAG;
         MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
         count2++;
         if (count2==ncpu) break;
