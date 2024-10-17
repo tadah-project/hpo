@@ -5,6 +5,7 @@
 #include <mpi.h>
 #endif
 #include "runners.h"
+#include "hpo.h"
 
 class HPO_Worker {
   const static int CONFIG_TAG = 4;
