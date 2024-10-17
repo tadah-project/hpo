@@ -4,6 +4,7 @@
 #ifdef TADAH_BUILD_MPI
 #include <mpi.h>
 #endif
+#include "runners.h"
 
 class HPO_Worker {
   const static int CONFIG_TAG = 4;
@@ -13,6 +14,7 @@ class HPO_Worker {
   const static int WORK_TAG = 0;
   int rank;
   int ncpu;
+  LammpsRunner runner;
   MPI_Group &world_group;
   public:
   HPO_Worker(int rank, int ncpu, MPI_Group &world_group):
@@ -68,19 +70,19 @@ class HPO_Worker {
           invar.push_back(buffer);
           delete[] buffer;
         }
-        //// Perform LAMMPS simulation
-        //auto *lmp = runner.run(work_comm, script, invar);
-        //int tloss = 0;
-        //if (!lmp) {
-        //  //tloss+=trg.LS[0].failscore;
-        //}
-        //else {
-        //  //for (const auto &v: trg.LS[0].varloss) {
-        //  //  double lmp_tloss= std::stod(runner.get_variable(lmp,v));
-        //  //  tloss+= lmp_tloss;
-        //  //}
-        //}
-        //if (lmp) delete lmp;
+        // Perform LAMMPS simulation
+        auto *lmp = runner.run(work_comm, script, invar);
+        int tloss = 0;
+        if (!lmp) {
+          //tloss+=trg.LS[0].failscore;
+        }
+        else {
+          //for (const auto &v: trg.LS[0].varloss) {
+          //  double lmp_tloss= std::stod(runner.get_variable(lmp,v));
+          //  tloss+= lmp_tloss;
+          //}
+        }
+        if (lmp) delete lmp;
 
         // Release 
         MPI_Group_free(&work_group);

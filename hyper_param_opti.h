@@ -105,7 +105,6 @@ class HyperParamOpti {
 
     //double operator() (T args) {
     double operator() (T p) {
-      std::cout << "HOST it:" << it << std::endl;
       it++;
       using std::chrono::high_resolution_clock;
       using std::chrono::duration_cast;
@@ -212,7 +211,6 @@ class HyperParamOpti {
 
       while (true) {
         if (!wpkgs.size()) {
-          std::cout << "HOST: No more work packages, exiting loop..." << std::endl;
           break;
         }
 
