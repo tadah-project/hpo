@@ -245,7 +245,7 @@ class HyperParamOpti {
                 MPI_Send(granks.data(), granks.size(), MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
                 available_workers.pop_back();
                 // send wpkgs[j].script
-                MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1, MPI_CHAR, worker, tag, MPI_COMM_WORLD);
+                MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
 
                 // send wpkgs[j].invar
               }
