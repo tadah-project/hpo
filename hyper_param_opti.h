@@ -140,7 +140,6 @@ class HyperParamOpti {
       // HOST is waiting for workers requests
       MPI_Trainer_HOST HOST(config_temp, rank, ncpu);
       HOST.prep_wpckgs();
-      std::cout << "HOST first loop BEGIN" << std::endl;
       while (true) {
         // Exit loop if there are no more packages
         if (!HOST.has_packages()) break;
@@ -159,11 +158,9 @@ class HyperParamOpti {
               + std::to_string(HOST.worker));
         }
       }
-      std::cout << "HOST first loop END" << std::endl;
 
       // work finised, collect remaining data and release all workers
       int count=1;  // count number of released workers, skip host
-      std::cout << "HOST second loop BEGIN" << std::endl;
       while(true) {
         HOST.probe();
         if (HOST.tag==MPI_Trainer::DATA_TAG) {
@@ -174,10 +171,7 @@ class HyperParamOpti {
         }
         if (count==ncpu) {  break; }  // count starts from 1
       }
-      std::cout << "HOST second loop END" << std::endl;
-
       HOST.solve();
-      std::cout << "HOST solve END" << std::endl;
 #else 
       Trainer HOST(config_temp);
       train_stdb.clear_nn();
@@ -246,7 +240,6 @@ class HyperParamOpti {
                 available_workers.pop_back();
                 // send wpkgs[j].script
                 MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
-
                 // send wpkgs[j].invar
                 // First, send the number of strings
                 int num_strings = wpkgs[j].invar.size();
@@ -274,34 +267,6 @@ class HyperParamOpti {
         count2++;
         if (count2==ncpu) break;
       }
-      // THIS IS DEBUG
-      //MPI_Barrier(MPI_COMM_WORLD);
-      //for (int worker=1; worker<ncpu;++worker) {
-      //    //MPI_Recv(NULL, 0, MPI_INT, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-      //  MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
-      //  std::cout << "Releasing worker: " << worker << std::endl;
-      //  // clear after the worker is released
-      //  while (true) {
-      //    int flag = 0;
-      //    MPI_Iprobe(worker, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
-      //    if (flag) {
-      //      int tag = status.MPI_TAG;
-      //      std::cout << "WORKER: " << worker << "tag: " << tag << std::endl;
-      //      // Get the size of the incoming message
-      //      int count;
-      //      MPI_Get_count(&status, MPI_CHAR, &count);
-
-      //      // Allocate buffer of appropriate size
-      //      std::vector<char> buffer(count);
-
-      //      // Receive the message into the buffer
-      //      MPI_Recv(buffer.data(), count, MPI_CHAR, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-      //      std::cout << "WORKER: " << worker << "tag: " << tag << "MSG RECEIVED" << std::endl;
-      //    }
-      //    else { break; }
-      //  }
-      //}
-      std::cout << "HOST LAMMPS release END" << std::endl;
 #else
       for (const auto& lsim : trg.LS) {
         auto *lmp = runner.run(MPI_COMM_WORLD, trg.LS[0].script, trg.LS[0].invar);
