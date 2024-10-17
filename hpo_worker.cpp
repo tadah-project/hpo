@@ -55,6 +55,8 @@ void HPO_Worker::run() {
         delete[] buffer;
       }
       // Perform LAMMPS simulation
+      for (auto tt: invar) std::cout << tt << " ";
+      std::cout << std::endl;
       auto *lmp = runner.run(work_comm, script, invar);
       int tloss = 0;
       if (!lmp) {
