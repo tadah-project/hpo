@@ -52,10 +52,10 @@ void HPO_Worker::run() {
         char* buffer = new char[length];
         MPI_Recv(buffer, length, MPI_CHAR, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         invar.push_back(buffer);
-      for (auto tt: invar) std::cout << buffer << " ";
-      std::cout << std::endl;
+      std::cout << buffer << " ";
         delete[] buffer;
       }
+      std::cout << std::endl;
       // Perform LAMMPS simulation
       for (auto tt: invar) std::cout << tt << " ";
       std::cout << std::endl;
