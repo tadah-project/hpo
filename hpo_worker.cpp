@@ -82,8 +82,8 @@ void HPO_Worker::run() {
 
       // Release 
       MPI_Barrier(work_comm);
-      MPI_Group_free(&work_group);
-      MPI_Comm_free(&work_comm);
+      //MPI_Group_free(&work_group);
+      //MPI_Comm_free(&work_comm);
     }
     else if (tag==RELEASE_TAG) {
       MPI_Recv(NULL, 0, MPI_INT, 0, RELEASE_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
