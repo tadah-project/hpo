@@ -30,6 +30,7 @@ void HPO_Worker::run() {
       // create work_group and communicator for LAMMPS
       MPI_Group_incl(world_group, granks.size(), granks.data(), &work_group);
       MPI_Comm_create_group(MPI_COMM_WORLD, work_group, s /*tag*/, &work_comm);
+      MPI_Comm_set_errhandler(work_comm, MPI_ERRORS_RETURN);
       // Get LAMMPS script name
       MPI_Probe(0, WORK_TAG, MPI_COMM_WORLD, &status);
       MPI_Get_count(&status, MPI_CHAR, &s);
@@ -75,11 +76,11 @@ void HPO_Worker::run() {
 
       if (lmp) {
         delete lmp;
-        MPI_Group_free(&work_group);
-        MPI_Comm_free(&work_comm);
       }
       // Release 
       //MPI_Barrier(work_comm);
+      MPI_Group_free(&work_group);
+      MPI_Comm_free(&work_comm);
     }
     else if (tag==RELEASE_TAG) {
       MPI_Recv(NULL, 0, MPI_INT, 0, RELEASE_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
