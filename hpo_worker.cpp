@@ -1,4 +1,5 @@
 #include "hpo_worker.h"
+#include "runners.h"
 HPO_Worker::HPO_Worker(int rank, int ncpu, MPI_Group &world_group):
   rank(rank),
   ncpu(ncpu),
@@ -6,6 +7,7 @@ HPO_Worker::HPO_Worker(int rank, int ncpu, MPI_Group &world_group):
 {};
 
 void HPO_Worker::run() {
+  LammpsRunner runner;
   MPI_Status status;
   while (true) {
     MPI_Send(NULL, 0, MPI_INT, 0, WORK_TAG, MPI_COMM_WORLD);
