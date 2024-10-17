@@ -217,22 +217,22 @@ class HyperParamOpti {
       std::cout << "HOST LAMMPS loop BEGIN" << std::endl;
 
       // THIS IS DEBUG
-      MPI_Barrier(MPI_COMM_WORLD);
-      int flag = 0;
-      MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
-      int source = status.MPI_SOURCE;
-      if (flag) {
-        int count;
-        MPI_Get_count(&status, MPI_CHAR, &count);
+      //MPI_Barrier(MPI_COMM_WORLD);
+      //int flag = 0;
+      //MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
+      //int source = status.MPI_SOURCE;
+      //if (flag) {
+      //  int count;
+      //  MPI_Get_count(&status, MPI_CHAR, &count);
 
-        std::vector<char> buffer(count);
-        MPI_Recv(buffer.data(), count, MPI_CHAR, source, status.MPI_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      //  std::vector<char> buffer(count);
+      //  MPI_Recv(buffer.data(), count, MPI_CHAR, source, status.MPI_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-        std::cout << "Process 0 received: " << buffer.data() << std::endl;
-      } else {
-        std::cout << "No messages available." << std::endl;
-      }
-      MPI_Barrier(MPI_COMM_WORLD);
+      //  std::cout << "Process 0 received: " << buffer.data() << std::endl;
+      //} else {
+      //  std::cout << "No messages available." << std::endl;
+      //}
+      //MPI_Barrier(MPI_COMM_WORLD);
       // THIS IS END OF DEBUG
 
       while (true) {
@@ -292,7 +292,7 @@ class HyperParamOpti {
         if (count2==ncpu) break;
       }
       // THIS IS DEBUG
-      MPI_Barrier(MPI_COMM_WORLD);
+      //MPI_Barrier(MPI_COMM_WORLD);
       //for (int worker=1; worker<ncpu;++worker) {
       //    //MPI_Recv(NULL, 0, MPI_INT, worker, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
       //  MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
