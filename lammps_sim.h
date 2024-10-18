@@ -11,78 +11,57 @@
 /**
  * @class LammpsSim
  * 
- * @brief Represents a LAMMPS simulation.
- *
- * This class encapsulates the setup and execution information required 
- * to run a LAMMPS simulation using Tadah! It also holds parameters 
- * specific to the simulation for data processing with HPO (Hyperparameter Optimization).
+ * @brief Represents a LAMMPS simulation and provides functionality
+ * for serialisation and MPI communication.
  */
 class LammpsSim {
   private:
-    std::string cmd; ///< Command line extracted from the HPO configuration file.
-    std::vector<std::string> tokens; ///< Tokenized command line.
-    std::vector<std::string> outvar; ///< LAMMPS output variables.
-    // TODO: Define MPI_Comm if needed for MPI communication.
+    std::string cmd; /**< Command line configuration */
+    std::vector<std::string> tokens; /**< Tokenised command line */
+    std::vector<std::string> outvar; /**< LAMMPS output variables */
 
   public:
-    std::vector<const char*> invar; ///< LAMMPS input variables.
+    std::vector<const char*> invar; /**< LAMMPS input variables */
+    std::string script; /**< Name of the LAMMPS script file */
+    std::vector<std::string> varloss; /**< Variables related to the loss function */
 
-    /**
-     * @brief Name of the LAMMPS script file.
-     *
-     * The script file must be specified for the simulation to run.
-     */
-    std::string script;
-
-    /**
-     * @brief Variables related to the loss function.
-     *
-     * At least one variable must be defined to work with HPO.
-     */
-    std::vector<std::string> varloss;
-
-    int ncpu = 1; ///< Number of CPUs to be used, applicable in MPI environments only.
-    double weight; ///< Weight parameter for simulation.
-    int lossfunc; ///< Identifier for the loss function used.
-    std::string maxtime; ///< Maximum allowed time for simulation execution.
-    double failscore; ///< Score given when a simulation fails.
+    int ncpu = 1; /**< Number of CPUs to be used */
+    double weight; /**< Weight parameter for simulation */
+    int lossfunc; /**< Identifier for the loss function used */
+    std::string maxtime; /**< Maximum allowed time for simulation execution */
+    double failscore; /**< Score given when a simulation fails */
 
     /**
      * @brief Constructor for LammpsSim class.
      * 
-     * Initializes simulation parameters and tokenizes the command.
-     * 
-     * @param cmd Command line configuration.
+     * @param cmd The command line configuration.
      * @param LOSS_FUNC Default loss function identifier.
      * @param MAX_TIME Maximum time allowed for the simulation.
      * @param FAIL_SCORE Default fail score value.
      */
     LammpsSim(std::string &cmd, int LOSS_FUNC, std::string MAX_TIME, double FAIL_SCORE):
       cmd(cmd), lossfunc(LOSS_FUNC), maxtime(MAX_TIME), failscore(FAIL_SCORE)
-  {
-    // Ensure LAMMPS library integration.
-    invar.push_back(TADAH_LAMMPS_LIB); // Assume TADAH_LAMMPS_LIB is defined appropriately.
-    tokenise();
-    parse_tokens();
+    {
+      tokenise();
+      parse_tokens();
 
-    // Ensure required log and screen outputs are disabled by default.
-    if (std::find(invar.begin(), invar.end(), "-log") == invar.end() || 
-        std::find(invar.begin(), invar.end(), "-l") == invar.end()) {
-      invar.push_back("-log");
-      invar.push_back("none");
-    }
-    if (std::find(invar.begin(), invar.end(), "-screen") == invar.end() || 
-        std::find(invar.begin(), invar.end(), "-sc") == invar.end()) {
-      invar.push_back("-screen");
-      invar.push_back("none");
-    }
+      if (std::find(invar.begin(), invar.end(), "-log") == invar.end() || 
+          std::find(invar.begin(), invar.end(), "-l") == invar.end()) {
+        invar.push_back("-log");
+        invar.push_back("none");
+      }
+      if (std::find(invar.begin(), invar.end(), "-screen") == invar.end() || 
+          std::find(invar.begin(), invar.end(), "-sc") == invar.end()) {
+        invar.push_back("-screen");
+        invar.push_back("none");
+      }
 
-    if (!script.length())
-      throw std::runtime_error("LammpsSim object must have a script specified!\n");
-  }
+      if (!script.length())
+        throw std::runtime_error("LammpsSim object must have a script specified!\n");
+    }
 
     /**
-     * @brief Tokenizes the command string.
+     * @brief Tokenises the command line configuration.
      */
     void tokenise() {
       std::stringstream ss(cmd);
@@ -93,9 +72,7 @@ class LammpsSim {
     }
 
     /**
-     * @brief Parses the tokenized command string to set class parameters.
-     * 
-     * Processes each token and updates class variables based on command-line options.
+     * @brief Parses the tokenised command line to set class parameters.
      */
     void parse_tokens() {
       for (size_t i = 0; i < tokens.size(); ++i) {
@@ -113,7 +90,7 @@ class LammpsSim {
             invar.push_back(tokens[++i].c_str());
             invar.push_back(tokens[++i].c_str());
           }
-          i++; // skip additional parameter
+          i++;
         } else if (tokens[i] == "-o" || tokens[i] == "--outvar") {
           if (i + 1 < tokens.size()) {
             outvar.push_back(tokens[++i]);
@@ -138,14 +115,14 @@ class LammpsSim {
             m = (tsec - h * 3600) / 60;
             s = tsec - h * 3600 - m * 60;
             maxtime = std::to_string(h) + ":" + std::to_string(m)
-              + ":" + std::to_string(s) + " every 1";
+                      + ":" + std::to_string(s) + " every 1";
           }
         } else if (tokens[i] == "-n" || tokens[i] == "--ncpu") {
           if (i + 1 < tokens.size()) {
             ncpu = std::stoi(tokens[++i]);
           }
         } else {
-          throw std::runtime_error("Unknown LAMMPS config option:\n" + cmd);
+          throw std::runtime_error("Unknown LAMMPS config:\n" + cmd);
         }
       }
     }
@@ -162,53 +139,63 @@ class LammpsSim {
     }
 
     /**
-     * @brief Serializes the LammpsSim object for MPI communication.
+     * @brief Serialises the LammpsSim object for MPI communication.
      * 
-     * @param buffer Vector to store serialized data.
+     * @param buffer Vector to store serialised data.
      */
-    void serialize(std::vector<char>& buffer) const {
-      // Serialize each element
-      serialize_string(cmd, buffer);
-      serialize_string(script, buffer);
-      serialize_string(maxtime, buffer);
+    void serialise(std::vector<char>& buffer) const {
+      serialise_string(cmd, buffer);
+      serialise_string(script, buffer);
+      serialise_string(maxtime, buffer);
 
-      serialize_vector_string(varloss, buffer);
-      serialize_vector_string(outvar, buffer);
+      serialise_vector_string(varloss, buffer);
+      serialise_vector_string(outvar, buffer);
 
-      // Serialize primitive types
       buffer.insert(buffer.end(), reinterpret_cast<const char*>(&ncpu), reinterpret_cast<const char*>(&ncpu) + sizeof(ncpu));
       buffer.insert(buffer.end(), reinterpret_cast<const char*>(&weight), reinterpret_cast<const char*>(&weight) + sizeof(weight));
       buffer.insert(buffer.end(), reinterpret_cast<const char*>(&lossfunc), reinterpret_cast<const char*>(&lossfunc) + sizeof(lossfunc));
       buffer.insert(buffer.end(), reinterpret_cast<const char*>(&failscore), reinterpret_cast<const char*>(&failscore) + sizeof(failscore));
     }
 
-    static void serialize_string(const std::string& str, std::vector<char>& buffer) {
+    /**
+     * @brief Serialises a string for MPI communication.
+     * 
+     * @param str String to serialise.
+     * @param buffer Vector to store serialised data.
+     */
+    static void serialise_string(const std::string& str, std::vector<char>& buffer) {
       size_t len = str.size();
       buffer.insert(buffer.end(), reinterpret_cast<const char*>(&len), reinterpret_cast<const char*>(&len) + sizeof(len));
       buffer.insert(buffer.end(), str.begin(), str.end());
     }
 
-    static void serialize_vector_string(const std::vector<std::string>& vec, std::vector<char>& buffer) {
+    /**
+     * @brief Serialises a vector of strings for MPI communication.
+     * 
+     * @param vec Vector of strings to serialise.
+     * @param buffer Vector to store serialised data.
+     */
+    static void serialise_vector_string(const std::vector<std::string>& vec, std::vector<char>& buffer) {
       size_t len = vec.size();
       buffer.insert(buffer.end(), reinterpret_cast<const char*>(&len), reinterpret_cast<const char*>(&len) + sizeof(len));
       for (const auto& str : vec) {
-        serialize_string(str, buffer);
+        serialise_string(str, buffer);
       }
     }
 
     /**
-     * @brief Deserializes the LammpsSim object from MPI communication buffer.
+     * @brief Deserialises the LammpsSim object from MPI communication buffer.
      * 
-     * @param buffer Vector containing serialized data.
+     * @param buffer Vector containing serialised data.
+     * @param offset Current position in the buffer.
      */
-    void deserialize(const std::vector<char>& buffer) {
-      size_t offset = 0;
-      cmd = deserialize_string(buffer, offset);
-      script = deserialize_string(buffer, offset);
-      maxtime = deserialize_string(buffer, offset);
+    void deserialise(const std::vector<char>& buffer, size_t& offset) {
+      cmd = deserialise_string(buffer, offset);
+      script = deserialise_string(buffer, offset);
+      maxtime = deserialise_string(buffer, offset);
 
-      varloss = deserialize_vector_string(buffer, offset);
-      outvar = deserialize_vector_string(buffer, offset);
+      varloss = deserialise_vector_string(buffer, offset);
+      outvar = deserialise_vector_string(buffer, offset);
 
       ncpu = *reinterpret_cast<const int*>(&buffer[offset]);
       offset += sizeof(ncpu);
@@ -220,7 +207,14 @@ class LammpsSim {
       offset += sizeof(failscore);
     }
 
-    static std::string deserialize_string(const std::vector<char>& buffer, size_t& offset) {
+    /**
+     * @brief Deserialises a string from MPI communication buffer.
+     * 
+     * @param buffer Vector containing serialised data.
+     * @param offset Current position in the buffer.
+     * @return Deserialised string.
+     */
+    static std::string deserialise_string(const std::vector<char>& buffer, size_t& offset) {
       size_t len = *reinterpret_cast<const size_t*>(&buffer[offset]);
       offset += sizeof(len);
       std::string str(&buffer[offset], len);
@@ -228,14 +222,52 @@ class LammpsSim {
       return str;
     }
 
-    static std::vector<std::string> deserialize_vector_string(const std::vector<char>& buffer, size_t& offset) {
+    /**
+     * @brief Deserialises a vector of strings from MPI communication buffer.
+     * 
+     * @param buffer Vector containing serialised data.
+     * @param offset Current position in the buffer.
+     * @return Deserialised vector of strings.
+     */
+    static std::vector<std::string> deserialise_vector_string(const std::vector<char>& buffer, size_t& offset) {
       size_t len = *reinterpret_cast<const size_t*>(&buffer[offset]);
       offset += sizeof(len);
       std::vector<std::string> vec(len);
       for (size_t i = 0; i < len; ++i) {
-        vec[i] = deserialize_string(buffer, offset);
+        vec[i] = deserialise_string(buffer, offset);
       }
       return vec;
     }
+
+    /**
+     * @brief Serialises a vector of LammpsSim objects for MPI communication.
+     * 
+     * @param sims Vector of LammpsSim objects.
+     * @param buffer Vector to store serialised data.
+     */
+    static void serialise_vector_LammpsSim(const std::vector<LammpsSim>& sims, std::vector<char>& buffer) {
+      size_t len = sims.size();
+      buffer.insert(buffer.end(), reinterpret_cast<const char*>(&len), reinterpret_cast<const char*>(&len) + sizeof(len));
+      for (const auto& sim : sims) {
+        sim.serialise(buffer);
+      }
+    }
+
+    /**
+     * @brief Deserialises a vector of LammpsSim objects from MPI communication buffer.
+     * 
+     * @param buffer Vector containing serialised data.
+     * @param sims Vector to store deserialised LammpsSim objects.
+     */
+    static void deserialise_vector_LammpsSim(const std::vector<char>& buffer, std::vector<LammpsSim>& sims) {
+      size_t offset = 0;
+      size_t len = *reinterpret_cast<const size_t*>(&buffer[offset]);
+      offset += sizeof(len);
+      sims.resize(len);
+      for (size_t i = 0; i < len; ++i) {
+        sims[i].deserialise(buffer, offset);
+      }
+    }
 };
 #endif // LAMMPS_SIM_H
+
