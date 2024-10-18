@@ -12,7 +12,7 @@ LMP* LammpsRunner::run(MPI_Comm &sub_comm, std::string &script,
     lmp = new LMP(lmpargc, const_cast<char**>(lmp_tokens.data()), sub_comm);
     lmp->input->file(script.c_str());
   } catch (std::exception& e) {
-    std::cout << "LAMMPS Exception: " << e.what() << std::endl;
+    //std::cout << "LAMMPS Exception: " << e.what() << std::endl;
     delete lmp;
     return nullptr;
   }
