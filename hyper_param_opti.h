@@ -156,7 +156,6 @@ class HyperParamOpti {
       outfile << pot_tadah;
       outfile.close();
 
-
 #ifdef TADAH_BUILD_MPI
 
       const static int CONFIG_TAG = 4;
@@ -165,12 +164,12 @@ class HyperParamOpti {
       const static int DATA_TAG = 1;
       const static int WORK_TAG = 0;
 
-      // communicate pot_file to workers
-
       MPI_Status status;
 
       auto wpkgs = trg.LS;  // make a copy of LammpsSim vec
                             // LS is sorted
+      // Distribute LS to all workers?
+ 
       if (wpkgs[0].ncpu>ncpu-1) {
         throw std::runtime_error   // TODO change to MPI
           ("Requested LAMMPS simulation size is bigger\n\\
@@ -205,6 +204,7 @@ class HyperParamOpti {
                 MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, &status);
                 MPI_Send(granks.data(), granks.size(), MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
                 available_workers.pop_back();
+                // TODO just send j index of the wpkgs vector as every worker has a copy of LS
                 // send wpkgs[j].script
                 MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
                 // send wpkgs[j].invar
@@ -250,8 +250,6 @@ class HyperParamOpti {
       }
 #endif
 
-      // while WORKERS are finishing LAMMPS sims
-      // HOST is predicting energy, forces and stresses.
       pot_tadah.set_defaults();
       pot_tadah.postprocess();
 
