@@ -44,6 +44,7 @@ class LammpsSim {
     LammpsSim(std::string &cmd, int LOSS_FUNC, std::string MAX_TIME, double FAIL_SCORE):
       cmd(cmd), lossfunc(LOSS_FUNC), maxtime(MAX_TIME), failscore(FAIL_SCORE)
     {
+      invar.push_back(TADAH_LAMMPS_LIB); // Ensure this is a string literal
       tokenise();
       parse_tokens();
 

@@ -8,12 +8,6 @@ LMP* LammpsRunner::run(MPI_Comm &sub_comm, std::string &script,
   int lmpargc = static_cast<int>(lmp_tokens.size());
   LMP* lmp = nullptr;
 
-  for (const auto& str : lmp_tokens) {
-    std::cout << str << " ";
-  }
-  std::cout << std::endl;
-  std::cout << script<< std::endl;
-
   try {
     lmp = new LMP(lmpargc, const_cast<char**>(lmp_tokens.data()), sub_comm);
     lmp->input->file(script.c_str());
