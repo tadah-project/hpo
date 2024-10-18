@@ -15,11 +15,11 @@ class HPO_Worker {
   int rank;
   int ncpu;
   MPI_Group &world_group;
-  bool use_lammps;
 
   public:
   HPO_Worker(int rank, int ncpu, MPI_Group &world_group);
 
+  bool use_lammps;
   void run();
 };
 #endif
