@@ -10,6 +10,12 @@ HPO_Worker::HPO_Worker(int rank, int ncpu, MPI_Group &world_group):
     std::vector<char> buffer(buffer_size);
     MPI_Bcast(buffer.data(), buffer.size(), MPI_CHAR, 0, MPI_COMM_WORLD);
     LammpsSim::deserialise_vector_LammpsSim(buffer, LS);
+    for (const auto &ls : LS) {
+      for (const auto &str : ls.invar) {
+        std::cout << str << " ";
+      }
+      std::cout << std::endl;
+    }
 };
 
 void HPO_Worker::run() {

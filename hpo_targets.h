@@ -12,8 +12,6 @@
 #include <sstream>
 #include <tuple>
 
-
-
 /**
  * Essentially a config file for HPO
  *
