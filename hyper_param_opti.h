@@ -87,6 +87,11 @@ class HyperParamOpti {
 
 #ifndef TADAH_BUILD_MPI
     train_stdb.add(config);
+    std::vector<char> buffer;
+    LammpsSim::serialise_vector_LammpsSim(wpkgs, buffer);
+    int buffer_size = buffer.size();
+    MPI_Bcast(&buffer_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(buffer.data(), buffer.size(), MPI_CHAR, 0, MPI_COMM_WORLD);
 #endif
 
     //if (config.exist("HPOEVERY")) {
@@ -169,11 +174,6 @@ class HyperParamOpti {
       auto wpkgs = trg.LS;  // make a copy of LammpsSim vec
                             // LS is sorted
                             // Distribute LS to all workers?
-      std::vector<char> buffer;
-      LammpsSim::serialise_vector_LammpsSim(wpkgs, buffer);
-      int buffer_size = buffer.size();
-      MPI_Bcast(&buffer_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
-      MPI_Bcast(buffer.data(), buffer.size(), MPI_CHAR, 0, MPI_COMM_WORLD);
 
       if (wpkgs[0].ncpu>ncpu-1) {
         throw std::runtime_error   // TODO change to MPI
