@@ -69,7 +69,7 @@ class LammpsSim {
      * 
      * @param buffer Vector to store serialised data.
      */
-    void serialise(std::vector<char>& buffer);
+    void serialise(std::vector<char>& buffer) const;
 
     /**
      * @brief Serialises a string for MPI communication.
