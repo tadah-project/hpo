@@ -1,5 +1,5 @@
-#ifndef HYPER_PARAM_OPTI_H
-#define HYPER_PARAM_OPTI_H
+#ifndef HPO_HOST_H
+#define HPO_HOST_H
 
 #include "../CORE/config/config.h"
 #include "../MLIP/structure_db.h"
@@ -45,13 +45,13 @@ inline omp_int_t omp_get_num_threads() { return 1;}
  *
  *     Config config("config.train");
  *     HPOTargets trg(config, "targets");
- *     HyperParamOpti<dlib::matrix<double,0,1>,LammpsRunner> 
+ *     HPO_Host<dlib::matrix<double,0,1>,LammpsRunner> 
    *     hpo(config,trg,"config_val");
  *     # the object is ready to be passed to the optimiser.
  *
  */
 template <typename T, typename R>
-class HyperParamOpti {
+class HPO_Host {
   private:
     R runner;
     HPOTargets &trg;
@@ -77,7 +77,7 @@ class HyperParamOpti {
     }
 
   public:
-    HyperParamOpti(Config c, HPOTargets &trg, std::string &val_file):
+    HPO_Host(Config c, HPOTargets &trg, std::string &val_file):
       trg(trg),
       //glf(trg),
       config(c)
