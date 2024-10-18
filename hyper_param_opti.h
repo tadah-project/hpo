@@ -169,6 +169,9 @@ class HyperParamOpti {
       auto wpkgs = trg.LS;  // make a copy of LammpsSim vec
                             // LS is sorted
       // Distribute LS to all workers?
+      std::vector<char> buffer;
+      LammpsSim::serialise_vector_LammpsSim(wpkgs, buffer);
+      MPI_Bcast(buffer.data(), buffer.size(), MPI_CHAR, 0, MPI_COMM_WORLD);
  
       if (wpkgs[0].ncpu>ncpu-1) {
         throw std::runtime_error   // TODO change to MPI
