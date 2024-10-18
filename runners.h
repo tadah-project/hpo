@@ -8,6 +8,10 @@
 #include <mpi.h>
 #endif
 
+#include TADAH_LMPA
+#include TADAH_LMPB
+#include TADAH_LMPC
+
 /** 
  * @class LammpsRunner
  * @brief A class to simplify running LAMMPS simulations.
@@ -23,58 +27,14 @@
  */
 class LammpsRunner {
   public:
-    /// Typedef for LAMMPS instance
-    typedef LAMMPS_NS::LAMMPS RI;
 
-    /// Default constructor for LammpsRunner
+    // Typedef for LAMMPS instance
+    typedef LAMMPS_NS::LAMMPS LMP;
+
+    // Default constructor for LammpsRunner
     LammpsRunner();
 
-    /**
-     * @brief Create a LAMMPS instance with specified arguments.
-     *
-     * @param sub_comm MPI_Comm object for sub-communication.
-     * @param logfile Name of the log file. Defaults to "none".
-     * @param args Additional arguments for LAMMPS initialization.
-     * @return Pointer to the created LAMMPS instance.
-     */
-    template <typename ...Args>
-      RI* instance(MPI_Comm &sub_comm,
-          std::string logfile="none", Args...args) {
-
-        const char *lmpargv[] = {TADAH_LAMMPS_LIB, "-log", logfile.c_str(), args...};
-        int lmpargc = sizeof(lmpargv) / sizeof(const char *);
-
-        // Create and return a new LAMMPS instance
-        return new RI(lmpargc, (char **)lmpargv, sub_comm);
-      }
-
-    /**
-     * @brief Run a LAMMPS script with given arguments.
-     *
-     * @param sub_comm MPI_Comm object for sub-communication.
-     * @param script The path to the LAMMPS script file.
-     * @param logfile Name of the log file. Defaults to "log.lammps".
-     * @param args Additional arguments for the LAMMPS run.
-     * @return Pointer to the LAMMPS instance, or nullptr on failure.
-     */
-    template <typename ...Args>
-      RI* run(MPI_Comm &sub_comm, std::string script,
-          std::string logfile="log.lammps", Args...args) {
-
-        RI *lmp = nullptr;
-        try {
-          lmp = instance(sub_comm, logfile, args...);
-          lmp->input->file(script.c_str());
-        }
-        catch (std::exception& e) {
-          std::cout << "LAMMPS Exception: " << e.what() << std::endl;
-          delete lmp;
-          return nullptr;
-        }
-        return lmp;
-      }
-
-    RI* run(MPI_Comm &sub_comm, std::string &script,
+    LMP* run(MPI_Comm &sub_comm, std::string &script,
         std::vector<const char*> &lmp_tokens);
 
     /**
@@ -84,7 +44,7 @@ class LammpsRunner {
      * @param varname The name of the variable to retrieve.
      * @return The value of the variable as a string.
      */
-    std::string get_variable(RI* lmp, std::string varname) {
+    std::string get_variable(LMP* lmp, std::string varname) {
       return lmp->input->variable->retrieve(varname.c_str());
     }
 };
