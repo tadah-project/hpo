@@ -159,7 +159,7 @@ class HPO_Host {
 
 #ifdef TADAH_BUILD_MPI
       if (use_lammps)
-        run();
+        run(rank, ncpu);
 
 #else
       for (const auto& lsim : trg.LS) {
@@ -233,7 +233,7 @@ class HPO_Host {
       //std::cout << "T4: " << t54.count() << "ms\n";
       return tloss;
     }
-    void run() {
+    void run(int rank, int ncpu) {
       const static int CONFIG_TAG = 4;
       const static int WAIT_TAG = 3;
       const static int RELEASE_TAG = 2;
