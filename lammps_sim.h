@@ -31,6 +31,8 @@ class LammpsSim {
     std::string maxtime; /**< Maximum allowed time for simulation execution */
     double failscore; /**< Score given when a simulation fails */
 
+    LammpsSim() {};
+
     /**
      * @brief Constructor for LammpsSim class.
      * 
