@@ -85,13 +85,14 @@ class HyperParamOpti {
     Config val_config(val_file);
     val_stdb.add(val_config);
 
-#ifndef TADAH_BUILD_MPI
-    train_stdb.add(config);
+#ifdef TADAH_BUILD_MPI
     std::vector<char> buffer;
     LammpsSim::serialise_vector_LammpsSim(wpkgs, buffer);
     int buffer_size = buffer.size();
     MPI_Bcast(&buffer_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(buffer.data(), buffer.size(), MPI_CHAR, 0, MPI_COMM_WORLD);
+#else
+    train_stdb.add(config);
 #endif
 
     //if (config.exist("HPOEVERY")) {
