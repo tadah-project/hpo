@@ -74,6 +74,7 @@ void HPO_Worker::run() {
         std::cout << str << " ";
       }
       std::cout << std::endl;
+      std::cout << script<< std::endl;
       // Perform LAMMPS simulation
       //for (const auto &tt: invar) std::cout << tt << " ";
       //std::cout << std::endl;
