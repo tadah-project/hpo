@@ -65,6 +65,9 @@ void HPO_Worker::run() {
       for (const auto& str : sinvar) {
         invar.push_back(str.c_str());
       }
+
+      std::cout << invar << std::endl;
+      std::cout << sinvar << std::endl;
       // Perform LAMMPS simulation
       //for (const auto &tt: invar) std::cout << tt << " ";
       //std::cout << std::endl;
