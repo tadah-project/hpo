@@ -12,9 +12,6 @@
 #include TADAH_LMPB
 #include TADAH_LMPC
 
-// Typedef for LAMMPS instance
-typedef LAMMPS_NS::LAMMPS LMP;
-
 /** 
  * @class LammpsRunner
  * @brief A class to simplify running LAMMPS simulations.
@@ -31,10 +28,18 @@ typedef LAMMPS_NS::LAMMPS LMP;
 class LammpsRunner {
   public:
 
+    // Typedef for LAMMPS instance
+    typedef LAMMPS_NS::LAMMPS LMP;
 
     // Default constructor for LammpsRunner
     LammpsRunner();
 
+    /** Create LAMMPS instance and run a script 
+     *
+     * Return a pointer to LAMMPS instance.
+     *
+     * In case of LAMMPS throwing exception return nullptr.
+     */
     LMP* run(MPI_Comm &sub_comm, std::string &script,
         std::vector<const char*> &lmp_tokens);
 
