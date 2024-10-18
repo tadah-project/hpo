@@ -12,6 +12,9 @@
 #include "../MLIP/analytics/analytics.h"
 #include "../CORE/utils/utils.h"
 
+class GLF2 {
+  std::<double> w;
+}
 class GLF {
     private:
         HPOTargets &trg;

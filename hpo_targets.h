@@ -1,6 +1,8 @@
 #ifndef HPO_TARGETS_H
 #define HPO_TARGETS_H
 
+#include "lammps_sim.h"
+
 #include <cmath>
 #include <vector>
 #include <unordered_map>
@@ -10,155 +12,6 @@
 #include <sstream>
 #include <tuple>
 
-
-/** This class represents LAMMPS simulation.
- *
- * In particular it contains all required information to
- * run LAMMPS simulation using Tadah!
- *
- * It also contains simulation specific parameters
- * for further data processing with HPO.
- */
-class LammpsSim {
-  private:
-    std::string cmd; // the command line from HPO config file
-    std::vector<std::string> tokens;  // cmd tokenised
-    std::vector<std::string> outvar;  // LAMMPS out variables
-
-    // TODO define MPI_Comm?
-  public:
-    std::vector<const char*> invar;   // LAMMPS input variables
-    // Required: 
-    std::string script;  // LMP script name
-    std::vector<std::string> varloss; // at leat one --varloss variable
-                                      // must be defined in the script
-                                      // so it can be used with HPO
-
-    // Optional:
-    int ncpu = 1; // the number of cpus to be used, MPI only
-    double weight;
-    int lossfunc;
-    std::string maxtime;
-    double failscore;
-
-    LammpsSim(std::string &cmd,
-        int LOSS_FUNC, std::string MAX_TIME, double FAIL_SCORE):
-      cmd(cmd)
-  {
-    // set default values from trg
-    lossfunc=LOSS_FUNC;
-    maxtime=MAX_TIME;
-    failscore=FAIL_SCORE;
-
-    // provide LAMMPS library
-    invar.push_back(TADAH_LAMMPS_LIB); // Ensure this is a string literal
-    tokenise();
-
-    parse_tokens(); // overwrites default values
-
-    // search invar only as tokens may contain -l for lossfunc as well
-    // default no log file
-    auto it1 = std::find(invar.begin(), invar.end(), "-log");
-    auto it2 = std::find(invar.begin(), invar.end(), "-l");
-    if (it1 == invar.end() || it2 == invar.end()) {
-      invar.push_back("-log");
-      invar.push_back("none");
-    }
-    // default no screen output
-    auto it3 = std::find(invar.begin(), invar.end(), "-screen");
-    auto it4 = std::find(invar.begin(), invar.end(), "-sc");
-    if (it3 == invar.end() || it4 == invar.end()) {
-      invar.push_back("-screen");
-      invar.push_back("none");
-    }
-    
-    if (!script.length())
-      throw std::runtime_error("LammpsSim object without a script!\n");
-  }
-
-    // method to tokenise cmd
-    void tokenise() {
-      std::stringstream ss(cmd);
-      std::string token;
-
-      while (ss >> token) {
-        tokens.push_back(token);
-      }
-    }
-
-    void parse_tokens() {
-      for (size_t i = 0; i < tokens.size(); ++i) {
-        if (tokens[i] == "-s" || tokens[i] == "--script") {
-          if (i + 1 < tokens.size()) {
-            script = tokens[i+1];
-          }
-          i++;
-        }
-        else if (tokens[i] == "-v" || tokens[i] == "--varloss") {
-          if (i + 1 < tokens.size()) {
-            varloss.push_back(tokens[i+1]);
-          }
-          i++;
-        }
-        else if (tokens[i] == "-i" || tokens[i] == "--invar") {
-          if (i + 2 < tokens.size()) {
-            invar.push_back("-var");
-            invar.push_back(tokens[i+1].c_str());
-            invar.push_back(tokens[i+2].c_str());
-          }
-          i+=2; // Skip the next 2 tokens
-        }
-        else if (tokens[i] == "-o" || tokens[i] == "--outvar") {
-          if (i + 1 < tokens.size()) {
-            outvar.push_back(tokens[i+1]);
-          }
-          i++;
-        }
-        else if (tokens[i] == "-w" || tokens[i] == "--weight") {
-          if (i + 1 < tokens.size()) {
-            weight = std::stod(tokens[i+1]);
-          }
-          i++;
-        }
-        else if (tokens[i] == "-f" || tokens[i] == "--failscore") {
-          if (i + 1 < tokens.size()) {
-            failscore = std::stod(tokens[i+1]);
-          }
-          i++;
-        }
-        else if (tokens[i] == "-l" || tokens[i] == "--lossfunc") {
-          if (i + 1 < tokens.size()) {
-            lossfunc = std::stoi(tokens[i+1]);
-          }
-          i++;
-        }
-        else if (tokens[i] == "-m" || tokens[i] == "--maxtime") {
-          if (i + 1 < tokens.size()) {
-            int tsec = std::stoi(tokens[i+1]);
-            int s,m,h;
-            h=tsec/3600;
-            m=(tsec-h*3600)/60;
-            s=tsec-h*3600-m*60;
-            maxtime=std::to_string(h) + ":" + std::to_string(m)
-              + ":" + std::to_string(s) + " every 1";
-          }
-          i++;
-        }
-        else if (tokens[i] == "-n" || tokens[i] == "--ncpu") {
-          if (i + 1 < tokens.size()) {
-            ncpu = std::stoi(tokens[i+1]);
-          }
-          i++;
-        }
-        else {
-          throw std::runtime_error("Unknown LAMMPS config:\n" + cmd);
-        }
-      }
-    }
-    static bool greater(const LammpsSim& lhs, const LammpsSim& rhs) {
-      return lhs.ncpu > rhs.ncpu;
-    }
-};
 
 
 /**
@@ -173,7 +26,7 @@ class HPOTargets {
     size_t      MAX_CALLS=std::numeric_limits<size_t>::max();
     double      EPS=1e-2; // control optimiser precision
     double      FAIL_SCORE=1000;
-    int         LOSS_FUNC=1;
+    int         LOSS_FUNC=1; 
     std::string MAX_TIME="00:00:10 every 1";
 
     std::vector<std::string> optim_map;
