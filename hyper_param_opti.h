@@ -137,51 +137,20 @@ class HyperParamOpti {
       MPI_Bcast(cs.data(), cs_size, MPI_CHAR, 0, MPI_COMM_WORLD);
 
       // HOST is waiting for workers requests
-      MPI_Trainer_HOST HOST(config_temp, rank, ncpu);
-      HOST.prep_wpckgs();
-      while (true) {
-        // Exit loop if there are no more packages
-        if (!HOST.has_packages()) break;
-
-        // probe ANY request from ANY worker
-        HOST.probe();
-
-        if (HOST.tag==MPI_Trainer::WORK_TAG) {
-          HOST.work_tag();
-        }
-        else if (HOST.tag==MPI_Trainer::DATA_TAG) {
-          HOST.data_tag();
-        }
-        else {
-          throw std::runtime_error("HOST: Unexpected request from "
-              + std::to_string(HOST.worker));
-        }
-      }
-
-      // work finised, collect remaining data and release all workers
-      int count=1;  // count number of released workers, skip host
-      while(true) {
-        HOST.probe();
-        if (HOST.tag==MPI_Trainer::DATA_TAG) {
-          HOST.data_tag();
-        }
-        else {
-          HOST.release_tag(count);
-        }
-        if (count==ncpu) {  break; }  // count starts from 1
-      }
-      HOST.solve();
+      TrainerHost host(config_temp, rank, ncpu);
+      host.run();
+      host.solve();
 #else 
-      Trainer HOST(config_temp);
+      Trainer host(config_temp);
       train_stdb.clear_nn();
-      HOST.train(train_stdb);
+      host.train(train_stdb);
 #endif
       // End of training
 
       double tloss = 0;
 
       // This potential will be used by LAMMPS
-      Config pot_tadah = HOST.model->get_param_file();
+      Config pot_tadah = host.model->get_param_file();
       std::ofstream outfile;
       outfile.open ("pot.tadah");
       outfile << pot_tadah;
