@@ -258,7 +258,7 @@ class HyperParamOpti {
       val_stdb.clear_nn();
       NNFinder nnf(pot_tadah);
       nnf.calc(val_stdb);
-      StructureDB stpred = HOST.model->predict(pot_tadah,val_stdb,HOST.dc);
+      StructureDB stpred = host.model->predict(pot_tadah,val_stdb,host.dc);
 
       Analytics a(val_stdb,stpred);
 
