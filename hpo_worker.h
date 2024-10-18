@@ -15,7 +15,7 @@ class HPO_Worker {
   int rank;
   int ncpu;
   MPI_Group &world_group;
-  std::vector<LammpsSim> LS;
+
   public:
   HPO_Worker(int rank, int ncpu, MPI_Group &world_group);
 
