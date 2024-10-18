@@ -86,7 +86,7 @@ class HPO_Host {
     LammpsSim::serialise_vector_LammpsSim(trg.LS, buffer);
     int buffer_size = buffer.size();
     for (const auto &str : buffer) {
-      std::cout << str << " ";
+      std::cout << str;
     }
     std::cout << std::endl;
     MPI_Bcast(&buffer_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
