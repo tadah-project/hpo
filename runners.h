@@ -12,6 +12,9 @@
 #include TADAH_LMPB
 #include TADAH_LMPC
 
+// Typedef for LAMMPS instance
+typedef LAMMPS_NS::LAMMPS LMP;
+
 /** 
  * @class LammpsRunner
  * @brief A class to simplify running LAMMPS simulations.
@@ -28,8 +31,6 @@
 class LammpsRunner {
   public:
 
-    // Typedef for LAMMPS instance
-    typedef LAMMPS_NS::LAMMPS LMP;
 
     // Default constructor for LammpsRunner
     LammpsRunner();
