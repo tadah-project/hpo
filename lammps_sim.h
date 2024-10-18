@@ -80,50 +80,67 @@ class LammpsSim {
       for (size_t i = 0; i < tokens.size(); ++i) {
         if (tokens[i] == "-s" || tokens[i] == "--script") {
           if (i + 1 < tokens.size()) {
-            script = tokens[++i];
-          }
-        } else if (tokens[i] == "-v" || tokens[i] == "--varloss") {
-          if (i + 1 < tokens.size()) {
-            varloss.push_back(tokens[++i]);
-          }
-        } else if (tokens[i] == "-i" || tokens[i] == "--invar") {
-          if (i + 2 < tokens.size()) {
-            invar.push_back("-var");
-            invar.push_back(tokens[++i].c_str());
-            invar.push_back(tokens[++i].c_str());
+            script = tokens[i+1];
           }
           i++;
-        } else if (tokens[i] == "-o" || tokens[i] == "--outvar") {
+        }
+        else if (tokens[i] == "-v" || tokens[i] == "--varloss") {
           if (i + 1 < tokens.size()) {
-            outvar.push_back(tokens[++i]);
+            varloss.push_back(tokens[i+1]);
           }
-        } else if (tokens[i] == "-w" || tokens[i] == "--weight") {
+          i++;
+        }
+        else if (tokens[i] == "-i" || tokens[i] == "--invar") {
+          if (i + 2 < tokens.size()) {
+            invar.push_back("-var");
+            invar.push_back(tokens[i+1].c_str());
+            invar.push_back(tokens[i+2].c_str());
+          }
+          i+=2; // Skip the next 2 tokens
+        }
+        else if (tokens[i] == "-o" || tokens[i] == "--outvar") {
           if (i + 1 < tokens.size()) {
-            weight = std::stod(tokens[++i]);
+            outvar.push_back(tokens[i+1]);
           }
-        } else if (tokens[i] == "-f" || tokens[i] == "--failscore") {
+          i++;
+        }
+        else if (tokens[i] == "-w" || tokens[i] == "--weight") {
           if (i + 1 < tokens.size()) {
-            failscore = std::stod(tokens[++i]);
+            weight = std::stod(tokens[i+1]);
           }
-        } else if (tokens[i] == "-l" || tokens[i] == "--lossfunc") {
+          i++;
+        }
+        else if (tokens[i] == "-f" || tokens[i] == "--failscore") {
           if (i + 1 < tokens.size()) {
-            lossfunc = std::stoi(tokens[++i]);
+            failscore = std::stod(tokens[i+1]);
           }
-        } else if (tokens[i] == "-m" || tokens[i] == "--maxtime") {
+          i++;
+        }
+        else if (tokens[i] == "-l" || tokens[i] == "--lossfunc") {
           if (i + 1 < tokens.size()) {
-            int tsec = std::stoi(tokens[++i]);
-            int s, m, h;
-            h = tsec / 3600;
-            m = (tsec - h * 3600) / 60;
-            s = tsec - h * 3600 - m * 60;
-            maxtime = std::to_string(h) + ":" + std::to_string(m)
-                      + ":" + std::to_string(s) + " every 1";
+            lossfunc = std::stoi(tokens[i+1]);
           }
-        } else if (tokens[i] == "-n" || tokens[i] == "--ncpu") {
+          i++;
+        }
+        else if (tokens[i] == "-m" || tokens[i] == "--maxtime") {
           if (i + 1 < tokens.size()) {
-            ncpu = std::stoi(tokens[++i]);
+            int tsec = std::stoi(tokens[i+1]);
+            int s,m,h;
+            h=tsec/3600;
+            m=(tsec-h*3600)/60;
+            s=tsec-h*3600-m*60;
+            maxtime=std::to_string(h) + ":" + std::to_string(m)
+              + ":" + std::to_string(s) + " every 1";
           }
-        } else {
+          i++;
+        }
+        else if (tokens[i] == "-n" || tokens[i] == "--ncpu") {
+          if (i + 1 < tokens.size()) {
+            ncpu = std::stoi(tokens[i+1]);
+          }
+          i++;
+        }
+        else {
           throw std::runtime_error("Unknown LAMMPS config:\n" + cmd);
         }
       }
