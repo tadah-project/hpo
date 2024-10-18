@@ -60,26 +60,16 @@ class LammpsSim {
      * @param rhs Right-hand side LammpsSim object.
      * @return True if lhs uses more CPUs than rhs, otherwise False.
      */
-    static bool greater(const LammpsSim& lhs, const LammpsSim& rhs);
+    static bool greater(const LammpsSim& lhs, const LammpsSim& rhs) {
+      return lhs.ncpu > rhs.ncpu;
+    }
 
     /**
      * @brief Serialises the LammpsSim object for MPI communication.
      * 
      * @param buffer Vector to store serialised data.
      */
-    void serialise(std::vector<char>& buffer) const {
-      serialise_string(cmd, buffer);
-      serialise_string(script, buffer);
-      serialise_string(maxtime, buffer);
-
-      serialise_vector_string(varloss, buffer);
-      serialise_vector_string(outvar, buffer);
-
-      buffer.insert(buffer.end(), reinterpret_cast<const char*>(&ncpu), reinterpret_cast<const char*>(&ncpu) + sizeof(ncpu));
-      buffer.insert(buffer.end(), reinterpret_cast<const char*>(&weight), reinterpret_cast<const char*>(&weight) + sizeof(weight));
-      buffer.insert(buffer.end(), reinterpret_cast<const char*>(&lossfunc), reinterpret_cast<const char*>(&lossfunc) + sizeof(lossfunc));
-      buffer.insert(buffer.end(), reinterpret_cast<const char*>(&failscore), reinterpret_cast<const char*>(&failscore) + sizeof(failscore));
-    }
+    void serialise(std::vector<char>& buffer);
 
     /**
      * @brief Serialises a string for MPI communication.
@@ -113,23 +103,7 @@ class LammpsSim {
      * @param buffer Vector containing serialised data.
      * @param offset Current position in the buffer.
      */
-    void deserialise(const std::vector<char>& buffer, size_t& offset) {
-      cmd = deserialise_string(buffer, offset);
-      script = deserialise_string(buffer, offset);
-      maxtime = deserialise_string(buffer, offset);
-
-      varloss = deserialise_vector_string(buffer, offset);
-      outvar = deserialise_vector_string(buffer, offset);
-
-      ncpu = *reinterpret_cast<const int*>(&buffer[offset]);
-      offset += sizeof(ncpu);
-      weight = *reinterpret_cast<const double*>(&buffer[offset]);
-      offset += sizeof(weight);
-      lossfunc = *reinterpret_cast<const int*>(&buffer[offset]);
-      offset += sizeof(lossfunc);
-      failscore = *reinterpret_cast<const double*>(&buffer[offset]);
-      offset += sizeof(failscore);
-    }
+    void deserialise(const std::vector<char>& buffer, size_t& offset);
 
     /**
      * @brief Deserialises a string from MPI communication buffer.
@@ -194,4 +168,3 @@ class LammpsSim {
     }
 };
 #endif // LAMMPS_SIM_H
-
