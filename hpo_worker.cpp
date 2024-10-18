@@ -5,11 +5,11 @@ HPO_Worker::HPO_Worker(int rank, int ncpu, MPI_Group &world_group):
   ncpu(ncpu),
   world_group(world_group)
 {
-    int buffer_size;
-    MPI_Bcast(&buffer_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    std::vector<char> buffer(buffer_size);
-    MPI_Bcast(buffer.data(), buffer.size(), MPI_CHAR, 0, MPI_COMM_WORLD);
-    LammpsSim::deserialise_vector_LammpsSim(buffer, LS);
+    //int buffer_size;
+    //MPI_Bcast(&buffer_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    //std::vector<char> buffer(buffer_size);
+    //MPI_Bcast(buffer.data(), buffer.size(), MPI_CHAR, 0, MPI_COMM_WORLD);
+    //LammpsSim::deserialise_vector_LammpsSim(buffer, LS);
 };
 
 void HPO_Worker::run() {
