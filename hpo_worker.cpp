@@ -6,8 +6,7 @@ HPO_Worker::HPO_Worker(int rank, int ncpu, MPI_Group &world_group):
   world_group(world_group)
 {
     int buffer_size;
-    MPI_Probe(source_rank, tag, comm, &status);
-    MPI_Get_count(&status, MPI_CHAR, &buffer_size);
+    MPI_Bcast(&buffer_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
     std::vector<char> buffer(buffer_size);
     MPI_Bcast(buffer.data(), buffer.size(), MPI_CHAR, 0, MPI_COMM_WORLD);
     LammpsSim::deserialise_vector_LammpsSim(buffer, LS);
