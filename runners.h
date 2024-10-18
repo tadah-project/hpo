@@ -8,10 +8,6 @@
 #include <mpi.h>
 #endif
 
-#include TADAH_LMPA
-#include TADAH_LMPB
-#include TADAH_LMPC
-
 /** 
  * @class LammpsRunner
  * @brief A class to simplify running LAMMPS simulations.
@@ -31,7 +27,7 @@ class LammpsRunner {
     typedef LAMMPS_NS::LAMMPS RI;
 
     /// Default constructor for LammpsRunner
-    LammpsRunner() {}
+    LammpsRunner();
 
     /**
      * @brief Create a LAMMPS instance with specified arguments.
@@ -79,24 +75,7 @@ class LammpsRunner {
       }
 
     RI* run(MPI_Comm &sub_comm, std::string &script,
-        std::vector<const char*> &lmp_tokens) {
-      //std::vector<const char*> c_str_tokens;
-      //c_str_tokens.push_back(TADAH_LAMMPS_LIB); // Ensure this is a string literal
-      //for (const auto& token : lmp_tokens) {
-      //  c_str_tokens.push_back(token.c_str());
-      //}
-      int lmpargc = static_cast<int>(lmp_tokens.size());
-      RI* lmp = nullptr;
-      try {
-        lmp = new RI(lmpargc, const_cast<char**>(lmp_tokens.data()), sub_comm);
-        lmp->input->file(script.c_str());
-      } catch (std::exception& e) {
-        std::cout << "LAMMPS Exception: " << e.what() << std::endl;
-        delete lmp;
-        return nullptr;
-      }
-      return lmp;
-    }
+        std::vector<const char*> &lmp_tokens);
 
     /**
      * @brief Retrieve the value of a LAMMPS variable.
@@ -111,4 +90,3 @@ class LammpsRunner {
 };
 
 #endif // LAMMPS_RUNNER_H
-
