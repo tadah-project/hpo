@@ -1,5 +1,5 @@
 #include "lammps_sim.h"
-LammpsSim::LammpsSim() {};
+LammpsSim::LammpsSim() {}
 LammpsSim::LammpsSim(std::string &cmd, int LOSS_FUNC, std::string MAX_TIME, double FAIL_SCORE):
   cmd(cmd), lossfunc(LOSS_FUNC), maxtime(MAX_TIME), failscore(FAIL_SCORE)
 {

@@ -6,7 +6,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
-#include <mpi.h>
 
 /**
  * @class LammpsSim

@@ -162,8 +162,9 @@ class HPO_Host {
         run(rank, ncpu);
 
 #else
+    int dummy = 0;
       for (const auto& lsim : trg.LS) {
-        auto *lmp = runner.run(MPI_COMM_WORLD, trg.LS[0].script, trg.LS[0].invar);
+      auto *lmp = runner.run(dummy, trg.LS[0].script, trg.LS[0].invar);
         if (!lmp) {
           tloss+=trg.LS[0].failscore;
         }
@@ -233,6 +234,7 @@ class HPO_Host {
       //std::cout << "T4: " << t54.count() << "ms\n";
       return tloss;
     }
+#ifdef TADAH_BUILD_MPI
     void run(int rank, int ncpu) {
       const static int CONFIG_TAG = 4;
       const static int WAIT_TAG = 3;
@@ -310,6 +312,7 @@ class HPO_Host {
         if (count2==ncpu) break;
       }
     }
+#endif
 
 };
 #endif

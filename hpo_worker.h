@@ -3,8 +3,6 @@
 
 #ifdef TADAH_BUILD_MPI
 #include <mpi.h>
-#endif
-#include "lammps_sim.h"
 
 class HPO_Worker {
   const static int CONFIG_TAG = 4;
@@ -22,5 +20,7 @@ class HPO_Worker {
   bool use_lammps;
   void run();
 };
+#endif
+
 #endif
 
