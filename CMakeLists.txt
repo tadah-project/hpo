@@ -117,10 +117,8 @@ endif()
 
 string(FIND "${TADAH_LAMMPS_LIB}" ".so" POSITION)
 if (POSITION EQUAL -1)
-  message(STATUS "Substring not found")
   add_library(liblammps STATIC IMPORTED)
 else()
-  message(STATUS "Substring found at position ${POSITION}")
   add_library(liblammps SHARED IMPORTED)
 endif()
 
