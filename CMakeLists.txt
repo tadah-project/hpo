@@ -92,7 +92,7 @@ add_compile_definitions(TADAH_LMPB=\"${TADAH_LAMMPS_DIR}/src/input.h\")
 add_compile_definitions(TADAH_LMPC=\"${TADAH_LAMMPS_DIR}/src/variable.h\")
 
 file(GLOB HPO_SRC CONFIGURE_DEPENDS "src/*.cpp")
-add_library(tadah.hpo STATIC ${HPO_SRC})
+add_library(tadah.hpo ${HPO_SRC})
 target_include_directories(tadah.hpo PUBLIC include)
 target_include_directories(tadah.hpo PUBLIC ${Tadah.MLIP_SOURCE_DIR}/include)
 target_include_directories(tadah.hpo PUBLIC ${Tadah.MODELS_SOURCE_DIR}/include)
