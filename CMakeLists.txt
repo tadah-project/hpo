@@ -117,15 +117,16 @@ endif()
 
 string(FIND "${TADAH_LAMMPS_LIB}" ".so" POSITION)
 if (POSITION EQUAL -1)
-if (BUILD_SHARED_LIBS)
-    message(FATAL_ERROR "The static LAMMPS library is not compatible with a shared Tadah! build. Please either link a sshared LAMMPS library or rebuild Tadah! with -DBUILD_SHARED_LIBS=OFF.")
-endif()
+  if (BUILD_SHARED_LIBS)
+    message(FATAL_ERROR "The static LAMMPS library is not compatible with a shared Tadah! build.
+    Please either link a sshared LAMMPS library or rebuild Tadah! with -DBUILD_SHARED_LIBS=OFF.")
+  endif()
   add_library(liblammps STATIC IMPORTED)
 else()
-if (NOT BUILD_SHARED_LIBS)
-    message(FATAL_ERROR "The shared LAMMPS library is not compatible with a static Tadah! build. Please either link a static LAMMPS library or rebuild Tadah! with -DBUILD_SHARED_LIBS=ON."
-)
-endif()
+  if (NOT BUILD_SHARED_LIBS)
+    message(FATAL_ERROR "The shared LAMMPS library is not compatible with a static Tadah! build.
+    Please either link a static LAMMPS library or rebuild Tadah! with -DBUILD_SHARED_LIBS=ON.")
+  endif()
   add_library(liblammps SHARED IMPORTED)
 endif()
 
