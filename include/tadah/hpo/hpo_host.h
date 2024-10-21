@@ -1,18 +1,17 @@
 #ifndef HPO_HOST_H
 #define HPO_HOST_H
 
-#include "../CORE/config/config.h"
-#include "../MLIP/structure_db.h"
-#include "../MLIP/nn_finder.h"
-#include "../MODELS/dc_selector.h"
-#include "../MLIP/models/m_tadah_base.h"
-#include "../MLIP/design_matrix/functions/dm_function_base.h"
-#include "../MLIP/descriptors_calc.h"
-#include "../MLIP/analytics/analytics.h"
-#include "../MLIP/trainer.h"
-#include "../CORE/utils/utils.h"
-#include "hpo_targets.h"
-//#include "glf.h"
+#include <tadah/core/utils/utils.h>
+#include <tadah/core/config.h>
+#include <tadah/models/dc_selector.h>
+#include <tadah/mlip/nn_finder.h>
+#include <tadah/mlip/structure_db.h>
+#include <tadah/mlip/models/m_tadah_base.h>
+#include <tadah/mlip/design_matrix/functions/dm_function_base.h>
+#include <tadah/mlip/descriptors_calc.h>
+#include <tadah/mlip/analytics/analytics.h>
+#include <tadah/mlip/trainer.h>
+#include <tadah/hpo/hpo_targets.h>
 
 #include <chrono>
 #include <vector>

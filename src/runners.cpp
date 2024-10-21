@@ -1,4 +1,4 @@
-#include "runners.h"
+#include <tadah/hpo/runners.h>
 
 using LMP = LammpsRunner::LMP; 
 LammpsRunner::LammpsRunner() {}

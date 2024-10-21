@@ -1,16 +1,17 @@
 #ifndef LAMMPS_SCORES_H
 #define LAMMPS_SCORES_H
 
+#include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/runners.h>
+#include <tadah/mlip/analytics/analytics.h>
+#include <tadah/core/utils.h>
+#include <cmrc/cmrc.hpp>
+
 #include <unistd.h>
 #include <stdlib.h>
 #include <sstream>
 #include <string>
 #include <map>
-#include <cmrc/cmrc.hpp>
-#include "hpo_targets.h"
-#include "runners.h"
-#include "../MLIP/analytics/analytics.h"
-#include "../CORE/utils/utils.h"
 
 class GLF2 {
   std::<double> w;

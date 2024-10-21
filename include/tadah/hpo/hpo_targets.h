@@ -1,7 +1,7 @@
 #ifndef HPO_TARGETS_H
 #define HPO_TARGETS_H
 
-#include "lammps_sim.h"
+#include <tadah/hpo/lammps_sim.h>
 
 #include <cmath>
 #include <vector>

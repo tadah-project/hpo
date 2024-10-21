@@ -1,9 +1,8 @@
-#include "hpo_host.h"
-#include "hpo_targets.h"
-#include "runners.h"
-#include "hpo.h"
-//#include "glf.h"
-#include "../CORE/config/config.h"
+#include <tadah/hpo/hpo_host.h>
+#include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/runners.h>
+#include <tadah/hpo/hpo.h>
+#include <tadah/core/config.h>
 #include <dlib/global_optimization/find_max_global.h>
 
 using R = LammpsRunner;

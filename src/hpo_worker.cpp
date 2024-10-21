@@ -1,5 +1,5 @@
-#include "hpo_worker.h"
-#include "runners.h"
+#include <tadah/hpo/hpo_worker.h>
+#include <tadah/hpo/runners.h>
 #ifdef TADAH_BUILD_MPI
 
 HPO_Worker::HPO_Worker(int rank, int ncpu, MPI_Group &world_group):
