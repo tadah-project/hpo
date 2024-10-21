@@ -120,7 +120,7 @@ if (POSITION EQUAL -1)
   if (BUILD_SHARED_LIBS)
     message(FATAL_ERROR "
     The static LAMMPS library is not compatible with a shared Tadah! build.
-    Please either link a sshared LAMMPS library or rebuild Tadah! with 
+    Please either link a shared LAMMPS library or rebuild Tadah! with 
 
     -DBUILD_SHARED_LIBS=OFF.")
   endif()
