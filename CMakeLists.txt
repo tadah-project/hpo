@@ -11,8 +11,8 @@ project(Tadah.HPO)
 get_filename_component(MODULE_TEST ${CMAKE_BINARY_DIR} NAME)
 if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR}
         OR ${MODULE_TEST} STREQUAL "HPO"
-        )
-    message(FATAL_ERROR "
+)
+  message(FATAL_ERROR "
     In-source builds not allowed.
     Please make a new directory (called a build directory) and run CMake from there.
     You may need to remove CMakeCache.txt and CMakeFiles dir. ")
@@ -23,29 +23,29 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(BUILD_SHARED_LIBS)
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
 
 if (BUILD_SHARED_LIBS)
-    # Always full RPATH
-    # use, i.e. don't skip the full RPATH for the build tree
-    set(CMAKE_SKIP_BUILD_RPATH FALSE)
+  # Always full RPATH
+  # use, i.e. don't skip the full RPATH for the build tree
+  set(CMAKE_SKIP_BUILD_RPATH FALSE)
 
-    # when building, don't use the install RPATH already
-    # (but later on when installing)
-    set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
+  # when building, don't use the install RPATH already
+  # (but later on when installing)
+  set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
 
+  set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+
+  # add the automatically determined parts of the RPATH
+  # which point to directories outside the build tree to the install RPATH
+  set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+
+  # the RPATH to be used when installing, but only if it's not a system directory
+  list(FIND CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES "${CMAKE_INSTALL_PREFIX}/lib" isSystemDir)
+  if("${isSystemDir}" STREQUAL "-1")
     set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
-
-    # add the automatically determined parts of the RPATH
-    # which point to directories outside the build tree to the install RPATH
-    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
-
-    # the RPATH to be used when installing, but only if it's not a system directory
-    list(FIND CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES "${CMAKE_INSTALL_PREFIX}/lib" isSystemDir)
-    if("${isSystemDir}" STREQUAL "-1")
-        set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
-    endif("${isSystemDir}" STREQUAL "-1")
+  endif("${isSystemDir}" STREQUAL "-1")
 endif()
 
 
@@ -55,7 +55,7 @@ FetchContent_Declare(
     Tadah.MLIP
     GIT_REPOSITORY https://git.ecdf.ed.ac.uk/tadah/mlip.git
     GIT_TAG origin/develop
-    )
+)
 FetchContent_MakeAvailable(Tadah.MLIP)
 
 include(FetchContent)
@@ -103,8 +103,8 @@ find_package(LAPACK)
 target_link_libraries(tadah.hpo PUBLIC ${LAPACK_LIBRARIES})
 
 if(TADAH_ENABLE_OPENMP)
-    find_package(OpenMP REQUIRED)
-    target_link_libraries(tadah.hpo PUBLIC OpenMP::OpenMP_CXX)
+  find_package(OpenMP REQUIRED)
+  target_link_libraries(tadah.hpo PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
 if (TADAH_BUILD_MPI)
@@ -112,13 +112,20 @@ if (TADAH_BUILD_MPI)
   target_link_libraries(tadah.hpo PUBLIC MPI::MPI_CXX)
   add_compile_definitions(TADAH_BUILD_MPI)
 else()
-    target_include_directories(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS)
+  target_include_directories(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS)
 endif()
 
 string(FIND "${TADAH_LAMMPS_LIB}" ".so" POSITION)
 if (POSITION EQUAL -1)
+if (BUILD_SHARED_LIBS)
+    message(FATAL_ERROR "The static LAMMPS library is not compatible with a shared Tadah! build. Please either link a sshared LAMMPS library or rebuild Tadah! with -DBUILD_SHARED_LIBS=OFF.")
+endif()
   add_library(liblammps STATIC IMPORTED)
 else()
+if (NOT BUILD_SHARED_LIBS)
+    message(FATAL_ERROR "The shared LAMMPS library is not compatible with a static Tadah! build. Please either link a static LAMMPS library or rebuild Tadah! with -DBUILD_SHARED_LIBS=ON."
+)
+endif()
   add_library(liblammps SHARED IMPORTED)
 endif()
 
@@ -133,17 +140,16 @@ target_link_libraries(tadah.hpo PUBLIC config::rc)
 
 #target_link_directories(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src)
 #target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_LIB})
-target_link_libraries(tadah.hpo PUBLIC liblammps)
 
 if (TADAH_BUILD_MPI)
   target_link_libraries(tadah.hpo PUBLIC MPI::MPI_CXX)
 else()
-    target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS/libmpi_stubs.a)
+  target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS/libmpi_stubs.a)
 endif()
 
 if(TADAH_BUILD_TESTS)
-    include(CTest) 
-    add_subdirectory(tests)
+  include(CTest) 
+  add_subdirectory(tests)
 endif()
 
 set(TADAH_HPO_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/include/tadah/HPO)
