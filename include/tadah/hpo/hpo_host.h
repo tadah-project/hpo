@@ -1,7 +1,7 @@
 #ifndef HPO_HOST_H
 #define HPO_HOST_H
 
-#include <tadah/core/utils/utils.h>
+#include <tadah/core/utils.h>
 #include <tadah/core/config.h>
 #include <tadah/models/dc_selector.h>
 #include <tadah/mlip/nn_finder.h>
