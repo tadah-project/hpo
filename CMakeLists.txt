@@ -51,10 +51,15 @@ endif()
 
 include(FetchContent)
 
+execute_process(
+    COMMAND git branch --show-current
+    OUTPUT_VARIABLE GIT_BRANCH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
 FetchContent_Declare(
     Tadah.MLIP
     GIT_REPOSITORY https://git.ecdf.ed.ac.uk/tadah/mlip.git
-    GIT_TAG origin/develop
+    GIT_TAG origin/${GIT_BRANCH}
 )
 FetchContent_MakeAvailable(Tadah.MLIP)
 
