@@ -164,6 +164,11 @@ if(TADAH_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
 
-set(TADAH_HPO_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/include/tadah/HPO)
-file(GLOB HPO_H CONFIGURE_DEPENDS "*.h" "*.hpp")
-install(FILES ${HPO_H} DESTINATION ${TADAH_HPO_INSTALL_DIR})
+# Installation rules
+install(TARGETS tadah.hpo
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib)
+install(DIRECTORY include/
+    DESTINATION include
+)
