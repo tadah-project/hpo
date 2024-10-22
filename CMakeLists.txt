@@ -51,11 +51,16 @@ endif()
 
 include(FetchContent)
 
-execute_process(
-    COMMAND git branch --show-current
+if(DEFINED ENV{CI_COMMIT_REF_NAME})
+    set(GIT_BRANCH "$ENV{CI_COMMIT_REF_NAME}")
+else()
+    execute_process(
+    COMMAND git rev-parse --symbolic-full-name --abbrev-ref HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     OUTPUT_VARIABLE GIT_BRANCH
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+endif()
+
 FetchContent_Declare(
     Tadah.MLIP
     GIT_REPOSITORY https://git.ecdf.ed.ac.uk/tadah/mlip.git
