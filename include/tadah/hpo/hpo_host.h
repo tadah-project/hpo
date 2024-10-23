@@ -160,9 +160,9 @@ class HPO_Host {
         run(rank, ncpu);
 
 #else
-    int dummy = 0;
+    int dummy_comm = 0;
       for (const auto& lsim : trg.LS) {
-      auto *lmp = runner.run(dummy, lsim.script, lsim.invar);
+      auto *lmp = runner.run(dummy_comm, lsim.script, lsim.invar);
         if (!lmp) {
           tloss+=lsim.failscore;
         }

@@ -20,12 +20,16 @@ LammpsSim::LammpsSim(std::string &cmd, int LOSS_FUNC, std::string MAX_TIME, doub
   }
 
   if (!script.length())
-    throw std::runtime_error("LammpsSim object must have a script specified!\n");
+    throw std::runtime_error("LammpsSim object must have a script specified.\n");
+
+  if (!varloss.size())
+    throw std::runtime_error("LammpsSim: --varloss variable is not defined.\n");
 }
 void LammpsSim::tokenise() {
   std::stringstream ss(cmd);
   std::string token;
   while (ss >> token) {
+    if (token[0]=='#') break;
     tokens.push_back(token);
   }
 }
