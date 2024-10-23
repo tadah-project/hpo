@@ -41,7 +41,7 @@ inline omp_int_t omp_get_num_threads() { return 1;}
  *     Config config("config.train");
  *     HPOTargets trg(config, "targets");
  *     HPO_Host<dlib::matrix<double,0,1>,LammpsRunner> 
-   *     hpo(config,trg,"config_val");
+ *     hpo(config,trg,"config_val");
  *     # the object is ready to be passed to the optimiser.
  *
  */
@@ -160,16 +160,23 @@ class HPO_Host {
         run(rank, ncpu);
 
 #else
-    int dummy_comm = 0;
-      for (const auto& lsim : trg.LS) {
-      auto *lmp = runner.run(dummy_comm, lsim.script, lsim.invar);
-        if (!lmp) {
-          tloss+=lsim.failscore;
+      int dummy_comm = 0;
+      for (auto& lsim : trg.LS) {
+        auto *lmp = runner.run(dummy_comm, lsim.script, lsim.invar);
+        if (!lmp) { // LAMMPS failed
+          for (size_t i = 0; i < lsim.varloss.size(); ++i)
+            lsim.v_varloss[i] = lsim.failscore;
+          for (size_t i = 0; i < lsim.outvar.size(); ++i)
+            lsim.v_outvar[i] = "fail";
         }
         else {
-          for (const auto &v: lsim.varloss) {
-            double lmp_tloss= std::stod(runner.get_variable(lmp,v));
-            tloss+= lmp_tloss;
+          for (size_t i = 0; i < lsim.varloss.size(); ++i) {
+            const auto& v = lsim.varloss[i];
+            lsim.v_varloss[i] = std::stod(runner.get_variable(lmp,v));
+          }
+          for (size_t i = 0; i < lsim.outvar.size(); ++i) {
+            const auto& o = lsim.outvar[i];
+            lsim.v_outvar[i] = runner.get_variable(lmp,o);
           }
         }
         if (lmp) delete lmp;

@@ -17,13 +17,16 @@ class LammpsSim {
   private:
     std::string cmd; /**< Command line configuration */
     std::vector<std::string> tokens; /**< Tokenised command line */
-    std::vector<std::string> outvar; /**< LAMMPS output variables */
 
   public:
-    std::vector<std::string> sinvar; /**< LAMMPS input variables */
-    std::vector<const char*> invar; /**< LAMMPS input variables */
     std::string script; /**< Name of the LAMMPS script file */
+    std::vector<std::string> sinvar; /**< LAMMPS input variables */
+    std::vector<const char*> invar; /**< LAMMPS input variables, ptrs to sinvars */
     std::vector<std::string> varloss; /**< Variables related to the loss function */
+    std::vector<double> v_varloss; /**< Value of the loss function */
+    std::vector<double> w_varloss; /**< Weight for varloss */
+    std::vector<std::string> outvar; /**< LAMMPS output variables */
+    std::vector<std::string> v_outvar; /**< LAMMPS output variables value*/
 
     int ncpu = 1; /**< Number of CPUs to be used */
     double weight; /**< Weight parameter for simulation */
