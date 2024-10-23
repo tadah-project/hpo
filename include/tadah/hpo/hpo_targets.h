@@ -25,7 +25,7 @@ class HPOTargets {
     double      EPS=1e-2; // control optimiser precision
     double      FAIL_SCORE=1000;
     int         LOSS_FUNC=1; 
-    std::string MAX_TIME="00:00:10 every 1";
+    std::string MAX_TIME="10";
 
     std::vector<std::string> optim_map;
     std::vector<double> optim_low;
@@ -80,15 +80,7 @@ class HPOTargets {
         }
         else if (key=="MAXTIME") {
           // -m, --maxtime <time in s>
-          // should be local for every LAMMPS script
-          int tsec;
-          iss >> tsec;
-          int s,m,h;
-          h=tsec/3600;
-          m=(tsec-h*3600)/60;
-          s=tsec-h*3600-m*60;
-          MAX_TIME=std::to_string(h) + ":" + std::to_string(m) 
-            + ":" + std::to_string(s)+" every 1";
+          iss >> MAX_TIME;
         }
         else if (key=="ERMSE") {
           iss >> ermse >> w_ermse;
