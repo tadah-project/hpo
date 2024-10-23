@@ -47,10 +47,8 @@ void HPO_Worker::run() {
       // Receive the number of strings
       int num_strings;
       MPI_Recv(&num_strings, 1, MPI_INT, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
       std::vector<const char*> invar;
       std::vector<std::string> sinvar;
-
       // Receive each string
       for (int i = 0; i < num_strings; i++) {
         int length;
@@ -64,24 +62,67 @@ void HPO_Worker::run() {
         invar.push_back(str.c_str());
       }
 
+      // obtain outvars
+      // Receive the number of strings
+      MPI_Recv(&num_strings, 1, MPI_INT, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      std::vector<std::string> outvar;
+      // Receive each string
+      for (int i = 0; i < num_strings; i++) {
+        int length;
+        MPI_Recv(&length, 1, MPI_INT, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        char* buffer = new char[length];
+        MPI_Recv(buffer, length, MPI_CHAR, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        outvar.push_back(std::string(buffer));
+        delete[] buffer;
+      }
+
+      // obtain varloss
+      // Receive the number of strings
+      MPI_Recv(&num_strings, 1, MPI_INT, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      std::vector<std::string> varloss;
+      // Receive each string
+      for (int i = 0; i < num_strings; i++) {
+        int length;
+        MPI_Recv(&length, 1, MPI_INT, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        char* buffer = new char[length];
+        MPI_Recv(buffer, length, MPI_CHAR, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        varloss.push_back(std::string(buffer));
+        delete[] buffer;
+      }
+
+      double failscore;
+      MPI_Recv(&failscore, 1, MPI_DOUBLE, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      //for (const auto &tt: outvar) std::cout << tt << " ";
+      //std::cout << std::endl;
+      std::vector<std::string> v_outvar(outvar.size());
+      std::vector<double> v_varloss(varloss.size());
+
+
       // Perform LAMMPS simulation
       //for (const auto &tt: invar) std::cout << tt << " ";
       //std::cout << std::endl;
       auto *lmp = runner.run(work_comm, script, invar);
-      int tloss = 0;
-      //if (!lmp) {
-      //  //tloss+=trg.LS[0].failscore;
-      //}
-      //else {
-      //  //for (const auto &v: trg.LS[0].varloss) {
-      //  //  double lmp_tloss= std::stod(runner.get_variable(lmp,v));
-      //  //  tloss+= lmp_tloss;
-      //  //}
-      //}
+      if (!lmp) {
+        for (size_t i = 0; i < varloss.size(); ++i)
+          v_varloss[i] = failscore;
+        for (size_t i = 0; i < outvar.size(); ++i)
+          v_outvar[i] = "fail";
+      }
+      else {
+        for (size_t i = 0; i < varloss.size(); ++i) {
+          const auto& v = varloss[i];
+          v_varloss[i] = std::stod(runner.get_variable(lmp,v));
+        }
+        for (size_t i = 0; i < outvar.size(); ++i) {
+          const auto& o = outvar[i];
+          v_outvar[i] = runner.get_variable(lmp,o);
+        }
+      }
 
       if (lmp) {
         delete lmp;
       }
+
       // Release 
       //MPI_Barrier(work_comm);
       MPI_Group_free(&work_group);

@@ -286,20 +286,44 @@ class HPO_Host {
                 MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, &status);
                 MPI_Send(granks.data(), granks.size(), MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
                 available_workers.pop_back();
-                // TODO just send j index of the wpkgs vector as every worker has a copy of LS
                 // send wpkgs[j].script
                 MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
+
                 // send wpkgs[j].invar
                 // First, send the number of strings
                 int num_strings = wpkgs[j].invar.size();
                 MPI_Send(&num_strings, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
-
                 // Send each string
                 for (const char* message : wpkgs[j].invar) {
                   int length = strlen(message) + 1; // +1 for the null terminator
                   MPI_Send(&length, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
                   MPI_Send(message, length, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
                 }
+
+                // send wpkgs[j].outvar
+                // First, send the number of strings
+                num_strings = wpkgs[j].outvar.size();
+                MPI_Send(&num_strings, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                // Send each string
+                for (const std::string &message : wpkgs[j].outvar) {
+                  int length = message.size() + 1; // +1 for the null terminator
+                  MPI_Send(&length, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                  MPI_Send(message.c_str(), length, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
+                }
+
+                // send wpkgs[j].varloss
+                // First, send the number of strings
+                num_strings = wpkgs[j].varloss.size();
+                MPI_Send(&num_strings, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                // Send each string
+                for (const std::string &message : wpkgs[j].varloss) {
+                  int length = message.size() + 1; // +1 for the null terminator
+                  MPI_Send(&length, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                  MPI_Send(message.c_str(), length, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
+                }
+
+                // send failscore
+                MPI_Send(&wpkgs[j].failscore, 1, MPI_DOUBLE, worker, WORK_TAG, MPI_COMM_WORLD);
               }
               wpkgs.erase(wpkgs.begin() + j);
               break; // break outer for loop
