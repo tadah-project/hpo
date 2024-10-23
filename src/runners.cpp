@@ -3,8 +3,8 @@
 using LMP = LammpsRunner::LMP; 
 LammpsRunner::LammpsRunner() {}
 
-LMP* LammpsRunner::run(MPI_Comm &sub_comm, std::string &script,
-    std::vector<const char*> &lmp_tokens) {
+LMP* LammpsRunner::run(MPI_Comm &sub_comm, const std::string &script,
+    const std::vector<const char*> &lmp_tokens) {
   int lmpargc = static_cast<int>(lmp_tokens.size());
   LMP* lmp = nullptr;
 

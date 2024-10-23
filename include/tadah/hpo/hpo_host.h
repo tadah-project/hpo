@@ -103,7 +103,6 @@ class HPO_Host {
     //}
   }
 
-    //double operator() (T args) {
     double operator() (T p) {
       it++;
       using std::chrono::high_resolution_clock;
@@ -163,12 +162,12 @@ class HPO_Host {
 #else
     int dummy = 0;
       for (const auto& lsim : trg.LS) {
-      auto *lmp = runner.run(dummy, trg.LS[0].script, trg.LS[0].invar);
+      auto *lmp = runner.run(dummy, lsim.script, lsim.invar);
         if (!lmp) {
-          tloss+=trg.LS[0].failscore;
+          tloss+=lsim.failscore;
         }
         else {
-          for (const auto &v: trg.LS[0].varloss) {
+          for (const auto &v: lsim.varloss) {
             double lmp_tloss= std::stod(runner.get_variable(lmp,v));
             tloss+= lmp_tloss;
           }

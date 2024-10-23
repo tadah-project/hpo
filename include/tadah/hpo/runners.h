@@ -40,8 +40,8 @@ class LammpsRunner {
      *
      * In case of LAMMPS throwing exception return nullptr.
      */
-    LMP* run(MPI_Comm &sub_comm, std::string &script,
-        std::vector<const char*> &lmp_tokens);
+    LMP* run(MPI_Comm &sub_comm, const std::string &script,
+        const std::vector<const char*> &lmp_tokens);
 
     /**
      * @brief Retrieve the value of a LAMMPS variable.
