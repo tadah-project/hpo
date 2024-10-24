@@ -138,10 +138,10 @@ class HPO_Host {
 
       // This potential will be used by LAMMPS
       Config pot_tadah = host.model->get_param_file();
-      std::ofstream outfile;
-      outfile.open ("pot.tadah");
-      outfile << pot_tadah;
-      outfile.close();
+      std::ofstream out_file;
+      out_file.open ("pot.tadah");
+      out_file << pot_tadah;
+      out_file.close();
 
 #ifdef TADAH_BUILD_MPI
       if (use_lammps)
@@ -208,20 +208,20 @@ class HPO_Host {
       // Dump potential if best
       if (tloss<best_score) {
         best_score = tloss;
-        std::ofstream outfile;
-        outfile.open ("best_pot.tadah");
+        std::ofstream out_file;
+        out_file.open ("best_pot.tadah");
         pot_tadah.clear_internal_keys();
-        outfile << pot_tadah;
-        outfile.close();
+        out_file << pot_tadah;
+        out_file.close();
       }
 
       // Dump potential potevery steps
       // Controled by POTEVERY
       if (it%trg.potevery==0) {
-        std::ofstream outfile;
-        outfile.open (trg.potevery_dir+"/pot_"+std::to_string(it)+".tadah");
-        outfile << pot_tadah;
-        outfile.close();
+        std::ofstream out_file;
+        out_file.open (trg.potevery_dir+"/pot_"+std::to_string(it)+".tadah");
+        out_file << pot_tadah;
+        out_file.close();
       }
 
       auto t2 = high_resolution_clock::now();
@@ -383,135 +383,135 @@ class HPO_Host {
     }
 #endif
     void init_loss() {
-      std::ofstream outFile(loss_file); // Open with default mode, which truncates
+      std::ofstream out_file(loss_file); // Open with default mode, which truncates
 
-      if (!outFile) {
+      if (!out_file) {
         std::cerr << "Error opening file: " << loss_file << std::endl;
       }
 
       // add headers
-      outFile << std::left << std::setw(cwidth) << "ITERATION";
+      out_file << std::left << std::setw(cwidth) << "ITERATION";
       if (trg.use_ermse)
-        outFile << std::left << std::setw(cwidth) << "ERMSE";
+        out_file << std::left << std::setw(cwidth) << "ERMSE";
       if (trg.use_frmse)
-        outFile << std::left << std::setw(cwidth) << "FRMSE";
+        out_file << std::left << std::setw(cwidth) << "FRMSE";
       if (trg.use_srmse)
-        outFile << std::left << std::setw(cwidth) << "SRMSE";
+        out_file << std::left << std::setw(cwidth) << "SRMSE";
 
       for (const auto& lsim : trg.LS) {
         for (const auto& vloss : lsim.varloss)
-          outFile << std::left << std::setw(cwidth) << vloss;
+          out_file << std::left << std::setw(cwidth) << vloss;
       }
 
-      outFile << std::left << std::setw(cwidth) << "TOTAL" << std::endl;
+      out_file << std::left << std::setw(cwidth) << "TOTAL" << std::endl;
     }
     void init_outvar() {
-      std::ofstream outFile(outvar_file); // Open with default mode, which truncates
+      std::ofstream out_file(outvar_file); // Open with default mode, which truncates
 
-      if (!outFile) {
+      if (!out_file) {
         std::cerr << "Error opening file: " << outvar_file << std::endl;
       }
 
       // add headers
-      outFile << std::left << std::setw(cwidth) << "ITERATION";
-      outFile << std::left << std::setw(cwidth) << "IT_TIME/ms";
+      out_file << std::left << std::setw(cwidth) << "ITERATION";
+      out_file << std::left << std::setw(cwidth) << "IT_TIME/ms";
       if (trg.use_ermse)
-        outFile << std::left << std::setw(cwidth) << "ERMSE";
+        out_file << std::left << std::setw(cwidth) << "ERMSE";
       if (trg.use_frmse)
-        outFile << std::left << std::setw(cwidth) << "FRMSE";
+        out_file << std::left << std::setw(cwidth) << "FRMSE";
       if (trg.use_srmse)
-        outFile << std::left << std::setw(cwidth) << "SRMSE";
+        out_file << std::left << std::setw(cwidth) << "SRMSE";
 
       for (const auto& lsim : trg.LS) {
         for (const auto& outvar : lsim.outvar)
-          outFile << std::left << std::setw(cwidth) << outvar;
+          out_file << std::left << std::setw(cwidth) << outvar;
       }
-      outFile << std::endl;
+      out_file << std::endl;
     }
 
     void init_params() {
-      std::ofstream outFile(params_file); // Open with default mode, which truncates
+      std::ofstream out_file(params_file); // Open with default mode, which truncates
 
-      if (!outFile) {
+      if (!out_file) {
         std::cerr << "Error opening file: " << params_file << std::endl;
       }
 
       // add headers
-      outFile << std::left << std::setw(cwidth) << "ITER";
+      out_file << std::left << std::setw(cwidth) << "ITER";
 
       for (const auto& optim : trg.optim_map) {
-        outFile << std::left << std::setw(cwidth) << optim;
+        out_file << std::left << std::setw(cwidth) << optim;
       }
-      outFile << std::endl;
+      out_file << std::endl;
     }
 
     void print_loss() {
-      std::ofstream outFile(loss_file, std::ios::app);
+      std::ofstream out_file(loss_file, std::ios::app);
 
-      if (!outFile) {
+      if (!out_file) {
         std::cerr << "Error opening file: " << loss_file << std::endl;
         return;
       }
-      outFile << std::left << std::setw(cwidth) << it;
+      out_file << std::left << std::setw(cwidth) << it;
 
       if (trg.use_ermse)
-        outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << (ermse-trg.ermse)*trg.w_ermse;
+        out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << (ermse-trg.ermse)*trg.w_ermse;
       if (trg.use_frmse)
-        outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << (frmse-trg.frmse)*trg.w_frmse;
+        out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << (frmse-trg.frmse)*trg.w_frmse;
       if (trg.use_srmse)
-        outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << (srmse-trg.srmse)*trg.w_srmse;
+        out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << (srmse-trg.srmse)*trg.w_srmse;
 
       for (const auto& lsim : trg.LS) {
         for (size_t i=0; i<lsim.varloss.size(); ++i) {
-          outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << lsim.w_varloss[i]*lsim.v_varloss[i];
+          out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << lsim.w_varloss[i]*lsim.v_varloss[i];
         }
       }
 
-      outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << tloss << std::endl;;
+      out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << tloss << std::endl;;
 
     }
     void print_outvar(double it_time) {
-      std::ofstream outFile(outvar_file, std::ios::app);
+      std::ofstream out_file(outvar_file, std::ios::app);
 
-      if (!outFile) {
+      if (!out_file) {
         std::cerr << "Error opening file: " << outvar_file << std::endl;
         return;
       }
 
-      outFile << std::left << std::setw(cwidth) << it;
-      outFile << std::left << std::setw(cwidth) << std::setprecision(pprec) << it_time;
+      out_file << std::left << std::setw(cwidth) << it;
+      out_file << std::left << std::setw(cwidth) << std::setprecision(pprec) << it_time;
 
       if (trg.use_ermse)
-        outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << ermse;
+        out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << ermse;
       if (trg.use_frmse)
-        outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << frmse;
+        out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << frmse;
       if (trg.use_srmse)
-        outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << srmse;
+        out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << srmse;
 
       for (const auto& lsim : trg.LS) {
         for (size_t i=0; i<lsim.outvar.size(); ++i) {
           std::string s = lsim.v_outvar[i].size() > cwidth-1 ? 
             lsim.v_outvar[i].substr(0, cwidth-1) : lsim.v_outvar[i];
-          outFile << std::left << std::setw(cwidth) << s;
+          out_file << std::left << std::setw(cwidth) << s;
         }
       }
 
-      outFile << std::endl;;
+      out_file << std::endl;;
     }
     void print_params(const T &p) {
-      std::ofstream outFile(params_file, std::ios::app);
+      std::ofstream out_file(params_file, std::ios::app);
 
-      if (!outFile) {
+      if (!out_file) {
         std::cerr << "Error opening file: " << params_file << std::endl;
         return;
       }
 
-      outFile << std::left << std::setw(cwidth) << it;
+      out_file << std::left << std::setw(cwidth) << it;
 
       for (const auto& v_optim : p) {
-        outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << v_optim;
+        out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << v_optim;
       }
-      outFile << std::endl;
+      out_file << std::endl;
     }
 
 };
