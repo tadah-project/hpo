@@ -31,6 +31,8 @@ void HPO_Worker::run() {
       MPI_Get_count(&status, MPI_INT, &s);
       std::vector<int> granks(s);
       MPI_Recv(granks.data(), s, MPI_INT, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      int j;
+      MPI_Recv(&j, 1, MPI_INT, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
       // create work_group and communicator for LAMMPS
       MPI_Group_incl(world_group, granks.size(), granks.data(), &work_group);
       MPI_Comm_create_group(MPI_COMM_WORLD, work_group, s /*tag*/, &work_comm);
@@ -94,28 +96,43 @@ void HPO_Worker::run() {
       MPI_Recv(&failscore, 1, MPI_DOUBLE, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
       //for (const auto &tt: outvar) std::cout << tt << " ";
       //std::cout << std::endl;
-      std::vector<std::string> v_outvar(outvar.size());
-      std::vector<double> v_varloss(varloss.size());
 
 
       // Perform LAMMPS simulation
       //for (const auto &tt: invar) std::cout << tt << " ";
       //std::cout << std::endl;
       auto *lmp = runner.run(work_comm, script, invar);
-      if (!lmp) {
-        for (size_t i = 0; i < varloss.size(); ++i)
-          v_varloss[i] = failscore;
-        for (size_t i = 0; i < outvar.size(); ++i)
-          v_outvar[i] = "fail";
-      }
-      else {
-        for (size_t i = 0; i < varloss.size(); ++i) {
-          const auto& v = varloss[i];
-          v_varloss[i] = std::stod(runner.get_variable(lmp,v));
+
+      // local work_comm root sends data back to the host
+      int lrank;
+      MPI_Comm_rank(work_comm, &lrank);
+      if (lrank==0) {
+        std::vector<std::string> v_outvar(outvar.size());
+        std::vector<double> v_varloss(varloss.size());
+        if (!lmp) {
+          for (size_t i = 0; i < varloss.size(); ++i)
+            v_varloss[i] = failscore;
+          for (size_t i = 0; i < outvar.size(); ++i)
+            v_outvar[i] = "fail";
         }
-        for (size_t i = 0; i < outvar.size(); ++i) {
-          const auto& o = outvar[i];
-          v_outvar[i] = runner.get_variable(lmp,o);
+        else {
+          for (size_t i = 0; i < varloss.size(); ++i) {
+            const auto& v = varloss[i];
+            v_varloss[i] = std::stod(runner.get_variable(lmp,v));
+          }
+          for (size_t i = 0; i < outvar.size(); ++i) {
+            const auto& o = outvar[i];
+            v_outvar[i] = runner.get_variable(lmp,o);
+          }
+        }
+        MPI_Send(&j, 1, MPI_INT, 0, DATA_TAG, MPI_COMM_WORLD);
+        MPI_Send(v_varloss.data(), v_varloss.size(), MPI_DOUBLE, 0, DATA_TAG, MPI_COMM_WORLD);
+
+        std::cout << "WORKER: " << script << " " << v_outvar.size() << std::endl;
+        for (const std::string &message : v_outvar) {
+          int length = message.size() + 1; // +1 for the null terminator
+          MPI_Send(&length, 1, MPI_INT, 0, DATA_TAG, MPI_COMM_WORLD);
+          MPI_Send(message.c_str(), length, MPI_CHAR, 0, DATA_TAG, MPI_COMM_WORLD);
         }
       }
 

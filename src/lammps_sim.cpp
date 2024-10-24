@@ -30,9 +30,6 @@ LammpsSim::LammpsSim(std::string &cmd, int LOSS_FUNC, std::string MAX_TIME, doub
   if (!varloss.size())
     throw std::runtime_error("LammpsSim: --varloss variable is not defined.\n");
 
-  if (varloss.size() != w_varloss.size())
-    throw std::runtime_error("varloss and w_varloss differ in size.\n");
-
   for (const auto &s: sinvar) invar.push_back(s.c_str());
 
   v_varloss.resize(varloss.size());

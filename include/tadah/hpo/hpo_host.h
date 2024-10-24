@@ -249,8 +249,9 @@ class HPO_Host {
 
       MPI_Status status;
 
-      auto wpkgs = trg.LS;  // make a copy of LammpsSim vec
+      const auto &wpkgs = trg.LS;  // make a copy of LammpsSim vec
                             // LS is sorted
+      std::vector<bool> is_wpkgs_avail(wpkgs.size(), true);  // zero index is root
 
       if (wpkgs[0].ncpu>ncpu-1) {
         throw std::runtime_error   // TODO change to MPI
@@ -258,86 +259,141 @@ class HPO_Host {
            than the total number of workers.\n");
       }
       std::vector<int> available_workers;
+      std::vector<int> distribution(ncpu);  // zero index is root
 
       while (true) {
-        if (!wpkgs.size()) {
+        bool has_wpkgs = std::any_of(is_wpkgs_avail.begin(), is_wpkgs_avail.end(), [](bool value) { return value; });
+
+        if (!has_wpkgs) {
           break;
         }
 
-        MPI_Recv(NULL, 0, MPI_INT, MPI_ANY_SOURCE, WORK_TAG, MPI_COMM_WORLD, &status);
+        MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+        int tag = status.MPI_TAG;
         int worker = status.MPI_SOURCE;
 
-        auto it = std::find(available_workers.begin(), available_workers.end(), worker);
-        if (it == available_workers.end()) {  // new worker is available
-          available_workers.push_back(worker);
-          MPI_Send(NULL, 0, MPI_INT, worker, WAIT_TAG, MPI_COMM_WORLD);
-        }
-        else {
-          // release an eager worker as we will select a group of workers here
-          MPI_Send(NULL, 0, MPI_INT, worker, WAIT_TAG, MPI_COMM_WORLD);
+        if (tag == WORK_TAG) {
+          MPI_Recv(NULL, 0, MPI_INT, worker, tag, MPI_COMM_WORLD, &status);
 
-          // There are no more new workers available at the moment.
-          // Let's find the biggest job we can fit to them
-          for (int j=0; j<wpkgs.size(); ++j) {
-            int job_size = wpkgs[j].ncpu;
-            if (job_size<=available_workers.size()) {
-              std::vector<int> granks(available_workers.end() - job_size, available_workers.end());
-              for (int worker: granks) {
-                MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, &status);
-                MPI_Send(granks.data(), granks.size(), MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
-                available_workers.pop_back();
-                // send wpkgs[j].script
-                MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
+          auto it = std::find(available_workers.begin(), available_workers.end(), worker);
+          if (it == available_workers.end()) {  // new worker is available
+            available_workers.push_back(worker);
+            MPI_Send(NULL, 0, MPI_INT, worker, WAIT_TAG, MPI_COMM_WORLD);
+          }
+          else {
+            // release an eager worker as we will select a group of workers here
+            MPI_Send(NULL, 0, MPI_INT, worker, WAIT_TAG, MPI_COMM_WORLD);
 
-                // send wpkgs[j].invar
-                // First, send the number of strings
-                int num_strings = wpkgs[j].invar.size();
-                MPI_Send(&num_strings, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
-                // Send each string
-                for (const char* message : wpkgs[j].invar) {
-                  int length = strlen(message) + 1; // +1 for the null terminator
-                  MPI_Send(&length, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
-                  MPI_Send(message, length, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
+            // There are no more new workers available at the moment.
+            // Let's find the biggest job we can fit to them
+            for (int j=0; j<wpkgs.size(); ++j) {
+
+              if (!is_wpkgs_avail[j]) continue;
+
+              int job_size = wpkgs[j].ncpu;
+              if (job_size<=available_workers.size()) {
+                std::vector<int> granks(available_workers.end() - job_size, available_workers.end());
+                for (int worker: granks) {
+                  //distribution[worker] = j;
+                  MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, &status);
+                  MPI_Send(granks.data(), granks.size(), MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                  MPI_Send(&j, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                  available_workers.pop_back();
+                  // send wpkgs[j].script
+                  MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
+
+                  // send wpkgs[j].invar
+                  // First, send the number of strings
+                  int num_strings = wpkgs[j].invar.size();
+                  MPI_Send(&num_strings, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                  // Send each string
+                  for (const char* message : wpkgs[j].invar) {
+                    int length = strlen(message) + 1; // +1 for the null terminator
+                    MPI_Send(&length, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                    MPI_Send(message, length, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
+                  }
+
+                  // send wpkgs[j].outvar
+                  // First, send the number of strings
+                  num_strings = wpkgs[j].outvar.size();
+                  MPI_Send(&num_strings, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                  // Send each string
+                  for (const std::string &message : wpkgs[j].outvar) {
+                    int length = message.size() + 1; // +1 for the null terminator
+                    MPI_Send(&length, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                    MPI_Send(message.c_str(), length, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
+                  }
+
+                  // send wpkgs[j].varloss
+                  // First, send the number of strings
+                  num_strings = wpkgs[j].varloss.size();
+                  MPI_Send(&num_strings, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                  // Send each string
+                  for (const std::string &message : wpkgs[j].varloss) {
+                    int length = message.size() + 1; // +1 for the null terminator
+                    MPI_Send(&length, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
+                    MPI_Send(message.c_str(), length, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
+                  }
+
+                  // send failscore
+                  MPI_Send(&wpkgs[j].failscore, 1, MPI_DOUBLE, worker, WORK_TAG, MPI_COMM_WORLD);
                 }
-
-                // send wpkgs[j].outvar
-                // First, send the number of strings
-                num_strings = wpkgs[j].outvar.size();
-                MPI_Send(&num_strings, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
-                // Send each string
-                for (const std::string &message : wpkgs[j].outvar) {
-                  int length = message.size() + 1; // +1 for the null terminator
-                  MPI_Send(&length, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
-                  MPI_Send(message.c_str(), length, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
-                }
-
-                // send wpkgs[j].varloss
-                // First, send the number of strings
-                num_strings = wpkgs[j].varloss.size();
-                MPI_Send(&num_strings, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
-                // Send each string
-                for (const std::string &message : wpkgs[j].varloss) {
-                  int length = message.size() + 1; // +1 for the null terminator
-                  MPI_Send(&length, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
-                  MPI_Send(message.c_str(), length, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
-                }
-
-                // send failscore
-                MPI_Send(&wpkgs[j].failscore, 1, MPI_DOUBLE, worker, WORK_TAG, MPI_COMM_WORLD);
+                is_wpkgs_avail[j]=false;
+                //wpkgs.erase(wpkgs.begin() + j);
+                break; // break outer for loop
               }
-              wpkgs.erase(wpkgs.begin() + j);
-              break; // break outer for loop
             }
           }
+        }
+        else if (tag == DATA_TAG) {
+          int j;
+          MPI_Recv(&j, 1, MPI_INT, worker, DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+          //MPI_Recv(NULL, 0, MPI_INT, worker, DATA_TAG, MPI_COMM_WORLD, &status);
+          //int j = distribution[worker];
+          MPI_Recv(trg.LS[j].v_varloss.data(), trg.LS[j].v_varloss.size(), MPI_DOUBLE, worker, DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+          std::cout << "HOST: " << trg.LS[j].script << " " << trg.LS[j].outvar.size() << std::endl;
+          for (int i = 0; i < trg.LS[j].v_outvar.size(); i++) {
+            int length;
+            MPI_Recv(&length, 1, MPI_INT, worker, DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            char* buffer = new char[length];
+            MPI_Recv(buffer, length, MPI_CHAR, worker, DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            trg.LS[j].v_outvar[i] = std::string(buffer);
+            delete[] buffer;
+          }
+          std::cout << "Obtained data from the worker 1" << std::endl;
         }
       }
       int count2 = 1;
       while (true) {
-        MPI_Recv(NULL, 0, MPI_INT, MPI_ANY_SOURCE, WORK_TAG, MPI_COMM_WORLD, &status);
-        int worker=status.MPI_SOURCE;
+        MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
         int tag = status.MPI_TAG;
-        MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
-        count2++;
+        int worker = status.MPI_SOURCE;
+
+        if (tag == WORK_TAG) {
+          MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+          MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
+          count2++;
+        }
+        else if (tag == DATA_TAG) {
+          int j;
+          MPI_Recv(&j, 1, MPI_INT, worker, DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+          //int j = distribution[worker];
+          MPI_Recv(trg.LS[j].v_varloss.data(), trg.LS[j].v_varloss.size(), MPI_DOUBLE, worker, DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+          std::cout << "HOST: " << trg.LS[j].script << " " << trg.LS[j].outvar.size() << std::endl;
+          for (int i = 0; i < trg.LS[j].v_outvar.size(); i++) {
+            int length;
+            MPI_Recv(&length, 1, MPI_INT, worker, DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            char* buffer = new char[length];
+            MPI_Recv(buffer, length, MPI_CHAR, worker, DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            trg.LS[j].v_outvar[i] = std::string(buffer);
+            delete[] buffer;
+          }
+
+          std::cout << "Obtained data from the worker 2" << std::endl;
+        }
+
         if (count2==ncpu) break;
       }
     }
