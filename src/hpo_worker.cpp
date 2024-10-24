@@ -31,8 +31,6 @@ void HPO_Worker::run() {
       MPI_Get_count(&status, MPI_INT, &s);
       std::vector<int> granks(s);
       MPI_Recv(granks.data(), s, MPI_INT, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-      int j;
-      MPI_Recv(&j, 1, MPI_INT, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
       // create work_group and communicator for LAMMPS
       MPI_Group_incl(world_group, granks.size(), granks.data(), &work_group);
       MPI_Comm_create_group(MPI_COMM_WORLD, work_group, s /*tag*/, &work_comm);
@@ -94,13 +92,8 @@ void HPO_Worker::run() {
 
       double failscore;
       MPI_Recv(&failscore, 1, MPI_DOUBLE, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-      //for (const auto &tt: outvar) std::cout << tt << " ";
-      //std::cout << std::endl;
 
-
-      // Perform LAMMPS simulation
-      //for (const auto &tt: invar) std::cout << tt << " ";
-      //std::cout << std::endl;
+      // LAMMPS simulation
       auto *lmp = runner.run(work_comm, script, invar);
 
       // local work_comm root sends data back to the host
@@ -113,7 +106,7 @@ void HPO_Worker::run() {
           for (size_t i = 0; i < varloss.size(); ++i)
             v_varloss[i] = failscore;
           for (size_t i = 0; i < outvar.size(); ++i)
-            v_outvar[i] = "fail";
+            v_outvar[i] = "NaN";
         }
         else {
           for (size_t i = 0; i < varloss.size(); ++i) {
@@ -125,10 +118,8 @@ void HPO_Worker::run() {
             v_outvar[i] = runner.get_variable(lmp,o);
           }
         }
-        MPI_Send(&j, 1, MPI_INT, 0, DATA_TAG, MPI_COMM_WORLD);
         MPI_Send(v_varloss.data(), v_varloss.size(), MPI_DOUBLE, 0, DATA_TAG, MPI_COMM_WORLD);
 
-        std::cout << "WORKER: " << script << " " << v_outvar.size() << std::endl;
         for (const std::string &message : v_outvar) {
           int length = message.size() + 1; // +1 for the null terminator
           MPI_Send(&length, 1, MPI_INT, 0, DATA_TAG, MPI_COMM_WORLD);

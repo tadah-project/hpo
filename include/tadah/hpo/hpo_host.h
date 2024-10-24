@@ -15,10 +15,11 @@
 
 #include <chrono>
 #include <vector>
-#include <cmath>
-#include <stdlib.h>
+#include <cmath> // ??
+#include <stdlib.h> // ??
 #include <iostream>
 #include <fstream>
+#include <iomanip>
 
 #if defined(TADAH_ENABLE_OPENMP)
 #include <omp.h>
@@ -48,17 +49,20 @@ inline omp_int_t omp_get_num_threads() { return 1;}
 template <typename T, typename R>
 class HPO_Host {
   private:
+    int cwidth=13;
+    int pprec=4;
+    double tloss, ermse, frmse, srmse;
+    std::string loss_file = "loss.tadah";
+    std::string params_file = "params.tadah";
+    std::string outvar_file = "outvar.tadah";
     R runner;
     HPOTargets &trg;
     //GLF glf;
     double best_score=std::numeric_limits<double>::max();
-    // Dump potential pevery steps
-    size_t pevery=std::numeric_limits<size_t>::max(); 
     Config config;  // make a copy
     StructureDB val_stdb; // validation dataset
     StructureDB train_stdb; // train dataset NON MPI only
     size_t it=0;    // iteration number
-    std::string pevery_dir;
 
     void update_config (T &p) {
       for (auto &m : trg.optim_map) {
@@ -89,18 +93,9 @@ class HPO_Host {
     train_stdb.add(config);
 #endif
 
-    //if (config.exist("HPOEVERY")) {
-    //  pevery_dir=config.get<std::string>("HPOEVERY",0);
-    //  pevery=config.get<size_t>("HPOEVERY",1);
-    //}
-
-    // update CONFIG - constants specific to this target
-    //for (const auto &p : trg.cfg) {
-    //  std::string key=p.first;
-    //  std::string val=p.second;
-    //  config.remove(key);
-    //  config.add(key,val);
-    //}
+    init_loss();
+    init_outvar();
+    init_params();
   }
 
     double operator() (T p) {
@@ -110,18 +105,13 @@ class HPO_Host {
       using std::chrono::duration;
       using std::chrono::milliseconds;
 
-      //auto t1 = high_resolution_clock::now();
-      //p = std::vector<double>(args.begin(), args.end());
+      auto t1 = high_resolution_clock::now();
       update_config(p);
 
       Config config_temp = config;
       config_temp.postprocess();
 
       // Train new potential with updated settings
-      //auto t2 = high_resolution_clock::now();
-      //duration<double, std::milli> t21 = t2 - t1;
-      //std::cout << "T1: " << t21.count() << "ms\n";
-
 #ifdef TADAH_BUILD_MPI
       int rank;
       int ncpu;
@@ -146,8 +136,6 @@ class HPO_Host {
 #endif
       // End of training
 
-      double tloss = 0;
-
       // This potential will be used by LAMMPS
       Config pot_tadah = host.model->get_param_file();
       std::ofstream outfile;
@@ -167,7 +155,7 @@ class HPO_Host {
           for (size_t i = 0; i < lsim.varloss.size(); ++i)
             lsim.v_varloss[i] = lsim.failscore;
           for (size_t i = 0; i < lsim.outvar.size(); ++i)
-            lsim.v_outvar[i] = "fail";
+            lsim.v_outvar[i] = "NaN";
         }
         else {
           for (size_t i = 0; i < lsim.varloss.size(); ++i) {
@@ -183,6 +171,7 @@ class HPO_Host {
       }
 #endif
 
+
       pot_tadah.set_defaults();
       pot_tadah.postprocess();
 
@@ -191,28 +180,29 @@ class HPO_Host {
       nnf.calc(val_stdb);
       StructureDB stpred = host.model->predict(pot_tadah,val_stdb,host.dc);
 
+      tloss = 0;  // reset total loss
       Analytics a(val_stdb,stpred);
 
       // By now we should have finished all computations
-      // It's time to calculate total loss value by GLF
 
-      // TODO computation of tloss to be performed by GLF
-      //double tloss = glf.total_loss(a,p,pdata,fail);
       if (trg.use_ermse) {
-        double ermse = a.calc_e_rmse().mean(); // eV/atom
+        ermse = a.calc_e_rmse().mean(); // eV/atom
         ermse *= 1000; // meV/atom;
-        double ermse_score = ermse*trg.w_ermse;
-        tloss += ermse_score;
+        tloss+= (ermse-trg.ermse)*trg.w_ermse;
       }
       if (trg.use_frmse) {
-        double frmse = a.calc_f_rmse().mean();
-        double frmse_score = frmse*trg.w_frmse;
-        tloss += frmse_score;
+        frmse = a.calc_f_rmse().mean();
+        tloss+= (frmse-trg.frmse)*trg.w_frmse;
       }
       if (trg.use_srmse) {
-        double srmse = a.calc_s_rmse().mean();
-        double srmse_score = srmse*trg.w_srmse;
-        tloss += srmse_score;
+        srmse = a.calc_s_rmse().mean();
+        tloss+= (srmse-trg.srmse)*trg.w_srmse;
+      }
+
+      for (const auto& lsim : trg.LS) {
+        for (size_t i=0; i<lsim.varloss.size(); ++i) {
+          tloss+= lsim.w_varloss[i]*lsim.v_varloss[i];
+        }
       }
 
       // Dump potential if best
@@ -225,18 +215,22 @@ class HPO_Host {
         outfile.close();
       }
 
-      // Dump potential pevery steps
-      // Controled by HPOEVERY
-      //if (it%pevery==0) {
-      //  std::ofstream outfile;
-      //  outfile.open (pevery_dir+"/pot_"+std::to_string(it)+".tadah");
-      //  outfile << pot_tadah;
-      //  outfile.close();
-      //}
+      // Dump potential potevery steps
+      // Controled by POTEVERY
+      if (it%trg.potevery==0) {
+        std::ofstream outfile;
+        outfile.open (trg.potevery_dir+"/pot_"+std::to_string(it)+".tadah");
+        outfile << pot_tadah;
+        outfile.close();
+      }
 
-      //auto t5 = high_resolution_clock::now();
-      //duration<double, std::milli> t54 = t5 - t4;
-      //std::cout << "T4: " << t54.count() << "ms\n";
+      auto t2 = high_resolution_clock::now();
+      duration<double, std::milli> t21 = t2 - t1;
+
+      // print output
+      print_loss();
+      print_outvar(t21.count());
+      print_params(p);
       return tloss;
     }
 #ifdef TADAH_BUILD_MPI
@@ -250,19 +244,21 @@ class HPO_Host {
       MPI_Status status;
 
       const auto &wpkgs = trg.LS;  // make a copy of LammpsSim vec
-                            // LS is sorted
+                                   // LS is sorted
       std::vector<bool> is_wpkgs_avail(wpkgs.size(), true);  // zero index is root
 
       if (wpkgs[0].ncpu>ncpu-1) {
-        throw std::runtime_error   // TODO change to MPI
-          ("Requested LAMMPS simulation size is bigger\n\\
+        throw std::runtime_error
+          ("Requested LAMMPS simulation size is bigger\n\
            than the total number of workers.\n");
       }
       std::vector<int> available_workers;
-      std::vector<int> distribution(ncpu);  // zero index is root
+      std::vector<int> distribution(ncpu);  // This array tracks the jobs assigned to each worker.
+                                            // zero index is root, 
 
       while (true) {
-        bool has_wpkgs = std::any_of(is_wpkgs_avail.begin(), is_wpkgs_avail.end(), [](bool value) { return value; });
+        bool has_wpkgs = std::any_of(is_wpkgs_avail.begin(),
+            is_wpkgs_avail.end(), [](bool value) { return value; });
 
         if (!has_wpkgs) {
           break;
@@ -294,10 +290,9 @@ class HPO_Host {
               if (job_size<=available_workers.size()) {
                 std::vector<int> granks(available_workers.end() - job_size, available_workers.end());
                 for (int worker: granks) {
-                  //distribution[worker] = j;
+                  distribution[worker] = j;
                   MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD, &status);
                   MPI_Send(granks.data(), granks.size(), MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
-                  MPI_Send(&j, 1, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD);
                   available_workers.pop_back();
                   // send wpkgs[j].script
                   MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1, MPI_CHAR, worker, WORK_TAG, MPI_COMM_WORLD);
@@ -339,20 +334,15 @@ class HPO_Host {
                   MPI_Send(&wpkgs[j].failscore, 1, MPI_DOUBLE, worker, WORK_TAG, MPI_COMM_WORLD);
                 }
                 is_wpkgs_avail[j]=false;
-                //wpkgs.erase(wpkgs.begin() + j);
                 break; // break outer for loop
               }
             }
           }
         }
         else if (tag == DATA_TAG) {
-          int j;
-          MPI_Recv(&j, 1, MPI_INT, worker, DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-          //MPI_Recv(NULL, 0, MPI_INT, worker, DATA_TAG, MPI_COMM_WORLD, &status);
-          //int j = distribution[worker];
+          int j = distribution[worker];
           MPI_Recv(trg.LS[j].v_varloss.data(), trg.LS[j].v_varloss.size(), MPI_DOUBLE, worker, DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-          std::cout << "HOST: " << trg.LS[j].script << " " << trg.LS[j].outvar.size() << std::endl;
           for (int i = 0; i < trg.LS[j].v_outvar.size(); i++) {
             int length;
             MPI_Recv(&length, 1, MPI_INT, worker, DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
@@ -361,7 +351,6 @@ class HPO_Host {
             trg.LS[j].v_outvar[i] = std::string(buffer);
             delete[] buffer;
           }
-          std::cout << "Obtained data from the worker 1" << std::endl;
         }
       }
       int count2 = 1;
@@ -376,12 +365,9 @@ class HPO_Host {
           count2++;
         }
         else if (tag == DATA_TAG) {
-          int j;
-          MPI_Recv(&j, 1, MPI_INT, worker, DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-          //int j = distribution[worker];
+          int j = distribution[worker];
           MPI_Recv(trg.LS[j].v_varloss.data(), trg.LS[j].v_varloss.size(), MPI_DOUBLE, worker, DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-          std::cout << "HOST: " << trg.LS[j].script << " " << trg.LS[j].outvar.size() << std::endl;
           for (int i = 0; i < trg.LS[j].v_outvar.size(); i++) {
             int length;
             MPI_Recv(&length, 1, MPI_INT, worker, DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
@@ -390,14 +376,143 @@ class HPO_Host {
             trg.LS[j].v_outvar[i] = std::string(buffer);
             delete[] buffer;
           }
-
-          std::cout << "Obtained data from the worker 2" << std::endl;
         }
 
         if (count2==ncpu) break;
       }
     }
 #endif
+    void init_loss() {
+      std::ofstream outFile(loss_file); // Open with default mode, which truncates
+
+      if (!outFile) {
+        std::cerr << "Error opening file: " << loss_file << std::endl;
+      }
+
+      // add headers
+      outFile << std::left << std::setw(cwidth) << "ITERATION";
+      if (trg.use_ermse)
+        outFile << std::left << std::setw(cwidth) << "ERMSE";
+      if (trg.use_frmse)
+        outFile << std::left << std::setw(cwidth) << "FRMSE";
+      if (trg.use_srmse)
+        outFile << std::left << std::setw(cwidth) << "SRMSE";
+
+      for (const auto& lsim : trg.LS) {
+        for (const auto& vloss : lsim.varloss)
+          outFile << std::left << std::setw(cwidth) << vloss;
+      }
+
+      outFile << std::left << std::setw(cwidth) << "TOTAL" << std::endl;
+    }
+    void init_outvar() {
+      std::ofstream outFile(outvar_file); // Open with default mode, which truncates
+
+      if (!outFile) {
+        std::cerr << "Error opening file: " << outvar_file << std::endl;
+      }
+
+      // add headers
+      outFile << std::left << std::setw(cwidth) << "ITERATION";
+      outFile << std::left << std::setw(cwidth) << "IT_TIME/ms";
+      if (trg.use_ermse)
+        outFile << std::left << std::setw(cwidth) << "ERMSE";
+      if (trg.use_frmse)
+        outFile << std::left << std::setw(cwidth) << "FRMSE";
+      if (trg.use_srmse)
+        outFile << std::left << std::setw(cwidth) << "SRMSE";
+
+      for (const auto& lsim : trg.LS) {
+        for (const auto& outvar : lsim.outvar)
+          outFile << std::left << std::setw(cwidth) << outvar;
+      }
+      outFile << std::endl;
+    }
+
+    void init_params() {
+      std::ofstream outFile(params_file); // Open with default mode, which truncates
+
+      if (!outFile) {
+        std::cerr << "Error opening file: " << params_file << std::endl;
+      }
+
+      // add headers
+      outFile << std::left << std::setw(cwidth) << "ITER";
+
+      for (const auto& optim : trg.optim_map) {
+        outFile << std::left << std::setw(cwidth) << optim;
+      }
+      outFile << std::endl;
+    }
+
+    void print_loss() {
+      std::ofstream outFile(loss_file, std::ios::app);
+
+      if (!outFile) {
+        std::cerr << "Error opening file: " << loss_file << std::endl;
+        return;
+      }
+      outFile << std::left << std::setw(cwidth) << it;
+
+      if (trg.use_ermse)
+        outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << (ermse-trg.ermse)*trg.w_ermse;
+      if (trg.use_frmse)
+        outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << (frmse-trg.frmse)*trg.w_frmse;
+      if (trg.use_srmse)
+        outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << (srmse-trg.srmse)*trg.w_srmse;
+
+      for (const auto& lsim : trg.LS) {
+        for (size_t i=0; i<lsim.varloss.size(); ++i) {
+          outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << lsim.w_varloss[i]*lsim.v_varloss[i];
+        }
+      }
+
+      outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << tloss << std::endl;;
+
+    }
+    void print_outvar(double it_time) {
+      std::ofstream outFile(outvar_file, std::ios::app);
+
+      if (!outFile) {
+        std::cerr << "Error opening file: " << outvar_file << std::endl;
+        return;
+      }
+
+      outFile << std::left << std::setw(cwidth) << it;
+      outFile << std::left << std::setw(cwidth) << std::setprecision(pprec) << it_time;
+
+      if (trg.use_ermse)
+        outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << ermse;
+      if (trg.use_frmse)
+        outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << frmse;
+      if (trg.use_srmse)
+        outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << srmse;
+
+      for (const auto& lsim : trg.LS) {
+        for (size_t i=0; i<lsim.outvar.size(); ++i) {
+          std::string s = lsim.v_outvar[i].size() > cwidth-1 ? 
+            lsim.v_outvar[i].substr(0, cwidth-1) : lsim.v_outvar[i];
+          outFile << std::left << std::setw(cwidth) << s;
+        }
+      }
+
+      outFile << std::endl;;
+    }
+    void print_params(const T &p) {
+      std::ofstream outFile(params_file, std::ios::app);
+
+      if (!outFile) {
+        std::cerr << "Error opening file: " << params_file << std::endl;
+        return;
+      }
+
+      outFile << std::left << std::setw(cwidth) << it;
+
+      for (const auto& v_optim : p) {
+        outFile << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << v_optim;
+      }
+      outFile << std::endl;
+    }
 
 };
 #endif

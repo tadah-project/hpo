@@ -11,13 +11,15 @@
 #include <fstream>
 #include <sstream>
 #include <tuple>
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 /**
  * Essentially a config file for HPO
  *
  */
 class HPOTargets {
-
   private:
     const Config &config;
   public:
@@ -26,6 +28,10 @@ class HPOTargets {
     double      FAIL_SCORE=1000;
     int         LOSS_FUNC=1; 
     std::string MAX_TIME="10";
+
+    std::string potevery_dir;
+    size_t potevery=std::numeric_limits<size_t>::max(); // dump pot this many timesteps
+                                                        // regardless of tloss
 
     std::vector<std::string> optim_map;
     std::vector<double> optim_low;
@@ -64,6 +70,18 @@ class HPOTargets {
 
         else if (key=="EPS") {
           iss >> EPS;
+        }
+        else if (key=="POTEVERY") {
+          iss >> potevery >> potevery_dir;
+          if (!fs::exists(potevery_dir)) {
+            if (fs::create_directory(potevery_dir)) {
+              std::cout << "Directory created: " << potevery_dir << std::endl;
+            } else {
+              std::cerr << "Failed to create directory: " << potevery_dir << std::endl;
+            }
+          } else {
+            std::cout << "Directory already exists: " << potevery_dir << std::endl;
+          }
         }
         else if (key=="MAXCALLS") {
           iss >> MAX_CALLS;
