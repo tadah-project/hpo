@@ -18,13 +18,14 @@ int hpo_run(Config &config, std::string &trg_file,
   const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
   const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
 
-  // TODO add option for initial_function_evals 
-  // TODO add option for is_integer_variable
+  std::vector<dlib::function_evaluation> init_values(1);
+  const dlib::matrix<double,0,1> init = dlib::mat(trg.optim_init);
+  init_values[0]=dlib::function_evaluation(init,0);
 
   auto result1 = dlib::find_min_global(hpo,low,high,
       dlib::max_function_calls(trg.MAX_CALLS),
       dlib::FOREVER,
-      trg.EPS
+      trg.EPS, init_values
       );
   return 0;
 }

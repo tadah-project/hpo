@@ -86,8 +86,8 @@ class HPO_Host {
     Config val_config(val_file);
     val_stdb.add(val_config);
 
-#ifdef TADAH_BUILD_MPI
     use_lammps =  trg.LS.size() > 0;
+#ifdef TADAH_BUILD_MPI
     MPI_Bcast(&use_lammps, 1, MPI_C_BOOL, 0, MPI_COMM_WORLD);
 #else
     train_stdb.add(config);
@@ -171,7 +171,6 @@ class HPO_Host {
       }
 #endif
 
-
       pot_tadah.set_defaults();
       pot_tadah.postprocess();
 
@@ -188,15 +187,15 @@ class HPO_Host {
       if (trg.use_ermse) {
         ermse = a.calc_e_rmse().mean(); // eV/atom
         ermse *= 1000; // meV/atom;
-        tloss+= (ermse-trg.ermse)*trg.w_ermse;
+        tloss+= std::abs(ermse-trg.ermse)*trg.w_ermse;
       }
       if (trg.use_frmse) {
         frmse = a.calc_f_rmse().mean();
-        tloss+= (frmse-trg.frmse)*trg.w_frmse;
+        tloss+= std::abs(frmse-trg.frmse)*trg.w_frmse;
       }
       if (trg.use_srmse) {
         srmse = a.calc_s_rmse().mean();
-        tloss+= (srmse-trg.srmse)*trg.w_srmse;
+        tloss+= std::abs(srmse-trg.srmse)*trg.w_srmse;
       }
 
       for (const auto& lsim : trg.LS) {
@@ -455,11 +454,11 @@ class HPO_Host {
       out_file << std::left << std::setw(cwidth) << it;
 
       if (trg.use_ermse)
-        out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << (ermse-trg.ermse)*trg.w_ermse;
+        out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << std::abs(ermse-trg.ermse)*trg.w_ermse;
       if (trg.use_frmse)
-        out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << (frmse-trg.frmse)*trg.w_frmse;
+        out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << std::abs(frmse-trg.frmse)*trg.w_frmse;
       if (trg.use_srmse)
-        out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << (srmse-trg.srmse)*trg.w_srmse;
+        out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << std::abs(srmse-trg.srmse)*trg.w_srmse;
 
       for (const auto& lsim : trg.LS) {
         for (size_t i=0; i<lsim.varloss.size(); ++i) {

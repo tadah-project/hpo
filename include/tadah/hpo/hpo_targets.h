@@ -2,6 +2,7 @@
 #define HPO_TARGETS_H
 
 #include <tadah/hpo/lammps_sim.h>
+#include <tadah/models/descriptors/d_base.h>
 
 #include <cmath>
 #include <vector>
@@ -37,6 +38,8 @@ class HPOTargets {
     std::vector<double> optim_low;
     std::vector<double> optim_high;
     std::vector<int> optim_is_int;
+
+    std::vector<double> optim_init;
 
     bool use_ermse=false; double ermse; double w_ermse;
     bool use_srmse=false; double srmse; double w_srmse;
@@ -127,10 +130,19 @@ class HPOTargets {
             // so we can push required number to optim_x
             // Here we also deal with the special case for S and C grids
             size_t size = config.size(k);
+            //std::cout << k << " " << is_int << std::endl;
             if (k=="CGRID2B" || k=="CGRID3B" || k=="CGRIDMB" ||
                 k=="SGRID2B" || k=="SGRID3B" || k=="SGRIDMB") {
-              if(config.get<int>(k,0)==-1 || config.get<int>(k,0)==-2)
+
+              if(config.get<int>(k,0)==-1 || config.get<int>(k,0)==-2) {
                 size = config.get<int>(k,1);
+                std::vector<double> grid(size);
+                D_Base::get_grid(config,k,grid);
+                optim_init.insert(optim_init.end(), grid.begin(), grid.end());
+              }
+            }
+            else {
+              optim_init.push_back(config.get<double>(k));
             }
             for (size_t i=0; i<size; ++i ) {
               optim_map.push_back(k);
