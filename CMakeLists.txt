@@ -109,6 +109,10 @@ target_include_directories(tadah.hpo PUBLIC ${Tadah.MODELS_SOURCE_DIR}/include)
 target_include_directories(tadah.hpo PUBLIC ${Tadah.CORE_SOURCE_DIR}/include)
 target_include_directories(tadah.hpo PUBLIC ${Tadah.CORE_SOURCE_DIR}/external/toml11)
 
+if(TADAH_BUILD_MPI)
+  set_target_properties(tadah.hpo PROPERTIES OUTPUT_NAME "tadah_mpi.hpo")
+endif()
+
 find_package(LAPACK)
 target_link_libraries(tadah.hpo PUBLIC ${LAPACK_LIBRARIES})
 
