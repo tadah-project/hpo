@@ -84,6 +84,9 @@ if(NOT DEFINED TADAH_LAMMPS_DIR)
     -DTADAH_LAMMPS_DIR=/path/to/lammps
     CMake will exit." )
 endif()
+if(NOT EXISTS ${TADAH_LAMMPS_DIR})
+  message(FATAL_ERROR "The ${TADAH_LAMMPS_DIR} does not exist.")
+endif()
 
 # we need to know which LAMMPS to use
 # note that LAMMPS lib must by compiles with tadah.lammps
@@ -95,6 +98,24 @@ if(NOT DEFINED TADAH_LAMMPS_LIB)
     DTADAH_LAMMPS_LIB=liblammps.a
     CMake will exit." )
 endif()
+if(NOT EXISTS ${TADAH_LAMMPS_DIR}/src/${TADAH_LAMMPS_LIB})
+  message(FATAL_ERROR "The ${TADAH_LAMMPS_DIR}/src/${TADAH_LAMMPS_LIB} does not exist.")
+endif()
+
+if(TADAH_BUILD_MPI)
+  string(FIND "${TADAH_LAMMPS_LIB}" "mpi" FOUND_INDEX)
+  if(${FOUND_INDEX} EQUAL -1)
+    message(FATAL_ERROR "Error: You are linking the serial LAMMPS library against an MPI-enabled build. Please link the MPI version of the LAMMPS library.")
+  endif()
+else()
+  string(FIND "${TADAH_LAMMPS_LIB}" "serial" FOUND_INDEX)
+  if(${FOUND_INDEX} EQUAL -1)
+    message(FATAL_ERROR "Error: You are linking the MPI-enabled LAMMPS library against a serial build. Please link the serial version of the LAMMPS library.")
+
+  endif()
+endif()
+
+
 add_compile_definitions(TADAH_LAMMPS_LIB=\"${TADAH_LAMMPS_LIB}\")
 
 add_compile_definitions(TADAH_LMPA=\"${TADAH_LAMMPS_DIR}/src/lammps.h\")
