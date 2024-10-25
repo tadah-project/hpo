@@ -1,7 +1,8 @@
 #ifndef HPO_TARGETS_H
 #define HPO_TARGETS_H
 
-#include "lammps_sim.h"
+#include <tadah/hpo/lammps_sim.h>
+#include <tadah/models/descriptors/d_base.h>
 
 #include <cmath>
 #include <vector>
@@ -11,13 +12,15 @@
 #include <fstream>
 #include <sstream>
 #include <tuple>
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 /**
  * Essentially a config file for HPO
  *
  */
 class HPOTargets {
-
   private:
     const Config &config;
   public:
@@ -25,12 +28,18 @@ class HPOTargets {
     double      EPS=1e-2; // control optimiser precision
     double      FAIL_SCORE=1000;
     int         LOSS_FUNC=1; 
-    std::string MAX_TIME="00:00:10 every 1";
+    std::string MAX_TIME="10";
+
+    std::string potevery_dir;
+    size_t potevery=std::numeric_limits<size_t>::max(); // dump pot this many timesteps
+                                                        // regardless of tloss
 
     std::vector<std::string> optim_map;
     std::vector<double> optim_low;
     std::vector<double> optim_high;
     std::vector<int> optim_is_int;
+
+    std::vector<double> optim_init;
 
     bool use_ermse=false; double ermse; double w_ermse;
     bool use_srmse=false; double srmse; double w_srmse;
@@ -65,6 +74,18 @@ class HPOTargets {
         else if (key=="EPS") {
           iss >> EPS;
         }
+        else if (key=="POTEVERY") {
+          iss >> potevery >> potevery_dir;
+          if (!fs::exists(potevery_dir)) {
+            if (fs::create_directory(potevery_dir)) {
+              std::cout << "Directory created: " << potevery_dir << std::endl;
+            } else {
+              std::cerr << "Failed to create directory: " << potevery_dir << std::endl;
+            }
+          } else {
+            std::cout << "Directory already exists: " << potevery_dir << std::endl;
+          }
+        }
         else if (key=="MAXCALLS") {
           iss >> MAX_CALLS;
         }
@@ -80,15 +101,7 @@ class HPOTargets {
         }
         else if (key=="MAXTIME") {
           // -m, --maxtime <time in s>
-          // should be local for every LAMMPS script
-          int tsec;
-          iss >> tsec;
-          int s,m,h;
-          h=tsec/3600;
-          m=(tsec-h*3600)/60;
-          s=tsec-h*3600-m*60;
-          MAX_TIME=std::to_string(h) + ":" + std::to_string(m) 
-            + ":" + std::to_string(s)+" every 1";
+          iss >> MAX_TIME;
         }
         else if (key=="ERMSE") {
           iss >> ermse >> w_ermse;
@@ -117,10 +130,19 @@ class HPOTargets {
             // so we can push required number to optim_x
             // Here we also deal with the special case for S and C grids
             size_t size = config.size(k);
+            //std::cout << k << " " << is_int << std::endl;
             if (k=="CGRID2B" || k=="CGRID3B" || k=="CGRIDMB" ||
                 k=="SGRID2B" || k=="SGRID3B" || k=="SGRIDMB") {
-              if(config.get<int>(k,0)==-1 || config.get<int>(k,0)==-2)
+
+              if(config.get<int>(k,0)==-1 || config.get<int>(k,0)==-2) {
                 size = config.get<int>(k,1);
+                std::vector<double> grid(size);
+                D_Base::get_grid(config,k,grid);
+                optim_init.insert(optim_init.end(), grid.begin(), grid.end());
+              }
+            }
+            else {
+              optim_init.push_back(config.get<double>(k));
             }
             for (size_t i=0; i<size; ++i ) {
               optim_map.push_back(k);

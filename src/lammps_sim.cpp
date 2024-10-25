@@ -1,30 +1,46 @@
-#include "lammps_sim.h"
-LammpsSim::LammpsSim() {};
+#include <tadah/hpo/lammps_sim.h>
+#include <iostream>
+
+LammpsSim::LammpsSim() {}
 LammpsSim::LammpsSim(std::string &cmd, int LOSS_FUNC, std::string MAX_TIME, double FAIL_SCORE):
   cmd(cmd), lossfunc(LOSS_FUNC), maxtime(MAX_TIME), failscore(FAIL_SCORE)
 {
-  invar.push_back(TADAH_LAMMPS_LIB); // Ensure this is a string literal
+  sinvar.push_back(TADAH_LAMMPS_LIB); // Ensure this is a string literal
   tokenise();
   parse_tokens();
 
-  if (std::find(invar.begin(), invar.end(), "-log") == invar.end() || 
-      std::find(invar.begin(), invar.end(), "-l") == invar.end()) {
-    invar.push_back("-log");
-    invar.push_back("none");
+  sinvar.push_back("-var");
+  sinvar.push_back("maxtime");
+  sinvar.push_back(maxtime+" every 1");
+
+  if (std::find(sinvar.begin(), sinvar.end(), "-log") == sinvar.end() || 
+      std::find(sinvar.begin(), sinvar.end(), "-l") == sinvar.end()) {
+    sinvar.push_back("-log");
+    sinvar.push_back("none");
   }
-  if (std::find(invar.begin(), invar.end(), "-screen") == invar.end() || 
-      std::find(invar.begin(), invar.end(), "-sc") == invar.end()) {
-    invar.push_back("-screen");
-    invar.push_back("none");
+  if (std::find(sinvar.begin(), sinvar.end(), "-screen") == sinvar.end() || 
+      std::find(sinvar.begin(), sinvar.end(), "-sc") == sinvar.end()) {
+    sinvar.push_back("-screen");
+    sinvar.push_back("none");
   }
 
   if (!script.length())
-    throw std::runtime_error("LammpsSim object must have a script specified!\n");
+    throw std::runtime_error("LammpsSim object must have a script specified.\n");
+
+  if (!varloss.size())
+    throw std::runtime_error("LammpsSim: --varloss variable is not defined.\n");
+
+  for (const auto &s: sinvar) invar.push_back(s.c_str());
+
+  v_varloss.resize(varloss.size());
+  v_outvar.resize(outvar.size());
+
 }
 void LammpsSim::tokenise() {
   std::stringstream ss(cmd);
   std::string token;
   while (ss >> token) {
+    if (token[0]=='#') break;
     tokens.push_back(token);
   }
 }
@@ -37,16 +53,16 @@ void LammpsSim::parse_tokens() {
       i++;
     }
     else if (tokens[i] == "-v" || tokens[i] == "--varloss") {
-      if (i + 1 < tokens.size()) {
-        varloss.push_back(tokens[i+1]);
+      if (i + 2 < tokens.size()) {
+        varloss.push_back(tokens[++i]);
+        w_varloss.push_back(std::stod(tokens[++i]));
       }
-      i++;
     }
     else if (tokens[i] == "-i" || tokens[i] == "--invar") {
       if (i + 2 < tokens.size()) {
-        invar.push_back("-var");
-        invar.push_back(tokens[i+1].c_str());
-        invar.push_back(tokens[i+2].c_str());
+        sinvar.push_back("-var");
+        sinvar.push_back(tokens[i+1].c_str());
+        sinvar.push_back(tokens[i+2].c_str());
       }
       i+=2; // Skip the next 2 tokens
     }
@@ -76,13 +92,7 @@ void LammpsSim::parse_tokens() {
     }
     else if (tokens[i] == "-m" || tokens[i] == "--maxtime") {
       if (i + 1 < tokens.size()) {
-        int tsec = std::stoi(tokens[i+1]);
-        int s,m,h;
-        h=tsec/3600;
-        m=(tsec-h*3600)/60;
-        s=tsec-h*3600-m*60;
-        maxtime=std::to_string(h) + ":" + std::to_string(m)
-          + ":" + std::to_string(s) + " every 1";
+        maxtime = tokens[i+1];
       }
       i++;
     }

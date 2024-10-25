@@ -1,5 +1,5 @@
 #include "catch2/catch.hpp"
-#include "../hpo.h"
+#include <tadah/hpo/hpo.h>
 
 TEST_CASE( "Testing HPO", "[HPO]" ) {
 }

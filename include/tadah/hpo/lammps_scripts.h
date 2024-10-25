@@ -2,6 +2,7 @@
 #define LAMMPS_SCRIPTS_H
 
 #include <cmrc/cmrc.hpp>
+
 #include <fstream>
 #include <unistd.h>
 // Gain access to embedded lammps script files
