@@ -27,7 +27,6 @@ class HPOTargets {
     size_t      MAX_CALLS=std::numeric_limits<size_t>::max();
     double      EPS=1e-2; // control optimiser precision
     double      FAIL_SCORE=1000;
-    int         LOSS_FUNC=1; 
     std::string MAX_TIME="10";
 
     std::string potevery_dir;
@@ -94,11 +93,6 @@ class HPOTargets {
           // LAMMPS local
           iss >> FAIL_SCORE;
         }
-        else if (key=="LOSSFUNC") {
-          // -l, --lossfunc <int>
-          // default LOSS_FUNC
-          iss >> LOSS_FUNC;
-        }
         else if (key=="MAXTIME") {
           // -m, --maxtime <time in s>
           iss >> MAX_TIME;
@@ -130,7 +124,6 @@ class HPOTargets {
             // so we can push required number to optim_x
             // Here we also deal with the special case for S and C grids
             size_t size = config.size(k);
-            //std::cout << k << " " << is_int << std::endl;
             if (k=="CGRID2B" || k=="CGRID3B" || k=="CGRIDMB" ||
                 k=="SGRID2B" || k=="SGRID3B" || k=="SGRIDMB") {
 
@@ -142,7 +135,9 @@ class HPOTargets {
               }
             }
             else {
-              optim_init.push_back(config.get<double>(k));
+              for (size_t i=0; i<size; ++i ) {
+                optim_init.push_back(config.get<double>(k,i));
+              }
             }
             for (size_t i=0; i<size; ++i ) {
               optim_map.push_back(k);
@@ -156,7 +151,7 @@ class HPOTargets {
         else if (key=="LAMMPS") {
           std::string cmd;
           std::getline(iss, cmd);
-          LS.push_back(LammpsSim(cmd,LOSS_FUNC, MAX_TIME, FAIL_SCORE));
+          LS.push_back(LammpsSim(cmd, MAX_TIME, FAIL_SCORE));
         }
         else {
           throw std::runtime_error("HPO config file unknown key:\n" + line);
