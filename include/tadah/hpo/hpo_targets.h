@@ -130,7 +130,6 @@ class HPOTargets {
             // so we can push required number to optim_x
             // Here we also deal with the special case for S and C grids
             size_t size = config.size(k);
-            //std::cout << k << " " << is_int << std::endl;
             if (k=="CGRID2B" || k=="CGRID3B" || k=="CGRIDMB" ||
                 k=="SGRID2B" || k=="SGRID3B" || k=="SGRIDMB") {
 
@@ -142,7 +141,9 @@ class HPOTargets {
               }
             }
             else {
-              optim_init.push_back(config.get<double>(k));
+              for (size_t i=0; i<size; ++i ) {
+                optim_init.push_back(config.get<double>(k,i));
+              }
             }
             for (size_t i=0; i<size; ++i ) {
               optim_map.push_back(k);

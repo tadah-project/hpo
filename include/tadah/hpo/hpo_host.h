@@ -57,7 +57,6 @@ class HPO_Host {
     std::string outvar_file = "outvar.tadah";
     R runner;
     HPOTargets &trg;
-    //GLF glf;
     double best_score=std::numeric_limits<double>::max();
     Config config;  // make a copy
     StructureDB val_stdb; // validation dataset
@@ -90,7 +89,7 @@ class HPO_Host {
 #ifdef TADAH_BUILD_MPI
     MPI_Bcast(&use_lammps, 1, MPI_C_BOOL, 0, MPI_COMM_WORLD);
 #else
-    train_stdb.add(config);
+    train_stdb.add(config); // this func checks ATOMS and WATOMS keys
 #endif
 
     init_loss();
