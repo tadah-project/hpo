@@ -27,7 +27,6 @@ class HPOTargets {
     size_t      MAX_CALLS=std::numeric_limits<size_t>::max();
     double      EPS=1e-2; // control optimiser precision
     double      FAIL_SCORE=1000;
-    int         LOSS_FUNC=1; 
     std::string MAX_TIME="10";
 
     std::string potevery_dir;
@@ -94,11 +93,6 @@ class HPOTargets {
           // LAMMPS local
           iss >> FAIL_SCORE;
         }
-        else if (key=="LOSSFUNC") {
-          // -l, --lossfunc <int>
-          // default LOSS_FUNC
-          iss >> LOSS_FUNC;
-        }
         else if (key=="MAXTIME") {
           // -m, --maxtime <time in s>
           iss >> MAX_TIME;
@@ -157,7 +151,7 @@ class HPOTargets {
         else if (key=="LAMMPS") {
           std::string cmd;
           std::getline(iss, cmd);
-          LS.push_back(LammpsSim(cmd,LOSS_FUNC, MAX_TIME, FAIL_SCORE));
+          LS.push_back(LammpsSim(cmd, MAX_TIME, FAIL_SCORE));
         }
         else {
           throw std::runtime_error("HPO config file unknown key:\n" + line);

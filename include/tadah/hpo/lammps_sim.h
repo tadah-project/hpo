@@ -30,7 +30,6 @@ class LammpsSim {
 
     int ncpu = 1; /**< Number of CPUs to be used */
     double weight; /**< Weight parameter for simulation */
-    int lossfunc; /**< Identifier for the loss function used */
     std::string maxtime; /**< Maximum allowed time for simulation execution */
     double failscore; /**< Score given when a simulation fails */
 
@@ -40,11 +39,10 @@ class LammpsSim {
      * @brief Constructor for LammpsSim class.
      * 
      * @param cmd The command line configuration.
-     * @param LOSS_FUNC Default loss function identifier.
      * @param MAX_TIME Maximum time allowed for the simulation.
      * @param FAIL_SCORE Default fail score value.
      */
-    LammpsSim(std::string &cmd, int LOSS_FUNC, std::string MAX_TIME, double FAIL_SCORE);
+    LammpsSim(std::string &cmd, std::string MAX_TIME, double FAIL_SCORE);
 
     /**
      * @brief Tokenises the command line configuration.

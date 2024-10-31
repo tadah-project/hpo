@@ -2,8 +2,8 @@
 #include <iostream>
 
 LammpsSim::LammpsSim() {}
-LammpsSim::LammpsSim(std::string &cmd, int LOSS_FUNC, std::string MAX_TIME, double FAIL_SCORE):
-  cmd(cmd), lossfunc(LOSS_FUNC), maxtime(MAX_TIME), failscore(FAIL_SCORE)
+LammpsSim::LammpsSim(std::string &cmd, std::string MAX_TIME, double FAIL_SCORE):
+  cmd(cmd), maxtime(MAX_TIME), failscore(FAIL_SCORE)
 {
   sinvar.push_back(TADAH_LAMMPS_LIB); // Ensure this is a string literal
   tokenise();
@@ -81,12 +81,6 @@ void LammpsSim::parse_tokens() {
     else if (tokens[i] == "-f" || tokens[i] == "--failscore") {
       if (i + 1 < tokens.size()) {
         failscore = std::stod(tokens[i+1]);
-      }
-      i++;
-    }
-    else if (tokens[i] == "-l" || tokens[i] == "--lossfunc") {
-      if (i + 1 < tokens.size()) {
-        lossfunc = std::stoi(tokens[i+1]);
       }
       i++;
     }
