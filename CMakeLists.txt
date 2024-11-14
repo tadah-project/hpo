@@ -162,7 +162,7 @@ target_link_libraries(liblammps INTERFACE ${TADAH_LAMMPS_DIR}/src/${TADAH_LAMMPS
 target_link_libraries(liblammps INTERFACE ${TADAH_LAMMPS_DIR}/lib/tadah.lammps/build/libtadah.lammps.a)
 target_link_libraries(liblammps INTERFACE dl)  # required by lammps
 
-# Link ALL lammps external libs, this step is necessary for static builds
+# Find and link ALL lammps external libraries, this step is necessary for static builds
 file(GLOB_RECURSE LAMMPS_ALL_LIBS "${TADAH_LAMMPS_DIR}/lib/*.a" "${TADAH_LAMMPS_DIR}/lib/*.so")
 target_link_libraries(liblammps INTERFACE ${LAMMPS_ALL_LIBS})
 
