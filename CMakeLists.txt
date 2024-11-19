@@ -118,10 +118,6 @@ endif()
 
 add_compile_definitions(TADAH_LAMMPS_LIB=\"${TADAH_LAMMPS_LIB}\")
 
-add_compile_definitions(TADAH_LMPA=\"${TADAH_LAMMPS_DIR}/src/lammps.h\")
-add_compile_definitions(TADAH_LMPB=\"${TADAH_LAMMPS_DIR}/src/input.h\")
-add_compile_definitions(TADAH_LMPC=\"${TADAH_LAMMPS_DIR}/src/variable.h\")
-
 file(GLOB HPO_SRC CONFIGURE_DEPENDS "src/*.cpp")
 add_library(tadah.hpo ${HPO_SRC})
 target_include_directories(tadah.hpo PUBLIC include)
@@ -129,6 +125,7 @@ target_include_directories(tadah.hpo PUBLIC ${Tadah.MLIP_SOURCE_DIR}/include)
 target_include_directories(tadah.hpo PUBLIC ${Tadah.MODELS_SOURCE_DIR}/include)
 target_include_directories(tadah.hpo PUBLIC ${Tadah.CORE_SOURCE_DIR}/include)
 target_include_directories(tadah.hpo PUBLIC ${Tadah.CORE_SOURCE_DIR}/external/toml11)
+target_include_directories(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src)
 
 if(TADAH_BUILD_MPI)
   set_target_properties(tadah.hpo PROPERTIES OUTPUT_NAME "tadah_mpi.hpo")
@@ -150,38 +147,28 @@ else()
   target_include_directories(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS)
 endif()
 
+# static LAMMPS lib is compiled withput fPIC so we cannot link it to shared lib
 string(FIND "${TADAH_LAMMPS_LIB}" ".so" POSITION)
-if (POSITION EQUAL -1)
-  if (BUILD_SHARED_LIBS)
-    message(FATAL_ERROR "
+if (BUILD_SHARED_LIBS AND POSITION EQUAL -1)
+  message(FATAL_ERROR "
     The static LAMMPS library is not compatible with a shared Tadah! build.
     Please either link a shared LAMMPS library or rebuild Tadah! with 
 
     -DBUILD_SHARED_LIBS=OFF.")
-  endif()
-  add_library(liblammps STATIC IMPORTED)
-else()
-  if (NOT BUILD_SHARED_LIBS)
-    message(FATAL_ERROR "
-    The shared LAMMPS library is not compatible with a static Tadah! build.
-    Please either link a static LAMMPS library or rebuild Tadah! with
-
-    -DBUILD_SHARED_LIBS=ON.")
-  endif()
-  add_library(liblammps SHARED IMPORTED)
 endif()
 
-set_target_properties(liblammps PROPERTIES IMPORTED_LOCATION ${TADAH_LAMMPS_DIR}/src/${TADAH_LAMMPS_LIB})
-#target_link_libraries(liblammps INTERFACE ${TADAH_LAMMPS_DIR}/lib/tadah.lammps/build/libtadah.lammps.so)
+add_library(liblammps INTERFACE)
+target_link_libraries(liblammps INTERFACE ${TADAH_LAMMPS_DIR}/src/${TADAH_LAMMPS_LIB})
 target_link_libraries(liblammps INTERFACE ${TADAH_LAMMPS_DIR}/lib/tadah.lammps/build/libtadah.lammps.a)
 target_link_libraries(liblammps INTERFACE dl)  # required by lammps
+
+# Find and link ALL lammps external libraries, this step is necessary for static builds
+file(GLOB_RECURSE LAMMPS_ALL_LIBS "${TADAH_LAMMPS_DIR}/lib/*.a" "${TADAH_LAMMPS_DIR}/lib/*.so")
+target_link_libraries(liblammps INTERFACE ${LAMMPS_ALL_LIBS})
 
 target_link_libraries(tadah.hpo PUBLIC dlib::dlib)
 target_link_libraries(tadah.hpo PUBLIC liblammps)
 target_link_libraries(tadah.hpo PUBLIC config::rc)
-
-#target_link_directories(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src)
-#target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_LIB})
 
 if (TADAH_BUILD_MPI)
   target_link_libraries(tadah.hpo PUBLIC MPI::MPI_CXX)

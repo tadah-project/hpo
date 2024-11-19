@@ -8,9 +8,9 @@
 #include <mpi.h>
 #endif
 
-#include TADAH_LMPA
-#include TADAH_LMPB
-#include TADAH_LMPC
+#include <lammps.h>
+#include <input.h>
+#include <variable.h>
 
 /** 
  * @class LammpsRunner
