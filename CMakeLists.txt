@@ -5,6 +5,9 @@
 cmake_minimum_required(VERSION 3.12)
 project(Tadah.HPO)
 
+option(TADAH_LAMMPS_DIR "Path to lammps root directory")
+option(TADAH_LAMMPS_LIB "Name of the lammps library")
+
 # Guard against in-source builds
 # Also, make sure user does not accidently invoke cmake .. from the source dir
 # of the module in case module is added as a submodule.
