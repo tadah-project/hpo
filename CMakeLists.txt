@@ -164,6 +164,20 @@ target_link_libraries(liblammps INTERFACE dl)  # required by lammps
 
 # Find and link ALL lammps external libraries, this step is necessary for static builds
 file(GLOB_RECURSE LAMMPS_ALL_LIBS "${TADAH_LAMMPS_DIR}/lib/*.a" "${TADAH_LAMMPS_DIR}/lib/*.so")
+
+# Create a list to store filtered libraries
+set(FILTERED_LAMMPS_LIBS)
+
+# Iterate over found libraries and filter out ones containing "tadah"
+foreach(lib ${LAMMPS_ALL_LIBS})
+    if(NOT lib MATCHES "tadah")
+        list(APPEND FILTERED_LAMMPS_LIBS ${lib})
+    endif()
+endforeach()
+
+# Replace original list with filtered list
+set(LAMMPS_ALL_LIBS ${FILTERED_LAMMPS_LIBS})
+
 target_link_libraries(liblammps INTERFACE ${LAMMPS_ALL_LIBS})
 
 target_link_libraries(tadah.hpo PUBLIC dlib::dlib)
