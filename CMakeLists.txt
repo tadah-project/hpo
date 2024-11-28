@@ -55,11 +55,11 @@ endif()
 include(FetchContent)
 
 if(DEFINED ENV{CI_COMMIT_REF_NAME})
-    set(GIT_BRANCH "$ENV{CI_COMMIT_REF_NAME}")
+  set(GIT_BRANCH "$ENV{CI_COMMIT_REF_NAME}")
 elseif(DEFINED ENV{READTHEDOCS})
-    set(GIT_BRANCH "$ENV{READTHEDOCS_PROJECT}")
+  set(GIT_BRANCH "$ENV{READTHEDOCS_VERSION}")
 else()
-    execute_process(
+  execute_process(
     COMMAND git rev-parse --symbolic-full-name --abbrev-ref HEAD
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     OUTPUT_VARIABLE GIT_BRANCH
@@ -176,9 +176,9 @@ set(FILTERED_LAMMPS_LIBS)
 
 # Iterate over found libraries and filter out ones containing "tadah"
 foreach(lib ${LAMMPS_ALL_LIBS})
-    if(NOT lib MATCHES "tadah")
-        list(APPEND FILTERED_LAMMPS_LIBS ${lib})
-    endif()
+  if(NOT lib MATCHES "tadah")
+    list(APPEND FILTERED_LAMMPS_LIBS ${lib})
+  endif()
 endforeach()
 
 # Replace original list with filtered list
