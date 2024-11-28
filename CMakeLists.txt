@@ -60,7 +60,7 @@ if(DEFINED ENV{CI_COMMIT_REF_NAME})
 else()
     execute_process(
     #COMMAND git rev-parse --symbolic-full-name --abbrev-ref HEAD
-    COMMAND bash -c "git status | grep origin | sed -e 's/.*origin\\///' -e 's/[^a-zA-Z].*//'"
+    COMMAND bash -c "git status | grep origin | sed -e s/.*origin\\/// -e s/[^a-zA-Z].*//"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     OUTPUT_VARIABLE GIT_BRANCH
     OUTPUT_STRIP_TRAILING_WHITESPACE)
