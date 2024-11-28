@@ -5,6 +5,9 @@
 cmake_minimum_required(VERSION 3.12)
 project(Tadah.HPO)
 
+option(TADAH_LAMMPS_DIR "Path to lammps root directory")
+option(TADAH_LAMMPS_LIB "Name of the lammps library")
+
 # Guard against in-source builds
 # Also, make sure user does not accidently invoke cmake .. from the source dir
 # of the module in case module is added as a submodule.
@@ -52,14 +55,17 @@ endif()
 include(FetchContent)
 
 if(DEFINED ENV{CI_COMMIT_REF_NAME})
-    set(GIT_BRANCH "$ENV{CI_COMMIT_REF_NAME}")
+  set(GIT_BRANCH "$ENV{CI_COMMIT_REF_NAME}")
+elseif(DEFINED ENV{READTHEDOCS})
+  set(GIT_BRANCH "$ENV{READTHEDOCS_VERSION}")
 else()
-    execute_process(
+  execute_process(
     COMMAND git rev-parse --symbolic-full-name --abbrev-ref HEAD
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     OUTPUT_VARIABLE GIT_BRANCH
     OUTPUT_STRIP_TRAILING_WHITESPACE)
 endif()
+message(STATUS "${TADAH}.HPO Using GIT_BRANCH:  ${GIT_BRANCH}.")
 
 FetchContent_Declare(
     Tadah.MLIP
@@ -164,6 +170,20 @@ target_link_libraries(liblammps INTERFACE dl)  # required by lammps
 
 # Find and link ALL lammps external libraries, this step is necessary for static builds
 file(GLOB_RECURSE LAMMPS_ALL_LIBS "${TADAH_LAMMPS_DIR}/lib/*.a" "${TADAH_LAMMPS_DIR}/lib/*.so")
+
+# Create a list to store filtered libraries
+set(FILTERED_LAMMPS_LIBS)
+
+# Iterate over found libraries and filter out ones containing "tadah"
+foreach(lib ${LAMMPS_ALL_LIBS})
+  if(NOT lib MATCHES "tadah")
+    list(APPEND FILTERED_LAMMPS_LIBS ${lib})
+  endif()
+endforeach()
+
+# Replace original list with filtered list
+set(LAMMPS_ALL_LIBS ${FILTERED_LAMMPS_LIBS})
+
 target_link_libraries(liblammps INTERFACE ${LAMMPS_ALL_LIBS})
 
 target_link_libraries(tadah.hpo PUBLIC dlib::dlib)
