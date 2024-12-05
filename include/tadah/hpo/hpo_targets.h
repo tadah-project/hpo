@@ -28,6 +28,10 @@ class HPOTargets {
     double      EPS=1e-2; // control optimiser precision
     double      FAIL_SCORE=1000;
     std::string MAX_TIME="10";
+    /* 0 - random search
+     * 1 - grid search
+     * 2 - MaxLIPO+TR */
+    std::string ALGO="2"; 
 
     std::string potevery_dir;
     size_t potevery=std::numeric_limits<size_t>::max(); // dump pot this many timesteps
@@ -72,6 +76,9 @@ class HPOTargets {
 
         else if (key=="EPS") {
           iss >> EPS;
+        }
+        else if (key=="ALGO") {
+          iss >> ALGO;
         }
         else if (key=="POTEVERY") {
           iss >> potevery >> potevery_dir;
