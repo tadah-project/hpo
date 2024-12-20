@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 #include <unordered_map>
 #include <limits>
@@ -70,89 +71,41 @@ private:
 
 
   Config &config;
-  void create_labels() {
-    for (auto& pair : optimap) {
-      std::string key = pair.first;
-      Opti &o = pair.second;
+  std::vector<std::pair<std::string, std::vector<double>>> get_d_labels(const std::string& type, const std::string& prefix) {
+    std::vector<std::pair<std::string, std::vector<double>>> d_label_obj;
 
-      std::string label="None";
-      size_t nparams=0;
-      std::string suffix = "2B";
-      std::string prefix = "D2_";
-      if(key.compare(key.size() - suffix.size(), suffix.size(), suffix) != 0) {
-        suffix="MB";
-        prefix="DM_";
-      }
-      std::string type = "TYPE"+suffix;
-      std::string rcut = "RCUT"+suffix;
-      std::string cgrid = "CGRID"+suffix;
-      std::string sgrid = "SGRID"+suffix;
-      std::string mparams = "MPARAMS";  // there is no label needed
-      std::string watoms = "WATOMS";
+    size_t s = config.size(type);
+    std::vector<std::string> type_config(s);
+    config.get<std::vector<std::string>>(type, type_config);
 
-      size_t i = key == type ? 1 : 0;
-      size_t s = config.size(type);  // grids should be expanded
-      std::vector<std::string> type_config(s);
-      config.get<std::vector<std::string>>(type,type_config);  // just in case get types from config
-      // auto it = std::find(type_config.begin(), type_config.end(), key);
-      size_t idx=0;
+    std::vector<double> d_label_param;
+    std::string current_label;
+    bool processing = false;
 
-      std::string pattern="mJoin";
-      type_config.erase(
-        std::remove_if(type_config.begin(), type_config.end(), [&pattern](const std::string& s) {
-          return s.find(pattern) != std::string::npos;
-        }),
-        type_config.end()
-      );
+    for (const auto& token : type_config) {
+      if (token.rfind(prefix, 0) == 0) {
+        if (token == prefix + "mJoin") continue;
 
-      while (i < o.labels.size()) {
-        // get next label
-        while (idx < type_config.size()) {
-          label = type_config[idx++];
-          if (label.rfind(prefix, 0) != 0) continue;
-          D_Base *d = CONFIG::factory<D_Base>(label);
-          auto &d_keys = d->keys;
-          size_t d_nparams = d->nparams; // number of params to follow after descriptor
-          auto it = std::find(d_keys.begin(), d_keys.end(), key); // check does descriptor uses this key
-          // if it is not the case we are not dealing with grids
+        if (processing) {
+          d_label_obj.emplace_back(current_label, d_label_param);
+          d_label_param.clear();
+        }
 
-          delete d;
-          if (it == d_keys.end()) {
-            //nparams=d_nparams;
-            if (key==type) nparams = d_nparams;
-            else nparams=0;
-            break;
-          }
-          size_t position = std::distance(d_keys.begin(), it);
-          idx += d_nparams - d_keys.size();
-          // idx+=position+(d_nparams-position);
-          if (idx < type_config.size() && is_number(type_config[idx])) {
-            nparams = std::stoi(type_config[idx]);
-          } else {
-            // Handle the case where no valid number follows
-            throw std::runtime_error("Expected a number after label.");
-          }
-          break;
-        }
-        // std::cout << "TYPE " << type << " KEY " << key << " Label " << label << " nparams " << nparams << " i " << i << " label.size " << o.labels.size()  << std::endl;
-        if (key==rcut) {
-          o.labels[i++] = label;
-        }
-        else if (key==cgrid || key==sgrid || key==type) {
-        // std::cout << " 1 TYPE " << type << " KEY " << key << " Label " << label << " nparams " << nparams << " i " << i << " label.size " << o.labels.size()  << std::endl;
-          for (size_t j=0; j<nparams; j++ ) o.labels[i++] = label;
-        }
-        else if (key==watoms) {
-          o.labels[i] = config.get<std::string>("ATOMS",i);
-          i++;
-        }
-        else {
-          std::cout << "SOMETHING ELSE WE DO NOT KNOW" << std::endl;
-          i++;
-        }
+        current_label = token;
+        processing = true;
+      } else if (processing) {
+        d_label_param.push_back(std::stod(token));
       }
     }
+
+    // Add the last pair if needed
+    if (processing) {
+      d_label_obj.emplace_back(current_label, d_label_param);
+    }
+
+    return d_label_obj;
   }
+
   struct Opti {
     // indexing from 1, zeroth element is unused
     std::vector<bool> opt;
@@ -253,6 +206,77 @@ private:
       std::cout << std::endl;
     }
   };
+
+void create_labels() {
+    for (auto& pair : optimap) {
+        std::string key = pair.first;
+        Opti& o = pair.second;
+
+        auto suffix_prefix = determine_suffix_prefix(key);
+        std::string type = "TYPE" + suffix_prefix.first;
+        std::string rcut = "RCUT" + suffix_prefix.first;
+        std::string cgrid = "CGRID" + suffix_prefix.first;
+        std::string sgrid = "SGRID" + suffix_prefix.first;
+        std::string watoms = "WATOMS";
+
+        size_t i = key == type ? 1 : 0;
+
+        auto d_labels = get_d_labels(type, suffix_prefix.second);
+
+    size_t nparams = 0;
+    for (auto it = d_labels.begin(); it != d_labels.end(); ++it) {
+        std::string label = it->first;
+        auto params = it->second;
+
+        if (key == rcut) {
+            o.labels[i++] = label;
+        } else if (key == type) {
+            nparams = params.size();
+            for (size_t j = 0; j < nparams; j++) o.labels[i++] = label;
+        } else if (key == cgrid || key == sgrid) {
+            process_grid_labels(label, o, i, params, key);
+        } else if (key == watoms) {
+            process_atoms_labels(o, i, watoms);
+        } else {
+            std::cerr << "Cannot create label for: " << label << std::endl;
+            i++;
+        }
+    }
+    }
+}
+
+std::pair<std::string, std::string> determine_suffix_prefix(const std::string& key) {
+    if (key.size() >= 2 && key.compare(key.size() - 2, 2, "2B") == 0) {
+        return {"2B", "D2_"};
+    } else {
+        return {"MB", "DM_"};
+    }
+}
+
+void process_grid_labels(const std::string& label, Opti& o, size_t& i,
+                         const std::vector<double>& params, const std::string& key) {
+    std::unique_ptr<D_Base> d(CONFIG::factory<D_Base>(label));
+    auto& d_keys = d->keys;
+    // size_t d_nparams = d->nparams;
+    auto it = std::find(d_keys.begin(), d_keys.end(), key);
+
+    if (it != d_keys.end()) {
+        //size_t nparams = params[params.size() - d_nparams + d_keys.size()];
+        size_t nparams = params.back();
+        for (size_t j = 0; j < nparams; j++) {
+            o.labels[i++] = label;
+        }
+    }
+}
+
+void process_atoms_labels(Opti& o, size_t& i, std::string& watoms) {
+    for (size_t j = 0; j < config.size("ATOMS"); ++j) {
+        o.labels[i++] = config.get<std::string>("ATOMS", j);
+    }
+    watoms = "\0"; // Avoid further processing
+}
+
+
   std::map<std::string, Opti> optimap;
 public:
   size_t      MAX_CALLS=std::numeric_limits<size_t>::max();
@@ -288,12 +312,20 @@ public:
   {
     D_mJoin::expand_grids(config);
 
+    std::cout << "Reading" << std::endl;
     read(fn);
     // sort LS such that the first simulation in the vector
     // requires the greatest number of cpus
     std::sort(LS.begin(), LS.end(), LammpsSim::greater);
 
+    // for (auto& pair : optimap) {
+    //   std::string key = pair.first;
+    //   Opti &o = pair.second;
+    //   o.config.resize(o.config.size()+1);
+    // }
+    std::cout << "Processing" << std::endl;
     create_labels();
+    std::cout << "Printing" << std::endl;
     for (auto& pair : optimap) {
       std::string key = pair.first;
       Opti &o = pair.second;
