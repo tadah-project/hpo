@@ -81,6 +81,32 @@ private:
 
   bool use_lammps;
 
+  void print_elements(const std::set<Element>& elements, const std::string& set_name, std::ostream& os) {
+    os << set_name << ": ";
+    for (const auto& elem : elements) {
+        os << elem << " "; // Ensure Element has an overloaded << operator
+    }
+    os << std::endl;
+}
+void validate_elements(const std::set<Element>& train_elements, const std::set<Element>& val_elements) {
+    std::ostringstream error_message;
+    bool error_found = false;
+
+    for (const auto& elem : val_elements) {
+        if (train_elements.find(elem) == train_elements.end()) {
+            error_found = true;
+            break;
+        }
+    }
+
+    if (error_found) {
+        error_message << "Atoms in the validation set are not found in the training set.\n";
+        print_elements(train_elements, "Training Set", error_message);
+        print_elements(val_elements, "Validation Set", error_message);
+        throw std::runtime_error(error_message.str());
+    }
+}
+
 public:
   HPO_Host(Config c, HPOTargets &trg, std::string &val_file):
     trg(trg),
@@ -89,6 +115,11 @@ public:
   {
     Config val_config(val_file);
     val_stdb.add(val_config);
+
+    std::set<Element> train_elements = StructureDB::find_unique_elements(config);
+    std::set<Element> val_elements = StructureDB::find_unique_elements(val_config);
+
+    validate_elements(train_elements, val_elements);
 
     use_lammps =  trg.LS.size() > 0;
 #ifdef TADAH_BUILD_MPI
