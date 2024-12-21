@@ -38,49 +38,58 @@ private:
     return offset;
   }
 
-  std::vector<std::string> parse_optim_line(std::istringstream& iss) {
+std::vector<std::string> parse_optim_line(std::istringstream& iss) {
     std::vector<std::string> elements;
     std::string token, enclosed;
     bool in_parens = false;
+    bool has_parens = false;
     std::string processed_line;
-    std::string indices="";
+    std::string indices = "";
 
     while (iss >> token) {
-      processed_line += token + " ";
+        processed_line += token + " ";
 
-      if (token.front() == '(' || in_parens) {
-        if (token.front() == '(') {
-          if (in_parens) {
-            throw std::runtime_error("Nested parentheses are not supported up to: " + processed_line);
-          }
-          in_parens = true;
-          token.erase(token.begin());
-        }
-        size_t close_pos = token.find(')');
-        if (close_pos != std::string::npos) {
-          enclosed += token.substr(0, close_pos);
-          in_parens = false;
-          if (enclosed.empty()) {
-            throw std::runtime_error("Empty parentheses are not valid up to: " + processed_line);
-          }
-          //elements.push_back(enclosed);
-          indices+=enclosed;
-          enclosed.clear();
+        if (token.front() == '(' || in_parens) {
+            has_parens = true;
+            if (token.front() == '(') {
+                if (in_parens) {
+                    throw std::runtime_error("Nested parentheses are not supported up to: " + processed_line);
+                }
+                in_parens = true;
+                token.erase(token.begin());
+            }
+            size_t close_pos = token.find(')');
+            if (close_pos != std::string::npos) {
+                enclosed += token.substr(0, close_pos);
+                in_parens = false;
+                if (enclosed.empty()) {
+                    throw std::runtime_error("Empty parentheses are not valid up to: " + processed_line);
+                }
+                indices += enclosed;
+                enclosed.clear();
+            } else {
+                enclosed += token + " ";
+            }
         } else {
-          enclosed += token + " ";
+            if (token.find(')') != std::string::npos && !in_parens) {
+                throw std::runtime_error("Unmatched closing parenthesis up to: " + processed_line);
+            }
+            elements.push_back(token);
         }
-      } else {
-        elements.push_back(token);
-      }
     }
 
     if (in_parens) {
-      throw std::runtime_error("Unmatched opening parenthesis up to: " + processed_line);
+        throw std::runtime_error("Unmatched opening parenthesis up to: " + processed_line);
+    }
+
+    if (!has_parens) {
+        throw std::runtime_error("No parentheses found up to: " + processed_line);
     }
 
     elements.push_back(indices);
     return elements;
-  }
+}
+
 
   Config &config;
 
