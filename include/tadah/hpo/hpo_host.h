@@ -1,6 +1,7 @@
 #ifndef HPO_HOST_H
 #define HPO_HOST_H
 
+#include <cstddef>
 #include <tadah/core/utils.h>
 #include <tadah/core/config.h>
 #include <tadah/models/dc_selector.h>
@@ -31,9 +32,7 @@ inline omp_int_t omp_get_num_threads() { return 1;}
 #endif
 
 /* General comments:
- * - lammps must be compiled as a shared library
  * - lammps must be compiled with c++ exceptions: -DLAMMPS_EXCEPTIONS
- * - when compiling code which uses below classes link -llammps -ldlib -fopenmp
  */
 
 /**
@@ -63,14 +62,20 @@ private:
   StructureDB train_stdb; // train dataset NON MPI only
   size_t it=0;    // iteration number
 
-  void update_config (T &p) {
-    for (auto &m : trg.optim_map) {
-      config.remove(m);
+  void update_config (T &v) {
+    for (auto &m : trg.optimap) {
+      config.remove(m.first);
     }
 
-    for (size_t i=0; i<trg.optim_map.size();++i) {
-      const std::string &s = trg.optim_map[i];
-      config.add(s,p(i));
+    size_t idx=0;
+    for (const auto &p:trg.optimap) {
+      for (size_t i=0; i<p.second.opt.size(); ++i) {
+        if (p.second.opt[i]) {
+          config.add(p.first,v(idx++));
+        } else {
+          config.add(p.first,p.second.config[i]);
+        }
+      }
     }
   }
 
@@ -440,8 +445,11 @@ than the total number of workers.\n");
     // add headers
     out_file << std::left << std::setw(cwidth) << "ITER";
 
-    for (const auto& optim : trg.optim_map) {
-      out_file << std::left << std::setw(cwidth) << optim;
+    for (const auto& p : trg.optimap) {
+      for (size_t i=0; i<p.second.opt.size(); ++i) {
+        if (p.second.opt[i])
+          out_file << std::left << std::setw(cwidth) << p.first;
+      }
     }
     out_file << std::endl;
   }
