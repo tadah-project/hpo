@@ -216,7 +216,7 @@ get_d_labels(const std::string& type, const std::string& prefix) {
 
       current_label = token;
       processing = true;
-    } else if (processing) {
+    } else if (processing && is_number(token)) {
       d_label_param.push_back(std::stod(token));
     }
   }
@@ -419,6 +419,12 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
         "Error processing user index on process_optim_config line "
         + std::to_string(nline) + ": " + std::string(e.what()) +
         "\nTokens: " + std::to_string(ui));
+    }
+  }
+  for (size_t i = 0; i < omap.lowbound.size(); ++i) {
+    if (omap.opt[i] && omap.highbound[i] <= omap.lowbound[i]) {
+      throw std::runtime_error("Error: Highbound must be greater than lowbound: "
+      + std::to_string(omap.lowbound[i])+">="+std::to_string(omap.highbound[i])+ "\n");
     }
   }
 }
