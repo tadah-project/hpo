@@ -411,6 +411,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
   for (const auto& ui : user_indices) {
     try {
       size_t i = ui_offset(omap.config, ui);
+      if (i>=s) throw std::runtime_error("Out of bound index: " + to_string(ui));
       omap.opt[i] = true;
       omap.highbound[i] = high;
       omap.lowbound[i] = low;
