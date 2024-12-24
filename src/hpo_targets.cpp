@@ -168,7 +168,8 @@ void HPOTargets::create_labels() {
 
     size_t i = key == type ? 1 : 0;
 
-    auto d_labels = get_d_labels(type, suffix_prefix.second);
+    auto d_labels = type=="TYPE" ? get_labels(key)
+      : get_d_labels(type, suffix_prefix.second);
 
     size_t nparams = 0;
     for (auto it = d_labels.begin(); it != d_labels.end(); ++it) {
@@ -197,6 +198,7 @@ std::vector<std::pair<std::string, std::vector<double>>> HPOTargets::
 get_d_labels(const std::string& type, const std::string& prefix) {
   std::vector<std::pair<std::string, std::vector<double>>> d_label_obj;
 
+  // if (config.exist(type)) { }
   size_t s = config.size(type);
   std::vector<std::string> type_config(s);
   config.get<std::vector<std::string>>(type, type_config);
@@ -227,13 +229,33 @@ get_d_labels(const std::string& type, const std::string& prefix) {
 
   return d_label_obj;
 }
+std::vector<std::pair<std::string, std::vector<double>>> HPOTargets::
+get_labels(const std::string& key) {
+  std::vector<std::pair<std::string, std::vector<double>>> label_obj;
+
+  size_t s = config.size(key);
+  std::vector<std::string> key_config(s);
+  config.get<std::vector<std::string>>(key, key_config);
+
+  std::vector<double> label_param;
+
+  for (const auto& token : key_config) {
+    label_param.push_back(std::stod(token));
+  }
+  label_obj.emplace_back(key, label_param);
+
+  return label_obj;
+}
 
 std::pair<std::string, std::string> HPOTargets::
 determine_suffix_prefix(const std::string& key) {
   if (key.size() >= 2 && key.compare(key.size() - 2, 2, "2B") == 0) {
     return {"2B", "D2_"};
-  } else {
+  }
+  else if (key.size() >= 2 && key.compare(key.size() - 2, 2, "MB") == 0) {
     return {"MB", "DM_"};
+  } else {
+    return {"", ""};
   }
 }
 

@@ -29,6 +29,7 @@ private:
 
     size_t ui_offset(std::vector<std::string> &tokens, size_t ui);
     std::vector<std::string> parse_optim_line(std::istringstream& iss);
+    std::vector<std::pair<std::string, std::vector<double>>> get_labels(const std::string& key);
     std::vector<std::pair<std::string, std::vector<double>>> get_d_labels(const std::string& type, const std::string& prefix);
     std::pair<std::string, std::string> determine_suffix_prefix(const std::string& key);
     void process_grid_labels(const std::string& label, Opti& o, size_t& i, const std::vector<double>& params, const std::string& key);
