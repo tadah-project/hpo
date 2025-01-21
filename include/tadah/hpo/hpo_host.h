@@ -1,6 +1,7 @@
 #ifndef HPO_HOST_H
 #define HPO_HOST_H
 
+#include <cstddef>
 #include <tadah/core/utils.h>
 #include <tadah/core/config.h>
 #include <tadah/models/dc_selector.h>
@@ -31,9 +32,7 @@ inline omp_int_t omp_get_num_threads() { return 1;}
 #endif
 
 /* General comments:
- * - lammps must be compiled as a shared library
  * - lammps must be compiled with c++ exceptions: -DLAMMPS_EXCEPTIONS
- * - when compiling code which uses below classes link -llammps -ldlib -fopenmp
  */
 
 /**
@@ -63,18 +62,50 @@ private:
   StructureDB train_stdb; // train dataset NON MPI only
   size_t it=0;    // iteration number
 
-  void update_config (T &p) {
-    for (auto &m : trg.optim_map) {
-      config.remove(m);
+  void update_config (T &v) {
+    for (auto &m : trg.optimap) {
+      config.remove(m.first);
     }
 
-    for (size_t i=0; i<trg.optim_map.size();++i) {
-      const std::string &s = trg.optim_map[i];
-      config.add(s,p(i));
+    size_t idx=0;
+    for (const auto &p:trg.optimap) {
+      for (size_t i=0; i<p.second.opt.size(); ++i) {
+        if (p.second.opt[i]) {
+          config.add(p.first,v(idx++));
+        } else {
+          config.add(p.first,p.second.config[i]);
+        }
+      }
     }
   }
 
   bool use_lammps;
+
+  void print_elements(const std::set<Element>& elements, const std::string& set_name, std::ostream& os) {
+    os << set_name << ": ";
+    for (const auto& elem : elements) {
+        os << elem << " "; // Ensure Element has an overloaded << operator
+    }
+    os << std::endl;
+}
+void validate_elements(const std::set<Element>& train_elements, const std::set<Element>& val_elements) {
+    std::ostringstream error_message;
+    bool error_found = false;
+
+    for (const auto& elem : val_elements) {
+        if (train_elements.find(elem) == train_elements.end()) {
+            error_found = true;
+            break;
+        }
+    }
+
+    if (error_found) {
+        error_message << "Atoms in the validation set are not found in the training set.\n";
+        print_elements(train_elements, "Training Set", error_message);
+        print_elements(val_elements, "Validation Set", error_message);
+        throw std::runtime_error(error_message.str());
+    }
+}
 
 public:
   HPO_Host(Config c, HPOTargets &trg, std::string &val_file):
@@ -84,6 +115,11 @@ public:
   {
     Config val_config(val_file);
     val_stdb.add(val_config);
+
+    std::set<Element> train_elements = StructureDB::find_unique_elements(config);
+    std::set<Element> val_elements = StructureDB::find_unique_elements(val_config);
+
+    validate_elements(train_elements, val_elements);
 
     use_lammps =  trg.LS.size() > 0;
 #ifdef TADAH_BUILD_MPI
@@ -440,8 +476,11 @@ than the total number of workers.\n");
     // add headers
     out_file << std::left << std::setw(cwidth) << "ITER";
 
-    for (const auto& optim : trg.optim_map) {
-      out_file << std::left << std::setw(cwidth) << optim;
+    for (const auto& p : trg.optimap) {
+      for (size_t i=0; i<p.second.opt.size(); ++i) {
+        if (p.second.opt[i])
+          out_file << std::left << std::setw(cwidth) << p.first;
+      }
     }
     out_file << std::endl;
   }
