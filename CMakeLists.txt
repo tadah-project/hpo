@@ -80,7 +80,7 @@ FetchContent_Declare(dlib
 FetchContent_MakeAvailable(dlib)
 
 # User must specify the root directory for lammps
-if(NOT DEFINED TADAH_LAMMPS_DIR)
+if(NOT TADAH_LAMMPS_DIR)
   message( FATAL_ERROR 
     "
     TADAH_LAMMPS_DIR is not specified.
@@ -89,12 +89,12 @@ if(NOT DEFINED TADAH_LAMMPS_DIR)
     CMake will exit." )
 endif()
 if(NOT EXISTS ${TADAH_LAMMPS_DIR})
-  message(FATAL_ERROR "The ${TADAH_LAMMPS_DIR} does not exist.")
+  message(FATAL_ERROR "The LAMMPS directory does not exist: ${TADAH_LAMMPS_DIR}")
 endif()
 
 # we need to know which LAMMPS to use
 # note that LAMMPS lib must by compiles with tadah.lammps
-if(NOT DEFINED TADAH_LAMMPS_LIB)
+if(NOT TADAH_LAMMPS_LIB)
   message( FATAL_ERROR 
     "
     TADAH_LAMMPS_LIB is not specified.
