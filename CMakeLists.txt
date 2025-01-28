@@ -187,6 +187,7 @@ target_link_libraries(liblammps INTERFACE ${LAMMPS_ALL_LIBS})
 target_link_libraries(tadah.hpo PUBLIC dlib::dlib)
 target_link_libraries(tadah.hpo PUBLIC liblammps)
 target_link_libraries(tadah.hpo PUBLIC config::rc)
+target_link_libraries(tadah.hpo PUBLIC tadah.mlip) # TODO
 
 if (TADAH_BUILD_MPI)
   target_link_libraries(tadah.hpo PUBLIC MPI::MPI_CXX)
