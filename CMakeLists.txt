@@ -106,18 +106,18 @@ if(NOT EXISTS ${TADAH_LAMMPS_DIR}/src/${TADAH_LAMMPS_LIB})
   message(FATAL_ERROR "The ${TADAH_LAMMPS_DIR}/src/${TADAH_LAMMPS_LIB} does not exist.")
 endif()
 
-if(TADAH_BUILD_MPI)
-  string(FIND "${TADAH_LAMMPS_LIB}" "mpi" FOUND_INDEX)
-  if(${FOUND_INDEX} EQUAL -1)
-    message(FATAL_ERROR "Error: You are linking the serial LAMMPS library against an MPI-enabled build. Please link the MPI version of the LAMMPS library.")
-  endif()
-else()
-  string(FIND "${TADAH_LAMMPS_LIB}" "serial" FOUND_INDEX)
-  if(${FOUND_INDEX} EQUAL -1)
-    message(FATAL_ERROR "Error: You are linking the MPI-enabled LAMMPS library against a serial build. Please link the serial version of the LAMMPS library.")
-
-  endif()
-endif()
+#if(TADAH_BUILD_MPI)
+#  string(FIND "${TADAH_LAMMPS_LIB}" "mpi" FOUND_INDEX)
+#  if(${FOUND_INDEX} EQUAL -1)
+#    message(FATAL_ERROR "Error: You are linking the serial LAMMPS library against an MPI-enabled build. Please link the MPI version of #the LAMMPS library.")
+#  endif()
+#else()
+#  string(FIND "${TADAH_LAMMPS_LIB}" "serial" FOUND_INDEX)
+#  if(${FOUND_INDEX} EQUAL -1)
+#    message(FATAL_ERROR "Error: You are linking the MPI-enabled LAMMPS library against a serial build. Please link the serial version #of the LAMMPS library.")
+#
+#  endif()
+#endif()
 
 
 add_compile_definitions(TADAH_LAMMPS_LIB=\"${TADAH_LAMMPS_LIB}\")
@@ -187,6 +187,7 @@ target_link_libraries(liblammps INTERFACE ${LAMMPS_ALL_LIBS})
 target_link_libraries(tadah.hpo PUBLIC dlib::dlib)
 target_link_libraries(tadah.hpo PUBLIC liblammps)
 target_link_libraries(tadah.hpo PUBLIC config::rc)
+target_link_libraries(tadah.hpo PUBLIC tadah.mlip) # TODO
 
 if (TADAH_BUILD_MPI)
   target_link_libraries(tadah.hpo PUBLIC MPI::MPI_CXX)
