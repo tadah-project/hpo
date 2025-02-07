@@ -326,6 +326,8 @@ void HPOTargets::read(std::string fn) {
         iss >> EPS;
       } else if (key == "ALGO") {
         iss >> ALGO;
+      } else if (key == "N") {
+        iss >> N;
       } else if (key == "POTEVERY") {
         iss >> potevery >> potevery_dir;
         handle_directory_creation(potevery_dir);
