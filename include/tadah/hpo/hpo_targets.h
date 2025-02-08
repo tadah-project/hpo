@@ -64,6 +64,7 @@ public:
     bool use_frmse = false; 
     double frmse; 
     double w_frmse;
+    double N=1; // L_g = abs(y_pred - y)^N
 };
 
 #endif // HPO_TARGETS_H

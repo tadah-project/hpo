@@ -225,15 +225,15 @@ public:
     if (trg.use_ermse) {
       ermse = a.calc_e_rmse().mean(); // eV/atom
       ermse *= 1000; // meV/atom;
-      tloss+= std::abs(ermse-trg.ermse)*trg.w_ermse;
+      tloss+= std::pow(std::abs(ermse-trg.ermse),trg.N)*trg.w_ermse;
     }
     if (trg.use_frmse) {
       frmse = a.calc_f_rmse().mean();
-      tloss+= std::abs(frmse-trg.frmse)*trg.w_frmse;
+      tloss+= std::pow(std::abs(frmse-trg.frmse),trg.N)*trg.w_frmse;
     }
     if (trg.use_srmse) {
       srmse = a.calc_s_rmse().mean();
-      tloss+= std::abs(srmse-trg.srmse)*trg.w_srmse;
+      tloss+= std::pow(std::abs(srmse-trg.srmse),trg.N)*trg.w_srmse;
     }
 
     for (const auto& lsim : trg.LS) {
@@ -495,11 +495,11 @@ than the total number of workers.\n");
     out_file << std::left << std::setw(cwidth) << it;
 
     if (trg.use_ermse)
-      out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << std::abs(ermse-trg.ermse)*trg.w_ermse;
+      out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << std::pow(std::abs(ermse-trg.ermse),trg.N)*trg.w_ermse;
     if (trg.use_frmse)
-      out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << std::abs(frmse-trg.frmse)*trg.w_frmse;
+      out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << std::pow(std::abs(frmse-trg.frmse),trg.N)*trg.w_frmse;
     if (trg.use_srmse)
-      out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << std::abs(srmse-trg.srmse)*trg.w_srmse;
+      out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << std::pow(std::abs(srmse-trg.srmse),trg.N)*trg.w_srmse;
 
     for (const auto& lsim : trg.LS) {
       for (size_t i=0; i<lsim.varloss.size(); ++i) {
