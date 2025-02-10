@@ -50,7 +50,7 @@ class HPO_Host {
 private:
   size_t cwidth=13;
   int pprec=4;
-  double tloss, ermse, frmse, srmse;
+  double tloss, emae, ermse, errmse, frmse, srmse;
   std::string loss_file = "loss.tadah";
   std::string params_file = "params.tadah";
   std::string outvar_file = "outvar.tadah";
@@ -222,10 +222,20 @@ public:
 
     // By now we should have finished all computations
 
+    if (trg.use_emae) {
+      emae = a.calc_e_mae().mean(); // eV/atom
+      emae *= 1000; // meV/atom;
+      tloss+= std::pow(std::abs(emae-trg.emae),trg.N)*trg.w_emae;
+    }
     if (trg.use_ermse) {
       ermse = a.calc_e_rmse().mean(); // eV/atom
       ermse *= 1000; // meV/atom;
       tloss+= std::pow(std::abs(ermse-trg.ermse),trg.N)*trg.w_ermse;
+    }
+    if (trg.use_errmse) {
+      errmse = a.calc_e_rrmse().mean(); // eV/atom
+      errmse *= 1000; // meV/atom;
+      tloss+= std::pow(std::abs(errmse-trg.errmse),trg.N)*trg.w_errmse;
     }
     if (trg.use_frmse) {
       frmse = a.calc_f_rmse().mean();
@@ -428,8 +438,12 @@ than the total number of workers.\n");
 
     // add headers
     out_file << std::left << std::setw(cwidth) << "ITERATION";
+    if (trg.use_emae)
+      out_file << std::left << std::setw(cwidth) << "EMAE";
     if (trg.use_ermse)
       out_file << std::left << std::setw(cwidth) << "ERMSE";
+    if (trg.use_errmse)
+      out_file << std::left << std::setw(cwidth) << "ErRMSE";
     if (trg.use_frmse)
       out_file << std::left << std::setw(cwidth) << "FRMSE";
     if (trg.use_srmse)
@@ -452,8 +466,12 @@ than the total number of workers.\n");
     // add headers
     out_file << std::left << std::setw(cwidth) << "ITERATION";
     out_file << std::left << std::setw(cwidth) << "IT_TIME/ms";
+    if (trg.use_emae)
+      out_file << std::left << std::setw(cwidth) << "EMAE";
     if (trg.use_ermse)
       out_file << std::left << std::setw(cwidth) << "ERMSE";
+    if (trg.use_errmse)
+      out_file << std::left << std::setw(cwidth) << "ErRMSE";
     if (trg.use_frmse)
       out_file << std::left << std::setw(cwidth) << "FRMSE";
     if (trg.use_srmse)
@@ -494,8 +512,12 @@ than the total number of workers.\n");
     }
     out_file << std::left << std::setw(cwidth) << it;
 
+    if (trg.use_emae)
+      out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << std::pow(std::abs(emae-trg.emae),trg.N)*trg.w_emae;
     if (trg.use_ermse)
       out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << std::pow(std::abs(ermse-trg.ermse),trg.N)*trg.w_ermse;
+    if (trg.use_errmse)
+      out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << std::pow(std::abs(errmse-trg.errmse),trg.N)*trg.w_errmse;
     if (trg.use_frmse)
       out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << std::pow(std::abs(frmse-trg.frmse),trg.N)*trg.w_frmse;
     if (trg.use_srmse)
@@ -521,8 +543,12 @@ than the total number of workers.\n");
     out_file << std::left << std::setw(cwidth) << it;
     out_file << std::left << std::setw(cwidth) << std::setprecision(pprec) << it_time;
 
+    if (trg.use_emae)
+      out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << emae;
     if (trg.use_ermse)
       out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << ermse;
+    if (trg.use_errmse)
+      out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << errmse;
     if (trg.use_frmse)
       out_file << std::left << std::setw(cwidth) << std::scientific << std::setprecision(pprec) << frmse;
     if (trg.use_srmse)

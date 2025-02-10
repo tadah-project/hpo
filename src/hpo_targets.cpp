@@ -337,9 +337,15 @@ void HPOTargets::read(std::string fn) {
         iss >> FAIL_SCORE;
       } else if (key == "MAXTIME") {
         iss >> MAX_TIME;
+      } else if (key == "EMAE") {
+        iss >> emae >> w_emae;
+        use_emae = true;
       } else if (key == "ERMSE") {
         iss >> ermse >> w_ermse;
         use_ermse = true;
+      } else if (key == "ErRMSE") {
+        iss >> errmse >> w_errmse;
+        use_errmse = true;
       } else if (key == "SRMSE") {
         iss >> srmse >> w_srmse;
         use_srmse = true;

@@ -55,9 +55,9 @@ public:
     std::string ALGO = "2";
     std::string potevery_dir;
     size_t potevery = std::numeric_limits<size_t>::max();
-    bool use_ermse = false; 
-    double ermse; 
-    double w_ermse;
+    bool use_emae = false; bool use_ermse = false;  bool use_errmse = false; 
+    double emae, ermse, errmse; 
+    double w_emae, w_ermse, w_errmse;
     bool use_srmse = false; 
     double srmse; 
     double w_srmse;
