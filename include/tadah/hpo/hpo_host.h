@@ -61,7 +61,7 @@ private:
   StructureDB val_stdb;   // validation dataset
   StructureDB train_stdb; // train dataset NON MPI only
   size_t it = 0;          // iteration number
-  tadah::models::memory::ModelsWorkspaceManager workspaceManager;
+  tadah::mlip::memory::MLIPWorkspaceManager workspaceManager;
 
   void update_config(T &v) {
     for (auto &m : trg.optimap) {
