@@ -61,6 +61,7 @@ private:
   StructureDB val_stdb;   // validation dataset
   StructureDB train_stdb; // train dataset NON MPI only
   size_t it = 0;          // iteration number
+  tadah::models::memory::ModelsWorkspaceManager workspaceManager;
 
   void update_config(T &v) {
     for (auto &m : trg.optimap) {
@@ -132,7 +133,6 @@ public:
     train_stdb.add(config); // this func checks ATOMS and WATOMS keys
                             // Create a workspace manager
     // TODO For now non MPI
-    tadah::models::memory::ModelsWorkspaceManager workspaceManager;
 #endif
 
     init_loss();
@@ -172,7 +172,7 @@ public:
     host.run();
     host.solve();
 #else
-    Trainer host(config_temp);
+    Trainer host(config_temp, workspaceManager);
     train_stdb.clear_nn();
     host.train(train_stdb);
 #endif
