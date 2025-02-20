@@ -13,7 +13,7 @@
 #include <tadah/mlip/structure_db.h>
 #include <tadah/mlip/trainer.h>
 #include <tadah/models/dc_selector.h>
-#include <tadah/models/memory/ModelsWorkspaceManager.h>
+#include <tadah/mlip/memory/MLIPWorkspaceManager.h>
 
 #include <chrono>
 #include <cmath> // ??
