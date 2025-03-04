@@ -51,6 +51,58 @@ if (BUILD_SHARED_LIBS)
   endif("${isSystemDir}" STREQUAL "-1")
 endif()
 
+# Set default build type
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+
+string(TOUPPER ${CMAKE_BUILD_TYPE} CMAKE_BUILD_TYPE)
+if (CMAKE_BUILD_TYPE STREQUAL "DEVELOP")
+if(NOT DEFINED ENV{TADAH_PATH})
+  message(FATAL_ERROR "TADAH_PATH system variable is undefined for the ${CMAKE_BUILD_TYPE} build")
+endif()
+  function(find_directory_case_insensitive target_name search_dir result_var)
+    execute_process(
+        COMMAND find "${search_dir}" -maxdepth 1 -type d -iname "${target_name}"
+        OUTPUT_VARIABLE found_dir
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if(found_dir)
+      set(${result_var} "${found_dir}" PARENT_SCOPE)
+      message("${TADAH} Develop build: Found directory: ${found_dir}")
+    else()
+      set(${result_var} "" PARENT_SCOPE)
+      message("${TADAH} Develop build: Directory not found.")
+    endif()
+  endfunction()
+  find_directory_case_insensitive("mlip" "$ENV{TADAH_PATH}" DEVELOP_MLIP_DIR)
+  set(FETCHCONTENT_SOURCE_DIR_TADAH.MLIP "${DEVELOP_MLIP_DIR}")
+endif()
+
+# Check is build supported
+string(TOUPPER ${CMAKE_BUILD_TYPE} CMAKE_BUILD_TYPE)
+if (CMAKE_BUILD_TYPE STREQUAL "DEBUG" 
+    OR
+    CMAKE_BUILD_TYPE STREQUAL "RELEASE"
+    OR
+    CMAKE_BUILD_TYPE STREQUAL "PROFILE"
+    OR
+    CMAKE_BUILD_TYPE STREQUAL "DEVELOP"
+)
+  message(STATUS "${TADAH} Build type:  ${CMAKE_BUILD_TYPE}.")
+else()
+  message(FATAL_ERROR "
+  Selected build type is not supported: ${CMAKE_BUILD_TYPE}.
+  Supported build types: Release, Debug, Profile Develop"
+  )
+endif()
+
+# Update the documentation string of CMAKE_BUILD_TYPE for GUIs
+set(CMAKE_BUILD_TYPE "${CMAKE_BUILD_TYPE}" CACHE STRING
+  "Choose the type of build, options are: None Debug Release Profile."
+  FORCE)
+
+
 
 include(FetchContent)
 
@@ -58,7 +110,7 @@ if(DEFINED ENV{CI_COMMIT_REF_NAME})
   set(GIT_BRANCH "$ENV{CI_COMMIT_REF_NAME}")
 else()
   execute_process(
-    COMMAND bash -c "git status | grep origin | sed -e 's/.*origin\\///' -e 's/[^a-zA-Z].*//'" 
+    COMMAND bash -c "git status | sed -n '1s/^On branch //p'" 
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     OUTPUT_VARIABLE GIT_BRANCH
     OUTPUT_STRIP_TRAILING_WHITESPACE)
