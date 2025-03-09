@@ -262,7 +262,7 @@ determine_suffix_prefix(const std::string& key) {
 void HPOTargets::process_grid_labels(
   const std::string& label, Opti& o, size_t& i,
   const std::vector<double>& params, const std::string& key) {
-  std::unique_ptr<D_Base> d(CONFIG::factory<D_Base>(label));
+  std::unique_ptr<D_Base> d(tadah::core::factory<D_Base>(label));
   int arg_pos = d->get_arg_pos(key);
 
   if (arg_pos > -1) {
