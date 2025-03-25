@@ -264,7 +264,6 @@ public:
       best_score = tloss;
       std::ofstream out_file;
       out_file.open("best_pot.tadah");
-      pot_tadah.clear_internal_keys();
       out_file << pot_tadah;
       out_file.close();
     }
