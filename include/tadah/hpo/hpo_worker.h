@@ -4,6 +4,9 @@
 #ifdef TADAH_BUILD_MPI
 #include <mpi.h>
 
+namespace tadah {
+namespace hpo {
+
 class HPO_Worker {
   const static int CONFIG_TAG = 4;
   const static int WAIT_TAG = 3;
@@ -20,6 +23,8 @@ class HPO_Worker {
   bool use_lammps;
   void run();
 };
+} // namespace hpo
+} // namespace tadah
 #endif
 
 #endif

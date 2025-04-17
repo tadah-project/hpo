@@ -2,7 +2,7 @@
 #define HPO_HOST_H
 
 #include <cstddef>
-#include <tadah/core/config.h>
+#include <tadah/core/context.h>
 #include <tadah/core/utils.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/mlip/analytics/analytics.h>
@@ -13,7 +13,7 @@
 #include <tadah/mlip/structure_db.h>
 #include <tadah/mlip/trainer.h>
 #include <tadah/models/dc_selector.h>
-#include <tadah/mlip/memory/MLIPWorkspaceManager.h>
+#include <tadah/mlip/memory/mlip_workspace_manager.h>
 
 #include <chrono>
 #include <cmath> // ??
@@ -32,6 +32,9 @@ inline omp_int_t omp_get_max_threads() { return 1; }
 inline omp_int_t omp_get_num_threads() { return 1; }
 #endif
 
+namespace tadah {
+namespace hpo {
+
 /* General comments:
  * - lammps must be compiled with c++ exceptions: -DLAMMPS_EXCEPTIONS
  */
@@ -39,10 +42,10 @@ inline omp_int_t omp_get_num_threads() { return 1; }
 /**
  * Usage example:
  *
- *     Config config("config.train");
- *     HPOTargets trg(config, "targets");
+ *     Context context("config.train");
+ *     HPOTargets trg(context, "targets");
  *     HPO_Host<dlib::matrix<double,0,1>,LammpsRunner>
- *     hpo(config,trg,"config_val");
+ *     hpo(context"config_val");
  *     # the object is ready to be passed to the optimiser.
  *
  */
@@ -57,24 +60,24 @@ private:
   R runner;
   HPOTargets &trg;
   double best_score = std::numeric_limits<double>::max();
-  Config config;          // make a copy
+  Context context;          // make a copy
   StructureDB val_stdb;   // validation dataset
   StructureDB train_stdb; // train dataset NON MPI only
   size_t it = 0;          // iteration number
   tadah::mlip::memory::MLIPWorkspaceManager workspaceManager;
 
-  void update_config(T &v) {
+  void update_context(T &v) {
     for (auto &m : trg.optimap) {
-      config.remove(m.first);
+      context.remove(m.first);
     }
 
     size_t idx = 0;
     for (const auto &p : trg.optimap) {
       for (size_t i = 0; i < p.second.opt.size(); ++i) {
         if (p.second.opt[i]) {
-          config.add(p.first, v(idx++));
+          context.add(p.first, v(idx++));
         } else {
-          config.add(p.first, p.second.config[i]);
+          context.add(p.first, p.second.context[i]);
         }
       }
     }
@@ -112,17 +115,17 @@ private:
   }
 
 public:
-  HPO_Host(Config c, HPOTargets &trg, std::string &val_file)
+  HPO_Host(Context c, HPOTargets &trg, std::string &val_file)
       : trg(trg),
         // glf(trg),
-        config(c) {
-    Config val_config(val_file);
-    val_stdb.add(val_config);
+        context(c) {
+    Context val_context(val_file);
+    val_stdb.add(val_context);
 
     std::set<Element> train_elements =
-        StructureDB::find_unique_elements(config);
+        StructureDB::find_unique_elements(context);
     std::set<Element> val_elements =
-        StructureDB::find_unique_elements(val_config);
+        StructureDB::find_unique_elements(val_context);
 
     validate_elements(train_elements, val_elements);
 
@@ -130,7 +133,7 @@ public:
 #ifdef TADAH_BUILD_MPI
     MPI_Bcast(&use_lammps, 1, MPI_C_BOOL, 0, MPI_COMM_WORLD);
 #else
-    train_stdb.add(config); // this func checks ATOMS and WATOMS keys
+    train_stdb.add(context); // this func checks ATOMS and WATOMS keys
                             // Create a workspace manager
     // TODO For now non MPI
 #endif
@@ -148,10 +151,10 @@ public:
     using std::chrono::milliseconds;
 
     auto t1 = high_resolution_clock::now();
-    update_config(p);
+    update_context(p);
 
-    Config config_temp = config;
-    config_temp.postprocess();
+    Context context_temp = context;
+    context_temp.postprocess();
 
     // Train new potential with updated settings
 #ifdef TADAH_BUILD_MPI
@@ -161,25 +164,25 @@ public:
     MPI_Comm_size(MPI_COMM_WORLD, &ncpu);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    // New config file must be communicated to all processes
-    std::vector<char> cs = config_temp.serialize();
+    // New context file must be communicated to all processes
+    std::vector<char> cs = context_temp.serialize();
     int cs_size = cs.size();
     MPI_Bcast(&cs_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(cs.data(), cs_size, MPI_CHAR, 0, MPI_COMM_WORLD);
 
     // HOST is waiting for workers requests
-    TrainerHost host(config_temp, rank, ncpu);
+    TrainerHost host(context_temp, rank, ncpu);
     host.run();
     host.solve();
 #else
-    Trainer host(config_temp, workspaceManager);
+    Trainer host(context_temp, workspaceManager);
     train_stdb.clear_nn();
     host.train(train_stdb);
 #endif
     // End of training
 
     // This potential will be used by LAMMPS
-    Config pot_tadah = host.model->get_param_file();
+    Context pot_tadah = host.model->get_param_file();
     std::ofstream out_file;
     out_file.open("pot.tadah");
     out_file << pot_tadah;
@@ -635,4 +638,6 @@ than the total number of workers.\n");
     out_file << std::endl;
   }
 };
+} // namespace hpo
+} // namespace tadah
 #endif

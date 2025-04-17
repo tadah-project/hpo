@@ -7,6 +7,9 @@
 #include <fstream>
 #include <stdexcept>
 
+namespace tadah {
+namespace hpo {
+
 namespace fs = std::filesystem;
 
 size_t HPOTargets::ui_offset(std::vector<std::string> &tokens, size_t ui) {
@@ -199,9 +202,9 @@ get_d_labels(const std::string& type, const std::string& prefix) {
   std::vector<std::pair<std::string, std::vector<double>>> d_label_obj;
 
   // if (config.exist(type)) { }
-  size_t s = config.size(type);
+  size_t s = context.size(type);
   std::vector<std::string> type_config(s);
-  config.get<std::vector<std::string>>(type, type_config);
+  context.get<std::vector<std::string>>(type, type_config);
 
   std::vector<double> d_label_param;
   std::string current_label;
@@ -233,9 +236,9 @@ std::vector<std::pair<std::string, std::vector<double>>> HPOTargets::
 get_labels(const std::string& key) {
   std::vector<std::pair<std::string, std::vector<double>>> label_obj;
 
-  size_t s = config.size(key);
+  size_t s = context.size(key);
   std::vector<std::string> key_config(s);
-  config.get<std::vector<std::string>>(key, key_config);
+  context.get<std::vector<std::string>>(key, key_config);
 
   std::vector<double> label_param;
 
@@ -274,14 +277,14 @@ void HPOTargets::process_grid_labels(
 }
 
 void HPOTargets::process_atoms_labels(Opti& o, size_t& i, std::string& watoms) {
-  for (size_t j = 0; j < config.size("ATOMS"); ++j) {
-    o.labels[i++] = config.get<std::string>("ATOMS", j);
+  for (size_t j = 0; j < context.size("ATOMS"); ++j) {
+    o.labels[i++] = context.get<std::string>("ATOMS", j);
   }
   watoms = "\0"; // Avoid further processing
 }
 
-HPOTargets::HPOTargets(Config &c, std::string fn) : config(c) {
-  D_mJoin::expand_grids(config);
+HPOTargets::HPOTargets(Context &c, std::string fn) : context(c) {
+  D_mJoin::expand_grids(context);
 
   read(fn);
   std::sort(LS.begin(), LS.end(), LammpsSim::greater);
@@ -304,7 +307,7 @@ HPOTargets::HPOTargets(Config &c, std::string fn) : config(c) {
 
 void HPOTargets::read(std::string fn) {
   std::ifstream ifs(fn);
-  if (!ifs.good()) throw std::runtime_error("HPO config file does not exist.");
+  if (!ifs.good()) throw std::runtime_error("HPO context file does not exist.");
 
   std::string line;
   size_t nline = 0;
@@ -392,7 +395,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
   }
 
   Opti& omap = optimap[k];
-  size_t s = config.size(k);
+  size_t s = context.size(k);
   omap.resize(s);
 
   std::vector<std::string> tokens = parse_optim_line(iss);
@@ -436,7 +439,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
   }
   tokens.pop_back();
 
-  config.get<std::vector<std::string>>(k, omap.config);
+  context.get<std::vector<std::string>>(k, omap.config);
 
   for (const auto& ui : user_indices) {
     try {
@@ -459,4 +462,6 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
     }
   }
 }
+} // namespace hpo
+} // namespace tadah
 

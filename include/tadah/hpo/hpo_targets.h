@@ -1,7 +1,7 @@
 #ifndef HPO_TARGETS_H
 #define HPO_TARGETS_H
 
-#include "tadah/core/config.h"
+#include "tadah/core/context.h"
 #include "tadah/core/utils.h"
 #include <tadah/hpo/lammps_sim.h>
 
@@ -13,6 +13,8 @@
 #include <sstream>
 #include <filesystem>
 
+namespace tadah {
+namespace hpo {
 
 class HPOTargets {
 private:
@@ -38,10 +40,10 @@ private:
     void handle_directory_creation(const std::string& directory);
     void process_optim_config(std::istringstream& iss, size_t nline);
     
-    Config &config;
+    Context &context;
 
 public:
-    HPOTargets(Config &c, std::string fn);
+    HPOTargets(Context &c, std::string fn);
     void read(std::string fn);
     std::map<std::string, Opti> optimap;
     std::vector<double> optim_low;
@@ -66,5 +68,7 @@ public:
     double w_frmse;
     double N=1; // L_g = abs(y_pred - y)^N
 };
+} // namespace hpo
+} // namespace tadah
 
 #endif // HPO_TARGETS_H

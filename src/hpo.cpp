@@ -2,15 +2,18 @@
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/runners.h>
 #include <tadah/hpo/hpo.h>
-#include <tadah/core/config.h>
+#include <tadah/core/context.h>
 #include <dlib/global_optimization/find_max_global.h>
 
 #include <random>
 
+namespace tadah {
+namespace hpo {
+
 using R = LammpsRunner;
 using T = dlib::matrix<double,0,1>;
 
-void random_search(Config &config, HPOTargets &trg, std::string &val_file) {
+void random_search(Context &context, HPOTargets &trg, std::string &val_file) {
   //auto &low = trg.optim_low;
   //auto &high = trg.optim_high;
   const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
@@ -18,7 +21,7 @@ void random_search(Config &config, HPOTargets &trg, std::string &val_file) {
   std::random_device rd;
   std::mt19937 gen(rd());
 
-  HPO_Host<T, R> hpo(config,trg, val_file);
+  HPO_Host<T, R> hpo(context,trg, val_file);
 
   for (size_t i=0; i<trg.MAX_CALLS; ++i) {
     T hp(low.size());
@@ -30,11 +33,11 @@ void random_search(Config &config, HPOTargets &trg, std::string &val_file) {
   }
 }
 
-void grid_search(Config &config, HPOTargets &trg, std::string &val_file) {
+void grid_search(Context &context, HPOTargets &trg, std::string &val_file) {
 }
 
-void find_min_global(Config &config, HPOTargets &trg, std::string &val_file) {
-  HPO_Host<T, R> hpo(config,trg, val_file);
+void find_min_global(Context &context, HPOTargets &trg, std::string &val_file) {
+  HPO_Host<T, R> hpo(context,trg, val_file);
   const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
   const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
 
@@ -51,19 +54,20 @@ void find_min_global(Config &config, HPOTargets &trg, std::string &val_file) {
 
 }
 
-int hpo_run(Config &config, std::string &trg_file,
-    std::string &val_file) {
+int hpo_run(Context &context) {
+  std::string trg_file = context.get<std::string>("HPOTARGET");
+  std::string val_file = context.get<std::string>("VALIDATION");
 
-  HPOTargets trg(config, trg_file);
+  HPOTargets trg(context, trg_file);
 
   if (trg.ALGO == "0") {
-    random_search(config, trg, val_file);
+    random_search(context, trg, val_file);
   }
   else if(trg.ALGO == "1") {
-    grid_search(config, trg, val_file);
+    grid_search(context, trg, val_file);
   }
   else if(trg.ALGO == "2") {
-    find_min_global(config, trg, val_file);
+    find_min_global(context, trg, val_file);
   }
   else {
     throw std::runtime_error("Wrong HPO algorithm.");
@@ -71,3 +75,6 @@ int hpo_run(Config &config, std::string &trg_file,
 
   return 0;
 }
+
+} // namespace hpo
+} // namespace tadah

@@ -2,6 +2,9 @@
 #include <tadah/hpo/runners.h>
 #ifdef TADAH_BUILD_MPI
 
+namespace tadah {
+namespace hpo {
+
 HPO_Worker::HPO_Worker(int rank, int ncpu, MPI_Group &world_group):
   rank(rank),
   ncpu(ncpu),
@@ -143,4 +146,7 @@ void HPO_Worker::run() {
   }
 
 }
+
+} // namespace hpo
+} // namespace tadah
 #endif
