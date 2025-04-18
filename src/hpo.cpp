@@ -13,7 +13,7 @@ namespace hpo {
 using R = LammpsRunner;
 using T = dlib::matrix<double,0,1>;
 
-void random_search(Context &context, HPOTargets &trg, std::string &val_file) {
+void random_search(core::Context &context, HPOTargets &trg, std::string &val_file) {
   //auto &low = trg.optim_low;
   //auto &high = trg.optim_high;
   const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
@@ -33,10 +33,10 @@ void random_search(Context &context, HPOTargets &trg, std::string &val_file) {
   }
 }
 
-void grid_search(Context &context, HPOTargets &trg, std::string &val_file) {
+void grid_search(core::Context &context, HPOTargets &trg, std::string &val_file) {
 }
 
-void find_min_global(Context &context, HPOTargets &trg, std::string &val_file) {
+void find_min_global(core::Context &context, HPOTargets &trg, std::string &val_file) {
   HPO_Host<T, R> hpo(context,trg, val_file);
   const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
   const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
@@ -51,10 +51,9 @@ void find_min_global(Context &context, HPOTargets &trg, std::string &val_file) {
       dlib::FOREVER,
       trg.EPS//, init_values
       );
-
 }
 
-int hpo_run(Context &context) {
+int hpo_run(core::Context &context) {
   std::string trg_file = context.get<std::string>("HPOTARGET");
   std::string val_file = context.get<std::string>("VALIDATION");
 

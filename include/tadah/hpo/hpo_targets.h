@@ -40,10 +40,10 @@ private:
     void handle_directory_creation(const std::string& directory);
     void process_optim_config(std::istringstream& iss, size_t nline);
     
-    Context &context;
+    core::Context &context;
 
 public:
-    HPOTargets(Context &c, std::string fn);
+    HPOTargets(core::Context &c, std::string fn);
     void read(std::string fn);
     std::map<std::string, Opti> optimap;
     std::vector<double> optim_low;

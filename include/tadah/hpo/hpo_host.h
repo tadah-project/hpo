@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <tadah/core/context.h>
+#include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/utils.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/mlip/analytics/analytics.h>
@@ -42,7 +43,7 @@ namespace hpo {
 /**
  * Usage example:
  *
- *     Context context("config.train");
+ *     core::Context context("config.train");
  *     HPOTargets trg(context, "targets");
  *     HPO_Host<dlib::matrix<double,0,1>,LammpsRunner>
  *     hpo(context"config_val");
@@ -60,9 +61,9 @@ private:
   R runner;
   HPOTargets &trg;
   double best_score = std::numeric_limits<double>::max();
-  Context context;          // make a copy
-  StructureDB val_stdb;   // validation dataset
-  StructureDB train_stdb; // train dataset NON MPI only
+  core::Context context;          // make a copy
+  mlip::StructureDB val_stdb;   // validation dataset
+  mlip::StructureDB train_stdb; // train dataset NON MPI only
   size_t it = 0;          // iteration number
   tadah::mlip::memory::MLIPWorkspaceManager workspaceManager;
 
@@ -77,7 +78,7 @@ private:
         if (p.second.opt[i]) {
           context.add(p.first, v(idx++));
         } else {
-          context.add(p.first, p.second.context[i]);
+          context.add(p.first, p.second.config[i]);
         }
       }
     }
@@ -85,16 +86,16 @@ private:
 
   bool use_lammps;
 
-  void print_elements(const std::set<Element> &elements,
+  void print_elements(const std::set<core::Element> &elements,
                       const std::string &set_name, std::ostream &os) {
     os << set_name << ": ";
     for (const auto &elem : elements) {
-      os << elem << " "; // Ensure Element has an overloaded << operator
+      os << elem << " "; // Ensure core::Element has an overloaded << operator
     }
     os << std::endl;
   }
-  void validate_elements(const std::set<Element> &train_elements,
-                         const std::set<Element> &val_elements) {
+  void validate_elements(const std::set<core::Element> &train_elements,
+                         const std::set<core::Element> &val_elements) {
     std::ostringstream error_message;
     bool error_found = false;
 
@@ -115,17 +116,16 @@ private:
   }
 
 public:
-  HPO_Host(Context c, HPOTargets &trg, std::string &val_file)
-      : trg(trg),
-        // glf(trg),
-        context(c) {
-    Context val_context(val_file);
+  HPO_Host(core::Context c, HPOTargets &trg, std::string &val_file)
+    : trg(trg),  context(c)
+  {
+    core::Context val_context(core::CoreUserConfigParser().parse(val_file));
     val_stdb.add(val_context);
 
-    std::set<Element> train_elements =
-        StructureDB::find_unique_elements(context);
-    std::set<Element> val_elements =
-        StructureDB::find_unique_elements(val_context);
+    std::set<core::Element> train_elements =
+      mlip::StructureDB::find_unique_elements(context);
+    std::set<core::Element> val_elements =
+      mlip::StructureDB::find_unique_elements(val_context);
 
     validate_elements(train_elements, val_elements);
 
@@ -134,8 +134,8 @@ public:
     MPI_Bcast(&use_lammps, 1, MPI_C_BOOL, 0, MPI_COMM_WORLD);
 #else
     train_stdb.add(context); // this func checks ATOMS and WATOMS keys
-                            // Create a workspace manager
-    // TODO For now non MPI
+                             // Create a workspace manager
+                             // TODO For now non MPI
 #endif
 
     init_loss();
@@ -153,8 +153,7 @@ public:
     auto t1 = high_resolution_clock::now();
     update_context(p);
 
-    Context context_temp = context;
-    context_temp.postprocess();
+    core::Context context_temp = context;
 
     // Train new potential with updated settings
 #ifdef TADAH_BUILD_MPI
@@ -175,14 +174,14 @@ public:
     host.run();
     host.solve();
 #else
-    Trainer host(context_temp, workspaceManager);
+    mlip::Trainer host(context_temp, workspaceManager);
     train_stdb.clear_nn();
     host.train(train_stdb);
 #endif
     // End of training
 
     // This potential will be used by LAMMPS
-    Context pot_tadah = host.model->get_param_file();
+    core::Context pot_tadah = host.model->get_param_file();
     std::ofstream out_file;
     out_file.open("pot.tadah");
     out_file << pot_tadah;
@@ -219,16 +218,13 @@ public:
     }
 #endif
 
-    pot_tadah.set_defaults();
-    pot_tadah.postprocess();
-
     val_stdb.clear_nn();
-    NNFinder nnf(pot_tadah);
+    mlip::NNFinder nnf(pot_tadah);
     nnf.calc(val_stdb);
-    StructureDB stpred = host.model->predict(pot_tadah, val_stdb, host.dc);
+    mlip::StructureDB stpred = host.model->predict(pot_tadah, val_stdb, host.dc);
 
     tloss = 0; // reset total loss
-    Analytics a(val_stdb, stpred);
+    mlip::Analytics a(val_stdb, stpred);
 
     // By now we should have finished all computations
 

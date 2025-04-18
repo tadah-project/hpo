@@ -130,6 +130,7 @@ FetchContent_Declare(dlib
         GIT_TAG        v19.24.6
 )
 FetchContent_MakeAvailable(dlib)
+add_compile_definitions(TADAH_USE_DLIB)
 
 # User must specify the root directory for lammps
 if(NOT TADAH_LAMMPS_DIR)
