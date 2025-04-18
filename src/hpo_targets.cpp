@@ -284,7 +284,9 @@ void HPOTargets::process_atoms_labels(Opti& o, size_t& i, std::string& watoms) {
 }
 
 HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
+  std::cout << "DEBUG: HPOTargets constructor" << std::endl;
   models::D_mJoin::expand_grids(context);
+  std::cout << "DEBUG: HPOTargets constructor after expand_grids" << std::endl;
 
   read(fn);
   std::sort(LS.begin(), LS.end(), LammpsSim::greater);

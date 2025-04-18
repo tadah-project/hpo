@@ -27,7 +27,9 @@ int HPOEngine::run(mlip::Task &task) {
     core::Context context = task.getContext();
 
     // parse config to get expanded grids
+    std::cout << "DEBUG: HPOEngine::run() - parsing config file" << std::endl;
     models::D_mJoin::expand_grids(context);
+    std::cout << "DEBUG: HPOEngine::run() - parsed config file" << std::endl;
 
 #ifdef TADAH_BUILD_MPI
     int rank = 0;
