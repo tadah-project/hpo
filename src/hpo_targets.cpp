@@ -167,7 +167,7 @@ void HPOTargets::create_labels() {
     std::string rcut = "RCUT" + suffix_prefix.first;
     std::string cgrid = "CGRID" + suffix_prefix.first;
     std::string sgrid = "SGRID" + suffix_prefix.first;
-    std::string watoms = "WATOMS";
+    std::string watom = "WATOM";
 
     size_t i = key == type ? 1 : 0;
 
@@ -186,10 +186,10 @@ void HPOTargets::create_labels() {
         for (size_t j = 0; j < nparams; j++) o.labels[i++] = label;
       } else if (key == cgrid || key == sgrid) {
         process_grid_labels(label, o, i, params, key);
-      } else if (key == watoms) {
-        process_atoms_labels(o, i, watoms);
+      } else if (key == watom) {
+        process_atoms_labels(o, i, watom);
       } else {
-        if (watoms != "\0") std::cerr << "Cannot create label for: "
+        if (watom != "\0") std::cerr << "Cannot create label for: "
           << label << std::endl;
         i++;
       }
@@ -276,17 +276,15 @@ void HPOTargets::process_grid_labels(
   }
 }
 
-void HPOTargets::process_atoms_labels(Opti& o, size_t& i, std::string& watoms) {
-  for (size_t j = 0; j < context.size("ATOMS"); ++j) {
-    o.labels[i++] = context.get<std::string>("ATOMS", j);
+void HPOTargets::process_atoms_labels(Opti& o, size_t& i, std::string& watom) {
+  for (size_t j = 0; j < context.size("ATOM"); ++j) {
+    o.labels[i++] = context.get<std::string>("ATOM", j);
   }
-  watoms = "\0"; // Avoid further processing
+  watom = "\0"; // Avoid further processing
 }
 
 HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
-  std::cout << "DEBUG: HPOTargets constructor" << std::endl;
   models::D_mJoin::expand_grids(context);
-  std::cout << "DEBUG: HPOTargets constructor after expand_grids" << std::endl;
 
   read(fn);
   std::sort(LS.begin(), LS.end(), LammpsSim::greater);

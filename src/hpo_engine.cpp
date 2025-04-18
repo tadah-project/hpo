@@ -11,6 +11,7 @@
 #include <tadah/mlip/trainer.h>
 
 #include <tadah/hpo/hpo.h>
+#include <tadah/hpo/hpo_worker.h>
 #include <tadah/hpo/engines/hpo_engine.h>
 
 #ifdef TADAH_BUILD_MPI
@@ -25,18 +26,14 @@ int HPOEngine::run(mlip::Task &task) {
 
   try {
     core::Context context = task.getContext();
-
-    // parse config to get expanded grids
-    std::cout << "DEBUG: HPOEngine::run() - parsing config file" << std::endl;
     models::D_mJoin::expand_grids(context);
-    std::cout << "DEBUG: HPOEngine::run() - parsed config file" << std::endl;
 
 #ifdef TADAH_BUILD_MPI
     int rank = 0;
     int ncpu = 1;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &ncpu);
-    MPI_Status status;
+    // MPI_Status status;
     MPI_Group world_group;
     MPI_Comm_group(MPI_COMM_WORLD, &world_group);
 
@@ -45,7 +42,7 @@ int HPOEngine::run(mlip::Task &task) {
         core::Logger::instance().log(
             tadah::core::LogLevel::ERROR,
             "Minimum number of cpus for an MPI version is 2");
-        return;
+        return EXIT_FAILURE;
       }
       core::Logger::instance().log(tadah::core::LogLevel::INFO, "Optimising HPs...");
       hpo_run(context);
@@ -55,8 +52,10 @@ int HPOEngine::run(mlip::Task &task) {
       MPI_Bcast(&cont, 1, MPI_INT, 0, MPI_COMM_WORLD);
     }
     else { // WORKER
-      HPO_Worker hpo_worker(rank, ncpu, world_group);
+      HPO_Worker hpoWorker(rank, ncpu, world_group);
 
+      tadah::mlip::memory::MLIPWorkspaceManager workspaceManager;
+      tadah::mlip::memory::MLIPWorkspaceManager workspaceManager2;
       while (true) {
         int cs_size;
         MPI_Bcast(&cs_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -69,13 +68,13 @@ int HPOEngine::run(mlip::Task &task) {
         core::Context workerContext;
         workerContext.deserialize(serialized);
 
-        TrainerWorker worker(workerContext, rank, ncpu);
+        mlip::TrainerWorker worker(workerContext, workspaceManager, workspaceManager2);
         worker.run();
         worker.solve();
 
         // Run LAMMPS
-        if (hpo_worker.use_lammps)
-          hpo_worker.run();
+        if (hpoWorker.use_lammps)
+          hpoWorker.runLammps();
       } // end of WORKER external while loop
     }
     // Free the communicator and groups when done

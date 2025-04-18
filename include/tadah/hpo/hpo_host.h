@@ -66,6 +66,7 @@ private:
   mlip::StructureDB train_stdb; // train dataset NON MPI only
   size_t it = 0;          // iteration number
   tadah::mlip::memory::MLIPWorkspaceManager workspaceManager;
+  tadah::mlip::memory::MLIPWorkspaceManager workspaceManager2;
 
   void update_context(T &v) {
     for (auto &m : trg.optimap) {
@@ -133,9 +134,7 @@ public:
 #ifdef TADAH_BUILD_MPI
     MPI_Bcast(&use_lammps, 1, MPI_C_BOOL, 0, MPI_COMM_WORLD);
 #else
-    train_stdb.add(context); // this func checks ATOMS and WATOMS keys
-                             // Create a workspace manager
-                             // TODO For now non MPI
+    train_stdb.add(context);
 #endif
 
     init_loss();
@@ -170,7 +169,7 @@ public:
     MPI_Bcast(cs.data(), cs_size, MPI_CHAR, 0, MPI_COMM_WORLD);
 
     // HOST is waiting for workers requests
-    TrainerHost host(context_temp, rank, ncpu);
+    mlip::TrainerHost host(context_temp, workspaceManager, workspaceManager2);
     host.run();
     host.solve();
 #else
@@ -189,7 +188,7 @@ public:
 
 #ifdef TADAH_BUILD_MPI
     if (use_lammps)
-      run(rank, ncpu);
+      runLammps(rank, ncpu);
 
 #else
     int dummy_comm = 0;
@@ -286,7 +285,7 @@ public:
     return tloss;
   }
 #ifdef TADAH_BUILD_MPI
-  void run(int rank, int ncpu) {
+  void runLammps(int rank, int ncpu) {
     const static int CONFIG_TAG = 4;
     const static int WAIT_TAG = 3;
     const static int RELEASE_TAG = 2;
