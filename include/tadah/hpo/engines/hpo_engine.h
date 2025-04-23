@@ -15,9 +15,6 @@ class HPOEngine: public mlip::engines::IEngine {
 public:
   int run(tadah::mlip::Task &task) override;
   void validate(const tadah::mlip::Task &task) override;
-
-private:
-  void dumpPotFile(const std::string &outfile, const core::Context &context);
 };
 
 } // namespace engines

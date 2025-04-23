@@ -33,7 +33,7 @@ void random_search(core::Context &context, HPOTargets &trg, std::string &val_fil
   }
 }
 
-void grid_search(core::Context &context, HPOTargets &trg, std::string &val_file) {
+void grid_search(core::Context &, HPOTargets &, std::string &) {
 }
 
 void find_min_global(core::Context &context, HPOTargets &trg, std::string &val_file) {

@@ -9,6 +9,7 @@
 #include <tadah/mlip/output/output.h>
 #include <tadah/mlip/structure_db.h>
 #include <tadah/mlip/trainer.h>
+#include <tadah/mlip/engines/train_engine.h>
 
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_worker.h>
@@ -110,20 +111,6 @@ void HPOEngine::validate(const tadah::mlip::Task &task) {
         "HPOEngine requires INIT2B or/and INITMB parameters to be set");
   }
 }
-
-// helper function to dump the potential file
-void HPOEngine::dumpPotFile(const std::string &outfile, const core::Context &context) {
-  core::Logger::instance().log(tadah::core::LogLevel::INFO,
-      "Saving parameters to file: " + outfile);
-  std::ofstream outstream(outfile);
-  if (outstream.is_open()) {
-    outstream << context << std::endl;
-  } else {
-    tadah::core::Logger::instance().log(tadah::core::LogLevel::ERROR,
-        "Error: Unable to open file: ", outfile);
-  }
-}
-
 
 } // namespace engines
 } // namespace hpo
