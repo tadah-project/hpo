@@ -188,8 +188,10 @@ if(TADAH_BUILD_MPI)
   set_target_properties(tadah.hpo PROPERTIES OUTPUT_NAME "tadah_mpi.hpo")
 endif()
 
+if (NOT TADAH_BUILD_DOCS_ONLY)
 find_package(LAPACK)
 target_link_libraries(tadah.hpo PUBLIC ${LAPACK_LIBRARIES})
+endif()
 
 if(TADAH_ENABLE_OPENMP)
   find_package(OpenMP REQUIRED)
