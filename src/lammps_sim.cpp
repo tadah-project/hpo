@@ -8,21 +8,15 @@ LammpsSim::LammpsSim(std::string &cmd, std::string MAX_TIME, double FAIL_SCORE):
   sinvar.push_back(TADAH_LAMMPS_LIB); // Ensure this is a string literal
   tokenise();
   parse_tokens();
+  
+  std::cout << "DEBUG: sinvar:  ";
+  for (const auto& s : sinvar) {
+    std::cout << s << " ";
+  }
 
   sinvar.push_back("-var");
   sinvar.push_back("maxtime");
   sinvar.push_back(maxtime+" every 1");
-
-  if (std::find(sinvar.begin(), sinvar.end(), "-log") == sinvar.end() || 
-      std::find(sinvar.begin(), sinvar.end(), "-l") == sinvar.end()) {
-    sinvar.push_back("-log");
-    sinvar.push_back("none");
-  }
-  if (std::find(sinvar.begin(), sinvar.end(), "-screen") == sinvar.end() || 
-      std::find(sinvar.begin(), sinvar.end(), "-sc") == sinvar.end()) {
-    sinvar.push_back("-screen");
-    sinvar.push_back("none");
-  }
 
   if (!script.length())
     throw std::runtime_error("LammpsSim object must have a script specified.\n");
@@ -93,6 +87,20 @@ void LammpsSim::parse_tokens() {
     else if (tokens[i] == "-n" || tokens[i] == "--ncpu") {
       if (i + 1 < tokens.size()) {
         ncpu = std::stoi(tokens[i+1]);
+      }
+      i++;
+    }
+    else if (tokens[i] == "-l" || tokens[i] == "-log") {
+      if (i + 1 < tokens.size()) {
+        sinvar.push_back("-log");
+        sinvar.push_back(tokens[i+1]);
+      }
+      i++;
+    }
+    else if (tokens[i] == "-sc" || tokens[i] == "-screen") {
+      if (i + 1 < tokens.size()) {
+        sinvar.push_back("-screen");
+        sinvar.push_back(tokens[i+1]);
       }
       i++;
     }
