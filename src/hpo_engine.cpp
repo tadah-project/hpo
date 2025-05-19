@@ -28,6 +28,9 @@ int HPOEngine::run(mlip::Task &task) {
   try {
     core::Context context = task.getContext();
     models::D_mJoin::expand_grids(context);
+    std::set<core::Element> unique_elements = mlip::StructureDB::find_unique_elements(context);
+    mlip::StructureDB::check_atom_key(context, unique_elements);
+    mlip::StructureDB::check_watom_key(context, unique_elements);
 
 #ifdef TADAH_BUILD_MPI
     int rank = 0;
