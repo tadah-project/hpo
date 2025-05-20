@@ -54,13 +54,15 @@ template <typename T, typename R> class HPO_Host {
 private:
   size_t cwidth = 13;
   int pprec = 4;
-  double tloss, emae, ermse, errmse, frmse, srmse;
+  double totalLoss, emae, ermse, errmse, frmse, srmse;
+  double emaeLoss, ermseLoss, errmseLoss, frmseLoss, srmseLoss;
+  std::vector<double> v_loss;
   std::string loss_file = "loss.tadah";
   std::string params_file = "params.tadah";
   std::string outvar_file = "outvar.tadah";
   R runner;
   HPOTargets &trg;
-  double best_score = std::numeric_limits<double>::max();
+  double bestLoss = std::numeric_limits<double>::max();
   core::Context context;          // make a copy
   mlip::StructureDB val_stdb;   // validation dataset
   mlip::StructureDB train_stdb; // train dataset NON MPI only
@@ -204,12 +206,25 @@ public:
           lsim.v_outvar[i] = "NaN";
       } else {
         for (size_t i = 0; i < lsim.varloss.size(); ++i) {
+          try {
           const auto &v = lsim.varloss[i];
           lsim.v_varloss[i] = std::stod(runner.get_variable(lmp, v));
+          } catch (const std::exception &e) {
+            std::cerr << "Error obtaining LAMMPS loss variable: " << e.what() << std::endl;
+            std::cerr << "Variable name: " << lsim.varloss[i] << std::endl;
+            throw;
+          }
         }
         for (size_t i = 0; i < lsim.outvar.size(); ++i) {
-          const auto &o = lsim.outvar[i];
-          lsim.v_outvar[i] = runner.get_variable(lmp, o);
+          try {
+            const auto &o = lsim.outvar[i];
+            lsim.v_outvar[i] = runner.get_variable(lmp, o);
+          } catch (const std::exception &e) {
+            // print variable name
+            std::cerr << "Error obtaining LAMMPS output variable: " << e.what() << std::endl;
+            std::cerr << "Variable name: " << lsim.outvar[i] << std::endl;
+            throw;
+          }
         }
       }
       if (lmp)
@@ -222,44 +237,37 @@ public:
     nnf.calc(val_stdb);
     mlip::StructureDB stpred = host.model->predict(pot_tadah, val_stdb, host.dc);
 
-    tloss = 0; // reset total loss
+    totalLoss = 0; // reset total loss
     mlip::Analytics a(val_stdb, stpred);
 
-    // By now we should have finished all computations
 
     if (trg.use_emae) {
       emae = a.calc_e_mae().mean(); // eV/atom
       emae *= 1000;                 // meV/atom;
-      tloss += std::pow(std::abs(emae - trg.emae), trg.N) * trg.w_emae;
     }
     if (trg.use_ermse) {
       ermse = a.calc_e_rmse().mean(); // eV/atom
       ermse *= 1000;                  // meV/atom;
-      tloss += std::pow(std::abs(ermse - trg.ermse), trg.N) * trg.w_ermse;
     }
     if (trg.use_errmse) {
       errmse = a.calc_e_rrmse().mean(); // eV/atom
       errmse *= 1000;                   // meV/atom;
-      tloss += std::pow(std::abs(errmse - trg.errmse), trg.N) * trg.w_errmse;
     }
     if (trg.use_frmse) {
       frmse = a.calc_f_rmse().mean();
-      tloss += std::pow(std::abs(frmse - trg.frmse), trg.N) * trg.w_frmse;
     }
     if (trg.use_srmse) {
       srmse = a.calc_s_rmse().mean();
-      tloss += std::pow(std::abs(srmse - trg.srmse), trg.N) * trg.w_srmse;
     }
+    // //////////////////////////////////////////////////
+    // By now we should have finished all computations //
+    // //////////////////////////////////////////////////
 
-    for (const auto &lsim : trg.LS) {
-      for (size_t i = 0; i < lsim.varloss.size(); ++i) {
-        tloss += lsim.w_varloss[i] * lsim.v_varloss[i];
-      }
-    }
+    compute_loss();
 
     // Dump potential if best
-    if (tloss < best_score) {
-      best_score = tloss;
+    if (totalLoss < bestLoss) {
+      bestLoss = totalLoss;
       std::ofstream out_file;
       out_file.open("best_pot.tadah");
       out_file << pot_tadah;
@@ -282,7 +290,7 @@ public:
     print_loss();
     print_outvar(t21.count());
     print_params(p);
-    return tloss;
+    return totalLoss;
   }
 #ifdef TADAH_BUILD_MPI
   void runLammps(int rank, int ncpu) {
@@ -468,22 +476,22 @@ than the total number of workers.\n");
     // add headers
     out_file << std::left << std::setw(cwidth) << "ITERATION";
     if (trg.use_emae)
-      out_file << std::left << std::setw(cwidth) << "EMAE";
+      out_file << std::left << std::setw(cwidth) << "loss(EMAE)";
     if (trg.use_ermse)
-      out_file << std::left << std::setw(cwidth) << "ERMSE";
+      out_file << std::left << std::setw(cwidth) << "loss(ERMSE)";
     if (trg.use_errmse)
-      out_file << std::left << std::setw(cwidth) << "ErRMSE";
+      out_file << std::left << std::setw(cwidth) << "loss(ErRMSE)";
     if (trg.use_frmse)
-      out_file << std::left << std::setw(cwidth) << "FRMSE";
+      out_file << std::left << std::setw(cwidth) << "loss(FRMSE)";
     if (trg.use_srmse)
-      out_file << std::left << std::setw(cwidth) << "SRMSE";
+      out_file << std::left << std::setw(cwidth) << "loss(SRMSE)";
 
     for (const auto &lsim : trg.LS) {
       for (const auto &vloss : lsim.varloss)
         out_file << std::left << std::setw(cwidth) << vloss;
     }
 
-    out_file << std::left << std::setw(cwidth) << "TOTAL" << std::endl;
+    out_file << std::left << std::setw(cwidth) << "TOTAL_LOSS" << std::endl;
   }
   void init_outvar() {
     std::ofstream out_file(
@@ -534,6 +542,42 @@ than the total number of workers.\n");
     out_file << std::endl;
   }
 
+  void compute_loss() {
+    if (trg.use_emae) {
+      emaeLoss = std::pow(std::abs(emae - trg.emae), trg.N) * trg.w_emae;
+      emaeLoss = emaeLoss > trg.FAIL_SCORE ? trg.FAIL_SCORE : emaeLoss;
+      totalLoss += emaeLoss;
+    }
+    if (trg.use_ermse) {
+      ermseLoss = std::pow(std::abs(ermse - trg.ermse), trg.N) * trg.w_ermse;
+      ermseLoss = ermseLoss > trg.FAIL_SCORE ? trg.FAIL_SCORE : ermseLoss;
+      totalLoss += ermseLoss;
+    }
+    if (trg.use_errmse) {
+      errmseLoss = std::pow(std::abs(errmse - trg.errmse), trg.N) * trg.w_errmse;
+      errmseLoss = errmseLoss > trg.FAIL_SCORE ? trg.FAIL_SCORE : errmseLoss;
+      totalLoss += errmseLoss;
+    }
+    if (trg.use_frmse) {
+      frmseLoss = std::pow(std::abs(frmse - trg.frmse), trg.N) * trg.w_frmse;
+      frmseLoss = frmseLoss > trg.FAIL_SCORE ? trg.FAIL_SCORE : frmseLoss;
+      totalLoss += frmseLoss;
+    }
+    if (trg.use_srmse) {
+      srmseLoss = std::pow(std::abs(srmse - trg.srmse), trg.N) * trg.w_srmse;
+      srmseLoss = srmseLoss > trg.FAIL_SCORE ? trg.FAIL_SCORE : srmseLoss;
+      totalLoss += srmseLoss;
+    }
+    for (const auto &lsim : trg.LS) {
+      v_loss.resize(lsim.varloss.size());
+      for (size_t i = 0; i < lsim.varloss.size(); ++i) {
+        double varloss = std::pow(lsim.v_varloss[i], trg.N)*lsim.w_varloss[i] > lsim.failscore ?
+          lsim.failscore : std::pow(lsim.v_varloss[i], trg.N)*lsim.w_varloss[i];
+        totalLoss += varloss;
+        v_loss[i] = varloss;
+      }
+    }
+  }
   void print_loss() {
     std::ofstream out_file(loss_file, std::ios::app);
 
@@ -545,35 +589,30 @@ than the total number of workers.\n");
 
     if (trg.use_emae)
       out_file << std::left << std::setw(cwidth) << std::scientific
-               << std::setprecision(pprec)
-               << std::pow(std::abs(emae - trg.emae), trg.N) * trg.w_emae;
+               << std::setprecision(pprec) << emaeLoss;
     if (trg.use_ermse)
       out_file << std::left << std::setw(cwidth) << std::scientific
-               << std::setprecision(pprec)
-               << std::pow(std::abs(ermse - trg.ermse), trg.N) * trg.w_ermse;
+               << std::setprecision(pprec) << ermseLoss;
     if (trg.use_errmse)
       out_file << std::left << std::setw(cwidth) << std::scientific
-               << std::setprecision(pprec)
-               << std::pow(std::abs(errmse - trg.errmse), trg.N) * trg.w_errmse;
+               << std::setprecision(pprec) << errmseLoss;
     if (trg.use_frmse)
       out_file << std::left << std::setw(cwidth) << std::scientific
-               << std::setprecision(pprec)
-               << std::pow(std::abs(frmse - trg.frmse), trg.N) * trg.w_frmse;
+               << std::setprecision(pprec) << frmseLoss;
     if (trg.use_srmse)
       out_file << std::left << std::setw(cwidth) << std::scientific
-               << std::setprecision(pprec)
-               << std::pow(std::abs(srmse - trg.srmse), trg.N) * trg.w_srmse;
+               << std::setprecision(pprec) << srmseLoss;
 
     for (const auto &lsim : trg.LS) {
       for (size_t i = 0; i < lsim.varloss.size(); ++i) {
         out_file << std::left << std::setw(cwidth) << std::scientific
-                 << std::setprecision(pprec)
-                 << lsim.w_varloss[i] * lsim.v_varloss[i];
+          << std::setprecision(pprec)
+          << v_loss[i];
       }
     }
 
     out_file << std::left << std::setw(cwidth) << std::scientific
-             << std::setprecision(pprec) << tloss << std::endl;
+             << std::setprecision(pprec) << totalLoss << std::endl;
     ;
   }
   void print_outvar(double it_time) {
