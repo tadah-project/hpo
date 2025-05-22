@@ -54,13 +54,14 @@ template <typename T, typename R> class HPO_Host {
 private:
   size_t cwidth = 13;
   int pprec = 4;
-  double totalLoss, emae, ermse, errmse, frmse, srmse;
-  double emaeLoss, ermseLoss, errmseLoss, frmseLoss, srmseLoss;
+  double totalLoss, emae, ermse, errmse, ersq, frmse, srmse;
+  double emaeLoss, ermseLoss, errmseLoss, ersqLoss, frmseLoss, srmseLoss;
   std::vector<double> v_loss;
   std::string loss_file = "loss.tadah";
   std::string params_file = "params.tadah";
   std::string outvar_file = "outvar.tadah";
   R runner;
+  std::vector<typename R::LMP*> lmps;
   HPOTargets &trg;
   double bestLoss = std::numeric_limits<double>::max();
   core::Context context;          // make a copy
@@ -119,6 +120,16 @@ private:
   }
 
 public:
+  ~HPO_Host() {
+    if (lmps.size() > 0) {
+      for (auto &lmp : lmps) {
+        if (lmp) {
+          delete lmp;
+          lmp = nullptr;
+        }
+      }
+    }
+  }
   HPO_Host(core::Context c, HPOTargets &trg, std::string &val_file)
     : trg(trg),  context(c)
   {
@@ -137,6 +148,9 @@ public:
     MPI_Bcast(&use_lammps, 1, MPI_C_BOOL, 0, MPI_COMM_WORLD);
 #else
     train_stdb.add(context);
+    if (use_lammps) {
+      lmps.resize(trg.LS.size());
+    }
 #endif
 
     init_loss();
@@ -144,6 +158,7 @@ public:
     init_params();
   }
 
+  // MAIN HPO LOOP
   double operator()(T p) {
     it++;
     using std::chrono::duration;
@@ -194,42 +209,100 @@ public:
 
 #else
     int dummy_comm = 0;
+    size_t lmp_idx=0;
 #ifdef _OPENMP
 #pragma omp parallel for shared(trg)
 #endif
-    for (auto &lsim : trg.LS) {
-      auto *lmp = runner.run(dummy_comm, lsim.script, lsim.invar);
-      if (!lmp) { // LAMMPS failed
-        for (size_t i = 0; i < lsim.varloss.size(); ++i)
-          lsim.v_varloss[i] = lsim.failscore;
-        for (size_t i = 0; i < lsim.outvar.size(); ++i)
-          lsim.v_outvar[i] = "NaN";
-      } else {
-        for (size_t i = 0; i < lsim.varloss.size(); ++i) {
-          try {
-          const auto &v = lsim.varloss[i];
-          lsim.v_varloss[i] = std::stod(runner.get_variable(lmp, v));
-          } catch (const std::exception &e) {
-            std::cerr << "Error obtaining LAMMPS loss variable: " << e.what() << std::endl;
-            std::cerr << "Variable name: " << lsim.varloss[i] << std::endl;
-            throw;
-          }
-        }
-        for (size_t i = 0; i < lsim.outvar.size(); ++i) {
-          try {
-            const auto &o = lsim.outvar[i];
-            lsim.v_outvar[i] = runner.get_variable(lmp, o);
-          } catch (const std::exception &e) {
-            // print variable name
-            std::cerr << "Error obtaining LAMMPS output variable: " << e.what() << std::endl;
-            std::cerr << "Variable name: " << lsim.outvar[i] << std::endl;
-            throw;
-          }
-        }
-      }
-      if (lmp)
-        delete lmp;
+    // for (auto &lsim : trg.LS) {
+    //   auto *lmp = runner.run(dummy_comm, lsim.script, lsim.invar);
+    //   if (!lmp) { // LAMMPS failed
+    //     for (size_t i = 0; i < lsim.varloss.size(); ++i)
+    //       lsim.v_varloss[i] = lsim.failscore;
+    //     for (size_t i = 0; i < lsim.outvar.size(); ++i)
+    //       lsim.v_outvar[i] = "NaN";
+    //   } else {
+    //     for (size_t i = 0; i < lsim.varloss.size(); ++i) {
+    //       try {
+    //       const auto &v = lsim.varloss[i];
+    //       lsim.v_varloss[i] = std::stod(runner.get_variable(lmp, v));
+    //       } catch (const std::exception &e) {
+    //         std::cerr << "Error obtaining LAMMPS loss variable: " << e.what() << std::endl;
+    //         std::cerr << "Variable name: " << lsim.varloss[i] << std::endl;
+    //         throw;
+    //       }
+    //     }
+    //     for (size_t i = 0; i < lsim.outvar.size(); ++i) {
+    //       try {
+    //         const auto &o = lsim.outvar[i];
+    //         lsim.v_outvar[i] = runner.get_variable(lmp, o);
+    //       } catch (const std::exception &e) {
+    //         // print variable name
+    //         std::cerr << "Error obtaining LAMMPS output variable: " << e.what() << std::endl;
+    //         std::cerr << "Variable name: " << lsim.outvar[i] << std::endl;
+    //         throw;
+    //       }
+    //     }
+    //   }
+    //   if (lmp)
+    //     delete lmp;
+    // }
+  // Run all simulations in trg.LS
+  for (auto &lsim : trg.LS) {
+    // If there is no valid LAMMPS instance, create one
+    // (some codes re-check if 'invar' changed, then re-create)
+    auto &lmp = lmps[lmp_idx++];
+    if (!lmp) {
+      lmp = runner.create_instance(dummy_comm, lsim.invar);
     }
+
+    // If LAMMPS creation failed, mark fail results and move on
+    if (!lmp) {
+      for (size_t i = 0; i < lsim.varloss.size(); ++i)
+        lsim.v_varloss[i] = lsim.failscore;
+      for (size_t i = 0; i < lsim.outvar.size(); ++i)
+        lsim.v_outvar[i] = "NaN";
+      continue;
+    }
+
+    // Attempt to run script on this instance
+    bool success = runner.run_script(lmp, lsim.script);
+
+    if (!success) {
+      // A crash or severe error occurred. Mark fail results
+      for (size_t i = 0; i < lsim.varloss.size(); ++i)
+        lsim.v_varloss[i] = lsim.failscore;
+      for (size_t i = 0; i < lsim.outvar.size(); ++i)
+        lsim.v_outvar[i] = "NaN";
+
+      // Discard the crashed instance so next iteration can re-create
+      delete lmp;
+      lmp = nullptr;
+      continue;
+    }
+
+    // If script ran successfully, retrieve LAMMPS variables
+    for (size_t i = 0; i < lsim.varloss.size(); ++i) {
+      try {
+        const std::string &v = lsim.varloss[i];
+        lsim.v_varloss[i] = std::stod(runner.get_variable(lmp, v));
+      } catch (const std::exception &e) {
+        std::cerr << "Error obtaining LAMMPS loss variable: " << e.what() << std::endl;
+        std::cerr << "Variable name: " << lsim.varloss[i] << std::endl;
+        throw; // or handle gracefully
+      }
+    }
+
+    for (size_t i = 0; i < lsim.outvar.size(); ++i) {
+      try {
+        const std::string &o = lsim.outvar[i];
+        lsim.v_outvar[i] = runner.get_variable(lmp, o);
+      } catch (const std::exception &e) {
+        std::cerr << "Error obtaining LAMMPS output variable: " << e.what() << std::endl;
+        std::cerr << "Variable name: " << lsim.outvar[i] << std::endl;
+        throw; // or handle gracefully
+      }
+    }
+  }
 #endif
 
     val_stdb.clear_nn();
@@ -252,6 +325,9 @@ public:
     if (trg.use_errmse) {
       errmse = a.calc_e_rrmse().mean(); // eV/atom
       errmse *= 1000;                   // meV/atom;
+    }
+    if (trg.use_ersq) {
+      ersq = a.calc_e_r_sq().mean();
     }
     if (trg.use_frmse) {
       frmse = a.calc_f_rmse().mean();
@@ -481,6 +557,8 @@ than the total number of workers.\n");
       out_file << std::left << std::setw(cwidth) << "loss(ERMSE)";
     if (trg.use_errmse)
       out_file << std::left << std::setw(cwidth) << "loss(ErRMSE)";
+    if (trg.use_ersq)
+      out_file << std::left << std::setw(cwidth) << "loss(ERSQ)";
     if (trg.use_frmse)
       out_file << std::left << std::setw(cwidth) << "loss(FRMSE)";
     if (trg.use_srmse)
@@ -510,6 +588,8 @@ than the total number of workers.\n");
       out_file << std::left << std::setw(cwidth) << "ERMSE";
     if (trg.use_errmse)
       out_file << std::left << std::setw(cwidth) << "ErRMSE";
+    if (trg.use_ersq)
+      out_file << std::left << std::setw(cwidth) << "ERSQ";
     if (trg.use_frmse)
       out_file << std::left << std::setw(cwidth) << "FRMSE";
     if (trg.use_srmse)
@@ -558,6 +638,11 @@ than the total number of workers.\n");
       errmseLoss = errmseLoss > trg.FAIL_SCORE ? trg.FAIL_SCORE : errmseLoss;
       totalLoss += errmseLoss;
     }
+    if (trg.use_ersq) {
+      ersqLoss = std::pow(std::abs(ersq - trg.ersq), trg.N) * trg.w_ersq;
+      ersqLoss = ersqLoss > trg.FAIL_SCORE ? trg.FAIL_SCORE : ersqLoss;
+      totalLoss += ersqLoss;
+    }
     if (trg.use_frmse) {
       frmseLoss = std::pow(std::abs(frmse - trg.frmse), trg.N) * trg.w_frmse;
       frmseLoss = frmseLoss > trg.FAIL_SCORE ? trg.FAIL_SCORE : frmseLoss;
@@ -596,6 +681,9 @@ than the total number of workers.\n");
     if (trg.use_errmse)
       out_file << std::left << std::setw(cwidth) << std::scientific
                << std::setprecision(pprec) << errmseLoss;
+    if (trg.use_ersq)
+      out_file << std::left << std::setw(cwidth) << std::scientific
+               << std::setprecision(pprec) << ersqLoss;
     if (trg.use_frmse)
       out_file << std::left << std::setw(cwidth) << std::scientific
                << std::setprecision(pprec) << frmseLoss;
@@ -636,6 +724,9 @@ than the total number of workers.\n");
     if (trg.use_errmse)
       out_file << std::left << std::setw(cwidth) << std::scientific
                << std::setprecision(pprec) << errmse;
+    if (trg.use_ersq)
+      out_file << std::left << std::setw(cwidth) << std::scientific
+               << std::setprecision(pprec) << ersq;
     if (trg.use_frmse)
       out_file << std::left << std::setw(cwidth) << std::scientific
                << std::setprecision(pprec) << frmse;

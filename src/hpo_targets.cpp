@@ -349,6 +349,9 @@ void HPOTargets::read(std::string fn) {
       } else if (key == "ErRMSE") {
         iss >> errmse >> w_errmse;
         use_errmse = true;
+      } else if (key == "ERSQ") {
+        iss >> ersq >> w_ersq;
+        use_ersq = true;
       } else if (key == "SRMSE") {
         iss >> srmse >> w_srmse;
         use_srmse = true;

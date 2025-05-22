@@ -9,7 +9,6 @@ LammpsSim::LammpsSim(std::string &cmd, std::string MAX_TIME, double FAIL_SCORE):
   tokenise();
   parse_tokens();
   
-  std::cout << "DEBUG: sinvar:  ";
   for (const auto& s : sinvar) {
     std::cout << s << " ";
   }
