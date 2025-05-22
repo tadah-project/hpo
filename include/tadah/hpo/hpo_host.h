@@ -208,48 +208,16 @@ public:
       runLammps(rank, ncpu);
 
 #else
+
     int dummy_comm = 0;
     size_t lmp_idx=0;
+
+  // Run all simulations in trg.LS
 #ifdef _OPENMP
 #pragma omp parallel for shared(trg)
 #endif
-    // for (auto &lsim : trg.LS) {
-    //   auto *lmp = runner.run(dummy_comm, lsim.script, lsim.invar);
-    //   if (!lmp) { // LAMMPS failed
-    //     for (size_t i = 0; i < lsim.varloss.size(); ++i)
-    //       lsim.v_varloss[i] = lsim.failscore;
-    //     for (size_t i = 0; i < lsim.outvar.size(); ++i)
-    //       lsim.v_outvar[i] = "NaN";
-    //   } else {
-    //     for (size_t i = 0; i < lsim.varloss.size(); ++i) {
-    //       try {
-    //       const auto &v = lsim.varloss[i];
-    //       lsim.v_varloss[i] = std::stod(runner.get_variable(lmp, v));
-    //       } catch (const std::exception &e) {
-    //         std::cerr << "Error obtaining LAMMPS loss variable: " << e.what() << std::endl;
-    //         std::cerr << "Variable name: " << lsim.varloss[i] << std::endl;
-    //         throw;
-    //       }
-    //     }
-    //     for (size_t i = 0; i < lsim.outvar.size(); ++i) {
-    //       try {
-    //         const auto &o = lsim.outvar[i];
-    //         lsim.v_outvar[i] = runner.get_variable(lmp, o);
-    //       } catch (const std::exception &e) {
-    //         // print variable name
-    //         std::cerr << "Error obtaining LAMMPS output variable: " << e.what() << std::endl;
-    //         std::cerr << "Variable name: " << lsim.outvar[i] << std::endl;
-    //         throw;
-    //       }
-    //     }
-    //   }
-    //   if (lmp)
-    //     delete lmp;
-    // }
-  // Run all simulations in trg.LS
   for (auto &lsim : trg.LS) {
     // If there is no valid LAMMPS instance, create one
-    // (some codes re-check if 'invar' changed, then re-create)
     auto &lmp = lmps[lmp_idx++];
     if (!lmp) {
       lmp = runner.create_instance(dummy_comm, lsim.invar);
@@ -258,7 +226,7 @@ public:
     // If LAMMPS creation failed, mark fail results and move on
     if (!lmp) {
       for (size_t i = 0; i < lsim.varloss.size(); ++i)
-        lsim.v_varloss[i] = lsim.failscore;
+        lsim.v_tloss[i] = lsim.failscore;
       for (size_t i = 0; i < lsim.outvar.size(); ++i)
         lsim.v_outvar[i] = "NaN";
       continue;
@@ -270,7 +238,7 @@ public:
     if (!success) {
       // A crash or severe error occurred. Mark fail results
       for (size_t i = 0; i < lsim.varloss.size(); ++i)
-        lsim.v_varloss[i] = lsim.failscore;
+        lsim.v_tloss[i] = lsim.failscore;
       for (size_t i = 0; i < lsim.outvar.size(); ++i)
         lsim.v_outvar[i] = "NaN";
 
@@ -284,7 +252,7 @@ public:
     for (size_t i = 0; i < lsim.varloss.size(); ++i) {
       try {
         const std::string &v = lsim.varloss[i];
-        lsim.v_varloss[i] = std::stod(runner.get_variable(lmp, v));
+        lsim.v_tloss[i] = std::stod(runner.get_variable(lmp, v));
       } catch (const std::exception &e) {
         std::cerr << "Error obtaining LAMMPS loss variable: " << e.what() << std::endl;
         std::cerr << "Variable name: " << lsim.varloss[i] << std::endl;
@@ -491,7 +459,7 @@ than the total number of workers.\n");
         }
       } else if (tag == DATA_TAG) {
         int j = distribution[worker];
-        MPI_Recv(trg.LS[j].v_varloss.data(), trg.LS[j].v_varloss.size(),
+        MPI_Recv(trg.LS[j].v_tloss.data(), trg.LS[j].v_tloss.size(),
                  MPI_DOUBLE, worker, DATA_TAG, MPI_COMM_WORLD,
                  MPI_STATUS_IGNORE);
 
@@ -520,7 +488,7 @@ than the total number of workers.\n");
         count2++;
       } else if (tag == DATA_TAG) {
         int j = distribution[worker];
-        MPI_Recv(trg.LS[j].v_varloss.data(), trg.LS[j].v_varloss.size(),
+        MPI_Recv(trg.LS[j].v_tloss.data(), trg.LS[j].v_tloss.size(),
                  MPI_DOUBLE, worker, DATA_TAG, MPI_COMM_WORLD,
                  MPI_STATUS_IGNORE);
 
@@ -656,10 +624,10 @@ than the total number of workers.\n");
     for (const auto &lsim : trg.LS) {
       v_loss.resize(lsim.varloss.size());
       for (size_t i = 0; i < lsim.varloss.size(); ++i) {
-        double varloss = std::pow(lsim.v_varloss[i], trg.N)*lsim.w_varloss[i] > lsim.failscore ?
-          lsim.failscore : std::pow(lsim.v_varloss[i], trg.N)*lsim.w_varloss[i];
-        totalLoss += varloss;
+        double varloss = std::pow(lsim.v_tloss[i], trg.N)*lsim.w_tloss[i] > lsim.failscore ?
+          lsim.failscore : std::pow(lsim.v_tloss[i], trg.N)*lsim.w_tloss[i];
         v_loss[i] = varloss;
+        totalLoss += varloss;
       }
     }
   }

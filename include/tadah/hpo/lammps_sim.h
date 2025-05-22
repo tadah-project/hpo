@@ -23,8 +23,8 @@ class LammpsSim {
     std::vector<std::string> sinvar; /**< LAMMPS input variables */
     std::vector<const char*> invar; /**< LAMMPS  variables, ptrs to sinvars */
     std::vector<std::string> varloss; /**< Variables related to the loss function */
-    std::vector<double> v_varloss; /**< Value of the loss function */
-    std::vector<double> w_varloss; /**< Weight for varloss */
+    std::vector<double> v_tloss; /**< Value of the loss function */
+    std::vector<double> w_tloss; /**< Weight for varloss */
     std::vector<std::string> outvar; /**< LAMMPS output variables */
     std::vector<std::string> v_outvar; /**< LAMMPS output variables value*/
 

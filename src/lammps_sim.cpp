@@ -25,7 +25,7 @@ LammpsSim::LammpsSim(std::string &cmd, std::string MAX_TIME, double FAIL_SCORE):
 
   for (const auto &s: sinvar) invar.push_back(s.c_str());
 
-  v_varloss.resize(varloss.size());
+  v_tloss.resize(varloss.size());
   v_outvar.resize(outvar.size());
 
 }
@@ -48,7 +48,7 @@ void LammpsSim::parse_tokens() {
     else if (tokens[i] == "-v" || tokens[i] == "--varloss") {
       if (i + 2 < tokens.size()) {
         varloss.push_back(tokens[++i]);
-        w_varloss.push_back(std::stod(tokens[++i]));
+        w_tloss.push_back(std::stod(tokens[++i]));
       }
     }
     else if (tokens[i] == "-i" || tokens[i] == "--invar") {
