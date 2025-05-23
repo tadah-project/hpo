@@ -209,7 +209,7 @@ public:
 #pragma omp parallel for shared(trg, runner)
 #endif
     for (auto &lsim : trg.LS) {
-      int dummy_comm = 0;
+      int dummy_comm = omp_get_thread_num();
       auto lmp = runner.create_instance(dummy_comm, lsim.invar);
 
       // If LAMMPS creation failed, mark fail results and move on
