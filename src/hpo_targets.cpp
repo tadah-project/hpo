@@ -334,6 +334,9 @@ void HPOTargets::read(std::string fn) {
       } else if (key == "POTEVERY") {
         iss >> potevery >> potevery_dir;
         handle_directory_creation(potevery_dir);
+      } else if (key == "BESTPOTEVERY") {
+        iss >> bestPotEvery >> bestPotEveryDir;
+        handle_directory_creation(bestPotEveryDir);
       } else if (key == "MAXCALLS") {
         iss >> MAX_CALLS;
       } else if (key == "FAILSCORE") {

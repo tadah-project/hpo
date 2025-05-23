@@ -22,14 +22,13 @@ class LammpsSim {
     std::string script; /**< Name of the LAMMPS script file */
     std::vector<std::string> sinvar; /**< LAMMPS input variables */
     std::vector<const char*> invar; /**< LAMMPS  variables, ptrs to sinvars */
-    std::vector<std::string> varloss; /**< Variables related to the loss function */
-    std::vector<double> v_tloss; /**< Value of the loss function */
-    std::vector<double> w_tloss; /**< Weight for varloss */
+    std::vector<std::string> n_varloss; /**< Variables names related to the loss function */
+    std::vector<double> v_varloss; /**< Value of the varloss */
+    std::vector<double> w_varloss; /**< Weight for varloss */
     std::vector<std::string> outvar; /**< LAMMPS output variables */
     std::vector<std::string> v_outvar; /**< LAMMPS output variables value*/
 
     int ncpu = 1; /**< Number of CPUs to be used */
-    double weight; /**< Weight parameter for simulation */
     std::string maxtime; /**< Maximum allowed time for simulation execution */
     double failscore; /**< Score given when a simulation fails */
 

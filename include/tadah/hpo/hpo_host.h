@@ -57,17 +57,20 @@ private:
   double totalLoss, emae, ermse, errmse, ersq, frmse, srmse;
   double emaeLoss, ermseLoss, errmseLoss, ersqLoss, frmseLoss, srmseLoss;
   std::vector<double> v_loss;
+  std::string bestLossFile = "best_loss.tadah";
+  std::string bestParamsFile = "best_params.tadah";
+  std::string bestOutvarFile = "best_outvar.tadah";
   std::string loss_file = "loss.tadah";
   std::string params_file = "params.tadah";
   std::string outvar_file = "outvar.tadah";
   R runner;
-  std::vector<typename R::LMP*> lmps;
   HPOTargets &trg;
   double bestLoss = std::numeric_limits<double>::max();
   core::Context context;          // make a copy
   mlip::StructureDB val_stdb;   // validation dataset
   mlip::StructureDB train_stdb; // train dataset NON MPI only
   size_t it = 0;          // iteration number
+  size_t best_it = 0;          // counts best pots
   tadah::mlip::memory::MLIPWorkspaceManager workspaceManager;
   tadah::mlip::memory::MLIPWorkspaceManager workspaceManager2;
 
@@ -121,14 +124,6 @@ private:
 
 public:
   ~HPO_Host() {
-    if (lmps.size() > 0) {
-      for (auto &lmp : lmps) {
-        if (lmp) {
-          delete lmp;
-          lmp = nullptr;
-        }
-      }
-    }
   }
   HPO_Host(core::Context c, HPOTargets &trg, std::string &val_file)
     : trg(trg),  context(c)
@@ -148,14 +143,15 @@ public:
     MPI_Bcast(&use_lammps, 1, MPI_C_BOOL, 0, MPI_COMM_WORLD);
 #else
     train_stdb.add(context);
-    if (use_lammps) {
-      lmps.resize(trg.LS.size());
-    }
 #endif
 
-    init_loss();
-    init_outvar();
-    init_params();
+    init_loss(loss_file);
+    init_outvar(outvar_file);
+    init_params(params_file);
+
+    init_loss(bestLossFile);
+    init_outvar(bestOutvarFile);
+    init_params(bestParamsFile);
   }
 
   // MAIN HPO LOOP
@@ -208,69 +204,65 @@ public:
       runLammps(rank, ncpu);
 
 #else
-
-    int dummy_comm = 0;
-    size_t lmp_idx=0;
-
   // Run all simulations in trg.LS
 #ifdef _OPENMP
-#pragma omp parallel for shared(trg)
+#pragma omp parallel for shared(trg, runner)
 #endif
-  for (auto &lsim : trg.LS) {
-    // If there is no valid LAMMPS instance, create one
-    auto &lmp = lmps[lmp_idx++];
-    if (!lmp) {
-      lmp = runner.create_instance(dummy_comm, lsim.invar);
-    }
+    for (auto &lsim : trg.LS) {
+      int dummy_comm = 0;
+      auto lmp = runner.create_instance(dummy_comm, lsim.invar);
 
-    // If LAMMPS creation failed, mark fail results and move on
-    if (!lmp) {
-      for (size_t i = 0; i < lsim.varloss.size(); ++i)
-        lsim.v_tloss[i] = lsim.failscore;
-      for (size_t i = 0; i < lsim.outvar.size(); ++i)
-        lsim.v_outvar[i] = "NaN";
-      continue;
-    }
+      // If LAMMPS creation failed, mark fail results and move on
+      // create will tidy up and return nullptr
+      if (!lmp) {
+        for (size_t i = 0; i < lsim.n_varloss.size(); ++i)
+          lsim.v_varloss[i] = lsim.failscore;
+        for (size_t i = 0; i < lsim.outvar.size(); ++i)
+          lsim.v_outvar[i] = "NaN";
+        continue;
+      }
 
-    // Attempt to run script on this instance
-    bool success = runner.run_script(lmp, lsim.script);
+      // Attempt to run script on this instance
+      bool success = runner.run_script(lmp, lsim.script);
 
-    if (!success) {
-      // A crash or severe error occurred. Mark fail results
-      for (size_t i = 0; i < lsim.varloss.size(); ++i)
-        lsim.v_tloss[i] = lsim.failscore;
-      for (size_t i = 0; i < lsim.outvar.size(); ++i)
-        lsim.v_outvar[i] = "NaN";
+      if (!success) {
+        // A crash or severe error occurred. Mark fail results
+        for (size_t i = 0; i < lsim.n_varloss.size(); ++i)
+          lsim.v_varloss[i] = lsim.failscore;
+        for (size_t i = 0; i < lsim.outvar.size(); ++i)
+          lsim.v_outvar[i] = "NaN";
 
-      // Discard the crashed instance so next iteration can re-create
-      delete lmp;
-      lmp = nullptr;
-      continue;
-    }
+        // Discard the crashed instance so next iteration can re-create
+        if (lmp) {
+          delete lmp;
+          lmp = nullptr;
+        }
+        continue;
+      }
 
-    // If script ran successfully, retrieve LAMMPS variables
-    for (size_t i = 0; i < lsim.varloss.size(); ++i) {
-      try {
-        const std::string &v = lsim.varloss[i];
-        lsim.v_tloss[i] = std::stod(runner.get_variable(lmp, v));
-      } catch (const std::exception &e) {
-        std::cerr << "Error obtaining LAMMPS loss variable: " << e.what() << std::endl;
-        std::cerr << "Variable name: " << lsim.varloss[i] << std::endl;
-        throw; // or handle gracefully
+      // If script ran successfully, retrieve LAMMPS variables
+      for (size_t i = 0; i < lsim.n_varloss.size(); ++i) {
+        try {
+          const std::string &v = lsim.n_varloss[i];
+          lsim.v_varloss[i] = std::stod(runner.get_variable(lmp, v));
+        } catch (const std::exception &e) {
+          std::cerr << "Error obtaining LAMMPS loss variable: " << e.what() << std::endl;
+          std::cerr << "Variable name: " << lsim.n_varloss[i] << std::endl;
+          throw; // or handle gracefully
+        }
+      }
+
+      for (size_t i = 0; i < lsim.outvar.size(); ++i) {
+        try {
+          const std::string &o = lsim.outvar[i];
+          lsim.v_outvar[i] = runner.get_variable(lmp, o);
+        } catch (const std::exception &e) {
+          std::cerr << "Error obtaining LAMMPS output variable: " << e.what() << std::endl;
+          std::cerr << "Variable name: " << lsim.outvar[i] << std::endl;
+          throw; // or handle gracefully
+        }
       }
     }
-
-    for (size_t i = 0; i < lsim.outvar.size(); ++i) {
-      try {
-        const std::string &o = lsim.outvar[i];
-        lsim.v_outvar[i] = runner.get_variable(lmp, o);
-      } catch (const std::exception &e) {
-        std::cerr << "Error obtaining LAMMPS output variable: " << e.what() << std::endl;
-        std::cerr << "Variable name: " << lsim.outvar[i] << std::endl;
-        throw; // or handle gracefully
-      }
-    }
-  }
 #endif
 
     val_stdb.clear_nn();
@@ -308,14 +300,29 @@ public:
     // //////////////////////////////////////////////////
 
     compute_loss();
+    auto t2 = high_resolution_clock::now();
+    duration<double, std::milli> t21 = t2 - t1;
 
     // Dump potential if best
     if (totalLoss < bestLoss) {
+      best_it++;
       bestLoss = totalLoss;
       std::ofstream out_file;
       out_file.open("best_pot.tadah");
       out_file << pot_tadah;
       out_file.close();
+
+      // Dump potential every bestPotEvery steps
+      if (it % trg.bestPotEvery == 0) {
+        std::ofstream out_file;
+        out_file.open(trg.bestPotEveryDir + "/best_pot_" + std::to_string(it) + ".tadah");
+        out_file << pot_tadah;
+        out_file.close();
+      }
+      // Save best loss, params and outvar
+      print_loss(bestLossFile,best_it);
+      print_outvar(bestOutvarFile,best_it,t21.count());
+      print_params(bestParamsFile,best_it,p);
     }
 
     // Dump potential potevery steps
@@ -327,13 +334,11 @@ public:
       out_file.close();
     }
 
-    auto t2 = high_resolution_clock::now();
-    duration<double, std::milli> t21 = t2 - t1;
 
     // print output
-    print_loss();
-    print_outvar(t21.count());
-    print_params(p);
+    print_loss(loss_file,it);
+    print_outvar(outvar_file,it,t21.count());
+    print_params(params_file,it,p);
     return totalLoss;
   }
 #ifdef TADAH_BUILD_MPI
@@ -434,13 +439,13 @@ than the total number of workers.\n");
                            MPI_COMM_WORLD);
                 }
 
-                // send wpkgs[j].varloss
+                // send wpkgs[j].n_varloss
                 // First, send the number of strings
-                num_strings = wpkgs[j].varloss.size();
+                num_strings = wpkgs[j].n_varloss.size();
                 MPI_Send(&num_strings, 1, MPI_INT, worker, WORK_TAG,
                          MPI_COMM_WORLD);
                 // Send each string
-                for (const std::string &message : wpkgs[j].varloss) {
+                for (const std::string &message : wpkgs[j].n_varloss) {
                   int length = message.size() + 1; // +1 for the null terminator
                   MPI_Send(&length, 1, MPI_INT, worker, WORK_TAG,
                            MPI_COMM_WORLD);
@@ -459,7 +464,7 @@ than the total number of workers.\n");
         }
       } else if (tag == DATA_TAG) {
         int j = distribution[worker];
-        MPI_Recv(trg.LS[j].v_tloss.data(), trg.LS[j].v_tloss.size(),
+        MPI_Recv(trg.LS[j].v_varloss.data(), trg.LS[j].v_varloss.size(),
                  MPI_DOUBLE, worker, DATA_TAG, MPI_COMM_WORLD,
                  MPI_STATUS_IGNORE);
 
@@ -488,7 +493,7 @@ than the total number of workers.\n");
         count2++;
       } else if (tag == DATA_TAG) {
         int j = distribution[worker];
-        MPI_Recv(trg.LS[j].v_tloss.data(), trg.LS[j].v_tloss.size(),
+        MPI_Recv(trg.LS[j].v_varloss.data(), trg.LS[j].v_varloss.size(),
                  MPI_DOUBLE, worker, DATA_TAG, MPI_COMM_WORLD,
                  MPI_STATUS_IGNORE);
 
@@ -509,12 +514,12 @@ than the total number of workers.\n");
     }
   }
 #endif
-  void init_loss() {
+  void init_loss(const std::string &_loss_file) {
     std::ofstream out_file(
-        loss_file); // Open with default mode, which truncates
+        _loss_file); // Open with default mode, which truncates
 
     if (!out_file) {
-      std::cerr << "Error opening file: " << loss_file << std::endl;
+      std::cerr << "Error opening file: " << _loss_file << std::endl;
     }
 
     // add headers
@@ -533,18 +538,18 @@ than the total number of workers.\n");
       out_file << std::left << std::setw(cwidth) << "loss(SRMSE)";
 
     for (const auto &lsim : trg.LS) {
-      for (const auto &vloss : lsim.varloss)
+      for (const auto &vloss : lsim.n_varloss)
         out_file << std::left << std::setw(cwidth) << vloss;
     }
 
     out_file << std::left << std::setw(cwidth) << "TOTAL_LOSS" << std::endl;
   }
-  void init_outvar() {
+  void init_outvar(const std::string &_outvar_file) {
     std::ofstream out_file(
-        outvar_file); // Open with default mode, which truncates
+        _outvar_file); // Open with default mode, which truncates
 
     if (!out_file) {
-      std::cerr << "Error opening file: " << outvar_file << std::endl;
+      std::cerr << "Error opening file: " << _outvar_file << std::endl;
     }
 
     // add headers
@@ -570,12 +575,12 @@ than the total number of workers.\n");
     out_file << std::endl;
   }
 
-  void init_params() {
+  void init_params(const std::string &_params_file) {
     std::ofstream out_file(
-        params_file); // Open with default mode, which truncates
+        _params_file); // Open with default mode, which truncates
 
     if (!out_file) {
-      std::cerr << "Error opening file: " << params_file << std::endl;
+      std::cerr << "Error opening file: " << _params_file << std::endl;
     }
 
     // add headers
@@ -622,23 +627,23 @@ than the total number of workers.\n");
       totalLoss += srmseLoss;
     }
     for (const auto &lsim : trg.LS) {
-      v_loss.resize(lsim.varloss.size());
-      for (size_t i = 0; i < lsim.varloss.size(); ++i) {
-        double varloss = std::pow(lsim.v_tloss[i], trg.N)*lsim.w_tloss[i] > lsim.failscore ?
-          lsim.failscore : std::pow(lsim.v_tloss[i], trg.N)*lsim.w_tloss[i];
-        v_loss[i] = varloss;
-        totalLoss += varloss;
+      v_loss.resize(lsim.n_varloss.size());
+      for (size_t i = 0; i < lsim.n_varloss.size(); ++i) {
+        double vl = std::pow(lsim.v_varloss[i], trg.N)*lsim.w_varloss[i] > lsim.failscore ?
+          lsim.failscore : std::pow(lsim.v_varloss[i], trg.N)*lsim.w_varloss[i];
+        v_loss[i] = vl;
+        totalLoss += vl;
       }
     }
   }
-  void print_loss() {
-    std::ofstream out_file(loss_file, std::ios::app);
+  void print_loss(const std::string &_loss_file, size_t _it) {
+    std::ofstream out_file(_loss_file, std::ios::app);
 
     if (!out_file) {
-      std::cerr << "Error opening file: " << loss_file << std::endl;
+      std::cerr << "Error opening file: " << _loss_file << std::endl;
       return;
     }
-    out_file << std::left << std::setw(cwidth) << it;
+    out_file << std::left << std::setw(cwidth) << _it;
 
     if (trg.use_emae)
       out_file << std::left << std::setw(cwidth) << std::scientific
@@ -660,7 +665,7 @@ than the total number of workers.\n");
                << std::setprecision(pprec) << srmseLoss;
 
     for (const auto &lsim : trg.LS) {
-      for (size_t i = 0; i < lsim.varloss.size(); ++i) {
+      for (size_t i = 0; i < lsim.n_varloss.size(); ++i) {
         out_file << std::left << std::setw(cwidth) << std::scientific
           << std::setprecision(pprec)
           << v_loss[i];
@@ -671,15 +676,15 @@ than the total number of workers.\n");
              << std::setprecision(pprec) << totalLoss << std::endl;
     ;
   }
-  void print_outvar(double it_time) {
-    std::ofstream out_file(outvar_file, std::ios::app);
+  void print_outvar(const std::string &_outvar_file, size_t _it, double it_time) {
+    std::ofstream out_file(_outvar_file, std::ios::app);
 
     if (!out_file) {
-      std::cerr << "Error opening file: " << outvar_file << std::endl;
+      std::cerr << "Error opening file: " << _outvar_file << std::endl;
       return;
     }
 
-    out_file << std::left << std::setw(cwidth) << it;
+    out_file << std::left << std::setw(cwidth) << _it;
     out_file << std::left << std::setw(cwidth) << std::setprecision(pprec)
              << it_time;
 
@@ -714,15 +719,15 @@ than the total number of workers.\n");
     out_file << std::endl;
     ;
   }
-  void print_params(const T &p) {
-    std::ofstream out_file(params_file, std::ios::app);
+  void print_params(const std::string &_params_file, size_t _it,const T &p) {
+    std::ofstream out_file(_params_file, std::ios::app);
 
     if (!out_file) {
-      std::cerr << "Error opening file: " << params_file << std::endl;
+      std::cerr << "Error opening file: " << _params_file << std::endl;
       return;
     }
 
-    out_file << std::left << std::setw(cwidth) << it;
+    out_file << std::left << std::setw(cwidth) << _it;
 
     for (const auto &v_optim : p) {
       out_file << std::left << std::setw(cwidth) << std::scientific

@@ -56,7 +56,9 @@ public:
     std::string MAX_TIME = "10";
     std::string ALGO = "2";
     std::string potevery_dir;
+    std::string bestPotEveryDir;
     size_t potevery = std::numeric_limits<size_t>::max();
+    size_t bestPotEvery = std::numeric_limits<size_t>::max();
     bool use_emae = false; bool use_ermse = false; bool use_errmse = false; bool use_ersq = false;
     double emae, ermse, errmse, ersq; 
     double w_emae, w_ermse, w_errmse, w_ersq;

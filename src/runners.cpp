@@ -70,5 +70,8 @@ bool LammpsRunner::run_script(LMP* lmp, const std::string &script) {
 }
 
 std::string LammpsRunner::get_variable(LMP* lmp, const std::string &varname) {
+  if (!lmp) {
+    throw std::runtime_error("get_variable(): LAMMPS instance is invalid.");
+  }
   return lmp->input->variable->retrieve(varname.c_str());
 }
