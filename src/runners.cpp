@@ -26,52 +26,108 @@
  * supports creation of a LAMMPS instance and running scripts.
  */
 
+// #include <tadah/hpo/runners.h>
+//
+// using LMP = LammpsRunner::LMP; 
+//
+// LammpsRunner::LammpsRunner() {
+//   // Nothing special here
+// }
+//
+// LMP* LammpsRunner::create_instance(MPI_Comm &sub_comm,
+//                                    const std::vector<const char*> &lmp_tokens) {
+//   // Number of command line arguments
+//   int lmpargc = static_cast<int>(lmp_tokens.size());
+//   LMP* lmp = nullptr;
+//
+//   try {
+//     // LAMMPS is constructed with command line args and the communicator
+//     lmp = new LMP(lmpargc, const_cast<char**>(lmp_tokens.data()), sub_comm);
+//   } catch (std::exception &e) {
+//     // If creation fails, release allocated object and return null
+//     delete lmp;
+//     lmp = nullptr;
+//   }
+//
+//   return lmp;
+// }
+//
+// bool LammpsRunner::run_script(LMP* lmp, const std::string &script) {
+//   if (!lmp) {
+//     // Cannot run if instance is invalid
+//     return false;
+//   }
+//
+//   try {
+//     // LAMMPS reads and runs commands from the script
+//     lmp->input->file(script.c_str());
+//   } catch (std::exception &e) {
+//     // If a crash or error in LAMMPS is thrown, report failure
+//     return false;
+//   }
+//
+//   return true;
+// }
+//
+// std::string LammpsRunner::get_variable(LMP* lmp, const std::string &varname) {
+//   if (!lmp) {
+//     throw std::runtime_error("get_variable(): LAMMPS instance is invalid.");
+//   }
+//   return lmp->input->variable->retrieve(varname.c_str());
+// }
+
 #include <tadah/hpo/runners.h>
+#include <stdexcept>
 
-using LMP = LammpsRunner::LMP; 
+LammpsRunner::LMPPtr
+LammpsRunner::create_instance(MPI_Comm sub_comm,
+                              const std::vector<const char*>& lmp_tokens) const {
+  // Number of command‐line arguments
+  int argc = static_cast<int>(lmp_tokens.size());
 
-LammpsRunner::LammpsRunner() {
-  // Nothing special here
-}
-
-LMP* LammpsRunner::create_instance(MPI_Comm &sub_comm,
-                                   const std::vector<const char*> &lmp_tokens) {
-  // Number of command line arguments
-  int lmpargc = static_cast<int>(lmp_tokens.size());
-  LMP* lmp = nullptr;
+  // unique_ptr initialized to nullptr
+  LMPPtr lmp_ptr;
 
   try {
-    // LAMMPS is constructed with command line args and the communicator
-    lmp = new LMP(lmpargc, const_cast<char**>(lmp_tokens.data()), sub_comm);
-  } catch (std::exception &e) {
-    // If creation fails, release allocated object and return null
-    delete lmp;
-    lmp = nullptr;
+    // Construct LAMMPS; transfer ownership into unique_ptr
+    lmp_ptr.reset(
+      new LMP(argc, const_cast<char**>(lmp_tokens.data()), sub_comm)
+    );
+  } catch (const std::exception&) {
+    // On exception, leave lmp_ptr null
   }
 
-  return lmp;
+  return lmp_ptr;
 }
 
-bool LammpsRunner::run_script(LMP* lmp, const std::string &script) {
-  if (!lmp) {
-    // Cannot run if instance is invalid
+bool
+LammpsRunner::run_script(const LMPPtr& lmp_ptr,
+                         const std::string& script) const {
+  if (!lmp_ptr) {
+    // Cannot run on invalid instance
     return false;
   }
 
   try {
-    // LAMMPS reads and runs commands from the script
-    lmp->input->file(script.c_str());
-  } catch (std::exception &e) {
-    // If a crash or error in LAMMPS is thrown, report failure
+    // Read and execute commands from the script file
+    lmp_ptr->input->file(script.c_str());
+  } catch (const std::exception&) {
+    // Execution failure indicates invalid run
     return false;
   }
 
   return true;
 }
 
-std::string LammpsRunner::get_variable(LMP* lmp, const std::string &varname) {
-  if (!lmp) {
+std::string
+LammpsRunner::get_variable(const LammpsRunner::LMPPtr& lmp_ptr,
+                           const std::string& varname) const {
+  if (!lmp_ptr) {
+    // Caller must not pass an invalid instance
     throw std::runtime_error("get_variable(): LAMMPS instance is invalid.");
   }
-  return lmp->input->variable->retrieve(varname.c_str());
+
+  // Retrieve variable via LAMMPS input subsystem
+  return lmp_ptr->input->variable->retrieve(varname.c_str());
 }
+

@@ -233,10 +233,10 @@ public:
           lsim.v_outvar[i] = "NaN";
 
         // Discard the crashed instance so next iteration can re-create
-        if (lmp) {
-          delete lmp;
-          lmp = nullptr;
-        }
+        // if (lmp) {
+        //   delete lmp;
+        //   lmp = nullptr;
+        // }
         continue;
       }
 

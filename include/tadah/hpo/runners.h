@@ -90,10 +90,74 @@
  * @endcode
  */
 
+// #ifndef LAMMPS_RUNNER_H
+// #define LAMMPS_RUNNER_H
+//
+// #include <iostream>
+// #include <memory>
+// #include <vector>
+// #include <string>
+//
+// #ifdef TADAH_BUILD_MPI
+// #include <mpi.h>
+// #endif
+//
+// #include <lammps.h>
+// #include <input.h>
+// #include <variable.h>
+//
+// /**
+//  * @class LammpsRunner
+//  * @brief A class to simplify creation and use of LAMMPS instances.
+//  *
+//  * A single instance is reusable for multiple script runs. 
+//  * If an unrecoverable LAMMPS exception is thrown during a script,
+//  * that instance is considered invalid.
+//  */
+// class LammpsRunner {
+//  public:
+//   /// Typedef for the LAMMPS namespace
+//   typedef LAMMPS_NS::LAMMPS LMP;
+//
+//   /// Default constructor
+//   LammpsRunner();
+//
+//   /**
+//    * @brief Creates a new LAMMPS instance with the given command line tokens.
+//    *
+//    * @param sub_comm MPI communicator used by this instance.
+//    * @param lmp_tokens Command line arguments for LAMMPS.
+//    * @return Valid pointer on success, nullptr if creation fails.
+//    */
+//   LMP* create_instance(MPI_Comm &sub_comm,
+//                        const std::vector<const char*> &lmp_tokens);
+//
+//   /**
+//    * @brief Runs a LAMMPS input script on an existing LAMMPS instance.
+//    *
+//    * If the script causes a LAMMPS exception, the method returns false.
+//    *
+//    * @param lmp Pointer to the LAMMPS instance.
+//    * @param script Path to the LAMMPS input script.
+//    * @return True on success, false if an exception was thrown.
+//    */
+//   bool run_script(LMP* lmp, const std::string &script);
+//
+//   /**
+//    * @brief Retrieve the value of a LAMMPS variable as a string.
+//    *
+//    * @param lmp Pointer to the LAMMPS instance.
+//    * @param varname Name of the variable to retrieve.
+//    * @return String value of the variable.
+//    */
+//   std::string get_variable(LMP* lmp, const std::string &varname);
+// };
+//
+// #endif // LAMMPS_RUNNER_H
+
 #ifndef LAMMPS_RUNNER_H
 #define LAMMPS_RUNNER_H
 
-#include <iostream>
 #include <memory>
 #include <vector>
 #include <string>
@@ -108,49 +172,66 @@
 
 /**
  * @class LammpsRunner
- * @brief A class to simplify creation and use of LAMMPS instances.
+ * @brief Simplifies creation and use of LAMMPS instances.
  *
- * A single instance is reusable for multiple script runs. 
- * If an unrecoverable LAMMPS exception is thrown during a script,
- * that instance is considered invalid.
+ * Instances are reusable for multiple runs.
+ * An instance encountering an unrecoverable exception becomes invalid.
  */
 class LammpsRunner {
  public:
-  /// Typedef for the LAMMPS namespace
+  /// Alias for the LAMMPS class in the LAMMPS_NS namespace
   typedef LAMMPS_NS::LAMMPS LMP;
 
-  /// Default constructor
-  LammpsRunner();
+  /// Unique‐pointer type for a LAMMPS instance
+  typedef std::unique_ptr<LMP> LMPPtr;
 
   /**
-   * @brief Creates a new LAMMPS instance with the given command line tokens.
+   * @brief Creates a new LAMMPS instance.
    *
-   * @param sub_comm MPI communicator used by this instance.
-   * @param lmp_tokens Command line arguments for LAMMPS.
-   * @return Valid pointer on success, nullptr if creation fails.
+   * Builds a LAMMPS instance using provided MPI sub‐communicator
+   * and command‐line tokens.  If construction throws, returns nullptr.
+   *
+   * @param sub_comm MPI communicator for this instance.
+   * @param lmp_tokens Command‐line arguments for LAMMPS.
+   * @return Unique pointer to a valid LAMMPS instance on success; nullptr on failure.
+   *
+   * @code
+   * // Example usage:
+   * std::vector<const char*> args = {"lmp", "-in", "in.script"};
+   * auto inst = runner.create_instance(comm, args);
+   * if (!inst) {
+   *   // handle creation failure
+   * }
+   * @endcode
    */
-  LMP* create_instance(MPI_Comm &sub_comm,
-                       const std::vector<const char*> &lmp_tokens);
+  LMPPtr create_instance(MPI_Comm sub_comm,
+                         const std::vector<const char*>& lmp_tokens) const;
 
   /**
-   * @brief Runs a LAMMPS input script on an existing LAMMPS instance.
+   * @brief Executes a LAMMPS input script on the given instance.
    *
-   * If the script causes a LAMMPS exception, the method returns false.
+   * Catches LAMMPS exceptions.  If the instance pointer is null
+   * or an exception is thrown, returns false.
    *
-   * @param lmp Pointer to the LAMMPS instance.
+   * @param lmp_ptr Unique pointer to a LAMMPS instance.
    * @param script Path to the LAMMPS input script.
-   * @return True on success, false if an exception was thrown.
+   * @return True if execution succeeded; false otherwise.
    */
-  bool run_script(LMP* lmp, const std::string &script);
+  bool run_script(const LMPPtr& lmp_ptr,
+                  const std::string& script) const;
 
   /**
-   * @brief Retrieve the value of a LAMMPS variable as a string.
+   * @brief Retrieves the value of a LAMMPS variable.
    *
-   * @param lmp Pointer to the LAMMPS instance.
+   * Throws std::runtime_error if the instance pointer is null.
+   *
+   * @param lmp_ptr Unique pointer to a LAMMPS instance.
    * @param varname Name of the variable to retrieve.
-   * @return String value of the variable.
+   * @return String representation of the requested variable.
+   * @throws std::runtime_error if lmp_ptr is null.
    */
-  std::string get_variable(LMP* lmp, const std::string &varname);
+  std::string get_variable(const LMPPtr& lmp_ptr,
+                           const std::string& varname) const;
 };
 
 #endif // LAMMPS_RUNNER_H
