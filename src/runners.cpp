@@ -81,17 +81,38 @@
 
 LammpsRunner::LMPPtr
 LammpsRunner::create_instance(MPI_Comm sub_comm,
-                              const std::vector<const char*>& lmp_tokens) const {
+                              std::vector<std::string> tokens) const {
   // Number of command‐line arguments
-  int argc = static_cast<int>(lmp_tokens.size());
+  // int argc = static_cast<int>(lmp_tokens.size());
 
   // unique_ptr initialized to nullptr
   LMPPtr lmp_ptr;
 
+  //   size_t n = tokens.size();
+  //
+  // // Own the buffers so they stay alive until f() returns
+  // std::vector<std::unique_ptr<char[]>> buffers;
+  // buffers.reserve(n);
+  //
+  // // Build argv array of mutable pointers
+  // std::vector<char*> argv;
+  // argv.reserve(n);
+  //
+  // for (auto const& s : tokens) {
+  //   // Allocate one extra byte for terminating '\0'
+  //   auto buf = std::make_unique<char[]>(s.size() + 1);
+  //   std::copy(s.c_str(), s.c_str() + s.size() + 1, buf.get());
+  //   argv.push_back(buf.get());
+  //   buffers.push_back(std::move(buf));
+  // }
+  //
+  // int argc = static_cast<int>(n);
+
   try {
     // Construct LAMMPS; transfer ownership into unique_ptr
     lmp_ptr.reset(
-      new LMP(argc, const_cast<char**>(lmp_tokens.data()), sub_comm)
+      new LMP(tokens, sub_comm)
+      //new LMP(argc, argv.data(), sub_comm)
     );
   } catch (const std::exception&) {
     // On exception, leave lmp_ptr null
@@ -100,8 +121,7 @@ LammpsRunner::create_instance(MPI_Comm sub_comm,
   return lmp_ptr;
 }
 
-bool
-LammpsRunner::run_script(const LMPPtr& lmp_ptr,
+bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
                          const std::string& script) const {
   if (!lmp_ptr) {
     // Cannot run on invalid instance
@@ -118,6 +138,23 @@ LammpsRunner::run_script(const LMPPtr& lmp_ptr,
 
   return true;
 }
+// bool LammpsRunner::run_script(const LMP* lmp_ptr,
+//                          const std::string& script) const {
+//   if (!lmp_ptr) {
+//     // Cannot run on invalid instance
+//     return false;
+//   }
+//
+//   try {
+//     // Read and execute commands from the script file
+//     lmp_ptr->input->file(script.c_str());
+//   } catch (const std::exception&) {
+//     // Execution failure indicates invalid run
+//     return false;
+//   }
+//
+//   return true;
+// }
 
 std::string
 LammpsRunner::get_variable(const LammpsRunner::LMPPtr& lmp_ptr,
@@ -130,4 +167,16 @@ LammpsRunner::get_variable(const LammpsRunner::LMPPtr& lmp_ptr,
   // Retrieve variable via LAMMPS input subsystem
   return lmp_ptr->input->variable->retrieve(varname.c_str());
 }
+
+// std::string
+// LammpsRunner::get_variable(const LammpsRunner::LMP* lmp_ptr,
+//                            const std::string& varname) const {
+//   if (!lmp_ptr) {
+//     // Caller must not pass an invalid instance
+//     throw std::runtime_error("get_variable(): LAMMPS instance is invalid.");
+//   }
+//
+//   // Retrieve variable via LAMMPS input subsystem
+//   return lmp_ptr->input->variable->retrieve(varname.c_str());
+// }
 

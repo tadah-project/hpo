@@ -23,7 +23,7 @@ LammpsSim::LammpsSim(std::string &cmd, std::string MAX_TIME, double FAIL_SCORE):
   if (!n_varloss.size())
     throw std::runtime_error("LammpsSim: --varloss variable is not defined.\n");
 
-  for (const auto &s: sinvar) invar.push_back(s.c_str());
+  // for (const auto &s: sinvar) invar.push_back(s.c_str());
 
   v_varloss.resize(n_varloss.size());
   v_outvar.resize(outvar.size());

@@ -185,6 +185,7 @@ class LammpsRunner {
   /// Unique‐pointer type for a LAMMPS instance
   typedef std::unique_ptr<LMP> LMPPtr;
 
+  // std::vector<LMP*> instances_;
   /**
    * @brief Creates a new LAMMPS instance.
    *
@@ -205,7 +206,7 @@ class LammpsRunner {
    * @endcode
    */
   LMPPtr create_instance(MPI_Comm sub_comm,
-                         const std::vector<const char*>& lmp_tokens) const;
+                         std::vector<std::string> lmp_tokens) const;
 
   /**
    * @brief Executes a LAMMPS input script on the given instance.
@@ -219,6 +220,8 @@ class LammpsRunner {
    */
   bool run_script(const LMPPtr& lmp_ptr,
                   const std::string& script) const;
+  // bool run_script(const LMP* lmp_ptr,
+  //                 const std::string& script) const;
 
   /**
    * @brief Retrieves the value of a LAMMPS variable.
@@ -232,6 +235,8 @@ class LammpsRunner {
    */
   std::string get_variable(const LMPPtr& lmp_ptr,
                            const std::string& varname) const;
+  // std::string get_variable(const LMP* lmp_ptr,
+  //                          const std::string& varname) const;
 };
 
 #endif // LAMMPS_RUNNER_H

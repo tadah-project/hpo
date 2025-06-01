@@ -24,6 +24,7 @@
 #include <stdlib.h> // ??
 #include <vector>
 
+
 #if defined(TADAH_ENABLE_OPENMP)
 #include <omp.h>
 #else
@@ -32,6 +33,17 @@ inline omp_int_t omp_get_thread_num() { return 0; }
 inline omp_int_t omp_get_max_threads() { return 1; }
 inline omp_int_t omp_get_num_threads() { return 1; }
 #endif
+
+namespace {
+  // pre-computed constant
+  static constexpr double LOG_2 = 0.6931471805599453;  
+
+  double stable_log_cosh(double r) {
+    double a = std::abs(r);
+    // for very large a, e^(–2a) underflows to 0, so log1p(exp(...)) → 0  
+    return a + std::log1p(std::exp(-2.0 * a)) - LOG_2;
+  }
+}
 
 namespace tadah {
 namespace hpo {
@@ -52,18 +64,34 @@ namespace hpo {
  */
 template <typename T, typename R> class HPO_Host {
 private:
-  size_t cwidth = 13;
-  int pprec = 4;
-  double totalLoss, emae, ermse, errmse, ersq, frmse, srmse;
+  // LOSS FUNCTIONS
+  enum LossType {
+    LOSS_POWN    = 0,  // |y - ypred|^N
+    LOSS_HUBER,        // Huber
+    LOSS_LOG_COSH,     // log-cosh
+    LOSS_MAPE,         // mean absolute percentage error
+    LOSS_RMSLE,        // root-mean-squared log error (without final sqrt)
+    LOSS_TUKEY,        // Tukey’s biweight
+  };
+  size_t lossType      = LOSS_POWN;
+  size_t numLosses;
+  double delta         = 1.0;       // Huber threshold
+  double tukeyC        = 4.685;     // Tukey biweight cutoff
+  double eps           = 1e-12;     // small constant for div/zero‐guard
+  // END LOSS FUNCTIONS
+
+  size_t cwidth = 16;
+  int pprec = 7;
+  double totalLossVar, emae, ermse, errmse, ersq, frmse, srmse;
   double emaeLoss, ermseLoss, errmseLoss, ersqLoss, frmseLoss, srmseLoss;
-  std::vector<double> v_loss;
+  std::vector<std::vector<double>> v_loss;
   std::string bestLossFile = "best_loss.tadah";
   std::string bestParamsFile = "best_params.tadah";
   std::string bestOutvarFile = "best_outvar.tadah";
   std::string loss_file = "loss.tadah";
   std::string params_file = "params.tadah";
   std::string outvar_file = "outvar.tadah";
-  R runner;
+  //R runner;
   HPOTargets &trg;
   double bestLoss = std::numeric_limits<double>::max();
   core::Context context;          // make a copy
@@ -72,7 +100,6 @@ private:
   size_t it = 0;          // iteration number
   size_t best_it = 0;          // counts best pots
   tadah::mlip::memory::MLIPWorkspaceManager workspaceManager;
-  tadah::mlip::memory::MLIPWorkspaceManager workspaceManager2;
 
   void update_context(T &v) {
     for (auto &m : trg.optimap) {
@@ -121,12 +148,24 @@ private:
       throw std::runtime_error(error_message.str());
     }
   }
+#ifdef TADAH_BUILD_MPI
+    mlip::TrainerHost host(context, workspaceManager, workspaceManager2);
+    tadah::mlip::memory::MLIPWorkspaceManager workspaceManager2;
+#else
+    mlip::Trainer host;
+    mlip::NNFinder nnf;
+#endif
 
 public:
   ~HPO_Host() {
   }
   HPO_Host(core::Context c, HPOTargets &trg, std::string &val_file)
-    : trg(trg),  context(c)
+    : trg(trg),  context(c), numLosses(0), 
+#ifdef TADAH_BUILD_MPI
+    host(c, workspaceManager, workspaceManager2)
+#else
+    host(c, workspaceManager), nnf(c)
+#endif
   {
     core::Context val_context(core::CoreUserConfigParser().parse(val_file));
     val_stdb.add(val_context);
@@ -139,11 +178,14 @@ public:
     validate_elements(train_elements, val_elements);
 
     use_lammps = trg.LS.size() > 0;
+    v_loss.resize(trg.LS.size());
 #ifdef TADAH_BUILD_MPI
     MPI_Bcast(&use_lammps, 1, MPI_C_BOOL, 0, MPI_COMM_WORLD);
 #else
     train_stdb.add(context);
 #endif
+
+    init_loss_func();
 
     init_loss(loss_file);
     init_outvar(outvar_file);
@@ -152,10 +194,14 @@ public:
     init_loss(bestLossFile);
     init_outvar(bestOutvarFile);
     init_params(bestParamsFile);
+
+    // mlip::Trainer host(context, workspaceManager);
   }
 
   // MAIN HPO LOOP
   double operator()(T p) {
+    totalLossVar = 0; // reset total loss
+    numLosses = 0;
     it++;
     using std::chrono::duration;
     using std::chrono::duration_cast;
@@ -165,7 +211,7 @@ public:
     auto t1 = high_resolution_clock::now();
     update_context(p);
 
-    core::Context context_temp = context;
+    // core::Context context_temp = context;
 
     // Train new potential with updated settings
 #ifdef TADAH_BUILD_MPI
@@ -176,102 +222,35 @@ public:
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
     // New context file must be communicated to all processes
-    std::vector<char> cs = context_temp.serialize();
+    std::vector<char> cs = context.serialize();
     int cs_size = cs.size();
     MPI_Bcast(&cs_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(cs.data(), cs_size, MPI_CHAR, 0, MPI_COMM_WORLD);
 
     // HOST is waiting for workers requests
-    mlip::TrainerHost host(context_temp, workspaceManager, workspaceManager2);
+    // mlip::TrainerHost host(context, workspaceManager, workspaceManager2);
     host.run();
     host.solve();
 #else
-    mlip::Trainer host(context_temp, workspaceManager);
-    train_stdb.clear_nn();
-    host.train(train_stdb);
+    //train_stdb.clear_nn();
+    //host.train(train_stdb);
 #endif
     // End of training
 
     // This potential will be used by LAMMPS
     core::Context pot_tadah = host.model->get_param_file();
-    std::ofstream out_file;
-    out_file.open("pot.tadah");
-    out_file << pot_tadah;
-    out_file.close();
 
-#ifdef TADAH_BUILD_MPI
-    if (use_lammps)
-      runLammps(rank, ncpu);
+     std::ofstream out_file;
+     out_file.open("pot.tadah");
+     out_file << pot_tadah;
+     out_file.close();
 
-#else
-  // Run all simulations in trg.LS
-#ifdef _OPENMP
-#pragma omp parallel for shared(trg, runner)
-#endif
-    for (auto &lsim : trg.LS) {
-      int dummy_comm = omp_get_thread_num();
-      auto lmp = runner.create_instance(dummy_comm, lsim.invar);
+     val_stdb.clear_nn();
+     nnf.init(pot_tadah);
+     nnf.calc(val_stdb);
+     mlip::StructureDB stpred = host.model->predict(pot_tadah, val_stdb, host.dc);
 
-      // If LAMMPS creation failed, mark fail results and move on
-      // create will tidy up and return nullptr
-      if (!lmp) {
-        for (size_t i = 0; i < lsim.n_varloss.size(); ++i)
-          lsim.v_varloss[i] = lsim.failscore;
-        for (size_t i = 0; i < lsim.outvar.size(); ++i)
-          lsim.v_outvar[i] = "NaN";
-        continue;
-      }
-
-      // Attempt to run script on this instance
-      bool success = runner.run_script(lmp, lsim.script);
-
-      if (!success) {
-        // A crash or severe error occurred. Mark fail results
-        for (size_t i = 0; i < lsim.n_varloss.size(); ++i)
-          lsim.v_varloss[i] = lsim.failscore;
-        for (size_t i = 0; i < lsim.outvar.size(); ++i)
-          lsim.v_outvar[i] = "NaN";
-
-        // Discard the crashed instance so next iteration can re-create
-        // if (lmp) {
-        //   delete lmp;
-        //   lmp = nullptr;
-        // }
-        continue;
-      }
-
-      // If script ran successfully, retrieve LAMMPS variables
-      for (size_t i = 0; i < lsim.n_varloss.size(); ++i) {
-        try {
-          const std::string &v = lsim.n_varloss[i];
-          lsim.v_varloss[i] = std::stod(runner.get_variable(lmp, v));
-        } catch (const std::exception &e) {
-          std::cerr << "Error obtaining LAMMPS loss variable: " << e.what() << std::endl;
-          std::cerr << "Variable name: " << lsim.n_varloss[i] << std::endl;
-          throw; // or handle gracefully
-        }
-      }
-
-      for (size_t i = 0; i < lsim.outvar.size(); ++i) {
-        try {
-          const std::string &o = lsim.outvar[i];
-          lsim.v_outvar[i] = runner.get_variable(lmp, o);
-        } catch (const std::exception &e) {
-          std::cerr << "Error obtaining LAMMPS output variable: " << e.what() << std::endl;
-          std::cerr << "Variable name: " << lsim.outvar[i] << std::endl;
-          throw; // or handle gracefully
-        }
-      }
-    }
-#endif
-
-    val_stdb.clear_nn();
-    mlip::NNFinder nnf(pot_tadah);
-    nnf.calc(val_stdb);
-    mlip::StructureDB stpred = host.model->predict(pot_tadah, val_stdb, host.dc);
-
-    totalLoss = 0; // reset total loss
-    mlip::Analytics a(val_stdb, stpred);
+     mlip::Analytics a(val_stdb, stpred);
 
 
     if (trg.use_emae) {
@@ -295,18 +274,31 @@ public:
     if (trg.use_srmse) {
       srmse = a.calc_s_rmse().mean();
     }
-    // //////////////////////////////////////////////////
-    // By now we should have finished all computations //
-    // //////////////////////////////////////////////////
 
-    compute_loss();
+    computeLoss();
+
+    // if (totalLoss < trg.FAIL_SCORE) {
+      // only run LAMMPS if loss is not too high
+      runLammps();
+      computeLammpsLoss();
+    // } else {
+    //   // If loss is too high, set LAMMPS loss to fail score
+    //   std::cout << "DEBUG: SKIPPING LAMMPS, setting loss to fail score" << std::endl;
+    //   for (size_t i = 0; i < trg.LS.size(); ++i) {
+    //     v_loss[i].resize(trg.LS[i].n_varloss.size());
+    //     for (size_t j = 0; j < trg.LS[i].n_varloss.size(); ++j) {
+    //       v_loss[i][j] = trg.LS[i].failscore;
+    //       totalLoss += v_loss[i][j];
+    //     }
+    //   }
+    // }
     auto t2 = high_resolution_clock::now();
     duration<double, std::milli> t21 = t2 - t1;
 
     // Dump potential if best
-    if (totalLoss < bestLoss) {
+    if (totalLoss() < bestLoss) {
       best_it++;
-      bestLoss = totalLoss;
+      bestLoss = totalLoss();
       std::ofstream out_file;
       out_file.open("best_pot.tadah");
       out_file << pot_tadah;
@@ -339,10 +331,98 @@ public:
     print_loss(loss_file,it);
     print_outvar(outvar_file,it,t21.count());
     print_params(params_file,it,p);
-    return totalLoss;
+    return totalLoss();
+  }
+
+  void runLammps() {
+
+#ifdef TADAH_BUILD_MPI
+    if (use_lammps)
+      runLammpsMPI(rank, ncpu);
+#else
+    // Run all simulations in trg.LS
+    auto &LS = trg.LS;
+#ifdef _OPENMP
+#pragma omp parallel for shared(LS)
+#endif
+    for (size_t simNum = 0; simNum < LS.size(); ++simNum) {
+      R runner;
+      std::cout << "DEBUG: Running LAMMPS simulation " << simNum << std::endl;
+      std::cout << "DEBUG: LAMMPS script: " << LS[simNum].script << std::endl;
+      std::cout << "DEBUG: LAMMPS sinvar: ";
+      for (const auto &s : LS[simNum].sinvar) {
+        std::cout << s << " ";
+      }
+      std::cout << std::endl;
+
+      auto &lsim = LS[simNum];
+      std::cout << "DEBUG: LAMMPS creating instance " << simNum << std::endl;
+      auto lmp = runner.create_instance(/*dummy_comm*/0, lsim.sinvar);
+      std::cout << "DEBUG: LAMMPS instance created " << simNum << std::endl;
+      // auto lmp = runner.instances_[simNum];
+
+      // If LAMMPS creation failed, mark fail results and move on
+      // create will tidy up and return nullptr
+      if (!lmp) {
+        std::cout << "DEBUG: LAMMPS instance creation failed " << simNum
+          << std::endl;
+        for (size_t i = 0; i < lsim.n_varloss.size(); ++i)
+          lsim.v_varloss[i] = lsim.failscore;
+        for (size_t i = 0; i < lsim.outvar.size(); ++i)
+          lsim.v_outvar[i] = "NaN";
+        std::cout << "DEBUG: LAMMPS instance creation failed continue " << simNum
+          << std::endl;
+        continue;
+      }
+
+      // Attempt to run script on this instance
+      std::cout << "DEBUG: LAMMPS running script " << simNum << std::endl;
+      bool success = runner.run_script(lmp, lsim.script);
+      std::cout << "DEBUG: LAMMPS script run " << simNum << std::endl;
+
+      if (!success) {
+        std::cout << "DEBUG: LAMMPS script run failed " << simNum
+          << std::endl;
+        // A crash or severe error occurred. Mark fail results
+        for (size_t i = 0; i < lsim.n_varloss.size(); ++i)
+          lsim.v_varloss[i] = lsim.failscore;
+        for (size_t i = 0; i < lsim.outvar.size(); ++i)
+          lsim.v_outvar[i] = "NaN";
+        std::cout << "DEBUG: LAMMPS script run failed continue " << simNum
+          << std::endl;
+        continue;
+      }
+
+      // If script ran successfully, retrieve LAMMPS variables
+      for (size_t i = 0; i < lsim.n_varloss.size(); ++i) {
+        std::cout << "DEBUG: LAMMPS retrieving varloss " << i << " simNum " << simNum <<std::endl;
+        try {
+          const std::string &v = lsim.n_varloss[i];
+          lsim.v_varloss[i] = std::stod(runner.get_variable(lmp, v));
+        } catch (const std::exception &e) {
+          std::cerr << "Error obtaining LAMMPS loss variable: " << e.what() << std::endl;
+          std::cerr << "Variable name: " << lsim.n_varloss[i] << std::endl;
+          throw;
+        }
+      }
+
+      for (size_t i = 0; i < lsim.outvar.size(); ++i) {
+        std::cout << "DEBUG: LAMMPS retrieving outvar " << i << " simNum " << simNum <<std::endl;
+        try {
+          const std::string &o = lsim.outvar[i];
+          lsim.v_outvar[i] = runner.get_variable(lmp, o);
+        } catch (const std::exception &e) {
+          std::cerr << "Error obtaining LAMMPS output variable: " << e.what() << std::endl;
+          std::cerr << "Variable name: " << lsim.outvar[i] << std::endl;
+          throw;
+        }
+      }
+      std::cout << "DEBUG: LAMMPS done " << simNum << std::endl;
+    }
+#endif
   }
 #ifdef TADAH_BUILD_MPI
-  void runLammps(int rank, int ncpu) {
+  void runLammpsMPI(int rank, int ncpu) {
     const static int CONFIG_TAG = 4;
     const static int WAIT_TAG = 3;
     const static int RELEASE_TAG = 2;
@@ -514,6 +594,31 @@ than the total number of workers.\n");
     }
   }
 #endif
+void init_loss_func() {
+  if (trg.lossType == "L1") {
+    lossType = LOSS_POWN;
+    trg.N = 1; // L1 loss
+  } else if (trg.lossType == "L2") {
+    lossType = LOSS_POWN;
+    trg.N = 2; // L2 loss
+  } else if (trg.lossType == "HUBER") {
+    lossType = LOSS_HUBER;
+    delta = trg.deltaHuber;
+  } else if (trg.lossType == "LOG_COSH") {
+    std::cout << "DEBUG: Using log-cosh loss function" << std::endl;
+    lossType = LOSS_LOG_COSH;
+  } else if (trg.lossType == "MAPE") {
+    lossType = LOSS_MAPE;
+  } else if (trg.lossType == "RMSLE") {
+    lossType = LOSS_RMSLE;
+  } else if (trg.lossType == "TUKEY") {
+    lossType = LOSS_TUKEY;
+    tukeyC = trg.tukeyC;
+  } else {
+    throw std::runtime_error("Unknown loss function: " + trg.lossType);
+  }
+}
+
   void init_loss(const std::string &_loss_file) {
     std::ofstream out_file(
         _loss_file); // Open with default mode, which truncates
@@ -595,44 +700,105 @@ than the total number of workers.\n");
     out_file << std::endl;
   }
 
-  void compute_loss() {
+
+double totalLoss() const {
+
+  double meanL = totalLossVar / numLosses;
+
+  // final sqrt for RMSE / RMSLE
+  if (lossType == LOSS_POWN && trg.N == 2) {
+    return std::sqrt(meanL);     // RMSE
+  }
+  if (lossType == LOSS_RMSLE) {
+    return std::sqrt(meanL);     // RMSLE
+  }
+  return meanL;
+}
+
+double sampleLoss(double y, double ypred, double w) {
+  numLosses++;
+
+  double r    = y - ypred;
+  double absr = std::abs(r);
+
+  switch(lossType) {
+
+    case LOSS_POWN:
+      return std::pow(absr, trg.N) * w;
+
+    case LOSS_HUBER:
+      if (absr <= delta) {
+        return 0.5 * r*r * w;
+      } else {
+        return delta * (absr - 0.5*delta) * w;
+      }
+
+    case LOSS_LOG_COSH:
+      {
+      // log(cosh(r)) ≈ r^2/2 for small r, ≈ |r| - log(2) for large r
+      double res = stable_log_cosh(r) * w;
+      return res;
+      }
+
+    case LOSS_MAPE:
+      return absr / (std::abs(y) + eps) * w;
+
+    case LOSS_RMSLE:
+      {
+        double ly  = std::log(y    + eps);
+        double lyp = std::log(ypred+ eps);
+        double dr  = ly - lyp;
+        return dr*dr * w;
+      }
+
+    case LOSS_TUKEY: 
+      {
+        if (absr <= tukeyC) {
+          double t = r / tukeyC;
+          return (tukeyC*tukeyC/6.0)*(1.0 - std::pow(1.0 - t*t, 3)) * w;
+        } else {
+          return (tukeyC*tukeyC/6.0) * w;
+        }
+      }
+
+  }
+}
+
+  void computeLoss() {
     if (trg.use_emae) {
-      emaeLoss = std::pow(std::abs(emae - trg.emae), trg.N) * trg.w_emae;
-      emaeLoss = emaeLoss > trg.FAIL_SCORE ? trg.FAIL_SCORE : emaeLoss;
-      totalLoss += emaeLoss;
+      emaeLoss = sampleLoss(emae, trg.emae, trg.w_emae);
+      totalLossVar += emaeLoss;
     }
     if (trg.use_ermse) {
-      ermseLoss = std::pow(std::abs(ermse - trg.ermse), trg.N) * trg.w_ermse;
-      ermseLoss = ermseLoss > trg.FAIL_SCORE ? trg.FAIL_SCORE : ermseLoss;
-      totalLoss += ermseLoss;
+      ermseLoss = sampleLoss(ermse, trg.ermse, trg.w_ermse);
+      totalLossVar += ermseLoss;
     }
     if (trg.use_errmse) {
-      errmseLoss = std::pow(std::abs(errmse - trg.errmse), trg.N) * trg.w_errmse;
-      errmseLoss = errmseLoss > trg.FAIL_SCORE ? trg.FAIL_SCORE : errmseLoss;
-      totalLoss += errmseLoss;
+      errmseLoss = sampleLoss(errmse, trg.errmse, trg.w_errmse);
+      totalLossVar += errmseLoss;
     }
     if (trg.use_ersq) {
-      ersqLoss = std::pow(std::abs(ersq - trg.ersq), trg.N) * trg.w_ersq;
-      ersqLoss = ersqLoss > trg.FAIL_SCORE ? trg.FAIL_SCORE : ersqLoss;
-      totalLoss += ersqLoss;
+      ersqLoss = sampleLoss(ersq, trg.ersq, trg.w_ersq);
+      totalLossVar += ersqLoss;
     }
     if (trg.use_frmse) {
-      frmseLoss = std::pow(std::abs(frmse - trg.frmse), trg.N) * trg.w_frmse;
-      frmseLoss = frmseLoss > trg.FAIL_SCORE ? trg.FAIL_SCORE : frmseLoss;
-      totalLoss += frmseLoss;
+      frmseLoss = sampleLoss(frmse, trg.frmse, trg.w_frmse);
+      totalLossVar += frmseLoss;
     }
     if (trg.use_srmse) {
-      srmseLoss = std::pow(std::abs(srmse - trg.srmse), trg.N) * trg.w_srmse;
-      srmseLoss = srmseLoss > trg.FAIL_SCORE ? trg.FAIL_SCORE : srmseLoss;
-      totalLoss += srmseLoss;
+      srmseLoss = sampleLoss(srmse, trg.srmse, trg.w_srmse);
+      totalLossVar += srmseLoss;
     }
-    for (const auto &lsim : trg.LS) {
-      v_loss.resize(lsim.n_varloss.size());
+  }
+  void computeLammpsLoss() {
+    // TODO Generalise to use sampleLoss
+    for (size_t nsim = 0; nsim < trg.LS.size(); ++nsim) {
+      const auto &lsim = trg.LS[nsim];
+      v_loss[nsim].resize(lsim.n_varloss.size());
       for (size_t i = 0; i < lsim.n_varloss.size(); ++i) {
-        double vl = std::pow(lsim.v_varloss[i], trg.N)*lsim.w_varloss[i] > lsim.failscore ?
-          lsim.failscore : std::pow(lsim.v_varloss[i], trg.N)*lsim.w_varloss[i];
-        v_loss[i] = vl;
-        totalLoss += vl;
+        double vl = std::pow(lsim.v_varloss[i], trg.N)*lsim.w_varloss[i];
+        v_loss[nsim][i] = vl;
+        totalLossVar += vl;
       }
     }
   }
@@ -664,16 +830,17 @@ than the total number of workers.\n");
       out_file << std::left << std::setw(cwidth) << std::scientific
                << std::setprecision(pprec) << srmseLoss;
 
-    for (const auto &lsim : trg.LS) {
+    for (size_t nsim = 0; nsim < trg.LS.size(); ++nsim) {
+      const auto &lsim = trg.LS[nsim];
       for (size_t i = 0; i < lsim.n_varloss.size(); ++i) {
         out_file << std::left << std::setw(cwidth) << std::scientific
           << std::setprecision(pprec)
-          << v_loss[i];
+          << v_loss[nsim][i];
       }
     }
 
     out_file << std::left << std::setw(cwidth) << std::scientific
-             << std::setprecision(pprec) << totalLoss << std::endl;
+             << std::setprecision(pprec) << totalLoss() << std::endl;
     ;
   }
   void print_outvar(const std::string &_outvar_file, size_t _it, double it_time) {

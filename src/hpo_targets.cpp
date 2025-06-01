@@ -4,6 +4,7 @@
 #include "tadah/core/registry.h"
 
 #include <algorithm>
+#include <random>
 #include <fstream>
 #include <stdexcept>
 
@@ -168,6 +169,7 @@ void HPOTargets::create_labels() {
     std::string cgrid = "CGRID" + suffix_prefix.first;
     std::string sgrid = "SGRID" + suffix_prefix.first;
     std::string watom = "WATOM";
+    std::string weights = "WEIGHTS";
 
     size_t i = key == type ? 1 : 0;
 
@@ -180,6 +182,8 @@ void HPOTargets::create_labels() {
       auto params = it->second;
 
       if (key == rcut) {
+        o.labels[i++] = label;
+      } else if (key == weights) {
         o.labels[i++] = label;
       } else if (key == type) {
         nparams = params.size();
@@ -303,6 +307,22 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
       }
     }
   }
+
+  // init with a random value between low and high
+  size_t nOptimInits = 0;
+  optim_init.resize(nOptimInits);
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  for (size_t j = 0; j < nOptimInits; ++j) {
+    optim_init[j].resize(optim_low.size());
+    for (size_t i = 0; i < optim_low.size(); ++i) {
+      std::uniform_real_distribution<> dis(optim_low[i], optim_high[i]);
+      optim_init[j][i] = dis(gen);
+    }
+  }
+  // dummy for now
+  optim_is_int.resize(optim_low.size(), false);
+
 }
 
 void HPOTargets::read(std::string fn) {
@@ -325,12 +345,41 @@ void HPOTargets::read(std::string fn) {
     if (key.empty()) continue;
 
     try {
-      if (key == "EPS") {
-        iss >> EPS;
-      } else if (key == "ALGO") {
-        iss >> ALGO;
-      } else if (key == "N") {
-        iss >> N;
+      if (key == "PARAMS") {
+        double temp;
+        while (iss >> temp) {
+          PARAMS.push_back(temp);
+        }
+      } else if (key == "MINIMIZER") {
+        iss >> MINIMIZER;
+      } else if (key == "LOSS") {
+        iss >> lossType;
+        if (lossType == "L1") {
+          N = 1;
+        } else if (lossType == "L2") {
+          N = 2;
+        } else if (lossType == "HUBER") {
+          try {
+            iss >> deltaHuber;
+          } catch (const std::exception& e) {
+            throw std::runtime_error("Error reading delta Huber parameter on line " 
+                                     + core::to_string(nline) + ": " 
+                                     + e.what());
+          }
+        } else if (lossType == "TUKEY") {
+          try {
+            iss >> tukeyC;
+          } catch (const std::exception& e) {
+            throw std::runtime_error("Error reading Tukey's biweight parameter on line " 
+                                     + core::to_string(nline) + ": " 
+                                     + e.what());
+          }
+        } else if (lossType == "MAPE") {
+        } else if (lossType == "RMSLE") {
+        } else if (lossType == "LOG_COSH") {
+        } else {
+          throw std::runtime_error("Unknown loss function: " + lossType);
+        } 
       } else if (key == "POTEVERY") {
         iss >> potevery >> potevery_dir;
         handle_directory_creation(potevery_dir);

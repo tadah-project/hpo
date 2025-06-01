@@ -48,13 +48,19 @@ public:
     std::map<std::string, Opti> optimap;
     std::vector<double> optim_low;
     std::vector<double> optim_high;
+    std::vector<bool> optim_is_int;
+    std::vector<std::vector<double>> optim_init;
     std::vector<LammpsSim> LS;
 
     size_t MAX_CALLS = std::numeric_limits<size_t>::max();
-    double EPS = 1e-2;
+    std::vector<double> PARAMS;  // convergence parameters for optimization algorithms
     double FAIL_SCORE = 1000;
     std::string MAX_TIME = "10";
-    std::string ALGO = "2";
+    std::string MINIMIZER = "2";
+    std::string lossType = "L2";
+    double deltaHuber = 1.0; // Huber threshold
+    double tukeyC = 4.685;     // Tukey biweight cutoff
+    double N=2;
     std::string potevery_dir;
     std::string bestPotEveryDir;
     size_t potevery = std::numeric_limits<size_t>::max();
@@ -68,7 +74,6 @@ public:
     bool use_frmse = false; 
     double frmse; 
     double w_frmse;
-    double N=1; // L_g = abs(y_pred - y)^N
 };
 } // namespace hpo
 } // namespace tadah

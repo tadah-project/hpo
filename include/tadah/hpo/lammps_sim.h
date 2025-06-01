@@ -21,7 +21,7 @@ class LammpsSim {
   public:
     std::string script; /**< Name of the LAMMPS script file */
     std::vector<std::string> sinvar; /**< LAMMPS input variables */
-    std::vector<const char*> invar; /**< LAMMPS  variables, ptrs to sinvars */
+    // std::vector<const char*> invar; /**< LAMMPS  variables, ptrs to sinvars */
     std::vector<std::string> n_varloss; /**< Variables names related to the loss function */
     std::vector<double> v_varloss; /**< Value of the varloss */
     std::vector<double> w_varloss; /**< Weight for varloss */
