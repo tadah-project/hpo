@@ -295,22 +295,9 @@ public:
     }
 
     computeLoss();
+    runLammps();
+    computeLammpsLoss();
 
-    // if (totalLoss < trg.FAIL_SCORE) {
-      // only run LAMMPS if loss is not too high
-      // runLammps();
-      // computeLammpsLoss();
-    // } else {
-    //   // If loss is too high, set LAMMPS loss to fail score
-    //   std::cout << "DEBUG: SKIPPING LAMMPS, setting loss to fail score" << std::endl;
-    //   for (size_t i = 0; i < trg.LS.size(); ++i) {
-    //     v_loss[i].resize(trg.LS[i].n_varloss.size());
-    //     for (size_t j = 0; j < trg.LS[i].n_varloss.size(); ++j) {
-    //       v_loss[i][j] = trg.LS[i].failscore;
-    //       totalLoss += v_loss[i][j];
-    //     }
-    //   }
-    // }
     auto t2 = high_resolution_clock::now();
     duration<double, std::milli> t21 = t2 - t1;
 
