@@ -91,9 +91,9 @@ namespace experimental {
       opt.set_solver_epsilon(solver_epsilon);
       opt.set_explore_epsilon(explore_epsilon);
       // opt.set_seed(12341234123);
-      // opt.set_relative_noise_magnitude( 1e-16);  // TODO guess
+      opt.set_relative_noise_magnitude( 1e-16);  // TODO guess
       // opt.set_monte_carlo_upper_bound_sample_num(50000); // TODO guess
-      opt.set_pure_random_search_probability(1.0);
+      opt.set_pure_random_search_probability(0.9);
 
       running_stats_decayed<double> objective_funct_eval_time(functions.size()*5);
       std::mutex eval_time_mutex;

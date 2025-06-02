@@ -329,7 +329,7 @@ namespace tadah
 
             if (radius == 0)
             {
-                for (auto& idx : distances) {
+                for (auto& idx : distances) { // TODO dlib::BUG?
                     double radius_tmp = std::max(radius, length(rowm(best_x-samples[idx.second].x, active_dims)) );
                     if (radius_tmp > radius)
                         radius = radius_tmp;
@@ -762,19 +762,19 @@ namespace tadah
 
           // if (run_explore_probability < run_explore_probability_highbound)
           //   run_explore_probability *= 1.001;
-          auto binfo = best_function();
-          double best_objective_value = binfo->best_objective_value;
+          // auto binfo = best_function();
+          // double best_objective_value = binfo->best_objective_value;
 
           // iterate over binfo->bov and find the largest value
         // std::cout << "Best objective value: " << best_objective_value << std::endl;
-        double best_bov = -std::numeric_limits<double>::infinity();
-        for (size_t i = 0; i < binfo->bov.size(); ++i)
-        {
-          if (binfo->bov[i] > best_bov)
-          {
-            best_bov = binfo->bov[i];
-          }
-        }
+        // double best_bov = -std::numeric_limits<double>::infinity();
+        // for (size_t i = 0; i < binfo->bov.size(); ++i)
+        // {
+        //   if (binfo->bov[i] > best_bov)
+        //   {
+        //     best_bov = binfo->bov[i];
+        //   }
+        // }
 
         // if (best_bov > -std::numeric_limits<double>::infinity() && best_objective_value > best_bov)
         // {
@@ -783,53 +783,54 @@ namespace tadah
         // }
 
 
-          if (rnd.get_random_double() < run_explore_probability)
-        {
-
-          auto info = best_function();
-          size_t &current_m_shell = info->current_m_shell;
-          auto &cteru = info->count_to_explore_region_update[current_m_shell];
-          double &radius = info->radii[current_m_shell];
-          const long dims = info->spec.lower.size();
-
-          // TODO postpone this until we have enough points to do explore region step
-          if (info->ub.num_points() > (dims+1))
-          {
-            cteru++;
-            auto tmp = pick_next_sample_using_trust_region(info->ub.get_points(),
-                radius, info->spec.lower, info->spec.upper, info->spec.is_integer_variable, hypercube_separators[info->function_idx],current_m_shell);
-            // std::cout << "Picking from the explore region. p=" << run_explore_probability << " Pred: "<< tmp.predicted_improvement << " r=" << info->radii[current_m_shell];
-            if (tmp.predicted_improvement > min_explore_region_epsilon)
-            {
-              // std::cout << " OK." << std::endl;
-              ofer new_req;
-              new_req.request_id = next_request_id++;
-              new_req.x = tmp.best_x;
-              new_req.was_explore_region_generated_request = true;
-              new_req.current_m_shell = current_m_shell;
-              new_req.anchor_objective_value = info->bov[current_m_shell];
-              new_req.predicted_improvement = tmp.predicted_improvement;
-              info->outstanding_evals.emplace_back(new_req);
-
-              if (cteru > 1) {
-                // we are doing well lets stay in this region
-                cteru--;
-              }
-              return fer(new_req, info);
-            }
-
-            if (cteru > 2) {
-              // hiccup, lets try to explore some other region
-              radius = 0; // reset previous explore region radius
-              cteru = 0; // reset counter
-              current_m_shell = hypercube_separators[info->function_idx].random_separation(0);
-              current_m_shell /= 2; // shell not M hypercubes
-            }
-          }
-        } 
+        //   if (rnd.get_random_double() < run_explore_probability)
+        // {
+        //
+        //   auto info = best_function();
+        //   size_t &current_m_shell = info->current_m_shell;
+        //   auto &cteru = info->count_to_explore_region_update[current_m_shell];
+        //   double &radius = info->radii[current_m_shell];
+        //   const long dims = info->spec.lower.size();
+        //
+        //   // TODO postpone this until we have enough points to do explore region step
+        //   if (info->ub.num_points() > (dims+1))
+        //   {
+        //     cteru++;
+        //     auto tmp = pick_next_sample_using_trust_region(info->ub.get_points(),
+        //         radius, info->spec.lower, info->spec.upper, info->spec.is_integer_variable, hypercube_separators[info->function_idx],current_m_shell);
+        //     // std::cout << "Picking from the explore region. p=" << run_explore_probability << " Pred: "<< tmp.predicted_improvement << " r=" << info->radii[current_m_shell];
+        //     if (tmp.predicted_improvement > min_explore_region_epsilon)
+        //     {
+        //       // std::cout << " OK." << std::endl;
+        //       ofer new_req;
+        //       new_req.request_id = next_request_id++;
+        //       new_req.x = tmp.best_x;
+        //       new_req.was_explore_region_generated_request = true;
+        //       new_req.current_m_shell = current_m_shell;
+        //       new_req.anchor_objective_value = info->bov[current_m_shell];
+        //       new_req.predicted_improvement = tmp.predicted_improvement;
+        //       info->outstanding_evals.emplace_back(new_req);
+        //
+        //       if (cteru > 1) {
+        //         // we are doing well lets stay in this region
+        //         cteru--;
+        //       }
+        //       return fer(new_req, info);
+        //     }
+        //
+        //     if (cteru > 2) {
+        //       // hiccup, lets try to explore some other region
+        //       radius = 0; // reset previous explore region radius
+        //       cteru = 0; // reset counter
+        //       current_m_shell = hypercube_separators[info->function_idx].random_separation(0);
+        //       current_m_shell /= 2; // shell not M hypercubes
+        //     }
+        //   }
+        // } 
 
           if (do_trust_region_step && !has_outstanding_trust_region_request())
         {
+          std::cout << "Trying to do a trust region step." << std::endl;
           // find the currently best performing function, we will do a trust region
           // step on it.
           auto info = best_function();
@@ -857,7 +858,8 @@ namespace tadah
               count_to_radius_reset--;
               return fer(new_req, info);
             }
-            if (count_to_radius_reset > 2) 
+
+            if (count_to_radius_reset > 5) 
             {
               // we are not doing well, lets try to reset
               count_to_radius_reset = 0;
@@ -872,7 +874,7 @@ namespace tadah
 
         if (rnd.get_random_double() >= pure_random_search_probability)
         {
-          // std::cout << "Using upper bound function to pick next sample. " << std::endl;
+          std::cout << "Using upper bound function to pick next sample. " << std::endl;
             // pick a point at random to sample according to the upper bound
             double best_upper_bound = -std::numeric_limits<double>::infinity();
             std::shared_ptr<fi> best_funct;
@@ -909,7 +911,7 @@ namespace tadah
 
 
         // pick entirely at random
-        // std::cout << "Picking next sample at random." << std::endl;
+        std::cout << "Picking next sample at random." << std::endl;
         size_t function_idx = rnd.get_integer(functions.size());
         auto info = functions[function_idx];
         ofer new_req;

@@ -191,17 +191,16 @@ template<class P,class R> typename HPO_Host<P,R>::Queue  HPO_Host<P,R>::g_q_;
 template<class P,class R> std::atomic_flag               HPO_Host<P,R>::writer_token_;
 template<class P,class R> std::mutex                     HPO_Host<P,R>::io_mtx_;
 template<class P,class R> std::map<std::size_t,
-  typename HPO_Host<P,R>::Result>
-  HPO_Host<P,R>::io_buf_;
-  template<class P,class R> std::atomic<std::size_t>       HPO_Host<P,R>::next_flush_{1};
+  typename HPO_Host<P,R>::Result> HPO_Host<P,R>::io_buf_;
+template<class P,class R> std::atomic<std::size_t>       HPO_Host<P,R>::next_flush_{1};
 
 template<class P, class R>
 thread_local tadah::mlip::memory::MLIPWorkspaceManager
-        HPO_Host<P,R>::tls_ws_{};
+HPO_Host<P,R>::tls_ws_{};
 #if defined(TADAH_BUILD_MPI)
 template<class P, class R>
 thread_local tadah::mlip::memory::MLIPWorkspaceManager
-        HPO_Host<P,R>::tls_ws_2{};
+HPO_Host<P,R>::tls_ws_2{};
 #endif
 
 /* ----------  constructor ---------------------------------------------- */
@@ -393,13 +392,15 @@ double HPO_Host<P,R>::operator()(const P& p) const
 
     /* best tracking ---------------------------------------------------- */
     double cur=g_best_.load(std::memory_order_relaxed);
-    while(r.loss<cur &&
-          !g_best_.compare_exchange_weak(cur,r.loss,
-                                         std::memory_order_acq_rel));
-    if(r.loss==g_best_){
-        r.is_best=true;
-        r.best_iter = g_best_iter_.fetch_add(1, std::memory_order_relaxed) + 1;
-        r.best_pot=std::move(pot);
+    bool i_am_best = false;
+    while(r.loss < cur &&
+        !(i_am_best =
+          g_best_.compare_exchange_weak(cur, r.loss,
+            std::memory_order_acq_rel)));
+    if(i_am_best){
+      r.is_best   = true;
+      r.best_iter = g_best_iter_.fetch_add(1, std::memory_order_relaxed) + 1;
+      r.best_pot  = std::move(pot);
     }
 
     r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -410,12 +411,10 @@ double HPO_Host<P,R>::operator()(const P& p) const
 }
 
 /* ---------- opportunistic writer helper ------------------------------ */
-template<class P,class R>
+  template<class P,class R>
 void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                                   std::size_t cw, int prec)
 {
-  // get thread id
-  static thread_local std::size_t thread_id = std::hash<std::thread::id>()(std::this_thread::get_id());
     /* 1. enqueue ------------------------------------------------------- */
     g_q_.enqueue(std::move(res));
 
@@ -451,14 +450,14 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
         if(next_flush_ % lossEvery == 0){
             print_loss_line  (loss_f , e.iter, e, trg, cw, prec);
             print_outvar_line(outv_f , e.iter, e, trg, cw, prec);
-            print_params_line(par_f  , e.iter, e,          cw, prec);
+            print_params_line(par_f  , e.iter, e,      cw, prec);
         }
 
         /* ---- new best logs ------------------------------------------ */
         if(e.is_best){
             print_loss_line  (best_f      , e.best_iter, e, trg, cw, prec);
             print_outvar_line(best_outv_f , e.best_iter, e, trg, cw, prec);
-            print_params_line(best_par_f  , e.best_iter, e,          cw, prec);
+            print_params_line(best_par_f  , e.best_iter, e,      cw, prec);
 
             /* overwrite & archive best_pot ---------------------------- */
             {
@@ -481,17 +480,9 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
 
             io_buf_.erase(next_flush_++);
         }
-
-    /* 5. flush files -------------------------------------------------- */
-    // loss_f.flush(); 
-    // outv_f.flush();
-    // par_f.flush();
-    // best_f.flush();
-    // best_outv_f.flush();
-    // best_par_f.flush();
     }
 
-    /* 6. release token ------------------------------------------------- */
+    /* 5. release token ------------------------------------------------- */
     writer_token_.clear(std::memory_order_release);
 }
 
