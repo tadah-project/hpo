@@ -232,6 +232,7 @@ public:
     host.run();
     host.solve();
 #else
+    host.init(context);
     //train_stdb.clear_nn();
     //host.train(train_stdb);
 #endif
@@ -347,55 +348,35 @@ public:
 #endif
     for (size_t simNum = 0; simNum < LS.size(); ++simNum) {
       R runner;
-      std::cout << "DEBUG: Running LAMMPS simulation " << simNum << std::endl;
-      std::cout << "DEBUG: LAMMPS script: " << LS[simNum].script << std::endl;
-      std::cout << "DEBUG: LAMMPS sinvar: ";
-      for (const auto &s : LS[simNum].sinvar) {
-        std::cout << s << " ";
-      }
-      std::cout << std::endl;
 
       auto &lsim = LS[simNum];
-      std::cout << "DEBUG: LAMMPS creating instance " << simNum << std::endl;
       auto lmp = runner.create_instance(/*dummy_comm*/0, lsim.sinvar);
-      std::cout << "DEBUG: LAMMPS instance created " << simNum << std::endl;
       // auto lmp = runner.instances_[simNum];
 
       // If LAMMPS creation failed, mark fail results and move on
       // create will tidy up and return nullptr
       if (!lmp) {
-        std::cout << "DEBUG: LAMMPS instance creation failed " << simNum
-          << std::endl;
         for (size_t i = 0; i < lsim.n_varloss.size(); ++i)
           lsim.v_varloss[i] = lsim.failscore;
         for (size_t i = 0; i < lsim.outvar.size(); ++i)
           lsim.v_outvar[i] = "NaN";
-        std::cout << "DEBUG: LAMMPS instance creation failed continue " << simNum
-          << std::endl;
         continue;
       }
 
       // Attempt to run script on this instance
-      std::cout << "DEBUG: LAMMPS running script " << simNum << std::endl;
       bool success = runner.run_script(lmp, lsim.script);
-      std::cout << "DEBUG: LAMMPS script run " << simNum << std::endl;
 
       if (!success) {
-        std::cout << "DEBUG: LAMMPS script run failed " << simNum
-          << std::endl;
         // A crash or severe error occurred. Mark fail results
         for (size_t i = 0; i < lsim.n_varloss.size(); ++i)
           lsim.v_varloss[i] = lsim.failscore;
         for (size_t i = 0; i < lsim.outvar.size(); ++i)
           lsim.v_outvar[i] = "NaN";
-        std::cout << "DEBUG: LAMMPS script run failed continue " << simNum
-          << std::endl;
         continue;
       }
 
       // If script ran successfully, retrieve LAMMPS variables
       for (size_t i = 0; i < lsim.n_varloss.size(); ++i) {
-        std::cout << "DEBUG: LAMMPS retrieving varloss " << i << " simNum " << simNum <<std::endl;
         try {
           const std::string &v = lsim.n_varloss[i];
           lsim.v_varloss[i] = std::stod(runner.get_variable(lmp, v));
@@ -407,7 +388,6 @@ public:
       }
 
       for (size_t i = 0; i < lsim.outvar.size(); ++i) {
-        std::cout << "DEBUG: LAMMPS retrieving outvar " << i << " simNum " << simNum <<std::endl;
         try {
           const std::string &o = lsim.outvar[i];
           lsim.v_outvar[i] = runner.get_variable(lmp, o);
@@ -417,7 +397,6 @@ public:
           throw;
         }
       }
-      std::cout << "DEBUG: LAMMPS done " << simNum << std::endl;
     }
 #endif
   }
@@ -605,7 +584,6 @@ void init_loss_func() {
     lossType = LOSS_HUBER;
     delta = trg.deltaHuber;
   } else if (trg.lossType == "LOG_COSH") {
-    std::cout << "DEBUG: Using log-cosh loss function" << std::endl;
     lossType = LOSS_LOG_COSH;
   } else if (trg.lossType == "MAPE") {
     lossType = LOSS_MAPE;
