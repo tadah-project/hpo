@@ -23,7 +23,9 @@
 #include <iostream>
 #include <stdlib.h> // ??
 #include <vector>
-
+#include <atomic>
+#include <mutex>       // only for IO serialisation (optional)
+#include <thread>
 
 #if defined(TADAH_ENABLE_OPENMP)
 #include <omp.h>
@@ -93,30 +95,37 @@ private:
   std::string outvar_file = "outvar.tadah";
   //R runner;
   HPOTargets &trg;
-  double bestLoss = std::numeric_limits<double>::max();
-  core::Context context;          // make a copy
+  const core::Context context_master;   // immutable after ctor
   mlip::StructureDB val_stdb;   // validation dataset
   mlip::StructureDB train_stdb; // train dataset NON MPI only
-  size_t it = 0;          // iteration number
-  size_t best_it = 0;          // counts best pots
-  tadah::mlip::memory::MLIPWorkspaceManager workspaceManager;
+  // tadah::mlip::memory::MLIPWorkspaceManager workspaceManager;
+  static thread_local tadah::mlip::memory::MLIPWorkspaceManager tlsWorkspaceManager;
 
-  void update_context(T &v) {
-    for (auto &m : trg.optimap) {
-      context.remove(m.first);
-    }
+    /* thread safe global bookkeeping */
+    // ONE copy per *program*, not per instance → they do *not* participate
+    // in the copy constructor.
+    // see definition at the bottom of this file
+    static std::atomic<size_t> g_it;
+    static std::atomic<size_t> g_best_it;
+    static std::atomic<double> g_bestLoss;
+    static std::mutex          io_mutex;
 
-    size_t idx = 0;
-    for (const auto &p : trg.optimap) {
-      for (size_t i = 0; i < p.second.opt.size(); ++i) {
-        if (p.second.opt[i]) {
-          context.add(p.first, v(idx++));
-        } else {
-          context.add(p.first, p.second.config[i]);
+    void update_context(core::Context& ctx, const T& v) const {
+      for (auto &m : trg.optimap) {
+        ctx.remove(m.first);
+      }
+
+      size_t idx = 0;
+      for (const auto &p : trg.optimap) {
+        for (size_t i = 0; i < p.second.opt.size(); ++i) {
+          if (p.second.opt[i]) {
+            ctx.add(p.first, v(idx++));
+          } else {
+            ctx.add(p.first, p.second.config[i]);
+          }
         }
       }
     }
-  }
 
   bool use_lammps;
 
@@ -149,8 +158,8 @@ private:
     }
   }
 #ifdef TADAH_BUILD_MPI
-    mlip::TrainerHost host(context, workspaceManager, workspaceManager2);
-    tadah::mlip::memory::MLIPWorkspaceManager workspaceManager2;
+    static thread_local tadah::mlip::memory::MLIPWorkspaceManager tlsWorkspaceManager;
+    mlip::TrainerHost host(context, tlsWorkspaceManager, tlsWorkspaceManager2);
 #else
     mlip::NNFinder nnf;
 #endif
@@ -159,18 +168,16 @@ public:
   ~HPO_Host() {
   }
   HPO_Host(core::Context c, HPOTargets &trg, std::string &val_file)
-    : trg(trg),  context(c), numLosses(0), 
+    : trg(trg),  context_master(std::move(c)), numLosses(0)
 #ifdef TADAH_BUILD_MPI
-    host(c, workspaceManager, workspaceManager2)
-#else
-    nnf(c)
+    ,host(c, tlsWorkspaceManager, tlsWorkspaceManager2)
 #endif
   {
     core::Context val_context(core::CoreUserConfigParser().parse(val_file));
     val_stdb.add(val_context);
 
     std::set<core::Element> train_elements =
-      mlip::StructureDB::find_unique_elements(context);
+      mlip::StructureDB::find_unique_elements(context_master);
     std::set<core::Element> val_elements =
       mlip::StructureDB::find_unique_elements(val_context);
 
@@ -181,7 +188,7 @@ public:
 #ifdef TADAH_BUILD_MPI
     MPI_Bcast(&use_lammps, 1, MPI_C_BOOL, 0, MPI_COMM_WORLD);
 #else
-    train_stdb.add(context);
+    train_stdb.add(context_master);
 #endif
 
     init_loss_func();
@@ -194,22 +201,38 @@ public:
     init_outvar(bestOutvarFile);
     init_params(bestParamsFile);
 
+    double rcutmax = context_master.get<double>("RCUTMAX");
+    // Loop over all optimap entries to find either RCUT2B or RCUTMB
+    // Overwrite rcutmax if higher value is found in optimap.highbound
+    for (const auto &opti: trg.optimap) {
+      if (opti.first == "RCUT2B" || opti.first == "RCUTMB") {
+        double rcut = opti.second.highbound[0];
+        if (rcut > rcutmax) {
+          rcutmax = rcut;
+        }
+      }
+    }
+
+    std::cout << "DEBUG: Using rcutmax = " << rcutmax << std::endl;
+
+    nnf.calc(val_stdb, rcutmax);
+    std::cout << "DEBUG: Nearest neighbours calculated for validation set." << std::endl;
   }
 
   // MAIN HPO LOOP
   double operator()(T p) {
     totalLossVar = 0; // reset total loss
     numLosses = 0;
-    it++;
+    g_it++;
     using std::chrono::duration;
     using std::chrono::duration_cast;
     using std::chrono::high_resolution_clock;
     using std::chrono::milliseconds;
 
     auto t1 = high_resolution_clock::now();
-    update_context(p);
 
-    core::Context context_temp = context;
+    core::Context context_local = context_master;
+    update_context(context_local, p);
 
     // Train new potential with updated settings
 #ifdef TADAH_BUILD_MPI
@@ -220,34 +243,30 @@ public:
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
     // New context file must be communicated to all processes
-    std::vector<char> cs = context.serialize();
+    std::vector<char> cs = context_local.serialize();
     int cs_size = cs.size();
     MPI_Bcast(&cs_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(cs.data(), cs_size, MPI_CHAR, 0, MPI_COMM_WORLD);
 
     // HOST is waiting for workers requests
-    // mlip::TrainerHost host(context, workspaceManager, workspaceManager2);
+    // mlip::TrainerHost host(context, tlsWorkspaceManager, tlsWorkspaceManager2);
     host.run();
     host.solve();
 #else
-    mlip::Trainer host(context, workspaceManager);
-    //train_stdb.clear_nn();
+    mlip::Trainer host(context_local, tlsWorkspaceManager);
     //host.train(train_stdb);
 #endif
     // End of training
 
     // This potential will be used by LAMMPS
     core::Context pot_tadah = host.model->get_param_file();
-    // core::Context pot_tadah = context_temp;
+    // core::Context pot_tadah = context_local;
 
-     std::ofstream out_file;
-     out_file.open("pot.tadah");
-     out_file << pot_tadah;
-     out_file.close();
+     // std::ofstream out_file;
+     // out_file.open("pot.tadah");
+     // out_file << pot_tadah;
+     // out_file.close();
 
-     val_stdb.clear_nn();
-     nnf.init(pot_tadah);
-     nnf.calc(val_stdb);
      mlip::StructureDB stpred = host.model->predict(pot_tadah, val_stdb, host.dc);
 
      mlip::Analytics a(val_stdb, stpred);
@@ -279,8 +298,8 @@ public:
 
     // if (totalLoss < trg.FAIL_SCORE) {
       // only run LAMMPS if loss is not too high
-      runLammps();
-      computeLammpsLoss();
+      // runLammps();
+      // computeLammpsLoss();
     // } else {
     //   // If loss is too high, set LAMMPS loss to fail score
     //   std::cout << "DEBUG: SKIPPING LAMMPS, setting loss to fail score" << std::endl;
@@ -296,41 +315,41 @@ public:
     duration<double, std::milli> t21 = t2 - t1;
 
     // Dump potential if best
-    if (totalLoss() < bestLoss) {
-      best_it++;
-      bestLoss = totalLoss();
+    if (totalLoss() < g_bestLoss) {
+      g_best_it++;
+      g_bestLoss = totalLoss();
       std::ofstream out_file;
       out_file.open("best_pot.tadah");
       out_file << pot_tadah;
       out_file.close();
 
       // Dump potential every bestPotEvery steps
-      if (it % trg.bestPotEvery == 0) {
+      if (g_it % trg.bestPotEvery == 0) {
         std::ofstream out_file;
-        out_file.open(trg.bestPotEveryDir + "/best_pot_" + std::to_string(it) + ".tadah");
+        out_file.open(trg.bestPotEveryDir + "/best_pot_" + std::to_string(g_it) + ".tadah");
         out_file << pot_tadah;
         out_file.close();
       }
       // Save best loss, params and outvar
-      print_loss(bestLossFile,best_it);
-      print_outvar(bestOutvarFile,best_it,t21.count());
-      print_params(bestParamsFile,best_it,p);
+      print_loss(bestLossFile,g_best_it);
+      print_outvar(bestOutvarFile,g_best_it,t21.count());
+      print_params(bestParamsFile,g_best_it,p);
     }
 
     // Dump potential potevery steps
     // Controled by POTEVERY
-    if (it % trg.potevery == 0) {
+    if (g_it % trg.potevery == 0) {
       std::ofstream out_file;
-      out_file.open(trg.potevery_dir + "/pot_" + std::to_string(it) + ".tadah");
+      out_file.open(trg.potevery_dir + "/pot_" + std::to_string(g_it) + ".tadah");
       out_file << pot_tadah;
       out_file.close();
     }
 
 
     // print output
-    print_loss(loss_file,it);
-    print_outvar(outvar_file,it,t21.count());
-    print_params(params_file,it,p);
+    print_loss(loss_file,g_it);
+    print_outvar(outvar_file,g_it,t21.count());
+    print_params(params_file,g_it,p);
     return totalLoss();
   }
 
@@ -437,9 +456,9 @@ than the total number of workers.\n");
       if (tag == WORK_TAG) {
         MPI_Recv(NULL, 0, MPI_INT, worker, tag, MPI_COMM_WORLD, &status);
 
-        auto it = std::find(available_workers.begin(), available_workers.end(),
+        auto g_it = std::find(available_workers.begin(), available_workers.end(),
                             worker);
-        if (it == available_workers.end()) { // new worker is available
+        if (g_it == available_workers.end()) { // new worker is available
           available_workers.push_back(worker);
           MPI_Send(NULL, 0, MPI_INT, worker, WAIT_TAG, MPI_COMM_WORLD);
         } else {
@@ -880,6 +899,25 @@ double sampleLoss(double y, double ypred, double w) {
     out_file << std::endl;
   }
 };
+
+template <typename T, typename R>
+thread_local tadah::mlip::memory::MLIPWorkspaceManager
+    HPO_Host<T,R>::tlsWorkspaceManager{};
+
+template <typename T, typename R>
+std::atomic<size_t> HPO_Host<T,R>::g_it{0};
+
+template <typename T, typename R>
+std::atomic<size_t> HPO_Host<T,R>::g_best_it{0};
+
+template <typename T, typename R>
+std::atomic<double> HPO_Host<T,R>::g_bestLoss{
+        std::numeric_limits<double>::max()};
+
+template <typename T, typename R>
+std::mutex HPO_Host<T,R>::io_mutex;
+
+
 } // namespace hpo
 } // namespace tadah
 #endif
