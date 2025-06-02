@@ -276,8 +276,8 @@ namespace tadah
             double best_val2 = -1e300;
             matrix<double,0,1> best_x2;
             if (mShell>=0) {
-              std::cout << "Finding new trust region in the mShell:= " << mShell << std::endl;
-              std::cout << "BEST: " << std::setprecision(15) << best_val << " at:\n" << std::setprecision(5) << trans(best_x) << std::endl;
+              // std::cout << "Finding new trust region in the mShell:= " << mShell << std::endl;
+              // std::cout << "BEST: " << std::setprecision(15) << best_val << " at:\n" << std::setprecision(5) << trans(best_x) << std::endl;
               bool found = false;
               for (auto& v : samples)
               {
@@ -290,12 +290,12 @@ namespace tadah
               }
               if (found) {
                 best_x = best_x2;
-                std::cout << "r=" << radius << " NEW:  " << std::setprecision(15) << best_val2 << " mShell: " << mShell << " at:\n" << std::setprecision(5) << trans(best_x) << std::endl;
+                // std::cout << "r=" << radius << " NEW:  " << std::setprecision(15) << best_val2 << " mShell: " << mShell << " at:\n" << std::setprecision(5) << trans(best_x) << std::endl;
               }
               else {
-                std::cout << "No new point found in Mth shell." << std::endl;
+                // std::cout << "No new point found in Mth shell." << std::endl;
                 best_x = hc.random_point_in_cube_shell(mShell);
-                std::cout << "NO NEW point found, return random point in mShell: " << hc.in_cube_shell(best_x,mShell) << std::endl;
+                // std::cout << "NO NEW point found, return random point in mShell: " << hc.in_cube_shell(best_x,mShell) << std::endl;
               }
             }
 
@@ -766,7 +766,7 @@ namespace tadah
           double best_objective_value = binfo->best_objective_value;
 
           // iterate over binfo->bov and find the largest value
-        std::cout << "Best objective value: " << best_objective_value << std::endl;
+        // std::cout << "Best objective value: " << best_objective_value << std::endl;
         double best_bov = -std::numeric_limits<double>::infinity();
         for (size_t i = 0; i < binfo->bov.size(); ++i)
         {
@@ -776,14 +776,14 @@ namespace tadah
           }
         }
 
-        if (best_bov > -std::numeric_limits<double>::infinity() && best_objective_value > best_bov)
-        {
-        run_explore_probability = 0.1*(1 - best_objective_value/best_bov);
-        std::cout << "Best BOV: " << best_bov << " p: " << run_explore_probability <<std::endl;
-        }
+        // if (best_bov > -std::numeric_limits<double>::infinity() && best_objective_value > best_bov)
+        // {
+        // run_explore_probability = 100*(1 - best_objective_value/best_bov);
+        // std::cout << "Best BOV: " << best_bov << " p: " << run_explore_probability <<std::endl;
+        // }
 
 
-          if (rnd.get_random_double() < run_explore_probability && !has_outstanding_explore_region_request())
+          if (rnd.get_random_double() < run_explore_probability)
         {
 
           auto info = best_function();
@@ -827,8 +827,8 @@ namespace tadah
             }
           }
         } 
-          else if (do_trust_region_step && !has_outstanding_trust_region_request() 
-            && !has_outstanding_explore_region_request())
+
+          if (do_trust_region_step && !has_outstanding_trust_region_request())
         {
           // find the currently best performing function, we will do a trust region
           // step on it.
@@ -909,7 +909,7 @@ namespace tadah
 
 
         // pick entirely at random
-        std::cout << "Picking next sample at random." << std::endl;
+        // std::cout << "Picking next sample at random." << std::endl;
         size_t function_idx = rnd.get_integer(functions.size());
         auto info = functions[function_idx];
         ofer new_req;

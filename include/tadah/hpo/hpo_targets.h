@@ -52,6 +52,7 @@ public:
     std::vector<std::vector<double>> optim_init;
     std::vector<LammpsSim> LS;
 
+    int THREADS = -1; // number of threads for parallel evaluation, -1 means all available threads
     size_t MAX_CALLS = std::numeric_limits<size_t>::max();
     std::vector<double> PARAMS;  // convergence parameters for optimization algorithms
     double FAIL_SCORE = 1000;

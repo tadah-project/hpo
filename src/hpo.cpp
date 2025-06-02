@@ -107,6 +107,7 @@ namespace experimental {
 
       // Now run the main solver loop.
       std::cout << "Starting global optimization with " << num.max_calls << " calls." << std::endl;
+      std::cout << "Using " << tp.num_threads_in_pool() << " threads." << std::endl;
       for (size_t i = 0; i < num.max_calls && steady_clock::now() < time_to_stop && !this_should_stop.load(); ++i)
       {
 
@@ -275,7 +276,12 @@ void tadah_find_min_global(core::Context &context, HPOTargets &trg, std::string 
   }
 
   // dlib::thread_pool tp(2);  // Use a single thread for now as HPO_Host::operator() is not thread-safe.
-  dlib::thread_pool &tp = dlib::default_thread_pool();
+  // dlib::thread_pool &tp = dlib::default_thread_pool();
+  int threads = trg.THREADS;
+  if (threads < 1) {
+    threads = dlib::default_thread_pool().num_threads_in_pool();
+  }
+  dlib::thread_pool tp(threads);
 
   //auto result1 = dlib::find_min_global(
   auto result1 = tadah::experimental::tadah_find_min_global(
@@ -303,7 +309,11 @@ void find_min_global(core::Context &context, HPOTargets &trg, std::string &val_f
   }
 
   // dlib::thread_pool tp(1);  // Use a single thread for now as HPO_Host::operator() is not thread-safe.
-  dlib::thread_pool &tp = dlib::default_thread_pool();
+  int threads = trg.THREADS;
+  if (threads < 1) {
+    threads = dlib::default_thread_pool().num_threads_in_pool();
+  }
+  dlib::thread_pool tp(threads);
 
   auto result1 = dlib::find_min_global(
       tp,

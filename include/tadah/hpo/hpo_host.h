@@ -47,10 +47,12 @@ template<class ParamVec>
 struct EvalResult
 {
     std::size_t                            iter      = 0;
+    std::size_t                            best_iter = 0;
     double                                 loss      = 0.0;
 
     /* validation metrics */
     double emae=0, ermse=0, errmse=0, ersq=0, frmse=0, srmse=0;
+    double emaeLoss=0, ermseLoss=0, errmseLoss=0, ersqLoss=0, frmseLoss=0, srmseLoss=0;
     std::vector<std::vector<double>>       v_loss;
     std::vector<std::string>               v_outvar;
 
@@ -97,6 +99,7 @@ private:
 
     /* ---------- global mutable state ----------------------------------- */
     static std::atomic_size_t   g_iter_;
+    static std::atomic_size_t   g_best_iter_;
     static std::atomic<double>  g_best_;
 
     /* opportunistic single-writer --------------------------------------- */
@@ -105,8 +108,8 @@ private:
     static std::mutex                              io_mtx_;       // protects FILEs
     static std::map<std::size_t,Result>            io_buf_;       // re-order
     static std::atomic<std::size_t>                next_flush_;   // next iter
-    static constexpr std::size_t                   FLUSH_THRESHOLD = 100; // N
-    static void submit_result(Result&&,
+    static constexpr std::size_t                   QFLUSH_THRESHOLD = 100; // N
+    static void submit_result(Result&&, const HPOTargets& trg_,
                               std::size_t cw, int prec);
 
 #if defined(TADAH_BUILD_MPI)
@@ -144,9 +147,13 @@ private:
     void init_loss   (const std::string& fn) const;
     void init_outvar (const std::string& fn) const;
     void init_params (const std::string& fn) const;
-    void print_loss  (std::ofstream&, const Result&) const;
-    void print_outvar(std::ofstream&, const Result&) const;
-    void print_params(std::ofstream&, const Result&) const;
+
+    static void print_loss_line  (std::ofstream&, size_t it, const Result&,
+                                  const HPOTargets&, std::size_t cw, int prec);
+    static void print_outvar_line(std::ofstream&, size_t it, const Result&,
+                                  const HPOTargets&, std::size_t cw, int prec);
+    static void print_params_line(std::ofstream&, size_t it, const Result&,
+                                  std::size_t cw, int prec);
 
 };
 

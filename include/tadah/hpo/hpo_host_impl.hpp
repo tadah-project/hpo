@@ -50,92 +50,136 @@ template<class P,class R>
 void HPO_Host<P,R>::init_loss(const std::string& fn) const
 {
     std::ofstream f(fn);
-    f<<std::left<<std::setw(cw_)<<"ITERATION";
-    if(trg_.use_emae)  f<<std::setw(cw_)<<"loss(EMAE)";
-    if(trg_.use_ermse) f<<std::setw(cw_)<<"loss(ERMSE)";
-    if(trg_.use_errmse)f<<std::setw(cw_)<<"loss(ErRMSE)";
-    if(trg_.use_ersq)  f<<std::setw(cw_)<<"loss(ERSQ)";
-    if(trg_.use_frmse) f<<std::setw(cw_)<<"loss(FRMSE)";
-    if(trg_.use_srmse) f<<std::setw(cw_)<<"loss(SRMSE)";
-    for(const auto& ls: trg_.LS)
-        for(const auto& n: ls.n_varloss)
-            f<<std::setw(cw_)<<n;
-    f<<std::setw(cw_)<<"TOTAL_LOSS\n";
+
+    f << std::left << std::setw(cw_) << "ITERATION";
+    if (trg_.use_emae)
+      f << std::left << std::setw(cw_) << "loss(EMAE)";
+    if (trg_.use_ermse)
+      f << std::left << std::setw(cw_) << "loss(ERMSE)";
+    if (trg_.use_errmse)
+      f << std::left << std::setw(cw_) << "loss(ErRMSE)";
+    if (trg_.use_ersq)
+      f << std::left << std::setw(cw_) << "loss(ERSQ)";
+    if (trg_.use_frmse)
+      f << std::left << std::setw(cw_) << "loss(FRMSE)";
+    if (trg_.use_srmse)
+      f << std::left << std::setw(cw_) << "loss(SRMSE)";
+
+
+    for (const auto &lsim : trg_.LS) {
+      for (const auto &vloss : lsim.n_varloss)
+        f << std::left << std::setw(cw_) << vloss;
+    }
+
+    f << std::left << std::setw(cw_) << "TOTAL_LOSS" << std::endl;
 }
+
 template<class P,class R>
 void HPO_Host<P,R>::init_outvar(const std::string& fn) const
 {
     std::ofstream f(fn);
-    f<<std::left<<std::setw(cw_)<<"ITERATION"
-      <<std::setw(cw_)<<"IT_TIME/ms";
-    if(trg_.use_emae)  f<<std::setw(cw_)<<"EMAE";
-    if(trg_.use_ermse) f<<std::setw(cw_)<<"ERMSE";
-    if(trg_.use_errmse)f<<std::setw(cw_)<<"ErRMSE";
-    if(trg_.use_ersq)  f<<std::setw(cw_)<<"ERSQ";
-    if(trg_.use_frmse) f<<std::setw(cw_)<<"FRMSE";
-    if(trg_.use_srmse) f<<std::setw(cw_)<<"SRMSE";
-    for(const auto& ls: trg_.LS)
-        for(const auto& n: ls.outvar)
-            f<<std::setw(cw_)<<n;
-    f<<'\n';
+
+        // add headers
+    f << std::left << std::setw(cw_) << "ITERATION";
+    f << std::left << std::setw(cw_) << "IT_TIME/ms";
+    if (trg_.use_emae)
+      f << std::left << std::setw(cw_) << "EMAE";
+    if (trg_.use_ermse)
+      f << std::left << std::setw(cw_) << "ERMSE";
+    if (trg_.use_errmse)
+      f << std::left << std::setw(cw_) << "ErRMSE";
+    if (trg_.use_ersq)
+      f << std::left << std::setw(cw_) << "ERSQ";
+    if (trg_.use_frmse)
+      f << std::left << std::setw(cw_) << "FRMSE";
+    if (trg_.use_srmse)
+      f << std::left << std::setw(cw_) << "SRMSE";
+
+    for (const auto &lsim : trg_.LS) {
+      for (const auto &outvar : lsim.outvar)
+        f << std::left << std::setw(cw_) << outvar;
+    }
+    f << std::endl;
 }
+
 template<class P,class R>
 void HPO_Host<P,R>::init_params(const std::string& fn) const
 {
-    std::ofstream f(fn);
-    f<<std::left<<std::setw(cw_)<<"ITER";
-    for(const auto& kv: trg_.optimap)
-        for(bool o: kv.second.opt)
-            if(o) f<<std::setw(cw_)<<kv.first;
-    f<<'\n';
+
+  std::ofstream f(fn);
+  f << std::left << std::setw(cw_) << "ITER";
+
+  for (const auto &p : trg_.optimap) {
+    for (size_t i = 0; i < p.second.opt.size(); ++i) {
+      if (p.second.opt[i])
+        f << std::left << std::setw(cw_) << p.first;
+    }
+  }
+  f << std::endl;
 }
 
 /* ----------  line printers (append) ---------------------------------- */
+/* ======= line writers ================================================ */
 template<class P,class R>
-void HPO_Host<P,R>::print_loss(std::ofstream& f,const Result& e) const
+void HPO_Host<P,R>::print_loss_line(std::ofstream& f, size_t it,const Result& e,
+                                    const HPOTargets& trg,
+                                    std::size_t cw,int prec)
 {
-    f<<std::left<<std::setw(cw_)<<e.iter;
-    if(trg_.use_emae)   f<<std::setw(cw_)<<e.emae;
-    if(trg_.use_ermse)  f<<std::setw(cw_)<<e.ermse;
-    if(trg_.use_errmse) f<<std::setw(cw_)<<e.errmse;
-    if(trg_.use_ersq)   f<<std::setw(cw_)<<e.ersq;
-    if(trg_.use_frmse)  f<<std::setw(cw_)<<e.frmse;
-    if(trg_.use_srmse)  f<<std::setw(cw_)<<e.srmse;
+    f << std::left << std::setw(cw) << it;
+    if(trg.use_emae)   f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.emaeLoss;
+    if(trg.use_ermse)  f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.ermseLoss;
+    if(trg.use_errmse) f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.errmseLoss;
+    if(trg.use_ersq)   f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.ersqLoss;
+    if(trg.use_frmse)  f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.frmseLoss;
+    if(trg.use_srmse)  f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.srmseLoss;
     for(const auto& v: e.v_loss)
-        for(double d: v)
-            f<<std::setw(cw_)<<d;
-    f<<std::setw(cw_)<<e.loss<<'\n';
+        for(double d: v) f<<std::setw(cw)<<d;
+    f<<std::setw(cw)<<e.loss<<'\n';
 }
+
 template<class P,class R>
-void HPO_Host<P,R>::print_outvar(std::ofstream& f,const Result& e) const
+void HPO_Host<P,R>::print_outvar_line(std::ofstream& f,size_t it,const Result& e,
+                                      const HPOTargets& trg,
+                                      std::size_t cw,int prec)
 {
-    f<<std::left<<std::setw(cw_)<<e.iter
-      <<std::setw(cw_)<<e.wall_ms.count();
-    if(trg_.use_emae)   f<<std::setw(cw_)<<e.emae;
-    if(trg_.use_ermse)  f<<std::setw(cw_)<<e.ermse;
-    if(trg_.use_errmse) f<<std::setw(cw_)<<e.errmse;
-    if(trg_.use_ersq)   f<<std::setw(cw_)<<e.ersq;
-    if(trg_.use_frmse)  f<<std::setw(cw_)<<e.frmse;
-    if(trg_.use_srmse)  f<<std::setw(cw_)<<e.srmse;
+    f << std::left << std::setw(cw) << it;
+    f << std::left << std::setw(cw) << std::setprecision(prec)
+      << e.wall_ms.count();
+
+    if(trg.use_emae)   f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.emae;
+    if(trg.use_ermse)  f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.ermse;
+    if(trg.use_errmse) f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.errmse;
+    if(trg.use_ersq)   f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.ersq;
+    if(trg.use_frmse)  f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.frmse;
+    if(trg.use_srmse)  f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.srmse;
     for(const auto& s: e.v_outvar){
-        std::string t=s.size()>cw_-1? s.substr(0,cw_-1):s;
-        f<<std::setw(cw_)<<t;
+      std::string t=s.size()>cw-1? s.substr(0,cw-1):s;
+      f<<std::setw(cw)<<t;
     }
     f<<'\n';
 }
+
 template<class P,class R>
-void HPO_Host<P,R>::print_params(std::ofstream& f,const Result& e) const
+void HPO_Host<P,R>::print_params_line(std::ofstream& f,size_t it,const Result& e,
+                                      std::size_t cw,int prec)
 {
-    f<<std::left<<std::setw(cw_)<<e.iter;
-    for(long i=0;i<e.params.size();++i)
-        f<<std::setw(cw_)<<std::scientific<<std::setprecision(prec_)<<e.params(i);
-    f<<'\n';
+  f << std::left << std::setw(cw) << it;
+
+  for(long i=0;i<e.params.size();++i) 
+  {
+    f << std::left << std::setw(cw) << std::scientific
+      << std::setprecision(prec) << e.params(i);
+  }
+  f << std::endl;
+
 }
 
 
 /* ----------  static data definitions ---------------------------------- */
 template<class P, class R>
 std::atomic_size_t  HPO_Host<P,R>::g_iter_{0};
+template<class P, class R>
+std::atomic_size_t  HPO_Host<P,R>::g_best_iter_{0};
 template<class P, class R>
 std::atomic<double> HPO_Host<P,R>::g_best_{std::numeric_limits<double>::max()};
 #if defined(TADAH_BUILD_MPI)
@@ -205,7 +249,6 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     init_loss   (bestLossFile_);
     init_outvar (bestOutvarFile_);
     init_params (bestParamsFile_);
-
 }
 
 /* ----------  helper: update context ----------------------------------- */
@@ -270,23 +313,25 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
 template<class P, class R>
 void HPO_Host<P,R>::accumulate_loss(Result& r) const
 {
-    double sum=0; std::size_t cnt=0;
-    auto add=[&](double y,double ref,double w){
-        sum+= sample_loss(y,ref,w,
+    double totalLoss=0; std::size_t cnt=0;
+    auto add=[&](double &res, double y,double ref,double w){
+      res = sample_loss(y,ref,w,
                           trg_.lossTypeId, trg_.N,
-                          trg_.deltaHuber, trg_.tukeyC); ++cnt; };
+                          trg_.deltaHuber, trg_.tukeyC); ++cnt;
+    totalLoss+= res;
+    };
 
-    if(trg_.use_emae)   add(r.emae , trg_.emae , trg_.w_emae );
-    if(trg_.use_ermse)  add(r.ermse, trg_.ermse, trg_.w_ermse);
-    if(trg_.use_errmse) add(r.errmse,trg_.errmse,trg_.w_errmse);
-    if(trg_.use_ersq)   add(r.ersq , trg_.ersq , trg_.w_ersq );
-    if(trg_.use_frmse)  add(r.frmse,trg_.frmse,trg_.w_frmse);
-    if(trg_.use_srmse)  add(r.srmse,trg_.srmse,trg_.w_srmse);
+    if(trg_.use_emae)   add(r.emaeLoss , r.emae , trg_.emae , trg_.w_emae );
+    if(trg_.use_ermse)  add(r.ermseLoss, r.ermse, trg_.ermse, trg_.w_ermse);
+    if(trg_.use_errmse) add(r.errmseLoss, r.errmse,trg_.errmse,trg_.w_errmse);
+    if(trg_.use_ersq)   add(r.ersqLoss , r.ersq , trg_.ersq , trg_.w_ersq );
+    if(trg_.use_frmse)  add(r.frmseLoss, r.frmse,trg_.frmse,trg_.w_frmse);
+    if(trg_.use_srmse)  add(r.srmseLoss, r.srmse,trg_.srmse,trg_.w_srmse);
 
     for(const auto& v : r.v_loss)
-        for(double d: v){ sum+=d; ++cnt; }
+        for(double d: v){ totalLoss+=d; ++cnt; }
 
-    double mean=sum/std::max<std::size_t>(1,cnt);
+    double mean=totalLoss/std::max<std::size_t>(1,cnt);
     if(trg_.lossTypeId==0 && trg_.N==2) r.loss = std::sqrt(mean); // RMSE
     else if(trg_.lossTypeId==4)         r.loss = std::sqrt(mean); // RMSLE
     else                                r.loss = mean;
@@ -346,9 +391,6 @@ double HPO_Host<P,R>::operator()(const P& p) const
     /* total loss ------------------------------------------------------- */
     accumulate_loss(r);
 
-    r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::high_resolution_clock::now() - t0);
-
     /* best tracking ---------------------------------------------------- */
     double cur=g_best_.load(std::memory_order_relaxed);
     while(r.loss<cur &&
@@ -356,23 +398,31 @@ double HPO_Host<P,R>::operator()(const P& p) const
                                          std::memory_order_acq_rel));
     if(r.loss==g_best_){
         r.is_best=true;
+        r.best_iter = ++g_best_iter_;
         r.best_pot=std::move(pot);
     }
 
-    submit_result(std::move(r), cw_, prec_);
+    r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::high_resolution_clock::now() - t0);
+
+    submit_result(std::move(r), trg_, cw_, prec_);
     return r.loss;
 }
 
 /* ---------- opportunistic writer helper ------------------------------ */
 template<class P,class R>
-void HPO_Host<P,R>::submit_result(Result&& res,
+void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                                   std::size_t cw, int prec)
 {
+  // get thread id
+  static thread_local std::size_t thread_id = std::hash<std::thread::id>()(std::this_thread::get_id());
     /* 1. enqueue ------------------------------------------------------- */
     g_q_.enqueue(std::move(res));
 
+
     /* 2. quick exit if queue still small ------------------------------- */
-    if(g_q_.size_approx() < FLUSH_THRESHOLD) return;
+    if(g_q_.size_approx() < QFLUSH_THRESHOLD) return;
+
 
     /* 3. try to become the writer ------------------------------------- */
     if(writer_token_.test_and_set(std::memory_order_acquire))
@@ -386,12 +436,12 @@ void HPO_Host<P,R>::submit_result(Result&& res,
         while(g_q_.try_dequeue(item))
             io_buf_.emplace(item.iter,std::move(item));
 
-        std::ofstream loss_f  ("loss.tadah"),
-                             outv_f  ("outvar.tadah"),
-                             par_f   ("params.tadah"),
-                             best_f  ("best_loss.tadah"),
-                             best_outv_f("best_outvar.tadah"),
-                             best_par_f ("best_params.tadah");
+        static std::ofstream loss_f  ("loss.tadah", std::ios::app),
+                             outv_f  ("outvar.tadah", std::ios::app),
+                             par_f   ("params.tadah", std::ios::app),
+                             best_f  ("best_loss.tadah", std::ios::app),
+                             best_outv_f("best_outvar.tadah", std::ios::app),
+                             best_par_f ("best_params.tadah", std::ios::app);
 
         while(io_buf_.count(next_flush_))
         {
@@ -399,26 +449,23 @@ void HPO_Host<P,R>::submit_result(Result&& res,
 
         /* ---- print standard logs ------------------------------------ */
         if(next_flush_ % lossEvery == 0){
-            print_loss  (loss_f , e);
-            print_outvar(outv_f , e);
-            print_params(par_f  , e);
+            print_loss_line  (loss_f , e.iter, e, trg, cw, prec);
+            print_outvar_line(outv_f , e.iter, e, trg, cw, prec);
+            print_params_line(par_f  , e.iter, e,          cw, prec);
         }
 
         /* ---- new best logs ------------------------------------------ */
         if(e.is_best){
-            best_f.seekp(0);
-            best_f<<std::scientific<<std::setprecision(prec)<<e.loss<<'\n';
-
-            print_loss  (best_f      , e);
-            print_outvar(best_outv_f , e);
-            print_params(best_par_f  , e);
+            print_loss_line  (best_f      , e.best_iter, e, trg, cw, prec);
+            print_outvar_line(best_outv_f , e.best_iter, e, trg, cw, prec);
+            print_params_line(best_par_f  , e.best_iter, e,          cw, prec);
 
             /* overwrite & archive best_pot ---------------------------- */
             {
                 std::ofstream bp("best_pot.tadah");
                 bp<<e.best_pot;
             }
-            if(e.iter % bestPotEvery == 0){
+            if(e.best_iter % bestPotEvery == 0){
                 std::ofstream bpa(std::string(bestPotDir_)
                     +"/best_pot_" + std::to_string(e.iter) + ".tadah");
                 bpa<<e.best_pot;
@@ -434,9 +481,17 @@ void HPO_Host<P,R>::submit_result(Result&& res,
 
             io_buf_.erase(next_flush_++);
         }
+
+    /* 5. flush files -------------------------------------------------- */
+    // loss_f.flush(); 
+    // outv_f.flush();
+    // par_f.flush();
+    // best_f.flush();
+    // best_outv_f.flush();
+    // best_par_f.flush();
     }
 
-    /* 5. release token ------------------------------------------------- */
+    /* 6. release token ------------------------------------------------- */
     writer_token_.clear(std::memory_order_release);
 }
 

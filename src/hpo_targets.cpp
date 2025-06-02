@@ -400,6 +400,8 @@ void HPOTargets::read(std::string fn) {
         iss >> FAIL_SCORE;
       } else if (key == "MAXTIME") {
         iss >> MAX_TIME;
+      } else if (key == "THREADS") {
+        iss >> THREADS;
       } else if (key == "EMAE") {
         iss >> emae >> w_emae;
         use_emae = true;
