@@ -58,6 +58,7 @@ struct EvalResult
     ParamVec                               params;
 
     bool                                   is_best   = false;
+    core::Context                          pot_ctx;
     core::Context                          best_pot;          // valid if is_best
 };
 
@@ -88,10 +89,6 @@ private:
     bool                         use_lammps_;
     mlip::NNFinder               nnf_;
 
-    /* formatting */
-    const std::size_t            cw_   = 16;
-    const int                    prec_ = 7;
-
     /* ---------- helpers (pure) ----------------------------------------- */
     void update_context(core::Context&, const ParamVec&) const;
     void fill_validation(Result&, const mlip::Analytics&)  const;
@@ -102,11 +99,15 @@ private:
     static std::atomic_size_t   g_iter_;
     static std::atomic<double>  g_best_;
 
-    /* queue + writer thread (one per process, lazily started) ----------- */
-    static Queue                g_q_;
-    static std::once_flag       writer_once_;
-    static std::thread          writer_th_;
-    static void                 writer_loop(HPOTargets*, std::size_t, int);
+    /* opportunistic single-writer --------------------------------------- */
+    static Queue                                   g_q_;          // MPMC queue
+    static std::atomic_flag                        writer_token_; // cleared = free
+    static std::mutex                              io_mtx_;       // protects FILEs
+    static std::map<std::size_t,Result>            io_buf_;       // re-order
+    static std::atomic<std::size_t>                next_flush_;   // next iter
+    static constexpr std::size_t                   FLUSH_THRESHOLD = 100; // N
+    static void submit_result(Result&&,
+                              std::size_t cw, int prec);
 
 #if defined(TADAH_BUILD_MPI)
     static std::mutex           mpi_mutex_;
@@ -116,6 +117,37 @@ private:
 
     /* per thread MLIP workspace ----------------------------------------- */
     static thread_local tadah::mlip::memory::MLIPWorkspaceManager tls_ws_;
+
+
+    /* formatting */
+    const std::size_t            cw_   = 16;
+    const int                    prec_ = 7;
+
+    /* I/O file names ---------------------------------------------------- */
+    const std::string loss_file_       = "loss.tadah";
+    const std::string outvar_file_     = "outvar.tadah";
+    const std::string params_file_     = "params.tadah";
+    const std::string bestLossFile_    = "best_loss.tadah";
+    const std::string bestOutvarFile_  = "best_outvar.tadah";
+    const std::string bestParamsFile_  = "best_params.tadah";
+    static constexpr const char*  bestPotDir_      = "best_pots";
+    static constexpr const char*  potDir_          = "pots";
+
+    /* hard-coded rates – replace by trg_ values later ------------------- */
+    static constexpr std::size_t  lossEvery       = 10;
+    static constexpr std::size_t  outvarEvery     = 10;
+    static constexpr std::size_t  paramsEvery     = 10;
+    static constexpr std::size_t  potEvery        = 10;   // archive any pot
+    static constexpr std::size_t  bestPotEvery    = 10;   // archive best pot
+
+    /* line printers ------------------------------------ */
+    void init_loss   (const std::string& fn) const;
+    void init_outvar (const std::string& fn) const;
+    void init_params (const std::string& fn) const;
+    void print_loss  (std::ofstream&, const Result&) const;
+    void print_outvar(std::ofstream&, const Result&) const;
+    void print_params(std::ofstream&, const Result&) const;
+
 };
 
 /* =======================================================================*/

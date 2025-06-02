@@ -45,6 +45,94 @@ inline double sample_loss(double y, double ypred, double w,
     return 0.0;
 }
 
+/* -----------------  header writers  ---------------------------------- */
+template<class P,class R>
+void HPO_Host<P,R>::init_loss(const std::string& fn) const
+{
+    std::ofstream f(fn);
+    f<<std::left<<std::setw(cw_)<<"ITERATION";
+    if(trg_.use_emae)  f<<std::setw(cw_)<<"loss(EMAE)";
+    if(trg_.use_ermse) f<<std::setw(cw_)<<"loss(ERMSE)";
+    if(trg_.use_errmse)f<<std::setw(cw_)<<"loss(ErRMSE)";
+    if(trg_.use_ersq)  f<<std::setw(cw_)<<"loss(ERSQ)";
+    if(trg_.use_frmse) f<<std::setw(cw_)<<"loss(FRMSE)";
+    if(trg_.use_srmse) f<<std::setw(cw_)<<"loss(SRMSE)";
+    for(const auto& ls: trg_.LS)
+        for(const auto& n: ls.n_varloss)
+            f<<std::setw(cw_)<<n;
+    f<<std::setw(cw_)<<"TOTAL_LOSS\n";
+}
+template<class P,class R>
+void HPO_Host<P,R>::init_outvar(const std::string& fn) const
+{
+    std::ofstream f(fn);
+    f<<std::left<<std::setw(cw_)<<"ITERATION"
+      <<std::setw(cw_)<<"IT_TIME/ms";
+    if(trg_.use_emae)  f<<std::setw(cw_)<<"EMAE";
+    if(trg_.use_ermse) f<<std::setw(cw_)<<"ERMSE";
+    if(trg_.use_errmse)f<<std::setw(cw_)<<"ErRMSE";
+    if(trg_.use_ersq)  f<<std::setw(cw_)<<"ERSQ";
+    if(trg_.use_frmse) f<<std::setw(cw_)<<"FRMSE";
+    if(trg_.use_srmse) f<<std::setw(cw_)<<"SRMSE";
+    for(const auto& ls: trg_.LS)
+        for(const auto& n: ls.outvar)
+            f<<std::setw(cw_)<<n;
+    f<<'\n';
+}
+template<class P,class R>
+void HPO_Host<P,R>::init_params(const std::string& fn) const
+{
+    std::ofstream f(fn);
+    f<<std::left<<std::setw(cw_)<<"ITER";
+    for(const auto& kv: trg_.optimap)
+        for(bool o: kv.second.opt)
+            if(o) f<<std::setw(cw_)<<kv.first;
+    f<<'\n';
+}
+
+/* ----------  line printers (append) ---------------------------------- */
+template<class P,class R>
+void HPO_Host<P,R>::print_loss(std::ofstream& f,const Result& e) const
+{
+    f<<std::left<<std::setw(cw_)<<e.iter;
+    if(trg_.use_emae)   f<<std::setw(cw_)<<e.emae;
+    if(trg_.use_ermse)  f<<std::setw(cw_)<<e.ermse;
+    if(trg_.use_errmse) f<<std::setw(cw_)<<e.errmse;
+    if(trg_.use_ersq)   f<<std::setw(cw_)<<e.ersq;
+    if(trg_.use_frmse)  f<<std::setw(cw_)<<e.frmse;
+    if(trg_.use_srmse)  f<<std::setw(cw_)<<e.srmse;
+    for(const auto& v: e.v_loss)
+        for(double d: v)
+            f<<std::setw(cw_)<<d;
+    f<<std::setw(cw_)<<e.loss<<'\n';
+}
+template<class P,class R>
+void HPO_Host<P,R>::print_outvar(std::ofstream& f,const Result& e) const
+{
+    f<<std::left<<std::setw(cw_)<<e.iter
+      <<std::setw(cw_)<<e.wall_ms.count();
+    if(trg_.use_emae)   f<<std::setw(cw_)<<e.emae;
+    if(trg_.use_ermse)  f<<std::setw(cw_)<<e.ermse;
+    if(trg_.use_errmse) f<<std::setw(cw_)<<e.errmse;
+    if(trg_.use_ersq)   f<<std::setw(cw_)<<e.ersq;
+    if(trg_.use_frmse)  f<<std::setw(cw_)<<e.frmse;
+    if(trg_.use_srmse)  f<<std::setw(cw_)<<e.srmse;
+    for(const auto& s: e.v_outvar){
+        std::string t=s.size()>cw_-1? s.substr(0,cw_-1):s;
+        f<<std::setw(cw_)<<t;
+    }
+    f<<'\n';
+}
+template<class P,class R>
+void HPO_Host<P,R>::print_params(std::ofstream& f,const Result& e) const
+{
+    f<<std::left<<std::setw(cw_)<<e.iter;
+    for(long i=0;i<e.params.size();++i)
+        f<<std::setw(cw_)<<std::scientific<<std::setprecision(prec_)<<e.params(i);
+    f<<'\n';
+}
+
+
 /* ----------  static data definitions ---------------------------------- */
 template<class P, class R>
 std::atomic_size_t  HPO_Host<P,R>::g_iter_{0};
@@ -54,12 +142,15 @@ std::atomic<double> HPO_Host<P,R>::g_best_{std::numeric_limits<double>::max()};
 template<class P, class R>
 std::mutex          HPO_Host<P,R>::mpi_mutex_;
 #endif
-template<class P, class R>
-typename HPO_Host<P,R>::Queue  HPO_Host<P,R>::g_q_;
-template<class P, class R>
-std::once_flag      HPO_Host<P,R>::writer_once_;
-template<class P, class R>
-std::thread         HPO_Host<P,R>::writer_th_;
+
+template<class P,class R> typename HPO_Host<P,R>::Queue  HPO_Host<P,R>::g_q_;
+template<class P,class R> std::atomic_flag               HPO_Host<P,R>::writer_token_;
+template<class P,class R> std::mutex                     HPO_Host<P,R>::io_mtx_;
+template<class P,class R> std::map<std::size_t,
+  typename HPO_Host<P,R>::Result>
+  HPO_Host<P,R>::io_buf_;
+  template<class P,class R> std::atomic<std::size_t>       HPO_Host<P,R>::next_flush_{1};
+
 template<class P, class R>
 thread_local tadah::mlip::memory::MLIPWorkspaceManager
         HPO_Host<P,R>::tls_ws_{};
@@ -108,10 +199,13 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
 
     nnf_.calc(val_stdb_, rcutmax);
 
-    /* start writer thread once ----------------------------------------- */
-    std::call_once(writer_once_, [&](){
-        writer_th_ = std::thread(writer_loop, &trg_, cw_, prec_);
-    });
+    init_loss   (loss_file_);
+    init_outvar (outvar_file_);
+    init_params (params_file_);
+    init_loss   (bestLossFile_);
+    init_outvar (bestOutvarFile_);
+    init_params (bestParamsFile_);
+
 }
 
 /* ----------  helper: update context ----------------------------------- */
@@ -235,6 +329,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
 
     /* validation ------------------------------------------------------- */
     core::Context pot = host.model->get_param_file();
+    r.pot_ctx = pot;
     auto pred = host.model->predict(pot, val_stdb_, host.dc);
     mlip::Analytics   a(val_stdb_, pred);
     fill_validation(r, a);
@@ -264,70 +359,87 @@ double HPO_Host<P,R>::operator()(const P& p) const
         r.best_pot=std::move(pot);
     }
 
-    g_q_.enqueue(std::move(r));
+    submit_result(std::move(r), cw_, prec_);
     return r.loss;
 }
 
-/* ----------  writer thread  (one per process) ------------------------ */
-template<class P, class R>
-void HPO_Host<P,R>::writer_loop(HPOTargets* trg,
-                                std::size_t cw, int prec)
+/* ---------- opportunistic writer helper ------------------------------ */
+template<class P,class R>
+void HPO_Host<P,R>::submit_result(Result&& res,
+                                  std::size_t cw, int prec)
 {
-    std::ofstream loss_f   ("loss.tadah");
-    std::ofstream outvar_f ("outvar.tadah");
-    std::ofstream params_f ("params.tadah");
-    std::ofstream bestloss ("best_loss.tadah");
+    /* 1. enqueue ------------------------------------------------------- */
+    g_q_.enqueue(std::move(res));
 
-    /* headers ---------------------------------------------------------- */
-    loss_f   << std::left<<std::setw(cw)<<"ITER"  <<std::setw(cw)<<"LOSS\n";
-    outvar_f << std::left<<std::setw(cw)<<"ITER"  <<std::setw(cw)<<"TIME/ms\n";
-    params_f << std::left<<std::setw(cw)<<"ITER\n";
+    /* 2. quick exit if queue still small ------------------------------- */
+    if(g_q_.size_approx() < FLUSH_THRESHOLD) return;
 
-    std::map<std::size_t,Result> buf;
-    std::size_t next=1;
+    /* 3. try to become the writer ------------------------------------- */
+    if(writer_token_.test_and_set(std::memory_order_acquire))
+        return;                                  // somebody else is writing
 
-    while(true)
+    /* 4. exclusive writer section ------------------------------------- */
     {
-        Result r;
-        std::cout << "DEBUG: waiting for result...\n";
-        g_q_.wait_dequeue(r);
-        std::cout << "HPO: iter=" << r.iter
-                  << " loss=" << std::scientific << std::setprecision(prec)
-                  << r.loss << "\n";
+        std::lock_guard<std::mutex> lg(io_mtx_);
 
-        if(r.iter==std::numeric_limits<std::size_t>::max()) break;
-        buf.emplace(r.iter,std::move(r));
+        Result item;
+        while(g_q_.try_dequeue(item))
+            io_buf_.emplace(item.iter,std::move(item));
 
-        while(buf.count(next))
+        std::ofstream loss_f  ("loss.tadah"),
+                             outv_f  ("outvar.tadah"),
+                             par_f   ("params.tadah"),
+                             best_f  ("best_loss.tadah"),
+                             best_outv_f("best_outvar.tadah"),
+                             best_par_f ("best_params.tadah");
+
+        while(io_buf_.count(next_flush_))
         {
-            const auto& e = buf[next];
+            const auto& e = io_buf_[next_flush_];
 
-            /* regular output every iteration --------------------------- */
-            loss_f << std::left<<std::setw(cw)<<e.iter
-                   << std::setw(cw)<<std::scientific<<std::setprecision(prec)
-                   << e.loss << "\n";
+        /* ---- print standard logs ------------------------------------ */
+        if(next_flush_ % lossEvery == 0){
+            print_loss  (loss_f , e);
+            print_outvar(outv_f , e);
+            print_params(par_f  , e);
+        }
 
-            outvar_f<< std::left<<std::setw(cw)<<e.iter
-                    << std::setw(cw)<<e.wall_ms.count() << "\n";
+        /* ---- new best logs ------------------------------------------ */
+        if(e.is_best){
+            best_f.seekp(0);
+            best_f<<std::scientific<<std::setprecision(prec)<<e.loss<<'\n';
 
-            params_f<< std::left<<std::setw(cw)<<e.iter;
-            for(long i=0;i<e.params.size();++i)
-                params_f<<std::setw(cw)<<std::scientific
-                        <<std::setprecision(prec)<<e.params(i);
-            params_f<<"\n";
+            print_loss  (best_f      , e);
+            print_outvar(best_outv_f , e);
+            print_params(best_par_f  , e);
 
-            /* new best ------------------------------------------------- */
-            if(e.is_best){
-                bestloss.seekp(0);
-                bestloss<<std::scientific<<std::setprecision(prec)<<e.loss<<"\n";
-                std::ofstream pot("best_pot.tadah");
-                pot<<e.best_pot;
+            /* overwrite & archive best_pot ---------------------------- */
+            {
+                std::ofstream bp("best_pot.tadah");
+                bp<<e.best_pot;
             }
+            if(e.iter % bestPotEvery == 0){
+                std::ofstream bpa(std::string(bestPotDir_)
+                    +"/best_pot_" + std::to_string(e.iter) + ".tadah");
+                bpa<<e.best_pot;
+            }
+        }
 
-            buf.erase(next++);
+        /* ---- archive ANY pot every potEvery ------------------------- */
+        if(e.iter % potEvery == 0){
+            std::ofstream pa(std::string(potDir_)
+                +"/pot_"+std::to_string(e.iter)+".tadah");
+            pa<<e.pot_ctx;
+        }
+
+            io_buf_.erase(next_flush_++);
         }
     }
+
+    /* 5. release token ------------------------------------------------- */
+    writer_token_.clear(std::memory_order_release);
 }
+
 
 #ifdef TADAH_BUILD_MPI
   void runLammpsMPI() {
