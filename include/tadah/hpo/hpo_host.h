@@ -152,7 +152,6 @@ private:
     mlip::TrainerHost host(context, workspaceManager, workspaceManager2);
     tadah::mlip::memory::MLIPWorkspaceManager workspaceManager2;
 #else
-    mlip::Trainer host;
     mlip::NNFinder nnf;
 #endif
 
@@ -164,7 +163,7 @@ public:
 #ifdef TADAH_BUILD_MPI
     host(c, workspaceManager, workspaceManager2)
 #else
-    host(c, workspaceManager), nnf(c)
+    nnf(c)
 #endif
   {
     core::Context val_context(core::CoreUserConfigParser().parse(val_file));
@@ -195,7 +194,6 @@ public:
     init_outvar(bestOutvarFile);
     init_params(bestParamsFile);
 
-    // mlip::Trainer host(context, workspaceManager);
   }
 
   // MAIN HPO LOOP
@@ -211,7 +209,7 @@ public:
     auto t1 = high_resolution_clock::now();
     update_context(p);
 
-    // core::Context context_temp = context;
+    core::Context context_temp = context;
 
     // Train new potential with updated settings
 #ifdef TADAH_BUILD_MPI
@@ -232,7 +230,7 @@ public:
     host.run();
     host.solve();
 #else
-    host.init(context);
+    mlip::Trainer host(context, workspaceManager);
     //train_stdb.clear_nn();
     //host.train(train_stdb);
 #endif
@@ -240,6 +238,7 @@ public:
 
     // This potential will be used by LAMMPS
     core::Context pot_tadah = host.model->get_param_file();
+    // core::Context pot_tadah = context_temp;
 
      std::ofstream out_file;
      out_file.open("pot.tadah");

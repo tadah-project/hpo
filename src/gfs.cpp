@@ -778,7 +778,7 @@ namespace tadah
 
         if (best_bov > -std::numeric_limits<double>::infinity() && best_objective_value > best_bov)
         {
-        run_explore_probability = 10*(1 - best_objective_value/best_bov);
+        run_explore_probability = 0.1*(1 - best_objective_value/best_bov);
         std::cout << "Best BOV: " << best_bov << " p: " << run_explore_probability <<std::endl;
         }
 
