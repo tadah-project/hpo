@@ -409,18 +409,33 @@ double HPO_Host<P,R>::operator()(const P& p) const
     submit_result(std::move(r), trg_, cw_, prec_);
     return r.loss;
 }
+  template<class P,class R>
+bool  HPO_Host<P,R>::need_flush(std::size_t produced_iter)
+{
+    /*  ‑ flush if we close the gap               */
+    // if (produced_iter == next_flush_.load(std::memory_order_relaxed))
+    //     return true;
+
+    /*  ‑ flush if queue is getting large (old)   */
+    return g_q_.size_approx() >= QFLUSH_THRESHOLD;
+}
 
 /* ---------- opportunistic writer helper ------------------------------ */
   template<class P,class R>
 void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                                   std::size_t cw, int prec)
 {
+    std::size_t my_iter = res.iter;            // store before move
+                                               
     /* 1. enqueue ------------------------------------------------------- */
     g_q_.enqueue(std::move(res));
 
+    /* 2. quick exit unless we *must* flush ------- */
+    if (!need_flush(my_iter))
+        return;
 
     /* 2. quick exit if queue still small ------------------------------- */
-    if(g_q_.size_approx() < QFLUSH_THRESHOLD) return;
+    // if(g_q_.size_approx() < QFLUSH_THRESHOLD) return;
 
 
     /* 3. try to become the writer ------------------------------------- */
@@ -480,6 +495,13 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
 
             io_buf_.erase(next_flush_++);
         }
+
+        loss_f.flush();
+        outv_f.flush();
+        par_f.flush();
+        best_f.flush();
+        best_outv_f.flush();
+        best_par_f.flush();
     }
 
     /* 5. release token ------------------------------------------------- */

@@ -155,6 +155,7 @@ private:
     static void print_params_line(std::ofstream&, size_t it, const Result&,
                                   std::size_t cw, int prec);
 
+    static bool need_flush(std::size_t produced_iter) ;
 };
 
 /* =======================================================================*/
