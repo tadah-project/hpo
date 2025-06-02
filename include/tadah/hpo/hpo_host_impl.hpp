@@ -398,7 +398,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
                                          std::memory_order_acq_rel));
     if(r.loss==g_best_){
         r.is_best=true;
-        r.best_iter = ++g_best_iter_;
+        r.best_iter = g_best_iter_.fetch_add(1, std::memory_order_relaxed) + 1;
         r.best_pot=std::move(pot);
     }
 
