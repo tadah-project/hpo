@@ -57,13 +57,13 @@ public:
     double FAIL_SCORE = 1000;
     std::string MAX_TIME = "10";
     std::string MINIMIZER = "2";
-    std::string lossType = "L2";
+    size_t lossTypeId = 2; // 0=L1/L2, 1=Huber, 2=logcosh, 3=MAPE, 4=RMSLE, 5=Tukey
     double deltaHuber = 1.0; // Huber threshold
     double tukeyC = 4.685;     // Tukey biweight cutoff
     double N=2;
     std::string potevery_dir;
     std::string bestPotEveryDir;
-    size_t potevery = std::numeric_limits<size_t>::max();
+    size_t io_every = std::numeric_limits<size_t>::max();
     size_t bestPotEvery = std::numeric_limits<size_t>::max();
     bool use_emae = false; bool use_ermse = false; bool use_errmse = false; bool use_ersq = false;
     double emae, ermse, errmse, ersq; 

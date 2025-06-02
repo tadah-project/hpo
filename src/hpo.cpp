@@ -274,8 +274,8 @@ void tadah_find_min_global(core::Context &context, HPOTargets &trg, std::string 
     init_values[i]=dlib::function_evaluation(dlib::mat(trg.optim_init[i]),i);
   }
 
-  dlib::thread_pool tp(1);  // Use a single thread for now as HPO_Host::operator() is not thread-safe.
-  // dlib::thread_pool &tp = dlib::default_thread_pool();
+  // dlib::thread_pool tp(2);  // Use a single thread for now as HPO_Host::operator() is not thread-safe.
+  dlib::thread_pool &tp = dlib::default_thread_pool();
 
   //auto result1 = dlib::find_min_global(
   auto result1 = tadah::experimental::tadah_find_min_global(
@@ -302,8 +302,8 @@ void find_min_global(core::Context &context, HPOTargets &trg, std::string &val_f
     init_values[i]=dlib::function_evaluation(dlib::mat(trg.optim_init[i]),i);
   }
 
-  dlib::thread_pool tp(2);  // Use a single thread for now as HPO_Host::operator() is not thread-safe.
-  // dlib::thread_pool &tp = dlib::default_thread_pool();
+  // dlib::thread_pool tp(1);  // Use a single thread for now as HPO_Host::operator() is not thread-safe.
+  dlib::thread_pool &tp = dlib::default_thread_pool();
 
   auto result1 = dlib::find_min_global(
       tp,

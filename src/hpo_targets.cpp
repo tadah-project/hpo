@@ -343,6 +343,7 @@ void HPOTargets::read(std::string fn) {
     iss >> key;
 
     if (key.empty()) continue;
+    std::string lossType;
 
     try {
       if (key == "PARAMS") {
@@ -356,9 +357,12 @@ void HPOTargets::read(std::string fn) {
         iss >> lossType;
         if (lossType == "L1") {
           N = 1;
+          lossTypeId = 0;
         } else if (lossType == "L2") {
           N = 2;
+          lossTypeId = 0;
         } else if (lossType == "HUBER") {
+          lossTypeId = 1;
           try {
             iss >> deltaHuber;
           } catch (const std::exception& e) {
@@ -366,7 +370,14 @@ void HPOTargets::read(std::string fn) {
                                      + core::to_string(nline) + ": " 
                                      + e.what());
           }
+        } else if (lossType == "LOG_COSH") {
+          lossTypeId = 2;
+        } else if (lossType == "MAPE") {
+          lossTypeId = 3;
+        } else if (lossType == "RMSLE") {
+          lossTypeId = 4;
         } else if (lossType == "TUKEY") {
+          lossTypeId = 5;
           try {
             iss >> tukeyC;
           } catch (const std::exception& e) {
@@ -374,14 +385,11 @@ void HPOTargets::read(std::string fn) {
                                      + core::to_string(nline) + ": " 
                                      + e.what());
           }
-        } else if (lossType == "MAPE") {
-        } else if (lossType == "RMSLE") {
-        } else if (lossType == "LOG_COSH") {
         } else {
           throw std::runtime_error("Unknown loss function: " + lossType);
         } 
-      } else if (key == "POTEVERY") {
-        iss >> potevery >> potevery_dir;
+      } else if (key == "IOEVERY") {
+        iss >> io_every >> potevery_dir;
         handle_directory_creation(potevery_dir);
       } else if (key == "BESTPOTEVERY") {
         iss >> bestPotEvery >> bestPotEveryDir;
