@@ -53,8 +53,8 @@ struct EvalResult
     /* validation metrics */
     double emae=0, ermse=0, errmse=0, ersq=0, frmse=0, srmse=0;
     double emaeLoss=0, ermseLoss=0, errmseLoss=0, ersqLoss=0, frmseLoss=0, srmseLoss=0;
-    std::vector<std::vector<double>>       v_loss;
-    std::vector<std::string>               v_outvar;
+    std::vector<std::vector<double>>       v_loss;    // [sim][loss_i]
+    std::vector<std::vector<std::string>>  v_outvar;  // [sim][outvar_i]
 
     std::chrono::milliseconds              wall_ms{};
     ParamVec                               params;
@@ -125,6 +125,7 @@ private:
     /* formatting */
     const std::size_t            cw_   = 16;
     const int                    prec_ = 7;
+    size_t                       max_title_len_ = cw_-1; // max length of title in loss/outvar/params
 
     /* I/O file names ---------------------------------------------------- */
     const std::string loss_file_       = "loss.tadah";

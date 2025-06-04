@@ -25,13 +25,22 @@ class LammpsSim {
   public:
     std::string script; /**< Name of the LAMMPS script file */
     std::vector<std::string> script_lines; /**< Lines of the LAMMPS script */
-    std::vector<std::string> invar; /**< LAMMPS input variables */
-    // std::vector<const char*> invar; /**< LAMMPS  variables, ptrs to sinvars */
-    std::vector<std::string> n_varloss; /**< Variables names related to the loss function */
-    std::vector<double> v_varloss; /**< Value of the varloss */
-    std::vector<double> w_varloss; /**< Weight for varloss */
-    std::vector<std::string> outvar; /**< LAMMPS output variables */
-    std::vector<std::string> v_outvar; /**< LAMMPS output variables value*/
+
+    // Any acceptable LAMMPS command line arguments.
+    std::vector<std::string> invar;     /**< LAMMPS input variables */
+
+    // LAMMPS output variables.
+    std::vector<std::string> n_outvar;  /**< names of LAMMPS output variables */
+    // std::vector<std::string> v_outvar;  /**< n_outvar values */
+
+    // LAMMPS variables for loss calculation. Not all outvar variables
+    // are used for loss calculation, so we need to specify which ones
+    // are used and their target values, weights. 
+    // Indices in i_varloss correspond to n_outvar indices.
+    std::vector<std::string> n_varloss; /**< Use this variables for loss calculation */
+    std::vector<double>      t_varloss; /**< Target value for varloss property */
+    std::vector<double>      w_varloss; /**< Weight for varloss */
+    std::vector<size_t>      i_varloss; /**< Map to n_outvar */
 
     int ncpu = 1; /**< Number of CPUs to be used */
     std::string maxtime; /**< Maximum allowed time for simulation execution */

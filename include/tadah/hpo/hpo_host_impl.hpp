@@ -50,57 +50,64 @@ inline double sample_loss(double y, double ypred, double w,
 template<class P,class R>
 void HPO_Host<P,R>::init_loss(const std::string& fn) const
 {
-    std::ofstream f(fn);
+  std::ofstream f(fn);
 
-    f << std::left << std::setw(cw_) << "ITERATION";
-    if (trg_.use_emae)
-      f << std::left << std::setw(cw_) << "loss(EMAE)";
-    if (trg_.use_ermse)
-      f << std::left << std::setw(cw_) << "loss(ERMSE)";
-    if (trg_.use_errmse)
-      f << std::left << std::setw(cw_) << "loss(ErRMSE)";
-    if (trg_.use_ersq)
-      f << std::left << std::setw(cw_) << "loss(ERSQ)";
-    if (trg_.use_frmse)
-      f << std::left << std::setw(cw_) << "loss(FRMSE)";
-    if (trg_.use_srmse)
-      f << std::left << std::setw(cw_) << "loss(SRMSE)";
+  f << std::left << std::setw(cw_) << "# ITERATION" << std::right;
+  if (trg_.use_emae)
+    f << std::setw(cw_) << "L(EMAE)";
+  if (trg_.use_ermse)
+    f << std::setw(cw_) << "L(ERMSE)";
+  if (trg_.use_errmse)
+    f << std::setw(cw_) << "L(ErRMSE)";
+  if (trg_.use_ersq)
+    f << std::setw(cw_) << "L(ERSQ)";
+  if (trg_.use_frmse)
+    f << std::setw(cw_) << "L(FRMSE)";
+  if (trg_.use_srmse)
+    f << std::setw(cw_) << "L(SRMSE)";
 
 
-    for (const auto &lsim : trg_.LS) {
-      for (const auto &vloss : lsim.n_varloss)
-        f << std::left << std::setw(cw_) << vloss;
+  for (const auto &lsim : trg_.LS) {
+    for (auto varname : lsim.n_varloss) {
+      if (varname.size()-2 > max_title_len_) {
+        varname = varname.substr(0, max_title_len_ - 4) + "*";
+      }
+      f << std::setw(cw_) << "L("+varname+")";
     }
+  }
 
-    f << std::left << std::setw(cw_) << "TOTAL_LOSS/N" << std::endl;
+  f << std::setw(cw_) << "TOTAL_LOSS/N" << std::endl;
 }
 
 template<class P,class R>
 void HPO_Host<P,R>::init_outvar(const std::string& fn) const
 {
-    std::ofstream f(fn);
+  std::ofstream f(fn);
 
-        // add headers
-    f << std::left << std::setw(cw_) << "ITERATION";
-    f << std::left << std::setw(cw_) << "IT_TIME/ms";
-    if (trg_.use_emae)
-      f << std::left << std::setw(cw_) << "EMAE";
-    if (trg_.use_ermse)
-      f << std::left << std::setw(cw_) << "ERMSE";
-    if (trg_.use_errmse)
-      f << std::left << std::setw(cw_) << "ErRMSE";
-    if (trg_.use_ersq)
-      f << std::left << std::setw(cw_) << "ERSQ";
-    if (trg_.use_frmse)
-      f << std::left << std::setw(cw_) << "FRMSE";
-    if (trg_.use_srmse)
-      f << std::left << std::setw(cw_) << "SRMSE";
+  f << std::left << std::setw(cw_) << "# ITERATION";
+  f << std::setw(cw_) << "IT_TIME/ms" << std::right;
+  if (trg_.use_emae)
+    f << std::setw(cw_) << "EMAE";
+  if (trg_.use_ermse)
+    f << std::setw(cw_) << "ERMSE";
+  if (trg_.use_errmse)
+    f << std::setw(cw_) << "ErRMSE";
+  if (trg_.use_ersq)
+    f << std::setw(cw_) << "ERSQ";
+  if (trg_.use_frmse)
+    f << std::setw(cw_) << "FRMSE";
+  if (trg_.use_srmse)
+    f << std::setw(cw_) << "SRMSE";
 
-    for (const auto &lsim : trg_.LS) {
-      for (const auto &outvar : lsim.outvar)
-        f << std::left << std::setw(cw_) << outvar;
+  for (const auto &lsim : trg_.LS) {
+    for (auto n_outvar : lsim.n_outvar) {
+      if (n_outvar.size() > max_title_len_) {
+        n_outvar = n_outvar.substr(0, max_title_len_ - 1) + "*";
+      }
+      f << std::setw(cw_) << n_outvar;
     }
-    f << std::endl;
+  }
+  f << std::endl;
 }
 
 template<class P,class R>
@@ -108,12 +115,12 @@ void HPO_Host<P,R>::init_params(const std::string& fn) const
 {
 
   std::ofstream f(fn);
-  f << std::left << std::setw(cw_) << "ITER";
+  f << std::left << std::setw(cw_) << "# ITERATION" << std::right;
 
   for (const auto &p : trg_.optimap) {
     for (size_t i = 0; i < p.second.opt.size(); ++i) {
       if (p.second.opt[i])
-        f << std::left << std::setw(cw_) << p.first;
+        f  << std::setw(cw_) << p.first;
     }
   }
   f << std::endl;
@@ -127,15 +134,22 @@ void HPO_Host<P,R>::print_loss_line(std::ofstream& f, size_t it,const Result& e,
                                     std::size_t cw,int prec)
 {
     f << std::left << std::setw(cw) << it;
-    if(trg.use_emae)   f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.emaeLoss;
-    if(trg.use_ermse)  f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.ermseLoss;
-    if(trg.use_errmse) f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.errmseLoss;
-    if(trg.use_ersq)   f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.ersqLoss;
-    if(trg.use_frmse)  f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.frmseLoss;
-    if(trg.use_srmse)  f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.srmseLoss;
-    for(const auto& v: e.v_loss)
-        for(double d: v) f<<std::setw(cw)<<d;
-    f<<std::setw(cw)<<e.loss<<'\n';
+    f << std::right << std::scientific << std::setprecision(prec);
+    if(trg.use_emae)   f <<std::setw(cw) <<e.emaeLoss;
+    if(trg.use_ermse)  f <<std::setw(cw) <<e.ermseLoss;
+    if(trg.use_errmse) f <<std::setw(cw) <<e.errmseLoss;
+    if(trg.use_ersq)   f <<std::setw(cw) <<e.ersqLoss;
+    if(trg.use_frmse)  f <<std::setw(cw) <<e.frmseLoss;
+    if(trg.use_srmse)  f <<std::setw(cw) <<e.srmseLoss;
+      
+    for (size_t i = 0; i < e.v_outvar.size(); ++i) {
+      auto &indices = trg.LS[i].i_varloss;
+      for (const auto &j : indices) {
+        f << std::setw(cw) << e.v_loss[i][j];
+      }
+    }
+
+    f << std::setw(cw) << e.loss << std::endl;
 }
 
 template<class P,class R>
@@ -147,17 +161,25 @@ void HPO_Host<P,R>::print_outvar_line(std::ofstream& f,size_t it,const Result& e
     f << std::left << std::setw(cw) << std::setprecision(prec)
       << e.wall_ms.count();
 
-    if(trg.use_emae)   f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.emae;
-    if(trg.use_ermse)  f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.ermse;
-    if(trg.use_errmse) f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.errmse;
-    if(trg.use_ersq)   f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.ersq;
-    if(trg.use_frmse)  f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.frmse;
-    if(trg.use_srmse)  f<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.srmse;
-    for(const auto& s: e.v_outvar){
-      std::string t=s.size()>cw-1? s.substr(0,cw-1):s;
-      f<<std::setw(cw)<<t;
+    if(trg.use_emae)   f<<std::right<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.emae;
+    if(trg.use_ermse)  f<<std::right<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.ermse;
+    if(trg.use_errmse) f<<std::right<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.errmse;
+    if(trg.use_ersq)   f<<std::right<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.ersq;
+    if(trg.use_frmse)  f<<std::right<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.frmse;
+    if(trg.use_srmse)  f<<std::right<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.srmse;
+
+    for (size_t i = 0; i < e.v_outvar.size(); ++i) {
+      auto &indices = trg.LS[i].i_varloss;
+      for (const auto &j : indices) {
+        f<<std::right << std::setw(cw) << std::scientific
+          << std::setprecision(prec) << std::stod(e.v_outvar[i][j]);
+      }
     }
-    f<<'\n';
+    // for(const auto& s: e.v_outvar){
+    //   std::string t=s.size()>cw-1? s.substr(0,cw-1):s;
+    //   f<<std::setw(cw)<<t;
+    // }
+    f<<std::endl;
 }
 
 template<class P,class R>
@@ -168,7 +190,7 @@ void HPO_Host<P,R>::print_params_line(std::ofstream& f,size_t it,const Result& e
 
   for(long i=0;i<e.params.size();++i) 
   {
-    f << std::left << std::setw(cw) << std::scientific
+    f << std::right << std::setw(cw) << std::scientific
       << std::setprecision(prec) << e.params(i);
   }
   f << std::endl;
@@ -285,41 +307,38 @@ void HPO_Host<P,R>::fill_validation(Result& r,
 template<class P, class R>
 void HPO_Host<P,R>::run_lammps(Result& r) const
 {
-    if(!use_lammps_) return;
-    const auto& LS = trg_.LS;
-    r.v_loss.resize(LS.size());
+  if(!use_lammps_) return;
+  const auto& LS = trg_.LS;
+  r.v_outvar.resize(LS.size());
 
 #ifdef TADAH_ENABLE_OPENMP
-#pragma omp parallel for
+#pragma omp parallel for shared(r,LS)
 #endif
-    for(std::size_t i=0;i<LS.size();++i)
-    {
-        const auto& lsim = LS[i];
-        R runner;
-        auto lmp = runner.create_instance(0, lsim.invar);
-        if(!lmp) continue;
-        if(!runner.run_script(lmp, lsim.script_lines, r.pot_ctx)) continue;
+  for(std::size_t i=0;i<LS.size();++i)
+  {
+    const auto& lsim = LS[i];
+    R runner;
+    auto lmp = runner.create_instance(0, lsim.invar);
+    if(!lmp) continue;
+    bool fail = !runner.run_script(lmp, lsim.script_lines, r.pot_ctx);
 
-        r.v_loss[i].resize(lsim.n_varloss.size());
-        for(std::size_t j=0;j<lsim.n_varloss.size();++j){
-            double v = std::stod(runner.get_variable(lmp, lsim.n_varloss[j]));
-            r.v_loss[i][j] = std::pow(v, trg_.N)*lsim.w_varloss[j];
-        }
-        for(const auto& n : lsim.outvar)
-            r.v_outvar.emplace_back(runner.get_variable(lmp, n));
+    for(std::size_t j=0;j<lsim.n_outvar.size();++j) {
+      if (fail) r.v_outvar[i].emplace_back(std::to_string(lsim.failscore/lsim.w_varloss[j]));
+      else  r.v_outvar[i].emplace_back(runner.get_variable(lmp, lsim.n_outvar[j]));
     }
+  }
 }
 
 /* ----------  helper: accumulate total loss ---------------------------- */
 template<class P, class R>
 void HPO_Host<P,R>::accumulate_loss(Result& r) const
 {
-    double totalLoss=0; std::size_t cnt=0;
+    double tLoss=0; std::size_t cnt=0;
     auto add=[&](double &res, double y,double ref,double w){
       res = sample_loss(y,ref,w,
                           trg_.lossTypeId, trg_.N,
                           trg_.deltaHuber, trg_.tukeyC); ++cnt;
-    totalLoss+= res;
+      tLoss += res;
     };
 
     if(trg_.use_emae)   add(r.emaeLoss , r.emae , trg_.emae , trg_.w_emae );
@@ -329,10 +348,21 @@ void HPO_Host<P,R>::accumulate_loss(Result& r) const
     if(trg_.use_frmse)  add(r.frmseLoss, r.frmse,trg_.frmse,trg_.w_frmse);
     if(trg_.use_srmse)  add(r.srmseLoss, r.srmse,trg_.srmse,trg_.w_srmse);
 
-    for(const auto& v : r.v_loss)
-        for(double d: v){ totalLoss+=d; ++cnt; }
+    r.v_loss.resize(trg_.LS.size());
+    for (size_t i = 0; i < r.v_outvar.size(); ++i) {
+      const auto& lsim = trg_.LS[i];
+      r.v_loss[i].resize(lsim.n_outvar.size());
+      for (auto j : lsim.i_varloss) {
+        double v = std::stod(r.v_outvar[i][j]);
+        double w = lsim.w_varloss[j];
+        add(r.v_loss[i][j], v, lsim.t_varloss[j], w);
+      }
+    }
 
-    double mean=totalLoss/std::max<std::size_t>(1,cnt);
+    // for(const auto& v : r.v_loss)
+    //     for(double d: v){ tLoss+=d; ++cnt; }
+
+    double mean=tLoss/std::max<std::size_t>(1,cnt);
     if(trg_.lossTypeId==0 && trg_.N==2) r.loss = std::sqrt(mean); // RMSE
     else if(trg_.lossTypeId==4)         r.loss = std::sqrt(mean); // RMSLE
     else                                r.loss = mean;
@@ -602,13 +632,13 @@ than the total number of workers.\n");
                            MPI_COMM_WORLD);
                 }
 
-                // send wpkgs[j].outvar
+                // send wpkgs[j].n_outvar
                 // First, send the number of strings
-                num_strings = wpkgs[j].outvar.size();
+                num_strings = wpkgs[j].n_outvar.size();
                 MPI_Send(&num_strings, 1, MPI_INT, worker, WORK_TAG,
                          MPI_COMM_WORLD);
                 // Send each string
-                for (const std::string &message : wpkgs[j].outvar) {
+                for (const std::string &message : wpkgs[j].n_outvar) {
                   int length = message.size() + 1; // +1 for the null terminator
                   MPI_Send(&length, 1, MPI_INT, worker, WORK_TAG,
                            MPI_COMM_WORLD);

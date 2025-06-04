@@ -25,10 +25,12 @@ LammpsSim::LammpsSim(std::string &cmd, std::string MAX_TIME, double FAIL_SCORE):
     invar.push_back("-log");
     invar.push_back("none");
   }
-
-  invar.push_back("-var");
-  invar.push_back("maxtime");
-  invar.push_back(maxtime+" every 1");
+  auto it_maxtime = std::find(invar.begin(), invar.end(), "maxtime");
+  if (it_maxtime == invar.end()) {
+    invar.push_back("-var");
+    invar.push_back("maxtime");
+    invar.push_back(maxtime+" every 1");
+  }
 
   if (!script.length())
     throw std::runtime_error("LammpsSim object must have a script specified.\n");
@@ -37,13 +39,32 @@ LammpsSim::LammpsSim(std::string &cmd, std::string MAX_TIME, double FAIL_SCORE):
     throw std::runtime_error("LammpsSim: --varloss variable is not defined.\n");
 
 
-  v_varloss.resize(n_varloss.size());
-  v_outvar.resize(outvar.size());
 
   prep_script_lines();
 
   if (script_lines.empty()) {
     throw std::runtime_error("LammpsSim: script_lines is empty.\n");
+  }
+
+ // prepare containers
+  if (n_varloss.size() != t_varloss.size() || w_varloss.size() != n_varloss.size()) {
+    throw std::runtime_error("LammpsSim: n_varloss, w_varloss and v_varloss must have the same size.\n");
+  }
+  // v_outvar.resize(n_outvar.size());
+  // prepare i_varloss
+  // i_varloss is used to map n_varloss to n_outvar
+  // it is a vector of indices that correspond to the indices of n_outvar
+  // for (const auto& var : n_varloss) {
+  //   auto it = std::find(n_outvar.begin(), n_outvar.end(), var);
+  //   if (it != n_outvar.end()) {
+  //     i_varloss.push_back(std::distance(n_outvar.begin(), it));
+  //   } else {
+  //     continue; // skip if not found
+  //   }
+  // }
+  // check if i_varloss is the same size as n_varloss
+  if (i_varloss.size() != n_varloss.size()) {
+    throw std::runtime_error("LammpsSim: i_varloss must have the same size as n_varloss.\n");
   }
 
 }
@@ -68,8 +89,11 @@ void LammpsSim::parse_tokens() {
     }
     // Tadah! specific keywords
     else if (tokens[i] == "--varloss") {
-      if (i + 2 < tokens.size()) {
-        n_varloss.push_back(tokens[++i]);
+      if (i + 3 < tokens.size()) {
+        n_outvar.push_back(tokens[++i]);  // Yes we also push to outvar
+        i_varloss.push_back(n_outvar.size() - 1); // map to n_outvar
+        n_varloss.push_back(tokens[i]);
+        t_varloss.push_back(std::stod(tokens[++i]));
         w_varloss.push_back(std::stod(tokens[++i]));
         i++;
       } else {
@@ -88,7 +112,7 @@ void LammpsSim::parse_tokens() {
     }
     else if (tokens[i] == "--outvar") {
       if (i + 1 < tokens.size()) {
-        outvar.push_back(tokens[++i]);
+        n_outvar.push_back(tokens[++i]);
         i++;
       } else {
         throw std::runtime_error("Invalid number of arguments for --outvar");
