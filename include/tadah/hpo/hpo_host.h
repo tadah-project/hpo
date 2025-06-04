@@ -59,9 +59,9 @@ struct EvalResult
     std::chrono::milliseconds              wall_ms{};
     ParamVec                               params;
 
-    bool                                   is_best   = false;
+    bool                                   is_best    = false;
+    // bool                                   run_lammps = false;   // option for the future?
     core::Context                          pot_ctx;
-    core::Context                          best_pot;          // valid if is_best
 };
 
 /* =========================================================================

@@ -49,6 +49,37 @@ bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
 
   return true;
 }
+bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
+    const std::vector<std::string>& script_lines,
+    tadah::core::Context pot_ctx) const {
+  if (!lmp_ptr) {
+    // Cannot run on invalid instance
+    return false;
+  }
+
+  try {
+    // Read and execute commands from the script file
+
+    for (const auto& line : script_lines) {
+      // If the line contains pair_coeff and EXTERN, load the potential
+      // from the context before executing the line
+      if (line.find("pair_coeff") != std::string::npos &&
+          line.find("EXTERN") != std::string::npos) {
+        LAMMPS_NS::Pair *pair = lmp_ptr->force->pair;
+        LAMMPS_NS::PairTadah *pt = dynamic_cast<LAMMPS_NS::PairTadah*>(pair);
+        pt->load(std::move(pot_ctx));
+      }
+      // Execute the line
+      lmp_ptr->input->one(line.c_str());
+    }
+  } catch (const std::exception&) {
+    // Execution failure indicates invalid run
+    return false;
+  }
+
+  return true;
+
+}
 
 bool LammpsRunner::say_hello(const LMPPtr& lmp_ptr) const {
   if (!lmp_ptr) {

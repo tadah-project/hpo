@@ -13,6 +13,8 @@
 #include <input.h>
 #include <variable.h>
 
+#include <tadah/core/context.h>
+
 /**
  * @class LammpsRunner
  * @brief Simplifies creation and use of LAMMPS instances.
@@ -62,6 +64,31 @@ class LammpsRunner {
    */
   bool run_script(const LMPPtr& lmp_ptr,
                   const std::string& script) const;
+
+  /**
+   * @brief Executes a LAMMPS input script using provided potential.
+   *
+   * Catches LAMMPS exceptions. If the instance pointer is null
+   * or an exception is thrown, returns false.
+   *
+   * The script file must contain line like:
+   *
+   * ```
+   * pair_coeff * * EXTERN Ti Nb
+   * ```
+   *
+   * The script is executed line by line. Once EXTERN is encountered 
+   * in the pair_coeff line, the runner will attempt to load 
+   * the potential from the context and then execute the rest of the script.
+   *
+   * @param lmp_ptr Unique pointer to a LAMMPS instance.
+   * @param script Path to the LAMMPS input script.
+   * @param pot_ctx Context for the script execution.
+   * @return True if execution succeeded; false otherwise.
+   */
+  bool run_script(const LMPPtr& lmp_ptr,
+                  const std::vector<std::string>& script_lines,
+                  tadah::core::Context pot_ctx) const;
 
   bool say_hello(const LMPPtr& lmp_ptr) const;
   /**

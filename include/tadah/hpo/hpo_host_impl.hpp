@@ -298,8 +298,8 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
         R runner;
         auto lmp = runner.create_instance(0, lsim.sinvar);
         if(!lmp) continue;
-        if(!runner.run_script(lmp, lsim.script)) continue;
         if(!runner.say_hello(lmp)) continue;
+        if(!runner.run_script(lmp, lsim.script, r.pot_ctx)) continue;
 
         r.v_loss[i].resize(lsim.n_varloss.size());
         for(std::size_t j=0;j<lsim.n_varloss.size();++j){
@@ -376,15 +376,16 @@ double HPO_Host<P,R>::operator()(const P& p) const
 
     /* validation ------------------------------------------------------- */
     core::Context pot = host.model->get_param_file();
-    r.pot_ctx = pot;
     auto pred = host.model->predict(pot, val_stdb_, host.dc);
     mlip::Analytics   a(val_stdb_, pred);
     fill_validation(r, a);
 
+    r.pot_ctx  = std::move(pot);
+
     /* optional LAMMPS -------------------------------------------------- */
 #ifdef TADAH_BUILD_MPI
-    if (use_lammps)
-      runLammpsMPI();
+    if (use_lammps_)
+      run_lammps_mpi(r);
 #else
     if (use_lammps_)
       run_lammps(r);
@@ -403,7 +404,6 @@ double HPO_Host<P,R>::operator()(const P& p) const
     if(i_am_best){
       r.is_best   = true;
       r.best_iter = g_best_iter_.fetch_add(1, std::memory_order_relaxed) + 1;
-      r.best_pot  = std::move(pot);
     }
 
     r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -480,12 +480,12 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
             /* overwrite & archive best_pot ---------------------------- */
             {
                 std::ofstream bp("best_pot.tadah");
-                bp<<e.best_pot;
+                bp<<e.pot_ctx;
             }
             if(e.best_iter % bestPotEvery == 0){
                 std::ofstream bpa(std::string(bestPotDir_)
                     +"/best_pot_" + std::to_string(e.iter) + ".tadah");
-                bpa<<e.best_pot;
+                bpa<<e.pot_ctx;
             }
         }
 
@@ -512,7 +512,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
 }
 
 #ifdef TADAH_BUILD_MPI
-  void runLammpsMPI() {
+  void run_lammps_mpi(Result& r) {
 
     int rank;
     int ncpu;
