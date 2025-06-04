@@ -59,8 +59,10 @@ bool LammpsRunner::say_hello(const LMPPtr& lmp_ptr) const {
   try {
     // Read and execute commands from the script file
     LAMMPS_NS::Pair *pair = lmp_ptr->force->pair;
-    LAMMPS_NS::PairTadah *pairTadah = dynamic_cast<LAMMPS_NS::PairTadah*>(pair);
+    LAMMPS_NS::PairTadah *pt = dynamic_cast<LAMMPS_NS::PairTadah*>(pair);
+    pt->say_hello();
 
+    return true;
   } catch (const std::exception&) {
     // Execution failure indicates invalid run
     return false;
