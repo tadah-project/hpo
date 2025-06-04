@@ -41,6 +41,7 @@ inline double sample_loss(double y, double ypred, double w,
             }
             return (tukeyC*tukeyC/6.0)*w;
         }
+        case 6: return std::pow(absr, N) * w;                       // squared L2
     }
     return 0.0;
 }
@@ -215,18 +216,6 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
 , host(c, tls_ws_, tls_ws2_)
 #endif
 {
-    /* validation set ---------------------------------------------------- */
-    core::Context val_ctx(core::CoreUserConfigParser().parse(val_cfg));
-    val_stdb_.add(val_ctx);
-#ifndef TADAH_BUILD_MPI
-    train_stdb_.add(master_ctx_);
-#endif
-    /* elements check ---------------------------------------------------- */
-    auto tr_el = mlip::StructureDB::find_unique_elements(master_ctx_);
-    for(auto e: mlip::StructureDB::find_unique_elements(val_ctx))
-        if(!tr_el.count(e))
-            throw std::runtime_error("Validation element missing in training");
-
     /* neighbours -------------------------------------------------------- */
     double rcutmax = master_ctx_.get<double>("RCUTMAX");
     // Loop over all optimap entries to find either RCUT2B or RCUTMB
@@ -240,7 +229,20 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
       }
     }
 
+    /* validation set ---------------------------------------------------- */
+    core::Context val_ctx(core::CoreUserConfigParser().parse(val_cfg));
+    val_stdb_.add(val_ctx);
     nnf_.calc(val_stdb_, rcutmax);
+#ifndef TADAH_BUILD_MPI
+    train_stdb_.add(master_ctx_);
+    nnf_.calc(train_stdb_, rcutmax);
+#endif
+    /* elements check ---------------------------------------------------- */
+    auto tr_el = mlip::StructureDB::find_unique_elements(master_ctx_);
+    for(auto e: mlip::StructureDB::find_unique_elements(val_ctx))
+        if(!tr_el.count(e))
+            throw std::runtime_error("Validation element missing in training");
+
 
     init_loss   (loss_file_);
     init_outvar (outvar_file_);
@@ -368,7 +370,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
     host.run(); host.solve();
 #else
     mlip::Trainer     host(ctx, tls_ws_);
-    //host.train(train_stdb_);
+    host.train(train_stdb_);
 #endif
 
     /* validation ------------------------------------------------------- */
@@ -507,7 +509,6 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
     /* 5. release token ------------------------------------------------- */
     writer_token_.clear(std::memory_order_release);
 }
-
 
 #ifdef TADAH_BUILD_MPI
   void runLammpsMPI() {

@@ -58,7 +58,7 @@ public:
     double FAIL_SCORE = 1000;
     std::string MAX_TIME = "10";
     std::string MINIMIZER = "2";
-    size_t lossTypeId = 2; // 0=L1/L2, 1=Huber, 2=logcosh, 3=MAPE, 4=RMSLE, 5=Tukey
+    size_t lossTypeId = 2; // 0=L1/L2, 1=Huber, 2=logcosh, 3=MAPE, 4=RMSLE, 5=Tukey, 6=squared L2
     double deltaHuber = 1.0; // Huber threshold
     double tukeyC = 4.685;     // Tukey biweight cutoff
     double N=2;

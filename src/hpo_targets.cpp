@@ -385,6 +385,9 @@ void HPOTargets::read(std::string fn) {
                                      + core::to_string(nline) + ": " 
                                      + e.what());
           }
+        } else if (lossType == "sqL2") {
+          N = 2;
+          lossTypeId = 6;
         } else {
           throw std::runtime_error("Unknown loss function: " + lossType);
         } 

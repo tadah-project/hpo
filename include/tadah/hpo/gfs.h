@@ -233,7 +233,7 @@ private:
             size_t request_id = 0;   // unique id for this eval request
             matrix<double,0,1> x;   // function x to evaluate 
                                     //
-            int current_m_shell = 1; // current M for explore region
+            int m_shell = 1; // current M for explore region
 
             // trust region specific stuff
             bool was_trust_region_generated_request = false;
@@ -283,6 +283,7 @@ private:
             std::vector<double> radii; // radii for explore region
             std::vector<size_t> count_to_explore_region_update;
             size_t current_m_shell = 1;
+            std::vector<std::vector<function_evaluation>> m_shell_samples;
 
         };
 
@@ -441,6 +442,8 @@ private:
       std::vector<Cand>,
       CandCompare
     > min_heap{CandCompare()};
+
+        size_t m_counter = 0;
 
         double run_explore_probability = 0.90;
         double run_explore_probability_lowbound = 0.5;
