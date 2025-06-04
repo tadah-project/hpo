@@ -72,7 +72,7 @@ void HPO_Host<P,R>::init_loss(const std::string& fn) const
         f << std::left << std::setw(cw_) << vloss;
     }
 
-    f << std::left << std::setw(cw_) << "TOTAL_LOSS" << std::endl;
+    f << std::left << std::setw(cw_) << "TOTAL_LOSS/N" << std::endl;
 }
 
 template<class P,class R>
@@ -296,10 +296,9 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     {
         const auto& lsim = LS[i];
         R runner;
-        auto lmp = runner.create_instance(0, lsim.sinvar);
+        auto lmp = runner.create_instance(0, lsim.invar);
         if(!lmp) continue;
-        if(!runner.say_hello(lmp)) continue;
-        if(!runner.run_script(lmp, lsim.script, r.pot_ctx)) continue;
+        if(!runner.run_script(lmp, lsim.script_lines, r.pot_ctx)) continue;
 
         r.v_loss[i].resize(lsim.n_varloss.size());
         for(std::size_t j=0;j<lsim.n_varloss.size();++j){

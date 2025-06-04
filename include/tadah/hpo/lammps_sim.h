@@ -17,10 +17,15 @@ class LammpsSim {
   private:
     std::string cmd; /**< Command line configuration */
     std::vector<std::string> tokens; /**< Tokenised command line */
+    std::string stripComments(const std::string& in,
+                                     bool& in_single,
+                                     bool& in_double,
+                                     bool& in_triple) const;
 
   public:
     std::string script; /**< Name of the LAMMPS script file */
-    std::vector<std::string> sinvar; /**< LAMMPS input variables */
+    std::vector<std::string> script_lines; /**< Lines of the LAMMPS script */
+    std::vector<std::string> invar; /**< LAMMPS input variables */
     // std::vector<const char*> invar; /**< LAMMPS  variables, ptrs to sinvars */
     std::vector<std::string> n_varloss; /**< Variables names related to the loss function */
     std::vector<double> v_varloss; /**< Value of the varloss */
@@ -63,5 +68,7 @@ class LammpsSim {
     static bool greater(const LammpsSim& lhs, const LammpsSim& rhs) {
       return lhs.ncpu > rhs.ncpu;
     }
+
+    void prep_script_lines();
 };
 #endif // LAMMPS_SIM_H
