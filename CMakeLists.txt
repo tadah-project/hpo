@@ -124,6 +124,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(Tadah.MLIP)
 
+# Use only to include lammps.tadah.h header file
+FetchContent_Declare(
+  Tadah.LAMMPS
+    GIT_REPOSITORY https://git.ecdf.ed.ac.uk/tadah/tadah.lammps.git
+    GIT_TAG origin/${GIT_BRANCH}
+)
+FetchContent_MakeAvailable(Tadah.LAMMPS)
+
 include(FetchContent)
 FetchContent_Declare(dlib
         GIT_REPOSITORY https://github.com/davisking/dlib.git
@@ -178,6 +186,8 @@ add_compile_definitions(TADAH_LAMMPS_LIB=\"${TADAH_LAMMPS_LIB}\")
 file(GLOB HPO_SRC CONFIGURE_DEPENDS "src/*.cpp")
 add_library(tadah.hpo ${HPO_SRC})
 target_include_directories(tadah.hpo PUBLIC include)
+target_include_directories(tadah.hpo PUBLIC ${Tadah.LAMMPS_SOURCE_DIR}/include)   # required for declaration of LammpsTadah used in runner.h
+target_include_directories(tadah.hpo PUBLIC ${Tadah.LAMMPS_SOURCE_DIR}/ML-TADAH)  # required for declaration of PairTadah used in runner.h
 target_include_directories(tadah.hpo PUBLIC ${Tadah.MLIP_SOURCE_DIR}/include)
 target_include_directories(tadah.hpo PUBLIC ${Tadah.MODELS_SOURCE_DIR}/include)
 target_include_directories(tadah.hpo PUBLIC ${Tadah.CORE_SOURCE_DIR}/include)

@@ -299,6 +299,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
         auto lmp = runner.create_instance(0, lsim.sinvar);
         if(!lmp) continue;
         if(!runner.run_script(lmp, lsim.script)) continue;
+        if(!runner.say_hello(lmp)) continue;
 
         r.v_loss[i].resize(lsim.n_varloss.size());
         for(std::size_t j=0;j<lsim.n_varloss.size();++j){
