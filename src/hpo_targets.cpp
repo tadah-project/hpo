@@ -1,7 +1,8 @@
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/models/descriptors/d_base.h>
 #include <tadah/models/descriptors/d_mjoin.h>
-#include "tadah/core/registry.h"
+#include <tadah/core/registry.h>
+#include <tadah/hpo/loss_function.h>
 
 #include <algorithm>
 #include <random>
@@ -325,7 +326,8 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
 
 }
 
-void HPOTargets::read(std::string fn) {
+void HPOTargets::read(std::string fn)
+{
   std::ifstream ifs(fn);
   if (!ifs.good()) throw std::runtime_error("HPO context file does not exist.");
 
@@ -343,9 +345,10 @@ void HPOTargets::read(std::string fn) {
     iss >> key;
 
     if (key.empty()) continue;
-    std::string lossType;
 
     try {
+      std::string globLossTypeStr;
+      std::vector<double> globLossParams;
       if (key == "PARAMS") {
         double temp;
         while (iss >> temp) {
@@ -354,43 +357,32 @@ void HPOTargets::read(std::string fn) {
       } else if (key == "MINIMIZER") {
         iss >> MINIMIZER;
       } else if (key == "LOSS") {
-        iss >> lossType;
-        if (lossType == "L1") {
-          N = 1;
-          lossTypeId = 0;
-        } else if (lossType == "L2") {
-          N = 2;
-          lossTypeId = 0;
-        } else if (lossType == "HUBER") {
-          lossTypeId = 1;
+        iss >> globLossTypeStr;
+        if (globLossTypeStr== "HUBER") {
           try {
+            double deltaHuber;
             iss >> deltaHuber;
+            globLossParams.push_back(deltaHuber);
           } catch (const std::exception& e) {
             throw std::runtime_error("Error reading delta Huber parameter on line " 
-                                     + core::to_string(nline) + ": " 
-                                     + e.what());
+                + core::to_string(nline) + ": " 
+                + e.what());
           }
-        } else if (lossType == "LOG_COSH") {
-          lossTypeId = 2;
-        } else if (lossType == "MAPE") {
-          lossTypeId = 3;
-        } else if (lossType == "RMSLE") {
-          lossTypeId = 4;
-        } else if (lossType == "TUKEY") {
-          lossTypeId = 5;
+        } else if (globLossTypeStr== "TUKEY") {
+          double tukeyC;
           try {
             iss >> tukeyC;
+            globLossParams.push_back(tukeyC);
           } catch (const std::exception& e) {
             throw std::runtime_error("Error reading Tukey's biweight parameter on line " 
-                                     + core::to_string(nline) + ": " 
-                                     + e.what());
+                + core::to_string(nline) + ": " 
+                + e.what());
           }
-        } else if (lossType == "sqL2") {
-          N = 2;
-          lossTypeId = 6;
-        } else {
-          throw std::runtime_error("Unknown loss function: " + lossType);
-        } 
+        }
+
+        auto lossTypeId = tadah::LossFunction::from_string(globLossTypeStr);
+        globalLoss = tadah::LossFunction(lossTypeId, globLossParams);
+
       } else if (key == "IOEVERY") {
         iss >> io_every >> potevery_dir;
         handle_directory_creation(potevery_dir);
@@ -428,13 +420,14 @@ void HPOTargets::read(std::string fn) {
       } else if (key == "LAMMPS") {
         std::string cmd;
         std::getline(iss, cmd);
-        LS.push_back(LammpsSim(cmd, MAX_TIME, FAIL_SCORE));
+        /* prepare default param vector for the global loss ------------------- */
+        LS.emplace_back(cmd, MAX_TIME, FAIL_SCORE, globalLoss);
       } else {
         throw std::runtime_error("Unknown key");
       }
     } catch (const std::exception& e) {
       throw std::runtime_error("Error on line " + core::to_string(nline) 
-                               + ": " + e.what() + "\nLine: " + line);
+          + ": " + e.what() + "\nLine: " + line);
     }
   }
 }

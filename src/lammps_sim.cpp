@@ -1,4 +1,6 @@
+#include <tadah/core/logger.h>
 #include <tadah/hpo/lammps_sim.h>
+#include <tadah/hpo/hpo_targets.h>
 #include <iostream>
 
 #include <fstream>
@@ -6,11 +8,35 @@
 #include <stdexcept>
 #include <string>
 
-LammpsSim::LammpsSim() {}
-LammpsSim::LammpsSim(std::string &cmd, std::string MAX_TIME, double FAIL_SCORE):
-  cmd(cmd), maxtime(MAX_TIME), failscore(FAIL_SCORE)
+namespace {
+
+
+/* provide an empty vector for loss types that need no parameters          */
+/* Huber[0]=δ , Tukey[0]=c                                                 */
+inline std::vector<double> defaultParams(int id,double dHuber,double tC)
 {
-  invar.push_back(TADAH_LAMMPS_LIB); // Ensure this is a string literal
+    switch(id){
+      case 4: return {dHuber};
+      case 6: return {tC};
+      default: return {};
+    }
+}
+
+} // anonymous
+
+namespace tadah::hpo {
+
+LammpsSim::LammpsSim() {}
+LammpsSim::LammpsSim(std::string& cmd_,
+                     const std::string& MAX_TIME,
+                     double FAIL_SCORE,
+                     const tadah::LossFunction& defaultLoss)
+  : cmd(cmd_)
+  , defLoss(defaultLoss)
+  , maxtime(MAX_TIME)
+  , failscore(FAIL_SCORE)
+{
+  invar.push_back(TADAH_LAMMPS_LIB);
   tokenise();
   parse_tokens();
 
@@ -67,6 +93,8 @@ LammpsSim::LammpsSim(std::string &cmd, std::string MAX_TIME, double FAIL_SCORE):
     throw std::runtime_error("LammpsSim: i_varloss must have the same size as n_varloss.\n");
   }
 
+  if (lossFn.size()!=n_varloss.size())
+    throw std::runtime_error("lossTypeId size mismatch in LammpsSim");
 }
 void LammpsSim::tokenise() {
   std::stringstream ss(cmd);
@@ -77,6 +105,7 @@ void LammpsSim::tokenise() {
   }
 }
 void LammpsSim::parse_tokens() {
+
   size_t i = 0;
   while (i < tokens.size()) {
     if (tokens[i] == "--script") { // LAMMPS script file
@@ -88,17 +117,43 @@ void LammpsSim::parse_tokens() {
       }
     }
     // Tadah! specific keywords
-    else if (tokens[i] == "--varloss") {
-      if (i + 3 < tokens.size()) {
-        n_outvar.push_back(tokens[++i]);  // Yes we also push to outvar
-        i_varloss.push_back(n_outvar.size() - 1); // map to n_outvar
-        n_varloss.push_back(tokens[i]);
-        t_varloss.push_back(std::stod(tokens[++i]));
-        w_varloss.push_back(std::stod(tokens[++i]));
-        i++;
-      } else {
-        throw std::runtime_error("Invalid number of arguments for --varloss");
+    else if (tokens[i] == "--varloss")
+    {
+      auto is_flag = [](const std::string& s){ return s.rfind("--",0)==0; };
+
+      std::size_t j=i+1;
+
+      if(j>=tokens.size() || is_flag(tokens[j]))
+        throw std::runtime_error("--varloss: missing <name>");
+      std::string vname = tokens[j++];
+
+      if(j>=tokens.size() || is_flag(tokens[j]))
+        throw std::runtime_error("--varloss "+vname+": missing <target>");
+      double tgt = std::stod(tokens[j++]);
+
+      if(j>=tokens.size() || is_flag(tokens[j]))
+        throw std::runtime_error("--varloss "+vname+": missing <weight>");
+      double wgt = std::stod(tokens[j++]);
+
+      /* optional override ---------------------------------------------- */
+      tadah::LossFunction myLoss = defLoss;
+      if(j<tokens.size() && !is_flag(tokens[j])){
+        auto t = tadah::LossFunction::from_string(tokens[j++]);
+        std::vector<double> pars;
+        while(j<tokens.size() && !is_flag(tokens[j]))
+          pars.push_back(std::stod(tokens[j++]));
+        myLoss = tadah::LossFunction(t, pars);
       }
+
+      /* store ----------------------------------------------------------- */
+      n_outvar .push_back(vname);
+      n_varloss.push_back(vname);
+      i_varloss.push_back(n_outvar.size()-1);
+      t_varloss.push_back(tgt);
+      w_varloss.push_back(wgt);
+      lossFn   .push_back(std::move(myLoss));
+
+      i = j;
     }
     else if (tokens[i] == "--invar") {
       if (i + 2 < tokens.size()) {
@@ -325,4 +380,5 @@ void LammpsSim::prep_script_lines()
       cmd.find_first_not_of(" \t\n") != std::string::npos)
     script_lines.push_back(cmd);
 }
+} // namespace tadah::hpo
 

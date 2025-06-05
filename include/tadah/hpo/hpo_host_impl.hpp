@@ -1,5 +1,6 @@
 #pragma once
 #include <tadah/core/core_user_config_parser.h>
+#include <tadah/hpo/loss_function.h>
 #include <fstream>
 #include <sstream>
 
@@ -16,35 +17,6 @@ inline double stable_log_cosh(double r)
 
 namespace tadah::hpo {
 
-/* ----------  free, non-template  loss helper --------------------------- */
-inline double sample_loss(double y, double ypred, double w,
-                          std::size_t lossTypeId, unsigned N,
-                          double delta, double tukeyC, double eps = 1e-12)
-{
-    double r    = y - ypred;
-    double absr = std::abs(r);
-
-    switch(lossTypeId)
-    {
-        case 0: return std::pow(absr, N) * w;                       // L1/L2
-        case 1: return absr<=delta ? 0.5*r*r*w : delta*(absr-0.5*delta)*w; // Huber
-        case 2: return stable_log_cosh(r) * w;                      // Log-Cosh
-        case 3: return absr/(std::abs(y)+eps) * w;                  // MAPE
-        case 4:{
-            double ly=std::log(y+eps), lyp=std::log(ypred+eps);
-            return (ly-lyp)*(ly-lyp)*w;                             // RMSLE
-        }
-        case 5:{
-            if(absr<=tukeyC) {
-                double t=r/tukeyC;
-                return (tukeyC*tukeyC/6.0)*(1-std::pow(1-t*t,3))*w;
-            }
-            return (tukeyC*tukeyC/6.0)*w;
-        }
-        case 6: return std::pow(absr, N) * w;                       // squared L2
-    }
-    return 0.0;
-}
 
 /* -----------------  header writers  ---------------------------------- */
 template<class P,class R>
@@ -322,9 +294,9 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     if(!lmp) continue;
     bool fail = !runner.run_script(lmp, lsim.script_lines, r.pot_ctx);
 
-    for(std::size_t j=0;j<lsim.n_outvar.size();++j) {
-      if (fail) r.v_outvar[i].emplace_back(std::to_string(lsim.failscore/lsim.w_varloss[j]));
-      else  r.v_outvar[i].emplace_back(runner.get_variable(lmp, lsim.n_outvar[j]));
+    for(const auto& n : lsim.n_outvar) {
+      if (fail) r.v_outvar[i].emplace_back(std::to_string(lsim.failscore));
+      else  r.v_outvar[i].emplace_back(runner.get_variable(lmp, n));
     }
   }
 }
@@ -333,47 +305,51 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
 template<class P, class R>
 void HPO_Host<P,R>::accumulate_loss(Result& r) const
 {
-    double tLoss=0; std::size_t cnt=0;
-    auto add=[&](double &res, double y,double ref,double w){
-      res = sample_loss(y,ref,w,
-                          trg_.lossTypeId, trg_.N,
-                          trg_.deltaHuber, trg_.tukeyC); ++cnt;
-      tLoss += res;
-    };
+  double tLoss=0; std::size_t cnt=0;
+  /* ----- helper -------------------------------------------------------- */
+  auto add_global = [&](double& sink, double y, double ref, double w)
+  {
+    sink = trg_.globalLoss.loss(y, ref, w);
+    ++cnt; tLoss += sink;
+  };
 
-    if(trg_.use_emae)   add(r.emaeLoss , r.emae , trg_.emae , trg_.w_emae );
-    if(trg_.use_ermse)  add(r.ermseLoss, r.ermse, trg_.ermse, trg_.w_ermse);
-    if(trg_.use_errmse) add(r.errmseLoss, r.errmse,trg_.errmse,trg_.w_errmse);
-    if(trg_.use_ersq)   add(r.ersqLoss , r.ersq , trg_.ersq , trg_.w_ersq );
-    if(trg_.use_frmse)  add(r.frmseLoss, r.frmse,trg_.frmse,trg_.w_frmse);
-    if(trg_.use_srmse)  add(r.srmseLoss, r.srmse,trg_.srmse,trg_.w_srmse);
+  if (trg_.use_emae)   add_global(r.emaeLoss , r.emae , trg_.emae , trg_.w_emae );
+  if (trg_.use_ermse)  add_global(r.ermseLoss, r.ermse, trg_.ermse, trg_.w_ermse);
+  if (trg_.use_errmse) add_global(r.errmseLoss,r.errmse,trg_.errmse,trg_.w_errmse);
+  if (trg_.use_ersq)   add_global(r.ersqLoss , r.ersq , trg_.ersq , trg_.w_ersq );
+  if (trg_.use_frmse)  add_global(r.frmseLoss,r.frmse,trg_.frmse,trg_.w_frmse);
+  if (trg_.use_srmse)  add_global(r.srmseLoss,r.srmse,trg_.srmse,trg_.w_srmse);
 
-    r.v_loss.resize(trg_.LS.size());
-    for (size_t i = 0; i < r.v_outvar.size(); ++i) {
-      const auto& lsim = trg_.LS[i];
-      r.v_loss[i].resize(lsim.n_outvar.size());
-      for (auto j : lsim.i_varloss) {
-        double v = std::stod(r.v_outvar[i][j]);
-        double w = lsim.w_varloss[j];
-        add(r.v_loss[i][j], v, lsim.t_varloss[j], w);
-      }
+  r.v_loss.resize(trg_.LS.size());
+  for (std::size_t i = 0; i < r.v_outvar.size(); ++i) {
+    const auto& lsim = trg_.LS[i];
+    r.v_loss[i].resize(lsim.n_outvar.size());
+
+    for (auto j : lsim.i_varloss) {
+      double v  = std::stod(r.v_outvar[i][j]);
+      double w  = lsim.w_varloss[j];
+
+      double l = lsim.lossFn[j].loss(v, lsim.t_varloss[j], w);
+      r.v_loss[i][j] = l;
+      tLoss += l; ++cnt;
     }
+  }
 
-    // for(const auto& v : r.v_loss)
-    //     for(double d: v){ tLoss+=d; ++cnt; }
-
-    double mean=tLoss/std::max<std::size_t>(1,cnt);
-    if(trg_.lossTypeId==0 && trg_.N==2) r.loss = std::sqrt(mean); // RMSE
-    else if(trg_.lossTypeId==4)         r.loss = std::sqrt(mean); // RMSLE
-    else                                r.loss = mean;
+  double mean = tLoss / std::max<std::size_t>(1,cnt);
+  auto gt = trg_.globalLoss.type();
+  if(gt==tadah::LossFunction::Type::L2 ||
+      gt==tadah::LossFunction::Type::RMSLE)
+    r.loss = std::sqrt(mean);
+  else
+    r.loss = mean;
 }
 
 /* ----------  operator()  (thread-safe) ------------------------------- */
 template<class P, class R>
 double HPO_Host<P,R>::operator()(const P& p) const
 {
-    Result r;
-    r.iter   = ++g_iter_;
+  Result r;
+  r.iter   = ++g_iter_;
     r.params = p;
 
     auto t0 = std::chrono::high_resolution_clock::now();

@@ -1,11 +1,16 @@
 #ifndef LAMMPS_SIM_H
 #define LAMMPS_SIM_H
 
+#include <tadah/hpo/loss_function.h>
+
 #include <string>
 #include <vector>
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
+
+namespace tadah::hpo {
+  
 
 /**
  * @class LammpsSim
@@ -22,7 +27,13 @@ class LammpsSim {
                                      bool& in_double,
                                      bool& in_triple) const;
 
+    /* default for all --varloss until the user overrides it */
+    tadah::LossFunction          defLoss;
+
   public:
+    /* one loss function per --varloss                                 */
+    std::vector<tadah::LossFunction> lossFn;
+
     std::string script; /**< Name of the LAMMPS script file */
     std::vector<std::string> script_lines; /**< Lines of the LAMMPS script */
 
@@ -54,9 +65,13 @@ class LammpsSim {
      * @param cmd The command line configuration.
      * @param MAX_TIME Maximum time allowed for the simulation.
      * @param FAIL_SCORE Default fail score value.
+     * @param defaultLoss Default loss function to be used.
+     *    can be overridden by user using --varloss
      */
-    LammpsSim(std::string &cmd, std::string MAX_TIME, double FAIL_SCORE);
-
+    LammpsSim(std::string&              cmd,
+              const std::string&        MAX_TIME,
+              double                    FAIL_SCORE,
+              const tadah::LossFunction& defaultLoss);
     /**
      * @brief Tokenises the command line configuration.
      */
@@ -80,4 +95,5 @@ class LammpsSim {
 
     void prep_script_lines();
 };
+} // namespace tadah::hpo
 #endif // LAMMPS_SIM_H
