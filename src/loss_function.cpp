@@ -17,7 +17,6 @@ LossFunction::Type LossFunction::from_string(const std::string& s)
     if(u=="HUBER")     return Type::HUBER;
     if(u=="RMSLE")     return Type::RMSLE;
     if(u=="TUKEY")     return Type::TUKEY;
-    if(u=="SQL2")      return Type::SQL2;
     throw std::runtime_error("LossFunction::from_string: unknown type '"+s+"'");
 }
 
@@ -31,7 +30,6 @@ std::string LossFunction::to_string(Type t)
       case Type::HUBER:     return "HUBER";
       case Type::RMSLE:     return "RMSLE";
       case Type::TUKEY:     return "TUKEY";
-      case Type::SQL2:      return "SQL2";
     }
     return "<invalid>";
 }
@@ -67,7 +65,6 @@ double LossFunction::loss(double y, double ypred, double w,
     {
         case Type::L1 :       return abs_r * w;
         case Type::L2 :       return abs_r*abs_r * w;
-        case Type::SQL2:      return abs_r*abs_r * w;
 
         case Type::LOG_COSH : return stable_log_cosh(r) * w;
 
@@ -86,15 +83,22 @@ double LossFunction::loss(double y, double ypred, double w,
         }
 
         case Type::TUKEY : {
-            double c = params_.empty()? 4.685 : params_[0];
+            double c = params_.empty()? w*4.685 : w*params_[0];
             if(abs_r <= c){
                 double t = r/c;
-                return (c*c/6.0)*(1-std::pow(1-t*t,3))*w;
+                return (1-std::pow(1-t*t,3))*w;
+                //return (c*c/6.0)*(1-std::pow(1-t*t,3))*w;
             }
-            return (c*c/6.0)*w;
+            return w;
+            //return (c*c/6.0)*w;
         }
     }
     return 0.0;     // should not get here
+}
+
+bool LossFunction::is_squared() const noexcept
+{
+    return type_==Type::L2 || type_==Type::RMSLE;
 }
 
 }   // namespace tadah

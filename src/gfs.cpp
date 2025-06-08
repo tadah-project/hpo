@@ -237,9 +237,7 @@ namespace tadah
             double& radius,
             const matrix<double,0,1>& lower,
             const matrix<double,0,1>& upper,
-            const std::vector<bool>& is_integer_variable,
-            HypercubeSeparator& hc,
-            int mShell = -1
+            const std::vector<bool>& is_integer_variable
         )
         {
             DLIB_CASSERT(samples.size() > 0);
@@ -569,7 +567,7 @@ namespace tadah
 
         if (req.was_explore_region_generated_request) {
 
-        info->m_shell_samples[req.m_shell].push_back(function_evaluation(req.x,y));
+          info->m_samples[req.m_shell].push_back(function_evaluation(req.x,y));
 
           if (y > info->bov[req.m_shell]) {
             info->bov[req.m_shell] = y;
@@ -626,27 +624,25 @@ namespace tadah
 
         }
     }
-
-// ----------------------------------------------------------------------------------------
-    void gfs::init_hypercube_separators (
-            int sep)
+    void gfs::init_chunks (
+            size_t splits)
     {
-      hypercube_separators.resize(functions.size());
       for (size_t i = 0; i < functions.size(); ++i)
       {
         auto &lower = functions[i]->spec.lower;
         auto &upper = functions[i]->spec.upper;
-        hypercube_separators[i] = 
-            HypercubeSeparator(lower, upper, sep);
+        pchunks.push_back(elm::ParameterSpaceDivider(lower, upper, splits));
 
         auto& info = functions[i];
+        size_t chunks = pchunks[i].num_chunks();
+        std::cout << "Function " << i << " has " << chunks << " chunks." << std::endl;
 
-        info->best_xs.resize(sep);
-        info->bov.resize(sep);
-        info->radii.resize(sep);
-        info->count_to_explore_region_update.resize(sep);
+        info->best_xs.resize(chunks);
+        info->bov.resize(chunks);
+        info->radii.resize(chunks);
+        info->count_to_explore_region_update.resize(chunks);
 
-        info->m_shell_samples.resize(sep);
+        info->m_samples.resize(chunks);
 
         for (size_t j = 0; j < info->radii.size(); ++j) {
           info->radii[j] = 0;
@@ -656,6 +652,37 @@ namespace tadah
         }
 
       }
+    }
+
+// ----------------------------------------------------------------------------------------
+    void gfs::init_hypercube_separators (
+            int sep)
+    {
+      // pchunks.resize(functions.size());
+      // for (size_t i = 0; i < functions.size(); ++i)
+      // {
+      //   auto &lower = functions[i]->spec.lower;
+      //   auto &upper = functions[i]->spec.upper;
+      //   pchunks[i] = 
+      //       HypercubeSeparator(lower, upper, sep);
+      //
+      //   auto& info = functions[i];
+      //
+      //   info->best_xs.resize(sep);
+      //   info->bov.resize(sep);
+      //   info->radii.resize(sep);
+      //   info->count_to_explore_region_update.resize(sep);
+      //
+      //   info->m_samples.resize(sep);
+      //
+      //   for (size_t j = 0; j < info->radii.size(); ++j) {
+      //     info->radii[j] = 0;
+      //     info->count_to_explore_region_update[j] = 0;
+      //     info->bov[j] = -std::numeric_limits<double>::infinity();
+      //     info->best_xs[j] = zeros_matrix(lower);
+      //   }
+      //
+      // }
     }
 
     size_t gfs::
@@ -756,6 +783,12 @@ namespace tadah
 
         }
 
+          auto binfo = best_function();
+          double best_objective_value = binfo->best_objective_value;
+
+          // iterate over binfo->bov and find the largest value
+        std::cout << "Best objective value: " << best_objective_value << " Length: " << std::setprecision(15) << length(binfo->best_x) << std::endl;
+
           // std::cout << "get_next Thread ID: " << dlib::get_thread_id() << std::endl;
           if (do_trust_region_step && !has_outstanding_trust_region_request())
         {
@@ -765,12 +798,12 @@ namespace tadah
           auto info = best_function();
           const long dims = info->spec.lower.size();
           // if we have enough points to do a trust region step
-          if (info->ub.num_points() > dims+1)
+          if (info->ub.num_points() > (dims+1))
           {
             count_to_radius_reset++;
             auto tmp = pick_next_sample_using_trust_region(info->ub.get_points(),
                 info->radius, info->spec.lower, info->spec.upper, 
-                info->spec.is_integer_variable, hypercube_separators[info->function_idx]);
+                info->spec.is_integer_variable);
             // std::cout << " improvement: "<< tmp.predicted_improvement;
             // std::cout << "Picking sample from the trust region." << " Pred: "<< tmp.predicted_improvement << " r=" << info->radius;
             if (tmp.predicted_improvement > min_trust_region_epsilon)
@@ -801,11 +834,6 @@ namespace tadah
 
           // if (run_explore_probability < run_explore_probability_highbound)
           //   run_explore_probability *= 1.001;
-          auto binfo = best_function();
-          double best_objective_value = binfo->best_objective_value;
-
-          // iterate over binfo->bov and find the largest value
-        std::cout << "Best objective value: " << best_objective_value << " Length: " << std::setprecision(15) << length(binfo->best_x) << std::endl;
         double best_bov = -std::numeric_limits<double>::infinity();
         matrix<double,0,1> best_bovx;
         for (size_t i = 0; i < binfo->bov.size(); ++i)
@@ -830,23 +858,25 @@ namespace tadah
 
             auto info = best_function();
             // print current dlib thread id
-            // size_t current_m_shell = hypercube_separators[info->function_idx].random_separation(0);
-            size_t current_m_shell = m_counter++/2;
-            if (m_counter == hypercube_separators[info->function_idx].max_separation())
-              m_counter = 0;
+            // size_t current_m_shell = pchunks[info->function_idx].random_separation(0);
+            // size_t current_m_shell = m_counter++/2;
+            // if (m_counter == pchunks[info->function_idx].max_separation())
+            //   m_counter = 0;
             // current_m_shell /= 2; // shells not M hypercubes
-            // size_t &current_m_shell = info->current_m_shell;
+            size_t &current_m_shell = info->current_m_shell;
             auto &cteru = info->count_to_explore_region_update[current_m_shell];
             double &radius = info->radii[current_m_shell];
             const long dims = info->spec.lower.size();
 
             // TODO postpone this until we have enough points to do explore region step
             //if (info->ub.num_points() > (dims+1))
-            if (info->m_shell_samples[current_m_shell].size() > 5*(dims+1) && cteru < 2)
+            // don't even try to do an explore region step if we don't have enough points
+            // to do it. Here we require at least 10*(dims+1) points to do an explore region step to make sense.
+            if (info->m_samples[current_m_shell].size() > 1*(dims+1) && cteru < 2)
             {
               cteru++;
-              auto tmp = pick_next_sample_using_trust_region(info->m_shell_samples[current_m_shell],
-                  radius, info->spec.lower, info->spec.upper, info->spec.is_integer_variable, hypercube_separators[info->function_idx],current_m_shell);
+              auto tmp = pick_next_sample_using_trust_region(info->m_samples[current_m_shell],
+                  radius, info->spec.lower, info->spec.upper, info->spec.is_integer_variable);
               // std::cout << "Picking from the explore region. p=" << run_explore_probability << " Pred: "<< tmp.predicted_improvement
               //   << " r=" << info->radii[current_m_shell] << " mShell: " << current_m_shell << std::endl;
               if (tmp.predicted_improvement > min_explore_region_epsilon)
@@ -867,22 +897,48 @@ namespace tadah
                 }
                 return fer(new_req, info);
               }
-
-            } else {
-              std::cout << "BEST NOT" << std::endl;
+            else {
+              std::cout << "BEST NOT" << " counter " << m_counter << " current_m_shell: " << current_m_shell << std::endl;
+              m_counter++;
+              if (m_counter == pchunks[info->function_idx].num_chunks())
+                m_counter = 0;
+              current_m_shell = m_counter;
               // hiccup, lets try to reset radius
               radius = 0; // reset previous explore region radius
               cteru = 0; // reset counter
-                         // not enough points to do explore region step, so just pick a random points and add to m_shell_samples
+                         // not enough points to do explore region step, so just pick a random points and add to m_samples
+        //       ofer new_req;
+        //       new_req.request_id = next_request_id++;
+        //       new_req.x = pchunks[info->function_idx].random_point_in_cube_shell(current_m_shell);
+        // // new_req.x = make_random_vector(rnd, info->spec.lower, info->spec.upper, info->spec.is_integer_variable);
+        //       new_req.was_explore_region_generated_request = true;
+        //       new_req.anchor_objective_value = info->bov[current_m_shell];
+        //       new_req.m_shell = current_m_shell;
+        //       new_req.predicted_improvement = 1;
+        //       info->outstanding_evals.emplace_back(new_req);
+        //       return fer(new_req, info);
+            }
+
+            }  
+            else {
+              std::cout << "Not enough points to do explore region step, picking random point for shell: " << current_m_shell
+                << " size: " << info->m_samples[current_m_shell].size() << std::endl;
+              radius = 0; // reset previous explore region radius
+              cteru = 0; // reset counter
+                         // not enough points to do explore region step, so just pick a random points and add to m_samples
               ofer new_req;
               new_req.request_id = next_request_id++;
-              new_req.x = hypercube_separators[info->function_idx].random_point_in_cube_shell(current_m_shell);
-        // new_req.x = make_random_vector(rnd, info->spec.lower, info->spec.upper, info->spec.is_integer_variable);
+              new_req.x = pchunks[info->function_idx].random_point_in_chunk(current_m_shell);
               new_req.was_explore_region_generated_request = true;
               new_req.anchor_objective_value = info->bov[current_m_shell];
               new_req.m_shell = current_m_shell;
               new_req.predicted_improvement = 1;
               info->outstanding_evals.emplace_back(new_req);
+        // std::lock_guard<std::mutex> lock(*info->m);
+              // m_counter++;
+              // if (m_counter == pchunks[info->function_idx].num_chunks())
+              //   m_counter = 0;
+              // current_m_shell = m_counter;  // move shell to next one
               return fer(new_req, info);
             }
           } 

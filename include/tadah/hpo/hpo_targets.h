@@ -54,10 +54,10 @@ public:
 
     int THREADS = -1; // number of threads for parallel evaluation, -1 means all available threads
     size_t MAX_CALLS = std::numeric_limits<size_t>::max();
-    std::vector<double> PARAMS;  // convergence parameters for optimization algorithms
+    std::vector<double> params;  // convergence parameters for optimization algorithms
     double FAIL_SCORE = 1000;
     std::string MAX_TIME = "10";
-    std::string MINIMIZER = "2";
+    std::vector<std::string> optimizer;
                            
     LossFunction globalLoss;
 

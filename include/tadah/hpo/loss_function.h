@@ -23,7 +23,6 @@ public:
         HUBER,
         RMSLE,
         TUKEY,
-        SQL2         // squared L2 (identical to L2 for loss, kept for clarity)
     };
 
     /* ----------------------------------------------------------------- *
@@ -49,6 +48,9 @@ public:
      * ----------------------------------------------------------------- */
     double loss(double y, double ypred, double w = 1.0,
                 double eps = 1e-12) const;
+
+    /* ––– meta information ––––––––––––––––––––––––––––––––––––––––––– */
+    bool is_squared() const noexcept;    // true  → collect in RMS bucket
 
 private:
     Type                type_;

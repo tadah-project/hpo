@@ -75,12 +75,36 @@ class HPO_Host
 
 public:
     HPO_Host(core::Context master,
-             HPOTargets&   trg,
-             const std::string& val_cfg);
+        HPOTargets&   trg,
+        const std::string& val_cfg);
 
     double operator()(const ParamVec& p) const;      // thread-safe
 
+
+    /* -------- adapter for NLopt C++ wrapper ----------------------------- */
+    static double nlopt_adapter_cpp(const std::vector<double>& x,
+        std::vector<double>&       grad,
+        void*                      data)
+    {
+      auto* self = static_cast<const HPO_Host*>(data);
+      if (!grad.empty()) {};               // no analytic gradient
+      return (*self)(make_param_vec(static_cast<unsigned>(x.size()),
+            x.data()));
+    }
+
 private:
+
+    // helper that converts the raw array coming from NLopt -----------------
+    static ParamVec make_param_vec(unsigned n, const double* x)
+    {
+      ParamVec v;                   // v is a dlib::matrix<double,0,1>
+      v.set_size(n);
+      for (unsigned i = 0; i < n; ++i)
+        v(i) = x[i];
+      return v;
+    }
+
+
     /* ---------- immutable after construction --------------------------- */
     core::Context                master_ctx_;
     HPOTargets&                  trg_;
@@ -108,7 +132,7 @@ private:
     static std::mutex                              io_mtx_;       // protects FILEs
     static std::map<std::size_t,Result>            io_buf_;       // re-order
     static std::atomic<std::size_t>                next_flush_;   // next iter
-    static constexpr std::size_t                   QFLUSH_THRESHOLD = 100; // N
+    static constexpr std::size_t                   QFLUSH_THRESHOLD = 10; // N
     static void submit_result(Result&&, const HPOTargets& trg_,
                               std::size_t cw, int prec);
 
@@ -142,7 +166,7 @@ private:
     static constexpr std::size_t  outvarEvery     = 10;
     static constexpr std::size_t  paramsEvery     = 10;
     static constexpr std::size_t  potEvery        = 10;   // archive any pot
-    static constexpr std::size_t  bestPotEvery    = 10;   // archive best pot
+    static constexpr std::size_t  bestPotEvery    = 10;   // archive best pot in bestPotDir_ every N iterations
 
     /* line printers ------------------------------------ */
     void init_loss   (const std::string& fn) const;

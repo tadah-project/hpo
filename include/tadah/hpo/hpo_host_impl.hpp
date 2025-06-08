@@ -305,14 +305,19 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
 template<class P, class R>
 void HPO_Host<P,R>::accumulate_loss(Result& r) const
 {
-  double tLoss=0; std::size_t cnt=0;
-  /* ----- helper -------------------------------------------------------- */
-  auto add_global = [&](double& sink, double y, double ref, double w)
+  double s_lin = 0.0, s_sq = 0.0;          // sums
+  std::size_t c_lin = 0,   c_sq = 0;       // counts
+
+  auto add_global = [&](double& sink,
+      double  y, double ref, double w)
   {
     sink = trg_.globalLoss.loss(y, ref, w);
-    ++cnt; tLoss += sink;
-  };
 
+    if (trg_.globalLoss.is_squared())
+    { s_sq += sink; ++c_sq; }
+    else
+    { s_lin += sink; ++c_lin; }
+  };
   if (trg_.use_emae)   add_global(r.emaeLoss , r.emae , trg_.emae , trg_.w_emae );
   if (trg_.use_ermse)  add_global(r.ermseLoss, r.ermse, trg_.ermse, trg_.w_ermse);
   if (trg_.use_errmse) add_global(r.errmseLoss,r.errmse,trg_.errmse,trg_.w_errmse);
@@ -328,20 +333,25 @@ void HPO_Host<P,R>::accumulate_loss(Result& r) const
     for (auto j : lsim.i_varloss) {
       double v  = std::stod(r.v_outvar[i][j]);
       double w  = lsim.w_varloss[j];
-
       double l = lsim.lossFn[j].loss(v, lsim.t_varloss[j], w);
       r.v_loss[i][j] = l;
-      tLoss += l; ++cnt;
+
+      if (lsim.lossFn[j].is_squared())
+      { s_sq += l; ++c_sq; }
+      else
+      { s_lin += l; ++c_lin; }
+
     }
   }
 
-  double mean = tLoss / std::max<std::size_t>(1,cnt);
-  auto gt = trg_.globalLoss.type();
-  if(gt==tadah::LossFunction::Type::L2 ||
-      gt==tadah::LossFunction::Type::RMSLE)
-    r.loss = std::sqrt(mean);
-  else
-    r.loss = mean;
+  // double part_lin = c_lin ? s_lin / static_cast<double>(c_lin) : 0.0;
+  // double part_sq  = c_sq  ? std::sqrt( s_sq / static_cast<double>(c_sq) ) : 0.0;
+  // r.loss = part_lin + part_sq;
+
+  // Probably better to use the following and apply sqrt when reporting?
+  double part_lin = c_lin ? s_lin / static_cast<double>(c_lin) : 0.0;
+  double part_sq  = c_sq  ? s_sq / static_cast<double>(c_sq) : 0.0;
+  r.loss = part_lin + part_sq;
 }
 
 /* ----------  operator()  (thread-safe) ------------------------------- */
@@ -438,17 +448,14 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
     /* 1. enqueue ------------------------------------------------------- */
     g_q_.enqueue(std::move(res));
 
-    /* 2. quick exit unless we *must* flush ------- */
+    /* 2. quick exit if queue still small ------------------------------- */
     if (!need_flush(my_iter))
         return;
-
-    /* 2. quick exit if queue still small ------------------------------- */
-    // if(g_q_.size_approx() < QFLUSH_THRESHOLD) return;
-
 
     /* 3. try to become the writer ------------------------------------- */
     if(writer_token_.test_and_set(std::memory_order_acquire))
         return;                                  // somebody else is writing
+
 
     /* 4. exclusive writer section ------------------------------------- */
     {

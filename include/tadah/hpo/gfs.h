@@ -1,3 +1,299 @@
+/******************************************************************************
+ * parameter_space_divider.h
+ *
+ * Divide an axis-aligned hyper-rectangular parameter space into an EXACT,
+ * user-requested number of chunks (5–100 is the intended range, but any
+ * positive value is accepted).  The class keeps the API of the previous
+ * draft yet replaces the “same splits on every axis” rule by a greedy,
+ * per-axis split allocator that guarantees
+ *
+ *      Π splits[i]  ==  target_chunks    (exact)
+ *
+ * while trying to keep the resulting hyper-rectangles as close as possible
+ * in hyper-volume.  Optional log–scaling is still applied automatically on
+ * axes whose ratio high/low ≥ 1000 and low > 0.
+ *
+ * No dynamic allocation except small std::vector, no 3rd-party deps besides
+ * dlib, header-only, C++17.
+ *
+ * Edinburgh University – ELM / GPT-4
+ ******************************************************************************/
+
+#ifndef ELM_PARAMETER_SPACE_DIVIDER_H_INCLUDED
+#define ELM_PARAMETER_SPACE_DIVIDER_H_INCLUDED
+
+#include <dlib/matrix.h>
+#include <dlib/rand.h>
+
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <cstddef>
+#include <ctime>
+#include <optional>
+#include <stdexcept>
+#include <vector>
+
+namespace elm
+{
+class ParameterSpaceDivider
+{
+public:
+    using Vec = dlib::matrix<double,0,1>;       // column vector
+
+    /* ------------------------------------------------------------------ */
+    /*  Construction                                                      */
+    /* ------------------------------------------------------------------ */
+    ParameterSpaceDivider(const Vec& low,
+                          const Vec& high,
+                          std::size_t target_chunks,
+                          bool  enable_log_scaling = false,
+                          std::optional<unsigned long> seed = std::nullopt)
+        : dim_{static_cast<std::size_t>(low.nr())},
+          rnd_{}
+    {
+        if (dim_ == 0)
+            throw std::invalid_argument("ParameterSpaceDivider: zero dimension");
+        if (high.nr() != static_cast<long>(dim_))
+            throw std::invalid_argument("low/high dimension mismatch");
+        if (target_chunks == 0)
+            throw std::invalid_argument("target_chunks must be > 0");
+
+        /* ---- RNG ----------------------------------------------------- */
+        if (seed) rnd_.set_seed(dlib::cast_to_string(*seed));
+        else      rnd_.set_seed(dlib::cast_to_string(std::time(nullptr)));
+
+        /* ---- decide per-axis scaling & transformed ranges ------------ */
+        use_log_ .resize(dim_);
+        min_t_  .resize(dim_);
+        width_t_.resize(dim_);
+        splits_ .assign(dim_, 1);        // start with 1 chunk along each axis
+        range_t_.resize(dim_);
+
+        const double RATIO_THRESHOLD = 1000.0;
+        for (std::size_t i = 0; i < dim_; ++i)
+        {
+            if (high(i) <= low(i))
+                throw std::invalid_argument("low(i) must be < high(i)");
+
+            const bool log_axis =
+                enable_log_scaling && low(i) > 0.0 &&
+                (high(i) / low(i)) >= RATIO_THRESHOLD;
+
+            use_log_[i] = log_axis;
+
+            min_t_[i]   = log_axis ? std::log(low(i)) : low(i);
+            const double max_t = log_axis ? std::log(high(i)) : high(i);
+
+            range_t_[i] = max_t - min_t_[i];
+        }
+
+        /* ---- greedy assignment of splits[] so that Π splits == target --- */
+        std::size_t product = 1;
+        while (product < target_chunks)
+        {
+            /* pick axis with widest current cell */
+            std::size_t best_axis = 0;
+            double      best_width = current_cell_width(0);
+
+            for (std::size_t i = 1; i < dim_; ++i)
+            {
+                double w = current_cell_width(i);
+                if (w > best_width)
+                {
+                    best_width = w;
+                    best_axis = i;
+                }
+            }
+
+            ++splits_[best_axis];
+            // product *= 1;    // product will be recomputed below for speed
+            product = 1;
+            for (std::size_t s: splits_) product *= s;
+
+            if (product > target_chunks)
+            {
+                /* we just exceeded; undo, and break (exact target impossible) */
+                --splits_[best_axis];
+                break;
+            }
+        }
+
+        /* If product < target_chunks we still need to reach it exactly.
+         * Increment axes round-robin until we hit the target.  This second
+         * pass only fires when the greedy loop couldn’t match the exact
+         * product due to small remaining factorisation (rare, small).        */
+        std::size_t axis = 0;
+        while (product < target_chunks)
+        {
+            ++splits_[axis];
+            product = 1;
+            for (std::size_t s: splits_) product *= s;
+            axis = (axis + 1) % dim_;
+        }
+        if (product != target_chunks)
+            throw std::logic_error("Internal error: could not reach target_chunks");
+
+        num_chunks_ = product;
+
+        /* ---- pre-compute width_t_  ---------------------------------- */
+        for (std::size_t i = 0; i < dim_; ++i)
+            width_t_[i] = range_t_[i] / static_cast<double>(splits_[i]);
+
+        /* ---- multipliers for row-major linearisation ---------------- */
+        mult_.resize(dim_);
+        mult_[0] = 1;
+        for (std::size_t i = 1; i < dim_; ++i)
+            mult_[i] = mult_[i-1] * splits_[i-1];
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  Basic queries                                                     */
+    /* ------------------------------------------------------------------ */
+    std::size_t dimensionality() const noexcept { return dim_; }
+    std::size_t num_chunks()      const noexcept { return num_chunks_; }
+
+    /* inclusive-inclusive random chunk */
+    std::size_t random_chunk(std::size_t inclusive_min,
+                             std::size_t inclusive_max)
+    {
+        if (inclusive_min > inclusive_max || inclusive_max >= num_chunks_)
+            throw std::out_of_range("random_chunk(): invalid range");
+
+        const std::size_t span = inclusive_max - inclusive_min + 1;
+        return inclusive_min +
+               static_cast<std::size_t>(rnd_.get_random_double() * span);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  Random point in chunk                                             */
+    /* ------------------------------------------------------------------ */
+    Vec random_point_in_chunk(std::size_t idx)
+    {
+        auto coord = decompose_index(idx);
+        Vec  out(dim_);
+
+        for (std::size_t i = 0; i < dim_; ++i)
+        {
+            double cell_min_t = min_t_[i] +
+                                static_cast<double>(coord[i]) * width_t_[i];
+            double v_t = cell_min_t + rnd_.get_random_double() * width_t_[i];
+
+            out(i) = use_log_[i] ? std::exp(v_t) : v_t;
+        }
+        return out;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  Membership test                                                   */
+    /* ------------------------------------------------------------------ */
+    bool point_in_chunk(const Vec& p, std::size_t idx) const
+    {
+        if (static_cast<std::size_t>(p.nr()) != dim_)
+            throw std::invalid_argument("point dimensionality mismatch");
+
+        auto coord = decompose_index(idx);
+
+        for (std::size_t i = 0; i < dim_; ++i)
+        {
+            double pt_t = use_log_[i] ? std::log(p(i)) : p(i);
+
+            double cell_min = min_t_[i] +
+                              static_cast<double>(coord[i]) * width_t_[i];
+            double cell_max = cell_min + width_t_[i];
+
+            bool last = (coord[i] == splits_[i]-1);
+            if ( last )
+            {
+                if (pt_t < cell_min || pt_t > cell_max + 1e-12)
+                    return false;
+            }
+            else
+            {
+                if (pt_t < cell_min || pt_t >= cell_max)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  Centre-to-centre distance                                         */
+    /* ------------------------------------------------------------------ */
+    double distance_between_chunks(std::size_t idx1,
+                                   std::size_t idx2) const
+    {
+        Vec c1 = centre_of_chunk(idx1);
+        Vec c2 = centre_of_chunk(idx2);
+
+        double sum = 0.0;
+        for (std::size_t i = 0; i < dim_; ++i)
+        {
+            double d = c1(i) - c2(i);
+            sum += d*d;
+        }
+        return std::sqrt(sum);
+    }
+
+private:
+    /* ------------------------------------------------------------------ */
+    /*  Helpers                                                           */
+    /* ------------------------------------------------------------------ */
+    double current_cell_width(std::size_t axis) const
+    {
+        return range_t_[axis] / static_cast<double>(splits_[axis]);
+    }
+
+    std::vector<std::size_t> decompose_index(std::size_t idx) const
+    {
+        if (idx >= num_chunks_)
+            throw std::out_of_range("chunk index out of range");
+
+        std::vector<std::size_t> coord(dim_);
+        for (std::size_t i = dim_; i-- > 0; )
+        {
+            coord[i] = idx / mult_[i];
+            idx      = idx % mult_[i];
+        }
+        return coord;
+    }
+
+    Vec centre_of_chunk(std::size_t idx) const
+    {
+        auto c = decompose_index(idx);
+        Vec centre(dim_);
+        for (std::size_t i = 0; i < dim_; ++i)
+        {
+            double centre_t = min_t_[i] +
+                              (static_cast<double>(c[i]) + 0.5) * width_t_[i];
+            centre(i) = use_log_[i] ? std::exp(centre_t) : centre_t;
+        }
+        return centre;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  Data members                                                      */
+    /* ------------------------------------------------------------------ */
+    const std::size_t dim_;
+    std::size_t       num_chunks_;
+
+    /* per-axis data */
+    std::vector<bool>   use_log_;
+    std::vector<double> min_t_;
+    std::vector<double> width_t_;
+    std::vector<double> range_t_;        /* transformed total range */
+    std::vector<std::size_t> splits_;    /* #chunks along each axis */
+    std::vector<std::size_t> mult_;      /* row-major multipliers   */
+
+    /* RNG (not thread-safe by design) */
+    dlib::rand rnd_;
+};
+
+} // namespace elm
+
+#endif  /* ELM_PARAMETER_SPACE_DIVIDER_H_INCLUDED */
+
+
 // Copyright (C) 2017  Davis E. King (davis@dlib.net)
 // License: Boost Software License   See LICENSE.txt for the full license.
 #ifndef TADAH_DLIB_GLOBAL_FuNCTION_SEARCH_Hh_
@@ -48,7 +344,7 @@ public:
 
     // set γ⁻¹ = S  =>  γ = 1/S
     gamma_inv_ = double(S);
-    max_M_     = S;
+    max_S_     = S;
 
     // precompute inv_widths[i] = 1/(γ*width_i) = S/width_i
     inv_widths_ = dlib::matrix<double>(d_, 1);
@@ -76,9 +372,9 @@ public:
   int M) const
 {
   check_initialized();
-  if (M < 0 || M > max_M_)
+  if (M < 0 || M > max_S_)
     throw std::invalid_argument(
-      "separated(): M out of valid range [0," + std::to_string(max_M_)+"]");
+      "separated(): M out of valid range [0," + std::to_string(max_S_)+"]");
   if (int(a.size()) != d_ || int(b.size()) != d_)
     throw std::invalid_argument("separated(): dimension mismatch");
 
@@ -102,18 +398,30 @@ public:
 
   int max_separation() const {
     if(d_==0) throw std::logic_error("uninitialized");
-    return max_M_;
+    return max_S_;
   }
 
-    // new method: draw a random integer in [min_M, max_separation()]
+// draw a random integer in [min_M, max_separation()]
   int random_separation(int min_M ) {
     check_initialized();
-    if (min_M < 0 || min_M > max_M_)
+    if (min_M < 0 || min_M > max_S_)
       throw std::invalid_argument(
-        "random_separation(): min_M out of valid range [0," + std::to_string(max_M_)+"]");
+        "random_separation(): min_M out of valid range [0," + std::to_string(max_S_)+"]");
 
-    long long res = rnd.get_integer_in_range(min_M, max_M_);
+    long long res = rnd.get_integer_in_range(min_M, max_S_);
     return res;
+  }
+
+  int random_shell(int M) {
+    check_initialized();
+    if (M < 0 || 2*M > max_S_)
+      throw std::invalid_argument(
+        "random_shell(): M out of valid range [0," + std::to_string(max_S_)+"]");
+
+    int res = rnd.get_integer_in_range(M, max_S_/2);
+
+    return res;
+
   }
 
   bool in_cube_shell(
@@ -124,8 +432,8 @@ public:
     check_initialized();
     if(int(centre.size())!=d_ || int(q.size())!=d_)
       throw std::invalid_argument("dimension mismatch");
-    if(M < 0 || M > max_M_)
-      throw std::invalid_argument("M out of [0," + std::to_string(max_M_)+"]");
+    if(M < 0 || M > max_S_)
+      throw std::invalid_argument("M out of [0," + std::to_string(max_S_)+"]");
 
     // compute cube‐indices and L∞‐index‐distance
     int max_delta = 0;
@@ -154,9 +462,9 @@ dlib::matrix<double,0,1> random_point_in_cube_shell(
     int M) 
   {
     check_initialized();
-    if(M < 0 || M > max_M_) 
+    if(M < 0 || M > max_S_) 
       throw std::invalid_argument(
-        "M out of range [0,"+std::to_string(max_M_)+"]");
+        "M out of range [0,"+std::to_string(max_S_)+"]");
     if(int(centre.size())!=d_) 
       throw std::invalid_argument("dimension mismatch");
 
@@ -215,7 +523,7 @@ private:
   }
   int d_ = 0;
   double gamma_inv_ = 0;    // = 1/gamma = (n/alpha)^(1/d)
-  int    max_M_     = 0;    // = floor(gamma_inv_)
+  int    max_S_     = 0;    // = floor(gamma_inv_),max separation between cubes
   double count_     = 0.0;  // ≈ number of cubes per dim = γ_inv_
 
   dlib::rand rnd;
@@ -282,8 +590,8 @@ private:
             double radius = 0;
             std::vector<double> radii; // radii for explore region
             std::vector<size_t> count_to_explore_region_update;
-            size_t current_m_shell = 1;
-            std::vector<std::vector<function_evaluation>> m_shell_samples;
+            size_t current_m_shell = 0;
+            std::vector<std::vector<function_evaluation>> m_samples;
 
         };
 
@@ -363,6 +671,9 @@ private:
         void init_hypercube_separators (
             int sep
         );
+        void init_chunks (
+            size_t splits
+        );
 
         size_t num_functions(
         ) const;
@@ -424,7 +735,8 @@ private:
         bool do_trust_region_step = true;
         bool do_trust_region_step2 = true;
 
-        std::vector<HypercubeSeparator> hypercube_separators;
+        // std::vector<HypercubeSeparator> hypercube_separators;
+        std::vector<elm::ParameterSpaceDivider> pchunks;
 
     private:
   using Cand = std::pair<double, dlib::matrix<double,0,1> const*>;

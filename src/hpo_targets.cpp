@@ -352,10 +352,13 @@ void HPOTargets::read(std::string fn)
       if (key == "PARAMS") {
         double temp;
         while (iss >> temp) {
-          PARAMS.push_back(temp);
+          params.push_back(temp);
         }
-      } else if (key == "MINIMIZER") {
-        iss >> MINIMIZER;
+      } else if (key == "OPTIMIZER") {
+        std::string temp;
+        while(iss >> temp) {
+          optimizer.push_back(temp);
+        }
       } else if (key == "LOSS") {
         iss >> globLossTypeStr;
         if (globLossTypeStr== "HUBER") {
