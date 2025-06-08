@@ -119,7 +119,7 @@ void LammpsSim::parse_tokens() {
     // Tadah! specific keywords
     else if (tokens[i] == "--varloss")
     {
-      auto is_flag = [](const std::string& s){ return s.rfind("--",0)==0; };
+      auto is_flag = [](const std::string& s){ return s.rfind("-",0)==0; };
 
       std::size_t j=i+1;
 
@@ -295,7 +295,8 @@ inline std::string read_entire_file(const std::string& filename)
 ------------------------------------------------------------------------- */
 void LammpsSim::prep_script_lines()
 {
-  std::string buffer = read_entire_file(script);
+  std::string buffer = expand_includes(script);
+  std::cout << "LAMMPS script after include expansion:\n" << buffer << std::endl;
   script_lines.clear();
 
   std::istringstream iss(buffer);
@@ -380,5 +381,83 @@ void LammpsSim::prep_script_lines()
       cmd.find_first_not_of(" \t\n") != std::string::npos)
     script_lines.push_back(cmd);
 }
+
+
+namespace fs = std::filesystem;
+
+// -----------------------------------------------------------------
+//  Recursive worker that actually performs the include expansion
+// -----------------------------------------------------------------
+std::string LammpsSim::expand_includes_rec(const fs::path &file,
+                                           std::unordered_set<std::string> &stack)
+{
+    const fs::path abs = fs::absolute(file);
+
+    if (!fs::exists(abs))
+        throw std::runtime_error("LAMMPS include file not found: " + abs.string());
+
+    /* Detect circular includes (“A includes B includes A …”)             */
+    if (!stack.insert(abs.string()).second)
+        throw std::runtime_error("Circular include detected at: " + abs.string());
+
+    std::string          text   = read_entire_file(abs);
+    std::ostringstream   out;
+    std::istringstream   iss(text);
+    std::string          line;
+
+    while (std::getline(iss, line))
+    {
+        /* strip trailing CR put there by Windows text files */
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+
+        /* find first non-blank character */
+        const std::size_t first = line.find_first_not_of(" \t");
+        if (first == std::string::npos)        /* completely blank line */
+        {
+            out << '\n';
+            continue;
+        }
+
+        /* test for   include  <filename>   */
+        if (line.compare(first, 7, "include") == 0 &&
+            std::isspace(static_cast<unsigned char>(line[first + 7])))
+        {
+            std::size_t fname_start = line.find_first_not_of(" \t", first + 7);
+            if (fname_start == std::string::npos)
+                throw std::runtime_error("Missing file name in include statement ("
+                                         + abs.string() + ')');
+
+            std::size_t fname_end = line.find_first_of(" \t#\r\n", fname_start);
+            std::string inc_name  = line.substr(fname_start,
+                                                fname_end == std::string::npos
+                                                    ? std::string::npos
+                                                    : fname_end - fname_start);
+
+            fs::path inc_path = abs.parent_path() / inc_name;
+            out << expand_includes_rec(inc_path, stack);   // recursive step
+            continue;                                      // nothing of the original line survives
+        }
+
+        /* ordinary line – keep verbatim */
+        out << line << '\n';
+    }
+
+    /* done with this file – pop it from the recursion guard */
+    stack.erase(abs.string());
+
+    return out.str();
+}
+
+// -----------------------------------------------------------------
+//  Public one-liner wrapper that callers can use
+// -----------------------------------------------------------------
+std::string LammpsSim::expand_includes(const fs::path &file)
+{
+    std::unordered_set<std::string> recursion_guard;
+    return expand_includes_rec(file, recursion_guard);
+}
+
+
 } // namespace tadah::hpo
+
 

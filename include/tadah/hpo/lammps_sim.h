@@ -8,6 +8,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
+#include <filesystem>
+#include <unordered_set>
 
 namespace tadah::hpo {
   
@@ -29,6 +31,10 @@ class LammpsSim {
 
     /* default for all --varloss until the user overrides it */
     tadah::LossFunction          defLoss;
+
+    static std::string expand_includes(const std::filesystem::path &file);
+    static std::string expand_includes_rec(const std::filesystem::path &file,
+                                           std::unordered_set<std::string> &stack);
 
   public:
     /* one loss function per --varloss                                 */
