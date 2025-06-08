@@ -67,8 +67,8 @@ bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
           line.find("EXTERN") != std::string::npos) {
         LAMMPS_NS::Pair *pair = lmp_ptr->force->pair;
         LAMMPS_NS::PairTadah *pt = dynamic_cast<LAMMPS_NS::PairTadah*>(pair);
-        std::cout << "DEBUG: Loading potential from context." << std::endl;
-        pt->load(std::move(pot_ctx));
+        // pt->load(std::move(pot_ctx));  // cannot move as pair_coeff might be called several times
+        pt->load(pot_ctx);
       }
       // Execute the line
       lmp_ptr->input->one(line.c_str());
