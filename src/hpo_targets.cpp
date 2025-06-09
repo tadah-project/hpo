@@ -386,12 +386,16 @@ void HPOTargets::read(std::string fn)
         auto lossTypeId = tadah::LossFunction::from_string(globLossTypeStr);
         globalLoss = tadah::LossFunction(lossTypeId, globLossParams);
 
-      } else if (key == "IOEVERY") {
-        iss >> io_every >> potevery_dir;
-        handle_directory_creation(potevery_dir);
-      } else if (key == "BESTPOTEVERY") {
-        iss >> bestPotEvery >> bestPotEveryDir;
-        handle_directory_creation(bestPotEveryDir);
+      } else if (key == "OUTPUT") {
+        iss >> outputEvery;
+      } else if (key == "BOUTPUT") {
+        iss >> bestOutputEvery;
+      } else if (key == "DUMP") {
+        iss >> dumpPotEvery >> dumpPotDir;
+        handle_directory_creation(dumpPotDir);
+      } else if (key == "BDUMP") {
+        iss >> dumpBestPotEvery >> dumpBestPotDir;
+        handle_directory_creation(dumpBestPotDir);
       } else if (key == "MAXCALLS") {
         iss >> MAX_CALLS;
       } else if (key == "FAILSCORE") {

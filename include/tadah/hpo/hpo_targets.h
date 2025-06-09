@@ -58,13 +58,22 @@ public:
     double FAIL_SCORE = 1000;
     std::string MAX_TIME = "10";
     std::vector<std::string> optimizer;
+
+    size_t outputEvery = 1;
+    size_t bestOutputEvery = 1;
+    size_t dumpPotEvery = std::numeric_limits<size_t>::max(); //  archiving potentials
+    size_t dumpBestPotEvery = std::numeric_limits<size_t>::max(); // archiving best potentials
+    std::string dumpPotDir = "pots";
+    std::string dumpBestPotDir = "best_pots";
                            
+    const std::string lossFile       = "loss.tadah";
+    const std::string outvarFile     = "outvar.tadah";
+    const std::string paramsFile     = "params.tadah";
+    const std::string bestLossFile    = "best_loss.tadah";
+    const std::string bestOutvarFile  = "best_outvar.tadah";
+    const std::string bestParamsFile  = "best_params.tadah";
     LossFunction globalLoss;
 
-    std::string potevery_dir;
-    std::string bestPotEveryDir;
-    size_t io_every = std::numeric_limits<size_t>::max();
-    size_t bestPotEvery = std::numeric_limits<size_t>::max();
     bool use_emae = false; bool use_ermse = false; bool use_errmse = false; bool use_ersq = false;
     double emae, ermse, errmse, ersq; 
     double w_emae, w_ermse, w_errmse, w_ersq;

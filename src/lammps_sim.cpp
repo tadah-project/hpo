@@ -296,7 +296,6 @@ inline std::string read_entire_file(const std::string& filename)
 void LammpsSim::prep_script_lines()
 {
   std::string buffer = expand_includes(script);
-  std::cout << "LAMMPS script after include expansion:\n" << buffer << std::endl;
   script_lines.clear();
 
   std::istringstream iss(buffer);

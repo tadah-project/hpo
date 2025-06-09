@@ -151,23 +151,6 @@ private:
     const int                    prec_ = 7;
     size_t                       max_title_len_ = cw_-1; // max length of title in loss/outvar/params
 
-    /* I/O file names ---------------------------------------------------- */
-    const std::string loss_file_       = "loss.tadah";
-    const std::string outvar_file_     = "outvar.tadah";
-    const std::string params_file_     = "params.tadah";
-    const std::string bestLossFile_    = "best_loss.tadah";
-    const std::string bestOutvarFile_  = "best_outvar.tadah";
-    const std::string bestParamsFile_  = "best_params.tadah";
-    static constexpr const char*  bestPotDir_      = "best_pots";
-    static constexpr const char*  potDir_          = "pots";
-
-    /* hard-coded rates – replace by trg_ values later ------------------- */
-    static constexpr std::size_t  lossEvery       = 10;
-    static constexpr std::size_t  outvarEvery     = 10;
-    static constexpr std::size_t  paramsEvery     = 10;
-    static constexpr std::size_t  potEvery        = 10;   // archive any pot
-    static constexpr std::size_t  bestPotEvery    = 10;   // archive best pot in bestPotDir_ every N iterations
-
     /* line printers ------------------------------------ */
     void init_loss   (const std::string& fn) const;
     void init_outvar (const std::string& fn) const;

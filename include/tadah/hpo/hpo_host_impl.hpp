@@ -238,12 +238,13 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
             throw std::runtime_error("Validation element missing in training");
 
 
-    init_loss   (loss_file_);
-    init_outvar (outvar_file_);
-    init_params (params_file_);
-    init_loss   (bestLossFile_);
-    init_outvar (bestOutvarFile_);
-    init_params (bestParamsFile_);
+    init_loss   (trg_.lossFile);
+    init_outvar (trg_.outvarFile);
+    init_params (trg_.paramsFile);
+    init_loss   (trg_.bestLossFile);
+    init_outvar (trg_.bestOutvarFile);
+    init_params (trg_.bestParamsFile);
+
 }
 
 /* ----------  helper: update context ----------------------------------- */
@@ -465,45 +466,47 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
         while(g_q_.try_dequeue(item))
             io_buf_.emplace(item.iter,std::move(item));
 
-        static std::ofstream loss_f  ("loss.tadah", std::ios::app),
-                             outv_f  ("outvar.tadah", std::ios::app),
-                             par_f   ("params.tadah", std::ios::app),
-                             best_f  ("best_loss.tadah", std::ios::app),
-                             best_outv_f("best_outvar.tadah", std::ios::app),
-                             best_par_f ("best_params.tadah", std::ios::app);
+        static std::ofstream loss_f  (trg.lossFile, std::ios::app),
+                             outv_f  (trg.outvarFile, std::ios::app),
+                             par_f   (trg.paramsFile, std::ios::app),
+                             best_f  (trg.bestLossFile, std::ios::app),
+                             best_outv_f(trg.bestOutvarFile, std::ios::app),
+                             best_par_f (trg.bestParamsFile, std::ios::app);
 
         while(io_buf_.count(next_flush_))
         {
             const auto& e = io_buf_[next_flush_];
 
         /* ---- print standard logs ------------------------------------ */
-        if(next_flush_ % lossEvery == 0){
+        if(next_flush_ % trg.outputEvery == 0){
             print_loss_line  (loss_f , e.iter, e, trg, cw, prec);
             print_outvar_line(outv_f , e.iter, e, trg, cw, prec);
             print_params_line(par_f  , e.iter, e,      cw, prec);
         }
 
         /* ---- new best logs ------------------------------------------ */
-        if(e.is_best){
+        if(e.is_best) {
+          if(trg.bestOutputEvery > 0) {
             print_loss_line  (best_f      , e.best_iter, e, trg, cw, prec);
             print_outvar_line(best_outv_f , e.best_iter, e, trg, cw, prec);
             print_params_line(best_par_f  , e.best_iter, e,      cw, prec);
+          }
 
-            /* overwrite & archive best_pot ---------------------------- */
-            {
-                std::ofstream bp("best_pot.tadah");
-                bp<<e.pot_ctx;
-            }
-            if(e.best_iter % bestPotEvery == 0){
-                std::ofstream bpa(std::string(bestPotDir_)
-                    +"/best_pot_" + std::to_string(e.iter) + ".tadah");
-                bpa<<e.pot_ctx;
-            }
+          /* overwrite & archive best_pot ---------------------------- */
+          {
+            std::ofstream bp("best_pot.tadah");
+            bp<<e.pot_ctx;
+          }
+          if(e.best_iter % trg.dumpBestPotEvery == 0){
+            std::ofstream bpa(std::string(trg.dumpBestPotDir)
+                +"/best_pot_" + std::to_string(e.best_iter) + ".tadah");
+            bpa<<e.pot_ctx;
+          }
         }
 
-        /* ---- archive ANY pot every potEvery ------------------------- */
-        if(e.iter % potEvery == 0){
-            std::ofstream pa(std::string(potDir_)
+        /* ---- archive ANY pot every ------------------------- */
+        if(e.iter % trg.dumpPotEvery == 0){
+            std::ofstream pa(std::string(trg.dumpPotDir)
                 +"/pot_"+std::to_string(e.iter)+".tadah");
             pa<<e.pot_ctx;
         }
