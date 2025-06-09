@@ -56,6 +56,7 @@ public:
     size_t MAX_CALLS = std::numeric_limits<size_t>::max();
     std::vector<double> params;  // convergence parameters for optimization algorithms
     double FAIL_SCORE = 1000;
+    std::size_t QFLUSH_THRESHOLD = 10; // number of results to flush to disk at once
     std::string MAX_TIME = "10";
     std::vector<std::string> optimizer;
 

@@ -57,7 +57,7 @@ void HPO_Host<P,R>::init_outvar(const std::string& fn) const
   std::ofstream f(fn);
 
   f << std::left << std::setw(cw_) << "# ITERATION";
-  f << std::setw(cw_) << "IT_TIME/ms" << std::right;
+  f << std::setw(cw_) << "IT-TIME/ms" << std::right;
   if (trg_.use_emae)
     f << std::setw(cw_) << "EMAE";
   if (trg_.use_ermse)
@@ -428,16 +428,6 @@ double HPO_Host<P,R>::operator()(const P& p) const
     submit_result(std::move(r), trg_, cw_, prec_);
     return r.loss;
 }
-  template<class P,class R>
-bool  HPO_Host<P,R>::need_flush(std::size_t produced_iter)
-{
-    /*  ‑ flush if we close the gap               */
-    // if (produced_iter == next_flush_.load(std::memory_order_relaxed))
-    //     return true;
-
-    /*  ‑ flush if queue is getting large (old)   */
-    return g_q_.size_approx() >= QFLUSH_THRESHOLD;
-}
 
 /* ---------- opportunistic writer helper ------------------------------ */
   template<class P,class R>
@@ -450,7 +440,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
     g_q_.enqueue(std::move(res));
 
     /* 2. quick exit if queue still small ------------------------------- */
-    if (!need_flush(my_iter))
+    if (g_q_.size_approx() < trg.QFLUSH_THRESHOLD)
         return;
 
     /* 3. try to become the writer ------------------------------------- */
@@ -495,12 +485,63 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
           /* overwrite & archive best_pot ---------------------------- */
           {
             std::ofstream bp("best_pot.tadah");
-            bp<<e.pot_ctx;
+
+            bp << "#-----------------------------------------------------" << std::endl;
+            bp<<"# HPO: Best potential at iter " << e.best_iter << std::endl;
+            auto now  = std::chrono::system_clock::now();          // current time-point
+            auto tt   = std::chrono::system_clock::to_time_t(now); // to time_t
+
+            bp << "# Time stamp: "
+              << std::put_time(std::localtime(&tt), "%d.%m.%Y %H:%M:%S")
+              << std::endl;
+            bp<<"# Loss: " << e.loss << std::endl;
+            bp << "#-----------------------------------------------------" << std::endl;
+            bp<<"# Outvars:" << std::endl << "#";
+            for (const auto &lsim : trg.LS) {
+              for (auto n_outvar : lsim.n_outvar) {
+                if (n_outvar.size() > cw - 1) {
+                  n_outvar = n_outvar.substr(0, cw - 1 - 1) + "*";
+                }
+                bp << std::setw(cw) << n_outvar;
+              }
+            }
+            bp << std::endl << "#";
+
+            for (size_t i = 0; i < e.v_outvar.size(); ++i) {
+              auto &indices = trg.LS[i].i_varloss;
+              for (const auto &j : indices) {
+                bp<<std::right << std::setw(cw) << std::scientific
+                  << std::setprecision(prec) << std::stod(e.v_outvar[i][j]);
+              }
+            }
+            bp<<std::endl;
+            bp<<"# Losses: " << std::endl << "#";
+            for (const auto &lsim : trg.LS) {
+              for (auto varname : lsim.n_varloss) {
+                if (varname.size() - 2 > cw - 1) {
+                  varname = varname.substr(0, cw -1 - 4) + "*";
+                }
+                bp << std::setw(cw) << "L(" + varname + ")";
+              }
+            }
+            bp << std::setw(cw) << "TOTAL_LOSS/N" << std::endl << "#";
+
+            for (size_t i = 0; i < e.v_loss.size(); ++i) {
+              auto &indices = trg.LS[i].i_varloss;
+              for (const auto &j : indices) {
+                bp<<std::right << std::setw(cw) << std::scientific
+                  << std::setprecision(prec) << e.v_loss[i][j];
+              }
+            }
+            bp<<std::endl;
+            bp << "#-----------------------------------------------------" << std::endl;
+
+            bp<<std::setprecision(e.pot_ctx.template get<size_t>("NUMERIC"))<<e.pot_ctx;
           }
           if(e.best_iter % trg.dumpBestPotEvery == 0){
             std::ofstream bpa(std::string(trg.dumpBestPotDir)
                 +"/best_pot_" + std::to_string(e.best_iter) + ".tadah");
-            bpa<<e.pot_ctx;
+            bpa<<std::setprecision(e.pot_ctx.template get<size_t>("NUMERIC"))<<e.pot_ctx;
           }
         }
 
@@ -508,7 +549,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
         if(e.iter % trg.dumpPotEvery == 0){
             std::ofstream pa(std::string(trg.dumpPotDir)
                 +"/pot_"+std::to_string(e.iter)+".tadah");
-            pa<<e.pot_ctx;
+            pa<<std::setprecision(e.pot_ctx.template get<size_t>("NUMERIC"))<<e.pot_ctx;
         }
 
             io_buf_.erase(next_flush_++);

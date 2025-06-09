@@ -132,7 +132,6 @@ private:
     static std::mutex                              io_mtx_;       // protects FILEs
     static std::map<std::size_t,Result>            io_buf_;       // re-order
     static std::atomic<std::size_t>                next_flush_;   // next iter
-    static constexpr std::size_t                   QFLUSH_THRESHOLD = 10; // N
     static void submit_result(Result&&, const HPOTargets& trg_,
                               std::size_t cw, int prec);
 
@@ -163,7 +162,6 @@ private:
     static void print_params_line(std::ofstream&, size_t it, const Result&,
                                   std::size_t cw, int prec);
 
-    static bool need_flush(std::size_t produced_iter) ;
 };
 
 /* =======================================================================*/

@@ -400,6 +400,8 @@ void HPOTargets::read(std::string fn)
         iss >> MAX_CALLS;
       } else if (key == "FAILSCORE") {
         iss >> FAIL_SCORE;
+      } else if (key == "QFLUSH") {
+        iss >> QFLUSH_THRESHOLD;
       } else if (key == "MAXTIME") {
         iss >> MAX_TIME;
       } else if (key == "THREADS") {
