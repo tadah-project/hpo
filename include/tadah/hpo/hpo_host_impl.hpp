@@ -487,7 +487,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
             std::ofstream bp("best_pot.tadah");
 
             bp << "#-----------------------------------------------------" << std::endl;
-            bp<<"# HPO: Best potential at iter " << e.best_iter << std::endl;
+            bp<<"# HPO: Best potential at iter " << e.best_iter << " (" << e.iter << ")" << std::endl;
             auto now  = std::chrono::system_clock::now();          // current time-point
             auto tt   = std::chrono::system_clock::to_time_t(now); // to time_t
 
