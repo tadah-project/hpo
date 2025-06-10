@@ -334,35 +334,58 @@ void HPOTargets::read(std::string fn)
 
   std::string line;
   size_t nline = 0;
-  while (std::getline(ifs, line)) {
+auto strip_comment_and_rtrim = [](std::string &s)
+{
+    // Remove everything after '#'
+    if (auto pos = s.find('#'); pos != std::string::npos)
+        s.resize(pos);
+
+    // Trim right-hand whitespace
+    s.erase(std::find_if(s.rbegin(), s.rend(),
+                         [](unsigned char ch) { return !std::isspace(ch); })
+                .base(),
+            s.end());
+};
+
+auto ltrim = [](std::string &s)
+{
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(),
+                                    [](unsigned char ch) { return !std::isspace(ch); }));
+};
+
+while (std::getline(ifs, line)) {
     ++nline;
-    size_t comment_pos = line.find('#');
-    if (comment_pos != std::string::npos) {
-      line = line.substr(0, comment_pos);
-    }
+    strip_comment_and_rtrim(line);
 
-    // strip trailing whitespace
-    line.erase(std::find_if(line.rbegin(), line.rend(),
-          [](unsigned char ch){ return !std::isspace(ch); })
-        .base(),
-        line.end());
+    // Skip lines that are empty *after* removing comments
+    if (std::all_of(line.begin(), line.end(),
+                    [](unsigned char ch) { return std::isspace(ch); }))
+        continue;
 
-    while (line.back() == '\\') {
-      std::string next_line;
-      if (std::getline(ifs, next_line)) {
-        line = line.substr(0, line.size() - 1) + next_line;
-        ++nline;
-        size_t comment_pos = line.find('#');
-        if (comment_pos != std::string::npos) {
-          line = line.substr(0, comment_pos);
+    while (!line.empty() && line.back() == '\\') {
+        line.pop_back();          // drop the back-slash
+
+        std::string next_line;
+        bool have_real_line = false;
+
+        // Keep reading until we hit a non-blank, non-comment line
+        while (std::getline(ifs, next_line)) {
+            ++nline;
+            strip_comment_and_rtrim(next_line);
+            ltrim(next_line);     // for “starts with a comment” check
+
+            if (next_line.empty())   // blank or comment-only
+                continue;
+
+            have_real_line = true;
+            break;
         }
-        line.erase(std::find_if(line.rbegin(), line.rend(),
-              [](unsigned char ch){ return !std::isspace(ch); })
-            .base(),
-            line.end());
-      } else {
-        throw std::runtime_error("Unexpected end of file after line " + core::to_string(nline));
-      }
+
+        if (!have_real_line)
+            throw std::runtime_error("Unexpected end of file after line " +
+                                     std::to_string(nline));
+
+        line += next_line;        // append continuation
     }
 
     std::istringstream iss(line);
