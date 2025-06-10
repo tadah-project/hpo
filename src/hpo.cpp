@@ -110,7 +110,7 @@ namespace experimental {
       double max_solver_overhead_time = 0;
 
       // Now run the main solver loop.
-      std::cout << "Starting global optimization with " << num.max_calls << " calls." << std::endl;
+      std::cout << "Starting optimization with " << num.max_calls << " calls." << std::endl;
       std::cout << "Using " << tp.num_threads_in_pool() << " threads." << std::endl;
       for (size_t i = 0; i < num.max_calls && steady_clock::now() < time_to_stop && !this_should_stop.load(); ++i)
       {
@@ -258,7 +258,7 @@ void random_search(core::Context &context, HPOTargets &trg, std::string &val_fil
 
   HPO_Host<T, R> hpo(context,trg, val_file);
 
-  for (size_t i=0; i<trg.MAX_CALLS; ++i) {
+  for (size_t i=0; i<trg.NSTEPS; ++i) {
     T hp(low.size());
     for (long int j=0; j<hp.size(); ++j) {
       std::uniform_real_distribution<> dis(low(j), high(j));
@@ -297,7 +297,7 @@ void tadah_find_min_global(core::Context &context, HPOTargets &trg, std::string 
       low,
       high,
       trg.optim_is_int,
-      dlib::max_function_calls(trg.MAX_CALLS),
+      dlib::max_function_calls(trg.NSTEPS),
       dlib::FOREVER,
       trg.params,
       init_values
@@ -327,7 +327,7 @@ void find_min_global(core::Context &context, HPOTargets &trg, std::string &val_f
       low,
       high,
       trg.optim_is_int,
-      dlib::max_function_calls(trg.MAX_CALLS),
+      dlib::max_function_calls(trg.NSTEPS),
       dlib::FOREVER,
       trg.params[0],
       init_values
@@ -361,7 +361,7 @@ void find_min_bobyqa(core::Context &context, HPOTargets &trg, std::string &val_f
       npt,
       low, high,
       rho_begin, rho_end,
-      trg.MAX_CALLS
+      trg.NSTEPS
       );
 }
 void find_min_using_approximate_derivatives(core::Context &context, HPOTargets &trg, std::string &val_file) {
@@ -434,16 +434,21 @@ void find_nlopt(core::Context &context, HPOTargets &trg, std::string &val_file) 
   const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
   const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
 
-  std::vector<double> starting_point(low.size());
-  time_t start_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-  dlib::rand rnd(dlib::cast_to_string(start_time)); // Seed the random number generator with the current time
-  for (long int j = 0; j < starting_point.size(); ++j) {
-    starting_point[j] = rnd.get_double_in_range(low(j), high(j));
-  }
+  std::vector<double> starting_point;
 
-  // nlopt::opt opt(nlopt::GN_DIRECT_L, trg.optim_low.size());
-  // const auto algo = algo_from_string(trg.optimizer[0]); // Convert string to nlopt algorithm type
-  // nlopt::opt opt(algo, trg.optim_low.size());
+  if (trg.optim_init.empty())
+  {
+    starting_point.resize(low.size());
+    time_t start_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    dlib::rand rnd(dlib::cast_to_string(start_time)); // Seed the random number generator with the current time
+    for (long int j = 0; j < starting_point.size(); ++j)
+    {
+      starting_point[j] = rnd.get_double_in_range(low(j), high(j));
+    }
+  } else 
+  {
+    starting_point = trg.optim_init[0]; // Use the first initial point if available
+  }
   nlopt::opt opt(trg.optimizer[1].c_str(), trg.optim_low.size());
   auto gnum_params = opt.num_params();
   std::cout << "Using NLopt algorithm: " << trg.optimizer[1] << std::endl;
@@ -478,6 +483,22 @@ int hpo_run(core::Context &context) {
   std::string val_file = context.get<std::string>("VALIDATION");
 
   HPOTargets trg(context, trg_file);
+
+  // We are beginning the optimization process. Let's print some information about the optimization process.
+  std::cout << "Starting optimization with " << trg.NSTEPS << " steps." << std::endl;
+  std::cout << "Dimension of the optimization problem: " << trg.optim_low.size() << std::endl;
+
+  std::cout << "Using optimizer: ";
+  for (const auto& o : trg.optimizer) {
+    std::cout << o << " ";
+  }
+  std::cout << std::endl;
+
+  std::cout << "Optimizer parameters: ";
+  for (const auto& p : trg.params) {
+    std::cout << p << " ";
+  }
+  std::cout << std::endl;
 
   if (trg.optimizer[0] == "0") {
     random_search(context, trg, val_file);

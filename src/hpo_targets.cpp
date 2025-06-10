@@ -309,16 +309,17 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
     }
   }
 
-  // init with a random value between low and high
-  size_t nOptimInits = 0;
+  // init with original values from the Context
+  // for now just one initial point
+  size_t nOptimInits = 1;
   optim_init.resize(nOptimInits);
-  std::random_device rd;
-  std::mt19937 gen(rd());
   for (size_t j = 0; j < nOptimInits; ++j) {
-    optim_init[j].resize(optim_low.size());
-    for (size_t i = 0; i < optim_low.size(); ++i) {
-      std::uniform_real_distribution<> dis(optim_low[i], optim_high[i]);
-      optim_init[j][i] = dis(gen);
+    for (auto& p : optimap) {
+      for (size_t i = 0; i < p.second.opt.size(); ++i) {
+        if (p.second.opt[i]) {
+          optim_init[j].emplace_back(std::stod(p.second.config[i]));
+        }
+      }
     }
   }
   // dummy for now
@@ -338,6 +339,30 @@ void HPOTargets::read(std::string fn)
     size_t comment_pos = line.find('#');
     if (comment_pos != std::string::npos) {
       line = line.substr(0, comment_pos);
+    }
+
+    // strip trailing whitespace
+    line.erase(std::find_if(line.rbegin(), line.rend(),
+          [](unsigned char ch){ return !std::isspace(ch); })
+        .base(),
+        line.end());
+
+    while (line.back() == '\\') {
+      std::string next_line;
+      if (std::getline(ifs, next_line)) {
+        line = line.substr(0, line.size() - 1) + next_line;
+        ++nline;
+        size_t comment_pos = line.find('#');
+        if (comment_pos != std::string::npos) {
+          line = line.substr(0, comment_pos);
+        }
+        line.erase(std::find_if(line.rbegin(), line.rend(),
+              [](unsigned char ch){ return !std::isspace(ch); })
+            .base(),
+            line.end());
+      } else {
+        throw std::runtime_error("Unexpected end of file after line " + core::to_string(nline));
+      }
     }
 
     std::istringstream iss(line);
@@ -396,8 +421,8 @@ void HPOTargets::read(std::string fn)
       } else if (key == "BDUMP") {
         iss >> dumpBestPotEvery >> dumpBestPotDir;
         handle_directory_creation(dumpBestPotDir);
-      } else if (key == "MAXCALLS") {
-        iss >> MAX_CALLS;
+      } else if (key == "NSTEPS") {
+        iss >> NSTEPS;
       } else if (key == "FAILSCORE") {
         iss >> FAIL_SCORE;
       } else if (key == "QFLUSH") {

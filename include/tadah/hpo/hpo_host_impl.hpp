@@ -541,6 +541,55 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
           if(e.best_iter % trg.dumpBestPotEvery == 0){
             std::ofstream bpa(std::string(trg.dumpBestPotDir)
                 +"/best_pot_" + std::to_string(e.best_iter) + ".tadah");
+            bpa << "#-----------------------------------------------------" << std::endl;
+            bpa<<"# HPO: Best potential at iter " << e.best_iter << " (" << e.iter << ")" << std::endl;
+            auto now  = std::chrono::system_clock::now();          // current time-point
+            auto tt   = std::chrono::system_clock::to_time_t(now); // to time_t
+
+            bpa << "# Time stamp: "
+              << std::put_time(std::localtime(&tt), "%d.%m.%Y %H:%M:%S")
+              << std::endl;
+            bpa<<"# Loss: " << e.loss << std::endl;
+            bpa << "#-----------------------------------------------------" << std::endl;
+            bpa<<"# Outvars:" << std::endl << "#";
+            for (const auto &lsim : trg.LS) {
+              for (auto n_outvar : lsim.n_outvar) {
+                if (n_outvar.size() > cw - 1) {
+                  n_outvar = n_outvar.substr(0, cw - 1 - 1) + "*";
+                }
+                bpa << std::setw(cw) << n_outvar;
+              }
+            }
+            bpa << std::endl << "#";
+
+            for (size_t i = 0; i < e.v_outvar.size(); ++i) {
+              auto &indices = trg.LS[i].i_varloss;
+              for (const auto &j : indices) {
+                bpa<<std::right << std::setw(cw) << std::scientific
+                  << std::setprecision(prec) << std::stod(e.v_outvar[i][j]);
+              }
+            }
+            bpa<<std::endl;
+            bpa<<"# Losses: " << std::endl << "#";
+            for (const auto &lsim : trg.LS) {
+              for (auto varname : lsim.n_varloss) {
+                if (varname.size() - 2 > cw - 1) {
+                  varname = varname.substr(0, cw -1 - 4) + "*";
+                }
+                bpa << std::setw(cw) << "L(" + varname + ")";
+              }
+            }
+            bpa << std::setw(cw) << "TOTAL_LOSS/N" << std::endl << "#";
+
+            for (size_t i = 0; i < e.v_loss.size(); ++i) {
+              auto &indices = trg.LS[i].i_varloss;
+              for (const auto &j : indices) {
+                bpa<<std::right << std::setw(cw) << std::scientific
+                  << std::setprecision(prec) << e.v_loss[i][j];
+              }
+            }
+            bpa<<std::endl;
+            bpa << "#-----------------------------------------------------" << std::endl;
             bpa<<std::setprecision(e.pot_ctx.template get<size_t>("NUMERIC"))<<e.pot_ctx;
           }
         }

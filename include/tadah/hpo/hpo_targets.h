@@ -45,15 +45,15 @@ private:
 public:
     HPOTargets(core::Context &c, std::string fn);
     void read(std::string fn);
-    std::map<std::string, Opti> optimap;
-    std::vector<double> optim_low;
+    std::map<std::string, Opti> optimap;  // used by HPO_Host
+    std::vector<double> optim_low;  // used by hpo.cpp
     std::vector<double> optim_high;
     std::vector<bool> optim_is_int;
     std::vector<std::vector<double>> optim_init;
     std::vector<LammpsSim> LS;
 
     int THREADS = -1; // number of threads for parallel evaluation, -1 means all available threads
-    size_t MAX_CALLS = std::numeric_limits<size_t>::max();
+    size_t NSTEPS = std::numeric_limits<size_t>::max();
     std::vector<double> params;  // convergence parameters for optimization algorithms
     double FAIL_SCORE = 1000;
     std::size_t QFLUSH_THRESHOLD = 10; // number of results to flush to disk at once
