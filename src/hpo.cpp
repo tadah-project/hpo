@@ -427,6 +427,10 @@ void find_nlopt(core::Context &context, HPOTargets &trg, std::string &val_file) 
     throw std::invalid_argument("nlopt optimizer must have at least two elements: [6, algorithm_name, [optional]");
   }
 
+  // params[0] = ftol_rel (required)
+  // params[1] = xtol_rel (optional)
+  // params[2] = ftol_rel for local optimizer (optional)
+  // params[3] = xtol_rel (for local optimizer, optional)
 
   // using T = std::vector<double>;
   HPO_Host<T, R> host(context,trg, val_file);
@@ -455,15 +459,38 @@ void find_nlopt(core::Context &context, HPOTargets &trg, std::string &val_file) 
   std::cout << "Number of parameters: " << gnum_params << std::endl;
   if (trg.optimizer.size()==3) {
     nlopt::opt local_opt(trg.optimizer[2].c_str(), trg.optim_low.size());
+    // check params size before accessing
+    if (trg.params.size() < 3) {
+      throw std::invalid_argument("this nlopt optimizer requires at least 3 parameters: ftol_rel, xtol_rel, ftol_rel_local, [xtol_rel_local]");
+    } 
+    if (trg.params.size() > 3) {
+      local_opt.set_ftol_rel(trg.params[2]); // Set the relative tolerance for the local optimizer
+      local_opt.set_xtol_rel(trg.params[3]); // Set the relative tolerance for the local optimizer
+    } else {
+      local_opt.set_ftol_rel(trg.params[2]); // Set the relative tolerance for the local optimizer
+    }
     opt.set_local_optimizer(local_opt); // Set local optimizer if specified
     auto lnum_params = local_opt.num_params();
     std::cout << "Using local optimizer: " << trg.optimizer[2] << std::endl;
     std::cout << "Number of local parameters: " << lnum_params << std::endl;
+    std::cout << "Stopping criteria for local optimizer: "
+              << "ftol_rel = " << local_opt.get_ftol_rel() << ", xtol_rel = " << local_opt.get_xtol_rel() << std::endl;
   }
   opt.set_lower_bounds(trg.optim_low);
   opt.set_upper_bounds(trg.optim_high);
   opt.set_min_objective(&HPO_Host<T,R>::nlopt_adapter_cpp, &host);
-  opt.set_xtol_rel(trg.params[0]);
+
+    if (trg.params.size() < 1) {
+      throw std::invalid_argument("this nlopt optimizer requires at least 1 parameter: ftol_rel, [xtol_rel]");
+    } 
+    if (trg.params.size() > 1) {
+      opt.set_ftol_rel(trg.params[0]); // Set the relative tolerance for the local optimizer
+      opt.set_xtol_rel(trg.params[1]); // Set the relative tolerance for the local optimizer
+    } else {
+      opt.set_ftol_rel(trg.params[0]); // Set the relative tolerance for the local optimizer
+    }
+    std::cout << "Stopping criteria for global optimizer: "
+              << "ftol_rel = " << opt.get_ftol_rel() << ", xtol_rel = " << opt.get_xtol_rel() << std::endl;
 
   
   double fmin;
