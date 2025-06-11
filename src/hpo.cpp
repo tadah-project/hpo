@@ -436,8 +436,8 @@ void find_nlopt(core::Context &context, HPOTargets &trg, std::string &val_file) 
 
   std::vector<double> starting_point;
 
-  if (trg.optim_init.empty())
-  {
+  // if (trg.optim_init.empty())
+  // {
     starting_point.resize(low.size());
     time_t start_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
     dlib::rand rnd(dlib::cast_to_string(start_time)); // Seed the random number generator with the current time
@@ -445,10 +445,10 @@ void find_nlopt(core::Context &context, HPOTargets &trg, std::string &val_file) 
     {
       starting_point[j] = rnd.get_double_in_range(low(j), high(j));
     }
-  } else 
-  {
-    starting_point = trg.optim_init[0]; // Use the first initial point if available
-  }
+  // } else 
+  // {
+  //   starting_point = trg.optim_init[0]; // Use the first initial point if available
+  // }
   nlopt::opt opt(trg.optimizer[1].c_str(), trg.optim_low.size());
   auto gnum_params = opt.num_params();
   std::cout << "Using NLopt algorithm: " << trg.optimizer[1] << std::endl;
@@ -460,7 +460,6 @@ void find_nlopt(core::Context &context, HPOTargets &trg, std::string &val_file) 
     std::cout << "Using local optimizer: " << trg.optimizer[2] << std::endl;
     std::cout << "Number of local parameters: " << lnum_params << std::endl;
   }
-  //nlopt::opt opt(nlopt::GN_DIRECT_L_NOSCAL, trg.optim_low.size());
   opt.set_lower_bounds(trg.optim_low);
   opt.set_upper_bounds(trg.optim_high);
   opt.set_min_objective(&HPO_Host<T,R>::nlopt_adapter_cpp, &host);

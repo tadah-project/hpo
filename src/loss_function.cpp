@@ -83,7 +83,7 @@ double LossFunction::loss(double y, double ypred, double w,
         }
 
         case Type::TUKEY : {
-            double c = params_.empty()? w*4.685 : w*params_[0];
+            double c = params_.empty()? 4.685 : params_[0];
             if(abs_r <= c){
                 double t = r/c;
                 return (1-std::pow(1-t*t,3))*w;
