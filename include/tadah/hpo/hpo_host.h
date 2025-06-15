@@ -23,6 +23,7 @@
 
 #include <tadah/core/context.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/optimiser_spec.h>
 #include <tadah/mlip/analytics/analytics.h>
 #include <tadah/mlip/structure_db.h>
 #include <tadah/mlip/nn_finder.h>
@@ -94,6 +95,7 @@ public:
 
 private:
 
+
     // helper that converts the raw array coming from NLopt -----------------
     static ParamVec make_param_vec(unsigned n, const double* x)
     {
@@ -108,6 +110,7 @@ private:
     /* ---------- immutable after construction --------------------------- */
     core::Context                master_ctx_;
     HPOTargets&                  trg_;
+    const OptimiserSpec &spec_;
     mlip::StructureDB            val_stdb_;
 #ifndef TADAH_BUILD_MPI
     mlip::StructureDB            train_stdb_;

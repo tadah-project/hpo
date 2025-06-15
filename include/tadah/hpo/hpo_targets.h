@@ -4,6 +4,7 @@
 #include "tadah/core/context.h"
 #include "tadah/core/utils.h"
 #include <tadah/hpo/lammps_sim.h>
+#include <tadah/hpo/optimiser_spec.h>
 
 #include <vector>
 #include <string>
@@ -53,12 +54,11 @@ public:
     std::vector<LammpsSim> LS;
 
     int THREADS = -1; // number of threads for parallel evaluation, -1 means all available threads
-    size_t NSTEPS = std::numeric_limits<size_t>::max();
-    std::vector<double> params;  // convergence parameters for optimization algorithms
     double FAIL_SCORE = 1000;
     std::size_t QFLUSH_THRESHOLD = 10; // number of results to flush to disk at once
     std::string MAX_TIME = "10";
-    std::vector<std::string> optimizer;
+
+    OptimiserSpec spec;
 
     size_t outputEvery = 1;
     size_t bestOutputEvery = 1;

@@ -204,12 +204,13 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                         HPOTargets&   trg,
                         const std::string& val_cfg)
 : master_ctx_(std::move(master_ctx))
-, trg_(trg)
+, trg_(trg), spec_(trg.spec)
 , use_lammps_( !trg.LS.empty() )
 #ifdef TADAH_BUILD_MPI
 , host(c, tls_ws_, tls_ws2_)
 #endif
 {
+
     /* neighbours -------------------------------------------------------- */
     double rcutmax = master_ctx_.get<double>("RCUTMAX");
     // Loop over all optimap entries to find either RCUT2B or RCUTMB

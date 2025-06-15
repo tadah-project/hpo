@@ -1,6 +1,9 @@
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/runners.h>
+#include <tadah/hpo/algorithms.h>
+#include <tadah/hpo/nlopt_adapter.h>
+#include <tadah/hpo/dlib_adapter.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/core/context.h>
 #include <dlib/global_optimization/find_max_global.h>
@@ -242,317 +245,349 @@ namespace experimental {
 } // namespace dlib
 
 
-namespace tadah {
-namespace hpo {
+// namespace tadah {
+// namespace hpo {
 
+// using R = LammpsRunner;
+// using T = dlib::matrix<double,0,1>;
+//
+// void random_search(core::Context &context, HPOTargets &trg, std::string &val_file) {
+//   //auto &low = trg.optim_low;
+//   //auto &high = trg.optim_high;
+//   const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
+//   const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
+//   std::random_device rd;
+//   std::mt19937 gen(rd());
+//
+//   HPO_Host<T, R> hpo(context,trg, val_file);
+//
+//   for (size_t i=0; i<trg.spec.maxeval; ++i) {
+//     T hp(low.size());
+//     for (long int j=0; j<hp.size(); ++j) {
+//       std::uniform_real_distribution<> dis(low(j), high(j));
+//       hp(j) = dis(gen);
+//     }
+//     hpo(hp);
+//   }
+// }
+//
+// void grid_search(core::Context &, HPOTargets &, std::string &) {
+// }
+//
+// void tadah_find_min_global(core::Context &context, HPOTargets &trg, std::string &val_file, int algo) {
+//   HPO_Host<T, R> hpo(context,trg, val_file);
+//   const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
+//   const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
+//
+//   std::vector<dlib::function_evaluation> init_values(trg.optim_init.size());
+//   for (size_t i = 0; i < trg.optim_init.size(); ++i) {
+//     init_values[i]=dlib::function_evaluation(dlib::mat(trg.optim_init[i]),i);
+//   }
+//
+//   // dlib::thread_pool tp(2);  // Use a single thread for now as HPO_Host::operator() is not thread-safe.
+//   // dlib::thread_pool &tp = dlib::default_thread_pool();
+//   int threads = trg.THREADS;
+//   if (threads < 1) {
+//     threads = dlib::default_thread_pool().num_threads_in_pool();
+//   }
+//   dlib::thread_pool tp(threads);
+//
+//   //auto result1 = dlib::find_min_global(
+//   auto result1 = tadah::experimental::tadah_find_min_global(
+//       algo, // 99 dlib, 0 for max
+//       tp,
+//       hpo,
+//       low,
+//       high,
+//       trg.optim_is_int,
+//       dlib::max_function_calls(trg.spec.maxeval),
+//       dlib::FOREVER,
+//       trg.params,
+//       init_values
+//       );
+// }
+
+// void find_min_global(core::Context &context, HPOTargets &trg, std::string &val_file) {
+//   HPO_Host<T, R> hpo(context,trg, val_file);
+//   const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
+//   const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
+//
+//   std::vector<dlib::function_evaluation> init_values(trg.optim_init.size());
+//   for (size_t i = 0; i < trg.optim_init.size(); ++i) {
+//     init_values[i]=dlib::function_evaluation(dlib::mat(trg.optim_init[i]),i);
+//   }
+//
+//   // dlib::thread_pool tp(1);  // Use a single thread for now as HPO_Host::operator() is not thread-safe.
+//   int threads = trg.THREADS;
+//   if (threads < 1) {
+//     threads = dlib::default_thread_pool().num_threads_in_pool();
+//   }
+//   dlib::thread_pool tp(threads);
+//
+//   auto result1 = dlib::find_min_global(
+//       tp,
+//       hpo,
+//       low,
+//       high,
+//       trg.optim_is_int,
+//       dlib::max_function_calls(trg.NSTEPS),
+//       dlib::FOREVER,
+//       trg.params[0],
+//       init_values
+//       );
+// }
+// void find_min_bobyqa(core::Context &context, HPOTargets &trg, std::string &val_file) {
+//   HPO_Host<T, R> hpo(context,trg, val_file);
+//   const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
+//   const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
+//
+//   dlib::matrix<double,0,1> starting_point(low.size());
+//   time_t start_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+//   dlib::rand rnd(dlib::cast_to_string(start_time)); // Seed the random number generator with the current time
+//   for (long int j = 0; j < starting_point.size(); ++j) {
+//     starting_point(j) = rnd.get_double_in_range(low(j), high(j));
+//   }
+//
+//   std::vector<dlib::function_evaluation> init_values(trg.optim_init.size());
+//   for (size_t i = 0; i < trg.optim_init.size(); ++i) {
+//     init_values[i]=dlib::function_evaluation(dlib::mat(trg.optim_init[i]),i);
+//   }
+//
+//   long npt = 2*starting_point.size() + 1; // Number of interpolation points for the BOBYQA algorithm.
+//
+//   double rho_begin = trg.params[1]; // Initial trust region radius for the BOBYQA algorithm.
+//   double rho_end = trg.params[0];   // Final trust region radius for the BOBYQA algorithm.
+//
+//   auto result1 = dlib::find_min_bobyqa(
+//       hpo,
+//       starting_point,
+//       npt,
+//       low, high,
+//       rho_begin, rho_end,
+//       trg.NSTEPS
+//       );
+// }
+// void find_min_using_approximate_derivatives(core::Context &context, HPOTargets &trg, std::string &val_file) {
+//   HPO_Host<T, R> hpo(context,trg, val_file);
+//
+//   const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
+//   const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
+//
+//   dlib::matrix<double,0,1> starting_point(low.size());
+//   time_t start_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+//   dlib::rand rnd(dlib::cast_to_string(start_time)); // Seed the random number generator with the current time
+//   for (long int j = 0; j < starting_point.size(); ++j) {
+//     starting_point(j) = rnd.get_double_in_range(low(j), high(j));
+//   }
+//
+//   using Any = std::variant<dlib::cg_search_strategy,
+//         dlib::bfgs_search_strategy,
+//         dlib::lbfgs_search_strategy>;
+//
+//   // params[i] is used as follows:
+//   // params[0] = min_f (stop when the loss function < min_f)
+//   // params[1] = stop_strategy.epsilon (stop when the change in the loss function is less than this value)
+//   // params[2] = derivative_eps (step size for numerical derivative approximation)
+//   // params[3] = search_strategyID (1 for CG, 2 for BFGS, 3 for LBFGS)
+//   // params[4] = lbfgs_max_size (optional, default 10, used only for LBFGS search strategy)
+//   auto search_strategy = dlib::bfgs_search_strategy();
+//   double min_f = trg.params[0]; // stop when the loss function < min_f
+//   auto stop_strategy = dlib::objective_delta_stop_strategy(trg.params[1]);
+//   double derivative_eps = trg.params[2]; // step size for numerical derivative approximation
+//   int search_strategyID = trg.params[3];
+//   long lbfgs_max_size = trg.params.size()==5? trg.params[4] : 0; // default value for lbfgs_max_size, can be changed in params
+//   Any value = [search_strategyID, lbfgs_max_size]() -> Any         // immediately-invoked λ
+//   {
+//     switch (search_strategyID)
+//     {
+//       case 1: return dlib::cg_search_strategy{};
+//       case 2: return dlib::bfgs_search_strategy{};
+//       case 3: return dlib::lbfgs_search_strategy{lbfgs_max_size};
+//       default: throw std::invalid_argument("Invalid search strategy ID. Must be 1, 2, or 3.");
+//     }
+//   }();
+//
+//   auto result = std::visit(
+//       [&stop_strategy,&hpo,&starting_point,min_f,derivative_eps](const auto& search_strategy) -> double  // generic visitor ✓
+//       {
+//       return dlib::find_min_using_approximate_derivatives
+//       (search_strategy, stop_strategy,hpo, starting_point, min_f, derivative_eps);     // correct instantiation chosen
+//       },
+//       value
+//       );
+// }
+// inline nlopt_algorithm algo_from_string(const std::string& s)
+// {
+//     nlopt_algorithm a = nlopt_algorithm_from_string(s.c_str());
+//     if (a == NLOPT_NUM_ALGORITHMS)           // not recognised
+//         throw std::invalid_argument("unknown NLopt algorithm: " + s);
+//     return a;
+// }
+// void find_nlopt(core::Context &context, HPOTargets &trg, std::string &val_file) {
+//
+//   // size(trg.optimizer ==2) throw otherwise
+//   if (trg.optimizer.size() < 2) {
+//     throw std::invalid_argument("nlopt optimizer must have at least two elements: [6, algorithm_name, [optional]");
+//   }
+//
+//   // params[0] = ftol_rel (required)
+//   // params[1] = xtol_rel (optional)
+//   // params[2] = ftol_rel for local optimizer (optional)
+//   // params[3] = xtol_rel (for local optimizer, optional)
+//
+//   // using T = std::vector<double>;
+//   HPO_Host<T, R> host(context,trg, val_file);
+//
+//   const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
+//   const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
+//
+//   std::vector<double> starting_point;
+//
+//   // if (trg.optim_init.empty())
+//   // {
+//     starting_point.resize(low.size());
+//     time_t start_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+//     dlib::rand rnd(dlib::cast_to_string(start_time)); // Seed the random number generator with the current time
+//     for (long int j = 0; j < starting_point.size(); ++j)
+//     {
+//       starting_point[j] = rnd.get_double_in_range(low(j), high(j));
+//     }
+//   // } else 
+//   // {
+//   //   starting_point = trg.optim_init[0]; // Use the first initial point if available
+//   // }
+//   nlopt::opt opt(trg.optimizer[1].c_str(), trg.optim_low.size());
+//   auto gnum_params = opt.num_params();
+//   std::cout << "Using NLopt algorithm: " << trg.optimizer[1] << std::endl;
+//   std::cout << "Number of parameters: " << gnum_params << std::endl;
+//   if (trg.optimizer.size()==3) {
+//     nlopt::opt local_opt(trg.optimizer[2].c_str(), trg.optim_low.size());
+//     // check params size before accessing
+//     if (trg.params.size() < 3) {
+//       throw std::invalid_argument("this nlopt optimizer requires at least 3 parameters: ftol_rel, xtol_rel, ftol_rel_local, [xtol_rel_local]");
+//     } 
+//     if (trg.params.size() > 3) {
+//       local_opt.set_ftol_rel(trg.params[2]); // Set the relative tolerance for the local optimizer
+//       local_opt.set_xtol_rel(trg.params[3]); // Set the relative tolerance for the local optimizer
+//     } else {
+//       local_opt.set_ftol_rel(trg.params[2]); // Set the relative tolerance for the local optimizer
+//     }
+//     opt.set_local_optimizer(local_opt); // Set local optimizer if specified
+//     auto lnum_params = local_opt.num_params();
+//     std::cout << "Using local optimizer: " << trg.optimizer[2] << std::endl;
+//     std::cout << "Number of local parameters: " << lnum_params << std::endl;
+//     std::cout << "Stopping criteria for local optimizer: "
+//               << "ftol_rel = " << local_opt.get_ftol_rel() << ", xtol_rel = " << local_opt.get_xtol_rel() << std::endl;
+//   }
+//   opt.set_lower_bounds(trg.optim_low);
+//   opt.set_upper_bounds(trg.optim_high);
+//   opt.set_min_objective(&HPO_Host<T,R>::nlopt_adapter_cpp, &host);
+//
+//     if (trg.params.size() < 1) {
+//       throw std::invalid_argument("this nlopt optimizer requires at least 1 parameter: ftol_rel, [xtol_rel]");
+//     } 
+//     if (trg.params.size() > 1) {
+//       opt.set_ftol_rel(trg.params[0]); // Set the relative tolerance for the local optimizer
+//       opt.set_xtol_rel(trg.params[1]); // Set the relative tolerance for the local optimizer
+//     } else {
+//       opt.set_ftol_rel(trg.params[0]); // Set the relative tolerance for the local optimizer
+//     }
+//     std::cout << "Stopping criteria for global optimizer: "
+//               << "ftol_rel = " << opt.get_ftol_rel() << ", xtol_rel = " << opt.get_xtol_rel() << std::endl;
+//
+//
+//   double fmin;
+//   nlopt::result result = opt.optimize(starting_point, fmin);
+//
+//   // params[i] is used as follows:
+//   // params[0] = min_f (stop when the loss function < min_f)
+//   // params[1] = stop_strategy.epsilon (stop when the change in the loss function is less than this value)
+//   // params[2] = derivative_eps (step size for numerical derivative approximation)
+//   // params[3] = search_strategyID (1 for CG, 2 for BFGS, 3 for LBFGS)
+//   // params[4] = lbfgs_max_size (optional, default 10, used only for LBFGS search strategy)
+//
+// }
+// int hpo_run(core::Context &context) {
+//   std::string trg_file = context.get<std::string>("HPOTARGET");
+//   std::string val_file = context.get<std::string>("VALIDATION");
+//
+//   HPOTargets trg(context, trg_file);
+//
+//   // We are beginning the optimization process. Let's print some information about the optimization process.
+//   std::cout << "Starting optimization with " << trg.NSTEPS << " steps." << std::endl;
+//   std::cout << "Dimension of the optimization problem: " << trg.optim_low.size() << std::endl;
+//
+//   std::cout << "Using optimizer: ";
+//   for (const auto& o : trg.optimizer) {
+//     std::cout << o << " ";
+//   }
+//   std::cout << std::endl;
+//
+//   std::cout << "Optimizer parameters: ";
+//   for (const auto& p : trg.params) {
+//     std::cout << p << " ";
+//   }
+//   std::cout << std::endl;
+//
+//   if (trg.optimizer[0] == "0") {
+//     random_search(context, trg, val_file);
+//   }
+//   else if(trg.optimizer[0] == "1") {
+//     grid_search(context, trg, val_file);
+//   }
+//   else if(trg.optimizer[0] == "2") { // dlib::find_min_global
+//     find_min_global(context, trg, val_file);
+//   }
+//   else if(trg.optimizer[0] == "3") { // tadah::experimental::tadah_find_min_global
+//     tadah_find_min_global(context, trg, val_file, 0);
+//   }
+//   else if(trg.optimizer[0] == "4") { // dlib::find_min_bobyqa
+//     find_min_bobyqa(context, trg, val_file);
+//   }
+//   else if(trg.optimizer[0] == "5") { // dlib::find_min_using_approximate_derivatives
+//     find_min_using_approximate_derivatives(context, trg, val_file);
+//   }
+//   else if(trg.optimizer[0] == "6") { // nlopt::optimize
+//     find_nlopt(context, trg, val_file);
+//   }
+//   else {
+//     throw std::runtime_error("Wrong HPO algorithm.");
+//   }
+//
+//   return 0;
+// }
+
+// } // namespace hpo
+// } // namespace tadah
+
+namespace tadah::hpo {
 using R = LammpsRunner;
-using T = dlib::matrix<double,0,1>;
-
-void random_search(core::Context &context, HPOTargets &trg, std::string &val_file) {
-  //auto &low = trg.optim_low;
-  //auto &high = trg.optim_high;
-  const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
-  const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
-  std::random_device rd;
-  std::mt19937 gen(rd());
-
-  HPO_Host<T, R> hpo(context,trg, val_file);
-
-  for (size_t i=0; i<trg.NSTEPS; ++i) {
-    T hp(low.size());
-    for (long int j=0; j<hp.size(); ++j) {
-      std::uniform_real_distribution<> dis(low(j), high(j));
-      hp(j) = dis(gen);
-    }
-    hpo(hp);
-  }
-}
-
-void grid_search(core::Context &, HPOTargets &, std::string &) {
-}
-
-void tadah_find_min_global(core::Context &context, HPOTargets &trg, std::string &val_file, int algo) {
-  HPO_Host<T, R> hpo(context,trg, val_file);
-  const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
-  const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
-
-  std::vector<dlib::function_evaluation> init_values(trg.optim_init.size());
-  for (size_t i = 0; i < trg.optim_init.size(); ++i) {
-    init_values[i]=dlib::function_evaluation(dlib::mat(trg.optim_init[i]),i);
-  }
-
-  // dlib::thread_pool tp(2);  // Use a single thread for now as HPO_Host::operator() is not thread-safe.
-  // dlib::thread_pool &tp = dlib::default_thread_pool();
-  int threads = trg.THREADS;
-  if (threads < 1) {
-    threads = dlib::default_thread_pool().num_threads_in_pool();
-  }
-  dlib::thread_pool tp(threads);
-
-  //auto result1 = dlib::find_min_global(
-  auto result1 = tadah::experimental::tadah_find_min_global(
-      algo, // 99 dlib, 0 for max
-      tp,
-      hpo,
-      low,
-      high,
-      trg.optim_is_int,
-      dlib::max_function_calls(trg.NSTEPS),
-      dlib::FOREVER,
-      trg.params,
-      init_values
-      );
-}
-
-void find_min_global(core::Context &context, HPOTargets &trg, std::string &val_file) {
-  HPO_Host<T, R> hpo(context,trg, val_file);
-  const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
-  const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
-
-  std::vector<dlib::function_evaluation> init_values(trg.optim_init.size());
-  for (size_t i = 0; i < trg.optim_init.size(); ++i) {
-    init_values[i]=dlib::function_evaluation(dlib::mat(trg.optim_init[i]),i);
-  }
-
-  // dlib::thread_pool tp(1);  // Use a single thread for now as HPO_Host::operator() is not thread-safe.
-  int threads = trg.THREADS;
-  if (threads < 1) {
-    threads = dlib::default_thread_pool().num_threads_in_pool();
-  }
-  dlib::thread_pool tp(threads);
-
-  auto result1 = dlib::find_min_global(
-      tp,
-      hpo,
-      low,
-      high,
-      trg.optim_is_int,
-      dlib::max_function_calls(trg.NSTEPS),
-      dlib::FOREVER,
-      trg.params[0],
-      init_values
-      );
-}
-void find_min_bobyqa(core::Context &context, HPOTargets &trg, std::string &val_file) {
-  HPO_Host<T, R> hpo(context,trg, val_file);
-  const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
-  const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
-
-  dlib::matrix<double,0,1> starting_point(low.size());
-  time_t start_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-  dlib::rand rnd(dlib::cast_to_string(start_time)); // Seed the random number generator with the current time
-  for (long int j = 0; j < starting_point.size(); ++j) {
-    starting_point(j) = rnd.get_double_in_range(low(j), high(j));
-  }
-
-  std::vector<dlib::function_evaluation> init_values(trg.optim_init.size());
-  for (size_t i = 0; i < trg.optim_init.size(); ++i) {
-    init_values[i]=dlib::function_evaluation(dlib::mat(trg.optim_init[i]),i);
-  }
-
-  long npt = 2*starting_point.size() + 1; // Number of interpolation points for the BOBYQA algorithm.
-
-  double rho_begin = trg.params[1]; // Initial trust region radius for the BOBYQA algorithm.
-  double rho_end = trg.params[0];   // Final trust region radius for the BOBYQA algorithm.
-
-  auto result1 = dlib::find_min_bobyqa(
-      hpo,
-      starting_point,
-      npt,
-      low, high,
-      rho_begin, rho_end,
-      trg.NSTEPS
-      );
-}
-void find_min_using_approximate_derivatives(core::Context &context, HPOTargets &trg, std::string &val_file) {
-  HPO_Host<T, R> hpo(context,trg, val_file);
-
-  const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
-  const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
-
-  dlib::matrix<double,0,1> starting_point(low.size());
-  time_t start_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-  dlib::rand rnd(dlib::cast_to_string(start_time)); // Seed the random number generator with the current time
-  for (long int j = 0; j < starting_point.size(); ++j) {
-    starting_point(j) = rnd.get_double_in_range(low(j), high(j));
-  }
-
-  using Any = std::variant<dlib::cg_search_strategy,
-        dlib::bfgs_search_strategy,
-        dlib::lbfgs_search_strategy>;
-
-  // params[i] is used as follows:
-  // params[0] = min_f (stop when the loss function < min_f)
-  // params[1] = stop_strategy.epsilon (stop when the change in the loss function is less than this value)
-  // params[2] = derivative_eps (step size for numerical derivative approximation)
-  // params[3] = search_strategyID (1 for CG, 2 for BFGS, 3 for LBFGS)
-  // params[4] = lbfgs_max_size (optional, default 10, used only for LBFGS search strategy)
-  auto search_strategy = dlib::bfgs_search_strategy();
-  double min_f = trg.params[0]; // stop when the loss function < min_f
-  auto stop_strategy = dlib::objective_delta_stop_strategy(trg.params[1]);
-  double derivative_eps = trg.params[2]; // step size for numerical derivative approximation
-  int search_strategyID = trg.params[3];
-  long lbfgs_max_size = trg.params.size()==5? trg.params[4] : 0; // default value for lbfgs_max_size, can be changed in params
-  Any value = [search_strategyID, lbfgs_max_size]() -> Any         // immediately-invoked λ
-  {
-    switch (search_strategyID)
-    {
-      case 1: return dlib::cg_search_strategy{};
-      case 2: return dlib::bfgs_search_strategy{};
-      case 3: return dlib::lbfgs_search_strategy{lbfgs_max_size};
-      default: throw std::invalid_argument("Invalid search strategy ID. Must be 1, 2, or 3.");
-    }
-  }();
-
-  auto result = std::visit(
-      [&stop_strategy,&hpo,&starting_point,min_f,derivative_eps](const auto& search_strategy) -> double  // generic visitor ✓
-      {
-      return dlib::find_min_using_approximate_derivatives
-      (search_strategy, stop_strategy,hpo, starting_point, min_f, derivative_eps);     // correct instantiation chosen
-      },
-      value
-      );
-}
-inline nlopt_algorithm algo_from_string(const std::string& s)
+using V = dlib::matrix<double,0,1>;
+int hpo_run(core::Context& ctx)
 {
-    nlopt_algorithm a = nlopt_algorithm_from_string(s.c_str());
-    if (a == NLOPT_NUM_ALGORITHMS)           // not recognised
-        throw std::invalid_argument("unknown NLopt algorithm: " + s);
-    return a;
+    HPOTargets trg(ctx, ctx.get<std::string>("HPOTARGET"));
+    std::string val = ctx.get<std::string>("VALIDATION");
+
+    HPO_Host<V,R> host(ctx,trg,val);
+    const OptimiserSpec& sp = trg.spec;          // short alias
+
+    /* quick info */
+    std::cout<<"[HPO] "<<sp.lib<<":"<<sp.algo<<"   dim="<<sp.low.size()<<"\n";
+    // if (ctx.exists("LIST_OPT")) {                // CLI: tadah hpo --list
+    //     OptimiserSpec::print_caps(sp.lib, sp.algo);
+    //     return 0;
+    // }
+
+    if (sp.lib=="TADAH" && sp.algo=="RANDOM")
+        run_random<V,R>(sp,host);
+    else if(sp.lib=="TADAH" && sp.algo=="GRID")
+        run_grid<V,R>  (sp,host);
+    else if(sp.lib=="DLIB")
+        run_dlib_global(sp,host);        // helper in new dlib_adapter.h
+    else if(sp.lib=="NLOPT")
+        run_nlopt(sp,host);              // helper in new nlopt_adapter.h
+    else
+        throw std::runtime_error("unknown optimiser "+sp.lib+":"+sp.algo);
+    return 0;
 }
-void find_nlopt(core::Context &context, HPOTargets &trg, std::string &val_file) {
-
-  // size(trg.optimizer ==2) throw otherwise
-  if (trg.optimizer.size() < 2) {
-    throw std::invalid_argument("nlopt optimizer must have at least two elements: [6, algorithm_name, [optional]");
-  }
-
-  // params[0] = ftol_rel (required)
-  // params[1] = xtol_rel (optional)
-  // params[2] = ftol_rel for local optimizer (optional)
-  // params[3] = xtol_rel (for local optimizer, optional)
-
-  // using T = std::vector<double>;
-  HPO_Host<T, R> host(context,trg, val_file);
-
-  const dlib::matrix<double,0,1> low = dlib::mat(trg.optim_low);
-  const dlib::matrix<double,0,1> high = dlib::mat(trg.optim_high);
-
-  std::vector<double> starting_point;
-
-  // if (trg.optim_init.empty())
-  // {
-    starting_point.resize(low.size());
-    time_t start_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    dlib::rand rnd(dlib::cast_to_string(start_time)); // Seed the random number generator with the current time
-    for (long int j = 0; j < starting_point.size(); ++j)
-    {
-      starting_point[j] = rnd.get_double_in_range(low(j), high(j));
-    }
-  // } else 
-  // {
-  //   starting_point = trg.optim_init[0]; // Use the first initial point if available
-  // }
-  nlopt::opt opt(trg.optimizer[1].c_str(), trg.optim_low.size());
-  auto gnum_params = opt.num_params();
-  std::cout << "Using NLopt algorithm: " << trg.optimizer[1] << std::endl;
-  std::cout << "Number of parameters: " << gnum_params << std::endl;
-  if (trg.optimizer.size()==3) {
-    nlopt::opt local_opt(trg.optimizer[2].c_str(), trg.optim_low.size());
-    // check params size before accessing
-    if (trg.params.size() < 3) {
-      throw std::invalid_argument("this nlopt optimizer requires at least 3 parameters: ftol_rel, xtol_rel, ftol_rel_local, [xtol_rel_local]");
-    } 
-    if (trg.params.size() > 3) {
-      local_opt.set_ftol_rel(trg.params[2]); // Set the relative tolerance for the local optimizer
-      local_opt.set_xtol_rel(trg.params[3]); // Set the relative tolerance for the local optimizer
-    } else {
-      local_opt.set_ftol_rel(trg.params[2]); // Set the relative tolerance for the local optimizer
-    }
-    opt.set_local_optimizer(local_opt); // Set local optimizer if specified
-    auto lnum_params = local_opt.num_params();
-    std::cout << "Using local optimizer: " << trg.optimizer[2] << std::endl;
-    std::cout << "Number of local parameters: " << lnum_params << std::endl;
-    std::cout << "Stopping criteria for local optimizer: "
-              << "ftol_rel = " << local_opt.get_ftol_rel() << ", xtol_rel = " << local_opt.get_xtol_rel() << std::endl;
-  }
-  opt.set_lower_bounds(trg.optim_low);
-  opt.set_upper_bounds(trg.optim_high);
-  opt.set_min_objective(&HPO_Host<T,R>::nlopt_adapter_cpp, &host);
-
-    if (trg.params.size() < 1) {
-      throw std::invalid_argument("this nlopt optimizer requires at least 1 parameter: ftol_rel, [xtol_rel]");
-    } 
-    if (trg.params.size() > 1) {
-      opt.set_ftol_rel(trg.params[0]); // Set the relative tolerance for the local optimizer
-      opt.set_xtol_rel(trg.params[1]); // Set the relative tolerance for the local optimizer
-    } else {
-      opt.set_ftol_rel(trg.params[0]); // Set the relative tolerance for the local optimizer
-    }
-    std::cout << "Stopping criteria for global optimizer: "
-              << "ftol_rel = " << opt.get_ftol_rel() << ", xtol_rel = " << opt.get_xtol_rel() << std::endl;
-
-  
-  double fmin;
-  nlopt::result result = opt.optimize(starting_point, fmin);
-
-  // params[i] is used as follows:
-  // params[0] = min_f (stop when the loss function < min_f)
-  // params[1] = stop_strategy.epsilon (stop when the change in the loss function is less than this value)
-  // params[2] = derivative_eps (step size for numerical derivative approximation)
-  // params[3] = search_strategyID (1 for CG, 2 for BFGS, 3 for LBFGS)
-  // params[4] = lbfgs_max_size (optional, default 10, used only for LBFGS search strategy)
-
-}
-int hpo_run(core::Context &context) {
-  std::string trg_file = context.get<std::string>("HPOTARGET");
-  std::string val_file = context.get<std::string>("VALIDATION");
-
-  HPOTargets trg(context, trg_file);
-
-  // We are beginning the optimization process. Let's print some information about the optimization process.
-  std::cout << "Starting optimization with " << trg.NSTEPS << " steps." << std::endl;
-  std::cout << "Dimension of the optimization problem: " << trg.optim_low.size() << std::endl;
-
-  std::cout << "Using optimizer: ";
-  for (const auto& o : trg.optimizer) {
-    std::cout << o << " ";
-  }
-  std::cout << std::endl;
-
-  std::cout << "Optimizer parameters: ";
-  for (const auto& p : trg.params) {
-    std::cout << p << " ";
-  }
-  std::cout << std::endl;
-
-  if (trg.optimizer[0] == "0") {
-    random_search(context, trg, val_file);
-  }
-  else if(trg.optimizer[0] == "1") {
-    grid_search(context, trg, val_file);
-  }
-  else if(trg.optimizer[0] == "2") { // dlib::find_min_global
-    find_min_global(context, trg, val_file);
-  }
-  else if(trg.optimizer[0] == "3") { // tadah::experimental::tadah_find_min_global
-    tadah_find_min_global(context, trg, val_file, 0);
-  }
-  else if(trg.optimizer[0] == "4") { // dlib::find_min_bobyqa
-    find_min_bobyqa(context, trg, val_file);
-  }
-  else if(trg.optimizer[0] == "5") { // dlib::find_min_using_approximate_derivatives
-    find_min_using_approximate_derivatives(context, trg, val_file);
-  }
-  else if(trg.optimizer[0] == "6") { // nlopt::optimize
-    find_nlopt(context, trg, val_file);
-  }
-  else {
-    throw std::runtime_error("Wrong HPO algorithm.");
-  }
-
-  return 0;
-}
-
-} // namespace hpo
-} // namespace tadah
+} // namespace tadah::hpo

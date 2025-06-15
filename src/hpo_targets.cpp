@@ -325,6 +325,11 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
   // dummy for now
   optim_is_int.resize(optim_low.size(), false);
 
+  spec.low   = optim_low;
+  spec.high  = optim_high;
+  spec.is_int= optim_is_int;
+  // spec.log_threshold = log_threshold_seen_in_file /* std::optional */;
+  // spec.analyse_logscale();
 }
 
 void HPOTargets::read(std::string fn)
@@ -397,17 +402,48 @@ while (std::getline(ifs, line)) {
     try {
       std::string globLossTypeStr;
       std::vector<double> globLossParams;
-      if (key == "PARAMS") {
-        double temp;
-        while (iss >> temp) {
-          params.push_back(temp);
-        }
-      } else if (key == "OPTIMIZER") {
-        std::string temp;
-        while(iss >> temp) {
-          optimizer.push_back(temp);
-        }
-      } else if (key == "LOSS") {
+      enum Block { ROOT, GLOBAL, LOCAL } block = ROOT;
+      OptimiserSpec* active = nullptr;
+      if (key=="OPTIMIZER")
+      {
+        block  = GLOBAL;
+        active = &spec;
+      }
+      else if (key=="ENDOPTIMISER")
+      {
+        block  = ROOT;
+        active = nullptr;
+      }
+      else if (key=="LOCAL")
+      {
+        spec.local = std::make_unique<OptimiserSpec>();
+        active     = spec.local.get();
+        block      = LOCAL;
+      }
+      else if (key=="ENDLOCAL")
+      {
+        active = &spec;
+        block  = GLOBAL;
+      }
+      else if (block!=ROOT)
+      {
+        /* -------- attribute line inside a block ---------------- */
+        if (key=="LIB")       iss>>active->lib;
+        else if(key=="ALGO")  iss>>active->algo;
+        else if(key=="MAXEVAL") { uint64_t v; iss >> v; active->stop.maxeval = v; }
+        else if (key=="MAXTIME") { double v;  iss>>v; active->stop.maxtime = v; }
+        else if (key=="STOPVAL"){ double v;  iss>>v; active->stop.stopval = v; }
+        else if (key=="FTOL_REL"){ double v; iss>>v; active->stop.ftol_rel = v; }
+        else if (key=="FTOL_ABS"){ double v; iss>>v; active->stop.ftol_abs = v; }
+        else if (key=="XTOL_REL"){ double v; iss>>v; active->stop.xtol_rel = v; }
+        else if (key=="XTOL_ABS"){ double v; iss>>v; active->stop.xtol_abs = v; }
+        else if(key=="PARAM") {
+          std::string name; double val;
+          iss>>name>>val;  active->param[name]=val;
+        } else if(key=="POPULATION") { double v; iss>>v; active->param["POPULATION"]=v; }
+        else std::cerr<<"[HPO] unknown optimizer attribute "<<key<<" (ignored)\n";
+      }
+     else if (key == "LOSS") {
         iss >> globLossTypeStr;
         if (globLossTypeStr== "HUBER") {
           try {
@@ -444,8 +480,6 @@ while (std::getline(ifs, line)) {
       } else if (key == "BDUMP") {
         iss >> dumpBestPotEvery >> dumpBestPotDir;
         handle_directory_creation(dumpBestPotDir);
-      } else if (key == "NSTEPS") {
-        iss >> NSTEPS;
       } else if (key == "FAILSCORE") {
         iss >> FAIL_SCORE;
       } else if (key == "QFLUSH") {
