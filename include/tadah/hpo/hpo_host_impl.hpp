@@ -24,7 +24,7 @@ void HPO_Host<P,R>::init_loss(const std::string& fn) const
 {
   std::ofstream f(fn);
 
-  f << std::left << std::setw(cw_) << "# ITERATION" << std::right;
+  f << std::left << std::setw(cw_) << "#ITERATION" << std::right;
   if (trg_.use_emae)
     f << std::setw(cw_) << "L(EMAE)";
   if (trg_.use_ermse)
@@ -56,7 +56,7 @@ void HPO_Host<P,R>::init_outvar(const std::string& fn) const
 {
   std::ofstream f(fn);
 
-  f << std::left << std::setw(cw_) << "# ITERATION";
+  f << std::left << std::setw(cw_) << "#ITERATION";
   f << std::setw(cw_) << "IT-TIME/ms" << std::right;
   if (trg_.use_emae)
     f << std::setw(cw_) << "EMAE";
@@ -87,7 +87,7 @@ void HPO_Host<P,R>::init_params(const std::string& fn) const
 {
 
   std::ofstream f(fn);
-  f << std::left << std::setw(cw_) << "# ITERATION" << std::right;
+  f << std::left << std::setw(cw_) << "#ITERATION" << std::right;
 
   for (const auto &p : trg_.optimap) {
     for (size_t i = 0; i < p.second.opt.size(); ++i) {
@@ -302,9 +302,8 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
   }
 }
 
-/* ----------  helper: accumulate total loss ---------------------------- */
 template<class P, class R>
-void HPO_Host<P,R>::accumulate_loss(Result& r) const
+void HPO_Host<P,R>::fit_loss(Result& r) const
 {
   double s_lin = 0.0, s_sq = 0.0;          // sums
   std::size_t c_lin = 0,   c_sq = 0;       // counts
@@ -326,6 +325,20 @@ void HPO_Host<P,R>::accumulate_loss(Result& r) const
   if (trg_.use_frmse)  add_global(r.frmseLoss,r.frmse,trg_.frmse,trg_.w_frmse);
   if (trg_.use_srmse)  add_global(r.srmseLoss,r.srmse,trg_.srmse,trg_.w_srmse);
 
+  // Probably better to use the following and apply sqrt when reporting?
+  double part_lin = c_lin ? s_lin / static_cast<double>(c_lin) : 0.0;
+  double part_sq  = c_sq  ? s_sq / static_cast<double>(c_sq) : 0.0;
+  r.loss += part_lin + part_sq;
+  if (r.loss > trg_.FAIL_SCORE) {
+    r.loss = trg_.FAIL_SCORE; // cap the loss
+  }
+}
+template<class P, class R>
+void HPO_Host<P,R>::sims_loss(Result& r) const
+{
+  double s_lin = 0.0, s_sq = 0.0;          // sums
+  std::size_t c_lin = 0,   c_sq = 0;       // counts
+
   r.v_loss.resize(trg_.LS.size());
   for (std::size_t i = 0; i < r.v_outvar.size(); ++i) {
     const auto& lsim = trg_.LS[i];
@@ -345,14 +358,13 @@ void HPO_Host<P,R>::accumulate_loss(Result& r) const
     }
   }
 
-  // double part_lin = c_lin ? s_lin / static_cast<double>(c_lin) : 0.0;
-  // double part_sq  = c_sq  ? std::sqrt( s_sq / static_cast<double>(c_sq) ) : 0.0;
-  // r.loss = part_lin + part_sq;
-
   // Probably better to use the following and apply sqrt when reporting?
   double part_lin = c_lin ? s_lin / static_cast<double>(c_lin) : 0.0;
   double part_sq  = c_sq  ? s_sq / static_cast<double>(c_sq) : 0.0;
-  r.loss = part_lin + part_sq;
+  r.loss += part_lin + part_sq;
+  if (r.loss > trg_.FAIL_SCORE) {
+    r.loss = trg_.FAIL_SCORE; // cap the loss
+  }
 }
 
 /* ----------  operator()  (thread-safe) ------------------------------- */
@@ -395,20 +407,18 @@ double HPO_Host<P,R>::operator()(const P& p) const
     auto pred = host.model->predict(pot, val_stdb_, host.dc);
     mlip::Analytics   a(val_stdb_, pred);
     fill_validation(r, a);
-
     r.pot_ctx  = std::move(pot);
+    fit_loss(r);
 
     /* optional LAMMPS -------------------------------------------------- */
+    if (use_lammps_ && r.loss < trg_.FAIL_SCORE) {
 #ifdef TADAH_BUILD_MPI
-    if (use_lammps_)
       run_lammps_mpi(r);
 #else
-    if (use_lammps_)
       run_lammps(r);
 #endif
-
-    /* total loss ------------------------------------------------------- */
-    accumulate_loss(r);
+      sims_loss(r);
+    }
 
     /* best tracking ---------------------------------------------------- */
     double cur=g_best_.load(std::memory_order_relaxed);

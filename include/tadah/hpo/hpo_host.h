@@ -119,7 +119,8 @@ private:
     void update_context(core::Context&, const ParamVec&) const;
     void fill_validation(Result&, const mlip::Analytics&)  const;
     void run_lammps     (Result&) const;
-    void accumulate_loss(Result&) const;
+    void fit_loss(Result&) const;
+    void sims_loss(Result&) const;
 
     /* ---------- global mutable state ----------------------------------- */
     static std::atomic_size_t   g_iter_;
