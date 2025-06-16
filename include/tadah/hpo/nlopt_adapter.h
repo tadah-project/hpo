@@ -16,7 +16,8 @@ inline nlopt_algorithm nlopt_algo(const std::string& s)
 }
 
 /* create an nlopt::opt recursively from OptimiserSpec -------------*/
-inline nlopt::opt make_nlopt(const OptimiserSpec& sp, unsigned dim)
+inline nlopt::opt make_nlopt(const OptimiserSpec& sp, unsigned dim,
+    std::unordered_set<std::string>& used)
 {
     nlopt::opt o(sp.algo.c_str(), dim);
 
@@ -30,16 +31,22 @@ inline nlopt::opt make_nlopt(const OptimiserSpec& sp, unsigned dim)
     if (sp.stop.stopval)   o.set_stopval(*sp.stop.stopval);
 
     /* generic PARAM lines */
-    for (auto& kv : sp.param)          // skip POPULATION; handled next
-        if (kv.first!="POPULATION")
-            o.set_param(kv.first.c_str(), kv.second);
+    for (auto& kv : sp.param) {        // skip POPULATION; handled next
+      if (kv.first!="POPULATION") {
+        o.set_param(kv.first.c_str(), kv.second);
+        std::cout << "[HPO] NLOPT param: " << kv.first << " = " << kv.second << "\n";
+        used.insert(kv.first);
+      }
+    }
 
-    if (auto it=sp.param.find("POPULATION"); it!=sp.param.end())
-        o.set_population(static_cast<unsigned>(it->second));
+    if (auto it=sp.param.find("POPULATION"); it!=sp.param.end()) {
+      o.set_population(static_cast<unsigned>(it->second));
+      used.insert("POPULATION");
+    }
 
     /* local optimiser (one level) */
     if (sp.local)
-        o.set_local_optimizer( make_nlopt(*sp.local,dim) );
+        o.set_local_optimizer( make_nlopt(*sp.local,dim, used) );
 
     return o;
 }
@@ -49,8 +56,11 @@ template<class Vec,class Runner>
 void run_nlopt(const OptimiserSpec& sp,
                HPO_Host<Vec,Runner>& host)
 {
+    std::unordered_set<std::string> used;          // <- track names
     const unsigned dim = static_cast<unsigned>(sp.low.size());
-    nlopt::opt opt = make_nlopt(sp, dim);
+    nlopt::opt opt = make_nlopt(sp, dim, used);
+
+    warn_unused_params(sp, used, "NLOPT::"+sp.algo);
 
     opt.set_lower_bounds(sp.low);
     opt.set_upper_bounds(sp.high);
@@ -71,10 +81,10 @@ void run_nlopt(const OptimiserSpec& sp,
 
     /* starting point – either user supplied or random inside bounds */
     std::vector<double> start(dim);
-    if (!host.targets().optim_init.empty())
+    if (!sp.optim_init.empty())
     {
-        auto v = sp.in( host.targets().optim_init.front() );
-        for(size_t i=0;i<dim;++i) start[i]=v(i);
+        auto v = sp.in( sp.optim_init.front() );
+        for(size_t i=0;i<dim;++i) start[i]=v[i];
     } else {
         dlib::rand r;                     // no seed: time-based
         for(size_t i=0;i<dim;++i)

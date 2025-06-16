@@ -8,8 +8,11 @@
 #include <memory>
 #include <limits>
 #include <cmath>
+#include <unordered_set>
 
 namespace tadah::hpo {
+
+
 
 /* ---------------- basic containers -------------------------------- */
 struct StopCriteria {
@@ -34,7 +37,14 @@ struct OptimiserSpec {
     std::vector<bool>   log_scaled;         // same size as low/high
     std::optional<double> log_threshold;    // OFF = std::nullopt
     std::vector<std::vector<double>> optim_init;
-    std::map<std::string, Opti> optimap;  // used by HPO_Host
+
+    /* helper to access THREADS stored in ParamMap                  */
+    unsigned num_threads(unsigned fallback = 0) const
+    {
+        auto it = param.find("THREADS");
+        return it!=param.end() ? static_cast<unsigned>(it->second)
+                              : fallback;
+    }
 
     /* call once after low/high are known */
     void analyse_logscale()
@@ -54,7 +64,7 @@ struct OptimiserSpec {
     /* Helper to go in/out of transformed space */
     template<typename Vec>
     Vec in(const Vec& x)  const
-    {   Vec y=x;  for(size_t i=0;i<y.size();++i) if(log_scaled[i]) y(i)=std::log(y(i)); return y; }
+    {   Vec y=x;  for(size_t i=0;i<y.size();++i) if(log_scaled[i]) y[i]=std::log(y[i]); return y; }
     template<typename Vec>
     Vec out(const Vec& x) const
     {   Vec y=x;  for(size_t i=0;i<y.size();++i) if(log_scaled[i]) y(i)=std::exp(y(i)); return y; }
@@ -63,4 +73,24 @@ struct OptimiserSpec {
     static void print_caps(const std::string& lib,
                            const std::string& algo);
 };
+
+/* ------------------------------------------------------------------ *
+ *  warn_unused_params()                                              *
+ *  ----------------------------------------------------------------- *
+ *  Call after the adapter has taken every parameter it understands.  *
+ *  Pass the set of names that have been consumed and a short text    *
+ *  identifying the current solver (for the message).                 *
+ * ------------------------------------------------------------------ */
+inline void warn_unused_params(const OptimiserSpec& sp,
+    const std::unordered_set<std::string>& used,
+    const std::string& ctx)
+{
+  for (const auto& kv : sp.param)
+    if (!used.count(kv.first))
+      std::cerr << "[HPO] warning: parameter '" << kv.first
+        << "' is not used by " << ctx << '\n';
+  if (sp.local)          // recurse into local optimiser, if any
+    warn_unused_params(*sp.local, used, ctx+"::LOCAL");
+}
+
 }   // namespace
