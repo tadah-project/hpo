@@ -7,7 +7,7 @@ namespace tadah::hpo {
 
 /* ----- RANDOM ---------------------------------------------------- */
 template<typename Vec, typename Runner>
-  void run_random(const OptimiserSpec& sp,
+  void run_random(const OptimizerSpec& sp,
       HPO_Host<Vec,Runner>& host)
   {
     uint64_t seed = sp.seed.value_or(std::random_device{}());  // default seed
@@ -28,7 +28,7 @@ template<typename Vec, typename Runner>
 
 /* ----- GRID  (naïve Cartesian product) --------------------------- */
 template<typename Vec, typename Runner>
-  void run_grid(const OptimiserSpec& sp,
+  void run_grid(const OptimizerSpec& sp,
       HPO_Host<Vec,Runner>& host)
   {
 

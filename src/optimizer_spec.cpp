@@ -1,4 +1,4 @@
-#include <tadah/hpo/optimiser_spec.h>
+#include <tadah/hpo/optimizer_spec.h>
 #include <iomanip>
 #include <nlopt.hpp>
 #include <dlib/optimization.h>
@@ -34,11 +34,11 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
 
     os<<"   * any NLopt stopping criterion\n"
         "   * PARAM <name> <value> – any nlopt::opt::set_param key\n";
-    if (algo[0]=='G')        os<<"   * global optimiser\n";
+    if (algo[0]=='G')        os<<"   * global optimizer\n";
     if (algo[1]=='N') os<<"   * derivative-free\n";
 }
 
-void OptimiserSpec::print_caps(const std::string& lib,
+void OptimizerSpec::print_caps(const std::string& lib,
                                const std::string& algo)
 {
     std::cout<<"Options for "<<lib<<":"<<algo<<"\n";

@@ -568,12 +568,12 @@ int hpo_run(core::Context& ctx)
     std::string val = ctx.get<std::string>("VALIDATION");
 
     HPO_Host<V,R> host(ctx,trg,val);
-    const OptimiserSpec& sp = trg.spec;          // short alias
+    const OptimizerSpec& sp = trg.spec;          // short alias
 
     /* quick info */
     std::cout<<"[HPO] "<<sp.lib<<":"<<sp.algo<<"   dim="<<sp.low.size()<<"\n";
     // if (ctx.exists("LIST_OPT")) {                // CLI: tadah hpo --list
-    //     OptimiserSpec::print_caps(sp.lib, sp.algo);
+    //     OptimizerSpec::print_caps(sp.lib, sp.algo);
     //     return 0;
     // }
 
@@ -586,7 +586,7 @@ int hpo_run(core::Context& ctx)
     else if(sp.lib=="NLOPT")
         run_nlopt<V,R>(sp,host);              // helper in new nlopt_adapter.h
     else
-        throw std::runtime_error("unknown optimiser "+sp.lib+":"+sp.algo);
+        throw std::runtime_error("unknown optimizer "+sp.lib+":"+sp.algo);
     return 0;
 }
 } // namespace tadah::hpo

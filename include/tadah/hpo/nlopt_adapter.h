@@ -1,6 +1,6 @@
 #pragma once
 #include <nlopt.hpp>
-#include <tadah/hpo/optimiser_spec.h>
+#include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_host.h>
 #include <dlib/rand.h>
 
@@ -15,8 +15,8 @@ inline nlopt_algorithm nlopt_algo(const std::string& s)
     return a;
 }
 
-/* create an nlopt::opt recursively from OptimiserSpec -------------*/
-inline nlopt::opt make_nlopt(const OptimiserSpec& sp, unsigned dim)
+/* create an nlopt::opt recursively from OptimizerSpec -------------*/
+inline nlopt::opt make_nlopt(const OptimizerSpec& sp, unsigned dim)
 {
     nlopt::opt o(sp.algo.c_str(), dim);
 
@@ -40,7 +40,7 @@ inline nlopt::opt make_nlopt(const OptimiserSpec& sp, unsigned dim)
         o.set_param(kv.first.c_str(), kv.second);
       }
 
-    /* local optimiser (one level) */
+    /* local optimizer (one level) */
     if (sp.local)
         o.set_local_optimizer( make_nlopt(*sp.local,dim) );
 
@@ -49,7 +49,7 @@ inline nlopt::opt make_nlopt(const OptimiserSpec& sp, unsigned dim)
 
 /* main driver ----------------------------------------------------- */
 template<class Vec,class Runner>
-void run_nlopt(const OptimiserSpec& sp,
+void run_nlopt(const OptimizerSpec& sp,
                HPO_Host<Vec,Runner>& host)
 {
     const unsigned dim = static_cast<unsigned>(sp.low.size());
@@ -62,14 +62,14 @@ void run_nlopt(const OptimiserSpec& sp,
     auto wrapper = [](const std::vector<double>& x,
                       std::vector<double>&, void* userdata)->double
     {
-        auto* pack = static_cast<std::pair<OptimiserSpec const*, HPO_Host<Vec,Runner>*>*>(userdata);
+        auto* pack = static_cast<std::pair<OptimizerSpec const*, HPO_Host<Vec,Runner>*>*>(userdata);
         const auto& spec = *pack->first;
         auto* hostp      =  pack->second;
         Vec v(x.size());
         for(size_t i=0;i<x.size();++i) v(i)=x[i];
         return (*hostp)( spec.out(v) );
     };
-    std::pair<const OptimiserSpec*, HPO_Host<Vec,Runner>*> udata{&sp,&host};
+    std::pair<const OptimizerSpec*, HPO_Host<Vec,Runner>*> udata{&sp,&host};
     opt.set_min_objective(wrapper,&udata);
 
     /* starting point – either user supplied or random inside bounds */

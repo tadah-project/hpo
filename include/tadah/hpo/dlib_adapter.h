@@ -1,12 +1,12 @@
 #pragma once
 #include <dlib/global_optimization.h>
-#include <tadah/hpo/optimiser_spec.h>
+#include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_host.h>
 
 namespace tadah::hpo {
 
 template<class Vec,class Runner>
-  void run_dlib_global(const OptimiserSpec& sp,
+  void run_dlib_global(const OptimizerSpec& sp,
       HPO_Host<Vec,Runner>& host)
   {
     using namespace dlib;
