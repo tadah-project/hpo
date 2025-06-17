@@ -30,11 +30,8 @@ struct OptimiserSpec {
     std::unique_ptr<OptimiserSpec> local;   // one sub-optimiser
 
     /* --------- algorithm-specific parameters ---------------------- */
-    std::optional<unsigned> vector_storage;
-    std::optional<unsigned> pop;
-    std::optional<unsigned long> seed;
+    std::optional<unsigned> vector_storage, pop, seed, num_threads;
     std::optional<double> step;
-    std::optional<unsigned> num_threads;
     StopCriteria stop;
     ParamMap     param;             // algorithm-specific knobs
 
