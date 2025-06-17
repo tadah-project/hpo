@@ -10,18 +10,13 @@ template<typename Vec, typename Runner>
   void run_random(const OptimiserSpec& sp,
       HPO_Host<Vec,Runner>& host)
   {
-    std::unordered_set<std::string> used;      // <- track consumption
-    uint64_t seed = std::random_device{}();  // default seed
-    if (auto it=sp.param.find("SEED"); it!=sp.param.end()) {
-      seed = it->second;
-      used.insert("SEED");
-    }
+    uint64_t seed = sp.seed.value_or(std::random_device{}());  // default seed
     std::cout << "[HPO] RANDOM search: seed=" << seed << std::endl;
     std::mt19937_64 rng(seed);
-    warn_unused_params(sp, used, "TADAH::RANDOM");
     const auto& lo = sp.low, &hi = sp.high;
 
-    uint64_t max = sp.stop.maxeval.value_or(10000);
+    constexpr uint64_t HUGE_UNSIGNED = std::numeric_limits<uint64_t>::max();
+    uint64_t max = sp.stop.maxeval.value_or(HUGE_UNSIGNED);
     for(uint64_t c=0;c<max;++c)
     {
       Vec x(lo.size());
@@ -37,13 +32,7 @@ template<typename Vec, typename Runner>
       HPO_Host<Vec,Runner>& host)
   {
 
-    std::unordered_set<std::string> used;      // <- track consumption
-    unsigned steps = 20;
-    if (auto it=sp.param.find("SPACING"); it!=sp.param.end()) {
-      steps = it->second;
-      used.insert("SPACING");
-    }
-    warn_unused_params(sp, used, "TADAH::GRID");
+    unsigned steps = sp.step.value_or(20);  // default steps in each dimension
 
     const size_t dim = sp.low.size();
     std::vector<unsigned> idx(dim,0);

@@ -21,25 +21,12 @@ template<class Vec,class Runner>
     //     init.emplace_back( mat(sp.in(v)), 0.0);          // y filled by dlib later
 
     /* ------- thread pool ---------------------------------------- */
-    // const unsigned nthreads = sp.num_threads(dlib::default_thread_pool().num_threads_in_pool());
-    const unsigned nthreads = sp.num_threads(1);  // signle thread for now
+    const unsigned nthreads = sp.num_threads.value_or(1);  // single thread as default
     dlib::thread_pool tp(nthreads);
 
-    std::unordered_set<std::string> used;          // <- track names
-
-    double solver_eps = 1e-7;
-    if (auto it = sp.param.find("SOLVER_EPS"); it != sp.param.end()) {
-      solver_eps = it->second;
-      used.insert("SOLVER_EPS");
-    }
-
-    double rel_noise = 1e-12;
-    if (auto it = sp.param.find("REL_NOISE"); it != sp.param.end()) {
-      rel_noise = it->second;
-      used.insert("REL_NOISE");
-    }
-
-    warn_unused_params(sp, used, "DLIB::GFS");
+    double solver_eps = sp.stop.ftol_abs.value_or(1e-3);
+    constexpr uint64_t HUGE_UNSIGNED = std::numeric_limits<uint64_t>::max();
+    uint64_t maxeval = sp.stop.maxeval.value_or(HUGE_UNSIGNED);
 
     /* ------- main call ------------------------------------------ */
     auto feval = [&](const matrix<double,0,1>& x)->double
@@ -47,7 +34,7 @@ template<class Vec,class Runner>
 
     find_min_global(tp, feval,
         lo, hi, sp.is_int,
-        max_function_calls(sp.stop.maxeval.value_or(100000)),
+        max_function_calls(maxeval),
         FOREVER,
         solver_eps,
         init

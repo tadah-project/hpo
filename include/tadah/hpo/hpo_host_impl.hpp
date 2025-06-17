@@ -445,8 +445,6 @@ double HPO_Host<P,R>::operator()(const P& p) const
 void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                                   std::size_t cw, int prec)
 {
-    std::size_t my_iter = res.iter;            // store before move
-                                               
     /* 1. enqueue ------------------------------------------------------- */
     g_q_.enqueue(std::move(res));
 

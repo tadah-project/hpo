@@ -412,6 +412,7 @@ void HPOTargets::read(const std::string& fn)
             {
                 if      (key=="LIB")       iss>>active->lib;
                 else if (key=="ALGO")      iss>>active->algo;
+                else if (key=="LOGSCALE_THRESHOLD") { double v; iss>>v; spec.log_threshold=v; }
                 else if (key=="MAXEVAL") { uint64_t v; iss>>v; active->stop.maxeval=v; }
                 else if (key=="MAXTIME") { double v; iss>>v; active->stop.maxtime=v; }
                 else if (key=="STOPVAL") { double v; iss>>v; active->stop.stopval=v; }
@@ -419,12 +420,12 @@ void HPOTargets::read(const std::string& fn)
                 else if (key=="FTOL_ABS") { double v; iss>>v; active->stop.ftol_abs=v; }
                 else if (key=="XTOL_REL") { double v; iss>>v; active->stop.xtol_rel=v; }
                 else if (key=="XTOL_ABS") { double v; iss>>v; active->stop.xtol_abs=v; }
+                else if (key=="POPULATION"){ unsigned v; iss>>v; active->pop=v; }
+                else if (key=="STEP")   { double v; iss>>v; active->step=v; }
+                else if (key=="SEED")   { unsigned long v; iss>>v; active->seed=v; }
+                else if (key=="VECTOR_STORAGE")   { unsigned v; iss>>v; active->vector_storage=v; }
+                else if (key=="THREADS")   {  unsigned v; iss>>v; active->num_threads=v; }
                 else if (key=="PARAM")    { std::string p; double v; iss>>p>>v; active->param[p]=v; }
-                else if (key=="POPULATION"){ double v; iss>>v; active->param[key]=v; }
-                else if (key=="THREADS")   { double v; iss>>v; active->param[key]=v; }
-                else if (key=="SPACING")   { double v; iss>>v; active->param[key]=v; }
-                else if (key=="SEED")   { double v; iss>>v; active->param[key]=v; }
-                else if (key=="LOGSCALE_THRESHOLD") { double v; iss>>v; spec.log_threshold=v; }
                 else std::cerr<<"[HPO] unknown optimiser attribute "<<key<<" (ignored)\n";
                 continue;
             }

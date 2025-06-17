@@ -581,7 +581,7 @@ int hpo_run(core::Context& ctx)
         run_random<V,R>(sp,host);
     else if(sp.lib=="TADAH" && sp.algo=="GRID")
         run_grid<V,R>  (sp,host);
-    else if(sp.lib=="DLIB")
+    else if(sp.lib=="DLIB" && sp.algo=="GFS")
         run_dlib_global(sp,host);        // helper in new dlib_adapter.h
     else if(sp.lib=="NLOPT")
         run_nlopt<V,R>(sp,host);              // helper in new nlopt_adapter.h

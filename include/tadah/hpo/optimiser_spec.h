@@ -25,11 +25,18 @@ using ParamMap = std::unordered_map<std::string,double>;
 
 /* ---------------- Optimiser description --------------------------- */
 struct OptimiserSpec {
-    std::string  lib   = "TADAH";   // DLIB | NLOPT | TADAH
-    std::string  algo  = "RANDOM";
+    std::string  lib   = "NOT SET";   // DLIB | NLOPT | TADAH
+    std::string  algo  = "NOT SET";
+    std::unique_ptr<OptimiserSpec> local;   // one sub-optimiser
+
+    /* --------- algorithm-specific parameters ---------------------- */
+    std::optional<unsigned> vector_storage;
+    std::optional<unsigned> pop;
+    std::optional<unsigned long> seed;
+    std::optional<double> step;
+    std::optional<unsigned> num_threads;
     StopCriteria stop;
     ParamMap     param;             // algorithm-specific knobs
-    std::unique_ptr<OptimiserSpec> local;   // one sub-optimiser
 
     /* -------- bounds, integer mask, log-scale --------------------- */
     std::vector<double> low, high;          // filled by HPOTargets
@@ -38,13 +45,6 @@ struct OptimiserSpec {
     std::optional<double> log_threshold;    // OFF = std::nullopt
     std::vector<std::vector<double>> optim_init;
 
-    /* helper to access THREADS stored in ParamMap                  */
-    unsigned num_threads(unsigned fallback = 0) const
-    {
-        auto it = param.find("THREADS");
-        return it!=param.end() ? static_cast<unsigned>(it->second)
-                              : fallback;
-    }
 
     /* call once after low/high are known */
     void analyse_logscale()
@@ -67,30 +67,11 @@ struct OptimiserSpec {
     {   Vec y=x;  for(size_t i=0;i<y.size();++i) if(log_scaled[i]) y[i]=std::log(y[i]); return y; }
     template<typename Vec>
     Vec out(const Vec& x) const
-    {   Vec y=x;  for(size_t i=0;i<y.size();++i) if(log_scaled[i]) y(i)=std::exp(y(i)); return y; }
+    {   Vec y=x;  for(long int i=0;i<y.size();++i) if(log_scaled[i]) y(i)=std::exp(y(i)); return y; }
 
     /* ------------- capability print-outs -------------------------- */
     static void print_caps(const std::string& lib,
                            const std::string& algo);
 };
-
-/* ------------------------------------------------------------------ *
- *  warn_unused_params()                                              *
- *  ----------------------------------------------------------------- *
- *  Call after the adapter has taken every parameter it understands.  *
- *  Pass the set of names that have been consumed and a short text    *
- *  identifying the current solver (for the message).                 *
- * ------------------------------------------------------------------ */
-inline void warn_unused_params(const OptimiserSpec& sp,
-    const std::unordered_set<std::string>& used,
-    const std::string& ctx)
-{
-  for (const auto& kv : sp.param)
-    if (!used.count(kv.first))
-      std::cerr << "[HPO] warning: parameter '" << kv.first
-        << "' is not used by " << ctx << '\n';
-  if (sp.local)          // recurse into local optimiser, if any
-    warn_unused_params(*sp.local, used, ctx+"::LOCAL");
-}
 
 }   // namespace
