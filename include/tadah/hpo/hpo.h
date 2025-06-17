@@ -1,9 +1,14 @@
 #ifndef TADAH_HPO_H
 #define TADAH_HPO_H
 
-#include <tadah/core/config.h>
+#include <tadah/core/context.h>
 
-int hpo_run(Config&, std::string &trg_file,
-    std::string &val_file);
+namespace tadah {
+namespace hpo {
+
+int hpo_run(core::Context&);
+
+} // namespace hpo
+} // namespace tadah
 
 #endif

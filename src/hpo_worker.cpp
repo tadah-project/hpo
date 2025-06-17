@@ -2,6 +2,9 @@
 #include <tadah/hpo/runners.h>
 #ifdef TADAH_BUILD_MPI
 
+namespace tadah {
+namespace hpo {
+
 HPO_Worker::HPO_Worker(int rank, int ncpu, MPI_Group &world_group):
   rank(rank),
   ncpu(ncpu),
@@ -10,7 +13,7 @@ HPO_Worker::HPO_Worker(int rank, int ncpu, MPI_Group &world_group):
   MPI_Bcast(&use_lammps, 1, MPI_C_BOOL, 0, MPI_COMM_WORLD);
 };
 
-void HPO_Worker::run() {
+void HPO_Worker::runLammps() {
   LammpsRunner runner;
   MPI_Status status;
   while (true) {
@@ -143,4 +146,7 @@ void HPO_Worker::run() {
   }
 
 }
+
+} // namespace hpo
+} // namespace tadah
 #endif

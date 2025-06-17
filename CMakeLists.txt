@@ -51,6 +51,58 @@ if (BUILD_SHARED_LIBS)
   endif("${isSystemDir}" STREQUAL "-1")
 endif()
 
+# Set default build type
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+
+string(TOUPPER ${CMAKE_BUILD_TYPE} CMAKE_BUILD_TYPE)
+if (CMAKE_BUILD_TYPE STREQUAL "DEVELOP")
+if(NOT DEFINED ENV{TADAH_PATH})
+  message(FATAL_ERROR "TADAH_PATH system variable is undefined for the ${CMAKE_BUILD_TYPE} build")
+endif()
+  function(find_directory_case_insensitive target_name search_dir result_var)
+    execute_process(
+        COMMAND find "${search_dir}" -maxdepth 1 -type d -iname "${target_name}"
+        OUTPUT_VARIABLE found_dir
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if(found_dir)
+      set(${result_var} "${found_dir}" PARENT_SCOPE)
+      message("${TADAH} Develop build: Found directory: ${found_dir}")
+    else()
+      set(${result_var} "" PARENT_SCOPE)
+      message("${TADAH} Develop build: Directory not found.")
+    endif()
+  endfunction()
+  find_directory_case_insensitive("mlip" "$ENV{TADAH_PATH}" DEVELOP_MLIP_DIR)
+  set(FETCHCONTENT_SOURCE_DIR_TADAH.MLIP "${DEVELOP_MLIP_DIR}")
+endif()
+
+# Check is build supported
+string(TOUPPER ${CMAKE_BUILD_TYPE} CMAKE_BUILD_TYPE)
+if (CMAKE_BUILD_TYPE STREQUAL "DEBUG" 
+    OR
+    CMAKE_BUILD_TYPE STREQUAL "RELEASE"
+    OR
+    CMAKE_BUILD_TYPE STREQUAL "PROFILE"
+    OR
+    CMAKE_BUILD_TYPE STREQUAL "DEVELOP"
+)
+  message(STATUS "${TADAH} Build type:  ${CMAKE_BUILD_TYPE}.")
+else()
+  message(FATAL_ERROR "
+  Selected build type is not supported: ${CMAKE_BUILD_TYPE}.
+  Supported build types: Release, Debug, Profile Develop"
+  )
+endif()
+
+# Update the documentation string of CMAKE_BUILD_TYPE for GUIs
+set(CMAKE_BUILD_TYPE "${CMAKE_BUILD_TYPE}" CACHE STRING
+  "Choose the type of build, options are: None Debug Release Profile."
+  FORCE)
+
+
 
 include(FetchContent)
 
@@ -58,12 +110,12 @@ if(DEFINED ENV{CI_COMMIT_REF_NAME})
   set(GIT_BRANCH "$ENV{CI_COMMIT_REF_NAME}")
 else()
   execute_process(
-    COMMAND bash -c "git status | grep origin | sed -e 's/.*origin\\///' -e 's/[^a-zA-Z].*//'" 
+    COMMAND bash -c "git status | grep origin |sed -e 's/.*origin\\///' -e 's/[^a-zA-Z\/_-].*//'"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     OUTPUT_VARIABLE GIT_BRANCH
     OUTPUT_STRIP_TRAILING_WHITESPACE)
 endif()
-message(STATUS "${TADAH}.HPO Using GIT_BRANCH:  ${GIT_BRANCH}.")
+message(STATUS "${TADAH}HPO Using GIT_BRANCH:  ${GIT_BRANCH}")
 
 FetchContent_Declare(
     Tadah.MLIP
@@ -72,12 +124,21 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(Tadah.MLIP)
 
+# Use only to include lammps.tadah.h header file
+FetchContent_Declare(
+  Tadah.LAMMPS
+    GIT_REPOSITORY https://git.ecdf.ed.ac.uk/tadah/tadah.lammps.git
+    GIT_TAG origin/${GIT_BRANCH}
+)
+FetchContent_MakeAvailable(Tadah.LAMMPS)
+
 include(FetchContent)
 FetchContent_Declare(dlib
         GIT_REPOSITORY https://github.com/davisking/dlib.git
         GIT_TAG        v19.24.6
 )
 FetchContent_MakeAvailable(dlib)
+add_compile_definitions(TADAH_USE_DLIB)
 
 # User must specify the root directory for lammps
 if(NOT TADAH_LAMMPS_DIR)
@@ -125,6 +186,8 @@ add_compile_definitions(TADAH_LAMMPS_LIB=\"${TADAH_LAMMPS_LIB}\")
 file(GLOB HPO_SRC CONFIGURE_DEPENDS "src/*.cpp")
 add_library(tadah.hpo ${HPO_SRC})
 target_include_directories(tadah.hpo PUBLIC include)
+target_include_directories(tadah.hpo PUBLIC ${Tadah.LAMMPS_SOURCE_DIR}/include)   # required for declaration of LammpsTadah used in runner.h
+target_include_directories(tadah.hpo PUBLIC ${Tadah.LAMMPS_SOURCE_DIR}/ML-TADAH)  # required for declaration of PairTadah used in runner.h
 target_include_directories(tadah.hpo PUBLIC ${Tadah.MLIP_SOURCE_DIR}/include)
 target_include_directories(tadah.hpo PUBLIC ${Tadah.MODELS_SOURCE_DIR}/include)
 target_include_directories(tadah.hpo PUBLIC ${Tadah.CORE_SOURCE_DIR}/include)
@@ -135,8 +198,10 @@ if(TADAH_BUILD_MPI)
   set_target_properties(tadah.hpo PROPERTIES OUTPUT_NAME "tadah_mpi.hpo")
 endif()
 
+if (NOT TADAH_BUILD_DOCS_ONLY)
 find_package(LAPACK)
 target_link_libraries(tadah.hpo PUBLIC ${LAPACK_LIBRARIES})
+endif()
 
 if(TADAH_ENABLE_OPENMP)
   find_package(OpenMP REQUIRED)
