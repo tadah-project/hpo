@@ -301,51 +301,26 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
   }
 
   /* ---------- gather bounds + initial point ----------------------- */
-std::vector<double> low, high;
-std::vector<std::vector<double>> init(1);         // one initial set
+  std::vector<double> low, high;
+  std::vector<std::vector<double>> init(1);         // one initial set
 
-for (auto& p : optimap)
-{
+  for (auto& p : optimap)
+  {
     const Opti& o = p.second;
     for (size_t i=0;i<o.opt.size();++i)
-        if (o.opt[i]) {
-            low .push_back(o.lowbound [i]);
-            high.push_back(o.highbound[i]);
-            init[0].push_back(std::stod(o.config[i]));
-        }
-}
+      if (o.opt[i]) {
+        low .push_back(o.lowbound [i]);
+        high.push_back(o.highbound[i]);
+        init[0].push_back(std::stod(o.config[i]));
+      }
+  }
 
-/* store in OptimiserSpec ----------------------------------------- */
-spec.low        = std::move(low);
-spec.high       = std::move(high);
-spec.is_int.assign(spec.low.size(), false);   // still no integer vars
-spec.optim_init = std::move(init);
-spec.analyse_logscale();  // convert to log-scale if needed
-
-  // for (auto& p : optimap) {
-  //   for (size_t i = 0; i < p.second.opt.size(); ++i) {
-  //     if (p.second.opt[i]) {
-  //       optim_low.push_back(p.second.lowbound[i]);
-  //       optim_high.push_back(p.second.highbound[i]);
-  //     }
-  //   }
-  // }
-  //
-  // // init with original values from the Context
-  // // for now just one initial point
-  // size_t nOptimInits = 1;
-  // optim_init.resize(nOptimInits);
-  // for (size_t j = 0; j < nOptimInits; ++j) {
-  //   for (auto& p : optimap) {
-  //     for (size_t i = 0; i < p.second.opt.size(); ++i) {
-  //       if (p.second.opt[i]) {
-  //         optim_init[j].emplace_back(std::stod(p.second.config[i]));
-  //       }
-  //     }
-  //   }
-  // }
-  // // dummy for now
-  // optim_is_int.resize(optim_low.size(), false);
+  /* store in OptimizerSpec ----------------------------------------- */
+  spec.low        = std::move(low);
+  spec.high       = std::move(high);
+  spec.is_int.assign(spec.low.size(), false);   // still no integer vars
+  spec.optim_init = std::move(init);
+  spec.analyse_logscale();  // convert to log-scale if needed
 
 }
 
@@ -357,10 +332,10 @@ void HPOTargets::read(const std::string& fn)
     std::ifstream ifs(fn);
     if (!ifs) throw std::runtime_error("HPO file " + fn + " not found");
 
-    /* state for optimiser blocks ---------------------------------- */
+    /* state for optimizer blocks ---------------------------------- */
     enum Block { ROOT, GLOBAL, LOCAL };
     Block           block  = ROOT;
-    OptimiserSpec*  active = nullptr;
+    OptimizerSpec*  active = nullptr;
 
     std::string line;           // whole line buffer
     size_t      nline = 0;      // 1-based
@@ -397,10 +372,10 @@ void HPOTargets::read(const std::string& fn)
 
         try {
             /* -------- block delimiters ---------------------------- */
-            if (key=="OPTIMISER")   { block=GLOBAL; active=&spec; continue; }
-            if (key=="ENDOPTIMISER"){ block=ROOT;   active=nullptr; continue; }
+            if (key=="OPTIMIZER")   { block=GLOBAL; active=&spec; continue; }
+            if (key=="ENDOPTIMIZER"){ block=ROOT;   active=nullptr; continue; }
             if (key=="LOCAL") {
-                spec.local = std::make_unique<OptimiserSpec>();
+                spec.local = std::make_unique<OptimizerSpec>();
                 active     = spec.local.get();
                 block      = LOCAL;
                 continue;
@@ -408,7 +383,7 @@ void HPOTargets::read(const std::string& fn)
             if (key=="ENDLOCAL")    { active=&spec; block=GLOBAL; continue; }
 
             /* ------------------------------------------------------ */
-            if (block!=ROOT)        /* inside OPTIMISER / LOCAL */
+            if (block!=ROOT)        /* inside OPTIMIZER / LOCAL */
             {
                 if      (key=="LIB")       iss>>active->lib;
                 else if (key=="ALGO")      iss>>active->algo;
@@ -426,13 +401,13 @@ void HPOTargets::read(const std::string& fn)
                 else if (key=="VECTOR_STORAGE")   { unsigned v; iss>>v; active->vector_storage=v; }
                 else if (key=="THREADS")   {  unsigned v; iss>>v; active->num_threads=v; }
                 else if (key=="PARAM")    { std::string p; double v; iss>>p>>v; active->param[p]=v; }
-                else std::cerr<<"[HPO] unknown optimiser attribute "<<key<<" (ignored)\n";
+                else std::cerr<<"[HPO] unknown optimizer attribute "<<key<<" (ignored)\n";
                 continue;
             }
 
             /* ==================  global (ROOT) section  =========== */
 
-            /* optimiser-independent settings ----------------------- */
+            /* optimizer-independent settings ----------------------- */
             // if      (key=="THREADS"){ double v; iss>>v; spec.param["THREADS"]=v; }
             if (key=="FAILSCORE"){ iss>>FAIL_SCORE; }
             else if (key=="MAXTIME")  { iss>>MAX_TIME;  }
@@ -479,199 +454,6 @@ void HPOTargets::read(const std::string& fn)
         }
     }
 }
-
-
-// void HPOTargets::read(std::string fn)
-// {
-//   std::ifstream ifs(fn);
-//   if (!ifs.good()) throw std::runtime_error("HPO context file does not exist.");
-//
-//   std::string line;
-//   size_t nline = 0;
-// auto strip_comment_and_rtrim = [](std::string &s)
-// {
-//     // Remove everything after '#'
-//     if (auto pos = s.find('#'); pos != std::string::npos)
-//         s.resize(pos);
-//
-//     // Trim right-hand whitespace
-//     s.erase(std::find_if(s.rbegin(), s.rend(),
-//                          [](unsigned char ch) { return !std::isspace(ch); })
-//                 .base(),
-//             s.end());
-// };
-//
-// auto ltrim = [](std::string &s)
-// {
-//     s.erase(s.begin(), std::find_if(s.begin(), s.end(),
-//                                     [](unsigned char ch) { return !std::isspace(ch); }));
-// };
-//
-// while (std::getline(ifs, line)) {
-//     ++nline;
-//     strip_comment_and_rtrim(line);
-//
-//     // Skip lines that are empty *after* removing comments
-//     if (std::all_of(line.begin(), line.end(),
-//                     [](unsigned char ch) { return std::isspace(ch); }))
-//         continue;
-//
-//     while (!line.empty() && line.back() == '\\') {
-//         line.pop_back();          // drop the back-slash
-//
-//         std::string next_line;
-//         bool have_real_line = false;
-//
-//         // Keep reading until we hit a non-blank, non-comment line
-//         while (std::getline(ifs, next_line)) {
-//             ++nline;
-//             strip_comment_and_rtrim(next_line);
-//             ltrim(next_line);     // for “starts with a comment” check
-//
-//             if (next_line.empty())   // blank or comment-only
-//                 continue;
-//
-//             have_real_line = true;
-//             break;
-//         }
-//
-//         if (!have_real_line)
-//             throw std::runtime_error("Unexpected end of file after line " +
-//                                      std::to_string(nline));
-//
-//         line += next_line;        // append continuation
-//     }
-//
-//     std::istringstream iss(line);
-//     std::string key;
-//     iss >> key;
-//
-//     if (key.empty()) continue;
-//
-//     try {
-//       std::string globLossTypeStr;
-//       std::vector<double> globLossParams;
-//       enum Block { ROOT, GLOBAL, LOCAL } block = ROOT;
-//       OptimiserSpec* active = nullptr;
-//       if (key=="OPTIMIZER")
-//       {
-//         block  = GLOBAL;
-//         active = &spec;
-//       }
-//       else if (key=="ENDOPTIMISER")
-//       {
-//         block  = ROOT;
-//         active = nullptr;
-//       }
-//       else if (key=="LOCAL")
-//       {
-//         spec.local = std::make_unique<OptimiserSpec>();
-//         active     = spec.local.get();
-//         block      = LOCAL;
-//       }
-//       else if (key=="ENDLOCAL")
-//       {
-//         active = &spec;
-//         block  = GLOBAL;
-//       }
-//       else if (block!=ROOT)
-//       {
-//         /* -------- attribute line inside a block ---------------- */
-//         if (key=="LIB")       iss>>active->lib;
-//         else if(key=="ALGO")  iss>>active->algo;
-//         else if(key=="MAXEVAL") { uint64_t v; iss >> v; active->stop.maxeval = v; }
-//         else if (key=="MAXTIME") { double v;  iss>>v; active->stop.maxtime = v; }
-//         else if (key=="STOPVAL"){ double v;  iss>>v; active->stop.stopval = v; }
-//         else if (key=="FTOL_REL"){ double v; iss>>v; active->stop.ftol_rel = v; }
-//         else if (key=="FTOL_ABS"){ double v; iss>>v; active->stop.ftol_abs = v; }
-//         else if (key=="XTOL_REL"){ double v; iss>>v; active->stop.xtol_rel = v; }
-//         else if (key=="XTOL_ABS"){ double v; iss>>v; active->stop.xtol_abs = v; }
-//         else if(key=="PARAM") {
-//           std::string name; double val;
-//           iss>>name>>val;  active->param[name]=val;
-//         } else if(key=="POPULATION") { double v; iss>>v; active->param["POPULATION"]=v; }
-//         else std::cerr<<"[HPO] unknown optimizer attribute "<<key<<" (ignored)\n";
-//       }
-//      else if (key == "LOSS") {
-//         iss >> globLossTypeStr;
-//         if (globLossTypeStr== "HUBER") {
-//           try {
-//             double deltaHuber;
-//             iss >> deltaHuber;
-//             globLossParams.push_back(deltaHuber);
-//           } catch (const std::exception& e) {
-//             throw std::runtime_error("Error reading delta Huber parameter on line " 
-//                 + core::to_string(nline) + ": " 
-//                 + e.what());
-//           }
-//         } else if (globLossTypeStr== "TUKEY") {
-//           double tukeyC;
-//           try {
-//             iss >> tukeyC;
-//             globLossParams.push_back(tukeyC);
-//           } catch (const std::exception& e) {
-//             throw std::runtime_error("Error reading Tukey's biweight parameter on line " 
-//                 + core::to_string(nline) + ": " 
-//                 + e.what());
-//           }
-//         }
-//
-//         auto lossTypeId = tadah::LossFunction::from_string(globLossTypeStr);
-//         globalLoss = tadah::LossFunction(lossTypeId, globLossParams);
-//
-//       } else if (key == "OUTPUT") {
-//         iss >> outputEvery;
-//       } else if (key == "BOUTPUT") {
-//         iss >> bestOutputEvery;
-//       } else if (key == "DUMP") {
-//         iss >> dumpPotEvery >> dumpPotDir;
-//         handle_directory_creation(dumpPotDir);
-//       } else if (key == "BDUMP") {
-//         iss >> dumpBestPotEvery >> dumpBestPotDir;
-//         handle_directory_creation(dumpBestPotDir);
-//       } else if (key == "FAILSCORE") {
-//         iss >> FAIL_SCORE;
-//       } else if (key == "QFLUSH") {
-//         iss >> QFLUSH_THRESHOLD;
-//       } else if (key == "MAXTIME") {
-//         iss >> MAX_TIME;
-//       } else if (key == "THREADS") {
-//         double thr;  iss >> thr;
-//         spec.param["THREADS"] = thr;
-//       } else if (key == "EMAE") {
-//         iss >> emae >> w_emae;
-//         use_emae = true;
-//       } else if (key == "ERMSE") {
-//         iss >> ermse >> w_ermse;
-//         use_ermse = true;
-//       } else if (key == "ErRMSE") {
-//         iss >> errmse >> w_errmse;
-//         use_errmse = true;
-//       } else if (key == "ERSQ") {
-//         iss >> ersq >> w_ersq;
-//         use_ersq = true;
-//       } else if (key == "SRMSE") {
-//         iss >> srmse >> w_srmse;
-//         use_srmse = true;
-//       } else if (key == "FRMSE") {
-//         iss >> frmse >> w_frmse;
-//         use_frmse = true;
-//       } else if (key == "OPTIM") {
-//         process_optim_config(iss, nline);
-//       } else if (key == "LAMMPS") {
-//         std::string cmd;
-//         std::getline(iss, cmd);
-//         /* prepare default param vector for the global loss ------------------- */
-//         LS.emplace_back(cmd, MAX_TIME, FAIL_SCORE, globalLoss);
-//       } else {
-//         throw std::runtime_error("Unknown key");
-//       }
-//     } catch (const std::exception& e) {
-//       throw std::runtime_error("Error on line " + core::to_string(nline) 
-//           + ": " + e.what() + "\nLine: " + line);
-//     }
-//   }
-// }
 
 void HPOTargets::handle_directory_creation(const std::string& directory) {
   try {

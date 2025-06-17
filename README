@@ -1,4 +1,4 @@
-Hyper Param Optimiser
+Hyper Param Optimizer
 =====================
 
 Overview
@@ -87,7 +87,7 @@ Requirements
 ------------
 
     - lammps compiled as linkable dynamic library
-    - some kind of optimiser, tested with dlib library (dlib::find_min_global)
+    - some kind of optimizer, tested with dlib library (dlib::find_min_global)
     - compiled with mpi so use mpic++ or mpi wrapper
     - link all necessary libraries, e.g.
       (-ldlib -lcblas -llapack -lpthread -fopenmp -ltadah -llammps_serial)

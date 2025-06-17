@@ -23,11 +23,11 @@ struct StopCriteria {
 
 using ParamMap = std::unordered_map<std::string,double>;
 
-/* ---------------- Optimiser description --------------------------- */
-struct OptimiserSpec {
+/* ---------------- Optimizer description --------------------------- */
+struct OptimizerSpec {
     std::string  lib   = "NOT SET";   // DLIB | NLOPT | TADAH
     std::string  algo  = "NOT SET";
-    std::unique_ptr<OptimiserSpec> local;   // one sub-optimiser
+    std::unique_ptr<OptimizerSpec> local;   // one sub-optimizer
 
     /* --------- algorithm-specific parameters ---------------------- */
     std::optional<unsigned> vector_storage, pop, seed, num_threads;

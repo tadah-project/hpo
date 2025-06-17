@@ -4,7 +4,7 @@
 #include "tadah/core/context.h"
 #include "tadah/core/utils.h"
 #include <tadah/hpo/lammps_sim.h>
-#include <tadah/hpo/optimiser_spec.h>
+#include <tadah/hpo/optimizer_spec.h>
 
 #include <vector>
 #include <string>
@@ -54,7 +54,7 @@ public:
     std::size_t QFLUSH_THRESHOLD = 10; // number of results to flush to disk at once
     std::string MAX_TIME = "10";
 
-    OptimiserSpec spec;
+    OptimizerSpec spec;
 
     size_t outputEvery = 1;
     size_t bestOutputEvery = 1;
