@@ -10,8 +10,6 @@
 #include <dlib/optimization.h>
 #include <dlib/global_optimization.h>
 
-#include <tadah/hpo/gfs.h>
-
 #include <nlopt.hpp>
 
 #include <random>
