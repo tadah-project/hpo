@@ -65,7 +65,7 @@ endif()
 tadah_get_git_branch(GIT_BRANCH)
 message(STATUS "${PROJECT_NAME} module is using GIT_BRANCH: ${GIT_BRANCH}")
 
-#4. Fetch Tadah! modules
+# 4. Fetch Tadah! modules
 FetchContent_Declare(
     Tadah.MLIP
     GIT_REPOSITORY https://git.ecdf.ed.ac.uk/tadah/mlip.git
@@ -73,7 +73,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(Tadah.MLIP)
 
-include(FetchContent)
+FetchContent_Declare(
+    Tadah.MD
+    GIT_REPOSITORY https://git.ecdf.ed.ac.uk/tadah/md.git
+    GIT_TAG origin/${GIT_BRANCH}
+)
+FetchContent_MakeAvailable(Tadah.MD)
+
+# 5. External dependencies
 FetchContent_Declare(dlib
         GIT_REPOSITORY https://github.com/davisking/dlib.git
         GIT_TAG        v19.24.6
@@ -188,9 +195,13 @@ set_target_properties(lammps PROPERTIES
 
 # LAMMPS itself needs the plugin
 target_link_libraries(lammps INTERFACE tadah.lammps dl ${TADAH_LAMMPS_LIBS})
-target_link_libraries(tadah.hpo PUBLIC dlib::dlib)
-target_link_libraries(tadah.hpo PUBLIC lammps tadah.mlip)
-
+target_link_libraries(tadah.hpo
+  PUBLIC
+    dlib::dlib
+    lammps
+    tadah.mlip
+    tadah.md            # <- new, provides <tadah/md/...> headers
+)
 if (TADAH_BUILD_MPI)
   find_package(MPI REQUIRED)
   set_target_properties(tadah.hpo PROPERTIES OUTPUT_NAME "tadah_mpi.hpo")
