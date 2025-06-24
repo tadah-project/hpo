@@ -3,6 +3,7 @@ project(Tadah.HPO LANGUAGES CXX)
 
 option(TADAH_LAMMPS_DIR "Path to lammps root directory")
 option(TADAH_LAMMPS_LIB "Name of the lammps library")
+
 # 0. Guard against in-source builds
 if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
   message(FATAL_ERROR
@@ -17,7 +18,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # default build type for single-config generators (Ninja/Make)
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
 endif()
 
 if(BUILD_SHARED_LIBS)
@@ -49,17 +50,6 @@ endif()
 
 # (option) Developer builds -DTADAH_DEVELOP=ON
 tadah_use_local_module(Tadah.MLIP MLIP)  # FetchContent name + folder name
-
-# 2. Bring in the shared compile/link options
-include(FetchContent)
-if(NOT TARGET tadah::compile_options)
-  FetchContent_Declare (
-    tadah_cmake
-    GIT_REPOSITORY  https://git.ecdf.ed.ac.uk/tadah/cmake-tools.git
-    GIT_TAG         main
-  )
-  FetchContent_MakeAvailable(tadah_cmake)   # defines tadah::compile_options
-endif()
 
 # 3. Git branch information, for informational purposes 
 tadah_get_git_branch(GIT_BRANCH)
