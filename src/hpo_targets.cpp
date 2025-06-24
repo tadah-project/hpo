@@ -431,19 +431,19 @@ void HPOTargets::read(const std::string& fn)
             else if (key=="OPTIM")   { process_optim_config(iss,nline); }
 
             /* LAMMPS sims ------------------------------------------ */
-            else if (key=="LAMMPS")
+            else if (key=="PC_LAMMPS")
             {
                 std::string cmd; std::getline(iss,cmd);
                 LS.emplace_back(cmd, MAX_TIME, FAIL_SCORE, globalLoss);
             }
 
             /* per-metric weight lines ------------------------------ */
-            else if (key=="EMAE")   { iss>>emae  >>w_emae ; use_emae  =true; }
-            else if (key=="ERMSE")  { iss>>ermse >>w_ermse; use_ermse =true; }
-            else if (key=="ErRMSE") { iss>>errmse>>w_errmse;use_errmse=true; }
-            else if (key=="ERSQ")   { iss>>ersq  >>w_ersq ; use_ersq  =true; }
-            else if (key=="SRMSE")  { iss>>srmse >>w_srmse;use_srmse =true; }
-            else if (key=="FRMSE")  { iss>>frmse >>w_frmse;use_frmse =true; }
+            else if (key=="PC_EMAE")   { iss>>emae  >>w_emae ; use_emae  =true; }
+            else if (key=="PC_ERMSE")  { iss>>ermse >>w_ermse; use_ermse =true; }
+            else if (key=="PC_ErRMSE") { iss>>errmse>>w_errmse;use_errmse=true; }
+            else if (key=="PC_ERSQ")   { iss>>ersq  >>w_ersq ; use_ersq  =true; }
+            else if (key=="PC_SRMSE")  { iss>>srmse >>w_srmse;use_srmse =true; }
+            else if (key=="PC_FRMSE")  { iss>>frmse >>w_frmse;use_frmse =true; }
             else
                 throw std::runtime_error("unknown key \""+key+"\"");
         }
