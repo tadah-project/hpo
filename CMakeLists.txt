@@ -59,14 +59,14 @@ message(STATUS "${PROJECT_NAME} module is using GIT_BRANCH: ${GIT_BRANCH}")
 FetchContent_Declare(
     Tadah.MLIP
     GIT_REPOSITORY https://git.ecdf.ed.ac.uk/tadah/mlip.git
-    GIT_TAG origin/${GIT_BRANCH}
+    GIT_TAG ${GIT_BRANCH}
 )
 FetchContent_MakeAvailable(Tadah.MLIP)
 
 FetchContent_Declare(
     Tadah.MD
     GIT_REPOSITORY https://git.ecdf.ed.ac.uk/tadah/md.git
-    GIT_TAG origin/${GIT_BRANCH}
+    GIT_TAG ${GIT_BRANCH}
 )
 FetchContent_MakeAvailable(Tadah.MD)
 
