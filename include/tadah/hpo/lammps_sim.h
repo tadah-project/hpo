@@ -1,11 +1,18 @@
 #ifndef LAMMPS_SIM_H
 #define LAMMPS_SIM_H
 
+#include <tadah/hpo/loss_function.h>
+
 #include <string>
 #include <vector>
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
+#include <filesystem>
+#include <unordered_set>
+
+namespace tadah::hpo {
+  
 
 /**
  * @class LammpsSim
@@ -17,19 +24,42 @@ class LammpsSim {
   private:
     std::string cmd; /**< Command line configuration */
     std::vector<std::string> tokens; /**< Tokenised command line */
+    std::string stripComments(const std::string& in,
+                                     bool& in_single,
+                                     bool& in_double,
+                                     bool& in_triple) const;
+
+    /* default for all --varloss until the user overrides it */
+    tadah::LossFunction          defLoss;
+
+    static std::string expand_includes(const std::filesystem::path &file);
+    static std::string expand_includes_rec(const std::filesystem::path &file,
+                                           std::unordered_set<std::string> &stack);
 
   public:
+    /* one loss function per --varloss                                 */
+    std::vector<tadah::LossFunction> lossFn;
+
     std::string script; /**< Name of the LAMMPS script file */
-    std::vector<std::string> sinvar; /**< LAMMPS input variables */
-    std::vector<const char*> invar; /**< LAMMPS input variables, ptrs to sinvars */
-    std::vector<std::string> varloss; /**< Variables related to the loss function */
-    std::vector<double> v_varloss; /**< Value of the loss function */
-    std::vector<double> w_varloss; /**< Weight for varloss */
-    std::vector<std::string> outvar; /**< LAMMPS output variables */
-    std::vector<std::string> v_outvar; /**< LAMMPS output variables value*/
+    std::vector<std::string> script_lines; /**< Lines of the LAMMPS script */
+
+    // Any acceptable LAMMPS command line arguments.
+    std::vector<std::string> invar;     /**< LAMMPS input variables */
+
+    // LAMMPS output variables.
+    std::vector<std::string> n_outvar;  /**< names of LAMMPS output variables */
+    // std::vector<std::string> v_outvar;  /**< n_outvar values */
+
+    // LAMMPS variables for loss calculation. Not all outvar variables
+    // are used for loss calculation, so we need to specify which ones
+    // are used and their target values, weights. 
+    // Indices in i_varloss correspond to n_outvar indices.
+    std::vector<std::string> n_varloss; /**< Use this variables for loss calculation */
+    std::vector<double>      t_varloss; /**< Target value for varloss property */
+    std::vector<double>      w_varloss; /**< Weight for varloss */
+    std::vector<size_t>      i_varloss; /**< Map to n_outvar */
 
     int ncpu = 1; /**< Number of CPUs to be used */
-    double weight; /**< Weight parameter for simulation */
     std::string maxtime; /**< Maximum allowed time for simulation execution */
     double failscore; /**< Score given when a simulation fails */
 
@@ -41,9 +71,13 @@ class LammpsSim {
      * @param cmd The command line configuration.
      * @param MAX_TIME Maximum time allowed for the simulation.
      * @param FAIL_SCORE Default fail score value.
+     * @param defaultLoss Default loss function to be used.
+     *    can be overridden by user using --varloss
      */
-    LammpsSim(std::string &cmd, std::string MAX_TIME, double FAIL_SCORE);
-
+    LammpsSim(std::string&              cmd,
+              const std::string&        MAX_TIME,
+              double                    FAIL_SCORE,
+              const tadah::LossFunction& defaultLoss);
     /**
      * @brief Tokenises the command line configuration.
      */
@@ -64,5 +98,8 @@ class LammpsSim {
     static bool greater(const LammpsSim& lhs, const LammpsSim& rhs) {
       return lhs.ncpu > rhs.ncpu;
     }
+
+    void prep_script_lines();
 };
+} // namespace tadah::hpo
 #endif // LAMMPS_SIM_H

@@ -1,35 +1,27 @@
-# Note: 
-# For non-MPI version link serial version of LAMMPS
-# Tadah MPI version requires MPI version of LAMMPS
-
 cmake_minimum_required(VERSION 3.12)
-project(Tadah.HPO)
+project(Tadah.HPO LANGUAGES CXX)
 
 option(TADAH_LAMMPS_DIR "Path to lammps root directory")
 option(TADAH_LAMMPS_LIB "Name of the lammps library")
 
-# Guard against in-source builds
-# Also, make sure user does not accidently invoke cmake .. from the source dir
-# of the module in case module is added as a submodule.
-get_filename_component(MODULE_TEST ${CMAKE_BINARY_DIR} NAME)
-if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR}
-        OR ${MODULE_TEST} STREQUAL "HPO"
-)
-  message(FATAL_ERROR "
-    In-source builds not allowed.
-    Please make a new directory (called a build directory) and run CMake from there.
-    You may need to remove CMakeCache.txt and CMakeFiles dir. ")
+# 0. Guard against in-source builds
+if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
+  message(FATAL_ERROR
+    "In-source builds are not allowed.\n"
+    "Create a separate build directory and run CMake from there.")
 endif()
 
+# 1. Global settings
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-if(BUILD_SHARED_LIBS)
-  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+# default build type for single-config generators (Ninja/Make)
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
 endif()
 
-if (BUILD_SHARED_LIBS)
+if(BUILD_SHARED_LIBS)
   # Always full RPATH
   # use, i.e. don't skip the full RPATH for the build tree
   set(CMAKE_SKIP_BUILD_RPATH FALSE)
@@ -43,28 +35,27 @@ if (BUILD_SHARED_LIBS)
   # add the automatically determined parts of the RPATH
   # which point to directories outside the build tree to the install RPATH
   set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
-
-  # the RPATH to be used when installing, but only if it's not a system directory
-  list(FIND CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES "${CMAKE_INSTALL_PREFIX}/lib" isSystemDir)
-  if("${isSystemDir}" STREQUAL "-1")
-    set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
-  endif("${isSystemDir}" STREQUAL "-1")
 endif()
 
-
+# 2. Bring in the shared compile/link options
 include(FetchContent)
-
-if(DEFINED ENV{CI_COMMIT_REF_NAME})
-  set(GIT_BRANCH "$ENV{CI_COMMIT_REF_NAME}")
-else()
-  execute_process(
-    COMMAND bash -c "git status | grep origin | sed -e 's/.*origin\\///' -e 's/[^a-zA-Z].*//'" 
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_BRANCH
-    OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT TARGET tadah::compile_options)
+  FetchContent_Declare (
+    tadah_cmake
+    GIT_REPOSITORY  https://git.ecdf.ed.ac.uk/tadah/cmake-tools.git
+    GIT_TAG         main
+  )
+  FetchContent_MakeAvailable(tadah_cmake)   # defines tadah::compile_options
 endif()
-message(STATUS "${TADAH}.HPO Using GIT_BRANCH:  ${GIT_BRANCH}.")
 
+# (option) Developer builds -DTADAH_DEVELOP=ON
+tadah_use_local_module(Tadah.MLIP MLIP)  # FetchContent name + folder name
+
+# 3. Git branch information, for informational purposes 
+tadah_get_git_branch(GIT_BRANCH)
+message(STATUS "${PROJECT_NAME} module is using GIT_BRANCH: ${GIT_BRANCH}")
+
+# 4. Fetch Tadah! modules
 FetchContent_Declare(
     Tadah.MLIP
     GIT_REPOSITORY https://git.ecdf.ed.ac.uk/tadah/mlip.git
@@ -72,12 +63,20 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(Tadah.MLIP)
 
-include(FetchContent)
+FetchContent_Declare(
+    Tadah.MD
+    GIT_REPOSITORY https://git.ecdf.ed.ac.uk/tadah/md.git
+    GIT_TAG origin/${GIT_BRANCH}
+)
+FetchContent_MakeAvailable(Tadah.MD)
+
+# 5. External dependencies
 FetchContent_Declare(dlib
         GIT_REPOSITORY https://github.com/davisking/dlib.git
         GIT_TAG        v19.24.6
 )
 FetchContent_MakeAvailable(dlib)
+add_compile_definitions(TADAH_USE_DLIB)
 
 # User must specify the root directory for lammps
 if(NOT TADAH_LAMMPS_DIR)
@@ -124,31 +123,33 @@ add_compile_definitions(TADAH_LAMMPS_LIB=\"${TADAH_LAMMPS_LIB}\")
 
 file(GLOB HPO_SRC CONFIGURE_DEPENDS "src/*.cpp")
 add_library(tadah.hpo ${HPO_SRC})
-target_include_directories(tadah.hpo PUBLIC include)
-target_include_directories(tadah.hpo PUBLIC ${Tadah.MLIP_SOURCE_DIR}/include)
-target_include_directories(tadah.hpo PUBLIC ${Tadah.MODELS_SOURCE_DIR}/include)
-target_include_directories(tadah.hpo PUBLIC ${Tadah.CORE_SOURCE_DIR}/include)
-target_include_directories(tadah.hpo PUBLIC ${Tadah.CORE_SOURCE_DIR}/external/toml11)
-target_include_directories(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src)
 
-if(TADAH_BUILD_MPI)
-  set_target_properties(tadah.hpo PROPERTIES OUTPUT_NAME "tadah_mpi.hpo")
+target_include_directories(tadah.hpo
+  PUBLIC
+  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/external>
+)
+target_link_libraries(tadah.hpo PUBLIC tadah::compile_options )
+
+add_library(tadah.lammps STATIC IMPORTED GLOBAL)
+set_target_properties(tadah.lammps PROPERTIES
+  IMPORTED_LOCATION
+  ${TADAH_LAMMPS_DIR}/lib/tadah.lammps/build/libtadah.lammps.a
+  INTERFACE_INCLUDE_DIRECTORIES
+  ${TADAH_LAMMPS_DIR}/lib/tadah.lammps/include
+  )
+target_link_libraries(tadah.lammps
+    INTERFACE tadah.core tadah.models tadah.md)
+
+if (NOT TADAH_BUILD_DOCS_ONLY)
+  find_package(LAPACK REQUIRED)
+  target_link_libraries(tadah.hpo PUBLIC ${LAPACK_LIBRARIES})
 endif()
-
-find_package(LAPACK)
-target_link_libraries(tadah.hpo PUBLIC ${LAPACK_LIBRARIES})
 
 if(TADAH_ENABLE_OPENMP)
   find_package(OpenMP REQUIRED)
   target_link_libraries(tadah.hpo PUBLIC OpenMP::OpenMP_CXX)
-endif()
-
-if (TADAH_BUILD_MPI)
-  find_package(MPI REQUIRED)
-  target_link_libraries(tadah.hpo PUBLIC MPI::MPI_CXX)
-  add_compile_definitions(TADAH_BUILD_MPI)
-else()
-  target_include_directories(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS)
 endif()
 
 # static LAMMPS lib is compiled withput fPIC so we cannot link it to shared lib
@@ -160,11 +161,6 @@ if (BUILD_SHARED_LIBS AND POSITION EQUAL -1)
 
     -DBUILD_SHARED_LIBS=OFF.")
 endif()
-
-add_library(liblammps INTERFACE)
-target_link_libraries(liblammps INTERFACE ${TADAH_LAMMPS_DIR}/src/${TADAH_LAMMPS_LIB})
-target_link_libraries(liblammps INTERFACE ${TADAH_LAMMPS_DIR}/lib/tadah.lammps/build/libtadah.lammps.a)
-target_link_libraries(liblammps INTERFACE dl ${TADAH_LAMMPS_LIBS})  # required by lammps
 
 # Find and link ALL lammps external libraries, this step is necessary for static builds
 file(GLOB_RECURSE LAMMPS_ALL_LIBS "${TADAH_LAMMPS_DIR}/lib/*.a" "${TADAH_LAMMPS_DIR}/lib/*.so")
@@ -181,22 +177,34 @@ endforeach()
 
 # Replace original list with filtered list
 set(LAMMPS_ALL_LIBS ${FILTERED_LAMMPS_LIBS})
+add_library(lammps STATIC IMPORTED GLOBAL)
+set_target_properties(lammps PROPERTIES
+    IMPORTED_LOCATION ${TADAH_LAMMPS_DIR}/src/${TADAH_LAMMPS_LIB}
+    INTERFACE_INCLUDE_DIRECTORIES ${TADAH_LAMMPS_DIR}/src
+  )
 
-target_link_libraries(liblammps INTERFACE ${LAMMPS_ALL_LIBS})
-
-target_link_libraries(tadah.hpo PUBLIC dlib::dlib)
-target_link_libraries(tadah.hpo PUBLIC liblammps)
-target_link_libraries(tadah.hpo PUBLIC config::rc)
-target_link_libraries(tadah.hpo PUBLIC tadah.mlip) # TODO
-
+# LAMMPS itself needs the plugin
+target_link_libraries(lammps INTERFACE tadah.lammps dl ${TADAH_LAMMPS_LIBS})
+target_link_libraries(tadah.hpo
+  PUBLIC
+    dlib::dlib
+    lammps
+    tadah.mlip
+    tadah.md            # <- new, provides <tadah/md/...> headers
+)
 if (TADAH_BUILD_MPI)
+  find_package(MPI REQUIRED)
+  set_target_properties(tadah.hpo PROPERTIES OUTPUT_NAME "tadah_mpi.hpo")
   target_link_libraries(tadah.hpo PUBLIC MPI::MPI_CXX)
+  add_compile_definitions(TADAH_BUILD_MPI)
 else()
+  target_include_directories(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS)
   target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS/libmpi_stubs.a)
 endif()
 
-if(TADAH_BUILD_TESTS)
-  include(CTest) 
+set(BUILD_TESTING OFF CACHE BOOL "Build tests")
+include(CTest)
+if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
 

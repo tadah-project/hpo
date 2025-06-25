@@ -1,9 +1,10 @@
 #ifndef HPO_TARGETS_H
 #define HPO_TARGETS_H
 
-#include "tadah/core/config.h"
+#include "tadah/core/context.h"
 #include "tadah/core/utils.h"
 #include <tadah/hpo/lammps_sim.h>
+#include <tadah/hpo/optimizer_spec.h>
 
 #include <vector>
 #include <string>
@@ -13,6 +14,8 @@
 #include <sstream>
 #include <filesystem>
 
+namespace tadah {
+namespace hpo {
 
 class HPOTargets {
 private:
@@ -38,33 +41,47 @@ private:
     void handle_directory_creation(const std::string& directory);
     void process_optim_config(std::istringstream& iss, size_t nline);
     
-    Config &config;
+    core::Context &context;
 
 public:
-    HPOTargets(Config &c, std::string fn);
-    void read(std::string fn);
-    std::map<std::string, Opti> optimap;
-    std::vector<double> optim_low;
-    std::vector<double> optim_high;
+    HPOTargets(core::Context &c, std::string fn);
+    void read(const std::string &fn);
+    std::map<std::string, Opti> optimap;  // used by HPO_Host
     std::vector<LammpsSim> LS;
 
-    size_t MAX_CALLS = std::numeric_limits<size_t>::max();
-    double EPS = 1e-2;
+    // int THREADS = -1; // number of threads for parallel evaluation, -1 means all available threads
     double FAIL_SCORE = 1000;
+    std::size_t QFLUSH_THRESHOLD = 10; // number of results to flush to disk at once
     std::string MAX_TIME = "10";
-    std::string ALGO = "2";
-    std::string potevery_dir;
-    size_t potevery = std::numeric_limits<size_t>::max();
-    bool use_ermse = false; 
-    double ermse; 
-    double w_ermse;
+
+    OptimizerSpec spec;
+
+    size_t outputEvery = 1;
+    size_t bestOutputEvery = 1;
+    size_t dumpPotEvery = std::numeric_limits<size_t>::max(); //  archiving potentials
+    size_t dumpBestPotEvery = std::numeric_limits<size_t>::max(); // archiving best potentials
+    std::string dumpPotDir = "pots";
+    std::string dumpBestPotDir = "best_pots";
+                           
+    const std::string lossFile       = "loss.tadah";
+    const std::string outvarFile     = "outvar.tadah";
+    const std::string paramsFile     = "params.tadah";
+    const std::string bestLossFile    = "best_loss.tadah";
+    const std::string bestOutvarFile  = "best_outvar.tadah";
+    const std::string bestParamsFile  = "best_params.tadah";
+    LossFunction globalLoss;
+
+    bool use_emae = false; bool use_ermse = false; bool use_errmse = false; bool use_ersq = false;
+    double emae, ermse, errmse, ersq; 
+    double w_emae, w_ermse, w_errmse, w_ersq;
     bool use_srmse = false; 
     double srmse; 
     double w_srmse;
     bool use_frmse = false; 
     double frmse; 
     double w_frmse;
-    double N=1; // L_g = abs(y_pred - y)^N
 };
+} // namespace hpo
+} // namespace tadah
 
 #endif // HPO_TARGETS_H

@@ -1,20 +1,115 @@
 #include <tadah/hpo/runners.h>
+#include <stdexcept>
 
-using LMP = LammpsRunner::LMP; 
-LammpsRunner::LammpsRunner() {}
+#include <input.h>
+#include <force.h>
+#include <pair.h>
+#include <pair_tadah.h>
 
-LMP* LammpsRunner::run(MPI_Comm &sub_comm, const std::string &script,
-    const std::vector<const char*> &lmp_tokens) {
-  int lmpargc = static_cast<int>(lmp_tokens.size());
-  LMP* lmp = nullptr;
+#include <tadah/tadah.lammps/lammps_tadah.h>
+
+using LMPPtr = LammpsRunner::LMPPtr;
+using LMP = LammpsRunner::LMP;
+
+LammpsRunner::LMPPtr
+LammpsRunner::create_instance(MPI_Comm sub_comm,
+                              std::vector<std::string> tokens) const {
+ 
+  // unique_ptr initialized to nullptr
+  LMPPtr lmp_ptr;
 
   try {
-    lmp = new LMP(lmpargc, const_cast<char**>(lmp_tokens.data()), sub_comm);
-    lmp->input->file(script.c_str());
-  } catch (std::exception& e) {
-    //std::cout << "LAMMPS Exception: " << e.what() << std::endl;
-    delete lmp;
-    return nullptr;
+    // Construct LAMMPS; transfer ownership into unique_ptr
+    lmp_ptr.reset(
+      new LMP(tokens, sub_comm)
+      //new LMP(argc, argv.data(), sub_comm)
+    );
+  } catch (const std::exception&) {
+    // On exception, leave lmp_ptr null
   }
-  return lmp;
+
+  return lmp_ptr;
+}
+
+bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
+                         const std::string& script) const {
+  if (!lmp_ptr) {
+    // Cannot run on invalid instance
+    return false;
+  }
+
+  try {
+    // Read and execute commands from the script file
+
+    lmp_ptr->input->file(script.c_str());
+  } catch (const std::exception&) {
+    // Execution failure indicates invalid run
+    return false;
+  }
+
+  return true;
+}
+bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
+    const std::vector<std::string>& script_lines,
+    tadah::core::Context pot_ctx) const {
+  if (!lmp_ptr) {
+    // Cannot run on invalid instance
+    return false;
+  }
+
+  try {
+    // Read and execute commands from the script file
+
+    for (const auto& line : script_lines) {
+      // If the line contains pair_coeff and EXTERN, load the potential
+      // from the context before executing the line
+      if (line.find("pair_coeff") != std::string::npos &&
+          line.find("EXTERN") != std::string::npos) {
+        LAMMPS_NS::Pair *pair = lmp_ptr->force->pair;
+        LAMMPS_NS::PairTadah *pt = dynamic_cast<LAMMPS_NS::PairTadah*>(pair);
+        // pt->load(std::move(pot_ctx));  // cannot move as pair_coeff might be called several times
+        pt->load(pot_ctx);
+      }
+      // Execute the line
+      lmp_ptr->input->one(line.c_str());
+    }
+  } catch (const std::exception&) {
+    // Execution failure indicates invalid run
+    return false;
+  }
+
+  return true;
+
+}
+
+bool LammpsRunner::say_hello(const LMPPtr& lmp_ptr) const {
+  if (!lmp_ptr) {
+    // Cannot run on invalid instance
+    return false;
+  }
+
+  try {
+    // Read and execute commands from the script file
+    LAMMPS_NS::Pair *pair = lmp_ptr->force->pair;
+    LAMMPS_NS::PairTadah *pt = dynamic_cast<LAMMPS_NS::PairTadah*>(pair);
+    pt->say_hello();
+
+    return true;
+  } catch (const std::exception&) {
+    // Execution failure indicates invalid run
+    return false;
+  }
+
+}
+
+std::string
+LammpsRunner::get_variable(const LammpsRunner::LMPPtr& lmp_ptr,
+                           const std::string& varname) const {
+  if (!lmp_ptr) {
+    // Caller must not pass an invalid instance
+    throw std::runtime_error("get_variable(): LAMMPS instance is invalid.");
+  }
+
+  // Retrieve variable via LAMMPS input subsystem
+  return lmp_ptr->input->variable->retrieve(varname.c_str());
 }
