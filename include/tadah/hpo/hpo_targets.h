@@ -50,7 +50,7 @@ public:
     std::vector<LammpsSim> LS;
 
     // int THREADS = -1; // number of threads for parallel evaluation, -1 means all available threads
-    double FAIL_SCORE = 1000;
+    double FAIL_SCORE = std::numeric_limits<double>::max();
     std::size_t QFLUSH_THRESHOLD = 10; // number of results to flush to disk at once
     std::string MAX_TIME = "10";
 
