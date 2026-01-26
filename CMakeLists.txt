@@ -62,7 +62,7 @@ tadah_use_local_module(Tadah.MLIP MLIP)  # FetchContent name + folder name
 
 # 3. Git branch information, for informational purposes 
 tadah_get_git_branch(TADAH_GIT_BRANCH)
-message(STATUS "${PROJECT_NAME} module is using TADAH_GIT_BRANCH) ${TADAH_GIT_BRANCH}")
+message(STATUS "${PROJECT_NAME} module is using TADAH_GIT_BRANCH ${TADAH_GIT_BRANCH}")
 
 # 4. Fetch Tadah! modules
 FetchContent_Declare(
