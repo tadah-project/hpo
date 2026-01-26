@@ -62,20 +62,20 @@ tadah_use_local_module(Tadah.MLIP MLIP)  # FetchContent name + folder name
 
 # 3. Git branch information, for informational purposes 
 tadah_get_git_branch(TADAH_GIT_BRANCH)
-message(STATUS "${PROJECT_NAME} module is using TADAH_GIT_BRANCH) ${TADAH_GIT_BRANCH)")
+message(STATUS "${PROJECT_NAME} module is using TADAH_GIT_BRANCH) ${TADAH_GIT_BRANCH}")
 
 # 4. Fetch Tadah! modules
 FetchContent_Declare(
     Tadah.MLIP
     GIT_REPOSITORY https://git.ecdf.ed.ac.uk/tadah/mlip.git
-    GIT_TAG ${TADAH_GIT_BRANCH)
+    GIT_TAG ${TADAH_GIT_BRANCH}
 )
 FetchContent_MakeAvailable(Tadah.MLIP)
 
 FetchContent_Declare(
     Tadah.MD
     GIT_REPOSITORY https://git.ecdf.ed.ac.uk/tadah/md.git
-    GIT_TAG ${TADAH_GIT_BRANCH)
+    GIT_TAG ${TADAH_GIT_BRANCH}
 )
 FetchContent_MakeAvailable(Tadah.MD)
 
@@ -152,7 +152,7 @@ target_link_libraries(tadah.hpo PUBLIC tadah::compile_options )
 FetchContent_Declare(
     tadah.lammps
     GIT_REPOSITORY https://git.ecdf.ed.ac.uk/tadah/tadah.lammps.git
-    GIT_TAG ${GIT_BRANCH}
+    GIT_TAG ${TADAH_GIT_BRANCH}
 )
 FetchContent_MakeAvailable(tadah.lammps)
 
