@@ -87,6 +87,13 @@ FetchContent_Declare(dlib
 FetchContent_MakeAvailable(dlib)
 add_compile_definitions(TADAH_USE_DLIB)
 
+FetchContent_Declare(
+  nlopt
+  GIT_REPOSITORY https://github.com/stevengj/nlopt.git
+  GIT_TAG        v2.10.0
+)
+FetchContent_MakeAvailable(nlopt)
+
 # User must specify the root directory for lammps
 if(NOT TADAH_LAMMPS_DIR)
   message( FATAL_ERROR 
@@ -139,6 +146,7 @@ target_include_directories(tadah.hpo
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/external>
 )
 target_link_libraries(tadah.hpo PUBLIC tadah::compile_options )
+target_link_libraries(tadah.hpo PRIVATE nlopt)
 
 # add_library(tadah.lammps STATIC IMPORTED GLOBAL)
 # set_target_properties(tadah.lammps PROPERTIES
