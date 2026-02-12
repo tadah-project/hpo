@@ -8,6 +8,11 @@
 #include <stdexcept>
 #include <string>
 
+#include <algorithm>
+#include <cctype>
+#include <unordered_map>
+#include <unordered_set>
+
 namespace {
 
 
@@ -22,6 +27,12 @@ inline std::vector<double> defaultParams(int id,double dHuber,double tC)
     }
 }
 
+inline std::string to_lower_ascii(std::string s)
+{
+    for (char &c : s)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
 } // anonymous
 
 namespace tadah::hpo {
@@ -71,6 +82,10 @@ LammpsSim::LammpsSim(std::string& cmd_,
   if (script_lines.empty()) {
     throw std::runtime_error("LammpsSim: script_lines is empty.\n");
   }
+  // Validate PC_LAMMPS contract
+  // every --varloss/--outvar must be defined in the script and must be equal-style.
+  validate_requested_variables_defined_equal();
+
 
  // prepare containers
   if (n_varloss.size() != t_varloss.size() || w_varloss.size() != n_varloss.size()) {
@@ -380,6 +395,97 @@ void LammpsSim::prep_script_lines()
       cmd.find_first_not_of(" \t\n") != std::string::npos)
     script_lines.push_back(cmd);
 }
+std::unordered_map<std::string, LammpsSim::VarDef>
+LammpsSim::index_defined_variables() const
+{
+    std::unordered_map<std::string, VarDef> defs;
+
+    for (std::size_t li = 0; li < script_lines.size(); ++li) {
+        std::istringstream iss(script_lines[li]);
+
+        std::string cmd, name, style;
+        if (!(iss >> cmd)) continue;
+        cmd = to_lower_ascii(cmd);
+
+        if (cmd != "variable") continue;
+
+        if (!(iss >> name))  continue;   // malformed; let LAMMPS fail later if run
+        if (!(iss >> style)) continue;   // malformed; same
+
+        style = to_lower_ascii(style);
+
+        // Track deletions too (LAMMPS: "variable X delete")
+        if (style == "delete") {
+            defs.erase(name);
+        } else {
+            defs[name] = VarDef{style, li + 1}; // 1-based logical command index
+        }
+    }
+
+    return defs;
+}
+
+void LammpsSim::validate_requested_variables_defined_equal() const
+{
+    const auto defs = index_defined_variables();
+
+    // Make membership check for varloss to improve error messages for outvar-only requests
+    std::unordered_set<std::string> varloss_set(n_varloss.begin(), n_varloss.end());
+
+    struct Problem {
+        std::string name;
+        std::string origin;   // "--varloss" or "--outvar"
+        std::string kind;     // "missing" or "wrongstyle"
+        std::string style;    // for wrongstyle
+        std::size_t where;    // logical command index where it was defined (if any)
+    };
+
+    std::vector<Problem> problems;
+
+    auto require_equal = [&](const std::string &v, const std::string &origin)
+    {
+        auto it = defs.find(v);
+        if (it == defs.end()) {
+            problems.push_back(Problem{v, origin, "missing", "", 0});
+            return;
+        }
+        if (it->second.style != "equal") {
+            problems.push_back(Problem{v, origin, "wrongstyle", it->second.style, it->second.logical_cmd});
+            return;
+        }
+    };
+
+    // Docs: --varloss vars must be defined & equal-style
+    for (const auto &v : n_varloss)
+        require_equal(v, "--varloss");
+
+    // Docs: --outvar vars must be defined & equal-style as well (you requested this requirement)
+    for (const auto &v : n_outvar) {
+        if (varloss_set.find(v) != varloss_set.end()) continue; // already checked as varloss
+        require_equal(v, "--outvar");
+    }
+
+    if (!problems.empty()) {
+        std::ostringstream oss;
+        oss << "PC_LAMMPS validation failed for script '" << script << "'.\n"
+            << "Tadah requires every --varloss/--outvar variable to be defined in the LAMMPS script (or included files)\n"
+            << "as an *equal-style* variable:\n"
+            << "  variable <name> equal ...\n\n";
+
+        oss << "Problems found:\n";
+        for (const auto &p : problems) {
+            if (p.kind == "missing") {
+                oss << "  - " << p.name << " requested by " << p.origin << " but not defined\n";
+            } else { // wrongstyle
+                oss << "  - " << p.name << " requested by " << p.origin
+                    << " but defined as style '" << p.style << "'"
+                    << " (logical command #" << p.where << " in expanded script)\n";
+            }
+        }
+
+        throw std::runtime_error(oss.str());
+    }
+}
 
 
 namespace fs = std::filesystem;
@@ -405,41 +511,67 @@ std::string LammpsSim::expand_includes_rec(const fs::path &file,
     std::string          line;
 
     while (std::getline(iss, line))
+  {
+    /* strip trailing CR put there by Windows text files */
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+
+    /* find first non-blank character */
+    const std::size_t first = line.find_first_not_of(" \t");
+    if (first == std::string::npos)        /* completely blank line */
     {
-        /* strip trailing CR put there by Windows text files */
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-
-        /* find first non-blank character */
-        const std::size_t first = line.find_first_not_of(" \t");
-        if (first == std::string::npos)        /* completely blank line */
-        {
-            out << '\n';
-            continue;
-        }
-
-        /* test for   include  <filename>   */
-        if (line.compare(first, 7, "include") == 0 &&
-            std::isspace(static_cast<unsigned char>(line[first + 7])))
-        {
-            std::size_t fname_start = line.find_first_not_of(" \t", first + 7);
-            if (fname_start == std::string::npos)
-                throw std::runtime_error("Missing file name in include statement ("
-                                         + abs.string() + ')');
-
-            std::size_t fname_end = line.find_first_of(" \t#\r\n", fname_start);
-            std::string inc_name  = line.substr(fname_start,
-                                                fname_end == std::string::npos
-                                                    ? std::string::npos
-                                                    : fname_end - fname_start);
-
-            fs::path inc_path = abs.parent_path() / inc_name;
-            out << expand_includes_rec(inc_path, stack);   // recursive step
-            continue;                                      // nothing of the original line survives
-        }
-
-        /* ordinary line – keep verbatim */
-        out << line << '\n';
+      out << '\n';
+      continue;
     }
+
+    /* test for   include  <filename>   */
+    // if (line.compare(first, 7, "include") == 0 &&
+    //     std::isspace(static_cast<unsigned char>(line[first + 7])))
+    // {
+    //     std::size_t fname_start = line.find_first_not_of(" \t", first + 7);
+    //     if (fname_start == std::string::npos)
+    //         throw std::runtime_error("Missing file name in include statement ("
+    //                                  + abs.string() + ')');
+    //
+    //     std::size_t fname_end = line.find_first_of(" \t#\r\n", fname_start);
+    //     std::string inc_name  = line.substr(fname_start,
+    //                                         fname_end == std::string::npos
+    //                                             ? std::string::npos
+    //                                             : fname_end - fname_start);
+    //
+    //     fs::path inc_path = abs.parent_path() / inc_name;
+    //     out << expand_includes_rec(inc_path, stack);   // recursive step
+    //     continue;                                      // nothing of the original line survives
+    // }
+    /* test for   include  <filename>   (case-insensitive) */
+    if (line.size() >= first + 7) {
+      std::string head = line.substr(first, 7);
+      head = to_lower_ascii(head);
+
+      if (head == "include" &&
+        (line.size() > first + 7) &&
+        std::isspace(static_cast<unsigned char>(line[first + 7])))
+      {
+        std::size_t fname_start = line.find_first_not_of(" \t", first + 7);
+        if (fname_start == std::string::npos)
+          throw std::runtime_error("Missing file name in include statement ("
+                                   + abs.string() + ')');
+
+        std::size_t fname_end = line.find_first_of(" \t#\r\n", fname_start);
+        std::string inc_name  = line.substr(fname_start,
+                                            fname_end == std::string::npos
+                                            ? std::string::npos
+                                            : fname_end - fname_start);
+
+        fs::path inc_path = abs.parent_path() / inc_name;
+        out << expand_includes_rec(inc_path, stack);   // recursive step
+        continue;                                      // nothing of the original line survives
+      }
+    }
+
+
+    /* ordinary line – keep verbatim */
+    out << line << '\n';
+  }
 
     /* done with this file – pop it from the recursion guard */
     stack.erase(abs.string());

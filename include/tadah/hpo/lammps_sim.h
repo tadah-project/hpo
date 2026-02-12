@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <filesystem>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace tadah::hpo {
@@ -28,6 +29,15 @@ class LammpsSim {
                                      bool& in_single,
                                      bool& in_double,
                                      bool& in_triple) const;
+
+    // Index of "variable <name> <style> ..." definitions found in the expanded script
+    struct VarDef {
+      std::string style;        // lowercased (e.g. "equal", "string", "atom", "delete", ...)
+      std::size_t logical_cmd;  // 1-based index into script_lines for diagnostics
+    };
+
+    std::unordered_map<std::string, VarDef> index_defined_variables() const;
+    void validate_requested_variables_defined_equal() const;
 
     /* default for all --varloss until the user overrides it */
     tadah::LossFunction          defLoss;
