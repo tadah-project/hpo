@@ -97,9 +97,7 @@ void HPO_Worker::runLammps() {
       MPI_Recv(&failscore, 1, MPI_DOUBLE, 0, WORK_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
       // LAMMPS simulation
-      std::vector<std::string> lmp_tokens(sinvar.begin(), sinvar.end());
-      auto lmp = runner.create_instance(work_comm, lmp_tokens);
-      bool success = lmp && runner.run_script(lmp, script);
+      auto *lmp = runner.run(work_comm, script, invar);
 
       // local work_comm root sends data back to the host
       int lrank;
@@ -107,7 +105,7 @@ void HPO_Worker::runLammps() {
       if (lrank==0) {
         std::vector<std::string> v_outvar(outvar.size());
         std::vector<double> v_varloss(varloss.size());
-        if (!success) {
+        if (!lmp) {
           for (size_t i = 0; i < varloss.size(); ++i)
             v_varloss[i] = failscore;
           for (size_t i = 0; i < outvar.size(); ++i)
@@ -116,11 +114,11 @@ void HPO_Worker::runLammps() {
         else {
           for (size_t i = 0; i < varloss.size(); ++i) {
             const auto& v = varloss[i];
-            v_varloss[i] = std::stod(runner.get_variable(lmp, v));
+            v_varloss[i] = std::stod(runner.get_variable(lmp,v));
           }
           for (size_t i = 0; i < outvar.size(); ++i) {
             const auto& o = outvar[i];
-            v_outvar[i] = runner.get_variable(lmp, o);
+            v_outvar[i] = runner.get_variable(lmp,o);
           }
         }
         MPI_Send(v_varloss.data(), v_varloss.size(), MPI_DOUBLE, 0, DATA_TAG, MPI_COMM_WORLD);
@@ -130,6 +128,10 @@ void HPO_Worker::runLammps() {
           MPI_Send(&length, 1, MPI_INT, 0, DATA_TAG, MPI_COMM_WORLD);
           MPI_Send(message.c_str(), length, MPI_CHAR, 0, DATA_TAG, MPI_COMM_WORLD);
         }
+      }
+
+      if (lmp) {
+        delete lmp;
       }
 
       // Release 
