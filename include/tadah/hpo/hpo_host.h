@@ -122,6 +122,9 @@ private:
     void update_context(core::Context&, const ParamVec&) const;
     void fill_validation(Result&, const mlip::Analytics&)  const;
     void run_lammps     (Result&) const;
+#if defined(TADAH_BUILD_MPI)
+    void run_lammps_mpi (Result&) const;
+#endif
     void fit_loss(Result&) const;
     void sims_loss(Result&) const;
 
@@ -142,7 +145,6 @@ private:
 #if defined(TADAH_BUILD_MPI)
     static std::mutex           mpi_mutex_;
     static thread_local tadah::mlip::memory::MLIPWorkspaceManager tls_ws2_;
-    mlip::TrainerHost host(context, tls_ws_, tls_ws2_);
 #endif
 
     /* per thread MLIP workspace ----------------------------------------- */
