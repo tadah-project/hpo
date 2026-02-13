@@ -228,9 +228,17 @@ if (TADAH_BUILD_MPI)
   find_package(MPI REQUIRED)
   # ScaLAPACK provides BLACS + PBLAS + ScaLAPACK (pdgels_, descinit_, blacs_*, numroc_)
   find_package(PkgConfig)
-  pkg_check_modules(SCALAPACK QUIET scalapack-openmpi scalapack)
-  find_library(SCALAPACK_LIB NAMES scalapack scalapack-openmpi PATHS ${SCALAPACK_LIBRARY_DIRS})
-  target_link_libraries(tadah.hpo PUBLIC ${SCALAPACK_LIB})
+  pkg_check_modules(SCALAPACK QUIET scalapack-mpich scalapack-openmpi scalapack)
+  find_library(SCALAPACK_LIB
+    NAMES scalapack-mpich scalapack-openmpi scalapack
+    PATHS ${SCALAPACK_LIBRARY_DIRS}
+    PATH_SUFFIXES lib lib64)
+  if(SCALAPACK_LIB)
+    target_link_libraries(tadah.hpo PUBLIC ${SCALAPACK_LIB})
+  else()
+    message(FATAL_ERROR
+      "ScaLAPACK library not found. Install e.g. libscalapack-mpich-dev or libscalapack-openmpi-dev.")
+  endif()
   set_target_properties(tadah.hpo PROPERTIES OUTPUT_NAME "tadah_mpi.hpo")
   target_link_libraries(tadah.hpo PUBLIC MPI::MPI_CXX)
   add_compile_definitions(TADAH_BUILD_MPI)
