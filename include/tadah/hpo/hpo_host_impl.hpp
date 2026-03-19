@@ -214,9 +214,10 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     // Overwrite rcutmax if higher value is found in optimap.highbound
     for (const auto &opti: trg_.optimap) {
       if (opti.first == "RCUT2B" || opti.first == "RCUTMB") {
-        double rcut = opti.second.highbound[0];
-        if (rcut > rcutmax) {
-          rcutmax = rcut;
+        for (double rcut : opti.second.highbound) {
+          if (rcut > rcutmax) {
+            rcutmax = rcut;
+          }
         }
       }
     }
@@ -404,7 +405,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
     /* validation ------------------------------------------------------- */
     core::Context pot = host.model->get_param_file();
     auto pred = host.model->predict(pot, val_stdb_, host.dc);
-    mlip::Analytics   a(val_stdb_, pred);
+    mlip::Analytics   a(val_stdb_, pred); // we do not need to recalc NN as each descriptor checks cutoffs internally
     fill_validation(r, a);
     r.pot_ctx  = std::move(pot);
     fit_loss(r);
