@@ -50,10 +50,14 @@ struct EvalResult
     std::size_t                            iter      = 0;
     std::size_t                            best_iter = 0;
     double                                 loss      = 0.0;
+    double                                 loss_sum  = 0.0;
+    std::size_t                            loss_count = 0;
 
     /* validation metrics */
     double emae=0, ermse=0, errmse=0, ersq=0, frmse=0, srmse=0;
     double emaeLoss=0, ermseLoss=0, errmseLoss=0, ersqLoss=0, frmseLoss=0, srmseLoss=0;
+    /* per-dataset validation metrics (one entry per validation dataset) */
+    std::vector<double> v_emae, v_ermse, v_errmse, v_ersq, v_frmse, v_srmse;
     std::vector<std::vector<double>>       v_loss;    // [sim][loss_i]
     std::vector<std::vector<std::string>>  v_outvar;  // [sim][outvar_i]
 
@@ -110,6 +114,7 @@ private:
     /* ---------- immutable after construction --------------------------- */
     core::Context                master_ctx_;
     HPOTargets&                  trg_;
+    std::size_t                  n_val_datasets_ = 0;
     const OptimizerSpec &spec_;
     mlip::StructureDB            val_stdb_;
 #ifndef TADAH_BUILD_MPI
@@ -160,6 +165,7 @@ private:
     void init_loss   (const std::string& fn) const;
     void init_outvar (const std::string& fn) const;
     void init_params (const std::string& fn) const;
+    void init_stats  (const std::string& fn) const;
 
     static void print_loss_line  (std::ofstream&, size_t it, const Result&,
                                   const HPOTargets&, std::size_t cw, int prec);
@@ -167,6 +173,8 @@ private:
                                   const HPOTargets&, std::size_t cw, int prec);
     static void print_params_line(std::ofstream&, size_t it, const Result&,
                                   std::size_t cw, int prec);
+    static void print_stats_line (std::ofstream&, size_t it, const Result&,
+                                  const HPOTargets&, std::size_t cw, int prec);
 
 };
 

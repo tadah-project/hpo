@@ -98,6 +98,31 @@ void HPO_Host<P,R>::init_params(const std::string& fn) const
   f << std::endl;
 }
 
+template<class P,class R>
+void HPO_Host<P,R>::init_stats(const std::string& fn) const
+{
+  std::ofstream f(fn);
+  f << std::left << std::setw(cw_) << "#ITERATION" << std::right;
+
+  auto write_header = [&](const std::string& label) {
+    for (std::size_t i = 1; i <= n_val_datasets_; ++i) {
+      std::string col = label + "[" + std::to_string(i) + "]";
+      if (col.size() > max_title_len_)
+        col = col.substr(0, max_title_len_ - 1) + "*";
+      f << std::setw(cw_) << col;
+    }
+    f << std::setw(cw_) << (label + "[avg]");
+  };
+
+  if (trg_.use_emae)   write_header("EMAE");
+  if (trg_.use_ermse)  write_header("ERMSE");
+  if (trg_.use_errmse) write_header("ErRMSE");
+  if (trg_.use_ersq)   write_header("ERSQ");
+  if (trg_.use_frmse)  write_header("FRMSE");
+  if (trg_.use_srmse)  write_header("SRMSE");
+  f << std::endl;
+}
+
 /* ----------  line printers (append) ---------------------------------- */
 /* ======= line writers ================================================ */
 template<class P,class R>
@@ -170,6 +195,28 @@ void HPO_Host<P,R>::print_params_line(std::ofstream& f,size_t it,const Result& e
 }
 
 
+template<class P,class R>
+void HPO_Host<P,R>::print_stats_line(std::ofstream& f, size_t it, const Result& e,
+                                     const HPOTargets& trg,
+                                     std::size_t cw, int prec)
+{
+  f << std::left << std::setw(cw) << it;
+  f << std::right << std::scientific << std::setprecision(prec);
+
+  auto write_metric = [&](const std::vector<double>& per_ds, double avg) {
+    for (double v : per_ds) f << std::setw(cw) << v;
+    f << std::setw(cw) << avg;
+  };
+
+  if (trg.use_emae)   write_metric(e.v_emae,   e.emae);
+  if (trg.use_ermse)  write_metric(e.v_ermse,  e.ermse);
+  if (trg.use_errmse) write_metric(e.v_errmse, e.errmse);
+  if (trg.use_ersq)   write_metric(e.v_ersq,   e.ersq);
+  if (trg.use_frmse)  write_metric(e.v_frmse,  e.frmse);
+  if (trg.use_srmse)  write_metric(e.v_srmse,  e.srmse);
+  f << std::endl;
+}
+
 /* ----------  static data definitions ---------------------------------- */
 template<class P, class R>
 std::atomic_size_t  HPO_Host<P,R>::g_iter_{0};
@@ -230,6 +277,8 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     train_stdb_.add(master_ctx_);
     nnf_.calc(train_stdb_, rcutmax);
 #endif
+    n_val_datasets_ = val_stdb_.dbidx.size() > 0 ? val_stdb_.dbidx.size() - 1 : 0;
+
     /* elements check ---------------------------------------------------- */
     auto tr_el = mlip::StructureDB::find_unique_elements(master_ctx_);
     for(auto e: mlip::StructureDB::find_unique_elements(val_ctx))
@@ -240,9 +289,11 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     init_loss   (trg_.lossFile);
     init_outvar (trg_.outvarFile);
     init_params (trg_.paramsFile);
+    init_stats  (trg_.statsFile);
     init_loss   (trg_.bestLossFile);
     init_outvar (trg_.bestOutvarFile);
     init_params (trg_.bestParamsFile);
+    init_stats  (trg_.bestStatsFile);
 
 }
 
@@ -267,12 +318,20 @@ template<class P, class R>
 void HPO_Host<P,R>::fill_validation(Result& r,
                                     const mlip::Analytics& a) const
 {
-    if(trg_.use_emae)   r.emae  = a.calc_e_mae ().mean()*1000.0;
-    if(trg_.use_ermse)  r.ermse = a.calc_e_rmse().mean()*1000.0;
-    if(trg_.use_errmse) r.errmse= a.calc_e_rrmse().mean()*1000.0;
-    if(trg_.use_ersq)   r.ersq  = a.calc_e_r_sq().mean();
-    if(trg_.use_frmse)  r.frmse = a.calc_f_rmse().mean();
-    if(trg_.use_srmse)  r.srmse = a.calc_s_rmse().mean();
+    auto fill = [](double& avg, std::vector<double>& per_ds,
+                   const core::t_type& v, double scale)
+    {
+        avg = v.mean() * scale;
+        per_ds.resize(v.size());
+        for (std::size_t i = 0; i < v.size(); ++i)
+            per_ds[i] = v[i] * scale;
+    };
+    if(trg_.use_emae)   fill(r.emae,   r.v_emae,   a.calc_e_mae(),   1000.0);
+    if(trg_.use_ermse)  fill(r.ermse,  r.v_ermse,  a.calc_e_rmse(),  1000.0);
+    if(trg_.use_errmse) fill(r.errmse, r.v_errmse, a.calc_e_rrmse(), 1000.0);
+    if(trg_.use_ersq)   fill(r.ersq,   r.v_ersq,   a.calc_e_r_sq(),     1.0);
+    if(trg_.use_frmse)  fill(r.frmse,  r.v_frmse,  a.calc_f_rmse(),     1.0);
+    if(trg_.use_srmse)  fill(r.srmse,  r.v_srmse,  a.calc_s_rmse(),     1.0);
 }
 
 /* ----------  helper: run LAMMPS (serial + OpenMP) --------------------- */
@@ -304,65 +363,45 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
 template<class P, class R>
 void HPO_Host<P,R>::fit_loss(Result& r) const
 {
-  double s_lin = 0.0, s_sq = 0.0;          // sums
-  std::size_t c_lin = 0,   c_sq = 0;       // counts
-
-  auto add_global = [&](double& sink,
-      double  y, double ref, double w)
+  auto add_global = [&](double& sink, double y, double ref, double w)
   {
     sink = trg_.globalLoss.loss(y, ref, w);
-
-    if (trg_.globalLoss.is_squared())
-    { s_sq += sink; ++c_sq; }
-    else
-    { s_lin += sink; ++c_lin; }
+    r.loss_sum += sink;
+    ++r.loss_count;
   };
-  if (trg_.use_emae)   add_global(r.emaeLoss , r.emae , trg_.emae , trg_.w_emae );
-  if (trg_.use_ermse)  add_global(r.ermseLoss, r.ermse, trg_.ermse, trg_.w_ermse);
-  if (trg_.use_errmse) add_global(r.errmseLoss,r.errmse,trg_.errmse,trg_.w_errmse);
-  if (trg_.use_ersq)   add_global(r.ersqLoss , r.ersq , trg_.ersq , trg_.w_ersq );
-  if (trg_.use_frmse)  add_global(r.frmseLoss,r.frmse,trg_.frmse,trg_.w_frmse);
-  if (trg_.use_srmse)  add_global(r.srmseLoss,r.srmse,trg_.srmse,trg_.w_srmse);
+  if (trg_.use_emae)   add_global(r.emaeLoss,   r.emae,   trg_.emae,   trg_.w_emae );
+  if (trg_.use_ermse)  add_global(r.ermseLoss,  r.ermse,  trg_.ermse,  trg_.w_ermse);
+  if (trg_.use_errmse) add_global(r.errmseLoss, r.errmse, trg_.errmse, trg_.w_errmse);
+  if (trg_.use_ersq)   add_global(r.ersqLoss,   r.ersq,   trg_.ersq,   trg_.w_ersq );
+  if (trg_.use_frmse)  add_global(r.frmseLoss,  r.frmse,  trg_.frmse,  trg_.w_frmse);
+  if (trg_.use_srmse)  add_global(r.srmseLoss,  r.srmse,  trg_.srmse,  trg_.w_srmse);
 
-  // Probably better to use the following and apply sqrt when reporting?
-  double part_lin = c_lin ? s_lin / static_cast<double>(c_lin) : 0.0;
-  double part_sq  = c_sq  ? s_sq / static_cast<double>(c_sq) : 0.0;
-  r.loss += part_lin + part_sq;
+  r.loss = r.loss_count ? r.loss_sum / static_cast<double>(r.loss_count) : 0.0;
   if (r.loss > trg_.FAIL_SCORE) {
-    r.loss = trg_.FAIL_SCORE; // cap the loss
+    r.loss = trg_.FAIL_SCORE;
   }
 }
 template<class P, class R>
 void HPO_Host<P,R>::sims_loss(Result& r) const
 {
-  double s_lin = 0.0, s_sq = 0.0;          // sums
-  std::size_t c_lin = 0,   c_sq = 0;       // counts
-
   r.v_loss.resize(trg_.LS.size());
   for (std::size_t i = 0; i < r.v_outvar.size(); ++i) {
     const auto& lsim = trg_.LS[i];
     r.v_loss[i].resize(lsim.n_outvar.size());
 
     for (auto j : lsim.i_varloss) {
-      double v  = std::stod(r.v_outvar[i][j]);
-      double w  = lsim.w_varloss[j];
+      double v = std::stod(r.v_outvar[i][j]);
+      double w = lsim.w_varloss[j];
       double l = lsim.lossFn[j].loss(v, lsim.t_varloss[j], w);
       r.v_loss[i][j] = l;
-
-      if (lsim.lossFn[j].is_squared())
-      { s_sq += l; ++c_sq; }
-      else
-      { s_lin += l; ++c_lin; }
-
+      r.loss_sum += l;
+      ++r.loss_count;
     }
   }
 
-  // Probably better to use the following and apply sqrt when reporting?
-  double part_lin = c_lin ? s_lin / static_cast<double>(c_lin) : 0.0;
-  double part_sq  = c_sq  ? s_sq / static_cast<double>(c_sq) : 0.0;
-  r.loss += part_lin + part_sq;
+  r.loss = r.loss_count ? r.loss_sum / static_cast<double>(r.loss_count) : 0.0;
   if (r.loss > trg_.FAIL_SCORE) {
-    r.loss = trg_.FAIL_SCORE; // cap the loss
+    r.loss = trg_.FAIL_SCORE;
   }
 }
 
@@ -467,9 +506,11 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
         static std::ofstream loss_f  (trg.lossFile, std::ios::app),
                              outv_f  (trg.outvarFile, std::ios::app),
                              par_f   (trg.paramsFile, std::ios::app),
+                             stats_f (trg.statsFile, std::ios::app),
                              best_f  (trg.bestLossFile, std::ios::app),
                              best_outv_f(trg.bestOutvarFile, std::ios::app),
-                             best_par_f (trg.bestParamsFile, std::ios::app);
+                             best_par_f (trg.bestParamsFile, std::ios::app),
+                             best_stats_f(trg.bestStatsFile, std::ios::app);
 
         while(io_buf_.count(next_flush_))
         {
@@ -480,6 +521,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
             print_loss_line  (loss_f , e.iter, e, trg, cw, prec);
             print_outvar_line(outv_f , e.iter, e, trg, cw, prec);
             print_params_line(par_f  , e.iter, e,      cw, prec);
+            print_stats_line (stats_f, e.iter, e, trg, cw, prec);
         }
 
         /* ---- new best logs ------------------------------------------ */
@@ -488,6 +530,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
             print_loss_line  (best_f      , e.best_iter, e, trg, cw, prec);
             print_outvar_line(best_outv_f , e.best_iter, e, trg, cw, prec);
             print_params_line(best_par_f  , e.best_iter, e,      cw, prec);
+            print_stats_line (best_stats_f, e.best_iter, e, trg, cw, prec);
           }
 
           /* overwrite & archive best_pot ---------------------------- */
@@ -615,9 +658,11 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
         loss_f.flush();
         outv_f.flush();
         par_f.flush();
+        stats_f.flush();
         best_f.flush();
         best_outv_f.flush();
         best_par_f.flush();
+        best_stats_f.flush();
     }
 
     /* 5. release token ------------------------------------------------- */

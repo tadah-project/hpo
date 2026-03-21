@@ -66,9 +66,11 @@ public:
     const std::string lossFile       = "loss.tadah";
     const std::string outvarFile     = "outvar.tadah";
     const std::string paramsFile     = "params.tadah";
+    const std::string statsFile      = "stats.tadah";
     const std::string bestLossFile    = "best_loss.tadah";
     const std::string bestOutvarFile  = "best_outvar.tadah";
     const std::string bestParamsFile  = "best_params.tadah";
+    const std::string bestStatsFile   = "best_stats.tadah";
     LossFunction globalLoss;
 
     bool use_emae = false; bool use_ermse = false; bool use_errmse = false; bool use_ersq = false;
