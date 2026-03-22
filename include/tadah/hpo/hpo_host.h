@@ -17,6 +17,7 @@
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -154,6 +155,36 @@ private:
 
     /* per thread MLIP workspace ----------------------------------------- */
     static thread_local tadah::mlip::memory::MLIPWorkspaceManager tls_ws_;
+
+    /* per-thread trainer cache ------------------------------------------ */
+#ifndef TADAH_BUILD_MPI
+    struct TrainerDeleter {
+        void operator()(mlip::Trainer* p) const noexcept { if (p) p->~Trainer(); }
+    };
+    struct TrainerCache {
+        alignas(mlip::Trainer) unsigned char             buf[sizeof(mlip::Trainer)];
+        std::unique_ptr<mlip::Trainer, TrainerDeleter>   trainer;
+        std::vector<std::string>                         cached_rcut2b;
+        std::vector<std::string>                         cached_rcutmb;
+    };
+    static thread_local TrainerCache tls_trainer_cache_;
+#endif
+#if defined(TADAH_BUILD_MPI)
+    struct TrainerHostDeleter {
+        void operator()(mlip::TrainerHost* p) const noexcept { if (p) p->~TrainerHost(); }
+    };
+    struct TrainerHostCache {
+        alignas(mlip::TrainerHost) unsigned char                   buf[sizeof(mlip::TrainerHost)];
+        std::unique_ptr<mlip::TrainerHost, TrainerHostDeleter>     trainer;
+        std::vector<std::string>                                   cached_rcut2b;
+        std::vector<std::string>                                   cached_rcutmb;
+    };
+    static thread_local TrainerHostCache tls_trainer_host_cache_;
+#endif
+
+    static bool structural_params_changed(const core::Context&,
+                                          const std::vector<std::string>&,
+                                          const std::vector<std::string>&);
 
 
     /* formatting */

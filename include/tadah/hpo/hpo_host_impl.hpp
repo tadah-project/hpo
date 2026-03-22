@@ -245,6 +245,17 @@ thread_local tadah::mlip::memory::MLIPWorkspaceManager
 HPO_Host<P,R>::tls_ws2_{};
 #endif
 
+#ifndef TADAH_BUILD_MPI
+template<class P, class R>
+thread_local typename HPO_Host<P,R>::TrainerCache
+HPO_Host<P,R>::tls_trainer_cache_{};
+#endif
+#if defined(TADAH_BUILD_MPI)
+template<class P, class R>
+thread_local typename HPO_Host<P,R>::TrainerHostCache
+HPO_Host<P,R>::tls_trainer_host_cache_{};
+#endif
+
 /* ----------  constructor ---------------------------------------------- */
 template<class P, class R>
 HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
@@ -311,6 +322,23 @@ void HPO_Host<P,R>::update_context(core::Context& ctx,
             else                 ctx.add(kv.first, kv.second.config[i]);
         }
     }
+}
+
+/* ----------  helper: structural param change detection ---------------- */
+template<class P, class R>
+bool HPO_Host<P,R>::structural_params_changed(
+    const core::Context& ctx,
+    const std::vector<std::string>& cached_rcut2b,
+    const std::vector<std::string>& cached_rcutmb)
+{
+    const auto& m = ctx.getMapRef();
+    auto get_vec = [&](const std::string& key) -> const std::vector<std::string>& {
+        static const std::vector<std::string> empty;
+        auto it = m.find(key);
+        return it != m.end() ? it->second : empty;
+    };
+    return get_vec("RCUT2B") != cached_rcut2b ||
+           get_vec("RCUTMB") != cached_rcutmb;
 }
 
 /* ----------  helper: fill validation metrics -------------------------- */
@@ -434,11 +462,56 @@ double HPO_Host<P,R>::operator()(const P& p) const
     MPI_Bcast(cs.data(), cs_size, MPI_CHAR, 0, MPI_COMM_WORLD);
 
     std::lock_guard<std::mutex> lock(mpi_mutex_);     // serialise MPI
-    mlip::TrainerHost host(ctx, tls_ws_, tls_ws2_);
-    host.run(); host.solve();
+    {
+        auto& cache = tls_trainer_host_cache_;
+        const auto& m = ctx.getMapRef();
+        auto get_vec = [&](const std::string& k) {
+            auto it = m.find(k);
+            return it != m.end() ? it->second : std::vector<std::string>{};
+        };
+        if (!cache.trainer ||
+            structural_params_changed(ctx, cache.cached_rcut2b, cache.cached_rcutmb))
+        {
+            cache.trainer.reset(); // calls ~TrainerHost(), does NOT free the buf
+            cache.trainer.reset(new (cache.buf) mlip::TrainerHost(ctx, tls_ws_, tls_ws2_));
+            cache.cached_rcut2b = get_vec("RCUT2B");
+            cache.cached_rcutmb = get_vec("RCUTMB");
+        }
+        else
+        {
+            // Only update HPO-optimised keys; leave computed fields (DSIZE etc.)
+            // that dc wrote into context at Trainer construction time intact.
+            update_context(cache.trainer->context, p);
+        }
+        cache.trainer->run();
+        cache.trainer->solve();
+    }
+    mlip::TrainerHost& host = *tls_trainer_host_cache_.trainer;
 #else
-    mlip::Trainer     host(ctx, tls_ws_);
-    host.train(train_stdb_);
+    {
+        auto& cache = tls_trainer_cache_;
+        const auto& m = ctx.getMapRef();
+        auto get_vec = [&](const std::string& k) {
+            auto it = m.find(k);
+            return it != m.end() ? it->second : std::vector<std::string>{};
+        };
+        if (!cache.trainer ||
+            structural_params_changed(ctx, cache.cached_rcut2b, cache.cached_rcutmb))
+        {
+            cache.trainer.reset(); // calls ~Trainer(), does NOT free the buf
+            cache.trainer.reset(new (cache.buf) mlip::Trainer(ctx, tls_ws_));
+            cache.cached_rcut2b = get_vec("RCUT2B");
+            cache.cached_rcutmb = get_vec("RCUTMB");
+        }
+        else
+        {
+            // Only update HPO-optimised keys; leave computed fields (DSIZE etc.)
+            // that dc wrote into context at Trainer construction time intact.
+            update_context(cache.trainer->context, p);
+        }
+        cache.trainer->train(train_stdb_);
+    }
+    mlip::Trainer& host = *tls_trainer_cache_.trainer;
 #endif
 
     /* validation ------------------------------------------------------- */
