@@ -57,6 +57,8 @@ if(NOT TARGET tadah::compile_options)
   FetchContent_MakeAvailable(tadah_cmake)   # defines tadah::compile_options
 endif()
 
+option(TADAH_ENABLE_ASAN "Enable AddressSanitizer (-fsanitize=address -fno-omit-frame-pointer)" OFF)
+
 # (option) Developer builds -DTADAH_DEVELOP=ON
 tadah_use_local_module(Tadah.MLIP MLIP)  # FetchContent name + folder name
 
@@ -147,6 +149,11 @@ target_include_directories(tadah.hpo
 )
 target_link_libraries(tadah.hpo PUBLIC tadah::compile_options )
 target_link_libraries(tadah.hpo PRIVATE nlopt)
+
+if(TADAH_ENABLE_ASAN)
+  target_compile_options(tadah.hpo PUBLIC -fsanitize=address -fno-omit-frame-pointer -g)
+  target_link_libraries(tadah.hpo PUBLIC -fsanitize=address)
+endif()
 
 # add_library(tadah.lammps STATIC IMPORTED GLOBAL)
 # set_target_properties(tadah.lammps PROPERTIES
