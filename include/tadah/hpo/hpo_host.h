@@ -39,6 +39,7 @@
 #endif
 
 #include <moodycamel/blockingconcurrentqueue.h>     // moodycamel
+#include <tadah/hpo/hpo_log.h>
 
 namespace tadah::hpo {
 
@@ -65,7 +66,8 @@ struct EvalResult
     std::chrono::milliseconds              wall_ms{};
     ParamVec                               params;
 
-    bool                                   is_best    = false;
+    bool                                   is_best         = false;
+    bool                                   was_nan_clamped = false;
     // bool                                   run_lammps = false;   // option for the future?
     core::Context                          pot_ctx;
 };
@@ -85,6 +87,12 @@ public:
         const std::string& val_cfg);
 
     double operator()(const ParamVec& p) const;      // thread-safe
+
+    std::size_t train_size() const;   // number of training structures
+    std::size_t val_size()   const;   // number of validation structures
+
+    /** Flush any results still in the queue (call after optimizer finishes). */
+    void flush_remaining() const;
 
 
     /* -------- adapter for NLopt C++ wrapper ----------------------------- */
@@ -128,6 +136,14 @@ private:
     void update_context(core::Context&, const ParamVec&) const;
     void fill_validation(Result&, const mlip::Analytics&)  const;
     void run_lammps     (Result&) const;
+
+    /** Format the current parameter vector as "KEY=val KEY=val ..."
+     *  Used in NaN-clamping log messages. */
+    std::string format_params_str(const ParamVec& p) const;
+
+    /** Check if any value in p is suspiciously close to a bound.
+     *  Returns a hint string (empty if everything looks fine). */
+    std::string bound_hints(const ParamVec& p) const;
 #if defined(TADAH_BUILD_MPI)
     void run_lammps_mpi (Result&) const;
 #endif
@@ -164,8 +180,6 @@ private:
     struct TrainerCache {
         alignas(mlip::Trainer) unsigned char             buf[sizeof(mlip::Trainer)];
         std::unique_ptr<mlip::Trainer, TrainerDeleter>   trainer;
-        std::vector<std::string>                         cached_rcut2b;
-        std::vector<std::string>                         cached_rcutmb;
     };
     static thread_local TrainerCache tls_trainer_cache_;
 #endif
@@ -176,15 +190,10 @@ private:
     struct TrainerHostCache {
         alignas(mlip::TrainerHost) unsigned char                   buf[sizeof(mlip::TrainerHost)];
         std::unique_ptr<mlip::TrainerHost, TrainerHostDeleter>     trainer;
-        std::vector<std::string>                                   cached_rcut2b;
-        std::vector<std::string>                                   cached_rcutmb;
     };
     static thread_local TrainerHostCache tls_trainer_host_cache_;
 #endif
 
-    static bool structural_params_changed(const core::Context&,
-                                          const std::vector<std::string>&,
-                                          const std::vector<std::string>&);
 
 
     /* formatting */

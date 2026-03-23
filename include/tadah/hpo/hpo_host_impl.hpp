@@ -324,21 +324,71 @@ void HPO_Host<P,R>::update_context(core::Context& ctx,
     }
 }
 
-/* ----------  helper: structural param change detection ---------------- */
+/* ----------  helper: train/val structure counts ----------------------- */
 template<class P, class R>
-bool HPO_Host<P,R>::structural_params_changed(
-    const core::Context& ctx,
-    const std::vector<std::string>& cached_rcut2b,
-    const std::vector<std::string>& cached_rcutmb)
+std::size_t HPO_Host<P,R>::train_size() const
 {
-    const auto& m = ctx.getMapRef();
-    auto get_vec = [&](const std::string& key) -> const std::vector<std::string>& {
-        static const std::vector<std::string> empty;
-        auto it = m.find(key);
-        return it != m.end() ? it->second : empty;
-    };
-    return get_vec("RCUT2B") != cached_rcut2b ||
-           get_vec("RCUTMB") != cached_rcutmb;
+#ifndef TADAH_BUILD_MPI
+    return train_stdb_.size();
+#else
+    return 0; // not available on MPI host rank
+#endif
+}
+
+template<class P, class R>
+std::size_t HPO_Host<P,R>::val_size() const { return val_stdb_.size(); }
+
+/* ----------  helper: format params for log ---------------------------- */
+template<class P, class R>
+std::string HPO_Host<P,R>::format_params_str(const P& p) const
+{
+    std::ostringstream s;
+    std::size_t idx = 0;
+    bool first = true;
+    for (const auto& kv : trg_.optimap) {
+        for (std::size_t i = 0; i < kv.second.opt.size(); ++i) {
+            if (!kv.second.opt[i]) continue;
+            if (!first) s << "  ";
+            first = false;
+            s << kv.first;
+            if (kv.second.opt.size() > 1) s << "[" << i << "]";
+            s << "=" << std::scientific << std::setprecision(3) << p(idx++);
+        }
+    }
+    return s.str();
+}
+
+/* ----------  helper: bound proximity hints for log -------------------- */
+template<class P, class R>
+std::string HPO_Host<P,R>::bound_hints(const P& p) const
+{
+    const auto& sp = spec_;
+    if (sp.low.empty()) return {};
+    constexpr double EDGE_FRAC = 0.02; // flag if within 2% of bound
+    std::ostringstream hints;
+    std::size_t idx = 0;
+    for (const auto& kv : trg_.optimap) {
+        for (std::size_t i = 0; i < kv.second.opt.size(); ++i) {
+            if (!kv.second.opt[i]) continue;
+            if (idx >= sp.low.size()) break;
+            const double v   = p(idx);
+            const double lo  = sp.low[idx];
+            const double hi  = sp.high[idx];
+            const double rng = hi - lo;
+            std::string name = kv.first;
+            if (kv.second.opt.size() > 1) name += "[" + std::to_string(i) + "]";
+            if (rng > 0) {
+                if ((v - lo) / rng < EDGE_FRAC)
+                    hints << "Tip: " << name << " is near its LOWER bound — "
+                          << "consider tightening or expanding the range. ";
+                else if ((hi - v) / rng < EDGE_FRAC)
+                    hints << "Tip: " << name << " is near its UPPER bound — "
+                          << "consider expanding the range. ";
+            }
+            ++idx;
+        }
+    }
+    return hints.str();
 }
 
 /* ----------  helper: fill validation metrics -------------------------- */
@@ -405,7 +455,8 @@ void HPO_Host<P,R>::fit_loss(Result& r) const
   if (trg_.use_srmse)  add_global(r.srmseLoss,  r.srmse,  trg_.srmse,  trg_.w_srmse);
 
   r.loss = r.loss_count ? r.loss_sum / static_cast<double>(r.loss_count) : 0.0;
-  if (r.loss > trg_.FAIL_SCORE) {
+  if (!std::isfinite(r.loss) || r.loss > trg_.FAIL_SCORE) {
+    if (!std::isfinite(r.loss)) r.was_nan_clamped = true;
     r.loss = trg_.FAIL_SCORE;
   }
 }
@@ -428,7 +479,8 @@ void HPO_Host<P,R>::sims_loss(Result& r) const
   }
 
   r.loss = r.loss_count ? r.loss_sum / static_cast<double>(r.loss_count) : 0.0;
-  if (r.loss > trg_.FAIL_SCORE) {
+  if (!std::isfinite(r.loss) || r.loss > trg_.FAIL_SCORE) {
+    if (!std::isfinite(r.loss)) r.was_nan_clamped = true;
     r.loss = trg_.FAIL_SCORE;
   }
 }
@@ -464,24 +516,23 @@ double HPO_Host<P,R>::operator()(const P& p) const
     std::lock_guard<std::mutex> lock(mpi_mutex_);     // serialise MPI
     {
         auto& cache = tls_trainer_host_cache_;
-        const auto& m = ctx.getMapRef();
-        auto get_vec = [&](const std::string& k) {
-            auto it = m.find(k);
-            return it != m.end() ? it->second : std::vector<std::string>{};
-        };
-        if (!cache.trainer ||
-            structural_params_changed(ctx, cache.cached_rcut2b, cache.cached_rcutmb))
-        {
-            cache.trainer.reset(); // calls ~TrainerHost(), does NOT free the buf
+        if (!cache.trainer) {
             cache.trainer.reset(new (cache.buf) mlip::TrainerHost(ctx, tls_ws_, tls_ws2_));
-            cache.cached_rcut2b = get_vec("RCUT2B");
-            cache.cached_rcutmb = get_vec("RCUTMB");
-        }
-        else
-        {
-            // Only update HPO-optimised keys; leave computed fields (DSIZE etc.)
-            // that dc wrote into context at Trainer construction time intact.
-            update_context(cache.trainer->context, p);
+        } else {
+            bool needs_rebuild = false;
+            try {
+                update_context(cache.trainer->context, p);
+                needs_rebuild = cache.trainer->reinit();
+            } catch (const std::exception& e) {
+                HPOLog::instance().warning(
+                    std::string("reinit() threw (eval ") + std::to_string(r.iter)
+                    + "): " + e.what() + " — rebuilding Trainer");
+                needs_rebuild = true;
+            }
+            if (needs_rebuild) {
+                cache.trainer.reset();
+                cache.trainer.reset(new (cache.buf) mlip::TrainerHost(ctx, tls_ws_, tls_ws2_));
+            }
         }
         cache.trainer->run();
         cache.trainer->solve();
@@ -490,24 +541,24 @@ double HPO_Host<P,R>::operator()(const P& p) const
 #else
     {
         auto& cache = tls_trainer_cache_;
-        const auto& m = ctx.getMapRef();
-        auto get_vec = [&](const std::string& k) {
-            auto it = m.find(k);
-            return it != m.end() ? it->second : std::vector<std::string>{};
-        };
-        if (!cache.trainer ||
-            structural_params_changed(ctx, cache.cached_rcut2b, cache.cached_rcutmb))
-        {
-            cache.trainer.reset(); // calls ~Trainer(), does NOT free the buf
+        if (!cache.trainer) {
             cache.trainer.reset(new (cache.buf) mlip::Trainer(ctx, tls_ws_));
-            cache.cached_rcut2b = get_vec("RCUT2B");
-            cache.cached_rcutmb = get_vec("RCUTMB");
-        }
-        else
-        {
-            // Only update HPO-optimised keys; leave computed fields (DSIZE etc.)
-            // that dc wrote into context at Trainer construction time intact.
-            update_context(cache.trainer->context, p);
+        } else {
+            bool needs_rebuild = false;
+            try {
+                update_context(cache.trainer->context, p);
+                needs_rebuild = cache.trainer->reinit();
+            } catch (const std::exception& e) {
+                // reinit threw — log and fall back to a clean rebuild
+                HPOLog::instance().warning(
+                    std::string("reinit() threw (eval ") + std::to_string(r.iter)
+                    + "): " + e.what() + " — rebuilding Trainer");
+                needs_rebuild = true;
+            }
+            if (needs_rebuild) {
+                cache.trainer.reset();
+                cache.trainer.reset(new (cache.buf) mlip::Trainer(ctx, tls_ws_));
+            }
         }
         cache.trainer->train(train_stdb_);
     }
@@ -547,8 +598,37 @@ double HPO_Host<P,R>::operator()(const P& p) const
     r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - t0);
 
+    /* save fields before r is moved into the queue ---------------------- */
+    const std::size_t save_iter    = r.iter;
+    const double      save_loss    = r.loss;
+    const double      save_wall_ms = static_cast<double>(r.wall_ms.count());
+    const bool        save_best    = r.is_best;
+    const bool        save_nan     = r.was_nan_clamped;
+    const double      save_emae    = r.emae,   save_ermse  = r.ermse;
+    const double      save_errmse  = r.errmse, save_frmse  = r.frmse;
+    const double      save_srmse   = r.srmse;
+
     submit_result(std::move(r), trg_, cw_, prec_);
-    return r.loss;
+
+    /* log to run journal ------------------------------------------------ */
+    auto& log = HPOLog::instance();
+    log.record_eval(save_iter, save_wall_ms, save_nan);
+
+    if (save_best)
+        log.log_new_best(save_iter, save_loss,
+                         save_emae,   trg_.use_emae,
+                         save_ermse,  trg_.use_ermse,
+                         save_errmse, trg_.use_errmse,
+                         save_frmse,  trg_.use_frmse,
+                         save_srmse,  trg_.use_srmse,
+                         save_wall_ms);
+
+    if (save_nan)
+        log.log_nan_clamped(save_iter,
+                            format_params_str(p),
+                            bound_hints(p));
+
+    return save_loss;
 }
 
 /* ---------- opportunistic writer helper ------------------------------ */
@@ -740,6 +820,49 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
 
     /* 5. release token ------------------------------------------------- */
     writer_token_.clear(std::memory_order_release);
+}
+
+/* ---------- final drain (call after optimizer returns) --------------- */
+template<class P,class R>
+void HPO_Host<P,R>::flush_remaining() const
+{
+    // Drain g_q_ into the ordered buffer, then write everything pending.
+    std::lock_guard<std::mutex> lg(io_mtx_);
+
+    Result item;
+    while(g_q_.try_dequeue(item))
+        io_buf_.emplace(item.iter, std::move(item));
+
+    // Re-open (append) the same files that submit_result uses.
+    // Using named ofstream objects so they close + flush on scope exit.
+    std::ofstream loss_f  (trg_.lossFile,       std::ios::app),
+                  outv_f  (trg_.outvarFile,      std::ios::app),
+                  par_f   (trg_.paramsFile,      std::ios::app),
+                  stats_f (trg_.statsFile,       std::ios::app),
+                  best_f  (trg_.bestLossFile,    std::ios::app),
+                  best_outv_f(trg_.bestOutvarFile, std::ios::app),
+                  best_par_f (trg_.bestParamsFile, std::ios::app),
+                  best_stats_f(trg_.bestStatsFile, std::ios::app);
+
+    while(io_buf_.count(next_flush_))
+    {
+        const auto& e = io_buf_[next_flush_];
+
+        if(next_flush_ % trg_.outputEvery == 0){
+            print_loss_line  (loss_f , e.iter, e, trg_, cw_, prec_);
+            print_outvar_line(outv_f , e.iter, e, trg_, cw_, prec_);
+            print_params_line(par_f  , e.iter, e,       cw_, prec_);
+            print_stats_line (stats_f, e.iter, e, trg_, cw_, prec_);
+        }
+        if(e.is_best && trg_.bestOutputEvery > 0) {
+            print_loss_line  (best_f      , e.best_iter, e, trg_, cw_, prec_);
+            print_outvar_line(best_outv_f , e.best_iter, e, trg_, cw_, prec_);
+            print_params_line(best_par_f  , e.best_iter, e,       cw_, prec_);
+            print_stats_line (best_stats_f, e.best_iter, e, trg_, cw_, prec_);
+        }
+
+        io_buf_.erase(next_flush_++);
+    }
 }
 
 #ifdef TADAH_BUILD_MPI

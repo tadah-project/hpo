@@ -2,6 +2,7 @@
 #include <nlopt.hpp>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_host.h>
+#include <tadah/hpo/hpo_log.h>
 #include <dlib/rand.h>
 
 namespace tadah::hpo {
@@ -85,9 +86,48 @@ void run_nlopt(const OptimizerSpec& sp,
     }
 
     double fmin=0;
-    nlopt::result res = opt.optimize(start,fmin);
-    std::cout<<"[HPO] NLopt finished with code "<<res
-             <<"  fmin="<<fmin<<"\n";
+    int result_code = 1;   // success by default
+    std::string status_str;
+    try {
+        nlopt::result res = opt.optimize(start, fmin);
+        result_code  = static_cast<int>(res);
+        status_str   = nlopt_result_str(result_code);
+        std::cout << "[HPO] NLopt finished: " << status_str
+                  << "  fmin=" << fmin << "\n";
+    } catch (const std::exception& e) {
+        const std::string what = e.what();
+        /* NLOPT_FAILURE (-1): population converged, local mutation simplex
+         * degenerated — algorithmic self-termination, not a bug.
+         * NLOPT_ROUNDOFF_LIMITED (-4): blocked by floating-point roundoff.
+         * Both mean the algorithm has nothing left to explore; the best
+         * result found so far is valid and already saved. */
+        const bool graceful = (what == "nlopt failure" ||
+                               what == "roundoff-limited");
+        if (graceful) {
+            status_str = "STOPPED — " + what +
+                " (algorithm converged; consider adding ftol_rel / xtol_rel"
+                " / maxeval to stop cleanly next time)";
+            std::cout << "[HPO] NLopt self-terminated (" << what
+                      << ") — best result preserved.\n";
+            HPOLog::instance().warning(what +
+                " — algorithm converged; best result preserved");
+        } else {
+            status_str = std::string("FAILED — ") + what;
+            std::cout << "[HPO] NLopt threw: " << what << "\n";
+            HPOLog::instance().warning(std::string("NLopt exception: ") + what);
+        }
+        /* Flush remaining results before reporting finish */
+        host.flush_remaining();
+        HPOLog::instance().finish(status_str);
+        if (!graceful) throw;
+    }
+
+    /* Flush any results that didn't reach QFLUSH_THRESHOLD (e.g. short runs). */
+    host.flush_remaining();
+
+    /* Write diagnostics + performance + result into the run journal.
+     * Best metrics are tracked internally by HPOLog::log_new_best(). */
+    HPOLog::instance().finish(status_str);
 }
 
 }   // namespace tadah::hpo
