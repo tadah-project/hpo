@@ -115,14 +115,11 @@ void PotHeaderWriter::write_best_header(
     const core::Context&            val_ctx,
     const mlip::StructureDB&        train_stdb,
     const mlip::StructureDB&        val_stdb,
-    const std::string&              train_cfg_path,
-    const std::string&              val_cfg_path,
     const std::vector<std::string>& param_labels,
     std::size_t                     cw,
     int                             prec)
 {
     write_banner(os, result.best_iter, result.iter, result.loss);
-    write_files_section(os, train_cfg_path, val_cfg_path);
     write_data_section(os, train_stdb, val_stdb, master_ctx, val_ctx);
     write_optim_section(os, trg, param_labels);
     write_loss_section(os, trg);

@@ -40,8 +40,6 @@ public:
         const core::Context&            val_ctx,
         const mlip::StructureDB&        train_stdb,
         const mlip::StructureDB&        val_stdb,
-        const std::string&              train_cfg_path,
-        const std::string&              val_cfg_path,
         const std::vector<std::string>& param_labels,
         std::size_t                     cw,
         int                             prec);
@@ -92,9 +90,6 @@ private:
     /* ---- section writers -------------------------------------------- */
     static void write_banner       (std::ostream& os, std::size_t best_iter,
                                     std::size_t eval_iter, double loss);
-    static void write_files_section(std::ostream& os,
-                                    const std::string& train_cfg,
-                                    const std::string& val_cfg);
     static void write_data_section (std::ostream& os,
                                     const mlip::StructureDB& train,
                                     const mlip::StructureDB& val,

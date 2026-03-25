@@ -134,7 +134,6 @@ private:
     mlip::NNFinder               nnf_;
 
     /* ---------- data for pot header writer ----------------------------- */
-    std::string                  val_cfg_path_;
     core::Context                val_ctx_;
     std::vector<std::string>     param_labels_;
 
@@ -172,7 +171,6 @@ private:
                               const core::Context& val_ctx,
                               const mlip::StructureDB& train_stdb,
                               const mlip::StructureDB& val_stdb,
-                              const std::string& val_cfg_path,
                               const std::vector<std::string>& param_labels,
                               std::size_t cw, int prec);
 

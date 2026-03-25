@@ -84,21 +84,6 @@ std::string PotHeaderWriter::fmt_timestamp()
     return s.str();
 }
 
-std::string PotHeaderWriter::file_timestamp(const std::string& path)
-{
-    namespace fs = std::filesystem;
-    try {
-        if (!fs::exists(path)) return "(not found)";
-        auto ftime = fs::last_write_time(path);
-        auto sctp  = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-            ftime - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
-        auto tt = std::chrono::system_clock::to_time_t(sctp);
-        std::ostringstream s;
-        s << std::put_time(std::localtime(&tt), "%Y-%m-%d %H:%M:%S");
-        return s.str();
-    } catch (...) { return "(unknown)"; }
-}
-
 /* =====================================================================
  *  Section writers
  * ===================================================================== */
@@ -115,25 +100,6 @@ void PotHeaderWriter::write_banner(std::ostream& os,
        << "  |  Loss: " << fmt_double(loss) << "\n";
     os << "#  " << fmt_timestamp() << "\n";
     rule(os);
-}
-
-/* -------------------------------------------------------------------- */
-void PotHeaderWriter::write_files_section(std::ostream& os,
-                                          const std::string& train_cfg,
-                                          const std::string& val_cfg)
-{
-    namespace fs = std::filesystem;
-    heading(os, "INPUT FILES");
-
-    auto abs_path = [](const std::string& p) -> std::string {
-        try { return fs::absolute(p).string(); }
-        catch (...) { return p; }
-    };
-
-    kv(os, "Training config", abs_path(train_cfg)
-       + "  (" + file_timestamp(train_cfg) + ")");
-    kv(os, "Validation config", abs_path(val_cfg)
-       + "  (" + file_timestamp(val_cfg) + ")");
 }
 
 /* -------------------------------------------------------------------- */
@@ -244,52 +210,41 @@ void PotHeaderWriter::write_optim_section(std::ostream& os,
 
     /* bounds table — compact two-column layout */
     {
-        constexpr int LBL_W = 18;   // label column
-        constexpr int BND_W = 30;   // "[lo, hi]" column
+        constexpr int LBL_W = 14;   // label column
+        constexpr int BND_W = 24;   // "[lo, hi]" column
+        constexpr int COL_W = LBL_W + BND_W;  // one full column
+        constexpr int GAP   = 2;    // gap between columns
 
         line(os, "Search space:");
 
-        /* try to fit two params per line */
-        for (std::size_t i = 0; i < sp.low.size(); ++i) {
-            const std::string& lbl = (i < labels.size())
-                ? labels[i] : "p[" + std::to_string(i) + "]";
+        auto fmt_col = [&](std::size_t idx) -> std::string {
+            const std::string& lbl = (idx < labels.size())
+                ? labels[idx] : "p[" + std::to_string(idx) + "]";
+            std::string lbl_trunc = lbl;
+            if (static_cast<int>(lbl_trunc.size()) > LBL_W - 1)
+                lbl_trunc = lbl_trunc.substr(0, LBL_W - 2) + "*";
 
             std::ostringstream bnd;
-            bnd << "[" << fmt_double(sp.low[i], 3)
-                << ", " << fmt_double(sp.high[i], 3) << "]";
-            if (i < sp.log_scaled.size() && sp.log_scaled[i])
+            bnd << "[" << fmt_double(sp.low[idx], 3)
+                << ", " << fmt_double(sp.high[idx], 3) << "]";
+            if (idx < sp.log_scaled.size() && sp.log_scaled[idx])
                 bnd << "(log)";
 
             std::ostringstream col;
-            col << std::left << std::setw(LBL_W) << lbl
+            col << std::left << std::setw(LBL_W) << lbl_trunc
                 << std::left << std::setw(BND_W) << bnd.str();
+            return col.str();
+        };
 
-            /* try to pair with next param on same line */
+        for (std::size_t i = 0; i < sp.low.size(); i += 2) {
+            std::string row = fmt_col(i);
             if (i + 1 < sp.low.size()) {
-                const std::string& lbl2 = (i + 1 < labels.size())
-                    ? labels[i + 1] : "p[" + std::to_string(i + 1) + "]";
-                std::ostringstream bnd2;
-                bnd2 << "[" << fmt_double(sp.low[i + 1], 3)
-                     << ", " << fmt_double(sp.high[i + 1], 3) << "]";
-                if (i + 1 < sp.log_scaled.size() && sp.log_scaled[i + 1])
-                    bnd2 << "(log)";
-
-                std::string col2_str;
-                {
-                    std::ostringstream c2;
-                    c2 << std::left << std::setw(LBL_W) << lbl2
-                       << bnd2.str();
-                    col2_str = c2.str();
-                }
-
-                /* only pair if total fits in W */
-                if (static_cast<int>(col.str().size() + col2_str.size() + 4) <= W) {
-                    line(os, col.str() + "  " + col2_str);
-                    ++i;  // skip next
-                    continue;
-                }
+                // pad first column to fixed width, add gap, then second
+                while (static_cast<int>(row.size()) < COL_W)
+                    row += ' ';
+                row += std::string(GAP, ' ') + fmt_col(i + 1);
             }
-            line(os, col.str());
+            line(os, row);
         }
     }
 }

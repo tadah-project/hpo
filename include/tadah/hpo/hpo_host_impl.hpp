@@ -266,7 +266,6 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
 : master_ctx_(std::move(master_ctx))
 , trg_(trg), spec_(trg.spec)
 , use_lammps_( !trg.LS.empty() )
-, val_cfg_path_(val_cfg)
 {
 
     /* neighbours -------------------------------------------------------- */
@@ -621,11 +620,11 @@ double HPO_Host<P,R>::operator()(const P& p) const
     const double      save_srmse   = r.srmse;
 
 #ifndef TADAH_BUILD_MPI
-    submit_result(std::move(r), trg_, master_ctx_, val_ctx_, train_stdb_, val_stdb_, val_cfg_path_, param_labels_, cw_, prec_);
+    submit_result(std::move(r), trg_, master_ctx_, val_ctx_, train_stdb_, val_stdb_, param_labels_, cw_, prec_);
 #else
     {
       static const mlip::StructureDB empty_stdb;
-      submit_result(std::move(r), trg_, master_ctx_, val_ctx_, empty_stdb, val_stdb_, val_cfg_path_, param_labels_, cw_, prec_);
+      submit_result(std::move(r), trg_, master_ctx_, val_ctx_, empty_stdb, val_stdb_, param_labels_, cw_, prec_);
     }
 #endif
 
@@ -657,7 +656,6 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                                   const core::Context& val_ctx,
                                   const mlip::StructureDB& train_stdb,
                                   const mlip::StructureDB& val_stdb,
-                                  const std::string& val_cfg_path,
                                   const std::vector<std::string>& param_labels,
                                   std::size_t cw, int prec)
 {
@@ -714,21 +712,11 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
           /* overwrite best_pot.tadah ---------------------------------- */
           {
             std::ofstream bp("best_pot.tadah");
-            std::string train_cfg_path = "(not available)";
-            try {
-                for (const auto& key : {"CONFIGFILE", "CONFIG"}) {
-                    if (master_ctx.contains(key)) {
-                        train_cfg_path = master_ctx.get<std::string>(key);
-                        break;
-                    }
-                }
-            } catch (...) {}
 
             PotHeaderWriter::write_best_header(
                 bp, e, trg, master_ctx,
                 val_ctx,
                 train_stdb, val_stdb,
-                train_cfg_path, val_cfg_path,
                 param_labels, cw, prec);
 
             bp << std::setprecision(
