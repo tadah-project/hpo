@@ -2,7 +2,7 @@
 #define TADAH_HPO_HOST_H_
 
 /*
- *  Thread-safe, “stateless” HPO_Host
+ *  Thread-safe, "stateless" HPO_Host
  *  ---------------------------------
  *  –  All data produced during one evaluation live in EvalResult, not in the
  *     functor object; operator() is therefore const and thread-safe.
@@ -25,6 +25,7 @@
 #include <tadah/core/context.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/pot_header_writer.h>
 #include <tadah/mlip/analytics/analytics.h>
 #include <tadah/mlip/structure_db.h>
 #include <tadah/mlip/nn_finder.h>
@@ -132,6 +133,11 @@ private:
     bool                         use_lammps_;
     mlip::NNFinder               nnf_;
 
+    /* ---------- data for pot header writer ----------------------------- */
+    std::string                  val_cfg_path_;
+    core::Context                val_ctx_;
+    std::vector<std::string>     param_labels_;
+
     /* ---------- helpers (pure) ----------------------------------------- */
     void update_context(core::Context&, const ParamVec&) const;
     void fill_validation(Result&, const mlip::Analytics&)  const;
@@ -162,6 +168,12 @@ private:
     static std::map<std::size_t,Result>            io_buf_;       // re-order
     static std::atomic<std::size_t>                next_flush_;   // next iter
     static void submit_result(Result&&, const HPOTargets& trg_,
+                              const core::Context& master_ctx,
+                              const core::Context& val_ctx,
+                              const mlip::StructureDB& train_stdb,
+                              const mlip::StructureDB& val_stdb,
+                              const std::string& val_cfg_path,
+                              const std::vector<std::string>& param_labels,
                               std::size_t cw, int prec);
 
 #if defined(TADAH_BUILD_MPI)

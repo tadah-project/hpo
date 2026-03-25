@@ -1,0 +1,115 @@
+#pragma once
+/*
+ * PotHeaderWriter — writes commented (#) metadata headers into potential files.
+ *
+ * Two levels of detail:
+ *   • write_best_header()    — full, self-contained header for best_pot.tadah
+ *                              (enough information to reproduce the HPO run)
+ *   • write_archive_header() — compact header for periodic pot/best_pot archives
+ *
+ * All output lines are prefixed with '#' so TADAH parsers skip them.
+ * Target line width ≤ 80 characters where practical.
+ */
+
+#include <tadah/core/context.h>
+#include <tadah/mlip/structure_db.h>
+#include <cstddef>
+#include <ostream>
+#include <string>
+#include <vector>
+
+namespace tadah::hpo {
+
+// Forward declarations
+class  HPOTargets;
+struct OptimizerSpec;
+template<class P> struct EvalResult;
+
+class PotHeaderWriter
+{
+public:
+    /* ------------------------------------------------------------------ *
+     *  Full header for best_pot.tadah — self-contained run summary
+     * ------------------------------------------------------------------ */
+    template<class ParamVec>
+    static void write_best_header(
+        std::ostream&                   os,
+        const EvalResult<ParamVec>&     result,
+        const HPOTargets&               trg,
+        const core::Context&            master_ctx,
+        const core::Context&            val_ctx,
+        const mlip::StructureDB&        train_stdb,
+        const mlip::StructureDB&        val_stdb,
+        const std::string&              train_cfg_path,
+        const std::string&              val_cfg_path,
+        const std::vector<std::string>& param_labels,
+        std::size_t                     cw,
+        int                             prec);
+
+    /* ------------------------------------------------------------------ *
+     *  Compact header for periodic pot archives (pot_N.tadah)
+     * ------------------------------------------------------------------ */
+    template<class ParamVec>
+    static void write_archive_header(
+        std::ostream&                os,
+        const EvalResult<ParamVec>&  result,
+        std::size_t                  cw,
+        int                         prec);
+
+    /* ------------------------------------------------------------------ *
+     *  Compact header for best pot archives (best_pot_N.tadah)
+     * ------------------------------------------------------------------ */
+    template<class ParamVec>
+    static void write_best_archive_header(
+        std::ostream&                os,
+        const EvalResult<ParamVec>&  result,
+        const HPOTargets&            trg,
+        std::size_t                  cw,
+        int                         prec);
+
+private:
+    static constexpr int W  = 78;   // target line width (inside "# ")
+    static constexpr int KW = 24;   // key column width
+
+    /* ---- tiny formatting helpers ------------------------------------ */
+    static void rule   (std::ostream& os);                    // # ====...
+    static void thin   (std::ostream& os);                    // # ----...
+    static void blank  (std::ostream& os);                    // #
+    static void heading(std::ostream& os, const std::string& title);
+    static void kv     (std::ostream& os,
+                        const std::string& key,
+                        const std::string& val);
+    static void line   (std::ostream& os, const std::string& text);
+    static void wrap   (std::ostream& os,
+                        const std::string& prefix,
+                        const std::vector<std::string>& items,
+                        int max_width = W);
+
+    static std::string fmt_double(double v, int prec = 4);
+    static std::string fmt_timestamp();
+    static std::string file_timestamp(const std::string& path);
+
+    /* ---- section writers -------------------------------------------- */
+    static void write_banner       (std::ostream& os, std::size_t best_iter,
+                                    std::size_t eval_iter, double loss);
+    static void write_files_section(std::ostream& os,
+                                    const std::string& train_cfg,
+                                    const std::string& val_cfg);
+    static void write_data_section (std::ostream& os,
+                                    const mlip::StructureDB& train,
+                                    const mlip::StructureDB& val,
+                                    const core::Context& train_ctx,
+                                    const core::Context& val_ctx);
+    static void write_optim_section(std::ostream& os,
+                                    const HPOTargets& trg,
+                                    const std::vector<std::string>& labels);
+    static void write_loss_section (std::ostream& os,
+                                    const HPOTargets& trg);
+    template<class ParamVec>
+    static void write_result_table (std::ostream& os,
+                                    const EvalResult<ParamVec>& e,
+                                    const HPOTargets& trg,
+                                    std::size_t cw, int prec);
+};
+
+}   // namespace tadah::hpo
