@@ -26,9 +26,26 @@ void PotHeaderWriter::write_result_table(std::ostream& os,
     constexpr int LW = 16;  // loss width
 
     auto metric_row = [&](const std::string& name, bool used,
-                          double val, double loss_val) {
+                          double val, double loss_val,
+                          const std::vector<double>& per_ds,
+                          const std::vector<double>& per_ds_loss) {
         if (!used) return;
-        os << "#   " << std::left << std::setw(NW) << name
+        /* per-dataset rows */
+        for (std::size_t d = 0; d < per_ds.size(); ++d) {
+            std::string ds_name = name + "[" + std::to_string(d + 1) + "]";
+            os << "#   " << std::left << std::setw(NW) << ds_name
+               << std::right << std::setw(VW) << std::scientific
+               << std::setprecision(prec) << per_ds[d];
+            if (d < per_ds_loss.size())
+               os << std::right << std::setw(LW) << std::scientific
+                  << std::setprecision(prec) << per_ds_loss[d];
+            else
+               os << std::right << std::setw(LW) << "-";
+            os << "\n";
+        }
+        /* average row */
+        std::string avg_name = name + "[avg]";
+        os << "#   " << std::left << std::setw(NW) << avg_name
            << std::right << std::setw(VW) << std::scientific
            << std::setprecision(prec) << val
            << std::right << std::setw(LW) << std::scientific
@@ -41,12 +58,12 @@ void PotHeaderWriter::write_result_table(std::ostream& os,
        << std::right << std::setw(LW) << "Loss" << "\n";
     os << "#   " << std::string(NW + VW + LW, '-') << "\n";
 
-    metric_row("EMAE   (meV/at)",  trg.use_emae,   e.emae,   e.emaeLoss);
-    metric_row("ERMSE  (meV/at)",  trg.use_ermse,  e.ermse,  e.ermseLoss);
-    metric_row("ErRMSE (meV/at)",  trg.use_errmse, e.errmse, e.errmseLoss);
-    metric_row("ERSQ",             trg.use_ersq,   e.ersq,   e.ersqLoss);
-    metric_row("FRMSE  (eV/A)",    trg.use_frmse,  e.frmse,  e.frmseLoss);
-    metric_row("SRMSE  (GPa)",     trg.use_srmse,  e.srmse,  e.srmseLoss);
+    metric_row("EMAE   (meV/at)",  trg.use_emae,   e.emae,   e.emaeLoss,   e.v_emae,   e.v_emaeLoss);
+    metric_row("ERMSE  (meV/at)",  trg.use_ermse,  e.ermse,  e.ermseLoss,  e.v_ermse,  e.v_ermseLoss);
+    metric_row("ErRMSE (meV/at)",  trg.use_errmse, e.errmse, e.errmseLoss, e.v_errmse, e.v_errmseLoss);
+    metric_row("ERSQ",             trg.use_ersq,   e.ersq,   e.ersqLoss,   e.v_ersq,   e.v_ersqLoss);
+    metric_row("FRMSE  (eV/A)",    trg.use_frmse,  e.frmse,  e.frmseLoss,  e.v_frmse,  e.v_frmseLoss);
+    metric_row("SRMSE  (GPa)",     trg.use_srmse,  e.srmse,  e.srmseLoss,  e.v_srmse,  e.v_srmseLoss);
 
     /* LAMMPS outvar + loss table */
     if (!trg.LS.empty() && !e.v_outvar.empty()) {
@@ -120,10 +137,10 @@ void PotHeaderWriter::write_best_header(
     int                             prec)
 {
     write_banner(os, result.best_iter, result.iter, result.loss);
-    write_data_section(os, train_stdb, val_stdb, master_ctx, val_ctx);
-    write_optim_section(os, trg, param_labels);
     write_loss_section(os, trg);
     write_result_table(os, result, trg, cw, prec);
+    write_data_section(os, train_stdb, val_stdb, master_ctx, val_ctx);
+    write_optim_section(os, trg, param_labels);
     rule(os);
 }
 

@@ -322,7 +322,8 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
         if (!used) return;
         std::ostringstream s;
         s << "weight=" << std::fixed << std::setprecision(2) << weight
-          << "  target=" << std::scientific << std::setprecision(3) << target;
+          << "  target=" << std::scientific << std::setprecision(3) << target
+          << "  (per-dataset + avg)";
         kv(name, s.str());
     };
 

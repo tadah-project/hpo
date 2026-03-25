@@ -61,6 +61,7 @@ struct EvalResult
     double emaeLoss=0, ermseLoss=0, errmseLoss=0, ersqLoss=0, frmseLoss=0, srmseLoss=0;
     /* per-dataset validation metrics (one entry per validation dataset) */
     std::vector<double> v_emae, v_ermse, v_errmse, v_ersq, v_frmse, v_srmse;
+    std::vector<double> v_emaeLoss, v_ermseLoss, v_errmseLoss, v_ersqLoss, v_frmseLoss, v_srmseLoss;
     std::vector<std::vector<double>>       v_loss;    // [sim][loss_i]
     std::vector<std::vector<std::string>>  v_outvar;  // [sim][outvar_i]
 

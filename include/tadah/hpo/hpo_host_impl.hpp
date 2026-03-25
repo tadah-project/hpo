@@ -27,18 +27,36 @@ void HPO_Host<P,R>::init_loss(const std::string& fn) const
   std::ofstream f(fn);
 
   f << std::left << std::setw(cw_) << "#ITERATION" << std::right;
-  if (trg_.use_emae)
-    f << std::setw(cw_) << "L(EMAE)";
-  if (trg_.use_ermse)
-    f << std::setw(cw_) << "L(ERMSE)";
-  if (trg_.use_errmse)
-    f << std::setw(cw_) << "L(ErRMSE)";
-  if (trg_.use_ersq)
-    f << std::setw(cw_) << "L(ERSQ)";
-  if (trg_.use_frmse)
-    f << std::setw(cw_) << "L(FRMSE)";
-  if (trg_.use_srmse)
-    f << std::setw(cw_) << "L(SRMSE)";
+  if (trg_.use_emae) {
+    for (std::size_t i = 1; i <= n_val_datasets_; ++i)
+      f << std::setw(cw_) << ("L(EMAE)[" + std::to_string(i) + "]");
+    f << std::setw(cw_) << "L(EMAE)[avg]";
+  }
+  if (trg_.use_ermse) {
+    for (std::size_t i = 1; i <= n_val_datasets_; ++i)
+      f << std::setw(cw_) << ("L(ERMSE)[" + std::to_string(i) + "]");
+    f << std::setw(cw_) << "L(ERMSE)[avg]";
+  }
+  if (trg_.use_errmse) {
+    for (std::size_t i = 1; i <= n_val_datasets_; ++i)
+      f << std::setw(cw_) << ("L(ErRMSE)[" + std::to_string(i) + "]");
+    f << std::setw(cw_) << "L(ErRMSE)[avg]";
+  }
+  if (trg_.use_ersq) {
+    for (std::size_t i = 1; i <= n_val_datasets_; ++i)
+      f << std::setw(cw_) << ("L(ERSQ)[" + std::to_string(i) + "]");
+    f << std::setw(cw_) << "L(ERSQ)[avg]";
+  }
+  if (trg_.use_frmse) {
+    for (std::size_t i = 1; i <= n_val_datasets_; ++i)
+      f << std::setw(cw_) << ("L(FRMSE)[" + std::to_string(i) + "]");
+    f << std::setw(cw_) << "L(FRMSE)[avg]";
+  }
+  if (trg_.use_srmse) {
+    for (std::size_t i = 1; i <= n_val_datasets_; ++i)
+      f << std::setw(cw_) << ("L(SRMSE)[" + std::to_string(i) + "]");
+    f << std::setw(cw_) << "L(SRMSE)[avg]";
+  }
 
 
   for (const auto &lsim : trg_.LS) {
@@ -134,12 +152,19 @@ void HPO_Host<P,R>::print_loss_line(std::ofstream& f, size_t it,const Result& e,
 {
     f << std::left << std::setw(cw) << it;
     f << std::right << std::scientific << std::setprecision(prec);
-    if(trg.use_emae)   f <<std::setw(cw) <<e.emaeLoss;
-    if(trg.use_ermse)  f <<std::setw(cw) <<e.ermseLoss;
-    if(trg.use_errmse) f <<std::setw(cw) <<e.errmseLoss;
-    if(trg.use_ersq)   f <<std::setw(cw) <<e.ersqLoss;
-    if(trg.use_frmse)  f <<std::setw(cw) <<e.frmseLoss;
-    if(trg.use_srmse)  f <<std::setw(cw) <<e.srmseLoss;
+
+    auto write_loss_metric = [&](bool used, const std::vector<double>& per_ds, double avg) {
+      if (!used) return;
+      for (double v : per_ds) f << std::setw(cw) << v;
+      f << std::setw(cw) << avg;
+    };
+
+    write_loss_metric(trg.use_emae,   e.v_emaeLoss,   e.emaeLoss);
+    write_loss_metric(trg.use_ermse,  e.v_ermseLoss,  e.ermseLoss);
+    write_loss_metric(trg.use_errmse, e.v_errmseLoss, e.errmseLoss);
+    write_loss_metric(trg.use_ersq,   e.v_ersqLoss,   e.ersqLoss);
+    write_loss_metric(trg.use_frmse,  e.v_frmseLoss,  e.frmseLoss);
+    write_loss_metric(trg.use_srmse,  e.v_srmseLoss,  e.srmseLoss);
       
     for (size_t i = 0; i < e.v_outvar.size(); ++i) {
       auto &indices = trg.LS[i].i_varloss;
@@ -286,6 +311,7 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     core::Context val_ctx(core::CoreUserConfigParser().parse(val_cfg));
     val_ctx_ = val_ctx;
     val_stdb_.add(val_ctx);
+    n_val_datasets_ = val_stdb_.dbidx.size() > 1 ? val_stdb_.dbidx.size() - 1 : 1;
     nnf_.calc(val_stdb_, rcutmax);
 #ifndef TADAH_BUILD_MPI
     train_stdb_.add(master_ctx_);
@@ -452,18 +478,22 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
 template<class P, class R>
 void HPO_Host<P,R>::fit_loss(Result& r) const
 {
-  auto add_global = [&](double& sink, double y, double ref, double w)
+  auto add_global = [&](double& sink, double y, double ref, double w,
+                        std::vector<double>& v_sink, const std::vector<double>& v_y)
   {
     sink = trg_.globalLoss.loss(y, ref, w);
     r.loss_sum += sink;
     ++r.loss_count;
+    v_sink.resize(v_y.size());
+    for (std::size_t i = 0; i < v_y.size(); ++i)
+      v_sink[i] = trg_.globalLoss.loss(v_y[i], ref, w);
   };
-  if (trg_.use_emae)   add_global(r.emaeLoss,   r.emae,   trg_.emae,   trg_.w_emae );
-  if (trg_.use_ermse)  add_global(r.ermseLoss,  r.ermse,  trg_.ermse,  trg_.w_ermse);
-  if (trg_.use_errmse) add_global(r.errmseLoss, r.errmse, trg_.errmse, trg_.w_errmse);
-  if (trg_.use_ersq)   add_global(r.ersqLoss,   r.ersq,   trg_.ersq,   trg_.w_ersq );
-  if (trg_.use_frmse)  add_global(r.frmseLoss,  r.frmse,  trg_.frmse,  trg_.w_frmse);
-  if (trg_.use_srmse)  add_global(r.srmseLoss,  r.srmse,  trg_.srmse,  trg_.w_srmse);
+  if (trg_.use_emae)   add_global(r.emaeLoss,   r.emae,   trg_.emae,   trg_.w_emae,   r.v_emaeLoss,   r.v_emae);
+  if (trg_.use_ermse)  add_global(r.ermseLoss,  r.ermse,  trg_.ermse,  trg_.w_ermse,  r.v_ermseLoss,  r.v_ermse);
+  if (trg_.use_errmse) add_global(r.errmseLoss, r.errmse, trg_.errmse, trg_.w_errmse, r.v_errmseLoss, r.v_errmse);
+  if (trg_.use_ersq)   add_global(r.ersqLoss,   r.ersq,   trg_.ersq,   trg_.w_ersq,   r.v_ersqLoss,   r.v_ersq);
+  if (trg_.use_frmse)  add_global(r.frmseLoss,  r.frmse,  trg_.frmse,  trg_.w_frmse,  r.v_frmseLoss,  r.v_frmse);
+  if (trg_.use_srmse)  add_global(r.srmseLoss,  r.srmse,  trg_.srmse,  trg_.w_srmse,  r.v_srmseLoss,  r.v_srmse);
 
   r.loss = r.loss_count ? r.loss_sum / static_cast<double>(r.loss_count) : 0.0;
   if (!std::isfinite(r.loss) || r.loss > trg_.FAIL_SCORE) {

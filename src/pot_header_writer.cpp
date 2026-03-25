@@ -265,7 +265,8 @@ void PotHeaderWriter::write_loss_section(std::ostream& os,
         if (!used) return;
         std::ostringstream s;
         s << "target=" << fmt_double(target, 3)
-          << "  w=" << std::fixed << std::setprecision(2) << weight;
+          << "  w=" << std::fixed << std::setprecision(2) << weight
+          << "  (per-dataset + avg)";
         kv(os, name, s.str());
     };
     metric("EMAE   (meV/at)",  trg.use_emae,   trg.emae,   trg.w_emae);
@@ -295,7 +296,7 @@ void PotHeaderWriter::write_loss_section(std::ostream& os,
                    << "  w=" << std::fixed << std::setprecision(2)
                    << lsim.w_varloss[j]
                    << "  loss=" << tadah::LossFunction::to_string(
-                                       lsim.lossFn[j].type());
+                                        lsim.lossFn[j].type());
                 const auto& lp = lsim.lossFn[j].params();
                 for (double p : lp) vl << " " << fmt_double(p, 3);
                 line(os, vl.str());
