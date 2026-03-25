@@ -435,11 +435,11 @@ void HPOLog::log_new_best(std::size_t eval_num,
     std::ostringstream msg;
     msg << "★ NEW BEST   eval=" << std::setw(6) << eval_num
         << "  loss=" << fmt_double(loss);
-    if (has_emae)   msg << "  EMAE="   << std::fixed << std::setprecision(1)
+    if (has_emae)   msg << "  EMAE="   << std::fixed << std::setprecision(2)
                         << emae   << " meV/at";
-    if (has_ermse)  msg << "  ERMSE="  << std::fixed << std::setprecision(1)
+    if (has_ermse)  msg << "  ERMSE="  << std::fixed << std::setprecision(2)
                         << ermse  << " meV/at";
-    if (has_errmse) msg << "  ErRMSE=" << std::fixed << std::setprecision(1)
+    if (has_errmse) msg << "  ErRMSE=" << std::fixed << std::setprecision(2)
                         << errmse << " meV/at";
     if (has_frmse)  msg << "  FRMSE="  << std::fixed << std::setprecision(3)
                         << frmse  << " eV/Å";

@@ -161,9 +161,12 @@ void LammpsSim::parse_tokens() {
       }
 
       /* store ----------------------------------------------------------- */
-      n_outvar .push_back(vname);
+      if (std::find(n_outvar.begin(), n_outvar.end(), vname) == n_outvar.end()) {
+        n_outvar .push_back(vname);
+      }
       n_varloss.push_back(vname);
-      i_varloss.push_back(n_outvar.size()-1);
+      // i_varloss.push_back(n_outvar.size()-1);
+      i_varloss.push_back(std::distance(n_outvar.begin(), std::find(n_outvar.begin(), n_outvar.end(), vname)));
       t_varloss.push_back(tgt);
       w_varloss.push_back(wgt);
       lossFn   .push_back(std::move(myLoss));
@@ -182,8 +185,14 @@ void LammpsSim::parse_tokens() {
     }
     else if (tokens[i] == "--outvar") {
       if (i + 1 < tokens.size()) {
-        n_outvar.push_back(tokens[++i]);
+        std::string vname = tokens[++i];
+        // Only add to n_outvar if not already present
+        if (std::find(n_outvar.begin(), n_outvar.end(), vname) == n_outvar.end()) {
+          n_outvar.push_back(vname);
+        }
         i++;
+        // n_outvar.push_back(tokens[++i]);
+        // i++;
       } else {
         throw std::runtime_error("Invalid number of arguments for --outvar");
       }

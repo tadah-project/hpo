@@ -691,15 +691,192 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
             std::ofstream bp("best_pot.tadah");
 
             bp << "#-----------------------------------------------------" << std::endl;
-            bp<<"# HPO: Best potential at iter " << e.best_iter << " (" << e.iter << ")" << std::endl;
-            auto now  = std::chrono::system_clock::now();          // current time-point
-            auto tt   = std::chrono::system_clock::to_time_t(now); // to time_t
+            bp << "# HPO: Best potential at iter " << e.best_iter << " (eval " << e.iter << ")" << std::endl;
+            auto now  = std::chrono::system_clock::now();
+            auto tt   = std::chrono::system_clock::to_time_t(now);
 
             bp << "# Time stamp: "
-              << std::put_time(std::localtime(&tt), "%d.%m.%Y %H:%M:%S")
-              << std::endl;
-            bp<<"# Loss: " << e.loss << std::endl;
+               << std::put_time(std::localtime(&tt), "%Y-%m-%d %H:%M:%S")
+               << std::endl;
+            bp << "# Loss: " << e.loss << std::endl;
             bp << "#-----------------------------------------------------" << std::endl;
+
+            // Block: Output files and archiving
+            bp << "# [FILES]" << std::endl;
+            bp << "#   Loss log: " << trg.lossFile << std::endl;
+            bp << "#   Outvar log: " << trg.outvarFile << std::endl;
+            bp << "#   Params log: " << trg.paramsFile << std::endl;
+            bp << "#   Stats log: " << trg.statsFile << std::endl;
+            bp << "#   Best loss log: " << trg.bestLossFile << std::endl;
+            bp << "#   Best outvar log: " << trg.bestOutvarFile << std::endl;
+            bp << "#   Best params log: " << trg.bestParamsFile << std::endl;
+            bp << "#   Best stats log: " << trg.bestStatsFile << std::endl;
+            bp << "#   Pot archive dir: " << trg.dumpPotDir << std::endl;
+            bp << "#   Best pot archive dir: " << trg.dumpBestPotDir << std::endl;
+            bp << "#-----------------------------------------------------" << std::endl;
+
+            // Block: Optimizer setup
+            bp << "# [OPTIMIZER]" << std::endl;
+            bp << "#   Algorithm: " << trg.spec.lib << " / " << trg.spec.algo << std::endl;
+            if (trg.spec.local)
+              bp << "#   Local optimizer: " << trg.spec.local->lib << " / " << trg.spec.local->algo << std::endl;
+            bp << "#   Dimensions: " << trg.spec.low.size() << std::endl;
+            bp << "#   Bounds:" << std::endl;
+            for (size_t i = 0; i < trg.spec.low.size(); i += 5) {
+              bp << "#     ";
+              for (size_t j = i; j < std::min(i + 5, trg.spec.low.size()); ++j) {
+                bp << "[" << trg.spec.low[j] << ", " << trg.spec.high[j] << "] ";
+              }
+              bp << std::endl;
+            }
+            bp << "#   Parameter labels:" << std::endl;
+            {
+              std::vector<std::string> labels;
+              for (const auto& kv : trg.optimap) {
+                for (size_t i = 0; i < kv.second.opt.size(); ++i) {
+                  if (kv.second.opt[i]) {
+                    std::string lbl = kv.first;
+                    if (kv.second.opt.size() > 1) lbl += "[" + std::to_string(i) + "]";
+                    labels.push_back(lbl);
+                  }
+                }
+              }
+              for (size_t i = 0; i < labels.size(); i += 5) {
+                bp << "#     ";
+                for (size_t j = i; j < std::min(i + 5, labels.size()); ++j) {
+                  bp << labels[j] << " ";
+                }
+                bp << std::endl;
+              }
+            }
+            bp << "#   Stop criteria:" << std::endl;
+            {
+              std::vector<std::string> crit;
+              if (trg.spec.stop.maxeval) crit.push_back("maxeval=" + std::to_string(*trg.spec.stop.maxeval));
+              if (trg.spec.stop.maxtime) crit.push_back("maxtime=" + std::to_string(*trg.spec.stop.maxtime));
+              if (trg.spec.stop.ftol_rel) crit.push_back("ftol_rel=" + std::to_string(*trg.spec.stop.ftol_rel));
+              if (trg.spec.stop.ftol_abs) crit.push_back("ftol_abs=" + std::to_string(*trg.spec.stop.ftol_abs));
+              if (trg.spec.stop.xtol_rel) crit.push_back("xtol_rel=" + std::to_string(*trg.spec.stop.xtol_rel));
+              if (trg.spec.stop.xtol_abs) crit.push_back("xtol_abs=" + std::to_string(*trg.spec.stop.xtol_abs));
+              if (trg.spec.stop.stopval)  crit.push_back("stopval="  + std::to_string(*trg.spec.stop.stopval));
+              for (size_t i = 0; i < crit.size(); i += 5) {
+                bp << "#     ";
+                for (size_t j = i; j < std::min(i + 5, crit.size()); ++j) {
+                  bp << crit[j] << " ";
+                }
+                bp << std::endl;
+              }
+            }
+            if (trg.spec.seed) bp << "#   Random seed: " << *trg.spec.seed << std::endl;
+            if (trg.spec.pop) bp << "#   Population size: " << *trg.spec.pop << std::endl;
+            bp << "#   Output every: " << trg.outputEvery << std::endl;
+            bp << "#   Best output every: " << trg.bestOutputEvery << std::endl;
+            bp << "#   FAIL_SCORE: " << trg.FAIL_SCORE << std::endl;
+            bp << "#   QFLUSH_THRESHOLD: " << trg.QFLUSH_THRESHOLD << std::endl;
+            bp << "#   MAX_TIME: " << trg.MAX_TIME << std::endl;
+            bp << "#-----------------------------------------------------" << std::endl;
+
+            // Block: Loss function and simulation setup
+            bp << "# [LOSS & SIMULATION]" << std::endl;
+            // Loss functions
+            bp << "#   Loss function(s):";
+            {
+              size_t count = 0;
+              for (const auto& lsim : trg.LS) {
+                for (const auto& lf : lsim.lossFn) {
+                  if (count % 5 == 0) bp << std::endl << "#     ";
+                  bp << tadah::LossFunction::to_string(lf.type()) << " ";
+                  ++count;
+                }
+              }
+              bp << std::endl;
+            }
+            // Targets
+            bp << "#   Target(s):";
+            {
+              size_t count = 0;
+              for (const auto& lsim : trg.LS) {
+                for (const auto& t : lsim.t_varloss) {
+                  if (count % 5 == 0) bp << std::endl << "#     ";
+                  bp << t << " ";
+                  ++count;
+                }
+              }
+              bp << std::endl;
+            }
+            // Weights
+            bp << "#   Weight(s):";
+            {
+              size_t count = 0;
+              for (const auto& lsim : trg.LS) {
+                for (const auto& w : lsim.w_varloss) {
+                  if (count % 5 == 0) bp << std::endl << "#     ";
+                  bp << w << " ";
+                  ++count;
+                }
+              }
+              bp << std::endl;
+            }
+            // Outvars
+            bp << "#   Outvar(s):";
+            {
+              size_t count = 0;
+              for (const auto& lsim : trg.LS) {
+                for (const auto& n : lsim.n_outvar) {
+                  if (count % 5 == 0) bp << std::endl << "#     ";
+                  bp << n << " ";
+                  ++count;
+                }
+              }
+              bp << std::endl;
+            }
+            // Varloss
+            bp << "#   Varloss(s):";
+            {
+              size_t count = 0;
+              for (const auto& lsim : trg.LS) {
+                for (const auto& n : lsim.n_varloss) {
+                  if (count % 5 == 0) bp << std::endl << "#     ";
+                  bp << n << " ";
+                  ++count;
+                }
+              }
+              bp << std::endl;
+            }
+            // ncpu, maxtime, failscore
+            bp << "#   ncpu:";
+            {
+              size_t count = 0;
+              for (const auto& lsim : trg.LS) {
+                if (count % 5 == 0) bp << std::endl << "#     ";
+                bp << lsim.ncpu << " ";
+                ++count;
+              }
+              bp << std::endl;
+            }
+            bp << "#   maxtime:";
+            {
+              size_t count = 0;
+              for (const auto& lsim : trg.LS) {
+                if (count % 5 == 0) bp << std::endl << "#     ";
+                bp << lsim.maxtime << " ";
+                ++count;
+              }
+              bp << std::endl;
+            }
+            bp << "#   failscore:";
+            {
+              size_t count = 0;
+              for (const auto& lsim : trg.LS) {
+                if (count % 5 == 0) bp << std::endl << "#     ";
+                bp << lsim.failscore << " ";
+                ++count;
+              }
+              bp << std::endl;
+            }
+            bp << "#-----------------------------------------------------" << std::endl;
+
+            // Outvar and loss table as before
             bp<<"# Outvars:" << std::endl << "#";
             for (const auto &lsim : trg.LS) {
               for (auto n_outvar : lsim.n_outvar) {
@@ -737,6 +914,8 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                   << std::setprecision(prec) << e.v_loss[i][j];
               }
             }
+            // Add total loss after all individual losses
+            bp << std::setw(cw) << e.loss;
             bp<<std::endl;
             bp << "#-----------------------------------------------------" << std::endl;
 
@@ -773,7 +952,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                   << std::setprecision(prec) << std::stod(e.v_outvar[i][j]);
               }
             }
-            bpa<<std::endl;
+            bpa<<std::endl<<std::endl;
             bpa<<"# Losses: " << std::endl << "#";
             for (const auto &lsim : trg.LS) {
               for (auto varname : lsim.n_varloss) {
