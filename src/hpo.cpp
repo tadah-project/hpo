@@ -81,12 +81,19 @@ int hpo_run(core::Context& ctx)
     std::string result_str = "UNKNOWN";
     bool used_nlopt = (sp.lib == "NLOPT");
     try {
+        if (sp.lib == "DLIB" && sp.local) {
+            throw std::runtime_error(
+                "DLIB optimisers do not support LOCAL blocks; choose a standalone ALGO such as BFGS or GFS");
+        }
         if      (sp.lib=="TADAH" && sp.algo=="RANDOM")
             run_random<V,R>(sp, host);
         else if (sp.lib=="TADAH" && sp.algo=="GRID")
             run_grid<V,R>  (sp, host);
-        else if (sp.lib=="DLIB" && sp.algo=="GFS")
-            run_dlib_global(sp, host);
+        else if (sp.lib=="DLIB" && (sp.algo=="GFS" || sp.algo=="BFGS"))
+            if (sp.algo=="GFS")
+                run_dlib_global(sp, host);
+            else
+                run_dlib_bfgs(sp, host);
         else if (sp.lib=="NLOPT")
             run_nlopt<V,R>(sp, host);   // run_nlopt calls log.finish() itself
         else

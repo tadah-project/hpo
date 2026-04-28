@@ -207,6 +207,16 @@ void PotHeaderWriter::write_optim_section(std::ostream& os,
     }
     if (sp.seed) kv(os, "Seed", std::to_string(*sp.seed));
     if (sp.pop)  kv(os, "Population", std::to_string(*sp.pop));
+    if (!sp.param.empty()) {
+        std::vector<std::pair<std::string, double>> params(sp.param.begin(), sp.param.end());
+        std::sort(params.begin(), params.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+        std::vector<std::string> param_lines;
+        param_lines.reserve(params.size());
+        for (const auto& kvp : params)
+            param_lines.push_back(kvp.first + "=" + fmt_double(kvp.second));
+        wrap(os, "Params:", param_lines);
+    }
 
     /* bounds table — compact two-column layout */
     {
@@ -316,4 +326,3 @@ void PotHeaderWriter::write_loss_section(std::ostream& os,
 }
 
 }   // namespace tadah::hpo
-

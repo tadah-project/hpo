@@ -4,6 +4,7 @@
 #include <tadah/core/context.h>
 #include <tadah/core/blueprint_parser.h>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <iomanip>
@@ -236,6 +237,18 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
     if (sp.pop)            kv("Population size", std::to_string(*sp.pop));
     if (sp.vector_storage) kv("Vector storage",  std::to_string(*sp.vector_storage));
     if (sp.seed)           kv("Random seed",     std::to_string(*sp.seed));
+    if (!sp.param.empty()) {
+        std::vector<std::pair<std::string, double>> params(sp.param.begin(), sp.param.end());
+        std::sort(params.begin(), params.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+        std::lock_guard<std::mutex> lg(mtx_);
+        f_ << "  Params:\n";
+        for (const auto& kvp : params) {
+            f_ << "    " << std::left << std::setw(KW-4) << kvp.first
+               << ": " << fmt_double(kvp.second) << "\n";
+        }
+        f_.flush();
+    }
 
     // ---- search space
     {

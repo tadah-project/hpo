@@ -21,6 +21,11 @@ static void print_dlib_caps(std::ostream& os, const std::string& algo)
     if(algo=="GFS")
         os<<"   * SOLVER_EPS   (double, default 1e-7)\n"
             "   * REL_NOISE    (double, default 1e-12)\n";
+    else if(algo=="BFGS")
+        os<<"   * MAXEVAL      (iteration limit)\n"
+            "   * FTOL_ABS     (objective-delta stop, default 1e-7)\n"
+            "   * PARAM fd_step <double>      (approx-derivative step, default 1e-6)\n"
+            "   * PARAM tol_gradinf <double>  (gradient-inf-norm stop; alternative to FTOL_ABS)\n";
     else if(algo=="BOBYQA")
         os<<"   * RHO_BEGIN / RHO_END\n";
     else
