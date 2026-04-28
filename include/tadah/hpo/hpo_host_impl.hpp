@@ -816,6 +816,14 @@ void HPO_Host<P,R>::flush_remaining() const
                   best_par_f (trg_.bestParamsFile, std::ios::app),
                   best_stats_f(trg_.bestStatsFile, std::ios::app);
 
+#if defined(TADAH_BUILD_MPI)
+    static const mlip::StructureDB empty_stdb;
+    const mlip::StructureDB& train_ref = empty_stdb;
+#else
+    const mlip::StructureDB& train_ref = train_stdb_;
+#endif
+    const mlip::StructureDB& val_ref = val_stdb_;
+
     while(io_buf_.count(next_flush_))
     {
         const auto& e = io_buf_[next_flush_];
@@ -831,6 +839,42 @@ void HPO_Host<P,R>::flush_remaining() const
             print_outvar_line(best_outv_f , e.best_iter, e, trg_, cw_, prec_);
             print_params_line(best_par_f  , e.best_iter, e,       cw_, prec_);
             print_stats_line (best_stats_f, e.best_iter, e, trg_, cw_, prec_);
+        }
+
+        if(e.is_best) {
+            {
+                std::ofstream bp("best_pot.tadah");
+
+                PotHeaderWriter::write_best_header(
+                    bp, e, trg_, master_ctx_,
+                    val_ctx_,
+                    train_ref, val_ref,
+                    param_labels_, cw_, prec_);
+
+                bp << std::setprecision(
+                    e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
+            }
+
+            if(e.best_iter % trg_.dumpBestPotEvery == 0){
+                std::ofstream bpa(std::string(trg_.dumpBestPotDir)
+                    + "/best_pot_" + std::to_string(e.best_iter) + ".tadah");
+
+                PotHeaderWriter::write_best_archive_header(
+                    bpa, e, trg_, cw_, prec_);
+
+                bpa << std::setprecision(
+                    e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
+            }
+        }
+
+        if(e.iter % trg_.dumpPotEvery == 0){
+            std::ofstream pa(std::string(trg_.dumpPotDir)
+                + "/pot_" + std::to_string(e.iter) + ".tadah");
+
+            PotHeaderWriter::write_archive_header(pa, e, cw_, prec_);
+
+            pa << std::setprecision(
+                e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
         }
 
         io_buf_.erase(next_flush_++);

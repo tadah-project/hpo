@@ -93,14 +93,17 @@ int hpo_run(core::Context& ctx)
             throw std::runtime_error("unknown optimizer "+sp.lib+":"+sp.algo);
 
         if (!used_nlopt) {
+            host.flush_remaining();
             result_str = "COMPLETED — all evaluations done";
             log.finish(result_str);
         }
     } catch (const std::exception& e) {
         result_str = std::string("STOPPED with error: ") + e.what();
         log.warning(std::string("Optimiser threw: ") + e.what());
-        if (!used_nlopt)
+        if (!used_nlopt) {
+            host.flush_remaining();
             log.finish(result_str);  // nlopt adapter already called finish()
+        }
         throw;   // re-throw so HPOEngine can report it
     }
 
