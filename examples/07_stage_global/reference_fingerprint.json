@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "example": "07_stage_global",
+  "description": "STRATEGY { TYPE PRESTAGE, TOPK, EXPLORE { ... } } \u2014 global pre-stage feeding refine.",
+  "best_loss": {
+    "value": 0.0833165,
+    "abs_tol": 1e-06,
+    "rel_tol": 0.001
+  },
+  "components": {
+    "L(ERMSE)[1]": {
+      "value": 0.01097544,
+      "abs_tol": 1e-06,
+      "rel_tol": 0.005
+    },
+    "L(ERMSE)[avg]": {
+      "value": 0.01097544,
+      "abs_tol": 1e-06,
+      "rel_tol": 0.005
+    },
+    "L(Ecoh)": {
+      "value": 0.1556576,
+      "abs_tol": 1e-06,
+      "rel_tol": 0.005
+    }
+  },
+  "hyperparameters": {
+    "RCUT2B": {
+      "value": 5.991559,
+      "abs_tol": 0.001,
+      "rel_tol": 0.001
+    },
+    "SGRIDMB": {
+      "value": 0.3974637,
+      "abs_tol": 0.001,
+      "rel_tol": 0.001
+    }
+  },
+  "evaluations": {
+    "value": 10,
+    "tol": 0
+  },
+  "best_ermse_meV_per_atom": 10.48,
+  "status_accepted": [
+    "COMPLETED"
+  ],
+  "nan_clampings_max": 0,
+  "walltime_hint": "0.2s",
+  "fast": true,
+  "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
+}

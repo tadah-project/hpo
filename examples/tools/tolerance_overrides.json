@@ -1,0 +1,83 @@
+{
+  "_comment": "Per-example overrides for fingerprint tolerance and accepted-status. Defaults in generate_fingerprint.py: best_loss abs=1e-6 rel=1e-3; component abs=1e-6 rel=5e-3; hyperparam abs=1e-3 rel=1e-3; evals_tol=0. Override only when justified.",
+
+  "01_baseline_bfgs": {
+    "description": "Single-shot DLIB:BFGS baseline; iter 0 is the implicit CONFIG point (RCUT2B = 5.6).",
+    "status_accepted": ["COMPLETED"]
+  },
+  "02_random_seeded": {
+    "description": "INIT { STRATEGY RANDOM, SEED 1234 } — seeded random init chain into DLIB:BFGS.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "03_lhs_multistart": {
+    "description": "INIT { STRATEGY LHS } + STRATEGY { TYPE MULTISTART, N_STARTS, BUDGET_PER_START }.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "04_sobol_seeded_gfs": {
+    "description": "INIT { STRATEGY SOBOL } seeds DLIB:GFS (which consumes all K seeds).",
+    "status_accepted": ["COMPLETED"]
+  },
+  "05_warm_refinement": {
+    "description": "INIT { STRATEGY WARM, WARM_ON_MISMATCH } seeded from HOT_A0 cache.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "06_prior_seeded": {
+    "description": "INIT { STRATEGY PRIOR } using descriptor suggested_value.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "07_stage_global": {
+    "description": "STRATEGY { TYPE PRESTAGE, TOPK, EXPLORE { ... } } — global pre-stage feeding refine.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "08_restart_on_stagnation": {
+    "description": "STRATEGY { RESTART { AFTER_STAGNATION, MAX, STRATEGY } } — relaunch on stagnation.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "09_noise_auto_bfgs": {
+    "description": "NOISE { AUTO } bareword — auto FD-step calibration before BFGS.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "10_derivative_free_local": {
+    "description": "STRATEGY { TYPE PLAIN, LIB NLOPT, ALGO LN_SBPLX, STEP } — derivative-free local search.",
+    "status_accepted": [
+      "MAXEVAL_REACHED — maximum evaluations exhausted",
+      "COMPLETED"
+    ]
+  },
+  "11_chained_init_warm_lhs": {
+    "description": "Chained init: WARM + LHS + DLIB:GFS, WARM-front reorder.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "12_random_search": {
+    "description": "STRATEGY { TYPE PLAIN, LIB TADAH, ALGO RANDOM, SEED } — pure random search.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "13_nlopt_crs_global": {
+    "description": "LIB NLOPT, ALGO GN_CRS2_LM — pure stochastic global, no internal local refinement.",
+    "status_accepted": [
+      "MAXEVAL_REACHED — maximum evaluations exhausted",
+      "COMPLETED"
+    ]
+  },
+  "14_nlopt_mlsl_lds": {
+    "description": "LIB NLOPT, ALGO G_MLSL_LDS + INNER { LIB NLOPT, ALGO LN_BOBYQA } — MLSL global+local hybrid.",
+    "status_accepted": [
+      "MAXEVAL_REACHED — maximum evaluations exhausted",
+      "COMPLETED"
+    ]
+  },
+  "15_basins_run_and_forget": {
+    "description": "STRATEGY { TYPE BASINS, EXPLORE { FTOL_LADDER, BUDGET_* }, REFINE { ... } } — anytime BASINS pipeline.",
+    "best_loss_tol":  {"abs_tol": 1e-6, "rel_tol": 5e-3},
+    "component_tol":  {"abs_tol": 1e-6, "rel_tol": 1e-2},
+    "hyperparam_tol": {"abs_tol": 1e-2, "rel_tol": 5e-3},
+    "evals_tol": 50,
+    "status_accepted": [
+      "STOPPED — nlopt failure (algorithm converged; consider adding ftol_rel / xtol_rel / maxeval to stop cleanly next time)",
+      "COMPLETED",
+      "MAXTIME_REACHED — wall-time budget exhausted"
+    ],
+    "fast": false,
+    "tolerance_rationale": "BASINS is anytime; final basin pool depends on EXPLORE/REFINE budgets and on a stochastic NLOPT inner. Bit-deterministic when SEED 1717 is set on this machine, but other machines (different LAPACK/BLAS) may explore basins in slightly different order. Loose loss tolerances tolerate that; eval-count window of ±50 absorbs adaptive budget rate."
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "example": "15_basins_run_and_forget",
+  "description": "STRATEGY { TYPE BASINS, EXPLORE { FTOL_LADDER, BUDGET_* }, REFINE { ... } } \u2014 anytime BASINS pipeline.",
+  "best_loss": {
+    "value": 0.04567213,
+    "abs_tol": 1e-06,
+    "rel_tol": 0.005
+  },
+  "components": {
+    "L(ERMSE)[1]": {
+      "value": 0.009970308,
+      "abs_tol": 1e-06,
+      "rel_tol": 0.01
+    },
+    "L(ERMSE)[avg]": {
+      "value": 0.009970308,
+      "abs_tol": 1e-06,
+      "rel_tol": 0.01
+    },
+    "L(Ecoh)": {
+      "value": 0.08137395,
+      "abs_tol": 1e-06,
+      "rel_tol": 0.01
+    }
+  },
+  "hyperparameters": {
+    "RCUT2B": {
+      "value": 4.214323,
+      "abs_tol": 0.01,
+      "rel_tol": 0.005
+    },
+    "SGRIDMB": {
+      "value": 0.3447294,
+      "abs_tol": 0.01,
+      "rel_tol": 0.005
+    }
+  },
+  "evaluations": {
+    "value": 3094,
+    "tol": 50
+  },
+  "best_ermse_meV_per_atom": 9.99,
+  "status_accepted": [
+    "STOPPED \u2014 nlopt failure (algorithm converged; consider adding ftol_rel / xtol_rel / maxeval to stop cleanly next time)",
+    "COMPLETED",
+    "MAXTIME_REACHED \u2014 wall-time budget exhausted"
+  ],
+  "nan_clampings_max": 0,
+  "walltime_hint": "48.2s",
+  "fast": false,
+  "tolerance_rationale": "BASINS is anytime; final basin pool depends on EXPLORE/REFINE budgets and on a stochastic NLOPT inner. Bit-deterministic when SEED 1717 is set on this machine, but other machines (different LAPACK/BLAS) may explore basins in slightly different order. Loose loss tolerances tolerate that; eval-count window of \u00b150 absorbs adaptive budget rate."
+}
