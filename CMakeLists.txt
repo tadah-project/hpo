@@ -57,6 +57,16 @@ if(NOT TARGET tadah::compile_options)
   FetchContent_MakeAvailable(tadah_cmake)   # defines tadah::compile_options
 endif()
 
+# Single-source-of-truth version (from CORE's blueprint TOML).
+# Falls back to 0.0.0 when CORE isn't reachable or cmake-tools is old.
+if(COMMAND tadah_read_version_from_blueprint)
+  tadah_read_version_from_blueprint(TADAH_VERSION)
+else()
+  set(TADAH_VERSION "0.0.0")
+endif()
+project(Tadah.HPO VERSION ${TADAH_VERSION} LANGUAGES CXX)
+message(STATUS "Tadah.HPO version: ${TADAH_VERSION}")
+
 option(TADAH_ENABLE_ASAN "Enable AddressSanitizer (-fsanitize=address -fno-omit-frame-pointer)" OFF)
 
 # (option) Developer builds -DTADAH_DEVELOP=ON
