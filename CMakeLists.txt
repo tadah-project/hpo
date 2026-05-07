@@ -61,6 +61,7 @@ option(TADAH_ENABLE_ASAN "Enable AddressSanitizer (-fsanitize=address -fno-omit-
 
 # (option) Developer builds -DTADAH_DEVELOP=ON
 tadah_use_local_module(Tadah.MLIP MLIP)  # FetchContent name + folder name
+tadah_use_local_module(Tadah.MD   MD)    # FetchContent name + folder name
 
 # 3. Git branch information, for informational purposes 
 tadah_get_git_branch(TADAH_GIT_BRANCH)
