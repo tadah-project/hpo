@@ -150,9 +150,10 @@ create / run timing. Useful with `perf record` / `valgrind
 
 ## Init strategies
 
-`STRATEGY <method> [args...]` — repeatable. Each line appends
-one entry to the *init chain*. The chain is resolved into a list of
-starting points (`optim_init`) before the optimiser runs.
+`INIT { STRATEGY <method> [args...] ... } ENDINIT` — repeatable inside
+the `INIT` block. Each `STRATEGY` line appends one entry to the *init
+chain*. The chain is resolved into a list of starting points
+(`optim_init`) before the optimiser runs.
 
 | Method | Args | Default K | Effect |
 |---|---|---|---|
@@ -202,22 +203,31 @@ single inner call because GFS already consumes K seeds natively.
 
 When the chain produces more seeds than the optimiser will consume,
 HPO emits a stderr warning at config time:
-`[HPO] WARNING: STRATEGY chain produced N seeds but ALGO
+`[HPO] WARNING: INIT_STRATEGY chain produced N seeds but ALGO
 consumes only the first; (N-1) seed(s) will be discarded.`
 
 ## Run policies
 
-| Keyword | Args | Default | Effect |
+Run-policy selection lives inside the mandatory `STRATEGY { ... }
+ENDSTRATEGY` block. `TYPE` picks the dispatch shape; `MULTISTART` /
+`PRESTAGE` / `BASINS`-specific knobs sit alongside it inside the same
+block. `RESTART { ... } ENDRESTART` is a decorator for `TYPE PLAIN`
+/ `MULTISTART` / `PRESTAGE`. `NOISE { ... } ENDNOISE` is a sibling
+block of `STRATEGY` (one level up, inside `OPTIMIZER`).
+
+| Keyword (location) | Args | Default | Effect |
 |---|---|---|---|
-| `MULTISTART <int>` | `K ≥ 1` | `1` | Run the inner optimiser `K` independent times. Validate-rejected for `NLOPT:GN_*`. |
-| `PARALLEL <int>` | `≥ 1` | `1` | Concurrent starts. Currently parsed and validated; runs serially with a stderr warning if `> 1`. |
-| `BUDGET_PER_START <int>` | `≥ 1` | derived | Per-start MAXEVAL override. When unset, HPO splits the outer `MAXEVAL` equally across `K` starts (ceil division). |
-| `STRATEGY { TYPE PRESTAGE EXPLORE { ... } ENDEXPLORE ... }` | block | (absent) | Wrap a global-exploration optimizer spec (LIB/ALGO/MAXEVAL/INIT_STRATEGY/…) that runs **first**; the outer OPTIMIZER then refines its top-K seeds. Block presence is the only trigger — no separate flag. Replaces the legacy `STAGE_GLOBAL true` keyword. |
-| `TOPK <int>` | `K ≥ 1` | `1` | Number of best (loss, params) pairs the PRESTAGE forwards to the refinement. |
-| `AFTER_STAGNATION <int>` | `N ≥ 0` | `0` | After this many consecutive evals without a new best, abort and restart with fresh init. `0` disables. |
-| `MAX <int>` | `M ≥ 0` | `0` | Cap on restarts. |
-| `RESTART_STRATEGY <method> [args]` | repeatable | (none) | Init chain used to draw the fresh point on each restart. CONFIG is *not* auto-prepended. |
-| `NOISE.AUTO [bool]` | optional bool | `false` | Derive `PARAM fd_step` from the search-space box diagonal: `max(1e-3 × diag / sqrt(dim), 1e-6)`. **`DLIB:BFGS` only**, only when `PARAM fd_step` is not already set explicitly. Bareword `NOISE.AUTO` parses as `true`. |
+| `STRATEGY { TYPE PLAIN \| MULTISTART \| PRESTAGE \| BASINS }` | enum | `PLAIN` | Selects the run policy. `PLAIN` = single-shot; the rest add decorators (see below). |
+| `STRATEGY { N_STARTS <int> }` (TYPE MULTISTART) | `K ≥ 1` | `1` | Run the inner optimiser `K` independent times. Validate-rejected for `NLOPT:GN_*`. |
+| `STRATEGY { PARALLEL <int> }` (TYPE MULTISTART) | `≥ 1` | `1` | Concurrent starts. Currently parsed and validated; runs serially with a stderr warning if `> 1`. |
+| `STRATEGY { BUDGET_PER_START <int> }` (TYPE MULTISTART) | `≥ 1` | derived | Per-start MAXEVAL override. When unset, HPO splits the outer `MAXEVAL` equally across `K` starts (ceil division). |
+| `STRATEGY { TYPE PRESTAGE EXPLORE { ... } ENDEXPLORE ... }` | block | (absent) | The `EXPLORE` block runs **first** (one-pass global exploration with its own LIB/ALGO/MAXEVAL/INIT). The outer `STRATEGY` LIB/ALGO then refines its top-K seeds. Replaces the legacy `STAGE_GLOBAL true` keyword. |
+| `STRATEGY { TOPK <int> }` (TYPE PRESTAGE) | `K ≥ 1` | `1` | Number of best (loss, params) pairs the PRESTAGE phase forwards to the refinement phase. |
+| `STRATEGY { RESTART { AFTER_STAGNATION <int> } }` | `N ≥ 0` | `0` | After this many consecutive evals without a new best, abort and restart with fresh init. `0` disables. |
+| `STRATEGY { RESTART { MAX <int> } }` | `M ≥ 0` | `0` | Cap on restart count. |
+| `STRATEGY { RESTART { STRATEGY <method> [args] ... } }` | repeatable | (none) | Init chain used to draw the fresh point on each restart (re-uses the `INIT`-block grammar). CONFIG is *not* auto-prepended. |
+| `OPTIMIZER { NOISE { AUTO [bool] } ENDNOISE }` | optional bool | `false` | Derive `PARAM fd_step` from the search-space box diagonal: `max(1e-3 × diag / sqrt(dim), 1e-6)`. **`DLIB:BFGS` only**, only when `PARAM fd_step` is not already set explicitly. Bareword `AUTO` parses as `true`. |
+| `OPTIMIZER { NOISE { CALIBRATION <int> } ENDNOISE }` | `0` or `≥ 2` | `0` | Repeat the seed evaluation N times to surface the objective's noise floor and emit a suggested `FTOL_REL`. `0` disables; `1` is rejected. |
 
 ### `STRATEGY { TYPE BASINS }` — anytime "run and forget" strategy
 
@@ -236,7 +246,7 @@ See `examples/15_basins_run_and_forget/` for a worked config and the
 | Keyword | Args | Default | Effect |
 |---|---|---|---|
 | `EXPLORE.LIB / EXPLORE.ALGO` | strings | `NLOPT GN_CRS2_LM` | Global-stage optimiser (one per round). |
-| `REFINE.LIB  / REFINE.ALGO`  | strings | `NLOPT LN_SBPLX`   | Local-stage optimiser (one call per due basin per rung). |
+| `REFINE.LIB  / REFINE.ALGO`  | strings | `NLOPT LN_BOBYQA`  | Local-stage optimiser (one call per due basin per rung). |
 | `EXPLORE.FTOL_LADDER`            | list of `>0` | auto from NOISE.CALIBRATION | Per-round `ftol_rel` for the global stage; clamps to last entry past length. |
 | `REFINE.FTOL_LADDER`            | list of `>0` | auto                       | Cumulative local-stage `ftol_rel`s; round k visits k rungs. |
 | `BASIN_POOL_MAX`            | int ≥ 1     | `32`  | Capacity of the persistent basin pool (worst-loss eviction on overflow). |
@@ -249,20 +259,20 @@ See `examples/15_basins_run_and_forget/` for a worked config and the
 
 `MAXTIME` and `MAXEVAL` from the outer OPTIMIZER block remain valid
 overall budgets. `BASINS` ignores `STRATEGY { TYPE MULTISTART }`, `STRATEGY { TYPE PRESTAGE }`, and
-`RESTART (it drives global+local internally).
+`RESTART` (it drives global+local internally).
 
 ### Composition
 
 - A `STRATEGY { TYPE PRESTAGE EXPLORE { ... } ENDEXPLORE ... }` block triggers staged-global mode by
   itself; do **not** also write `STAGE_GLOBAL true` (that keyword has
   been removed).
-- `LOCAL ... ENDLOCAL` is unrelated and only carries NLopt's local
-  sub-algorithm (NLOPT MLSL / G_MLSL_LDS).
+- `INNER ... ENDINNER` (formerly `LOCAL ... ENDLOCAL`) is unrelated and
+  only carries NLopt's local sub-algorithm (NLopt MLSL / G_MLSL_LDS / AUGLAG).
 - `STRATEGY { TYPE PRESTAGE }` + (top-K > 1) → the refinement automatically runs as
   `STRATEGY { TYPE MULTISTART }` over the top-K seeds.
-- `AFTER_STAGNATION` wraps any inner choice — combine with
-  MULTISTART or PRESTAGE for a global+restart hybrid.
-- `MULTISTART > 1` is rejected at validate-time for NLopt's `GN_*`
+- `RESTART { AFTER_STAGNATION ... }` wraps any inner choice — combine with
+  `MULTISTART` or `PRESTAGE` for a global+restart hybrid.
+- `STRATEGY { TYPE MULTISTART, N_STARTS > 1 }` is rejected at validate-time for NLopt's `GN_*`
   algorithms (those globals consume one starting point only); use
   `LD_*` / `LN_*` or `DLIB:GFS` / `DLIB:BFGS`.
 
@@ -288,7 +298,8 @@ Each policy emits a one-line stdout marker when it fires:
 | `[HPO] PRESTAGE: top-K losses: …` | Snapshot quality after PRESTAGE finishes. |
 | `[HPO] REFINEMENT: refining top-K seed(s) via LIB:ALGO` | Outer (refinement) phase starts. |
 | `[HPO] RESTART i/M — fresh init from STRATEGY` | Stagnation watchdog fired. |
-| `[HPO] NOISE.AUTO: PARAM fd_step set to V (diag=…, dim=…)` | NOISE.AUTO fired and shows the value used. |
+| `[HPO] NOISE_AUTO: PARAM fd_step set to V (diag=…, dim=…)` | NOISE.AUTO fired and shows the value used. |
+| `[HPO] NOISE_CALIBRATION: running N evals at the seed point` | NOISE.CALIBRATION started. |
 
 The `hpo_run.log` file additionally records a structured `Init
 strategy:` and `Run policy:` block at run start so the configuration
