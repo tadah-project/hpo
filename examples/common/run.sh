@@ -14,11 +14,11 @@ set -euo pipefail
 
 EXAMPLE_DIR=${EXAMPLE_DIR:-$(pwd)}
 COMMON_DIR=$(cd "$(dirname "$0")" && pwd)
-TADAH=${TADAH:-/home/marcin/PROJECTS/TADAH/develop_wt/build_tadah/tadah}
+TADAH=${TADAH:-tadah}  # override with TADAH=/path/to/tadah if not on PATH
 T=${OMP_NUM_THREADS:-1}
 
-if [[ ! -x "$TADAH" ]]; then
-  echo "[run.sh] tadah binary not found at $TADAH; set TADAH=/path/to/tadah" >&2
+if ! command -v "$TADAH" >/dev/null 2>&1 && [[ ! -x "$TADAH" ]]; then
+  echo "[run.sh] tadah binary not found at '$TADAH'; set TADAH=/path/to/tadah" >&2
   exit 1
 fi
 
