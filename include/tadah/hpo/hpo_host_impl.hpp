@@ -1,6 +1,8 @@
 #pragma once
 #include <tadah/core/core_user_config_parser.h>
+#include <tadah/core/logger.h>
 #include <tadah/hpo/lammps_sim.h>
+#include <tadah/hpo/val_filter_forwarding.h>
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/pot_header_writer.h>
 #include <tadah/hpo/pot_header_writer_impl.hpp>
@@ -647,10 +649,12 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
      * each best_pot.tadah. */
     report_ = mlip::apply_load_transforms(train_stdb_, master_ctx_);
 
-    /* Apply LSCALE/ESHIFT (only) to validation: training-only knobs (filter,
-     * WDBFILE, EWEIGHT_TEMP, ZERO_COM_FORCE) must NOT touch validation
-     * references. Use the resolved values from report_ so ESHIFT_ATOM /
-     * ESHIFT_DBATOM derivations on the training set propagate consistently. */
+    /* Apply LSCALE/ESHIFT to validation, and also forward EFILTER/FFILTER if
+     * the user declared them in the --validation file itself. Training-only
+     * knobs (filters from master_ctx_, WDBFILE, EWEIGHT_TEMP, ZERO_COM_FORCE)
+     * must NOT touch validation references. Use the resolved values from
+     * report_ so ESHIFT_ATOM / ESHIFT_DBATOM derivations on the training set
+     * propagate consistently. */
     {
         core::Context vt;
         if (master_ctx_.contains("LSCALE"))
@@ -663,7 +667,16 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
             for (int Z : Z_sorted)
                 vt.add("ESHIFT", core::to_string(report_.eshift.at(Z)));
         }
-        mlip::apply_load_transforms(val_stdb_, vt);
+        detail::forward_val_filters(vt, val_ctx);
+        const std::size_t n_val_before = val_stdb_.size();
+        val_report_ = mlip::apply_load_transforms(val_stdb_, vt);
+        core::Logger::instance().log(
+            tadah::core::LogLevel::INFO,
+            "Validation set: ", std::to_string(n_val_before),
+            " configs loaded; dropped ",
+            std::to_string(val_report_.n_dropped_energy), " by EFILTER, ",
+            std::to_string(val_report_.n_dropped_force), " by FFILTER; ",
+            std::to_string(val_stdb_.size()), " remain.");
     }
 
     nnf_.calc(val_stdb_, rcutmax);
@@ -673,7 +686,8 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
      * Global-view transforms (ESHIFT_ATOM, ESHIFT_DBATOM, EWEIGHT_TEMP,
      * WDBFILE_AUTO) are not yet wired through TrainerHost; we rely on the
      * fail-fast guard in TrainEngine for those. Explicit ESHIFT/LSCALE on
-     * validation can still be applied. */
+     * validation can still be applied. EFILTER/FFILTER from the --validation
+     * file itself are also forwarded; master_ctx_ filters are not. */
     {
         core::Context vt;
         if (master_ctx_.contains("LSCALE"))
@@ -683,7 +697,16 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
             master_ctx_.get<>("ESHIFT", es);
             for (double e : es) vt.add("ESHIFT", core::to_string(e));
         }
-        mlip::apply_load_transforms(val_stdb_, vt);
+        detail::forward_val_filters(vt, val_ctx);
+        const std::size_t n_val_before = val_stdb_.size();
+        val_report_ = mlip::apply_load_transforms(val_stdb_, vt);
+        core::Logger::instance().log(
+            tadah::core::LogLevel::INFO,
+            "Validation set: ", std::to_string(n_val_before),
+            " configs loaded; dropped ",
+            std::to_string(val_report_.n_dropped_energy), " by EFILTER, ",
+            std::to_string(val_report_.n_dropped_force), " by FFILTER; ",
+            std::to_string(val_stdb_.size()), " remain.");
     }
     nnf_.calc(val_stdb_, rcutmax);
 #endif
@@ -1324,14 +1347,22 @@ double HPO_Host<P,R>::operator()(const P& p) const
                       [](const Comp& a, const Comp& b) { return a.value > b.value; });
             double sum_total = 0.0;
             for (const auto& c : comps) sum_total += c.value;
+            /* Display values are scaled to per-component contribution to the
+             * mean (compᵢ / N), so they line up arithmetically with the
+             * displayed `loss=` (which IS the mean): pctᵢ × loss ≈ valueᵢ.
+             * sum_total is in raw (un-averaged) units, so the percentages
+             * are unaffected by the per-display rescaling. */
+            const double n_active = r.loss_count > 0
+                                  ? static_cast<double>(r.loss_count) : 1.0;
             const std::size_t TOPN = std::min<std::size_t>(5, comps.size());
             std::ostringstream oss;
             for (std::size_t i = 0; i < TOPN; ++i) {
                 if (i) oss << "  ";
                 const double pct = sum_total > 0.0
                                  ? 100.0 * comps[i].value / sum_total : 0.0;
+                const double display_val = comps[i].value / n_active;
                 std::ostringstream val;
-                val << std::scientific << std::setprecision(2) << comps[i].value;
+                val << std::scientific << std::setprecision(2) << display_val;
                 oss << comps[i].label << "=" << val.str()
                     << "(" << std::fixed << std::setprecision(1) << pct << "%)";
             }

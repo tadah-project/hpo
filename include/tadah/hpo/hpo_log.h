@@ -114,8 +114,20 @@ public:
     /** LOAD TRANSFORMS section — emitted once at host construction summarising
      *  what load-time transforms (LSCALE, ESHIFT, EFILTER, FFILTER, WDBFILE,
      *  EWEIGHT_TEMP, ZERO_COM_FORCE, equilibrium-volume) were applied to the
-     *  training set. No-op if @p report is informational-only (applied=false). */
-    void write_load_transforms_section(const mlip::LoadTransformReport& report);
+     *  training set. The validation report is summarised on a single line
+     *  (validation receives only LSCALE / resolved ESHIFT, plus EFILTER /
+     *  FFILTER if declared in the --validation file) so the validation-set
+     *  size after filtering is always visible.
+     *
+     *  Filter lines (training / validation) report `loaded → remain` so
+     *  the two sides are directly comparable.
+     *
+     *  No-op if @p train_report is informational-only (applied=false) AND
+     *  the validation report did not drop any configs. */
+    void write_load_transforms_section(const mlip::LoadTransformReport& train_report,
+                                       std::size_t                      n_train_loaded,
+                                       const mlip::LoadTransformReport& val_report,
+                                       std::size_t                      n_val_loaded);
 
     void write_loss_section(const HPOTargets& trg);
 

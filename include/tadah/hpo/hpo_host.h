@@ -125,8 +125,15 @@ public:
     std::size_t train_size() const;   // number of training structures
     std::size_t val_size()   const;   // number of validation structures
 
-    /** Report of load-time transforms applied during construction. */
+    /** Report of load-time transforms applied to the training set during
+     *  construction. */
     const mlip::LoadTransformReport& load_transform_report() const { return report_; }
+
+    /** Report of load-time transforms applied to the validation set during
+     *  construction. Only LSCALE / resolved ESHIFT, plus EFILTER / FFILTER
+     *  taken from the --validation file itself, contribute here; training-side
+     *  filters and weighting knobs are deliberately not forwarded. */
+    const mlip::LoadTransformReport& val_load_transform_report() const { return val_report_; }
 
     /** Flush any results still in the queue (call after optimizer finishes). */
     void flush_remaining() const;
@@ -201,6 +208,7 @@ private:
     mlip::StructureDB            train_stdb_;
 #endif
     mlip::LoadTransformReport    report_;
+    mlip::LoadTransformReport    val_report_;
     bool                         use_lammps_;
     mlip::NNFinder               nnf_;
 

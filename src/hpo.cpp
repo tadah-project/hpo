@@ -94,7 +94,16 @@ int hpo_run(core::Context& ctx)
     /* Build HPO_Host (loads train + val structures, applies load transforms) */
     HPO_Host<V,R> host(ctx, trg, val);
     log.write_potential_section(ctx, host.train_size(), host.val_size(), elem_str);
-    log.write_load_transforms_section(host.load_transform_report());
+    {
+        const auto& tr = host.load_transform_report();
+        const auto& vr = host.val_load_transform_report();
+        const std::size_t n_train_loaded =
+            host.train_size() + tr.n_dropped_energy + tr.n_dropped_force;
+        const std::size_t n_val_loaded =
+            host.val_size() + vr.n_dropped_energy + vr.n_dropped_force;
+        log.write_load_transforms_section(tr, n_train_loaded,
+                                          vr, n_val_loaded);
+    }
     log.write_loss_section(trg);
 
     const OptimizerSpec& sp = trg.spec;

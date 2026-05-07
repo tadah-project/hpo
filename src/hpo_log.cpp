@@ -556,9 +556,14 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
  * Load-transforms section
  * ───────────────────────────────────────────────────────────────────────── */
 
-void HPOLog::write_load_transforms_section(const mlip::LoadTransformReport& r)
+void HPOLog::write_load_transforms_section(const mlip::LoadTransformReport& r,
+                                            std::size_t                       n_train_loaded,
+                                            const mlip::LoadTransformReport& vr,
+                                            std::size_t                       n_val_loaded)
 {
-    if (!r.applied) return;
+    const bool val_filter_active =
+        vr.n_dropped_energy != 0 || vr.n_dropped_force != 0;
+    if (!r.applied && !val_filter_active) return;
     section("LOAD TRANSFORMS");
 
     if (r.lscale != 1.0) {
@@ -585,12 +590,26 @@ void HPOLog::write_load_transforms_section(const mlip::LoadTransformReport& r)
         kv("Energy shift (ESHIFT)", s.str());
     }
 
-    if (r.n_dropped_energy || r.n_dropped_force) {
+    auto fmt_filter = [](const mlip::LoadTransformReport& rep,
+                         std::size_t n_loaded) {
         std::ostringstream s;
-        s << "dropped " << r.n_dropped_energy << " by E, "
-          << r.n_dropped_force << " by F";
-        kv("Outlier filter", s.str());
-    }
+        s << "dropped " << rep.n_dropped_energy << " by E, "
+          << rep.n_dropped_force << " by F  ("
+          << n_loaded << " loaded, "
+          << (n_loaded - rep.n_dropped_energy - rep.n_dropped_force)
+          << " remain)";
+        return s.str();
+    };
+
+    if (r.n_dropped_energy || r.n_dropped_force)
+        kv("Outlier filter (training)", fmt_filter(r, n_train_loaded));
+
+    /* Validation outlier filter: only emitted when the user actually
+     * declared EFILTER / FFILTER on the --validation file (otherwise both
+     * counters are zero by construction — training-side filters are not
+     * forwarded to validation). */
+    if (val_filter_active)
+        kv("Outlier filter (validation)", fmt_filter(vr, n_val_loaded));
 
     if (!r.wdbfile_applied.empty()) {
         std::ostringstream s;
@@ -767,10 +786,9 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                 f_ << "[" << now_hms() << "]  HINT     "
                    << "no new best for " << evals_since_best
                    << " evals (>50% of run). Possible causes: "
-                   << "(a) LOCAL stop too tight for objective noise "
-                   << "(MLSL local searches default to ftol_rel=1e-15); "
+                   << "(a) inner stop tolerance too tight for objective noise; "
                    << "(b) the best basin is genuinely exhausted; "
-                   << "(c) penalty cliff — most LDS samples land on "
+                   << "(c) penalty cliff — most samples land on "
                    << "infeasible side. Inspect loss.tadah spread.\n";
             }
             f_.flush();

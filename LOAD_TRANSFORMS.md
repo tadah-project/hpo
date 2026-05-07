@@ -284,9 +284,44 @@ against the dataset's own equilibrium reference.
 The HPO host loads training and validation StructureDBs once at
 construction. `apply_load_transforms` is called on the training set
 with the master Context; the resulting `LoadTransformReport` is held
-on the host. The validation set has only LSCALE and the resolved
-ESHIFT applied — training-only knobs (filters, WDBFILE, EWEIGHT_TEMP,
-ZERO_COM_FORCE) must NOT touch validation references.
+on the host as `report_`. The validation set is then transformed
+with a **stripped** context that contains:
+
+* `LSCALE` from the master config (so geometric scale matches),
+* the **resolved** `ESHIFT` from the training run (so ESHIFT_ATOM /
+  ESHIFT_DBATOM derivations propagate; raw `ESHIFT_ATOM` /
+  `ESHIFT_DBATOM` keys are intentionally *not* re-derived on
+  validation),
+* `EFILTER` and `FFILTER` **only if they appear in the --validation
+  file itself**.
+
+Training-only knobs (`EFILTER` / `FFILTER` set in `master_ctx_`,
+`WDBFILE`, `WDBFILE_AUTO`, `EWEIGHT_TEMP`, `ZERO_COM_FORCE`) are
+never forwarded to the validation set: they would silently change
+what the validation metric is computed on without the user opting in,
+breaking apples-to-apples comparison across HPO trials.
+
+To filter the validation set, declare the threshold in the file you
+pass to `--validation` directly:
+
+```
+# validation.in
+DBFILE   val_eos.tadahdb
+EFILTER  -12.0  -2.0       # honoured for validation only
+FFILTER   20.0
+```
+
+The validation-side report is held on the host as `val_report_` and
+the host emits a single `INFO` log line at startup of the form
+
+```
+Validation set: 532 configs loaded; dropped 4 by EFILTER, 1 by FFILTER; 527 remain.
+```
+
+so it's clear which configs the validation metric is being computed
+on. The line is emitted unconditionally — when no filter is active
+the dropped counts are zero and the line still confirms the loaded
+size.
 
 The report is consumed in three places:
 
