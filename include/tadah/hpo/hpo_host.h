@@ -22,11 +22,15 @@
 #include <thread>
 #include <vector>
 
+#include <tadah/core/checkpoint.h>          // for ShutdownRequested
+#include <tadah/core/checkpoint_manager.h>  // for tick_eval cadence
 #include <tadah/core/context.h>
+#include <tadah/core/signal_handler.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/pot_header_writer.h>
 #include <tadah/mlip/analytics/analytics.h>
+#include <tadah/mlip/load_transforms.h>
 #include <tadah/mlip/structure_db.h>
 #include <tadah/mlip/nn_finder.h>
 #include <tadah/mlip/trainer.h>
@@ -78,7 +82,7 @@ struct EvalResult
  *  HPO_Host  –  stateless evaluation functor
  * ========================================================================= */
 template<class ParamVec, class LammpsRunner>
-class HPO_Host
+class HPO_Host : public core::ICheckpointable
 {
     using Result = EvalResult<ParamVec>;
     using Queue  = moodycamel::BlockingConcurrentQueue<Result>;
@@ -90,11 +94,76 @@ public:
 
     double operator()(const ParamVec& p) const;      // thread-safe
 
+    /* ICheckpointable — persists the static best-so-far comparator state
+     * (g_best_, g_best_iter_, iter_at_last_best_, g_iter_) so that a
+     * resumed run uses the prior best as the comparator for the very
+     * first post-resume eval. Without this, g_best_ defaults to
+     * +infinity and the first post-resume eval always reports
+     * spuriously as a new best, corrupting best_pot.tadah and the
+     * journal's running best. The actual journal counters live in
+     * HPOLog and are persisted there. */
+    void save(core::Checkpoint& cp) const override;
+    void load(const core::Checkpoint& cp) override;
+    std::string tag() const override { return "HPO_HOST"; }
+
+    /* Static save/load helpers — the ICheckpointable overrides delegate
+     * here so tests can exercise the round-trip without constructing a
+     * full HPO_Host (which requires datasets, a trainer, etc.). The
+     * checkpoint section tag is the same as tag(), i.e. HPO_HOST. */
+    static void save_globals(core::Checkpoint& cp);
+    static void load_globals(const core::Checkpoint& cp);
+
+    /* Test-only: reset the static comparator atomics to their freshly-
+     * constructed values. Used by regression tests to simulate process
+     * restart without spawning a new process. */
+    static void reset_globals_for_test();
+    /* Test-only accessors. */
+    static double      current_best()       { return g_best_.load(); }
+    static std::size_t current_best_iter()  { return g_best_iter_.load(); }
+    static std::size_t current_last_best()  { return iter_at_last_best_.load(); }
+
     std::size_t train_size() const;   // number of training structures
     std::size_t val_size()   const;   // number of validation structures
 
+    /** Report of load-time transforms applied during construction. */
+    const mlip::LoadTransformReport& load_transform_report() const { return report_; }
+
     /** Flush any results still in the queue (call after optimizer finishes). */
     void flush_remaining() const;
+
+    /* ---------- top-K tracking (used by StagedPolicy) ------------------ */
+    /** Enable a buffer that records the top-K (lowest loss) (loss, params)
+     *  pairs across operator() calls. Capacity = k; older worse-loss
+     *  entries are evicted. Disabled by default (zero overhead). */
+    static void set_track_topk(std::size_t k);
+    /** Snapshot the current top-K, sorted ascending by loss. */
+    static std::vector<std::pair<double, ParamVec>> get_topk();
+    /** Reset the top-K buffer (called at start of each staged-global run). */
+    static void clear_topk();
+
+    /* ---------- stagnation tracking (used by RestartPolicy) ------------ */
+    /** Throw StagnationStop from operator() when (g_iter_ - iter_at_last_best)
+     *  exceeds n, where iter_at_last_best resets on every new best.
+     *  n = 0 disables (default). */
+    static void set_stagnation_threshold(std::size_t n);
+    static std::size_t get_stagnation_threshold();
+    /** Reset the stagnation counter without changing the threshold. */
+    static void reset_stagnation();
+    /** Current stagnation count: g_iter_ - iter_at_last_best_. */
+    static std::size_t stagnation_count();
+
+    /* ---------- restart support ----------------------------------------- */
+    /** Bring the eval counter forward to at least @p n after a checkpoint
+     *  load — eval numbering then continues monotonically across the
+     *  resume boundary. Idempotent: never lowers g_iter_. */
+    static void set_g_iter_floor(std::size_t n);
+    static std::size_t g_iter_value();
+
+    /** Exception thrown by operator() to signal a stagnation-driven
+     *  abort. The RestartPolicy catches and re-enters with a fresh init. */
+    struct StagnationStop : public std::exception {
+      const char* what() const noexcept override { return "HPO stagnation threshold reached"; }
+    };
 
 
     /* -------- adapter for NLopt C++ wrapper ----------------------------- */
@@ -131,6 +200,7 @@ private:
 #ifndef TADAH_BUILD_MPI
     mlip::StructureDB            train_stdb_;
 #endif
+    mlip::LoadTransformReport    report_;
     bool                         use_lammps_;
     mlip::NNFinder               nnf_;
 
@@ -161,18 +231,37 @@ private:
     static std::atomic_size_t   g_best_iter_;
     static std::atomic<double>  g_best_;
 
+    /* Top-K tracking — gated. Pays mutex cost only when track_topk_capacity_ > 0. */
+    static std::mutex                                            topk_mtx_;
+    static std::size_t                                           topk_capacity_;
+    static std::vector<std::pair<double, ParamVec>>              topk_buf_;
+
+    /* Stagnation tracking — gated. iter at which the most recent best was
+     * recorded; stagnation = g_iter_ - iter_at_last_best_. */
+    static std::atomic_size_t   iter_at_last_best_;
+    static std::atomic_size_t   stagnation_threshold_;
+
     /* opportunistic single-writer --------------------------------------- */
     static Queue                                   g_q_;          // MPMC queue
     static std::atomic_flag                        writer_token_; // cleared = free
     static std::mutex                              io_mtx_;       // protects FILEs
     static std::map<std::size_t,Result>            io_buf_;       // re-order
     static std::atomic<std::size_t>                next_flush_;   // next iter
+    /* Bug 6: time (steady_clock ms since epoch) at which `next_flush_`
+     * first became "stuck" — i.e., the writer found io_buf_ has higher
+     * keys than next_flush_ but the next_flush_ key itself is missing.
+     * Reset to 0 on every successful drain. When > GAP_SKIP_MS old, the
+     * writer skips next_flush_ forward to the smallest available key
+     * (recovering from a hung eval thread that consumed the slot but
+     * never returned). */
+    static std::atomic<std::int64_t>               next_flush_stuck_since_ms_;
     static void submit_result(Result&&, const HPOTargets& trg_,
                               const core::Context& master_ctx,
                               const core::Context& val_ctx,
                               const mlip::StructureDB& train_stdb,
                               const mlip::StructureDB& val_stdb,
                               const std::vector<std::string>& param_labels,
+                              const mlip::LoadTransformReport& report,
                               std::size_t cw, int prec);
 
 #if defined(TADAH_BUILD_MPI)
@@ -207,10 +296,15 @@ private:
 
 
 
-    /* formatting */
-    const std::size_t            cw_   = 16;
-    const int                    prec_ = 7;
-    size_t                       max_title_len_ = cw_-1; // max length of title in loss/outvar/params
+    /* formatting — fixed geometry */
+    static constexpr std::size_t iter_cw_   = 12;  // #ITERATION(10) + 2; holds up to 10^6
+    static constexpr std::size_t ittime_cw_ = 12;  // IT-TIME/ms(10)  + 2
+    static constexpr std::size_t min_cw_    = 15;  // floor: fits L(ErRMSE)[avg](14) + 1 space
+
+    /* formatting — derived from outputDigits (set in constructor) */
+    int          prec_;           // digits after decimal in scientific notation
+    std::size_t  cw_;             // max(prec_+9, min_cw_)
+    std::size_t  max_title_len_;  // cw_-4: L(VAR) always ≥1 space gap; same truncation as VAR
 
     /* line printers ------------------------------------ */
     void init_loss   (const std::string& fn) const;

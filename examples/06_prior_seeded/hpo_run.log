@@ -1,0 +1,101 @@
+
+================================================================================
+  TADAH Hyperparameter Optimisation — Run Journal
+================================================================================
+
+  Tadah version  : 1.2.0
+  Started        : 2026-05-04 21:56:58
+  Working dir    : /home/marcin/PROJECTS/TADAH/develop_wt/HPO/examples/06_prior_seeded
+  Log file       : hpo_run.log
+  Process ID     : 1061178
+
+
+-- FILES ---------------------------------------------------------------
+  HPO targets           : config.hpo
+  Validation set        : /home/marcin/PROJECTS/TADAH/develop_wt/HPO/examples/common/config.val
+  Loss log              : loss.tadah
+  Outvar log            : outvar.tadah
+  Params log            : params.tadah
+  Stats log             : stats.tadah
+  Best loss log         : best_loss.tadah
+  Best potential        : best_pot.tadah
+
+-- OPTIMISER -----------------------------------------------------------
+  Library / algo        : DLIB / BFGS
+  Dimensions            : 2 parameters being optimised
+  Stop criteria:
+    Max evaluations     : 6
+  Search space (bounds in optimiser-internal space):
+    RCUT2B                  : [4.000e+00,  6.000e+00]
+    SGRIDMB                 : [1.000e-01,  4.000e-01]
+  Starting point: user-supplied (1 seed)
+  Init strategy:
+    [1] PRIOR
+    INIT_INCLUDE_CONFIG: false
+    WARM_ON_MISMATCH  : warn
+  Run policy:
+    (default — single-shot dispatch)
+
+-- POTENTIAL SETUP -----------------------------------------------------
+  2-body terms          : yes
+  Many-body terms       : yes
+  Cutoff 2B (Ang)       : 5.600
+  Cutoff MB (Ang)       : 5.600
+  Training structures   : 167
+  Validation structures : 29
+  Elements              : Ta
+
+-- LOSS FUNCTION -------------------------------------------------------
+  ERMSE  (meV/atom)     : weight=0.00  target=0.000e+00  (per-dataset + avg)
+  Ecoh                  : weight=800.00  target=8.100e+00
+  Aggregate             : mean over active components
+  Fail score            : 1.0000e+16  (returned when training produces NaN/Inf)
+  Output every          : 1 eval(s)
+  Output digits         : 6
+
+-- PROGRESS ------------------------------------------------------------
+  [HH:MM:SS]  tag       message
+  --------------------------------------------------------------------
+[21:56:58]  BEST     ★ NEW BEST   eval=     1  loss=8.6110e-02  ERMSE=8.28 meV/at  (23 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=     2  loss=8.6110e-02  ERMSE=8.28 meV/at  (9 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=     5  loss=8.6110e-02  ERMSE=8.28 meV/at  (12 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    10  loss=8.4902e-02  ERMSE=8.66 meV/at  (18 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    11  loss=8.4902e-02  ERMSE=8.66 meV/at  (8 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    14  loss=8.4902e-02  ERMSE=8.66 meV/at  (10 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    15  loss=8.4883e-02  ERMSE=8.67 meV/at  (10 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    16  loss=8.4883e-02  ERMSE=8.67 meV/at  (8 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    19  loss=8.4882e-02  ERMSE=8.67 meV/at  (10 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    20  loss=8.4628e-02  ERMSE=8.73 meV/at  (12 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    21  loss=8.4628e-02  ERMSE=8.73 meV/at  (8 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    24  loss=8.4628e-02  ERMSE=8.73 meV/at  (11 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    25  loss=8.4437e-02  ERMSE=8.76 meV/at  (12 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    26  loss=8.4437e-02  ERMSE=8.76 meV/at  (9 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    29  loss=8.4437e-02  ERMSE=8.76 meV/at  (11 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    30  loss=8.2211e-02  ERMSE=8.72 meV/at  (13 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    31  loss=8.2211e-02  ERMSE=8.72 meV/at  (9 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    34  loss=8.2210e-02  ERMSE=8.72 meV/at  (8 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    36  loss=7.7891e-02  ERMSE=7.99 meV/at  (16 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    38  loss=7.7891e-02  ERMSE=7.99 meV/at  (8 ms)
+[21:56:58]  BEST     ★ NEW BEST   eval=    40  loss=7.7891e-02  ERMSE=7.99 meV/at  (10 ms)
+
+-- DIAGNOSTICS ---------------------------------------------------------
+  Total evaluations       : 40
+  NaN/Inf clampings       : 0  (0.0%)
+  ✓ No NaN clampings — search space looks well-configured.
+
+-- PERFORMANCE ---------------------------------------------------------
+  Total wall time         : 0.5s
+  Mean per eval           : 10 ms
+  Fastest eval            : 8 ms  (eval 11)
+  Slowest eval            : 23 ms  (eval 1)
+  Throughput              : 5056.1 evals/min
+
+-- RESULT --------------------------------------------------------------
+  Optimiser status        : COMPLETED — all evaluations done
+  Best total loss         : 7.7891e-02  (eval 40)
+  Best ERMSE              : 7.99 meV/atom
+  Best potential saved    : best_pot.tadah
+  Finished                : 2026-05-04 21:56:58
+
+================================================================================
+

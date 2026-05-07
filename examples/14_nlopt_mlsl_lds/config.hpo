@@ -1,0 +1,43 @@
+# Example 14 — NLopt MLSL_LDS + LN_BOBYQA (single-call global+local).
+#
+# Multi-Level Single-Linkage with Low-Discrepancy Sampling. MLSL is
+# itself a global+local hybrid: it samples the box on an LDS sequence
+# and launches a local descent from each sample point — but it skips
+# starts that fall in the basin of an already-found minimum. The
+# result is K distinct local minima within a controlled budget, with
+# no repeat work on the same basin.
+#
+# Unlike a PRESTAGE strategy, MLSL is one call: the algorithm decides
+# itself when to spawn a new sample versus when to refine.
+#
+# REQUIRED: an INNER block specifying the inner local algorithm. We use
+# `LN_BOBYQA` (derivative-free trust-region) so noisy LAMMPS objectives
+# don't trip finite-difference gradients.
+
+OPTIMIZER
+  INIT
+    SEED 1717
+  ENDINIT
+  STRATEGY
+    TYPE PLAIN
+    LIB NLOPT
+    ALGO G_MLSL_LDS
+    MAXEVAL 24
+    POPULATION 4
+    INNER
+      LIB NLOPT
+      ALGO LN_BOBYQA
+    ENDINNER
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+PC_LAMMPS --script ../common/lammps/Ecoh.in --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B (1) 4.0 6.0
+OPTIM SGRIDMB (1) 0.1 0.4
+
+OUTPUT 1
+BOUTPUT 1

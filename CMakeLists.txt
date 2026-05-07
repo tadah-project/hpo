@@ -183,6 +183,7 @@ endif()
 if(TADAH_ENABLE_OPENMP)
   find_package(OpenMP REQUIRED)
   target_link_libraries(tadah.hpo PUBLIC OpenMP::OpenMP_CXX)
+  target_compile_definitions(tadah.hpo PUBLIC TADAH_ENABLE_OPENMP)
 endif()
 
 # static LAMMPS lib is compiled withput fPIC so we cannot link it to shared lib

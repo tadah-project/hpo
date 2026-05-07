@@ -1,0 +1,74 @@
+# Ecoh.in — minimal cohesive-energy script for HPO examples.
+#
+# Computes E_iso (free atom) - E_bulk_per_atom for a 4x4x4 BCC supercell.
+# Exposes:
+#   varloss Ecoh — used by HPO as a target loss term
+#   outvar  a0   — relaxed lattice constant; HPO captures it for the
+#                   warm-start cache and for the [a0_min, a0_max] filter.
+#
+# Honors ${hot_a0} as the initial lattice guess (HPO injects it).
+
+# ---------- Isolated atom ----------
+clear
+units metal
+dimension 3
+boundary f f f
+atom_style atomic
+atom_modify map array
+
+region box block -10 10 -10 10 -10 10
+create_box 1 box
+create_atoms 1 single 0 0 0
+
+pair_style tadah
+pair_coeff * * EXTERN Ta
+mass 1 180.95
+neighbor 2.0 bin
+neigh_modify delay 10 check yes
+
+compute eng all pe/atom
+compute eatoms all reduce sum c_eng
+
+run 0
+
+variable tmp equal c_eatoms
+variable Eiso equal ${tmp}
+
+# ---------- Relaxed bulk ----------
+clear
+units metal
+dimension 3
+boundary p p p
+atom_style atomic
+atom_modify map array
+
+lattice bcc ${hot_a0}
+region box block 0 4 0 4 0 4 units lattice
+create_box 1 box
+create_atoms 1 region box
+
+pair_style tadah
+pair_coeff * * EXTERN Ta
+mass 1 180.95
+neighbor 2.0 bin
+neigh_modify delay 10 check yes
+
+compute eng all pe/atom
+compute eatoms all reduce sum c_eng
+
+fix 1 all box/relax iso 0.0 vmax 0.001
+min_style cg
+min_modify dmax 0.01 line quadratic
+minimize 1e-12 1e-12 500 500
+unfix 1
+variable eq_ok equal ternary($(fmax) < 0.1, 1, 0)
+
+variable lxnow equal lx
+variable a0 equal ${lxnow}/4.0
+
+variable tmp equal atoms
+variable N equal ${tmp}
+variable tmp equal c_eatoms
+variable Ebulk equal ${tmp}
+variable Ecoh_raw equal -(1/${N})*(${Ebulk}-${N}*${Eiso})
+variable Ecoh equal ternary(v_eq_ok, v_Ecoh_raw, 100.0)

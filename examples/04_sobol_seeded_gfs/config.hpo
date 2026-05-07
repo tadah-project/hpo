@@ -1,0 +1,32 @@
+# Example 04 — Sobol-seeded DLIB:GFS global search.
+#
+# Sobol low-discrepancy sequence fills the box deterministically (no
+# RNG variance between runs at the same INIT.SEED). DLIB:GFS uses a
+# UCB-style global optimiser; seeds are handed in as
+# `initial_function_evals`, so the engine starts from real (x, y) pairs
+# rather than a cold sweep.
+
+OPTIMIZER
+  INIT
+    STRATEGY SOBOL 4
+    INCLUDE_CONFIG false
+    SEED 31337
+  ENDINIT
+  STRATEGY
+    TYPE PLAIN
+    LIB DLIB
+    ALGO GFS
+    MAXEVAL 8
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+PC_LAMMPS --script ../common/lammps/Ecoh.in --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B (1) 4.0 6.0
+OPTIM SGRIDMB (1) 0.1 0.4
+
+OUTPUT 1
+BOUTPUT 1

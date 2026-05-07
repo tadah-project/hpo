@@ -3,6 +3,8 @@
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/core/context.h>
 #include <tadah/core/blueprint_parser.h>
+#include <tadah/core/periodic_table.h>
+#include <tadah/mlip/load_transforms.h>
 
 #include <algorithm>
 #include <cmath>
@@ -47,6 +49,17 @@ static std::string fmt_millis(double ms)
 /* ─────────────────────────────────────────────────────────────────────────
  * HPOLog — lifecycle
  * ───────────────────────────────────────────────────────────────────────── */
+
+void HPOLog::reset_for_test()
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    n_eval_.store(0, std::memory_order_relaxed);
+    n_nan_ .store(0, std::memory_order_relaxed);
+    cur_best_loss_ = std::numeric_limits<double>::max();
+    cur_best_eval_ = 0;
+    best_emae_ = best_ermse_ = best_errmse_ = best_frmse_ = best_srmse_ = 0.0;
+    has_emae_ = has_ermse_ = has_errmse_ = has_frmse_ = has_srmse_ = false;
+}
 
 void HPOLog::open(const std::string& path,
                   const std::string& version,
@@ -95,6 +108,9 @@ void HPOLog::section(const std::string& title)
     while (line.size() < 72) line += '-';
     f_ << "\n" << line << "\n";
     f_.flush();
+    /* Any "real" section header marks the end of the lazy SETUP DIAGNOSTICS
+     * region so subsequent events flow inline as PROGRESS-style entries. */
+    sections_started_ = true;
 }
 
 void HPOLog::kv(const std::string& key, const std::string& val, int key_width)
@@ -122,6 +138,15 @@ void HPOLog::event(const std::string& tag, const std::string& msg)
 {
     std::lock_guard<std::mutex> lg(mtx_);
     if (!f_.is_open()) return;
+    /* Lazy SETUP DIAGNOSTICS header: emit before the first event when no
+     * other section has been started yet (init-time diagnostics that fire
+     * during HPOTargets construction land here). */
+    if (!sections_started_ && !wrote_setup_section_) {
+        std::string s = "-- SETUP DIAGNOSTICS ";
+        while (s.size() < 72) s += '-';
+        f_ << s << "\n";
+        wrote_setup_section_ = true;
+    }
     f_ << "[" << now_hms() << "]  " << std::left << std::setw(8) << tag
        << "  " << msg << "\n";
     f_.flush();
@@ -194,42 +219,105 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
                                      const std::vector<std::string>& param_labels)
 {
     section("OPTIMISER");
-    kv("Library / algo", sp.lib + " / " + sp.algo);
+    /* Strategy-aware library/algo summary. With TYPE BASINS the OUTER
+     * lib/algo are unset (the policy uses spec.basins.explore/refine);
+     * surface those instead. PRESTAGE shows OUTER as the refinement
+     * driver and reports EXPLORE separately under Run policy below. */
+    auto strategy_name = [&](StrategyType t) -> const char* {
+        switch (t) {
+            case StrategyType::PLAIN:      return "PLAIN";
+            case StrategyType::BASINS:     return "BASINS";
+            case StrategyType::MULTISTART: return "MULTISTART";
+            case StrategyType::PRESTAGE:   return "PRESTAGE";
+        }
+        return "?";
+    };
+    kv("Strategy", std::string(strategy_name(sp.strategy_type)));
+    if (sp.strategy_type == StrategyType::BASINS) {
+        if (sp.basins.explore)
+            kv("EXPLORE library / algo",
+               sp.basins.explore->lib + " / " + sp.basins.explore->algo);
+        if (sp.basins.refine)
+            kv("REFINE library / algo",
+               sp.basins.refine->lib + " / " + sp.basins.refine->algo);
+    } else {
+        kv("Library / algo", sp.lib + " / " + sp.algo);
+    }
     kv("Dimensions",     std::to_string(sp.low.size()) + " parameter"
                          + (sp.low.size() != 1 ? "s" : "") + " being optimised");
 
-    // ---- local optimizer
-    if (sp.local)
-        kv("Local optimizer", sp.local->lib + " / " + sp.local->algo);
+    // ---- inner optimizer (NLopt MLSL/AUGLAG sub-algo)
+    if (sp.inner)
+        kv("Inner optimizer", sp.inner->lib + " / " + sp.inner->algo);
+    if (sp.strategy_type == StrategyType::BASINS) {
+        if (sp.basins.explore && sp.basins.explore->inner)
+            kv("EXPLORE inner",
+               sp.basins.explore->inner->lib + " / " + sp.basins.explore->inner->algo);
+        if (sp.basins.refine && sp.basins.refine->inner)
+            kv("REFINE inner",
+               sp.basins.refine->inner->lib + " / " + sp.basins.refine->inner->algo);
+    }
 
-    // ---- stop criteria
+    auto write_stop_criteria = [&](const StopCriteria& s, const char* indent) {
+        if (s.maxeval)
+            f_ << indent << std::left << std::setw(KW-4) << "Max evaluations"
+               << ": " << *s.maxeval << "\n";
+        if (s.maxtime)
+            f_ << indent << std::left << std::setw(KW-4) << "Max time (s)"
+               << ": " << *s.maxtime << "\n";
+        if (s.ftol_rel)
+            f_ << indent << std::left << std::setw(KW-4) << "ftol_rel"
+               << ": " << fmt_double(*s.ftol_rel) << "\n";
+        if (s.ftol_abs)
+            f_ << indent << std::left << std::setw(KW-4) << "ftol_abs"
+               << ": " << fmt_double(*s.ftol_abs) << "\n";
+        if (s.xtol_rel)
+            f_ << indent << std::left << std::setw(KW-4) << "xtol_rel"
+               << ": " << fmt_double(*s.xtol_rel) << "\n";
+        if (s.xtol_abs)
+            f_ << indent << std::left << std::setw(KW-4) << "xtol_abs"
+               << ": " << fmt_double(*s.xtol_abs) << "\n";
+        if (s.stopval)
+            f_ << indent << std::left << std::setw(KW-4) << "stopval"
+               << ": " << fmt_double(*s.stopval) << "\n";
+    };
+    auto stop_is_empty = [](const StopCriteria& s) {
+        return !s.maxeval && !s.maxtime && !s.ftol_rel && !s.ftol_abs
+            && !s.xtol_rel && !s.xtol_abs && !s.stopval;
+    };
+
+    // ---- stop criteria (outer)
     {
         std::lock_guard<std::mutex> lg(mtx_);
         f_ << "  Stop criteria:\n";
-        if (sp.stop.maxeval)
-            f_ << "    " << std::left << std::setw(KW-4) << "Max evaluations"
-               << ": " << *sp.stop.maxeval << "\n";
-        if (sp.stop.maxtime)
-            f_ << "    " << std::left << std::setw(KW-4) << "Max time (s)"
-               << ": " << *sp.stop.maxtime << "\n";
-        if (sp.stop.ftol_rel)
-            f_ << "    " << std::left << std::setw(KW-4) << "ftol_rel"
-               << ": " << fmt_double(*sp.stop.ftol_rel) << "\n";
-        if (sp.stop.ftol_abs)
-            f_ << "    " << std::left << std::setw(KW-4) << "ftol_abs"
-               << ": " << fmt_double(*sp.stop.ftol_abs) << "\n";
-        if (sp.stop.xtol_rel)
-            f_ << "    " << std::left << std::setw(KW-4) << "xtol_rel"
-               << ": " << fmt_double(*sp.stop.xtol_rel) << "\n";
-        if (sp.stop.xtol_abs)
-            f_ << "    " << std::left << std::setw(KW-4) << "xtol_abs"
-               << ": " << fmt_double(*sp.stop.xtol_abs) << "\n";
-        if (sp.stop.stopval)
-            f_ << "    " << std::left << std::setw(KW-4) << "stopval"
-               << ": " << fmt_double(*sp.stop.stopval) << "\n";
-        if (!sp.stop.maxeval && !sp.stop.maxtime && !sp.stop.ftol_rel
-            && !sp.stop.ftol_abs && !sp.stop.xtol_rel && !sp.stop.stopval)
+        write_stop_criteria(sp.stop, "    ");
+        if (stop_is_empty(sp.stop))
             f_ << "    (none set — optimiser may run indefinitely)\n";
+        f_.flush();
+    }
+
+    // ---- stop criteria (INNER sub-spec).
+    // Critical for NLopt MLSL/G_MLSL_LDS: with no INNER stop criteria
+    // set, NLopt defaults to ftol_rel=1e-15 and xtol_rel=1e-7 for the
+    // inner local searches — far tighter than a noisy LAMMPS objective
+    // can ever satisfy, so each descent runs until something else
+    // intervenes. Surface the resolved values (or the silent default)
+    // so the user can see what is actually being asked of the inner.
+    if (sp.inner) {
+        std::lock_guard<std::mutex> lg(mtx_);
+        f_ << "  Inner stop criteria:\n";
+        write_stop_criteria(sp.inner->stop, "    ");
+        if (stop_is_empty(sp.inner->stop)) {
+            const bool is_mlsl = (sp.lib == "NLOPT" &&
+                (sp.algo == "G_MLSL" || sp.algo == "G_MLSL_LDS"));
+            if (is_mlsl) {
+                f_ << "    (none set — NLopt MLSL will use defaults "
+                      "ftol_rel=1e-15 xtol_rel=1e-7 for inner local searches; "
+                      "loosen these if inner descents stall on a noisy objective)\n";
+            } else {
+                f_ << "    (none set — inner sub-algo may run indefinitely)\n";
+            }
+        }
         f_.flush();
     }
 
@@ -272,11 +360,112 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
     // ---- initial point
     if (!sp.optim_init.empty()) {
         std::lock_guard<std::mutex> lg(mtx_);
-        f_ << "  Starting point: user-supplied\n";
+        f_ << "  Starting point: user-supplied"
+           << " (" << sp.optim_init.size() << " seed"
+           << (sp.optim_init.size()==1 ? "" : "s") << ")\n";
         f_.flush();
     } else {
         std::lock_guard<std::mutex> lg(mtx_);
         f_ << "  Starting point: random (uniform within bounds)\n";
+        f_.flush();
+    }
+
+    // ---- INIT_STRATEGY chain (resolved order, post WARM-reorder).
+    // Helper used by both OUTER (here) and PRESTAGE (below in run-policy).
+    auto write_init_strategy = [&](const InitStrategySpec& isp,
+                                   const char* header,
+                                   const char* indent) {
+        f_ << indent << header << "\n";
+        if (isp.chain.empty()) {
+            f_ << indent << "  (default — implicit CONFIG only)\n";
+        } else {
+            auto pretty_entry = [](const auto& e) {
+                std::string s = e.method;
+                for (const auto& a : e.args) s += " " + a;
+                return s;
+            };
+            auto chain = isp.chain;
+            auto wit = std::find_if(chain.begin(), chain.end(),
+                [](const auto& e){ return e.method == "WARM"; });
+            if (wit != chain.end() && wit != chain.begin()) {
+                auto w = std::move(*wit);
+                chain.erase(wit);
+                chain.insert(chain.begin(), std::move(w));
+            }
+            for (std::size_t i = 0; i < chain.size(); ++i)
+                f_ << indent << "  [" << (i+1) << "] " << pretty_entry(chain[i]) << "\n";
+        }
+        if (isp.k_total)
+            f_ << indent << "  INIT_K            : " << *isp.k_total << "\n";
+        if (isp.seed)
+            f_ << indent << "  INIT_SEED         : " << *isp.seed << "\n";
+        f_ << indent << "  INIT_INCLUDE_CONFIG: "
+           << (isp.include_config ? "true" : "false");
+        if (isp.include_config && !isp.chain.empty())
+            f_ << "  (suppressed — explicit chain present)";
+        f_ << "\n";
+        f_ << indent << "  WARM_ON_MISMATCH  : " << isp.warm_on_mismatch << "\n";
+    };
+    {
+        std::lock_guard<std::mutex> lg(mtx_);
+        write_init_strategy(sp.init_strategy_spec, "Init strategy:", "  ");
+        f_.flush();
+    }
+
+    // ---- run-policy (STRATEGY / RESTART / NOISE block)
+    {
+        std::lock_guard<std::mutex> lg(mtx_);
+        const auto& ms = sp.multistart;
+        const auto& rs = sp.restart;
+        const auto& ns = sp.noise;
+        const bool has_prestage = (sp.strategy_type == StrategyType::PRESTAGE && sp.prestage);
+        const bool is_basins    = (sp.strategy_type == StrategyType::BASINS);
+        const bool is_multistart= (sp.strategy_type == StrategyType::MULTISTART && ms.n_starts > 1);
+        const bool any_extra =
+            is_multistart || has_prestage || is_basins ||
+            (rs.after_stagnation > 0 && rs.max > 0) ||
+            ns.autodetect || (ns.calibration_n >= 2);
+        f_ << "  Run policy:\n";
+        if (!any_extra) {
+            f_ << "    (TYPE PLAIN — single-shot dispatch)\n";
+        }
+        if (is_multistart) {
+            f_ << "    MULTISTART        : N_STARTS=" << ms.n_starts
+               << "  (PARALLEL=" << ms.parallel << ")\n";
+            if (ms.budget_per_start)
+                f_ << "    BUDGET_PER_START  : " << *ms.budget_per_start << "\n";
+        }
+        if (has_prestage) {
+            const auto& ps = *sp.prestage;
+            f_ << "    PRESTAGE EXPLORE  : " << ps.lib << ":" << ps.algo
+               << "  MAXEVAL=" << ps.stop.maxeval.value_or(0)
+               << "  TOPK=" << sp.stage_topk << "\n";
+            f_ << "    PRESTAGE REFINE   : " << sp.lib << ":" << sp.algo
+               << "  MAXEVAL=" << sp.stop.maxeval.value_or(0) << "\n";
+            write_init_strategy(ps.init_strategy_spec,
+                                "PRESTAGE.EXPLORE init strategy:", "    ");
+            if (ps.inner) {
+                write_init_strategy(ps.inner->init_strategy_spec,
+                                    "PRESTAGE.EXPLORE.INNER init strategy:", "      ");
+            }
+        }
+        if (rs.after_stagnation > 0 && rs.max > 0) {
+            f_ << "    RESTART AFTER_STAGNATION: " << rs.after_stagnation
+               << "\n    RESTART MAX             : " << rs.max << "\n";
+            if (!rs.init_strategy.chain.empty()) {
+                f_ << "    RESTART init strategy:\n";
+                for (std::size_t i = 0; i < rs.init_strategy.chain.size(); ++i) {
+                    const auto& e = rs.init_strategy.chain[i];
+                    std::string s = e.method;
+                    for (const auto& a : e.args) s += " " + a;
+                    f_ << "      [" << (i+1) << "] " << s << "\n";
+                }
+            }
+        }
+        if (ns.autodetect) f_ << "    NOISE.AUTO        : true\n";
+        if (ns.calibration_n >= 2)
+            f_ << "    NOISE.CALIBRATION : " << ns.calibration_n
+               << "  (extra evals at the seed before optimisation)\n";
         f_.flush();
     }
 }
@@ -359,7 +548,159 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
     kv("Aggregate",   "mean over active components");
     kv("Fail score",  fmt_double(trg.FAIL_SCORE)
                       + "  (returned when training produces NaN/Inf)");
-    kv("Output every", std::to_string(trg.outputEvery) + " eval(s)");
+    kv("Output every",  std::to_string(trg.outputEvery) + " eval(s)");
+    kv("Output digits", std::to_string(trg.outputDigits));
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Load-transforms section
+ * ───────────────────────────────────────────────────────────────────────── */
+
+void HPOLog::write_load_transforms_section(const mlip::LoadTransformReport& r)
+{
+    if (!r.applied) return;
+    section("LOAD TRANSFORMS");
+
+    if (r.lscale != 1.0) {
+        std::ostringstream s;
+        s << std::fixed << std::setprecision(6) << r.lscale;
+        kv("Length rescale (LSCALE)", s.str());
+    }
+
+    if (!r.eshift.empty()) {
+        const char* src = "user";
+        switch (r.eshift_source) {
+            case mlip::LoadTransformReport::EshiftSource::User:   src = "user";   break;
+            case mlip::LoadTransformReport::EshiftSource::Atom:   src = "atom";   break;
+            case mlip::LoadTransformReport::EshiftSource::DBAtom: src = "dbatom"; break;
+            case mlip::LoadTransformReport::EshiftSource::None:   src = "none";   break;
+        }
+        std::ostringstream s;
+        s << "(source=" << src << ")";
+        for (const auto& kv_pair : r.eshift) {
+            const auto& el = core::PeriodicTable::find_by_Z(kv_pair.first);
+            s << "  " << el.symbol << "=" << std::fixed
+              << std::setprecision(4) << kv_pair.second;
+        }
+        kv("Energy shift (ESHIFT)", s.str());
+    }
+
+    if (r.n_dropped_energy || r.n_dropped_force) {
+        std::ostringstream s;
+        s << "dropped " << r.n_dropped_energy << " by E, "
+          << r.n_dropped_force << " by F";
+        kv("Outlier filter", s.str());
+    }
+
+    if (!r.wdbfile_applied.empty()) {
+        std::ostringstream s;
+        for (std::size_t i = 0; i < r.wdbfile_applied.size(); ++i) {
+            if (i) s << " ";
+            s << std::scientific << std::setprecision(3) << r.wdbfile_applied[i];
+        }
+        kv("Per-dataset weights", s.str());
+    }
+
+    if (r.eweight_temp > 0.0) {
+        std::ostringstream s;
+        s << r.eweight_temp << " K";
+        kv("Boltzmann eweight (T)", s.str());
+    }
+
+    if (r.zero_com_force)
+        kv("Zero COM force", "applied");
+
+    if (!r.eq_label.empty()) {
+        std::ostringstream s;
+        s << "label='" << r.eq_label << "'  E/N="
+          << std::fixed << std::setprecision(4) << r.eq_energy_per_atom
+          << " eV  V/N=" << r.eq_volume_per_atom << " A^3";
+        kv("Reference state (eq vol)", s.str());
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Noise calibration section
+ * ───────────────────────────────────────────────────────────────────────── */
+
+void HPOLog::write_noise_calibration_section(
+    const std::vector<double>& losses,
+    double                     suggested_ftol)
+{
+    section("NOISE CALIBRATION");
+
+    /* Compute summary stats outside any lock — purely arithmetic. */
+    double mn = 0.0, mx = 0.0, mean = 0.0, stddev = 0.0;
+    double abs_spread = 0.0, rel_spread = 0.0;
+    if (!losses.empty()) {
+        mn = losses.front(); mx = losses.front();
+        double sum = 0.0;
+        for (double v : losses) {
+            if (v < mn) mn = v;
+            if (v > mx) mx = v;
+            sum += v;
+        }
+        const double n = static_cast<double>(losses.size());
+        mean = sum / n;
+        if (losses.size() >= 2) {
+            double sq = 0.0;
+            for (double v : losses) {
+                const double d = v - mean;
+                sq += d * d;
+            }
+            stddev = std::sqrt(sq / (n - 1.0));
+        }
+        abs_spread = mx - mn;
+        rel_spread = (mean != 0.0) ? abs_spread / std::fabs(mean) : 0.0;
+    }
+
+    if (losses.size() < 2) {
+        std::lock_guard<std::mutex> lg(mtx_);
+        f_ << "  (calibration not run — need >= 2 evals)\n";
+        f_.flush();
+        return;
+    }
+
+    /* Single critical section for all of this section's body — holding
+     * the mutex once and writing directly to f_ avoids the kv() /
+     * lock_guard re-entrance trap (mtx_ is std::mutex, not recursive). */
+    auto fmt_sci = [](double v) {
+        std::ostringstream oss;
+        oss << std::scientific << std::setprecision(3) << v;
+        return oss.str();
+    };
+    constexpr int KW = 22;
+    std::lock_guard<std::mutex> lg(mtx_);
+    f_ << "  " << std::left << std::setw(KW-2) << "Repeats"
+       << ": " << losses.size() << "\n";
+    f_ << "  Per-run total loss:\n";
+    for (std::size_t i = 0; i < losses.size(); ++i)
+        f_ << "    [" << (i+1) << "] " << fmt_double(losses[i]) << "\n";
+    f_ << "  " << std::left << std::setw(KW-2) << "Mean"
+       << ": " << fmt_double(mean)   << "\n";
+    f_ << "  " << std::left << std::setw(KW-2) << "Stddev"
+       << ": " << fmt_double(stddev) << "\n";
+    f_ << "  " << std::left << std::setw(KW-2) << "Min"
+       << ": " << fmt_double(mn)     << "\n";
+    f_ << "  " << std::left << std::setw(KW-2) << "Max"
+       << ": " << fmt_double(mx)     << "\n";
+    f_ << "  " << std::left << std::setw(KW-2) << "Abs spread"
+       << ": " << fmt_double(abs_spread) << "\n";
+    f_ << "  " << std::left << std::setw(KW-2) << "Rel spread"
+       << ": " << fmt_sci(rel_spread)
+       << "  ((max-min)/|mean|)\n";
+    f_ << "  " << std::left << std::setw(KW-2) << "Suggested FTOL_REL"
+       << ": " << fmt_sci(suggested_ftol)
+       << "  (10x rel_spread, floored at 1e-6)\n";
+    if (rel_spread < 1e-12) {
+        f_ << "  Note: objective looks effectively deterministic at the seed point;\n"
+              "        any FTOL_REL >= 1e-6 will not be the bottleneck.\n";
+    } else if (rel_spread > 1e-2) {
+        f_ << "  Note: large noise floor (>1%). Local-search FTOL_REL tighter\n"
+              "        than the suggested value will not be reachable; consider\n"
+              "        averaging multiple LAMMPS runs or tightening MD sampling.\n";
+    }
+    f_.flush();
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -402,15 +743,36 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
             double avg = (done > 0) ? sum_ms_ / done : 0.0;
             double nan_pct = (done > 0) ? 100.0 * nan_cnt / done : 0.0;
 
+            const std::size_t evals_since_best =
+                (cur_best_eval_ > 0 && eval_num >= cur_best_eval_)
+                    ? (eval_num - cur_best_eval_) : 0;
+
             std::ostringstream msg;
             msg << "--- " << std::setw(6) << eval_num << " evals done"
                 << "   avg=" << fmt_millis(avg) << "/eval"
                 << "   best=" << fmt_double(cur_best_loss_)
-                << " (eval " << cur_best_eval_ << ")"
+                << " (eval " << cur_best_eval_ << ", "
+                << evals_since_best << " evals ago)"
                 << "   NaN rate=" << std::fixed << std::setprecision(1)
                 << nan_pct << "%";
             f_ << "[" << now_hms() << "]  SUMMARY  "
                << msg.str() << "\n";
+            /* Stagnation hint: if we've spent more than half the recent
+             * milestone window with no new best, point the user at the
+             * common causes (LOCAL too tight for noise, basin already
+             * exhausted, penalty cliff sampling). Single line, only
+             * once per milestone. */
+            if (cur_best_eval_ > 0 && evals_since_best >= 100 &&
+                evals_since_best * 2 >= eval_num) {
+                f_ << "[" << now_hms() << "]  HINT     "
+                   << "no new best for " << evals_since_best
+                   << " evals (>50% of run). Possible causes: "
+                   << "(a) LOCAL stop too tight for objective noise "
+                   << "(MLSL local searches default to ftol_rel=1e-15); "
+                   << "(b) the best basin is genuinely exhausted; "
+                   << "(c) penalty cliff — most LDS samples land on "
+                   << "infeasible side. Inspect loss.tadah spread.\n";
+            }
             f_.flush();
 
             // schedule next milestone: 100, 200, 500, 1000, 2000, 5000, ...
@@ -433,10 +795,21 @@ void HPOLog::log_new_best(std::size_t eval_num,
                           double      errmse, bool has_errmse,
                           double      frmse,  bool has_frmse,
                           double      srmse,  bool has_srmse,
-                          double      wall_ms)
+                          double      wall_ms,
+                          const std::string& top_breakdown)
 {
     std::lock_guard<std::mutex> lg(mtx_);
     if (!f_.is_open()) return;
+
+    /* Defensive guard: refuse to record a "new best" that is not actually
+     * better than the current best. This catches upstream bugs where the
+     * is_best comparator (e.g. HPO_Host::g_best_) drifted out of sync with
+     * the persisted journal state across a resume — without this guard, a
+     * stale comparator would silently overwrite cur_best_loss_ with a
+     * worse value and downstream summaries would report regression as
+     * progress. cur_best_loss_ defaults to numeric_limits<double>::max(),
+     * so the very first best at any finite loss is still accepted. */
+    if (loss >= cur_best_loss_) return;
 
     cur_best_loss_ = loss;
     cur_best_eval_ = eval_num;
@@ -462,6 +835,13 @@ void HPOLog::log_new_best(std::size_t eval_num,
     msg << "  (" << fmt_millis(wall_ms) << ")";
 
     f_ << "[" << now_hms() << "]  BEST     " << msg.str() << "\n";
+    if (!top_breakdown.empty()) {
+        /* Indent under the BEST line so the breakdown is visually
+         * attached. Cap line length defensively — if the caller
+         * produced an over-long string, write it whole; the user can
+         * grep for "top:" to extract these lines later. */
+        f_ << "                       top: " << top_breakdown << "\n";
+    }
     f_.flush();
 }
 
@@ -492,10 +872,25 @@ void HPOLog::log_nan_clamped(std::size_t        eval_num,
  * Final summary
  * ───────────────────────────────────────────────────────────────────────── */
 
+void HPOLog::set_status(const std::string& status_str)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    last_status_ = status_str;
+}
+
 void HPOLog::finish(const std::string& status_str)
 {
     std::lock_guard<std::mutex> lg(mtx_);
     if (!f_.is_open()) return;
+
+    /* If caller passed an explicit status, use it (overrides any set_status).
+     * If empty, fall back to whatever the inner driver recorded most recently
+     * via set_status(). If neither, use a generic placeholder. */
+    std::string effective_status = !status_str.empty()
+        ? status_str
+        : (last_status_.empty() ? std::string("COMPLETED") : last_status_);
+    /* Rebind the local arg name so the rest of the body keeps working. */
+    const std::string& status_str_local = effective_status;
 
     const std::size_t total  = n_eval_.load(std::memory_order_relaxed);
     const std::size_t nnan   = n_nan_ .load(std::memory_order_relaxed);
@@ -557,7 +952,7 @@ void HPOLog::finish(const std::string& status_str)
     /* ── RESULT ──────────────────────────────────────────────────────── */
     { std::string s = "-- RESULT "; while(s.size()<72) s+='-'; f_ << "\n" << s << "\n"; }
     f_ << "  " << std::left << std::setw(KW) << "Optimiser status"
-       << ": " << status_str << "\n";
+       << ": " << status_str_local << "\n";
     f_ << "  " << std::left << std::setw(KW) << "Best total loss"
        << ": " << fmt_double(cur_best_loss_)
        << "  (eval " << cur_best_eval_ << ")\n";
@@ -608,6 +1003,61 @@ std::string nlopt_result_str(int code)
         case -5: return "FORCED_STOP — optimisation was interrupted";
         default: return "UNKNOWN (" + std::to_string(code) + ")";
     }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * HPOLog — checkpoint participant
+ *
+ * Persists the journal-running counters and best-so-far so an
+ * interrupted run resumes with consistent state. The actual log file
+ * is reopened in append mode by open(); these counters keep the
+ * monotonic eval numbering and the "best so far" indicator coherent
+ * across the boundary.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+void HPOLog::save(core::Checkpoint& cp) const
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    cp.section(tag());
+    cp.put_size("n_eval",        n_eval_.load(std::memory_order_relaxed));
+    cp.put_size("n_nan",         n_nan_ .load(std::memory_order_relaxed));
+    cp.put_dbl ("cur_best_loss", cur_best_loss_);
+    cp.put_size("cur_best_eval", cur_best_eval_);
+    cp.put_dbl ("best_emae",     best_emae_);
+    cp.put_dbl ("best_ermse",    best_ermse_);
+    cp.put_dbl ("best_errmse",   best_errmse_);
+    cp.put_dbl ("best_frmse",    best_frmse_);
+    cp.put_dbl ("best_srmse",    best_srmse_);
+    cp.put_bool("has_emae",      has_emae_);
+    cp.put_bool("has_ermse",     has_ermse_);
+    cp.put_bool("has_errmse",    has_errmse_);
+    cp.put_bool("has_frmse",     has_frmse_);
+    cp.put_bool("has_srmse",     has_srmse_);
+    /* C3: persist NOISE_CALIBRATION's suggested_ftol so a resumed BASINS
+     * run (NOISE_CALIBRATION is gated on `!resumed`) can still clamp the
+     * ladder against the noise floor on its first round. */
+    if (noise_suggested_ftol_)
+        cp.put_dbl("noise_suggested_ftol", *noise_suggested_ftol_);
+}
+
+void HPOLog::load(const core::Checkpoint& cp)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    if (auto v = cp.get_size(tag(), "n_eval"))         n_eval_.store(*v);
+    if (auto v = cp.get_size(tag(), "n_nan"))          n_nan_ .store(*v);
+    if (auto v = cp.get_dbl (tag(), "cur_best_loss"))  cur_best_loss_ = *v;
+    if (auto v = cp.get_size(tag(), "cur_best_eval"))  cur_best_eval_ = *v;
+    if (auto v = cp.get_dbl (tag(), "best_emae"))      best_emae_   = *v;
+    if (auto v = cp.get_dbl (tag(), "best_ermse"))     best_ermse_  = *v;
+    if (auto v = cp.get_dbl (tag(), "best_errmse"))    best_errmse_ = *v;
+    if (auto v = cp.get_dbl (tag(), "best_frmse"))     best_frmse_  = *v;
+    if (auto v = cp.get_dbl (tag(), "best_srmse"))     best_srmse_  = *v;
+    if (auto v = cp.get_bool(tag(), "has_emae"))       has_emae_   = *v;
+    if (auto v = cp.get_bool(tag(), "has_ermse"))      has_ermse_  = *v;
+    if (auto v = cp.get_bool(tag(), "has_errmse"))     has_errmse_ = *v;
+    if (auto v = cp.get_bool(tag(), "has_frmse"))      has_frmse_  = *v;
+    if (auto v = cp.get_bool(tag(), "has_srmse"))      has_srmse_  = *v;
+    if (auto v = cp.get_dbl (tag(), "noise_suggested_ftol")) noise_suggested_ftol_ = *v;
 }
 
 } // namespace tadah::hpo

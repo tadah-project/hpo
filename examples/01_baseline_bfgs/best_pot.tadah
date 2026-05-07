@@ -1,0 +1,74 @@
+# ==============================================================================
+#  Tadah HPO — Best potential
+#  Best iter 4  (eval 5)  |  Loss: 1.0258e-01
+#  2026-05-05 01:30:50
+# ==============================================================================
+# -- LOSS FUNCTION -------------------------------------------------------------
+#   Global loss type        : L2
+#   Fail score              : 1.0000e+16
+#   ERMSE  (meV/at)         : target=0.000e+00  w=0.00  (per-dataset + avg)
+# ------------------------------------------------------------------------------
+#   LAMMPS simulations      : 1
+#   Sim[1]: ../common/lammps/Ecoh.in  ncpu=1  maxtime=10  failscore=1.00e+16
+#     --varloss Ecoh  target=8.100e+00  w=800.00  loss=L2
+# -- RESULT --------------------------------------------------------------------
+#   Metric                         Value            Loss
+#   ----------------------------------------------------
+#   ERMSE  (meV/at)[1]      5.580869e+00    3.114610e-03
+#   ERMSE  (meV/at)[avg]    5.580869e+00    3.114610e-03
+# ------------------------------------------------------------------------------
+#   Sim variable                   Value            Loss
+#   ----------------------------------------------------
+#   Ecoh                    8.115892e+00    2.020427e-01
+# ------------------------------------------------------------------------------
+#   Total loss / N          : 1.025787e-01
+# -- DATA ----------------------------------------------------------------------
+#   Training                : 167 structures, 334 atoms, 2 dataset(s)
+#   [1] 29 structs, atoms/struct: 2.0 +/- 0.0  /home/marcin/PROJECTS/TADAH/develop_wt/HPO/examples/01_baseline_bfgs/../common/data/elastic.tadahdb
+#   [2] 138 structs, atoms/struct: 2.0 +/- 0.0  /home/marcin/PROJECTS/TADAH/develop_wt/HPO/examples/01_baseline_bfgs/../common/data/eos_bcc.tadahdb
+#   Validation              : 29 structures, 58 atoms, 1 dataset(s)
+#   [1] 29 structs, atoms/struct: 2.0 +/- 0.0  /home/marcin/PROJECTS/TADAH/develop_wt/HPO/examples/01_baseline_bfgs/../common/data/elastic.tadahdb
+#   Elements                : Ta
+# -- OPTIMISER -----------------------------------------------------------------
+#   Algorithm               : DLIB / BFGS
+#   Dimensions              : 1
+#     Stop: maxeval=6
+#   Search space:
+#   RCUT2B        [4.000e+00, 6.000e+00]  
+# ==============================================================================
+# HOT_A0 ../common/lammps/Ecoh.in 3.31476441181435000e+00
+ATOM              Ta
+BIAS              false
+CEMBFUNC          1.000000000000000000   2.000000000000000000   3.000000000000000000   4.000000000000000000   5.000000000000000000   6.000000000000000000   7.000000000000000000
+CGRID2B           0.100000000000000006   0.583333333332999970   1.066666666666999941   1.550000000000000044   2.033333333333000148   2.516666666667000118   3.000000000000000000
+CGRIDMB           0.000000000000000000
+DBFILE            ../common/data/elastic.tadahdb
+DBFILE            ../common/data/eos_bcc.tadahdb
+DIMER             false   0   false
+EWEIGHT           1.0
+FORCE             false
+FWEIGHT           1.0
+HPOTARGET         config.hpo
+INIT2B            true
+INITMB            true
+LAMBDA            0
+MODEL             M_BLR   BF_Linear
+NORM              false
+NUMERIC           12
+OALGO             1   1e-13
+RCTYPE2B          Cut_Poly
+RCTYPEMB          Cut_Poly
+RCUT2B            5.607558787616905960
+RCUTENV           5.0
+RCUTMB            5.6
+SEMBFUNC          1.000000000000000000   1.000000000000000000   1.000000000000000000   1.000000000000000000   1.000000000000000000   1.000000000000000000   1.000000000000000000
+SGRID2B           1.000000000000000000   1.033333333332999926   1.066666666666999941   1.100000000000000089   1.133333333333000015   1.166666666667000030   1.199999999999999956
+SGRIDMB           0.200000000000000011
+STRESS            false
+SWEIGHT           1.0
+TYPE2B            D2_Blip   7   7   Ta   Ta
+TYPEMB            DM_mBlipEnv   0   1   1   7   7   Ta   Ta
+VALIDATION        /home/marcin/PROJECTS/TADAH/develop_wt/HPO/examples/common/config.val
+VERBOSE           1
+WATOM             1.0
+WEIGHTS           0.000000000000000000   -116.237299289127591351   18.715849414298300957   -4.139128835215164948   1.354090463459620697   16.429086229605704972   -8.523481396194588555   -42.902390138879624715   -48.042748349803787278   -38.698893318979685318   -26.485042163414700411   267.589692342033686145   0.000000000000000000   0.000000000000000000

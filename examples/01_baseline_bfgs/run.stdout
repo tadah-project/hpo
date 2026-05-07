@@ -1,0 +1,10 @@
+
+Config Key: RCUT2B
+   Label:  D2_Blip
+   Index:        1
+  Params:  5.6e+00
+ H bound:        6
+ L bound:        4
+[HPO] InitStrategy[OUTER] CONFIG produced 1 starting point
+[HPO] DLIB:BFGS   dim=1
+[HPO] DLIB:BFGS — MAXEVAL=6 function eval(s) reached; preserving best-so-far. (DLIB stop strategies count iterations, not evals; HPO enforces MAXEVAL externally.)

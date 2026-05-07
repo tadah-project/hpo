@@ -3,14 +3,30 @@
 #include <dlib/optimization.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_host.h>
+#include <tadah/hpo/hpo_log.h>
 
 #include <algorithm>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
 namespace tadah::hpo {
 
 namespace detail {
+
+/* DLIB's stop strategies count BFGS *iterations*, not function evals.
+ * At dim=D with central differences a single iteration consumes
+ * 2*D + line_search + step ≈ 2*D + 2..5 evals, so passing the user's
+ * MAXEVAL straight into objective_delta_stop_strategy(min_delta, max_iter)
+ * silently lets BFGS overshoot the user's budget by O(D)x. We therefore
+ * cap evaluations from outside DLIB by counting calls to the objective
+ * lambda and throwing this on overflow. The catch site treats it as a
+ * graceful termination. */
+struct MaxEvalReached : public std::exception {
+  const char* what() const noexcept override {
+    return "DLIB:BFGS reached MAXEVAL function evaluations (eval-counted, not iter-counted)";
+  }
+};
 
 inline std::optional<double> dlib_param(const OptimizerSpec& sp,
                                         const std::string& key)
@@ -27,9 +43,9 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
     throw std::runtime_error(
         "validate_dlib_bfgs_spec expects LIB=DLIB and ALGO=BFGS");
 
-  if (sp.local)
+  if (sp.inner)
     throw std::runtime_error(
-        "DLIB:BFGS is a standalone optimiser and does not support LOCAL blocks");
+        "DLIB:BFGS is a standalone optimiser and does not support INNER blocks");
 
   if (sp.low.empty() || sp.low.size() != sp.high.size())
     throw std::runtime_error(
@@ -100,11 +116,6 @@ template<class Vec,class Runner>
     const matrix<double,0,1> lo = mat(sp.low);
     const matrix<double,0,1> hi = mat(sp.high);
 
-    /* ------- optional user initial guesses ----------------------- */
-    std::vector<function_evaluation> init;
-    // for (const auto& v : sp.optim_init)
-    //     init.emplace_back( mat(sp.in(v)), 0.0);          // y filled by dlib later
-
     /* ------- thread pool ---------------------------------------- */
     const unsigned nthreads = sp.num_threads.value_or(1);  // single thread as default
     dlib::thread_pool tp(nthreads);
@@ -116,6 +127,35 @@ template<class Vec,class Runner>
     /* ------- main call ------------------------------------------ */
     auto feval = [&](const matrix<double,0,1>& x)->double
     {   return host( sp.out(x) ); };            // host expects real scale
+
+    /* ------- seed dlib with every point from sp.optim_init.
+     * find_min_global() treats `initial_function_evals` as already-known
+     * (x,y) pairs, so we evaluate each seed once here and hand the
+     * pair(s) over.  This guarantees the user's priors (CONFIG, WARM,
+     * PRIOR, RANDOM/LHS/SOBOL chain entries) are part of the explored
+     * set and tightens dlib's UCB-style stop criterion from the very
+     * first iteration. With INIT_STRATEGY chains plus DLIB:GFS the
+     * adapter consumes ALL K points (matches the documented behaviour
+     * of MULTISTART when the inner ALGO is GFS). */
+    std::vector<function_evaluation> init;
+    if (!sp.optim_init.empty()) {
+      std::ostringstream oss;
+      oss << "DLIB:GFS seeding with " << sp.optim_init.size()
+          << " starting point" << (sp.optim_init.size()==1 ? "" : "s");
+      std::cout << "[HPO] " << oss.str() << "\n";
+      HPOLog::instance().info(oss.str());
+      for (const auto& seed_real : sp.optim_init) {
+        const auto start_vec = sp.in(seed_real);
+        matrix<double,0,1> x_seed;
+        x_seed.set_size(static_cast<long>(start_vec.size()));
+        for (long i = 0; i < x_seed.size(); ++i)
+          x_seed(i) = start_vec[static_cast<std::size_t>(i)];
+        const double y_seed = feval(x_seed);
+        init.emplace_back(x_seed, y_seed);
+        if (maxeval != HUGE_UNSIGNED && maxeval > 0) --maxeval;
+        if (maxeval == 0) break;
+      }
+    }
 
     find_min_global(tp, feval,
         lo, hi, sp.is_int,
@@ -151,42 +191,48 @@ template<class Vec,class Runner>
           "DLIB:BFGS requires a starting point; HPO should provide one from the current config");
     }
 
-    auto feval = [&](const matrix<double,0,1>& xin)->double
-    {   return host( sp.out(xin) ); };
-    const auto grad = derivative(feval,
-        detail::dlib_param(sp, "fd_step").value_or(1.0e-6));
-
     const auto maxeval = sp.stop.maxeval.has_value()
         ? static_cast<unsigned long>(*sp.stop.maxeval)
         : 0ul;
 
-    if (const auto tol_gradinf = detail::dlib_param(sp, "tol_gradinf")) {
-      if (maxeval > 0) {
-        find_min_box_constrained(
-            bfgs_search_strategy(),
-            gradient_norm_stop_strategy(*tol_gradinf, maxeval),
-            feval, grad, x, lo, hi);
-      } else {
-        find_min_box_constrained(
-            bfgs_search_strategy(),
-            gradient_norm_stop_strategy(*tol_gradinf),
-            feval, grad, x, lo, hi);
+    /* Wrap the objective so each call increments an external counter.
+     * When the user's MAXEVAL is reached, throw detail::MaxEvalReached;
+     * the catch site below treats it as graceful termination so the
+     * best-so-far tracked by HPO_Host is preserved. */
+    unsigned long evals_used = 0;
+    auto feval = [&, maxeval](const matrix<double,0,1>& xin)->double {
+      if (maxeval > 0 && evals_used >= maxeval) throw detail::MaxEvalReached{};
+      ++evals_used;
+      return host( sp.out(xin) );
+    };
+    const auto grad = derivative(feval,
+        detail::dlib_param(sp, "fd_step").value_or(1.0e-6));
+
+    auto run_with_eval_cap = [&](auto&& search, auto&& stop) {
+      try {
+        find_min_box_constrained(std::forward<decltype(search)>(search),
+                                 std::forward<decltype(stop)>(stop),
+                                 feval, grad, x, lo, hi);
+      } catch (const detail::MaxEvalReached&) {
+        std::ostringstream oss;
+        oss << "DLIB:BFGS — MAXEVAL=" << maxeval
+            << " function eval(s) reached; preserving best-so-far. "
+               "(DLIB stop strategies count iterations, not evals; "
+               "HPO enforces MAXEVAL externally.)";
+        std::cout << "[HPO] " << oss.str() << "\n";
+        HPOLog::instance().info(oss.str());
       }
+    };
+
+    if (const auto tol_gradinf = detail::dlib_param(sp, "tol_gradinf")) {
+      run_with_eval_cap(bfgs_search_strategy(),
+                        gradient_norm_stop_strategy(*tol_gradinf));
       return;
     }
 
     const double ftol_abs = sp.stop.ftol_abs.value_or(1.0e-7);
-    if (maxeval > 0) {
-      find_min_box_constrained(
-          bfgs_search_strategy(),
-          objective_delta_stop_strategy(ftol_abs, maxeval),
-          feval, grad, x, lo, hi);
-    } else {
-      find_min_box_constrained(
-          bfgs_search_strategy(),
-          objective_delta_stop_strategy(ftol_abs),
-          feval, grad, x, lo, hi);
-    }
+    run_with_eval_cap(bfgs_search_strategy(),
+                      objective_delta_stop_strategy(ftol_abs));
   }
 
 }   // namespace tadah::hpo

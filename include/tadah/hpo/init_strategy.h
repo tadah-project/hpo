@@ -1,0 +1,67 @@
+#pragma once
+/*
+ * InitStrategy — produces a list of starting points (in real, untransformed
+ * space) for the optimiser, given bounds, the OPTIM map and a seed.
+ *
+ * Concrete strategies live in init_strategies.cpp. A free factory
+ * build_init_strategy() walks the parsed InitStrategySpec and returns
+ * one polymorphic InitStrategy that may be a Chain over several
+ * producers.
+ *
+ * Numerical contract:
+ *   - Sampling happens in the transformed (post analyse_logscale) space
+ *     using spec.low, spec.high, spec.log_scaled.
+ *   - Output points are returned in real space.
+ *   - log_scaled[d] == false ⇒ dim d is sampled linearly between low[d]
+ *     and high[d] (already real-valued).
+ *   - log_scaled[d] == true  ⇒ dim d is sampled in log-space (low[d] and
+ *     high[d] are already log-transformed by analyse_logscale()) and
+ *     exponentiated before being returned.
+ */
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace tadah::hpo {
+
+class HPOTargets;        // forward-declared — full type pulled in by .cpp
+struct OptimizerSpec;
+
+struct InitContext {
+    const OptimizerSpec& spec;            // bounds, log_scaled (post-transform)
+    const HPOTargets&    targets;         // optimap, ui_offset
+    std::uint64_t        seed;            // resolved INIT_SEED or random_device
+};
+
+class InitStrategy {
+public:
+    virtual ~InitStrategy() = default;
+
+    /** Produce up to k starting points. A strategy may return fewer
+     *  (e.g. CONFIG always returns 1). The caller is responsible for
+     *  truncating / padding to its budget. */
+    virtual std::vector<std::vector<double>>
+    generate(const InitContext& ctx, std::size_t k) const = 0;
+
+    /** Human-readable name for logs (matches the parser keyword). */
+    virtual std::string name() const = 0;
+
+    /** Natural number of points this strategy produces when no explicit
+     *  K is given. Used by build_init_strategy() to size INIT_K. */
+    virtual std::size_t default_k() const { return 1; }
+};
+
+/* Build the polymorphic InitStrategy from the parsed spec.
+ *
+ *   - Walks ispec.chain in order, instantiating each entry.
+ *   - If ispec.include_config is true (default) and the chain doesn't
+ *     already start with CONFIG, prepends ConfigInitStrategy.
+ *   - If the chain ends up empty (no entries, include_config false), an
+ *     implicit CONFIG is still used as a safe default — the caller can
+ *     always override with INIT_INCLUDE_CONFIG false + an explicit entry.
+ */
+std::unique_ptr<InitStrategy> build_init_strategy(const struct InitStrategySpec& ispec);
+
+}  // namespace tadah::hpo

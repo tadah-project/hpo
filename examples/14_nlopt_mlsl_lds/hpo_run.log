@@ -1,0 +1,96 @@
+
+================================================================================
+  TADAH Hyperparameter Optimisation — Run Journal
+================================================================================
+
+  Tadah version  : 1.2.0
+  Started        : 2026-05-04 23:39:36
+  Working dir    : /home/marcin/PROJECTS/TADAH/develop_wt/HPO/examples/14_nlopt_mlsl_lds
+  Log file       : hpo_run.log
+  Process ID     : 1532737
+
+-- SETUP DIAGNOSTICS ---------------------------------------------------
+[23:39:36]            InitStrategy CONFIG produced 1 starting point
+
+-- FILES ---------------------------------------------------------------
+  HPO targets           : config.hpo
+  Validation set        : /home/marcin/PROJECTS/TADAH/develop_wt/HPO/examples/common/config.val
+  Loss log              : loss.tadah
+  Outvar log            : outvar.tadah
+  Params log            : params.tadah
+  Stats log             : stats.tadah
+  Best loss log         : best_loss.tadah
+  Best potential        : best_pot.tadah
+
+-- OPTIMISER -----------------------------------------------------------
+  Library / algo        : NLOPT / G_MLSL_LDS
+  Dimensions            : 2 parameters being optimised
+  Local optimizer       : NLOPT / LN_BOBYQA
+  Stop criteria:
+    Max evaluations     : 24
+  Population size       : 4
+  Search space (bounds in optimiser-internal space):
+    RCUT2B                  : [4.000e+00,  6.000e+00]
+    SGRIDMB                 : [1.000e-01,  4.000e-01]
+  Starting point: user-supplied (1 seed)
+  Init strategy:
+    (default — implicit CONFIG only)
+    INIT_SEED         : 1717
+    INIT_INCLUDE_CONFIG: true
+    WARM_ON_MISMATCH  : warn
+  Run policy:
+    (default — single-shot dispatch)
+
+-- POTENTIAL SETUP -----------------------------------------------------
+  2-body terms          : yes
+  Many-body terms       : yes
+  Cutoff 2B (Ang)       : 5.600
+  Cutoff MB (Ang)       : 5.600
+  Training structures   : 167
+  Validation structures : 29
+  Elements              : Ta
+
+-- LOSS FUNCTION -------------------------------------------------------
+  ERMSE  (meV/atom)     : weight=0.00  target=0.000e+00  (per-dataset + avg)
+  Ecoh                  : weight=800.00  target=8.100e+00
+  Aggregate             : mean over active components
+  Fail score            : 1.0000e+16  (returned when training produces NaN/Inf)
+  Output every          : 1 eval(s)
+  Output digits         : 6
+
+-- PROGRESS ------------------------------------------------------------
+  [HH:MM:SS]  tag       message
+  --------------------------------------------------------------------
+[23:39:36]  BEST     ★ NEW BEST   eval=     1  loss=1.0264e-01  ERMSE=5.59 meV/at  (20 ms)
+[23:39:36]  BEST     ★ NEW BEST   eval=     2  loss=7.7618e-02  ERMSE=17.02 meV/at  (16 ms)
+[23:39:36]  BEST     ★ NEW BEST   eval=     8  loss=7.5214e-02  ERMSE=15.55 meV/at  (12 ms)
+[23:39:36]  BEST     ★ NEW BEST   eval=    11  loss=7.3465e-02  ERMSE=17.72 meV/at  (19 ms)
+[23:39:36]  BEST     ★ NEW BEST   eval=    12  loss=7.3267e-02  ERMSE=17.98 meV/at  (16 ms)
+[23:39:36]  BEST     ★ NEW BEST   eval=    13  loss=7.2892e-02  ERMSE=18.61 meV/at  (16 ms)
+[23:39:36]  BEST     ★ NEW BEST   eval=    14  loss=7.2281e-02  ERMSE=19.89 meV/at  (18 ms)
+[23:39:36]  BEST     ★ NEW BEST   eval=    15  loss=7.1494e-02  ERMSE=23.01 meV/at  (11 ms)
+[23:39:36]  BEST     ★ NEW BEST   eval=    16  loss=7.1407e-02  ERMSE=24.45 meV/at  (11 ms)
+[23:39:36]  BEST     ★ NEW BEST   eval=    19  loss=7.1405e-02  ERMSE=24.69 meV/at  (11 ms)
+[23:39:37]            NLopt finished: MAXEVAL_REACHED — maximum evaluations exhausted  fmin=0.0714052
+
+-- DIAGNOSTICS ---------------------------------------------------------
+  Total evaluations       : 24
+  NaN/Inf clampings       : 0  (0.0%)
+  ✓ No NaN clampings — search space looks well-configured.
+
+-- PERFORMANCE ---------------------------------------------------------
+  Total wall time         : 0.3s
+  Mean per eval           : 13 ms
+  Fastest eval            : 9 ms  (eval 17)
+  Slowest eval            : 20 ms  (eval 1)
+  Throughput              : 4201.2 evals/min
+
+-- RESULT --------------------------------------------------------------
+  Optimiser status        : MAXEVAL_REACHED — maximum evaluations exhausted
+  Best total loss         : 7.1405e-02  (eval 19)
+  Best ERMSE              : 24.69 meV/atom
+  Best potential saved    : best_pot.tadah
+  Finished                : 2026-05-04 23:39:37
+
+================================================================================
+

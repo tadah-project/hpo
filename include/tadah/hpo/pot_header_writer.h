@@ -12,6 +12,7 @@
  */
 
 #include <tadah/core/context.h>
+#include <tadah/mlip/load_transforms.h>
 #include <tadah/mlip/structure_db.h>
 #include <cstddef>
 #include <ostream>
@@ -33,16 +34,17 @@ public:
      * ------------------------------------------------------------------ */
     template<class ParamVec>
     static void write_best_header(
-        std::ostream&                   os,
-        const EvalResult<ParamVec>&     result,
-        const HPOTargets&               trg,
-        const core::Context&            master_ctx,
-        const core::Context&            val_ctx,
-        const mlip::StructureDB&        train_stdb,
-        const mlip::StructureDB&        val_stdb,
-        const std::vector<std::string>& param_labels,
-        std::size_t                     cw,
-        int                             prec);
+        std::ostream&                       os,
+        const EvalResult<ParamVec>&         result,
+        const HPOTargets&                   trg,
+        const core::Context&                master_ctx,
+        const core::Context&                val_ctx,
+        const mlip::StructureDB&            train_stdb,
+        const mlip::StructureDB&            val_stdb,
+        const std::vector<std::string>&     param_labels,
+        const mlip::LoadTransformReport&    report,
+        std::size_t                         cw,
+        int                                 prec);
 
     /* ------------------------------------------------------------------ *
      *  Compact header for periodic pot archives (pot_N.tadah)
@@ -95,6 +97,8 @@ private:
                                     const mlip::StructureDB& val,
                                     const core::Context& train_ctx,
                                     const core::Context& val_ctx);
+    static void write_load_transforms_section(std::ostream& os,
+                                              const mlip::LoadTransformReport& report);
     static void write_optim_section(std::ostream& os,
                                     const HPOTargets& trg,
                                     const std::vector<std::string>& labels);

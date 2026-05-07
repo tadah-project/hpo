@@ -1,0 +1,82 @@
+
+================================================================================
+  TADAH Hyperparameter Optimisation — Run Journal
+================================================================================
+
+  Tadah version  : 1.2.0
+  Started        : 2026-05-04 21:57:00
+  Working dir    : /home/marcin/PROJECTS/TADAH/develop_wt/HPO/examples/11_chained_init_warm_lhs
+  Log file       : hpo_run.log
+  Process ID     : 1061452
+
+
+-- FILES ---------------------------------------------------------------
+  HPO targets           : config.hpo
+  Validation set        : /home/marcin/PROJECTS/TADAH/develop_wt/HPO/examples/common/config.val
+  Loss log              : loss.tadah
+  Outvar log            : outvar.tadah
+  Params log            : params.tadah
+  Stats log             : stats.tadah
+  Best loss log         : best_loss.tadah
+  Best potential        : best_pot.tadah
+
+-- OPTIMISER -----------------------------------------------------------
+  Library / algo        : DLIB / GFS
+  Dimensions            : 1 parameter being optimised
+  Stop criteria:
+    Max evaluations     : 8
+  Search space (bounds in optimiser-internal space):
+    RCUT2B                  : [4.000e+00,  6.000e+00]
+  Starting point: user-supplied (4 seeds)
+  Init strategy:
+    [1] WARM seed_pot.tadah
+    [2] LHS 3
+    INIT_SEED         : 999
+    INIT_INCLUDE_CONFIG: false
+    WARM_ON_MISMATCH  : warn
+  Run policy:
+    (default — single-shot dispatch)
+
+-- POTENTIAL SETUP -----------------------------------------------------
+  2-body terms          : yes
+  Many-body terms       : yes
+  Cutoff 2B (Ang)       : 5.600
+  Cutoff MB (Ang)       : 5.600
+  Training structures   : 167
+  Validation structures : 29
+  Elements              : Ta
+
+-- LOSS FUNCTION -------------------------------------------------------
+  ERMSE  (meV/atom)     : weight=0.00  target=0.000e+00  (per-dataset + avg)
+  Ecoh                  : weight=800.00  target=8.100e+00
+  Aggregate             : mean over active components
+  Fail score            : 1.0000e+16  (returned when training produces NaN/Inf)
+  Output every          : 1 eval(s)
+  Output digits         : 6
+
+-- PROGRESS ------------------------------------------------------------
+  [HH:MM:SS]  tag       message
+  --------------------------------------------------------------------
+[21:57:00]  BEST     ★ NEW BEST   eval=     1  loss=1.0035e-01  ERMSE=5.09 meV/at  (13 ms)
+
+-- DIAGNOSTICS ---------------------------------------------------------
+  Total evaluations       : 8
+  NaN/Inf clampings       : 0  (0.0%)
+  ✓ No NaN clampings — search space looks well-configured.
+
+-- PERFORMANCE ---------------------------------------------------------
+  Total wall time         : 0.1s
+  Mean per eval           : 15 ms
+  Fastest eval            : 13 ms  (eval 1)
+  Slowest eval            : 25 ms  (eval 5)
+  Throughput              : 3624.1 evals/min
+
+-- RESULT --------------------------------------------------------------
+  Optimiser status        : COMPLETED — all evaluations done
+  Best total loss         : 1.0035e-01  (eval 1)
+  Best ERMSE              : 5.09 meV/atom
+  Best potential saved    : best_pot.tadah
+  Finished                : 2026-05-04 21:57:00
+
+================================================================================
+

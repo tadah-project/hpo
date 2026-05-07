@@ -1,0 +1,35 @@
+# Example 03 — LHS seeds + MULTISTART BFGS.
+#
+# Latin-hypercube fills the (2-D) box uniformly; we then refine each of
+# the K seeds with its own BFGS pass. The host's best-tracker keeps the
+# global minimum across all runs.
+#
+# Run-time cost ≈ K × MAXEVAL_per_start. Set BUDGET_PER_START explicitly,
+# otherwise the outer MAXEVAL is split equally (ceil division).
+
+OPTIMIZER
+  INIT
+    STRATEGY LHS 4
+    INCLUDE_CONFIG false
+    SEED 11
+  ENDINIT
+  STRATEGY
+    TYPE MULTISTART
+    LIB DLIB
+    ALGO BFGS
+    MAXEVAL 12
+    N_STARTS 4
+    BUDGET_PER_START 3
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+PC_LAMMPS --script ../common/lammps/Ecoh.in --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B (1) 4.0 6.0
+OPTIM SGRIDMB (1) 0.1 0.4
+
+OUTPUT 1
+BOUTPUT 1

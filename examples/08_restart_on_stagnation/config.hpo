@@ -1,0 +1,31 @@
+# Example 08 — RESTART decorator (stagnation watchdog).
+#
+# An unattended run that auto-recovers from getting stuck. The host
+# tracks `evals_since_last_best`; if it exceeds AFTER_STAGNATION, HPO
+# throws StagnationStop from inside the next eval. RestartPolicy catches
+# it, draws a fresh init from the RESTART block's STRATEGY, and re-enters
+# the inner optimiser.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB DLIB
+    ALGO BFGS
+    MAXEVAL 30
+    RESTART
+      AFTER_STAGNATION 4
+      MAX 2
+      STRATEGY RANDOM 1
+    ENDRESTART
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+PC_LAMMPS --script ../common/lammps/Ecoh.in --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B (1) 4.0 6.0
+
+OUTPUT 1
+BOUTPUT 1

@@ -1,9 +1,12 @@
 #include <tadah/core/logger.h>
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/runners.h>
 #include <iostream>
 
+#include <cstring>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -13,8 +16,11 @@
 #include <unordered_map>
 #include <unordered_set>
 
+namespace tadah::hpo { bool try_parse_double(const std::string& s, double& value); }
+
 namespace {
 
+using tadah::hpo::try_parse_double;
 
 /* provide an empty vector for loss types that need no parameters          */
 /* Huber[0]=δ , Tukey[0]=c                                                 */
@@ -33,9 +39,186 @@ inline std::string to_lower_ascii(std::string s)
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return s;
 }
+
+inline std::string trim_ascii(std::string s)
+{
+    const auto beg = s.find_first_not_of(" \t\r\n");
+    if (beg == std::string::npos) return "";
+    const auto end = s.find_last_not_of(" \t\r\n");
+    return s.substr(beg, end - beg + 1);
+}
+
+std::vector<std::string> split_lammps_words(const std::string& line)
+{
+    std::vector<std::string> out;
+    std::string cur;
+    bool in_single = false;
+    bool in_double = false;
+
+    for (char c : line) {
+        if (!in_double && c == '\'') {
+            in_single = !in_single;
+            continue;
+        }
+        if (!in_single && c == '"') {
+            in_double = !in_double;
+            continue;
+        }
+
+        if (!in_single && !in_double && std::isspace(static_cast<unsigned char>(c))) {
+            if (!cur.empty()) {
+                out.push_back(cur);
+                cur.clear();
+            }
+            continue;
+        }
+
+        cur.push_back(c);
+    }
+
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+
+std::optional<std::string>
+try_get_variable_value(const LammpsRunner::LMPPtr& lmp,
+                       const std::string& name)
+{
+    if (!lmp || !lmp->input || !lmp->input->variable) return std::nullopt;
+    try {
+        const int idx = lmp->input->variable->find(name.c_str());
+        if (idx < 0) return std::nullopt;
+        char* raw = lmp->input->variable->retrieve(name.c_str());
+        if (!raw) return std::nullopt;
+        return std::string(raw);
+    } catch (...) {
+        // Validation should not force evaluation of equal-style variables
+        // whose formulas depend on runtime simulation state (e.g. lx,
+        // pe/atoms, computes after run 0, etc.). Treat those as
+        // unavailable for static substitution and fall back to the
+        // literal-scan result or placeholder handling.
+        return std::nullopt;
+    }
+}
+
+bool substitute_known_variables(const LammpsRunner::LMPPtr& lmp,
+                                const std::string& in,
+                                std::string& out)
+{
+    out.clear();
+    out.reserve(in.size());
+
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        if (in[i] != '$') {
+            out.push_back(in[i]);
+            continue;
+        }
+
+        if (i + 1 >= in.size()) {
+            out.push_back(in[i]);
+            continue;
+        }
+
+        if (in[i + 1] == '(') {
+            out.push_back(in[i]);
+            continue;
+        }
+
+        if (in[i + 1] == '{') {
+            const std::size_t close = in.find('}', i + 2);
+            if (close == std::string::npos) return false;
+            const std::string name = in.substr(i + 2, close - (i + 2));
+            auto value = try_get_variable_value(lmp, name);
+            if (!value.has_value()) return false;
+            out += *value;
+            i = close;
+            continue;
+        }
+
+        if (std::isalnum(static_cast<unsigned char>(in[i + 1])) || in[i + 1] == '_') {
+            const std::string name(1, in[i + 1]);
+            auto value = try_get_variable_value(lmp, name);
+            if (!value.has_value()) return false;
+            out += *value;
+            ++i;
+            continue;
+        }
+
+        out.push_back(in[i]);
+    }
+
+    return true;
+}
+
+bool evaluate_condition(const LammpsRunner::LMPPtr& lmp,
+                        const std::string& condition,
+                        bool& value)
+{
+    const auto tokens = split_lammps_words(condition);
+    if (tokens.size() == 3 &&
+        (tokens[1] == "==" || tokens[1] == "!=")) {
+        double lhs = 0.0;
+        double rhs = 0.0;
+        if (!try_parse_double(tokens[0], lhs) || !try_parse_double(tokens[2], rhs)) {
+            value = (tokens[0] == tokens[2]);
+            if (tokens[1] == "!=") value = !value;
+            return true;
+        }
+    }
+
+    if (!lmp || !lmp->input || !lmp->input->variable) return false;
+
+    try {
+        lmp->input->one("variable __tadah_validator_cond equal " + condition);
+        const int idx = lmp->input->variable->find("__tadah_validator_cond");
+        if (idx < 0) return false;
+        value = (lmp->input->variable->compute_equal(idx) != 0.0);
+        lmp->input->one("variable __tadah_validator_cond delete");
+        return true;
+    } catch (...) {
+        try { lmp->input->one("variable __tadah_validator_cond delete"); } catch (...) {}
+        return false;
+    }
+}
+
+void ensure_placeholder_zero(const LammpsRunner::LMPPtr& lmp)
+{
+    if (!lmp || !lmp->input || !lmp->input->variable) return;
+    if (lmp->input->variable->find("__tadah_placeholder_zero") >= 0) return;
+    try {
+        lmp->input->one("variable __tadah_placeholder_zero equal 0.0");
+    } catch (...) {
+    }
+}
+
+std::string placeholder_variable_command(const std::string& name,
+                                         const std::string& style)
+{
+    if (style == "equal") {
+        return "variable " + name + " equal 0.0";
+    }
+    if (style == "string") {
+        return "variable " + name + " string 0";
+    }
+    if (style == "format") {
+        return "variable " + name + " format __tadah_placeholder_zero %.0f";
+    }
+    return {};
+}
 } // anonymous
 
 namespace tadah::hpo {
+
+bool try_parse_double(const std::string& s, double& value)
+{
+    try {
+        std::size_t pos = 0;
+        value = std::stod(s, &pos);
+        return pos == s.size();
+    } catch (...) {
+        return false;
+    }
+}
 
 LammpsSim::LammpsSim() {}
 LammpsSim::LammpsSim(std::string& cmd_,
@@ -217,6 +400,15 @@ void LammpsSim::parse_tokens() {
       if (i + 1 < tokens.size()) {
         ncpu = std::stoi(tokens[++i]);
         i++;
+#ifndef TADAH_BUILD_MPI
+        if (ncpu > 1) {
+          tadah::core::Logger::instance().log(
+              tadah::core::LogLevel::WARNING,
+              "--ncpu=", ncpu,
+              " has no effect in non-MPI builds; LAMMPS scripts run serially "
+              "and parallelism over scripts is controlled by OMP_NUM_THREADS.");
+        }
+#endif
       } else {
         throw std::runtime_error("Invalid number of arguments for -ncpu");
       }
@@ -431,6 +623,143 @@ LammpsSim::index_defined_variables() const
         }
     }
 
+    LammpsRunner runner;
+    auto lmp = runner.create_instance(0, invar);
+    if (!lmp || !lmp->input || !lmp->input->variable) return defs;
+
+    std::unordered_map<std::string, std::size_t> labels;
+    for (std::size_t li = 0; li < script_lines.size(); ++li) {
+        const auto tokens = split_lammps_words(trim_ascii(script_lines[li]));
+        if (tokens.size() >= 2 && to_lower_ascii(tokens[0]) == "label") {
+            labels[tokens[1]] = li;
+        }
+    }
+
+    auto define_variable = [&](const std::string& resolved_line, std::size_t logical_cmd) {
+        const auto tokens = split_lammps_words(trim_ascii(resolved_line));
+        if (tokens.size() < 3 || to_lower_ascii(tokens[0]) != "variable") return;
+
+        const std::string name = tokens[1];
+        const std::string style = to_lower_ascii(tokens[2]);
+
+        if (style == "delete") {
+            try { lmp->input->one(resolved_line); } catch (...) {}
+            defs.erase(name);
+            return;
+        }
+
+        bool defined_in_lammps = false;
+        if (resolved_line.find("$(") == std::string::npos) {
+            try {
+                lmp->input->one(resolved_line);
+                defined_in_lammps = true;
+            } catch (...) {
+                defined_in_lammps = false;
+            }
+        }
+
+        if (!defined_in_lammps) {
+            ensure_placeholder_zero(lmp);
+            const std::string placeholder = placeholder_variable_command(name, style);
+            if (!placeholder.empty()) {
+                try {
+                    lmp->input->one(placeholder);
+                    defined_in_lammps = true;
+                } catch (...) {
+                    defined_in_lammps = false;
+                }
+            }
+        }
+
+        defs[name] = VarDef{style, logical_cmd};
+    };
+
+    std::size_t pc = 0;
+    std::size_t steps = 0;
+    const std::size_t max_steps = std::max<std::size_t>(script_lines.size() * 8, 64);
+
+    while (pc < script_lines.size() && steps++ < max_steps) {
+        const std::string raw = trim_ascii(script_lines[pc]);
+        const auto raw_tokens = split_lammps_words(raw);
+        if (raw_tokens.empty()) {
+            ++pc;
+            continue;
+        }
+
+        const std::string cmd = to_lower_ascii(raw_tokens[0]);
+
+        if (cmd == "label") {
+            ++pc;
+            continue;
+        }
+
+        if (cmd == "clear") {
+            try { lmp->input->one("clear"); } catch (...) {}
+            ++pc;
+            continue;
+        }
+
+        if (cmd == "jump") {
+            if (raw_tokens.size() >= 3 && raw_tokens[1] == "SELF") {
+                auto it = labels.find(raw_tokens[2]);
+                if (it != labels.end()) {
+                    pc = it->second + 1;
+                    continue;
+                }
+            }
+            ++pc;
+            continue;
+        }
+
+        if (cmd == "if") {
+            std::string substituted;
+            if (substitute_known_variables(lmp, raw, substituted)) {
+                const auto tokens = split_lammps_words(substituted);
+                if (tokens.size() >= 4 && to_lower_ascii(tokens[2]) == "then") {
+                    bool cond_value = false;
+                    if (evaluate_condition(lmp, tokens[1], cond_value)) {
+                        std::string chosen;
+                        if (cond_value) chosen = tokens[3];
+                        else if (tokens.size() >= 6 && to_lower_ascii(tokens[4]) == "else") chosen = tokens[5];
+
+                        if (!chosen.empty()) {
+                            const auto chosen_tokens = split_lammps_words(chosen);
+                            if (!chosen_tokens.empty()) {
+                                const std::string chosen_cmd = to_lower_ascii(chosen_tokens[0]);
+                                if (chosen_cmd == "jump" && chosen_tokens.size() >= 3 && chosen_tokens[1] == "SELF") {
+                                    auto it = labels.find(chosen_tokens[2]);
+                                    if (it != labels.end()) {
+                                        pc = it->second + 1;
+                                        continue;
+                                    }
+                                }
+                                if (chosen_cmd == "variable") {
+                                    define_variable(chosen, pc + 1);
+                                } else if (chosen_cmd == "clear") {
+                                    try { lmp->input->one("clear"); } catch (...) {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            ++pc;
+            continue;
+        }
+
+        if (cmd == "variable") {
+            std::string substituted;
+            if (substitute_known_variables(lmp, raw, substituted)) {
+                define_variable(substituted, pc + 1);
+            }
+            ++pc;
+            continue;
+        }
+
+        ++pc;
+    }
+
     return defs;
 }
 
@@ -599,5 +928,3 @@ std::string LammpsSim::expand_includes(const fs::path &file)
 
 
 } // namespace tadah::hpo
-
-

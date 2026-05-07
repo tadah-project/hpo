@@ -1,0 +1,32 @@
+# Example 07 — Staged global: GFS EXPLORE feeds top-K seeds into BFGS.
+#
+# When you suspect the loss surface is multimodal, do not start a local
+# optimiser blindly: let GFS canvas the box first, snapshot the K best
+# (loss, params) pairs, and feed each into a BFGS refinement.
+# STRATEGY TYPE PRESTAGE picks the staged behaviour.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PRESTAGE
+    LIB DLIB
+    ALGO BFGS
+    MAXEVAL 4
+    TOPK 2
+    EXPLORE
+      LIB DLIB
+      ALGO GFS
+      MAXEVAL 6
+    ENDEXPLORE
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+PC_LAMMPS --script ../common/lammps/Ecoh.in --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B (1) 4.0 6.0
+OPTIM SGRIDMB (1) 0.1 0.4
+
+OUTPUT 1
+BOUTPUT 1

@@ -23,11 +23,192 @@ struct StopCriteria {
 
 using ParamMap = std::unordered_map<std::string,double>;
 
+/* InitStrategySpec — parsed `INIT/ENDINIT` block.
+ * Resolved into a polymorphic InitStrategy by build_init_strategy()
+ * after bounds + log-scale are settled. */
+struct InitStrategySpec {
+    struct Entry {
+        std::string method;                    // CONFIG, RANDOM, LHS, SOBOL, WARM, PRIOR, NOISE_AUTO
+        std::vector<std::string> args;         // method-specific tokens
+    };
+    std::vector<Entry> chain;                  // STRATEGY lines (in order, inside INIT block)
+    std::optional<std::size_t> k_total;        // K_TOTAL cap (default = sum of strategy default_k)
+    std::optional<std::uint64_t> seed;         // SEED for stochastic strategies
+    bool include_config = true;                // CONFIG implicitly prepended unless disabled
+    std::string warm_on_mismatch = "warn";     // warn | error | skip (used by WarmInitStrategy)
+};
+
+/* StrategyType — selected by `STRATEGY { TYPE <X> }` in the parser.
+ * Drives build_run_policy() in run_policy.h to assemble the right
+ * RunPolicy decorator stack. */
+enum class StrategyType {
+    PLAIN,        // single-shot run of spec.lib/algo (no decorators)
+    BASINS,       // BasinsPolicy (anytime/interruptible, basin pool, ladders)
+    MULTISTART,   // MultiStartPolicy (N independent starts of spec.lib/algo)
+    PRESTAGE,     // StagedPolicy (one EXPLORE pass → top-K refined by spec.lib/algo)
+};
+
+/* Forward decl needed because BasinsSpec holds unique_ptr<OptimizerSpec>. */
+struct OptimizerSpec;
+
+/* BasinsSpec — knobs for `STRATEGY { TYPE BASINS }`.
+ * Carries the EXPLORE/REFINE stage sub-specs, per-stage tolerance
+ * ladders + budget caps, and BASINS-wide pool/checkpoint knobs.
+ * Resolved at hpo_run() time into a BasinsPolicy<Vec, Runner> by
+ * build_run_policy().
+ *
+ * Defaults give a functional config with just `STRATEGY { TYPE BASINS }`:
+ *   EXPLORE = NLOPT GN_CRS2_LM, REFINE = NLOPT LN_BOBYQA,
+ *   default 6-rung ladders, 32-basin pool. */
+struct BasinsSpec {
+    BasinsSpec();
+    BasinsSpec(const BasinsSpec& o);
+    BasinsSpec& operator=(const BasinsSpec& o);
+    BasinsSpec(BasinsSpec&&) = default;
+    BasinsSpec& operator=(BasinsSpec&&) = default;
+    ~BasinsSpec() = default;
+
+    /* EXPLORE / REFINE stage sub-specs.
+     * - explore: global stage. Default NLOPT GN_CRS2_LM
+     *   (population-based, stochastic, noise-tolerant). May carry an
+     *   INNER block for MLSL/AUGLAG inner local sub-optimizer.
+     * - refine: per-basin local stage. Default NLOPT LN_BOBYQA
+     *   (derivative-free quadratic trust-region, bound-aware).
+     *   LN_BOBYQA replaces an earlier LN_SBPLX default — SBPLX
+     *   collapses ("simplex too small in dimension X" → masked
+     *   XTOL_REACHED) when a parameter approaches a bound, which
+     *   silently ends a basin's refinement without progress.
+     * unique_ptr because OptimizerSpec is not yet fully defined here
+     * and because BasinsSpec is itself a member of OptimizerSpec. */
+    std::unique_ptr<OptimizerSpec> explore;
+    std::unique_ptr<OptimizerSpec> refine;
+
+    /* Per-stage FTOL ladders. Empty -> auto-derive from NOISE_CALIBRATION
+     * (or 1e-9 floor). Populated by `EXPLORE { FTOL_LADDER ... }` and
+     * `REFINE { FTOL_LADDER ... }` in the parser. */
+    std::vector<double> explore_ftol_ladder;
+    std::vector<double> refine_ftol_ladder;
+
+    /* Per-stage budget caps & shape. Each stage has its own:
+     *   - BUDGET_MAX_EVALS  upper cap on evals consumed by one stage
+     *   - BUDGET_MIN_EVALS  lower cap (used by stagnation cap math)
+     *   - BUDGET_RATE_FACTOR  shape coefficient for the per-basin
+     *     stagnation budget (cap = max(min_evals, max_evals * rate)). */
+    std::size_t explore_budget_min_evals    = 30;
+    std::size_t explore_budget_max_evals    = 5000;
+    double      explore_budget_rate_factor  = 0.5;
+    std::size_t refine_budget_min_evals     = 30;
+    std::size_t refine_budget_max_evals     = 5000;
+    double      refine_budget_rate_factor   = 0.5;
+
+    /* BASINS-wide knobs (cross-stage / pool-level / process-level). */
+    double      basin_dedup_dist            = 0.05;
+    std::size_t basin_pool_max              = 32;
+    std::size_t stop_no_improve_rounds      = 5;
+
+    /* Checkpoint cadence (one or both can be set). 0 disables. */
+    double      checkpoint_seconds          = 0.0;
+    std::size_t checkpoint_evals            = 0;
+
+    /* EXPLORE re-seeding: number of top-loss basins to pre-evaluate at the
+     * start of each round k>1 EXPLORE stage. Default 1 = old behaviour
+     * (only the best basin's params seed the optimiser). With N>1, the
+     * top-N basins by loss are evaluated via host() (which feeds the
+     * top-K capture and BasinPool), and the lowest-loss of them is used
+     * as the optimiser start. */
+    std::size_t seed_top_n = 1;
+
+    /* Noise-floor ladder clamp (opt-in). When true and noise_floor is
+     * known (populated post-NOISE_CALIBRATION by hpo_run), strictly
+     * trim explore_ftol_ladder/refine_ftol_ladder rungs below noise_floor.
+     * Default OFF because NOISE_CALIBRATION at the seed point may
+     * report a misleading rel_spread when the seed is a poor potential
+     * (BAD_POT clamps inflate spread, or seed is below the BAD_POT
+     * threshold giving 0 spread). User opts in once they trust the
+     * calibration (e.g. from a converged WARM seed). */
+    bool                  clamp_to_noise_floor = false;
+    std::optional<double> noise_floor;
+};
+
+/* MultiStartSpec — knobs for `STRATEGY { TYPE MULTISTART }`. */
+struct MultiStartSpec {
+    std::size_t n_starts = 1;                      // N_STARTS — count
+    std::size_t parallel = 1;                      // PARALLEL — concurrent runs
+    std::optional<std::size_t> budget_per_start;   // BUDGET_PER_START override
+};
+
+/* RestartSpec — `STRATEGY { RESTART/ENDRESTART }` decorator.
+ * Composes with TYPE PLAIN/MULTISTART/PRESTAGE; not with BASINS. */
+struct RestartSpec {
+    std::size_t after_stagnation = 0;              // 0 disables
+    std::size_t max              = 0;              // cap on restart count
+    InitStrategySpec init_strategy;                // INIT chain to refresh on restart
+};
+
+/* NoiseSpec — `OPTIMIZER { NOISE/ENDNOISE }` block. */
+struct NoiseSpec {
+    bool        autodetect    = false;             // AUTO TRUE — derive PARAM fd_step
+                                                   // from box diagonal in transformed
+                                                   // space (DLIB:BFGS only)
+    std::size_t calibration_n = 0;                 // CALIBRATION N — repeat seed point
+                                                   // N times to surface objective noise
+                                                   // and suggest FTOL_REL. 0 = off.
+};
+
 /* ---------------- Optimizer description --------------------------- */
 struct OptimizerSpec {
+    OptimizerSpec() = default;
+
+    /* Deep-copy. Required by RunPolicy decorators (MULTISTART, PRESTAGE)
+     * that create per-start spec snapshots with a single replaced init
+     * point. The std::unique_ptr members block the implicit copy ctor;
+     * clone them explicitly. */
+    OptimizerSpec(const OptimizerSpec& o)
+        : strategy_type(o.strategy_type),
+          lib(o.lib), algo(o.algo),
+          inner(o.inner ? std::make_unique<OptimizerSpec>(*o.inner) : nullptr),
+          prestage(o.prestage ? std::make_unique<OptimizerSpec>(*o.prestage) : nullptr),
+          vector_storage(o.vector_storage), pop(o.pop), seed(o.seed),
+          num_threads(o.num_threads), step(o.step), stop(o.stop),
+          param(o.param), low(o.low), high(o.high), is_int(o.is_int),
+          log_scaled(o.log_scaled), log_threshold(o.log_threshold),
+          optim_init(o.optim_init),
+          init_strategy_spec(o.init_strategy_spec),
+          noise(o.noise),
+          multistart(o.multistart),
+          stage_topk(o.stage_topk),
+          restart(o.restart),
+          basins(o.basins) {}
+    OptimizerSpec& operator=(const OptimizerSpec& o) {
+        if (this != &o) {
+            OptimizerSpec tmp(o);
+            *this = std::move(tmp);
+        }
+        return *this;
+    }
+    OptimizerSpec(OptimizerSpec&&) = default;
+    OptimizerSpec& operator=(OptimizerSpec&&) = default;
+
+    /* --------- strategy selection -------------------------------- */
+    StrategyType strategy_type = StrategyType::PLAIN;
+
+    /* --------- driver (the optimiser run by this spec) ------------ */
     std::string  lib   = "NOT SET";   // DLIB | NLOPT | TADAH
     std::string  algo  = "NOT SET";
-    std::unique_ptr<OptimizerSpec> local;   // one sub-optimizer
+
+    /* INNER/ENDINNER sub-block — NLopt's local sub-algorithm
+     * (used only with MLSL/G_MLSL_LDS/AUGLAG, which delegate inner
+     * work to a local optimiser via set_local_optimizer).
+     * The previous keyword `LOCAL/ENDLOCAL` was renamed to INNER to
+     * avoid collision with BASINS' REFINE stage (the artist formerly
+     * known as LOCAL_LIB/LOCAL_ALGO). */
+    std::unique_ptr<OptimizerSpec> inner;
+
+    /* When strategy_type == PRESTAGE: the EXPLORE block content (one-pass
+     * global exploration). build_run_policy() runs `*prestage` first,
+     * picks the top-K (loss, params) pairs, and refines them via the
+     * outer spec's lib/algo. */
+    std::unique_ptr<OptimizerSpec> prestage;
 
     /* --------- algorithm-specific parameters ---------------------- */
     std::optional<unsigned> vector_storage, pop, seed, num_threads;
@@ -42,6 +223,15 @@ struct OptimizerSpec {
     std::optional<double> log_threshold;    // OFF = std::nullopt
     std::vector<std::vector<double>> optim_init;
 
+    /* -------- top-level OPTIMIZER blocks (parsed children) -------- */
+    InitStrategySpec init_strategy_spec;    // INIT/ENDINIT block
+    NoiseSpec        noise;                 // NOISE/ENDNOISE block
+
+    /* -------- strategy-specific sub-spec / decorator knobs -------- */
+    MultiStartSpec   multistart;            // STRATEGY { TYPE MULTISTART }
+    std::size_t      stage_topk = 1;        // STRATEGY { TYPE PRESTAGE TOPK ... }
+    RestartSpec      restart;                // STRATEGY { RESTART/ENDRESTART }
+    BasinsSpec       basins;                 // STRATEGY { TYPE BASINS }
 
     /* call once after low/high are known */
     void analyse_logscale()
@@ -70,5 +260,61 @@ struct OptimizerSpec {
     static void print_caps(const std::string& lib,
                            const std::string& algo);
 };
+
+/* BasinsSpec ctor / copy implementations need OptimizerSpec to be a
+ * complete type — defined here, after OptimizerSpec.
+ *
+ * The default ctor leaves explore/refine *null*. OptimizerSpec contains
+ * BasinsSpec by value, and BasinsSpec contains OptimizerSpec via these
+ * unique_ptrs — eagerly allocating in the default ctor would cause
+ * unbounded recursive default-construction. The parser allocates them
+ * (via ensure_defaults) when TYPE BASINS is selected. */
+inline BasinsSpec::BasinsSpec() = default;
+
+/* Allocate default explore/refine sub-specs (NLOPT GN_CRS2_LM + LN_BOBYQA).
+ * Called by the parser when STRATEGY TYPE BASINS is seen. Idempotent. */
+inline void basins_spec_ensure_defaults(BasinsSpec& bs)
+{
+    if (!bs.explore) {
+        bs.explore = std::make_unique<OptimizerSpec>();
+        bs.explore->lib  = "NLOPT";
+        bs.explore->algo = "GN_CRS2_LM";
+    }
+    if (!bs.refine) {
+        bs.refine = std::make_unique<OptimizerSpec>();
+        bs.refine->lib   = "NLOPT";
+        bs.refine->algo  = "LN_BOBYQA";
+    }
+}
+
+inline BasinsSpec::BasinsSpec(const BasinsSpec& o)
+    : explore(o.explore ? std::make_unique<OptimizerSpec>(*o.explore) : nullptr),
+      refine (o.refine  ? std::make_unique<OptimizerSpec>(*o.refine)  : nullptr),
+      explore_ftol_ladder(o.explore_ftol_ladder),
+      refine_ftol_ladder (o.refine_ftol_ladder),
+      explore_budget_min_evals  (o.explore_budget_min_evals),
+      explore_budget_max_evals  (o.explore_budget_max_evals),
+      explore_budget_rate_factor(o.explore_budget_rate_factor),
+      refine_budget_min_evals   (o.refine_budget_min_evals),
+      refine_budget_max_evals   (o.refine_budget_max_evals),
+      refine_budget_rate_factor (o.refine_budget_rate_factor),
+      basin_dedup_dist     (o.basin_dedup_dist),
+      basin_pool_max       (o.basin_pool_max),
+      stop_no_improve_rounds(o.stop_no_improve_rounds),
+      checkpoint_seconds   (o.checkpoint_seconds),
+      checkpoint_evals     (o.checkpoint_evals),
+      seed_top_n           (o.seed_top_n),
+      clamp_to_noise_floor (o.clamp_to_noise_floor),
+      noise_floor          (o.noise_floor)
+{}
+
+inline BasinsSpec& BasinsSpec::operator=(const BasinsSpec& o)
+{
+    if (this != &o) {
+        BasinsSpec tmp(o);
+        *this = std::move(tmp);
+    }
+    return *this;
+}
 
 }   // namespace

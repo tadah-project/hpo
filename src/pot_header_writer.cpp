@@ -3,6 +3,7 @@
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/hpo_host.h>
+#include <tadah/core/periodic_table.h>
 
 #include <algorithm>
 #include <chrono>
@@ -176,6 +177,68 @@ void PotHeaderWriter::write_data_section(std::ostream& os,
 }
 
 /* -------------------------------------------------------------------- */
+void PotHeaderWriter::write_load_transforms_section(
+    std::ostream& os,
+    const mlip::LoadTransformReport& r)
+{
+    if (!r.applied) return;
+    heading(os, "LOAD TRANSFORMS");
+
+    if (r.lscale != 1.0)
+        kv(os, "Length rescale", fmt_double(r.lscale, 6));
+
+    if (!r.eshift.empty()) {
+        const char* src = "user";
+        switch (r.eshift_source) {
+            case mlip::LoadTransformReport::EshiftSource::User:   src = "user";   break;
+            case mlip::LoadTransformReport::EshiftSource::Atom:   src = "atom";   break;
+            case mlip::LoadTransformReport::EshiftSource::DBAtom: src = "dbatom"; break;
+            case mlip::LoadTransformReport::EshiftSource::None:   src = "none";   break;
+        }
+        std::ostringstream s;
+        s << "(source=" << src << ")";
+        for (const auto& kvp : r.eshift) {
+            const auto& el = core::PeriodicTable::find_by_Z(kvp.first);
+            s << "  " << el.symbol << "=" << fmt_double(kvp.second, 4);
+        }
+        kv(os, "Energy shift", s.str());
+    }
+
+    if (r.n_dropped_energy || r.n_dropped_force) {
+        std::ostringstream s;
+        s << "dropped " << r.n_dropped_energy << " by E, "
+          << r.n_dropped_force << " by F";
+        kv(os, "Outlier filter", s.str());
+    }
+
+    if (!r.wdbfile_applied.empty()) {
+        std::ostringstream s;
+        for (std::size_t i = 0; i < r.wdbfile_applied.size(); ++i) {
+            if (i) s << " ";
+            s << fmt_double(r.wdbfile_applied[i], 3);
+        }
+        kv(os, "Per-dataset weights", s.str());
+    }
+
+    if (r.eweight_temp > 0.0) {
+        std::ostringstream s;
+        s << r.eweight_temp << " K";
+        kv(os, "Boltzmann eweight T", s.str());
+    }
+
+    if (r.zero_com_force)
+        kv(os, "Zero COM force", "applied");
+
+    if (!r.eq_label.empty()) {
+        std::ostringstream s;
+        s << "label='" << r.eq_label
+          << "'  E/N=" << fmt_double(r.eq_energy_per_atom, 4)
+          << " eV  V/N=" << fmt_double(r.eq_volume_per_atom, 4) << " A^3";
+        kv(os, "Reference state (eq vol)", s.str());
+    }
+}
+
+/* -------------------------------------------------------------------- */
 void PotHeaderWriter::write_optim_section(std::ostream& os,
                                           const HPOTargets& trg,
                                           const std::vector<std::string>& labels)
@@ -185,11 +248,11 @@ void PotHeaderWriter::write_optim_section(std::ostream& os,
     kv(os, "Algorithm", sp.lib + " / " + sp.algo);
     kv(os, "Dimensions", std::to_string(sp.low.size()));
 
-    if (sp.local) {
-        std::string local_str = sp.local->algo;
-        if (sp.local->lib != "NOT SET")
-            local_str = sp.local->lib + " / " + local_str;
-        kv(os, "Local optimizer", local_str);
+    if (sp.inner) {
+        std::string inner_str = sp.inner->algo;
+        if (sp.inner->lib != "NOT SET")
+            inner_str = sp.inner->lib + " / " + inner_str;
+        kv(os, "Inner optimizer", inner_str);
     }
 
     /* stop criteria — compact, one line */

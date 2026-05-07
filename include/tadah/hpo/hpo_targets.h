@@ -56,6 +56,7 @@ public:
 
     OptimizerSpec spec;
 
+    int    outputDigits = 6;      // decimal digits in scientific notation columns (DIGITS key)
     size_t outputEvery = 1;
     size_t bestOutputEvery = 1;
     size_t dumpPotEvery = std::numeric_limits<size_t>::max(); //  archiving potentials

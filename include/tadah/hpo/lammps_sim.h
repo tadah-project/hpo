@@ -111,5 +111,18 @@ class LammpsSim {
 
     void prep_script_lines();
 };
+
+/**
+ * Strict double parser. Returns true and writes to `value` only when the
+ * full string `s` is consumed by std::stod (no trailing junk). On parse
+ * failure, returns false and leaves `value` unchanged. Used by the eval
+ * path to treat unparseable LAMMPS variable retrievals (e.g. nullptr -> ""
+ * because the variable was never defined) as failed components rather
+ * than letting the std::invalid_argument escape into NLopt's wrapper —
+ * NLopt translates that exception to NLOPT_INVALID_ARGS and aborts the
+ * whole optimisation.
+ */
+bool try_parse_double(const std::string& s, double& value);
+
 } // namespace tadah::hpo
 #endif // LAMMPS_SIM_H

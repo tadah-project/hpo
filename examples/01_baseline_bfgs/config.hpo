@@ -1,0 +1,25 @@
+# Example 01 — single-shot DLIB:BFGS baseline.
+#
+# What this exercises:
+#   - TYPE PLAIN: single-shot dispatch, no decorators.
+#   - DLIB:BFGS as a local refinement engine.
+#   - The default (no INIT block) — iter 0 is the implicit CONFIG point.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB DLIB
+    ALGO BFGS
+    MAXEVAL 6
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+PC_LAMMPS --script ../common/lammps/Ecoh.in --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B (1) 4.0 6.0
+
+OUTPUT 1
+BOUTPUT 1

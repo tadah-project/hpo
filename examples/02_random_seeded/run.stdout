@@ -1,0 +1,16 @@
+
+Config Key: RCUT2B
+   Label:  D2_Blip
+   Index:        1
+  Params:  5.6e+00
+ H bound:        6
+ L bound:        4
+
+Config Key: SGRIDMB
+   Label:DM_mBlipEnv
+   Index:        1
+  Params:  2.0e-01
+ H bound:  4.0e-01
+ L bound:  1.0e-01
+[HPO] InitStrategy RANDOM produced 1 starting point
+[HPO] DLIB:BFGS   dim=2

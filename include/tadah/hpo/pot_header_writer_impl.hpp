@@ -1,6 +1,7 @@
 #pragma once
 #include <tadah/hpo/pot_header_writer.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/loss_function.h>
 
@@ -86,9 +87,14 @@ void PotHeaderWriter::write_result_table(std::ostream& os,
 
                 /* value */
                 if (j < e.v_outvar[i].size()) {
-                    os << std::right << std::setw(VW)
-                       << std::scientific << std::setprecision(prec)
-                       << std::stod(e.v_outvar[i][j]);
+                    double v;
+                    if (try_parse_double(e.v_outvar[i][j], v)) {
+                        os << std::right << std::setw(VW)
+                           << std::scientific << std::setprecision(prec)
+                           << v;
+                    } else {
+                        os << std::right << std::setw(VW) << "NaN";
+                    }
                 } else {
                     os << std::right << std::setw(VW) << "N/A";
                 }
@@ -125,21 +131,23 @@ void PotHeaderWriter::write_result_table(std::ostream& os,
  * ===================================================================== */
 template<class ParamVec>
 void PotHeaderWriter::write_best_header(
-    std::ostream&                   os,
-    const EvalResult<ParamVec>&     result,
-    const HPOTargets&               trg,
-    const core::Context&            master_ctx,
-    const core::Context&            val_ctx,
-    const mlip::StructureDB&        train_stdb,
-    const mlip::StructureDB&        val_stdb,
-    const std::vector<std::string>& param_labels,
-    std::size_t                     cw,
-    int                             prec)
+    std::ostream&                       os,
+    const EvalResult<ParamVec>&         result,
+    const HPOTargets&                   trg,
+    const core::Context&                master_ctx,
+    const core::Context&                val_ctx,
+    const mlip::StructureDB&            train_stdb,
+    const mlip::StructureDB&            val_stdb,
+    const std::vector<std::string>&     param_labels,
+    const mlip::LoadTransformReport&    report,
+    std::size_t                         cw,
+    int                                 prec)
 {
     write_banner(os, result.best_iter, result.iter, result.loss);
     write_loss_section(os, trg);
     write_result_table(os, result, trg, cw, prec);
     write_data_section(os, train_stdb, val_stdb, master_ctx, val_ctx);
+    write_load_transforms_section(os, report);
     write_optim_section(os, trg, param_labels);
     rule(os);
 }
