@@ -4,12 +4,14 @@
 #include <tadah/hpo/run_policy.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/iter_health.h>
 #include <tadah/core/checkpoint.h>
 #include <tadah/core/checkpoint_manager.h>
 #include <tadah/core/context.h>
 #include <tadah/core/blueprint_parser.h>
 #include <tadah/core/signal_handler.h>
 #include <tadah/mlip/structure_db.h>
+#include <tadah/mlip/preflight_audit.h>
 
 #include <filesystem>
 #include <set>
@@ -105,6 +107,40 @@ int hpo_run(core::Context& ctx)
                                           vr, n_val_loaded);
     }
     log.write_loss_section(trg);
+
+    /* ── IterHealthMonitor mode (Phase 6) ───────────────────────────── */
+    {
+        HealthLogMode hlm = health_log_mode_from_context(ctx);
+        global_iter_health_monitor().set_mode(hlm);
+        global_iter_health_monitor().clear_state();
+    }
+
+    /* ── Pre-flight audit (Phase 5) ───────────────────────────────────
+     * Walk every configured descriptor's meta() and run the per-param /
+     * cross-param HealthChecks on the training StructureDB. This is the
+     * BASINS-style guard: a fixed-and-off-shell `CGRIDMB` is flagged
+     * here with a ρ-collapse explanation BEFORE the optimiser runs. The
+     * critical-fixed-not-optimised audit additionally flags Critical
+     * params that lack any OPTIM block. Honours the AUDIT context key:
+     *   off    -> skipped
+     *   warn   -> findings logged via Logger; HPO continues
+     *   error  -> any FAIL throws and aborts before NOISE_CALIBRATION
+     */
+    {
+        mlip::AuditMode mode = mlip::audit_mode_from_context(ctx);
+        if (mode != mlip::AuditMode::Off) {
+            std::vector<std::string> optim_keys;
+            optim_keys.reserve(trg.optimap.size());
+            for (const auto& kv : trg.optimap) optim_keys.push_back(kv.first);
+            auto rep_soft  = mlip::run_preflight_from_db(
+                host.train_stdb_mut(), ctx, mode);
+            auto rep_optim = mlip::run_critical_optim_audit(ctx, optim_keys);
+            rep_soft.log();
+            rep_optim.log();
+            mlip::enforce_audit_mode(rep_soft,  mode);
+            mlip::enforce_audit_mode(rep_optim, mode);
+        }
+    }
 
     const OptimizerSpec& sp = trg.spec;
 

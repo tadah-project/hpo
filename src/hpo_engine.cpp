@@ -7,6 +7,7 @@
 #include <tadah/mlip/memory/imlip_workspace_manager.h>
 #include <tadah/mlip/memory/mlip_workspace_manager.h>
 #include <tadah/mlip/output/output.h>
+#include <tadah/mlip/preflight_audit.h>
 #include <tadah/mlip/structure_db.h>
 #include <tadah/mlip/trainer.h>
 #include <tadah/mlip/engines/train_engine.h>
@@ -112,6 +113,39 @@ void HPOEngine::validate(const tadah::mlip::Task &task) {
   if (!context.get<bool>("INIT2B") && !context.get<bool>("INITMB")) {
     throw std::runtime_error(
         "HPOEngine requires INIT2B or/and INITMB parameters to be set");
+  }
+
+  // Phase 5 — early "critical-fixed-not-optimised" preview. The
+  // canonical, HPOTargets-aware audit runs inside hpo_run() once the
+  // HPOTARGET file has been parsed. Here we do a lightweight scan of
+  // the raw HPOTARGET file for `OPTIM <KEY>` tokens — enough to flag
+  // the BASINS-style failure mode (e.g. CGRIDMB fixed at the seed and
+  // absent from every OPTIM line) before any structures are loaded.
+  // Always emits at WARNING; never throws — the run-time audit will
+  // emit again at FAIL severity when AUDIT=error if the issue stands.
+  if (context.contains("HPOTARGET")) {
+    std::vector<std::string> optim_keys;
+    try {
+      const std::string path = context.get<std::string>("HPOTARGET");
+      std::ifstream in(path);
+      std::string line;
+      while (std::getline(in, line)) {
+        // Skip blank/commented lines.
+        std::size_t p = line.find_first_not_of(" \t");
+        if (p == std::string::npos) continue;
+        if (line[p] == '#') continue;
+        // Match `OPTIM <KEY> ...` (case-sensitive — matches
+        // hpo_targets.cpp parsing).
+        if (line.compare(p, 5, "OPTIM") != 0) continue;
+        std::size_t q = p + 5;
+        while (q < line.size() && std::isspace(static_cast<unsigned char>(line[q]))) ++q;
+        std::size_t r = q;
+        while (r < line.size() && !std::isspace(static_cast<unsigned char>(line[r]))) ++r;
+        if (r > q) optim_keys.emplace_back(line.substr(q, r - q));
+      }
+    } catch (...) { /* unreadable HPOTARGET — skip the preview */ }
+    auto rep = tadah::mlip::run_critical_optim_audit(context, optim_keys);
+    rep.log();   // never throws (run_critical_optim_audit emits WARN-only)
   }
 }
 

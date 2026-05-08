@@ -7,6 +7,7 @@
 #include <tadah/hpo/pot_header_writer.h>
 #include <tadah/hpo/pot_header_writer_impl.hpp>
 #include <tadah/hpo/warmstart_cache.h>
+#include <tadah/hpo/iter_health.h>
 #include <fstream>
 #include <sstream>
 #include <thread>
@@ -1190,6 +1191,24 @@ double HPO_Host<P,R>::operator()(const P& p) const
     t_train_end = std::chrono::high_resolution_clock::now();
     stage_watchdog::leave(r.iter, "train", _stage_log);
 
+    /* ── Per-iter health monitor (Phase 6) ───────────────────────────
+     * Cheap O(P) scan of the trained weights, partitioned by the
+     * design-matrix ColumnLayout. Off by default (singleton starts in
+     * HealthLogMode::Off; hpo_run() flips it to summary unless
+     * HEALTH_LOG=off). The aggregation cost is negligible against the
+     * train+predict path that brackets it. */
+    {
+        auto& mon = global_iter_health_monitor();
+        if (mon.mode() != HealthLogMode::Off) {
+            const auto& w = host.model->get_weights();
+            const auto& layout = host.dm.layout();
+            if (!layout.blocks.empty()) {
+                auto rec = compute_iter_health(r.iter, w, layout);
+                mon.record(rec, layout);
+            }
+        }
+    }
+
     /* validation ------------------------------------------------------- */
     stage_watchdog::enter(r.iter, "predict_validate");
     core::Context pot = host.model->get_param_file();
@@ -1197,6 +1216,15 @@ double HPO_Host<P,R>::operator()(const P& p) const
      * derived from this eval round-trips through `tadah predict`. The trainer
      * itself doesn't know about load-time transforms, so the host injects them. */
     mlip::stamp_into_param_file(pot, report_);
+    /* Strip runtime-only audit knobs before the pot context is handed to
+     * LAMMPS (or written to disk). The LAMMPS-side PairTadah parser does
+     * not know about AUDIT / HEALTH_LOG and refuses pair_coeff with an
+     * "Invalid key" error; the partial init then segfaults inside
+     * calc_rho. Removing them here is the single choke-point — every
+     * downstream consumer (best_pot.tadah, per-eval pots, LAMMPS scripts)
+     * uses the same `pot` Context. */
+    pot.remove("AUDIT");
+    pot.remove("HEALTH_LOG");
     auto pred = host.model->predict(pot, val_stdb_, host.dc);
     mlip::Analytics   a(val_stdb_, pred); // we do not need to recalc NN as each descriptor checks cutoffs internally
     fill_validation(r, a);

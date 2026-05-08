@@ -125,6 +125,14 @@ public:
     std::size_t train_size() const;   // number of training structures
     std::size_t val_size()   const;   // number of validation structures
 
+    /** Read-only view of the training StructureDB. The audit (Phase 5)
+     *  passes this to `run_preflight_from_db` for cheap dataset stats. */
+    const mlip::StructureDB& train_stdb() const { return train_stdb_; }
+    /** Mutable view of the training StructureDB. compute_data_stats()
+     *  may run NN-finder on it; the host has already done so but the
+     *  call is idempotent. */
+    mlip::StructureDB&       train_stdb_mut()   { return train_stdb_; }
+
     /** Report of load-time transforms applied to the training set during
      *  construction. */
     const mlip::LoadTransformReport& load_transform_report() const { return report_; }
