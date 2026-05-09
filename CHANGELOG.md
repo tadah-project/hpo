@@ -24,6 +24,9 @@ HPO underwent the largest restructure of any module in this release: new init st
 - Per-thread `Trainer` / `TrainerHost` cache — when structural parameters do not change between evaluations, the cached object is reused via `Trainer::reinit()` instead of being reconstructed (large speed-up for sweeps that vary only weights or scalar regression parameters).
 - **Reference example suite** (`HPO/examples/`, 15 examples) with `run_reference_suite.sh` driver and per-example fingerprint files (`reference_fingerprint.json`) for regression testing. Full suite runs in ~52 s; `--fast` subset (14 examples) in ~5 s.
 - `TADAH_ENABLE_ASAN` CMake option.
+- **`TADAH:ANNEAL` Simulated Annealing driver** — classic Kirkpatrick/Metropolis SA in the in-tree TADAH library, dispatched from `run_inner()` alongside `TADAH:RANDOM` / `TADAH:GRID`. Operates in transformed (per-`OPTIM` log/identity) space; reflects out-of-bound proposal components back into the box (high-dim robustness fix).
+- **Pre-flight audit hook + per-iter health monitor** — wires the MLIP bound-validation pipeline into the HPO surface. Driven by blueprint keys `AUDIT`, `AUDIT_SAMPLE`, `HEALTH_LOG` (in CORE).
+- **`EFILTER` / `FFILTER` forwarded from `--validation`** — the validation-side LOAD-TRANSFORMS path now respects the same energy/force filtering as training. Symmetric LOAD-TRANSFORMS log; mean-share breakdown.
 
 ### Changed
 - **Major restructure** — init strategies, basins policy, resume, varloss reorganised into clearly separated layers; `+21 561` lines net.
