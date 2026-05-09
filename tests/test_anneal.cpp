@@ -391,6 +391,60 @@ TEST_CASE("ANNEAL: T0 line reports loss range and std",
     CHECK(log.find("mean|dE|=")       != std::string::npos);
 }
 
+TEST_CASE("ANNEAL: high-dim near-bound seed still proposes every L-step (reflection)",
+          "[HPO][anneal][reflection]")
+{
+    using namespace tadah::hpo;
+    /* 38 dims with the seed parked near a corner — the configuration
+     * that exposed the original whole-proposal rejection bug. With
+     * STEP_FRAC=0.10 and Gaussian proposals, the old code rejected
+     * ~98% of proposals because at least one of 38 dims fell out of
+     * bounds. Reflection lets every L-step do real work. */
+    const std::size_t D = 38;
+    std::vector<double> low(D, 0.0), high(D, 1.0);
+    auto sp = make_spec(low, high);
+    std::vector<double> seed(D, 0.02);   // near the lower wall in every dim
+    set_seed_point(sp, seed);
+    sp.seed = 1234;
+    sp.stop.maxeval = 600;
+    sp.param["T_INIT"]    = 1.0;
+    sp.param["L"]         = 50.0;
+    sp.param["RT"]        = 0.85;
+    sp.param["STEP_FRAC"] = 0.10;
+
+    LoggedRun lr;
+    StubHost stub{ [&](const Vec& x){
+        double s = 0.0;
+        for (long i = 0; i < x.size(); ++i) s += x(i) * x(i);
+        return s;
+    }, {} };
+    run_anneal_impl<Vec>(sp, stub);
+
+    /* Bounds invariance still holds — reflection clamps every dim. */
+    for (const auto& p : stub.calls) {
+        REQUIRE(p.size() == D);
+        for (std::size_t d = 0; d < D; ++d) {
+            CHECK(p[d] >= low[d] - 1e-12);
+            CHECK(p[d] <= high[d] + 1e-12);
+        }
+    }
+
+    /* Per-rung accept-rate quality: each rung must propose something
+     * close to L=50 evals (fix delivers ~100% of L; old code delivered
+     * ~2%). Allow some slack at MAXEVAL boundary. */
+    const std::string log = lr.read();
+    /* "proposed=N" is reported in every rung line. Confirm at least one
+     * rung crossed proposed=40 — old code was capped near 1-3. */
+    bool saw_full_rung = false;
+    std::size_t pos = 0;
+    while ((pos = log.find("proposed=", pos)) != std::string::npos) {
+        pos += 9;
+        int n = std::atoi(log.c_str() + pos);
+        if (n >= 40) { saw_full_rung = true; break; }
+    }
+    CHECK(saw_full_rung);
+}
+
 TEST_CASE("ANNEAL: STEP override echoes uniform sigma in the banner",
           "[HPO][anneal][log]")
 {

@@ -393,15 +393,37 @@ template<typename Vec, typename HostT>
               stop_reason = StopReason::MaxTime; inner_break = true; break;
             }
 
+            /* Generate proposal and reflect any out-of-bounds component
+             * back into the box. Whole-proposal rejection is fatal in
+             * high dimensions: with D dims and σ_i = STEP_FRAC * width,
+             * the joint in-bounds probability collapses (e.g. ~5% at
+             * D=38, STEP_FRAC=0.1, anywhere near a corner). Reflection
+             * keeps the proposal usable without consuming an L-step.
+             *
+             * Reflection is detailed-balance-symmetric in the bounded
+             * domain (mirror walls); a small bias toward bounds is
+             * acceptable for SA where the schedule itself, not Markov
+             * stationarity, drives convergence. The `oob` counter now
+             * tracks "proposals that needed reflection in at least one
+             * dim" — a useful diagnostic for STEP_FRAC mistuning. */
             Vec x_prop(dim);
-            bool in_bounds = true;
+            bool needed_reflect = false;
             for (std::size_t i = 0; i < dim; ++i) {
-              x_prop(i) = x(i) + sigma[i] * ndist(rng);
-              if (x_prop(i) < sp.low[i] || x_prop(i) > sp.high[i]) {
-                in_bounds = false; break;
+              double v = x(i) + sigma[i] * ndist(rng);
+              const double lo = sp.low[i], hi = sp.high[i];
+              if (v < lo || v > hi) {
+                needed_reflect = true;
+                /* Up to 16 fold-reflections handle σ up to ~16 * width;
+                 * pathological inputs fall through to a final clamp. */
+                for (int it = 0; it < 16 && (v < lo || v > hi); ++it) {
+                  if      (v < lo) v = 2.0 * lo - v;
+                  else if (v > hi) v = 2.0 * hi - v;
+                }
+                if (v < lo || v > hi) v = std::min(hi, std::max(lo, v));
               }
+              x_prop(i) = v;
             }
-            if (!in_bounds) { ++r_oob; continue; }
+            if (needed_reflect) ++r_oob;
 
             const double f_prop = host(sp.out(x_prop));
             ++n_used; ++r_proposed;
