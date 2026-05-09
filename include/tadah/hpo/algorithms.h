@@ -164,6 +164,22 @@ template<typename Vec, typename HostT>
     const std::size_t corana_NS     = static_cast<std::size_t>(pget("NS", 5.0));
     const std::size_t corana_NT     = static_cast<std::size_t>(pget("NT", 2.0));
     const double      corana_c      = pget("C", 2.0);
+    /* Brommer (2003) modification — reset chain to best-so-far at the
+     * end of every cooling step. Gives the adaptive chain "basin
+     * memory": after each cool, refinement resumes around the deepest
+     * point seen so far rather than wherever the chain drifted to.
+     * Strongly recommended when the landscape has FAILSCORE cliffs or
+     * when the chain wanders during the high-T phase. */
+    const bool        reset_to_best = pget("RESET_TO_BEST", 0.0) > 0.5;
+    /* V[i] floor as a fraction of (high_i - low_i). Vanilla Corana lets
+     * V shrink unboundedly when accept rate stays at 0 (e.g. on
+     * FAILSCORE-cliff landscapes where uphill ΔL ~ FAILSCORE rejects
+     * for any T) — V collapses by factor (1+C)^NT per rung and the
+     * chain dies. The floor below preserves chain mobility against
+     * such pathological sequences. The Corana paper assumed
+     * continuous functions where SOME accept always happens, so this
+     * floor was implicit; we make it explicit. */
+    const double      v_floor_frac  = pget("V_FLOOR_FRAC", 1e-3);
 
     if (!(rt > 0.0 && rt < 1.0))
       throw std::runtime_error("ANNEAL: PARAM RT must be in (0,1) (got "
@@ -254,10 +270,13 @@ template<typename Vec, typename HostT>
           << "seed=" << seed
           << "  RT=" << rt
           << "  T_MIN=" << t_min;
-      if (use_corana)
-        oss << "  NS=" << corana_NS << "  NT=" << corana_NT << "  C=" << corana_c;
-      else
+      if (use_corana) {
+        oss << "  NS=" << corana_NS << "  NT=" << corana_NT << "  C=" << corana_c
+            << "  V_FLOOR_FRAC=" << v_floor_frac;
+        if (reset_to_best) oss << "  RESET_TO_BEST=1";
+      } else {
         oss << "  L=" << L;
+      }
       if (sp.step.has_value())
         oss << "  sigma=" << *sp.step << " (uniform; STEP override)";
       else
@@ -425,6 +444,9 @@ template<typename Vec, typename HostT>
         std::vector<std::size_t> nA(dim, 0);             // per-dim accept counter
         std::uniform_real_distribution<double> u_pm(-1.0, 1.0);
         std::uniform_real_distribution<double> udist(0.0, 1.0);
+        /* Best-x tracker for Brommer-style reset_to_best (and harmless
+         * book-keeping otherwise). Initialised to the seed point. */
+        Vec best_x = x;
 
         while (T >= t_min && budget_left() > 0 && !time_exceeded()) {
           std::size_t r_proposed = 0, r_accepted = 0, r_oob = 0;
@@ -468,7 +490,10 @@ template<typename Vec, typename HostT>
                   f_x = f_prop;
                   ++r_accepted;
                   ++nA[i];
-                  if (f_x < best_f) best_f = f_x;
+                  if (f_x < best_f) {
+                    best_f = f_x;
+                    best_x = x;          // track for reset_to_best
+                  }
                 }
                 if (f_x <= stopval) {
                   stop_reason = StopReason::StopVal; inner_break = true; break;
@@ -480,8 +505,9 @@ template<typename Vec, typename HostT>
              * the just-completed NS cycles (each cycle perturbed dim i
              * once → at most NS accepts). The 0.4–0.6 deadband is from
              * the Corana paper; the gain `c` (default 2.0) controls how
-             * fast V[i] reacts. V[i] is clamped to (1e-12*width,
-             * width) to avoid runaway under degenerate conditions. */
+             * fast V[i] reacts. V[i] is clamped to
+             * [V_FLOOR_FRAC * width, width] — see V_FLOOR_FRAC notes
+             * above. */
             for (std::size_t i = 0; i < dim; ++i) {
               const double rate_i = static_cast<double>(nA[i]) /
                                     static_cast<double>(corana_NS);
@@ -491,8 +517,9 @@ template<typename Vec, typename HostT>
                 V[i] /= 1.0 + corana_c * (0.4 - rate_i) / 0.4;
               }
               const double w = sp.high[i] - sp.low[i];
-              if (V[i] > w)            V[i] = w;
-              if (V[i] < 1e-12 * w)    V[i] = 1e-12 * w;
+              const double v_lo = v_floor_frac * w;
+              if (V[i] > w)        V[i] = w;
+              if (V[i] < v_lo)     V[i] = v_lo;
             }
           }
 
@@ -538,6 +565,16 @@ template<typename Vec, typename HostT>
           if (T < t_min) { stop_reason = StopReason::TMin; break; }
           if (budget_left() == 0) { stop_reason = StopReason::MaxEval; break; }
           if (time_exceeded()) { stop_reason = StopReason::MaxTime; break; }
+
+          /* Brommer-style reset-to-best after each cool. Cheap
+           * (no host eval consumed); just snaps the chain back to the
+           * best-so-far point and updates f_x to match. The next rung
+           * then refines around best_x with the freshly-cooled T and
+           * the V[] adapted from the previous rung's experience. */
+          if (reset_to_best && f_x > best_f) {
+            x   = best_x;
+            f_x = best_f;
+          }
         }
       }
 

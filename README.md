@@ -324,6 +324,8 @@ proposals stay inside the basin and downhill steps still register.
 | `NS` | `5` | Step cycles per step-adjust cycle. |
 | `NT` | `2` | Step-adjust cycles per T (cooling triggers every `NT`). |
 | `C` | `2.0` | Step-adjust gain — controls how fast V[i] reacts to accept-rate deviation from the [0.4, 0.6] deadband. |
+| `V_FLOOR_FRAC` | `1e-3` | Lower clamp on `V[i]` as a fraction of `(high_i - low_i)`. Vanilla Corana has no explicit floor; on FAILSCORE-cliff landscapes `V[i]` can collapse by factor `(1+C)^NT` per zero-accept rung, killing the chain. Default `1e-3` keeps the chain mobile. |
+| `RESET_TO_BEST` | `0` | Brommer (2003) modification: set to `1` to snap the chain back to the best-so-far point after every cooling step. Gives the adaptive chain "basin memory" — high-T wanders no longer cost progress because the next rung restarts from the deepest known basin. Strongly recommended on FAILSCORE-cliff landscapes or when the chain wanders during the high-T phase. |
 
 `L` is ignored when `CORANA 1` is set. The per-rung journal line
 includes `V=[V_min, V_max]` so users can watch how the step vector
