@@ -13,17 +13,23 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
     else if(algo=="GRID")
         os<<"   * PARAM SPACING <double>   (default 20 steps each dim)\n";
     else if(algo=="ANNEAL")
-        os<<"   * Classic Kirkpatrick/Metropolis SA (refs: Kirkpatrick 1983, Metropolis 1953)\n"
+        os<<"   * Classic (Kirkpatrick/Metropolis 1983/1953) by default;\n"
+            "     opt-in Corana adaptive variant via PARAM CORANA 1\n"
+            "     (Corana et al. 1987; Brommer 2003).\n"
             "   * MAXEVAL / MAXTIME / STOPVAL honoured (FTOL_REL/FTOL_ABS not honoured)\n"
             "   * STEP <s>                  uniform sigma override (overrides STEP_FRAC)\n"
             "   * SEED <int>                RNG seed (default: random_device)\n"
             "   * PARAM T_INIT     <double> initial temperature (default: auto-calibrated)\n"
             "   * PARAM T_MIN      <double> cooling floor; stop when T < T_MIN (default 1e-12)\n"
             "   * PARAM RT         <double> geometric cooling factor in (0,1) (default 0.85)\n"
-            "   * PARAM L          <int>    Markov-chain length per temperature (default 50)\n"
+            "   * PARAM L          <int>    Markov-chain length per T (CLASSIC only, default 50)\n"
             "   * PARAM STEP_FRAC  <double> sigma_i = STEP_FRAC*(high_i-low_i) (default 0.10)\n"
             "   * PARAM T0_PROBES  <int>    random samples used to calibrate T0 (default 20)\n"
-            "   * PARAM T0_PACCEPT <double> target accept prob for T0 in (0,1) (default 0.80)\n";
+            "   * PARAM T0_PACCEPT <double> target accept prob for T0 in (0,1) (default 0.80)\n"
+            "   * PARAM CORANA     <0|1>    enable Corana adaptive variant (default 0=CLASSIC)\n"
+            "   * PARAM NS         <int>    Corana step cycles per adjust cycle (default 5)\n"
+            "   * PARAM NT         <int>    Corana step-adjust cycles per T (default 2)\n"
+            "   * PARAM C          <double> Corana step-adjust gain (default 2.0)\n";
     else
         os<<"   * (unknown tadah built-in algo)\n";
 }

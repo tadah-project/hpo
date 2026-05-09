@@ -7,7 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - `LIB TADAH ALGO ANNEAL` — classic Kirkpatrick/Metropolis Simulated Annealing driver (refs: Kirkpatrick 1983; Metropolis 1953). Geometric cooling, fixed-shape Gaussian step in transformed-parameter space, Metropolis acceptance, auto-T0 calibration from a small uniform-bounds random walk (overridable via `PARAM T_INIT`). Tunable knobs: `T_MIN`, `RT`, `L`, `STEP_FRAC`, `T0_PROBES`, `T0_PACCEPT`. Honours `MAXEVAL`/`MAXTIME`/`STOPVAL`.
+- **`ALGO ANNEAL` Corana adaptive variant** — opt-in via `PARAM CORANA 1` (refs: Corana, Marchesi, Martini, Ridella, *ACM Trans. Math. Soft.* 13:262, 1987; Brommer, Univ. Stuttgart MSc, 2003). Per-dim step vector `V[i]` adapts every `NS`-step cycle from the per-dim accept ratio (grows when rate > 0.6, shrinks when < 0.4); cools after every `NT` step-adjust cycles. Replaces classic's whole-vector Gaussian + fixed σ with one-dim-at-a-time uniform perturbation + adaptive σ — fixes the cold-T freeze that fixed-σ runs hit on continuous multimodal problems. Tunable knobs: `NS` (default 5), `NT` (default 2), `C` (default 2.0). Per-rung journal line shows `V=[V_min, V_max]` so users can watch step-size adaptation. Banner shows `ANNEAL[CORANA]` vs `ANNEAL[CLASSIC]`.
 - `ANNEAL` journal trace — `hpo_run.log` records: a banner echoing the resolved knobs (incl. `sigma=<s>` when `STEP` overrides `STEP_FRAC`), an extended T0 calibration line with `mean|dE|`, `loss range=[min, max]`, `std`, one summary line per cooling rung (`T`, `proposed`, `accepted` (%), `oob` (%), `f_x`, `best`), an end-of-run summary block with totals and accept-rate `min`/`max`, and a single explicit `ANNEAL stopped: <reason> after N host eval(s)` line. Lets users diagnose mistuned `T_INIT`/`RT`/`STEP_FRAC` from the journal alone.
+
+### Fixed
+- `ALGO ANNEAL` whole-proposal rejection in high dimensions — replace "any-dim-OOB → reject" with per-dim mirror reflection. Old code rejected ~98% of proposals on a 38-dim Ta workload, evaluating only ~1 of every 50 L-steps; reflection lets every L-step do real work, recovering full chain mobility.
 
 ## [1.3.0-beta.1] — TBD
 

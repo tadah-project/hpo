@@ -295,6 +295,43 @@ When the T0 calibration probes all return the same loss
 back to `1.0` and a warning is logged — pick `PARAM T_INIT` or widen
 the bounds in that case.
 
+#### Corana adaptive variant (`PARAM CORANA 1`)
+
+Optional opt-in alternative to the classic Kirkpatrick variant
+(refs: Corana, Marchesi, Martini, Ridella, *ACM Trans. Math. Soft.*
+13:262, 1987; Brommer, Univ. Stuttgart, 2003). Different inner
+structure but same setup, T0 calibration, stops, and journal:
+
+- Perturbs **one dim at a time** (uniform `U(-1,1) * V[i]`) instead of
+  the whole vector together.
+- Maintains an **adaptive per-dim step vector** `V[i]` (initialised to
+  the same `STEP_FRAC * width` as classic σ).
+- Every `NS` step cycles, computes per-dim accept rates and adapts
+  `V[i]`: grows by `(1 + C·(r_i - 0.6)/0.4)` when `r_i > 0.6`,
+  shrinks by `1 / (1 + C·(0.4 - r_i)/0.4)` when `r_i < 0.4`.
+- Cools by `RT` after every `NT` step-adjust cycles. Per-rung host
+  evals = `NT · NS · D`, replacing classic's `L`.
+
+Why pick Corana over classic on continuous multimodal problems:
+classic's fixed σ proposes broad-search jumps even at very low T,
+which the cold Metropolis gate rejects en masse — the chain freezes.
+Corana's `V[i]` shrinks naturally as the chain settles, so cold-T
+proposals stay inside the basin and downhill steps still register.
+
+| PARAM | Default | Effect |
+|-------|---------|--------|
+| `CORANA` | `0` | Set to `1` to enable the adaptive variant. |
+| `NS` | `5` | Step cycles per step-adjust cycle. |
+| `NT` | `2` | Step-adjust cycles per T (cooling triggers every `NT`). |
+| `C` | `2.0` | Step-adjust gain — controls how fast V[i] reacts to accept-rate deviation from the [0.4, 0.6] deadband. |
+
+`L` is ignored when `CORANA 1` is set. The per-rung journal line
+includes `V=[V_min, V_max]` so users can watch how the step vector
+adapts. The Corana paper recommends `NS=20`, `NT=max(100, 5D)`, but
+those defaults assume cheap function evaluations — for LAMMPS-driven
+HPO with ~600 ms/eval, we ship lower defaults (`NS=5`, `NT=2`) that
+cover a useful T schedule within practical wall budgets.
+
 #### Journal output
 
 Per run, `ANNEAL` writes the following structured trace to

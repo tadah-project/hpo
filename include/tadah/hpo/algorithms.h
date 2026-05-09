@@ -151,6 +151,20 @@ template<typename Vec, typename HostT>
     const std::size_t t0_probes_req = static_cast<std::size_t>(pget("T0_PROBES", 20.0));
     const double      t0_paccept    = pget("T0_PACCEPT", 0.8);
 
+    /* Corana adaptive variant (Corana, Marchesi, Martini, Ridella, ACM
+     * Trans. Math. Soft. 13:262, 1987; Brommer, Univ. Stuttgart, 2003).
+     *
+     * Selected via `PARAM CORANA 1`. Fundamentally different from the
+     * classic Kirkpatrick variant: perturbs one dim at a time (so each
+     * step is per-dim, not whole-vector), and adapts a per-dim step
+     * vector `V[i]` based on the per-dim accept ratio over an `NS`-cycle
+     * window. Every `NT` step-adjust cycles, T cools by `RT`. Per-rung
+     * eval count is `NT * NS * D` host calls, replacing classic's `L`. */
+    const bool        use_corana    = pget("CORANA", 0.0) > 0.5;
+    const std::size_t corana_NS     = static_cast<std::size_t>(pget("NS", 5.0));
+    const std::size_t corana_NT     = static_cast<std::size_t>(pget("NT", 2.0));
+    const double      corana_c      = pget("C", 2.0);
+
     if (!(rt > 0.0 && rt < 1.0))
       throw std::runtime_error("ANNEAL: PARAM RT must be in (0,1) (got "
         + std::to_string(rt) + ")");
@@ -161,6 +175,14 @@ template<typename Vec, typename HostT>
         + std::to_string(t0_paccept) + ")");
     if (has_t_init && !(t_init_user > 0.0))
       throw std::runtime_error("ANNEAL: PARAM T_INIT must be > 0");
+    if (use_corana) {
+      if (corana_NS == 0)
+        throw std::runtime_error("ANNEAL: PARAM NS must be >= 1 (Corana variant)");
+      if (corana_NT == 0)
+        throw std::runtime_error("ANNEAL: PARAM NT must be >= 1 (Corana variant)");
+      if (!(corana_c > 0.0))
+        throw std::runtime_error("ANNEAL: PARAM C must be > 0 (Corana step-adjust gain)");
+    }
 
     /* per-dim sigma (transformed-space) */
     std::vector<double> sigma(dim);
@@ -224,13 +246,18 @@ template<typename Vec, typename HostT>
 
     /* Entry banner — uniform sigma override is reported as the actual
      * value used (was previously misreported as STEP_FRAC even when
-     * STEP overrode it). */
+     * STEP overrode it). When Corana is enabled, the banner shows
+     * NS/NT/C in place of L (which Corana doesn't use). */
     {
       std::ostringstream oss;
-      oss << "ANNEAL: seed=" << seed
-          << "  L=" << L
+      oss << "ANNEAL[" << (use_corana ? "CORANA" : "CLASSIC") << "]: "
+          << "seed=" << seed
           << "  RT=" << rt
           << "  T_MIN=" << t_min;
+      if (use_corana)
+        oss << "  NS=" << corana_NS << "  NT=" << corana_NT << "  C=" << corana_c;
+      else
+        oss << "  L=" << L;
       if (sp.step.has_value())
         oss << "  sigma=" << *sp.step << " (uniform; STEP override)";
       else
@@ -375,8 +402,147 @@ template<typename Vec, typename HostT>
         }
       }
 
-      /* --- annealing loop --- */
-      if (proceed) {
+      /* --- annealing loop --- *
+       *
+       * Two variants share the same setup, T0 calibration, seed eval,
+       * stop conditions, per-rung counter scheme, and final summary;
+       * they differ only in the inner per-rung structure:
+       *
+       * Classic (Kirkpatrick/Metropolis 1953/1983) — `L` Markov-chain
+       *   trials per T, each a whole-vector Gaussian step with fixed
+       *   per-dim sigma. Cools after every L trials.
+       *
+       * Corana (Corana et al. 1987) — `NT` step-adjust cycles per T,
+       *   each containing `NS` step cycles, each containing one
+       *   uniform perturbation per dim (so D evals per step cycle).
+       *   Per-dim step magnitude V[i] is adapted at the end of each
+       *   step-adjust cycle from the per-dim accept ratio: V[i] grows
+       *   when accept rate > 0.6, shrinks when < 0.4. Cools after
+       *   every NT step-adjust cycles. */
+      if (proceed && use_corana) {
+        double T = T0;
+        std::vector<double> V        = sigma;            // adaptive per-dim step
+        std::vector<std::size_t> nA(dim, 0);             // per-dim accept counter
+        std::uniform_real_distribution<double> u_pm(-1.0, 1.0);
+        std::uniform_real_distribution<double> udist(0.0, 1.0);
+
+        while (T >= t_min && budget_left() > 0 && !time_exceeded()) {
+          std::size_t r_proposed = 0, r_accepted = 0, r_oob = 0;
+          bool inner_break = false;
+
+          for (std::size_t nt = 0; nt < corana_NT && !inner_break; ++nt) {
+            std::fill(nA.begin(), nA.end(), 0);
+
+            for (std::size_t ns = 0; ns < corana_NS && !inner_break; ++ns) {
+              for (std::size_t i = 0; i < dim && !inner_break; ++i) {
+                if (budget_left() == 0) {
+                  stop_reason = StopReason::MaxEval; inner_break = true; break;
+                }
+                if (time_exceeded()) {
+                  stop_reason = StopReason::MaxTime; inner_break = true; break;
+                }
+
+                /* perturb dim i by U(-1,1) * V[i]; reflect into
+                 * [low_i, high_i] if needed. */
+                Vec x_prop = x;
+                double v = x(i) + u_pm(rng) * V[i];
+                const double lo = sp.low[i], hi = sp.high[i];
+                bool needed_reflect = false;
+                if (v < lo || v > hi) {
+                  needed_reflect = true;
+                  for (int it = 0; it < 16 && (v < lo || v > hi); ++it) {
+                    if      (v < lo) v = 2.0 * lo - v;
+                    else if (v > hi) v = 2.0 * hi - v;
+                  }
+                  if (v < lo || v > hi) v = std::min(hi, std::max(lo, v));
+                }
+                x_prop(i) = v;
+                if (needed_reflect) ++r_oob;
+
+                const double f_prop = host(sp.out(x_prop));
+                ++n_used; ++r_proposed;
+                const double df = f_prop - f_x;
+                const bool accept = (df <= 0.0) || (udist(rng) < std::exp(-df / T));
+                if (accept) {
+                  x   = x_prop;
+                  f_x = f_prop;
+                  ++r_accepted;
+                  ++nA[i];
+                  if (f_x < best_f) best_f = f_x;
+                }
+                if (f_x <= stopval) {
+                  stop_reason = StopReason::StopVal; inner_break = true; break;
+                }
+              }
+            }
+
+            /* Step-adjust: V[i] tracks the per-dim accept ratio over
+             * the just-completed NS cycles (each cycle perturbed dim i
+             * once → at most NS accepts). The 0.4–0.6 deadband is from
+             * the Corana paper; the gain `c` (default 2.0) controls how
+             * fast V[i] reacts. V[i] is clamped to (1e-12*width,
+             * width) to avoid runaway under degenerate conditions. */
+            for (std::size_t i = 0; i < dim; ++i) {
+              const double rate_i = static_cast<double>(nA[i]) /
+                                    static_cast<double>(corana_NS);
+              if (rate_i > 0.6) {
+                V[i] *= 1.0 + corana_c * (rate_i - 0.6) / 0.4;
+              } else if (rate_i < 0.4) {
+                V[i] /= 1.0 + corana_c * (0.4 - rate_i) / 0.4;
+              }
+              const double w = sp.high[i] - sp.low[i];
+              if (V[i] > w)            V[i] = w;
+              if (V[i] < 1e-12 * w)    V[i] = 1e-12 * w;
+            }
+          }
+
+          /* Per-rung summary line — same shape as classic, plus the
+           * V[] range so users can watch step adaptation. */
+          if (r_proposed > 0 || r_oob > 0) {
+            const double rate = r_proposed > 0
+                ? static_cast<double>(r_accepted) / static_cast<double>(r_proposed) : 0.0;
+            const std::size_t r_total = r_proposed + r_oob;
+            const double oob_pct = r_total > 0
+                ? 100.0 * static_cast<double>(r_oob) / static_cast<double>(r_total) : 0.0;
+            if (r_proposed > 0) {
+              any_rate = true;
+              if (rate < accept_rate_min) accept_rate_min = rate;
+              if (rate > accept_rate_max) accept_rate_max = rate;
+            }
+            const double V_min = *std::min_element(V.begin(), V.end());
+            const double V_max = *std::max_element(V.begin(), V.end());
+            std::ostringstream oss;
+            oss << std::scientific << std::setprecision(3)
+                << "ANNEAL[CORANA] rung k=" << rung_count
+                << "  T=" << T
+                << "  proposed=" << r_proposed
+                << "  accepted=" << r_accepted
+                << " (" << std::fixed << std::setprecision(1) << (rate * 100.0) << "%)"
+                << "  oob=" << r_oob
+                << " (" << oob_pct << "%)"
+                << std::scientific << std::setprecision(3)
+                << "  f_x=" << f_x
+                << "  best=" << best_f
+                << "  V=[" << V_min << ", " << V_max << "]";
+            HPOLog::instance().info(oss.str());
+          }
+          total_proposed += r_proposed;
+          total_accepted += r_accepted;
+          total_oob      += r_oob;
+          T_final         = T;
+          ++rung_count;
+
+          if (inner_break) break;
+
+          T *= rt;
+          if (T < t_min) { stop_reason = StopReason::TMin; break; }
+          if (budget_left() == 0) { stop_reason = StopReason::MaxEval; break; }
+          if (time_exceeded()) { stop_reason = StopReason::MaxTime; break; }
+        }
+      }
+
+      /* --- classic Kirkpatrick/Metropolis loop --- */
+      if (proceed && !use_corana) {
         double T = T0;
         std::normal_distribution<double>          ndist(0.0, 1.0);
         std::uniform_real_distribution<double>    udist(0.0, 1.0);

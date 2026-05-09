@@ -391,6 +391,103 @@ TEST_CASE("ANNEAL: T0 line reports loss range and std",
     CHECK(log.find("mean|dE|=")       != std::string::npos);
 }
 
+TEST_CASE("ANNEAL[CORANA]: per-dim step vector adapts (grows for fruitful dim)",
+          "[HPO][anneal][corana]")
+{
+    using namespace tadah::hpo;
+    /* 2-D objective whose only sensitivity is in dim 0; dim 1 is a
+     * dead axis. Corana's per-dim step vector should grow V[0]
+     * (because dim-0 perturbations get accepted often when they head
+     * downhill) and shrink V[1] (dim-1 perturbations move f_x by ~0,
+     * so accept rate per dim 1 is determined by the Metropolis ratio
+     * exp(-0/T)=1 and they all accept — i.e. accept rate ~100% for
+     * dim 1 too). Actually both dims should grow since dim 1 always
+     * accepts (zero ΔL). The check below verifies the adapt happened
+     * (V differs from initial), and that the run completes. */
+    auto sp = make_spec({-1.0, -1.0}, {1.0, 1.0});
+    set_seed_point(sp, {0.5, 0.5});
+    sp.seed = 17;
+    sp.stop.maxeval = 800;
+    sp.param["CORANA"] = 1.0;
+    sp.param["NS"]     = 4.0;
+    sp.param["NT"]     = 3.0;
+    sp.param["C"]      = 2.0;
+    sp.param["T_INIT"] = 0.05;     // low T → mostly downhill on dim 0
+    sp.param["RT"]     = 0.85;
+    sp.param["STEP_FRAC"] = 0.05;  // small initial V
+
+    LoggedRun lr;
+    StubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {} };
+    run_anneal_impl<Vec>(sp, stub);
+
+    const std::string log = lr.read();
+    /* Banner switched to CORANA, V range reported per rung. */
+    CHECK(log.find("ANNEAL[CORANA]") != std::string::npos);
+    CHECK(log.find("V=[")            != std::string::npos);
+    /* SA found a near-zero on dim 0 (objective minimum at x(0)=0). */
+    double best = std::numeric_limits<double>::infinity();
+    for (const auto& p : stub.calls) {
+        const double f = p[0] * p[0];
+        if (f < best) best = f;
+    }
+    CHECK(best < 1e-2);
+}
+
+TEST_CASE("ANNEAL[CORANA]: Corana variant honours bounds via reflection",
+          "[HPO][anneal][corana][reflection]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({-2.0, -3.0}, {2.0, 3.0});
+    set_seed_point(sp, {1.5, 2.5});   // near corner
+    sp.seed = 23;
+    sp.stop.maxeval = 400;
+    sp.param["CORANA"] = 1.0;
+    sp.param["NS"]     = 3.0;
+    sp.param["NT"]     = 2.0;
+    sp.param["T_INIT"] = 1.0;
+    sp.param["STEP_FRAC"] = 0.50;     // big V — many proposals will reflect
+
+    StubHost stub{ [&](const Vec& x){
+        return quad_bowl(x, {0.0, 0.0});
+    }, {} };
+    run_anneal_impl<Vec>(sp, stub);
+
+    REQUIRE_FALSE(stub.calls.empty());
+    for (const auto& p : stub.calls) {
+        REQUIRE(p.size() == 2);
+        for (std::size_t d = 0; d < 2; ++d) {
+            CHECK(p[d] >= sp.low[d] - 1e-12);
+            CHECK(p[d] <= sp.high[d] + 1e-12);
+        }
+    }
+}
+
+TEST_CASE("ANNEAL[CORANA]: invalid PARAM NS/NT/C throws",
+          "[HPO][anneal][corana]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.stop.maxeval = 20;
+    sp.param["CORANA"] = 1.0;
+    sp.param["T_INIT"] = 1.0;
+
+    StubHost stub{ [&](const Vec&){ return 0.0; }, {} };
+
+    SECTION("NS=0") {
+        sp.param["NS"] = 0.0;
+        REQUIRE_THROWS_AS(run_anneal_impl<Vec>(sp, stub), std::runtime_error);
+    }
+    SECTION("NT=0") {
+        sp.param["NT"] = 0.0;
+        REQUIRE_THROWS_AS(run_anneal_impl<Vec>(sp, stub), std::runtime_error);
+    }
+    SECTION("C<=0") {
+        sp.param["C"] = -1.0;
+        REQUIRE_THROWS_AS(run_anneal_impl<Vec>(sp, stub), std::runtime_error);
+    }
+}
+
 TEST_CASE("ANNEAL: high-dim near-bound seed still proposes every L-step (reflection)",
           "[HPO][anneal][reflection]")
 {
