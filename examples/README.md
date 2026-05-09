@@ -95,6 +95,7 @@ public chemical symbol.
 | 13 | `13_nlopt_crs_global` | `LIB NLOPT, ALGO GN_CRS2_LM` — pure stochastic global, no internal local refinement |
 | 14 | `14_nlopt_mlsl_lds` | `LIB NLOPT, ALGO G_MLSL_LDS` + `INNER { LIB NLOPT, ALGO LN_BOBYQA }` — MLSL global+local hybrid |
 | 15 | `15_basins_run_and_forget` | `STRATEGY { TYPE BASINS, EXPLORE { FTOL_LADDER, BUDGET_* }, REFINE { ... } }` |
+| 16 | `16_simulated_annealing` | `STRATEGY { TYPE PLAIN, LIB TADAH, ALGO ANNEAL, PARAM RT/L/STEP_FRAC/T0_PROBES/T0_PACCEPT }` — classic Kirkpatrick/Metropolis SA with auto-T0 calibration |
 
 ## Reading the diagnostics
 

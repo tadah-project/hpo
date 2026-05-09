@@ -1,0 +1,40 @@
+# Example 16 — TADAH:ANNEAL classic Simulated Annealing.
+#
+# Kirkpatrick/Metropolis SA (refs: Kirkpatrick 1983, Metropolis 1953):
+# fixed-shape Gaussian step in transformed parameter space, geometric
+# temperature schedule (T <- T * RT), Metropolis acceptance.
+#
+# Initial temperature is auto-calibrated from a small uniform-bounds
+# random walk (T0_PROBES probes, mean |Δf|, target acceptance
+# T0_PACCEPT). The seed point follows the probes as the SA chain's
+# starting state.
+#
+# Stops honoured: MAXEVAL (hard cap including probes), MAXTIME,
+# STOPVAL, plus the SA-specific T_MIN floor. FTOL_REL/FTOL_ABS are
+# not honoured by this driver.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB TADAH
+    ALGO ANNEAL
+    MAXEVAL 200
+    SEED 1234
+    PARAM RT          0.85    # geometric cooling factor in (0,1)
+    PARAM L           20      # Markov-chain length per temperature
+    PARAM STEP_FRAC   0.15    # sigma_i = STEP_FRAC * (high_i - low_i)
+    PARAM T0_PROBES   20
+    PARAM T0_PACCEPT  0.8
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+PC_LAMMPS --script ../common/lammps/Ecoh.in --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B (1) 4.0 6.0
+OPTIM SGRIDMB (1) 0.1 0.4
+
+OUTPUT 1
+BOUTPUT 1

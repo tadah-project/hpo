@@ -196,6 +196,7 @@ chain*. The chain is resolved into a list of starting points
 | `DLIB:BFGS` | First only (`optim_init.front()`). |
 | `NLOPT:*` (any algo) | First only. |
 | `TADAH:RANDOM`, `TADAH:GRID` | First only — evaluated as eval 0, then sweep. |
+| `TADAH:ANNEAL` | First only — used as the SA chain's starting state after T0 calibration. |
 
 `MULTISTART > 1` then runs the inner optimiser K independent times,
 each consuming one seed (per-start). For `DLIB:GFS` it collapses to a
@@ -260,6 +261,74 @@ See `examples/15_basins_run_and_forget/` for a worked config and the
 `MAXTIME` and `MAXEVAL` from the outer OPTIMIZER block remain valid
 overall budgets. `BASINS` ignores `STRATEGY { TYPE MULTISTART }`, `STRATEGY { TYPE PRESTAGE }`, and
 `RESTART` (it drives global+local internally).
+
+### `LIB TADAH ALGO ANNEAL` — classic Simulated Annealing
+
+In-tree Kirkpatrick/Metropolis SA driver (refs: Kirkpatrick et al.,
+*Science* 220, 1983; Metropolis et al., *J. Chem. Phys.* 21, 1953).
+Operates entirely in the post-`LOG_HP` transformed parameter space;
+the LAMMPS side always sees real-space values.
+
+Stops honoured: `MAXEVAL` (hard cap on host calls, **including** T0
+calibration probes), `MAXTIME`, `STOPVAL`, plus the SA-specific
+`PARAM T_MIN` floor. `FTOL_REL` / `FTOL_ABS` are **not** honoured by
+this driver (no NEPS history; planned for a follow-up). The init
+strategy chain's first point is the SA chain's starting state — only
+the first seed is consumed (later seeds are dropped, with the usual
+warning).
+
+| PARAM         | Default       | Effect |
+|---------------|---------------|--------|
+| `T_INIT`      | auto          | Initial temperature. When set, T0 calibration is skipped (no probes are spent). |
+| `T_MIN`       | `1e-12`       | Cooling floor; the loop stops when `T < T_MIN`. |
+| `RT`          | `0.85`        | Geometric cooling factor in `(0,1)`: `T <- T * RT`. |
+| `L`           | `50`          | Markov-chain length per temperature. |
+| `STEP_FRAC`   | `0.10`        | `sigma_i = STEP_FRAC * (high_i - low_i)` per dim. |
+| `T0_PROBES`   | `20`          | Random uniform-bounds probes used to calibrate T0. |
+| `T0_PACCEPT`  | `0.80`        | Target acceptance probability for T0: `T0 = -mean|dE| / ln(P)`. |
+
+Top-level `STEP <s>` overrides `STEP_FRAC`, applying `sigma_i = s` for
+all dims (uniform sigma). `SEED <int>` seeds the RNG.
+
+When the T0 calibration probes all return the same loss
+(`mean|dE| == 0`, e.g. saturated `FAILSCORE` everywhere), T0 falls
+back to `1.0` and a warning is logged — pick `PARAM T_INIT` or widen
+the bounds in that case.
+
+#### Journal output
+
+Per run, `ANNEAL` writes the following structured trace to
+`hpo_run.log` (timestamps elided):
+
+```
+ANNEAL: seed=1234  L=20  RT=0.85  T_MIN=1e-12  STEP_FRAC=0.15
+ANNEAL: T0=8.188e+00 from 20 probes,  mean|dE|=1.83e+00  loss range=[3.20e-02, 1.40e+01]  std=2.10e+00  target p_accept=8.000e-01
+ANNEAL rung k=0  T=8.188e+00  proposed=20  accepted=14 (70.0%)  oob=2 (9.1%)  f_x=2.31e-01  best=1.84e-01
+ANNEAL rung k=1  T=6.960e+00  proposed=20  accepted=11 (55.0%)  oob=0 (0.0%)  f_x=1.97e-01  best=1.84e-01
+...
+ANNEAL summary: rungs=12  proposed=240  accepted=98 (40.8%)  oob=4 (1.6%)  T0=8.188e+00  T_final=2.46e-01  best=8.71e-02
+ANNEAL accept-rate trajectory: min=20.0%  max=70.0%
+ANNEAL stopped: MAXEVAL exhausted after 260 host eval(s) (12 rung(s) completed)
+```
+
+Reading the trace:
+
+- **Accept rate stays ≈ 100% across all rungs** → `T_INIT` /
+  `T0_PACCEPT` too high; chain is doing a random walk. Lower
+  `PARAM T0_PACCEPT` (e.g. `0.5`) or set `PARAM T_INIT`.
+- **Accept rate collapses in 2–3 rungs** → `RT` too aggressive; use
+  `0.90`–`0.95`.
+- **`oob` fraction > 30%** → `STEP_FRAC` (or top-level `STEP`) too
+  large for the bounds; halve it.
+- **Best stagnates while accept rate is > 50%** → chain is escaping
+  basins but not converging; raise `PARAM L`.
+- **`ANNEAL stopped: MAXTIME exceeded` after only a few rungs** →
+  wall-clock cap killed SA before it could cool. Raise `MAXTIME`,
+  reduce `L`, or switch to `LIB NLOPT ALGO LN_BOBYQA` for faster
+  local refinement.
+
+The standard `BEST` events from `HPO_Host` interleave with the rung
+lines; best-tracking is identical to other drivers.
 
 ### Composition
 

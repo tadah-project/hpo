@@ -53,6 +53,8 @@ inline void run_inner(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host)
     run_random<Vec,Runner>(spec, host);
   } else if (spec.lib == "TADAH" && spec.algo == "GRID") {
     run_grid<Vec,Runner>(spec, host);
+  } else if (spec.lib == "TADAH" && spec.algo == "ANNEAL") {
+    run_anneal<Vec,Runner>(spec, host);
   } else if (spec.lib == "DLIB" && spec.algo == "GFS") {
     run_dlib_global<Vec,Runner>(spec, host);
   } else if (spec.lib == "DLIB" && spec.algo == "BFGS") {

@@ -5,7 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+- `LIB TADAH ALGO ANNEAL` — classic Kirkpatrick/Metropolis Simulated Annealing driver (refs: Kirkpatrick 1983; Metropolis 1953). Geometric cooling, fixed-shape Gaussian step in transformed-parameter space, Metropolis acceptance, auto-T0 calibration from a small uniform-bounds random walk (overridable via `PARAM T_INIT`). Tunable knobs: `T_MIN`, `RT`, `L`, `STEP_FRAC`, `T0_PROBES`, `T0_PACCEPT`. Honours `MAXEVAL`/`MAXTIME`/`STOPVAL`.
+- `ANNEAL` journal trace — `hpo_run.log` records: a banner echoing the resolved knobs (incl. `sigma=<s>` when `STEP` overrides `STEP_FRAC`), an extended T0 calibration line with `mean|dE|`, `loss range=[min, max]`, `std`, one summary line per cooling rung (`T`, `proposed`, `accepted` (%), `oob` (%), `f_x`, `best`), an end-of-run summary block with totals and accept-rate `min`/`max`, and a single explicit `ANNEAL stopped: <reason> after N host eval(s)` line. Lets users diagnose mistuned `T_INIT`/`RT`/`STEP_FRAC` from the journal alone.
 
 ## [1.3.0-beta.1] — TBD
 
