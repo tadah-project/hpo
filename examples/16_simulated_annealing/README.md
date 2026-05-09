@@ -90,3 +90,32 @@ SA shines on rough, multi-modal landscapes where pure local methods
 search (example 12) wastes evals far from good basins. The
 Metropolis acceptance gives the chain a probabilistic exit from
 local minima that a strict descent cannot escape.
+
+## Corana adaptive variant (`PARAM CORANA 1`)
+
+The classic variant in this example uses a **fixed** per-dim sigma
+throughout the run. On continuous multimodal problems with many
+dimensions, this freezes the chain at low T: σ doesn't shrink, so
+proposals keep being broad-search jumps that the cold Metropolis
+gate rejects en masse.
+
+Set `PARAM CORANA 1` in the `STRATEGY` block to switch to the
+**Corana adaptive variant** (Corana et al. 1987; Brommer 2003):
+
+- One dim perturbed at a time (uniform `U(-1,1) * V[i]`)
+- Per-dim step vector `V[i]` adapts every `NS` cycles based on the
+  per-dim accept ratio (grows when > 0.6, shrinks when < 0.4)
+- Cools after every `NT` step-adjust cycles
+
+Corana-only PARAMs (defaults shown):
+
+```
+PARAM CORANA 1            # 0=CLASSIC (default), 1=CORANA
+PARAM NS     5            # step cycles per step-adjust cycle
+PARAM NT     2            # step-adjust cycles per T (cool every NT)
+PARAM C      2.0          # step-adjust gain
+```
+
+Per-rung host evals = `NT * NS * D` (replaces classic's `L`). The
+banner switches to `ANNEAL[CORANA]` and per-rung lines gain a
+`V=[V_min, V_max]` field so you can watch step adaptation.
