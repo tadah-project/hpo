@@ -257,6 +257,14 @@ private:
     static std::atomic_size_t   iter_at_last_best_;
     static std::atomic_size_t   stagnation_threshold_;
 
+    /* Once-per-event gate for the StagnationStop diagnostic. With OMP /
+     * concurrent eval threads, every thread that finishes its LAMMPS
+     * work after the threshold is crossed but before the policy resets
+     * iter_at_last_best_ throws StagnationStop in turn. Set on the first
+     * throw within an event window, cleared by reset_stagnation() (which
+     * the surrounding policy calls when starting a new stage). */
+    static std::atomic_bool     stagnation_warned_;
+
     /* opportunistic single-writer --------------------------------------- */
     static Queue                                   g_q_;          // MPMC queue
     static std::atomic_flag                        writer_token_; // cleared = free

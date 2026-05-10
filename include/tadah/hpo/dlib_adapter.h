@@ -6,6 +6,7 @@
 #include <tadah/hpo/hpo_log.h>
 
 #include <algorithm>
+#include <atomic>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -214,11 +215,23 @@ template<class Vec,class Runner>
                                  std::forward<decltype(stop)>(stop),
                                  feval, grad, x, lo, hi);
       } catch (const detail::MaxEvalReached&) {
+        /* MAXEVAL is enforced externally because DLIB's stop strategies
+         * count iterations (not evals). Hitting it is a normal termination
+         * once BFGS has consumed its eval budget; the preamble explaining
+         * this design fires once per process so subsequent stage runs in
+         * BASINS don't repeat it. */
+        static std::atomic_flag preamble_emitted = ATOMIC_FLAG_INIT;
+        if (!preamble_emitted.test_and_set(std::memory_order_relaxed)) {
+            const std::string preamble =
+                "DLIB:BFGS — MAXEVAL is enforced externally by HPO "
+                "(DLIB stop strategies count iterations, not evals). "
+                "Subsequent MAXEVAL hits in this run will be summarised tersely.";
+            std::cout << "[HPO] " << preamble << "\n";
+            HPOLog::instance().info(preamble);
+        }
         std::ostringstream oss;
         oss << "DLIB:BFGS — MAXEVAL=" << maxeval
-            << " function eval(s) reached; preserving best-so-far. "
-               "(DLIB stop strategies count iterations, not evals; "
-               "HPO enforces MAXEVAL externally.)";
+            << " reached; preserving best-so-far";
         std::cout << "[HPO] " << oss.str() << "\n";
         HPOLog::instance().info(oss.str());
       }

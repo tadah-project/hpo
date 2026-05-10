@@ -10,6 +10,7 @@
 #include <tadah/core/signal_handler.h>
 #include <tadah/hpo/basins_policy.h>
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/optimizer_caps.h>
 
 #include <algorithm>
 #include <chrono>
@@ -137,16 +138,26 @@ BasinsPolicy<Vec, Runner>::build_stage_spec(
     s.param          = src.param;
 
     /* Per-stage stop criteria. Start from the stage's own stop, then
-     * override ftol_rel from the BASINS ladder and maxeval from the
-     * per-stage budget cap. Other criteria (xtol_*, stopval, maxtime)
-     * flow through from the stage block (or from outer_ if the stage
-     * didn't set them). */
+     * override the per-stage ftol from the BASINS ladder and maxeval
+     * from the per-stage budget cap. Other criteria (xtol_*, stopval,
+     * maxtime) flow through from the stage block (or from outer_ if
+     * the stage didn't set them).
+     *
+     * The ladder rung is written to whichever ftol field the backend
+     * actually honours — ftol_rel for NLopt, ftol_abs for DLIB:BFGS
+     * (which has no relative-objective stop and previously rejected
+     * the ladder rung as an unsupported FTOL_REL). The choice lives
+     * in OptimizerCaps so backends are swappable without policy edits. */
     if (src.stop.stopval)  s.stop.stopval  = src.stop.stopval;
+    if (src.stop.ftol_rel) s.stop.ftol_rel = src.stop.ftol_rel;
     if (src.stop.ftol_abs) s.stop.ftol_abs = src.stop.ftol_abs;
     if (src.stop.xtol_rel) s.stop.xtol_rel = src.stop.xtol_rel;
     if (src.stop.xtol_abs) s.stop.xtol_abs = src.stop.xtol_abs;
     if (src.stop.maxtime)  s.stop.maxtime  = src.stop.maxtime;
-    s.stop.ftol_rel = tol;
+    /* Clear any ladder-managed ftol the user previously set on src so
+     * that backends with FtolKind::None (e.g. TADAH:ANNEAL) don't
+     * inherit a stale rung from EXPLORE/REFINE block-level settings. */
+    apply_ladder_ftol(s, tol);
     s.stop.maxeval  = static_cast<uint64_t>(
         global ? spec_.explore_budget_max_evals
                : spec_.refine_budget_max_evals);
@@ -277,21 +288,27 @@ void BasinsPolicy<Vec, Runner>::run_global_stage(HPO_Host<Vec, Runner>& host)
     HPO_Host<Vec, Runner>::clear_topk();
     HPO_Host<Vec, Runner>::set_track_topk(topk);
 
-    /* Start a per-stage stagnation cap so the optimiser can be
-     * gracefully aborted if it stops finding new bests. We rely on
-     * HPO_Host::StagnationStop (already plumbed end-to-end). */
+    /* Per-stage stagnation cap: short-circuit the optimiser if no new
+     * best is found within max(BUDGET_MIN_EVALS, BUDGET_MAX_EVALS *
+     * BUDGET_RATE_FACTOR) evals. The user controls all three. */
     HPO_Host<Vec, Runner>::reset_stagnation();
     HPO_Host<Vec, Runner>::set_stagnation_threshold(
-            std::max<std::size_t>(spec_.explore_budget_min_evals,
-                                  spec_.explore_budget_max_evals / 4));
+            std::max<std::size_t>(
+                spec_.explore_budget_min_evals,
+                static_cast<std::size_t>(spec_.explore_budget_max_evals
+                                         * spec_.explore_budget_rate_factor)));
 
     auto sub = build_stage_spec(/*global=*/true, tol, std::move(seeds));
 
     {
+        /* "ftol" not "ftol_rel": apply_ladder_ftol writes the rung to
+         * whichever ftol field the backend honours (ftol_rel for NLopt,
+         * ftol_abs for DLIB:BFGS), so the literal field name depends
+         * on the backend. */
         std::ostringstream os;
         os << "BASINS round=" << round_ << " EXPLORE begin: "
            << sub.lib << ":" << sub.algo
-           << "  ftol_rel=" << std::scientific << std::setprecision(3) << tol
+           << "  ftol=" << std::scientific << std::setprecision(3) << tol
            << "  maxeval=" << spec_.explore_budget_max_evals;
         HPOLog::instance().info(os.str());
     }
@@ -346,7 +363,7 @@ void BasinsPolicy<Vec, Runner>::run_local_stage(HPO_Host<Vec, Runner>& host,
     {
         std::ostringstream os;
         os << "BASINS round=" << round_ << " LOCAL step=" << loc_step
-           << " ftol_rel=" << std::scientific << std::setprecision(3) << tol
+           << " ftol=" << std::scientific << std::setprecision(3) << tol
            << "  basins=" << due.size() << "/" << pool_.size();
         HPOLog::instance().info(os.str());
     }
@@ -382,10 +399,15 @@ void BasinsPolicy<Vec, Runner>::run_local_stage(HPO_Host<Vec, Runner>& host,
             const auto basin_snapshot = pool_.heads_view()[bi];
             std::vector<std::vector<double>> seeds = { basin_snapshot.params };
 
+            /* Per-basin stagnation cap (REFINE): max(BUDGET_MIN_EVALS,
+             * BUDGET_MAX_EVALS * BUDGET_RATE_FACTOR), same shape as
+             * EXPLORE. */
             HPO_Host<Vec, Runner>::reset_stagnation();
             HPO_Host<Vec, Runner>::set_stagnation_threshold(
-                    std::max<std::size_t>(spec_.refine_budget_min_evals,
-                                          spec_.refine_budget_max_evals / 8));
+                    std::max<std::size_t>(
+                        spec_.refine_budget_min_evals,
+                        static_cast<std::size_t>(spec_.refine_budget_max_evals
+                                                 * spec_.refine_budget_rate_factor)));
 
             HPO_Host<Vec, Runner>::clear_topk();
             HPO_Host<Vec, Runner>::set_track_topk(1);
