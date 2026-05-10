@@ -166,12 +166,19 @@ int hpo_run(core::Context& ctx)
      * before any further evals happen. */
     auto& cpm = core::CheckpointManager::instance();
     bool resumed = false;
-    if (sp.strategy_type == StrategyType::BASINS) {
+    if (sp.strategy_type == StrategyType::BASINS ||
+        sp.strategy_type == StrategyType::BASINSV2) {
         cpm.set_path("checkpoint.tadah");
-        if (sp.basins.checkpoint_seconds > 0.0)
-            cpm.set_period_seconds(sp.basins.checkpoint_seconds);
-        if (sp.basins.checkpoint_evals > 0)
-            cpm.set_period_evals(sp.basins.checkpoint_evals);
+        const double cp_secs = (sp.strategy_type == StrategyType::BASINS)
+            ? sp.basins.checkpoint_seconds
+            : sp.basins_v2.checkpoint_seconds;
+        const std::size_t cp_evs = (sp.strategy_type == StrategyType::BASINS)
+            ? sp.basins.checkpoint_evals
+            : sp.basins_v2.checkpoint_evals;
+        if (cp_secs > 0.0)
+            cpm.set_period_seconds(cp_secs);
+        if (cp_evs > 0)
+            cpm.set_period_evals(cp_evs);
         /* HPOLog persists journal counters so eval numbering and
          * best-so-far stay coherent across the resume boundary. */
         cpm.register_(&log);
@@ -183,7 +190,9 @@ int hpo_run(core::Context& ctx)
         cpm.register_(&host);
         resumed = cpm.try_load();
         if (resumed) {
-            log.info("BASINS: resumed from checkpoint " + cpm.path() +
+            const std::string strat_name = (sp.strategy_type == StrategyType::BASINSV2)
+                ? "BASINSv2" : "BASINS";
+            log.info(strat_name + ": resumed from checkpoint " + cpm.path() +
                      " (n_eval=" + std::to_string(log.n_eval()) +
                      ", best_loss=" +
                      std::to_string(log.best_loss()) + ")");
@@ -269,15 +278,21 @@ int hpo_run(core::Context& ctx)
             if (auto* bp = dynamic_cast<BasinsPolicy<V,R>*>(policy.get())) {
                 bp->set_noise_floor(suggested_ftol);
             }
+            if (auto* bp2 = dynamic_cast<BasinsV2Policy<V,R>*>(policy.get())) {
+                bp2->set_noise_floor(suggested_ftol);
+            }
         }
     } else if (resumed) {
         /* C3 resume path: NOISE_CALIBRATION did not re-run (gated on
          * !resumed), but the prior run's suggested_ftol was persisted in
-         * the [HPOLOG] section. Re-plumb it into BasinsPolicy so the
-         * (opt-in) clamp keeps applying across resumes. */
+         * the [HPOLOG] section. Re-plumb it into BasinsPolicy / BasinsV2Policy
+         * so the (opt-in) clamp keeps applying across resumes. */
         if (auto suggested = log.noise_suggested_ftol()) {
             if (auto* bp = dynamic_cast<BasinsPolicy<V,R>*>(policy.get())) {
                 bp->set_noise_floor(*suggested);
+            }
+            if (auto* bp2 = dynamic_cast<BasinsV2Policy<V,R>*>(policy.get())) {
+                bp2->set_noise_floor(*suggested);
             }
         }
     }

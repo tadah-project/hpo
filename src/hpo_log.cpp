@@ -227,6 +227,7 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         switch (t) {
             case StrategyType::PLAIN:      return "PLAIN";
             case StrategyType::BASINS:     return "BASINS";
+            case StrategyType::BASINSV2:   return "BASINSV2";
             case StrategyType::MULTISTART: return "MULTISTART";
             case StrategyType::PRESTAGE:   return "PRESTAGE";
         }
@@ -240,6 +241,13 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         if (sp.basins.refine)
             kv("REFINE library / algo",
                sp.basins.refine->lib + " / " + sp.basins.refine->algo);
+    } else if (sp.strategy_type == StrategyType::BASINSV2) {
+        if (sp.basins_v2.explore)
+            kv("EXPLORE library / algo",
+               sp.basins_v2.explore->lib + " / " + sp.basins_v2.explore->algo);
+        if (sp.basins_v2.refine)
+            kv("REFINE library / algo",
+               sp.basins_v2.refine->lib + " / " + sp.basins_v2.refine->algo);
     } else {
         kv("Library / algo", sp.lib + " / " + sp.algo);
     }
@@ -256,6 +264,13 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         if (sp.basins.refine && sp.basins.refine->inner)
             kv("REFINE inner",
                sp.basins.refine->inner->lib + " / " + sp.basins.refine->inner->algo);
+    } else if (sp.strategy_type == StrategyType::BASINSV2) {
+        if (sp.basins_v2.explore && sp.basins_v2.explore->inner)
+            kv("EXPLORE inner",
+               sp.basins_v2.explore->inner->lib + " / " + sp.basins_v2.explore->inner->algo);
+        if (sp.basins_v2.refine && sp.basins_v2.refine->inner)
+            kv("REFINE inner",
+               sp.basins_v2.refine->inner->lib + " / " + sp.basins_v2.refine->inner->algo);
     }
 
     auto write_stop_criteria = [&](const StopCriteria& s, const char* indent) {
@@ -420,9 +435,10 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         const auto& ns = sp.noise;
         const bool has_prestage = (sp.strategy_type == StrategyType::PRESTAGE && sp.prestage);
         const bool is_basins    = (sp.strategy_type == StrategyType::BASINS);
+        const bool is_basins_v2 = (sp.strategy_type == StrategyType::BASINSV2);
         const bool is_multistart= (sp.strategy_type == StrategyType::MULTISTART && ms.n_starts > 1);
         const bool any_extra =
-            is_multistart || has_prestage || is_basins ||
+            is_multistart || has_prestage || is_basins || is_basins_v2 ||
             (rs.after_stagnation > 0 && rs.max > 0) ||
             ns.autodetect || (ns.calibration_n >= 2);
         f_ << "  Run policy:\n";
@@ -461,6 +477,31 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
                     f_ << "      [" << (i+1) << "] " << s << "\n";
                 }
             }
+        }
+        if (is_basins_v2) {
+            const auto& bv = sp.basins_v2;
+            f_ << "    BASINSV2          : pool_max=" << bv.basin_pool_max
+               << " dedup=" << bv.basin_dedup_dist
+               << " merge_dist=" << bv.basin_merge_dist
+               << " archive_max=" << bv.archive_max << "\n";
+            f_ << "    Cadences          : merge=" << bv.merge_cadence
+               << " verify=" << bv.verify_cadence
+               << " explore_kick=" << bv.explore_kick_cadence
+               << " summary=" << bv.summary_cadence << "\n";
+            f_ << "    Verify            : max_attempts=" << bv.verify_max_attempts
+               << " evals_cap=" << (bv.verify_evals_cap == 0 ? "auto" : std::to_string(bv.verify_evals_cap)) << "\n";
+            f_ << "    Plateau           : eps_factor=" << bv.plateau_eps_factor << "\n";
+            f_ << "    Stop              : no_improve_iterations=" << bv.stop_no_improve_iterations
+               << " starvation_cap=" << bv.starvation_cap << "\n";
+            f_ << "    Path              : max_points=" << bv.path_max_points
+               << " loss_eps=" << bv.path_loss_eps
+               << " dist_eps=" << bv.path_dist_eps << "\n";
+            f_ << "    Priority weights  : improve=" << bv.w_improve
+               << " neglect=" << bv.w_neglect
+               << " distance=" << bv.w_distance
+               << " tol_gap=" << bv.w_tol_gap
+               << " state=" << bv.w_state
+               << " age=" << bv.w_age << "\n";
         }
         if (ns.autodetect) f_ << "    NOISE.AUTO        : true\n";
         if (ns.calibration_n >= 2)

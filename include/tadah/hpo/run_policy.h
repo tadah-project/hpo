@@ -24,6 +24,7 @@
  * comments at the top of run_policy_base.h for the full rationale. */
 #include <tadah/hpo/run_policy_base.h>
 #include <tadah/hpo/init_strategy.h>
+#include <tadah/hpo/optimizer_caps.h>
 
 namespace tadah::hpo {
 
@@ -74,13 +75,24 @@ public:
       : k_(k), parallel_(parallel), budget_per_start_(budget_per_start) {}
 
   static void validate(const OptimizerSpec& spec) {
-    if (spec.lib == "NLOPT" && spec.algo.size() >= 2 &&
-        spec.algo[0] == 'G' && spec.algo[1] == 'N') {
+    /* Globals that consume exactly one starting point per run can't
+     * be multistarted in the conventional "K independent restarts"
+     * sense: each restart re-seeds a stochastic global from a fresh
+     * box-uniform draw, defeating the user-resolved INIT chain. The
+     * caps registry tells us which backends accept multiple seeds in
+     * a single run; if a global doesn't, refuse MULTISTART > 1.
+     * Compatible alternatives are enumerated from the live registry
+     * so the message stays accurate as backends are added/removed. */
+    const auto& caps = optimizer_caps(spec);
+    if (caps.is_global && !caps.accepts_multi_seed) {
+      auto compat = filter_optimizer_caps(
+          [](const OptimizerCaps& c) {
+            return !c.is_global || c.accepts_multi_seed;
+          });
       throw std::runtime_error(
-          "MULTISTART > 1 is incompatible with NLopt global derivative-free "
-          "algorithms (" + spec.algo + "). NLopt globals consume a single "
-          "starting point only; either pick a local algorithm (LD_*/LN_*) or "
-          "DLIB:GFS, or set MULTISTART 1.");
+          "MULTISTART > 1 is incompatible with " + spec.lib + ":" +
+          spec.algo + " (single-seed global). Compatible alternatives: " +
+          format_caps_list(compat) + ". Or set N_STARTS 1.");
     }
   }
 
@@ -93,13 +105,12 @@ public:
       return;
     }
 
-    /* For DLIB:GFS, hand all K points to find_min_global as initial
-     * function evaluations — single inner run. The adapter already
-     * iterates the optim_init vector (one entry today; K after this
-     * patch).  For other optimisers, run K times sequentially. */
-    const bool is_global_seed_consumer =
-        (spec.lib == "DLIB" && spec.algo == "GFS");
-    if (is_global_seed_consumer) {
+    /* Multi-seed-capable backends consume all K points as initial
+     * function evaluations in a single inner run; keyed by
+     * caps.accepts_multi_seed so future backends register the
+     * capability without touching this branch. For everything else,
+     * run the inner optimiser K times sequentially. */
+    if (optimizer_caps(spec).accepts_multi_seed) {
       run_inner<Vec,Runner>(spec, host);
       return;
     }
@@ -417,10 +428,11 @@ build_run_policy(const OptimizerSpec& spec, const HPOTargets* targets = nullptr)
 
 }  // namespace tadah::hpo
 
-/* BasinsPolicy is a forward-included template; deferring the
- * build_run_policy implementation past its include keeps the
- * include graph acyclic. */
+/* BasinsPolicy / BasinsV2Policy are forward-included templates; deferring the
+ * build_run_policy implementation past their includes keeps the include
+ * graph acyclic. */
 #include <tadah/hpo/basins_policy.h>
+#include <tadah/hpo/basins_v2_policy.h>
 
 namespace tadah::hpo {
 
@@ -434,6 +446,11 @@ build_run_policy(const OptimizerSpec& spec, const HPOTargets* targets)
     case StrategyType::BASINS:
       /* BASINS supersedes the decorator stack — RESTART is not applied. */
       return std::make_unique<BasinsPolicy<Vec,Runner>>(spec, targets);
+
+    case StrategyType::BASINSV2:
+      /* BASINSV2 also supersedes the decorator stack — its lifecycle
+       * subsumes RESTART semantics. */
+      return std::make_unique<BasinsV2Policy<Vec,Runner>>(spec, targets);
 
     case StrategyType::PRESTAGE:
       inner = std::make_unique<StagedPolicy<Vec,Runner>>(spec.stage_topk);

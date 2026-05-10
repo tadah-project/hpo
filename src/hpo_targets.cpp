@@ -1,6 +1,7 @@
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/init_strategy.h>
+#include <tadah/hpo/optimizer_caps.h>
 #include <tadah/models/descriptors/d_base.h>
 #include <tadah/models/descriptors/d_mjoin.h>
 #include <tadah/core/registry.h>
@@ -331,10 +332,22 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
    * post-transform space. The hand-set PARAM fd_step always wins so
    * users keep an escape hatch. */
   if (spec.noise.autodetect) {
-    if (spec.lib != "DLIB" || spec.algo != "BFGS") {
-      std::cerr << "[HPO] NOISE_AUTO is implemented for DLIB:BFGS only "
-                << "(current: " << spec.lib << ":" << spec.algo
-                << "); ignored\n";
+    /* fd_step is only consulted by gradient-based backends that take
+     * finite-difference derivatives (today: DLIB:BFGS via
+     * dlib::derivative). The caps registry flags those; for everything
+     * else the auto-derived fd_step would be a dead variable.
+     *
+     * BASINS leaves the OUTER lib/algo unset (the per-stage EXPLORE/
+     * REFINE specs drive the work), so a caps lookup here would throw.
+     * Treat unset OUTER as "not gradient-based" — NOISE_AUTO is a
+     * leaf-optimiser knob anyway and would have nothing to write into
+     * a stage sub-spec. */
+    const bool gradient_based = (spec.lib != "NOT SET") &&
+        optimizer_caps(spec).is_gradient_based;
+    if (!gradient_based) {
+      std::cerr << "[HPO] NOISE_AUTO derives PARAM fd_step for gradient-"
+                << "based optimisers only (current: " << spec.lib << ":"
+                << spec.algo << "); ignored\n";
     } else if (spec.param.count("fd_step")) {
       std::cerr << "[HPO] NOISE_AUTO: PARAM fd_step already set "
                    "explicitly; user value retained\n";
@@ -420,22 +433,36 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
 
   if (!spec.optim_init.empty()) {
     /* Warn when the resolved OUTER chain produced more points than
-     * the OUTER optimiser will actually consume. Only DLIB:GFS,
-     * MULTISTART >= 2, and the staged-global PRESTAGE block consume
-     * more than optim_init.front(); every other path drops the rest. */
-    const bool multi_seed_consumer =
-        (spec.lib == "DLIB" && spec.algo == "GFS") ||
+     * the OUTER optimiser will actually consume. Backends declare
+     * accepts_multi_seed=true in the caps registry when a single run
+     * ingests >1 seed; strategy decorators (MULTISTART/PRESTAGE/
+     * BASINS) consume the chain too. Every other path drops
+     * everything past optim_init.front().
+     *
+     * BASINS leaves OUTER lib/algo unset; the strategy_type check
+     * already short-circuits, but we order it first so the caps lookup
+     * is only attempted when the OUTER spec has a real (lib, algo). */
+    const bool strategy_consumes =
         (spec.strategy_type == StrategyType::MULTISTART && spec.multistart.n_starts >= 2) ||
         (spec.strategy_type == StrategyType::PRESTAGE && spec.prestage != nullptr) ||
         (spec.strategy_type == StrategyType::BASINS);
+    const bool backend_consumes =
+        (spec.lib != "NOT SET") && optimizer_caps(spec).accepts_multi_seed;
+    const bool multi_seed_consumer = strategy_consumes || backend_consumes;
     if (spec.optim_init.size() > 1 && !multi_seed_consumer) {
+      /* Surface compatible options from the live caps registry rather
+       * than hard-coding LIB:ALGO names — the registry is the single
+       * source of truth for who consumes >1 seed in one run. */
+      auto multi_seed = filter_optimizer_caps(
+          [](const OptimizerCaps& c) { return c.accepts_multi_seed; });
       std::cerr << "[HPO] WARNING: INIT_STRATEGY chain produced "
                 << spec.optim_init.size() << " seeds but " << spec.lib
                 << ":" << spec.algo << " consumes only the first; "
                 << (spec.optim_init.size() - 1)
                 << " seed(s) will be discarded. "
-                << "Set MULTISTART, add a PRESTAGE block, or use DLIB:GFS "
-                << "to use them.\n";
+                << "Set MULTISTART, add a PRESTAGE block, or pick a "
+                   "multi-seed backend (" << format_caps_list(multi_seed)
+                << ") to use them.\n";
     }
   }
 
@@ -525,19 +552,29 @@ static bool dispatch_opt_attr(const std::string& key,
 }
 
 /* Helper: parse one INIT-block key/value into an InitStrategySpec.
- * Returns true if consumed; false otherwise. */
+ * Returns true if consumed; false otherwise.
+ *
+ * METHOD is the canonical chain-entry keyword. STRATEGY is kept as a
+ * silent alias for older configs but is a poor fit syntactically: at
+ * the OPTIMIZER level STRATEGY/ENDSTRATEGY opens a block, so reusing
+ * it as a method-line key inside INIT (`STRATEGY RANDOM 1`) reads as
+ * if a nested block follows. New configs should write
+ *     INIT
+ *       METHOD RANDOM 1
+ *     ENDINIT
+ * which has no such collision. */
 static bool dispatch_init_attr(const std::string& key,
                                std::istringstream& iss,
                                InitStrategySpec& a)
 {
-    if (key=="STRATEGY") {
+    if (key=="METHOD" || key=="STRATEGY") {
         InitStrategySpec::Entry e;
         iss >> e.method;
         if (e.method.empty())
-            throw std::runtime_error("STRATEGY requires a method name");
+            throw std::runtime_error(key + " requires a method name");
         if (e.method == "NOISE_AUTO")
             throw std::runtime_error(
-                "INIT.STRATEGY NOISE_AUTO is not implemented "
+                "INIT." + key + " NOISE_AUTO is not implemented "
                 "(reserved keyword). Use RANDOM/LHS/SOBOL/PRIOR/WARM/CONFIG.");
         std::string tok;
         while (iss >> tok) e.args.push_back(tok);
@@ -643,12 +680,16 @@ void HPOTargets::read(const std::string& fn)
             case EXPLORE_BLK:
                 if (spec.strategy_type == StrategyType::BASINS)
                     active_opt = spec.basins.explore.get();
+                else if (spec.strategy_type == StrategyType::BASINSV2)
+                    active_opt = spec.basins_v2.explore.get();
                 else  /* PRESTAGE */
                     active_opt = spec.prestage.get();
                 break;
             case REFINE_BLK:
                 if (spec.strategy_type == StrategyType::BASINS)
                     active_opt = spec.basins.refine.get();
+                else if (spec.strategy_type == StrategyType::BASINSV2)
+                    active_opt = spec.basins_v2.refine.get();
                 else  /* PRESTAGE — REFINE is the OUTER spec */
                     active_opt = &spec;
                 break;
@@ -740,9 +781,13 @@ void HPOTargets::read(const std::string& fn)
             }
 
             if (key=="STRATEGY") {
-                /* Inside INIT/RESTART blocks, STRATEGY is a method-line key
-                 * (sets active_init->chain). Only at OUTER does it open
-                 * the STRATEGY block. Treat the dual meaning by context. */
+                /* STRATEGY has two roles:
+                 *   - Inside INIT/RESTART, it's a deprecated alias for
+                 *     METHOD that adds a chain entry. Kept silent so old
+                 *     configs keep parsing; new configs should use METHOD
+                 *     to avoid the keyword collision with the OUTER block.
+                 *   - At OUTER level, it opens the STRATEGY block.
+                 * Discriminate by context. */
                 if (block == INIT_BLK || block == RESTART_BLK) {
                     if (active_init && dispatch_init_attr(key, iss, *active_init))
                         continue;
@@ -766,9 +811,10 @@ void HPOTargets::read(const std::string& fn)
                 if (block != STRATEGY_BLK)
                     throw std::runtime_error("EXPLORE block must appear inside STRATEGY");
                 if (spec.strategy_type != StrategyType::BASINS &&
+                    spec.strategy_type != StrategyType::BASINSV2 &&
                     spec.strategy_type != StrategyType::PRESTAGE)
                     throw std::runtime_error(
-                        "EXPLORE block is only valid with TYPE BASINS or TYPE PRESTAGE "
+                        "EXPLORE block is only valid with TYPE BASINS, BASINSV2, or PRESTAGE "
                         "(declare TYPE before EXPLORE)");
                 if (spec.strategy_type == StrategyType::PRESTAGE) {
                     if (!spec.prestage)
@@ -790,9 +836,10 @@ void HPOTargets::read(const std::string& fn)
                 if (block != STRATEGY_BLK)
                     throw std::runtime_error("REFINE block must appear inside STRATEGY");
                 if (spec.strategy_type != StrategyType::BASINS &&
+                    spec.strategy_type != StrategyType::BASINSV2 &&
                     spec.strategy_type != StrategyType::PRESTAGE)
                     throw std::runtime_error(
-                        "REFINE block is only valid with TYPE BASINS or TYPE PRESTAGE "
+                        "REFINE block is only valid with TYPE BASINS, BASINSV2, or PRESTAGE "
                         "(declare TYPE before REFINE)");
                 block = REFINE_BLK;
                 refresh_active_opt();
@@ -911,16 +958,19 @@ void HPOTargets::read(const std::string& fn)
                     std::string t; iss>>t;
                     if      (t=="PLAIN")      spec.strategy_type = StrategyType::PLAIN;
                     else if (t=="BASINS")     spec.strategy_type = StrategyType::BASINS;
+                    else if (t=="BASINSV2")   spec.strategy_type = StrategyType::BASINSV2;
                     else if (t=="MULTISTART") spec.strategy_type = StrategyType::MULTISTART;
                     else if (t=="PRESTAGE")   spec.strategy_type = StrategyType::PRESTAGE;
-                    else throw std::runtime_error("STRATEGY TYPE must be PLAIN, BASINS, MULTISTART, or PRESTAGE (got '" + t + "')");
-                    /* For BASINS, allocate the EXPLORE/REFINE stage sub-specs
-                     * with NLopt defaults so a minimal `STRATEGY { TYPE BASINS }`
-                     * config is functional. (Not done in BasinsSpec's default
-                     * ctor to avoid recursive default-construction — see
-                     * optimizer_spec.h comment.) */
+                    else throw std::runtime_error("STRATEGY TYPE must be PLAIN, BASINS, BASINSV2, MULTISTART, or PRESTAGE (got '" + t + "')");
+                    /* For BASINS / BASINSV2, allocate the EXPLORE/REFINE stage
+                     * sub-specs with NLopt defaults so a minimal
+                     * `STRATEGY { TYPE ... }` config is functional. (Not
+                     * done in the spec's default ctor to avoid recursive
+                     * default-construction — see optimizer_spec.h comment.) */
                     if (spec.strategy_type == StrategyType::BASINS)
                         basins_spec_ensure_defaults(spec.basins);
+                    else if (spec.strategy_type == StrategyType::BASINSV2)
+                        basins_v2_spec_ensure_defaults(spec.basins_v2);
                     continue;
                 }
                 if (key=="LOG_HP") { double v; iss>>v; spec.log_threshold=v; continue; }
@@ -951,48 +1001,167 @@ void HPOTargets::read(const std::string& fn)
                     spec.stage_topk = v;
                     continue;
                 }
-                /* BASINS-wide knobs (TYPE BASINS). */
+                /* BASINS / BASINSV2 shared knobs. The destination depends
+                 * on STRATEGY TYPE (set above by the TYPE key).  */
+                const bool is_v1 = (spec.strategy_type == StrategyType::BASINS);
+                const bool is_v2 = (spec.strategy_type == StrategyType::BASINSV2);
+
                 if (key=="BASIN_POOL_MAX") {
                     std::size_t v; iss>>v;
                     if (v == 0) throw std::runtime_error("BASIN_POOL_MAX must be >= 1");
-                    spec.basins.basin_pool_max = v;
+                    if (is_v1)      spec.basins.basin_pool_max    = v;
+                    else if (is_v2) spec.basins_v2.basin_pool_max = v;
+                    else throw std::runtime_error("BASIN_POOL_MAX requires TYPE BASINS or BASINSV2");
                     continue;
                 }
                 if (key=="BASIN_DEDUP_DIST") {
                     double v; iss>>v;
                     if (v < 0.0) throw std::runtime_error("BASIN_DEDUP_DIST must be >= 0");
-                    spec.basins.basin_dedup_dist = v;
+                    if (is_v1)      spec.basins.basin_dedup_dist    = v;
+                    else if (is_v2) spec.basins_v2.basin_dedup_dist = v;
+                    else throw std::runtime_error("BASIN_DEDUP_DIST requires TYPE BASINS or BASINSV2");
                     continue;
                 }
                 if (key=="STOP_NO_IMPROVE_ROUNDS") {
                     std::size_t v; iss>>v;
+                    if (!is_v1) throw std::runtime_error("STOP_NO_IMPROVE_ROUNDS requires TYPE BASINS (use STOP_NO_IMPROVE_ITERATIONS for BASINSV2)");
                     spec.basins.stop_no_improve_rounds = v;
                     continue;
                 }
                 if (key=="SEED_TOP_N") {
                     std::size_t v; iss>>v;
                     if (v == 0) throw std::runtime_error("SEED_TOP_N must be >= 1");
+                    if (!is_v1) throw std::runtime_error("SEED_TOP_N requires TYPE BASINS (BASINSV2 uses Sobol+filtered EXPLORE seeding)");
                     spec.basins.seed_top_n = v;
                     continue;
                 }
                 if (key=="CLAMP_TO_NOISE_FLOOR") {
                     std::string v; iss>>v;
-                    spec.basins.clamp_to_noise_floor = parse_bool(v, "CLAMP_TO_NOISE_FLOOR");
+                    const bool b = parse_bool(v, "CLAMP_TO_NOISE_FLOOR");
+                    if (is_v1)      spec.basins.clamp_to_noise_floor    = b;
+                    else if (is_v2) spec.basins_v2.clamp_to_noise_floor = b;
+                    else throw std::runtime_error("CLAMP_TO_NOISE_FLOOR requires TYPE BASINS or BASINSV2");
                     continue;
                 }
                 if (key=="CHECKPOINT_EVERY") {
                     std::string tok; iss>>tok;
                     if (tok.empty())
                         throw std::runtime_error("CHECKPOINT_EVERY requires a value (e.g. \"60s\" or \"100\")");
+                    double secs = 0.0; std::size_t evs = 0;
                     if (tok.back() == 's' || tok.back() == 'S') {
-                        const double v = std::stod(tok.substr(0, tok.size()-1));
-                        if (v < 0.0) throw std::runtime_error("CHECKPOINT_EVERY seconds must be >= 0");
-                        spec.basins.checkpoint_seconds = v;
+                        secs = std::stod(tok.substr(0, tok.size()-1));
+                        if (secs < 0.0) throw std::runtime_error("CHECKPOINT_EVERY seconds must be >= 0");
                     } else {
-                        spec.basins.checkpoint_evals = std::stoul(tok);
+                        evs = std::stoul(tok);
+                    }
+                    if (is_v1) {
+                        spec.basins.checkpoint_seconds = secs;
+                        spec.basins.checkpoint_evals   = evs;
+                    } else if (is_v2) {
+                        spec.basins_v2.checkpoint_seconds = secs;
+                        spec.basins_v2.checkpoint_evals   = evs;
+                    } else {
+                        throw std::runtime_error("CHECKPOINT_EVERY requires TYPE BASINS or BASINSV2");
                     }
                     continue;
                 }
+
+                /* BASINSV2-only knobs. */
+                if (is_v2) {
+                    if (key=="BASIN_MERGE_DIST") {
+                        double v; iss>>v;
+                        if (v < 0.0) throw std::runtime_error("BASIN_MERGE_DIST must be >= 0");
+                        spec.basins_v2.basin_merge_dist = v; continue;
+                    }
+                    if (key=="BASIN_MERGE_LOSS_THRESHOLD") {
+                        double v; iss>>v;
+                        if (v < 0.0) throw std::runtime_error("BASIN_MERGE_LOSS_THRESHOLD must be >= 0");
+                        spec.basins_v2.basin_merge_loss_threshold = v; continue;
+                    }
+                    if (key=="ARCHIVE_MAX") {
+                        std::size_t v; iss>>v;
+                        spec.basins_v2.archive_max = v; continue;
+                    }
+                    if (key=="INACTIVE_AFTER_EVALS") {
+                        std::size_t v; iss>>v;
+                        spec.basins_v2.inactive_after_evals = v; continue;
+                    }
+                    if (key=="VERIFY_CADENCE") {
+                        std::size_t v; iss>>v;
+                        spec.basins_v2.verify_cadence = v; continue;
+                    }
+                    if (key=="VERIFY_MAX_ATTEMPTS") {
+                        std::size_t v; iss>>v;
+                        spec.basins_v2.verify_max_attempts = v; continue;
+                    }
+                    if (key=="VERIFY_EVALS_CAP") {
+                        std::size_t v; iss>>v;
+                        spec.basins_v2.verify_evals_cap = v; continue;
+                    }
+                    if (key=="MERGE_CADENCE") {
+                        std::size_t v; iss>>v;
+                        spec.basins_v2.merge_cadence = v; continue;
+                    }
+                    if (key=="EXPLORE_KICK_CADENCE") {
+                        std::size_t v; iss>>v;
+                        spec.basins_v2.explore_kick_cadence = v; continue;
+                    }
+                    if (key=="EXPLORE_DIST_FLOOR") {
+                        double v; iss>>v;
+                        if (v < 0.0) throw std::runtime_error("EXPLORE_DIST_FLOOR must be >= 0");
+                        spec.basins_v2.explore_dist_floor = v; continue;
+                    }
+                    if (key=="SUMMARY_CADENCE") {
+                        std::size_t v; iss>>v;
+                        spec.basins_v2.summary_cadence = v; continue;
+                    }
+                    if (key=="STARVATION_CAP") {
+                        std::size_t v; iss>>v;
+                        spec.basins_v2.starvation_cap = v; continue;
+                    }
+                    if (key=="STOP_NO_IMPROVE_ITERATIONS") {
+                        std::size_t v; iss>>v;
+                        spec.basins_v2.stop_no_improve_iterations = v; continue;
+                    }
+                    if (key=="PLATEAU_EPS_FACTOR") {
+                        double v; iss>>v;
+                        if (v <= 0.0) throw std::runtime_error("PLATEAU_EPS_FACTOR must be > 0");
+                        spec.basins_v2.plateau_eps_factor = v; continue;
+                    }
+                    if (key=="PATH_MAX_POINTS") {
+                        std::size_t v; iss>>v;
+                        spec.basins_v2.path_max_points = v; continue;
+                    }
+                    if (key=="PATH_LOSS_EPS") {
+                        double v; iss>>v;
+                        if (v < 0.0) throw std::runtime_error("PATH_LOSS_EPS must be >= 0");
+                        spec.basins_v2.path_loss_eps = v; continue;
+                    }
+                    if (key=="PATH_DIST_EPS") {
+                        double v; iss>>v;
+                        if (v < 0.0) throw std::runtime_error("PATH_DIST_EPS must be >= 0");
+                        spec.basins_v2.path_dist_eps = v; continue;
+                    }
+                    if (key=="PRIORITY_WEIGHTS") {
+                        /* Six floats: improve neglect distance tol_gap state age */
+                        double w_imp, w_neg, w_dist, w_tol, w_st, w_age;
+                        if (!(iss >> w_imp >> w_neg >> w_dist >> w_tol >> w_st >> w_age))
+                            throw std::runtime_error("PRIORITY_WEIGHTS expects 6 floats: improve neglect distance tol_gap state age");
+                        spec.basins_v2.w_improve  = w_imp;
+                        spec.basins_v2.w_neglect  = w_neg;
+                        spec.basins_v2.w_distance = w_dist;
+                        spec.basins_v2.w_tol_gap  = w_tol;
+                        spec.basins_v2.w_state    = w_st;
+                        spec.basins_v2.w_age      = w_age;
+                        continue;
+                    }
+                    if (key=="VERBOSE_DIAGNOSTICS") {
+                        std::string v; iss>>v;
+                        spec.basins_v2.verbose_diagnostics = parse_bool(v, "VERBOSE_DIAGNOSTICS");
+                        continue;
+                    }
+                }
+
                 throw std::runtime_error("unknown key '" + key + "' inside STRATEGY block");
             }
 
@@ -1001,43 +1170,65 @@ void HPOTargets::read(const std::string& fn)
              * stages so it doesn't need ladders/budgets. */
             if (block == EXPLORE_BLK || block == REFINE_BLK) {
                 const bool is_explore = (block == EXPLORE_BLK);
-                /* FTOL_LADDER and BUDGET_* only meaningful for BASINS. */
+                const bool is_v1 = (spec.strategy_type == StrategyType::BASINS);
+                const bool is_v2 = (spec.strategy_type == StrategyType::BASINSV2);
+                /* FTOL_LADDER and BUDGET_* meaningful for BASINS / BASINSV2. */
                 if (key=="FTOL_LADDER") {
-                    if (spec.strategy_type != StrategyType::BASINS)
-                        throw std::runtime_error("FTOL_LADDER only valid for TYPE BASINS");
+                    if (!is_v1 && !is_v2)
+                        throw std::runtime_error("FTOL_LADDER only valid for TYPE BASINS or BASINSV2");
                     std::vector<double> rungs; double v;
                     while (iss >> v) {
                         if (v <= 0.0) throw std::runtime_error("FTOL_LADDER entries must be positive");
                         rungs.push_back(v);
                     }
                     if (rungs.empty()) throw std::runtime_error("FTOL_LADDER requires at least one positive value");
-                    if (is_explore) spec.basins.explore_ftol_ladder = std::move(rungs);
-                    else            spec.basins.refine_ftol_ladder  = std::move(rungs);
+                    if (is_v1) {
+                        if (is_explore) spec.basins.explore_ftol_ladder = std::move(rungs);
+                        else            spec.basins.refine_ftol_ladder  = std::move(rungs);
+                    } else {
+                        if (is_explore) spec.basins_v2.explore_ftol_ladder = std::move(rungs);
+                        else            spec.basins_v2.refine_ftol_ladder  = std::move(rungs);
+                    }
                     continue;
                 }
                 if (key=="BUDGET_MAX_EVALS") {
-                    if (spec.strategy_type != StrategyType::BASINS)
-                        throw std::runtime_error("BUDGET_MAX_EVALS only valid for TYPE BASINS");
+                    if (!is_v1 && !is_v2)
+                        throw std::runtime_error("BUDGET_MAX_EVALS only valid for TYPE BASINS or BASINSV2");
                     std::size_t v; iss>>v;
-                    if (is_explore) spec.basins.explore_budget_max_evals = v;
-                    else            spec.basins.refine_budget_max_evals  = v;
+                    if (is_v1) {
+                        if (is_explore) spec.basins.explore_budget_max_evals = v;
+                        else            spec.basins.refine_budget_max_evals  = v;
+                    } else {
+                        if (is_explore) spec.basins_v2.explore_budget_max_evals = v;
+                        else            spec.basins_v2.refine_budget_max_evals  = v;
+                    }
                     continue;
                 }
                 if (key=="BUDGET_MIN_EVALS") {
-                    if (spec.strategy_type != StrategyType::BASINS)
-                        throw std::runtime_error("BUDGET_MIN_EVALS only valid for TYPE BASINS");
+                    if (!is_v1 && !is_v2)
+                        throw std::runtime_error("BUDGET_MIN_EVALS only valid for TYPE BASINS or BASINSV2");
                     std::size_t v; iss>>v;
-                    if (is_explore) spec.basins.explore_budget_min_evals = v;
-                    else            spec.basins.refine_budget_min_evals  = v;
+                    if (is_v1) {
+                        if (is_explore) spec.basins.explore_budget_min_evals = v;
+                        else            spec.basins.refine_budget_min_evals  = v;
+                    } else {
+                        if (is_explore) spec.basins_v2.explore_budget_min_evals = v;
+                        else            spec.basins_v2.refine_budget_min_evals  = v;
+                    }
                     continue;
                 }
                 if (key=="BUDGET_RATE_FACTOR") {
-                    if (spec.strategy_type != StrategyType::BASINS)
-                        throw std::runtime_error("BUDGET_RATE_FACTOR only valid for TYPE BASINS");
+                    if (!is_v1 && !is_v2)
+                        throw std::runtime_error("BUDGET_RATE_FACTOR only valid for TYPE BASINS or BASINSV2");
                     double v; iss>>v;
                     if (v < 0.0) throw std::runtime_error("BUDGET_RATE_FACTOR must be >= 0");
-                    if (is_explore) spec.basins.explore_budget_rate_factor = v;
-                    else            spec.basins.refine_budget_rate_factor  = v;
+                    if (is_v1) {
+                        if (is_explore) spec.basins.explore_budget_rate_factor = v;
+                        else            spec.basins.refine_budget_rate_factor  = v;
+                    } else {
+                        if (is_explore) spec.basins_v2.explore_budget_rate_factor = v;
+                        else            spec.basins_v2.refine_budget_rate_factor  = v;
+                    }
                     continue;
                 }
                 throw std::runtime_error("unknown key '" + key + "' inside "
@@ -1093,13 +1284,52 @@ void HPOTargets::read(const std::string& fn)
                 LS.emplace_back(cmd, MAX_TIME, FAIL_SCORE, globalLoss);
             }
 
-            /* per-metric weight lines ------------------------------ */
-            else if (key=="PC_EMAE")   { iss>>emae  >>w_emae ; use_emae  =true; }
-            else if (key=="PC_ERMSE")  { iss>>ermse >>w_ermse; use_ermse =true; }
-            else if (key=="PC_ErRMSE") { iss>>errmse>>w_errmse;use_errmse=true; }
-            else if (key=="PC_ERSQ")   { iss>>ersq  >>w_ersq ; use_ersq  =true; }
-            else if (key=="PC_SRMSE")  { iss>>srmse >>w_srmse;use_srmse =true; }
-            else if (key=="PC_FRMSE")  { iss>>frmse >>w_frmse;use_frmse =true; }
+            /* per-metric weight lines ------------------------------
+             *   PC_<METRIC>  <target>  <weight>  [--skip-above N] [--skip-rel R]
+             *
+             * --skip-above and --skip-rel attach a "bad-potential"
+             * pre-LAMMPS gate to the metric: if the eval's <metric>
+             * exceeds the cap, the LAMMPS phase is skipped and the
+             * iter is failscored. Replaces the legacy env vars
+             * TADAH_HPO_BAD_POT_ERMSE_MEV / _REL (which only ever
+             * gated on ERMSE; this is general). */
+            else if (key=="PC_EMAE"
+                  || key=="PC_ERMSE"
+                  || key=="PC_ErRMSE"
+                  || key=="PC_ERSQ"
+                  || key=="PC_SRMSE"
+                  || key=="PC_FRMSE")
+            {
+                double tgt, wgt;
+                iss >> tgt >> wgt;
+                if (!iss)
+                    throw std::runtime_error(key + " requires <target> <weight>");
+                /* Optional flags. Order is irrelevant; both are optional. */
+                HPOTargets::SkipCaps caps;
+                std::string flag;
+                while (iss >> flag) {
+                    if (flag == "--skip-above") {
+                        double v; iss >> v;
+                        if (!iss || !(v > 0.0))
+                            throw std::runtime_error(key + " --skip-above requires a positive number");
+                        caps.abs_above = v;
+                    } else if (flag == "--skip-rel") {
+                        double v; iss >> v;
+                        if (!iss || !(v > 0.0))
+                            throw std::runtime_error(key + " --skip-rel requires a positive number");
+                        caps.rel_above = v;
+                    } else {
+                        throw std::runtime_error(key + ": unknown flag '" + flag +
+                            "' (only --skip-above and --skip-rel are accepted)");
+                    }
+                }
+                if      (key=="PC_EMAE")   { emae=tgt;   w_emae=wgt;   use_emae=true;   skip_emae=caps; }
+                else if (key=="PC_ERMSE")  { ermse=tgt;  w_ermse=wgt;  use_ermse=true;  skip_ermse=caps; }
+                else if (key=="PC_ErRMSE") { errmse=tgt; w_errmse=wgt; use_errmse=true; skip_errmse=caps; }
+                else if (key=="PC_ERSQ")   { ersq=tgt;   w_ersq=wgt;   use_ersq=true;   skip_ersq=caps; }
+                else if (key=="PC_SRMSE")  { srmse=tgt;  w_srmse=wgt;  use_srmse=true;  skip_srmse=caps; }
+                else if (key=="PC_FRMSE")  { frmse=tgt;  w_frmse=wgt;  use_frmse=true;  skip_frmse=caps; }
+            }
             else
                 throw std::runtime_error("unknown key \""+key+"\"");
         }
