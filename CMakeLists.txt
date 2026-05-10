@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.24)   # OVERRIDE_FIND_PACKAGE for fetched Eigen3
 project(Tadah.HPO LANGUAGES CXX)
 
 option(TADAH_LAMMPS_DIR "Path to lammps root directory")
@@ -67,7 +67,8 @@ endif()
 project(Tadah.HPO VERSION ${TADAH_VERSION} LANGUAGES CXX)
 message(STATUS "Tadah.HPO version: ${TADAH_VERSION}")
 
-option(TADAH_ENABLE_ASAN "Enable AddressSanitizer (-fsanitize=address -fno-omit-frame-pointer)" OFF)
+option(TADAH_ENABLE_ASAN  "Enable AddressSanitizer (-fsanitize=address -fno-omit-frame-pointer)" OFF)
+option(TADAH_ENABLE_CERES "Enable Ceres Solver optimizer family (LBFGS/WOLFE/NLCG/STEEPEST_DESCENT)" ON)
 
 # (option) Developer builds -DTADAH_DEVELOP=ON
 tadah_use_local_module(Tadah.MLIP MLIP)          # FetchContent name + folder name
@@ -100,6 +101,52 @@ FetchContent_Declare(dlib
 )
 FetchContent_MakeAvailable(dlib)
 add_compile_definitions(TADAH_USE_DLIB)
+
+# ---------------------------------------------------------------------------
+# Ceres Solver — used by the CERES:LBFGS/WOLFE/NLCG/STEEPEST_DESCENT optimizer
+# family in HPO and by the unified GradientProvider (Ceres NumericDiff).
+# Block goes BEFORE nlopt so Ceres' fetched Eigen3 is in scope before nlopt's
+# own Eigen probe.
+# ---------------------------------------------------------------------------
+if(NOT TADAH_BUILD_DOCS_ONLY AND TADAH_ENABLE_CERES)
+  set(_tadah_saved_build_testing "${BUILD_TESTING}")
+  set(BUILD_TESTING            OFF CACHE BOOL "" FORCE)
+
+  message(STATUS "Fetching Eigen3 (Ceres dep)...")
+  set(EIGEN_BUILD_DOC          OFF CACHE BOOL "" FORCE)
+  set(EIGEN_BUILD_TESTING      OFF CACHE BOOL "" FORCE)
+  set(EIGEN_BUILD_PKGCONFIG    OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(Eigen3
+    GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+    GIT_TAG        3.4.0
+    GIT_SHALLOW    TRUE
+    OVERRIDE_FIND_PACKAGE
+  )
+  FetchContent_MakeAvailable(Eigen3)
+
+  message(STATUS "Fetching Ceres Solver...")
+  set(MINIGLOG                 ON  CACHE BOOL "" FORCE)
+  set(GFLAGS                   OFF CACHE BOOL "" FORCE)
+  set(SUITESPARSE              OFF CACHE BOOL "" FORCE)
+  set(EIGENSPARSE              OFF CACHE BOOL "" FORCE)
+  set(ACCELERATESPARSE         OFF CACHE BOOL "" FORCE)
+  set(LAPACK                   OFF CACHE BOOL "" FORCE)   # HPO links its own
+  set(USE_CUDA                 OFF CACHE BOOL "" FORCE)
+  set(BUILD_EXAMPLES           OFF CACHE BOOL "" FORCE)
+  set(BUILD_BENCHMARKS         OFF CACHE BOOL "" FORCE)
+  set(BUILD_DOCUMENTATION      OFF CACHE BOOL "" FORCE)
+  set(SCHUR_SPECIALIZATIONS    OFF CACHE BOOL "" FORCE)
+  set(PROVIDE_UNINSTALL_TARGET OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(ceres
+    GIT_REPOSITORY https://github.com/ceres-solver/ceres-solver.git
+    GIT_TAG        2.2.0
+    GIT_SHALLOW    TRUE
+  )
+  FetchContent_MakeAvailable(ceres)
+
+  set(BUILD_TESTING "${_tadah_saved_build_testing}" CACHE BOOL "" FORCE)
+  unset(_tadah_saved_build_testing)
+endif()
 
 FetchContent_Declare(
   nlopt
@@ -161,6 +208,26 @@ target_include_directories(tadah.hpo
 )
 target_link_libraries(tadah.hpo PUBLIC tadah::compile_options )
 target_link_libraries(tadah.hpo PRIVATE nlopt)
+
+if(TADAH_ENABLE_CERES)
+  # PUBLIC: gradient_provider.h is in tadah.hpo's public include, and
+  # downstream consumers (e.g. test_hpo, future drivers) need both the
+  # TADAH_USE_CERES define and the Ceres include directories to compile
+  # the templated factory's numerical branch.  When OFF, the header
+  # compiles to the autodiff-stub-only variant.
+  target_link_libraries     (tadah.hpo PUBLIC Ceres::ceres)
+  target_compile_definitions(tadah.hpo PUBLIC TADAH_USE_CERES)
+
+  # Mark Ceres' include dirs as SYSTEM so the inevitable miniglog CHECK
+  # macro redefinition (vs. Catch2 / downstream libraries) does not fire
+  # `-Werror`-promoted "macro redefined" diagnostics in consumer TUs.
+  # Apply to both the local target and as an INTERFACE on the imported
+  # Ceres target (so transitive consumers also see the dirs as -isystem).
+  get_target_property(_ceres_inc Ceres::ceres INTERFACE_INCLUDE_DIRECTORIES)
+  if(_ceres_inc)
+    target_include_directories(tadah.hpo SYSTEM PUBLIC ${_ceres_inc})
+  endif()
+endif()
 
 if(TADAH_ENABLE_ASAN)
   target_compile_options(tadah.hpo PUBLIC -fsanitize=address -fno-omit-frame-pointer -g)

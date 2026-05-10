@@ -1,12 +1,14 @@
 #pragma once
 #include <dlib/global_optimization.h>
 #include <dlib/optimization.h>
+#include <tadah/hpo/gradient_provider.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
 
 #include <algorithm>
 #include <atomic>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -196,18 +198,35 @@ template<class Vec,class Runner>
         ? static_cast<unsigned long>(*sp.stop.maxeval)
         : 0ul;
 
-    /* Wrap the objective so each call increments an external counter.
-     * When the user's MAXEVAL is reached, throw detail::MaxEvalReached;
-     * the catch site below treats it as graceful termination so the
-     * best-so-far tracked by HPO_Host is preserved. */
-    unsigned long evals_used = 0;
+    /* Wrap the objective so each call increments a shared atomic
+     * counter. The same counter is handed to the GradientProvider so
+     * that gradient-side evaluations also count toward MAXEVAL — without
+     * this, dlib::derivative used to count 2*D extra cost calls per
+     * iteration via the feval lambda; now Ceres' NumericDiff calls go
+     * through gp.gradient and bump the same counter. When the user's
+     * MAXEVAL is reached, throw detail::MaxEvalReached; the catch site
+     * below treats it as graceful termination so the best-so-far tracked
+     * by HPO_Host is preserved. */
+    std::atomic<unsigned long> evals_used{0};
     auto feval = [&, maxeval](const matrix<double,0,1>& xin)->double {
-      if (maxeval > 0 && evals_used >= maxeval) throw detail::MaxEvalReached{};
-      ++evals_used;
+      if (maxeval > 0 && evals_used.load() >= maxeval)
+          throw detail::MaxEvalReached{};
+      evals_used.fetch_add(1);
       return host( sp.out(xin) );
     };
-    const auto grad = derivative(feval,
-        detail::dlib_param(sp, "fd_step").value_or(1.0e-6));
+
+    /* Gradient via the unified provider. Default GRAD_STRATEGY is
+     * NUMERICAL — Ceres DynamicNumericDiffCostFunction with CENTRAL
+     * differences (PARAM diff_method 0|1|2 = CENTRAL/FORWARD/RIDDERS).
+     * AUTODIFF is reserved for a later phase. PARAM fd_step still works
+     * (forwarded to the provider as the relative step size). */
+    auto gp = make_gradient_provider<Vec, Runner>(sp, host, &evals_used, maxeval);
+    const auto grad = [&gp](const matrix<double,0,1>& x) {
+        matrix<double,0,1> g;
+        if (!gp.gradient(x, g))
+            throw detail::MaxEvalReached{};
+        return g;
+    };
 
     auto run_with_eval_cap = [&](auto&& search, auto&& stop) {
       try {

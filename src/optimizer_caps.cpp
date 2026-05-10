@@ -86,6 +86,32 @@ Registry build_registry()
         add(r, c);
     }
 
+    /* CERES — GradientProblemSolver family (LBFGS / WOLFE / NLCG /
+     * STEEPEST_DESCENT). All four are local, gradient-based, accept
+     * function/parameter tolerance (relative) and a gradient-norm
+     * tolerance via PARAM tol_gradinf. The Solver-family (LM, DOGLEG,
+     * SUBSPACE_DOGLEG) is intentionally NOT registered: those algorithms
+     * are degenerate over a scalar loss and require residual-mode loss
+     * exposure plus autodiff to be useful — deferred to a later phase.
+     * The dispatch in run_policy_base.h short-circuits those names with
+     * a tailored message before this caps lookup runs. */
+    {
+        const char* ceres_grad_algos[] = {
+            "LBFGS", "WOLFE", "NLCG", "STEEPEST_DESCENT"
+        };
+        for (const char* a : ceres_grad_algos) {
+            OptimizerCaps c;
+            c.lib                = "CERES";
+            c.algo               = a;
+            c.is_gradient_based  = true;
+            c.supports_maxeval   = true;
+            c.supports_ftol_rel  = true;
+            c.supports_xtol_rel  = true;
+            c.ladder_ftol        = OptimizerCaps::FtolKind::Rel;
+            add(r, c);
+        }
+    }
+
     /* NLopt — enumerate the catalogue. Every NLopt algorithm honours
      * the same StopCriteria via nlopt::opt::set_*; algorithm-class
      * flags are inferred from the canonical name prefix. */

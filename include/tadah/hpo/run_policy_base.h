@@ -27,6 +27,7 @@
 #include <string>
 
 #include <tadah/hpo/algorithms.h>
+#include <tadah/hpo/ceres_adapter.h>
 #include <tadah/hpo/dlib_adapter.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
@@ -52,6 +53,15 @@ namespace tadah::hpo {
 template<class Vec, class Runner>
 inline void run_inner(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host)
 {
+  /* Early-reject deferred CERES NLLS-family algos before the caps
+   * lookup so users see the tailored "use CERES:LBFGS" message rather
+   * than a generic "unknown optimizer" error. These algos are
+   * intentionally not registered in optimizer_caps because they are
+   * degenerate over a scalar HPO loss; making them useful requires
+   * residual-mode loss exposure (objective semantics change) and
+   * autodiff — both belong to a later phase. */
+  reject_deferred_ceres_nlls(spec);
+
   /* Caps lookup throws if (lib, algo) is not registered, giving a
    * single, uniform "unknown optimizer" error instead of a fall-through
    * at the end of the dispatch chain. */
@@ -76,6 +86,17 @@ inline void run_inner(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host)
     else throw std::runtime_error("unknown DLIB algo " + spec.algo);
   } else if (spec.lib == "NLOPT") {
     run_nlopt<Vec,Runner>(spec, host);
+  } else if (spec.lib == "CERES") {
+#ifndef TADAH_USE_CERES
+    throw std::runtime_error(
+        "CERES support is not built; reconfigure with -DTADAH_ENABLE_CERES=ON");
+#else
+    if      (spec.algo == "LBFGS")            run_ceres_lbfgs           <Vec,Runner>(spec, host);
+    else if (spec.algo == "WOLFE")            run_ceres_wolfe           <Vec,Runner>(spec, host);
+    else if (spec.algo == "NLCG")             run_ceres_nlcg            <Vec,Runner>(spec, host);
+    else if (spec.algo == "STEEPEST_DESCENT") run_ceres_steepest_descent<Vec,Runner>(spec, host);
+    else throw std::runtime_error("unknown CERES algo " + spec.algo);
+#endif
   } else {
     throw std::runtime_error("unknown optimizer LIB " + spec.lib);
   }

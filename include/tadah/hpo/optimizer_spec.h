@@ -21,6 +21,17 @@ struct StopCriteria {
     std::optional<uint64_t> maxeval;
 };
 
+/* GradStrategy — selector for the unified gradient provider used by
+ * gradient-based HPO optimizers (DLIB:BFGS, CERES:LBFGS/WOLFE/NLCG/
+ * STEEPEST_DESCENT, future NLOPT:LD_*). NUMERICAL is the working
+ * backend (Ceres DynamicNumericDiffCostFunction). AUTODIFF is reserved
+ * for a future phase that templates the train/predict pipeline through
+ * Context/MODELS; the stub throws at first call.
+ *
+ * Configured at OPTIMIZER block level via `GRAD_STRATEGY {NUMERICAL|
+ * AUTODIFF}`. Default (unset) = NUMERICAL. */
+enum class GradStrategy { Numerical, Autodiff };
+
 using ParamMap = std::unordered_map<std::string,double>;
 
 /* InitStrategySpec — parsed `INIT/ENDINIT` block.
@@ -267,7 +278,8 @@ struct OptimizerSpec {
           inner(o.inner ? std::make_unique<OptimizerSpec>(*o.inner) : nullptr),
           prestage(o.prestage ? std::make_unique<OptimizerSpec>(*o.prestage) : nullptr),
           vector_storage(o.vector_storage), pop(o.pop), seed(o.seed),
-          num_threads(o.num_threads), step(o.step), stop(o.stop),
+          num_threads(o.num_threads), step(o.step),
+          grad_strategy(o.grad_strategy), stop(o.stop),
           param(o.param), low(o.low), high(o.high), is_int(o.is_int),
           log_scaled(o.log_scaled), log_threshold(o.log_threshold),
           optim_init(o.optim_init),
@@ -312,6 +324,13 @@ struct OptimizerSpec {
     /* --------- algorithm-specific parameters ---------------------- */
     std::optional<unsigned> vector_storage, pop, seed, num_threads;
     std::optional<double> step;
+
+    /* Gradient backend used by gradient-based optimizers (DLIB:BFGS,
+     * CERES:LBFGS/...). std::nullopt means default (NUMERICAL). The
+     * field lives at OptimizerSpec scope (not PARAM) because it is
+     * shared across optimizer families. See GradStrategy doc above. */
+    std::optional<GradStrategy> grad_strategy;
+
     StopCriteria stop;
     ParamMap     param;             // algorithm-specific knobs
 

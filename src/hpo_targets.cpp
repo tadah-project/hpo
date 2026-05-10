@@ -546,6 +546,13 @@ static bool dispatch_opt_attr(const std::string& key,
     else if (key=="SEED")      { unsigned long v; iss>>v; a.seed=v; }
     else if (key=="VECTOR_ARR"){ unsigned v; iss>>v; a.vector_storage=v; }
     else if (key=="THREADS")   { unsigned v; iss>>v; a.num_threads=v; }
+    else if (key=="GRAD_STRATEGY") {
+        std::string v; iss>>v;
+        if      (v=="NUMERICAL") a.grad_strategy = GradStrategy::Numerical;
+        else if (v=="AUTODIFF")  a.grad_strategy = GradStrategy::Autodiff;
+        else throw std::runtime_error(
+            "GRAD_STRATEGY must be NUMERICAL or AUTODIFF (got '" + v + "')");
+    }
     else if (key=="PARAM")     { std::string p; double v; iss>>p>>v; a.param[p]=v; }
     else return false;
     return true;
