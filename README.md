@@ -94,51 +94,66 @@ constructs a fresh instance; subsequent evaluations reuse it. The
 script's own `clear` directive resets simulation state between runs,
 so existing scripts work unmodified.
 
-### Warm-start: `${hot_a0}`
+### Hot variables: `--hotvar`
 
 For LAMMPS scripts whose first action is a `box/relax` from a
 hard-coded lattice guess (typical for elastic constants, surface
-energies, …), HPO supports a warm-start protocol that avoids
-re-doing the expensive minimisation each evaluation:
+energies, …), HPO supports a two-phase eval that avoids redoing the
+expensive minimisation in every script:
 
-1. Replace the initial `lattice bcc 3.2` with `lattice bcc ${hot_a0}`.
-2. Add `variable a0 equal lx/<divisor>` (whatever divisor matches the
-   box size) right after the equilibrium minimisation.
+```
+PC_LAMMPS --script Ecoh_fast.in --hotvar hot_a0 2.5 4.0 3.302 \
+          --varloss Ecoh 8.10 1000
+PC_LAMMPS --script C11_fast.in  --varloss C11  263.92 0.2
+PC_LAMMPS --script surfaces_fast.in --invar surface 100 \
+          --varloss g_su_100 2.7209 800
+```
 
-HPO then automatically:
+`--hotvar <name> <min> <max> [<initial>]` declares a script as **hot**:
 
-- Injects `${hot_a0}` as a string-style LAMMPS variable on every call
-  (default 3.2 Å on the first call).
-- After each successful run, captures the script's `${a0}` and stores
-  it in a per-script cache keyed on the script path.
-- Passes the cached value back as `${hot_a0}` for the next evaluation.
+- HPO injects `variable <name> string <cached-or-initial>` before each
+  call. On iter 1 the value is `<initial>` (or the midpoint of
+  `[min, max]` if omitted); subsequent iters reuse the previously
+  converged value of the same script (cache lives in
+  `warmstart_cache.h`).
+- The script must redefine `<name>` as an equal-style variable
+  (typically `variable <name> delete` then
+  `variable <name> equal v_lx/<divisor>`) so HPO can read it back.
+- HPO validates the value against `[min, max]`. An out-of-range hot
+  value is treated as the unphysical-potential signal: the iter is
+  fail-scored and **all cold scripts are skipped**.
+- All in-range hot values are then propagated as `${<name>}` strings
+  to every cold (no-`--hotvar`) PC_LAMMPS script in the same iter.
 
-Tunable env vars:
+Multiple hot scripts are allowed; they run in parallel (OpenMP) in
+**phase A** with no cross-references between them. Cold scripts run
+in **phase B** after every hot script finishes.
 
-- `TADAH_HPO_HOT_A0_DEFAULT` — initial guess used when the cache is
-  empty (default `3.2`).
-- `TADAH_HPO_A0_MIN`, `TADAH_HPO_A0_MAX` — physical range for the
-  captured `a0`. A relaxed value outside this range is treated as a
-  sign of an unphysical potential (the script's outputs are clamped
-  to its `--failscore` and the cache is *not* updated). Defaults
-  `1.0` / `10.0`. System-specific tightening (e.g. `2.5/4.5` for Ta)
-  is an effective extra filter against runaway exploration.
+Per-(script, hot-var) values are persisted to `best_pot.tadah` as
+`# HOT <script> <name> <value>` lines so a `WARM` restart picks up
+exactly where the previous run's best converged. The legacy
+`# HOT_A0 <script> <a0>` format still parses, mapped to
+`(script, "hot_a0")`.
 
 ### Bad-potential early-exit
 
-Two cheap pre/post checks let HPO skip the (expensive) LAMMPS stage
-when training has produced an unphysical potential:
+Each `PC_<METRIC>` line accepts optional `--skip-above <cap>` /
+`--skip-rel <ratio>` flags that gate the LAMMPS phase on the
+corresponding validation metric:
 
-- **Pre-LAMMPS — validation ERMSE cap.** If validation energy-RMSE
-  exceeds an absolute or relative threshold, LAMMPS is skipped and
-  the eval reports `FAIL_SCORE`. Tunable env vars:
-  - `TADAH_HPO_BAD_POT_ERMSE_MEV` — absolute cap in meV/atom
-    (default `200`; lenient).
-  - `TADAH_HPO_BAD_POT_ERMSE_REL` — multiplier vs the running best
-    ERMSE; eval is skipped when current > REL × best (default `0` =
-    disabled).
-- **Post-LAMMPS — `a0` range filter.** As described in the
-  warm-start section.
+```
+PC_ERMSE 0 0.003 --skip-above 2000          # skip if ERMSE > 2000 meV/at
+PC_FRMSE 0 0.5   --skip-rel 5               # skip if FRMSE > 5 × best_seen
+```
+
+When any cap fires the LAMMPS phase is skipped entirely and the iter
+is fail-scored. `--skip-rel` only triggers once a finite running best
+for that metric has been observed.
+
+These flags replace the legacy env vars (`TADAH_HPO_HOT_A0_DEFAULT`,
+`TADAH_HPO_A0_MIN`/`MAX`, `TADAH_HPO_BAD_POT_ERMSE_MEV`/`_REL`),
+which were ERMSE-only and lattice-only. The new scheme is per-metric
+and per-hot-variable, declared once in `config.hpo`.
 
 ### Profiling harness
 
@@ -396,7 +411,7 @@ Each policy emits a one-line stdout marker when it fires:
 | `[HPO] PRIOR: N parameter(s) seeded from descriptor priors` | PRIOR success. |
 | `[HPO] PRIOR: N parameter(s) used bounds-midpoint fallback` | Some descriptors had no prior. |
 | `[HPO] WARM: loaded N parameter(s) from <file>` | WARM read all keys. |
-| `[HPO] WARM: primed warmstart cache with N HOT_A0 entry(ies)` | HOT_A0 lines parsed. |
+| `[HPO] WARM: primed warmstart cache with N HOT entry(ies)` | `# HOT <script> <name> <value>` (or legacy `# HOT_A0`) lines parsed. |
 | `[HPO] WARM: clamped dim[d] from X to Y (bounds […])` | Warm point fell outside narrowed bounds. |
 | `[HPO] DLIB:GFS seeding with N starting points` | Multi-seed forwarding. |
 | `[HPO] MULTISTART: running K starts (parallel=N)` | Multistart fires. |

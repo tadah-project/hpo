@@ -29,8 +29,9 @@ rm -f best_*.tadah loss.tadah outvar.tadah params.tadah stats.tadah \
 rm -rf newBestPotsDir
 
 echo "[run.sh] running $(basename "$EXAMPLE_DIR") (OMP_NUM_THREADS=$T)"
-TADAH_HPO_HOT_A0_DEFAULT=${TADAH_HPO_HOT_A0_DEFAULT:-3.3} \
-TADAH_HPO_BAD_POT_ERMSE_MEV=${TADAH_HPO_BAD_POT_ERMSE_MEV:-800} \
+# Hot-var ranges and bad-pot caps live in the example's config.hpo as
+# PC_LAMMPS --hotvar / PC_<METRIC> --skip-above / --skip-rel flags.
+# The legacy TADAH_HPO_* env vars are no longer consulted.
 OMP_NUM_THREADS=$T \
 "$TADAH" hpo \
   --hpotarget config.hpo \

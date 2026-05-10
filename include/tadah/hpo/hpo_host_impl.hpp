@@ -174,31 +174,36 @@ struct Scope {
 
 /* ----------  bad-potential early-exit heuristic ----------------------
  * Skip the (expensive) LAMMPS stage when validation metrics show the
- * trained potential is unphysical. Two configurable knobs:
- *   TADAH_HPO_BAD_POT_ERMSE_MEV   absolute energy-RMSE cap (default 200)
- *   TADAH_HPO_BAD_POT_ERMSE_REL   relative cap vs best seen so far
- *                                 (default 0 = disabled). If best seen
- *                                 is finite, current eval is rejected when
- *                                 ermse > REL * best_seen_ermse.
- * Either trigger sets the eval's loss to FAIL_SCORE and bypasses LAMMPS. */
+ * trained potential is unphysical. Per-metric thresholds are declared
+ * in config.hpo on the PC_* line:
+ *
+ *   PC_ERMSE  <target> <weight>  --skip-above 200      # meV/atom
+ *   PC_FRMSE  <target> <weight>  --skip-above 0.5  --skip-rel 5
+ *
+ * --skip-above:  skip when |metric| > cap (cap is in the metric's units).
+ * --skip-rel:    skip when metric > rel * best_seen_so_far for that metric.
+ *
+ * Either trigger sets the eval's loss to FAIL_SCORE and bypasses LAMMPS.
+ * The running-best tracker is per-metric; we keep them as static atomics
+ * because the trigger is a thread-shared pre-LAMMPS gate, not a per-host
+ * field. */
 namespace bad_pot_detail {
-  inline double abs_threshold_mev() {
-    static const double v = []{
-      const char* s = std::getenv("TADAH_HPO_BAD_POT_ERMSE_MEV");
-      return s && *s ? std::atof(s) : 200.0;
-    }();
-    return v;
-  }
-  inline double rel_threshold() {
-    static const double v = []{
-      const char* s = std::getenv("TADAH_HPO_BAD_POT_ERMSE_REL");
-      return s && *s ? std::atof(s) : 0.0;
-    }();
-    return v;
-  }
-  inline std::atomic<double>& best_ermse() {
-    static std::atomic<double> b{std::numeric_limits<double>::infinity()};
-    return b;
+  /* One running best per metric. infinity = nothing seen yet. */
+  inline std::atomic<double>& best_for(const char* tag) {
+    static std::atomic<double> b_emae   {std::numeric_limits<double>::infinity()};
+    static std::atomic<double> b_ermse  {std::numeric_limits<double>::infinity()};
+    static std::atomic<double> b_errmse {std::numeric_limits<double>::infinity()};
+    static std::atomic<double> b_ersq   {std::numeric_limits<double>::infinity()};
+    static std::atomic<double> b_frmse  {std::numeric_limits<double>::infinity()};
+    static std::atomic<double> b_srmse  {std::numeric_limits<double>::infinity()};
+    /* Hand-rolled dispatch — avoids string compare in the hot path's
+     * fallback (the call site already has a compile-time tag). */
+    if (tag[0]=='e' && tag[1]=='m')           return b_emae;
+    if (tag[0]=='e' && tag[1]=='r' && tag[2]=='m') return b_ermse;
+    if (tag[0]=='e' && tag[1]=='R')           return b_errmse;
+    if (tag[0]=='e' && tag[1]=='r' && tag[2]=='s') return b_ersq;
+    if (tag[0]=='f')                          return b_frmse;
+    return b_srmse;
   }
   inline std::atomic<std::size_t>& skip_count() {
     static std::atomic<std::size_t> c{0};
@@ -465,6 +470,7 @@ template<class P,class R> std::map<std::size_t,
   typename HPO_Host<P,R>::Result> HPO_Host<P,R>::io_buf_;
 template<class P,class R> std::atomic<std::size_t>       HPO_Host<P,R>::next_flush_{1};
 template<class P,class R> std::atomic<std::int64_t>      HPO_Host<P,R>::next_flush_stuck_since_ms_{0};
+template<class P,class R> std::atomic_bool               HPO_Host<P,R>::stagnation_warned_{false};
 
 /* Top-K + stagnation static state. Capacity 0 means top-K tracking is
  * disabled; threshold 0 means stagnation throws are disabled. */
@@ -514,6 +520,9 @@ template<class P,class R>
 void HPO_Host<P,R>::reset_stagnation() {
   iter_at_last_best_.store(g_iter_.load(std::memory_order_relaxed),
                            std::memory_order_relaxed);
+  /* Re-arm the once-per-event diagnostic gate so the next stagnation
+   * event in this run produces a fresh "begin" message. */
+  stagnation_warned_.store(false, std::memory_order_relaxed);
 }
 template<class P,class R>
 std::size_t HPO_Host<P,R>::stagnation_count() {
@@ -843,7 +852,27 @@ void HPO_Host<P,R>::fill_validation(Result& r,
     if(trg_.use_srmse)  fill(r.srmse,  r.v_srmse,  a.calc_s_rmse(),     1.0);
 }
 
-/* ----------  helper: run LAMMPS (serial + OpenMP) --------------------- */
+/* ----------  helper: run LAMMPS (serial + OpenMP) ---------------------
+ *
+ * Two-phase execution when any PC_LAMMPS line carries `--hotvar`:
+ *
+ *   PHASE A   Run hot scripts in parallel. Each hot script reads its
+ *             warmstart-cached value (or the user-declared `initial`,
+ *             midpoint of [min, max] on first eval) as `${<name>}`,
+ *             relaxes, exposes a fresh `<name>` value. The framework
+ *             validates against [min, max], updates the cache, and
+ *             collects (name → fresh value) into `hot_values_for_iter`.
+ *             An out-of-range value sets the eval-wide abort flag.
+ *
+ *   PHASE B   Run cold scripts in parallel. If phase A aborted, all
+ *             cold outputs are clamped to failscore. Otherwise every
+ *             value collected in phase A is injected as
+ *             `variable <name> string <value>` before each cold script,
+ *             so cold scripts read `${<name>}` to get the freshly
+ *             computed hot value from THIS eval.
+ *
+ * No --hotvar lines means phase A is empty; phase B runs all scripts in
+ * parallel as before. */
 template<class P, class R>
 void HPO_Host<P,R>::run_lammps(Result& r) const
 {
@@ -851,26 +880,33 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
   const auto& LS = trg_.LS;
   r.v_outvar.resize(LS.size());
 
-#ifdef TADAH_ENABLE_OPENMP
-#pragma omp parallel for shared(r,LS)
-#endif
-  for(std::size_t i=0;i<LS.size();++i)
-  {
+  /* Partition scripts into hot (any --hotvar) and cold (none). The hot
+   * set runs first so its produced values can flow into the cold set. */
+  std::vector<std::size_t> hot_idx, cold_idx;
+  hot_idx.reserve(LS.size());
+  cold_idx.reserve(LS.size());
+  for (std::size_t i = 0; i < LS.size(); ++i) {
+    if (LS[i].hotvars.empty()) cold_idx.push_back(i);
+    else                       hot_idx.push_back(i);
+  }
+
+  /* Per-iter map of fresh hot values (varname → value). Populated in
+   * phase A under hot_mtx_, then read-only during phase B. */
+  std::unordered_map<std::string, double> hot_values_for_iter;
+  std::mutex hot_mtx;
+
+  /* Generic per-script runner — used by both phases. Returns true on
+   * a successful LAMMPS run; false on script failure (in which case
+   * v_outvar is filled with failscore). The `extra_inject` callable
+   * is invoked once after the LAMMPS instance is ready and before
+   * `run_script`, with the raw lmp pointer; used by both phases to
+   * inject `variable <name> string <value>` lines. */
+  auto run_one = [&](std::size_t i,
+                     auto&& extra_inject) -> bool {
     const auto& lsim = LS[i];
-
-    // Early abort: another script in this eval already rejected, so skip
-    // LAMMPS for the remaining scripts and clamp their outputs to failscore.
-    if (warmstart::aborting_iter().load(std::memory_order_relaxed) == r.iter) {
-      for(const auto& n : lsim.n_outvar) {
-        (void)n;
-        r.v_outvar[i].emplace_back(std::to_string(lsim.failscore));
-      }
-      continue;
-    }
-
-    // Per-iteration copy of LAMMPS argv. If the user supplied -log/-screen
-    // with a real filename, append .t<thread_id> so concurrent OMP threads
-    // do not clobber the same file. "none" is left untouched.
+    /* Per-iteration copy of LAMMPS argv. -log / -screen with a real
+     * filename get a .t<tid> suffix so concurrent OMP threads don't
+     * clobber the same file. */
     std::vector<std::string> invar = lsim.invar;
 #ifdef TADAH_ENABLE_OPENMP
     const int tid = omp_get_thread_num();
@@ -888,16 +924,11 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     rewrite("-log");
     rewrite("-screen");
 
-    // Per-thread LAMMPS instance cache, keyed by (script + invar). Saves
-    // the constructor and package-list initialisation cost across HPO
-    // iterations. The script's own `clear` resets the simulation between
-    // calls. The key MUST include the invar list: when the same script is
-    // listed in multiple PC_LAMMPS lines with different --invar values
-    // (e.g. surfaces_fast.in --invar surface 100 vs --invar surface 110,
-    // or phase_bcc_x_P_fast.in with 17 different P values), reusing one
-    // LMP across them caused the second-and-later calls to return ""
-    // for their varloss variables — observed deterministically on
-    // 2026-05-05. Distinct (script, invar) → distinct LMP fixes that.
+    /* Per-thread LAMMPS instance cache, keyed by (script + invar).
+     * The key MUST include invar: the same script with different
+     * --invar values needs distinct LMP instances (observed
+     * deterministically on 2026-05-05; reusing one LMP returned ""
+     * for varloss vars on the second-and-later call). */
     std::string cache_key = lsim.script;
     for (const auto& s : invar) { cache_key += '\x01'; cache_key += s; }
     thread_local std::unordered_map<std::string, typename R::LMPPtr> tls_lmp_cache;
@@ -906,58 +937,48 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     auto cache_it = tls_lmp_cache.find(cache_key);
     if (cache_it == tls_lmp_cache.end()) {
       auto fresh = runner.create_instance(0, invar);
-      if (!fresh) continue;
+      if (!fresh) {
+        for (const auto& n : lsim.n_outvar) {
+          (void)n;
+          r.v_outvar[i].emplace_back(std::to_string(lsim.failscore));
+        }
+        return false;
+      }
       cache_it = tls_lmp_cache.emplace(cache_key, std::move(fresh)).first;
     }
     auto& lmp = cache_it->second;
     auto t_create1 = std::chrono::high_resolution_clock::now();
 
-    // Inject (or update) ${hot_a0} via a string-style variable. LAMMPS
-    // allows re-issuing `variable name string value` to update an existing
-    // string variable, so this works on both first and reused calls.
-    {
-      const double hot_a0 = warmstart::get(lsim.script);
-      char cmd[96];
-      std::snprintf(cmd, sizeof(cmd),
-                    "variable hot_a0 string %.10g", hot_a0);
-      try { lmp->input->one(cmd); } catch (...) { /* keep going */ }
-    }
+    /* Phase-specific injections happen here. */
+    extra_inject(lmp);
 
     bool fail = !runner.run_script(lmp, lsim.script_lines, r.pot_ctx);
     auto t_run1 = std::chrono::high_resolution_clock::now();
 
-    for(const auto& n : lsim.n_outvar) {
+    for (const auto& n : lsim.n_outvar) {
       if (fail) r.v_outvar[i].emplace_back(std::to_string(lsim.failscore));
-      else  r.v_outvar[i].emplace_back(runner.get_variable(lmp, n));
+      else      r.v_outvar[i].emplace_back(runner.get_variable(lmp, n));
     }
 
-    // A failed LAMMPS run is itself a rejection signal — short-circuit the
-    // remaining scripts in this eval rather than running them on a bad pot.
     if (fail) {
       warmstart::aborting_iter().store(r.iter, std::memory_order_relaxed);
     }
 
-    // Capture the script's relaxed lattice constant if exposed as ${a0},
-    // and reject the result when a0 is outside the physical range — an
-    // unphysical lattice means the potential is broken even if the
-    // validation metrics happened to look fine.
+    /* Hot-var validation + cache update. Only meaningful for hot
+     * scripts (cold scripts have empty hotvars). */
     if (!fail) {
-      try {
-        const std::string s = runner.get_variable(lmp, "a0");
-        if (!s.empty()) {
-          double a0_val = std::stod(s);
-          if (!warmstart::set(lsim.script, a0_val)) {
-            // out of [min, max] — clamp this script's outputs to failscore
-            for (auto& v : r.v_outvar[i]) v = std::to_string(lsim.failscore);
-            // Signal remaining scripts in this eval to short-circuit. Any
-            // peer thread already past the early-abort check will still run
-            // (we don't yank LAMMPS mid-script), but threads that have not
-            // yet entered the next script will see this and skip.
-            warmstart::aborting_iter().store(
-                r.iter, std::memory_order_relaxed);
-            // Count rejections per *eval*, not per script: only the first
-            // script in this eval to reject bumps the counter and emits a
-            // warning (subsequent rejections in the same eval are silent).
+      for (const auto& hv : lsim.hotvars) {
+        try {
+          const std::string s = runner.get_variable(lmp, hv.name);
+          if (s.empty()) continue;
+          double v = 0.0;
+          try { v = std::stod(s); }
+          catch (...) { continue; }
+          if (!std::isfinite(v) || v < hv.min || v > hv.max) {
+            /* Out of range — clamp this script's outputs and signal
+             * the iter-wide abort so phase B is skipped. */
+            for (auto& vs : r.v_outvar[i]) vs = std::to_string(lsim.failscore);
+            warmstart::aborting_iter().store(r.iter, std::memory_order_relaxed);
             auto& last = warmstart::last_rejected_iter();
             std::size_t prev = last.load(std::memory_order_relaxed);
             bool first_in_eval = false;
@@ -975,15 +996,22 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
                 HPOLog::instance().warning(
                     std::string("eval ") + std::to_string(r.iter)
                     + " script " + lsim.script
-                    + ": rejecting (a0=" + std::to_string(a0_val)
-                    + " outside [" + std::to_string(warmstart::a0_min())
-                    + ", " + std::to_string(warmstart::a0_max())
-                    + "], total rejects=" + std::to_string(rejs) + ")");
+                    + ": rejecting (" + hv.name + "=" + std::to_string(v)
+                    + " outside [" + std::to_string(hv.min) + ", "
+                    + std::to_string(hv.max) + "], total rejects="
+                    + std::to_string(rejs) + ")");
               }
             }
+            break; /* one out-of-range hot var is enough */
           }
-        }
-      } catch (...) { /* variable not defined or unparseable — ignore */ }
+          /* In-range — cache for next eval AND record for phase B. */
+          warmstart::set(lsim.script, hv.name, v);
+          {
+            std::lock_guard<std::mutex> lg(hot_mtx);
+            hot_values_for_iter[hv.name] = v;
+          }
+        } catch (...) { /* variable not defined or unparseable — ignore */ }
+      }
     }
 
     if (bench_detail::enabled()) {
@@ -993,14 +1021,93 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       static std::ofstream f("hpo_script_times.csv", std::ios::out | std::ios::trunc);
       static bool header_written = (f << "iter,thread,script,create_ms,run_ms\n", true);
       (void)header_written;
-      int tid = 0;
-#ifdef TADAH_ENABLE_OPENMP
-      tid = omp_get_thread_num();
-#endif
       f << r.iter << ',' << tid << ',' << lsim.script << ','
         << t_create_ms << ',' << t_run_ms << '\n';
       f.flush();
     }
+    return true;
+  };
+
+  auto inject_string_var = [](typename R::LMPPtr& lmp,
+                              const std::string& name, double value) {
+    char cmd[256];
+    std::snprintf(cmd, sizeof(cmd),
+                  "variable %s string %.17g", name.c_str(), value);
+    try { lmp->input->one(cmd); } catch (...) { /* keep going */ }
+  };
+
+  /* ─── PHASE A: hot scripts ─────────────────────────────────────── */
+#ifdef TADAH_ENABLE_OPENMP
+#pragma omp parallel for shared(r,LS,hot_idx,hot_values_for_iter,hot_mtx)
+#endif
+  for (std::size_t k = 0; k < hot_idx.size(); ++k) {
+    const std::size_t i = hot_idx[k];
+    if (warmstart::aborting_iter().load(std::memory_order_relaxed) == r.iter) {
+      for (const auto& n : LS[i].n_outvar) {
+        (void)n;
+        r.v_outvar[i].emplace_back(std::to_string(LS[i].failscore));
+      }
+      continue;
+    }
+    run_one(i, [&](typename R::LMPPtr& lmp) {
+      /* Seed each declared hot var with its cached or initial value. */
+      for (const auto& hv : LS[i].hotvars) {
+        double seed;
+        if (auto cached = warmstart::get(LS[i].script, hv.name)) {
+          seed = *cached;
+        } else if (hv.initial) {
+          seed = *hv.initial;
+        } else {
+          seed = 0.5 * (hv.min + hv.max);
+        }
+        inject_string_var(lmp, hv.name, seed);
+      }
+    });
+  }
+
+  /* ─── PHASE B: cold scripts ────────────────────────────────────── */
+  const bool aborted =
+      (warmstart::aborting_iter().load(std::memory_order_relaxed) == r.iter);
+
+  if (aborted) {
+    /* Phase A produced an out-of-range hot var (or a script crashed) —
+     * the potential is unphysical. Skip every cold script and clamp. */
+    for (auto i : cold_idx) {
+      for (const auto& n : LS[i].n_outvar) {
+        (void)n;
+        r.v_outvar[i].emplace_back(std::to_string(LS[i].failscore));
+      }
+    }
+    return;
+  }
+
+  /* Snapshot the per-iter hot-values map for use under #pragma omp
+   * parallel — once phase A is done, no more writes happen. */
+  std::unordered_map<std::string, double> hot_snapshot;
+  {
+    std::lock_guard<std::mutex> lg(hot_mtx);
+    hot_snapshot = hot_values_for_iter;
+  }
+
+#ifdef TADAH_ENABLE_OPENMP
+#pragma omp parallel for shared(r,LS,cold_idx,hot_snapshot)
+#endif
+  for (std::size_t k = 0; k < cold_idx.size(); ++k) {
+    const std::size_t i = cold_idx[k];
+    if (warmstart::aborting_iter().load(std::memory_order_relaxed) == r.iter) {
+      for (const auto& n : LS[i].n_outvar) {
+        (void)n;
+        r.v_outvar[i].emplace_back(std::to_string(LS[i].failscore));
+      }
+      continue;
+    }
+    run_one(i, [&](typename R::LMPPtr& lmp) {
+      /* Inject every fresh hot value from phase A. Cold scripts read
+       * them as `${<name>}`. */
+      for (const auto& kv : hot_snapshot) {
+        inject_string_var(lmp, kv.first, kv.second);
+      }
+    });
   }
 }
 
@@ -1236,33 +1343,57 @@ double HPO_Host<P,R>::operator()(const P& p) const
     stage_watchdog::leave(r.iter, "predict_validate", _stage_log);
 
     /* optional LAMMPS -------------------------------------------------- */
-    /* bad-potential heuristic: cheap pre-filter before launching LAMMPS */
+    /* bad-potential heuristic: cheap pre-filter before launching LAMMPS.
+     * Each per-metric --skip-above / --skip-rel cap (declared on PC_*
+     * lines in config.hpo) is tested independently; the first trigger
+     * wins. Caps are optional — a metric without flags never causes a
+     * skip.
+     *
+     * The metric → tag mapping passed to bad_pot_detail::best_for() is
+     * a 2-3 char prefix that disambiguates the running-best slot for
+     * that metric. */
     bool skip_lammps_bad_pot = false;
-    if (use_lammps_ && trg_.use_ermse && std::isfinite(r.ermse)) {
-      const double abs_thr = bad_pot_detail::abs_threshold_mev();
-      const double rel     = bad_pot_detail::rel_threshold();
-      const double best    = bad_pot_detail::best_ermse().load(std::memory_order_relaxed);
-      const bool bad_abs   = (abs_thr > 0.0) && (r.ermse > abs_thr);
-      const bool bad_rel   = (rel > 0.0) && std::isfinite(best) && (r.ermse > rel * best);
-      if (bad_abs || bad_rel) {
-        skip_lammps_bad_pot = true;
-        r.loss = trg_.FAIL_SCORE;
-        const auto skips = bad_pot_detail::skip_count().fetch_add(1, std::memory_order_relaxed) + 1;
-        if (skips <= 5 || (skips & (skips - 1)) == 0) {
-          HPOLog::instance().warning(
-              std::string("eval ") + std::to_string(r.iter)
-              + ": skipping LAMMPS (ERMSE=" + std::to_string(r.ermse)
-              + " meV/at, abs_thr=" + std::to_string(abs_thr)
-              + (bad_rel ? ", rel_thr breached vs best=" + std::to_string(best) : "")
-              + ", total skips=" + std::to_string(skips) + ")");
+    if (use_lammps_) {
+      auto check_metric = [&](const char* tag,
+                              bool used,
+                              double value,
+                              const HPOTargets::SkipCaps& caps,
+                              const char* unit) -> bool {
+        if (!used || !std::isfinite(value)) return false;
+        const double best = bad_pot_detail::best_for(tag).load(std::memory_order_relaxed);
+        const bool bad_abs = caps.abs_above && (value > *caps.abs_above);
+        const bool bad_rel = caps.rel_above && std::isfinite(best)
+                             && (value > *caps.rel_above * best);
+        if (bad_abs || bad_rel) {
+          const auto skips = bad_pot_detail::skip_count().fetch_add(
+              1, std::memory_order_relaxed) + 1;
+          if (skips <= 5 || (skips & (skips - 1)) == 0) {
+            std::ostringstream os;
+            os << "eval " << r.iter << ": skipping LAMMPS — "
+               << tag << "=" << value << " " << unit;
+            if (bad_abs) os << " > skip-above=" << *caps.abs_above;
+            if (bad_rel) os << " > skip-rel=" << *caps.rel_above
+                            << " * best(" << best << ")";
+            os << ", total skips=" << skips;
+            HPOLog::instance().warning(os.str());
+          }
+          return true;
         }
-      } else {
-        // Update running best; relaxed CAS is fine — strict ordering not needed.
-        double cur = bad_pot_detail::best_ermse().load(std::memory_order_relaxed);
-        while (r.ermse < cur &&
-               !bad_pot_detail::best_ermse().compare_exchange_weak(
-                   cur, r.ermse, std::memory_order_relaxed)) {}
-      }
+        /* Update per-metric running best — relaxed CAS, no ordering needed. */
+        double cur = bad_pot_detail::best_for(tag).load(std::memory_order_relaxed);
+        while (value < cur &&
+               !bad_pot_detail::best_for(tag).compare_exchange_weak(
+                   cur, value, std::memory_order_relaxed)) {}
+        return false;
+      };
+      skip_lammps_bad_pot =
+          check_metric("ermse",   trg_.use_ermse,   r.ermse,   trg_.skip_ermse,   "meV/at") ||
+          check_metric("emae",    trg_.use_emae,    r.emae,    trg_.skip_emae,    "meV/at") ||
+          check_metric("eRRMSE",  trg_.use_errmse,  r.errmse,  trg_.skip_errmse,  "meV/at") ||
+          check_metric("ersq",    trg_.use_ersq,    r.ersq,    trg_.skip_ersq,    "")       ||
+          check_metric("frmse",   trg_.use_frmse,   r.frmse,   trg_.skip_frmse,   "eV/A")   ||
+          check_metric("srmse",   trg_.use_srmse,   r.srmse,   trg_.skip_srmse,   "GPa");
+      if (skip_lammps_bad_pot) r.loss = trg_.FAIL_SCORE;
     }
 
     if (use_lammps_ && r.loss < trg_.FAIL_SCORE && !skip_lammps_bad_pot) {
@@ -1497,24 +1628,36 @@ double HPO_Host<P,R>::operator()(const P& p) const
         } catch (...) { /* swallow — main shutdown path takes over */ }
         throw;
     } catch (const StagnationStop&) {
-        /* RestartPolicy expects this. Bug 7: same iter-slot recovery
-         * as ShutdownRequested — submit FAIL_SCORE before rethrowing
-         * so the writer's next_flush_ does not stall on our iter while
-         * the RestartPolicy spins up the next stage. This was the
-         * root cause of the 3459 freeze observed at every BASINS
-         * GLOBAL→LOCAL boundary: stagnation was already past
-         * threshold by ~eval 3459, the throw escaped without
-         * submitting, and the writer waited 60 s before gap-skipping. */
-        r.loss = trg_.FAIL_SCORE;
-        r.was_nan_clamped = true;
+        /* StagnationStop is thrown from post_lammps_finalize AFTER r.loss
+         * is computed and counted in best/top-K tracking. This eval is
+         * therefore a real, valid result — submit it as-is. The earlier
+         * recovery path (Bug 7) overwrote r.loss with FAIL_SCORE and
+         * flagged was_nan_clamped, which corrupted loss.tadah and
+         * fabricated a NaN-clamp event for every concurrent thread that
+         * happened to cross the threshold while the surrounding policy
+         * was still resetting it.
+         *
+         * We still need to submit so the writer's next_flush_ does not
+         * stall on the iter slot consumed at ++g_iter_ — but with the
+         * real loss, not a synthetic FAIL_SCORE. */
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
-        try {
-            HPOLog::instance().warning(
-                std::string("eval ") + std::to_string(r.iter) +
-                ": StagnationStop — submitting FAIL_SCORE to keep "
-                "writer queue contiguous before rethrow");
-        } catch (...) {}
+        /* Diagnostic at most once per stagnation event. Concurrent
+         * eval threads commonly race to this catch when the threshold
+         * is crossed; without this gate the journal gets one warning
+         * per concurrent eval. Cleared by reset_stagnation() at the
+         * next stage boundary. */
+        if (!stagnation_warned_.exchange(true, std::memory_order_relaxed)) {
+            try {
+                HPOLog::instance().info(
+                    std::string("StagnationStop fired at eval ") +
+                    std::to_string(r.iter) +
+                    "; short-circuiting optimiser, real loss preserved "
+                    "(threshold=" +
+                    std::to_string(stagnation_threshold_.load(std::memory_order_relaxed)) +
+                    " evals without improvement)");
+            } catch (...) {}
+        }
         try {
 #ifndef TADAH_BUILD_MPI
             submit_result(std::move(r), trg_, master_ctx_, val_ctx_,

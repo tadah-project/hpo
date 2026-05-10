@@ -222,31 +222,32 @@ public:
         }
 
         /* Read the file into a buffer, stripping comment + blank lines.
-         * Comment lines beginning with `# HOT_A0 <script> <a0>` carry the
-         * lattice-cache snapshot that the writer dumped alongside the
-         * best-pot. Priming `warmstart::a0_map` from them makes the WARM
-         * eval start each box/relax from the same lattice constant the
+         * Comment lines beginning with `# HOT <script> <name> <value>`
+         * (or the legacy `# HOT_A0 <script> <a0>`) carry the warmstart
+         * cache snapshot that the writer dumped alongside the best-pot.
+         * Priming `warmstart::cache` from them makes the WARM eval
+         * start each --hotvar relaxation from the same value the
          * original best converged to — without that, a cold restart
-         * begins every script from TADAH_HPO_HOT_A0_DEFAULT and can land
-         * box/relax in a different basin, producing a loss that does
-         * not match what this file's header claims. */
+         * begins each hot script from its declared `initial` and may
+         * land box/relax in a different basin, producing a loss that
+         * does not match what this file's header claims. */
         std::vector<char> buf;
         std::string line;
-        std::size_t hot_a0_loaded = 0;
+        std::size_t hot_loaded = 0;
         while (std::getline(in, line)) {
             const auto first = line.find_first_not_of(" \t");
             if (first == std::string::npos) continue;
             if (line[first] == '#') {
-                if (warmstart::try_parse_line(line)) ++hot_a0_loaded;
+                if (warmstart::try_parse_line(line)) ++hot_loaded;
                 continue;
             }
             buf.insert(buf.end(), line.begin(), line.end());
             buf.push_back('\n');
         }
-        if (hot_a0_loaded > 0) {
+        if (hot_loaded > 0) {
             std::ostringstream oss;
-            oss << "WARM: primed warmstart cache with " << hot_a0_loaded
-                << " HOT_A0 entry(ies) from " << file_;
+            oss << "WARM: primed warmstart cache with " << hot_loaded
+                << " HOT entry(ies) from " << file_;
             std::cout << "[HPO] " << oss.str() << "\n";
             HPOLog::instance().info(oss.str());
         }

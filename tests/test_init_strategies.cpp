@@ -376,30 +376,29 @@ ENDOPTIMIZER
     CHECK_NOTHROW(tadah::hpo::HPOTargets(ctx, cfg.path.string()));
 }
 
-TEST_CASE("WarmInitStrategy: HOT_A0 round-trip primes warmstart cache",
-          "[HPO][init_strategy][warm][hot_a0]")
+TEST_CASE("WarmInitStrategy: HOT round-trip primes warmstart cache",
+          "[HPO][init_strategy][warm][hot]")
 {
-    /* Writer dumps `# HOT_A0 <script> <a0>` lines into best_pot.tadah;
-     * WARM reader must scan those and prime warmstart::a0_map so the
-     * restarted run reproduces the original loss instead of starting
-     * box/relax from TADAH_HPO_HOT_A0_DEFAULT. */
+    /* Writer dumps `# HOT <script> <name> <value>` lines into
+     * best_pot.tadah; WARM reader must scan those and prime
+     * warmstart::cache so the restarted run reproduces the original
+     * loss instead of starting each --hotvar relaxation from its
+     * declared `initial`. */
     using namespace tadah::hpo;
     auto sp = make_synthetic_spec({0.0}, {1.0});
     StubTargets st;
 
-    /* Pick a fresh, otherwise-unused script name so the test is
-     * insensitive to whatever the global cache picked up earlier. */
-    const std::string script = "test_hot_a0_round_trip.in";
-    const double      a0_in  = 3.4567;
+    const std::string script = "test_hot_round_trip.in";
+    const std::string name   = "hot_a0";
+    const double      v_in   = 3.4567;
 
     StrategyTempFile pot(
-        "# HOT_A0 " + script + " " + std::to_string(a0_in) + "\n"
+        "# HOT " + script + " " + name + " " + std::to_string(v_in) + "\n"
         "# unrelated comment\n"
     );
 
-    /* Sanity: cache is empty (or holds the default) for our key before
-     * the WARM read. */
-    REQUIRE(warmstart::a0_map().count(script) == 0);
+    /* Sanity: cache is empty for our key before the WARM read. */
+    REQUIRE(!warmstart::get(script, name).has_value());
 
     InitStrategySpec ispec;
     ispec.chain.push_back({"WARM", {pot.path.string()}});
@@ -411,30 +410,32 @@ TEST_CASE("WarmInitStrategy: HOT_A0 round-trip primes warmstart cache",
 
     /* Cache must now hold the value the file declared, to within the
      * 17-digit precision the writer uses. */
-    REQUIRE(warmstart::a0_map().count(script) == 1);
-    CHECK(warmstart::a0_map().at(script) == Approx(a0_in).margin(1e-12));
+    auto cached = warmstart::get(script, name);
+    REQUIRE(cached.has_value());
+    CHECK(*cached == Approx(v_in).margin(1e-12));
 
     /* Cleanup so subsequent tests don't see this stale entry. */
     {
         std::lock_guard<std::mutex> lg(warmstart::mtx());
-        warmstart::a0_map().erase(script);
+        warmstart::cache().erase({script, name});
     }
 }
 
-TEST_CASE("WarmInitStrategy: HOT_A0 out-of-range value is silently skipped",
-          "[HPO][init_strategy][warm][hot_a0]")
+TEST_CASE("WarmInitStrategy: legacy HOT_A0 line still primes cache",
+          "[HPO][init_strategy][warm][hot]")
 {
-    /* warmstart::set rejects values outside [a0_min, a0_max]; the WARM
-     * reader must inherit that filter so a corrupted/tampered HOT_A0
-     * line cannot poison the cache for the rest of the run. */
+    /* Old best_pot.tadah files written before the rename emit
+     * `# HOT_A0 <script> <a0>`. The WARM parser keeps a back-compat
+     * arm that maps these to (script, "hot_a0") in the new cache. */
     using namespace tadah::hpo;
     auto sp = make_synthetic_spec({0.0}, {1.0});
     StubTargets st;
 
-    const std::string script = "test_hot_a0_out_of_range.in";
-    /* a0_max default is 10.0; 999.0 is unambiguously out of range. */
+    const std::string script = "test_hot_a0_legacy.in";
+    const double      a0_in  = 3.30;
+
     StrategyTempFile pot(
-        "# HOT_A0 " + script + " 999.0\n"
+        "# HOT_A0 " + script + " " + std::to_string(a0_in) + "\n"
     );
 
     InitStrategySpec ispec;
@@ -445,7 +446,14 @@ TEST_CASE("WarmInitStrategy: HOT_A0 out-of-range value is silently skipped",
     InitContext ic{sp, *st.trg, 0};
     (void) strat->generate(ic, 1);
 
-    CHECK(warmstart::a0_map().count(script) == 0);
+    auto cached = warmstart::get(script, "hot_a0");
+    REQUIRE(cached.has_value());
+    CHECK(*cached == Approx(a0_in).margin(1e-12));
+
+    {
+        std::lock_guard<std::mutex> lg(warmstart::mtx());
+        warmstart::cache().erase({script, "hot_a0"});
+    }
 }
 
 TEST_CASE("PriorInitStrategy: empty optimap produces empty point",

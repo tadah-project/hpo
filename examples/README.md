@@ -125,6 +125,8 @@ fd_step, etc.
 - `DLIB:GFS` consumes every seed from the chain (patched). Other
   optimisers consume only `optim_init.front()`; HPO logs a warning
   when the chain produced more seeds than the optimiser can use.
-- Tightening `TADAH_HPO_A0_MIN`/`TADAH_HPO_A0_MAX` (e.g. `2.5/4.5`
-  for Ta) is the most effective extra filter against runaway HPO
-  candidates that produce a non-physical lattice.
+- Tightening the `--hotvar <name> <min> <max>` range on a hot
+  PC_LAMMPS line (e.g. `--hotvar hot_a0 2.5 4.5 3.302` for Ta) is
+  the most effective extra filter against runaway HPO candidates
+  that produce a non-physical lattice. An out-of-range value
+  fail-scores the iter and skips all cold scripts.

@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <limits>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <filesystem>
 
@@ -75,14 +76,32 @@ public:
     LossFunction globalLoss;
 
     bool use_emae = false; bool use_ermse = false; bool use_errmse = false; bool use_ersq = false;
-    double emae, ermse, errmse, ersq; 
+    double emae, ermse, errmse, ersq;
     double w_emae, w_ermse, w_errmse, w_ersq;
-    bool use_srmse = false; 
-    double srmse; 
+    bool use_srmse = false;
+    double srmse;
     double w_srmse;
-    bool use_frmse = false; 
-    double frmse; 
+    bool use_frmse = false;
+    double frmse;
     double w_frmse;
+
+    /* Bad-pot pre-LAMMPS skip thresholds, parsed from PC_* flags
+     *   PC_ERMSE  <target> <weight> [--skip-above <cap_meV>] [--skip-rel <ratio>]
+     * (and analogous for EMAE / FRMSE / SRMSE / ErRMSE / ERSQ).
+     *
+     * abs_above: skip the LAMMPS phase when the metric exceeds <cap>
+     *            (cap is in meV/atom for energy metrics, raw units for
+     *            force/stress; the same units the metric reports).
+     * rel_above: skip when the metric exceeds rel_above * best_seen_so_far.
+     *            Only fires when a finite best has been observed.
+     *
+     * Replaces the legacy env vars TADAH_HPO_BAD_POT_ERMSE_MEV /
+     * TADAH_HPO_BAD_POT_ERMSE_REL. Defaults are nullopt = no skip. */
+    struct SkipCaps {
+      std::optional<double> abs_above;
+      std::optional<double> rel_above;
+    };
+    SkipCaps skip_emae, skip_ermse, skip_errmse, skip_ersq, skip_frmse, skip_srmse;
 };
 } // namespace hpo
 } // namespace tadah

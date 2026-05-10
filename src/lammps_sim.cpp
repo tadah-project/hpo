@@ -396,6 +396,33 @@ void LammpsSim::parse_tokens() {
         throw std::runtime_error("Invalid number of arguments for --maxtime");
       }
     }
+    else if (tokens[i] == "--hotvar") {
+      /* --hotvar <name> <min> <max> [<initial>] */
+      auto is_flag = [](const std::string& s){ return s.rfind("-",0)==0; };
+      std::size_t j = i + 1;
+      if (j+2 >= tokens.size())
+        throw std::runtime_error("--hotvar requires <name> <min> <max> [<initial>]");
+      HotVarDecl hv;
+      hv.name = tokens[j++];
+      if (hv.name.empty() || is_flag(hv.name))
+        throw std::runtime_error("--hotvar: <name> must be a non-empty identifier");
+      try { hv.min = std::stod(tokens[j++]); }
+      catch (...) { throw std::runtime_error("--hotvar " + hv.name + ": <min> not a number"); }
+      try { hv.max = std::stod(tokens[j++]); }
+      catch (...) { throw std::runtime_error("--hotvar " + hv.name + ": <max> not a number"); }
+      if (!(hv.max > hv.min))
+        throw std::runtime_error("--hotvar " + hv.name + ": <max> must exceed <min>");
+      /* optional initial — must look like a positive number, not another flag */
+      if (j < tokens.size() && !is_flag(tokens[j])) {
+        double init;
+        if (try_parse_double(tokens[j], init)) {
+          hv.initial = init;
+          ++j;
+        }
+      }
+      hotvars.push_back(std::move(hv));
+      i = j;
+    }
     else if (tokens[i] == "--ncpu") {
       if (i + 1 < tokens.size()) {
         ncpu = std::stoi(tokens[++i]);

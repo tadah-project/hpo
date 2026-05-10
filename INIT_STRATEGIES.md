@@ -155,14 +155,18 @@ pulls the matching value from the file; missing keys fall through.
 
 Two implementation details that affect reproducibility:
 
-1. **HOT_A0 priming.** When the writer dumped `# HOT_A0 <script> <a0>`
-   lines, WARM reads them and primes the warmstart `${hot_a0}` cache.
-   Without this priming, the LAMMPS scripts would start their box/relax
-   from `TADAH_HPO_HOT_A0_DEFAULT` rather than the converged lattice
-   constant from the previous run, and might land in a different basin.
-   The diagnostic
-   `[HPO] WARM: primed warmstart cache with N HOT_A0 entry(ies)`
-   confirms how many lines were absorbed.
+1. **Hot-var priming.** When the writer dumped `# HOT <script> <name>
+   <value>` lines (one per `--hotvar` declaration; see the *Hot
+   variables* section in HPO/README.md), WARM reads them and primes
+   the per-(script, name) warmstart cache. Without this, every hot
+   PC_LAMMPS script would start its box/relax from the user's
+   `<initial>` (or the midpoint of `[min, max]`) rather than the
+   converged value the previous run's best landed on, and might fall
+   into a different basin. The diagnostic
+   `[HPO] WARM: primed warmstart cache with N HOT entry(ies)`
+   confirms how many lines were absorbed. Legacy
+   `# HOT_A0 <script> <a0>` lines from older best_pot files still
+   parse and map to `(script, "hot_a0")`.
 2. **Bounds clamping.** If the bounds have shrunk between runs and the
    warm point now sits outside, each clamped dim is logged so the
    silent narrowing does not get lost in noise.
