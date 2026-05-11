@@ -1,5 +1,6 @@
 #pragma once
 #include <tadah/core/core_user_config_parser.h>
+#include <tadah/core/intercept_layout.h>
 #include <tadah/core/logger.h>
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/val_filter_forwarding.h>
@@ -8,6 +9,7 @@
 #include <tadah/hpo/pot_header_writer_impl.hpp>
 #include <tadah/hpo/warmstart_cache.h>
 #include <tadah/hpo/iter_health.h>
+#include <tadah/mlip/analytics/dphi_dtheta_walk.h>
 #include <fstream>
 #include <sstream>
 #include <thread>
@@ -2090,6 +2092,200 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
     /* 5. release token ------------------------------------------------- */
     writer_token_.clear(std::memory_order_release);
     _writer_debug_log("EXIT wid=" + std::to_string(_wid));
+}
+
+/* ---------- analytical gradient callback (Phase 2A.4) ---------------- *
+ *
+ * Wires the IFT chain rule end-to-end against the live trainer cache.
+ * The optimizer's cost-then-gradient call sequence guarantees that
+ * operator()(x) ran immediately before us at the same x, leaving:
+ *   - tls_trainer_cache_.trainer with `dm.getPhi()`/`dm.getT()` reflecting
+ *     the augmented training matrix at θ = x (data rows scaled by
+ *     sqrt(eweight*eweightglob); augmentation block zero — train works
+ *     on a copy and writes sqrt(lambda)*I_no_bias into that copy).
+ *   - model->get_weights() holding W*(x).
+ *
+ * Strategy: on-demand factor reconstruction (locked decision, see
+ * project memory). Read live Phi/T/W, reassemble the
+ * sqrt(lambda)*I_no_bias augmentation block, build the Cholesky factor
+ * via dloss_dtheta::detail helpers, then call assemble_dphi_train_energy_rows
+ * twice per θ (once each over train_stdb_ and val_stdb_) to populate
+ * `per_theta`. compute_dloss_dtheta runs the metric chain rule. Indices
+ * the descriptor walker can't supply analytically (registry returns
+ * false) end up in `needs_fd` for HYBRID's masked-FD pass.
+ *
+ * Phase 2A first-cut restrictions — fall back to all-FD if violated:
+ *   - FORCE=false, STRESS=false  (energy-only chain rule)
+ *   - NORM=false                 (raw-feature W; chain rule lives in raw space)
+ *   - BF_Linear                  (the only basis the walker handles)
+ *   - OALGO=4 with LAMBDA != -1  (NormalEquations + fixed lambda)
+ * Each restriction lifts in a follow-up sub-task.
+ *
+ * The body delegates to compute_analytical_gradient_from_trainer (see
+ * dloss_dtheta.h), a free helper that takes a Trainer + train/val DBs +
+ * HPOTargets and returns the gradient. Keeping the plumbing as a free
+ * function makes it testable without HPO_Host's full data scaffolding
+ * (DBFILE / config.hpo / val.tadah). */
+template<class P, class R>
+bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
+                                        std::vector<int>& needs_fd) const
+{
+    const auto prefs = make_param_ref_table(trg_);
+    g.set_size(static_cast<long>(prefs.size()));
+    for (long i = 0; i < g.size(); ++i) g(i) = 0.0;
+    needs_fd.clear();
+    needs_fd.reserve(prefs.size());
+    (void)x;  /* unused: compute_dloss_dtheta reads everything from the plan. */
+
+    auto fall_back_all_fd = [&]() {
+        for (std::size_t i = 0; i < prefs.size(); ++i)
+            needs_fd.push_back(static_cast<int>(prefs[i].flat_idx));
+        return true;
+    };
+
+#if defined(TADAH_BUILD_MPI)
+    /* MPI build: trainer cache layout differs (TrainerHost). Phase 2A
+     * first cut targets the serial / OpenMP path only. */
+    return fall_back_all_fd();
+#else
+    auto& cache = tls_trainer_cache_;
+    if (!cache.trainer) {
+        fall_back_all_fd();
+        emit_grad_diagnostic(prefs, needs_fd, /*cache_miss=*/true);
+        return true;
+    }
+    std::vector<double> g_flat;
+    bool helper_ok = false;
+    std::string helper_throw_msg;
+    try {
+        helper_ok = compute_analytical_gradient_from_trainer(
+            *cache.trainer, train_stdb_, val_stdb_, trg_, prefs,
+            g_flat, needs_fd);
+    } catch (const std::exception& e) {
+        /* Any throw from the analytical helper (out-of-range, walker
+         * mismatch, internal Cholesky, ...) is gracefully degraded
+         * here: route all theta to FD, surface the message in the
+         * diagnostic and the journal so the user can debug. Without
+         * this catch the exception would propagate through gp.gradient
+         * into NLopt, which translates to a generic NLOPT_FAILURE with
+         * no useful information. */
+        helper_throw_msg = e.what();
+        helper_ok = false;
+    }
+    if (!helper_ok) {
+        if (!helper_throw_msg.empty()) {
+            std::ostringstream oss;
+            oss << "analytical_gradient: helper threw '"
+                << helper_throw_msg << "' — routing every theta to FD";
+            std::cerr << "[HPO] " << oss.str() << "\n";
+            HPOLog::instance().warning(oss.str());
+        }
+        /* Analytical helper signalled a hard failure (today the only
+         * path: IFT-side Cholesky non-PD even though the trainer's
+         * Cholesky succeeded — rare but happens when LAMBDA is tiny
+         * relative to ΦᵀΦ's smallest non-trivial eigenvalue, or when
+         * a per-theta dPhi row is itself rank-deficient). Returning
+         * false propagates to gp.gradient and the NLopt wrapper, where
+         * LD_LBFGS sees +inf gradient and bails out as NLOPT_FAILURE.
+         *
+         * Instead, route every theta onto needs_fd so HYBRID's masked
+         * FD pass produces a valid (slower) gradient and the
+         * optimiser keeps making progress. The diagnostic surfaces
+         * `ift_failed` so the user can tell this from a clean
+         * fall_back_all_fd inside the helper. */
+        needs_fd.clear();
+        fall_back_all_fd();
+        emit_grad_diagnostic(prefs, needs_fd, /*cache_miss=*/false,
+                             /*ift_failed=*/true);
+        return true;
+    }
+    for (std::size_t i = 0; i < g_flat.size(); ++i)
+        g(static_cast<long>(i)) = g_flat[i];
+    emit_grad_diagnostic(prefs, needs_fd, /*cache_miss=*/false);
+    return true;
+#endif
+}
+
+/* ---------- one-shot diagnostic for the analytical-gradient pipeline ---
+ *
+ * Logs the analytical-vs-FD split on the first analytical_gradient call
+ * (per process). Users running GRAD_STRATEGY=HYBRID / ANALYTICAL with
+ * a gradient-based optimiser (NLOPT:LD_LBFGS, DLIB:BFGS, CERES:LBFGS,
+ * ...) have no other way to verify whether the closed-form path is
+ * actually engaging — the wall-clock difference vs Numerical depends on
+ * the descriptor stack and is easy to misattribute. The log emits:
+ *
+ *   - GRAD_STRATEGY in use
+ *   - total theta count
+ *   - count covered by closed-form (analytical)
+ *   - count routed to masked FD (HYBRID) or that would throw (ANALYTICAL)
+ *
+ * If the orchestrator's gate fell back entirely (all theta on
+ * needs_fd), surface that as a separate line so the user can find the
+ * specific restriction (FORCE/STRESS/NORM/OALGO/LAMBDA/MODEL[1]/
+ * use_srmse/LAMMPS — see compute_analytical_gradient_from_trainer's
+ * gate stack). When the trainer cache is empty (first eval of the
+ * BLR-warmup window), log that explicitly so a transient all-FD line
+ * isn't mistaken for a gate failure. */
+template<class P, class R>
+void HPO_Host<P,R>::emit_grad_diagnostic(
+    const std::vector<ParamRef>& prefs,
+    const std::vector<int>&      needs_fd,
+    bool                         cache_miss,
+    bool                         ift_failed) const
+{
+    static std::atomic_flag emitted = ATOMIC_FLAG_INIT;
+    if (emitted.test_and_set(std::memory_order_relaxed)) return;
+
+    const std::size_t n_total = prefs.size();
+    const std::size_t n_fd    = needs_fd.size();
+    const std::size_t n_anal  = n_total - n_fd;
+
+    const char* strat_name = "NUMERICAL";
+    if (spec_.grad_strategy) {
+        switch (*spec_.grad_strategy) {
+          case GradStrategy::Numerical:  strat_name = "NUMERICAL";  break;
+          case GradStrategy::Analytical: strat_name = "ANALYTICAL"; break;
+          case GradStrategy::Hybrid:     strat_name = "HYBRID";     break;
+        }
+    }
+
+    std::ostringstream oss;
+    oss << "Gradient-pipeline diagnostic (first eval): "
+        << "GRAD_STRATEGY=" << strat_name
+        << " | total_theta=" << n_total
+        << " | analytical="  << n_anal
+        << " | FD-fallback=" << n_fd;
+    if (cache_miss) {
+        oss << "  [trainer cache empty on first call — usually the BLR-"
+               "warmup eval; subsequent calls populate the cache and "
+               "engage the analytical path]";
+    } else if (ift_failed) {
+        oss << "  [IFT-side Cholesky non-PD even though the trainer "
+               "fitted OK. Likely LAMBDA is small relative to ΦᵀΦ's "
+               "smallest eigenvalue, or a per-theta dPhi row is "
+               "rank-deficient. Routed every theta to FD so the "
+               "optimiser keeps making progress. Raise LAMBDA or "
+               "switch to GRAD_STRATEGY=NUMERICAL to silence this]";
+    } else if (n_total > 0 && n_fd == n_total) {
+        oss << "  [gate fall-back: every theta routed to FD. Check "
+               "STRESS/NORM/OALGO/LAMBDA/MODEL[1]/use_srmse/PC_LAMMPS "
+               "restrictions in compute_analytical_gradient_from_trainer]";
+    }
+    if (n_fd > 0 && n_fd < n_total) {
+        oss << "\n  FD-fallback theta:";
+        for (int flat : needs_fd) {
+            for (const auto& p : prefs) {
+                if (static_cast<int>(p.flat_idx) == flat) {
+                    oss << " " << p.theta_name;
+                    if (p.arg_pos > 0) oss << "[" << p.arg_pos << "]";
+                    break;
+                }
+            }
+        }
+    }
+    std::cout << "[HPO] " << oss.str() << "\n";
+    HPOLog::instance().info(oss.str());
 }
 
 /* ---------- final drain (call after optimizer returns) --------------- */

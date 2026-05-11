@@ -552,7 +552,36 @@ ENDOPTIMIZER
         REQUIRE(trg.spec.grad_strategy.has_value());
         CHECK(*trg.spec.grad_strategy == tadah::hpo::GradStrategy::Numerical);
     }
-    /* AUTODIFF */
+    /* ANALYTICAL */
+    {
+        ScopedTempFile input(R"(OPTIMIZER
+LIB CERES
+ALGO LBFGS
+GRAD_STRATEGY ANALYTICAL
+MAXEVAL 5
+ENDOPTIMIZER
+)");
+        tadah::core::Context ctx;
+        tadah::hpo::HPOTargets trg(ctx, input.path.string());
+        REQUIRE(trg.spec.grad_strategy.has_value());
+        CHECK(*trg.spec.grad_strategy == tadah::hpo::GradStrategy::Analytical);
+    }
+    /* HYBRID */
+    {
+        ScopedTempFile input(R"(OPTIMIZER
+LIB CERES
+ALGO LBFGS
+GRAD_STRATEGY HYBRID
+MAXEVAL 5
+ENDOPTIMIZER
+)");
+        tadah::core::Context ctx;
+        tadah::hpo::HPOTargets trg(ctx, input.path.string());
+        REQUIRE(trg.spec.grad_strategy.has_value());
+        CHECK(*trg.spec.grad_strategy == tadah::hpo::GradStrategy::Hybrid);
+    }
+    /* AUTODIFF — Phase-1 keyword, removed in Phase 2 with a tailored
+     * migration message pointing at ANALYTICAL/HYBRID. */
     {
         ScopedTempFile input(R"(OPTIMIZER
 LIB CERES
@@ -562,9 +591,9 @@ MAXEVAL 5
 ENDOPTIMIZER
 )");
         tadah::core::Context ctx;
-        tadah::hpo::HPOTargets trg(ctx, input.path.string());
-        REQUIRE(trg.spec.grad_strategy.has_value());
-        CHECK(*trg.spec.grad_strategy == tadah::hpo::GradStrategy::Autodiff);
+        CHECK_THROWS_WITH(tadah::hpo::HPOTargets(ctx, input.path.string()),
+                          Catch::Contains("AUTODIFF") &&
+                          Catch::Contains("ANALYTICAL"));
     }
     /* invalid */
     {
@@ -713,7 +742,7 @@ TEST_CASE("CERES NLCG validator rejects bad nlcg_type",
 /* =========================================================================
  * GradientProvider tests — exercise the unified gradient seam against a
  * stub host. These cover Ceres-NumericDiff parity vs. analytic, MAXEVAL
- * accounting, bad-eval propagation, and the AUTODIFF stub.
+ * accounting, bad-eval propagation, and the ANALYTICAL/HYBRID dispatch.
  * ========================================================================= */
 
 namespace {
@@ -836,28 +865,157 @@ TEST_CASE("GradientProvider Numerical propagates non-finite host eval",
 }
 #endif  // TADAH_USE_CERES
 
-TEST_CASE("GradientProvider Autodiff strategy throws not-implemented",
-          "[HPO][grad_provider][autodiff]")
+TEST_CASE("GradientProvider Analytical without callback throws wiring error",
+          "[HPO][grad_provider][analytical]")
 {
     auto sp = make_provider_test_spec();
-    sp.grad_strategy = tadah::hpo::GradStrategy::Autodiff;
+    sp.grad_strategy = tadah::hpo::GradStrategy::Analytical;
+    StubHostSinXY2 host;
+    std::atomic<unsigned long> counter{0};
+
+    /* No analytical_grad_fn passed -> the gradient lambda must throw a
+     * wiring-error diagnostic, not silently fall back. */
+    auto gp = tadah::hpo::make_gradient_provider<DlibVec, void>(
+        sp, host, &counter, /*maxeval=*/0);
+
+    DlibVec x; x.set_size(2); x(0)=1.0; x(1)=0.5;
+    CHECK(std::isfinite(gp.cost(x)));
+    DlibVec g;
+    CHECK_THROWS_WITH(gp.gradient(x, g),
+                      Catch::Contains("ANALYTICAL") &&
+                      Catch::Contains("internal wiring"));
+}
+
+TEST_CASE("GradientProvider Analytical with full callback matches analytic",
+          "[HPO][grad_provider][analytical][parity]")
+{
+    auto sp = make_provider_test_spec();
+    sp.grad_strategy = tadah::hpo::GradStrategy::Analytical;
+    StubHostSinXY2 host;
+    std::atomic<unsigned long> counter{0};
+
+    /* Callback fills both indices analytically: d/dx (sin(x)+y²) = (cos x, 2y). */
+    auto agf = [](const DlibVec& x, DlibVec& g, std::vector<int>& nfd) -> bool {
+        g.set_size(2);
+        g(0) = std::cos(x(0));
+        g(1) = 2.0 * x(1);
+        (void)nfd;  // empty
+        return true;
+    };
+
+    auto gp = tadah::hpo::make_gradient_provider<DlibVec, void>(
+        sp, host, &counter, /*maxeval=*/0, agf);
+
+    DlibVec x; x.set_size(2); x(0)=1.0; x(1)=0.5;
+    DlibVec g;
+    REQUIRE(gp.gradient(x, g));
+    CHECK(g(0) == Approx(std::cos(1.0)).margin(1e-12));
+    CHECK(g(1) == Approx(1.0)         .margin(1e-12));
+    /* One eval counted for the entire analytical pass. */
+    CHECK(counter.load() == 1u);
+}
+
+TEST_CASE("GradientProvider Analytical with leftover needs_fd throws strict diagnostic",
+          "[HPO][grad_provider][analytical][strict]")
+{
+    auto sp = make_provider_test_spec();
+    sp.grad_strategy = tadah::hpo::GradStrategy::Analytical;
+    StubHostSinXY2 host;
+    std::atomic<unsigned long> counter{0};
+
+    /* Callback fills index 0 but punts index 1 onto needs_fd. Strict
+     * Analytical mode must throw, naming the missing index. */
+    auto agf = [](const DlibVec& x, DlibVec& g, std::vector<int>& nfd) -> bool {
+        g.set_size(2);
+        g(0) = std::cos(x(0));
+        g(1) = 0.0;        // placeholder
+        nfd.push_back(1);
+        return true;
+    };
+
+    auto gp = tadah::hpo::make_gradient_provider<DlibVec, void>(
+        sp, host, &counter, /*maxeval=*/0, agf);
+
+    DlibVec x; x.set_size(2); x(0)=1.0; x(1)=0.5;
+    DlibVec g;
+    CHECK_THROWS_WITH(gp.gradient(x, g),
+                      Catch::Contains("ANALYTICAL") &&
+                      Catch::Contains("HYBRID") &&
+                      Catch::Contains("1"));
+}
+
+#ifdef TADAH_USE_CERES
+TEST_CASE("GradientProvider Hybrid runs masked FD on needs_fd indices",
+          "[HPO][grad_provider][hybrid][parity]")
+{
+    auto sp = make_provider_test_spec();
+    sp.grad_strategy = tadah::hpo::GradStrategy::Hybrid;
+    StubHostSinXY2 host;
+    std::atomic<unsigned long> counter{0};
+
+    /* Callback fills index 0 analytically, punts index 1 to FD. */
+    auto agf = [](const DlibVec& x, DlibVec& g, std::vector<int>& nfd) -> bool {
+        g.set_size(2);
+        g(0) = std::cos(x(0));
+        g(1) = 0.0;        // placeholder
+        nfd.push_back(1);
+        return true;
+    };
+
+    auto gp = tadah::hpo::make_gradient_provider<DlibVec, void>(
+        sp, host, &counter, /*maxeval=*/0, agf);
+
+    DlibVec x; x.set_size(2); x(0)=1.0; x(1)=0.5;
+    DlibVec g;
+    REQUIRE(gp.gradient(x, g));
+    CHECK(g(0) == Approx(std::cos(1.0)).margin(1e-12));
+    /* FD on index 1 with default fd_step=1e-6 hits 2y = 1.0 to FD precision. */
+    CHECK(g(1) == Approx(1.0).margin(1e-5));
+    /* 1 (analytical pass) + 2 (central-diff for index 1) = 3. */
+    CHECK(counter.load() == 3u);
+}
+
+TEST_CASE("GradientProvider Hybrid respects MAXEVAL on FD pass",
+          "[HPO][grad_provider][hybrid][maxeval]")
+{
+    auto sp = make_provider_test_spec();
+    sp.grad_strategy = tadah::hpo::GradStrategy::Hybrid;
+    StubHostSinXY2 host;
+    std::atomic<unsigned long> counter{0};
+
+    auto agf = [](const DlibVec& x, DlibVec& g, std::vector<int>& nfd) -> bool {
+        g.set_size(2);
+        g(0) = std::cos(x(0));
+        g(1) = 0.0;
+        nfd.push_back(1);
+        return true;
+    };
+
+    /* Cap = 2: analytical pass consumes 1; only one of the two FD samples
+     * fits before the cap → gradient returns false (graceful termination). */
+    auto gp = tadah::hpo::make_gradient_provider<DlibVec, void>(
+        sp, host, &counter, /*maxeval=*/2, agf);
+
+    DlibVec x; x.set_size(2); x(0)=1.0; x(1)=0.5;
+    DlibVec g;
+    CHECK_FALSE(gp.gradient(x, g));
+}
+#endif
+
+TEST_CASE("GradientProvider Hybrid without callback throws wiring error",
+          "[HPO][grad_provider][hybrid]")
+{
+    auto sp = make_provider_test_spec();
+    sp.grad_strategy = tadah::hpo::GradStrategy::Hybrid;
     StubHostSinXY2 host;
     std::atomic<unsigned long> counter{0};
 
     auto gp = tadah::hpo::make_gradient_provider<DlibVec, void>(
         sp, host, &counter, /*maxeval=*/0);
 
-    DlibVec x;
-    x.set_size(2);
-    x(0) = 1.0;
-    x(1) = 0.5;
-
-    /* Cost still works (only gradient is stubbed). */
-    CHECK(std::isfinite(gp.cost(x)));
-
-    /* Gradient throws the planned not-yet-implemented diagnostic. */
+    DlibVec x; x.set_size(2); x(0)=1.0; x(1)=0.5;
     DlibVec g;
     CHECK_THROWS_WITH(gp.gradient(x, g),
-                      Catch::Contains("AUTODIFF") &&
-                      Catch::Contains("NUMERICAL"));
+                      Catch::Contains("HYBRID") &&
+                      Catch::Contains("internal wiring"));
 }

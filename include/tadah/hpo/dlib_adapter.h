@@ -218,9 +218,21 @@ template<class Vec,class Runner>
     /* Gradient via the unified provider. Default GRAD_STRATEGY is
      * NUMERICAL — Ceres DynamicNumericDiffCostFunction with CENTRAL
      * differences (PARAM diff_method 0|1|2 = CENTRAL/FORWARD/RIDDERS).
-     * AUTODIFF is reserved for a later phase. PARAM fd_step still works
-     * (forwarded to the provider as the relative step size). */
-    auto gp = make_gradient_provider<Vec, Runner>(sp, host, &evals_used, maxeval);
+     * ANALYTICAL/HYBRID consume an analytical_grad_fn that delegates
+     * to HPO_Host::analytical_gradient (Phase 2A.4 wiring; see
+     * hpo_host_impl.hpp). PARAM fd_step still works (forwarded to the
+     * provider as the relative step size, both for NUMERICAL and
+     * HYBRID's masked FD pass). */
+    AnalyticalGradFn<Vec> agf = nullptr;
+    if (sp.grad_strategy &&
+        *sp.grad_strategy != GradStrategy::Numerical) {
+        agf = [&host](const Vec& x_in, Vec& g_out,
+                      std::vector<int>& nfd) -> bool {
+            return host.analytical_gradient(x_in, g_out, nfd);
+        };
+    }
+    auto gp = make_gradient_provider<Vec, Runner>(
+        sp, host, &evals_used, maxeval, agf);
     const auto grad = [&gp](const matrix<double,0,1>& x) {
         matrix<double,0,1> g;
         if (!gp.gradient(x, g))

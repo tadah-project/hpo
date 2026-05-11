@@ -3,9 +3,11 @@
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/gradient_provider.h>
 #include <dlib/rand.h>
 
 #include <algorithm>
+#include <atomic>
 #include <limits>
 #include <sstream>
 
@@ -70,18 +72,81 @@ void run_nlopt(const OptimizerSpec& sp,
     opt.set_lower_bounds(sp.low);
     opt.set_upper_bounds(sp.high);
 
-    /* objective adapter (handles log-scale automatically) */
-    auto wrapper = [](const std::vector<double>& x,
-                      std::vector<double>&, void* userdata)->double
-    {
-        auto* pack = static_cast<std::pair<OptimizerSpec const*, HPO_Host<Vec,Runner>*>*>(userdata);
-        const auto& spec = *pack->first;
-        auto* hostp      =  pack->second;
-        Vec v(x.size());
-        for(size_t i=0;i<x.size();++i) v(i)=x[i];
-        return (*hostp)( spec.out(v) );
+    /* GradientProvider for gradient-based NLopt algorithms (LD_*).
+     * Mirrors DLIB / CERES adapters: NUMERICAL routes through Ceres
+     * DynamicNumericDiffCostFunction; ANALYTICAL / HYBRID consume the
+     * host's analytical_gradient member with masked FD on the
+     * unregistered indices. Derivative-free algos (LN_*, GN_*) leave
+     * grad empty on each call — the wrapper skips the gradient path.
+     *
+     * MAXEVAL is enforced by NLopt itself (set_maxeval inside
+     * make_nlopt). The eval_counter here is used only by the
+     * GradientProvider's internal masked-FD bookkeeping; it is
+     * separate from NLopt's nfev counter. */
+    std::atomic<unsigned long> evals_used{0};
+    const unsigned long maxeval =
+        sp.stop.maxeval.has_value()
+            ? static_cast<unsigned long>(*sp.stop.maxeval)
+            : 0ul;
+
+    AnalyticalGradFn<Vec> agf = nullptr;
+    if (sp.grad_strategy &&
+        *sp.grad_strategy != GradStrategy::Numerical) {
+        agf = [&host](const Vec& x_in, Vec& g_out,
+                      std::vector<int>& nfd) -> bool {
+            return host.analytical_gradient(x_in, g_out, nfd);
+        };
+    }
+    auto gp = make_gradient_provider<Vec, Runner>(
+        sp, host, &evals_used, maxeval, agf);
+
+    /* Userdata for the NLopt callback. The GradientProvider must
+     * outlive opt.optimize(); it does, as a stack local in this
+     * function. */
+    struct UData {
+        const OptimizerSpec*               sp;
+        HPO_Host<Vec,Runner>*              host;
+        GradientProvider<Vec,Runner>*      gp;
     };
-    std::pair<const OptimizerSpec*, HPO_Host<Vec,Runner>*> udata{&sp,&host};
+    UData udata{&sp, &host, &gp};
+
+    /* objective adapter (handles log-scale automatically). For
+     * gradient-based algorithms NLopt passes a writable `grad` vector
+     * of size dim; for derivative-free algorithms `grad` is empty. We
+     * always compute f via host(); when grad is non-empty we ALSO
+     * compute the gradient via gp.gradient(). gp.gradient handles the
+     * Numerical / Analytical / Hybrid dispatch internally. */
+    auto wrapper = [](const std::vector<double>& x,
+                      std::vector<double>& grad, void* userdata)->double
+    {
+        auto* u = static_cast<UData*>(userdata);
+        Vec v;
+        v.set_size(static_cast<long>(x.size()));
+        for(size_t i=0;i<x.size();++i) v(static_cast<long>(i))=x[i];
+
+        /* Compute f first so the trainer cache is populated at this x;
+         * host.analytical_gradient (Phase 2A.4 wiring) consumes the
+         * cached fit state. */
+        const double f = (*u->host)( u->sp->out(v) );
+
+        if (!grad.empty()) {
+            Vec g;
+            g.set_size(static_cast<long>(x.size()));
+            if (!u->gp->gradient(v, g)) {
+                /* gp.gradient returns false on bad eval (NaN clamp,
+                 * non-finite W*, or MAXEVAL overflow during masked FD).
+                 * Signal a bad step to NLopt's line search: zero the
+                 * gradient and return +inf so the optimizer rejects
+                 * this point and backs off. Matches how Phase 1's
+                 * Numerical path handles non-finite host returns. */
+                std::fill(grad.begin(), grad.end(), 0.0);
+                return std::numeric_limits<double>::infinity();
+            }
+            for (size_t i=0;i<x.size();++i)
+                grad[i] = g(static_cast<long>(i));
+        }
+        return f;
+    };
     opt.set_min_objective(wrapper,&udata);
 
     /* starting point – either user supplied or random inside bounds */

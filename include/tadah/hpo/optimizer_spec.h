@@ -23,14 +23,28 @@ struct StopCriteria {
 
 /* GradStrategy — selector for the unified gradient provider used by
  * gradient-based HPO optimizers (DLIB:BFGS, CERES:LBFGS/WOLFE/NLCG/
- * STEEPEST_DESCENT, future NLOPT:LD_*). NUMERICAL is the working
- * backend (Ceres DynamicNumericDiffCostFunction). AUTODIFF is reserved
- * for a future phase that templates the train/predict pipeline through
- * Context/MODELS; the stub throws at first call.
+ * STEEPEST_DESCENT, future NLOPT:LD_*).
+ *
+ *   NUMERICAL  — Ceres DynamicNumericDiffCostFunction; finite differences
+ *                on full forward passes through the host.
+ *   ANALYTICAL — closed-form analytical gradient. The HPO host injects
+ *                a per-θ derivative callback (descriptor + cutoff +
+ *                kernel closed forms chained through the IFT-back-
+ *                substitution on the cached Cholesky factor of the
+ *                regression solve). Strict mode: any θ index without a
+ *                registered analytical derivative throws a diagnostic
+ *                naming the missing entry. Use HYBRID to fall back.
+ *   HYBRID     — analytical-where-registered + central-difference
+ *                fallback for unregistered indices, evaluated in one
+ *                gradient(x, g) call. Used when LAMMPS-derived loss
+ *                components (`sims_loss`) or tabulated descriptors
+ *                (EAM SETFL) participate in θ.
  *
  * Configured at OPTIMIZER block level via `GRAD_STRATEGY {NUMERICAL|
- * AUTODIFF}`. Default (unset) = NUMERICAL. */
-enum class GradStrategy { Numerical, Autodiff };
+ * ANALYTICAL|HYBRID}`. Default (unset) = NUMERICAL. The Phase-1 keyword
+ * `AUTODIFF` is no longer accepted; the parser emits a tailored error
+ * pointing at ANALYTICAL. */
+enum class GradStrategy { Numerical, Analytical, Hybrid };
 
 using ParamMap = std::unordered_map<std::string,double>;
 

@@ -26,6 +26,7 @@
 #include <tadah/core/checkpoint_manager.h>  // for tick_eval cadence
 #include <tadah/core/context.h>
 #include <tadah/core/signal_handler.h>
+#include <tadah/hpo/dloss_dtheta.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/pot_header_writer.h>
@@ -93,6 +94,42 @@ public:
         const std::string& val_cfg);
 
     double operator()(const ParamVec& p) const;      // thread-safe
+
+    /** Analytical-gradient callback for GRAD_STRATEGY=ANALYTICAL/HYBRID.
+     *
+     *  Signature matches `AnalyticalGradFn<ParamVec>`:
+     *    bool(const ParamVec& x, ParamVec& g, std::vector<int>& needs_fd)
+     *
+     *  Phase 2A.4: does not run a forward eval itself; it builds a
+     *  param-ref table and consults the orchestrator
+     *  (compute_dloss_dtheta). Until the per-θ analytical evaluation
+     *  is wired (sub-task), every index is reported in needs_fd, which
+     *  HYBRID then handles via masked central differences.
+     *
+     *  ANALYTICAL strict mode is therefore a no-op for production
+     *  configs (the GradientProvider raises a tailored diagnostic on
+     *  the first call), and callers should prefer HYBRID until the
+     *  registered descriptors widen.
+     *
+     *  Thread-safety: same guarantees as operator(); the returned
+     *  std::function captures `this` by pointer. Lifetime is bounded
+     *  by the surrounding adapter call. */
+    bool analytical_gradient(const ParamVec& x, ParamVec& g,
+                             std::vector<int>& needs_fd) const;
+
+    /** One-shot log on the first analytical_gradient call: prints
+     *  GRAD_STRATEGY, total theta count, analytical count, and
+     *  FD-fallback count. Idempotent across calls (atomic_flag gate).
+     *  Surfaces hints for the three different "all-FD" routes:
+     *    - cache_miss:  trainer cache empty on first call (transient)
+     *    - ift_failed:  analytical helper returned false (IFT Cholesky
+     *                   non-PD); rare numerical edge case
+     *    - default:     orchestrator gate (STRESS/NORM/OALGO/LAMBDA/
+     *                   MODEL[1]/use_srmse/PC_LAMMPS) rejected the run */
+    void emit_grad_diagnostic(const std::vector<ParamRef>& prefs,
+                              const std::vector<int>&      needs_fd,
+                              bool                         cache_miss,
+                              bool                         ift_failed = false) const;
 
     /* ICheckpointable — persists the static best-so-far comparator state
      * (g_best_, g_best_iter_, iter_at_last_best_, g_iter_) so that a

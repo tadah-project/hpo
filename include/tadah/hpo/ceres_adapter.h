@@ -315,7 +315,19 @@ inline void run_ceres_gradient_problem(
             : 0ul;
     std::atomic<unsigned long> evals_used{0};
 
-    auto gp = make_gradient_provider<Vec, Runner>(sp, host, &evals_used, maxeval);
+    /* ANALYTICAL/HYBRID: route through the host's analytical_gradient
+     * member function. NUMERICAL leaves the callback null so the
+     * provider takes the Ceres-NumericDiff path. */
+    AnalyticalGradFn<Vec> agf = nullptr;
+    if (sp.grad_strategy &&
+        *sp.grad_strategy != GradStrategy::Numerical) {
+        agf = [&host](const Vec& x_in, Vec& g_out,
+                      std::vector<int>& nfd) -> bool {
+            return host.analytical_gradient(x_in, g_out, nfd);
+        };
+    }
+    auto gp = make_gradient_provider<Vec, Runner>(
+        sp, host, &evals_used, maxeval, agf);
 
     /* GradientProblem takes ownership of the FirstOrderFunction. */
     auto fof = std::make_unique<HPO_FirstOrderFunction<Vec, Runner>>(&gp, dim);

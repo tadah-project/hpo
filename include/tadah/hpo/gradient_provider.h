@@ -4,16 +4,33 @@
  * optimizers (DLIB:BFGS, CERES:LBFGS/WOLFE/NLCG/STEEPEST_DESCENT, future
  * NLOPT:LD_*).
  *
- * Two strategies, selected by OptimizerSpec::grad_strategy (or default):
+ * Three strategies, selected by OptimizerSpec::grad_strategy (or default):
  *
  *   GradStrategy::Numerical  — Ceres DynamicNumericDiffCostFunction
  *                              (CENTRAL by default; FORWARD or RIDDERS
  *                              selectable via PARAM diff_method).
- *   GradStrategy::Autodiff   — stub that throws "not yet implemented".
- *                              Reserved for a later phase that templates
- *                              the train/predict pipeline through Context/
- *                              MODELS plus an implicit-function-theorem
- *                              rule for the LAPACK solve.
+ *   GradStrategy::Analytical — strict closed-form. The caller provides
+ *                              an `analytical_grad_fn` callback that
+ *                              fills g[] and reports any unregistered
+ *                              θ indices via a `needs_fd` out-list.
+ *                              Throws if any index has no registered
+ *                              analytical derivative — use HYBRID for
+ *                              graceful fallback.
+ *   GradStrategy::Hybrid     — analytical for registered θ + masked
+ *                              central-difference for unregistered
+ *                              indices, in one gradient(x, g) call.
+ *                              Same `analytical_grad_fn` signature.
+ *
+ * The factory's `analytical_grad_fn` parameter has the signature
+ *
+ *     bool(const Vec& x, Vec& g, std::vector<int>& needs_fd)
+ *
+ * Returning false signals a bad eval (e.g. r.was_nan_clamped or
+ * non-finite W*). Returning true means "g[i] is filled for every i not
+ * in needs_fd; for i in needs_fd, the caller must source g[i]
+ * elsewhere". The Hybrid strategy then runs central differences on
+ * exactly those indices, sharing the same eval_counter so MAXEVAL
+ * accounting works uniformly. Numerical ignores the callback.
  *
  * MAXEVAL is enforced at this layer by counting host calls in the shared
  * eval_counter. Optimizers receive `gradient(x,g) -> false` (and likewise
@@ -34,6 +51,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -65,6 +83,15 @@ struct GradientProvider {
   std::function<bool(const Vec& x, Vec& g)>      gradient;
 };
 
+/* Caller-injected analytical gradient lambda. Fills g with the
+ * closed-form gradient where it can; pushes any θ indices for which no
+ * analytical derivative is registered onto `needs_fd`. Returns false on
+ * bad eval (clamp, NaN). The HOST captures whatever state it needs
+ * (Trainer factor, Analytics, registry...) before binding this. */
+template<class Vec>
+using AnalyticalGradFn =
+    std::function<bool(const Vec& x, Vec& g, std::vector<int>& needs_fd)>;
+
 /* Build a GradientProvider for `host`. Honours sp.grad_strategy
  * (default: Numerical). The eval_counter is shared with the optimizer
  * driver, so external MAXEVAL accounting works uniformly.
@@ -73,13 +100,19 @@ struct GradientProvider {
  * place of HPO_Host<Vec,Runner>. Production call sites pass an
  * HPO_Host& and the type is deduced. The only requirement on HostT
  * is `double operator()(const Vec&)` returning the loss in real space
- * (sp.out is applied internally before the call). */
+ * (sp.out is applied internally before the call).
+ *
+ * `analytical_grad_fn` is required for ANALYTICAL/HYBRID strategies and
+ * ignored for NUMERICAL. Defaulted to nullptr so existing Phase-1
+ * callers (which only used NUMERICAL/AUTODIFF) keep working without
+ * code change. */
 template<class Vec, class Runner, class HostT>
 GradientProvider<Vec, Runner>
 make_gradient_provider(const OptimizerSpec&     sp,
                        HostT&                   host,
                        std::atomic<unsigned long>* eval_counter,
-                       unsigned long             maxeval /*0 = unbounded*/)
+                       unsigned long             maxeval /*0 = unbounded*/,
+                       AnalyticalGradFn<Vec>    analytical_grad_fn = nullptr)
 {
   const GradStrategy strat = sp.grad_strategy.value_or(GradStrategy::Numerical);
   GradientProvider<Vec, Runner> gp;
@@ -94,14 +127,105 @@ make_gradient_provider(const OptimizerSpec&     sp,
     return y;
   };
 
-  // ---- Autodiff: stubbed. Phase-2 work.
-  if (strat == GradStrategy::Autodiff) {
-    gp.gradient = [](const Vec&, Vec&)->bool {
-      throw std::runtime_error(
-          "GRAD_STRATEGY=AUTODIFF is not yet implemented. It requires "
-          "templating Context and the train/predict pipeline through "
-          "MODELS, plus an implicit-function-theorem rule for the LAPACK "
-          "solve. Use GRAD_STRATEGY=NUMERICAL for now.");
+  // ---- ANALYTICAL: strict mode. Defer to the caller-supplied callback;
+  // any index left in `needs_fd` is a hard error pointing the user at
+  // HYBRID or at registering the missing derivative.
+  if (strat == GradStrategy::Analytical) {
+    if (!analytical_grad_fn) {
+      gp.gradient = [](const Vec&, Vec&)->bool {
+        throw std::runtime_error(
+            "GRAD_STRATEGY=ANALYTICAL requires an analytical gradient "
+            "callback, but none was provided. This is an internal wiring "
+            "error — the HPO host must register an analytical gradient "
+            "function before constructing the GradientProvider.");
+      };
+      return gp;
+    }
+    gp.gradient = [analytical_grad_fn, eval_counter, maxeval]
+                  (const Vec& x, Vec& g)->bool {
+      if (maxeval > 0 && eval_counter->load() >= maxeval) return false;
+      eval_counter->fetch_add(1);
+      std::vector<int> needs_fd;
+      if (!analytical_grad_fn(x, g, needs_fd)) return false;
+      if (!needs_fd.empty()) {
+        std::ostringstream oss;
+        oss << "GRAD_STRATEGY=ANALYTICAL: " << needs_fd.size()
+            << " parameter index/indices have no registered analytical "
+               "derivative (indices: [";
+        for (std::size_t i = 0; i < needs_fd.size(); ++i) {
+          if (i) oss << ", ";
+          oss << needs_fd[i];
+        }
+        oss << "]). Use GRAD_STRATEGY=HYBRID to fall back to numerical "
+               "for these indices, or register the missing analytical "
+               "derivatives in dtheta_registry.";
+        throw std::runtime_error(oss.str());
+      }
+      for (long i = 0; i < g.size(); ++i)
+        if (!std::isfinite(g(i))) return false;
+      return true;
+    };
+    return gp;
+  }
+
+  // ---- HYBRID: analytical fills what it can; remaining indices get a
+  // masked central-difference pass that varies only the unregistered
+  // indices. fd_step honours PARAM fd_step (default 1e-6). The shared
+  // eval_counter accounts for FD calls so MAXEVAL stays correct.
+  if (strat == GradStrategy::Hybrid) {
+    if (!analytical_grad_fn) {
+      gp.gradient = [](const Vec&, Vec&)->bool {
+        throw std::runtime_error(
+            "GRAD_STRATEGY=HYBRID requires an analytical gradient "
+            "callback, but none was provided. This is an internal wiring "
+            "error.");
+      };
+      return gp;
+    }
+    double fd_step = 1.0e-6;
+    if (auto it = sp.param.find("fd_step"); it != sp.param.end())
+      fd_step = it->second;
+
+    gp.gradient = [&host, &sp, eval_counter, maxeval,
+                   analytical_grad_fn, fd_step]
+                  (const Vec& x, Vec& g)->bool {
+      const auto over = [&]() {
+        return maxeval > 0 && eval_counter->load() >= maxeval;
+      };
+      if (over()) return false;
+      eval_counter->fetch_add(1);
+
+      std::vector<int> needs_fd;
+      if (!analytical_grad_fn(x, g, needs_fd)) return false;
+
+      // Central differences over the masked indices.
+      for (int idx : needs_fd) {
+        const double xi = x(idx);
+        const double h  = fd_step * std::max(std::abs(xi), 1.0);
+
+        Vec xp = x; xp(idx) = xi + h;
+        Vec xm = x; xm(idx) = xi - h;
+
+        if (over()) return false;
+        eval_counter->fetch_add(1);
+        const double yp = host(sp.out(xp));
+        if (!std::isfinite(yp)) return false;
+
+        if (over()) return false;
+        eval_counter->fetch_add(1);
+        const double ym = host(sp.out(xm));
+        if (!std::isfinite(ym)) return false;
+
+        const double gi = (yp - ym) / (2.0 * h);
+        if (!std::isfinite(gi)) return false;
+        g(idx) = gi;
+      }
+
+      // Sanity check: every index should now be finite (the analytical
+      // pass may have left bad entries even outside needs_fd).
+      for (long i = 0; i < g.size(); ++i)
+        if (!std::isfinite(g(i))) return false;
+      return true;
     };
     return gp;
   }

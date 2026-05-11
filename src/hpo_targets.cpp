@@ -548,10 +548,18 @@ static bool dispatch_opt_attr(const std::string& key,
     else if (key=="THREADS")   { unsigned v; iss>>v; a.num_threads=v; }
     else if (key=="GRAD_STRATEGY") {
         std::string v; iss>>v;
-        if      (v=="NUMERICAL") a.grad_strategy = GradStrategy::Numerical;
-        else if (v=="AUTODIFF")  a.grad_strategy = GradStrategy::Autodiff;
+        if      (v=="NUMERICAL")  a.grad_strategy = GradStrategy::Numerical;
+        else if (v=="ANALYTICAL") a.grad_strategy = GradStrategy::Analytical;
+        else if (v=="HYBRID")     a.grad_strategy = GradStrategy::Hybrid;
+        else if (v=="AUTODIFF")   throw std::runtime_error(
+            "GRAD_STRATEGY=AUTODIFF was renamed to ANALYTICAL in Phase 2; "
+            "the prior stub now backs a closed-form analytical gradient. "
+            "Use GRAD_STRATEGY ANALYTICAL (strict — every θ must have a "
+            "registered analytical derivative) or GRAD_STRATEGY HYBRID "
+            "(analytical-where-registered + finite-difference fallback).");
         else throw std::runtime_error(
-            "GRAD_STRATEGY must be NUMERICAL or AUTODIFF (got '" + v + "')");
+            "GRAD_STRATEGY must be one of NUMERICAL, ANALYTICAL, HYBRID "
+            "(got '" + v + "')");
     }
     else if (key=="PARAM")     { std::string p; double v; iss>>p>>v; a.param[p]=v; }
     else return false;
