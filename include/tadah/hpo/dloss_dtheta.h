@@ -775,7 +775,8 @@ compute_analytical_gradient_from_trainer(
     using clk = std::chrono::high_resolution_clock;
     auto t_start = clk::now();
     auto t_train_phi = t_start, t_chol = t_start, t_val_phi = t_start,
-         t_per_theta = t_start, t_chain_rule = t_start;
+         t_dm_cache = t_start, t_per_theta = t_start,
+         t_chain_rule = t_start;
     auto ms = [](clk::time_point a, clk::time_point b) {
         return std::chrono::duration<double, std::milli>(b - a).count();
     };
@@ -1065,6 +1066,34 @@ compute_analytical_gradient_from_trainer(
         plan.loss_count = lc;
     }
 
+    /* DM rho/F'(ρ) cache (Phase 2E P3). The DM walker's per-atom pre-pass
+     * (calc_rho over neighbours + calc_aed to fill F'(rho) tail) is
+     * θ-INVARIANT — neither calc_rho nor calc_aed take a theta_name. Build
+     * the cache once per gradient call (train + val) and reuse it across
+     * all θ. build_dm_rho_cache parallelises internally.
+     *
+     * Bench knob: TADAH_DISABLE_DM_CACHE=1 skips the cache build and routes
+     * the per-θ loop through the non-cached combined walker. Used by P5 to
+     * measure the cache's marginal contribution on the live config; the
+     * cache itself stays opt-in via this knob until we have empirical data
+     * showing it consistently wins (the cache's memory-traffic vs
+     * compute-savings trade-off depends on the descriptor's per-atom rho
+     * size and the validation-set scale). */
+    const bool disable_dm_cache = [](){
+        const char* e = std::getenv("TADAH_DISABLE_DM_CACHE");
+        return e != nullptr && e[0] != '\0' && e[0] != '0';
+    }();
+    mlip::DMRhoCache dm_cache_train;
+    mlip::DMRhoCache dm_cache_val;
+    if (host.DCS.dmb && !disable_dm_cache) {
+        mlip::build_dm_rho_cache(train_stdb, *host.DCS.dmb,
+                                 dm_cache_train, n_cols);
+        mlip::build_dm_rho_cache(val_stdb,   *host.DCS.dmb,
+                                 dm_cache_val,   n_cols);
+    }
+
+    if (profile_grad) t_dm_cache = clk::now();
+
     /* Per-θ buffers (own storage; plan holds raw pointers into these).
      * Train side is laid out in the interleaved Phi_aug shape; val side
      * matches the n_val_rows-wide phi_val layout (with force rows when
@@ -1094,44 +1123,54 @@ compute_analytical_gradient_from_trainer(
         dphi_train_buf[i].assign(n_aug_rows * n_cols, 0.0);
         dphi_val_buf  [i].assign(n_val_rows * n_cols, 0.0);
 
-        /* Train-side energy rows: walker writes to a dense
-         * (n_struct × n_cols) scratch buffer, then we copy each
-         * struct's row into the interleaved position in dphi_train_buf
-         * and scale by w_e. */
-        const bool ok_e_train = mlip::assemble_dphi_train_energy_rows(
-            train_stdb, host.DCS, prefs[i].theta_name, prefs[i].arg_pos,
-            energy_scratch_train.data(), n_cols);
+        /* Combined energy + force walker with rho cache (Phase 2E P1+P3):
+         * one pass per side sharing the per-pair iteration (D2) and the
+         * per-atom rho/drho pre-pass (DM) across the energy and force
+         * derivative kernels, AND reusing the θ-independent rho/F'(ρ)
+         * field across all θ via dm_cache_{train,val}. Pre-Phase-2E this
+         * was four walker calls per θ each rebuilding the rho pre-pass;
+         * Phase 2E folds the rho pre-pass into a single one-shot build
+         * outside the per-θ loop.
+         *
+         * Train-side energy rows go to energy_scratch_train (dense
+         * n_struct × n_cols, copied later into the interleaved
+         * dphi_train_buf with weight scaling). Force rows go directly
+         * into the interleaved dphi_train_buf at the force-row offsets. */
+        const auto pr_train = disable_dm_cache
+            ? mlip::assemble_dphi_train_both_rows(
+                  train_stdb, host.DCS,
+                  prefs[i].theta_name, prefs[i].arg_pos,
+                  energy_scratch_train.data(),
+                  use_force ? dphi_train_buf[i].data() : nullptr,
+                  n_cols, force_row_start_for_struct)
+            : mlip::assemble_dphi_train_both_rows_cached(
+                  train_stdb, host.DCS, dm_cache_train,
+                  prefs[i].theta_name, prefs[i].arg_pos,
+                  energy_scratch_train.data(),
+                  use_force ? dphi_train_buf[i].data() : nullptr,
+                  n_cols, force_row_start_for_struct);
+        const bool ok_e_train = pr_train.first;
+        const bool ok_f_train = pr_train.second;
 
-        /* Val-side energy rows: same pattern (dense scratch then copy
-         * to interleaved phi_val layout). When use_frmse_val is false,
-         * the layout collapses to row = struct_idx and the copy is a
-         * straight per-row move. */
-        const bool ok_e_val = mlip::assemble_dphi_train_energy_rows(
-            val_stdb, host.DCS, prefs[i].theta_name, prefs[i].arg_pos,
-            energy_scratch_val.data(),   n_cols);
-
-        bool ok_f_train = false;
-        if (use_force) {
-            /* Force rows: walker writes directly into the interleaved
-             * dphi_train_buf at the force-row offsets, then scaled by
-             * w_f after the walk. The DC_Selector-level helper iterates
-             * D2 + DM arms; an analytical force closed form is owned by
-             * exactly one arm per (theta_name, arg_pos), so an OR
-             * across arms reports success when either claimed it. */
-            ok_f_train = mlip::assemble_dphi_train_force_rows(
-                train_stdb, host.DCS, prefs[i].theta_name, prefs[i].arg_pos,
-                dphi_train_buf[i].data(), n_cols, force_row_start_for_struct);
-        }
-
-        bool ok_f_val = false;
-        if (use_frmse_val) {
-            /* Val-side force rows: same combined walker on val_stdb.
-             * No weight scaling (val Phi has no eweight/fweight
-             * factors — they only weigh the training fit). */
-            ok_f_val = mlip::assemble_dphi_train_force_rows(
-                val_stdb, host.DCS, prefs[i].theta_name, prefs[i].arg_pos,
-                dphi_val_buf[i].data(), n_cols, force_row_start_for_struct_val);
-        }
+        /* Val-side: same cached walker on val_stdb with dm_cache_val.
+         * No weight scaling (val Phi has no eweight/fweight factors —
+         * they only weigh the training fit). force_row_start_for_struct_val
+         * is consumed only when use_frmse_val is true. */
+        const auto pr_val = disable_dm_cache
+            ? mlip::assemble_dphi_train_both_rows(
+                  val_stdb, host.DCS,
+                  prefs[i].theta_name, prefs[i].arg_pos,
+                  energy_scratch_val.data(),
+                  use_frmse_val ? dphi_val_buf[i].data() : nullptr,
+                  n_cols, force_row_start_for_struct_val)
+            : mlip::assemble_dphi_train_both_rows_cached(
+                  val_stdb, host.DCS, dm_cache_val,
+                  prefs[i].theta_name, prefs[i].arg_pos,
+                  energy_scratch_val.data(),
+                  use_frmse_val ? dphi_val_buf[i].data() : nullptr,
+                  n_cols, force_row_start_for_struct_val);
+        const bool ok_e_val = pr_val.first;
+        const bool ok_f_val = pr_val.second;
 
         /* Train-side ownership requires BOTH energy and (if FORCE) force
          * walkers to claim the theta. A descriptor that owns theta for
@@ -1231,13 +1270,15 @@ compute_analytical_gradient_from_trainer(
         t_chain_rule = clk::now();
         std::fprintf(stderr,
             "[GRADPROF] total=%.1fms | train_phi=%.1f | chol=%.2f | "
-            "val_phi=%.1f | per_theta=%.1f | chain_rule=%.1f | "
-            "n_train=%zu n_val=%zu n_theta=%zu n_cols=%zu\n",
+            "val_phi=%.1f | dm_cache=%.1f | per_theta=%.1f | "
+            "chain_rule=%.1f | n_train=%zu n_val=%zu n_theta=%zu "
+            "n_cols=%zu\n",
             ms(t_start, t_chain_rule),
             ms(t_start,     t_train_phi),
             ms(t_train_phi, t_chol),
             ms(t_chol,      t_val_phi),
-            ms(t_val_phi,   t_per_theta),
+            ms(t_val_phi,   t_dm_cache),
+            ms(t_dm_cache,  t_per_theta),
             ms(t_per_theta, t_chain_rule),
             train_stdb.size(), val_stdb.size(), prefs.size(), n_cols);
         /* Rank per-θ wall times. The few longest dominate the parallel
