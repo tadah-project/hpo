@@ -68,15 +68,34 @@ std::vector<std::string>
 extract_varloss_expressions(const LammpsSim& lsim)
 {
     /* Walk the script once, building a name→expression map. Last-wins
-     * semantics match LAMMPS' own variable redefinition rule. */
+     * semantics match LAMMPS' own variable redefinition rule.
+     *
+     * Two variable styles are honoured:
+     *   - `equal <expr>`: re-evaluated on every access (the canonical
+     *     observable pattern). Expression is differentiable as-is.
+     *   - `string $(<expr>)`: LAMMPS immediate-eval. The `$(...)` wrapper
+     *     is evaluated at definition time and the result stored as a
+     *     literal. For our purpose — reading the variable after `run 0`
+     *     at the relaxed state — this is identical to `equal $(<expr>)`
+     *     when the `variable` line appears post-minimize. We accept it
+     *     so users who prefer `string` (slightly cheaper, no re-eval)
+     *     aren't forced into FD fall-back.
+     *
+     * Other styles (atom / vector / world / file / getenv / format /
+     * loop / index / universe / uloop / internal / python) are skipped;
+     * the registry can't differentiate them. Plain `string foo` (not
+     * `$(...)`-wrapped) is also skipped — it's a literal constant. */
     std::unordered_map<std::string, std::string> by_name;
     for (const auto& raw : lsim.script_lines) {
         const std::string line = trim_for_scan(raw);
         if (line.empty()) continue;
         const auto tk = ws_tokens(line);
-        /* `variable <name> equal <expr...>` ⇒ at least 4 tokens. */
+        /* `variable <name> <style> <expr...>` ⇒ at least 4 tokens. */
         if (tk.size() < 4) continue;
-        if (tk[0] != "variable" || tk[2] != "equal") continue;
+        if (tk[0] != "variable") continue;
+        const bool is_equal  = (tk[2] == "equal");
+        const bool is_string = (tk[2] == "string");
+        if (!is_equal && !is_string) continue;
 
         /* Reconstruct the rest of the line as the raw expression so we
          * preserve `$(...)` wrappers and arithmetic. Re-tokenise from
@@ -95,7 +114,7 @@ extract_varloss_expressions(const LammpsSim& lsim)
                 ++cursor;
         };
         skip_ws();   skip_token();  /* <name> */
-        skip_ws();   skip_token();  /* equal */
+        skip_ws();   skip_token();  /* equal | string */
         skip_ws();
         std::string expr = (cursor < line.size())
                              ? line.substr(cursor)
@@ -105,6 +124,13 @@ extract_varloss_expressions(const LammpsSim& lsim)
         while (!expr.empty() &&
                std::isspace(static_cast<unsigned char>(expr.back()))) {
             expr.pop_back();
+        }
+        /* For string-style: only accept `$(...)` immediate-eval forms.
+         * A bare literal like `variable v string foo` is a constant
+         * that can't be folded into the chain rule — skip. */
+        if (is_string) {
+            if (expr.size() < 2 || expr[0] != '$' || expr[1] != '(')
+                continue;
         }
         by_name[name] = expr;
     }

@@ -739,7 +739,7 @@ TEST_CASE("sims_grad_lammps — extract_varloss_expressions: missing "
 }
 
 TEST_CASE("sims_grad_lammps — extract_varloss_expressions: comments and "
-          "non-`equal` styles ignored",
+          "unsupported styles ignored",
           "[sims_grad][phase3]")
 {
     using tadah::hpo::extract_varloss_expressions;
@@ -748,9 +748,9 @@ TEST_CASE("sims_grad_lammps — extract_varloss_expressions: comments and "
     LammpsSim ls;
     ls.script_lines = {
         "# variable v equal lx",       /* commented out — NOT a def */
-        "variable v string foo",       /* string-style — NOT equal */
+        "variable v string foo",       /* string but literal — skipped */
         "variable v equal lx",         /* the real one */
-        "variable v atom v_lx + 1",    /* atom-style overrides nothing */
+        "variable v atom v_lx + 1",    /* atom-style — skipped */
     };
     ls.n_outvar  = {"v"};
     ls.n_varloss = {"v"};
@@ -760,10 +760,84 @@ TEST_CASE("sims_grad_lammps — extract_varloss_expressions: comments and "
 
     const auto exprs = extract_varloss_expressions(ls);
     REQUIRE(exprs.size() == 1);
-    /* Commented + string + atom styles all skipped; only `equal` line
-     * matched, and the trailing `atom` line doesn't redefine the
-     * `equal` map (it's a different style — last-wins is per-style
-     * here, which matches what LAMMPS does for `equal` retrieval via
-     * `variable->retrieve` against an `equal` slot). */
+    /* Commented + literal-string + atom styles all skipped; only the
+     * `equal` line populates the map. */
     CHECK(exprs[0] == "lx");
+}
+
+/* `variable v string $(<expr>)` is LAMMPS' immediate-eval form: <expr>
+ * is computed at definition time and the result stored as a literal
+ * string. When the `variable` line appears AFTER the relaxation (the
+ * canonical pattern: `... minimize ... variable e_per string $(...)
+ * ... run 0`), the value reflects the post-minimize state — identical
+ * to what `variable v equal $(<expr>)` would return on access. We
+ * accept this form so users who prefer `string` (no re-evaluation cost)
+ * stay on the analytical path. */
+TEST_CASE("sims_grad_lammps — extract_varloss_expressions: "
+          "`string $(...)` immediate-eval honoured",
+          "[sims_grad][phase3]")
+{
+    using tadah::hpo::extract_varloss_expressions;
+    using tadah::hpo::LammpsSim;
+
+    /* Three scripts in one case to keep the surface compact:
+     *   (a) pure `string $(...)`
+     *   (b) `string $(...)` redefined to `equal <expr>` (last-wins
+     *       across styles)
+     *   (c) literal `string foo` (no `$(...)`) ignored even when no
+     *       other definition exists. */
+    SECTION("string $(...) parsed identically to equal $(...)") {
+        LammpsSim ls;
+        ls.script_lines = {
+            "variable e_per string $(c_eatoms/atoms)",
+            "variable my_lx string $(lx/4.0)",
+            "run 0",
+        };
+        ls.n_outvar  = {"e_per", "my_lx"};
+        ls.n_varloss = {"e_per", "my_lx"};
+        ls.t_varloss = {0.0, 0.0};
+        ls.w_varloss = {1.0, 1.0};
+        ls.i_varloss = {0, 1};
+
+        const auto exprs = extract_varloss_expressions(ls);
+        REQUIRE(exprs.size() == 2);
+        CHECK(exprs[0] == "$(c_eatoms/atoms)");
+        CHECK(exprs[1] == "$(lx/4.0)");
+    }
+
+    SECTION("last definition wins across string/equal styles") {
+        LammpsSim ls;
+        ls.script_lines = {
+            "variable v string $(lx)",
+            "variable v equal ly",          /* last-wins regardless of style */
+        };
+        ls.n_outvar  = {"v"};
+        ls.n_varloss = {"v"};
+        ls.t_varloss = {0.0};
+        ls.w_varloss = {1.0};
+        ls.i_varloss = {0};
+
+        const auto exprs = extract_varloss_expressions(ls);
+        REQUIRE(exprs.size() == 1);
+        CHECK(exprs[0] == "ly");
+    }
+
+    SECTION("literal string (no `$(...)`) skipped — gradient zero "
+            "isn't trustworthy on a free-form constant") {
+        LammpsSim ls;
+        ls.script_lines = {
+            "variable v string some_literal_value",
+            "variable other equal pe",
+        };
+        ls.n_outvar  = {"v", "other"};
+        ls.n_varloss = {"v", "other"};
+        ls.t_varloss = {0.0, 0.0};
+        ls.w_varloss = {1.0, 1.0};
+        ls.i_varloss = {0, 1};
+
+        const auto exprs = extract_varloss_expressions(ls);
+        REQUIRE(exprs.size() == 2);
+        CHECK(exprs[0].empty());         /* literal v skipped */
+        CHECK(exprs[1] == "pe");
+    }
 }
