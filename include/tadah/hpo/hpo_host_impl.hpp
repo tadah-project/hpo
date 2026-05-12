@@ -3,6 +3,7 @@
 #include <tadah/core/intercept_layout.h>
 #include <tadah/core/logger.h>
 #include <tadah/hpo/lammps_sim.h>
+#include <tadah/hpo/sims_grad_lammps.h>
 #include <tadah/hpo/val_filter_forwarding.h>
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/pot_header_writer.h>
@@ -2157,10 +2158,120 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
     std::vector<double> g_flat;
     bool helper_ok = false;
     std::string helper_throw_msg;
+
+    /* Phase 3.7B-orchestrator — SimsGradProvider construction.
+     *
+     * Lambda spins up a fresh LAMMPS instance per script, runs the
+     * relaxed-state script with the current iteration's pot, then folds
+     * the LAMMPS-observable gradients into g_out via
+     * `populate_sims_grad_input_from_lammps`. The instances are owned
+     * by `lmp_holders` (declared OUTSIDE the lambda so they outlive the
+     * `compute_sims_grad_dWchain` call which aliases pointers into
+     * `lt->aeds` / `lt->adjoint_snapshot`).
+     *
+     * Phase 3.7B-warmstart: hot-var scripts are now supported. A
+     * name-keyed snapshot is built from the warmstart cache (with
+     * `hv.initial` / midpoint fallback when the cache is unprimed) at
+     * the start of each lambda invocation; every script — hot or cold
+     * — gets `variable <name> string <value>` injected before
+     * `run_script` runs. The gradient lambda is strictly read-only on
+     * the cache (no `warmstart::set`) — only operator() owns cache
+     * mutation. Out-of-range produced hot values aren't validated; if
+     * the relaxation under the seeded value gives an unphysical
+     * observable, `populate_sims_grad_input_from_lammps` returns false
+     * via the FAIL_SCORE-clamp path and the orchestrator falls all
+     * theta back to FD per the all-or-nothing contract. */
+    std::vector<typename R::LMPPtr> lmp_holders;
+    SimsGradProvider sims_grad_provider = nullptr;
+    if (!trg_.LS.empty()) {
+        lmp_holders.reserve(trg_.LS.size());
+        sims_grad_provider =
+            [this, &lmp_holders, &cache]
+            (std::vector<SimsGradScriptInput>& inputs) -> bool {
+                inputs.clear();
+                inputs.resize(trg_.LS.size());
+                lmp_holders.clear();
+                lmp_holders.reserve(trg_.LS.size());
+
+                /* Build a name-keyed snapshot of hot-var seeds from
+                 * the warmstart cache. Mirrors operator()'s phase A
+                 * seed logic + phase B cross-script propagation:
+                 * a cold script that reads ${<name>} sees the same
+                 * value the hot script produced on the most recent
+                 * successful eval. Collapsed by name (not by (script,
+                 * name)) because cold scripts inject the same way. */
+                std::unordered_map<std::string, double> hot_snapshot;
+                for (const auto& lsim : trg_.LS) {
+                    for (const auto& hv : lsim.hotvars) {
+                        if (hot_snapshot.count(hv.name)) continue;
+                        if (auto cached = warmstart::get(lsim.script, hv.name)) {
+                            hot_snapshot[hv.name] = *cached;
+                        } else if (hv.initial) {
+                            hot_snapshot[hv.name] = *hv.initial;
+                        } else {
+                            hot_snapshot[hv.name] = 0.5 * (hv.min + hv.max);
+                        }
+                    }
+                }
+
+                auto inject_string_var =
+                    [](typename R::LMPPtr& lmp,
+                       const std::string& name, double value) {
+                        char cmd[256];
+                        std::snprintf(cmd, sizeof(cmd),
+                                      "variable %s string %.17g",
+                                      name.c_str(), value);
+                        try { lmp->input->one(cmd); }
+                        catch (...) { /* keep going — same as operator() */ }
+                    };
+
+                for (std::size_t k = 0; k < trg_.LS.size(); ++k) {
+                    const auto& lsim = trg_.LS[k];
+
+                    /* Build pot fresh from the current trainer (mirror
+                     * eval pipeline at hpo_host_impl.hpp:1323-1336). */
+                    core::Context pot = cache.trainer->model->get_param_file();
+                    mlip::stamp_into_param_file(pot, report_);
+                    pot.remove("AUDIT");
+                    pot.remove("HEALTH_LOG");
+
+                    R runner;
+                    auto lmp = runner.create_instance(0, lsim.invar);
+                    if (!lmp) return false;
+
+                    /* Inject every known hot-var seed BEFORE running the
+                     * script body. Scripts may overwrite via their own
+                     * `variable` lines (last-wins style for `string`). */
+                    for (const auto& kv : hot_snapshot)
+                        inject_string_var(lmp, kv.first, kv.second);
+
+                    if (!runner.run_script(lmp, lsim.script_lines, pot))
+                        return false;
+
+                    std::vector<std::string> v_outvar;
+                    v_outvar.reserve(lsim.n_outvar.size());
+                    for (const auto& name : lsim.n_outvar)
+                        v_outvar.push_back(runner.get_variable(lmp, name));
+
+                    const int box_dofs =
+                        detect_box_dofs_from_script(lsim.script_lines);
+                    const auto exprs = extract_varloss_expressions(lsim);
+
+                    if (!populate_sims_grad_input_from_lammps(
+                            lmp.get(), lsim, v_outvar, exprs,
+                            box_dofs, lsim.failscore, inputs[k]))
+                        return false;
+
+                    lmp_holders.push_back(std::move(lmp));
+                }
+                return true;
+            };
+    }
+
     try {
         helper_ok = compute_analytical_gradient_from_trainer(
             *cache.trainer, train_stdb_, val_stdb_, trg_, prefs,
-            g_flat, needs_fd);
+            g_flat, needs_fd, sims_grad_provider);
     } catch (const std::exception& e) {
         /* Any throw from the analytical helper (out-of-range, walker
          * mismatch, internal Cholesky, ...) is gracefully degraded

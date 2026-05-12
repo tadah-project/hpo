@@ -53,6 +53,7 @@
 #include <tadah/core/intercept_layout.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/loss_function.h>
+#include <tadah/hpo/sims_grad.h>
 #include <tadah/mlip/analytics/analytics.h>
 #include <tadah/mlip/analytics/analytics_grad.h>
 #include <tadah/mlip/analytics/dphi_dtheta_walk.h>
@@ -75,10 +76,12 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <numeric>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -527,7 +530,8 @@ template<class Vec>
 inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
                                  const Vec&             /*x*/,
                                  Vec&                   g,
-                                 std::vector<int>&      needs_fd)
+                                 std::vector<int>&      needs_fd,
+                                 std::vector<double>*   dWdtheta_out = nullptr)
 {
     if (plan.was_nan_clamped) return false;
     if (!plan.prefs)
@@ -549,16 +553,25 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
     if (!plan.per_theta || plan.per_theta->size() != prefs.size()) {
         for (std::size_t i = 0; i < prefs.size(); ++i)
             needs_fd.push_back(static_cast<int>(prefs[i].flat_idx));
+        if (dWdtheta_out) dWdtheta_out->clear();
         return true;
     }
 
     /* IFT chain: build dW/dtheta for every theta whose dPhi_train_aug
      * is supplied. Indices with nullptr dPhi_train_aug end up in
-     * needs_fd_internal — we propagate that to the caller's list. */
-    std::vector<double> dWdtheta;
+     * needs_fd_internal — we propagate that to the caller's list.
+     *
+     * Phase 3.7B: when the caller wants to chain dW/dθ into a sims_grad
+     * computation afterwards (LAMMPS-observable adjoint), it passes a
+     * non-null `dWdtheta_out` and reads the buffer once we return. The
+     * compute happens once either way — local storage when out is null,
+     * caller's buffer otherwise. */
+    std::vector<double> dWdtheta_local;
+    std::vector<double>& dWdtheta = dWdtheta_out ? *dWdtheta_out : dWdtheta_local;
     std::vector<int>    needs_fd_internal;
     if (!detail::compute_dWdtheta(plan, dWdtheta, needs_fd_internal)) {
         /* Cholesky failed → factor non-PD; signal as NaN-clamp. */
+        if (dWdtheta_out) dWdtheta_out->clear();
         return false;
     }
     /* Carry through indices the IFT layer punted to FD. */
@@ -716,6 +729,28 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
 }
 
 /* ------------------------------------------------------------------- *
+ *  SimsGradProvider — host-supplied callback that produces one
+ *  SimsGradScriptInput per script in trg.LS, captured at the current
+ *  iteration's relaxed state. Returns false if any script could not be
+ *  evaluated (LAMMPS instance failed, fail-score clamp, missing variable,
+ *  ...); the caller then falls back to all-FD per Phase 3.5's
+ *  all-or-nothing policy.
+ *
+ *  Default (nullptr) → preserves the pre-3.7B behaviour: when
+ *  `trg.LS` is non-empty, `compute_analytical_gradient_from_trainer`
+ *  routes every θ to FD via `fall_back_all_fd`. Non-null → the helper
+ *  asks the provider to capture per-script inputs and chains them
+ *  through `compute_sims_grad_dWchain` to fold sims_loss gradients
+ *  into `g_out`.
+ *
+ *  The provider returned vector must have `inputs.size() == trg.LS.size()`
+ *  with inputs[k] corresponding to LS[k]. Empty trg.LS → provider is
+ *  not invoked.
+ * ------------------------------------------------------------------- */
+using SimsGradProvider =
+    std::function<bool(std::vector<SimsGradScriptInput>& inputs)>;
+
+/* ------------------------------------------------------------------- *
  *  compute_analytical_gradient_from_trainer
  *
  *  Free helper that takes a live, trained mlip::Trainer plus the
@@ -742,6 +777,12 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
  *  M_KRR_Train, so the analytical chain requires dEKM/dtheta —
  *  deferred to Phase 2C.
  *
+ *  `sims_grad_provider` (Phase 3.7B): default-null. When `trg.LS` is
+ *  non-empty AND a provider is supplied, the helper drives
+ *  `compute_sims_grad_dWchain` on the provider's outputs to fold
+ *  LAMMPS-observable gradients into `g_out`. Null provider with non-
+ *  empty LS → falls back to all-FD (byte-identical to pre-3.7B).
+ *
  *  g_out is sized to prefs.size() and pre-zeroed by this helper.
  *  Returns false only when an internal step failed in a way the
  *  optimiser should treat as a clamp event (today: Cholesky non-PD).
@@ -754,7 +795,8 @@ compute_analytical_gradient_from_trainer(
     const HPOTargets&                         trg,
     const std::vector<ParamRef>&              prefs,
     std::vector<double>&                      g_out,
-    std::vector<int>&                         needs_fd)
+    std::vector<int>&                         needs_fd,
+    const SimsGradProvider&                   sims_grad_provider = nullptr)
 {
     g_out.assign(prefs.size(), 0.0);
     needs_fd.clear();
@@ -785,19 +827,19 @@ compute_analytical_gradient_from_trainer(
 
     auto& ctx = host.context;
 
-    /* PC_LAMMPS interaction (Option A from PROMPT_NEXT_NLOPT_LBFGS.md).
-     * Sims_loss is contributed by LAMMPS evaluations of outvar metrics
-     * (Ecoh, Cij, gamma_s, ...) — these are opaque to the orchestrator's
-     * chain rule (no closed-form dLAMMPS/dtheta is registered). When any
-     * LAMMPS script is active in the targets, every θ has a sims_loss
-     * contribution that no analytical pass can deliver. Fall back to FD
-     * for the whole gradient so the masked-FD pass in HYBRID picks up
-     * both fit_loss and sims_loss components consistently. Numerical
-     * gradient already does the full FD; ANALYTICAL would mis-attribute
-     * the sims_loss to zero. Partial-analytical (compute analytical
-     * descriptor gradient + FD-only-on-sims_loss) is a follow-up
-     * (Option B / Phase 2C). */
-    if (!trg.LS.empty())
+    /* PC_LAMMPS interaction.
+     *
+     * Pre-Phase 3.7B (Option A from PROMPT_NEXT_NLOPT_LBFGS.md): any
+     * trg.LS entry forced a full FD fall-back because sims_loss had no
+     * analytical chain. Phase 3 IFT-adjoint changes that — when the
+     * caller supplies a `sims_grad_provider`, the LAMMPS-observable
+     * gradient is folded in below via `compute_sims_grad_dWchain`. Null
+     * provider keeps the historical fall-back (HYBRID's masked FD picks
+     * up both fit_loss and sims_loss components).
+     *
+     * The fall-back path is byte-identical to the pre-3.7B behaviour
+     * when (a) trg.LS is non-empty AND (b) sims_grad_provider is null. */
+    if (!trg.LS.empty() && !sims_grad_provider)
         return fall_back_all_fd();
 
     /* Phase 2C (C-step) lifts FORCE=true for the training-side Phi
@@ -1316,7 +1358,78 @@ compute_analytical_gradient_from_trainer(
     std::vector<double> x_buf;
     x_dummy.data = &x_buf;
     VecAdapterFlat g_adapter{ &g_out };
-    const bool ok = compute_dloss_dtheta(plan, x_dummy, g_adapter, needs_fd);
+
+    /* Capture dW/dθ only when we need it for the sims_grad chain. The
+     * extra cost is one allocation; the actual back-solves happen inside
+     * compute_dloss_dtheta either way. */
+    const bool want_sims_grad = sims_grad_provider && !trg.LS.empty();
+    std::vector<double> dWdtheta;
+    const bool ok = compute_dloss_dtheta(
+        plan, x_dummy, g_adapter, needs_fd,
+        want_sims_grad ? &dWdtheta : nullptr);
+
+    /* Phase 3.7B sims_grad chain. Runs only when the caller supplied a
+     * provider AND fit-side compute_dloss_dtheta succeeded; the IFT
+     * Cholesky failure path (ok=false) already routes the optimiser to
+     * a clamp, so we don't bother chaining sims_loss in that case. */
+    if (ok && want_sims_grad && dWdtheta.size() == prefs.size() * n_cols) {
+        /* Build the set of θ for which the fit-side produced an
+         * analytical dW/dθ. needs_fd already lists indices that fell back
+         * to FD; the complement is the candidate set for analytical
+         * sims_grad. */
+        std::unordered_set<int> fd_set(needs_fd.begin(), needs_fd.end());
+        std::vector<int> analytical_theta;
+        analytical_theta.reserve(prefs.size());
+        std::vector<int> theta_row_to_g_idx(prefs.size(), -1);
+        for (std::size_t i = 0; i < prefs.size(); ++i) {
+            const int flat = static_cast<int>(prefs[i].flat_idx);
+            if (fd_set.count(flat) == 0) {
+                analytical_theta.push_back(static_cast<int>(i));
+                theta_row_to_g_idx[i] = static_cast<int>(i);
+            }
+        }
+
+        std::vector<SimsGradScriptInput> sims_inputs;
+        bool provider_ok = false;
+        try {
+            provider_ok = sims_grad_provider(sims_inputs);
+        } catch (const std::exception& e) {
+            /* Provider threw — treat as failure and fall back to FD for
+             * everything (per the helper's general "graceful degrade"
+             * pattern; analytical_gradient surfaces this via its catch
+             * around our call). */
+            (void)e;
+            provider_ok = false;
+        }
+        const bool inputs_well_formed =
+            provider_ok && sims_inputs.size() == trg.LS.size();
+
+        if (!inputs_well_formed) {
+            /* All-or-nothing per Phase 3.5: re-route every θ to FD so
+             * the masked FD picks up both fit and sims components. */
+            g_out.assign(prefs.size(), 0.0);
+            needs_fd.clear();
+            for (std::size_t i = 0; i < prefs.size(); ++i)
+                needs_fd.push_back(static_cast<int>(prefs[i].flat_idx));
+            return true;
+        }
+
+        std::vector<int> needs_fd_sims;
+        const bool sims_ok = compute_sims_grad_dWchain(
+            sims_inputs, dWdtheta, n_cols,
+            theta_row_to_g_idx, analytical_theta,
+            g_out, needs_fd_sims);
+        if (!sims_ok || !needs_fd_sims.empty()) {
+            /* compute_sims_grad_dWchain returns false (and dumps every
+             * analytical θ into needs_fd_sims) on any per-script
+             * failure. All-or-nothing: route everything to FD. */
+            g_out.assign(prefs.size(), 0.0);
+            needs_fd.clear();
+            for (std::size_t i = 0; i < prefs.size(); ++i)
+                needs_fd.push_back(static_cast<int>(prefs[i].flat_idx));
+            return true;
+        }
+    }
 
     if (profile_grad) {
         t_chain_rule = clk::now();

@@ -33,9 +33,13 @@
 #include <tadah/core/context.h>
 #include <tadah/core/element.h>
 #include <tadah/core/periodic_table.h>
+#include <tadah/core/aeds_type.h>
 #include <tadah/hpo/dloss_dtheta.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/loss_function.h>
+#include <tadah/hpo/sims_grad.h>
+
+#include <Eigen/Dense>
 #include <tadah/mlip/analytics/analytics_grad.h>
 #include <tadah/mlip/atom.h>
 #include <tadah/mlip/structure_db.h>
@@ -2350,6 +2354,195 @@ OPTIM CGRID2B (1) 0.0 4.0
         CHECK(g_anal[i] == 0.0);
         CHECK(needs_fd[i] == static_cast<int>(prefs[i].flat_idx));
     }
+}
+
+/* ------------------------------------------------------------------------
+ * Phase 3.7B — `compute_analytical_gradient_from_trainer` accepts a
+ * SimsGradProvider callback and folds sims_loss into the analytical
+ * gradient when one is supplied. The null-provider path remains the
+ * pre-3.7B fall_back_all_fd (covered by the Option A test above);
+ * here we verify both halves of the new branch:
+ *
+ *  (1) provider supplied + zero-observable input ⇒ behaves like the
+ *      empty-trg.LS path: needs_fd empty, g_anal == fit-only gradient.
+ *      Demonstrates the wiring runs compute_dloss_dtheta as before
+ *      and that compute_sims_grad_dWchain adds nothing when there is
+ *      nothing to add.
+ *
+ *  (2) provider supplied + one cohesive-E observable ⇒ needs_fd empty,
+ *      g_anal differs from (1) by a measurable amount (the sims_grad
+ *      contribution). The exact sign/magnitude depends on the live
+ *      trainer's dW/dθ and the synthetic descriptor inputs; we assert
+ *      the difference is non-zero and finite.
+ * ------------------------------------------------------------------------ */
+TEST_CASE("compute_analytical_gradient_from_trainer wires the "
+          "SimsGradProvider into compute_sims_grad_dWchain (Phase 3.7B)",
+          "[HPO][analytical_gradient][live_trainer][sims_grad_provider]")
+{
+    using tadah::mlip::memory::MLIPWorkspaceManager;
+    tadah::core::PeriodicTable::initialize();
+
+    /* Same trainer scaffolding as the Option A test. */
+    const std::vector<double> cgrid_0 = {0.5, 1.4};
+    const std::vector<double> sgrid_0 = {3.0, 5.0};
+    const double rcut = 3.0;
+
+    auto train_stdb = make_h3_stdb(/*N=*/4, rcut);
+    auto val_stdb   = make_h3_stdb(/*N=*/3, rcut);
+    for (auto& s : val_stdb.structures) {
+        for (auto& a : s.atoms) a.position[1] += 0.07;
+    }
+    {
+        NNFinder finder;
+        for (auto& s : val_stdb.structures) finder.calc(s, rcut);
+    }
+    for (std::size_t i = 0; i < train_stdb.size(); ++i)
+        train_stdb.structures[i].energy = 0.05 * static_cast<double>(i + 1);
+    for (std::size_t i = 0; i < val_stdb.size(); ++i)
+        val_stdb.structures[i].energy = 0.07 * static_cast<double>(i + 1);
+
+    MLIPWorkspaceManager ws_main;
+    Context c_main = make_minimal_trainer_context(cgrid_0, sgrid_0, rcut);
+    Trainer host(c_main, ws_main);
+    host.train(train_stdb);
+
+    ScopedTempFileLocal cfg(R"(OPTIMIZER
+LIB DLIB
+ALGO BFGS
+MAXEVAL 1
+ENDOPTIMIZER
+LOSS L2
+PC_EMAE 0 1
+OPTIM CGRID2B (1) 0.0 4.0
+)");
+    Context ctx_for_targets =
+        make_minimal_trainer_context(cgrid_0, sgrid_0, rcut);
+    tadah::hpo::HPOTargets trg(ctx_for_targets, cfg.path.string());
+    trg.LS.emplace_back();
+    REQUIRE_FALSE(trg.LS.empty());
+
+    auto prefs = tadah::hpo::make_param_ref_table(trg);
+    REQUIRE(prefs.size() == 1);
+
+    const std::size_t n_desc = host.DCS.descriptor_size();
+    REQUIRE(n_desc > 0);
+
+    /* Synthetic per-script context. Held alive in the test scope so the
+     * SimsGradScriptInput's pointers remain valid until the helper
+     * finishes consuming them. */
+    constexpr int nlocal = 4;
+    constexpr int natoms = 4;
+    tadah::core::aeds_type2 aeds(n_desc, nlocal);
+    for (int a = 0; a < nlocal; ++a)
+        for (std::size_t c = 0; c < n_desc; ++c)
+            aeds(c, a) = 1.0 + 0.1 * a + 0.2 * static_cast<double>(c);
+
+    std::vector<double> dF_dW(
+        static_cast<std::size_t>(3 * nlocal) * n_desc, 0.0);
+    for (int a = 0; a < nlocal; ++a)
+        for (int axis = 0; axis < 3; ++axis)
+            for (std::size_t c = 0; c < n_desc; ++c)
+                dF_dW[(static_cast<std::size_t>(3 * a + axis)) * n_desc + c]
+                    = 0.05 * (a + 1) + 0.03 * (axis + 1)
+                    + 0.07 * static_cast<double>(c + 1);
+
+    Eigen::MatrixXd H = Eigen::MatrixXd::Identity(3 * nlocal, 3 * nlocal) * 10.0;
+
+    auto make_input = [&](bool with_observable) {
+        tadah::hpo::SimsGradScriptInput in;
+        in.ctx.nlocal   = nlocal;
+        in.ctx.natoms   = natoms;
+        in.ctx.n_desc   = static_cast<int>(n_desc);
+        in.ctx.box_dofs = 0;
+        in.ctx.aeds     = &aeds;
+        in.ctx.lx = in.ctx.ly = 3.301; in.ctx.lz = 6.602;
+        in.H            = H;
+        in.dF_dW        = dF_dW.data();
+        if (with_observable) {
+            in.expressions = {"c_eatoms/atoms"};
+            in.v_observed  = {0.6};
+            in.t_targets   = {0.5};
+            in.w_weights   = {1.0};
+            in.loss_fns    = {tadah::LossFunction(
+                                tadah::LossFunction::Type::L2)};
+        }
+        return in;
+    };
+
+    /* Case 1: null provider — Option A behaviour preserved. */
+    std::vector<double> g_null;
+    std::vector<int>    nfd_null;
+    REQUIRE(tadah::hpo::compute_analytical_gradient_from_trainer(
+        host, train_stdb, val_stdb, trg, prefs, g_null, nfd_null));
+    REQUIRE(g_null.size() == prefs.size());
+    REQUIRE(nfd_null.size() == prefs.size());
+    CHECK(g_null[0] == 0.0);
+
+    /* Case 2: provider returns a script with NO observables. The fit
+     * side still computes its analytical gradient and the sims chain
+     * is a no-op — needs_fd must come out empty and g_anal non-zero. */
+    int provider_calls_empty = 0;
+    auto provider_empty =
+        [&](std::vector<tadah::hpo::SimsGradScriptInput>& out) {
+            ++provider_calls_empty;
+            out.clear();
+            out.push_back(make_input(/*with_observable=*/false));
+            return true;
+        };
+    std::vector<double> g_empty;
+    std::vector<int>    nfd_empty;
+    REQUIRE(tadah::hpo::compute_analytical_gradient_from_trainer(
+        host, train_stdb, val_stdb, trg, prefs, g_empty, nfd_empty,
+        provider_empty));
+    CHECK(provider_calls_empty == 1);
+    REQUIRE(g_empty.size() == prefs.size());
+    CHECK(nfd_empty.empty());
+    CHECK(std::isfinite(g_empty[0]));
+
+    /* Case 3: provider returns a script WITH the cohesive-E observable.
+     * The chain rule folds a non-zero sims_grad contribution into
+     * g_anal — the result differs from Case 2 by a measurable amount.
+     * Magnitude depends on the live dW/dθ; just assert non-zero diff. */
+    int provider_calls_obs = 0;
+    auto provider_obs =
+        [&](std::vector<tadah::hpo::SimsGradScriptInput>& out) {
+            ++provider_calls_obs;
+            out.clear();
+            out.push_back(make_input(/*with_observable=*/true));
+            return true;
+        };
+    std::vector<double> g_obs;
+    std::vector<int>    nfd_obs;
+    REQUIRE(tadah::hpo::compute_analytical_gradient_from_trainer(
+        host, train_stdb, val_stdb, trg, prefs, g_obs, nfd_obs,
+        provider_obs));
+    CHECK(provider_calls_obs == 1);
+    REQUIRE(g_obs.size() == prefs.size());
+    CHECK(nfd_obs.empty());
+    CHECK(std::isfinite(g_obs[0]));
+    /* The sims_grad contribution shifts the gradient. Without it the
+     * helper would silently drop the LAMMPS-observable term — this
+     * differs-from-no-observable check is the load-bearing wiring
+     * assertion. */
+    CHECK(std::abs(g_obs[0] - g_empty[0]) > 1e-12);
+
+    /* Case 4: provider reports failure ⇒ all-or-nothing fall back to
+     * FD (matches Phase 3.5's all-or-nothing contract). */
+    int provider_calls_fail = 0;
+    auto provider_fail =
+        [&](std::vector<tadah::hpo::SimsGradScriptInput>& out) {
+            ++provider_calls_fail;
+            out.clear();
+            return false;
+        };
+    std::vector<double> g_fail;
+    std::vector<int>    nfd_fail;
+    REQUIRE(tadah::hpo::compute_analytical_gradient_from_trainer(
+        host, train_stdb, val_stdb, trg, prefs, g_fail, nfd_fail,
+        provider_fail));
+    CHECK(provider_calls_fail == 1);
+    REQUIRE(nfd_fail.size() == prefs.size());
+    CHECK(g_fail[0] == 0.0);
 }
 
 /* ------------------------------------------------------------------------
