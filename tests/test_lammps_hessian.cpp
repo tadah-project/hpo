@@ -497,3 +497,68 @@ TEST_CASE("LammpsHessianAssembler — rejects out-of-range box_dofs",
     CHECK_THROWS_AS(asm_.assemble(nullptr, -1), std::runtime_error);
     CHECK_THROWS_AS(asm_.assemble(nullptr, 7),  std::runtime_error);
 }
+
+/* Phase 3.7E follow-up: profile the vflag=1 overhead added to
+ * LammpsHessianAssembler's box-DOF sweep. 3.7E flipped vflag from 0 to 1
+ * on the 12 strain perturbations so pair->virial gets populated and the
+ * off-diagonal box-box block can be assembled from -∂virial[α]/∂ε_β
+ * (reusing the same 12 LAMMPS computes). The added cost per compute is
+ * the per-atom virial accumulation inside pair_tadah's loops; the post-
+ * compute virial[] copy is 6 doubles and negligible by inspection.
+ *
+ * The bench runs two BENCHMARK blocks side by side on the same relaxed
+ * BCC Ta state: vflag=0 (pre-3.7E) and vflag=1 (post-3.7E). Their ratio
+ * = per-compute overhead of 3.7E's change. The total assembler cost
+ * picks this up on 12 of the 12 + 6·nlocal compute calls (atom-block
+ * sweep keeps vflag=0). For the production HPO workload (~16-atom
+ * cells, box_dofs=1 or 6) the box-DOF computes are O(12); atom-DOF
+ * computes are O(6·16)=96; vflag overhead applies to ~11% of computes.
+ *
+ * Memory predicts <1% total assembler overhead. The bench measures the
+ * per-compute multiplier directly so future regressions show up
+ * immediately. */
+TEST_CASE("LammpsHessianAssembler — vflag=1 overhead microbench "
+          "(Phase 3.7E follow-up)",
+          "[lammps_hessian_perf][lammps_hessian][phase3][.][!benchmark]")
+{
+    LammpsFixture fx;
+    if (fx.skipped) {
+        WARN("test_lammps_hessian vflag bench skipped: no pot. Set "
+             "TADAH_BENCH_POT or re-cmake with TADAH_PATH.");
+        SUCCEED("skipped (no pot)");
+        return;
+    }
+
+    LAMMPS_NS::Pair* pair = fx.lmp->force->pair;
+    LAMMPS_NS::Atom* atom = fx.lmp->atom;
+    REQUIRE(pair != nullptr);
+
+    /* Mirror compute_clear_and_eval's body so the bench measures the
+     * actual per-perturbation work the Hessian assembler does. */
+    auto clear_and_compute = [&](int eflag, int vflag) {
+        fx.lmp->neighbor->ago = 0;
+        const std::size_t nbytes_local = sizeof(double) * atom->nlocal;
+        std::size_t nbytes = nbytes_local;
+        if (fx.lmp->force->newton)
+            nbytes += sizeof(double) * atom->nghost;
+        if (nbytes) std::memset(&atom->f[0][0], 0, 3 * nbytes);
+        pair->compute(eflag, vflag);
+        if (fx.lmp->force->newton) fx.lmp->comm->reverse_comm();
+    };
+
+    /* Warmup: a single compute to populate caches before the BENCHMARK
+     * timing loop kicks in. */
+    clear_and_compute(/*eflag=*/1, /*vflag=*/0);
+
+    BENCHMARK("pair_tadah::compute(eflag=1, vflag=0) — pre-3.7E baseline")
+    {
+        clear_and_compute(1, 0);
+        return pair->eng_vdwl;
+    };
+
+    BENCHMARK("pair_tadah::compute(eflag=1, vflag=1) — 3.7E current")
+    {
+        clear_and_compute(1, 1);
+        return pair->eng_vdwl + pair->virial[0];
+    };
+}
