@@ -3154,6 +3154,29 @@ OPTIM WATOM   (1) 0.2 10.0
         CHECK(g_serial[i] == g_parallel[i]);
     }
 
+    /* Phase 2F: cost-descending sort over prefs reorders OMP dispatch
+     * but writes go to dphi_*_buf[i] / per_theta[i] in descriptor-side
+     * indexing, so the orchestrator's chain-rule reduction is identical.
+     * The compute_analytical_gradient_from_trainer body keeps a static
+     * cost cache: first call here populated it (g_serial), so g_parallel
+     * already used cost-descending sort. Add a third call with OMP=8
+     * (cache now warm AGAIN, sort stable) to confirm successive calls
+     * remain byte-identical — guards against any state leaking between
+     * calls through the cache or the order vector. */
+    std::vector<double> g_parallel_again;
+    std::vector<int>    needs_fd_parallel_again;
+    REQUIRE(tadah::hpo::compute_analytical_gradient_from_trainer(
+        host, train_stdb, val_stdb, trg, prefs,
+        g_parallel_again, needs_fd_parallel_again));
+    REQUIRE(g_parallel_again.size() == 3);
+    REQUIRE(needs_fd_parallel_again.empty());
+    for (std::size_t i = 0; i < g_serial.size(); ++i) {
+        INFO("theta " << i << " (" << prefs[i].theta_name << "): "
+             << "g_serial=" << g_serial[i]
+             << "  g_parallel_again=" << g_parallel_again[i]);
+        CHECK(g_serial[i] == g_parallel_again[i]);
+    }
+
 #if defined(TADAH_ENABLE_OPENMP)
     /* Restore so other tests aren't affected. */
     omp_set_num_threads(omp_get_max_threads());

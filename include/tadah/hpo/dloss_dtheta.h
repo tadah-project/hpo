@@ -75,8 +75,10 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <numeric>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -1108,14 +1110,58 @@ compute_analytical_gradient_from_trainer(
      * val_stdb. Scratch buffers are declared INSIDE the loop body so
      * each thread owns its own copy under OMP (heap churn is ~29 allocs
      * per gradient call, negligible vs the descriptor walk cost).
-     * schedule(dynamic) balances the per-θ cost variance across threads. */
-    /* Per-θ timing for profiling. Indexed by i; resized to prefs.size(). */
+     *
+     * Cost-aware scheduling (Phase 2F): on a config with n_theta close
+     * to n_threads (BASINSv2: 29 θ / 26 threads) and a long tail of
+     * near-equal-cost heavy θ, plain schedule(dynamic) can leave a
+     * heavy θ in the queue at wave-2 — the cheap-θ threads pick it up
+     * and the wall doubles. Sort θ by descending last-call cost (a
+     * static cache keyed by theta_name[arg_pos]) so the heaviest enter
+     * the queue first; threads converge on the heavy wave together,
+     * and the tail becomes a batch of cheap θ that fits in any gap.
+     * Iteration writes still go to dphi_*_buf[i] / per_theta[i] (the
+     * descriptor-side i), so caller-visible buffer layout is
+     * unchanged — sorting only reorders the OMP dispatch sequence. */
+    static std::unordered_map<std::string, double> theta_cost_cache;
+    auto cost_key = [](const ParamRef& p) {
+        std::string k = p.theta_name;
+        k.push_back('[');
+        k += std::to_string(p.arg_pos);
+        k.push_back(']');
+        return k;
+    };
+    std::vector<std::size_t> theta_order(prefs.size());
+    std::iota(theta_order.begin(), theta_order.end(), std::size_t{0});
+    {
+        std::vector<double> theta_cost_hint(prefs.size(), 0.0);
+        for (std::size_t i = 0; i < prefs.size(); ++i) {
+            const auto it = theta_cost_cache.find(cost_key(prefs[i]));
+            theta_cost_hint[i] = (it == theta_cost_cache.end()) ? 0.0 : it->second;
+        }
+        /* stable_sort: first call (all costs == 0) keeps unsorted prefs
+         * order, paying the tail cost once; subsequent calls converge. */
+        std::stable_sort(theta_order.begin(), theta_order.end(),
+                         [&](std::size_t a, std::size_t b) {
+                             return theta_cost_hint[a] > theta_cost_hint[b];
+                         });
+    }
+    /* Per-θ timing. Always recorded — the cache that drives next-call
+     * scheduling is fed from here, so we cannot gate this on profile_grad.
+     * clk::now() is ~30 ns on Linux clock_gettime(MONOTONIC); cost vs the
+     * ms-scale per-θ work is invisible. */
     std::vector<double> per_theta_ms(prefs.size(), 0.0);
+    /* Per-θ queue start offset (ms from per-θ loop entry) — lets the
+     * profile output identify which θ are dispatched LAST, the metric
+     * that matters for tail behaviour. Filled under profile_grad. */
+    std::vector<double> per_theta_start_ms(prefs.size(), 0.0);
+    const auto t_loop_start = clk::now();
 #if defined(TADAH_ENABLE_OPENMP)
-#   pragma omp parallel for schedule(dynamic)
+#   pragma omp parallel for schedule(dynamic, 1)
 #endif
-    for (std::size_t i = 0; i < prefs.size(); ++i) {
-        const auto t_th_start = profile_grad ? clk::now() : clk::time_point{};
+    for (std::size_t ord = 0; ord < theta_order.size(); ++ord) {
+        const std::size_t i = theta_order[ord];
+        const auto t_th_start = clk::now();
+        if (profile_grad) per_theta_start_ms[i] = ms(t_loop_start, t_th_start);
         /* Thread-local scratch (one struct's energy row, dense). */
         std::vector<double> energy_scratch_train(train_stdb.size() * n_cols, 0.0);
         std::vector<double> energy_scratch_val  (val_stdb.size()   * n_cols, 0.0);
@@ -1226,10 +1272,16 @@ compute_analytical_gradient_from_trainer(
         per_theta[i].dPhi_train_aug = dphi_train_buf[i].data();
         per_theta[i].dPhi_val       = dphi_val_buf  [i].data();
 
-        if (profile_grad) per_theta_ms[i] = ms(t_th_start, clk::now());
+        per_theta_ms[i] = ms(t_th_start, clk::now());
     }
 
     if (profile_grad) t_per_theta = clk::now();
+
+    /* Feed the scheduling cache for the next gradient call. Skipped θ
+     * (continue branches above) keep per_theta_ms[i] ≈ 0 — fine, they
+     * route to FD anyway and will sort to the tail next call. */
+    for (std::size_t i = 0; i < prefs.size(); ++i)
+        theta_cost_cache[cost_key(prefs[i])] = per_theta_ms[i];
 
     plan.factor        = &factor;
     plan.weights       = &W_star;
@@ -1296,6 +1348,24 @@ compute_analytical_gradient_from_trainer(
             std::fprintf(stderr, " %s[%d]=%.1fms",
                          prefs[i].theta_name.c_str(), prefs[i].arg_pos,
                          per_theta_ms[i]);
+        }
+        std::fprintf(stderr, "\n");
+        /* Queue-tail diagnostic: which θ were dispatched LAST? Under
+         * Phase 2F cost-descending sort, the tail must be cheap θ —
+         * if a heavy θ shows up here, the sort isn't doing its job
+         * (e.g. cold cache, or cost variance > expected). */
+        std::vector<std::size_t> start_order(prefs.size());
+        std::iota(start_order.begin(), start_order.end(), std::size_t{0});
+        std::sort(start_order.begin(), start_order.end(),
+                  [&](std::size_t a, std::size_t b){
+                      return per_theta_start_ms[a] > per_theta_start_ms[b];
+                  });
+        std::fprintf(stderr, "[GRADPROF-θ] last-3 dispatched (queue tail):");
+        for (std::size_t k = 0; k < std::min<std::size_t>(3, start_order.size()); ++k) {
+            const std::size_t i = start_order[k];
+            std::fprintf(stderr, " %s[%d] start=%.1fms wall=%.1fms",
+                         prefs[i].theta_name.c_str(), prefs[i].arg_pos,
+                         per_theta_start_ms[i], per_theta_ms[i]);
         }
         std::fprintf(stderr, "\n");
     }
