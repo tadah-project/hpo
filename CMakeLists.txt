@@ -209,6 +209,13 @@ target_include_directories(tadah.hpo
 target_link_libraries(tadah.hpo PUBLIC tadah::compile_options )
 target_link_libraries(tadah.hpo PRIVATE nlopt)
 
+# Phase 3 LammpsHessianAssembler uses Eigen3 directly (already fetched
+# via the Ceres dependency block above). PUBLIC because the public
+# header lammps_hessian.h returns Eigen::MatrixXd.
+if(TARGET Eigen3::Eigen)
+    target_link_libraries(tadah.hpo PUBLIC Eigen3::Eigen)
+endif()
+
 if(TADAH_ENABLE_CERES)
   # PUBLIC: gradient_provider.h is in tadah.hpo's public include, and
   # downstream consumers (e.g. test_hpo, future drivers) need both the
