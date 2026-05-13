@@ -116,6 +116,45 @@ TEST_CASE("parse_pc_observable_line: --etol sets relax_etol",
         "--hotvar a0 2.7 3.9 --etol 1e-15"));
 }
 
+TEST_CASE("parse_pc_observable_line: --unconverged const accepts a value",
+          "[hpo][pc_observable_parser][cohesive_energy][unconverged]")
+{
+    tadah::core::PeriodicTable::initialize();
+
+    /* `const 100.0` matches Ecoh_fast.in's eq_ok=false branch (cliff). */
+    CHECK_NOTHROW(tadah::hpo::parse_pc_observable_line(
+        "cohesive_energy --species Ta --target 8.100 --weight 1000 "
+        "--hotvar a0 2.7 3.9 --unconverged const 100.0"));
+}
+
+TEST_CASE("parse_pc_observable_line: --unconverged force-scaled accepts a slope",
+          "[hpo][pc_observable_parser][cohesive_energy][unconverged]")
+{
+    tadah::core::PeriodicTable::initialize();
+
+    /* `force-scaled <slope>` gives local optimisers a smooth gradient
+     * toward fmax→0 instead of a FAIL_SCORE cliff. */
+    CHECK_NOTHROW(tadah::hpo::parse_pc_observable_line(
+        "cohesive_energy --species Ta --target 8.100 --weight 1000 "
+        "--hotvar a0 2.7 3.9 --unconverged force-scaled 10.0"));
+}
+
+TEST_CASE("parse_pc_observable_line: --unconverged unknown kind throws",
+          "[hpo][pc_observable_parser][cohesive_energy][unconverged][error]")
+{
+    tadah::core::PeriodicTable::initialize();
+
+    CHECK_THROWS_AS(tadah::hpo::parse_pc_observable_line(
+        "cohesive_energy --species Ta --target 8.100 --weight 1000 "
+        "--hotvar a0 2.7 3.9 --unconverged ridiculous 100.0"),
+        std::runtime_error);
+    /* Legacy --unconverged-penalty syntax no longer accepted. */
+    CHECK_THROWS_AS(tadah::hpo::parse_pc_observable_line(
+        "cohesive_energy --species Ta --target 8.100 --weight 1000 "
+        "--hotvar a0 2.7 3.9 --unconverged-penalty 100.0"),
+        std::runtime_error);
+}
+
 TEST_CASE("parse_pc_observable_line: missing required flags throw",
           "[hpo][pc_observable_parser][error]")
 {

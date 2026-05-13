@@ -75,16 +75,40 @@ public:
         std::size_t relax_maxeval = 5000;
         /* eq_ok-style convergence gate (matches Ecoh_fast.in):
          * if the relax finishes with fmax > eq_fmax_threshold, the
-         * observable returns `unconverged_penalty` instead of the
-         * computed Ecoh. Mirrors LAMMPS's
+         * observable returns a strategy-controlled "unconverged" value
+         * instead of the computed Ecoh. Mirrors LAMMPS's
          *   variable eq_ok equal ternary($(fmax) < 0.1, 1, 0)
-         *   variable Ecoh  equal ternary(v_eq_ok, v_Ecoh_raw, 100.0)
-         * The optimiser sees a finite (but bad) loss for failed-to-
-         * converge θ, which navigates around them better than the
-         * NaN→FAIL_SCORE binary path. Set unconverged_penalty to NaN
-         * to disable the soft-penalty path and reject hard. */
+         *   variable Ecoh  equal ternary(v_eq_ok, v_Ecoh_raw, 100.0). */
         double eq_fmax_threshold      = 0.1;       /* eV/Å */
-        double unconverged_penalty    = 100.0;     /* eV/atom; NaN to disable */
+
+        /* Strategy for the observable value returned by an unconverged
+         * relax (not-converged / maxeval / scale-out-of-range /
+         * early-reject / wall-time / fmax > eq_fmax_threshold).
+         *
+         * - Const:       res.value = unconverged_value (a fixed number
+         *                in cohesive-energy units, eV/atom). With the
+         *                default 100.0 + LAMMPS's typical target ~8.1
+         *                + weight 1000, the resulting L2 loss saturates
+         *                FAIL_SCORE — i.e. a cliff. Use when you want
+         *                hard rejection without leaking NaN through
+         *                downstream best-tracking.
+         * - ForceScaled: res.value = target + unconverged_value ·
+         *                final_fmax_atoms. Maps "how far from
+         *                convergence" linearly into the value; the
+         *                optimiser sees a smooth gradient toward
+         *                fmax → 0 instead of a flat FAIL_SCORE plateau,
+         *                so local optimisers (BOBYQA, LBFGS) can
+         *                navigate the boundary of the converged region.
+         *                Set unconverged_value=0 to degenerate the
+         *                penalty to "target" (zero extra loss for
+         *                unconverged), which is essentially trusting
+         *                the partial relax.
+         *
+         * Surface via parser `--unconverged const <V>` or
+         * `--unconverged force-scaled <slope>`. */
+        enum class UnconvergedStrategy { Const, ForceScaled };
+        UnconvergedStrategy unconverged_strategy = UnconvergedStrategy::Const;
+        double              unconverged_value    = 100.0;  /* eV/atom OR slope */
     };
 
     explicit CohesiveEnergyObservable(Config cfg);

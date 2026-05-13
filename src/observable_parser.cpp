@@ -156,18 +156,31 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
              * exceeds this, return `--unconverged-penalty` as Ecoh. */
             cfg.eq_fmax_threshold =
                 parse_double(need_value(i, t), "--fmax-converged");
-        } else if (t == "--unconverged-penalty") {
-            /* Penalty Ecoh value when the relax didn't converge.
-             * Mirrors Ecoh_fast.in's `Ecoh = 100.0` fallback. Pass
-             * "nan" to fall back to hard NaN reject. */
-            const std::string& v = need_value(i, t);
-            if (v == "nan" || v == "NaN" || v == "NAN") {
-                cfg.unconverged_penalty =
-                    std::numeric_limits<double>::quiet_NaN();
+        } else if (t == "--unconverged") {
+            /* Strategy + value for unconverged relax outcomes. Syntax:
+             *   --unconverged const        <V>     # res.value = V
+             *   --unconverged force-scaled <slope> # res.value = target + slope·fmax
+             *
+             * `const 100.0` mirrors Ecoh_fast.in's eq_ok=false branch
+             * (the cliff). `force-scaled <slope>` gives local optimisers
+             * a continuous gradient toward fmax → 0; slope tunes how
+             * steeply unconverged θ are penalised. See
+             * CohesiveEnergyObservable::Config::UnconvergedStrategy
+             * docs for the full rationale. */
+            using Strat = CohesiveEnergyObservable::Config::UnconvergedStrategy;
+            const std::string& kind = need_value(i, t);
+            if (kind == "const") {
+                cfg.unconverged_strategy = Strat::Const;
+            } else if (kind == "force-scaled") {
+                cfg.unconverged_strategy = Strat::ForceScaled;
             } else {
-                cfg.unconverged_penalty =
-                    parse_double(v, "--unconverged-penalty");
+                throw std::runtime_error(
+                    "PC_OBSERVABLE cohesive_energy: --unconverged kind must be "
+                    "'const' or 'force-scaled' (got '" + kind + "')");
             }
+            cfg.unconverged_value = parse_double(
+                need_value(i, "--unconverged " + kind + " <value>"),
+                "--unconverged " + kind);
         } else {
             throw std::runtime_error(
                 "PC_OBSERVABLE cohesive_energy: unknown flag '" + t + "'");

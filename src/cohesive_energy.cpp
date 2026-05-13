@@ -144,7 +144,21 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
         rr.final_fmax_atoms > cfg_.eq_fmax_threshold;
     if (relax_unconverged) {
         ObservableEvalResult res;
-        res.value = cfg_.unconverged_penalty;  /* NaN passes through obs_loss → FAIL_SCORE */
+        switch (cfg_.unconverged_strategy) {
+            using Strat = Config::UnconvergedStrategy;
+            case Strat::Const:
+                res.value = cfg_.unconverged_value;
+                break;
+            case Strat::ForceScaled:
+                /* target + slope · fmax. With fmax → 0 the value → target
+                 * (no extra loss); with large fmax the value grows
+                 * linearly and the L2 loss grows quadratically. This
+                 * gives local optimisers a usable gradient toward
+                 * convergence instead of a FAIL_SCORE cliff. */
+                res.value = cfg_.target
+                          + cfg_.unconverged_value * rr.final_fmax_atoms;
+                break;
+        }
         res.needs_adjoint = false;
         res.box_dofs = 0;
         res.hotvar_updated_value = new_a0;  /* still update warmstart */
