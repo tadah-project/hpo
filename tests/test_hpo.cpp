@@ -1002,6 +1002,43 @@ TEST_CASE("GradientProvider Hybrid respects MAXEVAL on FD pass",
 }
 #endif
 
+TEST_CASE("GradientProvider Hybrid all-FD gate skips central differences",
+          "[HPO][grad_provider][hybrid][all_fd]")
+{
+    auto sp = make_provider_test_spec();
+    sp.grad_strategy = tadah::hpo::GradStrategy::Hybrid;
+    StubHostSinXY2 host;
+    std::atomic<unsigned long> counter{0};
+
+    /* Callback returns success but routes EVERY index to needs_fd — the
+     * degenerate case the analytical helper hits with PC_LAMMPS-only
+     * setups whose sims-grad chain can't be registered. HYBRID must
+     * skip the FD pass (otherwise the gradient-based inner monopolises
+     * the budget on slow, noisy FD on LAMMPS-driven losses) and return
+     * the analytical pass's zeros so an outer global sampler keeps
+     * making progress. */
+    auto agf = [](const DlibVec& x, DlibVec& g, std::vector<int>& nfd) -> bool {
+        g.set_size(2);
+        g(0) = 0.0;
+        g(1) = 0.0;
+        nfd.push_back(0);
+        nfd.push_back(1);
+        (void)x;
+        return true;
+    };
+
+    auto gp = tadah::hpo::make_gradient_provider<DlibVec, void>(
+        sp, host, &counter, /*maxeval=*/0, agf);
+
+    DlibVec x; x.set_size(2); x(0)=1.0; x(1)=0.5;
+    DlibVec g;
+    REQUIRE(gp.gradient(x, g));
+    CHECK(g(0) == 0.0);
+    CHECK(g(1) == 0.0);
+    /* Only the analytical pass is counted; no FD host calls were made. */
+    CHECK(counter.load() == 1u);
+}
+
 TEST_CASE("GradientProvider Hybrid without callback throws wiring error",
           "[HPO][grad_provider][hybrid]")
 {

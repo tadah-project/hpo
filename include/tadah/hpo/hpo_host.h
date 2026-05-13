@@ -70,6 +70,15 @@ struct EvalResult
     std::vector<std::vector<double>>       v_loss;    // [sim][loss_i]
     std::vector<std::vector<std::string>>  v_outvar;  // [sim][outvar_i]
 
+    /* PC_OBSERVABLE (Tier 1/2) results, one entry per
+     * trg_.observables[k]. v_obs_value[k] is the computed observable
+     * (e.g. cohesive energy in eV/atom); v_obs_loss[k] is the loss
+     * contribution evaluated through the observable's LossFunction
+     * against its target/weight. Both empty when trg_.observables is
+     * empty. */
+    std::vector<double>                    v_obs_value;
+    std::vector<double>                    v_obs_loss;
+
     std::chrono::milliseconds              wall_ms{};
     ParamVec                               params;
 
@@ -278,6 +287,14 @@ private:
 #endif
     void fit_loss(Result&) const;
     void sims_loss(Result&) const;
+    /* PC_OBSERVABLE (D4c) loss aggregation: evaluates every entry of
+     * trg_.observables at the current trained model, populates
+     * r.v_obs_value / r.v_obs_loss, and folds the per-observable loss
+     * into r.loss_sum / r.loss_count. Recomputes r.loss = mean.
+     * Mirrors sims_loss's FAIL_SCORE / NaN clamp behaviour so a
+     * diverging relax doesn't crash the eval. No-op when
+     * trg_.observables is empty. */
+    void obs_loss(Result&) const;
 
     /* ---------- global mutable state ----------------------------------- */
     static std::atomic_size_t   g_iter_;

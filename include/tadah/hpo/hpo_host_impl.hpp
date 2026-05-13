@@ -272,6 +272,17 @@ void HPO_Host<P,R>::init_loss(const std::string& fn) const
     }
   }
 
+  /* PC_OBSERVABLE columns: one L(<kind>[k]) per observable. The k
+   * index disambiguates multiple entries of the same kind (e.g. two
+   * cohesive_energy observables for different species). */
+  for (std::size_t k = 0; k < trg_.observables.size(); ++k) {
+    std::string label = "L(" + trg_.observables[k]->kind() + "["
+                      + std::to_string(k) + "])";
+    if (label.size() > max_title_len_)
+      label = label.substr(0, max_title_len_ - 1) + "*";
+    f << std::setw(cw_) << label;
+  }
+
   f << std::setw(cw_) << "TOTAL_LOSS/N" << std::endl;
 }
 
@@ -302,6 +313,14 @@ void HPO_Host<P,R>::init_outvar(const std::string& fn) const
       }
       f << std::setw(cw_) << n_outvar;
     }
+  }
+  /* PC_OBSERVABLE values: <kind>[k] for each observable. */
+  for (std::size_t k = 0; k < trg_.observables.size(); ++k) {
+    std::string label = trg_.observables[k]->kind() + "["
+                      + std::to_string(k) + "]";
+    if (label.size() > max_title_len_)
+      label = label.substr(0, max_title_len_ - 1) + "*";
+    f << std::setw(cw_) << label;
   }
   f << std::endl;
 }
@@ -384,6 +403,11 @@ void HPO_Host<P,R>::print_loss_line(std::ofstream& f, size_t it,const Result& e,
       }
     }
 
+    /* PC_OBSERVABLE per-observable loss columns. e.v_obs_loss is empty
+     * when trg.observables is empty (header is also empty then). */
+    for (std::size_t k = 0; k < e.v_obs_loss.size(); ++k)
+      f << std::setw(cw) << e.v_obs_loss[k];
+
     f << std::setw(cw) << e.loss << std::endl;
 }
 
@@ -412,6 +436,15 @@ void HPO_Host<P,R>::print_outvar_line(std::ofstream& f,size_t it,const Result& e
           f<<std::right << std::setw(cw) << "NaN";
         }
       }
+    }
+    /* PC_OBSERVABLE per-observable values. NaN is printed for failed
+     * evaluations (relax divergence / model NaN). */
+    for (std::size_t k = 0; k < e.v_obs_value.size(); ++k) {
+      if (std::isfinite(e.v_obs_value[k]))
+        f << std::right << std::setw(cw) << std::scientific
+          << std::setprecision(prec) << e.v_obs_value[k];
+      else
+        f << std::right << std::setw(cw) << "NaN";
     }
     f<<std::endl;
 }
@@ -1177,6 +1210,108 @@ void HPO_Host<P,R>::sims_loss(Result& r) const
   }
 }
 
+namespace detail {
+
+/* RAII guard that temporarily sets FORCE=true on a Context and
+ * restores the prior value on scope exit. Used to bracket observable
+ * evaluations: NativeRelaxer + IFT adjoint paths consume fd_ij
+ * arrays that dc.calc only fills when FORCE=true, even when the
+ * training fit itself doesn't use forces (force-free dataset). The
+ * trainer's context is per-thread (TLS cache), so mutating it during
+ * the host's eval/gradient call is safe. */
+struct ObsForceFlagGuard {
+    tadah::core::Context& ctx;
+    bool                  had_key;
+    bool                  prev_val;
+    ObsForceFlagGuard(tadah::core::Context& c) : ctx(c), had_key(false), prev_val(false) {
+        try {
+            prev_val = ctx.template get<bool>("FORCE");
+            had_key = true;
+        } catch (...) {
+            had_key = false;
+        }
+        if (!had_key || !prev_val) {
+            ctx.remove("FORCE");
+            ctx.add("FORCE", "true");
+        }
+    }
+    ~ObsForceFlagGuard() {
+        if (had_key && !prev_val) {
+            ctx.remove("FORCE");
+            ctx.add("FORCE", "false");
+        } else if (!had_key) {
+            ctx.remove("FORCE");
+        }
+        /* If had_key && prev_val: FORCE was already true; nothing to
+         * restore. */
+    }
+};
+
+}  // namespace detail
+
+template<class P, class R>
+void HPO_Host<P,R>::obs_loss(Result& r) const
+{
+  if (trg_.observables.empty()) return;
+
+  r.v_obs_value.resize(trg_.observables.size());
+  r.v_obs_loss.resize(trg_.observables.size());
+
+#if defined(TADAH_BUILD_MPI)
+  auto& cache = tls_trainer_host_cache_;
+#else
+  auto& cache = tls_trainer_cache_;
+#endif
+
+  const bool have_trainer = cache.trainer && cache.trainer->model;
+
+  /* Flip FORCE=true for the duration of all observable evaluations.
+   * dc.calc reads FORCE from the trainer's context (which dc holds
+   * by reference); NativeRelaxer's atom-force path requires fd_ij to
+   * be populated. Restored on scope exit. */
+  std::unique_ptr<detail::ObsForceFlagGuard> force_guard;
+  if (have_trainer) {
+    force_guard.reset(new detail::ObsForceFlagGuard(cache.trainer->context));
+  }
+
+  for (std::size_t k = 0; k < trg_.observables.size(); ++k) {
+    double v = std::numeric_limits<double>::quiet_NaN();
+    double l = trg_.FAIL_SCORE;
+
+    if (have_trainer && trg_.observables[k]) {
+      auto& obs = *trg_.observables[k];
+      try {
+        ObservableEvalResult res = obs.evaluate(
+            *cache.trainer->model,
+            cache.trainer->dc,
+            cache.trainer->context);
+        v = res.value;
+        if (std::isfinite(v)) {
+          l = obs.lossfn().loss(v, obs.target(), obs.weight());
+          if (!std::isfinite(l)) l = trg_.FAIL_SCORE;
+        }
+      } catch (const std::exception&) {
+        /* Relaxer divergence / NaN / model mismatch — record as a
+         * failed component contributing FAIL_SCORE so the optimiser
+         * walks away from this θ. */
+        v = std::numeric_limits<double>::quiet_NaN();
+        l = trg_.FAIL_SCORE;
+      }
+    }
+
+    r.v_obs_value[k] = v;
+    r.v_obs_loss[k]  = l;
+    r.loss_sum      += l;
+    ++r.loss_count;
+  }
+
+  r.loss = r.loss_count ? r.loss_sum / static_cast<double>(r.loss_count) : 0.0;
+  if (!std::isfinite(r.loss) || r.loss > trg_.FAIL_SCORE) {
+    if (!std::isfinite(r.loss)) r.was_nan_clamped = true;
+    r.loss = trg_.FAIL_SCORE;
+  }
+}
+
 /* ----------  operator()  (thread-safe) ------------------------------- */
 template<class P, class R>
 double HPO_Host<P,R>::operator()(const P& p) const
@@ -1340,6 +1475,14 @@ double HPO_Host<P,R>::operator()(const P& p) const
     fill_validation(r, a);
     r.pot_ctx  = std::move(pot);
     fit_loss(r);
+    /* PC_OBSERVABLE (D4c): typed observables fold into the same
+     * loss_sum / loss_count accumulators as fit + sims. Runs before
+     * the LAMMPS skip-bad-pot gate (observables are cheap relative to
+     * LAMMPS — there's no benefit to skipping them when the pot is
+     * bad). If an observable diverges, its loss component is clamped
+     * to FAIL_SCORE per obs_loss's contract; r.loss recomputes inside
+     * obs_loss. */
+    obs_loss(r);
     t_predict_end = std::chrono::high_resolution_clock::now();
     t_lammps_end = t_predict_end;
     t_sims_loss_end = t_predict_end;
@@ -1504,6 +1647,24 @@ double HPO_Host<P,R>::operator()(const P& p) const
                             + "[" + std::to_string(k) + "]";
                     comps.push_back({std::move(lbl), v});
                 }
+            }
+            /* PC_OBSERVABLE (D4c) — typed observable contributions to
+             * the top-breakdown. Symmetric with the PC_LAMMPS loop
+             * above: pull r.v_obs_loss[k] keyed by trg_.observables[k]'s
+             * kind() label. Without this, the journal's "top:" line
+             * silently omits cohesive_energy and similar observables,
+             * leaving users wondering whether their PC_OBSERVABLE
+             * weight is even being applied. */
+            for (std::size_t k = 0;
+                 k < trg_.observables.size() && k < r.v_obs_loss.size();
+                 ++k) {
+                const double v = r.v_obs_loss[k];
+                if (!(v > 0.0)) continue;
+                const auto& obs_ptr = trg_.observables[k];
+                std::string lbl = obs_ptr ? obs_ptr->kind()
+                                          : std::string("obs[")
+                                            + std::to_string(k) + "]";
+                comps.push_back({std::move(lbl), v});
             }
             std::sort(comps.begin(), comps.end(),
                       [](const Comp& a, const Comp& b) { return a.value > b.value; });
@@ -2183,6 +2344,73 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
      * theta back to FD per the all-or-nothing contract. */
     std::vector<typename R::LMPPtr> lmp_holders;
     SimsGradProvider sims_grad_provider = nullptr;
+
+    /* PC_OBSERVABLE (D4c) — typed-observable provider lambda. Parallel
+     * to SimsGradProvider but much simpler: the observable's
+     * evaluate() is pure Tadah (no LAMMPS instance, no adjoint
+     * snapshot for `needs_adjoint=false` observables like
+     * cohesive_energy). Captures the thread-local trainer cache to
+     * route model + dc + context references through.
+     *
+     * Hot-var warmstart: lives inside Observable state (a0_current_
+     * for cohesive_energy), updated in-place on every evaluate call.
+     * No external WarmStart cache plumbing needed — the Observable
+     * owns its hot vars per the D3 design contract. */
+    ObservableGradProvider obs_grad_provider = nullptr;
+    if (!trg_.observables.empty()) {
+        obs_grad_provider =
+            [this, &cache]
+            (std::vector<ObservableGradInput>& inputs) -> bool {
+                inputs.clear();
+                inputs.resize(trg_.observables.size());
+                if (!cache.trainer || !cache.trainer->model)
+                    return false;
+                /* FORCE=true required by NativeRelaxer's atom-force
+                 * path inside each observable's evaluate. See
+                 * obs_loss() for the same guard reasoning. */
+                detail::ObsForceFlagGuard _force_guard(cache.trainer->context);
+                for (std::size_t k = 0; k < trg_.observables.size(); ++k) {
+                    auto& obs_ptr = trg_.observables[k];
+                    if (!obs_ptr) {
+                        /* Structural error — trg_ is malformed. Hard
+                         * fail; the helper falls back to all-FD. */
+                        return false;
+                    }
+                    ObservableEvalResult res;
+                    try {
+                        res = obs_ptr->evaluate(
+                            *cache.trainer->model,
+                            cache.trainer->dc,
+                            cache.trainer->context);
+                    } catch (const std::exception&) {
+                        /* Phase A masking: relaxer divergence, NaN
+                         * energy, model mismatch. Mark this observable
+                         * as failed and continue. The loss obs_loss()
+                         * returns FAIL_SCORE for the same observable,
+                         * so ∂FAIL_SCORE/∂θ = 0 and the missing chain
+                         * contribution is exact in the continuous
+                         * region. */
+                        inputs[k].failed = true;
+                        continue;
+                    }
+                    if (!std::isfinite(res.value)) {
+                        inputs[k].failed = true;
+                        continue;
+                    }
+
+                    inputs[k].value         = res.value;
+                    inputs[k].target        = obs_ptr->target();
+                    inputs[k].weight        = obs_ptr->weight();
+                    inputs[k].loss_fn       = obs_ptr->lossfn();
+                    inputs[k].needs_adjoint = res.needs_adjoint;
+                    inputs[k].dO_dW.resize(static_cast<long>(res.dO_dW.size()));
+                    for (std::size_t c = 0; c < res.dO_dW.size(); ++c)
+                        inputs[k].dO_dW(static_cast<long>(c)) = res.dO_dW[c];
+                }
+                return true;
+            };
+    }
+
     if (!trg_.LS.empty()) {
         lmp_holders.reserve(trg_.LS.size());
         sims_grad_provider =
@@ -2237,7 +2465,13 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
 
                     R runner;
                     auto lmp = runner.create_instance(0, lsim.invar);
-                    if (!lmp) return false;
+                    if (!lmp) {
+                        /* Phase A masking: one LAMMPS instance creation
+                         * failure shouldn't poison the whole gradient.
+                         * Mark this entry as failed and continue. */
+                        inputs[k].failed = true;
+                        continue;
+                    }
 
                     /* Inject every known hot-var seed BEFORE running the
                      * script body. Scripts may overwrite via their own
@@ -2245,8 +2479,16 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                     for (const auto& kv : hot_snapshot)
                         inject_string_var(lmp, kv.first, kv.second);
 
-                    if (!runner.run_script(lmp, lsim.script_lines, pot))
-                        return false;
+                    if (!runner.run_script(lmp, lsim.script_lines, pot)) {
+                        /* Phase A masking: LAMMPS minimisation diverged
+                         * or hit NaN under the current pot. Mark and
+                         * continue — the failing script's loss is
+                         * FAIL_SCORE, a constant, so its gradient
+                         * contribution is exactly zero in the
+                         * continuous region. */
+                        inputs[k].failed = true;
+                        continue;
+                    }
 
                     std::vector<std::string> v_outvar;
                     v_outvar.reserve(lsim.n_outvar.size());
@@ -2259,8 +2501,18 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
 
                     if (!populate_sims_grad_input_from_lammps(
                             lmp.get(), lsim, v_outvar, exprs,
-                            box_dofs, lsim.failscore, inputs[k]))
-                        return false;
+                            box_dofs, lsim.failscore, inputs[k])) {
+                        /* Phase A masking: populate_sims_grad_input
+                         * returns false on FAIL_SCORE clamps (unphysical
+                         * energies, non-finite varloss values). The
+                         * resulting loss is FAIL_SCORE → zero
+                         * gradient contribution. Reset inputs[k] to a
+                         * clean failed state (populate may have
+                         * partially mutated it). */
+                        inputs[k] = SimsGradScriptInput{};
+                        inputs[k].failed = true;
+                        continue;
+                    }
 
                     lmp_holders.push_back(std::move(lmp));
                 }
@@ -2271,7 +2523,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
     try {
         helper_ok = compute_analytical_gradient_from_trainer(
             *cache.trainer, train_stdb_, val_stdb_, trg_, prefs,
-            g_flat, needs_fd, sims_grad_provider);
+            g_flat, needs_fd, sims_grad_provider, obs_grad_provider);
     } catch (const std::exception& e) {
         /* Any throw from the analytical helper (out-of-range, walker
          * mismatch, internal Cholesky, ...) is gracefully degraded

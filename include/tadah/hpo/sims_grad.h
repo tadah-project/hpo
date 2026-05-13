@@ -131,6 +131,17 @@ struct SimsGradScriptInput {
 
     /* Optional v_<name> resolver scoped to this script. */
     VariableResolver          resolver;
+
+    /* Phase A masking: when the provider can't produce a valid input
+     * for this script (LAMMPS run_script divergence, populate failure
+     * on the random-init pot, …), it sets `failed=true` and leaves the
+     * remaining fields empty/default. The chain helper skips failed
+     * entries (zero contribution to the gradient) instead of forcing
+     * the orchestrator to fall back to all-FD. Mathematically the
+     * failing script's loss is FAIL_SCORE (a constant) so
+     * ∂FAIL_SCORE/∂θ = 0 — skipping is correct in the continuous
+     * region. */
+    bool                      failed = false;
 };
 
 bool compute_sims_grad_for_script(const SimsGradScriptInput& input,
@@ -139,11 +150,16 @@ bool compute_sims_grad_for_script(const SimsGradScriptInput& input,
 /* ---------------------------------------------------------------- *
  *  Top-level: loop over scripts and chain into `g_out` via dWdtheta.
  *
- *  Returns true iff EVERY script was handled analytically. Otherwise
- *  returns false and pushes all caller-supplied θ indices into
- *  `needs_fd` — Phase 3.5's conservative "all-or-nothing" policy
- *  matches `dloss_dtheta.h:800`'s current `fall_back_all_fd` bailout.
- *  Phase 3.7+ can replace this with per-script masking.
+ *  Phase A masking: scripts with `failed=true` (LAMMPS divergence /
+ *  populate failure under random-init pots) are SKIPPED — their loss
+ *  is FAIL_SCORE, a constant, so ∂FAIL_SCORE/∂θ = 0 and the missing
+ *  chain contribution is exact in the continuous region.
+ *
+ *  Returns true iff every NON-FAILED script was handled analytically.
+ *  Returns false (and pushes all caller-supplied θ indices into
+ *  `needs_fd`) only on STRUCTURAL failures: unsupported loss kind
+ *  (MAPE/RMSLE), or observable-registry parser failure on the script's
+ *  varloss expressions. The orchestrator then falls back to all-FD.
  * ---------------------------------------------------------------- */
 bool compute_sims_grad_dWchain(
     const std::vector<SimsGradScriptInput>& scripts,
@@ -165,6 +181,76 @@ bool loss_grad_wrt_observed(const LossFunction& fn,
                             double t_target,
                             double w_weight,
                             double& out);
+
+/* ---------------------------------------------------------------- *
+ *  Typed-observable (PC_OBSERVABLE) chain rule.
+ *
+ *  The Tier-1/2 analogue of SimsGradScriptInput. Where SimsGrad
+ *  carries an IFT-adjoint payload (Hessian, dF/dW, λ-rhs) because
+ *  the LAMMPS-script observable's ∂g/∂x is generally non-zero, an
+ *  Observable that sets `needs_adjoint=false` (cohesive energy and
+ *  every observable evaluated at the energy minimum) reduces to a
+ *  flat (value, target, weight, lossfn, dO/dW) tuple — no Hessian
+ *  solve required.
+ *
+ *  MVP scope: only `needs_adjoint=false` observables. Anything that
+ *  flips the flag (lattice_param, elastic_constants, ...) routes the
+ *  whole call to FD until Phase 3 adjoint plumbing extends into the
+ *  observable seam.
+ *
+ *  The helper chains `dO_dW` through the loss prime, then through the
+ *  Phase 2 dW/dθ matrix (`apply_dWdtheta_chain`), and adds the
+ *  contribution into `g_out_inout`.
+ *
+ *  Phase A masking: observables with `failed=true` (provider-detected
+ *  relaxer divergence / NaN value) are SKIPPED — their loss is
+ *  FAIL_SCORE, a constant, so ∂FAIL_SCORE/∂θ = 0 and the missing chain
+ *  contribution is exact in the continuous region.
+ *
+ *  Returns true iff every NON-FAILED observable was handled
+ *  analytically. Returns false (and pushes all caller-supplied θ
+ *  indices into `needs_fd_out`) only on STRUCTURAL failures:
+ *  unsupported loss kind (MAPE/RMSLE) or needs_adjoint=true on the
+ *  MVP path. Matches compute_sims_grad_dWchain's contract.
+ * ---------------------------------------------------------------- */
+struct ObservableGradInput {
+    /** Observed value at current W (e.g. Ecoh in eV/atom). */
+    double          value   = 0.0;
+    /** User-supplied target the optimiser drives toward. */
+    double          target  = 0.0;
+    /** Loss weight for this observable. */
+    double          weight  = 1.0;
+    /** Loss-function kind (L1/L2/HUBER/LOG_COSH/TUKEY supported;
+     *  MAPE/RMSLE rejected, observable routes to FD). */
+    LossFunction    loss_fn{};
+
+    /** ∂O/∂W at current W (size = n_W). For cohesive_energy this is
+     *  populated directly by the closed-form path in
+     *  CohesiveEnergyObservable::evaluate. */
+    Eigen::VectorXd dO_dW;
+
+    /** Set true when the observable requires the IFT adjoint solve
+     *  (∂g/∂x ≠ 0 at the relaxed state). MVP rejects — caller routes
+     *  the call to FD. First user that will flip this is
+     *  LatticeParamObservable (deferred). */
+    bool            needs_adjoint = false;
+
+    /** Phase A masking: provider sets `failed=true` (relaxer
+     *  divergence, non-finite value, NN-finder fault, …) and leaves
+     *  dO_dW empty. The chain helper skips failed entries (zero
+     *  contribution) rather than poisoning the whole gradient. Same
+     *  ∂FAIL_SCORE/∂θ = 0 justification as SimsGradScriptInput. */
+    bool            failed = false;
+};
+
+bool compute_observables_grad_dWchain(
+    const std::vector<ObservableGradInput>& observables,
+    const std::vector<double>&              dWdtheta,
+    std::size_t                             n_cols,
+    const std::vector<int>&                 theta_row_to_g_idx,
+    const std::vector<int>&                 all_theta_indices,
+    std::vector<double>&                    g_out_inout,
+    std::vector<int>&                       needs_fd_out);
 
 }  // namespace tadah::hpo
 

@@ -20,6 +20,12 @@
  *                              central-difference for unregistered
  *                              indices, in one gradient(x, g) call.
  *                              Same `analytical_grad_fn` signature.
+ *                              Degenerate "no θ registered" case:
+ *                              skip the FD pass and return ‖g‖=0 so a
+ *                              gradient-based inner terminates cleanly
+ *                              and an outer derivative-free sampler
+ *                              keeps progressing. Use NUMERICAL to opt
+ *                              into full FD on the whole vector.
  *
  * The factory's `analytical_grad_fn` parameter has the signature
  *
@@ -197,6 +203,28 @@ make_gradient_provider(const OptimizerSpec&     sp,
 
       std::vector<int> needs_fd;
       if (!analytical_grad_fn(x, g, needs_fd)) return false;
+
+      /* All-FD gate: when every θ falls back to FD the masked-FD pass
+       * degenerates into pure central differences on the whole vector.
+       * On LAMMPS-driven loss components (`PC_LAMMPS`, see
+       * `compute_analytical_gradient_from_trainer`'s sims-grad chain
+       * failure path) this is both very expensive (2·dim host calls per
+       * gradient eval, each running LAMMPS) AND noisy — the relaxation
+       * cliff at `--hotvar` boundaries makes one perturbed point land on
+       * `FAIL_SCORE`, blowing up that gradient component. Gradient-based
+       * inner optimisers (`LD_LBFGS`, DLIB:BFGS, Ceres) then monopolise
+       * the eval budget on hopeless local descents and the outer global
+       * sampler (e.g. `GN_MLSL_LDS`) never gets to explore. Skip the FD
+       * pass instead and surface g = analytical_pass_zeros. The
+       * gradient-based local search receives ‖g‖=0 and terminates as
+       * "converged"; an outer global driver simply samples another
+       * point. NUMERICAL strategy remains the explicit opt-in for users
+       * who genuinely want full FD. */
+      if (needs_fd.size() == static_cast<std::size_t>(g.size())) {
+        for (long i = 0; i < g.size(); ++i)
+          if (!std::isfinite(g(i))) g(i) = 0.0;
+        return true;
+      }
 
       // Central differences over the masked indices.
       for (int idx : needs_fd) {

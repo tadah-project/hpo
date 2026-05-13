@@ -237,6 +237,119 @@ TEST_CASE("HPO_Host::analytical_gradient end-to-end on a Trainer with no "
     Host::reset_globals_for_test();
 }
 
+/* PC_OBSERVABLE end-to-end (D4c integration).
+ *
+ * Mirrors the PC_LAMMPS case below but with a typed observable
+ * (`PC_OBSERVABLE cohesive_energy ...`) instead. Validates that:
+ *   - HPOTargets parses PC_OBSERVABLE and populates trg.observables
+ *   - HPO_Host::operator() runs obs_loss(r), populates
+ *     r.v_obs_value / r.v_obs_loss, and folds them into r.loss
+ *   - HPO_Host::analytical_gradient builds the ObservableGradProvider
+ *     lambda and either folds the analytical chain into g, or routes
+ *     to FD (all-or-nothing fall-back). Either is valid wiring.
+ *
+ * Declared BEFORE the PC_LAMMPS case so the LAMMPS in-process global
+ * state (left after the PC_LAMMPS test's LMP destructor runs) does
+ * not contaminate the PC_OBSERVABLE relaxer. Tests in this file are
+ * hidden `[.][!benchmark]` and won't run together by default.
+ *
+ * The minimal 4-atom Ta DB and BF_Linear/D2_BP[2,2] pot used in the
+ * fixture produces a low-expressivity potential; the relaxer inside
+ * the observable may not converge to a physical Ecoh for arbitrary θ.
+ * The test accepts either a finite loss or FAIL_SCORE.
+ */
+TEST_CASE("HPO_Host::analytical_gradient end-to-end with one PC_OBSERVABLE "
+          "cohesive_energy entry (D4c)",
+          "[hpo_host_e2e][pc_observable][.][!benchmark]")
+{
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+
+    /* Force a clean Trainer rebuild on this test's first operator()
+     * call. The thread-local trainer cache from a prior test in this
+     * binary may have been built with FORCE=false and a different
+     * descriptor stack; reinit() doesn't fully reflow descriptor-side
+     * state for that flag change, and reusing the cached trainer with
+     * stale descriptor state segfaults on the first dc.calc inside
+     * obs_loss. */
+    const bool had_force_rebuild = std::getenv("TADAH_HPO_FORCE_REBUILD") != nullptr;
+    if (!had_force_rebuild) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1);
+    struct ForceRebuildGuard {
+        bool restore;
+        ~ForceRebuildGuard() { if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD"); }
+    } _guard{!had_force_rebuild};
+
+    ScratchDir sd;
+    const fs::path train_db = sd.dir / "train.db";
+    const fs::path val_db   = sd.dir / "val.db";
+    const fs::path val_cfg  = sd.dir / "config.val";
+    const fs::path hpo_cfg  = sd.dir / "config.hpo";
+
+    write_minimal_ta_dbfile(train_db, /*offset_x=*/0.0);
+    write_minimal_ta_dbfile(val_db,   /*offset_x=*/0.07);
+
+    {
+        std::ofstream os(val_cfg);
+        os << "DBFILE " << val_db.string() << "\n";
+    }
+    {
+        std::ofstream os(hpo_cfg);
+        os <<
+            "OPTIMIZER\n"
+            "LIB DLIB\n"
+            "ALGO BFGS\n"
+            "MAXEVAL 1\n"
+            "ENDOPTIMIZER\n"
+            "LOSS L2\n"
+            "FAILSCORE 1e8\n"
+            "PC_EMAE 0 1\n"
+            "PC_OBSERVABLE cohesive_energy --species Ta "
+            "--target 8.1 --weight 1 "
+            "--supercell 2 2 2 "
+            "--hotvar a0 2.7 3.9 3.3\n"
+            "OPTIM CGRID2B (1) 0.0 4.0\n";
+    }
+
+    tadah::core::Context ctx = make_ta_master_context(train_db, hpo_cfg, val_cfg);
+    /* Cohesive_energy's NativeRelaxer drives forces via fpredict, which
+     * needs FORCE=true in ctx so DescriptorsCalc::calc populates fd_ij.
+     * The minimal DBFILE has zero forces so FORCE=true is safe for the
+     * training fit. */
+    ctx.remove("FORCE");
+    ctx.add("FORCE", "true");
+
+    tadah::hpo::HPOTargets trg(ctx, hpo_cfg.string());
+    REQUIRE(trg.LS.empty());
+    REQUIRE(trg.observables.size() == 1u);
+    REQUIRE(trg.observables[0]->kind() == "cohesive_energy");
+
+    Host host(ctx, trg, val_cfg.string());
+    REQUIRE(host.train_size() == 1u);
+
+    ParamVec p(1);
+    p(0) = 0.5;
+    double f0 = std::numeric_limits<double>::quiet_NaN();
+    /* operator() runs fit_loss + obs_loss. obs_loss evaluates the
+     * cohesive_energy observable; a diverging relax clamps its loss
+     * component to FAIL_SCORE per the contract. f0 must be finite. */
+    REQUIRE_NOTHROW(f0 = host(p));
+    CHECK(std::isfinite(f0));
+
+    /* The real production wiring: analytical_gradient should construct
+     * an ObservableGradProvider (because trg_.observables is non-empty)
+     * and either fold the chain into g (analytical path) or route to FD
+     * (all-or-nothing fall-back). Either is valid. The test asserts the
+     * call returns cleanly. */
+    ParamVec g(1);
+    std::vector<int> needs_fd;
+    bool ok = false;
+    REQUIRE_NOTHROW(ok = host.analytical_gradient(p, g, needs_fd));
+    REQUIRE(ok);
+    CHECK(std::isfinite(g(0)));
+
+    Host::reset_globals_for_test();
+}
+
 /* Companion case: same fixture but with a PC_LAMMPS line pointing at a
  * cohesive-E pilot script (mirrors the simple_bcc_pilot_script from
  * test_hpo_phase3_pilot.cpp). This case verifies that:

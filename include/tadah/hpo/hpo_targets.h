@@ -4,8 +4,10 @@
 #include "tadah/core/context.h"
 #include "tadah/core/utils.h"
 #include <tadah/hpo/lammps_sim.h>
+#include <tadah/hpo/observables/observable.h>
 #include <tadah/hpo/optimizer_spec.h>
 
+#include <memory>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -49,6 +51,13 @@ public:
     void read(const std::string &fn);
     std::map<std::string, Opti> optimap;  // used by HPO_Host
     std::vector<LammpsSim> LS;
+
+    /* Typed observables (Tier 1 / Tier 2 of the PC_OBSERVABLE redesign).
+     * Each entry is a polymorphic Observable* — concrete subclasses live in
+     * tadah/hpo/observables/. The host iterates this vector alongside LS
+     * when computing the loss + gradient.
+     * Populated by PC_OBSERVABLE lines in the .hpotarget config. */
+    std::vector<std::unique_ptr<Observable>> observables;
 
     // int THREADS = -1; // number of threads for parallel evaluation, -1 means all available threads
     double FAIL_SCORE = std::numeric_limits<double>::max();

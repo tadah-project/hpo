@@ -751,6 +751,25 @@ using SimsGradProvider =
     std::function<bool(std::vector<SimsGradScriptInput>& inputs)>;
 
 /* ------------------------------------------------------------------- *
+ *  ObservableGradProvider — typed-observable (PC_OBSERVABLE) analogue
+ *  of SimsGradProvider. Host-supplied callback that evaluates every
+ *  entry of `trg.observables` at the current iteration's relaxed state
+ *  and fills one ObservableGradInput per observable.
+ *
+ *  Returns false on any per-observable failure (relaxer failure, NaN
+ *  energies, model not evaluable); the helper then falls all θ back
+ *  to FD per the same all-or-nothing contract that governs
+ *  SimsGradProvider.
+ *
+ *  The provider's returned vector must have
+ *  `inputs.size() == trg.observables.size()` with inputs[k]
+ *  corresponding to trg.observables[k]. Empty trg.observables → the
+ *  provider is not invoked.
+ * ------------------------------------------------------------------- */
+using ObservableGradProvider =
+    std::function<bool(std::vector<ObservableGradInput>& inputs)>;
+
+/* ------------------------------------------------------------------- *
  *  compute_analytical_gradient_from_trainer
  *
  *  Free helper that takes a live, trained mlip::Trainer plus the
@@ -783,6 +802,16 @@ using SimsGradProvider =
  *  LAMMPS-observable gradients into `g_out`. Null provider with non-
  *  empty LS → falls back to all-FD (byte-identical to pre-3.7B).
  *
+ *  `obs_grad_provider` (PC_OBSERVABLE D4b): default-null. When
+ *  `trg.observables` is non-empty AND a provider is supplied, the
+ *  helper drives `compute_observables_grad_dWchain` on the provider's
+ *  outputs to fold typed-observable (cohesive_energy, ...) gradients
+ *  into `g_out`. Null provider with non-empty observables → falls
+ *  back to all-FD. Sims and observable chains are independent — both
+ *  fire when both providers are present, and a failure in either
+ *  routes every θ to FD (all-or-nothing across both tiers; per-tier
+ *  Phase A masking is deferred).
+ *
  *  g_out is sized to prefs.size() and pre-zeroed by this helper.
  *  Returns false only when an internal step failed in a way the
  *  optimiser should treat as a clamp event (today: Cholesky non-PD).
@@ -796,7 +825,8 @@ compute_analytical_gradient_from_trainer(
     const std::vector<ParamRef>&              prefs,
     std::vector<double>&                      g_out,
     std::vector<int>&                         needs_fd,
-    const SimsGradProvider&                   sims_grad_provider = nullptr)
+    const SimsGradProvider&                   sims_grad_provider = nullptr,
+    const ObservableGradProvider&             obs_grad_provider  = nullptr)
 {
     g_out.assign(prefs.size(), 0.0);
     needs_fd.clear();
@@ -1359,24 +1389,31 @@ compute_analytical_gradient_from_trainer(
     x_dummy.data = &x_buf;
     VecAdapterFlat g_adapter{ &g_out };
 
-    /* Capture dW/dθ only when we need it for the sims_grad chain. The
-     * extra cost is one allocation; the actual back-solves happen inside
+    /* Capture dW/dθ when either chain needs it. Both PC_LAMMPS
+     * (Phase 3.7B) and PC_OBSERVABLE (D4b) consume the same dW/dθ
+     * matrix — gather both flags upfront. The extra cost is one
+     * allocation; the actual back-solves happen inside
      * compute_dloss_dtheta either way. */
     const bool want_sims_grad = sims_grad_provider && !trg.LS.empty();
+    const bool want_obs_grad  = obs_grad_provider && !trg.observables.empty();
+    const bool want_dWdtheta  = want_sims_grad || want_obs_grad;
     std::vector<double> dWdtheta;
     const bool ok = compute_dloss_dtheta(
         plan, x_dummy, g_adapter, needs_fd,
-        want_sims_grad ? &dWdtheta : nullptr);
+        want_dWdtheta ? &dWdtheta : nullptr);
 
-    /* Phase 3.7B sims_grad chain. Runs only when the caller supplied a
-     * provider AND fit-side compute_dloss_dtheta succeeded; the IFT
-     * Cholesky failure path (ok=false) already routes the optimiser to
-     * a clamp, so we don't bother chaining sims_loss in that case. */
-    if (ok && want_sims_grad && dWdtheta.size() == prefs.size() * n_cols) {
+    /* Chain rule for both LAMMPS-script (Tier 3, Phase 3.7B) and
+     * typed-observable (Tier 1/2, D4b) gradients. Runs only when the
+     * caller supplied at least one provider AND fit-side
+     * compute_dloss_dtheta succeeded; the IFT Cholesky failure path
+     * (ok=false) already routes the optimiser to a clamp, so we don't
+     * bother chaining downstream losses in that case. */
+    if (ok && want_dWdtheta && dWdtheta.size() == prefs.size() * n_cols) {
         /* Build the set of θ for which the fit-side produced an
          * analytical dW/dθ. needs_fd already lists indices that fell back
          * to FD; the complement is the candidate set for analytical
-         * sims_grad. */
+         * chain rules. Shared by both sims and observable chains so
+         * neither tier silently bypasses the FD set. */
         std::unordered_set<int> fd_set(needs_fd.begin(), needs_fd.end());
         std::vector<int> analytical_theta;
         analytical_theta.reserve(prefs.size());
@@ -1389,45 +1426,75 @@ compute_analytical_gradient_from_trainer(
             }
         }
 
-        std::vector<SimsGradScriptInput> sims_inputs;
-        bool provider_ok = false;
-        try {
-            provider_ok = sims_grad_provider(sims_inputs);
-        } catch (const std::exception& e) {
-            /* Provider threw — treat as failure and fall back to FD for
-             * everything (per the helper's general "graceful degrade"
-             * pattern; analytical_gradient surfaces this via its catch
-             * around our call). */
-            (void)e;
-            provider_ok = false;
-        }
-        const bool inputs_well_formed =
-            provider_ok && sims_inputs.size() == trg.LS.size();
-
-        if (!inputs_well_formed) {
-            /* All-or-nothing per Phase 3.5: re-route every θ to FD so
-             * the masked FD picks up both fit and sims components. */
+        auto fall_back_to_fd = [&]() {
             g_out.assign(prefs.size(), 0.0);
             needs_fd.clear();
             for (std::size_t i = 0; i < prefs.size(); ++i)
                 needs_fd.push_back(static_cast<int>(prefs[i].flat_idx));
             return true;
+        };
+
+        if (want_sims_grad) {
+            std::vector<SimsGradScriptInput> sims_inputs;
+            bool provider_ok = false;
+            try {
+                provider_ok = sims_grad_provider(sims_inputs);
+            } catch (const std::exception& e) {
+                /* Provider threw — treat as failure and fall back to FD
+                 * for everything (per the helper's general "graceful
+                 * degrade" pattern; analytical_gradient surfaces this via
+                 * its catch around our call). */
+                (void)e;
+                provider_ok = false;
+            }
+            const bool inputs_well_formed =
+                provider_ok && sims_inputs.size() == trg.LS.size();
+            if (!inputs_well_formed) return fall_back_to_fd();
+
+            /* Phase A masking: compute_sims_grad_dWchain skips entries
+             * with `failed=true` (per-script failures from the provider,
+             * e.g. LAMMPS run_script divergence on random-init pots).
+             * Failed scripts contribute zero to the chain; this is
+             * mathematically correct in the FAIL_SCORE=constant region
+             * (∂FAIL_SCORE/∂θ = 0) and prevents a single Tier-3 script
+             * crash from poisoning Tier-1 (PC_OBSERVABLE) analytical
+             * gradients via the all-FD gate. */
+            std::vector<int> needs_fd_sims;
+            const bool sims_ok = compute_sims_grad_dWchain(
+                sims_inputs, dWdtheta, n_cols,
+                theta_row_to_g_idx, analytical_theta,
+                g_out, needs_fd_sims);
+            if (!sims_ok || !needs_fd_sims.empty()) return fall_back_to_fd();
         }
 
-        std::vector<int> needs_fd_sims;
-        const bool sims_ok = compute_sims_grad_dWchain(
-            sims_inputs, dWdtheta, n_cols,
-            theta_row_to_g_idx, analytical_theta,
-            g_out, needs_fd_sims);
-        if (!sims_ok || !needs_fd_sims.empty()) {
-            /* compute_sims_grad_dWchain returns false (and dumps every
-             * analytical θ into needs_fd_sims) on any per-script
-             * failure. All-or-nothing: route everything to FD. */
-            g_out.assign(prefs.size(), 0.0);
-            needs_fd.clear();
-            for (std::size_t i = 0; i < prefs.size(); ++i)
-                needs_fd.push_back(static_cast<int>(prefs[i].flat_idx));
-            return true;
+        if (want_obs_grad) {
+            std::vector<ObservableGradInput> obs_inputs;
+            bool provider_ok = false;
+            try {
+                provider_ok = obs_grad_provider(obs_inputs);
+            } catch (const std::exception& e) {
+                /* Same "provider throws → all-FD" treatment as the sims
+                 * branch. The Observable evaluator runs entirely in
+                 * Tadah (no LAMMPS), so the throw set here is mostly
+                 * relaxer divergence / NN-finder failure / linear-model
+                 * weight mismatch. */
+                (void)e;
+                provider_ok = false;
+            }
+            const bool inputs_well_formed =
+                provider_ok && obs_inputs.size() == trg.observables.size();
+            if (!inputs_well_formed) return fall_back_to_fd();
+
+            /* Phase A masking applies symmetrically to PC_OBSERVABLE:
+             * a per-observable `failed=true` (relaxer divergence,
+             * non-finite value, NN-finder fault) → skip-and-zero
+             * contribution rather than poisoning the whole gradient. */
+            std::vector<int> needs_fd_obs;
+            const bool obs_ok = compute_observables_grad_dWchain(
+                obs_inputs, dWdtheta, n_cols,
+                theta_row_to_g_idx, analytical_theta,
+                g_out, needs_fd_obs);
+            if (!obs_ok || !needs_fd_obs.empty()) return fall_back_to_fd();
         }
     }
 

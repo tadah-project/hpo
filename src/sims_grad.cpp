@@ -231,10 +231,71 @@ bool compute_sims_grad_dWchain(
     std::vector<double> stage(g_out_inout.size(), 0.0);
 
     for (const auto& script : scripts) {
+        /* Phase A masking: skip provider-marked failed scripts. Their
+         * loss is FAIL_SCORE (a constant clamp set by the host's
+         * outvar/varloss FAIL_SCORE path) so ∂FAIL_SCORE/∂θ = 0 — the
+         * contribution to the gradient is exactly zero in the
+         * continuous region. The remaining scripts and PC_OBSERVABLE
+         * chain still contribute analytically. */
+        if (script.failed) continue;
+
         Eigen::VectorXd dL_dW;
         if (!compute_sims_grad_for_script(script, dL_dW)) {
-            /* All-or-nothing in 3.5: route every θ to needs_fd, discard
-             * the staged contributions, leave g_out untouched. */
+            /* Hard failure (unsupported loss kind, observable registry
+             * miss). Still all-or-nothing — these are structural and
+             * the optimiser needs FD anyway. */
+            for (int idx : all_theta_indices) needs_fd_out.push_back(idx);
+            return false;
+        }
+        apply_dWdtheta_chain(dL_dW, dWdtheta, n_cols,
+                             theta_row_to_g_idx, stage);
+    }
+
+    /* Commit. */
+    for (std::size_t i = 0; i < g_out_inout.size(); ++i) {
+        g_out_inout[i] += stage[i];
+    }
+    return true;
+}
+
+bool compute_observables_grad_dWchain(
+    const std::vector<ObservableGradInput>& observables,
+    const std::vector<double>&              dWdtheta,
+    std::size_t                             n_cols,
+    const std::vector<int>&                 theta_row_to_g_idx,
+    const std::vector<int>&                 all_theta_indices,
+    std::vector<double>&                    g_out_inout,
+    std::vector<int>&                       needs_fd_out)
+{
+    /* Stage contributions locally so an unsupported observable (loss
+     * kind / needs_adjoint=true) doesn't leave a half-applied g_out
+     * behind. Mirrors compute_sims_grad_dWchain's all-or-nothing
+     * commit semantics for structural failures; per-observable
+     * `failed=true` is masked (Phase A). */
+    std::vector<double> stage(g_out_inout.size(), 0.0);
+
+    for (const auto& obs : observables) {
+        /* Phase A masking: provider-marked failure (relaxer diverged,
+         * NaN value, …). Skip. ∂FAIL_SCORE/∂θ = 0. */
+        if (obs.failed) continue;
+
+        if (obs.needs_adjoint) {
+            /* MVP only wires the closed-form (needs_adjoint=false)
+             * path. LatticeParamObservable et al. will lift this once
+             * the IFT-adjoint seam threads through. */
+            for (int idx : all_theta_indices) needs_fd_out.push_back(idx);
+            return false;
+        }
+        if (obs.dO_dW.size() != static_cast<long>(n_cols)) {
+            throw std::runtime_error(
+                "compute_observables_grad_dWchain: dO_dW size != n_cols");
+        }
+
+        Eigen::VectorXd dL_dW(static_cast<long>(n_cols));
+        dL_dW.setZero();
+        if (!apply_loss_fold(obs.loss_fn, obs.value, obs.target, obs.weight,
+                             obs.dO_dW, dL_dW)) {
+            /* MAPE / RMSLE not supported by loss_grad_wrt_observed. */
             for (int idx : all_theta_indices) needs_fd_out.push_back(idx);
             return false;
         }

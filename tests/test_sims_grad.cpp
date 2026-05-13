@@ -374,6 +374,149 @@ TEST_CASE("sims_grad — compute_sims_grad_dWchain routes ALL θ to needs_fd "
     CHECK(needs_fd == std::vector<int>{0, 1, 2, 3, 4});
 }
 
+/* ---------------------------------------------------------------- *
+ * Phase A masking: SimsGradScriptInput::failed = true is silently
+ * skipped (zero contribution to the chain). Surviving entries still
+ * fold their analytical contributions. This is the load-bearing
+ * behaviour for HPO configs that mix PC_LAMMPS scripts with random-
+ * init pots — one diverging script must not poison Tier-1
+ * PC_OBSERVABLE chain gradients.
+ * ---------------------------------------------------------------- */
+TEST_CASE("sims_grad — compute_sims_grad_dWchain skips failed=true entries "
+          "and still folds the surviving scripts (Phase A masking)",
+          "[sims_grad][phase_a][phase3]")
+{
+    Synth s;
+
+    /* Good script — same as the pilot-shaped end-to-end case. */
+    SimsGradScriptInput good;
+    good.ctx        = s.ctx();
+    good.H          = s.H;
+    good.dF_dW      = s.dF_dW.data();
+    good.expressions = {"c_eatoms/atoms"};
+    good.v_observed  = {0.6};
+    good.t_targets   = {0.5};
+    good.w_weights   = {1.0};
+    good.loss_fns    = {LossFunction(LossFunction::Type::L2)};
+
+    /* Failed script: would be rejected outright by the chain helper
+     * (`v_unknown/...`) but `failed=true` masks the whole entry, so
+     * compute_sims_grad_for_script is never called. The chain helper
+     * must NOT report a structural failure on this input. */
+    SimsGradScriptInput bad;
+    bad.failed = true;
+    /* Leave the rest default-constructed: provider's failed path
+     * doesn't populate expressions / loss_fns. */
+
+    std::vector<double> dWdtheta(2 * s.n_desc, 0.0);
+    for (std::size_t r = 0; r < 2; ++r)
+        for (int c = 0; c < s.n_desc; ++c)
+            dWdtheta[r * s.n_desc + c] = 0.2 * static_cast<double>(r + 1)
+                                          + 0.1 * static_cast<double>(c);
+    std::vector<int> theta_row_to_g_idx = {0, 1};
+
+    /* Reference: re-run with only the good script. */
+    std::vector<double> g_ref(2, 0.0);
+    {
+        std::vector<int> nf;
+        REQUIRE(compute_sims_grad_dWchain({good}, dWdtheta, s.n_desc,
+                                           theta_row_to_g_idx,
+                                           /*all_theta_indices=*/{},
+                                           g_ref, nf));
+        CHECK(nf.empty());
+    }
+
+    /* Phase A: bad before good, after good, and sandwiched — order
+     * must not matter, the bad entry contributes zero in all cases. */
+    for (auto order : std::vector<std::vector<SimsGradScriptInput>>{
+            {bad, good}, {good, bad}, {bad, good, bad}}) {
+        std::vector<double> g_out(2, 0.0);
+        std::vector<int>    needs_fd;
+        REQUIRE(compute_sims_grad_dWchain(order, dWdtheta, s.n_desc,
+                                           theta_row_to_g_idx,
+                                           /*all_theta_indices=*/{},
+                                           g_out, needs_fd));
+        CHECK(needs_fd.empty());
+        CHECK(g_out[0] == Approx(g_ref[0]));
+        CHECK(g_out[1] == Approx(g_ref[1]));
+    }
+}
+
+TEST_CASE("sims_grad — compute_sims_grad_dWchain on all-failed list returns "
+          "true with empty needs_fd (no-op gradient contribution)",
+          "[sims_grad][phase_a][phase3]")
+{
+    SimsGradScriptInput failed_a; failed_a.failed = true;
+    SimsGradScriptInput failed_b; failed_b.failed = true;
+
+    std::vector<double> dWdtheta(3, 1.0);
+    std::vector<int>    theta_row_to_g_idx = {0};
+    std::vector<int>    all_theta_indices = {0, 1, 2};
+    std::vector<double> g_out(1, 42.0);
+    std::vector<int>    needs_fd;
+
+    REQUIRE(compute_sims_grad_dWchain({failed_a, failed_b}, dWdtheta,
+                                       /*n_cols=*/3,
+                                       theta_row_to_g_idx,
+                                       all_theta_indices,
+                                       g_out, needs_fd));
+    /* No failed entry contributes — g_out stays at its incoming value,
+     * needs_fd stays empty, and the helper does NOT signal failure. */
+    CHECK(g_out[0] == 42.0);
+    CHECK(needs_fd.empty());
+}
+
+TEST_CASE("sims_grad — compute_observables_grad_dWchain skips failed=true "
+          "entries (Phase A masking, mirrors sims branch)",
+          "[sims_grad][phase_a][phase3]")
+{
+    /* Good observable: cohesive-energy-shaped, L2 loss, fold (v-t)·dO/dW
+     * into the chain over a 2-θ dW/dθ matrix. */
+    const std::size_t n_cols = 3;
+    ObservableGradInput good;
+    good.value    = 0.6;
+    good.target   = 0.5;
+    good.weight   = 1.0;
+    good.loss_fn  = LossFunction(LossFunction::Type::L2);
+    good.dO_dW    = Eigen::VectorXd(static_cast<long>(n_cols));
+    good.dO_dW << 0.1, 0.2, 0.3;
+
+    ObservableGradInput bad;
+    bad.failed = true;
+
+    std::vector<double> dWdtheta(2 * n_cols, 0.0);
+    for (std::size_t r = 0; r < 2; ++r)
+        for (std::size_t c = 0; c < n_cols; ++c)
+            dWdtheta[r * n_cols + c] = 0.5 * static_cast<double>(r + 1)
+                                        + 0.1 * static_cast<double>(c);
+    std::vector<int> theta_row_to_g_idx = {0, 1};
+
+    /* Reference: good alone. */
+    std::vector<double> g_ref(2, 0.0);
+    {
+        std::vector<int> nf;
+        REQUIRE(compute_observables_grad_dWchain({good}, dWdtheta, n_cols,
+                                                  theta_row_to_g_idx,
+                                                  /*all_theta_indices=*/{},
+                                                  g_ref, nf));
+        CHECK(nf.empty());
+    }
+
+    /* With failed mixed in (any order), the masked result matches. */
+    for (auto order : std::vector<std::vector<ObservableGradInput>>{
+            {bad, good}, {good, bad}, {bad, good, bad}}) {
+        std::vector<double> g_out(2, 0.0);
+        std::vector<int>    needs_fd;
+        REQUIRE(compute_observables_grad_dWchain(order, dWdtheta, n_cols,
+                                                  theta_row_to_g_idx,
+                                                  /*all_theta_indices=*/{},
+                                                  g_out, needs_fd));
+        CHECK(needs_fd.empty());
+        CHECK(g_out[0] == Approx(g_ref[0]));
+        CHECK(g_out[1] == Approx(g_ref[1]));
+    }
+}
+
 TEST_CASE("sims_grad — IFT chain rule cross-check via central diff on W "
           "for a non-trivial λ (lattice-constant-style)",
           "[sims_grad][phase3]")

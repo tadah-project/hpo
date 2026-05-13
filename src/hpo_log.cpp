@@ -586,6 +586,20 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
         }
     }
 
+    /* PC_OBSERVABLE typed-observable components — surface them in the
+     * header so users see their cohesive_energy / etc. contribution
+     * alongside ERMSE and PC_LAMMPS varloss entries. Without this loop
+     * the section silently omits cohesive_energy and the user wonders
+     * whether their PC_OBSERVABLE line took effect. */
+    for (std::size_t k = 0; k < trg.observables.size(); ++k) {
+        const auto& obs = trg.observables[k];
+        if (!obs) continue;
+        std::ostringstream s;
+        s << "weight=" << std::fixed << std::setprecision(2) << obs->weight()
+          << "  target=" << std::scientific << std::setprecision(3) << obs->target();
+        kv(obs->kind() + "[" + std::to_string(k) + "]", s.str());
+    }
+
     kv("Aggregate",   "mean over active components");
     kv("Fail score",  fmt_double(trg.FAIL_SCORE)
                       + "  (returned when training produces NaN/Inf)");

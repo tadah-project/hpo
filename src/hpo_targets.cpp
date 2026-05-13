@@ -1,4 +1,5 @@
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/observables/observable_parser.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/init_strategy.h>
 #include <tadah/hpo/optimizer_caps.h>
@@ -1299,6 +1300,19 @@ void HPOTargets::read(const std::string& fn)
                 LS.emplace_back(cmd, MAX_TIME, FAIL_SCORE, globalLoss);
             }
 
+            /* Typed observables ------------------------------------
+             *   PC_OBSERVABLE <kind> --flag value …
+             *
+             * MVP kinds: cohesive_energy. The parser dispatches on
+             * <kind> and constructs the appropriate Observable*
+             * subclass. Future observables plug into the same dispatch
+             * without touching this file. */
+            else if (key=="PC_OBSERVABLE")
+            {
+                std::string cmd; std::getline(iss, cmd);
+                observables.push_back(parse_pc_observable_line(cmd));
+            }
+
             /* per-metric weight lines ------------------------------
              *   PC_<METRIC>  <target>  <weight>  [--skip-above N] [--skip-rel R]
              *
@@ -1353,6 +1367,104 @@ void HPOTargets::read(const std::string& fn)
             throw std::runtime_error("Error on line "+core::to_string(nline)+
                                      ": "+e.what()+"\nLine: "+line);
         }
+    }
+
+    /* Post-parse validation: PC_OBSERVABLE and PC_LAMMPS are mutually
+     * exclusive paths in the experimental MVP. The typed-observable
+     * path consumes analytical gradients exclusively; PC_LAMMPS now
+     * only supports gradient-free optimisers. Mixing them in one
+     * --hpotarget produces a config the orchestrator cannot serve
+     * consistently, so reject it early with a clear error rather than
+     * letting the user discover the problem at eval-time. */
+    if (!observables.empty() && !LS.empty()) {
+        throw std::runtime_error(
+            "--hpotarget defines both PC_OBSERVABLE (" +
+            core::to_string(observables.size()) +
+            " entries) and PC_LAMMPS (" +
+            core::to_string(LS.size()) +
+            " entries); these paths are mutually exclusive in the "
+            "current MVP. Remove one set of lines and rerun.");
+    }
+
+    /* PC_OBSERVABLE always engages the analytical gradient path. The
+     * MVP's only observable (cohesive_energy) provides closed-form
+     * dO/dW; combined with the Phase 2 fit-side walker, every θ has an
+     * analytical chain entry. NUMERICAL with PC_OBSERVABLE would run
+     * Ceres finite differences over the whole HPO objective — correct
+     * but slow, and contrary to the redesign's purpose. Reject it at
+     * parse time with a clear message. ANALYTICAL and HYBRID are both
+     * accepted; HYBRID's masked-FD fallback never fires for
+     * PC_OBSERVABLE (every θ is registered), so the two strategies
+     * are observationally identical here. */
+    auto reject_numerical_with_observable =
+        [&](const OptimizerSpec& sp, const char* tag) {
+            if (sp.grad_strategy
+                && *sp.grad_strategy == GradStrategy::Numerical) {
+                throw std::runtime_error(
+                    std::string("--hpotarget defines PC_OBSERVABLE but ")
+                    + tag + " GRAD_STRATEGY=NUMERICAL is set. PC_OBSERVABLE "
+                    "always uses analytical gradients. Set GRAD_STRATEGY "
+                    "to HYBRID or ANALYTICAL (they're equivalent for "
+                    "PC_OBSERVABLE), or drop the GRAD_STRATEGY line "
+                    "entirely.");
+            }
+        };
+    if (!observables.empty()) {
+        reject_numerical_with_observable(spec, "OPTIMIZER's");
+        if (spec.inner)
+            reject_numerical_with_observable(*spec.inner, "INNER's");
+    }
+
+    /* PC_LAMMPS: gradient-support dropped 2026-05-13.
+     *
+     * The HPO-side analytical-gradient wiring for PC_LAMMPS (Phase 3
+     * IFT-adjoint chain) is no longer engaged. PC_LAMMPS configs must
+     * use gradient-free optimisers — NLOPT GN_* / LN_*, TADAH built-ins
+     * (RANDOM/GRID/ANNEAL). The single accepted gradient-based exception
+     * is DLIB:BFGS, which performs its own per-θ-per-iter finite-
+     * difference dtheta inside dlib::find_min and never asks the host
+     * for a full gradient vector.
+     *
+     * Also reject any explicit GRAD_STRATEGY={NUMERICAL,HYBRID,
+     * ANALYTICAL} when PC_LAMMPS is present — these tags only make
+     * sense in the PC_OBSERVABLE world post-2026-05-13. */
+    auto reject_pc_lammps_grad =
+        [&](const OptimizerSpec& sp, const std::string& fallback_lib,
+            const char* tag) {
+            if (sp.grad_strategy) {
+                throw std::runtime_error(
+                    std::string("--hpotarget defines PC_LAMMPS but ") + tag
+                    + " GRAD_STRATEGY is set. PC_LAMMPS no longer "
+                    "supports analytical/numerical/hybrid gradients "
+                    "(2026-05-13). Drop the GRAD_STRATEGY line.");
+            }
+            if (sp.algo == "NOT SET") return;
+            /* INNER block typically only sets ALGO; lib is inherited
+             * from the enclosing STRATEGY at run time. Use the outer
+             * lib here so the caps lookup works for inner specs that
+             * don't carry their own lib string. */
+            const std::string lib =
+                (sp.lib == "NOT SET") ? fallback_lib : sp.lib;
+            if (lib == "NOT SET") return;
+            const bool dlib_bfgs_exception =
+                (lib == "DLIB" && sp.algo == "BFGS");
+            if (dlib_bfgs_exception) return;
+            const auto& caps = optimizer_caps(lib, sp.algo);
+            if (caps.is_gradient_based) {
+                throw std::runtime_error(
+                    std::string("--hpotarget defines PC_LAMMPS but ") + tag
+                    + " optimiser " + lib + ":" + sp.algo +
+                    " is gradient-based. PC_LAMMPS requires a "
+                    "gradient-free optimiser (NLOPT GN_*/LN_*, "
+                    "TADAH RANDOM/GRID/ANNEAL). The only gradient-based "
+                    "exception is DLIB:BFGS (uses per-θ-per-iter "
+                    "dtheta, not a full gradient).");
+            }
+        };
+    if (!LS.empty()) {
+        reject_pc_lammps_grad(spec, "NOT SET", "OPTIMIZER's");
+        if (spec.inner)
+            reject_pc_lammps_grad(*spec.inner, spec.lib, "INNER's");
     }
 }
 
