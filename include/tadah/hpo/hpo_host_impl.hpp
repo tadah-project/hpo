@@ -1475,31 +1475,21 @@ double HPO_Host<P,R>::operator()(const P& p) const
     fill_validation(r, a);
     r.pot_ctx  = std::move(pot);
     fit_loss(r);
-    /* PC_OBSERVABLE (D4c): typed observables fold into the same
-     * loss_sum / loss_count accumulators as fit + sims. Runs before
-     * the LAMMPS skip-bad-pot gate (observables are cheap relative to
-     * LAMMPS — there's no benefit to skipping them when the pot is
-     * bad). If an observable diverges, its loss component is clamped
-     * to FAIL_SCORE per obs_loss's contract; r.loss recomputes inside
-     * obs_loss. */
-    obs_loss(r);
-    t_predict_end = std::chrono::high_resolution_clock::now();
-    t_lammps_end = t_predict_end;
-    t_sims_loss_end = t_predict_end;
-    stage_watchdog::leave(r.iter, "predict_validate", _stage_log);
 
-    /* optional LAMMPS -------------------------------------------------- */
-    /* bad-potential heuristic: cheap pre-filter before launching LAMMPS.
-     * Each per-metric --skip-above / --skip-rel cap (declared on PC_*
-     * lines in config.hpo) is tested independently; the first trigger
-     * wins. Caps are optional — a metric without flags never causes a
-     * skip.
+    /* Bad-potential pre-filter. Each per-metric --skip-above / --skip-rel
+     * cap (declared on PC_* lines in config.hpo) is tested independently;
+     * the first trigger wins. Caps are optional — a metric without flags
+     * never causes a skip. The metric → tag mapping passed to
+     * bad_pot_detail::best_for() is a 2-3 char prefix that disambiguates
+     * the running-best slot for that metric.
      *
-     * The metric → tag mapping passed to bad_pot_detail::best_for() is
-     * a 2-3 char prefix that disambiguates the running-best slot for
-     * that metric. */
-    bool skip_lammps_bad_pot = false;
-    if (use_lammps_) {
+     * Runs before BOTH obs_loss and run_lammps so the gate gates every
+     * downstream phase, not just LAMMPS. Was previously wrapped in
+     * `if (use_lammps_)` — silently no-op on PC_OBSERVABLE-only configs
+     * which is a usability footgun (the parser accepts --skip-above on
+     * a PC_OBSERVABLE-only run but nothing acts on it). */
+    bool skip_bad_pot = false;
+    {
       auto check_metric = [&](const char* tag,
                               bool used,
                               double value,
@@ -1515,7 +1505,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
               1, std::memory_order_relaxed) + 1;
           if (skips <= 5 || (skips & (skips - 1)) == 0) {
             std::ostringstream os;
-            os << "eval " << r.iter << ": skipping LAMMPS — "
+            os << "eval " << r.iter << ": skipping downstream (obs+LAMMPS) — "
                << tag << "=" << value << " " << unit;
             if (bad_abs) os << " > skip-above=" << *caps.abs_above;
             if (bad_rel) os << " > skip-rel=" << *caps.rel_above
@@ -1532,17 +1522,32 @@ double HPO_Host<P,R>::operator()(const P& p) const
                    cur, value, std::memory_order_relaxed)) {}
         return false;
       };
-      skip_lammps_bad_pot =
+      skip_bad_pot =
           check_metric("ermse",   trg_.use_ermse,   r.ermse,   trg_.skip_ermse,   "meV/at") ||
           check_metric("emae",    trg_.use_emae,    r.emae,    trg_.skip_emae,    "meV/at") ||
           check_metric("eRRMSE",  trg_.use_errmse,  r.errmse,  trg_.skip_errmse,  "meV/at") ||
           check_metric("ersq",    trg_.use_ersq,    r.ersq,    trg_.skip_ersq,    "")       ||
           check_metric("frmse",   trg_.use_frmse,   r.frmse,   trg_.skip_frmse,   "eV/A")   ||
           check_metric("srmse",   trg_.use_srmse,   r.srmse,   trg_.skip_srmse,   "GPa");
-      if (skip_lammps_bad_pot) r.loss = trg_.FAIL_SCORE;
+      if (skip_bad_pot) r.loss = trg_.FAIL_SCORE;
     }
 
-    if (use_lammps_ && r.loss < trg_.FAIL_SCORE && !skip_lammps_bad_pot) {
+    /* PC_OBSERVABLE: typed observables fold into the same loss_sum /
+     * loss_count accumulators as fit + sims. Skipped on bad-pot —
+     * unlike the original D4c assumption ("observables are cheap"),
+     * cohesive_energy with maxeval=5000 and --max-wall-time can still
+     * be ~1 s per bad-pot iter, worth gating. If an observable
+     * diverges its loss component is clamped to FAIL_SCORE per
+     * obs_loss's contract; r.loss recomputes inside obs_loss. */
+    if (!skip_bad_pot) {
+      obs_loss(r);
+    }
+    t_predict_end = std::chrono::high_resolution_clock::now();
+    t_lammps_end = t_predict_end;
+    t_sims_loss_end = t_predict_end;
+    stage_watchdog::leave(r.iter, "predict_validate", _stage_log);
+
+    if (use_lammps_ && r.loss < trg_.FAIL_SCORE && !skip_bad_pot) {
       stage_watchdog::enter(r.iter, "lammps");
 #ifdef TADAH_BUILD_MPI
       run_lammps_mpi(r);
