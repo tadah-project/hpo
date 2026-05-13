@@ -104,6 +104,18 @@ TEST_CASE("parse_pc_observable_line: --supercell sets nx/ny/nz",
         "--hotvar a0 2.7 3.9 --supercell 5 5 5"));
 }
 
+TEST_CASE("parse_pc_observable_line: --etol sets relax_etol",
+          "[hpo][pc_observable_parser][cohesive_energy][etol]")
+{
+    tadah::core::PeriodicTable::initialize();
+
+    /* Smoke: syntax accepted, doesn't throw. The production runs target
+     * 1e-15 to match LAMMPS Ecoh_fast.in. */
+    CHECK_NOTHROW(tadah::hpo::parse_pc_observable_line(
+        "cohesive_energy --species Ta --target 8.100 --weight 1000 "
+        "--hotvar a0 2.7 3.9 --etol 1e-15"));
+}
+
 TEST_CASE("parse_pc_observable_line: missing required flags throw",
           "[hpo][pc_observable_parser][error]")
 {

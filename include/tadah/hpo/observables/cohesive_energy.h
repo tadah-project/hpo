@@ -58,6 +58,16 @@ public:
          * combined atom+strain DOF). */
         double relax_ftol  = 1.0e-3;   /* pressure-normalised, see NativeRelaxer */
         double relax_atom_ftol = 1.0e-1;
+        /* Energy convergence tolerance forwarded to NativeRelaxer::Options::etol.
+         * Default 0 = disabled (force-only). LAMMPS Ecoh_fast.in uses 1e-15 in
+         * its `minimize 1e-15 1e-15 5000 5000`. Surface via parser --etol. */
+        double relax_etol  = 0.0;
+        /* Per-relax wall-time cap (seconds). PC_OBSERVABLE's analogue of
+         * LAMMPS MAXTIME=1 (per-eval LAMMPS process kill). With the NN
+         * cache, a pathological θ can burn maxeval=5000 in ~5 s, much
+         * longer than LAMMPS's 1 s subprocess cap. Default 0 = disabled.
+         * Surface via parser --max-wall-time. */
+        double relax_max_wall_time_s = 0.0;
         std::size_t relax_maxiter = 5000;
         /* Total energy/force evaluations cap (LAMMPS's `maxeval` arg).
          * Caps work on pathological θ where the relax never converges,

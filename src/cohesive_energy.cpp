@@ -73,17 +73,38 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
     relax_opts.box_mode = NativeRelaxer::Options::Iso;
     relax_opts.pressure = 0.0;
     relax_opts.ftol     = cfg_.relax_atom_ftol;
+    relax_opts.etol     = cfg_.relax_etol;
+    relax_opts.max_wall_time_s = cfg_.relax_max_wall_time_s;
     relax_opts.maxiter  = cfg_.relax_maxiter;
     relax_opts.maxeval  = cfg_.relax_maxeval;
-    /* Don't impose scale bounds on the relaxer (default ±∞). LAMMPS
-     * lets `box/relax` wander to whatever cell the model wants; the
-     * hot-var rejection happens post-relax (`hot_a0 outside [...]`).
-     * Bounding the relaxer mid-iteration interacts badly with the
-     * Armijo line search: most LS retries land at the boundary, no
-     * step survives, and the relax exits unconverged for almost every
-     * wild θ. With max_strain_step=0.001 (matches LAMMPS vmax) +
-     * NNFinder's defensive cap on near-degenerate cells, the relax
-     * can't catastrophically drift inside maxeval=5000. */
+    /* Don't impose soft scale bounds on the relaxer (default ±∞).
+     * LAMMPS lets `box/relax` wander to whatever cell the model wants;
+     * the hot-var rejection happens post-relax (`hot_a0 outside [...]`).
+     * Per-LS-trial bounds interact badly with the Armijo line search:
+     * most retries land at the boundary, no step survives, and the
+     * relax exits unconverged for almost every wild θ. With
+     * max_strain_step=0.001 (matches LAMMPS vmax) + NNFinder's
+     * defensive cap on near-degenerate cells, the relax can't
+     * catastrophically drift inside maxeval=5000.
+     *
+     * Instead, use the early-bail predicate to abort once a successful
+     * line-search step has placed a0 outside [a0_min, a0_max]. The
+     * post-hoc hot-var gate at line 99 rejects on the same condition,
+     * so any relax that crosses the boundary is guaranteed to be
+     * rejected — burning the rest of the maxeval budget is wasted
+     * work. Because the predicate fires AFTER an accepted LS step
+     * (not during the LS halving), it doesn't interfere with the LS's
+     * ability to find a step that lands inside the range. */
+    {
+        const double a0_lo = cfg_.a0_min;
+        const double a0_hi = cfg_.a0_max;
+        const double a0_cur = a0_current_;
+        relax_opts.early_reject =
+            [a0_lo, a0_hi, a0_cur](const tadah::mlip::EarlyState& s) {
+                const double a = a0_cur * s.scale_total;
+                return a < a0_lo || a > a0_hi;
+            };
+    }
     NativeRelaxer relaxer;
     NativeRelaxer::Result rr = relaxer.relax(bulk, model, dc, ctx, relax_opts);
 
@@ -118,6 +139,8 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
         !rr.converged ||
         rr.maxeval_reached ||
         rr.scale_out_of_range ||
+        rr.early_rejected ||
+        rr.wall_time_exceeded ||
         rr.final_fmax_atoms > cfg_.eq_fmax_threshold;
     if (relax_unconverged) {
         ObservableEvalResult res;

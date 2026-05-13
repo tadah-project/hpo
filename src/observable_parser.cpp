@@ -125,6 +125,20 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
                 throw std::runtime_error(
                     "PC_OBSERVABLE cohesive_energy: --maxiter must be >= 0");
             cfg.relax_maxiter = static_cast<std::size_t>(v);
+        } else if (t == "--max-wall-time") {
+            /* Per-relax wall-time cap (seconds). PC_OBSERVABLE's
+             * analogue of LAMMPS's MAXTIME (per-eval subprocess kill).
+             * With NN caching, a pathological θ can burn maxeval=5000
+             * in ~5 s; 1.0 s matches the LAMMPS reference's MAXTIME=1. */
+            cfg.relax_max_wall_time_s =
+                parse_double(need_value(i, t), "--max-wall-time");
+        } else if (t == "--etol") {
+            /* LAMMPS-style energy convergence tolerance, mirrors 1st
+             * positional arg of `minimize etol ftol maxiter maxeval`.
+             * Production runs use 1e-15 to match Ecoh_fast.in. Default
+             * 0 = disabled (force-only convergence). */
+            cfg.relax_etol =
+                parse_double(need_value(i, t), "--etol");
         } else if (t == "--maxeval") {
             /* LAMMPS-style total energy/force-eval cap. Mirrors the
              * 4th positional arg of LAMMPS `minimize etol ftol maxiter
