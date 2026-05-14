@@ -2,9 +2,8 @@
 
 BASINSv2 is an additive `STRATEGY { TYPE BASINSV2 }` for the TADAH HPO
 framework. It coexists with `TYPE BASINS` (v1) and never alters v1's
-behaviour. The design rationale lives in `BASINSv2.md` (workdir
-design doc); this file documents the implementation as it lands in
-`/home/marcin/PROJECTS/TADAH/develop_wt/HPO/`.
+behaviour. This file documents the implementation as it lands in the
+`HPO/` module.
 
 ## What changed vs v1
 
