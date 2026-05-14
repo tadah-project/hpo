@@ -2,11 +2,7 @@
 #define TADAH_HPO_BASINS_POLICY_H
 
 /*
- *  BasinsPolicy — sophisticated "run and forget" HPO strategy.
- *
- *  See /home/marcin/.claude/plans/desing-sophisticated-run-and-rippling-steele.md
- *  for the full design rationale (anytime / basin-hopping / progressive
- *  tolerance ladder).
+ *  BasinsPolicy -- sophisticated "run and forget" HPO strategy.
  *
  *  In one paragraph:
  *  Round k runs a GLOBAL stage at glo_ladder[k] to harvest candidate
@@ -15,7 +11,7 @@
  *  at that tolerance. After each stage the policy commits a checkpoint
  *  so any interrupt (ctrl+C, SLURM SIGTERM/SIGUSR2) yields a usable
  *  state. Restart re-enters at the saved (round, stage_index) and runs
- *  from there — optimiser internal state is *not* required, the basin
+ *  from there -- optimiser internal state is *not* required, the basin
  *  pool's per-basin best params are enough to "move the needle in the
  *  right direction".
  *
@@ -64,7 +60,7 @@ public:
     /* Test hook: expose the OptimizerSpec that would be handed to the
      * inner driver for a stage. Used by test_basins_mlsl_inner_local.cpp
      * to verify that the LOCAL/ENDLOCAL sub-block is preserved through
-     * build_stage_spec — required for NLopt MLSL/AUGLAG-family globals
+     * build_stage_spec -- required for NLopt MLSL/AUGLAG-family globals
      * which delegate the inner search via set_local_optimizer. */
     OptimizerSpec build_stage_spec_for_test(bool global, double tol) const {
         return build_stage_spec(global, tol, {});
@@ -73,7 +69,7 @@ public:
     /* Plumbed from hpo_run() after NOISE_CALIBRATION (or after resume,
      * if the persisted suggested_ftol is set). Stores the value into
      * spec_.noise_floor and re-runs ensure_ladder() so the clamp (if
-     * spec_.clamp_ladder_to_noise_floor) takes effect. Idempotent —
+     * spec_.clamp_ladder_to_noise_floor) takes effect. Idempotent --
      * ensure_ladder rebuilds the ladder from spec_.tol_*_ladder
      * (originals), then trim_below(noise_floor). */
     void set_noise_floor(double f);
@@ -81,7 +77,7 @@ public:
 private:
     enum class Stage { GLOBAL, LOCAL };
 
-    /* The two stages — each builds a transient OptimizerSpec and
+    /* The two stages -- each builds a transient OptimizerSpec and
      * dispatches via run_inner<>(). */
     void run_global_stage(HPO_Host<Vec, Runner>& host);
     void run_local_stage (HPO_Host<Vec, Runner>& host, int loc_step);
