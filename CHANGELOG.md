@@ -53,6 +53,9 @@ HPO underwent the largest restructure of any module in this release: new init st
 - Hardcoded `/home/marcin` paths removed from `examples/common/run.sh` (`tadah` is now resolved on `PATH` by default).
 - `StagnationStop` recovery in `HPO_Host::operator()` no longer overwrites the eval's real loss with `FAIL_SCORE` and no longer flags the result as `was_nan_clamped` — both were corrupting `loss.tadah` for evals that successfully completed before the threshold check. The per-eval flood (one warning per concurrent OMP eval that crossed the threshold) is throttled to one diagnostic per stagnation event.
 - `ALGO ANNEAL` whole-proposal rejection in high dimensions — replace "any-dim-OOB → reject" with per-dim mirror reflection. Old code rejected ~98% of proposals on a 38-dim Ta workload; reflection lets every L-step do real work, recovering full chain mobility.
+- `pot_header_writer` wrote the `DBFILE` path through `fs::absolute()`, embedding the author's filesystem layout into shipped `best_pot.tadah` headers. It now records the path as written in `config.tadah` (relative).
+- Hot variables are now injected into LAMMPS as `equal`-style instead of `string`-style. A hot script that redefines `<name>` (per the README contract) becomes a same-style overwrite — no `variable delete` is needed and the cached LAMMPS instance no longer traps a stale definition into the next iteration; the warmstart cache evolves to the relaxed value instead of freezing at the injected seed.
+- `run_reference_suite.sh` return-code carry-over — a single example FAIL no longer marks every later example FAIL in the summary table.
 
 ### Internal
 - Per-run output artefacts un-tracked from `examples/` (stay reproducible via the driver, no longer cluttering `git status`).
