@@ -1,4 +1,4 @@
-# 12 -- exhaustive grid sweep (TADAH:GRID).
+# 11 -- exhaustive grid sweep (TADAH:GRID).
 #
 # Evaluates every point on a Cartesian grid. `STEP` is the number of
 # samples per dimension (total cost = STEP ^ dim), so keep dim and

@@ -1,4 +1,4 @@
-# 16 -- classical simulated annealing (TADAH:ANNEAL).
+# 15 -- classical simulated annealing (TADAH:ANNEAL).
 #
 # Kirkpatrick/Metropolis SA: fixed-shape Gaussian step in transformed
 # parameter space, geometric temperature schedule (T <- T * RT),

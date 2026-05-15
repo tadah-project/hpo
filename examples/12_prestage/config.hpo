@@ -1,4 +1,4 @@
-# 13 -- PRESTAGE: global exploration then local refinement.
+# 12 -- PRESTAGE: global exploration then local refinement.
 #
 # When the loss surface is multimodal, do not start a local optimiser
 # blindly. The PRESTAGE strategy runs an EXPLORE stage first (broad

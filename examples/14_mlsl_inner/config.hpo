@@ -1,4 +1,4 @@
-# 15 -- NLOPT MLSL_LDS with an INNER local optimiser.
+# 14 -- NLOPT MLSL_LDS with an INNER local optimiser.
 #
 # Multi-Level Single-Linkage with Low-Discrepancy Sampling is itself
 # a global+local hybrid: it samples the box on an LDS sequence and

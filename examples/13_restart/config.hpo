@@ -1,4 +1,4 @@
-# 14 -- RESTART decorator: auto-recover from stagnation.
+# 13 -- RESTART decorator: auto-recover from stagnation.
 #
 # The host tracks how many evals have passed without a new best.
 # If that count exceeds AFTER_STAGNATION, HPO short-circuits the

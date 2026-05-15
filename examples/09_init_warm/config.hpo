@@ -1,4 +1,4 @@
-# 10 -- warm restart from a previous best.
+# 09 -- warm restart from a previous best.
 #
 # Loads the best parameters from a prior run (seed_pot.tadah) and
 # refines from there. The seed file also carries the warmstart cache

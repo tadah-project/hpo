@@ -1,4 +1,4 @@
-# 11 -- chained init: WARM + LHS feeding DLIB:GFS.
+# 10 -- chained init: WARM + LHS feeding DLIB:GFS.
 #
 # Multiple INIT strategies stack in the same block. Here a previous
 # best (WARM) is combined with a broader LHS sweep; both feed into
