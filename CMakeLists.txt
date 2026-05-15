@@ -48,6 +48,24 @@ endif()
 
 # 2. Bring in the shared compile/link options
 include(FetchContent)
+# Developer build (-DTADAH_DEVELOP=ON): use a local cmake-tools checkout
+# rather than fetching it. Skipped when the source dir is already pinned
+# (e.g. -DFETCHCONTENT_SOURCE_DIR_TADAH_CMAKE=...).
+if(TADAH_DEVELOP AND NOT FETCHCONTENT_SOURCE_DIR_TADAH_CMAKE
+   AND DEFINED ENV{TADAH_PATH})
+  foreach(_tadah_ct "$ENV{TADAH_PATH}/cmake-tools"
+                    "$ENV{TADAH_PATH}/../cmake-tools")
+    if(IS_DIRECTORY "${_tadah_ct}")
+      get_filename_component(FETCHCONTENT_SOURCE_DIR_TADAH_CMAKE
+                             "${_tadah_ct}" ABSOLUTE)
+      message(STATUS
+        "TADAH_DEVELOP: cmake-tools taken from ${FETCHCONTENT_SOURCE_DIR_TADAH_CMAKE}")
+      break()
+    endif()
+  endforeach()
+  unset(_tadah_ct)
+endif()
+
 if(NOT TARGET tadah::compile_options)
   FetchContent_Declare (
     tadah_cmake
@@ -56,6 +74,11 @@ if(NOT TARGET tadah::compile_options)
   )
   FetchContent_MakeAvailable(tadah_cmake)   # defines tadah::compile_options
 endif()
+
+# Declare the BUILD_TESTING switch (default OFF) before any sub-module
+# is fetched, so a parent project's value propagates down. See
+# cmake-tools/TadahTesting.cmake.
+tadah_declare_testing()
 
 # Single-source-of-truth version (from CORE's blueprint TOML).
 # Falls back to 0.0.0 when CORE isn't reachable or cmake-tools is old.
@@ -95,6 +118,13 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Tadah.MD)
 
 # 5. External dependencies
+#
+# Shield every external library from BUILD_TESTING for the whole fetch
+# region so none of them build their own test suites (Ceres in
+# particular keys its tests off BUILD_TESTING). The cache value is
+# force-set OFF here and restored by tadah_end_external_deps() below.
+tadah_begin_external_deps()
+
 FetchContent_Declare(dlib
         GIT_REPOSITORY https://github.com/davisking/dlib.git
         GIT_TAG        v19.24.6
@@ -109,9 +139,6 @@ add_compile_definitions(TADAH_USE_DLIB)
 # own Eigen probe.
 # ---------------------------------------------------------------------------
 if(NOT TADAH_BUILD_DOCS_ONLY AND TADAH_ENABLE_CERES)
-  set(_tadah_saved_build_testing "${BUILD_TESTING}")
-  set(BUILD_TESTING            OFF CACHE BOOL "" FORCE)
-
   message(STATUS "Fetching Eigen3 (Ceres dep)...")
   set(EIGEN_BUILD_DOC          OFF CACHE BOOL "" FORCE)
   set(EIGEN_BUILD_TESTING      OFF CACHE BOOL "" FORCE)
@@ -143,17 +170,18 @@ if(NOT TADAH_BUILD_DOCS_ONLY AND TADAH_ENABLE_CERES)
     GIT_SHALLOW    TRUE
   )
   FetchContent_MakeAvailable(ceres)
-
-  set(BUILD_TESTING "${_tadah_saved_build_testing}" CACHE BOOL "" FORCE)
-  unset(_tadah_saved_build_testing)
 endif()
 
+set(NLOPT_TESTS OFF CACHE BOOL "Build nlopt's own unit tests" FORCE)
 FetchContent_Declare(
   nlopt
   GIT_REPOSITORY https://github.com/stevengj/nlopt.git
   GIT_TAG        v2.10.0
 )
 FetchContent_MakeAvailable(nlopt)
+
+# End of the external-dependency fetch region: restore BUILD_TESTING.
+tadah_end_external_deps()
 
 # User must specify the root directory for lammps
 if(NOT TADAH_LAMMPS_DIR)
@@ -341,11 +369,7 @@ else()
   # target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS/libmpi_stubs.a)
 endif()
 
-set(BUILD_TESTING OFF CACHE BOOL "Build tests")
-include(CTest)
-if(BUILD_TESTING)
-  add_subdirectory(tests)
-endif()
+tadah_add_tests()
 
 # Installation rules
 install(TARGETS tadah.hpo
