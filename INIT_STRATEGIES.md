@@ -54,10 +54,13 @@ to the legacy single-point CONFIG seed plus single-shot dispatch.
   `INIT { ... }` block. After resolution, this becomes `optim_init`,
   the list of starting points the optimiser will draw from. The chain
   is *resolved* into the list once, before the optimiser runs.
-- **Iter 0** — the first evaluation HPO performs. With `INIT { STRATEGY
-  CONFIG }` this is the value next to your `OPTIM` lines.
-- **Implicit CONFIG** — when you do not write any `INIT { STRATEGY }`
-  line, HPO behaves as if you wrote `INIT { STRATEGY CONFIG }`.
+- **Iter 0** — the first evaluation HPO performs. It is the first
+  entry of the resolved chain — i.e. the first `STRATEGY` line you
+  wrote in the `INIT` block.
+- **Default CONFIG** — when you do not write any `INIT { STRATEGY }`
+  line (or there is no INIT block), HPO behaves as if you wrote
+  `INIT { STRATEGY CONFIG }`. As soon as you list one or more
+  strategies, the chain is exactly what you listed — nothing is added.
 - **Bound transform** — `LOG_HP <ratio>` (or environment-driven defaults)
   log-transforms dims whose `high/low` ratio exceeds `<ratio>`. From
   this point onward, internal arithmetic happens in transformed space;
@@ -74,22 +77,17 @@ ENDINIT
 ```
 
 Reads the value next to each `OPTIM` line. Always available; produces
-exactly one starting point. Implicit by default — so a config without
-any `INIT { STRATEGY }` line behaves as if you wrote this one.
+exactly one starting point. It is the default when the INIT block has
+no `STRATEGY` line (or there is no INIT block at all).
 
-**When you write a chain explicitly, the implicit CONFIG is dropped.**
-The diagnostic on stdout makes this visible:
-
-```
-[HPO] InitStrategy: explicit chain set, implicit CONFIG suppressed.
-Add `STRATEGY CONFIG` explicitly inside INIT if you want the in-config
-point too.
-```
-
-If you want CONFIG mixed into your explicit chain, write it.
+**CONFIG is part of the chain only when you list it.** Once you write
+any `INIT { STRATEGY }` line, the chain contains exactly the strategies
+you listed — there is no implicit CONFIG and no on/off flag. If you
+want the in-config point alongside other strategies, write
+`STRATEGY CONFIG` yourself, in whatever position you want it evaluated.
 
 See [`examples/01_baseline_bfgs/`](examples/01_baseline_bfgs/) for the
-implicit-only case.
+default (no INIT block) case.
 
 ### RANDOM K
 
@@ -144,7 +142,6 @@ See [`examples/04_sobol_seeded_gfs/`](examples/04_sobol_seeded_gfs/).
 ```
 INIT
   STRATEGY WARM ../prev_run/best_pot.tadah
-  INCLUDE_CONFIG false
   WARM_ON_MISMATCH warn
 ENDINIT
 ```
@@ -180,13 +177,12 @@ Two implementation details that affect reproducibility:
 
 See [`examples/05_warm_refinement/`](examples/05_warm_refinement/).
 
-#### WARM is reordered to the chain front
+#### Chain order is preserved
 
-The resolver promotes the first WARM entry to position 0 in the chain
-regardless of where you wrote it. Iter 0 is then the warm point even
-when you also wrote LHS / RANDOM / SOBOL / PRIOR after it. The
-diagnostic `[HPO] InitStrategy: WARM moved to chain front` fires when
-the move actually changes the order.
+The chain is resolved in the exact order you write it — WARM is *not*
+promoted to the front. If you want the warm point at iter 0 (so its
+warmstart cache primes before any other seed is evaluated), list
+`STRATEGY WARM` first in the `INIT` block.
 
 See [`examples/11_chained_init_warm_lhs/`](examples/11_chained_init_warm_lhs/).
 
@@ -195,7 +191,6 @@ See [`examples/11_chained_init_warm_lhs/`](examples/11_chained_init_warm_lhs/).
 ```
 INIT
   STRATEGY PRIOR
-  INCLUDE_CONFIG false
 ENDINIT
 ```
 
@@ -217,20 +212,16 @@ All inside the `INIT { ... } ENDINIT` block:
 ```
 K_TOTAL 8                # cap on total points produced (default = sum of strategies' default_k)
 SEED 12345               # seed for RANDOM/LHS/SOBOL determinism
-INCLUDE_CONFIG false     # see below
 WARM_ON_MISMATCH warn   # warn|error|skip — used by WARM
 ```
 
-**`INCLUDE_CONFIG` and the implicit CONFIG.** Counter-intuitive:
-the value of this flag matters ONLY when your chain is empty.
-- empty chain + `true` (default) → CONFIG is auto-prepended.
-- empty chain + `false` → no init points; you'd typically combine this
-  with one explicit strategy.
-- non-empty chain → implicit CONFIG is *suppressed regardless of the
-  flag*. Add `STRATEGY CONFIG` yourself if you want it in.
+**Getting the in-config point into the chain.** There is no
+`INCLUDE_CONFIG` flag. The rule is simple:
 
-This is the most common surprise. The diagnostic line at run start
-exists to make the suppression visible.
+- empty INIT block (or no INIT block) → the chain is a single CONFIG
+  point.
+- one or more `STRATEGY` lines → the chain is exactly those lines, in
+  order. Add `STRATEGY CONFIG` if you also want the in-config point.
 
 ## How many seeds the optimiser actually consumes
 
@@ -427,9 +418,10 @@ The cycle terminates when:
 - `MAX` attempts have been used.
 
 Each restart gets its own stagnation window; the windows do not bleed
-into each other. The fresh-init chain follows the usual chain rules,
-EXCEPT that implicit CONFIG is not auto-prepended (a stagnated run by
-definition has CONFIG in its history already).
+into each other. The fresh-init chain follows the usual chain rules:
+it is exactly the `RESTART { STRATEGY ... }` lines you wrote. A
+RESTART block with no `STRATEGY` line falls back to a single CONFIG
+point.
 
 RESTART composes with `TYPE PLAIN`, `TYPE MULTISTART`, and
 `TYPE PRESTAGE`. It does NOT compose with `TYPE BASINS` (BASINS
@@ -494,7 +486,6 @@ OPTIMIZER
   INIT
     STRATEGY PRIOR
     STRATEGY LHS 4
-    INCLUDE_CONFIG false
   ENDINIT
   STRATEGY
     TYPE MULTISTART
@@ -511,7 +502,8 @@ What happens:
 
 - `PRIOR` produces 1 point.
 - `LHS 4` adds 4 stratified points.
-- `INCLUDE_CONFIG false` keeps the chain to those 5 (no CONFIG).
+- The chain is exactly those 5 points — CONFIG is not listed, so the
+  in-config value is not used.
 - `N_STARTS 5` runs BFGS five times, one per seed.
 - `BUDGET_PER_START 40` caps each BFGS pass at 40 evals.
 
@@ -529,7 +521,6 @@ a bound or relaxed a constraint. Refine.
 OPTIMIZER
   INIT
     STRATEGY WARM ../prev/best_pot.tadah
-    INCLUDE_CONFIG false
     WARM_ON_MISMATCH warn
   ENDINIT
   STRATEGY
@@ -545,10 +536,10 @@ What happens:
 
 - WARM reads the previous `best_pot.tadah` and pulls every OPTIM key.
 - For any key WARM cannot supply, it falls through. Without other
-  chain entries, the fallback is the in-config value next to the OPTIM
-  line — even though `INCLUDE_CONFIG false` is set. (This is by
-  design: WARM emits *one point* with all dims filled. Falling through
-  for missing dims uses the in-config dim value, not a chain re-roll.)
+  chain entries, the per-dim fallback is the in-config value next to
+  the OPTIM line. (This is by design: WARM emits *one point* with all
+  dims filled. Falling through for missing dims uses the in-config dim
+  value, not a chain re-roll — it is not the CONFIG strategy.)
 - BFGS refines from this single combined seed.
 
 ### Scenario 3 — suspected multimodal landscape

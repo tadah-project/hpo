@@ -2,13 +2,13 @@
 #
 # Default behaviour is "iter 0 = the value in config.tadah". Add an
 # INIT block to override: draw the starting point uniformly from
-# inside the OPTIM bounds with a reproducible SEED, and drop the
-# in-config value.
+# inside the OPTIM bounds with a reproducible SEED. Listing a STRATEGY
+# line replaces the in-config seed; the in-config point is used only
+# when you list `STRATEGY CONFIG` explicitly.
 
 OPTIMIZER
   INIT
     STRATEGY RANDOM 1
-    INCLUDE_CONFIG false
     SEED 2026
   ENDINIT
   STRATEGY

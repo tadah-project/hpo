@@ -94,7 +94,6 @@ TEST_CASE("RandomInitStrategy: deterministic with fixed seed",
 
     InitStrategySpec ispec;
     ispec.chain.push_back({"RANDOM", {"6"}});
-    ispec.include_config = false;
     ispec.seed = 42;
     auto strat = build_init_strategy(ispec);
 
@@ -114,7 +113,6 @@ TEST_CASE("RandomInitStrategy: outputs respect bounds",
 
     InitStrategySpec ispec;
     ispec.chain.push_back({"RANDOM", {"100"}});
-    ispec.include_config = false;
     ispec.seed = 7;
     auto strat = build_init_strategy(ispec);
     InitContext ic{sp, *st.trg, *ispec.seed};
@@ -139,7 +137,6 @@ TEST_CASE("RandomInitStrategy: log-scaled dims sampled in log-space",
 
     InitStrategySpec ispec;
     ispec.chain.push_back({"RANDOM", {"2000"}});
-    ispec.include_config = false;
     ispec.seed = 3;
     auto strat = build_init_strategy(ispec);
     InitContext ic{sp, *st.trg, *ispec.seed};
@@ -166,7 +163,6 @@ TEST_CASE("LhsInitStrategy: stratification — one sample per stratum per dim",
     const std::size_t k = 8;
     InitStrategySpec ispec;
     ispec.chain.push_back({"LHS", {std::to_string(k)}});
-    ispec.include_config = false;
     ispec.seed = 11;
     auto strat = build_init_strategy(ispec);
     InitContext ic{sp, *st.trg, *ispec.seed};
@@ -195,7 +191,6 @@ TEST_CASE("LhsInitStrategy: deterministic with fixed seed",
 
     InitStrategySpec ispec;
     ispec.chain.push_back({"LHS", {"8"}});
-    ispec.include_config = false;
     ispec.seed = 99;
     auto strat = build_init_strategy(ispec);
     InitContext ic{sp, *st.trg, *ispec.seed};
@@ -213,7 +208,6 @@ TEST_CASE("SobolInitStrategy: deterministic and bounds-compliant",
 
     InitStrategySpec ispec;
     ispec.chain.push_back({"SOBOL", {"32"}});
-    ispec.include_config = false;
     ispec.seed = 0;
     auto strat = build_init_strategy(ispec);
     InitContext ic{sp, *st.trg, 0};
@@ -242,7 +236,6 @@ TEST_CASE("SobolInitStrategy: cell coverage on unit square",
 
     InitStrategySpec ispec;
     ispec.chain.push_back({"SOBOL", {"64"}});
-    ispec.include_config = false;
     ispec.seed = 0;
     auto strat = build_init_strategy(ispec);
     InitContext ic{sp, *st.trg, 0};
@@ -272,7 +265,6 @@ TEST_CASE("ChainStrategy: concatenates and de-dups across producers",
     InitStrategySpec ispec;
     ispec.chain.push_back({"CONFIG", {}});
     ispec.chain.push_back({"RANDOM", {"4"}});
-    ispec.include_config = false;
     ispec.seed = 2026;
 
     auto strat = build_init_strategy(ispec);
@@ -302,7 +294,6 @@ TEST_CASE("ChainStrategy: INIT_K caps the total output",
     InitStrategySpec ispec;
     ispec.chain.push_back({"RANDOM", {"5"}});
     ispec.chain.push_back({"LHS",    {"5"}});
-    ispec.include_config = false;
     ispec.seed = 1234;
 
     auto strat = build_init_strategy(ispec);
@@ -326,7 +317,6 @@ TEST_CASE("WarmInitStrategy: missing file with policy=warn returns empty",
 
     InitStrategySpec ispec;
     ispec.chain.push_back({"WARM", {"/nonexistent_path/never_here.tadah"}});
-    ispec.include_config = false;
 
     auto strat = build_init_strategy(ispec);
     InitContext ic{sp, *st.trg, 0};
@@ -344,7 +334,6 @@ TEST_CASE("WarmInitStrategy: missing file with policy=error throws",
 
     InitStrategySpec ispec;
     ispec.chain.push_back({"WARM", {"/nonexistent_path/never_here.tadah"}});
-    ispec.include_config = false;
 
     auto strat = build_init_strategy(ispec);
     InitContext ic{sp, *st.trg, 0};
@@ -359,7 +348,6 @@ TEST_CASE("WarmInitStrategy: parser keyword acceptance",
     StrategyTempFile cfg(R"(OPTIMIZER
 INIT
   STRATEGY WARM /tmp/no_such.tadah
-  INCLUDE_CONFIG false
   WARM_ON_MISMATCH skip
 ENDINIT
 STRATEGY
@@ -370,9 +358,9 @@ ENDSTRATEGY
 ENDOPTIMIZER
 )");
     tadah::core::Context ctx;
-    /* With include_config=false and the only chain entry skipping (file
-     * missing), the resolved init list ends up empty — but the
-     * resolution path itself must not throw. */
+    /* The only chain entry skips (file missing, policy=skip), so the
+     * resolved init list ends up empty -- but the resolution path
+     * itself must not throw. */
     CHECK_NOTHROW(tadah::hpo::HPOTargets(ctx, cfg.path.string()));
 }
 
@@ -402,7 +390,6 @@ TEST_CASE("WarmInitStrategy: HOT round-trip primes warmstart cache",
 
     InitStrategySpec ispec;
     ispec.chain.push_back({"WARM", {pot.path.string()}});
-    ispec.include_config = false;
 
     auto strat = build_init_strategy(ispec);
     InitContext ic{sp, *st.trg, 0};
@@ -440,7 +427,6 @@ TEST_CASE("WarmInitStrategy: legacy HOT_A0 line still primes cache",
 
     InitStrategySpec ispec;
     ispec.chain.push_back({"WARM", {pot.path.string()}});
-    ispec.include_config = false;
 
     auto strat = build_init_strategy(ispec);
     InitContext ic{sp, *st.trg, 0};
@@ -464,7 +450,6 @@ TEST_CASE("PriorInitStrategy: empty optimap produces empty point",
     StrategyTempFile cfg(R"(OPTIMIZER
 INIT
   STRATEGY PRIOR
-  INCLUDE_CONFIG false
 ENDINIT
 STRATEGY
   TYPE PLAIN
@@ -689,7 +674,6 @@ STRATEGY
     MAXEVAL 600
     INIT
       STRATEGY SOBOL 32
-      INCLUDE_CONFIG false
       SEED 1717
     ENDINIT
   ENDEXPLORE
@@ -705,7 +689,6 @@ ENDOPTIMIZER
     CHECK(ps.stop.maxeval.value_or(0) == 600);
     REQUIRE(!ps.init_strategy_spec.chain.empty());
     CHECK(ps.init_strategy_spec.chain.front().method == "SOBOL");
-    CHECK(ps.init_strategy_spec.include_config == false);
     CHECK(ps.init_strategy_spec.seed.value_or(0) == 1717ULL);
     /* Resolution regression: the parsed PRESTAGE chain must be resolved
      * into PRESTAGE's own optim_init by the constructor — not silently
@@ -732,7 +715,6 @@ STRATEGY
     MAXEVAL 100
     INIT
       STRATEGY RANDOM 4
-      INCLUDE_CONFIG false
       SEED 1718
     ENDINIT
   ENDEXPLORE
@@ -893,9 +875,6 @@ ENDOPTIMIZER
     CHECK(cfg_run.restart.max == 4);
     REQUIRE(cfg_run.restart.init_strategy.chain.size() == 1);
     CHECK(cfg_run.restart.init_strategy.chain.front().method == "RANDOM");
-    /* RESTART STRATEGY suppresses the implicit CONFIG prefix so the
-     * refresh strategy is exactly what the user requested. */
-    CHECK(cfg_run.restart.init_strategy.include_config == false);
 }
 
 TEST_CASE("HPO RESTART defaults: zero window means no restart",
@@ -995,21 +974,18 @@ ENDOPTIMIZER
     CHECK_THROWS(tadah::hpo::HPOTargets(ctx, cfg.path.string()));
 }
 
-TEST_CASE("InitStrategy: explicit chain suppresses implicit CONFIG",
+TEST_CASE("InitStrategy: chain produces exactly the listed strategies",
           "[HPO][init_strategy][chain]")
 {
-    /* When the user writes an explicit chain entry, the implicit CONFIG
-     * is suppressed even with INIT_INCLUDE_CONFIG=true (the default).
-     * Verify by checking how many points the build_init_strategy chain
-     * produces — RANDOM 3 should give exactly 3, not 4 (3 + implicit
-     * CONFIG). */
+    /* There is no implicit CONFIG. A chain of `RANDOM 3` produces
+     * exactly 3 points -- the in-config point participates only when the
+     * user lists `STRATEGY CONFIG` explicitly. */
     using namespace tadah::hpo;
     auto sp = make_synthetic_spec({0.0, 0.0}, {1.0, 1.0});
     StubTargets st;
 
     InitStrategySpec ispec;
     ispec.chain.push_back({"RANDOM", {"3"}});
-    ispec.include_config = true;       // default
     ispec.seed = 7;
     auto strat = build_init_strategy(ispec);
     InitContext ic{sp, *st.trg, *ispec.seed};
@@ -1017,31 +993,32 @@ TEST_CASE("InitStrategy: explicit chain suppresses implicit CONFIG",
     CHECK(pts.size() == 3);
 }
 
-TEST_CASE("InitStrategy: WARM is reordered to chain front",
-          "[HPO][init_strategy][warm]")
+TEST_CASE("InitStrategy: chain order is preserved (WARM not reordered)",
+          "[HPO][init_strategy][warm][chain]")
 {
-    /* User wrote SOBOL first, WARM second. After build_init_strategy()
-     * the resolved chain runs WARM first so iter 0 is the warm point.
-     * We can observe that ordering by checking the produced point list:
-     * a WARM that returns empty (missing file, policy=warn) puts
-     * nothing at index 0, but a successful WARM would place its single
-     * point first. With a missing file we just verify no crash and
-     * SOBOL still contributes its points. */
+    /* The user wrote SOBOL first, WARM second. build_init_strategy()
+     * must keep that order -- WARM is no longer promoted to the chain
+     * front. SOBOL contributes 4 two-dim points, then WARM (comment-only
+     * file, empty optimap) contributes one zero-dim point at the end.
+     * If WARM were still reordered, pts.front() would be the zero-dim
+     * WARM point instead of a SOBOL point. */
     using namespace tadah::hpo;
     auto sp = make_synthetic_spec({0.0, 0.0}, {1.0, 1.0});
-    sp.init_strategy_spec.warm_on_mismatch = "warn";
     StubTargets st;
+
+    StrategyTempFile pot("# comment-only warm file\n");
 
     InitStrategySpec ispec;
     ispec.chain.push_back({"SOBOL", {"4"}});
-    ispec.chain.push_back({"WARM",  {"/nonexistent/never.tadah"}});
-    ispec.include_config = false;
+    ispec.chain.push_back({"WARM",  {pot.path.string()}});
     ispec.warm_on_mismatch = "warn";
 
     auto strat = build_init_strategy(ispec);
     InitContext ic{sp, *st.trg, 0};
     auto pts = strat->generate(ic, 0);
-    CHECK(pts.size() == 4);   /* SOBOL produced its points */
+    REQUIRE(pts.size() == 5);     /* 4 SOBOL + 1 WARM */
+    CHECK(pts.front().size() == 2);   /* SOBOL stayed first */
+    CHECK(pts.back().empty());        /* WARM stayed last  */
 }
 
 TEST_CASE("HPO log file records init/run-policy summary",

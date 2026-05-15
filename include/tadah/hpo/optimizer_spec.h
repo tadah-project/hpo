@@ -59,7 +59,6 @@ struct InitStrategySpec {
     std::vector<Entry> chain;                  // STRATEGY lines (in order, inside INIT block)
     std::optional<std::size_t> k_total;        // K_TOTAL cap (default = sum of strategy default_k)
     std::optional<std::uint64_t> seed;         // SEED for stochastic strategies
-    bool include_config = true;                // CONFIG implicitly prepended unless disabled
     std::string warm_on_mismatch = "warn";     // warn | error | skip (used by WarmInitStrategy)
 };
 

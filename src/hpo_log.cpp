@@ -385,40 +385,28 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         f_.flush();
     }
 
-    // ---- INIT_STRATEGY chain (resolved order, post WARM-reorder).
+    // ---- INIT chain (printed in the exact order the user wrote it).
     // Helper used by both OUTER (here) and PRESTAGE (below in run-policy).
     auto write_init_strategy = [&](const InitStrategySpec& isp,
                                    const char* header,
                                    const char* indent) {
         f_ << indent << header << "\n";
         if (isp.chain.empty()) {
-            f_ << indent << "  (default -- implicit CONFIG only)\n";
+            f_ << indent << "  (default -- CONFIG only)\n";
         } else {
             auto pretty_entry = [](const auto& e) {
                 std::string s = e.method;
                 for (const auto& a : e.args) s += " " + a;
                 return s;
             };
-            auto chain = isp.chain;
-            auto wit = std::find_if(chain.begin(), chain.end(),
-                [](const auto& e){ return e.method == "WARM"; });
-            if (wit != chain.end() && wit != chain.begin()) {
-                auto w = std::move(*wit);
-                chain.erase(wit);
-                chain.insert(chain.begin(), std::move(w));
-            }
-            for (std::size_t i = 0; i < chain.size(); ++i)
-                f_ << indent << "  [" << (i+1) << "] " << pretty_entry(chain[i]) << "\n";
+            for (std::size_t i = 0; i < isp.chain.size(); ++i)
+                f_ << indent << "  [" << (i+1) << "] "
+                   << pretty_entry(isp.chain[i]) << "\n";
         }
         if (isp.k_total)
             f_ << indent << "  INIT_K            : " << *isp.k_total << "\n";
         if (isp.seed)
             f_ << indent << "  INIT_SEED         : " << *isp.seed << "\n";
-        f_ << indent << "  INIT_INCLUDE_CONFIG: "
-           << (isp.include_config ? "true" : "false");
-        if (isp.include_config && !isp.chain.empty())
-            f_ << "  (suppressed -- explicit chain present)";
-        f_ << "\n";
         f_ << indent << "  WARM_ON_MISMATCH  : " << isp.warm_on_mismatch << "\n";
     };
     {

@@ -149,7 +149,6 @@ INIT
   STRATEGY RANDOM 4
   K_TOTAL 5
   SEED 12345
-  INCLUDE_CONFIG false
   WARM_ON_MISMATCH skip
 ENDINIT
 STRATEGY
@@ -173,29 +172,38 @@ ENDOPTIMIZER
     CHECK(*isp.k_total == 5u);
     REQUIRE(isp.seed.has_value());
     CHECK(*isp.seed == 12345u);
-    CHECK(isp.include_config == false);
     CHECK(isp.warm_on_mismatch == "skip");
 }
 
-TEST_CASE("HPO INCLUDE_CONFIG accepts a range of boolean spellings",
+TEST_CASE("HPO INCLUDE_CONFIG keyword is rejected with a helpful message",
           "[HPO][optim][init_strategy]")
 {
-    auto make_cfg = [](const std::string& val) {
-        return std::string("OPTIMIZER\nINIT\n  INCLUDE_CONFIG ") + val
-            + "\nENDINIT\nSTRATEGY\n  TYPE PLAIN\n  LIB DLIB\n  ALGO BFGS\nENDSTRATEGY\nENDOPTIMIZER\n";
-    };
-    for (const std::string val : {"true","TRUE","1","yes","YES","on","ON"}) {
-        ScopedTempFile input(make_cfg(val));
-        tadah::core::Context ctx;
+    /* INCLUDE_CONFIG was removed: the in-config point is now included
+     * only when the user lists `STRATEGY CONFIG` explicitly. The old
+     * keyword must fail with a message pointing at STRATEGY CONFIG
+     * rather than a generic "unknown key" error. */
+    ScopedTempFile input(R"(OPTIMIZER
+INIT
+  INCLUDE_CONFIG false
+ENDINIT
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    bool caught = false;
+    std::string msg;
+    try {
         tadah::hpo::HPOTargets trg(ctx, input.path.string());
-        CHECK(trg.spec.init_strategy_spec.include_config == true);
+    } catch (const std::exception& e) {
+        caught = true;
+        msg = e.what();
     }
-    for (const std::string val : {"false","FALSE","0","no","NO","off","OFF"}) {
-        ScopedTempFile input(make_cfg(val));
-        tadah::core::Context ctx;
-        tadah::hpo::HPOTargets trg(ctx, input.path.string());
-        CHECK(trg.spec.init_strategy_spec.include_config == false);
-    }
+    CHECK(caught);
+    CHECK(msg.find("STRATEGY CONFIG") != std::string::npos);
 }
 
 TEST_CASE("HPO WARM_ON_MISMATCH rejects invalid values",

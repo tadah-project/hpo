@@ -407,7 +407,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
    * Apply to OUTER, PRESTAGE, and PRESTAGE->LOCAL (LOCAL inside OUTER
    * is the NLopt MLSL local sub-algo and inherits the outer's
    * starting point -- it does not need its own chain). Each spec's
-   * INIT_STRATEGY / INIT_SEED / INIT_INCLUDE_CONFIG / WARM_ON_MISMATCH
+   * INIT block (STRATEGY / SEED / K_TOTAL / WARM_ON_MISMATCH lines)
    * is honoured independently of every other spec.
    *
    * Diagnostics tag the location ("OUTER" / "PRESTAGE" / "PRESTAGE.LOCAL")
@@ -473,8 +473,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
      * point flows in). If PRESTAGE has its own chain, that chain wins
      * and the OUTER's optim_init is *not* prepended -- PRESTAGE owns its
      * starting points. */
-    if (spec.prestage->init_strategy_spec.chain.empty() &&
-        spec.prestage->init_strategy_spec.include_config) {
+    if (spec.prestage->init_strategy_spec.chain.empty()) {
       /* Default: inherit from OUTER. */
       if (spec.prestage->optim_init.empty())
         spec.prestage->optim_init = spec.optim_init;
@@ -484,8 +483,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
     /* PRESTAGE's nested LOCAL: inherit OUTER's seed by default, or
      * resolve its own chain when one was given. */
     if (spec.prestage->inner) {
-      if (spec.prestage->inner->init_strategy_spec.chain.empty() &&
-          spec.prestage->inner->init_strategy_spec.include_config) {
+      if (spec.prestage->inner->init_strategy_spec.chain.empty()) {
         if (spec.prestage->inner->optim_init.empty())
           spec.prestage->inner->optim_init = spec.optim_init;
       } else {
@@ -498,8 +496,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
    * else inherit OUTER's optim_init so the seed point flows in. */
   if (spec.strategy_type == StrategyType::BASINS) {
     auto resolve_or_inherit = [&](OptimizerSpec& s, const char* tag) {
-      if (s.init_strategy_spec.chain.empty() &&
-          s.init_strategy_spec.include_config) {
+      if (s.init_strategy_spec.chain.empty()) {
         if (s.optim_init.empty())
           s.optim_init = spec.optim_init;
       } else {
@@ -599,11 +596,6 @@ static bool dispatch_init_attr(const std::string& key,
     }
     if (key=="K_TOTAL") { std::size_t v; iss>>v; a.k_total=v; return true; }
     if (key=="SEED")    { std::uint64_t v; iss>>v; a.seed=v; return true; }
-    if (key=="INCLUDE_CONFIG") {
-        std::string v; iss>>v;
-        a.include_config = parse_bool(v, "INCLUDE_CONFIG");
-        return true;
-    }
     if (key=="WARM_ON_MISMATCH") {
         std::string v; iss>>v;
         if (v!="warn" && v!="error" && v!="skip")
@@ -647,7 +639,8 @@ static bool reject_old_keyword(const std::string& key)
         {"INIT_STRATEGY",               "moved into `INIT { STRATEGY <method> ... } ENDINIT` block."},
         {"INIT_K",                      "renamed to K_TOTAL inside an INIT block."},
         {"INIT_SEED",                   "renamed to SEED inside an INIT block."},
-        {"INIT_INCLUDE_CONFIG",         "renamed to INCLUDE_CONFIG inside an INIT block."},
+        {"INIT_INCLUDE_CONFIG",         "removed. The in-config point is now included only when you list `STRATEGY CONFIG` explicitly inside the INIT block; omit it to leave the in-config point out."},
+        {"INCLUDE_CONFIG",              "removed. The in-config point is now included only when you list `STRATEGY CONFIG` explicitly inside the INIT block; omit it to leave the in-config point out."},
         {"NOISE_AUTO",                  "moved into `NOISE { AUTO true|false } ENDNOISE` block."},
         {"NOISE_CALIBRATION",           "moved into `NOISE { CALIBRATION N } ENDNOISE` block."},
         /* TOPK is now legal inside STRATEGY (TYPE PRESTAGE) -- don't reject it
@@ -897,12 +890,10 @@ void HPOTargets::read(const std::string& fn)
             if (key=="RESTART") {
                 if (block != STRATEGY_BLK)
                     throw std::runtime_error("RESTART block must appear inside STRATEGY");
-                /* Restart never auto-prepends CONFIG: a stagnated run by
-                 * definition has the user's config in its history. */
-                spec.restart.init_strategy.include_config = false;
                 active_init = &spec.restart.init_strategy;
-                /* Suspend active_opt while inside RESTART so SEED/STRATEGY/
-                 * INCLUDE_CONFIG go to active_init, not the OUTER spec. */
+                /* Suspend active_opt while inside RESTART so SEED/STRATEGY
+                 * go to active_init, not the OUTER spec. A RESTART with no
+                 * STRATEGY lines falls back to a single CONFIG point. */
                 inner_parent = active_opt;
                 active_opt   = nullptr;
                 prev_inner   = block;

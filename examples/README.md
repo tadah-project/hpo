@@ -46,7 +46,7 @@ each subsequent one introduces one or two new features.
 | 03 | `03_nlopt_local`         | `LIB NLOPT ALGO LN_SBPLX` + `STEP` (derivative-free local). |
 | 04 | `04_skip_bad_pots`       | `PC_<METRIC> --skip-above / --skip-rel` early-reject filter. |
 | 05 | `05_extra_observables`   | `PC_LAMMPS --invar` / `--outvar` (extra LAMMPS observables). |
-| 06 | `06_init_random`         | `INIT { STRATEGY RANDOM, SEED, INCLUDE_CONFIG }`. |
+| 06 | `06_init_random`         | `INIT { STRATEGY RANDOM, SEED }`. |
 | 07 | `07_init_lhs_multistart` | `INIT { STRATEGY LHS }` + `STRATEGY MULTISTART`. |
 | 08 | `08_init_sobol_gfs`      | `INIT { STRATEGY SOBOL }` + `DLIB:GFS` multi-seed consumer. |
 | 09 | `09_init_prior`          | `INIT { STRATEGY PRIOR }` (descriptor-supplied). |

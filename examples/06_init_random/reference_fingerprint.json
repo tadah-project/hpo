@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "example": "06_init_random",
-  "description": "INIT { STRATEGY RANDOM, SEED, INCLUDE_CONFIG false }.",
+  "description": "INIT { STRATEGY RANDOM, SEED }.",
   "best_loss": {
     "value": 0.1059427,
     "abs_tol": 1e-06,

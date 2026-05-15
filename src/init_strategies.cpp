@@ -558,52 +558,17 @@ make_one(const InitStrategySpec::Entry& e)
 std::unique_ptr<InitStrategy>
 build_init_strategy(const InitStrategySpec& ispec)
 {
-    /* Reorder: WARM (a previous-run optimum) is the highest-quality
-     * seed available, so promote the first WARM to the chain front
-     * regardless of where the user wrote it. iter 0 is then the warm
-     * point even when the chain also contains exploratory strategies
-     * (RANDOM/LHS/SOBOL) the user wanted as additional seeds. */
-    std::vector<InitStrategySpec::Entry> chain = ispec.chain;
-    auto warm_it = std::find_if(chain.begin(), chain.end(),
-        [](const InitStrategySpec::Entry& e){ return e.method == "WARM"; });
-    if (warm_it != chain.end() && warm_it != chain.begin()) {
-        const std::string msg =
-            "InitStrategy: WARM moved to chain front "
-            "(iter 0 will be the warm point regardless of where you wrote it)";
-        std::cout << "[HPO] " << msg << "\n";
-        HPOLog::instance().info(msg);
-        InitStrategySpec::Entry warm = std::move(*warm_it);
-        chain.erase(warm_it);
-        chain.insert(chain.begin(), std::move(warm));
-    }
-    if (ispec.include_config && !chain.empty()) {
-        /* The user left INIT_INCLUDE_CONFIG at its default but also wrote
-         * an explicit chain. Implicit CONFIG is suppressed so that iter 0
-         * is whatever they asked for. Make this visible -- silent suppression
-         * has surprised users who assumed CONFIG was still part of the chain. */
-        const std::string msg =
-            "InitStrategy: explicit chain set, implicit CONFIG suppressed. "
-            "Add `INIT_STRATEGY CONFIG` explicitly if you want the "
-            "in-config point too.";
-        std::cout << "[HPO] " << msg << "\n";
-        HPOLog::instance().info(msg);
-    }
-
+    /* The chain is instantiated in exactly the order the user wrote it
+     * -- no entry is reordered. iter 0 is therefore the first STRATEGY
+     * line in the INIT block. The in-config OPTIM point participates
+     * only when the user listed `STRATEGY CONFIG` explicitly; there is
+     * no implicit CONFIG prepend. */
     std::vector<std::unique_ptr<InitStrategy>> kids;
+    for (const auto& e : ispec.chain) kids.push_back(make_one(e));
 
-    /* Suppress the implicit CONFIG prepend whenever the user wrote any
-     * explicit INIT_STRATEGY. The principle: if the user listed even one
-     * strategy (WARM, PRIOR, RANDOM, LHS, SOBOL, ...) they are taking
-     * control of iter-0 seeding, and silently prepending CONFIG would
-     * shove their explicit choice to optim_init[1] -- which single-start
-     * optimisers ignore (NLopt feeds only optim_init.front()). Users who
-     * want CONFIG mixed in alongside an explicit chain can write
-     * `INIT_STRATEGY CONFIG` themselves. */
-    if (ispec.include_config && chain.empty())
-        kids.push_back(std::make_unique<ConfigInitStrategy>());
-
-    for (const auto& e : chain) kids.push_back(make_one(e));
-
+    /* An empty chain (no INIT block, or one with no STRATEGY lines)
+     * falls back to a single CONFIG point -- the in-config OPTIM values
+     * are always a valid starting point. */
     if (kids.empty())
         kids.push_back(std::make_unique<ConfigInitStrategy>());
 

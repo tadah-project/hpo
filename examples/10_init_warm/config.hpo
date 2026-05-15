@@ -8,7 +8,6 @@
 OPTIMIZER
   INIT
     STRATEGY WARM seed_pot.tadah
-    INCLUDE_CONFIG false
     WARM_ON_MISMATCH warn
   ENDINIT
   STRATEGY

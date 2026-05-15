@@ -185,25 +185,23 @@ chain*. The chain is resolved into a list of starting points
 
 | Keyword | Type | Default | Effect |
 |---|---|---|---|
-| `INIT { STRATEGY ... }` | repeatable | implicit `CONFIG` only when chain is empty | Append to chain. |
+| `INIT { STRATEGY ... }` | repeatable | single `CONFIG` point when no `STRATEGY` line is given | Append one entry to the chain. List `STRATEGY CONFIG` to include the in-config point. |
 | `INIT { K_TOTAL ... }` | uint | sum of strategies' `default_k` | Cap on total starting points produced. |
 | `INIT { SEED ... }` | uint | random | Seed for stochastic strategies (RANDOM/LHS/SOBOL). |
-| `INCLUDE_CONFIG` | bool | `true` | When chain is **empty**, include implicit CONFIG. **Note**: any non-empty chain suppresses the implicit CONFIG regardless of this flag — write `STRATEGY CONFIG` if you want both. |
 | `WARM_ON_MISMATCH` | `warn`\|`error`\|`skip` | `warn` | What to do when WARM cannot fill every OPTIM key. |
+
+There is no `INCLUDE_CONFIG` keyword. The in-config point participates
+only when `STRATEGY CONFIG` is listed explicitly; the old
+`INCLUDE_CONFIG` / `INIT_INCLUDE_CONFIG` keywords are rejected with a
+message pointing at `STRATEGY CONFIG`.
 
 ### Resolved-chain ordering
 
-`build_init_strategy` reorders the chain in two ways:
-
-1. The first `WARM` entry is moved to the chain front. Iter 0 is then
-   the warm point regardless of where the user wrote `WARM`. The
-   diagnostic `[HPO] InitStrategy: WARM moved to chain front` fires
-   when this reorder actually changes the order.
-2. The implicit `CONFIG` is auto-prepended ONLY when the user wrote
-   no explicit chain entries. The diagnostic
-   `[HPO] InitStrategy: explicit chain set, implicit CONFIG suppressed`
-   fires when the user wrote a non-empty chain (so they know CONFIG
-   was dropped).
+The chain is resolved in the exact order the user wrote it — no entry
+is reordered. Iter 0 is therefore the first `STRATEGY` line in the
+`INIT` block. To make the warm point iter 0, list `STRATEGY WARM`
+first. An `INIT` block with no `STRATEGY` line (or no `INIT` block at
+all) resolves to a single `CONFIG` point.
 
 ### How many seeds the optimiser actually consumes
 
@@ -408,8 +406,6 @@ Each policy emits a one-line stdout marker when it fires:
 | Line | Meaning |
 |---|---|
 | `[HPO] InitStrategy NAME produced N starting points` | After init resolution. |
-| `[HPO] InitStrategy: WARM moved to chain front` | Reorder happened. |
-| `[HPO] InitStrategy: explicit chain set, implicit CONFIG suppressed.` | User wrote a chain; implicit CONFIG dropped. |
 | `[HPO] PRIOR: N parameter(s) seeded from descriptor priors` | PRIOR success. |
 | `[HPO] PRIOR: N parameter(s) used bounds-midpoint fallback` | Some descriptors had no prior. |
 | `[HPO] WARM: loaded N parameter(s) from <file>` | WARM read all keys. |

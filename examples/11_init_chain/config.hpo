@@ -2,15 +2,14 @@
 #
 # Multiple INIT strategies stack in the same block. Here a previous
 # best (WARM) is combined with a broader LHS sweep; both feed into
-# DLIB:GFS as initial function evaluations. WARM is automatically
-# reordered to the front of the chain so the warm-start cache primes
-# before the LHS draws are evaluated.
+# DLIB:GFS as initial function evaluations. The chain runs in the
+# exact order it is written -- WARM is listed first so iter 0 is the
+# warm point and the warm-start cache primes before the LHS draws.
 
 OPTIMIZER
   INIT
-    STRATEGY LHS 3
     STRATEGY WARM seed_pot.tadah
-    INCLUDE_CONFIG false
+    STRATEGY LHS 3
     WARM_ON_MISMATCH warn
     SEED 999
   ENDINIT

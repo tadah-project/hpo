@@ -5,8 +5,9 @@ Multiple init strategies in one chain.
 What this shows:
 - Several `STRATEGY` lines inside `INIT { ... }` stack into a single
   chain of seeds.
-- `WARM` entries automatically move to the front of the chain so
-  warmstart-cache priming happens before random seeds are evaluated.
+- The chain runs in the exact order it is written -- no entry is
+  reordered. List `WARM` first when you want the warm point at iter 0
+  (and its warmstart cache primed before the other seeds).
 - The chain is consumed by the outer optimiser; multi-seed consumers
   like `DLIB:GFS` use every entry, single-seed consumers like
   `DLIB:BFGS` use just the front.

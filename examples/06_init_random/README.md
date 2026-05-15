@@ -5,8 +5,9 @@ Introduces the `INIT` block.
 What this shows:
 - `INIT { STRATEGY RANDOM K }` -- draws `K` uniformly-distributed
   points from inside the OPTIM bounds.
-- `INCLUDE_CONFIG false` -- drop the implicit `config.tadah` seed; the
-  init chain owns iter 0.
+- Listing any `STRATEGY` line means the init chain owns iter 0: the
+  `config.tadah` seed is used only when you list `STRATEGY CONFIG`
+  explicitly. There is no separate on/off flag.
 - `SEED <N>` -- make the draw reproducible across runs.
 
 `K` controls how many points the optimiser sees as initial seeds.

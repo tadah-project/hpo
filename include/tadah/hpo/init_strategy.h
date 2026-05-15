@@ -55,12 +55,12 @@ public:
 
 /* Build the polymorphic InitStrategy from the parsed spec.
  *
- *   - Walks ispec.chain in order, instantiating each entry.
- *   - If ispec.include_config is true (default) and the chain doesn't
- *     already start with CONFIG, prepends ConfigInitStrategy.
- *   - If the chain ends up empty (no entries, include_config false), an
- *     implicit CONFIG is still used as a safe default -- the caller can
- *     always override with INIT_INCLUDE_CONFIG false + an explicit entry.
+ *   - Walks ispec.chain in order, instantiating each entry. The chain is
+ *     never reordered -- entries run exactly as the user wrote them.
+ *   - The in-config OPTIM point is part of the chain only when the user
+ *     listed `STRATEGY CONFIG` explicitly. There is no implicit CONFIG.
+ *   - If the chain is empty (no INIT block, or one with no STRATEGY
+ *     lines) a single CONFIG point is used as a safe default.
  */
 std::unique_ptr<InitStrategy> build_init_strategy(const struct InitStrategySpec& ispec);
 
