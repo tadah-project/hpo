@@ -3,7 +3,7 @@
  * factory that resolves a parsed InitStrategySpec into a single
  * polymorphic strategy (possibly a Chain).
  *
- * Increment 2 ships CONFIG and RANDOM. LHS, SOBOL, WARM, PRIOR are added
+ * Increment 2 ships CONFIG and RANDOM. LHS, SOBOL, WARM are added
  * by later increments; the factory throws "not yet implemented" for them
  * here so the parser surface can be exercised in advance.
  */
@@ -14,9 +14,7 @@
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/warmstart_cache.h>
 #include <tadah/core/context.h>
-#include <tadah/core/registry.h>
 #include <tadah/core/utils.h>
-#include <tadah/models/descriptors/d_base.h>
 
 #include <algorithm>
 #include <cmath>
@@ -305,7 +303,7 @@ public:
                     missing.push_back(kv.first + "[" + std::to_string(i) + "]");
                     /* Fallback to the in-config value so a partial WARM
                      * is still a valid point. The chain semantics let
-                     * the user follow WARM with PRIOR/CONFIG to override
+                     * the user follow WARM with CONFIG to override
                      * the per-dim fallback if desired. */
                     point.push_back(std::stod(opti.config[i]));
                 }
@@ -365,91 +363,6 @@ private:
         std::cerr << "[HPO] " << msg << "\n";
     }
     std::string file_;
-};
-
-/* ---------------- PRIOR (per-descriptor physical defaults) ------ */
-class PriorInitStrategy : public InitStrategy {
-public:
-    std::vector<std::vector<double>>
-    generate(const InitContext& ctx, std::size_t /*k*/) const override
-    {
-        std::vector<double> point;
-        std::vector<std::string> fellback;
-        std::size_t dim_idx = 0;
-
-        for (const auto& kv : ctx.targets.optimap) {
-            const auto& opti = kv.second;
-
-            for (std::size_t i = 0; i < opti.opt.size(); ++i) {
-                if (!opti.opt[i]) continue;
-
-                /* 1-based numeric ordinal of dim i within this key. */
-                int arg_pos = 0;
-                for (std::size_t j = 0; j <= i; ++j) {
-                    if (core::is_number(opti.config[j])) ++arg_pos;
-                }
-
-                std::optional<double> val;
-
-                /* Try descriptor-specific prior via the factory. */
-                const std::string& label =
-                    (i < opti.labels.size()) ? opti.labels[i] : std::string();
-                const bool is_d_label =
-                    (label.rfind("D2_", 0) == 0 || label.rfind("DM_", 0) == 0);
-                if (is_d_label) {
-                    try {
-                        std::unique_ptr<models::D_Base> d(
-                            core::factory<models::D_Base>(label));
-                        val = d->suggested_value(kv.first, arg_pos);
-                    } catch (...) { /* descriptor instantiation failed */ }
-                }
-
-                /* Fallback: midpoint in transformed space. */
-                if (!val) {
-                    fellback.push_back(kv.first + "[" + std::to_string(i) + "]");
-                    if (dim_idx < ctx.spec.low.size()) {
-                        const double mid_t =
-                            0.5 * (ctx.spec.low[dim_idx] + ctx.spec.high[dim_idx]);
-                        val = ctx.spec.log_scaled[dim_idx]
-                            ? std::exp(mid_t) : mid_t;
-                    } else {
-                        val = 0.0;
-                    }
-                }
-
-                /* Clamp into bounds (real space). */
-                if (dim_idx < ctx.spec.low.size()) {
-                    const bool log_d = ctx.spec.log_scaled[dim_idx];
-                    const double lo = log_d ? std::exp(ctx.spec.low[dim_idx])
-                                            : ctx.spec.low[dim_idx];
-                    const double hi = log_d ? std::exp(ctx.spec.high[dim_idx])
-                                            : ctx.spec.high[dim_idx];
-                    if (*val < lo) val = lo;
-                    if (*val > hi) val = hi;
-                }
-
-                point.push_back(*val);
-                ++dim_idx;
-            }
-        }
-
-        if (!fellback.empty()) {
-            std::ostringstream oss;
-            oss << "PRIOR: " << fellback.size()
-                << " parameter(s) used bounds-midpoint fallback "
-                << "(no registered prior)";
-            std::cout << "[HPO] " << oss.str() << "\n";
-            HPOLog::instance().info(oss.str());
-        } else if (!point.empty()) {
-            std::ostringstream oss;
-            oss << "PRIOR: " << point.size()
-                << " parameter(s) seeded from descriptor priors";
-            std::cout << "[HPO] " << oss.str() << "\n";
-            HPOLog::instance().info(oss.str());
-        }
-        return { std::move(point) };
-    }
-    std::string name() const override { return "PRIOR"; }
 };
 
 /* ---------------- Chain (concatenation with de-dup) -------------- */
@@ -540,11 +453,6 @@ make_one(const InitStrategySpec::Entry& e)
         if (e.args.size() != 1)
             throw std::runtime_error("INIT_STRATEGY WARM expects exactly one arg: <pot_file>");
         return std::make_unique<WarmInitStrategy>(e.args[0]);
-    }
-    if (e.method == "PRIOR") {
-        if (!e.args.empty())
-            throw std::runtime_error("INIT_STRATEGY PRIOR takes no arguments");
-        return std::make_unique<PriorInitStrategy>();
     }
     /* NOISE_AUTO is rejected up-front in the parser so the user gets
      * an immediate, clear error rather than discovering at resolve

@@ -134,8 +134,8 @@ template<class Vec,class Runner>
     /* ------- seed dlib with every point from sp.optim_init.
      * find_min_global() treats `initial_function_evals` as already-known
      * (x,y) pairs, so we evaluate each seed once here and hand the
-     * pair(s) over.  This guarantees the user's priors (CONFIG, WARM,
-     * PRIOR, RANDOM/LHS/SOBOL chain entries) are part of the explored
+     * pair(s) over.  This guarantees the user's seeds (CONFIG, WARM,
+     * RANDOM/LHS/SOBOL chain entries) are part of the explored
      * set and tightens dlib's UCB-style stop criterion from the very
      * first iteration. With INIT_STRATEGY chains plus DLIB:GFS the
      * adapter consumes ALL K points (matches the documented behaviour

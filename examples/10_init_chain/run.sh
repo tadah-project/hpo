@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 10_init_warm/run.sh -- bootstrap seed_pot.tadah on first run, then
+# 10_init_chain/run.sh -- bootstrap seed_pot.tadah on first run, then
 # hand off to the shared driver.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)

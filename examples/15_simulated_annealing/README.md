@@ -1,4 +1,4 @@
-# 16 -- simulated annealing
+# 15 -- simulated annealing
 
 Classic Kirkpatrick/Metropolis SA, TADAH built-in.
 

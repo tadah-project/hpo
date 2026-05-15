@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 11_init_chain/run.sh -- bootstrap seed_pot.tadah on first run, then
+# 09_init_warm/run.sh -- bootstrap seed_pot.tadah on first run, then
 # hand off to the shared driver.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -7,7 +7,7 @@ COMMON_DIR="$HERE/../common"
 TADAH=${TADAH:-tadah}
 
 if [[ ! -f "$HERE/seed_pot.tadah" ]]; then
-  echo "[11] no seed_pot.tadah found; bootstrapping via a quick DLIB:BFGS run"
+  echo "[09] no seed_pot.tadah found; bootstrapping via a quick DLIB:BFGS run"
   cat > "$HERE/seed.hpo" <<'HPO'
 OPTIMIZER
   STRATEGY

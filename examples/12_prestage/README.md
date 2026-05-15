@@ -1,4 +1,4 @@
-# 13 -- PRESTAGE strategy
+# 12 -- PRESTAGE strategy
 
 Global explore + local refine, with mixed optimiser families.
 

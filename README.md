@@ -179,7 +179,6 @@ chain*. The chain is resolved into a list of starting points
 | `LHS K` | `K` (uint > 0) | `K` | Latin-hypercube — one sample per stratum per dim. |
 | `SOBOL K` | `K` (uint > 0) | `K` | Sobol low-discrepancy sequence. |
 | `WARM <file>` | path | 1 | Read previous `pot.tadah`, take values for OPTIM keys. |
-| `PRIOR` | (none) | 1 | Per-descriptor `suggested_value`; midpoint fallback. |
 
 ### Top-level init knobs
 
@@ -406,8 +405,6 @@ Each policy emits a one-line stdout marker when it fires:
 | Line | Meaning |
 |---|---|
 | `[HPO] InitStrategy NAME produced N starting points` | After init resolution. |
-| `[HPO] PRIOR: N parameter(s) seeded from descriptor priors` | PRIOR success. |
-| `[HPO] PRIOR: N parameter(s) used bounds-midpoint fallback` | Some descriptors had no prior. |
 | `[HPO] WARM: loaded N parameter(s) from <file>` | WARM read all keys. |
 | `[HPO] WARM: primed warmstart cache with N HOT entry(ies)` | `# HOT <script> <name> <value>` (or legacy `# HOT_A0`) lines parsed. |
 | `[HPO] WARM: clamped dim[d] from X to Y (bounds […])` | Warm point fell outside narrowed bounds. |

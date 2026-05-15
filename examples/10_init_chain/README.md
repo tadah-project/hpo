@@ -1,4 +1,4 @@
-# 11 -- chained INIT
+# 10 -- chained INIT
 
 Multiple init strategies in one chain.
 
@@ -12,4 +12,4 @@ What this shows:
   like `DLIB:GFS` use every entry, single-seed consumers like
   `DLIB:BFGS` use just the front.
 
-The local `run.sh` bootstraps `seed_pot.tadah` the same way as 10.
+The local `run.sh` bootstraps `seed_pot.tadah` the same way as 09.

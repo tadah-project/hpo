@@ -92,5 +92,5 @@ TEST_CASE("strategy_matrix.manifest entries parse under current grammar",
         ++entries;
     }
     /* Keep this in sync when entries are added to the manifest. */
-    CHECK(entries == 7);
+    CHECK(entries == 6);
 }

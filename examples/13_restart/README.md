@@ -1,4 +1,4 @@
-# 14 -- RESTART decorator
+# 13 -- RESTART decorator
 
 Auto-recover when the inner optimiser stalls.
 
@@ -8,7 +8,7 @@ What this shows:
   - `AFTER_STAGNATION <N>` -- restart after N evals without improvement.
   - `MAX <K>` -- give up after K restarts.
   - `STRATEGY <init-strategy>` -- how to seed each restart
-    (`RANDOM`, `LHS`, `SOBOL`, `PRIOR`).
+    (`RANDOM`, `LHS`, `SOBOL`).
 
 Useful for unattended overnight runs where a single BFGS getting
 stuck in a poor basin shouldn't waste the whole job.

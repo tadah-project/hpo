@@ -1,4 +1,4 @@
-# 12 -- exhaustive grid sweep
+# 11 -- exhaustive grid sweep
 
 Every point on a Cartesian lattice.
 

@@ -588,7 +588,7 @@ static bool dispatch_init_attr(const std::string& key,
         if (e.method == "NOISE_AUTO")
             throw std::runtime_error(
                 "INIT." + key + " NOISE_AUTO is not implemented "
-                "(reserved keyword). Use RANDOM/LHS/SOBOL/PRIOR/WARM/CONFIG.");
+                "(reserved keyword). Use RANDOM/LHS/SOBOL/WARM/CONFIG.");
         std::string tok;
         while (iss >> tok) e.args.push_back(tok);
         a.chain.push_back(std::move(e));

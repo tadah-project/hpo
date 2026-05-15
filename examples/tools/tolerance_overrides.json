@@ -36,42 +36,38 @@
     "description": "INIT { STRATEGY SOBOL } seeding DLIB:GFS.",
     "status_accepted": ["COMPLETED"]
   },
-  "09_init_prior": {
-    "description": "INIT { STRATEGY PRIOR } using descriptor suggested_value.",
-    "status_accepted": ["COMPLETED"]
-  },
-  "10_init_warm": {
+  "09_init_warm": {
     "description": "INIT { STRATEGY WARM } from a bootstrapped seed_pot.tadah.",
     "status_accepted": ["COMPLETED"],
     "evals_tol": 30
   },
-  "11_init_chain": {
+  "10_init_chain": {
     "description": "INIT chain (WARM + LHS) seeding DLIB:GFS.",
     "status_accepted": ["COMPLETED"]
   },
-  "12_grid_sweep": {
+  "11_grid_sweep": {
     "description": "TADAH:GRID exhaustive Cartesian sweep.",
     "status_accepted": ["COMPLETED"]
   },
-  "13_prestage": {
+  "12_prestage": {
     "description": "STRATEGY PRESTAGE; NLOPT:GN_CRS2_LM explore + DLIB:BFGS refine.",
     "status_accepted": [
       "COMPLETED",
       "MAXEVAL_REACHED -- maximum evaluations exhausted"
     ]
   },
-  "14_restart": {
+  "13_restart": {
     "description": "DLIB:BFGS + RESTART decorator (stagnation-driven).",
     "status_accepted": ["COMPLETED"]
   },
-  "15_mlsl_inner": {
+  "14_mlsl_inner": {
     "description": "NLOPT:G_MLSL_LDS + INNER NLOPT:LN_BOBYQA.",
     "status_accepted": [
       "COMPLETED",
       "MAXEVAL_REACHED -- maximum evaluations exhausted"
     ]
   },
-  "16_simulated_annealing": {
+  "15_simulated_annealing": {
     "description": "TADAH:ANNEAL with auto-T0 calibration.",
     "status_accepted": ["COMPLETED"]
   }

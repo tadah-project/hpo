@@ -164,7 +164,7 @@ void run_nlopt(const OptimizerSpec& sp,
     /* BOBYQA / NEWUOA_BOUND silently relocate the start point onto an
      * interior offset whenever any coordinate sits within rhobeg of a
      * bound (see nlopt/src/algs/bobyqa/bobyqa.c around line 3219). With
-     * a uniform user-supplied STEP this destroys WARM/PRIOR seeds whose
+     * a uniform user-supplied STEP this destroys WARM seeds whose
      * previous best lies near the edge of the box. Detect that case and
      * either auto-shrink the initial step so the seed is preserved, or
      * (when the seed is on/outside a bound) warn that the snap is
@@ -218,7 +218,7 @@ void run_nlopt(const OptimizerSpec& sp,
          *   - LN_SBPLX  (sbplx.c:162,183): swallows nldrmd's
          *     "starting step size led to a simplex that was too small
          *     in dimension N" as NLOPT_XTOL_REACHED. This fires when
-         *     the WARM/PRIOR seed sits near optimum and SBPLX's per-
+         *     the WARM seed sits near optimum and SBPLX's per-
          *     iteration xstep scaling shrinks the step below
          *     ~1e-13*|x|, so the next simplex vertex coincides with
          *     the start under nldrmd's `close()` test. The user then
@@ -239,7 +239,7 @@ void run_nlopt(const OptimizerSpec& sp,
                 << " but the underlying issue was masked. For "
                    "LN_SBPLX/LN_NELDERMEAD this typically means the "
                    "initial step shrank below precision near a near-"
-                   "optimum WARM/PRIOR seed; consider raising STEP, "
+                   "optimum WARM seed; consider raising STEP, "
                    "loosening the tightest bound on the seed coord, or "
                    "switching to LD_LBFGS / DLIB:BFGS / LN_BOBYQA.";
             std::cerr << "[HPO] " << oss.str() << "\n";

@@ -12,7 +12,7 @@ Nothing yet.
 HPO underwent the largest restructure of any module in this release: new init strategies, resume/restart, varloss, dlib-BFGS local optimiser, the `TADAH:ANNEAL` driver family (classic + Corana adaptive variant), the `CERES` gradient-based optimiser family, and a regression-tested example suite.
 
 ### Added
-- **Init strategies** — multiple ways to seed the HPO sweep (`CONFIG`, `RANDOM`, `LHS`, `SOBOL`, `WARM`, `PRIOR`); fully documented in the rewritten `hpo.rst`.
+- **Init strategies** — multiple ways to seed the HPO sweep (`CONFIG`, `RANDOM`, `LHS`, `SOBOL`, `WARM`); fully documented in the rewritten `hpo.rst`.
 - **Resume / restart** — checkpointed long runs can be resumed from the most recent journal entry; backed by the new CORE checkpoint + signal-handler infrastructure.
 - **Variance-of-loss (`varloss`) acquisition** — `--varloss` / `--outvar` flags select an alternative scoring function over a user-provided set of LAMMPS `equal`-style script variables; HPO now validates these variables exist before launching workers.
 - Standalone **dlib BFGS local optimiser** — added alongside the existing nlopt path.

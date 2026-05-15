@@ -53,7 +53,7 @@ using ParamMap = std::unordered_map<std::string,double>;
  * after bounds + log-scale are settled. */
 struct InitStrategySpec {
     struct Entry {
-        std::string method;                    // CONFIG, RANDOM, LHS, SOBOL, WARM, PRIOR, NOISE_AUTO
+        std::string method;                    // CONFIG, RANDOM, LHS, SOBOL, WARM, NOISE_AUTO
         std::vector<std::string> args;         // method-specific tokens
     };
     std::vector<Entry> chain;                  // STRATEGY lines (in order, inside INIT block)

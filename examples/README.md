@@ -15,7 +15,7 @@ on your PATH. Override OpenMP threads with `OMP_NUM_THREADS=N`. Each
 run cleans its previous output (`best_*.tadah`, `loss.tadah`,
 `outvar.tadah`, `params.tadah`, `stats.tadah`, `hpo_run.log`).
 
-A handful of examples (10, 11) ship their own `run.sh` because they
+A handful of examples (09, 10) ship their own `run.sh` because they
 need a `seed_pot.tadah` bootstrapped first; that script handles the
 bootstrap on first invocation and reuses the seed thereafter.
 
@@ -49,14 +49,13 @@ each subsequent one introduces one or two new features.
 | 06 | `06_init_random`         | `INIT { STRATEGY RANDOM, SEED }`. |
 | 07 | `07_init_lhs_multistart` | `INIT { STRATEGY LHS }` + `STRATEGY MULTISTART`. |
 | 08 | `08_init_sobol_gfs`      | `INIT { STRATEGY SOBOL }` + `DLIB:GFS` multi-seed consumer. |
-| 09 | `09_init_prior`          | `INIT { STRATEGY PRIOR }` (descriptor-supplied). |
-| 10 | `10_init_warm`           | `INIT { STRATEGY WARM <file> }`, warm-start cache. |
-| 11 | `11_init_chain`          | Multi-strategy INIT chain. |
-| 12 | `12_grid_sweep`          | `LIB TADAH ALGO GRID` exhaustive Cartesian sweep. |
-| 13 | `13_prestage`            | `STRATEGY PRESTAGE { EXPLORE { ... } }` global -> refine. |
-| 14 | `14_restart`             | `STRATEGY { ... RESTART { ... } }` decorator. |
-| 15 | `15_mlsl_inner`          | `STRATEGY { ... INNER { ... } }` for AUGLAG / MLSL. |
-| 16 | `16_simulated_annealing` | `LIB TADAH ALGO ANNEAL` with cooling-schedule PARAMs. |
+| 09 | `09_init_warm`           | `INIT { STRATEGY WARM <file> }`, warm-start cache. |
+| 10 | `10_init_chain`          | Multi-strategy INIT chain. |
+| 11 | `11_grid_sweep`          | `LIB TADAH ALGO GRID` exhaustive Cartesian sweep. |
+| 12 | `12_prestage`            | `STRATEGY PRESTAGE { EXPLORE { ... } }` global -> refine. |
+| 13 | `13_restart`             | `STRATEGY { ... RESTART { ... } }` decorator. |
+| 14 | `14_mlsl_inner`          | `STRATEGY { ... INNER { ... } }` for AUGLAG / MLSL. |
+| 15 | `15_simulated_annealing` | `LIB TADAH ALGO ANNEAL` with cooling-schedule PARAMs. |
 
 ## Files in `common/`
 

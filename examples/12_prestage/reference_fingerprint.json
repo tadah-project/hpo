@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "example": "13_prestage",
+  "example": "12_prestage",
   "description": "STRATEGY PRESTAGE; NLOPT:GN_CRS2_LM explore + DLIB:BFGS refine.",
   "best_loss": {
     "value": 0.06329275,

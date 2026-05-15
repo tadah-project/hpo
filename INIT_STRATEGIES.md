@@ -186,25 +186,6 @@ warmstart cache primes before any other seed is evaluated), list
 
 See [`examples/11_chained_init_warm_lhs/`](examples/11_chained_init_warm_lhs/).
 
-### PRIOR
-
-```
-INIT
-  STRATEGY PRIOR
-ENDINIT
-```
-
-For each OPTIM-flagged dim, asks the descriptor for its
-`suggested_value(key, arg_pos)` (registered per descriptor inside
-MODELS). For dims whose descriptor has nothing registered (or whose
-key is not descriptor-owned), the resolver falls back to the bounds
-midpoint (geometric for log-scaled, arithmetic for linear).
-
-Use as a *first-time-use* seed when you have no `pot.tadah` to WARM
-from and no informed CONFIG.
-
-See [`examples/06_prior_seeded/`](examples/06_prior_seeded/).
-
 ## INIT block top-level knobs
 
 All inside the `INIT { ... } ENDINIT` block:
@@ -484,8 +465,7 @@ You have a new material and bounds you trust, but no good seed.
 ```
 OPTIMIZER
   INIT
-    STRATEGY PRIOR
-    STRATEGY LHS 4
+    STRATEGY LHS 5
   ENDINIT
   STRATEGY
     TYPE MULTISTART
@@ -500,8 +480,7 @@ ENDOPTIMIZER
 
 What happens:
 
-- `PRIOR` produces 1 point.
-- `LHS 4` adds 4 stratified points.
+- `LHS 5` produces 5 stratified points.
 - The chain is exactly those 5 points — CONFIG is not listed, so the
   in-config value is not used.
 - `N_STARTS 5` runs BFGS five times, one per seed.
@@ -595,9 +574,6 @@ after SIGINT/SIGTERM (see example 15).
 
 ```
 OPTIMIZER
-  INIT
-    STRATEGY PRIOR
-  ENDINIT
   STRATEGY
     TYPE PLAIN
     LIB NLOPT

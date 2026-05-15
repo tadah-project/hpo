@@ -16,4 +16,4 @@ first seed is consumed; for multi-seed consumers like `DLIB:GFS` all
 `K` are used.
 
 Available init strategies: `CONFIG`, `RANDOM`, `LHS`, `SOBOL`,
-`PRIOR`, `WARM`. The next few examples cover each.
+`WARM`. The next few examples cover each.

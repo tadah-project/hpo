@@ -442,46 +442,6 @@ TEST_CASE("WarmInitStrategy: legacy HOT_A0 line still primes cache",
     }
 }
 
-TEST_CASE("PriorInitStrategy: empty optimap produces empty point",
-          "[HPO][init_strategy][prior]")
-{
-    /* No OPTIM-flagged dims → PRIOR has nothing to seed; the chain
-     * resolution must still return a single (zero-dim) point cleanly. */
-    StrategyTempFile cfg(R"(OPTIMIZER
-INIT
-  STRATEGY PRIOR
-ENDINIT
-STRATEGY
-  TYPE PLAIN
-  LIB DLIB
-  ALGO BFGS
-ENDSTRATEGY
-ENDOPTIMIZER
-)");
-    tadah::core::Context ctx;
-    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
-    REQUIRE(trg.spec.optim_init.size() == 1);
-    CHECK(trg.spec.optim_init.front().empty());
-}
-
-TEST_CASE("PriorInitStrategy: parser rejects extra args",
-          "[HPO][init_strategy][prior]")
-{
-    StrategyTempFile cfg(R"(OPTIMIZER
-INIT
-  STRATEGY PRIOR bogus
-ENDINIT
-STRATEGY
-  TYPE PLAIN
-  LIB DLIB
-  ALGO BFGS
-ENDSTRATEGY
-ENDOPTIMIZER
-)");
-    tadah::core::Context ctx;
-    CHECK_THROWS(tadah::hpo::HPOTargets(ctx, cfg.path.string()));
-}
-
 TEST_CASE("HPO parses MULTISTART knobs",
           "[HPO][run_policy][multistart]")
 {
