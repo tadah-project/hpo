@@ -44,6 +44,9 @@ HPO underwent the largest restructure of any module in this release: new init st
 
 ### Removed
 - `TADAH_HPO_HOT_A0_DEFAULT`, `TADAH_HPO_A0_MIN`, `TADAH_HPO_A0_MAX`, `TADAH_HPO_BAD_POT_ERMSE_MEV`, `TADAH_HPO_BAD_POT_ERMSE_REL` environment variables. All five knobs now live in `config.hpo` as `PC_LAMMPS --hotvar` / `PC_<METRIC> --skip-above` flags. Migration: replace `${hot_a0}` script convention with an explicit `--hotvar hot_a0 <min> <max> [<initial>]` on the producing `PC_LAMMPS` line; replace `TADAH_HPO_BAD_POT_ERMSE_MEV=N` with `PC_ERMSE … --skip-above N`.
+- `PRIOR` init strategy (parser path and the in-tree `INIT_STRATEGIES.md` tutorial). The `CONFIG` / `RANDOM` / `LHS` / `SOBOL` / `WARM` chain replaces it.
+- `INIT { INCLUDE_CONFIG }` flag and the chain-reordering behaviour it triggered.
+- Engineer-facing reference notes `HPO/LOAD_TRANSFORMS.md` and `HPO/INIT_STRATEGIES.md` — their content was folded into the user-facing `hpo.rst` in Session B's doc audit, leaving the in-tree notes redundant.
 
 ### Fixed
 - `rcut` optimisation path corrected.
@@ -62,6 +65,9 @@ HPO underwent the largest restructure of any module in this release: new init st
 - `tadah_use_local_module` integration — under `TADAH_DEVELOP=1`, HPO consumes the sibling Tadah.MD and Tadah.LAMMPS sources instead of fetching.
 - Substantive README rewrite + correction of stale init/run-policy tables.
 - Community / governance pointer files added.
+- Test build routed through `cmake-tools/cmake/TadahTesting.cmake` helpers (`tadah_declare_testing` / `tadah_add_tests`); external dependency fetches (dlib, Eigen, Ceres, nlopt) wrapped in `tadah_begin/end_external_deps`. **Fixes a latent test-suite-drop bug** where the previous hand-rolled `BUILD_TESTING` capture/restore ran before the cache entry was defined and silently disabled the whole `tests/` subdir on a bare reconfigure. Also sets `NLOPT_TESTS=OFF` explicitly.
+- Test fixture `strategy_matrix.manifest` migrated to the block grammar; guarded by a parser-rejection check so future grammar drift trips the test.
+- Examples: stale leading-comment numbers fixed after the example set was renumbered.
 
 ## [1.2.0] and earlier (condensed)
 
