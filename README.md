@@ -18,8 +18,7 @@ The user-facing surface is one config file (`config.hpo`) read by
 5. **OPTIM lines** — the search space.
 
 This README is the reference for keywords #1–#3. For full,
-worked-through examples see [`examples/`](examples/). For a
-beginner-friendly tutorial see [`INIT_STRATEGIES.md`](INIT_STRATEGIES.md).
+worked-through examples see [`examples/`](examples/).
 
 ## Quick start
 
