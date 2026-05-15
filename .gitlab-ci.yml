@@ -82,7 +82,7 @@ lint_codespell:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
   script:
-    - command -v codespell || pip install --user codespell
+    - command -v codespell || python3 -m pip install --user codespell
     - export PATH=$HOME/.local/bin:$PATH
     - codespell --skip='./build*,./external,./_deps,./tests/data,./examples/*/best_*' || true
   allow_failure: true
