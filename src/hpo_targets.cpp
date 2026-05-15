@@ -1260,7 +1260,7 @@ void HPOTargets::read(const std::string& fn)
             /* Anything still unhandled inside an OPTIMIZER-level block is
              * a user mistake (LIB/ALGO/MAXEVAL etc. now live inside
              * STRATEGY). LOSS / PC_LAMMPS / OPTIM / FAILSCORE / OUTPUT /
-             * KEEP and friends are ROOT-level and fall through. */
+             * BDUMP and friends are ROOT-level and fall through. */
             if (block != ROOT) {
                 throw std::runtime_error("unknown key '" + key + "' in this block");
             }
@@ -1278,7 +1278,7 @@ void HPOTargets::read(const std::string& fn)
                 if (outputDigits < 1 || outputDigits > 15)
                     throw std::runtime_error("DIGITS must be 1-15"); }
             else if (key=="DUMP")     { iss>>dumpPotEvery>>dumpPotDir;   handle_directory_creation(dumpPotDir); }
-            else if (key=="KEEP")     { iss>>dumpBestPotEvery>>dumpBestPotDir; handle_directory_creation(dumpBestPotDir); }
+            else if (key=="BDUMP")    { iss>>dumpBestPotEvery>>dumpBestPotDir; handle_directory_creation(dumpBestPotDir); }
 
             /* loss -------------------------------------------------- */
             else if (key=="LOSS")

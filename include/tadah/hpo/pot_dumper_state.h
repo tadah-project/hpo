@@ -2,29 +2,29 @@
 #define TADAH_HPO_POT_DUMPER_STATE_H
 
 /*
- *  PotDumperState -- checkpoint participant for DUMP / KEEP counters.
+ *  PotDumperState -- checkpoint participant for DUMP / BDUMP counters.
  *
  *  Background
  *  ----------
  *  DUMP <N> <dir>   archives a snapshot of the potential to <dir>/pot_*.tadah
- *  every N evaluations. KEEP <N> <dir> does the same for "every Nth new
+ *  every N evaluations. BDUMP <N> <dir> does the same for "every Nth new
  *  best". The actual write logic lives inline in HPO_Host::submit_result
  *  and HPO_Host::flush_remaining (hpo_host_impl.hpp:1241-1266 / 1348-1372)
  *  and is keyed off the global iteration counter `e.iter` and best counter
  *  `e.best_iter` respectively. Both counters are global atomics on
  *  HPO_Host (g_iter_ / g_best_iter_), so once those values are restored
- *  on resume the DUMP/KEEP modulo schedule continues seamlessly.
+ *  on resume the DUMP/BDUMP modulo schedule continues seamlessly.
  *
  *  Role of this participant
  *  ------------------------
- *  Surfaces the DUMP/KEEP configuration in the checkpoint file so that:
+ *  Surfaces the DUMP/BDUMP configuration in the checkpoint file so that:
  *    1. A user inspecting `checkpoint.tadah` can see "yes, this run was
  *       dumping every 50 evals to ./pots/ when it stopped".
  *    2. A future inline-refactor that does want per-dumper state (e.g.
  *       last-flushed counter, ring-buffer rotation index) has a place
  *       to put it.
  *
- *  This file does not change the user-visible DUMP/KEEP behaviour --
+ *  This file does not change the user-visible DUMP/BDUMP behaviour --
  *  the existing inline code path is left intact.
  */
 

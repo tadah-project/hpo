@@ -257,7 +257,7 @@ TEST_CASE("HPO parser accepts ROOT-level keys after ENDOPTIMIZER",
           "[HPO][parser][regression]")
 {
     /* Regression for the post-STRATEGY-rewrite bug where ROOT-level keys
-     * (LOSS, FAILSCORE, OUTPUT, BOUTPUT, DIGITS, OPTIM, PC_*, KEEP)
+     * (LOSS, FAILSCORE, OUTPUT, BOUTPUT, DIGITS, OPTIM, PC_*, BDUMP)
      * threw `unknown key '<X>' in this block`. The parser's fall-through
      * guard had become `if (block == OUTER) { fall through }` (matching
      * only the OPTIMIZER scope), so once `ENDOPTIMIZER` set
