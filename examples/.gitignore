@@ -22,6 +22,11 @@ run.stdout
 run.stderr
 hpo_*_times.csv
 
+# Bootstrapped seeds for INIT WARM examples -- regenerated on first
+# run by the example's run.sh, not checked in (would otherwise embed
+# the original author's filesystem layout into best_pot.tadah headers).
+seed_pot.tadah
+
 # Sub-directories created during a run
 newBestPotsDir/
 restart_pots/

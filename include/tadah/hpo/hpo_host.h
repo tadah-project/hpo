@@ -4,11 +4,11 @@
 /*
  *  Thread-safe, "stateless" HPO_Host
  *  ---------------------------------
- *  –  All data produced during one evaluation live in EvalResult, not in the
+ *  -  All data produced during one evaluation live in EvalResult, not in the
  *     functor object; operator() is therefore const and thread-safe.
- *  –  Results are forwarded to a single writer thread through a blocking
+ *  -  Results are forwarded to a single writer thread through a blocking
  *     moodycamel queue which guarantees ordered, race-free file output.
- *  –  MPI code is protected by one global mutex so that threaded builds can
+ *  -  MPI code is protected by one global mutex so that threaded builds can
  *     still work.  Remove the mutex if you choose to forbid that mix.
  */
 
@@ -50,7 +50,7 @@
 namespace tadah::hpo {
 
 /* =========================================================================
- *  EvalResult – everything produced by *one* evaluation
+ *  EvalResult - everything produced by *one* evaluation
  * ========================================================================= */
 template<class ParamVec>
 struct EvalResult
@@ -89,7 +89,7 @@ struct EvalResult
 };
 
 /* =========================================================================
- *  HPO_Host  –  stateless evaluation functor
+ *  HPO_Host  -  stateless evaluation functor
  * ========================================================================= */
 template<class ParamVec, class LammpsRunner>
 class HPO_Host : public core::ICheckpointable
@@ -111,7 +111,7 @@ public:
      *
      *  Phase 2A.4: does not run a forward eval itself; it builds a
      *  param-ref table and consults the orchestrator
-     *  (compute_dloss_dtheta). Until the per-θ analytical evaluation
+     *  (compute_dloss_dtheta). Until the per-theta analytical evaluation
      *  is wired (sub-task), every index is reported in needs_fd, which
      *  HYBRID then handles via masked central differences.
      *
@@ -140,7 +140,7 @@ public:
                               bool                         cache_miss,
                               bool                         ift_failed = false) const;
 
-    /* ICheckpointable — persists the static best-so-far comparator state
+    /* ICheckpointable -- persists the static best-so-far comparator state
      * (g_best_, g_best_iter_, iter_at_last_best_, g_iter_) so that a
      * resumed run uses the prior best as the comparator for the very
      * first post-resume eval. Without this, g_best_ defaults to
@@ -152,7 +152,7 @@ public:
     void load(const core::Checkpoint& cp) override;
     std::string tag() const override { return "HPO_HOST"; }
 
-    /* Static save/load helpers — the ICheckpointable overrides delegate
+    /* Static save/load helpers -- the ICheckpointable overrides delegate
      * here so tests can exercise the round-trip without constructing a
      * full HPO_Host (which requires datasets, a trainer, etc.). The
      * checkpoint section tag is the same as tag(), i.e. HPO_HOST. */
@@ -215,7 +215,7 @@ public:
 
     /* ---------- restart support ----------------------------------------- */
     /** Bring the eval counter forward to at least @p n after a checkpoint
-     *  load — eval numbering then continues monotonically across the
+     *  load -- eval numbering then continues monotonically across the
      *  resume boundary. Idempotent: never lowers g_iter_. */
     static void set_g_iter_floor(std::size_t n);
     static std::size_t g_iter_value();
@@ -301,12 +301,12 @@ private:
     static std::atomic_size_t   g_best_iter_;
     static std::atomic<double>  g_best_;
 
-    /* Top-K tracking — gated. Pays mutex cost only when track_topk_capacity_ > 0. */
+    /* Top-K tracking -- gated. Pays mutex cost only when track_topk_capacity_ > 0. */
     static std::mutex                                            topk_mtx_;
     static std::size_t                                           topk_capacity_;
     static std::vector<std::pair<double, ParamVec>>              topk_buf_;
 
-    /* Stagnation tracking — gated. iter at which the most recent best was
+    /* Stagnation tracking -- gated. iter at which the most recent best was
      * recorded; stagnation = g_iter_ - iter_at_last_best_. */
     static std::atomic_size_t   iter_at_last_best_;
     static std::atomic_size_t   stagnation_threshold_;
@@ -326,7 +326,7 @@ private:
     static std::map<std::size_t,Result>            io_buf_;       // re-order
     static std::atomic<std::size_t>                next_flush_;   // next iter
     /* Bug 6: time (steady_clock ms since epoch) at which `next_flush_`
-     * first became "stuck" — i.e., the writer found io_buf_ has higher
+     * first became "stuck" -- i.e., the writer found io_buf_ has higher
      * keys than next_flush_ but the next_flush_ key itself is missing.
      * Reset to 0 on every successful drain. When > GAP_SKIP_MS old, the
      * writer skips next_flush_ forward to the smallest available key
@@ -374,15 +374,15 @@ private:
 
 
 
-    /* formatting — fixed geometry */
+    /* formatting -- fixed geometry */
     static constexpr std::size_t iter_cw_   = 12;  // #ITERATION(10) + 2; holds up to 10^6
     static constexpr std::size_t ittime_cw_ = 12;  // IT-TIME/ms(10)  + 2
     static constexpr std::size_t min_cw_    = 15;  // floor: fits L(ErRMSE)[avg](14) + 1 space
 
-    /* formatting — derived from outputDigits (set in constructor) */
+    /* formatting -- derived from outputDigits (set in constructor) */
     int          prec_;           // digits after decimal in scientific notation
     std::size_t  cw_;             // max(prec_+9, min_cw_)
-    std::size_t  max_title_len_;  // cw_-4: L(VAR) always ≥1 space gap; same truncation as VAR
+    std::size_t  max_title_len_;  // cw_-4: L(VAR) always >=1 space gap; same truncation as VAR
 
     /* line printers ------------------------------------ */
     void init_loss   (const std::string& fn) const;

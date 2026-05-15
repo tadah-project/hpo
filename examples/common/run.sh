@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# common/run.sh — shared driver for HPO/examples.
+# common/run.sh -- shared driver for HPO/examples.
 #
 # Each example dir does `bash ../common/run.sh` to:
 #   - clean prior outputs

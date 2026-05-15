@@ -1,7 +1,7 @@
 #ifndef TADAH_HPO_ITER_HEALTH_H
 #define TADAH_HPO_ITER_HEALTH_H
 
-// Phase 6 — per-iteration HPO health monitor.
+// Phase 6 -- per-iteration HPO health monitor.
 //
 // The monitor records cheap per-block aggregates of the trained
 // weights produced by every HPO evaluation and emits rate-limited
@@ -51,10 +51,10 @@ struct IterHealthRecord {
 /** \brief Compute an IterHealthRecord from a weight vector + layout.
  *  Pure function: no logging, no state. Tests can call this directly.
  *
- *  Median-abs uses partial sort (`std::nth_element`) — O(N) per block.
- *  Non-zero floor is the IEEE denormal floor 1e-15 — explicitly the
+ *  Median-abs uses partial sort (`std::nth_element`) -- O(N) per block.
+ *  Non-zero floor is the IEEE denormal floor 1e-15 -- explicitly the
  *  only "constant" allowed in the audit code per the no-magic-numbers
- *  contract (see plan §"No-magic-numbers contract").
+ *  contract (see plan sec."No-magic-numbers contract").
  */
 IterHealthRecord compute_iter_health(
     std::size_t                            iter,
@@ -63,14 +63,14 @@ IterHealthRecord compute_iter_health(
 
 class IterHealthMonitor;
 
-/** \brief Process-singleton accessor — wired in `hpo_run()` from the
+/** \brief Process-singleton accessor -- wired in `hpo_run()` from the
  *  HEALTH_LOG context key. Default mode: Off (no overhead until
  *  configured). Tests can construct local instances and call record()
  *  directly without going through the singleton. */
 IterHealthMonitor& global_iter_health_monitor();
 
 /** \brief Stateful monitor that emits rate-limited warnings. The
- *  monitor is intentionally not thread-safe at the warning side —
+ *  monitor is intentionally not thread-safe at the warning side --
  *  callers should funnel records through a single log thread. The
  *  `record(...)` aggregation itself is small enough to live inside
  *  the eval loop.
@@ -80,7 +80,7 @@ class IterHealthMonitor {
   IterHealthMonitor() = default;
 
   /** Construct with mode + summary-window size. Default window is 100
-   *  evals — emits at most one warning per (block, kind) per 100
+   *  evals -- emits at most one warning per (block, kind) per 100
    *  evals in summary mode. */
   IterHealthMonitor(HealthLogMode mode,
                     std::size_t   summary_window = 100)
@@ -90,12 +90,12 @@ class IterHealthMonitor {
   HealthLogMode mode() const noexcept { return mode_; }
 
   /** Record one iter and emit any warnings. Safe to call with empty
-   *  records — no-ops then. */
+   *  records -- no-ops then. */
   void record(const IterHealthRecord&         rec,
               const tadah::mlip::ColumnLayout& layout);
 
   /** Test-only: pull the warning count for a given (block_idx, kind).
-   *  kind ∈ {"max_abs", "nz_fraction", "nan_inf"}. */
+   *  kind in {"max_abs", "nz_fraction", "nan_inf"}. */
   std::size_t warning_count(std::size_t block_idx,
                             const std::string& kind) const;
 

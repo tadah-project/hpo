@@ -1,6 +1,6 @@
 #pragma once
 /*
- * InitStrategy — produces a list of starting points (in real, untransformed
+ * InitStrategy -- produces a list of starting points (in real, untransformed
  * space) for the optimiser, given bounds, the OPTIM map and a seed.
  *
  * Concrete strategies live in init_strategies.cpp. A free factory
@@ -12,9 +12,9 @@
  *   - Sampling happens in the transformed (post analyse_logscale) space
  *     using spec.low, spec.high, spec.log_scaled.
  *   - Output points are returned in real space.
- *   - log_scaled[d] == false ⇒ dim d is sampled linearly between low[d]
+ *   - log_scaled[d] == false => dim d is sampled linearly between low[d]
  *     and high[d] (already real-valued).
- *   - log_scaled[d] == true  ⇒ dim d is sampled in log-space (low[d] and
+ *   - log_scaled[d] == true  => dim d is sampled in log-space (low[d] and
  *     high[d] are already log-transformed by analyse_logscale()) and
  *     exponentiated before being returned.
  */
@@ -26,7 +26,7 @@
 
 namespace tadah::hpo {
 
-class HPOTargets;        // forward-declared — full type pulled in by .cpp
+class HPOTargets;        // forward-declared -- full type pulled in by .cpp
 struct OptimizerSpec;
 
 struct InitContext {
@@ -59,7 +59,7 @@ public:
  *   - If ispec.include_config is true (default) and the chain doesn't
  *     already start with CONFIG, prepends ConfigInitStrategy.
  *   - If the chain ends up empty (no entries, include_config false), an
- *     implicit CONFIG is still used as a safe default — the caller can
+ *     implicit CONFIG is still used as a safe default -- the caller can
  *     always override with INIT_INCLUDE_CONFIG false + an explicit entry.
  */
 std::unique_ptr<InitStrategy> build_init_strategy(const struct InitStrategySpec& ispec);

@@ -28,7 +28,7 @@
  *   compute_dloss_dtheta : top-level entry. When per-theta inputs are
  *     missing it routes everything to needs_fd (HYBRID-mode default).
  *     When supplied it computes dW/dtheta via IFT and writes the
- *     dot-product (Phi_val_aggregate . dW/dtheta) to g — the second
+ *     dot-product (Phi_val_aggregate . dW/dtheta) to g -- the second
  *     half of dy/dtheta. The first half (the dPhi_val_row . W
  *     contribution) is added by the caller via per_theta.dy_feature
  *     when supplied. The metric chain-rule sum is still TODO; until
@@ -91,7 +91,7 @@
 
 namespace tadah::hpo {
 
-/* ParamRef — flatten `optimap` into a per-index lookup so the
+/* ParamRef -- flatten `optimap` into a per-index lookup so the
  * orchestrator can decode "what theta does index i refer to?" without
  * re-walking the map. Built once per gradient call by
  * make_param_ref_table from HPOTargets. */
@@ -99,7 +99,7 @@ struct ParamRef {
     /** The OPTIM key (upper-case), e.g. "CGRID2B", "SGRID2B", "RCUT2B".
      *  Matches the keys D2_Base::calc_dDdtheta expects. */
     std::string theta_name;
-    /** 1-based index for vector parameters. Always positive — descriptor
+    /** 1-based index for vector parameters. Always positive -- descriptor
      *  closed forms for vector keys (CGRID*, SGRID*, CEMBFUNC, SEMBFUNC,
      *  ...) require `arg_pos >= 1`. Scalar keys (RCUT*, RCUTENV) ignore
      *  arg_pos and match on theta_name alone, so 1 is fine there too. */
@@ -134,31 +134,31 @@ make_param_ref_table(const HPOTargets& trg)
     return out;
 }
 
-/* PerThetaInputs — caller-supplied per-theta design-matrix derivatives
+/* PerThetaInputs -- caller-supplied per-theta design-matrix derivatives
  * for one theta index. The orchestrator uses these to build the IFT
  * RHS and chain through to dy_pred/dtheta. The owning vector lives in
  * DLossDThetaPlan and is indexed in flat-theta order.
  *
  * Layout note: dPhi_train_aug, phi_train_aug, and dPhi_val are flat
  * row-major arrays. The training-side buffers have shape
- *   (n_aug_rows × n_cols)
+ *   (n_aug_rows x n_cols)
  * with n_cols = factor.n. The validation-side dPhi_val has shape
- *   (n_val_rows × n_cols)
+ *   (n_val_rows x n_cols)
  * matching the validation Phi layout (no ridge augmentation). */
 struct PerThetaInputs {
-    /** Augmented dPhi_train/dtheta — flat row-major (n_aug_rows × n_cols).
+    /** Augmented dPhi_train/dtheta -- flat row-major (n_aug_rows x n_cols).
      *  Augmentation rows are typically zero (lambda is fixed and the
-     *  ridge block does not depend on theta). nullptr ⇒ orchestrator
+     *  ridge block does not depend on theta). nullptr => orchestrator
      *  pushes the index onto needs_fd. */
     const double* dPhi_train_aug = nullptr;
 
-    /** dPhi_val/dtheta — flat row-major (n_val_rows × n_cols). Used by
-     *  the metric chain rule to build the dPhi_val_row · W contribution
+    /** dPhi_val/dtheta -- flat row-major (n_val_rows x n_cols). Used by
+     *  the metric chain rule to build the dPhi_val_row . W contribution
      *  to dy_pred/dtheta. nullptr is permitted (zero contribution). */
     const double* dPhi_val = nullptr;
 };
 
-/* MetricValues — measured (post-scale) metric values from
+/* MetricValues -- measured (post-scale) metric values from
  * Analytics + fill_validation, fed into the chain rule alongside the
  * targets in HPOTargets. Mirrors the EvalResult fields populated by
  * fill_validation in the live host; tests build this struct directly. */
@@ -171,7 +171,7 @@ struct MetricValues {
     double srmse  = 0.0;
 };
 
-/* DLossDThetaPlan — references-only bundle of live state passed to the
+/* DLossDThetaPlan -- references-only bundle of live state passed to the
  * orchestrator. Trivially copyable; do not extend lifetimes beyond the
  * gradient call. */
 struct DLossDThetaPlan {
@@ -183,19 +183,19 @@ struct DLossDThetaPlan {
     const tadah::core::t_type*               weights = nullptr;
 
     /** Augmented training Phi (snapshot from dm.getPhi() after train).
-     *  Flat row-major (n_aug_rows × factor.n). */
+     *  Flat row-major (n_aug_rows x factor.n). */
     const double*                            phi_train_aug = nullptr;
     const double*                            t_train_aug   = nullptr;
     std::size_t                              n_aug_rows    = 0;
 
     /** Validation Phi (no ridge augmentation), flat row-major
-     *  (n_val_rows × factor.n). Used by the metric chain rule to build
-     *  the Phi_val_row · dW/dtheta contribution. Required when
+     *  (n_val_rows x factor.n). Used by the metric chain rule to build
+     *  the Phi_val_row . dW/dtheta contribution. Required when
      *  per_theta is populated (i.e., when the orchestrator is asked
      *  to assemble dy_pred/dtheta analytically); ignored otherwise.
      *
-     *  Layout: per-struct interleaved when val_has_force is true —
-     *  for each struct s, 1 energy row + 3·natoms(s) force rows.
+     *  Layout: per-struct interleaved when val_has_force is true --
+     *  for each struct s, 1 energy row + 3.natoms(s) force rows.
      *  When val_has_force is false, just 1 energy row per struct
      *  (n_val_rows == truth_val->size()). */
     const double*                            phi_val   = nullptr;
@@ -207,16 +207,16 @@ struct DLossDThetaPlan {
      *  the absolute row index of struct s's energy row in phi_val,
      *  and val_force_row_start_for_struct[s] == val_energy_row_for_struct[s]+1
      *  is the absolute row of (atom 0, axis 0). Force cell (a, k)
-     *  lives at val_force_row_start_for_struct[s] + 3·a + k.
+     *  lives at val_force_row_start_for_struct[s] + 3.a + k.
      *
-     *  Both vectors may be nullptr — in that case val_cell_to_row falls
+     *  Both vectors may be nullptr -- in that case val_cell_to_row falls
      *  back to the energy-only convention (row = struct_idx) and
      *  rejects FORCE / STRESS cells with a tailored error. */
     const std::vector<std::size_t>*          val_energy_row_for_struct      = nullptr;
     const std::vector<std::size_t>*          val_force_row_start_for_struct = nullptr;
     bool                                     val_has_force                  = false;
 
-    /** Active descriptor selector — present for future cross-cutting
+    /** Active descriptor selector -- present for future cross-cutting
      *  theta aggregation (RCUT2B/RCUTMB across composite descriptors). */
     const tadah::models::DC_Selector*        dcs = nullptr;
 
@@ -233,7 +233,7 @@ struct DLossDThetaPlan {
      *  obtain dL/dmetric for the outer chain step. */
     MetricValues                             metrics{};
 
-    /** Number of active loss components — matches r.loss_count. The
+    /** Number of active loss components -- matches r.loss_count. The
      *  orchestrator divides the assembled g by this at the end so the
      *  result matches r.loss = r.loss_sum / loss_count. */
     std::size_t                              loss_count = 0;
@@ -245,7 +245,7 @@ struct DLossDThetaPlan {
      *  every index to needs_fd (Phase 2A.4 default). */
     const std::vector<PerThetaInputs>*       per_theta = nullptr;
 
-    /** Set true if the eval was clamped (NaN/FAIL_SCORE) — orchestrator
+    /** Set true if the eval was clamped (NaN/FAIL_SCORE) -- orchestrator
      *  returns false to the caller, signalling graceful termination. */
     bool                                     was_nan_clamped = false;
 };
@@ -296,7 +296,7 @@ ift_rhs(const double*               phi_aug,
 /* The IFT building block (ift_rhs above + LinearRegressor::backsolve)
  * is the chain-rule core. Composing them is intentionally left to the
  * caller because LinearRegressor::backsolve lives behind a header
- * (linear_regressor.h → ols.h) that fails to compile in HPO TUs under
+ * (linear_regressor.h -> ols.h) that fails to compile in HPO TUs under
  * -DTADAH_USE_DLIB (lapack.h's extern "C" block is suppressed). The
  * MODELS-side test_linear_regressor_ift.cpp validates the composition
  * directly; the HPO_Host integration sub-task uses the hand-rolled
@@ -317,7 +317,7 @@ ift_rhs(const double*               phi_aug,
  * suppresses tadah::core's dpotrf_ declaration (the dlib build path
  * supplies its own LAPACK headers and we have to avoid redeclaration).
  * For the small AtA matrices Phase 2A targets (n_cols on the order of
- * tens), a pure-C++ O(n³/6) Cholesky is inexpensive — the descriptor
+ * tens), a pure-C++ O(n^3/6) Cholesky is inexpensive -- the descriptor
  * walk and predict path dominate. A LAPACK replacement is a future
  * optimisation if this ever shows up in profiles. */
 inline bool cholesky_upper(double* A, int n)
@@ -345,7 +345,7 @@ inline bool cholesky_upper(double* A, int n)
 
 /* Solve U^T U x = b in place using the upper-triangular factor `U`
  * (column-major n*n, output of cholesky_upper). Equivalent to
- * dpotrs_(uplo='U', N=n, NRHS=1) but pure C++ — same rationale as
+ * dpotrs_(uplo='U', N=n, NRHS=1) but pure C++ -- same rationale as
  * cholesky_upper. */
 inline void cholesky_solve_uut(const double* U, int n, double* x)
 {
@@ -366,7 +366,7 @@ inline void cholesky_solve_uut(const double* U, int n, double* x)
 }
 
 /* Build A^T A in column-major n_cols*n_cols layout from a row-major
- * augmented Phi (n_rows × n_cols). Writes the full matrix (both
+ * augmented Phi (n_rows x n_cols). Writes the full matrix (both
  * triangles) so cholesky_upper can read either; matches the dsyrk_+
  * implicit-symmetry convention without depending on LAPACK. */
 inline void compute_normal_equations(const double* phi_aug,
@@ -389,11 +389,11 @@ inline void compute_normal_equations(const double* phi_aug,
  * carries a non-null dPhi_train_aug. Indices with nullptr are pushed
  * onto `needs_fd`.
  *
- * `dWdtheta_out` is sized to (prefs.size() × n_cols), row-major; rows
+ * `dWdtheta_out` is sized to (prefs.size() x n_cols), row-major; rows
  * for needs_fd indices are left zero.
  *
  * Uses one Cholesky factorisation of (Phi_aug^T Phi_aug) shared across
- * all theta partials — N_theta back-substitutions vs the N_theta full
+ * all theta partials -- N_theta back-substitutions vs the N_theta full
  * re-solves a finite-difference path would do. Returns false if the
  * matrix is not positive definite (caller should clamp). */
 inline bool
@@ -426,7 +426,7 @@ compute_dWdtheta(const DLossDThetaPlan&            plan,
     needs_fd.clear();
 
     if (!plan.per_theta || plan.per_theta->size() != prefs.size()) {
-        /* No analytical inputs available — fall back to FD for everything. */
+        /* No analytical inputs available -- fall back to FD for everything. */
         for (std::size_t i = 0; i < prefs.size(); ++i)
             needs_fd.push_back(static_cast<int>(prefs[i].flat_idx));
         return true;
@@ -450,8 +450,8 @@ compute_dWdtheta(const DLossDThetaPlan&            plan,
 
 }  // namespace detail
 
-/* Map a (struct_idx, kind, comp) cell — as emitted by analytics_grad's
- * set_dydp callback — to its row in the validation Phi.
+/* Map a (struct_idx, kind, comp) cell -- as emitted by analytics_grad's
+ * set_dydp callback -- to its row in the validation Phi.
  *
  * Phase 2A first cut handled ENERGY cells only with row = struct_idx.
  * Phase 2B (C-val) adds FORCE-cell support via the per-struct row maps:
@@ -463,7 +463,7 @@ compute_dWdtheta(const DLossDThetaPlan&            plan,
  *   - FORCE : requires force_row_start_for_struct (otherwise throws).
  *     row = (*force_row_start_for_struct)[struct_idx] + comp, where
  *     comp = 3*a + k as emitted by analytics_grad::frmse.
- *   - STRESS: still rejected — stress chain rule needs positions in
+ *   - STRESS: still rejected -- stress chain rule needs positions in
  *     the Phi row (Phase 2B sub-step C-stress).
  */
 inline std::size_t
@@ -486,7 +486,7 @@ val_cell_to_row(const tadah::mlip::StructureDB&         truth_val,
         if (!force_row_start_for_struct)
             throw std::runtime_error(
                 "compute_dloss_dtheta: FORCE cell emitted but the orchestrator "
-                "did not build force rows in Phi_val — pass val_has_force=true "
+                "did not build force rows in Phi_val -- pass val_has_force=true "
                 "and val_force_row_start_for_struct to enable use_frmse for "
                 "the analytical path.");
         return (*force_row_start_for_struct)[struct_idx] + comp;
@@ -501,12 +501,12 @@ val_cell_to_row(const tadah::mlip::StructureDB&         truth_val,
  *
  *   plan      : live state references; see DLossDThetaPlan.
  *   x         : current theta vector (real-space; sp.out applied
- *               upstream). Currently unused inside the orchestrator —
+ *               upstream). Currently unused inside the orchestrator --
  *               the plan carries everything needed.
  *   g         : output gradient; resized to plan.prefs->size() and
  *               pre-zeroed.
  *   needs_fd  : output list of theta indices the orchestrator could
- *               not supply analytically — passed back to the HYBRID
+ *               not supply analytically -- passed back to the HYBRID
  *               strategy for masked central-difference fallback.
  *
  * Returns: false if plan.was_nan_clamped is set; true otherwise.
@@ -559,30 +559,30 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
 
     /* IFT chain: build dW/dtheta for every theta whose dPhi_train_aug
      * is supplied. Indices with nullptr dPhi_train_aug end up in
-     * needs_fd_internal — we propagate that to the caller's list.
+     * needs_fd_internal -- we propagate that to the caller's list.
      *
-     * Phase 3.7B: when the caller wants to chain dW/dθ into a sims_grad
+     * Phase 3.7B: when the caller wants to chain dW/dtheta into a sims_grad
      * computation afterwards (LAMMPS-observable adjoint), it passes a
      * non-null `dWdtheta_out` and reads the buffer once we return. The
-     * compute happens once either way — local storage when out is null,
+     * compute happens once either way -- local storage when out is null,
      * caller's buffer otherwise. */
     std::vector<double> dWdtheta_local;
     std::vector<double>& dWdtheta = dWdtheta_out ? *dWdtheta_out : dWdtheta_local;
     std::vector<int>    needs_fd_internal;
     if (!detail::compute_dWdtheta(plan, dWdtheta, needs_fd_internal)) {
-        /* Cholesky failed → factor non-PD; signal as NaN-clamp. */
+        /* Cholesky failed -> factor non-PD; signal as NaN-clamp. */
         if (dWdtheta_out) dWdtheta_out->clear();
         return false;
     }
     /* Carry through indices the IFT layer punted to FD. */
     for (int idx : needs_fd_internal) needs_fd.push_back(idx);
 
-    /* Per-theta indices that have analytical dPhi_train_aug — these are
+    /* Per-theta indices that have analytical dPhi_train_aug -- these are
      * the ones we run the metric chain rule on. */
     if (!plan.weights || !plan.trg || !plan.truth_val || !plan.pred_val)
         throw std::runtime_error(
             "compute_dloss_dtheta: weights/trg/truth_val/pred_val "
-            "missing — required when per_theta is populated.");
+            "missing -- required when per_theta is populated.");
 
     const auto& W       = *plan.weights;
     const auto& trg     = *plan.trg;
@@ -591,9 +591,9 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
     const std::size_t n_cols = static_cast<std::size_t>(plan.factor->n);
 
     /* Validate phi_val presence when at least one theta is analytical.
-     * If the chain rule is trivial (Phi_val · dW = 0 everywhere) the
+     * If the chain rule is trivial (Phi_val . dW = 0 everywhere) the
      * caller can still pass phi_val=nullptr; we'd then only chain
-     * through dPhi_val · W. But that's an edge case and an explicit
+     * through dPhi_val . W. But that's an edge case and an explicit
      * pointer check catches the more common omission. */
     bool any_analytical = false;
     for (const auto& pt : *plan.per_theta) {
@@ -601,8 +601,8 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
     }
     if (any_analytical && !plan.phi_val)
         throw std::runtime_error(
-            "compute_dloss_dtheta: phi_val missing — required for the "
-            "Phi_val · dW/dtheta term in the metric chain rule.");
+            "compute_dloss_dtheta: phi_val missing -- required for the "
+            "Phi_val . dW/dtheta term in the metric chain rule.");
 
     /* Iterate every analytical theta. The metric chain rule loop is
      * O(N_active_metrics * N_val_cells) per theta; for energy-only
@@ -614,8 +614,8 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
         const std::size_t flat = prefs[ti].flat_idx;
         const double*     dW   = dWdtheta.data() + ti * n_cols;
 
-        /* Pre-compute dy_pred[cell]/dtheta_i = dPhi_val_row · W +
-         * Phi_val_row · dW. We do this lazily inside the set_dydp
+        /* Pre-compute dy_pred[cell]/dtheta_i = dPhi_val_row . W +
+         * Phi_val_row . dW. We do this lazily inside the set_dydp
          * callback (one row per call); for energy-only ENERGY cells
          * the row is just the struct index. */
         auto compute_dy_pred = [&](std::size_t row) -> double {
@@ -633,7 +633,7 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
          * (dy[c]/dtheta_i). Then accumulate
          * loss_prime(metric, target, w) * dmetric/dtheta_i into g[flat].
          *
-         * The set_dydp lambda is identical for every metric — it captures
+         * The set_dydp lambda is identical for every metric -- it captures
          * dmetric_dtheta_i by reference and accumulates per cell. We
          * reset dmetric_dtheta_i before each analytics_grad::* call. */
         double      dmetric_dtheta_i = 0.0;
@@ -652,7 +652,7 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
 
         /* loss_prime sign convention: fit_loss invokes
          *   loss(y=measured, ypred=target, w)
-         * so loss_prime(measured, target, w) returns dL/dtarget — not
+         * so loss_prime(measured, target, w) returns dL/dtarget -- not
          * what we need. The chain rule wants dL/dmeasured. For losses
          * that depend only on r = y - ypred (L1/L2/Huber/Tukey/
          * LOG_COSH/RMSLE), dL/dmeasured = -dL/dtarget; equivalently we
@@ -660,8 +660,8 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
          * which then returns dL/dypred where ypred is the measured.
          * The arg-swap form keeps the sign explicit at the call site.
          *
-         * MAPE has an extra ∂(1/(|y|+eps))/∂y term that the swap form
-         * does not capture — flagged as a known caveat (not exercised
+         * MAPE has an extra d(1/(|y|+eps))/dy term that the swap form
+         * does not capture -- flagged as a known caveat (not exercised
          * by the Phase 2A pilot, which targets L2 by default). */
         auto dl_dmeasured = [&](double measured, double target, double w) {
             return trg.globalLoss.loss_prime(target, measured, w);
@@ -695,7 +695,7 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
             g(flat_l) += dl_dmeasured(plan.metrics.ersq, trg.ersq, trg.w_ersq)
                        * dmetric_dtheta_i;
         }
-        /* use_frmse — Phase 2B (C-val) lift. Requires plan.val_has_force
+        /* use_frmse -- Phase 2B (C-val) lift. Requires plan.val_has_force
          * and plan.val_force_row_start_for_struct to be set by the
          * orchestrator: analytics_grad::frmse emits FORCE cells that
          * val_cell_to_row resolves through those row maps.
@@ -715,7 +715,7 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
             g(flat_l) += dl_dmeasured(plan.metrics.frmse, trg.frmse, trg.w_frmse)
                        * dmetric_dtheta_i;
         }
-        /* use_srmse remains deferred — analytics_grad::srmse emits STRESS
+        /* use_srmse remains deferred -- analytics_grad::srmse emits STRESS
          * cells which val_cell_to_row rejects (stress requires positions
          * in the Phi row; Phase 2B sub-step C-stress). */
     }
@@ -729,41 +729,41 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
 }
 
 /* ------------------------------------------------------------------- *
- *  SimsGradProvider — host-supplied callback that produces one
+ *  SimsGradProvider -- host-supplied callback that produces one
  *  SimsGradScriptInput per script in trg.LS, captured at the current
  *  iteration's relaxed state. Returns false if any script could not be
  *  evaluated (LAMMPS instance failed, fail-score clamp, missing variable,
  *  ...); the caller then falls back to all-FD per Phase 3.5's
  *  all-or-nothing policy.
  *
- *  Default (nullptr) → preserves the pre-3.7B behaviour: when
+ *  Default (nullptr) -> preserves the pre-3.7B behaviour: when
  *  `trg.LS` is non-empty, `compute_analytical_gradient_from_trainer`
- *  routes every θ to FD via `fall_back_all_fd`. Non-null → the helper
+ *  routes every theta to FD via `fall_back_all_fd`. Non-null -> the helper
  *  asks the provider to capture per-script inputs and chains them
  *  through `compute_sims_grad_dWchain` to fold sims_loss gradients
  *  into `g_out`.
  *
  *  The provider returned vector must have `inputs.size() == trg.LS.size()`
- *  with inputs[k] corresponding to LS[k]. Empty trg.LS → provider is
+ *  with inputs[k] corresponding to LS[k]. Empty trg.LS -> provider is
  *  not invoked.
  * ------------------------------------------------------------------- */
 using SimsGradProvider =
     std::function<bool(std::vector<SimsGradScriptInput>& inputs)>;
 
 /* ------------------------------------------------------------------- *
- *  ObservableGradProvider — typed-observable (PC_OBSERVABLE) analogue
+ *  ObservableGradProvider -- typed-observable (PC_OBSERVABLE) analogue
  *  of SimsGradProvider. Host-supplied callback that evaluates every
  *  entry of `trg.observables` at the current iteration's relaxed state
  *  and fills one ObservableGradInput per observable.
  *
  *  Returns false on any per-observable failure (relaxer failure, NaN
- *  energies, model not evaluable); the helper then falls all θ back
+ *  energies, model not evaluable); the helper then falls all theta back
  *  to FD per the same all-or-nothing contract that governs
  *  SimsGradProvider.
  *
  *  The provider's returned vector must have
  *  `inputs.size() == trg.observables.size()` with inputs[k]
- *  corresponding to trg.observables[k]. Empty trg.observables → the
+ *  corresponding to trg.observables[k]. Empty trg.observables -> the
  *  provider is not invoked.
  * ------------------------------------------------------------------- */
 using ObservableGradProvider =
@@ -774,7 +774,7 @@ using ObservableGradProvider =
  *
  *  Free helper that takes a live, trained mlip::Trainer plus the
  *  training and validation StructureDBs and produces the analytical
- *  loss gradient for each registered θ. Indices the descriptor walker
+ *  loss gradient for each registered theta. Indices the descriptor walker
  *  cannot supply analytically (or where Phase 2A first-cut restrictions
  *  fail) end up in `needs_fd` so the HYBRID strategy's masked-FD pass
  *  can pick them up.
@@ -789,27 +789,27 @@ using ObservableGradProvider =
  *  OALGO=4, LAMBDA != -1, MODEL[1] in {BF_Linear, Kern_Linear},
  *  use_srmse=false. FORCE=true is supported on the train side
  *  (Phase 2B C-step), and use_frmse=true is supported on the val side
- *  (Phase 2B C-val — requires ctx.FORCE=true so the descriptor calc
+ *  (Phase 2B C-val -- requires ctx.FORCE=true so the descriptor calc
  *  populates fd_ij). On any restriction violation the helper routes
  *  everything to needs_fd and returns true. Non-linear kernels
  *  (Kern_RBF / Kern_Polynomial / Kern_Sigmoid) use EKM projection in
- *  M_KRR_Train, so the analytical chain requires dEKM/dtheta —
+ *  M_KRR_Train, so the analytical chain requires dEKM/dtheta --
  *  deferred to Phase 2C.
  *
  *  `sims_grad_provider` (Phase 3.7B): default-null. When `trg.LS` is
  *  non-empty AND a provider is supplied, the helper drives
  *  `compute_sims_grad_dWchain` on the provider's outputs to fold
  *  LAMMPS-observable gradients into `g_out`. Null provider with non-
- *  empty LS → falls back to all-FD (byte-identical to pre-3.7B).
+ *  empty LS -> falls back to all-FD (byte-identical to pre-3.7B).
  *
  *  `obs_grad_provider` (PC_OBSERVABLE D4b): default-null. When
  *  `trg.observables` is non-empty AND a provider is supplied, the
  *  helper drives `compute_observables_grad_dWchain` on the provider's
  *  outputs to fold typed-observable (cohesive_energy, ...) gradients
- *  into `g_out`. Null provider with non-empty observables → falls
- *  back to all-FD. Sims and observable chains are independent — both
+ *  into `g_out`. Null provider with non-empty observables -> falls
+ *  back to all-FD. Sims and observable chains are independent -- both
  *  fire when both providers are present, and a failure in either
- *  routes every θ to FD (all-or-nothing across both tiers; per-tier
+ *  routes every theta to FD (all-or-nothing across both tiers; per-tier
  *  Phase A masking is deferred).
  *
  *  g_out is sized to prefs.size() and pre-zeroed by this helper.
@@ -839,7 +839,7 @@ compute_analytical_gradient_from_trainer(
 
     /* Phase-timing instrumentation. Enabled when env TADAH_PROFILE_GRADIENT=1
      * is set; emits one stderr line per gradient call breaking down the
-     * cost of train Phi rebuild, val Phi build, per-θ loop, and downstream
+     * cost of train Phi rebuild, val Phi build, per-theta loop, and downstream
      * chain rule. Costs nothing when the env var is unset (one getenv per
      * gradient call). */
     const bool profile_grad = [](){
@@ -861,7 +861,7 @@ compute_analytical_gradient_from_trainer(
      *
      * Pre-Phase 3.7B (Option A from PROMPT_NEXT_NLOPT_LBFGS.md): any
      * trg.LS entry forced a full FD fall-back because sims_loss had no
-     * analytical chain. Phase 3 IFT-adjoint changes that — when the
+     * analytical chain. Phase 3 IFT-adjoint changes that -- when the
      * caller supplies a `sims_grad_provider`, the LAMMPS-observable
      * gradient is folded in below via `compute_sims_grad_dWchain`. Null
      * provider keeps the historical fall-back (HYBRID's masked FD picks
@@ -876,7 +876,7 @@ compute_analytical_gradient_from_trainer(
      * (force rows in Phi_train_aug feed the IFT, fitting W* against
      * energy+force targets). Validation-side Phi remains energy-only
      * unless use_frmse or use_srmse is also lifted (separate sub-steps).
-     * STRESS=true still falls back — separate sub-step. */
+     * STRESS=true still falls back -- separate sub-step. */
     if (ctx.template get<bool>("STRESS"))
         return fall_back_all_fd();
     if (ctx.template get<bool>("NORM"))
@@ -901,7 +901,7 @@ compute_analytical_gradient_from_trainer(
          * Non-linear kernels (Kern_RBF / Kern_Polynomial / Kern_Sigmoid) still
          * fall back to FD: their Phi is `sum_atoms K(basis_b, aed_a)` and the
          * trainer always applies EKM projection, so the analytical chain
-         * requires both a kernel-arm walker and the dEKM/dtheta derivative —
+         * requires both a kernel-arm walker and the dEKM/dtheta derivative --
          * deferred to Phase 2C. The kernel-arm walker landed alongside this
          * gate lift (assemble_dphi_train_energy_rows_d2_kern in MLIP) and is
          * exercised by Layer-1.5 parity tests, but is not consumed here. */
@@ -914,18 +914,18 @@ compute_analytical_gradient_from_trainer(
      * reading host.dm.getPhi(). Trainer::dm is *not* populated by
      * Trainer::train (that builds M_BLR's private internal desmat,
      * which is inaccessible from here). The cost is one extra
-     * dc.calc(train_stdb) pass per gradient call — same cost as the
-     * predict() pass in operator(), and amortised over all θ partials.
+     * dc.calc(train_stdb) pass per gradient call -- same cost as the
+     * predict() pass in operator(), and amortised over all theta partials.
      *
      * Layout matches DesignMatrix's per-struct interleaved post-scale
      * output:
-     *   - Per struct s: 1 energy row, then (if FORCE) 3·natoms force
-     *     rows for atoms 0..natoms-1 × axis 0..2.
+     *   - Per struct s: 1 energy row, then (if FORCE) 3.natoms force
+     *     rows for atoms 0..natoms-1 x axis 0..2.
      *   - After all data rows: n_cols ridge augmentation rows
      *     (sqrt(lambda) on the no-bias diagonal).
      *
      * Row offsets:
-     *   - energy_row[s]      = sum_{s'<s} (1 + (FORCE ? 3·natoms(s') : 0))
+     *   - energy_row[s]      = sum_{s'<s} (1 + (FORCE ? 3.natoms(s') : 0))
      *   - force_row_start[s] = energy_row[s] + 1   (only used if FORCE)
      *   - ridge block starts at m_data. */
     const bool        use_force = ctx.template get<bool>("FORCE");
@@ -1009,7 +1009,7 @@ compute_analytical_gradient_from_trainer(
         }
     }
 
-    /* Ridge augmentation block — written into the bottom n_cols rows. */
+    /* Ridge augmentation block -- written into the bottom n_cols rows. */
     const double      lambda = ctx.template get<double>("LAMBDA", 0);
     const std::size_t n_bias = tadah::core::n_intercept_columns(ctx);
     if (lambda > 0.0) {
@@ -1039,15 +1039,15 @@ compute_analytical_gradient_from_trainer(
 
     if (profile_grad) t_chol = clk::now();
 
-    /* use_srmse still falls back — stress chain rule deferred to a later
+    /* use_srmse still falls back -- stress chain rule deferred to a later
      * Phase 2B sub-step (C-stress) because the Phi stress row carries a
      * position factor (ri[x] - rj[x]) that needs separate handling. */
     if (trg.use_srmse) return fall_back_all_fd();
 
     /* Validation Phi layout. Per-struct interleaved when use_frmse is
-     * active (mirrors the train-side layout): 1 energy row + 3·natoms
+     * active (mirrors the train-side layout): 1 energy row + 3.natoms
      * force rows per struct. When use_frmse is off, a single energy row
-     * per struct (energy_row_for_struct_val[s] == s — preserves the
+     * per struct (energy_row_for_struct_val[s] == s -- preserves the
      * Phase 2A scalar layout). use_frmse requires ctx.FORCE=true so the
      * walker on val_stdb has fd_ij populated; if FORCE=false the gate
      * falls back. */
@@ -1068,7 +1068,7 @@ compute_analytical_gradient_from_trainer(
         n_val_rows = row_cursor;
     }
 
-    /* Build phi_val and pred_val via dc.calc → sum AEDs (energy rows)
+    /* Build phi_val and pred_val via dc.calc -> sum AEDs (energy rows)
      * and the antisymmetric fij - fji pattern (force rows, when
      * use_frmse_val). Force prediction is phi_val_force_row . W*. */
     mlip::StructureDB pred_val;
@@ -1140,14 +1140,14 @@ compute_analytical_gradient_from_trainer(
         plan.loss_count = lc;
     }
 
-    /* DM rho/F'(ρ) cache (Phase 2E P3). The DM walker's per-atom pre-pass
+    /* DM rho/F'(rho) cache (Phase 2E P3). The DM walker's per-atom pre-pass
      * (calc_rho over neighbours + calc_aed to fill F'(rho) tail) is
-     * θ-INVARIANT — neither calc_rho nor calc_aed take a theta_name. Build
+     * theta-INVARIANT -- neither calc_rho nor calc_aed take a theta_name. Build
      * the cache once per gradient call (train + val) and reuse it across
-     * all θ. build_dm_rho_cache parallelises internally.
+     * all theta. build_dm_rho_cache parallelises internally.
      *
      * Bench knob: TADAH_DISABLE_DM_CACHE=1 skips the cache build and routes
-     * the per-θ loop through the non-cached combined walker. Used by P5 to
+     * the per-theta loop through the non-cached combined walker. Used by P5 to
      * measure the cache's marginal contribution on the live config; the
      * cache itself stays opt-in via this knob until we have empirical data
      * showing it consistently wins (the cache's memory-traffic vs
@@ -1168,7 +1168,7 @@ compute_analytical_gradient_from_trainer(
 
     if (profile_grad) t_dm_cache = clk::now();
 
-    /* Per-θ buffers (own storage; plan holds raw pointers into these).
+    /* Per-theta buffers (own storage; plan holds raw pointers into these).
      * Train side is laid out in the interleaved Phi_aug shape; val side
      * matches the n_val_rows-wide phi_val layout (with force rows when
      * use_frmse_val is true). */
@@ -1176,7 +1176,7 @@ compute_analytical_gradient_from_trainer(
     std::vector<std::vector<double>> dphi_val_buf  (prefs.size());
     std::vector<PerThetaInputs>      per_theta     (prefs.size());
 
-    /* Per-θ loop is embarrassingly parallel: each iteration i writes to
+    /* Per-theta loop is embarrassingly parallel: each iteration i writes to
      * its own dphi_train_buf[i] / dphi_val_buf[i] / per_theta[i] slot,
      * and the descriptor walkers are const on host.DCS, train_stdb,
      * val_stdb. Scratch buffers are declared INSIDE the loop body so
@@ -1184,16 +1184,16 @@ compute_analytical_gradient_from_trainer(
      * per gradient call, negligible vs the descriptor walk cost).
      *
      * Cost-aware scheduling (Phase 2F): on a config with n_theta close
-     * to n_threads (BASINSv2: 29 θ / 26 threads) and a long tail of
-     * near-equal-cost heavy θ, plain schedule(dynamic) can leave a
-     * heavy θ in the queue at wave-2 — the cheap-θ threads pick it up
-     * and the wall doubles. Sort θ by descending last-call cost (a
+     * to n_threads (BASINSv2: 29 theta / 26 threads) and a long tail of
+     * near-equal-cost heavy theta, plain schedule(dynamic) can leave a
+     * heavy theta in the queue at wave-2 -- the cheap-theta threads pick it up
+     * and the wall doubles. Sort theta by descending last-call cost (a
      * static cache keyed by theta_name[arg_pos]) so the heaviest enter
      * the queue first; threads converge on the heavy wave together,
-     * and the tail becomes a batch of cheap θ that fits in any gap.
+     * and the tail becomes a batch of cheap theta that fits in any gap.
      * Iteration writes still go to dphi_*_buf[i] / per_theta[i] (the
      * descriptor-side i), so caller-visible buffer layout is
-     * unchanged — sorting only reorders the OMP dispatch sequence. */
+     * unchanged -- sorting only reorders the OMP dispatch sequence. */
     static std::unordered_map<std::string, double> theta_cost_cache;
     auto cost_key = [](const ParamRef& p) {
         std::string k = p.theta_name;
@@ -1217,13 +1217,13 @@ compute_analytical_gradient_from_trainer(
                              return theta_cost_hint[a] > theta_cost_hint[b];
                          });
     }
-    /* Per-θ timing. Always recorded — the cache that drives next-call
+    /* Per-theta timing. Always recorded -- the cache that drives next-call
      * scheduling is fed from here, so we cannot gate this on profile_grad.
      * clk::now() is ~30 ns on Linux clock_gettime(MONOTONIC); cost vs the
-     * ms-scale per-θ work is invisible. */
+     * ms-scale per-theta work is invisible. */
     std::vector<double> per_theta_ms(prefs.size(), 0.0);
-    /* Per-θ queue start offset (ms from per-θ loop entry) — lets the
-     * profile output identify which θ are dispatched LAST, the metric
+    /* Per-theta queue start offset (ms from per-theta loop entry) -- lets the
+     * profile output identify which theta are dispatched LAST, the metric
      * that matters for tail behaviour. Filled under profile_grad. */
     std::vector<double> per_theta_start_ms(prefs.size(), 0.0);
     const auto t_loop_start = clk::now();
@@ -1244,14 +1244,14 @@ compute_analytical_gradient_from_trainer(
         /* Combined energy + force walker with rho cache (Phase 2E P1+P3):
          * one pass per side sharing the per-pair iteration (D2) and the
          * per-atom rho/drho pre-pass (DM) across the energy and force
-         * derivative kernels, AND reusing the θ-independent rho/F'(ρ)
-         * field across all θ via dm_cache_{train,val}. Pre-Phase-2E this
-         * was four walker calls per θ each rebuilding the rho pre-pass;
+         * derivative kernels, AND reusing the theta-independent rho/F'(rho)
+         * field across all theta via dm_cache_{train,val}. Pre-Phase-2E this
+         * was four walker calls per theta each rebuilding the rho pre-pass;
          * Phase 2E folds the rho pre-pass into a single one-shot build
-         * outside the per-θ loop.
+         * outside the per-theta loop.
          *
          * Train-side energy rows go to energy_scratch_train (dense
-         * n_struct × n_cols, copied later into the interleaved
+         * n_struct x n_cols, copied later into the interleaved
          * dphi_train_buf with weight scaling). Force rows go directly
          * into the interleaved dphi_train_buf at the force-row offsets. */
         const auto pr_train = disable_dm_cache
@@ -1271,7 +1271,7 @@ compute_analytical_gradient_from_trainer(
         const bool ok_f_train = pr_train.second;
 
         /* Val-side: same cached walker on val_stdb with dm_cache_val.
-         * No weight scaling (val Phi has no eweight/fweight factors —
+         * No weight scaling (val Phi has no eweight/fweight factors --
          * they only weigh the training fit). force_row_start_for_struct_val
          * is consumed only when use_frmse_val is true. */
         const auto pr_val = disable_dm_cache
@@ -1299,12 +1299,12 @@ compute_analytical_gradient_from_trainer(
          * theta to needs_fd instead.
          *
          * Val-side ownership: when use_frmse_val is true, both energy
-         * and force walkers must claim the theta for val too — same
+         * and force walkers must claim the theta for val too -- same
          * argument applies (a missing val force walker would silently
          * zero the dPhi_val force rows). */
         const bool ok_train = ok_e_train && (!use_force      || ok_f_train);
         const bool ok_val   = ok_e_val   && (!use_frmse_val  || ok_f_val);
-        if (!ok_train || !ok_val) continue;     /* → needs_fd */
+        if (!ok_train || !ok_val) continue;     /* -> needs_fd */
 
         /* Copy energy scratch rows into dphi_train_buf at the energy
          * row offsets and scale by w_e. */
@@ -1339,7 +1339,7 @@ compute_analytical_gradient_from_trainer(
                 dphi_val_buf[i][dst_off + c] = energy_scratch_val[src_off + c];
         }
         /* Val force rows were written directly by the walker into the
-         * interleaved positions — no copy needed, and no weight scaling. */
+         * interleaved positions -- no copy needed, and no weight scaling. */
 
         per_theta[i].dPhi_train_aug = dphi_train_buf[i].data();
         per_theta[i].dPhi_val       = dphi_val_buf  [i].data();
@@ -1349,8 +1349,8 @@ compute_analytical_gradient_from_trainer(
 
     if (profile_grad) t_per_theta = clk::now();
 
-    /* Feed the scheduling cache for the next gradient call. Skipped θ
-     * (continue branches above) keep per_theta_ms[i] ≈ 0 — fine, they
+    /* Feed the scheduling cache for the next gradient call. Skipped theta
+     * (continue branches above) keep per_theta_ms[i] ~= 0 -- fine, they
      * route to FD anyway and will sort to the tail next call. */
     for (std::size_t i = 0; i < prefs.size(); ++i)
         theta_cost_cache[cost_key(prefs[i])] = per_theta_ms[i];
@@ -1374,7 +1374,7 @@ compute_analytical_gradient_from_trainer(
     plan.prefs         = &prefs;
     plan.per_theta     = &per_theta;
 
-    /* The orchestrator works on a Vec template — wrap g_out in a
+    /* The orchestrator works on a Vec template -- wrap g_out in a
      * minimal adapter (mirrors the synthetic-test VecAdapter style). */
     struct VecAdapterFlat {
         std::vector<double>* data;
@@ -1389,9 +1389,9 @@ compute_analytical_gradient_from_trainer(
     x_dummy.data = &x_buf;
     VecAdapterFlat g_adapter{ &g_out };
 
-    /* Capture dW/dθ when either chain needs it. Both PC_LAMMPS
-     * (Phase 3.7B) and PC_OBSERVABLE (D4b) consume the same dW/dθ
-     * matrix — gather both flags upfront. The extra cost is one
+    /* Capture dW/dtheta when either chain needs it. Both PC_LAMMPS
+     * (Phase 3.7B) and PC_OBSERVABLE (D4b) consume the same dW/dtheta
+     * matrix -- gather both flags upfront. The extra cost is one
      * allocation; the actual back-solves happen inside
      * compute_dloss_dtheta either way. */
     const bool want_sims_grad = sims_grad_provider && !trg.LS.empty();
@@ -1409,8 +1409,8 @@ compute_analytical_gradient_from_trainer(
      * (ok=false) already routes the optimiser to a clamp, so we don't
      * bother chaining downstream losses in that case. */
     if (ok && want_dWdtheta && dWdtheta.size() == prefs.size() * n_cols) {
-        /* Build the set of θ for which the fit-side produced an
-         * analytical dW/dθ. needs_fd already lists indices that fell back
+        /* Build the set of theta for which the fit-side produced an
+         * analytical dW/dtheta. needs_fd already lists indices that fell back
          * to FD; the complement is the candidate set for analytical
          * chain rules. Shared by both sims and observable chains so
          * neither tier silently bypasses the FD set. */
@@ -1440,7 +1440,7 @@ compute_analytical_gradient_from_trainer(
             try {
                 provider_ok = sims_grad_provider(sims_inputs);
             } catch (const std::exception& e) {
-                /* Provider threw — treat as failure and fall back to FD
+                /* Provider threw -- treat as failure and fall back to FD
                  * for everything (per the helper's general "graceful
                  * degrade" pattern; analytical_gradient surfaces this via
                  * its catch around our call). */
@@ -1456,7 +1456,7 @@ compute_analytical_gradient_from_trainer(
              * e.g. LAMMPS run_script divergence on random-init pots).
              * Failed scripts contribute zero to the chain; this is
              * mathematically correct in the FAIL_SCORE=constant region
-             * (∂FAIL_SCORE/∂θ = 0) and prevents a single Tier-3 script
+             * (dFAIL_SCORE/dtheta = 0) and prevents a single Tier-3 script
              * crash from poisoning Tier-1 (PC_OBSERVABLE) analytical
              * gradients via the all-FD gate. */
             std::vector<int> needs_fd_sims;
@@ -1473,7 +1473,7 @@ compute_analytical_gradient_from_trainer(
             try {
                 provider_ok = obs_grad_provider(obs_inputs);
             } catch (const std::exception& e) {
-                /* Same "provider throws → all-FD" treatment as the sims
+                /* Same "provider throws -> all-FD" treatment as the sims
                  * branch. The Observable evaluator runs entirely in
                  * Tadah (no LAMMPS), so the throw set here is mostly
                  * relaxer divergence / NN-finder failure / linear-model
@@ -1487,7 +1487,7 @@ compute_analytical_gradient_from_trainer(
 
             /* Phase A masking applies symmetrically to PC_OBSERVABLE:
              * a per-observable `failed=true` (relaxer divergence,
-             * non-finite value, NN-finder fault) → skip-and-zero
+             * non-finite value, NN-finder fault) -> skip-and-zero
              * contribution rather than poisoning the whole gradient. */
             std::vector<int> needs_fd_obs;
             const bool obs_ok = compute_observables_grad_dWchain(
@@ -1513,16 +1513,16 @@ compute_analytical_gradient_from_trainer(
             ms(t_dm_cache,  t_per_theta),
             ms(t_per_theta, t_chain_rule),
             train_stdb.size(), val_stdb.size(), prefs.size(), n_cols);
-        /* Rank per-θ wall times. The few longest dominate the parallel
+        /* Rank per-theta wall times. The few longest dominate the parallel
          * loop wall-clock when n_theta < n_threads (one thread sits on
-         * a slow θ while others finish their batch and idle). */
+         * a slow theta while others finish their batch and idle). */
         std::vector<std::size_t> order(prefs.size());
         for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
         std::sort(order.begin(), order.end(),
                   [&](std::size_t a, std::size_t b){
                       return per_theta_ms[a] > per_theta_ms[b];
                   });
-        std::fprintf(stderr, "[GRADPROF-θ] top-6 thetas by wall:");
+        std::fprintf(stderr, "[GRADPROF-theta] top-6 thetas by wall:");
         for (std::size_t k = 0; k < std::min<std::size_t>(6, order.size()); ++k) {
             const std::size_t i = order[k];
             std::fprintf(stderr, " %s[%d]=%.1fms",
@@ -1530,9 +1530,9 @@ compute_analytical_gradient_from_trainer(
                          per_theta_ms[i]);
         }
         std::fprintf(stderr, "\n");
-        /* Queue-tail diagnostic: which θ were dispatched LAST? Under
-         * Phase 2F cost-descending sort, the tail must be cheap θ —
-         * if a heavy θ shows up here, the sort isn't doing its job
+        /* Queue-tail diagnostic: which theta were dispatched LAST? Under
+         * Phase 2F cost-descending sort, the tail must be cheap theta --
+         * if a heavy theta shows up here, the sort isn't doing its job
          * (e.g. cold cache, or cost variance > expected). */
         std::vector<std::size_t> start_order(prefs.size());
         std::iota(start_order.begin(), start_order.end(), std::size_t{0});
@@ -1540,7 +1540,7 @@ compute_analytical_gradient_from_trainer(
                   [&](std::size_t a, std::size_t b){
                       return per_theta_start_ms[a] > per_theta_start_ms[b];
                   });
-        std::fprintf(stderr, "[GRADPROF-θ] last-3 dispatched (queue tail):");
+        std::fprintf(stderr, "[GRADPROF-theta] last-3 dispatched (queue tail):");
         for (std::size_t k = 0; k < std::min<std::size_t>(3, start_order.size()); ++k) {
             const std::size_t i = start_order[k];
             std::fprintf(stderr, " %s[%d] start=%.1fms wall=%.1fms",

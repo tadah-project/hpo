@@ -2,7 +2,7 @@
 #define TADAH_HPO_PROGRESS_TRACKER_H
 
 /*
- *  ProgressTracker — per-stage stuck detector for the BASINS strategy.
+ *  ProgressTracker -- per-stage stuck detector for the BASINS strategy.
  *
  *  The user's safety contract:
  *    do not kill a candidate that is still progressing slowly relative
@@ -13,7 +13,7 @@
  *    2. The recent rate of best-loss improvement falls below
  *       `rate_threshold` (tolerance-derived; tighter tol => lower bar).
  *    3. The optimiser itself has signaled either ftol_rel/xtol_rel
- *       convergence or per-stage maxeval — recorded via the
+ *       convergence or per-stage maxeval -- recorded via the
  *       mark_optimizer_*() setters.
  *
  *  Conditions are AND'd. A single failing condition keeps the stage
@@ -70,7 +70,7 @@ public:
     double      best_loss()        const { return best_; }
     double      stage_tol()        const { return cfg_.tol; }
     bool        optimizer_done()   const { return opt_converged_ || opt_maxeval_; }
-    /* Reason string for hpolog ("rate=… < threshold=…", "optimizer
+    /* Reason string for hpolog ("rate=... < threshold=...", "optimizer
      * convergence", "max evals", ...). Best-effort, may be empty. */
     std::string stuck_reason()     const;
 

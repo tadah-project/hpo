@@ -91,7 +91,7 @@ class LammpsSim {
      * so they can use the warm-started guess as a relaxation seed.
      *
      * Multiple --hotvar entries on one line are allowed; they have no
-     * cross-references (hot scripts don't see each other's outputs —
+     * cross-references (hot scripts don't see each other's outputs --
      * phase A is parallel). Cold scripts see all of them.
      */
     struct HotVarDecl {
@@ -147,7 +147,7 @@ class LammpsSim {
  * failure, returns false and leaves `value` unchanged. Used by the eval
  * path to treat unparseable LAMMPS variable retrievals (e.g. nullptr -> ""
  * because the variable was never defined) as failed components rather
- * than letting the std::invalid_argument escape into NLopt's wrapper —
+ * than letting the std::invalid_argument escape into NLopt's wrapper --
  * NLopt translates that exception to NLOPT_INVALID_ARGS and aborts the
  * whole optimisation.
  */

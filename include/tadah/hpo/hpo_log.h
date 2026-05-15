@@ -1,6 +1,6 @@
 #pragma once
 /*
- * HPOLog — human-readable run journal for Tadah HPO jobs.
+ * HPOLog -- human-readable run journal for Tadah HPO jobs.
  *
  * Thread-safe singleton.  Call open() once from the main thread before
  * the optimiser starts; all other methods are safe from any thread.
@@ -9,15 +9,15 @@
  *
  * File layout
  * -----------
- *   ══ banner (version, cwd, PID, timestamp) ══
- *   ┄┄ FILES         ┄┄  — config / output files
- *   ┄┄ OPTIMISER     ┄┄  — algorithm, stop criteria, search space
- *   ┄┄ POTENTIAL      ┄┄  — 2B/MB, cutoffs, element list
- *   ┄┄ LOSS FUNCTION ┄┄  — targets, weights, FAIL_SCORE
- *   ┄┄ PROGRESS      ┄┄  — timestamped events: bests, NaN warnings, milestones
- *   ┄┄ DIAGNOSTICS   ┄┄  — NaN rate, bound-proximity analysis
- *   ┄┄ PERFORMANCE   ┄┄  — timing statistics
- *   ┄┄ RESULT        ┄┄  — final status, best loss, best metrics
+ *   == banner (version, cwd, PID, timestamp) ==
+ *   -- FILES         --  -- config / output files
+ *   -- OPTIMISER     --  -- algorithm, stop criteria, search space
+ *   -- POTENTIAL      --  -- 2B/MB, cutoffs, element list
+ *   -- LOSS FUNCTION --  -- targets, weights, FAIL_SCORE
+ *   -- PROGRESS      --  -- timestamped events: bests, NaN warnings, milestones
+ *   -- DIAGNOSTICS   --  -- NaN rate, bound-proximity analysis
+ *   -- PERFORMANCE   --  -- timing statistics
+ *   -- RESULT        --  -- final status, best loss, best metrics
  */
 
 #include <atomic>
@@ -40,11 +40,11 @@ namespace tadah::mlip { struct LoadTransformReport; }
 namespace tadah::hpo {
 
 /* =========================================================================
- * HPOLog — the logger.
+ * HPOLog -- the logger.
  *
  * HPOLog also implements ICheckpointable so that the journal's running
  * counters (n_eval, best loss, best eval) survive across restarts. The
- * actual log file is opened in append mode by open() — the
+ * actual log file is opened in append mode by open() -- the
  * checkpointed counters let the journal stay coherent (eval numbers
  * keep monotonically increasing, "best so far" doesn't reset).
  * ========================================================================= */
@@ -79,7 +79,7 @@ public:
      * ------------------------------------------------------------------ */
 
     void writeln(const std::string& text = "");
-    void section(const std::string& title);                 // ┄┄ TITLE ┄┄
+    void section(const std::string& title);                 // -- TITLE --
     void kv     (const std::string& key,
                  const std::string& val,
                  int key_width = 22);                       // "  key : val"
@@ -111,7 +111,7 @@ public:
         std::size_t          n_val,
         const std::string&   elements_str);
 
-    /** LOAD TRANSFORMS section — emitted once at host construction summarising
+    /** LOAD TRANSFORMS section -- emitted once at host construction summarising
      *  what load-time transforms (LSCALE, ESHIFT, EFILTER, FFILTER, WDBFILE,
      *  EWEIGHT_TEMP, ZERO_COM_FORCE, equilibrium-volume) were applied to the
      *  training set. The validation report is summarised on a single line
@@ -119,7 +119,7 @@ public:
      *  FFILTER if declared in the --validation file) so the validation-set
      *  size after filtering is always visible.
      *
-     *  Filter lines (training / validation) report `loaded → remain` so
+     *  Filter lines (training / validation) report `loaded -> remain` so
      *  the two sides are directly comparable.
      *
      *  No-op if @p train_report is informational-only (applied=false) AND
@@ -131,7 +131,7 @@ public:
 
     void write_loss_section(const HPOTargets& trg);
 
-    /** NOISE CALIBRATION section — written when the engine repeatedly
+    /** NOISE CALIBRATION section -- written when the engine repeatedly
      *  evaluates the seed point to measure objective noise. Surfaces
      *  per-run loss, summary stats, and a suggested FTOL_REL.
      *  @param losses           Total-loss values from each calibration eval
@@ -184,7 +184,7 @@ public:
      * ------------------------------------------------------------------ */
 
     /** Record an interim status string (e.g. NLopt's per-run termination
-     *  reason). Repeated calls overwrite — the last status before finish()
+     *  reason). Repeated calls overwrite -- the last status before finish()
      *  wins. Used by per-start drivers in MULTISTART so they don't have to
      *  call finish() themselves and prematurely close the journal.
      */
@@ -214,7 +214,7 @@ public:
         return cur_best_eval_;
     }
 
-    /** suggested FTOL_REL from NOISE_CALIBRATION (10 × rel_spread, floored
+    /** suggested FTOL_REL from NOISE_CALIBRATION (10 x rel_spread, floored
      *  at 1e-6). Returns nullopt if NOISE_CALIBRATION did not run.
      *  Persisted in the [HPOLOG] checkpoint section so a resumed BASINS
      *  run (which gates NOISE_CALIBRATION on `!resumed`) can still apply
@@ -229,7 +229,7 @@ public:
         noise_suggested_ftol_ = v;
     }
 
-    /* ICheckpointable — persists eval counters and best-so-far so an
+    /* ICheckpointable -- persists eval counters and best-so-far so an
      * interrupted run resumes with consistent journal state. */
     std::string tag() const override { return "HPOLOG"; }
     void save(core::Checkpoint& cp) const override;
@@ -238,7 +238,7 @@ public:
     /* Test-only: reset the singleton's running counters and best-so-far
      * to their freshly-constructed values. Used by regression tests so
      * one Catch2 test case's state does not leak into the next. Does
-     * not close the underlying file — call after open() if you also
+     * not close the underlying file -- call after open() if you also
      * want a fresh log file on disk. */
     void reset_for_test();
 
@@ -260,7 +260,7 @@ private:
     std::atomic<std::size_t> n_nan_      {0};
     std::atomic<std::size_t> n_nan_logged_{0};  // how many NaN events written
 
-    /* timing stats — protected by mtx_ */
+    /* timing stats -- protected by mtx_ */
     double      sum_ms_    = 0.0;
     double      min_ms_    = std::numeric_limits<double>::max();
     double      max_ms_    = 0.0;
@@ -270,7 +270,7 @@ private:
     /* next milestone for periodic summary */
     std::size_t next_milestone_ = 100;
 
-    /* best result tracking — set by log_new_best(), used by finish() */
+    /* best result tracking -- set by log_new_best(), used by finish() */
     double      cur_best_loss_  = std::numeric_limits<double>::max();
     std::size_t cur_best_eval_  = 0;
 
@@ -289,7 +289,7 @@ private:
 
     /* Lazy-section bookkeeping. event() emits a "-- SETUP DIAGNOSTICS --"
      * header on its very first call when sections_started_ is still false,
-     * so that init-time diagnostics (NOISE_AUTO, InitStrategy, …) emitted
+     * so that init-time diagnostics (NOISE_AUTO, InitStrategy, ...) emitted
      * during HPOTargets construction don't appear naked between the banner
      * and the first proper section. write_*_section() and start_progress()
      * set sections_started_ = true so subsequent events flow under PROGRESS
@@ -299,7 +299,7 @@ private:
 };
 
 /* =========================================================================
- * nlopt result → human-readable string
+ * nlopt result -> human-readable string
  * ========================================================================= */
 std::string nlopt_result_str(int code);
 

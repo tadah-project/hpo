@@ -1,29 +1,27 @@
 #!/usr/bin/env bash
-# run_reference_suite.sh — execute HPO examples and verify each against
+# run_reference_suite.sh -- execute HPO examples and verify each against
 # its reference_fingerprint.json. Designed for CI consumption (Session D
 # wires this into pipelines).
 #
 # CONTRACT
-#   • Run modes (mutually exclusive):
+#   * Run modes (mutually exclusive):
 #       --fast            run only examples flagged "fast": true (default)
 #       --full            run every numbered example
 #       --example=<NN>    run a single example by leading number (e.g. 03)
-#   • --no-clean          keep prior outputs / checkpoints; otherwise the
+#   * --no-clean          keep prior outputs / checkpoints; otherwise the
 #                         driver scrubs them before each run
-#   • Exit codes:
+#   * Exit codes:
 #       0  every executed example passed its fingerprint
 #       1  at least one example failed (numerical regression)
-#       2  at least one example skipped (missing fingerprint) — non-fatal
+#       2  at least one example skipped (missing fingerprint) -- non-fatal
 #          unless mixed with code 1
 #       3  one or more runs aborted before producing output (build broken)
-#   • Output: one line per example (PASS / FAIL / SKIP / MISSING) plus a
+#   * Output: one line per example (PASS / FAIL / SKIP / MISSING) plus a
 #     final summary table.
 #
 # ENVIRONMENT
-#   TADAH                 path to tadah CLI (default
-#                         /home/marcin/PROJECTS/TADAH/develop_wt/build_tadah/tadah).
-#                         Forwarded into common/run.sh which expects the
-#                         same variable.
+#   TADAH                 path to tadah CLI (defaults to `tadah` on PATH).
+#                         Forwarded into common/run.sh.
 #   OMP_NUM_THREADS       forwarded; defaults to 1 inside common/run.sh.
 #
 # TYPICAL USAGE
@@ -37,7 +35,7 @@
 #   bash HPO/examples/run_reference_suite.sh --example=03 --check-only
 #
 # This script is the single source of truth for "did the example bundle
-# regress?" — fingerprints live next to each example, the comparator
+# regress?" -- fingerprints live next to each example, the comparator
 # helper lives in tools/compare_fingerprint.py, and tolerance choices
 # are documented in tools/tolerance_overrides.json.
 
@@ -102,12 +100,17 @@ for dir in "${examples[@]}"; do
 
   if (( check_only == 0 )); then
     if (( clean_first )); then
-      # The example dir's run.sh wipes most outputs, but BASINS leaves a
-      # checkpoint.tadah behind that would otherwise short-circuit the run
-      # and skew fingerprint comparison.
       rm -f "$dir/checkpoint.tadah"
     fi
-    if ! ( cd "$dir" && bash "$COMMON_RUN" ) >/dev/null 2>&1; then
+    # Use the example's own run.sh when present (it may bootstrap a
+    # seed_pot.tadah or other prerequisites); otherwise fall through to
+    # the shared driver.
+    if [[ -x "$dir/run.sh" ]]; then
+      driver="$dir/run.sh"
+    else
+      driver="$COMMON_RUN"
+    fi
+    if ! ( cd "$dir" && bash "$driver" ) >/dev/null 2>&1; then
       echo "  RUN-FAIL  $name (driver returned non-zero)"
       fail+=1
       fail_names+=("$name (run failed)")
@@ -116,7 +119,8 @@ for dir in "${examples[@]}"; do
     fi
   fi
 
-  out=$(python3 "$COMPARATOR" "$dir" 2>&1) || rc=$? && rc=${rc:-0}
+  rc=0
+  out=$(python3 "$COMPARATOR" "$dir" 2>&1) || rc=$?
   echo "$out"
   case "$rc" in
     0) pass+=1;     results+=("$name|PASS") ;;

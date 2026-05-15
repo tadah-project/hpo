@@ -4,7 +4,7 @@
 
 namespace tadah {
 
-/* ----------  mapping strings ↔ enum  ---------------------------------- */
+/* ----------  mapping strings <-> enum  ---------------------------------- */
 LossFunction::Type LossFunction::from_string(const std::string& s)
 {
     std::string u(s);                                      // upper-case copy
@@ -38,7 +38,7 @@ std::string LossFunction::to_string(Type t)
 std::vector<double> LossFunction::default_params(Type t)
 {
     switch(t){
-      case Type::HUBER : return {50.0};      // δ
+      case Type::HUBER : return {50.0};      // delta
       case Type::TUKEY : return {4.685};     // c
       default : return {};
     }

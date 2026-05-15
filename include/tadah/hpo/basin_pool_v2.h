@@ -2,7 +2,7 @@
 #define TADAH_HPO_BASIN_POOL_V2_H
 
 /*
- *  BasinPoolV2 — extended basin pool for the BASINSv2 strategy.
+ *  BasinPoolV2 -- extended basin pool for the BASINSv2 strategy.
  *
  *  Extends v1's BasinPool with:
  *    - per-basin lifecycle state (ACTIVE / PROMISING / INACTIVE /
@@ -11,7 +11,7 @@
  *    - stable monotonic basin id (independent of vector index, so merge
  *      tombstones and the priority queue can refer to basins safely
  *      across pool compactions).
- *    - improvement EMA, eval bookkeeping, per-basin tol cursor — the raw
+ *    - improvement EMA, eval bookkeeping, per-basin tol cursor -- the raw
  *      inputs to the priority scoring formula.
  *    - verify-before-kill counters (ticks an INACTIVE basin a couple of
  *      times before transitioning to KILLED).
@@ -26,7 +26,7 @@
  *  Active-vs-archived: ACTIVE/PROMISING/INACTIVE/SUSPECT_DUP basins
  *  count against `pool_max`; MERGED/KILLED basins count against
  *  `archive_max`. Archived basins are retained because the EXPLORE filter
- *  uses them to answer "have we explored this region?" — silently evicting
+ *  uses them to answer "have we explored this region?" -- silently evicting
  *  them would defeat the design.
  */
 
@@ -56,7 +56,7 @@ const char* lifecycle_name(LifecycleState s);
 /* True iff the basin counts against pool_max (vs archive_max). */
 bool is_archive_state(LifecycleState s);
 
-/* Coarse path snapshot — kept here (not in basins_v2_path.h) so the
+/* Coarse path snapshot -- kept here (not in basins_v2_path.h) so the
  * pool's save/load can serialise the field without a circular include.
  * Phase 4 may grow path-handling helpers in basins_v2_path.h that
  * operate on this struct; the data layout stays in the pool. */
@@ -103,7 +103,7 @@ struct BasinV2 {
     int                 verify_passes          = 0;
 
     /* --- coarse trajectory (Phase 4; may stay empty in earlier
-     *     phases — checkpoint round-trips an empty vector cleanly) --- */
+     *     phases -- checkpoint round-trips an empty vector cleanly) --- */
     std::vector<PathPoint> coarse_path;
 };
 
@@ -126,7 +126,7 @@ public:
      *
      * Initial state is ACTIVE. Merge-by-distance considers ACTIVE,
      * PROMISING, INACTIVE, SUSPECT_DUP residents; merging into MERGED
-     * or KILLED is forbidden — those are tombstones. */
+     * or KILLED is forbidden -- those are tombstones. */
     int add_or_merge(std::vector<double> params, double loss, int iteration);
 
     /* Refinement-complete update: records params/loss (if improved),
@@ -148,7 +148,7 @@ public:
      * tickle refinement produced a measurable improvement. */
     void on_verify_attempt(int basin_id, bool improved, int iteration);
 
-    /* Mark basin as exhausted at the given tol (idempotent — tightest
+    /* Mark basin as exhausted at the given tol (idempotent -- tightest
      * value wins). */
     void mark_exhausted(int basin_id, double tol);
 
@@ -171,7 +171,7 @@ public:
                           double merge_loss_threshold) const;
 
     /* Flag a pair as SUSPECT_DUP so the scheduler refines them once
-     * more before deciding. Idempotent — already-suspect basins stay
+     * more before deciding. Idempotent -- already-suspect basins stay
      * suspect. Refuses if either is in MERGED / KILLED. Returns true
      * if any state actually changed. */
     bool flag_suspect_pair(int basin_id_a, int basin_id_b, int iteration);

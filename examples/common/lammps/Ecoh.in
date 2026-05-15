@@ -1,12 +1,13 @@
-# Ecoh.in — minimal cohesive-energy script for HPO examples.
+# Ecoh.in -- minimal cohesive-energy script for HPO examples.
 #
 # Computes E_iso (free atom) - E_bulk_per_atom for a 4x4x4 BCC supercell.
 # Exposes:
-#   varloss Ecoh — used by HPO as a target loss term
-#   outvar  a0   — relaxed lattice constant; HPO captures it for the
-#                   warm-start cache and for the [a0_min, a0_max] filter.
+#   varloss Ecoh   -- used by HPO as a target loss term
+#   hotvar  hot_a0 -- relaxed lattice constant; HPO reads it back and
+#                   caches it as the warm-start seed for the next eval.
 #
-# Honors ${hot_a0} as the initial lattice guess (HPO injects it).
+# Honors ${hot_a0} as the initial lattice guess (HPO injects it before
+# the script runs, then re-reads it via get_variable after minimise).
 
 # ---------- Isolated atom ----------
 clear
@@ -63,8 +64,11 @@ minimize 1e-12 1e-12 500 500
 unfix 1
 variable eq_ok equal ternary($(fmax) < 0.1, 1, 0)
 
-variable lxnow equal lx
-variable a0 equal ${lxnow}/4.0
+# Redefine hot_a0 to the relaxed lattice so HPO's get_variable() reads
+# back the converged value (not the seed it injected before the run).
+# HPO injects hotvars as equal-style, so this is a same-style overwrite
+# that LAMMPS accepts without a prior `variable delete`.
+variable hot_a0 equal lx/4.0
 
 variable tmp equal atoms
 variable N equal ${tmp}

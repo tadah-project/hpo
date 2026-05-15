@@ -47,7 +47,7 @@ void DenseAdjointSolver::solve(const Eigen::VectorXd& rhs,
             "DenseAdjointSolver: rhs size does not match H.rows()");
     }
 
-    /* Fast-path: identically-zero rhs ⇒ λ = 0. Pairs with
+    /* Fast-path: identically-zero rhs => lambda = 0. Pairs with
      * `ObservableHandle::dg_dx_is_zero` from Phase 3.3 so caller can
      * skip the call entirely; this catch is the defensive belt. */
     if (rhs.cwiseAbs().maxCoeff() == 0.0) {
@@ -59,7 +59,7 @@ void DenseAdjointSolver::solve(const Eigen::VectorXd& rhs,
 
     /* Acoustic translation-mode projection. For each cartesian axis,
      * subtract the per-axis mean of the atom block. The mode vectors
-     * are (1,0,0,1,0,0,…), (0,1,0,…), (0,0,1,…) on the atom block and
+     * are (1,0,0,1,0,0,...), (0,1,0,...), (0,0,1,...) on the atom block and
      * zero on the box block; orthogonalising rhs against them lets the
      * LDLT solve absorb the null-space without polluting box DOFs. */
     if (n_atom_dofs_ > 0 && (n_atom_dofs_ % 3 == 0)) {

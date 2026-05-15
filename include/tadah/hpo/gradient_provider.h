@@ -1,27 +1,27 @@
 #pragma once
 /*
- * gradient_provider.h — unified gradient backend for gradient-based HPO
+ * gradient_provider.h -- unified gradient backend for gradient-based HPO
  * optimizers (DLIB:BFGS, CERES:LBFGS/WOLFE/NLCG/STEEPEST_DESCENT, future
  * NLOPT:LD_*).
  *
  * Three strategies, selected by OptimizerSpec::grad_strategy (or default):
  *
- *   GradStrategy::Numerical  — Ceres DynamicNumericDiffCostFunction
+ *   GradStrategy::Numerical  -- Ceres DynamicNumericDiffCostFunction
  *                              (CENTRAL by default; FORWARD or RIDDERS
  *                              selectable via PARAM diff_method).
- *   GradStrategy::Analytical — strict closed-form. The caller provides
+ *   GradStrategy::Analytical -- strict closed-form. The caller provides
  *                              an `analytical_grad_fn` callback that
  *                              fills g[] and reports any unregistered
- *                              θ indices via a `needs_fd` out-list.
+ *                              theta indices via a `needs_fd` out-list.
  *                              Throws if any index has no registered
- *                              analytical derivative — use HYBRID for
+ *                              analytical derivative -- use HYBRID for
  *                              graceful fallback.
- *   GradStrategy::Hybrid     — analytical for registered θ + masked
+ *   GradStrategy::Hybrid     -- analytical for registered theta + masked
  *                              central-difference for unregistered
  *                              indices, in one gradient(x, g) call.
  *                              Same `analytical_grad_fn` signature.
- *                              Degenerate "no θ registered" case:
- *                              skip the FD pass and return ‖g‖=0 so a
+ *                              Degenerate "no theta registered" case:
+ *                              skip the FD pass and return g=0 so a
  *                              gradient-based inner terminates cleanly
  *                              and an outer derivative-free sampler
  *                              keeps progressing. Use NUMERICAL to opt
@@ -90,7 +90,7 @@ struct GradientProvider {
 };
 
 /* Caller-injected analytical gradient lambda. Fills g with the
- * closed-form gradient where it can; pushes any θ indices for which no
+ * closed-form gradient where it can; pushes any theta indices for which no
  * analytical derivative is registered onto `needs_fd`. Returns false on
  * bad eval (clamp, NaN). The HOST captures whatever state it needs
  * (Trainer factor, Analytics, registry...) before binding this. */
@@ -142,7 +142,7 @@ make_gradient_provider(const OptimizerSpec&     sp,
         throw std::runtime_error(
             "GRAD_STRATEGY=ANALYTICAL requires an analytical gradient "
             "callback, but none was provided. This is an internal wiring "
-            "error — the HPO host must register an analytical gradient "
+            "error -- the HPO host must register an analytical gradient "
             "function before constructing the GradientProvider.");
       };
       return gp;
@@ -204,19 +204,19 @@ make_gradient_provider(const OptimizerSpec&     sp,
       std::vector<int> needs_fd;
       if (!analytical_grad_fn(x, g, needs_fd)) return false;
 
-      /* All-FD gate: when every θ falls back to FD the masked-FD pass
+      /* All-FD gate: when every theta falls back to FD the masked-FD pass
        * degenerates into pure central differences on the whole vector.
        * On LAMMPS-driven loss components (`PC_LAMMPS`, see
        * `compute_analytical_gradient_from_trainer`'s sims-grad chain
-       * failure path) this is both very expensive (2·dim host calls per
-       * gradient eval, each running LAMMPS) AND noisy — the relaxation
+       * failure path) this is both very expensive (2.dim host calls per
+       * gradient eval, each running LAMMPS) AND noisy -- the relaxation
        * cliff at `--hotvar` boundaries makes one perturbed point land on
        * `FAIL_SCORE`, blowing up that gradient component. Gradient-based
        * inner optimisers (`LD_LBFGS`, DLIB:BFGS, Ceres) then monopolise
        * the eval budget on hopeless local descents and the outer global
        * sampler (e.g. `GN_MLSL_LDS`) never gets to explore. Skip the FD
        * pass instead and surface g = analytical_pass_zeros. The
-       * gradient-based local search receives ‖g‖=0 and terminates as
+       * gradient-based local search receives g=0 and terminates as
        * "converged"; an outer global driver simply samples another
        * point. NUMERICAL strategy remains the explicit opt-in for users
        * who genuinely want full FD. */

@@ -1,18 +1,18 @@
 #pragma once
 /*
- * ceres_adapter.h — drivers for the Ceres GradientProblemSolver family.
+ * ceres_adapter.h -- drivers for the Ceres GradientProblemSolver family.
  *
  * Algos exposed in this rollout:
- *   CERES:LBFGS              — line_search_direction_type = LBFGS, Wolfe LS
- *   CERES:WOLFE              — direction = BFGS,  Wolfe LS (full-Hessian BFGS)
- *   CERES:NLCG               — direction = NONLINEAR_CONJUGATE_GRADIENT
- *   CERES:STEEPEST_DESCENT   — direction = STEEPEST_DESCENT, Armijo LS
+ *   CERES:LBFGS              -- line_search_direction_type = LBFGS, Wolfe LS
+ *   CERES:WOLFE              -- direction = BFGS,  Wolfe LS (full-Hessian BFGS)
+ *   CERES:NLCG               -- direction = NONLINEAR_CONJUGATE_GRADIENT
+ *   CERES:STEEPEST_DESCENT   -- direction = STEEPEST_DESCENT, Armijo LS
  *
  * Algos explicitly deferred (not exposed; rejected at dispatch in
  * run_policy_base.h):
  *   CERES:LEVENBERG_MARQUARDT, CERES:DOGLEG, CERES:SUBSPACE_DOGLEG
- * — degenerate over a scalar loss; require residual-mode loss exposure
- * (objective semantics change Σrᵢ² vs. mean(rᵢ)) and benefit most from
+ * -- degenerate over a scalar loss; require residual-mode loss exposure
+ * (objective semantics change Sigmar^2 vs. mean(r)) and benefit most from
  * autodiff. Both belong to a later phase.
  *
  * Bounds caveat: GradientProblemSolver does not enforce box constraints.
@@ -130,13 +130,13 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
         throw std::runtime_error("CERES:" + algo + " requires MAXEVAL > 0 when provided");
 
     /* PARAM keys recognised across all four CERES gradient algos:
-     *   fd_step           — relative finite-diff step (numerical strategy)
-     *   diff_method       — 0 CENTRAL (default), 1 FORWARD, 2 RIDDERS
-     *   tol_gradinf       — gradient_tolerance (infinity norm)
-     *   max_lbfgs_rank    — LBFGS only
-     *   nlcg_type         — NLCG only: 0 FR, 1 PR, 2 HS
-     *   max_iter          — max_num_iterations cap (defaults to MAXEVAL or INT_MAX)
-     *   max_ls_iter       — max line search step size iterations
+     *   fd_step           -- relative finite-diff step (numerical strategy)
+     *   diff_method       -- 0 CENTRAL (default), 1 FORWARD, 2 RIDDERS
+     *   tol_gradinf       -- gradient_tolerance (infinity norm)
+     *   max_lbfgs_rank    -- LBFGS only
+     *   nlcg_type         -- NLCG only: 0 FR, 1 PR, 2 HS
+     *   max_iter          -- max_num_iterations cap (defaults to MAXEVAL or INT_MAX)
+     *   max_ls_iter       -- max line search step size iterations
      */
     static const std::vector<std::string> common_params = {
         "fd_step", "diff_method", "tol_gradinf",
@@ -343,7 +343,7 @@ inline void run_ceres_gradient_problem(
 
     std::ostringstream oss;
     oss << "CERES:" << algo_label
-        << " — termination: " << ceres::TerminationTypeToString(summary.termination_type)
+        << " -- termination: " << ceres::TerminationTypeToString(summary.termination_type)
         << " | iters=" << summary.iterations.size()
         << " | host_evals=" << evals_used.load()
         << " | initial_cost=" << summary.initial_cost
@@ -355,7 +355,7 @@ inline void run_ceres_gradient_problem(
     if (summary.termination_type != ceres::CONVERGENCE) {
         std::ostringstream oss2;
         oss2 << "CERES:" << algo_label
-             << " — non-convergent: " << summary.message;
+             << " -- non-convergent: " << summary.message;
         HPOLog::instance().warning(oss2.str());
     }
 }

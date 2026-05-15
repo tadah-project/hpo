@@ -5,7 +5,7 @@
 
 namespace tadah::hpo {
 
-/* Dense LDLT solver for the Phase 3 IFT-adjoint system  H · λ = rhs.
+/* Dense LDLT solver for the Phase 3 IFT-adjoint system  H . lambda = rhs.
  *
  * H is assembled by `LammpsHessianAssembler` (Phase 3.2) at the
  * relaxed atomic state x*. It is symmetric by construction, with a
@@ -27,7 +27,7 @@ namespace tadah::hpo {
  *   re-factored; `regularised()` reflects this.
  * - **Zero-rhs fast path.** Phase 3.3's `dg_dx_is_zero` flag promises
  *   the rhs is identically zero (e.g. cohesive E per atom at x*).
- *   The solver short-circuits to `λ = 0` without touching the LDLT.
+ *   The solver short-circuits to `lambda = 0` without touching the LDLT.
  */
 class DenseAdjointSolver {
 public:
@@ -38,12 +38,12 @@ public:
 
     /* Factorise H. `n_atom_dofs` defaults to -1, in which case the
      * full H is treated as box-only and acoustic projection is
-     * skipped; pass the atom-DOF count (3 × n_atoms) explicitly to
+     * skipped; pass the atom-DOF count (3 x n_atoms) explicitly to
      * enable the projection. H may be modified internally on the
      * Tikhonov retry. */
     explicit DenseAdjointSolver(Eigen::MatrixXd H, int n_atom_dofs = -1);
 
-    /// λ = H^-1 · (rhs projected). Resizes `lambda` to H.rows() doubles.
+    /// lambda = H^-1 . (rhs projected). Resizes `lambda` to H.rows() doubles.
     void solve(const Eigen::VectorXd& rhs, Eigen::VectorXd& lambda);
 
     /// True if the ctor applied a Tikhonov diagonal bump to make H factorable.

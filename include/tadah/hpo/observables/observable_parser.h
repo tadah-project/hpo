@@ -16,7 +16,7 @@ namespace hpo {
  *  tokens are kind-specific `--flag value` pairs.
  *
  *  Supported kinds in MVP:
- *    - `cohesive_energy` — required: `--species`, `--target`, `--weight`,
+ *    - `cohesive_energy` -- required: `--species`, `--target`, `--weight`,
  *      `--hotvar a0 <lo> <hi> [<init>]`. Optional: `--lattice bcc`
  *      (default), `--supercell nx ny nz` (default 4 4 4), `--loss
  *      L2|L1|HUBER|...` (default L2).

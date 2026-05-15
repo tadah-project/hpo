@@ -51,14 +51,14 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
      * model.fpredict which depends on dc.calc populating fd_ij arrays,
      * which is gated by FORCE in dc.context. The host owns the
      * trainer's master context and is the right scope to flip the
-     * flag — observable code stays oblivious to the trainer's training
+     * flag -- observable code stays oblivious to the trainer's training
      * FORCE setting. */
 
     /* PRECONDITION on warmstart: a0_current_ must lie within
      * [a0_min, a0_max]. Without this clamp, the relaxer can drive a0
      * outside the user-declared range over successive HPO evals (each
-     * eval updates a0_current_ ← new_a0 unconditionally). A drifted
-     * tiny a0 (e.g., 0.5 Å) produces a supercell whose NN search
+     * eval updates a0_current_ <- new_a0 unconditionally). A drifted
+     * tiny a0 (e.g., 0.5 Ang) produces a supercell whose NN search
      * builds ~10^4 neighbours per atom and stalls fpredict for tens
      * of seconds inside the analytical force loop. Mirrors PC_LAMMPS's
      * hot_a0 rejection policy. */
@@ -77,12 +77,12 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
     relax_opts.max_wall_time_s = cfg_.relax_max_wall_time_s;
     relax_opts.maxiter  = cfg_.relax_maxiter;
     relax_opts.maxeval  = cfg_.relax_maxeval;
-    /* Don't impose soft scale bounds on the relaxer (default ±∞).
+    /* Don't impose soft scale bounds on the relaxer (default +/-inf).
      * LAMMPS lets `box/relax` wander to whatever cell the model wants;
      * the hot-var rejection happens post-relax (`hot_a0 outside [...]`).
      * Per-LS-trial bounds interact badly with the Armijo line search:
      * most retries land at the boundary, no step survives, and the
-     * relax exits unconverged for almost every wild θ. With
+     * relax exits unconverged for almost every wild theta. With
      * max_strain_step=0.001 (matches LAMMPS vmax) + NNFinder's
      * defensive cap on near-degenerate cells, the relax can't
      * catastrophically drift inside maxeval=5000.
@@ -91,7 +91,7 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
      * line-search step has placed a0 outside [a0_min, a0_max]. The
      * post-hoc hot-var gate at line 99 rejects on the same condition,
      * so any relax that crosses the boundary is guaranteed to be
-     * rejected — burning the rest of the maxeval budget is wasted
+     * rejected -- burning the rest of the maxeval budget is wasted
      * work. Because the predicate fires AFTER an accepted LS step
      * (not during the LS halving), it doesn't interfere with the LS's
      * ability to find a step that lands inside the range. */
@@ -113,8 +113,8 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
 
     /* Reject if the relax drove a0 outside the user-declared hot-var
      * range. Mirrors PC_LAMMPS's `rejecting (hot_a0=... outside [..])`
-     * policy — the optimiser sees NaN → FAIL_SCORE component and
-     * walks away from this θ. Keep a0_current_ at the *clamped*
+     * policy -- the optimiser sees NaN -> FAIL_SCORE component and
+     * walks away from this theta. Keep a0_current_ at the *clamped*
      * pre-relax value so subsequent evals don't inherit a wild
      * warmstart that would re-stall NN search at the cell-build step. */
     if (!(new_a0 >= cfg_.a0_min && new_a0 <= cfg_.a0_max)) {
@@ -129,12 +129,12 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
     /* eq_ok-style convergence gate (matches Ecoh_fast.in). With
      * relax_atom_ftol=0.1 the relaxer's internal `converged` flag
      * fires exactly when (atom fmax, strain force normalised) both
-     * fall below LAMMPS's 0.1 eV/Å eq_ok threshold, so we can use
+     * fall below LAMMPS's 0.1 eV/Ang eq_ok threshold, so we can use
      * `!rr.converged` as the canonical unconverged signal. Returns
      * the soft penalty value (Ecoh=100.0 by default, matches the
      * `Ecoh = ternary(v_eq_ok, v_Ecoh_raw, 100.0)` fallback). Set
      * --unconverged-penalty nan to disable the soft path and reject
-     * hard via NaN→FAIL_SCORE. */
+     * hard via NaN->FAIL_SCORE. */
     const bool relax_unconverged =
         !rr.converged ||
         rr.maxeval_reached ||
@@ -150,7 +150,7 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
                 res.value = cfg_.unconverged_value;
                 break;
             case Strat::ForceScaled:
-                /* target + slope · fmax. With fmax → 0 the value → target
+                /* target + slope . fmax. With fmax -> 0 the value -> target
                  * (no extra loss); with large fmax the value grows
                  * linearly and the L2 loss grows quadratically. This
                  * gives local optimisers a usable gradient toward
@@ -166,7 +166,7 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
         return res;
     }
 
-    /* 3. Build isolated atom in a vacuum box (cubic 20 Å). */
+    /* 3. Build isolated atom in a vacuum box (cubic 20 Ang). */
     Structure iso = cells::isolated_atom(cfg_.species);
 
     /* 4. Descriptor + energy evaluation on both. NN-build on iso explicitly
@@ -201,7 +201,7 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
     /* 6. Update hot-var for next eval (warm start). */
     a0_current_ = new_a0;
 
-    /* 7. Assemble result. needs_adjoint = false (∂E_coh/∂x = 0 at minimum). */
+    /* 7. Assemble result. needs_adjoint = false (dE_coh/dx = 0 at minimum). */
     ObservableEvalResult res;
     res.value                 = Ecoh;
     res.dO_dW                 = std::move(dEcoh_dW);

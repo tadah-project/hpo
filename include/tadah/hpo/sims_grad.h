@@ -21,31 +21,31 @@ namespace tadah::hpo {
  *
  * The math is, per LAMMPS observable `k` at the relaxed state x*(W):
  *
- *   solve   H · λ_k = (∂g_k/∂x)ᵀ           (Phase 3.4)
- *   apply   dO_k/dW = ∂g_k/∂W + λ_kᵀ · dF/dW          (this header)
- *   fold    dL/dW  += (∂L_k/∂O_k) · dO_k/dW           (loss gradient)
- *   chain   g_out[i] += Σ_c dL/dW[c] · dWdtheta[i, c] (Phase 2 dWdθ)
+ *   solve   H . lambda_k = (dg_k/dx)^T           (Phase 3.4)
+ *   apply   dO_k/dW = dg_k/dW + lambda_k^T . dF/dW          (this header)
+ *   fold    dL/dW  += (dL_k/dO_k) . dO_k/dW           (loss gradient)
+ *   chain   g_out[i] += Sigma_c dL/dW[c] . dWdtheta[i, c] (Phase 2 dWdtheta)
  *
  * Sign conventions:
- * - `AdjointSnapshot::dF_dW[(3*atom+axis) * n_desc + c]` is ∂F/∂W
- *   (BF_Linear: F = -fd·W ⇒ ∂F/∂W = -fd_at_xstar). So
- *   ∂²E/∂x∂W = -∂F/∂W and the chain reduces to
- *   `dO/dW = dg/dW − λ · (-∂F/∂W) = dg/dW + λ · ∂F/∂W = dg/dW + λ · dF_dW`.
+ * - `AdjointSnapshot::dF_dW[(3*atom+axis) * n_desc + c]` is dF/dW
+ *   (BF_Linear: F = -fd.W => dF/dW = -fd_at_xstar). So
+ *   d^2E/dxdW = -dF/dW and the chain reduces to
+ *   `dO/dW = dg/dW  lambda . (-dF/dW) = dg/dW + lambda . dF/dW = dg/dW + lambda . dF_dW`.
  *   The kernel reads the snapshot directly without re-negating.
- * - `LossFunction::loss_prime(v, t, w)` returns ∂L/∂t (the second arg).
+ * - `LossFunction::loss_prime(v, t, w)` returns dL/dt (the second arg).
  *   `dL/dv = -loss_prime(v, t, w)` for residual-based losses (L1/L2/
  *   LOG_COSH/HUBER/TUKEY); MAPE/RMSLE are rejected (host falls back
- *   to FD for those θ).
+ *   to FD for those theta).
  *
- * Box DOFs in `λ` (entries past 3*nlocal) are ignored by the IFT
+ * Box DOFs in `lambda` (entries past 3*nlocal) are ignored by the IFT
  * kernel: the AdjointSnapshot only carries atom-axis rows of dF/dW.
  * For lattice-constant / vol observables (which carry rhs on box
- * DOFs), the box-tail of `λ` is still meaningful but Phase 3.7+ must
- * extend the snapshot with ∂(virial)/∂W to fold it in.
+ * DOFs), the box-tail of `lambda` is still meaningful but Phase 3.7+ must
+ * extend the snapshot with d(virial)/dW to fold it in.
  */
 
 /* ---------------------------------------------------------------- *
- *  Kernel 1 — per-observable IFT chain rule.
+ *  Kernel 1 -- per-observable IFT chain rule.
  *
  *  Computes dO/dW for one observable. Atom block: reads lambda
  *  entries [0, 3*nlocal) against `dF_dW`. Box block (Phase 3.7.5):
@@ -55,7 +55,7 @@ namespace tadah::hpo {
  *  dF_dW, so the chain contributes additively).
  *
  *  `dvirial_dW = nullptr` (or `box_dofs == 0`) preserves the pre-3.7.5
- *  atom-only behaviour byte-for-byte — the box-tail of lambda is
+ *  atom-only behaviour byte-for-byte -- the box-tail of lambda is
  *  silently ignored.
  * ---------------------------------------------------------------- */
 void apply_ift_chain_kernel(const Eigen::VectorXd& dg_dW,
@@ -68,12 +68,12 @@ void apply_ift_chain_kernel(const Eigen::VectorXd& dg_dW,
                             int                    box_dofs   = 0);
 
 /* ---------------------------------------------------------------- *
- *  Kernel 2 — loss-gradient fold.
+ *  Kernel 2 -- loss-gradient fold.
  *
- *  Adds `(∂L/∂O) · dO_dW` into dL_dW. ∂L/∂O is computed from the
+ *  Adds `(dL/dO) . dO_dW` into dL_dW. dL/dO is computed from the
  *  LossFunction via the dispatcher described above. Returns false
  *  on unsupported loss kinds (MAPE/RMSLE in 3.5); caller routes that
- *  observable's θ to needs_fd.
+ *  observable's theta to needs_fd.
  * ---------------------------------------------------------------- */
 bool apply_loss_fold(const LossFunction&    loss_fn,
                      double                 v_observed,
@@ -83,7 +83,7 @@ bool apply_loss_fold(const LossFunction&    loss_fn,
                      Eigen::VectorXd&       dL_dW_inout);
 
 /* ---------------------------------------------------------------- *
- *  Kernel 3 — external θ chain (gemv against dWdtheta).
+ *  Kernel 3 -- external theta chain (gemv against dWdtheta).
  *
  *  dWdtheta is row-major over (n_theta_rows, n_cols); row `r` of
  *  dWdtheta is mapped into `g_out` at position `theta_row_to_g_idx[r]`.
@@ -102,7 +102,7 @@ void apply_dWdtheta_chain(const Eigen::VectorXd&     dL_dW,
  *  Kernel 2, and accumulates `dL_dW`. Returns true iff every
  *  observable was handled analytically. On the first unrecognised
  *  expression or unsupported loss kind, the function clears dL_dW
- *  back to its pre-call state and returns false — the caller treats
+ *  back to its pre-call state and returns false -- the caller treats
  *  the whole script as needs_fd. (3.7+ can lift this to a per-
  *  observable mask.)
  * ---------------------------------------------------------------- */
@@ -110,13 +110,13 @@ struct SimsGradScriptInput {
     ObservableContext         ctx;            /* populated from x* */
     Eigen::MatrixXd           H;              /* Phase 3.2 */
 
-    /* Adjoint snapshot at x* — row-major (3*nlocal × n_desc). The
+    /* Adjoint snapshot at x* -- row-major (3*nlocal x n_desc). The
      * pointer's lifetime must outlive the call. */
     const double*             dF_dW = nullptr;
 
-    /* Phase 3.7.5: box-DOF block of -d²E/d eps_α dW (row-major,
-     * box_dofs × n_desc). nullptr or box_dofs==0 means "atom-only" —
-     * the chain kernel then ignores the box-tail of λ as in pre-3.7.5
+    /* Phase 3.7.5: box-DOF block of -d^2E/d eps_alpha dW (row-major,
+     * box_dofs x n_desc). nullptr or box_dofs==0 means "atom-only" --
+     * the chain kernel then ignores the box-tail of lambda as in pre-3.7.5
      * behaviour. Iso strain (box_dofs == 1) is the only supported mode
      * in 3.7.5; aniso Voigt-6 is deferred. */
     const double*             dvirial_dW = nullptr;
@@ -134,12 +134,12 @@ struct SimsGradScriptInput {
 
     /* Phase A masking: when the provider can't produce a valid input
      * for this script (LAMMPS run_script divergence, populate failure
-     * on the random-init pot, …), it sets `failed=true` and leaves the
+     * on the random-init pot, ...), it sets `failed=true` and leaves the
      * remaining fields empty/default. The chain helper skips failed
      * entries (zero contribution to the gradient) instead of forcing
      * the orchestrator to fall back to all-FD. Mathematically the
      * failing script's loss is FAIL_SCORE (a constant) so
-     * ∂FAIL_SCORE/∂θ = 0 — skipping is correct in the continuous
+     * dFAIL_SCORE/dtheta = 0 -- skipping is correct in the continuous
      * region. */
     bool                      failed = false;
 };
@@ -151,12 +151,12 @@ bool compute_sims_grad_for_script(const SimsGradScriptInput& input,
  *  Top-level: loop over scripts and chain into `g_out` via dWdtheta.
  *
  *  Phase A masking: scripts with `failed=true` (LAMMPS divergence /
- *  populate failure under random-init pots) are SKIPPED — their loss
- *  is FAIL_SCORE, a constant, so ∂FAIL_SCORE/∂θ = 0 and the missing
+ *  populate failure under random-init pots) are SKIPPED -- their loss
+ *  is FAIL_SCORE, a constant, so dFAIL_SCORE/dtheta = 0 and the missing
  *  chain contribution is exact in the continuous region.
  *
  *  Returns true iff every NON-FAILED script was handled analytically.
- *  Returns false (and pushes all caller-supplied θ indices into
+ *  Returns false (and pushes all caller-supplied theta indices into
  *  `needs_fd`) only on STRUCTURAL failures: unsupported loss kind
  *  (MAPE/RMSLE), or observable-registry parser failure on the script's
  *  varloss expressions. The orchestrator then falls back to all-FD.
@@ -171,7 +171,7 @@ bool compute_sims_grad_dWchain(
     std::vector<int>&                       needs_fd_out);
 
 /* ---------------------------------------------------------------- *
- *  Convenience: ∂L/∂v for the supported loss kinds.
+ *  Convenience: dL/dv for the supported loss kinds.
  *  Public so tests and 3.6's integration glue can re-use the same
  *  dispatcher without duplicating the sign-flip rule.
  *  Returns false (and leaves out untouched) on unsupported losses.
@@ -186,11 +186,11 @@ bool loss_grad_wrt_observed(const LossFunction& fn,
  *  Typed-observable (PC_OBSERVABLE) chain rule.
  *
  *  The Tier-1/2 analogue of SimsGradScriptInput. Where SimsGrad
- *  carries an IFT-adjoint payload (Hessian, dF/dW, λ-rhs) because
- *  the LAMMPS-script observable's ∂g/∂x is generally non-zero, an
+ *  carries an IFT-adjoint payload (Hessian, dF/dW, lambda-rhs) because
+ *  the LAMMPS-script observable's dg/dx is generally non-zero, an
  *  Observable that sets `needs_adjoint=false` (cohesive energy and
  *  every observable evaluated at the energy minimum) reduces to a
- *  flat (value, target, weight, lossfn, dO/dW) tuple — no Hessian
+ *  flat (value, target, weight, lossfn, dO/dW) tuple -- no Hessian
  *  solve required.
  *
  *  MVP scope: only `needs_adjoint=false` observables. Anything that
@@ -199,16 +199,16 @@ bool loss_grad_wrt_observed(const LossFunction& fn,
  *  observable seam.
  *
  *  The helper chains `dO_dW` through the loss prime, then through the
- *  Phase 2 dW/dθ matrix (`apply_dWdtheta_chain`), and adds the
+ *  Phase 2 dW/dtheta matrix (`apply_dWdtheta_chain`), and adds the
  *  contribution into `g_out_inout`.
  *
  *  Phase A masking: observables with `failed=true` (provider-detected
- *  relaxer divergence / NaN value) are SKIPPED — their loss is
- *  FAIL_SCORE, a constant, so ∂FAIL_SCORE/∂θ = 0 and the missing chain
+ *  relaxer divergence / NaN value) are SKIPPED -- their loss is
+ *  FAIL_SCORE, a constant, so dFAIL_SCORE/dtheta = 0 and the missing chain
  *  contribution is exact in the continuous region.
  *
  *  Returns true iff every NON-FAILED observable was handled
- *  analytically. Returns false (and pushes all caller-supplied θ
+ *  analytically. Returns false (and pushes all caller-supplied theta
  *  indices into `needs_fd_out`) only on STRUCTURAL failures:
  *  unsupported loss kind (MAPE/RMSLE) or needs_adjoint=true on the
  *  MVP path. Matches compute_sims_grad_dWchain's contract.
@@ -224,22 +224,22 @@ struct ObservableGradInput {
      *  MAPE/RMSLE rejected, observable routes to FD). */
     LossFunction    loss_fn{};
 
-    /** ∂O/∂W at current W (size = n_W). For cohesive_energy this is
+    /** dO/dW at current W (size = n_W). For cohesive_energy this is
      *  populated directly by the closed-form path in
      *  CohesiveEnergyObservable::evaluate. */
     Eigen::VectorXd dO_dW;
 
     /** Set true when the observable requires the IFT adjoint solve
-     *  (∂g/∂x ≠ 0 at the relaxed state). MVP rejects — caller routes
+     *  (dg/dx != 0 at the relaxed state). MVP rejects -- caller routes
      *  the call to FD. First user that will flip this is
      *  LatticeParamObservable (deferred). */
     bool            needs_adjoint = false;
 
     /** Phase A masking: provider sets `failed=true` (relaxer
-     *  divergence, non-finite value, NN-finder fault, …) and leaves
+     *  divergence, non-finite value, NN-finder fault, ...) and leaves
      *  dO_dW empty. The chain helper skips failed entries (zero
      *  contribution) rather than poisoning the whole gradient. Same
-     *  ∂FAIL_SCORE/∂θ = 0 justification as SimsGradScriptInput. */
+     *  dFAIL_SCORE/dtheta = 0 justification as SimsGradScriptInput. */
     bool            failed = false;
 };
 

@@ -95,7 +95,7 @@ void PotHeaderWriter::write_banner(std::ostream& os,
                                    double loss)
 {
     rule(os);
-    os << "#  Tadah HPO — Best potential\n";
+    os << "#  Tadah HPO -- Best potential\n";
     os << "#  Best iter " << best_iter
        << "  (eval " << eval_iter << ")"
        << "  |  Loss: " << fmt_double(loss) << "\n";
@@ -145,11 +145,12 @@ void PotHeaderWriter::write_data_section(std::ostream& os,
             double var  = (ns > 1) ? (sum2 - sum * sum / ns) / (ns - 1) : 0.0;
             double sd   = std::sqrt(std::max(var, 0.0));
 
-            /* DBFILE path for this dataset */
+            /* DBFILE path for this dataset, as written in config.tadah
+             * (relative paths preserved -- absolute paths would leak the
+             * user's filesystem layout into shipped best_pot.tadah files). */
             std::string dbpath;
             if (ctx.contains("DBFILE") && d < ctx.size("DBFILE")) {
-                try { dbpath = fs::absolute(ctx.get<std::string>("DBFILE", d)).string(); }
-                catch (...) { dbpath = ctx.get<std::string>("DBFILE", d); }
+                dbpath = ctx.get<std::string>("DBFILE", d);
             }
 
             std::ostringstream ds;
@@ -255,7 +256,7 @@ void PotHeaderWriter::write_optim_section(std::ostream& os,
         kv(os, "Inner optimizer", inner_str);
     }
 
-    /* stop criteria — compact, one line */
+    /* stop criteria -- compact, one line */
     {
         std::vector<std::string> crit;
         if (sp.stop.maxeval)  crit.push_back("maxeval=" + std::to_string(*sp.stop.maxeval));
@@ -281,7 +282,7 @@ void PotHeaderWriter::write_optim_section(std::ostream& os,
         wrap(os, "Params:", param_lines);
     }
 
-    /* bounds table — compact two-column layout */
+    /* bounds table -- compact two-column layout */
     {
         constexpr int LBL_W = 14;   // label column
         constexpr int BND_W = 24;   // "[lo, hi]" column
@@ -332,7 +333,7 @@ void PotHeaderWriter::write_loss_section(std::ostream& os,
        tadah::LossFunction::to_string(trg.globalLoss.type()));
     kv(os, "Fail score", fmt_double(trg.FAIL_SCORE));
 
-    /* global metrics — one line each, only if active */
+    /* global metrics -- one line each, only if active */
     auto metric = [&](const std::string& name, bool used,
                       double target, double weight) {
         if (!used) return;

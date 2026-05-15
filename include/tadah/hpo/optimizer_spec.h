@@ -21,24 +21,24 @@ struct StopCriteria {
     std::optional<uint64_t> maxeval;
 };
 
-/* GradStrategy — selector for the unified gradient provider used by
+/* GradStrategy -- selector for the unified gradient provider used by
  * gradient-based HPO optimizers (DLIB:BFGS, CERES:LBFGS/WOLFE/NLCG/
  * STEEPEST_DESCENT, future NLOPT:LD_*).
  *
- *   NUMERICAL  — Ceres DynamicNumericDiffCostFunction; finite differences
+ *   NUMERICAL  -- Ceres DynamicNumericDiffCostFunction; finite differences
  *                on full forward passes through the host.
- *   ANALYTICAL — closed-form analytical gradient. The HPO host injects
- *                a per-θ derivative callback (descriptor + cutoff +
+ *   ANALYTICAL -- closed-form analytical gradient. The HPO host injects
+ *                a per-theta derivative callback (descriptor + cutoff +
  *                kernel closed forms chained through the IFT-back-
  *                substitution on the cached Cholesky factor of the
- *                regression solve). Strict mode: any θ index without a
+ *                regression solve). Strict mode: any theta index without a
  *                registered analytical derivative throws a diagnostic
  *                naming the missing entry. Use HYBRID to fall back.
- *   HYBRID     — analytical-where-registered + central-difference
+ *   HYBRID     -- analytical-where-registered + central-difference
  *                fallback for unregistered indices, evaluated in one
  *                gradient(x, g) call. Used when LAMMPS-derived loss
  *                components (`sims_loss`) or tabulated descriptors
- *                (EAM SETFL) participate in θ.
+ *                (EAM SETFL) participate in theta.
  *
  * Configured at OPTIMIZER block level via `GRAD_STRATEGY {NUMERICAL|
  * ANALYTICAL|HYBRID}`. Default (unset) = NUMERICAL. The Phase-1 keyword
@@ -48,7 +48,7 @@ enum class GradStrategy { Numerical, Analytical, Hybrid };
 
 using ParamMap = std::unordered_map<std::string,double>;
 
-/* InitStrategySpec — parsed `INIT/ENDINIT` block.
+/* InitStrategySpec -- parsed `INIT/ENDINIT` block.
  * Resolved into a polymorphic InitStrategy by build_init_strategy()
  * after bounds + log-scale are settled. */
 struct InitStrategySpec {
@@ -63,24 +63,24 @@ struct InitStrategySpec {
     std::string warm_on_mismatch = "warn";     // warn | error | skip (used by WarmInitStrategy)
 };
 
-/* StrategyType — selected by `STRATEGY { TYPE <X> }` in the parser.
+/* StrategyType -- selected by `STRATEGY { TYPE <X> }` in the parser.
  * Drives build_run_policy() in run_policy.h to assemble the right
  * RunPolicy decorator stack. */
 enum class StrategyType {
     PLAIN,        // single-shot run of spec.lib/algo (no decorators)
     BASINS,       // BasinsPolicy (anytime/interruptible, basin pool, ladders)
     MULTISTART,   // MultiStartPolicy (N independent starts of spec.lib/algo)
-    PRESTAGE,     // StagedPolicy (one EXPLORE pass → top-K refined by spec.lib/algo)
+    PRESTAGE,     // StagedPolicy (one EXPLORE pass -> top-K refined by spec.lib/algo)
     BASINSV2,     // BasinsV2Policy (priority-driven scheduler, per-basin lifecycle,
                   // adaptive REFINE termination, explicit duplicate merging,
                   // Sobol+filtered EXPLORE, coarse path memory, smart checkpoint).
-                  // Additive — existing BASINS code paths untouched.
+                  // Additive -- existing BASINS code paths untouched.
 };
 
 /* Forward decl needed because BasinsSpec holds unique_ptr<OptimizerSpec>. */
 struct OptimizerSpec;
 
-/* BasinsSpec — knobs for `STRATEGY { TYPE BASINS }`.
+/* BasinsSpec -- knobs for `STRATEGY { TYPE BASINS }`.
  * Carries the EXPLORE/REFINE stage sub-specs, per-stage tolerance
  * ladders + budget caps, and BASINS-wide pool/checkpoint knobs.
  * Resolved at hpo_run() time into a BasinsPolicy<Vec, Runner> by
@@ -103,8 +103,8 @@ struct BasinsSpec {
      *   INNER block for MLSL/AUGLAG inner local sub-optimizer.
      * - refine: per-basin local stage. Default NLOPT LN_BOBYQA
      *   (derivative-free quadratic trust-region, bound-aware).
-     *   LN_BOBYQA replaces an earlier LN_SBPLX default — SBPLX
-     *   collapses ("simplex too small in dimension X" → masked
+     *   LN_BOBYQA replaces an earlier LN_SBPLX default -- SBPLX
+     *   collapses ("simplex too small in dimension X" -> masked
      *   XTOL_REACHED) when a parameter approaches a bound, which
      *   silently ends a basin's refinement without progress.
      * unique_ptr because OptimizerSpec is not yet fully defined here
@@ -159,10 +159,10 @@ struct BasinsSpec {
     std::optional<double> noise_floor;
 };
 
-/* BasinsV2Spec — knobs for `STRATEGY { TYPE BASINSV2 }`.
+/* BasinsV2Spec -- knobs for `STRATEGY { TYPE BASINSV2 }`.
  *
  * BASINSv2 is an additive strategy that replaces v1's per-round
- * GLOBAL→LOCAL sweep with an event-driven scheduler picking ONE work
+ * GLOBAL->LOCAL sweep with an event-driven scheduler picking ONE work
  * item per iteration: REFINE (priority-selected), EXPLORE (diversity),
  * VERIFY_KILL (cheap tickle on inactive basins), or MERGE_PASS
  * (cadence-triggered, no LAMMPS evals). Each basin carries a lifecycle
@@ -214,7 +214,7 @@ struct BasinsV2Spec {
     std::size_t merge_cadence               = 25;     // iters between deep-merge passes
     std::size_t explore_kick_cadence        = 50;     // iters between forced fresh-region EXPLOREs
     std::size_t summary_cadence             = 25;
-    std::size_t starvation_cap              = 200;    // iters since basin's last_iteration → force-pick
+    std::size_t starvation_cap              = 200;    // iters since basin's last_iteration -> force-pick
     std::size_t stop_no_improve_iterations  = 200;    // global stop after N iters without best improvement
 
     /* Adaptive REFINE termination. plateau_eps_factor * tol = relative
@@ -232,7 +232,7 @@ struct BasinsV2Spec {
     double      path_loss_eps               = 0.01;
     double      path_dist_eps               = 0.01;
 
-    /* Priority weights — six-tuple in fixed order: improve, neglect,
+    /* Priority weights -- six-tuple in fixed order: improve, neglect,
      * distance, tol_gap, state, age. */
     double      w_improve   = 2.0;
     double      w_neglect   = 0.5;
@@ -253,14 +253,14 @@ struct BasinsV2Spec {
     std::optional<double> noise_floor;
 };
 
-/* MultiStartSpec — knobs for `STRATEGY { TYPE MULTISTART }`. */
+/* MultiStartSpec -- knobs for `STRATEGY { TYPE MULTISTART }`. */
 struct MultiStartSpec {
-    std::size_t n_starts = 1;                      // N_STARTS — count
-    std::size_t parallel = 1;                      // PARALLEL — concurrent runs
+    std::size_t n_starts = 1;                      // N_STARTS -- count
+    std::size_t parallel = 1;                      // PARALLEL -- concurrent runs
     std::optional<std::size_t> budget_per_start;   // BUDGET_PER_START override
 };
 
-/* RestartSpec — `STRATEGY { RESTART/ENDRESTART }` decorator.
+/* RestartSpec -- `STRATEGY { RESTART/ENDRESTART }` decorator.
  * Composes with TYPE PLAIN/MULTISTART/PRESTAGE; not with BASINS. */
 struct RestartSpec {
     std::size_t after_stagnation = 0;              // 0 disables
@@ -268,12 +268,12 @@ struct RestartSpec {
     InitStrategySpec init_strategy;                // INIT chain to refresh on restart
 };
 
-/* NoiseSpec — `OPTIMIZER { NOISE/ENDNOISE }` block. */
+/* NoiseSpec -- `OPTIMIZER { NOISE/ENDNOISE }` block. */
 struct NoiseSpec {
-    bool        autodetect    = false;             // AUTO TRUE — derive PARAM fd_step
+    bool        autodetect    = false;             // AUTO TRUE -- derive PARAM fd_step
                                                    // from box diagonal in transformed
                                                    // space (DLIB:BFGS only)
-    std::size_t calibration_n = 0;                 // CALIBRATION N — repeat seed point
+    std::size_t calibration_n = 0;                 // CALIBRATION N -- repeat seed point
                                                    // N times to surface objective noise
                                                    // and suggest FTOL_REL. 0 = off.
 };
@@ -321,7 +321,7 @@ struct OptimizerSpec {
     std::string  lib   = "NOT SET";   // DLIB | NLOPT | TADAH
     std::string  algo  = "NOT SET";
 
-    /* INNER/ENDINNER sub-block — NLopt's local sub-algorithm
+    /* INNER/ENDINNER sub-block -- NLopt's local sub-algorithm
      * (used only with MLSL/G_MLSL_LDS/AUGLAG, which delegate inner
      * work to a local optimiser via set_local_optimizer).
      * The previous keyword `LOCAL/ENDLOCAL` was renamed to INNER to
@@ -395,11 +395,11 @@ struct OptimizerSpec {
 };
 
 /* BasinsSpec ctor / copy implementations need OptimizerSpec to be a
- * complete type — defined here, after OptimizerSpec.
+ * complete type -- defined here, after OptimizerSpec.
  *
  * The default ctor leaves explore/refine *null*. OptimizerSpec contains
  * BasinsSpec by value, and BasinsSpec contains OptimizerSpec via these
- * unique_ptrs — eagerly allocating in the default ctor would cause
+ * unique_ptrs -- eagerly allocating in the default ctor would cause
  * unbounded recursive default-construction. The parser allocates them
  * (via ensure_defaults) when TYPE BASINS is selected. */
 inline BasinsSpec::BasinsSpec() = default;
@@ -450,7 +450,7 @@ inline BasinsSpec& BasinsSpec::operator=(const BasinsSpec& o)
     return *this;
 }
 
-/* BasinsV2Spec — same forward-decl trick as BasinsSpec: definitions live
+/* BasinsV2Spec -- same forward-decl trick as BasinsSpec: definitions live
  * after OptimizerSpec is complete. */
 inline BasinsV2Spec::BasinsV2Spec() = default;
 

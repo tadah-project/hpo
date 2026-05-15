@@ -1,0 +1,33 @@
+# 05 -- extra LAMMPS observables (--invar, --outvar).
+#
+# Drives a parametric LAMMPS script (../common/lammps/Ecoh_param.in)
+# that builds an Nx x Ny x Nz BCC supercell. The supercell size is
+# pushed into LAMMPS via `--invar`, and the per-iter values of
+# E_isolated and E_bulk are pulled back via `--outvar` so they appear
+# alongside `Ecoh` in `outvar.tadah`.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB DLIB
+    ALGO BFGS
+    MAXEVAL 30
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+
+# --invar <name> <value>   inject `-var name value` into LAMMPS
+# --outvar <name>          capture an additional LAMMPS variable per iter
+PC_LAMMPS --script ../common/lammps/Ecoh_param.in \
+          --invar nx 5 --invar ny 5 --invar nz 5 \
+          --hotvar hot_a0 2.5 4.5 3.302 \
+          --outvar Eiso --outvar Ebulk \
+          --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B (1) 4.0 6.0
+
+OUTPUT 1
+BOUTPUT 1

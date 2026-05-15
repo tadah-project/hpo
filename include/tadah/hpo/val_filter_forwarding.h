@@ -6,7 +6,7 @@
 // applied to val_stdb_.
 //
 // Filters declared in the validation file are intentionally honoured;
-// filters set in the training (master) context are NOT forwarded — they
+// filters set in the training (master) context are NOT forwarded -- they
 // would change what the validation metric is computed on without the
 // user opting in, breaking apples-to-apples comparison across HPO trials.
 //

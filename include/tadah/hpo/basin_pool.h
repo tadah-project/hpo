@@ -2,7 +2,7 @@
 #define TADAH_HPO_BASIN_POOL_H
 
 /*
- *  BasinPool — persistent, deduplicated population for the BASINS strategy.
+ *  BasinPool -- persistent, deduplicated population for the BASINS strategy.
  *
  *  A "basin" is a candidate (params, loss) point in the search space.
  *  Each basin remembers when it was born, when it was last refined,
@@ -15,7 +15,7 @@
  *  Restartability: the pool is an ICheckpointable participant. On
  *  resume, the basins (and their per-basin state) are reconstructed
  *  exactly. This is what makes BASINS restart "move the needle in the
- *  right direction" — even if the optimiser internal state is lost,
+ *  right direction" -- even if the optimiser internal state is lost,
  *  every previously-discovered basin survives.
  */
 
@@ -65,7 +65,7 @@ public:
      * inserted (returned index == -1). */
     int add_or_merge(std::vector<double> params, double loss, int round);
 
-    /* Mark the i-th basin as exhausted at `tol`. Idempotent — the
+    /* Mark the i-th basin as exhausted at `tol`. Idempotent -- the
      * tightest (smallest) value wins. */
     void mark_exhausted(std::size_t i, double tol);
 

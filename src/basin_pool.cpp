@@ -23,7 +23,7 @@ double BasinPool::relative_l2_(const std::vector<double>& a,
                                const std::vector<double>& b) const
 {
     if (a.size() != b.size()) return std::numeric_limits<double>::infinity();
-    /* If normalisation isn't set, fall back to plain L2 — at startup
+    /* If normalisation isn't set, fall back to plain L2 -- at startup
      * the pool may not yet know the bounds. Distance is then measured
      * in raw search space. */
     double sumsq = 0.0;
@@ -86,7 +86,7 @@ int BasinPool::add_or_merge(std::vector<double> params, double loss, int round)
         const int wi = worst_index_();
         if (wi >= 0 && basins_[static_cast<std::size_t>(wi)].loss <= loss) {
             /* New candidate is no better than the worst already in
-             * the pool — refuse insertion. */
+             * the pool -- refuse insertion. */
             return -1;
         }
         if (wi >= 0) basins_.erase(basins_.begin() + wi);

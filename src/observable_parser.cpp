@@ -118,7 +118,7 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
              * convergence). On randomly-initialised potentials, the
              * energy surface is often non-physical and the relaxer
              * wanders without converging; cap to a small budget
-             * (50-200) for HPO use where the optimiser sweeps θ
+             * (50-200) for HPO use where the optimiser sweeps theta
              * before any pot is good enough for a true ground state. */
             const int v = parse_int(need_value(i, t), "--maxiter");
             if (v < 0)
@@ -128,7 +128,7 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
         } else if (t == "--max-wall-time") {
             /* Per-relax wall-time cap (seconds). PC_OBSERVABLE's
              * analogue of LAMMPS's MAXTIME (per-eval subprocess kill).
-             * With NN caching, a pathological θ can burn maxeval=5000
+             * With NN caching, a pathological theta can burn maxeval=5000
              * in ~5 s; 1.0 s matches the LAMMPS reference's MAXTIME=1. */
             cfg.relax_max_wall_time_s =
                 parse_double(need_value(i, t), "--max-wall-time");
@@ -142,8 +142,8 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
         } else if (t == "--maxeval") {
             /* LAMMPS-style total energy/force-eval cap. Mirrors the
              * 4th positional arg of LAMMPS `minimize etol ftol maxiter
-             * maxeval`. Critical for HPO: without it, a pathological θ
-             * that never converges does maxiter × maxiter_ls evals and
+             * maxeval`. Critical for HPO: without it, a pathological theta
+             * that never converges does maxiter x maxiter_ls evals and
              * burns minutes per HPO iter. */
             const int v = parse_int(need_value(i, t), "--maxeval");
             if (v < 0)
@@ -159,12 +159,12 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
         } else if (t == "--unconverged") {
             /* Strategy + value for unconverged relax outcomes. Syntax:
              *   --unconverged const        <V>     # res.value = V
-             *   --unconverged force-scaled <slope> # res.value = target + slope·fmax
+             *   --unconverged force-scaled <slope> # res.value = target + slope.fmax
              *
              * `const 100.0` mirrors Ecoh_fast.in's eq_ok=false branch
              * (the cliff). `force-scaled <slope>` gives local optimisers
-             * a continuous gradient toward fmax → 0; slope tunes how
-             * steeply unconverged θ are penalised. See
+             * a continuous gradient toward fmax -> 0; slope tunes how
+             * steeply unconverged theta are penalised. See
              * CohesiveEnergyObservable::Config::UnconvergedStrategy
              * docs for the full rationale. */
             using Strat = CohesiveEnergyObservable::Config::UnconvergedStrategy;

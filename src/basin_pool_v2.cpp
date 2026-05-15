@@ -245,7 +245,7 @@ void BasinPoolV2::on_refinement_complete(int basin_id,
             : rel;
         b->improvement_ema = 0.5 * b->improvement_ema + 0.5 * per_eval;
     } else {
-        /* No improvement — decay EMA and bump stagnation counter. */
+        /* No improvement -- decay EMA and bump stagnation counter. */
         b->improvement_ema = 0.5 * b->improvement_ema;
         b->evals_since_improvement += evals_used;
     }
@@ -263,7 +263,7 @@ void BasinPoolV2::set_state(int basin_id, LifecycleState s, int iteration)
 {
     BasinV2* b = by_id(basin_id);
     if (!b) return;
-    if (is_archive_state(b->state)) return;       // terminal — refuse out
+    if (is_archive_state(b->state)) return;       // terminal -- refuse out
     b->state = s;
     b->last_iteration = iteration;
     /* When a basin is revived to ACTIVE, reset stagnation counters so
@@ -334,7 +334,7 @@ BasinPoolV2::find_merge_candidates(double merge_dist,
     if (basins_.size() < 2) return out;
 
     /* Greedy pass: for each unmatched basin, pair it with its nearest
-     * qualifying neighbour. O(N^2) — acceptable at default pool_max=24. */
+     * qualifying neighbour. O(N^2) -- acceptable at default pool_max=24. */
     std::vector<bool> matched(basins_.size(), false);
     constexpr double eps = 1.0e-30;
 
@@ -408,8 +408,8 @@ void BasinPoolV2::confirm_merge(int loser_id, int winner_id, int iteration)
     loser->state           = LifecycleState::MERGED;
     loser->sibling_root_id = winner_id;
     loser->last_iteration  = iteration;
-    /* Winner stays in its current state (typically SUSPECT_DUP →
-     * caller chooses next state — usually ACTIVE for re-prioritisation). */
+    /* Winner stays in its current state (typically SUSPECT_DUP ->
+     * caller chooses next state -- usually ACTIVE for re-prioritisation). */
     winner->last_iteration = iteration;
 
     /* Archive eviction in case we just exceeded archive_max. */

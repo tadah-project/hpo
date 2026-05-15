@@ -1,6 +1,6 @@
 #pragma once
 /*
- * run_policy_base.h — minimum include surface for RunPolicy<> and
+ * run_policy_base.h -- minimum include surface for RunPolicy<> and
  * run_inner<>().
  *
  * Why this header exists separately from run_policy.h
@@ -38,7 +38,7 @@
 namespace tadah::hpo {
 
 /* ----------------------------------------------------------------------
- * run_inner — single-shot dispatch from an OptimizerSpec onto its
+ * run_inner -- single-shot dispatch from an OptimizerSpec onto its
  * concrete optimiser driver. Every starting point comes from
  * spec.optim_init (today a single vector, later a chain-resolved set).
  *
@@ -46,7 +46,7 @@ namespace tadah::hpo {
  *   1. Implement a templated `run_<lib>_<algo><Vec, Runner>(spec, host)`
  *      function (or one entry point per LIB).
  *   2. Register a CapsEntry in optimizer_caps.cpp.
- * Then add a single dispatch case below. No other call sites change —
+ * Then add a single dispatch case below. No other call sites change --
  * BasinsPolicy / MultiStartPolicy / hpo_targets all derive their
  * behaviour from the caps registry rather than ad-hoc lib/algo strings.
  * -------------------------------------------------------------------- */
@@ -59,7 +59,7 @@ inline void run_inner(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host)
    * intentionally not registered in optimizer_caps because they are
    * degenerate over a scalar HPO loss; making them useful requires
    * residual-mode loss exposure (objective semantics change) and
-   * autodiff — both belong to a later phase. */
+   * autodiff -- both belong to a later phase. */
   reject_deferred_ceres_nlls(spec);
 
   /* Caps lookup throws if (lib, algo) is not registered, giving a
@@ -103,7 +103,7 @@ inline void run_inner(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host)
 }
 
 /* ----------------------------------------------------------------------
- * RunPolicy — interface
+ * RunPolicy -- interface
  * -------------------------------------------------------------------- */
 template<class Vec, class Runner>
 class RunPolicy {
@@ -115,7 +115,7 @@ public:
    *  Currently always false: both NLopt and DLIB adapters merely record
    *  their per-run termination reason via HPOLog::set_status(); the
    *  outer hpo_run() always calls HPOLog::finish() once after the whole
-   *  policy (BasePolicy / MultiStart / StageGlobal / Restart …) ends. */
+   *  policy (BasePolicy / MultiStart / StageGlobal / Restart ...) ends. */
   static bool driver_finishes_log(const OptimizerSpec& /*spec*/) {
     return false;
   }

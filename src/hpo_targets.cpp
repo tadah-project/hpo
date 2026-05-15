@@ -340,7 +340,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
      *
      * BASINS leaves the OUTER lib/algo unset (the per-stage EXPLORE/
      * REFINE specs drive the work), so a caps lookup here would throw.
-     * Treat unset OUTER as "not gradient-based" — NOISE_AUTO is a
+     * Treat unset OUTER as "not gradient-based" -- NOISE_AUTO is a
      * leaf-optimiser knob anyway and would have nothing to write into
      * a stage sub-spec. */
     const bool gradient_based = (spec.lib != "NOT SET") &&
@@ -406,7 +406,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
    *
    * Apply to OUTER, PRESTAGE, and PRESTAGE->LOCAL (LOCAL inside OUTER
    * is the NLopt MLSL local sub-algo and inherits the outer's
-   * starting point — it does not need its own chain). Each spec's
+   * starting point -- it does not need its own chain). Each spec's
    * INIT_STRATEGY / INIT_SEED / INIT_INCLUDE_CONFIG / WARM_ON_MISMATCH
    * is honoured independently of every other spec.
    *
@@ -452,7 +452,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
     const bool multi_seed_consumer = strategy_consumes || backend_consumes;
     if (spec.optim_init.size() > 1 && !multi_seed_consumer) {
       /* Surface compatible options from the live caps registry rather
-       * than hard-coding LIB:ALGO names — the registry is the single
+       * than hard-coding LIB:ALGO names -- the registry is the single
        * source of truth for who consumes >1 seed in one run. */
       auto multi_seed = filter_optimizer_caps(
           [](const OptimizerCaps& c) { return c.accepts_multi_seed; });
@@ -471,7 +471,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
     /* If PRESTAGE has no explicit chain and no INIT_STRATEGY entries,
      * it inherits the OUTER's optim_init (legacy behaviour: a CONFIG
      * point flows in). If PRESTAGE has its own chain, that chain wins
-     * and the OUTER's optim_init is *not* prepended — PRESTAGE owns its
+     * and the OUTER's optim_init is *not* prepended -- PRESTAGE owns its
      * starting points. */
     if (spec.prestage->init_strategy_spec.chain.empty() &&
         spec.prestage->init_strategy_spec.include_config) {
@@ -512,7 +512,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
 }
 
 // -------------------------------------------------------------------
-// HPOTargets::read   – complete, no omissions
+// HPOTargets::read   - complete, no omissions
 // -------------------------------------------------------------------
 /* Helper: parse a boolean token (true/false/1/0/yes/no/on/off, any case).
  * Throws on unknown spellings. */
@@ -528,7 +528,7 @@ static bool parse_bool(const std::string& v, const std::string& ctx)
 /* Helper: parse one optimiser-attribute key/value into an OptimizerSpec.
  * Returns true if `key` was consumed; false otherwise (caller can try
  * other dispatches).  These keys are valid wherever an OptimizerSpec is
- * the active receiver — STRATEGY top-level, EXPLORE, REFINE, INNER. */
+ * the active receiver -- STRATEGY top-level, EXPLORE, REFINE, INNER. */
 static bool dispatch_opt_attr(const std::string& key,
                               std::istringstream& iss,
                               OptimizerSpec& a)
@@ -555,7 +555,7 @@ static bool dispatch_opt_attr(const std::string& key,
         else if (v=="AUTODIFF")   throw std::runtime_error(
             "GRAD_STRATEGY=AUTODIFF was renamed to ANALYTICAL in Phase 2; "
             "the prior stub now backs a closed-form analytical gradient. "
-            "Use GRAD_STRATEGY ANALYTICAL (strict — every θ must have a "
+            "Use GRAD_STRATEGY ANALYTICAL (strict -- every theta must have a "
             "registered analytical derivative) or GRAD_STRATEGY HYBRID "
             "(analytical-where-registered + finite-difference fallback).");
         else throw std::runtime_error(
@@ -650,7 +650,7 @@ static bool reject_old_keyword(const std::string& key)
         {"INIT_INCLUDE_CONFIG",         "renamed to INCLUDE_CONFIG inside an INIT block."},
         {"NOISE_AUTO",                  "moved into `NOISE { AUTO true|false } ENDNOISE` block."},
         {"NOISE_CALIBRATION",           "moved into `NOISE { CALIBRATION N } ENDNOISE` block."},
-        /* TOPK is now legal inside STRATEGY (TYPE PRESTAGE) — don't reject it
+        /* TOPK is now legal inside STRATEGY (TYPE PRESTAGE) -- don't reject it
          * unconditionally; the STRATEGY block dispatch handles it. */
     };
     for (const auto& r : map) {
@@ -670,16 +670,16 @@ void HPOTargets::read(const std::string& fn)
      *
      * Block hierarchy:
      *   ROOT
-     *   └─ OUTER         OPTIMIZER ... ENDOPTIMIZER
-     *       ├─ INIT_BLK    INIT ... ENDINIT          (optional, populates spec.init_strategy_spec)
-     *       ├─ NOISE_BLK   NOISE ... ENDNOISE        (optional, populates spec.noise)
-     *       └─ STRATEGY    STRATEGY ... ENDSTRATEGY  (required, drives StrategyType)
-     *           ├─ EXPLORE     EXPLORE ... ENDEXPLORE    (only with TYPE BASINS or PRESTAGE)
-     *           │   └─ INNER       INNER ... ENDINNER       (MLSL inner sub-optimiser)
-     *           ├─ REFINE      REFINE ... ENDREFINE      (only with TYPE BASINS or PRESTAGE)
-     *           │   └─ INNER       INNER ... ENDINNER
-     *           ├─ INNER       INNER ... ENDINNER       (when LIB/ALGO at STRATEGY level — TYPE PLAIN/MULTISTART)
-     *           └─ RESTART     RESTART ... ENDRESTART   (decorator; populates spec.restart) */
+     *   +-- OUTER         OPTIMIZER ... ENDOPTIMIZER
+     *       +-- INIT_BLK    INIT ... ENDINIT          (optional, populates spec.init_strategy_spec)
+     *       +-- NOISE_BLK   NOISE ... ENDNOISE        (optional, populates spec.noise)
+     *       +-- STRATEGY    STRATEGY ... ENDSTRATEGY  (required, drives StrategyType)
+     *           +-- EXPLORE     EXPLORE ... ENDEXPLORE    (only with TYPE BASINS or PRESTAGE)
+     *           |   +-- INNER       INNER ... ENDINNER       (MLSL inner sub-optimiser)
+     *           +-- REFINE      REFINE ... ENDREFINE      (only with TYPE BASINS or PRESTAGE)
+     *           |   +-- INNER       INNER ... ENDINNER
+     *           +-- INNER       INNER ... ENDINNER       (when LIB/ALGO at STRATEGY level -- TYPE PLAIN/MULTISTART)
+     *           +-- RESTART     RESTART ... ENDRESTART   (decorator; populates spec.restart) */
     enum Block { ROOT, OUTER, INIT_BLK, NOISE_BLK, STRATEGY_BLK,
                  EXPLORE_BLK, REFINE_BLK, INNER_BLK, RESTART_BLK };
     Block            block      = ROOT;
@@ -706,7 +706,7 @@ void HPOTargets::read(const std::string& fn)
                     active_opt = spec.basins.refine.get();
                 else if (spec.strategy_type == StrategyType::BASINSV2)
                     active_opt = spec.basins_v2.refine.get();
-                else  /* PRESTAGE — REFINE is the OUTER spec */
+                else  /* PRESTAGE -- REFINE is the OUTER spec */
                     active_opt = &spec;
                 break;
             case INIT_BLK:
@@ -982,7 +982,7 @@ void HPOTargets::read(const std::string& fn)
                      * sub-specs with NLopt defaults so a minimal
                      * `STRATEGY { TYPE ... }` config is functional. (Not
                      * done in the spec's default ctor to avoid recursive
-                     * default-construction — see optimizer_spec.h comment.) */
+                     * default-construction -- see optimizer_spec.h comment.) */
                     if (spec.strategy_type == StrategyType::BASINS)
                         basins_spec_ensure_defaults(spec.basins);
                     else if (spec.strategy_type == StrategyType::BASINSV2)
@@ -1182,7 +1182,7 @@ void HPOTargets::read(const std::string& fn)
             }
 
             /* EXPLORE / REFINE block keys (per-stage BASINS knobs).
-             * Only meaningful for TYPE BASINS — PRESTAGE doesn't iterate
+             * Only meaningful for TYPE BASINS -- PRESTAGE doesn't iterate
              * stages so it doesn't need ladders/budgets. */
             if (block == EXPLORE_BLK || block == REFINE_BLK) {
                 const bool is_explore = (block == EXPLORE_BLK);
@@ -1251,7 +1251,7 @@ void HPOTargets::read(const std::string& fn)
                     + std::string(is_explore ? "EXPLORE" : "REFINE") + " block");
             }
 
-            /* INNER block — only opt attributes, dispatched above. */
+            /* INNER block -- only opt attributes, dispatched above. */
             if (block == INNER_BLK) {
                 throw std::runtime_error("unknown key '" + key + "' inside INNER block "
                     "(only LIB/ALGO/MAXEVAL/FTOL_*/STEP/SEED/PARAM/POPULATION/THREADS/VECTOR_ARR are valid)");
@@ -1260,7 +1260,7 @@ void HPOTargets::read(const std::string& fn)
             /* Anything still unhandled inside an OPTIMIZER-level block is
              * a user mistake (LIB/ALGO/MAXEVAL etc. now live inside
              * STRATEGY). LOSS / PC_LAMMPS / OPTIM / FAILSCORE / OUTPUT /
-             * BDUMP and friends are ROOT-level and fall through. */
+             * KEEP and friends are ROOT-level and fall through. */
             if (block != ROOT) {
                 throw std::runtime_error("unknown key '" + key + "' in this block");
             }
@@ -1276,9 +1276,9 @@ void HPOTargets::read(const std::string& fn)
             else if (key=="BOUTPUT")  { iss>>bestOutputEvery; }
             else if (key=="DIGITS")   { iss>>outputDigits;
                 if (outputDigits < 1 || outputDigits > 15)
-                    throw std::runtime_error("DIGITS must be 1–15"); }
+                    throw std::runtime_error("DIGITS must be 1-15"); }
             else if (key=="DUMP")     { iss>>dumpPotEvery>>dumpPotDir;   handle_directory_creation(dumpPotDir); }
-            else if (key=="BDUMP")    { iss>>dumpBestPotEvery>>dumpBestPotDir; handle_directory_creation(dumpBestPotDir); }
+            else if (key=="KEEP")     { iss>>dumpBestPotEvery>>dumpBestPotDir; handle_directory_creation(dumpBestPotDir); }
 
             /* loss -------------------------------------------------- */
             else if (key=="LOSS")
@@ -1301,7 +1301,7 @@ void HPOTargets::read(const std::string& fn)
             }
 
             /* Typed observables ------------------------------------
-             *   PC_OBSERVABLE <kind> --flag value …
+             *   PC_OBSERVABLE <kind> --flag value ...
              *
              * MVP kinds: cohesive_energy. The parser dispatches on
              * <kind> and constructs the appropriate Observable*
@@ -1388,13 +1388,13 @@ void HPOTargets::read(const std::string& fn)
 
     /* PC_OBSERVABLE always engages the analytical gradient path. The
      * MVP's only observable (cohesive_energy) provides closed-form
-     * dO/dW; combined with the Phase 2 fit-side walker, every θ has an
+     * dO/dW; combined with the Phase 2 fit-side walker, every theta has an
      * analytical chain entry. NUMERICAL with PC_OBSERVABLE would run
-     * Ceres finite differences over the whole HPO objective — correct
+     * Ceres finite differences over the whole HPO objective -- correct
      * but slow, and contrary to the redesign's purpose. Reject it at
      * parse time with a clear message. ANALYTICAL and HYBRID are both
      * accepted; HYBRID's masked-FD fallback never fires for
-     * PC_OBSERVABLE (every θ is registered), so the two strategies
+     * PC_OBSERVABLE (every theta is registered), so the two strategies
      * are observationally identical here. */
     auto reject_numerical_with_observable =
         [&](const OptimizerSpec& sp, const char* tag) {
@@ -1419,14 +1419,14 @@ void HPOTargets::read(const std::string& fn)
      *
      * The HPO-side analytical-gradient wiring for PC_LAMMPS (Phase 3
      * IFT-adjoint chain) is no longer engaged. PC_LAMMPS configs must
-     * use gradient-free optimisers — NLOPT GN_* / LN_*, TADAH built-ins
+     * use gradient-free optimisers -- NLOPT GN_* / LN_*, TADAH built-ins
      * (RANDOM/GRID/ANNEAL). The single accepted gradient-based exception
-     * is DLIB:BFGS, which performs its own per-θ-per-iter finite-
+     * is DLIB:BFGS, which performs its own per-theta-per-iter finite-
      * difference dtheta inside dlib::find_min and never asks the host
      * for a full gradient vector.
      *
      * Also reject any explicit GRAD_STRATEGY={NUMERICAL,HYBRID,
-     * ANALYTICAL} when PC_LAMMPS is present — these tags only make
+     * ANALYTICAL} when PC_LAMMPS is present -- these tags only make
      * sense in the PC_OBSERVABLE world post-2026-05-13. */
     auto reject_pc_lammps_grad =
         [&](const OptimizerSpec& sp, const std::string& fallback_lib,
@@ -1457,7 +1457,7 @@ void HPOTargets::read(const std::string& fn)
                     " is gradient-based. PC_LAMMPS requires a "
                     "gradient-free optimiser (NLOPT GN_*/LN_*, "
                     "TADAH RANDOM/GRID/ANNEAL). The only gradient-based "
-                    "exception is DLIB:BFGS (uses per-θ-per-iter "
+                    "exception is DLIB:BFGS (uses per-theta-per-iter "
                     "dtheta, not a full gradient).");
             }
         };

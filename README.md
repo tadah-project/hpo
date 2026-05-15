@@ -111,14 +111,16 @@ PC_LAMMPS --script surfaces_fast.in --invar surface 100 \
 
 `--hotvar <name> <min> <max> [<initial>]` declares a script as **hot**:
 
-- HPO injects `variable <name> string <cached-or-initial>` before each
+- HPO injects `variable <name> equal <cached-or-initial>` before each
   call. On iter 1 the value is `<initial>` (or the midpoint of
   `[min, max]` if omitted); subsequent iters reuse the previously
   converged value of the same script (cache lives in
   `warmstart_cache.h`).
 - The script must redefine `<name>` as an equal-style variable
-  (typically `variable <name> delete` then
-  `variable <name> equal v_lx/<divisor>`) so HPO can read it back.
+  (typically `variable <name> equal v_lx/<divisor>`) so HPO can read
+  it back. No `variable <name> delete` is needed — HPO uses the same
+  `equal` style for injection so the script's redefinition is a
+  same-style overwrite, which LAMMPS allows.
 - HPO validates the value against `[min, max]`. An out-of-range hot
   value is treated as the unphysical-potential signal: the iter is
   fail-scored and **all cold scripts are skipped**.

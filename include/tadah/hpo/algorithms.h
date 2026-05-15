@@ -52,7 +52,7 @@ template<typename Vec, typename Runner>
     }
   }
 
-/* ----- GRID  (naïve Cartesian product) --------------------------- */
+/* ----- GRID  (nave Cartesian product) --------------------------- */
 template<typename Vec, typename Runner>
   void run_grid(const OptimizerSpec& sp,
       HPO_Host<Vec,Runner>& host)
@@ -164,7 +164,7 @@ template<typename Vec, typename HostT>
     const std::size_t corana_NS     = static_cast<std::size_t>(pget("NS", 5.0));
     const std::size_t corana_NT     = static_cast<std::size_t>(pget("NT", 2.0));
     const double      corana_c      = pget("C", 2.0);
-    /* Brommer (2003) modification — reset chain to best-so-far at the
+    /* Brommer (2003) modification -- reset chain to best-so-far at the
      * end of every cooling step. Gives the adaptive chain "basin
      * memory": after each cool, refinement resumes around the deepest
      * point seen so far rather than wherever the chain drifted to.
@@ -173,8 +173,8 @@ template<typename Vec, typename HostT>
     const bool        reset_to_best = pget("RESET_TO_BEST", 0.0) > 0.5;
     /* V[i] floor as a fraction of (high_i - low_i). Vanilla Corana lets
      * V shrink unboundedly when accept rate stays at 0 (e.g. on
-     * FAILSCORE-cliff landscapes where uphill ΔL ~ FAILSCORE rejects
-     * for any T) — V collapses by factor (1+C)^NT per rung and the
+     * FAILSCORE-cliff landscapes where uphill DeltaL ~ FAILSCORE rejects
+     * for any T) -- V collapses by factor (1+C)^NT per rung and the
      * chain dies. The floor below preserves chain mobility against
      * such pathological sequences. The Corana paper assumed
      * continuous functions where SOME accept always happens, so this
@@ -228,7 +228,7 @@ template<typename Vec, typename HostT>
     const double stopval =
         sp.stop.stopval.value_or(-std::numeric_limits<double>::infinity());
 
-    /* Stop reason — set at every exit path; emitted as a single
+    /* Stop reason -- set at every exit path; emitted as a single
      * `ANNEAL stopped: ...` line at the end so the user can see why
      * the loop finished without grepping per-eval timestamps. */
     enum class StopReason {
@@ -260,7 +260,7 @@ template<typename Vec, typename HostT>
     bool        any_rate        = false;
     bool        ran_sa          = false;   /* true once we passed T0 + seed */
 
-    /* Entry banner — uniform sigma override is reported as the actual
+    /* Entry banner -- uniform sigma override is reported as the actual
      * value used (was previously misreported as STEP_FRAC even when
      * STEP overrode it). When Corana is enabled, the banner shows
      * NS/NT/C in place of L (which Corana doesn't use). */
@@ -427,11 +427,11 @@ template<typename Vec, typename HostT>
        * stop conditions, per-rung counter scheme, and final summary;
        * they differ only in the inner per-rung structure:
        *
-       * Classic (Kirkpatrick/Metropolis 1953/1983) — `L` Markov-chain
+       * Classic (Kirkpatrick/Metropolis 1953/1983) -- `L` Markov-chain
        *   trials per T, each a whole-vector Gaussian step with fixed
        *   per-dim sigma. Cools after every L trials.
        *
-       * Corana (Corana et al. 1987) — `NT` step-adjust cycles per T,
+       * Corana (Corana et al. 1987) -- `NT` step-adjust cycles per T,
        *   each containing `NS` step cycles, each containing one
        *   uniform perturbation per dim (so D evals per step cycle).
        *   Per-dim step magnitude V[i] is adapted at the end of each
@@ -503,10 +503,10 @@ template<typename Vec, typename HostT>
 
             /* Step-adjust: V[i] tracks the per-dim accept ratio over
              * the just-completed NS cycles (each cycle perturbed dim i
-             * once → at most NS accepts). The 0.4–0.6 deadband is from
+             * once -> at most NS accepts). The 0.4-0.6 deadband is from
              * the Corana paper; the gain `c` (default 2.0) controls how
              * fast V[i] reacts. V[i] is clamped to
-             * [V_FLOOR_FRAC * width, width] — see V_FLOOR_FRAC notes
+             * [V_FLOOR_FRAC * width, width] -- see V_FLOOR_FRAC notes
              * above. */
             for (std::size_t i = 0; i < dim; ++i) {
               const double rate_i = static_cast<double>(nA[i]) /
@@ -523,7 +523,7 @@ template<typename Vec, typename HostT>
             }
           }
 
-          /* Per-rung summary line — same shape as classic, plus the
+          /* Per-rung summary line -- same shape as classic, plus the
            * V[] range so users can watch step adaptation. */
           if (r_proposed > 0 || r_oob > 0) {
             const double rate = r_proposed > 0
@@ -598,7 +598,7 @@ template<typename Vec, typename HostT>
 
             /* Generate proposal and reflect any out-of-bounds component
              * back into the box. Whole-proposal rejection is fatal in
-             * high dimensions: with D dims and σ_i = STEP_FRAC * width,
+             * high dimensions: with D dims and sigma_i = STEP_FRAC * width,
              * the joint in-bounds probability collapses (e.g. ~5% at
              * D=38, STEP_FRAC=0.1, anywhere near a corner). Reflection
              * keeps the proposal usable without consuming an L-step.
@@ -608,7 +608,7 @@ template<typename Vec, typename HostT>
              * acceptable for SA where the schedule itself, not Markov
              * stationarity, drives convergence. The `oob` counter now
              * tracks "proposals that needed reflection in at least one
-             * dim" — a useful diagnostic for STEP_FRAC mistuning. */
+             * dim" -- a useful diagnostic for STEP_FRAC mistuning. */
             Vec x_prop(dim);
             bool needed_reflect = false;
             for (std::size_t i = 0; i < dim; ++i) {
@@ -616,7 +616,7 @@ template<typename Vec, typename HostT>
               const double lo = sp.low[i], hi = sp.high[i];
               if (v < lo || v > hi) {
                 needed_reflect = true;
-                /* Up to 16 fold-reflections handle σ up to ~16 * width;
+                /* Up to 16 fold-reflections handle sigma up to ~16 * width;
                  * pathological inputs fall through to a final clamp. */
                 for (int it = 0; it < 16 && (v < lo || v > hi); ++it) {
                   if      (v < lo) v = 2.0 * lo - v;

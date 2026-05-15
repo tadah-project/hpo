@@ -2,7 +2,7 @@
 #define TADAH_HPO_TOLERANCE_LADDER_H
 
 /*
- *  ToleranceLadder — round-indexed tolerance schedule for the BASINS strategy.
+ *  ToleranceLadder -- round-indexed tolerance schedule for the BASINS strategy.
  *
  *  The ladder controls how aggressively each round tightens its
  *  ftol_rel:
@@ -18,7 +18,7 @@
  *
  *  Auto-derive: when the user omits TOL_GLO_LADDER / TOL_LOC_LADDER,
  *  build_default_ladders() picks 1e-3, 1e-4, ... down to a noise-floor
- *  (10× the relative spread reported by NOISE_CALIBRATION, or 1e-9
+ *  (10x the relative spread reported by NOISE_CALIBRATION, or 1e-9
  *  if calibration was not run).
  */
 

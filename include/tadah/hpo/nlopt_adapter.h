@@ -77,7 +77,7 @@ void run_nlopt(const OptimizerSpec& sp,
      * DynamicNumericDiffCostFunction; ANALYTICAL / HYBRID consume the
      * host's analytical_gradient member with masked FD on the
      * unregistered indices. Derivative-free algos (LN_*, GN_*) leave
-     * grad empty on each call — the wrapper skips the gradient path.
+     * grad empty on each call -- the wrapper skips the gradient path.
      *
      * MAXEVAL is enforced by NLopt itself (set_maxeval inside
      * make_nlopt). The eval_counter here is used only by the
@@ -149,7 +149,7 @@ void run_nlopt(const OptimizerSpec& sp,
     };
     opt.set_min_objective(wrapper,&udata);
 
-    /* starting point – either user supplied or random inside bounds */
+    /* starting point - either user supplied or random inside bounds */
     std::vector<double> start(dim);
     if (!sp.optim_init.empty())
     {
@@ -223,7 +223,7 @@ void run_nlopt(const OptimizerSpec& sp,
          *     ~1e-13*|x|, so the next simplex vertex coincides with
          *     the start under nldrmd's `close()` test. The user then
          *     sees a "successful" XTOL_REACHED that actually did no
-         *     useful exploration — the same symptom as BOBYQA's silent
+         *     useful exploration -- the same symptom as BOBYQA's silent
          *     start-point snap, but post-hoc rather than pre-flight.
          *   - LN_NELDERMEAD: identical close-test path as SBPLX.
          *   - Several others (cobyla/mma/slsqp/isres/...) surface the
@@ -234,7 +234,7 @@ void run_nlopt(const OptimizerSpec& sp,
             const int nfev = opt.get_numevals();
             std::ostringstream oss;
             oss << sp.algo << ": NLopt internal diagnostic was set after "
-                << nfev << " eval(s) — '" << nlopt_msg
+                << nfev << " eval(s) -- '" << nlopt_msg
                 << "'. Algorithm reported " << status_str
                 << " but the underlying issue was masked. For "
                    "LN_SBPLX/LN_NELDERMEAD this typically means the "
@@ -244,7 +244,7 @@ void run_nlopt(const OptimizerSpec& sp,
                    "switching to LD_LBFGS / DLIB:BFGS / LN_BOBYQA.";
             std::cerr << "[HPO] " << oss.str() << "\n";
             HPOLog::instance().warning(oss.str());
-            status_str = "STOPPED — masked " + status_str + ": " + nlopt_msg;
+            status_str = "STOPPED -- masked " + status_str + ": " + nlopt_msg;
         } else {
             std::ostringstream nfo;
             nfo << "NLopt finished: " << status_str << "  fmin=" << fmin;
@@ -254,22 +254,22 @@ void run_nlopt(const OptimizerSpec& sp,
     } catch (const std::exception& e) {
         const std::string what = e.what();
         /* NLOPT_FAILURE (-1): population converged, local mutation simplex
-         * degenerated — algorithmic self-termination, not a bug.
+         * degenerated -- algorithmic self-termination, not a bug.
          * NLOPT_ROUNDOFF_LIMITED (-4): blocked by floating-point roundoff.
          * Both mean the algorithm has nothing left to explore; the best
          * result found so far is valid and already saved. */
         const bool graceful = (what == "nlopt failure" ||
                                what == "roundoff-limited");
         if (graceful) {
-            status_str = "STOPPED — " + what +
+            status_str = "STOPPED -- " + what +
                 " (algorithm converged; consider adding ftol_rel / xtol_rel"
                 " / maxeval to stop cleanly next time)";
             std::cout << "[HPO] NLopt self-terminated (" << what
-                      << ") — best result preserved.\n";
+                      << ") -- best result preserved.\n";
             HPOLog::instance().warning(what +
-                " — algorithm converged; best result preserved");
+                " -- algorithm converged; best result preserved");
         } else {
-            status_str = std::string("FAILED — ") + what;
+            status_str = std::string("FAILED -- ") + what;
             std::cout << "[HPO] NLopt threw: " << what << "\n";
             HPOLog::instance().warning(std::string("NLopt exception: ") + what);
         }

@@ -23,7 +23,7 @@ double state_bonus(LifecycleState s)
 double min_max_normalise(double x, double lo, double hi)
 {
     const double range = hi - lo;
-    if (range <= 0.0) return 0.0;     // degenerate — all equal
+    if (range <= 0.0) return 0.0;     // degenerate -- all equal
     return (x - lo) / range;
 }
 

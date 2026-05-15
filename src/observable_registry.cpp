@@ -13,7 +13,7 @@ namespace {
 
 inline std::string strip_outer_paren_and_dollar(std::string s)
 {
-    /* Trim whitespace, then strip a single leading `$(` … `)` immediate-
+    /* Trim whitespace, then strip a single leading `$(` ... `)` immediate-
      * eval wrapper if present. Inner content is not re-trimmed of paren
      * pairs (a recursive descent into "(a+b)" is left to the parser). */
     auto trim = [](std::string& t) {
@@ -50,7 +50,7 @@ std::size_t find_outermost_pm(const std::string& s)
         if (c == '(') ++depth;
         else if (c == ')') --depth;
         else if (depth == 0 && (c == '+' || c == '-')) {
-            /* Reject sign-as-exponent (`1e-3`, `2E+4`) — the previous
+            /* Reject sign-as-exponent (`1e-3`, `2E+4`) -- the previous
              * char is a digit or '.' and the one before that is an
              * 'e'/'E'. */
             if (i >= 2) {
@@ -58,7 +58,7 @@ std::size_t find_outermost_pm(const std::string& s)
                 if ((p1 == 'e' || p1 == 'E')) {
                     /* The 'e' must be preceded by a digit or '.' to be
                      * an exponent marker (e.g. "1e-3" yes; "v_eatoms-3"
-                     * no — the 's' before 'e' isn't digit/dot). */
+                     * no -- the 's' before 'e' isn't digit/dot). */
                     if (i >= 2) {
                         const char p2 = s[i - 2];
                         if (std::isdigit(static_cast<unsigned char>(p2)) || p2 == '.') {
@@ -73,8 +73,8 @@ std::size_t find_outermost_pm(const std::string& s)
     return std::string::npos;
 }
 
-/* Parse `lx/<num>`, `ly/<num>`, `lz/<num>`, returning axis ∈ {0,1,2}
- * and divisor on success. Plain "lx" / "ly" / "lz" → divisor 1. */
+/* Parse `lx/<num>`, `ly/<num>`, `lz/<num>`, returning axis in {0,1,2}
+ * and divisor on success. Plain "lx" / "ly" / "lz" -> divisor 1. */
 struct LatticeMatch {
     int    axis;
     double divisor;
@@ -113,14 +113,14 @@ bool try_match_lattice(const std::string& s, LatticeMatch& out)
     }
 }
 
-/* Sum descriptors over local atoms: out[c] = Σ_a aeds(c, a). */
+/* Sum descriptors over local atoms: out[c] = Sigma_a aeds(c, a). */
 void accumulate_aeds_columns(const tadah::core::aeds_type2& aeds,
                              std::size_t nlocal,
                              Eigen::VectorXd& out)
 {
     const std::size_t n_desc = aeds.rows();
     out = Eigen::VectorXd::Zero(static_cast<Eigen::Index>(n_desc));
-    /* Guard against an upstream resize mismatch — descriptor matrix
+    /* Guard against an upstream resize mismatch -- descriptor matrix
      * columns are the storage allocation (atom->nmax), but logical
      * content tops out at nlocal. */
     const std::size_t cap = std::min<std::size_t>(nlocal, aeds.cols());
@@ -149,8 +149,8 @@ ObservableHandle make_cohesive_e_per_atom()
 {
     ObservableHandle h;
     h.kind = "cohesive_e_per_atom";
-    /* At the relaxed state x*, ∂E/∂x = -F = 0 to minimiser tolerance;
-     * skip the Hessian solve. Phase 3.4 routes λ_k = 0 in that case. */
+    /* At the relaxed state x*, dE/dx = -F = 0 to minimiser tolerance;
+     * skip the Hessian solve. Phase 3.4 routes lambda_k = 0 in that case. */
     h.dg_dx_is_zero = true;
     h.dg_dx = [](const ObservableContext& ctx, Eigen::VectorXd& out) {
         out = Eigen::VectorXd::Zero(3 * ctx.nlocal + ctx.box_dofs);
@@ -199,10 +199,10 @@ ObservableHandle make_lattice_constant(int axis, double divisor)
                           ctx.lz;
         const int row = 3 * ctx.nlocal;
         if (ctx.box_dofs == 1) {
-            /* Iso strain ε: L_new = (1+ε)·L, so ∂L/∂ε = L. */
+            /* Iso strain eps: L_new = (1+eps).L, so dL/deps = L. */
             out(row) = L / divisor;
         } else if (ctx.box_dofs == 6) {
-            /* Voigt aniso: ε_xx → axis 0, ε_yy → 1, ε_zz → 2. */
+            /* Voigt aniso: eps_xx -> axis 0, eps_yy -> 1, eps_zz -> 2. */
             out(row + axis) = L / divisor;
         }
     };
@@ -223,11 +223,11 @@ ObservableHandle make_vol()
         const double V = ctx.lx * ctx.ly * ctx.lz;
         const int row = 3 * ctx.nlocal;
         if (ctx.box_dofs == 1) {
-            /* Iso: V_new = (1+ε)³·V ⇒ ∂V/∂ε = 3·V at ε=0. */
+            /* Iso: V_new = (1+eps)^3.V => dV/deps = 3.V at eps=0. */
             out(row) = 3.0 * V;
         } else if (ctx.box_dofs == 6) {
-            /* Aniso diag (Voigt 0..2): ∂V/∂ε_αα = V (since V = lx·ly·lz
-             * and ε_αα stretches one edge by V/L_α · L_α = V). Shear
+            /* Aniso diag (Voigt 0..2): dV/deps_alphaalpha = V (since V = lx.ly.lz
+             * and eps_alphaalpha stretches one edge by V/L_alpha . L_alpha = V). Shear
              * Voigt modes (3..5) preserve V to leading order. */
             out(row + 0) = V;
             out(row + 1) = V;
@@ -295,11 +295,11 @@ bool try_register_inner(const std::string& expr,
     std::string s = strip_outer_paren_and_dollar(expr);
     if (s.empty()) return false;
 
-    /* Strip a single leading unary sign — `(-pe)` would otherwise stay
-     * parenthesised; the strip above already handled `$(…)`. */
+    /* Strip a single leading unary sign -- `(-pe)` would otherwise stay
+     * parenthesised; the strip above already handled `$(...)`. */
     /* No special handling here; binary -/+ at offset 0 falls through. */
 
-    /* 1. Linear combination — split on the outermost +/-. */
+    /* 1. Linear combination -- split on the outermost +/-. */
     const std::size_t op = find_outermost_pm(s);
     if (op != std::string::npos) {
         const std::string lhs_s = s.substr(0, op);
@@ -313,13 +313,13 @@ bool try_register_inner(const std::string& expr,
         return true;
     }
 
-    /* 2. v_<name> variable reference — defer to the host resolver. */
+    /* 2. v_<name> variable reference -- defer to the host resolver. */
     if (s.size() > 2 && s[0] == 'v' && s[1] == '_') {
         if (!resolver) return false;
         const std::string vname = s.substr(2);
         const std::string vexpr = resolver(vname);
         if (vexpr.empty()) return false;
-        /* Don't reuse the same name twice in the recursion frame —
+        /* Don't reuse the same name twice in the recursion frame --
          * caller-side resolver is responsible for cycle prevention. */
         return try_register_inner(vexpr, resolver, out, depth + 1);
     }

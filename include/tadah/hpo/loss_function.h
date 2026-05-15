@@ -44,7 +44,7 @@ public:
     const std::vector<double>&   params()  const noexcept { return params_; }
 
     /* ----------------------------------------------------------------- *
-     *  Evaluate     L(y, ŷ ; w )
+     *  Evaluate     L(y, y ; w )
      * ----------------------------------------------------------------- */
     double loss(double y, double ypred, double w = 1.0,
                 double eps = 1e-12) const;
@@ -63,8 +63,8 @@ public:
     double loss_prime(double y, double ypred, double w = 1.0,
                       double eps = 1e-12) const;
 
-    /* ––– meta information ––––––––––––––––––––––––––––––––––––––––––– */
-    bool is_squared() const noexcept;    // true  → collect in RMS bucket
+    /* --- meta information ------------------------------------------- */
+    bool is_squared() const noexcept;    // true  -> collect in RMS bucket
 
 private:
     Type                type_;

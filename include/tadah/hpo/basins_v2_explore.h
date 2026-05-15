@@ -2,17 +2,17 @@
 #define TADAH_HPO_BASINS_V2_EXPLORE_H
 
 /*
- *  basins_v2_explore — Sobol generator + path-aware survivor filter
+ *  basins_v2_explore -- Sobol generator + path-aware survivor filter
  *  for BASINSv2's EXPLORE pipeline.
  *
- *  Pure helpers, no policy / host / runner dependencies — keeps the
+ *  Pure helpers, no policy / host / runner dependencies -- keeps the
  *  pipeline unit-testable in isolation.
  *
  *  Pipeline (called by BasinsV2Policy::do_explore):
- *    1. sobol_unit_points(K, dim, seed_skip)   → K points in [0,1]^dim
+ *    1. sobol_unit_points(K, dim, seed_skip)   -> K points in [0,1]^dim
  *    2. caller maps to real space, evaluates them via host()
  *    3. filter_far_from_pool(candidates, pool, explore_dist_floor)
- *       → indices of survivors not within explore_dist_floor of any
+ *       -> indices of survivors not within explore_dist_floor of any
  *         known basin (or its coarse path, when present in Phase 4)
  *    4. caller picks top-M by loss and runs brief local refinement
  *

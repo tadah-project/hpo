@@ -19,7 +19,7 @@ namespace hpo {
  *  Layout supports both the trivial closed-form path (`needs_adjoint=false`,
  *  cohesive energy / surface energy / phase-transition energy at the
  *  energy minimum) and the IFT-adjoint path (`needs_adjoint=true`,
- *  lattice constant / elastic constants / γ-surface where the observable
+ *  lattice constant / elastic constants / gamma-surface where the observable
  *  depends explicitly on atomic positions or strain).
  *
  *  For the closed-form path the host uses dO_dW directly:
@@ -32,7 +32,7 @@ struct ObservableEvalResult {
     /** Scalar value of the observable (e.g. cohesive energy in eV/atom). */
     double value = 0.0;
 
-    /** ∂O/∂W (or the full direct contribution after adjoint folding).
+    /** dO/dW (or the full direct contribution after adjoint folding).
      *  Size = number of weights in the model. */
     tadah::core::t_type dO_dW;
 
@@ -40,7 +40,7 @@ struct ObservableEvalResult {
      *  solve (Hessian-vector). When false, dg_dx / dg_de are ignored. */
     bool needs_adjoint = false;
 
-    /** ∂g/∂x at the relaxed state, one Vec3d per atom.
+    /** dg/dx at the relaxed state, one Vec3d per atom.
      *  Populated only when `needs_adjoint=true`. The host passes this as
      *  the rhs to DenseAdjointSolver. */
     std::vector<tadah::core::Vec3d> dg_dx;
@@ -49,7 +49,7 @@ struct ObservableEvalResult {
      *  the simulation that produced this observable. */
     int box_dofs = 0;
 
-    /** ∂g/∂ε at the relaxed strain (size = box_dofs).
+    /** dg/deps at the relaxed strain (size = box_dofs).
      *  Populated only when `box_dofs > 0` and `needs_adjoint=true`. */
     tadah::core::t_type dg_de;
 
@@ -66,8 +66,8 @@ struct ObservableEvalResult {
  *  observable value with its W-derivative.
  *
  *  Concrete subclasses landing after the cohesive-energy MVP:
- *      - LatticeParamObservable        (∂g/∂x ≠ 0; first adjoint user)
- *      - VacancyFormationObservable    (multi-cell relax, ∂g/∂x = 0)
+ *      - LatticeParamObservable        (dg/dx != 0; first adjoint user)
+ *      - VacancyFormationObservable    (multi-cell relax, dg/dx = 0)
  *      - ElasticConstantObservable     (Voigt-6 strain + adjoint)
  *      - SurfaceEnergyObservable
  *      - GammaSurfaceObservable        (constrained relax)

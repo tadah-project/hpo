@@ -1,6 +1,6 @@
 #pragma once
 /*
- *  BasinsV2Policy implementation — included from basins_v2_policy.h.
+ *  BasinsV2Policy implementation -- included from basins_v2_policy.h.
  *
  *  Templated; uses run_inner<>() from run_policy_base.h. The dispatch
  *  shape mirrors v1's BasinsPolicy at the optimiser-invocation layer
@@ -114,7 +114,7 @@ template<class Vec, class Runner>
 double BasinsV2Policy<Vec, Runner>::pick_initial_tol_for_new_basin() const
 {
     /* Newly discovered basins enter the queue at the loosest local rung
-     * — they need exploring before deeper refinement is justified. */
+     * -- they need exploring before deeper refinement is justified. */
     const auto& loc = ladder_.loc_ladder();
     if (loc.empty()) return 1.0e-3;
     /* The ladder is stored sorted-descending (loosest first) by
@@ -189,7 +189,7 @@ BasinsV2Policy<Vec, Runner>::build_stage_spec(
 
     s.inner = src.inner ? std::make_unique<OptimizerSpec>(*src.inner) : nullptr;
 
-    /* Drop nesting — BASINSV2 sits at the top of the policy stack. */
+    /* Drop nesting -- BASINSV2 sits at the top of the policy stack. */
     s.strategy_type = StrategyType::PLAIN;
     s.basins        = BasinsSpec{};
     s.basins_v2     = BasinsV2Spec{};
@@ -240,7 +240,7 @@ BasinsV2Policy<Vec, Runner>::select_work()
 {
     WorkItem w;
 
-    /* (1) bootstrap: empty pool → EXPLORE. */
+    /* (1) bootstrap: empty pool -> EXPLORE. */
     if (pool_.empty() || pool_.active_count() == 0) {
         w.kind = WorkKind::EXPLORE;
         return w;
@@ -264,7 +264,7 @@ BasinsV2Policy<Vec, Runner>::select_work()
                 static_cast<int>(spec_.verify_cadence)) {
                 if (basins[i].verify_attempts >=
                     static_cast<int>(spec_.verify_max_attempts)) {
-                    /* Out of attempts — caller transitions to KILLED in
+                    /* Out of attempts -- caller transitions to KILLED in
                      * update_lifecycle(); skip here. */
                     continue;
                 }
@@ -318,7 +318,7 @@ BasinsV2Policy<Vec, Runner>::select_work()
     auto scores = compute_priorities(pool_.view(), min_dist, ctx, weights_);
     const int best_idx = argmax_priority(pool_.view(), scores);
     if (best_idx < 0) {
-        /* No active basin — fall back to EXPLORE. */
+        /* No active basin -- fall back to EXPLORE. */
         w.kind = WorkKind::EXPLORE;
         return w;
     }
@@ -366,7 +366,7 @@ void BasinsV2Policy<Vec, Runner>::do_explore(HPO_Host<Vec, Runner>& host)
     const auto unit_pts = sobol_unit_points(
         K, dim, /*seed_skip=*/static_cast<std::uint64_t>(iteration_ + 1));
 
-    /* Map [0,1]^dim → real space (outer_.in/out convention). */
+    /* Map [0,1]^dim -> real space (outer_.in/out convention). */
     std::vector<std::vector<double>> real_pts;
     real_pts.reserve(unit_pts.size());
     std::vector<std::vector<double>> transformed_pts;
@@ -402,7 +402,7 @@ void BasinsV2Policy<Vec, Runner>::do_explore(HPO_Host<Vec, Runner>& host)
         }
     } catch (const core::ShutdownRequested&) {
         /* Push whatever Sobol points we managed to evaluate into the
-         * pool before propagating — better than losing them. */
+         * pool before propagating -- better than losing them. */
         for (std::size_t i = 0; i < losses.size(); ++i) {
             const int new_id = pool_.add_or_merge(
                 transformed_pts[i], losses[i], iteration_);
@@ -444,7 +444,7 @@ void BasinsV2Policy<Vec, Runner>::do_explore(HPO_Host<Vec, Runner>& host)
 
     /* (5) Brief local refinement of survivors using the EXPLORE block's
      *     LIB/ALGO (default LN_BOBYQA). Cap budget at 30 * dim evals
-     *     per survivor — the goal is to find each Sobol survivor's
+     *     per survivor -- the goal is to find each Sobol survivor's
      *     basin endpoint, not refine it. */
     const std::size_t cap_per_survivor =
         std::max<std::size_t>(30u * dim, spec_.explore_budget_min_evals);
@@ -594,7 +594,7 @@ void BasinsV2Policy<Vec, Runner>::do_refine(HPO_Host<Vec, Runner>& host,
                                      evals_used, iteration_, tol,
                                      optimizer_converged_naturally);
     } else {
-        /* No top-K captured — still record the attempt for tol bookkeeping. */
+        /* No top-K captured -- still record the attempt for tol bookkeeping. */
         const BasinV2* now = pool_.by_id(basin_id);
         std::vector<double> snap = now ? now->params : std::vector<double>{};
         const double snap_loss = now ? now->loss : best_after;
@@ -729,7 +729,7 @@ void BasinsV2Policy<Vec, Runner>::do_verify_kill(HPO_Host<Vec, Runner>& host,
         os << "BASINSv2 verify basin[id=" << basin_id << "] tickle: best "
            << std::scientific << std::setprecision(4) << best_before
            << " -> " << best_after
-           << (improved ? " (improved — revived to ACTIVE)"
+           << (improved ? " (improved -- revived to ACTIVE)"
                         : " (no progress)")
            << " attempt=" << (b->verify_attempts + 1)
            << "/" << spec_.verify_max_attempts;
@@ -747,7 +747,7 @@ void BasinsV2Policy<Vec, Runner>::do_merge_pass()
      * each as SUSPECT_DUP. The scheduler's next REFINE selection will
      * pick the lower-loss member of each suspect pair (priority bias
      * via state_bonus = -2). After that refinement the policy
-     * post-checks whether the pair is still close — confirm or
+     * post-checks whether the pair is still close -- confirm or
      * revert. No LAMMPS evals are spent inside this pass itself. */
     auto candidates = pool_.find_merge_candidates(
         spec_.basin_merge_dist, spec_.basin_merge_loss_threshold);
@@ -774,7 +774,7 @@ void BasinsV2Policy<Vec, Runner>::do_merge_pass()
 
         /* If a pair is already SUSPECT_DUP from a previous merge-pass
          * AND has remained close after a refinement, confirm the merge
-         * here (no extra REFINE needed — the previous one already gave
+         * here (no extra REFINE needed -- the previous one already gave
          * them a chance). */
         if (bi.state == LifecycleState::SUSPECT_DUP &&
             bj.state == LifecycleState::SUSPECT_DUP) {
@@ -833,7 +833,7 @@ void BasinsV2Policy<Vec, Runner>::update_lifecycle()
     for (auto& b : basins) {
         if (is_archive_state(b.state)) continue;
 
-        /* INACTIVE → KILLED if out of verify attempts. */
+        /* INACTIVE -> KILLED if out of verify attempts. */
         if (b.state == LifecycleState::INACTIVE &&
             b.verify_attempts >= static_cast<int>(spec_.verify_max_attempts)) {
             const auto prev = b.state;
@@ -847,7 +847,7 @@ void BasinsV2Policy<Vec, Runner>::update_lifecycle()
             continue;
         }
 
-        /* ACTIVE → INACTIVE if stagnant. */
+        /* ACTIVE -> INACTIVE if stagnant. */
         if (b.state == LifecycleState::ACTIVE &&
             b.evals_since_improvement >= inactive_threshold &&
             b.evals_consumed_total > 0) {
@@ -863,7 +863,7 @@ void BasinsV2Policy<Vec, Runner>::update_lifecycle()
             continue;
         }
 
-        /* ACTIVE → PROMISING (top-quartile EMA). */
+        /* ACTIVE -> PROMISING (top-quartile EMA). */
         if (b.state == LifecycleState::ACTIVE && !emas.empty() &&
             b.improvement_ema > p75 && p75 > 0.0) {
             const auto prev = b.state;
@@ -878,7 +878,7 @@ void BasinsV2Policy<Vec, Runner>::update_lifecycle()
             continue;
         }
 
-        /* PROMISING → ACTIVE (bottom-quartile EMA). */
+        /* PROMISING -> ACTIVE (bottom-quartile EMA). */
         if (b.state == LifecycleState::PROMISING && !emas.empty() &&
             b.improvement_ema < p25) {
             const auto prev = b.state;
@@ -1021,7 +1021,7 @@ void BasinsV2Policy<Vec, Runner>::run(const OptimizerSpec& /*spec*/,
         } catch (const std::exception& e) {
             HPOLog::instance().warning(
                 std::string("BASINSv2 select_work failed: ") + e.what()
-                + " — falling back to EXPLORE");
+                + " -- falling back to EXPLORE");
             w.kind = WorkKind::EXPLORE;
         }
 
@@ -1074,7 +1074,7 @@ void BasinsV2Policy<Vec, Runner>::save(core::Checkpoint& cp) const
     cp.put_dbl  ("best_at_last_summary",        best_at_last_summary_);
     cp.put_dbl  ("global_best_observed",        global_best_observed_);
     cp.put_dbl  ("wall_seconds_accumulated",    wall_seconds_accumulated_);
-    /* Priority weights — for reproducibility audits. */
+    /* Priority weights -- for reproducibility audits. */
     std::vector<double> wvec = {
         weights_.improve, weights_.neglect, weights_.distance,
         weights_.tol_gap, weights_.state, weights_.age

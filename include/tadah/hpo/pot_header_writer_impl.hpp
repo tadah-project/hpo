@@ -11,7 +11,7 @@
 namespace tadah::hpo {
 
 /* =====================================================================
- *  write_result_table — all metrics, all outvars, all losses, total
+ *  write_result_table -- all metrics, all outvars, all losses, total
  * ===================================================================== */
 template<class ParamVec>
 void PotHeaderWriter::write_result_table(std::ostream& os,
@@ -127,7 +127,7 @@ void PotHeaderWriter::write_result_table(std::ostream& os,
 }
 
 /* =====================================================================
- *  write_best_header — full self-contained header
+ *  write_best_header -- full self-contained header
  * ===================================================================== */
 template<class ParamVec>
 void PotHeaderWriter::write_best_header(
@@ -153,7 +153,7 @@ void PotHeaderWriter::write_best_header(
 }
 
 /* =====================================================================
- *  write_archive_header — compact header for pot_N.tadah
+ *  write_archive_header -- compact header for pot_N.tadah
  * ===================================================================== */
 template<class ParamVec>
 void PotHeaderWriter::write_archive_header(
@@ -162,14 +162,14 @@ void PotHeaderWriter::write_archive_header(
     std::size_t                  /*cw*/, int prec)
 {
     thin(os);
-    os << "# Tadah HPO — eval " << result.iter
+    os << "# Tadah HPO -- eval " << result.iter
        << "  |  loss=" << fmt_double(result.loss, prec)
        << "  |  " << fmt_timestamp() << "\n";
     thin(os);
 }
 
 /* =====================================================================
- *  write_best_archive_header — compact header for best_pot_N.tadah
+ *  write_best_archive_header -- compact header for best_pot_N.tadah
  * ===================================================================== */
 template<class ParamVec>
 void PotHeaderWriter::write_best_archive_header(
@@ -179,7 +179,7 @@ void PotHeaderWriter::write_best_archive_header(
     std::size_t                  cw, int prec)
 {
     thin(os);
-    os << "# Tadah HPO — best iter " << result.best_iter
+    os << "# Tadah HPO -- best iter " << result.best_iter
        << "  (eval " << result.iter << ")"
        << "  |  loss=" << fmt_double(result.loss, prec)
        << "  |  " << fmt_timestamp() << "\n";

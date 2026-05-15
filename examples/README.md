@@ -1,132 +1,91 @@
 # HPO/examples
 
-Fifteen runnable end-to-end examples covering every block in the new
-`STRATEGY`-rooted grammar — `INIT`, `NOISE`, `RESTART`, `EXPLORE`,
-`REFINE`, `INNER`. Each example directory is self-contained: one
-`config.hpo`, one `README.md` describing what the example shows, and a
-`run.sh` (for examples that need bootstrapping). They share the small
-training/validation bundle in `common/`.
+A graded sequence of runnable HPO examples. Each example is a
+self-contained directory with one `config.hpo` and a `README.md` that
+explains what the example exercises. All examples share the same tiny
+Ta training+validation bundle in `common/`.
 
-## Grammar at a glance
+## How to run one
 
-```
-OPTIMIZER
-  INIT          # init chain (STRATEGY/K_TOTAL/SEED/INCLUDE_CONFIG/WARM_ON_MISMATCH)
-    ...
-  ENDINIT
-  NOISE         # NOISE.AUTO + NOISE.CALIBRATION
-    ...
-  ENDNOISE
-  STRATEGY      # mandatory; TYPE picks the policy
-    TYPE PLAIN | BASINS | MULTISTART | PRESTAGE
-    LIB ...   ALGO ...        # the (default) inner driver
-    ...stop / param keys...
-    INNER     # MLSL/AUGLAG-family inner local sub-optimiser
-    ENDINNER
-    EXPLORE   # TYPE BASINS / TYPE PRESTAGE — global stage
-    ENDEXPLORE
-    REFINE    # TYPE BASINS — per-basin local stage
-    ENDREFINE
-    RESTART   # decorator (PLAIN / MULTISTART / PRESTAGE)
-    ENDRESTART
-  ENDSTRATEGY
-ENDOPTIMIZER
-```
+    cd 01_minimal
+    bash ../common/run.sh
 
-## How to run one example
+Override the binary path with `TADAH=/path/to/tadah` if `tadah` is not
+on your PATH. Override OpenMP threads with `OMP_NUM_THREADS=N`. Each
+run cleans its previous output (`best_*.tadah`, `loss.tadah`,
+`outvar.tadah`, `params.tadah`, `stats.tadah`, `hpo_run.log`).
 
-```
-cd 01_baseline_bfgs
-bash ../common/run.sh
-```
-
-Each run cleans its previous output, invokes `tadah hpo` from the
-example dir, and prints a one-line summary. Outputs (`best_*.tadah`,
-`loss.tadah`, `hpo_run.log`, ...) land in the example dir.
+A handful of examples (10, 11) ship their own `run.sh` because they
+need a `seed_pot.tadah` bootstrapped first; that script handles the
+bootstrap on first invocation and reuses the seed thereafter.
 
 ## How to run them all
 
-```
-bash run_all.sh
-```
+    bash run_all.sh
 
-Prints a summary table; ~30 seconds total on a quiet machine.
+prints a one-line summary per example (best loss, eval count, status).
+
+## How to check against the reference
+
+    bash run_reference_suite.sh --full
+
+re-runs every example and compares the output to a checked-in
+`reference_fingerprint.json` (loss, hyperparameter values, eval count,
+optimiser status). Use `--example=NN` to check a single example or
+`--check-only` to skip the re-run.
+
+## The sequence
+
+The examples build up gradually: 01 is the smallest viable config,
+each subsequent one introduces one or two new features.
+
+| #  | Example                  | Introduces |
+|----|--------------------------|------------|
+| 01 | `01_minimal`             | Minimal `OPTIMIZER / STRATEGY / PC_LAMMPS / OPTIM` skeleton (DLIB:BFGS). |
+| 02 | `02_random_search`       | `LIB TADAH ALGO RANDOM` + `SEED` (baseline sampler). |
+| 03 | `03_nlopt_local`         | `LIB NLOPT ALGO LN_SBPLX` + `STEP` (derivative-free local). |
+| 04 | `04_skip_bad_pots`       | `PC_<METRIC> --skip-above / --skip-rel` early-reject filter. |
+| 05 | `05_extra_observables`   | `PC_LAMMPS --invar` / `--outvar` (extra LAMMPS observables). |
+| 06 | `06_init_random`         | `INIT { STRATEGY RANDOM, SEED, INCLUDE_CONFIG }`. |
+| 07 | `07_init_lhs_multistart` | `INIT { STRATEGY LHS }` + `STRATEGY MULTISTART`. |
+| 08 | `08_init_sobol_gfs`      | `INIT { STRATEGY SOBOL }` + `DLIB:GFS` multi-seed consumer. |
+| 09 | `09_init_prior`          | `INIT { STRATEGY PRIOR }` (descriptor-supplied). |
+| 10 | `10_init_warm`           | `INIT { STRATEGY WARM <file> }`, warm-start cache. |
+| 11 | `11_init_chain`          | Multi-strategy INIT chain. |
+| 12 | `12_grid_sweep`          | `LIB TADAH ALGO GRID` exhaustive Cartesian sweep. |
+| 13 | `13_prestage`            | `STRATEGY PRESTAGE { EXPLORE { ... } }` global -> refine. |
+| 14 | `14_restart`             | `STRATEGY { ... RESTART { ... } }` decorator. |
+| 15 | `15_mlsl_inner`          | `STRATEGY { ... INNER { ... } }` for AUGLAG / MLSL. |
+| 16 | `16_simulated_annealing` | `LIB TADAH ALGO ANNEAL` with cooling-schedule PARAMs. |
 
 ## Files in `common/`
 
 | File | Purpose |
 |---|---|
-| `data/elastic.tadahdb` | 29 elastic-deformation BCC structures |
-| `data/eos_bcc.tadahdb` | EOS sweep over the BCC volume |
-| `lammps/Ecoh.in` | Cohesive-energy LAMMPS script (uses `${hot_a0}` warm-start) |
-| `config.tadah` | Shared TADAH model (Blip 2B + mBlipEnv MB) |
-| `config.val` | Shared validation-set list |
-| `run.sh` | Driver script — clean + invoke `tadah hpo` + summarise |
+| `config.tadah`            | Shared TADAH model (Blip 2B + mBlipEnv MB on Ta). |
+| `config.val`              | Shared validation-set list. |
+| `data/elastic.tadahdb`    | 29 elastic-deformation BCC structures. |
+| `data/eos_bcc.tadahdb`    | EOS sweep over the BCC volume. |
+| `lammps/Ecoh.in`          | Cohesive-energy LAMMPS script (4x4x4 BCC). |
+| `lammps/Ecoh_param.in`    | Same, but the supercell is `${nx} x ${ny} x ${nz}`. |
+| `run.sh`                  | Driver script: clean, invoke `tadah hpo`, summarise. |
 
-The training and validation lists overlap on `elastic.tadahdb`
-(intentionally — keeps the example tiny). All paths in `config.tadah`
-are relative to the example directory; that is why `run.sh` `cd`s into
-the example before invoking tadah.
+All paths in `config.tadah` are relative to the example directory; that
+is why `run.sh` `cd`s into the example before invoking `tadah`.
 
-## What is anonymised
+## Notes on coverage
 
-The `data/*.tadahdb` files are slimmed copies of public DFT data. The
-first column of each structure entry (originally an absolute filesystem
-path on the author's machine) was rewritten to `examples/data/...` so
-no private path leaks. Element identity (Ta) is retained — it is a
-public chemical symbol.
+These examples exercise every `STRATEGY` and `INIT` flavour and the
+`LIB` families that today work with `PC_LAMMPS`. `STRATEGY BASINS` and
+`STRATEGY BASINSV2` are intentionally not shown -- both are still
+experimental. `CERES:LBFGS/WOLFE/NLCG/STEEPEST_DESCENT` are also not
+shown here: they are gradient-based and currently incompatible with
+`PC_LAMMPS` (use `LIB DLIB ALGO BFGS` or a gradient-free family for
+LAMMPS-driven loss terms).
 
-## Index
+## Tightening `--hotvar` against unphysical lattices
 
-| # | Example | Knobs exercised |
-|---|---|---|
-| 01 | `01_baseline_bfgs` | `STRATEGY { TYPE PLAIN }` — implicit CONFIG, single-shot DLIB:BFGS |
-| 02 | `02_random_seeded` | `INIT { STRATEGY RANDOM, INCLUDE_CONFIG false, SEED }` |
-| 03 | `03_lhs_multistart` | `INIT { STRATEGY LHS }` + `STRATEGY { TYPE MULTISTART, N_STARTS, BUDGET_PER_START }` |
-| 04 | `04_sobol_seeded_gfs` | `INIT { STRATEGY SOBOL }`; DLIB:GFS consumes all K seeds |
-| 05 | `05_warm_refinement` | `INIT { STRATEGY WARM, WARM_ON_MISMATCH }`, HOT_A0 cache |
-| 06 | `06_prior_seeded` | `INIT { STRATEGY PRIOR }`, descriptor `suggested_value` |
-| 07 | `07_stage_global` | `STRATEGY { TYPE PRESTAGE, TOPK, EXPLORE { ... } }` |
-| 08 | `08_restart_on_stagnation` | `STRATEGY { RESTART { AFTER_STAGNATION, MAX, STRATEGY } }` |
-| 09 | `09_noise_auto_bfgs` | `NOISE { AUTO }` (bareword form) |
-| 10 | `10_derivative_free_local` | `STRATEGY { TYPE PLAIN, LIB NLOPT, ALGO LN_SBPLX, STEP }` |
-| 11 | `11_chained_init_warm_lhs` | Chained init: WARM + LHS + DLIB:GFS, WARM-front reorder |
-| 12 | `12_random_search` | `STRATEGY { TYPE PLAIN, LIB TADAH, ALGO RANDOM, SEED }` |
-| 13 | `13_nlopt_crs_global` | `LIB NLOPT, ALGO GN_CRS2_LM` — pure stochastic global, no internal local refinement |
-| 14 | `14_nlopt_mlsl_lds` | `LIB NLOPT, ALGO G_MLSL_LDS` + `INNER { LIB NLOPT, ALGO LN_BOBYQA }` — MLSL global+local hybrid |
-| 15 | `15_basins_run_and_forget` | `STRATEGY { TYPE BASINS, EXPLORE { FTOL_LADDER, BUDGET_* }, REFINE { ... } }` |
-| 16 | `16_simulated_annealing` | `STRATEGY { TYPE PLAIN, LIB TADAH, ALGO ANNEAL, PARAM RT/L/STEP_FRAC/T0_PROBES/T0_PACCEPT }` — classic Kirkpatrick/Metropolis SA with auto-T0 calibration |
-
-## Reading the diagnostics
-
-Each example's `hpo_run.log` records the resolved configuration at the
-top, including a new `Init strategy:` and `Run policy:` block:
-
-```
-  Init strategy:
-    [1] SOBOL 4
-    K_TOTAL            : 4
-    SEED               : 31337
-    INCLUDE_CONFIG     : false
-    WARM_ON_MISMATCH   : warn
-  Run policy:
-    (TYPE PLAIN — single-shot dispatch)
-```
-
-This block is the one place to confirm which features actually fired.
-On stdout, lines tagged `[HPO] ...` mark each phase: init resolution,
-seed forwarding, multistart starts, stagnation restarts, noise-auto
-fd_step, etc.
-
-## Beware (limitations)
-
-- `PARALLEL > 1` is parsed but starts run sequentially —
-  HPO logs a warning if you set it >1.
-- `DLIB:GFS` consumes every seed from the chain (patched). Other
-  optimisers consume only `optim_init.front()`; HPO logs a warning
-  when the chain produced more seeds than the optimiser can use.
-- Tightening the `--hotvar <name> <min> <max>` range on a hot
-  PC_LAMMPS line (e.g. `--hotvar hot_a0 2.5 4.5 3.302` for Ta) is
-  the most effective extra filter against runaway HPO candidates
-  that produce a non-physical lattice. An out-of-range value
-  fail-scores the iter and skips all cold scripts.
+A reasonable `--hotvar` window on hot PC_LAMMPS lines (e.g.
+`--hotvar hot_a0 2.5 4.5 3.302` for Ta) is the cheapest extra filter
+against runaway HPO candidates: an out-of-range value fail-scores the
+iter and skips every cold script.

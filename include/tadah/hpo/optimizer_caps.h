@@ -1,6 +1,6 @@
 #pragma once
 /*
- * OptimizerCaps — capability descriptor for an optimiser backend.
+ * OptimizerCaps -- capability descriptor for an optimiser backend.
  *
  * Single source of truth for "what does (LIB, ALGO) support". Every
  * caller that previously hard-coded `spec.lib == "DLIB" && spec.algo
@@ -10,8 +10,8 @@
  * caller code changes.
  *
  * BasinsPolicy uses `ladder_ftol` to decide whether the per-rung
- * tolerance is written to ftol_rel (NLopt — relative test) or ftol_abs
- * (DLIB:BFGS — absolute objective-delta test). Without this, the
+ * tolerance is written to ftol_rel (NLopt -- relative test) or ftol_abs
+ * (DLIB:BFGS -- absolute objective-delta test). Without this, the
  * BasinsPolicy ladder unconditionally set ftol_rel and DLIB:BFGS's
  * REFINE step threw "DLIB:BFGS does not support FTOL_REL".
  */
@@ -71,7 +71,7 @@ void apply_ladder_ftol(OptimizerSpec& sp, double tol);
 
 /* Return all registered backends matching a predicate. Used to compose
  * "compatible alternatives" diagnostics from the live registry instead
- * of hard-coding LIB:ALGO names in error strings — the registry is the
+ * of hard-coding LIB:ALGO names in error strings -- the registry is the
  * single source of truth for who supports what. */
 using CapsPredicate = bool (*)(const OptimizerCaps&);
 std::vector<const OptimizerCaps*> filter_optimizer_caps(CapsPredicate pred);

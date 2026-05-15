@@ -5,10 +5,10 @@ Reads the same files generate_fingerprint.py reads, then for each tracked
 quantity checks |actual - reference| <= max(abs_tol, rel_tol * |reference|).
 
 Exit codes:
-  0 — all checks passed (within tolerance)
-  1 — at least one check failed
-  2 — example dir lacks a fingerprint (skipped)
-  3 — run output missing (example was not executed)
+  0 -- all checks passed (within tolerance)
+  1 -- at least one check failed
+  2 -- example dir lacks a fingerprint (skipped)
+  3 -- run output missing (example was not executed)
 """
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def compare(example_dir: Path):
 
     failures = []
 
-    # best_loss — pull TOTAL_LOSS/N for full precision
+    # best_loss -- pull TOTAL_LOSS/N for full precision
     if "TOTAL_LOSS/N" in loss_hdr:
         idx = loss_hdr.index("TOTAL_LOSS/N")
         try:

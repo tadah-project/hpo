@@ -136,7 +136,7 @@ inline std::int64_t leave(std::size_t iter, const char* stage, LogFn&& log) {
         log(std::string("eval ") + std::to_string(iter) +
             " stage '" + stage + "' took " +
             std::to_string(took_ms) + " ms (threshold " +
-            std::to_string(thr) + " ms) — possible hang surface");
+            std::to_string(thr) + " ms) -- possible hang surface");
     }
     return took_ms;
 }
@@ -199,7 +199,7 @@ namespace bad_pot_detail {
     static std::atomic<double> b_ersq   {std::numeric_limits<double>::infinity()};
     static std::atomic<double> b_frmse  {std::numeric_limits<double>::infinity()};
     static std::atomic<double> b_srmse  {std::numeric_limits<double>::infinity()};
-    /* Hand-rolled dispatch — avoids string compare in the hot path's
+    /* Hand-rolled dispatch -- avoids string compare in the hot path's
      * fallback (the call site already has a compile-time tag). */
     if (tag[0]=='e' && tag[1]=='m')           return b_emae;
     if (tag[0]=='e' && tag[1]=='r' && tag[2]=='m') return b_ermse;
@@ -576,7 +576,7 @@ void HPO_Host<P,R>::set_g_iter_floor(std::size_t n) {
                                       std::memory_order_relaxed)) break;
   }
   /* Bug-7: writer's `next_flush_` is a static atomic default-init to 1.
-   * On resume it would otherwise stay at 1 — the new io_buf_ starts empty
+   * On resume it would otherwise stay at 1 -- the new io_buf_ starts empty
    * and the resumed run's first eval submits at iter > n, so the writer's
    * gap-skip timer fires for 60s before advancing. The "8499 hung iter
    * slots" warning is misleading because the per-eval logs from the prior
@@ -855,10 +855,10 @@ std::string HPO_Host<P,R>::bound_hints(const P& p) const
             if (kv.second.opt.size() > 1) name += "[" + std::to_string(i) + "]";
             if (rng > 0) {
                 if ((v - lo) / rng < EDGE_FRAC)
-                    hints << "Tip: " << name << " is near its LOWER bound — "
+                    hints << "Tip: " << name << " is near its LOWER bound -- "
                           << "consider tightening or expanding the range. ";
                 else if ((hi - v) / rng < EDGE_FRAC)
-                    hints << "Tip: " << name << " is near its UPPER bound — "
+                    hints << "Tip: " << name << " is near its UPPER bound -- "
                           << "consider expanding the range. ";
             }
             ++idx;
@@ -897,7 +897,7 @@ void HPO_Host<P,R>::fill_validation(Result& r,
  *             midpoint of [min, max] on first eval) as `${<name>}`,
  *             relaxes, exposes a fresh `<name>` value. The framework
  *             validates against [min, max], updates the cache, and
- *             collects (name → fresh value) into `hot_values_for_iter`.
+ *             collects (name -> fresh value) into `hot_values_for_iter`.
  *             An out-of-range value sets the eval-wide abort flag.
  *
  *   PHASE B   Run cold scripts in parallel. If phase A aborted, all
@@ -926,12 +926,12 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     else                       hot_idx.push_back(i);
   }
 
-  /* Per-iter map of fresh hot values (varname → value). Populated in
+  /* Per-iter map of fresh hot values (varname -> value). Populated in
    * phase A under hot_mtx_, then read-only during phase B. */
   std::unordered_map<std::string, double> hot_values_for_iter;
   std::mutex hot_mtx;
 
-  /* Generic per-script runner — used by both phases. Returns true on
+  /* Generic per-script runner -- used by both phases. Returns true on
    * a successful LAMMPS run; false on script failure (in which case
    * v_outvar is filled with failscore). The `extra_inject` callable
    * is invoked once after the LAMMPS instance is ready and before
@@ -1011,7 +1011,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
           try { v = std::stod(s); }
           catch (...) { continue; }
           if (!std::isfinite(v) || v < hv.min || v > hv.max) {
-            /* Out of range — clamp this script's outputs and signal
+            /* Out of range -- clamp this script's outputs and signal
              * the iter-wide abort so phase B is skipped. */
             for (auto& vs : r.v_outvar[i]) vs = std::to_string(lsim.failscore);
             warmstart::aborting_iter().store(r.iter, std::memory_order_relaxed);
@@ -1040,13 +1040,13 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
             }
             break; /* one out-of-range hot var is enough */
           }
-          /* In-range — cache for next eval AND record for phase B. */
+          /* In-range -- cache for next eval AND record for phase B. */
           warmstart::set(lsim.script, hv.name, v);
           {
             std::lock_guard<std::mutex> lg(hot_mtx);
             hot_values_for_iter[hv.name] = v;
           }
-        } catch (...) { /* variable not defined or unparseable — ignore */ }
+        } catch (...) { /* variable not defined or unparseable -- ignore */ }
       }
     }
 
@@ -1064,15 +1064,24 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     return true;
   };
 
-  auto inject_string_var = [](typename R::LMPPtr& lmp,
-                              const std::string& name, double value) {
+  auto inject_hot_value = [](typename R::LMPPtr& lmp,
+                             const std::string& name, double value) {
+    /* Inject as `equal`-style (a constant expression) rather than
+     * `string` so that a hot script ending in
+     *   variable <name> equal v_lx/<divisor>
+     * is a *same-style* redefinition -- LAMMPS allows that without a
+     * prior `variable delete`. HPO caches one LAMMPS instance per
+     * (script, invar) tuple across iters (see line 970), and LAMMPS
+     * would reject a style change inside that instance, so keeping
+     * both ends `equal`-style makes the warmstart-cache cycle work
+     * without forcing scripts to insert delete boilerplate. */
     char cmd[256];
     std::snprintf(cmd, sizeof(cmd),
-                  "variable %s string %.17g", name.c_str(), value);
+                  "variable %s equal %.17g", name.c_str(), value);
     try { lmp->input->one(cmd); } catch (...) { /* keep going */ }
   };
 
-  /* ─── PHASE A: hot scripts ─────────────────────────────────────── */
+  /* --- PHASE A: hot scripts --------------------------------------- */
 #ifdef TADAH_ENABLE_OPENMP
 #pragma omp parallel for shared(r,LS,hot_idx,hot_values_for_iter,hot_mtx)
 #endif
@@ -1096,17 +1105,17 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
         } else {
           seed = 0.5 * (hv.min + hv.max);
         }
-        inject_string_var(lmp, hv.name, seed);
+        inject_hot_value(lmp, hv.name, seed);
       }
     });
   }
 
-  /* ─── PHASE B: cold scripts ────────────────────────────────────── */
+  /* --- PHASE B: cold scripts -------------------------------------- */
   const bool aborted =
       (warmstart::aborting_iter().load(std::memory_order_relaxed) == r.iter);
 
   if (aborted) {
-    /* Phase A produced an out-of-range hot var (or a script crashed) —
+    /* Phase A produced an out-of-range hot var (or a script crashed) --
      * the potential is unphysical. Skip every cold script and clamp. */
     for (auto i : cold_idx) {
       for (const auto& n : LS[i].n_outvar) {
@@ -1118,7 +1127,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
   }
 
   /* Snapshot the per-iter hot-values map for use under #pragma omp
-   * parallel — once phase A is done, no more writes happen. */
+   * parallel -- once phase A is done, no more writes happen. */
   std::unordered_map<std::string, double> hot_snapshot;
   {
     std::lock_guard<std::mutex> lg(hot_mtx);
@@ -1141,7 +1150,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       /* Inject every fresh hot value from phase A. Cold scripts read
        * them as `${<name>}`. */
       for (const auto& kv : hot_snapshot) {
-        inject_string_var(lmp, kv.first, kv.second);
+        inject_hot_value(lmp, kv.first, kv.second);
       }
     });
   }
@@ -1291,9 +1300,9 @@ void HPO_Host<P,R>::obs_loss(Result& r) const
           if (!std::isfinite(l)) l = trg_.FAIL_SCORE;
         }
       } catch (const std::exception&) {
-        /* Relaxer divergence / NaN / model mismatch — record as a
+        /* Relaxer divergence / NaN / model mismatch -- record as a
          * failed component contributing FAIL_SCORE so the optimiser
-         * walks away from this θ. */
+         * walks away from this theta. */
         v = std::numeric_limits<double>::quiet_NaN();
         l = trg_.FAIL_SCORE;
       }
@@ -1332,7 +1341,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
     auto t_train_start = t0, t_train_end = t0, t_predict_end = t0,
          t_lammps_end = t0, t_sims_loss_end = t0, t_submit_end = t0;
 
-    /* Per-stage watchdog logger — closes over r.iter so the post-hoc
+    /* Per-stage watchdog logger -- closes over r.iter so the post-hoc
      * leave() warning includes the iter that was running. */
     auto _stage_log = [](const std::string& msg) {
         HPOLog::instance().warning(msg);
@@ -1343,7 +1352,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
      * Without this guard, a throw between `r.iter = ++g_iter_` above
      * and the eventual `submit_result(std::move(r), ...)` below leaves
      * the writer's `next_flush_` permanently stuck at the missing
-     * iter — every subsequent eval enqueues fine but the writer never
+     * iter -- every subsequent eval enqueues fine but the writer never
      * advances past the gap, freezing loss.tadah / params.tadah / etc
      * while hpo_run.log keeps progressing.
      *
@@ -1355,9 +1364,9 @@ double HPO_Host<P,R>::operator()(const P& p) const
      * than a genuine high-loss point.
      *
      * Excluded from the catch:
-     *  - core::ShutdownRequested — must propagate to hpo_run() so the
+     *  - core::ShutdownRequested -- must propagate to hpo_run() so the
      *    run shuts down cleanly with a final checkpoint.
-     *  - StagnationStop — must propagate to RestartPolicy. */
+     *  - StagnationStop -- must propagate to RestartPolicy. */
     try {
 
     /* build context ---------------------------------------------------- */
@@ -1393,7 +1402,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
             } catch (const std::exception& e) {
                 HPOLog::instance().warning(
                     std::string("reinit() threw (eval ") + std::to_string(r.iter)
-                    + "): " + e.what() + " — rebuilding Trainer");
+                    + "): " + e.what() + " -- rebuilding Trainer");
                 needs_rebuild = true;
             }
             if (needs_rebuild) {
@@ -1418,10 +1427,10 @@ double HPO_Host<P,R>::operator()(const P& p) const
                 update_context(cache.trainer->context, p);
                 needs_rebuild = cache.trainer->reinit();
             } catch (const std::exception& e) {
-                // reinit threw — log and fall back to a clean rebuild
+                // reinit threw -- log and fall back to a clean rebuild
                 HPOLog::instance().warning(
                     std::string("reinit() threw (eval ") + std::to_string(r.iter)
-                    + "): " + e.what() + " — rebuilding Trainer");
+                    + "): " + e.what() + " -- rebuilding Trainer");
                 needs_rebuild = true;
             }
             if (needs_rebuild) {
@@ -1436,7 +1445,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
     t_train_end = std::chrono::high_resolution_clock::now();
     stage_watchdog::leave(r.iter, "train", _stage_log);
 
-    /* ── Per-iter health monitor (Phase 6) ───────────────────────────
+    /* -- Per-iter health monitor (Phase 6) ---------------------------
      * Cheap O(P) scan of the trained weights, partitioned by the
      * design-matrix ColumnLayout. Off by default (singleton starts in
      * HealthLogMode::Off; hpo_run() flips it to summary unless
@@ -1465,7 +1474,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
      * LAMMPS (or written to disk). The LAMMPS-side PairTadah parser does
      * not know about AUDIT / HEALTH_LOG and refuses pair_coeff with an
      * "Invalid key" error; the partial init then segfaults inside
-     * calc_rho. Removing them here is the single choke-point — every
+     * calc_rho. Removing them here is the single choke-point -- every
      * downstream consumer (best_pot.tadah, per-eval pots, LAMMPS scripts)
      * uses the same `pot` Context. */
     pot.remove("AUDIT");
@@ -1478,14 +1487,14 @@ double HPO_Host<P,R>::operator()(const P& p) const
 
     /* Bad-potential pre-filter. Each per-metric --skip-above / --skip-rel
      * cap (declared on PC_* lines in config.hpo) is tested independently;
-     * the first trigger wins. Caps are optional — a metric without flags
-     * never causes a skip. The metric → tag mapping passed to
+     * the first trigger wins. Caps are optional -- a metric without flags
+     * never causes a skip. The metric -> tag mapping passed to
      * bad_pot_detail::best_for() is a 2-3 char prefix that disambiguates
      * the running-best slot for that metric.
      *
      * Runs before BOTH obs_loss and run_lammps so the gate gates every
      * downstream phase, not just LAMMPS. Was previously wrapped in
-     * `if (use_lammps_)` — silently no-op on PC_OBSERVABLE-only configs
+     * `if (use_lammps_)` -- silently no-op on PC_OBSERVABLE-only configs
      * which is a usability footgun (the parser accepts --skip-above on
      * a PC_OBSERVABLE-only run but nothing acts on it). */
     bool skip_bad_pot = false;
@@ -1505,7 +1514,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
               1, std::memory_order_relaxed) + 1;
           if (skips <= 5 || (skips & (skips - 1)) == 0) {
             std::ostringstream os;
-            os << "eval " << r.iter << ": skipping downstream (obs+LAMMPS) — "
+            os << "eval " << r.iter << ": skipping downstream (obs+LAMMPS) -- "
                << tag << "=" << value << " " << unit;
             if (bad_abs) os << " > skip-above=" << *caps.abs_above;
             if (bad_rel) os << " > skip-rel=" << *caps.rel_above
@@ -1515,7 +1524,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
           }
           return true;
         }
-        /* Update per-metric running best — relaxed CAS, no ordering needed. */
+        /* Update per-metric running best -- relaxed CAS, no ordering needed. */
         double cur = bad_pot_detail::best_for(tag).load(std::memory_order_relaxed);
         while (value < cur &&
                !bad_pot_detail::best_for(tag).compare_exchange_weak(
@@ -1533,7 +1542,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
     }
 
     /* PC_OBSERVABLE: typed observables fold into the same loss_sum /
-     * loss_count accumulators as fit + sims. Skipped on bad-pot —
+     * loss_count accumulators as fit + sims. Skipped on bad-pot --
      * unlike the original D4c assumption ("observables are cheap"),
      * cohesive_energy with maxeval=5000 and --max-wall-time can still
      * be ~1 s per bad-pot iter, worth gating. If an observable
@@ -1578,7 +1587,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
       iter_at_last_best_.store(r.iter, std::memory_order_relaxed);
     }
 
-    /* Top-K tracking — cheap fast-path when disabled (capacity == 0). */
+    /* Top-K tracking -- cheap fast-path when disabled (capacity == 0). */
     if (topk_capacity_ > 0) {
       std::lock_guard<std::mutex> lk(topk_mtx_);
       if (topk_capacity_ > 0) {  /* re-check inside lock */
@@ -1595,7 +1604,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
       }
     }
 
-    /* Stagnation check — throw to short-circuit the optimiser loop. The
+    /* Stagnation check -- throw to short-circuit the optimiser loop. The
      * surrounding RestartPolicy catches StagnationStop and decides
      * whether to restart from a fresh init. */
     {
@@ -1625,7 +1634,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
 
     /* Build a one-line "top loss components" breakdown when this eval
      * is a new best. Defensive: any failure here must not crash the
-     * eval — catch and continue with an empty breakdown. */
+     * eval -- catch and continue with an empty breakdown. */
     std::string save_top_breakdown;
     if (save_best && save_loss > 0.0) {
         try {
@@ -1653,7 +1662,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
                     comps.push_back({std::move(lbl), v});
                 }
             }
-            /* PC_OBSERVABLE (D4c) — typed observable contributions to
+            /* PC_OBSERVABLE (D4c) -- typed observable contributions to
              * the top-breakdown. Symmetric with the PC_LAMMPS loop
              * above: pull r.v_obs_loss[k] keyed by trg_.observables[k]'s
              * kind() label. Without this, the journal's "top:" line
@@ -1676,8 +1685,8 @@ double HPO_Host<P,R>::operator()(const P& p) const
             double sum_total = 0.0;
             for (const auto& c : comps) sum_total += c.value;
             /* Display values are scaled to per-component contribution to the
-             * mean (compᵢ / N), so they line up arithmetically with the
-             * displayed `loss=` (which IS the mean): pctᵢ × loss ≈ valueᵢ.
+             * mean (comp / N), so they line up arithmetically with the
+             * displayed `loss=` (which IS the mean): pct x loss ~= value.
              * sum_total is in raw (un-averaged) units, so the percentages
              * are unaffected by the per-display rescaling. */
             const double n_active = r.loss_count > 0
@@ -1770,7 +1779,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
     return save_loss;
 
     } catch (const core::ShutdownRequested&) {
-        /* Cooperative shutdown — pass through to hpo_run()'s outer
+        /* Cooperative shutdown -- pass through to hpo_run()'s outer
          * catch which performs the final flush + checkpoint commit.
          *
          * Bug 7: before rethrowing, submit a synthetic FAIL_SCORE
@@ -1794,12 +1803,12 @@ double HPO_Host<P,R>::operator()(const P& p) const
                           empty_stdb, val_stdb_, param_labels_, report_,
                           cw_, prec_);
 #endif
-        } catch (...) { /* swallow — main shutdown path takes over */ }
+        } catch (...) { /* swallow -- main shutdown path takes over */ }
         throw;
     } catch (const StagnationStop&) {
         /* StagnationStop is thrown from post_lammps_finalize AFTER r.loss
          * is computed and counted in best/top-K tracking. This eval is
-         * therefore a real, valid result — submit it as-is. The earlier
+         * therefore a real, valid result -- submit it as-is. The earlier
          * recovery path (Bug 7) overwrote r.loss with FAIL_SCORE and
          * flagged was_nan_clamped, which corrupted loss.tadah and
          * fabricated a NaN-clamp event for every concurrent thread that
@@ -1807,7 +1816,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
          * was still resetting it.
          *
          * We still need to submit so the writer's next_flush_ does not
-         * stall on the iter slot consumed at ++g_iter_ — but with the
+         * stall on the iter slot consumed at ++g_iter_ -- but with the
          * real loss, not a synthetic FAIL_SCORE. */
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
@@ -1928,7 +1937,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
 
     /* 4. exclusive writer section ------------------------------------- */
     /* Wrapped in try/catch so a throw inside any per-iter write cannot
-     * leave writer_token_ stuck set — that would silently freeze every
+     * leave writer_token_ stuck set -- that would silently freeze every
      * subsequent submit_result and corrupt best_pot.tadah while
      * hpo_run.log keeps reporting better losses. See WRITER_THREAD_BUG.md. */
     /* Debug instrumentation: gated by TADAH_HPO_DEBUG_WRITER=1.
@@ -2111,7 +2120,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
          * enqueued, but iters N+1, N+2, ... continue to flow into io_buf_.
          * The drain loop terminates at next_flush_=N because count(N)==0,
          * and stays there indefinitely. operator()'s try/catch (Bug 5)
-         * does not help — there is no exception, the eval thread is
+         * does not help -- there is no exception, the eval thread is
          * simply stuck.
          *
          * Recovery: if next_flush_ is missing AND io_buf_ has higher
@@ -2123,7 +2132,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
          * abandoned (memory cost is bounded). */
         constexpr std::int64_t GAP_SKIP_MS = 60'000;  // 60 s
         if (_written > 0) {
-            /* Healthy progress this call — clear the stuck timer. */
+            /* Healthy progress this call -- clear the stuck timer. */
             next_flush_stuck_since_ms_.store(0, std::memory_order_relaxed);
         } else if (!io_buf_.empty()) {
             const auto smallest = io_buf_.begin()->first;
@@ -2149,7 +2158,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                     const std::string stuck_stages =
                         stage_watchdog::snapshot_stuck(GAP_SKIP_MS);
                     HPOLog::instance().warning(
-                        std::string("HPO writer: gap-skip — advancing next_flush_ from ") +
+                        std::string("HPO writer: gap-skip -- advancing next_flush_ from ") +
                         std::to_string(cur) + " to " +
                         std::to_string(smallest) + " (" +
                         std::to_string(skipped) + " hung iter slot" +
@@ -2267,8 +2276,8 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
  * The optimizer's cost-then-gradient call sequence guarantees that
  * operator()(x) ran immediately before us at the same x, leaving:
  *   - tls_trainer_cache_.trainer with `dm.getPhi()`/`dm.getT()` reflecting
- *     the augmented training matrix at θ = x (data rows scaled by
- *     sqrt(eweight*eweightglob); augmentation block zero — train works
+ *     the augmented training matrix at theta = x (data rows scaled by
+ *     sqrt(eweight*eweightglob); augmentation block zero -- train works
  *     on a copy and writes sqrt(lambda)*I_no_bias into that copy).
  *   - model->get_weights() holding W*(x).
  *
@@ -2276,12 +2285,12 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
  * project memory). Read live Phi/T/W, reassemble the
  * sqrt(lambda)*I_no_bias augmentation block, build the Cholesky factor
  * via dloss_dtheta::detail helpers, then call assemble_dphi_train_energy_rows
- * twice per θ (once each over train_stdb_ and val_stdb_) to populate
+ * twice per theta (once each over train_stdb_ and val_stdb_) to populate
  * `per_theta`. compute_dloss_dtheta runs the metric chain rule. Indices
  * the descriptor walker can't supply analytically (registry returns
  * false) end up in `needs_fd` for HYBRID's masked-FD pass.
  *
- * Phase 2A first-cut restrictions — fall back to all-FD if violated:
+ * Phase 2A first-cut restrictions -- fall back to all-FD if violated:
  *   - FORCE=false, STRESS=false  (energy-only chain rule)
  *   - NORM=false                 (raw-feature W; chain rule lives in raw space)
  *   - BF_Linear                  (the only basis the walker handles)
@@ -2325,7 +2334,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
     bool helper_ok = false;
     std::string helper_throw_msg;
 
-    /* Phase 3.7B-orchestrator — SimsGradProvider construction.
+    /* Phase 3.7B-orchestrator -- SimsGradProvider construction.
      *
      * Lambda spins up a fresh LAMMPS instance per script, runs the
      * relaxed-state script with the current iteration's pot, then folds
@@ -2338,10 +2347,10 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
      * Phase 3.7B-warmstart: hot-var scripts are now supported. A
      * name-keyed snapshot is built from the warmstart cache (with
      * `hv.initial` / midpoint fallback when the cache is unprimed) at
-     * the start of each lambda invocation; every script — hot or cold
-     * — gets `variable <name> string <value>` injected before
+     * the start of each lambda invocation; every script -- hot or cold
+     * -- gets `variable <name> string <value>` injected before
      * `run_script` runs. The gradient lambda is strictly read-only on
-     * the cache (no `warmstart::set`) — only operator() owns cache
+     * the cache (no `warmstart::set`) -- only operator() owns cache
      * mutation. Out-of-range produced hot values aren't validated; if
      * the relaxation under the seeded value gives an unphysical
      * observable, `populate_sims_grad_input_from_lammps` returns false
@@ -2350,7 +2359,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
     std::vector<typename R::LMPPtr> lmp_holders;
     SimsGradProvider sims_grad_provider = nullptr;
 
-    /* PC_OBSERVABLE (D4c) — typed-observable provider lambda. Parallel
+    /* PC_OBSERVABLE (D4c) -- typed-observable provider lambda. Parallel
      * to SimsGradProvider but much simpler: the observable's
      * evaluate() is pure Tadah (no LAMMPS instance, no adjoint
      * snapshot for `needs_adjoint=false` observables like
@@ -2359,7 +2368,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
      *
      * Hot-var warmstart: lives inside Observable state (a0_current_
      * for cohesive_energy), updated in-place on every evaluate call.
-     * No external WarmStart cache plumbing needed — the Observable
+     * No external WarmStart cache plumbing needed -- the Observable
      * owns its hot vars per the D3 design contract. */
     ObservableGradProvider obs_grad_provider = nullptr;
     if (!trg_.observables.empty()) {
@@ -2377,7 +2386,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                 for (std::size_t k = 0; k < trg_.observables.size(); ++k) {
                     auto& obs_ptr = trg_.observables[k];
                     if (!obs_ptr) {
-                        /* Structural error — trg_ is malformed. Hard
+                        /* Structural error -- trg_ is malformed. Hard
                          * fail; the helper falls back to all-FD. */
                         return false;
                     }
@@ -2392,7 +2401,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                          * energy, model mismatch. Mark this observable
                          * as failed and continue. The loss obs_loss()
                          * returns FAIL_SCORE for the same observable,
-                         * so ∂FAIL_SCORE/∂θ = 0 and the missing chain
+                         * so dFAIL_SCORE/dtheta = 0 and the missing chain
                          * contribution is exact in the continuous
                          * region. */
                         inputs[k].failed = true;
@@ -2447,15 +2456,17 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                     }
                 }
 
-                auto inject_string_var =
+                auto inject_hot_value =
                     [](typename R::LMPPtr& lmp,
                        const std::string& name, double value) {
+                        /* equal-style for same-style overwrite -- see the
+                         * eval-pipeline variant above for rationale. */
                         char cmd[256];
                         std::snprintf(cmd, sizeof(cmd),
-                                      "variable %s string %.17g",
+                                      "variable %s equal %.17g",
                                       name.c_str(), value);
                         try { lmp->input->one(cmd); }
-                        catch (...) { /* keep going — same as operator() */ }
+                        catch (...) { /* keep going -- same as operator() */ }
                     };
 
                 for (std::size_t k = 0; k < trg_.LS.size(); ++k) {
@@ -2480,14 +2491,14 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
 
                     /* Inject every known hot-var seed BEFORE running the
                      * script body. Scripts may overwrite via their own
-                     * `variable` lines (last-wins style for `string`). */
+                     * `variable` lines (last-wins for same-style). */
                     for (const auto& kv : hot_snapshot)
-                        inject_string_var(lmp, kv.first, kv.second);
+                        inject_hot_value(lmp, kv.first, kv.second);
 
                     if (!runner.run_script(lmp, lsim.script_lines, pot)) {
                         /* Phase A masking: LAMMPS minimisation diverged
                          * or hit NaN under the current pot. Mark and
-                         * continue — the failing script's loss is
+                         * continue -- the failing script's loss is
                          * FAIL_SCORE, a constant, so its gradient
                          * contribution is exactly zero in the
                          * continuous region. */
@@ -2510,7 +2521,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                         /* Phase A masking: populate_sims_grad_input
                          * returns false on FAIL_SCORE clamps (unphysical
                          * energies, non-finite varloss values). The
-                         * resulting loss is FAIL_SCORE → zero
+                         * resulting loss is FAIL_SCORE -> zero
                          * gradient contribution. Reset inputs[k] to a
                          * clean failed state (populate may have
                          * partially mutated it). */
@@ -2544,14 +2555,14 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
         if (!helper_throw_msg.empty()) {
             std::ostringstream oss;
             oss << "analytical_gradient: helper threw '"
-                << helper_throw_msg << "' — routing every theta to FD";
+                << helper_throw_msg << "' -- routing every theta to FD";
             std::cerr << "[HPO] " << oss.str() << "\n";
             HPOLog::instance().warning(oss.str());
         }
         /* Analytical helper signalled a hard failure (today the only
          * path: IFT-side Cholesky non-PD even though the trainer's
-         * Cholesky succeeded — rare but happens when LAMBDA is tiny
-         * relative to ΦᵀΦ's smallest non-trivial eigenvalue, or when
+         * Cholesky succeeded -- rare but happens when LAMBDA is tiny
+         * relative to Phi^TPhi's smallest non-trivial eigenvalue, or when
          * a per-theta dPhi row is itself rank-deficient). Returning
          * false propagates to gp.gradient and the NLopt wrapper, where
          * LD_LBFGS sees +inf gradient and bails out as NLOPT_FAILURE.
@@ -2580,7 +2591,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
  * (per process). Users running GRAD_STRATEGY=HYBRID / ANALYTICAL with
  * a gradient-based optimiser (NLOPT:LD_LBFGS, DLIB:BFGS, CERES:LBFGS,
  * ...) have no other way to verify whether the closed-form path is
- * actually engaging — the wall-clock difference vs Numerical depends on
+ * actually engaging -- the wall-clock difference vs Numerical depends on
  * the descriptor stack and is easy to misattribute. The log emits:
  *
  *   - GRAD_STRATEGY in use
@@ -2591,7 +2602,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
  * If the orchestrator's gate fell back entirely (all theta on
  * needs_fd), surface that as a separate line so the user can find the
  * specific restriction (FORCE/STRESS/NORM/OALGO/LAMBDA/MODEL[1]/
- * use_srmse/LAMMPS — see compute_analytical_gradient_from_trainer's
+ * use_srmse/LAMMPS -- see compute_analytical_gradient_from_trainer's
  * gate stack). When the trainer cache is empty (first eval of the
  * BLR-warmup window), log that explicitly so a transient all-FD line
  * isn't mistaken for a gate failure. */
@@ -2625,12 +2636,12 @@ void HPO_Host<P,R>::emit_grad_diagnostic(
         << " | analytical="  << n_anal
         << " | FD-fallback=" << n_fd;
     if (cache_miss) {
-        oss << "  [trainer cache empty on first call — usually the BLR-"
+        oss << "  [trainer cache empty on first call -- usually the BLR-"
                "warmup eval; subsequent calls populate the cache and "
                "engage the analytical path]";
     } else if (ift_failed) {
         oss << "  [IFT-side Cholesky non-PD even though the trainer "
-               "fitted OK. Likely LAMBDA is small relative to ΦᵀΦ's "
+               "fitted OK. Likely LAMBDA is small relative to Phi^TPhi's "
                "smallest eigenvalue, or a per-theta dPhi row is "
                "rank-deficient. Routed every theta to FD so the "
                "optimiser keeps making progress. Raise LAMBDA or "

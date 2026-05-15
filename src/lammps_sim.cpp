@@ -23,7 +23,7 @@ namespace {
 using tadah::hpo::try_parse_double;
 
 /* provide an empty vector for loss types that need no parameters          */
-/* Huber[0]=δ , Tukey[0]=c                                                 */
+/* Huber[0]=delta , Tukey[0]=c                                                 */
 inline std::vector<double> defaultParams(int id,double dHuber,double tC)
 {
     switch(id){
@@ -412,7 +412,7 @@ void LammpsSim::parse_tokens() {
       catch (...) { throw std::runtime_error("--hotvar " + hv.name + ": <max> not a number"); }
       if (!(hv.max > hv.min))
         throw std::runtime_error("--hotvar " + hv.name + ": <max> must exceed <min>");
-      /* optional initial — must look like a positive number, not another flag */
+      /* optional initial -- must look like a positive number, not another flag */
       if (j < tokens.size() && !is_flag(tokens[j])) {
         double init;
         if (try_parse_double(tokens[j], init)) {
@@ -570,7 +570,7 @@ void LammpsSim::prep_script_lines()
             {
                 continuation = true;
 
-                // erase everything from the ‘&’ to the end of line
+                // erase everything from the '&' to the end of line
                 clean.erase(last_print);
 
                 // make sure the part we keep ends with *exactly* one space
@@ -866,7 +866,7 @@ std::string LammpsSim::expand_includes_rec(const fs::path &file,
     if (!fs::exists(abs))
         throw std::runtime_error("LAMMPS include file not found: " + abs.string());
 
-    /* Detect circular includes (“A includes B includes A …”)             */
+    /* Detect circular includes ("A includes B includes A ...")             */
     if (!stack.insert(abs.string()).second)
         throw std::runtime_error("Circular include detected at: " + abs.string());
 
@@ -934,11 +934,11 @@ std::string LammpsSim::expand_includes_rec(const fs::path &file,
     }
 
 
-    /* ordinary line – keep verbatim */
+    /* ordinary line - keep verbatim */
     out << line << '\n';
   }
 
-    /* done with this file – pop it from the recursion guard */
+    /* done with this file - pop it from the recursion guard */
     stack.erase(abs.string());
 
     return out.str();

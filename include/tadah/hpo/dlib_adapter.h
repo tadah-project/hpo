@@ -19,7 +19,7 @@ namespace detail {
 
 /* DLIB's stop strategies count BFGS *iterations*, not function evals.
  * At dim=D with central differences a single iteration consumes
- * 2*D + line_search + step ≈ 2*D + 2..5 evals, so passing the user's
+ * 2*D + line_search + step ~= 2*D + 2..5 evals, so passing the user's
  * MAXEVAL straight into objective_delta_stop_strategy(min_delta, max_iter)
  * silently lets BFGS overshoot the user's budget by O(D)x. We therefore
  * cap evaluations from outside DLIB by counting calls to the objective
@@ -200,7 +200,7 @@ template<class Vec,class Runner>
 
     /* Wrap the objective so each call increments a shared atomic
      * counter. The same counter is handed to the GradientProvider so
-     * that gradient-side evaluations also count toward MAXEVAL — without
+     * that gradient-side evaluations also count toward MAXEVAL -- without
      * this, dlib::derivative used to count 2*D extra cost calls per
      * iteration via the feval lambda; now Ceres' NumericDiff calls go
      * through gp.gradient and bump the same counter. When the user's
@@ -216,7 +216,7 @@ template<class Vec,class Runner>
     };
 
     /* Gradient via the unified provider. Default GRAD_STRATEGY is
-     * NUMERICAL — Ceres DynamicNumericDiffCostFunction with CENTRAL
+     * NUMERICAL -- Ceres DynamicNumericDiffCostFunction with CENTRAL
      * differences (PARAM diff_method 0|1|2 = CENTRAL/FORWARD/RIDDERS).
      * ANALYTICAL/HYBRID consume an analytical_grad_fn that delegates
      * to HPO_Host::analytical_gradient (Phase 2A.4 wiring; see
@@ -254,14 +254,14 @@ template<class Vec,class Runner>
         static std::atomic_flag preamble_emitted = ATOMIC_FLAG_INIT;
         if (!preamble_emitted.test_and_set(std::memory_order_relaxed)) {
             const std::string preamble =
-                "DLIB:BFGS — MAXEVAL is enforced externally by HPO "
+                "DLIB:BFGS -- MAXEVAL is enforced externally by HPO "
                 "(DLIB stop strategies count iterations, not evals). "
                 "Subsequent MAXEVAL hits in this run will be summarised tersely.";
             std::cout << "[HPO] " << preamble << "\n";
             HPOLog::instance().info(preamble);
         }
         std::ostringstream oss;
-        oss << "DLIB:BFGS — MAXEVAL=" << maxeval
+        oss << "DLIB:BFGS -- MAXEVAL=" << maxeval
             << " reached; preserving best-so-far";
         std::cout << "[HPO] " << oss.str() << "\n";
         HPOLog::instance().info(oss.str());

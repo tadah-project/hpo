@@ -20,7 +20,7 @@
 namespace tadah::hpo {
 
 /* Tokenise on whitespace, dropping empty tokens. Bash-style quoting is
- * not honoured — LAMMPS variable defs in script_lines are normalised by
+ * not honoured -- LAMMPS variable defs in script_lines are normalised by
  * `prep_script_lines` before they reach us. */
 namespace {
 std::vector<std::string> ws_tokens(const std::string& s) {
@@ -49,16 +49,16 @@ int detect_box_dofs_from_script(const std::vector<std::string>& script_lines)
         const std::string line = trim_for_scan(raw);
         if (line.empty()) continue;
         const auto tk = ws_tokens(line);
-        /* `fix <id> <group> box/relax <mode> ...` ⇒ at least 5 tokens. */
+        /* `fix <id> <group> box/relax <mode> ...` => at least 5 tokens. */
         if (tk.size() < 5) continue;
         if (tk[0] != "fix" || tk[3] != "box/relax") continue;
         const std::string& mode = tk[4];
         if (mode == "iso") return 1;
-        /* aniso, tri, xyz subset modes — Voigt-6 block (atom-only on the
+        /* aniso, tri, xyz subset modes -- Voigt-6 block (atom-only on the
          * snapshot side per Phase 3.7.5; explicit aniso accumulation is
          * the deferred 3.7D work). Any non-iso mode reports 6 so the
          * orchestrator surfaces it; populate_sims_grad_input_from_lammps
-         * collapses 6→0 for the snapshot until 3.7D lands. */
+         * collapses 6->0 for the snapshot until 3.7D lands. */
         return 6;
     }
     return 0;
@@ -67,7 +67,7 @@ int detect_box_dofs_from_script(const std::vector<std::string>& script_lines)
 std::vector<std::string>
 extract_varloss_expressions(const LammpsSim& lsim)
 {
-    /* Walk the script once, building a name→expression map. Last-wins
+    /* Walk the script once, building a name->expression map. Last-wins
      * semantics match LAMMPS' own variable redefinition rule.
      *
      * Two variable styles are honoured:
@@ -75,8 +75,8 @@ extract_varloss_expressions(const LammpsSim& lsim)
      *     observable pattern). Expression is differentiable as-is.
      *   - `string $(<expr>)`: LAMMPS immediate-eval. The `$(...)` wrapper
      *     is evaluated at definition time and the result stored as a
-     *     literal. For our purpose — reading the variable after `run 0`
-     *     at the relaxed state — this is identical to `equal $(<expr>)`
+     *     literal. For our purpose -- reading the variable after `run 0`
+     *     at the relaxed state -- this is identical to `equal $(<expr>)`
      *     when the `variable` line appears post-minimize. We accept it
      *     so users who prefer `string` (slightly cheaper, no re-eval)
      *     aren't forced into FD fall-back.
@@ -84,13 +84,13 @@ extract_varloss_expressions(const LammpsSim& lsim)
      * Other styles (atom / vector / world / file / getenv / format /
      * loop / index / universe / uloop / internal / python) are skipped;
      * the registry can't differentiate them. Plain `string foo` (not
-     * `$(...)`-wrapped) is also skipped — it's a literal constant. */
+     * `$(...)`-wrapped) is also skipped -- it's a literal constant. */
     std::unordered_map<std::string, std::string> by_name;
     for (const auto& raw : lsim.script_lines) {
         const std::string line = trim_for_scan(raw);
         if (line.empty()) continue;
         const auto tk = ws_tokens(line);
-        /* `variable <name> <style> <expr...>` ⇒ at least 4 tokens. */
+        /* `variable <name> <style> <expr...>` => at least 4 tokens. */
         if (tk.size() < 4) continue;
         if (tk[0] != "variable") continue;
         const bool is_equal  = (tk[2] == "equal");
@@ -127,7 +127,7 @@ extract_varloss_expressions(const LammpsSim& lsim)
         }
         /* For string-style: only accept `$(...)` immediate-eval forms.
          * A bare literal like `variable v string foo` is a constant
-         * that can't be folded into the chain rule — skip. */
+         * that can't be folded into the chain rule -- skip. */
         if (is_string) {
             if (expr.size() < 2 || expr[0] != '$' || expr[1] != '(')
                 continue;
@@ -179,10 +179,10 @@ bool populate_sims_grad_input_from_lammps(
     if (!lt->adjoint_snapshot.valid) return false;
 
     /* Populate the chain-rule context from the LAMMPS state. The
-     * descriptor size comes from `lt->S.descriptor_size()` — it matches
+     * descriptor size comes from `lt->S.descriptor_size()` -- it matches
      * `aeds.rows()` post-capture but is the canonical source even when
      * `aeds` happens to be larger than nlocal (LAMMPS pre-allocates
-     * `aeds` to `nmax = atom->nmax` ≥ nlocal). */
+     * `aeds` to `nmax = atom->nmax` >= nlocal). */
     out.ctx.nlocal   = lmp->atom->nlocal;
     out.ctx.natoms   = static_cast<int>(lmp->atom->natoms);
     out.ctx.n_desc   = static_cast<int>(lt->S.descriptor_size());
@@ -201,7 +201,7 @@ bool populate_sims_grad_input_from_lammps(
 
     /* Hessian assembly. For pilot's cohesive-E-only path every handle
      * carries `dg_dx_is_zero=true` so this is never actually solved
-     * against — but the chain-core expects `out.H` to be present, and
+     * against -- but the chain-core expects `out.H` to be present, and
      * 3.7+ observables (lattice constant) will need it. */
     {
         LammpsHessianAssembler asm_;
@@ -213,7 +213,7 @@ bool populate_sims_grad_input_from_lammps(
         out.H = asm_.assemble(lmp, box_dofs);
     }
 
-    /* Re-capture the snapshot at x* — the assembler's central-diff
+    /* Re-capture the snapshot at x* -- the assembler's central-diff
      * sweep destroyed it. The host driver promised x*-correct dF_dW;
      * a second `pair->compute` with the flag back on is cheap. */
     lt->adjoint_snapshot.box_dofs = snapshot_box_dofs;
@@ -230,7 +230,7 @@ bool populate_sims_grad_input_from_lammps(
     /* Per-observable arrays. lsim.i_varloss[k] indexes into v_outvar;
      * lsim's t/w/lossFn align with k. Expressions come from the caller
      * (resolved from the LAMMPS variable table, which we don't peek at
-     * directly here — see test_hpo_phase3_pilot.cpp for the pattern). */
+     * directly here -- see test_hpo_phase3_pilot.cpp for the pattern). */
     const std::size_t k_count = lsim.i_varloss.size();
     if (expressions.size() != k_count) {
         throw std::runtime_error(

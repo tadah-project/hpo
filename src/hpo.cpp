@@ -31,7 +31,7 @@ using V = dlib::matrix<double,0,1>;
 
 /* NOISE_CALIBRATION is gated by two predicates: a non-trivial knob
  * (>=2 evals) and a fresh start (no checkpoint to resume from). When
- * resuming, the prior run already calibrated noise — repeating it
+ * resuming, the prior run already calibrated noise -- repeating it
  * would charge N more LAMMPS evals against the resumed counter and
  * pollute the per-eval logs. Pulled out of hpo_run() into a small free
  * function so the gating is unit-testable without invoking the full
@@ -43,11 +43,11 @@ bool should_run_noise_calibration(bool resumed, std::size_t noise_n)
 
 int hpo_run(core::Context& ctx)
 {
-    /* ── Open run journal first ─────────────────────────────────────
+    /* -- Open run journal first -------------------------------------
      * This must precede HPOTargets construction so that diagnostics
      * emitted while parsing OPTIMIZER, OPTIM, and INIT_STRATEGY blocks
      * (NOISE_AUTO, "InitStrategy X produced N points", WARM-front
-     * promotion, implicit-CONFIG suppression, …) reach both stdout
+     * promotion, implicit-CONFIG suppression, ...) reach both stdout
      * and the journal. The OPTIMISER section is written later, after
      * trg.spec has been finalised. */
     auto& log = HPOLog::instance();
@@ -67,7 +67,7 @@ int hpo_run(core::Context& ctx)
     HPOTargets trg(ctx, ctx.get<std::string>("HPOTARGET"));
     std::string val = ctx.get<std::string>("VALIDATION");
 
-    /* ── Build param labels for the search space section ────────────── */
+    /* -- Build param labels for the search space section -------------- */
     std::vector<std::string> param_labels;
     for (const auto& kv : trg.optimap) {
         for (std::size_t i = 0; i < kv.second.opt.size(); ++i) {
@@ -78,7 +78,7 @@ int hpo_run(core::Context& ctx)
         }
     }
 
-    /* ── Build element string ────────────────────────────────────────── */
+    /* -- Build element string ------------------------------------------ */
     std::string elem_str;
     try {
         auto elems = mlip::StructureDB::find_unique_elements(ctx);
@@ -88,7 +88,7 @@ int hpo_run(core::Context& ctx)
         }
     } catch (...) { elem_str = "(could not determine)"; }
 
-    /* ── Write setup sections ───────────────────────────────────────── */
+    /* -- Write setup sections ----------------------------------------- */
     log.write_files_section(ctx.get<std::string>("HPOTARGET"), val, trg);
 
     log.write_optimizer_section(trg.spec, param_labels);
@@ -108,18 +108,18 @@ int hpo_run(core::Context& ctx)
     }
     log.write_loss_section(trg);
 
-    /* ── IterHealthMonitor mode (Phase 6) ───────────────────────────── */
+    /* -- IterHealthMonitor mode (Phase 6) ----------------------------- */
     {
         HealthLogMode hlm = health_log_mode_from_context(ctx);
         global_iter_health_monitor().set_mode(hlm);
         global_iter_health_monitor().clear_state();
     }
 
-    /* ── Pre-flight audit (Phase 5) ───────────────────────────────────
+    /* -- Pre-flight audit (Phase 5) -----------------------------------
      * Walk every configured descriptor's meta() and run the per-param /
      * cross-param HealthChecks on the training StructureDB. This is the
      * BASINS-style guard: a fixed-and-off-shell `CGRIDMB` is flagged
-     * here with a ρ-collapse explanation BEFORE the optimiser runs. The
+     * here with a rho-collapse explanation BEFORE the optimiser runs. The
      * critical-fixed-not-optimised audit additionally flags Critical
      * params that lack any OPTIM block. Honours the AUDIT context key:
      *   off    -> skipped
@@ -144,7 +144,7 @@ int hpo_run(core::Context& ctx)
 
     const OptimizerSpec& sp = trg.spec;
 
-    /* ── Run optimiser via the configured RunPolicy ─────────────────── */
+    /* -- Run optimiser via the configured RunPolicy ------------------- */
 
     /* Build the decorator stack from sp's MULTISTART / PRESTAGE block /
      * RESTART knobs. With no knobs set, this collapses to BasePolicy.
@@ -156,7 +156,7 @@ int hpo_run(core::Context& ctx)
      * must run *before* try_load(). */
     auto policy = build_run_policy<V,R>(sp, &trg);
 
-    /* ── Checkpoint subsystem wiring (LIB BASINS only for now) ──────────
+    /* -- Checkpoint subsystem wiring (LIB BASINS only for now) ----------
      *
      * Order is important: try_load() must run BEFORE NOISE_CALIBRATION
      * so that a resumed run does not re-run the calibration evals (each
@@ -198,15 +198,15 @@ int hpo_run(core::Context& ctx)
                      std::to_string(log.best_loss()) + ")");
             /* Belt-and-suspenders: HPO_Host::load() already restores
              * g_iter_; the floor call below is idempotent and keeps
-             * the eval counter ≥ HPOLog's n_eval even if the
+             * the eval counter >= HPOLog's n_eval even if the
              * checkpoint predates the HPO_HOST section. */
             HPO_Host<V,R>::set_g_iter_floor(log.n_eval());
         }
     }
 
-    /* ── Noise calibration (NOISE_CALIBRATION N): repeat the seed point
+    /* -- Noise calibration (NOISE_CALIBRATION N): repeat the seed point
      * N times before the optimiser starts, surface the loss spread, and
-     * suggest a realistic FTOL_REL. Each repeat is a real evaluation —
+     * suggest a realistic FTOL_REL. Each repeat is a real evaluation --
      * it counts toward the global eval counter, the best-so-far tracker,
      * and the per-eval log files (loss.tadah / params.tadah / ...).
      * The overhead is N - 1 extra wall-clock evals; the user opted in
@@ -243,7 +243,7 @@ int hpo_run(core::Context& ctx)
             /* Suggest FTOL_REL = 10 * relative_spread, floored at 1e-6
              * (no point recommending tolerances below double precision
              * times a sensible fudge factor). NLopt's FTOL_REL test
-             * fires when |Δf| < ftol_rel * |f|, so 10x the observed
+             * fires when |Deltaf| < ftol_rel * |f|, so 10x the observed
              * relative spread gives the local search room to terminate
              * once it crosses the noise floor instead of chasing it. */
             double mn = losses.front(), mx = losses.front(), sum = 0.0;
@@ -270,7 +270,7 @@ int hpo_run(core::Context& ctx)
 
             /* C3: plumb the noise floor into BasinsPolicy so the (opt-in)
              * ladder clamp can drop sub-noise rungs. dynamic_cast is local
-             * and safe — BasinsPolicy is the only RunPolicy not wrapped
+             * and safe -- BasinsPolicy is the only RunPolicy not wrapped
              * by the decorator stack (run_policy.h:434-436). Using the
              * cast keeps RunPolicy's interface free of noise-specific
              * methods, per the ticket's "Do not change the RunPolicy
@@ -315,7 +315,7 @@ int hpo_run(core::Context& ctx)
         host.flush_remaining();
         log.finish();
     } catch (const core::ShutdownRequested& e) {
-        /* SIGINT/SIGTERM/SIGUSR2 — the policy already attempted to
+        /* SIGINT/SIGTERM/SIGUSR2 -- the policy already attempted to
          * commit a checkpoint on the way out. Drain the I/O queue,
          * close the journal cleanly with the signal reason. */
         log.warning(std::string("Shutdown requested: ") +

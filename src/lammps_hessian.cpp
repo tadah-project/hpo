@@ -21,9 +21,9 @@ namespace tadah::hpo {
 namespace {
 
 /* The six Voigt strain modes the assembler can apply, as tensors. Each
- * column α gives the symmetric ε_ij that turns Voigt strain α into a
- * deformation gradient F = I + ε. Engineering shear (Voigt 3..5) is
- * applied with a factor of 1/2 on the off-diagonal entries — the matched
+ * column alpha gives the symmetric eps_ij that turns Voigt strain alpha into a
+ * deformation gradient F = I + eps. Engineering shear (Voigt 3..5) is
+ * applied with a factor of 1/2 on the off-diagonal entries -- the matched
  * lattice-mechanics convention. */
 struct StrainBasis {
     double e[3][3];
@@ -89,7 +89,7 @@ inline void restore_box(LAMMPS_NS::Domain* dom, const BoxSnapshot& s) {
     dom->set_local_box();
 }
 
-/* Apply F = I + ε * scale to the saved box state and write it into
+/* Apply F = I + eps * scale to the saved box state and write it into
  * `dom`. Atoms held in lamda coords by the caller scale affinely on the
  * trailing lamda2x. */
 inline void apply_strain(LAMMPS_NS::Domain* dom,
@@ -98,12 +98,12 @@ inline void apply_strain(LAMMPS_NS::Domain* dom,
                          double scale)
 {
     /* Reconstruct the saved 3x3 box edge matrix B, then push through
-     * F·B. LAMMPS' upper-triangular convention: a=(xprd,0,0),
-     * b=(xy,yprd,0), c=(xz,yz,zprd). Restoring it after F·B requires
-     * the columns to stay upper-triangular — true for diagonal strains
+     * F.B. LAMMPS' upper-triangular convention: a=(xprd,0,0),
+     * b=(xy,yprd,0), c=(xz,yz,zprd). Restoring it after F.B requires
+     * the columns to stay upper-triangular -- true for diagonal strains
      * but only approximately true for shear modes at the scales we
-     * use (≤1e-5). The residual off-triangular pieces are dropped; the
-     * resulting drift is O(scale²) and bounded by the central-diff
+     * use (<=1e-5). The residual off-triangular pieces are dropped; the
+     * resulting drift is O(scale^2) and bounded by the central-diff
      * step-size noise of the Hessian itself. */
     const double xprd = base.boxhi[0] - base.boxlo[0];
     const double yprd = base.boxhi[1] - base.boxlo[1];
@@ -233,14 +233,14 @@ LammpsHessianAssembler::assemble(LAMMPS_NS::LAMMPS* lmp,
     F_plus.reserve(static_cast<std::size_t>(3 * nlocal));
     F_minus.reserve(static_cast<std::size_t>(3 * nlocal));
 
-    /* Atom DOF sweep ─ central diff of forces under per-atom displacements.
-     * H[ik, jl] = -∂F_j^l/∂x_i^k = (F_-(x-h·e_ik)[j,l] - F_+(x+h·e_ik)[j,l]) / (2h).
+    /* Atom DOF sweep - central diff of forces under per-atom displacements.
+     * H[ik, jl] = -dF_j^l/dx_i^k = (F_-(x-h.e_ik)[j,l] - F_+(x+h.e_ik)[j,l]) / (2h).
      *
      * Sametag walk: in a periodic system every local atom has one or
      * more ghost images that pair_tadah's neighbor loop iterates over.
      * Displacing only the local index leaves ghosts at the old cartesian
      * position, so atoms that see the ghost as their neighbor never feel
-     * the displacement — H ends up wrong (asymmetric + spurious acoustic
+     * the displacement -- H ends up wrong (asymmetric + spurious acoustic
      * stiffness). PHONON's DynamicalMatrix::displace_atom solves this by
      * walking atom->sametag, which threads each local atom through its
      * ghost copies. Same fix applies here. */
@@ -286,18 +286,18 @@ LammpsHessianAssembler::assemble(LAMMPS_NS::LAMMPS* lmp,
         }
     }
 
-    /* Box DOF sweep. Voigt order ε_xx, ε_yy, ε_zz, ε_yz, ε_xz, ε_xy. For
-     * box_dofs=1 we treat that single DOF as iso strain ε_iso applied as
-     * ε_ij = δ_ij·ε_iso (i.e. F = (1+ε)·I).
+    /* Box DOF sweep. Voigt order eps_xx, eps_yy, eps_zz, eps_yz, eps_xz, eps_xy. For
+     * box_dofs=1 we treat that single DOF as iso strain eps_iso applied as
+     * eps_ij = delta_ij.eps_iso (i.e. F = (1+eps).I).
      *
-     * For each box DOF α the strain mode displaces atoms affinely (held
-     * in lamda coords across the box edit). H[i*3+k, n_atom_dof + α] is
-     * read from the per-atom forces at strain ±h_strain; the diagonal
-     * H[n_atom_dof + α, n_atom_dof + α] is read from total pair energy
-     * via E(+h_s) - 2·E(0) + E(-h_s).
+     * For each box DOF alpha the strain mode displaces atoms affinely (held
+     * in lamda coords across the box edit). H[i*3+k, n_atom_dof + alpha] is
+     * read from the per-atom forces at strain +/-h_strain; the diagonal
+     * H[n_atom_dof + alpha, n_atom_dof + alpha] is read from total pair energy
+     * via E(+h_s) - 2.E(0) + E(-h_s).
      *
-     * Phase 3.7E: off-diagonal box-box terms H[α, β] for α≠β read from
-     * the LAMMPS pair virial (∂²E/∂ε_α∂ε_β = -∂virial[α]/∂ε_β). Mass
+     * Phase 3.7E: off-diagonal box-box terms H[alpha, beta] for alpha!=beta read from
+     * the LAMMPS pair virial (d^2E/deps_alphadeps_beta = -dvirial[alpha]/deps_beta). Mass
      * conserved: vflag flipped to 1 so virial gets populated; the
      * existing 12 LAMMPS computes are reused (no extra strain
      * perturbations).
@@ -317,15 +317,15 @@ LammpsHessianAssembler::assemble(LAMMPS_NS::LAMMPS* lmp,
         std::vector<double> F_pe(static_cast<std::size_t>(3 * nlocal), 0.0);
         std::vector<double> F_me(static_cast<std::size_t>(3 * nlocal), 0.0);
 
-        /* Saved virials at +ε_β / -ε_β for each β, indexed by Voigt α
-         * (post-permutation). Used after the α loop to assemble the
-         * off-diagonal box-box block. Flat row-major: [β · 6 + v]. */
+        /* Saved virials at +eps_beta / -eps_beta for each beta, indexed by Voigt alpha
+         * (post-permutation). Used after the alpha loop to assemble the
+         * off-diagonal box-box block. Flat row-major: [beta . 6 + v]. */
         std::vector<double> virial_p(
             static_cast<std::size_t>(n_strain) * 6u, 0.0);
         std::vector<double> virial_m(
             static_cast<std::size_t>(n_strain) * 6u, 0.0);
 
-        /* LAMMPS virial Voigt order → our Voigt order:
+        /* LAMMPS virial Voigt order -> our Voigt order:
          *   our[0..2] = LAMMPS[0..2]   (xx, yy, zz)
          *   our[3]    = LAMMPS[5]      (yz)
          *   our[4]    = LAMMPS[4]      (xz)
@@ -341,7 +341,7 @@ LammpsHessianAssembler::assemble(LAMMPS_NS::LAMMPS* lmp,
              * ghost periodic images scale affinely with the box; otherwise
              * pair_tadah's neighbor loop sees ghost neighbours at the
              * unstrained cartesian position and the energy/force curvature
-             * along ε comes out attenuated and asymmetric.
+             * along eps comes out attenuated and asymmetric.
              *
              * vflag=1 to populate pair->virial (energy + virial; per-atom
              * virial not needed). */
@@ -388,8 +388,8 @@ LammpsHessianAssembler::assemble(LAMMPS_NS::LAMMPS* lmp,
             }
             restore_box(dom, box_save);
 
-            /* Cross terms H[ik, α] = -∂F_i^k/∂ε_α.
-             * Symmetric counterpart H[α, ik] written from the same
+            /* Cross terms H[ik, alpha] = -dF_i^k/deps_alpha.
+             * Symmetric counterpart H[alpha, ik] written from the same
              * central difference; we average via symmetrise below. */
             const int col_alpha = n_atom_dof + alpha;
             const double inv2hs = 1.0 / (2.0 * h_strain);
@@ -401,23 +401,23 @@ LammpsHessianAssembler::assemble(LAMMPS_NS::LAMMPS* lmp,
                 }
             }
 
-            /* Diagonal H[α, α] = ∂²E/∂ε_α² via 3-point energy stencil. */
+            /* Diagonal H[alpha, alpha] = d^2E/deps_alpha^2 via 3-point energy stencil. */
             H(col_alpha, col_alpha) =
                 (E_p - 2.0 * E0 + E_m) / (h_strain * h_strain);
         }
 
-        /* Box-box off-diagonal block (Phase 3.7E). For α≠β:
+        /* Box-box off-diagonal block (Phase 3.7E). For alpha!=beta:
          *
-         *   H[α, β] = ∂²E/∂ε_α∂ε_β = -∂virial[α]/∂ε_β
+         *   H[alpha, beta] = d^2E/deps_alphadeps_beta = -dvirial[alpha]/deps_beta
          *
-         * LAMMPS' pair->virial[α] = -V·σ_α (compressive-positive
-         * convention: virial[α] > 0 under compression). Thus
-         * ∂E/∂ε_α = V·σ_α = -virial[α], and the second derivative is
-         *   H[α, β] = -(virial_perm(α)(+ε_β) - virial_perm(α)(-ε_β)) / (2h).
+         * LAMMPS' pair->virial[alpha] = -V.sigma_alpha (compressive-positive
+         * convention: virial[alpha] > 0 under compression). Thus
+         * dE/deps_alpha = V.sigma_alpha = -virial[alpha], and the second derivative is
+         *   H[alpha, beta] = -(virial_perm(alpha)(+eps_beta) - virial_perm(alpha)(-eps_beta)) / (2h).
          *
-         * Both H[α, β] and H[β, α] computed independently from
+         * Both H[alpha, beta] and H[beta, alpha] computed independently from
          * different perturbation directions; the trailing symmetrise
-         * pass (H = ½(H + Hᵀ)) averages them, picking up off-diagonal
+         * pass (H = 1/2(H + H^T)) averages them, picking up off-diagonal
          * stress-stress symmetry to FP. Skip iso (n_strain == 1: no
          * box-box off-diagonals to populate). */
         if (n_strain > 1) {
@@ -441,7 +441,7 @@ LammpsHessianAssembler::assemble(LAMMPS_NS::LAMMPS* lmp,
     /* Final state restoration. compute_clear_and_eval after every step
      * leaves atom->f populated with the last strained state; the
      * snapshot refresh below overwrites it, but the position copy here
-     * is the load-bearing invariant. Ghosts must also be restored — the
+     * is the load-bearing invariant. Ghosts must also be restored -- the
      * sametag walks in the atom sweep and the lamda2x(n_all) in the box
      * sweep both write past nlocal. */
     {
@@ -456,12 +456,12 @@ LammpsHessianAssembler::assemble(LAMMPS_NS::LAMMPS* lmp,
 
     if (symmetrize_) {
         /* Aliasing-safe symmetrise. `H = 0.5 * (H + H.transpose())`
-         * evaluates lazily — by the time the (j, i) entry is written,
+         * evaluates lazily -- by the time the (j, i) entry is written,
          * the (i, j) entry has already been overwritten. Force a
          * temporary via `.eval()` so the rhs computes from the
          * original H values throughout. Pre-3.7E this surfaced as
          * ~1e-8 asymmetry on the Voigt-6 box block, masked at the
-         * iso path (1×1 box block trivially symmetric). */
+         * iso path (1x1 box block trivially symmetric). */
         H = (0.5 * (H + H.transpose())).eval();
     }
     if (tikhonov_ > 0.0) {

@@ -2,11 +2,11 @@
 #define TADAH_HPO_BASINS_V2_POLICY_H
 
 /*
- *  BasinsV2Policy — priority-driven, lifecycle-aware "run and forget"
+ *  BasinsV2Policy -- priority-driven, lifecycle-aware "run and forget"
  *  HPO strategy, additive to v1's BasinsPolicy.
  *
  *  In one paragraph:
- *  Every scheduler iteration picks ONE work item — REFINE the highest-
+ *  Every scheduler iteration picks ONE work item -- REFINE the highest-
  *  priority basin, EXPLORE for diversity, VERIFY-KILL an inactive basin,
  *  or run a deep MERGE pass. Each basin has its own lifecycle state and
  *  its own ftol cursor; basins are not forced through the ladder in
@@ -21,7 +21,7 @@
  *  Sobol+filter pipeline. Phase 4 turns on path recording + smarter
  *  archive eviction. Phase 5 polishes diagnostics + docs.
  *
- *  Like v1, BASINSv2 sits at the top of the policy stack — the RESTART
+ *  Like v1, BASINSv2 sits at the top of the policy stack -- the RESTART
  *  decorator is not applied (lifecycle subsumes RESTART semantics).
  */
 
@@ -62,7 +62,7 @@ public:
     const BasinPoolV2&  pool()   const { return pool_;   }
     const ToleranceLadder& ladder() const { return ladder_; }
 
-    /* Exposed for test_basins_v2_*.cpp — same role as v1's
+    /* Exposed for test_basins_v2_*.cpp -- same role as v1's
      * build_stage_spec_for_test. */
     OptimizerSpec build_stage_spec_for_test(bool global, double tol) const {
         return build_stage_spec(global, tol, {});
@@ -90,10 +90,10 @@ private:
     void do_explore   (HPO_Host<Vec, Runner>& host);
     void do_refine    (HPO_Host<Vec, Runner>& host, int basin_id, double tol);
     void do_verify_kill(HPO_Host<Vec, Runner>& host, int basin_id);
-    void do_merge_pass();   /* Phase 2 — Phase 1 stub */
+    void do_merge_pass();   /* Phase 2 -- Phase 1 stub */
 
     /* ---- per-iteration bookkeeping -------------------------------- */
-    void update_lifecycle();          // ACTIVE↔PROMISING / ACTIVE→INACTIVE
+    void update_lifecycle();          // ACTIVE<->PROMISING / ACTIVE->INACTIVE
     void maybe_emit_summary();
     void maybe_commit_checkpoint();
 

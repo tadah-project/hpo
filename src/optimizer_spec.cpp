@@ -56,7 +56,7 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
     if (a==NLOPT_NUM_ALGORITHMS) { os<<"   * (unknown)\n"; return; }
 
     os<<"   * any NLopt stopping criterion\n"
-        "   * PARAM <name> <value> – any nlopt::opt::set_param key\n";
+        "   * PARAM <name> <value> - any nlopt::opt::set_param key\n";
     if (algo[0]=='G')        os<<"   * global optimizer\n";
     if (algo[1]=='N') os<<"   * derivative-free\n";
 }

@@ -15,9 +15,9 @@
 
 namespace tadah::hpo {
 
-/* ─────────────────────────────────────────────────────────────────────────
+/* -------------------------------------------------------------------------
  * Internal helpers
- * ───────────────────────────────────────────────────────────────────────── */
+ * ------------------------------------------------------------------------- */
 
 static constexpr int  KW       = 24;   // key column width in kv()
 
@@ -46,9 +46,9 @@ static std::string fmt_millis(double ms)
     return oss.str();
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * HPOLog — lifecycle
- * ───────────────────────────────────────────────────────────────────────── */
+/* -------------------------------------------------------------------------
+ * HPOLog -- lifecycle
+ * ------------------------------------------------------------------------- */
 
 void HPOLog::reset_for_test()
 {
@@ -78,7 +78,7 @@ void HPOLog::open(const std::string& path,
     auto tt = std::chrono::system_clock::to_time_t(t_start_);
 
     f_ << "\n" << HEAVY << "\n";
-    f_ << "  TADAH Hyperparameter Optimisation — Run Journal\n";
+    f_ << "  TADAH Hyperparameter Optimisation -- Run Journal\n";
     f_ << HEAVY << "\n\n";
     f_ << "  Tadah version  : " << version << "\n";
     f_ << "  Started        : " << std::put_time(std::localtime(&tt),
@@ -90,9 +90,9 @@ void HPOLog::open(const std::string& path,
     f_.flush();
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * HPOLog — primitive writers
- * ───────────────────────────────────────────────────────────────────────── */
+/* -------------------------------------------------------------------------
+ * HPOLog -- primitive writers
+ * ------------------------------------------------------------------------- */
 
 void HPOLog::writeln(const std::string& text)
 {
@@ -152,9 +152,9 @@ void HPOLog::event(const std::string& tag, const std::string& msg)
     f_.flush();
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * HPOLog — internal time helpers
- * ───────────────────────────────────────────────────────────────────────── */
+/* -------------------------------------------------------------------------
+ * HPOLog -- internal time helpers
+ * ------------------------------------------------------------------------- */
 
 std::string HPOLog::now_hms() const
 {
@@ -190,9 +190,9 @@ std::string HPOLog::now_ymdhms() const
     return oss.str();
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
+/* -------------------------------------------------------------------------
  * Structured section writers
- * ───────────────────────────────────────────────────────────────────────── */
+ * ------------------------------------------------------------------------- */
 
 void HPOLog::write_files_section(const std::string& target_file,
                                  const std::string& val_file,
@@ -307,14 +307,14 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         f_ << "  Stop criteria:\n";
         write_stop_criteria(sp.stop, "    ");
         if (stop_is_empty(sp.stop))
-            f_ << "    (none set — optimiser may run indefinitely)\n";
+            f_ << "    (none set -- optimiser may run indefinitely)\n";
         f_.flush();
     }
 
     // ---- stop criteria (INNER sub-spec).
     // Critical for NLopt MLSL/G_MLSL_LDS: with no INNER stop criteria
     // set, NLopt defaults to ftol_rel=1e-15 and xtol_rel=1e-7 for the
-    // inner local searches — far tighter than a noisy LAMMPS objective
+    // inner local searches -- far tighter than a noisy LAMMPS objective
     // can ever satisfy, so each descent runs until something else
     // intervenes. Surface the resolved values (or the silent default)
     // so the user can see what is actually being asked of the inner.
@@ -326,11 +326,11 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
             const bool is_mlsl = (sp.lib == "NLOPT" &&
                 (sp.algo == "G_MLSL" || sp.algo == "G_MLSL_LDS"));
             if (is_mlsl) {
-                f_ << "    (none set — NLopt MLSL will use defaults "
+                f_ << "    (none set -- NLopt MLSL will use defaults "
                       "ftol_rel=1e-15 xtol_rel=1e-7 for inner local searches; "
                       "loosen these if inner descents stall on a noisy objective)\n";
             } else {
-                f_ << "    (none set — inner sub-algo may run indefinitely)\n";
+                f_ << "    (none set -- inner sub-algo may run indefinitely)\n";
             }
         }
         f_.flush();
@@ -366,7 +366,7 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
             if (row.size() < 28) row.resize(28, ' ');
             row += ": [" + fmt_double(sp.low[i], 3) + ",  " + fmt_double(sp.high[i], 3) + "]";
             if (i < sp.log_scaled.size() && sp.log_scaled[i])
-                row += "  (log-scale — bounds are ln(value))";
+                row += "  (log-scale -- bounds are ln(value))";
             f_ << row << "\n";
         }
         f_.flush();
@@ -392,7 +392,7 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
                                    const char* indent) {
         f_ << indent << header << "\n";
         if (isp.chain.empty()) {
-            f_ << indent << "  (default — implicit CONFIG only)\n";
+            f_ << indent << "  (default -- implicit CONFIG only)\n";
         } else {
             auto pretty_entry = [](const auto& e) {
                 std::string s = e.method;
@@ -417,7 +417,7 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         f_ << indent << "  INIT_INCLUDE_CONFIG: "
            << (isp.include_config ? "true" : "false");
         if (isp.include_config && !isp.chain.empty())
-            f_ << "  (suppressed — explicit chain present)";
+            f_ << "  (suppressed -- explicit chain present)";
         f_ << "\n";
         f_ << indent << "  WARM_ON_MISMATCH  : " << isp.warm_on_mismatch << "\n";
     };
@@ -443,7 +443,7 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
             ns.autodetect || (ns.calibration_n >= 2);
         f_ << "  Run policy:\n";
         if (!any_extra) {
-            f_ << "    (TYPE PLAIN — single-shot dispatch)\n";
+            f_ << "    (TYPE PLAIN -- single-shot dispatch)\n";
         }
         if (is_multistart) {
             f_ << "    MULTISTART        : N_STARTS=" << ms.n_starts
@@ -550,7 +550,7 @@ void HPOLog::write_potential_section(const core::Context& ctx,
 
     if (!init2b && !initmb) {
         std::lock_guard<std::mutex> lg(mtx_);
-        f_ << "\n  !! Neither INIT2B nor INITMB is true — the potential has no terms.\n"
+        f_ << "\n  !! Neither INIT2B nor INITMB is true -- the potential has no terms.\n"
               "     Check your configuration file.\n";
         f_.flush();
     }
@@ -574,7 +574,7 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
     metric_line("ERMSE  (meV/atom)",  trg.use_ermse,  trg.ermse  * 1000.0, trg.w_ermse);
     metric_line("ErRMSE (meV/atom)",  trg.use_errmse, trg.errmse * 1000.0, trg.w_errmse);
     metric_line("ERSQ",               trg.use_ersq,   trg.ersq,            trg.w_ersq);
-    metric_line("FRMSE  (eV/Å)",      trg.use_frmse,  trg.frmse,           trg.w_frmse);
+    metric_line("FRMSE  (eV/Ang)",      trg.use_frmse,  trg.frmse,           trg.w_frmse);
     metric_line("SRMSE  (GPa)",       trg.use_srmse,  trg.srmse,           trg.w_srmse);
 
     for (const auto& lsim : trg.LS) {
@@ -586,7 +586,7 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
         }
     }
 
-    /* PC_OBSERVABLE typed-observable components — surface them in the
+    /* PC_OBSERVABLE typed-observable components -- surface them in the
      * header so users see their cohesive_energy / etc. contribution
      * alongside ERMSE and PC_LAMMPS varloss entries. Without this loop
      * the section silently omits cohesive_energy and the user wonders
@@ -607,9 +607,9 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
     kv("Output digits", std::to_string(trg.outputDigits));
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
+/* -------------------------------------------------------------------------
  * Load-transforms section
- * ───────────────────────────────────────────────────────────────────────── */
+ * ------------------------------------------------------------------------- */
 
 void HPOLog::write_load_transforms_section(const mlip::LoadTransformReport& r,
                                             std::size_t                       n_train_loaded,
@@ -661,7 +661,7 @@ void HPOLog::write_load_transforms_section(const mlip::LoadTransformReport& r,
 
     /* Validation outlier filter: only emitted when the user actually
      * declared EFILTER / FFILTER on the --validation file (otherwise both
-     * counters are zero by construction — training-side filters are not
+     * counters are zero by construction -- training-side filters are not
      * forwarded to validation). */
     if (val_filter_active)
         kv("Outlier filter (validation)", fmt_filter(vr, n_val_loaded));
@@ -693,9 +693,9 @@ void HPOLog::write_load_transforms_section(const mlip::LoadTransformReport& r,
     }
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
+/* -------------------------------------------------------------------------
  * Noise calibration section
- * ───────────────────────────────────────────────────────────────────────── */
+ * ------------------------------------------------------------------------- */
 
 void HPOLog::write_noise_calibration_section(
     const std::vector<double>& losses,
@@ -703,7 +703,7 @@ void HPOLog::write_noise_calibration_section(
 {
     section("NOISE CALIBRATION");
 
-    /* Compute summary stats outside any lock — purely arithmetic. */
+    /* Compute summary stats outside any lock -- purely arithmetic. */
     double mn = 0.0, mx = 0.0, mean = 0.0, stddev = 0.0;
     double abs_spread = 0.0, rel_spread = 0.0;
     if (!losses.empty()) {
@@ -730,12 +730,12 @@ void HPOLog::write_noise_calibration_section(
 
     if (losses.size() < 2) {
         std::lock_guard<std::mutex> lg(mtx_);
-        f_ << "  (calibration not run — need >= 2 evals)\n";
+        f_ << "  (calibration not run -- need >= 2 evals)\n";
         f_.flush();
         return;
     }
 
-    /* Single critical section for all of this section's body — holding
+    /* Single critical section for all of this section's body -- holding
      * the mutex once and writing directly to f_ avoids the kv() /
      * lock_guard re-entrance trap (mtx_ is std::mutex, not recursive). */
     auto fmt_sci = [](double v) {
@@ -777,9 +777,9 @@ void HPOLog::write_noise_calibration_section(
     f_.flush();
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
+/* -------------------------------------------------------------------------
  * Progress section
- * ───────────────────────────────────────────────────────────────────────── */
+ * ------------------------------------------------------------------------- */
 
 void HPOLog::start_progress()
 {
@@ -792,9 +792,9 @@ void HPOLog::start_progress()
     }
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
+/* -------------------------------------------------------------------------
  * Per-eval recording
- * ───────────────────────────────────────────────────────────────────────── */
+ * ------------------------------------------------------------------------- */
 
 void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
 {
@@ -843,7 +843,7 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                    << " evals (>50% of run). Possible causes: "
                    << "(a) inner stop tolerance too tight for objective noise; "
                    << "(b) the best basin is genuinely exhausted; "
-                   << "(c) penalty cliff — most samples land on "
+                   << "(c) penalty cliff -- most samples land on "
                    << "infeasible side. Inspect loss.tadah spread.\n";
             }
             f_.flush();
@@ -857,9 +857,9 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
     }
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
+/* -------------------------------------------------------------------------
  * Progress events
- * ───────────────────────────────────────────────────────────────────────── */
+ * ------------------------------------------------------------------------- */
 
 void HPOLog::log_new_best(std::size_t eval_num,
                           double      loss,
@@ -877,7 +877,7 @@ void HPOLog::log_new_best(std::size_t eval_num,
     /* Defensive guard: refuse to record a "new best" that is not actually
      * better than the current best. This catches upstream bugs where the
      * is_best comparator (e.g. HPO_Host::g_best_) drifted out of sync with
-     * the persisted journal state across a resume — without this guard, a
+     * the persisted journal state across a resume -- without this guard, a
      * stale comparator would silently overwrite cur_best_loss_ with a
      * worse value and downstream summaries would report regression as
      * progress. cur_best_loss_ defaults to numeric_limits<double>::max(),
@@ -893,7 +893,7 @@ void HPOLog::log_new_best(std::size_t eval_num,
     if (has_srmse)  { best_srmse_  = srmse;  has_srmse_  = true; }
 
     std::ostringstream msg;
-    msg << "★ NEW BEST   eval=" << std::setw(6) << eval_num
+    msg << "* NEW BEST   eval=" << std::setw(6) << eval_num
         << "  loss=" << fmt_double(loss);
     if (has_emae)   msg << "  EMAE="   << std::fixed << std::setprecision(2)
                         << emae   << " meV/at";
@@ -902,7 +902,7 @@ void HPOLog::log_new_best(std::size_t eval_num,
     if (has_errmse) msg << "  ErRMSE=" << std::fixed << std::setprecision(2)
                         << errmse << " meV/at";
     if (has_frmse)  msg << "  FRMSE="  << std::fixed << std::setprecision(3)
-                        << frmse  << " eV/Å";
+                        << frmse  << " eV/Ang";
     if (has_srmse)  msg << "  SRMSE="  << std::fixed << std::setprecision(3)
                         << srmse  << " GPa";
     msg << "  (" << fmt_millis(wall_ms) << ")";
@@ -910,7 +910,7 @@ void HPOLog::log_new_best(std::size_t eval_num,
     f_ << "[" << now_hms() << "]  BEST     " << msg.str() << "\n";
     if (!top_breakdown.empty()) {
         /* Indent under the BEST line so the breakdown is visually
-         * attached. Cap line length defensively — if the caller
+         * attached. Cap line length defensively -- if the caller
          * produced an over-long string, write it whole; the user can
          * grep for "top:" to extract these lines later. */
         f_ << "                       top: " << top_breakdown << "\n";
@@ -931,7 +931,7 @@ void HPOLog::log_nan_clamped(std::size_t        eval_num,
 
     f_ << "[" << now_hms() << "]  WARNING  "
        << "Eval " << std::setw(6) << eval_num
-       << ": training produced NaN/Inf — loss clamped to FAIL_SCORE\n";
+       << ": training produced NaN/Inf -- loss clamped to FAIL_SCORE\n";
     if (!params_str.empty())
         f_ << "           Parameters: " << params_str << "\n";
     if (!bound_hints.empty())
@@ -941,9 +941,9 @@ void HPOLog::log_nan_clamped(std::size_t        eval_num,
     f_.flush();
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
+/* -------------------------------------------------------------------------
  * Final summary
- * ───────────────────────────────────────────────────────────────────────── */
+ * ------------------------------------------------------------------------- */
 
 void HPOLog::set_status(const std::string& status_str)
 {
@@ -972,7 +972,7 @@ void HPOLog::finish(const std::string& status_str)
     const double wall_sec    = std::chrono::duration<double>(
                                    std::chrono::system_clock::now() - t_start_).count();
 
-    /* ── DIAGNOSTICS ─────────────────────────────────────────────────── */
+    /* -- DIAGNOSTICS --------------------------------------------------- */
     f_ << "\n"; { std::string s = "-- DIAGNOSTICS "; while(s.size()<72) s+='-'; f_ << s << "\n"; }
     f_ << "  " << std::left << std::setw(KW) << "Total evaluations"
        << ": " << total << "\n";
@@ -984,26 +984,26 @@ void HPOLog::finish(const std::string& status_str)
 
     // NaN rate interpretation
     if (nnan == 0) {
-        f_ << "  ✓ No NaN clampings — search space looks well-configured.\n";
+        f_ << "  [ok] No NaN clampings -- search space looks well-configured.\n";
     } else if (nan_pct < 5.0) {
-        f_ << "  ✓ NaN rate < 5% — occasional numerical instability, normal.\n";
+        f_ << "  [ok] NaN rate < 5% -- occasional numerical instability, normal.\n";
     } else if (nan_pct < 20.0) {
-        f_ << "  ⚠ NaN rate " << std::fixed << std::setprecision(1) << nan_pct
-           << "% — the optimiser is frequently hitting bad regions.\n"
+        f_ << "  [!] NaN rate " << std::fixed << std::setprecision(1) << nan_pct
+           << "% -- the optimiser is frequently hitting bad regions.\n"
               "    Consider narrowing the search bounds or adjusting FAIL_SCORE.\n";
     } else {
-        f_ << "  ✗ NaN rate " << std::fixed << std::setprecision(1) << nan_pct
-           << "% — most evaluations are failing numerically.\n"
+        f_ << "  [x] NaN rate " << std::fixed << std::setprecision(1) << nan_pct
+           << "% -- most evaluations are failing numerically.\n"
               "    The search space likely includes parameter values where the\n"
               "    linear system is severely ill-conditioned.  Common causes:\n"
-              "      • Regularisation (LAMBDA) lower bound is too small\n"
-              "      • Descriptor parameters (SIGMA/ETA) allow too-peaked functions\n"
-              "      • Cutoff radii (RCUT2B/RCUTMB) too small for the training data\n"
+              "      * Regularisation (LAMBDA) lower bound is too small\n"
+              "      * Descriptor parameters (SIGMA/ETA) allow too-peaked functions\n"
+              "      * Cutoff radii (RCUT2B/RCUTMB) too small for the training data\n"
               "    Action: check the NaN warnings in the PROGRESS section above\n"
               "    and tighten the bounds for the offending parameters.\n";
     }
 
-    /* ── PERFORMANCE ─────────────────────────────────────────────────── */
+    /* -- PERFORMANCE --------------------------------------------------- */
     { std::string s = "-- PERFORMANCE "; while(s.size()<72) s+='-'; f_ << "\n" << s << "\n"; }
     f_ << "  " << std::left << std::setw(KW) << "Total wall time"
        << ": " << format_duration(wall_sec) << "\n";
@@ -1022,7 +1022,7 @@ void HPOLog::finish(const std::string& status_str)
            << ": " << thr.str() << " evals/min\n";
     }
 
-    /* ── RESULT ──────────────────────────────────────────────────────── */
+    /* -- RESULT -------------------------------------------------------- */
     { std::string s = "-- RESULT "; while(s.size()<72) s+='-'; f_ << "\n" << s << "\n"; }
     f_ << "  " << std::left << std::setw(KW) << "Optimiser status"
        << ": " << status_str_local << "\n";
@@ -1040,7 +1040,7 @@ void HPOLog::finish(const std::string& status_str)
            << ": " << std::fixed << std::setprecision(2) << best_errmse_ << " meV/atom\n";
     if (has_frmse_)
         f_ << "  " << std::left << std::setw(KW) << "Best FRMSE"
-           << ": " << std::fixed << std::setprecision(4) << best_frmse_ << " eV/Å\n";
+           << ": " << std::fixed << std::setprecision(4) << best_frmse_ << " eV/Ang\n";
     if (has_srmse_)
         f_ << "  " << std::left << std::setw(KW) << "Best SRMSE"
            << ": " << std::fixed << std::setprecision(4) << best_srmse_ << " GPa\n";
@@ -1057,36 +1057,36 @@ void HPOLog::finish(const std::string& status_str)
     f_.close();
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * nlopt result code → human-readable string
- * ───────────────────────────────────────────────────────────────────────── */
+/* -------------------------------------------------------------------------
+ * nlopt result code -> human-readable string
+ * ------------------------------------------------------------------------- */
 std::string nlopt_result_str(int code)
 {
     switch (code) {
-        case  1: return "SUCCESS — generic success";
-        case  2: return "STOPVAL_REACHED — objective below stopval threshold";
-        case  3: return "FTOL_REACHED — function tolerance converged";
-        case  4: return "XTOL_REACHED — parameter tolerance converged";
-        case  5: return "MAXEVAL_REACHED — maximum evaluations exhausted";
-        case  6: return "MAXTIME_REACHED — maximum time exhausted";
-        case -1: return "FAILURE — generic failure (often caused by NaN objective values)";
-        case -2: return "INVALID_ARGS — invalid algorithm arguments (check bounds/dimensions)";
-        case -3: return "OUT_OF_MEMORY — insufficient memory for algorithm";
-        case -4: return "ROUNDOFF_LIMITED — progress blocked by floating-point roundoff";
-        case -5: return "FORCED_STOP — optimisation was interrupted";
+        case  1: return "SUCCESS -- generic success";
+        case  2: return "STOPVAL_REACHED -- objective below stopval threshold";
+        case  3: return "FTOL_REACHED -- function tolerance converged";
+        case  4: return "XTOL_REACHED -- parameter tolerance converged";
+        case  5: return "MAXEVAL_REACHED -- maximum evaluations exhausted";
+        case  6: return "MAXTIME_REACHED -- maximum time exhausted";
+        case -1: return "FAILURE -- generic failure (often caused by NaN objective values)";
+        case -2: return "INVALID_ARGS -- invalid algorithm arguments (check bounds/dimensions)";
+        case -3: return "OUT_OF_MEMORY -- insufficient memory for algorithm";
+        case -4: return "ROUNDOFF_LIMITED -- progress blocked by floating-point roundoff";
+        case -5: return "FORCED_STOP -- optimisation was interrupted";
         default: return "UNKNOWN (" + std::to_string(code) + ")";
     }
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * HPOLog — checkpoint participant
+/* -------------------------------------------------------------------------
+ * HPOLog -- checkpoint participant
  *
  * Persists the journal-running counters and best-so-far so an
  * interrupted run resumes with consistent state. The actual log file
  * is reopened in append mode by open(); these counters keep the
  * monotonic eval numbering and the "best so far" indicator coherent
  * across the boundary.
- * ───────────────────────────────────────────────────────────────────────── */
+ * ------------------------------------------------------------------------- */
 
 void HPOLog::save(core::Checkpoint& cp) const
 {

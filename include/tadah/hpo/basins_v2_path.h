@@ -2,7 +2,7 @@
 #define TADAH_HPO_BASINS_V2_PATH_H
 
 /*
- *  basins_v2_path — coarse-trajectory helpers for BASINSv2 (Phase 4).
+ *  basins_v2_path -- coarse-trajectory helpers for BASINSv2 (Phase 4).
  *
  *  Pure functions over PathPoint vectors. The data layout lives in
  *  basin_pool_v2.h (PathPoint, BasinV2::coarse_path) so the pool can
@@ -12,11 +12,11 @@
  *  Design notes:
  *    - prune_path keeps endpoints (first + last) and drops the
  *      intermediate snapshot whose loss is closest to its neighbours
- *      — i.e. the least-informative point. Repeated until under cap.
+ *      -- i.e. the least-informative point. Repeated until under cap.
  *      This preserves diversity at both ends of the trajectory.
  *    - path_overlap measures: for each point on path B, is there a
  *      point on path A within `dist_thresh` (using a caller-provided
- *      distance functor — typically BasinPoolV2::relative_l2)?
+ *      distance functor -- typically BasinPoolV2::relative_l2)?
  *      Returns the overlap fraction in [0, 1]. Used by Phase 2's
  *      merge predicate when paths are available (Phase 4 enhancement).
  *    - should_snapshot decides whether the policy should record a new
@@ -55,7 +55,7 @@ bool should_snapshot(const std::vector<PathPoint>& path,
 
 /* Fraction of path B's points that have at least one point on path A
  * within dist_thresh. Returns 0.0 if either path is empty. Symmetric
- * version is max(overlap(A,B), overlap(B,A)) — left to the caller. */
+ * version is max(overlap(A,B), overlap(B,A)) -- left to the caller. */
 double path_overlap(const std::vector<PathPoint>& a,
                     const std::vector<PathPoint>& b,
                     double dist_thresh,

@@ -1,0 +1,30 @@
+# 04 -- early-reject obviously-broken potentials.
+#
+# Adds `--skip-above` to PC_ERMSE: any iter whose validation-set
+# ERMSE exceeds the cap is fail-scored before LAMMPS is invoked.
+# This is much cheaper than running LAMMPS on a clearly-bad pot.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB DLIB
+    ALGO BFGS
+    MAXEVAL 30
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+
+# `--skip-above 100` (meV/atom) drops any pot whose training-residual
+# ERMSE is above 100. `--skip-rel 5` drops any pot whose ERMSE is
+# more than 5x the running best.
+PC_ERMSE 0 0.0001 --skip-above 100 --skip-rel 5
+
+PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 4.5 3.302 --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B  (1) 4.0 6.0
+OPTIM SGRIDMB (1) 0.1 0.4
+
+OUTPUT 1
+BOUTPUT 1

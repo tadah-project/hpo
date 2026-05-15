@@ -53,7 +53,7 @@ public:
     std::vector<LammpsSim> LS;
 
     /* Typed observables (Tier 1 / Tier 2 of the PC_OBSERVABLE redesign).
-     * Each entry is a polymorphic Observable* — concrete subclasses live in
+     * Each entry is a polymorphic Observable* -- concrete subclasses live in
      * tadah/hpo/observables/. The host iterates this vector alongside LS
      * when computing the loss + gradient.
      * Populated by PC_OBSERVABLE lines in the .hpotarget config. */

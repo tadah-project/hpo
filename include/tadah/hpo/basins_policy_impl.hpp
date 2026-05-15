@@ -1,6 +1,6 @@
 #pragma once
 /*
- *  BasinsPolicy implementation — included from basins_policy.h.
+ *  BasinsPolicy implementation -- included from basins_policy.h.
  *
  *  Templated; requires the run_inner<>() dispatch from run_policy.h
  *  (already included by basins_policy.h via <tadah/hpo/run_policy.h>).
@@ -94,12 +94,12 @@ void BasinsPolicy<Vec, Runner>::ensure_ladder()
                << " rungs, loc " << before_loc << "->" << after_loc
                << " rungs";
             HPOLog::instance().info(os.str());
-            /* Sanity warn if we just halved a user-supplied ladder — the
+            /* Sanity warn if we just halved a user-supplied ladder -- the
              * calibration may be unreliable on a poor seed. */
             if ((before_glo > 0 && after_glo * 2 < before_glo) ||
                 (before_loc > 0 && after_loc * 2 < before_loc)) {
                 HPOLog::instance().warning(
-                    "BASINS: noise-floor clamp dropped >50% of ladder rungs — "
+                    "BASINS: noise-floor clamp dropped >50% of ladder rungs -- "
                     "NOISE.CALIBRATION may have run at a poor seed (BAD_POT "
                     "clamps inflate rel_spread). Verify on a converged seed, "
                     "or set CLAMP_TO_NOISE_FLOOR false.");
@@ -144,7 +144,7 @@ BasinsPolicy<Vec, Runner>::build_stage_spec(
      * the stage didn't set them).
      *
      * The ladder rung is written to whichever ftol field the backend
-     * actually honours — ftol_rel for NLopt, ftol_abs for DLIB:BFGS
+     * actually honours -- ftol_rel for NLopt, ftol_abs for DLIB:BFGS
      * (which has no relative-objective stop and previously rejected
      * the ladder rung as an unsupported FTOL_REL). The choice lives
      * in OptimizerCaps so backends are swappable without policy edits. */
@@ -168,7 +168,7 @@ BasinsPolicy<Vec, Runner>::build_stage_spec(
      * stage's inner is safe. Resetting it would break BASINS+G_MLSL_LDS. */
     s.inner = src.inner ? std::make_unique<OptimizerSpec>(*src.inner) : nullptr;
 
-    /* Drop strategy nesting — BASINS sits at the top of the policy stack. */
+    /* Drop strategy nesting -- BASINS sits at the top of the policy stack. */
     s.strategy_type = StrategyType::PLAIN;
     s.basins        = BasinsSpec{};
     s.multistart    = MultiStartSpec{};
@@ -230,7 +230,7 @@ void BasinsPolicy<Vec, Runner>::run_global_stage(HPO_Host<Vec, Runner>& host)
 
     /* Pick seed(s) for the global stage. With C2 (GLOBAL_SEED_TOP_N > 1)
      * AND a non-empty pool from a prior round, pre-evaluate the top-N
-     * basins via host() — this routes them through the existing top-K
+     * basins via host() -- this routes them through the existing top-K
      * capture (so the BasinPool merge picks up any improvement vs. the
      * stored basin loss) and lets us pick the lowest-loss one as the
      * optimiser start. For DLIB:GFS the spec carries all N and the
@@ -258,7 +258,7 @@ void BasinsPolicy<Vec, Runner>::run_global_stage(HPO_Host<Vec, Runner>& host)
                     v(j) = heads[i].params[static_cast<std::size_t>(j)];
                 /* heads[i].params are already in optimiser-transformed
                  * space (BasinPool's contract). host() expects the real
-                 * (un-transformed) input — convert via outer_.out(). */
+                 * (un-transformed) input -- convert via outer_.out(). */
                 const double ls = host(outer_.out(v));
                 evaluated.emplace_back(heads[i].params, ls);
             }
@@ -316,9 +316,9 @@ void BasinsPolicy<Vec, Runner>::run_global_stage(HPO_Host<Vec, Runner>& host)
     try {
         run_inner<Vec, Runner>(sub, host);
     } catch (const typename HPO_Host<Vec, Runner>::StagnationStop&) {
-        /* Expected — stage is done. */
+        /* Expected -- stage is done. */
     } catch (const core::ShutdownRequested&) {
-        /* Honour shutdown — flush top-K into the pool, commit, rethrow. */
+        /* Honour shutdown -- flush top-K into the pool, commit, rethrow. */
         auto found = HPO_Host<Vec, Runner>::get_topk();
         for (auto& kv : found) {
             std::vector<double> p(kv.second.size());
@@ -330,7 +330,7 @@ void BasinsPolicy<Vec, Runner>::run_global_stage(HPO_Host<Vec, Runner>& host)
         throw;
     }
 
-    /* Harvest top-K → BasinPool. */
+    /* Harvest top-K -> BasinPool. */
     auto found = HPO_Host<Vec, Runner>::get_topk();
     int n_added = 0;
     for (const auto& kv : found) {
@@ -373,12 +373,12 @@ void BasinsPolicy<Vec, Runner>::run_local_stage(HPO_Host<Vec, Runner>& host,
     /* Per-basin LOCAL refinements. We capture each refinement's per-stage
      * minimum (top-K=1) and feed it back into the pool via add_or_merge.
      * Without this, every basin's pool entry is frozen at its round-1
-     * GLOBAL discovery (params, loss) for the entire run — even when its
+     * GLOBAL discovery (params, loss) for the entire run -- even when its
      * LOCAL refinement substantially improves the loss. Downstream effect:
      * round-k>1 GLOBAL re-seeds from stale heads(), and the pool ordering
      * by loss becomes meaningless once any basin actually refines below
      * its initial value. Updates are batched until end-of-stage because
-     * add_or_merge can dedup-merge or evict, shifting basin indices —
+     * add_or_merge can dedup-merge or evict, shifting basin indices --
      * applying mid-loop would invalidate the remaining `due` indices. */
     std::vector<std::pair<std::vector<double>, double>> pending_updates;
 

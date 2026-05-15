@@ -22,7 +22,7 @@ sobol_unit_points(std::size_t K, std::size_t dim, std::uint64_t seed_skip)
     boost::random::sobol engine(static_cast<unsigned>(dim));
     if (seed_skip > 0) {
         /* Discard seed_skip*dim values to land on a different
-         * subsequence — same trick init_strategies.cpp uses. */
+         * subsequence -- same trick init_strategies.cpp uses. */
         engine.discard(static_cast<std::size_t>(seed_skip * dim));
     }
     const auto sobol_max = static_cast<double>(engine.max());
@@ -48,7 +48,7 @@ filter_far_from_pool(const std::vector<std::vector<double>>& candidates,
     std::vector<std::size_t> survivors;
     survivors.reserve(candidates.size());
 
-    /* Empty pool → every candidate survives (nothing to compare against). */
+    /* Empty pool -> every candidate survives (nothing to compare against). */
     if (pool.empty() || explore_dist_floor <= 0.0) {
         survivors.resize(candidates.size());
         std::iota(survivors.begin(), survivors.end(), std::size_t{0});
@@ -59,7 +59,7 @@ filter_far_from_pool(const std::vector<std::vector<double>>& candidates,
     for (std::size_t i = 0; i < candidates.size(); ++i) {
         bool too_close = false;
         for (const auto& b : basins) {
-            /* Both active and archived basins are consulted — archived
+            /* Both active and archived basins are consulted -- archived
              * basins answer "have we explored here before?" (the design
              * doc's path/region-coverage query). */
             const double d = pool.relative_l2(candidates[i], b.params);

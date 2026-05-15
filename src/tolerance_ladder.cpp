@@ -34,7 +34,7 @@ ToleranceLadder ToleranceLadder::from_explicit(std::vector<double> glo,
     ToleranceLadder t;
     t.glo_ = std::move(glo);
     t.loc_ = std::move(loc);
-    /* Sort descending — rung k+1 must be tighter than rung k. */
+    /* Sort descending -- rung k+1 must be tighter than rung k. */
     std::sort(t.glo_.begin(), t.glo_.end(), std::greater<double>{});
     std::sort(t.loc_.begin(), t.loc_.end(), std::greater<double>{});
     return t;

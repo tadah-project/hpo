@@ -14,8 +14,8 @@ namespace hpo {
 
 namespace {
 
-// IEEE denormal floor — the only literal threshold permitted by the
-// no-magic-numbers contract (plan §"No-magic-numbers contract").
+// IEEE denormal floor -- the only literal threshold permitted by the
+// no-magic-numbers contract (plan sec."No-magic-numbers contract").
 constexpr double kZeroFloor = 1.0e-15;
 
 std::string lower(const std::string& s) {
@@ -28,7 +28,7 @@ std::string lower(const std::string& s) {
 }  // namespace
 
 IterHealthMonitor& global_iter_health_monitor() {
-  // Default state: Off — no overhead until hpo_run() flips it on
+  // Default state: Off -- no overhead until hpo_run() flips it on
   // based on the HEALTH_LOG context key. Process-lifetime singleton.
   static IterHealthMonitor mon{HealthLogMode::Off};
   return mon;
@@ -61,7 +61,7 @@ IterHealthRecord compute_iter_health(
   rec.block_median_abs.assign(nblocks, 0.0);
   rec.block_nz_fraction.assign(nblocks, 0.0);
 
-  // Reusable scratch — declared outside the loop to avoid reallocation.
+  // Reusable scratch -- declared outside the loop to avoid reallocation.
   std::vector<double> scratch;
 
   for (std::size_t b = 0; b < nblocks; ++b) {
@@ -69,7 +69,7 @@ IterHealthRecord compute_iter_health(
     const std::size_t lo = blk.col_offset;
     const std::size_t hi = lo + blk.col_count;
     if (hi > weights.size()) {
-      // Layout claims more columns than weights has — record a NaN
+      // Layout claims more columns than weights has -- record a NaN
       // sentinel and continue. The pre-flight audit handles the
       // structural check; here we just don't crash.
       rec.weights_have_nan_inf = true;
@@ -93,7 +93,7 @@ IterHealthRecord compute_iter_health(
     rec.block_nz_fraction[b] =
         static_cast<double>(nz) / static_cast<double>(blk.col_count);
 
-    // Median via nth_element — O(N) per block.
+    // Median via nth_element -- O(N) per block.
     const std::size_t mid = scratch.size() / 2;
     std::nth_element(scratch.begin(),
                      scratch.begin() + static_cast<std::ptrdiff_t>(mid),
@@ -126,7 +126,7 @@ void IterHealthMonitor::record(
         "iter_health: eval " + std::to_string(rec.iter) +
         " block[" + std::to_string(block_idx) + "/" +
         layout.blocks[block_idx].descriptor_label + "] " +
-        kind + " — " + text);
+        kind + " -- " + text);
   };
 
   // NaN/Inf is the only globally-emitted warning (no per-block index).
@@ -141,20 +141,20 @@ void IterHealthMonitor::record(
       tadah::core::Logger::instance().log(
           tadah::core::LogLevel::WARNING,
           "iter_health: eval " + std::to_string(rec.iter) +
-          " — weights contain NaN/Inf entries (training likely diverged).");
+          " -- weights contain NaN/Inf entries (training likely diverged).");
     }
   }
 
   // Per-block exact-zero blocks. block_max_abs == 0 means the regressor
-  // pruned the entire block — the BASINS-style failure signature.
+  // pruned the entire block -- the BASINS-style failure signature.
   for (std::size_t b = 0; b < rec.block_max_abs.size(); ++b) {
     if (b >= layout.blocks.size()) break;
     if (rec.block_max_abs[b] == 0.0) {
       maybe_warn(b, "max_abs",
-                 "all weights in this block are exactly zero — the "
+                 "all weights in this block are exactly zero -- the "
                  "descriptor block contributed nothing to the fit.");
     }
-    // Very low non-zero fraction — almost-empty block.
+    // Very low non-zero fraction -- almost-empty block.
     if (rec.block_nz_fraction[b] < 0.05 &&
         rec.block_max_abs[b] > 0.0) {
       maybe_warn(b, "nz_fraction",

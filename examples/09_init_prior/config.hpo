@@ -1,0 +1,29 @@
+# 09 -- descriptor-supplied prior.
+#
+# When you do not have a previous run to warm-start from, ask each
+# descriptor for its `suggested_value` (registered inside MODELS).
+# Where no suggestion is available the bounds midpoint is used.
+
+OPTIMIZER
+  INIT
+    STRATEGY PRIOR
+    INCLUDE_CONFIG false
+  ENDINIT
+  STRATEGY
+    TYPE PLAIN
+    LIB DLIB
+    ALGO BFGS
+    MAXEVAL 30
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 4.5 3.302 --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B  (1) 4.0 6.0
+OPTIM SGRIDMB (1) 0.1 0.4
+
+OUTPUT 1
+BOUTPUT 1

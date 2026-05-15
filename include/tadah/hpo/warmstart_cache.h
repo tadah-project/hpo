@@ -4,7 +4,7 @@
  *
  * Heavy LAMMPS scripts (e.g. computing elastic constants from a relaxed
  * BCC bulk) start with a box/relax minimisation from some lattice guess.
- * After one HPO evaluation the relaxed lattice constant is known —
+ * After one HPO evaluation the relaxed lattice constant is known --
  * passing it back as the next eval's input lets the relax start near
  * the converged state, reducing the minimise from ~340 iter to ~3-5.
  *
@@ -14,7 +14,7 @@
  *     hot script runs (so it can use ${<name>} as the seed);
  *   - reads <name> back after the script runs;
  *   - validates <name> against [min, max] (an out-of-range value is
- *     treated as an unphysical-potential signal — the iter is failscored
+ *     treated as an unphysical-potential signal -- the iter is failscored
  *     and cold scripts are skipped);
  *   - caches the in-range value here for the next eval AND propagates
  *     it as `${<name>}` to every cold script in the *same* eval.
@@ -32,7 +32,7 @@
  * run's best_pot is not reproducible on cold restart: every script
  * starts from `initial` and may land box/relax in a different basin.
  *
- * No environment variables — all knobs (ranges, initial, what's hot)
+ * No environment variables -- all knobs (ranges, initial, what's hot)
  * are declared per PC_LAMMPS line in config.hpo.
  */
 
@@ -49,7 +49,7 @@
 
 namespace tadah::hpo::warmstart {
 
-/* (script, varname) → cached value. */
+/* (script, varname) -> cached value. */
 struct Key {
     std::string script;
     std::string name;

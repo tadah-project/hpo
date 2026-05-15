@@ -34,7 +34,7 @@ void ProgressTracker::observe(double loss, double wall_ms)
     /* Slide the window. We track the loss observed at the front of the
      * window (i.e. what the caller's best-so-far was W evals ago). The
      * rate is then drop / window_size, which is sensitive to monotone
-     * progress. Taking the min over the window — which we used to do —
+     * progress. Taking the min over the window -- which we used to do --
      * collapses to current best when loss is monotone, falsely
      * reporting zero rate even while the optimiser is still improving. */
     while (hist_.size() > cfg_.window_size) hist_.pop_front();

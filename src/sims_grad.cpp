@@ -14,7 +14,7 @@ bool loss_grad_wrt_observed(const tadah::LossFunction& fn,
 {
     using Type = tadah::LossFunction::Type;
     switch (fn.type()) {
-        /* Residual-based: L = f(v - t), so ∂L/∂v = -∂L/∂t = -loss_prime. */
+        /* Residual-based: L = f(v - t), so dL/dv = -dL/dt = -loss_prime. */
         case Type::L1:
         case Type::L2:
         case Type::LOG_COSH:
@@ -60,7 +60,7 @@ void apply_ift_chain_kernel(const Eigen::VectorXd& dg_dW,
 
     dO_dW_out = dg_dW;
     if (dF_dW && nlocal > 0) {
-        /* dO_dW[c] += Σ_(atom,axis) λ[3*atom+axis] · dF_dW[(3*atom+axis), c]. */
+        /* dO_dW[c] += Sigma_(atom,axis) lambda[3*atom+axis] . dF_dW[(3*atom+axis), c]. */
         for (int atom = 0; atom < nlocal; ++atom) {
             for (int axis = 0; axis < 3; ++axis) {
                 const double lam = lambda(3 * atom + axis);
@@ -74,7 +74,7 @@ void apply_ift_chain_kernel(const Eigen::VectorXd& dg_dW,
         }
     }
 
-    /* Box block: dO_dW[c] += Σ_α λ[3*nlocal+α] · dvirial_dW[α, c]. */
+    /* Box block: dO_dW[c] += Sigma_alpha lambda[3*nlocal+alpha] . dvirial_dW[alpha, c]. */
     if (dvirial_dW && box_dofs > 0) {
         for (int alpha = 0; alpha < box_dofs; ++alpha) {
             const double lam = lambda(3 * nlocal + alpha);
@@ -146,7 +146,7 @@ bool compute_sims_grad_for_script(const SimsGradScriptInput& input,
 {
     const std::size_t k_count = input.expressions.size();
     if (k_count == 0) {
-        /* No observables on this script. Trivially analytic — dL_dW stays
+        /* No observables on this script. Trivially analytic -- dL_dW stays
          * at its incoming size; clear to zero of n_desc length for the
          * caller's convenience. */
         dL_dW_out = Eigen::VectorXd::Zero(input.ctx.n_desc);
@@ -161,7 +161,7 @@ bool compute_sims_grad_for_script(const SimsGradScriptInput& input,
             "compute_sims_grad_for_script: per-observable array size mismatch");
     }
 
-    /* Defer the LDLT until at least one observable carries dg_dx ≠ 0;
+    /* Defer the LDLT until at least one observable carries dg_dx != 0;
      * cohesive-energy-per-atom-only scripts (pilot) bypass it. */
     DenseAdjointSolver* solver_ptr = nullptr;
     std::unique_ptr<DenseAdjointSolver> solver;
@@ -233,7 +233,7 @@ bool compute_sims_grad_dWchain(
     for (const auto& script : scripts) {
         /* Phase A masking: skip provider-marked failed scripts. Their
          * loss is FAIL_SCORE (a constant clamp set by the host's
-         * outvar/varloss FAIL_SCORE path) so ∂FAIL_SCORE/∂θ = 0 — the
+         * outvar/varloss FAIL_SCORE path) so dFAIL_SCORE/dtheta = 0 -- the
          * contribution to the gradient is exactly zero in the
          * continuous region. The remaining scripts and PC_OBSERVABLE
          * chain still contribute analytically. */
@@ -242,7 +242,7 @@ bool compute_sims_grad_dWchain(
         Eigen::VectorXd dL_dW;
         if (!compute_sims_grad_for_script(script, dL_dW)) {
             /* Hard failure (unsupported loss kind, observable registry
-             * miss). Still all-or-nothing — these are structural and
+             * miss). Still all-or-nothing -- these are structural and
              * the optimiser needs FD anyway. */
             for (int idx : all_theta_indices) needs_fd_out.push_back(idx);
             return false;
@@ -276,7 +276,7 @@ bool compute_observables_grad_dWchain(
 
     for (const auto& obs : observables) {
         /* Phase A masking: provider-marked failure (relaxer diverged,
-         * NaN value, …). Skip. ∂FAIL_SCORE/∂θ = 0. */
+         * NaN value, ...). Skip. dFAIL_SCORE/dtheta = 0. */
         if (obs.failed) continue;
 
         if (obs.needs_adjoint) {

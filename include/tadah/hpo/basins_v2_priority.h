@@ -2,7 +2,7 @@
 #define TADAH_HPO_BASINS_V2_PRIORITY_H
 
 /*
- *  basins_v2_priority — pure-function priority scoring for BASINSv2.
+ *  basins_v2_priority -- pure-function priority scoring for BASINSv2.
  *
  *  Decoupled from BasinPoolV2 / BasinsV2Policy so the formula is unit-
  *  testable in isolation. The policy supplies the inputs (basins +
@@ -61,7 +61,7 @@ struct PriorityContext {
  * picked by argmax.
  *
  * Score for basins not in any active state still reflects the formula's
- * non-state terms — useful for observability but never used for
+ * non-state terms -- useful for observability but never used for
  * scheduling. */
 std::vector<double>
 compute_priorities(const std::vector<BasinV2>&  basins,
@@ -75,7 +75,7 @@ int argmax_priority(const std::vector<BasinV2>& basins,
                     const std::vector<double>&  scores);
 
 /* Adaptive REFINE plateau threshold. Returns the value to pass to
- * HPO_Host::set_stagnation_threshold() — the optimiser bails when no
+ * HPO_Host::set_stagnation_threshold() -- the optimiser bails when no
  * new global best is found within this many evals. The formula is
  * derived from the basin's current tol cursor + dim + user knobs:
  *
@@ -85,12 +85,12 @@ int argmax_priority(const std::vector<BasinV2>& basins,
  *
  * - min_evals    : refine_budget_min_evals (lower bound)
  * - 100 * dim    : protects slow exponential descent in higher dim
- * - 50 * |log10(tol)| * plateau_eps_factor : tighter tol → patience
+ * - 50 * |log10(tol)| * plateau_eps_factor : tighter tol -> patience
  *                                            grows; user can soften
  *                                            via plateau_eps_factor
  * - max_evals    : refine_budget_max_evals (hard cap)
  *
- * Pure free function — exposed here so unit tests can exercise the
+ * Pure free function -- exposed here so unit tests can exercise the
  * formula without instantiating BasinsV2Policy. */
 std::size_t
 adaptive_refine_threshold(double      tol,

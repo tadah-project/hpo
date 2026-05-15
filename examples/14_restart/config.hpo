@@ -1,0 +1,31 @@
+# 14 -- RESTART decorator: auto-recover from stagnation.
+#
+# The host tracks how many evals have passed without a new best.
+# If that count exceeds AFTER_STAGNATION, HPO short-circuits the
+# inner optimiser with a StagnationStop exception, the RESTART
+# decorator catches it, draws a fresh seed from its own INIT chain,
+# and re-enters the optimiser. After MAX restarts the run exits.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB DLIB
+    ALGO BFGS
+    MAXEVAL 60
+    RESTART
+      AFTER_STAGNATION 4
+      MAX 2
+      STRATEGY RANDOM 1
+    ENDRESTART
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 4.5 3.302 --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B (1) 4.0 6.0
+
+OUTPUT 1
+BOUTPUT 1

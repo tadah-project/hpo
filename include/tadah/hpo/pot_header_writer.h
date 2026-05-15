@@ -1,14 +1,14 @@
 #pragma once
 /*
- * PotHeaderWriter — writes commented (#) metadata headers into potential files.
+ * PotHeaderWriter -- writes commented (#) metadata headers into potential files.
  *
  * Two levels of detail:
- *   • write_best_header()    — full, self-contained header for best_pot.tadah
+ *   * write_best_header()    -- full, self-contained header for best_pot.tadah
  *                              (enough information to reproduce the HPO run)
- *   • write_archive_header() — compact header for periodic pot/best_pot archives
+ *   * write_archive_header() -- compact header for periodic pot/best_pot archives
  *
  * All output lines are prefixed with '#' so TADAH parsers skip them.
- * Target line width ≤ 80 characters where practical.
+ * Target line width <= 80 characters where practical.
  */
 
 #include <tadah/core/context.h>
@@ -30,7 +30,7 @@ class PotHeaderWriter
 {
 public:
     /* ------------------------------------------------------------------ *
-     *  Full header for best_pot.tadah — self-contained run summary
+     *  Full header for best_pot.tadah -- self-contained run summary
      * ------------------------------------------------------------------ */
     template<class ParamVec>
     static void write_best_header(

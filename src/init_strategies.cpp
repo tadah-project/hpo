@@ -217,7 +217,7 @@ public:
         std::ifstream in(file_);
         if (!in) {
             handle_mismatch(policy,
-                "WARM: cannot open " + file_ + " — falling through to next strategy");
+                "WARM: cannot open " + file_ + " -- falling through to next strategy");
             return {};
         }
 
@@ -227,7 +227,7 @@ public:
          * cache snapshot that the writer dumped alongside the best-pot.
          * Priming `warmstart::cache` from them makes the WARM eval
          * start each --hotvar relaxation from the same value the
-         * original best converged to — without that, a cold restart
+         * original best converged to -- without that, a cold restart
          * begins each hot script from its declared `initial` and may
          * land box/relax in a different basin, producing a loss that
          * does not match what this file's header claims. */
@@ -331,7 +331,7 @@ public:
             HPOLog::instance().info(oss.str());
         }
 
-        /* Clamp into bounds (in real space) — bounds may have moved
+        /* Clamp into bounds (in real space) -- bounds may have moved
          * between runs. Each clamp is logged so a narrowed bound that
          * silently shifts the warm point doesn't get lost in noise. */
         std::size_t clamped = 0;
@@ -579,7 +579,7 @@ build_init_strategy(const InitStrategySpec& ispec)
     if (ispec.include_config && !chain.empty()) {
         /* The user left INIT_INCLUDE_CONFIG at its default but also wrote
          * an explicit chain. Implicit CONFIG is suppressed so that iter 0
-         * is whatever they asked for. Make this visible — silent suppression
+         * is whatever they asked for. Make this visible -- silent suppression
          * has surprised users who assumed CONFIG was still part of the chain. */
         const std::string msg =
             "InitStrategy: explicit chain set, implicit CONFIG suppressed. "
@@ -595,7 +595,7 @@ build_init_strategy(const InitStrategySpec& ispec)
      * explicit INIT_STRATEGY. The principle: if the user listed even one
      * strategy (WARM, PRIOR, RANDOM, LHS, SOBOL, ...) they are taking
      * control of iter-0 seeding, and silently prepending CONFIG would
-     * shove their explicit choice to optim_init[1] — which single-start
+     * shove their explicit choice to optim_init[1] -- which single-start
      * optimisers ignore (NLopt feeds only optim_init.front()). Users who
      * want CONFIG mixed in alongside an explicit chain can write
      * `INIT_STRATEGY CONFIG` themselves. */

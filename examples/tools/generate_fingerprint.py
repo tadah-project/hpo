@@ -2,9 +2,9 @@
 """Generate reference_fingerprint.json for a single HPO example.
 
 Reads:
-  <example>/best_loss.tadah   — last row gives final per-component & total/N loss
-  <example>/best_params.tadah — last row gives final hyperparameter vector
-  <example>/hpo_run.log       — Best total loss, Total evaluations, Optimiser status
+  <example>/best_loss.tadah   -- last row gives final per-component & total/N loss
+  <example>/best_params.tadah -- last row gives final hyperparameter vector
+  <example>/hpo_run.log       -- Best total loss, Total evaluations, Optimiser status
 
 Tolerance policy (overridable per example via tolerance_overrides.json):
   best_loss:    abs 1e-6,  rel 1e-3
