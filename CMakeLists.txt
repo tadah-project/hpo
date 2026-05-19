@@ -300,7 +300,7 @@ if(TADAH_ENABLE_OPENMP)
   target_compile_definitions(tadah.hpo PUBLIC TADAH_ENABLE_OPENMP)
 endif()
 
-# static LAMMPS lib is compiled withput fPIC so we cannot link it to shared lib
+# static LAMMPS lib is compiled without fPIC so we cannot link it to shared lib
 string(FIND "${_lammps_libname}" ".so" POSITION)
 if (BUILD_SHARED_LIBS AND POSITION EQUAL -1)
   message(FATAL_ERROR "
