@@ -35,7 +35,7 @@ build_debug:
         -DTADAH_ENABLE_OPENMP=ON -DBUILD_TESTING=ON -DFETCHCONTENT_UPDATES_DISCONNECTED=ON
     - make -j ${CPU_BUILD}
     - make test
-    - cd ..; gcovr -e '.*tests.*|.*lib.*|.*examples.*|build' -r .
+    - cd ..; gcovr -e '.*tests.*|external|.*/_deps/.*|.*examples.*|build' -r .
   coverage: /^TOTAL.*\s+(\d+\%)$/
 
 build_release_shared:
@@ -109,7 +109,7 @@ lint_codespell:
         }
       fi
       export PATH="$HOME/.local/bin:$PATH"
-      codespell --skip='./build*,./external,./_deps,./tests/data,./examples/*/best_*' || true
+      codespell --skip='./build*,./external,./_deps,./tests/data,./tests/catch2,./examples/*/best_*' --ignore-words-list='Strat,strat,MAPE,mape,lamda,lamdas,fof,unparseable,re-use,re-uses,re-used,re-using,nd,SEH' || true
   allow_failure: true
 
 # ---- Source-tarball release (tag-gated) --------------------------------
