@@ -7,7 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Nothing yet.
 
-## [1.3.0-beta.1] — TBD
+## [1.3.0-beta.1] — 2026-05-20
 
 HPO underwent the largest restructure of any module in this release: new init strategies, resume/restart, varloss, dlib-BFGS local optimiser, the `TADAH:ANNEAL` driver family (classic + Corana adaptive variant), the `CERES` gradient-based optimiser family, and a regression-tested example suite.
 
