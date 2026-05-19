@@ -44,7 +44,7 @@ class LammpsScripts {
 
     public:
         // List of lammps scripts, each string will point
-        // to a temporary file which contains relavant scripts
+        // to a temporary file which contains relevant scripts
         std::map<std::string, std::string> scripts;
         LammpsScripts():
             hpo_fs(cmrc::hpo::get_filesystem())

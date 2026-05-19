@@ -1,0 +1,148 @@
+// bench_pair_tadah.cpp
+//
+// Phase 2A.5 microbench gate. Drives pair_tadah::compute on a 256-atom
+// bcc Ta cell and lets a CI step gate PRs on median throughput.
+//
+// The test is tagged [.][!benchmark] so it is hidden by default. To run
+// the bench, opt in via Catch2's --benchmark-samples flag and the tag:
+//
+//   ./build_ceres_check/_deps/tadah.hpo-build/tests/test_hpo \
+//       "[bench][pair_tadah]" --benchmark-samples 50
+//
+// Catch2 v2.13 (this build) ships console/compact/junit/xml reporters
+// only — there is no csv reporter despite the original plan note. The
+// default console reporter prints the bench summary inline; parse from
+// stdout for CI gating, or use --reporter xml --out bench.xml.
+//
+// Pot resolution (in order):
+//   1. TADAH_BENCH_POT env var (run-time override).
+//   2. TADAH_BENCH_DEFAULT_POT compile-time macro (set in HPO/tests/
+//      CMakeLists.txt, points at $TADAH_PATH/HPO_test/pot.tadah).
+// If neither is set or the file is unreadable the test SUCCEEDs with a
+// WARN explaining the miss — CI builds without the fixture do not fail
+// spuriously.
+//
+// Cell resolution (in order):
+//   1. TADAH_BENCH_CELL_DATA env var: path to a LAMMPS read_data file.
+//   2. Inline default: 4×4×8 bcc lattice at a₀ = 3.301 Å (256 atoms,
+//      box 13.2 × 13.2 × 26.4 Å). Every dimension exceeds 2·rcut for the
+//      default pot (RCUTMB = 6.0 Å), so neighbour lists are
+//      non-degenerate and the timing reflects realistic pair counts.
+
+#include "catch2/catch.hpp"
+
+#include <tadah/core/core_user_config_parser.h>
+#include <tadah/hpo/runners.h>
+
+#include <force.h>
+#include <pair.h>
+
+#include <cstdlib>
+#include <fstream>
+#include <string>
+#include <vector>
+
+namespace {
+
+std::string env_or(const char* name) {
+    const char* v = std::getenv(name);
+    return v ? std::string(v) : std::string();
+}
+
+std::string resolve_pot_path() {
+    std::string env = env_or("TADAH_BENCH_POT");
+    if (!env.empty()) return env;
+#ifdef TADAH_BENCH_DEFAULT_POT
+    return std::string(TADAH_BENCH_DEFAULT_POT);
+#else
+    return std::string();
+#endif
+}
+
+// 256-atom bcc Ta cell at a₀ ≈ 3.301 Å. 4×4×8 supercell — every box
+// dimension exceeds 2·rcut for the default 6-Å pot so the neighbour
+// list isn't degenerate. `run 0` builds the neighbour list and runs an
+// initial compute so subsequent pair->compute calls in the BENCHMARK
+// body time only the hot path.
+std::vector<std::string> inline_bcc_ta_script() {
+    return {
+        "units metal",
+        "boundary p p p",
+        "atom_style atomic",
+        "atom_modify map array",
+        "lattice bcc 3.301",
+        "region box block 0 4 0 4 0 8 units lattice",
+        "create_box 1 box",
+        "create_atoms 1 region box",
+        "mass 1 180.94788",
+        "pair_style tadah",
+        "pair_coeff * * EXTERN Ta",
+        "neighbor 2.0 bin",
+        "neigh_modify delay 10 check yes",
+        "run 0",
+    };
+}
+
+std::vector<std::string> data_file_script(const std::string& cell_path) {
+    return {
+        "units metal",
+        "boundary p p p",
+        "atom_style atomic",
+        "atom_modify map array",
+        "read_data " + cell_path,
+        "mass 1 180.94788",
+        "pair_style tadah",
+        "pair_coeff * * EXTERN Ta",
+        "neighbor 2.0 bin",
+        "neigh_modify delay 10 check yes",
+        "run 0",
+    };
+}
+
+}  // namespace
+
+TEST_CASE("pair_tadah microbench gate (256-atom bcc Ta)",
+          "[bench][pair_tadah][.][!benchmark]")
+{
+    const std::string pot_path = resolve_pot_path();
+    if (pot_path.empty()) {
+        WARN("pair_tadah microbench skipped: no pot path. Set TADAH_BENCH_POT "
+             "or re-cmake with TADAH_PATH so TADAH_BENCH_DEFAULT_POT resolves.");
+        SUCCEED("skipped (no pot)");
+        return;
+    }
+    {
+        std::ifstream ifs(pot_path);
+        if (!ifs.good()) {
+            WARN("pair_tadah microbench skipped: pot path '" + pot_path
+                 + "' not readable.");
+            SUCCEED("skipped (pot unreadable)");
+            return;
+        }
+    }
+
+    tadah::core::Context pot_ctx;
+    REQUIRE_NOTHROW(pot_ctx =
+        tadah::core::CoreUserConfigParser().parse(pot_path));
+
+    LammpsRunner runner;
+    auto lmp = runner.create_instance(
+        0, {"lmp", "-log", "none", "-screen", "none"});
+    REQUIRE(lmp != nullptr);
+
+    const std::string cell_data = env_or("TADAH_BENCH_CELL_DATA");
+    std::vector<std::string> setup = cell_data.empty()
+        ? inline_bcc_ta_script()
+        : data_file_script(cell_data);
+    REQUIRE(runner.run_script(lmp, setup, pot_ctx));
+
+    LAMMPS_NS::Pair* pair = lmp->force->pair;
+    REQUIRE(pair != nullptr);
+
+    BENCHMARK("pair_tadah::compute on 256-atom bcc Ta")
+    {
+        pair->compute(/*eflag=*/1, /*vflag=*/1);
+        // Anti-DCE: combine outputs the compiler can't prove are unused.
+        return pair->eng_vdwl + pair->virial[0];
+    };
+}

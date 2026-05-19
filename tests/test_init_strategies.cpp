@@ -1,0 +1,1119 @@
+/*
+ * Strategy-level unit tests for InitStrategy implementations.
+ *
+ * These tests build a minimal HPOTargets fixture by writing a temp
+ * config file (mirroring the ScopedTempFile pattern in test_hpo.cpp)
+ * and then exercise build_init_strategy + generate() directly.
+ */
+
+#include "catch2/catch.hpp"
+
+#include <tadah/core/context.h>
+#include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/init_strategy.h>
+#include <tadah/hpo/run_policy.h>
+#include <tadah/hpo/warmstart_cache.h>
+
+#include <chrono>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <random>
+#include <set>
+#include <sstream>
+
+namespace {
+
+struct StrategyTempFile {
+    std::filesystem::path path;
+    explicit StrategyTempFile(const std::string& body)
+    : path(std::filesystem::temp_directory_path() /
+           ("tadah_init_" +
+            std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+            ".in"))
+    {
+        std::ofstream os(path);
+        REQUIRE(os.good());
+        os << body;
+    }
+    ~StrategyTempFile() {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
+};
+
+/* Build a synthetic OptimizerSpec with explicit bounds (no optimap, so
+ * generators see the bounds we set without depending on a full
+ * descriptor configuration). */
+tadah::hpo::OptimizerSpec
+make_synthetic_spec(std::vector<double> low,
+                    std::vector<double> high,
+                    std::vector<bool>   log_scaled = {})
+{
+    tadah::hpo::OptimizerSpec sp;
+    sp.low = std::move(low);
+    sp.high = std::move(high);
+    if (log_scaled.empty()) log_scaled.assign(sp.low.size(), false);
+    sp.log_scaled = std::move(log_scaled);
+    sp.is_int.assign(sp.low.size(), false);
+
+    /* Mimic analyse_logscale's effect for log-flagged dims. The caller
+     * is expected to pass already-untransformed bounds; we transform
+     * the log-flagged ones in place. */
+    for (std::size_t d = 0; d < sp.low.size(); ++d) {
+        if (sp.log_scaled[d]) {
+            sp.low[d]  = std::log(sp.low[d]);
+            sp.high[d] = std::log(sp.high[d]);
+        }
+    }
+    return sp;
+}
+
+/* Generators don't read targets.optimap when bounds are provided
+ * directly via the spec, except CONFIG which does. We need a stand-in
+ * HPOTargets; provide an empty one via a no-OPTIM tempfile. */
+struct StubTargets {
+    StrategyTempFile file;
+    tadah::core::Context ctx;
+    std::unique_ptr<tadah::hpo::HPOTargets> trg;
+
+    StubTargets()
+    : file("OPTIMIZER\nLIB DLIB\nALGO BFGS\nENDOPTIMIZER\n"),
+      trg(std::make_unique<tadah::hpo::HPOTargets>(ctx, file.path.string()))
+    {}
+};
+
+}  // namespace
+
+TEST_CASE("RandomInitStrategy: deterministic with fixed seed",
+          "[HPO][init_strategy][random]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({-1.0, -2.0, 0.0}, {1.0, 2.0, 5.0});
+    StubTargets st;
+
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"RANDOM", {"6"}});
+    ispec.seed = 42;
+    auto strat = build_init_strategy(ispec);
+
+    InitContext ic{sp, *st.trg, *ispec.seed};
+    auto a = strat->generate(ic, 6);
+    auto b = strat->generate(ic, 6);
+    REQUIRE(a.size() == 6);
+    REQUIRE(a == b);
+}
+
+TEST_CASE("RandomInitStrategy: outputs respect bounds",
+          "[HPO][init_strategy][random]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({-1.0, -2.0, 0.0}, {1.0, 2.0, 5.0});
+    StubTargets st;
+
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"RANDOM", {"100"}});
+    ispec.seed = 7;
+    auto strat = build_init_strategy(ispec);
+    InitContext ic{sp, *st.trg, *ispec.seed};
+    auto pts = strat->generate(ic, 100);
+    REQUIRE(pts.size() == 100);
+    for (const auto& p : pts) {
+        REQUIRE(p.size() == 3);
+        for (std::size_t d = 0; d < 3; ++d) {
+            CHECK(p[d] >= sp.low[d] - 1e-12);
+            CHECK(p[d] <= sp.high[d] + 1e-12);
+        }
+    }
+}
+
+TEST_CASE("RandomInitStrategy: log-scaled dims sampled in log-space",
+          "[HPO][init_strategy][random][logscale]")
+{
+    using namespace tadah::hpo;
+    /* dim 0: linear [0,1]; dim 1: log [1e-3, 1e3]. */
+    auto sp = make_synthetic_spec({0.0, 1e-3}, {1.0, 1e3}, {false, true});
+    StubTargets st;
+
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"RANDOM", {"2000"}});
+    ispec.seed = 3;
+    auto strat = build_init_strategy(ispec);
+    InitContext ic{sp, *st.trg, *ispec.seed};
+    auto pts = strat->generate(ic, 2000);
+
+    /* For a uniform-on-log sample, mean(log(x)) ≈ (log_low+log_high)/2 = 0;
+     * naive linear sample would have mean ≈ 500 → log-mean ≈ 6.2. */
+    double sum_log = 0.0;
+    for (const auto& p : pts) {
+        REQUIRE(p[1] > 0.0);
+        sum_log += std::log(p[1]);
+    }
+    const double mean_log = sum_log / static_cast<double>(pts.size());
+    CHECK(std::abs(mean_log) < 0.3);
+}
+
+TEST_CASE("LhsInitStrategy: stratification — one sample per stratum per dim",
+          "[HPO][init_strategy][lhs]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({0.0, 0.0}, {1.0, 1.0});
+    StubTargets st;
+
+    const std::size_t k = 8;
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"LHS", {std::to_string(k)}});
+    ispec.seed = 11;
+    auto strat = build_init_strategy(ispec);
+    InitContext ic{sp, *st.trg, *ispec.seed};
+    auto pts = strat->generate(ic, k);
+    REQUIRE(pts.size() == k);
+
+    /* For each dim, every stratum [i/k, (i+1)/k] must have exactly one
+     * sample. */
+    for (std::size_t d = 0; d < 2; ++d) {
+        std::set<std::size_t> strata_seen;
+        for (const auto& p : pts) {
+            const std::size_t stratum =
+                std::min(k - 1, static_cast<std::size_t>(p[d] * k));
+            REQUIRE(strata_seen.insert(stratum).second);
+        }
+        CHECK(strata_seen.size() == k);
+    }
+}
+
+TEST_CASE("LhsInitStrategy: deterministic with fixed seed",
+          "[HPO][init_strategy][lhs]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({-3.0, 0.0}, {3.0, 1.0});
+    StubTargets st;
+
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"LHS", {"8"}});
+    ispec.seed = 99;
+    auto strat = build_init_strategy(ispec);
+    InitContext ic{sp, *st.trg, *ispec.seed};
+    auto a = strat->generate(ic, 8);
+    auto b = strat->generate(ic, 8);
+    REQUIRE(a == b);
+}
+
+TEST_CASE("SobolInitStrategy: deterministic and bounds-compliant",
+          "[HPO][init_strategy][sobol]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({-1.0, 0.0, 5.0}, {1.0, 1.0, 10.0});
+    StubTargets st;
+
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"SOBOL", {"32"}});
+    ispec.seed = 0;
+    auto strat = build_init_strategy(ispec);
+    InitContext ic{sp, *st.trg, 0};
+    auto a = strat->generate(ic, 32);
+    auto b = strat->generate(ic, 32);
+    REQUIRE(a.size() == 32);
+    REQUIRE(a == b);
+    for (const auto& p : a)
+        for (std::size_t d = 0; d < 3; ++d) {
+            CHECK(p[d] >= sp.low[d] - 1e-12);
+            CHECK(p[d] <= sp.high[d] + 1e-12);
+        }
+}
+
+TEST_CASE("SobolInitStrategy: cell coverage on unit square",
+          "[HPO][init_strategy][sobol]")
+{
+    /* For K=64 points on [0,1]^2, splitting each axis into 8 cells gives
+     * 64 cells. A Sobol sequence is constructed so that early samples
+     * fill the cube uniformly — every cell of an 8×8 grid should
+     * receive at least one point. Random uniform samples typically
+     * leave a few empty cells. This is a robust space-filling test. */
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({0.0, 0.0}, {1.0, 1.0});
+    StubTargets st;
+
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"SOBOL", {"64"}});
+    ispec.seed = 0;
+    auto strat = build_init_strategy(ispec);
+    InitContext ic{sp, *st.trg, 0};
+    auto pts = strat->generate(ic, 64);
+
+    std::set<std::pair<int,int>> cells;
+    for (const auto& p : pts) {
+        const int cx = std::min(7, static_cast<int>(p[0] * 8));
+        const int cy = std::min(7, static_cast<int>(p[1] * 8));
+        cells.insert({cx, cy});
+    }
+    /* Sobol fills nearly all 64 cells with K=64; require ≥90% coverage. */
+    CHECK(cells.size() >= 58);
+}
+
+TEST_CASE("ChainStrategy: concatenates and de-dups across producers",
+          "[HPO][init_strategy][chain]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({-1.0, -1.0}, {1.0, 1.0});
+    StubTargets st;
+
+    /* CONFIG (1 zero-dim point because optimap is empty) +
+     * RANDOM 4 non-empty points → CONFIG yields a zero-dim point but
+     * we have a 2-dim spec, so config_point_from_targets returns {}.
+     * The chain de-dups across producers in transformed space. */
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"CONFIG", {}});
+    ispec.chain.push_back({"RANDOM", {"4"}});
+    ispec.seed = 2026;
+
+    auto strat = build_init_strategy(ispec);
+    InitContext ic{sp, *st.trg, 2026};
+    auto pts = strat->generate(ic, 0 /* unbounded */);
+
+    /* Empty optimap → ConfigInitStrategy contributes a zero-dim vector
+     * which the chain keeps as-is (different size from RANDOM's
+     * 2-dim points, so de-dup keeps both classes). */
+    REQUIRE(pts.size() >= 4);
+    /* The 2-dim entries must respect the bounds. */
+    for (const auto& p : pts) if (p.size() == 2) {
+        CHECK(p[0] >= sp.low[0] - 1e-12);
+        CHECK(p[0] <= sp.high[0] + 1e-12);
+        CHECK(p[1] >= sp.low[1] - 1e-12);
+        CHECK(p[1] <= sp.high[1] + 1e-12);
+    }
+}
+
+TEST_CASE("ChainStrategy: INIT_K caps the total output",
+          "[HPO][init_strategy][chain]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({0.0, 0.0}, {1.0, 1.0});
+    StubTargets st;
+
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"RANDOM", {"5"}});
+    ispec.chain.push_back({"LHS",    {"5"}});
+    ispec.seed = 1234;
+
+    auto strat = build_init_strategy(ispec);
+    InitContext ic{sp, *st.trg, 1234};
+    /* k_total = 4 → chain stops at 4 even though 5+5=10 are available */
+    auto pts = strat->generate(ic, 4);
+    CHECK(pts.size() == 4);
+}
+
+TEST_CASE("WarmInitStrategy: missing file with policy=warn returns empty",
+          "[HPO][init_strategy][warm]")
+{
+    /* Without a populated optimap the WARM strategy still has the
+     * "open the file" path. With policy=warn, a missing file logs a
+     * warning and returns an empty vector — falling through to the
+     * next strategy in the chain. */
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({0.0}, {1.0});
+    sp.init_strategy_spec.warm_on_mismatch = "warn";
+    StubTargets st;
+
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"WARM", {"/nonexistent_path/never_here.tadah"}});
+
+    auto strat = build_init_strategy(ispec);
+    InitContext ic{sp, *st.trg, 0};
+    auto pts = strat->generate(ic, 1);
+    CHECK(pts.empty());
+}
+
+TEST_CASE("WarmInitStrategy: missing file with policy=error throws",
+          "[HPO][init_strategy][warm]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({0.0}, {1.0});
+    sp.init_strategy_spec.warm_on_mismatch = "error";
+    StubTargets st;
+
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"WARM", {"/nonexistent_path/never_here.tadah"}});
+
+    auto strat = build_init_strategy(ispec);
+    InitContext ic{sp, *st.trg, 0};
+    CHECK_THROWS(strat->generate(ic, 1));
+}
+
+TEST_CASE("WarmInitStrategy: parser keyword acceptance",
+          "[HPO][init_strategy][warm]")
+{
+    /* Round-trip the parser path so a typo'd file path doesn't
+     * silently break the WARM keyword pipeline. */
+    StrategyTempFile cfg(R"(OPTIMIZER
+INIT
+  STRATEGY WARM /tmp/no_such.tadah
+  WARM_ON_MISMATCH skip
+ENDINIT
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    /* The only chain entry skips (file missing, policy=skip), so the
+     * resolved init list ends up empty -- but the resolution path
+     * itself must not throw. */
+    CHECK_NOTHROW(tadah::hpo::HPOTargets(ctx, cfg.path.string()));
+}
+
+TEST_CASE("WarmInitStrategy: HOT round-trip primes warmstart cache",
+          "[HPO][init_strategy][warm][hot]")
+{
+    /* Writer dumps `# HOT <script> <name> <value>` lines into
+     * best_pot.tadah; WARM reader must scan those and prime
+     * warmstart::cache so the restarted run reproduces the original
+     * loss instead of starting each --hotvar relaxation from its
+     * declared `initial`. */
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({0.0}, {1.0});
+    StubTargets st;
+
+    const std::string script = "test_hot_round_trip.in";
+    const std::string name   = "hot_a0";
+    const double      v_in   = 3.4567;
+
+    StrategyTempFile pot(
+        "# HOT " + script + " " + name + " " + std::to_string(v_in) + "\n"
+        "# unrelated comment\n"
+    );
+
+    /* Sanity: cache is empty for our key before the WARM read. */
+    REQUIRE(!warmstart::get(script, name).has_value());
+
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"WARM", {pot.path.string()}});
+
+    auto strat = build_init_strategy(ispec);
+    InitContext ic{sp, *st.trg, 0};
+    (void) strat->generate(ic, 1);
+
+    /* Cache must now hold the value the file declared, to within the
+     * 17-digit precision the writer uses. */
+    auto cached = warmstart::get(script, name);
+    REQUIRE(cached.has_value());
+    CHECK(*cached == Approx(v_in).margin(1e-12));
+
+    /* Cleanup so subsequent tests don't see this stale entry. */
+    {
+        std::lock_guard<std::mutex> lg(warmstart::mtx());
+        warmstart::cache().erase({script, name});
+    }
+}
+
+TEST_CASE("WarmInitStrategy: legacy HOT_A0 line still primes cache",
+          "[HPO][init_strategy][warm][hot]")
+{
+    /* Old best_pot.tadah files written before the rename emit
+     * `# HOT_A0 <script> <a0>`. The WARM parser keeps a back-compat
+     * arm that maps these to (script, "hot_a0") in the new cache. */
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({0.0}, {1.0});
+    StubTargets st;
+
+    const std::string script = "test_hot_a0_legacy.in";
+    const double      a0_in  = 3.30;
+
+    StrategyTempFile pot(
+        "# HOT_A0 " + script + " " + std::to_string(a0_in) + "\n"
+    );
+
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"WARM", {pot.path.string()}});
+
+    auto strat = build_init_strategy(ispec);
+    InitContext ic{sp, *st.trg, 0};
+    (void) strat->generate(ic, 1);
+
+    auto cached = warmstart::get(script, "hot_a0");
+    REQUIRE(cached.has_value());
+    CHECK(*cached == Approx(a0_in).margin(1e-12));
+
+    {
+        std::lock_guard<std::mutex> lg(warmstart::mtx());
+        warmstart::cache().erase({script, "hot_a0"});
+    }
+}
+
+TEST_CASE("HPO parses MULTISTART knobs",
+          "[HPO][run_policy][multistart]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+STRATEGY
+  TYPE MULTISTART
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 50
+  N_STARTS 4
+  PARALLEL 2
+  BUDGET_PER_START 12
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    const auto& cfg_run = trg.spec;
+    CHECK(cfg_run.multistart.n_starts == 4);
+    CHECK(cfg_run.multistart.parallel == 2);
+    REQUIRE(cfg_run.multistart.budget_per_start.has_value());
+    CHECK(*cfg_run.multistart.budget_per_start == 12);
+}
+
+TEST_CASE("HPO MULTISTART rejects zero",
+          "[HPO][run_policy][multistart]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+STRATEGY
+  TYPE MULTISTART
+  LIB DLIB
+  ALGO BFGS
+  N_STARTS 0
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    CHECK_THROWS(tadah::hpo::HPOTargets(ctx, cfg.path.string()));
+}
+
+TEST_CASE("MultiStartPolicy: validate rejects NLopt GN_*",
+          "[HPO][run_policy][multistart]")
+{
+    using namespace tadah::hpo;
+    OptimizerSpec sp;
+    sp.lib = "NLOPT";
+    sp.algo = "GN_DIRECT";
+    CHECK_THROWS(MultiStartPolicy<dlib::matrix<double,0,1>, int>::validate(sp));
+}
+
+TEST_CASE("MultiStartPolicy: validate accepts local NLopt and DLIB",
+          "[HPO][run_policy][multistart]")
+{
+    using namespace tadah::hpo;
+    using V = dlib::matrix<double,0,1>;
+    for (auto algo : {"LN_BOBYQA", "LD_LBFGS", "LN_SBPLX"}) {
+        OptimizerSpec sp;
+        sp.lib = "NLOPT";
+        sp.algo = algo;
+        CHECK_NOTHROW(MultiStartPolicy<V, int>::validate(sp));
+    }
+    OptimizerSpec dlib_bfgs;
+    dlib_bfgs.lib = "DLIB";
+    dlib_bfgs.algo = "BFGS";
+    CHECK_NOTHROW(MultiStartPolicy<V, int>::validate(dlib_bfgs));
+}
+
+TEST_CASE("HPO parses PRESTAGE block and TOPK",
+          "[HPO][run_policy][prestage]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+STRATEGY
+  TYPE PRESTAGE
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 50
+  TOPK 3
+  EXPLORE
+    LIB DLIB
+    ALGO GFS
+    MAXEVAL 80
+  ENDEXPLORE
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    const auto& cfg_run = trg.spec;
+    CHECK(cfg_run.stage_topk == 3);
+    REQUIRE(trg.spec.prestage);
+    CHECK(trg.spec.prestage->algo == "GFS");
+    /* Outer remains the refinement and is unchanged. */
+    CHECK(trg.spec.algo == "BFGS");
+    /* INNER is independent — only for NLopt MLSL/AUGLAG. */
+    CHECK_FALSE(trg.spec.inner);
+}
+
+TEST_CASE("HPO TOPK rejects zero with PRESTAGE",
+          "[HPO][run_policy][prestage]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+STRATEGY
+  TYPE PRESTAGE
+  LIB DLIB
+  ALGO BFGS
+  TOPK 0
+  EXPLORE
+    LIB DLIB
+    ALGO GFS
+  ENDEXPLORE
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    CHECK_THROWS(tadah::hpo::HPOTargets(ctx, cfg.path.string()));
+}
+
+TEST_CASE("HPO STAGE_GLOBAL keyword now errors with helpful message",
+          "[HPO][run_policy][prestage]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+  STAGE_GLOBAL true
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    bool caught = false;
+    std::string msg;
+    try {
+        tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    } catch (const std::exception& e) {
+        caught = true;
+        msg = e.what();
+    }
+    CHECK(caught);
+    CHECK(msg.find("PRESTAGE") != std::string::npos);
+}
+
+TEST_CASE("PRESTAGE supports a nested INNER sub-algo (MLSL pattern)",
+          "[HPO][run_policy][prestage]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+STRATEGY
+  TYPE PRESTAGE
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 80
+  TOPK 4
+  EXPLORE
+    LIB NLOPT
+    ALGO G_MLSL_LDS
+    MAXEVAL 600
+    INNER
+      LIB NLOPT
+      ALGO LN_BOBYQA
+    ENDINNER
+  ENDEXPLORE
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    REQUIRE(trg.spec.prestage);
+    REQUIRE(trg.spec.prestage->inner);
+    CHECK(trg.spec.prestage->lib  == "NLOPT");
+    CHECK(trg.spec.prestage->algo == "G_MLSL_LDS");
+    CHECK(trg.spec.prestage->inner->lib  == "NLOPT");
+    CHECK(trg.spec.prestage->inner->algo == "LN_BOBYQA");
+    /* outer spec has no INNER of its own */
+    CHECK_FALSE(trg.spec.inner);
+}
+
+TEST_CASE("PRESTAGE EXPLORE block parses INIT block and bounds independently",
+          "[HPO][run_policy][prestage]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+STRATEGY
+  TYPE PRESTAGE
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 80
+  TOPK 4
+  EXPLORE
+    LIB DLIB
+    ALGO GFS
+    MAXEVAL 600
+    INIT
+      STRATEGY SOBOL 32
+      SEED 1717
+    ENDINIT
+  ENDEXPLORE
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    REQUIRE(trg.spec.prestage);
+    const auto& ps = *trg.spec.prestage;
+    CHECK(ps.lib == "DLIB");
+    CHECK(ps.algo == "GFS");
+    CHECK(ps.stop.maxeval.value_or(0) == 600);
+    REQUIRE(!ps.init_strategy_spec.chain.empty());
+    CHECK(ps.init_strategy_spec.chain.front().method == "SOBOL");
+    CHECK(ps.init_strategy_spec.seed.value_or(0) == 1717ULL);
+    /* Resolution regression: the parsed PRESTAGE chain must be resolved
+     * into PRESTAGE's own optim_init by the constructor — not silently
+     * left empty (and certainly not overridden by an inherited copy of
+     * OUTER's optim_init). Pre-fix, prestage.optim_init had size 1 (the
+     * inherited OUTER CONFIG point); post-fix it carries the SOBOL 32
+     * points the user actually requested. */
+    CHECK(ps.optim_init.size() == 32);
+}
+
+TEST_CASE("PRESTAGE INIT_STRATEGY RANDOM is resolved on the prestage spec",
+          "[HPO][run_policy][prestage][init_strategy]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+STRATEGY
+  TYPE PRESTAGE
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 80
+  TOPK 4
+  EXPLORE
+    LIB NLOPT
+    ALGO GN_CRS2_LM
+    MAXEVAL 100
+    INIT
+      STRATEGY RANDOM 4
+      SEED 1718
+    ENDINIT
+  ENDEXPLORE
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    REQUIRE(trg.spec.prestage);
+    /* Without the fix, PRESTAGE's optim_init was inherited from OUTER
+     * (size 1, the CONFIG point). With the fix it carries 4 RANDOM
+     * points produced by the prestage's own INIT chain. */
+    CHECK(trg.spec.prestage->optim_init.size() == 4);
+}
+
+TEST_CASE("HPO parses NOISE.CALIBRATION",
+          "[HPO][run_policy][noise_calibration]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+NOISE
+  CALIBRATION 5
+ENDNOISE
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 50
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    CHECK(trg.spec.noise.calibration_n == 5);
+}
+
+TEST_CASE("HPO NOISE.CALIBRATION default is 0 (disabled)",
+          "[HPO][run_policy][noise_calibration]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 50
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    CHECK(trg.spec.noise.calibration_n == 0);
+}
+
+TEST_CASE("HPO NOISE.CALIBRATION rejects N=1 (no spread possible)",
+          "[HPO][run_policy][noise_calibration]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+NOISE
+  CALIBRATION 1
+ENDNOISE
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    CHECK_THROWS(tadah::hpo::HPOTargets(ctx, cfg.path.string()));
+}
+
+TEST_CASE("HPO NOISE.CALIBRATION rejects non-integer arg",
+          "[HPO][run_policy][noise_calibration]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+NOISE
+  CALIBRATION abc
+ENDNOISE
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    CHECK_THROWS(tadah::hpo::HPOTargets(ctx, cfg.path.string()));
+}
+
+TEST_CASE("HPO NOISE.CALIBRATION accepts N=0 (explicit off)",
+          "[HPO][run_policy][noise_calibration]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+NOISE
+  CALIBRATION 0
+ENDNOISE
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    CHECK(trg.spec.noise.calibration_n == 0);
+}
+
+TEST_CASE("PRESTAGE EXPLORE without explicit INIT inherits OUTER's optim_init",
+          "[HPO][run_policy][prestage][init_strategy]")
+{
+    /* Legacy behaviour: a PRESTAGE EXPLORE block with no INIT chain of
+     * its own should inherit OUTER's resolved optim_init — the implicit
+     * CONFIG point flows in. The fix must not regress this. */
+    StrategyTempFile cfg(R"(OPTIMIZER
+STRATEGY
+  TYPE PRESTAGE
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 80
+  TOPK 4
+  EXPLORE
+    LIB DLIB
+    ALGO GFS
+    MAXEVAL 600
+  ENDEXPLORE
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    REQUIRE(trg.spec.prestage);
+    /* Outer's CONFIG produces 1 zero-dim point; PRESTAGE inherits it. */
+    REQUIRE(trg.spec.optim_init.size() == 1);
+    CHECK(trg.spec.prestage->optim_init.size() == 1);
+}
+
+TEST_CASE("HPO parses RESTART knobs",
+          "[HPO][run_policy][restart]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 200
+  RESTART
+    AFTER_STAGNATION 25
+    MAX 4
+    STRATEGY RANDOM 1
+  ENDRESTART
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    const auto& cfg_run = trg.spec;
+    CHECK(cfg_run.restart.after_stagnation == 25);
+    CHECK(cfg_run.restart.max == 4);
+    REQUIRE(cfg_run.restart.init_strategy.chain.size() == 1);
+    CHECK(cfg_run.restart.init_strategy.chain.front().method == "RANDOM");
+}
+
+TEST_CASE("HPO RESTART defaults: zero window means no restart",
+          "[HPO][run_policy][restart]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 50
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    const auto& cfg_run = trg.spec;
+    CHECK(cfg_run.restart.after_stagnation == 0);
+    CHECK(cfg_run.restart.max == 0);
+    CHECK(cfg_run.restart.init_strategy.chain.empty());
+}
+
+TEST_CASE("HPO parses NOISE.AUTO boolean",
+          "[HPO][run_policy][noise_auto]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+NOISE
+  AUTO true
+ENDNOISE
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 50
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    CHECK(trg.spec.noise.autodetect == true);
+}
+
+TEST_CASE("NOISE.AUTO bareword form parses to true",
+          "[HPO][run_policy][noise_auto]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+NOISE
+  AUTO
+ENDNOISE
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 50
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    CHECK(trg.spec.noise.autodetect == true);
+}
+
+TEST_CASE("NOISE.AUTO false leaves fd_step untouched",
+          "[HPO][run_policy][noise_auto]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+NOISE
+  AUTO false
+ENDNOISE
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 50
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    CHECK(trg.spec.noise.autodetect == false);
+    CHECK(trg.spec.param.count("fd_step") == 0);
+}
+
+TEST_CASE("HPO BUDGET_PER_START rejects zero",
+          "[HPO][run_policy][multistart]")
+{
+    StrategyTempFile cfg(R"(OPTIMIZER
+STRATEGY
+  TYPE MULTISTART
+  LIB DLIB
+  ALGO BFGS
+  BUDGET_PER_START 0
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    CHECK_THROWS(tadah::hpo::HPOTargets(ctx, cfg.path.string()));
+}
+
+TEST_CASE("InitStrategy: chain produces exactly the listed strategies",
+          "[HPO][init_strategy][chain]")
+{
+    /* There is no implicit CONFIG. A chain of `RANDOM 3` produces
+     * exactly 3 points -- the in-config point participates only when the
+     * user lists `STRATEGY CONFIG` explicitly. */
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({0.0, 0.0}, {1.0, 1.0});
+    StubTargets st;
+
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"RANDOM", {"3"}});
+    ispec.seed = 7;
+    auto strat = build_init_strategy(ispec);
+    InitContext ic{sp, *st.trg, *ispec.seed};
+    auto pts = strat->generate(ic, 0);
+    CHECK(pts.size() == 3);
+}
+
+TEST_CASE("InitStrategy: chain order is preserved (WARM not reordered)",
+          "[HPO][init_strategy][warm][chain]")
+{
+    /* The user wrote SOBOL first, WARM second. build_init_strategy()
+     * must keep that order -- WARM is no longer promoted to the chain
+     * front. SOBOL contributes 4 two-dim points, then WARM (comment-only
+     * file, empty optimap) contributes one zero-dim point at the end.
+     * If WARM were still reordered, pts.front() would be the zero-dim
+     * WARM point instead of a SOBOL point. */
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({0.0, 0.0}, {1.0, 1.0});
+    StubTargets st;
+
+    StrategyTempFile pot("# comment-only warm file\n");
+
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"SOBOL", {"4"}});
+    ispec.chain.push_back({"WARM",  {pot.path.string()}});
+    ispec.warm_on_mismatch = "warn";
+
+    auto strat = build_init_strategy(ispec);
+    InitContext ic{sp, *st.trg, 0};
+    auto pts = strat->generate(ic, 0);
+    REQUIRE(pts.size() == 5);     /* 4 SOBOL + 1 WARM */
+    CHECK(pts.front().size() == 2);   /* SOBOL stayed first */
+    CHECK(pts.back().empty());        /* WARM stayed last  */
+}
+
+TEST_CASE("HPO log file records init/run-policy summary",
+          "[HPO][hpo_log][run_policy]")
+{
+    /* Smoke-test the log writer: it must at least open the file, emit
+     * an OPTIMISER section, and include the new INIT_STRATEGY/run-policy
+     * sub-sections introduced by the diagnostics patch. We do not run
+     * a full optimisation here — only check the writer output. */
+    using namespace tadah::hpo;
+    StrategyTempFile cfg(R"(OPTIMIZER
+INIT
+  STRATEGY SOBOL 4
+  K_TOTAL 4
+ENDINIT
+NOISE
+  AUTO
+ENDNOISE
+STRATEGY
+  TYPE MULTISTART
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 50
+  N_STARTS 4
+  BUDGET_PER_START 12
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    HPOTargets trg(ctx, cfg.path.string());
+
+    auto& log = HPOLog::instance();
+    auto tmp_log = std::filesystem::temp_directory_path() /
+        ("hpo_log_test_" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+         ".log");
+    log.open(tmp_log.string(), "test", "/tmp", 1);
+    log.write_optimizer_section(trg.spec, {"p0","p1","p2","p3"});
+    log.finish("TEST");
+
+    std::ifstream lf(tmp_log);
+    REQUIRE(lf.good());
+    std::stringstream ss; ss << lf.rdbuf();
+    const std::string body = ss.str();
+    CHECK(body.find("Init strategy:") != std::string::npos);
+    CHECK(body.find("SOBOL 4") != std::string::npos);
+    CHECK(body.find("Run policy:") != std::string::npos);
+    CHECK(body.find("MULTISTART") != std::string::npos);
+    CHECK(body.find("BUDGET_PER_START") != std::string::npos);
+    CHECK(body.find("NOISE.AUTO") != std::string::npos);
+
+    std::error_code ec; std::filesystem::remove(tmp_log, ec);
+}
+
+TEST_CASE("HPOLog::set_status feeds finish() when status is empty",
+          "[HPO][hpo_log][set_status]")
+{
+    /* Regression test for the MULTISTART + NLopt journal bug: each per-
+     * start NLopt run records its termination reason via set_status(),
+     * and the outer hpo_run() calls finish() once at the very end. The
+     * journal trailer must reflect the most recent set_status value when
+     * finish() is called with an empty (or default) argument. */
+    using namespace tadah::hpo;
+    auto& log = HPOLog::instance();
+    auto tmp_log = std::filesystem::temp_directory_path() /
+        ("hpo_setstatus_test_" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+         ".log");
+
+    log.open(tmp_log.string(), "test", "/tmp", 1);
+    log.set_status("PENULTIMATE");
+    log.set_status("LAST_NLOPT_STATUS — most recent wins");
+    log.finish();   /* default empty arg → falls back to last set_status */
+
+    std::ifstream lf(tmp_log);
+    REQUIRE(lf.good());
+    std::stringstream ss; ss << lf.rdbuf();
+    const std::string body = ss.str();
+    CHECK(body.find("LAST_NLOPT_STATUS") != std::string::npos);
+    CHECK(body.find("PENULTIMATE")       == std::string::npos);
+    CHECK(body.find("COMPLETED")         == std::string::npos);
+
+    std::error_code ec; std::filesystem::remove(tmp_log, ec);
+}
+
+TEST_CASE("HPOLog::finish explicit arg overrides set_status",
+          "[HPO][hpo_log][set_status]")
+{
+    /* If hpo_run()'s catch block passes "STOPPED with error: ..." it
+     * must override any status the inner driver recorded. */
+    using namespace tadah::hpo;
+    auto& log = HPOLog::instance();
+    auto tmp_log = std::filesystem::temp_directory_path() /
+        ("hpo_setstatus_test_b_" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+         ".log");
+
+    log.open(tmp_log.string(), "test", "/tmp", 1);
+    log.set_status("MAXEVAL_REACHED");
+    log.finish("STOPPED with error: kaboom");
+
+    std::ifstream lf(tmp_log);
+    REQUIRE(lf.good());
+    std::stringstream ss; ss << lf.rdbuf();
+    const std::string body = ss.str();
+    CHECK(body.find("STOPPED with error: kaboom") != std::string::npos);
+    CHECK(body.find("MAXEVAL_REACHED")            == std::string::npos);
+
+    std::error_code ec; std::filesystem::remove(tmp_log, ec);
+}
+
+TEST_CASE("HPOLog::finish defaults to COMPLETED when no status was set",
+          "[HPO][hpo_log][set_status]")
+{
+    using namespace tadah::hpo;
+    auto& log = HPOLog::instance();
+    log.set_status("");   /* clear any leftover state from prior tests */
+    auto tmp_log = std::filesystem::temp_directory_path() /
+        ("hpo_setstatus_test_c_" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+         ".log");
+
+    log.open(tmp_log.string(), "test", "/tmp", 1);
+    log.finish();   /* no set_status, no explicit status → default */
+
+    std::ifstream lf(tmp_log);
+    REQUIRE(lf.good());
+    std::stringstream ss; ss << lf.rdbuf();
+    const std::string body = ss.str();
+    CHECK(body.find("COMPLETED") != std::string::npos);
+
+    std::error_code ec; std::filesystem::remove(tmp_log, ec);
+}
+
+/* RunPolicy template instantiation tests need a real Runner satisfying
+ * HPO_Host's API; we cover RunPolicy semantics end-to-end via the
+ * integration matrix (Increment 8) instead. The parser tests above
+ * already verify the knobs that drive build_run_policy(). */

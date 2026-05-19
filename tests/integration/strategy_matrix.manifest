@@ -1,0 +1,18 @@
+# strategy_matrix manifest
+# Format:  <name> | <hpo body>
+#
+# - <name> must be a filesystem-safe identifier (used as the scratch dir)
+# - <hpo body> is appended verbatim *before* the user's loss/optim lines
+#   and replaces the user's OPTIMIZER block. Use \n for newlines.
+#
+# Each entry uses the block grammar (INIT / NOISE / STRATEGY blocks).
+# Entries are intentionally short: small MAXEVAL, so the whole matrix
+# completes in minutes on a small bundle. Increase MAXEVAL when running
+# locally for real comparisons.
+#
+baseline_bfgs              | OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 12\n  ENDSTRATEGY\nENDOPTIMIZER\n
+random_then_bfgs           | OPTIMIZER\n  INIT\n    STRATEGY RANDOM 1\n  ENDINIT\n  STRATEGY\n    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 12\n  ENDSTRATEGY\nENDOPTIMIZER\n
+multistart_lhs_bfgs        | OPTIMIZER\n  INIT\n    STRATEGY LHS 4\n  ENDINIT\n  STRATEGY\n    TYPE MULTISTART\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 8\n    N_STARTS 4\n  ENDSTRATEGY\nENDOPTIMIZER\n
+sobol_seeded_bfgs          | OPTIMIZER\n  INIT\n    STRATEGY SOBOL 1\n  ENDINIT\n  STRATEGY\n    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 12\n  ENDSTRATEGY\nENDOPTIMIZER\n
+restart_bfgs               | OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 24\n    RESTART\n      AFTER_STAGNATION 6\n      MAX 1\n      STRATEGY RANDOM 1\n    ENDRESTART\n  ENDSTRATEGY\nENDOPTIMIZER\n
+noise_auto_bfgs            | OPTIMIZER\n  NOISE\n    AUTO\n  ENDNOISE\n  STRATEGY\n    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 12\n  ENDSTRATEGY\nENDOPTIMIZER\n

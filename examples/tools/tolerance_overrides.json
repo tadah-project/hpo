@@ -1,0 +1,74 @@
+{
+  "_comment": "Per-example overrides for fingerprint tolerance and accepted-status. Defaults in generate_fingerprint.py: best_loss abs=1e-6 rel=1e-3; component abs=1e-6 rel=5e-3; hyperparam abs=1e-3 rel=1e-3; evals_tol=0. Override only when justified.",
+
+  "01_minimal": {
+    "description": "DLIB:BFGS, 1-dim, implicit CONFIG seed.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "02_random_search": {
+    "description": "TADAH:RANDOM, seeded uniform sampler.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "03_nlopt_local": {
+    "description": "NLOPT:LN_SBPLX derivative-free local.",
+    "status_accepted": [
+      "COMPLETED",
+      "MAXEVAL_REACHED -- maximum evaluations exhausted"
+    ]
+  },
+  "04_skip_bad_pots": {
+    "description": "DLIB:BFGS with PC_ERMSE --skip-above / --skip-rel filter.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "05_extra_observables": {
+    "description": "PC_LAMMPS --invar / --outvar via parametric Ecoh_param.in.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "06_init_random": {
+    "description": "INIT { STRATEGY RANDOM, SEED, INCLUDE_CONFIG false }.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "07_init_lhs_multistart": {
+    "description": "INIT { STRATEGY LHS } + STRATEGY MULTISTART.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "08_init_sobol_gfs": {
+    "description": "INIT { STRATEGY SOBOL } seeding DLIB:GFS.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "09_init_warm": {
+    "description": "INIT { STRATEGY WARM } from a bootstrapped seed_pot.tadah.",
+    "status_accepted": ["COMPLETED"],
+    "evals_tol": 30
+  },
+  "10_init_chain": {
+    "description": "INIT chain (WARM + LHS) seeding DLIB:GFS.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "11_grid_sweep": {
+    "description": "TADAH:GRID exhaustive Cartesian sweep.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "12_prestage": {
+    "description": "STRATEGY PRESTAGE; NLOPT:GN_CRS2_LM explore + DLIB:BFGS refine.",
+    "status_accepted": [
+      "COMPLETED",
+      "MAXEVAL_REACHED -- maximum evaluations exhausted"
+    ]
+  },
+  "13_restart": {
+    "description": "DLIB:BFGS + RESTART decorator (stagnation-driven).",
+    "status_accepted": ["COMPLETED"]
+  },
+  "14_mlsl_inner": {
+    "description": "NLOPT:G_MLSL_LDS + INNER NLOPT:LN_BOBYQA.",
+    "status_accepted": [
+      "COMPLETED",
+      "MAXEVAL_REACHED -- maximum evaluations exhausted"
+    ]
+  },
+  "15_simulated_annealing": {
+    "description": "TADAH:ANNEAL with auto-T0 calibration.",
+    "status_accepted": ["COMPLETED"]
+  }
+}

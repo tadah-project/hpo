@@ -1,0 +1,26 @@
+# 11 -- exhaustive grid sweep (TADAH:GRID).
+#
+# Evaluates every point on a Cartesian grid. `STEP` is the number of
+# samples per dimension (total cost = STEP ^ dim), so keep dim and
+# STEP small. Useful as a deterministic sanity-check, or to visualise
+# the loss surface before reaching for a smarter optimiser.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB TADAH
+    ALGO GRID
+    STEP 10
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 4.5 3.302 --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B  (1) 4.0 6.0
+OPTIM SGRIDMB (1) 0.1 0.4
+
+OUTPUT 1
+BOUTPUT 1

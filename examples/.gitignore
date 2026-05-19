@@ -1,0 +1,33 @@
+# HPO worked-example run artifacts.
+#
+# Each `run.sh` invocation rewrites these as a side-effect (~85 files
+# per full sweep), polluting `git status`. The example *definitions*
+# (README.md, config.hpo, run.sh, reference_fingerprint.json) are
+# tracked; the runtime outputs are not.
+#
+# To regenerate fingerprints, see HPO/examples/tools/generate_fingerprint.py
+# and `bash HPO/examples/run_reference_suite.sh --full`.
+
+# Per-run output artifacts
+best_*.tadah
+loss.tadah
+outvar.tadah
+params.tadah
+stats.tadah
+pot.tadah
+checkpoint.tadah
+hpo_run.log
+log.lammps
+run.stdout
+run.stderr
+hpo_*_times.csv
+
+# Bootstrapped seeds for INIT WARM examples -- regenerated on first
+# run by the example's run.sh, not checked in (would otherwise embed
+# the original author's filesystem layout into best_pot.tadah headers).
+seed_pot.tadah
+
+# Sub-directories created during a run
+newBestPotsDir/
+restart_pots/
+prestage_pots/

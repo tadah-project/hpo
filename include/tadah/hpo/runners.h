@@ -27,17 +27,17 @@ class LammpsRunner {
   /// Alias for the LAMMPS class in the LAMMPS_NS namespace
   typedef LAMMPS_NS::LAMMPS LMP;
 
-  /// Unique‐pointer type for a LAMMPS instance
+  /// Uniquepointer type for a LAMMPS instance
   typedef std::unique_ptr<LMP> LMPPtr;
 
   /**
    * @brief Creates a new LAMMPS instance.
    *
-   * Builds a LAMMPS instance using provided MPI sub‐communicator
-   * and command‐line tokens.  If construction throws, returns nullptr.
+   * Builds a LAMMPS instance using provided MPI subcommunicator
+   * and commandline tokens.  If construction throws, returns nullptr.
    *
    * @param sub_comm MPI communicator for this instance.
-   * @param lmp_tokens Command‐line arguments for LAMMPS.
+   * @param lmp_tokens Commandline arguments for LAMMPS.
    * @return Unique pointer to a valid LAMMPS instance on success; nullptr on failure.
    *
    * @code

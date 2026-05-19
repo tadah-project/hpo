@@ -110,6 +110,14 @@ LammpsRunner::get_variable(const LammpsRunner::LMPPtr& lmp_ptr,
     throw std::runtime_error("get_variable(): LAMMPS instance is invalid.");
   }
 
-  // Retrieve variable via LAMMPS input subsystem
-  return lmp_ptr->input->variable->retrieve(varname.c_str());
+  // LAMMPS' Variable::retrieve() returns nullptr (not "") when the
+  // requested variable is undefined, has not been computed yet, or its
+  // expression evaluates to a non-numeric tag. Constructing a
+  // std::string from nullptr is undefined behaviour (libstdc++ throws
+  // std::logic_error on it). Convert nullptr to empty string so the
+  // caller can decide how to handle the missing value (typically
+  // std::stod() on "" throws std::invalid_argument, which the LAMMPS
+  // sims_loss path treats as a failed eval and clamps to FAIL_SCORE).
+  const char* raw = lmp_ptr->input->variable->retrieve(varname.c_str());
+  return raw ? std::string(raw) : std::string();
 }

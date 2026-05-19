@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <filesystem>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -73,6 +74,34 @@ class LammpsSim {
     std::string maxtime; /**< Maximum allowed time for simulation execution */
     double failscore; /**< Score given when a simulation fails */
 
+    /**
+     * Hot-variable declaration: `--hotvar <name> <min> <max> [<initial>]`.
+     *
+     * A PC_LAMMPS line carrying at least one --hotvar is a *hot* script
+     * and runs in phase A of the eval (in parallel with all other hot
+     * scripts). After it runs, every declared <name> is read back via
+     * LAMMPS' variable mechanism; if the value is in [min, max] the
+     * per-(script, name) warmstart cache is updated and the value is
+     * propagated as `${<name>}` to all *cold* scripts running in phase B.
+     * Out-of-range hot values fail-score the iter (phase B is skipped).
+     *
+     * Hot scripts also receive their own `${<name>}` injection at the
+     * start of each eval, sourced from the cache (or `initial`, falling
+     * back to the midpoint of [min, max] if absent on the first eval),
+     * so they can use the warm-started guess as a relaxation seed.
+     *
+     * Multiple --hotvar entries on one line are allowed; they have no
+     * cross-references (hot scripts don't see each other's outputs --
+     * phase A is parallel). Cold scripts see all of them.
+     */
+    struct HotVarDecl {
+        std::string name;
+        double      min   = 0.0;
+        double      max   = 0.0;
+        std::optional<double> initial;
+    };
+    std::vector<HotVarDecl> hotvars;
+
     LammpsSim();
 
     /**
@@ -111,5 +140,18 @@ class LammpsSim {
 
     void prep_script_lines();
 };
+
+/**
+ * Strict double parser. Returns true and writes to `value` only when the
+ * full string `s` is consumed by std::stod (no trailing junk). On parse
+ * failure, returns false and leaves `value` unchanged. Used by the eval
+ * path to treat unparseable LAMMPS variable retrievals (e.g. nullptr -> ""
+ * because the variable was never defined) as failed components rather
+ * than letting the std::invalid_argument escape into NLopt's wrapper --
+ * NLopt translates that exception to NLOPT_INVALID_ARGS and aborts the
+ * whole optimisation.
+ */
+bool try_parse_double(const std::string& s, double& value);
+
 } // namespace tadah::hpo
 #endif // LAMMPS_SIM_H

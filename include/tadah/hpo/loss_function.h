@@ -44,13 +44,27 @@ public:
     const std::vector<double>&   params()  const noexcept { return params_; }
 
     /* ----------------------------------------------------------------- *
-     *  Evaluate     L(y, ŷ ; w )
+     *  Evaluate     L(y, y ; w )
      * ----------------------------------------------------------------- */
     double loss(double y, double ypred, double w = 1.0,
                 double eps = 1e-12) const;
 
-    /* ––– meta information ––––––––––––––––––––––––––––––––––––––––––– */
-    bool is_squared() const noexcept;    // true  → collect in RMS bucket
+    /* ----------------------------------------------------------------- *
+     *  Derivative wrt ypred:  dL/d(ypred)
+     *
+     *  Used by HPO analytical / hybrid gradients (Phase 2) to chain into
+     *  d(metric)/d(theta). Sign convention matches the loss definition:
+     *  with r = y - ypred, dL/dypred = (dL/dr) * (-1).
+     *
+     *  Subgradient at non-differentiable points (r=0 for L1/MAPE,
+     *  |r|=delta for HUBER, |r|=c for TUKEY) returns 0 (kink) or the
+     *  smooth-side limit (HUBER/TUKEY); finite, FD-consistent.
+     * ----------------------------------------------------------------- */
+    double loss_prime(double y, double ypred, double w = 1.0,
+                      double eps = 1e-12) const;
+
+    /* --- meta information ------------------------------------------- */
+    bool is_squared() const noexcept;    // true  -> collect in RMS bucket
 
 private:
     Type                type_;

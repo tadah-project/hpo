@@ -4,13 +4,16 @@
 #include "tadah/core/context.h"
 #include "tadah/core/utils.h"
 #include <tadah/hpo/lammps_sim.h>
+#include <tadah/hpo/observables/observable.h>
 #include <tadah/hpo/optimizer_spec.h>
 
+#include <memory>
 #include <vector>
 #include <string>
 #include <unordered_map>
 #include <limits>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <filesystem>
 
@@ -49,6 +52,13 @@ public:
     std::map<std::string, Opti> optimap;  // used by HPO_Host
     std::vector<LammpsSim> LS;
 
+    /* Typed observables (Tier 1 / Tier 2 of the PC_OBSERVABLE redesign).
+     * Each entry is a polymorphic Observable* -- concrete subclasses live in
+     * tadah/hpo/observables/. The host iterates this vector alongside LS
+     * when computing the loss + gradient.
+     * Populated by PC_OBSERVABLE lines in the .hpotarget config. */
+    std::vector<std::unique_ptr<Observable>> observables;
+
     // int THREADS = -1; // number of threads for parallel evaluation, -1 means all available threads
     double FAIL_SCORE = std::numeric_limits<double>::max();
     std::size_t QFLUSH_THRESHOLD = 10; // number of results to flush to disk at once
@@ -56,6 +66,7 @@ public:
 
     OptimizerSpec spec;
 
+    int    outputDigits = 6;      // decimal digits in scientific notation columns (DIGITS key)
     size_t outputEvery = 1;
     size_t bestOutputEvery = 1;
     size_t dumpPotEvery = std::numeric_limits<size_t>::max(); //  archiving potentials
@@ -74,14 +85,32 @@ public:
     LossFunction globalLoss;
 
     bool use_emae = false; bool use_ermse = false; bool use_errmse = false; bool use_ersq = false;
-    double emae, ermse, errmse, ersq; 
+    double emae, ermse, errmse, ersq;
     double w_emae, w_ermse, w_errmse, w_ersq;
-    bool use_srmse = false; 
-    double srmse; 
+    bool use_srmse = false;
+    double srmse;
     double w_srmse;
-    bool use_frmse = false; 
-    double frmse; 
+    bool use_frmse = false;
+    double frmse;
     double w_frmse;
+
+    /* Bad-pot pre-LAMMPS skip thresholds, parsed from PC_* flags
+     *   PC_ERMSE  <target> <weight> [--skip-above <cap_meV>] [--skip-rel <ratio>]
+     * (and analogous for EMAE / FRMSE / SRMSE / ErRMSE / ERSQ).
+     *
+     * abs_above: skip the LAMMPS phase when the metric exceeds <cap>
+     *            (cap is in meV/atom for energy metrics, raw units for
+     *            force/stress; the same units the metric reports).
+     * rel_above: skip when the metric exceeds rel_above * best_seen_so_far.
+     *            Only fires when a finite best has been observed.
+     *
+     * Replaces the legacy env vars TADAH_HPO_BAD_POT_ERMSE_MEV /
+     * TADAH_HPO_BAD_POT_ERMSE_REL. Defaults are nullopt = no skip. */
+    struct SkipCaps {
+      std::optional<double> abs_above;
+      std::optional<double> rel_above;
+    };
+    SkipCaps skip_emae, skip_ermse, skip_errmse, skip_ersq, skip_frmse, skip_srmse;
 };
 } // namespace hpo
 } // namespace tadah

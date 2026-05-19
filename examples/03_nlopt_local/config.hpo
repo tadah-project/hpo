@@ -1,0 +1,26 @@
+# 03 -- derivative-free local search (NLOPT:LN_SBPLX).
+#
+# When gradients are unreliable (noisy LAMMPS loss components),
+# a derivative-free local optimiser is more robust than BFGS.
+# LN_SBPLX is a Subplex variant of Nelder-Mead.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB NLOPT
+    ALGO LN_SBPLX
+    MAXEVAL 60
+    STEP 0.05
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 4.5 3.302 --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B  (1) 4.0 6.0
+OPTIM SGRIDMB (1) 0.1 0.4
+
+OUTPUT 1
+BOUTPUT 1
