@@ -36,7 +36,7 @@ build directory.
 - A LAMMPS library built with [Tadah!LAMMPS](https://git.ecdf.ed.ac.uk/tadah/tadah.lammps)
   is needed at link time only when building HPO against the
   LAMMPS-driven targets (`PC_LAMMPS`). See the umbrella
-  [installation guide](https://tadah.readthedocs.io/en/latest/installation.html#installation-nfp).
+  [installation guide](https://tadah.readthedocs.io/develop/installation.html#installation-nfp).
 
 ## Layout
 

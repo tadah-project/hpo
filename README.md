@@ -6,7 +6,7 @@
 # HPO
 
 Hyperparameter-optimisation engine of the
-[Tadah!](https://tadah.readthedocs.io/) MLIP toolchain. Drives
+[Tadah!](https://tadah.readthedocs.io/develop/) MLIP toolchain. Drives
 parameter search around a Tadah! training+validation cycle, with
 optional LAMMPS-driven physical-property targets (elastic constants,
 equation-of-state points, surface energies, …).
@@ -22,7 +22,7 @@ The user-facing surface is one config file (`config.hpo`) read by
 
 For the full grammar, parallelism / performance notes, and worked
 examples, see the
-[HPO documentation](https://tadah.readthedocs.io/) and the
+[HPO documentation](https://tadah.readthedocs.io/develop/) and the
 [`examples/`](examples/) directory.
 
 ## You don't need to use this directly
