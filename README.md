@@ -3,7 +3,7 @@
 [![license](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 [![version](https://img.shields.io/badge/version-1.3.0--beta.1-blue.svg)](https://git.ecdf.ed.ac.uk/tadah/hpo/-/tags)
 
-# Tadah!HPO
+# HPO
 
 Hyperparameter-optimisation engine of the
 [Tadah!](https://tadah.readthedocs.io/) MLIP toolchain. Drives
@@ -27,7 +27,7 @@ examples, see the
 
 ## You don't need to use this directly
 
-Tadah!HPO is an internal module of the Tadah! MLIP toolchain. It is
+HPO is an internal module of the Tadah! MLIP toolchain. It is
 fetched automatically (via CMake `FetchContent`) by the umbrella
 project [Tadah!MLIP](https://git.ecdf.ed.ac.uk/tadah/tadah.mlip) when
 configured with `-DTADAH_ENABLE_NFP=ON`. End users install the
@@ -46,6 +46,6 @@ GPL-3.0; see [LICENSE](LICENSE).
 ## Reporting issues
 
 Bugs and feature requests:
-[Tadah!HPO issues](https://git.ecdf.ed.ac.uk/tadah/hpo/-/issues).
+[HPO issues](https://git.ecdf.ed.ac.uk/tadah/hpo/-/issues).
 For end-user questions please use the umbrella project
 [Tadah!MLIP](https://git.ecdf.ed.ac.uk/tadah/tadah.mlip).

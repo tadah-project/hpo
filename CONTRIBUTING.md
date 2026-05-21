@@ -1,10 +1,10 @@
-# Contributing to Tadah!HPO
+# Contributing to HPO
 
 The full multi-repo contributor guide for the Tadah! project lives on
 the umbrella repository:
 <https://git.ecdf.ed.ac.uk/tadah/tadah.mlip/-/blob/develop/CONTRIBUTING.md>
 
-This file covers what is specific to Tadah!HPO. Bug reports and
+This file covers what is specific to HPO. Bug reports and
 feature requests on this module use the GitLab issue tracker on this
 project; cross-cutting changes (work that touches more than one
 Tadah! module) should be discussed on the umbrella project first.
@@ -23,10 +23,10 @@ build directory.
 ### Dependencies
 
 - C++17 compiler.
-- [Tadah!CORE](https://git.ecdf.ed.ac.uk/tadah/core),
-  [Tadah!MODELS](https://git.ecdf.ed.ac.uk/tadah/models),
-  [Tadah!MLIP](https://git.ecdf.ed.ac.uk/tadah/mlip), and
-  [Tadah!MD](https://git.ecdf.ed.ac.uk/tadah/md) — fetched
+- [CORE](https://git.ecdf.ed.ac.uk/tadah/core),
+  [MODELS](https://git.ecdf.ed.ac.uk/tadah/models),
+  [MLIP](https://git.ecdf.ed.ac.uk/tadah/mlip), and
+  [MD](https://git.ecdf.ed.ac.uk/tadah/md) — fetched
   automatically.
 - [dlib](http://dlib.net/), [NLopt](https://nlopt.readthedocs.io/),
   [Eigen3](https://eigen.tuxfamily.org/), and (optionally)
@@ -34,7 +34,7 @@ build directory.
   versions.
 - LAPACK / BLAS at link time (provided by the build environment).
 - A LAMMPS library built with [Tadah!LAMMPS](https://git.ecdf.ed.ac.uk/tadah/tadah.lammps)
-  is needed at link time only when building Tadah!HPO against the
+  is needed at link time only when building HPO against the
   LAMMPS-driven targets (`PC_LAMMPS`). See the umbrella
   [installation guide](https://tadah.readthedocs.io/en/latest/installation.html#installation-nfp).
 
