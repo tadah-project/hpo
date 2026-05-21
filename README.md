@@ -16,7 +16,7 @@ The user-facing surface is one config file (`config.hpo`) read by
 
 - an **optimiser** (`DLIB` / `NLOPT` / `TADAH` algorithm),
 - an **init strategy** (where to start the search),
-- a **run policy** (single-shot, multistart, prestage, basins),
+- a **run policy** (single-shot, multistart, prestage),
 - **loss terms** (`PC_ERMSE`, `PC_FRMSE`, `PC_LAMMPS`, …),
 - and an **`OPTIM` search space**.
 
