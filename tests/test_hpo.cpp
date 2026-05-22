@@ -80,6 +80,83 @@ TEST_CASE("HPO placeholder — see comments above for planned tests", "[HPO]")
     SUCCEED();
 }
 
+TEST_CASE("HPOTargets accepts OPTIM WATOM with pair-triple input",
+          "[HPO][watom][pair_triple][optim]")
+{
+    /* Regression for the stod-on-symbol crash: when WATOM is in
+     * pair-triple format (`sym sym val ...`), HPOTargets::get_labels
+     * must not call stod on the symbol tokens. arg_pos counts the
+     * numeric (weight) entries only, so (1) selects the first triple's
+     * value, (2) the second, etc. Bounds apply to that value. */
+    ScopedTempFile input(R"(OPTIM WATOM (1) 0.1 5.0
+OPTIMIZER
+LIB DLIB
+ALGO BFGS
+MAXEVAL 5
+ENDOPTIMIZER
+)");
+
+    tadah::core::Context ctx;
+    ctx.add("ATOM", "C"); ctx.add("ATOM", "H");
+    ctx.add("WATOM", "C"); ctx.add("WATOM", "H"); ctx.add("WATOM", 1.0);
+    ctx.add("WATOM", "H"); ctx.add("WATOM", "H"); ctx.add("WATOM", 1.0);
+    ctx.add("WATOM", "C"); ctx.add("WATOM", "C"); ctx.add("WATOM", 1.0);
+
+    REQUIRE_NOTHROW(tadah::hpo::HPOTargets(ctx, input.path.string()));
+
+    tadah::hpo::HPOTargets trg(ctx, input.path.string());
+    REQUIRE(trg.optimap.count("WATOM") == 1);
+    const auto& w = trg.optimap.at("WATOM");
+
+    /* Pair-triple config keeps symbols at positions 0,1,3,4,6,7 and
+     * weights at 2,5,8. (1) targets the first weight slot (idx 2). */
+    REQUIRE(w.opt.size() == 9);
+    CHECK(w.opt[0] == false);  // "C" symbol
+    CHECK(w.opt[1] == false);  // "H" symbol
+    CHECK(w.opt[2] == true);   // C-H weight — optimised
+    CHECK(w.opt[3] == false);
+    CHECK(w.opt[5] == false);  // H-H weight — not optimised
+    CHECK(w.opt[8] == false);  // C-C weight — not optimised
+    CHECK(w.lowbound[2] == Approx(0.1));
+    CHECK(w.highbound[2] == Approx(5.0));
+}
+
+TEST_CASE("HPOTargets pair-triple WATOM with three OPTIM indices",
+          "[HPO][watom][pair_triple][optim]")
+{
+    /* Optimise all three pair weights with the same bounds. Indices are
+     * comma-separated inside the parens; arg_pos counts the numeric
+     * (weight) entries only. (1,2,3) or the equivalent range (1-3)
+     * selects the three weight slots. */
+    ScopedTempFile input(R"(OPTIM WATOM (1-3) 0.1 5.0
+OPTIMIZER
+LIB DLIB
+ALGO BFGS
+MAXEVAL 5
+ENDOPTIMIZER
+)");
+
+    tadah::core::Context ctx;
+    ctx.add("ATOM", "C"); ctx.add("ATOM", "H");
+    ctx.add("WATOM", "C"); ctx.add("WATOM", "H"); ctx.add("WATOM", 1.0);
+    ctx.add("WATOM", "H"); ctx.add("WATOM", "H"); ctx.add("WATOM", 1.0);
+    ctx.add("WATOM", "C"); ctx.add("WATOM", "C"); ctx.add("WATOM", 1.0);
+
+    tadah::hpo::HPOTargets trg(ctx, input.path.string());
+    const auto& w = trg.optimap.at("WATOM");
+    REQUIRE(w.opt.size() == 9);
+    CHECK(w.opt[2] == true);
+    CHECK(w.opt[5] == true);
+    CHECK(w.opt[8] == true);
+    /* Symbol slots stay inactive. */
+    CHECK(w.opt[0] == false);
+    CHECK(w.opt[1] == false);
+    CHECK(w.opt[3] == false);
+    CHECK(w.opt[4] == false);
+    CHECK(w.opt[6] == false);
+    CHECK(w.opt[7] == false);
+}
+
 TEST_CASE("HPO parses standalone DLIB BFGS optimizer blocks",
           "[HPO][optim][dlib][bfgs]")
 {

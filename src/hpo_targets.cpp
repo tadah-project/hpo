@@ -252,8 +252,15 @@ get_labels(const std::string& key) {
 
   std::vector<double> label_param;
 
+  /* Skip non-numeric tokens. Pair-triple WATOM (`sym sym val ...`)
+   * interleaves element symbols with weights, and the symbols would
+   * otherwise throw inside stod. label_param is only consumed for keys
+   * whose tokens are all numeric (TYPE/CGRID/SGRID); WATOM's downstream
+   * label production (process_atoms_labels) does not read params. */
   for (const auto& token : key_config) {
-    label_param.push_back(std::stod(token));
+    if (core::is_number(token)) {
+      label_param.push_back(std::stod(token));
+    }
   }
   label_obj.emplace_back(key, label_param);
 
@@ -287,8 +294,33 @@ void HPOTargets::process_grid_labels(
 }
 
 void HPOTargets::process_atoms_labels(Opti& o, size_t& i, std::string& watom) {
-  for (size_t j = 0; j < context.size("ATOM"); ++j) {
-    o.labels[i++] = context.get<std::string>("ATOM", j);
+  /* WATOM hot-variable labelling depends on the input format:
+   *   - Per-species (parallel to ATOM, `WATOM w1 w2 ...`): label per ATOM
+   *     symbol; arg_pos k → Z=watom_Z_by_arg_pos[k-1] downstream.
+   *   - Pair triples (`WATOM sym sym val ...`): label "<sym1>-<sym2>" per
+   *     triple; arg_pos k → (Zi,Zj)=watom_pair_by_arg_pos[k-1].
+   * Detection mirrors D_Base::update_weights: first WATOM token numeric
+   * ⇒ per-species. The label index `i` is advanced so that labels[]
+   * stays aligned with the numeric positions of `config[]` — Opti::print
+   * walks numeric config slots and reads labels[idx++] from `start`
+   * (=1 when config[0] is non-numeric, =0 otherwise). */
+  const bool per_species = context.contains("WATOM") &&
+                           context.size("WATOM") > 0 &&
+                           core::is_number(context.get<std::string>("WATOM", 0));
+  if (per_species) {
+    for (size_t j = 0; j < context.size("ATOM"); ++j) {
+      o.labels[i++] = context.get<std::string>("ATOM", j);
+    }
+  } else {
+    // Pair-triple: config[0] is a symbol, so Opti::print starts idx at 1.
+    // Skip labels[0] to keep idx-aligned, then emit one pair label per triple.
+    if (i == 0) i = 1;
+    const size_t n = context.size("WATOM");
+    for (size_t j = 0; j + 2 < n; j += 3) {
+      const std::string s1 = context.get<std::string>("WATOM", j);
+      const std::string s2 = context.get<std::string>("WATOM", j + 1);
+      o.labels[i++] = s1 + "-" + s2;
+    }
   }
   watom = "\0"; // Avoid further processing
 }
