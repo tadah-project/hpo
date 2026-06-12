@@ -2,6 +2,7 @@
 
 #include <tadah/hpo/engines/all_engines.h>
 #include <tadah/hpo/engines/hpo_engine.h>
+#include <tadah/hpo/engines/hpo_refit_engine.h>
 
 #include <stdexcept>
 #include <iostream>
@@ -13,6 +14,9 @@ namespace engines {
 void registerAllHPOEngines() {
   using tadah::mlip::engines::EngineFactory;
   EngineFactory::registerEngine("HPO", [](){ return std::make_unique<HPOEngine>(); });
+  // overrides MLIP's dense-only registration: adds REFIT_MODE=compact
+  EngineFactory::registerEngine("REFIT",
+      [](){ return std::make_unique<HPORefitEngine>(); });
 }
 
 } // namespace engines

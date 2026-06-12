@@ -176,6 +176,7 @@ void HPOTargets::create_labels() {
     std::string sgrid = "SGRID" + suffix_prefix.first;
     std::string watom = "WATOM";
     std::string weights = "WEIGHTS";
+    std::string fixweight = "FIXWEIGHT";
 
     size_t i = key == type ? 1 : 0;
 
@@ -189,7 +190,11 @@ void HPOTargets::create_labels() {
 
       if (key == rcut) {
         o.labels[i++] = label;
-      } else if (key == weights) {
+      } else if (key == weights || key == fixweight) {
+        // FIXWEIGHT mirrors WEIGHTS: `tadah refit` emits `OPTIM FIXWEIGHT`
+        // so HPO can search the (held) linear coefficients. The per-index
+        // optimisation is driven by Opti::opt[] (set in process_optim_config);
+        // the label here is cosmetic.
         o.labels[i++] = label;
       } else if (key == type) {
         nparams = params.size();
