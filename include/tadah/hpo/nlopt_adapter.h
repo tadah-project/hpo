@@ -69,6 +69,38 @@ void run_nlopt(const OptimizerSpec& sp,
     const unsigned dim = static_cast<unsigned>(sp.low.size());
     nlopt::opt opt = make_nlopt(sp, dim);
 
+    /* The *_MLSL_LDS variants explore with a deterministic Sobol
+     * low-discrepancy sequence -- nlopt's RNG (seeded in make_nlopt)
+     * is never consulted for the sampled points (mlsl.c uses
+     * nlopt_sobol_next when lds=1, nlopt_urand only when lds=0), and
+     * the sequence's skip count is a fixed function of dim and
+     * POPULATION. Every eval after the INIT-chain starting point is
+     * therefore identical across runs, with or without SEED. Surface
+     * that so neither "why does every run sample the same points?"
+     * nor "why doesn't SEED change the sampling?" needs a source
+     * dive; the non-LDS twin (e.g. G_MLSL) gives seed-controlled
+     * random sampling. */
+    if (sp.algo.find("MLSL_LDS") != std::string::npos) {
+        const bool seeded = sp.init_strategy_spec.seed.has_value() ||
+                            sp.seed.has_value();
+        std::ostringstream oss;
+        oss << sp.algo << ": exploration points come from a deterministic "
+               "Sobol (LDS) sequence and are identical across runs";
+        if (seeded)
+            oss << "; SEED affects at most the INIT-chain starting point "
+                   "(and only when the chain has a RANDOM/LHS/SOBOL entry), "
+                   "not the sampled points. Use " <<
+                   sp.algo.substr(0, sp.algo.size() - 4)
+                << " for seed-controlled random sampling";
+        oss << ".";
+        if (seeded) {
+            std::cerr << "[HPO] " << oss.str() << "\n";
+            HPOLog::instance().warning(oss.str());
+        } else {
+            HPOLog::instance().info(oss.str());
+        }
+    }
+
     opt.set_lower_bounds(sp.low);
     opt.set_upper_bounds(sp.high);
 

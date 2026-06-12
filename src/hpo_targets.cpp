@@ -451,6 +451,38 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
    * so the user can see which block fired which strategy. */
   auto resolve_init = [&](OptimizerSpec& s, const char* where) {
     auto strategy = build_init_strategy(s.init_strategy_spec);
+    /* A SEED with no seed-consuming METHOD in the chain is a silent
+     * no-op for the starting point: an empty chain falls back to
+     * CONFIG, and CONFIG/WARM ignore ctx.seed. The seed still reaches
+     * nlopt::srand in make_nlopt, but only stochastic non-LDS NLopt
+     * algos (G_MLSL, CRS, ISRES, ESCH, ...) ever read that RNG.
+     * Surface it so "I set SEED and nothing changed" is answerable
+     * from the log. */
+    if (s.init_strategy_spec.seed) {
+      const auto& chain = s.init_strategy_spec.chain;
+      const bool seed_consumed = std::any_of(
+          chain.begin(), chain.end(),
+          [](const InitStrategySpec::Entry& e) {
+            return e.method == "RANDOM" || e.method == "LHS" ||
+                   e.method == "SOBOL";
+          });
+      if (!seed_consumed) {
+        std::ostringstream oss;
+        oss << "INIT[" << where << "]: SEED is set but the strategy chain ("
+            << (chain.empty() ? std::string("empty -> CONFIG fallback")
+                              : [&]{ std::string m;
+                                     for (const auto& e : chain) {
+                                       if (!m.empty()) m += ", ";
+                                       m += e.method;
+                                     } return m; }())
+            << ") contains no stochastic method, so the seed does not "
+               "affect the starting point. Add METHOD RANDOM/LHS/SOBOL "
+               "to randomise it. (The seed still feeds NLopt's global "
+               "RNG, which only stochastic non-LDS algos consume.)";
+        std::cerr << "[HPO] " << oss.str() << "\n";
+        HPOLog::instance().warning(oss.str());
+      }
+    }
     std::uint64_t seed = s.init_strategy_spec.seed.value_or(
         static_cast<std::uint64_t>(std::random_device{}()));
     InitContext ictx{s, *this, seed};
