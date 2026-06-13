@@ -9,8 +9,12 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
+#include <initializer_list>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -45,6 +49,121 @@ double cget(const Context &c, const std::string &k, double def) {
 }
 int iget(const Context &c, const std::string &k, int def) {
   return c.contains(k) && c.size(k) > 0 ? c.get<int>(k) : def;
+}
+
+std::string up_(std::string s) {
+  for (char &ch : s) ch = static_cast<char>(std::toupper((unsigned char)ch));
+  return s;
+}
+void check_algo(const std::string &stage, const std::string &v,
+                std::initializer_list<const char *> vocab) {
+  for (const char *w : vocab)
+    if (v == w) return;
+  std::string list;
+  for (const char *w : vocab) list += (list.empty() ? "" : "|") + std::string(w);
+  throw std::runtime_error("OPTIMIZER " + stage + ": unknown ALGO '" + v +
+                           "' (" + list + ")");
+}
+
+// Parse the inline OPTIMIZER block (token stream captured verbatim by the
+// config parser between OPTIMIZER and ENDOPTIMIZER) into CompactConfig.
+// Grammar (subblocks and attributes all optional; keywords case-insensitive):
+//   GLOBAL  ALGO <a> [MAXEVAL <n>]                              ENDGLOBAL
+//   EXPLORE ALGO <a> [MAXEVAL <n>] [FTOL_REL <v>] [XTOL_REL <v>] ENDEXPLORE
+//   POLISH  ALGO <a> [MAXITER <n>] [FTOL <v>] [GTOL <v>]         ENDPOLISH
+//   JOINT   ALGO <a> [MAXITER <n>] [FTOL <v>]                    ENDJOINT
+// The GLOBAL stage's inner local refinement (MLSL) reuses the EXPLORE
+// tolerances. (GLOBAL maps to the CompactConfig seed_* fields internally.)
+void parse_optimizer_block(const std::vector<std::string> &tok,
+                           CompactConfig &cfg) {
+  auto as_int = [](const std::string &s, const char *attr) {
+    try {
+      size_t p = 0;
+      int v = std::stoi(s, &p);
+      if (p != s.size()) throw std::invalid_argument(s);
+      return v;
+    } catch (...) {
+      throw std::runtime_error(std::string("OPTIMIZER: ") + attr +
+                               " expects an integer, got '" + s + "'");
+    }
+  };
+  auto as_dbl = [](const std::string &s, const char *attr) {
+    try {
+      size_t p = 0;
+      double v = std::stod(s, &p);
+      if (p != s.size()) throw std::invalid_argument(s);
+      return v;
+    } catch (...) {
+      throw std::runtime_error(std::string("OPTIMIZER: ") + attr +
+                               " expects a number, got '" + s + "'");
+    }
+  };
+  size_t i = 0;
+  while (i < tok.size()) {
+    const std::string blk = up_(tok[i]);
+    if (blk != "GLOBAL" && blk != "EXPLORE" && blk != "POLISH" &&
+        blk != "JOINT")
+      throw std::runtime_error("OPTIMIZER: unknown subblock '" + tok[i] +
+                               "' (GLOBAL|EXPLORE|POLISH|JOINT)");
+    const std::string end = "END" + blk;
+    ++i;  // consume subblock opener
+    bool closed = false;
+    while (i < tok.size()) {
+      const std::string a = up_(tok[i]);
+      if (a == end) {
+        ++i;
+        closed = true;
+        break;
+      }
+      if (i + 1 >= tok.size())
+        throw std::runtime_error("OPTIMIZER " + blk + ": missing value after '" +
+                                 tok[i] + "'");
+      const std::string &val = tok[i + 1];
+      if (a == "ALGO") {
+        const std::string A = up_(val);
+        if (blk == "GLOBAL") {
+          check_algo("GLOBAL", A, {"MLSL", "DIRECT", "CRS2", "DLIB_GLOBAL",
+                                   "UNIFORM"});
+          cfg.seed_algo = A;
+        } else if (blk == "EXPLORE") {
+          check_algo("EXPLORE", A, {"SBPLX", "NELDERMEAD", "BOBYQA", "PRAXIS",
+                                    "NLOPT_LBFGS", "DLIB_LBFGS", "NONE"});
+          cfg.explore_algo = A;
+        } else if (blk == "POLISH") {
+          check_algo("POLISH", A, {"CERES_LM", "CERES_DOGLEG", "NLOPT_LBFGS",
+                                   "DLIB_LBFGS", "NONE"});
+          cfg.polish_algo = A;
+        } else {
+          check_algo("JOINT", A, {"CERES_DOGLEG", "CERES_LM", "NONE"});
+          cfg.joint_algo = A;
+        }
+      } else if (a == "MAXEVAL" && (blk == "GLOBAL" || blk == "EXPLORE")) {
+        const int n = as_int(val, "MAXEVAL");
+        if (blk == "GLOBAL") cfg.mlsl_maxeval = n;
+        else cfg.sbplx_maxeval = n;
+      } else if (a == "FTOL_REL" && blk == "EXPLORE") {
+        cfg.sbplx_ftol = as_dbl(val, "FTOL_REL");
+      } else if (a == "XTOL_REL" && blk == "EXPLORE") {
+        cfg.sbplx_xtol = as_dbl(val, "XTOL_REL");
+      } else if (a == "MAXITER" && (blk == "POLISH" || blk == "JOINT")) {
+        const int n = as_int(val, "MAXITER");
+        if (blk == "POLISH") cfg.ceres_max_iter = n;
+        else cfg.joint_max_iter = n;
+      } else if (a == "FTOL" && (blk == "POLISH" || blk == "JOINT")) {
+        const double v = as_dbl(val, "FTOL");
+        if (blk == "POLISH") cfg.ceres_ftol = v;
+        else cfg.joint_ftol = v;
+      } else if (a == "GTOL" && blk == "POLISH") {
+        cfg.ceres_gtol = as_dbl(val, "GTOL");
+      } else {
+        throw std::runtime_error("OPTIMIZER " + blk + ": unknown keyword '" +
+                                 tok[i] + "'");
+      }
+      i += 2;
+    }
+    if (!closed)
+      throw std::runtime_error("OPTIMIZER: " + blk + " not closed with " + end);
+  }
 }
 }  // namespace
 
@@ -105,7 +224,6 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   const double share = cget(c, "REFIT_COMPACT_SHARE", 0.5);
   CompactConfig lcfg;
   lcfg.n_max = iget(c, "REFIT_COMPACT_NMAX", 40);
-  lcfg.sbplx_maxeval = iget(c, "REFIT_COMPACT_BUDGET", 20000);
   lcfg.seed = static_cast<unsigned>(iget(c, "REFIT_COMPACT_SEED", 12345));
   // knot-family ladder schedule (blip defaults = legacy, regression-gated).
   // Matrix-measured (Fe+Ta LAMMPS batteries, 4 schedules): per-rung
@@ -119,13 +237,17 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   lcfg.insert_topk = iget(c, "REFIT_COMPACT_INSERT_TOPK", knotfam ? 3 : 1);
   lcfg.knot_degree = knot3 ? 3 : 5;
   lcfg.knot_mix = knotmix;
+  // Per-stage optimiser algorithm + budget + tolerances: defaults live in
+  // CompactConfig; the optional inline OPTIMIZER block overrides them.
+  if (c.contains("OPTIMIZER") && c.size("OPTIMIZER") > 0) {
+    std::vector<std::string> tok(c.size("OPTIMIZER"));
+    c.get("OPTIMIZER", tok);
+    parse_optimizer_block(tok, lcfg);
+  }
+  const std::string &joint_algo = lcfg.joint_algo;
   auto sget = [&](const std::string &k, const std::string &def) {
     return c.contains(k) && c.size(k) > 0 ? c.get<std::string>(k) : def;
   };
-  lcfg.seed_algo = sget("REFIT_COMPACT_SEED_ALGO", lcfg.seed_algo);
-  lcfg.explore_algo = sget("REFIT_COMPACT_EXPLORE_ALGO", lcfg.explore_algo);
-  lcfg.polish_algo = sget("REFIT_COMPACT_POLISH_ALGO", lcfg.polish_algo);
-  const std::string joint_algo = sget("REFIT_COMPACT_JOINT_ALGO", "CERES_DOGLEG");
 
   // ---- the refit optimisation log (REFIT_LOG; the user inspects this
   //      DURING the fit — every line is flushed) ----
@@ -136,15 +258,30 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
            "REFIT_COMPACT_SHARE x tolerance; d2_rmse tracks curvature");
   rlog.line("input element=" + eam.lattice() + " a0=" +
             core::to_string(a0, 4) + " rcut=" + core::to_string(rcut, 4));
-  rlog.line("basis=" + cfg.basis + "  strategy seed/explore/polish/joint = " +
+  rlog.line("basis=" + cfg.basis + "  strategy global/explore/polish/joint = " +
             lcfg.seed_algo + "/" + lcfg.explore_algo + "/" + lcfg.polish_algo +
             "/" + joint_algo);
+  // effective per-stage optimiser settings (defaults, or your OPTIMIZER block)
+  auto g = [](double v) {
+    char b[24];
+    std::snprintf(b, sizeof(b), "%.2g", v);
+    return std::string(b);
+  };
+  rlog.line(
+      "optimiser: global{algo=" + lcfg.seed_algo + " maxeval=" +
+      std::to_string(lcfg.mlsl_maxeval) + "}  explore{algo=" +
+      lcfg.explore_algo + " maxeval=" + std::to_string(lcfg.sbplx_maxeval) +
+      " ftol_rel=" + g(lcfg.sbplx_ftol) + " xtol_rel=" + g(lcfg.sbplx_xtol) +
+      "}  polish{algo=" + lcfg.polish_algo + " maxiter=" +
+      std::to_string(lcfg.ceres_max_iter) + " ftol=" + g(lcfg.ceres_ftol) +
+      " gtol=" + g(lcfg.ceres_gtol) + "}  joint{algo=" + joint_algo +
+      " maxiter=" + std::to_string(lcfg.joint_max_iter) + " ftol=" +
+      g(lcfg.joint_ftol) + "}");
   rlog.line("schedule: opt_every=" + std::to_string(lcfg.opt_every) +
             " stall=" + std::to_string(lcfg.stall_rungs) + " insert_topk=" +
             std::to_string(lcfg.insert_topk) +
             (lcfg.knot_mix ? "  KnotMix double-win detector ON" : "") +
-            "  n_max=" + std::to_string(lcfg.n_max) + " budget=" +
-            std::to_string(lcfg.sbplx_maxeval));
+            "  n_max=" + std::to_string(lcfg.n_max));
   rlog.line("windows: r in [" + core::to_string(rwin_lo, 4) + ", " +
             core::to_string(rcut, 4) + "]  rho in [0, " +
             core::to_string(rho_reach, 4) + "]  tolerances amb/cmp = " +
@@ -282,13 +419,15 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   // ---- joint refinement: curves + E-V residuals, analytic gradients ----
   rlog.line("---- joint refinement (curves + E-V residuals, " + joint_algo +
             ") ----");
+  std::string joint_term;
   const double e_resid_max =
       joint_refine(fphi, frho, fF, dphi, drho, dF, dists, e_orig, e_w,
-                   /*curve_weight=*/1.0, /*max_iter=*/2000, /*ftol=*/1e-15,
-                   joint_algo);
+                   /*curve_weight=*/1.0, lcfg.joint_max_iter, lcfg.joint_ftol,
+                   joint_algo, &joint_term);
   rlog.line("joint: max |dE|/tol = " + core::to_string(e_resid_max, 4) +
             "  params n2b/nrho/nF = " + std::to_string(fphi.n()) + "/" +
-            std::to_string(frho.n()) + "/" + std::to_string(fF.n()));
+            std::to_string(frho.n()) + "/" + std::to_string(fF.n()) +
+            "  term=" + joint_term);
   Logger::instance().log(LogLevel::WARNING,
       "tadah refit[compact]: joint refinement (curves + E-V residuals): "
       "max |dE|/tol = " + core::to_string(e_resid_max, 4) +

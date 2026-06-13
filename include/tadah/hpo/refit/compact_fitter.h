@@ -138,6 +138,11 @@ struct CompactConfig {
   //   CERES_LM (joint c,mu,eta analytic-Jacobian trust region)
   //   CERES_DOGLEG | NLOPT_LBFGS | DLIB_LBFGS (VARPRO reduced gradient) | NONE
   std::string polish_algo = "CERES_LM";
+  // joint (post-ladder all-function refinement vs curve + E-V residuals):
+  //   CERES_DOGLEG | CERES_LM | NONE
+  std::string joint_algo = "CERES_DOGLEG";
+  int joint_max_iter = 2000;   ///< joint Ceres max_num_iterations
+  double joint_ftol = 1e-15;   ///< joint Ceres function_tolerance
 };
 
 /** Fits one tabulated function on [lo,hi] given dense samples (xs, ys) and
@@ -208,6 +213,14 @@ private:
   double lo_, hi_, span_, eta0_;
   CompactConfig cfg_;
   BasisKind kind_ = BasisKind::Blip;
+
+  // Last termination tag for each stage (e.g. "FTOL_REACHED",
+  // "MAXEVAL_REACHED", "CONVERGENCE(12it)"). Set by the stage functions,
+  // read by fit() for the per-stage convergence log. mutable: the stage
+  // functions are const.
+  mutable std::string last_seed_term_;
+  mutable std::string last_explore_term_;
+  mutable std::string last_polish_term_;
 };
 
 /** Joint Ceres refinement of all three functions against their curve residuals
@@ -227,9 +240,12 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
                     const std::vector<double> &e_orig,
                     const std::vector<double> &e_weight,
                     double curve_weight, int max_iter, double ftol,
-                    const std::string &algo = "CERES_LM");
+                    const std::string &algo = "CERES_LM",
+                    std::string *term_out = nullptr);
                     // algo: CERES_LM | CERES_DOGLEG | NONE
                     // (basis families are carried by each BlipFit's `kind`)
+                    // term_out (optional): receives the Ceres termination tag
+                    // (e.g. "CONVERGENCE(143it, cost 2.1e-09)")
 
 }  // namespace refit
 }  // namespace hpo

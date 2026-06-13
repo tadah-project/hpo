@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <stdexcept>
 
 namespace tadah {
@@ -22,6 +23,36 @@ namespace refit {
 
 using tadah::models::B;
 using tadah::models::dB;
+
+// ---- optimiser termination → short tag (for the per-stage convergence log)
+namespace {
+const char *nlopt_term(nlopt::result r) {
+  switch (r) {
+    case nlopt::SUCCESS:          return "SUCCESS";
+    case nlopt::STOPVAL_REACHED:  return "STOPVAL_REACHED";
+    case nlopt::FTOL_REACHED:     return "FTOL_REACHED";
+    case nlopt::XTOL_REACHED:     return "XTOL_REACHED";
+    case nlopt::MAXEVAL_REACHED:  return "MAXEVAL_REACHED";
+    case nlopt::MAXTIME_REACHED:  return "MAXTIME_REACHED";
+    case nlopt::FAILURE:          return "FAILURE";
+    case nlopt::INVALID_ARGS:     return "INVALID_ARGS";
+    case nlopt::OUT_OF_MEMORY:    return "OUT_OF_MEMORY";
+    case nlopt::ROUNDOFF_LIMITED: return "ROUNDOFF_LIMITED";
+    case nlopt::FORCED_STOP:      return "FORCED_STOP";
+    default:                      return "UNKNOWN";
+  }
+}
+const char *ceres_term(ceres::TerminationType t) {
+  switch (t) {
+    case ceres::CONVERGENCE:    return "CONVERGENCE";
+    case ceres::NO_CONVERGENCE: return "NO_CONVERGENCE";
+    case ceres::FAILURE:        return "FAILURE";
+    case ceres::USER_SUCCESS:   return "USER_SUCCESS";
+    case ceres::USER_FAILURE:   return "USER_FAILURE";
+    default:                    return "UNKNOWN";
+  }
+}
+}  // namespace
 
 // ---- basis dispatch: value g(x_c) and r-derivative eta*g'(x_c) per family.
 // A 3-way switch on a hot member is branch-predicted perfectly; the blip
@@ -377,17 +408,20 @@ double CompactBlipFitter::sbplx_explore(BlipFit &f, int maxeval) const {
       for (int i = 0; i < dim; ++i) out(i) = g[i];
       return out;
     };
+    last_explore_term_ = "DLIB_LBFGS(delta/maxeval)";
     try {
       dlib::find_min_box_constrained(
           dlib::lbfgs_search_strategy(20),
           dlib::objective_delta_stop_strategy(cfg_.sbplx_ftol, maxeval),
           obj, der, x, xl, xu);
     } catch (const std::exception &) {
+      last_explore_term_ = "DLIB_LBFGS(threw)";
     }
     std::vector<double> v(x.begin(), x.end());
     theta_unpack(v, f);
     return solve_coeffs(f);
   } else if (a == "NONE") {
+    last_explore_term_ = "NONE(linear-solve)";
     return solve_coeffs(f);
   } else {
     throw std::runtime_error("compact_fitter: unknown explore algo '" + a +
@@ -417,15 +451,17 @@ double CompactBlipFitter::sbplx_explore(BlipFit &f, int maxeval) const {
     VarproCtx ctx_df{this, &work, span_};
     opt.set_min_objective(varpro_obj, &ctx_df);
     try {
-      opt.optimize(b.v, fval);
+      last_explore_term_ = nlopt_term(opt.optimize(b.v, fval));
     } catch (const std::exception &) {
+      last_explore_term_ = nlopt_term(opt.last_optimize_result());
     }
     theta_unpack(b.v, f);
     return solve_coeffs(f);
   }
   try {
-    opt.optimize(b.v, fval);
+    last_explore_term_ = nlopt_term(opt.optimize(b.v, fval));
   } catch (const std::exception &) {
+    last_explore_term_ = nlopt_term(opt.last_optimize_result());
   }
   theta_unpack(b.v, f);
   return solve_coeffs(f);
@@ -438,7 +474,7 @@ double CompactBlipFitter::explore(BlipFit &f) const {
 double CompactBlipFitter::polish_dispatch(BlipFit &f) const {
   const std::string &a = cfg_.polish_algo;
   if (a == "CERES_LM" || a == "CERES_DOGLEG") return polish(f);
-  if (a == "NONE") return solve_coeffs(f);
+  if (a == "NONE") { last_polish_term_ = "NONE(linear-solve)"; return solve_coeffs(f); }
   if (a == "NLOPT_LBFGS" || a == "DLIB_LBFGS") {
     // VARPRO reduced-gradient local, tight tolerances
     ThetaBox b = theta_box(f, lo_, hi_, span_);
@@ -455,8 +491,9 @@ double CompactBlipFitter::polish_dispatch(BlipFit &f) const {
       opt.set_min_objective(nlopt_grad_obj, &ctx);
       double fval = 1e300;
       try {
-        opt.optimize(b.v, fval);
+        last_polish_term_ = nlopt_term(opt.optimize(b.v, fval));
       } catch (const std::exception &) {
+        last_polish_term_ = nlopt_term(opt.last_optimize_result());
       }
       theta_unpack(b.v, f);
       return solve_coeffs(f);
@@ -478,6 +515,7 @@ double CompactBlipFitter::polish_dispatch(BlipFit &f) const {
       for (int i = 0; i < dim; ++i) out(i) = g[i];
       return out;
     };
+    last_polish_term_ = "DLIB_LBFGS(delta/maxeval)";
     try {
       dlib::find_min_box_constrained(
           dlib::lbfgs_search_strategy(30),
@@ -485,6 +523,7 @@ double CompactBlipFitter::polish_dispatch(BlipFit &f) const {
                                               50 * cfg_.ceres_max_iter),
           obj, der, x, xl, xu);
     } catch (const std::exception &) {
+      last_polish_term_ = "DLIB_LBFGS(threw)";
     }
     std::vector<double> v(x.begin(), x.end());
     theta_unpack(v, f);
@@ -510,6 +549,7 @@ BlipFit CompactBlipFitter::seed_mlsl() const {
 
   const std::string &a = cfg_.seed_algo;
   if (a == "UNIFORM") {  // no global step: uniform start, polish handles it
+    last_seed_term_ = "UNIFORM(no-global-step)";
     solve_coeffs(f);
     return f;
   }
@@ -528,6 +568,7 @@ BlipFit CompactBlipFitter::seed_mlsl() const {
       return reduced_mse(work, nullptr);
     };
     const int calls = std::max(500, cfg_.mlsl_maxeval / 20);
+    last_seed_term_ = "DLIB_GLOBAL(maxcalls=" + std::to_string(calls) + ")";
     auto res = dlib::find_min_global(
         obj, xl, xu, dlib::max_function_calls(static_cast<std::size_t>(calls)));
     std::vector<double> v(res.x.begin(), res.x.end());
@@ -561,8 +602,9 @@ BlipFit CompactBlipFitter::seed_mlsl() const {
   opt.set_min_objective(varpro_obj, &ctx);
   double fval = 1e300;
   try {
-    opt.optimize(b.v, fval);
+    last_seed_term_ = std::string(a) + ":" + nlopt_term(opt.optimize(b.v, fval));
   } catch (const std::exception &) {
+    last_seed_term_ = std::string(a) + ":" + nlopt_term(opt.last_optimize_result());
   }
   theta_unpack(b.v, f);
   solve_coeffs(f);
@@ -615,6 +657,8 @@ double CompactBlipFitter::polish(BlipFit &f) const {
     throw std::runtime_error("compact_fitter: analytic Jacobian failed the "
                              "Ceres finite-difference gradient check: " +
                              sum.message);
+  last_polish_term_ = std::string(ceres_term(sum.termination_type)) + "(" +
+                      std::to_string(sum.iterations.size()) + "it)";
   return solve_coeffs(f);  // final closed-form coeffs at the polished (mu,eta)
 }
 
@@ -787,6 +831,18 @@ BlipFit CompactBlipFitter::fit(const Metric &metric,
     f.metric = metric(f);
   };
 
+  // Compact histogram of stage-termination tags across a rung's candidates,
+  // rendered as e.g. "{FTOL_REACHED:2,MAXEVAL_REACHED:1}".
+  auto render_hist = [](const std::map<std::string, int> &h) {
+    std::string s = "{";
+    bool first = true;
+    for (const auto &kv : h) {
+      s += (first ? "" : ",") + kv.first + ":" + std::to_string(kv.second);
+      first = false;
+    }
+    return s + "}";
+  };
+
   BlipFit best = seed_mlsl();
   stamp(best);
   {
@@ -795,7 +851,10 @@ BlipFit CompactBlipFitter::fit(const Metric &metric,
     r.kept = true;
     trace.push_back(r);
   }
-  log("seed(" + cfg_.seed_algo + "): " + describe(best) +
+  // global stage: ran once; report which convergence criterion it hit so the
+  // user can tweak the GLOBAL block (e.g. MAXEVAL_REACHED => raise MAXEVAL).
+  log("global(" + cfg_.seed_algo + "): " + describe(best) +
+      "  term=" + last_seed_term_ + " polish=" + last_polish_term_ +
       "  [metric <= " + fmt(cfg_.target) + " stops the ladder]");
 
   // energy-aware insertion (knot kinds with insert_topk > 1): build one
@@ -853,6 +912,7 @@ BlipFit CompactBlipFitter::fit(const Metric &metric,
     ++rung_idx;
     const bool opt_rung = (opt_every == 1) || (rung_idx % opt_every == 0);
 
+    std::map<std::string, int> expl_hist, pol_hist;  // per-rung term tally
     BlipFit rung_best;
     if (one_sided(kind_)) {
       BlipFit base = insert_best(warm);
@@ -870,6 +930,8 @@ BlipFit CompactBlipFitter::fit(const Metric &metric,
           if (j > 0) jitter(cand, rng);
           explore(cand);
           stamp(cand);
+          ++expl_hist[last_explore_term_];
+          ++pol_hist[last_polish_term_];
           if (cand.metric < rung_best.metric) rung_best = cand;
         }
       }
@@ -882,6 +944,8 @@ BlipFit CompactBlipFitter::fit(const Metric &metric,
         if (j > 0) jitter(cand, rng);
         explore(cand);
         stamp(cand);
+        ++expl_hist[last_explore_term_];
+        ++pol_hist[last_polish_term_];
         if (cand.metric < rung_best.metric) rung_best = cand;
       }
     }
@@ -900,10 +964,18 @@ BlipFit CompactBlipFitter::fit(const Metric &metric,
       ++stall;
     }
     trace.push_back(row);
+    // per-stage convergence reasons: aggregated across this rung's candidates
+    // (explore + polish run once per candidate). A run of MAXEVAL_REACHED here
+    // means the EXPLORE budget is the binding limit — raise MAXEVAL or loosen
+    // FTOL_REL; CONVERGENCE means the tolerance bound first.
+    const std::string term = opt_rung
+        ? "  explore=" + render_hist(expl_hist) + " polish=" +
+              render_hist(pol_hist)
+        : "  (grow: insertion+solve, no optimiser)";
     log("rung " + std::to_string(rung_idx) + (opt_rung ? " (opt): " : " (grow): ") +
         describe(rung_best) + (row.kept ? "  KEPT" : "  stall=" +
         std::to_string(stall) + "/" + std::to_string(cfg_.stall_rungs)) +
-        "  (" + fmt(row.seconds) + "s)");
+        "  (" + fmt(row.seconds) + "s)" + term);
     warm = rung_best;  // continue the ladder from this rung regardless
   }
 
@@ -1042,10 +1114,12 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
                     const std::vector<std::vector<double>> &dists,
                     const std::vector<double> &e_orig,
                     const std::vector<double> &e_weight, double curve_weight,
-                    int max_iter, double ftol, const std::string &algo) {
+                    int max_iter, double ftol, const std::string &algo,
+                    std::string *term_out) {
   if (algo != "NONE" && algo != "CERES_LM" && algo != "CERES_DOGLEG")
     throw std::runtime_error("joint_refine: unknown algo '" + algo +
                              "' (CERES_LM|CERES_DOGLEG|NONE)");
+  if (term_out) *term_out = "NONE(skipped)";
   ceres::Problem prob;
   auto add_curve = [&](BlipFit &f, const JointCurveData &d) {
     // scale curve rows by curve_weight (fold into per-sample weights)
@@ -1096,6 +1170,13 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
     opt.logging_type = ceres::SILENT;
     ceres::Solver::Summary sum;
     ceres::Solve(opt, &prob, &sum);
+    if (term_out)
+      *term_out = std::string(ceres_term(sum.termination_type)) + "(" +
+                  std::to_string(sum.iterations.size()) + "it, cost " + [&] {
+                    char b[32];
+                    std::snprintf(b, sizeof(b), "%.3g", sum.final_cost);
+                    return std::string(b);
+                  }() + ")";
   }
 
   // final max weighted |E residual|
