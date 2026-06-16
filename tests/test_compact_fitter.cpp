@@ -165,7 +165,7 @@ TEST_CASE("compact fitter: VARPRO reduced gradient matches finite differences",
   REQUIRE(worst < 1e-5);
 }
 
-TEST_CASE("compact fitter: alternative polish backends recover blips",
+TEST_CASE("compact fitter: alternative refine backends recover blips",
           "[compact]") {
   const BlipFit truth = make_truth();
   std::vector<double> xs, ys;
@@ -174,7 +174,7 @@ TEST_CASE("compact fitter: alternative polish backends recover blips",
   for (const char *algo :
        {"CERES_LM", "CERES_DOGLEG", "NLOPT_LBFGS", "DLIB_LBFGS"}) {
     CompactConfig cfg;
-    cfg.polish_algo = algo;
+    cfg.refine_algo = algo;
     CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
     BlipFit f = truth;
     std::mt19937 rng(11);
@@ -185,15 +185,15 @@ TEST_CASE("compact fitter: alternative polish backends recover blips",
     }
     fit.solve_coeffs(f);
     const double before = f.curve_rmse;
-    const double after = fit.polish_with_cfg(f);
-    INFO("polish algo = " << algo << " before = " << before
+    const double after = fit.refine_with_cfg(f);
+    INFO("refine algo = " << algo << " before = " << before
                           << " after = " << after);
     REQUIRE(after < before);
     REQUIRE(after < 1e-7);  // representable problem + exact gradients
   }
 }
 
-TEST_CASE("compact fitter: Ceres polish recovers exact blips to ~noise",
+TEST_CASE("compact fitter: Ceres refine recovers exact blips to ~noise",
           "[compact]") {
   const BlipFit truth = make_truth();
   std::vector<double> xs, ys;
@@ -211,7 +211,7 @@ TEST_CASE("compact fitter: Ceres polish recovers exact blips to ~noise",
   }
   fit.solve_coeffs(f);
   const double before = f.curve_rmse;
-  const double after = fit.polish(f);
+  const double after = fit.refine(f);
   REQUIRE(after < before);
   REQUIRE(after < 1e-10);  // exact-recovery: representable target
 }
@@ -362,7 +362,7 @@ TEST_CASE("compact fitter: knot energy Jacobian matches finite differences",
                               F.c, F.mu, F.eta});
 }
 
-TEST_CASE("compact fitter: knot polish recovers exact knots (eta pinned)",
+TEST_CASE("compact fitter: knot refine recovers exact knots (eta pinned)",
           "[compact][knot5]") {
   const BlipFit truth = make_knot_truth();
   std::vector<double> xs, ys;
@@ -377,7 +377,7 @@ TEST_CASE("compact fitter: knot polish recovers exact knots (eta pinned)",
   for (int k = 0; k < f.n(); ++k) f.mu[k] += 0.05 * g(rng);
   fit.solve_coeffs(f);
   const double before = f.curve_rmse;
-  const double after = fit.polish(f);
+  const double after = fit.refine(f);
   REQUIRE(after < before);
   REQUIRE(after < 1e-10);  // representable target, exact gradients
   for (int k = 0; k < f.n(); ++k) {
@@ -434,7 +434,8 @@ TEST_CASE("compact fitter: merge_close_knots collapses coalesced pairs",
   f.mu.push_back(3.60);     f.eta.push_back(1.0); f.c.push_back(500.0);
   f.mu.push_back(3.600009); f.eta.push_back(1.0); f.c.push_back(-500.0);
   const int n_before = f.n();
-  fit.merge_close_knots(f);
+  const int merged = fit.merge_close_knots(f);
+  REQUIRE(merged == 1);                    // returns the merge count
   REQUIRE(f.n() == n_before);              // merged + re-inserted elsewhere
   std::vector<double> ts(f.mu.begin(), f.mu.end());
   std::sort(ts.begin(), ts.end());
@@ -446,8 +447,97 @@ TEST_CASE("compact fitter: merge_close_knots collapses coalesced pairs",
   BlipFit b = make_truth();
   CompactBlipFitter bfit(xs, ys, {}, 1.0, 5.5, cfg);
   const int bn = b.n();
-  bfit.merge_close_knots(b);
+  REQUIRE(bfit.merge_close_knots(b) == 0);
   REQUIRE(b.n() == bn);
+
+  // REFIT_COMPACT_MERGE false disables the guard entirely: the coalesced pair
+  // survives untouched and the routine reports zero merges.
+  CompactConfig cfg_off = cfg;
+  cfg_off.merge_guard = false;
+  CompactBlipFitter fit_off(xs, ys, {}, 1.0, 5.5, cfg_off, BasisKind::Knot5L);
+  BlipFit g = truth;
+  g.mu.push_back(3.60);     g.eta.push_back(1.0); g.c.push_back(500.0);
+  g.mu.push_back(3.600009); g.eta.push_back(1.0); g.c.push_back(-500.0);
+  const int gn = g.n();
+  REQUIRE(fit_off.merge_close_knots(g) == 0);  // guard off => no-op
+  REQUIRE(g.n() == gn);
+  REQUIRE(g.mu.back() == 3.600009);            // the coalesced knot is kept
+}
+
+TEST_CASE("compact fitter: curve objective fits derivatives (stacked solve)",
+          "[compact][curve]") {
+  // A smooth, NOT-in-class target (a Gaussian), under-resolved by a fixed knot
+  // set so neither solve is exact — then the value-only (Energy) solve and the
+  // stacked value+d1+d2 (Curve) solve differ, and Curve trades a little value
+  // RMSE for markedly lower curvature (d2) error.
+  std::vector<double> xs, ys;
+  const int N = 200;
+  for (int i = 0; i < N; ++i) {
+    const double x = 1.0 + (5.5 - 1.0) * i / (N - 1);
+    xs.push_back(x);
+    ys.push_back(std::exp(-(x - 3.0) * (x - 3.0)));
+  }
+  BlipFit knots;
+  knots.kind = BasisKind::Knot5L;
+  for (double m : {1.5, 2.5, 3.5, 4.5}) {
+    knots.mu.push_back(m); knots.eta.push_back(1.0); knots.c.push_back(0.0);
+  }
+
+  CompactConfig ce;  // Energy = value-only solve (the default)
+  CompactBlipFitter fe(xs, ys, {}, 1.0, 5.5, ce, BasisKind::Knot5L);
+  BlipFit ev = knots; fe.solve_coeffs(ev);
+
+  // exercise the STACKED value+d1+d2 solve: curve_deriv_weight > 0 (the default
+  // is 0 = pure value, which is deliberately identical to the energy value-LS).
+  CompactConfig cc; cc.objective = RefitObjective::Curve;
+  cc.curve_deriv_weight = 1.0;
+  CompactBlipFitter fc(xs, ys, {}, 1.0, 5.5, cc, BasisKind::Knot5L);
+  BlipFit cv = knots; fc.solve_coeffs(cv);
+
+  // the two objectives produce genuinely different coefficients
+  double dmax = 0.0;
+  for (int k = 0; k < knots.n(); ++k)
+    dmax = std::max(dmax, std::fabs(cv.c[k] - ev.c[k]));
+  REQUIRE(dmax > 1e-6);
+
+  // and the DEFAULT curve weight (0) reproduces the value-only solve exactly
+  // (this is the crystal-faithful default — pure value fit)
+  CompactConfig cc0; cc0.objective = RefitObjective::Curve;  // deriv_weight=0
+  CompactBlipFitter fc0(xs, ys, {}, 1.0, 5.5, cc0, BasisKind::Knot5L);
+  BlipFit cv0 = knots; fc0.solve_coeffs(cv0);
+  for (int k = 0; k < knots.n(); ++k)
+    REQUIRE(cv0.c[k] == Approx(ev.c[k]).margin(1e-9));
+
+  // value-only minimises VALUE rmse (so it is <= the curve solve's value rmse)
+  REQUIRE(ev.curve_rmse <= cv.curve_rmse + 1e-10);
+  // ...and the curve solve fits the 2nd derivative strictly better
+  REQUIRE(fc.d2_rmse(cv) < fe.d2_rmse(ev));
+  // combined score is a positive, finite dimensionless number
+  const double s = fc.combined_curve_score(cv);
+  REQUIRE(s > 0.0);
+  REQUIRE(std::isfinite(s));
+}
+
+TEST_CASE("compact fitter: curve-objective ladder runs and lowers d2",
+          "[compact][curve]") {
+  // full ladder smoke test in curve mode: it must grow and reduce the curvature
+  // error vs the rung-0 seed, with the energy metric (a dummy here) unused.
+  const BlipFit truth = make_knot_truth();
+  std::vector<double> xs, ys;
+  sample(truth, 1.0, 5.5, 300, xs, ys);
+  CompactConfig cfg;
+  cfg.objective = RefitObjective::Curve;
+  cfg.n_max = 8;
+  cfg.stall_rungs = 6;
+  CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg, BasisKind::Knot5L);
+  std::vector<LadderRow> trace;
+  // dummy energy metric: must be IGNORED in curve mode (return a constant)
+  BlipFit best = fit.fit([](const BlipFit &) { return 42.0; }, trace);
+  REQUIRE(best.n() >= 2);
+  REQUIRE(best.metric != 42.0);              // decisions used the curve score
+  REQUIRE(best.metric == Approx(fit.combined_curve_score(best)));
+  REQUIRE(fit.combined_curve_score(best) > 0.0);
+  REQUIRE(std::isfinite(best.curve_rmse));
 }
 
 TEST_CASE("compact fitter: knot ladder recovers an in-class knotted target",
@@ -542,7 +632,7 @@ TEST_CASE("compact fitter: knot joint refine drives E-V residuals to ~noise",
 
 // ===================== quintic B-spline bump (Blip5) =====================
 
-TEST_CASE("compact fitter: Blip5 polish recovers exact quintic bumps",
+TEST_CASE("compact fitter: Blip5 refine recovers exact quintic bumps",
           "[compact][blip5]") {
   BlipFit truth;
   truth.kind = BasisKind::Blip5;
@@ -564,7 +654,7 @@ TEST_CASE("compact fitter: Blip5 polish recovers exact quintic bumps",
   }
   fit.solve_coeffs(f);
   const double before = f.curve_rmse;
-  const double after = fit.polish(f);
+  const double after = fit.refine(f);
   REQUIRE(after < before);
   REQUIRE(after < 1e-10);  // representable target, exact gradients (C^4!)
 }
@@ -633,7 +723,7 @@ TEST_CASE("compact fitter: KnotMix ladder recovers a mixed-degree truth",
   REQUIRE(n_cubic >= 1);         // the auto-mode actually deployed cubics
 }
 
-TEST_CASE("compact fitter: pure Knot3 polish recovers exact cubic knots",
+TEST_CASE("compact fitter: pure Knot3 refine recovers exact cubic knots",
           "[compact][knotmix]") {
   BlipFit truth;
   truth.kind = BasisKind::Knot5L;
@@ -654,7 +744,7 @@ TEST_CASE("compact fitter: pure Knot3 polish recovers exact cubic knots",
   for (int k = 0; k < f.n(); ++k) f.mu[k] += 0.04 * g(rng);
   fit.solve_coeffs(f);
   const double before = f.curve_rmse;
-  const double after = fit.polish(f);
+  const double after = fit.refine(f);
   REQUIRE(after < before);
   REQUIRE(after < 1e-10);
   for (int k = 0; k < f.n(); ++k) REQUIRE(f.degree(k) == 3);

@@ -7,6 +7,7 @@
 #include <tadah/hpo/init_strategy.h>
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/optimizer_caps.h>
+#include <tadah/hpo/refit/refit_parser.h>
 #include <tadah/core/context.h>
 
 #include <atomic>
@@ -16,6 +17,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
 /* HPO integration tests
  *
@@ -1140,4 +1142,112 @@ TEST_CASE("GradientProvider Hybrid without callback throws wiring error",
     CHECK_THROWS_WITH(gp.gradient(x, g),
                       Catch::Contains("HYBRID") &&
                       Catch::Contains("internal wiring"));
+}
+
+/* ---- tadah refit stage-pipeline parser (INIT/EXPLORE/REFINE/FUSE) ---- */
+namespace {
+// Mirror what CORE's config parser deposits: each stage block becomes a
+// whitespace-split STRINGS Context key. Add token-by-token (these are valid
+// blueprint STRINGS keys, so Context::add accepts them).
+void add_block(tadah::core::Context &c, const std::string &key,
+               const std::string &body) {
+    std::istringstream iss(body);
+    std::string t;
+    while (iss >> t) c.add(key, t);
+}
+}  // namespace
+
+TEST_CASE("RefitParser parses the INIT/EXPLORE/REFINE/FUSE pipeline") {
+    using namespace tadah::hpo::refit;
+    tadah::core::Context c;
+    add_block(c, "INIT", "PHI XMIN PIN F XMAX PIN RHO MANUAL 2.55 1.5");
+    add_block(c, "EXPLORE",
+              "MAX_ADD 8 OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS MAXEVAL 60000 "
+              "INNER LIB NLOPT ALGO LN_SBPLX MAXEVAL 20000 FTOL_REL 1e-13 "
+              "XTOL_REL 1e-11 ENDINNER ENDOPTIMIZER");
+    add_block(c, "REFINE",
+              "OPTIMIZER LIB CERES ALGO LM MAXEVAL 1000 FTOL_REL 1e-15 "
+              "GTOL 1e-14 ENDOPTIMIZER");
+    add_block(c, "FUSE",
+              "OPTIMIZER LIB CERES ALGO DOGLEG MAXEVAL 2000 FTOL_REL 1e-15 "
+              "ENDOPTIMIZER");
+
+    RefitConfig rc = RefitParser::parse(c);
+
+    REQUIRE(rc.init.size() == 3);
+    CHECK(rc.init[0].channel == InitBasis::PHI);
+    CHECK(rc.init[0].placement == PinMode::XMin);
+    CHECK(rc.init[0].pinned);
+    CHECK(rc.init[1].channel == InitBasis::F);
+    CHECK(rc.init[1].placement == PinMode::XMax);
+    CHECK(rc.init[1].pinned);
+    CHECK(rc.init[2].channel == InitBasis::RHO);
+    CHECK(rc.init[2].placement == PinMode::Manual);
+    CHECK(rc.init[2].mu == Approx(2.55));
+    CHECK(rc.init[2].has_eta);
+    CHECK(rc.init[2].eta == Approx(1.5));
+    CHECK_FALSE(rc.init[2].pinned);
+
+    CHECK(rc.explore.has_opt);
+    // a single MAX_ADD value fills all three per-function slots [phi, rho, F]
+    CHECK(rc.explore.max_add[0] == 8);
+    CHECK(rc.explore.max_add[1] == 8);
+    CHECK(rc.explore.max_add[2] == 8);
+    CHECK(refit_explore_outer_algo(rc.explore.opt) == "MLSL");
+    REQUIRE(rc.explore.opt.inner);
+    CHECK(refit_explore_inner_algo(*rc.explore.opt.inner) == "SBPLX");
+    REQUIRE(rc.explore.opt.stop.maxeval.has_value());
+    CHECK(rc.explore.opt.stop.maxeval.value() == 60000);
+    REQUIRE(rc.explore.opt.inner->stop.maxeval.has_value());
+    CHECK(rc.explore.opt.inner->stop.maxeval.value() == 20000);
+
+    CHECK(refit_refine_algo(rc.refine.opt) == "CERES_LM");
+    CHECK(rc.refine.opt.stop.maxeval.value() == 1000);  // MAXEVAL -> ceres iters
+    REQUIRE(rc.refine.opt.stop.ftol_rel.has_value());    // FTOL_REL -> function_tolerance
+    CHECK(rc.refine.opt.stop.ftol_rel.value() == Approx(1e-15));
+    CHECK(rc.refine.opt.param.at("GTOL") == Approx(1e-14));
+
+    CHECK(refit_fuse_algo(rc.fuse.opt) == "CERES_DOGLEG");
+    CHECK(rc.fuse.opt.stop.maxeval.value() == 2000);
+}
+
+TEST_CASE("RefitParser rejects old grammar and illegal stage algorithms") {
+    using namespace tadah::hpo::refit;
+
+    SECTION("a top-level OPTIMIZER block (old grammar) is rejected") {
+        tadah::core::Context c;
+        add_block(c, "OPTIMIZER", "GLOBAL ALGO MLSL ENDGLOBAL");
+        CHECK_THROWS(RefitParser::parse(c));
+    }
+    SECTION("FUSE only accepts least-squares Ceres") {
+        tadah::hpo::OptimizerSpec s; s.lib = "CERES"; s.algo = "LBFGS";
+        CHECK_THROWS(refit_fuse_algo(s));
+    }
+    SECTION("REFINE rejects FTOL_ABS (Ceres function_tolerance is relative)") {
+        tadah::core::Context c;
+        add_block(c, "REFINE",
+                  "OPTIMIZER LIB CERES ALGO LM FTOL_ABS 1e-12 ENDOPTIMIZER");
+        CHECK_THROWS(RefitParser::parse(c));
+    }
+    SECTION("FUSE rejects the bare FTOL alias") {
+        tadah::core::Context c;
+        add_block(c, "FUSE",
+                  "OPTIMIZER LIB CERES ALGO DOGLEG FTOL 1e-12 ENDOPTIMIZER");
+        CHECK_THROWS(RefitParser::parse(c));
+    }
+    SECTION("EXPLORE outer must be a global search") {
+        tadah::hpo::OptimizerSpec s; s.lib = "NLOPT"; s.algo = "LN_SBPLX";
+        CHECK_THROWS(refit_explore_outer_algo(s));
+    }
+    SECTION("UNIFORM disables the global seed (accepted)") {
+        tadah::hpo::OptimizerSpec s; s.algo = "UNIFORM";
+        CHECK(refit_explore_outer_algo(s) == "UNIFORM");
+    }
+    SECTION("XMAX on PHI is parsed (engine skips it at resolution time)") {
+        tadah::core::Context c;
+        add_block(c, "INIT", "PHI XMAX PIN");
+        RefitConfig rc = RefitParser::parse(c);
+        REQUIRE(rc.init.size() == 1);
+        CHECK(rc.init[0].placement == PinMode::XMax);
+    }
 }

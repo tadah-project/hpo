@@ -3,6 +3,7 @@
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/init_strategy.h>
 #include <tadah/hpo/optimizer_caps.h>
+#include <tadah/hpo/optimizer_block.h>
 #include <tadah/models/descriptors/d_base.h>
 #include <tadah/models/descriptors/d_mjoin.h>
 #include <tadah/core/registry.h>
@@ -580,58 +581,9 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
 // -------------------------------------------------------------------
 // HPOTargets::read   - complete, no omissions
 // -------------------------------------------------------------------
-/* Helper: parse a boolean token (true/false/1/0/yes/no/on/off, any case).
- * Throws on unknown spellings. */
-static bool parse_bool(const std::string& v, const std::string& ctx)
-{
-    std::string lo; lo.reserve(v.size());
-    for (char c : v) lo.push_back(static_cast<char>(std::tolower(c)));
-    if (lo=="true" || lo=="1" || lo=="yes" || lo=="on")  return true;
-    if (lo=="false"|| lo=="0" || lo=="no"  || lo=="off") return false;
-    throw std::runtime_error(ctx + ": expected boolean (true/false/1/0/yes/no/on/off), got '" + v + "'");
-}
-
-/* Helper: parse one optimiser-attribute key/value into an OptimizerSpec.
- * Returns true if `key` was consumed; false otherwise (caller can try
- * other dispatches).  These keys are valid wherever an OptimizerSpec is
- * the active receiver -- STRATEGY top-level, EXPLORE, REFINE, INNER. */
-static bool dispatch_opt_attr(const std::string& key,
-                              std::istringstream& iss,
-                              OptimizerSpec& a)
-{
-    if      (key=="LIB")       iss >> a.lib;
-    else if (key=="ALGO")      iss >> a.algo;
-    else if (key=="MAXEVAL")   { uint64_t v; iss>>v; a.stop.maxeval=v; }
-    else if (key=="MAXTIME")   { double   v; iss>>v; a.stop.maxtime=v; }
-    else if (key=="STOPVAL")   { double   v; iss>>v; a.stop.stopval=v; }
-    else if (key=="FTOL_REL")  { double   v; iss>>v; a.stop.ftol_rel=v; }
-    else if (key=="FTOL_ABS")  { double   v; iss>>v; a.stop.ftol_abs=v; }
-    else if (key=="XTOL_REL")  { double   v; iss>>v; a.stop.xtol_rel=v; }
-    else if (key=="XTOL_ABS")  { double   v; iss>>v; a.stop.xtol_abs=v; }
-    else if (key=="POPULATION"){ unsigned v; iss>>v; a.pop=v; }
-    else if (key=="STEP")      { double   v; iss>>v; a.step=v; }
-    else if (key=="SEED")      { unsigned long v; iss>>v; a.seed=v; }
-    else if (key=="VECTOR_ARR"){ unsigned v; iss>>v; a.vector_storage=v; }
-    else if (key=="THREADS")   { unsigned v; iss>>v; a.num_threads=v; }
-    else if (key=="GRAD_STRATEGY") {
-        std::string v; iss>>v;
-        if      (v=="NUMERICAL")  a.grad_strategy = GradStrategy::Numerical;
-        else if (v=="ANALYTICAL") a.grad_strategy = GradStrategy::Analytical;
-        else if (v=="HYBRID")     a.grad_strategy = GradStrategy::Hybrid;
-        else if (v=="AUTODIFF")   throw std::runtime_error(
-            "GRAD_STRATEGY=AUTODIFF was renamed to ANALYTICAL in Phase 2; "
-            "the prior stub now backs a closed-form analytical gradient. "
-            "Use GRAD_STRATEGY ANALYTICAL (strict -- every theta must have a "
-            "registered analytical derivative) or GRAD_STRATEGY HYBRID "
-            "(analytical-where-registered + finite-difference fallback).");
-        else throw std::runtime_error(
-            "GRAD_STRATEGY must be one of NUMERICAL, ANALYTICAL, HYBRID "
-            "(got '" + v + "')");
-    }
-    else if (key=="PARAM")     { std::string p; double v; iss>>p>>v; a.param[p]=v; }
-    else return false;
-    return true;
-}
+/* parse_bool() and dispatch_opt_attr() moved to optimizer_block.{h,cpp} —
+ * shared with the `tadah refit` stage parser (RefitParser). The calls below
+ * resolve to those tadah::hpo:: free functions. */
 
 /* Helper: parse one INIT-block key/value into an InitStrategySpec.
  * Returns true if consumed; false otherwise.

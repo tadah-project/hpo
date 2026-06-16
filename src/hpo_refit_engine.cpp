@@ -6,6 +6,8 @@
 
 #ifdef TADAH_USE_CERES
 #include <tadah/hpo/refit/compact_fitter.h>
+#include <tadah/hpo/refit/refit_config.h>
+#include <tadah/hpo/refit/refit_parser.h>
 #endif
 
 #include <algorithm>
@@ -13,7 +15,7 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
-#include <initializer_list>
+#include <iomanip>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -50,120 +52,149 @@ double cget(const Context &c, const std::string &k, double def) {
 int iget(const Context &c, const std::string &k, int def) {
   return c.contains(k) && c.size(k) > 0 ? c.get<int>(k) : def;
 }
-
-std::string up_(std::string s) {
-  for (char &ch : s) ch = static_cast<char>(std::toupper((unsigned char)ch));
-  return s;
-}
-void check_algo(const std::string &stage, const std::string &v,
-                std::initializer_list<const char *> vocab) {
-  for (const char *w : vocab)
-    if (v == w) return;
-  std::string list;
-  for (const char *w : vocab) list += (list.empty() ? "" : "|") + std::string(w);
-  throw std::runtime_error("OPTIMIZER " + stage + ": unknown ALGO '" + v +
-                           "' (" + list + ")");
+bool bget(const Context &c, const std::string &k, bool def) {
+  return c.contains(k) && c.size(k) > 0 ? c.get<bool>(k) : def;
 }
 
-// Parse the inline OPTIMIZER block (token stream captured verbatim by the
-// config parser between OPTIMIZER and ENDOPTIMIZER) into CompactConfig.
-// Grammar (subblocks and attributes all optional; keywords case-insensitive):
-//   GLOBAL  ALGO <a> [MAXEVAL <n>]                              ENDGLOBAL
-//   EXPLORE ALGO <a> [MAXEVAL <n>] [FTOL_REL <v>] [XTOL_REL <v>] ENDEXPLORE
-//   POLISH  ALGO <a> [MAXITER <n>] [FTOL <v>] [GTOL <v>]         ENDPOLISH
-//   JOINT   ALGO <a> [MAXITER <n>] [FTOL <v>]                    ENDJOINT
-// The GLOBAL stage's inner local refinement (MLSL) reuses the EXPLORE
-// tolerances. (GLOBAL maps to the CompactConfig seed_* fields internally.)
-void parse_optimizer_block(const std::vector<std::string> &tok,
-                           CompactConfig &cfg) {
-  auto as_int = [](const std::string &s, const char *attr) {
-    try {
-      size_t p = 0;
-      int v = std::stoi(s, &p);
-      if (p != s.size()) throw std::invalid_argument(s);
-      return v;
-    } catch (...) {
-      throw std::runtime_error(std::string("OPTIMIZER: ") + attr +
-                               " expects an integer, got '" + s + "'");
+// The legacy inline OPTIMIZER-block parser (GLOBAL/EXPLORE/POLISH/JOINT
+// subblocks) was replaced by the stage pipeline parser RefitParser (see
+// refit_parser.{h,cpp}). The new INIT/EXPLORE/REFINE/FUSE blocks are parsed
+// there into a RefitConfig, which compact_fit() flattens into CompactConfig
+// (apply_stage_optimizers) and resolves into per-channel INIT seeds.
+
+// Flatten the parsed EXPLORE/REFINE/FUSE OptimizerSpecs onto CompactConfig's
+// scalar fields. EXPLORE outer = the global seed at rung 0 (absorbs the old
+// GLOBAL stage); EXPLORE INNER = the per-rung local search.
+void apply_stage_optimizers(const RefitConfig &rc, CompactConfig &lcfg) {
+  if (rc.explore.has_opt) {
+    const OptimizerSpec &o = rc.explore.opt;
+    lcfg.seed_algo = refit_explore_outer_algo(o);
+    if (o.stop.maxeval) lcfg.mlsl_maxeval = static_cast<int>(*o.stop.maxeval);
+    if (o.inner) {
+      const OptimizerSpec &in = *o.inner;
+      lcfg.explore_algo = refit_explore_inner_algo(in);
+      if (in.stop.maxeval) lcfg.sbplx_maxeval = static_cast<int>(*in.stop.maxeval);
+      if (in.stop.ftol_rel) lcfg.sbplx_ftol = *in.stop.ftol_rel;
+      if (in.stop.xtol_rel) lcfg.sbplx_xtol = *in.stop.xtol_rel;
     }
-  };
-  auto as_dbl = [](const std::string &s, const char *attr) {
-    try {
-      size_t p = 0;
-      double v = std::stod(s, &p);
-      if (p != s.size()) throw std::invalid_argument(s);
-      return v;
-    } catch (...) {
-      throw std::runtime_error(std::string("OPTIMIZER: ") + attr +
-                               " expects a number, got '" + s + "'");
-    }
-  };
-  size_t i = 0;
-  while (i < tok.size()) {
-    const std::string blk = up_(tok[i]);
-    if (blk != "GLOBAL" && blk != "EXPLORE" && blk != "POLISH" &&
-        blk != "JOINT")
-      throw std::runtime_error("OPTIMIZER: unknown subblock '" + tok[i] +
-                               "' (GLOBAL|EXPLORE|POLISH|JOINT)");
-    const std::string end = "END" + blk;
-    ++i;  // consume subblock opener
-    bool closed = false;
-    while (i < tok.size()) {
-      const std::string a = up_(tok[i]);
-      if (a == end) {
-        ++i;
-        closed = true;
-        break;
-      }
-      if (i + 1 >= tok.size())
-        throw std::runtime_error("OPTIMIZER " + blk + ": missing value after '" +
-                                 tok[i] + "'");
-      const std::string &val = tok[i + 1];
-      if (a == "ALGO") {
-        const std::string A = up_(val);
-        if (blk == "GLOBAL") {
-          check_algo("GLOBAL", A, {"MLSL", "DIRECT", "CRS2", "DLIB_GLOBAL",
-                                   "UNIFORM"});
-          cfg.seed_algo = A;
-        } else if (blk == "EXPLORE") {
-          check_algo("EXPLORE", A, {"SBPLX", "NELDERMEAD", "BOBYQA", "PRAXIS",
-                                    "NLOPT_LBFGS", "DLIB_LBFGS", "NONE"});
-          cfg.explore_algo = A;
-        } else if (blk == "POLISH") {
-          check_algo("POLISH", A, {"CERES_LM", "CERES_DOGLEG", "NLOPT_LBFGS",
-                                   "DLIB_LBFGS", "NONE"});
-          cfg.polish_algo = A;
-        } else {
-          check_algo("JOINT", A, {"CERES_DOGLEG", "CERES_LM", "NONE"});
-          cfg.joint_algo = A;
-        }
-      } else if (a == "MAXEVAL" && (blk == "GLOBAL" || blk == "EXPLORE")) {
-        const int n = as_int(val, "MAXEVAL");
-        if (blk == "GLOBAL") cfg.mlsl_maxeval = n;
-        else cfg.sbplx_maxeval = n;
-      } else if (a == "FTOL_REL" && blk == "EXPLORE") {
-        cfg.sbplx_ftol = as_dbl(val, "FTOL_REL");
-      } else if (a == "XTOL_REL" && blk == "EXPLORE") {
-        cfg.sbplx_xtol = as_dbl(val, "XTOL_REL");
-      } else if (a == "MAXITER" && (blk == "POLISH" || blk == "JOINT")) {
-        const int n = as_int(val, "MAXITER");
-        if (blk == "POLISH") cfg.ceres_max_iter = n;
-        else cfg.joint_max_iter = n;
-      } else if (a == "FTOL" && (blk == "POLISH" || blk == "JOINT")) {
-        const double v = as_dbl(val, "FTOL");
-        if (blk == "POLISH") cfg.ceres_ftol = v;
-        else cfg.joint_ftol = v;
-      } else if (a == "GTOL" && blk == "POLISH") {
-        cfg.ceres_gtol = as_dbl(val, "GTOL");
-      } else {
-        throw std::runtime_error("OPTIMIZER " + blk + ": unknown keyword '" +
-                                 tok[i] + "'");
-      }
-      i += 2;
-    }
-    if (!closed)
-      throw std::runtime_error("OPTIMIZER: " + blk + " not closed with " + end);
   }
+  // ceres_ftol / joint_ftol feed Ceres' function_tolerance, which is RELATIVE
+  // ((new_cost - old_cost) < ftol * old_cost) — Ceres has no absolute function
+  // tolerance, so FTOL_REL is the only accepted key (FTOL / FTOL_ABS are
+  // rejected by RefitParser).
+  if (rc.refine.has_opt) {
+    const OptimizerSpec &o = rc.refine.opt;
+    lcfg.refine_algo = refit_refine_algo(o);
+    if (o.stop.maxeval) lcfg.ceres_max_iter = static_cast<int>(*o.stop.maxeval);
+    if (o.stop.ftol_rel) lcfg.ceres_ftol = *o.stop.ftol_rel;
+    auto it = o.param.find("GTOL");
+    if (it != o.param.end()) lcfg.ceres_gtol = it->second;
+  }
+  if (rc.fuse.has_opt) {
+    const OptimizerSpec &o = rc.fuse.opt;
+    lcfg.joint_algo = refit_fuse_algo(o);
+    if (o.stop.maxeval) lcfg.joint_max_iter = static_cast<int>(*o.stop.maxeval);
+    if (o.stop.ftol_rel) lcfg.joint_ftol = *o.stop.ftol_rel;
+  }
+  // Explicit per-stage ON/OFF (ENABLED false) is a master kill-switch: it WINS
+  // over any configured optimiser (sets the stage's algo to NONE). If an
+  // optimiser was also configured, log that it is being ignored so the override
+  // is never silent. (EXPLORE cannot be disabled — enforced by the parser.)
+  if (!rc.refine.enabled) {
+    if (rc.refine.has_opt && refit_refine_algo(rc.refine.opt) != "NONE")
+      Logger::instance().log(LogLevel::WARNING,
+          "tadah refit: REFINE ENABLED false — stage DISABLED; the configured "
+          "REFINE optimiser (" + refit_refine_algo(rc.refine.opt) +
+          ") is ignored.");
+    else
+      Logger::instance().log(LogLevel::INFO,
+          "tadah refit: REFINE disabled (ENABLED false).");
+    lcfg.refine_algo = "NONE";
+  }
+  if (!rc.fuse.enabled) {
+    if (rc.fuse.has_opt && refit_fuse_algo(rc.fuse.opt) != "NONE")
+      Logger::instance().log(LogLevel::WARNING,
+          "tadah refit: FUSE ENABLED false — stage DISABLED; the configured "
+          "FUSE optimiser (" + refit_fuse_algo(rc.fuse.opt) + ") is ignored.");
+    else
+      Logger::instance().log(LogLevel::INFO,
+          "tadah refit: FUSE disabled (ENABLED false).");
+    lcfg.joint_algo = "NONE";
+  }
+}
+
+// Resolve one INIT anchor's centre on a channel's window [lo,hi] / target d.
+// Returns false if it should be skipped (XMAX on the left-active phi/rho).
+bool resolve_init_mu(const InitBasis &b, const JointCurveData &d, double lo,
+                     double hi, double &mu_out) {
+  auto arg_extreme = [&](bool want_max) {
+    if (d.ys.empty()) return 0.5 * (lo + hi);
+    std::size_t bi = 0;
+    for (std::size_t i = 1; i < d.ys.size(); ++i)
+      if (want_max ? (d.ys[i] > d.ys[bi]) : (d.ys[i] < d.ys[bi])) bi = i;
+    return d.xs[bi];
+  };
+  auto arg_deriv = [&](int order) {  // location of max |1st|/|2nd| derivative
+    const std::size_t n = d.xs.size();
+    if (n < 3) return 0.5 * (lo + hi);
+    std::size_t bi = 1;
+    double best = -1.0;
+    for (std::size_t i = 1; i + 1 < n; ++i) {
+      const double hl = d.xs[i] - d.xs[i - 1], hr = d.xs[i + 1] - d.xs[i];
+      if (hl <= 0.0 || hr <= 0.0) continue;
+      const double val =
+          (order == 1)
+              ? (d.ys[i + 1] - d.ys[i - 1]) / (hl + hr)
+              : 2.0 *
+                    (hl * d.ys[i + 1] - (hl + hr) * d.ys[i] + hr * d.ys[i - 1]) /
+                    (hl * hr * (hl + hr));
+      if (std::fabs(val) > best) { best = std::fabs(val); bi = i; }
+    }
+    return d.xs[bi];
+  };
+  switch (b.placement) {
+    case PinMode::Manual: mu_out = b.mu; return true;
+    case PinMode::XMin: mu_out = lo; return true;
+    case PinMode::XMax:
+      if (b.channel != InitBasis::F) {
+        Logger::instance().log(LogLevel::WARNING,
+            "tadah refit INIT: XMAX skipped for PHI/RHO (left-active, vanish "
+            "at the cutoff); only F (embedding) honours XMAX.");
+        return false;
+      }
+      mu_out = hi;
+      return true;
+    case PinMode::YMin: mu_out = arg_extreme(false); return true;
+    case PinMode::YMax: mu_out = arg_extreme(true); return true;
+    case PinMode::SMax: mu_out = arg_deriv(1); return true;
+    case PinMode::CMax: mu_out = arg_deriv(2); return true;
+  }
+  return false;
+}
+
+// Build the per-channel INIT seed (empty BlipFit if no INIT bases on `ch`).
+BlipFit build_init_seed(const RefitConfig &rc, InitBasis::Channel ch,
+                        BasisKind kind, const JointCurveData &d, double lo,
+                        double hi, int knot_degree) {
+  BlipFit f;
+  f.kind = kind;
+  const bool os = one_sided(kind);
+  const double eta_def = os ? 1.0 : 4.0 / std::max(1e-12, hi - lo);
+  bool any_nondefault_deg = false;
+  for (const InitBasis &b : rc.init) {
+    if (b.channel != ch) continue;
+    double mu;
+    if (!resolve_init_mu(b, d, lo, hi, mu)) continue;
+    f.mu.push_back(mu);
+    f.eta.push_back(os ? 1.0 : (b.has_eta ? b.eta : eta_def));
+    f.c.push_back(0.0);
+    f.pinned.push_back(b.pinned);
+    const int deg = (os && knot_degree != 5) ? knot_degree : 5;
+    f.deg.push_back(deg);
+    if (deg != 5) any_nondefault_deg = true;
+  }
+  if (!any_nondefault_deg) f.deg.clear();  // empty = all quintic (default)
+  return f;
 }
 }  // namespace
 
@@ -173,14 +204,15 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                                  std::unique_ptr<tadah::models::EAMRefit> &refit,
                                  SelfTest &st) {
   // ---- reachability first: compact mode NEEDS the energy metric ----
+  // The lattice/a0 are already guaranteed recognised by the crystal gate in
+  // RefitEngine::run(); a non-positive reachable window would still be unusable
+  // for rung selection, so fall back to dense in that (defensive) case.
   EAMRefit probe(eam, cfg);
   probe.analyze_reachability();
-  if (!probe.lattice_known() || eam.lattice_param() <= 0.0 ||
-      probe.r_reach() <= 0.0) {
+  if (probe.r_reach() <= 0.0) {
     Logger::instance().log(LogLevel::WARNING,
-        "tadah refit[compact]: header lattice '" + eam.lattice() +
-        "' / a0 unusable for the crystal energy metric — compact mode needs "
-        "it for rung selection.");
+        "tadah refit[compact]: reachable pair-distance window could not be "
+        "computed (r_reach<=0) — falling back to dense fitting.");
     return false;
   }
   const double rcut = eam.rcut();
@@ -223,7 +255,34 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   const double tol_cmp = cget(c, "REFIT_TOL_COMPRESSED", 1.0) * 1e-3;
   const double share = cget(c, "REFIT_COMPACT_SHARE", 0.5);
   CompactConfig lcfg;
-  lcfg.n_max = iget(c, "REFIT_COMPACT_NMAX", 40);
+  // REFIT_COMPACT_NMAX: per-function basis ceiling, indexed [phi, rho, F]. One
+  // value applies to all three; three values set them per-function.
+  int nmax_fn[3] = {40, 40, 40};
+  {
+    std::vector<std::string> t;
+    if (c.contains("REFIT_COMPACT_NMAX") && c.size("REFIT_COMPACT_NMAX") > 0) {
+      t.resize(c.size("REFIT_COMPACT_NMAX"));
+      c.get("REFIT_COMPACT_NMAX", t);
+    }
+    auto toi = [](const std::string &s) {
+      try { size_t p = 0; int v = std::stoi(s, &p);
+            if (p != s.size()) throw 0; return v; }
+      catch (...) { throw std::runtime_error(
+          "tadah refit: REFIT_COMPACT_NMAX expects integer(s); got '" + s + "'"); }
+    };
+    if (t.size() == 1) { nmax_fn[0] = nmax_fn[1] = nmax_fn[2] = toi(t[0]); }
+    else if (t.size() == 3) { nmax_fn[0] = toi(t[0]); nmax_fn[1] = toi(t[1]); nmax_fn[2] = toi(t[2]); }
+    else if (!t.empty())
+      throw std::runtime_error(
+          "tadah refit: REFIT_COMPACT_NMAX takes 1 value (all functions) or 3 "
+          "(phi rho F); got " + std::to_string(t.size()));
+    for (int v : nmax_fn)
+      if (v < 1) throw std::runtime_error(
+          "tadah refit: REFIT_COMPACT_NMAX values must be >= 1");
+  }
+  // lcfg.n_max = the max across functions — used for the sample-grid clamp and
+  // as the CompactConfig default; per-function ceilings are passed to run_ladder.
+  lcfg.n_max = std::max({nmax_fn[0], nmax_fn[1], nmax_fn[2]});
   lcfg.seed = static_cast<unsigned>(iget(c, "REFIT_COMPACT_SEED", 12345));
   // knot-family ladder schedule (blip defaults = legacy, regression-gated).
   // Matrix-measured (Fe+Ta LAMMPS batteries, 4 schedules): per-rung
@@ -235,16 +294,103 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   lcfg.opt_every = iget(c, "REFIT_COMPACT_OPT_EVERY", 1);
   lcfg.stall_rungs = iget(c, "REFIT_COMPACT_STALL", knotfam ? 12 : 6);
   lcfg.insert_topk = iget(c, "REFIT_COMPACT_INSERT_TOPK", knotfam ? 3 : 1);
+  // Randomised warm restarts per rung (each one runs the full EXPLORE->REFINE
+  // candidate, then the coalescence guard): jitters+1 candidates per rung, the
+  // metric-best kept. REFIT_COMPACT_JITTERS 0 = warm start only (cheaper, less
+  // exploration). This is WHY the guard's repair fired several times per rung.
+  lcfg.jitters = iget(c, "REFIT_COMPACT_JITTERS", 2);
   lcfg.knot_degree = knot3 ? 3 : 5;
   lcfg.knot_mix = knotmix;
+  // REFIT_OBJECTIVE: what the whole chain optimises toward. energy (default) =
+  // the crystal energy metric; curve = the normalised value+1st+2nd-derivative
+  // combined RMSE (energy is then unused end-to-end; FUSE drops its E-V term).
+  {
+    std::string obj = (c.contains("REFIT_OBJECTIVE") &&
+                       c.size("REFIT_OBJECTIVE") > 0)
+                          ? c.get<std::string>("REFIT_OBJECTIVE")
+                          : std::string("energy");
+    for (auto &ch : obj)
+      ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    if (obj == "curve")
+      lcfg.objective = RefitObjective::Curve;
+    else if (obj == "energy")
+      lcfg.objective = RefitObjective::Energy;
+    else
+      throw std::runtime_error(
+          "tadah refit: REFIT_OBJECTIVE must be 'energy' (default) or 'curve'; "
+          "got '" + obj + "'");
+  }
+  const bool curve_obj = (lcfg.objective == RefitObjective::Curve);
+  // Coalescence guard (Knot families): soft anti-coalescence penalty in EXPLORE
+  // + post-REFINE merge/re-insert of near-coincident knot pairs.
+  // REFIT_COMPACT_MERGE 'auto' (default) = OFF in curve mode (it over-constrains
+  // the weighted-curve ladder) and ON in energy mode (where it was validated);
+  // 'true'/'false' force it. No effect on the Blip families (no knots).
+  {
+    std::string m = (c.contains("REFIT_COMPACT_MERGE") &&
+                     c.size("REFIT_COMPACT_MERGE") > 0)
+                        ? c.get<std::string>("REFIT_COMPACT_MERGE")
+                        : std::string("auto");
+    for (auto &ch : m)
+      ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    if (m == "auto")       lcfg.merge_guard = !curve_obj;
+    else if (m == "true")  lcfg.merge_guard = true;
+    else if (m == "false") lcfg.merge_guard = false;
+    else
+      throw std::runtime_error(
+          "tadah refit: REFIT_COMPACT_MERGE must be 'true', 'false', or 'auto' "
+          "(default: off in curve mode, on in energy mode); got '" + m + "'");
+  }
+  // Curve mode: weight of each derivative block vs value. Default 0 (pure
+  // value) = crystal-faithful (LAMMPS energy depends on the curve VALUES);
+  // nonzero trades crystal energy for derivative SHAPE (measured: sharp
+  // degradation even at 0.01).
+  lcfg.curve_deriv_weight = cget(c, "REFIT_CURVE_DERIV_WEIGHT", 0.0);
+  // Pressure-relaxed curve weighting (curve mode, ON by default). Tight fit
+  // where the crystal actually probes (ambient: r in [r_amb,rcut], rho in
+  // [0,rho_amb]); smooth relaxation toward the compressed/high-pressure extreme
+  // down to a floor (REFIT_CURVE_RELAX). r_amb/rho_amb are derived self-
+  // contained from the lattice + EAM tables (no E-V scan dependency); the
+  // weights flow via JointCurveData.wts into BOTH the VARPRO solve and the
+  // curve selection metrics. REFIT_CURVE_WEIGHTING off => uniform (legacy).
+  const bool curve_weighting = bget(c, "REFIT_CURVE_WEIGHTING", true);
+  const double curve_relax = cget(c, "REFIT_CURVE_RELAX", 0.05);
+  if (curve_obj && (curve_relax <= 0.0 || curve_relax > 1.0))
+    throw std::runtime_error(
+        "tadah refit: REFIT_CURVE_RELAX must be in (0, 1]; got " +
+        core::to_string(curve_relax, 6));
+  // (curve-only knobs REFIT_CURVE_WEIGHTING/RELAX/DERIV_WEIGHT are read above but
+  // only consumed when curve_obj is true; in energy mode they are ignored. No
+  // contradiction error here: the blueprint injects their defaults on query, so
+  // an energy run could not distinguish a user-set knob from the default.)
   // Per-stage optimiser algorithm + budget + tolerances: defaults live in
   // CompactConfig; the optional inline OPTIMIZER block overrides them.
-  if (c.contains("OPTIMIZER") && c.size("OPTIMIZER") > 0) {
-    std::vector<std::string> tok(c.size("OPTIMIZER"));
-    c.get("OPTIMIZER", tok);
-    parse_optimizer_block(tok, lcfg);
-  }
+  // ---- stage pipeline (INIT -> EXPLORE -> REFINE -> FUSE) ----
+  // RefitParser reads the INIT/EXPLORE/REFINE/FUSE Context keys (throws on the
+  // old top-level OPTIMIZER grammar); apply_stage_optimizers flattens the
+  // EXPLORE/REFINE/FUSE optimisers onto the CompactConfig scalar fields.
+  const RefitConfig rcfg = RefitParser::parse(c);
+  apply_stage_optimizers(rcfg, lcfg);
+  if (lcfg.seed_algo == "UNIFORM" && rcfg.init.empty())
+    Logger::instance().log(LogLevel::WARNING,
+        "tadah refit: EXPLORE rung 0 is UNIFORM (no global search) and INIT is "
+        "empty — the global structure search is disabled. Set a global EXPLORE "
+        "ALGO (e.g. GN_MLSL_LDS) or provide INIT guesses for robustness.");
   const std::string &joint_algo = lcfg.joint_algo;
+
+  // ---- curve-objective optimiser policy ----
+  // Curve mode HONOURS the user-configured optimiser at every stage (EXPLORE
+  // inner, REFINE, FUSE) exactly as energy mode does — there is no silent
+  // substitution. The per-stage legal-ALGO set is enforced (hard error) at
+  // parse time by RefitParser; the actual stack used is logged in the header
+  // line below so the run is fully transparent. NOTE: aggressive least-squares
+  // (Ceres) at low basis can over-fit the unprobed high-magnitude regions of
+  // the curve and degrade the crystal — the pressure-relaxed weighting
+  // (REFIT_CURVE_WEIGHTING, on by default) is the mitigation that keeps the
+  // crystal faithful while honouring the configured optimiser. In curve mode
+  // FUSE is a per-function curve refine (no E-V coupling) using its configured
+  // optimiser; ENABLED false / ALGO NONE skips a stage.
+
   auto sget = [&](const std::string &k, const std::string &def) {
     return c.contains(k) && c.size(k) > 0 ? c.get<std::string>(k) : def;
   };
@@ -254,13 +400,52 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   tadah::mlip::engines::RefitLog rlog;
   rlog.open(sget("REFIT_LOG", "refit_opt.log"), /*append=*/false);
   rlog.raw("# tadah refit optimisation log (compact mode)");
-  rlog.raw("# one line per ladder event; metric <= 1 means within "
-           "REFIT_COMPACT_SHARE x tolerance; d2_rmse tracks curvature");
+  rlog.raw("# one line per ladder rung. metric = energy gate (drives selection;"
+           " <= 1 means within REFIT_COMPACT_SHARE x tolerance). The other three"
+           " are curve diagnostics vs the tabulated EAM: rmse = value RMSE,"
+           " d1 = 1st-derivative (slope) RMSE, d2 = 2nd-derivative (curvature)"
+           " RMSE. Each is shown across the per-rung checkpoints");
+  rlog.raw("#   insert -> explore -> refine -> merge   (knot families)");
+  rlog.raw("#   insert -> explore -> refine            (blip families; merge is"
+           " a no-op)");
+  rlog.raw("# insert=add a basis fn + linear solve, explore=EXPLORE.inner local"
+           " search, refine=REFINE Ceres refine, merge=coalescence guard"
+           " (REFIT_COMPACT_MERGE). 'guard merged X/Y cands' = the guard broke up"
+           " coalesced impostor knot pairs (and re-inserted at the residual"
+           " peaks) on X of the rung's Y candidates; the guard runs once per"
+           " candidate (Y = REFIT_COMPACT_JITTERS+1), which is why the old log"
+           " showed several identical merge lines per rung. The bracketed"
+           " [explore=.. refine=..] are the winning candidate's stop reasons"
+           " (NLopt evals / Ceres iterations). refine shows the SPECIFIC Ceres"
+           " cause: ftol|gtol|ptol|maxiter.");
+  rlog.raw("# NOTE on EXPLORE=XTOL_REACHED: for the derivative-free simplex"
+           " explorers (SBPLX/NELDERMEAD/BOBYQA/PRAXIS) this is the algorithm's"
+           " OWN parameter-space convergence (its simplex collapsed) and fires"
+           " regardless of XTOL_REL. XTOL_REL only gates an ADDITIONAL optional"
+           " outer early-stop; setting XTOL_REL 0 disables that gate but cannot"
+           " suppress the intrinsic simplex-collapse XTOL_REACHED. Treat it as"
+           " benign convergence (like FTOL_REACHED); the metric is the real"
+           " progress signal.");
+  if (curve_obj)
+    rlog.raw("# REFIT_OBJECTIVE=curve: the 'metric' column is the NORMALISED"
+             " curve score (lower=better), NOT the energy metric; the energy"
+             " metric is unused and FUSE drops the E-V term (curve mode is"
+             " independent of energy mode); the ladder grows until stall/n_max."
+             " deriv_weight sets value vs d1/d2 in the objective"
+             " (0=pure value=crystal-faithful). EXPLORE inner, REFINE and FUSE"
+             " each run the OPTIMISER YOU CONFIGURED (honoured, not overridden;"
+             " the actual stack is in the 'optimiser:' line above). The"
+             " pressure-relaxed weighting (REFIT_CURVE_WEIGHTING, on by default)"
+             " is what keeps an aggressive least-squares optimiser (Ceres) from"
+             " over-fitting the unprobed high-magnitude curve regions and"
+             " wrecking the crystal. NOTE: Ceres REFINE cost grows steeply with"
+             " the basis count n — cap its MAXEVAL / use REFIT_COMPACT_OPT_EVERY"
+             " (or the gentle SBPLX-only arm) at high NMAX.");
   rlog.line("input element=" + eam.lattice() + " a0=" +
             core::to_string(a0, 4) + " rcut=" + core::to_string(rcut, 4));
-  rlog.line("basis=" + cfg.basis + "  strategy global/explore/polish/joint = " +
-            lcfg.seed_algo + "/" + lcfg.explore_algo + "/" + lcfg.polish_algo +
-            "/" + joint_algo);
+  rlog.line("basis=" + cfg.basis +
+            "  pipeline EXPLORE(seed/inner)/REFINE/FUSE = " + lcfg.seed_algo +
+            "/" + lcfg.explore_algo + "/" + lcfg.refine_algo + "/" + joint_algo);
   // effective per-stage optimiser settings (defaults, or your OPTIMIZER block)
   auto g = [](double v) {
     char b[24];
@@ -268,23 +453,39 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
     return std::string(b);
   };
   rlog.line(
-      "optimiser: global{algo=" + lcfg.seed_algo + " maxeval=" +
-      std::to_string(lcfg.mlsl_maxeval) + "}  explore{algo=" +
+      "optimiser: EXPLORE.seed{algo=" + lcfg.seed_algo + " maxeval=" +
+      std::to_string(lcfg.mlsl_maxeval) + "}  EXPLORE.inner{algo=" +
       lcfg.explore_algo + " maxeval=" + std::to_string(lcfg.sbplx_maxeval) +
       " ftol_rel=" + g(lcfg.sbplx_ftol) + " xtol_rel=" + g(lcfg.sbplx_xtol) +
-      "}  polish{algo=" + lcfg.polish_algo + " maxiter=" +
-      std::to_string(lcfg.ceres_max_iter) + " ftol=" + g(lcfg.ceres_ftol) +
-      " gtol=" + g(lcfg.ceres_gtol) + "}  joint{algo=" + joint_algo +
-      " maxiter=" + std::to_string(lcfg.joint_max_iter) + " ftol=" +
+      "}  REFINE{algo=" + lcfg.refine_algo + " maxiter=" +
+      std::to_string(lcfg.ceres_max_iter) + " ftol_rel=" + g(lcfg.ceres_ftol) +
+      " gtol=" + g(lcfg.ceres_gtol) + "}  FUSE{algo=" + joint_algo +
+      " maxiter=" + std::to_string(lcfg.joint_max_iter) + " ftol_rel=" +
       g(lcfg.joint_ftol) + "}");
+  rlog.line("  (maxeval = NLopt objective-function evaluations [each call to "
+            "the loss], not optimiser iterations; for EXPLORE.seed=MLSL it is "
+            "the TOTAL budget across all inner restarts, EXPLORE.inner is the "
+            "per-restart budget; maxiter = Ceres solver iterations)");
   rlog.line("schedule: opt_every=" + std::to_string(lcfg.opt_every) +
             " stall=" + std::to_string(lcfg.stall_rungs) + " insert_topk=" +
-            std::to_string(lcfg.insert_topk) +
+            std::to_string(lcfg.insert_topk) + " jitters=" +
+            std::to_string(lcfg.jitters) + " (=> " +
+            std::to_string(lcfg.jitters + 1) + " candidates/rung)" +
+            "  merge_guard=" + (lcfg.merge_guard ? "on" : "off") +
+            "  objective=" +
+            (curve_obj ? "curve(value+d1+d2; deriv_weight=" + g(lcfg.curve_deriv_weight) + ")"
+                       : "energy") +
             (lcfg.knot_mix ? "  KnotMix double-win detector ON" : "") +
-            "  n_max=" + std::to_string(lcfg.n_max));
+            "  n_max=" +
+            ((nmax_fn[0] == nmax_fn[1] && nmax_fn[1] == nmax_fn[2])
+                 ? std::to_string(nmax_fn[0])
+                 : std::to_string(nmax_fn[0]) + "/" + std::to_string(nmax_fn[1]) +
+                       "/" + std::to_string(nmax_fn[2]) + " (phi/rho/F)"));
   rlog.line("windows: r in [" + core::to_string(rwin_lo, 4) + ", " +
             core::to_string(rcut, 4) + "]  rho in [0, " +
-            core::to_string(rho_reach, 4) + "]  tolerances amb/cmp = " +
+            core::to_string(rho_reach, 4) +
+            "]  self-test tolerances ambient(a/a0 0.95-1.10)/compressed(0.75-"
+            "0.95) = " +
             core::to_string(tol_amb * 1e3, 3) + "/" +
             core::to_string(tol_cmp * 1e3, 3) + " meV/atom");
 
@@ -332,7 +533,25 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   const int M = M_nat;  // ladder metrics use the native rows only
 
   // ---- dense curve samples on the windows ----
-  const int N = 800;
+  // Uniform grid per function across its fit window; the VALUE rmse and the
+  // 1st/2nd-derivative RMSEs (and the curve objective) are all evaluated on
+  // THIS shared grid (value = spline value, d1/d2 = analytic spline
+  // derivatives at the same points). REFIT_COMPACT_SAMPLES tunes it: more =
+  // a finer RMSE estimate + finer curve fit but slower (each VARPRO solve is
+  // O(N*n)); fewer = faster, coarser. Distinct from the energy E-V scan and
+  // the OUTPUT_GRID_SCALE setfl grid. Clamped to comfortably exceed the basis.
+  int N = iget(c, "REFIT_COMPACT_SAMPLES", 800);
+  const int N_min = std::max(50, 4 * lcfg.n_max);
+  if (N < N_min) {
+    Logger::instance().log(
+        LogLevel::WARNING,
+        "tadah refit[compact]: REFIT_COMPACT_SAMPLES=" + std::to_string(N) +
+            " is too few for the basis ceiling; raising to " +
+            std::to_string(N_min));
+    N = N_min;
+  }
+  rlog.line("curve sample grid: " + std::to_string(N) +
+            " points/function (value + d1 + d2 RMSE share this grid)");
   auto linspace_eval = [&](double lo, double hi,
                            const std::function<double(double)> &f,
                            std::vector<double> &xs, std::vector<double> &ys) {
@@ -350,6 +569,70 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                 drho.xs, drho.ys);
   linspace_eval(0.0, rho_reach, [&](double x) { return eam.F_tab(x); },
                 dF.xs, dF.ys);
+  // ANALYTIC target derivatives straight from the EAM cubic spline (no finite
+  // differencing): used by the curve objective and the d1/d2 log diagnostics.
+  for (double r : dphi.xs) { dphi.dys.push_back(eam.dphi_tab(r));
+                             dphi.d2ys.push_back(eam.d2phi_tab(r)); }
+  for (double r : drho.xs) { drho.dys.push_back(eam.drho_tab(r));
+                             drho.d2ys.push_back(eam.d2rho_tab(r)); }
+  for (double x : dF.xs)   { dF.dys.push_back(eam.dF_tab(x));
+                             dF.d2ys.push_back(eam.d2F_tab(x)); }
+
+  // ---- pressure-relaxed curve weights (curve mode, default ON) ----
+  // Ambient reference, SELF-CONTAINED (no E-V scan): the equilibrium lattice at
+  // a0. r_amb = nearest-neighbour distance there; rho_amb = per-atom density.
+  // phi/rho: weight 1 on [r_amb, rcut] (ambient .. cutoff), smoothstep down to
+  // the floor toward rwin_lo (compression = smaller r). F: weight 1 on
+  // [0, rho_amb] (zero .. ambient pressure), smoothstep down to the floor
+  // toward rho_reach (compression = higher rho). Filled into .wts so BOTH the
+  // stacked VARPRO solve and the curve selection metrics honour the profile.
+  if (curve_obj && curve_weighting) {
+    const std::vector<double> nbr = lat::neighbour_distances(lattice, a0, rcut);
+    double r_amb = rcut, rho_amb = 0.0;
+    for (double r : nbr) { r_amb = std::min(r_amb, r); rho_amb += eam.rho_tab(r); }
+    auto smoothstep = [](double t) {  // C1 ramp: S(0)=0, S(1)=1
+      t = std::clamp(t, 0.0, 1.0);
+      return t * t * (3.0 - 2.0 * t);
+    };
+    // tight (1) inside the ambient band; smoothstep down to `curve_relax` toward
+    // the compressed edge. w_lo: tight for x>=amb (phi/rho). w_hi: tight for
+    // x<=amb (F). Degenerate bands (amb outside the window) => uniform 1.
+    auto w_lo = [&](double x, double edge_lo, double amb) {
+      if (x >= amb || edge_lo >= amb) return 1.0;
+      const double t = (x - edge_lo) / (amb - edge_lo);  // 0 at edge, 1 at amb
+      return curve_relax + (1.0 - curve_relax) * smoothstep(t);
+    };
+    auto w_hi = [&](double x, double amb, double edge_hi) {
+      if (x <= amb || edge_hi <= amb) return 1.0;
+      const double t = (edge_hi - x) / (edge_hi - amb);  // 1 at amb, 0 at edge
+      return curve_relax + (1.0 - curve_relax) * smoothstep(t);
+    };
+    dphi.wts.resize(N);
+    drho.wts.resize(N);
+    dF.wts.resize(N);
+    for (int i = 0; i < N; ++i) {
+      dphi.wts[i] = w_lo(dphi.xs[i], rwin_lo, r_amb);
+      drho.wts[i] = w_lo(drho.xs[i], rwin_lo, r_amb);
+      dF.wts[i] = w_hi(dF.xs[i], rho_amb, rho_reach);
+    }
+    rlog.line("curve weighting: ON (pressure-relaxed)  r_amb=" +
+              core::to_string(r_amb, 4) + " rho_amb=" +
+              core::to_string(rho_amb, 4) + " relax_floor=" +
+              core::to_string(curve_relax, 3) +
+              "  [phi/rho tight on r>=r_amb; F tight on rho<=rho_amb]");
+  } else if (curve_obj) {
+    rlog.line("curve weighting: OFF (uniform) — REFIT_CURVE_WEIGHTING off");
+  }
+
+  // ---- INIT seeds: resolved anchors + pins per channel (empty => uniform) ----
+  const BlipFit init_phi =
+      build_init_seed(rcfg, InitBasis::PHI, k_rad, dphi, rwin_lo, rcut,
+                      lcfg.knot_degree);
+  const BlipFit init_rho =
+      build_init_seed(rcfg, InitBasis::RHO, k_rad, drho, rwin_lo, rcut,
+                      lcfg.knot_degree);
+  const BlipFit init_F = build_init_seed(rcfg, InitBasis::F, k_emb, dF, 0.0,
+                                         rho_reach, lcfg.knot_degree);
 
   // ---- per-function ladders with energy-metric rung selection ----
   // metric: candidate function + ORIGINAL other two, normalised so that 1.0
@@ -358,20 +641,56 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   auto run_ladder = [&](const JointCurveData &d, double lo, double hi,
                         const CompactBlipFitter::Metric &metric,
                         const char *name, std::vector<LadderRow> &trace,
-                        BasisKind kind) {
+                        BasisKind kind, const BlipFit &init, int nmax,
+                        int max_add) {
     CompactConfig fcfg = lcfg;
+    fcfg.n_max = nmax;  // this function's REFIT_COMPACT_NMAX ceiling
+    // EXPLORE MAX_ADD caps the basis this stage may add (per function): the
+    // ladder grows from the INIT count (or n_min) up to base + MAX_ADD,
+    // clamped to this function's NMAX.
+    const int base_n = init.n() > 0 ? init.n() : fcfg.n_min;
+    if (max_add >= 0)
+      fcfg.n_max = std::min(nmax, base_n + max_add);
+    if (max_add >= 0 && base_n + max_add < nmax)
+      rlog.line(std::string("[") + name + "] NOTE: EXPLORE MAX_ADD=" +
+                std::to_string(max_add) + " caps the ladder at n=" +
+                std::to_string(base_n + max_add) + " (base " +
+                std::to_string(base_n) + "+MAX_ADD) BELOW REFIT_COMPACT_NMAX=" +
+                std::to_string(nmax) +
+                " — raise MAX_ADD to let the ladder reach NMAX.");
     fcfg.log_fn = [&rlog, name](const std::string &m) {
       rlog.line(std::string("[") + name + "] " + m);
     };
     rlog.line(std::string("---- ") + name + " ladder ----");
-    CompactBlipFitter fitter(d.xs, d.ys, d.wts, lo, hi, fcfg, kind);
-    BlipFit best = fitter.fit(metric, trace);
-    Logger::instance().log(LogLevel::WARNING,
+    CompactBlipFitter fitter(d.xs, d.ys, d.wts, lo, hi, fcfg, kind, d.dys,
+                             d.d2ys);
+    BlipFit best = fitter.fit(metric, trace, init.n() > 0 ? &init : nullptr);
+    if (curve_obj) {
+      // Curve objective: best.metric is the normalised value+d1+d2 score (no
+      // tolerance threshold). Report the curve score + value rmse; the ladder
+      // grew until stall / n_max.
+      Logger::instance().log(
+          LogLevel::INFO,
+          std::string("tadah refit[compact]: ") + name + " ladder: n=" +
+              std::to_string(best.n()) + "  curve_rmse=" + g(best.curve_rmse) +
+              "  curve_score(value+d1+d2)=" + core::to_string(best.metric, 4) +
+              " (REFIT_OBJECTIVE=curve; grew to stall/n_max)");
+      return best;
+    }
+    // energy_metric <= 1 means this function alone is within its share of the
+    // tolerance budget => SUCCESS (log at INFO). > 1 means it fell short and is
+    // the binding limit on faithfulness => WARNING with guidance. (Either way
+    // the joint refinement below then couples the three functions.)
+    const bool within = best.metric <= 1.0;
+    Logger::instance().log(
+        within ? LogLevel::INFO : LogLevel::WARNING,
         std::string("tadah refit[compact]: ") + name + " ladder: n=" +
-        std::to_string(best.n()) + "  curve_rmse=" +
-        core::to_string(best.curve_rmse, 4) + "  energy_metric=" +
-        core::to_string(best.metric, 4) + " (<=1 means within " +
-        core::to_string(share, 2) + "x tolerance)");
+            std::to_string(best.n()) + "  curve_rmse=" + g(best.curve_rmse) +
+            "  energy_metric=" + core::to_string(best.metric, 4) + " (" +
+            (within ? "within"
+                    : "ABOVE — raise REFIT_COMPACT_NMAX / EXPLORE MAX_ADD or "
+                      "loosen REFIT_TOL_*") +
+            " " + core::to_string(share, 2) + "x tolerance)");
     return best;
   };
 
@@ -388,7 +707,7 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
         }
         return worst;
       },
-      "phi", tr_phi, k_rad);
+      "phi", tr_phi, k_rad, init_phi, nmax_fn[0], rcfg.explore.max_add[0]);
 
   BlipFit frho = run_ladder(
       drho, rwin_lo, rcut,
@@ -402,7 +721,7 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
         }
         return worst;
       },
-      "rho", tr_rho, k_rad);
+      "rho", tr_rho, k_rad, init_rho, nmax_fn[1], rcfg.explore.max_add[1]);
 
   BlipFit fF = run_ladder(
       dF, 0.0, rho_reach,
@@ -414,31 +733,92 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                                       e_w[i] / share);
         return worst;
       },
-      "F", tr_F, k_emb);
+      "F", tr_F, k_emb, init_F, nmax_fn[2], rcfg.explore.max_add[2]);
 
-  // ---- joint refinement: curves + E-V residuals, analytic gradients ----
-  rlog.line("---- joint refinement (curves + E-V residuals, " + joint_algo +
-            ") ----");
+  // ---- FUSE stage ----
   std::string joint_term;
-  const double e_resid_max =
-      joint_refine(fphi, frho, fF, dphi, drho, dF, dists, e_orig, e_w,
-                   /*curve_weight=*/1.0, lcfg.joint_max_iter, lcfg.joint_ftol,
-                   joint_algo, &joint_term);
-  rlog.line("joint: max |dE|/tol = " + core::to_string(e_resid_max, 4) +
-            "  params n2b/nrho/nF = " + std::to_string(fphi.n()) + "/" +
-            std::to_string(frho.n()) + "/" + std::to_string(fF.n()) +
-            "  term=" + joint_term);
-  Logger::instance().log(LogLevel::WARNING,
-      "tadah refit[compact]: joint refinement (curves + E-V residuals): "
-      "max |dE|/tol = " + core::to_string(e_resid_max, 4) +
-      "  params n2b/nrho/nF = " + std::to_string(fphi.n()) + "/" +
-      std::to_string(frho.n()) + "/" + std::to_string(fF.n()) +
-      " (basis " +
-      std::string(knotmix ? "KnotMix" : knot3 ? "Knot3" : knot5 ? "Knot5"
-                  : blip5 ? "Blip5" : "Blip") +
-      "; strategy seed/explore/polish/joint = " + lcfg.seed_algo + "/" +
-      lcfg.explore_algo + "/" + lcfg.polish_algo + "/" + joint_algo +
-      "; control: REFIT_BASIS + REFIT_COMPACT_* keys)");
+  double e_resid_max = 0.0;
+  // Curve mode drops the E-V energy coupling; the energy residual is still
+  // reported (report-only) so the user sees the energy cost of the curve fit.
+  auto report_energy_residual = [&]() {
+    double mx = 0.0;
+    for (std::size_t i = 0; i < dists.size(); ++i) {
+      double hp = 0.0, ri = 0.0;
+      for (double r : dists[i]) { hp += 0.5 * fphi.eval(r); ri += frho.eval(r); }
+      mx = std::max(mx, std::fabs(e_w[i] * (hp + fF.eval(ri) - e_orig[i])));
+    }
+    return mx;
+  };
+  auto report_fuse = [&](const std::string &what) {
+    e_resid_max = report_energy_residual();
+    rlog.line("joint: max |dE|/tol = " + core::to_string(e_resid_max, 4) +
+              " (report-only; energy dropped in curve mode)  params n2b/nrho/nF = " +
+              std::to_string(fphi.n()) + "/" + std::to_string(frho.n()) + "/" +
+              std::to_string(fF.n()));
+    Logger::instance().log(LogLevel::INFO,
+        "tadah refit[compact]: FUSE (" + what + ", no E-V): energy max |dE|/tol = " +
+        core::to_string(e_resid_max, 4) + " (report-only)  params n2b/nrho/nF = " +
+        std::to_string(fphi.n()) + "/" + std::to_string(frho.n()) + "/" +
+        std::to_string(fF.n()));
+  };
+  if (curve_obj) {
+    // Curve mode: FUSE is a per-function curve refine (energy E-V coupling
+    // dropped — curve mode stays independent of the crystal-energy metric). It
+    // HONOURS the configured FUSE optimiser (joint_algo) per function, on the
+    // SAME pressure-relaxed weighted curve as the ladder (d.wts). FUSE ALGO NONE
+    // (or ENABLED false) skips it.
+    joint_term = "curve (no E-V coupling)";
+    if (joint_algo == "NONE") {
+      rlog.line("---- FUSE (curve: skipped, ALGO NONE / disabled) ----");
+    } else {
+      rlog.line(std::string("---- FUSE (curve: per-function ") + joint_algo +
+                " refine, weighted, no E-V) ----");
+      auto fuse_one = [&](BlipFit &fit, const JointCurveData &d, double lo,
+                          double hi, BasisKind kind, const char *nm) {
+        CompactConfig ffcfg = lcfg;
+        ffcfg.refine_algo = joint_algo;  // FUSE honours its configured optimiser
+        CompactBlipFitter ff(d.xs, d.ys, d.wts, lo, hi, ffcfg, kind, d.dys,
+                             d.d2ys);
+        const double before = ff.combined_curve_score(fit);
+        ff.refine_with_cfg(fit);
+        const double after = ff.combined_curve_score(fit);
+        rlog.line(std::string("FUSE[") + nm + "] curve score " +
+                  core::to_string(before, 4) + " -> " + core::to_string(after, 4));
+      };
+      fuse_one(fphi, dphi, rwin_lo, rcut, k_rad, "phi");
+      fuse_one(frho, drho, rwin_lo, rcut, k_rad, "rho");
+      fuse_one(fF, dF, 0.0, rho_reach, k_emb, "F");
+    }
+    report_fuse("curve, weighted curve refine");
+  } else {
+    // ---- joint refinement: curves + E-V residuals, analytic gradients ----
+    rlog.line("---- joint refinement (curves + E-V residuals, " + joint_algo +
+              ") ----");
+    e_resid_max =
+        joint_refine(fphi, frho, fF, dphi, drho, dF, dists, e_orig, e_w,
+                     /*curve_weight=*/1.0, lcfg.joint_max_iter, lcfg.joint_ftol,
+                     joint_algo, &joint_term);
+    rlog.line("joint: max |dE|/tol = " + core::to_string(e_resid_max, 4) +
+              "  params n2b/nrho/nF = " + std::to_string(fphi.n()) + "/" +
+              std::to_string(frho.n()) + "/" + std::to_string(fF.n()) +
+              "  term=" + joint_term);
+    // max |dE|/tol <= 1 => the coupled E-V residuals are within tolerance
+    // (SUCCESS, INFO); > 1 => still above tolerance (WARNING). The crystal
+    // self-test below is the final faithfulness judge.
+    Logger::instance().log(
+        e_resid_max <= 1.0 ? LogLevel::INFO : LogLevel::WARNING,
+        "tadah refit[compact]: FUSE (joint curves + E-V residuals): "
+        "max |dE|/tol = " + core::to_string(e_resid_max, 4) +
+        (e_resid_max <= 1.0 ? " (within tolerance)" : " (ABOVE tolerance)") +
+        "  params n2b/nrho/nF = " + std::to_string(fphi.n()) + "/" +
+        std::to_string(frho.n()) + "/" + std::to_string(fF.n()) +
+        " (basis " +
+        std::string(knotmix ? "KnotMix" : knot3 ? "Knot3" : knot5 ? "Knot5"
+                    : blip5 ? "Blip5" : "Blip") +
+        "; pipeline EXPLORE(seed/inner)/REFINE/FUSE = " + lcfg.seed_algo + "/" +
+        lcfg.explore_algo + "/" + lcfg.refine_algo + "/" + joint_algo +
+        "; control: REFIT_BASIS + INIT/EXPLORE/REFINE/FUSE blocks)");
+  }
 
   // ---- ladder trace file ----
   {
@@ -455,6 +835,27 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
       dump("phi", tr_phi);
       dump("rho", tr_rho);
       dump("F", tr_F);
+    }
+  }
+
+  // ---- basis-info file: per-basis positions for the inspection plots ----
+  // (mu/eta/coeff/degree + the INIT pin flag). The plotting script overlays
+  // these on every function and derivative subplot.
+  {
+    std::ofstream os("refit_basis_info.dat");
+    if (os) {
+      os << "# tadah refit basis info (compact mode)\n"
+         << "# function  index  mu  eta  coeff  degree  pinned\n";
+      os << std::scientific << std::setprecision(10);
+      auto dump = [&](const char *nm, const BlipFit &f) {
+        for (int k = 0; k < f.n(); ++k)
+          os << nm << " " << k << " " << f.mu[k] << " " << f.eta[k] << " "
+             << f.c[k] << " " << f.degree(k) << " " << (f.is_pinned(k) ? 1 : 0)
+             << "\n";
+      };
+      dump("phi", fphi);
+      dump("rho", frho);
+      dump("F", fF);
     }
   }
 
@@ -487,6 +888,7 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   }
   rlog.line("outputs: pot.tadah (native), refit.eam (round-trip setfl), "
             "refit_curve_{phi,rho,F}.dat (value/d1/d2 inspection), "
+            "refit_basis_info.dat (knot/blip positions), "
             "refit_ladder_trace.dat, hpotarget");
   return true;
 }
