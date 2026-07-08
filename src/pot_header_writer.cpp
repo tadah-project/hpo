@@ -165,15 +165,27 @@ void PotHeaderWriter::write_data_section(std::ostream& os,
     dataset_stats(train, train_ctx, "Training");
     dataset_stats(val,   val_ctx,   "Validation");
 
-    /* elements */
+    /* elements: from the training data when present, otherwise from the
+     * explicit ATOM key (mandatory in no-training-DBFILE runs). The
+     * contains() guard matters beyond correctness: find_unique_elements
+     * calls train_ctx("DBFILE"), and Context::operator() LOGS an ERROR
+     * before throwing — so probing it per new-best spams stdout. */
     std::string elem_str;
     try {
-        auto elems = mlip::StructureDB::find_unique_elements(train_ctx);
-        for (const auto& e : elems) {
-            if (!elem_str.empty()) elem_str += ", ";
-            elem_str += e.symbol;
+        if (train_ctx.contains("DBFILE") && train_ctx.size("DBFILE") > 0) {
+            auto elems = mlip::StructureDB::find_unique_elements(train_ctx);
+            for (const auto& e : elems) {
+                if (!elem_str.empty()) elem_str += ", ";
+                elem_str += e.symbol;
+            }
+        } else if (train_ctx.contains("ATOM")) {
+            for (const auto& s : train_ctx("ATOM")) {
+                if (!elem_str.empty()) elem_str += ", ";
+                elem_str += s;
+            }
         }
-    } catch (...) { elem_str = "(unknown)"; }
+    } catch (...) { elem_str.clear(); }
+    if (elem_str.empty()) elem_str = "(unknown)";
     kv(os, "Elements", elem_str);
 }
 

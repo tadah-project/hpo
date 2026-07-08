@@ -89,15 +89,27 @@ int hpo_run(core::Context& ctx)
         }
     }
 
-    /* -- Build element string ------------------------------------------ */
+    /* -- Build element string ------------------------------------------
+     * From the training data when present, otherwise from the explicit
+     * ATOM key (mandatory in no-training-DBFILE runs). Guarded because
+     * find_unique_elements calls ctx("DBFILE"), and Context::operator()
+     * logs an ERROR line before throwing. */
     std::string elem_str;
     try {
-        auto elems = mlip::StructureDB::find_unique_elements(ctx);
-        for (const auto& e : elems) {
-            if (!elem_str.empty()) elem_str += ", ";
-            elem_str += e.symbol;
+        if (has_train_db) {
+            auto elems = mlip::StructureDB::find_unique_elements(ctx);
+            for (const auto& e : elems) {
+                if (!elem_str.empty()) elem_str += ", ";
+                elem_str += e.symbol;
+            }
+        } else if (ctx.contains("ATOM")) {
+            for (const auto& s : ctx("ATOM")) {
+                if (!elem_str.empty()) elem_str += ", ";
+                elem_str += s;
+            }
         }
-    } catch (...) { elem_str = "(could not determine)"; }
+    } catch (...) { elem_str.clear(); }
+    if (elem_str.empty()) elem_str = "(could not determine)";
 
     /* -- Write setup sections ----------------------------------------- */
     log.write_files_section(ctx.get<std::string>("HPOTARGET"), val, trg);
