@@ -169,7 +169,17 @@ TEST_CASE("fixweight mixed mode: LS + pinned + OPTIM'd weights",
     Host host(ctx, trg, val_cfg.string());
 
     std::vector<double> free_w_first;   // weights 1..K-2 at v=0.02
+    bool first_eval = true;
     for (double v : {0.02, 0.35}) {
+        if (!first_eval) {
+            /* Route the second evaluation through the CACHED trainer
+             * (update_context + reinit + re-train) — the production
+             * path. Regression: the reduced LS re-solve shrinks the
+             * model weight vector (K -> K-2), which used to trip a
+             * heap overflow in aed_type::resize. */
+            ::unsetenv("TADAH_HPO_FORCE_REBUILD");
+        }
+        first_eval = false;
         ParamVec p(1);
         p(0) = v;
         double loss = 0.0;
