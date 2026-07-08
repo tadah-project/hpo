@@ -1,0 +1,30 @@
+# 16 -- mixed weight mode: LS-fit + pinned + OPTIM'd linear coefficients.
+#
+# The training config (local config.tadah) pins weights 13 and 14 via
+# FIXINDEX/FIXWEIGHT. Weight 13 stays at its pinned value for the whole
+# run; weight 14 is searched by the optimiser below; weights 1-12 are
+# least-squares refitted against the residual target on every evaluation.
+#
+# NOTE: OPTIM FIXWEIGHT indices name MODEL WEIGHTS (the values FIXINDEX
+# pins), not positions in the FIXWEIGHT list -- `(14)` means weight 14.
+# With FIXINDEX present, analytical/HYBRID gradients fall back to finite
+# differences; a derivative-free algorithm is the natural choice.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB NLOPT
+    ALGO LN_BOBYQA
+    MAXEVAL 30
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 4.5 3.302 --varloss Ecoh 8.10 800
+
+OPTIM FIXWEIGHT (14) -50.0 50.0
+
+OUTPUT 1
+BOUTPUT 1

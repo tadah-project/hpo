@@ -1,0 +1,31 @@
+# 17 -- no training DBFILE: pure coefficient search on a fitted pot.
+#
+# run.sh first trains the shared model once (`tadah train`), then turns
+# the fitted pot into an HPO seed: FIXINDEX 1-14 pins every linear
+# coefficient at its fitted value and the DBFILE lines are dropped. With
+# no free weights there is nothing to least-squares fit, so `tadah hpo`
+# runs without any training data -- and without --validation: the loss
+# below is a single LAMMPS-computed observable (cohesive energy).
+#
+# This is the same shape as the `tadah refit` coefficient-polish
+# workflow (refit.hpotarget), reduced to a runnable example.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB NLOPT
+    ALGO LN_BOBYQA
+    MAXEVAL 40
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 4.5 3.302 --varloss Ecoh 8.10 800
+
+# Search three of the pinned coefficients (weight indices 2-4); the
+# remaining ones stay at their fitted values.
+OPTIM FIXWEIGHT (2-4) -300.0 300.0
+
+OUTPUT 1
+BOUTPUT 1

@@ -56,6 +56,8 @@ each subsequent one introduces one or two new features.
 | 13 | `13_restart`             | `STRATEGY { ... RESTART { ... } }` decorator. |
 | 14 | `14_mlsl_inner`          | `STRATEGY { ... INNER { ... } }` for AUGLAG / MLSL. |
 | 15 | `15_simulated_annealing` | `LIB TADAH ALGO ANNEAL` with cooling-schedule PARAMs. |
+| 16 | `16_fixweight_mixed`     | `FIXINDEX`/`FIXWEIGHT` pinning + `OPTIM FIXWEIGHT` (mixed LS/pinned/searched weights; local `config.tadah`). |
+| 17 | `17_no_training_db`      | No training `DBFILE`, no `--validation`: all coefficients pinned, `PC_LAMMPS`-only loss (refit-style polish). |
 
 ## Files in `common/`
 
