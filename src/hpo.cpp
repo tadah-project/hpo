@@ -5,6 +5,7 @@
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/iter_health.h>
+#include <tadah/hpo/startup_validation.h>
 #include <tadah/core/checkpoint.h>
 #include <tadah/core/checkpoint_manager.h>
 #include <tadah/core/context.h>
@@ -66,6 +67,14 @@ int hpo_run(core::Context& ctx)
 
     HPOTargets trg(ctx, ctx.get<std::string>("HPOTARGET"));
     std::string val = ctx.get<std::string>("VALIDATION");
+
+    /* Fail fast on inconsistent weight-pinning / loss-source setups
+     * before any data is loaded or the optimiser starts. */
+    {
+        const bool has_train_db =
+            ctx.contains("DBFILE") && ctx.size("DBFILE") > 0;
+        validate_hpo_setup(ctx, trg, has_train_db, !val.empty());
+    }
 
     /* -- Build param labels for the search space section -------------- */
     std::vector<std::string> param_labels;
