@@ -225,6 +225,67 @@ TEST_CASE("fixweight mixed mode: LS + pinned + OPTIM'd weights",
     Host::reset_globals_for_test();
 }
 
+/* All-fixed with a DBFILE present (the `tadah refit` coefficient-search
+ * workload): the fast path provisions weights directly and skips the
+ * per-eval design-matrix build. */
+TEST_CASE("fixweight all-fixed with DBFILE: DM-skip fast path",
+          "[fixweight_e2e][.]")
+{
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ForceRebuildGuard _rebuild;
+    ScratchDir sd;
+
+    const fs::path train_db = sd.dir / "train.db";
+    const fs::path val_db   = sd.dir / "val.db";
+    const fs::path val_cfg  = sd.dir / "config.val";
+    const fs::path hpo_cfg  = sd.dir / "config.hpo";
+    write_minimal_ta_dbfile(train_db, 0.0);
+    write_minimal_ta_dbfile(val_db,   0.07);
+    { std::ofstream os(val_cfg); os << "DBFILE " << val_db.string() << "\n"; }
+
+    tadah::core::Context ctx = make_ta_base_context(hpo_cfg);
+    const std::size_t K = tadah::hpo::derive_weight_count(ctx);
+    REQUIRE(K > 0);
+
+    ctx.add("DBFILE", train_db.string());
+    ctx.add("VALIDATION", val_cfg.string());
+    ctx.add("FIXINDEX", "1-" + std::to_string(K));
+    for (std::size_t k = 0; k < K; ++k)
+        ctx.add("FIXWEIGHT", 0.01 * static_cast<double>(k + 1));
+
+    {
+        std::ofstream os(hpo_cfg);
+        os << kOptimizerBlock
+           << "LOSS L2\nPC_EMAE 0 1\n"
+           << "OPTIM FIXWEIGHT (1-" << K << ") -1.0 1.0\n";
+    }
+
+    tadah::hpo::HPOTargets trg(ctx, hpo_cfg.string());
+    REQUIRE_NOTHROW(tadah::hpo::validate_hpo_setup(ctx, trg, true, true));
+    Host host(ctx, trg, val_cfg.string());
+
+    ParamVec p(static_cast<long>(K));
+    for (std::size_t k = 0; k < K; ++k)
+        p(static_cast<long>(k)) = 0.05 * static_cast<double>(k + 1);
+    double loss = 0.0;
+    REQUIRE_NOTHROW(loss = host(p));
+    CHECK(std::isfinite(loss));
+
+    const auto* tr = Host::tls_trainer_for_test();
+    REQUIRE(tr != nullptr);
+    REQUIRE(tr->model->is_trained());
+    const auto& w = tr->model->get_weights();
+    REQUIRE(w.size() == K);
+    for (std::size_t k = 0; k < K; ++k)
+        CHECK(w[k] == Approx(0.05 * static_cast<double>(k + 1)).epsilon(1e-12));
+
+    /* Fast path: no design matrix was built for the training set. */
+    CHECK(tr->dm.layout().blocks.empty());
+
+    Host::reset_globals_for_test();
+}
+
 /* Case 3a: no training DBFILE, no --validation; loss from PC_OBSERVABLE. */
 TEST_CASE("case 3: no DBFILE, observable-only loss",
           "[fixweight_e2e][.]")

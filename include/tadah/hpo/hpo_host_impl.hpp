@@ -10,6 +10,7 @@
 #include <tadah/hpo/pot_header_writer_impl.hpp>
 #include <tadah/hpo/warmstart_cache.h>
 #include <tadah/hpo/iter_health.h>
+#include <tadah/hpo/startup_validation.h>
 #include <tadah/mlip/analytics/dphi_dtheta_walk.h>
 #include <fstream>
 #include <mutex>
@@ -783,6 +784,33 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                 throw std::runtime_error("Validation element missing in training");
     }
 
+    /* all-fixed fast path ------------------------------------------------
+     * When FIXINDEX pins every model weight the per-eval LS solve is
+     * vacuous — the train stage can scatter the FIXWEIGHT values
+     * directly and skip the design-matrix build. NORM must be off
+     * (validate_hpo_setup rejects NORM+FIXINDEX; re-checked here since
+     * tests construct HPO_Host directly). Classification failures fall
+     * back to the ordinary train() path, which surfaces the error with
+     * full context. */
+    if (has_train_data_ && master_ctx_.contains("FIXINDEX")
+        && !(master_ctx_.contains("NORM") && master_ctx_.get<bool>("NORM"))) {
+        try {
+            const std::size_t K = derive_weight_count(master_ctx_);
+            all_weights_fixed_ =
+                K > 0 && mlip::classify_weight_source(master_ctx_, K)
+                             == mlip::WeightSource::AllFixedData;
+        } catch (const std::exception&) {
+            all_weights_fixed_ = false;
+        }
+        if (all_weights_fixed_) {
+            core::Logger::instance().log(
+                tadah::core::LogLevel::INFO,
+                "FIXINDEX covers every model weight: per-eval LS solve and "
+                "design-matrix build are skipped (weights provisioned from "
+                "FIXWEIGHT).");
+        }
+    }
+
     /* build param labels ------------------------------------------------ */
     for (const auto& kv : trg_.optimap) {
         for (std::size_t i = 0; i < kv.second.opt.size(); ++i) {
@@ -1458,13 +1486,14 @@ double HPO_Host<P,R>::operator()(const P& p) const
                 cache.trainer.reset(new (cache.buf) mlip::Trainer(ctx, tls_ws_));
             }
         }
-        if (has_train_data_) {
+        if (has_train_data_ && !all_weights_fixed_) {
             cache.trainer->train(train_stdb_);
         } else {
-            /* No training DBFILE: all weights are pinned by
-             * FIXINDEX/FIXWEIGHT (enforced by validate_hpo_setup);
-             * update_context above already wrote the optimiser's live
-             * FIXWEIGHT values into the trainer context. */
+            /* No training DBFILE, or FIXINDEX pins every weight: the LS
+             * solve is absent/vacuous, so scatter the FIXWEIGHT values
+             * directly (update_context above already wrote the
+             * optimiser's live values into the trainer context) and
+             * skip the design-matrix build. */
             cache.trainer->provision_fixed_weights();
         }
     }

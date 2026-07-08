@@ -267,6 +267,11 @@ private:
     /* No-training-DBFILE mode: weights are provisioned from
      * FIXINDEX/FIXWEIGHT instead of the per-eval LS fit. */
     bool                         has_train_data_ = true;
+    /* FIXINDEX covers every model weight (the refit coefficient-search
+     * workload): the LS solve is vacuous, so the per-eval train stage
+     * provisions the weights directly and skips the design-matrix
+     * build. Computed once in the ctor. */
+    bool                         all_weights_fixed_ = false;
     /* --validation is optional when the loss has other sources
      * (PC_OBSERVABLE / PC_LAMMPS); validated in validate_hpo_setup(). */
     bool                         has_validation_ = true;
