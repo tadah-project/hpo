@@ -170,14 +170,28 @@ void HPOTargets::create_labels() {
     std::string key = pair.first;
     Opti& o = pair.second;
 
+    if (key == "FIXWEIGHT") {
+      // FIXWEIGHT slots are labelled by the model weight they pin
+      // (w<FIXINDEX[slot]>), not by descriptor labels. FIXINDEX presence
+      // is validated in process_optim_config.
+      if (context.contains("FIXINDEX")) {
+        std::vector<std::string> fi_str(context.size("FIXINDEX"));
+        context.get("FIXINDEX", fi_str);
+        const std::vector<size_t> fixidx = core::parse_indices(fi_str);
+        for (size_t slot = 0; slot < o.labels.size() && slot < fixidx.size();
+             ++slot) {
+          o.labels[slot] = "w" + core::to_string(fixidx[slot]);
+        }
+      }
+      continue;
+    }
+
     auto suffix_prefix = determine_suffix_prefix(key);
     std::string type = "TYPE" + suffix_prefix.first;
     std::string rcut = "RCUT" + suffix_prefix.first;
     std::string cgrid = "CGRID" + suffix_prefix.first;
     std::string sgrid = "SGRID" + suffix_prefix.first;
     std::string watom = "WATOM";
-    std::string weights = "WEIGHTS";
-    std::string fixweight = "FIXWEIGHT";
 
     size_t i = key == type ? 1 : 0;
 
@@ -190,12 +204,6 @@ void HPOTargets::create_labels() {
       auto params = it->second;
 
       if (key == rcut) {
-        o.labels[i++] = label;
-      } else if (key == weights || key == fixweight) {
-        // FIXWEIGHT mirrors WEIGHTS: `tadah refit` emits `OPTIM FIXWEIGHT`
-        // so HPO can search the (held) linear coefficients. The per-index
-        // optimisation is driven by Opti::opt[] (set in process_optim_config);
-        // the label here is cosmetic.
         o.labels[i++] = label;
       } else if (key == type) {
         nparams = params.size();
@@ -1503,6 +1511,15 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
     throw std::runtime_error("Failed to read key from input.");
   }
 
+  if (k == "WEIGHTS") {
+    throw std::runtime_error(
+      "OPTIM WEIGHTS is not a valid search target: the linear WEIGHTS are "
+      "re-fitted by least squares on every evaluation, so optimising them "
+      "is a silent no-op. To search linear coefficients, pin them with "
+      "FIXINDEX + FIXWEIGHT in the training configuration and use "
+      "`OPTIM FIXWEIGHT (<weight-index>) <low> <high>`.");
+  }
+
   Opti& omap = optimap[k];
   size_t s = context.size(k);
   omap.resize(s);
@@ -1547,6 +1564,35 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
       "\nTokens: " + tokens.back());
   }
   tokens.pop_back();
+
+  if (k == "FIXWEIGHT") {
+    /* OPTIM FIXWEIGHT indices name MODEL WEIGHTS (the weights FIXINDEX
+     * pins), not positions in the FIXWEIGHT value list. Map each user
+     * index to its FIXWEIGHT slot through FIXINDEX; declaration order
+     * defines the pairing. Back-compatible with `tadah refit` targets,
+     * which pin FIXINDEX 1-K so weight index == slot. */
+    if (!context.contains("FIXINDEX")) {
+      throw std::runtime_error(
+        "OPTIM FIXWEIGHT requires FIXINDEX in the training configuration "
+        "(FIXINDEX names which model weights the FIXWEIGHT values pin).");
+    }
+    std::vector<std::string> fi_str(context.size("FIXINDEX"));
+    context.get("FIXINDEX", fi_str);
+    const std::vector<size_t> fixidx = core::parse_indices(fi_str);
+    for (auto& ui : user_indices) {
+      auto it = std::find(fixidx.begin(), fixidx.end(), ui);
+      if (it == fixidx.end()) {
+        throw std::runtime_error(
+          "OPTIM FIXWEIGHT (" + core::to_string(ui) + ") on line "
+          + core::to_string(nline) + ": weight " + core::to_string(ui)
+          + " is not pinned by FIXINDEX (" + core::join(fi_str)
+          + "). OPTIM FIXWEIGHT indices name MODEL WEIGHTS, not FIXWEIGHT "
+          "slots; add the weight to FIXINDEX/FIXWEIGHT or drop it from "
+          "this OPTIM line.");
+      }
+      ui = static_cast<size_t>(it - fixidx.begin()) + 1;  // 1-based slot
+    }
+  }
 
   context.get<std::vector<std::string>>(k, omap.config);
 

@@ -159,6 +159,120 @@ ENDOPTIMIZER
     CHECK(w.opt[7] == false);
 }
 
+TEST_CASE("OPTIM FIXWEIGHT indices name model weights (mapped through FIXINDEX)",
+          "[HPO][fixweight][optim]")
+{
+    /* FIXINDEX 4,1,7: slot 1 pins w4, slot 2 pins w1, slot 3 pins w7.
+     * OPTIM FIXWEIGHT (7) selects the weight named 7, i.e. slot 3. */
+    ScopedTempFile input(R"(OPTIM FIXWEIGHT (7) -1.0 1.0
+OPTIMIZER
+LIB DLIB
+ALGO BFGS
+MAXEVAL 5
+ENDOPTIMIZER
+)");
+
+    tadah::core::Context ctx;
+    ctx.add("FIXINDEX", "4,1,7");
+    ctx.add("FIXWEIGHT", 0.4);
+    ctx.add("FIXWEIGHT", 0.1);
+    ctx.add("FIXWEIGHT", 0.7);
+
+    tadah::hpo::HPOTargets trg(ctx, input.path.string());
+    const auto& o = trg.optimap.at("FIXWEIGHT");
+    REQUIRE(o.opt.size() == 3);
+    CHECK(o.opt[0] == false);
+    CHECK(o.opt[1] == false);
+    CHECK(o.opt[2] == true);
+    CHECK(o.lowbound[2] == Approx(-1.0));
+    CHECK(o.highbound[2] == Approx(1.0));
+    /* Labels name the pinned model weights, not descriptor params. */
+    CHECK(o.labels[0] == "w4");
+    CHECK(o.labels[1] == "w1");
+    CHECK(o.labels[2] == "w7");
+}
+
+TEST_CASE("OPTIM FIXWEIGHT refit back-compat: FIXINDEX 1-K, all searched",
+          "[HPO][fixweight][optim]")
+{
+    /* `tadah refit` pins FIXINDEX 1-K, so weight index == slot and its
+     * emitted per-coefficient OPTIM lines must select every slot. */
+    ScopedTempFile input(R"(OPTIM FIXWEIGHT (1-5) -1.0 1.0
+OPTIMIZER
+LIB DLIB
+ALGO BFGS
+MAXEVAL 5
+ENDOPTIMIZER
+)");
+
+    tadah::core::Context ctx;
+    ctx.add("FIXINDEX", "1-5");
+    for (int i = 0; i < 5; ++i) ctx.add("FIXWEIGHT", 0.1 * (i + 1));
+
+    tadah::hpo::HPOTargets trg(ctx, input.path.string());
+    const auto& o = trg.optimap.at("FIXWEIGHT");
+    REQUIRE(o.opt.size() == 5);
+    for (size_t i = 0; i < 5; ++i) CHECK(o.opt[i] == true);
+    CHECK(o.labels[0] == "w1");
+    CHECK(o.labels[4] == "w5");
+}
+
+TEST_CASE("OPTIM FIXWEIGHT rejects weights not pinned by FIXINDEX",
+          "[HPO][fixweight][optim]")
+{
+    ScopedTempFile input(R"(OPTIM FIXWEIGHT (3) -1.0 1.0
+OPTIMIZER
+LIB DLIB
+ALGO BFGS
+MAXEVAL 5
+ENDOPTIMIZER
+)");
+
+    tadah::core::Context ctx;
+    ctx.add("FIXINDEX", "4,1");
+    ctx.add("FIXWEIGHT", 0.4);
+    ctx.add("FIXWEIGHT", 0.1);
+
+    REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, input.path.string()),
+                        Catch::Contains("not pinned by FIXINDEX"));
+}
+
+TEST_CASE("OPTIM FIXWEIGHT without FIXINDEX in the training config throws",
+          "[HPO][fixweight][optim]")
+{
+    ScopedTempFile input(R"(OPTIM FIXWEIGHT (1) -1.0 1.0
+OPTIMIZER
+LIB DLIB
+ALGO BFGS
+MAXEVAL 5
+ENDOPTIMIZER
+)");
+
+    tadah::core::Context ctx;
+    ctx.add("FIXWEIGHT", 0.4);
+
+    REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, input.path.string()),
+                        Catch::Contains("requires FIXINDEX"));
+}
+
+TEST_CASE("OPTIM WEIGHTS is rejected with a FIXWEIGHT hint",
+          "[HPO][fixweight][optim]")
+{
+    ScopedTempFile input(R"(OPTIM WEIGHTS (1) -1.0 1.0
+OPTIMIZER
+LIB DLIB
+ALGO BFGS
+MAXEVAL 5
+ENDOPTIMIZER
+)");
+
+    tadah::core::Context ctx;
+    ctx.add("WEIGHTS", 0.4);
+
+    REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, input.path.string()),
+                        Catch::Contains("not a valid search target"));
+}
+
 TEST_CASE("HPO parses standalone DLIB BFGS optimizer blocks",
           "[HPO][optim][dlib][bfgs]")
 {
