@@ -66,15 +66,17 @@ int hpo_run(core::Context& ctx)
     core::SignalHandler::install();
 
     HPOTargets trg(ctx, ctx.get<std::string>("HPOTARGET"));
-    std::string val = ctx.get<std::string>("VALIDATION");
+    /* --validation is optional: PC_OBSERVABLE / PC_LAMMPS can carry the
+     * loss on their own; validate_hpo_setup below rejects setups where
+     * validation-set metrics are requested without a validation file. */
+    std::string val = ctx.contains("VALIDATION")
+        ? ctx.get<std::string>("VALIDATION") : "";
 
     /* Fail fast on inconsistent weight-pinning / loss-source setups
      * before any data is loaded or the optimiser starts. */
-    {
-        const bool has_train_db =
-            ctx.contains("DBFILE") && ctx.size("DBFILE") > 0;
-        validate_hpo_setup(ctx, trg, has_train_db, !val.empty());
-    }
+    const bool has_train_db =
+        ctx.contains("DBFILE") && ctx.size("DBFILE") > 0;
+    validate_hpo_setup(ctx, trg, has_train_db, !val.empty());
 
     /* -- Build param labels for the search space section -------------- */
     std::vector<std::string> param_labels;
@@ -135,7 +137,11 @@ int hpo_run(core::Context& ctx)
      *   warn   -> findings logged via Logger; HPO continues
      *   error  -> any FAIL throws and aborts before NOISE_CALIBRATION
      */
-    {
+    if (!has_train_db) {
+        core::Logger::instance().log(
+            tadah::core::LogLevel::INFO,
+            "No training DBFILE: pre-flight data audit skipped.");
+    } else {
         mlip::AuditMode mode = mlip::audit_mode_from_context(ctx);
         if (mode != mlip::AuditMode::Off) {
             std::vector<std::string> optim_keys;

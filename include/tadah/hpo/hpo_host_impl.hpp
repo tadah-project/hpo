@@ -12,6 +12,7 @@
 #include <tadah/hpo/iter_health.h>
 #include <tadah/mlip/analytics/dphi_dtheta_walk.h>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <thread>
 
@@ -661,6 +662,9 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
 : master_ctx_(std::move(master_ctx))
 , trg_(trg), spec_(trg.spec)
 , use_lammps_( !trg.LS.empty() )
+, has_train_data_( master_ctx_.contains("DBFILE")
+                   && master_ctx_.size("DBFILE") > 0 )
+, has_validation_( !val_cfg.empty() )
 , prec_(trg.outputDigits)
 , cw_(static_cast<std::size_t>(std::max(prec_ + 9, static_cast<int>(min_cw_))))
 , max_title_len_(cw_ - 4)
@@ -680,28 +684,36 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
       }
     }
 
-    /* validation set ---------------------------------------------------- */
-    core::Context val_ctx(core::CoreUserConfigParser().parse(val_cfg));
-    val_ctx_ = val_ctx;
-    val_stdb_.add(val_ctx);
-    n_val_datasets_ = val_stdb_.dbidx.size() > 1 ? val_stdb_.dbidx.size() - 1 : 1;
+    /* validation set (optional: PC_OBSERVABLE/PC_LAMMPS-only runs) ------- */
+    core::Context val_ctx;
+    if (has_validation_) {
+        val_ctx = core::Context(core::CoreUserConfigParser().parse(val_cfg));
+        val_ctx_ = val_ctx;
+        val_stdb_.add(val_ctx);
+        n_val_datasets_ = val_stdb_.dbidx.size() > 1 ? val_stdb_.dbidx.size() - 1 : 1;
+    }
 #ifndef TADAH_BUILD_MPI
-    train_stdb_.add(master_ctx_);
+    if (has_train_data_) {
+        train_stdb_.add(master_ctx_);
 
-    /* Apply load-time transforms once on host (LSCALE, ESHIFT, EFILTER/FFILTER,
-     * WDBFILE/WDBFILE_AUTO, EWEIGHT_TEMP, ZERO_COM_FORCE) before any neighbour
-     * finding so descriptors see the transformed dataset. The report is stored
-     * for later: pot.tadah header generation and stamping LSCALE/ESHIFT into
-     * each best_pot.tadah. */
-    report_ = mlip::apply_load_transforms(train_stdb_, master_ctx_);
+        /* Apply load-time transforms once on host (LSCALE, ESHIFT,
+         * EFILTER/FFILTER, WDBFILE/WDBFILE_AUTO, EWEIGHT_TEMP,
+         * ZERO_COM_FORCE) before any neighbour finding so descriptors see
+         * the transformed dataset. The report is stored for later:
+         * pot.tadah header generation and stamping LSCALE/ESHIFT into
+         * each best_pot.tadah. */
+        report_ = mlip::apply_load_transforms(train_stdb_, master_ctx_);
+    }
 
     /* Apply LSCALE/ESHIFT to validation, and also forward EFILTER/FFILTER if
      * the user declared them in the --validation file itself. Training-only
      * knobs (filters from master_ctx_, WDBFILE, EWEIGHT_TEMP, ZERO_COM_FORCE)
      * must NOT touch validation references. Use the resolved values from
      * report_ so ESHIFT_ATOM / ESHIFT_DBATOM derivations on the training set
-     * propagate consistently. */
-    {
+     * propagate consistently. Without training data report_ is empty, so
+     * explicit ESHIFT values from the potential config are forwarded
+     * instead (same policy as the MPI host below). */
+    if (has_validation_) {
         core::Context vt;
         if (master_ctx_.contains("LSCALE"))
             vt.add("LSCALE", master_ctx_.get<std::string>("LSCALE"));
@@ -712,6 +724,11 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
             std::sort(Z_sorted.begin(), Z_sorted.end());
             for (int Z : Z_sorted)
                 vt.add("ESHIFT", core::to_string(report_.eshift.at(Z)));
+        } else if (!has_train_data_ && master_ctx_.contains("ESHIFT")
+                   && master_ctx_.size("ESHIFT") > 0) {
+            std::vector<double> es(master_ctx_.size("ESHIFT"));
+            master_ctx_.get<>("ESHIFT", es);
+            for (double e : es) vt.add("ESHIFT", core::to_string(e));
         }
         detail::forward_val_filters(vt, val_ctx);
         const std::size_t n_val_before = val_stdb_.size();
@@ -723,10 +740,10 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
             std::to_string(val_report_.n_dropped_energy), " by EFILTER, ",
             std::to_string(val_report_.n_dropped_force), " by FFILTER; ",
             std::to_string(val_stdb_.size()), " remain.");
-    }
 
-    nnf_.calc(val_stdb_, rcutmax);
-    nnf_.calc(train_stdb_, rcutmax);
+        nnf_.calc(val_stdb_, rcutmax);
+    }
+    if (has_train_data_) nnf_.calc(train_stdb_, rcutmax);
 #else
     /* MPI host: training stdb lives on workers; validation stdb lives here.
      * Global-view transforms (ESHIFT_ATOM, ESHIFT_DBATOM, EWEIGHT_TEMP,
@@ -734,7 +751,7 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
      * fail-fast guard in TrainEngine for those. Explicit ESHIFT/LSCALE on
      * validation can still be applied. EFILTER/FFILTER from the --validation
      * file itself are also forwarded; master_ctx_ filters are not. */
-    {
+    if (has_validation_) {
         core::Context vt;
         if (master_ctx_.contains("LSCALE"))
             vt.add("LSCALE", master_ctx_.get<std::string>("LSCALE"));
@@ -753,15 +770,18 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
             std::to_string(val_report_.n_dropped_energy), " by EFILTER, ",
             std::to_string(val_report_.n_dropped_force), " by FFILTER; ",
             std::to_string(val_stdb_.size()), " remain.");
+
+        nnf_.calc(val_stdb_, rcutmax);
     }
-    nnf_.calc(val_stdb_, rcutmax);
 #endif
 
     /* elements check ---------------------------------------------------- */
-    auto tr_el = mlip::StructureDB::find_unique_elements(master_ctx_);
-    for(auto e: mlip::StructureDB::find_unique_elements(val_ctx))
-        if(!tr_el.count(e))
-            throw std::runtime_error("Validation element missing in training");
+    if (has_train_data_ && has_validation_) {
+        auto tr_el = mlip::StructureDB::find_unique_elements(master_ctx_);
+        for(auto e: mlip::StructureDB::find_unique_elements(val_ctx))
+            if(!tr_el.count(e))
+                throw std::runtime_error("Validation element missing in training");
+    }
 
     /* build param labels ------------------------------------------------ */
     for (const auto& kv : trg_.optimap) {
@@ -1438,7 +1458,15 @@ double HPO_Host<P,R>::operator()(const P& p) const
                 cache.trainer.reset(new (cache.buf) mlip::Trainer(ctx, tls_ws_));
             }
         }
-        cache.trainer->train(train_stdb_);
+        if (has_train_data_) {
+            cache.trainer->train(train_stdb_);
+        } else {
+            /* No training DBFILE: all weights are pinned by
+             * FIXINDEX/FIXWEIGHT (enforced by validate_hpo_setup);
+             * update_context above already wrote the optimiser's live
+             * FIXWEIGHT values into the trainer context. */
+            cache.trainer->provision_fixed_weights();
+        }
     }
     mlip::Trainer& host = *tls_trainer_cache_.trainer;
 #endif
@@ -1479,11 +1507,13 @@ double HPO_Host<P,R>::operator()(const P& p) const
      * uses the same `pot` Context. */
     pot.remove("AUDIT");
     pot.remove("HEALTH_LOG");
-    auto pred = host.model->predict(pot, val_stdb_, host.dc);
-    mlip::Analytics   a(val_stdb_, pred); // we do not need to recalc NN as each descriptor checks cutoffs internally
-    fill_validation(r, a);
+    if (has_validation_) {
+        auto pred = host.model->predict(pot, val_stdb_, host.dc);
+        mlip::Analytics   a(val_stdb_, pred); // we do not need to recalc NN as each descriptor checks cutoffs internally
+        fill_validation(r, a);
+    }
     r.pot_ctx  = std::move(pot);
-    fit_loss(r);
+    if (has_validation_) fit_loss(r);
 
     /* Bad-potential pre-filter. Each per-metric --skip-above / --skip-rel
      * cap (declared on PC_* lines in config.hpo) is tested independently;
@@ -2318,6 +2348,27 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
             needs_fd.push_back(static_cast<int>(prefs[i].flat_idx));
         return true;
     };
+
+    /* No training data (weights provisioned from FIXWEIGHT), or FIXINDEX
+     * present: the IFT orchestrator assumes the unconstrained ridge
+     * solution map, which partial fixing invalidates (the free weights
+     * solve a reduced system against T_r = T - Phi_f * w_f). Route every
+     * theta onto the masked-FD path. Closed-form dL/dFIXWEIGHT and a
+     * fixed-aware IFT are follow-ups. */
+    if (!has_train_data_ || master_ctx_.contains("FIXINDEX")) {
+        static std::once_flag warn_once;
+        std::call_once(warn_once, [this]{
+            HPOLog::instance().warning(
+                has_train_data_
+                ? "FIXINDEX present: analytical/IFT gradients assume the "
+                  "unconstrained LS solution map, so all parameters use "
+                  "finite differences for this run."
+                : "No training DBFILE: analytical/IFT gradients need live "
+                  "Phi/T, so all parameters use finite differences for "
+                  "this run.");
+        });
+        return fall_back_all_fd();
+    }
 
 #if defined(TADAH_BUILD_MPI)
     /* MPI build: trainer cache layout differs (TrainerHost). Phase 2A

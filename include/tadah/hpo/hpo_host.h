@@ -264,6 +264,12 @@ private:
     mlip::LoadTransformReport    report_;
     mlip::LoadTransformReport    val_report_;
     bool                         use_lammps_;
+    /* No-training-DBFILE mode: weights are provisioned from
+     * FIXINDEX/FIXWEIGHT instead of the per-eval LS fit. */
+    bool                         has_train_data_ = true;
+    /* --validation is optional when the loss has other sources
+     * (PC_OBSERVABLE / PC_LAMMPS); validated in validate_hpo_setup(). */
+    bool                         has_validation_ = true;
     mlip::NNFinder               nnf_;
 
     /* ---------- data for pot header writer ----------------------------- */
@@ -360,6 +366,15 @@ private:
         std::unique_ptr<mlip::Trainer, TrainerDeleter>   trainer;
     };
     static thread_local TrainerCache tls_trainer_cache_;
+
+public:
+    /** Test hook: expose this thread's cached trainer so e2e tests can
+     *  inspect the trained/provisioned model after an operator() call.
+     *  nullptr before the first evaluation on this thread. */
+    static const mlip::Trainer* tls_trainer_for_test() {
+        return tls_trainer_cache_.trainer.get();
+    }
+private:
 #endif
 #if defined(TADAH_BUILD_MPI)
     struct TrainerHostDeleter {

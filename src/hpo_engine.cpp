@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <tadah/core/context.h>
 #include <tadah/core/logger.h>
+#include <tadah/core/periodic_table.h>
 #include <tadah/mlip/memory/imlip_workspace_manager.h>
 #include <tadah/mlip/memory/mlip_workspace_manager.h>
 #include <tadah/mlip/output/output.h>
@@ -29,11 +30,34 @@ int HPOEngine::run(mlip::Task &task) {
   try {
     core::Context context = task.getContext();
     models::D_mJoin::expand_grids(context);
-    std::set<core::Element> unique_elements = mlip::StructureDB::find_unique_elements(context);
-    mlip::StructureDB::check_atom_key(context, unique_elements);
+
+    const bool has_train_db =
+        context.contains("DBFILE") && context.size("DBFILE") > 0;
+    std::set<core::Element> unique_elements;
+    if (has_train_db) {
+      unique_elements = mlip::StructureDB::find_unique_elements(context);
+      mlip::StructureDB::check_atom_key(context, unique_elements);
+    } else {
+      /* No training DBFILE (all weights pinned by FIXINDEX/FIXWEIGHT;
+       * enforced by validate_hpo_setup): the element set must be
+       * declared explicitly — validation is optional too, so it cannot
+       * be derived from data. */
+      if (!context.contains("ATOM")) {
+        throw std::runtime_error(
+            "No training DBFILE: the ATOM key is required in the training "
+            "configuration to declare the element set (e.g. 'ATOM Ta').");
+      }
+      for (const auto &sym : context("ATOM"))
+        unique_elements.insert(core::PeriodicTable::find_by_symbol(sym));
+    }
     mlip::StructureDB::check_watom_key(context, unique_elements);
 
 #ifdef TADAH_BUILD_MPI
+    if (!has_train_db) {
+      throw std::runtime_error(
+          "HPO without a training DBFILE is serial-only: there is no design "
+          "matrix to distribute. Use the serial (non-MPI) tadah binary.");
+    }
     int rank = 0;
     int ncpu = 1;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
