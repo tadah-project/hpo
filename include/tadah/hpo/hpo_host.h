@@ -275,6 +275,12 @@ private:
     /* --validation is optional when the loss has other sources
      * (PC_OBSERVABLE / PC_LAMMPS); validated in validate_hpo_setup(). */
     bool                         has_validation_ = true;
+    /* Knot-family channels (D2_Knot5 / DM_REAM knot bcode): RCUT2B/RCUTMB
+     * are DERIVED from the largest knot — re-derived on every evaluation in
+     * update_context (which is const, hence flags precomputed here) and
+     * folded into the one-time NN cutoff via detail::nn_safe_rcutmax. */
+    bool                         knot2b_ = false;
+    bool                         knotmb_ = false;
     mlip::NNFinder               nnf_;
 
     /* ---------- data for pot header writer ----------------------------- */

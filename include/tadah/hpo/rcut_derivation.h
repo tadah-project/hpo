@@ -1,0 +1,82 @@
+#ifndef TADAH_HPO_RCUT_DERIVATION_H
+#define TADAH_HPO_RCUT_DERIVATION_H
+
+// F2 support for knot-family refit potentials inside the HPO loop.
+//
+// A knot channel's basis vanishes C^4-smoothly at its largest knot, so its
+// effective cutoff IS max(knot centre) and the RCUT2B/RCUTMB keys are
+// derived quantities:
+//  * per evaluation (update_context hook) the keys are re-derived from the
+//    CURRENT grid values, so OPTIM'd knot positions move the cutoff with
+//    them (Trainer::reinit then applies it via fcut->set_rcut(RCUT*MAX));
+//  * the ONE-TIME neighbour build must be sized for the largest cutoff any
+//    evaluation can reach — i.e. also the OPTIM upper bounds of the knot
+//    grids, which the legacy RCUT-only scan missed (an OPTIM'd knot pushed
+//    beyond the stated RCUT would silently outrun the prebuilt NN list).
+// Bump (blip) channels are never touched: their hard truncation at the
+// stated RCUT is part of the fitted model.
+
+#include <cmath>
+#include <string>
+
+#include <tadah/core/context.h>
+#include <tadah/hpo/hpo_targets.h>
+#include <tadah/models/eam/pot_curve_edit.h>
+
+namespace tadah {
+namespace hpo {
+namespace detail {
+
+/** \brief Re-derive RCUT2B/RCUTMB from the CURRENT knot grids. Called from
+ *  HPO_Host::update_context on every evaluation, so it is deliberately
+ *  silent (the one-time user-facing explanation is logged by
+ *  validate_hpo_setup at startup) and cheap (a max over the grid; no-op
+ *  add/remove churn is avoided). Returns true when a key changed —
+ *  Context::add refreshes RCUT2BMAX/RCUTMBMAX/RCUTMAX automatically. */
+inline bool apply_knot_rcut_derivation(core::Context &ctx, bool knot2b,
+                                       bool knotmb) {
+  bool changed = false;
+  auto apply = [&](const char *sfx) {
+    const auto d = models::potedit::derived_knot_rcut(ctx, sfx);
+    if (!d) return;
+    const std::string key = std::string("RCUT") + sfx;
+    if (ctx.contains(key) && ctx.size(key) > 0) {
+      const double cur = ctx.get<double>(key);
+      if (std::fabs(cur - *d) <= 1e-12 * std::max(1.0, std::fabs(*d)))
+        return;
+    }
+    ctx.remove(key);
+    ctx.add(key, *d);
+    changed = true;
+  };
+  if (knot2b) apply("2B");
+  if (knotmb) apply("MB");
+  return changed;
+}
+
+/** \brief Cutoff for the ONE-TIME neighbour-list build: the stated RCUTMAX,
+ *  any OPTIM RCUT2B/RCUTMB upper bounds (legacy behaviour), and — for knot
+ *  channels — the OPTIM CGRID2B/CGRIDMB upper bounds (a knot moved to its
+ *  bound IS the new effective cutoff and the prebuilt list must cover it). */
+inline double nn_safe_rcutmax(const core::Context &master,
+                              const HPOTargets &trg) {
+  double rcutmax = master.get<double>("RCUTMAX");
+  auto scan = [&](const std::string &key) {
+    const auto it = trg.optimap.find(key);
+    if (it == trg.optimap.end()) return;
+    for (std::size_t i = 0; i < it->second.opt.size(); ++i)
+      if (it->second.opt[i] && it->second.highbound[i] > rcutmax)
+        rcutmax = it->second.highbound[i];
+  };
+  scan("RCUT2B");
+  scan("RCUTMB");
+  if (models::potedit::derived_knot_rcut(master, "2B")) scan("CGRID2B");
+  if (models::potedit::derived_knot_rcut(master, "MB")) scan("CGRIDMB");
+  return rcutmax;
+}
+
+} // namespace detail
+} // namespace hpo
+} // namespace tadah
+
+#endif // TADAH_HPO_RCUT_DERIVATION_H

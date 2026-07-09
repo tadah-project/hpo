@@ -10,6 +10,7 @@
 #include <tadah/hpo/pot_header_writer_impl.hpp>
 #include <tadah/hpo/warmstart_cache.h>
 #include <tadah/hpo/iter_health.h>
+#include <tadah/hpo/rcut_derivation.h>
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/mlip/analytics/dphi_dtheta_walk.h>
 #include <fstream>
@@ -671,19 +672,17 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
 , max_title_len_(cw_ - 4)
 {
 
+    /* knot channels: RCUT keys are derived from the largest knot (see
+     * rcut_derivation.h). Flags are computed once here because the per-eval
+     * hook lives in the const update_context(). */
+    knot2b_ = models::potedit::derived_knot_rcut(master_ctx_, "2B").has_value();
+    knotmb_ = models::potedit::derived_knot_rcut(master_ctx_, "MB").has_value();
+
     /* neighbours -------------------------------------------------------- */
-    double rcutmax = master_ctx_.get<double>("RCUTMAX");
-    // Loop over all optimap entries to find either RCUT2B or RCUTMB
-    // Overwrite rcutmax if higher value is found in optimap.highbound
-    for (const auto &opti: trg_.optimap) {
-      if (opti.first == "RCUT2B" || opti.first == "RCUTMB") {
-        for (double rcut : opti.second.highbound) {
-          if (rcut > rcutmax) {
-            rcutmax = rcut;
-          }
-        }
-      }
-    }
+    /* One-time build: sized for the largest cutoff any evaluation can
+     * reach — stated RCUTMAX, OPTIM RCUT2B/RCUTMB upper bounds, and (knot
+     * channels) OPTIM CGRID2B/CGRIDMB upper bounds. */
+    const double rcutmax = detail::nn_safe_rcutmax(master_ctx_, trg_);
 
     /* validation set (optional: PC_OBSERVABLE/PC_LAMMPS-only runs) ------- */
     core::Context val_ctx;
@@ -846,6 +845,13 @@ void HPO_Host<P,R>::update_context(core::Context& ctx,
             else                 ctx.add(kv.first, kv.second.config[i]);
         }
     }
+
+    /* Knot channels: the effective cutoff follows the (possibly OPTIM'd)
+     * largest knot — re-derive RCUT2B/RCUTMB so Trainer::reinit applies it
+     * via fcut->set_rcut(RCUT*MAX). Overrides a user OPTIM RCUT* dimension
+     * deliberately (warned once at startup). The prebuilt NN list already
+     * covers every reachable cutoff (detail::nn_safe_rcutmax). */
+    detail::apply_knot_rcut_derivation(ctx, knot2b_, knotmb_);
 }
 
 /* ----------  helper: train/val structure counts ----------------------- */

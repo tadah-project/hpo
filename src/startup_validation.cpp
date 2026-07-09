@@ -5,7 +5,11 @@
 #include <tadah/mlip/trainer.h>
 #include <tadah/mlip/weight_provisioning.h>
 #include <tadah/mlip/memory/mlip_workspace_manager.h>
+#include <tadah/models/descriptors/d_base.h>
+#include <tadah/models/eam/pot_curve_edit.h>
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -111,6 +115,98 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         "FIXINDEX/FIXWEIGHT is not supported with NORM true: fixed values "
         "would be interpreted in the normalized feature space. Set NORM "
         "false.");
+  }
+
+  /* --- RCUT contract for refit-family channels -------------------------- */
+  auto warn = [](const std::string &m) {
+    core::Logger::instance().log(core::LogLevel::WARNING, m);
+  };
+
+  /* Knot channels: the basis vanishes at its largest knot, so RCUT2B/RCUTMB
+   * are DERIVED. Correct a stale stated value (warns) BEFORE the host sizes
+   * the one-time neighbour list from RCUTMAX, and flag a user's OPTIM RCUT
+   * line — that dimension is overridden on every evaluation. */
+  models::potedit::normalize_knot_rcut(train_ctx, "tadah hpo");
+  for (const char *sfx : {"2B", "MB"}) {
+    if (!models::potedit::derived_knot_rcut(train_ctx, sfx)) continue;
+    const std::string rkey = std::string("RCUT") + sfx;
+    if (trg.optimap.count(rkey)) {
+      warn("OPTIM " + rkey + " has no effect for the knot basis family: the "
+           "effective cutoff is the largest CGRID" + std::string(sfx) +
+           " knot and " + rkey + " is re-derived on every evaluation. Remove "
+           "the OPTIM " + rkey + " line (a wasted search dimension) and vary "
+           "CGRID" + std::string(sfx) + " to change the effective cutoff.");
+    }
+  }
+
+  /* Bump (blip) channels: RCUT is authoritative — the hard truncation is
+   * part of the fitted model — so only warn: (a) a centre beyond RCUT is
+   * pathological; (b) OPTIM bounds that can push a blip's support across
+   * RCUT truncate its shoulder there. */
+  auto bump_halfwidth_for = [&](const char *sfx) -> double {
+    try {
+      if (std::string(sfx) == "2B") {
+        if (!train_ctx.contains("TYPE2B")) return 0.0;
+        const std::string n = train_ctx.get<std::string>("TYPE2B", 0);
+        if (n == "D2_Blip") return 2.0;
+        if (n == "D2_Blip5") return 3.0;
+      } else {
+        if (!train_ctx.contains("TYPEMB")) return 0.0;
+        if (train_ctx.get<std::string>("TYPEMB", 0) != "DM_REAM") return 0.0;
+        const int bcode = train_ctx.get<int>("TYPEMB", 1);
+        if (bcode == 0) return 2.0;  // Blip
+        if (bcode == 3) return 3.0;  // Blip5
+      }
+    } catch (const std::exception &) { /* not a refit shape */ }
+    return 0.0;
+  };
+  for (const char *sfx : {"2B", "MB"}) {
+    const double w = bump_halfwidth_for(sfx);
+    if (w == 0.0) continue;
+    const std::string ckey = std::string("CGRID") + sfx;
+    const std::string skey = std::string("SGRID") + sfx;
+    const std::string rkey = std::string("RCUT") + sfx;
+    if (!train_ctx.contains(ckey) || !train_ctx.contains(skey) ||
+        !train_ctx.contains(rkey))
+      continue;
+    core::v_type mu, eta;
+    try {
+      models::D_Base::get_grid(train_ctx, ckey, mu);
+      models::D_Base::get_grid(train_ctx, skey, eta);
+    } catch (const std::exception &) { continue; }
+    if (mu.empty() || mu.size() != eta.size()) continue;
+    const double rcut = train_ctx.get<double>(rkey);
+    const double tol = 1e-9 * std::max(1.0, rcut);
+    for (std::size_t i = 0; i < mu.size(); ++i) {
+      if (mu[i] > rcut + tol) {
+        warn(ckey + " centre " + core::to_string(mu[i]) + " lies beyond " +
+             rkey + " = " + core::to_string(rcut) + " — a blip centred past "
+             "the hard cutoff is pathological (its inner shoulder alone "
+             "contributes).");
+        break;
+      }
+    }
+    const auto itc = trg.optimap.find(ckey);
+    const auto its = trg.optimap.find(skey);
+    for (std::size_t i = 0; i < mu.size(); ++i) {
+      double hi_mu = mu[i];
+      if (itc != trg.optimap.end() && i < itc->second.opt.size() &&
+          itc->second.opt[i])
+        hi_mu = itc->second.highbound[i];
+      double eta_i = eta[i];
+      if (its != trg.optimap.end() && i < its->second.opt.size() &&
+          its->second.opt[i] && its->second.lowbound[i] > 0.0)
+        eta_i = std::min(eta_i, its->second.lowbound[i]);
+      if (eta_i <= 0.0) continue;
+      if (hi_mu + w / eta_i > rcut + tol) {
+        warn("the OPTIM bounds allow blip " + core::to_string(i + 1) +
+             " of " + ckey + " to extend its support past " + rkey + " = " +
+             core::to_string(rcut) + " — the overhang is hard-truncated "
+             "there (the truncation radius is part of the blip model and is "
+             "NOT auto-extended). Narrow the bounds if this is unintended.");
+        break;
+      }
+    }
   }
 }
 
