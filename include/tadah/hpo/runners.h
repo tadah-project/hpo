@@ -15,6 +15,8 @@
 
 #include <tadah/core/context.h>
 
+namespace tadah { class LammpsTadah; }
+
 /**
  * @class LammpsRunner
  * @brief Simplifies creation and use of LAMMPS instances.
@@ -88,7 +90,20 @@ class LammpsRunner {
    */
   bool run_script(const LMPPtr& lmp_ptr,
                   const std::vector<std::string>& script_lines,
-                  tadah::core::Context pot_ctx) const;
+                  const tadah::core::Context& pot_ctx) const;
+
+  /**
+   * @brief Executes a script using a pre-built shared potential object.
+   *
+   * Same EXTERN protocol as the Context overload, but the driver builds ONE
+   * tadah::LammpsTadah per candidate potential (per thread) and every
+   * pair_coeff EXTERN adopts it via PairTadah::load(shared_ptr) — no
+   * reconstruction, no Context copies. The object carries per-sim scratch,
+   * so it must only be shared across sims that run sequentially.
+   */
+  bool run_script(const LMPPtr& lmp_ptr,
+                  const std::vector<std::string>& script_lines,
+                  const std::shared_ptr<tadah::LammpsTadah>& pot) const;
 
   bool say_hello(const LMPPtr& lmp_ptr) const;
   /**

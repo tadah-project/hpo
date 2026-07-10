@@ -12,6 +12,7 @@
 #include <tadah/hpo/iter_health.h>
 #include <tadah/hpo/rcut_derivation.h>
 #include <tadah/hpo/startup_validation.h>
+#include <tadah/tadah.lammps/lammps_tadah.h>
 #include <tadah/mlip/analytics/dphi_dtheta_walk.h>
 #include <fstream>
 #include <mutex>
@@ -1042,7 +1043,28 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     /* Phase-specific injections happen here. */
     extra_inject(lmp);
 
-    bool fail = !runner.run_script(lmp, lsim.script_lines, r.pot_ctx);
+    /* O1a: build ONE LammpsTadah per (thread, eval) and let every
+     * clear/pair_coeff-EXTERN cycle of every script this thread runs adopt
+     * it (PairTadah::load(shared_ptr)) instead of reconstructing the
+     * potential (descriptor factories, grid parsing, EAM tables) on each
+     * pair_coeff. The object carries per-sim scratch, so it is shared
+     * per-thread only; sims within a thread run sequentially. A throwing
+     * ctor marks the sim failed before any LAMMPS line executes. */
+    thread_local std::shared_ptr<tadah::LammpsTadah> tls_lt;
+    thread_local long long tls_lt_iter = -1;
+    if (!tls_lt || tls_lt_iter != static_cast<long long>(r.iter)) {
+      try {
+        tls_lt = std::make_shared<tadah::LammpsTadah>(r.pot_ctx);
+      } catch (const std::exception& e) {
+        tadah::core::Logger::instance().log(
+            tadah::core::LogLevel::WARNING,
+            std::string("run_one: potential construction failed: ") + e.what());
+        tls_lt.reset();
+      }
+      tls_lt_iter = static_cast<long long>(r.iter);
+    }
+    bool fail = !tls_lt ||
+                !runner.run_script(lmp, lsim.script_lines, tls_lt);
     auto t_run1 = std::chrono::high_resolution_clock::now();
 
     for (const auto& n : lsim.n_outvar) {

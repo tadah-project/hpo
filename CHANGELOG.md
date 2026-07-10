@@ -5,7 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+- PC_LAMMPS: the host now builds ONE candidate-potential object per (thread, evaluation) and shares it across every `clear`/`pair_coeff EXTERN` cycle of every script that thread runs (`LammpsRunner::run_script` shared-potential overload; was a full `LammpsTadah` reconstruction per `pair_coeff` — 75x per evaluation on run15-class setups). Bitwise-identical objective; the hot->cold early-reject barrier is unchanged.
+- `LammpsRunner::run_script` takes the potential Context by const reference (was by value — one deep copy per sim per evaluation).
+- Startup journal now logs the OpenMP pool width (`omp_get_max_threads` and `OMP_NUM_THREADS`) — the PC_LAMMPS script fan-out is capped by it.
+
+### Fixed
+- A throwing candidate-potential construction now marks the sim failed before any LAMMPS command executes (previously the EXTERN line could proceed with a null potential).
 
 ## [1.3.0-beta.1] — 2026-05-20
 

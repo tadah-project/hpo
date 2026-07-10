@@ -14,6 +14,7 @@
 #include <tadah/mlip/structure_db.h>
 #include <tadah/mlip/preflight_audit.h>
 
+#include <cstdlib>    // getenv()
 #include <filesystem>
 #include <set>
 #include <unistd.h>   // getpid()
@@ -59,6 +60,19 @@ int hpo_run(core::Context& ctx)
         std::string cwd = std::filesystem::current_path().string();
         log.open("hpo_run.log", version, cwd, static_cast<int>(getpid()));
     }
+
+#ifdef TADAH_ENABLE_OPENMP
+    {
+        /* PC_LAMMPS sims fan out over scripts with OpenMP; the pool size is
+         * the single biggest wall-time lever, so journal it up front. */
+        const char* env_omp = std::getenv("OMP_NUM_THREADS");
+        log.info("OpenMP: max threads = " +
+                 std::to_string(omp_get_max_threads()) +
+                 "  (OMP_NUM_THREADS=" +
+                 (env_omp && env_omp[0] ? std::string(env_omp) : "unset") +
+                 "); PC_LAMMPS scripts run in parallel up to this width");
+    }
+#endif
 
     /* Cooperative shutdown: install SIGINT/SIGTERM/SIGUSR2 handlers so
      * the BasinsPolicy and HPO_Host can drop a final checkpoint and
