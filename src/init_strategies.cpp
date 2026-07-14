@@ -372,6 +372,10 @@ private:
     static void handle_mismatch(const std::string& policy, const std::string& msg) {
         if (policy == "error") throw std::runtime_error(msg);
         std::cerr << "[HPO] " << msg << "\n";
+        /* stderr alone is easy to lose under SLURM -- a missing/short
+         * seed silently changes the STARTING POINT of the run, so the
+         * journal must carry it too. */
+        HPOLog::instance().warning(msg);
     }
     std::string file_;
 };

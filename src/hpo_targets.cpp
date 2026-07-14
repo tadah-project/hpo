@@ -518,6 +518,22 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
     InitContext ictx{s, *this, seed};
     std::size_t k = s.init_strategy_spec.k_total.value_or(strategy->default_k());
     s.optim_init = strategy->generate(ictx, k);
+    if (s.optim_init.empty()) {
+      /* A non-empty chain can still come back empty (e.g. WARM with a
+       * missing file under WARM_ON_MISMATCH warn/skip and no further
+       * strategy behind it). The optimiser then starts from ITS OWN
+       * default -- the ANNEAL family uses the OPTIM box centre -- which
+       * is almost never what a WARM user intended. Say so explicitly;
+       * WARM_ON_MISMATCH error makes it fatal instead. */
+      std::ostringstream oss;
+      oss << "InitStrategy[" << where << "] " << strategy->name()
+          << " produced 0 starting points -- the optimiser falls back to "
+             "its default start (ANNEAL family: the OPTIM box CENTRE, not "
+             "your seed). Set WARM_ON_MISMATCH error in the INIT block to "
+             "make this fatal.";
+      std::cerr << "[HPO] " << oss.str() << "\n";
+      HPOLog::instance().warning(oss.str());
+    }
     if (!s.optim_init.empty()) {
       std::ostringstream oss;
       oss << "InitStrategy[" << where << "] " << strategy->name()
