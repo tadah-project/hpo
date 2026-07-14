@@ -513,6 +513,31 @@ inline std::vector<std::size_t> systematic_resample(
   return parent;
 }
 
+/* Planned rung count for one geometric schedule: rungs executed from
+ * T_begin down to t_min at ratio rt, capped by the eval budget
+ * (evals_left / rung_cost, rounded up so a partial final rung counts).
+ * This is the "total" in the journal's rung=current/total display --
+ * an upper estimate: plateau/STOPVAL stops end the run earlier. */
+inline std::size_t planned_rungs(double T_begin, double t_min, double rt,
+                                 std::uint64_t evals_left,
+                                 std::uint64_t rung_cost)
+{
+  std::size_t by_T = std::numeric_limits<std::size_t>::max();
+  if (T_begin < t_min) return 1;   /* schedule would not run; display floor */
+  if (rt < 1.0) {
+    const double k = std::log(t_min / T_begin) / std::log(rt);   /* >= 0 */
+    by_T = static_cast<std::size_t>(std::floor(k)) + 1;
+  }
+  std::size_t by_budget = std::numeric_limits<std::size_t>::max();
+  if (rung_cost > 0 &&
+      evals_left != std::numeric_limits<std::uint64_t>::max()) {
+    by_budget = static_cast<std::size_t>(
+        (evals_left + rung_cost - 1) / rung_cost);
+  }
+  const std::size_t n = std::min(by_T, by_budget);
+  return n == 0 ? 1 : n;
+}
+
 /* ---- shared budget / stop plumbing ----------------------------------
  *
  * One SharedBudget instance covers every host() consumer of a run

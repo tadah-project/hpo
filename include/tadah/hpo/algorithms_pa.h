@@ -438,6 +438,28 @@ template<typename Vec, typename HostT>
        * before the first reweighting. */
       bool ok = run_sweeps(T);
 
+      /* Planned total for the step=current/total display: the budget
+       * bound (every step sweeps the whole population), tightened by
+       * the geometric T_MIN bound when the schedule is pure geometric
+       * (adaptive ESS cools no faster than RT, so its step count has
+       * no useful upper T-bound). 0 = unbounded -> plain counter.
+       * Computed once, symmetric across ranks (one extra allreduce). */
+      std::size_t planned_steps = 0;
+      {
+        const std::uint64_t spent_now =
+            world > 1 ? hpo_allreduce_sum(budget.spent()) : budget.spent();
+        const std::uint64_t rem =
+            max_eval_global > spent_now ? max_eval_global - spent_now : 0;
+        if (max_eval_global != HUGE_UNSIGNED || kb.ess_target == 0.0) {
+          planned_steps = anneal::planned_rungs(
+              T, t_min, kb.ess_target == 0.0 ? kb.rt : 1.0,
+              max_eval_global == HUGE_UNSIGNED
+                  ? std::numeric_limits<std::uint64_t>::max()
+                  : rem,
+              static_cast<std::uint64_t>(R) * rung_cost);
+        }
+      }
+
       std::vector<double> f_local(n_local), f_all(R);
       std::vector<double> st_local(n_local * stride), st_all(R * stride);
 
@@ -583,8 +605,9 @@ template<typename Vec, typename HostT>
         if (rank == 0) {
           std::ostringstream oss;
           oss << std::scientific << std::setprecision(3)
-              << "ANNEAL_PA step t=" << step_count
-              << "  T=" << T
+              << "ANNEAL_PA step=" << step_count;
+          if (planned_steps > 0) oss << "/" << planned_steps;
+          oss << "  T=" << T
               << "  ESS=" << std::fixed << std::setprecision(1) << ess
               << "  parents=" << unique_parents << "/" << R
               << "  culled=" << culled

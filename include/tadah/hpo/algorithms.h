@@ -332,8 +332,18 @@ template<typename Vec, typename HostT>
 
     /* --- one annealing schedule from T_begin ---------------------------
      * Shared by the first anneal and every REANNEAL cycle. */
+    const std::uint64_t rung_cost =
+        kb.corana ? static_cast<std::uint64_t>(kb.NT) * kb.NS * dim
+                  : static_cast<std::uint64_t>(kb.L);
     auto run_schedule = [&](double T_begin) {
       double T = T_begin;
+      /* Planned total for the rung=current/total display: whichever of
+       * the T_MIN schedule or the eval budget will end this schedule
+       * first (plateau/STOPVAL may still end it earlier). Recomputed
+       * per REANNEAL cycle on top of the rungs already completed. */
+      const std::size_t schedule_total =
+          rung_count + anneal::planned_rungs(T_begin, t_min, kb.rt,
+                                             budget.left(), rung_cost);
       while (T >= t_min && budget.left() > 0 && !time_exceeded()) {
         const auto rs = anneal::run_rung(chain, T, sp, kb, host, ctx);
 
@@ -352,8 +362,8 @@ template<typename Vec, typename HostT>
           }
           std::ostringstream oss;
           oss << std::scientific << std::setprecision(3)
-              << (kb.corana ? "ANNEAL[CORANA] rung k=" : "ANNEAL rung k=")
-              << rung_count
+              << (kb.corana ? "ANNEAL[CORANA] rung=" : "ANNEAL rung=")
+              << (rung_count + 1) << "/" << schedule_total
               << "  T=" << T
               << "  proposed=" << rs.proposed
               << "  accepted=" << rs.accepted

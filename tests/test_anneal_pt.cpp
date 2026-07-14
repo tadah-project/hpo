@@ -278,7 +278,7 @@ TEST_CASE("ANNEAL_PT: journal carries the banner, epoch lines and the "
 
     const std::string log = lr.read();
     CHECK(log.find("ANNEAL_PT[CORANA]") != std::string::npos);
-    CHECK(log.find("ANNEAL_PT epoch e=") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT epoch=1/") != std::string::npos);
     CHECK(log.find("swap acceptance per pair") != std::string::npos);
     CHECK(log.find("ANNEAL_PT stopped:") != std::string::npos);
 }

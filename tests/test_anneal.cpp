@@ -323,7 +323,7 @@ TEST_CASE("ANNEAL: per-rung summary line is emitted to the journal",
 
     const std::string log = lr.read();
     /* At least one rung line and the final summary + stop lines. */
-    CHECK(log.find("ANNEAL rung k=0") != std::string::npos);
+    CHECK(log.find("ANNEAL rung=1/") != std::string::npos);
     CHECK(log.find("ANNEAL summary: rungs=") != std::string::npos);
     CHECK(log.find("ANNEAL stopped:") != std::string::npos);
 }

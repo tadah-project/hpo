@@ -419,12 +419,26 @@ template<typename Vec, typename HostT>
     if (proceed) {
       std::vector<anneal::RungStats> rstats(n_local);
       std::uniform_real_distribution<double> udist(0.0, 1.0);
+      /* Planned total for the epoch=current/total display: min of the
+       * budget bound (all replicas rung in lockstep) and, in hybrid
+       * mode (RT < 1), the ladder's cooling bound on the hot end.
+       * 0 = unbounded (pure PT with no MAXEVAL) -> plain counter. */
+      std::size_t planned_epochs = 0;
       for (;;) {
         const std::uint64_t spent_global =
             world > 1 ? hpo_allreduce_sum(budget.spent()) : budget.spent();
         const std::uint64_t remaining =
             max_eval_global > spent_global ? max_eval_global - spent_global : 0;
         if (remaining == 0) { stop_reason = StopReason::MaxEval; break; }
+        if (planned_epochs == 0 &&
+            (max_eval_global != HUGE_UNSIGNED || kb.rt < 1.0)) {
+          planned_epochs = anneal::planned_rungs(
+              T[K - 1], t_min, kb.rt,
+              max_eval_global == HUGE_UNSIGNED
+                  ? std::numeric_limits<std::uint64_t>::max()
+                  : remaining,
+              static_cast<std::uint64_t>(K) * rung_cost);
+        }
         if (time_exceeded() && world == 1) {
           stop_reason = StopReason::MaxTime; break;
         }
@@ -591,8 +605,9 @@ template<typename Vec, typename HostT>
               ? static_cast<double>(e_acc) / static_cast<double>(e_prop) : 0.0;
           std::ostringstream oss;
           oss << std::scientific << std::setprecision(3)
-              << "ANNEAL_PT epoch e=" << (epoch_count - 1)
-              << "  T=[" << T[0] << ", " << T[K - 1] << "]"
+              << "ANNEAL_PT epoch=" << epoch_count;
+          if (planned_epochs > 0) oss << "/" << planned_epochs;
+          oss << "  T=[" << T[0] << ", " << T[K - 1] << "]"
               << "  proposed=" << e_prop
               << "  accepted=" << std::fixed << std::setprecision(1)
               << (rate * 100.0) << "%";

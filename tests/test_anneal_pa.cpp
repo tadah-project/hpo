@@ -271,7 +271,7 @@ TEST_CASE("ANNEAL_PA: reaches T_MIN and reports the schedule",
 
     const std::string log = lr.read();
     CHECK(log.find("ANNEAL_PA[CLASSIC]") != std::string::npos);
-    CHECK(log.find("ANNEAL_PA step t=") != std::string::npos);
+    CHECK(log.find("ANNEAL_PA step=1/") != std::string::npos);
     CHECK(log.find("ESS=") != std::string::npos);
     CHECK(log.find("ANNEAL_PA stopped: T <= T_MIN") != std::string::npos);
 }
