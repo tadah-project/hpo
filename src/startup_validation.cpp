@@ -189,6 +189,13 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     const double tol = models::bump_rcut_tol(rcut);
     const std::string rname =
         rcut_is_optim ? ("the OPTIM " + rkey + " low bound") : rkey;
+    if (hard && rcut_is_optim) {
+      warn("OPTIM " + rkey + " on a bump channel is a wasted search "
+           "dimension: the bump-support gate keeps every support inside its "
+           "LOW bound (" + core::to_string(rcut) + "), so the cutoff value "
+           "cannot affect the model. Remove the OPTIM " + rkey + " line and "
+           "set " + rkey + " in the config instead.");
+    }
 
     /* (a) the seed pot's own bumps must fit */
     for (std::size_t i = 0; i < mu.size(); ++i) {
