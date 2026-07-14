@@ -8,6 +8,7 @@
 #include <tadah/hpo/refit/compact_fitter.h>
 #include <tadah/hpo/refit/refit_config.h>
 #include <tadah/hpo/refit/refit_parser.h>
+#include <tadah/models/descriptors/basis_kind.h>
 #endif
 
 #include <algorithm>
@@ -634,6 +635,39 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   const BlipFit init_F = build_init_seed(rcfg, InitBasis::F, k_emb, dF, 0.0,
                                          rho_reach, lcfg.knot_degree);
 
+  // Bump-support gate on the INIT anchors (authoring surface, radial bump
+  // channels): an anchor whose support reaches past rcut cannot be honoured
+  // — the ladder's clamp would silently move it, so reject it up front with
+  // the minimal --eta that fits.
+  if (!knotfam) {
+    const double w_rad = tadah::models::bump_halfwidth(
+        blip5 ? tadah::models::BasisKind::Blip5 : tadah::models::BasisKind::Blip);
+    const double tol = tadah::models::bump_rcut_tol(rcut);
+    auto check_init = [&](const BlipFit &f, const char *nm) {
+      for (int k = 0; k < f.n(); ++k) {
+        if (f.eta[k] <= 0.0) continue;
+        const double reach = f.mu[k] + w_rad / f.eta[k];
+        if (reach <= rcut + tol) continue;
+        const std::string hint =
+            f.mu[k] < rcut - tol
+                ? "Set --eta >= " +
+                      core::to_string(w_rad / (rcut - f.mu[k]), 6) +
+                      " or move the anchor inward."
+                : "Move the anchor below rcut (no width can fit a bump "
+                  "centred at/past the cutoff).";
+        throw std::runtime_error(
+            std::string("tadah refit INIT [") + nm + "]: the basis at mu " +
+            core::to_string(f.mu[k], 6) + " (eta " +
+            core::to_string(f.eta[k], 6) + ") has support reaching " +
+            core::to_string(reach, 6) + ", past rcut = " +
+            core::to_string(rcut, 6) + " — the emitted pot is hard-truncated "
+            "there (bump-support gate). " + hint);
+      }
+    };
+    check_init(init_phi, "phi");
+    check_init(init_rho, "rho");
+  }
+
   // ---- per-function ladders with energy-metric rung selection ----
   // metric: candidate function + ORIGINAL other two, normalised so that 1.0
   // == `share` of the user tolerance in every band (the joint refinement
@@ -642,9 +676,15 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                         const CompactBlipFitter::Metric &metric,
                         const char *name, std::vector<LadderRow> &trace,
                         BasisKind kind, const BlipFit &init, int nmax,
-                        int max_add) {
+                        int max_add, double hard_rcut) {
     CompactConfig fcfg = lcfg;
     fcfg.n_max = nmax;  // this function's REFIT_COMPACT_NMAX ceiling
+    // Bump-support gate (radial bump channels only; 0 = off): the emitted
+    // pot is hard-truncated at rcut, so every bump must keep mu + w/eta <=
+    // rcut — spilling tails are fitted against no data and `tadah hpo`
+    // rejects the pot. The knot families need no gate (left-active knots
+    // vanish at their own knot <= rcut) and the F channel has no r cutoff.
+    fcfg.hard_rcut = hard_rcut;
     // EXPLORE MAX_ADD caps the basis this stage may add (per function): the
     // ladder grows from the INIT count (or n_min) up to base + MAX_ADD,
     // clamped to this function's NMAX.
@@ -707,7 +747,8 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
         }
         return worst;
       },
-      "phi", tr_phi, k_rad, init_phi, nmax_fn[0], rcfg.explore.max_add[0]);
+      "phi", tr_phi, k_rad, init_phi, nmax_fn[0], rcfg.explore.max_add[0],
+      knotfam ? 0.0 : rcut);
 
   BlipFit frho = run_ladder(
       drho, rwin_lo, rcut,
@@ -721,7 +762,8 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
         }
         return worst;
       },
-      "rho", tr_rho, k_rad, init_rho, nmax_fn[1], rcfg.explore.max_add[1]);
+      "rho", tr_rho, k_rad, init_rho, nmax_fn[1], rcfg.explore.max_add[1],
+      knotfam ? 0.0 : rcut);
 
   BlipFit fF = run_ladder(
       dF, 0.0, rho_reach,
@@ -733,7 +775,8 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                                       e_w[i] / share);
         return worst;
       },
-      "F", tr_F, k_emb, init_F, nmax_fn[2], rcfg.explore.max_add[2]);
+      "F", tr_F, k_emb, init_F, nmax_fn[2], rcfg.explore.max_add[2],
+      /*hard_rcut=*/0.0);  // embedding: no r cutoff
 
   // ---- FUSE stage ----
   std::string joint_term;
@@ -774,20 +817,26 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
       rlog.line(std::string("---- FUSE (curve: per-function ") + joint_algo +
                 " refine, weighted, no E-V) ----");
       auto fuse_one = [&](BlipFit &fit, const JointCurveData &d, double lo,
-                          double hi, BasisKind kind, const char *nm) {
+                          double hi, BasisKind kind, const char *nm,
+                          double hard_rcut) {
         CompactConfig ffcfg = lcfg;
         ffcfg.refine_algo = joint_algo;  // FUSE honours its configured optimiser
+        ffcfg.hard_rcut = hard_rcut;     // bump-support gate (radial bumps)
         CompactBlipFitter ff(d.xs, d.ys, d.wts, lo, hi, ffcfg, kind, d.dys,
                              d.d2ys);
         const double before = ff.combined_curve_score(fit);
         ff.refine_with_cfg(fit);
+        const int moved = ff.clamp_bump_support(fit);  // + coeff re-solve
+        if (moved > 0)
+          rlog.line(std::string("FUSE[") + nm + "] bump-support clamp moved " +
+                    std::to_string(moved) + " bump(s) back inside rcut.");
         const double after = ff.combined_curve_score(fit);
         rlog.line(std::string("FUSE[") + nm + "] curve score " +
                   core::to_string(before, 4) + " -> " + core::to_string(after, 4));
       };
-      fuse_one(fphi, dphi, rwin_lo, rcut, k_rad, "phi");
-      fuse_one(frho, drho, rwin_lo, rcut, k_rad, "rho");
-      fuse_one(fF, dF, 0.0, rho_reach, k_emb, "F");
+      fuse_one(fphi, dphi, rwin_lo, rcut, k_rad, "phi", knotfam ? 0.0 : rcut);
+      fuse_one(frho, drho, rwin_lo, rcut, k_rad, "rho", knotfam ? 0.0 : rcut);
+      fuse_one(fF, dF, 0.0, rho_reach, k_emb, "F", 0.0);
     }
     report_fuse("curve, weighted curve refine");
   } else {
@@ -797,7 +846,29 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
     e_resid_max =
         joint_refine(fphi, frho, fF, dphi, drho, dF, dists, e_orig, e_w,
                      /*curve_weight=*/1.0, lcfg.joint_max_iter, lcfg.joint_ftol,
-                     joint_algo, &joint_term);
+                     joint_algo, &joint_term, knotfam ? 0.0 : rcut,
+                     knotfam ? 0.0 : rcut);
+    // Bump-support gate: Ceres bounded the centres, but the joint
+    // mu + w/eta <= rcut constraint needs the projection + a linear re-solve
+    // (the clamp core is shared with the ladder's clamp_bump_support).
+    if (!knotfam) {
+      bool moved_any = false;
+      auto reclamp = [&](BlipFit &fit, const JointCurveData &d, double lo,
+                         double hi, const char *nm) {
+        const int moved = clamp_bump_support_params(fit, rcut, hi - lo);
+        if (moved == 0) return;
+        moved_any = true;
+        CompactBlipFitter lin(d.xs, d.ys, d.wts, lo, hi, lcfg, fit.kind,
+                              d.dys, d.d2ys);
+        lin.solve_coeffs(fit);
+        rlog.line(std::string("joint[") + nm + "]: bump-support clamp moved " +
+                  std::to_string(moved) +
+                  " bump(s) back inside rcut (+ linear re-solve).");
+      };
+      reclamp(fphi, dphi, rwin_lo, rcut, "phi");
+      reclamp(frho, drho, rwin_lo, rcut, "rho");
+      if (moved_any) e_resid_max = report_energy_residual();
+    }
     rlog.line("joint: max |dE|/tol = " + core::to_string(e_resid_max, 4) +
               "  params n2b/nrho/nF = " + std::to_string(fphi.n()) + "/" +
               std::to_string(frho.n()) + "/" + std::to_string(fF.n()) +

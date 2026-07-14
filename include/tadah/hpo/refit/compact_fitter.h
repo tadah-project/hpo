@@ -120,6 +120,21 @@ struct CompactConfig {
   unsigned seed = 12345;       ///< deterministic jitter
   bool check_gradients = false;  ///< Ceres FD-vs-analytic Jacobian audit (tests)
 
+  /** Bump-support gate for RADIAL bump channels (Blip/Blip5): when > 0,
+   *  every bump must satisfy `mu + w/eta <= hard_rcut` (w = 2 cubic / 3
+   *  quintic) — the emitted pot is hard-truncated (Cut_Dummy) at rcut, so a
+   *  spilling tail is an energy/force step at the cutoff AND is fitted
+   *  against no data (the sample window ends at rcut); `tadah hpo` rejects
+   *  such pots at startup. Enforced by (a) capping the mu search boxes at
+   *  hard_rcut, (b) a soft spill penalty on the derivative-free VARPRO
+   *  objective, and (c) `clamp_bump_support` projecting every scored
+   *  candidate back into the feasible set (+ coefficient re-solve).
+   *  0 (default) = no gate: the embedding channel (no r cutoff) and
+   *  standalone/test fits keep the legacy behaviour bit-for-bit. The engine
+   *  sets it to rcut for the phi and rho ladders. Ignored by the one-sided
+   *  knot families (their box already ends at the largest sample). */
+  double hard_rcut = 0.0;
+
   /** Objective the whole chain optimises toward (REFIT_OBJECTIVE). Energy =
    *  the caller's energy metric (default, regression-gated). Curve = the
    *  normalised value+1st+2nd-derivative combined RMSE (see RefitObjective).
@@ -255,6 +270,23 @@ public:
    *  Exposed for tests. */
   int merge_close_knots(BlipFit &f) const;
 
+  /** Bump-support projection (cfg.hard_rcut gate; see CompactConfig): for
+   *  the bump families, pull any bump with `mu + w/eta > hard_rcut` back
+   *  into the feasible set (centre first if even the narrowest legal bump
+   *  cannot fit, then raise eta minimally) and re-solve the coefficients.
+   *  Runs after every refine+merge in the ladder so every SCORED candidate
+   *  is gate-compliant and selection stays fair. Returns the number of
+   *  bumps moved (0 = none / gate off / knot family). A PINNED violating
+   *  bump (an INIT anchor that cannot be honoured) throws with the anchor
+   *  named. Exposed for tests. */
+  int clamp_bump_support(BlipFit &f) const;
+
+  /** Soft spill penalty (>= 1) multiplied into the derivative-free VARPRO
+   *  objective when cfg.hard_rcut > 0, so SBPLX does not optimise into
+   *  regions the clamp will undo (precedent: knot_gap_factor). 1 for the
+   *  knot families / gate off. Exposed for tests. */
+  double bump_spill_guard(const BlipFit &f) const;
+
   /** RMSE of the fit's analytic f' / f'' against the TARGET derivatives — the
    *  EAM cubic spline's exact f' / f'' when the ctor was given them, else a
    *  finite-difference fallback on the sample grid. d1 = slope fidelity, d2 =
@@ -337,11 +369,26 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
                     const std::vector<double> &e_weight,
                     double curve_weight, int max_iter, double ftol,
                     const std::string &algo = "CERES_LM",
-                    std::string *term_out = nullptr);
+                    std::string *term_out = nullptr,
+                    double phi_hard_rcut = 0.0, double rho_hard_rcut = 0.0);
                     // algo: CERES_LM | CERES_DOGLEG | NONE
                     // (basis families are carried by each BlipFit's `kind`)
                     // term_out (optional): receives the Ceres termination tag
                     // (e.g. "CONVERGENCE(143it, cost 2.1e-09)")
+                    // phi/rho_hard_rcut > 0: bump-support gate on the radial
+                    // channels — Ceres bounds bump centres at hard_rcut; the
+                    // caller runs clamp_bump_support_params + a linear
+                    // re-solve afterwards (Ceres boxes cannot express the
+                    // joint mu + w/eta <= rcut constraint).
+
+/** Free-function core of CompactBlipFitter::clamp_bump_support (no fitter
+ *  needed — used by the engine after joint_refine): project every bump of a
+ *  BUMP-family fit back to `mu + w/eta <= hard_rcut`, given the fit span
+ *  (for the eta ceiling, 80*max(1,n-1)/span, matching the search box).
+ *  Returns the number of bumps moved; throws on a pinned violating bump.
+ *  No-op (0) for hard_rcut <= 0 or the one-sided knot families. Does NOT
+ *  re-solve coefficients — the caller owns that. */
+int clamp_bump_support_params(BlipFit &f, double hard_rcut, double span);
 
 }  // namespace refit
 }  // namespace hpo

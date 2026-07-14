@@ -802,4 +802,102 @@ TEST_CASE("compact fitter: d2_rmse and deriv2 are consistent",
   REQUIRE(fit.d2_rmse(f) < 1e-3);
 }
 
+TEST_CASE("compact fitter: bump-support clamp projects spilling bumps",
+          "[compact][bumpgate]") {
+  const double rcut = 5.5, span = 4.5;  // fit window [1.0, 5.5]
+  const double tol = 1e-6 * rcut;
+
+  SECTION("free-function core: projection + eta floor") {
+    // make_truth() spills TWICE at rcut 5.5: bump 3 (3.6 + 2/0.8 = 6.1)
+    // and bump 4 (4.8 + 2/1.1 = 6.62)
+    BlipFit f = make_truth();
+    REQUIRE(clamp_bump_support_params(f, rcut, span) == 2);
+    for (int k = 0; k < f.n(); ++k)
+      REQUIRE(f.mu[k] + 2.0 / f.eta[k] <= rcut + tol);
+    // the centres stayed (narrowest legal bumps fit there): the etas rose
+    REQUIRE(f.mu[2] == Approx(3.6));
+    REQUIRE(f.eta[2] == Approx(2.0 / (rcut - 3.6)));
+    REQUIRE(f.mu[3] == Approx(4.8));
+    REQUIRE(f.eta[3] == Approx(2.0 / (rcut - 4.8)));
+    // idempotent
+    REQUIRE(clamp_bump_support_params(f, rcut, span) == 0);
+  }
+  SECTION("centre beyond what the narrowest legal bump allows moves inward") {
+    BlipFit f = make_truth();
+    f.mu[3] = 5.6;                     // past rcut entirely
+    REQUIRE(clamp_bump_support_params(f, rcut, span) >= 1);
+    REQUIRE(f.mu[3] < rcut);
+    REQUIRE(f.mu[3] + 2.0 / f.eta[3] <= rcut + tol);
+  }
+  SECTION("gate off / knot family: no-op") {
+    BlipFit f = make_truth();
+    f.eta[3] = 0.5;
+    REQUIRE(clamp_bump_support_params(f, 0.0, span) == 0);
+    BlipFit k;
+    k.kind = BasisKind::Knot5L;
+    k.mu = {6.0};
+    k.eta = {1.0};
+    k.c = {1.0};
+    REQUIRE(clamp_bump_support_params(k, rcut, span) == 0);
+  }
+  SECTION("a pinned violating anchor throws with the eta hint") {
+    BlipFit f = make_truth();
+    f.pinned.assign(f.mu.size(), false);
+    f.pinned[3] = true;  // bump 4 spills at rcut 5.5 and cannot be moved
+    REQUIRE_THROWS_WITH(clamp_bump_support_params(f, rcut, span),
+                        Catch::Contains("pinned INIT anchor") &&
+                            Catch::Contains("--eta"));
+  }
+  SECTION("member clamp re-solves the coefficients") {
+    const BlipFit truth = make_truth();
+    std::vector<double> xs, ys;
+    sample(truth, 1.0, rcut, 200, xs, ys);
+    CompactConfig cfg;
+    cfg.hard_rcut = rcut;
+    CompactBlipFitter fit(xs, ys, {}, 1.0, rcut, cfg);
+    BlipFit f = truth;                 // bumps 3 and 4 spill (see above)
+    REQUIRE(fit.clamp_bump_support(f) == 2);
+    REQUIRE(f.curve_rmse < 1e300);     // solve_coeffs ran
+    for (int k = 0; k < f.n(); ++k)
+      REQUIRE(f.mu[k] + 2.0 / f.eta[k] <= rcut + tol);
+    // spill guard: 1.0 exactly on a compliant fit, > 1 when spilling
+    REQUIRE(fit.bump_spill_guard(f) == Approx(1.0));
+    BlipFit g = truth;
+    REQUIRE(fit.bump_spill_guard(g) > 1.0);
+  }
+}
+
+TEST_CASE("compact fitter: ladder under hard_rcut keeps every bump inside",
+          "[compact][bumpgate]") {
+  // Morse-like curve on [1.0, 5.5] with a hard cutoff at 5.5: the ladder,
+  // jitters, refine and insertion may propose spilling bumps, but every
+  // scored candidate is clamped — the final best must be gate-compliant.
+  const double rcut = 5.5;
+  std::vector<double> xs(400), ys(400);
+  for (int i = 0; i < 400; ++i) {
+    const double r = 1.0 + (rcut - 1.0) * i / 399.0;
+    xs[i] = r;
+    const double e = std::exp(-1.4 * (r - 2.2));
+    ys[i] = (e * e - 2.0 * e);
+  }
+  CompactConfig cfg;
+  cfg.n_max = 10;
+  cfg.sbplx_maxeval = 2000;  // keep the unit test quick
+  cfg.mlsl_maxeval = 4000;
+  cfg.target = 1.0;
+  cfg.hard_rcut = rcut;
+  CompactBlipFitter fit(xs, ys, {}, 1.0, rcut, cfg);
+  std::vector<LadderRow> trace;
+  BlipFit best = fit.fit(
+      [&](const BlipFit &f) { return f.curve_rmse / 1e-4; }, trace);
+  REQUIRE(best.n() >= 2);
+  const double tol = 1e-6 * rcut;
+  for (int k = 0; k < best.n(); ++k) {
+    INFO("bump " << k << ": mu=" << best.mu[k] << " eta=" << best.eta[k]);
+    REQUIRE(best.mu[k] + 2.0 / best.eta[k] <= rcut + tol);
+  }
+  // and the gate does not wreck the fit: still a good curve
+  REQUIRE(best.curve_rmse < 1e-2);
+}
+
 #endif  // TADAH_USE_CERES

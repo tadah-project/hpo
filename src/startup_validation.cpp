@@ -139,30 +139,20 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     }
   }
 
-  /* Bump (blip) channels: RCUT is authoritative — the hard truncation is
-   * part of the fitted model — so only warn: (a) a centre beyond RCUT is
-   * pathological; (b) OPTIM bounds that can push a blip's support across
-   * RCUT truncate its shoulder there. */
-  auto bump_halfwidth_for = [&](const char *sfx) -> double {
-    try {
-      if (std::string(sfx) == "2B") {
-        if (!train_ctx.contains("TYPE2B")) return 0.0;
-        const std::string n = train_ctx.get<std::string>("TYPE2B", 0);
-        if (n == "D2_Blip") return 2.0;
-        if (n == "D2_Blip5") return 3.0;
-      } else {
-        if (!train_ctx.contains("TYPEMB")) return 0.0;
-        if (train_ctx.get<std::string>("TYPEMB", 0) != "DM_REAM") return 0.0;
-        const int bcode = train_ctx.get<int>("TYPEMB", 1);
-        if (bcode == 0) return 2.0;  // Blip
-        if (bcode == 3) return 3.0;  // Blip5
-      }
-    } catch (const std::exception &) { /* not a refit shape */ }
-    return 0.0;
-  };
+  /* Bump (blip) channels: RCUT is authoritative — never auto-extended.
+   * Under a DISCONTINUOUS cutoff (Cut_Dummy) a bump support crossing RCUT
+   * is hard-truncated -> phi(RCUT) != 0 -> an energy/force step whenever a
+   * neighbour crosses the cutoff. Authoring a search that permits it is a
+   * hard ERROR (the bump-support gate): every violation is collected and
+   * reported with the exact bound that fixes it. Under a smooth cutoff the
+   * overhang is damped to zero at RCUT — legitimate, no gate (a centre
+   * beyond rcut still gets a warning: only its inner shoulder contributes).
+   * To search longer range, raise RCUT2B/RCUTMB in the config. */
+  std::vector<std::string> gate_errors;
   for (const char *sfx : {"2B", "MB"}) {
-    const double w = bump_halfwidth_for(sfx);
-    if (w == 0.0) continue;
+    const auto wopt = models::potedit::bump_channel_halfwidth(train_ctx, sfx);
+    if (!wopt) continue;
+    const double w = *wopt;
     const std::string ckey = std::string("CGRID") + sfx;
     const std::string skey = std::string("SGRID") + sfx;
     const std::string rkey = std::string("RCUT") + sfx;
@@ -175,17 +165,58 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
       models::D_Base::get_grid(train_ctx, skey, eta);
     } catch (const std::exception &) { continue; }
     if (mu.empty() || mu.size() != eta.size()) continue;
-    const double rcut = train_ctx.get<double>(rkey);
-    const double tol = 1e-9 * std::max(1.0, rcut);
-    for (std::size_t i = 0; i < mu.size(); ++i) {
-      if (mu[i] > rcut + tol) {
-        warn(ckey + " centre " + core::to_string(mu[i]) + " lies beyond " +
-             rkey + " = " + core::to_string(rcut) + " — a blip centred past "
-             "the hard cutoff is pathological (its inner shoulder alone "
-             "contributes).");
-        break;
+
+    const bool hard =
+        models::potedit::channel_cutoff_is_discontinuous(train_ctx, sfx);
+
+    /* The binding rcut of the gate. The cutoff object truncates at
+     * RCUT{sfx}MAX (the max over a per-pair RCUT list); when RCUT itself is
+     * an OPTIM dimension, every trial satisfies rcut >= its OPTIM low
+     * bound, so the gate binds against that. */
+    const std::string rmax = rkey + "MAX";
+    double rcut = (train_ctx.contains(rmax) && train_ctx.size(rmax) > 0)
+                      ? train_ctx.get<double>(rmax)
+                      : train_ctx.get<double>(rkey);
+    bool rcut_is_optim = false;
+    const auto itr = trg.optimap.find(rkey);
+    if (itr != trg.optimap.end()) {
+      for (std::size_t i = 0; i < itr->second.opt.size(); ++i) {
+        if (!itr->second.opt[i]) continue;
+        rcut = std::min(rcut, itr->second.lowbound[i]);
+        rcut_is_optim = true;
       }
     }
+    const double tol = models::bump_rcut_tol(rcut);
+    const std::string rname =
+        rcut_is_optim ? ("the OPTIM " + rkey + " low bound") : rkey;
+
+    /* (a) the seed pot's own bumps must fit */
+    for (std::size_t i = 0; i < mu.size(); ++i) {
+      if (eta[i] <= 0.0) continue;
+      const double reach = mu[i] + w / eta[i];
+      if (mu[i] > rcut + tol) {
+        const std::string m =
+            ckey + " bump " + core::to_string(i + 1) + " centre " +
+            core::to_string(mu[i]) + " lies beyond " + rname + " = " +
+            core::to_string(rcut) + " (pathological: only its inner "
+            "shoulder can contribute) — move the centre below the cutoff.";
+        if (hard) gate_errors.push_back(m);
+        else warn(m);
+        continue;
+      }
+      if (!hard || reach <= rcut + tol) continue;
+      gate_errors.push_back(
+          ckey + " bump " + core::to_string(i + 1) + " (centre " +
+          core::to_string(mu[i]) + ", eta " + core::to_string(eta[i]) +
+          ") reaches " + core::to_string(reach) + ", past " + rname + " = " +
+          core::to_string(rcut) + " — set " + skey + " (" +
+          core::to_string(i + 1) + ") >= " +
+          core::to_string(w / (rcut - mu[i])) + ", move the centre inward "
+          "(tadah refit --edit), or raise " + rkey + ".");
+    }
+    if (!hard) continue;  // smooth cutoff: overhanging boxes are legitimate
+
+    /* (b) the OPTIM box corner (CGRID high bound, SGRID low bound) must fit */
     const auto itc = trg.optimap.find(ckey);
     const auto its = trg.optimap.find(skey);
     for (std::size_t i = 0; i < mu.size(); ++i) {
@@ -198,15 +229,39 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
           its->second.opt[i] && its->second.lowbound[i] > 0.0)
         eta_i = std::min(eta_i, its->second.lowbound[i]);
       if (eta_i <= 0.0) continue;
-      if (hi_mu + w / eta_i > rcut + tol) {
-        warn("the OPTIM bounds allow blip " + core::to_string(i + 1) +
-             " of " + ckey + " to extend its support past " + rkey + " = " +
-             core::to_string(rcut) + " — the overhang is hard-truncated "
-             "there (the truncation radius is part of the blip model and is "
-             "NOT auto-extended). Narrow the bounds if this is unintended.");
-        break;
+      if (hi_mu + w / eta_i <= rcut + tol) continue;
+      if (hi_mu >= rcut - tol) {
+        gate_errors.push_back(
+            "the OPTIM bounds let bump " + core::to_string(i + 1) + " of " +
+            ckey + " reach " + core::to_string(hi_mu + w / eta_i) +
+            ", past " + rname + " = " + core::to_string(rcut) +
+            " — impossible while the OPTIM " + ckey + " (" +
+            core::to_string(i + 1) + ") high bound " + core::to_string(hi_mu) +
+            " >= " + core::to_string(rcut) + ": lower the " + ckey +
+            " high bound below " + rkey + " first.");
+      } else {
+        gate_errors.push_back(
+            "the OPTIM bounds let bump " + core::to_string(i + 1) + " of " +
+            ckey + " reach " + core::to_string(hi_mu + w / eta_i) +
+            ", past " + rname + " = " + core::to_string(rcut) +
+            " — need the OPTIM " + skey + " (" + core::to_string(i + 1) +
+            ") low bound >= w/(" + rkey + " - c_hi) = " +
+            core::to_string(w / (rcut - hi_mu)) + " (currently " +
+            core::to_string(eta_i) + ").");
       }
     }
+  }
+  if (!gate_errors.empty()) {
+    std::string msg =
+        "bump-support gate: with a hard (Cut_Dummy) cutoff every compact "
+        "bump must vanish at or before RCUT (c + w/eta <= RCUT) — a "
+        "truncated overhang is an energy/force STEP at the cutoff. "
+        "Violations:";
+    for (const auto &e : gate_errors) msg += "\n  - " + e;
+    msg += "\n  To search longer range, raise RCUT2B/RCUTMB in the config "
+           "(the potential stays smooth: bumps still vanish at their own "
+           "support edge).";
+    throw std::runtime_error(msg);
   }
 }
 

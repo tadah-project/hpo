@@ -222,3 +222,124 @@ TEST_CASE("startup validation: valid setups pass", "[startup_validation]") {
     REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, false, true));
   }
 }
+
+namespace {
+
+/* Bump-family (D2_Blip, w = 2) + DM_REAM bump density context. Every bump
+ * support ends EXACTLY at its channel's rcut (c + 2/eta == RCUT): compliant
+ * with the bump-support gate, and any loosening spills. `rctype` switches
+ * the cutoff kind (the gate applies to discontinuous cutoffs only). */
+Context make_bump_ctx(const char* rctype = "Cut_Dummy") {
+  Context c;
+  c.add("ATOM", "Ta");
+  c.add("WATOM", 1.0);
+  c.add("INIT2B", "true");
+  c.add("TYPE2B", "D2_Blip");
+  c.add("TYPE2B", 3);
+  c.add("TYPE2B", 3);
+  c.add("TYPE2B", "Ta");
+  c.add("TYPE2B", "Ta");
+  c.add("CGRID2B", "4.0 3.0 4.2");
+  c.add("SGRID2B", "2.0 1.0 2.5");
+  c.add("RCUT2B", 5.0);
+  c.add("RCTYPE2B", rctype);
+  c.add("INITMB", "true");
+  c.add("TYPEMB", "DM_REAM");
+  c.add("TYPEMB", 0);  // bcode Blip
+  c.add("TYPEMB", 2); c.add("TYPEMB", 2); c.add("TYPEMB", 2);
+  c.add("TYPEMB", 3); c.add("TYPEMB", 3);
+  c.add("TYPEMB", 0); c.add("TYPEMB", 0);
+  c.add("TYPEMB", "Ta");
+  c.add("TYPEMB", "Ta");
+  c.add("CGRIDMB", "2.8 2.5");
+  c.add("SGRIDMB", "1.0 1.1");
+  c.add("AMPGRIDMB", "0.01 -1.2");
+  c.add("CEMBFUNC", "0.9 2.9 0.1");
+  c.add("SEMBFUNC", "1.5 2.0 1.8");
+  c.add("RCUTMB", 4.8);
+  c.add("RCTYPEMB", rctype);
+  c.add("VERBOSE", 0);
+  c.add("MODEL", "M_BLR");
+  c.add("MODEL", "BF_Linear");
+  return c;
+}
+
+}  // namespace
+
+TEST_CASE("startup validation: bump-support gate",
+          "[startup_validation][bumpgate]") {
+  PeriodicTable::initialize();
+  ScopedTempFile plain(target_with("PC_ERMSE 0 1\n"));
+
+  SECTION("compliant edge seeds pass (support exactly at rcut)") {
+    Context ctx = make_bump_ctx();
+    ctx.add("DBFILE", "dummy.db");
+    HPOTargets trg(ctx, plain.path.string());
+    REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
+    REQUIRE(ctx.get<double>("RCUT2B") == 5.0);  // never modified
+  }
+  SECTION("seed spill errors, listing EVERY violating index + eta fix") {
+    Context ctx = make_bump_ctx();
+    ctx.remove("SGRID2B");
+    ctx.add("SGRID2B", "1.5 0.8 2.5");  // bump 1 -> 5.33, bump 2 -> 5.5
+    ctx.add("DBFILE", "dummy.db");
+    HPOTargets trg(ctx, plain.path.string());
+    REQUIRE_THROWS_WITH(
+        validate_hpo_setup(ctx, trg, true, true),
+        Catch::Contains("bump-support gate") &&
+            Catch::Contains("CGRID2B bump 1") &&
+            Catch::Contains("CGRID2B bump 2") &&
+            Catch::Contains("set SGRID2B (2) >= 1"));
+  }
+  SECTION("box corner spill errors with the exact SGRID low bound") {
+    Context ctx = make_bump_ctx();
+    ctx.add("DBFILE", "dummy.db");
+    // e_lo 1.0 -> corner 4.0 + 2/1.0 = 6.0 > 5; need lo >= 2/(5-4) = 2
+    ScopedTempFile tf("OPTIM SGRID2B (1) 1.0 3.0\nPC_ERMSE 0 1\n" +
+                      std::string(kOptimizerBlock));
+    HPOTargets trg(ctx, tf.path.string());
+    REQUIRE_THROWS_WITH(
+        validate_hpo_setup(ctx, trg, true, true),
+        Catch::Contains("bump-support gate") &&
+            Catch::Contains("low bound >= w/(RCUT2B - c_hi) = 2"));
+  }
+  SECTION("CGRID high bound at/above rcut is called impossible") {
+    Context ctx = make_bump_ctx();
+    ctx.add("DBFILE", "dummy.db");
+    ScopedTempFile tf("OPTIM CGRID2B (1) 4.5 5.5\nPC_ERMSE 0 1\n" +
+                      std::string(kOptimizerBlock));
+    HPOTargets trg(ctx, tf.path.string());
+    REQUIRE_THROWS_WITH(
+        validate_hpo_setup(ctx, trg, true, true),
+        Catch::Contains("impossible") &&
+            Catch::Contains("lower the CGRID2B high bound"));
+  }
+  SECTION("MB density bump gate fires against RCUTMB") {
+    Context ctx = make_bump_ctx();
+    ctx.remove("CGRIDMB");
+    ctx.add("CGRIDMB", "4.0 2.5");  // 4.0 + 2/1.0 = 6.0 > 4.8
+    ctx.add("DBFILE", "dummy.db");
+    HPOTargets trg(ctx, plain.path.string());
+    REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                        Catch::Contains("CGRIDMB bump 1"));
+  }
+  SECTION("smooth cutoff: identical spilling config passes (no gate)") {
+    Context ctx = make_bump_ctx("Cut_Poly");
+    ctx.remove("SGRID2B");
+    ctx.add("SGRID2B", "1.5 0.8 2.5");  // spills under Cut_Dummy
+    ctx.add("DBFILE", "dummy.db");
+    ScopedTempFile tf("OPTIM CGRID2B (1) 4.5 5.5\nPC_ERMSE 0 1\n" +
+                      std::string(kOptimizerBlock));
+    HPOTargets trg(ctx, tf.path.string());
+    REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
+  }
+  SECTION("OPTIM'd RCUT2B: its LOW bound is the binding rcut") {
+    Context ctx = make_bump_ctx();  // edge seeds reach exactly 5.0
+    ctx.add("DBFILE", "dummy.db");
+    ScopedTempFile tf("OPTIM RCUT2B (1) 4.5 6.0\nPC_ERMSE 0 1\n" +
+                      std::string(kOptimizerBlock));
+    HPOTargets trg(ctx, tf.path.string());
+    REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                        Catch::Contains("OPTIM RCUT2B low bound"));
+  }
+}

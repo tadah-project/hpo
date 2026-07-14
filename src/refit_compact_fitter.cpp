@@ -2,6 +2,7 @@
 
 #ifdef TADAH_USE_CERES
 
+#include <tadah/models/descriptors/basis_kind.h>
 #include <tadah/models/descriptors/d_basis_functions.h>
 
 #include <ceres/ceres.h>
@@ -76,7 +77,9 @@ std::string ceres_reason(const ceres::Solver::Summary &s) {
 // ---- basis dispatch: value g(x_c) and r-derivative eta*g'(x_c) per family.
 // A 3-way switch on a hot member is branch-predicted perfectly; the blip
 // path calls the exact same functions as before (bit-for-bit regression
-// gated against a fixed-seed golden refit).
+// gated against a fixed-seed golden refit — with cfg.hard_rcut == 0, the
+// standalone default; the engine's radial ladders set the bump-support gate,
+// which caps boxes and projects candidates).
 namespace {
 inline double bval(BasisKind k, double xc) {
   switch (k) {
@@ -86,6 +89,14 @@ inline double bval(BasisKind k, double xc) {
     case BasisKind::Blip5:  return tadah::models::B5(xc);
   }
   return 0.0;
+}
+// Support half-width of the bump families (in units of 1/eta) from the shared
+// MODELS trait — the fitter's private BasisKind enum maps onto it here. Only
+// the symmetric bumps reach this (one-sided kinds are gated out by callers).
+inline double bump_w(BasisKind k) {
+  return tadah::models::bump_halfwidth(k == BasisKind::Blip5
+                                           ? tadah::models::BasisKind::Blip5
+                                           : tadah::models::BasisKind::Blip);
 }
 inline double bder(BasisKind k, double xc, double eta) {
   switch (k) {
@@ -398,7 +409,8 @@ double varpro_obj(const std::vector<double> &v, std::vector<double> &grad,
   if (!one_sided(ctx->work->kind))  // knot families: eta pinned (gauge)
     for (int k = 0; k < n; ++k) ctx->work->eta[k] = v[n + k];
   return ctx->self->solve_coeffs(*ctx->work) *
-         (ctx->guard ? knot_gap_factor(*ctx->work, ctx->span) : 1.0);
+         (ctx->guard ? knot_gap_factor(*ctx->work, ctx->span) : 1.0) *
+         ctx->self->bump_spill_guard(*ctx->work);  // 1 unless hard_rcut gate
 }
 }  // namespace
 
@@ -484,7 +496,8 @@ struct ThetaBox {
 inline double knot_lb(BasisKind k, double lo, double span) {
   return (k == BasisKind::Knot5R) ? lo - span : lo;
 }
-ThetaBox theta_box(const BlipFit &f, double lo, double hi, double span) {
+ThetaBox theta_box(const BlipFit &f, double lo, double hi, double span,
+                   double hard_rcut = 0.0) {
   const int n = f.n();
   ThetaBox b;
   if (one_sided(f.kind)) {  // single shape param per atom (eta pinned at 1)
@@ -502,11 +515,16 @@ ThetaBox theta_box(const BlipFit &f, double lo, double hi, double span) {
     return b;
   }
   const double eta0 = std::max(1, n - 1) / span;
+  // Bump-support gate (cfg.hard_rcut): no centre may sit past the hard
+  // cutoff — the width-driven joint constraint mu + w/eta <= rcut is handled
+  // by the spill penalty + clamp_bump_support.
+  const double mu_ub = hard_rcut > 0.0 ? std::min(hi + span, hard_rcut)
+                                       : hi + span;
   b.lb.resize(2 * n);
   b.ub.resize(2 * n);
   b.v.resize(2 * n);
   for (int k = 0; k < n; ++k) {
-    b.lb[k] = lo - span;       b.ub[k] = hi + span;
+    b.lb[k] = lo - span;       b.ub[k] = mu_ub;
     b.lb[n + k] = 0.03 * eta0; b.ub[n + k] = 80.0 * eta0;
     b.v[k] = std::clamp(f.mu[k], b.lb[k], b.ub[k]);
     b.v[n + k] = std::clamp(f.eta[k], b.lb[n + k], b.ub[n + k]);
@@ -562,7 +580,7 @@ double CompactBlipFitter::sbplx_explore(BlipFit &f, int maxeval) const {
   else if (a == "NLOPT_LBFGS") { algo = nlopt::LD_LBFGS; use_grad = true; }
   else if (a == "DLIB_LBFGS") {
     // dlib box-constrained LBFGS on the VARPRO reduced objective
-    ThetaBox b = theta_box(f, lo_, hi_, span_);
+    ThetaBox b = theta_box(f, lo_, hi_, span_, cfg_.hard_rcut);
     const int dim = static_cast<int>(b.v.size());
     using dvec = dlib::matrix<double, 0, 1>;
     dvec x(dim), xl(dim), xu(dim);
@@ -602,7 +620,7 @@ double CompactBlipFitter::sbplx_explore(BlipFit &f, int maxeval) const {
                              "DLIB_LBFGS|NONE)");
   }
 
-  ThetaBox b = theta_box(f, lo_, hi_, span_);
+  ThetaBox b = theta_box(f, lo_, hi_, span_, cfg_.hard_rcut);
   const unsigned dim = static_cast<unsigned>(b.v.size());
   nlopt::opt opt(algo, dim);
   std::vector<double> step(dim);
@@ -657,7 +675,7 @@ double CompactBlipFitter::refine_dispatch(BlipFit &f) const {
   if (a == "NONE") { last_refine_term_ = "NONE(linear-solve)"; return solve_coeffs(f); }
   if (a == "NLOPT_LBFGS" || a == "DLIB_LBFGS") {
     // VARPRO reduced-gradient local, tight tolerances
-    ThetaBox b = theta_box(f, lo_, hi_, span_);
+    ThetaBox b = theta_box(f, lo_, hi_, span_, cfg_.hard_rcut);
     const int dim = static_cast<int>(b.v.size());
     if (a == "NLOPT_LBFGS") {
       nlopt::opt opt(nlopt::LD_LBFGS, static_cast<unsigned>(dim));
@@ -741,7 +759,7 @@ BlipFit CompactBlipFitter::seed_global(BlipFit f) const {
     solve_coeffs(f);
     return f;
   }
-  ThetaBox b = theta_box(f, lo_, hi_, span_);
+  ThetaBox b = theta_box(f, lo_, hi_, span_, cfg_.hard_rcut);
 
   // An all-pinned INIT seed has zero free dimensions (every box entry is
   // collapsed to lb==ub). A global search then just burns its whole MAXEVAL
@@ -832,10 +850,15 @@ double CompactBlipFitter::refine(BlipFit &f) const {
     }
   } else {
     const double eta0 = std::max(1, n - 1) / span_;
+    // bump-support gate: centres stay at/below the hard cutoff (the joint
+    // mu + w/eta constraint is projected by clamp_bump_support afterwards)
+    const double mu_ub = cfg_.hard_rcut > 0.0
+                             ? std::min(hi_ + span_, cfg_.hard_rcut)
+                             : hi_ + span_;
     for (int k = 0; k < n; ++k) {
       if (f.is_pinned(k)) continue;  // held constant by the manifold below
       prob.SetParameterLowerBound(mu.data(), k, lo_ - span_);
-      prob.SetParameterUpperBound(mu.data(), k, hi_ + span_);
+      prob.SetParameterUpperBound(mu.data(), k, mu_ub);
       prob.SetParameterLowerBound(eta.data(), k, 0.03 * eta0);
       prob.SetParameterUpperBound(eta.data(), k, 80.0 * eta0);
     }
@@ -953,8 +976,17 @@ void CompactBlipFitter::insert_at_deg(BlipFit &f, double xw, int d) const {
     return;
   }
   const double eta0 = std::max(1, f.n()) / span_;  // (n+1)-blip uniform scale
-  f.mu.push_back(xw);
-  f.eta.push_back(eta0);
+  double mu_ins = xw, eta_ins = eta0;
+  if (cfg_.hard_rcut > 0.0) {
+    // bump-support gate: start the new bump feasible (mu + w/eta <= rcut) —
+    // a residual peak AT the cutoff gets the narrowest legal bump there.
+    const double w = bump_w(f.kind);
+    const double eta_ub = 80.0 * eta0;
+    mu_ins = std::min(mu_ins, cfg_.hard_rcut - w / eta_ub);
+    eta_ins = std::max(eta_ins, w / (cfg_.hard_rcut - mu_ins));
+  }
+  f.mu.push_back(mu_ins);
+  f.eta.push_back(eta_ins);
   f.c.push_back(0.0);
   if (!f.pinned.empty()) f.pinned.push_back(false);  // inserted blips are free
 }
@@ -970,10 +1002,13 @@ void CompactBlipFitter::jitter(BlipFit &f, std::mt19937 &rng) const {
     return;
   }
   const double eta0 = std::max(1, f.n() - 1) / span_;
+  const double mu_ub = cfg_.hard_rcut > 0.0
+                           ? std::min(hi_ + span_, cfg_.hard_rcut)
+                           : hi_ + span_;  // bump-support gate on centres
   for (int k = 0; k < f.n(); ++k) {
     if (f.is_pinned(k)) continue;  // INIT-pinned anchors stay put
     f.mu[k] = std::clamp(f.mu[k] + 0.02 * span_ * g(rng), lo_ - span_,
-                         hi_ + span_);
+                         mu_ub);
     f.eta[k] = std::clamp(f.eta[k] * std::exp(0.2 * g(rng)), 0.03 * eta0,
                           80.0 * eta0);
   }
@@ -1042,6 +1077,64 @@ int CompactBlipFitter::merge_close_knots(BlipFit &f) const {
   return n_merged;
 }
 
+int clamp_bump_support_params(BlipFit &f, double hard_rcut, double span) {
+  // Bump-support projection: the optimisers' boxes cap the CENTRE at
+  // hard_rcut but cannot express the JOINT constraint mu + w/eta <= rcut
+  // (a wide bump centred inside rcut still spills), so every scored
+  // candidate is projected back here. Centre first — only when even the
+  // narrowest legal bump (the eta box ceiling) cannot fit at mu — then eta
+  // is raised minimally so the support ends exactly at rcut. A violating
+  // PINNED bump is an INIT anchor that cannot be honoured: throw.
+  if (hard_rcut <= 0.0 || one_sided(f.kind)) return 0;
+  const double w = bump_w(f.kind);
+  const double tol = tadah::models::bump_rcut_tol(hard_rcut);
+  const double eta_ub = 80.0 * (std::max(1, f.n() - 1) / span);
+  int moved = 0;
+  for (int k = 0; k < f.n(); ++k) {
+    if (f.eta[k] <= 0.0) continue;
+    if (f.mu[k] + w / f.eta[k] <= hard_rcut + tol) continue;
+    if (f.is_pinned(k))
+      throw std::runtime_error(
+          "compact_fitter: pinned INIT anchor " + std::to_string(k + 1) +
+          " (mu " + std::to_string(f.mu[k]) + ", eta " +
+          std::to_string(f.eta[k]) + ") has support past the hard cutoff " +
+          std::to_string(hard_rcut) + " — raise its --eta to at least " +
+          std::to_string(w / (hard_rcut - f.mu[k])) +
+          " or move the anchor inward.");
+    if (f.mu[k] > hard_rcut - w / eta_ub) f.mu[k] = hard_rcut - w / eta_ub;
+    f.eta[k] = std::max(f.eta[k], w / (hard_rcut - f.mu[k]));
+    ++moved;
+  }
+  return moved;
+}
+
+int CompactBlipFitter::clamp_bump_support(BlipFit &f) const {
+  const int moved = clamp_bump_support_params(f, cfg_.hard_rcut, span_);
+  if (moved > 0) solve_coeffs(f);
+  return moved;
+}
+
+double CompactBlipFitter::bump_spill_guard(const BlipFit &f) const {
+  // Soft penalty (>= 1) so the derivative-free search is steered away from
+  // spilling configurations instead of relying on the clamp to undo them
+  // (precedent: knot_gap_factor). Scale: overhang normalised by 2% of the
+  // span, squared — a bump reaching 2% past rcut roughly doubles the
+  // objective.
+  if (cfg_.hard_rcut <= 0.0 || one_sided(f.kind)) return 1.0;
+  const double w = bump_w(f.kind);
+  const double s = 0.02 * span_;
+  double pen = 0.0;
+  for (int k = 0; k < f.n(); ++k) {
+    if (f.eta[k] <= 0.0) continue;
+    const double over = f.mu[k] + w / f.eta[k] - cfg_.hard_rcut;
+    if (over > 0.0) {
+      const double v = over / s;
+      pen += v * v;
+    }
+  }
+  return 1.0 + pen;
+}
+
 BlipFit CompactBlipFitter::fit(const Metric &metric,
                                std::vector<LadderRow> &trace,
                                const BlipFit *init) {
@@ -1084,7 +1177,8 @@ BlipFit CompactBlipFitter::fit(const Metric &metric,
 
   auto stamp = [&](BlipFit &f) {
     refine_dispatch(f);
-    merge_close_knots(f);  // knot families only; no-op for blips
+    merge_close_knots(f);   // knot families only; no-op for blips
+    clamp_bump_support(f);  // bump families under the hard_rcut gate only
     f.metric = score(f);
   };
 
@@ -1136,6 +1230,9 @@ BlipFit CompactBlipFitter::fit(const Metric &metric,
     // coalescence guard (one-sided knot families only); merge count drives the
     // per-rung "merged=N" report so this no longer logs a line per candidate.
     st.merges = merge_close_knots(cand);
+    // bump-support gate (bump families under hard_rcut only): every SCORED
+    // candidate is projected back to mu + w/eta <= rcut, so selection is fair
+    clamp_bump_support(cand);
     cand.metric = score(cand);
     st.r_ref = cand.curve_rmse;
     st.m_ref = cand.metric;
@@ -1275,7 +1372,9 @@ BlipFit CompactBlipFitter::fit(const Metric &metric,
         }
       }
     } else {
-      // ---- legacy blip rung (bit-for-bit regression-gated) ----
+      // ---- legacy blip rung (bit-for-bit regression-gated at
+      //      cfg.hard_rcut == 0; the gate only adds box caps + the
+      //      post-merge clamp) ----
       BlipFit base = warm;
       insert_blip_at_worst(base);
       // insert reference for stage attribution (logging only; on a copy so the
@@ -1495,7 +1594,8 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
                     const std::vector<double> &e_orig,
                     const std::vector<double> &e_weight, double curve_weight,
                     int max_iter, double ftol, const std::string &algo,
-                    std::string *term_out) {
+                    std::string *term_out, double phi_hard_rcut,
+                    double rho_hard_rcut) {
   if (algo != "NONE" && algo != "CERES_LM" && algo != "CERES_DOGLEG")
     throw std::runtime_error("joint_refine: unknown algo '" + algo +
                              "' (CERES_LM|CERES_DOGLEG|NONE)");
@@ -1538,6 +1638,25 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
   pin_one_sided(phi, dphi);
   pin_one_sided(rho, drho);
   pin_one_sided(F, dF);
+
+  // Bump-support gate on the radial channels (FUSE previously had NO bump
+  // bounds at all): bound the centres at the hard cutoff. The joint
+  // mu + w/eta <= rcut constraint cannot be a Ceres box — the caller runs
+  // clamp_bump_support_params + a linear re-solve after the solve.
+  auto bound_bump_mu = [&](BlipFit &f, double hard_rcut) {
+    if (hard_rcut <= 0.0 || one_sided(f.kind)) return;
+    int npin = 0;
+    for (int k = 0; k < f.n(); ++k)
+      if (f.is_pinned(k)) ++npin;
+    if (npin == f.n()) return;  // whole block held constant below
+    for (int k = 0; k < f.n(); ++k) {
+      if (f.is_pinned(k)) continue;  // held constant by the manifold below
+      prob.SetParameterUpperBound(f.mu.data(), k, hard_rcut);
+      if (f.mu[k] > hard_rcut) f.mu[k] = hard_rcut;  // feasible start
+    }
+  };
+  bound_bump_mu(phi, phi_hard_rcut);
+  bound_bump_mu(rho, rho_hard_rcut);
 
   // INIT-pinned positions: hold them constant with a SubsetManifold. (An equal
   // lower==upper bound makes Ceres' bounded trust region return FAILURE at

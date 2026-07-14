@@ -136,7 +136,10 @@ Context make_knot_ctx(double first_knot = 5.0, double stale_rcut2b = -1.0) {
     return c;
 }
 
-/* Blip twin: same grids but D2_Blip / DM_REAM bcode 0 with width keys. */
+/* Blip twin: D2_Blip / DM_REAM bcode 0 with width keys. Every bump support
+ * ends EXACTLY at its channel's rcut (c + 2/eta == RCUT) so the fixture
+ * passes the bump-support startup gate (spilling seeds are a hard error
+ * since the gate landed). */
 Context make_blip_ctx() {
     Context c;
     c.add("ATOM",     "Ta");
@@ -147,8 +150,8 @@ Context make_blip_ctx() {
     c.add("TYPE2B",   3);
     c.add("TYPE2B",   "Ta");
     c.add("TYPE2B",   "Ta");
-    c.add("CGRID2B",  "5.0 3.0 4.2");
-    c.add("SGRID2B",  "1.2 1.0 1.4");
+    c.add("CGRID2B",  "4.0 3.0 4.2");
+    c.add("SGRID2B",  "2.0 1.0 2.5");
     c.add("RCUT2B",   5.0);
     c.add("RCTYPE2B", "Cut_Dummy");
     c.add("INITMB",   "true");
@@ -159,7 +162,7 @@ Context make_blip_ctx() {
     c.add("TYPEMB",   0); c.add("TYPEMB", 0);
     c.add("TYPEMB",   "Ta");
     c.add("TYPEMB",   "Ta");
-    c.add("CGRIDMB",  "4.8 2.5");
+    c.add("CGRIDMB",  "2.8 2.5");
     c.add("SGRIDMB",  "1.0 1.1");
     c.add("AMPGRIDMB", "0.01 -1.2");
     c.add("CEMBFUNC", "0.9 2.9 0.1");
@@ -286,14 +289,28 @@ TEST_CASE("rcut derivation: startup validation normalises stale knot RCUT",
         HPOTargets trg(ctx, tf.path.string());
         REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
     }
-    SECTION("bump channels are never modified") {
+    SECTION("bump channels: RCUT never modified; spilling boxes hard-error") {
+        // A CGRID2B box crossing RCUT is no longer a warning: the
+        // bump-support gate rejects it (the overhang would be
+        // hard-truncated at the cutoff).
         Context ctx = make_blip_ctx();
         ctx.add("DBFILE", "dummy.db");
         ScopedTempFile tf("OPTIM CGRID2B (1) 5.5 6.0\nPC_ERMSE 0 1\n" +
                           std::string(kOptimizerBlock));
         HPOTargets trg(ctx, tf.path.string());
-        // support-crossing warning fires (bounds beyond RCUT) but nothing
-        // throws and RCUT2B stays authoritative
+        REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                            Catch::Contains("bump-support gate"));
+        REQUIRE(ctx.get<double>("RCUT2B") == 5.0);  // stays authoritative
+    }
+    SECTION("bump channels: compliant boxes pass, RCUT untouched") {
+        Context ctx = make_blip_ctx();
+        ctx.add("DBFILE", "dummy.db");
+        // binding eta = min(seed 2.0, lowbound 2.0) = 2.0; corner
+        // 4.0 + 2/2.0 = 5.0 == RCUT2B (exact edge passes)
+        ScopedTempFile tf("OPTIM CGRID2B (1) 3.7 4.0\n"
+                          "OPTIM SGRID2B (1) 2.0 8.0\nPC_ERMSE 0 1\n" +
+                          std::string(kOptimizerBlock));
+        HPOTargets trg(ctx, tf.path.string());
         REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
         REQUIRE(ctx.get<double>("RCUT2B") == 5.0);
     }

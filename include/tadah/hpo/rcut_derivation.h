@@ -13,8 +13,13 @@
 //    evaluation can reach — i.e. also the OPTIM upper bounds of the knot
 //    grids, which the legacy RCUT-only scan missed (an OPTIM'd knot pushed
 //    beyond the stated RCUT would silently outrun the prebuilt NN list).
-// Bump (blip) channels are never touched: their hard truncation at the
-// stated RCUT is part of the fitted model.
+// Bump (blip) channels are never touched: RCUT is authoritative there and
+// never auto-extended. Their counterpart protection is the bump-support
+// GATE in validate_hpo_setup — under a hard Cut_Dummy cutoff, a seed or an
+// OPTIM box corner that lets a bump's support (c + w/eta) reach past RCUT
+// is a hard startup error (a truncated overhang is an energy/force step at
+// the cutoff), so no trial can ever spill and the prebuilt NN list needs no
+// bump-side padding.
 
 #include <cmath>
 #include <string>
