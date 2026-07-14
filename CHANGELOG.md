@@ -29,6 +29,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - ANNEAL warns when SEED is set only inside the INIT block (it seeds the init strategy, not the annealer's proposal stream).
 
 ### Fixed
+- **WARM init: a missing or unparseable seed file is now unconditionally FATAL**, independent of `WARM_ON_MISMATCH` (which governs seed-CONTENT mismatches only: missing parameters, out-of-box clamping). Previously the default `warn` policy printed one stderr line, returned an empty init, and the annealer silently started from the OPTIM box CENTRE instead of the seed — invisible in the journal and masked whenever the OPTIM boxes are centred on the seed values.
 - ANNEAL dead knobs are now hard errors instead of silent no-ops: `XTOL_REL`/`XTOL_ABS`, `VECTOR_ARR`, `GRAD_STRATEGY`, unknown `PARAM` keys (typo guard), and `THREADS`/`POPULATION` on the serial annealer (pointing at `TADAH:ANNEAL_PT` / `TADAH:ANNEAL_PA`).
 - `PARAM L` is no longer validated (or read) under `CORANA 1` — it is a classic-variant knob.
 - ANNEAL best-so-far bookkeeping: `best_x` now always pairs with `best_f` (previously a T0 probe could lower `best_f` while `best_x` stayed at the seed, handing `RESET_TO_BEST` an inconsistent state).

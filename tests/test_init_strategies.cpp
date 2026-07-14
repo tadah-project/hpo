@@ -303,25 +303,26 @@ TEST_CASE("ChainStrategy: INIT_K caps the total output",
     CHECK(pts.size() == 4);
 }
 
-TEST_CASE("WarmInitStrategy: missing file with policy=warn returns empty",
+TEST_CASE("WarmInitStrategy: missing file throws regardless of policy",
           "[HPO][init_strategy][warm]")
 {
-    /* Without a populated optimap the WARM strategy still has the
-     * "open the file" path. With policy=warn, a missing file logs a
-     * warning and returns an empty vector — falling through to the
-     * next strategy in the chain. */
+    /* WARM_ON_MISMATCH governs seed-CONTENT mismatches only; a missing
+     * seed file is a broken launch and is always fatal (falling through
+     * would silently start the optimiser from the box centre). */
     using namespace tadah::hpo;
-    auto sp = make_synthetic_spec({0.0}, {1.0});
-    sp.init_strategy_spec.warm_on_mismatch = "warn";
-    StubTargets st;
+    for (const char* policy : {"warn", "skip"}) {
+        auto sp = make_synthetic_spec({0.0}, {1.0});
+        sp.init_strategy_spec.warm_on_mismatch = policy;
+        StubTargets st;
 
-    InitStrategySpec ispec;
-    ispec.chain.push_back({"WARM", {"/nonexistent_path/never_here.tadah"}});
+        InitStrategySpec ispec;
+        ispec.chain.push_back({"WARM", {"/nonexistent_path/never_here.tadah"}});
 
-    auto strat = build_init_strategy(ispec);
-    InitContext ic{sp, *st.trg, 0};
-    auto pts = strat->generate(ic, 1);
-    CHECK(pts.empty());
+        auto strat = build_init_strategy(ispec);
+        InitContext ic{sp, *st.trg, 0};
+        REQUIRE_THROWS_WITH(strat->generate(ic, 1),
+                            Catch::Contains("cannot open seed file"));
+    }
 }
 
 TEST_CASE("WarmInitStrategy: missing file with policy=error throws",
@@ -358,10 +359,12 @@ ENDSTRATEGY
 ENDOPTIMIZER
 )");
     tadah::core::Context ctx;
-    /* The only chain entry skips (file missing, policy=skip), so the
-     * resolved init list ends up empty -- but the resolution path
-     * itself must not throw. */
-    CHECK_NOTHROW(tadah::hpo::HPOTargets(ctx, cfg.path.string()));
+    /* A missing seed file is unconditionally fatal (policy governs
+     * content mismatches only). The SPECIFIC error message proves the
+     * parser accepted both keywords and the path reached the WARM
+     * strategy -- which is what this round-trip is for. */
+    REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, cfg.path.string()),
+                        Catch::Contains("cannot open seed file"));
 }
 
 TEST_CASE("WarmInitStrategy: HOT round-trip primes warmstart cache",

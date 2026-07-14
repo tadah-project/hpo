@@ -214,9 +214,16 @@ public:
 
         std::ifstream in(file_);
         if (!in) {
-            handle_mismatch(policy,
-                "WARM: cannot open " + file_ + " -- falling through to next strategy");
-            return {};
+            /* UNCONDITIONALLY fatal, independent of WARM_ON_MISMATCH:
+             * the policy governs seed-CONTENT mismatches (missing
+             * parameters, out-of-box clamping). A missing file is a
+             * broken launch -- falling through would silently start the
+             * optimiser from its default point (ANNEAL: the OPTIM box
+             * centre) instead of the seed the user asked for. */
+            throw std::runtime_error(
+                "WARM: cannot open seed file '" + file_ + "'. Provide the "
+                "file (production submit scripts copy it into the run dir) "
+                "or drop the WARM line to start from the in-config values.");
         }
 
         /* Read the file into a buffer, stripping comment + blank lines.
@@ -254,9 +261,12 @@ public:
         try {
             loaded.deserialize(buf);
         } catch (const std::exception& e) {
-            handle_mismatch(policy,
-                std::string("WARM: parse failure in ") + file_ + ": " + e.what());
-            return {};
+            /* Same class as a missing file: an unreadable seed cannot be
+             * warm-started from, and falling through would silently
+             * launch from the box centre. Always fatal. */
+            throw std::runtime_error(
+                std::string("WARM: parse failure in seed file '") + file_ +
+                "': " + e.what());
         }
 
         std::vector<double> point;
