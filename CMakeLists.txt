@@ -346,6 +346,22 @@ target_link_libraries(tadah.hpo
 # must be last as we redefine TADAH_LAMMPS_LIB
 add_compile_definitions(TADAH_LAMMPS_LIB=\"${_lammps_libname}\")
 
+# Opt-in MPI for the HPO parallel-annealing drivers (TADAH:ANNEAL_PT /
+# TADAH:ANNEAL_PA): replicas/walkers distribute over ranks, every rank
+# trains locally (plain Trainer) and runs its LAMMPS instances on
+# MPI_COMM_SELF. This is deliberately NARROW -- no ScaLAPACK, no
+# MPI_Trainer, no binary rename -- and mutually exclusive with the
+# legacy TADAH_BUILD_MPI machinery.
+option(TADAH_HPO_MPI
+  "Distribute TADAH:ANNEAL_PT / ANNEAL_PA replicas over MPI ranks (requires an MPI LAMMPS library)"
+  OFF)
+if (TADAH_HPO_MPI AND TADAH_BUILD_MPI)
+  message(FATAL_ERROR
+    "TADAH_HPO_MPI and TADAH_BUILD_MPI are mutually exclusive: the former "
+    "is the narrow parallel-annealing layer, the latter the legacy "
+    "ScaLAPACK-distributed training build. Pick one.")
+endif()
+
 if (TADAH_BUILD_MPI)
   find_package(MPI REQUIRED)
   # ScaLAPACK provides BLACS + PBLAS + ScaLAPACK (pdgels_, descinit_, blacs_*, numroc_)
@@ -364,6 +380,27 @@ if (TADAH_BUILD_MPI)
   set_target_properties(tadah.hpo PROPERTIES OUTPUT_NAME "tadah_mpi.hpo")
   target_link_libraries(tadah.hpo PUBLIC MPI::MPI_CXX)
   add_compile_definitions(TADAH_BUILD_MPI)
+elseif (TADAH_HPO_MPI)
+  find_package(MPI REQUIRED COMPONENTS CXX)
+  # PUBLIC on tadah.hpo: the `tadah` executable inherits the link and the
+  # compile definition transitively -- no Tadah.MLIP CMake change, no
+  # binary rename (an MPI-linked tadah still runs standalone).
+  target_link_libraries(tadah.hpo PUBLIC MPI::MPI_CXX)
+  target_compile_definitions(tadah.hpo PUBLIC TADAH_HPO_MPI)
+  # The serial LAMMPS archive contains the MPI STUB symbol DEFINITIONS
+  # (src/STUBS/mpi.cpp) -- linking it together with a real libmpi is an
+  # ODR/symbol-collision hazard. Require an MPI-flavoured LAMMPS lib.
+  if (NOT _lammps_libname MATCHES "mpi" AND NOT TADAH_HPO_MPI_SKIP_LIB_CHECK)
+    message(FATAL_ERROR
+      "TADAH_HPO_MPI=ON requires an MPI LAMMPS library (got "
+      "'${_lammps_libname}'): the serial archive carries MPI stub symbol "
+      "definitions that collide with the real MPI library at link time. "
+      "Point TADAH_LAMMPS_LIB at the MPI build (e.g. "
+      "build_lammps_mpi/liblammps_develop_mpi.a) or set "
+      "-DTADAH_HPO_MPI_SKIP_LIB_CHECK=ON if your lib name simply lacks "
+      "the 'mpi' marker.")
+  endif()
+  message(STATUS "TADAH_HPO_MPI: ANNEAL_PT/ANNEAL_PA replicas distribute over MPI ranks (LAMMPS on MPI_COMM_SELF)")
 else()
   target_include_directories(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS)
   # target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS/libmpi_stubs.a)

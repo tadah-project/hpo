@@ -3,6 +3,7 @@
 
 #include "tadah/core/context.h"
 #include "tadah/core/utils.h"
+#include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/observables/observable.h>
 #include <tadah/hpo/optimizer_spec.h>
@@ -74,14 +75,18 @@ public:
     std::string dumpPotDir = "pots";
     std::string dumpBestPotDir = "best_pots";
                            
-    const std::string lossFile       = "loss.tadah";
-    const std::string outvarFile     = "outvar.tadah";
-    const std::string paramsFile     = "params.tadah";
-    const std::string statsFile      = "stats.tadah";
-    const std::string bestLossFile    = "best_loss.tadah";
-    const std::string bestOutvarFile  = "best_outvar.tadah";
-    const std::string bestParamsFile  = "best_params.tadah";
-    const std::string bestStatsFile   = "best_stats.tadah";
+    /* Fixed output names gain a ".r<rank>" suffix on MPI ranks > 0 so
+     * multi-rank runs sharing one working directory never clobber each
+     * other (rank 0 keeps the unsuffixed names for existing tooling;
+     * hpo_rank_suffix() is empty in non-MPI builds and 1-rank runs). */
+    const std::string lossFile       = "loss.tadah"        + hpo_rank_suffix();
+    const std::string outvarFile     = "outvar.tadah"      + hpo_rank_suffix();
+    const std::string paramsFile     = "params.tadah"      + hpo_rank_suffix();
+    const std::string statsFile      = "stats.tadah"       + hpo_rank_suffix();
+    const std::string bestLossFile    = "best_loss.tadah"   + hpo_rank_suffix();
+    const std::string bestOutvarFile  = "best_outvar.tadah" + hpo_rank_suffix();
+    const std::string bestParamsFile  = "best_params.tadah" + hpo_rank_suffix();
+    const std::string bestStatsFile   = "best_stats.tadah"  + hpo_rank_suffix();
     LossFunction globalLoss;
 
     bool use_emae = false; bool use_ermse = false; bool use_errmse = false; bool use_ersq = false;

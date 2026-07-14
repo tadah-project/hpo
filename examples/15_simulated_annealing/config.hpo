@@ -2,9 +2,9 @@
 #
 # Kirkpatrick/Metropolis SA: fixed-shape Gaussian step in transformed
 # parameter space, geometric temperature schedule (T <- T * RT),
-# Metropolis acceptance. Initial temperature is auto-calibrated from a
-# short uniform-bounds probe walk (T0_PROBES probes, mean |dE|, target
-# acceptance T0_PACCEPT).
+# Metropolis acceptance. Initial temperature is auto-calibrated from
+# local probes around the seed point (T0_PROBES probes, median uphill
+# |dE| over non-FAILSCORE probes, target acceptance T0_PACCEPT).
 
 OPTIMIZER
   STRATEGY

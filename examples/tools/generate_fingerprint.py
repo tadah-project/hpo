@@ -117,13 +117,21 @@ def build_fingerprint(example_dir: Path, overrides: dict) -> dict:
         except (ValueError, IndexError):
             continue
 
-    # best_params columns: skip leading ITERATION
+    # best_params columns: skip leading ITERATION. Repeated column names
+    # (e.g. OPTIM FIXWEIGHT (2-4) -> three FIXWEIGHT columns) get a
+    # 1-based [k] suffix; MUST mirror compare_fingerprint.py, which used
+    # to silently compare the FIRST duplicate against the LAST one
+    # stored here (dict collision) -- a flat-direction change in any
+    # other duplicate column then looked like a regression.
     hyperparams = {}
+    seen = {}
     for i, col in enumerate(params_hdr):
         if col == "ITERATION":
             continue
+        seen[col] = seen.get(col, 0) + 1
+        name = col if params_hdr.count(col) == 1 else f"{col}[{seen[col]}]"
         try:
-            hyperparams[col] = {
+            hyperparams[name] = {
                 "value": float(params_row[i]),
                 "abs_tol": tol_hp["abs_tol"],
                 "rel_tol": tol_hp["rel_tol"],

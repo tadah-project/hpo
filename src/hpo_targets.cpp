@@ -368,6 +368,11 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
   spec.is_int.assign(spec.low.size(), false);   // no integer vars yet
   spec.analyse_logscale();   // mutates low/high in place; fills log_scaled
 
+  /* Optimisers need to tell a real loss from the failed-evaluation
+   * sentinel (e.g. the ANNEAL T0 calibration excludes FAILSCORE
+   * probes from its statistics). */
+  spec.failscore = FAIL_SCORE;
+
   /* ---------- NOISE_AUTO: heuristic for finite-difference fd_step ---
    *
    * For DLIB:BFGS the user can ask the engine to pick a sensible
@@ -430,6 +435,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
     sub.high       = spec.high;
     sub.is_int     = spec.is_int;
     sub.log_scaled = spec.log_scaled;
+    sub.failscore  = spec.failscore;
   };
   if (spec.inner)    inherit_bounds_only(*spec.inner);
   if (spec.prestage) {
@@ -467,6 +473,21 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
      * algos (G_MLSL, CRS, ISRES, ESCH, ...) ever read that RNG.
      * Surface it so "I set SEED and nothing changed" is answerable
      * from the log. */
+    /* SEED inside the INIT block seeds the init-strategy chain ONLY --
+     * it does not seed the optimiser itself. For the ANNEAL family
+     * (whose proposal stream falls back to random_device without an
+     * optimiser-level SEED) this is a classic footgun: the user "set a
+     * seed" yet gets a non-reproducible run. */
+    if (!s.seed && s.init_strategy_spec.seed &&
+        s.lib == "TADAH" && s.algo.rfind("ANNEAL", 0) == 0) {
+      std::ostringstream oss;
+      oss << "INIT[" << where << "]: SEED inside the INIT block does not "
+             "seed TADAH:" << s.algo << " -- the annealer's proposal "
+             "stream falls back to random_device (non-reproducible). "
+             "Set SEED at the OPTIMIZER/STRATEGY level as well.";
+      std::cerr << "[HPO] " << oss.str() << "\n";
+      HPOLog::instance().warning(oss.str());
+    }
     if (s.init_strategy_spec.seed) {
       const auto& chain = s.init_strategy_spec.chain;
       const bool seed_consumed = std::any_of(

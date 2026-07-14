@@ -62,6 +62,42 @@ Registry build_registry()
         c.supports_maxeval = true;
         c.supports_maxtime = true;
         c.supports_stopval = true;
+        /* eps-NEPS plateau rule (both SA variants): NEPS consecutive
+         * rungs whose best improves by less than the tolerance stop the
+         * run. Rel is the natural ladder mapping (df < ftol_rel*|best|). */
+        c.supports_ftol_rel = true;
+        c.supports_ftol_abs = true;
+        c.ladder_ftol = OptimizerCaps::FtolKind::Rel;
+        add(r, c);
+    }
+    {
+        OptimizerCaps c;
+        c.lib = "TADAH";  c.algo = "ANNEAL_PT";
+        c.is_global       = true;
+        c.is_population   = true;   /* replica ladder */
+        c.supports_maxeval = true;
+        c.supports_maxtime = true;
+        c.supports_stopval = true;
+        /* Corana sec.-4 eps-NEPS plateau evaluated on the coldest slot
+         * + the global best. */
+        c.supports_ftol_rel = true;
+        c.supports_ftol_abs = true;
+        c.ladder_ftol = OptimizerCaps::FtolKind::Rel;
+        add(r, c);
+    }
+    {
+        OptimizerCaps c;
+        c.lib = "TADAH";  c.algo = "ANNEAL_PA";
+        c.is_global       = true;
+        c.is_population   = true;
+        c.supports_maxeval = true;
+        c.supports_maxtime = true;
+        c.supports_stopval = true;
+        /* Corana sec.-4 eps-NEPS plateau evaluated on the population
+         * best + the global best. */
+        c.supports_ftol_rel = true;
+        c.supports_ftol_abs = true;
+        c.ladder_ftol = OptimizerCaps::FtolKind::Rel;
         add(r, c);
     }
 

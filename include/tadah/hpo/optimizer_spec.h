@@ -296,6 +296,7 @@ struct OptimizerSpec {
           param(o.param), low(o.low), high(o.high), is_int(o.is_int),
           log_scaled(o.log_scaled), log_threshold(o.log_threshold),
           optim_init(o.optim_init),
+          failscore(o.failscore),
           init_strategy_spec(o.init_strategy_spec),
           noise(o.noise),
           multistart(o.multistart),
@@ -353,6 +354,12 @@ struct OptimizerSpec {
     std::vector<bool>   log_scaled;         // same size as low/high
     std::optional<double> log_threshold;    // OFF = std::nullopt
     std::vector<std::vector<double>> optim_init;
+
+    /* FAILSCORE from the enclosing HPOTargets, copied in so optimisers
+     * can tell a real loss from a failed-evaluation sentinel (the
+     * ANNEAL family excludes FAILSCORE losses from its T0 statistics).
+     * Unset only in bare specs built outside HPOTargets (unit tests). */
+    std::optional<double> failscore;
 
     /* -------- top-level OPTIMIZER blocks (parsed children) -------- */
     InitStrategySpec init_strategy_spec;    // INIT/ENDINIT block

@@ -27,6 +27,8 @@
 #include <string>
 
 #include <tadah/hpo/algorithms.h>
+#include <tadah/hpo/algorithms_pt.h>
+#include <tadah/hpo/algorithms_pa.h>
 #include <tadah/hpo/ceres_adapter.h>
 #include <tadah/hpo/dlib_adapter.h>
 #include <tadah/hpo/hpo_host.h>
@@ -76,9 +78,11 @@ inline void run_inner(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host)
   }
 
   if (spec.lib == "TADAH") {
-    if      (spec.algo == "RANDOM") run_random <Vec,Runner>(spec, host);
-    else if (spec.algo == "GRID")   run_grid   <Vec,Runner>(spec, host);
-    else if (spec.algo == "ANNEAL") run_anneal <Vec,Runner>(spec, host);
+    if      (spec.algo == "RANDOM")    run_random   <Vec,Runner>(spec, host);
+    else if (spec.algo == "GRID")      run_grid     <Vec,Runner>(spec, host);
+    else if (spec.algo == "ANNEAL")    run_anneal   <Vec,Runner>(spec, host);
+    else if (spec.algo == "ANNEAL_PT") run_anneal_pt<Vec,Runner>(spec, host);
+    else if (spec.algo == "ANNEAL_PA") run_anneal_pa<Vec,Runner>(spec, host);
     else throw std::runtime_error("unknown TADAH algo " + spec.algo);
   } else if (spec.lib == "DLIB") {
     if      (spec.algo == "GFS")  run_dlib_global<Vec,Runner>(spec, host);

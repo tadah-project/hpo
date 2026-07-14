@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "example": "17_no_training_db",
+  "example": "FIXWEIGHT[3]",
   "description": "",
   "best_loss": {
     "value": 1.87556e-10,
@@ -15,7 +15,17 @@
     }
   },
   "hyperparameters": {
-    "FIXWEIGHT": {
+    "FIXWEIGHT[1]": {
+      "value": -216.7625,
+      "abs_tol": 0.001,
+      "rel_tol": 0.001
+    },
+    "FIXWEIGHT[2]": {
+      "value": 258.3128,
+      "abs_tol": 0.001,
+      "rel_tol": 0.001
+    },
+    "FIXWEIGHT[3]": {
       "value": -43.332,
       "abs_tol": 0.001,
       "rel_tol": 0.001
@@ -30,7 +40,7 @@
     "MAXEVAL_REACHED -- maximum evaluations exhausted"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "2.1s",
+  "walltime_hint": "1.8s",
   "fast": true,
   "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
 }

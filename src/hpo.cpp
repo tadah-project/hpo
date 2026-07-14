@@ -58,7 +58,10 @@ int hpo_run(core::Context& ctx)
         try { version = core::BlueprintParser::getBlueprintTadah().version; }
         catch (...) {}
         std::string cwd = std::filesystem::current_path().string();
-        log.open("hpo_run.log", version, cwd, static_cast<int>(getpid()));
+        /* Rank-suffixed on MPI ranks > 0 (no-op otherwise) so multi-rank
+         * runs sharing one working directory keep separate journals. */
+        log.open("hpo_run.log" + hpo_rank_suffix(), version, cwd,
+                 static_cast<int>(getpid()));
     }
 
 #ifdef TADAH_ENABLE_OPENMP

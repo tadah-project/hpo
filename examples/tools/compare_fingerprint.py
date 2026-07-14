@@ -101,11 +101,17 @@ def compare(example_dir: Path):
             except (ValueError, IndexError) as e:
                 failures.append(f"component {col} parse error: {e}")
 
-    # hyperparameters
+    # hyperparameters -- duplicate column names carry a 1-based [k]
+    # suffix (must mirror generate_fingerprint.py's disambiguation).
+    disamb, seen = [], {}
+    for col in params_hdr:
+        seen[col] = seen.get(col, 0) + 1
+        disamb.append(col if params_hdr.count(col) == 1
+                      else f"{col}[{seen[col]}]")
     for col, ref in fp.get("hyperparameters", {}).items():
-        if col in params_hdr:
+        if col in disamb:
             try:
-                actual = float(params_row[params_hdr.index(col)])
+                actual = float(params_row[disamb.index(col)])
                 if not within_tol(actual, ref["value"],
                                   ref["abs_tol"], ref["rel_tol"]):
                     failures.append(

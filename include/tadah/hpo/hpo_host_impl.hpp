@@ -2,6 +2,7 @@
 #include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/intercept_layout.h>
 #include <tadah/core/logger.h>
+#include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/sims_grad_lammps.h>
 #include <tadah/hpo/val_filter_forwarding.h>
@@ -45,7 +46,8 @@ namespace bench_detail {
   inline std::ofstream& csv() {
     static std::ofstream f;
     if (!f.is_open()) {
-      f.open("hpo_phase_times.csv", std::ios::out | std::ios::trunc);
+      f.open("hpo_phase_times.csv" + hpo_rank_suffix(),
+             std::ios::out | std::ios::trunc);
       f << "iter,total_ms,train_ms,predict_ms,lammps_ms,sims_loss_ms,submit_ms,nthreads\n";
     }
     return f;
@@ -1007,7 +1009,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     auto rewrite = [&](const char* flag) {
       for (std::size_t k = 0; k + 1 < invar.size(); ++k) {
         if (invar[k] == flag && invar[k+1] != "none") {
-          invar[k+1] += ".t" + std::to_string(tid);
+          invar[k+1] += hpo_rank_suffix() + ".t" + std::to_string(tid);
           break;
         }
       }
@@ -1027,7 +1029,9 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     auto t_create0 = std::chrono::high_resolution_clock::now();
     auto cache_it = tls_lmp_cache.find(cache_key);
     if (cache_it == tls_lmp_cache.end()) {
-      auto fresh = runner.create_instance(0, invar);
+      /* Serial builds: comm 0 (LAMMPS STUBS). TADAH_HPO_MPI builds:
+       * MPI_COMM_SELF -- every rank runs its own single-rank LAMMPS. */
+      auto fresh = runner.create_instance(hpo_lammps_comm(), invar);
       if (!fresh) {
         for (const auto& n : lsim.n_outvar) {
           (void)n;
@@ -1130,7 +1134,8 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       const double t_create_ms = bench_detail::elapsed_ms(t_create0, t_create1);
       const double t_run_ms    = bench_detail::elapsed_ms(t_create1, t_run1);
       std::lock_guard<std::mutex> lg(bench_detail::mtx());
-      static std::ofstream f("hpo_script_times.csv", std::ios::out | std::ios::trunc);
+      static std::ofstream f("hpo_script_times.csv" + hpo_rank_suffix(),
+                             std::ios::out | std::ios::trunc);
       static bool header_written = (f << "iter,thread,script,create_ms,run_ms\n", true);
       (void)header_written;
       f << r.iter << ',' << tid << ',' << lsim.script << ','
@@ -2588,7 +2593,8 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                     pot.remove("HEALTH_LOG");
 
                     R runner;
-                    auto lmp = runner.create_instance(0, lsim.invar);
+                    auto lmp = runner.create_instance(hpo_lammps_comm(),
+                                                      lsim.invar);
                     if (!lmp) {
                         /* Phase A masking: one LAMMPS instance creation
                          * failure shouldn't poison the whole gradient.

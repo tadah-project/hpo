@@ -1,4 +1,5 @@
 #include <tadah/core/logger.h>
+#include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/runners.h>
@@ -651,7 +652,9 @@ LammpsSim::index_defined_variables() const
     }
 
     LammpsRunner runner;
-    auto lmp = runner.create_instance(0, invar);
+    /* Serial builds: comm 0 (LAMMPS STUBS). TADAH_HPO_MPI builds: a
+     * literal 0 would be a NULL MPI_Comm -- use MPI_COMM_SELF. */
+    auto lmp = runner.create_instance(hpo_lammps_comm(), invar);
     if (!lmp || !lmp->input || !lmp->input->variable) return defs;
 
     std::unordered_map<std::string, std::size_t> labels;

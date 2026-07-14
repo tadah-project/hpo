@@ -167,10 +167,15 @@ public:
       OptimizerSpec sub = spec;                  // deep copy
       sub.optim_init = { spec.optim_init[i] };   // single start
       if (per_start_maxeval) sub.stop.maxeval = *per_start_maxeval;
+      /* Decorrelate the starts: reusing one seed hands every start the
+       * same proposal stream, so stochastic inner optimisers (ANNEAL)
+       * produce near-duplicate chains that differ only by init point. */
+      if (spec.seed) sub.seed = *spec.seed + static_cast<unsigned>(i);
 
       const std::string start_msg =
           "MULTISTART start " + std::to_string(i+1) + "/" +
-          std::to_string(actual_k) + " -- running inner optimiser";
+          std::to_string(actual_k) + " -- running inner optimiser" +
+          (sub.seed ? " (seed=" + std::to_string(*sub.seed) + ")" : "");
       std::cout << "[HPO] " << start_msg << "\n";
       HPOLog::instance().info(start_msg);
       /* Snapshot global state at start so we can summarise this start's

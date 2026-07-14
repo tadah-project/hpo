@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "example": "16_fixweight_mixed",
+  "example": "FIXWEIGHT",
   "description": "",
   "best_loss": {
     "value": 0.09568511,
