@@ -20,6 +20,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unistd.h>
 
 namespace {
 
@@ -42,11 +43,17 @@ tadah::core::Context make_context_for_targets() {
     return c;
 }
 
-/* Helper: write an .hpotarget snippet to a temp file and return its path. */
+/* Helper: write an .hpotarget snippet to a temp file and return its path.
+ * The name must be unique ACROSS PROCESSES, not just within one: ctest runs
+ * every TEST_CASE as its own process (so a static counter restarts at 1 in
+ * each) and `ctest -j` runs them concurrently -- a counter-only name made
+ * parallel cases overwrite each other's configs (flaky no-throw failures). */
 std::filesystem::path write_temp_config(const std::string& body) {
     static int counter = 0;
     auto p = std::filesystem::temp_directory_path()
-           / ("test_pc_observable_parser_" + std::to_string(++counter) + ".cfg");
+           / ("test_pc_observable_parser_"
+              + std::to_string(::getpid()) + "_"
+              + std::to_string(++counter) + ".cfg");
     std::ofstream f(p);
     f << body;
     f.close();

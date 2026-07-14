@@ -330,9 +330,14 @@ public:
         }
 
         /* Clamp into bounds (in real space) -- bounds may have moved
-         * between runs. Each clamp is logged so a narrowed bound that
-         * silently shifts the warm point doesn't get lost in noise. */
+         * between runs. A clamped seed is a DIFFERENT starting point than
+         * the user asked for (it silently destroyed a whole run once:
+         * seed weights far outside narrowed OPTIM boxes were pinned to the
+         * box corner and the seed was never evaluated), so clamping goes
+         * through the same WARM_ON_MISMATCH policy as missing parameters:
+         * error -> throw, skip -> drop the point, warn (default) -> log. */
         std::size_t clamped = 0;
+        std::ostringstream coss;
         for (std::size_t d = 0; d < point.size(); ++d) {
             const bool log_d = ctx.spec.log_scaled[d];
             const double lo = log_d ? std::exp(ctx.spec.low[d])  : ctx.spec.low[d];
@@ -342,16 +347,22 @@ public:
             if (point[d] > hi) point[d] = hi;
             if (point[d] != orig) {
                 if (clamped < 5) {
-                    std::cerr << "[HPO] WARM: clamped dim[" << d
-                              << "] from " << orig << " to " << point[d]
-                              << " (bounds [" << lo << ", " << hi << "])\n";
+                    coss << (clamped ? "; " : "") << "dim[" << d
+                         << "] " << orig << " -> " << point[d]
+                         << " (bounds [" << lo << ", " << hi << "])";
                 }
                 ++clamped;
             }
         }
-        if (clamped > 5) {
-            std::cerr << "[HPO] WARM: " << clamped
-                      << " total dims clamped (further entries suppressed)\n";
+        if (clamped > 0) {
+            std::ostringstream oss;
+            oss << "WARM: " << clamped << " parameter(s) from " << file_
+                << " clamped into OPTIM bounds -- the seed point is NOT the "
+                   "one on disk: " << coss.str();
+            if (clamped > 5) oss << "; ... (further entries suppressed)";
+            HPOLog::instance().warning(oss.str());
+            handle_mismatch(policy, oss.str());
+            if (policy == "skip") return {};
         }
         return { std::move(point) };
     }
