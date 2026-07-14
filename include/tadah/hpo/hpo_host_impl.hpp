@@ -13,6 +13,7 @@
 #include <tadah/hpo/iter_health.h>
 #include <tadah/hpo/rcut_derivation.h>
 #include <tadah/hpo/startup_validation.h>
+#include <tadah/hpo/topk.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
 #include <tadah/mlip/analytics/dphi_dtheta_walk.h>
 #include <fstream>
@@ -522,6 +523,8 @@ template<class P,class R> std::size_t
   HPO_Host<P,R>::topk_capacity_{0};
 template<class P,class R>
   std::vector<std::pair<double, P>> HPO_Host<P,R>::topk_buf_;
+template<class P,class R>
+  std::vector<double> HPO_Host<P,R>::topk_widths_;
 template<class P,class R> std::atomic_size_t
   HPO_Host<P,R>::iter_at_last_best_{0};
 template<class P,class R> std::atomic_size_t
@@ -529,11 +532,12 @@ template<class P,class R> std::atomic_size_t
 
 /* Top-K accessors. Cheap when disabled. */
 template<class P,class R>
-void HPO_Host<P,R>::set_track_topk(std::size_t k) {
+void HPO_Host<P,R>::set_track_topk(std::size_t k, std::vector<double> widths) {
   std::lock_guard<std::mutex> lk(topk_mtx_);
   topk_capacity_ = k;
   topk_buf_.clear();
   topk_buf_.reserve(k);
+  topk_widths_ = std::move(widths);
 }
 template<class P,class R>
 std::vector<std::pair<double, P>> HPO_Host<P,R>::get_topk() {
@@ -1679,20 +1683,13 @@ double HPO_Host<P,R>::operator()(const P& p) const
       iter_at_last_best_.store(r.iter, std::memory_order_relaxed);
     }
 
-    /* Top-K tracking -- cheap fast-path when disabled (capacity == 0). */
+    /* Top-K tracking -- cheap fast-path when disabled (capacity == 0).
+     * Basin dedup (loss + normalised parameter distance) lives in topk.h. */
     if (topk_capacity_ > 0) {
       std::lock_guard<std::mutex> lk(topk_mtx_);
       if (topk_capacity_ > 0) {  /* re-check inside lock */
-        if (topk_buf_.size() < topk_capacity_) {
-          topk_buf_.emplace_back(r.loss, r.params);
-        } else {
-          /* Replace the worst entry if this one is better. */
-          auto worst = std::max_element(topk_buf_.begin(), topk_buf_.end(),
-              [](const auto& a, const auto& b){ return a.first < b.first; });
-          if (r.loss < worst->first) {
-            *worst = std::make_pair(r.loss, r.params);
-          }
-        }
+        topk_consider(topk_buf_, topk_capacity_, r.loss, r.params,
+                      topk_widths_);
       }
     }
 

@@ -250,8 +250,15 @@ public:
           "outer OPTIMIZER block defines the local refinement).");
     }
 
-    /* Step 1: enable top-K tracking, run the PRESTAGE. */
-    HPO_Host<Vec,Runner>::set_track_topk(top_k_);
+    /* Step 1: enable top-K tracking, run the PRESTAGE. Real-space box
+     * widths normalise the parameter half of the basin dedup (topk.h). */
+    std::vector<double> widths(spec.low.size());
+    for (std::size_t d = 0; d < widths.size(); ++d) {
+      const bool log_d = d < spec.log_scaled.size() && spec.log_scaled[d];
+      widths[d] = log_d ? std::exp(spec.high[d]) - std::exp(spec.low[d])
+                        : spec.high[d] - spec.low[d];
+    }
+    HPO_Host<Vec,Runner>::set_track_topk(top_k_, std::move(widths));
     {
       std::ostringstream oss;
       oss << "PRESTAGE: exploration phase "

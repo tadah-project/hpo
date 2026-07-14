@@ -195,8 +195,12 @@ public:
     /* ---------- top-K tracking (used by StagedPolicy) ------------------ */
     /** Enable a buffer that records the top-K (lowest loss) (loss, params)
      *  pairs across operator() calls. Capacity = k; older worse-loss
-     *  entries are evicted. Disabled by default (zero overhead). */
-    static void set_track_topk(std::size_t k);
+     *  entries are evicted, near-clones are deduped (see topk.h -- basin
+     *  dedup by loss AND normalised parameter distance). `widths` are the
+     *  real-space OPTIM box widths used to normalise the parameter test;
+     *  empty means loss-only dedup. Disabled by default (zero overhead). */
+    static void set_track_topk(std::size_t k,
+                               std::vector<double> widths = {});
     /** Snapshot the current top-K, sorted ascending by loss. */
     static std::vector<std::pair<double, ParamVec>> get_topk();
     /** Reset the top-K buffer (called at start of each staged-global run). */
@@ -322,6 +326,7 @@ private:
     static std::mutex                                            topk_mtx_;
     static std::size_t                                           topk_capacity_;
     static std::vector<std::pair<double, ParamVec>>              topk_buf_;
+    static std::vector<double>                                   topk_widths_;
 
     /* Stagnation tracking -- gated. iter at which the most recent best was
      * recorded; stagnation = g_iter_ - iter_at_last_best_. */
