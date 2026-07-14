@@ -1,0 +1,171 @@
+// test_sim_timeout.cpp
+//
+// Per-sim wall-clock enforcement (root MAXTIME / per-sim --maxtime,
+// SECONDS). LammpsSim injects `timer timeout ${maxtime}` after every
+// `clear` (and at line 0 when the script does not start with one); the
+// runner reports a fired timeout as a failed sim; a cached instance stays
+// healthy for the next script. Enforcement is opt-in: the default
+// MAX_TIME "off" injects nothing, and a script issuing its own `timer`
+// command keeps full control.
+
+#include "catch2/catch.hpp"
+
+#include <tadah/core/context.h>
+#include <tadah/hpo/lammps_sim.h>
+#include <tadah/hpo/runners.h>
+
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <vector>
+
+namespace {
+
+struct ScopedTempFile {
+  std::filesystem::path path;
+
+  explicit ScopedTempFile(const std::string& body)
+  : path(std::filesystem::temp_directory_path() /
+         ("tadah_hpo_timeout_" +
+          std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+          ".in"))
+  {
+    std::ofstream os(path);
+    REQUIRE(os.good());
+    os << body;
+    os.close();
+    REQUIRE(os.good());
+  }
+
+  ~ScopedTempFile() {
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+  }
+};
+
+std::size_t count_timer_lines(const std::vector<std::string>& lines) {
+  std::size_t n = 0;
+  for (const auto& l : lines)
+    if (l.rfind("timer timeout", 0) == 0) ++n;
+  return n;
+}
+
+int index_of_prefix(const std::vector<std::string>& lines,
+                    const std::string& prefix) {
+  for (std::size_t i = 0; i < lines.size(); ++i)
+    if (lines[i].rfind(prefix, 0) == 0) return static_cast<int>(i);
+  return -1;
+}
+
+const char* SIMPLE_BODY = R"(clear
+units lj
+variable foo equal 1.0
+print "ok"
+)";
+
+}  // namespace
+
+TEST_CASE("LammpsSim injects timer timeout after clear when maxtime is set",
+          "[lammps_sim][timeout]") {
+    ScopedTempFile script(SIMPLE_BODY);
+    std::string cmd = "--script " + script.path.string() +
+                      " --varloss foo 0.0 1.0";
+    tadah::hpo::LammpsSim sim(cmd, "5", 1.0e6, tadah::LossFunction{});
+
+    REQUIRE(count_timer_lines(sim.script_lines) == 1);
+    const int i_clear = index_of_prefix(sim.script_lines, "clear");
+    const int i_timer = index_of_prefix(sim.script_lines, "timer timeout");
+    REQUIRE(i_clear == 0);
+    REQUIRE(i_timer == 1);           // immediately after the leading clear
+    REQUIRE(sim.script_lines[i_timer].find("${maxtime}") != std::string::npos);
+}
+
+TEST_CASE("LammpsSim injects at line 0 when the script does not start with clear",
+          "[lammps_sim][timeout]") {
+    ScopedTempFile script("units lj\nvariable foo equal 1.0\nclear\n"
+                          "units lj\nvariable foo equal 1.0\nprint \"x\"\n");
+    std::string cmd = "--script " + script.path.string() +
+                      " --varloss foo 0.0 1.0";
+    tadah::hpo::LammpsSim sim(cmd, "5", 1.0e6, tadah::LossFunction{});
+
+    /* one at index 0 + one after the mid-script clear */
+    REQUIRE(count_timer_lines(sim.script_lines) == 2);
+    REQUIRE(sim.script_lines[0].rfind("timer timeout", 0) == 0);
+    const int i_clear = index_of_prefix(sim.script_lines, "clear");
+    REQUIRE(sim.script_lines[i_clear + 1].rfind("timer timeout", 0) == 0);
+}
+
+TEST_CASE("LammpsSim does not inject when maxtime is off (default)",
+          "[lammps_sim][timeout]") {
+    ScopedTempFile script(SIMPLE_BODY);
+    std::string cmd = "--script " + script.path.string() +
+                      " --varloss foo 0.0 1.0";
+    tadah::hpo::LammpsSim sim(cmd, "off", 1.0e6, tadah::LossFunction{});
+    REQUIRE(count_timer_lines(sim.script_lines) == 0);
+}
+
+TEST_CASE("LammpsSim does not inject when the script has its own timer",
+          "[lammps_sim][timeout]") {
+    ScopedTempFile script("clear\nunits lj\ntimer timeout 30 every 10\n"
+                          "variable foo equal 1.0\n");
+    std::string cmd = "--script " + script.path.string() +
+                      " --varloss foo 0.0 1.0";
+    tadah::hpo::LammpsSim sim(cmd, "5", 1.0e6, tadah::LossFunction{});
+
+    /* exactly the user's own line, no ${maxtime} injection */
+    std::size_t n_injected = 0;
+    for (const auto& l : sim.script_lines)
+        if (l.find("${maxtime}") != std::string::npos) ++n_injected;
+    REQUIRE(n_injected == 0);
+}
+
+TEST_CASE("fired timer timeout fails the sim and leaves the instance healthy",
+          "[lammps_sim][timeout][.][slow]") {
+    /* Long NVE run on an LJ melt: guaranteed to outlive a 1 s budget.
+     * `timer timeout 1 every 1` is checked every step and ends the run
+     * cleanly, so run_script must return false via Timer::is_timeout(). */
+    ScopedTempFile script(R"(clear
+units lj
+atom_style atomic
+lattice fcc 0.8442
+region box block 0 12 0 12 0 12
+create_box 1 box
+create_atoms 1 box
+mass 1 1.0
+velocity all create 3.0 87287
+pair_style lj/cut 2.5
+pair_coeff 1 1 1.0 1.0 2.5
+neighbor 0.3 bin
+neigh_modify delay 0 every 20 check no
+fix 1 all nve
+variable foo equal 1.0
+run 500000000
+)");
+    std::string cmd = "--script " + script.path.string() +
+                      " --varloss foo 0.0 1.0 --maxtime 1";
+    tadah::hpo::LammpsSim sim(cmd, "off", 1.0e6, tadah::LossFunction{});
+    REQUIRE(count_timer_lines(sim.script_lines) == 1);
+
+    LammpsRunner runner;
+    /* Same -var registration the HPO host performs (sim.invar carries it,
+     * here passed explicitly): ${maxtime} -> "1 every 1". */
+    auto lmp = runner.create_instance(
+        0, {"lmp", "-log", "none", "-screen", "none",
+            "-var", "maxtime", "1 every 1"});
+    REQUIRE(lmp != nullptr);
+
+    const auto t0 = std::chrono::steady_clock::now();
+    const bool ok = runner.run_script(lmp, sim.script_lines,
+                                      tadah::core::Context{});
+    const double secs = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - t0).count();
+
+    REQUIRE_FALSE(ok);        // timeout reported as a failed sim
+    REQUIRE(secs < 30.0);     // fired near 1 s, not after 500M steps
+
+    /* Cached-instance reuse: the next script's clear rebuilds the Timer. */
+    const std::vector<std::string> next = {
+        "clear", "units lj", "print \"healthy\""};
+    REQUIRE(runner.run_script(lmp, next, tadah::core::Context{}));
+}

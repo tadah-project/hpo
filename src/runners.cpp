@@ -4,6 +4,7 @@
 #include <input.h>
 #include <force.h>
 #include <pair.h>
+#include <timer.h>
 #include <pair_tadah.h>
 
 #include <tadah/tadah.lammps/lammps_tadah.h>
@@ -47,6 +48,12 @@ bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
     return false;
   }
 
+  /* A fired `timer timeout` stops run/minimize cleanly (no exception), so
+   * the sim reached this point without completing its physics -- report it
+   * as failed. The instance stays healthy: the next script's `clear`
+   * rebuilds the Timer and re-injects the timeout. */
+  if (lmp_ptr->timer->is_timeout()) return false;
+
   return true;
 }
 bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
@@ -72,6 +79,12 @@ bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
       }
       // Execute the line
       lmp_ptr->input->one(line.c_str());
+      /* Fired `timer timeout` == incomplete physics. Stop at the line
+       * boundary: LAMMPS's timer only interrupts run/minimize ITERATIONS,
+       * so a `run 0` probe still pays its (possibly pathological) force
+       * call after a timeout -- without this check a timed-out sim would
+       * execute every remaining probe line. */
+      if (lmp_ptr->timer->is_timeout()) return false;
     }
   } catch (const std::exception&) {
     // Execution failure indicates invalid run
@@ -100,6 +113,8 @@ bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
         pt->load(pot);
       }
       lmp_ptr->input->one(line.c_str());
+      // Per-line timeout stop; see the Context overload for rationale.
+      if (lmp_ptr->timer->is_timeout()) return false;
     }
   } catch (const std::exception&) {
     return false;

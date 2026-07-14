@@ -623,6 +623,40 @@ void LammpsSim::prep_script_lines()
   if (!cmd.empty() &&
       cmd.find_first_not_of(" \t\n") != std::string::npos)
     script_lines.push_back(cmd);
+
+  /* Per-sim wall-clock enforcement. LAMMPS's native `timer timeout` is the
+   * only mechanism that stops a running minimize cleanly (checked every
+   * minimizer iteration; ends the run with TIMEOUT status, not an error),
+   * and `clear` rebuilds the Timer, so the command must be re-issued after
+   * every clear. ${maxtime} expands to "<seconds> every 1" (the -var
+   * registered in the ctor). Enforcement is opt-in: MAXTIME/--maxtime
+   * default to "off"; a script that issues its own `timer` command keeps
+   * full control and gets no injection. */
+  if (maxtime != "off" && !script_lines.empty()) {
+    bool user_timer = false;
+    for (const auto& l : script_lines) {
+      std::istringstream ls(l);
+      std::string tok;
+      if ((ls >> tok) && to_lower_ascii(tok) == "timer") { user_timer = true; break; }
+    }
+    if (!user_timer) {
+      const std::string timer_line = "timer timeout ${maxtime}\n";
+      auto first_tok_is_clear = [](const std::string& l) {
+        std::istringstream ls(l);
+        std::string tok;
+        return (ls >> tok) && to_lower_ascii(tok) == "clear";
+      };
+      std::vector<std::string> out;
+      out.reserve(script_lines.size() + 4);
+      if (!first_tok_is_clear(script_lines.front()))
+        out.push_back(timer_line);
+      for (const auto& l : script_lines) {
+        out.push_back(l);
+        if (first_tok_is_clear(l)) out.push_back(timer_line);
+      }
+      script_lines.swap(out);
+    }
+  }
 }
 std::unordered_map<std::string, LammpsSim::VarDef>
 LammpsSim::index_defined_variables() const

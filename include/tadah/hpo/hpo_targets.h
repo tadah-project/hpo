@@ -63,7 +63,11 @@ public:
     // int THREADS = -1; // number of threads for parallel evaluation, -1 means all available threads
     double FAIL_SCORE = std::numeric_limits<double>::max();
     std::size_t QFLUSH_THRESHOLD = 10; // number of results to flush to disk at once
-    std::string MAX_TIME = "10";
+    /* Per-sim wall-clock limit in SECONDS (LAMMPS `timer timeout` units),
+     * injected into every PC_LAMMPS script after each `clear`. "off"
+     * disables enforcement (the default -- opt in via the root MAXTIME key
+     * or per-sim --maxtime). A timed-out sim scores FAILSCORE. */
+    std::string MAX_TIME = "off";
 
     OptimizerSpec spec;
 
