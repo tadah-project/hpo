@@ -794,6 +794,11 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
         sum_ms_ += wall_ms;
         if (wall_ms < min_ms_) { min_ms_ = wall_ms; min_eval_ = eval_num; }
         if (wall_ms > max_ms_) { max_ms_ = wall_ms; max_eval_ = eval_num; }
+        if (last_milestone_evals_ == 0) {
+            /* anchor the first wall-throughput window at the first eval */
+            last_milestone_tp_    = std::chrono::steady_clock::now();
+            last_milestone_evals_ = 1;
+        }
     }
 
     // Periodic milestone summary
@@ -805,13 +810,38 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
             double avg = (done > 0) ? sum_ms_ / done : 0.0;
             double nan_pct = (done > 0) ? 100.0 * nan_cnt / done : 0.0;
 
+            /* WALL throughput over the window since the previous
+             * milestone: what the run delivers per unit time under the
+             * CURRENT parallelisation. `avg` above is the mean PER-EVAL
+             * LATENCY on its worker thread -- under K concurrent
+             * workers it runs ~K x higher than the wall cost and must
+             * not be read as throughput. */
+            const auto now_tp = std::chrono::steady_clock::now();
+            double wall_ms_per_eval = 0.0;
+            if (last_milestone_evals_ > 0 && done > last_milestone_evals_) {
+                const double win_ms =
+                    std::chrono::duration<double, std::milli>(
+                        now_tp - last_milestone_tp_).count();
+                wall_ms_per_eval =
+                    win_ms / static_cast<double>(done - last_milestone_evals_);
+            }
+            last_milestone_tp_    = now_tp;
+            last_milestone_evals_ = done;
+
             const std::size_t evals_since_best =
                 (cur_best_eval_ > 0 && eval_num >= cur_best_eval_)
                     ? (eval_num - cur_best_eval_) : 0;
 
             std::ostringstream msg;
-            msg << "--- " << std::setw(6) << eval_num << " evals done"
-                << "   avg=" << fmt_millis(avg) << "/eval"
+            msg << "--- " << std::setw(6) << eval_num << " evals done";
+            if (wall_ms_per_eval > 0.0) {
+                std::ostringstream rate;
+                rate << std::fixed << std::setprecision(1)
+                     << 1000.0 / wall_ms_per_eval;
+                msg << "   wall=" << fmt_millis(wall_ms_per_eval)
+                    << "/eval (" << rate.str() << " ev/s)";
+            }
+            msg << "   latency=" << fmt_millis(avg) << "/eval"
                 << "   best=" << fmt_double(cur_best_loss_)
                 << " (eval " << cur_best_eval_ << ", "
                 << evals_since_best << " evals ago)"
@@ -995,8 +1025,12 @@ void HPOLog::finish(const std::string& status_str)
     { std::string s = "-- PERFORMANCE "; while(s.size()<72) s+='-'; f_ << "\n" << s << "\n"; }
     f_ << "  " << std::left << std::setw(KW) << "Total wall time"
        << ": " << format_duration(wall_sec) << "\n";
-    f_ << "  " << std::left << std::setw(KW) << "Mean per eval"
-       << ": " << fmt_millis(avg_ms) << "\n";
+    f_ << "  " << std::left << std::setw(KW) << "Mean eval latency"
+       << ": " << fmt_millis(avg_ms)
+       << "  (per worker thread; ~K x the wall cost under K workers)\n";
+    if (wall_sec > 0 && total > 0)
+        f_ << "  " << std::left << std::setw(KW) << "Wall per eval"
+           << ": " << fmt_millis(1000.0 * wall_sec / total) << "\n";
     if (min_ms_ < std::numeric_limits<double>::max())
         f_ << "  " << std::left << std::setw(KW) << "Fastest eval"
            << ": " << fmt_millis(min_ms_) << "  (eval " << min_eval_ << ")\n";

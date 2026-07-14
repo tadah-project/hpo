@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Journal SUMMARY lines report BOTH `wall=<ms>/eval (<N> ev/s)` — true wall-clock throughput over the window since the previous milestone, i.e. what the run delivers under the current parallelisation — and `latency=<ms>/eval` (was `avg=`), the mean per-evaluation wall time on its worker thread. Under K concurrent workers (ANNEAL_PT/PA THREADS, DLIB:GFS) the latency runs ~K× above the wall cost and must not be read as throughput. The end-of-run PERFORMANCE section gains a `Wall per eval` line and relabels the latency mean accordingly.
+
 ## [1.4.0] — 2026-07-14
 
 ### Changed

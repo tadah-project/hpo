@@ -267,8 +267,13 @@ private:
     std::size_t min_eval_  = 0;
     std::size_t max_eval_  = 0;
 
-    /* next milestone for periodic summary */
+    /* next milestone for periodic summary + the window over which the
+     * WALL throughput is measured (latency alone misleads under the
+     * parallel drivers: K concurrent workers inflate per-eval wall_ms
+     * by ~K vs what the run actually delivers per unit time). */
     std::size_t next_milestone_ = 100;
+    std::chrono::steady_clock::time_point last_milestone_tp_{};
+    std::size_t last_milestone_evals_ = 0;
 
     /* best result tracking -- set by log_new_best(), used by finish() */
     double      cur_best_loss_  = std::numeric_limits<double>::max();
