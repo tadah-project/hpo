@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-07-14
+
 ### Changed
 - **BREAKING — bump-support gate at `tadah hpo` startup (was warn-only).** For a compact bump channel (D2_Blip/D2_Blip5, DM_REAM bump density) under a hard **Cut_Dummy** cutoff, startup now HARD-ERRORS when (a) the seed pot's own bumps or (b) any OPTIM box corner (`CGRID` high bound + `SGRID` low bound) let a support `c + w/eta` reach past RCUT — a truncated overhang is an energy/force STEP at the cutoff (measured 139 meV/atom on a real Ta run whose OPTIM boxes permitted it, with 11/32 blips pushed past RCUT). Every violation is listed with the exact bound that fixes it; when RCUT itself is OPTIM'd the gate binds against its LOW bound. RCUT stays authoritative (never auto-extended); to search longer range, raise RCUT2B/RCUTMB in the config — NN sizing already covers OPTIM'd RCUT bounds. Smooth cutoffs (Cut_Poly/Cut_Cos/...) are exempt: they damp the overhang to zero, and overhang there is a legitimate idiom (all bundled examples are unaffected).
 - Startup also WARNS that an `OPTIM RCUT*` line on a gated bump channel is a wasted search dimension (the gate keeps every support inside its LOW bound, so the cutoff value cannot affect the model).
