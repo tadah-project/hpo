@@ -14,6 +14,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 
 namespace tadah {
 namespace hpo {
@@ -1441,6 +1442,33 @@ void HPOTargets::read(const std::string& fn)
             core::to_string(LS.size()) +
             " entries); these paths are mutually exclusive in the "
             "current MVP. Remove one set of lines and rerun.");
+    }
+
+    /* Reject the same --hotvar NAME declared by two DISTINCT PC_LAMMPS
+     * scripts. run_lammps' phase A writes hot_values_for_iter[name] (keyed by
+     * name only) and warmstart::set(script,name); if two scripts share a hot
+     * name, "last writer wins" makes the injected value order-dependent -- a
+     * latent non-determinism that longest-first fan-out reordering could
+     * expose. Hot names are meant to be unique per script (lammps_sim.h), so
+     * enforce it at parse time with a clear message. */
+    {
+        std::unordered_map<std::string, std::size_t> hot_owner;
+        for (std::size_t s = 0; s < LS.size(); ++s) {
+            for (const auto& hv : LS[s].hotvars) {
+                auto it = hot_owner.find(hv.name);
+                if (it != hot_owner.end() && it->second != s) {
+                    throw std::runtime_error(
+                        "PC_LAMMPS: --hotvar name '" + hv.name +
+                        "' is declared by two different scripts ('" +
+                        LS[it->second].script + "' and '" + LS[s].script +
+                        "'). Hot-var names must be unique across scripts: the "
+                        "per-iter hot value is keyed by name only, so sharing a "
+                        "name makes the injected value order-dependent. Rename "
+                        "one of them.");
+                }
+                hot_owner.emplace(hv.name, s);
+            }
+        }
     }
 
     /* PC_OBSERVABLE always engages the analytical gradient path. The

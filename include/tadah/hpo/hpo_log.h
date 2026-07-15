@@ -154,6 +154,21 @@ public:
      */
     void record_eval(std::size_t eval_num, double wall_ms, bool was_nan);
 
+    /** Record pc_lammps fan-out utilisation for one completed evaluation.
+     *  Folded into the periodic SUMMARY (fan-out efficiency + per-script
+     *  avg/fastest/slowest) and escalated to a WARNING below a threshold.
+     *  Cheap: a few adds under mtx_, no file I/O. Skipped when n_scripts==0.
+     *  @param width      fan-out thread width used this eval
+     *  @param wall_ms    fan-out wall time (the run_lammps phase)
+     *  @param busy_ms    sum of per-script busy time across the fan-out
+     *  @param n_scripts  number of pc_lammps scripts that ran this eval
+     *  @param min_ms     fastest single script this eval
+     *  @param max_ms     slowest single script this eval
+     *  @param slowest    name of the slowest script (worst offender) */
+    void record_fanout(int width, double wall_ms, double busy_ms,
+                       std::size_t n_scripts, double min_ms, double max_ms,
+                       const std::string& slowest);
+
     /** Log a new-best event (timestamped, written to file).
      *  @param top_breakdown  Optional human-readable summary of the top
      *                        loss components driving this best (e.g.
@@ -266,6 +281,22 @@ private:
     double      max_ms_    = 0.0;
     std::size_t min_eval_  = 0;
     std::size_t max_eval_  = 0;
+
+    /* pc_lammps fan-out utilisation -- protected by mtx_. Two horizons:
+     * *_win_ resets each milestone (drives the periodic SUMMARY line);
+     * *_tot_ is cumulative (drives the final PERFORMANCE line). Fan-out
+     * efficiency = busy / (width*wall): 1.0 means every fan-out thread is
+     * kept busy; the low baseline (~0.18) is the imbalance this targets. */
+    double      fo_busy_win_      = 0.0;   // Σ per-script ms this window (= avg numerator)
+    double      fo_widthwall_win_ = 0.0;
+    double      fo_smin_win_      = std::numeric_limits<double>::max();
+    double      fo_smax_win_      = 0.0;
+    std::size_t fo_scount_win_    = 0;
+    std::string fo_slowest_win_;           // name of the window's worst script
+    double      fo_busy_tot_      = 0.0;
+    double      fo_widthwall_tot_ = 0.0;
+    std::size_t fo_evals_         = 0;      // # evals that ran a fan-out
+    double      fo_eff_alarm_     = 0.60;   // WARN below this efficiency
 
     /* next milestone for periodic summary + the window over which the
      * WALL throughput is measured (latency alone misleads under the

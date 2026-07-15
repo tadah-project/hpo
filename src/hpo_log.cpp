@@ -849,6 +849,40 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                 << nan_pct << "%";
             f_ << "[" << now_hms() << "]  SUMMARY  "
                << msg.str() << "\n";
+            /* pc_lammps fan-out utilisation over this milestone window.
+             * efficiency = Σbusy / (width*wall): the fraction of fan-out
+             * core-time doing useful work. A low value means the scripts
+             * are imbalanced and most threads idle at the fork/join
+             * barrier waiting for the slowest script. */
+            if (fo_widthwall_win_ > 0.0) {
+                const double eff = fo_busy_win_ / fo_widthwall_win_;
+                const double avg = (fo_scount_win_ > 0)
+                    ? fo_busy_win_ / static_cast<double>(fo_scount_win_) : 0.0;
+                std::ostringstream fo;
+                fo << "    pc_lammps: fan-out eff " << std::fixed
+                   << std::setprecision(0) << 100.0 * eff << "%"
+                   << "  (per-script avg " << fmt_millis(avg)
+                   << ", fastest " << fmt_millis(fo_smin_win_)
+                   << ", slowest " << fmt_millis(fo_smax_win_);
+                if (!fo_slowest_win_.empty()) fo << " [" << fo_slowest_win_ << "]";
+                fo << ")";
+                f_ << "[" << now_hms() << "]  SUMMARY  " << fo.str() << "\n";
+                if (eff < fo_eff_alarm_) {
+                    f_ << "[" << now_hms() << "]  WARNING  "
+                       << "pc_lammps fan-out efficiency " << std::fixed
+                       << std::setprecision(0) << 100.0 * eff << "% < "
+                       << 100.0 * fo_eff_alarm_ << "% -- scripts imbalanced "
+                       << "across the fan-out threads (slowest "
+                       << fmt_millis(fo_smax_win_);
+                    if (!fo_slowest_win_.empty()) f_ << " [" << fo_slowest_win_ << "]";
+                    f_ << " vs avg " << fmt_millis(avg) << "); most fan-out "
+                       << "core-time is idle at the barrier.\n";
+                }
+                /* reset the window accumulators for the next milestone */
+                fo_busy_win_ = 0.0; fo_widthwall_win_ = 0.0; fo_scount_win_ = 0;
+                fo_smin_win_ = std::numeric_limits<double>::max();
+                fo_smax_win_ = 0.0; fo_slowest_win_.clear();
+            }
             /* Stagnation hint: if we've spent more than half the recent
              * milestone window with no new best, point the user at the
              * common causes (LOCAL too tight for noise, basin already
@@ -873,6 +907,23 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
             else                              next_milestone_ += 5000;
         }
     }
+}
+
+void HPOLog::record_fanout(int width, double wall_ms, double busy_ms,
+                           std::size_t n_scripts, double min_ms, double max_ms,
+                           const std::string& slowest)
+{
+    if (n_scripts == 0 || width <= 0 || wall_ms <= 0.0) return;
+    std::lock_guard<std::mutex> lg(mtx_);
+    const double widthwall = static_cast<double>(width) * wall_ms;
+    fo_busy_win_      += busy_ms;
+    fo_widthwall_win_ += widthwall;
+    fo_scount_win_    += n_scripts;
+    if (min_ms < fo_smin_win_) fo_smin_win_ = min_ms;
+    if (max_ms > fo_smax_win_) { fo_smax_win_ = max_ms; fo_slowest_win_ = slowest; }
+    fo_busy_tot_      += busy_ms;
+    fo_widthwall_tot_ += widthwall;
+    ++fo_evals_;
 }
 
 /* -------------------------------------------------------------------------
@@ -1042,6 +1093,20 @@ void HPOLog::finish(const std::string& status_str)
         thr << std::fixed << std::setprecision(1) << total / wall_sec * 60.0;
         f_ << "  " << std::left << std::setw(KW) << "Throughput"
            << ": " << thr.str() << " evals/min\n";
+    }
+    if (fo_evals_ > 0 && fo_widthwall_tot_ > 0.0) {
+        const double eff = fo_busy_tot_ / fo_widthwall_tot_;
+        std::ostringstream fo;
+        fo << std::fixed << std::setprecision(0) << 100.0 * eff << "%";
+        f_ << "  " << std::left << std::setw(KW) << "pc_lammps fan-out eff"
+           << ": " << fo.str()
+           << "  (Sum busy / (width x wall); 100% = all fan-out threads busy)\n";
+        if (eff < fo_eff_alarm_)
+            f_ << "  [!] fan-out under " << std::fixed << std::setprecision(0)
+               << 100.0 * fo_eff_alarm_ << "% -- the slowest pc_lammps script "
+               << "gates each eval while other threads idle. See the per-script\n"
+               << "      breakdown (TADAH_HPO_BENCH=1 -> hpo_script_times.csv) "
+               << "and consider longest-first fan-out scheduling.\n";
     }
 
     /* -- RESULT -------------------------------------------------------- */

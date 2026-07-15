@@ -80,6 +80,19 @@ struct EvalResult
     std::vector<double>                    v_obs_loss;
 
     std::chrono::milliseconds              wall_ms{};
+
+    /* pc_lammps fan-out utilisation for THIS eval (Stage 1a diagnostics).
+     * Filled by run_lammps from per-script timings; consumed once by
+     * HPOLog::record_fanout at the journal step. All zero when the eval
+     * ran no pc_lammps scripts. */
+    double                                 fanout_busy_ms  = 0.0; // Σ (create+run) ms
+    double                                 fanout_wall_ms  = 0.0; // run_lammps phase wall
+    int                                    fanout_width    = 0;   // fan-out thread width
+    std::size_t                            fanout_nscripts = 0;
+    double                                 fanout_min_ms   = 0.0;
+    double                                 fanout_max_ms   = 0.0;
+    std::string                            fanout_slowest;        // slowest script name
+
     ParamVec                               params;
 
     bool                                   is_best         = false;
@@ -259,6 +272,14 @@ private:
     /* ---------- immutable after construction --------------------------- */
     core::Context                master_ctx_;
     HPOTargets&                  trg_;
+    /* Stage 1b.1: per-script fan-out cost estimate (EWMA of create+run ms),
+     * indexed by script index into trg_.LS. Drives longest-processing-time-
+     * first (LPT) fan-out ordering so the slowest scripts dispatch first and
+     * short ones backfill the freed threads. Steers dispatch ORDER only, never
+     * a result value, so lock-free relaxed atomics with benign torn reads are
+     * fine (same rationale as dloss_dtheta.h's theta_cost_cache). mutable: it
+     * is updated from the const run_lammps. */
+    mutable std::vector<std::atomic<double>> script_ewma_ms_;
     std::size_t                  n_val_datasets_ = 0;
     const OptimizerSpec &spec_;
     mlip::StructureDB            val_stdb_;

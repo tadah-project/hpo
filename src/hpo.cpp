@@ -74,6 +74,17 @@ int hpo_run(core::Context& ctx)
                  "  (OMP_NUM_THREADS=" +
                  (env_omp && env_omp[0] ? std::string(env_omp) : "unset") +
                  "); PC_LAMMPS scripts run in parallel up to this width");
+        /* Journal the wait policy. ANNEAL_PT/PA run K replica workers, each
+         * spawning its own OMP team for the pc_lammps fan-out (and for MLIP
+         * train/predict); when a team's threads are idle they busy-spin under
+         * the default active policy, and with K teams live that wastes CPU a
+         * shared HPC node would rather not see. Launch parallel runs with
+         * OMP_WAIT_POLICY=passive so idle threads sleep instead; serial ANNEAL
+         * is happiest on the default (active) for lowest fan-out latency. */
+        const char* env_wait = std::getenv("OMP_WAIT_POLICY");
+        log.info(std::string("OpenMP: OMP_WAIT_POLICY=") +
+                 (env_wait && env_wait[0] ? env_wait : "unset (runtime default)") +
+                 "; prefer 'passive' for ANNEAL_PT/PA, 'active' for serial ANNEAL");
     }
 #endif
 

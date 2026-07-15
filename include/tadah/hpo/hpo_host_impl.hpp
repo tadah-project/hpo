@@ -669,7 +669,7 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                         HPOTargets&   trg,
                         const std::string& val_cfg)
 : master_ctx_(std::move(master_ctx))
-, trg_(trg), spec_(trg.spec)
+, trg_(trg), script_ewma_ms_(trg.LS.size()), spec_(trg.spec)
 , use_lammps_( !trg.LS.empty() )
 , has_train_data_( master_ctx_.contains("DBFILE")
                    && master_ctx_.size("DBFILE") > 0 )
@@ -678,6 +678,10 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
 , cw_(static_cast<std::size_t>(std::max(prec_ + 9, static_cast<int>(min_cw_))))
 , max_title_len_(cw_ - 4)
 {
+    /* Stage 1b.1: zero the fan-out cost estimates. All-zero on the first eval
+     * means the LPT stable_sort keeps today's script order, so the first-eval
+     * trajectory is byte-identical; the estimates converge from eval 2 on. */
+    for (auto& a : script_ewma_ms_) a.store(0.0, std::memory_order_relaxed);
 
     /* knot channels: RCUT keys are derived from the largest knot (see
      * rcut_derivation.h). Flags are computed once here because the per-eval
@@ -977,6 +981,23 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
   const auto& LS = trg_.LS;
   r.v_outvar.resize(LS.size());
 
+  /* Stage 1a: per-script busy time (create+run ms) for the fan-out
+   * utilisation diagnostic. Index i is written by exactly one fan-out
+   * thread (the one that runs script i), so no locking is needed.
+   * -1.0 = the script did not run (aborted/skipped). */
+  std::vector<double> per_script_busy(LS.size(), -1.0);
+
+  /* Stage 1b.1: stable longest-processing-time-first sort of a phase's script
+   * indices by their EWMA cost estimate (descending). stable_sort + all-equal
+   * costs (first eval, all zero) preserves the config order, so the first eval
+   * is byte-identical to the pre-change behaviour. */
+  auto lpt_sort = [&](std::vector<std::size_t>& idx) {
+    std::stable_sort(idx.begin(), idx.end(), [&](std::size_t a, std::size_t b) {
+      return script_ewma_ms_[a].load(std::memory_order_relaxed)
+           > script_ewma_ms_[b].load(std::memory_order_relaxed);
+    });
+  };
+
   /* Partition scripts into hot (any --hotvar) and cold (none). The hot
    * set runs first so its produced values can flow into the cold set. */
   std::vector<std::size_t> hot_idx, cold_idx;
@@ -1134,9 +1155,25 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       }
     }
 
+    /* Always record per-script busy time (a couple of clock reads, ~30 ns,
+     * invisible vs ms-scale LAMMPS) so the fan-out diagnostic works without
+     * TADAH_HPO_BENCH. The detailed CSV stays gated below. */
+    const double t_create_ms = bench_detail::elapsed_ms(t_create0, t_create1);
+    const double t_run_ms    = bench_detail::elapsed_ms(t_create1, t_run1);
+    per_script_busy[i] = t_create_ms + t_run_ms;
+    /* Stage 1b.1: fold this script's cost into its EWMA (alpha=0.3) so the
+     * next eval's LPT sort dispatches it earliest if it is slow. First
+     * observation seeds directly. Relaxed RMW: a torn read across concurrent
+     * PA/PT evals only nudges dispatch order, never a result value. */
+    {
+      constexpr double alpha = 0.3;
+      const double prev = script_ewma_ms_[i].load(std::memory_order_relaxed);
+      const double nextv = (prev <= 0.0)
+          ? per_script_busy[i]
+          : (1.0 - alpha) * prev + alpha * per_script_busy[i];
+      script_ewma_ms_[i].store(nextv, std::memory_order_relaxed);
+    }
     if (bench_detail::enabled()) {
-      const double t_create_ms = bench_detail::elapsed_ms(t_create0, t_create1);
-      const double t_run_ms    = bench_detail::elapsed_ms(t_create1, t_run1);
       std::lock_guard<std::mutex> lg(bench_detail::mtx());
       static std::ofstream f("hpo_script_times.csv" + hpo_rank_suffix(),
                              std::ios::out | std::ios::trunc);
@@ -1167,8 +1204,14 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
   };
 
   /* --- PHASE A: hot scripts --------------------------------------- */
+  /* Stage 1b.1: dispatch the slowest scripts first (LPT) so cheap scripts
+   * backfill the threads they free; schedule(dynamic,1) keeps every thread
+   * pulling the next script instead of stalling at a static-chunk boundary
+   * behind one slow relaxation. Order affects dispatch only -- each script
+   * writes its own r.v_outvar[i], so results are unchanged. */
+  lpt_sort(hot_idx);
 #ifdef TADAH_ENABLE_OPENMP
-#pragma omp parallel for shared(r,LS,hot_idx,hot_values_for_iter,hot_mtx)
+#pragma omp parallel for schedule(dynamic,1) shared(r,LS,hot_idx,hot_values_for_iter,hot_mtx)
 #endif
   for (std::size_t k = 0; k < hot_idx.size(); ++k) {
     const std::size_t i = hot_idx[k];
@@ -1219,8 +1262,9 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     hot_snapshot = hot_values_for_iter;
   }
 
+  lpt_sort(cold_idx);   /* Stage 1b.1: longest-first + dynamic (see phase A) */
 #ifdef TADAH_ENABLE_OPENMP
-#pragma omp parallel for shared(r,LS,cold_idx,hot_snapshot)
+#pragma omp parallel for schedule(dynamic,1) shared(r,LS,cold_idx,hot_snapshot)
 #endif
   for (std::size_t k = 0; k < cold_idx.size(); ++k) {
     const std::size_t i = cold_idx[k];
@@ -1238,6 +1282,31 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
         inject_hot_value(lmp, kv.first, kv.second);
       }
     });
+  }
+
+  /* Stage 1a: aggregate per-script busy time into the eval's fan-out
+   * utilisation fields (consumed once by HPOLog::record_fanout). Runs
+   * single-threaded here -- both phases have joined. */
+  {
+    double busy = 0.0, smin = std::numeric_limits<double>::max(), smax = 0.0;
+    std::size_t nsc = 0, worst = 0;
+    for (std::size_t i = 0; i < per_script_busy.size(); ++i) {
+      const double b = per_script_busy[i];
+      if (b < 0.0) continue;                 /* did not run */
+      busy += b; ++nsc;
+      if (b < smin) smin = b;
+      if (b > smax) { smax = b; worst = i; }
+    }
+    r.fanout_busy_ms  = busy;
+    r.fanout_nscripts = nsc;
+    r.fanout_min_ms   = nsc ? smin : 0.0;
+    r.fanout_max_ms   = smax;
+    r.fanout_slowest  = nsc ? LS[worst].script : std::string();
+#ifdef TADAH_ENABLE_OPENMP
+    r.fanout_width    = omp_get_max_threads();
+#else
+    r.fanout_width    = 1;
+#endif
   }
 }
 
@@ -1660,6 +1729,9 @@ double HPO_Host<P,R>::operator()(const P& p) const
       run_lammps(r);
 #endif
       t_lammps_end = std::chrono::high_resolution_clock::now();
+      /* Stage 1a: fan-out wall = the run_lammps phase (always, not gated on
+       * TADAH_HPO_BENCH) -- feeds the fan-out efficiency diagnostic. */
+      r.fanout_wall_ms = bench_detail::elapsed_ms(t_predict_end, t_lammps_end);
       sims_loss(r);
       t_sims_loss_end = std::chrono::high_resolution_clock::now();
       stage_watchdog::leave(r.iter, "lammps", _stage_log);
@@ -1720,6 +1792,14 @@ double HPO_Host<P,R>::operator()(const P& p) const
     const double      save_emae    = r.emae,   save_ermse  = r.ermse;
     const double      save_errmse  = r.errmse, save_frmse  = r.frmse;
     const double      save_srmse   = r.srmse;
+    /* Stage 1a: fan-out utilisation snapshot (r is moved into the queue below). */
+    const double      save_fo_busy  = r.fanout_busy_ms;
+    const double      save_fo_wall  = r.fanout_wall_ms;
+    const int         save_fo_width = r.fanout_width;
+    const std::size_t save_fo_nsc   = r.fanout_nscripts;
+    const double      save_fo_min   = r.fanout_min_ms;
+    const double      save_fo_max   = r.fanout_max_ms;
+    const std::string save_fo_slow  = r.fanout_slowest;
 
     /* Build a one-line "top loss components" breakdown when this eval
      * is a new best. Defensive: any failure here must not crash the
@@ -1842,6 +1922,8 @@ double HPO_Host<P,R>::operator()(const P& p) const
     stage_watchdog::Scope<decltype(_stage_log)> _sg_journal(save_iter, "journal_log", _stage_log);
     auto& log = HPOLog::instance();
     log.record_eval(save_iter, save_wall_ms, save_nan);
+    log.record_fanout(save_fo_width, save_fo_wall, save_fo_busy,
+                      save_fo_nsc, save_fo_min, save_fo_max, save_fo_slow);
 
     if (save_best)
         log.log_new_best(save_iter, save_loss,
