@@ -89,6 +89,25 @@ public:
   {
     if (n_tasks == 0) return;
 
+    /* Reentrancy guard (strict-DAG / deadlock-free): a task already running on a
+     * pool worker that calls run_batch again must NOT submit-then-wait -- its
+     * own worker slot is occupied by itself, so it could wait on work only it
+     * could run. Execute such a nested batch INLINE on the calling thread, still
+     * honouring the "run all, rethrow the first exception" contract. Not reached
+     * by the current call sites (fan-out and MLIP train/predict are driven from
+     * ReplicaPool / driver threads, never from a pool worker), but it makes the
+     * pool safe for any future nested use. worker_id 0 is fine: kernels ignore
+     * it and the fan-out never nests. */
+    if (on_worker_thread_()) {
+      std::exception_ptr first;
+      for (std::size_t i = 0; i < n_tasks; ++i) {
+        try { fn(i, 0); }
+        catch (...) { if (!first) first = std::current_exception(); }
+      }
+      if (first) std::rethrow_exception(first);
+      return;
+    }
+
     Batch b;
     b.remaining = n_tasks;
 
@@ -122,8 +141,13 @@ private:
     bool          stop  = false;
   };
 
+  /* True on this pool's own worker threads (read by the run_batch reentrancy
+   * guard). thread_local + static: a driver thread reads false, a worker true. */
+  static bool& on_worker_thread_() { static thread_local bool v = false; return v; }
+
   void worker_loop(int worker_id)
   {
+    on_worker_thread_() = true;
     for (;;) {
       Task t;
       q_.wait_dequeue(t);

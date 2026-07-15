@@ -14,9 +14,11 @@
 #include <tadah/core/signal_handler.h>
 #include <tadah/mlip/structure_db.h>
 #include <tadah/mlip/preflight_audit.h>
+#include <tadah/mlip/parallel.h>   // set_parallel_backend (Stage 2.3)
 
 #include <algorithm>  // std::max
 #include <cstdlib>    // getenv()
+#include <functional> // std::function
 #include <filesystem>
 #include <set>
 #include <unistd.h>   // getpid()
@@ -116,9 +118,21 @@ int hpo_run(core::Context& ctx)
             std::max<int>(1, static_cast<int>(trg.spec.num_threads.value_or(1)));
         const int exec_width = std::max(1, n_threads * omp_w);
         init_script_executor(exec_width);
+        /* Stage 2.3: route the MLIP train/predict kernels (design-matrix build,
+         * descriptor calc, predict) onto the SAME pool. This drops the nested
+         * per-replica OpenMP teams those kernels used to spawn and lets one
+         * replica's train/predict overlap another's fan-out. The kernels write
+         * disjoint output slots, so results are unchanged (verified by the
+         * determinism gate). Installed once here, before any optimiser eval. */
+        tadah::mlip::set_parallel_backend(
+            [](std::size_t n, const std::function<void(std::size_t)>& body) {
+                script_executor().run_batch(
+                    n, [&](std::size_t i, int /*worker_id*/) { body(i); });
+            });
         log.info("ScriptExecutor: " + std::to_string(exec_width) +
-                 " fan-out workers (THREADS=" + std::to_string(n_threads) +
-                 " x OMP=" + std::to_string(omp_w) + ")");
+                 " workers (THREADS=" + std::to_string(n_threads) +
+                 " x OMP=" + std::to_string(omp_w) +
+                 ") serving fan-out + train/predict");
     }
 
     /* --validation is optional: PC_OBSERVABLE / PC_LAMMPS can carry the
