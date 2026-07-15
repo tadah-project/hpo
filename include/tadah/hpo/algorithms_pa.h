@@ -38,6 +38,7 @@
  *                                  1: walkers>0 uniform in the box
  */
 #include <tadah/hpo/hpo_host.h>
+#include <tadah/hpo/warmstart_cache.h>   // current_chain() bridge
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/anneal_core.h>
 #include <tadah/hpo/anneal_parallel.h>
@@ -320,6 +321,7 @@ template<typename Vec, typename HostT>
       }
 
       pool.run_epoch(n_local, [&](std::size_t li) {
+        warmstart::current_chain() = off_local + li;   /* global slot key */
         if (rank == 0 && li == 0) return;   /* global slot 0 = seed */
         auto& w = walkers[li];
         if (stop_flag.load(std::memory_order_relaxed)) return;
@@ -374,6 +376,7 @@ template<typename Vec, typename HostT>
       }
       pool.run_epoch(n_local, [&](std::size_t li) {
         const std::size_t k = off_local + li;
+        warmstart::current_chain() = k;   /* global slot for warm-start key */
         anneal::RungStats acc;
         for (std::size_t s = 0; s < kb.sweeps; ++s) {
           const std::uint64_t left_here =

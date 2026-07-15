@@ -1241,7 +1241,7 @@ TEST_CASE("phase3_orchestrator — SimsGradProvider lambda body matches "
 // per-script body end-to-end on a hot-var-referencing script
 // (`lattice bcc ${hot_a0}`). Three sub-checks:
 //   1. Cache empty + `hv.initial` set: snapshot uses `initial`.
-//   2. Cache primed via `warmstart::set`: snapshot uses cached value.
+//   2. Best-hot primed via `warmstart::promote`: snapshot uses cached value.
 //   3. End-to-end happy path: snapshot seed flows through LAMMPS variable
 //      injection → script runs → relaxed-state observable → chain rule
 //      → g_out matches the cohesive-E closed-form to 1e-10 rel.
@@ -1282,7 +1282,7 @@ TEST_CASE("phase3_orchestrator — hot-var script analytical path: "
             for (const auto& ls : LS_in) {
                 for (const auto& hv : ls.hotvars) {
                     if (out.count(hv.name)) continue;
-                    if (auto cached = ws::get(ls.script, hv.name)) {
+                    if (auto cached = ws::best_get(ls.script, hv.name)) {
                         out[hv.name] = *cached;
                     } else if (hv.initial) {
                         out[hv.name] = *hv.initial;
@@ -1296,10 +1296,7 @@ TEST_CASE("phase3_orchestrator — hot-var script analytical path: "
 
     /* Clean cache for this (script, name) so the empty-cache path is
      * deterministic across re-runs of the test. */
-    {
-        std::lock_guard<std::mutex> lg(ws::mtx());
-        ws::cache().erase({lsim.script, "hot_a0"});
-    }
+    ws::clear();
 
     /* (1) Cache empty + initial set → snapshot uses initial. */
     {
@@ -1308,8 +1305,10 @@ TEST_CASE("phase3_orchestrator — hot-var script analytical path: "
         CHECK(snap["hot_a0"] == Approx(3.301).margin(1e-12));
     }
 
-    /* (2) Cache primed → snapshot uses cached value (not initial). */
-    ws::set(lsim.script, "hot_a0", 3.250);
+    /* (2) Cache primed → snapshot uses cached value (not initial). The gradient
+     * path reads the best-hot map, so prime it via promote (not the per-chain
+     * runtime set). */
+    ws::promote(lsim.script, "hot_a0", 3.250);
     {
         auto snap = build_snapshot(LS);
         REQUIRE(snap.count("hot_a0") == 1);
@@ -1403,10 +1402,7 @@ TEST_CASE("phase3_orchestrator — hot-var script analytical path: "
     CHECK(max_rel < 1e-10);
 
     /* Tidy cache for re-runs. */
-    {
-        std::lock_guard<std::mutex> lg(ws::mtx());
-        ws::cache().erase({lsim.script, "hot_a0"});
-    }
+    ws::clear();
 }
 
 // ----------------------------------------------------------------------------

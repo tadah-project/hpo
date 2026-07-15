@@ -4,6 +4,7 @@
 #include <tadah/hpo/run_policy.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/script_executor.h>
 #include <tadah/hpo/iter_health.h>
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/core/checkpoint.h>
@@ -14,6 +15,7 @@
 #include <tadah/mlip/structure_db.h>
 #include <tadah/mlip/preflight_audit.h>
 
+#include <algorithm>  // std::max
 #include <cstdlib>    // getenv()
 #include <filesystem>
 #include <set>
@@ -94,6 +96,31 @@ int hpo_run(core::Context& ctx)
     core::SignalHandler::install();
 
     HPOTargets trg(ctx, ctx.get<std::string>("HPOTARGET"));
+
+    /* Stage 2: size the shared pc_lammps fan-out pool ONCE, up front, to the
+     * per-rank core budget C = THREADS x OMP. One pool serves the serial
+     * fan-out AND every ANNEAL_PT/PA replica, so a replica's fan-out gap is
+     * backfilled by another replica's scripts with no OMP nesting. THREADS is
+     * the ReplicaPool worker count (1 for serial); OMP is the per-eval fan-out
+     * width. Idle workers block on a futex (0 CPU), unlike OMP's active spin. */
+    {
+#ifdef TADAH_ENABLE_OPENMP
+        const int omp_w = std::max(1, omp_get_max_threads());
+#else
+        int omp_w = 1;
+        if (const char* e = std::getenv("OMP_NUM_THREADS")) {
+            const int v = std::atoi(e); if (v > 0) omp_w = v;
+        }
+#endif
+        const int n_threads =
+            std::max<int>(1, static_cast<int>(trg.spec.num_threads.value_or(1)));
+        const int exec_width = std::max(1, n_threads * omp_w);
+        init_script_executor(exec_width);
+        log.info("ScriptExecutor: " + std::to_string(exec_width) +
+                 " fan-out workers (THREADS=" + std::to_string(n_threads) +
+                 " x OMP=" + std::to_string(omp_w) + ")");
+    }
+
     /* --validation is optional: PC_OBSERVABLE / PC_LAMMPS can carry the
      * loss on their own; validate_hpo_setup below rejects setups where
      * validation-set metrics are requested without a validation file. */

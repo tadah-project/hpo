@@ -51,6 +51,7 @@
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/anneal_core.h>
 #include <tadah/hpo/anneal_parallel.h>
+#include <tadah/hpo/warmstart_cache.h>   // current_chain() bridge
 
 #ifdef TADAH_ENABLE_OPENMP
 #include <omp.h>
@@ -367,6 +368,9 @@ template<typename Vec, typename HostT>
 
       /* Evaluate the non-seed starting points on the pool. */
       pool.run_epoch(n_local, [&](std::size_t li) {
+        /* key this chain's warm-start by its GLOBAL slot (off_local+li) so
+         * results are independent of which worker runs it. */
+        warmstart::current_chain() = off_local + li;
         if (rank == 0 && li == 0) return;   /* global slot 0 = seed */
         auto& c = chains[li];
         if (stop_flag.load(std::memory_order_relaxed)) return;
@@ -457,6 +461,7 @@ template<typename Vec, typename HostT>
 
         pool.run_epoch(n_local, [&](std::size_t li) {
           const std::size_t k = off_local + li;
+          warmstart::current_chain() = k;   /* global slot for warm-start key */
           rstats[li] = anneal::run_rung(chains[li], T[k], sp, kb, host, ctx,
                                         allowance[k]);
         });

@@ -20,6 +20,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include <tadah/core/checkpoint.h>          // for ShutdownRequested
@@ -57,6 +58,11 @@ struct EvalResult
 {
     std::size_t                            iter      = 0;
     std::size_t                            best_iter = 0;
+    /* Global slot of the chain (PT replica / PA walker) that produced this
+     * eval; set from warmstart::current_chain() at the top of operator().
+     * Keys the per-chain warm-start cache so PT/PA results are independent
+     * of fan-out execution order. 0 for serial / single-sequence optimisers. */
+    std::size_t                            chain_id  = 0;
     double                                 loss      = 0.0;
     double                                 loss_sum  = 0.0;
     std::size_t                            loss_count = 0;
@@ -69,6 +75,12 @@ struct EvalResult
     std::vector<double> v_emaeLoss, v_ermseLoss, v_errmseLoss, v_ersqLoss, v_frmseLoss, v_srmseLoss;
     std::vector<std::vector<double>>       v_loss;    // [sim][loss_i]
     std::vector<std::vector<std::string>>  v_outvar;  // [sim][outvar_i]
+
+    /* In-range (script, name, value) hot-var triples this eval produced.
+     * Promoted into the warmstart seed map when this eval becomes the new
+     * global best, so best_pot.tadah's `# HOT` lines reflect the best
+     * trajectory (deterministic: the new-best point is serialized). */
+    std::vector<std::tuple<std::string, std::string, double>> hot_produced;
 
     /* PC_OBSERVABLE (Tier 1/2) results, one entry per
      * trg_.observables[k]. v_obs_value[k] is the computed observable

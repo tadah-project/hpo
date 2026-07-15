@@ -10,6 +10,7 @@
 #include <tadah/hpo/pot_header_writer.h>
 #include <tadah/hpo/pot_header_writer_impl.hpp>
 #include <tadah/hpo/warmstart_cache.h>
+#include <tadah/hpo/script_executor.h>
 #include <tadah/hpo/iter_health.h>
 #include <tadah/hpo/rcut_derivation.h>
 #include <tadah/hpo/startup_validation.h>
@@ -228,9 +229,11 @@ namespace bad_pot_detail {
  * lines saved into best_pot.tadah without having to include this whole
  * template-heavy header.
  *
- * `aborting_iter`, `last_rejected_iter`, `reject_count` are also in
- * warmstart_cache.h since they participate in the same per-eval
- * rejection bookkeeping. */
+ * The cache is now keyed by (chain, script, name) so PT/PA replicas do not
+ * share a warm-start seed; a separate (script, name) seed map handles WARM
+ * priming / best_pot persistence. `reject_count` (rate-limited warning) also
+ * lives there. The out-of-range abort is a run-LOCAL flag in run_lammps, not
+ * a global -- see the eval_aborted note there. */
 
 
 /* -----------------  header writers  ---------------------------------- */
@@ -1013,24 +1016,33 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
   std::unordered_map<std::string, double> hot_values_for_iter;
   std::mutex hot_mtx;
 
+  /* Run-LOCAL abort flag (replaces the global warmstart::aborting_iter). An
+   * out-of-range hot var or a crashed hot script raises it; phase B (and any
+   * still-dispatching phase-A tasks) see it and clamp to failscore. Local to
+   * this run_lammps call => per-eval, so a concurrent eval's abort can neither
+   * leak into nor race this one: the fan-out order cannot change the result. */
+  std::atomic<bool> eval_aborted{false};
+  /* Separate run-local latch so the rate-limited "rejecting" warning fires at
+   * most once per eval, decoupled from eval_aborted (a crashed script raises
+   * eval_aborted without being a hot-var rejection). Replaces the global
+   * warmstart::last_rejected_iter, which worked only because r.iter is unique. */
+  std::atomic<bool> reject_logged{false};
+
   /* Generic per-script runner -- used by both phases. Returns true on
    * a successful LAMMPS run; false on script failure (in which case
    * v_outvar is filled with failscore). The `extra_inject` callable
    * is invoked once after the LAMMPS instance is ready and before
    * `run_script`, with the raw lmp pointer; used by both phases to
    * inject `variable <name> string <value>` lines. */
-  auto run_one = [&](std::size_t i,
+  auto run_one = [&](std::size_t i, int tid,
                      auto&& extra_inject) -> bool {
     const auto& lsim = LS[i];
     /* Per-iteration copy of LAMMPS argv. -log / -screen with a real
-     * filename get a .t<tid> suffix so concurrent OMP threads don't
-     * clobber the same file. */
+     * filename get a .t<tid> suffix so concurrent fan-out workers don't
+     * clobber the same file. Stage 2: tid is the ScriptExecutor worker id
+     * (0..width-1), stable for the whole run, so the thread_local LAMMPS
+     * caches below warm once per worker rather than once per OMP team. */
     std::vector<std::string> invar = lsim.invar;
-#ifdef TADAH_ENABLE_OPENMP
-    const int tid = omp_get_thread_num();
-#else
-    const int tid = 0;
-#endif
     auto rewrite = [&](const char* flag) {
       for (std::size_t k = 0; k + 1 < invar.size(); ++k) {
         if (invar[k] == flag && invar[k+1] != "none") {
@@ -1102,7 +1114,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     }
 
     if (fail) {
-      warmstart::aborting_iter().store(r.iter, std::memory_order_relaxed);
+      eval_aborted.store(true, std::memory_order_relaxed);
     }
 
     /* Hot-var validation + cache update. Only meaningful for hot
@@ -1116,20 +1128,14 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
           try { v = std::stod(s); }
           catch (...) { continue; }
           if (!std::isfinite(v) || v < hv.min || v > hv.max) {
-            /* Out of range -- clamp this script's outputs and signal
-             * the iter-wide abort so phase B is skipped. */
+            /* Out of range -- clamp this script's outputs and raise the
+             * run-local abort so phase B is skipped. */
             for (auto& vs : r.v_outvar[i]) vs = std::to_string(lsim.failscore);
-            warmstart::aborting_iter().store(r.iter, std::memory_order_relaxed);
-            auto& last = warmstart::last_rejected_iter();
-            std::size_t prev = last.load(std::memory_order_relaxed);
-            bool first_in_eval = false;
-            while (prev < r.iter) {
-              if (last.compare_exchange_weak(prev, r.iter,
-                                             std::memory_order_relaxed)) {
-                first_in_eval = true;
-                break;
-              }
-            }
+            eval_aborted.store(true, std::memory_order_relaxed);
+            /* Log at most once per eval (run-local latch), rate-limited
+             * across evals by the global reject_count. */
+            const bool first_in_eval =
+                !reject_logged.exchange(true, std::memory_order_relaxed);
             if (first_in_eval) {
               const auto rejs = warmstart::reject_count().fetch_add(
                   1, std::memory_order_relaxed) + 1;
@@ -1145,11 +1151,14 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
             }
             break; /* one out-of-range hot var is enough */
           }
-          /* In-range -- cache for next eval AND record for phase B. */
-          warmstart::set(lsim.script, hv.name, v);
+          /* In-range -- cache for THIS CHAIN for next eval, record for phase B,
+           * and stash for possible promotion into the seed map if this eval
+           * turns out to be the new global best. */
+          warmstart::set(r.chain_id, lsim.script, hv.name, v);
           {
             std::lock_guard<std::mutex> lg(hot_mtx);
             hot_values_for_iter[hv.name] = v;
+            r.hot_produced.emplace_back(lsim.script, hv.name, v);
           }
         } catch (...) { /* variable not defined or unparseable -- ignore */ }
       }
@@ -1204,29 +1213,29 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
   };
 
   /* --- PHASE A: hot scripts --------------------------------------- */
-  /* Stage 1b.1: dispatch the slowest scripts first (LPT) so cheap scripts
-   * backfill the threads they free; schedule(dynamic,1) keeps every thread
-   * pulling the next script instead of stalling at a static-chunk boundary
-   * behind one slow relaxation. Order affects dispatch only -- each script
+  /* Stage 2: submit the wave to the shared ScriptExecutor instead of an OMP
+   * team. One pool of C = THREADS x OMP workers serves EVERY replica, so a
+   * replica's fan-out gap is backfilled by another replica's scripts and there
+   * is no OMP nesting (train/predict still use OMP in this stage). LPT order is
+   * preserved: run_batch dispatches tasks in the caller's (longest-first) order,
+   * workers pull the next the instant they free -- same dynamic backfill as
+   * before, but shared across replicas. Order steers dispatch only; each script
    * writes its own r.v_outvar[i], so results are unchanged. */
   lpt_sort(hot_idx);
-#ifdef TADAH_ENABLE_OPENMP
-#pragma omp parallel for schedule(dynamic,1) shared(r,LS,hot_idx,hot_values_for_iter,hot_mtx)
-#endif
-  for (std::size_t k = 0; k < hot_idx.size(); ++k) {
+  script_executor().run_batch(hot_idx.size(), [&](std::size_t k, int wid) {
     const std::size_t i = hot_idx[k];
-    if (warmstart::aborting_iter().load(std::memory_order_relaxed) == r.iter) {
+    if (eval_aborted.load(std::memory_order_relaxed)) {
       for (const auto& n : LS[i].n_outvar) {
         (void)n;
         r.v_outvar[i].emplace_back(std::to_string(LS[i].failscore));
       }
-      continue;
+      return;
     }
-    run_one(i, [&](typename R::LMPPtr& lmp) {
+    run_one(i, wid, [&](typename R::LMPPtr& lmp) {
       /* Seed each declared hot var with its cached or initial value. */
       for (const auto& hv : LS[i].hotvars) {
         double seed;
-        if (auto cached = warmstart::get(LS[i].script, hv.name)) {
+        if (auto cached = warmstart::get(r.chain_id, LS[i].script, hv.name)) {
           seed = *cached;
         } else if (hv.initial) {
           seed = *hv.initial;
@@ -1236,11 +1245,10 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
         inject_hot_value(lmp, hv.name, seed);
       }
     });
-  }
+  });
 
   /* --- PHASE B: cold scripts -------------------------------------- */
-  const bool aborted =
-      (warmstart::aborting_iter().load(std::memory_order_relaxed) == r.iter);
+  const bool aborted = eval_aborted.load(std::memory_order_relaxed);
 
   if (aborted) {
     /* Phase A produced an out-of-range hot var (or a script crashed) --
@@ -1254,8 +1262,8 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     return;
   }
 
-  /* Snapshot the per-iter hot-values map for use under #pragma omp
-   * parallel -- once phase A is done, no more writes happen. */
+  /* Snapshot the per-iter hot-values map before the cold wave -- once phase A
+   * is done, no more writes happen, so cold tasks read it lock-free. */
   std::unordered_map<std::string, double> hot_snapshot;
   {
     std::lock_guard<std::mutex> lg(hot_mtx);
@@ -1263,26 +1271,23 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
   }
 
   lpt_sort(cold_idx);   /* Stage 1b.1: longest-first + dynamic (see phase A) */
-#ifdef TADAH_ENABLE_OPENMP
-#pragma omp parallel for schedule(dynamic,1) shared(r,LS,cold_idx,hot_snapshot)
-#endif
-  for (std::size_t k = 0; k < cold_idx.size(); ++k) {
+  script_executor().run_batch(cold_idx.size(), [&](std::size_t k, int wid) {
     const std::size_t i = cold_idx[k];
-    if (warmstart::aborting_iter().load(std::memory_order_relaxed) == r.iter) {
+    if (eval_aborted.load(std::memory_order_relaxed)) {
       for (const auto& n : LS[i].n_outvar) {
         (void)n;
         r.v_outvar[i].emplace_back(std::to_string(LS[i].failscore));
       }
-      continue;
+      return;
     }
-    run_one(i, [&](typename R::LMPPtr& lmp) {
+    run_one(i, wid, [&](typename R::LMPPtr& lmp) {
       /* Inject every fresh hot value from phase A. Cold scripts read
        * them as `${<name>}`. */
       for (const auto& kv : hot_snapshot) {
         inject_hot_value(lmp, kv.first, kv.second);
       }
     });
-  }
+  });
 
   /* Stage 1a: aggregate per-script busy time into the eval's fan-out
    * utilisation fields (consumed once by HPOLog::record_fanout). Runs
@@ -1489,6 +1494,10 @@ double HPO_Host<P,R>::operator()(const P& p) const
 
   Result r;
   r.iter   = ++g_iter_;
+    /* Which chain (PT replica / PA walker) is this? Bridged from the driver
+     * via a thread_local; keys the per-chain warm-start cache so results are
+     * independent of fan-out execution order. 0 for serial / NLOPT / dlib. */
+    r.chain_id = warmstart::current_chain();
     r.params = p;
 
     auto t0 = std::chrono::high_resolution_clock::now();
@@ -1753,6 +1762,11 @@ double HPO_Host<P,R>::operator()(const P& p) const
       r.is_best   = true;
       r.best_iter = g_best_iter_.fetch_add(1, std::memory_order_relaxed) + 1;
       iter_at_last_best_.store(r.iter, std::memory_order_relaxed);
+      /* Promote this (new global best) eval's hot values into the seed map so
+       * best_pot.tadah's `# HOT` lines reflect the best trajectory and a WARM
+       * restart reproduces it. Serialized by the CAS above => deterministic. */
+      for (const auto& t : r.hot_produced)
+        warmstart::promote(std::get<0>(t), std::get<1>(t), std::get<2>(t));
     }
 
     /* Top-K tracking -- cheap fast-path when disabled (capacity == 0).
@@ -2638,7 +2652,9 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                 for (const auto& lsim : trg_.LS) {
                     for (const auto& hv : lsim.hotvars) {
                         if (hot_snapshot.count(hv.name)) continue;
-                        if (auto cached = warmstart::get(lsim.script, hv.name)) {
+                        /* Gradient path has no chain context -- read the
+                         * chain-agnostic best hot value. */
+                        if (auto cached = warmstart::best_get(lsim.script, hv.name)) {
                             hot_snapshot[hv.name] = *cached;
                         } else if (hv.initial) {
                             hot_snapshot[hv.name] = *hv.initial;

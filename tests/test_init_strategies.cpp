@@ -389,7 +389,8 @@ TEST_CASE("WarmInitStrategy: HOT round-trip primes warmstart cache",
     );
 
     /* Sanity: cache is empty for our key before the WARM read. */
-    REQUIRE(!warmstart::get(script, name).has_value());
+    warmstart::clear();
+    REQUIRE(!warmstart::best_get(script, name).has_value());
 
     InitStrategySpec ispec;
     ispec.chain.push_back({"WARM", {pot.path.string()}});
@@ -400,15 +401,12 @@ TEST_CASE("WarmInitStrategy: HOT round-trip primes warmstart cache",
 
     /* Cache must now hold the value the file declared, to within the
      * 17-digit precision the writer uses. */
-    auto cached = warmstart::get(script, name);
+    auto cached = warmstart::best_get(script, name);
     REQUIRE(cached.has_value());
     CHECK(*cached == Approx(v_in).margin(1e-12));
 
     /* Cleanup so subsequent tests don't see this stale entry. */
-    {
-        std::lock_guard<std::mutex> lg(warmstart::mtx());
-        warmstart::cache().erase({script, name});
-    }
+    warmstart::clear();
 }
 
 TEST_CASE("WarmInitStrategy: legacy HOT_A0 line still primes cache",
@@ -435,14 +433,11 @@ TEST_CASE("WarmInitStrategy: legacy HOT_A0 line still primes cache",
     InitContext ic{sp, *st.trg, 0};
     (void) strat->generate(ic, 1);
 
-    auto cached = warmstart::get(script, "hot_a0");
+    auto cached = warmstart::best_get(script, "hot_a0");
     REQUIRE(cached.has_value());
     CHECK(*cached == Approx(a0_in).margin(1e-12));
 
-    {
-        std::lock_guard<std::mutex> lg(warmstart::mtx());
-        warmstart::cache().erase({script, "hot_a0"});
-    }
+    warmstart::clear();
 }
 
 TEST_CASE("HPO parses MULTISTART knobs",
