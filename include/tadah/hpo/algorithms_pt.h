@@ -133,22 +133,20 @@ template<typename Vec, typename HostT>
     }
 #ifdef TADAH_ENABLE_OPENMP
     {
+      // Under the shared-pool model THREADS is the actual concurrency: the
+      // pc_lammps fan-out and the MLIP train/predict all run on the pool.
+      // OMP_NUM_THREADS drives ONLY the residual NN-list / data-stats kernels,
+      // which fire transiently during per-eval training and not at all for
+      // pc_lammps-only configs -- so it is NOT multiplicative with THREADS.
+      // Warn only when the pool itself oversubscribes the cores. Do NOT
+      // re-introduce a "THREADS x OMP_NUM_THREADS > cores" warning: it is a
+      // false positive for the common (pc_lammps) case, where OMP is inert.
       const unsigned hw = std::thread::hardware_concurrency();
-      const std::size_t omp_w = static_cast<std::size_t>(omp_get_max_threads());
       if (hw && threads > hw) {
         std::ostringstream oss;
         oss << "ANNEAL_PT: THREADS(" << threads
             << ") exceeds hardware_concurrency(" << hw
             << "); the shared worker pool is oversubscribed. Set THREADS <= cores.";
-        std::cout << "[HPO] " << oss.str() << "\n";
-        HPOLog::instance().warning(oss.str());
-      } else if (hw && threads * omp_w > hw) {
-        std::ostringstream oss;
-        oss << "ANNEAL_PT: THREADS(" << threads << ") x OMP_NUM_THREADS("
-            << omp_w << ") = " << threads * omp_w
-            << " exceeds hardware_concurrency(" << hw
-            << "); the pool fits, but concurrent NN/data-stats OMP kernels may "
-            << "transiently oversubscribe -- lower OMP_NUM_THREADS if it hurts.";
         std::cout << "[HPO] " << oss.str() << "\n";
         HPOLog::instance().warning(oss.str());
       }
