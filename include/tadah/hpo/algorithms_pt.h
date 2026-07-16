@@ -18,13 +18,20 @@
  * calibrated to the acceptance rate AT its slot's temperature and
  * therefore stays with the slot.
  *
- * Execution: logical replicas are statically assigned to a persistent
- * ReplicaPool (THREADS workers); one host, many threads -- HPO_Host's
- * operator() is thread-safe by contract. Same SEED => identical
- * results for ANY thread count (per-replica RNG streams, driver-side
- * swap coins keyed by epoch, deterministic per-epoch budget slicing).
- * Documented exceptions: MAXTIME truncation and the tails of runs cut
- * short by STOPVAL/exceptions are timing-dependent.
+ * Execution: THREADS is the TOTAL width of the shared worker pool (the
+ * per-rank CPU-core budget) that actually runs the pc_lammps fan-out and
+ * MLIP train/predict; it no longer multiplies OMP_NUM_THREADS. A bounded
+ * set of driver threads (min(THREADS, K)) steps the K replicas, but each
+ * driver BLOCKS on the shared pool while its eval's scripts run, so the
+ * real concurrency is THREADS and one replica's eval alone submits far
+ * more tasks than THREADS -- enough to keep the pool saturated. One host,
+ * many threads -- HPO_Host's operator() is thread-safe by contract. Same
+ * SEED => identical results for ANY THREADS (per-replica RNG streams,
+ * driver-side swap coins keyed by epoch, deterministic per-epoch budget
+ * slicing). Documented exceptions: MAXTIME truncation and the tails of
+ * runs cut short by STOPVAL/exceptions are timing-dependent.
+ * (OMP_NUM_THREADS independently drives the residual OpenMP kernels --
+ * neighbour-list build, data-stats -- not this pool.)
  *
  * Ladder construction: T_HOT from PARAM T_HOT or the shared T0
  * calibration (target initial acceptance T0_PACCEPT at the hot end);
@@ -36,7 +43,9 @@
  * end crosses T_MIN.
  *
  * PT-specific PARAMs (shared stepper knobs as in ANNEAL):
- *   REPLICAS     max(THREADS,2)  ladder size K
+ *   REPLICAS     max(THREADS,2)  ladder size K (default: one replica per
+ *                                core; set REPLICAS to decouple K from the
+ *                                THREADS core budget)
  *   T_HOT        auto            hottest slot
  *   T_COLD       T_HOT/LADDER_SPAN  coldest slot
  *   LADDER_SPAN  1e3             T_HOT/T_COLD when T_COLD unset
@@ -126,12 +135,20 @@ template<typename Vec, typename HostT>
     {
       const unsigned hw = std::thread::hardware_concurrency();
       const std::size_t omp_w = static_cast<std::size_t>(omp_get_max_threads());
-      if (hw && threads * omp_w > hw) {
+      if (hw && threads > hw) {
+        std::ostringstream oss;
+        oss << "ANNEAL_PT: THREADS(" << threads
+            << ") exceeds hardware_concurrency(" << hw
+            << "); the shared worker pool is oversubscribed. Set THREADS <= cores.";
+        std::cout << "[HPO] " << oss.str() << "\n";
+        HPOLog::instance().warning(oss.str());
+      } else if (hw && threads * omp_w > hw) {
         std::ostringstream oss;
         oss << "ANNEAL_PT: THREADS(" << threads << ") x OMP_NUM_THREADS("
             << omp_w << ") = " << threads * omp_w
             << " exceeds hardware_concurrency(" << hw
-            << "); expect oversubscription. Aim for THREADS x OMP <= cores.";
+            << "); the pool fits, but concurrent NN/data-stats OMP kernels may "
+            << "transiently oversubscribe -- lower OMP_NUM_THREADS if it hurts.";
         std::cout << "[HPO] " << oss.str() << "\n";
         HPOLog::instance().warning(oss.str());
       }

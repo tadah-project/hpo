@@ -70,25 +70,27 @@ int hpo_run(core::Context& ctx)
 
 #ifdef TADAH_ENABLE_OPENMP
     {
-        /* PC_LAMMPS sims fan out over scripts with OpenMP; the pool size is
-         * the single biggest wall-time lever, so journal it up front. */
+        /* Under the shared-pool model (Option A) OpenMP no longer drives the
+         * pc_lammps fan-out -- THREADS does (see the ScriptExecutor log below).
+         * OMP_NUM_THREADS now controls only the residual OpenMP kernels
+         * (neighbour-list build, data-stats); journal its width for the record. */
         const char* env_omp = std::getenv("OMP_NUM_THREADS");
         log.info("OpenMP: max threads = " +
                  std::to_string(omp_get_max_threads()) +
                  "  (OMP_NUM_THREADS=" +
                  (env_omp && env_omp[0] ? std::string(env_omp) : "unset") +
-                 "); PC_LAMMPS scripts run in parallel up to this width");
-        /* Journal the wait policy. ANNEAL_PT/PA run K replica workers, each
-         * spawning its own OMP team for the pc_lammps fan-out (and for MLIP
-         * train/predict); when a team's threads are idle they busy-spin under
-         * the default active policy, and with K teams live that wastes CPU a
-         * shared HPC node would rather not see. Launch parallel runs with
-         * OMP_WAIT_POLICY=passive so idle threads sleep instead; serial ANNEAL
-         * is happiest on the default (active) for lowest fan-out latency. */
+                 "); drives only the residual OpenMP kernels (NN lists, "
+                 "data-stats), NOT the pc_lammps fan-out");
+        /* Journal the wait policy. The shared pool's idle workers block on a
+         * futex (0 CPU), so OMP_WAIT_POLICY no longer governs fan-out idle time
+         * -- it now only affects those residual OMP kernels, which are short
+         * setup steps. 'passive' stays the safe default on a shared node (idle
+         * OMP threads sleep between kernels); the pool is unaffected either way. */
         const char* env_wait = std::getenv("OMP_WAIT_POLICY");
         log.info(std::string("OpenMP: OMP_WAIT_POLICY=") +
                  (env_wait && env_wait[0] ? env_wait : "unset (runtime default)") +
-                 "; prefer 'passive' for ANNEAL_PT/PA, 'active' for serial ANNEAL");
+                 "; affects only the residual OMP kernels now (pool idles on a "
+                 "futex); prefer 'passive' on shared nodes");
     }
 #endif
 
@@ -99,24 +101,20 @@ int hpo_run(core::Context& ctx)
 
     HPOTargets trg(ctx, ctx.get<std::string>("HPOTARGET"));
 
-    /* Stage 2: size the shared pc_lammps fan-out pool ONCE, up front, to the
-     * per-rank core budget C = THREADS x OMP. One pool serves the serial
-     * fan-out AND every ANNEAL_PT/PA replica, so a replica's fan-out gap is
-     * backfilled by another replica's scripts with no OMP nesting. THREADS is
-     * the ReplicaPool worker count (1 for serial); OMP is the per-eval fan-out
-     * width. Idle workers block on a futex (0 CPU), unlike OMP's active spin. */
+    /* Parallelisation model (Option A): THREADS is the TOTAL width of the shared
+     * worker pool -- the number of threads that actually run pc_lammps scripts
+     * AND MLIP train/predict, i.e. the per-rank CPU-core budget. ONE pool serves
+     * serial ANNEAL (SA) and every ANNEAL_PT/PA replica; idle workers block on a
+     * futex (0 CPU). THREADS no longer multiplies OMP_NUM_THREADS -- the pool IS
+     * the parallelism, so `exec_width = THREADS`. OMP_NUM_THREADS independently
+     * controls the residual OpenMP kernels (neighbour-list build, data-stats) via
+     * the OpenMP runtime; it does NOT size this pool. (PT/PA additionally cap the
+     * number of *concurrent* replicas at min(THREADS, REPLICAS) -- the ReplicaPool
+     * in algorithms_p{t,a}.h -- which is enough to keep the THREADS-wide pool fed
+     * since one replica's eval alone submits many more tasks than THREADS.) */
     {
-#ifdef TADAH_ENABLE_OPENMP
-        const int omp_w = std::max(1, omp_get_max_threads());
-#else
-        int omp_w = 1;
-        if (const char* e = std::getenv("OMP_NUM_THREADS")) {
-            const int v = std::atoi(e); if (v > 0) omp_w = v;
-        }
-#endif
-        const int n_threads =
+        const int exec_width =
             std::max<int>(1, static_cast<int>(trg.spec.num_threads.value_or(1)));
-        const int exec_width = std::max(1, n_threads * omp_w);
         init_script_executor(exec_width);
         /* Stage 2.3: route the MLIP train/predict kernels (design-matrix build,
          * descriptor calc, predict) onto the SAME pool. This drops the nested
@@ -129,10 +127,29 @@ int hpo_run(core::Context& ctx)
                 script_executor().run_batch(
                     n, [&](std::size_t i, int /*worker_id*/) { body(i); });
             });
+#ifdef TADAH_ENABLE_OPENMP
+        const int omp_w = std::max(1, omp_get_max_threads());
+#else
+        int omp_w = 1;
+        if (const char* e = std::getenv("OMP_NUM_THREADS")) {
+            const int v = std::atoi(e); if (v > 0) omp_w = v;
+        }
+#endif
         log.info("ScriptExecutor: " + std::to_string(exec_width) +
-                 " workers (THREADS=" + std::to_string(n_threads) +
-                 " x OMP=" + std::to_string(omp_w) +
-                 ") serving fan-out + train/predict");
+                 " workers = THREADS (total pool: fan-out + train/predict); "
+                 "OMP_NUM_THREADS=" + std::to_string(omp_w) +
+                 " drives only the residual OpenMP kernels (NN lists, data-stats)");
+        /* Migration nudge: pre-Option-A, OMP_NUM_THREADS widened the fan-out, so
+         * a config with no THREADS line still got OMP-wide parallelism. Now the
+         * pool is THREADS alone, so that same config runs the fan-out on ONE
+         * worker. Warn once so users know to set THREADS for concurrency. */
+        if (!trg.spec.num_threads && omp_w > 1)
+            log.warning(
+                "THREADS not set: the pc_lammps fan-out and MLIP train/predict "
+                "run on a SINGLE worker. Under the shared-pool model "
+                "OMP_NUM_THREADS (=" + std::to_string(omp_w) + ") no longer "
+                "widens the fan-out -- set THREADS <n> in the STRATEGY block to "
+                "run scripts concurrently.");
     }
 
     /* --validation is optional: PC_OBSERVABLE / PC_LAMMPS can carry the

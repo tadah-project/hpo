@@ -64,8 +64,8 @@ public:
  * uses local state). For correctness, we run sequentially today and
  * leave a parallel knob (multistart_parallel) wired through to a
  * dlib::thread_pool in a follow-up. Each per-start run still
- * benefits from the inner OMP_NUM_THREADS pool that parallelises
- * LAMMPS scripts within a single evaluation.
+ * benefits from the shared worker pool (THREADS) that parallelises
+ * the pc_lammps fan-out within a single evaluation.
  * -------------------------------------------------------------------- */
 template<class Vec, class Runner>
 class MultiStartPolicy : public RunPolicy<Vec,Runner> {
@@ -134,7 +134,8 @@ public:
     if (parallel_ > 1) {
       HPOLog::instance().warning(
           "MULTISTART_PARALLEL > 1 not yet implemented; running starts "
-          "sequentially. Inner OMP_NUM_THREADS still parallelises LAMMPS.");
+          "sequentially. The shared THREADS pool still parallelises the "
+          "pc_lammps fan-out within each evaluation.");
     }
 
     /* MULTISTART_BUDGET_PER_START -- override per-start MAXEVAL.

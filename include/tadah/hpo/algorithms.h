@@ -152,9 +152,12 @@ template<typename Vec, typename Runner>
  * (overrides STEP_FRAC).
  *
  * Knobs that are dead for this algorithm are hard errors, not silent
- * no-ops: XTOL_REL/XTOL_ABS, VECTOR_ARR, GRAD_STRATEGY, THREADS and
- * POPULATION (use TADAH:ANNEAL_PT / TADAH:ANNEAL_PA), unknown PARAM
- * keys, and the renamed T_INIT. See anneal::Knobs::parse.
+ * no-ops: XTOL_REL/XTOL_ABS, VECTOR_ARR, GRAD_STRATEGY, and POPULATION
+ * (use TADAH:ANNEAL_PA), unknown PARAM keys, and the renamed T_INIT.
+ * THREADS IS accepted here under the shared-pool model (Option A): it
+ * sizes the per-rank worker pool that runs the within-eval pc_lammps
+ * fan-out -- serial ANNEAL still drives ONE chain, only the fan-out is
+ * parallel. See anneal::Knobs::parse.
  *
  * `run_anneal_impl` is parameterised on a generic callable host
  * (`double operator()(const Vec&) const`) so unit tests can drive the

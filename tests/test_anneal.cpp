@@ -728,13 +728,24 @@ TEST_CASE("ANNEAL: dead knobs are hard errors, not silent no-ops",
         REQUIRE_THROWS_WITH(run_anneal_impl<Vec>(sp, stub),
                             Catch::Contains("XTOL"));
     }
-    SECTION("THREADS on the serial annealer") {
+    SECTION("THREADS on the serial annealer (Option A: sizes the fan-out pool)") {
+        // Under the shared-pool model THREADS is the total worker-pool width and
+        // is honoured by EVERY family: serial ANNEAL runs ONE chain, but its
+        // within-eval pc_lammps fan-out runs on that pool, so THREADS is valid
+        // here. (It no longer multiplies OMP_NUM_THREADS; see anneal_core.h.)
         auto sp = make_spec({-1.0}, {1.0});
         set_seed_point(sp, {0.0});
         sp.stop.maxeval = 10;
         sp.num_threads = 4;
+        REQUIRE_NOTHROW(run_anneal_impl<Vec>(sp, stub));
+    }
+    SECTION("THREADS 0 is rejected on the serial annealer") {
+        auto sp = make_spec({-1.0}, {1.0});
+        set_seed_point(sp, {0.0});
+        sp.stop.maxeval = 10;
+        sp.num_threads = 0;
         REQUIRE_THROWS_WITH(run_anneal_impl<Vec>(sp, stub),
-                            Catch::Contains("ANNEAL_PT"));
+                            Catch::Contains("THREADS must be >= 1"));
     }
     SECTION("POPULATION on the serial annealer") {
         auto sp = make_spec({-1.0}, {1.0});

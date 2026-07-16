@@ -272,17 +272,17 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   if (sp.grad_strategy)
     throw std::runtime_error(
         ctx + " is derivative-free and does not use GRAD_STRATEGY; remove it");
-  if (kind == AlgoKind::Serial) {
-    if (sp.num_threads)
-      throw std::runtime_error(
-          ctx + " is serial and does not use THREADS; use TADAH:ANNEAL_PT "
-          "or TADAH:ANNEAL_PA for parallel annealing");
-  }
+  /* THREADS is honoured by EVERY family under the shared-pool model
+   * (Option A): it sizes the per-rank worker pool that runs the pc_lammps
+   * fan-out + MLIP train/predict. Serial ANNEAL still drives ONE chain, but
+   * its within-eval fan-out runs on that pool, so THREADS is meaningful here
+   * too -- only THREADS 0 is rejected. PT/PA additionally use THREADS to cap
+   * the number of concurrent replicas (see algorithms_p{t,a}.h). */
+  if (sp.num_threads && *sp.num_threads == 0)
+    throw std::runtime_error(ctx + ": THREADS must be >= 1");
   if (kind != AlgoKind::PA && sp.pop)
     throw std::runtime_error(
         ctx + " does not use POPULATION; use TADAH:ANNEAL_PA");
-  if (kind == AlgoKind::PT && sp.num_threads && *sp.num_threads == 0)
-    throw std::runtime_error(ctx + ": THREADS must be >= 1");
 
   auto pget = [&](const char* k, double dflt) {
     auto it = sp.param.find(k);

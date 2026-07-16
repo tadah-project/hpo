@@ -433,8 +433,8 @@ void LammpsSim::parse_tokens() {
           tadah::core::Logger::instance().log(
               tadah::core::LogLevel::WARNING,
               "--ncpu=", ncpu,
-              " has no effect in non-MPI builds; LAMMPS scripts run serially "
-              "and parallelism over scripts is controlled by OMP_NUM_THREADS.");
+              " has no effect in non-MPI builds; parallelism over pc_lammps "
+              "scripts is controlled by THREADS (the shared worker pool).");
         }
 #endif
       } else {

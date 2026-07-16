@@ -27,6 +27,15 @@
  * decorrelate deterministically and results are identical for any
  * THREADS.
  *
+ * Execution: THREADS is the TOTAL width of the shared worker pool (the
+ * per-rank CPU-core budget) running the pc_lammps fan-out + MLIP
+ * train/predict; it no longer multiplies OMP_NUM_THREADS. min(THREADS,
+ * n_local) driver threads step the walkers but block on the shared pool
+ * during each eval, so THREADS is the true concurrency. Note the default
+ * POPULATION scales with THREADS (4*THREADS) -- fix POPULATION to hold R
+ * constant while varying the core budget. OMP_NUM_THREADS independently
+ * drives the residual OpenMP kernels (NN lists, data-stats), not the pool.
+ *
  * PA-specific PARAMs (shared stepper knobs as in ANNEAL):
  *   POPULATION   4*THREADS (>=16)  population size R (top-level knob)
  *   SWEEPS       1                 rungs per walker per T-step

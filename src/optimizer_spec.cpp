@@ -45,8 +45,12 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
             "   * PARAM REANNEAL   <0|1>    warm re-anneal from REANNEAL_SCALE^n * T0 when\n"
             "                               T < T_MIN with budget left (default 1)\n"
             "   * PARAM REANNEAL_SCALE <double> re-anneal start-T factor in (0,1) (0.25)\n"
+            "   * THREADS <n>               shared fan-out pool width; sizes the pool that\n"
+            "                               runs the per-eval pc_lammps scripts + MLIP\n"
+            "                               train/predict (default 1; ANNEAL still drives\n"
+            "                               ONE chain, only the fan-out is parallel)\n"
             "   * Dead knobs are hard errors: XTOL_*, VECTOR_ARR, GRAD_STRATEGY, unknown\n"
-            "     PARAM keys; THREADS/POPULATION -> use TADAH:ANNEAL_PT / TADAH:ANNEAL_PA\n";
+            "     PARAM keys; POPULATION -> use TADAH:ANNEAL_PA\n";
     else if(algo=="ANNEAL_PT")
         os<<"   * Parallel tempering (replica exchange) over the ANNEAL stepper\n"
             "     (classic by default, PARAM CORANA 1 for the adaptive variant).\n"
@@ -54,7 +58,8 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
             "     adjacent pairs attempt a state swap every SWAP_EVERY epochs\n"
             "     (deterministic even/odd pairing). Same SEED => same result for\n"
             "     any THREADS.\n"
-            "   * THREADS <n>               worker threads evaluating replicas (default 1)\n"
+            "   * THREADS <n>               shared worker-pool width: replica evals + pc_lammps\n"
+            "                               fan-out + MLIP train/predict (default 1)\n"
             "   * SEED / STEP / MAXEVAL / MAXTIME / STOPVAL as in ANNEAL;\n"
             "     FTOL_REL/FTOL_ABS arm the plateau stop on the coldest slot\n"
             "   * PARAM REPLICAS    <int>   ladder size K (default max(THREADS,2))\n"
@@ -80,7 +85,8 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
             "     exp(-dbeta*f), resamples (systematic; FAILSCORE walkers die),\n"
             "     then every walker runs SWEEPS rungs at the new T. Same SEED =>\n"
             "     same result for any THREADS.\n"
-            "   * THREADS <n>               worker threads evaluating walkers (default 1)\n"
+            "   * THREADS <n>               shared worker-pool width: walker evals + pc_lammps\n"
+            "                               fan-out + MLIP train/predict (default 1)\n"
             "   * POPULATION <R>            population size (default 4*THREADS, min 16)\n"
             "   * SEED / STEP / MAXEVAL / MAXTIME / STOPVAL as in ANNEAL;\n"
             "     FTOL_REL/FTOL_ABS arm the plateau stop on the population best\n"
