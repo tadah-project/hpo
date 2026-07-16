@@ -958,25 +958,28 @@ void HPO_Host<P,R>::fill_validation(Result& r,
 
 /* ----------  helper: run LAMMPS (serial + OpenMP) ---------------------
  *
- * Two-phase execution when any PC_LAMMPS line carries `--hotvar`:
+ * Two-wave execution when any PC_LAMMPS line carries `--hotvar` (Stage 2.4):
  *
- *   PHASE A   Run hot scripts in parallel. Each hot script reads its
- *             warmstart-cached value (or the user-declared `initial`,
- *             midpoint of [min, max] on first eval) as `${<name>}`,
- *             relaxes, exposes a fresh `<name>` value. The framework
- *             validates against [min, max], updates the cache, and
- *             collects (name -> fresh value) into `hot_values_for_iter`.
- *             An out-of-range value sets the eval-wide abort flag.
+ *   WAVE 1    Run the hot scripts AND every cold script that references no
+ *             produced hot-var, in ONE parallel batch. Each hot script reads
+ *             its warmstart-cached value (or the user-declared `initial`,
+ *             midpoint of [min, max] on first eval) as `${<name>}`, relaxes,
+ *             exposes a fresh `<name>` value; the framework validates against
+ *             [min, max], updates the cache, and collects (name -> fresh value)
+ *             into `hot_values_for_iter`. An out-of-range value sets the
+ *             eval-wide abort flag. The hot-INDEPENDENT cold scripts run
+ *             alongside (no injection needed), filling cores that would
+ *             otherwise idle behind the hot box/relax.
  *
- *   PHASE B   Run cold scripts in parallel. If phase A aborted, all
- *             cold outputs are clamped to failscore. Otherwise every
- *             value collected in phase A is injected as
- *             `variable <name> string <value>` before each cold script,
- *             so cold scripts read `${<name>}` to get the freshly
- *             computed hot value from THIS eval.
+ *   WAVE 2    Run the hot-DEPENDENT cold scripts. If wave 1 aborted, ALL cold
+ *             outputs (independent ones included) are clamped to failscore.
+ *             Otherwise every value collected in wave 1 is injected as
+ *             `variable <name> string <value>` before each dependent cold
+ *             script, so it reads `${<name>}` to get the freshly computed hot
+ *             value from THIS eval.
  *
- * No --hotvar lines means phase A is empty; phase B runs all scripts in
- * parallel as before. */
+ * No --hotvar lines means wave 1 is all scripts (all classified independent)
+ * and wave 2 is empty -- identical to the pre-hotvar single parallel wave. */
 template<class P, class R>
 void HPO_Host<P,R>::run_lammps(Result& r) const
 {
@@ -1212,18 +1215,73 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     try { lmp->input->one(cmd); } catch (...) { /* keep going */ }
   };
 
-  /* --- PHASE A: hot scripts --------------------------------------- */
-  /* Stage 2: submit the wave to the shared ScriptExecutor instead of an OMP
-   * team. One pool of C = THREADS x OMP workers serves EVERY replica, so a
-   * replica's fan-out gap is backfilled by another replica's scripts and there
-   * is no OMP nesting (train/predict still use OMP in this stage). LPT order is
-   * preserved: run_batch dispatches tasks in the caller's (longest-first) order,
-   * workers pull the next the instant they free -- same dynamic backfill as
-   * before, but shared across replicas. Order steers dispatch only; each script
-   * writes its own r.v_outvar[i], so results are unchanged. */
+  /* --- Stage 2.4: classify cold scripts by hot-var dependency ------ */
+  /* A cold script that references NO produced hot-var (`${name}` or `v_name`
+   * for any declared name) needs no phase-A output, so it can run CONCURRENTLY
+   * with the hot scripts instead of idling behind the coarse phase barrier.
+   * This fills the cores that would otherwise sit idle while a lone hot
+   * box/relax runs (the small-hot-set case, e.g. 1 hot of 31). Cold scripts
+   * that DO reference a hot-var stay in wave 2, after the values are known.
+   *
+   * Determinism: an "independent" cold script does not reference the hot var,
+   * so the value it would have been injected is DEAD -- running it in wave 1
+   * with no injection produces exactly the same r.v_outvar[i] as running it in
+   * wave 2 with the (unused) injection. Classification is conservative: any
+   * textual reference marks the script dependent, so a mis-classification can
+   * only demote an independent script to wave 2 (a missed speed-up), never
+   * feed a cold script a stale value. */
+  std::vector<std::size_t> cold_indep_idx, cold_dep_idx;
+  cold_indep_idx.reserve(cold_idx.size());
+  cold_dep_idx.reserve(cold_idx.size());
+  {
+    std::vector<std::string> ref_brace, ref_v;   /* ${name} and v_name per hot var */
+    for (auto hi : hot_idx)
+      for (const auto& hv : LS[hi].hotvars) {
+        ref_brace.push_back("${" + hv.name + "}");
+        ref_v.push_back("v_" + hv.name);
+      }
+    auto references_hot = [&](std::size_t i) -> bool {
+      for (const auto& line : LS[i].script_lines)
+        for (std::size_t p = 0; p < ref_brace.size(); ++p)
+          if (line.find(ref_brace[p]) != std::string::npos ||
+              line.find(ref_v[p])     != std::string::npos)
+            return true;
+      return false;
+    };
+    for (auto i : cold_idx) {
+      if (ref_brace.empty() || !references_hot(i)) cold_indep_idx.push_back(i);
+      else                                          cold_dep_idx.push_back(i);
+    }
+  }
+
+  /* Uniform clamp of one cold script to failscore, overwriting any value it may
+   * have already produced in wave 1 (clear first) so the recorded result on an
+   * abort is exactly "all cold failscored", identical to the pre-merge
+   * behaviour and independent of execution order. */
+  auto clamp_cold = [&](std::size_t i) {
+    r.v_outvar[i].clear();
+    for (const auto& n : LS[i].n_outvar) {
+      (void)n;
+      r.v_outvar[i].emplace_back(std::to_string(LS[i].failscore));
+    }
+  };
+
+  /* --- WAVE 1: hot scripts + hot-INDEPENDENT cold scripts ---------- */
+  /* Submitted as ONE shared-pool batch, so idle cores during a long box/relax
+   * are filled by independent cold work. Hot scripts are dispatched first (LPT
+   * within each group) so the dependent cold wave that waits on them starts as
+   * early as possible. Order steers dispatch only; each script writes its own
+   * r.v_outvar[i], so results are unchanged (verified vs the pre-merge binary).
+   * The pool serves EVERY replica (no OMP nesting; train/predict share it too). */
   lpt_sort(hot_idx);
-  script_executor().run_batch(hot_idx.size(), [&](std::size_t k, int wid) {
-    const std::size_t i = hot_idx[k];
+  lpt_sort(cold_indep_idx);
+  std::vector<std::size_t> wave1;
+  wave1.reserve(hot_idx.size() + cold_indep_idx.size());
+  wave1.insert(wave1.end(), hot_idx.begin(), hot_idx.end());
+  wave1.insert(wave1.end(), cold_indep_idx.begin(), cold_indep_idx.end());
+
+  script_executor().run_batch(wave1.size(), [&](std::size_t k, int wid) {
+    const std::size_t i = wave1[k];
     if (eval_aborted.load(std::memory_order_relaxed)) {
       for (const auto& n : LS[i].n_outvar) {
         (void)n;
@@ -1231,48 +1289,52 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       }
       return;
     }
-    run_one(i, wid, [&](typename R::LMPPtr& lmp) {
-      /* Seed each declared hot var with its cached or initial value. */
-      for (const auto& hv : LS[i].hotvars) {
-        double seed;
-        if (auto cached = warmstart::get(r.chain_id, LS[i].script, hv.name)) {
-          seed = *cached;
-        } else if (hv.initial) {
-          seed = *hv.initial;
-        } else {
-          seed = 0.5 * (hv.min + hv.max);
+    if (!LS[i].hotvars.empty()) {
+      run_one(i, wid, [&](typename R::LMPPtr& lmp) {
+        /* hot script: seed each declared hot var with its cached/initial value. */
+        for (const auto& hv : LS[i].hotvars) {
+          double seed;
+          if (auto cached = warmstart::get(r.chain_id, LS[i].script, hv.name)) {
+            seed = *cached;
+          } else if (hv.initial) {
+            seed = *hv.initial;
+          } else {
+            seed = 0.5 * (hv.min + hv.max);
+          }
+          inject_hot_value(lmp, hv.name, seed);
         }
-        inject_hot_value(lmp, hv.name, seed);
-      }
-    });
+      });
+    } else {
+      /* hot-independent cold script: references no hot var => no injection. */
+      run_one(i, wid, [](auto&) {});
+    }
   });
 
-  /* --- PHASE B: cold scripts -------------------------------------- */
+  /* --- Between waves: abort gate + snapshot ------------------------ */
   const bool aborted = eval_aborted.load(std::memory_order_relaxed);
 
   if (aborted) {
-    /* Phase A produced an out-of-range hot var (or a script crashed) --
-     * the potential is unphysical. Skip every cold script and clamp. */
-    for (auto i : cold_idx) {
-      for (const auto& n : LS[i].n_outvar) {
-        (void)n;
-        r.v_outvar[i].emplace_back(std::to_string(LS[i].failscore));
-      }
-    }
+    /* An out-of-range hot var or a crashed wave-1 script => unphysical
+     * potential. Clamp EVERY cold script to failscore (incl. independents that
+     * already ran in wave 1) and skip wave 2. Recorded result is identical to
+     * the pre-merge behaviour: all cold failscored, deterministically. */
+    for (auto i : cold_indep_idx) clamp_cold(i);
+    for (auto i : cold_dep_idx)   clamp_cold(i);
     return;
   }
 
-  /* Snapshot the per-iter hot-values map before the cold wave -- once phase A
-   * is done, no more writes happen, so cold tasks read it lock-free. */
+  /* Snapshot the per-iter hot-values map before the dependent cold wave --
+   * wave 1 is done, no more writes happen, so cold tasks read it lock-free. */
   std::unordered_map<std::string, double> hot_snapshot;
   {
     std::lock_guard<std::mutex> lg(hot_mtx);
     hot_snapshot = hot_values_for_iter;
   }
 
-  lpt_sort(cold_idx);   /* Stage 1b.1: longest-first + dynamic (see phase A) */
-  script_executor().run_batch(cold_idx.size(), [&](std::size_t k, int wid) {
-    const std::size_t i = cold_idx[k];
+  /* --- WAVE 2: hot-DEPENDENT cold scripts -------------------------- */
+  lpt_sort(cold_dep_idx);   /* longest-first + dynamic (see wave 1) */
+  script_executor().run_batch(cold_dep_idx.size(), [&](std::size_t k, int wid) {
+    const std::size_t i = cold_dep_idx[k];
     if (eval_aborted.load(std::memory_order_relaxed)) {
       for (const auto& n : LS[i].n_outvar) {
         (void)n;
@@ -1281,8 +1343,8 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       return;
     }
     run_one(i, wid, [&](typename R::LMPPtr& lmp) {
-      /* Inject every fresh hot value from phase A. Cold scripts read
-       * them as `${<name>}`. */
+      /* Inject every fresh hot value from wave 1. Cold scripts read them as
+       * `${<name>}`. */
       for (const auto& kv : hot_snapshot) {
         inject_hot_value(lmp, kv.first, kv.second);
       }
