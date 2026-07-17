@@ -998,10 +998,24 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
    * costs (first eval, all zero) preserves the config order, so the first eval
    * is byte-identical to the pre-change behaviour. */
   auto lpt_sort = [&](std::vector<std::size_t>& idx) {
-    std::stable_sort(idx.begin(), idx.end(), [&](std::size_t a, std::size_t b) {
-      return script_ewma_ms_[a].load(std::memory_order_relaxed)
-           > script_ewma_ms_[b].load(std::memory_order_relaxed);
-    });
+    /* Snapshot the EWMA costs BEFORE sorting. script_ewma_ms_ is a shared
+     * HPO_Host member whose entries are updated concurrently by OTHER
+     * replicas' fan-out worker threads (script_ewma_ms_[i].store(...) after
+     * each script run). Reading the live atomics inside the comparator lets a
+     * cost change mid-sort, so the comparator ceases to be the consistent
+     * strict weak ordering std::stable_sort requires; its unguarded insertion
+     * sort then runs off the FRONT of idx -- a heap-buffer-overflow (a silent
+     * OOB write that detonates later as free(): invalid pointer). Sorting
+     * against a fixed local snapshot keeps the ordering consistent for the
+     * whole sort. (All-zero costs on the first eval still preserve config
+     * order via stable_sort, so first-eval output stays byte-identical.) */
+    std::vector<double> cost(LS.size());
+    for (std::size_t i = 0; i < LS.size(); ++i)
+      cost[i] = script_ewma_ms_[i].load(std::memory_order_relaxed);
+    std::stable_sort(idx.begin(), idx.end(),
+                     [&cost](std::size_t a, std::size_t b) {
+                       return cost[a] > cost[b];
+                     });
   };
 
   /* Partition scripts into hot (any --hotvar) and cold (none). The hot
