@@ -11,6 +11,7 @@
 #include <tadah/hpo/pot_header_writer_impl.hpp>
 #include <tadah/hpo/warmstart_cache.h>
 #include <tadah/hpo/script_executor.h>
+#include <tadah/hpo/pc_task_exec.h>
 #include <tadah/hpo/iter_health.h>
 #include <tadah/hpo/rcut_derivation.h>
 #include <tadah/hpo/startup_validation.h>
@@ -1045,89 +1046,40 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
    * warmstart::last_rejected_iter, which worked only because r.iter is unique. */
   std::atomic<bool> reject_logged{false};
 
-  /* Generic per-script runner -- used by both phases. Returns true on
-   * a successful LAMMPS run; false on script failure (in which case
-   * v_outvar is filled with failscore). The `extra_inject` callable
-   * is invoked once after the LAMMPS instance is ready and before
-   * `run_script`, with the raw lmp pointer; used by both phases to
-   * inject `variable <name> string <value>` lines. */
-  auto run_one = [&](std::size_t i, int tid,
-                     auto&& extra_inject) -> bool {
+  /* Hot-var NAME table (one vector<string> per sim, lsim.hotvars order) for
+   * the extracted execution core, which reads raw strings by name and leaves
+   * all parsing/validation here. Built once per eval; usually 0-1 entries. */
+  std::vector<std::vector<std::string>> hotvar_names(LS.size());
+  for (std::size_t i = 0; i < LS.size(); ++i) {
+    hotvar_names[i].reserve(LS[i].hotvars.size());
+    for (const auto& hv : LS[i].hotvars) hotvar_names[i].push_back(hv.name);
+  }
+
+  /* Parent-side post-processing of one executed script task: failscore
+   * formatting, abort policy, hot-var validation + warmstart, and the
+   * busy/EWMA/CSV bookkeeping. Everything that is NOT LAMMPS execution.
+   * (PC_ISOLATION split: execute_script_task runs identically in-process or
+   * inside a worker process; this function is always parent-side.) */
+  auto apply_task_result = [&](std::size_t i, int tid,
+                               const PcTaskResult& tres) -> bool {
     const auto& lsim = LS[i];
-    /* Per-iteration copy of LAMMPS argv. -log / -screen with a real
-     * filename get a .t<tid> suffix so concurrent fan-out workers don't
-     * clobber the same file. Stage 2: tid is the ScriptExecutor worker id
-     * (0..width-1), stable for the whole run, so the thread_local LAMMPS
-     * caches below warm once per worker rather than once per OMP team. */
-    std::vector<std::string> invar = lsim.invar;
-    auto rewrite = [&](const char* flag) {
-      for (std::size_t k = 0; k + 1 < invar.size(); ++k) {
-        if (invar[k] == flag && invar[k+1] != "none") {
-          invar[k+1] += hpo_rank_suffix() + ".t" + std::to_string(tid);
-          break;
-        }
-      }
-    };
-    rewrite("-log");
-    rewrite("-screen");
 
-    /* Per-thread LAMMPS instance cache, keyed by (script + invar).
-     * The key MUST include invar: the same script with different
-     * --invar values needs distinct LMP instances (observed
-     * deterministically on 2026-05-05; reusing one LMP returned ""
-     * for varloss vars on the second-and-later call). */
-    std::string cache_key = lsim.script;
-    for (const auto& s : invar) { cache_key += '\x01'; cache_key += s; }
-    thread_local std::unordered_map<std::string, typename R::LMPPtr> tls_lmp_cache;
-    R runner;
-    auto t_create0 = std::chrono::high_resolution_clock::now();
-    auto cache_it = tls_lmp_cache.find(cache_key);
-    if (cache_it == tls_lmp_cache.end()) {
-      /* Serial builds: comm 0 (LAMMPS STUBS). TADAH_HPO_MPI builds:
-       * MPI_COMM_SELF -- every rank runs its own single-rank LAMMPS. */
-      auto fresh = runner.create_instance(hpo_lammps_comm(), invar);
-      if (!fresh) {
-        for (const auto& n : lsim.n_outvar) {
-          (void)n;
-          r.v_outvar[i].emplace_back(std::to_string(lsim.failscore));
-        }
-        return false;
+    if (tres.status == PcTaskStatus::CREATE_FAIL) {
+      /* Pre-extraction semantics preserved exactly: an instance-create
+       * failure failscores THIS script only -- it does NOT raise
+       * eval_aborted and records no busy/EWMA/CSV entry (per_script_busy[i]
+       * stays -1 = "did not run"); the create is retried on the next task. */
+      for (const auto& n : lsim.n_outvar) {
+        (void)n;
+        r.v_outvar[i].emplace_back(std::to_string(lsim.failscore));
       }
-      cache_it = tls_lmp_cache.emplace(cache_key, std::move(fresh)).first;
+      return false;
     }
-    auto& lmp = cache_it->second;
-    auto t_create1 = std::chrono::high_resolution_clock::now();
 
-    /* Phase-specific injections happen here. */
-    extra_inject(lmp);
-
-    /* O1a: build ONE LammpsTadah per (thread, eval) and let every
-     * clear/pair_coeff-EXTERN cycle of every script this thread runs adopt
-     * it (PairTadah::load(shared_ptr)) instead of reconstructing the
-     * potential (descriptor factories, grid parsing, EAM tables) on each
-     * pair_coeff. The object carries per-sim scratch, so it is shared
-     * per-thread only; sims within a thread run sequentially. A throwing
-     * ctor marks the sim failed before any LAMMPS line executes. */
-    thread_local std::shared_ptr<tadah::LammpsTadah> tls_lt;
-    thread_local long long tls_lt_iter = -1;
-    if (!tls_lt || tls_lt_iter != static_cast<long long>(r.iter)) {
-      try {
-        tls_lt = std::make_shared<tadah::LammpsTadah>(r.pot_ctx);
-      } catch (const std::exception& e) {
-        tadah::core::Logger::instance().log(
-            tadah::core::LogLevel::WARNING,
-            std::string("run_one: potential construction failed: ") + e.what());
-        tls_lt.reset();
-      }
-      tls_lt_iter = static_cast<long long>(r.iter);
-    }
-    bool fail = !tls_lt ||
-                !runner.run_script(lmp, lsim.script_lines, tls_lt);
-    auto t_run1 = std::chrono::high_resolution_clock::now();
-
-    for (const auto& n : lsim.n_outvar) {
+    const bool fail = (tres.status != PcTaskStatus::OK);
+    for (std::size_t j = 0; j < lsim.n_outvar.size(); ++j) {
       if (fail) r.v_outvar[i].emplace_back(std::to_string(lsim.failscore));
-      else      r.v_outvar[i].emplace_back(runner.get_variable(lmp, n));
+      else      r.v_outvar[i].emplace_back(tres.outvar_values[j]);
     }
 
     if (fail) {
@@ -1137,9 +1089,10 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     /* Hot-var validation + cache update. Only meaningful for hot
      * scripts (cold scripts have empty hotvars). */
     if (!fail) {
-      for (const auto& hv : lsim.hotvars) {
+      for (std::size_t j = 0; j < lsim.hotvars.size(); ++j) {
+        const auto& hv = lsim.hotvars[j];
         try {
-          const std::string s = runner.get_variable(lmp, hv.name);
+          const std::string& s = tres.hotvar_values[j];
           if (s.empty()) continue;
           double v = 0.0;
           try { v = std::stod(s); }
@@ -1184,9 +1137,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     /* Always record per-script busy time (a couple of clock reads, ~30 ns,
      * invisible vs ms-scale LAMMPS) so the fan-out diagnostic works without
      * TADAH_HPO_BENCH. The detailed CSV stays gated below. */
-    const double t_create_ms = bench_detail::elapsed_ms(t_create0, t_create1);
-    const double t_run_ms    = bench_detail::elapsed_ms(t_create1, t_run1);
-    per_script_busy[i] = t_create_ms + t_run_ms;
+    per_script_busy[i] = tres.create_ms + tres.run_ms;
     /* Stage 1b.1: fold this script's cost into its EWMA (alpha=0.3) so the
      * next eval's LPT sort dispatches it earliest if it is slow. First
      * observation seeds directly. Relaxed RMW: a torn read across concurrent
@@ -1206,27 +1157,37 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       static bool header_written = (f << "iter,thread,script,create_ms,run_ms\n", true);
       (void)header_written;
       f << r.iter << ',' << tid << ',' << lsim.script << ','
-        << t_create_ms << ',' << t_run_ms << '\n';
+        << tres.create_ms << ',' << tres.run_ms << '\n';
       f.flush();
     }
     return true;
   };
 
-  auto inject_hot_value = [](typename R::LMPPtr& lmp,
-                             const std::string& name, double value) {
-    /* Inject as `equal`-style (a constant expression) rather than
-     * `string` so that a hot script ending in
-     *   variable <name> equal v_lx/<divisor>
-     * is a *same-style* redefinition -- LAMMPS allows that without a
-     * prior `variable delete`. HPO caches one LAMMPS instance per
-     * (script, invar) tuple across iters (see line 970), and LAMMPS
-     * would reject a style change inside that instance, so keeping
-     * both ends `equal`-style makes the warmstart-cache cycle work
-     * without forcing scripts to insert delete boilerplate. */
-    char cmd[256];
-    std::snprintf(cmd, sizeof(cmd),
-                  "variable %s equal %.17g", name.c_str(), value);
-    try { lmp->input->one(cmd); } catch (...) { /* keep going */ }
+  /* Generic per-script runner -- used by both phases. Returns true on a
+   * successful LAMMPS run; false on script failure (in which case v_outvar is
+   * filled with failscore). `inject_lines` are pre-formatted LAMMPS commands
+   * (format_hot_inject) executed once after the instance is ready and before
+   * run_script. The LAMMPS-touching core is execute_script_task
+   * (pc_task_exec.h) -- shared verbatim with the PC_ISOLATION worker-process
+   * path so THREAD and PROCESS modes cannot diverge. */
+  auto run_one = [&](std::size_t i, int tid,
+                     const std::vector<std::string>& inject_lines) -> bool {
+    const auto& lsim = LS[i];
+    /* -log/-screen get a .t<tid> suffix so concurrent fan-out workers don't
+     * clobber the same file; tid is the ScriptExecutor worker id, stable for
+     * the whole run, so the per-slot caches warm once per worker. */
+    const std::vector<std::string> invar =
+        make_worker_invar(lsim.invar, hpo_rank_suffix(), tid);
+
+    /* Per-slot persistent LAMMPS/potential caches. Same lifetime as the
+     * pre-extraction tls_lmp_cache/tls_lt/tls_lt_iter thread-locals: one per
+     * (worker thread, HPO_Host instantiation), warm across evals. */
+    static thread_local PcSlotState<R> slot_state;
+
+    const PcTaskResult tres = execute_script_task<R>(
+        lsim.script, lsim.script_lines, invar, lsim.n_outvar, hotvar_names[i],
+        r.pot_ctx, r.iter, inject_lines, slot_state);
+    return apply_task_result(i, tid, tres);
   };
 
   /* --- Stage 2.4: classify cold scripts by hot-var dependency ------ */
@@ -1304,23 +1265,26 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       return;
     }
     if (!LS[i].hotvars.empty()) {
-      run_one(i, wid, [&](typename R::LMPPtr& lmp) {
-        /* hot script: seed each declared hot var with its cached/initial value. */
-        for (const auto& hv : LS[i].hotvars) {
-          double seed;
-          if (auto cached = warmstart::get(r.chain_id, LS[i].script, hv.name)) {
-            seed = *cached;
-          } else if (hv.initial) {
-            seed = *hv.initial;
-          } else {
-            seed = 0.5 * (hv.min + hv.max);
-          }
-          inject_hot_value(lmp, hv.name, seed);
+      /* hot script: seed each declared hot var with its cached/initial value.
+       * Seeds are resolved HERE (parent-side, warmstart state) and shipped as
+       * pre-formatted inject lines -- identical commands to the old injector. */
+      std::vector<std::string> inject;
+      inject.reserve(LS[i].hotvars.size());
+      for (const auto& hv : LS[i].hotvars) {
+        double seed;
+        if (auto cached = warmstart::get(r.chain_id, LS[i].script, hv.name)) {
+          seed = *cached;
+        } else if (hv.initial) {
+          seed = *hv.initial;
+        } else {
+          seed = 0.5 * (hv.min + hv.max);
         }
-      });
+        inject.push_back(format_hot_inject(hv.name, seed));
+      }
+      run_one(i, wid, inject);
     } else {
       /* hot-independent cold script: references no hot var => no injection. */
-      run_one(i, wid, [](auto&) {});
+      run_one(i, wid, {});
     }
   });
 
@@ -1346,6 +1310,14 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
   }
 
   /* --- WAVE 2: hot-DEPENDENT cold scripts -------------------------- */
+  /* Inject every fresh hot value from wave 1; cold scripts read them as
+   * `${<name>}`. The command list is identical for every wave-2 task, so it
+   * is built once here (same commands the old per-task injector emitted). */
+  std::vector<std::string> wave2_inject;
+  wave2_inject.reserve(hot_snapshot.size());
+  for (const auto& kv : hot_snapshot)
+    wave2_inject.push_back(format_hot_inject(kv.first, kv.second));
+
   lpt_sort(cold_dep_idx);   /* longest-first + dynamic (see wave 1) */
   script_executor().run_batch(cold_dep_idx.size(), [&](std::size_t k, int wid) {
     const std::size_t i = cold_dep_idx[k];
@@ -1356,13 +1328,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       }
       return;
     }
-    run_one(i, wid, [&](typename R::LMPPtr& lmp) {
-      /* Inject every fresh hot value from wave 1. Cold scripts read them as
-       * `${<name>}`. */
-      for (const auto& kv : hot_snapshot) {
-        inject_hot_value(lmp, kv.first, kv.second);
-      }
-    });
+    run_one(i, wid, wave2_inject);
   });
 
   /* Stage 1a: aggregate per-script busy time into the eval's fan-out
