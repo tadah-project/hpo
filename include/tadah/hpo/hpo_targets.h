@@ -70,17 +70,22 @@ public:
     std::string MAX_TIME = "off";
 
     /* PC_ISOLATION: execution mode for the pc_lammps fan-out.
-     *   THREAD  (default) -- in-process ScriptExecutor threads (pre-existing
-     *                        behaviour; concurrent LAMMPS instances share
-     *                        the address space and race on LAMMPS process
-     *                        globals -- the `free(): invalid pointer` class).
-     *   PROCESS           -- persistent worker-process pool: each fan-out
+     *   PROCESS (default) -- persistent worker-process pool: each fan-out
      *                        slot runs its LAMMPS instances in its own child
-     *                        process, eliminating that race class
-     *                        (INVESTIGATIONS/PC_ISOLATION_process_pool.md).
-     * Env override: TADAH_PC_ISOLATION (read in hpo.cpp). Explicit PROCESS
-     * is rejected (hard error) in MPI builds. */
-    std::string PC_ISOLATION = "THREAD";
+     *                        process, eliminating races on LAMMPS process
+     *                        globals (the `free(): invalid pointer` class;
+     *                        INVESTIGATIONS/PC_ISOLATION_process_pool.md).
+     *                        Verified: byte-identical results vs THREAD,
+     *                        <=1.02x wall at 4/8/16-wide, TSan race-free,
+     *                        145k-eval ASan-clean soak.
+     *   THREAD            -- DEPRECATED fallback (pre-existing in-process
+     *                        behaviour; concurrent LAMMPS instances share
+     *                        the address space and race on its globals).
+     *                        Kept one production cycle, then removed.
+     * Env override: TADAH_PC_ISOLATION (read in hpo.cpp). PROCESS is
+     * rejected (hard error) in MPI builds -- those default to THREAD via
+     * the hpo.cpp guard. */
+    std::string PC_ISOLATION = "PROCESS";
     /* true iff the config file carried an explicit PC_ISOLATION line --
      * lets MPI builds distinguish "defaulted to PROCESS" (silently fall back
      * to THREAD) from "explicitly requested PROCESS" (hard error). */
