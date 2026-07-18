@@ -36,6 +36,7 @@ void encode_specs(pcwire::Writer& w, const std::vector<PcScriptSpec>& specs) {
     w.vstr(s.invar_final);
     w.vstr(s.outvar_names);
     w.vstr(s.hotvar_names);
+    w.vstr(s.failvar_names);   /* protocol v2 */
   }
 }
 
@@ -196,13 +197,25 @@ PcTaskResult PcWorkerPool::execute(int slot, std::uint32_t script_idx,
 
   auto synthetic_fail = [&](const std::string& why) {
     PcTaskResult res;
-    res.status = PcTaskStatus::RUN_FAIL;   /* failscore + eval abort (parity
-                                              with a crashed script) */
+    res.status = PcTaskStatus::KILLED;   /* parent-synthesized: worker died or
+                                            was SIGKILLed (deadline / gate).
+                                            Failscore + eval abort; graded as
+                                            band C (did not complete). */
     res.error_msg = why;
     return res;
   };
 
   if (ch.fd < 0) spawn_locked(ch, slot);   /* throws after repeated deaths */
+
+  /* Publish (iter, pid) for kill_matching -- inside the locked region, so a
+   * failed try_lock over there guarantees these describe the in-flight task.
+   * Cleared on every exit path below. */
+  ch.current_pid.store(ch.pid, std::memory_order_relaxed);
+  ch.current_iter.store(static_cast<long long>(iter), std::memory_order_release);
+  struct ClearPub {
+    Channel& c;
+    ~ClearPub() { c.current_iter.store(-1, std::memory_order_release); }
+  } clear_pub{ch};
 
   const bool has_pot = (ch.last_pot_iter != static_cast<long long>(iter));
   const std::uint64_t seq = ++ch.task_seq;
@@ -276,6 +289,7 @@ PcTaskResult PcWorkerPool::execute(int slot, std::uint32_t script_idx,
     res.error_msg = r.str();
     res.outvar_values = r.vstr();
     res.hotvar_values = r.vstr();
+    res.failvar_values = r.vstr();   /* protocol v2 */
     res.create_ms = r.f64();
     res.run_ms = r.f64();
     ch.consec_deaths = 0;   /* a full round-trip proves the worker healthy */
@@ -283,6 +297,29 @@ PcTaskResult PcWorkerPool::execute(int slot, std::uint32_t script_idx,
   } catch (const std::exception& e) {
     kill_reap_locked(ch, slot, (std::string("RESULT decode failed: ") + e.what()).c_str());
     return synthetic_fail(e.what());
+  }
+}
+
+void PcWorkerPool::kill_matching(std::uint64_t iter) {
+  const long long target = static_cast<long long>(iter);
+  for (int s = 0; s < width_; ++s) {
+    Channel& ch = *channels_[s];
+    /* try_lock SUCCESS => channel idle (no execute in flight) => nothing to
+     * kill; release and move on. try_lock FAILURE => exactly one execute()
+     * holds the lock for its whole task, and it published (pid, iter) inside
+     * that region -- so the atomics reliably describe the in-flight task and
+     * a mis-kill of another eval's task is impossible. */
+    if (ch.mtx.try_lock()) {
+      ch.mtx.unlock();
+      continue;
+    }
+    if (ch.current_iter.load(std::memory_order_acquire) == target) {
+      const pid_t p = ch.current_pid.load(std::memory_order_relaxed);
+      if (p > 0) ::kill(p, SIGKILL);
+      /* The blocked execute() on this channel sees EOF and runs its normal
+       * kill/reap/journal/respawn path; its caller gets a synthetic RUN_FAIL
+       * whose result is clamped by the gated eval anyway. */
+    }
   }
 }
 

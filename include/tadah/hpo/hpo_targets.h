@@ -96,6 +96,32 @@ public:
      * Env override: TADAH_PC_WORKER_TIMEOUT. */
     double PC_WORKER_TIMEOUT = 0.0;
 
+    /* FAILSCORE_GRADING ON|OFF: graded ("smooth") failure losses inside the
+     * band [0.999*FAILSCORE, FAILSCORE) -- severity bands A-D graded by
+     * per-band violation measures so failed evals push the optimiser toward
+     * feasibility instead of returning a gradient-free constant plateau.
+     * OFF (default for now) = byte-identical legacy behaviour. Requires a
+     * FINITE FAILSCORE when ON (startup-validated). Design:
+     * INVESTIGATIONS/SMOOTH_FAILSCORE_analysis.md. Env override:
+     * TADAH_FAILSCORE_GRADING. */
+    bool FAILSCORE_GRADING = false;
+
+    /* PC_FAILPROBE --script <f> --outvar <S> [--gate <T>] [--s0 <v0>]
+     * A minimiser-free potential-sanity probe (single-point run-0 script;
+     * designed to be un-failable) dispatched at the front of wave 1 every
+     * eval. Its first --outvar is the shittiness scalar S(theta) >= 0:
+     *   - grades bands C/D of the failure loss (measure for hangs/kills and
+     *     sick-potential failures);
+     *   - optional GATE: S > <T> short-circuits the eval (band D), cancels
+     *     queued sims and (PROCESS mode) kills this eval's in-flight sims.
+     *     The threshold changes the objective if it can fire on feasible
+     *     potentials -- calibrate conservatively; fire rate is journaled.
+     * <v0> is the half-saturation scale of sigma for S (default 1.0). */
+    int    failprobe_idx  = -1;          /* index into LS, -1 = not defined */
+    std::string failprobe_svar;          /* name of the S outvar            */
+    double failprobe_gate = std::numeric_limits<double>::infinity(); /* off */
+    double failprobe_s0   = 1.0;
+
     OptimizerSpec spec;
 
     int    outputDigits = 6;      // decimal digits in scientific notation columns (DIGITS key)

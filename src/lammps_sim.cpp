@@ -225,12 +225,14 @@ LammpsSim::LammpsSim() {}
 LammpsSim::LammpsSim(std::string& cmd_,
                      const std::string& MAX_TIME,
                      double FAIL_SCORE,
-                     const tadah::LossFunction& defaultLoss)
+                     const tadah::LossFunction& defaultLoss,
+                     bool failprobe)
   : cmd(cmd_)
   , defLoss(defaultLoss)
   , maxtime(MAX_TIME)
   , failscore(FAIL_SCORE)
 {
+  is_failprobe = failprobe;
   invar.push_back(TADAH_LAMMPS_LIB);
   tokenise();
   parse_tokens();
@@ -256,7 +258,10 @@ LammpsSim::LammpsSim(std::string& cmd_,
   if (!script.length())
     throw std::runtime_error("LammpsSim object must have a script specified.\n");
 
-  if (!n_varloss.size())
+  /* A PC_FAILPROBE sim is forbidden from declaring --varloss (it grades
+   * failures; it must not shape the feasible objective) -- the >=1
+   * requirement applies to ordinary PC_LAMMPS sims only. */
+  if (!n_varloss.size() && !is_failprobe)
     throw std::runtime_error("LammpsSim: --varloss variable is not defined.\n");
 
 
@@ -422,6 +427,35 @@ void LammpsSim::parse_tokens() {
         }
       }
       hotvars.push_back(std::move(hv));
+      i = j;
+    }
+    else if (tokens[i] == "--failvar") {
+      /* --failvar <name> [<scale>]  (graded-FAILSCORE Tier 2; see
+       * INVESTIGATIONS/SMOOTH_FAILSCORE_analysis.md 4.8). Convention: the
+       * LAMMPS variable <name> is a nonnegative violation measure -- 0 means
+       * "this sim vouches for itself", > 0 means "failed, this badly" (in
+       * natural units; <scale> maps to the dimensionless band-B measure).
+       * When it reads > 0, the sim is classified band B, its outvars are
+       * excluded from the fit, and scale*value grades the failure loss. */
+      auto is_flag = [](const std::string& s){ return s.rfind("-",0)==0; };
+      std::size_t j = i + 1;
+      if (j >= tokens.size())
+        throw std::runtime_error("--failvar requires <name> [<scale>]");
+      FailVarDecl fv;
+      fv.name = tokens[j++];
+      if (fv.name.empty() || is_flag(fv.name))
+        throw std::runtime_error("--failvar: <name> must be a non-empty identifier");
+      if (j < tokens.size() && !is_flag(tokens[j])) {
+        double sc;
+        if (try_parse_double(tokens[j], sc)) {
+          if (!(sc > 0.0))
+            throw std::runtime_error("--failvar " + fv.name +
+                                     ": <scale> must be > 0");
+          fv.scale = sc;
+          ++j;
+        }
+      }
+      failvars.push_back(std::move(fv));
       i = j;
     }
     else if (tokens[i] == "--ncpu") {
@@ -867,10 +901,21 @@ void LammpsSim::validate_requested_variables_defined_equal() const
         require_equal(v, "--outvar");
     }
 
+    // Graded-FAILSCORE: --failvar names get the same static guarantee. A
+    // typo'd failvar would otherwise read back empty at runtime, parse as
+    // "no violation" and silently disable failure detection for that sim.
+    {
+        std::unordered_set<std::string> outvar_set(n_outvar.begin(), n_outvar.end());
+        for (const auto &fv : failvars) {
+            if (varloss_set.count(fv.name) || outvar_set.count(fv.name)) continue;
+            require_equal(fv.name, "--failvar");
+        }
+    }
+
     if (!problems.empty()) {
         std::ostringstream oss;
         oss << "PC_LAMMPS validation failed for script '" << script << "'.\n"
-            << "Tadah requires every --varloss/--outvar variable to be defined in the LAMMPS script (or included files)\n"
+            << "Tadah requires every --varloss/--outvar/--failvar variable to be defined in the LAMMPS script (or included files)\n"
             << "as an *equal-style* variable:\n"
             << "  variable <name> equal ...\n\n";
 

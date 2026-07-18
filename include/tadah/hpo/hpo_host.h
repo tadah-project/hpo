@@ -29,6 +29,7 @@
 #include <tadah/core/signal_handler.h>
 #include <tadah/hpo/dloss_dtheta.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/pot_header_writer.h>
 #include <tadah/mlip/analytics/analytics.h>
@@ -81,6 +82,12 @@ struct EvalResult
      * global best, so best_pot.tadah's `# HOT` lines reflect the best
      * trajectory (deterministic: the new-best point is serialized). */
     std::vector<std::tuple<std::string, std::string, double>> hot_produced;
+
+    /* Graded-FAILSCORE classification of this eval (band == 0 => feasible).
+     * Accumulated by run_lammps/sims_loss; when FAILSCORE_GRADING is ON and
+     * band != 0, the final r.loss is graded_eval_loss(fail, FS, s0) instead
+     * of the constant FAILSCORE. See pc_fail_grading.h. */
+    PcFailInfo fail;
 
     /* PC_OBSERVABLE (Tier 1/2) results, one entry per
      * trg_.observables[k]. v_obs_value[k] is the computed observable

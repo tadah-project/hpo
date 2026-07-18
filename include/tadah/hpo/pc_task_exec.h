@@ -54,9 +54,13 @@ namespace hpo {
 
 enum class PcTaskStatus : unsigned {
   OK = 0,
-  RUN_FAIL = 1,        /* run_script returned false (incl. fired timer timeout) */
+  RUN_FAIL = 1,        /* run_script returned false (incl. fired timer timeout);
+                          the instance is ALIVE, so failvars are still read      */
   POT_BUILD_FAIL = 2,  /* LammpsTadah ctor threw (negative-cached per iter)      */
-  CREATE_FAIL = 3,     /* LAMMPS instance construction failed                    */
+  CREATE_FAIL = 3,     /* LAMMPS instance construction failed (infrastructure)   */
+  KILLED = 4,          /* parent-synthesized only (PROCESS mode): worker died or
+                          was SIGKILLed (deadline/gate) -- nothing was readable.
+                          Never sent by a worker.                                */
 };
 
 struct PcTaskResult {
@@ -65,6 +69,10 @@ struct PcTaskResult {
   std::vector<std::string> outvar_values;   /* OK only; one per outvar name      */
   std::vector<std::string> hotvar_values;   /* OK only; one per hotvar name; ""
                                                when undefined/unreadable         */
+  std::vector<std::string> failvar_values;  /* OK only; one per failvar name; ""
+                                               when undefined/unreadable. A
+                                               parseable value > 0 classifies
+                                               the sim band B (parent-side).    */
   double create_ms = 0.0;
   double run_ms = 0.0;
 };
@@ -121,6 +129,7 @@ PcTaskResult execute_script_task(
     const std::vector<std::string>& invar_final,
     const std::vector<std::string>& outvar_names,
     const std::vector<std::string>& hotvar_names,
+    const std::vector<std::string>& failvar_names,
     const tadah::core::Context& pot_ctx,
     unsigned long long iter,
     const std::vector<std::string>& inject_lines,
@@ -179,6 +188,17 @@ PcTaskResult execute_script_task(
 
   if (!run_ok) {
     res.status = pot_ok ? PcTaskStatus::RUN_FAIL : PcTaskStatus::POT_BUILD_FAIL;
+    /* RUN_FAIL (in-script timer timeout / failed run) leaves the LAMMPS
+     * instance ALIVE: the declared failvars -- defined EARLY by contract --
+     * are still readable and carry the graded band-B violation measure.
+     * POT_BUILD_FAIL never ran the script; nothing to read. */
+    if (res.status == PcTaskStatus::RUN_FAIL) {
+      res.failvar_values.reserve(failvar_names.size());
+      for (const auto& n : failvar_names) {
+        try { res.failvar_values.emplace_back(runner.get_variable(lmp, n)); }
+        catch (...) { res.failvar_values.emplace_back(); }
+      }
+    }
     return res;
   }
 
@@ -190,6 +210,11 @@ PcTaskResult execute_script_task(
   for (const auto& n : hotvar_names) {
     try { res.hotvar_values.emplace_back(runner.get_variable(lmp, n)); }
     catch (...) { res.hotvar_values.emplace_back(); }
+  }
+  res.failvar_values.reserve(failvar_names.size());
+  for (const auto& n : failvar_names) {
+    try { res.failvar_values.emplace_back(runner.get_variable(lmp, n)); }
+    catch (...) { res.failvar_values.emplace_back(); }
   }
   return res;
 }

@@ -102,21 +102,45 @@ class LammpsSim {
     };
     std::vector<HotVarDecl> hotvars;
 
+    /* --failvar <name> [<scale>] -- graded-FAILSCORE Tier 2 (see
+     * INVESTIGATIONS/SMOOTH_FAILSCORE_analysis.md 4.8). The LAMMPS variable
+     * <name> is a nonnegative violation measure: 0 = the sim vouches for
+     * itself, > 0 = "failed, this badly" (natural units; scale maps it to the
+     * dimensionless band-B measure). On > 0 the sim is classified failed
+     * (band B), its outvars are excluded from the fit, and scale*value grades
+     * the failure loss. Multiple entries per line sum. */
+    struct FailVarDecl {
+        std::string name;
+        double      scale = 1.0;
+    };
+    std::vector<FailVarDecl> failvars;
+
+    /* Set for the PC_FAILPROBE entry only: a minimiser-free potential-sanity
+     * probe dispatched at the FRONT of wave 1 (exempt from LPT ordering),
+     * whose first --outvar is the shittiness scalar S(theta) used to grade
+     * bands C/D (and optionally to gate the eval). Never contributes loss
+     * components. */
+    bool is_failprobe = false;
+
     LammpsSim();
 
     /**
      * @brief Constructor for LammpsSim class.
-     * 
+     *
      * @param cmd The command line configuration.
      * @param MAX_TIME Maximum time allowed for the simulation.
      * @param FAIL_SCORE Default fail score value.
      * @param defaultLoss Default loss function to be used.
      *    can be overridden by user using --varloss
+     * @param failprobe Construct as a PC_FAILPROBE sim: sets is_failprobe
+     *    and waives the >=1 --varloss requirement (a probe grades
+     *    failures; it must not shape the feasible objective).
      */
     LammpsSim(std::string&              cmd,
               const std::string&        MAX_TIME,
               double                    FAIL_SCORE,
-              const tadah::LossFunction& defaultLoss);
+              const tadah::LossFunction& defaultLoss,
+              bool                      failprobe = false);
     /**
      * @brief Tokenises the command line configuration.
      */

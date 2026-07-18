@@ -48,12 +48,15 @@
  * lazily on next use. >= PC_MAX_CONSEC_DEATHS consecutive deaths on one
  * channel throw (lands in the eval-thread catch -> FAIL_SCORE recovery). */
 
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
+
+#include <sys/types.h>   /* pid_t */
 
 #include <tadah/hpo/pc_task_exec.h>
 
@@ -74,11 +77,12 @@ struct PcScriptSpec {
   std::vector<std::string> invar_final;
   std::vector<std::string> outvar_names;
   std::vector<std::string> hotvar_names;
+  std::vector<std::string> failvar_names;  /* graded-FAILSCORE Tier 2 (v2) */
 };
 
 class PcWorkerPool {
 public:
-  static constexpr std::uint32_t PROTOCOL_VERSION = 1;
+  static constexpr std::uint32_t PROTOCOL_VERSION = 2;  /* v2: failvars */
   static constexpr int PC_MAX_CONSEC_DEATHS = 3;
 
   /* per_slot_specs[slot][sim] -- one spec table per worker (slots differ only
@@ -110,6 +114,19 @@ public:
    * destructor; idempotent. */
   void shutdown();
 
+  /* FAILPROBE gate support: SIGKILL every worker currently executing a task
+   * of evaluation `iter` (and ONLY those -- other replicas' tasks on the
+   * shared pool are never touched). Mis-kill-free by construction: a
+   * channel's (pid, current task iter) are published atomically inside its
+   * locked execute(); kill_matching only acts on channels whose mutex is
+   * BUSY (try_lock fails => an execute is in flight => the atomics describe
+   * exactly that task). Missed kills are possible (task just started or just
+   * finished) and benign: the gated eval's results are clamped regardless,
+   * and the per-task deadline still bounds the stragglers. The killed
+   * channel's own execute() observes EOF and runs its normal
+   * kill/reap/journal/respawn path. */
+  void kill_matching(std::uint64_t iter);
+
   int width() const { return width_; }
 
 private:
@@ -122,6 +139,10 @@ private:
     PcPotMap last_pot_map;          /* exact map last shipped (delta base);
                                        cleared on death => next send FULL  */
     int consec_deaths = 0;
+    /* Published for kill_matching (set/cleared inside the locked execute):
+     * what this channel is running RIGHT NOW. -1 = idle. */
+    std::atomic<long long> current_iter{-1};
+    std::atomic<pid_t>     current_pid{-1};
   };
 
   void spawn_locked(Channel& ch, int slot);         /* fork+exec + HELLO   */

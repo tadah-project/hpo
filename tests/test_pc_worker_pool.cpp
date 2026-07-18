@@ -168,9 +168,11 @@ TEST_CASE("pc pool: killing the worker process is contained and respawned",
   ::kill(child, SIGKILL);
 
   /* Next task: the pool detects the dead channel (EOF/EPIPE), journals,
-   * returns a synthetic RUN_FAIL... */
+   * returns a parent-synthesized KILLED (distinct from the wire-returned
+   * RUN_FAIL: the parent knows the worker died rather than the script
+   * failing, so FAILSCORE_GRADING can band it as not-completed)... */
   const PcTaskResult dead = pool.execute(0, 0, 2, pot, {}, "off");
-  CHECK(dead.status == PcTaskStatus::RUN_FAIL);
+  CHECK(dead.status == PcTaskStatus::KILLED);
 
   /* ...and the one after that runs on a fresh worker. */
   const PcTaskResult alive = pool.execute(0, 0, 3, pot, {}, "off");

@@ -1026,6 +1026,8 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
   hot_idx.reserve(LS.size());
   cold_idx.reserve(LS.size());
   for (std::size_t i = 0; i < LS.size(); ++i) {
+    if (LS[i].is_failprobe) continue;   /* dispatched separately (front of
+                                           wave 1, LPT-exempt) */
     if (LS[i].hotvars.empty()) cold_idx.push_back(i);
     else                       hot_idx.push_back(i);
   }
@@ -1056,14 +1058,25 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
   PcPotMap pc_pot_map;
   if (pc_process_mode) pc_pot_map = r.pot_ctx.storage_snapshot();
 
-  /* Hot-var NAME table (one vector<string> per sim, lsim.hotvars order) for
-   * the extracted execution core, which reads raw strings by name and leaves
-   * all parsing/validation here. Built once per eval; usually 0-1 entries. */
+  /* Hot-var / fail-var NAME tables (one vector<string> per sim, declaration
+   * order) for the extracted execution core, which reads raw strings by name
+   * and leaves all parsing/validation here. Built once per eval. */
   std::vector<std::vector<std::string>> hotvar_names(LS.size());
+  std::vector<std::vector<std::string>> failvar_names(LS.size());
   for (std::size_t i = 0; i < LS.size(); ++i) {
     hotvar_names[i].reserve(LS[i].hotvars.size());
     for (const auto& hv : LS[i].hotvars) hotvar_names[i].push_back(hv.name);
+    failvar_names[i].reserve(LS[i].failvars.size());
+    for (const auto& fv : LS[i].failvars) failvar_names[i].push_back(fv.name);
   }
+
+  /* Graded-FAILSCORE (FAILSCORE_GRADING ON): per-eval failure classification.
+   * Fan-out threads record failures here (worst band wins); the compact
+   * snapshot lands in r.fail at the end of run_lammps and sims_loss turns it
+   * into the graded loss. OFF => nothing is recorded and every site below
+   * behaves byte-identically to the legacy constant-FAILSCORE path. */
+  const bool fg_on = trg_.FAILSCORE_GRADING;
+  PcFailState fail_state;
 
   /* Parent-side post-processing of one executed script task: failscore
    * formatting, abort policy, hot-var validation + warmstart, and the
@@ -1078,7 +1091,10 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       /* Pre-extraction semantics preserved exactly: an instance-create
        * failure failscores THIS script only -- it does NOT raise
        * eval_aborted and records no busy/EWMA/CSV entry (per_script_busy[i]
-       * stays -1 = "did not run"); the create is retried on the next task. */
+       * stays -1 = "did not run"); the create is retried on the next task.
+       * Grading: INFRASTRUCTURE failure -- deliberately ungraded (constant
+       * top of band C); grading it would chase cluster noise, not theta. */
+      if (fg_on) fail_state.record_infra();
       for (const auto& n : lsim.n_outvar) {
         (void)n;
         r.v_outvar[i].emplace_back(std::to_string(lsim.failscore));
@@ -1086,7 +1102,61 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       return false;
     }
 
-    const bool fail = (tres.status != PcTaskStatus::OK);
+    bool fail = (tres.status != PcTaskStatus::OK);
+
+    /* Graded-FAILSCORE Tier 2: a declared failvar > 0 means the sim
+     * completed but vouches AGAINST itself -- classify band B, grade by
+     * scale*value, and treat the sim as failed (outvars excluded from the
+     * fit via the failscore fill below; a failed HOT sim also skips the
+     * warmstart caching and aborts the cold phase, same as a rejection). */
+    if (fg_on && !fail && !lsim.failvars.empty()) {
+      for (std::size_t j = 0; j < lsim.failvars.size() &&
+                              j < tres.failvar_values.size(); ++j) {
+        const std::string& s = tres.failvar_values[j];
+        if (s.empty()) continue;
+        double v = 0.0;
+        try { v = std::stod(s); } catch (...) { continue; }
+        if (std::isfinite(v) && v > 0.0) {
+          fail_state.record(FailBand::B, lsim.failvars[j].scale * v);
+          fail = true;
+        }
+      }
+    }
+
+    /* Graded-FAILSCORE Tier 1: classify hard task failures. */
+    if (fg_on && tres.status != PcTaskStatus::OK) {
+      switch (tres.status) {
+        case PcTaskStatus::POT_BUILD_FAIL:
+          fail_state.record(FailBand::D);           /* graded by S at assembly */
+          break;
+        case PcTaskStatus::KILLED:
+          fail_state.record(FailBand::C);           /* graded by S at assembly */
+          break;
+        case PcTaskStatus::RUN_FAIL: {
+          /* Instance alive: failvars (defined EARLY by contract) may still
+           * carry the violation measure -> band B graded; else band B by
+           * failed fraction. */
+          bool graded = false;
+          for (std::size_t j = 0; j < lsim.failvars.size() &&
+                                  j < tres.failvar_values.size(); ++j) {
+            const std::string& s = tres.failvar_values[j];
+            if (s.empty()) continue;
+            double v = 0.0;
+            try { v = std::stod(s); } catch (...) { continue; }
+            if (std::isfinite(v) && v > 0.0) {
+              fail_state.record(FailBand::B, lsim.failvars[j].scale * v);
+              graded = true;
+            }
+          }
+          if (!graded)
+            fail_state.record(FailBand::B,
+                              1.0 / static_cast<double>(LS.size()));
+          break;
+        }
+        default: break;
+      }
+    }
+
     for (std::size_t j = 0; j < lsim.n_outvar.size(); ++j) {
       if (fail) r.v_outvar[i].emplace_back(std::to_string(lsim.failscore));
       else      r.v_outvar[i].emplace_back(tres.outvar_values[j]);
@@ -1109,7 +1179,21 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
           catch (...) { continue; }
           if (!std::isfinite(v) || v < hv.min || v > hv.max) {
             /* Out of range -- clamp this script's outputs and raise the
-             * run-local abort so phase B is skipped. */
+             * run-local abort so phase B is skipped.
+             * Grading Tier 1 (band A): the normalized distance to the box is
+             * the violation measure, so a proposal that moves the hot value
+             * TOWARD [min,max] scores strictly better than one that moves it
+             * away -- instead of both landing on the same constant. */
+            if (fg_on) {
+              double dist;
+              if (!std::isfinite(v)) {
+                dist = std::numeric_limits<double>::infinity();
+              } else {
+                const double w = hv.max - hv.min;
+                dist = (v < hv.min ? (hv.min - v) : (v - hv.max)) / w;
+              }
+              fail_state.record(FailBand::A, dist);
+            }
             for (auto& vs : r.v_outvar[i]) vs = std::to_string(lsim.failscore);
             eval_aborted.store(true, std::memory_order_relaxed);
             /* Log at most once per eval (run-local latch), rate-limited
@@ -1207,7 +1291,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
 
     const PcTaskResult tres = execute_script_task<R>(
         lsim.script, lsim.script_lines, invar, lsim.n_outvar, hotvar_names[i],
-        r.pot_ctx, r.iter, inject_lines, slot_state);
+        failvar_names[i], r.pot_ctx, r.iter, inject_lines, slot_state);
     return apply_task_result(i, tid, tres);
   };
 
@@ -1272,12 +1356,60 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
   lpt_sort(hot_idx);
   lpt_sort(cold_indep_idx);
   std::vector<std::size_t> wave1;
-  wave1.reserve(hot_idx.size() + cold_indep_idx.size());
+  wave1.reserve(hot_idx.size() + cold_indep_idx.size() + 1);
+  /* PC_FAILPROBE runs at the FRONT of wave 1 (LPT-exempt): it is the
+   * cheapest task, so it returns first and its S(theta) is in hand before
+   * (almost) anything else can fail; good potentials pay zero latency
+   * because the probe just absorbs into fan-out slack. */
+  const int probe_idx = trg_.failprobe_idx;
+  if (probe_idx >= 0) wave1.push_back(static_cast<std::size_t>(probe_idx));
   wave1.insert(wave1.end(), hot_idx.begin(), hot_idx.end());
   wave1.insert(wave1.end(), cold_indep_idx.begin(), cold_indep_idx.end());
 
   script_executor().run_batch(wave1.size(), [&](std::size_t k, int wid) {
     const std::size_t i = wave1[k];
+    if (probe_idx >= 0 && i == static_cast<std::size_t>(probe_idx)) {
+      /* The probe runs even if another wave-1 task already aborted the eval:
+       * its S(theta) grades bands C/D of whatever failure occurred. */
+      run_one(i, wid, {});
+      double S = std::numeric_limits<double>::quiet_NaN();
+      if (!r.v_outvar[i].empty()) {
+        try { S = std::stod(r.v_outvar[i].front()); } catch (...) {}
+      }
+      /* S >= failscore means the probe task itself failed (its outvars
+       * were clamped to failscore strings) -- that is "probe garbage",
+       * not a huge-but-real S: fall through to the band-D branch below
+       * so a broken probe consistently reads as "potential sick". */
+      if (std::isfinite(S) && S >= 0.0 && S < LS[i].failscore) {
+        fail_state.set_S(S);
+        if (fg_on && S > trg_.failprobe_gate) {
+          /* GATE: potential too sick to be worth the fan-out. Classify the
+           * WHOLE eval band D (graded by S), cancel everything still queued
+           * (the eval_aborted check below), and -- PROCESS mode -- SIGKILL
+           * this eval's in-flight sims (slot-targeted; other replicas'
+           * tasks on the shared pool are untouched). Results of tasks that
+           * already completed are clamped at assembly regardless, so the
+           * outcome does not depend on the probe-vs-sims race. */
+          fail_state.set_gated();
+          eval_aborted.store(true, std::memory_order_relaxed);
+          if (pc_process_mode) pc_worker_pool().kill_matching(r.iter);
+          static std::atomic<std::size_t> gate_count{0};
+          const auto n = gate_count.fetch_add(1, std::memory_order_relaxed) + 1;
+          if (n <= 5 || (n & (n - 1)) == 0) {
+            HPOLog::instance().warning(
+                "eval " + std::to_string(r.iter) + " FAILPROBE gate: S="
+                + std::to_string(S) + " > " + std::to_string(trg_.failprobe_gate)
+                + " -- eval short-circuited (total gated=" + std::to_string(n)
+                + ")");
+          }
+        }
+      } else if (fg_on) {
+        /* The probe itself failed or produced garbage -- by design it cannot,
+         * so treat the potential as sick (band D, S unavailable = band top). */
+        fail_state.record(FailBand::D);
+      }
+      return;
+    }
     if (eval_aborted.load(std::memory_order_relaxed)) {
       for (const auto& n : LS[i].n_outvar) {
         (void)n;
@@ -1309,6 +1441,27 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     }
   });
 
+  /* Graded-FAILSCORE: persist this eval's classification (compact, copyable)
+   * for sims_loss to turn into the graded loss. Called on BOTH exits of
+   * run_lammps -- the abort gate below and the normal end. An aborted eval
+   * is precisely the one whose classification matters most: an OOR hot-var
+   * reject (band A) or a failed wave script (bands B/C/D) raises
+   * eval_aborted, so a merge only at the normal exit would drop every
+   * graded band. band stays 0 on feasible evals and always when
+   * FAILSCORE_GRADING is OFF. */
+  auto persist_fail_info = [&]() {
+    if (!fg_on) return;
+    const PcFailInfo snap = fail_state.snapshot();
+    if (snap.band > r.fail.band ||
+        (snap.band == r.fail.band && snap.band != 0)) {
+      const double keep_vD = r.fail.vD;   /* set by the skip-caps path */
+      r.fail = snap;
+      if (r.fail.vD < 0.0) r.fail.vD = keep_vD;
+    } else if (snap.S >= 0.0 && r.fail.S < 0.0) {
+      r.fail.S = snap.S;                  /* S is useful even band-unchanged */
+    }
+  };
+
   /* --- Between waves: abort gate + snapshot ------------------------ */
   const bool aborted = eval_aborted.load(std::memory_order_relaxed);
 
@@ -1319,6 +1472,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
      * the pre-merge behaviour: all cold failscored, deterministically. */
     for (auto i : cold_indep_idx) clamp_cold(i);
     for (auto i : cold_dep_idx)   clamp_cold(i);
+    persist_fail_info();
     return;
   }
 
@@ -1376,6 +1530,9 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     r.fanout_width    = 1;
 #endif
   }
+
+  /* Graded-FAILSCORE: normal-exit persist (see persist_fail_info above). */
+  persist_fail_info();
 }
 
 template<class P, class R>
@@ -1423,10 +1580,20 @@ void HPO_Host<P,R>::sims_loss(Result& r) const
       // user objective, NLopt's C++ wrapper translates it to
       // NLOPT_INVALID_ARGS and aborts the WHOLE optimisation. Treat
       // unparseable as a failed component contributing FAIL_SCORE.
-      if (try_parse_double(r.v_outvar[i][j], v)) {
+      // A short vector (a task whose result was never applied) is the
+      // same failure class -- guard it here rather than reading past
+      // the end of v_outvar[i].
+      if (j < r.v_outvar[i].size() && try_parse_double(r.v_outvar[i][j], v)) {
         l = lsim.lossFn[k].loss(v, lsim.t_varloss[k], w);
       } else {
         l = trg_.FAIL_SCORE;
+        /* Graded-FAILSCORE: an unparseable/empty component is a completed-
+         * but-failed sim output -> band B, graded by the failed fraction. */
+        if (trg_.FAILSCORE_GRADING) {
+          if (r.fail.band < static_cast<int>(FailBand::B))
+            r.fail.band = static_cast<int>(FailBand::B);
+          r.fail.vB += 1.0 / static_cast<double>(trg_.LS.size());
+        }
       }
       r.v_loss[i][j] = l;
       r.loss_sum += l;
@@ -1438,6 +1605,16 @@ void HPO_Host<P,R>::sims_loss(Result& r) const
   if (!std::isfinite(r.loss) || r.loss > trg_.FAIL_SCORE) {
     if (!std::isfinite(r.loss)) r.was_nan_clamped = true;
     r.loss = trg_.FAIL_SCORE;
+  }
+
+  /* Graded-FAILSCORE assembly: a classified failure replaces the constant
+   * (or the launder-prone partial mean) with the banded, monotone L_fail in
+   * [0.999*FS, FS) -- every existing failure filter still sees "failure"
+   * (>= 0.999*FS), any feasible loss still wins, and moves toward
+   * feasibility are strictly downhill. Feasible evals (band 0) and
+   * FAILSCORE_GRADING OFF are byte-identical to the legacy path above. */
+  if (trg_.FAILSCORE_GRADING && r.fail.band != 0) {
+    r.loss = graded_eval_loss(r.fail, trg_.FAIL_SCORE, trg_.failprobe_s0);
   }
 }
 
@@ -1735,6 +1912,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
      * which is a usability footgun (the parser accepts --skip-above on
      * a PC_OBSERVABLE-only run but nothing acts on it). */
     bool skip_bad_pot = false;
+    double skip_excess = -1.0;   /* graded band-D measure: metric/cap - 1 */
     {
       auto check_metric = [&](const char* tag,
                               bool used,
@@ -1747,6 +1925,8 @@ double HPO_Host<P,R>::operator()(const P& p) const
         const bool bad_rel = caps.rel_above && std::isfinite(best)
                              && (value > *caps.rel_above * best);
         if (bad_abs || bad_rel) {
+          if (bad_abs)      skip_excess = value / *caps.abs_above - 1.0;
+          else if (bad_rel) skip_excess = value / (*caps.rel_above * best) - 1.0;
           const auto skips = bad_pot_detail::skip_count().fetch_add(
               1, std::memory_order_relaxed) + 1;
           if (skips <= 5 || (skips & (skips - 1)) == 0) {
@@ -1775,7 +1955,20 @@ double HPO_Host<P,R>::operator()(const P& p) const
           check_metric("ersq",    trg_.use_ersq,    r.ersq,    trg_.skip_ersq,    "")       ||
           check_metric("frmse",   trg_.use_frmse,   r.frmse,   trg_.skip_frmse,   "eV/A")   ||
           check_metric("srmse",   trg_.use_srmse,   r.srmse,   trg_.skip_srmse,   "GPa");
-      if (skip_bad_pot) r.loss = trg_.FAIL_SCORE;
+      if (skip_bad_pot) {
+        if (trg_.FAILSCORE_GRADING) {
+          /* Band D graded by how far past the cap the metric landed --
+           * a pre-LAMMPS sick-potential verdict with its own natural
+           * violation measure. */
+          r.fail.band = std::max(r.fail.band,
+                                 static_cast<int>(FailBand::D));
+          r.fail.vD = std::max(skip_excess, 0.0);
+          r.loss = graded_eval_loss(r.fail, trg_.FAIL_SCORE,
+                                    trg_.failprobe_s0);
+        } else {
+          r.loss = trg_.FAIL_SCORE;
+        }
+      }
     }
 
     /* PC_OBSERVABLE: typed observables fold into the same loss_sum /

@@ -345,6 +345,17 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
 
   read(fn);
   std::sort(LS.begin(), LS.end(), LammpsSim::greater);
+  /* read() records failprobe_idx against parse order; the sort above
+   * invalidates it. Recover it from the flag carried on the sim itself
+   * (exactly one probe -- enforced at parse). */
+  if (failprobe_idx >= 0) {
+    failprobe_idx = -1;
+    for (std::size_t i = 0; i < LS.size(); ++i)
+      if (LS[i].is_failprobe) { failprobe_idx = static_cast<int>(i); break; }
+    if (failprobe_idx < 0)
+      throw std::runtime_error(
+          "internal: PC_FAILPROBE sim lost during LS ordering");
+  }
   create_labels();
   for (auto& pair : optimap) {
     std::string key = pair.first;
@@ -1338,6 +1349,60 @@ void HPOTargets::read(const std::string& fn)
                         + PC_ISOLATION + "'");
             }
             else if (key=="PC_WORKER_TIMEOUT") { iss>>PC_WORKER_TIMEOUT; }
+            else if (key=="FAILSCORE_GRADING") {
+                std::string v; iss>>v;
+                if (v=="ON")       FAILSCORE_GRADING = true;
+                else if (v=="OFF") FAILSCORE_GRADING = false;
+                else throw std::runtime_error(
+                        "FAILSCORE_GRADING must be ON or OFF, got '" + v + "'");
+            }
+
+            /* PC_FAILPROBE: minimiser-free potential-sanity probe (graded-
+             * FAILSCORE Tier 3). Strips the probe-only flags (--gate, --s0)
+             * before handing the rest to the LammpsSim parser, then flags the
+             * sim. Loss components on the probe are forbidden -- it must not
+             * shape the feasible-region objective. */
+            else if (key=="PC_FAILPROBE")
+            {
+                if (failprobe_idx >= 0)
+                    throw std::runtime_error("only one PC_FAILPROBE line is allowed");
+                std::string cmd; std::getline(iss,cmd);
+                std::istringstream ts(cmd);
+                std::vector<std::string> toks, keep;
+                { std::string t; while (ts>>t) toks.push_back(t); }
+                for (std::size_t i2 = 0; i2 < toks.size(); ++i2) {
+                    if (toks[i2]=="--gate" || toks[i2]=="--s0") {
+                        if (i2+1 >= toks.size())
+                            throw std::runtime_error("PC_FAILPROBE " + toks[i2]
+                                                     + " requires a value");
+                        const double v = std::stod(toks[i2+1]);
+                        if (toks[i2]=="--gate") failprobe_gate = v;
+                        else {
+                            if (!(v > 0.0))
+                                throw std::runtime_error("PC_FAILPROBE --s0 must be > 0");
+                            failprobe_s0 = v;
+                        }
+                        ++i2;
+                    } else keep.push_back(toks[i2]);
+                }
+                std::string cmd2;
+                for (const auto& t : keep) { cmd2 += ' '; cmd2 += t; }
+                LS.emplace_back(cmd2, MAX_TIME, FAIL_SCORE, globalLoss,
+                                /*failprobe=*/true);
+                LammpsSim& probe = LS.back();
+                if (!probe.n_varloss.empty() || !probe.i_varloss.empty())
+                    throw std::runtime_error(
+                        "PC_FAILPROBE must not declare --varloss (it grades "
+                        "failures; it must not shape the feasible objective)");
+                if (probe.n_outvar.empty())
+                    throw std::runtime_error(
+                        "PC_FAILPROBE requires --outvar <S> (the sanity scalar)");
+                if (!probe.hotvars.empty() || !probe.failvars.empty())
+                    throw std::runtime_error(
+                        "PC_FAILPROBE must not declare --hotvar/--failvar");
+                failprobe_idx  = static_cast<int>(LS.size()) - 1;
+                failprobe_svar = probe.n_outvar.front();
+            }
             else if (key=="QFLUSH")   { iss>>QFLUSH_THRESHOLD; }
             else if (key=="OUTPUT")   { iss>>outputEvery; }
             else if (key=="BOUTPUT")  { iss>>bestOutputEvery; }

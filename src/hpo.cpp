@@ -210,6 +210,8 @@ int hpo_run(core::Context& ctx)
                         sp.outvar_names = lsim.n_outvar;
                         for (const auto& hv : lsim.hotvars)
                             sp.hotvar_names.push_back(hv.name);
+                        for (const auto& fv : lsim.failvars)
+                            sp.failvar_names.push_back(fv.name);
                         per_slot[s].push_back(std::move(sp));
                     }
                 }
@@ -234,6 +236,48 @@ int hpo_run(core::Context& ctx)
                         "PROCESS is the supported mode. THREAD will be "
                         "removed after one production cycle.");
 #endif
+        }
+
+        /* ---- FAILSCORE_GRADING: graded ("smooth") failure losses --------
+         * ON: every failed eval returns a banded, monotone value inside
+         * [0.999*FAILSCORE, FAILSCORE) instead of the constant plateau.
+         * Env override TADAH_FAILSCORE_GRADING=ON|OFF (harness A/B).
+         * Design: INVESTIGATIONS/SMOOTH_FAILSCORE_analysis.md */
+        if (const char* e = std::getenv("TADAH_FAILSCORE_GRADING")) {
+            if (*e) {
+                const std::string v(e);
+                if (v == "ON")       trg.FAILSCORE_GRADING = true;
+                else if (v == "OFF") trg.FAILSCORE_GRADING = false;
+                else throw std::runtime_error(
+                        "TADAH_FAILSCORE_GRADING must be ON or OFF");
+            }
+        }
+        if (trg.FAILSCORE_GRADING) {
+            /* The band arithmetic needs a finite FAILSCORE: with the legacy
+             * DBL_MAX default, 0.999*FS and FS are not meaningfully ordered
+             * in loss space and L2 of the substituted value overflows. */
+            if (!std::isfinite(trg.FAIL_SCORE) ||
+                trg.FAIL_SCORE >= 1.0e300 || trg.FAIL_SCORE <= 0.0)
+                throw std::runtime_error(
+                    "FAILSCORE_GRADING ON requires a finite positive "
+                    "FAILSCORE (e.g. `FAILSCORE 1e9`); the default DBL_MAX "
+                    "sentinel cannot be banded.");
+            std::string probe_note = "no PC_FAILPROBE (bands C/D constant)";
+            if (trg.failprobe_idx >= 0) {
+                probe_note = "PC_FAILPROBE '" +
+                    trg.LS[static_cast<std::size_t>(trg.failprobe_idx)].script +
+                    "' S=" + trg.failprobe_svar;
+                if (std::isfinite(trg.failprobe_gate))
+                    probe_note += " gate=" + std::to_string(trg.failprobe_gate);
+                else
+                    probe_note += " gate=off";
+            }
+            log.info("FAILSCORE_GRADING: ON -- failed evals graded in "
+                     "[0.999*FS, FS), bands A-D (see docs); " + probe_note);
+        } else if (trg.failprobe_idx >= 0) {
+            log.warning("PC_FAILPROBE is defined but FAILSCORE_GRADING is "
+                        "OFF -- the probe runs as a plain diagnostic sim; "
+                        "no grading, no gate.");
         }
     }
 

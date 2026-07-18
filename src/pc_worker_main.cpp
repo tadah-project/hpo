@@ -36,11 +36,12 @@ std::vector<PcScriptSpec> decode_specs(pcwire::Reader& r) {
   specs.reserve(static_cast<std::size_t>(n));
   for (std::uint64_t i = 0; i < n; ++i) {
     PcScriptSpec s;
-    s.script       = r.str();
-    s.script_lines = r.vstr();
-    s.invar_final  = r.vstr();
-    s.outvar_names = r.vstr();
-    s.hotvar_names = r.vstr();
+    s.script        = r.str();
+    s.script_lines  = r.vstr();
+    s.invar_final   = r.vstr();
+    s.outvar_names  = r.vstr();
+    s.hotvar_names  = r.vstr();
+    s.failvar_names = r.vstr();   /* protocol v2 */
     specs.push_back(std::move(s));
   }
   return specs;
@@ -153,7 +154,8 @@ int pc_worker_main(int /*argc*/, char** /*argv*/) {
       const PcScriptSpec& sc = specs[script_idx];
       res = execute_script_task<LammpsRunner>(
           sc.script, sc.script_lines, sc.invar_final, sc.outvar_names,
-          sc.hotvar_names, pot_ctx, iter, inject, slot_state);
+          sc.hotvar_names, sc.failvar_names, pot_ctx, iter, inject,
+          slot_state);
     } catch (const std::exception& e) {
       res = PcTaskResult{};
       res.status = PcTaskStatus::RUN_FAIL;
@@ -168,6 +170,7 @@ int pc_worker_main(int /*argc*/, char** /*argv*/) {
       w.str(res.error_msg);
       w.vstr(res.outvar_values);
       w.vstr(res.hotvar_values);
+      w.vstr(res.failvar_values);   /* protocol v2 */
       w.f64(res.create_ms);
       w.f64(res.run_ms);
       pcwire::send_frame(kFd, FrameType::RESULT, w.buf);
