@@ -5,6 +5,7 @@
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/script_executor.h>
+#include <tadah/hpo/pc_worker_pool.h>   // PC_ISOLATION worker-process pool
 #include <tadah/hpo/iter_health.h>
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/core/checkpoint.h>
@@ -150,6 +151,90 @@ int hpo_run(core::Context& ctx)
                 "OMP_NUM_THREADS (=" + std::to_string(omp_w) + ") no longer "
                 "widens the fan-out -- set THREADS <n> in the STRATEGY block to "
                 "run scripts concurrently.");
+
+        /* ---- PC_ISOLATION: pc_lammps execution mode --------------------
+         * PROCESS = persistent worker-process pool (one child per fan-out
+         * slot; LAMMPS globals unshared -- the free(): invalid pointer race
+         * class is structurally gone). THREAD = in-process (pre-existing
+         * behaviour; kept one production cycle as a deprecated fallback).
+         * Env override TADAH_PC_ISOLATION lets the A/B and determinism
+         * harnesses switch modes without touching configs. Design:
+         * INVESTIGATIONS/PC_ISOLATION_process_pool.md */
+        std::string pc_mode = trg.PC_ISOLATION;
+        bool pc_mode_explicit = trg.PC_ISOLATION_set;
+        if (const char* e = std::getenv("TADAH_PC_ISOLATION")) {
+            if (*e) { pc_mode = e; pc_mode_explicit = true; }
+        }
+        double pc_wtimeout = trg.PC_WORKER_TIMEOUT;
+        if (const char* e = std::getenv("TADAH_PC_WORKER_TIMEOUT")) {
+            if (*e) pc_wtimeout = std::atof(e);
+        }
+        if (pc_mode != "THREAD" && pc_mode != "PROCESS")
+            throw std::runtime_error(
+                "PC_ISOLATION must be THREAD or PROCESS, got '" + pc_mode + "'");
+#if defined(TADAH_HPO_MPI) || defined(TADAH_BUILD_MPI)
+        if (pc_mode == "PROCESS") {
+            /* A fork+exec'd child of an MPI parent must never touch MPI
+             * (LAMMPS instances need an initialized MPI in these builds).
+             * EXPLICIT requests hard-error; the serial-build DEFAULT of
+             * PROCESS quietly falls back to THREAD here. */
+            if (pc_mode_explicit)
+                throw std::runtime_error(
+                    "PC_ISOLATION PROCESS is not supported in MPI builds "
+                    "(TADAH_HPO_MPI/TADAH_BUILD_MPI): the worker processes "
+                    "cannot initialize MPI. Use the serial build, or "
+                    "PC_ISOLATION THREAD.");
+            pc_mode = "THREAD";
+            log.info("PC_ISOLATION: THREAD (MPI build -- the PROCESS worker "
+                     "pool is serial-build only)");
+        }
+#endif
+        (void)pc_mode_explicit;
+        if (pc_mode == "PROCESS") {
+#if defined(TADAH_HPO_MPI) || defined(TADAH_BUILD_MPI)
+            /* unreachable: handled above */
+#else
+            if (!trg.LS.empty()) {
+                /* Per-slot ScriptSpec tables: slots differ only in the
+                 * .t<slot> -log/-screen suffix (make_worker_invar -- the
+                 * same helper the THREAD path applies per call). */
+                std::vector<std::vector<PcScriptSpec>> per_slot(exec_width);
+                for (int s = 0; s < exec_width; ++s) {
+                    per_slot[s].reserve(trg.LS.size());
+                    for (const auto& lsim : trg.LS) {
+                        PcScriptSpec sp;
+                        sp.script       = lsim.script;
+                        sp.script_lines = lsim.script_lines;
+                        sp.invar_final  = make_worker_invar(
+                            lsim.invar, hpo_rank_suffix(), s);
+                        sp.outvar_names = lsim.n_outvar;
+                        for (const auto& hv : lsim.hotvars)
+                            sp.hotvar_names.push_back(hv.name);
+                        per_slot[s].push_back(std::move(sp));
+                    }
+                }
+                pc_worker_pool_init(exec_width, std::move(per_slot),
+                                    pc_wtimeout);
+                log.info("PC_ISOLATION: PROCESS -- pc_lammps tasks execute in "
+                         + std::to_string(exec_width)
+                         + " persistent worker processes (LAMMPS globals "
+                           "unshared); MLIP train/predict stays in-process");
+            } else {
+                log.info("PC_ISOLATION: PROCESS requested but no PC_LAMMPS "
+                         "sims are configured -- nothing to isolate");
+            }
+#endif
+        } else {
+#if !defined(TADAH_HPO_MPI) && !defined(TADAH_BUILD_MPI)
+            /* Serial build running THREAD => it was explicitly requested
+             * (the default is PROCESS): always flag the deprecated mode. */
+            log.warning("PC_ISOLATION: THREAD (deprecated fallback) -- "
+                        "concurrent in-process LAMMPS instances share process "
+                        "globals (the free(): invalid pointer race class); "
+                        "PROCESS is the supported mode. THREAD will be "
+                        "removed after one production cycle.");
+#endif
+        }
     }
 
     /* --validation is optional: PC_OBSERVABLE / PC_LAMMPS can carry the
@@ -447,6 +532,12 @@ int hpo_run(core::Context& ctx)
         log.finish(err);
         throw;
     }
+
+    /* PC_ISOLATION: deterministic worker-pool teardown on the clean paths
+     * (SHUTDOWN frames + reap). On the throwing path above, the singleton's
+     * static destructor performs the same shutdown at process exit. No-op in
+     * THREAD mode (pool never constructed). */
+    pc_worker_pool_shutdown();
 
     return 0;
 }

@@ -1329,6 +1329,15 @@ void HPOTargets::read(const std::string& fn)
             // if      (key=="THREADS"){ double v; iss>>v; spec.param["THREADS"]=v; }
             if (key=="FAILSCORE"){ iss>>FAIL_SCORE; }
             else if (key=="MAXTIME")  { iss>>MAX_TIME;  }
+            else if (key=="PC_ISOLATION") {
+                iss>>PC_ISOLATION;
+                PC_ISOLATION_set = true;
+                if (PC_ISOLATION != "THREAD" && PC_ISOLATION != "PROCESS")
+                    throw std::runtime_error(
+                        "PC_ISOLATION must be THREAD or PROCESS, got '"
+                        + PC_ISOLATION + "'");
+            }
+            else if (key=="PC_WORKER_TIMEOUT") { iss>>PC_WORKER_TIMEOUT; }
             else if (key=="QFLUSH")   { iss>>QFLUSH_THRESHOLD; }
             else if (key=="OUTPUT")   { iss>>outputEvery; }
             else if (key=="BOUTPUT")  { iss>>bestOutputEvery; }

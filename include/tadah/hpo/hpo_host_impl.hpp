@@ -12,6 +12,7 @@
 #include <tadah/hpo/warmstart_cache.h>
 #include <tadah/hpo/script_executor.h>
 #include <tadah/hpo/pc_task_exec.h>
+#include <tadah/hpo/pc_worker_pool.h>
 #include <tadah/hpo/iter_health.h>
 #include <tadah/hpo/rcut_derivation.h>
 #include <tadah/hpo/startup_validation.h>
@@ -1046,6 +1047,15 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
    * warmstart::last_rejected_iter, which worked only because r.iter is unique. */
   std::atomic<bool> reject_logged{false};
 
+  /* PC_ISOLATION: in PROCESS mode every pc_lammps task ships to a persistent
+   * worker process (pc_worker_pool) instead of running in-process; the trial
+   * potential's raw storage map is snapshotted ONCE per eval here and each
+   * channel forwards it as a DELTA vs its last shipped map (FULL on first
+   * contact/respawn). THREAD mode: pool never constructed, map unused. */
+  const bool pc_process_mode = pc_worker_pool_enabled();
+  PcPotMap pc_pot_map;
+  if (pc_process_mode) pc_pot_map = r.pot_ctx.storage_snapshot();
+
   /* Hot-var NAME table (one vector<string> per sim, lsim.hotvars order) for
    * the extracted execution core, which reads raw strings by name and leaves
    * all parsing/validation here. Built once per eval; usually 0-1 entries. */
@@ -1173,6 +1183,17 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
   auto run_one = [&](std::size_t i, int tid,
                      const std::vector<std::string>& inject_lines) -> bool {
     const auto& lsim = LS[i];
+
+    /* PROCESS mode: proxy the task to worker-process channel `tid` (1:1 with
+     * the ScriptExecutor worker id). The worker runs the SAME
+     * execute_script_task below; all post-processing stays here. */
+    if (pc_process_mode) {
+      const PcTaskResult tres = pc_worker_pool().execute(
+          tid, static_cast<std::uint32_t>(i), r.iter, pc_pot_map,
+          inject_lines, lsim.maxtime);
+      return apply_task_result(i, tid, tres);
+    }
+
     /* -log/-screen get a .t<tid> suffix so concurrent fan-out workers don't
      * clobber the same file; tid is the ScriptExecutor worker id, stable for
      * the whole run, so the per-slot caches warm once per worker. */

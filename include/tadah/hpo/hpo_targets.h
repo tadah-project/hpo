@@ -69,6 +69,28 @@ public:
      * or per-sim --maxtime). A timed-out sim scores FAILSCORE. */
     std::string MAX_TIME = "off";
 
+    /* PC_ISOLATION: execution mode for the pc_lammps fan-out.
+     *   THREAD  (default) -- in-process ScriptExecutor threads (pre-existing
+     *                        behaviour; concurrent LAMMPS instances share
+     *                        the address space and race on LAMMPS process
+     *                        globals -- the `free(): invalid pointer` class).
+     *   PROCESS           -- persistent worker-process pool: each fan-out
+     *                        slot runs its LAMMPS instances in its own child
+     *                        process, eliminating that race class
+     *                        (INVESTIGATIONS/PC_ISOLATION_process_pool.md).
+     * Env override: TADAH_PC_ISOLATION (read in hpo.cpp). Explicit PROCESS
+     * is rejected (hard error) in MPI builds. */
+    std::string PC_ISOLATION = "THREAD";
+    /* true iff the config file carried an explicit PC_ISOLATION line --
+     * lets MPI builds distinguish "defaulted to PROCESS" (silently fall back
+     * to THREAD) from "explicitly requested PROCESS" (hard error). */
+    bool PC_ISOLATION_set = false;
+    /* PC_WORKER_TIMEOUT <seconds>: PROCESS mode only -- global override of
+     * the per-task deadline formula max(3*maxtime, maxtime+120s); 0 =
+     * derive from each sim's maxtime ("off" => no deadline, thread parity).
+     * Env override: TADAH_PC_WORKER_TIMEOUT. */
+    double PC_WORKER_TIMEOUT = 0.0;
+
     OptimizerSpec spec;
 
     int    outputDigits = 6;      // decimal digits in scientific notation columns (DIGITS key)
