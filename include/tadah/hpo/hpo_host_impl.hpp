@@ -1524,11 +1524,6 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     r.fanout_min_ms   = nsc ? smin : 0.0;
     r.fanout_max_ms   = smax;
     r.fanout_slowest  = nsc ? LS[worst].script : std::string();
-#ifdef TADAH_ENABLE_OPENMP
-    r.fanout_width    = omp_get_max_threads();
-#else
-    r.fanout_width    = 1;
-#endif
   }
 
   /* Graded-FAILSCORE: normal-exit persist (see persist_fail_info above). */
@@ -1994,9 +1989,6 @@ double HPO_Host<P,R>::operator()(const P& p) const
       run_lammps(r);
 #endif
       t_lammps_end = std::chrono::high_resolution_clock::now();
-      /* Stage 1a: fan-out wall = the run_lammps phase (always, not gated on
-       * TADAH_HPO_BENCH) -- feeds the fan-out efficiency diagnostic. */
-      r.fanout_wall_ms = bench_detail::elapsed_ms(t_predict_end, t_lammps_end);
       sims_loss(r);
       t_sims_loss_end = std::chrono::high_resolution_clock::now();
       stage_watchdog::leave(r.iter, "lammps", _stage_log);
@@ -2064,8 +2056,6 @@ double HPO_Host<P,R>::operator()(const P& p) const
     const double      save_srmse   = r.srmse;
     /* Stage 1a: fan-out utilisation snapshot (r is moved into the queue below). */
     const double      save_fo_busy  = r.fanout_busy_ms;
-    const double      save_fo_wall  = r.fanout_wall_ms;
-    const int         save_fo_width = r.fanout_width;
     const std::size_t save_fo_nsc   = r.fanout_nscripts;
     const double      save_fo_min   = r.fanout_min_ms;
     const double      save_fo_max   = r.fanout_max_ms;
@@ -2192,7 +2182,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
     stage_watchdog::Scope<decltype(_stage_log)> _sg_journal(save_iter, "journal_log", _stage_log);
     auto& log = HPOLog::instance();
     log.record_eval(save_iter, save_wall_ms, save_nan);
-    log.record_fanout(save_fo_width, save_fo_wall, save_fo_busy,
+    log.record_fanout(save_fo_busy,
                       save_fo_nsc, save_fo_min, save_fo_max, save_fo_slow);
 
     if (save_best)

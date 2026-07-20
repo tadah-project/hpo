@@ -59,6 +59,9 @@ void HPOLog::reset_for_test()
     cur_best_eval_ = 0;
     best_emae_ = best_ermse_ = best_errmse_ = best_frmse_ = best_srmse_ = 0.0;
     has_emae_ = has_ermse_ = has_errmse_ = has_frmse_ = has_srmse_ = false;
+    cadence_evals_   = 0;
+    cadence_unit_.clear();
+    cadence_maxeval_ = 0;
 }
 
 void HPOLog::open(const std::string& path,
@@ -353,25 +356,6 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         f_.flush();
     }
 
-    // ---- search space
-    {
-        std::lock_guard<std::mutex> lg(mtx_);
-        f_ << "  Search space (bounds in optimiser-internal space):\n";
-        const std::size_t n = sp.low.size();
-        for (std::size_t i = 0; i < n; ++i) {
-            const std::string& lbl = (i < param_labels.size())
-                                     ? param_labels[i] : "param[" + std::to_string(i) + "]";
-            std::string row = "    " + lbl;
-            // pad label
-            if (row.size() < 28) row.resize(28, ' ');
-            row += ": [" + fmt_double(sp.low[i], 3) + ",  " + fmt_double(sp.high[i], 3) + "]";
-            if (i < sp.log_scaled.size() && sp.log_scaled[i])
-                row += "  (log-scale -- bounds are ln(value))";
-            f_ << row << "\n";
-        }
-        f_.flush();
-    }
-
     // ---- initial point
     if (!sp.optim_init.empty()) {
         std::lock_guard<std::mutex> lg(mtx_);
@@ -495,6 +479,27 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         if (ns.calibration_n >= 2)
             f_ << "    NOISE.CALIBRATION : " << ns.calibration_n
                << "  (extra evals at the seed before optimisation)\n";
+        f_.flush();
+    }
+
+    /* ---- search space -- own section: the per-dim bounds dump grows
+     * with dim (hundreds of lines) and would drown the OPTIMISER prose. */
+    section("SEARCH SPACE");
+    {
+        std::lock_guard<std::mutex> lg(mtx_);
+        f_ << "  (bounds in optimiser-internal space)\n";
+        const std::size_t n = sp.low.size();
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::string& lbl = (i < param_labels.size())
+                                     ? param_labels[i] : "param[" + std::to_string(i) + "]";
+            std::string row = "    " + lbl;
+            // pad label
+            if (row.size() < 28) row.resize(28, ' ');
+            row += ": [" + fmt_double(sp.low[i], 3) + ",  " + fmt_double(sp.high[i], 3) + "]";
+            if (i < sp.log_scaled.size() && sp.log_scaled[i])
+                row += "  (log-scale -- bounds are ln(value))";
+            f_ << row << "\n";
+        }
         f_.flush();
     }
 }
@@ -818,8 +823,9 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
              * not be read as throughput. */
             const auto now_tp = std::chrono::steady_clock::now();
             double wall_ms_per_eval = 0.0;
+            double win_ms           = 0.0;   /* milestone-window elapsed */
             if (last_milestone_evals_ > 0 && done > last_milestone_evals_) {
-                const double win_ms =
+                win_ms =
                     std::chrono::duration<double, std::milli>(
                         now_tp - last_milestone_tp_).count();
                 wall_ms_per_eval =
@@ -849,39 +855,60 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                 << nan_pct << "%";
             f_ << "[" << now_hms() << "]  SUMMARY  "
                << msg.str() << "\n";
-            /* pc_lammps fan-out utilisation over this milestone window.
-             * efficiency = Σbusy / (width*wall): the fraction of fan-out
-             * core-time doing useful work. A low value means the scripts
-             * are imbalanced and most threads idle at the fork/join
-             * barrier waiting for the slowest script. */
-            if (fo_widthwall_win_ > 0.0) {
-                const double eff = fo_busy_win_ / fo_widthwall_win_;
-                const double avg = (fo_scount_win_ > 0)
-                    ? fo_busy_win_ / static_cast<double>(fo_scount_win_) : 0.0;
+            /* pc_lammps shared-pool utilisation over this milestone
+             * window: Σ script busy / (pool width x window elapsed).
+             * Honest under concurrent replicas (per-eval width x wall
+             * double-counted overlapped time -- the old ">100% eff"
+             * artefact). Printed only when the pool width is known;
+             * per-script stats print regardless. NOTE: this is
+             * utilisation of the WHOLE window, so time spent in
+             * train/predict/sims_loss also reads as pool idle -- a low
+             * value is not, by itself, evidence of script imbalance. */
+            if (fo_scount_win_ > 0) {
+                const double avg =
+                    fo_busy_win_ / static_cast<double>(fo_scount_win_);
                 std::ostringstream fo;
-                fo << "    pc_lammps: fan-out eff " << std::fixed
-                   << std::setprecision(0) << 100.0 * eff << "%"
-                   << "  (per-script avg " << fmt_millis(avg)
+                fo << "    pc_lammps:";
+                if (fanout_pool_width_ > 0 && win_ms > 0.0) {
+                    const double util = fo_busy_win_ /
+                        (static_cast<double>(fanout_pool_width_) * win_ms);
+                    fo << " pool util " << std::fixed << std::setprecision(0)
+                       << 100.0 * util << "% of width "
+                       << fanout_pool_width_ << ";";
+                }
+                fo << " per-script avg " << fmt_millis(avg)
                    << ", fastest " << fmt_millis(fo_smin_win_)
                    << ", slowest " << fmt_millis(fo_smax_win_);
                 if (!fo_slowest_win_.empty()) fo << " [" << fo_slowest_win_ << "]";
-                fo << ")";
                 f_ << "[" << now_hms() << "]  SUMMARY  " << fo.str() << "\n";
-                if (eff < fo_eff_alarm_) {
-                    f_ << "[" << now_hms() << "]  WARNING  "
-                       << "pc_lammps fan-out efficiency " << std::fixed
-                       << std::setprecision(0) << 100.0 * eff << "% < "
-                       << 100.0 * fo_eff_alarm_ << "% -- scripts imbalanced "
-                       << "across the fan-out threads (slowest "
-                       << fmt_millis(fo_smax_win_);
-                    if (!fo_slowest_win_.empty()) f_ << " [" << fo_slowest_win_ << "]";
-                    f_ << " vs avg " << fmt_millis(avg) << "); most fan-out "
-                       << "core-time is idle at the barrier.\n";
-                }
                 /* reset the window accumulators for the next milestone */
-                fo_busy_win_ = 0.0; fo_widthwall_win_ = 0.0; fo_scount_win_ = 0;
+                fo_busy_win_ = 0.0; fo_scount_win_ = 0;
                 fo_smin_win_ = std::numeric_limits<double>::max();
                 fo_smax_win_ = 0.0; fo_slowest_win_.clear();
+            }
+            /* Optimiser work-unit cadence: translate the registered
+             * rung/epoch/T-step eval cost into wall time at the CURRENT
+             * window rate. Re-derived every milestone (never frozen) so
+             * it tracks throughput drift; the unit eval count itself is
+             * exact arithmetic supplied by the optimiser. */
+            if (cadence_evals_ > 0 && wall_ms_per_eval > 0.0) {
+                std::ostringstream cs;
+                cs << "    " << cadence_unit_ << " = " << cadence_evals_
+                   << " evals ~ "
+                   << format_duration(
+                          static_cast<double>(cadence_evals_) *
+                          wall_ms_per_eval / 1000.0)
+                   << " at current rate";
+                if (cadence_maxeval_ > done) {
+                    const std::uint64_t rem  = cadence_maxeval_ - done;
+                    const std::uint64_t left =
+                        (rem + cadence_evals_ - 1) / cadence_evals_;
+                    cs << "; ~" << left << " " << cadence_unit_ << "(s) / ~"
+                       << format_duration(static_cast<double>(rem) *
+                                          wall_ms_per_eval / 1000.0)
+                       << " to MAXEVAL";
+                }
+                f_ << "[" << now_hms() << "]  SUMMARY  " << cs.str() << "\n";
             }
             /* Stagnation hint: if we've spent more than half the recent
              * milestone window with no new best, point the user at the
@@ -909,20 +936,32 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
     }
 }
 
-void HPOLog::record_fanout(int width, double wall_ms, double busy_ms,
+void HPOLog::set_cadence(std::size_t evals_per_unit, const std::string& unit,
+                         std::uint64_t maxeval_total)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    cadence_evals_   = evals_per_unit;
+    cadence_unit_    = unit;
+    cadence_maxeval_ = maxeval_total;
+}
+
+void HPOLog::set_fanout_width(int width)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    fanout_pool_width_ = width > 0 ? width : 0;
+}
+
+void HPOLog::record_fanout(double busy_ms,
                            std::size_t n_scripts, double min_ms, double max_ms,
                            const std::string& slowest)
 {
-    if (n_scripts == 0 || width <= 0 || wall_ms <= 0.0) return;
+    if (n_scripts == 0) return;
     std::lock_guard<std::mutex> lg(mtx_);
-    const double widthwall = static_cast<double>(width) * wall_ms;
     fo_busy_win_      += busy_ms;
-    fo_widthwall_win_ += widthwall;
     fo_scount_win_    += n_scripts;
     if (min_ms < fo_smin_win_) fo_smin_win_ = min_ms;
     if (max_ms > fo_smax_win_) { fo_smax_win_ = max_ms; fo_slowest_win_ = slowest; }
     fo_busy_tot_      += busy_ms;
-    fo_widthwall_tot_ += widthwall;
     ++fo_evals_;
 }
 
@@ -1094,19 +1133,23 @@ void HPOLog::finish(const std::string& status_str)
         f_ << "  " << std::left << std::setw(KW) << "Throughput"
            << ": " << thr.str() << " evals/min\n";
     }
-    if (fo_evals_ > 0 && fo_widthwall_tot_ > 0.0) {
-        const double eff = fo_busy_tot_ / fo_widthwall_tot_;
+    if (fo_evals_ > 0 && fanout_pool_width_ > 0 && wall_sec > 0.0) {
+        const double util = fo_busy_tot_ /
+            (static_cast<double>(fanout_pool_width_) * wall_sec * 1000.0);
         std::ostringstream fo;
-        fo << std::fixed << std::setprecision(0) << 100.0 * eff << "%";
-        f_ << "  " << std::left << std::setw(KW) << "pc_lammps fan-out eff"
+        fo << std::fixed << std::setprecision(0) << 100.0 * util << "%";
+        f_ << "  " << std::left << std::setw(KW) << "pc_lammps pool util"
            << ": " << fo.str()
-           << "  (Sum busy / (width x wall); 100% = all fan-out threads busy)\n";
-        if (eff < fo_eff_alarm_)
-            f_ << "  [!] fan-out under " << std::fixed << std::setprecision(0)
-               << 100.0 * fo_eff_alarm_ << "% -- the slowest pc_lammps script "
-               << "gates each eval while other threads idle. See the per-script\n"
-               << "      breakdown (TADAH_HPO_BENCH=1 -> hpo_script_times.csv) "
-               << "and consider longest-first fan-out scheduling.\n";
+           << "  (Sum script busy / (pool width " << fanout_pool_width_
+           << " x total wall))\n";
+        if (util < fo_util_note_)
+            f_ << "  Note: low pool utilisation. Common causes (not mutually "
+               << "exclusive): the\n"
+               << "      train/predict phase dominates the eval, THREADS is "
+               << "wider than the\n"
+               << "      script workload, or scripts are imbalanced. Per-script "
+               << "breakdown:\n"
+               << "      TADAH_HPO_BENCH=1 -> hpo_script_times.csv.\n";
     }
 
     /* -- RESULT -------------------------------------------------------- */

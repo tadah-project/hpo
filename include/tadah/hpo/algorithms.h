@@ -265,6 +265,36 @@ template<typename Vec, typename HostT>
       HPOLog::instance().info(oss.str());
     }
 
+    /* Layout arithmetic -- exact, printed up front so the rung cadence
+     * (and hence the journal cadence) is visible before the first
+     * per-rung line. */
+    {
+      const std::uint64_t rung_evals =
+          kb.corana ? static_cast<std::uint64_t>(kb.NT) * kb.NS * dim
+                    : static_cast<std::uint64_t>(kb.L);
+      std::ostringstream oss;
+      oss << "ANNEAL layout: rung = ";
+      if (kb.corana)
+        oss << "NT*NS*dim = " << kb.NT << "*" << kb.NS << "*" << dim << " = ";
+      else
+        oss << "L = ";
+      oss << rung_evals << " evals";
+      if (sp.stop.maxeval && rung_evals > 0) {
+        const std::uint64_t maxeval =
+            static_cast<std::uint64_t>(*sp.stop.maxeval);
+        oss << ";  MAXEVAL=" << maxeval << " -> <= "
+            << (maxeval + rung_evals - 1) / rung_evals
+            << " rung(s) by budget (T_MIN schedule / plateau may end "
+               "earlier, REANNEAL restarts extend rung count)";
+      }
+      HPOLog::instance().info(oss.str());
+      if (rung_evals > 0)
+        HPOLog::instance().set_cadence(
+            static_cast<std::size_t>(rung_evals), "rung",
+            sp.stop.maxeval
+                ? static_cast<std::uint64_t>(*sp.stop.maxeval) : 0);
+    }
+
     if (dim == 0) {
       if (!sp.optim_init.empty() && budget.left() > 0) {
         const auto v = sp.in(sp.optim_init.front());

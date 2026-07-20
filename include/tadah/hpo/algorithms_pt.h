@@ -228,6 +228,35 @@ template<typename Vec, typename HostT>
       HPOLog::instance().info(oss.str());
     }
 
+    /* Layout arithmetic -- exact, printed up front: with a large
+     * NT*NS*dim product the first per-epoch line can be hours away, and
+     * the epoch size is what sets both the swap and journal cadence. */
+    const std::uint64_t rung_cost =
+        kb.corana ? static_cast<std::uint64_t>(kb.NT) * kb.NS * dim
+                  : static_cast<std::uint64_t>(kb.L);
+    {
+      const std::uint64_t epoch_evals =
+          static_cast<std::uint64_t>(K) * rung_cost;
+      std::ostringstream oss;
+      oss << "ANNEAL_PT layout: rung = ";
+      if (kb.corana)
+        oss << "NT*NS*dim = " << kb.NT << "*" << kb.NS << "*" << dim << " = ";
+      else
+        oss << "L = ";
+      oss << rung_cost << " evals/replica;  epoch = REPLICAS*rung = "
+          << K << "*" << rung_cost << " = " << epoch_evals
+          << " evals;  exchange attempt every " << kb.swap_every
+          << " epoch(s)";
+      HPOLog::instance().info(oss.str());
+      /* Cadence registration is single-process only: the milestone
+       * throughput window is rank-local and would mis-scale a global
+       * budget under MPI. */
+      if (world == 1 && epoch_evals > 0)
+        HPOLog::instance().set_cadence(
+            static_cast<std::size_t>(epoch_evals), "epoch",
+            max_eval_global == HUGE_UNSIGNED ? 0 : max_eval_global);
+    }
+
     if (dim == 0) {
       if (!sp.optim_init.empty() && budget.left() > 0) {
         const auto v = sp.in(sp.optim_init.front());
@@ -425,9 +454,33 @@ template<typename Vec, typename HostT>
     std::vector<std::size_t> swap_attempt(K > 1 ? K - 1 : 0, 0);
     std::vector<std::size_t> swap_accept (K > 1 ? K - 1 : 0, 0);
 
-    const std::uint64_t rung_cost =
-        kb.corana ? static_cast<std::uint64_t>(kb.NT) * kb.NS * dim
-                  : static_cast<std::uint64_t>(kb.L);
+    /* Ladder-flow bookkeeping (Katzgraber-style up/down tagging),
+     * single-process runs only -- walker identities would have to ride
+     * the MPI boundary-swap messages to stay exact across ranks.
+     * walker_at[slot] tracks the STATE lineage (swaps move states, not
+     * slots); each walker is tagged by the extreme it visited last.
+     * A +1-tagged walker reaching the hot end = one genuine cold->hot
+     * traversal (and vice versa), so the counts are exact -- no
+     * initial-transient overcount. min(up, down) ~ completed round
+     * trips, the literature's tempering-effectiveness currency. */
+    std::vector<std::size_t> walker_at(K);
+    std::vector<signed char> walker_tag(K, 0);  /* 0 none, +1 cold, -1 hot */
+    std::size_t flow_up = 0, flow_down = 0;     /* cold->hot, hot->cold */
+    for (std::size_t i = 0; i < K; ++i) walker_at[i] = i;
+    auto flow_touch_extremes = [&]() {
+      if (world != 1 || K < 2) return;
+      {
+        const std::size_t w = walker_at[0];          /* coldest slot */
+        if (walker_tag[w] == -1) ++flow_down;
+        walker_tag[w] = +1;
+      }
+      {
+        const std::size_t w = walker_at[K - 1];      /* hottest slot */
+        if (walker_tag[w] == +1) ++flow_up;
+        walker_tag[w] = -1;
+      }
+    };
+    flow_touch_extremes();   /* initial tags only: all tags are still 0 */
 
     /* --- epoch loop ------------------------------------------------------
      * Fixed per-epoch collective order (every rank, every epoch):
@@ -444,6 +497,7 @@ template<typename Vec, typename HostT>
        * 0 = unbounded (pure PT with no MAXEVAL) -> plain counter. */
       std::size_t planned_epochs = 0;
       for (;;) {
+        const auto epoch_wall_t0 = std::chrono::steady_clock::now();
         const std::uint64_t spent_global =
             world > 1 ? hpo_allreduce_sum(budget.spent()) : budget.spent();
         const std::uint64_t remaining =
@@ -457,6 +511,54 @@ template<typename Vec, typename HostT>
                   ? std::numeric_limits<std::uint64_t>::max()
                   : remaining,
               static_cast<std::uint64_t>(K) * rung_cost);
+          /* Plan line -- printed once, from the same arithmetic that
+           * feeds the epoch=k/total display (an upper bound: STOPVAL /
+           * plateau / MAXTIME end the run earlier). */
+          if (rank == 0 && planned_epochs > 0) {
+            const std::size_t rounds =
+                (planned_epochs + kb.swap_every - 1) / kb.swap_every;
+            std::ostringstream oss;
+            oss << "ANNEAL_PT plan: ~" << planned_epochs << " epoch(s) (";
+            if (max_eval_global != HUGE_UNSIGNED)
+              oss << "budget left " << remaining << " evals";
+            if (max_eval_global != HUGE_UNSIGNED && kb.rt < 1.0) oss << ", ";
+            if (kb.rt < 1.0) oss << "hot-end cooling to T_MIN";
+            oss << "; upper bound), ~" << rounds << " exchange round(s)";
+            HPOLog::instance().info(oss.str());
+            /* Round-trip feasibility gates. The floor is STRUCTURAL: a
+             * DEO exchange round moves a state at most one slot, so one
+             * cold<->hot round trip needs >= 2*(K-1) rounds even at
+             * 100% swap acceptance -- below that, tempering provably
+             * cannot function (WARNING). Above it, the 20-40% per-pair
+             * acceptance the literature targets (Kone-Kofke 23%,
+             * Predescu 38.7% for optimization) stretches a round trip
+             * to roughly 2*(K-1)/0.25 rounds -- below that expect <~1
+             * round trip (heuristic -> HINT). */
+            if (K >= 2) {
+              const std::size_t rt_floor = 2 * (K - 1);
+              if (rounds < rt_floor) {
+                std::ostringstream w;
+                w << "ANNEAL_PT: planned exchange rounds " << rounds
+                  << " < 2*(REPLICAS-1) = " << rt_floor
+                  << " -- one cold<->hot ladder round trip is impossible "
+                     "even at 100% swap acceptance (a DEO round moves a "
+                     "state at most one slot); tempering degenerates to "
+                  << K << " independent chains. Reduce NT (epoch = "
+                     "REPLICAS*NT*NS*dim evals) or raise MAXEVAL.";
+                HPOLog::instance().warning(w.str());
+              } else if (rounds < 4 * rt_floor) {
+                std::ostringstream h;
+                h << "ANNEAL_PT: planned exchange rounds " << rounds
+                  << " < 2*(REPLICAS-1)/0.25 = " << 4 * rt_floor
+                  << " -- expect fewer than ~1 ladder round trip at the "
+                     "typical 20-40% per-pair swap acceptance (Kone-Kofke "
+                     "23%, Predescu 39% for optimization). Tempering will "
+                     "function only weakly; consider a smaller NT or a "
+                     "larger MAXEVAL.";
+                HPOLog::instance().hint(h.str());
+              }
+            }
+          }
         }
         if (time_exceeded() && world == 1) {
           stop_reason = StopReason::MaxTime; break;
@@ -542,6 +644,7 @@ template<typename Vec, typename HostT>
               if (delta >= 0.0 || coin < std::exp(delta)) {
                 std::swap(ci.x, cj.x);
                 std::swap(ci.f, cj.f);
+                if (world == 1) std::swap(walker_at[i], walker_at[i + 1]);
                 ++swap_accept[i];
                 ++acc;
               }
@@ -576,6 +679,7 @@ template<typename Vec, typename HostT>
           ++exchange_rounds;
           ep_swap_rate = att > 0 ? static_cast<double>(acc) /
                                    static_cast<double>(att) : 0.0;
+          flow_touch_extremes();   /* states moved -- update up/down flow */
         }
 
         /* --- global best + rank-0 stop decisions ----------------------
@@ -635,7 +739,11 @@ template<typename Vec, typename HostT>
             oss << "  swap_acc=" << (ep_swap_rate * 100.0) << "%";
           oss << std::scientific << std::setprecision(3)
               << "  f_cold=" << chains[0].f
-              << "  best=" << g_best;
+              << "  best=" << g_best
+              << "  epoch_wall=" << HPOLog::format_duration(
+                     std::chrono::duration<double>(
+                         std::chrono::steady_clock::now() - epoch_wall_t0)
+                         .count());
           HPOLog::instance().info(oss.str());
         }
       }
@@ -699,6 +807,21 @@ template<typename Vec, typename HostT>
                << r << "%";
         }
         HPOLog::instance().info(ossp.str());
+      }
+      /* Measured ladder flow (single-process runs; see the bookkeeping
+       * comment above). Exact counts of end-to-end traversals; 0 round
+       * trips = the ladder never communicated end to end. */
+      if (world == 1 && K >= 2 && exchange_rounds > 0) {
+        const std::size_t trips = std::min(flow_up, flow_down);
+        std::ostringstream ossf;
+        ossf << "ANNEAL_PT ladder flow: traversals cold->hot=" << flow_up
+             << "  hot->cold=" << flow_down;
+        if (trips > 0)
+          ossf << "  (~" << trips << " round trip(s) completed)";
+        else
+          ossf << "  (0 round trips -- the ladder never communicated "
+                  "end to end)";
+        HPOLog::instance().info(ossf.str());
       }
     }
 

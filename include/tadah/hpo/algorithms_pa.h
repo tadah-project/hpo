@@ -188,6 +188,34 @@ template<typename Vec, typename HostT>
       HPOLog::instance().info(oss.str());
     }
 
+    /* Layout arithmetic -- exact, printed up front (mirrors ANNEAL_PT:
+     * the first per-step line can be a long time away when the
+     * per-walker product is large). */
+    const std::uint64_t rung_cost =
+        (kb.corana ? static_cast<std::uint64_t>(kb.NT) * kb.NS * dim
+                   : static_cast<std::uint64_t>(kb.L)) * kb.sweeps;
+    {
+      const std::uint64_t step_evals =
+          static_cast<std::uint64_t>(R) * rung_cost;
+      std::ostringstream oss;
+      oss << "ANNEAL_PA layout: walker T-step = ";
+      if (kb.corana)
+        oss << "NT*NS*dim*SWEEPS = " << kb.NT << "*" << kb.NS << "*" << dim
+            << "*" << kb.sweeps << " = ";
+      else
+        oss << "L*SWEEPS = " << kb.L << "*" << kb.sweeps << " = ";
+      oss << rung_cost << " evals;  population T-step = POPULATION*rung = "
+          << R << "*" << rung_cost << " = " << step_evals << " evals";
+      HPOLog::instance().info(oss.str());
+      /* Cadence registration is single-process only: the milestone
+       * throughput window is rank-local and would mis-scale a global
+       * budget under MPI. */
+      if (world == 1 && step_evals > 0)
+        HPOLog::instance().set_cadence(
+            static_cast<std::size_t>(step_evals), "T-step",
+            max_eval_global == HUGE_UNSIGNED ? 0 : max_eval_global);
+    }
+
     if (dim == 0) {
       if (!sp.optim_init.empty() && budget.left() > 0) {
         const auto v = sp.in(sp.optim_init.front());
@@ -363,10 +391,6 @@ template<typename Vec, typename HostT>
       }
     }
 
-    const std::uint64_t rung_cost =
-        (kb.corana ? static_cast<std::uint64_t>(kb.NT) * kb.NS * dim
-                   : static_cast<std::uint64_t>(kb.L)) * kb.sweeps;
-
     /* One T-step of sweeps for the whole population (budget-sliced,
      * deterministic; slicing computed from the GLOBAL remaining budget
      * identically on every rank -- see the PT driver). */
@@ -469,6 +493,21 @@ template<typename Vec, typename HostT>
                   ? std::numeric_limits<std::uint64_t>::max()
                   : rem,
               static_cast<std::uint64_t>(R) * rung_cost);
+          /* Plan line -- printed once, from the same arithmetic that
+           * feeds the step=k/total display (an upper bound: STOPVAL /
+           * plateau / MAXTIME end the run earlier). */
+          if (rank == 0 && planned_steps > 0) {
+            std::ostringstream oss;
+            oss << "ANNEAL_PA plan: ~" << planned_steps
+                << " temperature step(s) (";
+            if (max_eval_global != HUGE_UNSIGNED)
+              oss << "budget left " << rem << " evals";
+            if (max_eval_global != HUGE_UNSIGNED && kb.ess_target == 0.0)
+              oss << ", ";
+            if (kb.ess_target == 0.0) oss << "geometric cooling to T_MIN";
+            oss << "; upper bound)";
+            HPOLog::instance().info(oss.str());
+          }
         }
       }
 
@@ -493,6 +532,7 @@ template<typename Vec, typename HostT>
       };
 
       while (ok) {
+        const auto step_wall_t0 = std::chrono::steady_clock::now();
         /* --- gather the population's current losses ------------------- */
         for (std::size_t li = 0; li < n_local; ++li) f_local[li] = walkers[li].f;
         hpo_gatherv(f_local, f_all, f_counts);
@@ -627,6 +667,10 @@ template<typename Vec, typename HostT>
               << std::scientific << std::setprecision(3)
               << "  pop_best=" << f_pop_best
               << "  best=" << g_best
+              << "  step_wall=" << HPOLog::format_duration(
+                     std::chrono::duration<double>(
+                         std::chrono::steady_clock::now() - step_wall_t0)
+                         .count())
               << (adaptive_used ? "" : "  [geometric]");
           HPOLog::instance().info(oss.str());
         }

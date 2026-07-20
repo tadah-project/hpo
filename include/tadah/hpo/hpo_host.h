@@ -100,13 +100,13 @@ struct EvalResult
 
     std::chrono::milliseconds              wall_ms{};
 
-    /* pc_lammps fan-out utilisation for THIS eval (Stage 1a diagnostics).
-     * Filled by run_lammps from per-script timings; consumed once by
-     * HPOLog::record_fanout at the journal step. All zero when the eval
-     * ran no pc_lammps scripts. */
+    /* pc_lammps fan-out busy-time stats for THIS eval (Stage 1a
+     * diagnostics). Filled by run_lammps from per-script timings;
+     * consumed once by HPOLog::record_fanout at the journal step (pool
+     * utilisation is derived there from the shared executor width and
+     * elapsed wall, not per-eval). All zero when the eval ran no
+     * pc_lammps scripts. */
     double                                 fanout_busy_ms  = 0.0; // Σ (create+run) ms
-    double                                 fanout_wall_ms  = 0.0; // run_lammps phase wall
-    int                                    fanout_width    = 0;   // fan-out thread width
     std::size_t                            fanout_nscripts = 0;
     double                                 fanout_min_ms   = 0.0;
     double                                 fanout_max_ms   = 0.0;

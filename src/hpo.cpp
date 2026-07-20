@@ -117,6 +117,9 @@ int hpo_run(core::Context& ctx)
         const int exec_width =
             std::max<int>(1, static_cast<int>(trg.spec.num_threads.value_or(1)));
         init_script_executor(exec_width);
+        /* Give the journal the true pool width -- the honest denominator
+         * for the periodic pc_lammps pool-utilisation figure. */
+        log.set_fanout_width(exec_width);
         /* Stage 2.3: route the MLIP train/predict kernels (design-matrix build,
          * descriptor calc, predict) onto the SAME pool. This drops the nested
          * per-replica OpenMP teams those kernels used to spawn and lets one
