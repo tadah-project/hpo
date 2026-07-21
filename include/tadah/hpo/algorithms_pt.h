@@ -264,6 +264,11 @@ template<typename Vec, typename HostT>
             static_cast<std::size_t>(epoch_evals), "epoch",
             max_eval_global == HUGE_UNSIGNED ? 0 : max_eval_global);
     }
+    /* Pinned-dim audit (single-process like the per-epoch report --
+     * marks are rank-local, a rank-0 table would miss other ranks). */
+    if (world == 1 && kb.corana)
+      HPOLog::instance().arm_pin_audit(
+          sp, kb.v_floor_frac, static_cast<int>(K), "epoch");
 
     if (dim == 0) {
       if (!sp.optim_init.empty() && budget.left() > 0) {
@@ -695,6 +700,15 @@ template<typename Vec, typename HostT>
             f_pre[li]   = chains[li].f;
             f_delta[li] = chains[li].f - f_start[li];
           }
+          /* Pinned-dim audit refresh: PRE-swap (slot V + the x that
+           * walked in the slot this epoch -- the exchange permutes x/f,
+           * never V). A slot whose x left the bound is unmarked; the
+           * table prints with the milestone SUMMARY. */
+          if (kb.corana)
+            for (std::size_t li = 0; li < n_local; ++li)
+              HPOLog::instance().record_pin_state(
+                  static_cast<int>(li), epoch_count,
+                  anneal::pinned_dims(chains[li], sp, kb));
         }
         /* Per-pair outcome of THIS epoch's exchange round for the
          * events row: 'x' swapped, '.' rejected, ' ' not attempted

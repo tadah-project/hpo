@@ -215,6 +215,10 @@ template<typename Vec, typename HostT>
             static_cast<std::size_t>(step_evals), "T-step",
             max_eval_global == HUGE_UNSIGNED ? 0 : max_eval_global);
     }
+    /* Pinned-dim audit (single-process, rank-local marks -- see PT). */
+    if (world == 1 && kb.corana)
+      HPOLog::instance().arm_pin_audit(
+          sp, kb.v_floor_frac, static_cast<int>(R), "T-step");
 
     if (dim == 0) {
       if (!sp.optim_init.empty() && budget.left() > 0) {
@@ -395,6 +399,10 @@ template<typename Vec, typename HostT>
      * deterministic; slicing computed from the GLOBAL remaining budget
      * identically on every rank -- see the PT driver). */
     std::vector<anneal::RungStats> rstats(n_local);
+    /* Pinned-dim audit unit: one tick per run_sweeps call. Kept separate
+     * from step_count (whose increment site differs between the first
+     * and subsequent T-steps) -- only monotonicity matters here. */
+    std::uint64_t pin_unit = 0;
     auto run_sweeps = [&](double T) -> bool {  /* false => stop fired */
       const std::uint64_t spent_global =
           world > 1 ? hpo_allreduce_sum(budget.spent()) : budget.spent();
@@ -426,6 +434,17 @@ template<typename Vec, typename HostT>
         rstats[li] = acc;
       });
       pool.rethrow_if_error();
+
+      /* Pinned-dim audit refresh: post-sweeps, PRE-resampling (marks
+       * follow what each walker's own sweeps did; resampling replaces
+       * walkers and simply re-marks/unmarks on the next T-step). */
+      if (world == 1 && kb.corana) {
+        ++pin_unit;
+        for (std::size_t li = 0; li < n_local; ++li)
+          HPOLog::instance().record_pin_state(
+              static_cast<int>(off_local + li), pin_unit,
+              anneal::pinned_dims(walkers[li], sp, kb));
+      }
 
       std::size_t e_prop = 0;
       bool any_stopval = false, any_time = false;

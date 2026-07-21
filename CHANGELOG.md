@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Pinned-dim audit in the journal (ANNEAL family, CORANA only).** After every rung (serial), epoch (ANNEAL_PT) or T-step (ANNEAL_PA) the driver marks each OPTIM dimension whose chain sits within one floor-step of an OPTIM bound while its Corana step `V[i]` is already clamped at the floor `V_FLOOR_FRAC*width` — the walk cannot leave the bound, so the bound is load-bearing. While `V[i]` can still shrink the dim is not marked (the walk may yet pull off legitimately); a chain that leaves its bound is unmarked. Every milestone SUMMARY then prints a single WARNING table of all currently-pinned `(dim, side)` rows — label (with `(ln)` on log-scaled dims), LO/HI side, bound value, gap, `v_floor`, chains pinned (parallel drivers), and how long the mark has been held — followed by a HINT (widen/re-centre the box unless the bound is deliberate). Automates the pinned-dim audit that previously required dumping `best_params` against the OPTIM boxes by hand. Parallel drivers record single-process only (marks are rank-local), matching the per-epoch replica reports.
+
 ### Changed
 - Journal SUMMARY lines report BOTH `wall=<ms>/eval (<N> ev/s)` — true wall-clock throughput over the window since the previous milestone, i.e. what the run delivers under the current parallelisation — and `latency=<ms>/eval` (was `avg=`), the mean per-evaluation wall time on its worker thread. Under K concurrent workers (ANNEAL_PT/PA THREADS, DLIB:GFS) the latency runs ~K× above the wall cost and must not be read as throughput. The end-of-run PERFORMANCE section gains a `Wall per eval` line and relabels the latency mean accordingly.
 

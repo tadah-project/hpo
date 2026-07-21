@@ -694,6 +694,38 @@ RungStats corana_rung(ChainState<Vec>& c, double T,
   return rs;
 }
 
+/* ---- pinned-dim audit -------------------------------------------------
+ *
+ * A dim is "pinned" when the chain hugs an OPTIM bound (within one
+ * floor-step v_lo = V_FLOOR_FRAC*width of it -- closer than the smallest
+ * possible move is indistinguishable from ON the bound) AND V[i] is
+ * already clamped at that floor, so the Corana adaptation has no finer
+ * step left that could pull the walk off the bound. While V[i] can
+ * still shrink the walk may yet leave legitimately -- not pinned.
+ * Corana-only by construction (CLASSIC never adapts V). The drivers
+ * feed the result to HPOLog::record_pin_state after every rung/epoch;
+ * the journal prints the aggregate table with each milestone SUMMARY. */
+template<class Vec>
+std::vector<PinnedDim> pinned_dims(const ChainState<Vec>& c,
+                                   const OptimizerSpec& sp,
+                                   const Knobs& kb)
+{
+  std::vector<PinnedDim> out;
+  const std::size_t dim = sp.low.size();
+  for (std::size_t i = 0; i < dim; ++i) {
+    const double w = sp.high[i] - sp.low[i];
+    if (w <= 0.0) continue;
+    const double v_lo = kb.v_floor_frac * w;
+    if (c.V[i] > v_lo * (1.0 + 1e-9)) continue;   /* step can still shrink */
+    const double g_lo = c.x(i) - sp.low[i];
+    const double g_hi = sp.high[i] - c.x(i);
+    const bool   hi   = g_hi < g_lo;
+    const double gap  = hi ? g_hi : g_lo;
+    if (gap <= v_lo) out.push_back(PinnedDim{i, hi, gap});
+  }
+  return out;
+}
+
 /* Classic Kirkpatrick/Metropolis rung: L whole-vector Gaussian
  * proposals with fixed per-dim sigma (c.V), mirror-reflected. */
 template<class Vec, class HostT>

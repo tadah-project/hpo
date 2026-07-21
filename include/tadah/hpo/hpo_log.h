@@ -31,6 +31,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -42,6 +43,17 @@ namespace tadah::core { class Context; class Element; }
 namespace tadah::mlip { struct LoadTransformReport; }
 
 namespace tadah::hpo {
+
+/* One pinned search-space dimension as reported by a CORANA annealing
+ * driver: the chain's x sits within one floor-step of an OPTIM bound AND
+ * the Corana step V[i] is already at its floor (it cannot shrink
+ * further), so the walk cannot leave the bound -- the bound is
+ * load-bearing. */
+struct PinnedDim {
+    std::size_t dim;   /* search-space dimension index */
+    bool        hi;    /* true = pinned at the HIGH bound, false = LOW */
+    double      gap;   /* |x - bound|, optimiser-internal units */
+};
 
 /* =========================================================================
  * HPOLog -- the logger.
@@ -184,6 +196,27 @@ public:
     void record_fanout(double busy_ms,
                        std::size_t n_scripts, double min_ms, double max_ms,
                        const std::string& slowest);
+
+    /** Arm the pinned-dim audit (CORANA annealers only -- CLASSIC never
+     *  shrinks its step, so "step at the V floor" is undefined there).
+     *  Stores the per-dim bounds snapshot the milestone table prints
+     *  (bound value, v_floor = v_floor_frac*(high-low), (ln) tags) plus
+     *  the chain count for the slots column (1 = serial -> column is
+     *  dropped) and the work-unit display name ("rung"/"epoch"/"T-step").
+     *  Re-arming clears any previous marks (fresh audit per driver run).
+     *  Dim labels come from write_optimizer_section when available. */
+    void arm_pin_audit(const OptimizerSpec& sp, double v_floor_frac,
+                       int n_chains, const std::string& unit_name);
+
+    /** Replace chain @p chain's pinned-dim set as of work unit @p unit
+     *  (the driver's rung/epoch/T-step counter -- only monotonicity is
+     *  used, for the table's "pinned for" column). A dim pinned before
+     *  but absent from @p pins is unmarked; a dim still pinned on the
+     *  same side keeps its original since-unit. Cheap map update under
+     *  mtx_, no file I/O: the table prints with the next milestone
+     *  SUMMARY (single WARNING block, only while marks exist). */
+    void record_pin_state(int chain, std::uint64_t unit,
+                          const std::vector<PinnedDim>& pins);
 
     /** Register the optimiser's fixed work-unit cadence (rung / epoch /
      *  T-step) for the periodic milestone SUMMARY: each milestone then
@@ -329,6 +362,10 @@ private:
     std::string now_hms()  const;   // "HH:MM:SS"
     std::string now_ymdhms() const; // "YYYY-MM-DD HH:MM:SS"
 
+    /* event() body without the lock/flush -- lets the milestone writer
+     * (which already holds mtx_) emit correctly starred+tagged blocks. */
+    void event_locked(const std::string& tag, const std::string& msg);
+
     std::ofstream  f_;
     mutable std::mutex     mtx_;
     std::chrono::system_clock::time_point t_start_;
@@ -370,6 +407,22 @@ private:
     std::size_t   cadence_evals_   = 0;
     std::string   cadence_unit_;
     std::uint64_t cadence_maxeval_ = 0;
+
+    /* pinned-dim audit (armed by the CORANA drivers) -- protected by
+     * mtx_. Key = (chain, dim, side 0=LO/1=HI); value = first unit the
+     * mark was set + latest gap. Bounds/log flags are snapshotted at
+     * arm time (labels at write_optimizer_section time) so the printer
+     * never reaches back into optimiser state. pin_chains_ == 0 <=>
+     * audit off. */
+    struct PinInfo { std::uint64_t since; double gap; };
+    std::map<std::tuple<int, std::size_t, int>, PinInfo> pin_state_;
+    std::vector<std::string> pin_labels_;
+    std::vector<double>      pin_low_, pin_high_;
+    std::vector<char>        pin_log_;             // 1 = log-scaled dim
+    double                   pin_floor_frac_ = 0.0;
+    int                      pin_chains_     = 0;
+    std::uint64_t            pin_unit_       = 0;  // latest unit seen
+    std::string              pin_unit_name_;
 
     /* next milestone for periodic summary + the window over which the
      * WALL throughput is measured (latency alone misleads under the

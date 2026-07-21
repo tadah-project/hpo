@@ -123,6 +123,11 @@ void HPOLog::reset_for_test()
     cur_best_T_      = 0.0;
     best_slot_win_.clear();
     best_slot_tot_.clear();
+    pin_state_.clear();
+    pin_chains_ = 0;
+    pin_unit_   = 0;
+    next_milestone_       = 100;
+    last_milestone_evals_ = 0;
     clear_eval_context();
 }
 
@@ -212,6 +217,12 @@ void HPOLog::event(const std::string& tag, const std::string& msg)
         f_ << s << "\n";
         wrote_setup_section_ = true;
     }
+    event_locked(tag, msg);
+    f_.flush();
+}
+
+void HPOLog::event_locked(const std::string& tag, const std::string& msg)
+{
     /* Multi-line entries: the block's FIRST line carries the (single)
      * timestamp and a star marking where the block starts; continuation
      * lines blank the timestamp column but repeat the tag, so any grep
@@ -233,7 +244,6 @@ void HPOLog::event(const std::string& tag, const std::string& msg)
         if (nl == std::string::npos) break;
         start = nl + 1;
     }
-    f_.flush();
 }
 
 /* -------------------------------------------------------------------------
@@ -570,9 +580,12 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         std::lock_guard<std::mutex> lg(mtx_);
         f_ << "  (bounds in optimiser-internal space)\n";
         const std::size_t n = sp.low.size();
+        /* Resolved labels double as the pinned-dim audit's dim names. */
+        pin_labels_.resize(n);
         for (std::size_t i = 0; i < n; ++i) {
             const std::string& lbl = (i < param_labels.size())
                                      ? param_labels[i] : "param[" + std::to_string(i) + "]";
+            pin_labels_[i] = lbl;
             std::string row = "    " + lbl;
             // pad label
             if (row.size() < 28) row.resize(28, ' ');
@@ -995,6 +1008,92 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                 }
                 f_ << std::string(12, ' ') << "SUMMARY  " << cs.str() << "\n";
             }
+            /* Pinned-dim audit: every OPTIM dim currently marked by a
+             * CORANA driver as sitting ON a bound with its step already
+             * at the V floor -- the walk cannot leave the bound, so the
+             * bound is shaping the optimum. One WARNING block per
+             * milestone while any mark is held, rows aggregated per
+             * (dim, side) across chains; the advice is a HINT (the pin
+             * is provable state, the remedy is judgement). */
+            if (pin_chains_ > 0 && !pin_state_.empty()) {
+                struct Row { std::size_t dim; int side; int n;
+                             double gap; std::uint64_t since; };
+                std::map<std::pair<std::size_t, int>, Row> agg;
+                for (const auto& [k, v] : pin_state_) {
+                    auto& r = agg.try_emplace(
+                        std::pair<std::size_t, int>{std::get<1>(k),
+                                                    std::get<2>(k)},
+                        Row{std::get<1>(k), std::get<2>(k), 0, 0.0,
+                            std::numeric_limits<std::uint64_t>::max()})
+                        .first->second;
+                    ++r.n;
+                    if (v.gap   > r.gap)   r.gap   = v.gap;
+                    if (v.since < r.since) r.since = v.since;
+                }
+                std::vector<Row> rows;
+                rows.reserve(agg.size());
+                for (const auto& [k, r] : agg) rows.push_back(r);
+                std::sort(rows.begin(), rows.end(),
+                          [](const Row& a, const Row& b) {
+                              if (a.n   != b.n)   return a.n   > b.n;
+                              if (a.dim != b.dim) return a.dim < b.dim;
+                              return a.side < b.side;
+                          });
+                auto label_of = [&](const Row& r) {
+                    std::string l = r.dim < pin_labels_.size()
+                        ? pin_labels_[r.dim]
+                        : "param[" + std::to_string(r.dim) + "]";
+                    if (r.dim < pin_log_.size() && pin_log_[r.dim])
+                        l += " (ln)";
+                    return l;
+                };
+                std::size_t lw = 24;
+                for (const auto& r : rows)
+                    lw = std::max(lw, label_of(r).size());
+                auto pad = [](std::string s, std::size_t w) {
+                    if (s.size() < w) s.resize(w, ' ');
+                    return s;
+                };
+                auto sci1 = [](double v) {
+                    if (v == 0.0) return std::string("0");
+                    std::ostringstream o;
+                    o << std::scientific << std::setprecision(1) << v;
+                    return o.str();
+                };
+                const bool multi = pin_chains_ > 1;
+                std::ostringstream t;
+                t << rows.size() << " OPTIM dim(s) pinned at a bound with "
+                     "step at the V floor -- the walk cannot leave the "
+                     "bound; it is load-bearing:\n"
+                  << "  " << pad("dim", lw + 2) << pad("side", 6)
+                  << pad("bound", 13) << pad("gap", 11) << pad("v_floor", 11);
+                if (multi) t << pad("slots", 8);
+                t << "pinned for";
+                for (const auto& r : rows) {
+                    const bool   ok = r.dim < pin_low_.size();
+                    const double b  = ok ? (r.side ? pin_high_[r.dim]
+                                                   : pin_low_[r.dim]) : 0.0;
+                    const double vf = ok ? pin_floor_frac_ *
+                                           (pin_high_[r.dim] - pin_low_[r.dim])
+                                         : 0.0;
+                    const std::uint64_t u = pin_unit_ >= r.since
+                                            ? pin_unit_ - r.since + 1 : 1;
+                    t << "\n  " << pad(label_of(r), lw + 2)
+                      << pad(r.side ? "HI" : "LO", 6)
+                      << pad(fmt_double(b, 3), 13)
+                      << pad(sci1(r.gap), 11)
+                      << pad(sci1(vf), 11);
+                    if (multi)
+                        t << pad(std::to_string(r.n) + "/"
+                                 + std::to_string(pin_chains_), 8);
+                    t << u << " " << pin_unit_name_ << (u == 1 ? "" : "s");
+                }
+                event_locked("WARNING", t.str());
+                event_locked("HINT",
+                    "pinned dims: the fit is pushing past these OPTIM "
+                    "boxes -- widen or re-centre the box if the bound is "
+                    "not physical; a deliberate bound can be left pinned.");
+            }
             /* Stagnation hint: if we've spent more than half the recent
              * milestone window with no new best, point the user at the
              * common causes (LOCAL too tight for noise, basin already
@@ -1018,6 +1117,46 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
             else if (next_milestone_ < 10000) next_milestone_ += 1000;
             else                              next_milestone_ += 5000;
         }
+    }
+}
+
+void HPOLog::arm_pin_audit(const OptimizerSpec& sp, double v_floor_frac,
+                           int n_chains, const std::string& unit_name)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    pin_low_  = sp.low;
+    pin_high_ = sp.high;
+    pin_log_.assign(sp.low.size(), 0);
+    for (std::size_t i = 0; i < sp.log_scaled.size() && i < pin_log_.size(); ++i)
+        pin_log_[i] = sp.log_scaled[i] ? 1 : 0;
+    pin_floor_frac_ = v_floor_frac;
+    pin_chains_     = n_chains > 0 ? n_chains : 1;
+    pin_unit_name_  = unit_name;
+    pin_unit_       = 0;
+    pin_state_.clear();
+}
+
+void HPOLog::record_pin_state(int chain, std::uint64_t unit,
+                              const std::vector<PinnedDim>& pins)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    if (pin_chains_ == 0) return;   /* audit not armed */
+    if (unit > pin_unit_) pin_unit_ = unit;
+    /* Replace this chain's set: a mark still held on the same (dim, side)
+     * keeps its original since-unit; everything else for the chain is
+     * unmarked. */
+    const auto lo = pin_state_.lower_bound({chain, 0, 0});
+    const auto hi = pin_state_.lower_bound({chain + 1, 0, 0});
+    std::map<std::pair<std::size_t, int>, std::uint64_t> old_since;
+    for (auto it = lo; it != hi; ++it)
+        old_since[{std::get<1>(it->first), std::get<2>(it->first)}] =
+            it->second.since;
+    pin_state_.erase(lo, hi);
+    for (const auto& p : pins) {
+        const int  side = p.hi ? 1 : 0;
+        const auto f    = old_since.find({p.dim, side});
+        pin_state_[{chain, p.dim, side}] =
+            PinInfo{f != old_since.end() ? f->second : unit, p.gap};
     }
 }
 
