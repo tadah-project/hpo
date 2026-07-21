@@ -50,6 +50,8 @@
  *   T_COLD       T_HOT/LADDER_SPAN  coldest slot
  *   LADDER_SPAN  1e3             T_HOT/T_COLD when T_COLD unset
  *   SWAP_EVERY   1               exchange attempt every N epochs
+ *   SWAP_WINDOW  20              windowed per-pair swap-acceptance table
+ *                                every N epochs (0 = cumulative only)
  *   RT           1.0             ladder cooling per epoch ((0,1])
  *   INIT_MODE    0               0: chain0=seed, others sigma-jittered
  *                                1: chains>0 drawn uniformly in the box
@@ -406,10 +408,10 @@ template<typename Vec, typename HostT>
           oss << "  [static ladder (RT=1)]";
         HPOLog::instance().info(oss.str());
       }
-      /* Per-slot table: [lo-hi] range rows of 8, continuation lines
-       * indented to the journal's message column (22). The end-of-run
-       * new-best histogram mirrors this grid so counts map onto
-       * temperatures by eye. */
+      /* Per-slot table: [lo-hi] range rows of 8 (HPOLog::event tags and
+       * indents continuation lines). The per-epoch report and the
+       * end-of-run new-best histogram mirror this grid so their values
+       * map onto temperatures by eye. */
       {
         const int iw = static_cast<int>(std::to_string(K - 1).size());
         std::ostringstream oss;
@@ -417,7 +419,7 @@ template<typename Vec, typename HostT>
             << "=hottest):";
         for (std::size_t lo = 0; lo < K; lo += 8) {
           const std::size_t hi = std::min(lo + 8, K) - 1;
-          oss << "\n" << std::string(22, ' ')
+          oss << "\n"
               << "[" << std::setw(iw) << lo << "-" << std::setw(iw) << hi
               << "]" << std::scientific << std::setprecision(3);
           for (std::size_t k = lo; k <= hi; ++k) oss << "  " << T[k];
@@ -504,6 +506,11 @@ template<typename Vec, typename HostT>
     /* Per-pair swap-acceptance bookkeeping. */
     std::vector<std::size_t> swap_attempt(K > 1 ? K - 1 : 0, 0);
     std::vector<std::size_t> swap_accept (K > 1 ? K - 1 : 0, 0);
+    /* SWAP_WINDOW-epoch window of the same counters (reset after each
+     * windowed table) -- shows acceptance DRIFT the cumulative table
+     * averages away. */
+    std::vector<std::size_t> swap_attempt_win(K > 1 ? K - 1 : 0, 0);
+    std::vector<std::size_t> swap_accept_win (K > 1 ? K - 1 : 0, 0);
 
     /* Ladder-flow bookkeeping (Katzgraber-style up/down tagging),
      * single-process runs only -- walker identities would have to ride
@@ -675,11 +682,12 @@ template<typename Vec, typename HostT>
         if (e_prop == 0) { stop_reason = StopReason::MaxEval; break; }
 
         /* Pre-swap snapshot for the per-epoch replica-state report: the
-         * exchange below permutes x/f and walker ids, while the report
-         * describes what each slot's rung actually did. Single-process
-         * only (chains are rank-local), same as the report itself. */
-        std::vector<double>      f_pre, f_delta;
-        std::vector<std::size_t> walker_pre;
+         * exchange below permutes x/f, while the report describes what
+         * each slot's rung actually did. (The walker row is deliberately
+         * POST-swap -- walkers only move at exchanges, so the pre-swap
+         * occupancy is last epoch's post-swap row.) Single-process only
+         * (chains are rank-local), same as the report itself. */
+        std::vector<double> f_pre, f_delta;
         if (world == 1) {
           f_pre.resize(n_local);
           f_delta.resize(n_local);
@@ -687,8 +695,11 @@ template<typename Vec, typename HostT>
             f_pre[li]   = chains[li].f;
             f_delta[li] = chains[li].f - f_start[li];
           }
-          walker_pre = walker_at;
         }
+        /* Per-pair outcome of THIS epoch's exchange round for the
+         * events row: 'x' swapped, '.' rejected, ' ' not attempted
+         * (DEO parity). */
+        std::vector<char> pair_event(K > 1 ? K - 1 : 0, ' ');
 
         /* --- exchange phase (deterministic; per-pair coin streams so
          * the decision is identical no matter which rank(s) own the
@@ -714,13 +725,17 @@ template<typename Vec, typename HostT>
               auto& cj = chains[i + 1 - off_local];
               const double delta = (beta_i - beta_j) * (ci.f - cj.f);
               ++swap_attempt[i];
+              ++swap_attempt_win[i];
               ++att;
+              pair_event[i] = '.';
               if (delta >= 0.0 || coin < std::exp(delta)) {
                 std::swap(ci.x, cj.x);
                 std::swap(ci.f, cj.f);
                 if (world == 1) std::swap(walker_at[i], walker_at[i + 1]);
                 ++swap_accept[i];
+                ++swap_accept_win[i];
                 ++acc;
+                pair_event[i] = 'x';
               }
             } else {
               /* Boundary pair: I own exactly one side; my peer owns the
@@ -738,8 +753,13 @@ template<typename Vec, typename HostT>
               const bool accepted = (delta >= 0.0) || coin < std::exp(delta);
               if (i_mine) {
                 ++swap_attempt[i];
+                ++swap_attempt_win[i];
                 ++att;
-                if (accepted) { ++swap_accept[i]; ++acc; }
+                if (accepted) {
+                  ++swap_accept[i];
+                  ++swap_accept_win[i];
+                  ++acc;
+                }
               }
               if (accepted) {
                 std::vector<double> sx(dim), rx(dim, 0.0);
@@ -819,6 +839,75 @@ template<typename Vec, typename HostT>
                          std::chrono::steady_clock::now() - epoch_wall_t0)
                          .count());
           HPOLog::instance().info(oss.str());
+          /* Per-pair swap-acceptance tables. DEO parity gives each pair
+           * at most one attempt per 2*SWAP_EVERY epochs, so per-epoch
+           * per-pair rates would be 0/100% noise -- the CUMULATIVE table
+           * (every exchange epoch) is the live ladder diagnostic, and
+           * the SWAP_WINDOW table (then reset) shows drift the
+           * cumulative average hides. att/pair in the header states the
+           * resolution; "-" = pair not attempted yet. Single-process
+           * only: the counters are rank-local. */
+          if (world == 1 && K >= 2 && ep_swap_rate >= 0.0) {
+            const int iwp = static_cast<int>(std::to_string(K - 2).size());
+            auto pair_table = [&](const std::string& label,
+                                  const std::vector<std::size_t>& attv,
+                                  const std::vector<std::size_t>& accv) {
+              std::size_t amin = std::numeric_limits<std::size_t>::max();
+              std::size_t amax = 0;
+              for (std::size_t p = 0; p + 1 < K; ++p) {
+                amin = std::min(amin, attv[p]);
+                amax = std::max(amax, attv[p]);
+              }
+              std::ostringstream o;
+              o << "ANNEAL_PT swap acc% per pair (" << label
+                << ", att/pair " << amin;
+              if (amax != amin) o << "-" << amax;
+              o << "; pair p = slots p<->p+1):";
+              for (std::size_t lo = 0; lo + 1 < K; lo += 8) {
+                const std::size_t hi = std::min(lo + 8, K - 1) - 1;
+                o << "\n[" << std::setw(iwp) << lo << "-" << std::setw(iwp)
+                  << hi << "]";
+                for (std::size_t p = lo; p <= hi; ++p) {
+                  if (attv[p] == 0)
+                    o << "  " << std::setw(9) << "-";
+                  else
+                    o << "  " << std::setw(9)
+                      << std::lround(100.0 *
+                             static_cast<double>(accv[p]) /
+                             static_cast<double>(attv[p]));
+                }
+              }
+              HPOLog::instance().info(o.str());
+            };
+            pair_table("cumulative", swap_attempt, swap_accept);
+            if (kb.swap_window > 0 && epoch_count % kb.swap_window == 0) {
+              std::size_t att_tot = 0;
+              for (auto a : swap_attempt_win) att_tot += a;
+              if (att_tot > 0) {
+                pair_table("last " + std::to_string(kb.swap_window) +
+                           " epoch(s)", swap_attempt_win, swap_accept_win);
+                std::fill(swap_attempt_win.begin(), swap_attempt_win.end(),
+                          std::size_t{0});
+                std::fill(swap_accept_win.begin(), swap_accept_win.end(),
+                          std::size_t{0});
+              }
+            }
+            /* THIS epoch's exchange outcomes -- the walker motion itself,
+             * readable without diffing walker rows across epochs. */
+            {
+              std::ostringstream o;
+              o << "ANNEAL_PT exchange this epoch "
+                   "(x=swapped, .=rejected, blank=other parity):";
+              for (std::size_t lo = 0; lo + 1 < K; lo += 8) {
+                const std::size_t hi = std::min(lo + 8, K - 1) - 1;
+                o << "\n[" << std::setw(iwp) << lo << "-" << std::setw(iwp)
+                  << hi << "]";
+                for (std::size_t p = lo; p <= hi; ++p)
+                  o << "  " << std::setw(9) << pair_event[p];
+              }
+              HPOLog::instance().info(o.str());
+            }
+          }
           /* Sparse per-slot new-best histogram for THIS epoch (chain-init
            * bests land in epoch 1's window), as its own tagged line.
            * Single-process only: the window counts are rank-local, so
@@ -847,7 +936,7 @@ template<typename Vec, typename HostT>
               o << head;
               for (std::size_t lo = 0; lo < K; lo += 8) {
                 const std::size_t hi = std::min(lo + 8, K) - 1;
-                o << "\n" << std::string(22, ' ')
+                o << "\n"
                   << "[" << std::setw(iw) << lo << "-" << std::setw(iw) << hi
                   << "]";
                 for (std::size_t s = lo; s <= hi; ++s) cell(o, s);
@@ -882,18 +971,40 @@ template<typename Vec, typename HostT>
                        static_cast<double>(p)) : 0;
                    o << "  " << std::setw(9) << pct;
                  });
-            grid("ANNEAL_PT walker per slot (pre-swap):",
+            /* POST-swap walker lineup (what the next epoch runs), each
+             * tagged by the last ladder end it touched (Katzgraber
+             * up/down labeling, from the flow bookkeeping): a 'v'
+             * walker descending toward slot 0 is a hot-end discovery
+             * being carried to the cold end. */
+            grid("ANNEAL_PT walker per slot (post-swap = next epoch's "
+                 "lineup; ^=up walker (last touched cold end), v=down "
+                 "walker (last touched hot end), .=no extreme yet):",
                  [&](std::ostringstream& o, std::size_t s) {
-                   o << "  " << std::setw(9) << walker_pre[s];
+                   const std::size_t w = walker_at[s];
+                   const char t = walker_tag[w] > 0
+                                      ? '^' : (walker_tag[w] < 0 ? 'v' : '.');
+                   o << "  " << std::setw(8) << w << t;
                  });
+            /* Running end-to-end communication scoreboard (the same
+             * counters as the end-of-run ladder-flow line): 0 round
+             * trips = the replicas are still effectively independent
+             * annealers. */
+            {
+              std::ostringstream of;
+              of << "ANNEAL_PT ladder flow: traversals cold->hot="
+                 << flow_up << "  hot->cold=" << flow_down
+                 << "  (~" << std::min(flow_up, flow_down)
+                 << " round trip(s) so far)";
+              HPOLog::instance().info(of.str());
+            }
             /* Corana step-vector state per slot, normalised to the box:
              * r_i = V[i]/width[i], so every slot starts at STEP_FRAC and
              * lives in [V_FLOOR_FRAC, 1]. V is slot-resident (exchanges
              * swap x/f, never V), so each slot's step scale equilibrates
              * to its own temperature. CLASSIC never adapts V -- the
              * blocks would be a constant STEP_FRAC row, so skip them.
-             * Per user preference these rows are individually tagged
-             * INFO lines, not continuation lines. */
+             * Emitted through the shared grid emitter -- HPOLog::event
+             * stars the header and tags every row. */
             if (kb.corana) {
               std::vector<double> v_gm(K), v_mn(K), v_mx(K);
               for (std::size_t s = 0; s < K; ++s) {
@@ -910,24 +1021,19 @@ template<typename Vec, typename HostT>
                 v_mn[s] = mn;
                 v_mx[s] = mx;
               }
-              auto vgrid = [&](const std::string& head,
-                               const std::vector<double>& v) {
-                HPOLog::instance().info(head);
-                for (std::size_t lo = 0; lo < K; lo += 8) {
-                  const std::size_t hi = std::min(lo + 8, K) - 1;
-                  std::ostringstream o;
-                  o << "  [" << std::setw(iw) << lo << "-" << std::setw(iw)
-                    << hi << "]" << std::scientific << std::setprecision(3);
-                  for (std::size_t s = lo; s <= hi; ++s)
-                    o << "  " << std::setw(9) << v[s];
-                  HPOLog::instance().info(o.str());
-                }
+              auto vcell = [&](const std::vector<double>& v) {
+                return [&](std::ostringstream& o, std::size_t s) {
+                  o << "  " << std::scientific << std::setprecision(3)
+                    << std::setw(9) << v[s];
+                };
               };
-              vgrid("ANNEAL_PT V geo-mean per slot "
-                    "(geomean_i V[i]/width[i]; start=STEP_FRAC, "
-                    "floor=V_FLOOR_FRAC, cap=1):", v_gm);
-              vgrid("ANNEAL_PT V min per slot (min_i V[i]/width[i]):", v_mn);
-              vgrid("ANNEAL_PT V max per slot (max_i V[i]/width[i]):", v_mx);
+              grid("ANNEAL_PT V geo-mean per slot "
+                   "(geomean_i V[i]/width[i]; start=STEP_FRAC, "
+                   "floor=V_FLOOR_FRAC, cap=1):", vcell(v_gm));
+              grid("ANNEAL_PT V min per slot (min_i V[i]/width[i]):",
+                   vcell(v_mn));
+              grid("ANNEAL_PT V max per slot (max_i V[i]/width[i]):",
+                   vcell(v_mx));
             }
           }
         }
@@ -1008,7 +1114,7 @@ template<typename Vec, typename HostT>
                << (K - 1) << "=hottest):";
           for (std::size_t lo = 0; lo < K; lo += 8) {
             const std::size_t hi = std::min(lo + 8, K) - 1;
-            ossb << "\n" << std::string(22, ' ')
+            ossb << "\n"
                  << "[" << std::setw(iw) << lo << "-" << std::setw(iw) << hi
                  << "]";
             for (std::size_t k = lo; k <= hi; ++k) {

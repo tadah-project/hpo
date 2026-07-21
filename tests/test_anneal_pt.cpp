@@ -269,11 +269,12 @@ TEST_CASE("ANNEAL_PT: journal carries the banner, epoch lines and the "
     sp.seed = 11;
     sp.num_threads = 2;
     sp.stop.maxeval = 400;
-    sp.param["REPLICAS"] = 4.0;
-    sp.param["CORANA"]   = 1.0;
-    sp.param["NS"]       = 2.0;
-    sp.param["NT"]       = 2.0;
-    sp.param["T_HOT"]    = 1.0;
+    sp.param["REPLICAS"]    = 4.0;
+    sp.param["CORANA"]      = 1.0;
+    sp.param["NS"]          = 2.0;
+    sp.param["NT"]          = 2.0;
+    sp.param["T_HOT"]       = 1.0;
+    sp.param["SWAP_WINDOW"] = 4.0;
 
     LoggedRun lr;
     MtStubHost stub{ [&](const Vec& x){ return quad_bowl2(x, 0.0, 0.0); }, {}, {} };
@@ -299,8 +300,14 @@ TEST_CASE("ANNEAL_PT: journal carries the banner, epoch lines and the "
     CHECK(log.find("ANNEAL_PT best_f per slot:") != std::string::npos);
     CHECK(log.find("ANNEAL_PT imp per slot") != std::string::npos);
     CHECK(log.find("ANNEAL_PT acc% per slot (epoch):") != std::string::npos);
-    CHECK(log.find("ANNEAL_PT walker per slot (pre-swap):") != std::string::npos);
-    /* Corana V-state blocks (per-line INFO rows) + knobs in the banner. */
+    /* Flow reporting: exchange-events row, tagged post-swap walker
+     * lineup, per-epoch traversal counters. */
+    CHECK(log.find("ANNEAL_PT exchange this epoch") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT walker per slot (post-swap")
+          != std::string::npos);
+    CHECK(log.find("ANNEAL_PT ladder flow: traversals cold->hot=")
+          != std::string::npos);
+    /* Corana V-state blocks + knobs in the banner. */
     CHECK(log.find("ANNEAL_PT V geo-mean per slot") != std::string::npos);
     CHECK(log.find("ANNEAL_PT V min per slot (min_i V[i]/width[i]):")
           != std::string::npos);
@@ -308,6 +315,15 @@ TEST_CASE("ANNEAL_PT: journal carries the banner, epoch lines and the "
           != std::string::npos);
     CHECK(log.find("V_FLOOR_FRAC=") != std::string::npos);
     CHECK(log.find("STEP_FRAC=") != std::string::npos);
+    /* Live per-pair swap tables: cumulative each exchange epoch, windowed
+     * every SWAP_WINDOW epochs. */
+    CHECK(log.find("ANNEAL_PT swap acc% per pair (cumulative")
+          != std::string::npos);
+    CHECK(log.find("ANNEAL_PT swap acc% per pair (last 4 epoch(s)")
+          != std::string::npos);
+    /* Multi-line entries: starred head line, tagged continuation rows. */
+    CHECK(log.find("INFO      * ANNEAL_PT ladder T per slot")
+          != std::string::npos);
 }
 
 TEST_CASE("HPOLog: best-origin tag (slot/T + probe) and per-slot histograms",
@@ -317,10 +333,11 @@ TEST_CASE("HPOLog: best-origin tag (slot/T + probe) and per-slot histograms",
     LoggedRun lr;
     auto& log = HPOLog::instance();
 
-    /* A best recorded while the thread is stamped as a T0 probe. */
+    /* A best recorded while the thread is stamped as a T0 probe; the
+     * breakdown continuation line must carry the timestamp + BEST tag. */
     HPOLog::set_eval_probe();
     log.log_new_best(1, 10.0, 0,false, 0,false, 0,false, 0,false, 0,false,
-                     1.0);
+                     1.0, "A=1(50%)");
     /* A better best recorded from ladder slot 3 of 32 at T=2.377. */
     HPOLog::set_eval_slot(3, 32, 2.377);
     log.log_new_best(2, 5.0, 0,false, 0,false, 0,false, 0,false, 0,false,
@@ -333,6 +350,9 @@ TEST_CASE("HPOLog: best-origin tag (slot/T + probe) and per-slot histograms",
     const std::string txt = lr.read();
     CHECK(txt.find("[T0 probe]") != std::string::npos);
     CHECK(txt.find("[slot 3/32 T=2.377e+00]") != std::string::npos);
+    /* Continuation line: blank timestamp column (12 spaces) + tag. */
+    CHECK(txt.find("\n            BEST       top: A=1(50%)")
+          != std::string::npos);
     /* The old redundant prefix is gone. */
     CHECK(txt.find("NEW BEST") == std::string::npos);
 

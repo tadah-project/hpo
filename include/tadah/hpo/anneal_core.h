@@ -181,6 +181,8 @@ struct Knobs {
   std::optional<double> t_cold;     /* explicit coldest slot            */
   double      ladder_span = 1e3;    /* T_COLD = T_HOT / LADDER_SPAN     */
   std::size_t swap_every  = 1;      /* exchange attempt every N epochs  */
+  std::size_t swap_window = 20;     /* windowed swap-acc table every N
+                                     * epochs (0 = cumulative only)     */
 
   /* shared by both parallel drivers */
   int         init_mode   = 0;      /* 0 = seed + sigma-jitter, 1 = box */
@@ -218,7 +220,7 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
       "REANNEAL", "REANNEAL_SCALE",
   };
   static const std::unordered_set<std::string> pt_keys = {
-      "REPLICAS", "T_COLD", "LADDER_SPAN", "SWAP_EVERY",
+      "REPLICAS", "T_COLD", "LADDER_SPAN", "SWAP_EVERY", "SWAP_WINDOW",
   };
   static const std::unordered_set<std::string> pa_keys = {
       "SWEEPS", "ESS_TARGET",
@@ -321,6 +323,10 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   if (sp.param.count("T_COLD")) kb.t_cold = pget("T_COLD", 0.0);
   kb.ladder_span = pget("LADDER_SPAN", 1e3);
   kb.swap_every  = static_cast<std::size_t>(pget("SWAP_EVERY", 1.0));
+  if (pget("SWAP_WINDOW", 20.0) < 0.0)
+    throw std::runtime_error(ctx + ": PARAM SWAP_WINDOW must be >= 0 "
+        "(epochs between windowed swap-acceptance tables; 0 disables them)");
+  kb.swap_window = static_cast<std::size_t>(pget("SWAP_WINDOW", 20.0));
   kb.init_mode   = static_cast<int>(pget("INIT_MODE", 0.0));
   kb.sweeps      = static_cast<std::size_t>(pget("SWEEPS", 1.0));
   kb.ess_target  = pget("ESS_TARGET", 0.5);

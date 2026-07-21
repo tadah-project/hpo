@@ -212,8 +212,27 @@ void HPOLog::event(const std::string& tag, const std::string& msg)
         f_ << s << "\n";
         wrote_setup_section_ = true;
     }
-    f_ << "[" << now_hms() << "]  " << std::left << std::setw(8) << tag
-       << "  " << msg << "\n";
+    /* Multi-line entries: the block's FIRST line carries the (single)
+     * timestamp and a star marking where the block starts; continuation
+     * lines blank the timestamp column but repeat the tag, so any grep
+     * hit stays attributed to its severity. Single-line entries stay
+     * unstarred. */
+    const bool multi = msg.find('\n') != std::string::npos;
+    std::size_t start = 0;
+    bool        first = true;
+    for (;;) {
+        const std::size_t nl = msg.find('\n', start);
+        if (first) f_ << "[" << now_hms() << "]  ";
+        else       f_ << std::string(12, ' ');
+        f_ << std::left << std::setw(8) << tag << "  ";
+        if (multi) f_ << (first ? "* " : "  ");
+        f_ << msg.substr(start,
+                         nl == std::string::npos ? std::string::npos
+                                                 : nl - start) << "\n";
+        first = false;
+        if (nl == std::string::npos) break;
+        start = nl + 1;
+    }
     f_.flush();
 }
 
@@ -916,6 +935,9 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                 << best_origin_str() << ")"
                 << "   NaN rate=" << std::fixed << std::setprecision(1)
                 << nan_pct << "%";
+            /* The milestone SUMMARY is one logical block: the head line
+             * carries the (single) timestamp, the pc_lammps and cadence
+             * sub-lines below blank the timestamp column. */
             f_ << "[" << now_hms() << "]  SUMMARY  "
                << msg.str() << "\n";
             /* pc_lammps shared-pool utilisation over this milestone
@@ -943,7 +965,7 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                    << ", fastest " << fmt_millis(fo_smin_win_)
                    << ", slowest " << fmt_millis(fo_smax_win_);
                 if (!fo_slowest_win_.empty()) fo << " [" << fo_slowest_win_ << "]";
-                f_ << "[" << now_hms() << "]  SUMMARY  " << fo.str() << "\n";
+                f_ << std::string(12, ' ') << "SUMMARY  " << fo.str() << "\n";
                 /* reset the window accumulators for the next milestone */
                 fo_busy_win_ = 0.0; fo_scount_win_ = 0;
                 fo_smin_win_ = std::numeric_limits<double>::max();
@@ -971,7 +993,7 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                                           wall_ms_per_eval / 1000.0)
                        << " to MAXEVAL";
                 }
-                f_ << "[" << now_hms() << "]  SUMMARY  " << cs.str() << "\n";
+                f_ << std::string(12, ' ') << "SUMMARY  " << cs.str() << "\n";
             }
             /* Stagnation hint: if we've spent more than half the recent
              * milestone window with no new best, point the user at the
@@ -1099,11 +1121,11 @@ void HPOLog::log_new_best(std::size_t eval_num,
 
     f_ << "[" << now_hms() << "]  BEST     " << msg.str() << "\n";
     if (!top_breakdown.empty()) {
-        /* Indent under the BEST line so the breakdown is visually
-         * attached. Cap line length defensively -- if the caller
-         * produced an over-long string, write it whole; the user can
-         * grep for "top:" to extract these lines later. */
-        f_ << "                       top: " << top_breakdown << "\n";
+        /* Continuation line: blank timestamp column + tag, like
+         * multi-line INFO entries (the head line above holds the entry
+         * star); grep for "top:" to extract these lines later. */
+        f_ << std::string(12, ' ') << "BEST       top: "
+           << top_breakdown << "\n";
     }
     f_.flush();
 }
