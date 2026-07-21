@@ -281,6 +281,52 @@ TEST_CASE("ANNEAL_PT: journal carries the banner, epoch lines and the "
     CHECK(log.find("ANNEAL_PT epoch=1/") != std::string::npos);
     CHECK(log.find("swap acceptance per pair") != std::string::npos);
     CHECK(log.find("ANNEAL_PT stopped:") != std::string::npos);
+    /* Resolved-ladder report: summary line + per-slot table (fires even
+     * with a user-set T_HOT, which skips the T0 calibration). The
+     * new-best histogram is NOT expected here: the stub host never calls
+     * log_new_best (that lives in HPO_Host) -- the origin-tag plumbing
+     * has its own HPOLog test case below. */
+    CHECK(log.find("ANNEAL_PT ladder: T_HOT=") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT ladder T per slot (0=coldest .. 3=hottest):")
+          != std::string::npos);
+    CHECK(log.find("[0-3]") != std::string::npos);
+}
+
+TEST_CASE("HPOLog: best-origin tag (slot/T + probe) and per-slot histograms",
+          "[HPO][anneal_pt][log]")
+{
+    using tadah::hpo::HPOLog;
+    LoggedRun lr;
+    auto& log = HPOLog::instance();
+
+    /* A best recorded while the thread is stamped as a T0 probe. */
+    HPOLog::set_eval_probe();
+    log.log_new_best(1, 10.0, 0,false, 0,false, 0,false, 0,false, 0,false,
+                     1.0);
+    /* A better best recorded from ladder slot 3 of 32 at T=2.377. */
+    HPOLog::set_eval_slot(3, 32, 2.377);
+    log.log_new_best(2, 5.0, 0,false, 0,false, 0,false, 0,false, 0,false,
+                     1.0);
+    /* Not-a-best: must neither tag nor count. */
+    log.log_new_best(3, 7.0, 0,false, 0,false, 0,false, 0,false, 0,false,
+                     1.0);
+    HPOLog::clear_eval_context();
+
+    const std::string txt = lr.read();
+    CHECK(txt.find("[T0 probe]") != std::string::npos);
+    CHECK(txt.find("[slot 3/32 T=2.377e+00]") != std::string::npos);
+    /* The old redundant prefix is gone. */
+    CHECK(txt.find("NEW BEST") == std::string::npos);
+
+    auto win = log.take_best_slot_window();
+    REQUIRE(win.size() == 1);
+    CHECK(win[0].first == 3);
+    CHECK(win[0].second == 1);
+    CHECK(log.take_best_slot_window().empty());   /* window drained */
+    auto tot = log.best_slot_totals();
+    REQUIRE(tot.size() == 1);
+    CHECK(tot[0].first == 3);
+    CHECK(tot[0].second == 1);
 }
 
 TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")

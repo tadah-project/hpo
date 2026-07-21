@@ -47,6 +47,62 @@ static std::string fmt_millis(double ms)
 }
 
 /* -------------------------------------------------------------------------
+ * HPOLog -- annealer eval context (thread-local)
+ * ------------------------------------------------------------------------- */
+
+namespace {
+thread_local int         tl_slot   = HPOLog::kSlotNone;
+thread_local std::size_t tl_nslots = 0;
+thread_local double      tl_T      = 0.0;
+}
+
+void HPOLog::set_eval_slot(int slot, std::size_t n_slots, double T)
+{
+    tl_slot   = slot;
+    tl_nslots = n_slots;
+    tl_T      = T;
+}
+
+void HPOLog::set_eval_probe()
+{
+    tl_slot   = kSlotProbe;
+    tl_nslots = 0;
+    tl_T      = 0.0;
+}
+
+void HPOLog::clear_eval_context()
+{
+    tl_slot   = kSlotNone;
+    tl_nslots = 0;
+    tl_T      = 0.0;
+}
+
+std::vector<std::pair<int, std::size_t>> HPOLog::take_best_slot_window()
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    std::vector<std::pair<int, std::size_t>> out(best_slot_win_.begin(),
+                                                 best_slot_win_.end());
+    best_slot_win_.clear();
+    return out;
+}
+
+std::vector<std::pair<int, std::size_t>> HPOLog::best_slot_totals() const
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    return {best_slot_tot_.begin(), best_slot_tot_.end()};
+}
+
+std::string HPOLog::best_origin_str() const
+{
+    if (cur_best_slot_ == kSlotProbe) return ", T0 probe";
+    if (cur_best_slot_ < 0) return "";
+    std::ostringstream s;
+    s << ", slot " << cur_best_slot_ << "/" << cur_best_nslots_
+      << " T=" << std::scientific << std::setprecision(3) << cur_best_T_;
+    return s.str();
+}
+
+/* -------------------------------------------------------------------------
  * HPOLog -- lifecycle
  * ------------------------------------------------------------------------- */
 
@@ -62,6 +118,12 @@ void HPOLog::reset_for_test()
     cadence_evals_   = 0;
     cadence_unit_.clear();
     cadence_maxeval_ = 0;
+    cur_best_slot_   = kSlotNone;
+    cur_best_nslots_ = 0;
+    cur_best_T_      = 0.0;
+    best_slot_win_.clear();
+    best_slot_tot_.clear();
+    clear_eval_context();
 }
 
 void HPOLog::open(const std::string& path,
@@ -850,7 +912,8 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
             msg << "   latency=" << fmt_millis(avg) << "/eval"
                 << "   best=" << fmt_double(cur_best_loss_)
                 << " (eval " << cur_best_eval_ << ", "
-                << evals_since_best << " evals ago)"
+                << evals_since_best << " evals ago"
+                << best_origin_str() << ")"
                 << "   NaN rate=" << std::fixed << std::setprecision(1)
                 << nan_pct << "%";
             f_ << "[" << now_hms() << "]  SUMMARY  "
@@ -994,14 +1057,27 @@ void HPOLog::log_new_best(std::size_t eval_num,
 
     cur_best_loss_ = loss;
     cur_best_eval_ = eval_num;
+    /* Snapshot the recording thread's annealer eval context (log_new_best
+     * runs on the thread that evaluated the point). Always overwritten --
+     * an untagged best clears a previous tag rather than inheriting it. */
+    cur_best_slot_   = tl_slot;
+    cur_best_nslots_ = tl_nslots;
+    cur_best_T_      = tl_T;
+    if (tl_slot >= 0) {
+        ++best_slot_win_[tl_slot];
+        ++best_slot_tot_[tl_slot];
+    }
     if (has_emae)   { best_emae_   = emae;   has_emae_   = true; }
     if (has_ermse)  { best_ermse_  = ermse;  has_ermse_  = true; }
     if (has_errmse) { best_errmse_ = errmse; has_errmse_ = true; }
     if (has_frmse)  { best_frmse_  = frmse;  has_frmse_  = true; }
     if (has_srmse)  { best_srmse_  = srmse;  has_srmse_  = true; }
 
+    /* The "BEST" tag column already announces the event, so the message
+     * itself carries only the data (the old "* NEW BEST" prefix was
+     * redundant; parse_hpo_log.py accepts both formats). */
     std::ostringstream msg;
-    msg << "* NEW BEST   eval=" << std::setw(6) << eval_num
+    msg << "* eval=" << std::setw(6) << eval_num
         << "  loss=" << fmt_double(loss);
     if (has_emae)   msg << "  EMAE="   << std::fixed << std::setprecision(2)
                         << emae   << " meV/at";
@@ -1014,6 +1090,12 @@ void HPOLog::log_new_best(std::size_t eval_num,
     if (has_srmse)  msg << "  SRMSE="  << std::fixed << std::setprecision(3)
                         << srmse  << " GPa";
     msg << "  (" << fmt_millis(wall_ms) << ")";
+    if (tl_slot == kSlotProbe) {
+        msg << "  [T0 probe]";
+    } else if (tl_slot >= 0) {
+        msg << "  [slot " << tl_slot << "/" << tl_nslots
+            << " T=" << std::scientific << std::setprecision(3) << tl_T << "]";
+    }
 
     f_ << "[" << now_hms() << "]  BEST     " << msg.str() << "\n";
     if (!top_breakdown.empty()) {
@@ -1158,7 +1240,7 @@ void HPOLog::finish(const std::string& status_str)
        << ": " << status_str_local << "\n";
     f_ << "  " << std::left << std::setw(KW) << "Best total loss"
        << ": " << fmt_double(cur_best_loss_)
-       << "  (eval " << cur_best_eval_ << ")\n";
+       << "  (eval " << cur_best_eval_ << best_origin_str() << ")\n";
     if (has_emae_)
         f_ << "  " << std::left << std::setw(KW) << "Best EMAE"
            << ": " << std::fixed << std::setprecision(2) << best_emae_ << " meV/atom\n";

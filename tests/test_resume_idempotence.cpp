@@ -143,10 +143,10 @@ TEST_CASE("BASINS resume is idempotent — bugs 1+2+3+4 end-to-end",
     /* Resume marker is present. */
     CHECK(log_b.find("BASINS: resumed from checkpoint") != std::string::npos);
 
-    /* Bug 1: no spurious NEW BEST with loss > best_a. We pull every
-     * NEW BEST loss from log_b and verify all are ≤ best_a (within an
+    /* Bug 1: no spurious BEST event with loss > best_a. We pull every
+     * BEST loss from log_b and verify all are ≤ best_a (within an
      * epsilon to allow numeric round-trip). */
-    std::regex best_re(R"(NEW BEST\s+eval=\s*\d+\s+loss=([0-9eE\.\+\-]+))");
+    std::regex best_re(R"(BEST\s+\*\s+eval=\s*\d+\s+loss=([0-9eE\.\+\-]+))");
     auto begin = std::sregex_iterator(log_b.begin(), log_b.end(), best_re);
     auto end   = std::sregex_iterator();
     bool found_any_best = false;

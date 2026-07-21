@@ -73,6 +73,7 @@
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -377,6 +378,49 @@ template<typename Vec, typename HostT>
                                static_cast<double>(k) /
                                static_cast<double>(K - 1));
 
+    /* Resolved-ladder report: T0 calibration fixes only the HOT end; the
+     * cold end and the per-slot geometry are decided here, so this is
+     * the first point the full ladder is known (also fires when a
+     * user-set T_HOT skipped the calibration entirely). */
+    if (rank == 0 && proceed) {
+      {
+        std::ostringstream oss;
+        oss << std::scientific << std::setprecision(3)
+            << "ANNEAL_PT ladder: T_HOT=" << T_hot
+            << "  T_COLD=" << T_cold
+            << (kb.t_cold ? " (PARAM T_COLD)" : " (T_HOT/LADDER_SPAN)")
+            << "  geometric over " << K << " slots, ratio="
+            << std::fixed << std::setprecision(3)
+            << std::pow(T_hot / T_cold, 1.0 / static_cast<double>(K - 1))
+            << " per rung";
+        if (kb.rt < 1.0)
+          oss << "  [initial; cools x" << kb.rt
+              << " per epoch, floor T_MIN="
+              << std::scientific << std::setprecision(3) << t_min << "]";
+        else
+          oss << "  [static ladder (RT=1)]";
+        HPOLog::instance().info(oss.str());
+      }
+      /* Per-slot table: [lo-hi] range rows of 8, continuation lines
+       * indented to the journal's message column (22). The end-of-run
+       * new-best histogram mirrors this grid so counts map onto
+       * temperatures by eye. */
+      {
+        const int iw = static_cast<int>(std::to_string(K - 1).size());
+        std::ostringstream oss;
+        oss << "ANNEAL_PT ladder T per slot (0=coldest .. " << (K - 1)
+            << "=hottest):";
+        for (std::size_t lo = 0; lo < K; lo += 8) {
+          const std::size_t hi = std::min(lo + 8, K) - 1;
+          oss << "\n" << std::string(22, ' ')
+              << "[" << std::setw(iw) << lo << "-" << std::setw(iw) << hi
+              << "]" << std::scientific << std::setprecision(3);
+          for (std::size_t k = lo; k <= hi; ++k) oss << "  " << T[k];
+        }
+        HPOLog::instance().info(oss.str());
+      }
+    }
+
     std::vector<anneal::ChainState<Vec>> chains(n_local);
     anneal::ReplicaPool pool(std::min(threads, n_local ? n_local : 1),
                              stop_flag);
@@ -414,7 +458,9 @@ template<typename Vec, typename HostT>
       pool.run_epoch(n_local, [&](std::size_t li) {
         /* key this chain's warm-start by its GLOBAL slot (off_local+li) so
          * results are independent of which worker runs it. */
-        warmstart::current_chain() = off_local + li;
+        const std::size_t gk = off_local + li;
+        warmstart::current_chain() = gk;
+        HPOLog::set_eval_slot(static_cast<int>(gk), K, T[gk]);
         if (rank == 0 && li == 0) return;   /* global slot 0 = seed */
         auto& c = chains[li];
         if (stop_flag.load(std::memory_order_relaxed)) return;
@@ -579,6 +625,7 @@ template<typename Vec, typename HostT>
         pool.run_epoch(n_local, [&](std::size_t li) {
           const std::size_t k = off_local + li;
           warmstart::current_chain() = k;   /* global slot for warm-start key */
+          HPOLog::set_eval_slot(static_cast<int>(k), K, T[k]);
           rstats[li] = anneal::run_rung(chains[li], T[k], sp, kb, host, ctx,
                                         allowance[k]);
         });
@@ -744,6 +791,17 @@ template<typename Vec, typename HostT>
                      std::chrono::duration<double>(
                          std::chrono::steady_clock::now() - epoch_wall_t0)
                          .count());
+          /* Sparse per-slot new-best histogram for THIS epoch (chain-init
+           * bests land in epoch 1's window). Single-process only: the
+           * window counts are rank-local, so under MPI a rank-0 line
+           * would silently miss the other ranks' slots. */
+          if (world == 1) {
+            const auto win = HPOLog::instance().take_best_slot_window();
+            if (!win.empty()) {
+              oss << "\n" << std::string(22, ' ') << "new bests per slot:";
+              for (const auto& [s, n] : win) oss << "  [" << s << "]:" << n;
+            }
+          }
           HPOLog::instance().info(oss.str());
         }
       }
@@ -807,6 +865,33 @@ template<typename Vec, typename HostT>
                << r << "%";
         }
         HPOLog::instance().info(ossp.str());
+      }
+      /* Per-slot new-best histogram over the whole run, on the same
+       * [lo-hi] grid (and column widths) as the startup ladder table so
+       * counts map onto temperatures by eye -- the direct answer to
+       * "did the hot rungs ever contribute?". Single-process only: the
+       * counts come from this rank's journal. */
+      if (world == 1) {
+        const auto tot = HPOLog::instance().best_slot_totals();
+        if (!tot.empty()) {
+          std::map<int, std::size_t> cnt(tot.begin(), tot.end());
+          const int iw = static_cast<int>(std::to_string(K - 1).size());
+          std::ostringstream ossb;
+          ossb << "ANNEAL_PT new-best count per slot (0=coldest .. "
+               << (K - 1) << "=hottest):";
+          for (std::size_t lo = 0; lo < K; lo += 8) {
+            const std::size_t hi = std::min(lo + 8, K) - 1;
+            ossb << "\n" << std::string(22, ' ')
+                 << "[" << std::setw(iw) << lo << "-" << std::setw(iw) << hi
+                 << "]";
+            for (std::size_t k = lo; k <= hi; ++k) {
+              const auto it = cnt.find(static_cast<int>(k));
+              ossb << "  " << std::setw(9)
+                   << (it != cnt.end() ? it->second : 0);
+            }
+          }
+          HPOLog::instance().info(ossb.str());
+        }
       }
       /* Measured ladder flow (single-process runs; see the bookkeeping
        * comment above). Exact counts of end-to-end traversals; 0 round

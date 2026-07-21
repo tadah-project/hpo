@@ -28,8 +28,10 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <tadah/core/checkpoint.h>
@@ -213,6 +215,36 @@ public:
                       double      wall_ms,
                       const std::string& top_breakdown = "");
 
+    /* ------------------------------------------------------------------
+     * Annealer eval context (thread-local): which ladder slot / absolute
+     * temperature the CURRENT thread's evaluations belong to. Stamped
+     * per task by the parallel annealing drivers (next to the warm-start
+     * key) and snapshotted by log_new_best(), so the journal can say
+     * WHERE each best was found. Threads that never stamp a context
+     * produce untagged bests -- serial drivers are unaffected.
+     * ------------------------------------------------------------------ */
+
+    static constexpr int kSlotNone  = -1;   /* no context stamped        */
+    static constexpr int kSlotProbe = -2;   /* T0-calibration probe eval */
+
+    /** Stamp the calling thread's evals as ladder slot @p slot of
+     *  @p n_slots (0 = coldest) at absolute temperature @p T. Stamp with
+     *  the T at eval time so a cooling ladder (RT < 1) stays correct. */
+    static void set_eval_slot(int slot, std::size_t n_slots, double T);
+    /** Stamp the calling thread's evals as T0-calibration probes. */
+    static void set_eval_probe();
+    /** Clear the calling thread's eval context (bests become untagged). */
+    static void clear_eval_context();
+
+    /** Per-slot new-best counts accumulated since the last call (the
+     *  drivers' per-epoch histogram), sorted by slot; probe bests
+     *  (kSlotProbe) are not counted. Single-process semantics: under
+     *  MPI the counts only cover THIS rank's slots. */
+    std::vector<std::pair<int, std::size_t>> take_best_slot_window();
+    /** Same histogram accumulated over the whole session (not
+     *  checkpointed -- a resumed run restarts the counts). */
+    std::vector<std::pair<int, std::size_t>> best_slot_totals() const;
+
     /** Log a NaN/Inf clamping event (timestamped, with parameter dump).
      *  @param eval_num     Global evaluation counter
      *  @param params_str   Human-readable string of parameter name=value pairs
@@ -350,6 +382,21 @@ private:
     /* best result tracking -- set by log_new_best(), used by finish() */
     double      cur_best_loss_  = std::numeric_limits<double>::max();
     std::size_t cur_best_eval_  = 0;
+
+    /* Where the current best was found: snapshot of the recording
+     * thread's eval context at log_new_best() time, plus per-slot
+     * new-best histograms (window = since last take_best_slot_window(),
+     * tot = whole session). Deliberately NOT checkpointed: after a
+     * resume the origin tag reappears with the first new best, and the
+     * histograms describe this session only. Protected by mtx_. */
+    int         cur_best_slot_   = kSlotNone;
+    std::size_t cur_best_nslots_ = 0;
+    double      cur_best_T_      = 0.0;
+    std::map<int, std::size_t> best_slot_win_;
+    std::map<int, std::size_t> best_slot_tot_;
+
+    /* ", slot 5/32 T=3.712e+00" | ", T0 probe" | "" -- mtx_ held. */
+    std::string best_origin_str() const;
 
     /* C3: suggested FTOL_REL from NOISE_CALIBRATION. Persisted so a
      * resumed BASINS run (which skips re-running NOISE_CALIBRATION)

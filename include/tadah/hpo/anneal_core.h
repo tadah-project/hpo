@@ -788,6 +788,11 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
     return out;
   }
 
+  /* Tag this thread's evals as T0 probes for the journal's best-origin
+   * tracking; cleared before returning so the serial driver's chain
+   * evals (same thread) are not mislabelled. */
+  HPOLog::set_eval_probe();
+
   std::normal_distribution<double>       ndist(0.0, 1.0);
   std::uniform_real_distribution<double> u_pm(-1.0, 1.0);
   double bf_probe = std::numeric_limits<double>::infinity();
@@ -929,6 +934,7 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
         << " sample(s)  loss range=[" << pmin << ", " << pmax << "]";
     HPOLog::instance().info(oss.str());
   }
+  HPOLog::clear_eval_context();
   return out;
 }
 

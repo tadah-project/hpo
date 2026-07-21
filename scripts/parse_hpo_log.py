@@ -59,7 +59,8 @@ def main(path):
 
     re_started = re.compile(r"Started\s+:\s*(\S+\s\S+)")
     re_finished = re.compile(r"Finished\s+:\s*(\S+\s\S+)")
-    re_newbest = re.compile(r"NEW BEST\s+eval=\s*(\d+)\s+loss=([0-9.eE+\-]+)")
+    # Matches both journal generations: old "* NEW BEST   eval=" and new "* eval=".
+    re_newbest = re.compile(r"\*\s+(?:NEW BEST\s+)?eval=\s*(\d+)\s+loss=([0-9.eE+\-]+)")
     re_round = re.compile(r"BASINS (round=\d+ \w+(?:\s+step=\d+)?[^|]*)")
     re_summary_eval = re.compile(r"---\s+(\d+)\s+evals done\s+.*best=([0-9.eE+\-]+)")
 
