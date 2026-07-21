@@ -148,9 +148,17 @@ private:
   void worker_loop(int worker_id)
   {
     on_worker_thread_() = true;
+    /* Consumer token: REQUIRED for fairness across producer streams. The
+     * token-less try_dequeue scores only the first 3 non-empty producer
+     * sub-queues in fixed producer-list order, so when many replica drivers
+     * enqueue batches at once (a PT exchange-barrier release) the producers at
+     * the tail of the scan order starve for tens of seconds while the pool
+     * stays busy on the head producers. A token rotates consumption across
+     * producers (moodycamel's documented remedy). */
+    moodycamel::ConsumerToken tok(q_);
     for (;;) {
       Task t;
-      q_.wait_dequeue(t);
+      q_.wait_dequeue(tok, t);
       if (t.stop) return;
 
       std::exception_ptr caught;
