@@ -577,6 +577,7 @@ enum class RungStop { Completed, Budget, Time, StopVal, External };
 
 struct RungStats {
   std::size_t proposed = 0, accepted = 0, oob = 0;
+  std::size_t improved = 0;   /* moves that set a new chain personal best */
   RungStop    stop = RungStop::Completed;
 };
 
@@ -661,6 +662,7 @@ RungStats corana_rung(ChainState<Vec>& c, double T,
           if (c.f < c.best_f) {
             c.best_f = c.f;
             c.best_x = c.x;
+            ++rs.improved;
           }
         }
         if (c.f <= ctx.stopval) {
@@ -735,6 +737,7 @@ RungStats classic_rung(ChainState<Vec>& c, double T,
       if (c.f < c.best_f) {
         c.best_f = c.f;
         c.best_x = c.x;
+        ++rs.improved;
       }
     }
     if (c.f <= ctx.stopval) { rs.stop = RungStop::StopVal; break; }

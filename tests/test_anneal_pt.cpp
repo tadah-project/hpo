@@ -87,6 +87,9 @@ struct LoggedRun {
     ~LoggedRun() {
         tadah::hpo::HPOLog::instance().finish("test-end");
         tadah::hpo::HPOLog::instance().reset_for_test();
+        /* Formatting aid: dump the journal before deleting it. */
+        if (std::getenv("TADAH_TEST_DUMP_LOG"))
+            std::cout << "\n===== " << path.string() << " =====\n" << read();
         std::error_code ec;
         std::filesystem::remove(path, ec);
     }
@@ -290,6 +293,21 @@ TEST_CASE("ANNEAL_PT: journal carries the banner, epoch lines and the "
     CHECK(log.find("ANNEAL_PT ladder T per slot (0=coldest .. 3=hottest):")
           != std::string::npos);
     CHECK(log.find("[0-3]") != std::string::npos);
+    /* Per-epoch replica-state report (world==1 path). */
+    CHECK(log.find("ANNEAL_PT f per slot (pre-swap):") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT df per slot (epoch):") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT best_f per slot:") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT imp per slot") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT acc% per slot (epoch):") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT walker per slot (pre-swap):") != std::string::npos);
+    /* Corana V-state blocks (per-line INFO rows) + knobs in the banner. */
+    CHECK(log.find("ANNEAL_PT V geo-mean per slot") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT V min per slot (min_i V[i]/width[i]):")
+          != std::string::npos);
+    CHECK(log.find("ANNEAL_PT V max per slot (max_i V[i]/width[i]):")
+          != std::string::npos);
+    CHECK(log.find("V_FLOOR_FRAC=") != std::string::npos);
+    CHECK(log.find("STEP_FRAC=") != std::string::npos);
 }
 
 TEST_CASE("HPOLog: best-origin tag (slot/T + probe) and per-slot histograms",

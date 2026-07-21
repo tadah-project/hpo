@@ -221,9 +221,14 @@ template<typename Vec, typename HostT>
       if (kb.t_cold)      oss << "  T_COLD=" << *kb.t_cold;
       else                oss << "  LADDER_SPAN=" << kb.ladder_span;
       if (kb.corana)
-        oss << "  NS=" << kb.NS << "  NT=" << kb.NT << "  C=" << kb.C;
+        oss << "  NS=" << kb.NS << "  NT=" << kb.NT << "  C=" << kb.C
+            << "  V_FLOOR_FRAC=" << kb.v_floor_frac;
       else
         oss << "  L=" << kb.L;
+      if (sp.step.has_value())
+        oss << "  sigma=" << *sp.step << " (uniform; STEP override)";
+      else
+        oss << "  STEP_FRAC=" << kb.step_frac;
       oss << "  INIT_MODE=" << kb.init_mode;
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
@@ -622,6 +627,12 @@ template<typename Vec, typename HostT>
             allowance[k] = base + (k < rem ? 1 : 0);
         }
 
+        /* f at epoch start (post previous exchange), for the per-epoch
+         * replica-state report's df column. */
+        std::vector<double> f_start(n_local);
+        for (std::size_t li = 0; li < n_local; ++li)
+          f_start[li] = chains[li].f;
+
         pool.run_epoch(n_local, [&](std::size_t li) {
           const std::size_t k = off_local + li;
           warmstart::current_chain() = k;   /* global slot for warm-start key */
@@ -662,6 +673,22 @@ template<typename Vec, typename HostT>
         if (any_stopval) { stop_reason = StopReason::StopVal; break; }
         if (any_time)    { stop_reason = StopReason::MaxTime; break; }
         if (e_prop == 0) { stop_reason = StopReason::MaxEval; break; }
+
+        /* Pre-swap snapshot for the per-epoch replica-state report: the
+         * exchange below permutes x/f and walker ids, while the report
+         * describes what each slot's rung actually did. Single-process
+         * only (chains are rank-local), same as the report itself. */
+        std::vector<double>      f_pre, f_delta;
+        std::vector<std::size_t> walker_pre;
+        if (world == 1) {
+          f_pre.resize(n_local);
+          f_delta.resize(n_local);
+          for (std::size_t li = 0; li < n_local; ++li) {
+            f_pre[li]   = chains[li].f;
+            f_delta[li] = chains[li].f - f_start[li];
+          }
+          walker_pre = walker_at;
+        }
 
         /* --- exchange phase (deterministic; per-pair coin streams so
          * the decision is identical no matter which rank(s) own the
@@ -791,18 +818,118 @@ template<typename Vec, typename HostT>
                      std::chrono::duration<double>(
                          std::chrono::steady_clock::now() - epoch_wall_t0)
                          .count());
+          HPOLog::instance().info(oss.str());
           /* Sparse per-slot new-best histogram for THIS epoch (chain-init
-           * bests land in epoch 1's window). Single-process only: the
-           * window counts are rank-local, so under MPI a rank-0 line
-           * would silently miss the other ranks' slots. */
+           * bests land in epoch 1's window), as its own tagged line.
+           * Single-process only: the window counts are rank-local, so
+           * under MPI a rank-0 line would silently miss the other ranks'
+           * slots. */
           if (world == 1) {
             const auto win = HPOLog::instance().take_best_slot_window();
             if (!win.empty()) {
-              oss << "\n" << std::string(22, ' ') << "new bests per slot:";
-              for (const auto& [s, n] : win) oss << "  [" << s << "]:" << n;
+              std::ostringstream ossw;
+              ossw << "ANNEAL_PT new bests per slot:";
+              for (const auto& [s, n] : win) ossw << "  [" << s << "]:" << n;
+              HPOLog::instance().info(ossw.str());
             }
           }
-          HPOLog::instance().info(oss.str());
+          /* --- per-epoch replica-state report (pre-swap snapshot) ------
+           * One grid block per metric, on the same [lo-hi] rows and
+           * column widths as the startup ladder table so slot columns
+           * line up down the journal. f/df/imp/acc describe the rung
+           * phase just run; best_f is slot-resident (never swapped);
+           * walker is the state lineage that produced this slot's rung.
+           * Single-process only, like the histogram above. */
+          if (world == 1) {
+            const int iw = static_cast<int>(std::to_string(K - 1).size());
+            auto grid = [&](const std::string& head, auto&& cell) {
+              std::ostringstream o;
+              o << head;
+              for (std::size_t lo = 0; lo < K; lo += 8) {
+                const std::size_t hi = std::min(lo + 8, K) - 1;
+                o << "\n" << std::string(22, ' ')
+                  << "[" << std::setw(iw) << lo << "-" << std::setw(iw) << hi
+                  << "]";
+                for (std::size_t s = lo; s <= hi; ++s) cell(o, s);
+              }
+              HPOLog::instance().info(o.str());
+            };
+            grid("ANNEAL_PT f per slot (pre-swap):",
+                 [&](std::ostringstream& o, std::size_t s) {
+                   o << "  " << std::scientific << std::setprecision(3)
+                     << std::setw(9) << f_pre[s];
+                 });
+            grid("ANNEAL_PT df per slot (epoch):",
+                 [&](std::ostringstream& o, std::size_t s) {
+                   o << " " << std::scientific << std::setprecision(3)
+                     << std::showpos << std::setw(10) << f_delta[s]
+                     << std::noshowpos;
+                 });
+            grid("ANNEAL_PT best_f per slot:",
+                 [&](std::ostringstream& o, std::size_t s) {
+                   o << "  " << std::scientific << std::setprecision(3)
+                     << std::setw(9) << chains[s].best_f;
+                 });
+            grid("ANNEAL_PT imp per slot (epoch, new personal bests):",
+                 [&](std::ostringstream& o, std::size_t s) {
+                   o << "  " << std::setw(9) << rstats[s].improved;
+                 });
+            grid("ANNEAL_PT acc% per slot (epoch):",
+                 [&](std::ostringstream& o, std::size_t s) {
+                   const std::size_t p = rstats[s].proposed;
+                   const long pct = p ? std::lround(
+                       100.0 * static_cast<double>(rstats[s].accepted) /
+                       static_cast<double>(p)) : 0;
+                   o << "  " << std::setw(9) << pct;
+                 });
+            grid("ANNEAL_PT walker per slot (pre-swap):",
+                 [&](std::ostringstream& o, std::size_t s) {
+                   o << "  " << std::setw(9) << walker_pre[s];
+                 });
+            /* Corana step-vector state per slot, normalised to the box:
+             * r_i = V[i]/width[i], so every slot starts at STEP_FRAC and
+             * lives in [V_FLOOR_FRAC, 1]. V is slot-resident (exchanges
+             * swap x/f, never V), so each slot's step scale equilibrates
+             * to its own temperature. CLASSIC never adapts V -- the
+             * blocks would be a constant STEP_FRAC row, so skip them.
+             * Per user preference these rows are individually tagged
+             * INFO lines, not continuation lines. */
+            if (kb.corana) {
+              std::vector<double> v_gm(K), v_mn(K), v_mx(K);
+              for (std::size_t s = 0; s < K; ++s) {
+                double slog = 0.0;
+                double mn = std::numeric_limits<double>::infinity();
+                double mx = 0.0;
+                for (std::size_t i = 0; i < dim; ++i) {
+                  const double r = chains[s].V[i] / (sp.high[i] - sp.low[i]);
+                  slog += std::log(r);
+                  mn = std::min(mn, r);
+                  mx = std::max(mx, r);
+                }
+                v_gm[s] = std::exp(slog / static_cast<double>(dim));
+                v_mn[s] = mn;
+                v_mx[s] = mx;
+              }
+              auto vgrid = [&](const std::string& head,
+                               const std::vector<double>& v) {
+                HPOLog::instance().info(head);
+                for (std::size_t lo = 0; lo < K; lo += 8) {
+                  const std::size_t hi = std::min(lo + 8, K) - 1;
+                  std::ostringstream o;
+                  o << "  [" << std::setw(iw) << lo << "-" << std::setw(iw)
+                    << hi << "]" << std::scientific << std::setprecision(3);
+                  for (std::size_t s = lo; s <= hi; ++s)
+                    o << "  " << std::setw(9) << v[s];
+                  HPOLog::instance().info(o.str());
+                }
+              };
+              vgrid("ANNEAL_PT V geo-mean per slot "
+                    "(geomean_i V[i]/width[i]; start=STEP_FRAC, "
+                    "floor=V_FLOOR_FRAC, cap=1):", v_gm);
+              vgrid("ANNEAL_PT V min per slot (min_i V[i]/width[i]):", v_mn);
+              vgrid("ANNEAL_PT V max per slot (max_i V[i]/width[i]):", v_mx);
+            }
+          }
         }
       }
     }
