@@ -63,11 +63,21 @@ public:
     // int THREADS = -1; // number of threads for parallel evaluation, -1 means all available threads
     double FAIL_SCORE = std::numeric_limits<double>::max();
     std::size_t QFLUSH_THRESHOLD = 10; // number of results to flush to disk at once
-    /* Per-sim wall-clock limit in SECONDS (LAMMPS `timer timeout` units),
-     * injected into every PC_LAMMPS script after each `clear`. "off"
-     * disables enforcement (the default -- opt in via the root MAXTIME key
-     * or per-sim --maxtime). A timed-out sim scores FAILSCORE. */
+    /* Per-pc_script wall-clock limit in SECONDS (LAMMPS `timer timeout`
+     * units), injected into every PC_LAMMPS script after each `clear`. "off"
+     * disables enforcement (the default -- opt in via the root
+     * PC_SCRIPT_TIMEOUT key, its legacy alias MAXTIME, or per-sim --maxtime).
+     * A timed-out sim scores FAILSCORE. Distinct from the OPTIMIZER-block
+     * MAXTIME (whole-run stop) and from PC_WORKER_TIMEOUT (the outer
+     * per-worker-task hard deadline). */
     std::string MAX_TIME = "off";
+    /* Which root key last supplied MAX_TIME, and whether each spelling was
+     * seen -- consumed by the startup diagnostic line and the both-keys
+     * warning. PC_SCRIPT_TIMEOUT is the self-describing name; MAXTIME is the
+     * legacy alias kept so existing .hpo configs keep parsing. */
+    std::string MAX_TIME_key;           // "PC_SCRIPT_TIMEOUT" | "MAXTIME" | ""
+    bool MAX_TIME_seen_new    = false;  // PC_SCRIPT_TIMEOUT was given
+    bool MAX_TIME_seen_legacy = false;  // legacy MAXTIME was given
 
     /* PC_ISOLATION: execution mode for the pc_lammps fan-out.
      *   PROCESS (default) -- persistent worker-process pool: each fan-out

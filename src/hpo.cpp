@@ -19,6 +19,7 @@
 
 #include <algorithm>  // std::max
 #include <cstdlib>    // getenv()
+#include <sstream>    // std::ostringstream (PC_SCRIPT_TIMEOUT diagnostic)
 #include <functional> // std::function
 #include <filesystem>
 #include <set>
@@ -239,6 +240,43 @@ int hpo_run(core::Context& ctx)
                         "PROCESS is the supported mode. THREAD will be "
                         "removed after one production cycle.");
 #endif
+        }
+
+        /* ---- PC_SCRIPT_TIMEOUT (legacy alias: MAXTIME): per-pc_script soft
+         * wall-clock limit, injected as LAMMPS `timer timeout` after each
+         * clear. Distinct from PC_WORKER_TIMEOUT (the outer per-worker-task
+         * hard deadline) and from the OPTIMIZER-block MAXTIME (whole-run
+         * stop). No startup diagnostic existed for it before -- print the
+         * effective value, which keyword supplied it, and the hard deadline. */
+        {
+            const std::string src = trg.MAX_TIME_key.empty()
+                ? "default" : trg.MAX_TIME_key;
+            const std::string soft = (trg.MAX_TIME == "off")
+                ? "off (no per-script limit)" : (trg.MAX_TIME + " s");
+            std::string hard;
+            if (pc_mode == "PROCESS") {
+                if (pc_wtimeout > 0.0) {
+                    std::ostringstream w; w << pc_wtimeout;
+                    hard = w.str() + " s (PC_WORKER_TIMEOUT)";
+                } else if (trg.MAX_TIME == "off") {
+                    hard = "none";
+                } else {
+                    hard = "derived max(3x, x+120) s from the per-script limit";
+                }
+            } else {
+                hard = "n/a (THREAD mode)";
+            }
+            log.info("PC_SCRIPT_TIMEOUT: " + soft + " (from " + src +
+                     ") -- soft LAMMPS `timer timeout`, re-armed each "
+                     "run-section; hard per-worker-task deadline: " + hard);
+            if (trg.MAX_TIME_seen_new && trg.MAX_TIME_seen_legacy)
+                log.warning("both PC_SCRIPT_TIMEOUT and legacy MAXTIME were "
+                            "given; the later line wins (effective: " +
+                            trg.MAX_TIME + " s from " + src + ")");
+            else if (trg.MAX_TIME_seen_legacy)
+                log.info("MAXTIME is a legacy alias for PC_SCRIPT_TIMEOUT "
+                         "(per-pc_script timeout, seconds); prefer "
+                         "PC_SCRIPT_TIMEOUT in new configs");
         }
 
         /* ---- FAILSCORE_GRADING: graded ("smooth") failure losses --------

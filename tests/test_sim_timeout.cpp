@@ -13,6 +13,7 @@
 #include <tadah/core/context.h>
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/runners.h>
+#include <tadah/hpo/hpo_targets.h>   // PC_SCRIPT_TIMEOUT / MAXTIME keyword parse
 
 #include <chrono>
 #include <filesystem>
@@ -168,4 +169,65 @@ run 500000000
     const std::vector<std::string> next = {
         "clear", "units lj", "print \"healthy\""};
     REQUIRE(runner.run_script(lmp, next, tadah::core::Context{}));
+}
+
+/* ---------------------------------------------------------------------------
+ * Config-keyword parse: PC_SCRIPT_TIMEOUT is the self-describing name for the
+ * per-pc_script wall-clock limit; MAXTIME is the legacy alias. Both feed the
+ * same MAX_TIME string; if both appear the later line wins. (The OPTIMIZER-
+ * block MAXTIME is a different setting and is not exercised here.)
+ * ------------------------------------------------------------------------- */
+namespace { const char* MIN_OPT = "OPTIMIZER\nLIB DLIB\nALGO BFGS\nENDOPTIMIZER\n"; }
+
+TEST_CASE("PC_SCRIPT_TIMEOUT sets the per-script limit",
+          "[lammps_sim][timeout][config]") {
+    ScopedTempFile cfg(std::string(MIN_OPT) + "PC_SCRIPT_TIMEOUT 5\n");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    REQUIRE(trg.MAX_TIME == "5");
+    REQUIRE(trg.MAX_TIME_seen_new);
+    REQUIRE_FALSE(trg.MAX_TIME_seen_legacy);
+    REQUIRE(trg.MAX_TIME_key == "PC_SCRIPT_TIMEOUT");
+}
+
+TEST_CASE("legacy MAXTIME still sets the per-script limit (alias)",
+          "[lammps_sim][timeout][config]") {
+    ScopedTempFile cfg(std::string(MIN_OPT) + "MAXTIME 7\n");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    REQUIRE(trg.MAX_TIME == "7");
+    REQUIRE(trg.MAX_TIME_seen_legacy);
+    REQUIRE_FALSE(trg.MAX_TIME_seen_new);
+    REQUIRE(trg.MAX_TIME_key == "MAXTIME");
+}
+
+TEST_CASE("PC_SCRIPT_TIMEOUT and legacy MAXTIME set an identical value",
+          "[lammps_sim][timeout][config]") {
+    ScopedTempFile a(std::string(MIN_OPT) + "PC_SCRIPT_TIMEOUT 3\n");
+    ScopedTempFile b(std::string(MIN_OPT) + "MAXTIME 3\n");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets ta(ctx, a.path.string());
+    tadah::hpo::HPOTargets tb(ctx, b.path.string());
+    REQUIRE(ta.MAX_TIME == tb.MAX_TIME);   // downstream timer injection identical
+}
+
+TEST_CASE("both timeout keys: later line wins, both flags set",
+          "[lammps_sim][timeout][config]") {
+    ScopedTempFile cfg(std::string(MIN_OPT) + "MAXTIME 7\nPC_SCRIPT_TIMEOUT 5\n");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    REQUIRE(trg.MAX_TIME == "5");          // later line wins
+    REQUIRE(trg.MAX_TIME_seen_new);
+    REQUIRE(trg.MAX_TIME_seen_legacy);
+    REQUIRE(trg.MAX_TIME_key == "PC_SCRIPT_TIMEOUT");
+}
+
+TEST_CASE("no timeout key: defaults to off, no flags",
+          "[lammps_sim][timeout][config]") {
+    ScopedTempFile cfg(MIN_OPT);
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    REQUIRE(trg.MAX_TIME == "off");
+    REQUIRE_FALSE(trg.MAX_TIME_seen_new);
+    REQUIRE_FALSE(trg.MAX_TIME_seen_legacy);
 }

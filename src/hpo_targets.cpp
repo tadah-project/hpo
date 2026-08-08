@@ -1339,7 +1339,19 @@ void HPOTargets::read(const std::string& fn)
             /* optimizer-independent settings ----------------------- */
             // if      (key=="THREADS"){ double v; iss>>v; spec.param["THREADS"]=v; }
             if (key=="FAILSCORE"){ iss>>FAIL_SCORE; }
-            else if (key=="MAXTIME")  { iss>>MAX_TIME;  }
+            /* PC_SCRIPT_TIMEOUT: per-pc_script soft wall-clock limit (SECONDS)
+             * injected as LAMMPS `timer timeout` after each clear. MAXTIME is
+             * the legacy alias, kept so existing .hpo configs keep parsing.
+             * NOTE: the OPTIMIZER-block MAXTIME (whole-run stop) is a DIFFERENT
+             * setting parsed in optimizer_block.cpp -- do not conflate. If both
+             * spellings appear here, the later line wins (each overwrites
+             * MAX_TIME); hpo.cpp warns when both were given. */
+            else if (key=="PC_SCRIPT_TIMEOUT" || key=="MAXTIME") {
+                iss>>MAX_TIME;
+                MAX_TIME_key = key;
+                if (key=="MAXTIME") MAX_TIME_seen_legacy = true;
+                else                MAX_TIME_seen_new    = true;
+            }
             else if (key=="PC_ISOLATION") {
                 iss>>PC_ISOLATION;
                 PC_ISOLATION_set = true;
