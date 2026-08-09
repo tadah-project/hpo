@@ -43,6 +43,9 @@ make_pt_spec(std::vector<double> low, std::vector<double> high)
     sp.log_scaled.assign(sp.low.size(), false);
     sp.lib  = "TADAH";
     sp.algo = "ANNEAL_PT";
+    /* Most pre-STEP_AUTO tests exercise the legacy trajectory explicitly.
+     * Automatic-mode cases erase this fixture override. */
+    sp.param["STEP_AUTO"] = 0.0;
     return sp;
 }
 
@@ -108,6 +111,53 @@ double quad_bowl2(const Vec& x, double cx, double cy)
     return dx * dx + dy * dy;
 }
 
+struct TempWorkingDirectory {
+    std::filesystem::path old_path;
+    std::filesystem::path path;
+    TempWorkingDirectory()
+        : old_path(std::filesystem::current_path()),
+          path(std::filesystem::temp_directory_path() /
+               ("anneal_pt_steps_" +
+                std::to_string(std::chrono::steady_clock::now()
+                                   .time_since_epoch().count())))
+    {
+        std::filesystem::create_directories(path);
+        std::filesystem::current_path(path);
+    }
+    ~TempWorkingDirectory() {
+        std::filesystem::current_path(old_path);
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+    }
+};
+
+struct StepScaleRow {
+    std::size_t slot = 0;
+    double temperature = 0.0;
+    std::string parameter;
+    double sigma = 0.0;
+    double fraction = 0.0;
+    double acceptance = 0.0;
+    std::string status;
+};
+
+std::vector<StepScaleRow> read_step_scales()
+{
+    std::ifstream input("hpo_step_scales.tsv");
+    std::string line;
+    std::getline(input, line);
+    std::vector<StepScaleRow> rows;
+    while (std::getline(input, line)) {
+        std::replace(line.begin(), line.end(), '\t', ' ');
+        std::istringstream fields(line);
+        StepScaleRow row;
+        fields >> row.slot >> row.temperature >> row.parameter
+               >> row.sigma >> row.fraction >> row.acceptance >> row.status;
+        if (fields) rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
 }  // namespace
 
 TEST_CASE("ANNEAL_PT: INIT_MODE 0 uses Gaussian seed jitter for both steppers",
@@ -125,6 +175,7 @@ TEST_CASE("ANNEAL_PT: INIT_MODE 0 uses Gaussian seed jitter for both steppers",
         sp.param["T_HOT"] = 1.0;
         sp.param["T_COLD"] = 0.1;
         if (corana) {
+            sp.param.erase("STEP_AUTO");
             sp.param["CORANA"] = 1.0;
             sp.param["NS"] = 1.0;
             sp.param["NT"] = 1.0;
@@ -164,6 +215,7 @@ TEST_CASE("ANNEAL_PT: fixed-size thread-count invariance (same SEED => same eval
         sp.num_threads = threads;
         sp.stop.maxeval = 600;
         sp.param["REPLICAS"]  = 8.0;
+        sp.param.erase("STEP_AUTO");
         sp.param["CORANA"]    = 1.0;
         sp.param["NS"]        = 2.0;
         sp.param["NT"]        = 2.0;
@@ -259,6 +311,239 @@ TEST_CASE("ANNEAL_PT: MAXEVAL is a hard cap across all replicas",
     CHECK(stub.sorted_calls().size() == 137);
 }
 
+TEST_CASE("ANNEAL_PT automatic steps learn a 12-decade diagonal and emit TSV",
+          "[HPO][anneal_pt][step_auto]")
+{
+    using namespace tadah::hpo;
+    TempWorkingDirectory cwd;
+    LoggedRun lr;
+    auto sp = make_pt_spec({-1e-6, -1.0, -1e6}, {1e-6, 1.0, 1e6});
+    sp.param.erase("STEP_AUTO");       // exercise the default-on path
+    set_seed_point(sp, {0.0, 0.0, 0.0});
+    sp.seed = 91001;
+    sp.num_threads = 2;
+    sp.stop.maxeval = 1200;
+    sp.param["REPLICAS"] = 2.0;
+    sp.param["L"] = 10.0;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["T_COLD"] = 0.1;
+    sp.param["STEP_FRAC"] = 0.1;
+
+    MtStubHost host{[](const Vec& x) {
+        const double a = x(0) / 1e-6;
+        const double b = x(1);
+        const double c = x(2) / 1e6;
+        return a * a + b * b + c * c;
+    }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, host);
+
+    const auto rows = read_step_scales();
+    REQUIRE(rows.size() == 6);
+    for (const auto& row : rows) {
+        CHECK(std::isfinite(row.sigma));
+        CHECK(row.sigma > 0.0);
+        CHECK(row.fraction > 0.0);
+        CHECK(row.acceptance >= 0.0);
+        CHECK(row.acceptance <= 1.0);
+    }
+    for (std::size_t slot = 0; slot < 2; ++slot) {
+        double min_fraction = std::numeric_limits<double>::infinity();
+        double max_fraction = 0.0;
+        double min_sigma = std::numeric_limits<double>::infinity();
+        double max_sigma = 0.0;
+        for (const auto& row : rows) if (row.slot == slot) {
+            min_fraction = std::min(min_fraction, row.fraction);
+            max_fraction = std::max(max_fraction, row.fraction);
+            min_sigma = std::min(min_sigma, row.sigma);
+            max_sigma = std::max(max_sigma, row.sigma);
+        }
+        CHECK(max_fraction / min_fraction < 100.0);
+        CHECK(max_sigma / min_sigma > 1e10);
+    }
+    const std::string log = lr.read();
+    CHECK(log.find("ANNEAL_PT[CLASSIC[AUTO-FROZEN]]") != std::string::npos);
+    CHECK(log.find("step calibration slot=0") != std::string::npos);
+    CHECK(log.find("production epoch/swap/flow statistics reset")
+          != std::string::npos);
+}
+
+TEST_CASE("ANNEAL_PT automatic scales are robust to expanded OPTIM support",
+          "[HPO][anneal_pt][step_auto][support]")
+{
+    using namespace tadah::hpo;
+    auto learned_sigma = [](double half_width) {
+        TempWorkingDirectory cwd;
+        auto sp = make_pt_spec({-half_width}, {half_width});
+        sp.param.erase("STEP_AUTO");
+        set_seed_point(sp, {0.0});
+        sp.seed = 91002;
+        sp.num_threads = 2;
+        sp.stop.maxeval = 500;
+        sp.param["REPLICAS"] = 2.0;
+        sp.param["L"] = 5.0;
+        sp.param["T_HOT"] = 1.0;
+        sp.param["T_COLD"] = 0.1;
+        sp.param["STEP_FRAC"] = 1e-4;
+        MtStubHost host{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
+        run_anneal_pt_impl<Vec>(sp, host);
+        const auto rows = read_step_scales();
+        REQUIRE(rows.size() == 2);
+        return rows[1].sigma;          // compare at the same hot slot
+    };
+
+    const double base = learned_sigma(10.0);
+    const double expanded = learned_sigma(1e7);  // width expanded by 1e6
+    CHECK(expanded / base > 0.01);
+    CHECK(expanded / base < 100.0);
+}
+
+TEST_CASE("ANNEAL_PT automatic steps operate in transformed log coordinates",
+          "[HPO][anneal_pt][step_auto][logscale]")
+{
+    using namespace tadah::hpo;
+    TempWorkingDirectory cwd;
+    auto sp = make_pt_spec({1e-6}, {1e6});
+    sp.log_threshold = 1e3;
+    sp.analyse_logscale();
+    REQUIRE(sp.log_scaled == std::vector<bool>{true});
+    sp.param.erase("STEP_AUTO");
+    set_seed_point(sp, {1.0});  // public starting points remain physical
+    sp.seed = 91006;
+    sp.num_threads = 2;
+    sp.stop.maxeval = 500;
+    sp.param["REPLICAS"] = 2.0;
+    sp.param["L"] = 5.0;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["T_COLD"] = 0.1;
+    sp.param["STEP_FRAC"] = 0.1;
+    MtStubHost host{[](const Vec& physical) {
+        return std::pow(std::log(physical(0)), 2.0);
+    }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, host);
+
+    const auto rows = read_step_scales();
+    REQUIRE(rows.size() == 2);
+    for (const auto& row : rows) {
+        CHECK(std::isfinite(row.sigma));
+        CHECK(row.sigma > 0.0);
+    }
+    const auto calls = host.sorted_calls();
+    REQUIRE_FALSE(calls.empty());
+    for (const auto& call : calls) {
+        REQUIRE(call.size() == 1);
+        CHECK(std::isfinite(call[0]));
+        CHECK(call[0] > 0.0);
+    }
+}
+
+TEST_CASE("ANNEAL_PT automatic warm-up flags flat support and backs off cliffs",
+          "[HPO][anneal_pt][step_auto][cliff]")
+{
+    using namespace tadah::hpo;
+    TempWorkingDirectory cwd;
+    LoggedRun lr;
+    auto sp = make_pt_spec({-1.0, -1.0}, {1.0, 1.0});
+    sp.param.erase("STEP_AUTO");
+    set_seed_point(sp, {0.0, 1.0});  // exercise an exact-bound warm seed
+    sp.seed = 91005;
+    sp.num_threads = 2;
+    sp.stop.maxeval = 600;
+    sp.param["REPLICAS"] = 2.0;
+    sp.param["L"] = 5.0;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["T_COLD"] = 0.1;
+    sp.param["STEP_FRAC"] = 0.5;
+    MtStubHost host{[](const Vec& x) {
+        if (std::fabs(x(0)) > 0.02)
+            return std::numeric_limits<double>::infinity();
+        return x(0) * x(0);  // dimension 1 is deliberately flat
+    }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, host);
+
+    const auto rows = read_step_scales();
+    REQUIRE(rows.size() == 4);
+    bool flat_capped = false;
+    for (const auto& row : rows) {
+        if (row.parameter == "dim[1]" &&
+            row.status.find("support-capped") != std::string::npos)
+            flat_capped = true;
+    }
+    CHECK(flat_capped);
+    unsigned floor_status = pt_detail::StepOk;
+    const double floor_hi = std::nextafter(1.0, 2.0);
+    const double floor_scale = pt_detail::clamp_coordinate_scale(
+        0.0, 1.0, 1.0, floor_hi, floor_status);
+    CHECK(floor_scale == floor_hi - 1.0);
+    CHECK((floor_status & pt_detail::StepNumericalFloor) != 0);
+    const std::string log = lr.read();
+    const std::size_t first = log.find("backoffs=");
+    REQUIRE(first != std::string::npos);
+    CHECK(log.find("backoffs=0", first) == std::string::npos);
+}
+
+TEST_CASE("ANNEAL_PT interrupted automatic warm-up consumes exact budget",
+          "[HPO][anneal_pt][step_auto][budget]")
+{
+    using namespace tadah::hpo;
+    TempWorkingDirectory cwd;
+    LoggedRun lr;
+    auto sp = make_pt_spec({-1.0, -1.0}, {1.0, 1.0});
+    sp.param.erase("STEP_AUTO");
+    set_seed_point(sp, {0.0, 0.0});
+    sp.seed = 91003;
+    sp.num_threads = 4;
+    sp.stop.maxeval = 137;
+    sp.param["REPLICAS"] = 4.0;
+    sp.param["L"] = 10.0;
+    sp.param["T_HOT"] = 1.0;
+    MtStubHost host{[](const Vec& x) { return x(0) * x(0) + x(1) * x(1); },
+                    {}, {}};
+    run_anneal_pt_impl<Vec>(sp, host);
+    CHECK(host.sorted_calls().size() == 137);
+    const auto rows = read_step_scales();
+    REQUIRE(rows.size() == 8);
+    CHECK(std::any_of(rows.begin(), rows.end(), [](const StepScaleRow& row) {
+        return row.status.find("interrupted") != std::string::npos;
+    }));
+    CHECK(lr.read().find("MAXEVAL exhausted after 137 host eval(s)")
+          != std::string::npos);
+}
+
+TEST_CASE("ANNEAL_PT automatic adaptive diagonal is thread-count deterministic",
+          "[HPO][anneal_pt][step_auto][determinism]")
+{
+    using namespace tadah::hpo;
+    auto run = [](unsigned threads) {
+        TempWorkingDirectory cwd;
+        auto sp = make_pt_spec({-2.0, -2.0}, {2.0, 2.0});
+        sp.param.erase("STEP_AUTO");
+        set_seed_point(sp, {0.5, -0.5});
+        sp.seed = 91004;
+        sp.num_threads = threads;
+        sp.stop.maxeval = 600;
+        sp.param["REPLICAS"] = 4.0;
+        sp.param["L"] = 5.0;
+        sp.param["T_HOT"] = 1.0;
+        sp.param["T_COLD"] = 0.1;
+        sp.param["STEP_AUTO_SWEEPS"] = 4.0;
+        sp.param["STEP_ADAPT_EVERY"] = 5.0;
+        MtStubHost host{[](const Vec& x) {
+            return x(0) * x(0) + 10.0 * x(1) * x(1);
+        }, {}, {}};
+        run_anneal_pt_impl<Vec>(sp, host);
+        return host.sorted_calls();
+    };
+    const auto serial = run(1);
+    const auto parallel = run(4);
+    REQUIRE(serial.size() == 600);
+    REQUIRE(serial.size() == parallel.size());
+    for (std::size_t i = 0; i < serial.size(); ++i) {
+        REQUIRE(serial[i].size() == parallel[i].size());
+        for (std::size_t d = 0; d < serial[i].size(); ++d)
+            CHECK(serial[i][d] == Approx(parallel[i][d]).margin(1e-15));
+    }
+}
+
 TEST_CASE("ANNEAL_PT: MAXEVAL zero performs no host evaluation",
           "[HPO][anneal_pt][budget]")
 {
@@ -291,6 +576,7 @@ TEST_CASE("ANNEAL_PT: round-trip advice matches the selected stepper variant",
         sp.param["REPLICAS"] = 4.0;
         sp.param["T_HOT"] = 1.0;
         if (corana) {
+            sp.param.erase("STEP_AUTO");
             sp.stop.maxeval = 8;   /* 4 starts + one 4-eval epoch */
             sp.param["CORANA"] = 1.0;
             sp.param["NS"] = 1.0;
@@ -532,6 +818,7 @@ TEST_CASE("ANNEAL_PT: journal carries the banner, epoch lines and the "
     sp.num_threads = 2;
     sp.stop.maxeval = 400;
     sp.param["REPLICAS"]    = 4.0;
+    sp.param.erase("STEP_AUTO");
     sp.param["CORANA"]      = 1.0;
     sp.param["NS"]          = 2.0;
     sp.param["NT"]          = 2.0;
@@ -640,6 +927,53 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
     using namespace tadah::hpo;
     MtStubHost stub{ [&](const Vec&){ return 0.0; }, {}, {} };
 
+    SECTION("automatic controls default on for CLASSIC PT") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        sp.param.erase("STEP_AUTO");
+        const auto kb = anneal::Knobs::parse(sp, anneal::AlgoKind::PT);
+        CHECK(kb.step_auto);
+        CHECK(kb.step_auto_sweeps == 12);
+        CHECK(kb.step_adapt_every == 0);
+    }
+    SECTION("STEP_AUTO is Boolean") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        sp.param["STEP_AUTO"] = 2.0;
+        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                            Catch::Contains("STEP_AUTO"));
+    }
+    SECTION("STEP_AUTO_SWEEPS must be positive") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        sp.param["STEP_AUTO"] = 1.0;
+        sp.param["STEP_AUTO_SWEEPS"] = 0.0;
+        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                            Catch::Contains("STEP_AUTO_SWEEPS"));
+    }
+    SECTION("automatic controls are CLASSIC PT only") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        sp.param.erase("STEP_AUTO");
+        sp.param["CORANA"] = 1.0;
+        sp.param["NS"] = 1.0;
+        sp.param["NT"] = 1.0;
+        sp.param["STEP_ADAPT_EVERY"] = 1.0;
+        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                            Catch::Contains("CLASSIC variant"));
+    }
+    SECTION("explicit STEP disables automatic calibration") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        sp.param.erase("STEP_AUTO");
+        sp.step = 0.1;
+        const auto kb = anneal::Knobs::parse(sp, anneal::AlgoKind::PT);
+        CHECK_FALSE(kb.step_auto);
+        CHECK(kb.step_adapt_every == 0);
+    }
+    SECTION("adaptation cadence is rejected when STEP_AUTO is off") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        sp.param["STEP_AUTO"] = 0.0;
+        sp.param["STEP_ADAPT_EVERY"] = 1.0;
+        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                            Catch::Contains("unused"));
+    }
+
     SECTION("REPLICAS < 2") {
         auto sp = make_pt_spec({-1.0}, {1.0});
         set_seed_point(sp, {0.0});
@@ -714,6 +1048,7 @@ TEST_CASE("ANNEAL_PT: converges on a quadratic bowl at least as well as "
     sp.num_threads = 4;
     sp.stop.maxeval = 1200;
     sp.param["REPLICAS"]  = 6.0;
+    sp.param.erase("STEP_AUTO");
     sp.param["CORANA"]    = 1.0;
     sp.param["NS"]        = 3.0;
     sp.param["NT"]        = 2.0;

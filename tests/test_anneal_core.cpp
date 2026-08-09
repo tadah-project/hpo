@@ -720,6 +720,56 @@ TEST_CASE("anneal::metropolis_accept follows graded FAILSCORE repair signal",
     CHECK(coins == 1);
 }
 
+TEST_CASE("anneal diagonal RAM cadence accumulates every proposal",
+          "[HPO][anneal_core][step_adapt]")
+{
+    using Vec = dlib::matrix<double, 0, 1>;
+    OptimizerSpec sp;
+    sp.low = {-10.0, -10.0};
+    sp.high = {10.0, 10.0};
+    auto make_chain = [] {
+        anneal::ChainState<Vec> c;
+        c.x = Vec(2);
+        c.x = 0.0;
+        c.V = {0.1, 0.2};
+        return c;
+    };
+    const std::vector<double> z{1.0, 2.0};
+
+    auto frozen = make_chain();
+    anneal::accumulate_diagonal_ram(frozen, z, 1.0L, sp, 0);
+    CHECK(frozen.V[0] == 0.1);
+    CHECK(frozen.diag_ram_proposals == 0);
+
+    auto every_one = make_chain();
+    anneal::accumulate_diagonal_ram(every_one, z, 1.0L, sp, 1);
+    CHECK(every_one.V[0] > 0.1);
+    CHECK(every_one.V[1] > 0.2);
+    CHECK(every_one.diag_ram_pending == 0);
+
+    auto every_l = make_chain();
+    auto every_5l = make_chain();
+    for (std::size_t j = 0; j < 4; ++j) {
+        anneal::accumulate_diagonal_ram(every_l, z, 1.0L, sp, 5);
+        anneal::accumulate_diagonal_ram(every_5l, z, 1.0L, sp, 25);
+    }
+    CHECK(every_l.V[0] == 0.1);
+    CHECK(every_5l.V[0] == 0.1);
+    CHECK(every_l.diag_ram_pending == 4);
+    CHECK(every_5l.diag_ram_pending == 4);
+    REQUIRE(every_l.diag_ram_delta.size() == 2);
+    REQUIRE(every_5l.diag_ram_delta.size() == 2);
+    CHECK(every_l.diag_ram_delta[0] == Approx(every_5l.diag_ram_delta[0]));
+    CHECK(every_l.diag_ram_delta[1] == Approx(every_5l.diag_ram_delta[1]));
+
+    anneal::accumulate_diagonal_ram(every_l, z, 1.0L, sp, 5);
+    anneal::accumulate_diagonal_ram(every_5l, z, 1.0L, sp, 25);
+    CHECK(every_l.V[0] > 0.1);       // cadence L applies the batch
+    CHECK(every_5l.V[0] == 0.1);     // cadence 5L retains it for later
+    CHECK(every_5l.diag_ram_pending == 5);
+    CHECK(every_5l.diag_ram_delta[0] > 0.0);
+}
+
 TEST_CASE("anneal::run_rung retains the best graded FAILSCORE repair",
           "[HPO][anneal_core][rung][failscore][fail_grading]")
 {

@@ -274,6 +274,9 @@ struct Knobs {
   std::size_t swap_every  = 1;      /* exchange attempt every N epochs  */
   std::size_t swap_window = 20;     /* windowed swap-acc table every N
                                      * epochs (0 = cumulative only)     */
+  bool        step_auto = true;     /* PT CLASSIC coordinate warm-up    */
+  std::size_t step_auto_sweeps = 12;/* minimum attempts per coordinate  */
+  std::size_t step_adapt_every = 0; /* PT diagonal RAM apply cadence     */
 
   /* shared by both parallel drivers */
   int         init_mode   = 0;      /* 0 = seed + Gaussian jitter, 1 = box */
@@ -312,6 +315,7 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   };
   static const std::unordered_set<std::string> pt_keys = {
       "REPLICAS", "T_COLD", "LADDER_SPAN", "SWAP_EVERY", "SWAP_WINDOW",
+      "STEP_AUTO", "STEP_AUTO_SWEEPS", "STEP_ADAPT_EVERY",
   };
   static const std::unordered_set<std::string> pa_keys = {
       "SWEEPS", "ESS_TARGET",
@@ -471,6 +475,9 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   kb.ladder_span = pget("LADDER_SPAN", 1e3);
   kb.swap_every  = pcount("SWAP_EVERY", 1.0);
   kb.swap_window = pcount("SWAP_WINDOW", 20.0);
+  kb.step_auto = kind == AlgoKind::PT && pbool("STEP_AUTO", true);
+  kb.step_auto_sweeps = pcount("STEP_AUTO_SWEEPS", 12.0);
+  kb.step_adapt_every = pcount("STEP_ADAPT_EVERY", 0.0);
   const std::size_t init_mode = pcount("INIT_MODE", 0.0);
   if (kind != AlgoKind::Serial && init_mode > 1)
     throw std::runtime_error(
@@ -502,6 +509,32 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   if (kind == AlgoKind::PT && kb.rt == 1.0 && kb.t_min)
     throw std::runtime_error(
         ctx + ": PARAM T_MIN is unused by a static PT ladder (RT=1)");
+  if (kind == AlgoKind::PT && kb.corana) {
+    for (const char* key : {"STEP_AUTO", "STEP_AUTO_SWEEPS",
+                            "STEP_ADAPT_EVERY"})
+      if (sp.param.count(key))
+        throw std::runtime_error(
+            ctx + ": PARAM " + key + " belongs to the CLASSIC variant");
+    kb.step_auto = false;
+    kb.step_adapt_every = 0;
+  }
+  if (kind == AlgoKind::PT && sp.step) {
+    if (sp.param.count("STEP_AUTO_SWEEPS") ||
+        sp.param.count("STEP_ADAPT_EVERY"))
+      throw std::runtime_error(
+          ctx + ": STEP_AUTO_SWEEPS/STEP_ADAPT_EVERY are unused when "
+                "explicit STEP disables automatic step calibration");
+    kb.step_auto = false;
+    kb.step_adapt_every = 0;
+  }
+  if (kind == AlgoKind::PT && !kb.step_auto && !sp.step && !kb.corana) {
+    if (sp.param.count("STEP_AUTO_SWEEPS") ||
+        sp.param.count("STEP_ADAPT_EVERY"))
+      throw std::runtime_error(
+          ctx + ": STEP_AUTO_SWEEPS/STEP_ADAPT_EVERY are unused when "
+                "PARAM STEP_AUTO is 0");
+    kb.step_adapt_every = 0;
+  }
 
   /* -- validation ---------------------------------------------------- */
   const bool rt_one_ok = (kind == AlgoKind::PT);
@@ -555,6 +588,9 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
       throw std::runtime_error(ctx + ": PARAM LADDER_SPAN must be > 1");
     if (kb.swap_every == 0)
       throw std::runtime_error(ctx + ": PARAM SWAP_EVERY must be >= 1");
+    if (kb.step_auto && kb.step_auto_sweeps == 0)
+      throw std::runtime_error(
+          ctx + ": PARAM STEP_AUTO_SWEEPS must be >= 1");
     if (kb.rt < 1.0 && kb.t_min && !(*kb.t_min > 0.0))
       throw std::runtime_error(ctx + ": PARAM T_MIN must be > 0");
   }
@@ -1036,6 +1072,18 @@ struct RungStats {
   RungStop    stop = RungStop::Completed;
 };
 
+inline long double metropolis_probability(
+    double current, double proposed, double T,
+    const std::optional<double>& failscore)
+{
+  if (!loss_is_rankable(proposed, failscore)) return 0.0L;
+  if (!loss_is_rankable(current, failscore) || proposed <= current) return 1.0L;
+  if (!(T > 0.0)) return 0.0L;
+  const long double delta = static_cast<long double>(proposed) -
+                            static_cast<long double>(current);
+  return std::exp(-delta / static_cast<long double>(T));
+}
+
 /* FAILSCORE-aware Metropolis decision.  A rankable proposal always repairs an
  * unusable (NaN/Inf/exact-FAILSCORE) current state, while an unusable proposal
  * is never allowed to poison a healthy chain.  Graded failures below FS remain
@@ -1056,6 +1104,22 @@ inline bool metropolis_accept(double current, double proposed, double T,
   return static_cast<long double>(coin()) < p;
 }
 
+/* Smallest positive Gaussian scale that can move x by one representable
+ * value while remaining inside its hard support. */
+inline double resolvable_coordinate_scale(double x, double lo, double hi)
+{
+  double best = std::numeric_limits<double>::infinity();
+  if (x < hi) {
+    const double d = std::nextafter(x, hi) - x;
+    if (d > 0.0 && std::isfinite(d)) best = std::min(best, d);
+  }
+  if (x > lo) {
+    const double d = x - std::nextafter(x, lo);
+    if (d > 0.0 && std::isfinite(d)) best = std::min(best, d);
+  }
+  return std::isfinite(best) ? best : std::numeric_limits<double>::denorm_min();
+}
+
 /* ---- ChainState ------------------------------------------------------
  *
  * One annealing chain (= one PT replica / PA walker / the single serial
@@ -1070,7 +1134,58 @@ struct ChainState {
   std::mt19937_64     rng;
   Vec    best_x;
   double best_f = std::numeric_limits<double>::infinity();
+  std::vector<double> diag_ram_delta;
+  std::uint64_t       diag_ram_proposals = 0;
+  std::size_t         diag_ram_pending = 0;
 };
+
+/* Diagonal robust-adaptive-Metropolis contribution. Every proposal updates
+ * the accumulator; STEP_ADAPT_EVERY controls only when the proposal kernel
+ * changes. V stores standard deviations, so a variance log-factor contributes
+ * half as much to log(V). */
+template<class Vec>
+void accumulate_diagonal_ram(ChainState<Vec>& c,
+                             const std::vector<double>& z,
+                             long double alpha,
+                             const OptimizerSpec& sp,
+                             std::size_t adapt_every)
+{
+  if (adapt_every == 0) return;
+  const std::size_t dim = z.size();
+  if (c.diag_ram_delta.size() != dim)
+    c.diag_ram_delta.assign(dim, 0.0);
+  long double norm2 = 0.0L;
+  for (double zi : z) norm2 += static_cast<long double>(zi) * zi;
+  const std::uint64_t j = ++c.diag_ram_proposals;
+  ++c.diag_ram_pending;
+  if (norm2 > 0.0L && std::isfinite(norm2)) {
+    const long double eta = std::min<long double>(
+        1.0L, std::pow(static_cast<long double>(j), -0.6L));
+    for (std::size_t i = 0; i < dim; ++i) {
+      const long double ratio =
+          static_cast<long double>(z[i]) * z[i] / norm2;
+      const long double term = eta * (alpha - 0.234L) * ratio;
+      c.diag_ram_delta[i] += static_cast<double>(std::log1p(term));
+    }
+  }
+  if (c.diag_ram_pending < adapt_every) return;
+
+  const double log2 = std::log(2.0);
+  for (std::size_t i = 0; i < dim; ++i) {
+    const double log_variance_factor =
+        std::clamp(c.diag_ram_delta[i], -log2, log2);
+    long double next = static_cast<long double>(c.V[i]) *
+                       std::exp(0.5L * log_variance_factor);
+    const double floor = resolvable_coordinate_scale(
+        c.x(i), sp.low[i], sp.high[i]);
+    const double cap = sp.high[i] - sp.low[i];
+    next = std::max(static_cast<long double>(floor),
+                    std::min(static_cast<long double>(cap), next));
+    c.V[i] = static_cast<double>(next);
+  }
+  std::fill(c.diag_ram_delta.begin(), c.diag_ram_delta.end(), 0.0);
+  c.diag_ram_pending = 0;
+}
 
 /* ---- one rung (temperature step) on one chain ------------------------
  *
@@ -1210,6 +1325,8 @@ RungStats classic_rung(ChainState<Vec>& c, double T,
   RungStats rs;
   std::normal_distribution<double>       ndist(0.0, 1.0);
   std::uniform_real_distribution<double> udist(0.0, 1.0);
+  std::vector<double> z;
+  if (kb.step_adapt_every > 0) z.resize(dim);
 
   for (std::size_t k = 0; k < kb.L; ++k) {
     if (rs.proposed >= allowance) { rs.stop = RungStop::Budget; break; }
@@ -1229,21 +1346,26 @@ RungStats classic_rung(ChainState<Vec>& c, double T,
     Vec x_prop(dim);
     bool needed_bounds = false;
     for (std::size_t i = 0; i < dim; ++i) {
+      double unit = 0.0;
       auto draw = [&]() -> long double {
+        unit = ndist(c.rng);
         return static_cast<long double>(c.x(i)) +
                static_cast<long double>(c.V[i]) *
-               static_cast<long double>(ndist(c.rng));
+               static_cast<long double>(unit);
       };
       long double v = draw();
       if (constrain_proposal(v, sp.low[i], sp.high[i],
                              kb.boundary_mode, draw))
         needed_bounds = true;
       x_prop(i) = static_cast<double>(v);
+      if (!z.empty()) z[i] = unit;
     }
     if (needed_bounds) ++rs.oob;
 
     const double f_prop = host(sp.out(x_prop));
     ++rs.proposed;
+    const long double alpha =
+        metropolis_probability(c.f, f_prop, T, sp.failscore);
     const bool accept = metropolis_accept(
         c.f, f_prop, T, sp.failscore, [&] { return udist(c.rng); });
     if (accept) {
@@ -1256,6 +1378,8 @@ RungStats classic_rung(ChainState<Vec>& c, double T,
         ++rs.improved;
       }
     }
+    if (!z.empty())
+      accumulate_diagonal_ram(c, z, alpha, sp, kb.step_adapt_every);
     if (stopval_reached(c.f, ctx.stopval, sp.failscore)) {
       ctx.stop.store(true, std::memory_order_relaxed);
       rs.stop = RungStop::StopVal;

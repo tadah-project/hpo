@@ -122,6 +122,21 @@ Signature run_pt(std::uint64_t cap, RecordingHost& host,
   return host.global_signature();
 }
 
+Signature run_pt_auto(std::uint64_t cap, RecordingHost& host)
+{
+  auto sp = base_spec("ANNEAL_PT", cap);
+  sp.param.erase("CORANA");
+  sp.param.erase("NS");
+  sp.param.erase("NT");
+  sp.param["REPLICAS"] = 8.0;
+  sp.param["T_COLD"] = 0.1;
+  sp.param["L"] = 3.0;
+  /* STEP_AUTO is intentionally omitted: exercise the default-on CLASSIC
+   * coordinate warm-up and its cross-rank diagnostic gather. */
+  tadah::hpo::run_anneal_pt_impl<Vec>(sp, host);
+  return host.global_signature();
+}
+
 Signature run_pa(std::uint64_t cap, RecordingHost& host,
                  bool auto_t0 = false, bool stop_on_remote = false)
 {
@@ -294,6 +309,11 @@ int main(int argc, char** argv)
     const Signature pt_sig = run_pt(113, pt);
     require_all(pt_sig.count == 113, "PT did not consume exact MAXEVAL", rank);
 
+    RecordingHost pt_auto{rank, world};
+    const Signature pt_auto_sig = run_pt_auto(113, pt_auto);
+    require_all(pt_auto_sig.count == 113,
+                "automatic CLASSIC PT did not consume exact MAXEVAL", rank);
+
     RecordingHost pa{rank, world};
     const Signature pa_sig = run_pa(137, pa);
     require_all(pa_sig.count == 137, "PA did not consume exact MAXEVAL", rank);
@@ -355,6 +375,8 @@ int main(int argc, char** argv)
     if (rank == 0) {
       std::cout << "ANNEAL_MPI_SIGNATURE PT:" << pt_sig.count << ':'
                 << pt_sig.sum << ':' << pt_sig.xors
+                << " PT_AUTO:" << pt_auto_sig.count << ':'
+                << pt_auto_sig.sum << ':' << pt_auto_sig.xors
                 << " PA:" << pa_sig.count << ':' << pa_sig.sum << ':'
                 << pa_sig.xors << '\n';
     }

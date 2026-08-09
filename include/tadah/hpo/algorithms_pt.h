@@ -3,8 +3,11 @@
  *
  * Refs: Swendsen & Wang, PRL 57 (1986); Geyer (1991); Earl & Deem,
  *       PCCP 7 (2005) [review]; Corana et al., ACM TOMS 13:262 (1987)
- *       for the per-replica adaptive stepper; the deterministic
- *       even/odd (DEO) pairing follows Okabe et al., CPL 335 (2001).
+ *       for the per-replica adaptive stepper; Roberts, Gelman & Gilks,
+ *       AoAP 7 (1997), Garthwaite, Fan & Sisson (2010), and Vihola
+ *       (2012) motivate the CLASSIC scaling targets/adaptation. The
+ *       deterministic even/odd (DEO) pairing follows Okabe et al.,
+ *       CPL 335 (2001).
  *
  * K replicas run the shared annealing rung (anneal_core.h) on a geometric
  * ladder T_0 < T_1 < ... < T_{K-1} (slot 0 coldest). It is static by
@@ -57,8 +60,14 @@
  *   SWAP_WINDOW  20              windowed per-pair swap-acceptance table
  *                                every N epochs (0 = cumulative only)
  *   RT           1.0             ladder cooling per epoch ((0,1])
- *   INIT_MODE    0               0: chain0=seed; others use Gaussian
- *                                jitter (sigma=CLASSIC scale or Corana V)
+ *   STEP_AUTO    1               CLASSIC-only coordinate calibration;
+ *                                explicit STEP disables it, 0 is legacy fixed
+ *   STEP_AUTO_SWEEPS 12          minimum coordinate attempts (up to 2x)
+ *   STEP_ADAPT_EVERY 0           production diagonal-RAM apply cadence per
+ *                                slot; 0 freezes after warm-up
+ *   INIT_MODE    0               0: automatic CLASSIC starts every slot at
+ *                                the valid warm seed; fixed/Corana use seed
+ *                                plus Gaussian jitter in higher slots
  *                                1: chains>0 drawn uniformly in the box
  *   RESET_TO_BEST 0              when 1, snaps ONLY the coldest slot to
  *                                the global best after each epoch
@@ -78,10 +87,12 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -180,6 +191,286 @@ inline bool accept_exchange(double cold_temperature, double hot_temperature,
   const long double log_threshold =
       std::log(-std::log(static_cast<long double>(coin)));
   return log_m < log_threshold;
+}
+
+enum StepStatus : unsigned {
+  StepOk            = 0,
+  StepNumericalFloor = 1u << 0,
+  StepSupportCapped  = 1u << 1,
+  StepUnconverged    = 1u << 2,
+  StepInterrupted    = 1u << 3,
+};
+
+struct DimCalibration {
+  std::size_t attempts = 0;
+  std::size_t accepted = 0;
+  std::size_t backoffs = 0;
+  unsigned status = StepOk;
+};
+
+struct SlotCalibration {
+  std::vector<DimCalibration> dims;
+  std::size_t coordinate_proposed = 0;
+  std::size_t coordinate_accepted = 0;
+  std::size_t pilot_proposed = 0;
+  std::size_t pilot_accepted = 0;
+  std::size_t pilot_backoffs = 0;
+  anneal::RungStop stop = anneal::RungStop::Completed;
+};
+
+inline bool coordinate_converged(const DimCalibration& d,
+                                 std::size_t minimum_attempts)
+{
+  if (d.attempts < minimum_attempts) return false;
+  const double rate = static_cast<double>(d.accepted) /
+                      static_cast<double>(d.attempts);
+  return std::fabs(rate - 0.44) <= 0.15;
+}
+
+inline double clamp_coordinate_scale(double scale, double x,
+                                     double lo, double hi,
+                                     unsigned& status)
+{
+  const double floor = anneal::resolvable_coordinate_scale(x, lo, hi);
+  const double cap = hi - lo;
+  if (!std::isfinite(scale) || scale < floor) {
+    status |= StepNumericalFloor;
+    return floor;
+  }
+  if (scale > cap) {
+    status |= StepSupportCapped;
+    return cap;
+  }
+  return scale;
+}
+
+template<class Vec, class HostT>
+void coordinate_warmup(
+    anneal::ChainState<Vec>& c, double T, const OptimizerSpec& sp,
+    const anneal::Knobs& kb, HostT& host, anneal::StopCtx& ctx,
+    std::uint64_t allowance, SlotCalibration& out)
+{
+  const std::size_t dim = sp.low.size();
+  const std::size_t minimum = kb.step_auto_sweeps;
+  const std::size_t maximum = anneal::saturating_add(minimum, minimum);
+  if (out.dims.empty()) out.dims.resize(dim);
+  out.stop = anneal::RungStop::Completed;
+  for (auto& dc : out.dims)
+    dc.status &= ~(StepUnconverged | StepInterrupted);
+  std::normal_distribution<double> ndist(0.0, 1.0);
+  std::uniform_real_distribution<double> udist(0.0, 1.0);
+  std::vector<std::size_t> active;
+  active.reserve(dim);
+  for (std::size_t i = 0; i < dim; ++i) {
+    const auto& dc = out.dims[i];
+    if (dc.attempts < minimum ||
+        (!coordinate_converged(dc, minimum) && dc.attempts < maximum))
+      active.push_back(i);
+  }
+  const std::size_t proposed_at_entry = out.coordinate_proposed;
+
+  for (std::size_t sweep = 0; sweep < maximum && !active.empty(); ++sweep) {
+    std::shuffle(active.begin(), active.end(), c.rng);
+    std::vector<std::size_t> next;
+    next.reserve(active.size());
+    for (std::size_t i : active) {
+      if (out.coordinate_proposed - proposed_at_entry >= allowance) {
+        out.stop = anneal::RungStop::Budget;
+        break;
+      }
+      if (!ctx.budget.try_reserve()) {
+        out.stop = anneal::RungStop::Budget;
+        break;
+      }
+      if (ctx.stop.load(std::memory_order_relaxed)) {
+        ctx.budget.release();
+        out.stop = anneal::RungStop::External;
+        break;
+      }
+      if (ctx.time_exceeded()) {
+        ctx.budget.release();
+        out.stop = anneal::RungStop::Time;
+        break;
+      }
+
+      Vec proposal = c.x;
+      auto draw = [&]() -> long double {
+        return static_cast<long double>(c.x(i)) +
+               static_cast<long double>(c.V[i]) * ndist(c.rng);
+      };
+      long double value = draw();
+      anneal::constrain_proposal(value, sp.low[i], sp.high[i],
+                                 kb.boundary_mode, draw);
+      proposal(i) = static_cast<double>(value);
+      const double f_proposal = host(sp.out(proposal));
+      ++out.coordinate_proposed;
+      DimCalibration& dc = out.dims[i];
+      ++dc.attempts;
+      const long double alpha = anneal::metropolis_probability(
+          c.f, f_proposal, T, sp.failscore);
+      const bool accepted = anneal::metropolis_accept(
+          c.f, f_proposal, T, sp.failscore, [&] { return udist(c.rng); });
+      if (accepted) {
+        c.x = proposal;
+        c.f = f_proposal;
+        ++dc.accepted;
+        ++out.coordinate_accepted;
+        if (!anneal::loss_is_rankable(c.best_f, sp.failscore) ||
+            c.f < c.best_f) {
+          c.best_f = c.f;
+          c.best_x = c.x;
+        }
+      }
+
+      double next_scale = c.V[i];
+      if (!anneal::loss_is_finite(f_proposal, sp.failscore) || alpha < 0.01L) {
+        next_scale *= 0.1;
+        ++dc.backoffs;
+      } else {
+        const double gain = 5.0 * std::pow(
+            static_cast<double>(dc.attempts), -0.6);
+        const double change = std::clamp(
+            gain * (static_cast<double>(alpha) - 0.44),
+            -std::log(2.0), std::log(2.0));
+        next_scale *= std::exp(change);
+      }
+      c.V[i] = clamp_coordinate_scale(
+          next_scale, c.x(i), sp.low[i], sp.high[i], dc.status);
+
+      if (anneal::stopval_reached(c.f, ctx.stopval, sp.failscore)) {
+        ctx.stop.store(true, std::memory_order_relaxed);
+        out.stop = anneal::RungStop::StopVal;
+        break;
+      }
+      if (dc.attempts < minimum ||
+          (!coordinate_converged(dc, minimum) && dc.attempts < maximum))
+        next.push_back(i);
+    }
+    if (out.stop != anneal::RungStop::Completed) break;
+    active.swap(next);
+  }
+
+  for (auto& dc : out.dims) {
+    if (!coordinate_converged(dc, minimum)) dc.status |= StepUnconverged;
+    if (out.stop != anneal::RungStop::Completed &&
+        !coordinate_converged(dc, minimum) && dc.attempts < maximum)
+      dc.status |= StepInterrupted;
+  }
+}
+
+template<class Vec, class HostT>
+void full_vector_pilot(anneal::ChainState<Vec>& c, double T,
+                       const OptimizerSpec& sp, const anneal::Knobs& kb,
+                       HostT& host, anneal::StopCtx& ctx,
+                       std::uint64_t allowance, SlotCalibration& out)
+{
+  constexpr std::size_t pilot_count = 100;
+  const std::size_t dim = sp.low.size();
+  const double inv_sqrt_dim = 1.0 / std::sqrt(static_cast<double>(dim));
+  std::vector<double> base(dim), floor_ratio(dim), cap_ratio(dim);
+  double multiplier_min = 0.0;
+  double multiplier_max = std::numeric_limits<double>::infinity();
+  for (std::size_t i = 0; i < dim; ++i) {
+    const double floor = anneal::resolvable_coordinate_scale(
+        c.x(i), sp.low[i], sp.high[i]);
+    base[i] = c.V[i] * inv_sqrt_dim;
+    if (!(base[i] >= floor)) {
+      base[i] = floor;
+      out.dims[i].status |= StepNumericalFloor;
+    }
+    floor_ratio[i] = floor / base[i];
+    cap_ratio[i] = (sp.high[i] - sp.low[i]) / base[i];
+    multiplier_min = std::max(multiplier_min, floor_ratio[i]);
+    multiplier_max = std::min(multiplier_max, cap_ratio[i]);
+  }
+
+  double multiplier = 1.0;
+  std::normal_distribution<double> ndist(0.0, 1.0);
+  std::uniform_real_distribution<double> udist(0.0, 1.0);
+  for (std::size_t m = 1; m <= pilot_count; ++m) {
+    if (out.pilot_proposed >= allowance) {
+      out.stop = anneal::RungStop::Budget;
+      break;
+    }
+    if (!ctx.budget.try_reserve()) {
+      out.stop = anneal::RungStop::Budget;
+      break;
+    }
+    if (ctx.stop.load(std::memory_order_relaxed)) {
+      ctx.budget.release();
+      out.stop = anneal::RungStop::External;
+      break;
+    }
+    if (ctx.time_exceeded()) {
+      ctx.budget.release();
+      out.stop = anneal::RungStop::Time;
+      break;
+    }
+
+    Vec proposal(dim);
+    for (std::size_t i = 0; i < dim; ++i) {
+      auto draw = [&]() -> long double {
+        return static_cast<long double>(c.x(i)) +
+               static_cast<long double>(base[i] * multiplier) * ndist(c.rng);
+      };
+      long double value = draw();
+      anneal::constrain_proposal(value, sp.low[i], sp.high[i],
+                                 kb.boundary_mode, draw);
+      proposal(i) = static_cast<double>(value);
+    }
+    const double f_proposal = host(sp.out(proposal));
+    ++out.pilot_proposed;
+    const long double alpha = anneal::metropolis_probability(
+        c.f, f_proposal, T, sp.failscore);
+    const bool accepted = anneal::metropolis_accept(
+        c.f, f_proposal, T, sp.failscore, [&] { return udist(c.rng); });
+    if (accepted) {
+      c.x = proposal;
+      c.f = f_proposal;
+      ++out.pilot_accepted;
+      if (!anneal::loss_is_rankable(c.best_f, sp.failscore) ||
+          c.f < c.best_f) {
+        c.best_f = c.f;
+        c.best_x = c.x;
+      }
+    }
+
+    double next_multiplier = multiplier;
+    if (!anneal::loss_is_finite(f_proposal, sp.failscore) || alpha < 0.01L) {
+      next_multiplier *= 0.1;
+      ++out.pilot_backoffs;
+    } else {
+      const double gain = 5.0 * std::pow(static_cast<double>(m), -0.6);
+      const double change = std::clamp(
+          gain * (static_cast<double>(alpha) - 0.234),
+          -std::log(2.0), std::log(2.0));
+      next_multiplier *= std::exp(change);
+    }
+    if (next_multiplier < multiplier_min) {
+      next_multiplier = multiplier_min;
+      for (std::size_t i = 0; i < dim; ++i)
+        if (floor_ratio[i] >= multiplier_min * (1.0 - 1e-12))
+          out.dims[i].status |= StepNumericalFloor;
+    }
+    if (next_multiplier > multiplier_max) {
+      next_multiplier = multiplier_max;
+      for (std::size_t i = 0; i < dim; ++i)
+        if (cap_ratio[i] <= multiplier_max * (1.0 + 1e-12))
+          out.dims[i].status |= StepSupportCapped;
+    }
+    multiplier = next_multiplier;
+    if (anneal::stopval_reached(c.f, ctx.stopval, sp.failscore)) {
+      ctx.stop.store(true, std::memory_order_relaxed);
+      out.stop = anneal::RungStop::StopVal;
+      break;
+    }
+  }
+
+  for (std::size_t i = 0; i < dim; ++i) {
+    c.V[i] = base[i] * multiplier;
+    if (out.stop != anneal::RungStop::Completed)
+      out.dims[i].status |= StepInterrupted;
+  }
 }
 
 }  // namespace pt_detail
@@ -313,8 +604,14 @@ template<typename Vec, typename HostT>
 
     {
       std::ostringstream oss;
-      oss << "ANNEAL_PT[" << (kb.corana ? "CORANA" : "CLASSIC") << "]: "
-          << "seed=" << seed
+      const char* mode = kb.corana
+          ? "CORANA"
+          : (kb.step_auto
+                 ? (kb.step_adapt_every > 0
+                        ? "CLASSIC[ADAPTIVE-DIAG]"
+                        : "CLASSIC[AUTO-FROZEN]")
+                 : "CLASSIC[FIXED]");
+      oss << "ANNEAL_PT[" << mode << "]: seed=" << seed
           << "  REPLICAS=" << K
           << "  THREADS=" << threads
           << "  SWAP_EVERY=" << kb.swap_every
@@ -326,6 +623,12 @@ template<typename Vec, typename HostT>
             << "  V_FLOOR_FRAC=" << kb.v_floor_frac;
       else
         oss << "  L=" << kb.L;
+      if (kb.step_auto)
+        oss << "  STEP_AUTO=1"
+            << "  STEP_AUTO_SWEEPS=" << kb.step_auto_sweeps
+            << "  STEP_ADAPT_EVERY=" << kb.step_adapt_every;
+      else if (!kb.corana)
+        oss << "  STEP_AUTO=0";
       if (sp.step.has_value()) {
         if (kb.corana)
           oss << "  STEP=" << *sp.step
@@ -343,8 +646,10 @@ template<typename Vec, typename HostT>
                   ? "(REFLECT)" : "(REDRAW)")
           << "  INIT_MODE=" << kb.init_mode
           << (kb.init_mode == 0
-                  ? (kb.corana ? "(Gaussian jitter; sigma=initial V)"
-                               : "(Gaussian jitter; sigma=proposal sigma)")
+                  ? (kb.step_auto
+                         ? "(shared warm seed for automatic calibration)"
+                         : (kb.corana ? "(Gaussian jitter; sigma=initial V)"
+                                      : "(Gaussian jitter; sigma=proposal sigma)"))
                   : "(uniform box)");
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
@@ -603,6 +908,8 @@ template<typename Vec, typename HostT>
     }
 
     std::vector<anneal::ChainState<Vec>> chains(n_local);
+    std::vector<pt_detail::SlotCalibration> step_calibration(n_local);
+    std::vector<double> gathered_step_records;
     anneal::ReplicaPool pool(std::min(threads, n_local ? n_local : 1),
                              stop_flag);
     auto rethrow_pool_error = [&](const char* phase) {
@@ -625,13 +932,13 @@ template<typename Vec, typename HostT>
         c.V   = proposal_scale;
         c.x   = Vec(dim);
         if (k == 0 || kb.init_mode == 0) {
-          /* Chain 0 starts at the seed exactly. Higher slots use Gaussian
-           * seed jitter in both variants; under Corana the initial V[i]
-           * value is reused as that initialization-only sigma. */
+          /* Automatic CLASSIC calibration needs the same valid warm anchor at
+           * every temperature. Fixed CLASSIC and Corana retain their legacy
+           * Gaussian initialization jitter for higher slots. */
           std::normal_distribution<double> nd(0.0, 1.0);
           for (std::size_t i = 0; i < dim; ++i) {
             long double v = static_cast<long double>(x0(i));
-            if (k > 0) {
+            if (k > 0 && !kb.step_auto) {
               auto draw = [&]() {
                 return static_cast<long double>(x0(i)) +
                        static_cast<long double>(proposal_scale[i]) * nd(c.rng);
@@ -648,7 +955,12 @@ template<typename Vec, typename HostT>
         }
         c.best_x = c.x;
       }
-      if (rank == 0 && n_local > 0) {
+      if (kb.step_auto && kb.init_mode == 0) {
+        for (auto& c : chains) {
+          c.f = f0;
+          c.best_f = f0;
+        }
+      } else if (rank == 0 && n_local > 0) {
         chains[0].f      = f0;
         chains[0].best_f = f0;
       }
@@ -669,6 +981,8 @@ template<typename Vec, typename HostT>
         warmstart::current_chain() = gk;
         HPOLog::set_eval_slot(static_cast<int>(gk), K, T[gk]);
         if (rank == 0 && li == 0) return;   /* global slot 0 = seed */
+        if (kb.step_auto && kb.init_mode == 0)
+          return;  /* all slots share the already-evaluated warm seed */
         if (gk == 0 || gk > init_admitted) return;
         auto& c = chains[li];
         if (stop_flag.load(std::memory_order_relaxed)) return;
@@ -703,6 +1017,252 @@ template<typename Vec, typename HostT>
       } else if (stopval && stop_flag.load(std::memory_order_relaxed) &&
                  anneal::stopval_reached(g_best, stopval, sp.failscore)) {
         stop_reason = StopReason::StopVal;
+        proceed = false;
+      }
+    }
+
+    /* --- automatic diagonal calibration -------------------------------
+     * This phase deliberately precedes every epoch/swap/flow counter. Host
+     * calls still consume the shared hard budget and discovered states/bests
+     * are retained, while production diagnostics start from a clean epoch 0. */
+    if (proceed && kb.step_auto) {
+      const std::uint64_t warmup_spent_begin = world > 1
+          ? hpo_allreduce_sum(budget.spent()) : budget.spent();
+      const std::uint64_t max_coordinate_attempts = anneal::saturating_mul(
+          anneal::saturating_mul(
+              static_cast<std::uint64_t>(kb.step_auto_sweeps), 2),
+          static_cast<std::uint64_t>(dim));
+
+      auto phase_allowance = [&](std::uint64_t desired_per_slot,
+                                 std::size_t extra_offset = 0) {
+        const std::uint64_t spent = world > 1
+            ? hpo_allreduce_sum(budget.spent()) : budget.spent();
+        const std::uint64_t remaining = max_eval_global > spent
+            ? max_eval_global - spent : 0;
+        const std::uint64_t base = remaining / static_cast<std::uint64_t>(K);
+        const std::uint64_t extra = remaining % static_cast<std::uint64_t>(K);
+        std::vector<std::uint64_t> result(K, 0);
+        for (std::size_t k = 0; k < K; ++k) {
+          const std::size_t extra_position =
+              (k + K - extra_offset % K) % K;
+          result[k] = std::min(
+              desired_per_slot,
+              base + (static_cast<std::uint64_t>(extra_position) < extra ? 1 : 0));
+        }
+        return result;
+      };
+
+      auto phase_stop_code = [&]() {
+        int code = 0;  /* 0 complete, 1 budget, 2 time, 3 STOPVAL */
+        for (const auto& sc : step_calibration) {
+          if (sc.stop == RungStop::StopVal ||
+              (sc.stop == RungStop::External &&
+               stop_flag.load(std::memory_order_relaxed)))
+            code = std::max(code, 3);
+          else if (sc.stop == RungStop::Time)
+            code = std::max(code, 2);
+          else if (sc.stop == RungStop::Budget)
+            code = std::max(code, 1);
+        }
+        if (time_exceeded()) code = std::max(code, 2);
+        if (world > 1) code = hpo_allreduce_max(code);
+        return code;
+      };
+
+      int warmup_code = 0;
+      std::uint64_t after_coordinates = warmup_spent_begin;
+      std::size_t extra_offset = 0;
+      std::size_t stalled_rounds = 0;
+      for (;;) {
+        const std::uint64_t before_coordinates = after_coordinates;
+        const auto coordinate_allowance =
+            phase_allowance(max_coordinate_attempts, extra_offset);
+        pool.run_epoch(n_local, [&](std::size_t li) {
+          const std::size_t k = off_local + li;
+          warmstart::current_chain() = k;
+          HPOLog::set_eval_slot(static_cast<int>(k), K, T[k]);
+          pt_detail::coordinate_warmup(
+              chains[li], T[k], sp, kb, host, ctx,
+              coordinate_allowance[k], step_calibration[li]);
+        });
+        rethrow_pool_error("automatic coordinate warm-up");
+        warmup_code = phase_stop_code();
+        after_coordinates = world > 1
+            ? hpo_allreduce_sum(budget.spent()) : budget.spent();
+        if (warmup_code != 1 ||
+            (max_eval_global != HUGE_UNSIGNED &&
+             after_coordinates >= max_eval_global))
+          break;
+        stalled_rounds = after_coordinates == before_coordinates
+            ? stalled_rounds + 1 : 0;
+        if (stalled_rounds >= K) break;
+        extra_offset = (extra_offset + 1) % K;
+        /* Some slots converged before using their fair share. Redistribute
+         * the remaining global budget and rotate indivisible extras so a
+         * lone unfinished hot slot cannot be starved by cold-slot priority. */
+      }
+      if (warmup_code == 0 && max_eval_global != HUGE_UNSIGNED &&
+          after_coordinates >= max_eval_global)
+        warmup_code = 1;
+
+      if (warmup_code == 0) {
+        const auto pilot_allowance = phase_allowance(100);
+        pool.run_epoch(n_local, [&](std::size_t li) {
+          const std::size_t k = off_local + li;
+          warmstart::current_chain() = k;
+          HPOLog::set_eval_slot(static_cast<int>(k), K, T[k]);
+          pt_detail::full_vector_pilot(
+              chains[li], T[k], sp, kb, host, ctx,
+              pilot_allowance[k], step_calibration[li]);
+        });
+        rethrow_pool_error("automatic full-vector pilot");
+        warmup_code = phase_stop_code();
+        const std::uint64_t after_pilot = world > 1
+            ? hpo_allreduce_sum(budget.spent()) : budget.spent();
+        if (warmup_code == 0 && max_eval_global != HUGE_UNSIGNED &&
+            after_pilot >= max_eval_global)
+          warmup_code = 1;
+      }
+
+      for (std::size_t li = 0; li < n_local; ++li) {
+        if (chains[li].best_f < l_best) {
+          l_best = chains[li].best_f;
+          l_best_x = chains[li].best_x;
+        }
+        chains[li].diag_ram_delta.assign(dim, 0.0);
+        chains[li].diag_ram_proposals = 0;
+        chains[li].diag_ram_pending = 0;
+      }
+      g_best = std::min(g_best, l_best);
+      if (world > 1) {
+        double gb = std::isfinite(l_best) ? l_best
+                                          : std::numeric_limits<double>::max();
+        int owner = 0;
+        hpo_allreduce_minloc(gb, owner);
+        if (gb < std::numeric_limits<double>::max()) g_best = gb;
+      }
+
+      /* Gather the slot-contiguous records so rank 0 can emit one canonical
+       * file even when the ladder is split across MPI ranks. */
+      constexpr std::size_t fields = 8;
+      std::vector<double> local_records;
+      local_records.reserve(n_local * dim * fields);
+      for (std::size_t li = 0; li < n_local; ++li) {
+        const auto& sc = step_calibration[li];
+        for (std::size_t i = 0; i < dim; ++i) {
+          const auto& dc = sc.dims[i];
+          local_records.push_back(chains[li].V[i]);
+          local_records.push_back(static_cast<double>(dc.accepted));
+          local_records.push_back(static_cast<double>(dc.attempts));
+          local_records.push_back(static_cast<double>(dc.backoffs));
+          local_records.push_back(static_cast<double>(dc.status));
+          local_records.push_back(static_cast<double>(sc.pilot_proposed));
+          local_records.push_back(static_cast<double>(sc.pilot_accepted));
+          local_records.push_back(static_cast<double>(sc.pilot_backoffs));
+        }
+      }
+      std::vector<int> record_counts(static_cast<std::size_t>(world), 0);
+      std::size_t record_total = 0;
+      for (int r = 0; r < world; ++r) {
+        const std::size_t count = slot_count(r) * dim * fields;
+        if (count > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+          throw std::length_error(
+              "TADAH:ANNEAL_PT: step-scale diagnostic exceeds MPI count limit");
+        record_counts[static_cast<std::size_t>(r)] = static_cast<int>(count);
+        record_total += count;
+      }
+      if (rank == 0) gathered_step_records.resize(record_total);
+      hpo_gatherv(local_records, gathered_step_records, record_counts);
+      const std::uint64_t warmup_spent_end = world > 1
+          ? hpo_allreduce_sum(budget.spent()) : budget.spent();
+
+      if (rank == 0) {
+        auto status_text = [](unsigned status) {
+          if (status == pt_detail::StepOk) return std::string("ok");
+          std::string text;
+          auto add = [&](const char* word) {
+            if (!text.empty()) text += ',';
+            text += word;
+          };
+          if (status & pt_detail::StepNumericalFloor) add("numerical-floor");
+          if (status & pt_detail::StepSupportCapped) add("support-capped");
+          if (status & pt_detail::StepUnconverged) add("unconverged");
+          if (status & pt_detail::StepInterrupted) add("interrupted");
+          return text;
+        };
+        std::ofstream scale_file("hpo_step_scales.tsv", std::ios::trunc);
+        if (!scale_file) {
+          HPOLog::instance().warning(
+              "ANNEAL_PT: cannot open hpo_step_scales.tsv for writing");
+        } else {
+          scale_file << "slot\ttemperature\tparameter\tsigma\tsigma/width"
+                        "\tacceptance\tstatus\n";
+          scale_file << std::scientific << std::setprecision(17);
+          for (std::size_t k = 0; k < K; ++k) {
+            std::size_t coordinate_accepted = 0;
+            std::size_t coordinate_attempts = 0;
+            std::size_t backoffs = 0;
+            double sigma_min = std::numeric_limits<double>::infinity();
+            double sigma_max = 0.0;
+            const std::size_t slot_base = k * dim * fields;
+            for (std::size_t i = 0; i < dim; ++i) {
+              const std::size_t p = slot_base + i * fields;
+              const double sigma = gathered_step_records[p];
+              const std::size_t accepted = static_cast<std::size_t>(
+                  std::llround(gathered_step_records[p + 1]));
+              const std::size_t attempts = static_cast<std::size_t>(
+                  std::llround(gathered_step_records[p + 2]));
+              const unsigned status = static_cast<unsigned>(
+                  std::llround(gathered_step_records[p + 4]));
+              const double acceptance = attempts > 0
+                  ? static_cast<double>(accepted) / attempts : 0.0;
+              scale_file << k << '\t' << T[k] << "\tdim[" << i << "]\t"
+                         << sigma << '\t'
+                         << sigma / (sp.high[i] - sp.low[i]) << '\t'
+                         << acceptance << '\t' << status_text(status) << '\n';
+              coordinate_accepted += accepted;
+              coordinate_attempts += attempts;
+              backoffs += static_cast<std::size_t>(
+                  std::llround(gathered_step_records[p + 3]));
+              sigma_min = std::min(sigma_min, sigma);
+              sigma_max = std::max(sigma_max, sigma);
+            }
+            const std::size_t pilot_proposed = dim > 0
+                ? static_cast<std::size_t>(std::llround(
+                      gathered_step_records[slot_base + 5])) : 0;
+            const std::size_t pilot_accepted = dim > 0
+                ? static_cast<std::size_t>(std::llround(
+                      gathered_step_records[slot_base + 6])) : 0;
+            const std::size_t pilot_backoffs = dim > 0
+                ? static_cast<std::size_t>(std::llround(
+                      gathered_step_records[slot_base + 7])) : 0;
+            std::ostringstream diag;
+            diag << std::scientific << std::setprecision(3)
+                 << "ANNEAL_PT step calibration slot=" << k
+                 << "  T=" << T[k]
+                 << "  coordinate_acc=" << std::fixed << std::setprecision(1)
+                 << (coordinate_attempts > 0
+                         ? 100.0 * coordinate_accepted / coordinate_attempts
+                         : 0.0) << "%"
+                 << "  pilot_acc="
+                 << (pilot_proposed > 0
+                         ? 100.0 * pilot_accepted / pilot_proposed : 0.0) << "%"
+                 << "  backoffs=" << (backoffs + pilot_backoffs)
+                 << std::scientific << std::setprecision(3)
+                 << "  sigma=[" << sigma_min << ", " << sigma_max << "]";
+            HPOLog::instance().info(diag.str());
+          }
+        }
+        HPOLog::instance().info(
+            "ANNEAL_PT automatic step warm-up spent " +
+            std::to_string(warmup_spent_end - warmup_spent_begin) +
+            " host eval(s); production epoch/swap/flow statistics reset");
+      }
+
+      if (warmup_code != 0) {
+        stop_reason = warmup_code == 3 ? StopReason::StopVal
+                    : warmup_code == 2 ? StopReason::MaxTime
+                                       : StopReason::MaxEval;
         proceed = false;
       }
     }
