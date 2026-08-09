@@ -122,6 +122,20 @@ Signature run_pt(std::uint64_t cap, RecordingHost& host,
   return host.global_signature();
 }
 
+Signature run_pt_adaptive(std::uint64_t cap, RecordingHost& host)
+{
+  auto sp = base_spec("ANNEAL_PT", cap);
+  sp.param["REPLICAS"] = 8.0;
+  sp.param["T_COLD"] = 0.1;
+  sp.param["LADDER_POWER"] = 0.5;
+  sp.param["LADDER_ADAPT"] = 1.0;
+  sp.param["LADDER_ADAPT_EVERY"] = 1.0;
+  sp.param["LADDER_ADAPT_GAIN"] = 1.0;
+  sp.param["LADDER_ADAPT_DECAY"] = 0.6;
+  tadah::hpo::run_anneal_pt_impl<Vec>(sp, host);
+  return host.global_signature();
+}
+
 Signature run_pt_auto(std::uint64_t cap, RecordingHost& host)
 {
   auto sp = base_spec("ANNEAL_PT", cap);
@@ -309,6 +323,11 @@ int main(int argc, char** argv)
     const Signature pt_sig = run_pt(113, pt);
     require_all(pt_sig.count == 113, "PT did not consume exact MAXEVAL", rank);
 
+    RecordingHost pt_adaptive{rank, world};
+    const Signature pt_adaptive_sig = run_pt_adaptive(113, pt_adaptive);
+    require_all(pt_adaptive_sig.count == 113,
+                "adaptive PT did not consume exact MAXEVAL", rank);
+
     RecordingHost pt_auto{rank, world};
     const Signature pt_auto_sig = run_pt_auto(113, pt_auto);
     require_all(pt_auto_sig.count == 113,
@@ -375,6 +394,9 @@ int main(int argc, char** argv)
     if (rank == 0) {
       std::cout << "ANNEAL_MPI_SIGNATURE PT:" << pt_sig.count << ':'
                 << pt_sig.sum << ':' << pt_sig.xors
+                << " PT_ADAPT:" << pt_adaptive_sig.count << ':'
+                << pt_adaptive_sig.sum << ':'
+                << pt_adaptive_sig.xors
                 << " PT_AUTO:" << pt_auto_sig.count << ':'
                 << pt_auto_sig.sum << ':' << pt_auto_sig.xors
                 << " PA:" << pa_sig.count << ':' << pa_sig.sum << ':'

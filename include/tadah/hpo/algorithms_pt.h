@@ -7,11 +7,13 @@
  *       AoAP 7 (1997), Garthwaite, Fan & Sisson (2010), and Vihola
  *       (2012) motivate the CLASSIC scaling targets/adaptation. The
  *       deterministic even/odd (DEO) pairing follows Okabe et al.,
- *       CPL 335 (2001).
+ *       CPL 335 (2001). Temperature-gap adaptation follows Miasojedow,
+ *       Moulines & Vihola (2013) and dynamic temperature selection by
+ *       Vousden, Farr & Mandel (2016).
  *
- * K replicas run the shared annealing rung (anneal_core.h) on a geometric
- * ladder T_0 < T_1 < ... < T_{K-1} (slot 0 coldest). It is static by
- * default; RT < 1 cools the whole ladder each epoch. Every
+ * K replicas run the shared annealing rung on a power-shaped log ladder
+ * T_0 < T_1 < ... < T_{K-1} (slot 0 coldest). It is static by default;
+ * optional adaptation moves interiors, and RT < 1 cools it each epoch. Every
  * SWAP_EVERY epochs, adjacent pairs attempt a state exchange with
  * Metropolis probability
  *
@@ -41,11 +43,13 @@
  *
  * Ladder construction: T_HOT from PARAM T_HOT or the shared T0
  * calibration (T0_PACCEPT is assigned to the calibration delta at the hot end);
- * T_COLD from PARAM T_COLD or T_HOT / LADDER_SPAN; geometric spacing
- * in between (adjacent ratio (T_HOT/T_COLD)^(1/(K-1)). The commonly cited
- * 20-40% per-pair acceptance range is a starting heuristic, not a
- * workload-independent target; rates are logged so the ladder can be
- * tuned). RT (default 1.0) < 1 additionally cools the WHOLE
+ * T_COLD from PARAM T_COLD or T_HOT / LADDER_SPAN. LADDER_POWER shapes
+ * normalized log-temperature positions (1 = geometric). Optional
+ * LADDER_ADAPT redistributes positive interior log gaps to equalize
+ * adjacent-pair swap rates while preserving both endpoints. The commonly
+ * cited 20-40% per-pair acceptance range is a starting heuristic, not a
+ * workload-independent target: fixed endpoints and replica count control
+ * the absolute rate. RT (default 1.0) < 1 additionally cools the WHOLE
  * ladder each epoch (PT -> SA hybrid); the run then ends when the hot
  * end crosses T_MIN.
  *
@@ -59,6 +63,12 @@
  *   SWAP_EVERY   1               exchange attempt every N epochs
  *   SWAP_WINDOW  20              windowed per-pair swap-acceptance table
  *                                every N epochs (0 = cumulative only)
+ *   LADDER_POWER 1.0             initial normalized log-ladder power
+ *   LADDER_ADAPT 0               adapt interior temperatures in production
+ *   LADDER_ADAPT_EVERY 20        attempts at every pair before an update
+ *   LADDER_ADAPT_GAIN 1.0        initial stochastic gain in (0,1]
+ *   LADDER_ADAPT_DECAY 0.6       diminishing-gain exponent in (0.5,1]
+ *   LADDER_ADAPT_UPDATES 0       maximum updates (0 = ongoing)
  *   RT           1.0             ladder cooling per epoch ((0,1])
  *   STEP_AUTO    1               CLASSIC-only coordinate calibration;
  *                                explicit STEP disables it, 0 is legacy fixed
@@ -120,6 +130,160 @@ inline void validate_mpi_payload_dimension(std::size_t dim)
         " exceeds the MPI payload limit (dimension + 2 must fit in int)");
 }
 #endif
+
+/* Reconstruct an endpoint-preserving temperature ladder from normalized
+ * positions in log-temperature space.  nextafter bounds reserve at least
+ * one representable double for every remaining slot; this is both the
+ * numerical gap floor used by adaptation and the strict-monotonicity guard
+ * for very narrow or extreme finite endpoint spans. */
+inline std::vector<double> ladder_from_log_positions(
+    double cold, double hot, const std::vector<long double>& position)
+{
+  if (!std::isfinite(cold) || !std::isfinite(hot) ||
+      !(cold > 0.0) || !(hot > cold))
+    throw std::invalid_argument(
+        "ANNEAL_PT ladder requires finite 0 < T_COLD < T_HOT");
+  if (position.size() < 2 || position.front() != 0.0L ||
+      position.back() != 1.0L)
+    throw std::invalid_argument(
+        "ANNEAL_PT ladder positions require endpoints 0 and 1");
+  for (std::size_t k = 1; k < position.size(); ++k) {
+    if (!std::isfinite(position[k]) || position[k] < position[k - 1] ||
+        position[k] > 1.0L)
+      throw std::invalid_argument(
+          "ANNEAL_PT ladder positions must be finite and nondecreasing");
+  }
+
+  const std::size_t K = position.size();
+  std::vector<double> upper(K, hot);
+  for (std::size_t k = K - 1; k > 1; --k)
+    upper[k - 1] = std::nextafter(upper[k], cold);
+  if (K > 2 && !(upper[1] > cold))
+    throw std::runtime_error(
+        "ANNEAL_PT ladder endpoints cannot represent the requested number "
+        "of strictly increasing temperatures");
+
+  const long double log_cold = std::log(static_cast<long double>(cold));
+  const long double log_hot = std::log(static_cast<long double>(hot));
+  const long double span = log_hot - log_cold;
+  std::vector<double> temperature(K, 0.0);
+  temperature.front() = cold;
+  temperature.back() = hot;
+  for (std::size_t k = 1; k + 1 < K; ++k) {
+    const double lower = std::nextafter(temperature[k - 1], hot);
+    if (lower > upper[k])
+      throw std::runtime_error(
+          "ANNEAL_PT ladder numerical gap floor exhausted the endpoint span");
+    const double ideal = static_cast<double>(
+        std::exp(log_cold + span * position[k]));
+    temperature[k] = std::clamp(ideal, lower, upper[k]);
+  }
+  return temperature;
+}
+
+/* Power-shaped initial ladder.  power==1 follows the former geometric
+ * arithmetic exactly, preserving legacy trajectories when no new control is
+ * supplied. */
+inline std::vector<double> make_temperature_ladder(
+    double cold, double hot, std::size_t replicas, double power = 1.0)
+{
+  if (replicas < 2)
+    throw std::invalid_argument("ANNEAL_PT ladder requires at least 2 replicas");
+  if (!std::isfinite(power) || !(power > 0.0))
+    throw std::invalid_argument("ANNEAL_PT LADDER_POWER must be finite and > 0");
+  std::vector<long double> position(replicas, 0.0L);
+  position.back() = 1.0L;
+  for (std::size_t k = 1; k + 1 < replicas; ++k) {
+    const long double fraction = static_cast<long double>(k) /
+                                 static_cast<long double>(replicas - 1);
+    position[k] = power == 1.0
+        ? fraction
+        : std::pow(fraction, static_cast<long double>(power));
+  }
+  return ladder_from_log_positions(cold, hot, position);
+}
+
+inline long double ladder_log_gap(double cold, double hot)
+{
+  return std::log(static_cast<long double>(hot)) -
+         std::log(static_cast<long double>(cold));
+}
+
+struct LadderAdaptation {
+  std::vector<double> temperature;
+  std::vector<double> acceptance;
+  std::vector<long double> old_log_gap;
+  std::vector<long double> new_log_gap;
+  double gain = 0.0;
+};
+
+/* One diminishing stochastic-approximation update.  High-acceptance gaps
+ * expand and low-acceptance gaps contract, after which all positive gaps are
+ * renormalized to the fixed endpoint span. */
+inline LadderAdaptation adapt_temperature_ladder(
+    const std::vector<double>& temperature,
+    const std::vector<std::size_t>& attempts,
+    const std::vector<std::size_t>& accepted,
+    std::size_t update, double initial_gain, double decay)
+{
+  const std::size_t K = temperature.size();
+  if (K < 3 || attempts.size() + 1 != K || accepted.size() != attempts.size())
+    throw std::invalid_argument(
+        "ANNEAL_PT ladder adaptation requires K>=3 and one counter per pair");
+  if (update == 0 || !std::isfinite(initial_gain) ||
+      !(initial_gain > 0.0 && initial_gain <= 1.0) ||
+      !std::isfinite(decay) || !(decay > 0.5 && decay <= 1.0))
+    throw std::invalid_argument("ANNEAL_PT ladder adaptation controls are invalid");
+
+  LadderAdaptation out;
+  out.acceptance.resize(K - 1);
+  out.old_log_gap.resize(K - 1);
+  long double mean = 0.0L;
+  for (std::size_t p = 0; p + 1 < K; ++p) {
+    if (!std::isfinite(temperature[p]) || !(temperature[p] > 0.0) ||
+        !std::isfinite(temperature[p + 1]) ||
+        !(temperature[p + 1] > temperature[p]) || attempts[p] == 0 ||
+        accepted[p] > attempts[p])
+      throw std::invalid_argument(
+          "ANNEAL_PT ladder adaptation requires a positive increasing "
+          "ladder and valid nonzero pair counters");
+    out.acceptance[p] = static_cast<double>(accepted[p]) /
+                        static_cast<double>(attempts[p]);
+    mean += static_cast<long double>(out.acceptance[p]);
+    out.old_log_gap[p] = ladder_log_gap(
+        temperature[p], temperature[p + 1]);
+    if (!(out.old_log_gap[p] > 0.0L))
+      throw std::runtime_error("ANNEAL_PT ladder log gap is not positive");
+  }
+  mean /= static_cast<long double>(K - 1);
+  out.gain = initial_gain * std::pow(static_cast<double>(update), -decay);
+
+  const long double max_change = std::log(2.0L);
+  std::vector<long double> weight(K - 1, 0.0L);
+  long double weight_sum = 0.0L;
+  for (std::size_t p = 0; p + 1 < K; ++p) {
+    const long double change = std::clamp(
+        static_cast<long double>(out.gain) *
+            (static_cast<long double>(out.acceptance[p]) - mean),
+        -max_change, max_change);
+    weight[p] = out.old_log_gap[p] * std::exp(change);
+    weight_sum += weight[p];
+  }
+  std::vector<long double> position(K, 0.0L);
+  long double cumulative = 0.0L;
+  for (std::size_t p = 0; p + 2 < K; ++p) {
+    cumulative += weight[p];
+    position[p + 1] = cumulative / weight_sum;
+  }
+  position.back() = 1.0L;
+  out.temperature = ladder_from_log_positions(
+      temperature.front(), temperature.back(), position);
+  out.new_log_gap.resize(K - 1);
+  for (std::size_t p = 0; p + 1 < K; ++p)
+    out.new_log_gap[p] = ladder_log_gap(
+        out.temperature[p], out.temperature[p + 1]);
+  return out;
+}
 
 /* Replica-exchange decision for adjacent slots, `cold_temperature <=
  * hot_temperature`. Resolve deterministic limits before forming inverse
@@ -721,6 +885,11 @@ template<typename Vec, typename HostT>
                                       : std::max<std::size_t>(threads, 2);
     if (K < 2)
       throw std::runtime_error("TADAH:ANNEAL_PT: needs REPLICAS >= 2");
+    if (kb.ladder_adapt && K < 3)
+      throw std::runtime_error(
+          "TADAH:ANNEAL_PT: LADDER_ADAPT requires REPLICAS >= 3");
+    const bool ladder_controls_explicit =
+        sp.param.count("LADDER_POWER") || sp.param.count("LADDER_ADAPT");
 
     /* --- MPI layout (no-op when built without TADAH_HPO_MPI or run on
      * one rank): contiguous ladder blocks per rank, slot 0 (coldest) on
@@ -842,6 +1011,14 @@ template<typename Vec, typename HostT>
           << "  RT=" << kb.rt;
       if (kb.t_cold)      oss << "  T_COLD=" << *kb.t_cold;
       else                oss << "  LADDER_SPAN=" << kb.ladder_span;
+      if (ladder_controls_explicit)
+        oss << "  LADDER_POWER=" << kb.ladder_power
+            << "  LADDER_ADAPT=" << (kb.ladder_adapt ? 1 : 0);
+      if (kb.ladder_adapt)
+        oss << "  LADDER_ADAPT_EVERY=" << kb.ladder_adapt_every
+            << "  LADDER_ADAPT_GAIN=" << kb.ladder_adapt_gain
+            << "  LADDER_ADAPT_DECAY=" << kb.ladder_adapt_decay
+            << "  LADDER_ADAPT_UPDATES=" << kb.ladder_adapt_updates;
       if (kb.corana)
         oss << "  NS=" << kb.NS << "  NT=" << kb.NT << "  C=" << kb.C
             << "  V_FLOOR_FRAC=" << kb.v_floor_frac;
@@ -1075,14 +1252,19 @@ template<typename Vec, typename HostT>
     if (proceed) {
       log_t_cold = std::log(static_cast<long double>(T_cold));
       log_t_hot  = std::log(static_cast<long double>(T_hot));
-      for (std::size_t k = 0; k < K; ++k) {
-        if (k == 0) T[k] = T_cold;
-        else if (k + 1 == K) T[k] = T_hot;
-        else {
-          const long double u = static_cast<long double>(k) /
-                                static_cast<long double>(K - 1);
-          T[k] = static_cast<double>(
-              std::exp(log_t_cold + (log_t_hot - log_t_cold) * u));
+      if (ladder_controls_explicit) {
+        T = pt_detail::make_temperature_ladder(
+            T_cold, T_hot, K, kb.ladder_power);
+      } else {
+        for (std::size_t k = 0; k < K; ++k) {
+          if (k == 0) T[k] = T_cold;
+          else if (k + 1 == K) T[k] = T_hot;
+          else {
+            const long double u = static_cast<long double>(k) /
+                                  static_cast<long double>(K - 1);
+            T[k] = static_cast<double>(
+                std::exp(log_t_cold + (log_t_hot - log_t_cold) * u));
+          }
         }
       }
     }
@@ -1098,11 +1280,19 @@ template<typename Vec, typename HostT>
             << "ANNEAL_PT ladder: T_HOT=" << T_hot
             << "  T_COLD=" << T_cold
             << (kb.t_cold ? " (PARAM T_COLD)" : " (T_HOT/LADDER_SPAN)")
-            << "  geometric over " << K << " slots, ratio="
-            << std::fixed << std::setprecision(3)
-            << std::exp((log_t_hot - log_t_cold) /
-                        static_cast<long double>(K - 1))
-            << " per rung";
+            << "  ";
+        if (kb.ladder_power == 1.0) {
+          oss << "geometric over " << K << " slots, ratio="
+              << std::fixed << std::setprecision(3)
+              << std::exp((log_t_hot - log_t_cold) /
+                          static_cast<long double>(K - 1))
+              << " per rung";
+        } else {
+          oss << "power-shaped log ladder over " << K
+              << " slots, LADDER_POWER=" << std::fixed
+              << std::setprecision(3) << kb.ladder_power;
+        }
+        if (kb.ladder_adapt) oss << "  [adaptive interior]";
         if (kb.rt < 1.0)
           oss << "  [initial; cools x" << kb.rt
               << " per epoch, floor T_MIN="
@@ -1128,6 +1318,20 @@ template<typename Vec, typename HostT>
           for (std::size_t k = lo; k <= hi; ++k) oss << "  " << T[k];
         }
         HPOLog::instance().info(oss.str());
+      }
+    }
+
+    std::ofstream ladder_file;
+    if (rank == 0 && proceed && kb.ladder_adapt) {
+      ladder_file.open("hpo_temperature_ladder.tsv", std::ios::trunc);
+      if (!ladder_file) {
+        HPOLog::instance().warning(
+            "ANNEAL_PT: cannot open hpo_temperature_ladder.tsv for writing");
+      } else {
+        ladder_file << "update\tepoch\tpair\tattempts\taccepted\tacceptance"
+                       "\told_T_low\told_T_high\tnew_T_low\tnew_T_high"
+                       "\told_log_gap\tnew_log_gap\n";
+        ladder_file << std::scientific << std::setprecision(17);
       }
     }
 
@@ -1631,6 +1835,15 @@ template<typename Vec, typename HostT>
     /* Per-pair swap-acceptance bookkeeping. */
     std::vector<std::size_t> swap_attempt(K > 1 ? K - 1 : 0, 0);
     std::vector<std::size_t> swap_accept (K > 1 ? K - 1 : 0, 0);
+    /* Independent adaptation windows.  Only the rank owning the colder
+     * side of a pair increments its local entry; every exchange round
+     * allreduces these counters before deciding whether to update. */
+    std::vector<std::size_t> ladder_attempt(K > 1 ? K - 1 : 0, 0);
+    std::vector<std::size_t> ladder_accept(K > 1 ? K - 1 : 0, 0);
+    std::vector<std::size_t> ladder_attempt_global(K > 1 ? K - 1 : 0, 0);
+    std::vector<std::size_t> ladder_accept_global(K > 1 ? K - 1 : 0, 0);
+    std::size_t ladder_update_count = 0;
+    bool ladder_adaptation_active = kb.ladder_adapt;
     /* SWAP_WINDOW-epoch window of the same counters (reset after each
      * windowed table) -- shows acceptance DRIFT the cumulative table
      * averages away. */
@@ -1889,6 +2102,7 @@ template<typename Vec, typename HostT>
                   [&]() { return udist(pair_rng); });
               ++swap_attempt[i];
               ++swap_attempt_win[i];
+              if (ladder_adaptation_active) ++ladder_attempt[i];
               ++att;
               pair_event[i] = '.';
               if (accepted) {
@@ -1897,6 +2111,7 @@ template<typename Vec, typename HostT>
                 if (world == 1) std::swap(walker_at[i], walker_at[i + 1]);
                 ++swap_accept[i];
                 ++swap_accept_win[i];
+                if (ladder_adaptation_active) ++ladder_accept[i];
                 ++acc;
                 pair_event[i] = 'x';
               }
@@ -1918,10 +2133,12 @@ template<typename Vec, typename HostT>
               if (i_mine) {
                 ++swap_attempt[i];
                 ++swap_attempt_win[i];
+                if (ladder_adaptation_active) ++ladder_attempt[i];
                 ++att;
                 if (accepted) {
                   ++swap_accept[i];
                   ++swap_accept_win[i];
+                  if (ladder_adaptation_active) ++ladder_accept[i];
                   ++acc;
                 }
               }
@@ -1941,6 +2158,111 @@ template<typename Vec, typename HostT>
           ++exchange_rounds;
           ep_swap_rate = att > 0 ? static_cast<double>(acc) /
                                    static_cast<double>(att) : 0.0;
+
+          if (ladder_adaptation_active) {
+            bool ready = true;
+            for (std::size_t p = 0; p + 1 < K; ++p) {
+              ladder_attempt_global[p] = world > 1
+                  ? hpo_allreduce_sum_sz(ladder_attempt[p])
+                  : ladder_attempt[p];
+              ladder_accept_global[p] = world > 1
+                  ? hpo_allreduce_sum_sz(ladder_accept[p])
+                  : ladder_accept[p];
+              ready = ready &&
+                      ladder_attempt_global[p] >= kb.ladder_adapt_every;
+            }
+            if (ready) {
+              bool representable = T.front() > 0.0;
+              for (std::size_t k = 1; k < K; ++k)
+                representable = representable && T[k] > T[k - 1];
+              if (!representable) {
+                ladder_adaptation_active = false;
+                if (rank == 0)
+                  HPOLog::instance().warning(
+                      "ANNEAL_PT ladder adaptation frozen: cooling reached "
+                      "a non-positive or non-distinct temperature; endpoint "
+                      "cooling continues unchanged");
+              } else {
+                const std::vector<double> old_temperature = T;
+                const auto update = pt_detail::adapt_temperature_ladder(
+                    T, ladder_attempt_global, ladder_accept_global,
+                    ladder_update_count + 1, kb.ladder_adapt_gain,
+                    kb.ladder_adapt_decay);
+                T = update.temperature;
+                ++ladder_update_count;
+
+                if (rank == 0) {
+                  const auto [accept_min, accept_max] = std::minmax_element(
+                      update.acceptance.begin(), update.acceptance.end());
+                  const auto [old_gap_min, old_gap_max] = std::minmax_element(
+                      update.old_log_gap.begin(), update.old_log_gap.end());
+                  const auto [new_gap_min, new_gap_max] = std::minmax_element(
+                      update.new_log_gap.begin(), update.new_log_gap.end());
+                  std::ostringstream summary;
+                  summary << std::fixed << std::setprecision(1)
+                          << "ANNEAL_PT ladder update=" << ladder_update_count
+                          << " epoch=" << epoch_count
+                          << "  acceptance=[" << 100.0 * *accept_min << "%, "
+                          << 100.0 * *accept_max << "%]"
+                          << std::scientific << std::setprecision(3)
+                          << "  gain=" << update.gain
+                          << "  log-gap(old)= [" << *old_gap_min << ", "
+                          << *old_gap_max << "]"
+                          << "  log-gap(new)= [" << *new_gap_min << ", "
+                          << *new_gap_max << "]";
+                  HPOLog::instance().info(summary.str());
+
+                  const int iw = static_cast<int>(
+                      std::to_string(K - 1).size());
+                  std::ostringstream table;
+                  table << "ANNEAL_PT ladder T per slot after update "
+                        << ladder_update_count << ":";
+                  for (std::size_t lo = 0; lo < K; lo += 8) {
+                    const std::size_t hi = std::min(lo + 8, K) - 1;
+                    table << "\n[" << std::setw(iw) << lo << "-"
+                          << std::setw(iw) << hi << "]"
+                          << std::scientific << std::setprecision(3);
+                    for (std::size_t k = lo; k <= hi; ++k)
+                      table << "  " << T[k];
+                  }
+                  HPOLog::instance().info(table.str());
+
+                  if (ladder_file) {
+                    for (std::size_t p = 0; p + 1 < K; ++p) {
+                      ladder_file
+                          << ladder_update_count << '\t' << epoch_count << '\t'
+                          << p << '\t' << ladder_attempt_global[p] << '\t'
+                          << ladder_accept_global[p] << '\t'
+                          << update.acceptance[p] << '\t'
+                          << old_temperature[p] << '\t'
+                          << old_temperature[p + 1] << '\t'
+                          << T[p] << '\t' << T[p + 1] << '\t'
+                          << update.old_log_gap[p] << '\t'
+                          << update.new_log_gap[p] << '\n';
+                    }
+                    ladder_file.flush();
+                  }
+                }
+                std::fill(ladder_attempt.begin(), ladder_attempt.end(),
+                          std::size_t{0});
+                std::fill(ladder_accept.begin(), ladder_accept.end(),
+                          std::size_t{0});
+                std::fill(ladder_attempt_global.begin(),
+                          ladder_attempt_global.end(), std::size_t{0});
+                std::fill(ladder_accept_global.begin(),
+                          ladder_accept_global.end(), std::size_t{0});
+                if (kb.ladder_adapt_updates > 0 &&
+                    ladder_update_count >= kb.ladder_adapt_updates) {
+                  ladder_adaptation_active = false;
+                  if (rank == 0)
+                    HPOLog::instance().info(
+                        "ANNEAL_PT ladder adaptation frozen after configured "
+                        "LADDER_ADAPT_UPDATES=" +
+                        std::to_string(kb.ladder_adapt_updates));
+                }
+              }
+            }
+          }
           flow_touch_extremes();   /* states moved -- update up/down flow */
         }
 
@@ -2337,6 +2659,34 @@ template<typename Vec, typename HostT>
         swap_attempt_report[i] = hpo_allreduce_sum_sz(swap_attempt[i]);
         swap_accept_report[i]  = hpo_allreduce_sum_sz(swap_accept[i]);
       }
+    }
+
+    if (rank == 0 && ran_sa && kb.ladder_adapt) {
+      std::size_t pending_min = 0, pending_max = 0;
+      if (!ladder_attempt_global.empty()) {
+        const auto pending = std::minmax_element(
+            ladder_attempt_global.begin(), ladder_attempt_global.end());
+        pending_min = *pending.first;
+        pending_max = *pending.second;
+      }
+      const int iw = static_cast<int>(std::to_string(K - 1).size());
+      std::ostringstream final_ladder;
+      final_ladder << "ANNEAL_PT final ladder: updates="
+                   << ladder_update_count
+                   << "  pending_attempts/pair=" << pending_min;
+      if (pending_max != pending_min) final_ladder << '-' << pending_max;
+      final_ladder << "  mode="
+                   << (ladder_adaptation_active ? "ongoing" : "frozen")
+                   << "; T per slot:";
+      for (std::size_t lo = 0; lo < K; lo += 8) {
+        const std::size_t hi = std::min(lo + 8, K) - 1;
+        final_ladder << "\n[" << std::setw(iw) << lo << '-'
+                     << std::setw(iw) << hi << ']'
+                     << std::scientific << std::setprecision(3);
+        for (std::size_t k = lo; k <= hi; ++k)
+          final_ladder << "  " << T[k];
+      }
+      HPOLog::instance().info(final_ladder.str());
     }
 
     /* --- final summary --------------------------------------------------- */

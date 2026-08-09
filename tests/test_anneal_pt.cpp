@@ -258,6 +258,48 @@ TEST_CASE("ANNEAL_PT: fixed-size thread-count invariance (same SEED => same eval
     }
 }
 
+TEST_CASE("ANNEAL_PT: adaptive ladder is thread-count deterministic",
+          "[HPO][anneal_pt][determinism][ladder]")
+{
+    using namespace tadah::hpo;
+    TempWorkingDirectory cwd;
+    auto run_with_threads = [&](unsigned threads) {
+        auto sp = make_pt_spec({-1.0, -1.0}, {1.0, 1.0});
+        set_seed_point(sp, {0.5, -0.5});
+        sp.seed = 4243;
+        sp.num_threads = threads;
+        sp.stop.maxeval = 240;
+        sp.param["REPLICAS"] = 8.0;
+        sp.param.erase("STEP_AUTO");
+        sp.param["CORANA"] = 1.0;
+        sp.param["NS"] = 1.0;
+        sp.param["NT"] = 1.0;
+        sp.param["T_HOT"] = 1.0;
+        sp.param["LADDER_SPAN"] = 100.0;
+        sp.param["LADDER_POWER"] = 0.5;
+        sp.param["LADDER_ADAPT"] = 1.0;
+        sp.param["LADDER_ADAPT_EVERY"] = 2.0;
+        MtStubHost stub{
+            [&](const Vec& x) { return quad_bowl2(x, 0.1, -0.2); }, {}, {}};
+        run_anneal_pt_impl<Vec>(sp, stub);
+        return stub.sorted_calls();
+    };
+
+    const auto a = run_with_threads(1);
+    const auto b = run_with_threads(2);
+    const auto c = run_with_threads(8);
+    REQUIRE(a.size() == 240);
+    REQUIRE(a.size() == b.size());
+    REQUIRE(a.size() == c.size());
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        REQUIRE(a[i].size() == b[i].size());
+        for (std::size_t d = 0; d < a[i].size(); ++d) {
+            CHECK(a[i][d] == Approx(b[i][d]).margin(1e-15));
+            CHECK(a[i][d] == Approx(c[i][d]).margin(1e-15));
+        }
+    }
+}
+
 TEST_CASE("ANNEAL_PT: cold replica escapes a deep double well via tempering",
           "[HPO][anneal_pt][doublewell]")
 {
@@ -844,6 +886,175 @@ TEST_CASE("ANNEAL_PT: extreme finite temperature endpoints build a finite ladder
     CHECK(log.find(" inf") == std::string::npos);
 }
 
+TEST_CASE("ANNEAL_PT: power-shaped ladders preserve endpoints and numerical gaps",
+          "[HPO][anneal_pt][temperature][ladder]")
+{
+    using namespace tadah::hpo::pt_detail;
+
+    const auto geometric = make_temperature_ladder(1.0, 16.0, 5, 1.0);
+    REQUIRE(geometric.size() == 5);
+    CHECK(geometric[0] == 1.0);
+    CHECK(geometric[1] == Approx(2.0));
+    CHECK(geometric[2] == Approx(4.0));
+    CHECK(geometric[3] == Approx(8.0));
+    CHECK(geometric[4] == 16.0);
+
+    const auto hot_shaped = make_temperature_ladder(1.0, 16.0, 5, 0.5);
+    const auto cold_shaped = make_temperature_ladder(1.0, 16.0, 5, 2.0);
+    CHECK(hot_shaped.front() == 1.0);
+    CHECK(hot_shaped.back() == 16.0);
+    CHECK(hot_shaped[1] > geometric[1]);
+    CHECK(cold_shaped[1] < geometric[1]);
+
+    const auto extreme = make_temperature_ladder(
+        std::numeric_limits<double>::denorm_min(),
+        std::numeric_limits<double>::max(), 32, 0.5);
+    CHECK(extreme.front() == std::numeric_limits<double>::denorm_min());
+    CHECK(extreme.back() == std::numeric_limits<double>::max());
+    for (std::size_t k = 1; k < extreme.size(); ++k) {
+        CHECK(std::isfinite(extreme[k]));
+        CHECK(extreme[k] > extreme[k - 1]);
+    }
+
+    double narrow_hot = 1.0;
+    for (int i = 0; i < 4; ++i)
+        narrow_hot = std::nextafter(
+            narrow_hot, std::numeric_limits<double>::infinity());
+    const auto floored = make_temperature_ladder(1.0, narrow_hot, 5, 100.0);
+    CHECK(floored.front() == 1.0);
+    CHECK(floored.back() == narrow_hot);
+    for (std::size_t k = 1; k < floored.size(); ++k)
+        CHECK(floored[k] > floored[k - 1]);
+
+    CHECK_THROWS(make_temperature_ladder(
+        1.0, std::nextafter(1.0, 2.0), 3, 1.0));
+}
+
+TEST_CASE("ANNEAL_PT: synthetic bottleneck contracts while open gaps expand",
+          "[HPO][anneal_pt][temperature][ladder]")
+{
+    using namespace tadah::hpo::pt_detail;
+    const auto initial = make_temperature_ladder(1.0, 64.0, 4, 1.0);
+    const std::vector<std::size_t> attempts{20, 20, 20};
+    const std::vector<std::size_t> accepted{0, 10, 20};
+    const auto first = adapt_temperature_ladder(
+        initial, attempts, accepted, 1, 1.0, 0.6);
+
+    CHECK(first.temperature.front() == initial.front());
+    CHECK(first.temperature.back() == initial.back());
+    CHECK(first.old_log_gap[0] == Approx(
+        static_cast<double>(first.old_log_gap[1])));
+    CHECK(first.new_log_gap[0] < first.old_log_gap[0]);
+    CHECK(first.new_log_gap[2] > first.old_log_gap[2]);
+    for (std::size_t k = 1; k < first.temperature.size(); ++k)
+        CHECK(first.temperature[k] > first.temperature[k - 1]);
+
+    const auto later = adapt_temperature_ladder(
+        initial, attempts, accepted, 16, 1.0, 0.6);
+    CHECK(later.gain < first.gain);
+    CHECK(std::fabs(static_cast<double>(later.new_log_gap[0] -
+                                       later.old_log_gap[0])) <
+          std::fabs(static_cast<double>(first.new_log_gap[0] -
+                                       first.old_log_gap[0])));
+
+    /* A simple barrier model a_p=exp(-b_p*d_p) closes its acceptance
+     * spread after one update, not merely its abstract gap spread. */
+    const std::vector<double> barrier{4.0, 2.0, 1.0};
+    const std::vector<std::size_t> many_attempts(3, 100000);
+    std::vector<std::size_t> model_accepted(3, 0);
+    std::vector<double> before_rate(3, 0.0);
+    for (std::size_t p = 0; p < 3; ++p) {
+        before_rate[p] = std::exp(
+            -barrier[p] * static_cast<double>(first.old_log_gap[p]));
+        model_accepted[p] = static_cast<std::size_t>(
+            std::llround(100000.0 * before_rate[p]));
+    }
+    const auto equalized = adapt_temperature_ladder(
+        initial, many_attempts, model_accepted, 1, 1.0, 0.6);
+    std::vector<double> after_rate(3, 0.0);
+    for (std::size_t p = 0; p < 3; ++p)
+        after_rate[p] = std::exp(
+            -barrier[p] * static_cast<double>(equalized.new_log_gap[p]));
+    const auto before_range = std::minmax_element(
+        before_rate.begin(), before_rate.end());
+    const auto after_range = std::minmax_element(
+        after_rate.begin(), after_rate.end());
+    CHECK(*after_range.second - *after_range.first <
+          *before_range.second - *before_range.first);
+}
+
+TEST_CASE("ANNEAL_PT: finite ladder adaptation freezes and writes canonical TSV",
+          "[HPO][anneal_pt][temperature][ladder][log]")
+{
+    using namespace tadah::hpo;
+    TempWorkingDirectory cwd;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 20260810;
+    sp.num_threads = 2;
+    sp.stop.maxeval = 20;
+    sp.param["REPLICAS"] = 4.0;
+    sp.param["L"] = 1.0;
+    sp.param["T_HOT"] = 8.0;
+    sp.param["T_COLD"] = 1.0;
+    sp.param["LADDER_POWER"] = 0.5;
+    sp.param["LADDER_ADAPT"] = 1.0;
+    sp.param["LADDER_ADAPT_EVERY"] = 1.0;
+    sp.param["LADDER_ADAPT_UPDATES"] = 1.0;
+
+    LoggedRun lr;
+    MtStubHost stub{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, stub);
+
+    CHECK(stub.sorted_calls().size() == 20);
+    const std::string log = lr.read();
+    CHECK(log.find("LADDER_POWER=0.5") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT ladder update=1") != std::string::npos);
+    CHECK(log.find("ladder adaptation frozen after configured") !=
+          std::string::npos);
+    CHECK(log.find("ANNEAL_PT final ladder: updates=1") != std::string::npos);
+
+    std::ifstream input("hpo_temperature_ladder.tsv");
+    std::ostringstream contents;
+    contents << input.rdbuf();
+    const std::string tsv = contents.str();
+    CHECK(tsv.find("update\tepoch\tpair\tattempts") == 0);
+    CHECK(static_cast<std::size_t>(std::count(tsv.begin(), tsv.end(), '\n')) == 4);
+}
+
+TEST_CASE("ANNEAL_PT: interrupted ladder window is retained without an update",
+          "[HPO][anneal_pt][temperature][ladder][budget]")
+{
+    using namespace tadah::hpo;
+    TempWorkingDirectory cwd;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 20260811;
+    sp.num_threads = 2;
+    sp.stop.maxeval = 20;
+    sp.param["REPLICAS"] = 4.0;
+    sp.param["L"] = 1.0;
+    sp.param["T_HOT"] = 8.0;
+    sp.param["T_COLD"] = 1.0;
+    sp.param["LADDER_ADAPT"] = 1.0;
+    sp.param["LADDER_ADAPT_EVERY"] = 5.0;
+
+    LoggedRun lr;
+    MtStubHost stub{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, stub);
+
+    CHECK(stub.sorted_calls().size() == 20);
+    const std::string log = lr.read();
+    CHECK(log.find("ANNEAL_PT ladder update=") == std::string::npos);
+    CHECK(log.find("ANNEAL_PT final ladder: updates=0") != std::string::npos);
+    CHECK(log.find("pending_attempts/pair=1-2") != std::string::npos);
+    std::ifstream input("hpo_temperature_ladder.tsv");
+    std::ostringstream contents;
+    contents << input.rdbuf();
+    const std::string tsv = contents.str();
+    CHECK(static_cast<std::size_t>(std::count(tsv.begin(), tsv.end(), '\n')) == 1);
+}
+
 TEST_CASE("ANNEAL_PT: exchange decision is stable at zero and extreme states",
           "[HPO][anneal_pt][temperature][swap]")
 {
@@ -1003,6 +1214,38 @@ TEST_CASE("ANNEAL_PT: RT<1 cools the ladder to T_MIN (hybrid mode)",
     run_anneal_pt_impl<Vec>(sp, stub);
     CHECK(lr.read().find("ANNEAL_PT stopped: T < T_MIN (hot end)")
           != std::string::npos);
+}
+
+TEST_CASE("ANNEAL_PT: adaptive interiors preserve RT endpoint cooling",
+          "[HPO][anneal_pt][temperature][ladder]")
+{
+    using namespace tadah::hpo;
+    TempWorkingDirectory cwd;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.5});
+    sp.seed = 6;
+    sp.num_threads = 2;
+    sp.stop.maxeval = 1000;
+    sp.param["REPLICAS"] = 4.0;
+    sp.param["L"] = 1.0;
+    sp.param["T_HOT"] = 8.0;
+    sp.param["T_COLD"] = 1.0;
+    sp.param["RT"] = 0.5;
+    sp.param["T_MIN"] = 0.75;
+    sp.param["LADDER_ADAPT"] = 1.0;
+    sp.param["LADDER_ADAPT_EVERY"] = 1.0;
+
+    LoggedRun lr;
+    MtStubHost stub{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, stub);
+
+    const std::string log = lr.read();
+    CHECK(log.find("ANNEAL_PT stopped: T < T_MIN (hot end)") !=
+          std::string::npos);
+    CHECK(log.find("ANNEAL_PT final ladder: updates=2") !=
+          std::string::npos);
+    CHECK(log.find("6.250e-02") != std::string::npos);
+    CHECK(log.find("5.000e-01") != std::string::npos);
 }
 
 TEST_CASE("ANNEAL_PT: journal carries the banner, epoch lines and the "
@@ -1169,6 +1412,74 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
         sp.param["STEP_ADAPT_EVERY"] = 1.0;
         REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
                             Catch::Contains("unused"));
+    }
+    SECTION("LADDER_POWER is independently usable") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        sp.param["LADDER_POWER"] = 0.5;
+        const auto kb = anneal::Knobs::parse(sp, anneal::AlgoKind::PT);
+        CHECK(kb.ladder_power == 0.5);
+        CHECK_FALSE(kb.ladder_adapt);
+    }
+    SECTION("LADDER_POWER must be positive") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        sp.param["LADDER_POWER"] = 0.0;
+        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                            Catch::Contains("LADDER_POWER"));
+    }
+    SECTION("LADDER_ADAPT is Boolean") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        sp.param["LADDER_ADAPT"] = 2.0;
+        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                            Catch::Contains("LADDER_ADAPT"));
+    }
+    SECTION("adaptation controls are rejected when disabled") {
+        for (const char* key : {"LADDER_ADAPT_EVERY", "LADDER_ADAPT_GAIN",
+                                "LADDER_ADAPT_DECAY",
+                                "LADDER_ADAPT_UPDATES"}) {
+            auto sp = make_pt_spec({-1.0}, {1.0});
+            sp.param[key] = 1.0;
+            REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                                Catch::Contains("unused when LADDER_ADAPT is 0"));
+        }
+    }
+    SECTION("adaptation requires at least three resolved replicas") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        sp.param["REPLICAS"] = 2.0;
+        sp.param["LADDER_ADAPT"] = 1.0;
+        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                            Catch::Contains("REPLICAS >= 3"));
+    }
+    SECTION("LADDER_ADAPT_EVERY must be positive") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        sp.param["LADDER_ADAPT"] = 1.0;
+        sp.param["LADDER_ADAPT_EVERY"] = 0.0;
+        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                            Catch::Contains("LADDER_ADAPT_EVERY"));
+    }
+    SECTION("LADDER_ADAPT_GAIN must be in range") {
+        for (double gain : {0.0, 1.01}) {
+            auto sp = make_pt_spec({-1.0}, {1.0});
+            sp.param["LADDER_ADAPT"] = 1.0;
+            sp.param["LADDER_ADAPT_GAIN"] = gain;
+            REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                                Catch::Contains("LADDER_ADAPT_GAIN"));
+        }
+    }
+    SECTION("LADDER_ADAPT_DECAY must be in range") {
+        for (double decay : {0.5, 1.01}) {
+            auto sp = make_pt_spec({-1.0}, {1.0});
+            sp.param["LADDER_ADAPT"] = 1.0;
+            sp.param["LADDER_ADAPT_DECAY"] = decay;
+            REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                                Catch::Contains("LADDER_ADAPT_DECAY"));
+        }
+    }
+    SECTION("LADDER_ADAPT_UPDATES must be integral") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        sp.param["LADDER_ADAPT"] = 1.0;
+        sp.param["LADDER_ADAPT_UPDATES"] = 1.5;
+        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                            Catch::Contains("non-negative integer"));
     }
 
     SECTION("REPLICAS < 2") {

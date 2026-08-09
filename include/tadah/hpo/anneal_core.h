@@ -272,6 +272,12 @@ struct Knobs {
   std::size_t replicas    = 0;      /* 0 = resolve to max(THREADS, 2)   */
   std::optional<double> t_cold;     /* explicit coldest slot            */
   double      ladder_span = 1e3;    /* T_COLD = T_HOT / LADDER_SPAN     */
+  double      ladder_power = 1.0;   /* initial log-ladder shape         */
+  bool        ladder_adapt = false; /* adapt interior temperatures      */
+  std::size_t ladder_adapt_every = 20; /* attempts/pair between updates */
+  double      ladder_adapt_gain = 1.0; /* initial stochastic gain       */
+  double      ladder_adapt_decay = 0.6;/* diminishing-gain exponent     */
+  std::size_t ladder_adapt_updates = 0;/* 0 = ongoing adaptation        */
   std::size_t swap_every  = 1;      /* exchange attempt every N epochs  */
   std::size_t swap_window = 20;     /* windowed swap-acc table every N
                                      * epochs (0 = cumulative only)     */
@@ -316,6 +322,8 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   };
   static const std::unordered_set<std::string> pt_keys = {
       "REPLICAS", "T_COLD", "LADDER_SPAN", "SWAP_EVERY", "SWAP_WINDOW",
+      "LADDER_POWER", "LADDER_ADAPT", "LADDER_ADAPT_EVERY",
+      "LADDER_ADAPT_GAIN", "LADDER_ADAPT_DECAY", "LADDER_ADAPT_UPDATES",
       "STEP_AUTO", "STEP_AUTO_SWEEPS", "STEP_ADAPT_EVERY",
   };
   static const std::unordered_set<std::string> pa_keys = {
@@ -474,6 +482,12 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   kb.replicas    = pcount("REPLICAS", 0.0);
   if (sp.param.count("T_COLD")) kb.t_cold = pget("T_COLD", 0.0);
   kb.ladder_span = pget("LADDER_SPAN", 1e3);
+  kb.ladder_power = pget("LADDER_POWER", 1.0);
+  kb.ladder_adapt = pbool("LADDER_ADAPT", false);
+  kb.ladder_adapt_every = pcount("LADDER_ADAPT_EVERY", 20.0);
+  kb.ladder_adapt_gain = pget("LADDER_ADAPT_GAIN", 1.0);
+  kb.ladder_adapt_decay = pget("LADDER_ADAPT_DECAY", 0.6);
+  kb.ladder_adapt_updates = pcount("LADDER_ADAPT_UPDATES", 0.0);
   kb.swap_every  = pcount("SWAP_EVERY", 1.0);
   kb.swap_window = pcount("SWAP_WINDOW", 20.0);
   kb.step_auto = kind == AlgoKind::PT && pbool("STEP_AUTO", true);
@@ -510,6 +524,14 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   if (kind == AlgoKind::PT && kb.rt == 1.0 && kb.t_min)
     throw std::runtime_error(
         ctx + ": PARAM T_MIN is unused by a static PT ladder (RT=1)");
+  if (kind == AlgoKind::PT && !kb.ladder_adapt) {
+    for (const char* key : {"LADDER_ADAPT_EVERY", "LADDER_ADAPT_GAIN",
+                            "LADDER_ADAPT_DECAY", "LADDER_ADAPT_UPDATES"})
+      if (sp.param.count(key))
+        throw std::runtime_error(
+            ctx + ": PARAM " + key +
+            " is unused when LADDER_ADAPT is 0");
+  }
   if (kind == AlgoKind::PT && kb.corana) {
     for (const char* key : {"STEP_AUTO", "STEP_AUTO_SWEEPS",
                             "STEP_ADAPT_EVERY"})
@@ -587,6 +609,19 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     }
     if (!(kb.ladder_span > 1.0))
       throw std::runtime_error(ctx + ": PARAM LADDER_SPAN must be > 1");
+    if (!(kb.ladder_power > 0.0))
+      throw std::runtime_error(ctx + ": PARAM LADDER_POWER must be > 0");
+    if (kb.ladder_adapt) {
+      if (kb.ladder_adapt_every == 0)
+        throw std::runtime_error(
+            ctx + ": PARAM LADDER_ADAPT_EVERY must be >= 1");
+      if (!(kb.ladder_adapt_gain > 0.0 && kb.ladder_adapt_gain <= 1.0))
+        throw std::runtime_error(
+            ctx + ": PARAM LADDER_ADAPT_GAIN must be in (0,1]");
+      if (!(kb.ladder_adapt_decay > 0.5 && kb.ladder_adapt_decay <= 1.0))
+        throw std::runtime_error(
+            ctx + ": PARAM LADDER_ADAPT_DECAY must be in (0.5,1]");
+    }
     if (kb.swap_every == 0)
       throw std::runtime_error(ctx + ": PARAM SWAP_EVERY must be >= 1");
     if (kb.step_auto && kb.step_auto_sweeps == 0)
