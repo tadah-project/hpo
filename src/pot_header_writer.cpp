@@ -80,8 +80,14 @@ std::string PotHeaderWriter::fmt_timestamp()
 {
     auto now = std::chrono::system_clock::now();
     auto tt  = std::chrono::system_clock::to_time_t(now);
+    std::tm local {};
+#if defined(_WIN32)
+    localtime_s(&local, &tt);
+#else
+    localtime_r(&tt, &local);
+#endif
     std::ostringstream s;
-    s << std::put_time(std::localtime(&tt), "%Y-%m-%d %H:%M:%S");
+    s << std::put_time(&local, "%Y-%m-%d %H:%M:%S");
     return s.str();
 }
 

@@ -11,9 +11,11 @@ Ta training+validation bundle in `common/`.
     bash ../common/run.sh
 
 Override the binary path with `TADAH=/path/to/tadah` if `tadah` is not
-on your PATH. Override OpenMP threads with `OMP_NUM_THREADS=N`. Each
-run cleans its previous output (`best_*.tadah`, `loss.tadah`,
-`outvar.tadah`, `params.tadah`, `stats.tadah`, `hpo_run.log`).
+on your PATH. `THREADS` in each config sets the main shared worker-pool
+width; `OMP_NUM_THREADS` controls only residual OpenMP kernels and does
+not multiply it. Each run cleans its previous output (`best_*.tadah`,
+`loss.tadah`, `outvar.tadah`, `params.tadah`, `stats.tadah`,
+`hpo_run.log`).
 
 A handful of examples (09, 10) ship their own `run.sh` because they
 need a `seed_pot.tadah` bootstrapped first; that script handles the
@@ -58,6 +60,9 @@ each subsequent one introduces one or two new features.
 | 15 | `15_simulated_annealing` | `LIB TADAH ALGO ANNEAL` with cooling-schedule PARAMs. |
 | 16 | `16_fixweight_mixed`     | `FIXINDEX`/`FIXWEIGHT` pinning + `OPTIM FIXWEIGHT` (mixed LS/pinned/searched weights; local `config.tadah`). |
 | 17 | `17_no_training_db`      | No training `DBFILE`, no `--validation`: all coefficients pinned, `PC_LAMMPS`-only loss (refit-style polish). |
+| 18 | `18_anneal_pt`            | `LIB TADAH ALGO ANNEAL_PT` parallel tempering with replica exchanges and cumulative/windowed swap-flow diagnostics. |
+| 19 | `19_anneal_pa`            | `LIB TADAH ALGO ANNEAL_PA` population annealing with ESS-controlled resampling and explicit all-failed handling. |
+| 20 | `20_anneal_corana`        | `LIB TADAH ALGO ANNEAL` with adaptive Corana coordinate steps and boundary-policy diagnostics. |
 
 ## Files in `common/`
 

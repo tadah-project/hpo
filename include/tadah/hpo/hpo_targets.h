@@ -142,10 +142,10 @@ public:
     std::string dumpPotDir = "pots";
     std::string dumpBestPotDir = "best_pots";
                            
-    /* Fixed output names gain a ".r<rank>" suffix on MPI ranks > 0 so
+    /* Fixed output names gain a ".r<rank>" suffix on every MPI rank so
      * multi-rank runs sharing one working directory never clobber each
-     * other (rank 0 keeps the unsuffixed names for existing tooling;
-     * hpo_rank_suffix() is empty in non-MPI builds and 1-rank runs). */
+     * other. The unsuffixed namespace is reserved for canonical shared
+     * artifacts; the suffix is empty in non-MPI builds and 1-rank runs. */
     const std::string lossFile       = "loss.tadah"        + hpo_rank_suffix();
     const std::string outvarFile     = "outvar.tadah"      + hpo_rank_suffix();
     const std::string paramsFile     = "params.tadah"      + hpo_rank_suffix();
@@ -154,6 +154,13 @@ public:
     const std::string bestOutvarFile  = "best_outvar.tadah" + hpo_rank_suffix();
     const std::string bestParamsFile  = "best_params.tadah" + hpo_rank_suffix();
     const std::string bestStatsFile   = "best_stats.tadah"  + hpo_rank_suffix();
+    /* best_pot.tadah is canonical across ranks. Multi-rank runs also keep an
+     * explicit local file for every rank, including best_pot.tadah.r0. */
+    const std::string canonicalBestPotFile = "best_pot.tadah";
+    const std::string localBestPotFile =
+        std::string("best_pot.tadah") + hpo_rank_suffix();
+    /* Prevent rank-local archive ordinals from truncating one shared file. */
+    const std::string potArchiveSuffix = hpo_rank_suffix();
     LossFunction globalLoss;
 
     bool use_emae = false; bool use_ermse = false; bool use_errmse = false; bool use_ersq = false;

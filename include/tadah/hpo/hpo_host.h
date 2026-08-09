@@ -6,8 +6,9 @@
  *  ---------------------------------
  *  -  All data produced during one evaluation live in EvalResult, not in the
  *     functor object; operator() is therefore const and thread-safe.
- *  -  Results are forwarded to a single writer thread through a blocking
- *     moodycamel queue which guarantees ordered, race-free file output.
+ *  -  Ordinary result logs are forwarded to a single writer through a
+ *     blocking moodycamel queue. New-best potentials are committed
+ *     synchronously and atomically before operator() returns.
  *  -  MPI code is protected by one global mutex so that threaded builds can
  *     still work.  Remove the mutex if you choose to forbid that mix.
  */
@@ -19,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <tuple>
 #include <vector>
@@ -28,6 +30,7 @@
 #include <tadah/core/context.h>
 #include <tadah/core/signal_handler.h>
 #include <tadah/hpo/dloss_dtheta.h>
+#include <tadah/hpo/durable_best.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/optimizer_spec.h>
@@ -64,6 +67,9 @@ struct EvalResult
      * Keys the per-chain warm-start cache so PT/PA results are independent
      * of fan-out execution order. 0 for serial / single-sequence optimisers. */
     std::size_t                            chain_id  = 0;
+    /* Rank that evaluated this exact candidate. Persisted with chain_id and
+     * iter for deterministic cross-process best-file tie breaking. */
+    int                                    source_rank = 0;
     double                                 loss      = 0.0;
     double                                 loss_sum  = 0.0;
     std::size_t                            loss_count = 0;
@@ -195,10 +201,21 @@ public:
      * constructed values. Used by regression tests to simulate process
      * restart without spawning a new process. */
     static void reset_globals_for_test();
+    /** Reset only run-scoped best-comparator state while preserving the
+     * monotonic evaluation counter/writer cursor. Used by fresh-run startup
+     * and exposed for the embedded two-runs-in-one-process regression. */
+    static void reset_best_state_for_fresh_run();
     /* Test-only accessors. */
     static double      current_best()       { return g_best_.load(); }
     static std::size_t current_best_iter()  { return g_best_iter_.load(); }
     static std::size_t current_last_best()  { return iter_at_last_best_.load(); }
+    static std::optional<durable_best::Key> current_best_key_for_test();
+
+    /** Establish the output generation after checkpoint detection. A fresh
+     * run removes stale best-potential incumbents; an explicit checkpoint
+     * resume retains them and restores the compound tie key. MPI ranks
+     * coordinate before any evaluation can publish. */
+    void prepare_best_publication(bool resumed) const;
 
     std::size_t train_size() const;   // number of training structures
     std::size_t val_size()   const;   // number of validation structures
@@ -348,6 +365,9 @@ private:
 #endif
     void fit_loss(Result&) const;
     void sims_loss(Result&) const;
+    /** Render and synchronously publish this completed candidate to the
+     * canonical cross-rank best file and this rank's local best file. */
+    void persist_durable_best(const Result&) const;
     /* PC_OBSERVABLE (D4c) loss aggregation: evaluates every entry of
      * trg_.observables at the current trained model, populates
      * r.v_obs_value / r.v_obs_loss, and folds the per-observable loss
@@ -361,6 +381,11 @@ private:
     static std::atomic_size_t   g_iter_;
     static std::atomic_size_t   g_best_iter_;
     static std::atomic<double>  g_best_;
+    /* Serializes the complete loss/rank/slot/eval comparison and synchronous
+     * publication. The atomics remain for cheap observers/checkpoint fields;
+     * this mutex makes exact-loss ties deterministic within one process. */
+    static std::mutex                       best_mtx_;
+    static std::optional<durable_best::Key> g_best_key_;
 
     /* Top-K tracking -- gated. Pays mutex cost only when track_topk_capacity_ > 0. */
     static std::mutex                                            topk_mtx_;

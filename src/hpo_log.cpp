@@ -111,6 +111,7 @@ void HPOLog::reset_for_test()
     std::lock_guard<std::mutex> lg(mtx_);
     n_eval_.store(0, std::memory_order_relaxed);
     n_nan_ .store(0, std::memory_order_relaxed);
+    n_nan_logged_.store(0, std::memory_order_relaxed);
     cur_best_loss_ = std::numeric_limits<double>::max();
     cur_best_eval_ = 0;
     best_emae_ = best_ermse_ = best_errmse_ = best_frmse_ = best_srmse_ = 0.0;
@@ -689,7 +690,7 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
 
     kv("Aggregate",   "mean over active components");
     kv("Fail score",  fmt_double(trg.FAIL_SCORE)
-                      + "  (returned when training produces NaN/Inf)");
+                      + "  (returned when an evaluation produces NaN/Inf)");
     kv("Output every",  std::to_string(trg.outputEvery) + " eval(s)");
     kv("Output digits", std::to_string(trg.outputDigits));
 }
@@ -912,8 +913,8 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
             /* WALL throughput over the window since the previous
              * milestone: what the run delivers per unit time under the
              * CURRENT parallelisation. `avg` above is the mean PER-EVAL
-             * LATENCY on its worker thread -- under K concurrent
-             * workers it runs ~K x higher than the wall cost and must
+             * LATENCY on its worker thread -- when K evaluations are fully concurrent,
+             * it can approach K x the wall cost and must
              * not be read as throughput. */
             const auto now_tp = std::chrono::steady_clock::now();
             double wall_ms_per_eval = 0.0;
@@ -1008,13 +1009,12 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                 }
                 f_ << std::string(12, ' ') << "SUMMARY  " << cs.str() << "\n";
             }
-            /* Pinned-dim audit: every OPTIM dim currently marked by a
-             * CORANA driver as sitting ON a bound with its step already
-             * at the V floor -- the walk cannot leave the bound, so the
-             * bound is shaping the optimum. One WARNING block per
-             * milestone while any mark is held, rows aggregated per
-             * (dim, side) across chains; the advice is a HINT (the pin
-             * is provable state, the remedy is judgement). */
+            /* Near-bound floor-step audit: a CORANA driver marks a dim
+             * whose chain is within one floor-step of a bound while V is
+             * already at that floor. Inward proposals remain possible, so
+             * this is a heuristic signal, not proof that the optimum lies
+             * outside the box. One WARNING block per milestone aggregates
+             * marks by (dim, side) across chains. */
             if (pin_chains_ > 0 && !pin_state_.empty()) {
                 struct Row { std::size_t dim; int side; int n;
                              double gap; std::uint64_t since; };
@@ -1062,13 +1062,13 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                 };
                 const bool multi = pin_chains_ > 1;
                 std::ostringstream t;
-                t << rows.size() << " OPTIM dim(s) pinned at a bound with "
-                     "step at the V floor -- the walk cannot leave the "
-                     "bound; it is load-bearing:\n"
+                t << rows.size() << " OPTIM dim(s) near a bound with "
+                     "step at the V floor -- no further adaptive step "
+                     "shrinkage is available:\n"
                   << "  " << pad("dim", lw + 2) << pad("side", 6)
                   << pad("bound", 13) << pad("gap", 11) << pad("v_floor", 11);
                 if (multi) t << pad("slots", 8);
-                t << "pinned for";
+                t << "observed for";
                 for (const auto& r : rows) {
                     const bool   ok = r.dim < pin_low_.size();
                     const double b  = ok ? (r.side ? pin_high_[r.dim]
@@ -1090,9 +1090,9 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                 }
                 event_locked("WARNING", t.str());
                 event_locked("HINT",
-                    "pinned dims: the fit is pushing past these OPTIM "
-                    "boxes -- widen or re-centre the box if the bound is "
-                    "not physical; a deliberate bound can be left pinned.");
+                    "persistent near-bound occupancy at the V floor may indicate "
+                    "OPTIM bound pressure -- inspect the trace; widen or "
+                    "re-centre only when the admissible domain permits it.");
             }
             /* Stagnation hint: if we've spent more than half the recent
              * milestone window with no new best, point the user at the
@@ -1282,7 +1282,7 @@ void HPOLog::log_nan_clamped(std::size_t        eval_num,
 
     f_ << "[" << now_hms() << "]  WARNING  "
        << "Eval " << std::setw(6) << eval_num
-       << ": training produced NaN/Inf -- loss clamped to FAIL_SCORE\n";
+       << ": evaluation produced NaN/Inf -- loss clamped to FAIL_SCORE\n";
     if (!params_str.empty())
         f_ << "           Parameters: " << params_str << "\n";
     if (!bound_hints.empty())
@@ -1333,25 +1333,16 @@ void HPOLog::finish(const std::string& status_str)
         f_ << "  (" << std::fixed << std::setprecision(1) << nan_pct << "%)";
     f_ << "\n";
 
-    // NaN rate interpretation
-    if (nnan == 0) {
-        f_ << "  [ok] No NaN clampings -- search space looks well-configured.\n";
-    } else if (nan_pct < 5.0) {
-        f_ << "  [ok] NaN rate < 5% -- occasional numerical instability, normal.\n";
-    } else if (nan_pct < 20.0) {
-        f_ << "  [!] NaN rate " << std::fixed << std::setprecision(1) << nan_pct
-           << "% -- the optimiser is frequently hitting bad regions.\n"
-              "    Consider narrowing the search bounds or adjusting FAIL_SCORE.\n";
+    // Report the observation without inferring a cause from its rate alone.
+    if (total == 0) {
+        f_ << "  [info] No evaluations recorded; NaN/Inf rate is unavailable.\n";
+    } else if (nnan == 0) {
+        f_ << "  [ok] No NaN/Inf clampings were recorded.\n";
     } else {
-        f_ << "  [x] NaN rate " << std::fixed << std::setprecision(1) << nan_pct
-           << "% -- most evaluations are failing numerically.\n"
-              "    The search space likely includes parameter values where the\n"
-              "    linear system is severely ill-conditioned.  Common causes:\n"
-              "      * Regularisation (LAMBDA) lower bound is too small\n"
-              "      * Descriptor parameters (SIGMA/ETA) allow too-peaked functions\n"
-              "      * Cutoff radii (RCUT2B/RCUTMB) too small for the training data\n"
-              "    Action: check the NaN warnings in the PROGRESS section above\n"
-              "    and tighten the bounds for the offending parameters.\n";
+        f_ << "  [!] " << std::fixed << std::setprecision(1) << nan_pct
+           << "% of evaluations produced a non-finite loss that was clamped.\n"
+              "    This counter does not identify the cause. Inspect the matching\n"
+              "    WARNING entries before changing bounds, the model, or FAIL_SCORE.\n";
     }
 
     /* -- PERFORMANCE --------------------------------------------------- */
@@ -1360,7 +1351,8 @@ void HPOLog::finish(const std::string& status_str)
        << ": " << format_duration(wall_sec) << "\n";
     f_ << "  " << std::left << std::setw(KW) << "Mean eval latency"
        << ": " << fmt_millis(avg_ms)
-       << "  (per worker thread; ~K x the wall cost under K workers)\n";
+       << "  (per worker thread; can approach ~K x wall cost when K evaluations\n"
+          "   are fully concurrent)\n";
     if (wall_sec > 0 && total > 0)
         f_ << "  " << std::left << std::setw(KW) << "Wall per eval"
            << ": " << fmt_millis(1000.0 * wall_sec / total) << "\n";
@@ -1442,7 +1434,7 @@ std::string nlopt_result_str(int code)
         case  4: return "XTOL_REACHED -- parameter tolerance converged";
         case  5: return "MAXEVAL_REACHED -- maximum evaluations exhausted";
         case  6: return "MAXTIME_REACHED -- maximum time exhausted";
-        case -1: return "FAILURE -- generic failure (often caused by NaN objective values)";
+        case -1: return "FAILURE -- generic failure";
         case -2: return "INVALID_ARGS -- invalid algorithm arguments (check bounds/dimensions)";
         case -3: return "OUT_OF_MEMORY -- insufficient memory for algorithm";
         case -4: return "ROUNDOFF_LIMITED -- progress blocked by floating-point roundoff";

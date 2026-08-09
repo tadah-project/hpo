@@ -46,6 +46,14 @@ public:
         std::size_t                         cw,
         int                                 prec);
 
+    /** Persist the hot variables produced by this exact evaluation. Unlike
+     * the process-global warm-start cache, this snapshot cannot be changed by
+     * a later concurrent candidate before the file is rendered. */
+    template<class ParamVec>
+    static void write_candidate_hot(
+        std::ostream&                       os,
+        const EvalResult<ParamVec>&         result);
+
     /* ------------------------------------------------------------------ *
      *  Compact header for periodic pot archives (pot_N.tadah)
      * ------------------------------------------------------------------ */

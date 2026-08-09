@@ -1390,8 +1390,9 @@ void HPOTargets::read(const std::string& fn)
                         const double v = std::stod(toks[i2+1]);
                         if (toks[i2]=="--gate") failprobe_gate = v;
                         else {
-                            if (!(v > 0.0))
-                                throw std::runtime_error("PC_FAILPROBE --s0 must be > 0");
+                            if (!std::isfinite(v) || !(v > 0.0))
+                                throw std::runtime_error(
+                                    "PC_FAILPROBE --s0 must be finite and > 0");
                             failprobe_s0 = v;
                         }
                         ++i2;

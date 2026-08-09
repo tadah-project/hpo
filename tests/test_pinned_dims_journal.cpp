@@ -116,7 +116,7 @@ TEST_CASE("HPOLog pinned-dim audit -- mark/unmark + milestone table",
 
     log.record_eval(100, 1.0, false);          /* milestone 1 */
     std::string s1 = slurp(path);
-    CHECK(s1.find("2 OPTIM dim(s) pinned") != std::string::npos);
+    CHECK(s1.find("2 OPTIM dim(s) near a bound") != std::string::npos);
     CHECK(s1.find("WARNING") != std::string::npos);
     CHECK(s1.find("2/64") != std::string::npos);   /* dim0: both chains */
     CHECK(s1.find("1/64") != std::string::npos);   /* dim2: chain 7 only */
@@ -124,7 +124,9 @@ TEST_CASE("HPOLog pinned-dim audit -- mark/unmark + milestone table",
     CHECK(s1.find("LO") != std::string::npos);
     CHECK(s1.find("HI") != std::string::npos);
     CHECK(s1.find("1 epoch") != std::string::npos);
-    CHECK(s1.find("pinned dims:") != std::string::npos);   /* the HINT */
+    CHECK(s1.find("persistent near-bound occupancy") != std::string::npos);
+    CHECK(s1.find("may indicate") != std::string::npos);
+    CHECK(s1.find("walk cannot leave") == std::string::npos);
 
     /* Epoch 6: chain 3 leaves its bound (unmark); chain 7 keeps dim0
      * pinned (since-unit must survive) but releases dim2. */
@@ -133,7 +135,7 @@ TEST_CASE("HPOLog pinned-dim audit -- mark/unmark + milestone table",
 
     log.record_eval(200, 1.0, false);          /* milestone 2 */
     std::string s2 = slurp(path).substr(s1.size());
-    CHECK(s2.find("1 OPTIM dim(s) pinned") != std::string::npos);
+    CHECK(s2.find("1 OPTIM dim(s) near a bound") != std::string::npos);
     CHECK(s2.find("1/64") != std::string::npos);
     CHECK(s2.find("2 epochs") != std::string::npos);   /* held since 5 */
     CHECK(s2.find("(ln)") == std::string::npos);       /* dim2 row gone */

@@ -390,10 +390,15 @@ struct OptimizerSpec {
     /* Helper to go in/out of transformed space */
     template<typename Vec>
     Vec in(const Vec& x)  const
-    {   Vec y=x;  for(size_t i=0;i<y.size();++i) if(log_scaled[i]) y[i]=std::log(y[i]); return y; }
+    {   Vec y=x;  for(size_t i=0;i<y.size();++i)
+            if(i < log_scaled.size() && log_scaled[i]) y[i]=std::log(y[i]);
+        return y; }
     template<typename Vec>
     Vec out(const Vec& x) const
-    {   Vec y=x;  for(long int i=0;i<y.size();++i) if(log_scaled[i]) y(i)=std::exp(y(i)); return y; }
+    {   Vec y=x;  for(long int i=0;i<y.size();++i)
+            if(static_cast<size_t>(i) < log_scaled.size() && log_scaled[i])
+                y(i)=std::exp(y(i));
+        return y; }
 
     /* ------------- capability print-outs -------------------------- */
     static void print_caps(const std::string& lib,

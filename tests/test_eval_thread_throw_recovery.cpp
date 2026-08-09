@@ -34,6 +34,7 @@ namespace {
 struct FakeResult {
     std::size_t iter = 0;
     bool        is_failscore = false;
+    double      loss = 0.0;
 };
 
 /* Mirror of the writer's drain loop. The fix's invariant is that as
@@ -46,12 +47,14 @@ struct DrainSim {
     std::atomic<std::size_t>          next_flush{1};
     std::vector<std::size_t>          drained_iters;
     std::vector<std::size_t>          drained_failscore_iters;
+    std::vector<double>               drained_losses;
 
     void drain_until_gap() {
         while (io_buf.count(next_flush)) {
             const auto& e = io_buf[next_flush];
             drained_iters.push_back(next_flush);
             if (e.is_failscore) drained_failscore_iters.push_back(next_flush);
+            drained_losses.push_back(e.loss);
             io_buf.erase(next_flush++);
         }
     }
@@ -90,6 +93,38 @@ TEST_CASE("Writer drain stalls at missing iter, recovers after FAIL_SCORE submit
     CHECK(sim.drained_iters.size() == 100);
     CHECK(sim.drained_failscore_iters.size() == 1);
     CHECK(sim.drained_failscore_iters.front() == 50);
+}
+
+TEST_CASE("Fatal best-potential persistence still fills its ordered iter slot",
+          "[eval-thread][durable-best][queue]")
+{
+    DrainSim sim;
+    constexpr std::size_t failed_iter = 7;
+    constexpr double completed_loss = 0.125;
+
+    /* Mirrors a durable_best::Error after evaluation completed but before the
+     * normal submit_result call. Later evaluations may already be queued. */
+    for (std::size_t i = 1; i <= 20; ++i) {
+        if (i == failed_iter) continue;
+        sim.io_buf.emplace(i, FakeResult{i, false, static_cast<double>(i)});
+    }
+    sim.drain_until_gap();
+    REQUIRE(sim.next_flush.load() == failed_iter);
+
+    /* The dedicated persistence catch enqueues the completed Result with its
+     * real loss, then rethrows the fatal I/O error. The writer can therefore
+     * drain every later result during final cleanup instead of dropping them
+     * behind a permanent gap. */
+    sim.io_buf.emplace(
+        failed_iter, FakeResult{failed_iter, false, completed_loss});
+    sim.drain_until_gap();
+
+    CHECK(sim.next_flush.load() == 21);
+    CHECK(sim.io_buf.empty());
+    CHECK(sim.drained_iters.size() == 20);
+    CHECK(sim.drained_failscore_iters.empty());
+    REQUIRE(sim.drained_losses.size() == 20);
+    CHECK(sim.drained_losses[failed_iter - 1] == Approx(completed_loss));
 }
 
 TEST_CASE("Multiple non-adjacent throws all recoverable",

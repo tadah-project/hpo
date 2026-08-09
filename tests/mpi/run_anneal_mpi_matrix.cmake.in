@@ -1,0 +1,38 @@
+set(_mpiexec "@MPIEXEC_EXECUTABLE@")
+set(_numproc_flag "@MPIEXEC_NUMPROC_FLAG@")
+set(_preflags @MPIEXEC_PREFLAGS@)
+set(_postflags @MPIEXEC_POSTFLAGS@)
+set(_max_procs "@MPIEXEC_MAX_NUMPROCS@")
+if(_max_procs STREQUAL "" OR _max_procs LESS 4)
+  message(FATAL_ERROR "MPI annealing matrix requires at least 4 process slots")
+endif()
+if(NOT DEFINED TEST_EXE OR TEST_EXE STREQUAL "")
+  message(FATAL_ERROR "TEST_EXE was not supplied")
+endif()
+
+set(_baseline "")
+foreach(_n 1 2 4)
+  execute_process(
+    COMMAND "${_mpiexec}" "${_numproc_flag}" "${_n}" ${_preflags}
+            "${TEST_EXE}" ${_postflags}
+    RESULT_VARIABLE _rc
+    OUTPUT_VARIABLE _out
+    ERROR_VARIABLE _err
+    TIMEOUT 120)
+  if(NOT _rc EQUAL 0)
+    message(FATAL_ERROR
+      "${_n}-rank MPI annealing test failed (${_rc})\nstdout:\n${_out}\nstderr:\n${_err}")
+  endif()
+  string(REGEX MATCH "ANNEAL_MPI_SIGNATURE[^\r\n]*" _sig "${_out}")
+  if(_sig STREQUAL "")
+    message(FATAL_ERROR "${_n}-rank run emitted no signature\n${_out}")
+  endif()
+  if(_baseline STREQUAL "")
+    set(_baseline "${_sig}")
+  elseif(NOT "${_sig}" STREQUAL "${_baseline}")
+    message(FATAL_ERROR
+      "rank-count invariance failed\n1-rank: ${_baseline}\n${_n}-rank: ${_sig}")
+  endif()
+endforeach()
+
+message(STATUS "MPI annealing 1/2/4-rank signature: ${_baseline}")

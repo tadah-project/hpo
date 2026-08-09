@@ -5,8 +5,11 @@
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/loss_function.h>
 
+#include <algorithm>
 #include <iomanip>
+#include <limits>
 #include <sstream>
+#include <tuple>
 
 namespace tadah::hpo {
 
@@ -143,6 +146,20 @@ void PotHeaderWriter::write_best_header(
     std::size_t                         cw,
     int                                 prec)
 {
+    /* Stable machine-readable preamble. durable_best::parse_key deliberately
+     * depends only on these five fields; the human header may evolve. */
+    const auto old_prec = os.precision();
+    const auto old_flags = os.flags();
+    os << "# HPO_BEST_FORMAT 1\n"
+       << "# HPO_BEST_LOSS " << std::scientific
+       << std::setprecision(std::numeric_limits<double>::max_digits10)
+       << result.loss << "\n"
+       << "# HPO_SOURCE_RANK " << result.source_rank << "\n"
+       << "# HPO_SOURCE_SLOT " << result.chain_id << "\n"
+       << "# HPO_SOURCE_EVAL " << result.iter << "\n";
+    os.flags(old_flags);
+    os.precision(old_prec);
+
     write_banner(os, result.best_iter, result.iter, result.loss);
     write_loss_section(os, trg);
     write_result_table(os, result, trg, cw, prec);
@@ -150,6 +167,30 @@ void PotHeaderWriter::write_best_header(
     write_load_transforms_section(os, report);
     write_optim_section(os, trg, param_labels);
     rule(os);
+}
+
+template<class ParamVec>
+void PotHeaderWriter::write_candidate_hot(
+    std::ostream&                       os,
+    const EvalResult<ParamVec>&         result)
+{
+    auto hot = result.hot_produced;
+    std::sort(hot.begin(), hot.end(), [](const auto& a, const auto& b) {
+        if (std::get<0>(a) != std::get<0>(b))
+            return std::get<0>(a) < std::get<0>(b);
+        if (std::get<1>(a) != std::get<1>(b))
+            return std::get<1>(a) < std::get<1>(b);
+        return std::get<2>(a) < std::get<2>(b);
+    });
+    const auto old_prec = os.precision();
+    const auto old_flags = os.flags();
+    os << std::scientific
+       << std::setprecision(std::numeric_limits<double>::max_digits10);
+    for (const auto& entry : hot)
+        os << "# HOT " << std::get<0>(entry) << " " << std::get<1>(entry)
+           << " " << std::get<2>(entry) << "\n";
+    os.flags(old_flags);
+    os.precision(old_prec);
 }
 
 /* =====================================================================

@@ -506,6 +506,10 @@ template<class P, class R>
 std::atomic_size_t  HPO_Host<P,R>::g_best_iter_{0};
 template<class P, class R>
 std::atomic<double> HPO_Host<P,R>::g_best_{std::numeric_limits<double>::max()};
+template<class P, class R>
+std::mutex HPO_Host<P,R>::best_mtx_;
+template<class P, class R>
+std::optional<durable_best::Key> HPO_Host<P,R>::g_best_key_;
 #if defined(TADAH_BUILD_MPI)
 template<class P, class R>
 std::mutex          HPO_Host<P,R>::mpi_mutex_;
@@ -615,15 +619,23 @@ std::size_t HPO_Host<P,R>::g_iter_value() {
 /* ---------- ICheckpointable: persist best-so-far comparator state ----- */
 template<class P,class R>
 void HPO_Host<P,R>::save_globals(core::Checkpoint& cp) {
+    std::lock_guard<std::mutex> lock(best_mtx_);
     cp.section("HPO_HOST");
     cp.put_dbl ("g_best",            g_best_.load(std::memory_order_relaxed));
     cp.put_size("g_best_iter",       g_best_iter_.load(std::memory_order_relaxed));
     cp.put_size("iter_at_last_best", iter_at_last_best_.load(std::memory_order_relaxed));
     cp.put_size("g_iter",            g_iter_.load(std::memory_order_relaxed));
+    cp.put_bool("g_best_key_valid",  g_best_key_.has_value());
+    if (g_best_key_) {
+        cp.put_int ("g_best_rank", g_best_key_->rank);
+        cp.put_size("g_best_slot", g_best_key_->slot);
+        cp.put_size("g_best_eval", g_best_key_->eval);
+    }
 }
 
 template<class P,class R>
 void HPO_Host<P,R>::load_globals(const core::Checkpoint& cp) {
+    std::lock_guard<std::mutex> lock(best_mtx_);
     if (auto v = cp.get_dbl ("HPO_HOST", "g_best"))
         g_best_.store(*v, std::memory_order_relaxed);
     if (auto v = cp.get_size("HPO_HOST", "g_best_iter"))
@@ -632,6 +644,20 @@ void HPO_Host<P,R>::load_globals(const core::Checkpoint& cp) {
         iter_at_last_best_.store(*v, std::memory_order_relaxed);
     if (auto v = cp.get_size("HPO_HOST", "g_iter"))
         g_iter_.store(*v, std::memory_order_relaxed);
+
+    g_best_key_.reset();
+    const auto key_valid = cp.get_bool("HPO_HOST", "g_best_key_valid");
+    if (key_valid && *key_valid) {
+        const auto rank = cp.get_int ("HPO_HOST", "g_best_rank");
+        const auto slot = cp.get_size("HPO_HOST", "g_best_slot");
+        const auto eval = cp.get_size("HPO_HOST", "g_best_eval");
+        const double loss = g_best_.load(std::memory_order_relaxed);
+        if (rank && slot && eval && *rank >= 0 &&
+            *rank <= std::numeric_limits<int>::max() && std::isfinite(loss)) {
+            g_best_key_ = durable_best::Key{
+                loss, static_cast<int>(*rank), *slot, *eval};
+        }
+    }
 }
 
 template<class P,class R>
@@ -642,10 +668,104 @@ void HPO_Host<P,R>::load(const core::Checkpoint& cp) { load_globals(cp); }
 
 template<class P,class R>
 void HPO_Host<P,R>::reset_globals_for_test() {
+    {
+        std::lock_guard<std::mutex> lock(best_mtx_);
+        g_best_.store(std::numeric_limits<double>::max(), std::memory_order_relaxed);
+        g_best_iter_.store(0, std::memory_order_relaxed);
+        iter_at_last_best_.store(0, std::memory_order_relaxed);
+        g_iter_.store(0, std::memory_order_relaxed);
+        g_best_key_.reset();
+    }
+    warmstart::reset_best_snapshot_for_fresh_run();
+}
+
+template<class P,class R>
+void HPO_Host<P,R>::reset_best_state_for_fresh_run() {
+    std::lock_guard<std::mutex> lock(best_mtx_);
     g_best_.store(std::numeric_limits<double>::max(), std::memory_order_relaxed);
     g_best_iter_.store(0, std::memory_order_relaxed);
-    iter_at_last_best_.store(0, std::memory_order_relaxed);
-    g_iter_.store(0, std::memory_order_relaxed);
+    /* Keep eval numbering/writer order monotonic when an embedding invokes
+     * two HPO runs in one process, but start stagnation from this boundary. */
+    iter_at_last_best_.store(g_iter_.load(std::memory_order_relaxed),
+                             std::memory_order_relaxed);
+    g_best_key_.reset();
+}
+
+template<class P,class R>
+std::optional<durable_best::Key>
+HPO_Host<P,R>::current_best_key_for_test() {
+    std::lock_guard<std::mutex> lock(best_mtx_);
+    return g_best_key_;
+}
+
+template<class P,class R>
+void HPO_Host<P,R>::prepare_best_publication(bool resumed) const {
+    std::string local_error;
+    std::optional<durable_best::Key> retained_key;
+    std::optional<durable_best::Key> checkpoint_key;
+    {
+        std::lock_guard<std::mutex> lock(best_mtx_);
+        checkpoint_key = g_best_key_;
+    }
+
+    try {
+        if (!resumed) {
+            if (hpo_rank() == 0)
+                durable_best::reset_for_fresh_run(trg_.canonicalBestPotFile);
+            if (trg_.localBestPotFile != trg_.canonicalBestPotFile)
+                durable_best::reset_for_fresh_run(trg_.localBestPotFile);
+        } else {
+            /* The checkpoint comparator is global, so bind it only to the
+             * canonical global artifact. Rank-local files are independent
+             * history and can legitimately carry a different (worse) key. */
+            retained_key =
+                durable_best::read_key_file(trg_.canonicalBestPotFile);
+
+            const double checkpoint_loss =
+                g_best_.load(std::memory_order_relaxed);
+            if (retained_key &&
+                checkpoint_loss != std::numeric_limits<double>::max() &&
+                retained_key->loss != checkpoint_loss) {
+                throw durable_best::Error(
+                    "checkpoint best loss does not match retained best-potential metadata");
+            }
+            if (retained_key && checkpoint_key &&
+                (checkpoint_key->loss != retained_key->loss ||
+                 checkpoint_key->rank != retained_key->rank ||
+                 checkpoint_key->slot != retained_key->slot ||
+                 checkpoint_key->eval != retained_key->eval)) {
+                throw durable_best::Error(
+                    "checkpoint compound best key does not match retained canonical potential");
+            }
+        }
+    } catch (const std::exception& e) {
+        local_error = e.what();
+    } catch (...) {
+        local_error = "unknown best-potential preparation failure";
+    }
+
+    /* Every rank reaches both collectives even when its local filesystem
+     * operation failed, so startup errors cannot strand peers in a barrier. */
+    const int any_failed = hpo_allreduce_max(local_error.empty() ? 0 : 1);
+    hpo_barrier();
+    if (any_failed) {
+        if (local_error.empty())
+            local_error = "best-potential preparation failed on another MPI rank";
+        throw durable_best::Error(local_error);
+    }
+
+    if (!resumed) {
+        reset_best_state_for_fresh_run();
+        warmstart::reset_best_snapshot_for_fresh_run();
+    } else if (retained_key) {
+        std::lock_guard<std::mutex> lock(best_mtx_);
+        const double checkpoint_loss =
+            g_best_.load(std::memory_order_relaxed);
+        if (checkpoint_loss == std::numeric_limits<double>::max())
+            g_best_.store(retained_key->loss, std::memory_order_relaxed);
+        if (!g_best_key_)
+            g_best_key_ = retained_key;
+    }
 }
 
 template<class P, class R>
@@ -1715,6 +1835,68 @@ void HPO_Host<P,R>::obs_loss(Result& r) const
   }
 }
 
+/* ---------- synchronous crash-safe best potential ------------------- */
+template<class P, class R>
+void HPO_Host<P,R>::persist_durable_best(const Result& r) const
+{
+    try {
+        std::ostringstream payload;
+#if defined(TADAH_BUILD_MPI)
+        /* Legacy distributed training has no complete rank-local training DB;
+         * this matches the historical queue-writer header behaviour. */
+        static const mlip::StructureDB empty_stdb;
+        const mlip::StructureDB& train_ref = empty_stdb;
+#else
+        const mlip::StructureDB& train_ref = train_stdb_;
+#endif
+        PotHeaderWriter::write_best_header(
+            payload, r, trg_, master_ctx_, val_ctx_, train_ref, val_stdb_,
+            param_labels_, report_, cw_, prec_);
+        PotHeaderWriter::write_candidate_hot(payload, r);
+        payload << std::setprecision(
+            r.pot_ctx.template get<std::size_t>("NUMERIC")) << r.pot_ctx;
+        if (!payload.good())
+            throw durable_best::Error("failed to render best-potential payload");
+
+        const durable_best::Key key{r.loss, r.source_rank, r.chain_id, r.iter};
+        const std::string bytes = payload.str();
+
+        /* Canonical first: if SIGKILL lands between the two commits, the
+         * globally useful artifact still contains the improvement. */
+        (void)durable_best::publish_if_better(
+            trg_.canonicalBestPotFile, key, bytes);
+        if (trg_.localBestPotFile != trg_.canonicalBestPotFile) {
+            /* The canonical file is the correctness boundary. A rank-local
+             * mirror is useful diagnostics/history, but a pre-existing better
+             * local key (or a local I/O failure) must not undo or invalidate an
+             * already durable canonical commit. */
+            try {
+                (void)durable_best::publish_if_better(
+                    trg_.localBestPotFile, key, bytes);
+            } catch (const std::exception& e) {
+                try {
+                    HPOLog::instance().warning(
+                        std::string("rank-local best-potential mirror failed: ") +
+                        e.what());
+                } catch (...) {}
+            } catch (...) {
+                try {
+                    HPOLog::instance().warning(
+                        "rank-local best-potential mirror failed: unknown exception");
+                } catch (...) {}
+            }
+        }
+    } catch (const durable_best::Error&) {
+        throw;
+    } catch (const std::exception& e) {
+        throw durable_best::Error(
+            std::string("cannot persist completed best candidate: ") + e.what());
+    } catch (...) {
+        throw durable_best::Error(
+            "cannot persist completed best candidate: unknown exception");
+    }
+}
+
 /* ----------  operator()  (thread-safe) ------------------------------- */
 template<class P, class R>
 double HPO_Host<P,R>::operator()(const P& p) const
@@ -1733,6 +1915,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
      * via a thread_local; keys the per-chain warm-start cache so results are
      * independent of fan-out execution order. 0 for serial / NLOPT / dlib. */
     r.chain_id = warmstart::current_chain();
+    r.source_rank = hpo_rank();
     r.params = p;
 
     auto t0 = std::chrono::high_resolution_clock::now();
@@ -1999,22 +2182,50 @@ double HPO_Host<P,R>::operator()(const P& p) const
      * if stagnation_check throws StagnationStop. */
     {
     stage_watchdog::Scope<decltype(_stage_log)> _sg_finalize(r.iter, "post_lammps_finalize", _stage_log);
-    /* best tracking ---------------------------------------------------- */
-    double cur=g_best_.load(std::memory_order_relaxed);
-    bool i_am_best = false;
-    while(r.loss < cur &&
-        !(i_am_best =
-          g_best_.compare_exchange_weak(cur, r.loss,
-            std::memory_order_acq_rel)));
-    if(i_am_best){
-      r.is_best   = true;
-      r.best_iter = g_best_iter_.fetch_add(1, std::memory_order_relaxed) + 1;
-      iter_at_last_best_.store(r.iter, std::memory_order_relaxed);
-      /* Promote this (new global best) eval's hot values into the seed map so
-       * best_pot.tadah's `# HOT` lines reflect the best trajectory and a WARM
-       * restart reproduces it. Serialized by the CAS above => deterministic. */
-      for (const auto& t : r.hot_produced)
-        warmstart::promote(std::get<0>(t), std::get<1>(t), std::get<2>(t));
+    /* best tracking ----------------------------------------------------
+     * Serialize the full compound decision through durable publication. A
+     * loss-only CAS cannot resolve exact-loss ties deterministically: a later
+     * finishing (rank,slot,eval)-smaller candidate would never reach the file
+     * comparator. New-best commits are rare, so holding this mutex across the
+     * two fsync+rename operations is preferable to split-brain metadata/HOT. */
+    {
+      std::lock_guard<std::mutex> best_lock(best_mtx_);
+      const durable_best::Key key{
+          r.loss, r.source_rank, r.chain_id, r.iter};
+      const double cur = g_best_.load(std::memory_order_relaxed);
+      const bool lower_loss = r.loss < cur;
+      const bool tied_compound_winner =
+          r.loss == cur && g_best_key_ &&
+          durable_best::precedes(key, *g_best_key_);
+      /* A legacy checkpoint can carry g_best without the newer compound key.
+       * Its equal-loss candidate is allowed through once; durable publication
+       * remains the authoritative comparator against a metadata-bearing file. */
+      const bool legacy_equal =
+          r.loss == cur && !g_best_key_ &&
+          cur != std::numeric_limits<double>::max();
+
+      if (lower_loss || tied_compound_winner || legacy_equal) {
+        r.best_iter = g_best_iter_.load(std::memory_order_relaxed) + 1;
+
+        /* On return the canonical artifact contains this candidate or an
+         * equal/better compound incumbent from another MPI rank. The latter
+         * does not reject this rank's improvement: g_best_, r.is_best, and
+         * best_hot_map are deliberately rank-local live-search state. The
+         * early multi-rank dispatch guard limits this split ownership to plain
+         * PT/PA, which have no checkpoint/resume registration; the canonical
+         * file remains the sole global result. */
+        persist_durable_best(r);
+
+        if (!warmstart::promote_batch(key, r.hot_produced))
+          throw durable_best::Error(
+              "HOT snapshot comparator contradicts the durable compound best key");
+
+        g_best_.store(r.loss, std::memory_order_release);
+        g_best_key_ = key;
+        g_best_iter_.store(r.best_iter, std::memory_order_relaxed);
+        iter_at_last_best_.store(r.iter, std::memory_order_relaxed);
+        r.is_best = true;
+      }
     }
 
     /* Top-K tracking -- cheap fast-path when disabled (capacity == 0).
@@ -2280,6 +2491,37 @@ double HPO_Host<P,R>::operator()(const P& p) const
 #endif
         } catch (...) {}
         throw;
+    } catch (const durable_best::Error& e) {
+        /* Persistence is part of committing a completed best evaluation.
+         * Converting this failure to FAIL_SCORE would let optimization carry
+         * on while silently losing the global best, so it must escape. The
+         * evaluation itself is nevertheless complete and consumed an ordered
+         * iter slot; enqueue its real loss before rethrowing so final cleanup
+         * does not discard every later result behind a permanent gap. */
+        r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::high_resolution_clock::now() - t0);
+        try {
+            HPOLog::instance().warning(
+                std::string("fatal best-potential persistence failure at eval ") +
+                std::to_string(r.iter) + ": " + e.what());
+        } catch (...) {}
+        try {
+#ifndef TADAH_BUILD_MPI
+            submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
+                          train_stdb_, val_stdb_, param_labels_, report_,
+                          cw_, prec_);
+#else
+            static const mlip::StructureDB empty_stdb;
+            submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
+                          empty_stdb, val_stdb_, param_labels_, report_,
+                          cw_, prec_);
+#endif
+        } catch (...) {
+            /* Preserve the primary durability exception. The writer's
+             * time-based gap recovery remains the last resort if enqueueing
+             * itself fails. */
+        }
+        throw;
     } catch (const std::exception& e) {
         /* Any other throw between ++g_iter_ and submit_result must
          * not leak the iter slot. Build a synthetic FAIL_SCORE Result
@@ -2346,12 +2588,12 @@ double HPO_Host<P,R>::operator()(const P& p) const
 /* ---------- opportunistic writer helper ------------------------------ */
   template<class P,class R>
 void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
-                                  const core::Context& master_ctx,
-                                  const core::Context& val_ctx,
-                                  const mlip::StructureDB& train_stdb,
-                                  const mlip::StructureDB& val_stdb,
-                                  const std::vector<std::string>& param_labels,
-                                  const mlip::LoadTransformReport& report,
+                                  const core::Context& /*master_ctx*/,
+                                  const core::Context& /*val_ctx*/,
+                                  const mlip::StructureDB& /*train_stdb*/,
+                                  const mlip::StructureDB& /*val_stdb*/,
+                                  const std::vector<std::string>& /*param_labels*/,
+                                  const mlip::LoadTransformReport& /*report*/,
                                   std::size_t cw, int prec)
 {
     /* 1. enqueue ------------------------------------------------------- */
@@ -2369,8 +2611,8 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
     /* 4. exclusive writer section ------------------------------------- */
     /* Wrapped in try/catch so a throw inside any per-iter write cannot
      * leave writer_token_ stuck set -- that would silently freeze every
-     * subsequent submit_result and corrupt best_pot.tadah while
-     * hpo_run.log keeps reporting better losses. See WRITER_THREAD_BUG.md. */
+     * subsequent per-evaluation/result log while hpo_run.log keeps moving.
+     * Canonical best persistence no longer depends on this queue. */
     /* Debug instrumentation: gated by TADAH_HPO_DEBUG_WRITER=1.
      * Writes a short log line to writer_debug.log on entry/exit of
      * the exclusive section + heartbeat every N iters. Used to track
@@ -2456,31 +2698,16 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
             print_stats_line (best_stats_f, e.best_iter, e, trg, cw, prec);
           }
 
-          /* overwrite best_pot.tadah ---------------------------------- */
-          {
-            std::ofstream bp("best_pot.tadah");
-
-            PotHeaderWriter::write_best_header(
-                bp, e, trg, master_ctx,
-                val_ctx,
-                train_stdb, val_stdb,
-                param_labels, report, cw, prec);
-
-            warmstart::dump_to_stream(bp);
-
-            bp << std::setprecision(
-                e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
-          }
-
           /* archive best_pot_N.tadah ---------------------------------- */
           if(e.best_iter % trg.dumpBestPotEvery == 0){
             std::ofstream bpa(std::string(trg.dumpBestPotDir)
-                +"/best_pot_" + std::to_string(e.best_iter) + ".tadah");
+                +"/best_pot_" + std::to_string(e.best_iter) + ".tadah"
+                + trg.potArchiveSuffix);
 
             PotHeaderWriter::write_best_archive_header(
                 bpa, e, trg, cw, prec);
 
-            warmstart::dump_to_stream(bpa);
+            PotHeaderWriter::write_candidate_hot(bpa, e);
 
             bpa << std::setprecision(
                 e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
@@ -2490,11 +2717,12 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
         /* ---- archive ANY pot every ---------------------------------- */
         if(e.iter % trg.dumpPotEvery == 0){
             std::ofstream pa(std::string(trg.dumpPotDir)
-                +"/pot_"+std::to_string(e.iter)+".tadah");
+                +"/pot_"+std::to_string(e.iter)+".tadah"
+                + trg.potArchiveSuffix);
 
             PotHeaderWriter::write_archive_header(pa, e, cw, prec);
 
-            warmstart::dump_to_stream(pa);
+            PotHeaderWriter::write_candidate_hot(pa, e);
 
             pa << std::setprecision(
                 e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
@@ -2508,7 +2736,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                  * records the failure for follow-up. The Result fields
                  * (is_best, has pot_ctx NUMERIC?) are included so the
                  * journal entry alone is enough to differentiate the
-                 * pot_ctx.get / write_best_header / per-iter print
+                 * pot_ctx.get / archive-header / per-iter print
                  * candidate throw sites without needing a second
                  * reproduction. */
                 bool is_best = false, has_numeric = false;
@@ -2621,29 +2849,22 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                                     print_params_line(best_par_f  , e.best_iter, e,      cw, prec);
                                     print_stats_line (best_stats_f, e.best_iter, e, trg, cw, prec);
                                 }
-                                {
-                                    std::ofstream bp("best_pot.tadah");
-                                    PotHeaderWriter::write_best_header(
-                                        bp, e, trg, master_ctx, val_ctx,
-                                        train_stdb, val_stdb, param_labels, report, cw, prec);
-                                    warmstart::dump_to_stream(bp);
-                                    bp << std::setprecision(
-                                        e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
-                                }
                                 if (e.best_iter % trg.dumpBestPotEvery == 0) {
                                     std::ofstream bpa(std::string(trg.dumpBestPotDir)
-                                        +"/best_pot_" + std::to_string(e.best_iter) + ".tadah");
+                                        +"/best_pot_" + std::to_string(e.best_iter) + ".tadah"
+                                        + trg.potArchiveSuffix);
                                     PotHeaderWriter::write_best_archive_header(bpa, e, trg, cw, prec);
-                                    warmstart::dump_to_stream(bpa);
+                                    PotHeaderWriter::write_candidate_hot(bpa, e);
                                     bpa << std::setprecision(
                                         e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
                                 }
                             }
                             if (e.iter % trg.dumpPotEvery == 0) {
                                 std::ofstream pa(std::string(trg.dumpPotDir)
-                                    +"/pot_"+std::to_string(e.iter)+".tadah");
+                                    +"/pot_"+std::to_string(e.iter)+".tadah"
+                                    + trg.potArchiveSuffix);
                                 PotHeaderWriter::write_archive_header(pa, e, cw, prec);
-                                warmstart::dump_to_stream(pa);
+                                PotHeaderWriter::write_candidate_hot(pa, e);
                                 pa << std::setprecision(
                                     e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
                             }
@@ -3144,14 +3365,6 @@ void HPO_Host<P,R>::flush_remaining() const
                   best_par_f (trg_.bestParamsFile, std::ios::app),
                   best_stats_f(trg_.bestStatsFile, std::ios::app);
 
-#if defined(TADAH_BUILD_MPI)
-    static const mlip::StructureDB empty_stdb;
-    const mlip::StructureDB& train_ref = empty_stdb;
-#else
-    const mlip::StructureDB& train_ref = train_stdb_;
-#endif
-    const mlip::StructureDB& val_ref = val_stdb_;
-
     while(io_buf_.count(next_flush_))
     {
         try {
@@ -3171,29 +3384,15 @@ void HPO_Host<P,R>::flush_remaining() const
             }
 
             if(e.is_best) {
-                {
-                    std::ofstream bp("best_pot.tadah");
-
-                    PotHeaderWriter::write_best_header(
-                        bp, e, trg_, master_ctx_,
-                        val_ctx_,
-                        train_ref, val_ref,
-                        param_labels_, report_, cw_, prec_);
-
-                    warmstart::dump_to_stream(bp);
-
-                    bp << std::setprecision(
-                        e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
-                }
-
                 if(e.best_iter % trg_.dumpBestPotEvery == 0){
                     std::ofstream bpa(std::string(trg_.dumpBestPotDir)
-                        + "/best_pot_" + std::to_string(e.best_iter) + ".tadah");
+                        + "/best_pot_" + std::to_string(e.best_iter) + ".tadah"
+                        + trg_.potArchiveSuffix);
 
                     PotHeaderWriter::write_best_archive_header(
                         bpa, e, trg_, cw_, prec_);
 
-                    warmstart::dump_to_stream(bpa);
+                    PotHeaderWriter::write_candidate_hot(bpa, e);
 
                     bpa << std::setprecision(
                         e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
@@ -3202,11 +3401,12 @@ void HPO_Host<P,R>::flush_remaining() const
 
             if(e.iter % trg_.dumpPotEvery == 0){
                 std::ofstream pa(std::string(trg_.dumpPotDir)
-                    + "/pot_" + std::to_string(e.iter) + ".tadah");
+                    + "/pot_" + std::to_string(e.iter) + ".tadah"
+                    + trg_.potArchiveSuffix);
 
                 PotHeaderWriter::write_archive_header(pa, e, cw_, prec_);
 
-                warmstart::dump_to_stream(pa);
+                PotHeaderWriter::write_candidate_hot(pa, e);
 
                 pa << std::setprecision(
                     e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;

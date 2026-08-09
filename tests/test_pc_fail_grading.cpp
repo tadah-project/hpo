@@ -39,8 +39,26 @@ TEST_CASE("fail_sigma: bounded, monotone, safe", "[fail_grading]") {
   /* bad v0 falls back sanely */
   CHECK(fail_sigma(1.0, -3.0) == Approx(0.5));
   CHECK(fail_sigma(1.0, std::nan("")) == Approx(0.5));
+  /* Ratio normalization must not overflow v + v0 at finite extremes. */
+  const double m = std::numeric_limits<double>::max();
+  CHECK(fail_sigma(m, m) == Approx(0.5));
+  CHECK(fail_sigma(0.5 * m, m) == Approx(1.0 / 3.0));
+  CHECK(fail_sigma(m, 0.5 * m) == Approx(2.0 / 3.0));
+  CHECK(fail_sigma(0.5 * m, m) < fail_sigma(m, m));
+  CHECK(fail_sigma(m, m) < fail_sigma(m, 0.5 * m));
 }
 
+
+TEST_CASE("graded FAILSCORE scale preserves representable band ordering",
+          "[fail_grading]") {
+  CHECK(graded_failscore_is_ordered(FS));
+  CHECK(graded_failscore_is_ordered(std::numeric_limits<double>::min()));
+  CHECK_FALSE(graded_failscore_is_ordered(
+      std::numeric_limits<double>::denorm_min()));
+  CHECK_FALSE(graded_failscore_is_ordered(0.0));
+  CHECK_FALSE(graded_failscore_is_ordered(
+      std::numeric_limits<double>::infinity()));
+}
 TEST_CASE("graded_failscore: band ranges and separation", "[fail_grading]") {
   const double W = 1e-3 * FS;
   for (auto band : {FailBand::A, FailBand::B, FailBand::C, FailBand::D}) {

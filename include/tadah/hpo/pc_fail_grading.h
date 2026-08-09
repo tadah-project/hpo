@@ -82,7 +82,13 @@ inline double fail_sigma(double v, double v0) {
   if (!(v > 0.0)) return 0.0;                       /* v <= 0 or NaN */
   if (!std::isfinite(v)) return 1.0 - 1e-9;
   if (!(v0 > 0.0) || !std::isfinite(v0)) v0 = 1.0;
-  const double s = v / (v + v0);
+  double s;
+  if (v > v0) {
+    s = 1.0 / (1.0 + v0 / v);
+  } else {
+    const double r = v / v0;
+    s = r / (1.0 + r);
+  }
   return std::min(s, 1.0 - 1e-9);
 }
 
@@ -101,6 +107,25 @@ inline double graded_failscore(double fs, FailBand band, double v, double v0) {
     default:          return fs;   /* not a failure -- caller bug guard */
   }
   return 0.999 * fs + W * (off + 0.25 * fail_sigma(v, v0));
+}
+
+/* Verify that the configured scale can represent every within-band and
+ * cross-band ordering promised above.  Tiny subnormal FAILSCORE values can
+ * collapse 0.001*FS to zero and must be rejected before optimization. */
+inline bool graded_failscore_is_ordered(double fs) {
+  if (!std::isfinite(fs) || !(fs > 0.0)) return false;
+  const double inf = std::numeric_limits<double>::infinity();
+  double previous_top = -inf;
+  for (FailBand band : {FailBand::A, FailBand::B,
+                        FailBand::C, FailBand::D}) {
+    const double lo = graded_failscore(fs, band, 0.0, 1.0);
+    const double hi = graded_failscore(fs, band, inf, 1.0);
+    if (!std::isfinite(lo) || !std::isfinite(hi) ||
+        !(previous_top < lo) || !(lo < hi))
+      return false;
+    previous_top = hi;
+  }
+  return previous_top < fs;
 }
 
 /* Compact, copyable per-eval failure record (travels inside EvalResult

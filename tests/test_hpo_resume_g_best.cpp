@@ -64,6 +64,10 @@ TEST_CASE("HPO_Host comparator atomics survive a checkpoint round-trip",
         cp.put_size("g_best_iter",       42);
         cp.put_size("iter_at_last_best", 50);
         cp.put_size("g_iter",            100);
+        cp.put_bool("g_best_key_valid",  true);
+        cp.put_int ("g_best_rank",       2);
+        cp.put_size("g_best_slot",       3);
+        cp.put_size("g_best_eval",       42);
         cp.commit();
     }
 
@@ -83,6 +87,10 @@ TEST_CASE("HPO_Host comparator atomics survive a checkpoint round-trip",
     CHECK(Host::current_best()       == Approx(1.0));
     CHECK(Host::current_best_iter()  == 42u);
     CHECK(Host::current_last_best()  == 50u);
+    REQUIRE(Host::current_best_key_for_test().has_value());
+    CHECK(Host::current_best_key_for_test()->rank == 2);
+    CHECK(Host::current_best_key_for_test()->slot == 3u);
+    CHECK(Host::current_best_key_for_test()->eval == 42u);
 
     /* ---- save round-trip — values written should match what we set -- */
     {
@@ -99,6 +107,18 @@ TEST_CASE("HPO_Host comparator atomics survive a checkpoint round-trip",
     CHECK(Host::current_best()      == Approx(1.0));
     CHECK(Host::current_best_iter() == 42u);
     CHECK(Host::current_last_best() == 50u);
+    REQUIRE(Host::current_best_key_for_test().has_value());
+    CHECK(Host::current_best_key_for_test()->rank == 2);
+
+    /* A confirmed fresh run in the same process must not inherit the prior
+     * comparator, even though eval numbering remains monotonic for the ordered
+     * writer. Its first finite candidate can therefore own the new output. */
+    Host::reset_best_state_for_fresh_run();
+    CHECK(Host::current_best() == std::numeric_limits<double>::max());
+    CHECK(Host::current_best_iter() == 0u);
+    CHECK_FALSE(Host::current_best_key_for_test().has_value());
+    CHECK(Host::current_last_best() == Host::g_iter_value());
+    CHECK(Host::g_iter_value() == 100u);
 
     /* ---- a missing HPO_HOST section is a no-op (defensive) ----------- */
     Host::reset_globals_for_test();

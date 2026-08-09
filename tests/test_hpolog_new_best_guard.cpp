@@ -4,6 +4,9 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
 
 /* Bug 2 regression — HPOLog::log_new_best must reject calls whose loss is
  * not strictly better than cur_best_loss_. Without the guard, an upstream
@@ -27,6 +30,14 @@ std::filesystem::path scratch_log_path()
          ".log");
 }
 
+std::string read_log(const std::filesystem::path& path)
+{
+    std::ifstream is(path);
+    std::ostringstream oss;
+    oss << is.rdbuf();
+    return oss.str();
+}
+
 void log_best(double loss, std::size_t eval_num)
 {
     /* No metric flags — simplest call form. */
@@ -43,6 +54,42 @@ void log_best(double loss, std::size_t eval_num)
 }
 
 }  // namespace
+
+TEST_CASE("HPOLog diagnostics state observations without inferring causes",
+          "[hpolog][diagnostics]")
+{
+    auto& log = tadah::hpo::HPOLog::instance();
+
+    const auto zero_path = scratch_log_path();
+    log.reset_for_test();
+    log.open(zero_path.string(), "test", "test_cwd", 0);
+    log.finish("ZERO_EVALS");
+    const std::string zero = read_log(zero_path);
+    CHECK(zero.find("No evaluations recorded; NaN/Inf rate is unavailable.")
+          != std::string::npos);
+    CHECK(zero.find("well-configured") == std::string::npos);
+    std::error_code zero_ec;
+    std::filesystem::remove(zero_path, zero_ec);
+
+    const auto mixed_path = scratch_log_path();
+    log.reset_for_test();
+    log.open(mixed_path.string(), "test", "test_cwd", 0);
+    log.record_eval(1, 1.0, false);
+    log.record_eval(2, 1.0, true);
+    log.log_nan_clamped(2, "", "");
+    log.finish("MIXED");
+    const std::string mixed = read_log(mixed_path);
+    CHECK(mixed.find("50.0% of evaluations produced a non-finite loss")
+          != std::string::npos);
+    CHECK(mixed.find("This counter does not identify the cause.")
+          != std::string::npos);
+    CHECK(mixed.find("evaluation produced NaN/Inf") != std::string::npos);
+    CHECK(mixed.find("most evaluations") == std::string::npos);
+    std::error_code mixed_ec;
+    std::filesystem::remove(mixed_path, mixed_ec);
+
+    CHECK(tadah::hpo::nlopt_result_str(-1) == "FAILURE -- generic failure");
+}
 
 TEST_CASE("HPOLog::log_new_best rejects non-improving losses", "[hpolog][bug2]")
 {

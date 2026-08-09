@@ -15,7 +15,7 @@
  * the shared annealing stepper (anneal_core.h) at the new temperature.
  *
  * Schedule: ESS_TARGET in (0,1) (default 0.5) picks dbeta adaptively so
- * the effective sample size stays at target * N_finite -- zero extra
+ * the effective sample size stays at target * N_feasible -- zero extra
  * evaluations, capped so T never drops faster than RT per step;
  * degenerate populations (all-equal f, all-FAILSCORE) fall back to the
  * geometric T *= RT step. ESS_TARGET 0 = pure geometric schedule.
@@ -42,8 +42,9 @@
  *   ESS_TARGET   0.5               adaptive-dbeta target; 0 = geometric
  *   T_HOT        auto              starting temperature
  *   T_MIN        auto (T0*1e-6)    final temperature
- *   RT           0.85              max cooling per step / geometric ratio
- *   INIT_MODE    0                 0: walker0=seed, rest sigma-jittered
+ *   RT           0.90              max cooling per step / geometric ratio
+ *   INIT_MODE    0                 0: walker0=seed; others use Gaussian
+ *                                  jitter (sigma=CLASSIC scale or Corana V)
  *                                  1: walkers>0 uniform in the box
  */
 #include <tadah/hpo/hpo_host.h>
@@ -59,6 +60,7 @@
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -67,6 +69,52 @@
 #include <vector>
 
 namespace tadah::hpo {
+
+#ifdef TADAH_HPO_MPI
+namespace pa_detail {
+
+/* PA uses two MPI payload shapes: a dim+2 calibration broadcast and a
+ * population-wide gather/scatter with stride 2*dim+1.  Validate both without
+ * allocating either payload, and keep every multiplication in a checked
+ * domain before it can be narrowed to the MPI C API's int counts. */
+inline void validate_mpi_calibration_dimension(std::size_t dim)
+{
+  const std::size_t mpi_limit =
+      static_cast<std::size_t>(std::numeric_limits<int>::max());
+  constexpr std::size_t calibration_fields = 2;
+  if (dim > mpi_limit - calibration_fields)
+    throw std::length_error(
+        "TADAH:ANNEAL_PA: parameter dimension " + std::to_string(dim) +
+        " exceeds the MPI calibration-payload limit "
+        "(dimension + 2 must fit in int)");
+}
+
+inline void validate_mpi_population_state(std::size_t dim,
+                                          std::size_t population)
+{
+  const std::size_t mpi_limit =
+      static_cast<std::size_t>(std::numeric_limits<int>::max());
+  const std::size_t size_limit = std::numeric_limits<std::size_t>::max();
+  if (dim > (size_limit - 1) / 2)
+    throw std::length_error(
+        "TADAH:ANNEAL_PA: state-vector stride overflows size_t");
+  const std::size_t stride = 2 * dim + 1;
+  if (population > mpi_limit || stride > mpi_limit ||
+      population > mpi_limit / stride)
+    throw std::length_error(
+        "TADAH:ANNEAL_PA: population state exceeds MPI int "
+        "count/displacement limits");
+}
+
+inline void validate_mpi_payload_dimensions(std::size_t dim,
+                                            std::size_t population)
+{
+  validate_mpi_calibration_dimension(dim);
+  validate_mpi_population_state(dim, population);
+}
+
+}  // namespace pa_detail
+#endif
 
 template<typename Vec, typename HostT>
   void run_anneal_pa_impl(const OptimizerSpec& sp, HostT& host)
@@ -91,6 +139,13 @@ template<typename Vec, typename HostT>
      * identical for any rank count (and any THREADS). */
     const int world = hpo_size();
     const int rank  = hpo_rank();
+    const bool distributed_mpi = hpo_mpi_active() && world > 1;
+#ifdef TADAH_HPO_MPI
+    if (distributed_mpi)
+      pa_detail::validate_mpi_payload_dimensions(dim, R);
+#endif
+    const std::vector<double> initial =
+        anneal::make_initial_point(sp, AlgoKind::PA);
     if (static_cast<std::size_t>(world) > R)
       throw std::runtime_error(
           "TADAH:ANNEAL_PA: POPULATION (" + std::to_string(R) +
@@ -115,21 +170,17 @@ template<typename Vec, typename HostT>
       HPOLog::instance().warning(hint);
     }
 
-    /* per-dim sigma (transformed space) */
-    std::vector<double> sigma(dim);
-    if (sp.step.has_value()) {
-      for (std::size_t i = 0; i < dim; ++i) sigma[i] = *sp.step;
-    } else {
-      for (std::size_t i = 0; i < dim; ++i)
-        sigma[i] = kb.step_frac * (sp.high[i] - sp.low[i]);
-    }
+    /* Per-dimension proposal scale in transformed space: CLASSIC Gaussian
+     * sigma, or Corana uniform half-width V (already floor/cap-clamped). */
+    const std::vector<double> proposal_scale = anneal::make_initial_steps(sp, kb);
 
     constexpr std::uint64_t HUGE_UNSIGNED = std::numeric_limits<std::uint64_t>::max();
     const std::uint64_t max_eval_global = sp.stop.maxeval.value_or(HUGE_UNSIGNED);
-    /* Multi-rank runs enforce MAXEVAL through GLOBAL accounting (spent
-     * counts allreduced per sweep round feed the deterministic
-     * slicing), so the local reserve counter stays uncapped there. */
-    anneal::SharedBudget budget(world > 1 ? HUGE_UNSIGNED : max_eval_global);
+    /* Rank 0 alone owns seed/T0 calibration.  Cap it at the GLOBAL limit;
+     * distributed initialization/sweeps use deterministic global slot
+     * allowances and allreduce their rank-local counters. */
+    anneal::SharedBudget budget(
+        world > 1 && rank != 0 ? HUGE_UNSIGNED : max_eval_global);
 
     const auto t0_wall = std::chrono::steady_clock::now();
     const double max_time = sp.stop.maxtime.value_or(0.0);
@@ -140,17 +191,16 @@ template<typename Vec, typename HostT>
                std::chrono::steady_clock::now() - t0_wall).count() >= max_time;
     };
 
-    const double stopval =
-        sp.stop.stopval.value_or(-std::numeric_limits<double>::infinity());
+    const auto stopval = sp.stop.stopval;
 
     std::atomic<bool> stop_flag{false};
     anneal::StopCtx ctx{budget, stop_flag, time_exceeded, stopval};
 
-    anneal::CoranaPlateau plateau(sp.stop, kb.neps);
+    anneal::CoranaPlateau plateau(sp.stop, kb.neps, sp.failscore);
 
     enum class StopReason {
       Done, MaxEval, MaxTime, StopVal, TMin, Plateau,
-      StopValOnProbe, MaxTimeOnProbe, NoDims, NoBudget
+      StopValOnProbe, ExternalOnProbe, MaxTimeOnProbe, NoDims, NoBudget
     };
     StopReason stop_reason = StopReason::Done;
 
@@ -180,10 +230,30 @@ template<typename Vec, typename HostT>
       if (kb.t_min) oss << "  T_MIN=" << *kb.t_min;
       else          oss << "  T_MIN=auto(T0*1e-6)";
       if (kb.corana)
-        oss << "  NS=" << kb.NS << "  NT=" << kb.NT << "  C=" << kb.C;
+        oss << "  NS=" << kb.NS << "  NT=" << kb.NT << "  C=" << kb.C
+            << "  V_FLOOR_FRAC=" << kb.v_floor_frac;
       else
         oss << "  L=" << kb.L;
-      oss << "  INIT_MODE=" << kb.init_mode;
+      if (sp.step.has_value()) {
+        if (kb.corana)
+          oss << "  STEP=" << *sp.step
+              << " (Corana U(-V,V) half-width; floor/cap applied per dim)";
+        else
+          oss << "  sigma=" << *sp.step
+              << " (CLASSIC Gaussian; explicit STEP)";
+      } else {
+        oss << "  STEP_FRAC=" << kb.step_frac
+            << (kb.corana ? " (Corana V half-width/width)"
+                          : " (CLASSIC Gaussian sigma/width)");
+      }
+      oss << "  BOUNDARY_MODE=" << static_cast<int>(kb.boundary_mode)
+          << (kb.boundary_mode == anneal::BoundaryMode::Reflect
+                  ? "(REFLECT)" : "(REDRAW)")
+          << "  INIT_MODE=" << kb.init_mode
+          << (kb.init_mode == 0
+                  ? (kb.corana ? "(Gaussian jitter; sigma=initial V)"
+                               : "(Gaussian jitter; sigma=proposal sigma)")
+                  : "(uniform box)");
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
@@ -191,12 +261,15 @@ template<typename Vec, typename HostT>
     /* Layout arithmetic -- exact, printed up front (mirrors ANNEAL_PT:
      * the first per-step line can be a long time away when the
      * per-walker product is large). */
-    const std::uint64_t rung_cost =
-        (kb.corana ? static_cast<std::uint64_t>(kb.NT) * kb.NS * dim
-                   : static_cast<std::uint64_t>(kb.L)) * kb.sweeps;
+    const std::uint64_t base_rung_cost =
+        kb.corana ? anneal::saturating_mul(
+                        anneal::saturating_mul(kb.NT, kb.NS), dim)
+                  : static_cast<std::uint64_t>(kb.L);
+    const std::uint64_t rung_cost = anneal::saturating_mul(
+        base_rung_cost, static_cast<std::uint64_t>(kb.sweeps));
+    const std::uint64_t step_cost = anneal::saturating_mul(
+        static_cast<std::uint64_t>(R), rung_cost);
     {
-      const std::uint64_t step_evals =
-          static_cast<std::uint64_t>(R) * rung_cost;
       std::ostringstream oss;
       oss << "ANNEAL_PA layout: walker T-step = ";
       if (kb.corana)
@@ -205,14 +278,14 @@ template<typename Vec, typename HostT>
       else
         oss << "L*SWEEPS = " << kb.L << "*" << kb.sweeps << " = ";
       oss << rung_cost << " evals;  population T-step = POPULATION*rung = "
-          << R << "*" << rung_cost << " = " << step_evals << " evals";
+          << R << "*" << rung_cost << " = " << step_cost << " evals";
       HPOLog::instance().info(oss.str());
       /* Cadence registration is single-process only: the milestone
        * throughput window is rank-local and would mis-scale a global
        * budget under MPI. */
-      if (world == 1 && step_evals > 0)
+      if (world == 1 && step_cost > 0)
         HPOLog::instance().set_cadence(
-            static_cast<std::size_t>(step_evals), "T-step",
+            static_cast<std::size_t>(step_cost), "T-step",
             max_eval_global == HUGE_UNSIGNED ? 0 : max_eval_global);
     }
     /* Pinned-dim audit (single-process, rank-local marks -- see PT). */
@@ -220,14 +293,32 @@ template<typename Vec, typename HostT>
       HPOLog::instance().arm_pin_audit(
           sp, kb.v_floor_frac, static_cast<int>(R), "T-step");
 
+    bool calib_threw = false;
+    std::string calib_what;
     if (dim == 0) {
-      if (!sp.optim_init.empty() && budget.left() > 0) {
-        const auto v = sp.in(sp.optim_init.front());
-        Vec xv(v.size());
-        for (std::size_t i = 0; i < v.size(); ++i) xv(i) = v[i];
-        host(sp.out(xv));
-      }
       stop_reason = StopReason::NoDims;
+      if (rank == 0 && !sp.optim_init.empty()) {
+        if (!budget.try_reserve()) {
+          stop_reason = StopReason::NoBudget;
+        } else {
+          try {
+            Vec xv(dim);
+            for (std::size_t i = 0; i < dim; ++i) xv(i) = initial[i];
+            double f = host(sp.out(xv));
+            if (!std::isfinite(f))
+              f = std::numeric_limits<double>::infinity();
+            if (anneal::stopval_reached(f, stopval, sp.failscore))
+              stop_reason = StopReason::StopVal;
+            else if (time_exceeded()) stop_reason = StopReason::MaxTime;
+          } catch (const std::exception& e) {
+            calib_threw = true;
+            calib_what = e.what();
+          } catch (...) {
+            calib_threw = true;
+            calib_what = "TADAH:ANNEAL_PA: non-standard exception during zero-dimensional evaluation";
+          }
+        }
+      }
     }
 
     bool proceed = (stop_reason == StopReason::Done);
@@ -240,48 +331,67 @@ template<typename Vec, typename HostT>
     Vec x0(dim);
     double f0 = std::numeric_limits<double>::infinity();
     if (proceed && rank == 0) {
-      if (!sp.optim_init.empty()) {
-        const auto v = sp.in(sp.optim_init.front());
-        for (std::size_t i = 0; i < v.size(); ++i) x0(i) = v[i];
-      } else {
-        for (std::size_t i = 0; i < dim; ++i)
-          x0(i) = 0.5 * (sp.low[i] + sp.high[i]);
-      }
-      if (!budget.try_reserve() ||
-          (world == 1 && max_eval_global == 0)) {
+      for (std::size_t i = 0; i < dim; ++i) x0(i) = initial[i];
+      if (!budget.try_reserve()) {
         stop_reason = StopReason::NoBudget;
         proceed = false;
       } else {
-        f0 = host(sp.out(x0));
-        ran_sa = true;
-        g_best = l_best = f0;
-        g_best_x = l_best_x = x0;
-        if (f0 <= stopval) {
-          stop_reason = StopReason::StopVal; proceed = false;
-        } else if (time_exceeded()) {
-          stop_reason = StopReason::MaxTime; proceed = false;
+        try {
+          f0 = host(sp.out(x0));
+          if (!std::isfinite(f0))
+            f0 = std::numeric_limits<double>::infinity();
+          ran_sa = true;
+          g_best = l_best = f0;
+          g_best_x = l_best_x = x0;
+          if (anneal::stopval_reached(f0, stopval, sp.failscore)) {
+            stop_reason = StopReason::StopVal; proceed = false;
+          } else if (time_exceeded()) {
+            stop_reason = StopReason::MaxTime; proceed = false;
+          }
+        } catch (const std::exception& e) {
+          calib_threw = true;
+          calib_what = e.what();
+          proceed = false;
+        } catch (...) {
+          calib_threw = true;
+          calib_what =
+              "TADAH:ANNEAL_PA: non-standard exception during seed evaluation";
+          proceed = false;
         }
       }
     }
 
-    bool calib_threw = false;
-    std::string calib_what;
     if (proceed && rank == 0) {
       std::mt19937_64 probe_rng = anneal::make_stream(seed, anneal::SALT_PROBES);
       try {
         const auto t0out = anneal::calibrate_t0(
-            sp, kb, sigma, x0, f0, l_best_x, l_best,
+            sp, kb, proposal_scale, x0, f0, l_best_x, l_best,
             host, probe_rng, ctx, "ANNEAL_PA");
         g_best = l_best;
         T_hot = t0out.T0;
         if (t0out.aborted) {
-          stop_reason = t0out.stopval_hit ? StopReason::StopValOnProbe
-                                          : StopReason::MaxTimeOnProbe;
+          stop_reason = t0out.budget_exhausted
+                            ? StopReason::MaxEval
+                            : (t0out.stopval_hit
+                                   ? StopReason::StopValOnProbe
+                                   : (t0out.external_stop
+                                          ? StopReason::ExternalOnProbe
+                                          : StopReason::MaxTimeOnProbe));
+          proceed = false;
+        } else if (budget.left() == 0) {
+          stop_reason = StopReason::MaxEval;
+          proceed = false;
+        } else if (time_exceeded()) {
+          stop_reason = StopReason::MaxTimeOnProbe;
           proceed = false;
         }
       } catch (const std::exception& e) {
         calib_threw = true;
         calib_what  = e.what();
+      } catch (...) {
+        calib_threw = true;
+        calib_what =
+            "TADAH:ANNEAL_PA: non-standard exception during T0 calibration";
       }
     }
     if (world > 1) {
@@ -320,19 +430,63 @@ template<typename Vec, typename HostT>
     }
 
     const double t_min = kb.t_min ? *kb.t_min
-                                  : (T_hot > 0.0 ? T_hot * 1e-6 : 1e-12);
+                                  : (T_hot > 0.0
+                                         ? anneal::automatic_t_min(T_hot)
+                                         : 1e-12);
+    if (proceed && t_min > T_hot)
+      throw std::runtime_error(
+          "TADAH:ANNEAL_PA: resolved T_MIN must be <= resolved T_HOT");
 
     /* --- population (local slot block only) ------------------------------ */
     std::vector<anneal::ChainState<Vec>> walkers(n_local);
     anneal::ReplicaPool pool(std::min(threads, n_local ? n_local : 1),
                              stop_flag);
+    auto rethrow_pool_error = [&](const char* phase) {
+      const bool local_error = pool.has_error();
+      const int any_error = world > 1
+          ? hpo_allreduce_max(local_error ? 1 : 0)
+          : (local_error ? 1 : 0);
+      if (!any_error) return;
+      if (local_error) pool.rethrow_if_error();
+      throw std::runtime_error(
+          std::string("TADAH:ANNEAL_PA: worker failed on another MPI rank during ") +
+          phase);
+    };
 
-    /* Per-rank element counts for the population-wide gathers. */
+    /* Per-rank element counts for the population-wide gathers.  Multi-rank
+     * MPI limits were checked at the driver prologue, before allocation or
+     * evaluation.  Preserve the prior late validation/error order for serial
+     * and MPI-world1 runs; do not repeat it after the distributed prologue. */
     std::vector<int> f_counts(world), st_counts(world);
+    if (dim > (std::numeric_limits<std::size_t>::max() - 1) / 2)
+      throw std::runtime_error(
+          "TADAH:ANNEAL_PA: state-vector stride overflows size_t");
     const std::size_t stride = 2 * dim + 1;   /* f | x | V per walker */
+    const std::size_t mpi_int_max =
+        static_cast<std::size_t>(std::numeric_limits<int>::max());
+    if (!distributed_mpi &&
+        (R > mpi_int_max || stride > mpi_int_max ||
+         R > mpi_int_max / stride))
+      throw std::runtime_error(
+          "TADAH:ANNEAL_PA: population state exceeds MPI int "
+          "count/displacement limits");
+    const std::size_t population_state_size = R * stride;
     for (int r = 0; r < world; ++r) {
-      f_counts[r]  = static_cast<int>(slot_count(r));
-      st_counts[r] = static_cast<int>(slot_count(r) * stride);
+      const std::size_t rank_slots = slot_count(r);
+#ifdef TADAH_HPO_MPI
+      if (hpo_mpi_active()) {
+        f_counts[r] = hpo_mpi_checked_count(
+            rank_slots, "ANNEAL_PA MPI loss gather");
+        st_counts[r] = hpo_mpi_checked_count(
+            rank_slots * stride, "ANNEAL_PA MPI state gather/scatter");
+      } else {
+        f_counts[r] = static_cast<int>(rank_slots);
+        st_counts[r] = static_cast<int>(rank_slots * stride);
+      }
+#else
+      f_counts[r] = static_cast<int>(rank_slots);
+      st_counts[r] = static_cast<int>(rank_slots * stride);
+#endif
     }
 
     if (proceed) {
@@ -340,15 +494,25 @@ template<typename Vec, typename HostT>
         const std::size_t k = off_local + li;   /* global slot */
         auto& w = walkers[li];
         w.rng = anneal::make_stream(seed, anneal::SALT_CHAIN, k);
-        w.V   = sigma;
+        w.V   = proposal_scale;
         w.x   = Vec(dim);
         if (k == 0 || kb.init_mode == 0) {
+          /* Walker 0 starts at the seed exactly. Higher slots use Gaussian
+           * seed jitter in both variants; under Corana the initial V[i]
+           * value is reused as that initialization-only sigma. */
           std::normal_distribution<double> nd(0.0, 1.0);
           for (std::size_t i = 0; i < dim; ++i) {
-            double v = x0(i);
-            if (k > 0) v += sigma[i] * nd(w.rng);
-            anneal::reflect_into(v, sp.low[i], sp.high[i]);
-            w.x(i) = v;
+            long double v = static_cast<long double>(x0(i));
+            if (k > 0) {
+              auto draw = [&]() {
+                return static_cast<long double>(x0(i)) +
+                       static_cast<long double>(proposal_scale[i]) * nd(w.rng);
+              };
+              v = draw();
+              (void)anneal::constrain_proposal(
+                  v, sp.low[i], sp.high[i], kb.boundary_mode, draw);
+            }
+            w.x(i) = static_cast<double>(v);
           }
         } else {
           for (std::size_t i = 0; i < dim; ++i)
@@ -361,18 +525,31 @@ template<typename Vec, typename HostT>
         walkers[0].best_f = f0;
       }
 
+      /* As in PT, admit a deterministic prefix of global non-seed slots so
+       * partial initialization is independent of rank/thread layout. */
+      const std::uint64_t spent_before_init = world > 1
+          ? hpo_allreduce_sum(budget.spent()) : budget.spent();
+      const std::uint64_t init_remaining = max_eval_global > spent_before_init
+          ? max_eval_global - spent_before_init : 0;
+      const std::uint64_t init_admitted = std::min<std::uint64_t>(
+          R > 0 ? static_cast<std::uint64_t>(R - 1) : 0, init_remaining);
       pool.run_epoch(n_local, [&](std::size_t li) {
-        warmstart::current_chain() = off_local + li;   /* global slot key */
+        const std::size_t gk = off_local + li;
+        warmstart::current_chain() = gk;   /* global slot key */
         if (rank == 0 && li == 0) return;   /* global slot 0 = seed */
+        if (gk == 0 || gk > init_admitted) return;
         auto& w = walkers[li];
         if (stop_flag.load(std::memory_order_relaxed)) return;
         if (!ctx.budget.try_reserve()) return;   /* f stays inf */
         w.f = host(sp.out(w.x));
+        if (!std::isfinite(w.f))
+          w.f = std::numeric_limits<double>::infinity();
         w.best_f = w.f;
         w.best_x = w.x;
-        if (w.f <= stopval) stop_flag.store(true, std::memory_order_relaxed);
+        if (anneal::stopval_reached(w.f, stopval, sp.failscore))
+          stop_flag.store(true, std::memory_order_relaxed);
       });
-      pool.rethrow_if_error();
+      rethrow_pool_error("population initialization");
       for (auto& w : walkers) {
         if (w.best_f < l_best) { l_best = w.best_f; l_best_x = w.best_x; }
       }
@@ -384,12 +561,12 @@ template<typename Vec, typename HostT>
         hpo_allreduce_minloc(gb, owner);
         if (gb < std::numeric_limits<double>::max())
           g_best = std::min(g_best, gb);
-        int code = (stop_flag.load(std::memory_order_relaxed) &&
-                    g_best <= stopval) ? 1 : 0;
+        int code = (stopval && stop_flag.load(std::memory_order_relaxed) &&
+                    anneal::stopval_reached(g_best, stopval, sp.failscore)) ? 1 : 0;
         code = hpo_allreduce_max(code);
         if (code) { stop_reason = StopReason::StopVal; proceed = false; }
-      } else if (stop_flag.load(std::memory_order_relaxed) &&
-                 g_best <= stopval) {
+      } else if (stopval && stop_flag.load(std::memory_order_relaxed) &&
+                 anneal::stopval_reached(g_best, stopval, sp.failscore)) {
         stop_reason = StopReason::StopVal;
         proceed = false;
       }
@@ -399,6 +576,7 @@ template<typename Vec, typename HostT>
      * deterministic; slicing computed from the GLOBAL remaining budget
      * identically on every rank -- see the PT driver). */
     std::vector<anneal::RungStats> rstats(n_local);
+    std::size_t last_proposed = 0, last_accepted = 0, last_oob = 0;
     /* Pinned-dim audit unit: one tick per run_sweeps call. Kept separate
      * from step_count (whose increment site differs between the first
      * and subsequent T-steps) -- only monotonicity matters here. */
@@ -409,7 +587,7 @@ template<typename Vec, typename HostT>
       const std::uint64_t remaining =
           max_eval_global > spent_global ? max_eval_global - spent_global : 0;
       std::vector<std::uint64_t> allowance(R, rung_cost);
-      if (remaining < static_cast<std::uint64_t>(R) * rung_cost) {
+      if (remaining < step_cost) {
         const std::uint64_t base = remaining / R;
         const std::uint64_t rem  = remaining % R;
         for (std::size_t k = 0; k < R; ++k)
@@ -433,7 +611,7 @@ template<typename Vec, typename HostT>
         }
         rstats[li] = acc;
       });
-      pool.rethrow_if_error();
+      rethrow_pool_error("walker sweeps");
 
       /* Pinned-dim audit refresh: post-sweeps, PRE-resampling (marks
        * follow what each walker's own sweeps did; resampling replaces
@@ -446,13 +624,12 @@ template<typename Vec, typename HostT>
               anneal::pinned_dims(walkers[li], sp, kb));
       }
 
-      std::size_t e_prop = 0;
+      std::size_t e_prop = 0, e_acc = 0, e_oob = 0;
       bool any_stopval = false, any_time = false;
       for (std::size_t li = 0; li < n_local; ++li) {
         e_prop += rstats[li].proposed;
-        total_proposed += rstats[li].proposed;
-        total_accepted += rstats[li].accepted;
-        total_oob      += rstats[li].oob;
+        e_acc  += rstats[li].accepted;
+        e_oob  += rstats[li].oob;
         if (rstats[li].stop == RungStop::StopVal) any_stopval = true;
         if (rstats[li].stop == RungStop::Time)    any_time    = true;
         if (walkers[li].best_f < l_best) {
@@ -461,19 +638,32 @@ template<typename Vec, typename HostT>
         }
       }
       g_best = std::min(g_best, l_best);
+      any_time = any_time || time_exceeded();
       if (world > 1) {
         e_prop = hpo_allreduce_sum_sz(e_prop);
+        e_acc  = hpo_allreduce_sum_sz(e_acc);
+        e_oob  = hpo_allreduce_sum_sz(e_oob);
         int code = any_stopval ? 2 : (any_time ? 1 : 0);
         code = hpo_allreduce_max(code);
         any_stopval = (code == 2);
         any_time    = (code == 1);
       }
-      if (any_stopval || (stop_flag.load(std::memory_order_relaxed) &&
-                          g_best <= stopval)) {
+      total_proposed += e_prop;
+      total_accepted += e_acc;
+      total_oob      += e_oob;
+      last_proposed = e_prop;
+      last_accepted = e_acc;
+      last_oob      = e_oob;
+      if (any_stopval || (stopval &&
+                          stop_flag.load(std::memory_order_relaxed) &&
+                          anneal::stopval_reached(g_best, stopval, sp.failscore))) {
         stop_reason = StopReason::StopVal; return false;
       }
       if (any_time) { stop_reason = StopReason::MaxTime; return false; }
       if (e_prop == 0) {
+        stop_reason = StopReason::MaxEval; return false;
+      }
+      if (max_eval_global != HUGE_UNSIGNED && e_prop >= remaining) {
         stop_reason = StopReason::MaxEval; return false;
       }
       return true;
@@ -492,6 +682,14 @@ template<typename Vec, typename HostT>
       /* Step 0: equilibrate the fresh (delta-ish) population at T_HOT
        * before the first reweighting. */
       bool ok = run_sweeps(T);
+      /* T_HOT == T_MIN is a valid one-temperature run. Stop after its hot
+       * equilibration instead of entering the resampler with dbeta == 0 and
+       * performing a redundant second sweep. A stop from run_sweeps (most
+       * importantly exact MAXEVAL) retains priority. */
+      if (ok && T <= t_min) {
+        stop_reason = StopReason::TMin;
+        ok = false;
+      }
 
       /* Planned total for the step=current/total display: the budget
        * bound (every step sweeps the whole population), tightened by
@@ -511,7 +709,7 @@ template<typename Vec, typename HostT>
               max_eval_global == HUGE_UNSIGNED
                   ? std::numeric_limits<std::uint64_t>::max()
                   : rem,
-              static_cast<std::uint64_t>(R) * rung_cost);
+              step_cost);
           /* Plan line -- printed once, from the same arithmetic that
            * feeds the step=k/total display (an upper bound: STOPVAL /
            * plateau / MAXTIME end the run earlier). */
@@ -531,7 +729,8 @@ template<typename Vec, typename HostT>
       }
 
       std::vector<double> f_local(n_local), f_all(R);
-      std::vector<double> st_local(n_local * stride), st_all(R * stride);
+      std::vector<double> st_local(n_local * stride),
+                          st_all(population_state_size);
 
       auto pack_states = [&]() {
         for (std::size_t li = 0; li < n_local; ++li) {
@@ -572,37 +771,66 @@ template<typename Vec, typename HostT>
             HPOLog::instance().warning(
                 "ANNEAL_PA: population collapse -- only " +
                 std::to_string(n_finite_pre) + "/" + std::to_string(R) +
-                " walkers carry a finite loss");
+                " walkers carry a feasible loss");
           }
 
-          const double beta = 1.0 / T;
-          const double beta_rt_cap = 1.0 / (T * kb.rt) - beta;
-          double dbeta = beta_rt_cap;                 /* geometric default */
-          if (kb.ess_target > 0.0 && f_finite.size() >= 2) {
+          const double geometric_T =
+              anneal::pa_geometric_temperature(T, kb.rt, t_min);
+          const long double beta_ld = 1.0L / static_cast<long double>(T);
+          const long double cap_ld =
+              1.0L / static_cast<long double>(geometric_T) - beta_ld;
+          const long double double_max_ld = static_cast<long double>(
+              std::numeric_limits<double>::max());
+          const bool cap_not_representable = cap_ld > double_max_ld ||
+              (cap_ld > 0.0L && static_cast<double>(cap_ld) == 0.0);
+          const double beta_rt_cap = cap_ld > double_max_ld
+                                          ? std::numeric_limits<double>::max()
+                                          : static_cast<double>(cap_ld);
+          double requested_dbeta = beta_rt_cap;       /* geometric default */
+          if (!cap_not_representable && kb.ess_target > 0.0 &&
+              f_finite.size() >= 2) {
             const double lo = *std::min_element(f_finite.begin(), f_finite.end());
             const double hi = *std::max_element(f_finite.begin(), f_finite.end());
             if (hi > lo) {   /* non-degenerate -> adapt */
-              dbeta = anneal::choose_dbeta(f_finite, kb.ess_target, beta_rt_cap);
+              requested_dbeta = anneal::choose_dbeta(
+                  f_finite, kb.ess_target, beta_rt_cap);
               adaptive_used = true;
-              if (dbeta <= 0.0) dbeta = beta_rt_cap * 1e-3;
             }
           }
-          T_new = 1.0 / (beta + dbeta);
-          if (T_new < t_min) T_new = t_min;
+          /* choose_dbeta is public double arithmetic.  Materialize its
+           * endpoint, force one representable decrease if it rounded back to
+           * T, then reweight with the inverse-temperature increment actually
+           * represented by that endpoint. */
+          const double proposed_T = cap_not_representable
+              ? geometric_T
+              : static_cast<double>(
+                    1.0L / (beta_ld +
+                            static_cast<long double>(requested_dbeta)));
+          const auto realized = anneal::realize_pa_temperature_step(
+              T, geometric_T, proposed_T);
+          T_new = realized.temperature;
+          const long double realized_dbeta = realized.dbeta;
 
           /* Reweight + systematic resample plan over the gathered f. */
           std::vector<double> wgt(R, 0.0);
-          double wsum = 0.0, fmin = std::numeric_limits<double>::infinity();
+          long double wsum = 0.0L, wsum2 = 0.0L;
+          double fmin = std::numeric_limits<double>::infinity();
           for (double f : f_all)
             if (anneal::loss_is_finite(f, sp.failscore) && f < fmin) fmin = f;
           for (std::size_t k = 0; k < R; ++k) {
             if (anneal::loss_is_finite(f_all[k], sp.failscore)) {
-              wgt[k] = std::exp(-dbeta * (f_all[k] - fmin));
-              wsum += wgt[k];
+              const long double delta = static_cast<long double>(f_all[k]) -
+                                        static_cast<long double>(fmin);
+              const long double exponent = delta == 0.0L
+                  ? 0.0L : -realized_dbeta * delta;
+              const long double w = std::exp(exponent);
+              wgt[k] = static_cast<double>(w);
+              wsum += w;
+              wsum2 += w * w;
             }
           }
-          if (wsum > 0.0) {
-            ess = anneal::reweight_ess(f_finite, dbeta);
+          if (wsum > 0.0L && wsum2 > 0.0L) {
+            ess = static_cast<double>((wsum * wsum) / wsum2);
             std::mt19937_64 rs_rng =
                 anneal::make_stream(seed, anneal::SALT_PA_RESAMPLE, step_count);
             const double u =
@@ -610,21 +838,30 @@ template<typename Vec, typename HostT>
             parent = anneal::systematic_resample(wgt, u);
             std::unordered_set<std::size_t> uniq(parent.begin(), parent.end());
             unique_parents = uniq.size();
-            for (std::size_t j = 0; j < R; ++j)
-              if (parent[j] != j) ++culled;
+            culled = R - unique_parents;
             do_resample = 1;
           } else {
             HPOLog::instance().warning(
-                "ANNEAL_PA: no finite walker -- skipping resampling this step "
+                "ANNEAL_PA: no feasible walker -- skipping resampling this step "
                 "(geometric cooling continues)");
           }
         }
 
         if (world > 1) {
-          std::vector<double> ctrl{T_new, static_cast<double>(do_resample)};
+          std::vector<double> ctrl{
+              T_new, static_cast<double>(do_resample), ess,
+              static_cast<double>(culled),
+              static_cast<double>(unique_parents),
+              static_cast<double>(n_finite_pre),
+              adaptive_used ? 1.0 : 0.0};
           hpo_bcast(ctrl, 0);
           T_new       = ctrl[0];
           do_resample = static_cast<int>(ctrl[1]);
+          ess          = ctrl[2];
+          culled       = static_cast<std::size_t>(ctrl[3]);
+          unique_parents = static_cast<std::size_t>(ctrl[4]);
+          n_finite_pre = static_cast<std::size_t>(ctrl[5]);
+          adaptive_used = ctrl[6] != 0.0;
         }
 
         /* --- apply the resample plan ----------------------------------- */
@@ -632,7 +869,7 @@ template<typename Vec, typename HostT>
           pack_states();
           hpo_gatherv(st_local, st_all, st_counts);
           if (rank == 0) {
-            std::vector<double> permuted(R * stride);
+            std::vector<double> permuted(population_state_size);
             for (std::size_t j = 0; j < R; ++j)
               std::copy(st_all.begin() + parent[j] * stride,
                         st_all.begin() + (parent[j] + 1) * stride,
@@ -648,6 +885,25 @@ template<typename Vec, typename HostT>
         T = T_new;
         ++step_count;
         ok = run_sweeps(T);
+        const std::uint64_t spent_after_sweeps = world > 1
+            ? hpo_allreduce_sum(budget.spent()) : budget.spent();
+        const bool maxeval_hit = max_eval_global != HUGE_UNSIGNED &&
+                                 spent_after_sweeps >= max_eval_global;
+
+        anneal::StepSaturation step_vsat;
+        if (kb.corana) {
+          for (const auto& w : walkers) {
+            const auto s = anneal::step_saturation(w.V, sp, kb);
+            step_vsat.floor += s.floor;
+            step_vsat.cap   += s.cap;
+            step_vsat.total += s.total;
+          }
+          if (world > 1) {
+            step_vsat.floor = hpo_allreduce_sum_sz(step_vsat.floor);
+            step_vsat.cap   = hpo_allreduce_sum_sz(step_vsat.cap);
+            step_vsat.total = hpo_allreduce_sum_sz(step_vsat.total);
+          }
+        }
 
         /* Population best after the sweeps (current f, not the
          * monotone best) + the global best for the plateau rule. */
@@ -674,6 +930,14 @@ template<typename Vec, typename HostT>
         }
 
         if (rank == 0) {
+          const double accept_pct = last_proposed > 0
+              ? 100.0 * static_cast<double>(last_accepted) /
+                    static_cast<double>(last_proposed)
+              : 0.0;
+          const double oob_pct = last_proposed > 0
+              ? 100.0 * static_cast<double>(last_oob) /
+                    static_cast<double>(last_proposed)
+              : 0.0;
           std::ostringstream oss;
           oss << std::scientific << std::setprecision(3)
               << "ANNEAL_PA step=" << step_count;
@@ -683,9 +947,17 @@ template<typename Vec, typename HostT>
               << "  parents=" << unique_parents << "/" << R
               << "  culled=" << culled
               << "  finite=" << n_fin << "/" << R
+              << "  proposed=" << last_proposed
+              << "  accepted=" << std::fixed << std::setprecision(1)
+              << accept_pct << "%"
+              << "  oob=" << last_oob << " (" << oob_pct << "%)"
               << std::scientific << std::setprecision(3)
               << "  pop_best=" << f_pop_best
-              << "  best=" << g_best
+              << "  best=" << g_best;
+          if (kb.corana)
+            oss << "  V_floor=" << step_vsat.floor << "/" << step_vsat.total
+                << "  V_cap=" << step_vsat.cap << "/" << step_vsat.total;
+          oss
               << "  step_wall=" << HPOLog::format_duration(
                      std::chrono::duration<double>(
                          std::chrono::steady_clock::now() - step_wall_t0)
@@ -700,13 +972,28 @@ template<typename Vec, typename HostT>
         if (world > 1) hpo_bcast(rank0_code, 0);
 
         if (!ok) break;
+        if (maxeval_hit) { stop_reason = StopReason::MaxEval; break; }
         if (rank0_code == 1) { stop_reason = StopReason::Plateau; break; }
         if (T <= t_min) { stop_reason = StopReason::TMin; break; }
       }
     }
 
-    /* --- multi-rank finalisation: rank 0's best_* outputs must carry
-     * the GLOBAL winner (same scheme as ANNEAL_PT). */
+    /* --- multi-rank finalisation: share the global winner without a
+     * synthetic rank-0 re-evaluation (which would exceed MAXEVAL). */
+    anneal::StepSaturation final_vsat;
+    if (kb.corana) {
+      for (const auto& w : walkers) {
+        const auto s = anneal::step_saturation(w.V, sp, kb);
+        final_vsat.floor += s.floor;
+        final_vsat.cap   += s.cap;
+        final_vsat.total += s.total;
+      }
+      if (world > 1) {
+        final_vsat.floor = hpo_allreduce_sum_sz(final_vsat.floor);
+        final_vsat.cap   = hpo_allreduce_sum_sz(final_vsat.cap);
+        final_vsat.total = hpo_allreduce_sum_sz(final_vsat.total);
+      }
+    }
     std::uint64_t spent_report = budget.spent();
     if (world > 1 && dim > 0) {
       double gb = std::isfinite(l_best) ? l_best
@@ -720,19 +1007,19 @@ template<typename Vec, typename HostT>
           for (std::size_t d = 0; d < dim; ++d) bx[d] = l_best_x(d);
         hpo_bcast(bx, owner);
         for (std::size_t d = 0; d < dim; ++d) g_best_x(d) = bx[d];
-        if (rank == 0 && owner != 0) {
-          budget.try_reserve();   /* accounting only */
-          (void)host(sp.out(g_best_x));
-        }
       }
-      spent_report = hpo_allreduce_sum(budget.spent());
     }
+    if (world > 1) spent_report = hpo_allreduce_sum(budget.spent());
 
     /* --- final summary ----------------------------------------------------- */
     if (ran_sa) {
       const double overall_rate = total_proposed > 0
           ? static_cast<double>(total_accepted) /
             static_cast<double>(total_proposed) : 0.0;
+      const double oob_pct = total_proposed > 0
+          ? 100.0 * static_cast<double>(total_oob) /
+                static_cast<double>(total_proposed)
+          : 0.0;
       std::ostringstream oss;
       oss << std::scientific << std::setprecision(3)
           << "ANNEAL_PA summary: steps=" << step_count
@@ -741,10 +1028,15 @@ template<typename Vec, typename HostT>
           << "  accepted=" << std::fixed << std::setprecision(1)
           << (overall_rate * 100.0) << "%"
           << std::scientific << std::setprecision(3)
-          << "  oob=" << total_oob
+          << "  oob=" << total_oob << " (" << std::fixed
+          << std::setprecision(1) << oob_pct << "%)"
+          << std::scientific << std::setprecision(3)
           << "  culled_total=" << total_culled
           << "  T_hot=" << T_hot
           << "  best=" << g_best;
+      if (kb.corana)
+        oss << "  V_floor=" << final_vsat.floor << "/" << final_vsat.total
+            << "  V_cap=" << final_vsat.cap << "/" << final_vsat.total;
       HPOLog::instance().info(oss.str());
     }
 
@@ -755,6 +1047,7 @@ template<typename Vec, typename HostT>
         case StopReason::MaxTime:        reason = "MAXTIME exceeded"; break;
         case StopReason::StopVal:        reason = "STOPVAL reached"; break;
         case StopReason::StopValOnProbe: reason = "STOPVAL reached during T0 probes"; break;
+        case StopReason::ExternalOnProbe: reason = "external stop requested during T0 probes"; break;
         case StopReason::MaxTimeOnProbe: reason = "MAXTIME exceeded during T0 probes"; break;
         case StopReason::TMin:           reason = "T <= T_MIN"; break;
         case StopReason::Plateau:        reason = "FTOL plateau (Corana eps-NEPS rule, population best)"; break;

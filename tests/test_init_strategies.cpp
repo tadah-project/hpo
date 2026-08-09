@@ -384,6 +384,11 @@ TEST_CASE("WarmInitStrategy: HOT round-trip primes warmstart cache",
     const double      v_in   = 3.4567;
 
     StrategyTempFile pot(
+        "# HPO_BEST_FORMAT 1\n"
+        "# HPO_BEST_LOSS 1.25e-3\n"
+        "# HPO_SOURCE_RANK 0\n"
+        "# HPO_SOURCE_SLOT 2\n"
+        "# HPO_SOURCE_EVAL 17\n"
         "# HOT " + script + " " + name + " " + std::to_string(v_in) + "\n"
         "# unrelated comment\n"
     );

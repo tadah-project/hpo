@@ -10,8 +10,10 @@
  * Contents:
  *   - AlgoKind / algo_name       family-member selector
  *   - make_stream                decorrelated RNG streams (seed_seq salts)
- *   - reflect_into               mirror reflection into [lo, hi]
- *   - loss_is_finite             FAILSCORE-aware finiteness test
+ *   - reflect_into               exact mirror reflection into [lo, hi]
+ *   - constrain_proposal         reflection / redraw boundary policy
+ *   - loss_is_finite             FAILSCORE-aware feasibility test
+ *   - loss_is_rankable           annealer ordering test (graded failures)
  *   - robust_t0                  cliff-robust initial-temperature estimate
  *   - Knobs / Knobs::parse       PARAM parsing, validation, whitelists
  *   - CoranaPlateau              Corana et al. 1987 sec. 4 eps-NEPS stop
@@ -40,6 +42,8 @@ namespace tadah::hpo {
 namespace anneal {
 
 enum class AlgoKind { Serial, PT, PA };
+
+enum class BoundaryMode : int { Reflect = 0, Redraw = 1 };
 
 inline const char* algo_name(AlgoKind k)
 {
@@ -73,19 +77,74 @@ inline std::mt19937_64 make_stream(std::uint64_t seed,
   return std::mt19937_64(seq);
 }
 
-/* Mirror-reflect v into [lo, hi]. Up to 16 fold-reflections handle
- * steps up to ~16 * width; pathological inputs fall through to a
- * final clamp. Returns true when any reflection/clamp was needed
- * (feeds the `oob` diagnostic counters). */
+/* Mirror-reflect v into [lo, hi] exactly, however many box widths the
+ * finite proposal crossed.  The old bounded loop folded at most 16
+ * times and then clamped to an endpoint, creating artificial boundary
+ * atoms for large STEP overrides.  Long-double modulo arithmetic keeps
+ * the operation defined even when subtracting opposite-sign doubles
+ * would overflow in double precision. */
+inline bool reflect_into(long double& v, long double lo, long double hi)
+{
+  if (!std::isfinite(v) || !std::isfinite(lo) || !std::isfinite(hi) ||
+      !(hi > lo))
+    throw std::invalid_argument(
+        "anneal::reflect_into requires finite v and finite lo < hi");
+  if (v >= lo && v <= hi) return false;
+
+  const long double llo = lo;
+  const long double lhi = hi;
+  const long double w   = lhi - llo;
+  const long double p   = 2.0L * w;
+  long double y = std::fmod(static_cast<long double>(v) - llo, p);
+  if (y < 0.0L) y += p;
+  const long double folded = y <= w ? llo + y : lhi - (y - w);
+  v = folded;
+  /* Round-off at an exactly representable endpoint must never leak a
+   * proposal outside the public invariant. */
+  v = std::min(hi, std::max(lo, v));
+  return true;
+}
+
 inline bool reflect_into(double& v, double lo, double hi)
 {
-  if (v >= lo && v <= hi) return false;
-  for (int it = 0; it < 16 && (v < lo || v > hi); ++it) {
-    if      (v < lo) v = 2.0 * lo - v;
-    else if (v > hi) v = 2.0 * hi - v;
+  long double wide = static_cast<long double>(v);
+  const bool changed = reflect_into(
+      wide, static_cast<long double>(lo), static_cast<long double>(hi));
+  v = static_cast<double>(wide);
+  v = std::min(hi, std::max(lo, v));
+  return changed;
+}
+
+/* Apply the configured boundary kernel to an already-drawn coordinate.
+ * `redraw` must produce a fresh draw from the same unconstrained proposal
+ * distribution.  Returns true iff the first draw was outside; later
+ * discarded draws do not consume host-evaluation budget and count as one
+ * OOB proposal, keeping the diagnostic comparable with reflection. */
+template<class Real, class Draw>
+inline bool constrain_proposal(Real& v, double lo, double hi,
+                               BoundaryMode mode, Draw&& redraw)
+{
+  if (!std::isfinite(lo) || !std::isfinite(hi) || !(hi > lo))
+    throw std::invalid_argument(
+        "anneal::constrain_proposal requires finite lo < hi");
+  if (mode != BoundaryMode::Reflect && mode != BoundaryMode::Redraw)
+    throw std::invalid_argument("anneal::constrain_proposal invalid boundary mode");
+  if (std::isfinite(v) && v >= static_cast<Real>(lo) &&
+      v <= static_cast<Real>(hi)) return false;
+  if (mode == BoundaryMode::Reflect) {
+    reflect_into(v, static_cast<Real>(lo), static_cast<Real>(hi));
+    return true;
   }
-  if (v < lo || v > hi) v = std::min(hi, std::max(lo, v));
-  return true;
+  /* A malformed/out-of-box centre used to make this an unbounded loop.
+   * Valid annealer centres have substantial in-box mass, so 4096 misses is
+   * incontrovertibly a broken proposal kernel rather than bad luck. */
+  for (std::size_t attempt = 0; attempt < 4096; ++attempt) {
+    v = redraw();
+    if (std::isfinite(v) && v >= static_cast<Real>(lo) &&
+        v <= static_cast<Real>(hi)) return true;
+  }
+  throw std::runtime_error(
+      "anneal redraw kernel failed to produce an in-bounds finite coordinate");
 }
 
 /* FAILSCORE-aware finiteness: a loss is usable for statistics when it
@@ -97,6 +156,27 @@ inline bool loss_is_finite(double f, const std::optional<double>& failscore)
   if (!std::isfinite(f)) return false;
   if (failscore) return f < 0.999 * *failscore;
   return true;
+}
+
+/* A loss may still carry useful ordering information without being feasible.
+ * FAILSCORE_GRADING reserves [0.999*FS, FS) for directional failure losses:
+ * T0 calibration and PA resampling must continue to filter that band through
+ * loss_is_finite(), while Metropolis moves and chain personal bests must be
+ * able to descend through it.  The exact legacy FAILSCORE remains unrankable. */
+inline bool loss_is_rankable(double f,
+                             const std::optional<double>& failscore)
+{
+  if (!std::isfinite(f)) return false;
+  return !failscore || f < *failscore;
+}
+
+/* STOPVAL is a success criterion, so neither non-finite nor graded/legacy
+ * failure losses may satisfy it even when a user supplied a high threshold. */
+inline bool stopval_reached(double f,
+                            const std::optional<double>& stopval,
+                            const std::optional<double>& failscore)
+{
+  return stopval && loss_is_finite(f, failscore) && f <= *stopval;
 }
 
 /* Cliff-robust initial-temperature estimate from probes around a
@@ -118,22 +198,36 @@ inline std::optional<double> robust_t0(double f0,
                                        const std::optional<double>& failscore,
                                        double paccept)
 {
-  std::vector<double> up, absd;
+  if (!std::isfinite(f0) || !std::isfinite(paccept) ||
+      !(paccept > 0.0 && paccept < 1.0))
+    throw std::invalid_argument(
+        "anneal::robust_t0 requires finite f0 and paccept in (0,1)");
+  std::vector<long double> up, absd;
   up.reserve(probes.size());
   absd.reserve(probes.size());
   for (double f : probes) {
     if (!loss_is_finite(f, failscore)) continue;
-    const double d = f - f0;
-    if (d > 0.0) up.push_back(d);
+    long double d = static_cast<long double>(f) -
+                    static_cast<long double>(f0);
+    if (!std::isfinite(d))
+      d = std::copysign(
+          static_cast<long double>(std::numeric_limits<double>::max()), d);
+    if (d > 0.0L) up.push_back(d);
     absd.push_back(std::fabs(d));
   }
   if (absd.empty()) return std::nullopt;
-  std::vector<double>& src = up.empty() ? absd : up;
+  std::vector<long double>& src = up.empty() ? absd : up;
   std::sort(src.begin(), src.end());
   const std::size_t n = src.size();
-  const double med = (n % 2) ? src[n / 2]
-                             : 0.5 * (src[n / 2 - 1] + src[n / 2]);
-  return med / std::log(1.0 / paccept);
+  const long double med = (n % 2)
+      ? src[n / 2]
+      : 0.5L * src[n / 2 - 1] + 0.5L * src[n / 2];
+  const long double estimate =
+      med / -std::log(static_cast<long double>(paccept));
+  if (estimate >= static_cast<long double>(
+                      std::numeric_limits<double>::max()))
+    return std::numeric_limits<double>::max();
+  return static_cast<double>(estimate);
 }
 
 /* ---- Knobs ---------------------------------------------------------
@@ -145,16 +239,12 @@ inline std::optional<double> robust_t0(double f0,
 struct Knobs {
   /* stepper (shared across the family)
    *
-   * NS/NT/RT/T0_PACCEPT defaults were re-derived empirically on the
-   * 42-D Kr EAM workload at fixed MAXEVAL (2026-07-13 bench,
-   * playground_anneal_defaults/): NS5/NT5/RT0.90/PACCEPT0.05 beat the
-   * old NS5/NT2/RT0.85/PACCEPT0.80 by ~3 orders of magnitude in median
-   * best-at-budget, and beat a hand-tuned T_HOT as well. Deviations
-   * from Corana 1987 (NS 20, NT max(100,5D)): a rung costs NS*NT*D
-   * evals, so the paper's values are unaffordable at LAMMPS evaluation
-   * costs -- NT 5 keeps part of the paper's V-equilibration intent;
-   * PACCEPT 0.05 targets the small-dE tail, which is what actually
-   * matters on FAILSCORE-cliff landscapes. */
+   * A fixed-MAXEVAL grid on one 42-D Kr EAM workload retained the prior
+   * NS=5 default and changed NT 2->5, RT 0.85->0.90, and T0_PACCEPT
+   * 0.80->0.05.  On matched seeds 201-203, the measured median best losses
+   * were 3.35e-3 for NS5/NT5/P0.05, 1.41 for NS5/NT2/P0.05, and 5.45
+   * for NS5/NT2/P0.80.  These are workload-specific fixed-budget
+   * measurements, not a general ranking of settings. */
   bool        corana        = false;
   std::size_t L             = 50;     /* classic chain length per rung   */
   std::size_t NS            = 5;      /* Corana step cycles              */
@@ -162,6 +252,7 @@ struct Knobs {
   double      C             = 2.0;    /* Corana step-adjust gain         */
   double      step_frac     = 0.10;
   double      v_floor_frac  = 1e-3;
+  BoundaryMode boundary_mode = BoundaryMode::Reflect;
   bool        reset_to_best = false;  /* default flips to true w/ CORANA */
   std::size_t neps          = 4;
 
@@ -185,7 +276,7 @@ struct Knobs {
                                      * epochs (0 = cumulative only)     */
 
   /* shared by both parallel drivers */
-  int         init_mode   = 0;      /* 0 = seed + sigma-jitter, 1 = box */
+  int         init_mode   = 0;      /* 0 = seed + Gaussian jitter, 1 = box */
 
   /* population annealing (ANNEAL_PA only) */
   std::size_t sweeps      = 1;      /* rungs per walker per T-step      */
@@ -213,7 +304,7 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
    *    different family member -------------------------------------- */
   static const std::unordered_set<std::string> shared_keys = {
       "CORANA", "NS", "NT", "C", "L", "STEP_FRAC", "V_FLOOR_FRAC",
-      "RESET_TO_BEST", "NEPS", "T0_PROBES", "T0_PACCEPT",
+      "BOUNDARY_MODE", "RESET_TO_BEST", "NEPS", "T0_PROBES", "T0_PACCEPT",
       "T_HOT", "T_MIN", "RT",
   };
   static const std::unordered_set<std::string> serial_keys = {
@@ -286,50 +377,131 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     throw std::runtime_error(
         ctx + " does not use POPULATION; use TADAH:ANNEAL_PA");
 
+  auto require_finite_stop = [&](const char* name,
+                                 const std::optional<double>& value,
+                                 bool allow_negative) {
+    if (!value) return;
+    if (!std::isfinite(*value) || (!allow_negative && *value < 0.0))
+      throw std::runtime_error(
+          ctx + ": " + name + " must be finite" +
+          std::string(allow_negative ? "" : " and non-negative"));
+  };
+  require_finite_stop("STOPVAL", sp.stop.stopval, true);
+  require_finite_stop("FTOL_REL", sp.stop.ftol_rel, false);
+  require_finite_stop("FTOL_ABS", sp.stop.ftol_abs, false);
+  require_finite_stop("MAXTIME", sp.stop.maxtime, false);
+  if (sp.stop.maxtime && !(*sp.stop.maxtime > 0.0))
+    throw std::runtime_error(ctx + ": MAXTIME must be > 0");
+  if (sp.failscore &&
+      (!std::isfinite(*sp.failscore) || !(*sp.failscore > 0.0)))
+    throw std::runtime_error(ctx + ": FAILSCORE must be finite and > 0");
+
   auto pget = [&](const char* k, double dflt) {
     auto it = sp.param.find(k);
-    return it == sp.param.end() ? dflt : it->second;
+    if (it == sp.param.end()) return dflt;
+    if (!std::isfinite(it->second))
+      throw std::runtime_error(ctx + ": PARAM " + k + " must be finite");
+    return it->second;
+  };
+  auto pcount = [&](const char* k, double dflt) -> std::size_t {
+    const double v = pget(k, dflt);
+    const long double size_limit = std::ldexp(
+        1.0L, std::numeric_limits<std::size_t>::digits);
+    if (v < 0.0 || std::floor(v) != v ||
+        static_cast<long double>(v) >= size_limit)
+      throw std::runtime_error(
+          ctx + ": PARAM " + k + " must be a non-negative integer");
+    return static_cast<std::size_t>(v);
+  };
+  auto pbool = [&](const char* k, bool dflt) -> bool {
+    const double v = pget(k, dflt ? 1.0 : 0.0);
+    if (v != 0.0 && v != 1.0)
+      throw std::runtime_error(ctx + ": PARAM " + k + " must be 0 or 1");
+    return v == 1.0;
   };
 
   Knobs kb;
-  kb.corana        = pget("CORANA", 0.0) > 0.5;
-  kb.L             = static_cast<std::size_t>(pget("L", 50.0));
-  kb.NS            = static_cast<std::size_t>(pget("NS", 5.0));
-  kb.NT            = static_cast<std::size_t>(pget("NT", 5.0));
+  kb.corana        = pbool("CORANA", false);
+
+  /* Variant-level no-ops are errors.  They used to be admitted by the
+   * family whitelist and then silently ignored by the selected kernel. */
+  if (kb.corana && sp.param.count("L"))
+    throw std::runtime_error(ctx + ": PARAM L belongs to the CLASSIC variant");
+  if (!kb.corana) {
+    for (const char* key : {"NS", "NT", "C", "V_FLOOR_FRAC"})
+      if (sp.param.count(key))
+        throw std::runtime_error(
+            ctx + ": PARAM " + key + " requires PARAM CORANA 1");
+  }
+  if (kind == AlgoKind::PA && sp.param.count("RESET_TO_BEST"))
+    throw std::runtime_error(
+        ctx + ": PARAM RESET_TO_BEST is not defined for population annealing");
+
+  kb.L             = pcount("L", 50.0);
+  kb.NS            = pcount("NS", 5.0);
+  kb.NT            = pcount("NT", 5.0);
   kb.C             = pget("C", 2.0);
   kb.step_frac     = pget("STEP_FRAC", 0.10);
   kb.v_floor_frac  = pget("V_FLOOR_FRAC", 1e-3);
-  /* Brommer reset-to-best defaults ON under CORANA: on FAILSCORE-cliff
-   * landscapes the adaptive chain otherwise drifts during the high-T
-   * phase with no way back to the deepest basin seen. In PT it defaults
-   * OFF and applies only to the coldest slot (hot replicas exist to
-   * explore; snapping them to their best defeats tempering). */
-  kb.reset_to_best = pget("RESET_TO_BEST",
-                          (kb.corana && kind != AlgoKind::PT) ? 1.0 : 0.0) > 0.5;
-  kb.neps          = static_cast<std::size_t>(pget("NEPS", 4.0));
+  const std::size_t boundary = pcount("BOUNDARY_MODE", 0.0);
+  if (boundary > 1)
+    throw std::runtime_error(
+        ctx + ": PARAM BOUNDARY_MODE must be 0 (REFLECT) or 1 (REDRAW)");
+  kb.boundary_mode = static_cast<BoundaryMode>(boundary);
+  /* Corana's published cooling step returns to the best-so-far point.
+   * Keep that default for serial Corana; PT defaults off because snapping
+   * hot replicas defeats exchange, while PA rejects the knob above. */
+  kb.reset_to_best = pbool("RESET_TO_BEST",
+                           kb.corana && kind == AlgoKind::Serial);
+  kb.neps          = pcount("NEPS", 4.0);
 
   if (sp.param.count("T_HOT")) kb.t_hot = pget("T_HOT", 0.0);
   if (sp.param.count("T_MIN")) kb.t_min = pget("T_MIN", 0.0);
   /* RT: cooling ratio everywhere. PT default 1.0 = static ladder (pure
    * tempering); RT < 1 turns PT into a cooling-ladder hybrid. */
   kb.rt            = pget("RT", kind == AlgoKind::PT ? 1.0 : 0.90);
-  kb.t0_probes     = static_cast<std::size_t>(pget("T0_PROBES", 20.0));
+  kb.t0_probes     = pcount("T0_PROBES", 20.0);
   kb.t0_paccept    = pget("T0_PACCEPT", 0.05);
 
-  kb.reanneal       = kind == AlgoKind::Serial && pget("REANNEAL", 1.0) > 0.5;
+  kb.reanneal       = kind == AlgoKind::Serial && pbool("REANNEAL", true);
   kb.reanneal_scale = pget("REANNEAL_SCALE", 0.25);
 
-  kb.replicas    = static_cast<std::size_t>(pget("REPLICAS", 0.0));
+  kb.replicas    = pcount("REPLICAS", 0.0);
   if (sp.param.count("T_COLD")) kb.t_cold = pget("T_COLD", 0.0);
   kb.ladder_span = pget("LADDER_SPAN", 1e3);
-  kb.swap_every  = static_cast<std::size_t>(pget("SWAP_EVERY", 1.0));
-  if (pget("SWAP_WINDOW", 20.0) < 0.0)
-    throw std::runtime_error(ctx + ": PARAM SWAP_WINDOW must be >= 0 "
-        "(epochs between windowed swap-acceptance tables; 0 disables them)");
-  kb.swap_window = static_cast<std::size_t>(pget("SWAP_WINDOW", 20.0));
-  kb.init_mode   = static_cast<int>(pget("INIT_MODE", 0.0));
-  kb.sweeps      = static_cast<std::size_t>(pget("SWEEPS", 1.0));
+  kb.swap_every  = pcount("SWAP_EVERY", 1.0);
+  kb.swap_window = pcount("SWAP_WINDOW", 20.0);
+  const std::size_t init_mode = pcount("INIT_MODE", 0.0);
+  if (kind != AlgoKind::Serial && init_mode > 1)
+    throw std::runtime_error(
+        ctx + ": PARAM INIT_MODE must be 0 (seed-jitter) or 1 (uniform box)");
+  kb.init_mode   = static_cast<int>(init_mode);
+  kb.sweeps      = pcount("SWEEPS", 1.0);
   kb.ess_target  = pget("ESS_TARGET", 0.5);
+
+  /* Explicitly reject controls whose values would be ignored.  Silent
+   * precedence is especially dangerous in long HPO runs because the banner
+   * can show both knobs while only one affects the trajectory. */
+  if (sp.step && sp.param.count("STEP_FRAC"))
+    throw std::runtime_error(
+        ctx + ": STEP and PARAM STEP_FRAC are mutually exclusive");
+  if (sp.param.count("T_HOT")) {
+    for (const char* key : {"T0_PROBES", "T0_PACCEPT"})
+      if (sp.param.count(key))
+        throw std::runtime_error(
+            ctx + ": PARAM " + key + " is unused when T_HOT is set");
+  }
+  if (kind == AlgoKind::Serial && !kb.reanneal &&
+      sp.param.count("REANNEAL_SCALE"))
+    throw std::runtime_error(
+        ctx + ": PARAM REANNEAL_SCALE is unused when REANNEAL is 0");
+  if (kind == AlgoKind::PT && kb.t_cold &&
+      sp.param.count("LADDER_SPAN"))
+    throw std::runtime_error(
+        ctx + ": PARAM LADDER_SPAN is unused when T_COLD is set");
+  if (kind == AlgoKind::PT && kb.rt == 1.0 && kb.t_min)
+    throw std::runtime_error(
+        ctx + ": PARAM T_MIN is unused by a static PT ladder (RT=1)");
 
   /* -- validation ---------------------------------------------------- */
   const bool rt_one_ok = (kind == AlgoKind::PT);
@@ -347,8 +519,10 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     if (!(kb.C > 0.0))
       throw std::runtime_error(ctx + ": PARAM C must be > 0 (Corana step-adjust gain)");
   }
-  if (!(kb.step_frac > 0.0))
-    throw std::runtime_error(ctx + ": PARAM STEP_FRAC must be > 0");
+  if (!(kb.step_frac > 0.0 && kb.step_frac <= 1.0))
+    throw std::runtime_error(ctx + ": PARAM STEP_FRAC must be in (0,1]");
+  if (!(kb.v_floor_frac >= 0.0 && kb.v_floor_frac <= 1.0))
+    throw std::runtime_error(ctx + ": PARAM V_FLOOR_FRAC must be in [0,1]");
   if (!(kb.t0_paccept > 0.0 && kb.t0_paccept < 1.0))
     throw std::runtime_error(ctx + ": PARAM T0_PACCEPT must be in (0,1) (got "
         + std::to_string(kb.t0_paccept) + ")");
@@ -356,6 +530,8 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     throw std::runtime_error(ctx + ": PARAM T_HOT must be > 0");
   if (kb.t_min && !(*kb.t_min > 0.0))
     throw std::runtime_error(ctx + ": PARAM T_MIN must be > 0");
+  if (kb.t_hot && kb.t_min && *kb.t_min > *kb.t_hot)
+    throw std::runtime_error(ctx + ": PARAM T_MIN must be <= T_HOT");
   if (!kb.t_hot && kb.t0_probes < 2)
     throw std::runtime_error(
         ctx + ": PARAM T0_PROBES must be >= 2 when T_HOT is not set "
@@ -382,9 +558,6 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     if (kb.rt < 1.0 && kb.t_min && !(*kb.t_min > 0.0))
       throw std::runtime_error(ctx + ": PARAM T_MIN must be > 0");
   }
-  if (kind != AlgoKind::Serial && kb.init_mode != 0 && kb.init_mode != 1)
-    throw std::runtime_error(
-        ctx + ": PARAM INIT_MODE must be 0 (seed-jitter) or 1 (uniform box)");
   if (kind == AlgoKind::PA) {
     if (kb.sweeps == 0)
       throw std::runtime_error(ctx + ": PARAM SWEEPS must be >= 1");
@@ -395,7 +568,135 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
       throw std::runtime_error(ctx + ": POPULATION must be >= 8");
   }
 
+  if (sp.step && (!std::isfinite(*sp.step) || !(*sp.step > 0.0)))
+    throw std::runtime_error(ctx + ": STEP must be finite and > 0");
+  if (sp.low.size() != sp.high.size())
+    throw std::runtime_error(ctx + ": mismatched lower/upper bound counts");
+  if (!sp.log_scaled.empty() && sp.log_scaled.size() != sp.low.size())
+    throw std::runtime_error(ctx + ": mismatched LOG_SCALE mask size");
+  for (std::size_t i = 0; i < sp.low.size(); ++i) {
+    const double lo = sp.low[i], hi = sp.high[i];
+    if (!std::isfinite(lo) || !std::isfinite(hi) || !(hi > lo))
+      throw std::runtime_error(
+          ctx + ": every optimisable dimension requires finite low < high");
+    const double width = hi - lo;
+    if (!std::isfinite(width))
+      throw std::runtime_error(
+          ctx + ": every optimisable dimension requires a finite bound width");
+    if (kb.boundary_mode == BoundaryMode::Redraw && sp.step &&
+        *sp.step > width)
+      throw std::runtime_error(
+          ctx + ": STEP must not exceed any dimension width under "
+          "BOUNDARY_MODE 1 (REDRAW)");
+  }
+
   return kb;
+}
+
+/* Resolve the first starting point into transformed space and enforce the
+ * chain invariant that every coordinate begins inside its OPTIM interval.
+ * Rejecting malformed CONFIG/WARM seeds is preferable to an unbounded redraw
+ * loop or to reflecting only the one coordinate touched by a Corana move. */
+inline std::vector<double> make_initial_point(const OptimizerSpec& sp,
+                                              AlgoKind kind)
+{
+  const std::string ctx = std::string("TADAH:") + algo_name(kind);
+  const std::size_t dim = sp.low.size();
+  std::vector<double> x(dim);
+  if (sp.optim_init.empty()) {
+    for (std::size_t i = 0; i < dim; ++i)
+      x[i] = sp.low[i] + 0.5 * (sp.high[i] - sp.low[i]);
+  } else {
+    const auto& raw = sp.optim_init.front();
+    if (raw.size() != dim)
+      throw std::runtime_error(
+          ctx + ": starting point has " + std::to_string(raw.size()) +
+          " coordinate(s), expected " + std::to_string(dim));
+    for (std::size_t i = 0; i < dim; ++i) {
+      double v = raw[i];
+      if (!sp.log_scaled.empty() && sp.log_scaled[i]) {
+        if (!(v > 0.0) || !std::isfinite(v))
+          throw std::runtime_error(
+              ctx + ": log-scaled starting coordinate must be finite and > 0");
+        v = std::log(v);
+      }
+      x[i] = v;
+    }
+  }
+  for (std::size_t i = 0; i < dim; ++i) {
+    if (!std::isfinite(x[i]) || x[i] < sp.low[i] || x[i] > sp.high[i])
+      throw std::runtime_error(
+          ctx + ": starting coordinate " + std::to_string(i) +
+          " lies outside its OPTIM bounds");
+  }
+  return x;
+}
+
+/* Build the per-dimension proposal scale once for every driver.  Classic
+ * keeps an explicit STEP verbatim (large reflected Gaussian steps are a
+ * supported exploration choice); Corana's adaptive state always starts
+ * inside the same advertised [floor*width,width] interval it must obey
+ * after adjustment. */
+inline std::vector<double> make_initial_steps(const OptimizerSpec& sp,
+                                              const Knobs& kb)
+{
+  std::vector<double> out(sp.low.size());
+  for (std::size_t i = 0; i < out.size(); ++i) {
+    const double width = sp.high[i] - sp.low[i];
+    const double raw = sp.step ? *sp.step : kb.step_frac * width;
+    if (!(raw > 0.0) || !std::isfinite(raw))
+      throw std::runtime_error(
+          "anneal: proposal scale underflowed or is non-finite in dimension " +
+          std::to_string(i) + "; use an explicit positive STEP");
+    out[i] = kb.corana
+        ? std::min(width, std::max(kb.v_floor_frac * width, raw))
+        : raw;
+  }
+  return out;
+}
+
+/* One coordinate of Corana's section-4 step adjustment.  Factored out so
+ * the exact 0.4/0.6 table and both clamps have direct regression tests. */
+inline double adjust_corana_step(double current, double width,
+                                 std::size_t accepted,
+                                 std::size_t proposed,
+                                 double gain, double floor_frac)
+{
+  if (!(std::isfinite(current) && current >= 0.0) ||
+      !(std::isfinite(width) && width > 0.0) || proposed == 0 ||
+      accepted > proposed || !(std::isfinite(gain) && gain > 0.0) ||
+      !(std::isfinite(floor_frac) && floor_frac >= 0.0 &&
+        floor_frac <= 1.0))
+    throw std::invalid_argument("invalid Corana step-adjustment inputs");
+  const double rate = static_cast<double>(accepted) /
+                      static_cast<double>(proposed);
+  if (rate > 0.6)
+    current *= 1.0 + gain * (rate - 0.6) / 0.4;
+  else if (rate < 0.4)
+    current /= 1.0 + gain * (0.4 - rate) / 0.4;
+  return std::min(width, std::max(floor_frac * width, current));
+}
+
+struct StepSaturation {
+  std::size_t floor = 0;
+  std::size_t cap   = 0;
+  std::size_t total = 0;
+};
+
+inline StepSaturation step_saturation(const std::vector<double>& V,
+                                      const OptimizerSpec& sp,
+                                      const Knobs& kb)
+{
+  StepSaturation s;
+  s.total = V.size();
+  for (std::size_t i = 0; i < V.size(); ++i) {
+    const double width = sp.high[i] - sp.low[i];
+    const double floor = kb.v_floor_frac * width;
+    const double tol = 32.0 * std::numeric_limits<double>::epsilon() * width;
+    if (std::fabs(V[i] - floor) <= tol) ++s.floor;
+    if (std::fabs(V[i] - width) <= tol) ++s.cap;
+  }
+  return s;
 }
 
 /* ---- CoranaPlateau --------------------------------------------------
@@ -414,11 +715,16 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
  * when FTOL_REL and/or FTOL_ABS is set on the strategy. */
 class CoranaPlateau {
 public:
-  CoranaPlateau(const StopCriteria& stop, std::size_t neps)
+  CoranaPlateau(const StopCriteria& stop, std::size_t neps,
+                std::optional<double> failscore = std::nullopt)
       : ftol_rel_(stop.ftol_rel), ftol_abs_(stop.ftol_abs),
+        failscore_(failscore),
         active_(stop.ftol_rel.has_value() || stop.ftol_abs.has_value()),
         neps_(neps)
   {
+    if (active_ && neps_ == 0)
+      throw std::invalid_argument(
+          "anneal::CoranaPlateau requires NEPS >= 1 when FTOL is active");
     if (active_) ring_.reserve(neps_);
   }
 
@@ -429,6 +735,12 @@ public:
   bool update(double f_rung_end, double f_best)
   {
     if (!active_) return false;
+    if (!loss_is_finite(f_rung_end, failscore_) ||
+        !loss_is_finite(f_best, failscore_)) {
+      ring_.clear();
+      next_ = 0;
+      return false;
+    }
     const double eps = std::max(
         ftol_abs_.value_or(0.0),
         ftol_rel_ ? *ftol_rel_ * std::fabs(f_rung_end) : 0.0);
@@ -449,7 +761,7 @@ public:
   }
 
 private:
-  std::optional<double> ftol_rel_, ftol_abs_;
+  std::optional<double> ftol_rel_, ftol_abs_, failscore_;
   bool        active_ = false;
   std::size_t neps_   = 4;
   std::vector<double> ring_;
@@ -466,14 +778,22 @@ private:
 inline double reweight_ess(const std::vector<double>& f, double dbeta)
 {
   if (f.empty()) return 0.0;
+  if (!std::isfinite(dbeta) || dbeta < 0.0)
+    throw std::invalid_argument("anneal::reweight_ess requires finite dbeta >= 0");
+  for (double fi : f)
+    if (!std::isfinite(fi))
+      throw std::invalid_argument("anneal::reweight_ess requires finite losses");
+  if (dbeta == 0.0) return static_cast<double>(f.size());
   const double fmin = *std::min_element(f.begin(), f.end());
-  double s = 0.0, s2 = 0.0;
+  long double s = 0.0L, s2 = 0.0L;
   for (double fi : f) {
-    const double w = std::exp(-dbeta * (fi - fmin));
+    const long double delta = static_cast<long double>(fi) -
+                              static_cast<long double>(fmin);
+    const long double w = std::exp(-static_cast<long double>(dbeta) * delta);
     s += w;
     s2 += w * w;
   }
-  return s2 > 0.0 ? (s * s) / s2 : 0.0;
+  return s2 > 0.0L ? static_cast<double>((s * s) / s2) : 0.0;
 }
 
 /* Largest dbeta in (0, cap] with ESS(dbeta)/N >= target (ESS is
@@ -483,15 +803,83 @@ inline double choose_dbeta(const std::vector<double>& f, double target,
                            double dbeta_cap)
 {
   const double n = static_cast<double>(f.size());
-  if (f.empty() || dbeta_cap <= 0.0) return 0.0;
+  if (!std::isfinite(target) || target < 0.0 || target > 1.0 ||
+      !std::isfinite(dbeta_cap) || dbeta_cap < 0.0)
+    throw std::invalid_argument("anneal::choose_dbeta invalid target or cap");
+  if (f.empty() || dbeta_cap == 0.0) return 0.0;
   if (reweight_ess(f, dbeta_cap) / n >= target) return dbeta_cap;
-  double lo = 0.0, hi = dbeta_cap;
+  /* First find a factor-two bracket around the transition.  A linear search
+   * over [0,cap] has only cap/2^N absolute resolution and returns zero for
+   * perfectly representable roots near 1e-300. */
+  double hi = dbeta_cap;
+  double lo = 0.0;
+  for (;;) {
+    const double half = 0.5 * hi;
+    if (half == 0.0 || half == hi) return 0.0;
+    if (reweight_ess(f, half) / n >= target) {
+      lo = half;
+      break;
+    }
+    hi = half;
+  }
+  /* The bracket spans at most a factor of two, so 60 iterations now provide
+   * relative rather than cap-relative resolution. */
   for (int it = 0; it < 60; ++it) {
-    const double mid = 0.5 * (lo + hi);
+    const double mid = lo + 0.5 * (hi - lo);
+    if (mid == lo || mid == hi) break;
     if (reweight_ess(f, mid) / n >= target) lo = mid;
     else                                    hi = mid;
   }
   return lo;
+}
+
+/* PA needs a representable geometric endpoint, not cool_temperature's zero
+ * sentinel (which is intended to terminate serial/PT schedules). */
+inline double pa_geometric_temperature(double current, double rt,
+                                       double floor)
+{
+  if (!std::isfinite(current) || !std::isfinite(rt) ||
+      !std::isfinite(floor) || !(current > floor && floor > 0.0) ||
+      !(rt > 0.0 && rt < 1.0))
+    throw std::invalid_argument(
+        "anneal::pa_geometric_temperature invalid schedule");
+  double next = current * rt;
+  if (!(next < current)) next = std::nextafter(current, 0.0);
+  return std::max(floor, next);
+}
+
+struct PaTemperatureStep {
+  double temperature = 0.0;
+  long double dbeta = 0.0L;
+};
+
+/* Materialize an adaptive PA endpoint in double precision.  A positive
+ * choose_dbeta result can round back to the current temperature; in that case
+ * take one representable step without exceeding the geometric cooling cap.
+ * The returned inverse-temperature increment is recomputed from the endpoint
+ * and is the value the resampling weights must use. */
+inline PaTemperatureStep realize_pa_temperature_step(
+    double current, double geometric_floor, double proposed)
+{
+  if (!std::isfinite(current) || !std::isfinite(geometric_floor) ||
+      !std::isfinite(proposed) || !(current > 0.0) ||
+      !(geometric_floor > 0.0 && geometric_floor < current) ||
+      proposed < 0.0)
+    throw std::invalid_argument(
+        "anneal::realize_pa_temperature_step invalid endpoint");
+  double next = std::max(geometric_floor, std::min(current, proposed));
+  if (!(next < current))
+    next = std::max(geometric_floor, std::nextafter(current, 0.0));
+  if (!(next > 0.0 && next < current))
+    throw std::runtime_error(
+        "anneal::realize_pa_temperature_step made no progress");
+  const long double dbeta =
+      1.0L / static_cast<long double>(next) -
+      1.0L / static_cast<long double>(current);
+  if (!(dbeta > 0.0L))
+    throw std::runtime_error(
+        "anneal::realize_pa_temperature_step has non-positive dbeta");
+  return {next, dbeta};
 }
 
 /* Systematic resampling: N ordered positions (u + j)/N over the
@@ -504,15 +892,31 @@ inline std::vector<std::size_t> systematic_resample(
 {
   const std::size_t n = w.size();
   std::vector<std::size_t> parent(n, 0);
-  double wsum = 0.0;
-  for (double wi : w) wsum += wi;
+  if (n == 0) return parent;
+  if (!std::isfinite(u) || u < 0.0 || u >= 1.0)
+    throw std::invalid_argument("anneal::systematic_resample requires u in [0,1)");
+  long double wsum = 0.0L;
+  std::size_t last_positive = n;
+  for (std::size_t k = 0; k < n; ++k) {
+    const double wi = w[k];
+    if (!std::isfinite(wi) || wi < 0.0)
+      throw std::invalid_argument(
+          "anneal::systematic_resample requires finite non-negative weights");
+    wsum += static_cast<long double>(wi);
+    if (wi > 0.0) last_positive = k;
+  }
+  if (!(wsum > 0.0L) || !std::isfinite(wsum) || last_positive == n)
+    throw std::invalid_argument(
+        "anneal::systematic_resample requires a finite positive weight sum");
   std::size_t i = 0;         /* current parent */
-  double cdf = w.empty() ? 0.0 : w[0] / wsum;
+  long double cdf = static_cast<long double>(w[0]);
   for (std::size_t j = 0; j < n; ++j) {
-    const double p = (u + static_cast<double>(j)) / static_cast<double>(n);
-    while (p > cdf && i + 1 < n) {
+    const long double p =
+        (static_cast<long double>(u) + static_cast<long double>(j)) /
+        static_cast<long double>(n) * wsum;
+    while (p >= cdf && i < last_positive) {
       ++i;
-      cdf += w[i] / wsum;
+      cdf += static_cast<long double>(w[i]);
     }
     parent[j] = i;
   }
@@ -528,20 +932,65 @@ inline std::size_t planned_rungs(double T_begin, double t_min, double rt,
                                  std::uint64_t evals_left,
                                  std::uint64_t rung_cost)
 {
+  if (!std::isfinite(T_begin) || !std::isfinite(t_min) ||
+      !std::isfinite(rt) || !(T_begin > 0.0) || !(t_min > 0.0) ||
+      !(rt > 0.0 && rt <= 1.0))
+    throw std::invalid_argument("anneal::planned_rungs invalid temperature input");
   std::size_t by_T = std::numeric_limits<std::size_t>::max();
   if (T_begin < t_min) return 1;   /* schedule would not run; display floor */
   if (rt < 1.0) {
-    const double k = std::log(t_min / T_begin) / std::log(rt);   /* >= 0 */
-    by_T = static_cast<std::size_t>(std::floor(k)) + 1;
+    const long double k =
+        (std::log(static_cast<long double>(t_min)) -
+         std::log(static_cast<long double>(T_begin))) /
+        std::log(static_cast<long double>(rt));
+    const long double lim = static_cast<long double>(
+        std::numeric_limits<std::size_t>::max() - 1);
+    by_T = !std::isfinite(k) || k >= lim
+        ? std::numeric_limits<std::size_t>::max()
+        : static_cast<std::size_t>(std::floor(k)) + 1;
   }
   std::size_t by_budget = std::numeric_limits<std::size_t>::max();
   if (rung_cost > 0 &&
       evals_left != std::numeric_limits<std::uint64_t>::max()) {
-    by_budget = static_cast<std::size_t>(
-        (evals_left + rung_cost - 1) / rung_cost);
+    const std::uint64_t q = evals_left / rung_cost;
+    const std::uint64_t r = evals_left % rung_cost;
+    const std::uint64_t ceil = q + (r != 0 ? 1 : 0);
+    by_budget = ceil > std::numeric_limits<std::size_t>::max()
+        ? std::numeric_limits<std::size_t>::max()
+        : static_cast<std::size_t>(ceil);
   }
   const std::size_t n = std::min(by_T, by_budget);
   return n == 0 ? 1 : n;
+}
+
+inline std::uint64_t saturating_mul(std::uint64_t a, std::uint64_t b)
+{
+  if (a != 0 && b > std::numeric_limits<std::uint64_t>::max() / a)
+    return std::numeric_limits<std::uint64_t>::max();
+  return a * b;
+}
+
+inline std::size_t saturating_add(std::size_t a, std::size_t b)
+{
+  const std::size_t max = std::numeric_limits<std::size_t>::max();
+  return b > max - a ? max : a + b;
+}
+
+inline double automatic_t_min(double T0)
+{
+  if (!std::isfinite(T0) || !(T0 > 0.0))
+    throw std::invalid_argument("anneal::automatic_t_min requires finite T0 > 0");
+  const double scaled = T0 * 1e-6;
+  return scaled > 0.0 ? scaled : std::numeric_limits<double>::denorm_min();
+}
+
+/* Return a strictly smaller representable temperature, or zero when
+ * multiplication rounds back to the same value. Zero is below every valid
+ * positive floor and therefore terminates the schedule deterministically. */
+inline double cool_temperature(double T, double rt)
+{
+  const double next = T * rt;
+  return next < T ? next : 0.0;
 }
 
 /* ---- shared budget / stop plumbing ----------------------------------
@@ -576,7 +1025,7 @@ struct StopCtx {
   SharedBudget&                budget;
   std::atomic<bool>&           stop;
   const std::function<bool()>& time_exceeded;
-  double                       stopval;
+  std::optional<double>        stopval;
 };
 
 enum class RungStop { Completed, Budget, Time, StopVal, External };
@@ -587,12 +1036,32 @@ struct RungStats {
   RungStop    stop = RungStop::Completed;
 };
 
+/* FAILSCORE-aware Metropolis decision.  A rankable proposal always repairs an
+ * unusable (NaN/Inf/exact-FAILSCORE) current state, while an unusable proposal
+ * is never allowed to poison a healthy chain.  Graded failures below FS remain
+ * rankable so the chain can follow their repair direction.  Forming the uphill
+ * delta in long double avoids overflow for opposite-sign finite losses.
+ * `coin` is invoked only for a genuine uphill move, preserving the documented
+ * RNG stream. */
+template<class DrawCoin>
+inline bool metropolis_accept(double current, double proposed, double T,
+                              const std::optional<double>& failscore,
+                              DrawCoin&& coin)
+{
+  if (!loss_is_rankable(proposed, failscore)) return false;
+  if (!loss_is_rankable(current, failscore) || proposed <= current) return true;
+  const long double delta = static_cast<long double>(proposed) -
+                            static_cast<long double>(current);
+  const long double p = std::exp(-delta / static_cast<long double>(T));
+  return static_cast<long double>(coin()) < p;
+}
+
 /* ---- ChainState ------------------------------------------------------
  *
  * One annealing chain (= one PT replica / PA walker / the single serial
- * chain). `V` is the per-dim step vector: adapted by the Corana rung,
- * constant sigma for the classic rung. The RNG is the chain's private
- * stream (make_stream(seed, SALT_CHAIN, chain_index)). */
+ * chain). `V` stores the per-dimension proposal scale: a fixed Gaussian
+ * sigma for CLASSIC, or the adaptive uniform half-width for Corana. The
+ * RNG is the chain's private stream (make_stream(seed, SALT_CHAIN, chain_index)). */
 template<class Vec>
 struct ChainState {
   Vec    x;
@@ -626,13 +1095,14 @@ RungStats corana_rung(ChainState<Vec>& c, double T,
 {
   const std::size_t dim = sp.low.size();
   RungStats rs;
-  std::vector<std::size_t> nA(dim, 0);
+  std::vector<std::size_t> nA(dim, 0), nP(dim, 0);
   std::uniform_real_distribution<double> u_pm(-1.0, 1.0);
   std::uniform_real_distribution<double> udist(0.0, 1.0);
   bool inner_break = false;
 
   for (std::size_t nt = 0; nt < kb.NT && !inner_break; ++nt) {
     std::fill(nA.begin(), nA.end(), 0);
+    std::fill(nP.begin(), nP.end(), 0);
 
     for (std::size_t ns = 0; ns < kb.NS && !inner_break; ++ns) {
       for (std::size_t i = 0; i < dim && !inner_break; ++i) {
@@ -652,59 +1122,60 @@ RungStats corana_rung(ChainState<Vec>& c, double T,
         }
 
         Vec x_prop = c.x;
-        double v = c.x(i) + u_pm(c.rng) * c.V[i];
-        if (reflect_into(v, sp.low[i], sp.high[i])) ++rs.oob;
-        x_prop(i) = v;
+        auto draw = [&]() -> long double {
+          return static_cast<long double>(c.x(i)) +
+                 static_cast<long double>(u_pm(c.rng)) *
+                 static_cast<long double>(c.V[i]);
+        };
+        long double v = draw();
+        if (constrain_proposal(v, sp.low[i], sp.high[i],
+                               kb.boundary_mode, draw))
+          ++rs.oob;
+        x_prop(i) = static_cast<double>(v);
 
         const double f_prop = host(sp.out(x_prop));
         ++rs.proposed;
-        const double df = f_prop - c.f;
-        const bool accept = (df <= 0.0) || (udist(c.rng) < std::exp(-df / T));
+        ++nP[i];
+        const bool accept = metropolis_accept(
+            c.f, f_prop, T, sp.failscore, [&] { return udist(c.rng); });
         if (accept) {
           c.x = x_prop;
           c.f = f_prop;
           ++rs.accepted;
           ++nA[i];
-          if (c.f < c.best_f) {
+          if (!loss_is_rankable(c.best_f, sp.failscore) || c.f < c.best_f) {
             c.best_f = c.f;
             c.best_x = c.x;
             ++rs.improved;
           }
         }
-        if (c.f <= ctx.stopval) {
+        if (stopval_reached(c.f, ctx.stopval, sp.failscore)) {
+          ctx.stop.store(true, std::memory_order_relaxed);
           rs.stop = RungStop::StopVal; inner_break = true; break;
         }
       }
     }
 
-    for (std::size_t i = 0; i < dim; ++i) {
-      const double rate_i = static_cast<double>(nA[i]) /
-                            static_cast<double>(kb.NS);
-      if (rate_i > 0.6) {
-        c.V[i] *= 1.0 + kb.C * (rate_i - 0.6) / 0.4;
-      } else if (rate_i < 0.4) {
-        c.V[i] /= 1.0 + kb.C * (0.4 - rate_i) / 0.4;
-      }
-      const double w = sp.high[i] - sp.low[i];
-      const double v_lo = kb.v_floor_frac * w;
-      if (c.V[i] > w)    c.V[i] = w;
-      if (c.V[i] < v_lo) c.V[i] = v_lo;
-    }
+    /* Corana adjusts only after a complete NS-by-D block.  Treating
+     * unvisited dimensions as zero-acceptance when a budget/stop cut the
+     * block short spuriously divided their steps by up to 1+C. */
+    if (!inner_break)
+      for (std::size_t i = 0; i < dim; ++i)
+        c.V[i] = adjust_corana_step(
+            c.V[i], sp.high[i] - sp.low[i], nA[i], nP[i],
+            kb.C, kb.v_floor_frac);
   }
   return rs;
 }
 
-/* ---- pinned-dim audit -------------------------------------------------
+/* ---- near-bound floor-step audit ---------------------------------------
  *
- * A dim is "pinned" when the chain hugs an OPTIM bound (within one
- * floor-step v_lo = V_FLOOR_FRAC*width of it -- closer than the smallest
- * possible move is indistinguishable from ON the bound) AND V[i] is
- * already clamped at that floor, so the Corana adaptation has no finer
- * step left that could pull the walk off the bound. While V[i] can
- * still shrink the walk may yet leave legitimately -- not pinned.
- * Corana-only by construction (CLASSIC never adapts V). The drivers
- * feed the result to HPOLog::record_pin_state after every rung/epoch;
- * the journal prints the aggregate table with each milestone SUMMARY. */
+ * Mark a dim when the chain lies within v_lo = V_FLOOR_FRAC*width of an
+ * OPTIM bound and V[i] is already clamped at that floor. This records that
+ * adaptive shrinkage is exhausted at the observed scale. It does not stop
+ * inward proposals or prove bound pressure. Corana-only by construction
+ * (CLASSIC never adapts V). Drivers feed the observations to HPOLog after
+ * each rung/epoch; the journal prints the aggregate heuristic at milestones. */
 template<class Vec>
 std::vector<PinnedDim> pinned_dims(const ChainState<Vec>& c,
                                    const OptimizerSpec& sp,
@@ -752,33 +1223,44 @@ RungStats classic_rung(ChainState<Vec>& c, double T,
       rs.stop = RungStop::Time; break;
     }
 
-    /* Reflection instead of whole-proposal rejection: in high
-     * dimensions the joint in-bounds probability collapses near
-     * corners (see the serial driver's history). */
+    /* Bounds are enforced per coordinate.  REDRAW resamples only the
+     * offending coordinate, avoiding the exponential whole-vector retry
+     * cost in high dimension. */
     Vec x_prop(dim);
-    bool needed_reflect = false;
+    bool needed_bounds = false;
     for (std::size_t i = 0; i < dim; ++i) {
-      double v = c.x(i) + c.V[i] * ndist(c.rng);
-      if (reflect_into(v, sp.low[i], sp.high[i])) needed_reflect = true;
-      x_prop(i) = v;
+      auto draw = [&]() -> long double {
+        return static_cast<long double>(c.x(i)) +
+               static_cast<long double>(c.V[i]) *
+               static_cast<long double>(ndist(c.rng));
+      };
+      long double v = draw();
+      if (constrain_proposal(v, sp.low[i], sp.high[i],
+                             kb.boundary_mode, draw))
+        needed_bounds = true;
+      x_prop(i) = static_cast<double>(v);
     }
-    if (needed_reflect) ++rs.oob;
+    if (needed_bounds) ++rs.oob;
 
     const double f_prop = host(sp.out(x_prop));
     ++rs.proposed;
-    const double df = f_prop - c.f;
-    const bool accept = (df <= 0.0) || (udist(c.rng) < std::exp(-df / T));
+    const bool accept = metropolis_accept(
+        c.f, f_prop, T, sp.failscore, [&] { return udist(c.rng); });
     if (accept) {
       c.x = x_prop;
       c.f = f_prop;
       ++rs.accepted;
-      if (c.f < c.best_f) {
+      if (!loss_is_rankable(c.best_f, sp.failscore) || c.f < c.best_f) {
         c.best_f = c.f;
         c.best_x = c.x;
         ++rs.improved;
       }
     }
-    if (c.f <= ctx.stopval) { rs.stop = RungStop::StopVal; break; }
+    if (stopval_reached(c.f, ctx.stopval, sp.failscore)) {
+      ctx.stop.store(true, std::memory_order_relaxed);
+      rs.stop = RungStop::StopVal;
+      break;
+    }
   }
   return rs;
 }
@@ -798,7 +1280,7 @@ RungStats run_rung(ChainState<Vec>& c, double T,
  *
  * Shared by the serial driver and the parallel drivers. Anchors on the
  * ALREADY-EVALUATED point (x, f) — typically the seed — and probes its
- * sigma-neighbourhood; see robust_t0 for the statistics. On a
+ * proposal-kernel neighbourhood; see robust_t0 for the statistics. On a
  * FAILSCORE anchor, spends one uniform-box batch to re-anchor (x, f)
  * on the best finite point, then probes locally again; throws when
  * nothing finite exists anywhere. Mutates (x, f) only on re-anchor and
@@ -807,14 +1289,16 @@ RungStats run_rung(ChainState<Vec>& c, double T,
 struct T0Outcome {
   double T0 = 0.0;
   bool   re_anchored = false;
-  bool   aborted     = false;   /* STOPVAL/MAXTIME fired mid-probe */
+  bool   aborted     = false;   /* budget/STOPVAL/MAXTIME mid-probe */
+  bool   budget_exhausted = false;
   bool   stopval_hit = false;
+  bool   external_stop = false;
   std::size_t n_probes = 0;
 };
 
 template<class Vec, class HostT>
 T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
-                       const std::vector<double>& sigma,
+                       const std::vector<double>& proposal_scale,
                        Vec& x, double& f_x, Vec& best_x, double& best_f,
                        HostT& host, std::mt19937_64& probe_rng,
                        StopCtx& ctx, const char* banner_ctx = "ANNEAL")
@@ -832,7 +1316,10 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
   /* Tag this thread's evals as T0 probes for the journal's best-origin
    * tracking; cleared before returning so the serial driver's chain
    * evals (same thread) are not mislabelled. */
-  HPOLog::set_eval_probe();
+  struct ProbeContextGuard {
+    ProbeContextGuard() { HPOLog::set_eval_probe(); }
+    ~ProbeContextGuard() { HPOLog::clear_eval_context(); }
+  } probe_context_guard;
 
   std::normal_distribution<double>       ndist(0.0, 1.0);
   std::uniform_real_distribution<double> u_pm(-1.0, 1.0);
@@ -849,7 +1336,17 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
                         std::vector<double>& probes) -> bool {
     std::uniform_int_distribution<std::size_t> pick_dim(0, dim - 1);
     for (std::size_t k = 0; k < kb.t0_probes; ++k) {
-      if (!ctx.budget.try_reserve()) return true;
+      if (!ctx.budget.try_reserve()) {
+        out.aborted = true;
+        out.budget_exhausted = true;
+        return false;
+      }
+      if (ctx.stop.load(std::memory_order_relaxed)) {
+        ctx.budget.release();
+        out.aborted = true;
+        out.external_stop = true;
+        return false;
+      }
       if (ctx.time_exceeded()) {
         ctx.budget.release();
         out.aborted = true;
@@ -859,26 +1356,44 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
       if (local && kb.corana) {
         xp = centre;
         const std::size_t i = pick_dim(probe_rng);
-        double v = centre(i) + u_pm(probe_rng) * sigma[i];
-        reflect_into(v, sp.low[i], sp.high[i]);
-        xp(i) = v;
+        auto draw = [&]() -> long double {
+          return static_cast<long double>(centre(i)) +
+                 static_cast<long double>(u_pm(probe_rng)) *
+                 static_cast<long double>(proposal_scale[i]);
+        };
+        long double v = draw();
+        constrain_proposal(v, sp.low[i], sp.high[i],
+                           kb.boundary_mode, draw);
+        xp(i) = static_cast<double>(v);
       } else {
         for (std::size_t i = 0; i < dim; ++i) {
-          double v = local
-              ? centre(i) + sigma[i] * ndist(probe_rng)
-              : std::uniform_real_distribution<>(sp.low[i], sp.high[i])(probe_rng);
-          reflect_into(v, sp.low[i], sp.high[i]);
-          xp(i) = v;
+          auto draw = [&]() -> long double {
+            return local
+                ? static_cast<long double>(centre(i)) +
+                      static_cast<long double>(proposal_scale[i]) *
+                      static_cast<long double>(ndist(probe_rng))
+                : static_cast<long double>(std::uniform_real_distribution<>(
+                      sp.low[i], sp.high[i])(probe_rng));
+          };
+          long double v = draw();
+          constrain_proposal(v, sp.low[i], sp.high[i],
+                             kb.boundary_mode, draw);
+          xp(i) = static_cast<double>(v);
         }
       }
       const double f = host(sp.out(xp));
       probes.push_back(f);
-      if (f < best_f) { best_f = f; best_x = xp; }
+      if (loss_is_finite(f, sp.failscore) &&
+          (!loss_is_finite(best_f, sp.failscore) || f < best_f)) {
+        best_f = f;
+        best_x = xp;
+      }
       if (loss_is_finite(f, sp.failscore) && f < bf_probe) {
         bf_probe = f;
         bx_probe = xp;
       }
-      if (f <= ctx.stopval) {
+      if (stopval_reached(f, ctx.stopval, sp.failscore)) {
+        ctx.stop.store(true, std::memory_order_relaxed);
         out.aborted     = true;
         out.stopval_hit = true;
         return false;
@@ -900,6 +1415,10 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
       if (std::isfinite(bf_probe)) {
         x   = bx_probe;
         f_x = bf_probe;
+        if (!loss_is_finite(best_f, sp.failscore) || bf_probe < best_f) {
+          best_f = bf_probe;
+          best_x = bx_probe;
+        }
         out.re_anchored = true;
         probes.clear();
         run_probes(/*local=*/true, x, probes);
@@ -919,21 +1438,32 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
   }
   out.n_probes = probes.size();
 
-  /* Probe-loss spread stats for the log line. */
-  double pmin = 0.0, pmax = 0.0, pmean = 0.0, pstd = 0.0;
-  if (!probes.empty()) {
-    pmin = pmax = probes.front();
-    double sum = 0.0;
-    for (double v : probes) {
+  /* Probe-loss spread stats use the same FAILSCORE-aware population as
+   * robust_t0; sentinel/Inf values must not turn a diagnostic into NaN. */
+  std::vector<double> diagnostic_probes;
+  diagnostic_probes.reserve(probes.size());
+  for (double v : probes)
+    if (loss_is_finite(v, sp.failscore)) diagnostic_probes.push_back(v);
+  double pmin = 0.0, pmax = 0.0, pstd = 0.0;
+  if (!diagnostic_probes.empty()) {
+    pmin = pmax = diagnostic_probes.front();
+    long double mean = 0.0L, m2 = 0.0L;
+    std::size_t count = 0;
+    for (double v : diagnostic_probes) {
       if (v < pmin) pmin = v;
       if (v > pmax) pmax = v;
-      sum += v;
+      ++count;
+      const long double delta = static_cast<long double>(v) - mean;
+      mean += delta / static_cast<long double>(count);
+      const long double delta2 = static_cast<long double>(v) - mean;
+      m2 += delta * delta2;
     }
-    pmean = sum / static_cast<double>(probes.size());
-    if (probes.size() >= 2) {
-      double sq = 0.0;
-      for (double v : probes) { const double d = v - pmean; sq += d*d; }
-      pstd = std::sqrt(sq / static_cast<double>(probes.size() - 1));
+    const long double dmax = static_cast<long double>(
+        std::numeric_limits<double>::max());
+    if (diagnostic_probes.size() >= 2) {
+      const long double sd = std::sqrt(
+          m2 / static_cast<long double>(diagnostic_probes.size() - 1));
+      pstd = static_cast<double>(std::min(dmax, sd));
     }
   }
 
@@ -955,7 +1485,7 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
         "or a larger STEP_FRAC.");
     } else {
       out.T0 = *t0_est;
-      med_de = out.T0 * std::log(1.0 / kb.t0_paccept);
+      med_de = out.T0 * -std::log(kb.t0_paccept);
     }
     std::ostringstream oss;
     oss << std::scientific << std::setprecision(3)
@@ -975,7 +1505,6 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
         << " sample(s)  loss range=[" << pmin << ", " << pmax << "]";
     HPOLog::instance().info(oss.str());
   }
-  HPOLog::clear_eval_context();
   return out;
 }
 

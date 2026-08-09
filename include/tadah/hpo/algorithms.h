@@ -132,7 +132,10 @@ template<typename Vec, typename Runner>
  *   T_MIN          auto    cooling floor; auto = T0 * 1e-6
  *   RT             0.90    geometric cooling factor T <- T * RT
  *   L              50      Markov-chain length per T (CLASSIC only)
- *   STEP_FRAC      0.10    sigma_i = STEP_FRAC * (high[i] - low[i])
+ *   STEP_FRAC      0.10    scale_i = STEP_FRAC * width_i (CLASSIC:
+ *                          Gaussian sigma; CORANA: initial uniform half-width V)
+ *   BOUNDARY_MODE  0       0: exact mirror reflection, 1: redraw the
+ *                          offending coordinate
  *   T0_PROBES      20      local probes used to calibrate T0
  *   T0_PACCEPT     0.05    target acceptance probability for T0
  *   NEPS           4       plateau window (rungs); used only when
@@ -142,14 +145,15 @@ template<typename Vec, typename Runner>
  *   NT             5       Corana step-adjust cycles per T
  *   C              2.0     Corana step-adjust gain
  *   V_FLOOR_FRAC   1e-3    Corana V[i] floor as fraction of dim width
- *   RESET_TO_BEST  CORANA? Brommer reset-to-best after each cool
+ *   RESET_TO_BEST  CORANA? Corana reset-to-best after each cool
  *                          (default 1 under CORANA, 0 otherwise)
  *   REANNEAL       1       on T_MIN with budget left: snap to best and
  *                          re-anneal from REANNEAL_SCALE^n * T0
  *   REANNEAL_SCALE 0.25    per-re-anneal start-temperature factor
  *
- * If `STEP <s>` is set on the OptimizerSpec, sigma_i = s for all i
- * (overrides STEP_FRAC).
+ * If `STEP <s>` is set, s is the CLASSIC Gaussian sigma or the Corana
+ * initial uniform half-width V in every dimension (Corana then applies its
+ * per-dimension floor/cap). STEP and explicit STEP_FRAC are exclusive.
  *
  * Knobs that are dead for this algorithm are hard errors, not silent
  * no-ops: XTOL_REL/XTOL_ABS, VECTOR_ARR, GRAD_STRATEGY, and POPULATION
@@ -175,19 +179,16 @@ template<typename Vec, typename HostT>
     const std::uint64_t seed = sp.seed.value_or(std::random_device{}());
 
     const Knobs kb = Knobs::parse(sp, AlgoKind::Serial);
+    const std::vector<double> initial =
+        anneal::make_initial_point(sp, AlgoKind::Serial);
 
     /* Decorrelated streams: probing never shifts the proposal
      * sequence (see anneal_core.h). */
     std::mt19937_64 probe_rng = anneal::make_stream(seed, anneal::SALT_PROBES);
 
-    /* per-dim sigma (transformed-space) */
-    std::vector<double> sigma(dim);
-    if (sp.step.has_value()) {
-      for (std::size_t i = 0; i < dim; ++i) sigma[i] = *sp.step;
-    } else {
-      for (std::size_t i = 0; i < dim; ++i)
-        sigma[i] = kb.step_frac * (sp.high[i] - sp.low[i]);
-    }
+    /* Per-dim transformed-space proposal scale.  Corana initialization
+     * goes through the same floor/cap invariant as later adjustments. */
+    const std::vector<double> proposal_scale = anneal::make_initial_steps(sp, kb);
 
     constexpr std::uint64_t HUGE_UNSIGNED = std::numeric_limits<std::uint64_t>::max();
     anneal::SharedBudget budget(sp.stop.maxeval.value_or(HUGE_UNSIGNED));
@@ -201,13 +202,12 @@ template<typename Vec, typename HostT>
                std::chrono::steady_clock::now() - t0_wall).count() >= max_time;
     };
 
-    const double stopval =
-        sp.stop.stopval.value_or(-std::numeric_limits<double>::infinity());
+    const auto stopval = sp.stop.stopval;
 
     std::atomic<bool> stop_flag{false};
     anneal::StopCtx ctx{budget, stop_flag, time_exceeded, stopval};
 
-    anneal::CoranaPlateau plateau(sp.stop, kb.neps);
+    anneal::CoranaPlateau plateau(sp.stop, kb.neps, sp.failscore);
 
     /* Stop reason -- set at every exit path; emitted as a single
      * `ANNEAL stopped: ...` line at the end so the user can see why
@@ -220,6 +220,7 @@ template<typename Vec, typename HostT>
       TMin,
       Plateau,         /* Corana sec.-4 eps-NEPS plateau */
       StopValOnProbe,  /* STOPVAL hit during T0 calibration probes */
+      ExternalOnProbe,
       MaxTimeOnProbe,
       NoDims,
       NoBudget         /* MAXEVAL ran out before any SA proposal */
@@ -246,7 +247,10 @@ template<typename Vec, typename HostT>
       std::ostringstream oss;
       oss << "ANNEAL[" << (kb.corana ? "CORANA" : "CLASSIC") << "]: "
           << "seed=" << seed
-          << "  RT=" << kb.rt;
+          << "  RT=" << kb.rt
+          << "  BOUNDARY_MODE=" << static_cast<int>(kb.boundary_mode)
+          << (kb.boundary_mode == anneal::BoundaryMode::Reflect
+                  ? "(REFLECT)" : "(REDRAW)");
       if (kb.t_min) oss << "  T_MIN=" << *kb.t_min;
       else          oss << "  T_MIN=auto(T0*1e-6)";
       if (kb.corana) {
@@ -256,10 +260,18 @@ template<typename Vec, typename HostT>
       } else {
         oss << "  L=" << kb.L;
       }
-      if (sp.step.has_value())
-        oss << "  sigma=" << *sp.step << " (uniform; STEP override)";
-      else
-        oss << "  STEP_FRAC=" << kb.step_frac;
+      if (sp.step.has_value()) {
+        if (kb.corana)
+          oss << "  STEP=" << *sp.step
+              << " (Corana U(-V,V) half-width; floor/cap applied per dim)";
+        else
+          oss << "  sigma=" << *sp.step
+              << " (CLASSIC Gaussian; explicit STEP)";
+      } else {
+        oss << "  STEP_FRAC=" << kb.step_frac
+            << (kb.corana ? " (Corana V half-width/width)"
+                          : " (CLASSIC Gaussian sigma/width)");
+      }
       oss << "  REANNEAL=" << (kb.reanneal ? 1 : 0);
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
@@ -270,7 +282,8 @@ template<typename Vec, typename HostT>
      * per-rung line. */
     {
       const std::uint64_t rung_evals =
-          kb.corana ? static_cast<std::uint64_t>(kb.NT) * kb.NS * dim
+          kb.corana ? anneal::saturating_mul(
+                          anneal::saturating_mul(kb.NT, kb.NS), dim)
                     : static_cast<std::uint64_t>(kb.L);
       std::ostringstream oss;
       oss << "ANNEAL layout: rung = ";
@@ -283,7 +296,7 @@ template<typename Vec, typename HostT>
         const std::uint64_t maxeval =
             static_cast<std::uint64_t>(*sp.stop.maxeval);
         oss << ";  MAXEVAL=" << maxeval << " -> <= "
-            << (maxeval + rung_evals - 1) / rung_evals
+            << (maxeval / rung_evals + (maxeval % rung_evals != 0 ? 1 : 0))
             << " rung(s) by budget (T_MIN schedule / plateau may end "
                "earlier, REANNEAL restarts extend rung count)";
       }
@@ -298,13 +311,22 @@ template<typename Vec, typename HostT>
       HPOLog::instance().arm_pin_audit(sp, kb.v_floor_frac, 1, "rung");
 
     if (dim == 0) {
-      if (!sp.optim_init.empty() && budget.left() > 0) {
-        const auto v = sp.in(sp.optim_init.front());
-        Vec xv(v.size());
-        for (std::size_t i = 0; i < v.size(); ++i) xv(i) = v[i];
-        host(sp.out(xv));
+      if (!sp.optim_init.empty()) {
+        if (!budget.try_reserve()) {
+          stop_reason = StopReason::NoBudget;
+        } else {
+          Vec xv(dim);
+          for (std::size_t i = 0; i < dim; ++i) xv(i) = initial[i];
+          double f = host(sp.out(xv));
+          if (!std::isfinite(f))
+            f = std::numeric_limits<double>::infinity();
+          if (anneal::stopval_reached(f, stopval, sp.failscore)) stop_reason = StopReason::StopVal;
+          else if (time_exceeded()) stop_reason = StopReason::MaxTime;
+          else                  stop_reason = StopReason::NoDims;
+        }
+      } else {
+        stop_reason = StopReason::NoDims;
       }
-      stop_reason = StopReason::NoDims;
     }
 
     bool proceed = (stop_reason == StopReason::Done);
@@ -314,16 +336,10 @@ template<typename Vec, typename HostT>
      * its local probes on it. */
     anneal::ChainState<Vec> chain;
     chain.rng = anneal::make_stream(seed, anneal::SALT_CHAIN, 0);
-    chain.V   = sigma;
+    chain.V   = proposal_scale;
     chain.x   = Vec(dim);
     if (proceed) {
-      if (!sp.optim_init.empty()) {
-        const auto v = sp.in(sp.optim_init.front());
-        for (std::size_t i = 0; i < v.size(); ++i) chain.x(i) = v[i];
-      } else {
-        for (std::size_t i = 0; i < dim; ++i)
-          chain.x(i) = 0.5 * (sp.low[i] + sp.high[i]);
-      }
+      for (std::size_t i = 0; i < dim; ++i) chain.x(i) = initial[i];
 
       if (!budget.try_reserve()) {
         stop_reason = StopReason::NoBudget;
@@ -331,10 +347,14 @@ template<typename Vec, typename HostT>
       } else {
         chain.f = host(sp.out(chain.x));
         ran_sa = true;
+        /* A synthetic/non-HPO host can return NaN.  Treat it like +Inf so
+         * calibration or the first finite proposal can repair the chain. */
+        if (!std::isfinite(chain.f)) chain.f =
+            std::numeric_limits<double>::infinity();
         chain.best_f = chain.f;
         chain.best_x = chain.x;
 
-        if (chain.f <= stopval) {
+        if (anneal::stopval_reached(chain.f, stopval, sp.failscore)) {
           stop_reason = StopReason::StopVal;
           proceed     = false;
         } else if (time_exceeded()) {
@@ -348,37 +368,67 @@ template<typename Vec, typename HostT>
     /* --- T0 calibration (skipped when PARAM T_HOT is set) --- */
     if (proceed) {
       const auto t0out = anneal::calibrate_t0(
-          sp, kb, sigma, chain.x, chain.f, chain.best_x, chain.best_f,
+          sp, kb, proposal_scale, chain.x, chain.f, chain.best_x, chain.best_f,
           host, probe_rng, ctx);
       T0      = t0out.T0;
       T_final = T0;
       if (t0out.aborted) {
-        stop_reason = t0out.stopval_hit ? StopReason::StopValOnProbe
-                                        : StopReason::MaxTimeOnProbe;
+        if (t0out.budget_exhausted) stop_reason = StopReason::MaxEval;
+        else if (t0out.stopval_hit) stop_reason = StopReason::StopValOnProbe;
+        else if (t0out.external_stop) stop_reason = StopReason::ExternalOnProbe;
+        else stop_reason = StopReason::MaxTimeOnProbe;
+        proceed = false;
+      } else if (budget.left() == 0) {
+        /* Completing the final requested probe exactly at MAXEVAL is just
+         * as terminal as failing to reserve the next one. */
+        stop_reason = StopReason::MaxEval;
+        proceed = false;
+      } else if (time_exceeded()) {
+        stop_reason = StopReason::MaxTimeOnProbe;
         proceed = false;
       }
     }
 
-    /* Auto cooling floor: reachable in ~85 rungs at RT=0.85 instead of
+    /* Auto cooling floor: reachable in ~132 rungs at the RT=0.90 default
      * the historical fixed 1e-12 (~170+ rungs -- runs always died on
      * MAXEVAL instead). Explicit PARAM T_MIN always wins. */
     const double t_min = kb.t_min ? *kb.t_min
-                                  : (T0 > 0.0 ? T0 * 1e-6 : 1e-12);
+                                  : (T0 > 0.0
+                                         ? anneal::automatic_t_min(T0)
+                                         : 1e-12);
+    if (proceed && t_min > T0)
+      throw std::runtime_error(
+          "TADAH:ANNEAL: resolved T_MIN must be <= T_HOT/T0 (T_MIN=" +
+          std::to_string(t_min) + ", resolved T0=" +
+          std::to_string(T0) + ")");
 
     /* --- one annealing schedule from T_begin ---------------------------
      * Shared by the first anneal and every REANNEAL cycle. */
     const std::uint64_t rung_cost =
-        kb.corana ? static_cast<std::uint64_t>(kb.NT) * kb.NS * dim
+        kb.corana ? anneal::saturating_mul(
+                        anneal::saturating_mul(kb.NT, kb.NS), dim)
                   : static_cast<std::uint64_t>(kb.L);
     auto run_schedule = [&](double T_begin) {
       double T = T_begin;
+      if (budget.left() == 0) {
+        stop_reason = StopReason::MaxEval;
+        return;
+      }
+      if (time_exceeded()) {
+        stop_reason = StopReason::MaxTime;
+        return;
+      }
+      if (T < t_min) {
+        stop_reason = StopReason::TMin;
+        return;
+      }
       /* Planned total for the rung=current/total display: whichever of
        * the T_MIN schedule or the eval budget will end this schedule
        * first (plateau/STOPVAL may still end it earlier). Recomputed
        * per REANNEAL cycle on top of the rungs already completed. */
-      const std::size_t schedule_total =
-          rung_count + anneal::planned_rungs(T_begin, t_min, kb.rt,
-                                             budget.left(), rung_cost);
+      const std::size_t schedule_total = anneal::saturating_add(
+          rung_count, anneal::planned_rungs(T_begin, t_min, kb.rt,
+                                            budget.left(), rung_cost));
       while (T >= t_min && budget.left() > 0 && !time_exceeded()) {
         const auto rs = anneal::run_rung(chain, T, sp, kb, host, ctx);
 
@@ -394,9 +444,10 @@ template<typename Vec, typename HostT>
         if (rs.proposed > 0 || rs.oob > 0) {
           const double rate = rs.proposed > 0
               ? static_cast<double>(rs.accepted) / static_cast<double>(rs.proposed) : 0.0;
-          const std::size_t r_total = rs.proposed + rs.oob;
-          const double oob_pct = r_total > 0
-              ? 100.0 * static_cast<double>(rs.oob) / static_cast<double>(r_total) : 0.0;
+          const double oob_pct = rs.proposed > 0
+              ? 100.0 * static_cast<double>(rs.oob) /
+                    static_cast<double>(rs.proposed)
+              : 0.0;
           if (rs.proposed > 0) {
             any_rate = true;
             if (rate < accept_rate_min) accept_rate_min = rate;
@@ -418,7 +469,10 @@ template<typename Vec, typename HostT>
           if (kb.corana) {
             const double V_min = *std::min_element(chain.V.begin(), chain.V.end());
             const double V_max = *std::max_element(chain.V.begin(), chain.V.end());
-            oss << "  V=[" << V_min << ", " << V_max << "]";
+            const auto sat = anneal::step_saturation(chain.V, sp, kb);
+            oss << "  V=[" << V_min << ", " << V_max << "]"
+                << "  V_floor=" << sat.floor << "/" << sat.total
+                << "  V_cap=" << sat.cap << "/" << sat.total;
           }
           HPOLog::instance().info(oss.str());
         }
@@ -438,16 +492,16 @@ template<typename Vec, typename HostT>
           break;
         }
 
+        if (budget.left() == 0) { stop_reason = StopReason::MaxEval; break; }
+        if (time_exceeded()) { stop_reason = StopReason::MaxTime; break; }
         if (plateau.update(chain.f, chain.best_f)) {
           stop_reason = StopReason::Plateau; break;
         }
 
-        T *= kb.rt;
+        T = anneal::cool_temperature(T, kb.rt);
         if (T < t_min) { stop_reason = StopReason::TMin; break; }
-        if (budget.left() == 0) { stop_reason = StopReason::MaxEval; break; }
-        if (time_exceeded()) { stop_reason = StopReason::MaxTime; break; }
 
-        /* Brommer-style reset-to-best after each cool. Cheap (no host
+        /* Corana reset-to-best after each cool. Cheap (no host
          * eval consumed); just snaps the chain back to the best-so-far
          * point. The next rung then refines around best_x with the
          * freshly-cooled T and the V[] adapted so far. */
@@ -494,9 +548,10 @@ template<typename Vec, typename HostT>
     if (ran_sa) {
       const double overall_rate = total_proposed > 0
           ? static_cast<double>(total_accepted) / static_cast<double>(total_proposed) : 0.0;
-      const std::size_t total_evals = total_proposed + total_oob;
-      const double oob_pct = total_evals > 0
-          ? 100.0 * static_cast<double>(total_oob) / static_cast<double>(total_evals) : 0.0;
+      const double oob_pct = total_proposed > 0
+          ? 100.0 * static_cast<double>(total_oob) /
+                static_cast<double>(total_proposed)
+          : 0.0;
       std::ostringstream oss;
       oss << std::scientific << std::setprecision(3)
           << "ANNEAL summary: rungs=" << rung_count
@@ -510,6 +565,11 @@ template<typename Vec, typename HostT>
           << "  T_final=" << T_final
           << "  reanneals=" << reanneal_count
           << "  best=" << chain.best_f;
+      if (kb.corana) {
+        const auto sat = anneal::step_saturation(chain.V, sp, kb);
+        oss << "  V_floor=" << sat.floor << "/" << sat.total
+            << "  V_cap=" << sat.cap << "/" << sat.total;
+      }
       HPOLog::instance().info(oss.str());
       if (any_rate) {
         std::ostringstream oss2;
@@ -529,6 +589,7 @@ template<typename Vec, typename HostT>
         case StopReason::MaxTime:        reason = "MAXTIME exceeded"; break;
         case StopReason::StopVal:        reason = "STOPVAL reached"; break;
         case StopReason::StopValOnProbe: reason = "STOPVAL reached during T0 probes"; break;
+        case StopReason::ExternalOnProbe: reason = "external stop during T0 probes"; break;
         case StopReason::MaxTimeOnProbe: reason = "MAXTIME exceeded during T0 probes"; break;
         case StopReason::TMin:           reason = "T < T_MIN"; break;
         case StopReason::Plateau:        reason = "FTOL plateau (Corana eps-NEPS rule)"; break;

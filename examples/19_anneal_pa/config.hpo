@@ -1,14 +1,15 @@
 # 19 -- population annealing (TADAH:ANNEAL_PA).
 #
 # Sixteen walkers anneal together from T_HOT to T_MIN. Each temperature
-# step reweights the population by exp(-dbeta * loss) and resamples
-# (systematic resampling -- FAILSCORE walkers die out naturally), then
+# step reweights the population by exp(-dbeta * loss) and resamples, then
 # every walker runs SWEEPS rungs of the Corana stepper at the new
-# temperature. The adaptive schedule (ESS_TARGET) picks the largest
-# temperature drop that keeps the effective sample size at half the
-# population. Same SEED => identical results for any THREADS. All
-# schedule knobs are pinned so this example is independent of shipped
-# defaults.
+# temperature. FAILSCORE walkers receive zero resampling weight whenever
+# at least one feasible walker exists; if all walkers fail, resampling is
+# skipped and geometric cooling continues. ESS_TARGET 0.5 targets half
+# the feasible population. POPULATION is fixed, the objective is deterministic,
+# and MAXEVAL is the only active stop, so the same SEED gives the same
+# evaluated set for any THREADS. Demonstrated controls are explicit below;
+# supported controls not shown retain shipped defaults.
 
 OPTIMIZER
   STRATEGY

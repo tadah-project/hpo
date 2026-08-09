@@ -3,9 +3,10 @@
 # Four replicas at a fixed geometric temperature ladder run the Corana
 # adaptive stepper concurrently (THREADS worker threads over one
 # thread-safe host); adjacent pairs attempt a state exchange every
-# epoch (deterministic even/odd pairing). Same SEED => identical
-# results for any THREADS. All schedule knobs are pinned so this
-# example is independent of shipped defaults.
+# epoch (deterministic even/odd pairing). REPLICAS is fixed, the objective
+# is deterministic, and MAXEVAL is the only active stop, so the same SEED
+# gives the same evaluated set for any THREADS. The demonstrated controls
+# are explicit below; supported controls not shown retain shipped defaults.
 
 OPTIMIZER
   STRATEGY
@@ -22,6 +23,8 @@ OPTIMIZER
     PARAM T_HOT  0.10       # pinned: skips T0 calibration
     PARAM T_COLD 0.001
     PARAM SWAP_EVERY 1
+    PARAM SWAP_WINDOW 20      # windowed table cadence; 0 = cumulative only
+    PARAM RT 1.0              # explicit static ladder (pure PT)
     PARAM STEP_FRAC 0.15
   ENDSTRATEGY
 ENDOPTIMIZER

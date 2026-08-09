@@ -44,14 +44,13 @@ namespace tadah::mlip { struct LoadTransformReport; }
 
 namespace tadah::hpo {
 
-/* One pinned search-space dimension as reported by a CORANA annealing
- * driver: the chain's x sits within one floor-step of an OPTIM bound AND
- * the Corana step V[i] is already at its floor (it cannot shrink
- * further), so the walk cannot leave the bound -- the bound is
- * load-bearing. */
+/* One near-bound floor-step observation reported by a CORANA driver.
+ * The chain is within one floor-step of an OPTIM bound and V[i] cannot
+ * shrink further. Inward proposals remain possible; this mark is a
+ * heuristic diagnostic and makes no claim about the optimum. */
 struct PinnedDim {
     std::size_t dim;   /* search-space dimension index */
-    bool        hi;    /* true = pinned at the HIGH bound, false = LOW */
+    bool        hi;    /* true = nearest the HIGH bound, false = LOW */
     double      gap;   /* |x - bound|, optimiser-internal units */
 };
 
@@ -210,8 +209,8 @@ public:
 
     /** Replace chain @p chain's pinned-dim set as of work unit @p unit
      *  (the driver's rung/epoch/T-step counter -- only monotonicity is
-     *  used, for the table's "pinned for" column). A dim pinned before
-     *  but absent from @p pins is unmarked; a dim still pinned on the
+     *  used, for the table's "observed for" column). A dim marked before
+     *  but absent from @p pins is unmarked; a dim still marked on the
      *  same side keeps its original since-unit. Cheap map update under
      *  mtx_, no file I/O: the table prints with the next milestone
      *  SUMMARY (single WARNING block, only while marks exist). */

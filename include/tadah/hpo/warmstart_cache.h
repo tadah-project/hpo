@@ -74,7 +74,11 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <unordered_map>
+#include <vector>
+
+#include <tadah/hpo/durable_best.h>
 
 namespace tadah::hpo::warmstart {
 
@@ -141,6 +145,14 @@ inline std::unordered_map<SeedKey, double, SeedKeyHash>& best_hot_map() {
     static std::unordered_map<SeedKey, double, SeedKeyHash> m;
     return m;
 }
+/* Compound identity of the batch applied to best_hot_map. It uses exactly the
+ * same loss/rank/slot/eval ordering as durable best-potential publication, so
+ * an exact-loss tie cannot leave the HOT snapshot and potential file pointing
+ * at different candidates. Protected by mtx(). */
+inline std::optional<durable_best::Key>& best_hot_key() {
+    static std::optional<durable_best::Key> key;
+    return key;
+}
 
 /* Lookup for the given chain: the chain's own value if present, else the
  * STATIC warm-prime fallback, else nullopt (caller then uses the decl's
@@ -167,14 +179,34 @@ inline void set(std::size_t chain,
     chain_cache()[{chain, script, name}] = value;
 }
 
-/* Promote a new-global-best eval's hot value into the dumped best map. Called
- * under the serialized best CAS in operator(), so deterministic. Does NOT
- * touch warm_prime_map (the eval fallback stays static). */
+/* Single-entry helper for setup/tests. Concurrent new-best publication must
+ * use promote_batch() so a delayed older worker cannot roll the map back.
+ * Does NOT touch warm_prime_map (the eval fallback stays static). */
 inline void promote(const std::string& script,
                     const std::string& name,
                     double value) {
     std::lock_guard<std::mutex> lg(mtx());
     best_hot_map()[{script, name}] = value;
+}
+
+/* Atomically replace the HOT snapshot with every value produced by one
+ * completed compound-best evaluation. Clearing first is important: a
+ * candidate that legitimately omits a HOT value must not inherit that value
+ * from an older potential. Returns false for a stale batch. */
+inline bool promote_batch(
+    const durable_best::Key& key,
+    const std::vector<std::tuple<std::string, std::string, double>>& values) {
+    std::lock_guard<std::mutex> lg(mtx());
+    if (!std::isfinite(key.loss) || key.rank < 0) return false;
+    if (best_hot_key() && !durable_best::precedes(key, *best_hot_key()))
+        return false;
+    best_hot_map().clear();
+    for (const auto& value : values) {
+        best_hot_map()[{std::get<0>(value), std::get<1>(value)}] =
+            std::get<2>(value);
+    }
+    best_hot_key() = key;
+    return true;
 }
 
 /* Best hot value for (script, name) -- used by the single-threaded analytical
@@ -196,6 +228,7 @@ inline void prime(const std::string& script,
     std::lock_guard<std::mutex> lg(mtx());
     warm_prime_map()[{script, name}] = value;
     best_hot_map()[{script, name}]   = value;
+    best_hot_key().reset();
 }
 
 /* Reset ALL warm-start state (per-chain cache + both seed maps). Primarily a
@@ -205,6 +238,17 @@ inline void clear() {
     chain_cache().clear();
     warm_prime_map().clear();
     best_hot_map().clear();
+    best_hot_key().reset();
+}
+
+/* Start a new output generation without discarding WARM's static fallback.
+ * HPOTargets parses/loads WARM before HPO learns whether a checkpoint exists;
+ * a confirmed fresh run must forget the prior best snapshot/key while keeping
+ * warm_prime_map available to seed the first evaluation. */
+inline void reset_best_snapshot_for_fresh_run() {
+    std::lock_guard<std::mutex> lg(mtx());
+    best_hot_map().clear();
+    best_hot_key().reset();
 }
 
 /* Counter used only for LOGGING the rate-limited "rejecting" warnings in

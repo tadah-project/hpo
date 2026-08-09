@@ -285,4 +285,11 @@ TEST_CASE("PC_FAILPROBE: rejections", "[failgrade][parse][failprobe]")
         REQUIRE_THROWS_AS(tadah::hpo::HPOTargets(ctx, cfg.string()),
                           std::runtime_error);
     }
+    SECTION("--s0 must be finite") {
+        auto cfg = write_file("cfg", config_head() + sim
+            + "PC_FAILPROBE --script " + script.string()
+            + " --outvar S --s0 inf\n");
+        REQUIRE_THROWS_AS(tadah::hpo::HPOTargets(ctx, cfg.string()),
+                          std::runtime_error);
+    }
 }

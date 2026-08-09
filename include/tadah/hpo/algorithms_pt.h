@@ -6,15 +6,17 @@
  *       for the per-replica adaptive stepper; the deterministic
  *       even/odd (DEO) pairing follows Okabe et al., CPL 335 (2001).
  *
- * K replicas run the shared annealing rung (anneal_core.h) at fixed
- * temperatures T_0 < T_1 < ... < T_{K-1} (slot 0 coldest). Every
+ * K replicas run the shared annealing rung (anneal_core.h) on a geometric
+ * ladder T_0 < T_1 < ... < T_{K-1} (slot 0 coldest). It is static by
+ * default; RT < 1 cools the whole ladder each epoch. Every
  * SWAP_EVERY epochs, adjacent pairs attempt a state exchange with
  * Metropolis probability
  *
  *     p = min(1, exp((beta_i - beta_j) * (f_i - f_j)))     (i colder)
  *
- * so a better (lower-f) state always migrates cold-ward. Swaps move
- * STATES (x, f), not temperatures: the Corana step vector V is
+ * A lower-f state found on the hot side moves cold-ward with probability
+ * one; reverse exchanges remain possible to preserve detailed balance.
+ * Swaps move STATES (x, f), not temperatures: the Corana step vector V is
  * calibrated to the acceptance rate AT its slot's temperature and
  * therefore stays with the slot.
  *
@@ -25,20 +27,22 @@
  * driver BLOCKS on the shared pool while its eval's scripts run, so the
  * real concurrency is THREADS and one replica's eval alone submits far
  * more tasks than THREADS -- enough to keep the pool saturated. One host,
- * many threads -- HPO_Host's operator() is thread-safe by contract. Same
- * SEED => identical results for ANY THREADS (per-replica RNG streams,
- * driver-side swap coins keyed by epoch, deterministic per-epoch budget
- * slicing). Documented exceptions: MAXTIME truncation and the tails of
+ * many threads -- HPO_Host's operator() is thread-safe by contract.
+ * With REPLICAS fixed, a deterministic objective, and no timing-dependent
+ * stop, the same SEED gives the same evaluated set for any THREADS (per-replica
+ * RNG streams, driver-side swap coins keyed by epoch, deterministic
+ * per-epoch budget slicing). Documented exceptions: MAXTIME truncation and
  * runs cut short by STOPVAL/exceptions are timing-dependent.
  * (OMP_NUM_THREADS independently drives the residual OpenMP kernels --
  * neighbour-list build, data-stats -- not this pool.)
  *
  * Ladder construction: T_HOT from PARAM T_HOT or the shared T0
- * calibration (target initial acceptance T0_PACCEPT at the hot end);
+ * calibration (T0_PACCEPT is assigned to the calibration delta at the hot end);
  * T_COLD from PARAM T_COLD or T_HOT / LADDER_SPAN; geometric spacing
- * in between (adjacent ratio (T_HOT/T_COLD)^(1/(K-1)) -- aim for
- * 20-40% swap acceptance; the per-pair rates are logged so LADDER_SPAN
- * can be tuned). RT (default 1.0) < 1 additionally cools the WHOLE
+ * in between (adjacent ratio (T_HOT/T_COLD)^(1/(K-1)). The commonly cited
+ * 20-40% per-pair acceptance range is a starting heuristic, not a
+ * workload-independent target; rates are logged so the ladder can be
+ * tuned). RT (default 1.0) < 1 additionally cools the WHOLE
  * ladder each epoch (PT -> SA hybrid); the run then ends when the hot
  * end crosses T_MIN.
  *
@@ -53,7 +57,8 @@
  *   SWAP_WINDOW  20              windowed per-pair swap-acceptance table
  *                                every N epochs (0 = cumulative only)
  *   RT           1.0             ladder cooling per epoch ((0,1])
- *   INIT_MODE    0               0: chain0=seed, others sigma-jittered
+ *   INIT_MODE    0               0: chain0=seed; others use Gaussian
+ *                                jitter (sigma=CLASSIC scale or Corana V)
  *                                1: chains>0 drawn uniformly in the box
  *   RESET_TO_BEST 0              when 1, snaps ONLY the coldest slot to
  *                                the global best after each epoch
@@ -75,6 +80,7 @@
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <random>
 #include <sstream>
@@ -85,6 +91,99 @@
 
 namespace tadah::hpo {
 
+namespace pt_detail {
+
+#ifdef TADAH_HPO_MPI
+/* PT broadcasts a calibration packet containing T_hot, f0, and the full
+ * parameter vector (dim + 2 doubles), then exchanges dim doubles at ladder
+ * block boundaries.  Reject an unrepresentable packet before allocating any
+ * dimension-sized driver state or entering a collective. */
+inline void validate_mpi_payload_dimension(std::size_t dim)
+{
+  const std::size_t mpi_limit =
+      static_cast<std::size_t>(std::numeric_limits<int>::max());
+  constexpr std::size_t calibration_fields = 2;
+  if (dim > mpi_limit - calibration_fields)
+    throw std::length_error(
+        "TADAH:ANNEAL_PT: parameter dimension " + std::to_string(dim) +
+        " exceeds the MPI payload limit (dimension + 2 must fit in int)");
+}
+#endif
+
+/* Replica-exchange decision for adjacent slots, `cold_temperature <=
+ * hot_temperature`. Resolve deterministic limits before forming inverse
+ * temperatures: cooling may legitimately underflow ladder endpoints to zero,
+ * while equal temperatures/losses make the formal beta-gap product
+ * indeterminate even though the exchange probability is one.
+ *
+ * For a genuine uphill exchange, compare in the log domain:
+ *
+ *   coin < exp(-m),
+ *   m = (f_hot - f_cold) * (T_hot - T_cold) / (T_cold * T_hot).
+ *
+ * This is algebraically the usual replica-exchange rule for finite positive
+ * temperatures, but it cannot create `inf - inf` or `inf * 0`. Normalized
+ * unusable losses are represented by infinities; their ordering has the
+ * corresponding zero-temperature limit. A coin is drawn only when the
+ * decision is genuinely probabilistic, matching the annealing core RNG
+ * discipline.
+ */
+template<class DrawCoin>
+inline bool accept_exchange(double cold_temperature, double hot_temperature,
+                            double cold_loss, double hot_loss,
+                            DrawCoin&& draw_coin)
+{
+  if (!std::isfinite(cold_temperature) ||
+      !std::isfinite(hot_temperature) || cold_temperature < 0.0 ||
+      hot_temperature < cold_temperature)
+    throw std::invalid_argument(
+        "ANNEAL_PT exchange requires finite 0 <= T_cold <= T_hot");
+  if (std::isnan(cold_loss) || std::isnan(hot_loss))
+    throw std::invalid_argument(
+        "ANNEAL_PT exchange requires losses normalized away from NaN");
+
+  /* Equal beta or equal energy gives exponent zero, including 0/0 and
+   * infinity/infinity limiting cases. */
+  if (cold_temperature == hot_temperature || cold_loss == hot_loss)
+    return true;
+
+  /* Moving a strictly lower loss into the colder slot is always accepted.
+   * This comparison also handles a normalized +/-infinity without doing
+   * arithmetic on it. */
+  if (hot_loss < cold_loss) return true;
+
+  /* The only remaining ordering is f_cold < f_hot. At zero cold
+   * temperature, or with an infinite endpoint loss, the reverse exchange has
+   * probability zero. */
+  if (cold_temperature == 0.0 || !std::isfinite(cold_loss) ||
+      !std::isfinite(hot_loss))
+    return false;
+
+  const double coin = draw_coin();
+  if (!std::isfinite(coin) || coin < 0.0 || !(coin < 1.0))
+    throw std::invalid_argument(
+        "ANNEAL_PT exchange coin must be finite and in [0,1)");
+
+  const long double energy_gap = static_cast<long double>(hot_loss) -
+                                 static_cast<long double>(cold_loss);
+  const long double temperature_gap =
+      static_cast<long double>(hot_temperature) -
+      static_cast<long double>(cold_temperature);
+  const long double log_m = std::log(energy_gap) +
+                            std::log(temperature_gap) -
+                            std::log(static_cast<long double>(cold_temperature)) -
+                            std::log(static_cast<long double>(hot_temperature));
+
+  /* coin==0 is below every positive, finite mathematical probability. An
+   * infinite m is the exact zero-probability limit and remains rejected. */
+  if (coin == 0.0) return !std::isinf(log_m);
+  const long double log_threshold =
+      std::log(-std::log(static_cast<long double>(coin)));
+  return log_m < log_threshold;
+}
+
+}  // namespace pt_detail
+
 template<typename Vec, typename HostT>
   void run_anneal_pt_impl(const OptimizerSpec& sp, HostT& host)
   {
@@ -93,9 +192,14 @@ template<typename Vec, typename HostT>
     using anneal::RungStop;
 
     const std::size_t dim = sp.low.size();
+#ifdef TADAH_HPO_MPI
+    if (hpo_mpi_active()) pt_detail::validate_mpi_payload_dimension(dim);
+#endif
     const std::uint64_t seed = sp.seed.value_or(std::random_device{}());
 
     const Knobs kb = Knobs::parse(sp, AlgoKind::PT);
+    const std::vector<double> initial =
+        anneal::make_initial_point(sp, AlgoKind::PT);
 
     const std::size_t threads = sp.num_threads.value_or(1);
     const std::size_t K = kb.replicas ? kb.replicas
@@ -156,21 +260,17 @@ template<typename Vec, typename HostT>
     }
 #endif
 
-    /* per-dim sigma (transformed space) */
-    std::vector<double> sigma(dim);
-    if (sp.step.has_value()) {
-      for (std::size_t i = 0; i < dim; ++i) sigma[i] = *sp.step;
-    } else {
-      for (std::size_t i = 0; i < dim; ++i)
-        sigma[i] = kb.step_frac * (sp.high[i] - sp.low[i]);
-    }
+    /* Per-dimension proposal scale in transformed space: CLASSIC Gaussian
+     * sigma, or Corana uniform half-width V (already floor/cap-clamped). */
+    const std::vector<double> proposal_scale = anneal::make_initial_steps(sp, kb);
 
     constexpr std::uint64_t HUGE_UNSIGNED = std::numeric_limits<std::uint64_t>::max();
     const std::uint64_t max_eval_global = sp.stop.maxeval.value_or(HUGE_UNSIGNED);
-    /* Multi-rank runs enforce MAXEVAL through GLOBAL accounting (spent
-     * counts allreduced each epoch feed the deterministic slicing), so
-     * the local reserve counter stays uncapped there. */
-    anneal::SharedBudget budget(world > 1 ? HUGE_UNSIGNED : max_eval_global);
+    /* Rank 0 alone owns seed/T0 calibration.  Cap it at the GLOBAL limit;
+     * subsequent distributed phases are admitted from deterministic global
+     * slot allowances and allreduce their rank-local counters. */
+    anneal::SharedBudget budget(
+        world > 1 && rank != 0 ? HUGE_UNSIGNED : max_eval_global);
 
     const auto t0_wall = std::chrono::steady_clock::now();
     const double max_time = sp.stop.maxtime.value_or(0.0);
@@ -181,17 +281,16 @@ template<typename Vec, typename HostT>
                std::chrono::steady_clock::now() - t0_wall).count() >= max_time;
     };
 
-    const double stopval =
-        sp.stop.stopval.value_or(-std::numeric_limits<double>::infinity());
+    const auto stopval = sp.stop.stopval;
 
     std::atomic<bool> stop_flag{false};
     anneal::StopCtx ctx{budget, stop_flag, time_exceeded, stopval};
 
-    anneal::CoranaPlateau plateau(sp.stop, kb.neps);
+    anneal::CoranaPlateau plateau(sp.stop, kb.neps, sp.failscore);
 
     enum class StopReason {
       Done, MaxEval, MaxTime, StopVal, TMin, Plateau,
-      StopValOnProbe, MaxTimeOnProbe, NoDims, NoBudget
+      StopValOnProbe, ExternalOnProbe, MaxTimeOnProbe, NoDims, NoBudget
     };
     StopReason stop_reason = StopReason::Done;
 
@@ -227,11 +326,26 @@ template<typename Vec, typename HostT>
             << "  V_FLOOR_FRAC=" << kb.v_floor_frac;
       else
         oss << "  L=" << kb.L;
-      if (sp.step.has_value())
-        oss << "  sigma=" << *sp.step << " (uniform; STEP override)";
-      else
-        oss << "  STEP_FRAC=" << kb.step_frac;
-      oss << "  INIT_MODE=" << kb.init_mode;
+      if (sp.step.has_value()) {
+        if (kb.corana)
+          oss << "  STEP=" << *sp.step
+              << " (Corana U(-V,V) half-width; floor/cap applied per dim)";
+        else
+          oss << "  sigma=" << *sp.step
+              << " (CLASSIC Gaussian; explicit STEP)";
+      } else {
+        oss << "  STEP_FRAC=" << kb.step_frac
+            << (kb.corana ? " (Corana V half-width/width)"
+                          : " (CLASSIC Gaussian sigma/width)");
+      }
+      oss << "  BOUNDARY_MODE=" << static_cast<int>(kb.boundary_mode)
+          << (kb.boundary_mode == anneal::BoundaryMode::Reflect
+                  ? "(REFLECT)" : "(REDRAW)")
+          << "  INIT_MODE=" << kb.init_mode
+          << (kb.init_mode == 0
+                  ? (kb.corana ? "(Gaussian jitter; sigma=initial V)"
+                               : "(Gaussian jitter; sigma=proposal sigma)")
+                  : "(uniform box)");
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
@@ -240,11 +354,12 @@ template<typename Vec, typename HostT>
      * NT*NS*dim product the first per-epoch line can be hours away, and
      * the epoch size is what sets both the swap and journal cadence. */
     const std::uint64_t rung_cost =
-        kb.corana ? static_cast<std::uint64_t>(kb.NT) * kb.NS * dim
+        kb.corana ? anneal::saturating_mul(
+                        anneal::saturating_mul(kb.NT, kb.NS), dim)
                   : static_cast<std::uint64_t>(kb.L);
+    const std::uint64_t epoch_cost =
+        anneal::saturating_mul(static_cast<std::uint64_t>(K), rung_cost);
     {
-      const std::uint64_t epoch_evals =
-          static_cast<std::uint64_t>(K) * rung_cost;
       std::ostringstream oss;
       oss << "ANNEAL_PT layout: rung = ";
       if (kb.corana)
@@ -252,16 +367,16 @@ template<typename Vec, typename HostT>
       else
         oss << "L = ";
       oss << rung_cost << " evals/replica;  epoch = REPLICAS*rung = "
-          << K << "*" << rung_cost << " = " << epoch_evals
+          << K << "*" << rung_cost << " = " << epoch_cost
           << " evals;  exchange attempt every " << kb.swap_every
           << " epoch(s)";
       HPOLog::instance().info(oss.str());
       /* Cadence registration is single-process only: the milestone
        * throughput window is rank-local and would mis-scale a global
        * budget under MPI. */
-      if (world == 1 && epoch_evals > 0)
+      if (world == 1 && epoch_cost > 0)
         HPOLog::instance().set_cadence(
-            static_cast<std::size_t>(epoch_evals), "epoch",
+            static_cast<std::size_t>(epoch_cost), "epoch",
             max_eval_global == HUGE_UNSIGNED ? 0 : max_eval_global);
     }
     /* Pinned-dim audit (single-process like the per-epoch report --
@@ -270,14 +385,32 @@ template<typename Vec, typename HostT>
       HPOLog::instance().arm_pin_audit(
           sp, kb.v_floor_frac, static_cast<int>(K), "epoch");
 
+    bool calib_threw = false;
+    std::string calib_what;
     if (dim == 0) {
-      if (!sp.optim_init.empty() && budget.left() > 0) {
-        const auto v = sp.in(sp.optim_init.front());
-        Vec xv(v.size());
-        for (std::size_t i = 0; i < v.size(); ++i) xv(i) = v[i];
-        host(sp.out(xv));
-      }
       stop_reason = StopReason::NoDims;
+      if (rank == 0 && !sp.optim_init.empty()) {
+        if (!budget.try_reserve()) {
+          stop_reason = StopReason::NoBudget;
+        } else {
+          try {
+            Vec xv(dim);
+            for (std::size_t i = 0; i < dim; ++i) xv(i) = initial[i];
+            double f = host(sp.out(xv));
+            if (!std::isfinite(f))
+              f = std::numeric_limits<double>::infinity();
+            if (anneal::stopval_reached(f, stopval, sp.failscore))
+              stop_reason = StopReason::StopVal;
+            else if (time_exceeded()) stop_reason = StopReason::MaxTime;
+          } catch (const std::exception& e) {
+            calib_threw = true;
+            calib_what = e.what();
+          } catch (...) {
+            calib_threw = true;
+            calib_what = "TADAH:ANNEAL_PT: non-standard exception during zero-dimensional evaluation";
+          }
+        }
+      }
     }
 
     bool proceed = (stop_reason == StopReason::Done);
@@ -289,48 +422,67 @@ template<typename Vec, typename HostT>
     Vec x0(dim);
     double f0 = std::numeric_limits<double>::infinity();
     if (proceed && rank == 0) {
-      if (!sp.optim_init.empty()) {
-        const auto v = sp.in(sp.optim_init.front());
-        for (std::size_t i = 0; i < v.size(); ++i) x0(i) = v[i];
-      } else {
-        for (std::size_t i = 0; i < dim; ++i)
-          x0(i) = 0.5 * (sp.low[i] + sp.high[i]);
-      }
-      if (!budget.try_reserve() ||
-          (world == 1 && max_eval_global == 0)) {
+      for (std::size_t i = 0; i < dim; ++i) x0(i) = initial[i];
+      if (!budget.try_reserve()) {
         stop_reason = StopReason::NoBudget;
         proceed = false;
       } else {
-        f0 = host(sp.out(x0));
-        ran_sa = true;
-        g_best = l_best = f0;
-        g_best_x = l_best_x = x0;
-        if (f0 <= stopval) {
-          stop_reason = StopReason::StopVal; proceed = false;
-        } else if (time_exceeded()) {
-          stop_reason = StopReason::MaxTime; proceed = false;
+        try {
+          f0 = host(sp.out(x0));
+          if (!std::isfinite(f0))
+            f0 = std::numeric_limits<double>::infinity();
+          ran_sa = true;
+          g_best = l_best = f0;
+          g_best_x = l_best_x = x0;
+          if (anneal::stopval_reached(f0, stopval, sp.failscore)) {
+            stop_reason = StopReason::StopVal; proceed = false;
+          } else if (time_exceeded()) {
+            stop_reason = StopReason::MaxTime; proceed = false;
+          }
+        } catch (const std::exception& e) {
+          calib_threw = true;
+          calib_what = e.what();
+          proceed = false;
+        } catch (...) {
+          calib_threw = true;
+          calib_what =
+              "TADAH:ANNEAL_PT: non-standard exception during seed evaluation";
+          proceed = false;
         }
       }
     }
 
-    bool calib_threw = false;
-    std::string calib_what;
     if (proceed && rank == 0) {
       std::mt19937_64 probe_rng = anneal::make_stream(seed, anneal::SALT_PROBES);
       try {
         const auto t0out = anneal::calibrate_t0(
-            sp, kb, sigma, x0, f0, l_best_x, l_best,
+            sp, kb, proposal_scale, x0, f0, l_best_x, l_best,
             host, probe_rng, ctx, "ANNEAL_PT");
         g_best = l_best;
         T_hot = t0out.T0;
         if (t0out.aborted) {
-          stop_reason = t0out.stopval_hit ? StopReason::StopValOnProbe
-                                          : StopReason::MaxTimeOnProbe;
+          stop_reason = t0out.budget_exhausted
+                            ? StopReason::MaxEval
+                            : (t0out.stopval_hit
+                                   ? StopReason::StopValOnProbe
+                                   : (t0out.external_stop
+                                          ? StopReason::ExternalOnProbe
+                                          : StopReason::MaxTimeOnProbe));
+          proceed = false;
+        } else if (budget.left() == 0) {
+          stop_reason = StopReason::MaxEval;
+          proceed = false;
+        } else if (time_exceeded()) {
+          stop_reason = StopReason::MaxTimeOnProbe;
           proceed = false;
         }
       } catch (const std::exception& e) {
         calib_threw = true;
         calib_what  = e.what();
+      } catch (...) {
+        calib_threw = true;
+        calib_what =
+            "TADAH:ANNEAL_PT: non-standard exception during T0 calibration";
       }
     }
     if (world > 1) {
@@ -378,17 +530,33 @@ template<typename Vec, typename HostT>
 
     /* Hybrid cooling floor (only meaningful when RT < 1). */
     const double t_min = kb.t_min ? *kb.t_min
-                                  : (T_hot > 0.0 ? T_hot * 1e-6 : 1e-12);
+                                  : (T_hot > 0.0
+                                         ? anneal::automatic_t_min(T_hot)
+                                         : 1e-12);
+    if (proceed && t_min > T_hot)
+      throw std::runtime_error(
+          "TADAH:ANNEAL_PT: resolved T_MIN must be <= resolved T_HOT");
 
     /* --- ladder + chains ----------------------------------------------
      * Every rank builds the FULL temperature ladder (identical, cheap)
      * but only its own contiguous slot block of chains. Chain RNG
      * streams are keyed by the GLOBAL slot index. */
-    std::vector<double> T(K);
-    for (std::size_t k = 0; k < K; ++k)
-      T[k] = T_cold * std::pow(T_hot / T_cold,
-                               static_cast<double>(k) /
-                               static_cast<double>(K - 1));
+    std::vector<double> T(K, 0.0);
+    long double log_t_cold = 0.0L, log_t_hot = 0.0L;
+    if (proceed) {
+      log_t_cold = std::log(static_cast<long double>(T_cold));
+      log_t_hot  = std::log(static_cast<long double>(T_hot));
+      for (std::size_t k = 0; k < K; ++k) {
+        if (k == 0) T[k] = T_cold;
+        else if (k + 1 == K) T[k] = T_hot;
+        else {
+          const long double u = static_cast<long double>(k) /
+                                static_cast<long double>(K - 1);
+          T[k] = static_cast<double>(
+              std::exp(log_t_cold + (log_t_hot - log_t_cold) * u));
+        }
+      }
+    }
 
     /* Resolved-ladder report: T0 calibration fixes only the HOT end; the
      * cold end and the per-slot geometry are decided here, so this is
@@ -403,7 +571,8 @@ template<typename Vec, typename HostT>
             << (kb.t_cold ? " (PARAM T_COLD)" : " (T_HOT/LADDER_SPAN)")
             << "  geometric over " << K << " slots, ratio="
             << std::fixed << std::setprecision(3)
-            << std::pow(T_hot / T_cold, 1.0 / static_cast<double>(K - 1))
+            << std::exp((log_t_hot - log_t_cold) /
+                        static_cast<long double>(K - 1))
             << " per rung";
         if (kb.rt < 1.0)
           oss << "  [initial; cools x" << kb.rt
@@ -436,24 +605,42 @@ template<typename Vec, typename HostT>
     std::vector<anneal::ChainState<Vec>> chains(n_local);
     anneal::ReplicaPool pool(std::min(threads, n_local ? n_local : 1),
                              stop_flag);
+    auto rethrow_pool_error = [&](const char* phase) {
+      const bool local_error = pool.has_error();
+      const int any_error = world > 1
+          ? hpo_allreduce_max(local_error ? 1 : 0)
+          : (local_error ? 1 : 0);
+      if (!any_error) return;
+      if (local_error) pool.rethrow_if_error();
+      throw std::runtime_error(
+          std::string("TADAH:ANNEAL_PT: worker failed on another MPI rank during ") +
+          phase);
+    };
 
     if (proceed) {
       for (std::size_t li = 0; li < n_local; ++li) {
         const std::size_t k = off_local + li;   /* global slot */
         auto& c = chains[li];
         c.rng = anneal::make_stream(seed, anneal::SALT_CHAIN, k);
-        c.V   = sigma;
+        c.V   = proposal_scale;
         c.x   = Vec(dim);
         if (k == 0 || kb.init_mode == 0) {
-          /* chain 0 starts at the seed exactly; higher slots jitter
-           * around it from their own stream (uniform-box starts are
-           * cliff bait on real landscapes). */
+          /* Chain 0 starts at the seed exactly. Higher slots use Gaussian
+           * seed jitter in both variants; under Corana the initial V[i]
+           * value is reused as that initialization-only sigma. */
           std::normal_distribution<double> nd(0.0, 1.0);
           for (std::size_t i = 0; i < dim; ++i) {
-            double v = x0(i);
-            if (k > 0) v += sigma[i] * nd(c.rng);
-            anneal::reflect_into(v, sp.low[i], sp.high[i]);
-            c.x(i) = v;
+            long double v = static_cast<long double>(x0(i));
+            if (k > 0) {
+              auto draw = [&]() {
+                return static_cast<long double>(x0(i)) +
+                       static_cast<long double>(proposal_scale[i]) * nd(c.rng);
+              };
+              v = draw();
+              (void)anneal::constrain_proposal(
+                  v, sp.low[i], sp.high[i], kb.boundary_mode, draw);
+            }
+            c.x(i) = static_cast<double>(v);
           }
         } else {
           for (std::size_t i = 0; i < dim; ++i)
@@ -466,7 +653,15 @@ template<typename Vec, typename HostT>
         chains[0].best_f = f0;
       }
 
-      /* Evaluate the non-seed starting points on the pool. */
+      /* Evaluate a deterministic global prefix of non-seed starting points.
+       * This makes partial initialization identical for every rank/thread
+       * layout and prevents MPI ranks collectively overshooting MAXEVAL. */
+      const std::uint64_t spent_before_init = world > 1
+          ? hpo_allreduce_sum(budget.spent()) : budget.spent();
+      const std::uint64_t init_remaining = max_eval_global > spent_before_init
+          ? max_eval_global - spent_before_init : 0;
+      const std::uint64_t init_admitted = std::min<std::uint64_t>(
+          K > 0 ? static_cast<std::uint64_t>(K - 1) : 0, init_remaining);
       pool.run_epoch(n_local, [&](std::size_t li) {
         /* key this chain's warm-start by its GLOBAL slot (off_local+li) so
          * results are independent of which worker runs it. */
@@ -474,15 +669,19 @@ template<typename Vec, typename HostT>
         warmstart::current_chain() = gk;
         HPOLog::set_eval_slot(static_cast<int>(gk), K, T[gk]);
         if (rank == 0 && li == 0) return;   /* global slot 0 = seed */
+        if (gk == 0 || gk > init_admitted) return;
         auto& c = chains[li];
         if (stop_flag.load(std::memory_order_relaxed)) return;
         if (!ctx.budget.try_reserve()) return;   /* f stays inf */
         c.f = host(sp.out(c.x));
+        if (!std::isfinite(c.f))
+          c.f = std::numeric_limits<double>::infinity();
         c.best_f = c.f;
         c.best_x = c.x;
-        if (c.f <= stopval) stop_flag.store(true, std::memory_order_relaxed);
+        if (anneal::stopval_reached(c.f, stopval, sp.failscore))
+          stop_flag.store(true, std::memory_order_relaxed);
       });
-      pool.rethrow_if_error();
+      rethrow_pool_error("population initialization");
       for (std::size_t li = 0; li < n_local; ++li) {
         if (chains[li].best_f < l_best) {
           l_best   = chains[li].best_f;
@@ -497,12 +696,12 @@ template<typename Vec, typename HostT>
         hpo_allreduce_minloc(gb, owner);
         if (gb < std::numeric_limits<double>::max())
           g_best = std::min(g_best, gb);
-        int code = (stop_flag.load(std::memory_order_relaxed) &&
-                    g_best <= stopval) ? 1 : 0;
+        int code = (stopval && stop_flag.load(std::memory_order_relaxed) &&
+                    anneal::stopval_reached(g_best, stopval, sp.failscore)) ? 1 : 0;
         code = hpo_allreduce_max(code);
         if (code) { stop_reason = StopReason::StopVal; proceed = false; }
-      } else if (stop_flag.load(std::memory_order_relaxed) &&
-                 g_best <= stopval) {
+      } else if (stopval && stop_flag.load(std::memory_order_relaxed) &&
+                 anneal::stopval_reached(g_best, stopval, sp.failscore)) {
         stop_reason = StopReason::StopVal;
         proceed = false;
       }
@@ -573,13 +772,13 @@ template<typename Vec, typename HostT>
               max_eval_global == HUGE_UNSIGNED
                   ? std::numeric_limits<std::uint64_t>::max()
                   : remaining,
-              static_cast<std::uint64_t>(K) * rung_cost);
+              epoch_cost);
           /* Plan line -- printed once, from the same arithmetic that
            * feeds the epoch=k/total display (an upper bound: STOPVAL /
            * plateau / MAXTIME end the run earlier). */
           if (rank == 0 && planned_epochs > 0) {
-            const std::size_t rounds =
-                (planned_epochs + kb.swap_every - 1) / kb.swap_every;
+            const std::size_t rounds = planned_epochs / kb.swap_every +
+                (planned_epochs % kb.swap_every != 0 ? 1 : 0);
             std::ostringstream oss;
             oss << "ANNEAL_PT plan: ~" << planned_epochs << " epoch(s) (";
             if (max_eval_global != HUGE_UNSIGNED)
@@ -591,12 +790,11 @@ template<typename Vec, typename HostT>
             /* Round-trip feasibility gates. The floor is STRUCTURAL: a
              * DEO exchange round moves a state at most one slot, so one
              * cold<->hot round trip needs >= 2*(K-1) rounds even at
-             * 100% swap acceptance -- below that, tempering provably
-             * cannot function (WARNING). Above it, the 20-40% per-pair
-             * acceptance the literature targets (Kone-Kofke 23%,
-             * Predescu 38.7% for optimization) stretches a round trip
-             * to roughly 2*(K-1)/0.25 rounds -- below that expect <~1
-             * round trip (heuristic -> HINT). */
+             * 100% swap acceptance -- below that, a complete round trip is
+             * structurally impossible (WARNING). Above it, the common 25%
+             * planning approximation gives 2*(K-1)/0.25 rounds per nominal
+             * trip; it is reported only as a heuristic HINT, while measured
+             * ladder-flow counts remain authoritative. */
             if (K >= 2) {
               const std::size_t rt_floor = 2 * (K - 1);
               if (rounds < rt_floor) {
@@ -605,25 +803,34 @@ template<typename Vec, typename HostT>
                   << " < 2*(REPLICAS-1) = " << rt_floor
                   << " -- one cold<->hot ladder round trip is impossible "
                      "even at 100% swap acceptance (a DEO round moves a "
-                     "state at most one slot); tempering degenerates to "
-                  << K << " independent chains. Reduce NT (epoch = "
-                     "REPLICAS*NT*NS*dim evals) or raise MAXEVAL.";
+                     "state at most one slot). Exchanges can still couple "
+                     "adjacent slots, but no lineage can complete a round trip. ";
+                if (kb.corana)
+                  w << "Reduce NS or NT (epoch = REPLICAS*NT*NS*dim evals) ";
+                else
+                  w << "Reduce L (epoch = REPLICAS*L evals) ";
+                w << "or raise MAXEVAL.";
                 HPOLog::instance().warning(w.str());
               } else if (rounds < 4 * rt_floor) {
                 std::ostringstream h;
                 h << "ANNEAL_PT: planned exchange rounds " << rounds
                   << " < 2*(REPLICAS-1)/0.25 = " << 4 * rt_floor
-                  << " -- expect fewer than ~1 ladder round trip at the "
-                     "typical 20-40% per-pair swap acceptance (Kone-Kofke "
-                     "23%, Predescu 39% for optimization). Tempering will "
-                     "function only weakly; consider a smaller NT or a "
-                     "larger MAXEVAL.";
+                  << " -- the 25%-acceptance planning heuristic yields fewer "
+                     "than ~1 nominal ladder round trip (literature reference "
+                     "values: Kone-Kofke 23%, Predescu 39% for optimization). "
+                     "Measured ladder-flow counts are authoritative. ";
+                if (kb.corana)
+                  h << "Consider smaller NS/NT or larger MAXEVAL.";
+                else
+                  h << "Consider smaller L or larger MAXEVAL.";
                 HPOLog::instance().hint(h.str());
               }
             }
           }
         }
-        if (time_exceeded() && world == 1) {
+        int pre_time = time_exceeded() ? 1 : 0;
+        if (world > 1) pre_time = hpo_allreduce_max(pre_time);
+        if (pre_time) {
           stop_reason = StopReason::MaxTime; break;
         }
 
@@ -632,7 +839,7 @@ template<typename Vec, typename HostT>
          * given to the coldest slots. Computed identically on every
          * rank from the GLOBAL remaining count. */
         std::vector<std::uint64_t> allowance(K, rung_cost);
-        if (remaining < static_cast<std::uint64_t>(K) * rung_cost) {
+        if (remaining < epoch_cost) {
           const std::uint64_t base = remaining / K;
           const std::uint64_t rem  = remaining % K;
           for (std::size_t k = 0; k < K; ++k)
@@ -652,9 +859,10 @@ template<typename Vec, typename HostT>
           rstats[li] = anneal::run_rung(chains[li], T[k], sp, kb, host, ctx,
                                         allowance[k]);
         });
-        pool.rethrow_if_error();
+        rethrow_pool_error("replica rung");
 
         std::size_t e_prop = 0, e_acc = 0, e_oob = 0;
+        anneal::StepSaturation e_vsat;
         bool any_stopval = false, any_time = false;
         for (std::size_t li = 0; li < n_local; ++li) {
           e_prop += rstats[li].proposed;
@@ -666,12 +874,24 @@ template<typename Vec, typename HostT>
             l_best   = chains[li].best_f;
             l_best_x = chains[li].best_x;
           }
+          if (kb.corana) {
+            const auto s = anneal::step_saturation(chains[li].V, sp, kb);
+            e_vsat.floor += s.floor;
+            e_vsat.cap   += s.cap;
+            e_vsat.total += s.total;
+          }
         }
         g_best = std::min(g_best, l_best);
+        any_time = any_time || time_exceeded();
         if (world > 1) {
           e_prop = hpo_allreduce_sum_sz(e_prop);
           e_acc  = hpo_allreduce_sum_sz(e_acc);
           e_oob  = hpo_allreduce_sum_sz(e_oob);
+          if (kb.corana) {
+            e_vsat.floor = hpo_allreduce_sum_sz(e_vsat.floor);
+            e_vsat.cap   = hpo_allreduce_sum_sz(e_vsat.cap);
+            e_vsat.total = hpo_allreduce_sum_sz(e_vsat.total);
+          }
           int code = any_stopval ? 2 : (any_time ? 1 : 0);
           code = hpo_allreduce_max(code);
           any_stopval = (code == 2);
@@ -681,10 +901,13 @@ template<typename Vec, typename HostT>
         total_accepted += e_acc;
         total_oob      += e_oob;
         ++epoch_count;
-
-        if (any_stopval) { stop_reason = StopReason::StopVal; break; }
-        if (any_time)    { stop_reason = StopReason::MaxTime; break; }
-        if (e_prop == 0) { stop_reason = StopReason::MaxEval; break; }
+        const bool maxeval_hit = max_eval_global != HUGE_UNSIGNED &&
+                                 e_prop >= remaining;
+        if (any_stopval)       stop_reason = StopReason::StopVal;
+        else if (any_time)     stop_reason = StopReason::MaxTime;
+        else if (e_prop == 0 || maxeval_hit)
+                               stop_reason = StopReason::MaxEval;
+        const bool terminal_epoch = stop_reason != StopReason::Done;
 
         /* Pre-swap snapshot for the per-epoch replica-state report: the
          * exchange below permutes x/f, while the report describes what
@@ -719,7 +942,7 @@ template<typename Vec, typename HostT>
          * the decision is identical no matter which rank(s) own the
          * pair or how many ranks there are) --------------------------- */
         double ep_swap_rate = -1.0;
-        if (epoch_count % kb.swap_every == 0) {
+        if (!terminal_epoch && epoch_count % kb.swap_every == 0) {
           const std::size_t parity =
               (epoch_count / kb.swap_every) % 2;  /* DEO alternation */
           std::size_t att = 0, acc = 0;
@@ -730,19 +953,17 @@ template<typename Vec, typename HostT>
             std::mt19937_64 pair_rng = anneal::make_stream(
                 seed, anneal::SALT_PT_SWAP,
                 static_cast<std::uint64_t>(epoch_count) * K + i);
-            const double coin = udist(pair_rng);
-            const double beta_i = 1.0 / T[i];      /* colder */
-            const double beta_j = 1.0 / T[i + 1];  /* hotter */
-
             if (i_mine && j_mine) {
               auto& ci = chains[i - off_local];
               auto& cj = chains[i + 1 - off_local];
-              const double delta = (beta_i - beta_j) * (ci.f - cj.f);
+              const bool accepted = pt_detail::accept_exchange(
+                  T[i], T[i + 1], ci.f, cj.f,
+                  [&]() { return udist(pair_rng); });
               ++swap_attempt[i];
               ++swap_attempt_win[i];
               ++att;
               pair_event[i] = '.';
-              if (delta >= 0.0 || coin < std::exp(delta)) {
+              if (accepted) {
                 std::swap(ci.x, cj.x);
                 std::swap(ci.f, cj.f);
                 if (world == 1) std::swap(walker_at[i], walker_at[i + 1]);
@@ -753,8 +974,8 @@ template<typename Vec, typename HostT>
               }
             } else {
               /* Boundary pair: I own exactly one side; my peer owns the
-               * other. Both sides draw the SAME coin from the pair
-               * stream and compute the SAME decision -- only f (and x
+               * other. Both sides use the SAME pair coin stream when the
+               * decision is probabilistic and compute the SAME result -- only f (and x
                * on accept) travel. */
               const std::size_t mine_g = i_mine ? i : i + 1;
               auto& c = chains[mine_g - off_local];
@@ -763,8 +984,9 @@ template<typename Vec, typename HostT>
               hpo_sendrecv(sendf, recvf, peer, static_cast<int>(i % 1024) * 2);
               const double f_i = i_mine ? c.f : recvf[0];
               const double f_j = i_mine ? recvf[0] : c.f;
-              const double delta = (beta_i - beta_j) * (f_i - f_j);
-              const bool accepted = (delta >= 0.0) || coin < std::exp(delta);
+              const bool accepted = pt_detail::accept_exchange(
+                  T[i], T[i + 1], f_i, f_j,
+                  [&]() { return udist(pair_rng); });
               if (i_mine) {
                 ++swap_attempt[i];
                 ++swap_attempt_win[i];
@@ -784,6 +1006,10 @@ template<typename Vec, typename HostT>
               }
             }
           }
+          if (world > 1) {
+            att = hpo_allreduce_sum_sz(att);
+            acc = hpo_allreduce_sum_sz(acc);
+          }
           ++exchange_rounds;
           ep_swap_rate = att > 0 ? static_cast<double>(acc) /
                                    static_cast<double>(att) : 0.0;
@@ -802,20 +1028,21 @@ template<typename Vec, typename HostT>
         }
 
         int rank0_code = 0;   /* 0 none, 1 plateau */
-        if (rank == 0) {
+        if (rank == 0 && !terminal_epoch) {
           if (plateau.update(chains[0].f, g_best)) rank0_code = 1;
         }
         if (world > 1) hpo_bcast(rank0_code, 0);
-        if (rank0_code == 1) { stop_reason = StopReason::Plateau; break; }
+        const bool plateau_hit = rank0_code == 1;
 
         /* --- optional ladder cooling (PT -> SA hybrid) ---------------- */
-        if (kb.rt < 1.0) {
-          for (auto& t : T) t *= kb.rt;
-          if (T[K - 1] < t_min) { stop_reason = StopReason::TMin; break; }
+        bool tmin_hit = false;
+        if (!terminal_epoch && !plateau_hit && kb.rt < 1.0) {
+          for (auto& t : T) t = anneal::cool_temperature(t, kb.rt);
+          tmin_hit = T[K - 1] < t_min;
         }
 
         /* --- reset-to-best: coldest slot only ------------------------- */
-        if (kb.reset_to_best) {
+        if (!terminal_epoch && !plateau_hit && kb.reset_to_best) {
           std::vector<double> bx(dim, 0.0);
           if (world > 1) {
             if (rank == best_owner)
@@ -827,6 +1054,8 @@ template<typename Vec, typename HostT>
           if (rank == 0 && n_local > 0 && chains[0].f > g_best) {
             for (std::size_t d = 0; d < dim; ++d) chains[0].x(d) = bx[d];
             chains[0].f = g_best;
+            chains[0].best_x = chains[0].x;
+            chains[0].best_f = g_best;
           }
         }
 
@@ -835,6 +1064,10 @@ template<typename Vec, typename HostT>
         if (rank == 0) {
           const double rate = e_prop > 0
               ? static_cast<double>(e_acc) / static_cast<double>(e_prop) : 0.0;
+          const double oob_pct = e_prop > 0
+              ? 100.0 * static_cast<double>(e_oob) /
+                    static_cast<double>(e_prop)
+              : 0.0;
           std::ostringstream oss;
           oss << std::scientific << std::setprecision(3)
               << "ANNEAL_PT epoch=" << epoch_count;
@@ -842,12 +1075,17 @@ template<typename Vec, typename HostT>
           oss << "  T=[" << T[0] << ", " << T[K - 1] << "]"
               << "  proposed=" << e_prop
               << "  accepted=" << std::fixed << std::setprecision(1)
-              << (rate * 100.0) << "%";
+              << (rate * 100.0) << "%"
+              << "  oob=" << e_oob << " (" << oob_pct << "%)";
           if (ep_swap_rate >= 0.0)
             oss << "  swap_acc=" << (ep_swap_rate * 100.0) << "%";
           oss << std::scientific << std::setprecision(3)
               << "  f_cold=" << chains[0].f
-              << "  best=" << g_best
+              << "  best=" << g_best;
+          if (kb.corana)
+            oss << "  V_floor=" << e_vsat.floor << "/" << e_vsat.total
+                << "  V_cap=" << e_vsat.cap << "/" << e_vsat.total;
+          oss
               << "  epoch_wall=" << HPOLog::format_duration(
                      std::chrono::duration<double>(
                          std::chrono::steady_clock::now() - epoch_wall_t0)
@@ -1051,15 +1289,31 @@ template<typename Vec, typename HostT>
             }
           }
         }
+        if (terminal_epoch) break;
+        if (plateau_hit) { stop_reason = StopReason::Plateau; break; }
+        if (tmin_hit)    { stop_reason = StopReason::TMin; break; }
       }
     }
 
     /* --- multi-rank finalisation ------------------------------------------
-     * Rank 0's best_* output files must carry the GLOBAL winner: the
-     * owning rank broadcasts its best x and rank 0 re-evaluates it once
-     * (one eval) so the host-side writers record it. Guarded by dim>0
-     * (symmetric on every rank) rather than per-rank flags so the
-     * collectives can never be left unmatched. */
+     * Broadcast the winning coordinates for the driver's global result.
+     * Do not re-evaluate on rank 0: host-side best checkpoints are written
+     * at discovery time, and a synthetic final evaluation would violate the
+     * hard global MAXEVAL contract. */
+    anneal::StepSaturation final_vsat;
+    if (kb.corana) {
+      for (const auto& c : chains) {
+        const auto s = anneal::step_saturation(c.V, sp, kb);
+        final_vsat.floor += s.floor;
+        final_vsat.cap   += s.cap;
+        final_vsat.total += s.total;
+      }
+      if (world > 1) {
+        final_vsat.floor = hpo_allreduce_sum_sz(final_vsat.floor);
+        final_vsat.cap   = hpo_allreduce_sum_sz(final_vsat.cap);
+        final_vsat.total = hpo_allreduce_sum_sz(final_vsat.total);
+      }
+    }
     std::uint64_t spent_report = budget.spent();
     if (world > 1 && dim > 0) {
       double gb = std::isfinite(l_best) ? l_best
@@ -1073,12 +1327,17 @@ template<typename Vec, typename HostT>
           for (std::size_t d = 0; d < dim; ++d) bx[d] = l_best_x(d);
         hpo_bcast(bx, owner);
         for (std::size_t d = 0; d < dim; ++d) g_best_x(d) = bx[d];
-        if (rank == 0 && owner != 0) {
-          budget.try_reserve();   /* accounting only */
-          (void)host(sp.out(g_best_x));
-        }
       }
-      spent_report = hpo_allreduce_sum(budget.spent());
+    }
+    if (world > 1) spent_report = hpo_allreduce_sum(budget.spent());
+
+    std::vector<std::size_t> swap_attempt_report = swap_attempt;
+    std::vector<std::size_t> swap_accept_report  = swap_accept;
+    if (world > 1) {
+      for (std::size_t i = 0; i + 1 < K; ++i) {
+        swap_attempt_report[i] = hpo_allreduce_sum_sz(swap_attempt[i]);
+        swap_accept_report[i]  = hpo_allreduce_sum_sz(swap_accept[i]);
+      }
     }
 
     /* --- final summary --------------------------------------------------- */
@@ -1086,6 +1345,10 @@ template<typename Vec, typename HostT>
       const double overall_rate = total_proposed > 0
           ? static_cast<double>(total_accepted) /
             static_cast<double>(total_proposed) : 0.0;
+      const double oob_pct = total_proposed > 0
+          ? 100.0 * static_cast<double>(total_oob) /
+                static_cast<double>(total_proposed)
+          : 0.0;
       std::ostringstream oss;
       oss << std::scientific << std::setprecision(3)
           << "ANNEAL_PT summary: epochs=" << epoch_count
@@ -1094,10 +1357,15 @@ template<typename Vec, typename HostT>
           << "  accepted=" << std::fixed << std::setprecision(1)
           << (overall_rate * 100.0) << "%"
           << std::scientific << std::setprecision(3)
-          << "  oob=" << total_oob
+          << "  oob=" << total_oob << " (" << std::fixed
+          << std::setprecision(1) << oob_pct << "%)"
+          << std::scientific << std::setprecision(3)
           << "  T_hot=" << T_hot
           << "  T_cold=" << T_cold
           << "  best=" << g_best;
+      if (kb.corana)
+        oss << "  V_floor=" << final_vsat.floor << "/" << final_vsat.total
+            << "  V_cap=" << final_vsat.cap << "/" << final_vsat.total;
       HPOLog::instance().info(oss.str());
       /* Per-pair swap-acceptance table -- THE diagnostic for tuning
        * LADDER_SPAN/REPLICAS (aim 20-40% per pair). */
@@ -1105,9 +1373,9 @@ template<typename Vec, typename HostT>
         std::ostringstream ossp;
         ossp << "ANNEAL_PT swap acceptance per pair (cold->hot):";
         for (std::size_t i = 0; i + 1 < K; ++i) {
-          const double r = swap_attempt[i] > 0
-              ? 100.0 * static_cast<double>(swap_accept[i]) /
-                        static_cast<double>(swap_attempt[i]) : 0.0;
+          const double r = swap_attempt_report[i] > 0
+              ? 100.0 * static_cast<double>(swap_accept_report[i]) /
+                        static_cast<double>(swap_attempt_report[i]) : 0.0;
           ossp << "  " << i << ":" << std::fixed << std::setprecision(0)
                << r << "%";
         }
@@ -1164,6 +1432,7 @@ template<typename Vec, typename HostT>
         case StopReason::MaxTime:        reason = "MAXTIME exceeded"; break;
         case StopReason::StopVal:        reason = "STOPVAL reached"; break;
         case StopReason::StopValOnProbe: reason = "STOPVAL reached during T0 probes"; break;
+        case StopReason::ExternalOnProbe: reason = "external stop requested during T0 probes"; break;
         case StopReason::MaxTimeOnProbe: reason = "MAXTIME exceeded during T0 probes"; break;
         case StopReason::TMin:           reason = "T < T_MIN (hot end)"; break;
         case StopReason::Plateau:        reason = "FTOL plateau (Corana eps-NEPS rule, coldest slot)"; break;

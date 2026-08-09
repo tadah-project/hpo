@@ -2,10 +2,10 @@
  * Unit tests for `run_anneal_pt_impl` (TADAH:ANNEAL_PT -- parallel
  * tempering over the shared annealing core, algorithms_pt.h).
  *
- * A thread-safe stub host records every parameter vector, so the tests
- * can assert the determinism contract: same SEED => the same SET of
- * evaluated points for ANY thread count (call ORDER differs across
- * thread counts by design; per-chain sequences are fixed).
+ * A thread-safe stub host records every parameter vector. With REPLICAS
+ * fixed, a deterministic objective, and a MAXEVAL-only stop, the tests
+ * assert that the same SEED gives the same SET of evaluated points for
+ * any thread count (call ORDER differs; per-chain sequences are fixed).
  */
 
 #include "catch2/catch.hpp"
@@ -23,7 +23,9 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <mutex>
+#include <random>
 #include <sstream>
 #include <vector>
 
@@ -108,7 +110,50 @@ double quad_bowl2(const Vec& x, double cx, double cy)
 
 }  // namespace
 
-TEST_CASE("ANNEAL_PT: thread-count invariance (same SEED => same eval set)",
+TEST_CASE("ANNEAL_PT: INIT_MODE 0 uses Gaussian seed jitter for both steppers",
+          "[HPO][anneal_pt][init][kernel]")
+{
+    using namespace tadah::hpo;
+    auto run = [](bool corana) {
+        auto sp = make_pt_spec({-10.0}, {10.0});
+        set_seed_point(sp, {0.0});
+        sp.seed = 314159;
+        sp.num_threads = 2;
+        sp.stop.maxeval = 4;
+        sp.step = 0.25;
+        sp.param["REPLICAS"] = 4.0;
+        sp.param["T_HOT"] = 1.0;
+        sp.param["T_COLD"] = 0.1;
+        if (corana) {
+            sp.param["CORANA"] = 1.0;
+            sp.param["NS"] = 1.0;
+            sp.param["NT"] = 1.0;
+        } else {
+            sp.param["L"] = 1.0;
+        }
+        MtStubHost host{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
+        run_anneal_pt_impl<Vec>(sp, host);
+        return host.sorted_calls();
+    };
+
+    for (bool corana : {false, true}) {
+        CAPTURE(corana);
+        std::vector<std::vector<double>> expected{{0.0}};
+        for (std::size_t k = 1; k < 4; ++k) {
+            auto rng = anneal::make_stream(314159, anneal::SALT_CHAIN, k);
+            const double unit =
+                std::normal_distribution<double>(0.0, 1.0)(rng);
+            expected.push_back({0.25 * unit});
+        }
+        std::sort(expected.begin(), expected.end());
+        const auto actual = run(corana);
+        REQUIRE(actual.size() == expected.size());
+        for (std::size_t i = 0; i < actual.size(); ++i)
+            CHECK(actual[i][0] == Approx(expected[i][0]).margin(1e-15));
+    }
+}
+
+TEST_CASE("ANNEAL_PT: fixed-size thread-count invariance (same SEED => same eval set)",
           "[HPO][anneal_pt][determinism]")
 {
     using namespace tadah::hpo;
@@ -211,8 +256,225 @@ TEST_CASE("ANNEAL_PT: MAXEVAL is a hard cap across all replicas",
 
     MtStubHost stub{ [&](const Vec& x){ return quad_bowl2(x, 0.0, 0.0); }, {}, {} };
     run_anneal_pt_impl<Vec>(sp, stub);
-    CHECK(stub.sorted_calls().size() <= 137);
-    CHECK(stub.sorted_calls().size() >= 100);   /* budget actually used */
+    CHECK(stub.sorted_calls().size() == 137);
+}
+
+TEST_CASE("ANNEAL_PT: MAXEVAL zero performs no host evaluation",
+          "[HPO][anneal_pt][budget]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 3;
+    sp.num_threads = 2;
+    sp.stop.maxeval = 0;
+    sp.param["REPLICAS"] = 4.0;
+    sp.param["L"]        = 2.0;
+    sp.param["T_HOT"]    = 1.0;
+
+    LoggedRun lr;
+    MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
+    run_anneal_pt_impl<Vec>(sp, stub);
+    CHECK(stub.sorted_calls().empty());
+    CHECK(lr.read().find("after 0 host eval(s)") != std::string::npos);
+}
+
+TEST_CASE("ANNEAL_PT: round-trip advice matches the selected stepper variant",
+          "[HPO][anneal_pt][log][planning]")
+{
+    using namespace tadah::hpo;
+    auto run = [](bool corana) {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        set_seed_point(sp, {0.0});
+        sp.seed = 17;
+        sp.num_threads = 1;
+        sp.param["REPLICAS"] = 4.0;
+        sp.param["T_HOT"] = 1.0;
+        if (corana) {
+            sp.stop.maxeval = 8;   /* 4 starts + one 4-eval epoch */
+            sp.param["CORANA"] = 1.0;
+            sp.param["NS"] = 1.0;
+            sp.param["NT"] = 1.0;
+        } else {
+            sp.stop.maxeval = 44;  /* 4 starts + one 40-eval epoch */
+            sp.param["L"] = 10.0;
+        }
+
+        LoggedRun lr;
+        MtStubHost stub{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
+        run_anneal_pt_impl<Vec>(sp, stub);
+        return lr.read();
+    };
+
+    const std::string classic = run(false);
+    CHECK(classic.find("Reduce L (epoch = REPLICAS*L evals)")
+          != std::string::npos);
+    CHECK(classic.find("Reduce NS or NT") == std::string::npos);
+
+    const std::string corana = run(true);
+    CHECK(corana.find("Reduce NS or NT (epoch = REPLICAS*NT*NS*dim evals)")
+          != std::string::npos);
+    CHECK(corana.find("Reduce L (epoch") == std::string::npos);
+}
+
+TEST_CASE("ANNEAL_PT: T0 probe exhaustion reports MAXEVAL exactly",
+          "[HPO][anneal_pt][budget]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.25});
+    sp.seed = 31;
+    sp.num_threads = 2;
+    sp.stop.maxeval = 3;           /* seed + two of the default probes */
+    sp.param["REPLICAS"] = 4.0;
+    sp.param["L"]        = 2.0;
+
+    LoggedRun lr;
+    MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
+    run_anneal_pt_impl<Vec>(sp, stub);
+    CHECK(stub.sorted_calls().size() == 3);
+    CHECK(lr.read().find("ANNEAL_PT stopped: MAXEVAL exhausted")
+          != std::string::npos);
+}
+
+TEST_CASE("ANNEAL_PT: extreme finite temperature endpoints build a finite ladder",
+          "[HPO][anneal_pt][temperature]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 13;
+    sp.num_threads = 1;
+    sp.stop.maxeval = 3;
+    sp.param["REPLICAS"] = 3.0;
+    sp.param["T_HOT"] = std::numeric_limits<double>::max();
+    sp.param["T_COLD"] = std::numeric_limits<double>::denorm_min();
+    sp.param["L"] = 1.0;
+
+    MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
+    LoggedRun lr;
+    run_anneal_pt_impl<Vec>(sp, stub);
+
+    CHECK(stub.sorted_calls().size() == 3);
+    const std::string log = lr.read();
+    CHECK(log.find("ANNEAL_PT ladder T per slot") != std::string::npos);
+    CHECK(log.find(" inf") == std::string::npos);
+}
+
+TEST_CASE("ANNEAL_PT: exchange decision is stable at zero and extreme states",
+          "[HPO][anneal_pt][temperature][swap]")
+{
+    using tadah::hpo::pt_detail::accept_exchange;
+
+    int draws = 0;
+    auto coin = [&](double value) {
+        return [&, value]() {
+            ++draws;
+            return value;
+        };
+    };
+
+    /* Equal beta or energy has probability one and consumes no coin. */
+    CHECK(accept_exchange(1.0, 1.0, -4.0, 9.0, coin(0.99)));
+    CHECK(accept_exchange(0.0, 0.0, -4.0, 9.0, coin(0.99)));
+    CHECK(accept_exchange(0.0, 1.0, 3.0, 3.0, coin(0.99)));
+    CHECK(draws == 0);
+
+    /* At zero cold temperature, only a better hot state moves coldward
+     * (apart from the equal-energy case above). */
+    CHECK(accept_exchange(0.0, 1.0, 2.0, 1.0, coin(0.99)));
+    CHECK_FALSE(accept_exchange(0.0, 1.0, 1.0, 2.0, coin(0.0)));
+    CHECK(draws == 0);
+
+    /* Normalized infinity states are ordered without inf-inf or inf*0. */
+    const double inf = std::numeric_limits<double>::infinity();
+    CHECK(accept_exchange(0.25, 1.0, inf, 1.0, coin(0.99)));
+    CHECK_FALSE(accept_exchange(0.25, 1.0, 1.0, inf, coin(0.0)));
+    CHECK(accept_exchange(0.25, 1.0, inf, inf, coin(0.99)));
+    CHECK(draws == 0);
+
+    /* Moderate finite inputs agree with
+     * exp((1/T_cold-1/T_hot)*(f_cold-f_hot)). */
+    const double probability = std::exp(-0.5);
+    CHECK(accept_exchange(1.0, 2.0, 0.0, 1.0,
+                          coin(0.5 * probability)));
+    CHECK_FALSE(accept_exchange(1.0, 2.0, 0.0, 1.0,
+                                coin(0.5 * (1.0 + probability))));
+    CHECK(draws == 2);
+
+    /* Cross-check a finite, positive-temperature grid against the direct
+     * replica-exchange formula away from indeterminate limit cases. */
+    const double cold_grid[] = {0.125, 1.0, 3.0};
+    const double ratio_grid[] = {1.25, 2.0, 10.0};
+    const double loss_grid[] = {-100.0, -1.0, 0.0, 3.0};
+    const double coin_grid[] = {0.01, 0.25, 0.75, 0.99};
+    for (double t_cold : cold_grid) {
+        for (double ratio : ratio_grid) {
+            const double t_hot = t_cold * ratio;
+            for (double f_cold : loss_grid) {
+                for (double f_hot : loss_grid) {
+                    for (double u : coin_grid) {
+                        const long double delta =
+                            (1.0L / static_cast<long double>(t_cold) -
+                             1.0L / static_cast<long double>(t_hot)) *
+                            (static_cast<long double>(f_cold) -
+                             static_cast<long double>(f_hot));
+                        const bool expected = delta >= 0.0L ||
+                            static_cast<long double>(u) < std::exp(delta);
+                        CHECK(accept_exchange(t_cold, t_hot, f_cold, f_hot,
+                                              [u]() { return u; }) == expected);
+                    }
+                }
+            }
+        }
+    }
+
+    /* A positive subnormal cold endpoint remains a well-defined finite-
+     * temperature limit rather than producing NaN. */
+    CHECK_FALSE(accept_exchange(std::numeric_limits<double>::denorm_min(),
+                                1.0, 0.0, 1.0, coin(0.5)));
+    CHECK(draws == 3);
+
+    CHECK_THROWS_AS(accept_exchange(-1.0, 1.0, 0.0, 1.0, coin(0.5)),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(accept_exchange(2.0, 1.0, 0.0, 1.0, coin(0.5)),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(accept_exchange(1.0, 2.0,
+                                    std::numeric_limits<double>::quiet_NaN(),
+                                    1.0, coin(0.5)),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(accept_exchange(1.0, 2.0, 0.0, 1.0, coin(1.0)),
+                    std::invalid_argument);
+}
+
+TEST_CASE("ANNEAL_PT: equal-energy exchange survives cold-temperature underflow",
+          "[HPO][anneal_pt][temperature][swap]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 20260809;
+    sp.num_threads = 1;
+    sp.stop.maxeval = 8;  /* 2 starts + three 2-eval epochs */
+    sp.param["REPLICAS"] = 2.0;
+    sp.param["L"] = 1.0;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["T_COLD"] = std::numeric_limits<double>::denorm_min();
+    sp.param["RT"] = 0.5;
+
+    LoggedRun lr;
+    MtStubHost stub{[](const Vec&) { return 7.0; }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, stub);
+
+    const std::string log = lr.read();
+    const std::size_t epoch2 = log.find("ANNEAL_PT epoch=2/");
+    REQUIRE(epoch2 != std::string::npos);
+    const std::size_t line_end = log.find("\n", epoch2);
+    const std::string line = log.substr(epoch2, line_end - epoch2);
+    CHECK(line.find("T=[0.000e+00,") != std::string::npos);
+    CHECK(line.find("swap_acc=100.0%") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT swap acceptance per pair (cold->hot):  0:100%")
+          != std::string::npos);
 }
 
 TEST_CASE("ANNEAL_PT: STOPVAL terminates the ladder",
@@ -275,6 +537,7 @@ TEST_CASE("ANNEAL_PT: journal carries the banner, epoch lines and the "
     sp.param["NT"]          = 2.0;
     sp.param["T_HOT"]       = 1.0;
     sp.param["SWAP_WINDOW"] = 4.0;
+    sp.step = 0.123;
 
     LoggedRun lr;
     MtStubHost stub{ [&](const Vec& x){ return quad_bowl2(x, 0.0, 0.0); }, {}, {} };
@@ -314,7 +577,12 @@ TEST_CASE("ANNEAL_PT: journal carries the banner, epoch lines and the "
     CHECK(log.find("ANNEAL_PT V max per slot (max_i V[i]/width[i]):")
           != std::string::npos);
     CHECK(log.find("V_FLOOR_FRAC=") != std::string::npos);
-    CHECK(log.find("STEP_FRAC=") != std::string::npos);
+    CHECK(log.find("STEP=0.123") != std::string::npos);
+    CHECK(log.find("Corana U(-V,V) half-width") != std::string::npos);
+    CHECK(log.find("STEP_FRAC=") == std::string::npos);
+    CHECK(log.find("BOUNDARY_MODE=0(REFLECT)") != std::string::npos);
+    CHECK(log.find("V_floor=") != std::string::npos);
+    CHECK(log.find("V_cap=") != std::string::npos);
     /* Live per-pair swap tables: cumulative each exchange epoch, windowed
      * every SWAP_WINDOW epochs. */
     CHECK(log.find("ANNEAL_PT swap acc% per pair (cumulative")
@@ -395,6 +663,17 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
         sp.param["INIT_MODE"] = 2.0;
         REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
                             Catch::Contains("INIT_MODE"));
+    }
+    SECTION("T_MIN exceeds auto-calibrated T_HOT") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        set_seed_point(sp, {0.0});
+        sp.stop.maxeval = 100;
+        sp.param["REPLICAS"] = 4.0;
+        sp.param["RT"] = 0.9;
+        sp.param["T_MIN"] = 2.0;
+        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                            Catch::Contains(
+                                "ANNEAL_PT: resolved T_MIN must be <= resolved T_HOT"));
     }
     SECTION("serial-only REANNEAL rejected on PT") {
         auto sp = make_pt_spec({-1.0}, {1.0});

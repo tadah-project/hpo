@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <sstream>
 #include <vector>
 
@@ -129,6 +130,85 @@ TEST_CASE("ANNEAL: same seed reproduces the host()-call sequence",
     }
 }
 
+TEST_CASE("ANNEAL: malformed, non-finite, and out-of-bounds seeds fail early",
+          "[HPO][anneal][bounds][validation]")
+{
+    using namespace tadah::hpo;
+    auto base = make_spec({-1.0}, {1.0});
+    base.stop.maxeval = 10;
+    base.param["T_HOT"] = 1.0;
+
+    SECTION("wrong dimension") {
+        auto sp = base;
+        set_seed_point(sp, {0.0, 0.0});
+        StubHost stub{[](const Vec&) { return 0.0; }, {}};
+        REQUIRE_THROWS_WITH(run_anneal_impl<Vec>(sp, stub),
+                            Catch::Contains("expected 1"));
+        CHECK(stub.calls.empty());
+    }
+    SECTION("outside the optimisation box") {
+        auto sp = base;
+        set_seed_point(sp, {2.0});
+        StubHost stub{[](const Vec&) { return 0.0; }, {}};
+        REQUIRE_THROWS_WITH(run_anneal_impl<Vec>(sp, stub),
+                            Catch::Contains("outside its OPTIM bounds"));
+        CHECK(stub.calls.empty());
+    }
+    SECTION("NaN") {
+        auto sp = base;
+        set_seed_point(sp, {std::numeric_limits<double>::quiet_NaN()});
+        StubHost stub{[](const Vec&) { return 0.0; }, {}};
+        REQUIRE_THROWS_WITH(run_anneal_impl<Vec>(sp, stub),
+                            Catch::Contains("outside its OPTIM bounds"));
+        CHECK(stub.calls.empty());
+    }
+}
+
+TEST_CASE("ANNEAL: a very large finite STEP remains bounded under REFLECT",
+          "[HPO][anneal][bounds][numeric]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({0.0}, {1.0});
+    set_seed_point(sp, {0.5});
+    sp.seed = 987;
+    sp.stop.maxeval = 32;
+    sp.step = std::numeric_limits<double>::max();
+    sp.param["BOUNDARY_MODE"] = 0.0;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["L"] = 31.0;
+
+    StubHost stub{[](const Vec&) { return 0.0; }, {}};
+    run_anneal_impl<Vec>(sp, stub);
+
+    REQUIRE(stub.calls.size() == 32);
+    for (const auto& p : stub.calls) {
+        REQUIRE(p.size() == 1);
+        CHECK(std::isfinite(p[0]));
+        CHECK(p[0] >= 0.0);
+        CHECK(p[0] <= 1.0);
+    }
+}
+
+TEST_CASE("ANNEAL: an invalid seed loss is repaired by a finite proposal",
+          "[HPO][anneal][numeric][failscore]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 988;
+    sp.stop.maxeval = 4;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["L"] = 3.0;
+
+    std::size_t n = 0;
+    StubHost stub{[&](const Vec& x) {
+        if (n++ == 0) return std::numeric_limits<double>::quiet_NaN();
+        return x(0) * x(0);
+    }, {}};
+    REQUIRE_NOTHROW(run_anneal_impl<Vec>(sp, stub));
+    CHECK(stub.calls.size() == 4);
+}
+
 TEST_CASE("ANNEAL: MAXEVAL is a hard cap on total host() calls",
           "[HPO][anneal]")
 {
@@ -157,17 +237,47 @@ TEST_CASE("ANNEAL: PARAM T_HOT skips T0 calibration probes",
     sp.stop.maxeval = 30;
     sp.param["T_HOT"] = 0.5;
     sp.param["L"]      = 4.0;
-    sp.param["T0_PROBES"] = 20.0;   // would otherwise eat much of the budget
 
     StubHost stub{ [&](const Vec& x){ return quad_bowl(x, {0.0, 0.0}); }, {} };
     run_anneal_impl<Vec>(sp, stub);
 
-    /* The seed point is always the first host() call; with T_HOT set
-     * no probe follows it — call 2 is already a chain proposal (which,
+    /* The seed point is always the first host() call; with T_HOT set the
+     * default 20 probes are skipped — call 2 is already a proposal (which,
      * at seed (0,0) with STEP_FRAC jitter, is not (0,0) again). */
     REQUIRE(stub.calls.size() >= 2);
     CHECK(stub.calls[0][0] == Approx(0.0));
     CHECK(stub.calls[0][1] == Approx(0.0));
+}
+
+TEST_CASE("ANNEAL: empty LOG_SCALE mask means an all-linear transform",
+          "[HPO][anneal][validation]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({-1.0}, {1.0});
+    sp.log_scaled.clear();
+    set_seed_point(sp, {0.0});
+    sp.stop.maxeval = 3;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["L"] = 2.0;
+    StubHost stub{[](const Vec& x) { return x(0) * x(0); }, {}};
+    REQUIRE_NOTHROW(run_anneal_impl<Vec>(sp, stub));
+    CHECK(stub.calls.size() == 3);
+}
+
+TEST_CASE("ANNEAL: non-finite losses do not imply an absent STOPVAL",
+          "[HPO][anneal][numeric][stopval]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.stop.maxeval = 4;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["L"] = 3.0;
+    StubHost stub{[](const Vec&) {
+        return -std::numeric_limits<double>::infinity();
+    }, {}};
+    REQUIRE_NOTHROW(run_anneal_impl<Vec>(sp, stub));
+    CHECK(stub.calls.size() == 4);
 }
 
 TEST_CASE("ANNEAL: renamed PARAM T_INIT is a hard error naming T_HOT",
@@ -478,6 +588,35 @@ TEST_CASE("ANNEAL[CORANA]: Corana variant honours bounds via reflection",
     }
 }
 
+TEST_CASE("ANNEAL boundary redraw is bounded and seed-reproducible",
+          "[HPO][anneal][bounds][redraw]")
+{
+    using namespace tadah::hpo;
+    auto run = [] {
+        auto sp = make_spec({0.0, 0.0}, {1.0, 1.0});
+        set_seed_point(sp, {0.01, 0.99});
+        sp.seed = 991;
+        sp.stop.maxeval = 160;
+        sp.param["BOUNDARY_MODE"] = 1.0;
+        sp.param["T_HOT"] = 1.0;
+        sp.param["L"] = 20.0;
+        sp.param["STEP_FRAC"] = 1.0;
+        StubHost stub{[&](const Vec& x) { return quad_bowl(x, {0.5, 0.5}); }, {}};
+        run_anneal_impl<Vec>(sp, stub);
+        return stub.calls;
+    };
+
+    const auto a = run();
+    const auto b = run();
+    REQUIRE(a == b);
+    REQUIRE_FALSE(a.empty());
+    for (const auto& p : a)
+        for (double v : p) {
+            CHECK(v >= 0.0);
+            CHECK(v <= 1.0);
+        }
+}
+
 TEST_CASE("ANNEAL[CORANA]: invalid PARAM NS/NT/C throws",
           "[HPO][anneal][corana]")
 {
@@ -682,7 +821,7 @@ TEST_CASE("ANNEAL[CORANA]: plateau stop covers the Corana flavour too",
     CHECK(stub.calls.size() == 13);
 }
 
-TEST_CASE("ANNEAL: STEP override echoes uniform sigma in the banner",
+TEST_CASE("ANNEAL: explicit STEP identifies CLASSIC Gaussian sigma in the banner",
           "[HPO][anneal][log]")
 {
     using namespace tadah::hpo;
@@ -700,7 +839,7 @@ TEST_CASE("ANNEAL: STEP override echoes uniform sigma in the banner",
 
     const std::string log = lr.read();
     CHECK(log.find("sigma=") != std::string::npos);
-    CHECK(log.find("STEP override") != std::string::npos);
+    CHECK(log.find("CLASSIC Gaussian; explicit STEP") != std::string::npos);
     CHECK(log.find("STEP_FRAC=") == std::string::npos);
 }
 
@@ -757,7 +896,7 @@ TEST_CASE("ANNEAL: dead knobs are hard errors, not silent no-ops",
     }
 }
 
-TEST_CASE("ANNEAL[CORANA]: L is ignored and unvalidated under CORANA",
+TEST_CASE("ANNEAL[CORANA]: L is rejected as a silent no-op",
           "[HPO][anneal][corana][validation]")
 {
     using namespace tadah::hpo;
@@ -767,10 +906,143 @@ TEST_CASE("ANNEAL[CORANA]: L is ignored and unvalidated under CORANA",
     sp.stop.maxeval = 20;
     sp.param["CORANA"] = 1.0;
     sp.param["T_HOT"]  = 1.0;
-    sp.param["L"]      = 0.0;   // fatal for CLASSIC; a no-op for CORANA
+    sp.param["L"]      = 5.0;
 
     StubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {} };
-    REQUIRE_NOTHROW(run_anneal_impl<Vec>(sp, stub));
+    REQUIRE_THROWS_WITH(run_anneal_impl<Vec>(sp, stub),
+                        Catch::Contains("CLASSIC variant"));
+}
+
+TEST_CASE("ANNEAL: T0 probe exhaustion reports MAXEVAL and never overshoots",
+          "[HPO][anneal][t0][maxeval]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 17;
+    sp.stop.maxeval = 3;       // seed + only two of the 20 default probes
+
+    LoggedRun lr;
+    StubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {} };
+    run_anneal_impl<Vec>(sp, stub);
+
+    CHECK(stub.calls.size() == 3);
+    CHECK(lr.read().find("ANNEAL stopped: MAXEVAL exhausted")
+          != std::string::npos);
+}
+
+TEST_CASE("ANNEAL: explicit T_MIN is checked against auto-calibrated T0",
+          "[HPO][anneal][t0][validation]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 171;
+    sp.stop.maxeval = 64;
+    sp.param["T0_PROBES"] = 2.0;
+    sp.param["T_MIN"] = 2.0;  // constant probes resolve fallback T0=1
+
+    StubHost stub{[](const Vec&) { return 1.0; }, {}};
+    REQUIRE_THROWS_WITH(run_anneal_impl<Vec>(sp, stub),
+                        Catch::Contains("resolved T_MIN"));
+    CHECK(stub.calls.size() == 3);  // seed + two calibration probes
+}
+
+TEST_CASE("ANNEAL: completing T0 probes exactly at MAXEVAL reports exhaustion",
+          "[HPO][anneal][t0][maxeval]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 18;
+    sp.stop.maxeval = 3;       // seed + exactly two requested probes
+    sp.param["T0_PROBES"] = 2.0;
+
+    LoggedRun lr;
+    StubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {} };
+    run_anneal_impl<Vec>(sp, stub);
+
+    CHECK(stub.calls.size() == 3);
+    CHECK(lr.read().find("ANNEAL stopped: MAXEVAL exhausted")
+          != std::string::npos);
+}
+
+TEST_CASE("ANNEAL: zero-dimensional seed evaluation consumes MAXEVAL budget",
+          "[HPO][anneal][maxeval]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({}, {});
+    set_seed_point(sp, {});
+    sp.stop.maxeval = 1;
+
+    LoggedRun lr;
+    StubHost stub{ [&](const Vec&){ return 1.0; }, {} };
+    run_anneal_impl<Vec>(sp, stub);
+
+    CHECK(stub.calls.size() == 1);
+    CHECK(lr.read().find("after 1 host eval(s)") != std::string::npos);
+}
+
+TEST_CASE("ANNEAL: zero-dimensional non-finite loss does not invent STOPVAL",
+          "[HPO][anneal][numeric][stopval]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({}, {});
+    set_seed_point(sp, {});
+    sp.stop.maxeval = 1;
+
+    LoggedRun lr;
+    StubHost stub{[](const Vec&) {
+        return -std::numeric_limits<double>::infinity();
+    }, {}};
+    run_anneal_impl<Vec>(sp, stub);
+
+    CHECK(stub.calls.size() == 1);
+    const std::string log = lr.read();
+    CHECK(log.find("ANNEAL stopped: no optimisable dimensions") !=
+          std::string::npos);
+    CHECK(log.find("STOPVAL reached") == std::string::npos);
+}
+
+TEST_CASE("ANNEAL: zero-dimensional finite loss still honours STOPVAL",
+          "[HPO][anneal][stopval]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({}, {});
+    set_seed_point(sp, {});
+    sp.stop.maxeval = 1;
+    sp.stop.stopval = 0.0;
+
+    LoggedRun lr;
+    StubHost stub{[](const Vec&) { return -1.0; }, {}};
+    run_anneal_impl<Vec>(sp, stub);
+
+    CHECK(stub.calls.size() == 1);
+    CHECK(lr.read().find("ANNEAL stopped: STOPVAL reached") !=
+          std::string::npos);
+}
+
+TEST_CASE("ANNEAL[CORANA]: incomplete NS block does not shrink unvisited steps",
+          "[HPO][anneal][corana][maxeval]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({-1.0, -1.0}, {1.0, 1.0});
+    set_seed_point(sp, {0.0, 0.0});
+    sp.seed = 19;
+    sp.stop.maxeval = 2;       // seed + one coordinate of an NS*D block
+    sp.param["CORANA"] = 1.0;
+    sp.param["NS"] = 2.0;
+    sp.param["NT"] = 1.0;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["STEP_FRAC"] = 0.1;
+
+    LoggedRun lr;
+    StubHost stub{ [&](const Vec& x){ return x(0) * x(0) + x(1) * x(1); }, {} };
+    run_anneal_impl<Vec>(sp, stub);
+
+    CHECK(stub.calls.size() == 2);
+    const std::string log = lr.read();
+    CHECK(log.find("V=[2.000e-01, 2.000e-01]") != std::string::npos);
 }
 
 TEST_CASE("ANNEAL[CORANA]: RESET_TO_BEST defaults to ON under CORANA",

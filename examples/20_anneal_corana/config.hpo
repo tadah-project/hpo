@@ -2,10 +2,11 @@
 #
 # The serial annealer with the Corana et al. (1987) adaptive per-dim
 # step vector: one-dim-at-a-time proposals, V[i] adapted every NS-cycle
-# from the per-dim accept ratio, RESET_TO_BEST (Brommer) on by default
-# under CORANA. T0 is auto-calibrated from one-dim probes around the
-# seed (the probe kernel mirrors the proposal kernel). Schedule knobs
-# are pinned so this example is independent of shipped defaults.
+# from the per-dim accept ratio, RESET_TO_BEST (Corana step 7, also used
+# by Brommer) on by default under CORANA. T0 is auto-calibrated from
+# one-dim probes around the seed (the probe kernel mirrors the proposal
+# kernel). The demonstrated controls are explicit below; supported controls
+# not shown retain their shipped defaults.
 
 OPTIMIZER
   STRATEGY
@@ -19,6 +20,7 @@ OPTIMIZER
     PARAM NT 2
     PARAM RT 0.85
     PARAM STEP_FRAC 0.15
+    PARAM BOUNDARY_MODE 0      # exact reflection
     PARAM T0_PROBES 20
     PARAM T0_PACCEPT 0.8
     PARAM REANNEAL 1

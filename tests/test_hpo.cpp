@@ -17,6 +17,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 
 /* HPO integration tests
@@ -74,6 +75,34 @@ struct ScopedTempFile {
 };
 
 }  // namespace
+
+TEST_CASE("ANNEAL capability help exposes corrected public contracts",
+          "[HPO][anneal][help]")
+{
+    auto capture = [](const std::string& algo) {
+        std::ostringstream out;
+        std::streambuf* const old = std::cout.rdbuf(out.rdbuf());
+        tadah::hpo::OptimizerSpec::print_caps("TADAH", algo);
+        std::cout.rdbuf(old);
+        return out.str();
+    };
+
+    const std::string serial = capture("ANNEAL");
+    CHECK(serial.find("if none is uphill, median absolute delta is used")
+          != std::string::npos);
+    CHECK(serial.find("next start must be >= T_MIN/RT (two rungs)")
+          != std::string::npos);
+
+    const std::string pt = capture("ANNEAL_PT");
+    CHECK(pt.find("PARAM SWAP_WINDOW") != std::string::npos);
+    CHECK(pt.find("default 20; 0 = cumulative table only")
+          != std::string::npos);
+    CHECK(pt.find("With REPLICAS fixed") != std::string::npos);
+
+    const std::string pa = capture("ANNEAL_PA");
+    CHECK(pa.find("all-fail skips resampling") != std::string::npos);
+    CHECK(pa.find("With POPULATION fixed") != std::string::npos);
+}
 
 TEST_CASE("HPO placeholder — see comments above for planned tests", "[HPO]")
 {
@@ -814,8 +843,9 @@ ENDOPTIMIZER
 TEST_CASE("CERES caps registry exposes the four GradientProblemSolver algos",
           "[HPO][optim][ceres][caps]")
 {
+    const std::string library = "CERES";
     for (const std::string algo : {"LBFGS", "WOLFE", "NLCG", "STEEPEST_DESCENT"}) {
-        const auto& caps = tadah::hpo::optimizer_caps("CERES", algo);
+        const auto& caps = tadah::hpo::optimizer_caps(library, algo);
         CHECK(caps.is_gradient_based);
         CHECK_FALSE(caps.is_global);
         CHECK_FALSE(caps.is_population);

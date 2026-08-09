@@ -21,6 +21,23 @@ endif()
 include(Catch.cmake)
 catch_discover_tests(test_hpo)
 
+if(TADAH_HPO_MPI)
+    add_executable(test_hpo_anneal_mpi mpi/test_anneal_mpi.cpp)
+    target_link_libraries(test_hpo_anneal_mpi PRIVATE
+        tadah.core tadah.mlip tadah.hpo MPI::MPI_CXX)
+    configure_file(
+        mpi/run_anneal_mpi_matrix.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/run_anneal_mpi_matrix.cmake
+        @ONLY)
+    add_test(NAME hpo_anneal_mpi_matrix
+        COMMAND ${CMAKE_COMMAND}
+            -DTEST_EXE=$<TARGET_FILE:test_hpo_anneal_mpi>
+            -P ${CMAKE_CURRENT_BINARY_DIR}/run_anneal_mpi_matrix.cmake)
+    set_tests_properties(hpo_anneal_mpi_matrix PROPERTIES
+        LABELS "anneal;mpi"
+        TIMEOUT 180)
+endif()
+
 # Integration matrix — opt-in via `ctest -L slow`. Requires a bundle
 # directory; the env var TADAH_HPO_INTEGRATION_BUNDLE selects which one.
 # Skipped (gracefully) when the env var is not set.

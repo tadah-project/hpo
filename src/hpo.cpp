@@ -49,6 +49,15 @@ bool should_run_noise_calibration(bool resumed, std::size_t noise_n)
     return !resumed && noise_n >= 2;
 }
 
+bool hpo_mpi_dispatch_supported(int world_size,
+                                const OptimizerSpec& spec) noexcept
+{
+    if (world_size <= 1) return true;
+    return spec.strategy_type == StrategyType::PLAIN &&
+           spec.lib == "TADAH" &&
+           (spec.algo == "ANNEAL_PT" || spec.algo == "ANNEAL_PA");
+}
+
 int hpo_run(core::Context& ctx)
 {
     /* -- Open run journal first -------------------------------------
@@ -102,6 +111,22 @@ int hpo_run(core::Context& ctx)
     core::SignalHandler::install();
 
     HPOTargets trg(ctx, ctx.get<std::string>("HPOTARGET"));
+
+    /* This is more than a dispatch convenience: HPO_Host's live best/HOT
+     * state is intentionally rank-local while best_pot.tadah is the global
+     * cross-rank artifact. PT/PA do not register checkpoint state, so a rank
+     * can safely keep its local incumbent when another rank wins canonical
+     * publication. Allowing a checkpointed/decorated strategy here would mix
+     * those ownership domains on resume. Keep size-one MPI launches identical
+     * to serial builds. */
+    const int hpo_world = hpo_size();
+    if (!hpo_mpi_dispatch_supported(hpo_world, trg.spec)) {
+        throw std::runtime_error(
+            "multi-rank HPO supports only STRATEGY TYPE PLAIN with "
+            "LIB TADAH and ALGO ANNEAL_PT or ANNEAL_PA; got " +
+            trg.spec.lib + ":" + trg.spec.algo +
+            " on " + std::to_string(hpo_world) + " ranks");
+    }
 
     /* Parallelisation model (Option A): THREADS is the TOTAL width of the shared
      * worker pool -- the number of threads that actually run pc_lammps scripts
@@ -303,6 +328,10 @@ int hpo_run(core::Context& ctx)
                     "FAILSCORE_GRADING ON requires a finite positive "
                     "FAILSCORE (e.g. `FAILSCORE 1e9`); the default DBL_MAX "
                     "sentinel cannot be banded.");
+            if (!graded_failscore_is_ordered(trg.FAIL_SCORE))
+                throw std::runtime_error(
+                    "FAILSCORE_GRADING ON requires a FAILSCORE large enough "
+                    "to represent four strictly ordered grading bands.");
             std::string probe_note = "no PC_FAILPROBE (bands C/D constant)";
             if (trg.failprobe_idx >= 0) {
                 probe_note = "PC_FAILPROBE '" +
@@ -486,6 +515,12 @@ int hpo_run(core::Context& ctx)
             HPO_Host<V,R>::set_g_iter_floor(log.n_eval());
         }
     }
+
+    /* Bind best-potential publication to this run only after checkpoint
+     * detection. A confirmed fresh run atomically discards stale artifacts
+     * from an unrelated prior objective; an explicit resume retains and
+     * validates its incumbent. MPI ranks synchronize before any evaluation. */
+    host.prepare_best_publication(resumed);
 
     /* -- Noise calibration (NOISE_CALIBRATION N): repeat the seed point
      * N times before the optimiser starts, surface the loss spread, and
