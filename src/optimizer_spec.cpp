@@ -94,7 +94,7 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
             "                               disables calibration\n"
             "   * PARAM STEP_AUTO_SWEEPS <int> minimum shuffled coordinate sweeps (default 12;\n"
             "                               unconverged coordinates continue to at most 2x)\n"
-            "   * PARAM STEP_ADAPT_EVERY <int> production diagonal-RAM apply cadence per slot;\n"
+            "   * PARAM STEP_ADAPT_EVERY <int> production scalar+diagonal RAM apply cadence per slot;\n"
             "                               0 freezes the calibrated kernel (default), L is a\n"
             "                               recommended continuing-adaptation cadence\n"
             "   * PARAM INIT_MODE   <0|1>   0: automatic CLASSIC starts all slots at the valid\n"
@@ -105,9 +105,10 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
             "   * STEP_FRAC/BOUNDARY_MODE and T0 controls are shared with ANNEAL;\n"
             "     L is CLASSIC-only, while NS/NT/C/V_FLOOR_FRAC are CORANA-only.\n"
             "     V adapts per temperature slot (swaps move states)\n"
-            "   * Automatic warm-up and its 100 full-vector pilots per slot count against\n"
-            "     MAXEVAL/MAXTIME; learned scales and statuses are written to\n"
-            "     hpo_step_scales.tsv\n"
+            "   * Automatic warm-up uses fixed 4-proposal coordinate batches, then\n"
+            "     100-200 full-vector pilots per slot; all count against MAXEVAL/MAXTIME\n"
+            "   * Learned calibration scales/statuses are written once to\n"
+            "     hpo_step_scales.tsv; adaptive production scales are logged per SWAP_WINDOW\n"
             "   * Per-pair swap acceptance is logged; 20-40% is a literature-derived\n"
             "     starting heuristic, not a workload-independent target\n";
     else if(algo=="ANNEAL_PA")

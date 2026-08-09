@@ -139,6 +139,17 @@ struct StepScaleRow {
     double fraction = 0.0;
     double acceptance = 0.0;
     std::string status;
+    double mean_alpha = 0.0;
+    std::size_t attempts = 0;
+    std::size_t backoffs = 0;
+    std::size_t unusable = 0;
+    double pilot_multiplier = 1.0;
+    double pilot_acceptance = 0.0;
+    double pilot_mean_alpha = 0.0;
+    std::size_t pilot_attempts = 0;
+    std::size_t pilot_backoffs = 0;
+    std::size_t pilot_unusable = 0;
+    std::string pilot_status;
 };
 
 std::vector<StepScaleRow> read_step_scales()
@@ -152,7 +163,12 @@ std::vector<StepScaleRow> read_step_scales()
         std::istringstream fields(line);
         StepScaleRow row;
         fields >> row.slot >> row.temperature >> row.parameter
-               >> row.sigma >> row.fraction >> row.acceptance >> row.status;
+               >> row.sigma >> row.fraction >> row.acceptance >> row.status
+               >> row.mean_alpha >> row.attempts >> row.backoffs
+               >> row.unusable >> row.pilot_multiplier
+               >> row.pilot_acceptance >> row.pilot_mean_alpha
+               >> row.pilot_attempts >> row.pilot_backoffs
+               >> row.pilot_unusable >> row.pilot_status;
         if (fields) rows.push_back(std::move(row));
     }
     return rows;
@@ -367,6 +383,103 @@ TEST_CASE("ANNEAL_PT automatic steps learn a 12-decade diagonal and emit TSV",
           != std::string::npos);
 }
 
+TEST_CASE("ANNEAL_PT calibrates a run22-shaped 174-D objective",
+          "[HPO][anneal_pt][step_auto][run22]")
+{
+    using namespace tadah::hpo;
+    constexpr std::size_t D = 174;
+    const std::vector<std::size_t> flat_dims{31, 47, 79, 105, 131, 147};
+    auto is_flat = [&](std::size_t i) {
+        return std::find(flat_dims.begin(), flat_dims.end(), i) !=
+               flat_dims.end();
+    };
+
+    std::vector<double> low(D), high(D), seed(D, 0.0);
+    for (std::size_t i = 0; i < D; ++i) {
+        const double exponent = -6.0 +
+            12.0 * static_cast<double>(i) / static_cast<double>(D - 1);
+        const double half_width = std::pow(10.0, exponent);
+        low[i] = -half_width;
+        high[i] = half_width;
+    }
+
+    TempWorkingDirectory cwd;
+    LoggedRun lr;
+    auto sp = make_pt_spec(low, high);
+    sp.param.erase("STEP_AUTO");
+    sp.parameter_labels.resize(D);
+    for (std::size_t i = 0; i < D; ++i)
+        sp.parameter_labels[i] = "run22_param_" + std::to_string(i);
+    set_seed_point(sp, seed);
+    sp.seed = 92224;
+    sp.num_threads = 2;
+    sp.stop.maxeval = 20000;
+    sp.param["REPLICAS"] = 2.0;
+    sp.param["L"] = 20.0;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["T_COLD"] = 0.1;
+    sp.param["STEP_FRAC"] = 1.0e-6;
+    sp.param["STEP_AUTO_SWEEPS"] = 24.0;
+    sp.param["STEP_ADAPT_EVERY"] = 20.0;
+    sp.param["SWAP_WINDOW"] = 2.0;
+
+    MtStubHost host{[&, low, high](const Vec& x) {
+        long double loss = 0.0L;
+        for (std::size_t i = 0; i < D; ++i) {
+            if (is_flat(i)) continue;
+            const double half_width = 0.5 * (high[i] - low[i]);
+            const double sensitivity = (i % 29 == 0) ? 100.0 : 1.0;
+            const long double characteristic =
+                static_cast<long double>(half_width) * 1.0e-3L / sensitivity;
+            const long double q = static_cast<long double>(x(i)) /
+                                  characteristic;
+            if (i % 37 == 0 && std::fabs(q) > 4.0L)
+                return std::numeric_limits<double>::infinity();
+            loss += q * q;
+        }
+        return static_cast<double>(loss);
+    }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, host);
+
+    const auto rows = read_step_scales();
+    REQUIRE(rows.size() == 2 * D);
+    std::size_t nonflat_validated = 0;
+    std::size_t nonflat_total = 0;
+    std::size_t flat_capped = 0;
+    for (const auto& row : rows) {
+        REQUIRE(row.parameter ==
+                "run22_param_" + std::to_string(
+                    static_cast<std::size_t>(&row - rows.data()) % D));
+        CHECK(std::isfinite(row.sigma));
+        CHECK(row.sigma > 0.0);
+        CHECK(row.attempts >= 24);
+        CHECK(row.attempts <= 48);
+        CHECK(row.pilot_attempts >= 100);
+        CHECK(row.pilot_attempts <= 200);
+        const std::size_t dim_index = static_cast<std::size_t>(
+            std::stoul(row.parameter.substr(std::string("run22_param_").size())));
+        if (is_flat(dim_index)) {
+            if (row.status.find("support-capped") != std::string::npos)
+                ++flat_capped;
+        } else {
+            ++nonflat_total;
+            if (row.status == "ok" ||
+                (row.mean_alpha >= 0.29 && row.mean_alpha <= 0.59))
+                ++nonflat_validated;
+        }
+    }
+    CHECK(flat_capped == 2 * flat_dims.size());
+    /* Strict status requires two consecutive valid windows. At exhaustion,
+     * an unresolved coordinate deliberately uses its best tested window; it
+     * is still a calibrated production scale, but remains visibly warned. */
+    CHECK(nonflat_validated >=
+          static_cast<std::size_t>(0.90 * nonflat_total));
+    const std::string log = lr.read();
+    CHECK(log.find("step calibration summary") != std::string::npos);
+    CHECK(log.find("adaptive sigma/width geo-mean per slot") !=
+          std::string::npos);
+}
+
 TEST_CASE("ANNEAL_PT automatic scales are robust to expanded OPTIM support",
           "[HPO][anneal_pt][step_auto][support]")
 {
@@ -479,6 +592,90 @@ TEST_CASE("ANNEAL_PT automatic warm-up flags flat support and backs off cliffs",
     const std::size_t first = log.find("backoffs=");
     REQUIRE(first != std::string::npos);
     CHECK(log.find("backoffs=0", first) == std::string::npos);
+}
+
+TEST_CASE("ANNEAL_PT coordinate cap retains the best tested fixed scale",
+          "[HPO][anneal_pt][step_auto][controller]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    anneal::Knobs kb;
+    kb.step_auto_sweeps = 12;
+    anneal::ChainState<Vec> c;
+    c.x = Vec(1);
+    c.x = 0.0;
+    c.f = 0.0;
+    c.V = {0.1};
+    c.rng.seed(123);
+    c.best_x = c.x;
+    c.best_f = c.f;
+    anneal::SharedBudget budget(100);
+    std::atomic<bool> stop{false};
+    const std::function<bool()> never = [] { return false; };
+    anneal::StopCtx ctx{budget, stop, never, std::nullopt};
+    pt_detail::SlotCalibration calibration;
+    std::size_t call = 0;
+    auto host = [&](const Vec&) {
+        static const double first_eight[] =
+            {-1.0, 1.0, -2.0, 1.0, -3.0, 1.0, -4.0, 1.0};
+        if (call < 8) return first_eight[call++];
+        ++call;
+        return std::numeric_limits<double>::infinity();
+    };
+
+    pt_detail::coordinate_warmup(
+        c, 1.0e-12, sp, kb, host, ctx, 100, calibration);
+
+    REQUIRE(calibration.dims.size() == 1);
+    const auto& dc = calibration.dims[0];
+    CHECK(dc.attempts == 24);
+    CHECK(dc.validation_mean_alpha == Approx(0.5));
+    CHECK((dc.status & pt_detail::StepUnconverged) != 0);
+    CHECK(c.V[0] == Approx(0.1));
+    CHECK(dc.backoffs > 0);
+}
+
+TEST_CASE("ANNEAL_PT pilot changes a late failed multiplier by at most two",
+          "[HPO][anneal_pt][step_auto][controller]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    anneal::Knobs kb;
+    anneal::ChainState<Vec> c;
+    c.x = Vec(1);
+    c.x = 0.0;
+    c.f = 0.0;
+    c.V = {0.1};
+    c.rng.seed(321);
+    c.best_x = c.x;
+    c.best_f = c.f;
+    anneal::SharedBudget budget(250);
+    std::atomic<bool> stop{false};
+    const std::function<bool()> never = [] { return false; };
+    anneal::StopCtx ctx{budget, stop, never, std::nullopt};
+    pt_detail::SlotCalibration calibration;
+    calibration.dims.resize(1);
+    std::size_t call = 0;
+    std::size_t downhill = 0;
+    auto host = [&](const Vec&) {
+        const std::size_t window = call / 20;
+        const std::size_t in_window = call % 20;
+        ++call;
+        if (window < 2) return 0.0;  // two high-alpha factor-two windows
+        if (window == 3) return 100.0;
+        if (in_window < 5) return -static_cast<double>(++downhill);
+        return 100.0;
+    };
+
+    pt_detail::full_vector_pilot(
+        c, 1.0e-12, sp, kb, host, ctx, 250, calibration);
+
+    CHECK(calibration.pilot_proposed == 120);
+    CHECK(calibration.pilot_status == pt_detail::StepOk);
+    CHECK(calibration.pilot_backoffs == 1);
+    CHECK(calibration.pilot_multiplier >= 2.0);
+    CHECK(calibration.pilot_multiplier <= 4.0);
+    CHECK(c.V[0] == Approx(0.1 * calibration.pilot_multiplier));
 }
 
 TEST_CASE("ANNEAL_PT interrupted automatic warm-up consumes exact budget",

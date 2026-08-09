@@ -741,6 +741,15 @@ TEST_CASE("anneal diagonal RAM cadence accumulates every proposal",
     CHECK(frozen.V[0] == 0.1);
     CHECK(frozen.diag_ram_proposals == 0);
 
+    auto zero_displacement = make_chain();
+    const std::vector<double> zero_z{0.0, 0.0};
+    anneal::accumulate_diagonal_ram(
+        zero_displacement, zero_z, 0.0L, sp, 2);
+    anneal::accumulate_diagonal_ram(
+        zero_displacement, zero_z, 0.0L, sp, 2);
+    CHECK(zero_displacement.V[0] < 0.1);
+    CHECK(zero_displacement.V[1] < 0.2);
+
     auto every_one = make_chain();
     anneal::accumulate_diagonal_ram(every_one, z, 1.0L, sp, 1);
     CHECK(every_one.V[0] > 0.1);
@@ -768,6 +777,29 @@ TEST_CASE("anneal diagonal RAM cadence accumulates every proposal",
     CHECK(every_5l.V[0] == 0.1);     // cadence 5L retains it for later
     CHECK(every_5l.diag_ram_pending == 5);
     CHECK(every_5l.diag_ram_delta[0] > 0.0);
+}
+
+TEST_CASE("anneal scalar RAM repairs a common tenfold scale error quickly",
+          "[HPO][anneal_core][step_adapt][scalar]")
+{
+    using Vec = dlib::matrix<double, 0, 1>;
+    OptimizerSpec sp;
+    sp.low = {-10.0, -10.0, -10.0};
+    sp.high = {10.0, 10.0, 10.0};
+    anneal::ChainState<Vec> c;
+    c.x = Vec(3);
+    c.x = 0.0;
+    c.V = {1.0e-3, 1.0e-3, 1.0e-3};
+    const std::vector<double> z{1.0, 1.0, 1.0};
+
+    for (std::size_t j = 0; j < 200; ++j)
+        anneal::accumulate_diagonal_ram(c, z, 1.0L, sp, 20);
+
+    CHECK(c.V[0] > 1.0e-2);
+    CHECK(c.V[0] == Approx(c.V[1]));
+    CHECK(c.V[1] == Approx(c.V[2]));
+    CHECK(c.diag_ram_proposals == 200);
+    CHECK(c.diag_ram_pending == 0);
 }
 
 TEST_CASE("anneal::run_rung retains the best graded FAILSCORE repair",

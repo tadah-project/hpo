@@ -373,6 +373,7 @@ int hpo_run(core::Context& ctx)
             param_labels.push_back(lbl);
         }
     }
+    trg.spec.parameter_labels = param_labels;
 
     /* -- Build element string ------------------------------------------
      * From the training data when present, otherwise from the explicit

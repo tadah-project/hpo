@@ -293,7 +293,8 @@ struct OptimizerSpec {
           vector_storage(o.vector_storage), pop(o.pop), seed(o.seed),
           num_threads(o.num_threads), step(o.step),
           grad_strategy(o.grad_strategy), stop(o.stop),
-          param(o.param), low(o.low), high(o.high), is_int(o.is_int),
+          param(o.param), low(o.low), high(o.high),
+          parameter_labels(o.parameter_labels), is_int(o.is_int),
           log_scaled(o.log_scaled), log_threshold(o.log_threshold),
           optim_init(o.optim_init),
           failscore(o.failscore),
@@ -350,6 +351,7 @@ struct OptimizerSpec {
 
     /* -------- bounds, integer mask, log-scale --------------------- */
     std::vector<double> low, high;          // filled by HPOTargets
+    std::vector<std::string> parameter_labels; // canonical flattened OPTIM names
     std::vector<bool>   is_int;
     std::vector<bool>   log_scaled;         // same size as low/high
     std::optional<double> log_threshold;    // OFF = std::nullopt

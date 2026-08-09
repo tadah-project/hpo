@@ -29,6 +29,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <random>
 #include <sstream>
@@ -1135,14 +1136,16 @@ struct ChainState {
   Vec    best_x;
   double best_f = std::numeric_limits<double>::infinity();
   std::vector<double> diag_ram_delta;
+  double              diag_ram_scalar_delta = 0.0;
   std::uint64_t       diag_ram_proposals = 0;
   std::size_t         diag_ram_pending = 0;
 };
 
-/* Diagonal robust-adaptive-Metropolis contribution. Every proposal updates
- * the accumulator; STEP_ADAPT_EVERY controls only when the proposal kernel
- * changes. V stores standard deviations, so a variance log-factor contributes
- * half as much to log(V). */
+/* Scalar-plus-diagonal robust-adaptive-Metropolis contribution. Every
+ * proposal updates both accumulators; STEP_ADAPT_EVERY controls only when the
+ * proposal kernel changes. The scalar term can repair a common scale error in
+ * O(1) rather than O(D) adaptation time. The centred diagonal term changes
+ * shape without also changing the geometric-mean scale. */
 template<class Vec>
 void accumulate_diagonal_ram(ChainState<Vec>& c,
                              const std::vector<double>& z,
@@ -1158,9 +1161,11 @@ void accumulate_diagonal_ram(ChainState<Vec>& c,
   for (double zi : z) norm2 += static_cast<long double>(zi) * zi;
   const std::uint64_t j = ++c.diag_ram_proposals;
   ++c.diag_ram_pending;
+  const long double eta = std::min<long double>(
+      1.0L, std::pow(static_cast<long double>(j), -0.6L));
+  c.diag_ram_scalar_delta +=
+      static_cast<double>(eta * (alpha - 0.234L));
   if (norm2 > 0.0L && std::isfinite(norm2)) {
-    const long double eta = std::min<long double>(
-        1.0L, std::pow(static_cast<long double>(j), -0.6L));
     for (std::size_t i = 0; i < dim; ++i) {
       const long double ratio =
           static_cast<long double>(z[i]) * z[i] / norm2;
@@ -1171,11 +1176,17 @@ void accumulate_diagonal_ram(ChainState<Vec>& c,
   if (c.diag_ram_pending < adapt_every) return;
 
   const double log2 = std::log(2.0);
+  const double shape_mean = dim > 0
+      ? std::accumulate(c.diag_ram_delta.begin(), c.diag_ram_delta.end(), 0.0) /
+            static_cast<double>(dim)
+      : 0.0;
   for (std::size_t i = 0; i < dim; ++i) {
-    const double log_variance_factor =
-        std::clamp(c.diag_ram_delta[i], -log2, log2);
+    const double log_sigma_factor = std::clamp(
+        c.diag_ram_scalar_delta +
+            0.5 * (c.diag_ram_delta[i] - shape_mean),
+        -log2, log2);
     long double next = static_cast<long double>(c.V[i]) *
-                       std::exp(0.5L * log_variance_factor);
+                       std::exp(static_cast<long double>(log_sigma_factor));
     const double floor = resolvable_coordinate_scale(
         c.x(i), sp.low[i], sp.high[i]);
     const double cap = sp.high[i] - sp.low[i];
@@ -1184,6 +1195,7 @@ void accumulate_diagonal_ram(ChainState<Vec>& c,
     c.V[i] = static_cast<double>(next);
   }
   std::fill(c.diag_ram_delta.begin(), c.diag_ram_delta.end(), 0.0);
+  c.diag_ram_scalar_delta = 0.0;
   c.diag_ram_pending = 0;
 }
 
@@ -1358,7 +1370,13 @@ RungStats classic_rung(ChainState<Vec>& c, double T,
                              kb.boundary_mode, draw))
         needed_bounds = true;
       x_prop(i) = static_cast<double>(v);
-      if (!z.empty()) z[i] = unit;
+      if (!z.empty()) {
+        /* Reflection/redraw changes the realised direction. Feed RAM the
+         * effective standardised displacement, not the discarded raw draw. */
+        z[i] = c.V[i] > 0.0
+            ? (x_prop(i) - c.x(i)) / c.V[i]
+            : 0.0;
+      }
     }
     if (needed_bounds) ++rs.oob;
 
