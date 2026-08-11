@@ -112,6 +112,7 @@ void HPOLog::reset_for_test()
     n_eval_.store(0, std::memory_order_relaxed);
     n_nan_ .store(0, std::memory_order_relaxed);
     n_nan_logged_.store(0, std::memory_order_relaxed);
+    for (auto& b : n_fail_band_) b.store(0, std::memory_order_relaxed);
     cur_best_loss_ = std::numeric_limits<double>::max();
     cur_best_eval_ = 0;
     best_emae_ = best_ermse_ = best_errmse_ = best_frmse_ = best_srmse_ = 0.0;
@@ -884,6 +885,12 @@ void HPOLog::start_progress()
  * Per-eval recording
  * ------------------------------------------------------------------------- */
 
+void HPOLog::record_fail_band(int band)
+{
+    if (band >= 1 && band <= 4)
+        n_fail_band_[band].fetch_add(1, std::memory_order_relaxed);
+}
+
 void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
 {
     n_eval_.fetch_add(1, std::memory_order_relaxed);
@@ -949,6 +956,26 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                 << best_origin_str() << ")"
                 << "   NaN rate=" << std::fixed << std::setprecision(1)
                 << nan_pct << "%";
+            /* Graded-failure census. NaN rate above counts only non-finite
+             * losses; a killed worker or a failed script yields a large but
+             * FINITE failscore, so it is invisible there. Printed only when
+             * something actually failed, so healthy runs keep the line
+             * short. */
+            {
+                const std::size_t fa = n_fail_band_[1].load(std::memory_order_relaxed);
+                const std::size_t fb = n_fail_band_[2].load(std::memory_order_relaxed);
+                const std::size_t fc = n_fail_band_[3].load(std::memory_order_relaxed);
+                const std::size_t fd = n_fail_band_[4].load(std::memory_order_relaxed);
+                const std::size_t ft = fa + fb + fc + fd;
+                if (ft > 0) {
+                    const double fpct = eval_num ? 100.0 * static_cast<double>(ft) /
+                                                       static_cast<double>(eval_num)
+                                                 : 0.0;
+                    msg << "   failed=" << ft << " (" << std::fixed
+                        << std::setprecision(1) << fpct << "%; A=" << fa
+                        << " B=" << fb << " C=" << fc << " D=" << fd << ")";
+                }
+            }
             /* The milestone SUMMARY is one logical block: the head line
              * carries the (single) timestamp, the pc_lammps and cadence
              * sub-lines below blank the timestamp column. */
@@ -1062,11 +1089,19 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                 };
                 const bool multi = pin_chains_ > 1;
                 std::ostringstream t;
-                t << rows.size() << " OPTIM dim(s) near a bound with "
-                     "step at the V floor -- no further adaptive step "
-                     "shrinkage is available:\n"
+                /* Variant-neutral wording: this audit now runs for CLASSIC
+                 * as well as CORANA. Under CORANA a row additionally means
+                 * the step has bottomed out; under CLASSIC only the
+                 * near-bound occupancy is asserted, because V_FLOOR_FRAC is
+                 * a CORANA knob and has no meaning for the calibrated
+                 * CLASSIC step. Claiming "step at the V floor" for both
+                 * would be false half the time. */
+                t << rows.size() << " OPTIM dim(s) near a bound -- x sits "
+                     "within the audit tolerance of an OPTIM limit (under "
+                     "CORANA the step has also reached its floor, so no "
+                     "further shrinkage is available):\n"
                   << "  " << pad("dim", lw + 2) << pad("side", 6)
-                  << pad("bound", 13) << pad("gap", 11) << pad("v_floor", 11);
+                  << pad("bound", 13) << pad("gap", 11) << pad("tol", 11);
                 if (multi) t << pad("slots", 8);
                 t << "observed for";
                 for (const auto& r : rows) {
@@ -1090,7 +1125,7 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                 }
                 event_locked("WARNING", t.str());
                 event_locked("HINT",
-                    "persistent near-bound occupancy at the V floor may indicate "
+                    "persistent near-bound occupancy may indicate "
                     "OPTIM bound pressure -- inspect the trace; widen or "
                     "re-centre only when the admissible domain permits it.");
             }
@@ -1345,6 +1380,40 @@ void HPOLog::finish(const std::string& status_str)
               "    WARNING entries before changing bounds, the model, or FAIL_SCORE.\n";
     }
 
+    /* Graded failures. Disjoint from the NaN counter above: a killed worker
+     * or a failed script produces a large but FINITE failscore, so it never
+     * reaches was_nan_clamped. Without this line a run can fail almost every
+     * evaluation and still report "No NaN/Inf clampings were recorded". */
+    {
+        const std::size_t fa = n_fail_band_[1].load(std::memory_order_relaxed);
+        const std::size_t fb = n_fail_band_[2].load(std::memory_order_relaxed);
+        const std::size_t fc = n_fail_band_[3].load(std::memory_order_relaxed);
+        const std::size_t fd = n_fail_band_[4].load(std::memory_order_relaxed);
+        const std::size_t ft = fa + fb + fc + fd;
+        f_ << "  " << std::left << std::setw(KW) << "Graded failures"
+           << ": " << ft;
+        if (total > 0)
+            f_ << "  (" << std::fixed << std::setprecision(1)
+               << 100.0 * static_cast<double>(ft) / static_cast<double>(total)
+               << "%)";
+        f_ << "\n";
+        if (ft > 0) {
+            f_ << "    A=" << fa << " (hot-var out of range)"
+               << "  B=" << fb << " (script failed)"
+               << "  C=" << fc << " (did not complete)"
+               << "  D=" << fd << " (pot build / gated)\n";
+            const double fpct = total > 0
+                ? 100.0 * static_cast<double>(ft) / static_cast<double>(total)
+                : 0.0;
+            if (fpct >= 50.0)
+                f_ << "  [!] The majority of evaluations failed. The reported best\n"
+                      "    may predate the onset -- check when the failures started\n"
+                      "    before trusting it.\n";
+        } else if (total > 0) {
+            f_ << "  [ok] Every evaluation produced a usable loss.\n";
+        }
+    }
+
     /* -- PERFORMANCE --------------------------------------------------- */
     { std::string s = "-- PERFORMANCE "; while(s.size()<72) s+='-'; f_ << "\n" << s << "\n"; }
     f_ << "  " << std::left << std::setw(KW) << "Total wall time"
@@ -1391,9 +1460,22 @@ void HPOLog::finish(const std::string& status_str)
     { std::string s = "-- RESULT "; while(s.size()<72) s+='-'; f_ << "\n" << s << "\n"; }
     f_ << "  " << std::left << std::setw(KW) << "Optimiser status"
        << ": " << status_str_local << "\n";
-    f_ << "  " << std::left << std::setw(KW) << "Best total loss"
-       << ": " << fmt_double(cur_best_loss_)
-       << "  (eval " << cur_best_eval_ << best_origin_str() << ")\n";
+    /* DX: cur_best_loss_ starts at DBL_MAX and log_new_best only lowers it,
+     * so a run that recorded no best printed the sentinel verbatim --
+     * "Best total loss : 1.7977e+308 (eval 0)" -- immediately followed by
+     * "Best potential saved : best_pot.tadah", a file that was never
+     * written. Both lines have to know that "no best" is a state. */
+    const bool have_best =
+        cur_best_eval_ > 0 &&
+        cur_best_loss_ < std::numeric_limits<double>::max();
+    if (have_best) {
+        f_ << "  " << std::left << std::setw(KW) << "Best total loss"
+           << ": " << fmt_double(cur_best_loss_)
+           << "  (eval " << cur_best_eval_ << best_origin_str() << ")\n";
+    } else {
+        f_ << "  " << std::left << std::setw(KW) << "Best total loss"
+           << ": (none -- no evaluation produced a usable loss)\n";
+    }
     if (has_emae_)
         f_ << "  " << std::left << std::setw(KW) << "Best EMAE"
            << ": " << std::fixed << std::setprecision(2) << best_emae_ << " meV/atom\n";
@@ -1410,7 +1492,8 @@ void HPOLog::finish(const std::string& status_str)
         f_ << "  " << std::left << std::setw(KW) << "Best SRMSE"
            << ": " << std::fixed << std::setprecision(4) << best_srmse_ << " GPa\n";
     f_ << "  " << std::left << std::setw(KW) << "Best potential saved"
-       << ": best_pot.tadah\n";
+       << ": " << (have_best ? "best_pot.tadah"
+                             : "(none written)") << "\n";
 
     auto now = std::chrono::system_clock::now();
     auto tt  = std::chrono::system_clock::to_time_t(now);

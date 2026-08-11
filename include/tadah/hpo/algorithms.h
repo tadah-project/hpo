@@ -307,8 +307,7 @@ template<typename Vec, typename HostT>
             sp.stop.maxeval
                 ? static_cast<std::uint64_t>(*sp.stop.maxeval) : 0);
     }
-    if (kb.corana)
-      HPOLog::instance().arm_pin_audit(sp, kb.v_floor_frac, 1, "rung");
+    HPOLog::instance().arm_pin_audit(sp, kb.v_floor_frac, 1, "rung");
 
     if (dim == 0) {
       if (!sp.optim_init.empty()) {
@@ -432,12 +431,13 @@ template<typename Vec, typename HostT>
       while (T >= t_min && budget.left() > 0 && !time_exceeded()) {
         const auto rs = anneal::run_rung(chain, T, sp, kb, host, ctx);
 
-        /* Pinned-dim audit refresh (Corana only): marks follow the
-         * chain's post-rung state -- a dim that left its bound is
-         * unmarked here; the table prints with the milestone SUMMARY. */
-        if (kb.corana)
-          HPOLog::instance().record_pin_state(
-              0, rung_count + 1, anneal::pinned_dims(chain, sp, kb));
+        /* Pinned-dim audit refresh: marks follow the chain's post-rung
+         * state -- a dim that left its bound is unmarked here; the table
+         * prints with the milestone SUMMARY. Applies to both steppers:
+         * pinned_dims() drops its Corana-only step-floor clause under
+         * CLASSIC and reports pure near-bound occupancy. */
+        HPOLog::instance().record_pin_state(
+            0, rung_count + 1, anneal::pinned_dims(chain, sp, kb));
 
         /* Per-rung summary line. Emitted whenever the rung consumed
          * any host evals, even if we broke out mid-rung. */

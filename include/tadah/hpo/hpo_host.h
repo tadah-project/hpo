@@ -473,6 +473,9 @@ private:
     /* formatting -- fixed geometry */
     static constexpr std::size_t iter_cw_   = 12;  // #ITERATION(10) + 2; holds up to 10^6
     static constexpr std::size_t ittime_cw_ = 12;  // IT-TIME/ms(10)  + 2
+    // D19: replica/slot column (Result::chain_id). "SLOT"(4) + 2, wide
+    // enough for any REPLICAS a shared-memory pool can drive.
+    static constexpr std::size_t slot_cw_   = 6;
     static constexpr std::size_t min_cw_    = 15;  // floor: fits L(ErRMSE)[avg](14) + 1 space
 
     /* formatting -- derived from outputDigits (set in constructor) */
@@ -485,6 +488,10 @@ private:
     void init_outvar (const std::string& fn) const;
     void init_params (const std::string& fn) const;
     void init_stats  (const std::string& fn) const;
+    /* D18: false when no per-structure metric is active (a run with no
+     * training/validation DB), in which case stats.tadah has no columns
+     * beyond #ITERATION and its rows are suppressed. */
+    bool stats_have_columns() const;
 
     static void print_loss_line  (std::ofstream&, size_t it, const Result&,
                                   const HPOTargets&, std::size_t cw, int prec);

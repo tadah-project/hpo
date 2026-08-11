@@ -43,10 +43,12 @@
  *
  * Failure semantics: any channel error (EOF, short/bad frame, seq mismatch,
  * deadline expiry) => SIGKILL + waitpid (decoded status journaled), the
- * in-flight task returns a synthetic RUN_FAIL PcTaskResult (parent formats
- * failscore -- identical to a script failure), and the channel respawns
+ * in-flight task returns a synthetic KILLED PcTaskResult (parent formats
+ * failscore -- graded band C, "did not complete"), and the channel respawns
  * lazily on next use. >= PC_MAX_CONSEC_DEATHS consecutive deaths on one
- * channel throw (lands in the eval-thread catch -> FAIL_SCORE recovery). */
+ * channel with no successful round trip in between throttle the next
+ * respawn by PC_RESPAWN_BACKOFF_MS; the channel is never permanently
+ * retired. */
 
 #include <atomic>
 #include <cstdint>
@@ -83,7 +85,12 @@ struct PcScriptSpec {
 class PcWorkerPool {
 public:
   static constexpr std::uint32_t PROTOCOL_VERSION = 2;  /* v2: failvars */
+  /* Consecutive deaths on one channel with no successful round trip in
+   * between. Reaching this throttles the next respawn; it never retires the
+   * channel -- a dead slot in a shared-queue pool drains tasks faster than
+   * the live ones and would convert a local fault into a whole-run failure. */
   static constexpr int PC_MAX_CONSEC_DEATHS = 3;
+  static constexpr long PC_RESPAWN_BACKOFF_MS = 5'000;
 
   /* per_slot_specs[slot][sim] -- one spec table per worker (slots differ only
    * in invar_final's .t<slot> suffix). worker_timeout_s > 0 overrides the
@@ -143,6 +150,11 @@ private:
      * what this channel is running RIGHT NOW. -1 = idle. */
     std::atomic<long long> current_iter{-1};
     std::atomic<pid_t>     current_pid{-1};
+    /* Set by kill_matching immediately before it SIGKILLs a healthy worker,
+     * consumed (and cleared) by kill_reap_locked. Marks the death as
+     * requested rather than faulty, so the FAILPROBE gate cannot drive a
+     * good channel into the respawn backoff. */
+    std::atomic<bool>      gate_killed{false};
   };
 
   void spawn_locked(Channel& ch, int slot);         /* fork+exec + HELLO   */

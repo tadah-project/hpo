@@ -32,8 +32,9 @@
     }
   },
   "evaluations": {
-    "value": 20,
-    "tol": 0
+    "value": 23,
+    "tol": 0,
+    "note": "Raised 20 -> 23 when the journal's evaluation census was fixed (D3). record_eval() used to run only on the success path, so the three evaluations that exit through the StagnationStop catch -- one per RESTART decision -- were never counted. loss.tadah always contained all 23 rows; only the counter was short. The run itself is unchanged: the MPI determinism signature and every other fingerprint in the bundle are bit-identical."
   },
   "best_ermse_meV_per_atom": 5.09,
   "status_accepted": [

@@ -175,6 +175,20 @@ public:
      */
     void record_eval(std::size_t eval_num, double wall_ms, bool was_nan);
 
+    /** Record the graded-FAILSCORE band of one completed evaluation.
+     *
+     *  "NaN rate" is not a failure rate. A pc_lammps task that was killed or
+     *  whose script failed comes back with a parseable failscore string, so
+     *  the assembled loss is a large but FINITE number and nothing sets
+     *  was_nan_clamped -- run22 reported NaN rate=0.0% across 23.7 M evals
+     *  while six workers were SIGKILLed. Nothing anywhere counted failed
+     *  evaluations, so a run could degrade to a near-total failure rate and
+     *  still look healthy in the journal.
+     *
+     *  @param band  PcFailInfo::band -- 0 none, 1..4 = A..D (worst wins).
+     *               Bands 1..4 are tallied; 0 is ignored. */
+    void record_fail_band(int band);
+
     /** Register the shared script-executor pool width (Option A: THREADS).
      *  Enables the honest pool-utilisation figure in the periodic SUMMARY:
      *  util = Σ script busy / (pool width x window elapsed). Without it the
@@ -373,6 +387,10 @@ private:
     std::atomic<std::size_t> n_eval_     {0};
     std::atomic<std::size_t> n_nan_      {0};
     std::atomic<std::size_t> n_nan_logged_{0};  // how many NaN events written
+    /* Graded-FAILSCORE band tallies, index 1..4 = A..D (0 unused). Cheap
+     * relaxed counters; surfaced in the milestone SUMMARY and the RESULT
+     * trailer so a failing run is visibly failing. */
+    std::atomic<std::size_t> n_fail_band_[5] = {};
 
     /* timing stats -- protected by mtx_ */
     double      sum_ms_    = 0.0;

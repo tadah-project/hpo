@@ -6,6 +6,7 @@
 #include <tadah/hpo/pc_worker_wire.h>
 #include <tadah/hpo/hpo_log.h>
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -90,11 +91,47 @@ long PcWorkerPool::deadline_ms_for(const std::string& maxtime) const {
 }
 
 void PcWorkerPool::spawn_locked(Channel& ch, int slot) {
-  if (ch.consec_deaths >= PC_MAX_CONSEC_DEATHS)
-    throw std::runtime_error(
+  /* Repeated deaths back the channel off; they must NOT retire it.
+   *
+   * The previous behaviour threw here, before the fork. Because execute()
+   * only calls spawn_locked when ch.fd < 0 -- exactly the state
+   * kill_reap_locked leaves -- and consec_deaths is reset in only one place
+   * (after a complete RESULT round trip, which needs a live channel), the
+   * throw was permanent for that slot. It was then swallowed by the
+   * eval-thread catch into a FAIL_SCORE, so the run continued while one of
+   * N worker slots was dead forever.
+   *
+   * That degrades far worse than "lose 1/N of throughput": a channel that
+   * throws before doing any work returns to the shared task queue in
+   * microseconds, so it drains tasks orders of magnitude faster than the
+   * healthy workers and captures most of them. The observable result is a
+   * near-100% FAILSCORE rate at an inflated evaluation rate, with one
+   * WARNING per eval and no fatal error.
+   *
+   * Backing off instead is strictly better: three deaths with no
+   * intervening successful round trip is pathological regardless of elapsed
+   * time (a healthy channel completes hundreds per epoch), so an
+   * unconditional sleep is both simpler and better targeted than a
+   * time-decay -- the deaths that trip the latch are by construction
+   * closely spaced. Sleeping rather than returning a synthetic failure is
+   * deliberate: it makes one evaluation slow instead of feeding the
+   * optimiser a fabricated FAILSCORE, and it removes the fast-drain
+   * amplification above.
+   *
+   * Safe to sleep under ch.mtx: kill_matching only try_locks, and
+   * current_iter is still -1 here (ClearPub is constructed after this
+   * call), so the gate correctly treats the channel as idle. */
+  if (ch.consec_deaths >= PC_MAX_CONSEC_DEATHS) {
+    HPOLog::instance().warning(
         "pc-worker slot " + std::to_string(slot) + ": "
         + std::to_string(ch.consec_deaths)
-        + " consecutive worker deaths -- giving up (see journal)");
+        + " consecutive worker deaths with no successful task -- backing off "
+        + std::to_string(PC_RESPAWN_BACKOFF_MS) + " ms, then respawning");
+    struct timespec ts{PC_RESPAWN_BACKOFF_MS / 1000,
+                       (PC_RESPAWN_BACKOFF_MS % 1000) * 1'000'000L};
+    ::nanosleep(&ts, nullptr);
+    ch.consec_deaths = 0;
+  }
 
   int sv[2];
   if (::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0)
@@ -172,13 +209,19 @@ void PcWorkerPool::kill_reap_locked(Channel& ch, int slot, const char* why) {
   ch.pid = -1;
   ch.last_pot_iter = -1;
   ch.last_pot_map.clear();   /* fresh worker knows nothing: next pot is FULL */
-  ++ch.consec_deaths;
+  /* A kill we asked for (the FAILPROBE gate) says nothing about this
+   * channel's health, so it does not count toward the respawn backoff. */
+  const bool deliberate = ch.gate_killed.exchange(false,
+                                                  std::memory_order_acq_rel);
+  if (!deliberate) ++ch.consec_deaths;
   /* ALWAYS journaled: silent respawns would mask crash-loops and sanitizer
    * aborts inside workers. */
   HPOLog::instance().warning(
       std::string("pc-worker slot ") + std::to_string(slot)
       + " killed/died: " + why + "; wait: " + status
-      + "; consecutive deaths: " + std::to_string(ch.consec_deaths));
+      + (deliberate
+             ? "; deliberate (FAILPROBE gate) -- not counted as a slot fault"
+             : "; consecutive deaths: " + std::to_string(ch.consec_deaths)));
 }
 
 PcTaskResult PcWorkerPool::execute(int slot, std::uint32_t script_idx,
@@ -195,6 +238,16 @@ PcTaskResult PcWorkerPool::execute(int slot, std::uint32_t script_idx,
    * channel 0. */
   std::lock_guard<std::mutex> lk(ch.mtx);
 
+  /* D10: a killed task still consumed wall time -- usually the MOST of any
+   * task in the eval, since it typically burned the whole deadline. It used
+   * to report create_ms = run_ms = 0 (the struct defaults), and the host
+   * folds those into the per-script EWMA that drives the longest-processing-
+   * time dispatch order and into the fan-out min/max. So the one script that
+   * hung was recorded as the cheapest, its EWMA fell ~30%, and the LPT sort
+   * pushed it LATER -- the opposite of the intent -- while the journal
+   * reported "fastest 0 ms". Measuring from the top of execute() covers
+   * everything the task actually occupied the channel for. */
+  const auto t_task0 = std::chrono::steady_clock::now();
   auto synthetic_fail = [&](const std::string& why) {
     PcTaskResult res;
     res.status = PcTaskStatus::KILLED;   /* parent-synthesized: worker died or
@@ -202,6 +255,8 @@ PcTaskResult PcWorkerPool::execute(int slot, std::uint32_t script_idx,
                                             Failscore + eval abort; graded as
                                             band C (did not complete). */
     res.error_msg = why;
+    res.run_ms = std::chrono::duration<double, std::milli>(
+                     std::chrono::steady_clock::now() - t_task0).count();
     return res;
   };
 
@@ -214,7 +269,18 @@ PcTaskResult PcWorkerPool::execute(int slot, std::uint32_t script_idx,
   ch.current_iter.store(static_cast<long long>(iter), std::memory_order_release);
   struct ClearPub {
     Channel& c;
-    ~ClearPub() { c.current_iter.store(-1, std::memory_order_release); }
+    ~ClearPub() {
+      /* Retire the pid as well as the iter. Correctness against
+       * kill_matching already rests on ch.mtx (it only inspects a channel
+       * whose try_lock failed, i.e. one inside execute(), which republishes
+       * both fields before doing any work). But leaving current_pid holding
+       * a reaped pid across idle periods is a loaded gun: it is safe only
+       * for as long as the iter check short-circuits first, and pids are
+       * reused by the OS. Clear pid before iter so the pair is never
+       * observed as (idle, live-looking pid). */
+      c.current_pid.store(-1, std::memory_order_relaxed);
+      c.current_iter.store(-1, std::memory_order_release);
+    }
   } clear_pub{ch};
 
   const bool has_pot = (ch.last_pot_iter != static_cast<long long>(iter));
@@ -315,10 +381,17 @@ void PcWorkerPool::kill_matching(std::uint64_t iter) {
     }
     if (ch.current_iter.load(std::memory_order_acquire) == target) {
       const pid_t p = ch.current_pid.load(std::memory_order_relaxed);
+      /* Announce the kill BEFORE sending it. This death is deliberate --
+       * the FAILPROBE gate decided the whole evaluation is not worth
+       * finishing -- so it is not evidence that this channel is faulty and
+       * must not count toward the consecutive-death backoff. Without this
+       * flag, three gate firings on one slot in three consecutive tasks
+       * would throttle a perfectly healthy worker. */
+      ch.gate_killed.store(true, std::memory_order_release);
       if (p > 0) ::kill(p, SIGKILL);
       /* The blocked execute() on this channel sees EOF and runs its normal
-       * kill/reap/journal/respawn path; its caller gets a synthetic RUN_FAIL
-       * whose result is clamped by the gated eval anyway. */
+       * kill/reap/journal/respawn path; its caller gets a synthetic KILLED
+       * result which is clamped by the gated eval anyway. */
     }
   }
 }

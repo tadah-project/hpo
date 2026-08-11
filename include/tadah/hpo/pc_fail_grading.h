@@ -92,8 +92,31 @@ inline double fail_sigma(double v, double v0) {
   return std::min(s, 1.0 - 1e-9);
 }
 
+/* Bottom of the reserved failure band, as a fraction of FAILSCORE. Every
+ * graded failure loss lands in [kFailBandFloor*FS, FS); every feasible loss
+ * is below it. Single definition -- anneal_core.h's loss_is_finite() and the
+ * host's best-publication gate both read the band through this constant. */
+inline constexpr double kFailBandFloor = 0.999;
+
+/* Is this loss a real result rather than a failure sentinel?
+ *
+ * The band contract above makes this decidable: feasible losses are
+ * << kFailBandFloor*FS, failures are >= it. Anything that must not treat a
+ * failure as an achievement -- publishing a best potential, seeding a warm
+ * start, reporting a result -- has to ask this rather than merely checking
+ * isfinite(), because a graded failure IS finite by construction. With no
+ * FAILSCORE configured, only finiteness is knowable.
+ *
+ * (anneal_core.h spells the same predicate `anneal::loss_is_finite`, kept
+ * for the annealer call sites; it delegates here.) */
+inline bool loss_is_feasible(double loss, double failscore) {
+  if (!std::isfinite(loss)) return false;
+  if (!(failscore > 0.0) || !std::isfinite(failscore)) return true;
+  return loss < kFailBandFloor * failscore;
+}
+
 /* The graded failure loss. Preconditions: fs finite and > 0 (validated at
- * startup); band != NONE. Guarantees: 0.999*fs <= L < fs, monotone
+ * startup); band != NONE. Guarantees: kFailBandFloor*fs <= L < fs, monotone
  * (strictly, until sigma saturates) in v within a band, and every band-X
  * value < every band-(X+1) value. */
 inline double graded_failscore(double fs, FailBand band, double v, double v0) {
@@ -106,7 +129,7 @@ inline double graded_failscore(double fs, FailBand band, double v, double v0) {
     case FailBand::D: off = 0.75; break;
     default:          return fs;   /* not a failure -- caller bug guard */
   }
-  return 0.999 * fs + W * (off + 0.25 * fail_sigma(v, v0));
+  return kFailBandFloor * fs + W * (off + 0.25 * fail_sigma(v, v0));
 }
 
 /* Verify that the configured scale can represent every within-band and

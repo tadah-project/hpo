@@ -20,6 +20,7 @@
  */
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/pc_fail_grading.h>   /* kFailBandFloor, loss_is_feasible */
 
 #include <algorithm>
 #include <atomic>
@@ -150,13 +151,14 @@ inline bool constrain_proposal(Real& v, double lo, double hi,
 
 /* FAILSCORE-aware finiteness: a loss is usable for statistics when it
  * is a normal number comfortably below the configured FAILSCORE. The
- * 0.999 margin absorbs failscore values that went through lossy text
- * round-trips. When no failscore is known every finite double counts. */
+ * reserved-band margin absorbs failscore values that went through lossy
+ * text round-trips. When no failscore is known every finite double counts.
+ * The band boundary itself is defined once, in pc_fail_grading.h, next to
+ * the grading arithmetic that produces the values being excluded. */
 inline bool loss_is_finite(double f, const std::optional<double>& failscore)
 {
-  if (!std::isfinite(f)) return false;
-  if (failscore) return f < 0.999 * *failscore;
-  return true;
+  if (!failscore) return std::isfinite(f);
+  return loss_is_feasible(f, *failscore);
 }
 
 /* A loss may still carry useful ordering information without being feasible.
@@ -461,6 +463,35 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     throw std::runtime_error(
         ctx + ": PARAM BOUNDARY_MODE must be 0 (REFLECT) or 1 (REDRAW)");
   kb.boundary_mode = static_cast<BoundaryMode>(boundary);
+  /* D23: REDRAW is not a symmetric proposal, and the acceptance rule does
+   * not correct for that.
+   *
+   * constrain_proposal's redraw branch resamples only the offending
+   * coordinate until it lands in range, which is a truncated Gaussian whose
+   * normalisation depends on how much of the kernel's mass sat inside the
+   * box -- i.e. on the CURRENT x. metropolis_accept applies no
+   * Metropolis-Hastings ratio q(x|x')/q(x'|x), so detailed balance does not
+   * hold near a bound and the stationary distribution is skewed away from
+   * the box edges. REFLECT (the default) has no such problem: it is an
+   * exact period-2w fold, hence an involution, hence symmetric.
+   *
+   * Announced rather than corrected, deliberately. The correct ratio for a
+   * SEQUENTIAL per-coordinate redraw depends on which coordinates were
+   * resampled and on each one's in-box mass at both x and x'; a plausible
+   * but wrong ratio would be worse than a documented, bounded bias. For a
+   * minimiser the practical cost is modest -- the deliverable is the best
+   * point visited, not the stationary measure -- but a user sampling near
+   * bounds must know. HINT, not WARNING: the magnitude depends on the
+   * objective and the geometry, so it is a caution, not a proof. */
+  if (kb.boundary_mode == BoundaryMode::Redraw)
+    HPOLog::instance().hint(
+        ctx + ": BOUNDARY_MODE 1 (REDRAW) resamples out-of-box coordinates "
+        "from a truncated kernel whose normalisation depends on the current "
+        "point, and the Metropolis rule applies no Hastings correction for "
+        "it. Sampling near an OPTIM bound is therefore biased away from the "
+        "edge. This does not affect which best point is reported, but if you "
+        "care about the distribution rather than the optimum, use "
+        "BOUNDARY_MODE 0 (REFLECT), which is an exact symmetric fold.");
   /* Corana's published cooling step returns to the best-so-far point.
    * Keep that default for serial Corana; PT defaults off because snapping
    * hot replicas defeats exchange, while PA rejects the knob above. */
@@ -1349,7 +1380,19 @@ std::vector<PinnedDim> pinned_dims(const ChainState<Vec>& c,
     const double w = sp.high[i] - sp.low[i];
     if (w <= 0.0) continue;
     const double v_lo = kb.v_floor_frac * w;
-    if (c.V[i] > v_lo * (1.0 + 1e-9)) continue;   /* step can still shrink */
+    /* Corana only: a dim is interesting when its step has ALSO bottomed
+     * out, because then no further shrinkage is available to work it free.
+     * That clause cannot be applied to CLASSIC -- V_FLOOR_FRAC is a
+     * Corana-only knob (Knobs::parse rejects it otherwise), so under
+     * CLASSIC it is just the 1e-3 default, while a calibrated CLASSIC
+     * sigma/width sits several orders of magnitude below that. The test
+     * would be vacuously true for every dim and the audit would degenerate
+     * into an unconditional near-bound report while still claiming "step at
+     * the V floor". Under CLASSIC the remaining clause -- x within
+     * v_floor_frac*width of a bound -- is exact, checkable, and is what the
+     * table actually reports. */
+    if (kb.corana && c.V[i] > v_lo * (1.0 + 1e-9))
+      continue;   /* step can still shrink */
     const double g_lo = c.x(i) - sp.low[i];
     const double g_hi = sp.high[i] - c.x(i);
     const bool   hi   = g_hi < g_lo;

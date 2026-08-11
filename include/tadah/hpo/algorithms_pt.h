@@ -393,6 +393,16 @@ struct DimCalibration {
   double best_scale = 0.0;
   double best_score = std::numeric_limits<double>::infinity();
   bool finished = false;
+  /* D9: the sigma the COORDINATE phase settled on, kept because the pilot
+   * immediately overwrites c.V[i] with pilot_base*multiplier. Every other
+   * column the diagnostics file reports for this dimension (acceptance,
+   * status, mean_alpha, attempts, backoffs, unusable) was measured at THIS
+   * scale, not at the production one, and the two differ by
+   * sqrt(dim)/pilot_multiplier -- about 26x for run22. Reporting them on
+   * one row against the production sigma made rows self-contradictory:
+   * every "support-capped" row means the coordinate scale reached 1.0 x
+   * width, yet printed sigma/width = 0.0379. */
+  double coordinate_scale = 0.0;
 };
 
 struct SlotCalibration {
@@ -424,6 +434,15 @@ struct SlotCalibration {
   bool pilot_have_best = false;
   double pilot_best_multiplier = 1.0;
   double pilot_best_score = std::numeric_limits<double>::infinity();
+  /* D12: did the pilot ever actually move the multiplier off its 1.0
+   * start? On a flat or noisy score surface the strict `score <
+   * pilot_best_score` comparison lets window 1 win outright, so an
+   * `unconverged` pilot restores 1.0 -- the initial value -- and the log
+   * ("pilot_attempts=200 pilot_multiplier=1.000e+00 pilot_status=unconverged")
+   * is indistinguishable from a pilot that genuinely converged there. Two
+   * run22 slots spent 200 host evaluations each to arrive back at the
+   * default with nothing saying so. */
+  bool pilot_multiplier_moved = false;
   bool pilot_finished = false;
   anneal::RungStop stop = anneal::RungStop::Completed;
 };
@@ -520,6 +539,7 @@ void coordinate_warmup(
         dc.finished = true;
         dc.status = StepOk;
         c.V[i] = scale;
+        dc.coordinate_scale = scale;   /* D9 */
         select_batch(dc, scale, dc.batch_attempts, dc.batch_accepted,
                      mean_alpha);
       }
@@ -531,6 +551,7 @@ void coordinate_warmup(
         dc.finished = true;
         dc.status = StepNumericalFloor;
         c.V[i] = scale;
+        dc.coordinate_scale = scale;   /* D9 */
         select_batch(dc, scale, dc.batch_attempts, dc.batch_accepted,
                      mean_alpha);
       } else if (usable && mean_alpha > target_hi && at_cap &&
@@ -538,6 +559,7 @@ void coordinate_warmup(
         dc.finished = true;
         dc.status = StepSupportCapped;
         c.V[i] = scale;
+        dc.coordinate_scale = scale;   /* D9 */
         select_batch(dc, scale, dc.batch_attempts, dc.batch_accepted,
                      mean_alpha);
       } else {
@@ -564,6 +586,7 @@ void coordinate_warmup(
       dc.finished = true;
       dc.status = StepUnconverged;
       if (dc.have_best) c.V[i] = dc.best_scale;
+      dc.coordinate_scale = c.V[i];   /* D9: best tested, or the last one */
     } else if (!dc.finished && change_scale) {
       double next_scale = scale;
       if (dc.have_lower_scale && dc.have_upper_scale &&
@@ -578,6 +601,14 @@ void coordinate_warmup(
       const double clamped_scale = clamp_coordinate_scale(
           next_scale, c.x(i), sp.low[i], sp.high[i], clamp_status);
       if (clamped_scale < scale) ++dc.backoffs;
+      /* D8: keep the reason the scale was clamped. It used to be computed
+       * here and dropped, so an interim floor/cap saturation left no trace:
+       * a dim that spent the whole search pressed against the resolvable
+       * floor still finished labelled a bare "unconverged", and
+       * unexplained_dimensions counted it as inexplicable. run22 reported
+       * numerical-floor for exactly 0 of 5,568 dims while 1,882 came back
+       * unconverged -- the two facts were the same fact. */
+      dc.status |= clamp_status;
       c.V[i] = clamped_scale;
     }
 
@@ -692,15 +723,37 @@ void full_vector_pilot(anneal::ChainState<Vec>& c, double T,
       const double floor = anneal::resolvable_coordinate_scale(
           c.x(i), sp.low[i], sp.high[i]);
       out.pilot_base[i] = c.V[i] * inv_sqrt_dim;
+      /* D22: a coordinate whose base has been raised TO the floor must not
+       * veto shrinkage for every other dimension.
+       *
+       * pilot_multiplier_min is a max over floor/base across all dims. When
+       * base was clamped up to floor, that ratio is exactly 1.0, so the
+       * global minimum multiplier becomes 1.0 and the clamp below turns
+       * every shrink into a no-op -- for ALL dims. The pilot can then only
+       * grow the step, will exhaust its 200 evaluations, and reports
+       * `unconverged` with no indication that a single numerically pinned
+       * coordinate disabled the search. Such a dim is already flagged
+       * StepNumericalFloor and already cannot shrink; excluding it from the
+       * global bound is what keeps the bound meaningful for the rest. */
+      bool at_floor = false;
       if (!(out.pilot_base[i] >= floor)) {
         out.pilot_base[i] = floor;
-        out.dims[i].status |= StepNumericalFloor;
+        /* D9: this is a PILOT-phase fact, so it belongs to pilot_status.
+         * It used to be ORed into dims[i].status, which is the COORDINATE
+         * phase's status column -- so a dim that converged cleanly in the
+         * coordinate phase was retroactively relabelled numerical-floor,
+         * and the coordinate status_floor tally counted pilot events.
+         * (Safe to move: coordinate_converged() reads dims[].status only
+         * during the coordinate phase, which has already finished here.) */
+        out.pilot_status |= StepNumericalFloor;
+        at_floor = true;
       }
       const double floor_ratio = floor / out.pilot_base[i];
       const double cap_ratio =
           (sp.high[i] - sp.low[i]) / out.pilot_base[i];
-      out.pilot_multiplier_min =
-          std::max(out.pilot_multiplier_min, floor_ratio);
+      if (!at_floor)
+        out.pilot_multiplier_min =
+            std::max(out.pilot_multiplier_min, floor_ratio);
       out.pilot_multiplier_max =
           std::min(out.pilot_multiplier_max, cap_ratio);
     }
@@ -837,6 +890,8 @@ void full_vector_pilot(anneal::ChainState<Vec>& c, double T,
             next_multiplier, out.pilot_multiplier_min,
             out.pilot_multiplier_max);
         if (next_multiplier < old_multiplier) ++out.pilot_backoffs;
+        if (next_multiplier != old_multiplier)
+          out.pilot_multiplier_moved = true;   /* D12 */
         out.pilot_multiplier = next_multiplier;
       }
 
@@ -1014,11 +1069,23 @@ template<typename Vec, typename HostT>
       if (ladder_controls_explicit)
         oss << "  LADDER_POWER=" << kb.ladder_power
             << "  LADDER_ADAPT=" << (kb.ladder_adapt ? 1 : 0);
-      if (kb.ladder_adapt)
+      if (kb.ladder_adapt) {
+        /* D15: LADDER_ADAPT_EVERY counts ATTEMPTS PER PAIR, while its
+         * neighbours SWAP_EVERY and SWAP_WINDOW count EPOCHS -- and DEO
+         * parity attempts each pair only every other exchange round, so the
+         * two scales differ by 2x. Printed side by side with no units this
+         * reads as a contradiction against hpo_temperature_ladder.tsv,
+         * whose updates land at epoch 40, 80, ... for a value of 20. State
+         * the derived epoch cadence rather than making the reader
+         * rediscover the factor. */
         oss << "  LADDER_ADAPT_EVERY=" << kb.ladder_adapt_every
+            << " attempts/pair (= every "
+            << kb.ladder_adapt_every * 2 * kb.swap_every << " epochs at "
+            << "SWAP_EVERY=" << kb.swap_every << " with DEO parity)"
             << "  LADDER_ADAPT_GAIN=" << kb.ladder_adapt_gain
             << "  LADDER_ADAPT_DECAY=" << kb.ladder_adapt_decay
             << "  LADDER_ADAPT_UPDATES=" << kb.ladder_adapt_updates;
+      }
       if (kb.corana)
         oss << "  NS=" << kb.NS << "  NT=" << kb.NT << "  C=" << kb.C
             << "  V_FLOOR_FRAC=" << kb.v_floor_frac;
@@ -1056,6 +1123,38 @@ template<typename Vec, typename HostT>
       HPOLog::instance().info(oss.str());
     }
 
+    /* D20: a moving ladder with a frozen step.
+     *
+     * STEP_ADAPT_EVERY defaults to 0, which freezes each slot's calibrated
+     * step. That is the right default for a STATIC ladder -- the step was
+     * calibrated at the slot's temperature and the temperature does not
+     * move. But with LADDER_ADAPT=1 or RT<1 the temperatures do move, and
+     * every slot then keeps a step tuned for a temperature it no longer
+     * has. run22 ran 861 ladder updates that shifted the interior log-gaps
+     * from [1.87e-1, 2.07] to [2.02e-1, 3.49] against steps calibrated once
+     * at the start, and nothing said so.
+     *
+     * Combination is legal (a user may want a frozen kernel deliberately)
+     * and the consequence is a modelling judgement rather than a proof, so
+     * this is a HINT. The CLI help already recommends STEP_ADAPT_EVERY=L;
+     * the point here is that the recommendation reaches the person who
+     * actually tripped the condition. Not applicable under CORANA, whose
+     * own V adaptation is always live. */
+    if (!kb.corana && kb.step_auto && kb.step_adapt_every == 0 &&
+        (kb.ladder_adapt || kb.rt < 1.0)) {
+      std::ostringstream h;
+      h << "ANNEAL_PT: temperatures move ("
+        << (kb.ladder_adapt ? "LADDER_ADAPT=1" : "")
+        << (kb.ladder_adapt && kb.rt < 1.0 ? ", " : "")
+        << (kb.rt < 1.0 ? "RT<1" : "")
+        << ") but STEP_ADAPT_EVERY=0 freezes each slot's step at the value "
+           "calibrated for its ORIGINAL temperature. Acceptance will drift "
+           "away from target as the ladder moves, and no later message "
+           "reports that drift. STEP_ADAPT_EVERY=" << kb.L
+        << " (= L) keeps the step adapting with the temperature.";
+      HPOLog::instance().hint(h.str());
+    }
+
     /* Layout arithmetic -- exact, printed up front: with a large
      * NT*NS*dim product the first per-epoch line can be hours away, and
      * the epoch size is what sets both the swap and journal cadence. */
@@ -1087,7 +1186,7 @@ template<typename Vec, typename HostT>
     }
     /* Pinned-dim audit (single-process like the per-epoch report --
      * marks are rank-local, a rank-0 table would miss other ranks). */
-    if (world == 1 && kb.corana)
+    if (world == 1)
       HPOLog::instance().arm_pin_audit(
           sp, kb.v_floor_frac, static_cast<int>(K), "epoch");
 
@@ -1252,21 +1351,29 @@ template<typename Vec, typename HostT>
     if (proceed) {
       log_t_cold = std::log(static_cast<long double>(T_cold));
       log_t_hot  = std::log(static_cast<long double>(T_hot));
-      if (ladder_controls_explicit) {
-        T = pt_detail::make_temperature_ladder(
-            T_cold, T_hot, K, kb.ladder_power);
-      } else {
-        for (std::size_t k = 0; k < K; ++k) {
-          if (k == 0) T[k] = T_cold;
-          else if (k + 1 == K) T[k] = T_hot;
-          else {
-            const long double u = static_cast<long double>(k) /
-                                  static_cast<long double>(K - 1);
-            T[k] = static_cast<double>(
-                std::exp(log_t_cold + (log_t_hot - log_t_cold) * u));
-          }
-        }
-      }
+      /* D21: one ladder constructor, always.
+       *
+       * This used to fork on the mere PRESENCE of LADDER_POWER/LADDER_ADAPT,
+       * and the legacy branch was an open-coded geometric loop with neither
+       * the nextafter gap floor nor the strict-increase check that
+       * make_temperature_ladder enforces. With narrow endpoints and large K
+       * it silently collapsed adjacent T[k] onto the same double -- and
+       * accept_exchange returns true unconditionally when the two
+       * temperatures are equal, so those pairs reported 100% swap
+       * acceptance forever while performing no tempering at all. The
+       * per-pair table looked perfect precisely where the method had
+       * stopped working.
+       *
+       * Removing the branch is a no-op on every well-formed ladder rather
+       * than a behaviour change: make_temperature_ladder with power == 1
+       * (the default) sets position[k] = k/(K-1) with no pow() call, and
+       * ladder_from_log_positions then evaluates the same
+       * exp(log_cold + span*position[k]) in the same long double. The only
+       * divergence is the clamp against the nextafter floor, which engages
+       * exactly in the degenerate case above -- where it now throws with a
+       * diagnostic instead of returning a mute, broken ladder. */
+      T = pt_detail::make_temperature_ladder(
+          T_cold, T_hot, K, kb.ladder_power);
     }
 
     /* Resolved-ladder report: T0 calibration fixes only the HOT end; the
@@ -1292,13 +1399,22 @@ template<typename Vec, typename HostT>
               << " slots, LADDER_POWER=" << std::fixed
               << std::setprecision(3) << kb.ladder_power;
         }
-        if (kb.ladder_adapt) oss << "  [adaptive interior]";
-        if (kb.rt < 1.0)
-          oss << "  [initial; cools x" << kb.rt
+        /* D16: RT and LADDER_ADAPT are orthogonal, and printing them as two
+         * independent tags read as a contradiction -- "[adaptive interior]
+         * [static ladder (RT=1)]" on one line, which is what EVERY adaptive
+         * run showed, because RT=1 is the PT default. RT cools the whole
+         * ladder per epoch; LADDER_ADAPT redistributes the interior between
+         * frozen endpoints. Say which of the two is happening, once. */
+        if (kb.rt < 1.0) {
+          oss << "  [endpoints cool x" << kb.rt
               << " per epoch, floor T_MIN="
-              << std::scientific << std::setprecision(3) << t_min << "]";
-        else
-          oss << "  [static ladder (RT=1)]";
+              << std::scientific << std::setprecision(3) << t_min << ";"
+              << (kb.ladder_adapt ? " interior adapts]" : " interior fixed]");
+        } else if (kb.ladder_adapt) {
+          oss << "  [endpoints fixed (RT=1); interior adapts]";
+        } else {
+          oss << "  [static ladder (RT=1, no interior adaptation)]";
+        }
         HPOLog::instance().info(oss.str());
       }
       /* Per-slot table: [lo-hi] range rows of 8 (HPOLog::event tags and
@@ -1587,7 +1703,8 @@ template<typename Vec, typename HostT>
 
       /* Gather the slot-contiguous records so rank 0 can emit one canonical
        * file even when the ladder is split across MPI ranks. */
-      constexpr std::size_t fields = 17;
+      /* 17 -> 19: + coordinate_scale (D9) and pilot_multiplier_moved (D12). */
+      constexpr std::size_t fields = 19;
       std::vector<double> local_records;
       local_records.reserve(n_local * dim * fields);
       for (std::size_t li = 0; li < n_local; ++li) {
@@ -1595,6 +1712,7 @@ template<typename Vec, typename HostT>
         for (std::size_t i = 0; i < dim; ++i) {
           const auto& dc = sc.dims[i];
           local_records.push_back(chains[li].V[i]);
+          local_records.push_back(dc.coordinate_scale);          /* D9 */
           local_records.push_back(static_cast<double>(dc.validation_accepted));
           local_records.push_back(static_cast<double>(dc.validation_attempts));
           local_records.push_back(static_cast<double>(dc.attempts));
@@ -1613,6 +1731,7 @@ template<typename Vec, typename HostT>
           local_records.push_back(sc.pilot_validation_mean_alpha);
           local_records.push_back(static_cast<double>(sc.pilot_unusable));
           local_records.push_back(static_cast<double>(sc.pilot_status));
+          local_records.push_back(sc.pilot_multiplier_moved ? 1.0 : 0.0); /* D12 */
         }
       }
       std::vector<int> record_counts(static_cast<std::size_t>(world), 0);
@@ -1649,9 +1768,21 @@ template<typename Vec, typename HostT>
           HPOLog::instance().warning(
               "ANNEAL_PT: cannot open hpo_step_scales.tsv for writing");
         } else {
+          /* D9: `sigma`/`sigma/width` are the PRODUCTION step actually
+           * used by the run (post-pilot). Everything from `acceptance` to
+           * `unusable` was measured during the COORDINATE phase, at
+           * `coord_sigma` -- larger by sqrt(dim)/pilot_multiplier, ~26x for
+           * run22. The two used to share a row with only the production
+           * sigma printed, so a `support-capped` row (meaning the
+           * coordinate scale reached 1.0 x width) displayed
+           * sigma/width = 0.038 and read as a contradiction. Both scales
+           * are now columns; each measurement sits next to the sigma it was
+           * taken at. */
           scale_file << "slot\ttemperature\tparameter\tsigma\tsigma/width"
+                        "\tcoord_sigma\tcoord_sigma/width"
                         "\tacceptance\tstatus\tmean_alpha\tattempts"
                         "\tbackoffs\tunusable\tpilot_multiplier"
+                        "\tpilot_multiplier_moved"
                         "\tpilot_acceptance\tpilot_mean_alpha"
                         "\tpilot_attempts\tpilot_backoffs\tpilot_unusable"
                         "\tpilot_status\n";
@@ -1677,37 +1808,40 @@ template<typename Vec, typename HostT>
           for (std::size_t i = 0; i < dim; ++i) {
             const std::size_t p = slot_base + i * fields;
             const double sigma = gathered_step_records[p];
+            const double coord_sigma = gathered_step_records[p + 1];
             const std::size_t accepted = static_cast<std::size_t>(
-                std::llround(gathered_step_records[p + 1]));
-            const std::size_t validation_attempts = static_cast<std::size_t>(
                 std::llround(gathered_step_records[p + 2]));
-            const std::size_t total_attempts = static_cast<std::size_t>(
+            const std::size_t validation_attempts = static_cast<std::size_t>(
                 std::llround(gathered_step_records[p + 3]));
-            const std::size_t backoffs = static_cast<std::size_t>(
+            const std::size_t total_attempts = static_cast<std::size_t>(
                 std::llround(gathered_step_records[p + 4]));
-            const unsigned status = static_cast<unsigned>(
+            const std::size_t backoffs = static_cast<std::size_t>(
                 std::llround(gathered_step_records[p + 5]));
-            const double mean_alpha = gathered_step_records[p + 6];
+            const unsigned status = static_cast<unsigned>(
+                std::llround(gathered_step_records[p + 6]));
+            const double mean_alpha = gathered_step_records[p + 7];
             const std::size_t unusable = static_cast<std::size_t>(
-                std::llround(gathered_step_records[p + 7]));
+                std::llround(gathered_step_records[p + 8]));
             const double acceptance = validation_attempts > 0
                 ? static_cast<double>(accepted) / validation_attempts : 0.0;
             const std::size_t pilot_attempts = static_cast<std::size_t>(
-                std::llround(gathered_step_records[p + 8]));
+                std::llround(gathered_step_records[p + 9]));
             const std::size_t pilot_backoffs = static_cast<std::size_t>(
-                std::llround(gathered_step_records[p + 10]));
-            const double pilot_multiplier = gathered_step_records[p + 11];
+                std::llround(gathered_step_records[p + 11]));
+            const double pilot_multiplier = gathered_step_records[p + 12];
             const std::size_t pilot_validation_accepted =
                 static_cast<std::size_t>(
-                    std::llround(gathered_step_records[p + 12]));
+                    std::llround(gathered_step_records[p + 13]));
             const std::size_t pilot_validation_attempts =
                 static_cast<std::size_t>(
-                    std::llround(gathered_step_records[p + 13]));
-            const double pilot_mean_alpha = gathered_step_records[p + 14];
+                    std::llround(gathered_step_records[p + 14]));
+            const double pilot_mean_alpha = gathered_step_records[p + 15];
             const std::size_t pilot_unusable = static_cast<std::size_t>(
-                std::llround(gathered_step_records[p + 15]));
-            const unsigned pilot_status = static_cast<unsigned>(
                 std::llround(gathered_step_records[p + 16]));
+            const unsigned pilot_status = static_cast<unsigned>(
+                std::llround(gathered_step_records[p + 17]));
+            const bool pilot_moved =
+                gathered_step_records[p + 18] != 0.0;
             const double pilot_acceptance = pilot_validation_attempts > 0
                 ? static_cast<double>(pilot_validation_accepted) /
                       pilot_validation_attempts
@@ -1716,13 +1850,18 @@ template<typename Vec, typename HostT>
                 ? sp.parameter_labels[i]
                 : "dim[" + std::to_string(i) + "]";
             if (scale_file) {
+              const double width = sp.high[i] - sp.low[i];
               scale_file << k << '\t' << T[k] << '\t' << parameter << '\t'
                          << sigma << '\t'
-                         << sigma / (sp.high[i] - sp.low[i]) << '\t'
+                         << sigma / width << '\t'
+                         << coord_sigma << '\t'
+                         << coord_sigma / width << '\t'
                          << acceptance << '\t' << status_text(status) << '\t'
                          << mean_alpha << '\t' << total_attempts << '\t'
                          << backoffs << '\t' << unusable << '\t'
-                         << pilot_multiplier << '\t' << pilot_acceptance << '\t'
+                         << pilot_multiplier << '\t'
+                         << (pilot_moved ? 1 : 0) << '\t'
+                         << pilot_acceptance << '\t'
                          << pilot_mean_alpha << '\t' << pilot_attempts << '\t'
                          << pilot_backoffs << '\t' << pilot_unusable << '\t'
                          << status_text(pilot_status) << '\n';
@@ -1866,17 +2005,41 @@ template<typename Vec, typename HostT>
     std::vector<signed char> walker_tag(K, 0);  /* 0 none, +1 cold, -1 hot */
     std::size_t flow_up = 0, flow_down = 0;     /* cold->hot, hot->cold */
     for (std::size_t i = 0; i < K; ++i) walker_at[i] = i;
+    /* Measured-transport window. The cumulative flow counters above answer
+     * "has the ladder EVER communicated"; they cannot say "is it still
+     * communicating", because a ladder that severs at hour 16 keeps
+     * reporting the traversals it banked before that. So the same tagging
+     * is also accumulated over a rolling window and reported separately.
+     *
+     * Window length: 100 * (K-1) exchange rounds. K-1 is the EXACT
+     * structural minimum for one one-way traversal (a DEO round moves a
+     * state at most one slot), so the window is 100 one-way minima -- long
+     * enough that a healthy ladder completes several traversals inside it
+     * at any plausible acceptance, short enough to localise when transport
+     * stops. Derived from K, so no new PARAM key.
+     *
+     * slot_seen[s*K + w] marks "walker w occupied slot s". The per-slot
+     * population count is what localises WHERE the ladder is severed:
+     * under mixing every slot is visited by ~all K walkers, while a
+     * severed ladder leaves the far side circulating among a handful. */
+    const std::size_t transport_window = 100 * (K > 1 ? K - 1 : 1);
+    std::size_t flow_up_win = 0, flow_down_win = 0;
+    std::vector<char> slot_seen(K * K, 0), slot_seen_win(K * K, 0);
     auto flow_touch_extremes = [&]() {
       if (world != 1 || K < 2) return;
       {
         const std::size_t w = walker_at[0];          /* coldest slot */
-        if (walker_tag[w] == -1) ++flow_down;
+        if (walker_tag[w] == -1) { ++flow_down; ++flow_down_win; }
         walker_tag[w] = +1;
       }
       {
         const std::size_t w = walker_at[K - 1];      /* hottest slot */
-        if (walker_tag[w] == +1) ++flow_up;
+        if (walker_tag[w] == +1) { ++flow_up; ++flow_up_win; }
         walker_tag[w] = -1;
+      }
+      for (std::size_t s = 0; s < K; ++s) {
+        slot_seen[s * K + walker_at[s]] = 1;
+        slot_seen_win[s * K + walker_at[s]] = 1;
       }
     };
     flow_touch_extremes();   /* initial tags only: all tags are still 0 */
@@ -2068,11 +2231,10 @@ template<typename Vec, typename HostT>
            * walked in the slot this epoch -- the exchange permutes x/f,
            * never V). A slot whose x left the bound is unmarked; the
            * table prints with the milestone SUMMARY. */
-          if (kb.corana)
-            for (std::size_t li = 0; li < n_local; ++li)
-              HPOLog::instance().record_pin_state(
-                  static_cast<int>(li), epoch_count,
-                  anneal::pinned_dims(chains[li], sp, kb));
+          for (std::size_t li = 0; li < n_local; ++li)
+            HPOLog::instance().record_pin_state(
+                static_cast<int>(li), epoch_count,
+                anneal::pinned_dims(chains[li], sp, kb));
         }
         /* Per-pair outcome of THIS epoch's exchange round for the
          * events row: 'x' swapped, '.' rejected, ' ' not attempted
@@ -2499,6 +2661,75 @@ template<typename Vec, typename HostT>
                  << " round trip(s) so far)";
               HPOLog::instance().info(of.str());
             }
+            /* --- measured-transport report (windowed) --------------------
+             * The cumulative line above cannot distinguish "communicating"
+             * from "communicated once, an hour ago". This block reports the
+             * same tagging over the last `transport_window` exchange rounds
+             * and escalates on it, because measured transport -- not the
+             * per-pair acceptance table -- is what says whether tempering is
+             * doing anything. An adaptive ladder equalises acceptance, and
+             * acceptance can stay textbook-uniform while transport is zero.
+             *
+             * ep_swap_rate >= 0 restricts this to epochs that actually ran
+             * an exchange round (the file's own idiom, as used by the pair
+             * tables), so the window does not re-fire when SWAP_EVERY > 1. */
+            if (K >= 2 && ep_swap_rate >= 0.0 && transport_window > 0 &&
+                exchange_rounds > 0 &&
+                exchange_rounds % transport_window == 0) {
+              const std::size_t rt_win = std::min(flow_up_win, flow_down_win);
+              {
+                std::ostringstream o;
+                o << "ANNEAL_PT ladder transport (last " << transport_window
+                  << " exchange round(s)): traversals cold->hot=" << flow_up_win
+                  << "  hot->cold=" << flow_down_win << "  (" << rt_win
+                  << " round trip(s) in window; cumulative " << flow_up << "/"
+                  << flow_down << " over " << exchange_rounds << " round(s))";
+                HPOLog::instance().info(o.str());
+              }
+              grid("ANNEAL_PT distinct walkers per slot (last " +
+                       std::to_string(transport_window) +
+                       " exchange round(s); " + std::to_string(K) +
+                       " = fully mixed):",
+                   [&](std::ostringstream& o, std::size_t s) {
+                     std::size_t n = 0;
+                     for (std::size_t w = 0; w < K; ++w)
+                       n += slot_seen_win[s * K + w] ? 1 : 0;
+                     o << "  " << std::setw(9) << n;
+                   });
+              /* Severity. Both branches state only what was measured over a
+               * stated window, so both are exact -- but they differ in what
+               * they prove. Zero tags at BOTH extremes means no lineage
+               * reached either end: the ladder demonstrably did not carry
+               * anything end to end, which is a structural failure of the
+               * method and therefore a WARNING. One-sided flow is weaker
+               * evidence -- it can also be a long round trip straddling the
+               * window boundary -- so it is a HINT. */
+              if (flow_up_win == 0 && flow_down_win == 0) {
+                std::ostringstream w;
+                w << "ANNEAL_PT: no ladder traversal in the last "
+                  << transport_window << " exchange round(s) -- no replica "
+                     "lineage reached either temperature extreme, so the "
+                     "ensemble is running as " << K
+                  << " effectively independent annealers over this window. "
+                     "Per-pair swap acceptance does NOT diagnose this: an "
+                     "adaptive ladder equalises acceptance, and acceptance "
+                     "can stay in the usual 20-40% band while transport is "
+                     "zero. See the distinct-walkers-per-slot row above -- "
+                     "slots stuck near 1 mark where the ladder is severed.";
+                HPOLog::instance().warning(w.str());
+              } else if (rt_win == 0) {
+                std::ostringstream h;
+                h << "ANNEAL_PT: no COMPLETE round trip in the last "
+                  << transport_window << " exchange round(s) (cold->hot="
+                  << flow_up_win << ", hot->cold=" << flow_down_win
+                  << "). One-sided flow can be a round trip straddling the "
+                     "window boundary, but sustained one-sidedness means the "
+                     "hot replicas' work is not reaching the cold end.";
+                HPOLog::instance().hint(h.str());
+              }
+              flow_up_win = flow_down_win = 0;
+              std::fill(slot_seen_win.begin(), slot_seen_win.end(), char{0});
+            }
             /* Corana step-vector state per slot, normalised to the box:
              * r_i = V[i]/width[i], so every slot starts at STEP_FRAC and
              * lives in [V_FLOOR_FRAC, 1]. V is slot-resident (exchanges
@@ -2771,6 +3002,45 @@ template<typename Vec, typename HostT>
           ossf << "  (0 round trips -- the ladder never communicated "
                   "end to end)";
         HPOLog::instance().info(ossf.str());
+        /* Whole-run mixing profile. Round trips are an end-to-end scalar;
+         * this says which slots participated. A slot visited by 1 walker
+         * never exchanged its state with anyone -- reading across the row
+         * shows exactly where the ladder separated into non-communicating
+         * populations. Cumulative, so it is a property of the whole run. */
+        const int iw = static_cast<int>(std::to_string(K - 1).size());
+        std::ostringstream osw;
+        osw << "ANNEAL_PT distinct walkers per slot over the whole run ("
+            << K << " = fully mixed):";
+        std::size_t worst = K, worst_slot = 0;
+        for (std::size_t lo = 0; lo < K; lo += 8) {
+          const std::size_t hi = std::min(lo + std::size_t{8}, K) - 1;
+          osw << "\n"
+              << "[" << std::setw(iw) << lo << "-" << std::setw(iw) << hi
+              << "]";
+          for (std::size_t s = lo; s <= hi; ++s) {
+            std::size_t n = 0;
+            for (std::size_t w = 0; w < K; ++w)
+              n += slot_seen[s * K + w] ? 1 : 0;
+            if (n < worst) { worst = n; worst_slot = s; }
+            osw << "  " << std::setw(9) << n;
+          }
+        }
+        HPOLog::instance().info(osw.str());
+        /* Only meaningful once the run was long enough for mixing to be
+         * possible at all. A DEO round moves a state at most one slot, so
+         * below 2*(K-1) rounds a lone walker per slot is arithmetic, not a
+         * defect -- and the planning gate has already warned about that
+         * case. Warning here too would fire on every short run and teach
+         * the reader to ignore the message. */
+        if (worst <= 1 && exchange_rounds >= 2 * (K - 1)) {
+          std::ostringstream w;
+          w << "ANNEAL_PT: slot " << worst_slot << " was occupied by a single "
+               "walker across all " << exchange_rounds << " exchange round(s) "
+               "-- its state never exchanged with any other replica, so that "
+               "slot contributed nothing the ensemble could use. The ladder "
+               "is severed at or adjacent to it.";
+          HPOLog::instance().warning(w.str());
+        }
       }
     }
 

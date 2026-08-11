@@ -136,6 +136,12 @@ public:
 
     int    outputDigits = 6;      // decimal digits in scientific notation columns (DIGITS key)
     size_t outputEvery = 1;
+    /* Cadence over NEW BESTS (not over evaluations): best_*.tadah rows are
+     * written every Nth improvement, keyed by best_iter. Was parsed as a
+     * number but consumed as a boolean (`> 0`), so BOUTPUT 100 wrote exactly
+     * as much as BOUTPUT 1 and the key looked broken to anyone trying to
+     * shrink the artifacts -- run22 produced 1.55 GB of best_*.tadah.
+     * Must be >= 1; validated at the parse site. */
     size_t bestOutputEvery = 1;
     size_t dumpPotEvery = std::numeric_limits<size_t>::max(); //  archiving potentials
     size_t dumpBestPotEvery = std::numeric_limits<size_t>::max(); // archiving best potentials

@@ -137,6 +137,10 @@ struct StepScaleRow {
     std::string parameter;
     double sigma = 0.0;
     double fraction = 0.0;
+    /* D9: the coordinate phase's own sigma, alongside the production one --
+     * every column from `acceptance` on was measured at THIS scale. */
+    double coord_sigma = 0.0;
+    double coord_fraction = 0.0;
     double acceptance = 0.0;
     std::string status;
     double mean_alpha = 0.0;
@@ -144,6 +148,7 @@ struct StepScaleRow {
     std::size_t backoffs = 0;
     std::size_t unusable = 0;
     double pilot_multiplier = 1.0;
+    int pilot_multiplier_moved = 0;   /* D12 */
     double pilot_acceptance = 0.0;
     double pilot_mean_alpha = 0.0;
     std::size_t pilot_attempts = 0;
@@ -163,9 +168,12 @@ std::vector<StepScaleRow> read_step_scales()
         std::istringstream fields(line);
         StepScaleRow row;
         fields >> row.slot >> row.temperature >> row.parameter
-               >> row.sigma >> row.fraction >> row.acceptance >> row.status
+               >> row.sigma >> row.fraction
+               >> row.coord_sigma >> row.coord_fraction
+               >> row.acceptance >> row.status
                >> row.mean_alpha >> row.attempts >> row.backoffs
                >> row.unusable >> row.pilot_multiplier
+               >> row.pilot_multiplier_moved
                >> row.pilot_acceptance >> row.pilot_mean_alpha
                >> row.pilot_attempts >> row.pilot_backoffs
                >> row.pilot_unusable >> row.pilot_status;
@@ -1318,6 +1326,160 @@ TEST_CASE("ANNEAL_PT: journal carries the banner, epoch lines and the "
           != std::string::npos);
     /* Multi-line entries: starred head line, tagged continuation rows. */
     CHECK(log.find("INFO      * ANNEAL_PT ladder T per slot")
+          != std::string::npos);
+}
+
+/* --- D25: semantic coverage for the ladder-flow traversal counter --------
+ * The pre-existing journal test above only asserts that the ladder-flow
+ * STRING appears. That would stay green if the counter tagged slots instead
+ * of walkers, or if the world==1 guard were dropped, or if the counts were
+ * simply wrong -- and D6 makes these counts the headline PT-effectiveness
+ * metric, so they need pinning to arithmetic, not to a substring. */
+
+namespace {
+/* Pull the integer immediately following the LAST occurrence of `key`.
+ * Returns -1 if `key` is absent. */
+long last_int_after(const std::string& log, const std::string& key)
+{
+    const std::size_t at = log.rfind(key);
+    if (at == std::string::npos) return -1;
+    return std::strtol(log.c_str() + at + key.size(), nullptr, 10);
+}
+
+/* Pull the integer immediately PRECEDING the LAST occurrence of `key`
+ * (the stop line reads "... (E epoch(s), R exchange round(s))", so the
+ * count sits to the left of its label). Returns -1 if absent. */
+long last_int_before(const std::string& log, const std::string& key)
+{
+    const std::size_t at = log.rfind(key);
+    if (at == std::string::npos) return -1;
+    std::size_t e = at;
+    while (e > 0 && std::isspace(static_cast<unsigned char>(log[e - 1]))) --e;
+    std::size_t b = e;
+    while (b > 0 && std::isdigit(static_cast<unsigned char>(log[b - 1]))) --b;
+    if (b == e) return -1;
+    return std::strtol(log.substr(b, e - b).c_str(), nullptr, 10);
+}
+}  // namespace
+
+TEST_CASE("ANNEAL_PT: ladder flow counts walker lineages with exact arithmetic",
+          "[HPO][anneal_pt][log][flow]")
+{
+    using namespace tadah::hpo;
+
+    /* K=2 makes the traversal arithmetic exactly predictable. The only
+     * exchange pair is (0,1), and slot 0 is the cold END while slot 1 is the
+     * hot END -- so every ACCEPTED swap moves one walker cold->hot and the
+     * other hot->cold, incrementing both counters by exactly 1.
+     *
+     * A constant objective forces every attempted exchange to accept:
+     * accept_exchange short-circuits to true when cold_loss == hot_loss
+     * (algorithms_pt.h, the equal-loss/equal-temperature branch), with no
+     * coin drawn.
+     *
+     * DEO parity is `(epoch_count / SWAP_EVERY) % 2` and epoch_count is
+     * incremented BEFORE the exchange phase, so the first exchange round
+     * runs at epoch_count==1 -> parity 1, which at K=2 attempts no pair at
+     * all (the loop starts at i=parity and needs i+1 < K). Pairs are
+     * therefore attempted on EVEN epoch_count only, giving
+     *     flow_up == flow_down == rounds / 2   (floor).
+     * That identity is what distinguishes walker tagging from slot tagging:
+     * a slot-indexed counter cannot grow at all here, because slots 0 and 1
+     * are occupied every single round by construction. */
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 4242;
+    sp.num_threads = 1;
+    sp.param["REPLICAS"] = 2.0;
+    sp.param["T_COLD"] = 1e-3;
+    sp.param["T_HOT"]  = 1.0;
+    sp.param["L"] = 2.0;
+    sp.param["SWAP_EVERY"] = 1.0;
+    /* 2 seed/init evals + E epochs x REPLICAS x L. 40 epochs -> 20 accepted
+     * swaps, comfortably above the 1 round trip a working ladder needs and
+     * well short of the 100*(K-1)=100-round transport window, which is
+     * exercised separately below. */
+    sp.stop.maxeval = 2 + 40 * 2 * 2;
+
+    LoggedRun lr;
+    MtStubHost stub{[](const Vec&) { return 1.0; }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, stub);
+    const std::string log = lr.read();
+
+    const long rounds = last_int_before(log, "exchange round(s))");
+    const long up   = last_int_after(log, "traversals cold->hot=");
+    const long down = last_int_after(log, "  hot->cold=");
+
+    REQUIRE(up   >= 0);
+    REQUIRE(down >= 0);
+
+    /* Symmetric at K=2: a walker leaving the cold end arrives at the hot end
+     * in the same swap. */
+    CHECK(up == down);
+    /* Non-trivial: the ladder actually moved lineages. */
+    CHECK(up > 0);
+
+    /* The exact identity. `rounds` is read from the stop line
+     * "... (E epoch(s), R exchange round(s))". */
+    REQUIRE(rounds > 0);
+    CHECK(up == rounds / 2);
+
+    /* Whole-run mixing profile: with K=2 and every swap accepted, both slots
+     * are visited by both walkers. */
+    CHECK(log.find("ANNEAL_PT distinct walkers per slot over the whole run "
+                   "(2 = fully mixed):") != std::string::npos);
+    /* ...so the single-walker severance WARNING must NOT fire. */
+    CHECK(log.find("was occupied by a single walker for the entire run")
+          == std::string::npos);
+}
+
+TEST_CASE("ANNEAL_PT: a severed ladder is reported, not just tabulated",
+          "[HPO][anneal_pt][log][flow]")
+{
+    using namespace tadah::hpo;
+
+    /* Same K=2 geometry, but now exchanges must never be accepted, so no
+     * lineage ever reaches the opposite extreme. Two ingredients:
+     *   - a strictly slot-dependent objective, so cold_loss != hot_loss and
+     *     the equal-loss short circuit cannot fire;
+     *   - T_COLD far below the loss scale, so the Metropolis factor for the
+     *     uphill direction underflows.
+     * The replicas then anneal independently -- which is exactly the
+     * condition run22 was in for 21 hours without any message saying so. */
+    auto sp = make_pt_spec({-1.0e4, -1.0e4}, {1.0e4, 1.0e4});
+    set_seed_point(sp, {5.0e3, 5.0e3});
+    sp.seed = 99;
+    sp.num_threads = 1;
+    sp.param["REPLICAS"] = 2.0;
+    sp.param["T_COLD"] = 1e-300;
+    sp.param["T_HOT"]  = 1e-297;
+    sp.param["L"] = 2.0;
+    sp.param["SWAP_EVERY"] = 1.0;
+    sp.param["STEP_FRAC"] = 1e-6;   /* stay put: keep the two losses apart */
+    /* transport_window = 100*(K-1) = 100 exchange rounds; run past it. */
+    sp.stop.maxeval = 2 + 130 * 2 * 2;
+
+    LoggedRun lr;
+    MtStubHost stub{[](const Vec& x) { return x(0) * x(0) + x(1) * x(1); },
+                    {}, {}};
+    run_anneal_pt_impl<Vec>(sp, stub);
+    const std::string log = lr.read();
+
+    /* The windowed report exists and names its own window length. */
+    CHECK(log.find("ANNEAL_PT ladder transport (last 100 exchange round(s)):")
+          != std::string::npos);
+    /* Zero transport over a measured window is a structural failure of the
+     * method, so it must be a WARNING -- not a HINT, and not merely a table
+     * the reader is expected to notice. */
+    CHECK(log.find("WARNING") != std::string::npos);
+    CHECK(log.find("no ladder traversal in the last 100 exchange round(s)")
+          != std::string::npos);
+    /* The message must say why the per-pair acceptance table cannot be used
+     * as the diagnostic instead -- that confusion is what cost run22 21 h. */
+    CHECK(log.find("adaptive ladder equalises acceptance") != std::string::npos);
+    /* Cumulative counters agree with the window. */
+    CHECK(log.find("traversals cold->hot=0  hot->cold=0") != std::string::npos);
+    CHECK(log.find("0 round trips -- the ladder never communicated end to end")
           != std::string::npos);
 }
 

@@ -289,7 +289,7 @@ template<typename Vec, typename HostT>
             max_eval_global == HUGE_UNSIGNED ? 0 : max_eval_global);
     }
     /* Pinned-dim audit (single-process, rank-local marks -- see PT). */
-    if (world == 1 && kb.corana)
+    if (world == 1)
       HPOLog::instance().arm_pin_audit(
           sp, kb.v_floor_frac, static_cast<int>(R), "T-step");
 
@@ -616,7 +616,7 @@ template<typename Vec, typename HostT>
       /* Pinned-dim audit refresh: post-sweeps, PRE-resampling (marks
        * follow what each walker's own sweeps did; resampling replaces
        * walkers and simply re-marks/unmarks on the next T-step). */
-      if (world == 1 && kb.corana) {
+      if (world == 1) {
         ++pin_unit;
         for (std::size_t li = 0; li < n_local; ++li)
           HPOLog::instance().record_pin_state(

@@ -1417,13 +1417,37 @@ void HPOTargets::read(const std::string& fn)
                 failprobe_svar = probe.n_outvar.front();
             }
             else if (key=="QFLUSH")   { iss>>QFLUSH_THRESHOLD; }
-            else if (key=="OUTPUT")   { iss>>outputEvery; }
-            else if (key=="BOUTPUT")  { iss>>bestOutputEvery; }
+            /* D14: these are moduli (`iter % every`), so 0 is an integer
+             * division by zero -- SIGFPE on the first evaluation, with no
+             * message. "0" is also the spelling a user naturally reaches for
+             * to mean "do not write these files", which makes it a trap
+             * rather than a typo. Reject it at the parse site, where the
+             * line number is still known, in the same shape as DIGITS
+             * below. */
+            else if (key=="OUTPUT")   { iss>>outputEvery;
+                if (!iss || outputEvery < 1)
+                    throw std::runtime_error(
+                        "OUTPUT must be >= 1 (it is a cadence: write every "
+                        "Nth evaluation). To write as little as possible, "
+                        "use a large value such as OUTPUT 1000000."); }
+            else if (key=="BOUTPUT")  { iss>>bestOutputEvery;
+                if (!iss || bestOutputEvery < 1)
+                    throw std::runtime_error(
+                        "BOUTPUT must be >= 1 (it is a cadence: write every "
+                        "Nth new best)."); }
             else if (key=="DIGITS")   { iss>>outputDigits;
                 if (outputDigits < 1 || outputDigits > 15)
                     throw std::runtime_error("DIGITS must be 1-15"); }
-            else if (key=="DUMP")     { iss>>dumpPotEvery>>dumpPotDir;   handle_directory_creation(dumpPotDir); }
-            else if (key=="BDUMP")    { iss>>dumpBestPotEvery>>dumpBestPotDir; handle_directory_creation(dumpBestPotDir); }
+            else if (key=="DUMP")     { iss>>dumpPotEvery>>dumpPotDir;
+                if (!iss || dumpPotEvery < 1)
+                    throw std::runtime_error(
+                        "DUMP requires a cadence >= 1 and a directory");
+                handle_directory_creation(dumpPotDir); }
+            else if (key=="BDUMP")    { iss>>dumpBestPotEvery>>dumpBestPotDir;
+                if (!iss || dumpBestPotEvery < 1)
+                    throw std::runtime_error(
+                        "BDUMP requires a cadence >= 1 and a directory");
+                handle_directory_creation(dumpBestPotDir); }
 
             /* loss -------------------------------------------------- */
             else if (key=="LOSS")

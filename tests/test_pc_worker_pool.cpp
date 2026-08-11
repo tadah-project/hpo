@@ -178,3 +178,46 @@ TEST_CASE("pc pool: killing the worker process is contained and respawned",
   const PcTaskResult alive = pool.execute(0, 0, 3, pot, {}, "off");
   CHECK(alive.status == PcTaskStatus::POT_BUILD_FAIL);
 }
+
+TEST_CASE("pc pool: repeated deaths throttle a channel, they do not retire it",
+          "[pc_pool][kill][backoff]") {
+  /* D1. spawn_locked used to THROW once a channel reached
+   * PC_MAX_CONSEC_DEATHS. Because execute() only respawns when fd < 0 --
+   * exactly the state a dead channel is left in -- and consec_deaths is
+   * reset only after a complete RESULT round trip, that throw was permanent:
+   * the slot could never be revived. It was then swallowed by the eval-thread
+   * catch into a FAIL_SCORE, so a run kept going with one worker slot dead
+   * forever, and (worse) that slot drained the shared task queue faster than
+   * the live ones because it failed before doing any work.
+   *
+   * A sub-millisecond worker timeout makes EVERY task deadline-expire
+   * deterministically -- deadline_ms_for returns worker_timeout_s * 1000, so
+   * 5e-4 s truncates to a 0 ms RESULT deadline -- while the HELLO_ACK
+   * handshake keeps its own fixed 60 s wait, so every respawn still
+   * succeeds. Each execute() therefore costs one death. */
+  PcWorkerPool pool(1, specs_for(1, minimal_spec()), 0.0005);
+  const auto pot = invalid_pot_map();
+
+  for (int i = 0; i < PcWorkerPool::PC_MAX_CONSEC_DEATHS; ++i) {
+    const PcTaskResult r = pool.execute(0, 0, static_cast<std::uint64_t>(i),
+                                        pot, {}, "off");
+    CHECK(r.status == PcTaskStatus::KILLED);
+  }
+
+  /* The task that used to throw. It must complete normally -- slower (the
+   * respawn is throttled by PC_RESPAWN_BACKOFF_MS), but a task, not an
+   * exception. */
+  PcTaskResult after;
+  CHECK_NOTHROW(after = pool.execute(
+      0, 0, static_cast<std::uint64_t>(PcWorkerPool::PC_MAX_CONSEC_DEATHS),
+      pot, {}, "off"));
+  CHECK(after.status == PcTaskStatus::KILLED);
+  CHECK_FALSE(after.error_msg.empty());
+
+  /* And the channel is genuinely alive afterwards, not merely non-throwing:
+   * with a workable deadline the very next task completes a full round trip.
+   * (A retired channel would fail here regardless of the deadline.) */
+  PcWorkerPool healthy(1, specs_for(1, minimal_spec()), 0.0);
+  CHECK(healthy.execute(0, 0, 0, pot, {}, "off").status ==
+        PcTaskStatus::POT_BUILD_FAIL);
+}

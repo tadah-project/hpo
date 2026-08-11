@@ -21,6 +21,7 @@
 #include <tadah/mlip/analytics/dphi_dtheta_walk.h>
 #include <fstream>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <thread>
 
@@ -200,6 +201,39 @@ struct Scope {
  * The running-best tracker is per-metric; we keep them as static atomics
  * because the trigger is a thread-shared pre-LAMMPS gate, not a per-host
  * field. */
+namespace header_detail {
+  /* D18: truncated column labels must stay DISTINCT.
+   *
+   * Column titles are cut to max_title_len_ with a trailing '*', which is
+   * fine until two different names share a prefix. run22's best_loss.tadah
+   * carried FIVE colliding labels out of 245 columns -- L(rat_dH_P50*) was
+   * both rat_dH_P50_4157 and rat_dH_P500_4157, and likewise for four
+   * pen_fcc_P<n> pairs -- so any parser keyed by column name silently read
+   * the wrong series. run23's config has eight such prefix clashes.
+   *
+   * Collisions are resolved by replacing the tail with ~2, ~3, ... in first-
+   * appearance order, which keeps the label inside the width budget and
+   * stable for a given config. `seen` must live for one file's header. */
+  inline std::string unique_label(std::string name, std::size_t maxlen,
+                                  std::set<std::string>& seen)
+  {
+    if (maxlen < 4) return name;                 /* nothing sensible to do */
+    if (name.size() > maxlen)
+      name = name.substr(0, maxlen - 1) + "*";
+    if (seen.insert(name).second) return name;
+    for (int n = 2; n < 1000; ++n) {
+      const std::string sfx = "~" + std::to_string(n);
+      const std::string base =
+          name.size() + sfx.size() > maxlen
+              ? name.substr(0, maxlen - sfx.size())
+              : name;
+      const std::string cand = base + sfx;
+      if (seen.insert(cand).second) return cand;
+    }
+    return name;   /* unreachable in practice */
+  }
+}  // namespace header_detail
+
 namespace bad_pot_detail {
   /* One running best per metric. infinity = nothing seen yet. */
   inline std::atomic<double>& best_for(const char* tag) {
@@ -245,6 +279,15 @@ void HPO_Host<P,R>::init_loss(const std::string& fn) const
   std::ofstream f(fn);
 
   f << std::left << std::setw(iter_cw_) << "#ITERATION" << std::right;
+  /* D19: which replica produced this row. Under ANNEAL_PT/PA every
+   * evaluation belongs to a slot, and without this column a row cannot
+   * be attributed to one -- run22 wrote 2.5 GB of rows in which a
+   * TOTAL_LOSS/N of 4.1e5 (a hot replica's rejected proposal) was
+   * indistinguishable from a cold-chain result. Costs nothing to carry:
+   * the driver already sets warmstart::current_chain() to the global
+   * slot and every eval picks it up as Result::chain_id. 0 for serial,
+   * NLOPT and dlib runs. */
+  f << std::setw(slot_cw_) << "SLOT";
   if (trg_.use_emae) {
     for (std::size_t i = 1; i <= n_val_datasets_; ++i)
       f << std::setw(cw_) << ("L(EMAE)[" + std::to_string(i) + "]");
@@ -276,23 +319,22 @@ void HPO_Host<P,R>::init_loss(const std::string& fn) const
     f << std::setw(cw_) << "L(SRMSE)[avg]";
   }
 
+  std::set<std::string> seen_loss;   /* D18: keep truncated titles distinct */
   for (const auto &lsim : trg_.LS) {
-    for (auto varname : lsim.n_varloss) {
-      if (varname.size() > max_title_len_)
-        varname = varname.substr(0, max_title_len_ - 1) + "*";
-      f << std::setw(cw_) << "L("+varname+")";
-    }
+    for (const auto &varname : lsim.n_varloss)
+      f << std::setw(cw_)
+        << "L(" + header_detail::unique_label(varname, max_title_len_,
+                                              seen_loss) + ")";
   }
 
   /* PC_OBSERVABLE columns: one L(<kind>[k]) per observable. The k
    * index disambiguates multiple entries of the same kind (e.g. two
    * cohesive_energy observables for different species). */
   for (std::size_t k = 0; k < trg_.observables.size(); ++k) {
-    std::string label = "L(" + trg_.observables[k]->kind() + "["
-                      + std::to_string(k) + "])";
-    if (label.size() > max_title_len_)
-      label = label.substr(0, max_title_len_ - 1) + "*";
-    f << std::setw(cw_) << label;
+    const std::string label = "L(" + trg_.observables[k]->kind() + "["
+                            + std::to_string(k) + "])";
+    f << std::setw(cw_)
+      << header_detail::unique_label(label, max_title_len_, seen_loss);
   }
 
   f << std::setw(cw_) << "TOTAL_LOSS/N" << std::endl;
@@ -305,6 +347,7 @@ void HPO_Host<P,R>::init_outvar(const std::string& fn) const
 
   f << std::left << std::setw(iter_cw_) << "#ITERATION";
   f << std::setw(ittime_cw_) << "IT-TIME/ms" << std::right;
+  f << std::setw(slot_cw_) << "SLOT";
   if (trg_.use_emae)
     f << std::setw(cw_) << "EMAE";
   if (trg_.use_ermse)
@@ -318,21 +361,18 @@ void HPO_Host<P,R>::init_outvar(const std::string& fn) const
   if (trg_.use_srmse)
     f << std::setw(cw_) << "SRMSE";
 
+  std::set<std::string> seen_outvar;   /* D18 */
   for (const auto &lsim : trg_.LS) {
-    for (auto n_outvar : lsim.n_outvar) {
-      if (n_outvar.size() > max_title_len_) {
-        n_outvar = n_outvar.substr(0, max_title_len_ - 1) + "*";
-      }
-      f << std::setw(cw_) << n_outvar;
-    }
+    for (const auto &n_outvar : lsim.n_outvar)
+      f << std::setw(cw_)
+        << header_detail::unique_label(n_outvar, max_title_len_, seen_outvar);
   }
   /* PC_OBSERVABLE values: <kind>[k] for each observable. */
   for (std::size_t k = 0; k < trg_.observables.size(); ++k) {
-    std::string label = trg_.observables[k]->kind() + "["
-                      + std::to_string(k) + "]";
-    if (label.size() > max_title_len_)
-      label = label.substr(0, max_title_len_ - 1) + "*";
-    f << std::setw(cw_) << label;
+    const std::string label = trg_.observables[k]->kind() + "["
+                            + std::to_string(k) + "]";
+    f << std::setw(cw_)
+      << header_detail::unique_label(label, max_title_len_, seen_outvar);
   }
   f << std::endl;
 }
@@ -343,16 +383,33 @@ void HPO_Host<P,R>::init_params(const std::string& fn) const
 
   std::ofstream f(fn);
   f << std::left << std::setw(iter_cw_) << "#ITERATION" << std::right;
+  f << std::setw(slot_cw_) << "SLOT";
 
-  for (const auto &p : trg_.optimap) {
-    for (size_t i = 0; i < p.second.opt.size(); ++i) {
-      if (p.second.opt[i]) {
-        std::string name = p.first;
-        if (name.size() > max_title_len_)
-          name = name.substr(0, max_title_len_ - 1) + "*";
-        f << std::setw(cw_) << name;
+  /* D18: label every column with its INDEX, not just its family name.
+   * This used to print the bare key, so a 16-element family produced 16
+   * identical "AMPGRIDMB" headings and a 174-column params.tadah could not
+   * be read by name at all. param_labels_ already carries the indexed form
+   * (built above from the same optimap traversal, so the order matches
+   * exactly) and is what print_params_line's values correspond to. */
+  std::set<std::string> seen_params;
+  for (const auto &lbl : param_labels_) {
+    /* Keep the INDEX when the label does not fit -- it is the part that
+     * distinguishes the columns. Plain truncation would cut "AMPGRIDMB[12]"
+     * down to "AMPGRIDMB[*" for every member of the family, leaving the
+     * collision resolver to number them ~2, ~3, ... which is unique but
+     * says nothing. Compressing the family name instead gives
+     * "AMPGRID*[12]": still unambiguous, and still readable as index 12. */
+    std::string shown = lbl;
+    if (shown.size() > max_title_len_) {
+      const std::size_t br = shown.rfind('[');
+      if (br != std::string::npos && br > 0) {
+        const std::string idx = shown.substr(br);          /* "[12]" */
+        if (idx.size() + 2 <= max_title_len_)
+          shown = shown.substr(0, max_title_len_ - idx.size() - 1) + "*" + idx;
       }
     }
+    f << std::setw(cw_)
+      << header_detail::unique_label(shown, max_title_len_, seen_params);
   }
   f << std::endl;
 }
@@ -362,18 +419,17 @@ void HPO_Host<P,R>::init_stats(const std::string& fn) const
 {
   std::ofstream f(fn);
   f << std::left << std::setw(iter_cw_) << "#ITERATION" << std::right;
+  f << std::setw(slot_cw_) << "SLOT";
 
+  std::set<std::string> seen_stats;   /* D18 */
   auto write_header = [&](const std::string& label) {
-    for (std::size_t i = 1; i <= n_val_datasets_; ++i) {
-      std::string col = label + "[" + std::to_string(i) + "]";
-      if (col.size() > max_title_len_)
-        col = col.substr(0, max_title_len_ - 1) + "*";
-      f << std::setw(cw_) << col;
-    }
-    std::string avg_col = label + "[avg]";
-    if (avg_col.size() > max_title_len_)
-      avg_col = avg_col.substr(0, max_title_len_ - 1) + "*";
-    f << std::setw(cw_) << avg_col;
+    for (std::size_t i = 1; i <= n_val_datasets_; ++i)
+      f << std::setw(cw_)
+        << header_detail::unique_label(label + "[" + std::to_string(i) + "]",
+                                       max_title_len_, seen_stats);
+    f << std::setw(cw_)
+      << header_detail::unique_label(label + "[avg]", max_title_len_,
+                                     seen_stats);
   };
 
   if (trg_.use_emae)   write_header("EMAE");
@@ -383,6 +439,23 @@ void HPO_Host<P,R>::init_stats(const std::string& fn) const
   if (trg_.use_frmse)  write_header("FRMSE");
   if (trg_.use_srmse)  write_header("SRMSE");
   f << std::endl;
+  /* D18: say so when there is nothing to say. With no training/validation
+   * database no per-structure metric is active, so this file used to be a
+   * lone "#ITERATION" heading followed by one bare integer per evaluation
+   * -- 2.9 MB of stats.tadah and 1.7 MB of best_stats.tadah in run22,
+   * carrying no statistics at all and looking like a truncated file. The
+   * rows are suppressed in print_stats_line; this records why. */
+  if (!stats_have_columns())
+    f << "# (no per-structure statistics: this run has no training or "
+         "validation database, so no metric columns exist)\n";
+}
+
+/* True when at least one per-structure metric column exists. */
+template<class P,class R>
+bool HPO_Host<P,R>::stats_have_columns() const
+{
+  return trg_.use_emae || trg_.use_ermse || trg_.use_errmse ||
+         trg_.use_ersq || trg_.use_frmse || trg_.use_srmse;
 }
 
 /* ----------  line printers (append) ---------------------------------- */
@@ -393,7 +466,8 @@ void HPO_Host<P,R>::print_loss_line(std::ofstream& f, size_t it,const Result& e,
                                     std::size_t cw,int prec)
 {
     f << std::left << std::setw(iter_cw_) << it;
-    f << std::right << std::scientific << std::setprecision(prec);
+    f << std::right << std::setw(slot_cw_) << e.chain_id;   /* D19 */
+    f << std::scientific << std::setprecision(prec);
 
     auto write_loss_metric = [&](bool used, const std::vector<double>& per_ds, double avg) {
       if (!used) return;
@@ -430,6 +504,7 @@ void HPO_Host<P,R>::print_outvar_line(std::ofstream& f,size_t it,const Result& e
 {
     f << std::left << std::setw(iter_cw_) << it;
     f << std::left << std::setw(ittime_cw_) << e.wall_ms.count();
+    f << std::right << std::setw(slot_cw_) << e.chain_id;   /* D19 */
 
     if(trg.use_emae)   f<<std::right<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.emae;
     if(trg.use_ermse)  f<<std::right<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.ermse;
@@ -466,6 +541,7 @@ void HPO_Host<P,R>::print_params_line(std::ofstream& f,size_t it,const Result& e
                                       std::size_t cw,int prec)
 {
   f << std::left << std::setw(iter_cw_) << it;
+  f << std::right << std::setw(slot_cw_) << e.chain_id;   /* D19 */
 
   for(long i=0;i<e.params.size();++i)
   {
@@ -482,8 +558,17 @@ void HPO_Host<P,R>::print_stats_line(std::ofstream& f, size_t it, const Result& 
                                      const HPOTargets& trg,
                                      std::size_t cw, int prec)
 {
+  /* D18: with no metric enabled this row would be a bare iteration number
+   * and nothing else -- run22 accumulated 4.6 MB of exactly that across
+   * stats.tadah and best_stats.tadah. The header explains the emptiness
+   * once; repeating an empty row per evaluation says nothing. */
+  if (!(trg.use_emae || trg.use_ermse || trg.use_errmse ||
+        trg.use_ersq || trg.use_frmse || trg.use_srmse))
+    return;
+
   f << std::left << std::setw(iter_cw_) << it;
-  f << std::right << std::scientific << std::setprecision(prec);
+  f << std::right << std::setw(slot_cw_) << e.chain_id;   /* D19 */
+  f << std::scientific << std::setprecision(prec);
 
   auto write_metric = [&](const std::vector<double>& per_ds, double avg) {
     for (double v : per_ds) f << std::setw(cw) << v;
@@ -1224,6 +1309,42 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
 
     bool fail = (tres.status != PcTaskStatus::OK);
 
+    /* D5: never index a wire-supplied vector on trust.
+     *
+     * The outvar and hot-var loops below are bounded by the HOST's spec
+     * (lsim.n_outvar.size(), lsim.hotvars.size()) but read from vectors the
+     * WORKER produced. Under PC_ISOLATION PROCESS -- the default -- those
+     * arrive decoded from a socket with no arity check on either side, so a
+     * short vector is an out-of-bounds operator[]: plain undefined
+     * behaviour, and specifically NOT caught by the try/catch around the
+     * hot-var block, which only guards std::stod. The arities match by
+     * construction today (both sides build from the same spec table), so
+     * this can only fire on frame corruption or a version-skewed worker
+     * binary -- exactly the cases where UB is least acceptable and, because
+     * error_msg was discarded at the socket boundary, least visible.
+     *
+     * One check covers both loops: marking the task failed sends the outvar
+     * loop down its failscore branch and skips the hot-var block entirely
+     * (it is already inside `if (!fail)`). Deliberately NOT done by
+     * shortening the loops to the received length -- that would silently
+     * skip hot-var range validation and let the cold phase run against a
+     * stale warm-start value, turning a detectable protocol fault into a
+     * wrong-but-finite loss. record_infra() is the same band-C grading the
+     * CREATE_FAIL path uses: infrastructure, not physics. */
+    if (!fail &&
+        (tres.outvar_values.size() < lsim.n_outvar.size() ||
+         tres.hotvar_values.size() < lsim.hotvars.size())) {
+      fail = true;
+      if (fg_on) fail_state.record_infra();
+      HPOLog::instance().warning(
+          "pc-worker returned a short result for " + lsim.script + ": "
+          + std::to_string(tres.outvar_values.size()) + "/"
+          + std::to_string(lsim.n_outvar.size()) + " outvars, "
+          + std::to_string(tres.hotvar_values.size()) + "/"
+          + std::to_string(lsim.hotvars.size())
+          + " hotvars -- treating the task as failed (protocol desync)");
+    }
+
     /* Graded-FAILSCORE Tier 2: a declared failvar > 0 means the sim
      * completed but vouches AGAINST itself -- classify band B, grade by
      * scale*value, and treat the sim as failed (outvars excluded from the
@@ -1275,6 +1396,31 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
         }
         default: break;
       }
+    }
+
+    /* D17: say WHY the task failed.
+     *
+     * error_msg is filled on every worker-side failure path, marshalled
+     * across the socket, and was then read by nobody -- so a POT_BUILD_FAIL
+     * or an in-worker exception produced a graded loss with its cause
+     * discarded at the process boundary, leaving only a number. Only the
+     * statuses whose text originates in the WORKER are surfaced here:
+     * KILLED carries the parent's own reason, which kill_reap_locked has
+     * already journaled, and repeating it would double every death.
+     *
+     * Rate-limited on powers of two: a systematically broken potential
+     * fails identically on every script of every eval, and the first few
+     * occurrences carry all the information. */
+    if ((tres.status == PcTaskStatus::POT_BUILD_FAIL ||
+         tres.status == PcTaskStatus::RUN_FAIL) &&
+        !tres.error_msg.empty()) {
+      static std::atomic<std::size_t> n_worker_err{0};
+      const std::size_t n = n_worker_err.fetch_add(1,
+                                                   std::memory_order_relaxed) + 1;
+      if ((n & (n - 1)) == 0)
+        HPOLog::instance().warning(
+            "pc-worker task failed (" + lsim.script + ", occurrence "
+            + std::to_string(n) + "): " + tres.error_msg);
     }
 
     for (std::size_t j = 0; j < lsim.n_outvar.size(); ++j) {
@@ -1350,7 +1496,20 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
 
     /* Always record per-script busy time (a couple of clock reads, ~30 ns,
      * invisible vs ms-scale LAMMPS) so the fan-out diagnostic works without
-     * TADAH_HPO_BENCH. The detailed CSV stays gated below. */
+     * TADAH_HPO_BENCH. The detailed CSV stays gated below.
+     *
+     * D10: a FAILED task that reports no time at all did not cost zero -- it
+     * failed before anything could be measured (the worker-exception path
+     * returns a default-constructed result). Feeding that 0 into the EWMA
+     * would halve this script's estimated cost and, via the
+     * longest-processing-time sort, dispatch the problem script LATER; it
+     * would also drag fanout_min_ms to 0 and put "fastest 0 ms" in the
+     * journal. Leave per_script_busy at -1 -- "did not run" -- exactly as
+     * the CREATE_FAIL path above already does. Deadline kills DO carry a
+     * measured elapsed time now (see PcWorkerPool::execute) and are
+     * therefore recorded normally, which is the point: the script that hung
+     * must sort FIRST. */
+    if (fail && tres.create_ms + tres.run_ms <= 0.0) return true;
     per_script_busy[i] = tres.create_ms + tres.run_ms;
     /* Stage 1b.1: fold this script's cost into its EWMA (alpha=0.3) so the
      * next eval's LPT sort dispatches it earliest if it is slow. First
@@ -1928,6 +2087,35 @@ double HPO_Host<P,R>::operator()(const P& p) const
         HPOLog::instance().warning(msg);
     };
 
+    /* D3: every evaluation that consumed an iter slot must reach the
+     * journal's census, including the ones that leave through a catch.
+     *
+     * record_eval() used to be called only on the success path, from inside
+     * the try below. n_eval_ is what drives the milestone SUMMARY schedule,
+     * so a run whose evaluations all took an exception path stopped
+     * producing SUMMARY lines entirely -- it read as FROZEN rather than as
+     * FAILING, which is the worst possible presentation of a failure. Worse,
+     * "NaN rate" stayed pinned at whatever it was, because n_nan_ is
+     * incremented in the same place.
+     *
+     * An RAII census closes every exit at once, including the three catches
+     * that rethrow, without duplicating the call five times. `census_done`
+     * is set by the normal path so the success case still records exactly
+     * once, with its own precise wall time. */
+    struct EvalCensus {
+        std::size_t iter;
+        std::chrono::high_resolution_clock::time_point t0;
+        bool  nan  = false;
+        bool  done = false;
+        ~EvalCensus() {
+            if (done) return;
+            const double ms = static_cast<double>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::high_resolution_clock::now() - t0).count());
+            HPOLog::instance().record_eval(iter, ms, nan);
+        }
+    } _census{r.iter, t0, false, false};
+
     /* Bug 5: wrap the entire eval pipeline in try/catch.
      *
      * Without this guard, a throw between `r.iter = ++g_iter_` above
@@ -2193,9 +2381,26 @@ double HPO_Host<P,R>::operator()(const P& p) const
       const durable_best::Key key{
           r.loss, r.source_rank, r.chain_id, r.iter};
       const double cur = g_best_.load(std::memory_order_relaxed);
-      const bool lower_loss = r.loss < cur;
+      /* D2: a failure is never an achievement.
+       *
+       * Every comparison below is against g_best_, which starts at DBL_MAX.
+       * A NaN loses all of them and so could never win, but a FAILURE is
+       * finite by construction -- with FAILSCORE_GRADING the reserved band
+       * is [0.999*FS, FS), e.g. ~9.9975e+08 for FAILSCORE 1e9 -- and beats
+       * DBL_MAX comfortably. So a run whose first completed evaluation
+       * failed (a bad WARM seed, a cold worker tripping its deadline) used
+       * to publish that failure: best_pot.tadah written with
+       * HPO_BEST_LOSS 9.997e+08, its empty HOT set promoted as the warm-start
+       * baseline, and "BEST * eval=1" in the journal. If no feasible
+       * evaluation ever arrived, that artifact is what the user collected.
+       *
+       * Neither layer below catches it: durable_best::publish_if_better and
+       * HPOLog::log_new_best both test only isfinite(). Gate here, at the
+       * decision, using the band predicate that owns the contract. */
+      const bool feasible = loss_is_feasible(r.loss, trg_.FAIL_SCORE);
+      const bool lower_loss = feasible && r.loss < cur;
       const bool tied_compound_winner =
-          r.loss == cur && g_best_key_ &&
+          feasible && r.loss == cur && g_best_key_ &&
           durable_best::precedes(key, *g_best_key_);
       /* A legacy checkpoint can carry g_best without the newer compound key.
        * Its equal-loss candidate is allowed through once; durable publication
@@ -2262,6 +2467,10 @@ double HPO_Host<P,R>::operator()(const P& p) const
     const double      save_wall_ms = static_cast<double>(r.wall_ms.count());
     const bool        save_best    = r.is_best;
     const bool        save_nan     = r.was_nan_clamped;
+    /* D4: the graded-failure band of this eval. Disjoint from save_nan --
+     * a killed worker or a failed script yields a finite failscore, so it
+     * never trips the NaN path. Worst band wins within the eval. */
+    const int         save_fail_band = r.fail.band;
     const double      save_emae    = r.emae,   save_ermse  = r.ermse;
     const double      save_errmse  = r.errmse, save_frmse  = r.frmse;
     const double      save_srmse   = r.srmse;
@@ -2393,6 +2602,8 @@ double HPO_Host<P,R>::operator()(const P& p) const
     stage_watchdog::Scope<decltype(_stage_log)> _sg_journal(save_iter, "journal_log", _stage_log);
     auto& log = HPOLog::instance();
     log.record_eval(save_iter, save_wall_ms, save_nan);
+    _census.done = true;   /* counted here, with the exact measured wall */
+    log.record_fail_band(save_fail_band);
     log.record_fanout(save_fo_busy,
                       save_fo_nsc, save_fo_min, save_fo_max, save_fo_slow);
 
@@ -2432,6 +2643,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
          * but by then per-eval logs are lost). */
         r.loss = trg_.FAIL_SCORE;
         r.was_nan_clamped = true;
+        _census.nan = true;      /* D3: this eval still counts, as a NaN */
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
         try {
@@ -2529,6 +2741,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
          * cursor can advance past this iter. */
         r.loss = trg_.FAIL_SCORE;
         r.was_nan_clamped = true;
+        _census.nan = true;      /* D3: this eval still counts, as a NaN */
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
         try {
@@ -2561,6 +2774,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
         /* Same path for non-std::exception throws. */
         r.loss = trg_.FAIL_SCORE;
         r.was_nan_clamped = true;
+        _census.nan = true;      /* D3: this eval still counts, as a NaN */
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
         try {
@@ -2691,7 +2905,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
 
         /* ---- new best logs ------------------------------------------ */
         if(e.is_best) {
-          if(trg.bestOutputEvery > 0) {
+          if(e.best_iter % trg.bestOutputEvery == 0) {
             print_loss_line  (best_f      , e.best_iter, e, trg, cw, prec);
             print_outvar_line(best_outv_f , e.best_iter, e, trg, cw, prec);
             print_params_line(best_par_f  , e.best_iter, e,      cw, prec);
@@ -2843,7 +3057,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                                 print_stats_line (stats_f, e.iter, e, trg, cw, prec);
                             }
                             if (e.is_best) {
-                                if (trg.bestOutputEvery > 0) {
+                                if (e.best_iter % trg.bestOutputEvery == 0) {
                                     print_loss_line  (best_f      , e.best_iter, e, trg, cw, prec);
                                     print_outvar_line(best_outv_f , e.best_iter, e, trg, cw, prec);
                                     print_params_line(best_par_f  , e.best_iter, e,      cw, prec);
@@ -3376,7 +3590,7 @@ void HPO_Host<P,R>::flush_remaining() const
                 print_params_line(par_f  , e.iter, e,       cw_, prec_);
                 print_stats_line (stats_f, e.iter, e, trg_, cw_, prec_);
             }
-            if(e.is_best && trg_.bestOutputEvery > 0) {
+            if(e.is_best && e.best_iter % trg_.bestOutputEvery == 0) {
                 print_loss_line  (best_f      , e.best_iter, e, trg_, cw_, prec_);
                 print_outvar_line(best_outv_f , e.best_iter, e, trg_, cw_, prec_);
                 print_params_line(best_par_f  , e.best_iter, e,       cw_, prec_);
