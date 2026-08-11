@@ -528,6 +528,67 @@ TEST_CASE("ANNEAL_PT calibrates a run22-shaped 174-D objective",
     CHECK(log.find("step calibration summary") != std::string::npos);
     CHECK(log.find("adaptive sigma/width geo-mean per slot") !=
           std::string::npos);
+
+    /* The per-slot journal line and hpo_step_scales.tsv are two readers of
+     * one gathered record. They drifted once: D9 inserted a field at offset
+     * 1, the TSV reader was updated and the journal reader was not, so every
+     * run23 slot line printed pilot_attempts=0, pilot_multiplier=0,
+     * pilot_status=ok while the TSV showed 200 / 13.19 / unconverged.
+     * Nothing caught it because the only assertion was that the substring
+     * "step calibration slot=0" existed. Pin the numbers instead. */
+    auto slot_line = [&](std::size_t slot) {
+        const std::string key =
+            "step calibration slot=" + std::to_string(slot) + "  ";
+        const auto at = log.find(key);
+        REQUIRE(at != std::string::npos);
+        return log.substr(at, log.find('\n', at) - at);
+    };
+    auto field = [](const std::string& line, const char* name) {
+        const std::string key = std::string("  ") + name + "=";
+        const auto at = line.find(key);
+        REQUIRE(at != std::string::npos);
+        const auto from = at + key.size();
+        auto to = line.find(' ', from);
+        if (to == std::string::npos) to = line.size();
+        std::string tok = line.substr(from, to - from);
+        if (!tok.empty() && tok.back() == '%') tok.pop_back();
+        return tok;
+    };
+    std::size_t unresolved_pilots = 0;
+    for (std::size_t slot = 0; slot < 2; ++slot) {
+        const StepScaleRow* any = nullptr;
+        std::size_t attempts = 0, backoffs = 0, unusable = 0;
+        for (const auto& row : rows) if (row.slot == slot) {
+            if (!any) any = &row;
+            /* Slot-wide pilot fields are replicated on every dim record. */
+            CHECK(row.pilot_attempts == any->pilot_attempts);
+            CHECK(row.pilot_status == any->pilot_status);
+            attempts += row.attempts;
+            backoffs += row.backoffs;
+            unusable += row.unusable;
+        }
+        REQUIRE(any != nullptr);
+        if (any->pilot_status != "ok") ++unresolved_pilots;
+        const std::string line = slot_line(slot);
+        CHECK(std::stoul(field(line, "coordinate_attempts")) == attempts);
+        CHECK(std::stoul(field(line, "coordinate_backoffs")) == backoffs);
+        CHECK(std::stoul(field(line, "coordinate_unusable")) == unusable);
+        CHECK(std::stoul(field(line, "pilot_attempts")) == any->pilot_attempts);
+        CHECK(std::stoul(field(line, "pilot_backoffs")) == any->pilot_backoffs);
+        CHECK(field(line, "pilot_status") == any->pilot_status);
+        CHECK(std::stod(field(line, "pilot_multiplier")) ==
+              Approx(any->pilot_multiplier).epsilon(1e-3));
+        CHECK(std::stod(field(line, "pilot_acc")) ==
+              Approx(100.0 * any->pilot_acceptance).margin(0.05));
+        CHECK(std::stod(field(line, "pilot_alpha")) ==
+              Approx(100.0 * any->pilot_mean_alpha).margin(0.05));
+        /* D12: the journal must say which 1.0 this is. */
+        CHECK(line.find(any->pilot_multiplier_moved ? "(moved)"
+                                                    : "(never moved)")
+              != std::string::npos);
+    }
+    CHECK(log.find("unresolved-pilots=" + std::to_string(unresolved_pilots))
+          != std::string::npos);
 }
 
 TEST_CASE("ANNEAL_PT automatic scales are robust to expanded OPTIM support",
@@ -1431,6 +1492,56 @@ TEST_CASE("ANNEAL_PT: ladder flow counts walker lineages with exact arithmetic",
     /* ...so the single-walker severance WARNING must NOT fire. */
     CHECK(log.find("was occupied by a single walker for the entire run")
           == std::string::npos);
+}
+
+TEST_CASE("ANNEAL_PT: a cooperative shutdown still reports the whole run",
+          "[HPO][anneal_pt][log][flow][shutdown]")
+{
+    using namespace tadah::hpo;
+
+    /* SIGINT/SIGTERM/SIGUSR2 surface as core::ShutdownRequested thrown by
+     * HPO_Host::operator() at the next evaluation. That used to unwind
+     * straight out of run_anneal_pt_impl, past every end-of-run table --
+     * so a PT run stopped by the wall clock (the normal fate of a
+     * MAXEVAL sized above the SLURM slot) produced no whole-run mixing
+     * profile, which for a transport study is the entire deliverable.
+     *
+     * The driver now reports first and re-throws after. Both halves are
+     * asserted: the tables must be in the journal AND the exception must
+     * still reach the caller, because hpo_run() writes the SHUTDOWN
+     * trailer and sets the exit status from it. */
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 4244;
+    sp.num_threads = 1;
+    sp.param["REPLICAS"] = 2.0;
+    sp.param["T_COLD"] = 1e-3;
+    sp.param["T_HOT"]  = 1.0;
+    sp.param["L"] = 2.0;
+    sp.param["SWAP_EVERY"] = 1.0;
+    /* Budget far beyond the interrupt, so the ONLY way out is the throw. */
+    sp.stop.maxeval = 1000000;
+
+    LoggedRun lr;
+    std::atomic<int> calls{0};
+    MtStubHost stub{[&calls](const Vec&) -> double {
+        /* Enough epochs for a traversal to be possible before the stop. */
+        if (++calls > 200) throw tadah::core::ShutdownRequested{};
+        return 1.0;
+    }, {}, {}};
+
+    REQUIRE_THROWS_AS(run_anneal_pt_impl<Vec>(sp, stub),
+                      tadah::core::ShutdownRequested);
+
+    const std::string log = lr.read();
+    CHECK(log.find("ANNEAL_PT stopped: external stop requested "
+                   "(SIGINT/SIGTERM/SIGUSR2)") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT distinct walkers per slot over the whole run "
+                   "(2 = fully mixed):") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT ladder flow: traversals cold->hot=")
+          != std::string::npos);
+    /* The counters describe the run that actually happened, not a blank. */
+    CHECK(last_int_before(log, "exchange round(s))") > 0);
 }
 
 TEST_CASE("ANNEAL_PT: a severed ladder is reported, not just tabulated",

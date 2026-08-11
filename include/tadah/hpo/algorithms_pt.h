@@ -1029,9 +1029,14 @@ template<typename Vec, typename HostT>
 
     enum class StopReason {
       Done, MaxEval, MaxTime, StopVal, TMin, Plateau,
-      StopValOnProbe, ExternalOnProbe, MaxTimeOnProbe, NoDims, NoBudget
+      StopValOnProbe, External, ExternalOnProbe, MaxTimeOnProbe,
+      NoDims, NoBudget
     };
     StopReason stop_reason = StopReason::Done;
+    /* Set when the epoch loop unwound on SIGINT/SIGTERM/SIGUSR2 (see the
+     * catch below). The exception is re-thrown after the end-of-run
+     * report so hpo_run() still writes its SHUTDOWN trailer. */
+    bool shutdown_seen = false;
 
     double      T_hot = 0.0, T_cold = 0.0;
     std::size_t epoch_count    = 0;
@@ -1703,35 +1708,55 @@ template<typename Vec, typename HostT>
 
       /* Gather the slot-contiguous records so rank 0 can emit one canonical
        * file even when the ladder is split across MPI ranks. */
-      /* 17 -> 19: + coordinate_scale (D9) and pilot_multiplier_moved (D12). */
-      constexpr std::size_t fields = 19;
+      /* 17 -> 19: + coordinate_scale (D9) and pilot_multiplier_moved (D12).
+       *
+       * The layout is named rather than indexed by literal. D9 inserted
+       * `rc_coord_sigma` at offset 1, shifting everything after it; the
+       * per-dim TSV reader below was updated and the per-slot journal
+       * summary was not, so slot lines printed `pilot_attempts=0`
+       * (coordinate `unusable`), `pilot_multiplier=0` (pilot `backoffs`)
+       * and `pilot_status=ok` (pilot `unusable`) for run23's whole
+       * calibration. Both readers now name the field they want, so the
+       * next insertion cannot desynchronise them. */
+      enum : std::size_t {
+        rc_sigma = 0, rc_coord_sigma, rc_accepted, rc_attempts_val,
+        rc_attempts, rc_backoffs, rc_status, rc_mean_alpha, rc_unusable,
+        rc_pilot_proposed, rc_pilot_accepted, rc_pilot_backoffs,
+        rc_pilot_multiplier, rc_pilot_val_accepted, rc_pilot_val_attempts,
+        rc_pilot_val_mean_alpha, rc_pilot_unusable, rc_pilot_status,
+        rc_pilot_moved, rc_field_count
+      };
+      constexpr std::size_t fields = rc_field_count;
+      static_assert(fields == 19, "step-scale record layout changed");
       std::vector<double> local_records;
       local_records.reserve(n_local * dim * fields);
       for (std::size_t li = 0; li < n_local; ++li) {
         const auto& sc = step_calibration[li];
         for (std::size_t i = 0; i < dim; ++i) {
           const auto& dc = sc.dims[i];
-          local_records.push_back(chains[li].V[i]);
-          local_records.push_back(dc.coordinate_scale);          /* D9 */
-          local_records.push_back(static_cast<double>(dc.validation_accepted));
-          local_records.push_back(static_cast<double>(dc.validation_attempts));
-          local_records.push_back(static_cast<double>(dc.attempts));
-          local_records.push_back(static_cast<double>(dc.backoffs));
-          local_records.push_back(static_cast<double>(dc.status));
-          local_records.push_back(dc.validation_mean_alpha);
-          local_records.push_back(static_cast<double>(dc.unusable));
-          local_records.push_back(static_cast<double>(sc.pilot_proposed));
-          local_records.push_back(static_cast<double>(sc.pilot_accepted));
-          local_records.push_back(static_cast<double>(sc.pilot_backoffs));
-          local_records.push_back(sc.pilot_multiplier);
-          local_records.push_back(
-              static_cast<double>(sc.pilot_validation_accepted));
-          local_records.push_back(
-              static_cast<double>(sc.pilot_validation_attempts));
-          local_records.push_back(sc.pilot_validation_mean_alpha);
-          local_records.push_back(static_cast<double>(sc.pilot_unusable));
-          local_records.push_back(static_cast<double>(sc.pilot_status));
-          local_records.push_back(sc.pilot_multiplier_moved ? 1.0 : 0.0); /* D12 */
+          double rec[fields];
+          rec[rc_sigma]            = chains[li].V[i];
+          rec[rc_coord_sigma]      = dc.coordinate_scale;            /* D9 */
+          rec[rc_accepted]         = static_cast<double>(dc.validation_accepted);
+          rec[rc_attempts_val]     = static_cast<double>(dc.validation_attempts);
+          rec[rc_attempts]         = static_cast<double>(dc.attempts);
+          rec[rc_backoffs]         = static_cast<double>(dc.backoffs);
+          rec[rc_status]           = static_cast<double>(dc.status);
+          rec[rc_mean_alpha]       = dc.validation_mean_alpha;
+          rec[rc_unusable]         = static_cast<double>(dc.unusable);
+          rec[rc_pilot_proposed]   = static_cast<double>(sc.pilot_proposed);
+          rec[rc_pilot_accepted]   = static_cast<double>(sc.pilot_accepted);
+          rec[rc_pilot_backoffs]   = static_cast<double>(sc.pilot_backoffs);
+          rec[rc_pilot_multiplier] = sc.pilot_multiplier;
+          rec[rc_pilot_val_accepted] =
+              static_cast<double>(sc.pilot_validation_accepted);
+          rec[rc_pilot_val_attempts] =
+              static_cast<double>(sc.pilot_validation_attempts);
+          rec[rc_pilot_val_mean_alpha] = sc.pilot_validation_mean_alpha;
+          rec[rc_pilot_unusable]   = static_cast<double>(sc.pilot_unusable);
+          rec[rc_pilot_status]     = static_cast<double>(sc.pilot_status);
+          rec[rc_pilot_moved]      = sc.pilot_multiplier_moved ? 1.0 : 0.0; /* D12 */
+          local_records.insert(local_records.end(), rec, rec + fields);
         }
       }
       std::vector<int> record_counts(static_cast<std::size_t>(world), 0);
@@ -1807,41 +1832,43 @@ template<typename Vec, typename HostT>
           const std::size_t slot_base = k * dim * fields;
           for (std::size_t i = 0; i < dim; ++i) {
             const std::size_t p = slot_base + i * fields;
-            const double sigma = gathered_step_records[p];
-            const double coord_sigma = gathered_step_records[p + 1];
+            const double sigma = gathered_step_records[p + rc_sigma];
+            const double coord_sigma = gathered_step_records[p + rc_coord_sigma];
             const std::size_t accepted = static_cast<std::size_t>(
-                std::llround(gathered_step_records[p + 2]));
+                std::llround(gathered_step_records[p + rc_accepted]));
             const std::size_t validation_attempts = static_cast<std::size_t>(
-                std::llround(gathered_step_records[p + 3]));
+                std::llround(gathered_step_records[p + rc_attempts_val]));
             const std::size_t total_attempts = static_cast<std::size_t>(
-                std::llround(gathered_step_records[p + 4]));
+                std::llround(gathered_step_records[p + rc_attempts]));
             const std::size_t backoffs = static_cast<std::size_t>(
-                std::llround(gathered_step_records[p + 5]));
+                std::llround(gathered_step_records[p + rc_backoffs]));
             const unsigned status = static_cast<unsigned>(
-                std::llround(gathered_step_records[p + 6]));
-            const double mean_alpha = gathered_step_records[p + 7];
+                std::llround(gathered_step_records[p + rc_status]));
+            const double mean_alpha = gathered_step_records[p + rc_mean_alpha];
             const std::size_t unusable = static_cast<std::size_t>(
-                std::llround(gathered_step_records[p + 8]));
+                std::llround(gathered_step_records[p + rc_unusable]));
             const double acceptance = validation_attempts > 0
                 ? static_cast<double>(accepted) / validation_attempts : 0.0;
             const std::size_t pilot_attempts = static_cast<std::size_t>(
-                std::llround(gathered_step_records[p + 9]));
+                std::llround(gathered_step_records[p + rc_pilot_proposed]));
             const std::size_t pilot_backoffs = static_cast<std::size_t>(
-                std::llround(gathered_step_records[p + 11]));
-            const double pilot_multiplier = gathered_step_records[p + 12];
+                std::llround(gathered_step_records[p + rc_pilot_backoffs]));
+            const double pilot_multiplier =
+                gathered_step_records[p + rc_pilot_multiplier];
             const std::size_t pilot_validation_accepted =
                 static_cast<std::size_t>(
-                    std::llround(gathered_step_records[p + 13]));
+                    std::llround(gathered_step_records[p + rc_pilot_val_accepted]));
             const std::size_t pilot_validation_attempts =
                 static_cast<std::size_t>(
-                    std::llround(gathered_step_records[p + 14]));
-            const double pilot_mean_alpha = gathered_step_records[p + 15];
+                    std::llround(gathered_step_records[p + rc_pilot_val_attempts]));
+            const double pilot_mean_alpha =
+                gathered_step_records[p + rc_pilot_val_mean_alpha];
             const std::size_t pilot_unusable = static_cast<std::size_t>(
-                std::llround(gathered_step_records[p + 16]));
+                std::llround(gathered_step_records[p + rc_pilot_unusable]));
             const unsigned pilot_status = static_cast<unsigned>(
-                std::llround(gathered_step_records[p + 17]));
+                std::llround(gathered_step_records[p + rc_pilot_status]));
             const bool pilot_moved =
-                gathered_step_records[p + 18] != 0.0;
+                gathered_step_records[p + rc_pilot_moved] != 0.0;
             const double pilot_acceptance = pilot_validation_attempts > 0
                 ? static_cast<double>(pilot_validation_accepted) /
                       pilot_validation_attempts
@@ -1885,25 +1912,29 @@ template<typename Vec, typename HostT>
                             pt_detail::StepSupportCapped)))
               ++unexplained_dimensions;
           }
+          /* Slot-wide pilot fields are replicated across every dim record,
+           * so dim 0 carries them. Named offsets: see the layout enum. */
           const std::size_t pilot_attempts = dim > 0
               ? static_cast<std::size_t>(std::llround(
-                    gathered_step_records[slot_base + 8])) : 0;
+                    gathered_step_records[slot_base + rc_pilot_proposed])) : 0;
           const std::size_t pilot_backoffs = dim > 0
               ? static_cast<std::size_t>(std::llround(
-                    gathered_step_records[slot_base + 10])) : 0;
+                    gathered_step_records[slot_base + rc_pilot_backoffs])) : 0;
           const double pilot_multiplier = dim > 0
-              ? gathered_step_records[slot_base + 11] : 1.0;
+              ? gathered_step_records[slot_base + rc_pilot_multiplier] : 1.0;
+          const bool pilot_moved = dim > 0 &&
+              gathered_step_records[slot_base + rc_pilot_moved] != 0.0;
           const std::size_t pilot_accepted = dim > 0
               ? static_cast<std::size_t>(std::llround(
-                    gathered_step_records[slot_base + 12])) : 0;
+                    gathered_step_records[slot_base + rc_pilot_val_accepted])) : 0;
           const std::size_t pilot_validation_attempts = dim > 0
               ? static_cast<std::size_t>(std::llround(
-                    gathered_step_records[slot_base + 13])) : 0;
+                    gathered_step_records[slot_base + rc_pilot_val_attempts])) : 0;
           const double pilot_mean_alpha = dim > 0
-              ? gathered_step_records[slot_base + 14] : 0.0;
+              ? gathered_step_records[slot_base + rc_pilot_val_mean_alpha] : 0.0;
           const unsigned pilot_status = dim > 0
               ? static_cast<unsigned>(std::llround(
-                    gathered_step_records[slot_base + 16]))
+                    gathered_step_records[slot_base + rc_pilot_status]))
               : pt_detail::StepOk;
           if (pilot_status & pt_detail::StepUnconverged) ++unresolved_pilots;
           std::ostringstream diag;
@@ -1932,6 +1963,10 @@ template<typename Vec, typename HostT>
                << "  pilot_backoffs=" << pilot_backoffs
                << "  pilot_multiplier=" << std::scientific
                << std::setprecision(3) << pilot_multiplier
+               /* D12: 1.0 from "the controller converged there" reads the
+                * same as 1.0 from "the controller never moved". Only the
+                * TSV carried the distinction; the journal does now too. */
+               << (pilot_moved ? " (moved)" : " (never moved)")
                << "  pilot_status=" << status_text(pilot_status)
                << "  sigma=[" << sigma_min << ", " << sigma_max << "]";
           HPOLog::instance().info(diag.str());
@@ -2058,6 +2093,22 @@ template<typename Vec, typename HostT>
        * mode (RT < 1), the ladder's cooling bound on the hot end.
        * 0 = unbounded (pure PT with no MAXEVAL) -> plain counter. */
       std::size_t planned_epochs = 0;
+      /* Cooperative shutdown must not cost the run its own diagnostics.
+       * HPO_Host::operator() throws ShutdownRequested at the next eval,
+       * and that used to unwind straight past the end-of-run block --
+       * so a wall-clock-limited or scancel'd PT run produced NO whole-run
+       * mixing profile, NO new-best-per-slot histogram and NO final swap
+       * table, which for a transport study is the entire deliverable.
+       * Absorb it here, report, then re-throw so hpo_run() still writes
+       * its SHUTDOWN trailer and the exit status is unchanged.
+       *
+       * world > 1 re-throws immediately: the finalisation below runs MPI
+       * collectives, and a rank that reached them while a peer unwound
+       * would hang instead of exiting. Signals are delivered to the whole
+       * job step in practice, but "in practice" is not a guarantee worth
+       * a deadlock. Every diagnostic absorbed here is world == 1 only
+       * anyway -- walker identities never cross the rank boundary. */
+      try {
       for (;;) {
         const auto epoch_wall_t0 = std::chrono::steady_clock::now();
         const std::uint64_t spent_global =
@@ -2845,6 +2896,11 @@ template<typename Vec, typename HostT>
         if (plateau_hit) { stop_reason = StopReason::Plateau; break; }
         if (tmin_hit)    { stop_reason = StopReason::TMin; break; }
       }
+      } catch (const core::ShutdownRequested&) {
+        if (world > 1) throw;
+        shutdown_seen = true;
+        stop_reason = StopReason::External;
+      }
     }
 
     /* --- multi-rank finalisation ------------------------------------------
@@ -3051,6 +3107,7 @@ template<typename Vec, typename HostT>
         case StopReason::MaxTime:        reason = "MAXTIME exceeded"; break;
         case StopReason::StopVal:        reason = "STOPVAL reached"; break;
         case StopReason::StopValOnProbe: reason = "STOPVAL reached during T0 probes"; break;
+        case StopReason::External:       reason = "external stop requested (SIGINT/SIGTERM/SIGUSR2)"; break;
         case StopReason::ExternalOnProbe: reason = "external stop requested during T0 probes"; break;
         case StopReason::MaxTimeOnProbe: reason = "MAXTIME exceeded during T0 probes"; break;
         case StopReason::TMin:           reason = "T < T_MIN (hot end)"; break;
@@ -3066,6 +3123,10 @@ template<typename Vec, typename HostT>
           << exchange_rounds << " exchange round(s))";
       HPOLog::instance().info(oss.str());
     }
+
+    /* Report first, then unwind: hpo_run() writes the SHUTDOWN trailer and
+     * the process exit status stays exactly what it was before. */
+    if (shutdown_seen) throw core::ShutdownRequested{};
   }
 
 template<typename Vec, typename Runner>
