@@ -214,17 +214,30 @@ struct LadderAdaptation {
   std::vector<double> acceptance;
   std::vector<long double> old_log_gap;
   std::vector<long double> new_log_gap;
+  std::vector<char> at_floor;   /* pair held at the LADDER_MIN_GAP floor */
   double gain = 0.0;
 };
 
 /* One diminishing stochastic-approximation update.  High-acceptance gaps
  * expand and low-acceptance gaps contract, after which all positive gaps are
- * renormalized to the fixed endpoint span. */
+ * renormalized to the fixed endpoint span.
+ *
+ * D26: min_gap_frac > 0 additionally floors every interior log-gap at
+ * min_gap_frac * (span / (K-1)).  Without it the controller keeps
+ * contracting any pair whose acceptance is persistently below the mean, and
+ * a pair whose low acceptance is caused by a basin offset rather than by
+ * temperature spacing (acceptance gap-INSENSITIVE) is driven towards the
+ * 1-ULP representability guard: run24 reached adjacent-rung ratios of
+ * 1.006-1.010 this way, en route to the D21 degenerate-pair failure (equal
+ * rungs exchange unconditionally, reporting 100% acceptance with zero
+ * tempering).  The floor bounds that contraction; the pairs it holds are
+ * reported in at_floor.  See docs/annealing_implementation_audit_2026-08-09.md. */
 inline LadderAdaptation adapt_temperature_ladder(
     const std::vector<double>& temperature,
     const std::vector<std::size_t>& attempts,
     const std::vector<std::size_t>& accepted,
-    std::size_t update, double initial_gain, double decay)
+    std::size_t update, double initial_gain, double decay,
+    double min_gap_frac = 0.0)
 {
   const std::size_t K = temperature.size();
   if (K < 3 || attempts.size() + 1 != K || accepted.size() != attempts.size())
@@ -234,6 +247,10 @@ inline LadderAdaptation adapt_temperature_ladder(
       !(initial_gain > 0.0 && initial_gain <= 1.0) ||
       !std::isfinite(decay) || !(decay > 0.5 && decay <= 1.0))
     throw std::invalid_argument("ANNEAL_PT ladder adaptation controls are invalid");
+  if (!std::isfinite(min_gap_frac) ||
+      !(min_gap_frac >= 0.0 && min_gap_frac < 1.0))
+    throw std::invalid_argument(
+        "ANNEAL_PT ladder min-gap fraction must be in [0,1)");
 
   LadderAdaptation out;
   out.acceptance.resize(K - 1);
@@ -269,11 +286,49 @@ inline LadderAdaptation adapt_temperature_ladder(
     weight[p] = out.old_log_gap[p] * std::exp(change);
     weight_sum += weight[p];
   }
+  out.at_floor.assign(K - 1, 0);
   std::vector<long double> position(K, 0.0L);
-  long double cumulative = 0.0L;
-  for (std::size_t p = 0; p + 2 < K; ++p) {
-    cumulative += weight[p];
-    position[p + 1] = cumulative / weight_sum;
+  if (min_gap_frac > 0.0) {
+    /* Clamp-and-redistribute waterfilling in log-gap space.  Every clamped
+     * pair takes exactly G; free pairs share the remaining span in
+     * proportion to their weights.  Termination: if every free pair fell
+     * below G at once, the whole span would be below (K-1)*G =
+     * min_gap_frac*S < S -- impossible -- so each pass either finishes or
+     * clamps at least one pair while at least one stays free; at most K-2
+     * passes run. */
+    const long double S =
+        ladder_log_gap(temperature.front(), temperature.back());
+    const long double G = static_cast<long double>(min_gap_frac) * S /
+                          static_cast<long double>(K - 1);
+    std::vector<long double> gap(K - 1, 0.0L);
+    for (;;) {
+      std::size_t n_clamped = 0;
+      long double free_weight = 0.0L;
+      for (std::size_t p = 0; p + 1 < K; ++p) {
+        if (out.at_floor[p]) ++n_clamped;
+        else free_weight += weight[p];
+      }
+      const long double remaining =
+          S - static_cast<long double>(n_clamped) * G;
+      bool clamped_more = false;
+      for (std::size_t p = 0; p + 1 < K; ++p) {
+        if (out.at_floor[p]) { gap[p] = G; continue; }
+        gap[p] = weight[p] / free_weight * remaining;
+        if (gap[p] < G) { out.at_floor[p] = 1; clamped_more = true; }
+      }
+      if (!clamped_more) break;
+    }
+    long double cumulative = 0.0L;
+    for (std::size_t p = 0; p + 2 < K; ++p) {
+      cumulative += gap[p];
+      position[p + 1] = cumulative / S;
+    }
+  } else {
+    long double cumulative = 0.0L;
+    for (std::size_t p = 0; p + 2 < K; ++p) {
+      cumulative += weight[p];
+      position[p + 1] = cumulative / weight_sum;
+    }
   }
   position.back() = 1.0L;
   out.temperature = ladder_from_log_positions(
@@ -1089,7 +1144,9 @@ template<typename Vec, typename HostT>
             << "SWAP_EVERY=" << kb.swap_every << " with DEO parity)"
             << "  LADDER_ADAPT_GAIN=" << kb.ladder_adapt_gain
             << "  LADDER_ADAPT_DECAY=" << kb.ladder_adapt_decay
-            << "  LADDER_ADAPT_UPDATES=" << kb.ladder_adapt_updates;
+            << "  LADDER_ADAPT_UPDATES=" << kb.ladder_adapt_updates
+            << "  LADDER_MIN_GAP=" << kb.ladder_min_gap
+            << (kb.ladder_min_gap == 0.0 ? " (no floor)" : "");
       }
       if (kb.corana)
         oss << "  NS=" << kb.NS << "  NT=" << kb.NT << "  C=" << kb.C
@@ -1451,7 +1508,7 @@ template<typename Vec, typename HostT>
       } else {
         ladder_file << "update\tepoch\tpair\tattempts\taccepted\tacceptance"
                        "\told_T_low\told_T_high\tnew_T_low\tnew_T_high"
-                       "\told_log_gap\tnew_log_gap\n";
+                       "\told_log_gap\tnew_log_gap\tat_floor\n";
         ladder_file << std::scientific << std::setprecision(17);
       }
     }
@@ -2018,6 +2075,11 @@ template<typename Vec, typename HostT>
     std::vector<std::size_t> ladder_accept_global(K > 1 ? K - 1 : 0, 0);
     std::size_t ladder_update_count = 0;
     bool ladder_adaptation_active = kb.ladder_adapt;
+    /* D26 convergence freeze: consecutive updates in which every pair was
+     * either equalized to within the window's binomial resolving power or
+     * held at the LADDER_MIN_GAP floor. */
+    std::size_t ladder_equalized_streak = 0;
+    constexpr std::size_t kLadderFreezeStreak = 3;
     /* SWAP_WINDOW-epoch window of the same counters (reset after each
      * windowed table) -- shows acceptance DRIFT the cumulative table
      * averages away. */
@@ -2400,9 +2462,47 @@ template<typename Vec, typename HostT>
                 const auto update = pt_detail::adapt_temperature_ladder(
                     T, ladder_attempt_global, ladder_accept_global,
                     ladder_update_count + 1, kb.ladder_adapt_gain,
-                    kb.ladder_adapt_decay);
+                    kb.ladder_adapt_decay, kb.ladder_min_gap);
                 T = update.temperature;
                 ++ladder_update_count;
+
+                /* D26: a pair is settled when its window acceptance is
+                 * within 2 binomial sigma of the pooled mean (equalized to
+                 * within what this window can resolve) or when the
+                 * LADDER_MIN_GAP floor holds it open against a still
+                 * below-mean acceptance (gap-insensitive -- contracting
+                 * further cannot help).  When every pair is settled the
+                 * update was a statistical no-op; a streak of them means
+                 * further adaptation only chases noise.  Derived from the
+                 * allreduced counters, so identical on every rank. */
+                {
+                  long double mean_acc = 0.0L;
+                  for (std::size_t p = 0; p + 1 < K; ++p)
+                    mean_acc +=
+                        static_cast<long double>(update.acceptance[p]);
+                  mean_acc /= static_cast<long double>(K - 1);
+                  bool all_settled = true;
+                  for (std::size_t p = 0; p + 1 < K; ++p) {
+                    const long double n =
+                        static_cast<long double>(ladder_attempt_global[p]);
+                    const long double sigma = std::sqrt(std::max<long double>(
+                        0.0L, mean_acc * (1.0L - mean_acc) / n));
+                    const long double dev = std::fabs(
+                        static_cast<long double>(update.acceptance[p]) -
+                        mean_acc);
+                    const bool converged = dev <= 2.0L * sigma;
+                    const bool floor_limited =
+                        update.at_floor[p] &&
+                        static_cast<long double>(update.acceptance[p]) <
+                            mean_acc;
+                    if (!(converged || floor_limited)) {
+                      all_settled = false;
+                      break;
+                    }
+                  }
+                  ladder_equalized_streak =
+                      all_settled ? ladder_equalized_streak + 1 : 0;
+                }
 
                 if (rank == 0) {
                   const auto [accept_min, accept_max] = std::minmax_element(
@@ -2423,6 +2523,13 @@ template<typename Vec, typename HostT>
                           << *old_gap_max << "]"
                           << "  log-gap(new)= [" << *new_gap_min << ", "
                           << *new_gap_max << "]";
+                  if (kb.ladder_min_gap > 0.0) {
+                    const std::size_t n_floor = static_cast<std::size_t>(
+                        std::count(update.at_floor.begin(),
+                                   update.at_floor.end(), char{1}));
+                    summary << "  floor-clamped=" << n_floor << "/"
+                            << (K - 1);
+                  }
                   HPOLog::instance().info(summary.str());
 
                   const int iw = static_cast<int>(
@@ -2451,7 +2558,8 @@ template<typename Vec, typename HostT>
                           << old_temperature[p + 1] << '\t'
                           << T[p] << '\t' << T[p + 1] << '\t'
                           << update.old_log_gap[p] << '\t'
-                          << update.new_log_gap[p] << '\n';
+                          << update.new_log_gap[p] << '\t'
+                          << static_cast<int>(update.at_floor[p]) << '\n';
                     }
                     ladder_file.flush();
                   }
@@ -2472,6 +2580,17 @@ template<typename Vec, typename HostT>
                         "ANNEAL_PT ladder adaptation frozen after configured "
                         "LADDER_ADAPT_UPDATES=" +
                         std::to_string(kb.ladder_adapt_updates));
+                }
+                if (ladder_adaptation_active &&
+                    ladder_equalized_streak >= kLadderFreezeStreak) {
+                  ladder_adaptation_active = false;
+                  if (rank == 0)
+                    HPOLog::instance().info(
+                        "ANNEAL_PT ladder adaptation frozen: per-pair window "
+                        "acceptance indistinguishable from equalized (<=2 "
+                        "sigma) or held at the LADDER_MIN_GAP floor for " +
+                        std::to_string(kLadderFreezeStreak) +
+                        " consecutive updates; ladder is final");
                 }
               }
             }

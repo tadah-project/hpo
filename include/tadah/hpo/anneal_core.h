@@ -280,6 +280,8 @@ struct Knobs {
   double      ladder_adapt_gain = 1.0; /* initial stochastic gain       */
   double      ladder_adapt_decay = 0.6;/* diminishing-gain exponent     */
   std::size_t ladder_adapt_updates = 0;/* 0 = ongoing adaptation        */
+  double      ladder_min_gap = 0.1; /* min interior log-gap as a fraction
+                                     * of the mean gap; 0 = no floor    */
   std::size_t swap_every  = 1;      /* exchange attempt every N epochs  */
   std::size_t swap_window = 20;     /* windowed swap-acc table every N
                                      * epochs (0 = cumulative only)     */
@@ -326,6 +328,7 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
       "REPLICAS", "T_COLD", "LADDER_SPAN", "SWAP_EVERY", "SWAP_WINDOW",
       "LADDER_POWER", "LADDER_ADAPT", "LADDER_ADAPT_EVERY",
       "LADDER_ADAPT_GAIN", "LADDER_ADAPT_DECAY", "LADDER_ADAPT_UPDATES",
+      "LADDER_MIN_GAP",
       "STEP_AUTO", "STEP_AUTO_SWEEPS", "STEP_ADAPT_EVERY",
   };
   static const std::unordered_set<std::string> pa_keys = {
@@ -519,6 +522,7 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   kb.ladder_adapt_gain = pget("LADDER_ADAPT_GAIN", 1.0);
   kb.ladder_adapt_decay = pget("LADDER_ADAPT_DECAY", 0.6);
   kb.ladder_adapt_updates = pcount("LADDER_ADAPT_UPDATES", 0.0);
+  kb.ladder_min_gap = pget("LADDER_MIN_GAP", 0.1);
   kb.swap_every  = pcount("SWAP_EVERY", 1.0);
   kb.swap_window = pcount("SWAP_WINDOW", 20.0);
   kb.step_auto = kind == AlgoKind::PT && pbool("STEP_AUTO", true);
@@ -557,7 +561,8 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
         ctx + ": PARAM T_MIN is unused by a static PT ladder (RT=1)");
   if (kind == AlgoKind::PT && !kb.ladder_adapt) {
     for (const char* key : {"LADDER_ADAPT_EVERY", "LADDER_ADAPT_GAIN",
-                            "LADDER_ADAPT_DECAY", "LADDER_ADAPT_UPDATES"})
+                            "LADDER_ADAPT_DECAY", "LADDER_ADAPT_UPDATES",
+                            "LADDER_MIN_GAP"})
       if (sp.param.count(key))
         throw std::runtime_error(
             ctx + ": PARAM " + key +
@@ -652,6 +657,11 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
       if (!(kb.ladder_adapt_decay > 0.5 && kb.ladder_adapt_decay <= 1.0))
         throw std::runtime_error(
             ctx + ": PARAM LADDER_ADAPT_DECAY must be in (0.5,1]");
+      if (!std::isfinite(kb.ladder_min_gap) ||
+          !(kb.ladder_min_gap >= 0.0 && kb.ladder_min_gap < 1.0))
+        throw std::runtime_error(
+            ctx + ": PARAM LADDER_MIN_GAP must be in [0,1) "
+            "(0 disables the floor; 1 would leave no adaptable span)");
     }
     if (kb.swap_every == 0)
       throw std::runtime_error(ctx + ": PARAM SWAP_EVERY must be >= 1");

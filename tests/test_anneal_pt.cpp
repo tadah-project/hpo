@@ -1052,6 +1052,121 @@ TEST_CASE("ANNEAL_PT: synthetic bottleneck contracts while open gaps expand",
           *before_range.second - *before_range.first);
 }
 
+TEST_CASE("ANNEAL_PT: ladder floor clamps one-sided contraction",
+          "[HPO][anneal_pt][temperature][ladder]")
+{
+    using namespace tadah::hpo::pt_detail;
+    const auto initial = make_temperature_ladder(1.0, 64.0, 4, 1.0);
+    const long double span = ladder_log_gap(initial.front(), initial.back());
+    const std::vector<std::size_t> attempts{1000, 1000, 1000};
+
+    /* A single update's weight change is clamped to a factor of 2, so a
+     * wide floor (0.8) is needed for one update to reach it. */
+    const double wide = 0.8;
+    const long double wide_gap =
+        static_cast<long double>(wide) * span / 3.0L;
+    const auto floored = adapt_temperature_ladder(
+        initial, attempts, {0, 1000, 1000}, 1, 1.0, 0.6, wide);
+    REQUIRE(floored.at_floor.size() == 3);
+    CHECK(floored.at_floor[0] == 1);
+    CHECK(floored.at_floor[1] == 0);
+    CHECK(floored.at_floor[2] == 0);
+    CHECK(floored.temperature.front() == initial.front());
+    CHECK(floored.temperature.back() == initial.back());
+    long double total = 0.0L;
+    for (std::size_t p = 0; p < 3; ++p) {
+        CHECK(static_cast<double>(floored.new_log_gap[p]) >=
+              static_cast<double>(wide_gap) * (1.0 - 1e-9));
+        total += floored.new_log_gap[p];
+    }
+    CHECK(static_cast<double>(total) ==
+          Approx(static_cast<double>(span)).epsilon(1e-9));
+
+    /* run24 regression: re-feeding the same one-sided counters keeps
+     * contracting the starved pair, but never below the floor, however
+     * many updates run -- and the pair ends up flagged at the floor. */
+    const double frac = 0.25;
+    const long double floor_gap =
+        static_cast<long double>(frac) * span / 3.0L;
+    const std::vector<std::size_t> accepted{0, 500, 1000};
+    auto ladder = initial;
+    std::vector<char> last_at_floor;
+    for (std::size_t n = 1; n <= 50; ++n) {
+        const auto step = adapt_temperature_ladder(
+            ladder, attempts, accepted, n, 1.0, 0.6, frac);
+        ladder = step.temperature;
+        last_at_floor = step.at_floor;
+        CHECK(ladder.front() == initial.front());
+        CHECK(ladder.back() == initial.back());
+        for (std::size_t k = 1; k < ladder.size(); ++k)
+            CHECK(ladder[k] > ladder[k - 1]);
+        for (std::size_t p = 0; p < 3; ++p)
+            CHECK(static_cast<double>(step.new_log_gap[p]) >=
+                  static_cast<double>(floor_gap) * (1.0 - 1e-9));
+    }
+    REQUIRE(last_at_floor.size() == 3);
+    CHECK(last_at_floor[0] == 1);
+
+    /* Two starved pairs: both clamp, the third absorbs the rest. */
+    const auto two = adapt_temperature_ladder(
+        initial, attempts, {0, 0, 1000}, 1, 1.0, 0.6, wide);
+    CHECK(two.at_floor[0] == 1);
+    CHECK(two.at_floor[1] == 1);
+    CHECK(two.at_floor[2] == 0);
+    CHECK(static_cast<double>(two.new_log_gap[2]) ==
+          Approx(static_cast<double>(span - 2.0L * wide_gap)).epsilon(1e-9));
+
+    /* Legacy default: no floor argument means no clamps and the historic
+     * renormalization. */
+    const auto legacy = adapt_temperature_ladder(
+        initial, attempts, accepted, 1, 1.0, 0.6);
+    for (std::size_t p = 0; p < 3; ++p) CHECK(legacy.at_floor[p] == 0);
+
+    CHECK_THROWS_AS(adapt_temperature_ladder(
+        initial, attempts, accepted, 1, 1.0, 0.6, 1.0),
+        std::invalid_argument);
+    CHECK_THROWS_AS(adapt_temperature_ladder(
+        initial, attempts, accepted, 1, 1.0, 0.6, -0.1),
+        std::invalid_argument);
+}
+
+TEST_CASE("ANNEAL_PT: ladder adaptation freezes after equalization",
+          "[HPO][anneal_pt][temperature][ladder][log]")
+{
+    using namespace tadah::hpo;
+    TempWorkingDirectory cwd;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 20260817;
+    sp.num_threads = 2;
+    sp.stop.maxeval = 60;
+    sp.param["REPLICAS"] = 4.0;
+    sp.param["L"] = 1.0;
+    sp.param["T_HOT"] = 8.0;
+    sp.param["T_COLD"] = 1.0;
+    sp.param["LADDER_ADAPT"] = 1.0;
+    sp.param["LADDER_ADAPT_EVERY"] = 1.0;
+
+    LoggedRun lr;
+    /* Constant objective: every exchange accepts through the equal-loss
+     * branch, so every pair's window acceptance is exactly the mean and
+     * every update is a statistical no-op. */
+    MtStubHost stub{[](const Vec&) { return 0.0; }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, stub);
+
+    const std::string log = lr.read();
+    CHECK(log.find("ladder adaptation frozen: per-pair window acceptance "
+                   "indistinguishable from equalized") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT final ladder: updates=3") != std::string::npos);
+    CHECK(log.find("mode=frozen") != std::string::npos);
+
+    std::ifstream input("hpo_temperature_ladder.tsv");
+    std::ostringstream contents;
+    contents << input.rdbuf();
+    const std::string tsv = contents.str();
+    CHECK(tsv.find("\tat_floor\n") != std::string::npos);
+}
+
 TEST_CASE("ANNEAL_PT: finite ladder adaptation freezes and writes canonical TSV",
           "[HPO][anneal_pt][temperature][ladder][log]")
 {
@@ -1708,7 +1823,7 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
     SECTION("adaptation controls are rejected when disabled") {
         for (const char* key : {"LADDER_ADAPT_EVERY", "LADDER_ADAPT_GAIN",
                                 "LADDER_ADAPT_DECAY",
-                                "LADDER_ADAPT_UPDATES"}) {
+                                "LADDER_ADAPT_UPDATES", "LADDER_MIN_GAP"}) {
             auto sp = make_pt_spec({-1.0}, {1.0});
             sp.param[key] = 1.0;
             REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
@@ -1753,6 +1868,15 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
         sp.param["LADDER_ADAPT_UPDATES"] = 1.5;
         REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
                             Catch::Contains("non-negative integer"));
+    }
+    SECTION("LADDER_MIN_GAP must be in [0,1)") {
+        for (double frac : {-0.1, 1.0, 2.0}) {
+            auto sp = make_pt_spec({-1.0}, {1.0});
+            sp.param["LADDER_ADAPT"] = 1.0;
+            sp.param["LADDER_MIN_GAP"] = frac;
+            REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                                Catch::Contains("LADDER_MIN_GAP"));
+        }
     }
 
     SECTION("REPLICAS < 2") {
