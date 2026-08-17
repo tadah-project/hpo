@@ -340,6 +340,84 @@ inline LadderAdaptation adapt_temperature_ladder(
   return out;
 }
 
+/* D26 (revised after review): pooled evidence for the equalization freeze.
+ *
+ * The original per-window streak test had two confirmed defects: a
+ * zero-information window (every pair exactly 0% or 100% -- e.g. an
+ * equal-loss plateau, where accept_exchange accepts unconditionally) has
+ * sigma = 0 and dev = 0 and counted as "settled", so three transient
+ * plateau windows latched the freeze permanently; and at the default
+ * 20-attempt window the 2-sigma tolerance is ~+/-19 points, so a
+ * genuinely unequal ladder could pass three noisy windows in a row.
+ *
+ * This version accumulates: windows carrying no acceptance signal are
+ * HELD (not pooled, not reset), settled windows pool their counters so
+ * the test gains power instead of re-rolling the same noise, and any
+ * unsettled pooled test clears the evidence.  Freeze fires only when
+ * every pair is settled on the POOLED statistics and every pair has at
+ * least `min_pooled_attempts` pooled attempts. */
+struct LadderFreezeEvidence {
+  std::vector<std::size_t> attempt;
+  std::vector<std::size_t> accept;
+};
+
+inline bool ladder_freeze_step(LadderFreezeEvidence& ev,
+                               const std::vector<std::size_t>& attempts,
+                               const std::vector<std::size_t>& accepted,
+                               const std::vector<char>& at_floor,
+                               std::size_t min_pooled_attempts)
+{
+  const std::size_t P = attempts.size();
+  if (P == 0 || accepted.size() != P || at_floor.size() != P)
+    throw std::invalid_argument(
+        "ANNEAL_PT ladder freeze evidence shape mismatch");
+  if (ev.attempt.size() != P) {
+    ev.attempt.assign(P, 0);
+    ev.accept.assign(P, 0);
+  }
+  std::size_t win_att = 0, win_acc = 0;
+  for (std::size_t p = 0; p < P; ++p) {
+    win_att += attempts[p];
+    win_acc += accepted[p];
+  }
+  if (win_att == 0) return false;
+  if (win_acc == 0 || win_acc == win_att) return false;  /* hold */
+
+  for (std::size_t p = 0; p < P; ++p) {
+    ev.attempt[p] += attempts[p];
+    ev.accept[p] += accepted[p];
+  }
+  long double tot_att = 0.0L, tot_acc = 0.0L;
+  std::size_t min_att = std::numeric_limits<std::size_t>::max();
+  for (std::size_t p = 0; p < P; ++p) {
+    tot_att += static_cast<long double>(ev.attempt[p]);
+    tot_acc += static_cast<long double>(ev.accept[p]);
+    min_att = std::min(min_att, ev.attempt[p]);
+  }
+  /* The hold above guarantees at least one pooled window with
+   * 0 < acc < att, so 0 < mean < 1 and sigma > 0 for every pair. */
+  const long double mean = tot_acc / tot_att;
+  bool all_settled = true;
+  for (std::size_t p = 0; p < P; ++p) {
+    const long double n = static_cast<long double>(ev.attempt[p]);
+    const long double a = static_cast<long double>(ev.accept[p]) / n;
+    const long double sigma =
+        std::sqrt(std::max<long double>(0.0L, mean * (1.0L - mean) / n));
+    const bool converged = std::fabs(a - mean) <= 2.0L * sigma;
+    const bool floor_limited = at_floor[p] && a < mean;
+    if (!(converged || floor_limited)) {
+      all_settled = false;
+      break;
+    }
+  }
+  if (!all_settled) {
+    std::fill(ev.attempt.begin(), ev.attempt.end(), std::size_t{0});
+    std::fill(ev.accept.begin(), ev.accept.end(), std::size_t{0});
+    return false;
+  }
+  return min_att >= min_pooled_attempts;
+}
+
 /* Replica-exchange decision for adjacent slots, `cold_temperature <=
  * hot_temperature`. Resolve deterministic limits before forming inverse
  * temperatures: cooling may legitimately underflow ladder endpoints to zero,
@@ -726,7 +804,11 @@ void coordinate_warmup(
             std::sqrt(dc.lower_scale * dc.upper_scale),
             c.x(i), sp.low[i], sp.high[i], clamp_status);
         dc.status = StepBracketOk | clamp_status;
-        dc.coordinate_scale = c.V[i];
+        /* D9 contract: the TSV's coord_sigma column is the scale the
+         * row's acceptance/alpha measurements were taken at.  Those
+         * came from the best tested batch, not from the (never
+         * sampled) bracket midpoint that seeds production in c.V[i]. */
+        dc.coordinate_scale = dc.have_best ? dc.best_scale : c.V[i];
       } else {
         dc.status = StepUnconverged;
         /* D28: name the cause when the best tested batch pins it. */
@@ -1243,7 +1325,8 @@ template<typename Vec, typename HostT>
             << "  LADDER_ADAPT_DECAY=" << kb.ladder_adapt_decay
             << "  LADDER_ADAPT_UPDATES=" << kb.ladder_adapt_updates
             << "  LADDER_MIN_GAP=" << kb.ladder_min_gap
-            << (kb.ladder_min_gap == 0.0 ? " (no floor)" : "");
+            << (kb.ladder_min_gap == 0.0 ? " (no floor)" : "")
+            << "  LADDER_FREEZE=" << (kb.ladder_freeze ? 1 : 0);
       }
       if (kb.corana)
         oss << "  NS=" << kb.NS << "  NT=" << kb.NT << "  C=" << kb.C
@@ -2214,11 +2297,12 @@ template<typename Vec, typename HostT>
     std::vector<std::size_t> ladder_accept_global(K > 1 ? K - 1 : 0, 0);
     std::size_t ladder_update_count = 0;
     bool ladder_adaptation_active = kb.ladder_adapt;
-    /* D26 convergence freeze: consecutive updates in which every pair was
-     * either equalized to within the window's binomial resolving power or
-     * held at the LADDER_MIN_GAP floor. */
-    std::size_t ladder_equalized_streak = 0;
-    constexpr std::size_t kLadderFreezeStreak = 3;
+    /* D26 convergence freeze: pooled per-pair acceptance evidence (see
+     * pt_detail::ladder_freeze_step).  100 pooled attempts/pair = 5
+     * default windows; the pooled 2-sigma test then resolves ~+/-9
+     * acceptance points. */
+    pt_detail::LadderFreezeEvidence ladder_freeze_evidence;
+    constexpr std::size_t kLadderFreezeMinAttempts = 100;
     /* SWAP_WINDOW-epoch window of the same counters (reset after each
      * windowed table) -- shows acceptance DRIFT the cumulative table
      * averages away. */
@@ -2528,7 +2612,7 @@ template<typename Vec, typename HostT>
                   T[i], T[i + 1], ci.f, cj.f,
                   [&]() { return udist(pair_rng); });
               ++swap_attempt[i];
-              ++swap_attempt_win[i];
+              if (kb.swap_window > 0) ++swap_attempt_win[i];
               if (ladder_adaptation_active) ++ladder_attempt[i];
               ++att;
               pair_event[i] = '.';
@@ -2537,7 +2621,7 @@ template<typename Vec, typename HostT>
                 std::swap(ci.f, cj.f);
                 if (world == 1) std::swap(walker_at[i], walker_at[i + 1]);
                 ++swap_accept[i];
-                ++swap_accept_win[i];
+                if (kb.swap_window > 0) ++swap_accept_win[i];
                 if (ladder_adaptation_active) ++ladder_accept[i];
                 ++acc;
                 pair_event[i] = 'x';
@@ -2559,12 +2643,12 @@ template<typename Vec, typename HostT>
                   [&]() { return udist(pair_rng); });
               if (i_mine) {
                 ++swap_attempt[i];
-                ++swap_attempt_win[i];
+                if (kb.swap_window > 0) ++swap_attempt_win[i];
                 if (ladder_adaptation_active) ++ladder_attempt[i];
                 ++att;
                 if (accepted) {
                   ++swap_accept[i];
-                  ++swap_accept_win[i];
+                  if (kb.swap_window > 0) ++swap_accept_win[i];
                   if (ladder_adaptation_active) ++ladder_accept[i];
                   ++acc;
                 }
@@ -2618,43 +2702,21 @@ template<typename Vec, typename HostT>
                 T = update.temperature;
                 ++ladder_update_count;
 
-                /* D26: a pair is settled when its window acceptance is
-                 * within 2 binomial sigma of the pooled mean (equalized to
-                 * within what this window can resolve) or when the
-                 * LADDER_MIN_GAP floor holds it open against a still
-                 * below-mean acceptance (gap-insensitive -- contracting
-                 * further cannot help).  When every pair is settled the
-                 * update was a statistical no-op; a streak of them means
-                 * further adaptation only chases noise.  Derived from the
-                 * allreduced counters, so identical on every rank. */
-                {
-                  long double mean_acc = 0.0L;
-                  for (std::size_t p = 0; p + 1 < K; ++p)
-                    mean_acc +=
-                        static_cast<long double>(update.acceptance[p]);
-                  mean_acc /= static_cast<long double>(K - 1);
-                  bool all_settled = true;
-                  for (std::size_t p = 0; p + 1 < K; ++p) {
-                    const long double n =
-                        static_cast<long double>(ladder_attempt_global[p]);
-                    const long double sigma = std::sqrt(std::max<long double>(
-                        0.0L, mean_acc * (1.0L - mean_acc) / n));
-                    const long double dev = std::fabs(
-                        static_cast<long double>(update.acceptance[p]) -
-                        mean_acc);
-                    const bool converged = dev <= 2.0L * sigma;
-                    const bool floor_limited =
-                        update.at_floor[p] &&
-                        static_cast<long double>(update.acceptance[p]) <
-                            mean_acc;
-                    if (!(converged || floor_limited)) {
-                      all_settled = false;
-                      break;
-                    }
-                  }
-                  ladder_equalized_streak =
-                      all_settled ? ladder_equalized_streak + 1 : 0;
-                }
+                /* D26: pooled-evidence freeze decision.  A pair is settled
+                 * when its POOLED acceptance is within 2 binomial sigma of
+                 * the pooled mean, or when the LADDER_MIN_GAP floor holds
+                 * it open against a below-mean acceptance (gap-insensitive
+                 * -- contracting further cannot help).  Zero-information
+                 * windows (all pairs exactly 0% or 100%, e.g. an equal-loss
+                 * plateau) neither advance nor destroy the evidence.
+                 * Derived from the allreduced counters, so identical on
+                 * every rank. */
+                const bool ladder_freeze_now =
+                    kb.ladder_freeze &&
+                    pt_detail::ladder_freeze_step(
+                        ladder_freeze_evidence, ladder_attempt_global,
+                        ladder_accept_global, update.at_floor,
+                        kLadderFreezeMinAttempts);
 
                 if (rank == 0) {
                   const auto [accept_min, accept_max] = std::minmax_element(
@@ -2733,16 +2795,16 @@ template<typename Vec, typename HostT>
                         "LADDER_ADAPT_UPDATES=" +
                         std::to_string(kb.ladder_adapt_updates));
                 }
-                if (ladder_adaptation_active &&
-                    ladder_equalized_streak >= kLadderFreezeStreak) {
+                if (ladder_adaptation_active && ladder_freeze_now) {
                   ladder_adaptation_active = false;
                   if (rank == 0)
                     HPOLog::instance().info(
-                        "ANNEAL_PT ladder adaptation frozen: per-pair window "
+                        "ANNEAL_PT ladder adaptation frozen: per-pair "
                         "acceptance indistinguishable from equalized (<=2 "
-                        "sigma) or held at the LADDER_MIN_GAP floor for " +
-                        std::to_string(kLadderFreezeStreak) +
-                        " consecutive updates; ladder is final");
+                        "sigma) or held at the LADDER_MIN_GAP floor, on >= " +
+                        std::to_string(kLadderFreezeMinAttempts) +
+                        " pooled attempts/pair; ladder is final "
+                        "(LADDER_FREEZE 0 disables this)");
                 }
               }
             }
@@ -3299,7 +3361,8 @@ template<typename Vec, typename HostT>
        * SWAP_WINDOW table next to it; fall back to the labelled partial
        * window when no window ever completed.  Window counters are
        * rank-local, hence single-process only. */
-      if (world == 1 && K >= 2 && exchange_rounds > 0) {
+      if (world == 1 && K >= 2 && exchange_rounds > 0 &&
+          kb.swap_window > 0) {
         if (swap_last_end_epoch > 0) {
           HPOLog::instance().info(pt_detail::format_pair_table(
               K,
@@ -3309,12 +3372,18 @@ template<typename Vec, typename HostT>
                   std::to_string(epoch_count),
               swap_attempt_last, swap_accept_last));
         } else {
+          /* No window ever completed (short run, or window boundaries
+           * never coincided with exchange epochs).  The counters then
+           * cover every exchange since epoch 1 -- say so explicitly
+           * rather than implying "less than one window". */
           std::size_t att_tot = 0;
           for (auto a : swap_attempt_win) att_tot += a;
           if (att_tot > 0)
             HPOLog::instance().info(pt_detail::format_pair_table(
-                K, "final partial window", swap_attempt_win,
-                swap_accept_win));
+                K,
+                "no completed SWAP_WINDOW; covers epochs 1-" +
+                    std::to_string(epoch_count),
+                swap_attempt_win, swap_accept_win));
         }
       }
       /* Per-slot new-best histogram over the whole run, on the same

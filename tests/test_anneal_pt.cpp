@@ -1245,7 +1245,7 @@ TEST_CASE("ANNEAL_PT: ladder floor clamps one-sided contraction",
         std::invalid_argument);
 }
 
-TEST_CASE("ANNEAL_PT: ladder adaptation freezes after equalization",
+TEST_CASE("ANNEAL_PT: equal-loss plateau does not latch the ladder freeze",
           "[HPO][anneal_pt][temperature][ladder][log]")
 {
     using namespace tadah::hpo;
@@ -1264,22 +1264,68 @@ TEST_CASE("ANNEAL_PT: ladder adaptation freezes after equalization",
 
     LoggedRun lr;
     /* Constant objective: every exchange accepts through the equal-loss
-     * branch, so every pair's window acceptance is exactly the mean and
-     * every update is a statistical no-op. */
+     * branch, so every window is exactly-100% on every pair -- a
+     * zero-information window.  The pooled-evidence freeze must HOLD
+     * (adaptation stays armed for when real signal appears), not latch
+     * as the original per-window streak did. */
     MtStubHost stub{[](const Vec&) { return 0.0; }, {}, {}};
     run_anneal_pt_impl<Vec>(sp, stub);
 
     const std::string log = lr.read();
-    CHECK(log.find("ladder adaptation frozen: per-pair window acceptance "
-                   "indistinguishable from equalized") != std::string::npos);
-    CHECK(log.find("ANNEAL_PT final ladder: updates=3") != std::string::npos);
-    CHECK(log.find("mode=frozen") != std::string::npos);
+    CHECK(log.find("ladder adaptation frozen: per-pair acceptance") ==
+          std::string::npos);
+    CHECK(log.find("ANNEAL_PT ladder update=") != std::string::npos);
+    CHECK(log.find("mode=ongoing") != std::string::npos);
 
     std::ifstream input("hpo_temperature_ladder.tsv");
     std::ostringstream contents;
     contents << input.rdbuf();
     const std::string tsv = contents.str();
     CHECK(tsv.find("\tat_floor\n") != std::string::npos);
+}
+
+TEST_CASE("ANNEAL_PT: pooled freeze evidence holds, accumulates and resets",
+          "[HPO][anneal_pt][temperature][ladder]")
+{
+    using namespace tadah::hpo::pt_detail;
+    const std::vector<char> nofloor{0, 0, 0};
+    const std::vector<std::size_t> att{20, 20, 20};
+
+    /* Zero-information windows (all-accept / all-reject): held forever,
+     * evidence untouched. */
+    LadderFreezeEvidence hold;
+    for (int i = 0; i < 10; ++i) {
+        CHECK_FALSE(ladder_freeze_step(hold, att, {20, 20, 20}, nofloor, 100));
+        CHECK_FALSE(ladder_freeze_step(hold, att, {0, 0, 0}, nofloor, 100));
+    }
+    REQUIRE(hold.attempt.size() == 3);
+    CHECK(hold.attempt[0] == 0);
+
+    /* Genuinely equalized noisy windows: evidence pools and the freeze
+     * fires exactly when every pair reaches 100 pooled attempts. */
+    LadderFreezeEvidence eq;
+    const std::vector<std::vector<std::size_t>> acc_eq{
+        {5, 4, 5}, {4, 5, 4}, {5, 5, 4}, {4, 4, 5}, {5, 5, 5}};
+    for (std::size_t w = 0; w < acc_eq.size(); ++w) {
+        const bool frozen =
+            ladder_freeze_step(eq, att, acc_eq[w], nofloor, 100);
+        CHECK(frozen == (w + 1 == acc_eq.size()));
+    }
+
+    /* A genuinely unequal ladder (15% vs 35%) must never freeze: pooling
+     * raises the test's power until the disparity is resolved and the
+     * evidence resets. */
+    LadderFreezeEvidence uneq;
+    for (int w = 0; w < 20; ++w)
+        CHECK_FALSE(ladder_freeze_step(uneq, att, {3, 7, 3}, nofloor, 100));
+
+    /* A floor-limited below-mean pair counts as settled. */
+    LadderFreezeEvidence fl;
+    const std::vector<char> floor0{1, 0, 0};
+    bool frozen = false;
+    for (int w = 0; w < 5; ++w)
+        frozen = ladder_freeze_step(fl, att, {3, 5, 5}, floor0, 100);
+    CHECK(frozen);
 }
 
 TEST_CASE("ANNEAL_PT: finite ladder adaptation freezes and writes canonical TSV",
@@ -1851,12 +1897,42 @@ TEST_CASE("ANNEAL_PT: final summary repeats the last completed swap window",
     CHECK(log.find("swap acc% per pair (last completed SWAP_WINDOW=4 "
                    "window, ended epoch 8") != std::string::npos);
 
-    /* Too short for any completed window: the partial window is printed
-     * and labelled as such. */
+    /* Too short for any completed window: the accumulated counters are
+     * printed with an honest coverage label. */
     const std::string short_log = run(16);
     CHECK(short_log.find("last completed SWAP_WINDOW") == std::string::npos);
-    CHECK(short_log.find("swap acc% per pair (final partial window") !=
-          std::string::npos);
+    CHECK(short_log.find(
+              "swap acc% per pair (no completed SWAP_WINDOW; covers "
+              "epochs 1-") != std::string::npos);
+}
+
+TEST_CASE("ANNEAL_PT: SWAP_WINDOW=0 suppresses window tables entirely",
+          "[HPO][anneal_pt][log][swap]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 91022;
+    sp.num_threads = 2;
+    sp.stop.maxeval = 40;
+    sp.param["REPLICAS"] = 4.0;
+    sp.param["L"] = 1.0;
+    sp.param["T_HOT"] = 8.0;
+    sp.param["T_COLD"] = 1.0;
+    sp.param["SWAP_WINDOW"] = 0.0;
+
+    LoggedRun lr;
+    MtStubHost stub{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, stub);
+
+    /* Cumulative-only mode: no windowed table may appear anywhere, and
+     * in particular the final summary must not relabel whole-run
+     * counters as a window. */
+    const std::string log = lr.read();
+    CHECK(log.find("swap acc% per pair (cumulative") != std::string::npos);
+    CHECK(log.find("last completed SWAP_WINDOW") == std::string::npos);
+    CHECK(log.find("no completed SWAP_WINDOW") == std::string::npos);
+    CHECK(log.find("swap acc% per pair (last ") == std::string::npos);
 }
 
 TEST_CASE("ANNEAL_PT: epoch line reports the temperatures the epoch ran at",
@@ -2071,8 +2147,8 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
     }
     SECTION("adaptation controls are rejected when disabled") {
         for (const char* key : {"LADDER_ADAPT_EVERY", "LADDER_ADAPT_GAIN",
-                                "LADDER_ADAPT_DECAY",
-                                "LADDER_ADAPT_UPDATES", "LADDER_MIN_GAP"}) {
+                                "LADDER_ADAPT_DECAY", "LADDER_ADAPT_UPDATES",
+                                "LADDER_MIN_GAP", "LADDER_FREEZE"}) {
             auto sp = make_pt_spec({-1.0}, {1.0});
             sp.param[key] = 1.0;
             REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
