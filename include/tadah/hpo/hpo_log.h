@@ -290,6 +290,12 @@ public:
     /** Same histogram accumulated over the whole session (not
      *  checkpointed -- a resumed run restarts the counts). */
     std::vector<std::pair<int, std::size_t>> best_slot_totals() const;
+    /** D29: eval number of the LAST new best recorded per slot, sorted by
+     *  slot.  Separates "this slot still contributes" from "this slot's
+     *  cumulative count is a fossil of the initial transient" (run24's
+     *  hot-slot counts all dated from the first ~500 of 20,457 bests).
+     *  Single-process semantics, same as the histograms. */
+    std::vector<std::pair<int, std::size_t>> best_slot_last_evals() const;
 
     /** Log a NaN/Inf clamping event (timestamped, with parameter dump).
      *  @param eval_num     Global evaluation counter
@@ -464,6 +470,7 @@ private:
     double      cur_best_T_      = 0.0;
     std::map<int, std::size_t> best_slot_win_;
     std::map<int, std::size_t> best_slot_tot_;
+    std::map<int, std::size_t> best_slot_last_;   /* slot -> last best eval */
 
     /* ", slot 5/32 T=3.712e+00" | ", T0 probe" | "" -- mtx_ held. */
     std::string best_origin_str() const;

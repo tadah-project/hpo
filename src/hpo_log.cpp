@@ -92,6 +92,12 @@ std::vector<std::pair<int, std::size_t>> HPOLog::best_slot_totals() const
     return {best_slot_tot_.begin(), best_slot_tot_.end()};
 }
 
+std::vector<std::pair<int, std::size_t>> HPOLog::best_slot_last_evals() const
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    return {best_slot_last_.begin(), best_slot_last_.end()};
+}
+
 std::string HPOLog::best_origin_str() const
 {
     if (cur_best_slot_ == kSlotProbe) return ", T0 probe";
@@ -125,6 +131,7 @@ void HPOLog::reset_for_test()
     cur_best_T_      = 0.0;
     best_slot_win_.clear();
     best_slot_tot_.clear();
+    best_slot_last_.clear();
     pin_state_.clear();
     pin_chains_ = 0;
     pin_unit_   = 0;
@@ -1262,6 +1269,7 @@ void HPOLog::log_new_best(std::size_t eval_num,
     if (tl_slot >= 0) {
         ++best_slot_win_[tl_slot];
         ++best_slot_tot_[tl_slot];
+        best_slot_last_[tl_slot] = eval_num;
     }
     if (has_emae)   { best_emae_   = emae;   has_emae_   = true; }
     if (has_ermse)  { best_ermse_  = ermse;  has_ermse_  = true; }

@@ -1824,6 +1824,67 @@ TEST_CASE("ANNEAL_PT: a severed ladder is reported, not just tabulated",
           != std::string::npos);
 }
 
+TEST_CASE("ANNEAL_PT: final summary repeats the last completed swap window",
+          "[HPO][anneal_pt][log][swap]")
+{
+    using namespace tadah::hpo;
+    auto run = [](std::size_t maxeval) {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        set_seed_point(sp, {0.0});
+        sp.seed = 91020;
+        sp.num_threads = 2;
+        sp.stop.maxeval = maxeval;
+        sp.param["REPLICAS"] = 4.0;
+        sp.param["L"] = 1.0;
+        sp.param["T_HOT"] = 8.0;
+        sp.param["T_COLD"] = 1.0;
+        sp.param["SWAP_WINDOW"] = 4.0;
+        LoggedRun lr;
+        MtStubHost stub{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
+        run_anneal_pt_impl<Vec>(sp, stub);
+        return lr.read();
+    };
+
+    /* Enough epochs for two completed windows: the final table names the
+     * last one and its end epoch. */
+    const std::string log = run(40);
+    CHECK(log.find("swap acc% per pair (last completed SWAP_WINDOW=4 "
+                   "window, ended epoch 8") != std::string::npos);
+
+    /* Too short for any completed window: the partial window is printed
+     * and labelled as such. */
+    const std::string short_log = run(16);
+    CHECK(short_log.find("last completed SWAP_WINDOW") == std::string::npos);
+    CHECK(short_log.find("swap acc% per pair (final partial window") !=
+          std::string::npos);
+}
+
+TEST_CASE("ANNEAL_PT: epoch line reports the temperatures the epoch ran at",
+          "[HPO][anneal_pt][log][temperature]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 91021;
+    sp.num_threads = 2;
+    sp.stop.maxeval = 60;
+    sp.param["REPLICAS"] = 4.0;
+    sp.param["L"] = 1.0;
+    sp.param["T_HOT"] = 8.0;
+    sp.param["T_COLD"] = 1.0;
+    sp.param["RT"] = 0.5;
+
+    LoggedRun lr;
+    MtStubHost stub{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, stub);
+
+    /* D29: RT cooling halves the ladder at the END of each epoch; the
+     * epoch-1 line must still show the uncooled [T_COLD, T_HOT] the
+     * epoch's rungs actually used, not the mutated values. */
+    const std::string log = lr.read();
+    CHECK(log.find("T=[1.000e+00, 8.000e+00]") != std::string::npos);
+}
+
 TEST_CASE("HPOLog: best-origin tag (slot/T + probe) and per-slot histograms",
           "[HPO][anneal_pt][log]")
 {
@@ -1863,6 +1924,37 @@ TEST_CASE("HPOLog: best-origin tag (slot/T + probe) and per-slot histograms",
     REQUIRE(tot.size() == 1);
     CHECK(tot[0].first == 3);
     CHECK(tot[0].second == 1);
+    /* D29: the slot-3 best above landed at eval 2; the rejected
+     * non-best at eval 3 must not have moved it. */
+    auto last = log.best_slot_last_evals();
+    REQUIRE(last.size() == 1);
+    CHECK(last[0].first == 3);
+    CHECK(last[0].second == 2);
+    log.reset_for_test();
+    CHECK(log.best_slot_last_evals().empty());
+}
+
+TEST_CASE("ANNEAL_PT: D29 table formatters render grids and dashes",
+          "[HPO][anneal_pt][log]")
+{
+    using namespace tadah::hpo::pt_detail;
+    /* Slot-count grid: rows of 8, zero-fill for missing slots. */
+    const std::string t = format_slot_count_table(
+        "HDR:", 10, {{0, 17177}, {6, 157}, {9, 3}});
+    CHECK(t.find("HDR:") == 0);
+    CHECK(t.find("[0-7]") != std::string::npos);
+    CHECK(t.find("[8-9]") != std::string::npos);
+    CHECK(t.find("17177") != std::string::npos);
+    CHECK(t.find("157") != std::string::npos);
+    /* slot 1 zero-filled */
+    CHECK(t.find("      17177          0") != std::string::npos);
+
+    /* Pair table: percentages, att/pair range, '-' for unattempted. */
+    const std::string p = format_pair_table(
+        4, "label", {10, 0, 20}, {5, 0, 10});
+    CHECK(p.find("ANNEAL_PT swap acc% per pair (label, att/pair 0-20;") == 0);
+    CHECK(p.find("       50") != std::string::npos);
+    CHECK(p.find("        -") != std::string::npos);
 }
 
 TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")

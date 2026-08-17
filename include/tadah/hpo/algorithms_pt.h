@@ -412,6 +412,60 @@ inline bool accept_exchange(double cold_temperature, double hot_temperature,
   return log_m < log_threshold;
 }
 
+/* D29: render a per-slot count grid on the standard [lo-hi] rows-of-8
+ * layout (slots absent from `entries` print 0). */
+inline std::string format_slot_count_table(
+    const std::string& header, std::size_t K,
+    const std::vector<std::pair<int, std::size_t>>& entries)
+{
+  std::map<int, std::size_t> cnt(entries.begin(), entries.end());
+  const int iw = static_cast<int>(std::to_string(K - 1).size());
+  std::ostringstream o;
+  o << header;
+  for (std::size_t lo = 0; lo < K; lo += 8) {
+    const std::size_t hi = std::min(lo + 8, K) - 1;
+    o << "\n[" << std::setw(iw) << lo << "-" << std::setw(iw) << hi << "]";
+    for (std::size_t k = lo; k <= hi; ++k) {
+      const auto it = cnt.find(static_cast<int>(k));
+      o << "  " << std::setw(9) << (it != cnt.end() ? it->second : 0);
+    }
+  }
+  return o.str();
+}
+
+/* D29: render the att/acc per-pair percentage table ("-" = pair not yet
+ * attempted), rows of 8, att/pair resolution stated in the header. */
+inline std::string format_pair_table(
+    std::size_t K, const std::string& label,
+    const std::vector<std::size_t>& attv,
+    const std::vector<std::size_t>& accv)
+{
+  const int iwp = static_cast<int>(std::to_string(K - 2).size());
+  std::size_t amin = std::numeric_limits<std::size_t>::max();
+  std::size_t amax = 0;
+  for (std::size_t p = 0; p + 1 < K; ++p) {
+    amin = std::min(amin, attv[p]);
+    amax = std::max(amax, attv[p]);
+  }
+  std::ostringstream o;
+  o << "ANNEAL_PT swap acc% per pair (" << label << ", att/pair " << amin;
+  if (amax != amin) o << "-" << amax;
+  o << "; pair p = slots p<->p+1):";
+  for (std::size_t lo = 0; lo + 1 < K; lo += 8) {
+    const std::size_t hi = std::min(lo + 8, K - 1) - 1;
+    o << "\n[" << std::setw(iwp) << lo << "-" << std::setw(iwp) << hi << "]";
+    for (std::size_t p = lo; p <= hi; ++p) {
+      if (attv[p] == 0)
+        o << "  " << std::setw(9) << "-";
+      else
+        o << "  " << std::setw(9)
+          << std::lround(100.0 * static_cast<double>(accv[p]) /
+                         static_cast<double>(attv[p]));
+    }
+  }
+  return o.str();
+}
+
 enum StepStatus : unsigned {
   StepOk            = 0,
   StepNumericalFloor = 1u << 0,
@@ -2170,6 +2224,10 @@ template<typename Vec, typename HostT>
      * averages away. */
     std::vector<std::size_t> swap_attempt_win(K > 1 ? K - 1 : 0, 0);
     std::vector<std::size_t> swap_accept_win (K > 1 ? K - 1 : 0, 0);
+    /* D29: last COMPLETED window, kept for the final summary. */
+    std::vector<std::size_t> swap_attempt_last(K > 1 ? K - 1 : 0, 0);
+    std::vector<std::size_t> swap_accept_last (K > 1 ? K - 1 : 0, 0);
+    std::size_t swap_last_end_epoch = 0;
     std::vector<std::size_t> step_attempt_win(K, 0);
     std::vector<std::size_t> step_accept_win(K, 0);
     std::vector<std::size_t> step_health_streak(K, 0);
@@ -2349,6 +2407,11 @@ template<typename Vec, typename HostT>
         std::vector<double> f_start(n_local);
         for (std::size_t li = 0; li < n_local; ++li)
           f_start[li] = chains[li].f;
+        /* D29: ladder adaptation and RT cooling mutate T later in this
+         * same iteration; the epoch line must report the T this epoch's
+         * rungs actually RAN at. */
+        const double epoch_T_cold = T[0];
+        const double epoch_T_hot = T[K - 1];
 
         pool.run_epoch(n_local, [&](std::size_t li) {
           const std::size_t k = off_local + li;
@@ -2743,7 +2806,7 @@ template<typename Vec, typename HostT>
           oss << std::scientific << std::setprecision(3)
               << "ANNEAL_PT epoch=" << epoch_count;
           if (planned_epochs > 0) oss << "/" << planned_epochs;
-          oss << "  T=[" << T[0] << ", " << T[K - 1] << "]"
+          oss << "  T=[" << epoch_T_cold << ", " << epoch_T_hot << "]"
               << "  proposed=" << e_prop
               << "  accepted=" << std::fixed << std::setprecision(1)
               << (rate * 100.0) << "%"
@@ -2775,32 +2838,8 @@ template<typename Vec, typename HostT>
             auto pair_table = [&](const std::string& label,
                                   const std::vector<std::size_t>& attv,
                                   const std::vector<std::size_t>& accv) {
-              std::size_t amin = std::numeric_limits<std::size_t>::max();
-              std::size_t amax = 0;
-              for (std::size_t p = 0; p + 1 < K; ++p) {
-                amin = std::min(amin, attv[p]);
-                amax = std::max(amax, attv[p]);
-              }
-              std::ostringstream o;
-              o << "ANNEAL_PT swap acc% per pair (" << label
-                << ", att/pair " << amin;
-              if (amax != amin) o << "-" << amax;
-              o << "; pair p = slots p<->p+1):";
-              for (std::size_t lo = 0; lo + 1 < K; lo += 8) {
-                const std::size_t hi = std::min(lo + 8, K - 1) - 1;
-                o << "\n[" << std::setw(iwp) << lo << "-" << std::setw(iwp)
-                  << hi << "]";
-                for (std::size_t p = lo; p <= hi; ++p) {
-                  if (attv[p] == 0)
-                    o << "  " << std::setw(9) << "-";
-                  else
-                    o << "  " << std::setw(9)
-                      << std::lround(100.0 *
-                             static_cast<double>(accv[p]) /
-                             static_cast<double>(attv[p]));
-                }
-              }
-              HPOLog::instance().info(o.str());
+              HPOLog::instance().info(
+                  pt_detail::format_pair_table(K, label, attv, accv));
             };
             pair_table("cumulative", swap_attempt, swap_accept);
             if (kb.swap_window > 0 && epoch_count % kb.swap_window == 0) {
@@ -2809,6 +2848,11 @@ template<typename Vec, typename HostT>
               if (att_tot > 0) {
                 pair_table("last " + std::to_string(kb.swap_window) +
                            " epoch(s)", swap_attempt_win, swap_accept_win);
+                /* D29: keep the completed window for the final summary,
+                 * where the cumulative table averages late drift away. */
+                swap_attempt_last = swap_attempt_win;
+                swap_accept_last = swap_accept_win;
+                swap_last_end_epoch = epoch_count;
                 std::fill(swap_attempt_win.begin(), swap_attempt_win.end(),
                           std::size_t{0});
                 std::fill(swap_accept_win.begin(), swap_accept_win.end(),
@@ -3249,31 +3293,49 @@ template<typename Vec, typename HostT>
         }
         HPOLog::instance().info(ossp.str());
       }
+      /* D29: the cumulative table alone averages late drift away (run24:
+       * bottleneck pairs at 1-3% in the final windows while the
+       * cumulative row still read 11-22%).  Repeat the last completed
+       * SWAP_WINDOW table next to it; fall back to the labelled partial
+       * window when no window ever completed.  Window counters are
+       * rank-local, hence single-process only. */
+      if (world == 1 && K >= 2 && exchange_rounds > 0) {
+        if (swap_last_end_epoch > 0) {
+          HPOLog::instance().info(pt_detail::format_pair_table(
+              K,
+              "last completed SWAP_WINDOW=" +
+                  std::to_string(kb.swap_window) + " window, ended epoch " +
+                  std::to_string(swap_last_end_epoch) + " of " +
+                  std::to_string(epoch_count),
+              swap_attempt_last, swap_accept_last));
+        } else {
+          std::size_t att_tot = 0;
+          for (auto a : swap_attempt_win) att_tot += a;
+          if (att_tot > 0)
+            HPOLog::instance().info(pt_detail::format_pair_table(
+                K, "final partial window", swap_attempt_win,
+                swap_accept_win));
+        }
+      }
       /* Per-slot new-best histogram over the whole run, on the same
        * [lo-hi] grid (and column widths) as the startup ladder table so
        * counts map onto temperatures by eye -- the direct answer to
        * "did the hot rungs ever contribute?". Single-process only: the
-       * counts come from this rank's journal. */
+       * counts come from this rank's journal.  D29: the counts are
+       * cumulative since process start (init/warm-up/transient included),
+       * so the last-new-best row distinguishes "still contributing" from
+       * "fossil of the initial transient" -- run24's hot-slot counts all
+       * dated from the first ~500 of 20,457 bests. */
       if (world == 1) {
         const auto tot = HPOLog::instance().best_slot_totals();
         if (!tot.empty()) {
-          std::map<int, std::size_t> cnt(tot.begin(), tot.end());
-          const int iw = static_cast<int>(std::to_string(K - 1).size());
-          std::ostringstream ossb;
-          ossb << "ANNEAL_PT new-best count per slot (0=coldest .. "
-               << (K - 1) << "=hottest):";
-          for (std::size_t lo = 0; lo < K; lo += 8) {
-            const std::size_t hi = std::min(lo + 8, K) - 1;
-            ossb << "\n"
-                 << "[" << std::setw(iw) << lo << "-" << std::setw(iw) << hi
-                 << "]";
-            for (std::size_t k = lo; k <= hi; ++k) {
-              const auto it = cnt.find(static_cast<int>(k));
-              ossb << "  " << std::setw(9)
-                   << (it != cnt.end() ? it->second : 0);
-            }
-          }
-          HPOLog::instance().info(ossb.str());
+          HPOLog::instance().info(pt_detail::format_slot_count_table(
+              "ANNEAL_PT new-best count per slot (0=coldest .. " +
+                  std::to_string(K - 1) + "=hottest):",
+              K, tot));
+          HPOLog::instance().info(pt_detail::format_slot_count_table(
+              "ANNEAL_PT last new best per slot (eval #; 0 = never):",
+              K, HPOLog::instance().best_slot_last_evals()));
         }
       }
       /* Measured ladder flow (single-process runs; see the bookkeeping
