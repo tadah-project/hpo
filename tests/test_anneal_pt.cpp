@@ -433,6 +433,90 @@ TEST_CASE("ANNEAL_PT automatic steps learn a 12-decade diagonal and emit TSV",
           != std::string::npos);
 }
 
+TEST_CASE("ANNEAL_PT warm-up classifies a hypersensitive dim",
+          "[HPO][anneal_pt][step_auto][classify]")
+{
+    using namespace tadah::hpo;
+    TempWorkingDirectory cwd;
+    LoggedRun lr;
+    auto sp = make_pt_spec({-1e12}, {1e12});
+    sp.param.erase("STEP_AUTO");
+    set_seed_point(sp, {0.0});
+    sp.seed = 91007;
+    sp.num_threads = 2;
+    sp.stop.maxeval = 800;
+    sp.param["REPLICAS"] = 2.0;
+    sp.param["L"] = 5.0;
+    sp.param["T_HOT"] = 1e-6;
+    sp.param["T_COLD"] = 1e-7;
+
+    /* Acceptance collapses at every scale the 48-attempt budget can
+     * reach from STEP_FRAC*width: /10 back-offs cannot cross 12 decades
+     * of hypersensitivity. */
+    MtStubHost host{[](const Vec& x) { return 1e9 * std::fabs(x(0)); }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, host);
+
+    const std::string log = lr.read();
+    CHECK(log.find("hypersensitive=2") != std::string::npos);
+    CHECK(log.find("unexplained=0") != std::string::npos);
+    const auto rows = read_step_scales();
+    REQUIRE(rows.size() == 2);
+    for (const auto& row : rows) {
+        CHECK(row.status.find("unconverged") != std::string::npos);
+        CHECK(row.status.find("hypersensitive") != std::string::npos);
+    }
+}
+
+TEST_CASE("ANNEAL_PT warm-up accepts a tight bracket as calibrated",
+          "[HPO][anneal_pt][step_auto][classify]")
+{
+    using namespace tadah::hpo;
+    /* A 0/1 acceptance cliff defeats the two-consecutive-in-band rule at
+     * 2 batches per dim (STEP_AUTO_SWEEPS 4 -> attempt cap 8), while a
+     * miss-low followed by a miss-high builds a two-sided x2 bracket
+     * that D28 accepts as calibrated.  The batch outcomes are 4-sample
+     * Bernoulli draws, so a fixed deterministic seed list is scanned and
+     * at least one run must certify via the bracket; each individual run
+     * remains fully deterministic. */
+    bool any_bracket = false;
+    std::string bracket_log;
+    for (unsigned seed : {91010u, 91011u, 91012u, 91013u, 91014u,
+                          91015u, 91016u, 91017u, 91018u, 91019u}) {
+        TempWorkingDirectory cwd;
+        LoggedRun lr;
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        sp.param.erase("STEP_AUTO");
+        set_seed_point(sp, {0.0});
+        sp.seed = seed;
+        sp.num_threads = 2;
+        sp.stop.maxeval = 600;
+        sp.param["REPLICAS"] = 2.0;
+        sp.param["L"] = 5.0;
+        sp.param["T_HOT"] = 1.0;
+        sp.param["T_COLD"] = 0.5;
+        sp.param["STEP_FRAC"] = 0.5;
+        sp.param["STEP_AUTO_SWEEPS"] = 4.0;
+
+        MtStubHost host{[](const Vec& x) {
+            return std::fabs(x(0)) < 0.45 ? 0.0 : 1e9;
+        }, {}, {}};
+        run_anneal_pt_impl<Vec>(sp, host);
+
+        const auto rows = read_step_scales();
+        REQUIRE(rows.size() == 2);
+        for (const auto& row : rows) {
+            if (row.status.find("bracket-ok") != std::string::npos) {
+                any_bracket = true;
+                CHECK(row.sigma > 0.0);
+            }
+        }
+        if (any_bracket) { bracket_log = lr.read(); break; }
+    }
+    REQUIRE(any_bracket);
+    CHECK(bracket_log.find("bracket-ok=") != std::string::npos);
+    CHECK(bracket_log.find("bracket-ok=0") == std::string::npos);
+}
+
 TEST_CASE("ANNEAL_PT trust region banner and sigma journal labels",
           "[HPO][anneal_pt][step_auto][step_adapt][trust]")
 {

@@ -418,6 +418,18 @@ enum StepStatus : unsigned {
   StepSupportCapped  = 1u << 1,
   StepUnconverged    = 1u << 2,
   StepInterrupted    = 1u << 3,
+  /* D28: appended bits only -- the values cross the MPI gather as doubles
+   * and appear in hpo_step_scales.tsv, so existing bits stay stable.
+   * BracketOk: the two-consecutive-batches rule never certified the dim,
+   * but the bisection bracket had tightened enough that the in-band scale
+   * provably lies within a small factor -- calibrated, not unexplained.
+   * Insensitive/Hypersensitive: attempt-cap exhaustion with the best
+   * tested batch still at alpha ~ 1 (objective does not respond to this
+   * coordinate) or alpha ~ 0 (acceptance collapses at every tested
+   * scale); both accompany StepUnconverged and name its cause. */
+  StepBracketOk      = 1u << 4,
+  StepInsensitive    = 1u << 5,
+  StepHypersensitive = 1u << 6,
 };
 
 struct DimCalibration {
@@ -535,6 +547,13 @@ void coordinate_warmup(
   constexpr double target = 0.44;
   constexpr double target_lo = 0.29;
   constexpr double target_hi = 0.59;
+  /* Gross-miss thresholds (also the D28 sensitivity-classification
+   * boundaries) and the bracket-acceptance factor: a two-sided bracket
+   * with upper <= 4x lower puts the in-band scale within 2x of either
+   * edge, each of which measured on the wrong side of the band. */
+  constexpr double gross_low_alpha = 0.01;
+  constexpr double gross_high_alpha = 0.9;
+  constexpr double bracket_ok_factor = 4.0;
   const std::size_t dim = sp.low.size();
   const std::size_t minimum = kb.step_auto_sweeps;
   const std::size_t maximum = anneal::saturating_add(minimum, minimum);
@@ -622,8 +641,8 @@ void coordinate_warmup(
          * noise and retried at the identical scale. Gross misses still move
          * immediately. This preserves the two-consecutive-window rule while
          * avoiding a bracket jump after one unlucky four-sample batch. */
-        const bool gross_miss = !usable || mean_alpha < 0.01 ||
-                                mean_alpha > 0.9;
+        const bool gross_miss = !usable || mean_alpha < gross_low_alpha ||
+                                mean_alpha > gross_high_alpha;
         change_scale = !had_target_batch || gross_miss;
         if (change_scale) {
           if (!usable || mean_alpha < target_lo) {
@@ -639,18 +658,42 @@ void coordinate_warmup(
 
     if (!dc.finished && dc.attempts >= maximum) {
       dc.finished = true;
-      dc.status = StepUnconverged;
-      if (dc.have_best) c.V[i] = dc.best_scale;
-      dc.coordinate_scale = c.V[i];   /* D9: best tested, or the last one */
+      if (dc.have_lower_scale && dc.have_upper_scale &&
+          dc.lower_scale < dc.upper_scale &&
+          dc.upper_scale <= bracket_ok_factor * dc.lower_scale) {
+        /* D28 bracket-ok: the noisy 4-sample in-band test never fired
+         * twice in a row, but the bisection bracket is tight -- the
+         * geometric mean is within sqrt(bracket_ok_factor) of both
+         * edges, each of which measured on the wrong side of the band.
+         * run24 finished 949/2784 dims "unconverged/unexplained" under
+         * the old rule. */
+        unsigned clamp_status = StepOk;
+        c.V[i] = clamp_coordinate_scale(
+            std::sqrt(dc.lower_scale * dc.upper_scale),
+            c.x(i), sp.low[i], sp.high[i], clamp_status);
+        dc.status = StepBracketOk | clamp_status;
+        dc.coordinate_scale = c.V[i];
+      } else {
+        dc.status = StepUnconverged;
+        /* D28: name the cause when the best tested batch pins it. */
+        if (dc.have_best) {
+          if (dc.validation_mean_alpha > gross_high_alpha)
+            dc.status |= StepInsensitive;
+          else if (dc.validation_mean_alpha < gross_low_alpha)
+            dc.status |= StepHypersensitive;
+          c.V[i] = dc.best_scale;
+        }
+        dc.coordinate_scale = c.V[i];   /* D9: best tested, or the last */
+      }
     } else if (!dc.finished && change_scale) {
       double next_scale = scale;
       if (dc.have_lower_scale && dc.have_upper_scale &&
           dc.lower_scale < dc.upper_scale) {
         next_scale = std::sqrt(dc.lower_scale * dc.upper_scale);
       } else if (!usable || mean_alpha < target_lo) {
-        next_scale /= (!usable || mean_alpha < 0.01) ? 10.0 : 2.0;
+        next_scale /= (!usable || mean_alpha < gross_low_alpha) ? 10.0 : 2.0;
       } else {
-        next_scale *= mean_alpha > 0.9 ? 10.0 : 2.0;
+        next_scale *= mean_alpha > gross_high_alpha ? 10.0 : 2.0;
       }
       unsigned clamp_status = StepOk;
       const double clamped_scale = clamp_coordinate_scale(
@@ -1846,6 +1889,9 @@ template<typename Vec, typename HostT>
           if (status & pt_detail::StepSupportCapped) add("support-capped");
           if (status & pt_detail::StepUnconverged) add("unconverged");
           if (status & pt_detail::StepInterrupted) add("interrupted");
+          if (status & pt_detail::StepBracketOk) add("bracket-ok");
+          if (status & pt_detail::StepInsensitive) add("insensitive");
+          if (status & pt_detail::StepHypersensitive) add("hypersensitive");
           return text;
         };
         std::ofstream scale_file("hpo_step_scales.tsv", std::ios::trunc);
@@ -1878,6 +1924,9 @@ template<typename Vec, typename HostT>
         std::size_t status_capped = 0;
         std::size_t status_unconverged = 0;
         std::size_t status_interrupted = 0;
+        std::size_t status_bracket_ok = 0;
+        std::size_t status_insensitive = 0;
+        std::size_t status_hypersensitive = 0;
         std::size_t unexplained_dimensions = 0;
         std::size_t unresolved_pilots = 0;
         for (std::size_t k = 0; k < K; ++k) {
@@ -1967,9 +2016,18 @@ template<typename Vec, typename HostT>
             if (status & pt_detail::StepSupportCapped) ++status_capped;
             if (status & pt_detail::StepUnconverged) ++status_unconverged;
             if (status & pt_detail::StepInterrupted) ++status_interrupted;
+            if (status & pt_detail::StepBracketOk) ++status_bracket_ok;
+            if (status & pt_detail::StepInsensitive) ++status_insensitive;
+            if (status & pt_detail::StepHypersensitive)
+              ++status_hypersensitive;
+            /* D28: "unexplained" = unconverged with nothing naming the
+             * cause -- neither an interim floor/cap saturation nor a
+             * sensitivity classification. */
             if ((status & pt_detail::StepUnconverged) &&
                 !(status & (pt_detail::StepNumericalFloor |
-                            pt_detail::StepSupportCapped)))
+                            pt_detail::StepSupportCapped |
+                            pt_detail::StepInsensitive |
+                            pt_detail::StepHypersensitive)))
               ++unexplained_dimensions;
           }
           /* Slot-wide pilot fields are replicated across every dim record,
@@ -2035,9 +2093,13 @@ template<typename Vec, typename HostT>
           std::ostringstream summary;
           summary << "ANNEAL_PT step calibration summary: dimensions="
                   << (K * dim) << "  ok=" << status_ok
+                  << "  bracket-ok=" << status_bracket_ok
                   << "  numerical-floor=" << status_floor
                   << "  support-capped=" << status_capped
                   << "  unconverged=" << status_unconverged
+                  << " (insensitive=" << status_insensitive
+                  << " hypersensitive=" << status_hypersensitive
+                  << " unexplained=" << unexplained_dimensions << ")"
                   << "  interrupted=" << status_interrupted
                   << "  unresolved-pilots=" << unresolved_pilots;
           HPOLog::instance().info(summary.str());
@@ -2051,6 +2113,16 @@ template<typename Vec, typename HostT>
               std::to_string(unresolved_pilots) +
               " unresolved full-vector pilot(s); inspect the calibration-only "
               "hpo_step_scales.tsv file");
+        }
+        if (warmup_code == 0 &&
+            (status_insensitive > 0 || status_hypersensitive > 0)) {
+          HPOLog::instance().hint(
+              "step warm-up sensitivity classification: 'insensitive' dims "
+              "(best alpha ~ 1 at every tested scale) do not affect the "
+              "objective over their OPTIM range -- consider dropping or "
+              "fixing them; 'hypersensitive' dims (best alpha ~ 0) collapse "
+              "acceptance at every tested scale -- consider narrowing or "
+              "log-scaling their OPTIM range");
         }
         HPOLog::instance().info(
             "ANNEAL_PT automatic step warm-up spent " +
