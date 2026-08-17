@@ -1153,11 +1153,14 @@ template<typename Vec, typename HostT>
             << "  V_FLOOR_FRAC=" << kb.v_floor_frac;
       else
         oss << "  L=" << kb.L;
-      if (kb.step_auto)
+      if (kb.step_auto) {
         oss << "  STEP_AUTO=1"
             << "  STEP_AUTO_SWEEPS=" << kb.step_auto_sweeps
             << "  STEP_ADAPT_EVERY=" << kb.step_adapt_every;
-      else if (!kb.corana)
+        if (kb.step_adapt_every > 0)
+          oss << "  STEP_TRUST_FACTOR=" << kb.step_trust_factor
+              << (kb.step_trust_factor == 0.0 ? " (off)" : "");
+      } else if (!kb.corana)
         oss << "  STEP_AUTO=0";
       if (sp.step.has_value()) {
         if (kb.corana)
@@ -2063,6 +2066,16 @@ template<typename Vec, typename HostT>
       }
     }
 
+    /* D27: record each slot's calibrated sigma as the diagonal-RAM trust
+     * anchor.  The post-warm-up V encodes the legitimate per-dim
+     * sensitivity profile (including deliberately tiny sigmas on
+     * hypersensitive wide-box dims); production adaptation may move
+     * around it but not drift without bound.  Guarded on the RAM
+     * condition, not the auto condition, so it stays correct if the two
+     * ever decouple. */
+    if (proceed && !kb.corana && kb.step_adapt_every > 0)
+      for (auto& c : chains) c.V_baseline = c.V;
+
     /* Per-pair swap-acceptance bookkeeping. */
     std::vector<std::size_t> swap_attempt(K > 1 ? K - 1 : 0, 0);
     std::vector<std::size_t> swap_accept (K > 1 ? K - 1 : 0, 0);
@@ -2281,7 +2294,11 @@ template<typename Vec, typename HostT>
           e_prop += rstats[li].proposed;
           e_acc  += rstats[li].accepted;
           e_oob  += rstats[li].oob;
-          if (world == 1) {
+          /* Accumulated only where the sigma/step-health block below can
+           * consume them; under CORANA or STEP_ADAPT_EVERY=0 they would
+           * grow unread for the whole run. */
+          if (world == 1 && !kb.corana && kb.step_adapt_every > 0 &&
+              kb.swap_window > 0) {
             step_attempt_win[li] += rstats[li].proposed;
             step_accept_win[li] += rstats[li].accepted;
           }
@@ -2964,9 +2981,10 @@ template<typename Vec, typename HostT>
                     << std::setw(9) << v[s];
                 };
               };
+              /* The printed values are the live chains[s].V at print time,
+               * not an aggregate over the window -- say so. */
               const std::string window =
-                  " (last " + std::to_string(kb.swap_window) +
-                  " epochs; sigma[i]/OPTIM_width[i])";
+                  " (instantaneous V; sigma[i]/OPTIM_width[i])";
               grid("ANNEAL_PT adaptive sigma/width geo-mean per slot" + window +
                        ":",
                    vcell(v_gm));
@@ -2976,6 +2994,29 @@ template<typename Vec, typename HostT>
               grid("ANNEAL_PT adaptive sigma/width max per slot" + window +
                        ":",
                    vcell(v_mx));
+              if (kb.step_trust_factor > 1.0 &&
+                  !chains.empty() && chains[0].V_baseline.size() == dim) {
+                /* D27: dims pinned against the trust region, per slot. */
+                std::vector<std::size_t> n_lo(K, 0), n_hi(K, 0);
+                for (std::size_t s = 0; s < K; ++s) {
+                  for (std::size_t i = 0; i < dim; ++i) {
+                    const double base = chains[s].V_baseline[i];
+                    if (chains[s].V[i] <=
+                        base / kb.step_trust_factor * (1.0 + 1e-12))
+                      ++n_lo[s];
+                    else if (chains[s].V[i] >=
+                             base * kb.step_trust_factor * (1.0 - 1e-12))
+                      ++n_hi[s];
+                  }
+                }
+                grid("ANNEAL_PT sigma dims at trust bound per slot "
+                     "(lo|hi of " + std::to_string(dim) + "):",
+                     [&](std::ostringstream& o, std::size_t s) {
+                       o << "  " << std::setw(4) << n_lo[s] << '|'
+                         << std::left << std::setw(4) << n_hi[s]
+                         << std::right;
+                     });
+              }
 
               std::ostringstream unhealthy;
               std::size_t unhealthy_count = 0;

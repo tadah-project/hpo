@@ -802,6 +802,55 @@ TEST_CASE("anneal scalar RAM repairs a common tenfold scale error quickly",
     CHECK(c.diag_ram_pending == 0);
 }
 
+TEST_CASE("anneal diagonal RAM trust region bounds adversarial drift",
+          "[HPO][anneal_core][step_adapt][trust]")
+{
+    using Vec = dlib::matrix<double, 0, 1>;
+    OptimizerSpec sp;
+    sp.low = {-10.0, -10.0};
+    sp.high = {10.0, 10.0};
+    auto make_chain = [] {
+        anneal::ChainState<Vec> c;
+        c.x = Vec(2);
+        c.x = 0.0;
+        c.V = {0.1, 0.1};
+        return c;
+    };
+    /* All displacement in dim 0, every proposal rejected: the scalar term
+     * shrinks the whole vector while the centred shape term keeps pushing
+     * dim 0 below dim 1 -- the unbounded-anisotropy walk the trust region
+     * exists to bound (run24 sat at sigma/width ~ 2e-10 for 70k epochs). */
+    const std::vector<double> z{1.0, 0.0};
+    const double F = 8.0;
+
+    auto bounded = make_chain();
+    bounded.V_baseline = bounded.V;
+    for (std::size_t j = 0; j < 5000; ++j) {
+        anneal::accumulate_diagonal_ram(bounded, z, 0.0L, sp, 1, F);
+        if (j % 100 == 0) {
+            for (std::size_t i = 0; i < 2; ++i) {
+                CHECK(bounded.V[i] >= 0.1 / F * (1.0 - 1e-9));
+                CHECK(bounded.V[i] <= 0.1 * F * (1.0 + 1e-9));
+            }
+        }
+    }
+    CHECK(bounded.V[0] >= 0.1 / F * (1.0 - 1e-9));
+    CHECK(bounded.V[1] >= 0.1 / F * (1.0 - 1e-9));
+
+    /* Legacy behaviour is preserved both with the factor off and with no
+     * recorded baseline: the walk escapes the would-be trust bound. */
+    auto unbounded = make_chain();
+    unbounded.V_baseline = unbounded.V;
+    for (std::size_t j = 0; j < 5000; ++j)
+        anneal::accumulate_diagonal_ram(unbounded, z, 0.0L, sp, 1, 0.0);
+    CHECK(unbounded.V[0] < 0.1 / F);
+
+    auto no_baseline = make_chain();
+    for (std::size_t j = 0; j < 5000; ++j)
+        anneal::accumulate_diagonal_ram(no_baseline, z, 0.0L, sp, 1, F);
+    CHECK(no_baseline.V[0] < 0.1 / F);
+}
+
 TEST_CASE("anneal::run_rung retains the best graded FAILSCORE repair",
           "[HPO][anneal_core][rung][failscore][fail_grading]")
 {

@@ -433,6 +433,37 @@ TEST_CASE("ANNEAL_PT automatic steps learn a 12-decade diagonal and emit TSV",
           != std::string::npos);
 }
 
+TEST_CASE("ANNEAL_PT trust region banner and sigma journal labels",
+          "[HPO][anneal_pt][step_auto][step_adapt][trust]")
+{
+    using namespace tadah::hpo;
+    TempWorkingDirectory cwd;
+    LoggedRun lr;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    sp.param.erase("STEP_AUTO");       // default-on automatic calibration
+    set_seed_point(sp, {0.0});
+    sp.seed = 91002;
+    sp.num_threads = 2;
+    sp.stop.maxeval = 1200;
+    sp.param["REPLICAS"] = 2.0;
+    sp.param["L"] = 2.0;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["T_COLD"] = 0.1;
+    sp.param["STEP_ADAPT_EVERY"] = 1.0;
+    sp.param["SWAP_WINDOW"] = 2.0;
+
+    MtStubHost host{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, host);
+
+    const std::string log = lr.read();
+    CHECK(log.find("STEP_TRUST_FACTOR=64") != std::string::npos);
+    CHECK(log.find("(instantaneous V; sigma[i]/OPTIM_width[i])") !=
+          std::string::npos);
+    CHECK(log.find("epochs; sigma[i]/OPTIM_width[i])") == std::string::npos);
+    CHECK(log.find("ANNEAL_PT sigma dims at trust bound per slot") !=
+          std::string::npos);
+}
+
 TEST_CASE("ANNEAL_PT calibrates a run22-shaped 174-D objective",
           "[HPO][anneal_pt][step_auto][run22]")
 {
@@ -1762,6 +1793,7 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
         CHECK(kb.step_auto);
         CHECK(kb.step_auto_sweeps == 12);
         CHECK(kb.step_adapt_every == 0);
+        CHECK(kb.step_trust_factor == 64.0);
     }
     SECTION("STEP_AUTO is Boolean") {
         auto sp = make_pt_spec({-1.0}, {1.0});
@@ -1800,6 +1832,47 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
         sp.param["STEP_ADAPT_EVERY"] = 1.0;
         REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
                             Catch::Contains("unused"));
+    }
+    SECTION("STEP_TRUST_FACTOR requires the adaptive diagonal") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        sp.param.erase("STEP_AUTO");
+        sp.param["STEP_TRUST_FACTOR"] = 8.0;
+        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                            Catch::Contains("STEP_ADAPT_EVERY is 0"));
+    }
+    SECTION("STEP_TRUST_FACTOR is rejected where the RAM cannot run") {
+        {
+            auto sp = make_pt_spec({-1.0}, {1.0});
+            sp.param.erase("STEP_AUTO");
+            sp.param["CORANA"] = 1.0;
+            sp.param["STEP_TRUST_FACTOR"] = 8.0;
+            REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                                Catch::Contains("CLASSIC variant"));
+        }
+        {
+            auto sp = make_pt_spec({-1.0}, {1.0});
+            sp.param.erase("STEP_AUTO");
+            sp.step = 0.1;
+            sp.param["STEP_TRUST_FACTOR"] = 8.0;
+            REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                                Catch::Contains("explicit STEP"));
+        }
+        {
+            auto sp = make_pt_spec({-1.0}, {1.0});
+            sp.param["STEP_TRUST_FACTOR"] = 8.0;   /* fixture STEP_AUTO=0 */
+            REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                                Catch::Contains("STEP_AUTO is 0"));
+        }
+    }
+    SECTION("STEP_TRUST_FACTOR must be 0 or greater than 1") {
+        for (double f : {1.0, 0.5, -3.0}) {
+            auto sp = make_pt_spec({-1.0}, {1.0});
+            sp.param.erase("STEP_AUTO");
+            sp.param["STEP_ADAPT_EVERY"] = 1.0;
+            sp.param["STEP_TRUST_FACTOR"] = f;
+            REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                                Catch::Contains("STEP_TRUST_FACTOR"));
+        }
     }
     SECTION("LADDER_POWER is independently usable") {
         auto sp = make_pt_spec({-1.0}, {1.0});

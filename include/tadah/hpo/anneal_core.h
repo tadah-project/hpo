@@ -288,6 +288,8 @@ struct Knobs {
   bool        step_auto = true;     /* PT CLASSIC coordinate warm-up    */
   std::size_t step_auto_sweeps = 12;/* minimum attempts per coordinate  */
   std::size_t step_adapt_every = 0; /* PT diagonal RAM apply cadence     */
+  double      step_trust_factor = 64.0; /* RAM sigma bound as a factor of
+                                     * the calibrated baseline; 0 = off */
 
   /* shared by both parallel drivers */
   int         init_mode   = 0;      /* 0 = seed + Gaussian jitter, 1 = box */
@@ -330,6 +332,7 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
       "LADDER_ADAPT_GAIN", "LADDER_ADAPT_DECAY", "LADDER_ADAPT_UPDATES",
       "LADDER_MIN_GAP",
       "STEP_AUTO", "STEP_AUTO_SWEEPS", "STEP_ADAPT_EVERY",
+      "STEP_TRUST_FACTOR",
   };
   static const std::unordered_set<std::string> pa_keys = {
       "SWEEPS", "ESS_TARGET",
@@ -528,6 +531,7 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   kb.step_auto = kind == AlgoKind::PT && pbool("STEP_AUTO", true);
   kb.step_auto_sweeps = pcount("STEP_AUTO_SWEEPS", 12.0);
   kb.step_adapt_every = pcount("STEP_ADAPT_EVERY", 0.0);
+  kb.step_trust_factor = pget("STEP_TRUST_FACTOR", 64.0);
   const std::size_t init_mode = pcount("INIT_MODE", 0.0);
   if (kind != AlgoKind::Serial && init_mode > 1)
     throw std::runtime_error(
@@ -570,30 +574,43 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   }
   if (kind == AlgoKind::PT && kb.corana) {
     for (const char* key : {"STEP_AUTO", "STEP_AUTO_SWEEPS",
-                            "STEP_ADAPT_EVERY"})
+                            "STEP_ADAPT_EVERY", "STEP_TRUST_FACTOR"})
       if (sp.param.count(key))
         throw std::runtime_error(
             ctx + ": PARAM " + key + " belongs to the CLASSIC variant");
     kb.step_auto = false;
     kb.step_adapt_every = 0;
+    kb.step_trust_factor = 0.0;
   }
   if (kind == AlgoKind::PT && sp.step) {
     if (sp.param.count("STEP_AUTO_SWEEPS") ||
-        sp.param.count("STEP_ADAPT_EVERY"))
+        sp.param.count("STEP_ADAPT_EVERY") ||
+        sp.param.count("STEP_TRUST_FACTOR"))
       throw std::runtime_error(
-          ctx + ": STEP_AUTO_SWEEPS/STEP_ADAPT_EVERY are unused when "
-                "explicit STEP disables automatic step calibration");
+          ctx + ": STEP_AUTO_SWEEPS/STEP_ADAPT_EVERY/STEP_TRUST_FACTOR are "
+                "unused when explicit STEP disables automatic step "
+                "calibration");
     kb.step_auto = false;
     kb.step_adapt_every = 0;
+    kb.step_trust_factor = 0.0;
   }
   if (kind == AlgoKind::PT && !kb.step_auto && !sp.step && !kb.corana) {
     if (sp.param.count("STEP_AUTO_SWEEPS") ||
-        sp.param.count("STEP_ADAPT_EVERY"))
+        sp.param.count("STEP_ADAPT_EVERY") ||
+        sp.param.count("STEP_TRUST_FACTOR"))
       throw std::runtime_error(
-          ctx + ": STEP_AUTO_SWEEPS/STEP_ADAPT_EVERY are unused when "
-                "PARAM STEP_AUTO is 0");
+          ctx + ": STEP_AUTO_SWEEPS/STEP_ADAPT_EVERY/STEP_TRUST_FACTOR are "
+                "unused when PARAM STEP_AUTO is 0");
     kb.step_adapt_every = 0;
+    kb.step_trust_factor = 0.0;
   }
+  /* The trust region binds inside the diagonal RAM apply; with the RAM
+   * disabled the key would be a silently dead knob. */
+  if (kind == AlgoKind::PT && sp.param.count("STEP_TRUST_FACTOR") &&
+      kb.step_adapt_every == 0)
+    throw std::runtime_error(
+        ctx + ": PARAM STEP_TRUST_FACTOR is unused when STEP_ADAPT_EVERY "
+              "is 0 (no adaptive diagonal to bound)");
 
   /* -- validation ---------------------------------------------------- */
   const bool rt_one_ok = (kind == AlgoKind::PT);
@@ -668,6 +685,11 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     if (kb.step_auto && kb.step_auto_sweeps == 0)
       throw std::runtime_error(
           ctx + ": PARAM STEP_AUTO_SWEEPS must be >= 1");
+    if (!(kb.step_trust_factor == 0.0 ||
+          (std::isfinite(kb.step_trust_factor) &&
+           kb.step_trust_factor > 1.0)))
+      throw std::runtime_error(
+          ctx + ": PARAM STEP_TRUST_FACTOR must be 0 (off) or > 1");
     if (kb.rt < 1.0 && kb.t_min && !(*kb.t_min > 0.0))
       throw std::runtime_error(ctx + ": PARAM T_MIN must be > 0");
   }
@@ -1208,6 +1230,10 @@ struct ChainState {
   Vec    x;
   double f = std::numeric_limits<double>::infinity();
   std::vector<double> V;
+  /* D27 trust-region anchor for the diagonal RAM: the calibrated per-dim
+   * scale recorded once after warm-up.  Empty = no trust region (serial,
+   * PA, Corana, and legacy callers). */
+  std::vector<double> V_baseline;
   std::mt19937_64     rng;
   Vec    best_x;
   double best_f = std::numeric_limits<double>::infinity();
@@ -1227,7 +1253,8 @@ void accumulate_diagonal_ram(ChainState<Vec>& c,
                              const std::vector<double>& z,
                              long double alpha,
                              const OptimizerSpec& sp,
-                             std::size_t adapt_every)
+                             std::size_t adapt_every,
+                             double trust_factor = 0.0)
 {
   if (adapt_every == 0) return;
   const std::size_t dim = z.size();
@@ -1263,6 +1290,17 @@ void accumulate_diagonal_ram(ChainState<Vec>& c,
         -log2, log2);
     long double next = static_cast<long double>(c.V[i]) *
                        std::exp(static_cast<long double>(log_sigma_factor));
+    /* D27: the centred shape term is a mean-zero random walk with no
+     * restoring force, so per-dim sigma can drift arbitrarily far from
+     * its calibrated scale (run24 held dims at sigma/width ~ 2e-10 for
+     * 70k epochs).  Bound it to a factor of the recorded baseline.  The
+     * support floor/cap is applied LAST: representability outranks the
+     * trust region, so a coordinate can always still move. */
+    if (trust_factor > 1.0 && c.V_baseline.size() == dim) {
+      const long double base = static_cast<long double>(c.V_baseline[i]);
+      next = std::max(base / trust_factor,
+                      std::min(base * trust_factor, next));
+    }
     const double floor = resolvable_coordinate_scale(
         c.x(i), sp.low[i], sp.high[i]);
     const double cap = sp.high[i] - sp.low[i];
@@ -1485,7 +1523,8 @@ RungStats classic_rung(ChainState<Vec>& c, double T,
       }
     }
     if (!z.empty())
-      accumulate_diagonal_ram(c, z, alpha, sp, kb.step_adapt_every);
+      accumulate_diagonal_ram(c, z, alpha, sp, kb.step_adapt_every,
+                              kb.step_trust_factor);
     if (stopval_reached(c.f, ctx.stopval, sp.failscore)) {
       ctx.stop.store(true, std::memory_order_relaxed);
       rs.stop = RungStop::StopVal;
