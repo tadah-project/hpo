@@ -27,7 +27,16 @@
  *
  * Semantics preserved bit-for-bit from the pre-extraction run_one:
  *   - instance cache keyed by (script + '\x01' + each invar token); a failed
- *     create leaves NO cache entry (retried on the next task);
+ *     create leaves NO cache entry (retried on the next task). Each entry
+ *     also owns the script rendered ONCE to a temp file (ScriptFile):
+ *     scripts execute through LAMMPS's Input::file(), the only executor
+ *     with native jump/label/next semantics (backward jumps = loops). An
+ *     entry whose run fails via an exception (TIMEOUT_ABORT/SCRIPT_ERROR)
+ *     is ERASED after the failvar readback: the exception skipped
+ *     Input::file()'s internal cleanup, so the instance is poisoned
+ *     (dangling FILE handle, nested-file counter, possibly a sticky label
+ *     search). Recreation is ~free (create_ms is ~0.02% of run_ms).
+ *     A TIMEOUT_CLEAN failure keeps the healthy instance, as before;
  *   - one LammpsTadah per (slot, iter), adopted by every EXTERN pair_coeff of
  *     every script this slot runs within the eval (O1a); a throwing ctor is
  *     negative-cached for the remainder of the iter on this slot;
@@ -84,7 +93,11 @@ struct PcTaskResult {
  * each worker process. */
 template <class R>
 struct PcSlotState {
-  std::unordered_map<std::string, typename R::LMPPtr> lmp_cache;
+  struct CacheEntry {
+    typename R::LMPPtr lmp;
+    ScriptFile script;         /* rendered once; reused every eval        */
+  };
+  std::unordered_map<std::string, CacheEntry> lmp_cache;
   std::shared_ptr<tadah::LammpsTadah> pot;
   long long pot_iter = -1;     /* iter the pot/pot_failed state belongs to */
   bool pot_failed = false;     /* negative cache: ctor threw for this iter */
@@ -151,9 +164,22 @@ PcTaskResult execute_script_task(
       res.status = PcTaskStatus::CREATE_FAIL;
       return res;   /* no cache entry -> retried on the next task */
     }
-    cache_it = st.lmp_cache.emplace(cache_key, std::move(fresh)).first;
+    ScriptFile rendered;
+    try {
+      rendered = ScriptFile(script_lines);
+    } catch (const std::exception& e) {
+      /* Temp-file write failed (infrastructure, like a failed create).
+       * Same classification in THREAD and PROCESS modes by construction. */
+      res.status = PcTaskStatus::CREATE_FAIL;
+      res.error_msg = e.what();
+      return res;   /* no cache entry -> retried on the next task */
+    }
+    cache_it = st.lmp_cache.emplace(
+        cache_key,
+        typename PcSlotState<R>::CacheEntry{std::move(fresh),
+                                            std::move(rendered)}).first;
   }
-  auto& lmp = cache_it->second;
+  auto& lmp = cache_it->second.lmp;
   auto t_create1 = std::chrono::high_resolution_clock::now();
 
   /* --- Injections (pre-formatted command lines; failures swallowed) ----- */
@@ -178,7 +204,9 @@ PcTaskResult execute_script_task(
   }
 
   const bool pot_ok = static_cast<bool>(st.pot) && !st.pot_failed;
-  const bool run_ok = pot_ok && runner.run_script(lmp, script_lines, st.pot);
+  ScriptRunStatus run_status = ScriptRunStatus::OK;
+  const bool run_ok = pot_ok &&
+      runner.run_script(lmp, cache_it->second.script, st.pot, &run_status);
   auto t_run1 = std::chrono::high_resolution_clock::now();
 
   res.create_ms =
@@ -197,6 +225,14 @@ PcTaskResult execute_script_task(
       for (const auto& n : failvar_names) {
         try { res.failvar_values.emplace_back(runner.get_variable(lmp, n)); }
         catch (...) { res.failvar_values.emplace_back(); }
+      }
+      /* Exception exits from Input::file() poison the instance (see the
+       * header comment); discard AFTER the failvar readback (the Variable
+       * store is still intact and band-B grading needs the values).
+       * TIMEOUT_CLEAN keeps the healthy instance, as before. */
+      if (run_status == ScriptRunStatus::TIMEOUT_ABORT ||
+          run_status == ScriptRunStatus::SCRIPT_ERROR) {
+        st.lmp_cache.erase(cache_it);
       }
     }
     return res;

@@ -14,8 +14,27 @@
 #include <variable.h>
 
 #include <tadah/core/context.h>
+#include <tadah/hpo/script_file.h>
 
 namespace tadah { class LammpsTadah; }
+
+namespace tadah { namespace hpo {
+
+/* Outcome of a script run, for callers that need more than pass/fail.
+ * TIMEOUT_CLEAN keeps the LAMMPS instance healthy (a fired timer in the
+ * final section; run/minimize stopped cleanly, Input::file() completed).
+ * TIMEOUT_ABORT and SCRIPT_ERROR left Input::file() via an exception,
+ * which skips its internal cleanup (open FILE handle, nested-file
+ * counter, possibly a sticky label search) -- the instance must be
+ * DISCARDED by any caller that caches instances (see pc_task_exec.h). */
+enum class ScriptRunStatus {
+  OK = 0,
+  TIMEOUT_CLEAN,   /* fired soft timeout, instance healthy               */
+  TIMEOUT_ABORT,   /* section-boundary guard fired, instance poisoned    */
+  SCRIPT_ERROR,    /* any other failure, instance poisoned               */
+};
+
+} }  // namespace tadah::hpo
 
 /**
  * @class LammpsRunner
@@ -68,39 +87,55 @@ class LammpsRunner {
                   const std::string& script) const;
 
   /**
-   * @brief Executes a LAMMPS input script using provided potential.
+   * @brief Executes a rendered PC_LAMMPS script through Input::file().
    *
-   * Catches LAMMPS exceptions. If the instance pointer is null
-   * or an exception is thrown, returns false.
-   *
-   * The script file must contain line like:
-   *
-   * ```
-   * pair_coeff * * EXTERN Ti Nb
-   * ```
-   *
-   * The script is executed line by line. Once EXTERN is encountered 
-   * in the pair_coeff line, the runner will attempt to load 
-   * the potential from the context and then execute the rest of the script.
+   * The whole script runs under LAMMPS's own file reader, so
+   * jump/label/next and if-then-"jump" control flow (including BACKWARD
+   * jumps, i.e. loops) have native LAMMPS semantics. The candidate
+   * potential is staged per-thread (PairTadah::stage_extern) for the
+   * duration of the run; every `pair_coeff * * EXTERN ...` the script
+   * executes adopts it inside PairTadah::coeff(). The potential is built
+   * from the Context once per run, and only when the script actually
+   * contains an EXTERN line (EXTERN-less scripts run fine with an empty
+   * Context).
    *
    * @param lmp_ptr Unique pointer to a LAMMPS instance.
-   * @param script Path to the LAMMPS input script.
-   * @param pot_ctx Context for the script execution.
+   * @param script_file Rendered script (see tadah::hpo::ScriptFile).
+   * @param pot_ctx Potential Context (used only for EXTERN scripts).
+   * @param why Optional detailed outcome; see ScriptRunStatus for the
+   *            instance-poisoning contract on TIMEOUT_ABORT/SCRIPT_ERROR.
    * @return True if execution succeeded; false otherwise.
+   */
+  bool run_script(const LMPPtr& lmp_ptr,
+                  const tadah::hpo::ScriptFile& script_file,
+                  const tadah::core::Context& pot_ctx,
+                  tadah::hpo::ScriptRunStatus* why = nullptr) const;
+
+  /**
+   * @brief Executes a rendered script using a pre-built shared potential.
+   *
+   * Same executor as the Context overload, but the driver builds ONE
+   * tadah::LammpsTadah per candidate potential (per thread) and stages it
+   * directly -- no reconstruction, no Context copies. The object carries
+   * per-sim scratch, so it must only be shared across sims that run
+   * sequentially.
+   */
+  bool run_script(const LMPPtr& lmp_ptr,
+                  const tadah::hpo::ScriptFile& script_file,
+                  const std::shared_ptr<tadah::LammpsTadah>& pot,
+                  tadah::hpo::ScriptRunStatus* why = nullptr) const;
+
+  /**
+   * @brief Convenience wrapper: renders script_lines to a temp ScriptFile
+   * per call and delegates to the ScriptFile overload. Intended for tests
+   * and one-shot callers; cached/hot paths should render once and reuse
+   * (pc_task_exec.h, LammpsSim::script_file()).
    */
   bool run_script(const LMPPtr& lmp_ptr,
                   const std::vector<std::string>& script_lines,
                   const tadah::core::Context& pot_ctx) const;
 
-  /**
-   * @brief Executes a script using a pre-built shared potential object.
-   *
-   * Same EXTERN protocol as the Context overload, but the driver builds ONE
-   * tadah::LammpsTadah per candidate potential (per thread) and every
-   * pair_coeff EXTERN adopts it via PairTadah::load(shared_ptr) — no
-   * reconstruction, no Context copies. The object carries per-sim scratch,
-   * so it must only be shared across sims that run sequentially.
-   */
+  /** @brief Convenience wrapper; see the Context-flavoured wrapper above. */
   bool run_script(const LMPPtr& lmp_ptr,
                   const std::vector<std::string>& script_lines,
                   const std::shared_ptr<tadah::LammpsTadah>& pot) const;

@@ -12,6 +12,7 @@
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
+#include <tadah/hpo/script_file.h>
 
 namespace tadah::hpo {
   
@@ -53,6 +54,19 @@ class LammpsSim {
 
     std::string script; /**< Name of the LAMMPS script file */
     std::vector<std::string> script_lines; /**< Lines of the LAMMPS script */
+
+    /**
+     * @brief The script rendered once to a node-local temp file, for
+     * execution through LAMMPS's Input::file() (native jump/label/next
+     * semantics -- see tadah::hpo::ScriptFile).
+     *
+     * Lazily created on first call and shared by copies of this sim
+     * (script_lines are immutable after construction). Guarded by a
+     * file-local mutex in lammps_sim.cpp: a shared_ptr member (rather
+     * than a once_flag/mutex member) keeps LammpsSim copyable/movable,
+     * which HPOTargets::LS vector growth requires.
+     */
+    const tadah::hpo::ScriptFile& script_file() const;
 
     // Any acceptable LAMMPS command line arguments.
     std::vector<std::string> invar;     /**< LAMMPS input variables */
@@ -121,6 +135,10 @@ class LammpsSim {
      * bands C/D (and optionally to gate the eval). Never contributes loss
      * components. */
     bool is_failprobe = false;
+
+    /* Lazily-rendered ScriptFile backing script_file(); shared across
+     * copies. Do not touch directly. */
+    mutable std::shared_ptr<tadah::hpo::ScriptFile> script_file_;
 
     LammpsSim();
 

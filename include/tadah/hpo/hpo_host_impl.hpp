@@ -3385,7 +3385,17 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                     for (const auto& kv : hot_snapshot)
                         inject_hot_value(lmp, kv.first, kv.second);
 
-                    if (!runner.run_script(lmp, lsim.script_lines, pot)) {
+                    bool grad_run_ok = false;
+                    try {
+                        /* Rendered once per sim (lazy), executed through
+                         * Input::file() -- same executor as the eval
+                         * pipeline. */
+                        grad_run_ok =
+                            runner.run_script(lmp, lsim.script_file(), pot);
+                    } catch (const std::exception&) {
+                        grad_run_ok = false;  /* ScriptFile render failed */
+                    }
+                    if (!grad_run_ok) {
                         /* Phase A masking: LAMMPS minimisation diverged
                          * or hit NaN under the current pot. Mark and
                          * continue -- the failing script's loss is

@@ -56,71 +56,115 @@ bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
 
   return true;
 }
+namespace {
+
+using tadah::hpo::ScriptFile;
+using tadah::hpo::ScriptRunStatus;
+
+bool set_why(ScriptRunStatus* why, ScriptRunStatus v) {
+  if (why) *why = v;
+  return v == ScriptRunStatus::OK;
+}
+
+/* RAII staging of the EXTERN potential for the duration of one script run
+ * (per thread; see PairTadah::stage_extern). An empty pot stages nothing
+ * but still clears the slot on exit, so no stale potential can leak into a
+ * later run on this thread. */
+struct StagedExternGuard {
+  explicit StagedExternGuard(std::shared_ptr<tadah::LammpsTadah> pot) {
+    LAMMPS_NS::PairTadah::stage_extern(std::move(pot));
+  }
+  ~StagedExternGuard() { LAMMPS_NS::PairTadah::clear_staged_extern(); }
+  StagedExternGuard(const StagedExternGuard&) = delete;
+  StagedExternGuard& operator=(const StagedExternGuard&) = delete;
+};
+
+/* Run the rendered script through LAMMPS's own reader. Native semantics
+ * for jump/label/next/if-then-"jump" -- the one()-per-line executor could
+ * not loop backwards (jump's rewind() is a no-op on stdin and the sticky
+ * label search then swallowed the rest of the script AND poisoned the
+ * cached instance's next eval: the run26 SIGSEGV storm). */
+bool execute_file(const LammpsRunner::LMPPtr& lmp_ptr, const ScriptFile& sf,
+                  ScriptRunStatus* why) {
+  try {
+    lmp_ptr->input->file(sf.path().c_str());
+  } catch (const std::exception& e) {
+    /* The injected section-boundary guard (see prep_script_lines) aborts
+     * with the sentinel as an "unknown command"; anything else is a
+     * genuine script failure. Either way the exception skipped
+     * Input::file()'s internal cleanup, so the instance is poisoned --
+     * cache-holding callers must discard it (ScriptRunStatus contract). */
+    const bool timeout =
+        std::string(e.what()).find(tadah::hpo::PC_TIMEOUT_ABORT_SENTINEL) !=
+        std::string::npos;
+    return set_why(why, timeout ? ScriptRunStatus::TIMEOUT_ABORT
+                                : ScriptRunStatus::SCRIPT_ERROR);
+  }
+  /* A fired `timer timeout` in the FINAL section stops run/minimize
+   * cleanly (no exception) and no clear follows to reset it: incomplete
+   * physics, healthy instance -- the next script's clear rebuilds the
+   * Timer, exactly as under the old executor. */
+  if (lmp_ptr->timer->is_timeout())
+    return set_why(why, ScriptRunStatus::TIMEOUT_CLEAN);
+  return set_why(why, ScriptRunStatus::OK);
+}
+
+}  // namespace
+
+bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
+    const tadah::hpo::ScriptFile& script_file,
+    const tadah::core::Context& pot_ctx,
+    tadah::hpo::ScriptRunStatus* why) const {
+  if (!lmp_ptr || !script_file.valid()) {
+    return set_why(why, ScriptRunStatus::SCRIPT_ERROR);
+  }
+  try {
+    /* Build the potential once per run, and ONLY for scripts that adopt
+     * it: EXTERN-less scripts legitimately run with an empty Context (the
+     * old per-line hook rebuilt the potential on every EXTERN line). */
+    StagedExternGuard staged(script_file.has_extern()
+        ? std::make_shared<tadah::LammpsTadah>(pot_ctx)
+        : std::shared_ptr<tadah::LammpsTadah>());
+    return execute_file(lmp_ptr, script_file, why);
+  } catch (const std::exception&) {
+    // LammpsTadah construction failed
+    return set_why(why, ScriptRunStatus::SCRIPT_ERROR);
+  }
+}
+
+bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
+    const tadah::hpo::ScriptFile& script_file,
+    const std::shared_ptr<tadah::LammpsTadah>& pot,
+    tadah::hpo::ScriptRunStatus* why) const {
+  if (!lmp_ptr || !pot || !script_file.valid()) {
+    return set_why(why, ScriptRunStatus::SCRIPT_ERROR);
+  }
+  StagedExternGuard staged(pot);
+  return execute_file(lmp_ptr, script_file, why);
+}
+
 bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
     const std::vector<std::string>& script_lines,
     const tadah::core::Context& pot_ctx) const {
-  if (!lmp_ptr) {
-    // Cannot run on invalid instance
-    return false;
-  }
-
+  if (!lmp_ptr) return false;
   try {
-    // Read and execute commands from the script file
-
-    for (const auto& line : script_lines) {
-      // If the line contains pair_coeff and EXTERN, load the potential
-      // from the context before executing the line
-      if (line.find("pair_coeff") != std::string::npos &&
-          line.find("EXTERN") != std::string::npos) {
-        LAMMPS_NS::Pair *pair = lmp_ptr->force->pair;
-        LAMMPS_NS::PairTadah *pt = dynamic_cast<LAMMPS_NS::PairTadah*>(pair);
-        // pt->load(std::move(pot_ctx));  // cannot move as pair_coeff might be called several times
-        pt->load(pot_ctx);
-      }
-      // Execute the line
-      lmp_ptr->input->one(line.c_str());
-      /* Fired `timer timeout` == incomplete physics. Stop at the line
-       * boundary: LAMMPS's timer only interrupts run/minimize ITERATIONS,
-       * so a `run 0` probe still pays its (possibly pathological) force
-       * call after a timeout -- without this check a timed-out sim would
-       * execute every remaining probe line. */
-      if (lmp_ptr->timer->is_timeout()) return false;
-    }
+    const ScriptFile sf(script_lines);  // per-call render (see runners.h)
+    return run_script(lmp_ptr, sf, pot_ctx, nullptr);
   } catch (const std::exception&) {
-    // Execution failure indicates invalid run
     return false;
   }
-
-  return true;
-
 }
 
 bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
     const std::vector<std::string>& script_lines,
     const std::shared_ptr<tadah::LammpsTadah>& pot) const {
-  if (!lmp_ptr || !pot) {
-    return false;
-  }
-
+  if (!lmp_ptr || !pot) return false;
   try {
-    for (const auto& line : script_lines) {
-      // On the EXTERN pair_coeff line, adopt the shared pre-built potential
-      // instead of reconstructing one from a Context.
-      if (line.find("pair_coeff") != std::string::npos &&
-          line.find("EXTERN") != std::string::npos) {
-        LAMMPS_NS::Pair *pair = lmp_ptr->force->pair;
-        LAMMPS_NS::PairTadah *pt = dynamic_cast<LAMMPS_NS::PairTadah*>(pair);
-        pt->load(pot);
-      }
-      lmp_ptr->input->one(line.c_str());
-      // Per-line timeout stop; see the Context overload for rationale.
-      if (lmp_ptr->timer->is_timeout()) return false;
-    }
+    const ScriptFile sf(script_lines);  // per-call render (see runners.h)
+    return run_script(lmp_ptr, sf, pot, nullptr);
   } catch (const std::exception&) {
     return false;
   }
-
-  return true;
 }
 
 bool LammpsRunner::say_hello(const LMPPtr& lmp_ptr) const {

@@ -7,6 +7,7 @@
 
 #include <cstring>
 #include <fstream>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -665,7 +666,21 @@ void LammpsSim::prep_script_lines()
    * every clear. ${maxtime} expands to "<seconds> every 1" (the -var
    * registered in the ctor). Enforcement is opt-in: MAXTIME/--maxtime
    * default to "off"; a script that issues its own `timer` command keeps
-   * full control and gets no injection. */
+   * full control and gets no injection.
+   *
+   * Scripts run through Input::file(), which never checks the timer
+   * BETWEEN commands, and `clear` destroys a FIRED Timer -- so on its own
+   * the re-armed timer would let a timed-out section roll silently into
+   * the next section with a fresh budget (and the end-of-script
+   * is_timeout() check would see a healthy timer: a timed-out sim
+   * misreported as OK). The `timeremain` guard injected BEFORE each
+   * mid-script clear aborts the run at the section boundary instead: after
+   * a fire, `$(timeremain)` is exactly 0.0 and the sentinel executes as an
+   * unknown command, failing Input::file() with a message the runner
+   * classifies as a soft-timeout stop. This preserves the per-section
+   * timeout semantics and cost profile of the old per-line executor. The
+   * final section needs no guard: with no clear after it, the fired timer
+   * survives to the end-of-script is_timeout() check. */
   if (maxtime != "off" && !script_lines.empty()) {
     bool user_timer = false;
     for (const auto& l : script_lines) {
@@ -675,23 +690,66 @@ void LammpsSim::prep_script_lines()
     }
     if (!user_timer) {
       const std::string timer_line = "timer timeout ${maxtime}\n";
+      const std::string guard_line =
+          std::string("if \"$(timeremain) == 0.0\" then \"") +
+          tadah::hpo::PC_TIMEOUT_ABORT_SENTINEL + "\"\n";
       auto first_tok_is_clear = [](const std::string& l) {
         std::istringstream ls(l);
         std::string tok;
         return (ls >> tok) && to_lower_ascii(tok) == "clear";
       };
+      auto first_tok_creates_box = [](const std::string& l) {
+        std::istringstream ls(l);
+        std::string tok;
+        if (!(ls >> tok)) return false;
+        tok = to_lower_ascii(tok);
+        return tok == "create_box" || tok == "read_data" ||
+               tok == "read_restart";
+      };
       std::vector<std::string> out;
-      out.reserve(script_lines.size() + 4);
-      if (!first_tok_is_clear(script_lines.front()))
+      out.reserve(2 * script_lines.size() + 4);
+      bool armed = false;   /* a timer line precedes the current position */
+      /* `$(timeremain)` cannot be evaluated before a simulation box
+       * exists, so the guard is placed only after sections that created
+       * one (create_box/read_data/read_restart since the last clear).
+       * This is exact, not a heuristic: a boxless section has no
+       * run/minimize, so its timer can never fire and the guard would be
+       * a no-op there anyway. Scripts opening with variable-setup lines
+       * followed by a defensive `clear` (vac_bcc_P, eos_deriv_v2, ...)
+       * would otherwise die on the guard itself. */
+      bool section_has_box = false;
+      if (!first_tok_is_clear(script_lines.front())) {
         out.push_back(timer_line);
+        armed = true;
+      }
       for (const auto& l : script_lines) {
-        out.push_back(l);
-        if (first_tok_is_clear(l)) out.push_back(timer_line);
+        if (first_tok_is_clear(l)) {
+          if (armed && section_has_box) out.push_back(guard_line);
+          out.push_back(l);
+          out.push_back(timer_line);
+          armed = true;
+          section_has_box = false;
+        } else {
+          if (first_tok_creates_box(l)) section_has_box = true;
+          out.push_back(l);
+        }
       }
       script_lines.swap(out);
     }
   }
 }
+const tadah::hpo::ScriptFile& LammpsSim::script_file() const
+{
+    /* File-local mutex (not a member) so LammpsSim stays copyable/movable
+     * for HPOTargets::LS vector growth. Contention is negligible: one
+     * render per sim per process lifetime. */
+    static std::mutex script_file_mutex;
+    std::lock_guard<std::mutex> lock(script_file_mutex);
+    if (!script_file_)
+        script_file_ = std::make_shared<tadah::hpo::ScriptFile>(script_lines);
+    return *script_file_;
+}
+
 std::unordered_map<std::string, LammpsSim::VarDef>
 LammpsSim::index_defined_variables() const
 {
