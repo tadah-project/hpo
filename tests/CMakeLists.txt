@@ -5,6 +5,10 @@ file(GLOB tests_src "*.cpp")
 add_executable(test_hpo ${tests_src})
 target_link_libraries(test_hpo PRIVATE
     Catch2 tadah.core tadah.mlip tadah.hpo)
+# Pristine all-gates-off ASA reference build for the golden-neutrality
+# gate (test_asa_golden.cpp); the featured tadah_asa arrives through
+# tadah.hpo's link interface.
+target_link_libraries(test_hpo PRIVATE tadah_asa_pristine)
 
 # Phase 2A.5 microbench gate. Enable Catch2's BENCHMARK macros and point at
 # a real, fitted Ta potential checked into the worktree so the bench runs
