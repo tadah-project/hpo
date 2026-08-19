@@ -1800,6 +1800,12 @@ RET1_asa:
       if (current_user_parameter_temp[index_v] < (double) EPS_DOUBLE) {
         *exit_status = P_TEMP_TOO_SMALL;
         *index_exit_v = index_v;
+        /* TADAH-PATCH begin: mirror the underflowed dimension for the
+         * driver's stop-reason line (see TADAH-PATCHES.md). */
+#if ASA_PARALLEL
+        tadah_asa_exit_index = (LONG_INT) index_v;
+#endif
+        /* TADAH-PATCH end */
         goto EXIT_asa;
       }
 #endif

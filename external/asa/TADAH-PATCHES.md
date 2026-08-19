@@ -59,6 +59,14 @@ All hunks are fenced with `/* TADAH-PATCH begin */ ... /* TADAH-PATCH end */`
    `Immediate_Exit` is pending (so a stop request cannot be starved by
    `Limit_Invalid_Generated_States = -1`).
 
+4. **P_TEMP_TOO_SMALL dimension mirror**: upstream records the index of
+   the dimension whose temperature underflowed only in an internal
+   variable (`*index_exit_v`) and its own journal. The patch (guarded
+   `#if ASA_PARALLEL`, i.e. featured build only) mirrors it into
+   `tadah_asa_exit_index` (declared in `tadah_asa_hook.h`) at the exit
+   site so the driver can name the dimension in the stop-reason line.
+   A plain store; no trajectory effect (golden-gated).
+
 ## Known upstream quirks the embedding must respect
 
 - `ASA_PRINT` must stay `1`: `asa_exit()` calls

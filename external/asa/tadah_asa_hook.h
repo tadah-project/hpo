@@ -56,6 +56,15 @@ typedef void (*tadah_asa_parallel_hook_fn) (
  * driver before calling asa(); reset to NULL after the call. */
 extern tadah_asa_parallel_hook_fn tadah_asa_parallel_hook;
 
+/* Index of the dimension whose temperature underflowed when asa()
+ * exits with P_TEMP_TOO_SMALL (-1 otherwise). Upstream records it only
+ * in an internal variable (*index_exit_v) and its own journal; the
+ * TADAH patch mirrors it here so the driver can name the dimension in
+ * the stop-reason line. Written on asa()'s thread at the exit site;
+ * the driver resets it to -1 before each call (single-instance mutex
+ * makes this race-free). */
+extern LONG_INT tadah_asa_exit_index;
+
 #ifdef __cplusplus
 }
 #endif

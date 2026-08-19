@@ -589,6 +589,33 @@ TEST_CASE("ASA dlib adapter path (run_asa_impl)", "[HPO][asa]")
     CHECK(host.n == 60);
 }
 
+TEST_CASE("ASA P_TEMP_TOO_SMALL names the underflowed dimension",
+          "[HPO][asa]")
+{
+    /* 1-D at default schedule anneals the parameter temperature below
+     * EPS_DOUBLE within a few hundred generated states -> exit 1; the
+     * stop line must name the dimension via its OPTIM label. */
+    auto sp = make_asa_spec({-2.0}, {2.0});
+    set_seed_point(sp, {1.0});
+    sp.parameter_labels = {"RCUT2B[0]"};
+    sp.stop.maxeval = 5000;
+    sp.param = {{"Maximum_Cost_Repeat", 0.0}};
+
+    Recorder rec;
+    rec.f = [](const std::vector<double>& x) { return x[0] * x[0]; };
+    const AsaHostFn fn = rec.fn();
+
+    std::ostringstream captured;
+    auto* old = std::cout.rdbuf(captured.rdbuf());
+    run_asa_erased(sp, 1, fn);
+    std::cout.rdbuf(old);
+
+    const std::string s = captured.str();
+    INFO(s);
+    CHECK(s.find("P_TEMP_TOO_SMALL") != std::string::npos);
+    CHECK(s.find("[dim 0: RCUT2B[0]]") != std::string::npos);
+}
+
 TEST_CASE("ASA requires an OPTIM dimension", "[HPO][asa]")
 {
     OptimizerSpec sp;

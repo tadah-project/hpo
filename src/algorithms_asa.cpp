@@ -104,6 +104,21 @@ struct AsaRunCtx {
     long next_accept_mark = 0;
     int  accept_modulus   = 0;
 
+    /* Live totals observed from OPTIONS at every callback: asa()
+     * restores N_Generated/N_Accepted to their AT-BEST values on exit
+     * (upstream semantics), which reads as generated=0 when the best
+     * never left the seed. Monotonic max of the live values gives the
+     * honest totals for the summary (ASA thread only). */
+    long seen_generated = 0;
+    long seen_accepted  = 0;
+    void observe_counters(const USER_DEFINES* o)
+    {
+        if (static_cast<long>(o->N_Generated) > seen_generated)
+            seen_generated = static_cast<long>(o->N_Generated);
+        if (static_cast<long>(o->N_Accepted) > seen_accepted)
+            seen_accepted = static_cast<long>(o->N_Accepted);
+    }
+
     /* block-parallel pool (installed only when Gener_Block_Max > 1) */
     anneal::ReplicaPool* pool = nullptr;
 };
@@ -203,6 +218,7 @@ extern "C" double tadah_asa_cost(double* x, double* /*lo*/, double* /*hi*/,
     const double cost = eval_one(*c, x, cost_flag);
     if (c->pending_stop.load(std::memory_order_relaxed))
         o->Immediate_Exit = TRUE;
+    c->observe_counters(o);
     maybe_progress_line(*c, o);
     return cost;
 }
@@ -272,6 +288,7 @@ extern "C" void tadah_asa_block_hook(tadah_asa_state_view* block,
         c->set_why(AsaRunCtx::Time);
     if (c->pending_stop.load(std::memory_order_relaxed))
         o->Immediate_Exit = TRUE;
+    c->observe_counters(o);
     maybe_progress_line(*c, o);
 }
 
@@ -546,6 +563,7 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
 
     /* ---- the run (single instance per process) ---------------------- */
     double final_cost = 0.0;
+    long   exit_index = -1;   /* P_TEMP_TOO_SMALL dimension, if any */
     {
         std::lock_guard<std::mutex> lk(g_asa_mutex);
         std::mt19937_64 rng(seed);
@@ -559,25 +577,40 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
             ctx.pool = &*pool;
         }
         HookInstallGuard hook_guard(parallel_blocks);
+        tadah_asa_exit_index = -1;
         final_cost =
             asa(&tadah_asa_cost, &tadah_asa_rng, &w.rand_seed, w.x.data(),
                 w.lo.data(), w.hi.data(), w.tangents.data(),
                 w.curvature.data(), &w.n_params, w.parameter_type.data(),
                 &w.valid_flag, &w.exit_status, &w.opts);
+        exit_index = static_cast<long>(tadah_asa_exit_index);
         ctx.pool = nullptr;
     }
 
     /* ---- summary + status ------------------------------------------ */
     const int exit_status = w.exit_status;
-    const std::string reason = stop_reason_string(ctx, exit_status);
+    std::string reason = stop_reason_string(ctx, exit_status);
+    if (exit_status == 1 && exit_index >= 0) {
+        reason += " [dim " + std::to_string(exit_index);
+        if (static_cast<std::size_t>(exit_index) <
+            sp.parameter_labels.size())
+            reason += ": " + sp.parameter_labels[
+                static_cast<std::size_t>(exit_index)];
+        reason += "]";
+    }
     {
+        /* seen_* are live maxima; on exit asa() restores N_Generated/
+         * N_Accepted to their AT-BEST snapshots (0/0 when the best is
+         * the seed), reported here as at-best for reference. */
         std::ostringstream oss;
         oss << std::scientific << std::setprecision(6)
-            << "ASA summary: generated=" << w.opts.N_Generated
-            << " accepted=" << w.opts.N_Accepted
+            << "ASA summary: generated=" << ctx.seen_generated
+            << " accepted=" << ctx.seen_accepted
             << " host_evals=" << ctx.n_evals.load()
             << " best=" << final_cost
-            << " exit=" << asa_exit_name(exit_status);
+            << " exit=" << asa_exit_name(exit_status)
+            << "  (at-best: generated=" << w.opts.N_Generated
+            << " accepted=" << w.opts.N_Accepted << ")";
         HPOLog::instance().info(oss.str());
     }
     if (ao.multi_number > 1) {
