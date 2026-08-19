@@ -63,6 +63,7 @@ each subsequent one introduces one or two new features.
 | 18 | `18_anneal_pt`            | `LIB TADAH ALGO ANNEAL_PT` parallel tempering with replica exchanges and cumulative/windowed swap-flow diagnostics. |
 | 19 | `19_anneal_pa`            | `LIB TADAH ALGO ANNEAL_PA` population annealing with ESS-controlled resampling and explicit all-failed handling. |
 | 20 | `20_anneal_corana`        | `LIB TADAH ALGO ANNEAL` with adaptive Corana coordinate steps and boundary-policy diagnostics. |
+| 21 | `21_asa`                  | `LIB ASA ALGO ASA` — vendored Ingber ASA-30.53 (adaptive simulated annealing) with original option spellings (`PARAM Temperature_Ratio_Scale` etc.). |
 
 ## Files in `common/`
 
