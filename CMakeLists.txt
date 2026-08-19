@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)   # OVERRIDE_FIND_PACKAGE for fetched Eigen3
-project(Tadah.HPO LANGUAGES CXX)
+project(Tadah.HPO LANGUAGES CXX C)     # C: vendored ASA library (external/asa)
 
 option(TADAH_LAMMPS_DIR "Path to lammps root directory")
 option(TADAH_LAMMPS_LIB "Path to the lammps library")
@@ -87,7 +87,7 @@ if(COMMAND tadah_read_version_from_blueprint)
 else()
   set(TADAH_VERSION "0.0.0")
 endif()
-project(Tadah.HPO VERSION ${TADAH_VERSION} LANGUAGES CXX)
+project(Tadah.HPO VERSION ${TADAH_VERSION} LANGUAGES CXX C)
 message(STATUS "Tadah.HPO version: ${TADAH_VERSION}")
 
 option(TADAH_ENABLE_ASAN  "Enable AddressSanitizer (-fsanitize=address -fno-omit-frame-pointer)" OFF)
@@ -225,6 +225,9 @@ endif()
 
 # add_compile_definitions(TADAH_LAMMPS_LIB=\"${TADAH_LAMMPS_LIB}\")
 
+# Vendored third-party ASA-30.53 (BSD-3, Lester Ingber) -- LIB ASA optimizer
+add_subdirectory(external/asa)
+
 file(GLOB HPO_SRC CONFIGURE_DEPENDS "src/*.cpp")
 add_library(tadah.hpo ${HPO_SRC})
 
@@ -236,6 +239,7 @@ target_include_directories(tadah.hpo
 )
 target_link_libraries(tadah.hpo PUBLIC tadah::compile_options )
 target_link_libraries(tadah.hpo PRIVATE nlopt)
+target_link_libraries(tadah.hpo PRIVATE tadah_asa)
 
 # Phase 3 LammpsHessianAssembler uses Eigen3 directly (already fetched
 # via the Ceres dependency block above). PUBLIC because the public
@@ -413,6 +417,9 @@ install(TARGETS tadah.hpo
         RUNTIME DESTINATION bin
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib)
+# tadah.hpo is a static archive and does not embed the vendored ASA
+# objects; install the archive so downstream links resolve.
+install(TARGETS tadah_asa ARCHIVE DESTINATION lib)
 install(DIRECTORY include/
     DESTINATION include
 )
