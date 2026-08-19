@@ -21,6 +21,7 @@ log.lammps
 run.stdout
 run.stderr
 hpo_*_times.csv
+asa_out*
 
 # Bootstrapped seeds for INIT WARM examples -- regenerated on first
 # run by the example's run.sh, not checked in (would otherwise embed
