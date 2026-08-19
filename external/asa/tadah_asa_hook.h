@@ -56,6 +56,15 @@ typedef void (*tadah_asa_parallel_hook_fn) (
  * driver before calling asa(); reset to NULL after the call. */
 extern tadah_asa_parallel_hook_fn tadah_asa_parallel_hook;
 
+/* Live mirror of asa()'s *current_cost_temperature (the acceptance
+ * temperature), refreshed by the patched spawn region before every
+ * block-evaluation hook call. The TADAH driver resets it to NaN before
+ * each run and stamps it on block evaluations as the journal's
+ * "Tcost=" tag; it stays NaN until the first block (serial contexts
+ * never refresh it). Written on asa()'s thread; read by the hook on
+ * the same thread (race-free under the single-instance mutex). */
+extern double tadah_asa_cost_temp;
+
 /* Index of the dimension whose temperature underflowed when asa()
  * exits with P_TEMP_TOO_SMALL (-1 otherwise). Upstream records it only
  * in an internal variable (*index_exit_v) and its own journal; the

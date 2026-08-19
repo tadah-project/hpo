@@ -2378,6 +2378,9 @@ RET1_asa:
           }
         }
 #endif /* ASA_QUEUE */
+        /* mirror the live acceptance temperature for the driver's
+         * journal tags (plain store; no trajectory effect) */
+        tadah_asa_cost_temp = *current_cost_temperature;
         tadah_asa_parallel_hook ((tadah_asa_state_view *) gener_block_state,
                                  OPTIONS->Gener_Block,
                                  parameter_minimum, parameter_maximum,

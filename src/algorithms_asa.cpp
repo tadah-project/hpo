@@ -192,6 +192,8 @@ void maybe_progress_line(AsaRunCtx& c, USER_DEFINES* o)
         oss << " best=" << *o->Best_Cost;
     if (o->Last_Cost && std::isfinite(*o->Last_Cost))
         oss << " last=" << *o->Last_Cost;
+    if (std::isfinite(tadah_asa_cost_temp))
+        oss << " Tcost=" << tadah_asa_cost_temp;
     HPOLog::instance().info(oss.str());
 }
 
@@ -270,10 +272,11 @@ extern "C" void tadah_asa_block_hook(tadah_asa_state_view* block,
         may_run[t] = 1;
     }
 
+    const double t_cost = tadah_asa_cost_temp;  /* NaN before 1st block */
     c->pool->run_epoch(n, [&](std::size_t t) {
         if (!may_run[t]) return;
         warmstart::current_chain() = t;
-        HPOLog::set_eval_slot(static_cast<int>(t), n, 0.0);
+        HPOLog::set_eval_slot(static_cast<int>(t), n, t_cost, "Tcost");
         int flag = FALSE;
         const double cost = eval_core(*c, block[t].parameter, &flag);
         block[t].cost = cost;
@@ -578,6 +581,7 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
         }
         HookInstallGuard hook_guard(parallel_blocks);
         tadah_asa_exit_index = -1;
+        tadah_asa_cost_temp = std::numeric_limits<double>::quiet_NaN();
         final_cost =
             asa(&tadah_asa_cost, &tadah_asa_rng, &w.rand_seed, w.x.data(),
                 w.lo.data(), w.hi.data(), w.tangents.data(),

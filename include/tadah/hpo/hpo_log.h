@@ -275,8 +275,13 @@ public:
 
     /** Stamp the calling thread's evals as ladder slot @p slot of
      *  @p n_slots (0 = coldest) at absolute temperature @p T. Stamp with
-     *  the T at eval time so a cooling ladder (RT < 1) stays correct. */
-    static void set_eval_slot(int slot, std::size_t n_slots, double T);
+     *  the T at eval time so a cooling ladder (RT < 1) stays correct.
+     *  @p t_label names the temperature in the journal tag (default
+     *  "T"; ASA block slots stamp the COST temperature as "Tcost").
+     *  Must point at a string with static storage duration. A NaN @p T
+     *  omits the temperature from the tag entirely (slot-only tag). */
+    static void set_eval_slot(int slot, std::size_t n_slots, double T,
+                              const char* t_label = "T");
     /** Stamp the calling thread's evals as T0-calibration probes. */
     static void set_eval_probe();
     /** Clear the calling thread's eval context (bests become untagged). */
@@ -468,6 +473,7 @@ private:
     int         cur_best_slot_   = kSlotNone;
     std::size_t cur_best_nslots_ = 0;
     double      cur_best_T_      = 0.0;
+    const char* cur_best_T_label_ = "T";
     std::map<int, std::size_t> best_slot_win_;
     std::map<int, std::size_t> best_slot_tot_;
     std::map<int, std::size_t> best_slot_last_;   /* slot -> last best eval */

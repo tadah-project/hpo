@@ -16,6 +16,10 @@
 
 #include <dlib/matrix.h>
 
+extern "C" {
+#include <asa/tadah_asa_hook.h>  /* tadah_asa_cost_temp mirror */
+}
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -587,6 +591,27 @@ TEST_CASE("ASA dlib adapter path (run_asa_impl)", "[HPO][asa]")
     StubHost host;
     tadah::hpo::run_asa_impl<Vec>(sp, host);
     CHECK(host.n == 60);
+}
+
+TEST_CASE("ASA block runs mirror the live cost temperature",
+          "[HPO][asa][parallel]")
+{
+    auto sp = make_asa_spec({-2.0, -2.0}, {2.0, 2.0});
+    set_seed_point(sp, {1.0, -1.0});
+    sp.num_threads = 2;  /* installs the hook -> mirror refreshed */
+    sp.stop.maxeval = 200;
+    sp.param = {{"Gener_Block", 4.0}, {"Gener_Block_Max", 4.0}};
+    Recorder rec;
+    rec.f = [](const std::vector<double>& x) {
+        return x[0] * x[0] + x[1] * x[1];
+    };
+    const AsaHostFn fn = rec.fn();
+    run_asa_erased(sp, 2, fn);
+    /* the driver resets the mirror to NaN per run; the patched spawn
+     * region must have refreshed it with a real (positive) acceptance
+     * temperature by the first block */
+    CHECK(std::isfinite(tadah_asa_cost_temp));
+    CHECK(tadah_asa_cost_temp > 0.0);
 }
 
 TEST_CASE("ASA P_TEMP_TOO_SMALL names the underflowed dimension",

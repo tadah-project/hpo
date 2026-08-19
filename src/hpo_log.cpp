@@ -54,13 +54,16 @@ namespace {
 thread_local int         tl_slot   = HPOLog::kSlotNone;
 thread_local std::size_t tl_nslots = 0;
 thread_local double      tl_T      = 0.0;
+thread_local const char* tl_T_label = "T";
 }
 
-void HPOLog::set_eval_slot(int slot, std::size_t n_slots, double T)
+void HPOLog::set_eval_slot(int slot, std::size_t n_slots, double T,
+                           const char* t_label)
 {
     tl_slot   = slot;
     tl_nslots = n_slots;
     tl_T      = T;
+    tl_T_label = t_label;
 }
 
 void HPOLog::set_eval_probe()
@@ -103,8 +106,10 @@ std::string HPOLog::best_origin_str() const
     if (cur_best_slot_ == kSlotProbe) return ", T0 probe";
     if (cur_best_slot_ < 0) return "";
     std::ostringstream s;
-    s << ", slot " << cur_best_slot_ << "/" << cur_best_nslots_
-      << " T=" << std::scientific << std::setprecision(3) << cur_best_T_;
+    s << ", slot " << cur_best_slot_ << "/" << cur_best_nslots_;
+    if (!std::isnan(cur_best_T_))
+        s << " " << cur_best_T_label_ << "=" << std::scientific
+          << std::setprecision(3) << cur_best_T_;
     return s.str();
 }
 
@@ -129,6 +134,7 @@ void HPOLog::reset_for_test()
     cur_best_slot_   = kSlotNone;
     cur_best_nslots_ = 0;
     cur_best_T_      = 0.0;
+    cur_best_T_label_ = "T";
     best_slot_win_.clear();
     best_slot_tot_.clear();
     best_slot_last_.clear();
@@ -1266,6 +1272,7 @@ void HPOLog::log_new_best(std::size_t eval_num,
     cur_best_slot_   = tl_slot;
     cur_best_nslots_ = tl_nslots;
     cur_best_T_      = tl_T;
+    cur_best_T_label_ = tl_T_label;
     if (tl_slot >= 0) {
         ++best_slot_win_[tl_slot];
         ++best_slot_tot_[tl_slot];
@@ -1297,8 +1304,11 @@ void HPOLog::log_new_best(std::size_t eval_num,
     if (tl_slot == kSlotProbe) {
         msg << "  [T0 probe]";
     } else if (tl_slot >= 0) {
-        msg << "  [slot " << tl_slot << "/" << tl_nslots
-            << " T=" << std::scientific << std::setprecision(3) << tl_T << "]";
+        msg << "  [slot " << tl_slot << "/" << tl_nslots;
+        if (!std::isnan(tl_T))
+            msg << " " << tl_T_label << "=" << std::scientific
+                << std::setprecision(3) << tl_T;
+        msg << "]";
     }
 
     f_ << "[" << now_hms() << "]  BEST     " << msg.str() << "\n";

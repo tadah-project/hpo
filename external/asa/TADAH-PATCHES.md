@@ -45,7 +45,11 @@ All hunks are fenced with `/* TADAH-PATCH begin */ ... /* TADAH-PATCH end */`
    hook is NULL, the original upstream loop (including its OpenMP pragma)
    runs verbatim in the `else` branch. The hook path deliberately never
    writes `OPTIONS->parallel_id` (upstream writes it from inside the
-   OpenMP loop, a data race on the shared `USER_DEFINES`).
+   OpenMP loop, a data race on the shared `USER_DEFINES`). The hook
+   branch also mirrors the live `*current_cost_temperature` into
+   `tadah_asa_cost_temp` before each hook call, so the driver can stamp
+   the acceptance temperature on journal tags (`Tcost=`) -- a plain
+   store with no trajectory effect.
 
 3. **Invalid-state retry-loop bound (upstream bug fix)**: the
    `ASA_PARALLEL` invalid-state retry `do { ... } while
