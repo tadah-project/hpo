@@ -1,4 +1,5 @@
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/asa_options.h>
 #include <iomanip>
 #include <nlopt.hpp>
 #include <dlib/optimization.h>
@@ -191,6 +192,21 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
     if (algo[1]=='N') os<<"   * derivative-free\n";
 }
 
+static void print_asa_caps(std::ostream& os, const std::string& algo)
+{
+    if (algo != "ASA") { os << "   * (the ASA library has one algorithm: ALGO ASA)\n"; return; }
+    os << "   * Adaptive Simulated Annealing (Lester Ingber, ASA-30.53,\n"
+          "     vendored under external/asa, BSD-3-Clause)\n"
+          "   * single-instance: one ASA run per process at a time\n"
+          "   * stops: MAXEVAL / MAXTIME / STOPVAL plus ASA's own\n"
+          "     Limit_* and plateau options below; FTOL/XTOL rejected\n"
+          "   * SEED seeds the proposal stream; INIT seed auto-sets\n"
+          "     User_Initial_Parameters\n"
+          "   * PARAM keys use the original ASA option spellings\n"
+          "     (case-sensitive); per-dim options accept Name[i]\n";
+    print_asa_param_table(os);
+}
+
 void OptimizerSpec::print_caps(const std::string& lib,
                                const std::string& algo)
 {
@@ -198,5 +214,6 @@ void OptimizerSpec::print_caps(const std::string& lib,
     if      (lib=="TADAH") print_tadah_caps(std::cout,algo);
     else if (lib=="DLIB")  print_dlib_caps (std::cout,algo);
     else if (lib=="NLOPT") print_nlopt_caps(std::cout,algo);
+    else if (lib=="ASA")   print_asa_caps  (std::cout,algo);
     else std::cout<<"   * (no info)\n";
 }

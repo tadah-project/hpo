@@ -101,6 +101,20 @@ Registry build_registry()
         add(r, c);
     }
 
+    /* ASA (vendored Ingber ASA-30.53, external/asa) ------------------- */
+    {
+        OptimizerCaps c;
+        c.lib = "ASA";  c.algo = "ASA";
+        c.is_global       = true;
+        c.supports_maxeval = true;
+        c.supports_maxtime = true;
+        c.supports_stopval = true;
+        /* No ftol/xtol: ASA's own plateau stops are PARAM Cost_Precision
+         * + Maximum_Cost_Repeat and Accepted_To_Generated_Ratio, so
+         * ladder_ftol stays None (BASINS' FTOL_LADDER has no target). */
+        add(r, c);
+    }
+
     /* DLIB ----------------------------------------------------------- */
     {
         OptimizerCaps c;

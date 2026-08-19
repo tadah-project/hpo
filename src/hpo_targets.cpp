@@ -491,11 +491,13 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
      * optimiser-level SEED) this is a classic footgun: the user "set a
      * seed" yet gets a non-reproducible run. */
     if (!s.seed && s.init_strategy_spec.seed &&
-        s.lib == "TADAH" && s.algo.rfind("ANNEAL", 0) == 0) {
+        ((s.lib == "TADAH" && s.algo.rfind("ANNEAL", 0) == 0) ||
+         s.lib == "ASA")) {
       std::ostringstream oss;
       oss << "INIT[" << where << "]: SEED inside the INIT block does not "
-             "seed TADAH:" << s.algo << " -- the annealer's proposal "
-             "stream falls back to random_device (non-reproducible). "
+             "seed " << s.lib << ":" << s.algo << " -- the annealer's "
+             "proposal stream falls back to random_device "
+             "(non-reproducible). "
              "Set SEED at the OPTIMIZER/STRATEGY level as well.";
       std::cerr << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().warning(oss.str());

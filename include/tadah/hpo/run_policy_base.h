@@ -27,6 +27,7 @@
 #include <string>
 
 #include <tadah/hpo/algorithms.h>
+#include <tadah/hpo/algorithms_asa.h>
 #include <tadah/hpo/algorithms_pt.h>
 #include <tadah/hpo/algorithms_pa.h>
 #include <tadah/hpo/ceres_adapter.h>
@@ -90,6 +91,11 @@ inline void run_inner(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host)
     else throw std::runtime_error("unknown DLIB algo " + spec.algo);
   } else if (spec.lib == "NLOPT") {
     run_nlopt<Vec,Runner>(spec, host);
+  } else if (spec.lib == "ASA") {
+    if (spec.algo == "ASA") run_asa<Vec,Runner>(spec, host);
+    else throw std::runtime_error("unknown ASA algo " + spec.algo +
+                                  " (the ASA library has one algorithm: "
+                                  "ALGO ASA)");
   } else if (spec.lib == "CERES") {
 #ifndef TADAH_USE_CERES
     throw std::runtime_error(
