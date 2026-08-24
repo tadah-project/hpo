@@ -25,6 +25,15 @@ endif()
 include(Catch.cmake)
 catch_discover_tests(test_hpo)
 
+# Statistical validation suite (equilibrium sampling, swap acceptance,
+# transport): hidden Catch2 tag [.statistical], excluded from the default
+# run; exposed as one labelled ctest entry for `ctest -L statistical`.
+add_test(NAME hpo_anneal_statistical
+    COMMAND test_hpo "[.statistical]")
+set_tests_properties(hpo_anneal_statistical PROPERTIES
+    LABELS "anneal;statistical"
+    TIMEOUT 900)
+
 # Registry drift gate: the checked-in anneal_keys_gen.h must match what the
 # generator produces from blueprint/anneal_keys.toml. Regenerate with
 #   python3 HPO/blueprint/gen_anneal_keys.py --header
