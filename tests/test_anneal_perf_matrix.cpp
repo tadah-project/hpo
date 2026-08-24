@@ -110,7 +110,7 @@ const std::vector<std::string>& matrix_functions()
     static const std::vector<std::string> fs = {
         "sphere2",  "sphere6",    "sphere20",  "ellipsoid6",
         "rosenbrock6", "rastrigin2", "rastrigin6", "ackley10",
-        "corana4",  "double_well1", "boundary_optimum6",
+        "corana1987_q4", "double_well1", "boundary_optimum6",
         "failscore_cliff6"};
     return fs;
 }

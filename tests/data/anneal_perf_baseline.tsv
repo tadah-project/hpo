@@ -6,7 +6,7 @@ serial-classic	rosenbrock6	7	0.0155392
 serial-classic	rastrigin2	9	0.0226495
 serial-classic	rastrigin6	0	0.154056
 serial-classic	ackley10	0	9.55831
-serial-classic	corana4	0	4.62986e+06
+serial-classic	corana1987_q4	0	1.29659e+07
 serial-classic	double_well1	50	0
 serial-classic	boundary_optimum6	50	0.000576735
 serial-classic	failscore_cliff6	5	0.00212393
@@ -18,7 +18,7 @@ serial-corana	rosenbrock6	32	0.00865074
 serial-corana	rastrigin2	3	0.124511
 serial-corana	rastrigin6	0	0.158384
 serial-corana	ackley10	33	0.0433499
-serial-corana	corana4	0	71923.4
+serial-corana	corana1987_q4	0	1.55506e+06
 serial-corana	double_well1	50	0
 serial-corana	boundary_optimum6	50	0.000101241
 serial-corana	failscore_cliff6	50	0.000151859
@@ -30,7 +30,7 @@ serial-t0acc080-gate	rosenbrock6	4	0.0161499
 serial-t0acc080-gate	rastrigin2	7	0.020328
 serial-t0acc080-gate	rastrigin6	0	0.17889
 serial-t0acc080-gate	ackley10	0	9.43434
-serial-t0acc080-gate	corana4	0	7.71942e+06
+serial-t0acc080-gate	corana1987_q4	0	1.29562e+07
 serial-t0acc080-gate	double_well1	50	0
 serial-t0acc080-gate	boundary_optimum6	49	0.000601904
 serial-t0acc080-gate	failscore_cliff6	3	0.00191044
@@ -42,7 +42,7 @@ pt-plain	rosenbrock6	2	0.0167105
 pt-plain	rastrigin2	5	0.0294732
 pt-plain	rastrigin6	0	0.206184
 pt-plain	ackley10	0	10.0085
-pt-plain	corana4	0	7.16558e+06
+pt-plain	corana1987_q4	0	1.13159e+07
 pt-plain	double_well1	50	0
 pt-plain	boundary_optimum6	41	0.000678673
 pt-plain	failscore_cliff6	1	0.00248594
@@ -54,7 +54,7 @@ pt-ladder-adapt	rosenbrock6	1	0.0174746
 pt-ladder-adapt	rastrigin2	5	0.0300226
 pt-ladder-adapt	rastrigin6	0	0.19155
 pt-ladder-adapt	ackley10	0	10.0455
-pt-ladder-adapt	corana4	0	4.87377e+06
+pt-ladder-adapt	corana1987_q4	0	1.2574e+07
 pt-ladder-adapt	double_well1	50	0
 pt-ladder-adapt	boundary_optimum6	43	0.000724965
 pt-ladder-adapt	failscore_cliff6	2	0.00248594
@@ -66,7 +66,7 @@ pt-step-frozen	rosenbrock6	20	0.0108411
 pt-step-frozen	rastrigin2	3	0.0322678
 pt-step-frozen	rastrigin6	0	0.168726
 pt-step-frozen	ackley10	0	5.71548
-pt-step-frozen	corana4	0	1.21276e+06
+pt-step-frozen	corana1987_q4	0	1.93527e+06
 pt-step-frozen	double_well1	50	0
 pt-step-frozen	boundary_optimum6	46	0.000251862
 pt-step-frozen	failscore_cliff6	47	0.000301942
@@ -78,7 +78,7 @@ pt-step-adaptive	rosenbrock6	42	0.00819916
 pt-step-adaptive	rastrigin2	2	0.0349585
 pt-step-adaptive	rastrigin6	0	0.124392
 pt-step-adaptive	ackley10	0	15.8833
-pt-step-adaptive	corana4	0	289254
+pt-step-adaptive	corana1987_q4	0	529840
 pt-step-adaptive	double_well1	50	0
 pt-step-adaptive	boundary_optimum6	50	0.000116508
 pt-step-adaptive	failscore_cliff6	50	7.71337e-05
@@ -90,7 +90,7 @@ pt-corana	rosenbrock6	48	0.00866516
 pt-corana	rastrigin2	8	0.0290988
 pt-corana	rastrigin6	0	0.0828388
 pt-corana	ackley10	0	6.94863
-pt-corana	corana4	0	47066.5
+pt-corana	corana1987_q4	0	260998
 pt-corana	double_well1	50	0
 pt-corana	boundary_optimum6	49	8.10067e-05
 pt-corana	failscore_cliff6	50	2.20378e-05
@@ -102,7 +102,7 @@ pt-defaults	rosenbrock6	20	0.0108411
 pt-defaults	rastrigin2	3	0.0322678
 pt-defaults	rastrigin6	0	0.168726
 pt-defaults	ackley10	0	5.71548
-pt-defaults	corana4	0	1.21276e+06
+pt-defaults	corana1987_q4	0	1.93527e+06
 pt-defaults	double_well1	50	0
 pt-defaults	boundary_optimum6	46	0.000251862
 pt-defaults	failscore_cliff6	47	0.000301942
@@ -114,7 +114,7 @@ pt-adapt-combo-gate	rosenbrock6	41	0.00821749
 pt-adapt-combo-gate	rastrigin2	2	0.0349585
 pt-adapt-combo-gate	rastrigin6	0	0.124392
 pt-adapt-combo-gate	ackley10	0	15.7526
-pt-adapt-combo-gate	corana4	0	259018
+pt-adapt-combo-gate	corana1987_q4	0	529840
 pt-adapt-combo-gate	double_well1	50	0
 pt-adapt-combo-gate	boundary_optimum6	50	0.000146059
 pt-adapt-combo-gate	failscore_cliff6	50	7.71337e-05

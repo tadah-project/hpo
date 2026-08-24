@@ -13,21 +13,12 @@
  * from the primary source.  While the table has no data rows the test
  * reports itself as SKIPPED.
  *
- * Function definitions below were transcribed from the paper on
- * 2026-08-24 (ACM TOMS 13(3), pp. 269 and 272, with the Rosenbrock
- * sign fix from the 1989 Corrigenda) and cross-checked against the
- * paper's reported local-minimum values: the hole nearest the origin
- * along a d_i = 1 axis has value c_r * (s - t)^2 = 3.375E-3 for
- * s = .2, t = .05 and 5.4E-4 for s = .1, t = .04 -- exactly the
- * "local minima closest to the global one" the paper reports its 4-D
- * and 10-D runs stopping at (p. 276).
- *
- * NOTE the paper's q_n is NOT the separable per-coordinate staircase
- * circulated in secondary implementations (and used as the in-tree
- * benchmark objective "corana4"): the paper's local-minimum holes are
- * open PRODUCT regions -- every coordinate must lie within t_i of a
- * grid node -- and the plateau value uses the hole's inner corner
- * z_i = k_i s_i - sign(k_i) t_i, not the node itself.
+ * The multiminima function q_n itself is the shared, transcription-
+ * verified definition anneal_functions::corana1987_q (see the notes in
+ * anneal_test_functions.h, incl. the cross-check against the paper's
+ * reported local-minimum values 3.375E-3 / 5.4E-4); this oracle is what
+ * pins that shared definition -- also used by the performance matrix
+ * and the benchmark harness -- to the paper's published results.
  *
  * Protocol-fidelity settings applied to every run (paper, Section 2):
  *   BOUNDARY_MODE 1  -- out-of-domain coordinates are redrawn (Step 2);
@@ -42,6 +33,7 @@
 
 #include "catch2/catch.hpp"
 
+#include "anneal_test_functions.h"
 #include "anneal_test_support.h"
 
 #include <tadah/hpo/algorithms.h>
@@ -64,21 +56,6 @@ using anneal_test::Vec;
 
 namespace {
 
-/* Steepness vectors d (paper p. 272): part of the function definition,
- * fixed per dimension. */
-const std::vector<double>& steepness(std::size_t dim)
-{
-    static const std::vector<double> d2{1.0, 1000.0};
-    static const std::vector<double> d4{1.0, 1000.0, 10.0, 100.0};
-    static const std::vector<double> d10{1.0, 1000.0, 10.0, 100.0, 1.0,
-                                         10.0, 100.0, 1000.0, 1.0, 10.0};
-    if (dim == 2) return d2;
-    if (dim == 4) return d4;
-    if (dim == 10) return d10;
-    throw std::runtime_error(
-        "corana1987: no steepness vector for dim " + std::to_string(dim));
-}
-
 /* Rosenbrock, classic signs per the Corrigenda (+(1 - x_k)^2). Table I
  * cannot be transcribed (its termination epsilon is unpublished), so no
  * reference rows use this yet; kept should that epsilon ever surface. */
@@ -92,31 +69,13 @@ double rosenbrock(const Vec& x, double, double)
     return s;
 }
 
-/* The paper's multiminima function q_n (p. 272).  A point is inside a
- * local-minimum hole iff EVERY coordinate lies strictly within t of a
- * grid node k_i*s (holes are open product regions) and the node vector
- * k is not identically zero; there q = c_r * sum_i d_i z_i^2 with
- * z_i = k_i s - sign(k_i) t (0 for k_i = 0).  Everywhere else q is the
- * paraboloid sum_i d_i x_i^2. */
+/* The paper's multiminima function q_n lives in the shared function
+ * header (anneal_functions::corana1987_q, single source of truth used
+ * by the performance matrix and benchmark harness too); this oracle
+ * pins that definition to the paper's published results. */
 double staircase(const Vec& x, double s, double t)
 {
-    constexpr double cr = 0.15;
-    const auto& d = steepness(std::size_t(x.size()));
-    bool in_hole = true, all_zero = true;
-    double hole = 0.0, parab = 0.0;
-    for (long i = 0; i < x.size(); ++i) {
-        const double xi = x(i);
-        parab += d[std::size_t(i)] * xi * xi;
-        if (!in_hole) continue;
-        const double k = std::nearbyint(xi / s);
-        if (std::fabs(xi - k * s) >= t) { in_hole = false; continue; }
-        if (k != 0.0) {
-            all_zero = false;
-            const double zi = k * s - (k > 0.0 ? t : -t);
-            hole += d[std::size_t(i)] * zi * zi;
-        }
-    }
-    return (in_hole && !all_zero) ? cr * hole : parab;
+    return anneal_functions::corana1987_q(x, s, t);
 }
 
 struct ProtocolRow {
