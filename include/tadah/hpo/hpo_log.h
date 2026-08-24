@@ -183,7 +183,7 @@ public:
      *  "NaN rate" is not a failure rate. A pc_lammps task that was killed or
      *  whose script failed comes back with a parseable failscore string, so
      *  the assembled loss is a large but FINITE number and nothing sets
-     *  was_nan_clamped -- run22 reported NaN rate=0.0% across 23.7 M evals
+     *  was_nan_clamped -- a long run can report NaN rate=0.0% across tens of millions of evals
      *  while six workers were SIGKILLed. Nothing anywhere counted failed
      *  evaluations, so a run could degrade to a near-total failure rate and
      *  still look healthy in the journal.
@@ -300,7 +300,7 @@ public:
     std::vector<std::pair<int, std::size_t>> best_slot_totals() const;
     /** D29: eval number of the LAST new best recorded per slot, sorted by
      *  slot.  Separates "this slot still contributes" from "this slot's
-     *  cumulative count is a fossil of the initial transient" (run24's
+     *  cumulative count is a fossil of the initial transient" (one observed long run's
      *  hot-slot counts all dated from the first ~500 of 20,457 bests).
      *  Single-process semantics, same as the histograms. */
     std::vector<std::pair<int, std::size_t>> best_slot_last_evals() const;

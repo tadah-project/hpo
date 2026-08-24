@@ -1104,7 +1104,7 @@ TEST_CASE("anneal diagonal RAM trust region bounds adversarial drift",
     /* All displacement in dim 0, every proposal rejected: the scalar term
      * shrinks the whole vector while the centred shape term keeps pushing
      * dim 0 below dim 1 -- the unbounded-anisotropy walk the trust region
-     * exists to bound (run24 sat at sigma/width ~ 2e-10 for 70k epochs). */
+     * exists to bound (observed in a long run: sigma/width pinned at ~2e-10 for 70k epochs). */
     const std::vector<double> z{1.0, 0.0};
     const double F = 8.0;
 

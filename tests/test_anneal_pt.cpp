@@ -568,8 +568,9 @@ TEST_CASE("ANNEAL_PT trust region banner and sigma journal labels",
           std::string::npos);
 }
 
-TEST_CASE("ANNEAL_PT calibrates a run22-shaped 174-D objective",
-          "[HPO][anneal_pt][step_auto][run22]")
+TEST_CASE("ANNEAL_PT calibrates a 174-D objective with 12 decades of "
+          "per-dimension scale spread",
+          "[HPO][anneal_pt][step_auto][highdim]")
 {
     using namespace tadah::hpo;
     constexpr std::size_t D = 174;
@@ -594,11 +595,14 @@ TEST_CASE("ANNEAL_PT calibrates a run22-shaped 174-D objective",
     sp.param_raw["STEP_MODE"] = "ADAPTIVE";  // production RAM per proposal
     sp.parameter_labels.resize(D);
     for (std::size_t i = 0; i < D; ++i)
-        sp.parameter_labels[i] = "run22_param_" + std::to_string(i);
+        sp.parameter_labels[i] = "p_" + std::to_string(i);
     set_seed_point(sp, seed);
     sp.seed = 92224;
     sp.num_threads = 2;
-    sp.stop.maxeval = 20000;
+    /* This test studies the CALIBRATION itself; budget it so the
+     * MAXEVAL/4 calibration governor cannot truncate the warm-up
+     * (2*STEP_WARMUP_SWEEPS*dim*K + pilot <= 17104 evals). */
+    sp.stop.maxeval = 80000;
     sp.param["REPLICAS"] = 2.0;
     sp.param["T_HOT"] = 1.0;
     sp.param["T_COLD"] = 0.1;
@@ -634,7 +638,7 @@ TEST_CASE("ANNEAL_PT calibrates a run22-shaped 174-D objective",
     std::size_t flat_capped = 0;
     for (const auto& row : rows) {
         REQUIRE(row.parameter ==
-                "run22_param_" + std::to_string(
+                "p_" + std::to_string(
                     static_cast<std::size_t>(&row - rows.data()) % D));
         CHECK(std::isfinite(row.sigma));
         CHECK(row.sigma > 0.0);
@@ -643,7 +647,7 @@ TEST_CASE("ANNEAL_PT calibrates a run22-shaped 174-D objective",
         CHECK(row.pilot_attempts >= 100);
         CHECK(row.pilot_attempts <= 200);
         const std::size_t dim_index = static_cast<std::size_t>(
-            std::stoul(row.parameter.substr(std::string("run22_param_").size())));
+            std::stoul(row.parameter.substr(std::string("p_").size())));
         if (is_flat(dim_index)) {
             if (row.status.find("support-capped") != std::string::npos)
                 ++flat_capped;
@@ -668,7 +672,7 @@ TEST_CASE("ANNEAL_PT calibrates a run22-shaped 174-D objective",
     /* The per-slot journal line and hpo_step_scales.tsv are two readers of
      * one gathered record. They drifted once: D9 inserted a field at offset
      * 1, the TSV reader was updated and the journal reader was not, so every
-     * run23 slot line printed pilot_attempts=0, pilot_multiplier=0,
+     * a slot line once printed pilot_attempts=0, pilot_multiplier=0,
      * pilot_status=ok while the TSV showed 200 / 13.19 / unconverged.
      * Nothing caught it because the only assertion was that the substring
      * "step calibration slot=0" existed. Pin the numbers instead. */
@@ -805,7 +809,9 @@ TEST_CASE("ANNEAL_PT automatic warm-up flags flat support and backs off cliffs",
     set_seed_point(sp, {0.0, 1.0});  // exercise an exact-bound warm seed
     sp.seed = 91005;
     sp.num_threads = 2;
-    sp.stop.maxeval = 600;
+    /* Calibration study: sized so the MAXEVAL/4 governor does not bind
+     * (coordinate phase + full pilots <= 500 evals). */
+    sp.stop.maxeval = 2400;
     sp.param["REPLICAS"] = 2.0;
     sp.param["T_HOT"] = 1.0;
     sp.param["T_COLD"] = 0.1;
@@ -1224,7 +1230,7 @@ TEST_CASE("ANNEAL_PT: ladder floor clamps one-sided contraction",
     CHECK(static_cast<double>(total) ==
           Approx(static_cast<double>(span)).epsilon(1e-9));
 
-    /* run24 regression: re-feeding the same one-sided counters keeps
+    /* Regression: re-feeding the same one-sided counters keeps
      * contracting the starved pair, but never below the floor, however
      * many updates run -- and the pair ends up flagged at the floor. */
     const double frac = 0.25;
@@ -1905,7 +1911,7 @@ TEST_CASE("ANNEAL_PT: a severed ladder is reported, not just tabulated",
      *   - T_COLD far below the loss scale, so the Metropolis factor for the
      *     uphill exchange direction underflows.
      * The replicas then anneal independently -- which is exactly the
-     * condition run22 was in for 21 hours without any message saying so. */
+     * condition can persist for many hours of wall clock without any message saying so. */
     auto sp = make_pt_spec({-1.0e4, -1.0e4}, {1.0e4, 1.0e4});
     set_seed_point(sp, {0.0, 0.0});
     sp.seed = 99;
@@ -1935,7 +1941,7 @@ TEST_CASE("ANNEAL_PT: a severed ladder is reported, not just tabulated",
     CHECK(log.find("no ladder traversal in the last 100 exchange round(s)")
           != std::string::npos);
     /* The message must say why the per-pair acceptance table cannot be used
-     * as the diagnostic instead -- that confusion is what cost run22 21 h. */
+     * as the diagnostic instead -- mistaking one for the other wastes long runs. */
     CHECK(log.find("adaptive ladder equalises acceptance") != std::string::npos);
     /* Cumulative counters agree with the window. */
     CHECK(log.find("traversals cold->hot=0  hot->cold=0") != std::string::npos);

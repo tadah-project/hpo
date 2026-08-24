@@ -227,7 +227,7 @@ struct LadderAdaptation {
  * contracting any pair whose acceptance is persistently below the mean, and
  * a pair whose low acceptance is caused by a basin offset rather than by
  * temperature spacing (acceptance gap-INSENSITIVE) is driven towards the
- * 1-ULP representability guard: run24 reached adjacent-rung ratios of
+ * 1-ULP representability guard: an adapted ladder can reach adjacent-rung ratios of
  * 1.006-1.010 this way, en route to the D21 degenerate-pair failure (equal
  * rungs exchange unconditionally, reporting 100% acceptance with zero
  * tempering).  The floor bounds that contraction; the pairs it holds are
@@ -610,7 +610,7 @@ struct DimCalibration {
    * column the diagnostics file reports for this dimension (acceptance,
    * status, mean_alpha, attempts, backoffs, unusable) was measured at THIS
    * scale, not at the production one, and the two differ by
-   * sqrt(dim)/pilot_multiplier -- about 26x for run22. Reporting them on
+   * sqrt(dim)/pilot_multiplier -- about 26x in one observed configuration. Reporting them on
    * one row against the production sigma made rows self-contradictory:
    * every "support-capped" row means the coordinate scale reached 1.0 x
    * width, yet printed sigma/width = 0.0379. */
@@ -657,7 +657,7 @@ struct SlotCalibration {
    * `unconverged` pilot restores 1.0 -- the initial value -- and the log
    * ("pilot_attempts=200 pilot_multiplier=1.000e+00 pilot_status=unconverged")
    * is indistinguishable from a pilot that genuinely converged there. Two
-   * run22 slots spent 200 host evaluations each to arrive back at the
+   * slots have been observed spending 200 host evaluations each to arrive back at the
    * default with nothing saying so. */
   bool pilot_multiplier_moved = false;
   bool pilot_finished = false;
@@ -815,7 +815,7 @@ void coordinate_warmup(
          * twice in a row, but the bisection bracket is tight -- the
          * geometric mean is within sqrt(bracket_ok_factor) of both
          * edges, each of which measured on the wrong side of the band.
-         * run24 finished 949/2784 dims "unconverged/unexplained" under
+         * a long run once finished a third of its dims "unconverged/unexplained" under
          * the old rule. */
         unsigned clamp_status = StepOk;
         c.V[i] = clamp_coordinate_scale(
@@ -857,7 +857,7 @@ void coordinate_warmup(
        * here and dropped, so an interim floor/cap saturation left no trace:
        * a dim that spent the whole search pressed against the resolvable
        * floor still finished labelled a bare "unconverged", and
-       * unexplained_dimensions counted it as inexplicable. run22 reported
+       * unexplained_dimensions counted it as inexplicable. One run reported
        * numerical-floor for exactly 0 of 5,568 dims while 1,882 came back
        * unconverged -- the two facts were the same fact. */
       dc.status |= clamp_status;
@@ -1840,13 +1840,28 @@ template<typename Vec, typename HostT>
           anneal::saturating_mul(
               static_cast<std::uint64_t>(kb.step_warmup_sweeps), 2),
           static_cast<std::uint64_t>(dim));
+      /* Calibration budget governor: the warm-up + pilot may spend at
+       * most a quarter of MAXEVAL. Without a cap the default
+       * calibration (up to 2*STEP_WARMUP_SWEEPS*dim + ~200 evals PER
+       * SLOT) consumes the entire budget of a modest run and
+       * production never starts. A capped, incomplete calibration is
+       * safe: interrupted coordinates continue at their best TESTED
+       * scale and are flagged in the step diagnostics. */
+      const std::uint64_t warmup_budget =
+          max_eval_global == HUGE_UNSIGNED ? HUGE_UNSIGNED
+                                           : max_eval_global / 4;
 
       auto phase_allowance = [&](std::uint64_t desired_per_slot,
                                  std::size_t extra_offset = 0) {
         const std::uint64_t spent = world > 1
             ? hpo_allreduce_sum(budget.spent()) : budget.spent();
-        const std::uint64_t remaining = max_eval_global > spent
-            ? max_eval_global - spent : 0;
+        const std::uint64_t warmup_spent = spent > warmup_spent_begin
+            ? spent - warmup_spent_begin : 0;
+        const std::uint64_t cap_left = warmup_budget > warmup_spent
+            ? warmup_budget - warmup_spent : 0;
+        const std::uint64_t remaining = std::min<std::uint64_t>(
+            max_eval_global > spent ? max_eval_global - spent : 0,
+            cap_left);
         const std::uint64_t base = remaining / static_cast<std::uint64_t>(K);
         const std::uint64_t extra = remaining % static_cast<std::uint64_t>(K);
         std::vector<std::uint64_t> result(K, 0);
@@ -1899,7 +1914,8 @@ template<typename Vec, typename HostT>
             ? hpo_allreduce_sum(budget.spent()) : budget.spent();
         if (warmup_code != 1 ||
             (max_eval_global != HUGE_UNSIGNED &&
-             after_coordinates >= max_eval_global))
+             (after_coordinates >= max_eval_global ||
+              after_coordinates - warmup_spent_begin >= warmup_budget)))
           break;
         stalled_rounds = after_coordinates == before_coordinates
             ? stalled_rounds + 1 : 0;
@@ -1912,6 +1928,12 @@ template<typename Vec, typename HostT>
       if (warmup_code == 0 && max_eval_global != HUGE_UNSIGNED &&
           after_coordinates >= max_eval_global)
         warmup_code = 1;
+      /* Calibration-cap exhaustion is not a run stop: clear the phase
+       * budget code so production proceeds on best tested scales. */
+      if (warmup_code == 1 && max_eval_global != HUGE_UNSIGNED &&
+          after_coordinates < max_eval_global &&
+          after_coordinates - warmup_spent_begin >= warmup_budget)
+        warmup_code = 0;
 
       if (warmup_code == 0) {
         std::uint64_t after_pilot = after_coordinates;
@@ -1934,7 +1956,8 @@ template<typename Vec, typename HostT>
               ? hpo_allreduce_sum(budget.spent()) : budget.spent();
           if (warmup_code != 1 ||
               (max_eval_global != HUGE_UNSIGNED &&
-               after_pilot >= max_eval_global))
+               (after_pilot >= max_eval_global ||
+                after_pilot - warmup_spent_begin >= warmup_budget)))
             break;
           stalled_rounds = after_pilot == before_pilot
               ? stalled_rounds + 1 : 0;
@@ -1944,6 +1967,24 @@ template<typename Vec, typename HostT>
         if (warmup_code == 0 && max_eval_global != HUGE_UNSIGNED &&
             after_pilot >= max_eval_global)
           warmup_code = 1;
+        /* As after the coordinate phase: exhausting only the
+         * CALIBRATION budget is not a run stop. */
+        if (warmup_code == 1 && max_eval_global != HUGE_UNSIGNED &&
+            after_pilot < max_eval_global &&
+            after_pilot - warmup_spent_begin >= warmup_budget)
+          warmup_code = 0;
+      }
+      {
+        const std::uint64_t spent_now = world > 1
+            ? hpo_allreduce_sum(budget.spent()) : budget.spent();
+        if (rank == 0 && warmup_code == 0 &&
+            max_eval_global != HUGE_UNSIGNED &&
+            spent_now - warmup_spent_begin >= warmup_budget)
+          HPOLog::instance().info(
+              "ANNEAL_PT step warm-up reached the calibration budget "
+              "(MAXEVAL/4 = " + std::to_string(warmup_budget) +
+              " evals); unfinished coordinates continue at their best "
+              "tested scales (see the calibration summary)");
       }
 
       for (std::size_t li = 0; li < n_local; ++li) {
@@ -1971,7 +2012,7 @@ template<typename Vec, typename HostT>
        * per-dim TSV reader below was updated and the per-slot journal
        * summary was not, so slot lines printed `pilot_attempts=0`
        * (coordinate `unusable`), `pilot_multiplier=0` (pilot `backoffs`)
-       * and `pilot_status=ok` (pilot `unusable`) for run23's whole
+       * and `pilot_status=ok` (pilot `unusable`) for a whole
        * calibration. Both readers now name the field they want, so the
        * next insertion cannot desynchronise them. */
       enum : std::size_t {
@@ -2056,7 +2097,7 @@ template<typename Vec, typename HostT>
            * used by the run (post-pilot). Everything from `acceptance` to
            * `unusable` was measured during the COORDINATE phase, at
            * `coord_sigma` -- larger by sqrt(dim)/pilot_multiplier, ~26x for
-           * run22. The two used to share a row with only the production
+           * such runs. The two used to share a row with only the production
            * sigma printed, so a `support-capped` row (meaning the
            * coordinate scale reached 1.0 x width) displayed
            * sigma/width = 0.038 and read as a contradiction. Both scales
@@ -3591,7 +3632,7 @@ template<typename Vec, typename HostT>
           }
         }
       }
-      /* D29: the cumulative table alone averages late drift away (run24:
+      /* D29: the cumulative table alone averages late drift away (observed:
        * bottleneck pairs at 1-3% in the final windows while the
        * cumulative row still read 11-22%).  Repeat the last completed
        * SWAP_WINDOW table next to it; fall back to the labelled partial
@@ -3629,7 +3670,7 @@ template<typename Vec, typename HostT>
        * counts come from this rank's journal.  D29: the counts are
        * cumulative since process start (init/warm-up/transient included),
        * so the last-new-best row distinguishes "still contributing" from
-       * "fossil of the initial transient" -- run24's hot-slot counts all
+       * "fossil of the initial transient" -- a long run's hot-slot counts all
        * dated from the first ~500 of 20,457 bests. */
       if (world == 1) {
         const auto tot = HPOLog::instance().best_slot_totals();

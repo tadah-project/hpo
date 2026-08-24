@@ -54,9 +54,17 @@
 #     acceptance for scale-family energy distributions (LADDER_POWER 1).
 #   Syed et al., JRSS-B 84(2), 2022: non-reversible DEO parallel tempering;
 #     frequent swap attempts (SWAP_EVERY 1) are optimal when swaps are free.
-#   T0_ACCEPT: 0.05 pending the P4 benchmark gate; the literature start
-#     (Kirkpatrick et al. 1983, chi0 ~ 0.8; Ben-Ameur 2004) is evaluated
-#     there on the in-tree function matrix before any default flip.
+#   T0_ACCEPT 0.05: gate DECIDED on the in-tree function matrix
+#     (tests/data/anneal_perf_baseline.tsv, serial-t0acc080-gate row):
+#     the literature start chi0 ~ 0.8 (Kirkpatrick et al. 1983;
+#     Ben-Ameur 2004) targets sampling-quality equilibration, but under a
+#     fixed optimization budget it won on no test function and mildly
+#     lost on four -- the hot start spends refinement budget exploring.
+#   LADDER_ADAPT 0: gate DECIDED on the same matrix (pt-ladder-adapt and
+#     pt-adapt-combo-gate rows): non-inferior but with no measurable win
+#     on this set, where the geometric default ladder is already
+#     near-optimal; enable it when the per-pair swap table shows uneven
+#     acceptance (mis-shaped ladders on heterogeneous landscapes).
 
 [meta]
 version = 2

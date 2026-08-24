@@ -1,0 +1,40 @@
+# Corana et al. (1987) protocol-replication reference table.
+#
+# Source (the ONLY permitted source for the numbers below):
+#   A. Corana, M. Marchesi, C. Martini, S. Ridella,
+#   "Minimizing multimodal functions of continuous variables with the
+#   'simulated annealing' algorithm", ACM TOMS 13(3), 262-280 (1987),
+#   doi:10.1145/29380.29864 -- INCLUDING its published Corrigenda.
+#
+# This file ships EMPTY (header only).  While it has no data rows,
+# test_anneal_corana_protocol.cpp reports itself as SKIPPED.  Fill it by
+# transcribing the paper's experimental setup and result tables -- never
+# from memory, never from secondary sources.  While transcribing, also
+# verify the test-function definitions coded in
+# test_anneal_corana_protocol.cpp (paraboloid / Rosenbrock / staircase
+# and the weight cycle d = {1, 1000, 10, 100}) against the paper and
+# correct them there if they differ.
+#
+# Columns (tab-separated; one row per paper run):
+#   function  paraboloid | rosenbrock | staircase
+#   dim       problem dimension used in the paper run (2, 4, 10, ...)
+#   low,high  uniform search bounds of the paper run (scalars)
+#   start     starting point: comma-separated list (dim values) or one
+#             value replicated across dimensions
+#   v0        paper's initial step size (absolute, original units);
+#             "-" = implementation default
+#   t_init    paper's starting temperature T0 for the run
+#   rt        temperature reduction coefficient r_T
+#   ns        step-adjustment cycle length N_S
+#   nt        temperature-step length N_T (loops per temperature)
+#   neps      termination window N_eps
+#   eps       termination tolerance epsilon
+#   accuracy  "reached the optimum" gate on the final best f (from the
+#             final-function-value column of the paper's tables)
+#   neval     paper's reported number of function evaluations for SA on
+#             this run (mean, if the paper reports several sequences)
+#
+# Acceptance policy applied by the test (fixed in code, not here):
+#   20/20 fixed seeds end with best f <= accuracy, and the mean eval
+#   count over the 20 seeds lies within [0.5x, 2x] of neval.
+function	dim	low	high	start	v0	t_init	rt	ns	nt	neps	eps	accuracy	neval
