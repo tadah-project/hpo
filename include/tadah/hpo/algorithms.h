@@ -123,41 +123,18 @@ template<typename Vec, typename Runner>
  * FTOL_REL/FTOL_ABS via the Corana sec.-4 eps-NEPS plateau rule (see
  * anneal::CoranaPlateau).
  *
- * T0 calibration (when PARAM T_HOT is not set): seed-anchored local
+ * T0 calibration (when PARAM T_INIT is not set): seed-anchored local
  * probing with FAILSCORE-robust statistics; see anneal::calibrate_t0.
  *
- * PARAMs (all optional, defaults shown):
- *   T_HOT          auto    starting/hottest temperature (skips T0
- *                          calibration; renamed from T_INIT)
- *   T_MIN          auto    cooling floor; auto = T0 * 1e-6
- *   RT             0.90    geometric cooling factor T <- T * RT
- *   L              50      Markov-chain length per T (CLASSIC only)
- *   STEP_FRAC      0.10    scale_i = STEP_FRAC * width_i (CLASSIC:
- *                          Gaussian sigma; CORANA: initial uniform half-width V)
- *   BOUNDARY_MODE  0       0: exact mirror reflection, 1: redraw the
- *                          offending coordinate
- *   T0_PROBES      20      local probes used to calibrate T0
- *   T0_PACCEPT     0.05    target acceptance probability for T0
- *   NEPS           4       plateau window (rungs); used only when
- *                          FTOL_REL and/or FTOL_ABS is set
- *   CORANA         0       enable the Corana adaptive variant
- *   NS             5       Corana step cycles per adjust cycle
- *   NT             5       Corana step-adjust cycles per T
- *   C              2.0     Corana step-adjust gain
- *   V_FLOOR_FRAC   1e-3    Corana V[i] floor as fraction of dim width
- *   RESET_TO_BEST  CORANA? Corana reset-to-best after each cool
- *                          (default 1 under CORANA, 0 otherwise)
- *   REANNEAL       1       on T_MIN with budget left: snap to best and
- *                          re-anneal from REANNEAL_SCALE^n * T0
- *   REANNEAL_SCALE 0.25    per-re-anneal start-temperature factor
- *
- * If `STEP <s>` is set, s is the CLASSIC Gaussian sigma or the Corana
- * initial uniform half-width V in every dimension (Corana then applies its
- * per-dimension floor/cap). STEP and explicit STEP_FRAC are exclusive.
+ * PARAM keys, defaults, ranges, and cross-key rules are defined in
+ * blueprint/anneal_keys.toml (generated into anneal_keys_gen.h); this
+ * driver adds only the AUTO resolution of CHAIN_LENGTH/NT from the
+ * MAXEVAL budget once T0 (and hence the schedule length) is known.
  *
  * Knobs that are dead for this algorithm are hard errors, not silent
- * no-ops: XTOL_REL/XTOL_ABS, VECTOR_ARR, GRAD_STRATEGY, and POPULATION
- * (use TADAH:ANNEAL_PA), unknown PARAM keys, and the renamed T_INIT.
+ * no-ops: STEP, XTOL_REL/XTOL_ABS, VECTOR_ARR, GRAD_STRATEGY, and
+ * POPULATION (use TADAH:ANNEAL_PA), unknown PARAM keys, and retired
+ * key names (registry rename hints).
  * THREADS IS accepted here under the shared-pool model (Option A): it
  * sizes the per-rank worker pool that runs the within-eval pc_lammps
  * fan-out -- serial ANNEAL still drives ONE chain, only the fan-out is
@@ -241,8 +218,10 @@ template<typename Vec, typename HostT>
     bool        any_rate        = false;
     bool        ran_sa          = false;   /* true once the seed evaluated */
 
-    /* Entry banner. When Corana is enabled it shows NS/NT/C in place
-     * of L (which Corana doesn't use). */
+    /* Entry banner. When Corana is enabled it shows NS/NT/CORANA_C in
+     * place of CHAIN_LENGTH (which Corana doesn't use). AUTO lengths
+     * print as such here; the resolved values follow in the layout line
+     * once T0 (and hence the schedule length) is known. */
     {
       std::ostringstream oss;
       oss << "ANNEAL[" << (kb.corana ? "CORANA" : "CLASSIC") << "]: "
@@ -251,61 +230,26 @@ template<typename Vec, typename HostT>
           << "  BOUNDARY_MODE=" << static_cast<int>(kb.boundary_mode)
           << (kb.boundary_mode == anneal::BoundaryMode::Reflect
                   ? "(REFLECT)" : "(REDRAW)");
+      if (kb.t_start) oss << "  T_INIT=" << *kb.t_start;
       if (kb.t_min) oss << "  T_MIN=" << *kb.t_min;
       else          oss << "  T_MIN=auto(T0*1e-6)";
       if (kb.corana) {
-        oss << "  NS=" << kb.NS << "  NT=" << kb.NT << "  C=" << kb.C
+        oss << "  NS=" << kb.NS;
+        if (kb.NT > 0) oss << "  NT=" << kb.NT;
+        else           oss << "  NT=auto";
+        oss << "  CORANA_C=" << kb.corana_c
             << "  V_FLOOR_FRAC=" << kb.v_floor_frac;
         if (kb.reset_to_best) oss << "  RESET_TO_BEST=1";
       } else {
-        oss << "  L=" << kb.L;
+        if (kb.chain_length > 0) oss << "  CHAIN_LENGTH=" << kb.chain_length;
+        else                     oss << "  CHAIN_LENGTH=auto";
       }
-      if (sp.step.has_value()) {
-        if (kb.corana)
-          oss << "  STEP=" << *sp.step
-              << " (Corana U(-V,V) half-width; floor/cap applied per dim)";
-        else
-          oss << "  sigma=" << *sp.step
-              << " (CLASSIC Gaussian; explicit STEP)";
-      } else {
-        oss << "  STEP_FRAC=" << kb.step_frac
-            << (kb.corana ? " (Corana V half-width/width)"
-                          : " (CLASSIC Gaussian sigma/width)");
-      }
+      oss << "  STEP_FRAC=" << kb.step_frac
+          << (kb.corana ? " (Corana V half-width/width)"
+                        : " (CLASSIC Gaussian sigma/width)");
       oss << "  REANNEAL=" << (kb.reanneal ? 1 : 0);
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
-    }
-
-    /* Layout arithmetic -- exact, printed up front so the rung cadence
-     * (and hence the journal cadence) is visible before the first
-     * per-rung line. */
-    {
-      const std::uint64_t rung_evals =
-          kb.corana ? anneal::saturating_mul(
-                          anneal::saturating_mul(kb.NT, kb.NS), dim)
-                    : static_cast<std::uint64_t>(kb.L);
-      std::ostringstream oss;
-      oss << "ANNEAL layout: rung = ";
-      if (kb.corana)
-        oss << "NT*NS*dim = " << kb.NT << "*" << kb.NS << "*" << dim << " = ";
-      else
-        oss << "L = ";
-      oss << rung_evals << " evals";
-      if (sp.stop.maxeval && rung_evals > 0) {
-        const std::uint64_t maxeval =
-            static_cast<std::uint64_t>(*sp.stop.maxeval);
-        oss << ";  MAXEVAL=" << maxeval << " -> <= "
-            << (maxeval / rung_evals + (maxeval % rung_evals != 0 ? 1 : 0))
-            << " rung(s) by budget (T_MIN schedule / plateau may end "
-               "earlier, REANNEAL restarts extend rung count)";
-      }
-      HPOLog::instance().info(oss.str());
-      if (rung_evals > 0)
-        HPOLog::instance().set_cadence(
-            static_cast<std::size_t>(rung_evals), "rung",
-            sp.stop.maxeval
-                ? static_cast<std::uint64_t>(*sp.stop.maxeval) : 0);
     }
     HPOLog::instance().arm_pin_audit(sp, kb.v_floor_frac, 1, "rung");
 
@@ -388,25 +332,93 @@ template<typename Vec, typename HostT>
       }
     }
 
-    /* Auto cooling floor: reachable in ~132 rungs at the RT=0.90 default
-     * the historical fixed 1e-12 (~170+ rungs -- runs always died on
-     * MAXEVAL instead). Explicit PARAM T_MIN always wins. */
+    /* Auto cooling floor T0*1e-6: ~86 rungs at the RT=0.85 default.
+     * Explicit PARAM T_MIN always wins. */
     const double t_min = kb.t_min ? *kb.t_min
                                   : (T0 > 0.0
                                          ? anneal::automatic_t_min(T0)
                                          : 1e-12);
     if (proceed && t_min > T0)
       throw std::runtime_error(
-          "TADAH:ANNEAL: resolved T_MIN must be <= T_HOT/T0 (T_MIN=" +
+          "TADAH:ANNEAL: resolved T_MIN must be <= T_INIT/T0 (T_MIN=" +
           std::to_string(t_min) + ", resolved T0=" +
           std::to_string(T0) + ")");
+
+    /* --- AUTO length resolution ----------------------------------------
+     * CHAIN_LENGTH/NT default to AUTO: the remaining MAXEVAL budget
+     * spread evenly over the cooling schedule (T0 -> T_MIN at RT), NT
+     * additionally capped at the Corana 1987 structure max(100, 5n).
+     * Knobs::parse guarantees MAXEVAL is set whenever AUTO is in play,
+     * and surplus budget flows into REANNEAL cycles. */
+    anneal::Knobs kbr = kb;
+    if (proceed) {
+      const std::size_t schedule_rungs = [&]() -> std::size_t {
+        if (!(T0 > 0.0) || !(t_min > 0.0) || t_min >= T0) return 1;
+        const double m = std::log(t_min / T0) / std::log(kb.rt);
+        if (!std::isfinite(m) || m < 0.0) return 1;
+        return static_cast<std::size_t>(std::floor(m)) + 1;
+      }();
+      if (!kb.corana && kb.chain_length == 0) {
+        kbr.chain_length = static_cast<std::size_t>(std::max<std::uint64_t>(
+            1, budget.left() / schedule_rungs));
+        std::ostringstream oss;
+        oss << "ANNEAL auto CHAIN_LENGTH: remaining budget " << budget.left()
+            << " over " << schedule_rungs
+            << " scheduled rung(s) (T0 -> T_MIN at RT=" << kb.rt
+            << ") -> CHAIN_LENGTH=" << kbr.chain_length;
+        HPOLog::instance().info(oss.str());
+      }
+      if (kb.corana && kb.NT == 0) {
+        const std::uint64_t cap = std::max<std::uint64_t>(
+            100, 5 * static_cast<std::uint64_t>(dim));
+        const std::uint64_t per_nt = anneal::saturating_mul(
+            anneal::saturating_mul(schedule_rungs, kb.NS),
+            std::max<std::size_t>(dim, 1));
+        const std::uint64_t nt_raw =
+            per_nt > 0 ? budget.left() / per_nt : 1;
+        kbr.NT = static_cast<std::size_t>(
+            std::min<std::uint64_t>(cap, std::max<std::uint64_t>(1, nt_raw)));
+        std::ostringstream oss;
+        oss << "ANNEAL auto NT: remaining budget " << budget.left()
+            << " over " << schedule_rungs << " scheduled rung(s) x NS="
+            << kb.NS << " x dim=" << dim << " -> NT=" << kbr.NT
+            << " (cap max(100, 5*dim)=" << cap << ")";
+        HPOLog::instance().info(oss.str());
+      }
+    }
 
     /* --- one annealing schedule from T_begin ---------------------------
      * Shared by the first anneal and every REANNEAL cycle. */
     const std::uint64_t rung_cost =
-        kb.corana ? anneal::saturating_mul(
-                        anneal::saturating_mul(kb.NT, kb.NS), dim)
-                  : static_cast<std::uint64_t>(kb.L);
+        kbr.corana ? anneal::saturating_mul(
+                         anneal::saturating_mul(kbr.NT, kbr.NS), dim)
+                   : static_cast<std::uint64_t>(kbr.chain_length);
+    /* Layout arithmetic -- exact, printed before the first per-rung line
+     * so the rung cadence (and hence the journal cadence) is visible. */
+    if (proceed) {
+      std::ostringstream oss;
+      oss << "ANNEAL layout: rung = ";
+      if (kbr.corana)
+        oss << "NT*NS*dim = " << kbr.NT << "*" << kbr.NS << "*" << dim
+            << " = ";
+      else
+        oss << "CHAIN_LENGTH = ";
+      oss << rung_cost << " evals";
+      if (sp.stop.maxeval && rung_cost > 0) {
+        const std::uint64_t maxeval =
+            static_cast<std::uint64_t>(*sp.stop.maxeval);
+        oss << ";  MAXEVAL=" << maxeval << " -> <= "
+            << (maxeval / rung_cost + (maxeval % rung_cost != 0 ? 1 : 0))
+            << " rung(s) by budget (T_MIN schedule / plateau may end "
+               "earlier, REANNEAL restarts extend rung count)";
+      }
+      HPOLog::instance().info(oss.str());
+      if (rung_cost > 0)
+        HPOLog::instance().set_cadence(
+            static_cast<std::size_t>(rung_cost), "rung",
+            sp.stop.maxeval
+                ? static_cast<std::uint64_t>(*sp.stop.maxeval) : 0);
+    }
     auto run_schedule = [&](double T_begin) {
       double T = T_begin;
       if (budget.left() == 0) {
@@ -429,7 +441,7 @@ template<typename Vec, typename HostT>
           rung_count, anneal::planned_rungs(T_begin, t_min, kb.rt,
                                             budget.left(), rung_cost));
       while (T >= t_min && budget.left() > 0 && !time_exceeded()) {
-        const auto rs = anneal::run_rung(chain, T, sp, kb, host, ctx);
+        const auto rs = anneal::run_rung(chain, T, sp, kbr, host, ctx);
 
         /* Pinned-dim audit refresh: marks follow the chain's post-rung
          * state -- a dim that left its bound is unmarked here; the table
@@ -437,7 +449,7 @@ template<typename Vec, typename HostT>
          * pinned_dims() drops its Corana-only step-floor clause under
          * CLASSIC and reports pure near-bound occupancy. */
         HPOLog::instance().record_pin_state(
-            0, rung_count + 1, anneal::pinned_dims(chain, sp, kb));
+            0, rung_count + 1, anneal::pinned_dims(chain, sp, kbr));
 
         /* Per-rung summary line. Emitted whenever the rung consumed
          * any host evals, even if we broke out mid-rung. */
@@ -469,7 +481,7 @@ template<typename Vec, typename HostT>
           if (kb.corana) {
             const double V_min = *std::min_element(chain.V.begin(), chain.V.end());
             const double V_max = *std::max_element(chain.V.begin(), chain.V.end());
-            const auto sat = anneal::step_saturation(chain.V, sp, kb);
+            const auto sat = anneal::step_saturation(chain.V, sp, kbr);
             oss << "  V=[" << V_min << ", " << V_max << "]"
                 << "  V_floor=" << sat.floor << "/" << sat.total
                 << "  V_cap=" << sat.cap << "/" << sat.total;
@@ -515,9 +527,9 @@ template<typename Vec, typename HostT>
     /* --- main anneal + warm re-anneal driver ---------------------------
      * When a schedule cools out (T < T_MIN) with budget left, REANNEAL
      * snaps the chain to the best-so-far and restarts the schedule at
-     * REANNEAL_SCALE^n * T0 (run15 lever: the schedule used to truncate
-     * progress mid-improvement). Stops re-annealing when the next start
-     * temperature could not complete ~2 rungs above T_MIN. */
+     * REANNEAL_SCALE^n * T0, so leftover budget refines rather than
+     * truncating progress mid-improvement. Stops re-annealing when the
+     * next start temperature could not complete ~2 rungs above T_MIN. */
     if (proceed) {
       double T_start = T0;
       for (;;) {
@@ -566,7 +578,7 @@ template<typename Vec, typename HostT>
           << "  reanneals=" << reanneal_count
           << "  best=" << chain.best_f;
       if (kb.corana) {
-        const auto sat = anneal::step_saturation(chain.V, sp, kb);
+        const auto sat = anneal::step_saturation(chain.V, sp, kbr);
         oss << "  V_floor=" << sat.floor << "/" << sat.total
             << "  V_cap=" << sat.cap << "/" << sat.total;
       }

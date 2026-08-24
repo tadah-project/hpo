@@ -97,10 +97,12 @@ struct LoggedRun {
 
 }  // namespace
 
-TEST_CASE("ANNEAL_PA: INIT_MODE 0 uses Gaussian seed jitter for both steppers",
+TEST_CASE("ANNEAL_PA: INIT_MODE JITTER uses Gaussian seed jitter for both steppers",
           "[HPO][anneal_pa][init][kernel]")
 {
     using namespace tadah::hpo;
+    /* Jitter sigma is the proposal scale STEP_FRAC * width = 0.0125 * 20. */
+    constexpr double kJitterSigma = 0.0125 * 20.0;
     auto run = [](bool corana) {
         auto sp = make_pa_spec({-10.0}, {10.0});
         set_seed_point(sp, {0.0});
@@ -108,14 +110,15 @@ TEST_CASE("ANNEAL_PA: INIT_MODE 0 uses Gaussian seed jitter for both steppers",
         sp.num_threads = 2;
         sp.pop = 16;
         sp.stop.maxeval = 16;
-        sp.step = 0.25;
+        sp.param["STEP_FRAC"] = 0.0125;
+        sp.param_raw["INIT_MODE"] = "JITTER";   /* the default, explicit */
         sp.param["T_HOT"] = 1.0;
         if (corana) {
             sp.param["CORANA"] = 1.0;
             sp.param["NS"] = 1.0;
             sp.param["NT"] = 1.0;
         } else {
-            sp.param["L"] = 1.0;
+            sp.param["CHAIN_LENGTH"] = 1.0;
         }
         MtStubHost host{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
         run_anneal_pa_impl<Vec>(sp, host);
@@ -129,7 +132,7 @@ TEST_CASE("ANNEAL_PA: INIT_MODE 0 uses Gaussian seed jitter for both steppers",
             auto rng = anneal::make_stream(271828, anneal::SALT_CHAIN, k);
             const double unit =
                 std::normal_distribution<double>(0.0, 1.0)(rng);
-            expected.push_back({0.25 * unit});
+            expected.push_back({kJitterSigma * unit});
         }
         std::sort(expected.begin(), expected.end());
         const auto actual = run(corana);
@@ -321,10 +324,10 @@ TEST_CASE("ANNEAL_PA: FAILSCORE walkers are culled at the first resample",
     sp.num_threads = 2;
     sp.pop = 16;
     sp.stop.maxeval = 800;
-    sp.param["L"]         = 4.0;
+    sp.param["CHAIN_LENGTH"]         = 4.0;
     sp.param["T_HOT"]     = 0.5;
     sp.param["T_MIN"]     = 1e-3;
-    sp.param["INIT_MODE"] = 1.0;    /* uniform box -> half start on cliff */
+    sp.param_raw["INIT_MODE"] = "UNIFORM";  /* box draw -> half start on cliff */
     sp.param["STEP_FRAC"] = 0.10;
 
     LoggedRun lr;
@@ -351,7 +354,7 @@ TEST_CASE("ANNEAL_PA: MAXEVAL is a hard cap across the population",
     sp.num_threads = 4;
     sp.pop = 16;
     sp.stop.maxeval = 231;
-    sp.param["L"]     = 5.0;
+    sp.param["CHAIN_LENGTH"]     = 5.0;
     sp.param["T_HOT"] = 1.0;
 
     MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
@@ -369,7 +372,7 @@ TEST_CASE("ANNEAL_PA: MAXEVAL zero performs no host evaluation",
     sp.num_threads = 2;
     sp.pop = 16;
     sp.stop.maxeval = 0;
-    sp.param["L"]     = 2.0;
+    sp.param["CHAIN_LENGTH"]     = 2.0;
     sp.param["T_HOT"] = 1.0;
 
     LoggedRun lr;
@@ -389,7 +392,7 @@ TEST_CASE("ANNEAL_PA: T0 probe exhaustion reports MAXEVAL exactly",
     sp.num_threads = 2;
     sp.pop = 16;
     sp.stop.maxeval = 3;
-    sp.param["L"] = 2.0;
+    sp.param["CHAIN_LENGTH"] = 2.0;
 
     LoggedRun lr;
     MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
@@ -409,7 +412,7 @@ TEST_CASE("ANNEAL_PA: reaches T_MIN and reports the schedule",
     sp.num_threads = 2;
     sp.pop = 16;
     sp.stop.maxeval = 100000;
-    sp.param["L"]          = 2.0;
+    sp.param["CHAIN_LENGTH"]          = 2.0;
     sp.param["T_HOT"]      = 1.0;
     sp.param["T_MIN"]      = 0.05;
     sp.param["RT"]         = 0.5;
@@ -438,7 +441,7 @@ TEST_CASE("ANNEAL_PA: T_HOT equal to T_MIN runs one hot sweep only",
     sp.stop.maxeval = 100;
     sp.param["T_HOT"] = 1.0;
     sp.param["T_MIN"] = 1.0;
-    sp.param["L"] = 1.0;
+    sp.param["CHAIN_LENGTH"] = 1.0;
 
     MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
     LoggedRun lr;
@@ -464,7 +467,7 @@ TEST_CASE("ANNEAL_PA: subnormal temperatures make geometric progress",
     sp.param["T_HOT"] = 2.0 * tiny;
     sp.param["T_MIN"] = tiny;
     sp.param["RT"] = 0.5;
-    sp.param["L"] = 1.0;
+    sp.param["CHAIN_LENGTH"] = 1.0;
 
     MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
     LoggedRun lr;
@@ -486,7 +489,7 @@ TEST_CASE("ANNEAL_PA: ESS_TARGET 0 gives the pure geometric schedule",
     sp.num_threads = 2;
     sp.pop = 16;
     sp.stop.maxeval = 100000;
-    sp.param["L"]          = 2.0;
+    sp.param["CHAIN_LENGTH"]          = 2.0;
     sp.param["T_HOT"]      = 1.0;
     sp.param["T_MIN"]      = 0.2;
     sp.param["RT"]         = 0.5;
@@ -515,18 +518,20 @@ TEST_CASE("ANNEAL_PA: Corana banner and step diagnostics expose bounds",
     sp.param["NS"] = 1.0;
     sp.param["NT"] = 1.0;
     sp.param["T_HOT"] = 1.0;
-    sp.step = 0.123;
+    sp.param["STEP_FRAC"] = 0.123;
 
     LoggedRun lr;
     MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0) + x(1) * x(1); }, {}, {} };
     run_anneal_pa_impl<Vec>(sp, stub);
 
     const std::string log = lr.read();
+    CHECK(log.find("ANNEAL_PA[CORANA]") != std::string::npos);
+    CHECK(log.find("CORANA_C=") != std::string::npos);
     CHECK(log.find("V_FLOOR_FRAC=") != std::string::npos);
-    CHECK(log.find("STEP=0.123") != std::string::npos);
-    CHECK(log.find("Corana U(-V,V) half-width") != std::string::npos);
-    CHECK(log.find("STEP_FRAC=") == std::string::npos);
+    CHECK(log.find("STEP_FRAC=0.123 (Corana V half-width/width)")
+          != std::string::npos);
     CHECK(log.find("BOUNDARY_MODE=0(REFLECT)") != std::string::npos);
+    CHECK(log.find("INIT_MODE=JITTER") != std::string::npos);
     CHECK(log.find("V_floor=") != std::string::npos);
     CHECK(log.find("V_cap=") != std::string::npos);
 }

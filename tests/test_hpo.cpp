@@ -87,21 +87,30 @@ TEST_CASE("ANNEAL capability help exposes corrected public contracts",
         return out.str();
     };
 
+    /* The key listings are generated from the registry
+     * (blueprint/anneal_keys.toml), so these checks pin the emitter
+     * format and a few registry facts, not hand-written prose. */
     const std::string serial = capture("ANNEAL");
-    CHECK(serial.find("if none is uphill, median absolute delta is used")
+    CHECK(serial.find("PARAM T_INIT") != std::string::npos);
+    CHECK(serial.find("PARAM CHAIN_LENGTH (default auto)")
           != std::string::npos);
-    CHECK(serial.find("next start must be >= T_MIN/RT (two rungs)")
+    CHECK(serial.find("PARAM RT (default 0.85)") != std::string::npos);
+    CHECK(serial.find("Dead knobs are hard errors: STEP")
           != std::string::npos);
 
     const std::string pt = capture("ANNEAL_PT");
-    CHECK(pt.find("PARAM SWAP_WINDOW") != std::string::npos);
-    CHECK(pt.find("default 20; 0 = cumulative table only")
+    CHECK(pt.find("PARAM SWAP_WINDOW (default 20)") != std::string::npos);
+    CHECK(pt.find("PARAM STEP_MODE <FIXED|FROZEN|ADAPTIVE> (default FROZEN)")
           != std::string::npos);
+    CHECK(pt.find("best-stall") != std::string::npos);
     CHECK(pt.find("With REPLICAS fixed") != std::string::npos);
+    CHECK(pt.find("PARAM RT") == std::string::npos);
 
     const std::string pa = capture("ANNEAL_PA");
-    CHECK(pa.find("all-fail skips resampling") != std::string::npos);
-    CHECK(pa.find("With POPULATION fixed") != std::string::npos);
+    CHECK(pa.find("all-fail skips") != std::string::npos);
+    CHECK(pa.find("POPULATION <R> population size") != std::string::npos);
+    CHECK(pa.find("PARAM INIT_MODE <JITTER|UNIFORM> (default JITTER)")
+          != std::string::npos);
 }
 
 TEST_CASE("HPO placeholder — see comments above for planned tests", "[HPO]")

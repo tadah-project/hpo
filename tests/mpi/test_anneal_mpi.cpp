@@ -104,7 +104,8 @@ tadah::hpo::OptimizerSpec base_spec(const char* algo, std::uint64_t maxeval)
   sp.stop.maxeval = maxeval;
   sp.param["CORANA"] = 1.0;
   sp.param["NS"] = 1.0;
-  sp.param["NT"] = 1.0;
+  /* NT is serial/PA-only now (ANNEAL_PT runs one sweep per epoch);
+   * run_pa() adds it back for the population annealer. */
   sp.param["T_HOT"] = 1.0;
   sp.param["BOUNDARY_MODE"] = 1.0;
   return sp;
@@ -141,11 +142,9 @@ Signature run_pt_auto(std::uint64_t cap, RecordingHost& host)
   auto sp = base_spec("ANNEAL_PT", cap);
   sp.param.erase("CORANA");
   sp.param.erase("NS");
-  sp.param.erase("NT");
   sp.param["REPLICAS"] = 8.0;
   sp.param["T_COLD"] = 0.1;
-  sp.param["L"] = 3.0;
-  /* STEP_AUTO is intentionally omitted: exercise the default-on CLASSIC
+  /* STEP_MODE is intentionally omitted: exercise the FROZEN-default CLASSIC
    * coordinate warm-up and its cross-rank diagnostic gather. */
   tadah::hpo::run_anneal_pt_impl<Vec>(sp, host);
   return host.global_signature();
@@ -156,6 +155,7 @@ Signature run_pa(std::uint64_t cap, RecordingHost& host,
 {
   auto sp = base_spec("ANNEAL_PA", cap);
   sp.pop = 16;
+  sp.param["NT"] = 1.0;
   sp.param["T_MIN"] = 1e-8;
   if (auto_t0) sp.param.erase("T_HOT");
   if (stop_on_remote) sp.stop.stopval = -100.0;
@@ -303,6 +303,7 @@ int main(int argc, char** argv)
     if (world > 1) {
       auto oversized = base_spec("ANNEAL_PA", 137);
       oversized.pop = std::numeric_limits<unsigned>::max();
+      oversized.param["NT"] = 1.0;
       oversized.param["T_MIN"] = 1e-8;
       RecordingHost untouched{rank, world};
       bool rejected_before_host = false;

@@ -1,37 +1,47 @@
 {
   "schema_version": 1,
-  "example": "18_anneal_pt",
-  "description": "TADAH:ANNEAL_PT parallel tempering, 4 replicas, THREADS 2, pinned ladder.",
+  "example": "SGRIDMB",
+  "description": "",
   "best_loss": {
-    "value": 0.04570457,
+    "value": 0.04572276,
     "abs_tol": 1e-06,
     "rel_tol": 0.001
   },
   "components": {
+    "SLOT": {
+      "value": 1.0,
+      "abs_tol": 1e-06,
+      "rel_tol": 0.005
+    },
     "L(ERMSE)[1]": {
-      "value": 0.00995851,
+      "value": 0.01016264,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(ERMSE)[avg]": {
-      "value": 0.00995851,
+      "value": 0.01016264,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(Ecoh)": {
-      "value": 0.08145063,
+      "value": 0.08128288,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     }
   },
   "hyperparameters": {
+    "SLOT": {
+      "value": 1.0,
+      "abs_tol": 0.001,
+      "rel_tol": 0.001
+    },
     "RCUT2B": {
-      "value": 4.220985,
+      "value": 4.207977,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     },
     "SGRIDMB": {
-      "value": 0.3445386,
+      "value": 0.3450119,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     }
@@ -40,12 +50,12 @@
     "value": 260,
     "tol": 0
   },
-  "best_ermse_meV_per_atom": 9.98,
+  "best_ermse_meV_per_atom": 10.08,
   "status_accepted": [
     "COMPLETED"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "2.1s",
+  "walltime_hint": "2.8s",
   "fast": true,
   "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
 }

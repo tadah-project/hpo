@@ -244,17 +244,20 @@ inline std::optional<double> robust_t0(double f0,
 struct Knobs {
   /* Every default below comes from the generated anneal_defaults
    * constants (source of truth: blueprint/anneal_keys.toml).  Do not
-   * restate a literal here. */
+   * restate a literal here.  0 on chain_length/NT is the AUTO sentinel
+   * (serial: resolved from the MAXEVAL budget after T0 calibration). */
 
   /* stepper (shared across the family) */
   bool        corana        = anneal_defaults::CORANA == 1.0;
-  std::size_t L             = static_cast<std::size_t>(anneal_defaults::L);
-                                      /* classic chain length per rung   */
+  std::size_t chain_length  = 0;      /* CLASSIC proposals per rung;
+                                       * 0 = AUTO (serial), PA default
+                                       * applied in parse                */
   std::size_t NS            = static_cast<std::size_t>(anneal_defaults::NS);
-                                      /* Corana step cycles              */
-  std::size_t NT            = static_cast<std::size_t>(anneal_defaults::NT);
-                                      /* Corana step-adjust cycles per T */
-  double      C             = anneal_defaults::C;
+                                      /* Corana step cycles (PT: sweeps
+                                       * between per-slot V adjustments) */
+  std::size_t NT            = 0;      /* Corana step-adjust cycles per
+                                       * rung; 0 = AUTO (serial)         */
+  double      corana_c      = anneal_defaults::CORANA_C;
                                       /* Corana step-adjust gain         */
   double      step_frac     = anneal_defaults::STEP_FRAC;
   double      v_floor_frac  = anneal_defaults::V_FLOOR_FRAC;
@@ -264,12 +267,13 @@ struct Knobs {
                                        * serial CORANA (Knobs::parse)    */
   std::size_t neps          = static_cast<std::size_t>(anneal_defaults::NEPS);
 
-  /* temperature family */
-  std::optional<double> t_hot;        /* explicit T_HOT skips calibration */
+  /* temperature family.  t_start holds the serial T_INIT or the PT/PA
+   * T_HOT -- one field, kind-appropriate key name at parse time. */
+  std::optional<double> t_start;      /* explicit value skips calibration */
   std::optional<double> t_min;        /* explicit floor; auto = T0 * 1e-6 */
-  double      rt            = anneal_defaults::RT;   /* PT: RT_PT        */
+  double      rt            = anneal_defaults::RT_SERIAL;  /* PA: RT_PA */
   std::size_t t0_probes     = static_cast<std::size_t>(anneal_defaults::T0_PROBES);
-  double      t0_paccept    = anneal_defaults::T0_PACCEPT;
+  double      t0_accept     = anneal_defaults::T0_ACCEPT;
 
   /* serial warm re-anneal on T_MIN */
   bool        reanneal       = anneal_defaults::REANNEAL == 1.0;
@@ -290,11 +294,6 @@ struct Knobs {
                                     /* attempts/pair between updates    */
   double      ladder_adapt_gain = anneal_defaults::LADDER_ADAPT_GAIN;
   double      ladder_adapt_decay = anneal_defaults::LADDER_ADAPT_DECAY;
-  std::size_t ladder_adapt_updates =
-      static_cast<std::size_t>(anneal_defaults::LADDER_ADAPT_UPDATES);
-                                    /* 0 = no update-count cap (the
-                                     * equalization freeze may still stop
-                                     * adaptation; see ladder_freeze)   */
   double      ladder_min_gap = anneal_defaults::LADDER_MIN_GAP;
                                     /* min interior log-gap as a fraction
                                      * of the mean gap; 0 = no floor    */
@@ -304,23 +303,28 @@ struct Knobs {
   std::size_t swap_every  = static_cast<std::size_t>(anneal_defaults::SWAP_EVERY);
                                     /* exchange attempt every N epochs  */
   std::size_t swap_window = static_cast<std::size_t>(anneal_defaults::SWAP_WINDOW);
-                                    /* windowed swap-acc table every N
-                                     * epochs (0 = cumulative only)     */
-  bool        step_auto = anneal_defaults::STEP_AUTO == 1.0;
-                                    /* PT CLASSIC coordinate warm-up    */
-  std::size_t step_auto_sweeps =
-      static_cast<std::size_t>(anneal_defaults::STEP_AUTO_SWEEPS);
-                                    /* minimum attempts per coordinate  */
-  std::size_t step_adapt_every =
-      static_cast<std::size_t>(anneal_defaults::STEP_ADAPT_EVERY);
-                                    /* PT diagonal RAM apply cadence    */
-  double      step_trust_factor = anneal_defaults::STEP_TRUST_FACTOR;
-                                    /* RAM sigma bound as a factor of
-                                     * the calibrated baseline; 0 = off */
+                                    /* epochs per diagnostics window
+                                     * (0 = cumulative reports only)    */
+  int         step_mode   = anneal_enums::STEP_MODE::FIXED;
+                                    /* PT CLASSIC step policy; parse sets
+                                     * the FROZEN default for PT         */
+  std::size_t step_warmup_sweeps =
+      static_cast<std::size_t>(anneal_defaults::STEP_WARMUP_SWEEPS);
+                                    /* min calibration attempts/coord    */
+  std::size_t step_adapt_every = 0; /* RAM apply cadence; parse sets the
+                                     * registry default under ADAPTIVE,
+                                     * 0 = RAM off (FIXED/FROZEN)        */
+  double      step_trust_factor = 0.0;
+                                    /* RAM sigma bound as a factor of the
+                                     * calibrated baseline; parse sets
+                                     * the registry default under
+                                     * ADAPTIVE, 0 = off                 */
 
   /* shared by both parallel drivers */
   int         init_mode   = static_cast<int>(anneal_defaults::INIT_MODE);
-                                    /* 0 = seed + Gaussian jitter, 1 = box */
+                                    /* JITTER = seed + Gaussian jitter,
+                                     * UNIFORM = box draw (slot 0 always
+                                     * starts exactly at the seed)       */
 
   /* population annealing (ANNEAL_PA only) */
   std::size_t sweeps      = static_cast<std::size_t>(anneal_defaults::SWEEPS);
@@ -339,15 +343,12 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
                            : kind == AlgoKind::PT     ? reg::KIND_PT
                                                       : reg::KIND_PA;
 
-  /* -- renamed keys: hard error naming the replacement -------------- */
-  static const std::unordered_map<std::string, std::string> renamed = {
-      {"T_INIT", "T_HOT"},
-  };
-  for (const auto& [old_key, new_key] : renamed) {
-    if (sp.param.count(old_key) || sp.param_raw.count(old_key))
-      throw std::runtime_error(
-          ctx + ": PARAM " + old_key + " was renamed to " + new_key +
-          " (same meaning: the starting/hottest temperature); update the config");
+  /* -- retired/wrong-kind key names: hard error with the registry's
+   *    migration hint (blueprint/anneal_keys.toml [[renamed]]) -------- */
+  for (const auto& ren : reg::kRenamed) {
+    if (!(ren.kinds & kind_mask)) continue;
+    if (sp.param.count(ren.old_name) || sp.param_raw.count(ren.old_name))
+      throw std::runtime_error(ctx + ": " + ren.msg);
   }
 
   /* -- membership: key names and family applicability come from the
@@ -387,11 +388,13 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   for (const auto& kv : sp.param) check_membership(kv.first);
   for (const auto& kv : sp.param_raw) {
     check_membership(kv.first);
-    /* Every current family key is numeric; a token value is a typo or
-     * a misplaced word, never a silent 0.0. */
-    throw std::runtime_error(
-        ctx + ": PARAM " + kv.first + " must be a number (got '" +
-        kv.second + "')");
+    /* Token values are legal only for enum-typed keys; anything else is
+     * a typo or a misplaced word, never a silent 0.0. */
+    const auto* ki = reg::find_key(kv.first);
+    if (ki->type != reg::AnnealKeyType::Enum)
+      throw std::runtime_error(
+          ctx + ": PARAM " + kv.first + " must be a number (got '" +
+          kv.second + "')");
   }
 
   /* -- spec-level knobs that are dead for this family --------------- */
@@ -405,6 +408,10 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   if (sp.grad_strategy)
     throw std::runtime_error(
         ctx + " is derivative-free and does not use GRAD_STRATEGY; remove it");
+  if (sp.step)
+    throw std::runtime_error(
+        ctx + " does not use STEP; set PARAM STEP_FRAC (and PARAM "
+        "STEP_MODE for ANNEAL_PT) instead");
   /* THREADS is honoured by EVERY family under the shared-pool model
    * (Option A): it sizes the per-rank worker pool that runs the pc_lammps
    * fan-out + MLIP train/predict. Serial ANNEAL still drives ONE chain, but
@@ -450,17 +457,23 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
           "; regenerate anneal_keys_gen.h");
     return *ki;
   };
-  auto default_of = [&](const reg::AnnealKeyInfo& ki) -> double {
-    if (kind == AlgoKind::PT && ki.has_def_pt) return ki.def_pt;
-    if (kind == AlgoKind::PA && ki.has_def_pa) return ki.def_pa;
-    return ki.def;
+  auto default_of = [&](const reg::AnnealKeyInfo& ki, bool& has) -> double {
+    switch (kind) {
+      case AlgoKind::Serial: has = ki.has_def_serial; return ki.def_serial;
+      case AlgoKind::PT:     has = ki.has_def_pt;     return ki.def_pt;
+      default:               has = ki.has_def_pa;     return ki.def_pa;
+    }
   };
   auto pget = [&](const char* k) -> double {
     const auto& ki = pinfo(k);
     double v;
     auto it = sp.param.find(k);
     if (it == sp.param.end()) {
-      v = default_of(ki);
+      bool has = false;
+      v = default_of(ki, has);
+      /* No registry default for this kind = presence-tested optional or
+       * a run-time AUTO key: the 0 sentinel takes no range check. */
+      if (!has) return v;
     } else {
       if (!std::isfinite(it->second))
         throw std::runtime_error(ctx + ": PARAM " + k + " must be finite");
@@ -495,14 +508,45 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
       throw std::runtime_error(ctx + ": PARAM " + k + " must be 0 or 1");
     return it->second == 1.0;
   };
+  /* Enum keys take token values (PARAM STEP_MODE FROZEN); the token list
+   * and default come from the registry. */
+  auto penum = [&](const char* k) -> int {
+    const auto& ki = pinfo(k);
+    auto tokens_of = [&]() {
+      std::string tokens;
+      for (std::size_t i = 0; i < ki.enum_count; ++i) {
+        if (i) tokens += ' ';
+        tokens += ki.enum_values[i];
+      }
+      return tokens;
+    };
+    auto raw = sp.param_raw.find(k);
+    if (raw != sp.param_raw.end()) {
+      for (std::size_t i = 0; i < ki.enum_count; ++i)
+        if (raw->second == ki.enum_values[i]) return static_cast<int>(i);
+      throw std::runtime_error(
+          ctx + ": PARAM " + k + " must be one of: " + tokens_of() +
+          " (got '" + raw->second + "')");
+    }
+    if (sp.param.count(k))
+      throw std::runtime_error(
+          ctx + ": PARAM " + k + " takes a token, one of: " + tokens_of());
+    bool has = false;
+    const double def = default_of(ki, has);
+    if (!has)
+      throw std::logic_error(
+          std::string("anneal_keys.toml enum key ") + k +
+          " lacks a default for this kind");
+    return static_cast<int>(def);
+  };
 
   Knobs kb;
   kb.corana        = pbool("CORANA");
 
-  kb.L             = pcount("L");
+  kb.chain_length  = pcount("CHAIN_LENGTH");   /* serial: 0 = AUTO */
   kb.NS            = pcount("NS");
-  kb.NT            = pcount("NT");
-  kb.C             = pget("C");
+  kb.NT            = pcount("NT");             /* serial: 0 = AUTO */
+  kb.corana_c      = pget("CORANA_C");
   kb.step_frac     = pget("STEP_FRAC");
   kb.v_floor_frac  = pget("V_FLOOR_FRAC");
   const std::size_t boundary_raw = pcount("BOUNDARY_MODE");
@@ -514,13 +558,14 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
                                kb.corana && kind == AlgoKind::Serial);
   kb.neps          = pcount("NEPS");
 
-  if (sp.param.count("T_HOT")) kb.t_hot = pget("T_HOT");
+  /* One start-temperature field, kind-appropriate key name: the serial
+   * schedule starts at T_INIT; PT/PA anchor the hot end at T_HOT. */
+  const char* t_start_key = kind == AlgoKind::Serial ? "T_INIT" : "T_HOT";
+  if (sp.param.count(t_start_key)) kb.t_start = pget(t_start_key);
   if (sp.param.count("T_MIN")) kb.t_min = pget("T_MIN");
-  /* RT: cooling ratio everywhere. PT default 1.0 = static ladder (pure
-   * tempering); RT < 1 turns PT into a cooling-ladder hybrid. */
   kb.rt            = pget("RT");
   kb.t0_probes     = pcount("T0_PROBES");
-  kb.t0_paccept    = pget("T0_PACCEPT");
+  kb.t0_accept     = pget("T0_ACCEPT");
 
   kb.reanneal       = kind == AlgoKind::Serial && pbool("REANNEAL");
   kb.reanneal_scale = pget("REANNEAL_SCALE");
@@ -533,16 +578,18 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   kb.ladder_adapt_every = pcount("LADDER_ADAPT_EVERY");
   kb.ladder_adapt_gain = pget("LADDER_ADAPT_GAIN");
   kb.ladder_adapt_decay = pget("LADDER_ADAPT_DECAY");
-  kb.ladder_adapt_updates = pcount("LADDER_ADAPT_UPDATES");
   kb.ladder_min_gap = pget("LADDER_MIN_GAP");
   kb.ladder_freeze = pbool("LADDER_FREEZE");
   kb.swap_every  = pcount("SWAP_EVERY");
   kb.swap_window = pcount("SWAP_WINDOW");
-  kb.step_auto = kind == AlgoKind::PT && pbool("STEP_AUTO");
-  kb.step_auto_sweeps = pcount("STEP_AUTO_SWEEPS");
+  kb.step_mode   = kind == AlgoKind::PT ? penum("STEP_MODE")
+                                        : anneal_enums::STEP_MODE::FIXED;
+  kb.step_warmup_sweeps = pcount("STEP_WARMUP_SWEEPS");
   kb.step_adapt_every = pcount("STEP_ADAPT_EVERY");
   kb.step_trust_factor = pget("STEP_TRUST_FACTOR");
-  const std::size_t init_mode_raw = pcount("INIT_MODE");
+  kb.init_mode   = kind != AlgoKind::Serial
+                       ? penum("INIT_MODE")
+                       : anneal_enums::INIT_MODE::JITTER;
   kb.sweeps      = pcount("SWEEPS");
   kb.ess_target  = pget("ESS_TARGET");
 
@@ -559,8 +606,24 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
         "anneal_keys.toml rule references unmapped flag '" +
         std::string(flag) + "'");
   };
+  auto enum_parsed = [&](std::string_view name) -> int {
+    if (name == "STEP_MODE") return kb.step_mode;
+    if (name == "INIT_MODE") return kb.init_mode;
+    throw std::logic_error(
+        "anneal_keys.toml rule references unmapped enum '" +
+        std::string(name) + "'");
+  };
+  auto enum_index = [&](const char* name, const char* token) -> int {
+    const auto* ki = reg::find_key(name);
+    for (std::size_t i = 0; ki && i < ki->enum_count; ++i)
+      if (std::string_view(token) == ki->enum_values[i])
+        return static_cast<int>(i);
+    throw std::logic_error(
+        std::string("anneal_keys.toml rule token ") + token +
+        " is not a value of " + name);
+  };
   for (const auto& rule : reg::kRules) {
-    if (!sp.param.count(rule.key)) continue;
+    if (!sp.param.count(rule.key) && !sp.param_raw.count(rule.key)) continue;
     bool fire = false;
     switch (rule.type) {
       case reg::AnnealRuleType::RequiresFlag:
@@ -568,9 +631,14 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
       case reg::AnnealRuleType::ConflictsFlag:
         fire = flag_parsed(rule.arg); break;
       case reg::AnnealRuleType::UnusedWhenSet:
-        fire = sp.param.count(rule.arg) != 0; break;
+        fire = sp.param.count(rule.arg) != 0 ||
+               sp.param_raw.count(rule.arg) != 0;
+        break;
       case reg::AnnealRuleType::UnusedWhenFlagOff:
         fire = !flag_parsed(rule.arg); break;
+      case reg::AnnealRuleType::RequiresEnum:
+        fire = enum_parsed(rule.arg) != enum_index(rule.arg, rule.arg2);
+        break;
       case reg::AnnealRuleType::KindReject:
         fire = (rule.kind_mask & kind_mask) != 0; break;
     }
@@ -578,51 +646,25 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   }
 
   /* -- cross-key semantics beyond the registry rule forms ------------ */
-  if (sp.step && sp.param.count("STEP_FRAC"))
-    throw std::runtime_error(
-        ctx + ": STEP and PARAM STEP_FRAC are mutually exclusive");
-  if (kind == AlgoKind::PT && kb.rt == 1.0 && kb.t_min)
-    throw std::runtime_error(
-        ctx + ": PARAM T_MIN is unused by a static PT ladder (RT=1)");
   if (kind == AlgoKind::PT && kb.corana) {
-    for (const char* key : {"STEP_AUTO", "STEP_AUTO_SWEEPS",
-                            "STEP_ADAPT_EVERY", "STEP_TRUST_FACTOR"})
-      if (sp.param.count(key))
-        throw std::runtime_error(
-            ctx + ": PARAM " + key + " belongs to the CLASSIC variant");
-    kb.step_auto = false;
-    kb.step_adapt_every = 0;
-    kb.step_trust_factor = 0.0;
+    /* Explicit STEP_MODE/STEP_WARMUP_SWEEPS/... alongside CORANA are
+     * rejected by the registry conflicts rules above; the DEFAULT
+     * STEP_MODE collapses to FIXED because CORANA adapts its own
+     * per-dimension steps and must not run the CLASSIC warm-up. */
+    kb.step_mode = anneal_enums::STEP_MODE::FIXED;
   }
-  if (kind == AlgoKind::PT && sp.step) {
-    if (sp.param.count("STEP_AUTO_SWEEPS") ||
-        sp.param.count("STEP_ADAPT_EVERY") ||
-        sp.param.count("STEP_TRUST_FACTOR"))
-      throw std::runtime_error(
-          ctx + ": STEP_AUTO_SWEEPS/STEP_ADAPT_EVERY/STEP_TRUST_FACTOR are "
-                "unused when explicit STEP disables automatic step "
-                "calibration");
-    kb.step_auto = false;
-    kb.step_adapt_every = 0;
-    kb.step_trust_factor = 0.0;
-  }
-  if (kind == AlgoKind::PT && !kb.step_auto && !sp.step && !kb.corana) {
-    if (sp.param.count("STEP_AUTO_SWEEPS") ||
-        sp.param.count("STEP_ADAPT_EVERY") ||
-        sp.param.count("STEP_TRUST_FACTOR"))
-      throw std::runtime_error(
-          ctx + ": STEP_AUTO_SWEEPS/STEP_ADAPT_EVERY/STEP_TRUST_FACTOR are "
-                "unused when PARAM STEP_AUTO is 0");
-    kb.step_adapt_every = 0;
-    kb.step_trust_factor = 0.0;
-  }
-  /* The trust region binds inside the diagonal RAM apply; with the RAM
-   * disabled the key would be a silently dead knob. */
-  if (kind == AlgoKind::PT && sp.param.count("STEP_TRUST_FACTOR") &&
-      kb.step_adapt_every == 0)
+  if (kind == AlgoKind::PT &&
+      kb.step_mode == anneal_enums::STEP_MODE::FIXED && !kb.corana &&
+      sp.param.count("STEP_WARMUP_SWEEPS"))
     throw std::runtime_error(
-        ctx + ": PARAM STEP_TRUST_FACTOR is unused when STEP_ADAPT_EVERY "
-              "is 0 (no adaptive diagonal to bound)");
+        ctx + ": PARAM STEP_WARMUP_SWEEPS is unused when STEP_MODE is "
+              "FIXED (no calibration warm-up runs)");
+  /* The RAM cadence and its trust region exist only under ADAPTIVE;
+   * FIXED/FROZEN kernels carry the 0 = off sentinels internally. */
+  if (kb.step_mode != anneal_enums::STEP_MODE::ADAPTIVE) {
+    kb.step_adapt_every  = 0;
+    kb.step_trust_factor = 0.0;
+  }
 
   /* -- registry-declared ranges (checked after the cross-key rules so
    *    a wrong-variant key errors as such, not with a range message;
@@ -641,7 +683,6 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     }
   }
   kb.boundary_mode = static_cast<BoundaryMode>(boundary_raw);
-  kb.init_mode     = static_cast<int>(init_mode_raw);
   /* D23: REDRAW is not a symmetric proposal, and the acceptance rule does
    * not correct for that.
    *
@@ -673,33 +714,49 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
         "BOUNDARY_MODE 0 (REFLECT), which is an exact symmetric fold.");
 
   /* -- validation beyond the registry ranges ------------------------- */
-  const bool rt_one_ok = (kind == AlgoKind::PT);
-  if (!(kb.rt > 0.0 && (kb.rt < 1.0 || (rt_one_ok && kb.rt == 1.0))))
-    throw std::runtime_error(ctx + ": PARAM RT must be in "
-        + std::string(rt_one_ok ? "(0,1]" : "(0,1)") + " (got "
+  if (kind != AlgoKind::PT && !(kb.rt > 0.0 && kb.rt < 1.0))
+    throw std::runtime_error(ctx + ": PARAM RT must be in (0,1) (got "
         + std::to_string(kb.rt) + ")");
-  if (kb.t_hot && kb.t_min && *kb.t_min > *kb.t_hot)
-    throw std::runtime_error(ctx + ": PARAM T_MIN must be <= T_HOT");
-  if (!kb.t_hot && kb.t0_probes < 2)
+  if (kb.t_start && kb.t_min && *kb.t_min > *kb.t_start)
     throw std::runtime_error(
-        ctx + ": PARAM T0_PROBES must be >= 2 when T_HOT is not set "
-        "(the calibration needs at least two probes)");
+        ctx + ": PARAM T_MIN must be <= " + t_start_key);
+  if (!kb.t_start && kb.t0_probes < 2)
+    throw std::runtime_error(
+        ctx + ": PARAM T0_PROBES must be >= 2 when " + t_start_key +
+        " is not set (the calibration needs at least two probes)");
   const bool plateau_armed =
-      sp.stop.ftol_rel.has_value() || sp.stop.ftol_abs.has_value();
+      (sp.stop.ftol_rel && *sp.stop.ftol_rel > 0.0) ||
+      (sp.stop.ftol_abs && *sp.stop.ftol_abs > 0.0);
   if (plateau_armed && kb.neps == 0)
     throw std::runtime_error(ctx + ": PARAM NEPS must be >= 1");
+  /* Serial AUTO lengths are resolved from the eval budget after T0
+   * calibration; without MAXEVAL there is no principled value to derive,
+   * so make the user choose instead of inventing one. */
+  if (kind == AlgoKind::Serial && !sp.stop.maxeval) {
+    if (!kb.corana && kb.chain_length == 0)
+      throw std::runtime_error(
+          ctx + ": CHAIN_LENGTH AUTO needs MAXEVAL to derive the "
+          "per-rung budget; set PARAM CHAIN_LENGTH explicitly (e.g. for "
+          "MAXTIME- or STOPVAL-driven runs)");
+    if (kb.corana && kb.NT == 0)
+      throw std::runtime_error(
+          ctx + ": NT AUTO needs MAXEVAL to derive the per-rung budget; "
+          "set PARAM NT explicitly (e.g. for MAXTIME- or STOPVAL-driven "
+          "runs)");
+  }
   if (kind == AlgoKind::PT) {
     if (sp.param.count("REPLICAS") && kb.replicas < 2)
       throw std::runtime_error(ctx + ": PARAM REPLICAS must be >= 2");
     if (kb.t_cold) {
       if (!(*kb.t_cold > 0.0))
         throw std::runtime_error(ctx + ": PARAM T_COLD must be > 0");
-      if (kb.t_hot && !(*kb.t_cold < *kb.t_hot))
+      if (kb.t_start && !(*kb.t_cold < *kb.t_start))
         throw std::runtime_error(ctx + ": PARAM T_COLD must be < T_HOT");
     }
-    if (kb.step_auto && kb.step_auto_sweeps == 0)
+    if (kb.step_mode != anneal_enums::STEP_MODE::FIXED &&
+        kb.step_warmup_sweeps == 0)
       throw std::runtime_error(
-          ctx + ": PARAM STEP_AUTO_SWEEPS must be >= 1");
+          ctx + ": PARAM STEP_WARMUP_SWEEPS must be >= 1");
     if (!(kb.step_trust_factor == 0.0 ||
           (std::isfinite(kb.step_trust_factor) &&
            kb.step_trust_factor > 1.0)))
@@ -711,8 +768,6 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
       throw std::runtime_error(ctx + ": POPULATION must be >= 8");
   }
 
-  if (sp.step && (!std::isfinite(*sp.step) || !(*sp.step > 0.0)))
-    throw std::runtime_error(ctx + ": STEP must be finite and > 0");
   if (sp.low.size() != sp.high.size())
     throw std::runtime_error(ctx + ": mismatched lower/upper bound counts");
   if (!sp.log_scaled.empty() && sp.log_scaled.size() != sp.low.size())
@@ -726,11 +781,6 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     if (!std::isfinite(width))
       throw std::runtime_error(
           ctx + ": every optimisable dimension requires a finite bound width");
-    if (kb.boundary_mode == BoundaryMode::Redraw && sp.step &&
-        *sp.step > width)
-      throw std::runtime_error(
-          ctx + ": STEP must not exceed any dimension width under "
-          "BOUNDARY_MODE 1 (REDRAW)");
   }
 
   return kb;
@@ -775,22 +825,20 @@ inline std::vector<double> make_initial_point(const OptimizerSpec& sp,
   return x;
 }
 
-/* Build the per-dimension proposal scale once for every driver.  Classic
- * keeps an explicit STEP verbatim (large reflected Gaussian steps are a
- * supported exploration choice); Corana's adaptive state always starts
- * inside the same advertised [floor*width,width] interval it must obey
- * after adjustment. */
+/* Build the per-dimension proposal scale once for every driver.
+ * Corana's adaptive state always starts inside the same advertised
+ * [floor*width, width] interval it must obey after adjustment. */
 inline std::vector<double> make_initial_steps(const OptimizerSpec& sp,
                                               const Knobs& kb)
 {
   std::vector<double> out(sp.low.size());
   for (std::size_t i = 0; i < out.size(); ++i) {
     const double width = sp.high[i] - sp.low[i];
-    const double raw = sp.step ? *sp.step : kb.step_frac * width;
+    const double raw = kb.step_frac * width;
     if (!(raw > 0.0) || !std::isfinite(raw))
       throw std::runtime_error(
           "anneal: proposal scale underflowed or is non-finite in dimension " +
-          std::to_string(i) + "; use an explicit positive STEP");
+          std::to_string(i) + "; widen the OPTIM interval or raise STEP_FRAC");
     out[i] = kb.corana
         ? std::min(width, std::max(kb.v_floor_frac * width, raw))
         : raw;
@@ -862,7 +910,11 @@ public:
                 std::optional<double> failscore = std::nullopt)
       : ftol_rel_(stop.ftol_rel), ftol_abs_(stop.ftol_abs),
         failscore_(failscore),
-        active_(stop.ftol_rel.has_value() || stop.ftol_abs.has_value()),
+        /* 0 = disabled, not "bitwise equality over NEPS rungs": an exact
+         * eps of zero can only ever fire on identical doubles, which no
+         * user asking for a tolerance stop means. */
+        active_((stop.ftol_rel.has_value() && *stop.ftol_rel > 0.0) ||
+                (stop.ftol_abs.has_value() && *stop.ftol_abs > 0.0)),
         neps_(neps)
   {
     if (active_ && neps_ == 0)
@@ -1249,6 +1301,12 @@ struct ChainState {
   double              diag_ram_scalar_delta = 0.0;
   std::uint64_t       diag_ram_proposals = 0;
   std::size_t         diag_ram_pending = 0;
+  /* Sweep-mode Corana accumulators (ANNEAL_PT): per-dimension accept /
+   * propose counts and the completed-sweep counter feeding the V
+   * adjustment every NS sweeps. Slot-resident, like V itself. The
+   * serial rung kernel uses rung-local counters instead. */
+  std::vector<std::size_t> corana_nA, corana_nP;
+  std::size_t              corana_sweeps = 0;
 };
 
 /* Scalar-plus-diagonal robust-adaptive-Metropolis contribution. Every
@@ -1334,7 +1392,66 @@ void accumulate_diagonal_ram(ChainState<Vec>& c,
  *
  * RNG discipline preserved from the serial implementation: the
  * Metropolis coin is drawn ONLY for uphill moves (short-circuit), so
- * per-seed sequences stay comparable across configurations. */
+ * per-seed sequences stay comparable across configurations.
+ *
+ * One single-coordinate Corana move on dimension i (shared by the serial
+ * NT-by-NS rung kernel and the ANNEAL_PT sweep kernel).  Returns false
+ * when the caller must stop, with rs.stop recording why. */
+template<class Vec, class HostT>
+bool corana_move(ChainState<Vec>& c, std::size_t i, double T,
+                 const OptimizerSpec& sp, const Knobs& kb,
+                 HostT& host, StopCtx& ctx, RungStats& rs,
+                 std::uint64_t allowance,
+                 std::vector<std::size_t>& nA, std::vector<std::size_t>& nP,
+                 std::uniform_real_distribution<double>& u_pm,
+                 std::uniform_real_distribution<double>& udist)
+{
+  if (rs.proposed >= allowance) { rs.stop = RungStop::Budget; return false; }
+  if (!ctx.budget.try_reserve()) { rs.stop = RungStop::Budget; return false; }
+  if (ctx.stop.load(std::memory_order_relaxed)) {
+    ctx.budget.release();
+    rs.stop = RungStop::External; return false;
+  }
+  if (ctx.time_exceeded()) {
+    ctx.budget.release();
+    rs.stop = RungStop::Time; return false;
+  }
+
+  Vec x_prop = c.x;
+  auto draw = [&]() -> long double {
+    return static_cast<long double>(c.x(i)) +
+           static_cast<long double>(u_pm(c.rng)) *
+           static_cast<long double>(c.V[i]);
+  };
+  long double v = draw();
+  if (constrain_proposal(v, sp.low[i], sp.high[i], kb.boundary_mode, draw))
+    ++rs.oob;
+  x_prop(i) = static_cast<double>(v);
+
+  const double f_prop = host(sp.out(x_prop));
+  ++rs.proposed;
+  ++nP[i];
+  const bool accept = metropolis_accept(
+      c.f, f_prop, T, sp.failscore, [&] { return udist(c.rng); });
+  if (accept) {
+    c.x = x_prop;
+    c.f = f_prop;
+    ++rs.accepted;
+    ++nA[i];
+    if (!loss_is_rankable(c.best_f, sp.failscore) || c.f < c.best_f) {
+      c.best_f = c.f;
+      c.best_x = c.x;
+      ++rs.improved;
+    }
+  }
+  if (stopval_reached(c.f, ctx.stopval, sp.failscore)) {
+    ctx.stop.store(true, std::memory_order_relaxed);
+    rs.stop = RungStop::StopVal; return false;
+  }
+  return true;
+}
+
+/* The Corana 1987 NT-by-NS rung kernel (serial ANNEAL / ANNEAL_PA). */
 template<class Vec, class HostT>
 RungStats corana_rung(ChainState<Vec>& c, double T,
                       const OptimizerSpec& sp, const Knobs& kb,
@@ -1353,57 +1470,11 @@ RungStats corana_rung(ChainState<Vec>& c, double T,
     std::fill(nA.begin(), nA.end(), 0);
     std::fill(nP.begin(), nP.end(), 0);
 
-    for (std::size_t ns = 0; ns < kb.NS && !inner_break; ++ns) {
-      for (std::size_t i = 0; i < dim && !inner_break; ++i) {
-        if (rs.proposed >= allowance) {
-          rs.stop = RungStop::Budget; inner_break = true; break;
-        }
-        if (!ctx.budget.try_reserve()) {
-          rs.stop = RungStop::Budget; inner_break = true; break;
-        }
-        if (ctx.stop.load(std::memory_order_relaxed)) {
-          ctx.budget.release();
-          rs.stop = RungStop::External; inner_break = true; break;
-        }
-        if (ctx.time_exceeded()) {
-          ctx.budget.release();
-          rs.stop = RungStop::Time; inner_break = true; break;
-        }
-
-        Vec x_prop = c.x;
-        auto draw = [&]() -> long double {
-          return static_cast<long double>(c.x(i)) +
-                 static_cast<long double>(u_pm(c.rng)) *
-                 static_cast<long double>(c.V[i]);
-        };
-        long double v = draw();
-        if (constrain_proposal(v, sp.low[i], sp.high[i],
-                               kb.boundary_mode, draw))
-          ++rs.oob;
-        x_prop(i) = static_cast<double>(v);
-
-        const double f_prop = host(sp.out(x_prop));
-        ++rs.proposed;
-        ++nP[i];
-        const bool accept = metropolis_accept(
-            c.f, f_prop, T, sp.failscore, [&] { return udist(c.rng); });
-        if (accept) {
-          c.x = x_prop;
-          c.f = f_prop;
-          ++rs.accepted;
-          ++nA[i];
-          if (!loss_is_rankable(c.best_f, sp.failscore) || c.f < c.best_f) {
-            c.best_f = c.f;
-            c.best_x = c.x;
-            ++rs.improved;
-          }
-        }
-        if (stopval_reached(c.f, ctx.stopval, sp.failscore)) {
-          ctx.stop.store(true, std::memory_order_relaxed);
-          rs.stop = RungStop::StopVal; inner_break = true; break;
-        }
-      }
-    }
+    for (std::size_t ns = 0; ns < kb.NS && !inner_break; ++ns)
+      for (std::size_t i = 0; i < dim && !inner_break; ++i)
+        if (!corana_move(c, i, T, sp, kb, host, ctx, rs, allowance,
+                         nA, nP, u_pm, udist))
+          inner_break = true;
 
     /* Corana adjusts only after a complete NS-by-D block.  Treating
      * unvisited dimensions as zero-acceptance when a budget/stop cut the
@@ -1412,7 +1483,50 @@ RungStats corana_rung(ChainState<Vec>& c, double T,
       for (std::size_t i = 0; i < dim; ++i)
         c.V[i] = adjust_corana_step(
             c.V[i], sp.high[i] - sp.low[i], nA[i], nP[i],
-            kb.C, kb.v_floor_frac);
+            kb.corana_c, kb.v_floor_frac);
+  }
+  return rs;
+}
+
+/* One Corana sweep (dim single-coordinate moves) for ANNEAL_PT, where a
+ * replica runs exactly one sweep per epoch so exchange stays frequent.
+ * The accept/propose counters live in the ChainState (slot-resident,
+ * like V) and the V adjustment fires after every NS COMPLETED sweeps --
+ * the same NS-by-D evidence window as the serial kernel, accumulated
+ * across epochs instead of inside one rung.  A sweep cut short by
+ * budget/stop leaves the counters untouched for the next epoch. */
+template<class Vec, class HostT>
+RungStats corana_sweep(ChainState<Vec>& c, double T,
+                       const OptimizerSpec& sp, const Knobs& kb,
+                       HostT& host, StopCtx& ctx,
+                       std::uint64_t allowance =
+                           std::numeric_limits<std::uint64_t>::max())
+{
+  const std::size_t dim = sp.low.size();
+  RungStats rs;
+  if (c.corana_nA.size() != dim) c.corana_nA.assign(dim, 0);
+  if (c.corana_nP.size() != dim) c.corana_nP.assign(dim, 0);
+  std::uniform_real_distribution<double> u_pm(-1.0, 1.0);
+  std::uniform_real_distribution<double> udist(0.0, 1.0);
+
+  bool complete = true;
+  for (std::size_t i = 0; i < dim; ++i) {
+    if (!corana_move(c, i, T, sp, kb, host, ctx, rs, allowance,
+                     c.corana_nA, c.corana_nP, u_pm, udist)) {
+      complete = false;
+      break;
+    }
+  }
+  if (complete) {
+    ++c.corana_sweeps;
+    if (c.corana_sweeps % kb.NS == 0) {
+      for (std::size_t i = 0; i < dim; ++i)
+        c.V[i] = adjust_corana_step(
+            c.V[i], sp.high[i] - sp.low[i], c.corana_nA[i], c.corana_nP[i],
+            kb.corana_c, kb.v_floor_frac);
+      std::fill(c.corana_nA.begin(), c.corana_nA.end(), 0);
+      std::fill(c.corana_nP.begin(), c.corana_nP.end(), 0);
+    }
   }
   return rs;
 }
@@ -1474,7 +1588,7 @@ RungStats classic_rung(ChainState<Vec>& c, double T,
   std::vector<double> z;
   if (kb.step_adapt_every > 0) z.resize(dim);
 
-  for (std::size_t k = 0; k < kb.L; ++k) {
+  for (std::size_t k = 0; k < kb.chain_length; ++k) {
     if (rs.proposed >= allowance) { rs.stop = RungStop::Budget; break; }
     if (!ctx.budget.try_reserve()) { rs.stop = RungStop::Budget; break; }
     if (ctx.stop.load(std::memory_order_relaxed)) {
@@ -1553,6 +1667,23 @@ RungStats run_rung(ChainState<Vec>& c, double T,
                    : classic_rung(c, T, sp, kb, host, ctx, allowance);
 }
 
+/* One sweep for ANNEAL_PT: CLASSIC = one whole-vector proposal, CORANA =
+ * dim single-coordinate moves with the slot-resident NS-sweep V cadence.
+ * PT rejects CHAIN_LENGTH/NT, so the CLASSIC path runs the rung kernel
+ * with an internal length of one. */
+template<class Vec, class HostT>
+RungStats run_sweep(ChainState<Vec>& c, double T,
+                    const OptimizerSpec& sp, const Knobs& kb,
+                    HostT& host, StopCtx& ctx,
+                    std::uint64_t allowance =
+                        std::numeric_limits<std::uint64_t>::max())
+{
+  if (kb.corana) return corana_sweep(c, T, sp, kb, host, ctx, allowance);
+  Knobs one = kb;
+  one.chain_length = 1;
+  return classic_rung(c, T, sp, one, host, ctx, allowance);
+}
+
 /* ---- T0 calibration --------------------------------------------------
  *
  * Shared by the serial driver and the parallel drivers. Anchors on the
@@ -1583,10 +1714,14 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
   const std::size_t dim = sp.low.size();
   T0Outcome out;
 
-  if (kb.t_hot) {
-    out.T0 = *kb.t_hot;
+  if (kb.t_start) {
+    out.T0 = *kb.t_start;
+    /* Key name matches the kind: the serial schedule's start is T_INIT,
+     * the PT/PA hot end is T_HOT. */
+    const bool serial = std::string_view(banner_ctx) == "ANNEAL";
     HPOLog::instance().info(std::string(banner_ctx) +
-      ": using user-specified T_HOT=" + std::to_string(out.T0));
+      ": using user-specified " + (serial ? "T_INIT=" : "T_HOT=") +
+      std::to_string(out.T0));
     return out;
   }
 
@@ -1745,7 +1880,7 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
   }
 
   if (!out.aborted) {
-    const auto t0_est = robust_t0(f_x, probes, sp.failscore, kb.t0_paccept);
+    const auto t0_est = robust_t0(f_x, probes, sp.failscore, kb.t0_accept);
     double med_de = 0.0;
     if (!t0_est) {
       out.T0 = 1.0;
@@ -1762,7 +1897,7 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
         "or a larger STEP_FRAC.");
     } else {
       out.T0 = *t0_est;
-      med_de = out.T0 * -std::log(kb.t0_paccept);
+      med_de = out.T0 * -std::log(kb.t0_accept);
     }
     std::ostringstream oss;
     oss << std::scientific << std::setprecision(3)
@@ -1771,7 +1906,7 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
         << "  median|dE|=" << med_de
         << "  loss range=[" << pmin << ", " << pmax << "]"
         << "  std=" << pstd
-        << "  target p_accept=" << kb.t0_paccept
+        << "  target p_accept=" << kb.t0_accept
         << "  anchor=" << (out.re_anchored ? "re-anchored" : "seed");
     std::cout << "[HPO] " << oss.str() << "\n";
     HPOLog::instance().info(oss.str());

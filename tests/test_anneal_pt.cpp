@@ -43,9 +43,10 @@ make_pt_spec(std::vector<double> low, std::vector<double> high)
     sp.log_scaled.assign(sp.low.size(), false);
     sp.lib  = "TADAH";
     sp.algo = "ANNEAL_PT";
-    /* Most pre-STEP_AUTO tests exercise the legacy trajectory explicitly.
-     * Automatic-mode cases erase this fixture override. */
-    sp.param["STEP_AUTO"] = 0.0;
+    /* Most tests exercise the fixed-step trajectory explicitly (no
+     * calibration warm-up). Warm-up cases erase this fixture override
+     * to get the FROZEN default (or set ADAPTIVE). */
+    sp.param_raw["STEP_MODE"] = "FIXED";
     return sp;
 }
 
@@ -184,44 +185,54 @@ std::vector<StepScaleRow> read_step_scales()
 
 }  // namespace
 
-TEST_CASE("ANNEAL_PT: INIT_MODE 0 uses Gaussian seed jitter for both steppers",
-          "[HPO][anneal_pt][init][kernel]")
+TEST_CASE("ANNEAL_PT: INIT_MODE JITTER spreads slots >= 1 for every stepper "
+          "and STEP_MODE", "[HPO][anneal_pt][init][kernel]")
 {
     using namespace tadah::hpo;
-    auto run = [](bool corana) {
+    /* Jitter sigma is the initial proposal scale STEP_FRAC * width. Slot 0
+     * is always exactly the seed; every other slot is Gaussian-jittered
+     * around it -- for CLASSIC FIXED, CLASSIC FROZEN (the old "shared warm
+     * seed under STEP_AUTO" no-op is gone) and CORANA alike, each init
+     * costing one eval. */
+    constexpr double kJitterSigma = 0.0125 * 20.0;
+    enum class Mode { ClassicFixed, ClassicFrozen, Corana };
+    auto run = [](Mode mode) {
         auto sp = make_pt_spec({-10.0}, {10.0});
         set_seed_point(sp, {0.0});
         sp.seed = 314159;
         sp.num_threads = 2;
-        sp.stop.maxeval = 4;
-        sp.step = 0.25;
+        sp.stop.maxeval = 4;   /* seed + 3 jittered slot inits, nothing else */
+        sp.param["STEP_FRAC"] = 0.0125;
         sp.param["REPLICAS"] = 4.0;
         sp.param["T_HOT"] = 1.0;
         sp.param["T_COLD"] = 0.1;
-        if (corana) {
-            sp.param.erase("STEP_AUTO");
+        if (mode == Mode::Corana) {
+            sp.param_raw.erase("STEP_MODE");
             sp.param["CORANA"] = 1.0;
             sp.param["NS"] = 1.0;
-            sp.param["NT"] = 1.0;
-        } else {
-            sp.param["L"] = 1.0;
+        } else if (mode == Mode::ClassicFrozen) {
+            sp.param_raw["STEP_MODE"] = "FROZEN";
         }
         MtStubHost host{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
         run_anneal_pt_impl<Vec>(sp, host);
         return host.sorted_calls();
     };
 
-    for (bool corana : {false, true}) {
-        CAPTURE(corana);
+    for (Mode mode : {Mode::ClassicFixed, Mode::ClassicFrozen, Mode::Corana}) {
+        CAPTURE(static_cast<int>(mode));
         std::vector<std::vector<double>> expected{{0.0}};
         for (std::size_t k = 1; k < 4; ++k) {
             auto rng = anneal::make_stream(314159, anneal::SALT_CHAIN, k);
             const double unit =
                 std::normal_distribution<double>(0.0, 1.0)(rng);
-            expected.push_back({0.25 * unit});
+            expected.push_back({kJitterSigma * unit});
         }
         std::sort(expected.begin(), expected.end());
-        const auto actual = run(corana);
+        /* Every non-seed start genuinely differs from the seed. */
+        std::size_t at_seed = 0;
+        for (const auto& e : expected) if (e[0] == 0.0) ++at_seed;
+        CHECK(at_seed == 1);
+        const auto actual = run(mode);
         REQUIRE(actual.size() == expected.size());
         for (std::size_t i = 0; i < actual.size(); ++i)
             CHECK(actual[i][0] == Approx(expected[i][0]).margin(1e-15));
@@ -239,10 +250,9 @@ TEST_CASE("ANNEAL_PT: fixed-size thread-count invariance (same SEED => same eval
         sp.num_threads = threads;
         sp.stop.maxeval = 600;
         sp.param["REPLICAS"]  = 8.0;
-        sp.param.erase("STEP_AUTO");
+        sp.param_raw.erase("STEP_MODE");
         sp.param["CORANA"]    = 1.0;
         sp.param["NS"]        = 2.0;
-        sp.param["NT"]        = 2.0;
         sp.param["T_HOT"]     = 1.0;   /* skip probes: fixed prefix */
         sp.param["LADDER_SPAN"] = 100.0;
         MtStubHost stub{ [&](const Vec& x){ return quad_bowl2(x, 0.1, -0.2); }, {}, {} };
@@ -278,10 +288,9 @@ TEST_CASE("ANNEAL_PT: adaptive ladder is thread-count deterministic",
         sp.num_threads = threads;
         sp.stop.maxeval = 240;
         sp.param["REPLICAS"] = 8.0;
-        sp.param.erase("STEP_AUTO");
+        sp.param_raw.erase("STEP_MODE");
         sp.param["CORANA"] = 1.0;
         sp.param["NS"] = 1.0;
-        sp.param["NT"] = 1.0;
         sp.param["T_HOT"] = 1.0;
         sp.param["LADDER_SPAN"] = 100.0;
         sp.param["LADDER_POWER"] = 0.5;
@@ -327,7 +336,6 @@ TEST_CASE("ANNEAL_PT: cold replica escapes a deep double well via tempering",
             sp.num_threads = 2;
             sp.stop.maxeval = 3000;
             sp.param["REPLICAS"] = 8.0;
-            sp.param["L"]        = 10.0;
             sp.param["T_HOT"]    = 10.0;
             sp.param["T_COLD"]   = 0.01;
             sp.param["STEP_FRAC"] = 0.10;
@@ -342,8 +350,8 @@ TEST_CASE("ANNEAL_PT: cold replica escapes a deep double well via tempering",
             set_seed_point(sp, {-1.0});
             sp.seed = 7;
             sp.stop.maxeval = 3000;
-            sp.param["L"]         = 10.0;
-            sp.param["T_HOT"]     = 0.01;
+            sp.param["CHAIN_LENGTH"] = 10.0;
+            sp.param["T_INIT"]    = 0.01;
             sp.param["T_MIN"]     = 1e-5;
             sp.param["STEP_FRAC"] = 0.10;
             sp.param["REANNEAL"]  = 0.0;
@@ -369,7 +377,6 @@ TEST_CASE("ANNEAL_PT: MAXEVAL is a hard cap across all replicas",
     sp.num_threads = 4;
     sp.stop.maxeval = 137;         /* deliberately not a multiple of K */
     sp.param["REPLICAS"] = 4.0;
-    sp.param["L"]        = 10.0;
     sp.param["T_HOT"]    = 1.0;
 
     MtStubHost stub{ [&](const Vec& x){ return quad_bowl2(x, 0.0, 0.0); }, {}, {} };
@@ -384,13 +391,12 @@ TEST_CASE("ANNEAL_PT automatic steps learn a 12-decade diagonal and emit TSV",
     TempWorkingDirectory cwd;
     LoggedRun lr;
     auto sp = make_pt_spec({-1e-6, -1.0, -1e6}, {1e-6, 1.0, 1e6});
-    sp.param.erase("STEP_AUTO");       // exercise the default-on path
+    sp.param_raw.erase("STEP_MODE");       // exercise the default-on path
     set_seed_point(sp, {0.0, 0.0, 0.0});
     sp.seed = 91001;
     sp.num_threads = 2;
     sp.stop.maxeval = 1200;
     sp.param["REPLICAS"] = 2.0;
-    sp.param["L"] = 10.0;
     sp.param["T_HOT"] = 1.0;
     sp.param["T_COLD"] = 0.1;
     sp.param["STEP_FRAC"] = 0.1;
@@ -427,7 +433,7 @@ TEST_CASE("ANNEAL_PT automatic steps learn a 12-decade diagonal and emit TSV",
         CHECK(max_sigma / min_sigma > 1e10);
     }
     const std::string log = lr.read();
-    CHECK(log.find("ANNEAL_PT[CLASSIC[AUTO-FROZEN]]") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT[CLASSIC[FROZEN]]") != std::string::npos);
     CHECK(log.find("step calibration slot=0") != std::string::npos);
     CHECK(log.find("production epoch/swap/flow statistics reset")
           != std::string::npos);
@@ -440,30 +446,36 @@ TEST_CASE("ANNEAL_PT warm-up classifies a hypersensitive dim",
     TempWorkingDirectory cwd;
     LoggedRun lr;
     auto sp = make_pt_spec({-1e12}, {1e12});
-    sp.param.erase("STEP_AUTO");
+    sp.param_raw.erase("STEP_MODE");
     set_seed_point(sp, {0.0});
     sp.seed = 91007;
     sp.num_threads = 2;
     sp.stop.maxeval = 800;
     sp.param["REPLICAS"] = 2.0;
-    sp.param["L"] = 5.0;
     sp.param["T_HOT"] = 1e-6;
     sp.param["T_COLD"] = 1e-7;
 
-    /* Acceptance collapses at every scale the 48-attempt budget can
-     * reach from STEP_FRAC*width: /10 back-offs cannot cross 12 decades
-     * of hypersensitivity. */
+    /* Slot 0 sits EXACTLY at the |x| cusp (JITTER pins slot 0 to the
+     * seed), so acceptance collapses at every scale the 48-attempt
+     * budget can reach from STEP_FRAC*width: /10 back-offs cannot cross
+     * 12 decades of hypersensitivity. Slot 1 is Gaussian-jittered ~1e11
+     * away from the cusp (JITTER now ALWAYS spreads slots >= 1), where
+     * downhill proposals accept -- it is genuinely responsive there and
+     * must NOT be classified hypersensitive. */
     MtStubHost host{[](const Vec& x) { return 1e9 * std::fabs(x(0)); }, {}, {}};
     run_anneal_pt_impl<Vec>(sp, host);
 
     const std::string log = lr.read();
-    CHECK(log.find("hypersensitive=2") != std::string::npos);
-    CHECK(log.find("unexplained=0") != std::string::npos);
+    CHECK(log.find("hypersensitive=1") != std::string::npos);
+    CHECK(log.find("insensitive=0") != std::string::npos);
     const auto rows = read_step_scales();
     REQUIRE(rows.size() == 2);
     for (const auto& row : rows) {
         CHECK(row.status.find("unconverged") != std::string::npos);
-        CHECK(row.status.find("hypersensitive") != std::string::npos);
+        if (row.slot == 0)
+            CHECK(row.status.find("hypersensitive") != std::string::npos);
+        else
+            CHECK(row.status.find("hypersensitive") == std::string::npos);
     }
 }
 
@@ -472,7 +484,7 @@ TEST_CASE("ANNEAL_PT warm-up accepts a tight bracket as calibrated",
 {
     using namespace tadah::hpo;
     /* A 0/1 acceptance cliff defeats the two-consecutive-in-band rule at
-     * 2 batches per dim (STEP_AUTO_SWEEPS 4 -> attempt cap 8), while a
+     * 2 batches per dim (STEP_WARMUP_SWEEPS 4 -> attempt cap 8), while a
      * miss-low followed by a miss-high builds a two-sided x2 bracket
      * that D28 accepts as calibrated.  The batch outcomes are 4-sample
      * Bernoulli draws, so a fixed deterministic seed list is scanned and
@@ -485,17 +497,16 @@ TEST_CASE("ANNEAL_PT warm-up accepts a tight bracket as calibrated",
         TempWorkingDirectory cwd;
         LoggedRun lr;
         auto sp = make_pt_spec({-1.0}, {1.0});
-        sp.param.erase("STEP_AUTO");
+        sp.param_raw.erase("STEP_MODE");
         set_seed_point(sp, {0.0});
         sp.seed = seed;
         sp.num_threads = 2;
         sp.stop.maxeval = 600;
         sp.param["REPLICAS"] = 2.0;
-        sp.param["L"] = 5.0;
-        sp.param["T_HOT"] = 1.0;
+            sp.param["T_HOT"] = 1.0;
         sp.param["T_COLD"] = 0.5;
         sp.param["STEP_FRAC"] = 0.5;
-        sp.param["STEP_AUTO_SWEEPS"] = 4.0;
+        sp.param["STEP_WARMUP_SWEEPS"] = 4.0;
 
         MtStubHost host{[](const Vec& x) {
             return std::fabs(x(0)) < 0.45 ? 0.0 : 1e9;
@@ -524,13 +535,12 @@ TEST_CASE("ANNEAL_PT trust region banner and sigma journal labels",
     TempWorkingDirectory cwd;
     LoggedRun lr;
     auto sp = make_pt_spec({-1.0}, {1.0});
-    sp.param.erase("STEP_AUTO");       // default-on automatic calibration
+    sp.param_raw["STEP_MODE"] = "ADAPTIVE";  // calibrate, then keep adapting
     set_seed_point(sp, {0.0});
     sp.seed = 91002;
     sp.num_threads = 2;
     sp.stop.maxeval = 1200;
     sp.param["REPLICAS"] = 2.0;
-    sp.param["L"] = 2.0;
     sp.param["T_HOT"] = 1.0;
     sp.param["T_COLD"] = 0.1;
     sp.param["STEP_ADAPT_EVERY"] = 1.0;
@@ -540,6 +550,7 @@ TEST_CASE("ANNEAL_PT trust region banner and sigma journal labels",
     run_anneal_pt_impl<Vec>(sp, host);
 
     const std::string log = lr.read();
+    CHECK(log.find("ANNEAL_PT[CLASSIC[ADAPTIVE]]") != std::string::npos);
     CHECK(log.find("STEP_TRUST_FACTOR=64") != std::string::npos);
     CHECK(log.find("(instantaneous V; sigma[i]/OPTIM_width[i])") !=
           std::string::npos);
@@ -571,7 +582,7 @@ TEST_CASE("ANNEAL_PT calibrates a run22-shaped 174-D objective",
     TempWorkingDirectory cwd;
     LoggedRun lr;
     auto sp = make_pt_spec(low, high);
-    sp.param.erase("STEP_AUTO");
+    sp.param_raw["STEP_MODE"] = "ADAPTIVE";  // STEP_ADAPT_EVERY needs it
     sp.parameter_labels.resize(D);
     for (std::size_t i = 0; i < D; ++i)
         sp.parameter_labels[i] = "run22_param_" + std::to_string(i);
@@ -580,13 +591,15 @@ TEST_CASE("ANNEAL_PT calibrates a run22-shaped 174-D objective",
     sp.num_threads = 2;
     sp.stop.maxeval = 20000;
     sp.param["REPLICAS"] = 2.0;
-    sp.param["L"] = 20.0;
     sp.param["T_HOT"] = 1.0;
     sp.param["T_COLD"] = 0.1;
     sp.param["STEP_FRAC"] = 1.0e-6;
-    sp.param["STEP_AUTO_SWEEPS"] = 24.0;
+    sp.param["STEP_WARMUP_SWEEPS"] = 24.0;
     sp.param["STEP_ADAPT_EVERY"] = 20.0;
-    sp.param["SWAP_WINDOW"] = 2.0;
+    /* Epoch = REPLICAS*1 evals now, so the post-warm-up production phase
+     * runs ~1400 epochs; report every 100 to keep the journal bounded
+     * while still exercising the windowed sigma blocks. */
+    sp.param["SWAP_WINDOW"] = 100.0;
 
     MtStubHost host{[&, low, high](const Vec& x) {
         long double loss = 0.0L;
@@ -713,14 +726,13 @@ TEST_CASE("ANNEAL_PT automatic scales are robust to expanded OPTIM support",
     auto learned_sigma = [](double half_width) {
         TempWorkingDirectory cwd;
         auto sp = make_pt_spec({-half_width}, {half_width});
-        sp.param.erase("STEP_AUTO");
+        sp.param_raw.erase("STEP_MODE");
         set_seed_point(sp, {0.0});
         sp.seed = 91002;
         sp.num_threads = 2;
         sp.stop.maxeval = 500;
         sp.param["REPLICAS"] = 2.0;
-        sp.param["L"] = 5.0;
-        sp.param["T_HOT"] = 1.0;
+            sp.param["T_HOT"] = 1.0;
         sp.param["T_COLD"] = 0.1;
         sp.param["STEP_FRAC"] = 1e-4;
         MtStubHost host{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
@@ -745,13 +757,12 @@ TEST_CASE("ANNEAL_PT automatic steps operate in transformed log coordinates",
     sp.log_threshold = 1e3;
     sp.analyse_logscale();
     REQUIRE(sp.log_scaled == std::vector<bool>{true});
-    sp.param.erase("STEP_AUTO");
+    sp.param_raw.erase("STEP_MODE");
     set_seed_point(sp, {1.0});  // public starting points remain physical
     sp.seed = 91006;
     sp.num_threads = 2;
     sp.stop.maxeval = 500;
     sp.param["REPLICAS"] = 2.0;
-    sp.param["L"] = 5.0;
     sp.param["T_HOT"] = 1.0;
     sp.param["T_COLD"] = 0.1;
     sp.param["STEP_FRAC"] = 0.1;
@@ -782,13 +793,12 @@ TEST_CASE("ANNEAL_PT automatic warm-up flags flat support and backs off cliffs",
     TempWorkingDirectory cwd;
     LoggedRun lr;
     auto sp = make_pt_spec({-1.0, -1.0}, {1.0, 1.0});
-    sp.param.erase("STEP_AUTO");
+    sp.param_raw.erase("STEP_MODE");
     set_seed_point(sp, {0.0, 1.0});  // exercise an exact-bound warm seed
     sp.seed = 91005;
     sp.num_threads = 2;
     sp.stop.maxeval = 600;
     sp.param["REPLICAS"] = 2.0;
-    sp.param["L"] = 5.0;
     sp.param["T_HOT"] = 1.0;
     sp.param["T_COLD"] = 0.1;
     sp.param["STEP_FRAC"] = 0.5;
@@ -826,7 +836,7 @@ TEST_CASE("ANNEAL_PT coordinate cap retains the best tested fixed scale",
     using namespace tadah::hpo;
     auto sp = make_pt_spec({-1.0}, {1.0});
     anneal::Knobs kb;
-    kb.step_auto_sweeps = 12;
+    kb.step_warmup_sweeps = 12;
     anneal::ChainState<Vec> c;
     c.x = Vec(1);
     c.x = 0.0;
@@ -911,13 +921,12 @@ TEST_CASE("ANNEAL_PT interrupted automatic warm-up consumes exact budget",
     TempWorkingDirectory cwd;
     LoggedRun lr;
     auto sp = make_pt_spec({-1.0, -1.0}, {1.0, 1.0});
-    sp.param.erase("STEP_AUTO");
+    sp.param_raw.erase("STEP_MODE");
     set_seed_point(sp, {0.0, 0.0});
     sp.seed = 91003;
     sp.num_threads = 4;
     sp.stop.maxeval = 137;
     sp.param["REPLICAS"] = 4.0;
-    sp.param["L"] = 10.0;
     sp.param["T_HOT"] = 1.0;
     MtStubHost host{[](const Vec& x) { return x(0) * x(0) + x(1) * x(1); },
                     {}, {}};
@@ -939,16 +948,16 @@ TEST_CASE("ANNEAL_PT automatic adaptive diagonal is thread-count deterministic",
     auto run = [](unsigned threads) {
         TempWorkingDirectory cwd;
         auto sp = make_pt_spec({-2.0, -2.0}, {2.0, 2.0});
-        sp.param.erase("STEP_AUTO");
+        sp.param_raw.erase("STEP_MODE");
         set_seed_point(sp, {0.5, -0.5});
         sp.seed = 91004;
         sp.num_threads = threads;
         sp.stop.maxeval = 600;
         sp.param["REPLICAS"] = 4.0;
-        sp.param["L"] = 5.0;
         sp.param["T_HOT"] = 1.0;
         sp.param["T_COLD"] = 0.1;
-        sp.param["STEP_AUTO_SWEEPS"] = 4.0;
+        sp.param_raw["STEP_MODE"] = "ADAPTIVE";
+        sp.param["STEP_WARMUP_SWEEPS"] = 4.0;
         sp.param["STEP_ADAPT_EVERY"] = 5.0;
         MtStubHost host{[](const Vec& x) {
             return x(0) * x(0) + 10.0 * x(1) * x(1);
@@ -977,7 +986,6 @@ TEST_CASE("ANNEAL_PT: MAXEVAL zero performs no host evaluation",
     sp.num_threads = 2;
     sp.stop.maxeval = 0;
     sp.param["REPLICAS"] = 4.0;
-    sp.param["L"]        = 2.0;
     sp.param["T_HOT"]    = 1.0;
 
     LoggedRun lr;
@@ -987,26 +995,22 @@ TEST_CASE("ANNEAL_PT: MAXEVAL zero performs no host evaluation",
     CHECK(lr.read().find("after 0 host eval(s)") != std::string::npos);
 }
 
-TEST_CASE("ANNEAL_PT: round-trip advice matches the selected stepper variant",
-          "[HPO][anneal_pt][log][planning]")
+TEST_CASE("ANNEAL_PT: layout line matches the stepper and the planning gates "
+          "grade round-trip feasibility", "[HPO][anneal_pt][log][planning]")
 {
     using namespace tadah::hpo;
-    auto run = [](bool corana) {
+    auto run = [](bool corana, std::size_t maxeval) {
         auto sp = make_pt_spec({-1.0}, {1.0});
         set_seed_point(sp, {0.0});
         sp.seed = 17;
         sp.num_threads = 1;
         sp.param["REPLICAS"] = 4.0;
         sp.param["T_HOT"] = 1.0;
+        sp.stop.maxeval = maxeval;
         if (corana) {
-            sp.param.erase("STEP_AUTO");
-            sp.stop.maxeval = 8;   /* 4 starts + one 4-eval epoch */
+            sp.param_raw.erase("STEP_MODE");
             sp.param["CORANA"] = 1.0;
             sp.param["NS"] = 1.0;
-            sp.param["NT"] = 1.0;
-        } else {
-            sp.stop.maxeval = 44;  /* 4 starts + one 40-eval epoch */
-            sp.param["L"] = 10.0;
         }
 
         LoggedRun lr;
@@ -1015,15 +1019,33 @@ TEST_CASE("ANNEAL_PT: round-trip advice matches the selected stepper variant",
         return lr.read();
     };
 
-    const std::string classic = run(false);
-    CHECK(classic.find("Reduce L (epoch = REPLICAS*L evals)")
+    /* An epoch is ONE SWEEP per replica: CLASSIC = 1 whole-vector
+     * proposal, CORANA = dim single-coordinate moves. K=4 -> the
+     * structural round-trip floor is 2*(K-1) = 6 exchange rounds and the
+     * 25%-heuristic threshold is 24. */
+    const std::string classic = run(false, 8);   /* 4 starts + 1 epoch */
+    CHECK(classic.find("ANNEAL_PT layout: sweep = 1 proposal eval(s)/replica"
+                       ";  epoch = REPLICAS*sweep = 4*1 = 4 evals")
           != std::string::npos);
-    CHECK(classic.find("Reduce NS or NT") == std::string::npos);
+    CHECK(classic.find("one cold<->hot ladder round trip is impossible")
+          != std::string::npos);
+    CHECK(classic.find("Raise MAXEVAL or reduce REPLICAS/SWAP_EVERY.")
+          != std::string::npos);
 
-    const std::string corana = run(true);
-    CHECK(corana.find("Reduce NS or NT (epoch = REPLICAS*NT*NS*dim evals)")
+    const std::string corana = run(true, 8);
+    CHECK(corana.find("ANNEAL_PT layout: sweep = dim = 1 eval(s)/replica")
           != std::string::npos);
-    CHECK(corana.find("Reduce L (epoch") == std::string::npos);
+    CHECK(corana.find("one cold<->hot ladder round trip is impossible")
+          != std::string::npos);
+
+    /* 4 starts + 40 evals -> 10 planned rounds: above the structural
+     * floor, below the 25%-heuristic bound -> HINT, not WARNING. */
+    const std::string hinted = run(false, 44);
+    CHECK(hinted.find("one cold<->hot ladder round trip is impossible")
+          == std::string::npos);
+    CHECK(hinted.find("< 2*(REPLICAS-1)/0.25 = 24") != std::string::npos);
+    CHECK(hinted.find("Consider a larger MAXEVAL or fewer REPLICAS.")
+          != std::string::npos);
 }
 
 TEST_CASE("ANNEAL_PT: T0 probe exhaustion reports MAXEVAL exactly",
@@ -1036,7 +1058,6 @@ TEST_CASE("ANNEAL_PT: T0 probe exhaustion reports MAXEVAL exactly",
     sp.num_threads = 2;
     sp.stop.maxeval = 3;           /* seed + two of the default probes */
     sp.param["REPLICAS"] = 4.0;
-    sp.param["L"]        = 2.0;
 
     LoggedRun lr;
     MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
@@ -1058,7 +1079,6 @@ TEST_CASE("ANNEAL_PT: extreme finite temperature endpoints build a finite ladder
     sp.param["REPLICAS"] = 3.0;
     sp.param["T_HOT"] = std::numeric_limits<double>::max();
     sp.param["T_COLD"] = std::numeric_limits<double>::denorm_min();
-    sp.param["L"] = 1.0;
 
     MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
     LoggedRun lr;
@@ -1256,7 +1276,6 @@ TEST_CASE("ANNEAL_PT: equal-loss plateau does not latch the ladder freeze",
     sp.num_threads = 2;
     sp.stop.maxeval = 60;
     sp.param["REPLICAS"] = 4.0;
-    sp.param["L"] = 1.0;
     sp.param["T_HOT"] = 8.0;
     sp.param["T_COLD"] = 1.0;
     sp.param["LADDER_ADAPT"] = 1.0;
@@ -1328,7 +1347,23 @@ TEST_CASE("ANNEAL_PT: pooled freeze evidence holds, accumulates and resets",
     CHECK(frozen);
 }
 
-TEST_CASE("ANNEAL_PT: finite ladder adaptation freezes and writes canonical TSV",
+TEST_CASE("ANNEAL_PT: removed LADDER_ADAPT_UPDATES is a hard error; the "
+          "equalization freeze governs the adaptation lifetime",
+          "[HPO][anneal_pt][temperature][ladder][validation]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.stop.maxeval = 20;
+    sp.param["LADDER_ADAPT"] = 1.0;
+    sp.param["LADDER_ADAPT_UPDATES"] = 1.0;
+
+    MtStubHost stub{[](const Vec&) { return 0.0; }, {}, {}};
+    REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                        Catch::Contains("LADDER_ADAPT_UPDATES was removed"));
+}
+
+TEST_CASE("ANNEAL_PT: ladder adaptation stays live and writes canonical TSV",
           "[HPO][anneal_pt][temperature][ladder][log]")
 {
     using namespace tadah::hpo;
@@ -1339,13 +1374,11 @@ TEST_CASE("ANNEAL_PT: finite ladder adaptation freezes and writes canonical TSV"
     sp.num_threads = 2;
     sp.stop.maxeval = 20;
     sp.param["REPLICAS"] = 4.0;
-    sp.param["L"] = 1.0;
     sp.param["T_HOT"] = 8.0;
     sp.param["T_COLD"] = 1.0;
     sp.param["LADDER_POWER"] = 0.5;
     sp.param["LADDER_ADAPT"] = 1.0;
     sp.param["LADDER_ADAPT_EVERY"] = 1.0;
-    sp.param["LADDER_ADAPT_UPDATES"] = 1.0;
 
     LoggedRun lr;
     MtStubHost stub{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
@@ -1355,9 +1388,11 @@ TEST_CASE("ANNEAL_PT: finite ladder adaptation freezes and writes canonical TSV"
     const std::string log = lr.read();
     CHECK(log.find("LADDER_POWER=0.5") != std::string::npos);
     CHECK(log.find("ANNEAL_PT ladder update=1") != std::string::npos);
-    CHECK(log.find("ladder adaptation frozen after configured") !=
-          std::string::npos);
+    /* No update-count cap exists any more: with only one pooled update the
+     * equalization freeze cannot have fired, so adaptation is still live. */
+    CHECK(log.find("ladder adaptation frozen") == std::string::npos);
     CHECK(log.find("ANNEAL_PT final ladder: updates=1") != std::string::npos);
+    CHECK(log.find("mode=ongoing") != std::string::npos);
 
     std::ifstream input("hpo_temperature_ladder.tsv");
     std::ostringstream contents;
@@ -1378,7 +1413,6 @@ TEST_CASE("ANNEAL_PT: interrupted ladder window is retained without an update",
     sp.num_threads = 2;
     sp.stop.maxeval = 20;
     sp.param["REPLICAS"] = 4.0;
-    sp.param["L"] = 1.0;
     sp.param["T_HOT"] = 8.0;
     sp.param["T_COLD"] = 1.0;
     sp.param["LADDER_ADAPT"] = 1.0;
@@ -1486,7 +1520,7 @@ TEST_CASE("ANNEAL_PT: exchange decision is stable at zero and extreme states",
                     std::invalid_argument);
 }
 
-TEST_CASE("ANNEAL_PT: equal-energy exchange survives cold-temperature underflow",
+TEST_CASE("ANNEAL_PT: equal-energy exchange survives a subnormal cold slot",
           "[HPO][anneal_pt][temperature][swap]")
 {
     using namespace tadah::hpo;
@@ -1496,21 +1530,26 @@ TEST_CASE("ANNEAL_PT: equal-energy exchange survives cold-temperature underflow"
     sp.num_threads = 1;
     sp.stop.maxeval = 8;  /* 2 starts + three 2-eval epochs */
     sp.param["REPLICAS"] = 2.0;
-    sp.param["L"] = 1.0;
     sp.param["T_HOT"] = 1.0;
     sp.param["T_COLD"] = std::numeric_limits<double>::denorm_min();
-    sp.param["RT"] = 0.5;
+    sp.param["SWAP_WINDOW"] = 2.0;
 
     LoggedRun lr;
+    /* Constant losses: every attempted exchange accepts through the
+     * equal-energy branch even at the subnormal cold temperature. */
     MtStubHost stub{[](const Vec&) { return 7.0; }, {}, {}};
     run_anneal_pt_impl<Vec>(sp, stub);
 
     const std::string log = lr.read();
+    /* Banner check: [FIXED] is the fixture STEP_MODE. */
+    CHECK(log.find("ANNEAL_PT[CLASSIC[FIXED]]") != std::string::npos);
+    /* K=2 attempts its only pair on even epoch counts; epoch 2 is a
+     * SWAP_WINDOW report epoch and must show the accepted swap. */
     const std::size_t epoch2 = log.find("ANNEAL_PT epoch=2/");
     REQUIRE(epoch2 != std::string::npos);
     const std::size_t line_end = log.find("\n", epoch2);
     const std::string line = log.substr(epoch2, line_end - epoch2);
-    CHECK(line.find("T=[0.000e+00,") != std::string::npos);
+    CHECK(line.find("T=[4.941e-324, 1.000e+00]") != std::string::npos);
     CHECK(line.find("swap_acc=100.0%") != std::string::npos);
     CHECK(log.find("ANNEAL_PT swap acceptance per pair (cold->hot):  0:100%")
           != std::string::npos);
@@ -1527,7 +1566,6 @@ TEST_CASE("ANNEAL_PT: STOPVAL terminates the ladder",
     sp.stop.maxeval = 5000;
     sp.stop.stopval = 1e-3;
     sp.param["REPLICAS"] = 4.0;
-    sp.param["L"]        = 10.0;
     sp.param["T_HOT"]    = 0.5;
 
     LoggedRun lr;
@@ -1538,30 +1576,44 @@ TEST_CASE("ANNEAL_PT: STOPVAL terminates the ladder",
           != std::string::npos);
 }
 
-TEST_CASE("ANNEAL_PT: RT<1 cools the ladder to T_MIN (hybrid mode)",
-          "[HPO][anneal_pt]")
+TEST_CASE("ANNEAL_PT: cooling-schedule keys are rejected -- the ladder is static",
+          "[HPO][anneal_pt][validation][temperature]")
 {
     using namespace tadah::hpo;
-    auto sp = make_pt_spec({-1.0}, {1.0});
-    set_seed_point(sp, {0.5});
-    sp.seed = 5;
-    sp.num_threads = 2;
-    sp.stop.maxeval = 100000;
-    sp.param["REPLICAS"] = 4.0;
-    sp.param["L"]        = 5.0;
-    sp.param["T_HOT"]    = 1.0;
-    sp.param["T_COLD"]   = 0.1;
-    sp.param["RT"]       = 0.5;
-    sp.param["T_MIN"]    = 1e-2;
+    MtStubHost stub{ [&](const Vec&){ return 0.0; }, {}, {} };
 
-    LoggedRun lr;
-    MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
-    run_anneal_pt_impl<Vec>(sp, stub);
-    CHECK(lr.read().find("ANNEAL_PT stopped: T < T_MIN (hot end)")
-          != std::string::npos);
+    SECTION("RT") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        set_seed_point(sp, {0.5});
+        sp.stop.maxeval = 10;
+        sp.param["RT"] = 0.5;
+        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                            Catch::Contains("static"));
+    }
+    SECTION("T_MIN") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        set_seed_point(sp, {0.5});
+        sp.stop.maxeval = 10;
+        sp.param["T_MIN"] = 1e-2;
+        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
+                            Catch::Contains("static"));
+    }
+    SECTION("NT and CHAIN_LENGTH name the sweep-per-epoch structure") {
+        auto nt = make_pt_spec({-1.0}, {1.0});
+        nt.param["CORANA"] = 1.0;
+        nt.param["NT"] = 2.0;
+        nt.stop.maxeval = 10;
+        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(nt, stub),
+                            Catch::Contains("NT is not used by ANNEAL_PT"));
+        auto cl = make_pt_spec({-1.0}, {1.0});
+        cl.param["CHAIN_LENGTH"] = 5.0;
+        cl.stop.maxeval = 10;
+        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(cl, stub),
+                            Catch::Contains("one sweep per epoch"));
+    }
 }
 
-TEST_CASE("ANNEAL_PT: adaptive interiors preserve RT endpoint cooling",
+TEST_CASE("ANNEAL_PT: adaptive interiors preserve the fixed ladder endpoints",
           "[HPO][anneal_pt][temperature][ladder]")
 {
     using namespace tadah::hpo;
@@ -1570,13 +1622,10 @@ TEST_CASE("ANNEAL_PT: adaptive interiors preserve RT endpoint cooling",
     set_seed_point(sp, {0.5});
     sp.seed = 6;
     sp.num_threads = 2;
-    sp.stop.maxeval = 1000;
+    sp.stop.maxeval = 40;
     sp.param["REPLICAS"] = 4.0;
-    sp.param["L"] = 1.0;
     sp.param["T_HOT"] = 8.0;
     sp.param["T_COLD"] = 1.0;
-    sp.param["RT"] = 0.5;
-    sp.param["T_MIN"] = 0.75;
     sp.param["LADDER_ADAPT"] = 1.0;
     sp.param["LADDER_ADAPT_EVERY"] = 1.0;
 
@@ -1585,12 +1634,14 @@ TEST_CASE("ANNEAL_PT: adaptive interiors preserve RT endpoint cooling",
     run_anneal_pt_impl<Vec>(sp, stub);
 
     const std::string log = lr.read();
-    CHECK(log.find("ANNEAL_PT stopped: T < T_MIN (hot end)") !=
-          std::string::npos);
-    CHECK(log.find("ANNEAL_PT final ladder: updates=2") !=
-          std::string::npos);
-    CHECK(log.find("6.250e-02") != std::string::npos);
-    CHECK(log.find("5.000e-01") != std::string::npos);
+    /* Adaptation ran, and the endpoints in the final ladder table are the
+     * configured T_COLD/T_HOT exactly (only interiors moved). */
+    CHECK(log.find("ANNEAL_PT ladder update=") != std::string::npos);
+    const std::size_t final_at = log.find("ANNEAL_PT final ladder: updates=");
+    REQUIRE(final_at != std::string::npos);
+    const std::string tail = log.substr(final_at);
+    CHECK(tail.find("1.000e+00") != std::string::npos);
+    CHECK(tail.find("8.000e+00") != std::string::npos);
 }
 
 TEST_CASE("ANNEAL_PT: journal carries the banner, epoch lines and the "
@@ -1603,13 +1654,11 @@ TEST_CASE("ANNEAL_PT: journal carries the banner, epoch lines and the "
     sp.num_threads = 2;
     sp.stop.maxeval = 400;
     sp.param["REPLICAS"]    = 4.0;
-    sp.param.erase("STEP_AUTO");
+    sp.param_raw.erase("STEP_MODE");
     sp.param["CORANA"]      = 1.0;
     sp.param["NS"]          = 2.0;
-    sp.param["NT"]          = 2.0;
     sp.param["T_HOT"]       = 1.0;
     sp.param["SWAP_WINDOW"] = 4.0;
-    sp.step = 0.123;
 
     LoggedRun lr;
     MtStubHost stub{ [&](const Vec& x){ return quad_bowl2(x, 0.0, 0.0); }, {}, {} };
@@ -1617,7 +1666,9 @@ TEST_CASE("ANNEAL_PT: journal carries the banner, epoch lines and the "
 
     const std::string log = lr.read();
     CHECK(log.find("ANNEAL_PT[CORANA]") != std::string::npos);
-    CHECK(log.find("ANNEAL_PT epoch=1/") != std::string::npos);
+    /* Journal reports fire every SWAP_WINDOW epochs now, not per epoch. */
+    CHECK(log.find("ANNEAL_PT epoch=4/") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT epoch=1/") == std::string::npos);
     CHECK(log.find("swap acceptance per pair") != std::string::npos);
     CHECK(log.find("ANNEAL_PT stopped:") != std::string::npos);
     /* Resolved-ladder report: summary line + per-slot table (fires even
@@ -1649,10 +1700,16 @@ TEST_CASE("ANNEAL_PT: journal carries the banner, epoch lines and the "
     CHECK(log.find("ANNEAL_PT V max per slot (max_i V[i]/width[i]):")
           != std::string::npos);
     CHECK(log.find("V_FLOOR_FRAC=") != std::string::npos);
-    CHECK(log.find("STEP=0.123") != std::string::npos);
-    CHECK(log.find("Corana U(-V,V) half-width") != std::string::npos);
-    CHECK(log.find("STEP_FRAC=") == std::string::npos);
+    CHECK(log.find("NS=2 (sweeps per V adjustment)") != std::string::npos);
+    CHECK(log.find("CORANA_C=") != std::string::npos);
+    CHECK(log.find("STEP_FRAC=0.1 (Corana V half-width/width)")
+          != std::string::npos);
+    /* Retired banner tokens must be gone entirely. */
+    CHECK(log.find("STEP_AUTO") == std::string::npos);
+    CHECK(log.find(" RT=") == std::string::npos);
+    CHECK(log.find("LADDER_ADAPT_UPDATES") == std::string::npos);
     CHECK(log.find("BOUNDARY_MODE=0(REFLECT)") != std::string::npos);
+    CHECK(log.find("INIT_MODE=JITTER") != std::string::npos);
     CHECK(log.find("V_floor=") != std::string::npos);
     CHECK(log.find("V_cap=") != std::string::npos);
     /* Live per-pair swap tables: cumulative each exchange epoch, windowed
@@ -1730,13 +1787,13 @@ TEST_CASE("ANNEAL_PT: ladder flow counts walker lineages with exact arithmetic",
     sp.param["REPLICAS"] = 2.0;
     sp.param["T_COLD"] = 1e-3;
     sp.param["T_HOT"]  = 1.0;
-    sp.param["L"] = 2.0;
     sp.param["SWAP_EVERY"] = 1.0;
-    /* 2 seed/init evals + E epochs x REPLICAS x L. 40 epochs -> 20 accepted
-     * swaps, comfortably above the 1 round trip a working ladder needs and
-     * well short of the 100*(K-1)=100-round transport window, which is
-     * exercised separately below. */
-    sp.stop.maxeval = 2 + 40 * 2 * 2;
+    /* 2 seed/init evals + E epochs x REPLICAS x 1 (CLASSIC sweep = one
+     * proposal per replica). 40 epochs -> 19 accepted swaps, comfortably
+     * above the 1 round trip a working ladder needs and well short of the
+     * 100*(K-1)=100-round transport window, which is exercised separately
+     * below. */
+    sp.stop.maxeval = 2 + 40 * 2;
 
     LoggedRun lr;
     MtStubHost stub{[](const Vec&) { return 1.0; }, {}, {}};
@@ -1766,7 +1823,7 @@ TEST_CASE("ANNEAL_PT: ladder flow counts walker lineages with exact arithmetic",
     CHECK(log.find("ANNEAL_PT distinct walkers per slot over the whole run "
                    "(2 = fully mixed):") != std::string::npos);
     /* ...so the single-walker severance WARNING must NOT fire. */
-    CHECK(log.find("was occupied by a single walker for the entire run")
+    CHECK(log.find("was occupied by a single walker")
           == std::string::npos);
 }
 
@@ -1793,7 +1850,6 @@ TEST_CASE("ANNEAL_PT: a cooperative shutdown still reports the whole run",
     sp.param["REPLICAS"] = 2.0;
     sp.param["T_COLD"] = 1e-3;
     sp.param["T_HOT"]  = 1.0;
-    sp.param["L"] = 2.0;
     sp.param["SWAP_EVERY"] = 1.0;
     /* Budget far beyond the interrupt, so the ONLY way out is the throw. */
     sp.stop.maxeval = 1000000;
@@ -1827,24 +1883,26 @@ TEST_CASE("ANNEAL_PT: a severed ladder is reported, not just tabulated",
 
     /* Same K=2 geometry, but now exchanges must never be accepted, so no
      * lineage ever reaches the opposite extreme. Two ingredients:
-     *   - a strictly slot-dependent objective, so cold_loss != hot_loss and
-     *     the equal-loss short circuit cannot fire;
+     *   - slot 0 starts EXACTLY at the loss minimum (JITTER leaves slot 0
+     *     at the seed) and its cold chain can only stay there, while the
+     *     jittered hot slot is strictly above 0 -- so cold_loss < hot_loss
+     *     always and the equal-loss short circuit cannot fire;
      *   - T_COLD far below the loss scale, so the Metropolis factor for the
-     *     uphill direction underflows.
+     *     uphill exchange direction underflows.
      * The replicas then anneal independently -- which is exactly the
      * condition run22 was in for 21 hours without any message saying so. */
     auto sp = make_pt_spec({-1.0e4, -1.0e4}, {1.0e4, 1.0e4});
-    set_seed_point(sp, {5.0e3, 5.0e3});
+    set_seed_point(sp, {0.0, 0.0});
     sp.seed = 99;
     sp.num_threads = 1;
     sp.param["REPLICAS"] = 2.0;
     sp.param["T_COLD"] = 1e-300;
     sp.param["T_HOT"]  = 1e-297;
-    sp.param["L"] = 2.0;
     sp.param["SWAP_EVERY"] = 1.0;
     sp.param["STEP_FRAC"] = 1e-6;   /* stay put: keep the two losses apart */
-    /* transport_window = 100*(K-1) = 100 exchange rounds; run past it. */
-    sp.stop.maxeval = 2 + 130 * 2 * 2;
+    /* transport_window = 100*(K-1) = 100 exchange rounds; run past it
+     * (CLASSIC epoch = REPLICAS * 1 evals). */
+    sp.stop.maxeval = 2 + 130 * 2;
 
     LoggedRun lr;
     MtStubHost stub{[](const Vec& x) { return x(0) * x(0) + x(1) * x(1); },
@@ -1881,7 +1939,6 @@ TEST_CASE("ANNEAL_PT: final summary repeats the last completed swap window",
         sp.num_threads = 2;
         sp.stop.maxeval = maxeval;
         sp.param["REPLICAS"] = 4.0;
-        sp.param["L"] = 1.0;
         sp.param["T_HOT"] = 8.0;
         sp.param["T_COLD"] = 1.0;
         sp.param["SWAP_WINDOW"] = 4.0;
@@ -1916,7 +1973,6 @@ TEST_CASE("ANNEAL_PT: SWAP_WINDOW=0 suppresses window tables entirely",
     sp.num_threads = 2;
     sp.stop.maxeval = 40;
     sp.param["REPLICAS"] = 4.0;
-    sp.param["L"] = 1.0;
     sp.param["T_HOT"] = 8.0;
     sp.param["T_COLD"] = 1.0;
     sp.param["SWAP_WINDOW"] = 0.0;
@@ -1925,17 +1981,19 @@ TEST_CASE("ANNEAL_PT: SWAP_WINDOW=0 suppresses window tables entirely",
     MtStubHost stub{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
     run_anneal_pt_impl<Vec>(sp, stub);
 
-    /* Cumulative-only mode: no windowed table may appear anywhere, and
-     * in particular the final summary must not relabel whole-run
-     * counters as a window. */
+    /* Cumulative-only mode: no PERIODIC report fires at all (reports are
+     * tied to SWAP_WINDOW boundaries now), no windowed table may appear
+     * anywhere, and the final summary must not relabel whole-run counters
+     * as a window -- only the whole-run per-pair summary remains. */
     const std::string log = lr.read();
-    CHECK(log.find("swap acc% per pair (cumulative") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT swap acceptance per pair (cold->hot):")
+          != std::string::npos);
     CHECK(log.find("last completed SWAP_WINDOW") == std::string::npos);
     CHECK(log.find("no completed SWAP_WINDOW") == std::string::npos);
     CHECK(log.find("swap acc% per pair (last ") == std::string::npos);
 }
 
-TEST_CASE("ANNEAL_PT: epoch line reports the temperatures the epoch ran at",
+TEST_CASE("ANNEAL_PT: epoch line reports the ladder endpoints of the epoch",
           "[HPO][anneal_pt][log][temperature]")
 {
     using namespace tadah::hpo;
@@ -1945,18 +2003,16 @@ TEST_CASE("ANNEAL_PT: epoch line reports the temperatures the epoch ran at",
     sp.num_threads = 2;
     sp.stop.maxeval = 60;
     sp.param["REPLICAS"] = 4.0;
-    sp.param["L"] = 1.0;
     sp.param["T_HOT"] = 8.0;
     sp.param["T_COLD"] = 1.0;
-    sp.param["RT"] = 0.5;
+    sp.param["SWAP_WINDOW"] = 2.0;
 
     LoggedRun lr;
     MtStubHost stub{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
     run_anneal_pt_impl<Vec>(sp, stub);
 
-    /* D29: RT cooling halves the ladder at the END of each epoch; the
-     * epoch-1 line must still show the uncooled [T_COLD, T_HOT] the
-     * epoch's rungs actually used, not the mutated values. */
+    /* D29: the epoch line snapshots T BEFORE any in-epoch ladder mutation;
+     * with a static ladder it is exactly [T_COLD, T_HOT] on every report. */
     const std::string log = lr.read();
     CHECK(log.find("T=[1.000e+00, 8.000e+00]") != std::string::npos);
 }
@@ -2038,89 +2094,74 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
     using namespace tadah::hpo;
     MtStubHost stub{ [&](const Vec&){ return 0.0; }, {}, {} };
 
-    SECTION("automatic controls default on for CLASSIC PT") {
+    SECTION("STEP_MODE defaults to FROZEN for CLASSIC PT") {
         auto sp = make_pt_spec({-1.0}, {1.0});
-        sp.param.erase("STEP_AUTO");
+        sp.param_raw.erase("STEP_MODE");
         const auto kb = anneal::Knobs::parse(sp, anneal::AlgoKind::PT);
-        CHECK(kb.step_auto);
-        CHECK(kb.step_auto_sweeps == 12);
-        CHECK(kb.step_adapt_every == 0);
-        CHECK(kb.step_trust_factor == 64.0);
+        CHECK(kb.step_mode == anneal_enums::STEP_MODE::FROZEN);
+        CHECK(kb.step_warmup_sweeps == 12);
+        CHECK(kb.step_adapt_every == 0);       /* RAM off outside ADAPTIVE */
+        CHECK(kb.step_trust_factor == 0.0);
     }
-    SECTION("STEP_AUTO is Boolean") {
+    SECTION("retired STEP_AUTO steers to STEP_MODE") {
         auto sp = make_pt_spec({-1.0}, {1.0});
-        sp.param["STEP_AUTO"] = 2.0;
-        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
-                            Catch::Contains("STEP_AUTO"));
-    }
-    SECTION("STEP_AUTO_SWEEPS must be positive") {
-        auto sp = make_pt_spec({-1.0}, {1.0});
+        sp.param_raw.erase("STEP_MODE");
         sp.param["STEP_AUTO"] = 1.0;
-        sp.param["STEP_AUTO_SWEEPS"] = 0.0;
         REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
-                            Catch::Contains("STEP_AUTO_SWEEPS"));
+                            Catch::Contains("replaced by PARAM STEP_MODE"));
     }
-    SECTION("automatic controls are CLASSIC PT only") {
+    SECTION("STEP_WARMUP_SWEEPS must be positive when a warm-up runs") {
         auto sp = make_pt_spec({-1.0}, {1.0});
-        sp.param.erase("STEP_AUTO");
-        sp.param["CORANA"] = 1.0;
-        sp.param["NS"] = 1.0;
-        sp.param["NT"] = 1.0;
-        sp.param["STEP_ADAPT_EVERY"] = 1.0;
+        sp.param_raw["STEP_MODE"] = "FROZEN";
+        sp.param["STEP_WARMUP_SWEEPS"] = 0.0;
         REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
-                            Catch::Contains("CLASSIC variant"));
+                            Catch::Contains("STEP_WARMUP_SWEEPS must be >= 1"));
     }
-    SECTION("explicit STEP disables automatic calibration") {
-        auto sp = make_pt_spec({-1.0}, {1.0});
-        sp.param.erase("STEP_AUTO");
-        sp.step = 0.1;
-        const auto kb = anneal::Knobs::parse(sp, anneal::AlgoKind::PT);
-        CHECK_FALSE(kb.step_auto);
-        CHECK(kb.step_adapt_every == 0);
-    }
-    SECTION("adaptation cadence is rejected when STEP_AUTO is off") {
-        auto sp = make_pt_spec({-1.0}, {1.0});
-        sp.param["STEP_AUTO"] = 0.0;
-        sp.param["STEP_ADAPT_EVERY"] = 1.0;
+    SECTION("STEP_WARMUP_SWEEPS is unused under STEP_MODE FIXED") {
+        auto sp = make_pt_spec({-1.0}, {1.0});   /* fixture FIXED */
+        sp.param["STEP_WARMUP_SWEEPS"] = 8.0;
         REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
-                            Catch::Contains("unused"));
+                            Catch::Contains("unused when STEP_MODE is FIXED"));
     }
-    SECTION("STEP_TRUST_FACTOR requires the adaptive diagonal") {
-        auto sp = make_pt_spec({-1.0}, {1.0});
-        sp.param.erase("STEP_AUTO");
-        sp.param["STEP_TRUST_FACTOR"] = 8.0;
-        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
-                            Catch::Contains("STEP_ADAPT_EVERY is 0"));
-    }
-    SECTION("STEP_TRUST_FACTOR is rejected where the RAM cannot run") {
-        {
+    SECTION("CLASSIC step controls conflict with CORANA") {
+        for (const char* key : {"STEP_WARMUP_SWEEPS", "STEP_ADAPT_EVERY",
+                                "STEP_TRUST_FACTOR"}) {
             auto sp = make_pt_spec({-1.0}, {1.0});
-            sp.param.erase("STEP_AUTO");
+            sp.param_raw.erase("STEP_MODE");
             sp.param["CORANA"] = 1.0;
-            sp.param["STEP_TRUST_FACTOR"] = 8.0;
+            sp.param[key] = 8.0;
             REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
-                                Catch::Contains("CLASSIC variant"));
+                                Catch::Contains("CLASSIC kernel"));
         }
-        {
-            auto sp = make_pt_spec({-1.0}, {1.0});
-            sp.param.erase("STEP_AUTO");
-            sp.step = 0.1;
-            sp.param["STEP_TRUST_FACTOR"] = 8.0;
-            REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
-                                Catch::Contains("explicit STEP"));
-        }
-        {
-            auto sp = make_pt_spec({-1.0}, {1.0});
-            sp.param["STEP_TRUST_FACTOR"] = 8.0;   /* fixture STEP_AUTO=0 */
-            REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
-                                Catch::Contains("STEP_AUTO is 0"));
+        auto mode = make_pt_spec({-1.0}, {1.0});
+        mode.param["CORANA"] = 1.0;   /* fixture sets STEP_MODE FIXED */
+        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(mode, stub),
+                            Catch::Contains("CLASSIC kernel"));
+    }
+    SECTION("top-level STEP is rejected outright") {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        sp.param_raw.erase("STEP_MODE");
+        sp.step = 0.1;
+        REQUIRE_THROWS_WITH(
+            run_anneal_pt_impl<Vec>(sp, stub),
+            Catch::Contains("does not use STEP; set PARAM STEP_FRAC"));
+    }
+    SECTION("adaptation cadence and trust factor are ADAPTIVE-only") {
+        for (const char* key : {"STEP_ADAPT_EVERY", "STEP_TRUST_FACTOR"}) {
+            for (const char* mode : {"FIXED", "FROZEN"}) {
+                auto sp = make_pt_spec({-1.0}, {1.0});
+                sp.param_raw["STEP_MODE"] = mode;
+                sp.param[key] = 8.0;
+                REQUIRE_THROWS_WITH(
+                    run_anneal_pt_impl<Vec>(sp, stub),
+                    Catch::Contains("unused unless STEP_MODE is ADAPTIVE"));
+            }
         }
     }
     SECTION("STEP_TRUST_FACTOR must be 0 or greater than 1") {
         for (double f : {1.0, 0.5, -3.0}) {
             auto sp = make_pt_spec({-1.0}, {1.0});
-            sp.param.erase("STEP_AUTO");
-            sp.param["STEP_ADAPT_EVERY"] = 1.0;
+            sp.param_raw["STEP_MODE"] = "ADAPTIVE";
             sp.param["STEP_TRUST_FACTOR"] = f;
             REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
                                 Catch::Contains("STEP_TRUST_FACTOR"));
@@ -2147,7 +2188,7 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
     }
     SECTION("adaptation controls are rejected when disabled") {
         for (const char* key : {"LADDER_ADAPT_EVERY", "LADDER_ADAPT_GAIN",
-                                "LADDER_ADAPT_DECAY", "LADDER_ADAPT_UPDATES",
+                                "LADDER_ADAPT_DECAY",
                                 "LADDER_MIN_GAP", "LADDER_FREEZE"}) {
             auto sp = make_pt_spec({-1.0}, {1.0});
             sp.param[key] = 1.0;
@@ -2187,12 +2228,12 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
                                 Catch::Contains("LADDER_ADAPT_DECAY"));
         }
     }
-    SECTION("LADDER_ADAPT_UPDATES must be integral") {
+    SECTION("removed LADDER_ADAPT_UPDATES names the freeze that replaced it") {
         auto sp = make_pt_spec({-1.0}, {1.0});
         sp.param["LADDER_ADAPT"] = 1.0;
         sp.param["LADDER_ADAPT_UPDATES"] = 1.5;
         REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
-                            Catch::Contains("non-negative integer"));
+                            Catch::Contains("LADDER_FREEZE"));
     }
     SECTION("LADDER_MIN_GAP must be in [0,1)") {
         for (double frac : {-0.1, 1.0, 2.0}) {
@@ -2220,24 +2261,22 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
         REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
                             Catch::Contains("SWAP_EVERY"));
     }
-    SECTION("INIT_MODE out of range") {
+    SECTION("numeric INIT_MODE names the tokens") {
         auto sp = make_pt_spec({-1.0}, {1.0});
         set_seed_point(sp, {0.0});
         sp.stop.maxeval = 10;
         sp.param["INIT_MODE"] = 2.0;
-        REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
-                            Catch::Contains("INIT_MODE"));
+        REQUIRE_THROWS_WITH(
+            run_anneal_pt_impl<Vec>(sp, stub),
+            Catch::Contains("INIT_MODE takes a token, one of: JITTER UNIFORM"));
     }
-    SECTION("T_MIN exceeds auto-calibrated T_HOT") {
+    SECTION("unknown INIT_MODE token is reported verbatim") {
         auto sp = make_pt_spec({-1.0}, {1.0});
         set_seed_point(sp, {0.0});
-        sp.stop.maxeval = 100;
-        sp.param["REPLICAS"] = 4.0;
-        sp.param["RT"] = 0.9;
-        sp.param["T_MIN"] = 2.0;
+        sp.stop.maxeval = 10;
+        sp.param_raw["INIT_MODE"] = "SCATTER";
         REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
-                            Catch::Contains(
-                                "ANNEAL_PT: resolved T_MIN must be <= resolved T_HOT"));
+                            Catch::Contains("got 'SCATTER'"));
     }
     SECTION("serial-only REANNEAL rejected on PT") {
         auto sp = make_pt_spec({-1.0}, {1.0});
@@ -2278,14 +2317,103 @@ TEST_CASE("ANNEAL_PT: converges on a quadratic bowl at least as well as "
     sp.num_threads = 4;
     sp.stop.maxeval = 1200;
     sp.param["REPLICAS"]  = 6.0;
-    sp.param.erase("STEP_AUTO");
+    sp.param_raw.erase("STEP_MODE");
     sp.param["CORANA"]    = 1.0;
     sp.param["NS"]        = 3.0;
-    sp.param["NT"]        = 2.0;
     sp.param["T_HOT"]     = 2.0;
     sp.param["LADDER_SPAN"] = 1e3;
 
     MtStubHost stub{ [&](const Vec& x){ return quad_bowl2(x, cx, cy); }, {}, {} };
     run_anneal_pt_impl<Vec>(sp, stub);
     CHECK(best_of(stub.sorted_calls()) < 0.05);
+}
+
+/* --- FTOL best-stall stop (the PT replacement for the serial plateau) ----
+ * With FTOL_REL/FTOL_ABS > 0 the run stops when the GLOBAL best has not
+ * improved by more than max(FTOL_ABS, FTOL_REL*|best|) over NEPS
+ * consecutive diagnostics windows (window = SWAP_WINDOW epochs;
+ * SWAP_WINDOW 0 falls back to 20 for the stall detector). */
+
+TEST_CASE("ANNEAL_PT: FTOL best-stall stops a stalled global best",
+          "[HPO][anneal_pt][plateau][stall]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 91030;
+    sp.num_threads = 1;
+    sp.stop.maxeval = 10000;
+    sp.stop.ftol_abs = 1e-6;
+    sp.param["REPLICAS"] = 2.0;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["T_COLD"] = 0.1;
+    sp.param["SWAP_WINDOW"] = 5.0;
+    sp.param["NEPS"] = 2.0;
+
+    LoggedRun lr;
+    /* Constant objective: the global best never improves after the seed.
+     * Window 1 seeds the reference, windows 2 and 3 count the stall ->
+     * stop at epoch 15. Evals: 2 starts + 15 epochs x 2 replicas x 1. */
+    MtStubHost stub{[](const Vec&) { return 1.0; }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, stub);
+
+    CHECK(stub.sorted_calls().size() == 32);
+    const std::string log = lr.read();
+    CHECK(log.find("ANNEAL_PT stopped: FTOL best-stall (global best improved "
+                   "by <= tol over NEPS diagnostics windows)")
+          != std::string::npos);
+}
+
+TEST_CASE("ANNEAL_PT: best-stall does not fire while the best keeps improving",
+          "[HPO][anneal_pt][plateau][stall]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 91031;
+    sp.num_threads = 1;
+    sp.stop.maxeval = 100;
+    sp.stop.ftol_abs = 1e-6;
+    sp.param["REPLICAS"] = 2.0;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["T_COLD"] = 0.1;
+    sp.param["SWAP_WINDOW"] = 5.0;
+    sp.param["NEPS"] = 2.0;
+
+    LoggedRun lr;
+    /* Every eval improves the global best by 1.0 >> ftol_abs. */
+    std::atomic<int> k{0};
+    MtStubHost stub{[&k](const Vec&) { return 1000.0 - (++k); }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, stub);
+
+    CHECK(stub.sorted_calls().size() == 100);
+    const std::string log = lr.read();
+    CHECK(log.find("ANNEAL_PT stopped: MAXEVAL exhausted") != std::string::npos);
+    CHECK(log.find("FTOL best-stall") == std::string::npos);
+}
+
+TEST_CASE("ANNEAL_PT: SWAP_WINDOW=0 falls back to a 20-epoch stall window",
+          "[HPO][anneal_pt][plateau][stall][swap]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 91032;
+    sp.num_threads = 1;
+    sp.stop.maxeval = 10000;
+    sp.stop.ftol_abs = 1e-6;
+    sp.param["REPLICAS"] = 2.0;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["T_COLD"] = 0.1;
+    sp.param["SWAP_WINDOW"] = 0.0;
+    sp.param["NEPS"] = 2.0;
+
+    LoggedRun lr;
+    MtStubHost stub{[](const Vec&) { return 1.0; }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, stub);
+
+    /* Stall windows at epochs 20/40/60 -> stop at epoch 60:
+     * 2 starts + 60 epochs x 2 replicas x 1 = 122 evals. */
+    CHECK(stub.sorted_calls().size() == 122);
+    CHECK(lr.read().find("FTOL best-stall") != std::string::npos);
 }

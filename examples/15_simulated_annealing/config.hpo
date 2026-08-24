@@ -5,7 +5,7 @@
 # Metropolis acceptance. Initial temperature is auto-calibrated from
 # local full-vector Gaussian probes around the seed point (T0_PROBES
 # probes; median uphill |dE|, or median absolute |dE| when none is uphill;
-# T0_PACCEPT is assigned to that calibration delta).
+# T0_ACCEPT is assigned to that calibration delta).
 # The knobs demonstrated here are explicit; supported controls not shown
 # retain their shipped defaults.
 
@@ -17,11 +17,11 @@ OPTIMIZER
     MAXEVAL 200
     SEED 1234
     PARAM RT          0.85    # geometric cooling factor in (0,1)
-    PARAM L           20      # Markov-chain length per temperature
+    PARAM CHAIN_LENGTH 20     # CLASSIC proposals per temperature rung
     PARAM STEP_FRAC   0.15    # sigma_i = STEP_FRAC * (high_i - low_i)
     PARAM BOUNDARY_MODE 0      # exact reflection
     PARAM T0_PROBES   20
-    PARAM T0_PACCEPT  0.8
+    PARAM T0_ACCEPT   0.8
   ENDSTRATEGY
 ENDOPTIMIZER
 

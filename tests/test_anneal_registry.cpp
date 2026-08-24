@@ -46,6 +46,8 @@ OptimizerSpec registry_base_spec(anneal::AlgoKind k)
     sp.high = {1.0};
     sp.is_int = {false};
     sp.log_scaled = {false};
+    /* Serial CHAIN_LENGTH/NT default to AUTO, which requires MAXEVAL. */
+    sp.stop.maxeval = 1000;
     if (k == anneal::AlgoKind::PA) sp.pop = 16;
     return sp;
 }
@@ -57,14 +59,15 @@ OptimizerSpec registry_base_spec(anneal::AlgoKind k)
 void enable_context(OptimizerSpec& sp, const std::string& key,
                     anneal::AlgoKind kind)
 {
-    if (key == "NS" || key == "NT" || key == "C" || key == "V_FLOOR_FRAC")
+    (void)kind;
+    if (key == "NS" || key == "NT" || key == "CORANA_C" ||
+        key == "V_FLOOR_FRAC")
         sp.param["CORANA"] = 1.0;
     if (key.rfind("LADDER_ADAPT_", 0) == 0 || key == "LADDER_MIN_GAP" ||
         key == "LADDER_FREEZE")
         sp.param["LADDER_ADAPT"] = 1.0;
-    if (key == "STEP_TRUST_FACTOR") sp.param["STEP_ADAPT_EVERY"] = 8.0;
-    if (key == "T_MIN" && kind == anneal::AlgoKind::PT)
-        sp.param["RT"] = 0.5;
+    if (key == "STEP_TRUST_FACTOR" || key == "STEP_ADAPT_EVERY")
+        sp.param_raw["STEP_MODE"] = "ADAPTIVE";
 }
 
 /* A value that passes the key's declared range (customs get literals). */
@@ -75,23 +78,39 @@ double good_value(const reg::AnnealKeyInfo& ki)
     if (name == "T0_PROBES") return 4.0;
     if (name == "STEP_TRUST_FACTOR") return 8.0;
     if (name == "RT") return 0.5;
-    if (name == "T_HOT" || name == "T_MIN" || name == "T_COLD") return 0.5;
+    if (name == "T_INIT" || name == "T_HOT" || name == "T_MIN" ||
+        name == "T_COLD")
+        return 0.5;
     if (ki.type == reg::AnnealKeyType::Bool) return 1.0;
+    if (ki.type == reg::AnnealKeyType::Enum) return 0.0;  /* value index */
     if (!ki.has_min && !ki.has_max)
         return 1.0;
     if (ki.type == reg::AnnealKeyType::Count) {
         if (ki.has_min) return ki.min;
-        return ki.max;  /* only-max counts: the top of the enum range */
+        return ki.max;  /* only-max counts: the top of the range */
     }
     if (ki.has_min && ki.has_max) return (ki.min + ki.max) / 2.0;
     if (ki.has_min) return ki.min + 1.0;
     return ki.max / 2.0;
 }
 
-/* Values that violate the declared range (empty for custom ranges). */
+/* Write a valid value for the key into the spec: numeric keys go to
+ * `param`, enum keys take their token form in `param_raw`. */
+void set_good(OptimizerSpec& sp, const reg::AnnealKeyInfo& ki)
+{
+    if (ki.type == reg::AnnealKeyType::Enum)
+        sp.param_raw[ki.name] =
+            ki.enum_values[static_cast<std::size_t>(good_value(ki))];
+    else
+        sp.param[ki.name] = good_value(ki);
+}
+
+/* Values that violate the declared range (empty for custom ranges and
+ * enum keys, which get their own dedicated checks). */
 std::vector<double> bad_values(const reg::AnnealKeyInfo& ki)
 {
     std::vector<double> bad;
+    if (ki.type == reg::AnnealKeyType::Enum) return bad;
     if (ki.type == reg::AnnealKeyType::Bool) {
         bad.push_back(2.0);
         return bad;
@@ -129,7 +148,7 @@ TEST_CASE("registry: every key parses at a valid value for every kind it "
             INFO("key " << ki.name << " kind " << anneal::algo_name(kind));
             auto sp = registry_base_spec(kind);
             enable_context(sp, ki.name, kind);
-            sp.param[ki.name] = good_value(ki);
+            set_good(sp, ki);
             CHECK_NOTHROW(anneal::Knobs::parse(sp, kind));
         }
     }
@@ -141,9 +160,17 @@ TEST_CASE("registry: every key steers to its family members for kinds it "
     for (const auto& ki : reg::kKeys) {
         for (const auto& [kind, bit] : kAllKinds) {
             if (ki.kinds & bit) continue;
+            /* A rename hint for this kind takes precedence over the
+             * membership steering (e.g. RT/T_MIN/NT under PT). */
+            bool renamed_hint = false;
+            for (const auto& ren : reg::kRenamed)
+                if ((ren.kinds & bit) &&
+                    std::string(ren.old_name) == ki.name)
+                    renamed_hint = true;
+            if (renamed_hint) continue;
             INFO("key " << ki.name << " kind " << anneal::algo_name(kind));
             auto sp = registry_base_spec(kind);
-            sp.param[ki.name] = good_value(ki);
+            set_good(sp, ki);
             REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, kind),
                                 Catch::Contains("belongs to"));
         }
@@ -187,15 +214,24 @@ TEST_CASE("registry: every cross-key rule fires with its exact message",
             for (const auto& [k, b] : kAllKinds)
                 if (rule.kind_mask & b) { kind = k; bit = b; }
         } else {
-            /* The first kind the key belongs to (rules themselves are
-             * kind-independent apart from KindReject). */
+            /* The first kind where the rule can actually fire: both the
+             * rule's key and, for UnusedWhenSet, the `other` key must be
+             * live keys for that kind (e.g. the T0_*-vs-T_HOT rules can
+             * only fire for PT/PA, where T_HOT exists). */
+            unsigned need = ki->kinds;
+            if (rule.type == reg::AnnealRuleType::UnusedWhenSet) {
+                const auto* other = reg::find_key(rule.arg);
+                REQUIRE(other != nullptr);
+                need &= other->kinds;
+            }
+            REQUIRE(need != 0u);
             for (const auto& [k, b] : kAllKinds)
-                if (ki->kinds & b) { kind = k; bit = b; break; }
+                if (need & b) { kind = k; bit = b; break; }
         }
         (void)bit;
         INFO("rule on " << rule.key << " kind " << anneal::algo_name(kind));
         auto sp = registry_base_spec(kind);
-        sp.param[rule.key] = good_value(*ki);
+        set_good(sp, *ki);
         switch (rule.type) {
             case reg::AnnealRuleType::RequiresFlag:
                 /* flag absent -> rule fires */
@@ -204,10 +240,14 @@ TEST_CASE("registry: every cross-key rule fires with its exact message",
                 sp.param[rule.arg] = 1.0;
                 break;
             case reg::AnnealRuleType::UnusedWhenSet:
-                sp.param[rule.arg] = good_value(*reg::find_key(rule.arg));
+                set_good(sp, *reg::find_key(rule.arg));
                 break;
             case reg::AnnealRuleType::UnusedWhenFlagOff:
                 sp.param[rule.arg] = 0.0;
+                break;
+            case reg::AnnealRuleType::RequiresEnum:
+                /* enum stays at its default, which the rule requires
+                 * it not to be */
                 break;
             case reg::AnnealRuleType::KindReject:
                 break;
@@ -239,14 +279,14 @@ TEST_CASE("registry: non-numeric, unknown, and renamed PARAMs are hard "
                             Catch::Contains("accepted keys"));
     }
     SECTION("renamed key is caught in numeric and token form") {
-        auto sp = registry_base_spec(anneal::AlgoKind::Serial);
-        sp.param["T_INIT"] = 1.0;
-        REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
-                            Catch::Contains("renamed to T_HOT"));
-        auto sp2 = registry_base_spec(anneal::AlgoKind::Serial);
-        sp2.param_raw["T_INIT"] = "hot";
-        REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp2, anneal::AlgoKind::Serial),
-                            Catch::Contains("renamed to T_HOT"));
+        auto sp = registry_base_spec(anneal::AlgoKind::PT);
+        sp.param["STEP_AUTO"] = 1.0;
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::PT),
+                            Catch::Contains("replaced by PARAM STEP_MODE"));
+        auto sp2 = registry_base_spec(anneal::AlgoKind::PT);
+        sp2.param_raw["STEP_AUTO"] = "on";
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp2, anneal::AlgoKind::PT),
+                            Catch::Contains("replaced by PARAM STEP_MODE"));
     }
 }
 
@@ -254,17 +294,56 @@ TEST_CASE("registry: defaults in the generated header match the parsed "
           "defaults", "[HPO][anneal_core][registry]")
 {
     /* A bare spec must produce knob values equal to the registry
-     * defaults (spot checks across the three types + a PT override). */
+     * defaults (spot checks across the types, kinds, and AUTO/enum
+     * forms). */
     auto serial = registry_base_spec(anneal::AlgoKind::Serial);
     const auto kb = anneal::Knobs::parse(serial, anneal::AlgoKind::Serial);
-    CHECK(kb.L == static_cast<std::size_t>(anneal_defaults::L));
+    CHECK(kb.chain_length == 0);   /* AUTO sentinel: resolved at run time */
+    CHECK(kb.NT == 0);             /* AUTO sentinel (Corana) */
+    CHECK(kb.NS == static_cast<std::size_t>(anneal_defaults::NS));
+    CHECK(kb.corana_c == anneal_defaults::CORANA_C);
     CHECK(kb.step_frac == anneal_defaults::STEP_FRAC);
     CHECK(kb.corana == (anneal_defaults::CORANA == 1.0));
-    CHECK(kb.rt == anneal_defaults::RT);
+    CHECK(kb.rt == anneal_defaults::RT_SERIAL);
+    CHECK(kb.t0_accept == anneal_defaults::T0_ACCEPT);
 
     auto pt = registry_base_spec(anneal::AlgoKind::PT);
     const auto kbp = anneal::Knobs::parse(pt, anneal::AlgoKind::PT);
-    CHECK(kbp.rt == anneal_defaults::RT_PT);
+    CHECK(kbp.step_mode == anneal_enums::STEP_MODE::FROZEN);
+    CHECK(kbp.init_mode == anneal_enums::INIT_MODE::JITTER);
     CHECK(kbp.swap_window ==
           static_cast<std::size_t>(anneal_defaults::SWAP_WINDOW));
+    /* FROZEN normalizes the ADAPTIVE-only knobs to their off sentinels. */
+    CHECK(kbp.step_adapt_every == 0);
+    CHECK(kbp.step_trust_factor == 0.0);
+
+    auto pa = registry_base_spec(anneal::AlgoKind::PA);
+    const auto kba = anneal::Knobs::parse(pa, anneal::AlgoKind::PA);
+    CHECK(kba.chain_length ==
+          static_cast<std::size_t>(anneal_defaults::CHAIN_LENGTH_PA));
+    CHECK(kba.rt == anneal_defaults::RT_PA);
+
+    SECTION("enum keys reject numeric and unknown-token values") {
+        auto sp = registry_base_spec(anneal::AlgoKind::PT);
+        sp.param["STEP_MODE"] = 1.0;
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::PT),
+                            Catch::Contains("takes a token"));
+        auto sp2 = registry_base_spec(anneal::AlgoKind::PT);
+        sp2.param_raw["STEP_MODE"] = "SOMETIMES";
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp2, anneal::AlgoKind::PT),
+                            Catch::Contains("must be one of"));
+    }
+    SECTION("every registry rename hint fires for its kinds") {
+        for (const auto& ren : reg::kRenamed) {
+            for (const auto& [kind, bit] : kAllKinds) {
+                if (!(ren.kinds & bit)) continue;
+                INFO("renamed " << ren.old_name << " kind "
+                                << anneal::algo_name(kind));
+                auto sp = registry_base_spec(kind);
+                sp.param[ren.old_name] = 1.0;
+                REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, kind),
+                                    Catch::Contains(ren.msg));
+            }
+        }
+    }
 }

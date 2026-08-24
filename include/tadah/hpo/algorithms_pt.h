@@ -687,7 +687,7 @@ void coordinate_warmup(
   constexpr double gross_high_alpha = 0.9;
   constexpr double bracket_ok_factor = 4.0;
   const std::size_t dim = sp.low.size();
-  const std::size_t minimum = kb.step_auto_sweeps;
+  const std::size_t minimum = kb.step_warmup_sweeps;
   const std::size_t maximum = anneal::saturating_add(minimum, minimum);
   const std::size_t batch_size = std::min<std::size_t>(4, minimum);
   if (out.dims.empty()) out.dims.resize(dim);
@@ -1259,10 +1259,25 @@ template<typename Vec, typename HostT>
     std::atomic<bool> stop_flag{false};
     anneal::StopCtx ctx{budget, stop_flag, time_exceeded, stopval};
 
-    anneal::CoranaPlateau plateau(sp.stop, kb.neps, sp.failscore);
+    /* Best-stall stop (PT analogue of the serial eps-NEPS plateau): the
+     * run stops when the GLOBAL best has not improved by more than the
+     * FTOL tolerance over NEPS consecutive diagnostics windows. The
+     * coldest slot's occupant changes at every exchange, so a
+     * per-trajectory plateau has no clean meaning here; the run best is
+     * the quantity a stopping user actually watches. Armed only by a
+     * positive FTOL_REL/FTOL_ABS. */
+    const double stall_ftol_rel = sp.stop.ftol_rel.value_or(0.0);
+    const double stall_ftol_abs = sp.stop.ftol_abs.value_or(0.0);
+    const bool   stall_armed = stall_ftol_rel > 0.0 || stall_ftol_abs > 0.0;
+    const std::size_t stall_window =
+        kb.swap_window > 0
+            ? kb.swap_window
+            : static_cast<std::size_t>(anneal_defaults::SWAP_WINDOW);
+    double      stall_ref_best = std::numeric_limits<double>::infinity();
+    std::size_t stall_windows  = 0;
 
     enum class StopReason {
-      Done, MaxEval, MaxTime, StopVal, TMin, Plateau,
+      Done, MaxEval, MaxTime, StopVal, Plateau,
       StopValOnProbe, External, ExternalOnProbe, MaxTimeOnProbe,
       NoDims, NoBudget
     };
@@ -1293,16 +1308,15 @@ template<typename Vec, typename HostT>
       std::ostringstream oss;
       const char* mode = kb.corana
           ? "CORANA"
-          : (kb.step_auto
-                 ? (kb.step_adapt_every > 0
-                        ? "CLASSIC[ADAPTIVE-DIAG]"
-                        : "CLASSIC[AUTO-FROZEN]")
-                 : "CLASSIC[FIXED]");
+          : (kb.step_mode == anneal_enums::STEP_MODE::ADAPTIVE
+                 ? "CLASSIC[ADAPTIVE]"
+                 : (kb.step_mode == anneal_enums::STEP_MODE::FROZEN
+                        ? "CLASSIC[FROZEN]"
+                        : "CLASSIC[FIXED]"));
       oss << "ANNEAL_PT[" << mode << "]: seed=" << seed
           << "  REPLICAS=" << K
           << "  THREADS=" << threads
-          << "  SWAP_EVERY=" << kb.swap_every
-          << "  RT=" << kb.rt;
+          << "  SWAP_EVERY=" << kb.swap_every;
       if (kb.t_cold)      oss << "  T_COLD=" << *kb.t_cold;
       else                oss << "  LADDER_SPAN=" << kb.ladder_span;
       if (ladder_controls_explicit)
@@ -1323,102 +1337,79 @@ template<typename Vec, typename HostT>
             << "SWAP_EVERY=" << kb.swap_every << " with DEO parity)"
             << "  LADDER_ADAPT_GAIN=" << kb.ladder_adapt_gain
             << "  LADDER_ADAPT_DECAY=" << kb.ladder_adapt_decay
-            << "  LADDER_ADAPT_UPDATES=" << kb.ladder_adapt_updates
             << "  LADDER_MIN_GAP=" << kb.ladder_min_gap
             << (kb.ladder_min_gap == 0.0 ? " (no floor)" : "")
             << "  LADDER_FREEZE=" << (kb.ladder_freeze ? 1 : 0);
       }
       if (kb.corana)
-        oss << "  NS=" << kb.NS << "  NT=" << kb.NT << "  C=" << kb.C
+        oss << "  NS=" << kb.NS << " (sweeps per V adjustment)"
+            << "  CORANA_C=" << kb.corana_c
             << "  V_FLOOR_FRAC=" << kb.v_floor_frac;
-      else
-        oss << "  L=" << kb.L;
-      if (kb.step_auto) {
-        oss << "  STEP_AUTO=1"
-            << "  STEP_AUTO_SWEEPS=" << kb.step_auto_sweeps
-            << "  STEP_ADAPT_EVERY=" << kb.step_adapt_every;
-        if (kb.step_adapt_every > 0)
-          oss << "  STEP_TRUST_FACTOR=" << kb.step_trust_factor
+      if (kb.step_mode != anneal_enums::STEP_MODE::FIXED) {
+        oss << "  STEP_WARMUP_SWEEPS=" << kb.step_warmup_sweeps;
+        if (kb.step_mode == anneal_enums::STEP_MODE::ADAPTIVE)
+          oss << "  STEP_ADAPT_EVERY=" << kb.step_adapt_every
+              << "  STEP_TRUST_FACTOR=" << kb.step_trust_factor
               << (kb.step_trust_factor == 0.0 ? " (off)" : "");
-      } else if (!kb.corana)
-        oss << "  STEP_AUTO=0";
-      if (sp.step.has_value()) {
-        if (kb.corana)
-          oss << "  STEP=" << *sp.step
-              << " (Corana U(-V,V) half-width; floor/cap applied per dim)";
-        else
-          oss << "  sigma=" << *sp.step
-              << " (CLASSIC Gaussian; explicit STEP)";
-      } else {
-        oss << "  STEP_FRAC=" << kb.step_frac
-            << (kb.corana ? " (Corana V half-width/width)"
-                          : " (CLASSIC Gaussian sigma/width)");
       }
+      oss << "  STEP_FRAC=" << kb.step_frac
+          << (kb.corana ? " (Corana V half-width/width)"
+                        : " (CLASSIC Gaussian sigma/width)");
       oss << "  BOUNDARY_MODE=" << static_cast<int>(kb.boundary_mode)
           << (kb.boundary_mode == anneal::BoundaryMode::Reflect
                   ? "(REFLECT)" : "(REDRAW)")
-          << "  INIT_MODE=" << kb.init_mode
-          << (kb.init_mode == 0
-                  ? (kb.step_auto
-                         ? "(shared warm seed for automatic calibration)"
-                         : (kb.corana ? "(Gaussian jitter; sigma=initial V)"
-                                      : "(Gaussian jitter; sigma=proposal sigma)"))
-                  : "(uniform box)");
+          << "  INIT_MODE="
+          << (kb.init_mode == anneal_enums::INIT_MODE::JITTER
+                  ? "JITTER (slot 0 = seed; others Gaussian around it)"
+                  : "UNIFORM (slot 0 = seed; others uniform in the box)");
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
 
-    /* D20: a moving ladder with a frozen step.
+    /* D20: an adapting ladder with a frozen step.
      *
-     * STEP_ADAPT_EVERY defaults to 0, which freezes each slot's calibrated
-     * step. That is the right default for a STATIC ladder -- the step was
+     * STEP_MODE FROZEN calibrates each slot's step once and freezes it.
+     * That is the right default for a STATIC ladder -- the step was
      * calibrated at the slot's temperature and the temperature does not
-     * move. But with LADDER_ADAPT=1 or RT<1 the temperatures do move, and
+     * move. With LADDER_ADAPT=1 the interior temperatures do move, and
      * every slot then keeps a step tuned for a temperature it no longer
-     * has. run22 ran 861 ladder updates that shifted the interior log-gaps
-     * from [1.87e-1, 2.07] to [2.02e-1, 3.49] against steps calibrated once
-     * at the start, and nothing said so.
-     *
-     * Combination is legal (a user may want a frozen kernel deliberately)
-     * and the consequence is a modelling judgement rather than a proof, so
-     * this is a HINT. The CLI help already recommends STEP_ADAPT_EVERY=L;
-     * the point here is that the recommendation reaches the person who
-     * actually tripped the condition. Not applicable under CORANA, whose
-     * own V adaptation is always live. */
-    if (!kb.corana && kb.step_auto && kb.step_adapt_every == 0 &&
-        (kb.ladder_adapt || kb.rt < 1.0)) {
+     * has. Combination is legal (a user may want a frozen kernel
+     * deliberately) and the consequence is a modelling judgement rather
+     * than a proof, so this is a HINT. Not applicable under CORANA,
+     * whose own V adaptation is always live. */
+    if (!kb.corana && kb.step_mode == anneal_enums::STEP_MODE::FROZEN &&
+        kb.ladder_adapt) {
       std::ostringstream h;
-      h << "ANNEAL_PT: temperatures move ("
-        << (kb.ladder_adapt ? "LADDER_ADAPT=1" : "")
-        << (kb.ladder_adapt && kb.rt < 1.0 ? ", " : "")
-        << (kb.rt < 1.0 ? "RT<1" : "")
-        << ") but STEP_ADAPT_EVERY=0 freezes each slot's step at the value "
-           "calibrated for its ORIGINAL temperature. Acceptance will drift "
-           "away from target as the ladder moves, and no later message "
-           "reports that drift. STEP_ADAPT_EVERY=" << kb.L
-        << " (= L) keeps the step adapting with the temperature.";
+      h << "ANNEAL_PT: interior temperatures move (LADDER_ADAPT=1) but "
+           "STEP_MODE FROZEN keeps each slot's step at the value "
+           "calibrated for its ORIGINAL temperature. Acceptance will "
+           "drift away from target as the ladder moves, and no later "
+           "message reports that drift. STEP_MODE ADAPTIVE keeps the "
+           "step adapting with the temperature.";
       HPOLog::instance().hint(h.str());
     }
 
-    /* Layout arithmetic -- exact, printed up front: with a large
-     * NT*NS*dim product the first per-epoch line can be hours away, and
-     * the epoch size is what sets both the swap and journal cadence. */
+    /* Layout arithmetic -- exact, printed up front. A replica runs ONE
+     * sweep per epoch (CLASSIC: one whole-vector proposal; CORANA: dim
+     * single-coordinate moves) so exchange rounds stay frequent; the
+     * journal cadence is SWAP_WINDOW epochs. */
     const std::uint64_t rung_cost =
-        kb.corana ? anneal::saturating_mul(
-                        anneal::saturating_mul(kb.NT, kb.NS), dim)
-                  : static_cast<std::uint64_t>(kb.L);
+        kb.corana ? static_cast<std::uint64_t>(dim ? dim : 1) : 1u;
     const std::uint64_t epoch_cost =
         anneal::saturating_mul(static_cast<std::uint64_t>(K), rung_cost);
     {
       std::ostringstream oss;
-      oss << "ANNEAL_PT layout: rung = ";
+      oss << "ANNEAL_PT layout: sweep = ";
       if (kb.corana)
-        oss << "NT*NS*dim = " << kb.NT << "*" << kb.NS << "*" << dim << " = ";
+        oss << "dim = " << rung_cost;
       else
-        oss << "L = ";
-      oss << rung_cost << " evals/replica;  epoch = REPLICAS*rung = "
+        oss << "1 proposal";
+      oss << " eval(s)/replica;  epoch = REPLICAS*sweep = "
           << K << "*" << rung_cost << " = " << epoch_cost
           << " evals;  exchange attempt every " << kb.swap_every
+          << " epoch(s);  reports every "
+          << (kb.swap_window > 0 ? std::to_string(kb.swap_window)
+                                 : std::string("(cumulative only)"))
           << " epoch(s)";
       HPOLog::instance().info(oss.str());
       /* Cadence registration is single-process only: the milestone
@@ -1578,15 +1569,6 @@ template<typename Vec, typename HostT>
           std::to_string(T_cold) + ", T_HOT=" + std::to_string(T_hot) +
           "); set PARAM T_COLD/T_HOT or LADDER_SPAN consistently");
 
-    /* Hybrid cooling floor (only meaningful when RT < 1). */
-    const double t_min = kb.t_min ? *kb.t_min
-                                  : (T_hot > 0.0
-                                         ? anneal::automatic_t_min(T_hot)
-                                         : 1e-12);
-    if (proceed && t_min > T_hot)
-      throw std::runtime_error(
-          "TADAH:ANNEAL_PT: resolved T_MIN must be <= resolved T_HOT");
-
     /* --- ladder + chains ----------------------------------------------
      * Every rank builds the FULL temperature ladder (identical, cheap)
      * but only its own contiguous slot block of chains. Chain RNG
@@ -1644,21 +1626,12 @@ template<typename Vec, typename HostT>
               << " slots, LADDER_POWER=" << std::fixed
               << std::setprecision(3) << kb.ladder_power;
         }
-        /* D16: RT and LADDER_ADAPT are orthogonal, and printing them as two
-         * independent tags read as a contradiction -- "[adaptive interior]
-         * [static ladder (RT=1)]" on one line, which is what EVERY adaptive
-         * run showed, because RT=1 is the PT default. RT cools the whole
-         * ladder per epoch; LADDER_ADAPT redistributes the interior between
-         * frozen endpoints. Say which of the two is happening, once. */
-        if (kb.rt < 1.0) {
-          oss << "  [endpoints cool x" << kb.rt
-              << " per epoch, floor T_MIN="
-              << std::scientific << std::setprecision(3) << t_min << ";"
-              << (kb.ladder_adapt ? " interior adapts]" : " interior fixed]");
-        } else if (kb.ladder_adapt) {
-          oss << "  [endpoints fixed (RT=1); interior adapts]";
+        /* The ladder endpoints are always fixed; LADDER_ADAPT
+         * redistributes the interior between them. */
+        if (kb.ladder_adapt) {
+          oss << "  [endpoints fixed; interior adapts]";
         } else {
-          oss << "  [static ladder (RT=1, no interior adaptation)]";
+          oss << "  [static ladder]";
         }
         HPOLog::instance().info(oss.str());
       }
@@ -1720,14 +1693,15 @@ template<typename Vec, typename HostT>
         c.rng = anneal::make_stream(seed, anneal::SALT_CHAIN, k);
         c.V   = proposal_scale;
         c.x   = Vec(dim);
-        if (k == 0 || kb.init_mode == 0) {
-          /* Automatic CLASSIC calibration needs the same valid warm anchor at
-           * every temperature. Fixed CLASSIC and Corana retain their legacy
-           * Gaussian initialization jitter for higher slots. */
+        if (k == 0 || kb.init_mode == anneal_enums::INIT_MODE::JITTER) {
+          /* Slot 0 always starts exactly at the seed; JITTER spreads the
+           * other slots around it at the initial proposal scale,
+           * independent of STEP_MODE (the warm-up calibrates scale, not
+           * position). */
           std::normal_distribution<double> nd(0.0, 1.0);
           for (std::size_t i = 0; i < dim; ++i) {
             long double v = static_cast<long double>(x0(i));
-            if (k > 0 && !kb.step_auto) {
+            if (k > 0) {
               auto draw = [&]() {
                 return static_cast<long double>(x0(i)) +
                        static_cast<long double>(proposal_scale[i]) * nd(c.rng);
@@ -1744,12 +1718,7 @@ template<typename Vec, typename HostT>
         }
         c.best_x = c.x;
       }
-      if (kb.step_auto && kb.init_mode == 0) {
-        for (auto& c : chains) {
-          c.f = f0;
-          c.best_f = f0;
-        }
-      } else if (rank == 0 && n_local > 0) {
+      if (rank == 0 && n_local > 0) {
         chains[0].f      = f0;
         chains[0].best_f = f0;
       }
@@ -1770,8 +1739,6 @@ template<typename Vec, typename HostT>
         warmstart::current_chain() = gk;
         HPOLog::set_eval_slot(static_cast<int>(gk), K, T[gk]);
         if (rank == 0 && li == 0) return;   /* global slot 0 = seed */
-        if (kb.step_auto && kb.init_mode == 0)
-          return;  /* all slots share the already-evaluated warm seed */
         if (gk == 0 || gk > init_admitted) return;
         auto& c = chains[li];
         if (stop_flag.load(std::memory_order_relaxed)) return;
@@ -1814,12 +1781,12 @@ template<typename Vec, typename HostT>
      * This phase deliberately precedes every epoch/swap/flow counter. Host
      * calls still consume the shared hard budget and discovered states/bests
      * are retained, while production diagnostics start from a clean epoch 0. */
-    if (proceed && kb.step_auto) {
+    if (proceed && kb.step_mode != anneal_enums::STEP_MODE::FIXED) {
       const std::uint64_t warmup_spent_begin = world > 1
           ? hpo_allreduce_sum(budget.spent()) : budget.spent();
       const std::uint64_t max_coordinate_attempts = anneal::saturating_mul(
           anneal::saturating_mul(
-              static_cast<std::uint64_t>(kb.step_auto_sweeps), 2),
+              static_cast<std::uint64_t>(kb.step_warmup_sweeps), 2),
           static_cast<std::uint64_t>(dim));
 
       auto phase_allowance = [&](std::uint64_t desired_per_slot,
@@ -2405,27 +2372,22 @@ template<typename Vec, typename HostT>
         const std::uint64_t remaining =
             max_eval_global > spent_global ? max_eval_global - spent_global : 0;
         if (remaining == 0) { stop_reason = StopReason::MaxEval; break; }
-        if (planned_epochs == 0 &&
-            (max_eval_global != HUGE_UNSIGNED || kb.rt < 1.0)) {
-          planned_epochs = anneal::planned_rungs(
-              T[K - 1], t_min, kb.rt,
-              max_eval_global == HUGE_UNSIGNED
-                  ? std::numeric_limits<std::uint64_t>::max()
-                  : remaining,
-              epoch_cost);
+        if (planned_epochs == 0 && max_eval_global != HUGE_UNSIGNED) {
+          planned_epochs = epoch_cost > 0
+              ? static_cast<std::size_t>(remaining / epoch_cost +
+                                         (remaining % epoch_cost ? 1 : 0))
+              : 0;
           /* Plan line -- printed once, from the same arithmetic that
            * feeds the epoch=k/total display (an upper bound: STOPVAL /
-           * plateau / MAXTIME end the run earlier). */
+           * best-stall / MAXTIME end the run earlier). */
           if (rank == 0 && planned_epochs > 0) {
             const std::size_t rounds = planned_epochs / kb.swap_every +
                 (planned_epochs % kb.swap_every != 0 ? 1 : 0);
             std::ostringstream oss;
-            oss << "ANNEAL_PT plan: ~" << planned_epochs << " epoch(s) (";
-            if (max_eval_global != HUGE_UNSIGNED)
-              oss << "budget left " << remaining << " evals";
-            if (max_eval_global != HUGE_UNSIGNED && kb.rt < 1.0) oss << ", ";
-            if (kb.rt < 1.0) oss << "hot-end cooling to T_MIN";
-            oss << "; upper bound), ~" << rounds << " exchange round(s)";
+            oss << "ANNEAL_PT plan: ~" << planned_epochs
+                << " epoch(s) (budget left " << remaining
+                << " evals; upper bound), ~" << rounds
+                << " exchange round(s)";
             HPOLog::instance().info(oss.str());
             /* Round-trip feasibility gates. The floor is STRUCTURAL: a
              * DEO exchange round moves a state at most one slot, so one
@@ -2445,11 +2407,7 @@ template<typename Vec, typename HostT>
                      "even at 100% swap acceptance (a DEO round moves a "
                      "state at most one slot). Exchanges can still couple "
                      "adjacent slots, but no lineage can complete a round trip. ";
-                if (kb.corana)
-                  w << "Reduce NS or NT (epoch = REPLICAS*NT*NS*dim evals) ";
-                else
-                  w << "Reduce L (epoch = REPLICAS*L evals) ";
-                w << "or raise MAXEVAL.";
+                w << "Raise MAXEVAL or reduce REPLICAS/SWAP_EVERY.";
                 HPOLog::instance().warning(w.str());
               } else if (rounds < 4 * rt_floor) {
                 std::ostringstream h;
@@ -2459,10 +2417,7 @@ template<typename Vec, typename HostT>
                      "than ~1 nominal ladder round trip (literature reference "
                      "values: Kone-Kofke 23%, Predescu 39% for optimization). "
                      "Measured ladder-flow counts are authoritative. ";
-                if (kb.corana)
-                  h << "Consider smaller NS/NT or larger MAXEVAL.";
-                else
-                  h << "Consider smaller L or larger MAXEVAL.";
+                h << "Consider a larger MAXEVAL or fewer REPLICAS.";
                 HPOLog::instance().hint(h.str());
               }
             }
@@ -2501,8 +2456,8 @@ template<typename Vec, typename HostT>
           const std::size_t k = off_local + li;
           warmstart::current_chain() = k;   /* global slot for warm-start key */
           HPOLog::set_eval_slot(static_cast<int>(k), K, T[k]);
-          rstats[li] = anneal::run_rung(chains[li], T[k], sp, kb, host, ctx,
-                                        allowance[k]);
+          rstats[li] = anneal::run_sweep(chains[li], T[k], sp, kb, host, ctx,
+                                         allowance[k]);
         });
         rethrow_pool_error("replica rung");
 
@@ -2786,15 +2741,6 @@ template<typename Vec, typename HostT>
                           ladder_attempt_global.end(), std::size_t{0});
                 std::fill(ladder_accept_global.begin(),
                           ladder_accept_global.end(), std::size_t{0});
-                if (kb.ladder_adapt_updates > 0 &&
-                    ladder_update_count >= kb.ladder_adapt_updates) {
-                  ladder_adaptation_active = false;
-                  if (rank == 0)
-                    HPOLog::instance().info(
-                        "ANNEAL_PT ladder adaptation frozen after configured "
-                        "LADDER_ADAPT_UPDATES=" +
-                        std::to_string(kb.ladder_adapt_updates));
-                }
                 if (ladder_adaptation_active && ladder_freeze_now) {
                   ladder_adaptation_active = false;
                   if (rank == 0)
@@ -2823,19 +2769,26 @@ template<typename Vec, typename HostT>
             g_best = std::min(g_best, gb);
         }
 
-        int rank0_code = 0;   /* 0 none, 1 plateau */
-        if (rank == 0 && !terminal_epoch) {
-          if (plateau.update(chains[0].f, g_best)) rank0_code = 1;
+        int rank0_code = 0;   /* 0 none, 1 best-stall */
+        if (rank == 0 && !terminal_epoch && stall_armed &&
+            epoch_count % stall_window == 0) {
+          if (!anneal::loss_is_finite(g_best, sp.failscore)) {
+            stall_windows = 0;
+            stall_ref_best = g_best;
+          } else {
+            const double eps = std::max(
+                stall_ftol_abs, stall_ftol_rel * std::fabs(g_best));
+            if (std::isfinite(stall_ref_best) &&
+                stall_ref_best - g_best <= eps)
+              ++stall_windows;
+            else
+              stall_windows = 0;
+            stall_ref_best = g_best;
+            if (stall_windows >= kb.neps) rank0_code = 1;
+          }
         }
         if (world > 1) hpo_bcast(rank0_code, 0);
         const bool plateau_hit = rank0_code == 1;
-
-        /* --- optional ladder cooling (PT -> SA hybrid) ---------------- */
-        bool tmin_hit = false;
-        if (!terminal_epoch && !plateau_hit && kb.rt < 1.0) {
-          for (auto& t : T) t = anneal::cool_temperature(t, kb.rt);
-          tmin_hit = T[K - 1] < t_min;
-        }
 
         /* --- reset-to-best: coldest slot only ------------------------- */
         if (!terminal_epoch && !plateau_hit && kb.reset_to_best) {
@@ -2855,9 +2808,16 @@ template<typename Vec, typename HostT>
           }
         }
 
-        /* --- one journal line per epoch (rank 0 carries the global
-         * numbers; other ranks stay quiet) ----------------------------- */
-        if (rank == 0) {
+        /* --- journal reports, every SWAP_WINDOW epochs (an epoch is one
+         * sweep per replica, so per-epoch lines would be one line per
+         * eval-round; SWAP_WINDOW 0 = cumulative summaries only).
+         * Terminal and stall epochs always report so the last state
+         * before a stop is on record. Rank 0 carries the global numbers;
+         * other ranks stay quiet. ------------------------------------- */
+        const bool report_epoch =
+            (kb.swap_window > 0 && epoch_count % kb.swap_window == 0) ||
+            terminal_epoch || plateau_hit;
+        if (rank == 0 && report_epoch) {
           const double rate = e_prop > 0
               ? static_cast<double>(e_acc) / static_cast<double>(e_prop) : 0.0;
           const double oob_pct = e_prop > 0
@@ -3232,7 +3192,6 @@ template<typename Vec, typename HostT>
         }
         if (terminal_epoch) break;
         if (plateau_hit) { stop_reason = StopReason::Plateau; break; }
-        if (tmin_hit)    { stop_reason = StopReason::TMin; break; }
       }
       } catch (const core::ShutdownRequested&) {
         if (world > 1) throw;
@@ -3473,8 +3432,7 @@ template<typename Vec, typename HostT>
         case StopReason::External:       reason = "external stop requested (SIGINT/SIGTERM/SIGUSR2)"; break;
         case StopReason::ExternalOnProbe: reason = "external stop requested during T0 probes"; break;
         case StopReason::MaxTimeOnProbe: reason = "MAXTIME exceeded during T0 probes"; break;
-        case StopReason::TMin:           reason = "T < T_MIN (hot end)"; break;
-        case StopReason::Plateau:        reason = "FTOL plateau (Corana eps-NEPS rule, coldest slot)"; break;
+        case StopReason::Plateau:        reason = "FTOL best-stall (global best improved by <= tol over NEPS diagnostics windows)"; break;
         case StopReason::NoDims:         reason = "no optimisable dimensions"; break;
         case StopReason::NoBudget:       reason = "MAXEVAL exhausted before SA proposal"; break;
         case StopReason::Done:           reason = "loop completed normally"; break;

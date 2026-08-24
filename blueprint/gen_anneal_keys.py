@@ -2,10 +2,10 @@
 """Generate include/tadah/hpo/anneal_keys_gen.h from blueprint/anneal_keys.toml.
 
 The TOML file is the single source of truth for the ANNEAL-family PARAM keys
-(names, types, defaults, ranges, applicability, cross-key rules, docs
-metadata).  The generated header is checked in; the ctest target
-hpo_anneal_registry_sync runs `gen_anneal_keys.py --check` and fails when the
-checked-in header drifts from the TOML.
+(names, types, defaults, ranges, applicability, enum values, cross-key rules,
+rename hints, docs metadata).  The generated header is checked in; the ctest
+target hpo_anneal_registry_sync runs `gen_anneal_keys.py --check` and fails
+when the checked-in header drifts from the TOML.
 
 Usage:
   gen_anneal_keys.py --header [-o PATH]   write the header (default path below)
@@ -24,16 +24,19 @@ DEFAULT_TOML = SCRIPT_DIR / "anneal_keys.toml"
 DEFAULT_HEADER = SCRIPT_DIR.parent / "include" / "tadah" / "hpo" / "anneal_keys_gen.h"
 
 KINDS = {"serial": "KIND_SERIAL", "pt": "KIND_PT", "pa": "KIND_PA"}
+KIND_ORDER = ["serial", "pt", "pa"]
 TYPES = {"bool": "AnnealKeyType::Bool", "count": "AnnealKeyType::Count",
-         "float": "AnnealKeyType::Float"}
+         "float": "AnnealKeyType::Float", "enum": "AnnealKeyType::Enum"}
 GROUPS = {"budget", "temperature", "steps", "ladder", "swaps", "init", "stopping"}
 RULE_TYPES = {"requires_flag", "conflicts_flag", "unused_when_set",
-              "unused_when_flag_off", "kind_reject"}
+              "unused_when_flag_off", "requires_enum", "kind_reject"}
 
-KEY_FIELDS = {"name", "type", "default", "default_pt", "default_pa", "kinds",
-              "group", "rank", "doc", "min", "max", "min_open", "max_open",
-              "range_msg", "range_note", "report_value", "custom_range"}
-RULE_FIELDS = {"type", "key", "flag", "other", "kind", "msg"}
+KEY_FIELDS = {"name", "type", "default", "default_serial", "default_pt",
+              "default_pa", "values", "kinds", "group", "rank", "doc",
+              "min", "max", "min_open", "max_open", "range_msg", "range_note",
+              "report_value", "custom_range"}
+RULE_FIELDS = {"type", "key", "flag", "other", "kind", "enum_key", "value", "msg"}
+RENAMED_FIELDS = {"old", "kinds", "msg"}
 
 
 def fail(msg: str) -> None:
@@ -90,13 +93,23 @@ def build_range_msg(key: dict) -> str | None:
     return msg
 
 
+def default_literal(key: dict, raw: str) -> float:
+    """Numeric form of a default: enum defaults resolve to their index."""
+    if key["type"] == "enum":
+        if raw not in key["values"]:
+            fail(f"key {key['name']}: default {raw!r} not in values")
+        return float(key["values"].index(raw))
+    return float(raw)
+
+
 def load(toml_path: pathlib.Path) -> dict:
     with open(toml_path, "rb") as fh:
         data = tomllib.load(fh)
-    if set(data) - {"meta", "key", "rule"}:
-        fail(f"unknown top-level tables: {sorted(set(data) - {'meta', 'key', 'rule'})}")
-    if data.get("meta", {}).get("version") != 1:
-        fail("meta.version must be 1")
+    if set(data) - {"meta", "key", "rule", "renamed"}:
+        fail("unknown top-level tables: "
+             f"{sorted(set(data) - {'meta', 'key', 'rule', 'renamed'})}")
+    if data.get("meta", {}).get("version") != 2:
+        fail("meta.version must be 2")
 
     names = set()
     for key in data.get("key", []):
@@ -115,13 +128,26 @@ def load(toml_path: pathlib.Path) -> dict:
             fail(f"key {key['name']}: bad group {key['group']!r}")
         if not key["kinds"] or any(k not in KINDS for k in key["kinds"]):
             fail(f"key {key['name']}: bad kinds {key['kinds']!r}")
-        for field in ("default", "default_pt", "default_pa"):
-            if field in key:
-                float(key[field])  # must parse
-        if "default_pt" in key and "default" not in key:
-            fail(f"key {key['name']}: default_pt without default")
+        if key["type"] == "enum":
+            values = key.get("values")
+            if not values or not all(
+                    v.isupper() and v.isidentifier() for v in values):
+                fail(f"key {key['name']}: enum needs uppercase identifier values")
+            if any(f in key for f in ("min", "max", "range_msg", "custom_range")):
+                fail(f"key {key['name']}: enum keys take no range")
+        elif "values" in key:
+            fail(f"key {key['name']}: 'values' is enum-only")
         if key["type"] == "bool" and ("min" in key or "max" in key):
             fail(f"key {key['name']}: bool keys take no range")
+        # Resolve per-kind defaults: override > base > absent.
+        key["_def"] = {}
+        for kind in key["kinds"]:
+            raw = key.get(f"default_{kind}", key.get("default"))
+            if raw is not None:
+                key["_def"][kind] = default_literal(key, str(raw))
+        for kind in KIND_ORDER:
+            if f"default_{kind}" in key and kind not in key["kinds"]:
+                fail(f"key {key['name']}: default_{kind} but not a {kind} key")
         key["_range_msg"] = build_range_msg(key)
 
     by_name = {k["name"]: k for k in data.get("key", [])}
@@ -142,10 +168,35 @@ def load(toml_path: pathlib.Path) -> dict:
         elif rule["type"] == "unused_when_set":
             if rule.get("other") not in by_name:
                 fail(f"rule on {rule['key']}: other {rule.get('other')!r} unknown")
+        elif rule["type"] == "requires_enum":
+            ek = rule.get("enum_key")
+            if ek not in by_name or by_name[ek]["type"] != "enum":
+                fail(f"rule on {rule['key']}: enum_key {ek!r} is not an enum key")
+            if rule.get("value") not in by_name[ek]["values"]:
+                fail(f"rule on {rule['key']}: value {rule.get('value')!r} "
+                     f"not in {ek}'s values")
         elif rule["type"] == "kind_reject":
             if rule.get("kind") not in KINDS:
                 fail(f"rule on {rule['key']}: bad kind {rule.get('kind')!r}")
+
+    for ren in data.get("renamed", []):
+        extra = set(ren) - RENAMED_FIELDS
+        if extra:
+            fail(f"renamed {ren.get('old', '?')}: unknown fields {sorted(extra)}")
+        for field in ("old", "kinds", "msg"):
+            if field not in ren:
+                fail(f"renamed {ren.get('old', '?')}: missing '{field}'")
+        if not ren["kinds"] or any(k not in KINDS for k in ren["kinds"]):
+            fail(f"renamed {ren['old']}: bad kinds {ren['kinds']!r}")
+        # A rename hint must not shadow a key that is live for that kind.
+        live = by_name.get(ren["old"])
+        if live and any(k in live["kinds"] for k in ren["kinds"]):
+            fail(f"renamed {ren['old']}: shadows a live key for {ren['kinds']}")
     return data
+
+
+def bool_lit(value: bool) -> str:
+    return "true" if value else "false"
 
 
 def emit(data: dict) -> str:
@@ -169,14 +220,15 @@ def emit(data: dict) -> str:
     out("inline constexpr unsigned KIND_PT     = 2u;")
     out("inline constexpr unsigned KIND_PA     = 4u;")
     out("")
-    out("enum class AnnealKeyType : unsigned char { Bool, Count, Float };")
+    out("enum class AnnealKeyType : unsigned char { Bool, Count, Float, Enum };")
     out("")
     out("enum class AnnealRuleType : unsigned char {")
-    out("  RequiresFlag,      // key valid only when `flag` parses to 1")
-    out("  ConflictsFlag,     // key invalid when `flag` parses to 1")
-    out("  UnusedWhenSet,     // key invalid when `other` is explicitly set")
-    out("  UnusedWhenFlagOff, // key invalid when `flag` parses to 0")
-    out("  KindReject,        // key invalid for `kind`, custom message")
+    out("  RequiresFlag,      // key valid only when bool `arg` parses to 1")
+    out("  ConflictsFlag,     // key invalid when bool `arg` parses to 1")
+    out("  UnusedWhenSet,     // key invalid when `arg` is explicitly set")
+    out("  UnusedWhenFlagOff, // key invalid when bool `arg` parses to 0")
+    out("  RequiresEnum,      // key valid only when enum `arg` == `arg2`")
+    out("  KindReject,        // key invalid for `kind_mask`, custom message")
     out("};")
     out("")
     out("struct AnnealKeyInfo {")
@@ -186,56 +238,82 @@ def emit(data: dict) -> str:
     out("  const char* group;")
     out("  int rank;                // importance order within the group")
     out("  const char* doc;")
-    out("  bool has_default;        // false = presence-tested optional key")
-    out("  double def;              // base default (bool: 0/1)")
-    out("  bool has_def_pt, has_def_pa;")
-    out("  double def_pt, def_pa;   // per-kind default overrides")
+    out("  // Per-kind defaults (absent = presence-tested or run-time AUTO).")
+    out("  bool has_def_serial, has_def_pt, has_def_pa;")
+    out("  double def_serial, def_pt, def_pa;   // enum defaults = value index")
     out("  bool has_min, min_open, has_max, max_open;")
     out("  double min, max;")
     out("  const char* range_msg;   // \"must be ...\"; nullptr = no table range check")
     out("  bool report_value;       // append \" (got <v>)\" to the range message")
+    out("  const char* const* enum_values;  // Enum type only, else nullptr")
+    out("  std::size_t enum_count;")
     out("};")
     out("")
     out("struct AnnealKeyRule {")
     out("  AnnealRuleType type;")
     out("  const char* key;")
-    out("  const char* arg;         // flag / other key; kind name for KindReject")
+    out("  const char* arg;         // flag / other key / enum key")
+    out("  const char* arg2;        // RequiresEnum: required enum token")
     out("  unsigned kind_mask;      // KindReject only")
     out("  const char* msg;         // full message suffix after \"TADAH:<ALGO>: \"")
     out("};")
     out("")
+    out("struct AnnealKeyRename {")
+    out("  const char* old_name;")
+    out("  unsigned kinds;          // where the hint applies")
+    out("  const char* msg;         // full message suffix after \"TADAH:<ALGO>: \"")
+    out("};")
+    out("")
+    for key in data["key"]:
+        if key["type"] != "enum":
+            continue
+        vals = ", ".join(cstr(v) for v in key["values"])
+        out(f"inline constexpr const char* k{key['name']}_values[] = {{{vals}}};")
+    out("")
     out("inline constexpr AnnealKeyInfo kKeys[] = {")
     for key in data["key"]:
         kinds = " | ".join(KINDS[k] for k in key["kinds"])
-        has_default = "default" in key
-        def_v = fmt_double(float(key["default"])) if has_default else "0.0"
-        has_pt, has_pa = "default_pt" in key, "default_pa" in key
-        def_pt = fmt_double(float(key["default_pt"])) if has_pt else "0.0"
-        def_pa = fmt_double(float(key["default_pa"])) if has_pa else "0.0"
+        defs = key["_def"]
+        has = {k: k in defs for k in KIND_ORDER}
+        val = {k: fmt_double(defs[k]) if k in defs else "0.0" for k in KIND_ORDER}
         has_min, has_max = "min" in key, "max" in key
         min_v = fmt_double(float(key["min"])) if has_min else "0.0"
         max_v = fmt_double(float(key["max"])) if has_max else "0.0"
         range_msg = cstr(key["_range_msg"]) if key["_range_msg"] else "nullptr"
+        if key["type"] == "enum":
+            enum_vals = f"k{key['name']}_values"
+            enum_count = str(len(key["values"]))
+        else:
+            enum_vals, enum_count = "nullptr", "0"
         out(f"  {{{cstr(key['name'])}, {TYPES[key['type']]}, {kinds},")
         out(f"   {cstr(key['group'])}, {key['rank']}, {cstr(key['doc'])},")
-        out(f"   {bool_lit(has_default)}, {def_v}, "
-            f"{bool_lit(has_pt)}, {bool_lit(has_pa)}, {def_pt}, {def_pa},")
+        out(f"   {bool_lit(has['serial'])}, {bool_lit(has['pt'])}, "
+            f"{bool_lit(has['pa'])}, {val['serial']}, {val['pt']}, {val['pa']},")
         out(f"   {bool_lit(has_min)}, {bool_lit(bool(key.get('min_open')))}, "
             f"{bool_lit(has_max)}, {bool_lit(bool(key.get('max_open')))}, "
             f"{min_v}, {max_v},")
-        out(f"   {range_msg}, {bool_lit(bool(key.get('report_value')))}}},")
+        out(f"   {range_msg}, {bool_lit(bool(key.get('report_value')))}, "
+            f"{enum_vals}, {enum_count}}},")
     out("};")
     out("")
     rule_cpp = {"requires_flag": "RequiresFlag", "conflicts_flag": "ConflictsFlag",
                 "unused_when_set": "UnusedWhenSet",
                 "unused_when_flag_off": "UnusedWhenFlagOff",
+                "requires_enum": "RequiresEnum",
                 "kind_reject": "KindReject"}
     out("inline constexpr AnnealKeyRule kRules[] = {")
     for rule in data.get("rule", []):
-        arg = rule.get("flag") or rule.get("other") or rule.get("kind") or ""
+        arg = rule.get("flag") or rule.get("other") or rule.get("enum_key") or ""
+        arg2 = rule.get("value") or ""
         mask = KINDS[rule["kind"]] if rule["type"] == "kind_reject" else "0u"
         out(f"  {{AnnealRuleType::{rule_cpp[rule['type']]}, {cstr(rule['key'])}, "
-            f"{cstr(arg)}, {mask}, {cstr(rule['msg'])}}},")
+            f"{cstr(arg)}, {cstr(arg2)}, {mask}, {cstr(rule['msg'])}}},")
+    out("};")
+    out("")
+    out("inline constexpr AnnealKeyRename kRenamed[] = {")
+    for ren in data.get("renamed", []):
+        kinds = " | ".join(KINDS[k] for k in ren["kinds"])
+        out(f"  {{{cstr(ren['old'])}, {kinds}, {cstr(ren['msg'])}}},")
     out("};")
     out("")
     out("inline constexpr const AnnealKeyInfo* find_key(std::string_view name)")
@@ -247,30 +325,42 @@ def emit(data: dict) -> str:
     out("")
     out("}  // namespace anneal_registry")
     out("")
-    out("/* Default values, one constexpr per key with a static default.  The")
-    out(" * anneal::Knobs member initialisers consume these; nothing else may")
-    out(" * restate a default. */")
+    out("/* Default values, one constexpr per key kind-variant with a static")
+    out(" * default (enum defaults are value indices).  The anneal::Knobs")
+    out(" * member initialisers consume these; nothing else may restate a")
+    out(" * default. */")
     out("namespace anneal_defaults {")
     for key in data["key"]:
-        if "default" not in key:
+        defs = key["_def"]
+        if not defs:
             continue
-        out(f"inline constexpr double {key['name']} = "
-            f"{fmt_double(float(key['default']))};")
-    for key in data["key"]:
-        for field, suffix in (("default_pt", "_PT"), ("default_pa", "_PA")):
-            if field in key:
-                out(f"inline constexpr double {key['name']}{suffix} = "
-                    f"{fmt_double(float(key[field]))};")
+        distinct = set(defs.values())
+        if len(distinct) == 1 and set(defs) == set(key["kinds"]):
+            out(f"inline constexpr double {key['name']} = "
+                f"{fmt_double(next(iter(distinct)))};")
+        else:
+            for kind in KIND_ORDER:
+                if kind in defs:
+                    out(f"inline constexpr double {key['name']}_{kind.upper()} = "
+                        f"{fmt_double(defs[kind])};")
     out("}  // namespace anneal_defaults")
+    out("")
+    out("/* Named enum value indices for readable driver code, e.g.")
+    out(" *   kb.step_mode == anneal_enums::STEP_MODE::FROZEN */")
+    out("namespace anneal_enums {")
+    for key in data["key"]:
+        if key["type"] != "enum":
+            continue
+        out(f"namespace {key['name']} {{")
+        for idx, v in enumerate(key["values"]):
+            out(f"inline constexpr int {v} = {idx};")
+        out("}")
+    out("}  // namespace anneal_enums")
     out("")
     out("}  // namespace hpo")
     out("}  // namespace tadah")
     out("")
     return "\n".join(lines)
-
-
-def bool_lit(value: bool) -> str:
-    return "true" if value else "false"
 
 
 def main() -> int:

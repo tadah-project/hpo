@@ -36,16 +36,17 @@
  * constant while varying the core budget. OMP_NUM_THREADS independently
  * drives the residual OpenMP kernels (NN lists, data-stats), not the pool.
  *
- * PA-specific PARAMs (shared stepper knobs as in ANNEAL):
+ * PA-specific PARAMs (shared stepper knobs as in ANNEAL; the full key
+ * registry lives in blueprint/anneal_keys.toml):
  *   POPULATION   4*THREADS (>=16)  population size R (top-level knob)
  *   SWEEPS       1                 rungs per walker per T-step
  *   ESS_TARGET   0.5               adaptive-dbeta target; 0 = geometric
  *   T_HOT        auto              starting temperature
  *   T_MIN        auto (T0*1e-6)    final temperature
  *   RT           0.90              max cooling per step / geometric ratio
- *   INIT_MODE    0                 0: walker0=seed; others use Gaussian
+ *   INIT_MODE    JITTER            JITTER: walker0=seed; others Gaussian
  *                                  jitter (sigma=CLASSIC scale or Corana V)
- *                                  1: walkers>0 uniform in the box
+ *                                  UNIFORM: walkers>0 uniform in the box
  */
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/warmstart_cache.h>   // current_chain() bridge
@@ -230,30 +231,22 @@ template<typename Vec, typename HostT>
       if (kb.t_min) oss << "  T_MIN=" << *kb.t_min;
       else          oss << "  T_MIN=auto(T0*1e-6)";
       if (kb.corana)
-        oss << "  NS=" << kb.NS << "  NT=" << kb.NT << "  C=" << kb.C
+        oss << "  NS=" << kb.NS << "  NT=" << kb.NT
+            << "  CORANA_C=" << kb.corana_c
             << "  V_FLOOR_FRAC=" << kb.v_floor_frac;
       else
-        oss << "  L=" << kb.L;
-      if (sp.step.has_value()) {
-        if (kb.corana)
-          oss << "  STEP=" << *sp.step
-              << " (Corana U(-V,V) half-width; floor/cap applied per dim)";
-        else
-          oss << "  sigma=" << *sp.step
-              << " (CLASSIC Gaussian; explicit STEP)";
-      } else {
-        oss << "  STEP_FRAC=" << kb.step_frac
-            << (kb.corana ? " (Corana V half-width/width)"
-                          : " (CLASSIC Gaussian sigma/width)");
-      }
+        oss << "  CHAIN_LENGTH=" << kb.chain_length;
+      oss << "  STEP_FRAC=" << kb.step_frac
+          << (kb.corana ? " (Corana V half-width/width)"
+                        : " (CLASSIC Gaussian sigma/width)");
       oss << "  BOUNDARY_MODE=" << static_cast<int>(kb.boundary_mode)
           << (kb.boundary_mode == anneal::BoundaryMode::Reflect
                   ? "(REFLECT)" : "(REDRAW)")
-          << "  INIT_MODE=" << kb.init_mode
-          << (kb.init_mode == 0
-                  ? (kb.corana ? "(Gaussian jitter; sigma=initial V)"
-                               : "(Gaussian jitter; sigma=proposal sigma)")
-                  : "(uniform box)");
+          << "  INIT_MODE="
+          << (kb.init_mode == anneal_enums::INIT_MODE::JITTER
+                  ? (kb.corana ? "JITTER (Gaussian; sigma=initial V)"
+                               : "JITTER (Gaussian; sigma=proposal sigma)")
+                  : "UNIFORM (box)");
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
@@ -264,7 +257,7 @@ template<typename Vec, typename HostT>
     const std::uint64_t base_rung_cost =
         kb.corana ? anneal::saturating_mul(
                         anneal::saturating_mul(kb.NT, kb.NS), dim)
-                  : static_cast<std::uint64_t>(kb.L);
+                  : static_cast<std::uint64_t>(kb.chain_length);
     const std::uint64_t rung_cost = anneal::saturating_mul(
         base_rung_cost, static_cast<std::uint64_t>(kb.sweeps));
     const std::uint64_t step_cost = anneal::saturating_mul(
@@ -276,7 +269,7 @@ template<typename Vec, typename HostT>
         oss << "NT*NS*dim*SWEEPS = " << kb.NT << "*" << kb.NS << "*" << dim
             << "*" << kb.sweeps << " = ";
       else
-        oss << "L*SWEEPS = " << kb.L << "*" << kb.sweeps << " = ";
+        oss << "CHAIN_LENGTH*SWEEPS = " << kb.chain_length << "*" << kb.sweeps << " = ";
       oss << rung_cost << " evals;  population T-step = POPULATION*rung = "
           << R << "*" << rung_cost << " = " << step_cost << " evals";
       HPOLog::instance().info(oss.str());

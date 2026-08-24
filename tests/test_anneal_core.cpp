@@ -190,6 +190,19 @@ TEST_CASE("CoranaPlateau: inactive without an FTOL tolerance",
     for (int i = 0; i < 10; ++i) CHECK_FALSE(p.update(5.0, 5.0));
 }
 
+TEST_CASE("CoranaPlateau: FTOL_REL/FTOL_ABS = 0 means disabled, not "
+          "bitwise-equality", "[HPO][anneal_core][plateau]")
+{
+    StopCriteria s;
+    s.ftol_abs = 0.0;
+    s.ftol_rel = 0.0;
+    anneal::CoranaPlateau p(s, 2);
+    CHECK_FALSE(p.active());
+    for (int i = 0; i < 10; ++i) CHECK_FALSE(p.update(5.0, 5.0));
+    /* NEPS=0 is only rejected when a tolerance actually arms the rule. */
+    CHECK_NOTHROW(anneal::CoranaPlateau(s, 0));
+}
+
 TEST_CASE("CoranaPlateau: FTOL_REL scales eps with |f|",
           "[HPO][anneal_core][plateau]")
 {
@@ -220,7 +233,7 @@ TEST_CASE("CoranaPlateau: non-finite values reset rather than satisfy plateau",
 TEST_CASE("CoranaPlateau excludes graded and legacy failure plateaus",
           "[HPO][anneal_core][plateau][failscore][fail_grading]")
 {
-    anneal::CoranaPlateau p(ftol_abs_stop(0.0), 2, 100.0);
+    anneal::CoranaPlateau p(ftol_abs_stop(1e-9), 2, 100.0);
     CHECK_FALSE(p.update(100.0, 100.0));
     CHECK_FALSE(p.update(100.0, 100.0));
     CHECK_FALSE(p.update(99.95, 99.95));
@@ -344,6 +357,10 @@ OptimizerSpec bare_spec()
     sp.high = {1.0};
     sp.is_int = {false};
     sp.log_scaled = {false};
+    /* Serial CHAIN_LENGTH/NT default to AUTO, which requires a MAXEVAL
+     * budget to derive from; parse hard-errors otherwise (tested
+     * explicitly below). */
+    sp.stop.maxeval = 1000;
     return sp;
 }
 
@@ -374,12 +391,12 @@ TEST_CASE("anneal::Knobs::parse defaults", "[HPO][anneal_core][knobs]")
     auto sp = bare_spec();
     const auto kb = anneal::Knobs::parse(sp, anneal::AlgoKind::Serial);
     CHECK_FALSE(kb.corana);
-    CHECK(kb.L == 50);
-    CHECK(kb.NS == 5);
-    CHECK(kb.NT == 5);                 // bench-derived (Kr 42-D, 2026-07-13)
-    CHECK(kb.rt == Approx(0.90));
-    CHECK(kb.t0_paccept == Approx(0.05));
-    CHECK_FALSE(kb.t_hot.has_value());
+    CHECK(kb.chain_length == 0);       // AUTO sentinel: driver derives from MAXEVAL
+    CHECK(kb.NS == 20);                // Corana 1987 NS = 20
+    CHECK(kb.NT == 0);                 // AUTO sentinel
+    CHECK(kb.rt == Approx(0.85));      // Corana 1987 r_T = 0.85
+    CHECK(kb.t0_accept == Approx(0.05));
+    CHECK_FALSE(kb.t_start.has_value());
     CHECK_FALSE(kb.t_min.has_value());
     CHECK(kb.reanneal);
     CHECK(kb.reanneal_scale == Approx(0.25));
@@ -392,15 +409,151 @@ TEST_CASE("anneal::Knobs::parse defaults", "[HPO][anneal_core][knobs]")
     CHECK(kc.reset_to_best);          // flips ON under CORANA
     sp.param["RESET_TO_BEST"] = 0.0;  // explicit override wins
     CHECK_FALSE(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial).reset_to_best);
+
+    /* PA keeps static defaults (values unchanged by the redesign). */
+    auto pa = bare_spec();
+    pa.algo = "ANNEAL_PA";
+    const auto kp = anneal::Knobs::parse(pa, anneal::AlgoKind::PA);
+    CHECK(kp.chain_length == 50);
+    CHECK(kp.NT == 5);
+    CHECK(kp.rt == Approx(0.90));
+    CHECK(kp.init_mode == anneal_enums::INIT_MODE::JITTER);
+
+    /* PT: STEP_MODE defaults to FROZEN; the RAM knobs are normalized to
+     * their 0 = off sentinels outside ADAPTIVE. */
+    auto pt = bare_spec();
+    pt.algo = "ANNEAL_PT";
+    const auto kt = anneal::Knobs::parse(pt, anneal::AlgoKind::PT);
+    CHECK(kt.step_mode == anneal_enums::STEP_MODE::FROZEN);
+    CHECK(kt.step_warmup_sweeps == 12);
+    CHECK(kt.step_adapt_every == 0);
+    CHECK(kt.step_trust_factor == 0.0);
+    CHECK(kt.init_mode == anneal_enums::INIT_MODE::JITTER);
+}
+
+TEST_CASE("anneal::Knobs::parse serial AUTO lengths require MAXEVAL",
+          "[HPO][anneal_core][knobs]")
+{
+    auto sp = bare_spec();
+    sp.stop.maxeval.reset();
+    REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
+                        Catch::Contains("CHAIN_LENGTH AUTO needs MAXEVAL"));
+    sp.param["CHAIN_LENGTH"] = 10.0;
+    REQUIRE_NOTHROW(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial));
+    sp.param.erase("CHAIN_LENGTH");
+    sp.param["CORANA"] = 1.0;
+    REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
+                        Catch::Contains("NT AUTO needs MAXEVAL"));
+    sp.param["NT"] = 3.0;
+    REQUIRE_NOTHROW(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial));
+}
+
+TEST_CASE("anneal::Knobs::parse enum keys take tokens",
+          "[HPO][anneal_core][knobs][enum]")
+{
+    auto pt = bare_spec();
+    pt.algo = "ANNEAL_PT";
+
+    SECTION("numeric STEP_MODE is a hard error naming the tokens") {
+        pt.param["STEP_MODE"] = 1.0;
+        REQUIRE_THROWS_WITH(
+            anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
+            Catch::Contains("takes a token, one of: FIXED FROZEN ADAPTIVE"));
+    }
+    SECTION("unknown STEP_MODE token is reported verbatim") {
+        pt.param_raw["STEP_MODE"] = "SOMETIMES";
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
+                            Catch::Contains("got 'SOMETIMES'"));
+    }
+    SECTION("tokens map onto anneal_enums and arm the ADAPTIVE defaults") {
+        pt.param_raw["STEP_MODE"] = "FIXED";
+        auto kf = anneal::Knobs::parse(pt, anneal::AlgoKind::PT);
+        CHECK(kf.step_mode == anneal_enums::STEP_MODE::FIXED);
+        CHECK(kf.step_adapt_every == 0);
+        CHECK(kf.step_trust_factor == 0.0);
+
+        pt.param_raw["STEP_MODE"] = "ADAPTIVE";
+        auto ka = anneal::Knobs::parse(pt, anneal::AlgoKind::PT);
+        CHECK(ka.step_mode == anneal_enums::STEP_MODE::ADAPTIVE);
+        CHECK(ka.step_adapt_every == 10);      // registry default
+        CHECK(ka.step_trust_factor == 64.0);   // registry default
+    }
+    SECTION("INIT_MODE tokens (PT + PA)") {
+        pt.param_raw["INIT_MODE"] = "UNIFORM";
+        CHECK(anneal::Knobs::parse(pt, anneal::AlgoKind::PT).init_mode ==
+              anneal_enums::INIT_MODE::UNIFORM);
+        auto pa = bare_spec();
+        pa.algo = "ANNEAL_PA";
+        pa.param["INIT_MODE"] = 1.0;
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(pa, anneal::AlgoKind::PA),
+                            Catch::Contains("takes a token, one of: JITTER UNIFORM"));
+        pa.param.erase("INIT_MODE");
+        pa.param_raw["INIT_MODE"] = "JITTER";
+        CHECK(anneal::Knobs::parse(pa, anneal::AlgoKind::PA).init_mode ==
+              anneal_enums::INIT_MODE::JITTER);
+    }
+    SECTION("token values on non-enum keys are typos, not silent zeros") {
+        auto sp = bare_spec();
+        sp.param_raw["STEP_FRAC"] = "BIG";
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
+                            Catch::Contains("must be a number (got 'BIG')"));
+    }
 }
 
 TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
 {
-    SECTION("renamed T_INIT") {
+    SECTION("wrong-kind start-temperature keys steer to the right name") {
         auto sp = bare_spec();
-        sp.param["T_INIT"] = 1.0;
+        sp.param["T_HOT"] = 1.0;   /* serial takes T_INIT */
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
-                            Catch::Contains("renamed to T_HOT"));
+                            Catch::Contains("PARAM T_INIT"));
+        auto pt = bare_spec();
+        pt.algo = "ANNEAL_PT";
+        pt.param["T_INIT"] = 1.0;  /* PT/PA take T_HOT */
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
+                            Catch::Contains("use T_HOT here"));
+    }
+    SECTION("renamed keys are hard errors with migration hints") {
+        auto sp = bare_spec();
+        sp.param["L"] = 5.0;
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
+                            Catch::Contains("renamed to CHAIN_LENGTH"));
+        sp.param.erase("L");
+        sp.param["C"] = 2.0;
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
+                            Catch::Contains("renamed to CORANA_C"));
+        sp.param.erase("C");
+        sp.param["T0_PACCEPT"] = 0.1;
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
+                            Catch::Contains("renamed to T0_ACCEPT"));
+
+        auto pt = bare_spec();
+        pt.algo = "ANNEAL_PT";
+        pt.param["STEP_AUTO"] = 1.0;
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
+                            Catch::Contains("replaced by PARAM STEP_MODE"));
+        pt.param.erase("STEP_AUTO");
+        pt.param["STEP_AUTO_SWEEPS"] = 8.0;
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
+                            Catch::Contains("renamed to STEP_WARMUP_SWEEPS"));
+        pt.param.erase("STEP_AUTO_SWEEPS");
+        pt.param["LADDER_ADAPT_UPDATES"] = 4.0;
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
+                            Catch::Contains("was removed"));
+    }
+    SECTION("PT rejects cooling-schedule keys with static-ladder steering") {
+        for (const char* key : {"RT", "T_MIN", "NT", "CHAIN_LENGTH"}) {
+            auto pt = bare_spec();
+            pt.algo = "ANNEAL_PT";
+            pt.param[key] = 1.0;
+            REQUIRE_THROWS_WITH(anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
+                                Catch::Contains("is not used by ANNEAL_PT"));
+        }
+        auto pt = bare_spec();
+        pt.algo = "ANNEAL_PT";
+        pt.param["RT"] = 0.9;
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
+                            Catch::Contains("static"));
     }
     SECTION("unknown key") {
         auto sp = bare_spec();
@@ -414,14 +567,14 @@ TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
         REQUIRE_THROWS_AS(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
                           std::runtime_error);
     }
-    SECTION("T0_PROBES too small without T_HOT") {
+    SECTION("T0_PROBES too small without T_INIT") {
         auto sp = bare_spec();
         sp.param["T0_PROBES"] = 1.0;
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
                             Catch::Contains("T0_PROBES"));
-        sp.param["T_HOT"] = 1.0;
+        sp.param["T_INIT"] = 1.0;
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
-                            Catch::Contains("unused when T_HOT is set"));
+                            Catch::Contains("unused when T_INIT is set"));
         sp.param.erase("T0_PROBES");
         REQUIRE_NOTHROW(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial));
     }
@@ -441,16 +594,16 @@ TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
     }
     SECTION("integer knobs reject fractions and negatives before casting") {
         auto sp = bare_spec();
-        sp.param["L"] = 1.5;
+        sp.param["CHAIN_LENGTH"] = 1.5;
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
                             Catch::Contains("non-negative integer"));
 
         auto pt = bare_spec();
         pt.algo = "ANNEAL_PT";
-        pt.param["INIT_MODE"] = std::ldexp(1.0, 32);
+        pt.param["REPLICAS"] = 2.5;
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
-                            Catch::Contains("INIT_MODE"));
-        sp.param.erase("L");
+                            Catch::Contains("non-negative integer"));
+        sp.param.erase("CHAIN_LENGTH");
         sp.param["CORANA"] = 1.0;
         sp.param["NS"] = -1.0;
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
@@ -483,12 +636,12 @@ TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
         sp.param["V_FLOOR_FRAC"] = 0.0;
         REQUIRE_NOTHROW(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial));
     }
-    SECTION("temperature floor cannot exceed an explicit hot temperature") {
+    SECTION("temperature floor cannot exceed an explicit start temperature") {
         auto sp = bare_spec();
-        sp.param["T_HOT"] = 1.0;
+        sp.param["T_INIT"] = 1.0;
         sp.param["T_MIN"] = 2.0;
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
-                            Catch::Contains("T_MIN must be <= T_HOT"));
+                            Catch::Contains("T_MIN must be <= T_INIT"));
         sp.param["T_MIN"] = 1.0;
         REQUIRE_NOTHROW(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial));
     }
@@ -517,7 +670,8 @@ TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
 
         auto corana = bare_spec();
         corana.param["CORANA"] = 1.0;
-        corana.param["L"] = 5.0;
+        corana.param["NT"] = 1.0;             /* satisfy the AUTO gate */
+        corana.param["CHAIN_LENGTH"] = 5.0;
         REQUIRE_THROWS_WITH(
             anneal::Knobs::parse(corana, anneal::AlgoKind::Serial),
             Catch::Contains("CLASSIC variant"));
@@ -536,14 +690,14 @@ TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
         step.param["STEP_FRAC"] = 0.2;
         REQUIRE_THROWS_WITH(
             anneal::Knobs::parse(step, anneal::AlgoKind::Serial),
-            Catch::Contains("mutually exclusive"));
+            Catch::Contains("does not use STEP"));
 
         auto hot = bare_spec();
-        hot.param["T_HOT"] = 1.0;
-        hot.param["T0_PACCEPT"] = 0.5;
+        hot.param["T_INIT"] = 1.0;
+        hot.param["T0_ACCEPT"] = 0.5;
         REQUIRE_THROWS_WITH(
             anneal::Knobs::parse(hot, anneal::AlgoKind::Serial),
-            Catch::Contains("unused when T_HOT"));
+            Catch::Contains("unused when T_INIT"));
 
         auto re = bare_spec();
         re.param["REANNEAL"] = 0.0;
@@ -562,11 +716,23 @@ TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
         pt.param.erase("LADDER_SPAN");
         pt.param["T_MIN"] = 1e-3;
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
-                            Catch::Contains("static PT ladder"));
+                            Catch::Contains("static"));
+    }
+    SECTION("top-level STEP is a hard error for the whole family") {
+        for (auto kind : {anneal::AlgoKind::Serial, anneal::AlgoKind::PT,
+                          anneal::AlgoKind::PA}) {
+            auto sp = bare_spec();
+            sp.algo = anneal::algo_name(kind);
+            if (kind == anneal::AlgoKind::PA) sp.pop = 16;
+            sp.step = 0.1;
+            REQUIRE_THROWS_WITH(
+                anneal::Knobs::parse(sp, kind),
+                Catch::Contains("does not use STEP; set PARAM STEP_FRAC"));
+        }
     }
     SECTION("integer parsing rejects the first unrepresentable size") {
         auto sp = bare_spec();
-        sp.param["L"] = std::ldexp(
+        sp.param["CHAIN_LENGTH"] = std::ldexp(
             1.0, std::numeric_limits<std::size_t>::digits);
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
                             Catch::Contains("non-negative integer"));
@@ -858,8 +1024,14 @@ TEST_CASE("anneal::run_rung retains the best graded FAILSCORE repair",
         CAPTURE(corana);
         auto sp = bare_spec();
         sp.failscore = 100.0;
-        sp.param["T_HOT"] = 1.0e300;
-        if (corana) sp.param["CORANA"] = 1.0;
+        sp.param["T_INIT"] = 1.0e300;
+        if (corana) {
+            sp.param["CORANA"] = 1.0;
+            sp.param["NS"] = 2.0;
+            sp.param["NT"] = 1.0;
+        } else {
+            sp.param["CHAIN_LENGTH"] = 2.0;
+        }
         const auto kb = anneal::Knobs::parse(sp, anneal::AlgoKind::Serial);
         auto c = scalar_chain(0.0, 100.0);
         anneal::SharedBudget budget(2);
@@ -889,13 +1061,13 @@ TEST_CASE("anneal::run_rung releases reservations on pre-evaluation stops",
     for (bool corana : {false, true}) {
         CAPTURE(corana);
         auto sp = bare_spec();
-        sp.param["T_HOT"] = 1.0;
+        sp.param["T_INIT"] = 1.0;
         if (corana) {
             sp.param["CORANA"] = 1.0;
             sp.param["NS"] = 2.0;
             sp.param["NT"] = 1.0;
         } else {
-            sp.param["L"] = 2.0;
+            sp.param["CHAIN_LENGTH"] = 2.0;
         }
         const auto kb = anneal::Knobs::parse(sp, anneal::AlgoKind::Serial);
 
@@ -1066,15 +1238,15 @@ TEST_CASE("anneal::make_initial_steps enforces Corana floor and cap",
 {
     auto sp = bare_spec();
     sp.param["CORANA"] = 1.0;
+    sp.param["NT"] = 1.0;
     sp.param["STEP_FRAC"] = 0.01;
     sp.param["V_FLOOR_FRAC"] = 0.10;
     auto kb = anneal::Knobs::parse(sp, anneal::AlgoKind::Serial);
     auto v = anneal::make_initial_steps(sp, kb);
     REQUIRE(v.size() == 1);
-    CHECK(v[0] == Approx(0.2));
+    CHECK(v[0] == Approx(0.2));      /* raised to the V floor 0.10 * width */
 
-    sp.step = 10.0;
-    sp.param.erase("STEP_FRAC");
+    sp.param["STEP_FRAC"] = 1.0;     /* raw 2.0 = the full width cap */
     kb = anneal::Knobs::parse(sp, anneal::AlgoKind::Serial);
     v = anneal::make_initial_steps(sp, kb);
     CHECK(v[0] == Approx(2.0));
@@ -1085,7 +1257,7 @@ TEST_CASE("anneal::make_initial_steps enforces Corana floor and cap",
     kb = anneal::Knobs::parse(sp, anneal::AlgoKind::Serial);
     REQUIRE_THROWS_WITH(anneal::make_initial_steps(sp, kb),
                         Catch::Contains("proposal scale underflowed"));
-    sp.step = std::numeric_limits<double>::denorm_min();
+    sp.param["STEP_FRAC"] = 1.0;     /* full width is still representable */
     kb = anneal::Knobs::parse(sp, anneal::AlgoKind::Serial);
     CHECK(anneal::make_initial_steps(sp, kb)[0] > 0.0);
 }
