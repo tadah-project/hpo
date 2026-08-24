@@ -6,9 +6,10 @@
  * user workload.
  *
  * References: sphere/ellipsoid/Rosenbrock/Rastrigin/Ackley are the
- * standard global-optimization test set; the 4-D staircase is the test
- * function of Corana, Marchesi, Martini & Ridella, ACM TOMS 13(3), 1987
- * (the paper whose annealing algorithm the CORANA variant implements). */
+ * standard global-optimization test set; the 4-D staircase is modeled
+ * on the test function of Corana, Marchesi, Martini & Ridella, ACM TOMS
+ * 13(3), 1987 (the paper whose annealing algorithm the CORANA variant
+ * implements; see the corana4 comment below for how it differs). */
 
 #include <cmath>
 #include <functional>
@@ -132,11 +133,17 @@ inline std::vector<Problem> standard_set()
     }
 
     {
-        /* Corana et al. (1987) staircase: a separable quadratic carved
-         * into flat-bottomed plateaus (step s=0.2, half-width t=0.05,
-         * plateau depth factor c=0.15) with weights d_i cycling
-         * {1, 1000, 10, 100}. Global minimum 0 on the plateau at the
-         * origin; ~1e20 local minima over [-10000, 10000]^4. */
+        /* Separable staircase in the style of Corana et al. (1987):
+         * a quadratic carved into flat-bottomed plateaus per coordinate
+         * (step s=0.2, half-width t=0.05, depth factor c=0.15) with
+         * weights d_i cycling {1, 1000, 10, 100}. Global minimum 0 at
+         * the origin; ~1e20 local minima over [-10000, 10000]^4.
+         * NOTE this is the per-coordinate variant circulated in
+         * secondary implementations, kept as an in-tree benchmark
+         * objective (the recorded perf baseline depends on its exact
+         * values); the paper's actual q_n -- open PRODUCT-region holes,
+         * plateau value from the hole's inner corner -- lives in
+         * test_anneal_corana_protocol.cpp, transcription-verified. */
         constexpr std::size_t dim = 4;
         ps.push_back(Problem{
             "corana4", std::vector<double>(dim, -10000.0),

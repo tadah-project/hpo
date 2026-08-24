@@ -34,6 +34,15 @@ set_tests_properties(hpo_anneal_statistical PROPERTIES
     LABELS "anneal;statistical"
     TIMEOUT 900)
 
+# Corana et al. (1987) protocol-replication oracle: hidden tag
+# [.corana1987], armed by the transcribed reference table
+# tests/data/corana1987_protocol.tsv (reports SKIPPED while empty).
+add_test(NAME hpo_corana1987_protocol
+    COMMAND test_hpo "[.corana1987]")
+set_tests_properties(hpo_corana1987_protocol PROPERTIES
+    LABELS "anneal;statistical"
+    TIMEOUT 900)
+
 # Registry drift gate: the checked-in anneal_keys_gen.h must match what the
 # generator produces from blueprint/anneal_keys.toml. Regenerate with
 #   python3 HPO/blueprint/gen_anneal_keys.py --header

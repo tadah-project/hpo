@@ -4,37 +4,92 @@
 #   A. Corana, M. Marchesi, C. Martini, S. Ridella,
 #   "Minimizing multimodal functions of continuous variables with the
 #   'simulated annealing' algorithm", ACM TOMS 13(3), 262-280 (1987),
-#   doi:10.1145/29380.29864 -- INCLUDING its published Corrigenda.
+#   doi:10.1145/29380.29864, plus its Corrigenda (ACM TOMS 15(3), 287
+#   (1989)).  Local copies used for this transcription (2026-08-24):
+#   SIMULATED_ANNEALING/Literature/29380.29864.pdf and 66888.356281.pdf.
 #
-# This file ships EMPTY (header only).  While it has no data rows,
-# test_anneal_corana_protocol.cpp reports itself as SKIPPED.  Fill it by
-# transcribing the paper's experimental setup and result tables -- never
-# from memory, never from secondary sources.  While transcribing, also
-# verify the test-function definitions coded in
-# test_anneal_corana_protocol.cpp (paraboloid / Rosenbrock / staircase
-# and the weight cycle d = {1, 1000, 10, 100}) against the paper and
-# correct them there if they differ.
+# Transcription notes:
+# * The rows below are the paper's Table II (p. 277): every SA run on the
+#   parabolic multiminima function q_n, one row per starting point.  The
+#   "Function evaluation x 10^-3" column is stored here as raw counts
+#   (684 -> 684000).
+# * Block headers transcribed from Table II: 2-D and 4-D runs used
+#   T0 = 1E8, eps = 1E-4, s = .2, t = .05 with the Section-2 defaults
+#   NS = 20, NT = max(100, 5n) = 100, c = 2, N_eps = 4, r_T = 0.85; the
+#   10-D block used T0 = 1E9, eps = 1E-4, s = .1, t = .04, NS = 15,
+#   NT = 60.  Domains are (-10000, 10000)^n (p. 276); the steepness
+#   vectors d and c_r = 0.15 (p. 272) are coded in
+#   test_anneal_corana_protocol.cpp with the same page citation.
+# * Three 4-D starting points are printed with doubled digits in the
+#   scan (e.g. "-9999" / "10000").  They are resolved here using the
+#   paper's own statement that starts lie "at a distance of about
+#   1000*sqrt(n) from the origin" (p. 276): the resolved coordinates
+#   give norms 1998.5, 2000 (exact), and 1999.2, while the literal
+#   doubled-digit readings give norms > 10000 (and 10000 itself is the
+#   domain boundary).  Resolved rows: (-999,-999,-999,-1000),
+#   (1000,-1000,1000,-1000), (1000,-1000,-999,999).
+# * The paper's Table I (Rosenbrock, n = 2 and 4) is NOT transcribed:
+#   its termination epsilon is not published, so those runs cannot be
+#   replicated faithfully.  The rosenbrock builder in the test (classic
+#   form, signs per the Corrigenda) stays available should the missing
+#   epsilon ever surface.
+# * The accuracy gate encodes the paper's reported outcomes: in 2-D
+#   every run ended at 4.2E-10..4.0E-8 (gate 1E-6, far below the
+#   nearest local minimum 3.375E-3); in 4-D eight of ten runs found the
+#   global minimum (~E-7) and two stopped at the nearest local minimum
+#   3.375E-3 (gate 4E-3; the test additionally requires at least half
+#   of the 4-D runs to reach 1E-6); in 10-D every run stopped at the
+#   nearest local minima valued 5.4E-4 (gate 6E-4 -- finding the global
+#   minimum would also pass).
 #
 # Columns (tab-separated; one row per paper run):
-#   function  paraboloid | rosenbrock | staircase
-#   dim       problem dimension used in the paper run (2, 4, 10, ...)
+#   function  rosenbrock | staircase
+#   dim       problem dimension of the paper run
 #   low,high  uniform search bounds of the paper run (scalars)
 #   start     starting point: comma-separated list (dim values) or one
 #             value replicated across dimensions
+#   fs,ft     staircase grid step s_i and hole half-width t_i for the
+#             run ("-" for rosenbrock)
 #   v0        paper's initial step size (absolute, original units);
-#             "-" = implementation default
+#             "-" = implementation default (Table II does not publish
+#             v0; the step vector self-adapts every NS cycles)
 #   t_init    paper's starting temperature T0 for the run
 #   rt        temperature reduction coefficient r_T
 #   ns        step-adjustment cycle length N_S
-#   nt        temperature-step length N_T (loops per temperature)
+#   nt        temperature-step length N_T (adjustments per temperature)
 #   neps      termination window N_eps
 #   eps       termination tolerance epsilon
-#   accuracy  "reached the optimum" gate on the final best f (from the
-#             final-function-value column of the paper's tables)
-#   neval     paper's reported number of function evaluations for SA on
-#             this run (mean, if the paper reports several sequences)
+#   accuracy  gate on the final best f (see transcription notes)
+#   neval     paper's reported number of function evaluations
 #
 # Acceptance policy applied by the test (fixed in code, not here):
-#   20/20 fixed seeds end with best f <= accuracy, and the mean eval
-#   count over the 20 seeds lies within [0.5x, 2x] of neval.
-function	dim	low	high	start	v0	t_init	rt	ns	nt	neps	eps	accuracy	neval
+#   every run ends with best f <= accuracy; per row, the mean eval
+#   count lies within [0.5x, 2x] of neval; at least half of the
+#   (staircase, 4-D) runs reach 1E-6 (paper: 8/10).
+function	dim	low	high	start	fs	ft	v0	t_init	rt	ns	nt	neps	eps	accuracy	neval
+staircase	2	-10000	10000	1000,888	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	1e-6	684000
+staircase	2	-10000	10000	-999,1001	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	1e-6	680000
+staircase	2	-10000	10000	-999,-889	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	1e-6	708000
+staircase	2	-10000	10000	1001,-998	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	1e-6	696000
+staircase	2	-10000	10000	1441,3	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	1e-6	708000
+staircase	2	-10000	10000	-10,-1410	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	1e-6	680000
+staircase	2	-10000	10000	-1100,850	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	1e-6	696000
+staircase	2	-10000	10000	850,-1100	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	1e-6	656000
+staircase	4	-10000	10000	-999,-999,-999,-1000	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	4e-3	1440000
+staircase	4	-10000	10000	999,1000,1001,-998	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	4e-3	1160000
+staircase	4	-10000	10000	1000,-1000,1000,-1000	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	4e-3	1464000
+staircase	4	-10000	10000	-999,-999,-998,-1000	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	4e-3	1440000
+staircase	4	-10000	10000	1000,999,999,998	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	4e-3	1424000
+staircase	4	-10000	10000	1000,-1000,-999,999	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	4e-3	1416000
+staircase	4	-10000	10000	1000,-1000,998,1000	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	4e-3	1176000
+staircase	4	-10000	10000	0,0,1,2001	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	4e-3	1408000
+staircase	4	-10000	10000	1998,3,10,-13	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	4e-3	1408000
+staircase	4	-10000	10000	1234,-1234,560,-334	0.2	0.05	-	1e8	0.85	20	100	4	1e-4	4e-3	1432000
+staircase	10	-10000	10000	1000	0.1	0.04	-	1e9	0.85	15	60	4	1e-4	6e-4	1638000
+staircase	10	-10000	10000	-1000,1000,-1000,1000,-1000,1000,-1000,1000,-1000,1000	0.1	0.04	-	1e9	0.85	15	60	4	1e-4	6e-4	1638000
+staircase	10	-10000	10000	-999	0.1	0.04	-	1e9	0.85	15	60	4	1e-4	6e-4	1638000
+staircase	10	-10000	10000	999,999,999,999,999,-999,-999,-999,-999,-999	0.1	0.04	-	1e9	0.85	15	60	4	1e-4	6e-4	1548000
+staircase	10	-10000	10000	-999,1000,-999,1000,1000,-999,1000,1000,-999,1000	0.1	0.04	-	1e9	0.85	15	60	4	1e-4	6e-4	1593000
+staircase	10	-10000	10000	3000,4,20,40,120,-3,-6,0,0,100	0.1	0.04	-	1e9	0.85	15	60	4	1e-4	6e-4	1638000
+staircase	10	-10000	10000	1000,-999,1000,-999,1000,-999,1000,-999,1000,-999	0.1	0.04	-	1e9	0.85	15	60	4	1e-4	6e-4	1665000
+staircase	10	-10000	10000	1000,-999,1000,-999,1000,-999,1000,-999,1000,-999	0.1	0.04	-	1e9	0.85	15	60	4	1e-4	6e-4	1611000
