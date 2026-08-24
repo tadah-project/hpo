@@ -1,0 +1,540 @@
+# Single source of truth for the TADAH ANNEAL-family PARAM keys
+# (TADAH:ANNEAL serial classic/Corana, TADAH:ANNEAL_PT, TADAH:ANNEAL_PA).
+#
+# Consumed by blueprint/gen_anneal_keys.py, which emits the checked-in header
+# include/tadah/hpo/anneal_keys_gen.h (constexpr key/rule tables + the
+# anneal_defaults constants used by anneal::Knobs).  A ctest target
+# (hpo_anneal_registry_sync) regenerates the header and fails on drift, so
+# this file, the parser, the CLI capability text, and the documentation key
+# tables cannot diverge silently.
+#
+# Fields per [[key]]:
+#   name       PARAM name as written in config.hpo
+#   type       "bool" (0/1) | "count" (non-negative integer) | "float"
+#   default    literal default value; omit for presence-tested optional keys
+#   default_pt / default_pa   per-kind overrides of `default`
+#   kinds      subset of ["serial", "pt", "pa"] the key applies to
+#   group      budget|temperature|steps|ladder|swaps|init|stopping (docs/caps grouping)
+#   rank       importance order within the group (1 = most important; docs/caps order)
+#   doc        one-line description (docs key tables + CLI caps)
+#   min/max, min_open/max_open   simple numeric range enforced by the table walker
+#   range_msg  overrides the generated range message text (rare)
+#   range_note parenthetical appended to the range message (rare)
+#   report_value  append " (got <value>)" to the range message
+#   custom_range = true   range enforced by hand-written logic in Knobs::parse
+#                         (conditional or cross-key ranges the table cannot express)
+#
+# [[rule]] cross-key constraints, enforced by the table walker:
+#   type = "requires_flag"       key valid only when `flag` is 1
+#          "conflicts_flag"      key invalid when `flag` is 1
+#          "unused_when_set"     key invalid when `other` is explicitly set
+#          "unused_when_flag_off" key invalid when `flag` is explicitly 0 / defaults 0
+#          "kind_reject"         key invalid for `kind`, custom message
+#   msg    exact error message suffix (prefixed with "TADAH:<ALGO>: " by the parser)
+#
+# Semantics that are more than validation (dynamic defaults, keys that force
+# other keys off, spec-level interactions with STEP/FTOL/bounds) live in
+# anneal::Knobs::parse and are marked here with `custom_*` notes.
+
+[meta]
+version = 1
+
+# ---------------------------------------------------------------- shared ----
+
+[[key]]
+name = "CORANA"
+type = "bool"
+default = "0"
+kinds = ["serial", "pt", "pa"]
+group = "steps"
+rank = 1
+doc = "Select the Corana per-dimension adaptive-step kernel instead of the whole-vector CLASSIC kernel."
+
+[[key]]
+name = "STEP_FRAC"
+type = "float"
+default = "0.10"
+kinds = ["serial", "pt", "pa"]
+group = "steps"
+rank = 2
+doc = "Initial proposal scale per dimension as a fraction of the OPTIM interval width."
+min = 0.0
+min_open = true
+max = 1.0
+
+[[key]]
+name = "L"
+type = "count"
+default = "50"
+kinds = ["serial", "pt", "pa"]
+group = "steps"
+rank = 3
+doc = "CLASSIC kernel: whole-vector proposals per temperature rung."
+min = 1
+
+[[key]]
+name = "NS"
+type = "count"
+default = "5"
+kinds = ["serial", "pt", "pa"]
+group = "steps"
+rank = 4
+doc = "Corana kernel: step-variation cycles per step-adjustment cycle."
+min = 1
+range_note = "(Corana variant)"
+
+[[key]]
+name = "NT"
+type = "count"
+default = "5"
+kinds = ["serial", "pt", "pa"]
+group = "steps"
+rank = 5
+doc = "Corana kernel: step-adjustment cycles per temperature rung."
+min = 1
+range_note = "(Corana variant)"
+
+[[key]]
+name = "C"
+type = "float"
+default = "2.0"
+kinds = ["serial", "pt", "pa"]
+group = "steps"
+rank = 6
+doc = "Corana kernel: step-adjustment gain in the 0.4/0.6 acceptance-ratio rule."
+min = 0.0
+min_open = true
+range_note = "(Corana step-adjust gain)"
+
+[[key]]
+name = "V_FLOOR_FRAC"
+type = "float"
+default = "1e-3"
+kinds = ["serial", "pt", "pa"]
+group = "steps"
+rank = 7
+doc = "Corana kernel: lower clamp on the per-dimension step as a fraction of the OPTIM interval width."
+min = 0.0
+max = 1.0
+
+[[key]]
+name = "BOUNDARY_MODE"
+type = "count"
+default = "0"
+kinds = ["serial", "pt", "pa"]
+group = "steps"
+rank = 8
+doc = "Out-of-box proposal handling: 0 = REFLECT (exact mirror fold), 1 = REDRAW the offending coordinate."
+max = 1
+range_msg = "must be 0 (REFLECT) or 1 (REDRAW)"
+
+[[key]]
+name = "RESET_TO_BEST"
+type = "bool"
+kinds = ["serial", "pt", "pa"]
+group = "steps"
+rank = 9
+doc = "Snap the chain back to the best-so-far point after each cooling step (PT: coldest slot only, after each epoch)."
+# default is dynamic: 1 under serial CORANA, else 0 (custom_default in
+# Knobs::parse); PA rejects the key via the kind_reject rule below, so it
+# stays visible to all kinds for the specific error message.
+
+[[key]]
+name = "T_HOT"
+type = "float"
+kinds = ["serial", "pt", "pa"]
+group = "temperature"
+rank = 1
+doc = "Starting (hottest) temperature; when set, the T0 calibration probes are skipped."
+min = 0.0
+min_open = true
+
+[[key]]
+name = "T_MIN"
+type = "float"
+kinds = ["serial", "pt", "pa"]
+group = "temperature"
+rank = 2
+doc = "Stop temperature; unset derives T0 * 1e-6. PT: only meaningful with RT < 1 (hot-end stop)."
+min = 0.0
+min_open = true
+# additional cross-check T_MIN <= T_HOT is hand-written (needs both values)
+
+[[key]]
+name = "RT"
+type = "float"
+default = "0.90"
+default_pt = "1.0"
+kinds = ["serial", "pt", "pa"]
+group = "temperature"
+rank = 3
+doc = "Geometric cooling ratio per rung (PT: applied to every ladder slot per epoch; 1.0 = static ladder)."
+custom_range = true   # (0,1) serial/PA, (0,1] PT; message reports the got-value
+
+[[key]]
+name = "T0_PROBES"
+type = "count"
+default = "20"
+kinds = ["serial", "pt", "pa"]
+group = "temperature"
+rank = 4
+doc = "Local probes used by the automatic T0 calibration."
+custom_range = true   # >= 2 required only when T_HOT is not set
+
+[[key]]
+name = "T0_PACCEPT"
+type = "float"
+default = "0.05"
+kinds = ["serial", "pt", "pa"]
+group = "temperature"
+rank = 5
+doc = "Target initial uphill-acceptance probability: T0 = median(uphill dE) / ln(1/T0_PACCEPT)."
+min = 0.0
+min_open = true
+max = 1.0
+max_open = true
+report_value = true
+
+[[key]]
+name = "NEPS"
+type = "count"
+default = "4"
+kinds = ["serial", "pt", "pa"]
+group = "stopping"
+rank = 1
+doc = "Plateau ring size: consecutive rung-end values that must agree within FTOL_* to stop."
+custom_range = true   # >= 1 enforced only when FTOL_REL/FTOL_ABS arms the plateau
+
+# ---------------------------------------------------------------- serial ----
+
+[[key]]
+name = "REANNEAL"
+type = "bool"
+default = "1"
+kinds = ["serial"]
+group = "temperature"
+rank = 6
+doc = "When the schedule cools below T_MIN with budget left, restart from the best point at a raised temperature."
+
+[[key]]
+name = "REANNEAL_SCALE"
+type = "float"
+default = "0.25"
+kinds = ["serial"]
+group = "temperature"
+rank = 7
+doc = "Start temperature of re-anneal cycle n, as a fraction: T_start = T0 * REANNEAL_SCALE^n."
+min = 0.0
+min_open = true
+max = 1.0
+max_open = true
+
+# -------------------------------------------------------------------- PT ----
+
+[[key]]
+name = "REPLICAS"
+type = "count"
+default = "0"
+kinds = ["pt"]
+group = "ladder"
+rank = 1
+doc = "Number of ladder slots K; 0 resolves to max(THREADS, 2)."
+custom_range = true   # >= 2 enforced only when explicitly set
+
+[[key]]
+name = "T_COLD"
+type = "float"
+kinds = ["pt"]
+group = "temperature"
+rank = 8
+doc = "Coldest ladder slot temperature; unset derives T_HOT / LADDER_SPAN."
+custom_range = true   # > 0 and < T_HOT (needs both values)
+
+[[key]]
+name = "LADDER_SPAN"
+type = "float"
+default = "1e3"
+kinds = ["pt"]
+group = "ladder"
+rank = 2
+doc = "Ratio T_HOT / T_COLD used when T_COLD is not set."
+min = 1.0
+min_open = true
+
+[[key]]
+name = "LADDER_POWER"
+type = "float"
+default = "1.0"
+kinds = ["pt"]
+group = "ladder"
+rank = 3
+doc = "Shape of the initial log-temperature ladder: position_k = (k/(K-1))^power; 1.0 = geometric."
+min = 0.0
+min_open = true
+
+[[key]]
+name = "LADDER_ADAPT"
+type = "bool"
+default = "0"
+kinds = ["pt"]
+group = "ladder"
+rank = 4
+doc = "Adapt interior ladder temperatures toward equal pair swap acceptance (endpoints fixed)."
+
+[[key]]
+name = "LADDER_ADAPT_EVERY"
+type = "count"
+default = "20"
+kinds = ["pt"]
+group = "ladder"
+rank = 5
+doc = "Swap attempts per pair required before each ladder update."
+min = 1
+
+[[key]]
+name = "LADDER_ADAPT_GAIN"
+type = "float"
+default = "1.0"
+kinds = ["pt"]
+group = "ladder"
+rank = 6
+doc = "Initial stochastic-approximation gain of the ladder update."
+min = 0.0
+min_open = true
+max = 1.0
+
+[[key]]
+name = "LADDER_ADAPT_DECAY"
+type = "float"
+default = "0.6"
+kinds = ["pt"]
+group = "ladder"
+rank = 7
+doc = "Diminishing-gain exponent: effective gain = GAIN * update^(-DECAY)."
+min = 0.5
+min_open = true
+max = 1.0
+
+[[key]]
+name = "LADDER_ADAPT_UPDATES"
+type = "count"
+default = "0"
+kinds = ["pt"]
+group = "ladder"
+rank = 8
+doc = "Hard cap on ladder updates; 0 = no cap (the equalization freeze may still stop adaptation)."
+
+[[key]]
+name = "LADDER_MIN_GAP"
+type = "float"
+default = "0.1"
+kinds = ["pt"]
+group = "ladder"
+rank = 9
+doc = "Floor on every interior log-gap as a fraction of the mean gap; 0 disables the floor."
+min = 0.0
+max = 1.0
+max_open = true
+range_note = "(0 disables the floor; 1 would leave no adaptable span)"
+
+[[key]]
+name = "LADDER_FREEZE"
+type = "bool"
+default = "1"
+kinds = ["pt"]
+group = "ladder"
+rank = 10
+doc = "Freeze ladder adaptation once per-pair acceptances are statistically indistinguishable from equalized."
+
+[[key]]
+name = "SWAP_EVERY"
+type = "count"
+default = "1"
+kinds = ["pt"]
+group = "swaps"
+rank = 1
+doc = "Epochs between exchange rounds."
+min = 1
+
+[[key]]
+name = "SWAP_WINDOW"
+type = "count"
+default = "20"
+kinds = ["pt"]
+group = "swaps"
+rank = 2
+doc = "Epochs per windowed swap-diagnostics report; 0 = cumulative tables only."
+
+[[key]]
+name = "STEP_AUTO"
+type = "bool"
+default = "1"
+kinds = ["pt"]
+group = "steps"
+rank = 10
+doc = "CLASSIC kernel: two-phase automatic step calibration (per-coordinate warm-up, then full-vector pilot)."
+
+[[key]]
+name = "STEP_AUTO_SWEEPS"
+type = "count"
+default = "12"
+kinds = ["pt"]
+group = "steps"
+rank = 11
+doc = "Minimum calibration attempts per coordinate (the maximum is twice this)."
+custom_range = true   # >= 1 enforced only when STEP_AUTO is active
+
+[[key]]
+name = "STEP_ADAPT_EVERY"
+type = "count"
+default = "0"
+kinds = ["pt"]
+group = "steps"
+rank = 12
+doc = "Proposals between adaptive step updates after warm-up; 0 = freeze the calibrated step."
+
+[[key]]
+name = "STEP_TRUST_FACTOR"
+type = "float"
+default = "64.0"
+kinds = ["pt"]
+group = "steps"
+rank = 13
+doc = "Clamp adapted step scales to [baseline/f, baseline*f] around the calibrated baseline; 0 = off."
+custom_range = true   # 0 (off) or > 1
+
+# ------------------------------------------------------- parallel shared ----
+
+[[key]]
+name = "INIT_MODE"
+type = "count"
+default = "0"
+kinds = ["pt", "pa"]
+group = "init"
+rank = 1
+doc = "Replica initialisation: 0 = seed point (+ jitter where applicable), 1 = uniform draw in the OPTIM box."
+max = 1
+range_msg = "must be 0 (seed-jitter) or 1 (uniform box)"
+
+# -------------------------------------------------------------------- PA ----
+
+[[key]]
+name = "SWEEPS"
+type = "count"
+default = "1"
+kinds = ["pa"]
+group = "steps"
+rank = 14
+doc = "Rungs per walker per temperature step."
+min = 1
+
+[[key]]
+name = "ESS_TARGET"
+type = "float"
+default = "0.5"
+kinds = ["pa"]
+group = "temperature"
+rank = 9
+doc = "Adaptive temperature-step target for the effective sample size; 0 = geometric RT schedule."
+min = 0.0
+max = 1.0
+max_open = true
+range_note = "(0 = geometric RT schedule)"
+
+# ------------------------------------------------------------------ rules ----
+
+[[rule]]
+type = "requires_flag"
+key = "NS"
+flag = "CORANA"
+msg = "PARAM NS requires PARAM CORANA 1"
+
+[[rule]]
+type = "requires_flag"
+key = "NT"
+flag = "CORANA"
+msg = "PARAM NT requires PARAM CORANA 1"
+
+[[rule]]
+type = "requires_flag"
+key = "C"
+flag = "CORANA"
+msg = "PARAM C requires PARAM CORANA 1"
+
+[[rule]]
+type = "requires_flag"
+key = "V_FLOOR_FRAC"
+flag = "CORANA"
+msg = "PARAM V_FLOOR_FRAC requires PARAM CORANA 1"
+
+[[rule]]
+type = "conflicts_flag"
+key = "L"
+flag = "CORANA"
+msg = "PARAM L belongs to the CLASSIC variant"
+
+[[rule]]
+type = "kind_reject"
+key = "RESET_TO_BEST"
+kind = "pa"
+msg = "PARAM RESET_TO_BEST is not defined for population annealing"
+
+[[rule]]
+type = "unused_when_set"
+key = "T0_PROBES"
+other = "T_HOT"
+msg = "PARAM T0_PROBES is unused when T_HOT is set"
+
+[[rule]]
+type = "unused_when_set"
+key = "T0_PACCEPT"
+other = "T_HOT"
+msg = "PARAM T0_PACCEPT is unused when T_HOT is set"
+
+[[rule]]
+type = "unused_when_flag_off"
+key = "REANNEAL_SCALE"
+flag = "REANNEAL"
+msg = "PARAM REANNEAL_SCALE is unused when REANNEAL is 0"
+
+[[rule]]
+type = "unused_when_set"
+key = "LADDER_SPAN"
+other = "T_COLD"
+msg = "PARAM LADDER_SPAN is unused when T_COLD is set"
+
+[[rule]]
+type = "unused_when_flag_off"
+key = "LADDER_ADAPT_EVERY"
+flag = "LADDER_ADAPT"
+msg = "PARAM LADDER_ADAPT_EVERY is unused when LADDER_ADAPT is 0"
+
+[[rule]]
+type = "unused_when_flag_off"
+key = "LADDER_ADAPT_GAIN"
+flag = "LADDER_ADAPT"
+msg = "PARAM LADDER_ADAPT_GAIN is unused when LADDER_ADAPT is 0"
+
+[[rule]]
+type = "unused_when_flag_off"
+key = "LADDER_ADAPT_DECAY"
+flag = "LADDER_ADAPT"
+msg = "PARAM LADDER_ADAPT_DECAY is unused when LADDER_ADAPT is 0"
+
+[[rule]]
+type = "unused_when_flag_off"
+key = "LADDER_ADAPT_UPDATES"
+flag = "LADDER_ADAPT"
+msg = "PARAM LADDER_ADAPT_UPDATES is unused when LADDER_ADAPT is 0"
+
+[[rule]]
+type = "unused_when_flag_off"
+key = "LADDER_MIN_GAP"
+flag = "LADDER_ADAPT"
+msg = "PARAM LADDER_MIN_GAP is unused when LADDER_ADAPT is 0"
+
+[[rule]]
+type = "unused_when_flag_off"
+key = "LADDER_FREEZE"
+flag = "LADDER_ADAPT"
+msg = "PARAM LADDER_FREEZE is unused when LADDER_ADAPT is 0"

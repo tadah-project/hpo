@@ -21,6 +21,7 @@
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/pc_fail_grading.h>   /* kFailBandFloor, loss_is_feasible */
+#include <tadah/hpo/anneal_keys_gen.h>   /* generated key/rule registry      */
 
 #include <algorithm>
 #include <atomic>
@@ -36,6 +37,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -240,143 +242,156 @@ inline std::optional<double> robust_t0(double f0,
  * dead for the selected algorithm are hard errors (never silently
  * ignored) so typos and stale configs surface immediately. */
 struct Knobs {
-  /* stepper (shared across the family)
-   *
-   * A fixed-MAXEVAL grid on one 42-D Kr EAM workload retained the prior
-   * NS=5 default and changed NT 2->5, RT 0.85->0.90, and T0_PACCEPT
-   * 0.80->0.05.  On matched seeds 201-203, the measured median best losses
-   * were 3.35e-3 for NS5/NT5/P0.05, 1.41 for NS5/NT2/P0.05, and 5.45
-   * for NS5/NT2/P0.80.  These are workload-specific fixed-budget
-   * measurements, not a general ranking of settings. */
-  bool        corana        = false;
-  std::size_t L             = 50;     /* classic chain length per rung   */
-  std::size_t NS            = 5;      /* Corana step cycles              */
-  std::size_t NT            = 5;      /* Corana step-adjust cycles per T */
-  double      C             = 2.0;    /* Corana step-adjust gain         */
-  double      step_frac     = 0.10;
-  double      v_floor_frac  = 1e-3;
-  BoundaryMode boundary_mode = BoundaryMode::Reflect;
-  bool        reset_to_best = false;  /* default flips to true w/ CORANA */
-  std::size_t neps          = 4;
+  /* Every default below comes from the generated anneal_defaults
+   * constants (source of truth: blueprint/anneal_keys.toml).  Do not
+   * restate a literal here. */
+
+  /* stepper (shared across the family) */
+  bool        corana        = anneal_defaults::CORANA == 1.0;
+  std::size_t L             = static_cast<std::size_t>(anneal_defaults::L);
+                                      /* classic chain length per rung   */
+  std::size_t NS            = static_cast<std::size_t>(anneal_defaults::NS);
+                                      /* Corana step cycles              */
+  std::size_t NT            = static_cast<std::size_t>(anneal_defaults::NT);
+                                      /* Corana step-adjust cycles per T */
+  double      C             = anneal_defaults::C;
+                                      /* Corana step-adjust gain         */
+  double      step_frac     = anneal_defaults::STEP_FRAC;
+  double      v_floor_frac  = anneal_defaults::V_FLOOR_FRAC;
+  BoundaryMode boundary_mode =
+      static_cast<BoundaryMode>(static_cast<int>(anneal_defaults::BOUNDARY_MODE));
+  bool        reset_to_best = false;  /* dynamic default: true under
+                                       * serial CORANA (Knobs::parse)    */
+  std::size_t neps          = static_cast<std::size_t>(anneal_defaults::NEPS);
 
   /* temperature family */
   std::optional<double> t_hot;        /* explicit T_HOT skips calibration */
   std::optional<double> t_min;        /* explicit floor; auto = T0 * 1e-6 */
-  double      rt            = 0.90;
-  std::size_t t0_probes     = 20;
-  double      t0_paccept    = 0.05;
+  double      rt            = anneal_defaults::RT;   /* PT: RT_PT        */
+  std::size_t t0_probes     = static_cast<std::size_t>(anneal_defaults::T0_PROBES);
+  double      t0_paccept    = anneal_defaults::T0_PACCEPT;
 
-  /* serial warm re-anneal on T_MIN (run15 lever) */
-  bool        reanneal       = true;
-  double      reanneal_scale = 0.25;
+  /* serial warm re-anneal on T_MIN */
+  bool        reanneal       = anneal_defaults::REANNEAL == 1.0;
+  double      reanneal_scale = anneal_defaults::REANNEAL_SCALE;
 
   /* parallel tempering (ANNEAL_PT only) */
-  std::size_t replicas    = 0;      /* 0 = resolve to max(THREADS, 2)   */
+  std::size_t replicas    = static_cast<std::size_t>(anneal_defaults::REPLICAS);
+                                    /* 0 = resolve to max(THREADS, 2)   */
   std::optional<double> t_cold;     /* explicit coldest slot            */
-  double      ladder_span = 1e3;    /* T_COLD = T_HOT / LADDER_SPAN     */
-  double      ladder_power = 1.0;   /* initial log-ladder shape         */
-  bool        ladder_adapt = false; /* adapt interior temperatures      */
-  std::size_t ladder_adapt_every = 20; /* attempts/pair between updates */
-  double      ladder_adapt_gain = 1.0; /* initial stochastic gain       */
-  double      ladder_adapt_decay = 0.6;/* diminishing-gain exponent     */
-  std::size_t ladder_adapt_updates = 0;/* 0 = no update-count cap (the
+  double      ladder_span = anneal_defaults::LADDER_SPAN;
+                                    /* T_COLD = T_HOT / LADDER_SPAN     */
+  double      ladder_power = anneal_defaults::LADDER_POWER;
+                                    /* initial log-ladder shape         */
+  bool        ladder_adapt = anneal_defaults::LADDER_ADAPT == 1.0;
+                                    /* adapt interior temperatures      */
+  std::size_t ladder_adapt_every =
+      static_cast<std::size_t>(anneal_defaults::LADDER_ADAPT_EVERY);
+                                    /* attempts/pair between updates    */
+  double      ladder_adapt_gain = anneal_defaults::LADDER_ADAPT_GAIN;
+  double      ladder_adapt_decay = anneal_defaults::LADDER_ADAPT_DECAY;
+  std::size_t ladder_adapt_updates =
+      static_cast<std::size_t>(anneal_defaults::LADDER_ADAPT_UPDATES);
+                                    /* 0 = no update-count cap (the
                                      * equalization freeze may still stop
                                      * adaptation; see ladder_freeze)   */
-  double      ladder_min_gap = 0.1; /* min interior log-gap as a fraction
+  double      ladder_min_gap = anneal_defaults::LADDER_MIN_GAP;
+                                    /* min interior log-gap as a fraction
                                      * of the mean gap; 0 = no floor    */
-  bool        ladder_freeze = true; /* pooled-evidence equalization
+  bool        ladder_freeze = anneal_defaults::LADDER_FREEZE == 1.0;
+                                    /* pooled-evidence equalization
                                      * freeze; 0 = adapt forever        */
-  std::size_t swap_every  = 1;      /* exchange attempt every N epochs  */
-  std::size_t swap_window = 20;     /* windowed swap-acc table every N
+  std::size_t swap_every  = static_cast<std::size_t>(anneal_defaults::SWAP_EVERY);
+                                    /* exchange attempt every N epochs  */
+  std::size_t swap_window = static_cast<std::size_t>(anneal_defaults::SWAP_WINDOW);
+                                    /* windowed swap-acc table every N
                                      * epochs (0 = cumulative only)     */
-  bool        step_auto = true;     /* PT CLASSIC coordinate warm-up    */
-  std::size_t step_auto_sweeps = 12;/* minimum attempts per coordinate  */
-  std::size_t step_adapt_every = 0; /* PT diagonal RAM apply cadence     */
-  double      step_trust_factor = 64.0; /* RAM sigma bound as a factor of
+  bool        step_auto = anneal_defaults::STEP_AUTO == 1.0;
+                                    /* PT CLASSIC coordinate warm-up    */
+  std::size_t step_auto_sweeps =
+      static_cast<std::size_t>(anneal_defaults::STEP_AUTO_SWEEPS);
+                                    /* minimum attempts per coordinate  */
+  std::size_t step_adapt_every =
+      static_cast<std::size_t>(anneal_defaults::STEP_ADAPT_EVERY);
+                                    /* PT diagonal RAM apply cadence    */
+  double      step_trust_factor = anneal_defaults::STEP_TRUST_FACTOR;
+                                    /* RAM sigma bound as a factor of
                                      * the calibrated baseline; 0 = off */
 
   /* shared by both parallel drivers */
-  int         init_mode   = 0;      /* 0 = seed + Gaussian jitter, 1 = box */
+  int         init_mode   = static_cast<int>(anneal_defaults::INIT_MODE);
+                                    /* 0 = seed + Gaussian jitter, 1 = box */
 
   /* population annealing (ANNEAL_PA only) */
-  std::size_t sweeps      = 1;      /* rungs per walker per T-step      */
-  double      ess_target  = 0.5;    /* adaptive dbeta target; 0 = RT    */
+  std::size_t sweeps      = static_cast<std::size_t>(anneal_defaults::SWEEPS);
+                                    /* rungs per walker per T-step      */
+  double      ess_target  = anneal_defaults::ESS_TARGET;
+                                    /* adaptive dbeta target; 0 = RT    */
 
   static Knobs parse(const OptimizerSpec& sp, AlgoKind kind);
 };
 
 inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
 {
+  namespace reg = anneal_registry;
   const std::string ctx = std::string("TADAH:") + algo_name(kind);
+  const unsigned kind_mask = kind == AlgoKind::Serial ? reg::KIND_SERIAL
+                           : kind == AlgoKind::PT     ? reg::KIND_PT
+                                                      : reg::KIND_PA;
 
   /* -- renamed keys: hard error naming the replacement -------------- */
   static const std::unordered_map<std::string, std::string> renamed = {
       {"T_INIT", "T_HOT"},
   };
   for (const auto& [old_key, new_key] : renamed) {
-    if (sp.param.count(old_key))
+    if (sp.param.count(old_key) || sp.param_raw.count(old_key))
       throw std::runtime_error(
           ctx + ": PARAM " + old_key + " was renamed to " + new_key +
           " (same meaning: the starting/hottest temperature); update the config");
   }
 
-  /* -- per-kind whitelist: unknown keys are typos or knobs for a
-   *    different family member -------------------------------------- */
-  static const std::unordered_set<std::string> shared_keys = {
-      "CORANA", "NS", "NT", "C", "L", "STEP_FRAC", "V_FLOOR_FRAC",
-      "BOUNDARY_MODE", "RESET_TO_BEST", "NEPS", "T0_PROBES", "T0_PACCEPT",
-      "T_HOT", "T_MIN", "RT",
-  };
-  static const std::unordered_set<std::string> serial_keys = {
-      "REANNEAL", "REANNEAL_SCALE",
-  };
-  static const std::unordered_set<std::string> pt_keys = {
-      "REPLICAS", "T_COLD", "LADDER_SPAN", "SWAP_EVERY", "SWAP_WINDOW",
-      "LADDER_POWER", "LADDER_ADAPT", "LADDER_ADAPT_EVERY",
-      "LADDER_ADAPT_GAIN", "LADDER_ADAPT_DECAY", "LADDER_ADAPT_UPDATES",
-      "LADDER_MIN_GAP", "LADDER_FREEZE",
-      "STEP_AUTO", "STEP_AUTO_SWEEPS", "STEP_ADAPT_EVERY",
-      "STEP_TRUST_FACTOR",
-  };
-  static const std::unordered_set<std::string> pa_keys = {
-      "SWEEPS", "ESS_TARGET",
-  };
-  static const std::unordered_set<std::string> par_keys = {
-      "INIT_MODE",   /* shared by both parallel drivers */
-  };
-  auto allowed = [&](const std::string& k) {
-    if (shared_keys.count(k)) return true;
-    if (kind == AlgoKind::Serial && serial_keys.count(k)) return true;
-    if (kind == AlgoKind::PT && pt_keys.count(k)) return true;
-    if (kind == AlgoKind::PA && pa_keys.count(k)) return true;
-    if (kind != AlgoKind::Serial && par_keys.count(k)) return true;
-    return false;
-  };
-  for (const auto& kv : sp.param) {
-    if (!allowed(kv.first)) {
-      /* Steer knobs of a sibling family member explicitly. */
-      if (kind != AlgoKind::PT && pt_keys.count(kv.first))
+  /* -- membership: key names and family applicability come from the
+   *    generated registry (blueprint/anneal_keys.toml). Unknown or
+   *    wrong-family PARAMs are hard errors; keys of a sibling family
+   *    member steer the user to the right ALGO. --------------------- */
+  auto check_membership = [&](const std::string& name) {
+    const auto* ki = reg::find_key(name);
+    if (ki && (ki->kinds & kind_mask)) return;
+    if (ki) {
+      if (ki->kinds == reg::KIND_PT)
         throw std::runtime_error(
-            ctx + ": PARAM " + kv.first + " belongs to TADAH:ANNEAL_PT");
-      if (kind != AlgoKind::PA && pa_keys.count(kv.first))
+            ctx + ": PARAM " + name + " belongs to TADAH:ANNEAL_PT");
+      if (ki->kinds == reg::KIND_PA)
         throw std::runtime_error(
-            ctx + ": PARAM " + kv.first + " belongs to TADAH:ANNEAL_PA");
-      if (kind != AlgoKind::Serial && serial_keys.count(kv.first))
+            ctx + ": PARAM " + name + " belongs to TADAH:ANNEAL_PA");
+      if (ki->kinds == reg::KIND_SERIAL)
         throw std::runtime_error(
-            ctx + ": PARAM " + kv.first + " belongs to the serial TADAH:ANNEAL");
-      std::string keys;
-      for (const auto& k : shared_keys) { keys += k; keys += " "; }
-      if (kind == AlgoKind::Serial)
-        for (const auto& k : serial_keys) { keys += k; keys += " "; }
-      if (kind == AlgoKind::PT)
-        for (const auto& k : pt_keys) { keys += k; keys += " "; }
-      if (kind == AlgoKind::PA)
-        for (const auto& k : pa_keys) { keys += k; keys += " "; }
-      if (kind != AlgoKind::Serial)
-        for (const auto& k : par_keys) { keys += k; keys += " "; }
+            ctx + ": PARAM " + name + " belongs to the serial TADAH:ANNEAL");
+      if (ki->kinds == (reg::KIND_PT | reg::KIND_PA))
+        throw std::runtime_error(
+            ctx + ": PARAM " + name + " belongs to the parallel drivers "
+            "TADAH:ANNEAL_PT/TADAH:ANNEAL_PA");
+      std::string members;
+      if (ki->kinds & reg::KIND_SERIAL) members += " TADAH:ANNEAL";
+      if (ki->kinds & reg::KIND_PT)     members += " TADAH:ANNEAL_PT";
+      if (ki->kinds & reg::KIND_PA)     members += " TADAH:ANNEAL_PA";
       throw std::runtime_error(
-          ctx + ": unknown PARAM '" + kv.first + "'; accepted keys: " + keys);
+          ctx + ": PARAM " + name + " belongs to" + members);
     }
+    std::string keys;
+    for (const auto& k : reg::kKeys)
+      if (k.kinds & kind_mask) { keys += k.name; keys += ' '; }
+    throw std::runtime_error(
+        ctx + ": unknown PARAM '" + name + "'; accepted keys: " + keys);
+  };
+  for (const auto& kv : sp.param) check_membership(kv.first);
+  for (const auto& kv : sp.param_raw) {
+    check_membership(kv.first);
+    /* Every current family key is numeric; a token value is a typo or
+     * a misplaced word, never a silent 0.0. */
+    throw std::runtime_error(
+        ctx + ": PARAM " + kv.first + " must be a number (got '" +
+        kv.second + "')");
   }
 
   /* -- spec-level knobs that are dead for this family --------------- */
@@ -421,15 +436,41 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
       (!std::isfinite(*sp.failscore) || !(*sp.failscore > 0.0)))
     throw std::runtime_error(ctx + ": FAILSCORE must be finite and > 0");
 
-  auto pget = [&](const char* k, double dflt) {
-    auto it = sp.param.find(k);
-    if (it == sp.param.end()) return dflt;
-    if (!std::isfinite(it->second))
-      throw std::runtime_error(ctx + ": PARAM " + k + " must be finite");
-    return it->second;
+  /* -- typed getters: defaults and value form come from the registry
+   *    entry of each key.  Every (key, value) pair that reaches the
+   *    knobs -- explicit or defaulted -- is recorded for the
+   *    registry-declared range checks that run after the cross-key
+   *    rules (so e.g. "requires CORANA 1" outranks a range error). -- */
+  std::vector<std::pair<const reg::AnnealKeyInfo*, double>> parsed_values;
+  auto pinfo = [&](const char* k) -> const reg::AnnealKeyInfo& {
+    const auto* ki = reg::find_key(k);
+    if (!ki)
+      throw std::logic_error(
+          std::string("anneal_keys.toml lost key ") + k +
+          "; regenerate anneal_keys_gen.h");
+    return *ki;
   };
-  auto pcount = [&](const char* k, double dflt) -> std::size_t {
-    const double v = pget(k, dflt);
+  auto default_of = [&](const reg::AnnealKeyInfo& ki) -> double {
+    if (kind == AlgoKind::PT && ki.has_def_pt) return ki.def_pt;
+    if (kind == AlgoKind::PA && ki.has_def_pa) return ki.def_pa;
+    return ki.def;
+  };
+  auto pget = [&](const char* k) -> double {
+    const auto& ki = pinfo(k);
+    double v;
+    auto it = sp.param.find(k);
+    if (it == sp.param.end()) {
+      v = default_of(ki);
+    } else {
+      if (!std::isfinite(it->second))
+        throw std::runtime_error(ctx + ": PARAM " + k + " must be finite");
+      v = it->second;
+    }
+    parsed_values.emplace_back(&ki, v);
+    return v;
+  };
+  auto pcount = [&](const char* k) -> std::size_t {
+    const double v = pget(k);
     const long double size_limit = std::ldexp(
         1.0L, std::numeric_limits<std::size_t>::digits);
     if (v < 0.0 || std::floor(v) != v ||
@@ -438,145 +479,111 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
           ctx + ": PARAM " + k + " must be a non-negative integer");
     return static_cast<std::size_t>(v);
   };
-  auto pbool = [&](const char* k, bool dflt) -> bool {
-    const double v = pget(k, dflt ? 1.0 : 0.0);
+  auto pbool = [&](const char* k) -> bool {
+    const double v = pget(k);
     if (v != 0.0 && v != 1.0)
       throw std::runtime_error(ctx + ": PARAM " + k + " must be 0 or 1");
     return v == 1.0;
   };
+  /* For keys whose default depends on other knobs (no registry default). */
+  auto pbool_dyn = [&](const char* k, bool dflt) -> bool {
+    auto it = sp.param.find(k);
+    if (it == sp.param.end()) return dflt;
+    if (!std::isfinite(it->second))
+      throw std::runtime_error(ctx + ": PARAM " + k + " must be finite");
+    if (it->second != 0.0 && it->second != 1.0)
+      throw std::runtime_error(ctx + ": PARAM " + k + " must be 0 or 1");
+    return it->second == 1.0;
+  };
 
   Knobs kb;
-  kb.corana        = pbool("CORANA", false);
+  kb.corana        = pbool("CORANA");
 
-  /* Variant-level no-ops are errors.  They used to be admitted by the
-   * family whitelist and then silently ignored by the selected kernel. */
-  if (kb.corana && sp.param.count("L"))
-    throw std::runtime_error(ctx + ": PARAM L belongs to the CLASSIC variant");
-  if (!kb.corana) {
-    for (const char* key : {"NS", "NT", "C", "V_FLOOR_FRAC"})
-      if (sp.param.count(key))
-        throw std::runtime_error(
-            ctx + ": PARAM " + key + " requires PARAM CORANA 1");
-  }
-  if (kind == AlgoKind::PA && sp.param.count("RESET_TO_BEST"))
-    throw std::runtime_error(
-        ctx + ": PARAM RESET_TO_BEST is not defined for population annealing");
-
-  kb.L             = pcount("L", 50.0);
-  kb.NS            = pcount("NS", 5.0);
-  kb.NT            = pcount("NT", 5.0);
-  kb.C             = pget("C", 2.0);
-  kb.step_frac     = pget("STEP_FRAC", 0.10);
-  kb.v_floor_frac  = pget("V_FLOOR_FRAC", 1e-3);
-  const std::size_t boundary = pcount("BOUNDARY_MODE", 0.0);
-  if (boundary > 1)
-    throw std::runtime_error(
-        ctx + ": PARAM BOUNDARY_MODE must be 0 (REFLECT) or 1 (REDRAW)");
-  kb.boundary_mode = static_cast<BoundaryMode>(boundary);
-  /* D23: REDRAW is not a symmetric proposal, and the acceptance rule does
-   * not correct for that.
-   *
-   * constrain_proposal's redraw branch resamples only the offending
-   * coordinate until it lands in range, which is a truncated Gaussian whose
-   * normalisation depends on how much of the kernel's mass sat inside the
-   * box -- i.e. on the CURRENT x. metropolis_accept applies no
-   * Metropolis-Hastings ratio q(x|x')/q(x'|x), so detailed balance does not
-   * hold near a bound and the stationary distribution is skewed away from
-   * the box edges. REFLECT (the default) has no such problem: it is an
-   * exact period-2w fold, hence an involution, hence symmetric.
-   *
-   * Announced rather than corrected, deliberately. The correct ratio for a
-   * SEQUENTIAL per-coordinate redraw depends on which coordinates were
-   * resampled and on each one's in-box mass at both x and x'; a plausible
-   * but wrong ratio would be worse than a documented, bounded bias. For a
-   * minimiser the practical cost is modest -- the deliverable is the best
-   * point visited, not the stationary measure -- but a user sampling near
-   * bounds must know. HINT, not WARNING: the magnitude depends on the
-   * objective and the geometry, so it is a caution, not a proof. */
-  if (kb.boundary_mode == BoundaryMode::Redraw)
-    HPOLog::instance().hint(
-        ctx + ": BOUNDARY_MODE 1 (REDRAW) resamples out-of-box coordinates "
-        "from a truncated kernel whose normalisation depends on the current "
-        "point, and the Metropolis rule applies no Hastings correction for "
-        "it. Sampling near an OPTIM bound is therefore biased away from the "
-        "edge. This does not affect which best point is reported, but if you "
-        "care about the distribution rather than the optimum, use "
-        "BOUNDARY_MODE 0 (REFLECT), which is an exact symmetric fold.");
+  kb.L             = pcount("L");
+  kb.NS            = pcount("NS");
+  kb.NT            = pcount("NT");
+  kb.C             = pget("C");
+  kb.step_frac     = pget("STEP_FRAC");
+  kb.v_floor_frac  = pget("V_FLOOR_FRAC");
+  const std::size_t boundary_raw = pcount("BOUNDARY_MODE");
   /* Corana's published cooling step returns to the best-so-far point.
    * Keep that default for serial Corana; PT defaults off because snapping
-   * hot replicas defeats exchange, while PA rejects the knob above. */
-  kb.reset_to_best = pbool("RESET_TO_BEST",
-                           kb.corana && kind == AlgoKind::Serial);
-  kb.neps          = pcount("NEPS", 4.0);
+   * hot replicas defeats exchange, while PA rejects the knob (registry
+   * KindReject rule). */
+  kb.reset_to_best = pbool_dyn("RESET_TO_BEST",
+                               kb.corana && kind == AlgoKind::Serial);
+  kb.neps          = pcount("NEPS");
 
-  if (sp.param.count("T_HOT")) kb.t_hot = pget("T_HOT", 0.0);
-  if (sp.param.count("T_MIN")) kb.t_min = pget("T_MIN", 0.0);
+  if (sp.param.count("T_HOT")) kb.t_hot = pget("T_HOT");
+  if (sp.param.count("T_MIN")) kb.t_min = pget("T_MIN");
   /* RT: cooling ratio everywhere. PT default 1.0 = static ladder (pure
    * tempering); RT < 1 turns PT into a cooling-ladder hybrid. */
-  kb.rt            = pget("RT", kind == AlgoKind::PT ? 1.0 : 0.90);
-  kb.t0_probes     = pcount("T0_PROBES", 20.0);
-  kb.t0_paccept    = pget("T0_PACCEPT", 0.05);
+  kb.rt            = pget("RT");
+  kb.t0_probes     = pcount("T0_PROBES");
+  kb.t0_paccept    = pget("T0_PACCEPT");
 
-  kb.reanneal       = kind == AlgoKind::Serial && pbool("REANNEAL", true);
-  kb.reanneal_scale = pget("REANNEAL_SCALE", 0.25);
+  kb.reanneal       = kind == AlgoKind::Serial && pbool("REANNEAL");
+  kb.reanneal_scale = pget("REANNEAL_SCALE");
 
-  kb.replicas    = pcount("REPLICAS", 0.0);
-  if (sp.param.count("T_COLD")) kb.t_cold = pget("T_COLD", 0.0);
-  kb.ladder_span = pget("LADDER_SPAN", 1e3);
-  kb.ladder_power = pget("LADDER_POWER", 1.0);
-  kb.ladder_adapt = pbool("LADDER_ADAPT", false);
-  kb.ladder_adapt_every = pcount("LADDER_ADAPT_EVERY", 20.0);
-  kb.ladder_adapt_gain = pget("LADDER_ADAPT_GAIN", 1.0);
-  kb.ladder_adapt_decay = pget("LADDER_ADAPT_DECAY", 0.6);
-  kb.ladder_adapt_updates = pcount("LADDER_ADAPT_UPDATES", 0.0);
-  kb.ladder_min_gap = pget("LADDER_MIN_GAP", 0.1);
-  kb.ladder_freeze = pbool("LADDER_FREEZE", true);
-  kb.swap_every  = pcount("SWAP_EVERY", 1.0);
-  kb.swap_window = pcount("SWAP_WINDOW", 20.0);
-  kb.step_auto = kind == AlgoKind::PT && pbool("STEP_AUTO", true);
-  kb.step_auto_sweeps = pcount("STEP_AUTO_SWEEPS", 12.0);
-  kb.step_adapt_every = pcount("STEP_ADAPT_EVERY", 0.0);
-  kb.step_trust_factor = pget("STEP_TRUST_FACTOR", 64.0);
-  const std::size_t init_mode = pcount("INIT_MODE", 0.0);
-  if (kind != AlgoKind::Serial && init_mode > 1)
-    throw std::runtime_error(
-        ctx + ": PARAM INIT_MODE must be 0 (seed-jitter) or 1 (uniform box)");
-  kb.init_mode   = static_cast<int>(init_mode);
-  kb.sweeps      = pcount("SWEEPS", 1.0);
-  kb.ess_target  = pget("ESS_TARGET", 0.5);
+  kb.replicas    = pcount("REPLICAS");
+  if (sp.param.count("T_COLD")) kb.t_cold = pget("T_COLD");
+  kb.ladder_span = pget("LADDER_SPAN");
+  kb.ladder_power = pget("LADDER_POWER");
+  kb.ladder_adapt = pbool("LADDER_ADAPT");
+  kb.ladder_adapt_every = pcount("LADDER_ADAPT_EVERY");
+  kb.ladder_adapt_gain = pget("LADDER_ADAPT_GAIN");
+  kb.ladder_adapt_decay = pget("LADDER_ADAPT_DECAY");
+  kb.ladder_adapt_updates = pcount("LADDER_ADAPT_UPDATES");
+  kb.ladder_min_gap = pget("LADDER_MIN_GAP");
+  kb.ladder_freeze = pbool("LADDER_FREEZE");
+  kb.swap_every  = pcount("SWAP_EVERY");
+  kb.swap_window = pcount("SWAP_WINDOW");
+  kb.step_auto = kind == AlgoKind::PT && pbool("STEP_AUTO");
+  kb.step_auto_sweeps = pcount("STEP_AUTO_SWEEPS");
+  kb.step_adapt_every = pcount("STEP_ADAPT_EVERY");
+  kb.step_trust_factor = pget("STEP_TRUST_FACTOR");
+  const std::size_t init_mode_raw = pcount("INIT_MODE");
+  kb.sweeps      = pcount("SWEEPS");
+  kb.ess_target  = pget("ESS_TARGET");
 
-  /* Explicitly reject controls whose values would be ignored.  Silent
-   * precedence is especially dangerous in long HPO runs because the banner
-   * can show both knobs while only one affects the trajectory. */
+  /* -- registry cross-key rules (blueprint/anneal_keys.toml): explicitly
+   *    set keys whose values would be ignored are hard errors, never
+   *    silent.  Silent precedence is especially dangerous in long HPO
+   *    runs because the banner can show both knobs while only one
+   *    affects the trajectory. ------------------------------------------ */
+  auto flag_parsed = [&](std::string_view flag) -> bool {
+    if (flag == "CORANA")       return kb.corana;
+    if (flag == "REANNEAL")     return kb.reanneal;
+    if (flag == "LADDER_ADAPT") return kb.ladder_adapt;
+    throw std::logic_error(
+        "anneal_keys.toml rule references unmapped flag '" +
+        std::string(flag) + "'");
+  };
+  for (const auto& rule : reg::kRules) {
+    if (!sp.param.count(rule.key)) continue;
+    bool fire = false;
+    switch (rule.type) {
+      case reg::AnnealRuleType::RequiresFlag:
+        fire = !flag_parsed(rule.arg); break;
+      case reg::AnnealRuleType::ConflictsFlag:
+        fire = flag_parsed(rule.arg); break;
+      case reg::AnnealRuleType::UnusedWhenSet:
+        fire = sp.param.count(rule.arg) != 0; break;
+      case reg::AnnealRuleType::UnusedWhenFlagOff:
+        fire = !flag_parsed(rule.arg); break;
+      case reg::AnnealRuleType::KindReject:
+        fire = (rule.kind_mask & kind_mask) != 0; break;
+    }
+    if (fire) throw std::runtime_error(ctx + ": " + rule.msg);
+  }
+
+  /* -- cross-key semantics beyond the registry rule forms ------------ */
   if (sp.step && sp.param.count("STEP_FRAC"))
     throw std::runtime_error(
         ctx + ": STEP and PARAM STEP_FRAC are mutually exclusive");
-  if (sp.param.count("T_HOT")) {
-    for (const char* key : {"T0_PROBES", "T0_PACCEPT"})
-      if (sp.param.count(key))
-        throw std::runtime_error(
-            ctx + ": PARAM " + key + " is unused when T_HOT is set");
-  }
-  if (kind == AlgoKind::Serial && !kb.reanneal &&
-      sp.param.count("REANNEAL_SCALE"))
-    throw std::runtime_error(
-        ctx + ": PARAM REANNEAL_SCALE is unused when REANNEAL is 0");
-  if (kind == AlgoKind::PT && kb.t_cold &&
-      sp.param.count("LADDER_SPAN"))
-    throw std::runtime_error(
-        ctx + ": PARAM LADDER_SPAN is unused when T_COLD is set");
   if (kind == AlgoKind::PT && kb.rt == 1.0 && kb.t_min)
     throw std::runtime_error(
         ctx + ": PARAM T_MIN is unused by a static PT ladder (RT=1)");
-  if (kind == AlgoKind::PT && !kb.ladder_adapt) {
-    for (const char* key : {"LADDER_ADAPT_EVERY", "LADDER_ADAPT_GAIN",
-                            "LADDER_ADAPT_DECAY", "LADDER_ADAPT_UPDATES",
-                            "LADDER_MIN_GAP", "LADDER_FREEZE"})
-      if (sp.param.count(key))
-        throw std::runtime_error(
-            ctx + ": PARAM " + key +
-            " is unused when LADDER_ADAPT is 0");
-  }
   if (kind == AlgoKind::PT && kb.corana) {
     for (const char* key : {"STEP_AUTO", "STEP_AUTO_SWEEPS",
                             "STEP_ADAPT_EVERY", "STEP_TRUST_FACTOR"})
@@ -617,41 +624,66 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
         ctx + ": PARAM STEP_TRUST_FACTOR is unused when STEP_ADAPT_EVERY "
               "is 0 (no adaptive diagonal to bound)");
 
-  /* -- validation ---------------------------------------------------- */
+  /* -- registry-declared ranges (checked after the cross-key rules so
+   *    a wrong-variant key errors as such, not with a range message;
+   *    covers every explicit or defaulted value that was parsed) ----- */
+  for (const auto& [ki, v] : parsed_values) {
+    if (!ki->range_msg) continue;
+    bool bad = false;
+    if (ki->has_min) bad = ki->min_open ? !(v > ki->min) : !(v >= ki->min);
+    if (!bad && ki->has_max)
+      bad = ki->max_open ? !(v < ki->max) : !(v <= ki->max);
+    if (bad) {
+      std::string msg =
+          ctx + ": PARAM " + ki->name + " " + ki->range_msg;
+      if (ki->report_value) msg += " (got " + std::to_string(v) + ")";
+      throw std::runtime_error(msg);
+    }
+  }
+  kb.boundary_mode = static_cast<BoundaryMode>(boundary_raw);
+  kb.init_mode     = static_cast<int>(init_mode_raw);
+  /* D23: REDRAW is not a symmetric proposal, and the acceptance rule does
+   * not correct for that.
+   *
+   * constrain_proposal's redraw branch resamples only the offending
+   * coordinate until it lands in range, which is a truncated Gaussian whose
+   * normalisation depends on how much of the kernel's mass sat inside the
+   * box -- i.e. on the CURRENT x. metropolis_accept applies no
+   * Metropolis-Hastings ratio q(x|x')/q(x'|x), so detailed balance does not
+   * hold near a bound and the stationary distribution is skewed away from
+   * the box edges. REFLECT (the default) has no such problem: it is an
+   * exact period-2w fold, hence an involution, hence symmetric.
+   *
+   * Announced rather than corrected, deliberately. The correct ratio for a
+   * SEQUENTIAL per-coordinate redraw depends on which coordinates were
+   * resampled and on each one's in-box mass at both x and x'; a plausible
+   * but wrong ratio would be worse than a documented, bounded bias. For a
+   * minimiser the practical cost is modest -- the deliverable is the best
+   * point visited, not the stationary measure -- but a user sampling near
+   * bounds must know. HINT, not WARNING: the magnitude depends on the
+   * objective and the geometry, so it is a caution, not a proof. */
+  if (kb.boundary_mode == BoundaryMode::Redraw)
+    HPOLog::instance().hint(
+        ctx + ": BOUNDARY_MODE 1 (REDRAW) resamples out-of-box coordinates "
+        "from a truncated kernel whose normalisation depends on the current "
+        "point, and the Metropolis rule applies no Hastings correction for "
+        "it. Sampling near an OPTIM bound is therefore biased away from the "
+        "edge. This does not affect which best point is reported, but if you "
+        "care about the distribution rather than the optimum, use "
+        "BOUNDARY_MODE 0 (REFLECT), which is an exact symmetric fold.");
+
+  /* -- validation beyond the registry ranges ------------------------- */
   const bool rt_one_ok = (kind == AlgoKind::PT);
   if (!(kb.rt > 0.0 && (kb.rt < 1.0 || (rt_one_ok && kb.rt == 1.0))))
     throw std::runtime_error(ctx + ": PARAM RT must be in "
         + std::string(rt_one_ok ? "(0,1]" : "(0,1)") + " (got "
         + std::to_string(kb.rt) + ")");
-  if (!kb.corana && kb.L == 0)
-    throw std::runtime_error(ctx + ": PARAM L must be >= 1");
-  if (kb.corana) {
-    if (kb.NS == 0)
-      throw std::runtime_error(ctx + ": PARAM NS must be >= 1 (Corana variant)");
-    if (kb.NT == 0)
-      throw std::runtime_error(ctx + ": PARAM NT must be >= 1 (Corana variant)");
-    if (!(kb.C > 0.0))
-      throw std::runtime_error(ctx + ": PARAM C must be > 0 (Corana step-adjust gain)");
-  }
-  if (!(kb.step_frac > 0.0 && kb.step_frac <= 1.0))
-    throw std::runtime_error(ctx + ": PARAM STEP_FRAC must be in (0,1]");
-  if (!(kb.v_floor_frac >= 0.0 && kb.v_floor_frac <= 1.0))
-    throw std::runtime_error(ctx + ": PARAM V_FLOOR_FRAC must be in [0,1]");
-  if (!(kb.t0_paccept > 0.0 && kb.t0_paccept < 1.0))
-    throw std::runtime_error(ctx + ": PARAM T0_PACCEPT must be in (0,1) (got "
-        + std::to_string(kb.t0_paccept) + ")");
-  if (kb.t_hot && !(*kb.t_hot > 0.0))
-    throw std::runtime_error(ctx + ": PARAM T_HOT must be > 0");
-  if (kb.t_min && !(*kb.t_min > 0.0))
-    throw std::runtime_error(ctx + ": PARAM T_MIN must be > 0");
   if (kb.t_hot && kb.t_min && *kb.t_min > *kb.t_hot)
     throw std::runtime_error(ctx + ": PARAM T_MIN must be <= T_HOT");
   if (!kb.t_hot && kb.t0_probes < 2)
     throw std::runtime_error(
         ctx + ": PARAM T0_PROBES must be >= 2 when T_HOT is not set "
         "(the calibration needs at least two probes)");
-  if (!(kb.reanneal_scale > 0.0 && kb.reanneal_scale < 1.0))
-    throw std::runtime_error(ctx + ": PARAM REANNEAL_SCALE must be in (0,1)");
   const bool plateau_armed =
       sp.stop.ftol_rel.has_value() || sp.stop.ftol_abs.has_value();
   if (plateau_armed && kb.neps == 0)
@@ -665,28 +697,6 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
       if (kb.t_hot && !(*kb.t_cold < *kb.t_hot))
         throw std::runtime_error(ctx + ": PARAM T_COLD must be < T_HOT");
     }
-    if (!(kb.ladder_span > 1.0))
-      throw std::runtime_error(ctx + ": PARAM LADDER_SPAN must be > 1");
-    if (!(kb.ladder_power > 0.0))
-      throw std::runtime_error(ctx + ": PARAM LADDER_POWER must be > 0");
-    if (kb.ladder_adapt) {
-      if (kb.ladder_adapt_every == 0)
-        throw std::runtime_error(
-            ctx + ": PARAM LADDER_ADAPT_EVERY must be >= 1");
-      if (!(kb.ladder_adapt_gain > 0.0 && kb.ladder_adapt_gain <= 1.0))
-        throw std::runtime_error(
-            ctx + ": PARAM LADDER_ADAPT_GAIN must be in (0,1]");
-      if (!(kb.ladder_adapt_decay > 0.5 && kb.ladder_adapt_decay <= 1.0))
-        throw std::runtime_error(
-            ctx + ": PARAM LADDER_ADAPT_DECAY must be in (0.5,1]");
-      if (!std::isfinite(kb.ladder_min_gap) ||
-          !(kb.ladder_min_gap >= 0.0 && kb.ladder_min_gap < 1.0))
-        throw std::runtime_error(
-            ctx + ": PARAM LADDER_MIN_GAP must be in [0,1) "
-            "(0 disables the floor; 1 would leave no adaptable span)");
-    }
-    if (kb.swap_every == 0)
-      throw std::runtime_error(ctx + ": PARAM SWAP_EVERY must be >= 1");
     if (kb.step_auto && kb.step_auto_sweeps == 0)
       throw std::runtime_error(
           ctx + ": PARAM STEP_AUTO_SWEEPS must be >= 1");
@@ -695,15 +705,8 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
            kb.step_trust_factor > 1.0)))
       throw std::runtime_error(
           ctx + ": PARAM STEP_TRUST_FACTOR must be 0 (off) or > 1");
-    if (kb.rt < 1.0 && kb.t_min && !(*kb.t_min > 0.0))
-      throw std::runtime_error(ctx + ": PARAM T_MIN must be > 0");
   }
   if (kind == AlgoKind::PA) {
-    if (kb.sweeps == 0)
-      throw std::runtime_error(ctx + ": PARAM SWEEPS must be >= 1");
-    if (!(kb.ess_target >= 0.0 && kb.ess_target < 1.0))
-      throw std::runtime_error(
-          ctx + ": PARAM ESS_TARGET must be in [0,1) (0 = geometric RT schedule)");
     if (sp.pop && *sp.pop < 8)
       throw std::runtime_error(ctx + ": POPULATION must be >= 8");
   }

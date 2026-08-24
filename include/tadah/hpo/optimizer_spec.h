@@ -48,6 +48,13 @@ enum class GradStrategy { Numerical, Analytical, Hybrid };
 
 using ParamMap = std::unordered_map<std::string,double>;
 
+/* PARAM values that did not parse as numbers are stored verbatim here
+ * (name -> raw token). Families with enum-valued PARAM keys consume the
+ * token form; families whose keys are all numeric reject any entry with
+ * a hard error. Before this map existed a non-numeric PARAM value was
+ * silently stored as 0.0. */
+using RawParamMap = std::unordered_map<std::string,std::string>;
+
 /* InitStrategySpec -- parsed `INIT/ENDINIT` block.
  * Resolved into a polymorphic InitStrategy by build_init_strategy()
  * after bounds + log-scale are settled. */
@@ -290,10 +297,10 @@ struct OptimizerSpec {
           lib(o.lib), algo(o.algo),
           inner(o.inner ? std::make_unique<OptimizerSpec>(*o.inner) : nullptr),
           prestage(o.prestage ? std::make_unique<OptimizerSpec>(*o.prestage) : nullptr),
-          vector_storage(o.vector_storage), pop(o.pop), seed(o.seed),
-          num_threads(o.num_threads), step(o.step),
+          vector_storage(o.vector_storage), pop(o.pop),
+          num_threads(o.num_threads), seed(o.seed), step(o.step),
           grad_strategy(o.grad_strategy), stop(o.stop),
-          param(o.param), low(o.low), high(o.high),
+          param(o.param), param_raw(o.param_raw), low(o.low), high(o.high),
           parameter_labels(o.parameter_labels), is_int(o.is_int),
           log_scaled(o.log_scaled), log_threshold(o.log_threshold),
           optim_init(o.optim_init),
@@ -337,7 +344,10 @@ struct OptimizerSpec {
     std::unique_ptr<OptimizerSpec> prestage;
 
     /* --------- algorithm-specific parameters ---------------------- */
-    std::optional<unsigned> vector_storage, pop, seed, num_threads;
+    std::optional<unsigned> vector_storage, pop, num_threads;
+    /* 64-bit so SEED values at or above 2^32 are preserved exactly;
+     * every consumer already widens to std::uint64_t. */
+    std::optional<std::uint64_t> seed;
     std::optional<double> step;
 
     /* Gradient backend used by gradient-based optimizers (DLIB:BFGS,
@@ -348,6 +358,7 @@ struct OptimizerSpec {
 
     StopCriteria stop;
     ParamMap     param;             // algorithm-specific knobs
+    RawParamMap  param_raw;         // PARAM values that were not numeric
 
     /* -------- bounds, integer mask, log-scale --------------------- */
     std::vector<double> low, high;          // filled by HPOTargets

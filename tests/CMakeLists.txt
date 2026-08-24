@@ -25,6 +25,20 @@ endif()
 include(Catch.cmake)
 catch_discover_tests(test_hpo)
 
+# Registry drift gate: the checked-in anneal_keys_gen.h must match what the
+# generator produces from blueprint/anneal_keys.toml. Regenerate with
+#   python3 HPO/blueprint/gen_anneal_keys.py --header
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME hpo_anneal_registry_sync
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/../blueprint/gen_anneal_keys.py
+            --check)
+    set_tests_properties(hpo_anneal_registry_sync PROPERTIES
+        LABELS "anneal"
+        TIMEOUT 30)
+endif()
+
 if(TADAH_HPO_MPI)
     add_executable(test_hpo_anneal_mpi mpi/test_anneal_mpi.cpp)
     target_link_libraries(test_hpo_anneal_mpi PRIVATE

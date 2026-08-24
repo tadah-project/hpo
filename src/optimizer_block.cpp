@@ -1,8 +1,10 @@
 #include <tadah/hpo/optimizer_block.h>
 
 #include <cctype>
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
+#include <string>
 
 namespace tadah {
 namespace hpo {
@@ -61,7 +63,7 @@ bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
     iss >> v;
     a.step = v;
   } else if (key == "SEED") {
-    unsigned long v;
+    std::uint64_t v;
     iss >> v;
     a.seed = v;
   } else if (key == "VECTOR_ARR") {
@@ -94,10 +96,26 @@ bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
           "(got '" +
           v + "')");
   } else if (key == "PARAM") {
-    std::string p;
-    double v;
-    iss >> p >> v;
-    a.param[p] = v;
+    std::string p, raw;
+    iss >> p >> raw;
+    if (p.empty() || raw.empty())
+      throw std::runtime_error("PARAM requires a name and a value");
+    /* Numeric values land in `param`; anything else is kept verbatim in
+     * `param_raw` for families with enum-valued keys (numeric-only
+     * families reject raw entries with a hard error). The pre-registry
+     * parser silently stored 0.0 for a non-numeric value. */
+    bool numeric = false;
+    try {
+      std::size_t pos = 0;
+      const double v = std::stod(raw, &pos);
+      if (pos == raw.size()) {
+        a.param[p] = v;
+        numeric = true;
+      }
+    } catch (const std::exception&) {
+      /* not numeric */
+    }
+    if (!numeric) a.param_raw[p] = raw;
   } else
     return false;
   return true;

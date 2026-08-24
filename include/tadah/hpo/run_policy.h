@@ -171,7 +171,7 @@ public:
       /* Decorrelate the starts: reusing one seed hands every start the
        * same proposal stream, so stochastic inner optimisers (ANNEAL)
        * produce near-duplicate chains that differ only by init point. */
-      if (spec.seed) sub.seed = *spec.seed + static_cast<unsigned>(i);
+      if (spec.seed) sub.seed = *spec.seed + static_cast<std::uint64_t>(i);
 
       const std::string start_msg =
           "MULTISTART start " + std::to_string(i+1) + "/" +
