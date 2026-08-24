@@ -111,8 +111,8 @@ TEST_CASE("HPOLog pinned-dim audit -- mark/unmark + milestone table",
     log.arm_pin_audit(sp, 1e-3, 64, "epoch");
 
     /* Epoch 5: chain 3 pins dim0 LO; chain 7 pins dim0 LO + dim2 HI. */
-    log.record_pin_state(3, 5, {{0, false, 0.0}});
-    log.record_pin_state(7, 5, {{0, false, 1e-6}, {2, true, 0.0}});
+    log.record_pin_state(3, 5, {{0, false, 0.0, 1e-3}});
+    log.record_pin_state(7, 5, {{0, false, 1e-6, 1e-3}, {2, true, 0.0, 1e-3}});
 
     log.record_eval(100, 1.0, false);          /* milestone 1 */
     std::string s1 = slurp(path);
@@ -131,7 +131,7 @@ TEST_CASE("HPOLog pinned-dim audit -- mark/unmark + milestone table",
     /* Epoch 6: chain 3 leaves its bound (unmark); chain 7 keeps dim0
      * pinned (since-unit must survive) but releases dim2. */
     log.record_pin_state(3, 6, {});
-    log.record_pin_state(7, 6, {{0, false, 2e-6}});
+    log.record_pin_state(7, 6, {{0, false, 2e-6, 1e-3}});
 
     log.record_eval(200, 1.0, false);          /* milestone 2 */
     std::string s2 = slurp(path).substr(s1.size());

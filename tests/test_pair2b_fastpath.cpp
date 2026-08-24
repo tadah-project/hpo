@@ -12,6 +12,7 @@
 #include "catch2/catch.hpp"
 
 #include <tadah/core/core_user_config_parser.h>
+#include <tadah/core/periodic_table.h>
 #include <tadah/hpo/runners.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
 
@@ -124,6 +125,9 @@ double getd(LammpsRunner& runner, const LammpsRunner::LMPPtr& lmp,
 
 TEST_CASE("pair2b fast path: static + box/relax parity vs generic kernel",
           "[pair_tadah][pair2b][eamfast]") {
+    /* Building the potential resolves "Kr"; required when this case runs
+     * first in its process (ctest runs one case per process). */
+    tadah::core::PeriodicTable::initialize();
     LammpsRunner runner;
 
     struct Obs { double e, fn, fm, p, a0; bool fast; };
@@ -173,6 +177,7 @@ TEST_CASE("pair2b fast path: static + box/relax parity vs generic kernel",
 
 TEST_CASE("pair2b fast path: adjoint capture falls back to the generic kernel",
           "[pair_tadah][pair2b][eamfast][adjoint]") {
+    tadah::core::PeriodicTable::initialize();
     LammpsRunner runner;
     const std::string pot_path = write_pot(/*eamfast=*/true);
     tadah::core::Context pot_ctx;

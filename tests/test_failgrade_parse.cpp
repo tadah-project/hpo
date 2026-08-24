@@ -82,7 +82,8 @@ std::string config_head() {
 
 }  // namespace
 
-TEST_CASE("--failvar: name-only and name+scale parse onto LammpsSim",
+TEST_CASE("PC_LAMMPS --failvar: name-only and name+scale parse onto "
+          "LammpsSim",
           "[failgrade][parse][failvar]")
 {
     tadah::core::PeriodicTable::initialize();
@@ -108,7 +109,7 @@ TEST_CASE("--failvar: name-only and name+scale parse onto LammpsSim",
     CHECK_FALSE(trg.LS[0].is_failprobe);
 }
 
-TEST_CASE("--failvar: rejections", "[failgrade][parse][failvar]")
+TEST_CASE("PC_LAMMPS --failvar: rejections", "[failgrade][parse][failvar]")
 {
     tadah::core::PeriodicTable::initialize();
     auto ctx = make_context_for_targets();
