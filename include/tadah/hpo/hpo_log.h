@@ -44,14 +44,17 @@ namespace tadah::mlip { struct LoadTransformReport; }
 
 namespace tadah::hpo {
 
-/* One near-bound floor-step observation reported by a CORANA driver.
- * The chain is within one floor-step of an OPTIM bound and V[i] cannot
- * shrink further. Inward proposals remain possible; this mark is a
- * heuristic diagnostic and makes no claim about the optimum. */
+/* One near-bound observation reported by an annealing driver: the
+ * chain sits within one proposal step of an OPTIM bound (under CORANA
+ * the step has additionally bottomed out at its floor, so no further
+ * shrinkage can work it free). Inward proposals remain possible; this
+ * mark is a heuristic diagnostic and makes no claim about the optimum. */
 struct PinnedDim {
     std::size_t dim;   /* search-space dimension index */
     bool        hi;    /* true = nearest the HIGH bound, false = LOW */
     double      gap;   /* |x - bound|, optimiser-internal units */
+    double      tol;   /* audit tolerance = the dim's proposal scale
+                        * (CORANA: the V floor; CLASSIC: sigma[i]) */
 };
 
 /* =========================================================================
@@ -442,7 +445,7 @@ private:
      * arm time (labels at write_optimizer_section time) so the printer
      * never reaches back into optimiser state. pin_chains_ == 0 <=>
      * audit off. */
-    struct PinInfo { std::uint64_t since; double gap; };
+    struct PinInfo { std::uint64_t since; double gap; double tol; };
     std::map<std::tuple<int, std::size_t, int>, PinInfo> pin_state_;
     std::vector<std::string> pin_labels_;
     std::vector<double>      pin_low_, pin_high_;

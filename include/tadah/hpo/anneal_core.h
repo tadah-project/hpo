@@ -61,14 +61,39 @@ inline const char* algo_name(AlgoKind k)
 /* ---- RNG stream discipline ----------------------------------------
  *
  * Every consumer of randomness gets its own mt19937_64 seeded from
- * (SEED, salt, index) through a seed_seq. Streams are therefore
- * decorrelated and independent: enabling/disabling the T0 probes no
- * longer shifts the proposal sequence, and parallel chains draw
- * reproducibly regardless of thread scheduling. */
+ * (SEED, salt, index) through a seed_seq: chains (SALT_CHAIN, per global
+ * slot), T0 probes (SALT_PROBES; index 1 = the PT second pass), PT swap
+ * coins (SALT_PT_SWAP, per epoch*K+pair), the PT step warm-up
+ * (SALT_WARMUP, per global slot), and the PA resampler. Streams are
+ * decorrelated and independent, so the calibration phases (T0 probes,
+ * warm-up, pilot) never shift a chain's production proposal sequence:
+ * with explicit temperatures and a fixed ladder, chain proposals are a
+ * pure function of (SEED, slot) for every STEP_MODE, and parallel
+ * chains draw reproducibly regardless of thread scheduling. (Chain
+ * INITIALIZATION -- JITTER/UNIFORM draws for slots >= 1 -- does consume
+ * the chain stream and legitimately differs between INIT_MODEs.) */
 constexpr std::uint64_t SALT_CHAIN       = 0xC4A1C;  /* chain i proposals+coins */
 constexpr std::uint64_t SALT_PROBES      = 0x70B35;  /* T0 calibration probes   */
 constexpr std::uint64_t SALT_PT_SWAP     = 0x5757;   /* PT swap coins (epoch)   */
 constexpr std::uint64_t SALT_PA_RESAMPLE = 0x9E5A;   /* PA resampler (tstep)    */
+constexpr std::uint64_t SALT_WARMUP      = 0x57A21;  /* PT step warm-up + pilot */
+
+/* ---- adaptation targets (literature constants) ----------------------
+ *
+ * kTargetAcceptVector: optimal acceptance for whole-vector random-walk
+ *   Metropolis in moderate-to-high dimension (Roberts, Gelman & Gilks,
+ *   Ann. Appl. Probab. 7, 110 (1997): 0.234).
+ * kTargetAcceptCoord: optimal acceptance for one-coordinate-at-a-time
+ *   proposals (the d = 1 scaling limit; Gelman, Roberts & Gilks 1996:
+ *   0.44).
+ * kRamDecay: Robbins-Monro gain exponent eta_j = j^-kRamDecay for the
+ *   adaptive-Metropolis update; any value in (1/2, 1] satisfies the
+ *   diminishing-adaptation conditions (Andrieu & Thoms, Stat. Comput.
+ *   18, 343 (2008)). Distinct from LADDER_ADAPT_DECAY, which governs the
+ *   temperature-ladder controller.  */
+constexpr double kTargetAcceptVector = 0.234;
+constexpr double kTargetAcceptCoord  = 0.44;
+constexpr double kRamDecay           = 0.6;
 
 inline std::mt19937_64 make_stream(std::uint64_t seed,
                                    std::uint64_t salt,
@@ -241,6 +266,24 @@ inline std::optional<double> robust_t0(double f0,
  * decides which keys are accepted. Renamed keys and knobs that are
  * dead for the selected algorithm are hard errors (never silently
  * ignored) so typos and stale configs surface immediately. */
+/* Test/tooling observation seam: the drivers report every chain's
+ * end-of-rung (PT: end-of-sweep, PRE-swap) state and every exchange
+ * attempt. Coordinates arrive in TRANSFORMED (post-LOG_HP) space. Not
+ * config-parseable; wired via OptimizerSpec::anneal_observer. Zero cost
+ * when null. Callbacks run on the driver thread that owns the chain
+ * (PT worker threads for on_rung_end -- implementations must be
+ * thread-safe there; on_swap_attempt fires on the driver's exchange
+ * phase, single-threaded). */
+struct ChainObserver {
+  virtual void on_rung_end(int /*slot*/, double /*T*/,
+                           const std::vector<double>& /*x*/, double /*f*/) {}
+  virtual void on_swap_attempt(std::size_t /*epoch*/, std::size_t /*pair*/,
+                               bool /*accepted*/, bool /*degenerate*/,
+                               double /*t_lo*/, double /*t_hi*/,
+                               double /*f_lo*/, double /*f_hi*/) {}
+  virtual ~ChainObserver() = default;
+};
+
 struct Knobs {
   /* Every default below comes from the generated anneal_defaults
    * constants (source of truth: blueprint/anneal_keys.toml).  Do not
@@ -311,9 +354,6 @@ struct Knobs {
   std::size_t step_warmup_sweeps =
       static_cast<std::size_t>(anneal_defaults::STEP_WARMUP_SWEEPS);
                                     /* min calibration attempts/coord    */
-  std::size_t step_adapt_every = 0; /* RAM apply cadence; parse sets the
-                                     * registry default under ADAPTIVE,
-                                     * 0 = RAM off (FIXED/FROZEN)        */
   double      step_trust_factor = 0.0;
                                     /* RAM sigma bound as a factor of the
                                      * calibrated baseline; parse sets
@@ -331,6 +371,9 @@ struct Knobs {
                                     /* rungs per walker per T-step      */
   double      ess_target  = anneal_defaults::ESS_TARGET;
                                     /* adaptive dbeta target; 0 = RT    */
+
+  /* test/tooling seam, copied from OptimizerSpec::anneal_observer */
+  ChainObserver* observer = nullptr;
 
   static Knobs parse(const OptimizerSpec& sp, AlgoKind kind);
 };
@@ -585,7 +628,6 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   kb.step_mode   = kind == AlgoKind::PT ? penum("STEP_MODE")
                                         : anneal_enums::STEP_MODE::FIXED;
   kb.step_warmup_sweeps = pcount("STEP_WARMUP_SWEEPS");
-  kb.step_adapt_every = pcount("STEP_ADAPT_EVERY");
   kb.step_trust_factor = pget("STEP_TRUST_FACTOR");
   kb.init_mode   = kind != AlgoKind::Serial
                        ? penum("INIT_MODE")
@@ -659,12 +701,12 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     throw std::runtime_error(
         ctx + ": PARAM STEP_WARMUP_SWEEPS is unused when STEP_MODE is "
               "FIXED (no calibration warm-up runs)");
-  /* The RAM cadence and its trust region exist only under ADAPTIVE;
-   * FIXED/FROZEN kernels carry the 0 = off sentinels internally. */
-  if (kb.step_mode != anneal_enums::STEP_MODE::ADAPTIVE) {
-    kb.step_adapt_every  = 0;
+  /* The trust region exists only under ADAPTIVE (the per-proposal RAM);
+   * FIXED/FROZEN kernels carry the 0 = off sentinel internally. */
+  if (kb.step_mode != anneal_enums::STEP_MODE::ADAPTIVE)
     kb.step_trust_factor = 0.0;
-  }
+
+  kb.observer = sp.anneal_observer;
 
   /* -- registry-declared ranges (checked after the cross-key rules so
    *    a wrong-variant key errors as such, not with a range message;
@@ -1297,10 +1339,7 @@ struct ChainState {
   std::mt19937_64     rng;
   Vec    best_x;
   double best_f = std::numeric_limits<double>::infinity();
-  std::vector<double> diag_ram_delta;
-  double              diag_ram_scalar_delta = 0.0;
-  std::uint64_t       diag_ram_proposals = 0;
-  std::size_t         diag_ram_pending = 0;
+  std::uint64_t       diag_ram_proposals = 0;  /* RAM eta counter j */
   /* Sweep-mode Corana accumulators (ANNEAL_PT): per-dimension accept /
    * propose counts and the completed-sweep counter feeding the V
    * adjustment every NS sweeps. Slot-resident, like V itself. The
@@ -1309,59 +1348,66 @@ struct ChainState {
   std::size_t              corana_sweeps = 0;
 };
 
-/* Scalar-plus-diagonal robust-adaptive-Metropolis contribution. Every
- * proposal updates both accumulators; STEP_ADAPT_EVERY controls only when the
- * proposal kernel changes. The scalar term can repair a common scale error in
- * O(1) rather than O(D) adaptation time. The centred diagonal term changes
- * shape without also changing the geometric-mean scale. */
+/* Scalar-plus-diagonal robust-adaptive-Metropolis update, applied ONCE
+ * PER PROPOSAL (Robbins-Monro: ln V_i += clamp(eta_j * g_i, +/- ln 2),
+ * eta_j = j^-kRamDecay).  The scalar part eta*(alpha - kTargetAcceptVector)
+ * repairs a common scale error in O(1) adaptation time; the centred
+ * shape part changes per-dimension shape without moving the
+ * geometric-mean scale.
+ *
+ * Per-observation application matters: the previous implementation
+ * accumulated a whole STEP_ADAPT_EVERY window of increments and applied
+ * the sum in one multiplicative step, so every acceptance in the window
+ * was measured at a stale kernel and the feedback-loop gain was
+ * multiplied by the window length -- the +/- ln 2 clamp and the trust
+ * region were containing that oscillation rather than any real drift.
+ * Here each acceptance feeds back immediately at its own eta_j, which
+ * is the form the convergence results are stated for (Andrieu & Thoms
+ * 2008), and STEP_ADAPT_EVERY ceased to mean anything and was retired. */
 template<class Vec>
-void accumulate_diagonal_ram(ChainState<Vec>& c,
-                             const std::vector<double>& z,
-                             long double alpha,
-                             const OptimizerSpec& sp,
-                             std::size_t adapt_every,
-                             double trust_factor = 0.0)
+void apply_diagonal_ram(ChainState<Vec>& c,
+                        const std::vector<double>& z,
+                        long double alpha,
+                        const OptimizerSpec& sp,
+                        double trust_factor = 0.0)
 {
-  if (adapt_every == 0) return;
   const std::size_t dim = z.size();
-  if (c.diag_ram_delta.size() != dim)
-    c.diag_ram_delta.assign(dim, 0.0);
+  if (dim == 0) return;
   long double norm2 = 0.0L;
   for (double zi : z) norm2 += static_cast<long double>(zi) * zi;
   const std::uint64_t j = ++c.diag_ram_proposals;
-  ++c.diag_ram_pending;
   const long double eta = std::min<long double>(
-      1.0L, std::pow(static_cast<long double>(j), -0.6L));
-  c.diag_ram_scalar_delta +=
-      static_cast<double>(eta * (alpha - 0.234L));
+      1.0L, std::pow(static_cast<long double>(j),
+                     -static_cast<long double>(kRamDecay)));
+  const long double err =
+      alpha - static_cast<long double>(kTargetAcceptVector);
+  const double scalar = static_cast<double>(eta * err);
+
+  /* Centred shape term from THIS proposal's standardised displacement. */
+  std::vector<double> delta(dim, 0.0);
+  double shape_mean = 0.0;
   if (norm2 > 0.0L && std::isfinite(norm2)) {
     for (std::size_t i = 0; i < dim; ++i) {
       const long double ratio =
           static_cast<long double>(z[i]) * z[i] / norm2;
-      const long double term = eta * (alpha - 0.234L) * ratio;
-      c.diag_ram_delta[i] += static_cast<double>(std::log1p(term));
+      delta[i] = static_cast<double>(std::log1p(eta * err * ratio));
+      shape_mean += delta[i];
     }
+    shape_mean /= static_cast<double>(dim);
   }
-  if (c.diag_ram_pending < adapt_every) return;
 
   const double log2 = std::log(2.0);
-  const double shape_mean = dim > 0
-      ? std::accumulate(c.diag_ram_delta.begin(), c.diag_ram_delta.end(), 0.0) /
-            static_cast<double>(dim)
-      : 0.0;
   for (std::size_t i = 0; i < dim; ++i) {
     const double log_sigma_factor = std::clamp(
-        c.diag_ram_scalar_delta +
-            0.5 * (c.diag_ram_delta[i] - shape_mean),
-        -log2, log2);
+        scalar + 0.5 * (delta[i] - shape_mean), -log2, log2);
     long double next = static_cast<long double>(c.V[i]) *
                        std::exp(static_cast<long double>(log_sigma_factor));
     /* D27: the centred shape term is a mean-zero random walk with no
-     * restoring force, so per-dim sigma can drift arbitrarily far from
-     * its calibrated scale (run24 held dims at sigma/width ~ 2e-10 for
-     * 70k epochs).  Bound it to a factor of the recorded baseline.  The
-     * support floor/cap is applied LAST: representability outranks the
-     * trust region, so a coordinate can always still move. */
+     * restoring force, so per-dim sigma can still drift far from its
+     * calibrated scale over long runs.  Bound it to a factor of the
+     * recorded baseline.  The support floor/cap is applied LAST:
+     * representability outranks the trust region, so a coordinate can
+     * always still move. */
     if (trust_factor > 1.0 && c.V_baseline.size() == dim) {
       const long double base = static_cast<long double>(c.V_baseline[i]);
       next = std::max(base / trust_factor,
@@ -1374,9 +1420,6 @@ void accumulate_diagonal_ram(ChainState<Vec>& c,
                     std::min(static_cast<long double>(cap), next));
     c.V[i] = static_cast<double>(next);
   }
-  std::fill(c.diag_ram_delta.begin(), c.diag_ram_delta.end(), 0.0);
-  c.diag_ram_scalar_delta = 0.0;
-  c.diag_ram_pending = 0;
 }
 
 /* ---- one rung (temperature step) on one chain ------------------------
@@ -1548,26 +1591,26 @@ std::vector<PinnedDim> pinned_dims(const ChainState<Vec>& c,
   const std::size_t dim = sp.low.size();
   for (std::size_t i = 0; i < dim; ++i) {
     const double w = sp.high[i] - sp.low[i];
-    if (w <= 0.0) continue;
+    if (w <= 0.0 || c.V.size() <= i) continue;
+    /* The audit tolerance is the dim's ACTUAL proposal scale, so the
+     * report means the same thing under both kernels: "x sits within one
+     * proposal step of an OPTIM limit".
+     *   CORANA:  V[i] is the adaptive half-width; a dim is interesting
+     *            only when V[i] has ALSO bottomed out at the
+     *            V_FLOOR_FRAC*width floor -- no further shrinkage is
+     *            available to work it free.
+     *   CLASSIC: V[i] is the (calibrated or fixed) Gaussian sigma;
+     *            there is no floor clause because sigma does not shrink
+     *            in response to bound pressure. */
     const double v_lo = kb.v_floor_frac * w;
-    /* Corana only: a dim is interesting when its step has ALSO bottomed
-     * out, because then no further shrinkage is available to work it free.
-     * That clause cannot be applied to CLASSIC -- V_FLOOR_FRAC is a
-     * Corana-only knob (Knobs::parse rejects it otherwise), so under
-     * CLASSIC it is just the 1e-3 default, while a calibrated CLASSIC
-     * sigma/width sits several orders of magnitude below that. The test
-     * would be vacuously true for every dim and the audit would degenerate
-     * into an unconditional near-bound report while still claiming "step at
-     * the V floor". Under CLASSIC the remaining clause -- x within
-     * v_floor_frac*width of a bound -- is exact, checkable, and is what the
-     * table actually reports. */
     if (kb.corana && c.V[i] > v_lo * (1.0 + 1e-9))
       continue;   /* step can still shrink */
+    const double tol = kb.corana ? v_lo : c.V[i];
     const double g_lo = c.x(i) - sp.low[i];
     const double g_hi = sp.high[i] - c.x(i);
     const bool   hi   = g_hi < g_lo;
     const double gap  = hi ? g_hi : g_lo;
-    if (gap <= v_lo) out.push_back(PinnedDim{i, hi, gap});
+    if (gap <= tol) out.push_back(PinnedDim{i, hi, gap, tol});
   }
   return out;
 }
@@ -1586,7 +1629,7 @@ RungStats classic_rung(ChainState<Vec>& c, double T,
   std::normal_distribution<double>       ndist(0.0, 1.0);
   std::uniform_real_distribution<double> udist(0.0, 1.0);
   std::vector<double> z;
-  if (kb.step_adapt_every > 0) z.resize(dim);
+  if (kb.step_mode == anneal_enums::STEP_MODE::ADAPTIVE) z.resize(dim);
 
   for (std::size_t k = 0; k < kb.chain_length; ++k) {
     if (rs.proposed >= allowance) { rs.stop = RungStop::Budget; break; }
@@ -1645,8 +1688,7 @@ RungStats classic_rung(ChainState<Vec>& c, double T,
       }
     }
     if (!z.empty())
-      accumulate_diagonal_ram(c, z, alpha, sp, kb.step_adapt_every,
-                              kb.step_trust_factor);
+      apply_diagonal_ram(c, z, alpha, sp, kb.step_trust_factor);
     if (stopval_reached(c.f, ctx.stopval, sp.failscore)) {
       ctx.stop.store(true, std::memory_order_relaxed);
       rs.stop = RungStop::StopVal;

@@ -490,6 +490,19 @@ inline bool accept_exchange(double cold_temperature, double hot_temperature,
   return log_m < log_threshold;
 }
 
+/* D21: hard diagnostic thresholds, named in one place and stated once in
+ * the journal's startup diagnostics block. They shape WARNINGs only --
+ * never the sampling or adaptation itself (with one exception: degenerate
+ * equal-loss exchanges are excluded from ladder-adaptation evidence). */
+constexpr double      kStepHealthAcceptLo   = 0.05;
+constexpr double      kStepHealthAcceptHi   = 0.50;
+constexpr std::size_t kStepHealthStreak     = 2;    /* windows */
+constexpr std::size_t kTransportWindowFactor = 100; /* x (K-1) rounds */
+constexpr std::size_t kLadderFreezeMinAttempts = 100; /* pooled/pair */
+/* A window whose swap acceptance is mostly degenerate exchanges carries
+ * (almost) no tempering information; warn above this fraction. */
+constexpr double      kDegenerateWarnFrac   = 0.5;
+
 /* D29: render a per-slot count grid on the standard [lo-hi] rows-of-8
  * layout (slots absent from `entries` print 0). */
 inline std::string format_slot_count_table(
@@ -605,6 +618,11 @@ struct DimCalibration {
 };
 
 struct SlotCalibration {
+  /* Dedicated warm-up RNG stream (SALT_WARMUP, keyed by global slot):
+   * calibration draws must not touch the chain's production stream, so
+   * toggling STEP_MODE never shifts the production proposal sequence
+   * for a given SEED. Seeded by the driver before the first phase. */
+  std::mt19937_64 rng;
   std::vector<DimCalibration> dims;
   std::size_t coordinate_proposed = 0;
   std::size_t coordinate_accepted = 0;
@@ -676,9 +694,9 @@ void coordinate_warmup(
     const anneal::Knobs& kb, HostT& host, anneal::StopCtx& ctx,
     std::uint64_t allowance, SlotCalibration& out)
 {
-  constexpr double target = 0.44;
-  constexpr double target_lo = 0.29;
-  constexpr double target_hi = 0.59;
+  constexpr double target = anneal::kTargetAcceptCoord;
+  constexpr double target_lo = target - 0.15;
+  constexpr double target_hi = target + 0.15;
   /* Gross-miss thresholds (also the D28 sensitivity-classification
    * boundaries) and the bracket-acceptance factor: a two-sided bracket
    * with upper <= 4x lower puts the in-band scale within 2x of either
@@ -853,7 +871,7 @@ void coordinate_warmup(
   };
 
   while (!active.empty()) {
-    std::shuffle(active.begin(), active.end(), c.rng);
+    std::shuffle(active.begin(), active.end(), out.rng);
     std::vector<std::size_t> next;
     next.reserve(active.size());
     for (std::size_t i : active) {
@@ -879,7 +897,7 @@ void coordinate_warmup(
       Vec proposal = c.x;
       auto draw = [&]() -> long double {
         return static_cast<long double>(c.x(i)) +
-               static_cast<long double>(c.V[i]) * ndist(c.rng);
+               static_cast<long double>(c.V[i]) * ndist(out.rng);
       };
       long double value = draw();
       anneal::constrain_proposal(value, sp.low[i], sp.high[i],
@@ -899,7 +917,7 @@ void coordinate_warmup(
         ++dc.batch_unusable;
       }
       const bool accepted = anneal::metropolis_accept(
-          c.f, f_proposal, T, sp.failscore, [&] { return udist(c.rng); });
+          c.f, f_proposal, T, sp.failscore, [&] { return udist(out.rng); });
       if (accepted) {
         c.x = proposal;
         c.f = f_proposal;
@@ -928,10 +946,21 @@ void coordinate_warmup(
     active.swap(next);
   }
 
-  for (auto& dc : out.dims) {
+  for (std::size_t i = 0; i < out.dims.size(); ++i) {
+    auto& dc = out.dims[i];
     if (out.stop != anneal::RungStop::Completed &&
-        !dc.finished && dc.attempts < maximum)
+        !dc.finished && dc.attempts < maximum) {
       dc.status |= StepInterrupted;
+      /* D11: an interruption can land between batches, leaving V[i] at
+       * the last PROBE scale -- possibly a /10 gross-miss backoff that
+       * was never scored -- rather than anything tested. Continue at the
+       * best tested scale instead, and keep the diagnostics column
+       * consistent with the kernel that will actually run. */
+      if (dc.have_best && dc.best_scale > 0.0) {
+        c.V[i] = dc.best_scale;
+        dc.coordinate_scale = dc.best_scale;
+      }
+    }
   }
 }
 
@@ -944,7 +973,7 @@ void full_vector_pilot(anneal::ChainState<Vec>& c, double T,
   constexpr std::size_t window_size = 20;
   constexpr std::size_t pilot_minimum = 100;
   constexpr std::size_t pilot_maximum = 200;
-  constexpr double target = 0.234;
+  constexpr double target = anneal::kTargetAcceptVector;
   constexpr double target_lo = 0.15;
   constexpr double target_hi = 0.35;
   const std::size_t dim = sp.low.size();
@@ -1026,7 +1055,7 @@ void full_vector_pilot(anneal::ChainState<Vec>& c, double T,
       auto draw = [&]() -> long double {
         return static_cast<long double>(c.x(i)) +
                static_cast<long double>(out.pilot_base[i] *
-                                        out.pilot_multiplier) * ndist(c.rng);
+                                        out.pilot_multiplier) * ndist(out.rng);
       };
       long double value = draw();
       anneal::constrain_proposal(value, sp.low[i], sp.high[i],
@@ -1044,7 +1073,7 @@ void full_vector_pilot(anneal::ChainState<Vec>& c, double T,
       ++out.pilot_window_unusable;
     }
     const bool accepted = anneal::metropolis_accept(
-        c.f, f_proposal, T, sp.failscore, [&] { return udist(c.rng); });
+        c.f, f_proposal, T, sp.failscore, [&] { return udist(out.rng); });
     if (accepted) {
       c.x = proposal;
       c.f = f_proposal;
@@ -1348,8 +1377,7 @@ template<typename Vec, typename HostT>
       if (kb.step_mode != anneal_enums::STEP_MODE::FIXED) {
         oss << "  STEP_WARMUP_SWEEPS=" << kb.step_warmup_sweeps;
         if (kb.step_mode == anneal_enums::STEP_MODE::ADAPTIVE)
-          oss << "  STEP_ADAPT_EVERY=" << kb.step_adapt_every
-              << "  STEP_TRUST_FACTOR=" << kb.step_trust_factor
+          oss << "  STEP_TRUST_FACTOR=" << kb.step_trust_factor
               << (kb.step_trust_factor == 0.0 ? " (off)" : "");
       }
       oss << "  STEP_FRAC=" << kb.step_frac
@@ -1419,6 +1447,23 @@ template<typename Vec, typename HostT>
         HPOLog::instance().set_cadence(
             static_cast<std::size_t>(epoch_cost), "epoch",
             max_eval_global == HUGE_UNSIGNED ? 0 : max_eval_global);
+    }
+    /* D21: state the fixed diagnostic thresholds once, so every later
+     * WARNING/HINT that fires from them can be read against its rule. */
+    if (rank == 0) {
+      std::ostringstream d;
+      d << "ANNEAL_PT diagnostics: step-health acceptance band ["
+        << std::fixed << std::setprecision(0)
+        << 100.0 * pt_detail::kStepHealthAcceptLo << "%, "
+        << 100.0 * pt_detail::kStepHealthAcceptHi << "%] per SWAP_WINDOW, "
+        << "warning after " << pt_detail::kStepHealthStreak
+        << " consecutive windows;  transport window = "
+        << pt_detail::kTransportWindowFactor
+        << "*(REPLICAS-1) exchange rounds;  ladder-freeze evidence >= "
+        << pt_detail::kLadderFreezeMinAttempts
+        << " pooled attempts/pair;  degenerate (equal-loss) exchanges "
+           "are reported separately and excluded from ladder adaptation";
+      HPOLog::instance().info(d.str());
     }
     /* Pinned-dim audit (single-process like the per-epoch report --
      * marks are rank-local, a rank-0 table would miss other ranks). */
@@ -1782,6 +1827,13 @@ template<typename Vec, typename HostT>
      * calls still consume the shared hard budget and discovered states/bests
      * are retained, while production diagnostics start from a clean epoch 0. */
     if (proceed && kb.step_mode != anneal_enums::STEP_MODE::FIXED) {
+      /* Dedicated warm-up streams (SALT_WARMUP, global slot key): the
+       * calibration must not consume the chains' production streams, so
+       * with explicit temperatures the production proposal sequence is
+       * a pure function of (SEED, slot) for every STEP_MODE. */
+      for (std::size_t li = 0; li < n_local; ++li)
+        step_calibration[li].rng = anneal::make_stream(
+            seed, anneal::SALT_WARMUP, off_local + li);
       const std::uint64_t warmup_spent_begin = world > 1
           ? hpo_allreduce_sum(budget.spent()) : budget.spent();
       const std::uint64_t max_coordinate_attempts = anneal::saturating_mul(
@@ -1899,10 +1951,7 @@ template<typename Vec, typename HostT>
           l_best = chains[li].best_f;
           l_best_x = chains[li].best_x;
         }
-        chains[li].diag_ram_delta.assign(dim, 0.0);
-        chains[li].diag_ram_scalar_delta = 0.0;
         chains[li].diag_ram_proposals = 0;
-        chains[li].diag_ram_pending = 0;
       }
       g_best = std::min(g_best, l_best);
       if (world > 1) {
@@ -2249,12 +2298,139 @@ template<typename Vec, typename HostT>
      * around it but not drift without bound.  Guarded on the RAM
      * condition, not the auto condition, so it stays correct if the two
      * ever decouple. */
-    if (proceed && !kb.corana && kb.step_adapt_every > 0)
+    if (proceed && !kb.corana &&
+        kb.step_mode == anneal_enums::STEP_MODE::ADAPTIVE)
       for (auto& c : chains) c.V_baseline = c.V;
 
-    /* Per-pair swap-acceptance bookkeeping. */
+    /* D12: second calibration pass.
+     *
+     * Pass 1 estimated T0 with the generic STEP_FRAC-width kernel -- its
+     * only job was to give the warm-up a ladder to calibrate against.
+     * The kernel the run actually uses is the warm-up's frozen per-slot
+     * sigma, which can sit an order of magnitude away from that generic
+     * scale, and a temperature derived for a kernel the run never makes
+     * moves with anchors the whole ladder wrong. Re-estimate T_HOT from
+     * the same seed anchor under the HOTTEST slot's calibrated kernel
+     * and rebuild the ladder. Skipped when T_HOT is explicit (no
+     * calibration ran) or STEP_MODE is FIXED (pass 1's kernel IS the
+     * production kernel). Pass-2 probes draw from their own stream
+     * (SALT_PROBES, index 1) and count against MAXEVAL like any probe. */
+    if (proceed && !kb.t_start && !kb.corana &&
+        kb.step_mode != anneal_enums::STEP_MODE::FIXED && dim > 0) {
+      std::vector<double> hot_V(dim, 0.0);
+      const int hot_owner = world - 1;   /* global slot K-1 lives on the
+                                          * last rank's block */
+      if (rank == hot_owner && n_local > 0)
+        for (std::size_t i = 0; i < dim; ++i)
+          hot_V[i] = chains[n_local - 1].V[i];
+      if (world > 1) hpo_bcast(hot_V, hot_owner);
+
+      double t_hot_pass2 = 0.0;
+      bool pass2_threw = false;
+      std::string pass2_what;
+      if (rank == 0) {
+        try {
+          Vec xa = x0;
+          double fa = f0;
+          std::mt19937_64 probe2 =
+              anneal::make_stream(seed, anneal::SALT_PROBES, 1);
+          const auto t2 = anneal::calibrate_t0(
+              sp, kb, hot_V, xa, fa, l_best_x, l_best, host, probe2, ctx,
+              "ANNEAL_PT calibration pass 2");
+          g_best = std::min(g_best, l_best);
+          if (t2.aborted) {
+            stop_reason = t2.budget_exhausted
+                              ? StopReason::MaxEval
+                              : (t2.stopval_hit
+                                     ? StopReason::StopValOnProbe
+                                     : (t2.external_stop
+                                            ? StopReason::ExternalOnProbe
+                                            : StopReason::MaxTimeOnProbe));
+            proceed = false;
+          } else {
+            t_hot_pass2 = t2.T0;
+          }
+        } catch (const std::exception& e) {
+          pass2_threw = true;
+          pass2_what = e.what();
+        } catch (...) {
+          pass2_threw = true;
+          pass2_what = "TADAH:ANNEAL_PT: non-standard exception during "
+                       "calibration pass 2";
+        }
+      }
+      if (world > 1) {
+        int code = 0;
+        if (rank == 0)
+          code = pass2_threw ? -1
+                             : (proceed ? 0 : 1 + static_cast<int>(stop_reason));
+        hpo_bcast(code, 0);
+        if (code == -1) {
+          if (rank == 0) throw std::runtime_error(pass2_what);
+          throw std::runtime_error(
+              "TADAH:ANNEAL_PT: rank 0 aborted during calibration pass 2");
+        }
+        std::vector<double> pkt{t_hot_pass2};
+        hpo_bcast(pkt, 0);
+        t_hot_pass2 = pkt[0];
+        if (rank != 0 && code != 0) {
+          stop_reason = static_cast<StopReason>(code - 1);
+          proceed = false;
+        }
+      } else if (pass2_threw) {
+        throw std::runtime_error(pass2_what);
+      }
+
+      if (proceed && t_hot_pass2 > 0.0) {
+        const double ratio = T_hot > 0.0 ? t_hot_pass2 / T_hot : 0.0;
+        const double t_cold_pass2 =
+            kb.t_cold ? *kb.t_cold : t_hot_pass2 / kb.ladder_span;
+        if (!(t_cold_pass2 > 0.0 && t_cold_pass2 < t_hot_pass2))
+          throw std::runtime_error(
+              "TADAH:ANNEAL_PT: calibration pass 2 produced an invalid "
+              "ladder (T_COLD=" + std::to_string(t_cold_pass2) +
+              ", T_HOT=" + std::to_string(t_hot_pass2) +
+              "); set PARAM T_HOT/T_COLD explicitly");
+        T_hot = t_hot_pass2;
+        T_cold = t_cold_pass2;
+        log_t_cold = std::log(static_cast<long double>(T_cold));
+        log_t_hot  = std::log(static_cast<long double>(T_hot));
+        T = pt_detail::make_temperature_ladder(
+            T_cold, T_hot, K, kb.ladder_power);
+        if (rank == 0) {
+          std::ostringstream oss;
+          oss << std::scientific << std::setprecision(3)
+              << "ANNEAL_PT calibration pass 2: T_HOT=" << T_hot
+              << " from the calibrated production kernel (pass 1 used the "
+                 "generic STEP_FRAC kernel; pass2/pass1 ratio="
+              << std::fixed << std::setprecision(2) << ratio
+              << "); ladder rebuilt";
+          HPOLog::instance().info(oss.str());
+          const int iw = static_cast<int>(std::to_string(K - 1).size());
+          std::ostringstream tt;
+          tt << "ANNEAL_PT ladder T per slot after calibration pass 2 "
+                "(0=coldest .. " << (K - 1) << "=hottest):";
+          for (std::size_t lo = 0; lo < K; lo += 8) {
+            const std::size_t hi2 = std::min(lo + 8, K) - 1;
+            tt << "\n" << "[" << std::setw(iw) << lo << "-" << std::setw(iw)
+               << hi2 << "]" << std::scientific << std::setprecision(3);
+            for (std::size_t s = lo; s <= hi2; ++s) tt << "  " << T[s];
+          }
+          HPOLog::instance().info(tt.str());
+        }
+      }
+    }
+
+    /* Per-pair swap-acceptance bookkeeping. Degenerate = equal-loss
+     * exchanges: accepting them with probability 1 is exact Metropolis
+     * (exp(0) = 1), but they carry NO tempering information, so they are
+     * counted separately -- a pair whose acceptance is dominated by
+     * degenerate exchanges (e.g. both replicas pinned at FAILSCORE)
+     * must not read as healthy (D16). */
     std::vector<std::size_t> swap_attempt(K > 1 ? K - 1 : 0, 0);
     std::vector<std::size_t> swap_accept (K > 1 ? K - 1 : 0, 0);
+    std::vector<std::size_t> swap_degenerate(K > 1 ? K - 1 : 0, 0);
+    std::vector<std::size_t> swap_degenerate_win(K > 1 ? K - 1 : 0, 0);
     /* Independent adaptation windows.  Only the rank owning the colder
      * side of a pair increments its local entry; every exchange round
      * allreduces these counters before deciding whether to update. */
@@ -2269,7 +2445,6 @@ template<typename Vec, typename HostT>
      * default windows; the pooled 2-sigma test then resolves ~+/-9
      * acceptance points. */
     pt_detail::LadderFreezeEvidence ladder_freeze_evidence;
-    constexpr std::size_t kLadderFreezeMinAttempts = 100;
     /* SWAP_WINDOW-epoch window of the same counters (reset after each
      * windowed table) -- shows acceptance DRIFT the cumulative table
      * averages away. */
@@ -2313,7 +2488,8 @@ template<typename Vec, typename HostT>
      * population count is what localises WHERE the ladder is severed:
      * under mixing every slot is visited by ~all K walkers, while a
      * severed ladder leaves the far side circulating among a handful. */
-    const std::size_t transport_window = 100 * (K > 1 ? K - 1 : 1);
+    const std::size_t transport_window =
+        pt_detail::kTransportWindowFactor * (K > 1 ? K - 1 : 1);
     std::size_t flow_up_win = 0, flow_down_win = 0;
     std::vector<char> slot_seen(K * K, 0), slot_seen_win(K * K, 0);
     auto flow_touch_extremes = [&]() {
@@ -2458,6 +2634,13 @@ template<typename Vec, typename HostT>
           HPOLog::set_eval_slot(static_cast<int>(k), K, T[k]);
           rstats[li] = anneal::run_sweep(chains[li], T[k], sp, kb, host, ctx,
                                          allowance[k]);
+          if (kb.observer) {
+            /* PRE-swap state, on the worker thread that owns the chain. */
+            std::vector<double> xv(dim);
+            for (std::size_t d = 0; d < dim; ++d) xv[d] = chains[li].x(d);
+            kb.observer->on_rung_end(static_cast<int>(k), T[k], xv,
+                                     chains[li].f);
+          }
         });
         rethrow_pool_error("replica rung");
 
@@ -2469,9 +2652,10 @@ template<typename Vec, typename HostT>
           e_acc  += rstats[li].accepted;
           e_oob  += rstats[li].oob;
           /* Accumulated only where the sigma/step-health block below can
-           * consume them; under CORANA or STEP_ADAPT_EVERY=0 they would
-           * grow unread for the whole run. */
-          if (world == 1 && !kb.corana && kb.step_adapt_every > 0 &&
+           * consume them; under CORANA or a non-ADAPTIVE step mode they
+           * would grow unread for the whole run. */
+          if (world == 1 && !kb.corana &&
+              kb.step_mode == anneal_enums::STEP_MODE::ADAPTIVE &&
               kb.swap_window > 0) {
             step_attempt_win[li] += rstats[li].proposed;
             step_accept_win[li] += rstats[li].accepted;
@@ -2563,12 +2747,23 @@ template<typename Vec, typename HostT>
             if (i_mine && j_mine) {
               auto& ci = chains[i - off_local];
               auto& cj = chains[i + 1 - off_local];
+              const double f_lo = ci.f, f_hi = cj.f;
+              const bool degenerate = f_lo == f_hi;
               const bool accepted = pt_detail::accept_exchange(
-                  T[i], T[i + 1], ci.f, cj.f,
+                  T[i], T[i + 1], f_lo, f_hi,
                   [&]() { return udist(pair_rng); });
               ++swap_attempt[i];
               if (kb.swap_window > 0) ++swap_attempt_win[i];
-              if (ladder_adaptation_active) ++ladder_attempt[i];
+              if (degenerate) {
+                ++swap_degenerate[i];
+                if (kb.swap_window > 0) ++swap_degenerate_win[i];
+              }
+              /* Degenerate exchanges say nothing about whether the pair
+               * gap is right; feeding their automatic acceptance into
+               * the equalization controller (or its freeze evidence)
+               * would adapt the ladder toward a false 100% signal. */
+              if (ladder_adaptation_active && !degenerate)
+                ++ladder_attempt[i];
               ++att;
               pair_event[i] = '.';
               if (accepted) {
@@ -2577,10 +2772,15 @@ template<typename Vec, typename HostT>
                 if (world == 1) std::swap(walker_at[i], walker_at[i + 1]);
                 ++swap_accept[i];
                 if (kb.swap_window > 0) ++swap_accept_win[i];
-                if (ladder_adaptation_active) ++ladder_accept[i];
+                if (ladder_adaptation_active && !degenerate)
+                  ++ladder_accept[i];
                 ++acc;
                 pair_event[i] = 'x';
               }
+              if (kb.observer)
+                kb.observer->on_swap_attempt(
+                    epoch_count, i, accepted, degenerate,
+                    T[i], T[i + 1], f_lo, f_hi);
             } else {
               /* Boundary pair: I own exactly one side; my peer owns the
                * other. Both sides use the SAME pair coin stream when the
@@ -2593,20 +2793,31 @@ template<typename Vec, typename HostT>
               hpo_sendrecv(sendf, recvf, peer, static_cast<int>(i % 1024) * 2);
               const double f_i = i_mine ? c.f : recvf[0];
               const double f_j = i_mine ? recvf[0] : c.f;
+              const bool degenerate = f_i == f_j;
               const bool accepted = pt_detail::accept_exchange(
                   T[i], T[i + 1], f_i, f_j,
                   [&]() { return udist(pair_rng); });
               if (i_mine) {
                 ++swap_attempt[i];
                 if (kb.swap_window > 0) ++swap_attempt_win[i];
-                if (ladder_adaptation_active) ++ladder_attempt[i];
+                if (degenerate) {
+                  ++swap_degenerate[i];
+                  if (kb.swap_window > 0) ++swap_degenerate_win[i];
+                }
+                if (ladder_adaptation_active && !degenerate)
+                  ++ladder_attempt[i];
                 ++att;
                 if (accepted) {
                   ++swap_accept[i];
                   if (kb.swap_window > 0) ++swap_accept_win[i];
-                  if (ladder_adaptation_active) ++ladder_accept[i];
+                  if (ladder_adaptation_active && !degenerate)
+                    ++ladder_accept[i];
                   ++acc;
                 }
+                if (kb.observer)
+                  kb.observer->on_swap_attempt(
+                      epoch_count, i, accepted, degenerate,
+                      T[i], T[i + 1], f_i, f_j);
               }
               if (accepted) {
                 std::vector<double> sx(dim), rx(dim, 0.0);
@@ -2645,9 +2856,9 @@ template<typename Vec, typename HostT>
                 ladder_adaptation_active = false;
                 if (rank == 0)
                   HPOLog::instance().warning(
-                      "ANNEAL_PT ladder adaptation frozen: cooling reached "
-                      "a non-positive or non-distinct temperature; endpoint "
-                      "cooling continues unchanged");
+                      "ANNEAL_PT ladder adaptation frozen: an update "
+                      "produced a non-positive or non-distinct temperature; "
+                      "the current ladder is kept");
               } else {
                 const std::vector<double> old_temperature = T;
                 const auto update = pt_detail::adapt_temperature_ladder(
@@ -2671,7 +2882,7 @@ template<typename Vec, typename HostT>
                     pt_detail::ladder_freeze_step(
                         ladder_freeze_evidence, ladder_attempt_global,
                         ladder_accept_global, update.at_floor,
-                        kLadderFreezeMinAttempts);
+                        pt_detail::kLadderFreezeMinAttempts);
 
                 if (rank == 0) {
                   const auto [accept_min, accept_max] = std::minmax_element(
@@ -2748,7 +2959,7 @@ template<typename Vec, typename HostT>
                         "ANNEAL_PT ladder adaptation frozen: per-pair "
                         "acceptance indistinguishable from equalized (<=2 "
                         "sigma) or held at the LADDER_MIN_GAP floor, on >= " +
-                        std::to_string(kLadderFreezeMinAttempts) +
+                        std::to_string(pt_detail::kLadderFreezeMinAttempts) +
                         " pooled attempts/pair; ladder is final "
                         "(LADDER_FREEZE 0 disables this)");
                 }
@@ -2864,12 +3075,42 @@ template<typename Vec, typename HostT>
                   pt_detail::format_pair_table(K, label, attv, accv));
             };
             pair_table("cumulative", swap_attempt, swap_accept);
+            {
+              /* D16: equal-loss exchanges accept with probability 1 by
+               * exact Metropolis but move no tempering information; a
+               * pair whose traffic is dominated by them must not read
+               * as healthy from the acceptance table alone. */
+              std::size_t deg_tot = 0;
+              for (auto d : swap_degenerate) deg_tot += d;
+              if (deg_tot > 0)
+                pair_table("DEGENERATE% (equal-loss; cumulative)",
+                           swap_attempt, swap_degenerate);
+            }
             if (kb.swap_window > 0 && epoch_count % kb.swap_window == 0) {
-              std::size_t att_tot = 0;
+              std::size_t att_tot = 0, deg_tot = 0;
               for (auto a : swap_attempt_win) att_tot += a;
+              for (auto d : swap_degenerate_win) deg_tot += d;
               if (att_tot > 0) {
                 pair_table("last " + std::to_string(kb.swap_window) +
                            " epoch(s)", swap_attempt_win, swap_accept_win);
+                if (deg_tot > 0)
+                  pair_table("DEGENERATE% (equal-loss; last window)",
+                             swap_attempt_win, swap_degenerate_win);
+                if (static_cast<double>(deg_tot) /
+                        static_cast<double>(att_tot) >
+                    pt_detail::kDegenerateWarnFrac) {
+                  std::ostringstream w;
+                  w << "ANNEAL_PT: " << std::fixed << std::setprecision(0)
+                    << 100.0 * static_cast<double>(deg_tot) /
+                           static_cast<double>(att_tot)
+                    << "% of the last window's exchange attempts were "
+                       "DEGENERATE (equal losses on both sides -- typical "
+                       "when replicas sit on a FAILSCORE plateau). Their "
+                       "automatic acceptance carries no tempering "
+                       "information, so the swap tables overstate ladder "
+                       "health; they are excluded from ladder adaptation.";
+                  HPOLog::instance().warning(w.str());
+                }
                 /* D29: keep the completed window for the final summary,
                  * where the cumulative table averages late drift away. */
                 swap_attempt_last = swap_attempt_win;
@@ -2879,6 +3120,8 @@ template<typename Vec, typename HostT>
                           std::size_t{0});
                 std::fill(swap_accept_win.begin(), swap_accept_win.end(),
                           std::size_t{0});
+                std::fill(swap_degenerate_win.begin(),
+                          swap_degenerate_win.end(), std::size_t{0});
               }
             }
             /* THIS epoch's exchange outcomes -- the walker motion itself,
@@ -3093,7 +3336,8 @@ template<typename Vec, typename HostT>
               grid("ANNEAL_PT V max per slot (max_i V[i]/width[i]):",
                    vcell(v_mx));
             }
-            if (!kb.corana && kb.step_adapt_every > 0 &&
+            if (!kb.corana &&
+                kb.step_mode == anneal_enums::STEP_MODE::ADAPTIVE &&
                 kb.swap_window > 0 &&
                 epoch_count % kb.swap_window == 0) {
               std::vector<double> v_gm(K), v_mn(K), v_mx(K);
@@ -3166,11 +3410,12 @@ template<typename Vec, typename HostT>
                 const double acceptance =
                     static_cast<double>(step_accept_win[s]) /
                     static_cast<double>(step_attempt_win[s]);
-                if (acceptance < 0.05 || acceptance > 0.50)
+                if (acceptance < pt_detail::kStepHealthAcceptLo ||
+                    acceptance > pt_detail::kStepHealthAcceptHi)
                   ++step_health_streak[s];
                 else
                   step_health_streak[s] = 0;
-                if (step_health_streak[s] >= 2) {
+                if (step_health_streak[s] >= pt_detail::kStepHealthStreak) {
                   if (unhealthy_count++ > 0) unhealthy << ", ";
                   unhealthy << "slot " << s << '=' << std::fixed
                             << std::setprecision(1) << 100.0 * acceptance
@@ -3180,8 +3425,9 @@ template<typename Vec, typename HostT>
               if (unhealthy_count > 0) {
                 HPOLog::instance().warning(
                     "ANNEAL_PT adaptive step health: production acceptance "
-                    "outside [5%, 50%] for at least two consecutive "
-                    "SWAP_WINDOW intervals: " + unhealthy.str());
+                    "outside the diagnostics band for at least " +
+                    std::to_string(pt_detail::kStepHealthStreak) +
+                    " consecutive SWAP_WINDOW intervals: " + unhealthy.str());
               }
               std::fill(step_attempt_win.begin(), step_attempt_win.end(),
                         std::size_t{0});
@@ -3238,10 +3484,13 @@ template<typename Vec, typename HostT>
 
     std::vector<std::size_t> swap_attempt_report = swap_attempt;
     std::vector<std::size_t> swap_accept_report  = swap_accept;
+    std::vector<std::size_t> swap_degenerate_report = swap_degenerate;
     if (world > 1) {
       for (std::size_t i = 0; i + 1 < K; ++i) {
         swap_attempt_report[i] = hpo_allreduce_sum_sz(swap_attempt[i]);
         swap_accept_report[i]  = hpo_allreduce_sum_sz(swap_accept[i]);
+        swap_degenerate_report[i] =
+            hpo_allreduce_sum_sz(swap_degenerate[i]);
       }
     }
 
@@ -3313,6 +3562,34 @@ template<typename Vec, typename HostT>
                << r << "%";
         }
         HPOLog::instance().info(ossp.str());
+        /* D16: cumulative degenerate share next to the acceptance it
+         * inflates, plus the dominance warning when most of the run's
+         * exchange traffic carried no tempering information. */
+        std::size_t att_tot = 0, deg_tot = 0;
+        for (std::size_t i = 0; i + 1 < K; ++i) {
+          att_tot += swap_attempt_report[i];
+          deg_tot += swap_degenerate_report[i];
+        }
+        if (rank == 0 && deg_tot > 0) {
+          HPOLog::instance().info(pt_detail::format_pair_table(
+              K, "DEGENERATE% (equal-loss; cumulative)",
+              swap_attempt_report, swap_degenerate_report));
+          if (att_tot > 0 &&
+              static_cast<double>(deg_tot) / static_cast<double>(att_tot) >
+                  pt_detail::kDegenerateWarnFrac) {
+            std::ostringstream w;
+            w << "ANNEAL_PT: " << std::fixed << std::setprecision(0)
+              << 100.0 * static_cast<double>(deg_tot) /
+                     static_cast<double>(att_tot)
+              << "% of ALL exchange attempts were DEGENERATE (equal "
+                 "losses on both sides -- typical when replicas sit on a "
+                 "FAILSCORE plateau). Their automatic acceptance carries "
+                 "no tempering information, so the swap tables overstate "
+                 "ladder health; they were excluded from ladder "
+                 "adaptation.";
+            HPOLog::instance().warning(w.str());
+          }
+        }
       }
       /* D29: the cumulative table alone averages late drift away (run24:
        * bottleneck pairs at 1-3% in the final windows while the

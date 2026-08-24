@@ -442,6 +442,11 @@ template<typename Vec, typename HostT>
                                             budget.left(), rung_cost));
       while (T >= t_min && budget.left() > 0 && !time_exceeded()) {
         const auto rs = anneal::run_rung(chain, T, sp, kbr, host, ctx);
+        if (kbr.observer) {
+          std::vector<double> xv(dim);
+          for (std::size_t d = 0; d < dim; ++d) xv[d] = chain.x(d);
+          kbr.observer->on_rung_end(0, T, xv, chain.f);
+        }
 
         /* Pinned-dim audit refresh: marks follow the chain's post-rung
          * state -- a dim that left its bound is unmarked here; the table

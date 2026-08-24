@@ -412,22 +412,12 @@ doc = "Minimum calibration attempts per coordinate during the step warm-up (the 
 custom_range = true   # >= 1 enforced only when the warm-up runs (STEP_MODE != FIXED)
 
 [[key]]
-name = "STEP_ADAPT_EVERY"
-type = "count"
-default = "10"
-kinds = ["pt"]
-group = "steps"
-rank = 12
-doc = "Proposals between adaptive step applications after warm-up (STEP_MODE ADAPTIVE)."
-min = 1
-
-[[key]]
 name = "STEP_TRUST_FACTOR"
 type = "float"
 default = "64.0"
 kinds = ["pt"]
 group = "steps"
-rank = 13
+rank = 12
 doc = "Clamp adapted step scales to [baseline/f, baseline*f] around the calibrated baseline; 0 = off (STEP_MODE ADAPTIVE)."
 custom_range = true   # 0 (off) or > 1
 
@@ -586,22 +576,9 @@ msg = "PARAM STEP_WARMUP_SWEEPS belongs to the CLASSIC kernel (CORANA adapts its
 
 [[rule]]
 type = "conflicts_flag"
-key = "STEP_ADAPT_EVERY"
-flag = "CORANA"
-msg = "PARAM STEP_ADAPT_EVERY belongs to the CLASSIC kernel (CORANA adapts its own per-dimension steps)"
-
-[[rule]]
-type = "conflicts_flag"
 key = "STEP_TRUST_FACTOR"
 flag = "CORANA"
 msg = "PARAM STEP_TRUST_FACTOR belongs to the CLASSIC kernel (CORANA adapts its own per-dimension steps)"
-
-[[rule]]
-type = "requires_enum"
-key = "STEP_ADAPT_EVERY"
-enum_key = "STEP_MODE"
-value = "ADAPTIVE"
-msg = "PARAM STEP_ADAPT_EVERY is unused unless STEP_MODE is ADAPTIVE"
 
 [[rule]]
 type = "requires_enum"
@@ -646,6 +623,11 @@ msg = "PARAM STEP_AUTO was replaced by PARAM STEP_MODE (FIXED / FROZEN / ADAPTIV
 old = "STEP_AUTO_SWEEPS"
 kinds = ["pt"]
 msg = "PARAM STEP_AUTO_SWEEPS was renamed to STEP_WARMUP_SWEEPS (same meaning: minimum calibration attempts per coordinate); update the config"
+
+[[renamed]]
+old = "STEP_ADAPT_EVERY"
+kinds = ["pt"]
+msg = "PARAM STEP_ADAPT_EVERY was removed: STEP_MODE ADAPTIVE applies the robust-adaptive-Metropolis update after every proposal (a batched cadence multiplied the feedback gain by the batch size)"
 
 [[renamed]]
 old = "LADDER_ADAPT_UPDATES"

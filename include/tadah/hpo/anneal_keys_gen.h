@@ -224,13 +224,8 @@ inline constexpr AnnealKeyInfo kKeys[] = {
    false, true, false, 0.0, 12.0, 0.0,
    false, false, false, false, 0.0, 0.0,
    nullptr, false, nullptr, 0},
-  {"STEP_ADAPT_EVERY", AnnealKeyType::Count, KIND_PT,
-   "steps", 12, "Proposals between adaptive step applications after warm-up (STEP_MODE ADAPTIVE).",
-   false, true, false, 0.0, 10.0, 0.0,
-   true, false, false, false, 1.0, 0.0,
-   "must be >= 1", false, nullptr, 0},
   {"STEP_TRUST_FACTOR", AnnealKeyType::Float, KIND_PT,
-   "steps", 13, "Clamp adapted step scales to [baseline/f, baseline*f] around the calibrated baseline; 0 = off (STEP_MODE ADAPTIVE).",
+   "steps", 12, "Clamp adapted step scales to [baseline/f, baseline*f] around the calibrated baseline; 0 = off (STEP_MODE ADAPTIVE).",
    false, true, false, 0.0, 64.0, 0.0,
    false, false, false, false, 0.0, 0.0,
    nullptr, false, nullptr, 0},
@@ -271,9 +266,7 @@ inline constexpr AnnealKeyRule kRules[] = {
   {AnnealRuleType::UnusedWhenFlagOff, "LADDER_FREEZE", "LADDER_ADAPT", "", 0u, "PARAM LADDER_FREEZE is unused when LADDER_ADAPT is 0"},
   {AnnealRuleType::ConflictsFlag, "STEP_MODE", "CORANA", "", 0u, "PARAM STEP_MODE belongs to the CLASSIC kernel (CORANA adapts its own per-dimension steps)"},
   {AnnealRuleType::ConflictsFlag, "STEP_WARMUP_SWEEPS", "CORANA", "", 0u, "PARAM STEP_WARMUP_SWEEPS belongs to the CLASSIC kernel (CORANA adapts its own per-dimension steps)"},
-  {AnnealRuleType::ConflictsFlag, "STEP_ADAPT_EVERY", "CORANA", "", 0u, "PARAM STEP_ADAPT_EVERY belongs to the CLASSIC kernel (CORANA adapts its own per-dimension steps)"},
   {AnnealRuleType::ConflictsFlag, "STEP_TRUST_FACTOR", "CORANA", "", 0u, "PARAM STEP_TRUST_FACTOR belongs to the CLASSIC kernel (CORANA adapts its own per-dimension steps)"},
-  {AnnealRuleType::RequiresEnum, "STEP_ADAPT_EVERY", "STEP_MODE", "ADAPTIVE", 0u, "PARAM STEP_ADAPT_EVERY is unused unless STEP_MODE is ADAPTIVE"},
   {AnnealRuleType::RequiresEnum, "STEP_TRUST_FACTOR", "STEP_MODE", "ADAPTIVE", 0u, "PARAM STEP_TRUST_FACTOR is unused unless STEP_MODE is ADAPTIVE"},
 };
 
@@ -285,6 +278,7 @@ inline constexpr AnnealKeyRename kRenamed[] = {
   {"T0_PACCEPT", KIND_SERIAL | KIND_PT | KIND_PA, "PARAM T0_PACCEPT was renamed to T0_ACCEPT (same meaning: target initial acceptance probability); update the config"},
   {"STEP_AUTO", KIND_PT, "PARAM STEP_AUTO was replaced by PARAM STEP_MODE (FIXED / FROZEN / ADAPTIVE); STEP_AUTO 1 corresponds to STEP_MODE FROZEN, STEP_AUTO 0 to STEP_MODE FIXED"},
   {"STEP_AUTO_SWEEPS", KIND_PT, "PARAM STEP_AUTO_SWEEPS was renamed to STEP_WARMUP_SWEEPS (same meaning: minimum calibration attempts per coordinate); update the config"},
+  {"STEP_ADAPT_EVERY", KIND_PT, "PARAM STEP_ADAPT_EVERY was removed: STEP_MODE ADAPTIVE applies the robust-adaptive-Metropolis update after every proposal (a batched cadence multiplied the feedback gain by the batch size)"},
   {"LADDER_ADAPT_UPDATES", KIND_PT, "PARAM LADDER_ADAPT_UPDATES was removed; the pooled-evidence equalization freeze (LADDER_FREEZE) governs the adaptation lifetime"},
   {"RT", KIND_PT, "PARAM RT is not used by ANNEAL_PT: parallel tempering runs a static (optionally self-adapting) temperature ladder; cooling schedules belong to the serial TADAH:ANNEAL"},
   {"T_MIN", KIND_PT, "PARAM T_MIN is not used by ANNEAL_PT: parallel tempering runs a static (optionally self-adapting) temperature ladder; cooling schedules belong to the serial TADAH:ANNEAL"},
@@ -334,7 +328,6 @@ inline constexpr double SWAP_EVERY = 1.0;
 inline constexpr double SWAP_WINDOW = 20.0;
 inline constexpr double STEP_MODE = 1.0;
 inline constexpr double STEP_WARMUP_SWEEPS = 12.0;
-inline constexpr double STEP_ADAPT_EVERY = 10.0;
 inline constexpr double STEP_TRUST_FACTOR = 64.0;
 inline constexpr double INIT_MODE = 0.0;
 inline constexpr double SWEEPS = 1.0;

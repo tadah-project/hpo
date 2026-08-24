@@ -1057,17 +1057,18 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
              * marks by (dim, side) across chains. */
             if (pin_chains_ > 0 && !pin_state_.empty()) {
                 struct Row { std::size_t dim; int side; int n;
-                             double gap; std::uint64_t since; };
+                             double gap; double tol; std::uint64_t since; };
                 std::map<std::pair<std::size_t, int>, Row> agg;
                 for (const auto& [k, v] : pin_state_) {
                     auto& r = agg.try_emplace(
                         std::pair<std::size_t, int>{std::get<1>(k),
                                                     std::get<2>(k)},
-                        Row{std::get<1>(k), std::get<2>(k), 0, 0.0,
+                        Row{std::get<1>(k), std::get<2>(k), 0, 0.0, 0.0,
                             std::numeric_limits<std::uint64_t>::max()})
                         .first->second;
                     ++r.n;
                     if (v.gap   > r.gap)   r.gap   = v.gap;
+                    if (v.tol   > r.tol)   r.tol   = v.tol;
                     if (v.since < r.since) r.since = v.since;
                 }
                 std::vector<Row> rows;
@@ -1110,9 +1111,9 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                  * CLASSIC step. Claiming "step at the V floor" for both
                  * would be false half the time. */
                 t << rows.size() << " OPTIM dim(s) near a bound -- x sits "
-                     "within the audit tolerance of an OPTIM limit (under "
-                     "CORANA the step has also reached its floor, so no "
-                     "further shrinkage is available):\n"
+                     "within one proposal step (tol) of an OPTIM limit "
+                     "(under CORANA the step has also reached its floor, "
+                     "so no further shrinkage is available):\n"
                   << "  " << pad("dim", lw + 2) << pad("side", 6)
                   << pad("bound", 13) << pad("gap", 11) << pad("tol", 11);
                 if (multi) t << pad("slots", 8);
@@ -1121,16 +1122,13 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                     const bool   ok = r.dim < pin_low_.size();
                     const double b  = ok ? (r.side ? pin_high_[r.dim]
                                                    : pin_low_[r.dim]) : 0.0;
-                    const double vf = ok ? pin_floor_frac_ *
-                                           (pin_high_[r.dim] - pin_low_[r.dim])
-                                         : 0.0;
                     const std::uint64_t u = pin_unit_ >= r.since
                                             ? pin_unit_ - r.since + 1 : 1;
                     t << "\n  " << pad(label_of(r), lw + 2)
                       << pad(r.side ? "HI" : "LO", 6)
                       << pad(fmt_double(b, 3), 13)
                       << pad(sci1(r.gap), 11)
-                      << pad(sci1(vf), 11);
+                      << pad(sci1(r.tol), 11);
                     if (multi)
                         t << pad(std::to_string(r.n) + "/"
                                  + std::to_string(pin_chains_), 8);
@@ -1204,7 +1202,7 @@ void HPOLog::record_pin_state(int chain, std::uint64_t unit,
         const int  side = p.hi ? 1 : 0;
         const auto f    = old_since.find({p.dim, side});
         pin_state_[{chain, p.dim, side}] =
-            PinInfo{f != old_since.end() ? f->second : unit, p.gap};
+            PinInfo{f != old_since.end() ? f->second : unit, p.gap, p.tol};
     }
 }
 

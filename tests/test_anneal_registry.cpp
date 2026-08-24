@@ -313,8 +313,8 @@ TEST_CASE("registry: defaults in the generated header match the parsed "
     CHECK(kbp.init_mode == anneal_enums::INIT_MODE::JITTER);
     CHECK(kbp.swap_window ==
           static_cast<std::size_t>(anneal_defaults::SWAP_WINDOW));
-    /* FROZEN normalizes the ADAPTIVE-only knobs to their off sentinels. */
-    CHECK(kbp.step_adapt_every == 0);
+    /* FROZEN normalizes the ADAPTIVE-only trust region to its off
+     * sentinel (the RAM adapts per proposal; it has no cadence knob). */
     CHECK(kbp.step_trust_factor == 0.0);
 
     auto pa = registry_base_spec(anneal::AlgoKind::PA);

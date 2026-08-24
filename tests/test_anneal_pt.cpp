@@ -471,11 +471,18 @@ TEST_CASE("ANNEAL_PT warm-up classifies a hypersensitive dim",
     const auto rows = read_step_scales();
     REQUIRE(rows.size() == 2);
     for (const auto& row : rows) {
-        CHECK(row.status.find("unconverged") != std::string::npos);
-        if (row.slot == 0)
+        if (row.slot == 0) {
+            /* The cusp slot cannot find an in-band scale at any tested
+             * magnitude: unconverged AND classified hypersensitive. */
+            CHECK(row.status.find("unconverged") != std::string::npos);
             CHECK(row.status.find("hypersensitive") != std::string::npos);
-        else
+        } else {
+            /* The jittered slot is genuinely responsive away from the
+             * cusp; it must not be classified hypersensitive (whether
+             * its bisection fully converges depends on the warm-up
+             * stream and is not the property under test). */
             CHECK(row.status.find("hypersensitive") == std::string::npos);
+        }
     }
 }
 
@@ -543,7 +550,6 @@ TEST_CASE("ANNEAL_PT trust region banner and sigma journal labels",
     sp.param["REPLICAS"] = 2.0;
     sp.param["T_HOT"] = 1.0;
     sp.param["T_COLD"] = 0.1;
-    sp.param["STEP_ADAPT_EVERY"] = 1.0;
     sp.param["SWAP_WINDOW"] = 2.0;
 
     MtStubHost host{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
@@ -552,6 +558,9 @@ TEST_CASE("ANNEAL_PT trust region banner and sigma journal labels",
     const std::string log = lr.read();
     CHECK(log.find("ANNEAL_PT[CLASSIC[ADAPTIVE]]") != std::string::npos);
     CHECK(log.find("STEP_TRUST_FACTOR=64") != std::string::npos);
+    /* The retired cadence knob is gone from the banner: ADAPTIVE applies
+     * the RAM after every proposal. */
+    CHECK(log.find("STEP_ADAPT_EVERY") == std::string::npos);
     CHECK(log.find("(instantaneous V; sigma[i]/OPTIM_width[i])") !=
           std::string::npos);
     CHECK(log.find("epochs; sigma[i]/OPTIM_width[i])") == std::string::npos);
@@ -582,7 +591,7 @@ TEST_CASE("ANNEAL_PT calibrates a run22-shaped 174-D objective",
     TempWorkingDirectory cwd;
     LoggedRun lr;
     auto sp = make_pt_spec(low, high);
-    sp.param_raw["STEP_MODE"] = "ADAPTIVE";  // STEP_ADAPT_EVERY needs it
+    sp.param_raw["STEP_MODE"] = "ADAPTIVE";  // production RAM per proposal
     sp.parameter_labels.resize(D);
     for (std::size_t i = 0; i < D; ++i)
         sp.parameter_labels[i] = "run22_param_" + std::to_string(i);
@@ -595,7 +604,6 @@ TEST_CASE("ANNEAL_PT calibrates a run22-shaped 174-D objective",
     sp.param["T_COLD"] = 0.1;
     sp.param["STEP_FRAC"] = 1.0e-6;
     sp.param["STEP_WARMUP_SWEEPS"] = 24.0;
-    sp.param["STEP_ADAPT_EVERY"] = 20.0;
     /* Epoch = REPLICAS*1 evals now, so the post-warm-up production phase
      * runs ~1400 epochs; report every 100 to keep the journal bounded
      * while still exercising the windowed sigma blocks. */
@@ -958,7 +966,6 @@ TEST_CASE("ANNEAL_PT automatic adaptive diagonal is thread-count deterministic",
         sp.param["T_COLD"] = 0.1;
         sp.param_raw["STEP_MODE"] = "ADAPTIVE";
         sp.param["STEP_WARMUP_SWEEPS"] = 4.0;
-        sp.param["STEP_ADAPT_EVERY"] = 5.0;
         MtStubHost host{[](const Vec& x) {
             return x(0) * x(0) + 10.0 * x(1) * x(1);
         }, {}, {}};
@@ -1283,24 +1290,32 @@ TEST_CASE("ANNEAL_PT: equal-loss plateau does not latch the ladder freeze",
 
     LoggedRun lr;
     /* Constant objective: every exchange accepts through the equal-loss
-     * branch, so every window is exactly-100% on every pair -- a
-     * zero-information window.  The pooled-evidence freeze must HOLD
-     * (adaptation stays armed for when real signal appears), not latch
-     * as the original per-window streak did. */
+     * branch. Degenerate exchanges carry no information about the pair
+     * gaps, so they are EXCLUDED from adaptation evidence entirely: the
+     * ladder must neither update nor freeze, adaptation stays armed
+     * (mode=ongoing) for when real signal appears, the DEGENERATE%
+     * table and its dominance WARNING call the situation out, and the
+     * raw swap table still shows the (correct) 100% acceptance. */
     MtStubHost stub{[](const Vec&) { return 0.0; }, {}, {}};
     run_anneal_pt_impl<Vec>(sp, stub);
 
     const std::string log = lr.read();
     CHECK(log.find("ladder adaptation frozen: per-pair acceptance") ==
           std::string::npos);
-    CHECK(log.find("ANNEAL_PT ladder update=") != std::string::npos);
+    CHECK(log.find("ANNEAL_PT ladder update=") == std::string::npos);
     CHECK(log.find("mode=ongoing") != std::string::npos);
+    CHECK(log.find("DEGENERATE% (equal-loss") != std::string::npos);
+    CHECK(log.find("were DEGENERATE (equal losses on both sides")
+          != std::string::npos);
 
+    /* No updates -> the ladder TSV holds the header only. */
     std::ifstream input("hpo_temperature_ladder.tsv");
     std::ostringstream contents;
     contents << input.rdbuf();
     const std::string tsv = contents.str();
     CHECK(tsv.find("\tat_floor\n") != std::string::npos);
+    CHECK(tsv.rfind("\tat_floor\n") + std::string("\tat_floor\n").size()
+          == tsv.size());
 }
 
 TEST_CASE("ANNEAL_PT: pooled freeze evidence holds, accumulates and resets",
@@ -2100,8 +2115,7 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
         const auto kb = anneal::Knobs::parse(sp, anneal::AlgoKind::PT);
         CHECK(kb.step_mode == anneal_enums::STEP_MODE::FROZEN);
         CHECK(kb.step_warmup_sweeps == 12);
-        CHECK(kb.step_adapt_every == 0);       /* RAM off outside ADAPTIVE */
-        CHECK(kb.step_trust_factor == 0.0);
+        CHECK(kb.step_trust_factor == 0.0);    /* trust off outside ADAPTIVE */
     }
     SECTION("retired STEP_AUTO steers to STEP_MODE") {
         auto sp = make_pt_spec({-1.0}, {1.0});
@@ -2124,8 +2138,7 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
                             Catch::Contains("unused when STEP_MODE is FIXED"));
     }
     SECTION("CLASSIC step controls conflict with CORANA") {
-        for (const char* key : {"STEP_WARMUP_SWEEPS", "STEP_ADAPT_EVERY",
-                                "STEP_TRUST_FACTOR"}) {
+        for (const char* key : {"STEP_WARMUP_SWEEPS", "STEP_TRUST_FACTOR"}) {
             auto sp = make_pt_spec({-1.0}, {1.0});
             sp.param_raw.erase("STEP_MODE");
             sp.param["CORANA"] = 1.0;
@@ -2146,16 +2159,26 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
             run_anneal_pt_impl<Vec>(sp, stub),
             Catch::Contains("does not use STEP; set PARAM STEP_FRAC"));
     }
-    SECTION("adaptation cadence and trust factor are ADAPTIVE-only") {
-        for (const char* key : {"STEP_ADAPT_EVERY", "STEP_TRUST_FACTOR"}) {
-            for (const char* mode : {"FIXED", "FROZEN"}) {
-                auto sp = make_pt_spec({-1.0}, {1.0});
-                sp.param_raw["STEP_MODE"] = mode;
-                sp.param[key] = 8.0;
-                REQUIRE_THROWS_WITH(
-                    run_anneal_pt_impl<Vec>(sp, stub),
-                    Catch::Contains("unused unless STEP_MODE is ADAPTIVE"));
-            }
+    SECTION("retired STEP_ADAPT_EVERY is removed under every STEP_MODE") {
+        /* The rename gate fires before any cross-key rule, so the removal
+         * message wins even where ADAPTIVE would once have accepted it. */
+        for (const char* mode : {"FIXED", "FROZEN", "ADAPTIVE"}) {
+            auto sp = make_pt_spec({-1.0}, {1.0});
+            sp.param_raw["STEP_MODE"] = mode;
+            sp.param["STEP_ADAPT_EVERY"] = 8.0;
+            REQUIRE_THROWS_WITH(
+                run_anneal_pt_impl<Vec>(sp, stub),
+                Catch::Contains("STEP_ADAPT_EVERY was removed"));
+        }
+    }
+    SECTION("trust factor is ADAPTIVE-only") {
+        for (const char* mode : {"FIXED", "FROZEN"}) {
+            auto sp = make_pt_spec({-1.0}, {1.0});
+            sp.param_raw["STEP_MODE"] = mode;
+            sp.param["STEP_TRUST_FACTOR"] = 8.0;
+            REQUIRE_THROWS_WITH(
+                run_anneal_pt_impl<Vec>(sp, stub),
+                Catch::Contains("unused unless STEP_MODE is ADAPTIVE"));
         }
     }
     SECTION("STEP_TRUST_FACTOR must be 0 or greater than 1") {

@@ -12,6 +12,8 @@
 
 #include <dlib/matrix.h>
 
+#include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <functional>
 #include <limits>
@@ -419,14 +421,14 @@ TEST_CASE("anneal::Knobs::parse defaults", "[HPO][anneal_core][knobs]")
     CHECK(kp.rt == Approx(0.90));
     CHECK(kp.init_mode == anneal_enums::INIT_MODE::JITTER);
 
-    /* PT: STEP_MODE defaults to FROZEN; the RAM knobs are normalized to
-     * their 0 = off sentinels outside ADAPTIVE. */
+    /* PT: STEP_MODE defaults to FROZEN; the RAM trust region is
+     * normalized to its 0 = off sentinel outside ADAPTIVE.
+     * (STEP_ADAPT_EVERY is retired -- the RAM applies per proposal.) */
     auto pt = bare_spec();
     pt.algo = "ANNEAL_PT";
     const auto kt = anneal::Knobs::parse(pt, anneal::AlgoKind::PT);
     CHECK(kt.step_mode == anneal_enums::STEP_MODE::FROZEN);
     CHECK(kt.step_warmup_sweeps == 12);
-    CHECK(kt.step_adapt_every == 0);
     CHECK(kt.step_trust_factor == 0.0);
     CHECK(kt.init_mode == anneal_enums::INIT_MODE::JITTER);
 }
@@ -469,13 +471,11 @@ TEST_CASE("anneal::Knobs::parse enum keys take tokens",
         pt.param_raw["STEP_MODE"] = "FIXED";
         auto kf = anneal::Knobs::parse(pt, anneal::AlgoKind::PT);
         CHECK(kf.step_mode == anneal_enums::STEP_MODE::FIXED);
-        CHECK(kf.step_adapt_every == 0);
         CHECK(kf.step_trust_factor == 0.0);
 
         pt.param_raw["STEP_MODE"] = "ADAPTIVE";
         auto ka = anneal::Knobs::parse(pt, anneal::AlgoKind::PT);
         CHECK(ka.step_mode == anneal_enums::STEP_MODE::ADAPTIVE);
-        CHECK(ka.step_adapt_every == 10);      // registry default
         CHECK(ka.step_trust_factor == 64.0);   // registry default
     }
     SECTION("INIT_MODE tokens (PT + PA)") {
@@ -537,6 +537,15 @@ TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
                             Catch::Contains("renamed to STEP_WARMUP_SWEEPS"));
         pt.param.erase("STEP_AUTO_SWEEPS");
+        /* STEP_ADAPT_EVERY is retired outright: the per-proposal RAM has
+         * no batching cadence any more. */
+        pt.param["STEP_ADAPT_EVERY"] = 5.0;
+        REQUIRE_THROWS_WITH(
+            anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
+            Catch::Contains("PARAM STEP_ADAPT_EVERY was removed: STEP_MODE "
+                            "ADAPTIVE applies the robust-adaptive-Metropolis "
+                            "update after every proposal"));
+        pt.param.erase("STEP_ADAPT_EVERY");
         pt.param["LADDER_ADAPT_UPDATES"] = 4.0;
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
                             Catch::Contains("was removed"));
@@ -886,8 +895,8 @@ TEST_CASE("anneal::metropolis_accept follows graded FAILSCORE repair signal",
     CHECK(coins == 1);
 }
 
-TEST_CASE("anneal diagonal RAM cadence accumulates every proposal",
-          "[HPO][anneal_core][step_adapt]")
+TEST_CASE("anneal diagonal RAM applies once per proposal "
+          "(STEP_ADAPT_EVERY retired)", "[HPO][anneal_core][step_adapt]")
 {
     using Vec = dlib::matrix<double, 0, 1>;
     OptimizerSpec sp;
@@ -902,47 +911,158 @@ TEST_CASE("anneal diagonal RAM cadence accumulates every proposal",
     };
     const std::vector<double> z{1.0, 2.0};
 
-    auto frozen = make_chain();
-    anneal::accumulate_diagonal_ram(frozen, z, 1.0L, sp, 0);
-    CHECK(frozen.V[0] == 0.1);
-    CHECK(frozen.diag_ram_proposals == 0);
+    /* Every observation feeds back immediately at its own eta_j: V moves
+     * on the very first call and the eta counter advances per call --
+     * there is no pending batch and no cadence knob any more. */
+    auto c = make_chain();
+    anneal::apply_diagonal_ram(c, z, 1.0L, sp);
+    CHECK(c.diag_ram_proposals == 1);
+    CHECK(c.V[0] > 0.1);
+    CHECK(c.V[1] > 0.2);
+    const double v_after_one = c.V[0];
+    anneal::apply_diagonal_ram(c, z, 1.0L, sp);
+    CHECK(c.diag_ram_proposals == 2);
+    CHECK(c.V[0] > v_after_one);
 
-    auto zero_displacement = make_chain();
+    /* alpha = 0 shrinks: err = -kTargetAcceptVector < 0 (zero
+     * displacement leaves only the scalar term). */
+    auto shrink = make_chain();
     const std::vector<double> zero_z{0.0, 0.0};
-    anneal::accumulate_diagonal_ram(
-        zero_displacement, zero_z, 0.0L, sp, 2);
-    anneal::accumulate_diagonal_ram(
-        zero_displacement, zero_z, 0.0L, sp, 2);
-    CHECK(zero_displacement.V[0] < 0.1);
-    CHECK(zero_displacement.V[1] < 0.2);
+    anneal::apply_diagonal_ram(shrink, zero_z, 0.0L, sp);
+    CHECK(shrink.V[0] < 0.1);
+    CHECK(shrink.V[1] < 0.2);
 
-    auto every_one = make_chain();
-    anneal::accumulate_diagonal_ram(every_one, z, 1.0L, sp, 1);
-    CHECK(every_one.V[0] > 0.1);
-    CHECK(every_one.V[1] > 0.2);
-    CHECK(every_one.diag_ram_pending == 0);
+    /* Zero-dimensional input is a no-op and does not advance eta. */
+    auto zero_dim = make_chain();
+    anneal::apply_diagonal_ram(zero_dim, {}, 1.0L, sp);
+    CHECK(zero_dim.diag_ram_proposals == 0);
+    CHECK(zero_dim.V[0] == 0.1);
+}
 
-    auto every_l = make_chain();
-    auto every_5l = make_chain();
-    for (std::size_t j = 0; j < 4; ++j) {
-        anneal::accumulate_diagonal_ram(every_l, z, 1.0L, sp, 5);
-        anneal::accumulate_diagonal_ram(every_5l, z, 1.0L, sp, 25);
+TEST_CASE("anneal::classic_rung feeds the RAM only under STEP_MODE ADAPTIVE",
+          "[HPO][anneal_core][step_adapt][rung]")
+{
+    using Vec = dlib::matrix<double, 0, 1>;
+    OptimizerSpec sp;
+    sp.low = {-10.0, -10.0};
+    sp.high = {10.0, 10.0};
+    sp.is_int.assign(2, false);
+    sp.log_scaled.assign(2, false);
+    auto run = [&](int step_mode) {
+        anneal::Knobs kb;
+        kb.chain_length = 6;
+        kb.step_mode = step_mode;
+        anneal::ChainState<Vec> c;
+        c.x = Vec(2);
+        c.x = 0.0;
+        c.f = 0.0;
+        c.V = {0.1, 0.1};
+        c.rng = anneal::make_stream(555, anneal::SALT_CHAIN, 0);
+        c.best_x = c.x;
+        c.best_f = c.f;
+        anneal::SharedBudget budget(100);
+        std::atomic<bool> stop{false};
+        const std::function<bool()> never = [] { return false; };
+        anneal::StopCtx ctx{budget, stop, never, std::nullopt};
+        auto host = [](const Vec&) { return 0.0; };
+        anneal::classic_rung(c, 1.0, sp, kb, host, ctx);
+        return c;
+    };
+
+    const auto frozen = run(anneal_enums::STEP_MODE::FROZEN);
+    CHECK(frozen.diag_ram_proposals == 0);
+    CHECK(frozen.V[0] == 0.1);
+    CHECK(frozen.V[1] == 0.1);
+
+    /* alpha = 1 on every proposal (f_prop <= f): the scalar term grows
+     * both sigmas and the eta counter tracks the proposal count. */
+    const auto adaptive = run(anneal_enums::STEP_MODE::ADAPTIVE);
+    CHECK(adaptive.diag_ram_proposals == 6);
+    CHECK(adaptive.V[0] > 0.1);
+    CHECK(adaptive.V[1] > 0.1);
+}
+
+TEST_CASE("anneal RAM ln-V trajectory equals the Robbins-Monro closed form",
+          "[HPO][anneal_core][step_adapt][lock]")
+{
+    using Vec = dlib::matrix<double, 0, 1>;
+    OptimizerSpec sp;
+    sp.low = {-100.0, -100.0};
+    sp.high = {100.0, 100.0};
+    /* z all-equal: ratio_i = 1/dim for every dim, so the centred shape
+     * term is EXACTLY zero and the update is the pure scalar recursion
+     *     ln V_j = ln V_{j-1} + clamp(eta_j*(alpha_j - target), +/- ln 2),
+     *     eta_j = min(1, j^-kRamDecay). */
+    const std::vector<double> z{1.0, 1.0};
+    /* The at-target step uses the constant itself: a 0.234L literal
+     * differs from (long double)kTargetAcceptVector in the low bits and
+     * would make the "no move at target" branch ill-posed. */
+    const std::vector<long double> alphas{
+        1.0L, 0.0L, 0.8L,
+        static_cast<long double>(anneal::kTargetAcceptVector),
+        0.5L, 0.0L, 1.0L, 0.1L};
+    const double ln2 = std::log(2.0);
+
+    anneal::ChainState<Vec> c;
+    c.x = Vec(2);
+    c.x = 0.0;
+    c.V = {0.1, 0.1};
+
+    double expected = 0.1;
+    for (std::size_t j = 1; j <= alphas.size(); ++j) {
+        const long double alpha = alphas[j - 1];
+        const double before = c.V[0];
+        anneal::apply_diagonal_ram(c, z, alpha, sp);
+
+        const long double eta = std::min<long double>(
+            1.0L, std::pow(static_cast<long double>(j),
+                           -static_cast<long double>(anneal::kRamDecay)));
+        const long double err =
+            alpha - static_cast<long double>(anneal::kTargetAcceptVector);
+        const double scalar = static_cast<double>(eta * err);
+        const double factor = std::clamp(scalar, -ln2, ln2);
+        expected = static_cast<double>(
+            static_cast<long double>(expected) *
+            std::exp(static_cast<long double>(factor)));
+
+        CAPTURE(j);
+        CHECK(c.V[0] == Approx(expected).epsilon(1e-12));
+        CHECK(c.V[1] == Approx(expected).epsilon(1e-12));
+        /* Direction lock: alpha above target grows, below shrinks. */
+        if (alpha > static_cast<long double>(anneal::kTargetAcceptVector))
+            CHECK(c.V[0] > before);
+        else if (alpha < static_cast<long double>(anneal::kTargetAcceptVector))
+            CHECK(c.V[0] < before);
+        else
+            CHECK(c.V[0] == Approx(before));
     }
-    CHECK(every_l.V[0] == 0.1);
-    CHECK(every_5l.V[0] == 0.1);
-    CHECK(every_l.diag_ram_pending == 4);
-    CHECK(every_5l.diag_ram_pending == 4);
-    REQUIRE(every_l.diag_ram_delta.size() == 2);
-    REQUIRE(every_5l.diag_ram_delta.size() == 2);
-    CHECK(every_l.diag_ram_delta[0] == Approx(every_5l.diag_ram_delta[0]));
-    CHECK(every_l.diag_ram_delta[1] == Approx(every_5l.diag_ram_delta[1]));
+    CHECK(c.diag_ram_proposals == alphas.size());
 
-    anneal::accumulate_diagonal_ram(every_l, z, 1.0L, sp, 5);
-    anneal::accumulate_diagonal_ram(every_5l, z, 1.0L, sp, 25);
-    CHECK(every_l.V[0] > 0.1);       // cadence L applies the batch
-    CHECK(every_5l.V[0] == 0.1);     // cadence 5L retains it for later
-    CHECK(every_5l.diag_ram_pending == 5);
-    CHECK(every_5l.diag_ram_delta[0] > 0.0);
+    /* Trust-region clamp: the same recursion saturates at baseline*F
+     * upward (alpha = 1) and baseline/F downward (alpha = 0). */
+    const double F = 2.0;
+    anneal::ChainState<Vec> up;
+    up.x = Vec(2);
+    up.x = 0.0;
+    up.V = {0.1, 0.1};
+    up.V_baseline = up.V;
+    for (std::size_t j = 0; j < 10; ++j) {
+        anneal::apply_diagonal_ram(up, z, 1.0L, sp, F);
+        CHECK(up.V[0] <= 0.1 * F * (1.0 + 1e-12));
+    }
+    CHECK(up.V[0] == Approx(0.1 * F));
+    CHECK(up.V[1] == Approx(0.1 * F));
+
+    anneal::ChainState<Vec> down;
+    down.x = Vec(2);
+    down.x = 0.0;
+    down.V = {0.1, 0.1};
+    down.V_baseline = down.V;
+    for (std::size_t j = 0; j < 40; ++j) {
+        anneal::apply_diagonal_ram(down, z, 0.0L, sp, F);
+        CHECK(down.V[0] >= 0.1 / F * (1.0 - 1e-12));
+    }
+    CHECK(down.V[0] == Approx(0.1 / F));
 }
 
 TEST_CASE("anneal scalar RAM repairs a common tenfold scale error quickly",
@@ -959,13 +1079,12 @@ TEST_CASE("anneal scalar RAM repairs a common tenfold scale error quickly",
     const std::vector<double> z{1.0, 1.0, 1.0};
 
     for (std::size_t j = 0; j < 200; ++j)
-        anneal::accumulate_diagonal_ram(c, z, 1.0L, sp, 20);
+        anneal::apply_diagonal_ram(c, z, 1.0L, sp);
 
     CHECK(c.V[0] > 1.0e-2);
     CHECK(c.V[0] == Approx(c.V[1]));
     CHECK(c.V[1] == Approx(c.V[2]));
     CHECK(c.diag_ram_proposals == 200);
-    CHECK(c.diag_ram_pending == 0);
 }
 
 TEST_CASE("anneal diagonal RAM trust region bounds adversarial drift",
@@ -992,7 +1111,7 @@ TEST_CASE("anneal diagonal RAM trust region bounds adversarial drift",
     auto bounded = make_chain();
     bounded.V_baseline = bounded.V;
     for (std::size_t j = 0; j < 5000; ++j) {
-        anneal::accumulate_diagonal_ram(bounded, z, 0.0L, sp, 1, F);
+        anneal::apply_diagonal_ram(bounded, z, 0.0L, sp, F);
         if (j % 100 == 0) {
             for (std::size_t i = 0; i < 2; ++i) {
                 CHECK(bounded.V[i] >= 0.1 / F * (1.0 - 1e-9));
@@ -1008,13 +1127,63 @@ TEST_CASE("anneal diagonal RAM trust region bounds adversarial drift",
     auto unbounded = make_chain();
     unbounded.V_baseline = unbounded.V;
     for (std::size_t j = 0; j < 5000; ++j)
-        anneal::accumulate_diagonal_ram(unbounded, z, 0.0L, sp, 1, 0.0);
+        anneal::apply_diagonal_ram(unbounded, z, 0.0L, sp, 0.0);
     CHECK(unbounded.V[0] < 0.1 / F);
 
     auto no_baseline = make_chain();
     for (std::size_t j = 0; j < 5000; ++j)
-        anneal::accumulate_diagonal_ram(no_baseline, z, 0.0L, sp, 1, F);
+        anneal::apply_diagonal_ram(no_baseline, z, 0.0L, sp, F);
     CHECK(no_baseline.V[0] < 0.1 / F);
+}
+
+TEST_CASE("anneal::pinned_dims tolerance is the dim's actual proposal scale",
+          "[HPO][anneal_core][pinned]")
+{
+    using Vec = dlib::matrix<double, 0, 1>;
+    OptimizerSpec sp;
+    sp.low = {0.0, 0.0};
+    sp.high = {1.0, 1.0};
+
+    SECTION("CLASSIC: tol = sigma, no step-floor clause") {
+        anneal::Knobs kb;
+        kb.corana = false;
+        anneal::ChainState<Vec> c;
+        c.x = Vec(2);
+        c.x(0) = 0.05;   /* gap to LOW = 0.05 <= sigma 0.1 */
+        c.x(1) = 0.5;    /* mid-box: no pin */
+        c.V = {0.1, 0.1};
+        const auto pins = anneal::pinned_dims(c, sp, kb);
+        REQUIRE(pins.size() == 1);
+        CHECK(pins[0].dim == 0);
+        CHECK_FALSE(pins[0].hi);
+        CHECK(pins[0].gap == Approx(0.05));
+        CHECK(pins[0].tol == Approx(0.1));      /* D22: the actual sigma */
+
+        c.V = {0.04, 0.1};   /* gap 0.05 > sigma 0.04: one step clears it */
+        CHECK(anneal::pinned_dims(c, sp, kb).empty());
+    }
+
+    SECTION("CORANA: tol = the V floor, pin only when V bottomed out") {
+        anneal::Knobs kb;
+        kb.corana = true;
+        kb.v_floor_frac = 0.01;   /* floor = 0.01 * width = 0.01 */
+        anneal::ChainState<Vec> c;
+        c.x = Vec(2);
+        c.x(0) = 0.995;  /* gap to HIGH = 0.005 <= floor 0.01 */
+        c.x(1) = 0.5;
+        c.V = {0.01, 0.5};   /* dim 0 at the floor */
+        const auto pins = anneal::pinned_dims(c, sp, kb);
+        REQUIRE(pins.size() == 1);
+        CHECK(pins[0].dim == 0);
+        CHECK(pins[0].hi);
+        CHECK(pins[0].gap == Approx(0.005));
+        CHECK(pins[0].tol == Approx(0.01));     /* D22: the V floor */
+
+        /* V above the floor: adaptive shrinkage is not exhausted, so the
+         * dim is not reported even at the same near-bound occupancy. */
+        c.V = {0.05, 0.5};
+        CHECK(anneal::pinned_dims(c, sp, kb).empty());
+    }
 }
 
 TEST_CASE("anneal::run_rung retains the best graded FAILSCORE repair",

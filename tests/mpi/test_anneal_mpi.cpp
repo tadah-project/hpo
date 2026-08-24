@@ -142,10 +142,14 @@ Signature run_pt_auto(std::uint64_t cap, RecordingHost& host)
   auto sp = base_spec("ANNEAL_PT", cap);
   sp.param.erase("CORANA");
   sp.param.erase("NS");
+  /* T_HOT is erased too: with STEP_MODE at its FROZEN default this
+   * exercises the full auto path -- T0 pass 1, per-slot coordinate
+   * warm-up + pilot with their cross-rank diagnostic gathers, and the
+   * pass-2 re-anchoring with the hot slot's calibrated kernel (which
+   * includes a bcast from the hot slot's owner rank). Rank-invariance
+   * of the eval signature covers all of it. */
+  sp.param.erase("T_HOT");
   sp.param["REPLICAS"] = 8.0;
-  sp.param["T_COLD"] = 0.1;
-  /* STEP_MODE is intentionally omitted: exercise the FROZEN-default CLASSIC
-   * coordinate warm-up and its cross-rank diagnostic gather. */
   tadah::hpo::run_anneal_pt_impl<Vec>(sp, host);
   return host.global_signature();
 }
