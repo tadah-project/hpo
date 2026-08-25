@@ -192,6 +192,12 @@ public:
      *               Bands 1..4 are tallied; 0 is ignored. */
     void record_fail_band(int band);
 
+    /** Tally one bump-support per-candidate gate reject (a band-D subset:
+     *  the trial's c + w/eta reached past RCUT and was rejected before
+     *  training). Surfaced in the SUMMARY failure census and the RESULT
+     *  trailer so a high reject rate is visible. */
+    void record_bump_gate_reject();
+
     /** Register the shared script-executor pool width (Option A: THREADS).
      *  Enables the honest pool-utilisation figure in the periodic SUMMARY:
      *  util = Σ script busy / (pool width x window elapsed). Without it the
@@ -405,6 +411,8 @@ private:
      * relaxed counters; surfaced in the milestone SUMMARY and the RESULT
      * trailer so a failing run is visibly failing. */
     std::atomic<std::size_t> n_fail_band_[5] = {};
+    /* Bump-support per-candidate gate rejects (a band-D subset). */
+    std::atomic<std::size_t> n_bump_gate_ {0};
 
     /* timing stats -- protected by mtx_ */
     double      sum_ms_    = 0.0;

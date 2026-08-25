@@ -15,11 +15,16 @@
 //    beyond the stated RCUT would silently outrun the prebuilt NN list).
 // Bump (blip) channels are never touched: RCUT is authoritative there and
 // never auto-extended. Their counterpart protection is the bump-support
-// GATE in validate_hpo_setup — under a hard Cut_Dummy cutoff, a seed or an
-// OPTIM box corner that lets a bump's support (c + w/eta) reach past RCUT
-// is a hard startup error (a truncated overhang is an energy/force step at
-// the cutoff), so no trial can ever spill and the prebuilt NN list needs no
-// bump-side padding.
+// GATE — under a hard Cut_Dummy cutoff a truncated overhang (c + w/eta
+// past RCUT) is an energy/force step at the cutoff. A SEED whose bumps
+// spill is a hard startup error in every mode (validate_hpo_setup). OPTIM
+// boxes: BUMPGATE STRICT hard-errors on a violating box corner (legacy);
+// BUMPGATE CANDIDATE (default) errors only on a box with NO feasible
+// point and rejects violating trials per evaluation BEFORE training
+// (bump_support_gate.h, graded band-D). Either way no spilling trial is
+// ever trained, and the prebuilt NN list needs no bump-side padding:
+// nn_safe_rcutmax below covers every OPTIM RCUT high bound, so any
+// candidate the gate passes is inside the list.
 
 #include <cmath>
 #include <string>

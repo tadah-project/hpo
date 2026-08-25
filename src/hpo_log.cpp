@@ -904,6 +904,11 @@ void HPOLog::record_fail_band(int band)
         n_fail_band_[band].fetch_add(1, std::memory_order_relaxed);
 }
 
+void HPOLog::record_bump_gate_reject()
+{
+    n_bump_gate_.fetch_add(1, std::memory_order_relaxed);
+}
+
 void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
 {
     n_eval_.fetch_add(1, std::memory_order_relaxed);
@@ -987,6 +992,9 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                     msg << "   failed=" << ft << " (" << std::fixed
                         << std::setprecision(1) << fpct << "%; A=" << fa
                         << " B=" << fb << " C=" << fc << " D=" << fd << ")";
+                    const std::size_t bg =
+                        n_bump_gate_.load(std::memory_order_relaxed);
+                    if (bg > 0) msg << " bumpgate=" << bg;
                 }
             }
             /* The milestone SUMMARY is one logical block: the head line
@@ -1418,6 +1426,10 @@ void HPOLog::finish(const std::string& status_str)
                << "  B=" << fb << " (script failed)"
                << "  C=" << fc << " (did not complete)"
                << "  D=" << fd << " (pot build / gated)\n";
+            const std::size_t bg = n_bump_gate_.load(std::memory_order_relaxed);
+            if (bg > 0)
+                f_ << "    of which bump-support gate rejects: " << bg
+                   << " (c + w/eta past RCUT, rejected before training)\n";
             const double fpct = total > 0
                 ? 100.0 * static_cast<double>(ft) / static_cast<double>(total)
                 : 0.0;

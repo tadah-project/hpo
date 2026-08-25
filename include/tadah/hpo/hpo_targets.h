@@ -116,6 +116,20 @@ public:
      * TADAH_FAILSCORE_GRADING. */
     bool FAILSCORE_GRADING = false;
 
+    /* BUMPGATE CANDIDATE|STRICT: how the bump-support invariant
+     * (c + w/eta <= RCUT on hard Cut_Dummy channels) is enforced over the
+     * OPTIM boxes.
+     *   CANDIDATE (default): startup errors only when a bump's box contains
+     *     NO feasible point; otherwise every sampled combination is tested
+     *     per evaluation and violating candidates return a graded band-D
+     *     failure before any training work.
+     *   STRICT: legacy behaviour -- startup hard-errors when the worst box
+     *     corner (CGRID high bound, SGRID low bound) violates, guaranteeing
+     *     zero runtime rejects (strict MAXEVAL budgeting / old-run repro).
+     * The seed pot's own bumps must fit in both modes. Env override:
+     * TADAH_BUMPGATE. */
+    bool BUMPGATE_STRICT = false;
+
     /* PC_FAILPROBE --script <f> --outvar <S> [--gate <T>] [--s0 <v0>]
      * A minimiser-free potential-sanity probe (single-point run-0 script;
      * designed to be un-failable) dispatched at the front of wave 1 every

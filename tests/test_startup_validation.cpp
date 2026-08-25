@@ -291,11 +291,24 @@ TEST_CASE("startup validation: bump-support gate",
             Catch::Contains("CGRID2B bump 2") &&
             Catch::Contains("set SGRID2B (2) >= 1"));
   }
-  SECTION("box corner spill errors with the exact SGRID low bound") {
+  SECTION("partially feasible box arms the per-candidate gate (CANDIDATE)") {
+    Context ctx = make_bump_ctx();
+    ctx.add("DBFILE", "dummy.db");
+    // e_lo 1.0 -> worst corner 4.0 + 2/1.0 = 6.0 > 5, but the best corner
+    // 4.0 + 2/3.0 = 4.67 <= 5 is feasible: accepted at full width under
+    // the default BUMPGATE CANDIDATE (violating trials are rejected per
+    // evaluation instead).
+    ScopedTempFile tf("OPTIM SGRID2B (1) 1.0 3.0\nPC_ERMSE 0 1\n" +
+                      std::string(kOptimizerBlock));
+    HPOTargets trg(ctx, tf.path.string());
+    REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
+  }
+  SECTION("BUMPGATE STRICT: legacy box-corner error with the SGRID fix") {
     Context ctx = make_bump_ctx();
     ctx.add("DBFILE", "dummy.db");
     // e_lo 1.0 -> corner 4.0 + 2/1.0 = 6.0 > 5; need lo >= 2/(5-4) = 2
-    ScopedTempFile tf("OPTIM SGRID2B (1) 1.0 3.0\nPC_ERMSE 0 1\n" +
+    ScopedTempFile tf("BUMPGATE STRICT\nOPTIM SGRID2B (1) 1.0 3.0\n"
+                      "PC_ERMSE 0 1\n" +
                       std::string(kOptimizerBlock));
     HPOTargets trg(ctx, tf.path.string());
     REQUIRE_THROWS_WITH(
@@ -303,16 +316,37 @@ TEST_CASE("startup validation: bump-support gate",
         Catch::Contains("bump-support gate") &&
             Catch::Contains("low bound >= w/(RCUT2B - c_hi) = 2"));
   }
-  SECTION("CGRID high bound at/above rcut is called impossible") {
+  SECTION("CGRID box with a feasible sliver arms the gate; STRICT errors") {
     Context ctx = make_bump_ctx();
     ctx.add("DBFILE", "dummy.db");
+    // Seed eta 2.0 (static): best corner 4.5 + 2/2.0 = 5.5 > 5 would be
+    // infeasible -- see the "no feasible point" SECTION below. Here the
+    // low bound 3.9 keeps a feasible sliver (3.9 + 1.0 = 4.9 <= 5).
+    ScopedTempFile tf("OPTIM CGRID2B (1) 3.9 5.5\nPC_ERMSE 0 1\n" +
+                      std::string(kOptimizerBlock));
+    HPOTargets trg(ctx, tf.path.string());
+    REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
+    ScopedTempFile tf2("BUMPGATE STRICT\nOPTIM CGRID2B (1) 3.9 5.5\n"
+                       "PC_ERMSE 0 1\n" +
+                       std::string(kOptimizerBlock));
+    HPOTargets trg2(ctx, tf2.path.string());
+    REQUIRE_THROWS_WITH(
+        validate_hpo_setup(ctx, trg2, true, true),
+        Catch::Contains("impossible") &&
+            Catch::Contains("lower the CGRID2B high bound"));
+  }
+  SECTION("no feasible point in the box is still a hard error (CANDIDATE)") {
+    Context ctx = make_bump_ctx();
+    ctx.add("DBFILE", "dummy.db");
+    // Seed eta 2.0 (static): even the best corner 4.5 + 2/2.0 = 5.5 > 5.
     ScopedTempFile tf("OPTIM CGRID2B (1) 4.5 5.5\nPC_ERMSE 0 1\n" +
                       std::string(kOptimizerBlock));
     HPOTargets trg(ctx, tf.path.string());
     REQUIRE_THROWS_WITH(
         validate_hpo_setup(ctx, trg, true, true),
-        Catch::Contains("impossible") &&
-            Catch::Contains("lower the CGRID2B high bound"));
+        Catch::Contains("bump-support gate") &&
+            Catch::Contains("no feasible point") &&
+            Catch::Contains("CGRID2B"));
   }
   SECTION("MB density bump gate fires against RCUTMB") {
     Context ctx = make_bump_ctx();
@@ -333,13 +367,37 @@ TEST_CASE("startup validation: bump-support gate",
     HPOTargets trg(ctx, tf.path.string());
     REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
   }
-  SECTION("OPTIM'd RCUT2B: its LOW bound is the binding rcut") {
+  SECTION("OPTIM'd RCUT2B: reachable high bound keeps the box feasible") {
     Context ctx = make_bump_ctx();  // edge seeds reach exactly 5.0
     ctx.add("DBFILE", "dummy.db");
+    // Sampled RCUT2B in [4.5, 6.0]: candidates below 5.0 make the static
+    // edge bumps spill and are per-candidate rejects; the seed itself is
+    // valid at its stated cutoff, so startup accepts (armed gate).
     ScopedTempFile tf("OPTIM RCUT2B (1) 4.5 6.0\nPC_ERMSE 0 1\n" +
+                      std::string(kOptimizerBlock));
+    HPOTargets trg(ctx, tf.path.string());
+    REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
+  }
+  SECTION("OPTIM'd RCUT2B: STRICT keeps the LOW bound as the binding rcut") {
+    Context ctx = make_bump_ctx();  // edge seeds reach exactly 5.0
+    ctx.add("DBFILE", "dummy.db");
+    ScopedTempFile tf("BUMPGATE STRICT\nOPTIM RCUT2B (1) 4.5 6.0\n"
+                      "PC_ERMSE 0 1\n" +
                       std::string(kOptimizerBlock));
     HPOTargets trg(ctx, tf.path.string());
     REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
                         Catch::Contains("OPTIM RCUT2B low bound"));
+  }
+  SECTION("OPTIM'd RCUT2B: high bound below the seeds' reach hard-errors") {
+    Context ctx = make_bump_ctx();  // edge seeds reach exactly 5.0
+    ctx.add("DBFILE", "dummy.db");
+    // Even the largest sampled cutoff (4.6) cannot fit the static bumps:
+    // no feasible point anywhere in the search space.
+    ScopedTempFile tf("OPTIM RCUT2B (1) 4.0 4.6\nPC_ERMSE 0 1\n" +
+                      std::string(kOptimizerBlock));
+    HPOTargets trg(ctx, tf.path.string());
+    REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                        Catch::Contains("bump-support gate") &&
+                            Catch::Contains("no feasible point"));
   }
 }

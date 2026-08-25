@@ -349,6 +349,25 @@ int hpo_run(core::Context& ctx)
                         "OFF -- the probe runs as a plain diagnostic sim; "
                         "no grading, no gate.");
         }
+
+        /* ---- BUMPGATE: bump-support enforcement mode --------------------
+         * CANDIDATE (default): full OPTIM boxes; infeasible (c, eta)
+         * combinations are rejected per evaluation as graded band-D
+         * failures. STRICT: legacy startup box-corner hard-error.
+         * Env override TADAH_BUMPGATE=CANDIDATE|STRICT (harness A/B). */
+        if (const char* e = std::getenv("TADAH_BUMPGATE")) {
+            if (*e) {
+                const std::string v(e);
+                if (v == "STRICT")         trg.BUMPGATE_STRICT = true;
+                else if (v == "CANDIDATE") trg.BUMPGATE_STRICT = false;
+                else throw std::runtime_error(
+                        "TADAH_BUMPGATE must be CANDIDATE or STRICT");
+            }
+        }
+        if (trg.BUMPGATE_STRICT)
+            log.info("BUMPGATE: STRICT -- OPTIM boxes on hard-cutoff bump "
+                     "channels must be feasible at the worst corner "
+                     "(legacy startup gate); no per-candidate rejection.");
     }
 
     /* --validation is optional: PC_OBSERVABLE / PC_LAMMPS can carry the

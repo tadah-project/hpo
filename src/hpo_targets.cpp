@@ -1370,6 +1370,13 @@ void HPOTargets::read(const std::string& fn)
                 else throw std::runtime_error(
                         "FAILSCORE_GRADING must be ON or OFF, got '" + v + "'");
             }
+            else if (key=="BUMPGATE") {
+                std::string v; iss>>v;
+                if (v=="STRICT")         BUMPGATE_STRICT = true;
+                else if (v=="CANDIDATE") BUMPGATE_STRICT = false;
+                else throw std::runtime_error(
+                        "BUMPGATE must be CANDIDATE or STRICT, got '" + v + "'");
+            }
 
             /* PC_FAILPROBE: minimiser-free potential-sanity probe (graded-
              * FAILSCORE Tier 3). Strips the probe-only flags (--gate, --s0)

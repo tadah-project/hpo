@@ -856,6 +856,9 @@ void HPO_Host<P,R>::prepare_best_publication(bool resumed) const {
 template<class P, class R>
 thread_local tadah::mlip::memory::MLIPWorkspaceManager
 HPO_Host<P,R>::tls_ws_{};
+
+template<class P, class R>
+thread_local bool HPO_Host<P,R>::tls_trainer_theta_stale_ = false;
 #if defined(TADAH_BUILD_MPI)
 template<class P, class R>
 thread_local tadah::mlip::memory::MLIPWorkspaceManager
@@ -898,6 +901,25 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
      * hook lives in the const update_context(). */
     knot2b_ = models::potedit::derived_knot_rcut(master_ctx_, "2B").has_value();
     knotmb_ = models::potedit::derived_knot_rcut(master_ctx_, "MB").has_value();
+
+    /* Per-candidate bump-support gate (bump_support_gate.h). Under STRICT
+     * validate_hpo_setup already hard-errored on any violable box, so the
+     * table is only built -- and only ever non-empty -- under CANDIDATE
+     * with a partially infeasible OPTIM box. */
+    if (!trg_.BUMPGATE_STRICT)
+        bump_gate_ = detail::build_bump_gate_table(master_ctx_, trg_);
+    if (!bump_gate_.empty()) {
+        std::string dims;
+        for (const auto& ch : bump_gate_)
+            for (const auto& b : ch.bumps) {
+                if (!dims.empty()) dims += ", ";
+                dims += ch.ckey + "[" + std::to_string(b.index + 1) + "]";
+            }
+        HPOLog::instance().info(
+            "bump-support per-candidate gate armed on " + dims +
+            ": infeasible candidates (c + w/eta > RCUT) are rejected "
+            "before training as graded band-D failures");
+    }
 
     /* neighbours -------------------------------------------------------- */
     /* One-time build: sized for the largest cutoff any evaluation can
@@ -2138,6 +2160,77 @@ double HPO_Host<P,R>::operator()(const P& p) const
      *  - StagnationStop -- must propagate to RestartPolicy. */
     try {
 
+    /* Bump-support per-candidate gate (BUMPGATE CANDIDATE): an infeasible
+     * (c, eta[, rcut]) combination would be a hard-truncated bump -- an
+     * energy/force STEP at the cutoff -- so it is rejected BEFORE any
+     * training work with a graded band-D loss (the pre-LAMMPS skip-caps
+     * idiom below). The table is empty unless startup armed it, so
+     * feasible-only searches pay a single branch. */
+    if (!bump_gate_.empty()) {
+      const double v = detail::bump_gate_violation(bump_gate_, p);
+      if (v > 0.0) {
+        r.fail.band = std::max(r.fail.band, static_cast<int>(FailBand::D));
+        r.fail.vD = v;
+        r.loss = trg_.FAILSCORE_GRADING
+                     ? graded_eval_loss(r.fail, trg_.FAIL_SCORE,
+                                        trg_.failprobe_s0)
+                     : trg_.FAIL_SCORE;
+        /* Rate-limited journal note: first 5, then powers of two --
+         * parity with the bad-pot skip counter. */
+        static std::atomic<std::size_t> n_rejects{0};
+        const auto k = n_rejects.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (k <= 5 || (k & (k - 1)) == 0) {
+            HPOLog::instance().info(
+                "eval " + std::to_string(r.iter) + ": bump-support gate "
+                "reject (c + w/eta past the cutoff, violation=" +
+                std::to_string(v) + ", graded band D); total rejects=" +
+                std::to_string(k));
+        }
+        /* The trainer cache still holds the previous feasible theta; the
+         * next analytical_gradient() must not read it as "current x". */
+        tls_trainer_theta_stale_ = true;
+        /* Stagnation check (parity with post_lammps_finalize): an
+         * all-infeasible run must still trip StagnationStop -- its catch
+         * submits r with the real graded loss. */
+        {
+          const std::size_t threshold =
+              stagnation_threshold_.load(std::memory_order_relaxed);
+          if (threshold > 0) {
+            const std::size_t last =
+                iter_at_last_best_.load(std::memory_order_relaxed);
+            if (r.iter > last && r.iter - last >= threshold) {
+              throw StagnationStop{};
+            }
+          }
+        }
+        r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::high_resolution_clock::now() - t0);
+        const std::size_t save_iter = r.iter;
+        const double save_loss = r.loss;
+        const double save_wall_ms = static_cast<double>(r.wall_ms.count());
+        const int save_fail_band = r.fail.band;
+#ifndef TADAH_BUILD_MPI
+        submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
+                      train_stdb_, val_stdb_, param_labels_, report_,
+                      cw_, prec_);
+#else
+        {
+          static const mlip::StructureDB empty_stdb;
+          submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
+                        empty_stdb, val_stdb_, param_labels_, report_,
+                        cw_, prec_);
+        }
+#endif
+        auto& log = HPOLog::instance();
+        log.record_eval(save_iter, save_wall_ms, /*nan=*/false);
+        _census.done = true;   /* counted here, with the measured wall */
+        log.record_fail_band(save_fail_band);
+        log.record_bump_gate_reject();
+        core::CheckpointManager::instance().tick_eval(save_iter);
+        return save_loss;
+      }
+    }
+
     /* build context ---------------------------------------------------- */
     core::Context ctx = master_ctx_;
     update_context(ctx, p);
@@ -2220,6 +2313,8 @@ double HPO_Host<P,R>::operator()(const P& p) const
     }
     mlip::Trainer& host = *tls_trainer_cache_.trainer;
 #endif
+    /* Training succeeded: the trainer cache reflects theta = p again. */
+    tls_trainer_theta_stale_ = false;
     t_train_end = std::chrono::high_resolution_clock::now();
     stage_watchdog::leave(r.iter, "train", _stage_log);
 
@@ -3212,7 +3307,12 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
     return fall_back_all_fd();
 #else
     auto& cache = tls_trainer_cache_;
-    if (!cache.trainer) {
+    /* tls_trainer_theta_stale_: the bump-gate reject path returned before
+     * training, so the cache holds the PREVIOUS feasible theta, not x --
+     * fall back to FD, which re-evaluates operator() and passes through
+     * the gate (non-smooth across the constraint boundary, same class as
+     * the existing skip caps). */
+    if (!cache.trainer || tls_trainer_theta_stale_) {
         fall_back_all_fd();
         emit_grad_diagnostic(prefs, needs_fd, /*cache_miss=*/true);
         return true;

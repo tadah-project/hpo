@@ -29,6 +29,7 @@
 #include <tadah/core/checkpoint_manager.h>  // for tick_eval cadence
 #include <tadah/core/context.h>
 #include <tadah/core/signal_handler.h>
+#include <tadah/hpo/bump_support_gate.h>
 #include <tadah/hpo/dloss_dtheta.h>
 #include <tadah/hpo/durable_best.h>
 #include <tadah/hpo/hpo_targets.h>
@@ -342,6 +343,11 @@ private:
      * folded into the one-time NN cutoff via detail::nn_safe_rcutmax. */
     bool                         knot2b_ = false;
     bool                         knotmb_ = false;
+    /* Per-candidate bump-support gate (BUMPGATE CANDIDATE): the bumps
+     * whose OPTIM box can violate c + w/eta <= RCUT on a hard Cut_Dummy
+     * channel. Empty -- the common case, and always under BUMPGATE
+     * STRICT -- means no per-eval check. Built once in the ctor. */
+    std::vector<detail::BumpGateChannel> bump_gate_;
     mlip::NNFinder               nnf_;
 
     /* ---------- data for pot header writer ----------------------------- */
@@ -436,6 +442,13 @@ private:
 
     /* per thread MLIP workspace ----------------------------------------- */
     static thread_local tadah::mlip::memory::MLIPWorkspaceManager tls_ws_;
+
+    /* The bump-gate reject path returns BEFORE training, breaking the
+     * "operator()(x) ran immediately before us at the same x" contract
+     * analytical_gradient() reads the trainer cache under. Set on reject,
+     * cleared after every successful train; while set, gradients fall
+     * back to all-FD instead of reading a stale cache. */
+    static thread_local bool tls_trainer_theta_stale_;
 
     /* per-thread trainer cache ------------------------------------------ */
 #ifndef TADAH_BUILD_MPI
