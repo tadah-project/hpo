@@ -1875,6 +1875,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
    * AUTO derives the box from the CONFIG seed of each selected index:
    *   geometric  [x0/f, x0*f] (mirrored for x0 < 0)   default for positive-only keys (RATIO 2)
    *   linear     x0 +/- max(p*|x0|, a, r*max|x0| over this OPTIM line)   otherwise (FRAC 0.5)
+   *   FRAC 0 + FLOOR a  -> every index gets the same absolute half-width a (grid centres)
    * Cutoff keys (RCUT*) are excluded: the neighbour list is sized from
    * explicit high bounds. */
   DimTransform tf;
@@ -1938,7 +1939,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
         rule.geometric = true; rule.factor = v; mode_set = true;
       } else if (opt == "FRAC") {
         if (mode_set) throw std::runtime_error("OPTIM " + k + ": RATIO and FRAC are mutually exclusive");
-        if (!(v > 0.0)) throw std::runtime_error("OPTIM " + k + ": AUTO FRAC must be > 0 (got " + tokens[t + 1] + ")");
+        if (!(v >= 0.0)) throw std::runtime_error("OPTIM " + k + ": AUTO FRAC must be >= 0 (got " + tokens[t + 1] + "); FRAC 0 with FLOOR/GROUP_FLOOR gives a constant absolute half-width");
         rule.geometric = false; rule.factor = v; mode_set = true;
       } else if (opt == "FLOOR") {
         if (v < 0.0) throw std::runtime_error("OPTIM " + k + ": AUTO FLOOR must be >= 0");
@@ -2048,8 +2049,11 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
                                      rule.group_floor * group_max});
           if (!(d > 0.0))
             throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
-                                     "): AUTO FRAC gives a zero-width box for seed 0; "
-                                     "set FLOOR or GROUP_FLOOR");
+                                     "): AUTO FRAC gives a zero-width box (seed 0 or FRAC 0); " +
+                                     ((rule.group_floor > 0.0 && !(group_max > 0.0))
+                                        ? "every seed on this line is 0, so GROUP_FLOOR has "
+                                          "nothing to scale; set FLOOR"
+                                        : "set FLOOR or GROUP_FLOOR"));
           lo_i = x0 - d; hi_i = x0 + d;
           omap.origin[i] = BoxOrigin::AutoLinear;
         }

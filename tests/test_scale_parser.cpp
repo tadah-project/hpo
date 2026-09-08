@@ -432,6 +432,25 @@ ENDOPTIMIZER
     CHECK(trg.spec.space->at(0).lo == Approx(0.7));   /* max(0.1, 0.3) = 0.3 */
     CHECK(trg.spec.space->at(0).hi == Approx(1.3));
   }
+  SECTION("FRAC 0 + FLOOR: constant absolute half-width (grid-centre boxes)") {
+    ScopedTempFile in("OPTIM WATOM (1) AUTO FRAC 0 FLOOR 0.25\nOPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\nENDOPTIMIZER\n");
+    auto ctx = watom_ctx();
+    tadah::hpo::HPOTargets trg(ctx, in.path.string());
+    CHECK(trg.spec.space->at(0).lo == Approx(0.75));   /* max(0*1, 0.25) = 0.25 */
+    CHECK(trg.spec.space->at(0).hi == Approx(1.25));
+    CHECK(trg.spec.space->at(0).origin == tadah::hpo::BoxOrigin::AutoLinear);
+  }
+  SECTION("FRAC 0 without a floor is the zero-width error; negative FRAC is rejected") {
+    auto ctx = watom_ctx();
+    {
+      ScopedTempFile in("OPTIM WATOM (1) AUTO FRAC 0\nOPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\nENDOPTIMIZER\n");
+      REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, in.path.string()), Catch::Contains("zero-width box"));
+    }
+    {
+      ScopedTempFile in("OPTIM WATOM (1) AUTO FRAC -0.1\nOPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\nENDOPTIMIZER\n");
+      REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, in.path.string()), Catch::Contains("FRAC must be >= 0"));
+    }
+  }
   SECTION("geometric RATIO with a tag") {
     ScopedTempFile in("OPTIM WATOM (1) AUTO RATIO 4 LOG\nOPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\nENDOPTIMIZER\n");
     auto ctx = watom_ctx();
