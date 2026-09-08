@@ -1,4 +1,5 @@
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/core/context.h>
@@ -445,6 +446,48 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         f_.flush();
     }
 
+    // ---- initial step (config level; the effective per-dim vector is
+    //      journaled by the NLopt adapter at run time, where the start
+    //      point is known)
+    if (sp.lib != "NOT SET" && sp.algo != "NOT SET") {
+        std::string line;
+        if (sp.step || !sp.step_overrides.empty()) {
+            std::ostringstream oss;
+            if (sp.step) oss << "STEP " << *sp.step << " (fraction of transformed OPTIM width per dim)";
+            else         oss << "STEP overrides only";
+            for (const auto& o : sp.step_overrides) {
+                oss << "; " << o.key;
+                if (!o.indices.empty()) {
+                    oss << "(";
+                    for (std::size_t k = 0; k < o.indices.size(); ++k)
+                        oss << (k ? "," : "") << o.indices[k];
+                    oss << ")";
+                }
+                oss << " " << o.frac;
+            }
+            line = oss.str();
+        } else if (sp.lib == "NLOPT") {
+            line = "(STEP unset -- NLopt default per dim: 0.25*width, or 0.75*distance to "
+                   "the nearer bound; read back at run time)";
+        } else if (sp.lib == "TADAH" && sp.algo.rfind("ANNEAL", 0) == 0) {
+            auto it = sp.param.find("STEP_FRAC");
+            line = "PARAM STEP_FRAC " + (it != sp.param.end() ? fmt_double(it->second) : std::string("(default)"))
+                 + " (fraction of transformed width per dim)";
+        } else if (sp.lib == "TADAH" && sp.algo == "GRID") {
+            auto it = sp.param.find("GRID_POINTS");
+            line = "PARAM GRID_POINTS " + (it != sp.param.end() ? std::to_string(static_cast<int>(it->second)) : std::string("20"))
+                 + " per dim";
+        } else {
+            line = "n/a (no initial-step concept)";
+        }
+        kv("Initial step", line);
+        try {
+            const auto& c = optimizer_caps(sp);
+            if (step_use_consumes(c.step_use) || sp.step)
+                kv("Step consumption", std::string(step_use_name(c.step_use)) + " -- " + c.step_note);
+        } catch (const std::exception&) { /* unregistered: skip */ }
+    }
+
     // ---- algorithm-specific params
     if (sp.pop)            kv("Population size", std::to_string(*sp.pop));
     if (sp.vector_storage) kv("Vector storage",  std::to_string(*sp.vector_storage));
@@ -593,21 +636,97 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
     section("SEARCH SPACE");
     {
         std::lock_guard<std::mutex> lg(mtx_);
-        f_ << "  (bounds in optimiser-internal space)\n";
         const std::size_t n = sp.low.size();
         /* Resolved labels double as the pinned-dim audit's dim names. */
         pin_labels_.resize(n);
-        for (std::size_t i = 0; i < n; ++i) {
-            const std::string& lbl = (i < param_labels.size())
-                                     ? param_labels[i] : "param[" + std::to_string(i) + "]";
-            pin_labels_[i] = lbl;
-            std::string row = "    " + lbl;
-            // pad label
-            if (row.size() < 28) row.resize(28, ' ');
-            row += ": [" + fmt_double(sp.low[i], 3) + ",  " + fmt_double(sp.high[i], 3) + "]";
-            if (i < sp.log_scaled.size() && sp.log_scaled[i])
-                row += "  (log-scale -- bounds are ln(value))";
-            f_ << row << "\n";
+        for (std::size_t i = 0; i < n; ++i)
+            pin_labels_[i] = (i < param_labels.size())
+                             ? param_labels[i] : "param[" + std::to_string(i) + "]";
+
+        if (sp.space && sp.space->dim() == n && n > 0) {
+            const SearchSpace& ss = *sp.space;
+            /* -- policy summary ------------------------------------------ */
+            if (ss.normalised())
+                f_ << "  Scaling               : OPTIM_SCALE AUTO -- every OPTIM dimension "
+                      "is mapped to the unit box [0,1] (optimisers iterate on u_i = "
+                      "(t_i(x_i)-t_i(lo_i))/(t_i(hi_i)-t_i(lo_i)))\n"
+                   << "  Optimiser units       : STEP, XTOL_ABS and PARAM fd_step are "
+                      "fractions of each box width\n";
+            else
+                f_ << "  Scaling               : OPTIM_SCALE NONE -- optimisers iterate "
+                      "in raw OPTIM units (ln for LOG dims, asinh(x/c) for ASINH dims)\n";
+            std::size_t n_auto = 0, n_log = 0, n_asinh = 0;
+            for (std::size_t i = 0; i < n; ++i) {
+                const auto& d = ss.at(i);
+                if (d.tf.kind == ScaleKind::Log)   { ++n_log;   if (d.auto_log) ++n_auto; }
+                if (d.tf.kind == ScaleKind::Asinh) ++n_asinh;
+            }
+            {
+                std::ostringstream pol;
+                if (sp.log_threshold)
+                    pol << "LOG_HP " << *sp.log_threshold << " (" << n_auto
+                        << " dim(s) auto-LOG)";
+                else
+                    pol << "LOG_HP off";
+                pol << "; explicit tags: " << (n_log - n_auto) << " LOG, "
+                    << n_asinh << " ASINH";
+                f_ << "  Scale policy          : " << pol.str() << "\n";
+            }
+            {
+                double wmin = std::numeric_limits<double>::infinity(), wmax = 0.0;
+                std::size_t imin = 0, imax = 0;
+                for (std::size_t i = 0; i < n; ++i) {
+                    const double w = ss.real_width(i);
+                    if (w < wmin) { wmin = w; imin = i; }
+                    if (w > wmax) { wmax = w; imax = i; }
+                }
+                std::ostringstream wr;
+                wr << fmt_double(wmin > 0 ? wmax / wmin : 0.0, 2)
+                   << " (min " << pin_labels_[imin] << " " << fmt_double(wmin, 3)
+                   << ", max " << pin_labels_[imax] << " " << fmt_double(wmax, 3) << ")";
+                if (ss.normalised()) wr << " -> 1.0 for every dim after scaling";
+                f_ << "  Real width ratio      : " << wr.str() << "\n";
+            }
+            f_ << "  Space version         : " << ss.version() << "\n";
+
+            /* -- per-dim table --------------------------------------------- */
+            const std::vector<double>* start =
+                sp.optim_init.empty() ? nullptr : &sp.optim_init.front();
+            auto pad = [](std::string s, std::size_t w) {
+                if (s.size() < w) s.resize(w, ' ');
+                return s;
+            };
+            f_ << "   " << pad("#", 4) << pad("parameter", 24) << pad("scale", 13)
+               << pad("origin", 11) << pad("real bounds", 30)
+               << pad("internal bounds", 26) << pad("start (real)", 14)
+               << "u0\n";
+            for (std::size_t i = 0; i < n; ++i) {
+                const auto& d = ss.at(i);
+                std::string row = "   " + pad(std::to_string(i + 1), 4)
+                                + pad(pin_labels_[i], 24)
+                                + pad(ss.describe_dim(i), 13)
+                                + pad(box_origin_name(d.origin), 11)
+                                + pad("[" + fmt_double(d.lo, 3) + ", " + fmt_double(d.hi, 3) + "]", 30)
+                                + pad("[" + fmt_double(sp.low[i], 3) + ", " + fmt_double(sp.high[i], 3) + "]", 26);
+                if (start && i < start->size()) {
+                    const double x0 = (*start)[i];
+                    row += pad(fmt_double(x0, 4), 14);
+                    row += fmt_double(ss.to_internal(i, x0), 4);
+                } else {
+                    row += pad("-", 14) + "-";
+                }
+                f_ << row << "\n";
+            }
+        } else {
+            f_ << "  (bounds in optimiser-internal space)\n";
+            for (std::size_t i = 0; i < n; ++i) {
+                std::string row = "    " + pin_labels_[i];
+                if (row.size() < 28) row.resize(28, ' ');
+                row += ": [" + fmt_double(sp.low[i], 3) + ",  " + fmt_double(sp.high[i], 3) + "]";
+                if (i < sp.log_scaled.size() && sp.log_scaled[i])
+                    row += "  (log-scale -- bounds are ln(value))";
+                f_ << row << "\n";
+            }
         }
         f_.flush();
     }
@@ -1057,6 +1176,10 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                 }
                 f_ << std::string(12, ' ') << "SUMMARY  " << cs.str() << "\n";
             }
+            /* Bound-occupancy audit (every backend): where the latest best
+             * sits relative to its OPTIM box. */
+            write_bound_occupancy_locked("SUMMARY", /*final_table=*/false);
+
             /* Near-bound floor-step audit: a CORANA driver marks a dim
              * whose chain is within one floor-step of a bound while V is
              * already at that floor. Inward proposals remain possible, so
@@ -1092,8 +1215,10 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                     std::string l = r.dim < pin_labels_.size()
                         ? pin_labels_[r.dim]
                         : "param[" + std::to_string(r.dim) + "]";
-                    if (r.dim < pin_log_.size() && pin_log_[r.dim])
+                    if (r.dim < pin_log_.size() && pin_log_[r.dim] == 1)
                         l += " (ln)";
+                    else if (r.dim < pin_log_.size() && pin_log_[r.dim] == 2)
+                        l += " (asinh)";
                     return l;
                 };
                 std::size_t lw = 24;
@@ -1174,15 +1299,77 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
     }
 }
 
+void HPOLog::record_bound_occupancy(const std::vector<BoundOccupancy::Mark>& marks,
+                                    std::uint64_t eval, double edge)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    occ_marks_ = marks;
+    occ_eval_  = eval;
+    occ_edge_  = edge;
+    occ_seen_  = true;
+}
+
+/* Caller holds mtx_. Milestone form: multi-line INFO block + one HINT.
+ * Final form (DIAGNOSTICS): plain table. Nothing is printed when the
+ * latest best sits away from every bound (final form says so). */
+void HPOLog::write_bound_occupancy_locked(const char* /*indent_tag*/, bool final_table)
+{
+    if (!occ_seen_) return;
+    if (occ_marks_.empty()) {
+        if (final_table)
+            f_ << "  [ok] Final best sits away from every OPTIM bound (edge "
+               << std::fixed << std::setprecision(0) << occ_edge_ * 100.0 << "% of width).\n";
+        return;
+    }
+    std::ostringstream tbl;
+    tbl << (final_table ? "  Bound occupancy of the final best (eval " : "best point (eval ")
+        << occ_eval_ << ") sits within " << std::fixed << std::setprecision(0)
+        << occ_edge_ * 100.0 << "% of an OPTIM limit on " << occ_marks_.size()
+        << " dim(s) (gap = fraction of width):\n";
+    tbl << (final_table ? "    " : "  ")
+        << std::left << std::setw(24) << "dim" << std::setw(6) << "side"
+        << std::setw(14) << "value" << std::setw(14) << "bound"
+        << std::setw(11) << "gap/width" << "since eval\n";
+    for (const auto& m : occ_marks_) {
+        const std::string lbl = m.dim < pin_labels_.size() ? pin_labels_[m.dim]
+                                                           : "param[" + std::to_string(m.dim) + "]";
+        tbl << (final_table ? "    " : "  ")
+            << std::left << std::setw(24) << lbl << std::setw(6) << (m.hi ? "HI" : "LO")
+            << std::setw(14) << fmt_double(m.real_value, 4)
+            << std::setw(14) << fmt_double(m.real_bound, 4)
+            << std::setw(11) << fmt_double(m.gap_u, 2)
+            << m.since_eval << "\n";
+    }
+    std::string text = tbl.str();
+    if (!text.empty() && text.back() == '\n') text.pop_back();
+    if (final_table) {
+        f_ << text << "\n"
+           << "    (advisory: a best that rides a bound suggests bound pressure -- widen that side\n"
+              "     and rerun with INIT METHOD WARM; the run never changes OPTIM bounds by itself)\n";
+    } else {
+        event_locked("INFO", text);
+        event_locked("HINT", "a best that keeps riding a bound suggests bound pressure -- widen that "
+                             "side (where the physics permits) and rerun with INIT METHOD WARM");
+    }
+    f_.flush();
+}
+
 void HPOLog::arm_pin_audit(const OptimizerSpec& sp, double v_floor_frac,
                            int n_chains, const std::string& unit_name)
 {
     std::lock_guard<std::mutex> lg(mtx_);
     pin_low_  = sp.low;
     pin_high_ = sp.high;
+    /* 1 = ln-scaled, 2 = asinh-scaled (tag suffix in the milestone table). */
     pin_log_.assign(sp.low.size(), 0);
-    for (std::size_t i = 0; i < sp.log_scaled.size() && i < pin_log_.size(); ++i)
-        pin_log_[i] = sp.log_scaled[i] ? 1 : 0;
+    for (std::size_t i = 0; i < pin_log_.size(); ++i) {
+        if (sp.space && i < sp.space->dim()) {
+            const auto k = sp.space->at(i).tf.kind;
+            pin_log_[i] = (k == ScaleKind::Log) ? 1 : (k == ScaleKind::Asinh ? 2 : 0);
+        } else if (i < sp.log_scaled.size() && sp.log_scaled[i]) {
+            pin_log_[i] = 1;
+        }
+    }
     pin_floor_frac_ = v_floor_frac;
     pin_chains_     = n_chains > 0 ? n_chains : 1;
     pin_unit_name_  = unit_name;
@@ -1443,6 +1630,8 @@ void HPOLog::finish(const std::string& status_str)
     }
 
     /* -- PERFORMANCE --------------------------------------------------- */
+    if (occ_seen_) write_bound_occupancy_locked(nullptr, /*final_table=*/true);
+
     { std::string s = "-- PERFORMANCE "; while(s.size()<72) s+='-'; f_ << "\n" << s << "\n"; }
     f_ << "  " << std::left << std::setw(KW) << "Total wall time"
        << ": " << format_duration(wall_sec) << "\n";

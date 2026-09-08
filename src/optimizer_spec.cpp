@@ -1,4 +1,5 @@
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/asa_options.h>
 #include <tadah/hpo/anneal_keys_gen.h>
 #include <algorithm>
@@ -70,7 +71,8 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
     if (algo=="RANDOM")
         os<<"   * No parameters.\n";
     else if(algo=="GRID")
-        os<<"   * PARAM SPACING <double>   (default 20 steps each dim)\n";
+        os<<"   * PARAM GRID_POINTS <int>  (default 20 points per dimension;\n"
+            "     spacing = width/(n-1); total cost = n^dim). STEP is rejected.\n";
     else if(algo=="ANNEAL")
     {
         os<<"   * Serial simulated annealing: classic whole-vector Gaussian kernel\n"
@@ -139,10 +141,8 @@ static void print_dlib_caps(std::ostream& os, const std::string& algo)
             "   * FTOL_ABS     (objective-delta stop, default 1e-7)\n"
             "   * PARAM fd_step <double>      (approx-derivative step, default 1e-6)\n"
             "   * PARAM tol_gradinf <double>  (gradient-inf-norm stop; alternative to FTOL_ABS)\n";
-    else if(algo=="BOBYQA")
-        os<<"   * RHO_BEGIN / RHO_END\n";
     else
-        os<<"   * (use Dlib docs for details)\n";
+        os<<"   * (unknown DLIB algo; registered: GFS, BFGS)\n";
 }
 
 static void print_nlopt_caps(std::ostream& os,const std::string& algo)
@@ -154,6 +154,18 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
         "   * PARAM <name> <value> - any nlopt::opt::set_param key\n";
     if (algo[0]=='G')        os<<"   * global optimizer\n";
     if (algo[1]=='N') os<<"   * derivative-free\n";
+    /* Initial-step policy from the registry (single source of truth). */
+    try {
+        const auto& c = optimizer_caps("NLOPT", algo);
+        if (step_use_consumes(c.step_use))
+            os<<"   * STEP <double>  initial step; consumption: "
+              << step_use_name(c.step_use) << "\n"
+              << "     " << c.step_note << "\n";
+        else
+            os<<"   * STEP is rejected: " << c.step_note << "\n";
+        if (c.ignores_bounds)
+            os<<"   * WARNING: " << c.bounds_note << "\n";
+    } catch (const std::exception&) { /* unregistered: nothing to add */ }
 }
 
 static void print_asa_caps(std::ostream& os, const std::string& algo)

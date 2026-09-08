@@ -362,7 +362,7 @@ TEST_CASE("startup validation: bump-support gate",
     ctx.remove("SGRID2B");
     ctx.add("SGRID2B", "1.5 0.8 2.5");  // spills under Cut_Dummy
     ctx.add("DBFILE", "dummy.db");
-    ScopedTempFile tf("OPTIM CGRID2B (1) 4.5 5.5\nPC_ERMSE 0 1\n" +
+    ScopedTempFile tf("OPTIM CGRID2B (1) 3.9 5.5\nPC_ERMSE 0 1\n" +
                       std::string(kOptimizerBlock));
     HPOTargets trg(ctx, tf.path.string());
     REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));

@@ -9,6 +9,7 @@
 #include <limits>
 #include <cmath>
 #include <unordered_set>
+#include <tadah/hpo/search_space.h>
 
 namespace tadah::hpo {
 
@@ -287,6 +288,18 @@ struct NoiseSpec {
                                                    // and suggest FTOL_REL. 0 = off.
 };
 
+/* StepOverride -- `STEP <KEY>[(indices)] <frac>`: per-key / per-index
+ * override of the OPTIMIZER-block STEP fraction. Parsed by
+ * dispatch_opt_attr into OptimizerSpec::step_overrides; resolved against
+ * the search space (unknown key / non-OPTIM'd index are hard errors)
+ * when the per-dimension initial-step plan is built. An empty `indices`
+ * means every OPTIM'd index of `key`. */
+struct StepOverride {
+    std::string              key;
+    std::vector<std::size_t> indices;   // 1-based OPTIM indices; empty = all
+    double                   frac = 0.0;
+};
+
 /* ---------------- Optimizer description --------------------------- */
 struct OptimizerSpec {
     OptimizerSpec() = default;
@@ -302,11 +315,13 @@ struct OptimizerSpec {
           prestage(o.prestage ? std::make_unique<OptimizerSpec>(*o.prestage) : nullptr),
           vector_storage(o.vector_storage), pop(o.pop),
           num_threads(o.num_threads), seed(o.seed), step(o.step),
+          step_overrides(o.step_overrides),
           grad_strategy(o.grad_strategy), stop(o.stop),
           param(o.param), param_raw(o.param_raw),
           anneal_observer(o.anneal_observer), low(o.low), high(o.high),
           parameter_labels(o.parameter_labels), is_int(o.is_int),
           log_scaled(o.log_scaled), log_threshold(o.log_threshold),
+          space(o.space), scale(o.scale),
           optim_init(o.optim_init),
           failscore(o.failscore),
           init_strategy_spec(o.init_strategy_spec),
@@ -352,7 +367,12 @@ struct OptimizerSpec {
     /* 64-bit so SEED values at or above 2^32 are preserved exactly;
      * every consumer already widens to std::uint64_t. */
     std::optional<std::uint64_t> seed;
+    /* STEP: initial step of derivative-free NLopt algorithms. Consumed
+     * only by backends whose OptimizerCaps::step_use is a consumer
+     * (scale_validation.h rejects it everywhere else). */
     std::optional<double> step;
+    /* STEP <KEY>[(indices)] <frac> overrides (see StepOverride). */
+    std::vector<StepOverride> step_overrides;
 
     /* Gradient backend used by gradient-based optimizers (DLIB:BFGS,
      * CERES:LBFGS/...). std::nullopt means default (NUMERICAL). The
@@ -369,12 +389,26 @@ struct OptimizerSpec {
      * not owned. */
     anneal::ChainObserver* anneal_observer = nullptr;
 
-    /* -------- bounds, integer mask, log-scale --------------------- */
-    std::vector<double> low, high;          // filled by HPOTargets
+    /* -------- bounds, integer mask, transform ---------------------- */
+    /* low/high are INTERNAL (optimiser-space) bounds -- derived caches
+     * filled by bind_space() from the SearchSpace (or, for hand-built
+     * specs, by the analyse_logscale() shim). Every backend iterates on
+     * [low, high]; in()/out() map REAL <-> INTERNAL. */
+    std::vector<double> low, high;
     std::vector<std::string> parameter_labels; // canonical flattened OPTIM names
     std::vector<bool>   is_int;
-    std::vector<bool>   log_scaled;         // same size as low/high
-    std::optional<double> log_threshold;    // OFF = std::nullopt
+    /* log_scaled[i] == true iff dim i's shape is LOG (ln). Kept as a
+     * derived cache for display code and hand-built test specs; ALL
+     * coordinate arithmetic must go through in()/out()/space, which also
+     * cover the ASINH shape (log_scaled is false for it). */
+    std::vector<bool>   log_scaled;
+    std::optional<double> log_threshold;    // LOG_HP ratio; OFF = std::nullopt
+    /* The search space this spec iterates in (shared with every sub-spec
+     * and stage-spec clone). Null only for hand-built specs that never
+     * called bind_space()/analyse_logscale() -- in()/out() then fall back
+     * to the log_scaled mask. */
+    SearchSpacePtr        space;
+    ScalePolicy           scale;            // OPTIM_SCALE + LOG_HP as parsed
     std::vector<std::vector<double>> optim_init;
 
     /* FAILSCORE from the enclosing HPOTargets, copied in so optimisers
@@ -394,33 +428,73 @@ struct OptimizerSpec {
     BasinsSpec       basins;                 // STRATEGY { TYPE BASINS }
     BasinsV2Spec     basins_v2;              // STRATEGY { TYPE BASINSV2 }
 
-    /* call once after low/high are known */
+    /* Bind the search space: low/high become the INTERNAL bounds, is_int,
+     * log_scaled and parameter_labels are derived from it. Called by
+     * HPOTargets for the outer spec and every sub-spec. */
+    void bind_space(SearchSpacePtr s)
+    {
+        space = std::move(s);
+        const std::size_t n = space ? space->dim() : 0;
+        low.resize(n); high.resize(n);
+        is_int.assign(n, false);
+        log_scaled.assign(n, false);
+        for (std::size_t i = 0; i < n; ++i) {
+            low[i]  = space->internal_lo(i);
+            high[i] = space->internal_hi(i);
+            is_int[i] = space->at(i).is_int;
+            log_scaled[i] = (space->at(i).tf.kind == ScaleKind::Log);
+        }
+        parameter_labels = space ? space->labels() : std::vector<std::string>{};
+    }
+
+    /* Shim for hand-built specs (tests): low/high hold REAL bounds on
+     * entry; builds an UNNORMALISED search space (OPTIM_SCALE NONE) with
+     * the LOG_HP rule from log_threshold and binds it, so low/high end
+     * up ln-transformed for qualifying dims exactly as before.
+     * Production code builds the space in HPOTargets; do not call this
+     * on a spec that already has one. */
     void analyse_logscale()
     {
-        const double thr = log_threshold.value_or(std::numeric_limits<double>::infinity());
-        log_scaled.resize(low.size(),false);
-        for (size_t i=0;i<low.size();++i)
-        {
-            if ( low[i]>0 && high[i]/low[i] >= thr )
-            {
-                log_scaled[i]=true;
-                low [i] = std::log(low [i]);
-                high[i] = std::log(high[i]);
-            }
+        std::vector<DimSpec> dims(low.size());
+        for (std::size_t i = 0; i < low.size(); ++i) {
+            dims[i].label = (i < parameter_labels.size() && !parameter_labels[i].empty())
+                            ? parameter_labels[i] : "dim[" + std::to_string(i) + "]";
+            dims[i].key = dims[i].label;
+            dims[i].lo = low[i];
+            dims[i].hi = high[i];
+            dims[i].is_int = (i < is_int.size()) && is_int[i];
         }
+        ScalePolicy pol;
+        pol.log_ratio = log_threshold;
+        pol.normalise = false;
+        scale = pol;
+        bind_space(std::make_shared<const SearchSpace>(
+            SearchSpace::build(std::move(dims), pol)));
     }
-    /* Helper to go in/out of transformed space */
+
+    /* REAL -> INTERNAL and INTERNAL -> REAL for std::vector<double> or a
+     * dlib column matrix. Through the search space when bound; the
+     * legacy ln/exp mask otherwise (specs built by hand in tests). */
     template<typename Vec>
-    Vec in(const Vec& x)  const
-    {   Vec y=x;  for(size_t i=0;i<y.size();++i)
-            if(i < log_scaled.size() && log_scaled[i]) y[i]=std::log(y[i]);
-        return y; }
+    Vec in(const Vec& x) const
+    {
+        if (space) return space->to_internal(x);
+        Vec y = x;
+        for (std::size_t i = 0; i < ss_detail::len(y); ++i)
+            if (i < log_scaled.size() && log_scaled[i])
+                ss_detail::elem(y, i) = std::log(ss_detail::elem(y, i));
+        return y;
+    }
     template<typename Vec>
     Vec out(const Vec& x) const
-    {   Vec y=x;  for(long int i=0;i<y.size();++i)
-            if(static_cast<size_t>(i) < log_scaled.size() && log_scaled[i])
-                y(i)=std::exp(y(i));
-        return y; }
+    {
+        if (space) return space->to_real(x);
+        Vec y = x;
+        for (std::size_t i = 0; i < ss_detail::len(y); ++i)
+            if (i < log_scaled.size() && log_scaled[i])
+                ss_detail::elem(y, i) = std::exp(ss_detail::elem(y, i));
+        return y;
+    }
 
     /* ------------- capability print-outs -------------------------- */
     static void print_caps(const std::string& lib,

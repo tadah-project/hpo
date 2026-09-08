@@ -35,6 +35,7 @@
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/bound_audit.h>
 #include <tadah/hpo/pot_header_writer.h>
 #include <tadah/mlip/analytics/analytics.h>
 #include <tadah/mlip/load_transforms.h>
@@ -363,8 +364,8 @@ private:
      *  Used in NaN-clamping log messages. */
     std::string format_params_str(const ParamVec& p) const;
 
-    /** Check if any value in p is suspiciously close to a bound.
-     *  Returns a hint string (empty if everything looks fine). */
+    /** Legacy one-line bound hint for the NaN-clamp log path (compares in
+     *  INTERNAL space). The generic audit is bound_occ_ / bound_audit.h. */
     std::string bound_hints(const ParamVec& p) const;
 #if defined(TADAH_BUILD_MPI)
     void run_lammps_mpi (Result&) const;
@@ -391,6 +392,11 @@ private:
      * publication. The atomics remain for cheap observers/checkpoint fields;
      * this mutex makes exact-loss ties deterministic within one process. */
     static std::mutex                       best_mtx_;
+    /* Bound-occupancy audit of the running best (bound_audit.h); armed
+     * from trg.space() at construction, updated on the new-best path
+     * under its own mutex, reported by HPOLog. */
+    static BoundOccupancy                   bound_occ_;
+    static std::mutex                       bound_occ_mtx_;
     static std::optional<durable_best::Key> g_best_key_;
 
     /* Top-K tracking -- gated. Pays mutex cost only when track_topk_capacity_ > 0. */

@@ -1,4 +1,5 @@
 #include <tadah/hpo/optimizer_block.h>
+#include <tadah/core/utils.h>
 
 #include <cctype>
 #include <cstdint>
@@ -18,6 +19,24 @@ bool parse_bool(const std::string &v, const std::string &ctx) {
   throw std::runtime_error(
       ctx + ": expected boolean (true/false/1/0/yes/no/on/off), got '" + v +
       "'");
+}
+
+const std::vector<std::string> &opt_attr_keys() {
+  static const std::vector<std::string> keys = {
+      "LIB",      "ALGO",     "MAXEVAL",       "MAXTIME",  "STOPVAL",
+      "FTOL_REL", "FTOL_ABS", "XTOL_REL",      "XTOL_ABS", "POPULATION",
+      "STEP",     "SEED",     "VECTOR_ARR",    "THREADS",  "GRAD_STRATEGY",
+      "PARAM"};
+  return keys;
+}
+
+std::string opt_attr_keys_joined(const char *sep) {
+  std::string out;
+  for (const auto &k : opt_attr_keys()) {
+    if (!out.empty()) out += sep;
+    out += k;
+  }
+  return out;
 }
 
 bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
@@ -59,9 +78,70 @@ bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
     iss >> v;
     a.pop = v;
   } else if (key == "STEP") {
-    double v;
-    iss >> v;
-    a.step = v;
+    /* Two forms:
+     *   STEP <number>                      -- the block-wide fraction
+     *   STEP <KEY>[(indices)] <number>     -- per-key / per-index override
+     * A non-numeric first token that is not a key form used to leave v=0
+     * and surface later as NLopt's 'zero step size'; both forms are now
+     * parsed strictly. */
+    std::string first;
+    iss >> first;
+    if (first.empty())
+      throw std::runtime_error("STEP requires a value");
+    auto parse_num = [](const std::string& tok, double& out) {
+      try {
+        std::size_t pos = 0;
+        out = std::stod(tok, &pos);
+        return pos == tok.size();
+      } catch (const std::exception&) {
+        return false;
+      }
+    };
+    double v = 0.0;
+    if (parse_num(first, v)) {
+      a.step = v;
+    } else {
+      StepOverride ov;
+      /* KEY, KEY(3), KEY(1-4,7) or KEY (1,2) with a space before '(' */
+      std::string spec = first;
+      std::string rest_tok;
+      if (spec.find('(') == std::string::npos) {
+        std::streampos save = iss.tellg();
+        if (iss >> rest_tok && !rest_tok.empty() && rest_tok.front() == '(') {
+          spec += rest_tok;
+        } else {
+          iss.clear();
+          iss.seekg(save);
+        }
+      }
+      const std::size_t lp = spec.find('(');
+      if (lp != std::string::npos) {
+        const std::size_t rp = spec.find(')', lp);
+        if (rp == std::string::npos || rp != spec.size() - 1)
+          throw std::runtime_error(
+              "STEP override '" + spec + "': expected KEY(indices) <frac>");
+        ov.key = spec.substr(0, lp);
+        const std::string idx = spec.substr(lp + 1, rp - lp - 1);
+        if (idx.empty())
+          throw std::runtime_error(
+              "STEP override '" + spec + "': empty index list");
+        try {
+          ov.indices = core::parse_indices(idx);
+        } catch (const std::exception& e) {
+          throw std::runtime_error("STEP override '" + spec +
+                                   "': bad index list (" + e.what() + ")");
+        }
+      } else {
+        ov.key = spec;
+      }
+      std::string num;
+      iss >> num;
+      if (num.empty() || !parse_num(num, ov.frac))
+        throw std::runtime_error(
+            "STEP override for '" + ov.key + "' expects a numeric fraction "
+            "(got '" + num + "')");
+      a.step_overrides.push_back(std::move(ov));
+    }
   } else if (key == "SEED") {
     std::uint64_t v;
     iss >> v;

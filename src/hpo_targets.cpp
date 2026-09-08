@@ -4,6 +4,10 @@
 #include <tadah/hpo/init_strategy.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_block.h>
+#include <tadah/hpo/scale_validation.h>
+#include <tadah/mlip/engines/hpotarget_writer.h>
+#include <cctype>
+#include <cstdlib>
 #include <tadah/models/descriptors/d_base.h>
 #include <tadah/models/descriptors/d_mjoin.h>
 #include <tadah/core/registry.h>
@@ -93,6 +97,8 @@ void HPOTargets::Opti::resize(size_t s) {
   opt.resize(s, false);
   config.resize(s);
   labels.resize(s, "");
+  scale.resize(s);
+  origin.resize(s, BoxOrigin::Explicit);
   lowbound.resize(s, 0);
   highbound.resize(s, 0);
 }
@@ -363,22 +369,30 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
     o.print(key);
   }
 
-  /* ---------- gather bounds --------------------------------------- */
-  std::vector<double> low, high;
-  for (auto& p : optimap)
-  {
-    const Opti& o = p.second;
-    for (size_t i=0;i<o.opt.size();++i)
-      if (o.opt[i]) {
-        low .push_back(o.lowbound [i]);
-        high.push_back(o.highbound[i]);
-      }
+  /* ---------- search space ----------------------------------------
+   * One SearchSpace from the OPTIM lines (real boxes + per-line shape
+   * tags), OPTIM_SCALE and LOG_HP; bound to the outer spec and, below,
+   * to every sub-spec. spec.low/high are the INTERNAL bounds. */
+  /* Env override TADAH_OPTIM_SCALE=AUTO|NONE (harness A/B of the
+   * coordinate system; the reference-suite gate runs every example both
+   * ways). Read here because the space is built in this constructor. */
+  if (const char* e = std::getenv("TADAH_OPTIM_SCALE")) {
+    std::string v = e;
+    for (auto& ch : v) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    if      (v == "AUTO") scale_policy_.normalise = true;
+    else if (v == "NONE") scale_policy_.normalise = false;
+    else throw std::runtime_error("TADAH_OPTIM_SCALE must be AUTO or NONE (got '" +
+                                  std::string(e) + "')");
+    std::ostringstream oss;
+    oss << "OPTIM_SCALE " << v << " taken from the TADAH_OPTIM_SCALE environment "
+           "override" << (scale_policy_set_ ? " (config value ignored)" : "");
+    std::cerr << "[HPO] " << oss.str() << "\n";
+    HPOLog::instance().info(oss.str());
+    scale_policy_set_ = true;
   }
-
-  spec.low        = std::move(low);
-  spec.high       = std::move(high);
-  spec.is_int.assign(spec.low.size(), false);   // no integer vars yet
-  spec.analyse_logscale();   // mutates low/high in place; fills log_scaled
+  space_ = std::make_shared<const SearchSpace>(build_search_space());
+  spec.scale = space_->policy();
+  spec.bind_space(space_);
 
   /* Optimisers need to tell a real loss from the failed-evaluation
    * sentinel (e.g. the ANNEAL T0 calibration excludes FAILSCORE
@@ -437,34 +451,11 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
     }
   }
 
-  /* Propagate the resolved search space and (analyse_logscale-applied)
-   * bounds into the LOCAL and PRESTAGE sub-specs FIRST, before resolving
-   * any INIT_STRATEGY chain on them: strategies like RANDOM/LHS/SOBOL
-   * sample within bounds, so an unbounded sub-spec produces 0-dim
-   * points. (Bound inheritance must precede init resolution.) */
-  auto inherit_bounds_only = [&](OptimizerSpec& sub) {
-    sub.low        = spec.low;
-    sub.high       = spec.high;
-    sub.is_int     = spec.is_int;
-    sub.log_scaled = spec.log_scaled;
-    sub.failscore  = spec.failscore;
-  };
-  if (spec.inner)    inherit_bounds_only(*spec.inner);
-  if (spec.prestage) {
-    inherit_bounds_only(*spec.prestage);
-    if (spec.prestage->inner) inherit_bounds_only(*spec.prestage->inner);
-  }
-  /* BASINS' EXPLORE/REFINE stage sub-specs need bounds too. */
-  if (spec.strategy_type == StrategyType::BASINS) {
-    if (spec.basins.explore) {
-        inherit_bounds_only(*spec.basins.explore);
-        if (spec.basins.explore->inner) inherit_bounds_only(*spec.basins.explore->inner);
-    }
-    if (spec.basins.refine) {
-        inherit_bounds_only(*spec.basins.refine);
-        if (spec.basins.refine->inner) inherit_bounds_only(*spec.basins.refine->inner);
-    }
-  }
+  /* Propagate the search space into every sub-spec FIRST, before
+   * resolving any INIT_STRATEGY chain on them: strategies like RANDOM/
+   * LHS/SOBOL sample within bounds, so an unbound sub-spec produces
+   * 0-dim points. (Bound inheritance must precede init resolution.) */
+  bind_space_recursive();
 
   /* ---------- resolve INIT_STRATEGY chain into optim_init -----------
    *
@@ -635,6 +626,11 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
     if (spec.basins.explore) resolve_or_inherit(*spec.basins.explore, "BASINS.EXPLORE");
     if (spec.basins.refine ) resolve_or_inherit(*spec.basins.refine,  "BASINS.REFINE");
   }
+
+  /* Fail fast on the initial-step policy (registry-driven). Seeds vs
+   * box and the width audit run in validate_hpo_setup(), with the other
+   * startup rules. */
+  run_scale_validation(spec, /*check_start_points=*/false);
 }
 
 // -------------------------------------------------------------------
@@ -1039,6 +1035,34 @@ void HPOTargets::read(const std::string& fn)
                 throw std::runtime_error("unknown key '" + key + "' inside NOISE block");
             }
 
+            /* LOG_HP is a property of the search space (one transform for
+             * the whole run): accepted once at OPTIMIZER (short form) or
+             * STRATEGY level -- the docs always promised both, the parser
+             * used to accept STRATEGY only and throw 'unknown key' at
+             * OUTER -- and rejected inside stage / INNER / INIT blocks. */
+            if (key=="LOG_HP") {
+                if (block == OUTER || block == STRATEGY_BLK) {
+                    double v = 0.0;
+                    if (!(iss >> v) || !std::isfinite(v) || !(v >= 1.0))
+                        throw std::runtime_error(
+                            "LOG_HP must be a finite ratio >= 1 (a dimension is "
+                            "log-scaled when high/low >= LOG_HP and low > 0)");
+                    if (spec.log_threshold) {
+                        std::ostringstream oss;
+                        oss << "LOG_HP given more than once; the last value ("
+                            << v << ") wins";
+                        std::cerr << "[HPO] " << oss.str() << "\n";
+                        HPOLog::instance().warning(oss.str());
+                    }
+                    spec.log_threshold = v;
+                    continue;
+                }
+                throw std::runtime_error(
+                    "LOG_HP is a search-space property; declare it once at the "
+                    "OPTIMIZER or STRATEGY level, not inside a stage, INNER or "
+                    "INIT block");
+            }
+
             /* STRATEGY block keys */
             if (block == STRATEGY_BLK) {
                 if (key=="TYPE") {
@@ -1060,8 +1084,6 @@ void HPOTargets::read(const std::string& fn)
                         basins_v2_spec_ensure_defaults(spec.basins_v2);
                     continue;
                 }
-                if (key=="LOG_HP") { double v; iss>>v; spec.log_threshold=v; continue; }
-
                 /* MULTISTART knobs (only meaningful with TYPE MULTISTART). */
                 if (key=="N_STARTS") {
                     std::size_t v; iss>>v;
@@ -1325,7 +1347,7 @@ void HPOTargets::read(const std::string& fn)
             /* INNER block -- only opt attributes, dispatched above. */
             if (block == INNER_BLK) {
                 throw std::runtime_error("unknown key '" + key + "' inside INNER block "
-                    "(only LIB/ALGO/MAXEVAL/FTOL_*/STEP/SEED/PARAM/POPULATION/THREADS/VECTOR_ARR are valid)");
+                    "(only " + opt_attr_keys_joined("/") + " are valid)");
             }
 
             /* Anything still unhandled inside an OPTIMIZER-level block is
@@ -1470,6 +1492,19 @@ void HPOTargets::read(const std::string& fn)
 
             /* optimisation variables --------------------------------*/
             else if (key=="OPTIM")   { process_optim_config(iss,nline); }
+            else if (key=="OPTIM_SCALE") {
+                std::string v; iss >> v;
+                for (auto& ch : v) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+                if (scale_policy_set_)
+                    throw std::runtime_error("OPTIM_SCALE given more than once");
+                if      (v == "AUTO") scale_policy_.normalise = true;
+                else if (v == "NONE") scale_policy_.normalise = false;
+                else throw std::runtime_error(
+                    "OPTIM_SCALE must be AUTO (every OPTIM dimension is mapped to the unit "
+                    "box [0,1]) or NONE (optimisers work in raw OPTIM units; ln for LOG "
+                    "dims) -- got '" + v + "'");
+                scale_policy_set_ = true;
+            }
 
             /* LAMMPS sims ------------------------------------------ */
             else if (key=="PC_LAMMPS")
@@ -1690,6 +1725,105 @@ void HPOTargets::handle_directory_creation(const std::string& directory) {
   }
 }
 
+/* Positive-only OPTIM keys, from the same table the refit hpotarget writer
+ * uses (MLIP hpotarget_writer.h) so HPO and the writer cannot disagree;
+ * keys unknown to that table are sign-free. */
+bool HPOTargets::optim_key_positive_only(const std::string& key) {
+  for (const auto& g : mlip::engines::hpotarget_group_specs())
+    if (key == g.key) return g.positive_only;
+  return false;
+}
+
+SearchSpace HPOTargets::build_search_space() const {
+  std::vector<DimSpec> dims;
+  for (const auto& kv : optimap) {
+    const Opti& o = kv.second;
+    std::size_t numeric_ordinal = 0;
+    for (std::size_t i = 0; i < o.opt.size(); ++i) {
+      const bool numeric = i < o.config.size() && core::is_number(o.config[i]);
+      if (numeric) ++numeric_ordinal;
+      if (!o.opt[i]) continue;
+      DimSpec d;
+      d.key        = kv.first;
+      d.user_index = numeric ? numeric_ordinal : 0;
+      d.label      = kv.first;
+      if (o.opt.size() > 1) d.label += "[" + std::to_string(i) + "]";
+      d.lo = o.lowbound[i];
+      d.hi = o.highbound[i];
+      d.tf = i < o.scale.size() ? o.scale[i] : DimTransform{};
+      d.origin = i < o.origin.size() ? o.origin[i] : BoxOrigin::Explicit;
+      if (numeric) {
+        try { d.x0 = std::stod(o.config[i]); } catch (const std::exception&) {}
+      }
+      dims.push_back(std::move(d));
+    }
+  }
+  ScalePolicy pol = scale_policy_;
+  pol.log_ratio = spec.log_threshold;
+  return SearchSpace::build(std::move(dims), pol);
+}
+
+void HPOTargets::write_search_space_files(const std::string& dir) const {
+  if (!space_) return;
+  const SearchSpace& ss = *space_;
+  const std::vector<double>* x0 = spec.optim_init.empty() ? nullptr : &spec.optim_init.front();
+  {
+    std::ofstream tsv(dir + "/hpo_search_space.tsv");
+    tsv << "dim\tlabel\tkey\toptim_index\tlo\thi\torigin\tx0\tscale\tc\tu0\tinternal_lo\tinternal_hi\tversion\n";
+    tsv << std::setprecision(17);
+    for (std::size_t i = 0; i < ss.dim(); ++i) {
+      const DimSpec& d = ss.at(i);
+      const double seed = (x0 && i < x0->size()) ? (*x0)[i] : d.x0;
+      tsv << (i + 1) << '\t' << d.label << '\t' << d.key << '\t' << d.user_index << '\t'
+          << d.lo << '\t' << d.hi << '\t' << box_origin_name(d.origin) << '\t';
+      if (std::isfinite(seed)) tsv << seed; else tsv << "nan";
+      tsv << '\t' << scale_kind_name(d.tf.kind) << '\t' << d.tf.c << '\t';
+      if (std::isfinite(seed)) tsv << ss.to_internal(i, seed); else tsv << "nan";
+      tsv << '\t' << ss.internal_lo(i) << '\t' << ss.internal_hi(i) << '\t' << ss.version() << '\n';
+    }
+  }
+  bool any_auto = false;
+  for (std::size_t i = 0; i < ss.dim(); ++i)
+    if (ss.at(i).origin != BoxOrigin::Explicit) any_auto = true;
+  if (!any_auto) return;
+  std::ofstream hpo(dir + "/hpo_optim_resolved.hpo");
+  hpo << "# Resolved OPTIM block (explicit bounds for every searched dimension).\n"
+         "# Written by tadah hpo because at least one box was derived by an AUTO rule;\n"
+         "# paste these lines in place of the AUTO lines to pin exactly this search space.\n";
+  hpo << std::setprecision(10);
+  for (std::size_t i = 0; i < ss.dim(); ++i) {
+    const DimSpec& d = ss.at(i);
+    hpo << "OPTIM " << d.key << " (" << (d.user_index ? d.user_index : 1) << ") "
+        << d.lo << " " << d.hi;
+    if (d.tf.kind == ScaleKind::Log)   hpo << " LOG";
+    if (d.tf.kind == ScaleKind::Asinh) hpo << " ASINH " << d.tf.c;
+    hpo << "   # " << box_origin_name(d.origin) << '\n';
+  }
+}
+
+void HPOTargets::bind_space_recursive() {
+  auto bind = [&](OptimizerSpec* sub) {
+    if (!sub) return;
+    sub->bind_space(space_);
+    sub->scale     = spec.scale;
+    sub->failscore = spec.failscore;
+    if (sub->inner) {
+      sub->inner->bind_space(space_);
+      sub->inner->scale     = spec.scale;
+      sub->inner->failscore = spec.failscore;
+    }
+  };
+  bind(spec.inner.get());
+  bind(spec.prestage.get());
+  if (spec.strategy_type == StrategyType::BASINS) {
+    bind(spec.basins.explore.get());
+    bind(spec.basins.refine.get());
+  } else if (spec.strategy_type == StrategyType::BASINSV2) {
+    bind(spec.basins_v2.explore.get());
+    bind(spec.basins_v2.refine.get());
+  }
+}
+
 void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
   std::string k;
   if (!(iss >> k)) {
@@ -1711,10 +1845,13 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
 
   std::vector<std::string> tokens = parse_optim_line(iss);
 
-  if (tokens.size() < 3) {
+  /* At least the (indices) group plus one token (AUTO, or <low> <high>);
+   * the exact grammar is checked below. */
+  if (tokens.size() < 2) {
     throw std::runtime_error(
-      "Insufficient tokens from parse_optim_line. Tokens: "
-      + core::to_string(tokens.size()));
+      "OPTIM " + k + " on line " + core::to_string(nline) +
+      ": expected `(indices) <low> <high>` or `(indices) AUTO ...` (got "
+      + core::to_string(tokens.size() - (tokens.empty() ? 0 : 1)) + " token(s))");
   }
 
   std::vector<size_t> user_indices;
@@ -1728,27 +1865,124 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
   }
   tokens.pop_back();
 
-  double high;
-  try {
-    high = std::stod(tokens.back());
-  } catch (const std::exception& e) {
-    throw std::runtime_error(
-      "Error converting high bound to double on process_optim_config line "
-      + core::to_string(nline) + ": " + std::string(e.what()) +
-      "\nTokens: " + tokens.back());
-  }
-  tokens.pop_back();
+  /* Strict grammar: OPTIM <KEY> (indices) <low> <high>. Anything else
+   * used to be silently ignored (the bounds were popped from the END of
+   * the token list), which swallowed typos and stray tokens. */
+  /* Two forms after the (indices) group has been extracted:
+   *   <low> <high> [LIN | LOG | ASINH <c>]                  explicit box
+   *   AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]
+   *                                                        seed-relative box
+   * AUTO derives the box from the CONFIG seed of each selected index:
+   *   geometric  [x0/f, x0*f] (mirrored for x0 < 0)   default for positive-only keys (RATIO 2)
+   *   linear     x0 +/- max(p*|x0|, a, r*max|x0| over this OPTIM line)   otherwise (FRAC 0.5)
+   * Cutoff keys (RCUT*) are excluded: the neighbour list is sized from
+   * explicit high bounds. */
+  DimTransform tf;
+  auto upper = [](std::string t) {
+    for (auto& ch : t) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    return t;
+  };
+  auto parse_num = [&](const std::string& tok, const char* what) {
+    try {
+      std::size_t pos = 0;
+      const double v = std::stod(tok, &pos);
+      if (pos != tok.size()) throw std::invalid_argument("trailing chars");
+      return v;
+    } catch (const std::exception&) {
+      throw std::runtime_error("OPTIM " + k + " on line " + core::to_string(nline) +
+                               ": " + what + " must be a number (got '" + tok + "')");
+    }
+  };
+  /* trailing shape tag (both forms) */
+  auto take_tag = [&](std::vector<std::string>& toks) {
+    if (toks.size() >= 2 && upper(toks[toks.size() - 2]) == "ASINH") {
+      tf.kind = ScaleKind::Asinh;
+      tf.c = parse_num(toks.back(), "ASINH <c>");
+      if (!std::isfinite(tf.c) || !(tf.c > 0.0))
+        throw std::runtime_error("OPTIM " + k + " on line " + core::to_string(nline) +
+                                 ": ASINH requires a positive linear scale c (got " +
+                                 toks.back() + ")");
+      toks.pop_back(); toks.pop_back();
+      return;
+    }
+    if (!toks.empty()) {
+      const std::string tag = upper(toks.back());
+      if (tag == "LIN")      { tf.kind = ScaleKind::Linear; toks.pop_back(); }
+      else if (tag == "LOG") { tf.kind = ScaleKind::Log;    toks.pop_back(); }
+      else if (tag == "ASINH")
+        throw std::runtime_error("OPTIM " + k + " on line " + core::to_string(nline) +
+                                 ": ASINH needs one argument <c> (the linear scale)");
+    }
+  };
+  const std::string grammar =
+    " -- the grammar is OPTIM <KEY> (indices) <low> <high> [LIN | LOG | ASINH <c>]"
+    " or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>]"
+    " [LIN | LOG | ASINH <c>]";
 
-  double low;
-  try {
-    low = std::stod(tokens.back());
-  } catch (const std::exception& e) {
-    throw std::runtime_error(
-      "Error converting low bound to double on process_optim_config line "
-      + core::to_string(nline) + ": " + std::string(e.what()) +
-      "\nTokens: " + tokens.back());
+  const bool auto_box = !tokens.empty() && upper(tokens.front()) == "AUTO";
+  double low = 0.0, high = 0.0;
+  struct AutoRule { bool geometric = false; double factor = 0.0; double floor = 0.0; double group_floor = 0.0; } rule;
+  if (auto_box) {
+    tokens.erase(tokens.begin());
+    take_tag(tokens);
+    bool mode_set = false;
+    for (std::size_t t = 0; t < tokens.size(); t += 2) {
+      const std::string opt = upper(tokens[t]);
+      if (t + 1 >= tokens.size())
+        throw std::runtime_error("OPTIM " + k + " on line " + core::to_string(nline) +
+                                 ": AUTO option '" + tokens[t] + "' needs a value" + grammar);
+      const double v = parse_num(tokens[t + 1], ("AUTO " + opt).c_str());
+      if (opt == "RATIO") {
+        if (mode_set) throw std::runtime_error("OPTIM " + k + ": RATIO and FRAC are mutually exclusive");
+        if (!(v > 1.0)) throw std::runtime_error("OPTIM " + k + ": AUTO RATIO must be > 1 (got " + tokens[t + 1] + ")");
+        rule.geometric = true; rule.factor = v; mode_set = true;
+      } else if (opt == "FRAC") {
+        if (mode_set) throw std::runtime_error("OPTIM " + k + ": RATIO and FRAC are mutually exclusive");
+        if (!(v > 0.0)) throw std::runtime_error("OPTIM " + k + ": AUTO FRAC must be > 0 (got " + tokens[t + 1] + ")");
+        rule.geometric = false; rule.factor = v; mode_set = true;
+      } else if (opt == "FLOOR") {
+        if (v < 0.0) throw std::runtime_error("OPTIM " + k + ": AUTO FLOOR must be >= 0");
+        rule.floor = v;
+      } else if (opt == "GROUP_FLOOR") {
+        if (v < 0.0) throw std::runtime_error("OPTIM " + k + ": AUTO GROUP_FLOOR must be >= 0");
+        rule.group_floor = v;
+      } else {
+        throw std::runtime_error("OPTIM " + k + " on line " + core::to_string(nline) +
+                                 ": unexpected AUTO option '" + tokens[t] + "'" + grammar);
+      }
+    }
+    if (k.rfind("RCUT", 0) == 0)
+      throw std::runtime_error("OPTIM " + k + ": AUTO boxes are not allowed on cutoff keys "
+                               "(the neighbour list is sized from an explicit high bound); "
+                               "give explicit bounds");
+    if (!mode_set) {
+      rule.geometric = optim_key_positive_only(k);
+      rule.factor    = rule.geometric ? 2.0 : 0.5;
+    }
+  } else {
+    take_tag(tokens);
+    if (tokens.size() != 2) {
+      throw std::runtime_error(
+        "OPTIM " + k + " on line " + core::to_string(nline) +
+        ": unexpected token(s) '" + core::join(tokens) + "'" + grammar);
+    }
+    try {
+      high = std::stod(tokens[1]);
+    } catch (const std::exception& e) {
+      throw std::runtime_error(
+        "Error converting high bound to double on process_optim_config line "
+        + core::to_string(nline) + ": " + std::string(e.what()) +
+        "\nTokens: " + tokens[1]);
+    }
+    try {
+      low = std::stod(tokens[0]);
+    } catch (const std::exception& e) {
+      throw std::runtime_error(
+        "Error converting low bound to double on process_optim_config line "
+        + core::to_string(nline) + ": " + std::string(e.what()) +
+        "\nTokens: " + tokens[0]);
+    }
   }
-  tokens.pop_back();
 
   if (k == "FIXWEIGHT") {
     /* OPTIM FIXWEIGHT indices name MODEL WEIGHTS (the weights FIXINDEX
@@ -1781,13 +2015,54 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
 
   context.get<std::vector<std::string>>(k, omap.config);
 
+  /* AUTO: the group floor is r * max|x0| over the indices of THIS line. */
+  double group_max = 0.0;
+  if (auto_box) {
+    for (const auto& ui : user_indices) {
+      const size_t i = ui_offset(omap.config, ui);
+      if (i < s && core::is_number(omap.config[i]))
+        group_max = std::max(group_max, std::fabs(std::stod(omap.config[i])));
+    }
+  }
+
   for (const auto& ui : user_indices) {
     try {
       size_t i = ui_offset(omap.config, ui);
       if (i>=s) throw std::runtime_error("Out of bound index: " + core::to_string(ui));
+      double lo_i = low, hi_i = high;
+      if (auto_box) {
+        if (!core::is_number(omap.config[i]))
+          throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
+                                   "): AUTO needs a numeric CONFIG seed (got '" +
+                                   omap.config[i] + "')");
+        const double x0 = std::stod(omap.config[i]);
+        if (rule.geometric) {
+          if (!(x0 != 0.0))
+            throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
+                                     "): AUTO RATIO needs a non-zero seed; use FRAC + FLOOR");
+          const double a = x0 / rule.factor, b = x0 * rule.factor;
+          lo_i = std::min(a, b); hi_i = std::max(a, b);
+          omap.origin[i] = BoxOrigin::AutoGeometric;
+        } else {
+          const double d = std::max({rule.factor * std::fabs(x0), rule.floor,
+                                     rule.group_floor * group_max});
+          if (!(d > 0.0))
+            throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
+                                     "): AUTO FRAC gives a zero-width box for seed 0; "
+                                     "set FLOOR or GROUP_FLOOR");
+          lo_i = x0 - d; hi_i = x0 + d;
+          omap.origin[i] = BoxOrigin::AutoLinear;
+        }
+        if (tf.kind == ScaleKind::Log && lo_i <= 0.0)
+          throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
+                                   "): AUTO box [" + core::to_string(lo_i) + ", " +
+                                   core::to_string(hi_i) + "] is not positive but the dim is "
+                                   "tagged LOG; use RATIO (geometric) or drop the tag");
+      }
       omap.opt[i] = true;
-      omap.highbound[i] = high;
-      omap.lowbound[i] = low;
+      omap.highbound[i] = hi_i;
+      omap.lowbound[i] = lo_i;
+      omap.scale[i] = tf;
     } catch (const std::exception& e) {
       throw std::runtime_error(
         "Error processing user index on process_optim_config line "

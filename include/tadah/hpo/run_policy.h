@@ -255,9 +255,13 @@ public:
      * widths normalise the parameter half of the basin dedup (topk.h). */
     std::vector<double> widths(spec.low.size());
     for (std::size_t d = 0; d < widths.size(); ++d) {
-      const bool log_d = d < spec.log_scaled.size() && spec.log_scaled[d];
-      widths[d] = log_d ? std::exp(spec.high[d]) - std::exp(spec.low[d])
-                        : spec.high[d] - spec.low[d];
+      if (spec.space) {
+        widths[d] = spec.space->real_width(d);
+      } else {
+        const bool log_d = d < spec.log_scaled.size() && spec.log_scaled[d];
+        widths[d] = log_d ? std::exp(spec.high[d]) - std::exp(spec.low[d])
+                          : spec.high[d] - spec.low[d];
+      }
     }
     HPO_Host<Vec,Runner>::set_track_topk(top_k_, std::move(widths));
     {

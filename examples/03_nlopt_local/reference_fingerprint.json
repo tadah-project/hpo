@@ -1,37 +1,47 @@
 {
   "schema_version": 1,
-  "example": "03_nlopt_local",
+  "example": "SGRIDMB",
   "description": "NLOPT:LN_SBPLX derivative-free local.",
   "best_loss": {
-    "value": 0.07391775,
+    "value": 0.0738873,
     "abs_tol": 1e-06,
     "rel_tol": 0.001
   },
   "components": {
+    "SLOT": {
+      "value": 0.0,
+      "abs_tol": 1e-06,
+      "rel_tol": 0.005
+    },
     "L(ERMSE)[1]": {
-      "value": 0.01194418,
+      "value": 0.01175245,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(ERMSE)[avg]": {
-      "value": 0.01194418,
+      "value": 0.01175245,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(Ecoh)": {
-      "value": 0.1358913,
+      "value": 0.1360221,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     }
   },
   "hyperparameters": {
+    "SLOT": {
+      "value": 0.0,
+      "abs_tol": 0.001,
+      "rel_tol": 0.001
+    },
     "RCUT2B": {
-      "value": 4.418512,
+      "value": 4.427551,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     },
     "SGRIDMB": {
-      "value": 0.2362427,
+      "value": 0.2363844,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     }
@@ -40,13 +50,13 @@
     "value": 60,
     "tol": 0
   },
-  "best_ermse_meV_per_atom": 10.93,
+  "best_ermse_meV_per_atom": 10.84,
   "status_accepted": [
     "COMPLETED",
     "MAXEVAL_REACHED -- maximum evaluations exhausted"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "0.8s",
+  "walltime_hint": "1.0s",
   "fast": true,
   "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
 }

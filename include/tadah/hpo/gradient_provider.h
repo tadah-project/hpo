@@ -123,6 +123,29 @@ make_gradient_provider(const OptimizerSpec&     sp,
   const GradStrategy strat = sp.grad_strategy.value_or(GradStrategy::Numerical);
   GradientProvider<Vec, Runner> gp;
 
+  /* Chain rule for the analytical path: the host differentiates the loss
+   * with respect to the REAL parameters (dL/dtheta), while the optimiser
+   * iterates in INTERNAL coordinates u (ln / asinh / unit-box affine), so
+   * g_u[i] = dL/dtheta_i * dtheta_i/du_i. The FD paths perturb u directly
+   * and need nothing. Without a bound space the legacy ln mask applies
+   * (dtheta/du = theta = exp(u) on log dims). */
+  auto pull_to_internal = [&sp](const Vec& x, Vec& g,
+                                const std::vector<int>& skip) {
+    for (long i = 0; i < g.size(); ++i) {
+      bool fd = false;
+      for (int k : skip) if (k == i) { fd = true; break; }
+      if (fd) continue;
+      double jac = 1.0;
+      if (sp.space) {
+        jac = sp.space->dreal_dinternal(static_cast<std::size_t>(i), x(i));
+      } else if (static_cast<std::size_t>(i) < sp.log_scaled.size() &&
+                 sp.log_scaled[static_cast<std::size_t>(i)]) {
+        jac = std::exp(x(i));
+      }
+      g(i) *= jac;
+    }
+  };
+
   // ---- Cost: direct host call, shared counter, return +inf on failure.
   gp.cost = [&host, &sp, eval_counter, maxeval](const Vec& x)->double {
     if (maxeval > 0 && eval_counter->load() >= maxeval)
@@ -147,12 +170,13 @@ make_gradient_provider(const OptimizerSpec&     sp,
       };
       return gp;
     }
-    gp.gradient = [analytical_grad_fn, eval_counter, maxeval]
+    gp.gradient = [analytical_grad_fn, eval_counter, maxeval, pull_to_internal]
                   (const Vec& x, Vec& g)->bool {
       if (maxeval > 0 && eval_counter->load() >= maxeval) return false;
       eval_counter->fetch_add(1);
       std::vector<int> needs_fd;
       if (!analytical_grad_fn(x, g, needs_fd)) return false;
+      pull_to_internal(x, g, needs_fd);
       if (!needs_fd.empty()) {
         std::ostringstream oss;
         oss << "GRAD_STRATEGY=ANALYTICAL: " << needs_fd.size()
@@ -193,7 +217,7 @@ make_gradient_provider(const OptimizerSpec&     sp,
       fd_step = it->second;
 
     gp.gradient = [&host, &sp, eval_counter, maxeval,
-                   analytical_grad_fn, fd_step]
+                   analytical_grad_fn, fd_step, pull_to_internal]
                   (const Vec& x, Vec& g)->bool {
       const auto over = [&]() {
         return maxeval > 0 && eval_counter->load() >= maxeval;
@@ -203,6 +227,7 @@ make_gradient_provider(const OptimizerSpec&     sp,
 
       std::vector<int> needs_fd;
       if (!analytical_grad_fn(x, g, needs_fd)) return false;
+      pull_to_internal(x, g, needs_fd);
 
       /* All-FD gate: when every theta falls back to FD the masked-FD pass
        * degenerates into pure central differences on the whole vector.
@@ -258,10 +283,71 @@ make_gradient_provider(const OptimizerSpec&     sp,
     return gp;
   }
 
+  // ---- NUMERICAL: two kernels.
+  //   inhouse -- central differences in INTERNAL coordinates with
+  //              h_i = fd_step * max(|u_i|, 1): in the unit box
+  //              (OPTIM_SCALE AUTO) exactly fd_step * width on every
+  //              dimension, which is what PARAM fd_step is documented to
+  //              mean there; the same kernel serves HYBRID's masked pass.
+  //   ceres   -- Ceres DynamicNumericDiffCostFunction with per-parameter
+  //              delta max(sqrt(eps), fd_step*|u|): the pre-existing
+  //              kernel, kept as the default under OPTIM_SCALE NONE so
+  //              legacy runs stay byte-identical; unsuitable in the unit
+  //              box because the delta collapses to 1.5e-8 next to u = 0
+  //              (every lower bound).
+  // PARAM fd_kernel inhouse|ceres overrides the default either way.
+  bool use_ceres_kernel = !(sp.space && sp.space->normalised());
+  if (auto it = sp.param_raw.find("fd_kernel"); it != sp.param_raw.end()) {
+    if (it->second == "ceres" || it->second == "CERES") use_ceres_kernel = true;
+    else if (it->second != "inhouse" && it->second != "INHOUSE")
+      throw std::runtime_error("PARAM fd_kernel must be inhouse (default) or ceres (got '" +
+                               it->second + "')");
+  }
+  if (!use_ceres_kernel) {
+    double fd_step = 1.0e-6;
+    if (auto it = sp.param.find("fd_step"); it != sp.param.end())
+      fd_step = it->second;
+    if (!(fd_step > 0.0) || !std::isfinite(fd_step))
+      throw std::runtime_error("PARAM fd_step must be a positive finite fraction of the box width");
+    gp.gradient = [&host, &sp, eval_counter, maxeval, fd_step]
+                  (const Vec& x, Vec& g)->bool {
+      const auto over = [&]() {
+        return maxeval > 0 && eval_counter->load() >= maxeval;
+      };
+      /* Centre evaluation first: a non-finite loss AT x means the
+       * gradient is meaningless (bad-eval contract shared with the
+       * Ceres kernel, which evaluates the residual at x as well). */
+      if (over()) return false;
+      eval_counter->fetch_add(1);
+      if (!std::isfinite(host(sp.out(x)))) return false;
+      const long n = x.size();
+      g.set_size(n);
+      for (long idx = 0; idx < n; ++idx) {
+        const double xi = x(idx);
+        const double h  = fd_step * std::max(std::abs(xi), 1.0);
+        Vec xp = x; xp(idx) = xi + h;
+        Vec xm = x; xm(idx) = xi - h;
+        if (over()) return false;
+        eval_counter->fetch_add(1);
+        const double yp = host(sp.out(xp));
+        if (!std::isfinite(yp)) return false;
+        if (over()) return false;
+        eval_counter->fetch_add(1);
+        const double ym = host(sp.out(xm));
+        if (!std::isfinite(ym)) return false;
+        const double gi = (yp - ym) / (2.0 * h);
+        if (!std::isfinite(gi)) return false;
+        g(idx) = gi;
+      }
+      return true;
+    };
+    return gp;
+  }
+
 #ifndef TADAH_USE_CERES
   gp.gradient = [](const Vec&, Vec&)->bool {
     throw std::runtime_error(
-        "Numerical gradient via Ceres requires the build to be configured "
+        "PARAM fd_kernel ceres requires the build to be configured "
         "with -DTADAH_ENABLE_CERES=ON.");
   };
   return gp;

@@ -48,7 +48,9 @@ BasinsV2Policy<Vec, Runner>::BasinsV2Policy(const OptimizerSpec& outer,
     weights_.state    = spec_.w_state;
     weights_.age      = spec_.w_age;
 
-    if (!outer_.low.empty() && outer_.low.size() == outer_.high.size())
+    if (outer_.space)
+        pool_.set_space(outer_.space);
+    else if (!outer_.low.empty() && outer_.low.size() == outer_.high.size())
         pool_.set_normalisation(outer_.low, outer_.high);
     ensure_ladder();
 
@@ -172,6 +174,7 @@ BasinsV2Policy<Vec, Runner>::build_stage_spec(
     s.pop  = src.pop;
     s.seed = src.seed;
     s.step = src.step;
+    s.step_overrides = src.step_overrides;
     s.vector_storage = src.vector_storage;
     s.num_threads    = src.num_threads;
     s.param          = src.param;
@@ -366,24 +369,16 @@ void BasinsV2Policy<Vec, Runner>::do_explore(HPO_Host<Vec, Runner>& host)
     const auto unit_pts = sobol_unit_points(
         K, dim, /*seed_skip=*/static_cast<std::uint64_t>(iteration_ + 1));
 
-    /* Map [0,1]^dim -> real space (outer_.in/out convention). */
+    /* Map [0,1]^dim -> INTERNAL box -> REAL space (outer_.out). The pool
+     * and every seed handed to a stage optimiser are REAL-space. */
     std::vector<std::vector<double>> real_pts;
     real_pts.reserve(unit_pts.size());
-    std::vector<std::vector<double>> transformed_pts;
-    transformed_pts.reserve(unit_pts.size());
     for (const auto& u : unit_pts) {
         std::vector<double> tx(dim);
         for (std::size_t d = 0; d < dim; ++d) {
             tx[d] = outer_.low[d] + u[d] * (outer_.high[d] - outer_.low[d]);
         }
-        transformed_pts.push_back(tx);
-        std::vector<double> real = tx;
-        if (!outer_.log_scaled.empty() && outer_.log_scaled.size() == dim) {
-            for (std::size_t d = 0; d < dim; ++d) {
-                if (outer_.log_scaled[d]) real[d] = std::exp(real[d]);
-            }
-        }
-        real_pts.push_back(std::move(real));
+        real_pts.push_back(outer_.out(tx));
     }
 
     /* (2) Evaluate each Sobol point. host() expects a Vec in real
@@ -405,7 +400,7 @@ void BasinsV2Policy<Vec, Runner>::do_explore(HPO_Host<Vec, Runner>& host)
          * pool before propagating -- better than losing them. */
         for (std::size_t i = 0; i < losses.size(); ++i) {
             const int new_id = pool_.add_or_merge(
-                transformed_pts[i], losses[i], iteration_);
+                real_pts[i], losses[i], iteration_);
             if (new_id >= 0) {
                 if (BasinV2* b = pool_.by_id(new_id))
                     if (b->birth_iteration == iteration_)
@@ -418,9 +413,9 @@ void BasinsV2Policy<Vec, Runner>::do_explore(HPO_Host<Vec, Runner>& host)
     /* (3) Filter survivors that are far from any known basin /
      *     coarse path. */
     auto survivor_idx = filter_far_from_pool(
-        transformed_pts, pool_, spec_.explore_dist_floor);
+        real_pts, pool_, spec_.explore_dist_floor);
 
-    const std::size_t n_filtered_out = transformed_pts.size() - survivor_idx.size();
+    const std::size_t n_filtered_out = real_pts.size() - survivor_idx.size();
 
     /* (4) Top-M survivors by loss. */
     std::vector<double> survivor_losses;
@@ -457,7 +452,7 @@ void BasinsV2Policy<Vec, Runner>::do_explore(HPO_Host<Vec, Runner>& host)
         /* Insert the raw Sobol point first so it survives even if the
          * local refinement fails. */
         const int seeded_id = pool_.add_or_merge(
-            transformed_pts[idx], losses[idx], iteration_);
+            real_pts[idx], losses[idx], iteration_);
         if (seeded_id < 0) continue;
 
         BasinV2* b_seed = pool_.by_id(seeded_id);
@@ -469,7 +464,7 @@ void BasinsV2Policy<Vec, Runner>::do_explore(HPO_Host<Vec, Runner>& host)
         }
 
         /* Local refinement from this Sobol point. */
-        std::vector<std::vector<double>> seeds = { transformed_pts[idx] };
+        std::vector<std::vector<double>> seeds = { real_pts[idx] };
         HPO_Host<Vec, Runner>::reset_stagnation();
         HPO_Host<Vec, Runner>::set_stagnation_threshold(cap_per_survivor);
         HPO_Host<Vec, Runner>::clear_topk();

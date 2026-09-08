@@ -133,7 +133,29 @@ template<class Vec,class Runner>
       HPOLog::instance().warning(msg);
     }
 
-    /* ------- transform bounds into (possibly) log space ---------- */
+    /* dlib::find_min_global applies its OWN ln transform to any
+     * non-integer dim with lower > 0 and upper/lower >= 1000 in the
+     * coordinates it is given, and does not transform the seed vectors
+     * (initial_function_evals) accordingly -- a second, invisible layer
+     * on top of HPO's search space. It can only fire under
+     * OPTIM_SCALE NONE (the unit box has lower = 0); name the dims. */
+    for (std::size_t i = 0; i < sp.low.size(); ++i) {
+      const bool is_int = i < sp.is_int.size() && sp.is_int[i];
+      if (!is_int && sp.low[i] > 0.0 && sp.high[i] / sp.low[i] >= 1000.0) {
+        std::ostringstream oss;
+        oss << "DLIB:GFS: dlib applies its own ln transform to "
+            << (i < sp.parameter_labels.size() ? sp.parameter_labels[i]
+                                               : "dim[" + std::to_string(i) + "]")
+            << " (internal bounds [" << sp.low[i] << ", " << sp.high[i]
+            << "], ratio >= 1000) and does not transform the INIT seeds "
+               "handed to it; tag the dim LOG on its OPTIM line (or set "
+               "OPTIM_SCALE AUTO) so HPO owns the transform";
+        std::cerr << "[HPO] " << oss.str() << "\n";
+        HPOLog::instance().warning(oss.str());
+      }
+    }
+
+    /* ------- bounds in optimiser-internal space ------------------- */
     const matrix<double,0,1> lo = mat(sp.low);
     const matrix<double,0,1> hi = mat(sp.high);
 

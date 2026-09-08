@@ -61,13 +61,34 @@ template<typename Vec, typename Runner>
       HPO_Host<Vec,Runner>& host)
   {
 
-    unsigned steps = sp.step.value_or(20);  // default steps in each dimension
+    /* Grid resolution: PARAM GRID_POINTS <n> (integer >= 2, default 20).
+     * The historic `STEP <n>` overload is rejected by the scale validator
+     * (StepUse::GridCount) -- STEP<1 used to truncate to 0 points and loop
+     * forever at the low corner, STEP 1 divided by zero. */
+    if (sp.step)
+      throw std::runtime_error(
+          "TADAH:GRID: STEP is not the grid resolution; use PARAM GRID_POINTS "
+          "<n> (integer >= 2, default 20 points per dimension)");
+    unsigned steps = 20;
+    if (auto it = sp.param.find("GRID_POINTS"); it != sp.param.end()) {
+      const double v = it->second;
+      if (!std::isfinite(v) || v < 2.0 || v != std::floor(v))
+        throw std::runtime_error(
+            "TADAH:GRID PARAM GRID_POINTS must be an integer >= 2 (got " +
+            std::to_string(v) + "; a 1-point grid divides by zero)");
+      steps = static_cast<unsigned>(v);
+    }
+    for (const auto& kv : sp.param)
+      if (kv.first != "GRID_POINTS")
+        throw std::runtime_error("TADAH:GRID: unknown PARAM '" + kv.first +
+                                 "' (the only GRID parameter is GRID_POINTS)");
 
     const size_t dim = sp.low.size();
     std::vector<unsigned> idx(dim,0);
     {
       std::ostringstream oss;
-      oss << "GRID search: " << steps << " steps in each dimension, "
+      oss << "GRID search: " << steps << " points in each dimension "
+          << "(PARAM GRID_POINTS; spacing = width/" << (steps - 1) << "), "
           << dim << " dimensions.";
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());

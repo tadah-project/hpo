@@ -382,17 +382,9 @@ int hpo_run(core::Context& ctx)
         ctx.contains("DBFILE") && ctx.size("DBFILE") > 0;
     validate_hpo_setup(ctx, trg, has_train_db, !val.empty());
 
-    /* -- Build param labels for the search space section -------------- */
-    std::vector<std::string> param_labels;
-    for (const auto& kv : trg.optimap) {
-        for (std::size_t i = 0; i < kv.second.opt.size(); ++i) {
-            if (!kv.second.opt[i]) continue;
-            std::string lbl = kv.first;
-            if (kv.second.opt.size() > 1) lbl += "[" + std::to_string(i) + "]";
-            param_labels.push_back(lbl);
-        }
-    }
-    trg.spec.parameter_labels = param_labels;
+    /* -- Param labels for the search space section: built by the
+     * HPOTargets constructor (canonical flattened OPTIM order). ------- */
+    const std::vector<std::string>& param_labels = trg.spec.parameter_labels;
 
     /* -- Build element string ------------------------------------------
      * From the training data when present, otherwise from the explicit
@@ -420,6 +412,12 @@ int hpo_run(core::Context& ctx)
     log.write_files_section(ctx.get<std::string>("HPOTARGET"), val, trg);
 
     log.write_optimizer_section(trg.spec, param_labels);
+
+    /* Machine-readable search-space sidecars next to the journal:
+     * hpo_search_space.tsv (one row per dim) always; hpo_optim_resolved.hpo
+     * (a paste-ready explicit OPTIM block) when any box was derived by an
+     * AUTO rule, so a later run can pin exactly what this one searched. */
+    trg.write_search_space_files(".");
 
     /* Build HPO_Host (loads train + val structures, applies load transforms) */
     HPO_Host<V,R> host(ctx, trg, val);

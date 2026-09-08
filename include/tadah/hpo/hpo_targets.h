@@ -29,6 +29,11 @@ private:
         std::vector<std::string> labels;
         std::vector<double> lowbound;
         std::vector<double> highbound;
+        /* Per-token shape tag from the OPTIM line ([LIN | LOG | ASINH c]);
+         * default LIN. Consumed when the SearchSpace is built. */
+        std::vector<DimTransform> scale;
+        /* How each box was obtained (explicit bounds or an AUTO rule). */
+        std::vector<BoxOrigin> origin;
 
         void resize(size_t s);
         void print(const std::string &key) const;
@@ -44,14 +49,32 @@ private:
     void create_labels();
     void handle_directory_creation(const std::string& directory);
     void process_optim_config(std::istringstream& iss, size_t nline);
-    
+    SearchSpace build_search_space() const;
+    void bind_space_recursive();
+
     core::Context &context;
+    SearchSpacePtr space_;
+    /* OPTIM_SCALE (root key): AUTO by default -- every OPTIM dimension is
+     * mapped to the unit box; NONE is the legacy escape hatch (raw units,
+     * ln for LOG dims). LOG_HP lands on spec.log_threshold. */
+    ScalePolicy    scale_policy_{std::nullopt, /*normalise=*/true};
+    bool           scale_policy_set_ = false;
 
 public:
     HPOTargets(core::Context &c, std::string fn);
     void read(const std::string &fn);
     std::map<std::string, Opti> optimap;  // used by HPO_Host
     std::vector<LammpsSim> LS;
+
+    /* The search space built from the OPTIM lines + OPTIM_SCALE + LOG_HP
+     * (shared with spec and every sub-spec via bind_space). */
+    SearchSpacePtr space() const { return space_; }
+    /* Positive-only OPTIM keys (geometric AUTO boxes by default), from the
+     * refit hpotarget writer's key table. */
+    static bool optim_key_positive_only(const std::string& key);
+    /* hpo_search_space.tsv (always) + hpo_optim_resolved.hpo (when any
+     * OPTIM box was derived by an AUTO rule) into `dir`. */
+    void write_search_space_files(const std::string& dir) const;
 
     /* Typed observables (Tier 1 / Tier 2 of the PC_OBSERVABLE redesign).
      * Each entry is a polymorphic Observable* -- concrete subclasses live in

@@ -319,7 +319,9 @@ void PotHeaderWriter::write_optim_section(std::ostream& os,
             std::ostringstream bnd;
             bnd << "[" << fmt_double(sp.low[idx], 3)
                 << ", " << fmt_double(sp.high[idx], 3) << "]";
-            if (idx < sp.log_scaled.size() && sp.log_scaled[idx])
+            if (sp.space && idx < sp.space->dim() && sp.space->is_nonlinear(idx))
+                bnd << "(" << sp.space->describe_dim(idx) << ")";
+            else if (idx < sp.log_scaled.size() && sp.log_scaled[idx])
                 bnd << "(log)";
 
             std::ostringstream col;

@@ -36,6 +36,7 @@
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/nlopt_adapter.h>
 #include <tadah/hpo/optimizer_caps.h>
+#include <tadah/hpo/scale_validation.h>
 #include <tadah/hpo/optimizer_spec.h>
 
 namespace tadah::hpo {
@@ -69,6 +70,13 @@ inline void run_inner(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host)
    * single, uniform "unknown optimizer" error instead of a fall-through
    * at the end of the dispatch chain. */
   const auto& caps = optimizer_caps(spec);
+
+  /* Registry-driven STEP policy, re-checked here for specs assembled at
+   * run time (BASINS stage specs, MULTISTART clones). Seeds were validated
+   * at startup; run-time seeds come from the pool / top-K. */
+  validate_optimizer_scaling(spec, "run", /*check_start_points=*/false);
+  if (spec.inner)
+    validate_optimizer_scaling(*spec.inner, "run.INNER", false);
 
   if (spec.inner && !caps.accepts_inner) {
     throw std::runtime_error(

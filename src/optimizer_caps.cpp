@@ -46,6 +46,8 @@ Registry build_registry()
         c.supports_maxeval = true;
         c.supports_maxtime = true;
         c.supports_stopval = true;
+        c.step_use  = StepUse::Rejected;
+        c.step_note = "uniform sampling in the OPTIM box has no initial step; remove STEP";
         add(r, c);
     }
     {
@@ -53,6 +55,9 @@ Registry build_registry()
         c.lib = "TADAH";  c.algo = "GRID";
         c.is_global       = true;
         c.supports_maxeval = false;
+        c.step_use  = StepUse::GridCount;
+        c.step_note = "STEP is not the grid resolution; use PARAM GRID_POINTS <n> "
+                      "(integer >= 2, default 20 points per dimension)";
         add(r, c);
     }
     {
@@ -68,6 +73,8 @@ Registry build_registry()
         c.supports_ftol_rel = true;
         c.supports_ftol_abs = true;
         c.ladder_ftol = OptimizerCaps::FtolKind::Rel;
+        c.step_use  = StepUse::WidthFraction;
+        c.step_note = "set PARAM STEP_FRAC (and PARAM STEP_MODE for ANNEAL_PT) instead";
         add(r, c);
     }
     {
@@ -83,6 +90,8 @@ Registry build_registry()
         c.supports_ftol_rel = true;
         c.supports_ftol_abs = true;
         c.ladder_ftol = OptimizerCaps::FtolKind::Rel;
+        c.step_use  = StepUse::WidthFraction;
+        c.step_note = "set PARAM STEP_FRAC (and PARAM STEP_MODE for ANNEAL_PT) instead";
         add(r, c);
     }
     {
@@ -98,6 +107,8 @@ Registry build_registry()
         c.supports_ftol_rel = true;
         c.supports_ftol_abs = true;
         c.ladder_ftol = OptimizerCaps::FtolKind::Rel;
+        c.step_use  = StepUse::WidthFraction;
+        c.step_note = "set PARAM STEP_FRAC (and PARAM STEP_MODE for ANNEAL_PT) instead";
         add(r, c);
     }
 
@@ -112,6 +123,9 @@ Registry build_registry()
         /* No ftol/xtol: ASA's own plateau stops are PARAM Cost_Precision
          * + Maximum_Cost_Repeat and Accepted_To_Generated_Ratio, so
          * ladder_ftol stays None (BASINS' FTOL_LADDER has no target). */
+        c.step_use  = StepUse::Rejected;
+        c.step_note = "the generating distribution width is driven by the per-dim "
+                      "temperatures (Initial_Parameter_Temperature, Temperature_Ratio_Scale)";
         add(r, c);
     }
 
@@ -124,6 +138,8 @@ Registry build_registry()
         c.supports_maxeval   = true;
         c.supports_ftol_abs  = true;     // solver_eps -- absolute-style
         c.ladder_ftol        = OptimizerCaps::FtolKind::Abs;
+        c.step_use  = StepUse::Rejected;
+        c.step_note = "MaxLIPO+TR sizes its own trust region from the samples; remove STEP";
         add(r, c);
     }
     {
@@ -133,6 +149,8 @@ Registry build_registry()
         c.supports_maxeval   = true;
         c.supports_ftol_abs  = true;     // objective_delta_stop_strategy
         c.ladder_ftol        = OptimizerCaps::FtolKind::Abs;
+        c.step_use  = StepUse::Rejected;
+        c.step_note = "the line search starts from -grad; the finite-difference step is PARAM fd_step";
         add(r, c);
     }
 
@@ -158,6 +176,13 @@ Registry build_registry()
             c.supports_ftol_rel  = true;
             c.supports_xtol_rel  = true;
             c.ladder_ftol        = OptimizerCaps::FtolKind::Rel;
+            c.step_use           = StepUse::Rejected;
+            c.step_note          = "the initial trust-region/line-search step is automatic; "
+                                   "use PARAM max_line_search_step_size if needed";
+            c.ignores_bounds     = true;
+            c.bounds_note        = "Ceres GradientProblemSolver enforces no box constraints: "
+                                   "iterates may leave the OPTIM box (log-scaled dims stay "
+                                   "positive; linear dims are unbounded)";
             add(r, c);
         }
     }
@@ -189,6 +214,40 @@ Registry build_registry()
             s.find("ISRES")  != std::string::npos ||
             s.find("MLSL")   != std::string::npos)        c.is_population = true;
 
+        /* Initial-step consumption, verified against nlopt 2.10
+         * src/api/optimize.c (see StepUse doc in optimizer_caps.h). */
+        auto has = [&](const char* sub) { return s.find(sub) != std::string::npos; };
+        if (has("SBPLX") || has("NELDERMEAD")) {
+            c.step_use  = StepUse::PerDimVector;
+            c.step_note = "per-dim first simplex edges; no coordinate rescaling; later "
+                          "step scale is one L1 progress ratio in [0.1,10] applied to "
+                          "every dim; the per-dim x-stop guard is |x|-relative (use XTOL_ABS)";
+        } else if (has("BOBYQA") || has("COBYLA")) {
+            c.step_use  = StepUse::PerDimRescale;
+            c.step_note = "coordinates rescaled by the step vector (rhobeg = step in every "
+                          "dim after rescaling); rhoend = XTOL_REL*rhobeg, floored by XTOL_ABS";
+        } else if (has("NEWUOA") || has("PRAXIS")) {
+            c.step_use  = StepUse::MinCollapsed;
+            c.step_note = "uses one radius = min over dims of |step|";
+        } else if (has("MMA") || has("CCSAQ")) {
+            c.step_use  = StepUse::TrustHalfWidth;
+            c.step_note = "per-dim initial trust-region half-width (default 0.5*width)";
+        } else if (has("MLSL") || has("AUGLAG")) {
+            c.step_use  = StepUse::ForwardedToInner;
+            c.step_note = "forwarded to the INNER local optimiser (an OUTER STEP overrides "
+                          "an INNER STEP)";
+        } else {
+            c.step_use  = StepUse::Ignored;
+            c.step_note = "this algorithm never reads an initial step (population, "
+                          "branch-and-bound, or line-search method); remove STEP";
+        }
+        if (s == "LN_NEWUOA") {
+            c.ignores_bounds = true;
+            c.bounds_note    = "LN_NEWUOA is called without bounds (nlopt optimize.c passes "
+                               "lb=ub=NULL): evaluations may leave the OPTIM box; use "
+                               "LN_NEWUOA_BOUND or LN_BOBYQA";
+        }
+
         add(r, c);
     }
 
@@ -202,6 +261,36 @@ const Registry& registry()
 }
 
 }  // namespace
+
+const char* step_use_name(StepUse u)
+{
+    switch (u) {
+        case StepUse::Rejected:         return "rejected (no initial-step concept)";
+        case StepUse::Ignored:          return "ignored by the algorithm (rejected)";
+        case StepUse::PerDimVector:     return "per-dim vector, raw simplex edges";
+        case StepUse::PerDimRescale:    return "per-dim vector -> coordinate rescaling";
+        case StepUse::MinCollapsed:     return "collapsed to min over dims of |step|";
+        case StepUse::TrustHalfWidth:   return "per-dim trust-region half-width";
+        case StepUse::ForwardedToInner: return "forwarded to the INNER optimiser";
+        case StepUse::GridCount:        return "grid point count (use PARAM GRID_POINTS)";
+        case StepUse::WidthFraction:    return "family-owned width fraction (PARAM STEP_FRAC)";
+    }
+    return "?";
+}
+
+bool step_use_consumes(StepUse u)
+{
+    switch (u) {
+        case StepUse::PerDimVector:
+        case StepUse::PerDimRescale:
+        case StepUse::MinCollapsed:
+        case StepUse::TrustHalfWidth:
+        case StepUse::ForwardedToInner:
+            return true;
+        default:
+            return false;
+    }
+}
 
 const OptimizerCaps& optimizer_caps(const std::string& lib,
                                     const std::string& algo)

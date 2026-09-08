@@ -594,6 +594,10 @@ std::atomic<double> HPO_Host<P,R>::g_best_{std::numeric_limits<double>::max()};
 template<class P, class R>
 std::mutex HPO_Host<P,R>::best_mtx_;
 template<class P, class R>
+BoundOccupancy HPO_Host<P,R>::bound_occ_;
+template<class P, class R>
+std::mutex HPO_Host<P,R>::bound_occ_mtx_;
+template<class P, class R>
 std::optional<durable_best::Key> HPO_Host<P,R>::g_best_key_;
 #if defined(TADAH_BUILD_MPI)
 template<class P, class R>
@@ -890,7 +894,14 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
 , prec_(trg.outputDigits)
 , cw_(static_cast<std::size_t>(std::max(prec_ + 9, static_cast<int>(min_cw_))))
 , max_title_len_(cw_ - 4)
-{
+{    /* Arm the bound-occupancy audit on this run's search space (a pure
+     * function of the config, so re-arming on every host construction is
+     * idempotent across MULTISTART/BASINS policies). */
+    {
+        std::lock_guard<std::mutex> lg(bound_occ_mtx_);
+        bound_occ_ = BoundOccupancy(trg.space());
+    }
+
     /* Stage 1b.1: zero the fan-out cost estimates. All-zero on the first eval
      * means the LPT stable_sort keeps today's script order, so the first-eval
      * trajectory is byte-identical; the estimates converge from eval 2 on. */
@@ -1140,11 +1151,13 @@ std::string HPO_Host<P,R>::bound_hints(const P& p) const
     constexpr double EDGE_FRAC = 0.02; // flag if within 2% of bound
     std::ostringstream hints;
     std::size_t idx = 0;
+    /* p is REAL-space; the bounds are INTERNAL -- compare in one space. */
+    const P u = sp.in(p);
     for (const auto& kv : trg_.optimap) {
         for (std::size_t i = 0; i < kv.second.opt.size(); ++i) {
             if (!kv.second.opt[i]) continue;
             if (idx >= sp.low.size()) break;
-            const double v   = p(idx);
+            const double v   = u(static_cast<long>(idx));
             const double lo  = sp.low[idx];
             const double hi  = sp.high[idx];
             const double rng = hi - lo;
@@ -2702,7 +2715,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
     log.record_fanout(save_fo_busy,
                       save_fo_nsc, save_fo_min, save_fo_max, save_fo_slow);
 
-    if (save_best)
+    if (save_best) {
         log.log_new_best(save_iter, save_loss,
                          save_emae,   trg_.use_emae,
                          save_ermse,  trg_.use_ermse,
@@ -2711,6 +2724,15 @@ double HPO_Host<P,R>::operator()(const P& p) const
                          save_srmse,  trg_.use_srmse,
                          save_wall_ms,
                          save_top_breakdown);
+        /* Bound-occupancy audit on the new best (REAL coordinates). */
+        std::lock_guard<std::mutex> lg(bound_occ_mtx_);
+        if (bound_occ_.armed()) {
+            std::vector<double> xr(static_cast<std::size_t>(p.size()));
+            for (long i = 0; i < p.size(); ++i) xr[static_cast<std::size_t>(i)] = p(i);
+            bound_occ_.on_new_best(save_iter, xr);
+            log.record_bound_occupancy(bound_occ_.marks(), save_iter, bound_occ_.edge());
+        }
+    }
 
     if (save_nan)
         log.log_nan_clamped(save_iter,

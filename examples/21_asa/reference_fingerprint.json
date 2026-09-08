@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "example": "21_asa",
-  "description": "ASA:ASA vendored Ingber ASA-30.53, canonical defaults + slowed TRS, MAXEVAL 200.",
+  "example": "SGRIDMB",
+  "description": "",
   "best_loss": {
-    "value": 0.04621547,
+    "value": 0.04569559,
     "abs_tol": 1e-06,
     "rel_tol": 0.001
   },
@@ -14,17 +14,17 @@
       "rel_tol": 0.005
     },
     "L(ERMSE)[1]": {
-      "value": 0.01300479,
+      "value": 0.01053354,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(ERMSE)[avg]": {
-      "value": 0.01300479,
+      "value": 0.01053354,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(Ecoh)": {
-      "value": 0.07942615,
+      "value": 0.08085763,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     }
@@ -36,12 +36,12 @@
       "rel_tol": 0.001
     },
     "RCUT2B": {
-      "value": 4.218634,
+      "value": 4.215895,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     },
     "SGRIDMB": {
-      "value": 0.3459174,
+      "value": 0.3449691,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     }
@@ -50,12 +50,12 @@
     "value": 200,
     "tol": 0
   },
-  "best_ermse_meV_per_atom": 11.4,
+  "best_ermse_meV_per_atom": 10.26,
   "status_accepted": [
     "ASA: MAXEVAL reached"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "4.3s",
+  "walltime_hint": "3.4s",
   "fast": true,
   "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
 }

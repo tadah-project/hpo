@@ -848,15 +848,13 @@ inline std::vector<double> make_initial_point(const OptimizerSpec& sp,
           ctx + ": starting point has " + std::to_string(raw.size()) +
           " coordinate(s), expected " + std::to_string(dim));
     for (std::size_t i = 0; i < dim; ++i) {
-      double v = raw[i];
-      if (!sp.log_scaled.empty() && sp.log_scaled[i]) {
-        if (!(v > 0.0) || !std::isfinite(v))
-          throw std::runtime_error(
-              ctx + ": log-scaled starting coordinate must be finite and > 0");
-        v = std::log(v);
-      }
-      x[i] = v;
+      if (!sp.log_scaled.empty() && sp.log_scaled[i] &&
+          (!(raw[i] > 0.0) || !std::isfinite(raw[i])))
+        throw std::runtime_error(
+            ctx + ": log-scaled starting coordinate must be finite and > 0");
     }
+    /* REAL -> INTERNAL through the search space (ln / asinh / affine). */
+    x = sp.in(raw);
   }
   for (std::size_t i = 0; i < dim; ++i) {
     if (!std::isfinite(x[i]) || x[i] < sp.low[i] || x[i] > sp.high[i])
@@ -1306,7 +1304,12 @@ inline bool metropolis_accept(double current, double proposed, double T,
 }
 
 /* Smallest positive Gaussian scale that can move x by one representable
- * value while remaining inside its hard support. */
+ * value while remaining inside its hard support, floored at one machine
+ * epsilon of the interval width. The ULP of x alone collapses to a
+ * subnormal when x sits at 0 -- which, in the unit-box search space
+ * (OPTIM_SCALE AUTO), is every dimension's lower bound -- so the width
+ * term keeps the floor meaningful there; for |x| ~ width the two agree
+ * within a factor of 2. */
 inline double resolvable_coordinate_scale(double x, double lo, double hi)
 {
   double best = std::numeric_limits<double>::infinity();
@@ -1318,7 +1321,11 @@ inline double resolvable_coordinate_scale(double x, double lo, double hi)
     const double d = x - std::nextafter(x, lo);
     if (d > 0.0 && std::isfinite(d)) best = std::min(best, d);
   }
-  return std::isfinite(best) ? best : std::numeric_limits<double>::denorm_min();
+  const double ulp = std::isfinite(best) ? best : std::numeric_limits<double>::denorm_min();
+  const double width = hi - lo;
+  const double width_floor = (std::isfinite(width) && width > 0.0)
+      ? std::numeric_limits<double>::epsilon() * width : 0.0;
+  return std::max(ulp, width_floor);
 }
 
 /* ---- ChainState ------------------------------------------------------

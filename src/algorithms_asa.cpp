@@ -331,16 +331,14 @@ struct AsaWorkspace {
                     std::to_string(raw.size()) + " coordinate(s), expected " +
                     std::to_string(dim));
             for (std::size_t i = 0; i < dim; ++i) {
-                double v = raw[i];
-                if (!sp.log_scaled.empty() && sp.log_scaled[i]) {
-                    if (!(v > 0.0) || !std::isfinite(v))
-                        throw std::runtime_error(
-                            "ASA:ASA: log-scaled starting coordinate must "
-                            "be finite and > 0");
-                    v = std::log(v);
-                }
-                x[i] = v;
+                if (!sp.log_scaled.empty() && sp.log_scaled[i] &&
+                    (!(raw[i] > 0.0) || !std::isfinite(raw[i])))
+                    throw std::runtime_error(
+                        "ASA:ASA: log-scaled starting coordinate must "
+                        "be finite and > 0");
             }
+            /* REAL -> INTERNAL through the search space. */
+            x = sp.in(raw);
         }
         for (std::size_t i = 0; i < dim; ++i) {
             if (!(hi[i] - lo[i] >= EPS_DOUBLE))
@@ -353,6 +351,26 @@ struct AsaWorkspace {
                 throw std::runtime_error(
                     "ASA:ASA: starting coordinate " + std::to_string(i) +
                     " lies outside its OPTIM bounds");
+        }
+
+        /* ASA's reanneal sensitivities are finite differences with an
+         * offset (1 + Delta_X) * x_i -- identically zero for a coordinate
+         * at 0 (every lower bound of the unit box under OPTIM_SCALE AUTO),
+         * so such a dim is skipped by reannealing until it moves. */
+        if (ao.reanneal_parameters == 1) {
+            std::string zeros;
+            for (std::size_t i = 0; i < dim; ++i)
+                if (x[i] == 0.0) {
+                    if (!zeros.empty()) zeros += ", ";
+                    zeros += (i < sp.parameter_labels.size() ? sp.parameter_labels[i]
+                                                             : "dim[" + std::to_string(i) + "]");
+                }
+            if (!zeros.empty())
+                HPOLog::instance().info(
+                    "ASA:ASA: Reanneal_Parameters uses (1+Delta_X)*x offsets; the "
+                    "starting coordinate is exactly 0 on " + zeros +
+                    " (its lower bound), so those dims get no reanneal tangent "
+                    "until the chain moves them");
         }
 
         tangents.assign(dim, 0.0);

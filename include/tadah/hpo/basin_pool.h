@@ -20,6 +20,7 @@
  */
 
 #include <tadah/core/checkpoint.h>
+#include <tadah/hpo/search_space.h>
 
 #include <cstddef>
 #include <optional>
@@ -30,7 +31,9 @@ namespace tadah {
 namespace hpo {
 
 struct Basin {
-    /* Parameters in optimiser-transformed (search) space. */
+    /* Parameters in REAL space (what the OPTIM lines and the model see).
+     * Distances are measured in the search space's INTERNAL coordinates
+     * (set_space); persisted as-is in the checkpoint. */
     std::vector<double>      params;
     double                   loss = 0.0;
     int                      birth_round = 0;
@@ -45,17 +48,28 @@ struct Basin {
     std::optional<double>    last_tol_attempted;
 };
 
+/* Shared by both pools: verify a checkpointed pool section against the
+ * live search space (params_real tag + fingerprint). Throws with a
+ * delete-checkpoint hint on a mismatch; accepts legacy sections only when
+ * every dimension is linear. */
+void check_checkpoint_space(const core::Checkpoint& cp, const std::string& section,
+                            const SearchSpacePtr& space, const char* who);
+
 class BasinPool : public core::ICheckpointable {
 public:
-    /* dedup_dist is a *relative* distance: ||a - b||_2 / ||high - low||_2
-     * (computed in optimiser-transformed space; the caller passes the
-     * normalisation reference via set_normalisation()).
+    /* dedup_dist is a *relative* distance: per-dim (a_i - b_i)/width_i in
+     * INTERNAL coordinates, L2 over dims. With set_space() the REAL
+     * params are mapped through the search space first (so LOG/ASINH
+     * dims compare in their transformed coordinate and, under
+     * OPTIM_SCALE AUTO, every width is 1); set_normalisation() is the
+     * legacy form (raw widths, params taken as already internal).
      * pool_max bounds the number of resident basins. */
     BasinPool(double dedup_dist, std::size_t pool_max);
 
-    /* Set the per-dimension normalisation used in dedup distance. The
-     * caller (BasinsPolicy) passes the optimiser bounds (low, high).
-     * Must be set before add_or_merge() if dedup_dist > 0. */
+    /* Preferred: distances through the search space. */
+    void set_space(SearchSpacePtr space);
+    /* Legacy: per-dimension widths, params compared raw. Must be set
+     * before add_or_merge() if dedup_dist > 0 and no space is set. */
     void set_normalisation(std::vector<double> low, std::vector<double> high);
 
     /* Insert or merge by deduplication. Returns the index of the
@@ -104,7 +118,8 @@ private:
 
     double                  dedup_dist_ = 0.05;
     std::size_t             pool_max_   = 32;
-    std::vector<double>     low_, high_;     // bounds for normalisation
+    std::vector<double>     low_, high_;     // legacy normalisation bounds
+    SearchSpacePtr          space_;          // preferred normalisation
     std::vector<Basin>      basins_;
 };
 

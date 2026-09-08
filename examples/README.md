@@ -45,7 +45,7 @@ each subsequent one introduces one or two new features.
 |----|--------------------------|------------|
 | 01 | `01_minimal`             | Minimal `OPTIMIZER / STRATEGY / PC_LAMMPS / OPTIM` skeleton (DLIB:BFGS). |
 | 02 | `02_random_search`       | `LIB TADAH ALGO RANDOM` + `SEED` (baseline sampler). |
-| 03 | `03_nlopt_local`         | `LIB NLOPT ALGO LN_SBPLX` + `STEP` (derivative-free local). |
+| 03 | `03_nlopt_local`         | `LIB NLOPT ALGO LN_SBPLX` + `STEP` (fraction of each OPTIM width; derivative-free local). |
 | 04 | `04_skip_bad_pots`       | `PC_<METRIC> --skip-above / --skip-rel` early-reject filter. |
 | 05 | `05_extra_observables`   | `PC_LAMMPS --invar` / `--outvar` (extra LAMMPS observables). |
 | 06 | `06_init_random`         | `INIT { STRATEGY RANDOM, SEED }`. |

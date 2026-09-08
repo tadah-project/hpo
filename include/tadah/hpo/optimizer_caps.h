@@ -24,6 +24,44 @@ namespace tadah::hpo {
 
 struct OptimizerSpec;
 
+/* StepUse -- how a backend consumes the OPTIMIZER-block `STEP` value.
+ * Single source of truth for the STEP acceptance policy: the startup
+ * validator (scale_validation.h) and run_inner reject STEP on backends
+ * that would silently drop it, and the journal prints the consumption
+ * mode next to the effective per-dimension step. NLopt's own semantics
+ * (verified against nlopt-src/src/api/optimize.c, 2.10):
+ *   PerDimVector     -- raw per-dim initial steps (LN_NELDERMEAD, LN_SBPLX)
+ *   PerDimRescale    -- the step vector becomes a per-dim coordinate
+ *                       rescaling s_i = dx_i/dx_0 (LN_BOBYQA, LN_COBYLA;
+ *                       util/rescale.c); rhobeg = |dx_0|, rhoend =
+ *                       XTOL_REL*rhobeg
+ *   MinCollapsed     -- the vector collapses to min_i |dx_i|
+ *                       (LN_NEWUOA, LN_NEWUOA_BOUND, LN_PRAXIS)
+ *   TrustHalfWidth   -- per-dim initial trust-region half-width
+ *                       (LD_MMA, LD_CCSAQ)
+ *   ForwardedToInner -- copied onto the local sub-optimiser; an OUTER
+ *                       STEP overrides an INNER STEP (MLSL, AUGLAG)
+ *   Ignored          -- the algorithm never reads an initial step
+ *                       (CRS, ISRES, ESCH, DIRECT*, STOGO, LD_LBFGS,
+ *                       LD_VAR*, LD_TNEWTON*, LD_SLSQP): STEP is rejected
+ *   GridCount        -- TADAH:GRID historic overload (STEP as an integer
+ *                       point count); replaced by PARAM GRID_POINTS, STEP
+ *                       is rejected
+ *   WidthFraction    -- the family has its own width-relative step knob
+ *                       (ANNEAL*: PARAM STEP_FRAC); STEP is rejected
+ *   Rejected         -- no initial-step concept at all (RANDOM, GFS,
+ *                       BFGS, CERES, ASA): STEP is rejected */
+enum class StepUse {
+    Rejected, Ignored, PerDimVector, PerDimRescale, MinCollapsed,
+    TrustHalfWidth, ForwardedToInner, GridCount, WidthFraction
+};
+
+/* Human-readable consumption mode for journal/error text. */
+const char* step_use_name(StepUse u);
+
+/* True when the backend honours an OPTIMIZER-block STEP (NLopt consumers). */
+bool step_use_consumes(StepUse u);
+
 struct OptimizerCaps {
     std::string lib;
     std::string algo;
@@ -54,6 +92,18 @@ struct OptimizerCaps {
      * None = no useful ftol-style stop (e.g. TADAH:GRID, TADAH:ANNEAL). */
     enum class FtolKind { None, Rel, Abs };
     FtolKind ladder_ftol = FtolKind::None;
+
+    /* STEP policy (see StepUse). step_note is the actionable suffix of the
+     * rejection message ("set PARAM STEP_FRAC ...") or the one-line
+     * consumption description printed in hpo_run.log for consumers. */
+    StepUse     step_use  = StepUse::Rejected;
+    const char* step_note = "";
+
+    /* The backend evaluates outside the OPTIM box: LN_NEWUOA is called with
+     * lb=ub=NULL (nlopt optimize.c), CERES' GradientProblemSolver has no box
+     * constraints. Surfaced as a startup WARNING with bounds_note. */
+    bool        ignores_bounds = false;
+    const char* bounds_note    = "";
 };
 
 /* Lookup capabilities for (lib, algo). Throws std::runtime_error if

@@ -37,3 +37,5 @@ train.stdout
 newBestPotsDir/
 restart_pots/
 prestage_pots/
+hpo_search_space.tsv
+hpo_optim_resolved.hpo

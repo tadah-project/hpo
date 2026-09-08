@@ -25,7 +25,8 @@ fi
 cd "$EXAMPLE_DIR"
 rm -f best_*.tadah loss.tadah outvar.tadah params.tadah stats.tadah \
       pot.tadah hpo_run.log log.lammps hpo_phase_times.csv \
-      hpo_script_times.csv
+      hpo_script_times.csv hpo_search_space.tsv hpo_optim_resolved.hpo \
+      hpo_step_scales.tsv hpo_temperature_ladder.tsv
 rm -rf newBestPotsDir
 
 echo "[run.sh] running $(basename "$EXAMPLE_DIR") (OMP_NUM_THREADS=$T)"

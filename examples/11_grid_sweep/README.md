@@ -4,8 +4,8 @@ Every point on a Cartesian lattice.
 
 What this shows:
 - `LIB TADAH, ALGO GRID` -- TADAH's built-in grid sampler.
-- `STEP <N>` -- samples per dimension. Total evals = `STEP ^ dim`,
-  so this scales badly with dimensionality (`STEP=10` in 2D = 100
+- `PARAM GRID_POINTS <N>` -- samples per dimension. Total evals = `GRID_POINTS ^ dim`,
+  so this scales badly with dimensionality (`GRID_POINTS=10` in 2D = 100
   evals; in 5D = 100 000).
 - No `MAXEVAL` (the sweep runs to completion).
 

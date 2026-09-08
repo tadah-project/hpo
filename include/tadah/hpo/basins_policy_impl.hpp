@@ -31,7 +31,9 @@ BasinsPolicy<Vec, Runner>::BasinsPolicy(const OptimizerSpec& outer,
       spec_(outer.basins),
       pool_(spec_.basin_dedup_dist, spec_.basin_pool_max)
 {
-    if (!outer_.low.empty() && outer_.low.size() == outer_.high.size())
+    if (outer_.space)
+        pool_.set_space(outer_.space);
+    else if (!outer_.low.empty() && outer_.low.size() == outer_.high.size())
         pool_.set_normalisation(outer_.low, outer_.high);
     ensure_ladder();
 
@@ -133,6 +135,7 @@ BasinsPolicy<Vec, Runner>::build_stage_spec(
     s.pop  = src.pop;
     s.seed = src.seed;
     s.step = src.step;
+    s.step_overrides = src.step_overrides;
     s.vector_storage = src.vector_storage;
     s.num_threads    = src.num_threads;
     s.param          = src.param;
@@ -256,10 +259,9 @@ void BasinsPolicy<Vec, Runner>::run_global_stage(HPO_Host<Vec, Runner>& host)
                 v.set_size(static_cast<long>(heads[i].params.size()));
                 for (long j = 0; j < v.size(); ++j)
                     v(j) = heads[i].params[static_cast<std::size_t>(j)];
-                /* heads[i].params are already in optimiser-transformed
-                 * space (BasinPool's contract). host() expects the real
-                 * (un-transformed) input -- convert via outer_.out(). */
-                const double ls = host(outer_.out(v));
+                /* Basin params are REAL-space (BasinPool's contract), as
+                 * host() expects. */
+                const double ls = host(v);
                 evaluated.emplace_back(heads[i].params, ls);
             }
             std::sort(evaluated.begin(), evaluated.end(),

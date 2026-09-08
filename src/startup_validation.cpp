@@ -1,4 +1,5 @@
 #include <tadah/hpo/startup_validation.h>
+#include <tadah/hpo/scale_validation.h>
 
 #include <tadah/core/logger.h>
 #include <tadah/core/utils.h>
@@ -358,6 +359,12 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
            "support edge).";
     throw std::runtime_error(msg);
   }
+
+  /* Search-space / initial-step rules (scale_validation.h): STEP policy
+   * from the caps registry (already applied at parse time), every
+   * resolved seed inside its OPTIM box, and the width audit. Runs last so
+   * the physics gates above (knot RCUT, bump support) report first. */
+  run_scale_validation(trg.spec, /*check_start_points=*/true);
 }
 
 } // namespace hpo

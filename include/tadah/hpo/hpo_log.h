@@ -22,6 +22,7 @@
  */
 
 #include <atomic>
+#include <tadah/hpo/bound_audit.h>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
@@ -218,6 +219,14 @@ public:
     void record_fanout(double busy_ms,
                        std::size_t n_scripts, double min_ms, double max_ms,
                        const std::string& slowest);
+
+    /** Bound-occupancy audit (every backend): HPO_Host reports the marks
+     *  of the latest new best (REAL best within EDGE of a bound in
+     *  internal units). The milestone SUMMARY prints them as an INFO
+     *  table with one HINT; finish() prints the final best's table in
+     *  DIAGNOSTICS. Empty vector = no dim near a bound. */
+    void record_bound_occupancy(const std::vector<BoundOccupancy::Mark>& marks,
+                                std::uint64_t eval, double edge);
 
     /** Arm the pinned-dim audit (CORANA annealers only -- CLASSIC never
      *  shrinks its step, so "step at the V floor" is undefined there).
@@ -456,6 +465,12 @@ private:
     struct PinInfo { std::uint64_t since; double gap; double tol; };
     std::map<std::tuple<int, std::size_t, int>, PinInfo> pin_state_;
     std::vector<std::string> pin_labels_;
+    /* Bound-occupancy audit snapshot (latest new best). */
+    std::vector<BoundOccupancy::Mark> occ_marks_;
+    std::uint64_t                     occ_eval_ = 0;
+    double                            occ_edge_ = 0.02;
+    bool                              occ_seen_ = false;   // any new best reported
+    void write_bound_occupancy_locked(const char* indent_tag, bool final_table);
     std::vector<double>      pin_low_, pin_high_;
     std::vector<char>        pin_log_;             // 1 = log-scaled dim
     double                   pin_floor_frac_ = 0.0;

@@ -31,6 +31,12 @@ namespace hpo {
  *  unknown spellings; `ctx` is used in the error message. */
 bool parse_bool(const std::string &v, const std::string &ctx);
 
+/** The optimiser-attribute vocabulary consumed by dispatch_opt_attr(), in
+ *  the order documented. Single source of truth for "unknown key" messages
+ *  (previously hand-listed in the INNER block error) and the docs table. */
+const std::vector<std::string> &opt_attr_keys();
+std::string opt_attr_keys_joined(const char *sep = "/");
+
 /** Parse one optimiser-attribute key/value into an OptimizerSpec. Returns true
  *  if `key` was consumed (its value(s) read from `iss`), false otherwise so the
  *  caller can try other dispatches. Valid wherever an OptimizerSpec is the

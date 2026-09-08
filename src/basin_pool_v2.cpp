@@ -34,6 +34,11 @@ BasinPoolV2::BasinPoolV2(double dedup_dist, std::size_t pool_max,
       archive_max_(archive_max == 0 ? 2u * pool_max_ : archive_max)
 {}
 
+void BasinPoolV2::set_space(SearchSpacePtr space)
+{
+    space_ = std::move(space);
+}
+
 void BasinPoolV2::set_normalisation(std::vector<double> low,
                                     std::vector<double> high)
 {
@@ -47,6 +52,16 @@ double BasinPoolV2::relative_l2(const std::vector<double>& a,
                                 const std::vector<double>& b) const
 {
     if (a.size() != b.size()) return std::numeric_limits<double>::infinity();
+    if (space_ && space_->dim() == a.size()) {
+        double sumsq = 0.0;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            const double w = space_->internal_width(i);
+            const double d = (space_->to_internal(i, a[i]) - space_->to_internal(i, b[i]))
+                             / (w > 0.0 ? w : 1.0);
+            sumsq += d * d;
+        }
+        return std::sqrt(sumsq);
+    }
     double sumsq = 0.0;
     if (low_.size() == a.size() && high_.size() == a.size()) {
         for (std::size_t i = 0; i < a.size(); ++i) {
@@ -440,6 +455,9 @@ void BasinPoolV2::save(core::Checkpoint& cp) const
     cp.put_size("pool_max",     pool_max_);
     cp.put_size("archive_max",  archive_max_);
     cp.put_int ("next_id",      next_id_);
+    cp.put_bool("params_real",  true);
+    if (space_)
+        cp.put_int("space_fingerprint", static_cast<long long>(space_->fingerprint_u64()));
     if (!low_.empty())  cp.put_vec("low",  low_);
     if (!high_.empty()) cp.put_vec("high", high_);
     cp.put_size("n_basins", basins_.size());
@@ -480,8 +498,11 @@ void BasinPoolV2::load(const core::Checkpoint& cp)
     if (auto v = cp.get_size(tag(), "pool_max"))     pool_max_     = *v;
     if (auto v = cp.get_size(tag(), "archive_max"))  archive_max_  = *v;
     if (auto v = cp.get_int (tag(), "next_id"))      next_id_      = static_cast<int>(*v);
-    if (auto v = cp.get_vec (tag(), "low"))          low_          = *v;
-    if (auto v = cp.get_vec (tag(), "high"))         high_         = *v;
+    check_checkpoint_space(cp, tag(), space_, "BasinPoolV2");
+    if (!space_) {
+        if (auto v = cp.get_vec (tag(), "low"))      low_          = *v;
+        if (auto v = cp.get_vec (tag(), "high"))     high_         = *v;
+    }
 
     basins_.clear();
     const auto n = cp.get_size(tag(), "n_basins").value_or(0);

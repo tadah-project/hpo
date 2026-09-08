@@ -42,12 +42,10 @@ std::vector<double>
 unit_to_real(const OptimizerSpec& sp,
              const std::vector<double>& u)
 {
-    std::vector<double> x(u.size());
-    for (std::size_t d = 0; d < u.size(); ++d) {
-        const double t = sp.low[d] + u[d] * (sp.high[d] - sp.low[d]);
-        x[d] = sp.log_scaled[d] ? std::exp(t) : t;
-    }
-    return x;
+    std::vector<double> t(u.size());
+    for (std::size_t d = 0; d < u.size(); ++d)
+        t[d] = sp.low[d] + u[d] * (sp.high[d] - sp.low[d]);
+    return sp.out(t);   // INTERNAL -> REAL through the search space
 }
 
 /* Walk targets.optimap in deterministic (lex-sorted) order and pull the
@@ -349,9 +347,15 @@ public:
         std::size_t clamped = 0;
         std::ostringstream coss;
         for (std::size_t d = 0; d < point.size(); ++d) {
-            const bool log_d = ctx.spec.log_scaled[d];
-            const double lo = log_d ? std::exp(ctx.spec.low[d])  : ctx.spec.low[d];
-            const double hi = log_d ? std::exp(ctx.spec.high[d]) : ctx.spec.high[d];
+            double lo, hi;
+            if (ctx.spec.space && d < ctx.spec.space->dim()) {
+                lo = ctx.spec.space->at(d).lo;
+                hi = ctx.spec.space->at(d).hi;
+            } else {
+                const bool log_d = ctx.spec.log_scaled[d];
+                lo = log_d ? std::exp(ctx.spec.low[d])  : ctx.spec.low[d];
+                hi = log_d ? std::exp(ctx.spec.high[d]) : ctx.spec.high[d];
+            }
             const double orig = point[d];
             if (point[d] < lo) point[d] = lo;
             if (point[d] > hi) point[d] = hi;
@@ -425,16 +429,15 @@ private:
                           const OptimizerSpec& sp)
     {
         const double tol = 1.0e-12;
+        /* compare in INTERNAL space so log/lin dims share a meaningful
+         * tolerance. */
+        const std::vector<double> pi = sp.in(p);
         for (const auto& q : haystack) {
             if (q.size() != p.size()) continue;
+            const std::vector<double> qi = sp.in(q);
             bool eq = true;
-            for (std::size_t d = 0; d < p.size() && eq; ++d) {
-                /* compare in transformed space so log/lin dims share a
-                 * meaningful tolerance. */
-                double a = p[d], b = q[d];
-                if (sp.log_scaled[d]) { a = std::log(a); b = std::log(b); }
-                if (std::abs(a - b) > tol) eq = false;
-            }
+            for (std::size_t d = 0; d < p.size() && eq; ++d)
+                if (std::abs(pi[d] - qi[d]) > tol) eq = false;
             if (eq) return true;
         }
         return false;

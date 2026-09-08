@@ -7,8 +7,46 @@
 namespace tadah {
 namespace hpo {
 
+void check_checkpoint_space(const core::Checkpoint& cp, const std::string& section,
+                            const SearchSpacePtr& space, const char* who)
+{
+    const bool tagged_real = cp.get_bool(section, "params_real").value_or(false);
+    if (!tagged_real) {
+        /* Pre-transform checkpoint: params were stored in whatever the
+         * old code considered "transformed" space (real for v1 top-K
+         * inserts, mixed for v2). Unambiguous only when every dim is
+         * linear. */
+        if (space) {
+            for (std::size_t i = 0; i < space->dim(); ++i) {
+                if (space->is_nonlinear(i))
+                    throw std::runtime_error(std::string(who) +
+                        ": checkpoint.tadah predates the search-space transform "
+                        "and this run has a LOG/ASINH-scaled dimension (" +
+                        space->labels()[i] + "), so the stored basin coordinates "
+                        "are ambiguous; delete checkpoint.tadah to start the basin "
+                        "pool afresh (best_pot.tadah is unaffected)");
+            }
+        }
+        return;
+    }
+    if (!space) return;
+    if (auto fp = cp.get_int(section, "space_fingerprint")) {
+        if (static_cast<std::uint64_t>(*fp) != space->fingerprint_u64())
+            throw std::runtime_error(std::string(who) +
+                ": checkpoint.tadah was written for a different search space "
+                "(OPTIM bounds, scale tags or OPTIM_SCALE changed since); "
+                "restore the previous OPTIM block, or delete checkpoint.tadah to "
+                "start the basin pool afresh (best_pot.tadah is unaffected)");
+    }
+}
+
 BasinPool::BasinPool(double dedup_dist, std::size_t pool_max)
     : dedup_dist_(dedup_dist), pool_max_(pool_max == 0 ? 1u : pool_max) {}
+
+void BasinPool::set_space(SearchSpacePtr space)
+{
+    space_ = std::move(space);
+}
 
 void BasinPool::set_normalisation(std::vector<double> low,
                                   std::vector<double> high)
@@ -23,6 +61,16 @@ double BasinPool::relative_l2_(const std::vector<double>& a,
                                const std::vector<double>& b) const
 {
     if (a.size() != b.size()) return std::numeric_limits<double>::infinity();
+    if (space_ && space_->dim() == a.size()) {
+        double sumsq = 0.0;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            const double w = space_->internal_width(i);
+            const double d = (space_->to_internal(i, a[i]) - space_->to_internal(i, b[i]))
+                             / (w > 0.0 ? w : 1.0);
+            sumsq += d * d;
+        }
+        return std::sqrt(sumsq);
+    }
     /* If normalisation isn't set, fall back to plain L2 -- at startup
      * the pool may not yet know the bounds. Distance is then measured
      * in raw search space. */
@@ -150,6 +198,13 @@ void BasinPool::save(core::Checkpoint& cp) const
     cp.section(tag());
     cp.put_dbl ("dedup_dist", dedup_dist_);
     cp.put_size("pool_max",   pool_max_);
+    /* Coordinate contract tag: basin params are REAL-space; the search
+     * space they were normalised in is identified by its fingerprint so
+     * a resume against changed OPTIM bounds/scales is detected instead
+     * of silently normalising with stale widths. */
+    cp.put_bool("params_real", true);
+    if (space_)
+        cp.put_int("space_fingerprint", static_cast<long long>(space_->fingerprint_u64()));
     if (!low_.empty())  cp.put_vec("low",  low_);
     if (!high_.empty()) cp.put_vec("high", high_);
     cp.put_size("n_basins", basins_.size());
@@ -171,8 +226,12 @@ void BasinPool::load(const core::Checkpoint& cp)
 {
     if (auto v = cp.get_dbl (tag(), "dedup_dist")) dedup_dist_ = *v;
     if (auto v = cp.get_size(tag(), "pool_max"))   pool_max_   = *v;
-    if (auto v = cp.get_vec (tag(), "low"))        low_  = *v;
-    if (auto v = cp.get_vec (tag(), "high"))       high_ = *v;
+    check_checkpoint_space(cp, tag(), space_, "BasinPool");
+    if (!space_) {
+        /* legacy normalisation only when no space is bound */
+        if (auto v = cp.get_vec (tag(), "low"))        low_  = *v;
+        if (auto v = cp.get_vec (tag(), "high"))       high_ = *v;
+    }
 
     basins_.clear();
     const auto n = cp.get_size(tag(), "n_basins").value_or(0);

@@ -31,6 +31,8 @@
  */
 
 #include <tadah/core/checkpoint.h>
+#include <tadah/hpo/search_space.h>
+#include <tadah/hpo/basin_pool.h>
 
 #include <cstddef>
 #include <optional>
@@ -116,8 +118,12 @@ public:
     BasinPoolV2(double dedup_dist, std::size_t pool_max,
                 std::size_t archive_max = 0);
 
-    /* Set per-dim normalisation (caller passes outer_.low/high). Must
-     * be called before add_or_merge() if dedup_dist > 0. */
+    /* Preferred: distances through the search space (REAL params mapped
+     * to INTERNAL coordinates, divided by the internal widths). */
+    void set_space(SearchSpacePtr space);
+    /* Legacy per-dim normalisation (raw widths; params compared raw).
+     * Must be called before add_or_merge() if dedup_dist > 0 and no
+     * space is set. */
     void set_normalisation(std::vector<double> low, std::vector<double> high);
 
     /* Insert or merge a candidate. Returns the resulting basin's
@@ -228,6 +234,7 @@ private:
     std::size_t pool_max_    = 24;
     std::size_t archive_max_ = 48;
     std::vector<double> low_, high_;
+    SearchSpacePtr          space_;          // preferred normalisation
     std::vector<BasinV2> basins_;
 
     int  find_nearest_within_active_(const std::vector<double>& params,
