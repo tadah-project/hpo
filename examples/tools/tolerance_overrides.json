@@ -68,7 +68,7 @@
     ]
   },
   "15_simulated_annealing": {
-    "description": "TADAH:ANNEAL with auto-T0 calibration.",
+    "description": "TADAH:ANNEAL classic with seed-local auto-T0 calibration (post T_HOT rename).",
     "status_accepted": ["COMPLETED"]
   }
 }

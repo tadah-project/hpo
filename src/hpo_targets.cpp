@@ -14,6 +14,7 @@
 #include <tadah/hpo/loss_function.h>
 
 #include <algorithm>
+#include <iomanip>
 #include <random>
 #include <fstream>
 #include <sstream>
@@ -96,254 +97,10 @@ void HPOTargets::Opti::resize(size_t s) {
   if (opt.size() >= s) return;
   opt.resize(s, false);
   config.resize(s);
-  labels.resize(s, "");
   scale.resize(s);
   origin.resize(s, BoxOrigin::Explicit);
   lowbound.resize(s, 0);
   highbound.resize(s, 0);
-}
-
-void HPOTargets::Opti::print(const std::string &key) const {
-  int p = 1;
-  int w = 8 + p;
-  size_t start = core::is_number(config[0]) ? 0 : 1;
-
-  std::cout << "\nConfig Key: " << key << std::endl;
-  std::cout << std::setw(w) << "Label:";
-  for (size_t i = start, idx = start; i < labels.size(); ++i) {
-    if (core::is_number(config[i])) {
-      std::cout << std::setw(w) << labels[idx++];
-    }
-  }
-  std::cout << std::endl;
-
-  std::cout << std::setw(w) << "Index:";
-  for (size_t i = start, idx = 1; i < config.size(); ++i) {
-    if (core::is_number(config[i])) {
-      std::cout << std::setw(w) << idx++;
-    }
-  }
-  std::cout << std::endl;
-
-  std::cout << std::setw(w) << "Params:";
-  for (size_t i = start; i < config.size(); ++i) {
-    if (core::is_number(config[i])) {
-      double num = std::stod(config[i]);
-      if (core::is_integer(num)) {
-        std::cout << std::setw(w) << std::right << static_cast<int>(num);
-      } else {
-        std::cout << std::setw(w) << std::right
-          << std::scientific << std::setprecision(p) << num;
-      }
-    }
-  }
-  std::cout << std::endl;
-
-  std::cout << std::setw(w) << "H bound:";
-  for (size_t i = start; i < opt.size(); ++i) {
-    if (!core::is_number(config[i])) continue;
-    if (opt[i]) {
-      if (core::is_integer(highbound[i])) {
-        std::cout << std::setw(w) << static_cast<int>(highbound[i]);
-      } else {
-        std::cout << std::setw(w) << std::scientific 
-          << std::setprecision(p) << highbound[i];
-      }
-    } else {
-      std::cout << std::setw(w) << std::right << " ";
-    }
-  }
-  std::cout << std::endl;
-
-  std::cout << std::setw(w) << "L bound:";
-  for (size_t i = start; i < opt.size(); ++i) {
-    if (!core::is_number(config[i])) continue;
-    if (opt[i]) {
-      if (core::is_integer(lowbound[i])) {
-        std::cout << std::setw(w) << static_cast<int>(lowbound[i]);
-      } else {
-        std::cout << std::setw(w) << 
-          std::scientific << std::setprecision(p) << lowbound[i];
-      }
-    } else {
-      std::cout << std::setw(w) << std::right << " ";
-    }
-  }
-  std::cout << std::endl;
-}
-
-void HPOTargets::create_labels() {
-  for (auto& pair : optimap) {
-    std::string key = pair.first;
-    Opti& o = pair.second;
-
-    if (key == "FIXWEIGHT") {
-      // FIXWEIGHT slots are labelled by the model weight they pin
-      // (w<FIXINDEX[slot]>), not by descriptor labels. FIXINDEX presence
-      // is validated in process_optim_config.
-      if (context.contains("FIXINDEX")) {
-        std::vector<std::string> fi_str(context.size("FIXINDEX"));
-        context.get("FIXINDEX", fi_str);
-        const std::vector<size_t> fixidx = core::parse_indices(fi_str);
-        for (size_t slot = 0; slot < o.labels.size() && slot < fixidx.size();
-             ++slot) {
-          o.labels[slot] = "w" + core::to_string(fixidx[slot]);
-        }
-      }
-      continue;
-    }
-
-    auto suffix_prefix = determine_suffix_prefix(key);
-    std::string type = "TYPE" + suffix_prefix.first;
-    std::string rcut = "RCUT" + suffix_prefix.first;
-    std::string cgrid = "CGRID" + suffix_prefix.first;
-    std::string sgrid = "SGRID" + suffix_prefix.first;
-    std::string watom = "WATOM";
-
-    size_t i = key == type ? 1 : 0;
-
-    auto d_labels = type=="TYPE" ? get_labels(key)
-      : get_d_labels(type, suffix_prefix.second);
-
-    size_t nparams = 0;
-    for (auto it = d_labels.begin(); it != d_labels.end(); ++it) {
-      std::string label = it->first;
-      auto params = it->second;
-
-      if (key == rcut) {
-        o.labels[i++] = label;
-      } else if (key == type) {
-        nparams = params.size();
-        for (size_t j = 0; j < nparams; j++) o.labels[i++] = label;
-      } else if (key == cgrid || key == sgrid) {
-        process_grid_labels(label, o, i, params, key);
-      } else if (key == watom) {
-        process_atoms_labels(o, i, watom);
-      } else {
-        if (watom != "\0") std::cerr << "Cannot create label for: "
-          << label << std::endl;
-        i++;
-      }
-    }
-  }
-}
-
-std::vector<std::pair<std::string, std::vector<double>>> HPOTargets::
-get_d_labels(const std::string& type, const std::string& prefix) {
-  std::vector<std::pair<std::string, std::vector<double>>> d_label_obj;
-
-  // if (config.exist(type)) { }
-  size_t s = context.size(type);
-  std::vector<std::string> type_config(s);
-  context.get<std::vector<std::string>>(type, type_config);
-
-  std::vector<double> d_label_param;
-  std::string current_label;
-  bool processing = false;
-
-  for (const auto& token : type_config) {
-    if (token.rfind(prefix, 0) == 0) {
-      if (token == prefix + "mJoin") continue;
-
-      if (processing) {
-        d_label_obj.emplace_back(current_label, d_label_param);
-        d_label_param.clear();
-      }
-
-      current_label = token;
-      processing = true;
-    } else if (processing && core::is_number(token)) {
-      d_label_param.push_back(std::stod(token));
-    }
-  }
-
-  if (processing) {
-    d_label_obj.emplace_back(current_label, d_label_param);
-  }
-
-  return d_label_obj;
-}
-std::vector<std::pair<std::string, std::vector<double>>> HPOTargets::
-get_labels(const std::string& key) {
-  std::vector<std::pair<std::string, std::vector<double>>> label_obj;
-
-  size_t s = context.size(key);
-  std::vector<std::string> key_config(s);
-  context.get<std::vector<std::string>>(key, key_config);
-
-  std::vector<double> label_param;
-
-  /* Skip non-numeric tokens. Pair-triple WATOM (`sym sym val ...`)
-   * interleaves element symbols with weights, and the symbols would
-   * otherwise throw inside stod. label_param is only consumed for keys
-   * whose tokens are all numeric (TYPE/CGRID/SGRID); WATOM's downstream
-   * label production (process_atoms_labels) does not read params. */
-  for (const auto& token : key_config) {
-    if (core::is_number(token)) {
-      label_param.push_back(std::stod(token));
-    }
-  }
-  label_obj.emplace_back(key, label_param);
-
-  return label_obj;
-}
-
-std::pair<std::string, std::string> HPOTargets::
-determine_suffix_prefix(const std::string& key) {
-  if (key.size() >= 2 && key.compare(key.size() - 2, 2, "2B") == 0) {
-    return {"2B", "D2_"};
-  }
-  else if (key.size() >= 2 && key.compare(key.size() - 2, 2, "MB") == 0) {
-    return {"MB", "DM_"};
-  } else {
-    return {"", ""};
-  }
-}
-
-void HPOTargets::process_grid_labels(
-  const std::string& label, Opti& o, size_t& i,
-  const std::vector<double>& params, const std::string& key) {
-  std::unique_ptr<models::D_Base> d(tadah::core::factory<models::D_Base>(label));
-  int arg_pos = d->get_arg_pos(key);
-
-  if (arg_pos > -1) {
-    size_t nparams = params[arg_pos];
-    for (size_t j = 0; j < nparams; j++) {
-      o.labels[i++] = label;
-    }
-  }
-}
-
-void HPOTargets::process_atoms_labels(Opti& o, size_t& i, std::string& watom) {
-  /* WATOM hot-variable labelling depends on the input format:
-   *   - Per-species (parallel to ATOM, `WATOM w1 w2 ...`): label per ATOM
-   *     symbol; arg_pos k → Z=watom_Z_by_arg_pos[k-1] downstream.
-   *   - Pair triples (`WATOM sym sym val ...`): label "<sym1>-<sym2>" per
-   *     triple; arg_pos k → (Zi,Zj)=watom_pair_by_arg_pos[k-1].
-   * Detection mirrors D_Base::update_weights: first WATOM token numeric
-   * ⇒ per-species. The label index `i` is advanced so that labels[]
-   * stays aligned with the numeric positions of `config[]` — Opti::print
-   * walks numeric config slots and reads labels[idx++] from `start`
-   * (=1 when config[0] is non-numeric, =0 otherwise). */
-  const bool per_species = context.contains("WATOM") &&
-                           context.size("WATOM") > 0 &&
-                           core::is_number(context.get<std::string>("WATOM", 0));
-  if (per_species) {
-    for (size_t j = 0; j < context.size("ATOM"); ++j) {
-      o.labels[i++] = context.get<std::string>("ATOM", j);
-    }
-  } else {
-    // Pair-triple: config[0] is a symbol, so Opti::print starts idx at 1.
-    // Skip labels[0] to keep idx-aligned, then emit one pair label per triple.
-    if (i == 0) i = 1;
-    const size_t n = context.size("WATOM");
-    for (size_t j = 0; j + 2 < n; j += 3) {
-      const std::string s1 = context.get<std::string>("WATOM", j);
-      const std::string s2 = context.get<std::string>("WATOM", j + 1);
-      o.labels[i++] = s1 + "-" + s2;
-    }
-  }
-  watom = "\0"; // Avoid further processing
 }
 
 HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
@@ -362,13 +119,6 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
       throw std::runtime_error(
           "internal: PC_FAILPROBE sim lost during LS ordering");
   }
-  create_labels();
-  for (auto& pair : optimap) {
-    std::string key = pair.first;
-    Opti &o = pair.second;
-    o.print(key);
-  }
-
   /* ---------- search space ----------------------------------------
    * One SearchSpace from the OPTIM lines (real boxes + per-line shape
    * tags), OPTIM_SCALE and LOG_HP; bound to the outer spec and, below,
@@ -1738,6 +1488,17 @@ SearchSpace HPOTargets::build_search_space() const {
   std::vector<DimSpec> dims;
   for (const auto& kv : optimap) {
     const Opti& o = kv.second;
+    /* user_index is the index the OPTIM line uses -- and the only one the
+     * user ever sees (labels, journal, sidecars): the 1-based position among
+     * the key's numeric values, or for FIXWEIGHT the MODEL WEIGHT the slot
+     * pins (FIXINDEX; process_optim_config maps it to the slot). Never the
+     * 0-based token position, which is an implementation detail. */
+    std::vector<std::size_t> fixidx;
+    if (kv.first == "FIXWEIGHT" && context.contains("FIXINDEX")) {
+      std::vector<std::string> fi(context.size("FIXINDEX"));
+      context.get("FIXINDEX", fi);
+      fixidx = core::parse_indices(fi);
+    }
     std::size_t numeric_ordinal = 0;
     for (std::size_t i = 0; i < o.opt.size(); ++i) {
       const bool numeric = i < o.config.size() && core::is_number(o.config[i]);
@@ -1746,8 +1507,10 @@ SearchSpace HPOTargets::build_search_space() const {
       DimSpec d;
       d.key        = kv.first;
       d.user_index = numeric ? numeric_ordinal : 0;
+      if (!fixidx.empty() && d.user_index >= 1 && d.user_index <= fixidx.size())
+        d.user_index = fixidx[d.user_index - 1];
       d.label      = kv.first;
-      if (o.opt.size() > 1) d.label += "[" + std::to_string(i) + "]";
+      if (o.opt.size() > 1) d.label += "[" + std::to_string(d.user_index) + "]";
       d.lo = o.lowbound[i];
       d.hi = o.highbound[i];
       d.tf = i < o.scale.size() ? o.scale[i] : DimTransform{};
@@ -1768,19 +1531,65 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
   const SearchSpace& ss = *space_;
   const std::vector<double>* x0 = spec.optim_init.empty() ? nullptr : &spec.optim_init.front();
   {
-    std::ofstream tsv(dir + "/hpo_search_space.tsv");
-    tsv << "dim\tlabel\tkey\toptim_index\tlo\thi\torigin\tx0\tscale\tc\tu0\tinternal_lo\tinternal_hi\tversion\n";
-    tsv << std::setprecision(17);
+    /* Human-first layout: every column space-padded to one width and the
+     * columns tab-separated, so the file lines up in any editor AND stays a
+     * TSV (strip whitespace when parsing). 10 significant digits -- the
+     * exact box is what the run holds; hpo_optim_resolved.hpo is the
+     * paste-ready record. */
+    auto num = [](double v) {
+      std::ostringstream o; o << std::setprecision(10) << v; return o.str();
+    };
+    const std::vector<std::string> header = {
+      "dim", "label", "lo", "hi", "origin", "x0", "scale", "c", "u0",
+      "internal_lo", "internal_hi", "version"};
+    const std::vector<bool> right_align = {
+      true, false, true, true, false, true, false, true, true, true, true, true};
+    std::vector<std::vector<std::string>> rows;
+    rows.reserve(ss.dim());
     for (std::size_t i = 0; i < ss.dim(); ++i) {
       const DimSpec& d = ss.at(i);
       const double seed = (x0 && i < x0->size()) ? (*x0)[i] : d.x0;
-      tsv << (i + 1) << '\t' << d.label << '\t' << d.key << '\t' << d.user_index << '\t'
-          << d.lo << '\t' << d.hi << '\t' << box_origin_name(d.origin) << '\t';
-      if (std::isfinite(seed)) tsv << seed; else tsv << "nan";
-      tsv << '\t' << scale_kind_name(d.tf.kind) << '\t' << d.tf.c << '\t';
-      if (std::isfinite(seed)) tsv << ss.to_internal(i, seed); else tsv << "nan";
-      tsv << '\t' << ss.internal_lo(i) << '\t' << ss.internal_hi(i) << '\t' << ss.version() << '\n';
+      const bool ok = std::isfinite(seed);
+      rows.push_back({std::to_string(i + 1), d.label, num(d.lo), num(d.hi),
+                      box_origin_name(d.origin), ok ? num(seed) : "nan",
+                      scale_kind_name(d.tf.kind), num(d.tf.c),
+                      ok ? num(ss.to_internal(i, seed)) : "nan",
+                      num(ss.internal_lo(i)), num(ss.internal_hi(i)),
+                      std::to_string(ss.version())});
     }
+    std::vector<std::size_t> width(header.size());
+    for (std::size_t c = 0; c < header.size(); ++c) {
+      width[c] = header[c].size();
+      for (const auto& r : rows) width[c] = std::max(width[c], r[c].size());
+    }
+    std::ofstream tsv(dir + "/hpo_search_space.tsv");
+    tsv <<
+      "# tadah hpo search space -- one row per optimised dimension, in optimiser order\n"
+      "# (the same order as the params.tadah columns and the journal tables).\n"
+      "#   dim          1-based position in the parameter vector\n"
+      "#   label        KEY[n]: n is the OPTIM index (1-based; for FIXWEIGHT the model weight\n"
+      "#                named in FIXINDEX); single-value keys carry no index\n"
+      "#   lo, hi       real bounds the optimiser may not leave\n"
+      "#   origin       OPTIM = explicit bounds; AUTO FRAC / AUTO RATIO = derived from the seed\n"
+      "#   x0           starting point (real units)\n"
+      "#   scale, c     shape of the internal coordinate: LIN, LOG (ln x) or ASINH (asinh(x/c));\n"
+      "#                c is the ASINH linear scale, 1 for the other shapes\n"
+      "#   u0           x0 in optimiser units (0..1 under OPTIM_SCALE AUTO, raw or ln under NONE)\n"
+      "#   internal_lo, internal_hi   optimiser-side bounds (0 and 1 under AUTO)\n"
+      "#   version      revision of the search space. 1 = the boxes parsed from the config; it\n"
+      "#                would only increase if a bound-adaptation step rewrote the boxes during\n"
+      "#                the run (no such step exists yet), so a journal or checkpoint reference\n"
+      "#                to a version can always be matched to one box set\n"
+      "# Columns are tab-separated and space-padded to equal width -- strip whitespace when parsing\n"
+      "# (pandas: read_csv(path, sep='\\t', comment='#') then .str.strip() on text columns).\n";
+    auto emit = [&](const std::vector<std::string>& r) {
+      for (std::size_t c = 0; c < r.size(); ++c) {
+        tsv << (right_align[c] ? std::right : std::left) << std::setw(static_cast<int>(width[c])) << r[c];
+        tsv << (c + 1 < r.size() ? '\t' : '\n');
+      }
+    };
+    emit(header);
+    for (const auto& r : rows) emit(r);
   }
   bool any_auto = false;
   for (std::size_t i = 0; i < ss.dim(); ++i)

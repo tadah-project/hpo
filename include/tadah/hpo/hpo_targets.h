@@ -26,7 +26,6 @@ private:
     struct Opti {
         std::vector<bool> opt;
         std::vector<std::string> config;
-        std::vector<std::string> labels;
         std::vector<double> lowbound;
         std::vector<double> highbound;
         /* Per-token shape tag from the OPTIM line ([LIN | LOG | ASINH c]);
@@ -36,17 +35,10 @@ private:
         std::vector<BoxOrigin> origin;
 
         void resize(size_t s);
-        void print(const std::string &key) const;
     };
 
     size_t ui_offset(std::vector<std::string> &tokens, size_t ui);
     std::vector<std::string> parse_optim_line(std::istringstream& iss);
-    std::vector<std::pair<std::string, std::vector<double>>> get_labels(const std::string& key);
-    std::vector<std::pair<std::string, std::vector<double>>> get_d_labels(const std::string& type, const std::string& prefix);
-    std::pair<std::string, std::string> determine_suffix_prefix(const std::string& key);
-    void process_grid_labels(const std::string& label, Opti& o, size_t& i, const std::vector<double>& params, const std::string& key);
-    void process_atoms_labels(Opti& o, size_t& i, std::string& watoms);
-    void create_labels();
     void handle_directory_creation(const std::string& directory);
     void process_optim_config(std::istringstream& iss, size_t nline);
     SearchSpace build_search_space() const;

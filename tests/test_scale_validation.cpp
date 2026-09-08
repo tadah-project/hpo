@@ -173,7 +173,7 @@ TEST_CASE("scale_validation: start points must lie inside the OPTIM box",
           "[HPO][scale][seed]")
 {
     auto sp = make_spec("NLOPT", "LN_BOBYQA", {0.0, 1.0}, {1.0, 2.0});
-    sp.parameter_labels = {"RCUT2B", "SGRIDMB[0]"};
+    sp.parameter_labels = {"RCUT2B", "SGRIDMB[1]"};
 
     SECTION("inside") {
         sp.optim_init = {{0.5, 1.5}, {0.0, 2.0}};   /* bounds inclusive */
@@ -182,7 +182,7 @@ TEST_CASE("scale_validation: start points must lie inside the OPTIM box",
     SECTION("outside names the dimension and the real bounds") {
         sp.optim_init = {{0.5, 2.5}};
         REQUIRE_THROWS_WITH(validate_optimizer_scaling(sp, "OUTER"),
-                            Catch::Contains("SGRIDMB[0]") &&
+                            Catch::Contains("SGRIDMB[1]") &&
                             Catch::Contains("outside its OPTIM bounds") &&
                             Catch::Contains("[1, 2]"));
     }
@@ -245,11 +245,11 @@ TEST_CASE("scale_validation: width audit journals ratio and pinned dims",
 {
     JournalCapture j;
     auto sp = make_spec("NLOPT", "LN_SBPLX", {0.0, 0.0, 1.0}, {1.0, 1e-3, 1.0 + 1e-15});
-    sp.parameter_labels = {"CGRID2B[0]", "AMPGRIDMB[5]", "SEMBFUNC[12]"};
+    sp.parameter_labels = {"CGRID2B[1]", "AMPGRIDMB[5]", "SEMBFUNC[13]"};
     audit_search_space_widths(sp);
     const std::string t = j.text();
     CHECK(t.find("max/min ratio") != std::string::npos);
-    CHECK(t.find("CGRID2B[0]") != std::string::npos);    /* widest */
-    CHECK(t.find("SEMBFUNC[12]") != std::string::npos);  /* narrowest + pinned */
+    CHECK(t.find("CGRID2B[1]") != std::string::npos);    /* widest */
+    CHECK(t.find("SEMBFUNC[13]") != std::string::npos);  /* narrowest + pinned */
     CHECK(t.find("effectively pinned") != std::string::npos);
 }

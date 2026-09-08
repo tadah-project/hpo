@@ -5,12 +5,14 @@
 #include <tadah/core/context.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/scale_validation.h>
+#include <tadah/hpo/initial_step.h>
 
 #include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -58,8 +60,9 @@ ENDOPTIMIZER
     REQUIRE(trg.spec.log_threshold.has_value());
     CHECK(*trg.spec.log_threshold == Approx(100.0));
     CHECK(trg.spec.parameter_labels.size() == 1);
-    /* pair-triple WATOM: the weight sits at token position 2 */
-    CHECK(trg.spec.parameter_labels[0] == "WATOM[2]");
+    /* labels carry the OPTIM index (1-based), never the token position
+     * (the pair-triple weight sits at token 2 -- an implementation detail) */
+    CHECK(trg.spec.parameter_labels[0] == "WATOM[1]");
   }
   SECTION("STRATEGY block") {
     ScopedTempFile in(std::string("OPTIM_SCALE NONE\n") + kOptim + R"(OPTIMIZER
@@ -502,6 +505,116 @@ ENDOPTIMIZER
     std::ifstream f(dir / "hpo_optim_resolved.hpo"); std::string line, all;
     while (std::getline(f, line)) all += line + "\n";
     CHECK(all.find("OPTIM WATOM (1) 0.8 1.2") != std::string::npos);
+
+    /* hpo_search_space.tsv: a comment header explaining every column, then a
+     * header row and one row per dimension; no key/optim_index columns (the
+     * label carries the OPTIM index); every column space-padded to ONE width
+     * and tab-separated, so it lines up in an editor and still parses as TSV. */
+    std::ifstream t(dir / "hpo_search_space.tsv");
+    std::vector<std::string> comments, table;
+    while (std::getline(t, line)) (line.rfind("#", 0) == 0 ? comments : table).push_back(line);
+    REQUIRE(!comments.empty());
+    CHECK(comments.front().find("search space") != std::string::npos);
+    bool version_explained = false;
+    for (const auto& c : comments) if (c.find("version") != std::string::npos) version_explained = true;
+    CHECK(version_explained);
+    REQUIRE(table.size() == 2);   /* header + WATOM row */
+    auto split = [](const std::string& l) {
+      std::vector<std::string> f; std::string cur;
+      for (char ch : l) { if (ch == '\t') { f.push_back(cur); cur.clear(); } else cur += ch; }
+      f.push_back(cur); return f;
+    };
+    auto strip = [](std::string v) {
+      const auto a = v.find_first_not_of(' '), b = v.find_last_not_of(' ');
+      return a == std::string::npos ? std::string() : v.substr(a, b - a + 1);
+    };
+    const auto hdr = split(table[0]), row = split(table[1]);
+    REQUIRE(hdr.size() == 12);
+    REQUIRE(row.size() == 12);
+    std::vector<std::string> names;
+    for (const auto& h : hdr) names.push_back(strip(h));
+    CHECK(names == std::vector<std::string>{"dim", "label", "lo", "hi", "origin", "x0", "scale", "c",
+                                            "u0", "internal_lo", "internal_hi", "version"});
+    for (std::size_t c = 0; c < 12; ++c) CHECK(hdr[c].size() == row[c].size());   /* aligned */
+    CHECK(strip(row[0]) == "1");
+    CHECK(strip(row[1]) == "WATOM[1]");          /* OPTIM index, not token position 2 */
+    CHECK(strip(row[2]) == "0.8");
+    CHECK(strip(row[3]) == "1.2");
+    CHECK(strip(row[4]) == "AUTO FRAC");
+    CHECK(strip(row[6]) == "LIN");
+    CHECK(strip(row[8]) == "0.5");
+    CHECK(strip(row[11]) == "1");
     std::filesystem::remove_all(dir);
+  }
+}
+
+TEST_CASE("FIXWEIGHT dimensions are addressed by the model weight everywhere",
+          "[HPO][scale][parser][autobox][fixweight]")
+{
+  /* FIXINDEX 4,1,7 pins weights 4, 1 and 7 in slots 1..3. OPTIM FIXWEIGHT (7)
+   * therefore selects slot 3; the label, the sidecar table and the resolved
+   * OPTIM block must all say 7 -- the slot number is an implementation
+   * detail the user never typed. */
+  ScopedTempFile in("OPTIM FIXWEIGHT (7) AUTO FRAC 0.5\nOPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\nENDOPTIMIZER\n");
+  tadah::core::Context ctx;
+  ctx.add("FIXINDEX", "4,1,7");
+  ctx.add("FIXWEIGHT", 0.4);
+  ctx.add("FIXWEIGHT", 0.1);
+  ctx.add("FIXWEIGHT", 0.8);
+  tadah::hpo::HPOTargets trg(ctx, in.path.string());
+  REQUIRE(trg.spec.parameter_labels.size() == 1);
+  CHECK(trg.spec.parameter_labels[0] == "FIXWEIGHT[7]");
+  const auto dir = std::filesystem::temp_directory_path() /
+      ("tadah_ss_fixw_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(dir);
+  trg.write_search_space_files(dir.string());
+  std::ifstream f(dir / "hpo_optim_resolved.hpo"); std::string line, all;
+  while (std::getline(f, line)) all += line + "\n";
+  CHECK(all.find("OPTIM FIXWEIGHT (7) 0.4 1.2") != std::string::npos);
+  CHECK(all.find("FIXWEIGHT (3)") == std::string::npos);
+  std::ifstream t(dir / "hpo_search_space.tsv"); bool saw = false;
+  while (std::getline(t, line)) if (line.find("FIXWEIGHT[7]") != std::string::npos) saw = true;
+  CHECK(saw);
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("STEP FIXWEIGHT(i) names the model weight, like OPTIM FIXWEIGHT (i)",
+          "[HPO][scale][parser][step][fixweight]")
+{
+  /* FIXINDEX 4,1,7: weight 7 sits in slot 3. The OPTIM line, the label and
+   * the STEP override all speak in model weights; the slot is internal. */
+  auto make_ctx = [] {
+    tadah::core::Context ctx;
+    ctx.add("FIXINDEX", "4,1,7");
+    ctx.add("FIXWEIGHT", 0.4);
+    ctx.add("FIXWEIGHT", 0.1);
+    ctx.add("FIXWEIGHT", 0.8);
+    return ctx;
+  };
+  const std::string head =
+      "OPTIM FIXWEIGHT (7) -1 1\nOPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
+      "    ALGO LN_SBPLX\n    MAXEVAL 5\n    STEP 0.1\n";
+  const std::string tail = "  ENDSTRATEGY\nENDOPTIMIZER\n";
+  SECTION("the model-weight index resolves onto the dimension") {
+    ScopedTempFile in(head + "    STEP FIXWEIGHT(7) 0.05\n" + tail);
+    auto ctx = make_ctx();
+    tadah::hpo::HPOTargets trg(ctx, in.path.string());
+    REQUIRE(trg.spec.parameter_labels.size() == 1);
+    CHECK(trg.spec.parameter_labels[0] == "FIXWEIGHT[7]");
+    const auto ov = tadah::hpo::resolve_step_overrides(trg.spec);
+    REQUIRE(ov.size() == 1);
+    REQUIRE(ov[0].has_value());
+    CHECK(*ov[0] == Approx(0.05));
+  }
+  SECTION("the slot number is not an OPTIM'd index") {
+    ScopedTempFile in(head + "    STEP FIXWEIGHT(3) 0.05\n" + tail);
+    auto ctx = make_ctx();
+    bool threw = false; std::string msg;
+    try {
+      tadah::hpo::HPOTargets trg(ctx, in.path.string());
+      (void)tadah::hpo::resolve_step_overrides(trg.spec);
+    } catch (const std::exception& e) { threw = true; msg = e.what(); }
+    CHECK(threw);
+    CHECK(msg.find("not an OPTIM'd index") != std::string::npos);
   }
 }

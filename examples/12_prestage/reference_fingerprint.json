@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "example": "SGRIDMB",
+  "example": "12_prestage",
   "description": "STRATEGY PRESTAGE; NLOPT:GN_CRS2_LM explore + DLIB:BFGS refine.",
   "best_loss": {
     "value": 0.06196835,
@@ -8,11 +8,6 @@
     "rel_tol": 0.001
   },
   "components": {
-    "SLOT": {
-      "value": 0.0,
-      "abs_tol": 1e-06,
-      "rel_tol": 0.005
-    },
     "L(ERMSE)[1]": {
       "value": 0.02796788,
       "abs_tol": 1e-06,
@@ -30,11 +25,6 @@
     }
   },
   "hyperparameters": {
-    "SLOT": {
-      "value": 0.0,
-      "abs_tol": 0.001,
-      "rel_tol": 0.001
-    },
     "RCUT2B": {
       "value": 4.688581,
       "abs_tol": 0.001,
@@ -56,7 +46,7 @@
     "MAXEVAL_REACHED -- maximum evaluations exhausted"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "1.6s",
+  "walltime_hint": "1.7s",
   "fast": true,
   "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
 }

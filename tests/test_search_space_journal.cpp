@@ -50,8 +50,8 @@ struct JournalCapture {
 OptimizerSpec bound_spec(bool normalise)
 {
     DimSpec a; a.key = "RCUT2B";  a.label = "RCUT2B";     a.lo = 4.0;  a.hi = 6.0;
-    DimSpec b; b.key = "SGRID2B"; b.label = "SGRID2B[0]"; b.lo = 0.05; b.hi = 5.0;
-    DimSpec c; c.key = "FIXWEIGHT"; c.label = "FIXWEIGHT[3]"; c.lo = -26.5; c.hi = 26.5;
+    DimSpec b; b.key = "SGRID2B"; b.label = "SGRID2B[1]"; b.lo = 0.05; b.hi = 5.0;
+    DimSpec c; c.key = "FIXWEIGHT"; c.label = "FIXWEIGHT[4]"; c.lo = -26.5; c.hi = 26.5;
     c.tf.kind = ScaleKind::Asinh; c.tf.c = 1.0;
     ScalePolicy pol; pol.normalise = normalise; pol.log_ratio = 100.0;
     OptimizerSpec sp;

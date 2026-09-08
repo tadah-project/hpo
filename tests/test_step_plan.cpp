@@ -20,8 +20,8 @@ namespace {
  * mirroring run15's CGRID2B vs AMPGRIDMB spread. */
 OptimizerSpec spec(const char* algo, bool normalise)
 {
-    DimSpec a; a.key = "CGRID2B";   a.user_index = 1; a.label = "CGRID2B[0]";   a.lo = 0.0; a.hi = 2.0;
-    DimSpec b; b.key = "AMPGRIDMB"; b.user_index = 6; b.label = "AMPGRIDMB[5]"; b.lo = 0.0; b.hi = 0.008;
+    DimSpec a; a.key = "CGRID2B";   a.user_index = 1; a.label = "CGRID2B[1]";   a.lo = 0.0; a.hi = 2.0;
+    DimSpec b; b.key = "AMPGRIDMB"; b.user_index = 6; b.label = "AMPGRIDMB[6]"; b.lo = 0.0; b.hi = 0.008;
     ScalePolicy pol; pol.normalise = normalise;
     OptimizerSpec sp;
     sp.lib = "NLOPT"; sp.algo = algo;
@@ -135,8 +135,8 @@ TEST_CASE("StepPlan: format_step_report lists every dimension",
     const std::string r = format_step_report(plan, sp, optimizer_caps(sp), start);
     CHECK(r.find("Initial step (NLOPT:LN_SBPLX)") != std::string::npos);
     CHECK(r.find("consumption:") != std::string::npos);
-    CHECK(r.find("CGRID2B[0]") != std::string::npos);
-    CHECK(r.find("AMPGRIDMB[5]") != std::string::npos);
+    CHECK(r.find("CGRID2B[1]") != std::string::npos);
+    CHECK(r.find("AMPGRIDMB[6]") != std::string::npos);
     CHECK(r.find("0.0500") != std::string::npos);
 }
 

@@ -87,9 +87,13 @@ def compare(example_dir: Path):
         except (ValueError, IndexError) as e:
             failures.append(f"best_loss parse error: {e}")
 
-    # components
+    # components -- a reference column that the run no longer writes is a
+    # failure, not a skip: a renamed or dropped column used to pass silently.
     for col, ref in fp.get("components", {}).items():
-        if col in loss_hdr:
+        if col not in loss_hdr:
+            failures.append(f"component {col}: column missing from best_loss.tadah "
+                            f"(regenerate the fingerprint if the rename is intended)")
+        else:
             try:
                 actual = float(loss_row[loss_hdr.index(col)])
                 if not within_tol(actual, ref["value"],
@@ -109,7 +113,10 @@ def compare(example_dir: Path):
         disamb.append(col if params_hdr.count(col) == 1
                       else f"{col}[{seen[col]}]")
     for col, ref in fp.get("hyperparameters", {}).items():
-        if col in disamb:
+        if col not in disamb:
+            failures.append(f"hyperparam {col}: column missing from best_params.tadah "
+                            f"(regenerate the fingerprint if the rename is intended)")
+        else:
             try:
                 actual = float(params_row[disamb.index(col)])
                 if not within_tol(actual, ref["value"],

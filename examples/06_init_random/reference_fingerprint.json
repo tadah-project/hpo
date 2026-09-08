@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "example": "SGRIDMB",
+  "example": "06_init_random",
   "description": "INIT { STRATEGY RANDOM, SEED, INCLUDE_CONFIG false }.",
   "best_loss": {
     "value": 0.08335099,
@@ -8,11 +8,6 @@
     "rel_tol": 0.001
   },
   "components": {
-    "SLOT": {
-      "value": 0.0,
-      "abs_tol": 1e-06,
-      "rel_tol": 0.005
-    },
     "L(ERMSE)[1]": {
       "value": 0.008672794,
       "abs_tol": 1e-06,
@@ -30,11 +25,6 @@
     }
   },
   "hyperparameters": {
-    "SLOT": {
-      "value": 0.0,
-      "abs_tol": 0.001,
-      "rel_tol": 0.001
-    },
     "RCUT2B": {
       "value": 4.854193,
       "abs_tol": 0.001,

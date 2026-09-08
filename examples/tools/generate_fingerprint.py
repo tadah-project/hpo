@@ -106,7 +106,8 @@ def build_fingerprint(example_dir: Path, overrides: dict) -> dict:
     # best_loss columns: skip leading "ITERATION", trailing "TOTAL_LOSS/N"
     components = {}
     for i, col in enumerate(loss_hdr):
-        if col in ("ITERATION", "TOTAL_LOSS/N"):
+        # SLOT is the replica/slot bookkeeping column (D19), not a loss term.
+        if col in ("ITERATION", "SLOT", "TOTAL_LOSS/N"):
             continue
         try:
             components[col] = {
@@ -126,12 +127,12 @@ def build_fingerprint(example_dir: Path, overrides: dict) -> dict:
     hyperparams = {}
     seen = {}
     for i, col in enumerate(params_hdr):
-        if col == "ITERATION":
+        if col in ("ITERATION", "SLOT"):
             continue
         seen[col] = seen.get(col, 0) + 1
-        name = col if params_hdr.count(col) == 1 else f"{col}[{seen[col]}]"
+        key = col if params_hdr.count(col) == 1 else f"{col}[{seen[col]}]"
         try:
-            hyperparams[name] = {
+            hyperparams[key] = {
                 "value": float(params_row[i]),
                 "abs_tol": tol_hp["abs_tol"],
                 "rel_tol": tol_hp["rel_tol"],
@@ -186,6 +187,19 @@ def main(argv):
 
     fp = build_fingerprint(args.example_dir, overrides)
     out_path = args.out or (args.example_dir / "reference_fingerprint.json")
+    # Hand-written fields of an existing fingerprint survive a regeneration:
+    # the description (when the overrides file has none) and the free-text
+    # note on the evaluation count. Everything measured is refreshed.
+    if out_path.exists():
+        try:
+            prev = json.loads(out_path.read_text())
+        except (ValueError, OSError):
+            prev = {}
+        if not fp.get("description") and prev.get("description"):
+            fp["description"] = prev["description"]
+        note = (prev.get("evaluations") or {}).get("note")
+        if note and "note" not in fp["evaluations"]:
+            fp["evaluations"]["note"] = note
     out_path.write_text(json.dumps(fp, indent=2) + "\n")
     print(f"wrote {out_path}")
 

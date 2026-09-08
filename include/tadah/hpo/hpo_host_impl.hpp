@@ -1064,14 +1064,21 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
         }
     }
 
-    /* build param labels ------------------------------------------------ */
-    for (const auto& kv : trg_.optimap) {
-        for (std::size_t i = 0; i < kv.second.opt.size(); ++i) {
-            if (!kv.second.opt[i]) continue;
-            std::string lbl = kv.first;
-            if (kv.second.opt.size() > 1) lbl += "[" + std::to_string(i) + "]";
-            param_labels_.push_back(lbl);
-        }
+    /* param labels: ONE builder (HPOTargets::build_search_space), the same
+     * optimap traversal that orders the optimiser vector, so params.tadah
+     * columns, the journal and hpo_search_space.tsv agree by construction.
+     * KEY[n] with n the OPTIM index (1-based; the pinned model weight for
+     * FIXWEIGHT); single-value keys carry no index. */
+    param_labels_ = trg_.spec.parameter_labels;
+    {
+        std::size_t n_opt = 0;
+        for (const auto& kv : trg_.optimap)
+            for (bool b : kv.second.opt) if (b) ++n_opt;
+        if (param_labels_.size() != n_opt)
+            throw std::runtime_error(
+                "internal: " + std::to_string(param_labels_.size()) +
+                " parameter label(s) for " + std::to_string(n_opt) +
+                " OPTIM dimension(s)");
     }
 
     init_loss   (trg_.lossFile);
@@ -1129,14 +1136,16 @@ std::string HPO_Host<P,R>::format_params_str(const P& p) const
     std::ostringstream s;
     std::size_t idx = 0;
     bool first = true;
+    /* One label convention everywhere: param_labels_ (KEY[n], n = OPTIM
+     * index) is built from this same optimap traversal. */
     for (const auto& kv : trg_.optimap) {
         for (std::size_t i = 0; i < kv.second.opt.size(); ++i) {
             if (!kv.second.opt[i]) continue;
             if (!first) s << "  ";
             first = false;
-            s << kv.first;
-            if (kv.second.opt.size() > 1) s << "[" << i << "]";
-            s << "=" << std::scientific << std::setprecision(3) << p(idx++);
+            s << (idx < param_labels_.size() ? param_labels_[idx] : kv.first);
+            s << "=" << std::scientific << std::setprecision(3) << p(idx);
+            ++idx;
         }
     }
     return s.str();
@@ -1161,8 +1170,8 @@ std::string HPO_Host<P,R>::bound_hints(const P& p) const
             const double lo  = sp.low[idx];
             const double hi  = sp.high[idx];
             const double rng = hi - lo;
-            std::string name = kv.first;
-            if (kv.second.opt.size() > 1) name += "[" + std::to_string(i) + "]";
+            const std::string name =
+                idx < param_labels_.size() ? param_labels_[idx] : kv.first;
             if (rng > 0) {
                 if ((v - lo) / rng < EDGE_FRAC)
                     hints << "Tip: " << name << " is near its LOWER bound -- "

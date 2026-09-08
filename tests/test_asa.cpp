@@ -622,7 +622,7 @@ TEST_CASE("ASA P_TEMP_TOO_SMALL names the underflowed dimension",
      * stop line must name the dimension via its OPTIM label. */
     auto sp = make_asa_spec({-2.0}, {2.0});
     set_seed_point(sp, {1.0});
-    sp.parameter_labels = {"RCUT2B[0]"};
+    sp.parameter_labels = {"RCUT2B"};
     sp.stop.maxeval = 5000;
     sp.param = {{"Maximum_Cost_Repeat", 0.0}};
 
@@ -638,7 +638,7 @@ TEST_CASE("ASA P_TEMP_TOO_SMALL names the underflowed dimension",
     const std::string s = captured.str();
     INFO(s);
     CHECK(s.find("P_TEMP_TOO_SMALL") != std::string::npos);
-    CHECK(s.find("[dim 0: RCUT2B[0]]") != std::string::npos);
+    CHECK(s.find("[dim 0: RCUT2B]") != std::string::npos);
 }
 
 TEST_CASE("ASA requires an OPTIM dimension", "[HPO][asa]")

@@ -1,32 +1,32 @@
 {
   "schema_version": 1,
-  "example": "FIXWEIGHT[3]",
+  "example": "17_no_training_db",
   "description": "",
   "best_loss": {
-    "value": 1.87556e-10,
+    "value": 6.1612e-08,
     "abs_tol": 1e-06,
     "rel_tol": 0.001
   },
   "components": {
     "L(Ecoh)": {
-      "value": 1.87556e-10,
+      "value": 6.1612e-08,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     }
   },
   "hyperparameters": {
-    "FIXWEIGHT[1]": {
-      "value": -216.7625,
+    "FIXWEIG*[2]": {
+      "value": -216.7655,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     },
-    "FIXWEIGHT[2]": {
-      "value": 258.3128,
+    "FIXWEIG*[3]": {
+      "value": 258.3286,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     },
-    "FIXWEIGHT[3]": {
-      "value": -43.332,
+    "FIXWEIG*[4]": {
+      "value": -43.33188,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     }
@@ -40,7 +40,7 @@
     "MAXEVAL_REACHED -- maximum evaluations exhausted"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "1.8s",
+  "walltime_hint": "2.1s",
   "fast": true,
   "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
 }

@@ -308,7 +308,14 @@ public:
                     }
                 }
                 if (!resolved) {
-                    missing.push_back(kv.first + "[" + std::to_string(i) + "]");
+                    /* Name the dimension the way every other message does:
+                     * the search-space label (KEY[n], n = OPTIM index);
+                     * point.size() is this dimension's position because
+                     * the traversal order is the optimiser order. */
+                    const auto& lbls = ctx.targets.spec.parameter_labels;
+                    missing.push_back(point.size() < lbls.size()
+                                          ? lbls[point.size()]
+                                          : kv.first + "[" + std::to_string(ord) + "]");
                     /* Fallback to the in-config value so a partial WARM
                      * is still a valid point. The chain semantics let
                      * the user follow WARM with CONFIG to override

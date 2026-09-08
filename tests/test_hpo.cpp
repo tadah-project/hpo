@@ -224,10 +224,12 @@ ENDOPTIMIZER
     CHECK(o.opt[2] == true);
     CHECK(o.lowbound[2] == Approx(-1.0));
     CHECK(o.highbound[2] == Approx(1.0));
-    /* Labels name the pinned model weights, not descriptor params. */
-    CHECK(o.labels[0] == "w4");
-    CHECK(o.labels[1] == "w1");
-    CHECK(o.labels[2] == "w7");
+    /* The label names the pinned MODEL WEIGHT (the OPTIM index), not the
+     * slot: slot 3 pins weight 7. */
+    REQUIRE(trg.spec.parameter_labels.size() == 1);
+    CHECK(trg.spec.parameter_labels[0] == "FIXWEIGHT[7]");
+    REQUIRE(trg.spec.space);
+    CHECK(trg.spec.space->at(0).user_index == 7);
 }
 
 TEST_CASE("OPTIM FIXWEIGHT refit back-compat: FIXINDEX 1-K, all searched",
@@ -251,8 +253,9 @@ ENDOPTIMIZER
     const auto& o = trg.optimap.at("FIXWEIGHT");
     REQUIRE(o.opt.size() == 5);
     for (size_t i = 0; i < 5; ++i) CHECK(o.opt[i] == true);
-    CHECK(o.labels[0] == "w1");
-    CHECK(o.labels[4] == "w5");
+    REQUIRE(trg.spec.parameter_labels.size() == 5);
+    CHECK(trg.spec.parameter_labels[0] == "FIXWEIGHT[1]");
+    CHECK(trg.spec.parameter_labels[4] == "FIXWEIGHT[5]");
 }
 
 TEST_CASE("OPTIM FIXWEIGHT rejects weights not pinned by FIXINDEX",

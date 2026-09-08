@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "example": "SGRIDMB",
+  "example": "08_init_sobol_gfs",
   "description": "INIT { STRATEGY SOBOL } seeding DLIB:GFS.",
   "best_loss": {
     "value": 0.071539,
@@ -8,11 +8,6 @@
     "rel_tol": 0.001
   },
   "components": {
-    "SLOT": {
-      "value": 0.0,
-      "abs_tol": 1e-06,
-      "rel_tol": 0.005
-    },
     "L(ERMSE)[1]": {
       "value": 0.05134988,
       "abs_tol": 1e-06,
@@ -30,11 +25,6 @@
     }
   },
   "hyperparameters": {
-    "SLOT": {
-      "value": 0.0,
-      "abs_tol": 0.001,
-      "rel_tol": 0.001
-    },
     "RCUT2B": {
       "value": 4.629592,
       "abs_tol": 0.001,
@@ -55,7 +45,7 @@
     "COMPLETED"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "1.0s",
+  "walltime_hint": "1.1s",
   "fast": true,
   "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
 }

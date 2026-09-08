@@ -9,24 +9,24 @@
   },
   "components": {
     "L(ERMSE)[1]": {
-      "value": 0.06092352,
+      "value": 0.06092417,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(ERMSE)[avg]": {
-      "value": 0.06092352,
+      "value": 0.06092417,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(Ecoh)": {
-      "value": 0.08188688,
+      "value": 0.08188623,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     }
   },
   "hyperparameters": {
     "RCUT2B": {
-      "value": 4.513347,
+      "value": 4.513339,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     },
@@ -46,7 +46,7 @@
     "MAXEVAL_REACHED -- maximum evaluations exhausted"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "1.4s",
+  "walltime_hint": "1.6s",
   "fast": true,
   "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
 }
