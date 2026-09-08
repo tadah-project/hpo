@@ -188,23 +188,43 @@ TEST_CASE("ASA options: indexed per-dim grammar", "[HPO][asa][options]")
 {
     auto sp = make_asa_spec({0.0, 0.0, 0.0}, {1.0, 1.0, 1.0});
 
+    /* [i] is 1-based: [1] is the first dimension, [dim] the last, and
+     * they line up with the dim column of hpo_search_space.tsv. */
     SECTION("uniform fill + indexed override") {
         sp.param = {{"User_Quench_Param_Scale", 0.8},
-                    {"User_Quench_Param_Scale[1]", 0.5}};
+                    {"User_Quench_Param_Scale[2]", 0.5}};
         const auto o = parse_asa_options(sp, 3);
         CHECK(o.user_quench_param_scale ==
               std::vector<double>{0.8, 0.5, 0.8});
     }
+    SECTION("index 1 is the first dimension") {
+        sp.param = {{"User_Quench_Param_Scale", 0.8},
+                    {"User_Quench_Param_Scale[1]", 0.5}};
+        const auto o = parse_asa_options(sp, 3);
+        CHECK(o.user_quench_param_scale ==
+              std::vector<double>{0.5, 0.8, 0.8});
+    }
     SECTION("indexed override of a mirrored default") {
-        sp.param = {{"Delta_X", 0.01}, {"User_Delta_Parameter[2]", 0.5}};
+        sp.param = {{"Delta_X", 0.01}, {"User_Delta_Parameter[3]", 0.5}};
         const auto o = parse_asa_options(sp, 3);
         CHECK(o.user_delta_parameter ==
               std::vector<double>{0.01, 0.01, 0.5});
     }
+    SECTION("index 0 is rejected and names the 1-based change") {
+        sp.param = {{"User_Quench_Param_Scale[0]", 0.5}};
+        REQUIRE_THROWS_WITH(parse_asa_options(sp, 3),
+                            Catch::Contains("1-based"));
+    }
     SECTION("index out of range") {
-        sp.param = {{"User_Quench_Param_Scale[3]", 0.5}};
+        sp.param = {{"User_Quench_Param_Scale[4]", 0.5}};
         REQUIRE_THROWS_WITH(parse_asa_options(sp, 3),
                             Catch::Contains("index out of range"));
+    }
+    SECTION("last dimension is addressable") {
+        sp.param = {{"User_Quench_Param_Scale[3]", 0.5}};
+        const auto o = parse_asa_options(sp, 3);
+        CHECK(o.user_quench_param_scale ==
+              std::vector<double>{1.0, 1.0, 0.5});
     }
     SECTION("malformed index") {
         sp.param = {{"User_Quench_Param_Scale[x]", 0.5}};
@@ -638,7 +658,7 @@ TEST_CASE("ASA P_TEMP_TOO_SMALL names the underflowed dimension",
     const std::string s = captured.str();
     INFO(s);
     CHECK(s.find("P_TEMP_TOO_SMALL") != std::string::npos);
-    CHECK(s.find("[dim 0: RCUT2B]") != std::string::npos);
+    CHECK(s.find("[dim 1: RCUT2B]") != std::string::npos);
 }
 
 TEST_CASE("ASA requires an OPTIM dimension", "[HPO][asa]")

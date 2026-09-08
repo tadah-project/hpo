@@ -613,7 +613,9 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
     const int exit_status = w.exit_status;
     std::string reason = stop_reason_string(ctx, exit_status);
     if (exit_status == 1 && exit_index >= 0) {
-        reason += " [dim " + std::to_string(exit_index);
+        /* +1: exit_index is the internal 0-based position; every dim
+         * number the run prints is 1-based (hpo_search_space.tsv). */
+        reason += " [dim " + std::to_string(exit_index + 1);
         if (static_cast<std::size_t>(exit_index) <
             sp.parameter_labels.size())
             reason += ": " + sp.parameter_labels[

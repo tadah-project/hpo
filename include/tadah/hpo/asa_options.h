@@ -4,7 +4,9 @@
  *
  * PARAM keys use the EXACT upstream spellings (case-sensitive), e.g.
  *     PARAM Limit_Acceptances 10000
- * Per-dimension options accept an optional 0-based index suffix:
+ * Per-dimension options accept an optional 1-based index suffix, using
+ * the same dimension numbering as the `dim` column of
+ * hpo_search_space.tsv:
  *     PARAM User_Quench_Param_Scale 0.9      (fills every dimension)
  *     PARAM User_Quench_Param_Scale[3] 0.7   (overrides dimension 3)
  * Unknown keys are hard errors; options excluded from the vendored

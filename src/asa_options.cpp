@@ -176,7 +176,12 @@ std::string lower(std::string s)
     throw std::runtime_error(oss.str());
 }
 
-/* Split "Name[3]" -> {"Name", 3}; plain "Name" -> {"Name", -1}. */
+/* Split "Name[3]" -> {"Name", 3}; plain "Name" -> {"Name", -1}.
+ * The index is 1-based and means the same dimension as the `dim` column
+ * of hpo_search_space.tsv and the `#` column of the journal's SEARCH
+ * SPACE table, so a dimension number a user reads is the one they type.
+ * Index 0 is rejected by the caller (it was the first dimension in
+ * Tadah 1.4 and earlier). */
 std::pair<std::string, long> split_indexed(const std::string& key)
 {
     const auto lb = key.find('[');
@@ -184,7 +189,7 @@ std::pair<std::string, long> split_indexed(const std::string& key)
     if (key.back() != ']' || lb + 1 >= key.size() - 1u + 1u)
         throw std::runtime_error(
             "ASA:ASA: malformed indexed PARAM '" + key +
-            "' (expected Name[<0-based index>])");
+            "' (expected Name[<1-based index>])");
     const std::string base = key.substr(0, lb);
     const std::string idx  = key.substr(lb + 1, key.size() - lb - 2);
     if (idx.empty() ||
@@ -192,7 +197,7 @@ std::pair<std::string, long> split_indexed(const std::string& key)
                      [](unsigned char c) { return std::isdigit(c); }))
         throw std::runtime_error(
             "ASA:ASA: malformed index in PARAM '" + key +
-            "' (expected a non-negative integer)");
+            "' (expected a positive integer)");
     return {base, std::stol(idx)};
 }
 
@@ -384,10 +389,17 @@ AsaOptions parse_asa_options(const OptimizerSpec& sp, std::size_t dim)
                 throw std::runtime_error(
                     "ASA:ASA: PARAM " + base +
                     " is a scalar option (indexed form not accepted)");
-            if ((std::size_t)idx >= dim)
+            if (idx == 0)
+                throw std::runtime_error(
+                    "ASA:ASA: PARAM " + key + " index 0 is not a dimension: "
+                    "per-dimension indices are 1-based and match the dim "
+                    "column of hpo_search_space.tsv. They were 0-based in "
+                    "Tadah 1.4 and earlier, so every old index shifts up by "
+                    "one ([0] is now [1])");
+            if ((std::size_t)idx > dim)
                 throw std::runtime_error(
                     "ASA:ASA: PARAM " + key + " index out of range (dim=" +
-                    std::to_string(dim) + ", 0-based)");
+                    std::to_string(dim) + ", 1-based)");
             check_value(*d, key, val);
             indexed.emplace_back(key, val);
         } else {
@@ -404,7 +416,9 @@ AsaOptions parse_asa_options(const OptimizerSpec& sp, std::size_t dim)
 
     for (const auto& [key, val] : indexed) {
         const auto [base, idx] = split_indexed(key);
-        auto put = [&](std::vector<double>& v) { v[(std::size_t)idx] = val; };
+        auto put = [&](std::vector<double>& v) {
+            v[(std::size_t)(idx - 1)] = val;   /* [i] is 1-based */
+        };
         if      (base == "User_Quench_Param_Scale") {
             if (!(val > 0.0)) throw std::runtime_error(
                 "ASA:ASA: PARAM " + key + " must be > 0");

@@ -24,7 +24,9 @@ What this shows:
     default `0` costs O(dim^2) evaluations at exit; documented TADAH
     default deviation).
   - Per-dimension options accept an indexed form, e.g.
-    `PARAM User_Quench_Param_Scale[0] 0.9`.
+    `PARAM User_Quench_Param_Scale[1] 0.9`. The index is 1-based and is
+    the dimension number the run prints (the `dim` column of
+    `hpo_search_space.tsv`).
 - Stops honoured: `MAXEVAL` (hard cap incl. the `Number_Cost_Samples`
   initial cost-temperature probes), `MAXTIME`, `STOPVAL`, plus ASA's own
   `Limit_*`, `Accepted_To_Generated_Ratio`, `Cost_Precision` x
