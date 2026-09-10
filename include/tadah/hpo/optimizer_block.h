@@ -37,6 +37,21 @@ bool parse_bool(const std::string &v, const std::string &ctx);
 const std::vector<std::string> &opt_attr_keys();
 std::string opt_attr_keys_joined(const char *sep = "/");
 
+/** Value grammar for `PARAM <key> ...`: given the value tokens already read
+ *  (`sofar`) and the next token on the stream, should that token be taken as a
+ *  further value of this key? Almost every key answers false after one value;
+ *  `INIT_MODE` accepts `UNIFORM` | `JITTER [AUTO <p> | <frac>]`.
+ *
+ *  This is a grammar rather than a maximum count because the two callers frame
+ *  their input differently: HPOTargets::read() hands dispatch_opt_attr() one
+ *  LINE, while read_optimizer_block() hands it a flat token stream spanning
+ *  the whole block. "Read up to N values" would silently consume the next key
+ *  in the second framing whenever fewer than N are actually present; deciding
+ *  per token is correct in both. `key` is expected uppercase. */
+bool param_takes_another_value(const std::string &key,
+                               const std::vector<std::string> &sofar,
+                               const std::string &next);
+
 /** Parse one optimiser-attribute key/value into an OptimizerSpec. Returns true
  *  if `key` was consumed (its value(s) read from `iss`), false otherwise so the
  *  caller can try other dispatches. Valid wherever an OptimizerSpec is the

@@ -9,6 +9,7 @@
  */
 
 #include <tadah/hpo/init_strategy.h>
+#include <tadah/hpo/log_index.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_targets.h>
@@ -368,8 +369,8 @@ public:
             if (point[d] > hi) point[d] = hi;
             if (point[d] != orig) {
                 if (clamped < 5) {
-                    coss << (clamped ? "; " : "") << "dim[" << d
-                         << "] " << orig << " -> " << point[d]
+                    coss << (clamped ? "; " : "") << logidx::dim_label(d)
+                         << " " << orig << " -> " << point[d]
                          << " (bounds [" << lo << ", " << hi << "])";
                 }
                 ++clamped;

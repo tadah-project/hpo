@@ -1,4 +1,5 @@
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_targets.h>
@@ -102,16 +103,24 @@ std::vector<std::pair<int, std::size_t>> HPOLog::best_slot_last_evals() const
     return {best_slot_last_.begin(), best_slot_last_.end()};
 }
 
+std::string HPOLog::slot_tag(int slot, std::size_t n_slots, double T,
+                             const char* t_label)
+{
+    std::ostringstream s;
+    s << "slot " << logidx::uis(static_cast<std::size_t>(slot)) << "/"
+      << n_slots;
+    if (!std::isnan(T))
+        s << " " << t_label << "=" << std::scientific << std::setprecision(3)
+          << T;
+    return s.str();
+}
+
 std::string HPOLog::best_origin_str() const
 {
     if (cur_best_slot_ == kSlotProbe) return ", T0 probe";
     if (cur_best_slot_ < 0) return "";
-    std::ostringstream s;
-    s << ", slot " << cur_best_slot_ << "/" << cur_best_nslots_;
-    if (!std::isnan(cur_best_T_))
-        s << " " << cur_best_T_label_ << "=" << std::scientific
-          << std::setprecision(3) << cur_best_T_;
-    return s.str();
+    return ", " + slot_tag(cur_best_slot_, cur_best_nslots_, cur_best_T_,
+                           cur_best_T_label_);
 }
 
 /* -------------------------------------------------------------------------
@@ -492,15 +501,37 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
     if (sp.pop)            kv("Population size", std::to_string(*sp.pop));
     if (sp.vector_storage) kv("Vector storage",  std::to_string(*sp.vector_storage));
     if (sp.seed)           kv("Random seed",     std::to_string(*sp.seed));
-    if (!sp.param.empty()) {
-        std::vector<std::pair<std::string, double>> params(sp.param.begin(), sp.param.end());
+    /* Every PARAM, not just the numeric ones. This block used to walk
+     * sp.param alone, so a token-valued key was recorded NOWHERE -- a run
+     * with `PARAM INIT_MODE UNIFORM` produced a journal indistinguishable
+     * from the default, and the same hole existed in the potential header.
+     * Multi-token values (`INIT_MODE JITTER AUTO 0.05`) print in full. */
+    if (!sp.param.empty() || !sp.param_raw.empty()) {
+        std::vector<std::pair<std::string, std::string>> params;
+        params.reserve(sp.param.size() + sp.param_raw.size());
+        const auto rendered = [&sp](const std::string& name,
+                                    const std::string& fallback) {
+            const auto it = sp.param_tokens.find(name);
+            if (it == sp.param_tokens.end()) return fallback;
+            std::string joined;
+            for (const auto& t : it->second) {
+                if (!joined.empty()) joined += ' ';
+                joined += t;
+            }
+            return joined;
+        };
+        for (const auto& kvp : sp.param)
+            params.emplace_back(kvp.first,
+                                rendered(kvp.first, fmt_double(kvp.second)));
+        for (const auto& kvp : sp.param_raw)
+            params.emplace_back(kvp.first, rendered(kvp.first, kvp.second));
         std::sort(params.begin(), params.end(),
                   [](const auto& a, const auto& b) { return a.first < b.first; });
         std::lock_guard<std::mutex> lg(mtx_);
         f_ << "  Params:\n";
         for (const auto& kvp : params) {
             f_ << "    " << std::left << std::setw(KW-4) << kvp.first
-               << ": " << fmt_double(kvp.second) << "\n";
+               << ": " << kvp.second << "\n";
         }
         f_.flush();
     }
@@ -641,7 +672,7 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         pin_labels_.resize(n);
         for (std::size_t i = 0; i < n; ++i)
             pin_labels_[i] = (i < param_labels.size())
-                             ? param_labels[i] : "param[" + std::to_string(i) + "]";
+                             ? param_labels[i] : logidx::param_label(i);
 
         if (sp.space && sp.space->dim() == n && n > 0) {
             const SearchSpace& ss = *sp.space;
@@ -1214,7 +1245,7 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                 auto label_of = [&](const Row& r) {
                     std::string l = r.dim < pin_labels_.size()
                         ? pin_labels_[r.dim]
-                        : "param[" + std::to_string(r.dim) + "]";
+                        : logidx::param_label(r.dim);
                     if (r.dim < pin_log_.size() && pin_log_[r.dim] == 1)
                         l += " (ln)";
                     else if (r.dim < pin_log_.size() && pin_log_[r.dim] == 2)
@@ -1332,7 +1363,7 @@ void HPOLog::write_bound_occupancy_locked(const char* /*indent_tag*/, bool final
         << std::setw(11) << "gap/width" << "since eval\n";
     for (const auto& m : occ_marks_) {
         const std::string lbl = m.dim < pin_labels_.size() ? pin_labels_[m.dim]
-                                                           : "param[" + std::to_string(m.dim) + "]";
+                                                           : logidx::param_label(m.dim);
         tbl << (final_table ? "    " : "  ")
             << std::left << std::setw(24) << lbl << std::setw(6) << (m.hi ? "HI" : "LO")
             << std::setw(14) << fmt_double(m.real_value, 4)
@@ -1497,11 +1528,7 @@ void HPOLog::log_new_best(std::size_t eval_num,
     if (tl_slot == kSlotProbe) {
         msg << "  [T0 probe]";
     } else if (tl_slot >= 0) {
-        msg << "  [slot " << tl_slot << "/" << tl_nslots;
-        if (!std::isnan(tl_T))
-            msg << " " << tl_T_label << "=" << std::scientific
-                << std::setprecision(3) << tl_T;
-        msg << "]";
+        msg << "  [" << slot_tag(tl_slot, tl_nslots, tl_T, tl_T_label) << "]";
     }
 
     f_ << "[" << now_hms() << "]  BEST     " << msg.str() << "\n";

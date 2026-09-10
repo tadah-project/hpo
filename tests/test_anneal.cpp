@@ -173,7 +173,7 @@ TEST_CASE("ANNEAL: the largest STEP_FRAC remains bounded under REFLECT",
     sp.seed = 987;
     sp.stop.maxeval = 32;
     sp.param["STEP_FRAC"] = 1.0;   /* sigma = full width: many folds */
-    sp.param["BOUNDARY_MODE"] = 0.0;
+    sp.param_raw["BOUNDARY_MODE"] = "REFLECT";
     sp.param["T_INIT"] = 1.0;
     sp.param["CHAIN_LENGTH"] = 31.0;
 
@@ -548,7 +548,7 @@ TEST_CASE("ANNEAL[CORANA]: per-dim step vector adapts (grows for fruitful dim)",
     set_seed_point(sp, {0.5, 0.5});
     sp.seed = 17;
     sp.stop.maxeval = 800;
-    sp.param["CORANA"] = 1.0;
+    sp.param_raw["CORANA"] = "ON";
     sp.param["NS"]     = 4.0;
     sp.param["NT"]     = 3.0;
     sp.param["CORANA_C"]      = 2.0;
@@ -581,7 +581,7 @@ TEST_CASE("ANNEAL[CORANA]: Corana variant honours bounds via reflection",
     set_seed_point(sp, {1.5, 2.5});   // near corner
     sp.seed = 23;
     sp.stop.maxeval = 400;
-    sp.param["CORANA"] = 1.0;
+    sp.param_raw["CORANA"] = "ON";
     sp.param["NS"]     = 3.0;
     sp.param["NT"]     = 2.0;
     sp.param["T_INIT"] = 1.0;
@@ -611,7 +611,7 @@ TEST_CASE("ANNEAL boundary redraw is bounded and seed-reproducible",
         set_seed_point(sp, {0.01, 0.99});
         sp.seed = 991;
         sp.stop.maxeval = 160;
-        sp.param["BOUNDARY_MODE"] = 1.0;
+        sp.param_raw["BOUNDARY_MODE"] = "REDRAW";
         sp.param["T_INIT"] = 1.0;
         sp.param["CHAIN_LENGTH"] = 20.0;
         sp.param["STEP_FRAC"] = 1.0;
@@ -638,7 +638,7 @@ TEST_CASE("ANNEAL[CORANA]: invalid PARAM NS/NT/CORANA_C throws",
     auto sp = make_spec({-1.0}, {1.0});
     set_seed_point(sp, {0.0});
     sp.stop.maxeval = 20;
-    sp.param["CORANA"] = 1.0;
+    sp.param_raw["CORANA"] = "ON";
     sp.param["T_INIT"] = 1.0;
 
     StubHost stub{ [&](const Vec&){ return 0.0; }, {} };
@@ -817,7 +817,7 @@ TEST_CASE("ANNEAL[CORANA]: plateau stop covers the Corana flavour too",
     sp.seed = 4;
     sp.stop.maxeval  = 10000;
     sp.stop.ftol_rel = 1e-4;
-    sp.param["CORANA"] = 1.0;
+    sp.param_raw["CORANA"] = "ON";
     sp.param["NS"]     = 2.0;
     sp.param["NT"]     = 2.0;
     sp.param["T_INIT"] = 1.0;
@@ -883,7 +883,7 @@ TEST_CASE("ANNEAL: AUTO CHAIN_LENGTH/NT are derived from MAXEVAL and journaled",
         set_seed_point(sp, {0.0, 0.0});
         sp.seed = 72;
         sp.stop.maxeval = 1000;
-        sp.param["CORANA"] = 1.0;
+        sp.param_raw["CORANA"] = "ON";
         sp.param["T_INIT"] = 1.0;
 
         LoggedRun lr;
@@ -959,7 +959,7 @@ TEST_CASE("ANNEAL[CORANA]: CHAIN_LENGTH is rejected as a silent no-op",
     set_seed_point(sp, {0.0});
     sp.seed = 5;
     sp.stop.maxeval = 20;
-    sp.param["CORANA"] = 1.0;
+    sp.param_raw["CORANA"] = "ON";
     sp.param["T_INIT"]  = 1.0;
     sp.param["CHAIN_LENGTH"]      = 5.0;
 
@@ -1085,7 +1085,7 @@ TEST_CASE("ANNEAL[CORANA]: incomplete NS block does not shrink unvisited steps",
     set_seed_point(sp, {0.0, 0.0});
     sp.seed = 19;
     sp.stop.maxeval = 2;       // seed + one coordinate of an NS*D block
-    sp.param["CORANA"] = 1.0;
+    sp.param_raw["CORANA"] = "ON";
     sp.param["NS"] = 2.0;
     sp.param["NT"] = 1.0;
     sp.param["T_INIT"] = 1.0;
@@ -1108,13 +1108,13 @@ TEST_CASE("ANNEAL[CORANA]: RESET_TO_BEST defaults to ON under CORANA",
     set_seed_point(sp, {0.0});
     sp.seed = 5;
     sp.stop.maxeval = 30;
-    sp.param["CORANA"] = 1.0;
+    sp.param_raw["CORANA"] = "ON";
     sp.param["T_INIT"]  = 1.0;
 
     LoggedRun lr;
     StubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {} };
     run_anneal_impl<Vec>(sp, stub);
-    CHECK(lr.read().find("RESET_TO_BEST=1") != std::string::npos);
+    CHECK(lr.read().find("RESET_TO_BEST=ON") != std::string::npos);
 }
 
 namespace {
@@ -1194,7 +1194,7 @@ TEST_CASE("ANNEAL: T0 probes mirror the proposal kernel (one-dim under CORANA)",
 
     SECTION("CORANA: one-dim probes stay on the ridge -> real T0") {
         auto sp = mkspec();
-        sp.param["CORANA"] = 1.0;
+        sp.param_raw["CORANA"] = "ON";
         LoggedRun lr;
         run_anneal_impl<Vec>(sp, stub);
         const std::string log = lr.read();
@@ -1286,7 +1286,7 @@ TEST_CASE("ANNEAL: REANNEAL 0 disables the warm restart",
     sp.param["T_MIN"]    = 1e-3;
     sp.param["RT"]       = 0.5;
     sp.param["CHAIN_LENGTH"]        = 2.0;
-    sp.param["REANNEAL"] = 0.0;
+    sp.param_raw["REANNEAL"] = "OFF";
 
     LoggedRun lr;
     StubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {} };

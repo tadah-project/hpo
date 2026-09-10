@@ -12,7 +12,8 @@
  *       Vousden, Farr & Mandel (2016).
  *
  * K replicas run the shared annealing rung on a power-shaped log ladder
- * T_0 < T_1 < ... < T_{K-1} (slot 0 coldest). It is static by default;
+ * T_0 < T_1 < ... < T_{K-1} (journalled 1-based: slot 1 is coldest). It
+ * is static by default;
  * optional adaptation moves interiors, and RT < 1 cools it each epoch. Every
  * SWAP_EVERY epochs, adjacent pairs attempt a state exchange with
  * Metropolis probability
@@ -85,6 +86,9 @@
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/anneal_core.h>
+#include <tadah/hpo/anneal_jitter.h>
+#include <tadah/hpo/corana_census.h>
+#include <tadah/hpo/log_index.h>
 #include <tadah/hpo/anneal_parallel.h>
 #include <tadah/hpo/warmstart_cache.h>   // current_chain() bridge
 
@@ -510,18 +514,11 @@ inline std::string format_slot_count_table(
     const std::vector<std::pair<int, std::size_t>>& entries)
 {
   std::map<int, std::size_t> cnt(entries.begin(), entries.end());
-  const int iw = static_cast<int>(std::to_string(K - 1).size());
-  std::ostringstream o;
-  o << header;
-  for (std::size_t lo = 0; lo < K; lo += 8) {
-    const std::size_t hi = std::min(lo + 8, K) - 1;
-    o << "\n[" << std::setw(iw) << lo << "-" << std::setw(iw) << hi << "]";
-    for (std::size_t k = lo; k <= hi; ++k) {
-      const auto it = cnt.find(static_cast<int>(k));
-      o << "  " << std::setw(9) << (it != cnt.end() ? it->second : 0);
-    }
-  }
-  return o.str();
+  /* `k` stays 0-based: it is the key of HPOLog's best_slot_* maps. */
+  return logidx::grid(header, K, [&](std::ostringstream& o, std::size_t k) {
+    const auto it = cnt.find(static_cast<int>(k));
+    o << "  " << std::setw(9) << (it != cnt.end() ? it->second : 0);
+  });
 }
 
 /* D29: render the att/acc per-pair percentage table ("-" = pair not yet
@@ -531,30 +528,26 @@ inline std::string format_pair_table(
     const std::vector<std::size_t>& attv,
     const std::vector<std::size_t>& accv)
 {
-  const int iwp = static_cast<int>(std::to_string(K - 2).size());
   std::size_t amin = std::numeric_limits<std::size_t>::max();
   std::size_t amax = 0;
   for (std::size_t p = 0; p + 1 < K; ++p) {
     amin = std::min(amin, attv[p]);
     amax = std::max(amax, attv[p]);
   }
-  std::ostringstream o;
-  o << "ANNEAL_PT swap acc% per pair (" << label << ", att/pair " << amin;
-  if (amax != amin) o << "-" << amax;
-  o << "; pair p = slots p<->p+1):";
-  for (std::size_t lo = 0; lo + 1 < K; lo += 8) {
-    const std::size_t hi = std::min(lo + 8, K - 1) - 1;
-    o << "\n[" << std::setw(iwp) << lo << "-" << std::setw(iwp) << hi << "]";
-    for (std::size_t p = lo; p <= hi; ++p) {
-      if (attv[p] == 0)
-        o << "  " << std::setw(9) << "-";
-      else
-        o << "  " << std::setw(9)
-          << std::lround(100.0 * static_cast<double>(accv[p]) /
-                         static_cast<double>(attv[p]));
-    }
-  }
-  return o.str();
+  std::ostringstream head;
+  head << "ANNEAL_PT swap acc% per pair (" << label << ", att/pair " << amin;
+  if (amax != amin) head << "-" << amax;
+  head << "; pair p = slots p<->p+1):";
+  /* K-1 pairs; the pair family has its own label width. */
+  return logidx::grid(head.str(), K - 1,
+                      [&](std::ostringstream& o, std::size_t p) {
+    if (attv[p] == 0)
+      o << "  " << std::setw(9) << "-";
+    else
+      o << "  " << std::setw(9)
+        << std::lround(100.0 * static_cast<double>(accv[p]) /
+                       static_cast<double>(attv[p]));
+  });
 }
 
 enum StepStatus : unsigned {
@@ -1265,6 +1258,11 @@ template<typename Vec, typename HostT>
     /* Per-dimension proposal scale in transformed space: CLASSIC Gaussian
      * sigma, or Corana uniform half-width V (already floor/cap-clamped). */
     const std::vector<double> proposal_scale = anneal::make_initial_steps(sp, kb);
+    /* Initial displacement, decoupled from the production step (1.5.0).
+     * Identical to proposal_scale unless INIT_MODE JITTER carries a
+     * magnitude, so the default trajectory is unchanged. */
+    const std::vector<double> jitter_sigma =
+        anneal::make_jitter_sigma(sp, kb, proposal_scale);
 
     constexpr std::uint64_t HUGE_UNSIGNED = std::numeric_limits<std::uint64_t>::max();
     const std::uint64_t max_eval_global = sp.stop.maxeval.value_or(HUGE_UNSIGNED);
@@ -1331,6 +1329,14 @@ template<typename Vec, typename HostT>
     double      l_best = std::numeric_limits<double>::infinity();
     Vec         g_best_x(dim);
     Vec         l_best_x(dim);
+    /* NOT RANK-UNIFORM, and must never gate a collective.  Rank 0 sets it
+     * as soon as the seed evaluation returns; every other rank sets it only
+     * on the success path of the T0 broadcast below, so any run that stops
+     * during seeding/probing (NoBudget, *OnProbe, ...) leaves rank 0 with
+     * true and the rest with false.  That is fine for the rank-0 journal
+     * blocks it guards -- and it deadlocked the Corana census the moment a
+     * gatherv was placed inside one.  Gate collectives on epoch_count or a
+     * reduced value instead. */
     bool        ran_sa = false;
 
     {
@@ -1350,7 +1356,7 @@ template<typename Vec, typename HostT>
       else                oss << "  LADDER_SPAN=" << kb.ladder_span;
       if (ladder_controls_explicit)
         oss << "  LADDER_POWER=" << kb.ladder_power
-            << "  LADDER_ADAPT=" << (kb.ladder_adapt ? 1 : 0);
+            << "  LADDER_ADAPT=" << (kb.ladder_adapt ? "ON" : "OFF");
       if (kb.ladder_adapt) {
         /* D15: LADDER_ADAPT_EVERY counts ATTEMPTS PER PAIR, while its
          * neighbours SWAP_EVERY and SWAP_WINDOW count EPOCHS -- and DEO
@@ -1368,7 +1374,7 @@ template<typename Vec, typename HostT>
             << "  LADDER_ADAPT_DECAY=" << kb.ladder_adapt_decay
             << "  LADDER_MIN_GAP=" << kb.ladder_min_gap
             << (kb.ladder_min_gap == 0.0 ? " (no floor)" : "")
-            << "  LADDER_FREEZE=" << (kb.ladder_freeze ? 1 : 0);
+            << "  LADDER_FREEZE=" << (kb.ladder_freeze ? "ON" : "OFF");
       }
       if (kb.corana)
         oss << "  NS=" << kb.NS << " (sweeps per V adjustment)"
@@ -1376,20 +1382,50 @@ template<typename Vec, typename HostT>
             << "  V_FLOOR_FRAC=" << kb.v_floor_frac;
       if (kb.step_mode != anneal_enums::STEP_MODE::FIXED) {
         oss << "  STEP_WARMUP_SWEEPS=" << kb.step_warmup_sweeps;
-        if (kb.step_mode == anneal_enums::STEP_MODE::ADAPTIVE)
-          oss << "  STEP_TRUST_FACTOR=" << kb.step_trust_factor
-              << (kb.step_trust_factor == 0.0 ? " (off)" : "");
+        if (kb.step_mode == anneal_enums::STEP_MODE::ADAPTIVE) {
+          if (kb.step_trust_factor == 0.0) oss << "  STEP_TRUST_FACTOR=OFF";
+          else oss << "  STEP_TRUST_FACTOR=" << kb.step_trust_factor;
+        }
       }
       oss << "  STEP_FRAC=" << kb.step_frac
           << (kb.corana ? " (Corana V half-width/width)"
                         : " (CLASSIC Gaussian sigma/width)");
-      oss << "  BOUNDARY_MODE=" << static_cast<int>(kb.boundary_mode)
+      oss << "  BOUNDARY_MODE="
           << (kb.boundary_mode == anneal::BoundaryMode::Reflect
-                  ? "(REFLECT)" : "(REDRAW)")
-          << "  INIT_MODE="
-          << (kb.init_mode == anneal_enums::INIT_MODE::JITTER
-                  ? "JITTER (slot 0 = seed; others Gaussian around it)"
-                  : "UNIFORM (slot 0 = seed; others uniform in the box)");
+                  ? "REFLECT" : "REDRAW")
+          << "  INIT_MODE=";
+      /* State the distribution ONCE: the magnitude clause decides it, so a
+       * fixed "others Gaussian around it" prefix would contradict the
+       * uniform draw that FIXED/AUTO actually use. */
+      if (kb.init_mode != anneal_enums::INIT_MODE::JITTER) {
+        oss << "UNIFORM (slot 1 = seed; others drawn uniformly in the box)";
+      } else {
+        oss << "JITTER (slot 1 = seed; others ";
+        switch (kb.init_jitter_mode) {
+          case anneal::Knobs::JitterMode::Step:
+            oss << "Gaussian, sigma=STEP_FRAC*width=" << kb.step_frac << ")";
+            break;
+          case anneal::Knobs::JitterMode::Fixed:
+            oss << "uniform on +/-sigma, sigma=" << kb.init_jitter_frac
+                << "*width)";
+            break;
+          case anneal::Knobs::JitterMode::Auto:
+            oss << "uniform on +/-sigma, sigma measured per dim at tol="
+                << kb.init_jitter_tol << ")";
+            break;
+        }
+        /* The magnitude clause above is the BASE sigma; since 1.5.0 each
+         * slot's is scaled by the ladder unless this says OFF, so leaving
+         * it out would make the banner quietly wrong about what slot k
+         * actually draws. */
+        oss << " x (T_k/T_hot)^";
+        if (kb.init_jitter_ladder > 0.0)
+          oss << anneal::fmt_knob_number(kb.init_jitter_ladder)
+              << (kb.init_jitter_ladder_auto ? " [INIT_JITTER_LADDER AUTO]"
+                                             : " [INIT_JITTER_LADDER]");
+        else
+          oss << "0 [INIT_JITTER_LADDER OFF: every slot uses the same sigma]";
+      }
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
@@ -1399,7 +1435,7 @@ template<typename Vec, typename HostT>
      * STEP_MODE FROZEN calibrates each slot's step once and freezes it.
      * That is the right default for a STATIC ladder -- the step was
      * calibrated at the slot's temperature and the temperature does not
-     * move. With LADDER_ADAPT=1 the interior temperatures do move, and
+     * move. With LADDER_ADAPT ON the interior temperatures do move, and
      * every slot then keeps a step tuned for a temperature it no longer
      * has. Combination is legal (a user may want a frozen kernel
      * deliberately) and the consequence is a modelling judgement rather
@@ -1408,7 +1444,7 @@ template<typename Vec, typename HostT>
     if (!kb.corana && kb.step_mode == anneal_enums::STEP_MODE::FROZEN &&
         kb.ladder_adapt) {
       std::ostringstream h;
-      h << "ANNEAL_PT: interior temperatures move (LADDER_ADAPT=1) but "
+      h << "ANNEAL_PT: interior temperatures move (LADDER_ADAPT=ON) but "
            "STEP_MODE FROZEN keeps each slot's step at the value "
            "calibrated for its ORIGINAL temperature. Acceptance will "
            "drift away from target as the ladder moves, and no later "
@@ -1685,18 +1721,13 @@ template<typename Vec, typename HostT>
        * end-of-run new-best histogram mirror this grid so their values
        * map onto temperatures by eye. */
       {
-        const int iw = static_cast<int>(std::to_string(K - 1).size());
-        std::ostringstream oss;
-        oss << "ANNEAL_PT ladder T per slot (0=coldest .. " << (K - 1)
-            << "=hottest):";
-        for (std::size_t lo = 0; lo < K; lo += 8) {
-          const std::size_t hi = std::min(lo + 8, K) - 1;
-          oss << "\n"
-              << "[" << std::setw(iw) << lo << "-" << std::setw(iw) << hi
-              << "]" << std::scientific << std::setprecision(3);
-          for (std::size_t k = lo; k <= hi; ++k) oss << "  " << T[k];
-        }
-        HPOLog::instance().info(oss.str());
+        std::ostringstream head;
+        head << "ANNEAL_PT ladder T per slot (" << logidx::uis(0)
+             << "=coldest .. " << logidx::uis(K - 1) << "=hottest):";
+        HPOLog::instance().info(logidx::grid(
+            head.str(), K, [&](std::ostringstream& o, std::size_t k) {
+              o << std::scientific << std::setprecision(3) << "  " << T[k];
+            }));
       }
     }
 
@@ -1712,6 +1743,23 @@ template<typename Vec, typename HostT>
                        "\told_log_gap\tnew_log_gap\tat_floor\n";
         ladder_file << std::scientific << std::setprecision(17);
       }
+    }
+
+    /* ---- INIT_MODE JITTER AUTO -----------------------------------------
+     * Measure the per-dimension jitter here: the anchor (x0, f0) is known
+     * and frozen, the ladder is resolved, and no replica has been placed
+     * yet. Single-rank for now (the MPI split is a later step), so a
+     * multi-rank run falls back to the STEP_FRAC sigma with a note rather
+     * than having each rank calibrate a different vector. */
+    std::vector<double> auto_sigma = jitter_sigma;
+    if (proceed && kb.init_jitter_mode == anneal::Knobs::JitterMode::Auto) {
+      /* Every rank participates: the dimensions are split into contiguous
+       * blocks and the resulting sigma vector is broadcast, so all ranks
+       * seed their own replicas from the same measurement. */
+      const auto plan = anneal::run_jitter_calibration<Vec>(
+          sp, kb, x0, f0, jitter_sigma, host, ctx, max_time, "ANNEAL_PT",
+          rank, world);
+      auto_sigma = plan.sigma;
     }
 
     std::vector<anneal::ChainState<Vec>> chains(n_local);
@@ -1732,36 +1780,89 @@ template<typename Vec, typename HostT>
     };
 
     if (proceed) {
+      /* --- ladder scaling of the INITIAL jitter (INIT_JITTER_LADDER) -----
+       *
+       * sigma_k = sigma_d * (T_k/T_hot)^gamma. Without it every slot is
+       * placed with the SAME displacement, so the coldest replica -- the one
+       * whose whole job is to refine the seed -- starts as far from it as
+       * the hottest, and the ensemble has no cold end to speak of.
+       *
+       * The ladder read here is the one resolved above. Under the
+       * DERIVED T_COLD (the default, T_hot/LADDER_SPAN) the shape T_k/T_hot
+       * is invariant under the T0 pass-2 re-anchoring further down, because
+       * that rescales both ends by the same factor; only a PINNED T_COLD
+       * makes pass 2 change the shape, and the population must exist before
+       * the warm-up that pass 2 depends on, so this is the ladder to use.
+       *
+       * Slot 0 is exempt: seed_replica places it exactly at the seed with
+       * no draw at all, so it has no sigma to scale and must not appear in
+       * the floor census. */
+      std::size_t jitter_floored = 0, jitter_scaled_dims = 0;
+      const double T_max = K > 0 ? T[K - 1] : 0.0;
+      std::vector<double> x0v(dim), slot_factor(K, 1.0);
+      for (std::size_t i = 0; i < dim; ++i) x0v[i] = x0(i);
+      const bool ladder_jitter =
+          kb.init_mode == anneal_enums::INIT_MODE::JITTER &&
+          kb.init_jitter_ladder > 0.0 && dim > 0;
+      if (ladder_jitter)
+        for (std::size_t k = 1; k < K; ++k)
+          slot_factor[k] = anneal::ladder_jitter_factor(
+              T[k], T_max, kb.init_jitter_ladder);
       for (std::size_t li = 0; li < n_local; ++li) {
         const std::size_t k = off_local + li;   /* global slot */
-        auto& c = chains[li];
-        c.rng = anneal::make_stream(seed, anneal::SALT_CHAIN, k);
-        c.V   = proposal_scale;
-        c.x   = Vec(dim);
-        if (k == 0 || kb.init_mode == anneal_enums::INIT_MODE::JITTER) {
-          /* Slot 0 always starts exactly at the seed; JITTER spreads the
-           * other slots around it at the initial proposal scale,
-           * independent of STEP_MODE (the warm-up calibrates scale, not
-           * position). */
-          std::normal_distribution<double> nd(0.0, 1.0);
-          for (std::size_t i = 0; i < dim; ++i) {
-            long double v = static_cast<long double>(x0(i));
-            if (k > 0) {
-              auto draw = [&]() {
-                return static_cast<long double>(x0(i)) +
-                       static_cast<long double>(proposal_scale[i]) * nd(c.rng);
-              };
-              v = draw();
-              (void)anneal::constrain_proposal(
-                  v, sp.low[i], sp.high[i], kb.boundary_mode, draw);
-            }
-            c.x(i) = static_cast<double>(v);
-          }
+        if (ladder_jitter && k > 0) {
+          const auto scaled = anneal::scale_jitter_for_slot(
+              auto_sigma, x0v, sp.low, sp.high, T[k], T_max,
+              kb.init_jitter_ladder);
+          jitter_floored += scaled.floored;
+          jitter_scaled_dims += dim;
+          anneal::seed_replica(chains[li], seed, k, x0, proposal_scale,
+                               scaled.sigma, sp, kb);
         } else {
-          for (std::size_t i = 0; i < dim; ++i)
-            c.x(i) = std::uniform_real_distribution<>(sp.low[i], sp.high[i])(c.rng);
+          anneal::seed_replica(chains[li], seed, k, x0, proposal_scale,
+                               auto_sigma, sp, kb);
         }
-        c.best_x = c.x;
+      }
+      if (ladder_jitter && world > 1) {
+        jitter_floored = hpo_allreduce_sum_sz(jitter_floored);
+        jitter_scaled_dims = hpo_allreduce_sum_sz(jitter_scaled_dims);
+      }
+      if (ladder_jitter && rank == 0) {
+        std::ostringstream oss;
+        oss << "ANNEAL_PT initial-jitter ladder scaling: sigma_k = sigma_d * "
+               "(T_k/T_hot)^gamma with gamma=" << std::fixed
+            << std::setprecision(3) << kb.init_jitter_ladder
+            << (kb.init_jitter_ladder_auto
+                    ? " (AUTO: equipartition, spread ~ sqrt(T))"
+                    : " (INIT_JITTER_LADDER)")
+            << ".  Slot " << logidx::uis(0)
+            << " is the seed exactly; slot " << logidx::uis(1) << " draws "
+            << std::setprecision(2) << (100.0 * slot_factor[K > 1 ? 1 : 0])
+            << "% of sigma_d and slot " << logidx::uis(K - 1) << " 100%.";
+        HPOLog::instance().info(oss.str());
+        HPOLog::instance().info(logidx::grid(
+            "ANNEAL_PT initial-jitter factor per slot (% of sigma_d; the "
+            "coldest slot is the seed itself and draws none):", K,
+            [&](std::ostringstream& o, std::size_t k) {
+              /* slot_factor[0] is 1.0 only because nothing scales it --
+               * printing "100.000" there would read as "the coldest slot
+               * draws the FULL sigma", the exact opposite of the truth. */
+              o << "  " << std::setw(9);
+              if (k == 0) o << "seed";
+              else o << std::fixed << std::setprecision(3)
+                     << (100.0 * slot_factor[k]);
+            }));
+        if (jitter_floored > 0) {
+          std::ostringstream w;
+          w << "ANNEAL_PT: ladder scaling drove " << jitter_floored << " of "
+            << jitter_scaled_dims << " (slot, dimension) initial sigmas below "
+               "the resolvable coordinate scale; they were clamped there so "
+               "the cold slots stay distinct points rather than K copies of "
+               "the seed. A large share means the ladder is wider than the "
+               "search space can express -- reduce LADDER_SPAN, or set "
+               "PARAM INIT_JITTER_LADDER to a smaller gamma or OFF.";
+          HPOLog::instance().warning(w.str());
+        }
       }
       if (rank == 0 && n_local > 0) {
         chains[0].f      = f0;
@@ -1797,6 +1898,54 @@ template<typename Vec, typename HostT>
           stop_flag.store(true, std::memory_order_relaxed);
       });
       rethrow_pool_error("population initialization");
+
+      /* ---- what the jitter actually DID ----------------------------------
+       * Costs no extra evaluations: every start above was already evaluated.
+       *
+       * This is the reality check on the calibration, and it is mandatory
+       * for a reason. AUTO bounds each coordinate SEPARATELY, and per-axis
+       * tolerances do not compose: at high dimension a replica can respect
+       * every single one of them and still land far outside the band
+       * jointly. The per-rung loss is the only number that says whether the
+       * warm start actually survived, so it is reported whatever the jitter
+       * mode -- including the STEP_FRAC default, where nothing reported it
+       * before. */
+      if (world == 1 && K > 1) {
+        const double denom = std::fabs(f0) > 0.0 ? std::fabs(f0) : 1.0;
+        HPOLog::instance().info(logidx::grid(
+            "ANNEAL_PT initial loss per slot (slot 1 = seed):", K,
+            [&](std::ostringstream& o, std::size_t k) {
+              o << "  " << std::scientific << std::setprecision(3)
+                << std::setw(9) << chains[k].f;
+            }));
+        HPOLog::instance().info(logidx::grid(
+            "ANNEAL_PT initial (L-L0)/|L0| per slot:", K,
+            [&](std::ostringstream& o, std::size_t k) {
+              const double d = (chains[k].f - f0) / denom;
+              o << " " << std::scientific << std::setprecision(3)
+                << std::showpos << std::setw(10) << d << std::noshowpos;
+            }));
+        if (kb.init_jitter_mode == anneal::Knobs::JitterMode::Auto) {
+          std::string over;
+          for (std::size_t k = 1; k < K; ++k) {
+            if (!std::isfinite(chains[k].f)) continue;
+            if ((chains[k].f - f0) / denom > kb.init_jitter_tol) {
+              if (!over.empty()) over += ", ";
+              over += logidx::uis(k);
+            }
+          }
+          if (!over.empty()) {
+            std::ostringstream w;
+            w << "ANNEAL_PT: slot(s) " << over << " start outside the "
+              << kb.init_jitter_tol << " band the per-dimension jitter was "
+                 "measured against. Each COORDINATE respects it; their sum "
+                 "over " << dim << " dimensions need not. Lower the AUTO "
+                 "tolerance if the warm start matters more than the spread.";
+            HPOLog::instance().warning(w.str());
+          }
+        }
+      }
+
       for (std::size_t li = 0; li < n_local; ++li) {
         if (chains[li].best_f < l_best) {
           l_best   = chains[li].best_f;
@@ -2178,10 +2327,11 @@ template<typename Vec, typename HostT>
                 : 0.0;
             const std::string parameter = sp.parameter_labels.size() == dim
                 ? sp.parameter_labels[i]
-                : "dim[" + std::to_string(i) + "]";
+                : logidx::dim_label(i);
             if (scale_file) {
               const double width = sp.high[i] - sp.low[i];
-              scale_file << k << '\t' << T[k] << '\t' << parameter << '\t'
+              scale_file << logidx::uis(k) << '\t' << T[k] << '\t'
+                         << parameter << '\t'
                          << sigma << '\t'
                          << sigma / width << '\t'
                          << coord_sigma << '\t'
@@ -2251,7 +2401,7 @@ template<typename Vec, typename HostT>
           if (pilot_status & pt_detail::StepUnconverged) ++unresolved_pilots;
           std::ostringstream diag;
           diag << std::scientific << std::setprecision(3)
-               << "ANNEAL_PT step calibration slot=" << k
+               << "ANNEAL_PT step calibration slot=" << logidx::uis(k)
                << "  T=" << T[k]
                << "  coordinate_acc=" << std::fixed << std::setprecision(1)
                << (coordinate_validation_attempts > 0
@@ -2447,17 +2597,14 @@ template<typename Vec, typename HostT>
               << std::fixed << std::setprecision(2) << ratio
               << "); ladder rebuilt";
           HPOLog::instance().info(oss.str());
-          const int iw = static_cast<int>(std::to_string(K - 1).size());
-          std::ostringstream tt;
-          tt << "ANNEAL_PT ladder T per slot after calibration pass 2 "
-                "(0=coldest .. " << (K - 1) << "=hottest):";
-          for (std::size_t lo = 0; lo < K; lo += 8) {
-            const std::size_t hi2 = std::min(lo + 8, K) - 1;
-            tt << "\n" << "[" << std::setw(iw) << lo << "-" << std::setw(iw)
-               << hi2 << "]" << std::scientific << std::setprecision(3);
-            for (std::size_t s = lo; s <= hi2; ++s) tt << "  " << T[s];
-          }
-          HPOLog::instance().info(tt.str());
+          std::ostringstream head2;
+          head2 << "ANNEAL_PT ladder T per slot after calibration pass 2 ("
+                << logidx::uis(0) << "=coldest .. " << logidx::uis(K - 1)
+                << "=hottest):";
+          HPOLog::instance().info(logidx::grid(
+              head2.str(), K, [&](std::ostringstream& o, std::size_t s) {
+                o << std::scientific << std::setprecision(3) << "  " << T[s];
+              }));
         }
       }
     }
@@ -2551,6 +2698,101 @@ template<typename Vec, typename HostT>
       }
     };
     flow_touch_extremes();   /* initial tags only: all tags are still 0 */
+
+    /* --- Corana per-dimension acceptance census -------------------------
+     *
+     * Corana's step adaptation has ALWAYS been per dimension:
+     * adjust_corana_step divides or multiplies V[i] from that coordinate's
+     * own nA[i]/nP[i], never from a rung-wide scalar. What was missing was
+     * visibility -- the journal printed one accept% per epoch for the whole
+     * ladder, so a run could sit at a healthy 30% while hundreds of
+     * coordinates never moved at all and nothing said so. The counters that
+     * feed the adaptation cannot be read afterwards either: corana_sweep
+     * consumes and zeroes them every NS sweeps. ChainState carries a
+     * parallel never-reset copy for this.
+     *
+     * Wire layout: cc_fields doubles per (slot, dim). The WHOLE table is
+     * gathered rather than each rank shipping a packed per-slot summary,
+     * because a packed summary needs two independent readers (the journal
+     * formatter and the TSV writer) whose field offsets can silently
+     * desynchronise -- precisely the failure the step-scale layout enum
+     * above was introduced to end. One layout, one reader. The cost is
+     * K*dim*cc_fields doubles per report (816 dims x 16 slots ~ 313 kB) once
+     * per SWAP_WINDOW epochs, against K host evaluations per epoch: not
+     * measurable.
+     *
+     * Everything here is a no-op unless PARAM CORANA is ON. */
+    enum : std::size_t { cc_accepted = 0, cc_proposed, cc_sigma, cc_fields };
+    const bool census_on = kb.corana && dim > 0;
+    std::vector<int> census_counts(static_cast<std::size_t>(world), 0);
+    std::size_t census_total = 0;
+    if (census_on) {
+      for (int r = 0; r < world; ++r) {
+        const std::size_t count = slot_count(r) * dim * cc_fields;
+        if (count > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+          throw std::length_error(
+              "TADAH:ANNEAL_PT: Corana acceptance census exceeds MPI count "
+              "limit");
+        census_counts[static_cast<std::size_t>(r)] = static_cast<int>(count);
+        census_total += count;
+      }
+    }
+    /* Rank-0 snapshots. `census_at_window` is the table as it stood at the
+     * last report, `census_window` the delta of the last COMPLETED
+     * SWAP_WINDOW window -- the same bookkeeping as the D29 swap tables,
+     * for the same reason: a whole-run cumulative average hides late
+     * drift, which for Corana is exactly the thing that goes wrong. */
+    std::vector<double> census_at_window, census_window;
+    std::size_t census_at_window_epoch = 0, census_window_end_epoch = 0;
+
+    /* Collective: EVERY rank must call this, rank 0 receives. */
+    auto census_gather = [&](std::vector<double>& all) {
+      std::vector<double> local;
+      local.reserve(n_local * dim * cc_fields);
+      for (std::size_t li = 0; li < n_local; ++li) {
+        const auto& c = chains[li];
+        for (std::size_t i = 0; i < dim; ++i) {
+          local.push_back(i < c.corana_census_nA.size()
+                              ? static_cast<double>(c.corana_census_nA[i])
+                              : 0.0);
+          local.push_back(i < c.corana_census_nP.size()
+                              ? static_cast<double>(c.corana_census_nP[i])
+                              : 0.0);
+          local.push_back(i < c.V.size() ? c.V[i] : 0.0);
+        }
+      }
+      all.assign(rank == 0 ? census_total : std::size_t{0}, 0.0);
+      hpo_gatherv(local, all, census_counts);
+    };
+
+    /* One slot's cells out of a gathered table. `base`, when given, turns
+     * the cumulative counters into a window delta. */
+    auto census_slot = [&](const std::vector<double>& all,
+                           const std::vector<double>* base,
+                           std::size_t k) {
+      std::vector<corana_census::DimAcceptance> cells(dim);
+      const std::size_t slot_base = k * dim * cc_fields;
+      for (std::size_t i = 0; i < dim; ++i) {
+        const std::size_t p = slot_base + i * cc_fields;
+        double a = all[p + cc_accepted];
+        double q = all[p + cc_proposed];
+        if (base) {
+          a -= (*base)[p + cc_accepted];
+          q -= (*base)[p + cc_proposed];
+        }
+        cells[i].accepted =
+            static_cast<std::size_t>(std::llround(std::max(0.0, a)));
+        cells[i].proposed =
+            static_cast<std::size_t>(std::llround(std::max(0.0, q)));
+        cells[i].sigma = all[p + cc_sigma];
+      }
+      return cells;
+    };
+
+    auto census_label = [&](std::size_t i) {
+      return sp.parameter_labels.size() == dim ? sp.parameter_labels[i]
+                                               : logidx::dim_label(i);
+    };
 
     /* --- epoch loop ------------------------------------------------------
      * Fixed per-epoch collective order (every rank, every epoch):
@@ -2953,26 +3195,22 @@ template<typename Vec, typename HostT>
                   }
                   HPOLog::instance().info(summary.str());
 
-                  const int iw = static_cast<int>(
-                      std::to_string(K - 1).size());
-                  std::ostringstream table;
-                  table << "ANNEAL_PT ladder T per slot after update "
+                  std::ostringstream uhead;
+                  uhead << "ANNEAL_PT ladder T per slot after update "
                         << ladder_update_count << ":";
-                  for (std::size_t lo = 0; lo < K; lo += 8) {
-                    const std::size_t hi = std::min(lo + 8, K) - 1;
-                    table << "\n[" << std::setw(iw) << lo << "-"
-                          << std::setw(iw) << hi << "]"
-                          << std::scientific << std::setprecision(3);
-                    for (std::size_t k = lo; k <= hi; ++k)
-                      table << "  " << T[k];
-                  }
-                  HPOLog::instance().info(table.str());
+                  HPOLog::instance().info(logidx::grid(
+                      uhead.str(), K,
+                      [&](std::ostringstream& o, std::size_t k) {
+                        o << std::scientific << std::setprecision(3)
+                          << "  " << T[k];
+                      }));
 
                   if (ladder_file) {
                     for (std::size_t p = 0; p + 1 < K; ++p) {
                       ladder_file
                           << ladder_update_count << '\t' << epoch_count << '\t'
-                          << p << '\t' << ladder_attempt_global[p] << '\t'
+                          << logidx::uis(p) << '\t'
+                          << ladder_attempt_global[p] << '\t'
                           << ladder_accept_global[p] << '\t'
                           << update.acceptance[p] << '\t'
                           << old_temperature[p] << '\t'
@@ -3069,6 +3307,67 @@ template<typename Vec, typename HostT>
         const bool report_epoch =
             (kb.swap_window > 0 && epoch_count % kb.swap_window == 0) ||
             terminal_epoch || plateau_hit;
+        /* Corana per-dimension acceptance drift, on the report cadence.
+         * COLLECTIVE -- deliberately outside the rank==0 guard below, and
+         * gated only on quantities that are already globally agreed
+         * (epoch_count, terminal_epoch, plateau_hit), so every rank enters
+         * the gather together. */
+        if (census_on && report_epoch) {
+          std::vector<double> census_now;
+          census_gather(census_now);
+          const bool window_closed =
+              kb.swap_window > 0 && epoch_count % kb.swap_window == 0;
+          if (rank == 0 && census_now.size() == census_total) {
+            const bool have_base = census_at_window.size() == census_now.size();
+            const std::vector<double>* base =
+                have_base ? &census_at_window : nullptr;
+            /* State the exact epoch span rather than "last SWAP_WINDOW":
+             * terminal and plateau epochs report off-cadence, so the
+             * interval since the previous report is often shorter. */
+            const std::string span =
+                "epochs " +
+                std::to_string(have_base ? census_at_window_epoch + 1 : 1) +
+                "-" + std::to_string(epoch_count);
+            std::vector<corana_census::SlotCensus> cs(K);
+            for (std::size_t k = 0; k < K; ++k)
+              cs[k] = corana_census::summarize(census_slot(census_now, base, k));
+            HPOLog::instance().info(logidx::grid(
+                "ANNEAL_PT Corana median per-dim acceptance % per slot (" +
+                    span + "; per-slot, not per-walker):",
+                K, [&](std::ostringstream& o, std::size_t k) {
+                  o << "  " << std::setw(9) << std::fixed
+                    << std::setprecision(1)
+                    << (100.0 * cs[k].pct[corana_census::kP50]);
+                }));
+            std::size_t frozen_total = 0;
+            for (const auto& c : cs) frozen_total += c.frozen;
+            if (frozen_total > 0)
+              HPOLog::instance().info(logidx::grid(
+                  "ANNEAL_PT Corana dims with ZERO accepted moves per slot (of "
+                  + std::to_string(dim) + "; " + span + "):",
+                  K, [&](std::ostringstream& o, std::size_t k) {
+                    o << "  " << std::setw(9) << cs[k].frozen;
+                  }));
+            if (window_closed) {
+              if (have_base) {
+                census_window.resize(census_now.size());
+                for (std::size_t j = 0; j < census_now.size(); ++j)
+                  census_window[j] = census_now[j] - census_at_window[j];
+              } else {
+                census_window = census_now;   /* first window = epochs 1-n */
+              }
+              /* sigma is a level, not a count: a delta of it is meaningless.
+               * Carry the current value through so the TSV's window columns
+               * sit next to the step they were measured at. */
+              for (std::size_t j = cc_sigma; j < census_window.size();
+                   j += cc_fields)
+                census_window[j] = census_now[j];
+              census_window_end_epoch = epoch_count;
+            }
+            census_at_window = census_now;
+            census_at_window_epoch = epoch_count;
+          }
+        }
         if (rank == 0 && report_epoch) {
           const double rate = e_prop > 0
               ? static_cast<double>(e_acc) / static_cast<double>(e_prop) : 0.0;
@@ -3108,7 +3407,6 @@ template<typename Vec, typename HostT>
            * resolution; "-" = pair not attempted yet. Single-process
            * only: the counters are rank-local. */
           if (world == 1 && K >= 2 && ep_swap_rate >= 0.0) {
-            const int iwp = static_cast<int>(std::to_string(K - 2).size());
             auto pair_table = [&](const std::string& label,
                                   const std::vector<std::size_t>& attv,
                                   const std::vector<std::size_t>& accv) {
@@ -3168,17 +3466,12 @@ template<typename Vec, typename HostT>
             /* THIS epoch's exchange outcomes -- the walker motion itself,
              * readable without diffing walker rows across epochs. */
             {
-              std::ostringstream o;
-              o << "ANNEAL_PT exchange this epoch "
-                   "(x=swapped, .=rejected, blank=other parity):";
-              for (std::size_t lo = 0; lo + 1 < K; lo += 8) {
-                const std::size_t hi = std::min(lo + 8, K - 1) - 1;
-                o << "\n[" << std::setw(iwp) << lo << "-" << std::setw(iwp)
-                  << hi << "]";
-                for (std::size_t p = lo; p <= hi; ++p)
-                  o << "  " << std::setw(9) << pair_event[p];
-              }
-              HPOLog::instance().info(o.str());
+              HPOLog::instance().info(logidx::grid(
+                  "ANNEAL_PT exchange this epoch "
+                  "(x=swapped, .=rejected, blank=other parity):",
+                  K - 1, [&](std::ostringstream& o, std::size_t p) {
+                    o << "  " << std::setw(9) << pair_event[p];
+                  }));
             }
           }
           /* Sparse per-slot new-best histogram for THIS epoch (chain-init
@@ -3191,7 +3484,9 @@ template<typename Vec, typename HostT>
             if (!win.empty()) {
               std::ostringstream ossw;
               ossw << "ANNEAL_PT new bests per slot:";
-              for (const auto& [s, n] : win) ossw << "  [" << s << "]:" << n;
+              for (const auto& [s, n] : win)
+                ossw << "  [" << logidx::uis(static_cast<std::size_t>(s))
+                     << "]:" << n;
               HPOLog::instance().info(ossw.str());
             }
           }
@@ -3203,18 +3498,8 @@ template<typename Vec, typename HostT>
            * walker is the state lineage that produced this slot's rung.
            * Single-process only, like the histogram above. */
           if (world == 1) {
-            const int iw = static_cast<int>(std::to_string(K - 1).size());
             auto grid = [&](const std::string& head, auto&& cell) {
-              std::ostringstream o;
-              o << head;
-              for (std::size_t lo = 0; lo < K; lo += 8) {
-                const std::size_t hi = std::min(lo + 8, K) - 1;
-                o << "\n"
-                  << "[" << std::setw(iw) << lo << "-" << std::setw(iw) << hi
-                  << "]";
-                for (std::size_t s = lo; s <= hi; ++s) cell(o, s);
-              }
-              HPOLog::instance().info(o.str());
+              HPOLog::instance().info(logidx::grid(head, K, cell));
             };
             grid("ANNEAL_PT f per slot (pre-swap):",
                  [&](std::ostringstream& o, std::size_t s) {
@@ -3256,7 +3541,7 @@ template<typename Vec, typename HostT>
                    const std::size_t w = walker_at[s];
                    const char t = walker_tag[w] > 0
                                       ? '^' : (walker_tag[w] < 0 ? 'v' : '.');
-                   o << "  " << std::setw(8) << w << t;
+                   o << "  " << std::setw(8) << logidx::uis(w) << t;
                  });
             /* Running end-to-end communication scoreboard (the same
              * counters as the end-of-run ladder-flow line): 0 round
@@ -3458,7 +3743,7 @@ template<typename Vec, typename HostT>
                   step_health_streak[s] = 0;
                 if (step_health_streak[s] >= pt_detail::kStepHealthStreak) {
                   if (unhealthy_count++ > 0) unhealthy << ", ";
-                  unhealthy << "slot " << s << '=' << std::fixed
+                  unhealthy << "slot " << logidx::uis(s) << '=' << std::fixed
                             << std::setprecision(1) << 100.0 * acceptance
                             << '%';
                 }
@@ -3543,23 +3828,17 @@ template<typename Vec, typename HostT>
         pending_min = *pending.first;
         pending_max = *pending.second;
       }
-      const int iw = static_cast<int>(std::to_string(K - 1).size());
+      std::ostringstream fhead;
+      fhead << "ANNEAL_PT final ladder: updates=" << ladder_update_count
+            << "  pending_attempts/pair=" << pending_min;
+      if (pending_max != pending_min) fhead << '-' << pending_max;
+      fhead << "  mode=" << (ladder_adaptation_active ? "ongoing" : "frozen")
+            << "; T per slot:";
       std::ostringstream final_ladder;
-      final_ladder << "ANNEAL_PT final ladder: updates="
-                   << ladder_update_count
-                   << "  pending_attempts/pair=" << pending_min;
-      if (pending_max != pending_min) final_ladder << '-' << pending_max;
-      final_ladder << "  mode="
-                   << (ladder_adaptation_active ? "ongoing" : "frozen")
-                   << "; T per slot:";
-      for (std::size_t lo = 0; lo < K; lo += 8) {
-        const std::size_t hi = std::min(lo + 8, K) - 1;
-        final_ladder << "\n[" << std::setw(iw) << lo << '-'
-                     << std::setw(iw) << hi << ']'
-                     << std::scientific << std::setprecision(3);
-        for (std::size_t k = lo; k <= hi; ++k)
-          final_ladder << "  " << T[k];
-      }
+      final_ladder << logidx::grid(
+          fhead.str(), K, [&](std::ostringstream& o, std::size_t k) {
+            o << std::scientific << std::setprecision(3) << "  " << T[k];
+          });
       HPOLog::instance().info(final_ladder.str());
     }
 
@@ -3599,7 +3878,7 @@ template<typename Vec, typename HostT>
           const double r = swap_attempt_report[i] > 0
               ? 100.0 * static_cast<double>(swap_accept_report[i]) /
                         static_cast<double>(swap_attempt_report[i]) : 0.0;
-          ossp << "  " << i << ":" << std::fixed << std::setprecision(0)
+          ossp << "  " << logidx::uis(i) << ":" << std::fixed << std::setprecision(0)
                << r << "%";
         }
         HPOLog::instance().info(ossp.str());
@@ -3676,8 +3955,9 @@ template<typename Vec, typename HostT>
         const auto tot = HPOLog::instance().best_slot_totals();
         if (!tot.empty()) {
           HPOLog::instance().info(pt_detail::format_slot_count_table(
-              "ANNEAL_PT new-best count per slot (0=coldest .. " +
-                  std::to_string(K - 1) + "=hottest):",
+              "ANNEAL_PT new-best count per slot (" + logidx::uis(0) +
+              "=coldest .. " +
+                  logidx::uis(K - 1) + "=hottest):",
               K, tot));
           HPOLog::instance().info(pt_detail::format_slot_count_table(
               "ANNEAL_PT last new best per slot (eval #; 0 = never):",
@@ -3703,24 +3983,19 @@ template<typename Vec, typename HostT>
          * never exchanged its state with anyone -- reading across the row
          * shows exactly where the ladder separated into non-communicating
          * populations. Cumulative, so it is a property of the whole run. */
-        const int iw = static_cast<int>(std::to_string(K - 1).size());
-        std::ostringstream osw;
-        osw << "ANNEAL_PT distinct walkers per slot over the whole run ("
-            << K << " = fully mixed):";
+        std::ostringstream whead;
+        whead << "ANNEAL_PT distinct walkers per slot over the whole run ("
+              << K << " = fully mixed):";
         std::size_t worst = K, worst_slot = 0;
-        for (std::size_t lo = 0; lo < K; lo += 8) {
-          const std::size_t hi = std::min(lo + std::size_t{8}, K) - 1;
-          osw << "\n"
-              << "[" << std::setw(iw) << lo << "-" << std::setw(iw) << hi
-              << "]";
-          for (std::size_t s = lo; s <= hi; ++s) {
-            std::size_t n = 0;
-            for (std::size_t w = 0; w < K; ++w)
-              n += slot_seen[s * K + w] ? 1 : 0;
-            if (n < worst) { worst = n; worst_slot = s; }
-            osw << "  " << std::setw(9) << n;
-          }
-        }
+        std::ostringstream osw;
+        osw << logidx::grid(
+            whead.str(), K, [&](std::ostringstream& o, std::size_t s) {
+              std::size_t n = 0;
+              for (std::size_t w = 0; w < K; ++w)
+                n += slot_seen[s * K + w] ? 1 : 0;
+              if (n < worst) { worst = n; worst_slot = s; }
+              o << "  " << std::setw(9) << n;
+            });
         HPOLog::instance().info(osw.str());
         /* Only meaningful once the run was long enough for mixing to be
          * possible at all. A DEO round moves a state at most one slot, so
@@ -3730,12 +4005,171 @@ template<typename Vec, typename HostT>
          * the reader to ignore the message. */
         if (worst <= 1 && exchange_rounds >= 2 * (K - 1)) {
           std::ostringstream w;
-          w << "ANNEAL_PT: slot " << worst_slot << " was occupied by a single "
+          w << "ANNEAL_PT: slot " << logidx::uis(worst_slot)
+            << " was occupied by a single "
                "walker across all " << exchange_rounds << " exchange round(s) "
                "-- its state never exchanged with any other replica, so that "
                "slot contributed nothing the ensemble could use. The ladder "
                "is severed at or adjacent to it.";
           HPOLog::instance().warning(w.str());
+        }
+      }
+    }
+
+    /* --- whole-run Corana per-dimension acceptance census ---------------
+     * COLLECTIVE first, rank-0 reporting second -- and deliberately OUTSIDE
+     * `if (ran_sa)` above: that flag is not rank-uniform (see its
+     * declaration), so a gatherv inside it hangs every run that stopped
+     * during seeding. `epoch_count` is incremented in lockstep by the
+     * collective epoch loop, so it is the right gate, and it says the
+     * honest thing as well: with no epoch there were no Corana moves and
+     * the census would be a table of zeros. */
+    if (census_on && epoch_count > 0) {
+      std::vector<double> census_final;
+      census_gather(census_final);
+      if (rank == 0 && census_final.size() == census_total) {
+        std::vector<corana_census::SlotCensus> cs(K);
+        std::vector<std::vector<corana_census::DimAcceptance>> cells(K);
+        for (std::size_t k = 0; k < K; ++k) {
+          cells[k] = census_slot(census_final, nullptr, k);
+          cs[k] = corana_census::summarize(cells[k]);
+        }
+        std::ostringstream tbl;
+        tbl << "ANNEAL_PT Corana per-dimension acceptance census "
+               "(cumulative over the whole run).\n"
+               "  Corana adapts every coordinate's step from THAT "
+               "coordinate's own accept/propose\n"
+               "  counts, so these are the per-dimension rates the kernel "
+               "actually steered on --\n"
+               "  not a rung-wide scalar. Rows are per SLOT (temperature), "
+               "NOT per walker: an\n"
+               "  exchange moves x/f between slots and leaves V and these "
+               "counters behind, so a\n"
+               "  row aggregates every walker that visited that "
+               "temperature. Percentiles are\n"
+               "  nearest-rank over the VISITED dimensions; 'frozen' = "
+               "visited but never accepted.\n"
+               "  Full per-(slot, dimension) table: "
+               "hpo_corana_acceptance.tsv\n"
+            << corana_census::slot_table_header();
+        for (std::size_t k = 0; k < K; ++k)
+          tbl << '\n' << corana_census::format_slot_row(k, T[k], cs[k]);
+        HPOLog::instance().info(tbl.str());
+
+        /* Named extremes for the two ends of the ladder only. The cold
+         * slot is where a frozen coordinate is expected and the hot slot
+         * is where it is not, so those two rows carry the diagnosis; the
+         * K-2 interiors would add K-2 lines of the same shape and are in
+         * the TSV. */
+        auto extremes_line = [&](std::size_t k, const char* which) {
+          if (cs[k].lowest.empty()) return;
+          std::ostringstream o;
+          o << "ANNEAL_PT Corana acceptance extremes, " << which
+            << " slot " << logidx::uis(k) << " (T=" << std::scientific
+            << std::setprecision(3) << T[k] << "): ";
+          /* Sizes come from the lists, never from kExtremes: the two are
+           * disjoint and either can be short, so a hard-coded "5" is
+           * simply wrong on a small search space. When `highest` is empty
+           * the lists together already name every visited dimension, and
+           * one ordered list says more than a pair of mirrored ones. */
+          if (cs[k].highest.empty()) {
+            o << "all " << cs[k].lowest.size()
+              << " visited dimension(s), lowest first: "
+              << corana_census::format_dim_list(cs[k].lowest, cells[k],
+                                                census_label);
+          } else {
+            o << "lowest " << cs[k].lowest.size() << " = "
+              << corana_census::format_dim_list(cs[k].lowest, cells[k],
+                                                census_label)
+              << " | highest " << cs[k].highest.size() << " = "
+              << corana_census::format_dim_list(cs[k].highest, cells[k],
+                                                census_label);
+          }
+          HPOLog::instance().info(o.str());
+        };
+        extremes_line(0, "coldest");
+        if (K > 1) extremes_line(K - 1, "hottest");
+
+        /* A coordinate frozen at ONE slot is ordinary: the cold end is
+         * meant to reject nearly everything. A coordinate frozen at
+         * EVERY slot, hot end included, never moved anywhere in the run
+         * -- either the objective does not respond to it over its OPTIM
+         * range, or its V collapsed onto the floor. That is the
+         * actionable number, so it is separated from the per-slot
+         * counts, which cannot distinguish the two cases. */
+        std::vector<std::size_t> dead;
+        for (std::size_t i = 0; i < dim; ++i) {
+          bool visited_somewhere = false, accepted_somewhere = false;
+          for (std::size_t k = 0; k < K; ++k) {
+            if (cells[k][i].proposed > 0) visited_somewhere = true;
+            if (cells[k][i].accepted > 0) { accepted_somewhere = true; break; }
+          }
+          if (visited_somewhere && !accepted_somewhere) dead.push_back(i);
+        }
+        if (!dead.empty()) {
+          std::ostringstream o;
+          o << "Corana accepted no move on " << dead.size() << " of " << dim
+            << " dimension(s) at ANY of the " << K
+            << " temperature(s) over the whole run";
+          const std::size_t show = std::min<std::size_t>(10, dead.size());
+          o << " -- ";
+          for (std::size_t j = 0; j < show; ++j) {
+            if (j) o << ", ";
+            o << census_label(dead[j]);
+          }
+          if (show < dead.size())
+            o << ", ... (" << (dead.size() - show) << " more in "
+                 "hpo_corana_acceptance.tsv)";
+          o << ". Either the objective does not respond to them over their "
+               "OPTIM range, or their step collapsed onto the V floor; "
+               "compare their sigma column against V_FLOOR_FRAC x width.";
+          HPOLog::instance().hint(o.str());
+        }
+
+        std::ofstream acc_file("hpo_corana_acceptance.tsv", std::ios::trunc);
+        if (!acc_file) {
+          HPOLog::instance().warning(
+              "ANNEAL_PT: cannot open hpo_corana_acceptance.tsv for writing");
+        } else {
+          /* `window_*` cover the last COMPLETED SWAP_WINDOW window; they
+           * are 0 when no window completed (the journal line below says
+           * which). Cumulative and window sit side by side because a
+           * whole-run average over a cooling slot conflates the two
+           * regimes the reader is trying to tell apart. */
+          acc_file << "slot\ttemperature\tparameter\tacceptance\taccepted"
+                      "\tproposed\tsigma\tsigma/width\twindow_acceptance"
+                      "\twindow_accepted\twindow_proposed\n";
+          acc_file << std::scientific << std::setprecision(17);
+          const bool have_window = census_window.size() == census_final.size();
+          for (std::size_t k = 0; k < K; ++k) {
+            const auto win = have_window
+                ? census_slot(census_window, nullptr, k)
+                : std::vector<corana_census::DimAcceptance>(dim);
+            for (std::size_t i = 0; i < dim; ++i) {
+              const double width = sp.high[i] - sp.low[i];
+              acc_file << logidx::uis(k) << '\t' << T[k] << '\t'
+                       << census_label(i) << '\t'
+                       << cells[k][i].rate() << '\t'
+                       << cells[k][i].accepted << '\t'
+                       << cells[k][i].proposed << '\t'
+                       << cells[k][i].sigma << '\t'
+                       << (width > 0.0 ? cells[k][i].sigma / width : 0.0)
+                       << '\t' << win[i].rate() << '\t'
+                       << win[i].accepted << '\t' << win[i].proposed << '\n';
+            }
+          }
+          std::ostringstream w;
+          w << "ANNEAL_PT wrote hpo_corana_acceptance.tsv: " << (K * dim)
+            << " row(s) (" << K << " slot(s) x " << dim << " dimension(s)); "
+            << "window_* columns cover ";
+          if (have_window && census_window_end_epoch > 0)
+            w << "the SWAP_WINDOW=" << kb.swap_window
+              << " window ending at epoch " << census_window_end_epoch
+              << " of " << epoch_count;
+          else
+            w << "nothing -- no SWAP_WINDOW window completed in "
+              << epoch_count << " epoch(s)";
+          HPOLog::instance().info(w.str());
         }
       }
     }

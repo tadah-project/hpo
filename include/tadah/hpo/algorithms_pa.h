@@ -174,6 +174,11 @@ template<typename Vec, typename HostT>
     /* Per-dimension proposal scale in transformed space: CLASSIC Gaussian
      * sigma, or Corana uniform half-width V (already floor/cap-clamped). */
     const std::vector<double> proposal_scale = anneal::make_initial_steps(sp, kb);
+    /* Initial displacement, decoupled from the production step (1.5.0).
+     * Identical to proposal_scale unless INIT_MODE JITTER carries a
+     * magnitude, so the default trajectory is unchanged. */
+    const std::vector<double> jitter_sigma =
+        anneal::make_jitter_sigma(sp, kb, proposal_scale);
 
     constexpr std::uint64_t HUGE_UNSIGNED = std::numeric_limits<std::uint64_t>::max();
     const std::uint64_t max_eval_global = sp.stop.maxeval.value_or(HUGE_UNSIGNED);
@@ -239,14 +244,28 @@ template<typename Vec, typename HostT>
       oss << "  STEP_FRAC=" << kb.step_frac
           << (kb.corana ? " (Corana V half-width/width)"
                         : " (CLASSIC Gaussian sigma/width)");
-      oss << "  BOUNDARY_MODE=" << static_cast<int>(kb.boundary_mode)
+      oss << "  BOUNDARY_MODE="
           << (kb.boundary_mode == anneal::BoundaryMode::Reflect
-                  ? "(REFLECT)" : "(REDRAW)")
+                  ? "REFLECT" : "REDRAW")
           << "  INIT_MODE="
-          << (kb.init_mode == anneal_enums::INIT_MODE::JITTER
-                  ? (kb.corana ? "JITTER (Gaussian; sigma=initial V)"
-                               : "JITTER (Gaussian; sigma=proposal sigma)")
-                  : "UNIFORM (box)");
+          << (kb.init_mode == anneal_enums::INIT_MODE::JITTER ? "JITTER"
+                                                              : "UNIFORM (box)");
+      if (kb.init_mode == anneal_enums::INIT_MODE::JITTER) {
+        switch (kb.init_jitter_mode) {
+          case anneal::Knobs::JitterMode::Step:
+            oss << (kb.corana ? " (Gaussian; sigma=initial V)"
+                              : " (Gaussian; sigma=proposal sigma)");
+            break;
+          case anneal::Knobs::JitterMode::Fixed:
+            oss << " (uniform bound; sigma=" << kb.init_jitter_frac
+                << "*width)";
+            break;
+          case anneal::Knobs::JitterMode::Auto:
+            oss << " (uniform bound; sigma=AUTO per dim, tol="
+                << kb.init_jitter_tol << ")";
+            break;
+        }
+      }
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
@@ -483,35 +502,14 @@ template<typename Vec, typename HostT>
     }
 
     if (proceed) {
+      /* Walker 0 starts at the seed exactly; higher walkers use the shared
+       * kernel (under Corana the initial V[i] doubles as the jitter sigma).
+       * The raw `kb.init_mode == 0` this used to compare against is now the
+       * named enum inside seed_replica -- PA and PT can no longer drift. */
       for (std::size_t li = 0; li < n_local; ++li) {
         const std::size_t k = off_local + li;   /* global slot */
-        auto& w = walkers[li];
-        w.rng = anneal::make_stream(seed, anneal::SALT_CHAIN, k);
-        w.V   = proposal_scale;
-        w.x   = Vec(dim);
-        if (k == 0 || kb.init_mode == 0) {
-          /* Walker 0 starts at the seed exactly. Higher slots use Gaussian
-           * seed jitter in both variants; under Corana the initial V[i]
-           * value is reused as that initialization-only sigma. */
-          std::normal_distribution<double> nd(0.0, 1.0);
-          for (std::size_t i = 0; i < dim; ++i) {
-            long double v = static_cast<long double>(x0(i));
-            if (k > 0) {
-              auto draw = [&]() {
-                return static_cast<long double>(x0(i)) +
-                       static_cast<long double>(proposal_scale[i]) * nd(w.rng);
-              };
-              v = draw();
-              (void)anneal::constrain_proposal(
-                  v, sp.low[i], sp.high[i], kb.boundary_mode, draw);
-            }
-            w.x(i) = static_cast<double>(v);
-          }
-        } else {
-          for (std::size_t i = 0; i < dim; ++i)
-            w.x(i) = std::uniform_real_distribution<>(sp.low[i], sp.high[i])(w.rng);
-        }
-        w.best_x = w.x;
+        anneal::seed_replica(walkers[li], seed, k, x0, proposal_scale,
+                             jitter_sigma, sp, kb);
       }
       if (rank == 0 && n_local > 0) {
         walkers[0].f      = f0;

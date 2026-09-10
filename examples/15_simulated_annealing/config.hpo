@@ -19,7 +19,7 @@ OPTIMIZER
     PARAM RT          0.85    # geometric cooling factor in (0,1)
     PARAM CHAIN_LENGTH 20     # CLASSIC proposals per temperature rung
     PARAM STEP_FRAC   0.15    # sigma_i = STEP_FRAC * (high_i - low_i)
-    PARAM BOUNDARY_MODE 0      # exact reflection
+    PARAM BOUNDARY_MODE REFLECT      # exact reflection
     PARAM T0_PROBES   20
     PARAM T0_ACCEPT   0.8
   ENDSTRATEGY

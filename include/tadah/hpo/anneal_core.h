@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -94,6 +95,16 @@ constexpr std::uint64_t SALT_WARMUP      = 0x57A21;  /* PT step warm-up + pilot 
 constexpr double kTargetAcceptVector = 0.234;
 constexpr double kTargetAcceptCoord  = 0.44;
 constexpr double kRamDecay           = 0.6;
+
+/* AUTO's gamma. NOT a tuned number and deliberately NOT a function of
+ * LADDER_SPAN: in a locally quadratic basin the equilibrium coordinate
+ * spread scales as sqrt(T) by equipartition, whatever the ladder happens to
+ * span. The span already enters through T_k/T_hot, so making gamma depend on
+ * it as well would count the same quantity twice. On the default geometric
+ * ladder (S = 1e3) gamma = 0.5 gives the coldest non-seed slot 3.2% of
+ * sigma_d and the hottest the full value -- the intended shape, produced by
+ * the span alone. */
+constexpr double kLadderJitterGammaAuto = 0.5;
 
 inline std::mt19937_64 make_stream(std::uint64_t seed,
                                    std::uint64_t salt,
@@ -362,9 +373,42 @@ struct Knobs {
 
   /* shared by both parallel drivers */
   int         init_mode   = static_cast<int>(anneal_defaults::INIT_MODE);
-                                    /* JITTER = seed + Gaussian jitter,
-                                     * UNIFORM = box draw (slot 0 always
-                                     * starts exactly at the seed)       */
+                                    /* JITTER = seed + jitter, UNIFORM =
+                                     * box draw (slot 0 always starts
+                                     * exactly at the seed)              */
+
+  /* How BIG the initial jitter is, decoupled from STEP_FRAC (1.5.0).
+   *
+   * STEP is the historical behaviour and stays the default: one vector,
+   * STEP_FRAC * width, doing double duty as the Metropolis proposal scale
+   * AND the initialisation sigma. That coupling is the defect -- a
+   * STEP_FRAC chosen for the production kernel also decides how far the
+   * warm start is thrown away, and at high dimension "a fraction of every
+   * box at once" is a different point in the space, not a perturbation.
+   *
+   * FIXED takes an explicit fraction; AUTO measures one per dimension.
+   * Both draw UNIFORMLY on +/-sigma rather than Gaussian, so the magnitude
+   * is a bound on every coordinate instead of a one-sigma average. */
+  enum class JitterMode { Step, Fixed, Auto };
+  JitterMode  init_jitter_mode = JitterMode::Step;
+  double      init_jitter_frac = 0.0;   /* FIXED: sigma / OPTIM width      */
+  double      init_jitter_tol  = 0.0;   /* AUTO:  relative loss tolerance p */
+  /* AUTO shape and cost. MAXEVAL is deliberately NOT charged (the phase runs
+   * on its own probe budget), so TIME is the axis that still bounds it --
+   * hence a MAXTIME fraction rather than an eval fraction. */
+  double      init_jitter_max   = 0.5;  /* cap on sigma/width; screen point */
+  std::size_t init_jitter_probes = 8;   /* per dimension, both sides        */
+  std::size_t init_jitter_maxeval = 0;  /* 0 = AUTO: dim * probes           */
+  double      init_jitter_maxtime_frac = 0.25;
+  std::size_t init_jitter_sample = 0;   /* 0 = every dimension            */
+  std::size_t init_jitter_audit  = 32;  /* dims re-probed at sigma/2      */
+  /* PT ladder scaling of the INITIAL jitter: sigma_k = sigma_d *
+   * (T_k/T_hot)^gamma.  0 = OFF (every slot draws from the same sigma,
+   * the pre-1.5.0 shape). `_auto` only selects the journal wording; the
+   * resolvable-scale floor applies whenever gamma > 0, because an
+   * explicit gamma can collapse the cold slots just as easily. */
+  double      init_jitter_ladder = 0.0;
+  bool        init_jitter_ladder_auto = false;
 
   /* population annealing (ANNEAL_PA only) */
   std::size_t sweeps      = static_cast<std::size_t>(anneal_defaults::SWEEPS);
@@ -377,6 +421,31 @@ struct Knobs {
 
   static Knobs parse(const OptimizerSpec& sp, AlgoKind kind);
 };
+
+/* Case-insensitive token compare for the 1.5.0 PARAM value vocabulary
+ * (ON / OFF / AUTO). Config keywords elsewhere in Tadah are matched
+ * case-insensitively, so the value vocabulary follows suit. */
+inline std::string anneal_upper(std::string s)
+{
+  for (char& c : s)
+    c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+  return s;
+}
+
+/* Render a knob value the way the user most likely typed it, for migration
+ * messages: integral values without a decimal tail, so `PARAM NS 20`
+ * echoes back as '20' rather than '20.000000'. */
+inline std::string fmt_knob_number(double v)
+{
+  if (std::isfinite(v) && v == std::floor(v) && std::fabs(v) < 1e15) {
+    std::ostringstream os;
+    os << static_cast<long long>(v);
+    return os.str();
+  }
+  std::ostringstream os;
+  os << v;
+  return os.str();
+}
 
 inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
 {
@@ -431,13 +500,21 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   for (const auto& kv : sp.param) check_membership(kv.first);
   for (const auto& kv : sp.param_raw) {
     check_membership(kv.first);
-    /* Token values are legal only for enum-typed keys; anything else is
-     * a typo or a misplaced word, never a silent 0.0. */
+    /* Token values are legal for enum-typed keys, for booleans (ON/OFF)
+     * and for numeric keys that declare AUTO and/or OFF in the registry.
+     * Anything else is a typo or a misplaced word, never a silent 0.0. */
     const auto* ki = reg::find_key(kv.first);
-    if (ki->type != reg::AnnealKeyType::Enum)
-      throw std::runtime_error(
-          ctx + ": PARAM " + kv.first + " must be a number (got '" +
-          kv.second + "')");
+    if (ki->type == reg::AnnealKeyType::Enum) continue;
+    if (ki->type == reg::AnnealKeyType::Bool) continue;   // ON/OFF, see pbool
+    const std::string t = anneal_upper(kv.second);
+    if ((ki->accepts_auto && t == "AUTO") || (ki->accepts_off && t == "OFF"))
+      continue;
+    std::string accepted = "a number";
+    if (ki->accepts_auto) accepted += ", AUTO";
+    if (ki->accepts_off)  accepted += ", OFF";
+    throw std::runtime_error(
+        ctx + ": PARAM " + kv.first + " must be " + accepted + " (got '" +
+        kv.second + "')");
   }
 
   /* -- spec-level knobs that are dead for this family --------------- */
@@ -490,7 +567,7 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
    *    entry of each key.  Every (key, value) pair that reaches the
    *    knobs -- explicit or defaulted -- is recorded for the
    *    registry-declared range checks that run after the cross-key
-   *    rules (so e.g. "requires CORANA 1" outranks a range error). -- */
+   *    rules (so e.g. "requires CORANA ON" outranks a range error). -- */
   std::vector<std::pair<const reg::AnnealKeyInfo*, double>> parsed_values;
   auto pinfo = [&](const char* k) -> const reg::AnnealKeyInfo& {
     const auto* ki = reg::find_key(k);
@@ -510,6 +587,15 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   auto pget = [&](const char* k) -> double {
     const auto& ki = pinfo(k);
     double v;
+    /* 1.5.0 vocabulary: AUTO / OFF resolve to the registry's internal
+     * value and take no range check -- the sentinel is by construction
+     * outside the key's legal numeric range (e.g. REPLICAS AUTO -> 0
+     * while REPLICAS itself must be >= 2). */
+    if (auto rit = sp.param_raw.find(k); rit != sp.param_raw.end()) {
+      const std::string t = anneal_upper(rit->second);
+      if (ki.accepts_auto && t == "AUTO") return ki.auto_value;
+      if (ki.accepts_off  && t == "OFF")  return ki.off_value;
+    }
     auto it = sp.param.find(k);
     if (it == sp.param.end()) {
       bool has = false;
@@ -535,21 +621,46 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
           ctx + ": PARAM " + k + " must be a non-negative integer");
     return static_cast<std::size_t>(v);
   };
+  /* Booleans take the tokens ON / OFF (1.5.0). A numeric 0/1 is a hard
+   * error carrying its own migration hint: accepting it silently would
+   * make the old and new spellings indistinguishable in a config, which
+   * is exactly the ambiguity this vocabulary removes. */
+  auto pbool_token = [&](const char* k, bool& out) -> bool {
+    auto rit = sp.param_raw.find(k);
+    if (rit == sp.param_raw.end()) return false;
+    const std::string t = anneal_upper(rit->second);
+    if (t == "ON")  { out = true;  return true; }
+    if (t == "OFF") { out = false; return true; }
+    throw std::runtime_error(
+        ctx + ": PARAM " + k + " takes ON or OFF (got '" + rit->second + "')");
+  };
+  auto pbool_reject_numeric = [&](const char* k) {
+    if (sp.param.count(k))
+      throw std::runtime_error(
+          ctx + ": PARAM " + k + " takes ON or OFF (got '" +
+          fmt_knob_number(sp.param.at(k)) + "'). 0/1 booleans were removed "
+          "in 1.5.0 -- use `PARAM " + std::string(k) + " " +
+          (sp.param.at(k) != 0.0 ? "ON" : "OFF") + "`.");
+  };
   auto pbool = [&](const char* k) -> bool {
-    const double v = pget(k);
-    if (v != 0.0 && v != 1.0)
-      throw std::runtime_error(ctx + ": PARAM " + k + " must be 0 or 1");
-    return v == 1.0;
+    pbool_reject_numeric(k);
+    bool v = false;
+    if (pbool_token(k, v)) return v;
+    const auto& ki = pinfo(k);
+    /* A key that does not apply to this kind has no per-kind default and
+     * reads as false -- Knobs::parse walks every key unconditionally, so
+     * e.g. serial ANNEAL still asks for the PT-only LADDER_ADAPT. This
+     * mirrors what pget() did for numeric bools before 1.5.0. */
+    bool has = false;
+    const double def = default_of(ki, has);
+    return has && def != 0.0;
   };
   /* For keys whose default depends on other knobs (no registry default). */
   auto pbool_dyn = [&](const char* k, bool dflt) -> bool {
-    auto it = sp.param.find(k);
-    if (it == sp.param.end()) return dflt;
-    if (!std::isfinite(it->second))
-      throw std::runtime_error(ctx + ": PARAM " + k + " must be finite");
-    if (it->second != 0.0 && it->second != 1.0)
-      throw std::runtime_error(ctx + ": PARAM " + k + " must be 0 or 1");
-    return it->second == 1.0;
+    pbool_reject_numeric(k);
+    bool v = false;
+    if (pbool_token(k, v)) return v;
+    return dflt;
   };
   /* Enum keys take token values (PARAM STEP_MODE FROZEN); the token list
    * and default come from the registry. */
@@ -592,7 +703,7 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   kb.corana_c      = pget("CORANA_C");
   kb.step_frac     = pget("STEP_FRAC");
   kb.v_floor_frac  = pget("V_FLOOR_FRAC");
-  const std::size_t boundary_raw = pcount("BOUNDARY_MODE");
+  const int boundary_raw = penum("BOUNDARY_MODE");
   /* Corana's published cooling step returns to the best-so-far point.
    * Keep that default for serial Corana; PT defaults off because snapping
    * hot replicas defeats exchange, while PA rejects the knob (registry
@@ -632,6 +743,67 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   kb.init_mode   = kind != AlgoKind::Serial
                        ? penum("INIT_MODE")
                        : anneal_enums::INIT_MODE::JITTER;
+  /* INIT_MODE's optional extras (multi-token PARAM, 1.5.0):
+   *     INIT_MODE UNIFORM
+   *     INIT_MODE JITTER                 sigma = STEP_FRAC * width
+   *     INIT_MODE JITTER <frac>          sigma = <frac> * width
+   *     INIT_MODE JITTER AUTO <p>        sigma measured per dimension
+   * The registry owns the mode token; the extras are a small grammar the
+   * table cannot express, so they are parsed here and every rejection is a
+   * hard error rather than a silently ignored word. */
+  if (auto tk = sp.param_tokens.find("INIT_MODE");
+      tk != sp.param_tokens.end() && tk->second.size() > 1) {
+    const auto& toks = tk->second;
+    if (kind == AlgoKind::Serial)
+      throw std::runtime_error(
+          ctx + ": PARAM INIT_MODE takes no value beyond the mode for "
+                "serial annealing (it runs a single chain)");
+    if (kb.init_mode != anneal_enums::INIT_MODE::JITTER)
+      throw std::runtime_error(
+          ctx + ": PARAM INIT_MODE " + toks[0] + " takes no further value "
+                "(got '" + toks[1] + "'); the jitter magnitude applies to "
+                "JITTER only");
+    auto as_number = [&](const std::string& t, const char* what) {
+      try {
+        std::size_t pos = 0;
+        const double v = std::stod(t, &pos);
+        if (pos == t.size() && std::isfinite(v)) return v;
+      } catch (const std::exception&) { /* fall through */ }
+      throw std::runtime_error(ctx + ": PARAM INIT_MODE JITTER " +
+                               std::string(what) + " must be a finite "
+                               "number (got '" + t + "')");
+    };
+    if (anneal_upper(toks[1]) == "AUTO") {
+      if (toks.size() < 3)
+        throw std::runtime_error(
+            ctx + ": PARAM INIT_MODE JITTER AUTO needs a relative loss "
+                  "tolerance, e.g. `PARAM INIT_MODE JITTER AUTO 0.05`");
+      kb.init_jitter_mode = Knobs::JitterMode::Auto;
+      kb.init_jitter_tol  = as_number(toks[2], "AUTO tolerance");
+      if (!(kb.init_jitter_tol > 0.0))
+        throw std::runtime_error(
+            ctx + ": PARAM INIT_MODE JITTER AUTO tolerance must be > 0");
+    } else {
+      kb.init_jitter_mode = Knobs::JitterMode::Fixed;
+      kb.init_jitter_frac = as_number(toks[1], "fraction");
+      if (!(kb.init_jitter_frac > 0.0 && kb.init_jitter_frac <= 1.0))
+        throw std::runtime_error(
+            ctx + ": PARAM INIT_MODE JITTER <fraction> must be in (0,1] "
+                  "(a fraction of each OPTIM interval)");
+    }
+  }
+  kb.init_jitter_max    = pget("INIT_JITTER_MAX");
+  kb.init_jitter_probes = pcount("INIT_JITTER_PROBES");
+  kb.init_jitter_maxeval = pcount("INIT_JITTER_MAXEVAL");
+  kb.init_jitter_maxtime_frac = pget("INIT_JITTER_MAXTIME_FRAC");
+  kb.init_jitter_sample = pcount("INIT_JITTER_SAMPLE");
+  kb.init_jitter_audit  = pcount("INIT_JITTER_AUDIT");
+  if (kind == AlgoKind::PT) {
+    const double g = pget("INIT_JITTER_LADDER");
+    kb.init_jitter_ladder_auto = (g == anneal_defaults::INIT_JITTER_LADDER);
+    kb.init_jitter_ladder = kb.init_jitter_ladder_auto
+                                ? kLadderJitterGammaAuto : g;
+  }
   kb.sweeps      = pcount("SWEEPS");
   kb.ess_target  = pget("ESS_TARGET");
 
@@ -706,6 +878,57 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   if (kb.step_mode != anneal_enums::STEP_MODE::ADAPTIVE)
     kb.step_trust_factor = 0.0;
 
+  /* The AUTO shape/cost keys are registry-gated on INIT_MODE JITTER, which is
+   * the closest the rule table can express: AUTO is a multi-token EXTRA on
+   * INIT_MODE, not an enum value of it. Finish the job here so setting them
+   * on a run that never calibrates is an error rather than a no-op. */
+  if (kb.init_jitter_mode != Knobs::JitterMode::Auto) {
+    for (const char* k : {"INIT_JITTER_MAX", "INIT_JITTER_PROBES",
+                          "INIT_JITTER_MAXEVAL", "INIT_JITTER_MAXTIME_FRAC",
+                          "INIT_JITTER_SAMPLE", "INIT_JITTER_AUDIT"})
+      if (sp.param.count(k) || sp.param_raw.count(k))
+        throw std::runtime_error(
+            ctx + ": PARAM " + std::string(k) + " is unused unless INIT_MODE "
+                  "is `JITTER AUTO <tolerance>`");
+  } else if (sp.param.count("INIT_JITTER_MAXEVAL") &&
+             kb.init_jitter_maxeval == 0) {
+    throw std::runtime_error(
+        ctx + ": PARAM INIT_JITTER_MAXEVAL must be >= 1, or AUTO to let the "
+              "protocol size its own cap");
+  }
+
+  /* INIT_JITTER_LADDER is deliberately NOT in the list above: it shapes the
+   * initial population for EVERY INIT_MODE JITTER variant, not just AUTO.
+   * What it needs is a jitter at all, so UNIFORM is the case to reject --
+   * and that cannot be a registry rule, because a `requires_enum` against
+   * INIT_MODE's own default value can never fire. */
+  if (kind == AlgoKind::PT &&
+      (sp.param.count("INIT_JITTER_LADDER") ||
+       sp.param_raw.count("INIT_JITTER_LADDER"))) {
+    if (kb.init_mode != anneal_enums::INIT_MODE::JITTER)
+      throw std::runtime_error(
+          ctx + ": PARAM INIT_JITTER_LADDER scales the per-slot INITIAL "
+                "JITTER and is unused when INIT_MODE is UNIFORM");
+    /* A bare 0 is the pre-1.5.0 spelling of OFF and is rejected with the
+     * migration hint rather than silently meaning gamma = 0, which happens
+     * to do the same thing -- accepting it would leave the old and new
+     * spellings indistinguishable in a config file. */
+    if (sp.param.count("INIT_JITTER_LADDER")) {
+      const double g = sp.param.at("INIT_JITTER_LADDER");
+      if (g == 0.0)
+        throw std::runtime_error(
+            ctx + ": PARAM INIT_JITTER_LADDER 0 is no longer accepted; "
+                  "0/1 booleans and 0-means-disabled were removed in 1.5.0 -- "
+                  "write PARAM INIT_JITTER_LADDER OFF to disable ladder "
+                  "scaling, or AUTO for the sqrt(T) default");
+      if (!(g > 0.0 && g <= 4.0))
+        throw std::runtime_error(
+            ctx + ": PARAM INIT_JITTER_LADDER must be in (0,4], or AUTO "
+                  "(gamma=0.5, equipartition) or OFF; got " +
+                  fmt_knob_number(g));
+    }
+  }
+
   kb.observer = sp.anneal_observer;
 
   /* -- registry-declared ranges (checked after the cross-key rules so
@@ -747,13 +970,13 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
    * objective and the geometry, so it is a caution, not a proof. */
   if (kb.boundary_mode == BoundaryMode::Redraw)
     HPOLog::instance().hint(
-        ctx + ": BOUNDARY_MODE 1 (REDRAW) resamples out-of-box coordinates "
+        ctx + ": BOUNDARY_MODE REDRAW resamples out-of-box coordinates "
         "from a truncated kernel whose normalisation depends on the current "
         "point, and the Metropolis rule applies no Hastings correction for "
         "it. Sampling near an OPTIM bound is therefore biased away from the "
         "edge. This does not affect which best point is reported, but if you "
         "care about the distribution rather than the optimum, use "
-        "BOUNDARY_MODE 0 (REFLECT), which is an exact symmetric fold.");
+        "BOUNDARY_MODE REFLECT, which is an exact symmetric fold.");
 
   /* -- validation beyond the registry ranges ------------------------- */
   if (kind != AlgoKind::PT && !(kb.rt > 0.0 && kb.rt < 1.0))
@@ -799,11 +1022,16 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
         kb.step_warmup_sweeps == 0)
       throw std::runtime_error(
           ctx + ": PARAM STEP_WARMUP_SWEEPS must be >= 1");
-    if (!(kb.step_trust_factor == 0.0 ||
-          (std::isfinite(kb.step_trust_factor) &&
-           kb.step_trust_factor > 1.0)))
-      throw std::runtime_error(
-          ctx + ": PARAM STEP_TRUST_FACTOR must be 0 (off) or > 1");
+    /* 1.5.0: OFF is the "disable the clamp" spelling; a numeric 0 is not.
+     * Validate what the USER wrote (sp.param), not kb.step_trust_factor --
+     * the latter is deliberately zeroed above for non-ADAPTIVE step modes,
+     * an internal sentinel that is none of the config's business. */
+    if (auto tf = sp.param.find("STEP_TRUST_FACTOR"); tf != sp.param.end()) {
+      if (!(std::isfinite(tf->second) && tf->second > 1.0))
+        throw std::runtime_error(
+            ctx + ": PARAM STEP_TRUST_FACTOR must be > 1, or OFF to disable "
+                  "the clamp");
+    }
   }
   if (kind == AlgoKind::PA) {
     if (sp.pop && *sp.pop < 8)
@@ -883,6 +1111,24 @@ inline std::vector<double> make_initial_steps(const OptimizerSpec& sp,
         ? std::min(width, std::max(kb.v_floor_frac * width, raw))
         : raw;
   }
+  return out;
+}
+
+/* Per-dimension jitter sigma for replica initialisation.
+ *
+ * STEP reuses the proposal scale, which is exactly the historical coupling:
+ * one number sets both the production step and how far the warm start is
+ * thrown away. FIXED takes its own fraction of each OPTIM interval instead.
+ * (AUTO measures a vector per dimension and supplies it directly, so it does
+ * not come through here.) */
+inline std::vector<double> make_jitter_sigma(
+    const OptimizerSpec& sp, const Knobs& kb,
+    const std::vector<double>& proposal_scale)
+{
+  if (kb.init_jitter_mode != Knobs::JitterMode::Fixed) return proposal_scale;
+  std::vector<double> out(sp.low.size());
+  for (std::size_t i = 0; i < out.size(); ++i)
+    out[i] = kb.init_jitter_frac * (sp.high[i] - sp.low[i]);
   return out;
 }
 
@@ -1328,6 +1574,67 @@ inline double resolvable_coordinate_scale(double x, double lo, double hi)
   return std::max(ulp, width_floor);
 }
 
+/* Factor applied to the initial jitter at a slot of temperature T_k.
+ *
+ * Returns 1 for the hottest slot, for gamma <= 0 (scaling OFF) and for any
+ * degenerate ladder -- a non-finite or non-positive temperature means the
+ * caller has bigger problems than the jitter shape, and silently returning
+ * the unscaled sigma is the behaviour that cannot make things worse. */
+inline double ladder_jitter_factor(double T_k, double T_max, double gamma)
+{
+  if (!(gamma > 0.0)) return 1.0;
+  if (!std::isfinite(T_k) || !std::isfinite(T_max)) return 1.0;
+  if (!(T_k > 0.0) || !(T_max > 0.0)) return 1.0;
+  const double r = T_k / T_max;
+  if (!std::isfinite(r) || !(r > 0.0) || r >= 1.0) return 1.0;
+  const double f = std::pow(r, gamma);
+  return std::isfinite(f) ? f : 1.0;
+}
+
+/* One slot's scaled jitter vector, plus how many coordinates the floor
+ * caught.
+ *
+ * The floor is where a genuinely span-dependent problem lives: at
+ * LADDER_SPAN = 1e6, gamma = 0.5 leaves slot 1 with 0.1% of sigma_d and the
+ * coldest few slots become numerically indistinguishable from the seed --
+ * K replicas collapsing to a handful of distinct starting points, which
+ * defeats the ensemble. Clamping at resolvable_coordinate_scale (the floor
+ * this codebase already uses everywhere else, so no new magic number) keeps
+ * every slot a distinct point. Clamped coordinates are counted, not hidden:
+ * a large count means the ladder is too wide for the search space and the
+ * user should hear about it. */
+struct SlotJitter {
+  std::vector<double> sigma;
+  std::size_t floored = 0;
+};
+
+inline SlotJitter scale_jitter_for_slot(const std::vector<double>& base,
+                                        const std::vector<double>& x0,
+                                        const std::vector<double>& lo,
+                                        const std::vector<double>& hi,
+                                        double T_k, double T_max, double gamma)
+{
+  SlotJitter out;
+  out.sigma = base;
+  const double f = ladder_jitter_factor(T_k, T_max, gamma);
+  if (f >= 1.0) return out;                 /* nothing to scale or to floor */
+  for (std::size_t i = 0; i < out.sigma.size(); ++i) {
+    const double scaled = base[i] * f;
+    const double floor_i = resolvable_coordinate_scale(x0[i], lo[i], hi[i]);
+    /* Only a sigma the scaling actually pushed BELOW the floor counts: a
+     * base sigma that was already sub-resolvable is the calibration's
+     * verdict, not this feature's doing, and reporting it here would blame
+     * ladder scaling for something it did not cause. */
+    if (scaled < floor_i && base[i] >= floor_i) {
+      out.sigma[i] = floor_i;
+      ++out.floored;
+    } else {
+      out.sigma[i] = scaled;
+    }
+  }
+  return out;
+}
+
 /* ---- ChainState ------------------------------------------------------
  *
  * One annealing chain (= one PT replica / PA walker / the single serial
@@ -1353,7 +1660,26 @@ struct ChainState {
    * serial rung kernel uses rung-local counters instead. */
   std::vector<std::size_t> corana_nA, corana_nP;
   std::size_t              corana_sweeps = 0;
+  /* Lifetime per-dimension acceptance census.  corana_nA/corana_nP above
+   * are the ADAPTATION evidence window: adjust_corana_step consumes them
+   * and they are then zeroed IN PLACE, so by the time any reporting code
+   * looks at them they describe at most the tail of one window.  These
+   * are never zeroed, so "which coordinates actually moved" survives the
+   * reset.  Slot-resident like V: an exchange swaps x/f between slots and
+   * leaves these behind, making the census per-SLOT (per-temperature),
+   * not per-walker.  See corana_census.h. */
+  std::vector<std::size_t> corana_census_nA, corana_census_nP;
 };
+
+/* Size the lifetime census to `dim` on first use.  Separate from the
+ * corana_nA/nP sizing next to it because these must survive every reset
+ * that one undergoes. */
+template<class Vec>
+void ensure_corana_census(ChainState<Vec>& c, std::size_t dim)
+{
+  if (c.corana_census_nA.size() != dim) c.corana_census_nA.assign(dim, 0);
+  if (c.corana_census_nP.size() != dim) c.corana_census_nP.assign(dim, 0);
+}
 
 /* Scalar-plus-diagonal robust-adaptive-Metropolis update, applied ONCE
  * PER PROPOSAL (Robbins-Monro: ln V_i += clamp(eta_j * g_i, +/- ln 2),
@@ -1481,6 +1807,9 @@ bool corana_move(ChainState<Vec>& c, std::size_t i, double T,
   const double f_prop = host(sp.out(x_prop));
   ++rs.proposed;
   ++nP[i];
+  /* Bounds-checked rather than assumed: the census is sized by the two
+   * kernels below, and corana_move is also reachable directly from tests. */
+  if (i < c.corana_census_nP.size()) ++c.corana_census_nP[i];
   const bool accept = metropolis_accept(
       c.f, f_prop, T, sp.failscore, [&] { return udist(c.rng); });
   if (accept) {
@@ -1488,6 +1817,7 @@ bool corana_move(ChainState<Vec>& c, std::size_t i, double T,
     c.f = f_prop;
     ++rs.accepted;
     ++nA[i];
+    if (i < c.corana_census_nA.size()) ++c.corana_census_nA[i];
     if (!loss_is_rankable(c.best_f, sp.failscore) || c.f < c.best_f) {
       c.best_f = c.f;
       c.best_x = c.x;
@@ -1511,6 +1841,7 @@ RungStats corana_rung(ChainState<Vec>& c, double T,
 {
   const std::size_t dim = sp.low.size();
   RungStats rs;
+  ensure_corana_census(c, dim);
   std::vector<std::size_t> nA(dim, 0), nP(dim, 0);
   std::uniform_real_distribution<double> u_pm(-1.0, 1.0);
   std::uniform_real_distribution<double> udist(0.0, 1.0);
@@ -1556,6 +1887,7 @@ RungStats corana_sweep(ChainState<Vec>& c, double T,
   RungStats rs;
   if (c.corana_nA.size() != dim) c.corana_nA.assign(dim, 0);
   if (c.corana_nP.size() != dim) c.corana_nP.assign(dim, 0);
+  ensure_corana_census(c, dim);
   std::uniform_real_distribution<double> u_pm(-1.0, 1.0);
   std::uniform_real_distribution<double> udist(0.0, 1.0);
 
@@ -1579,6 +1911,117 @@ RungStats corana_sweep(ChainState<Vec>& c, double T,
     }
   }
   return rs;
+}
+
+/* Outcome of measuring one dimension's jitter magnitude.
+ *
+ * Deliberately NOT pt_detail::StepStatus: that lives in algorithms_pt.h,
+ * which ANNEAL_PA does not include, and the two mean different things -- the
+ * step warm-up targets an acceptance RATE, this measures a BOUND.
+ *
+ * The bands are distinguished because they call for different actions and
+ * because collapsing them is how a diagnostic stops being actionable:
+ * "insensitive" says the objective does not respond to a coordinate over its
+ * whole OPTIM range (consider dropping or fixing it), while "gate-reject"
+ * says a perfectly sensitive coordinate is bounded by a FEASIBILITY wall
+ * (BUMPGATE), not by the loss -- pre-training and therefore cheap. A cliff is
+ * neither: the objective returned a non-rankable loss. */
+enum JitterStatus : unsigned {
+  JitterOk            = 0,
+  JitterNumericalFloor = 1u << 0,  /* sigma hit the resolvable scale        */
+  JitterSupportCapped  = 1u << 1,  /* sigma hit INIT_JITTER_MAX * width     */
+  JitterInsensitive    = 1u << 2,  /* in band even at the cap               */
+  JitterOneSided       = 1u << 3,  /* seed on a bound: only one side probed */
+  JitterAsymmetric     = 1u << 4,  /* the two signs disagree by > 2x        */
+  JitterCliff          = 1u << 5,  /* a probe returned a non-rankable loss  */
+  JitterGateReject     = 1u << 6,  /* BUMPGATE band D: infeasible, not bad  */
+  JitterNoAnchor       = 1u << 7,  /* L0 unusable; AUTO abandoned           */
+  JitterInterrupted    = 1u << 8,  /* cap/time cut this dimension short     */
+  JitterInferred       = 1u << 9,  /* not measured: inherited from its family */
+  JitterNonMonotone    = 1u << 10, /* out of band INSIDE sigma (audit)        */
+};
+
+inline std::string jitter_status_text(unsigned st)
+{
+  if (st == JitterOk) return "ok";
+  std::string out;
+  auto add = [&](const char* n) { if (!out.empty()) out += '+'; out += n; };
+  if (st & JitterNumericalFloor) add("numerical-floor");
+  if (st & JitterSupportCapped)  add("support-capped");
+  if (st & JitterInsensitive)    add("insensitive");
+  if (st & JitterOneSided)       add("one-sided");
+  if (st & JitterAsymmetric)     add("asymmetric");
+  if (st & JitterCliff)          add("cliff");
+  if (st & JitterGateReject)     add("gate-reject");
+  if (st & JitterNoAnchor)       add("no-anchor");
+  if (st & JitterInterrupted)    add("interrupted");
+  if (st & JitterInferred)       add("inferred");
+  if (st & JitterNonMonotone)    add("non-monotone");
+  return out;
+}
+
+/* Initial state of ONE replica (ANNEAL_PT slot) / walker (ANNEAL_PA), shared
+ * by both drivers so the two cannot drift apart.
+ *
+ * `k` is the GLOBAL index: slot/walker 0 always starts exactly at the seed
+ * `x0`, whatever INIT_MODE says. JITTER spreads the rest around it at the
+ * initial proposal scale (independent of STEP_MODE -- the warm-up calibrates
+ * scale, not position); UNIFORM draws them from the whole box.
+ *
+ * RNG-CONSUMPTION CONTRACT. This function defines how much of the chain's
+ * private stream initialisation eats, and PT/PA trajectories at a fixed SEED
+ * are only reproducible while that is stable. Three things matter and are
+ * easy to "tidy" away:
+ *   - `nd` is constructed ONCE per replica, not per dimension. A
+ *     std::normal_distribution generates variates in pairs and caches the
+ *     second, so a per-dimension object would draw twice as often.
+ *   - slot 0 constructs `nd` but draws NOTHING (the `k > 0` guard), so the
+ *     branch shape has to stay as written rather than being hoisted.
+ *   - under BOUNDARY_MODE REDRAW, constrain_proposal calls `draw` again for
+ *     every rejected coordinate, so consumption is data-dependent.
+ * tests/test_seed_replica.cpp pins all three against an inline transcription
+ * of the pre-1.5.0 loop, comparing stream POSITION and not just coordinates:
+ * the two can agree while the streams have diverged. */
+template<class Vec>
+void seed_replica(ChainState<Vec>& c, std::uint64_t seed, std::size_t k,
+                  const Vec& x0, const std::vector<double>& proposal_scale,
+                  const std::vector<double>& jitter_sigma,
+                  const OptimizerSpec& sp, const Knobs& kb)
+{
+  const std::size_t dim = sp.low.size();
+  c.rng = make_stream(seed, SALT_CHAIN, k);
+  /* V is the PRODUCTION step and always comes from proposal_scale; only the
+   * initial displacement uses jitter_sigma. Under INIT_JITTER STEP the two
+   * are the same vector, which is the pre-1.5.0 behaviour. */
+  c.V   = proposal_scale;
+  c.x   = Vec(dim);
+  if (k == 0 || kb.init_mode == anneal_enums::INIT_MODE::JITTER) {
+    /* STEP keeps the Gaussian, so an unconfigured run is bit-identical to
+     * pre-1.5.0. FIXED/AUTO draw uniformly on +/-sigma instead: their sigma
+     * is a measured or declared BOUND, and a Gaussian would put ~32% of
+     * coordinates outside the bound it was told to respect. */
+    const bool gaussian = kb.init_jitter_mode == Knobs::JitterMode::Step;
+    std::normal_distribution<double> nd(0.0, 1.0);
+    std::uniform_real_distribution<double> ud(-1.0, 1.0);
+    for (std::size_t i = 0; i < dim; ++i) {
+      long double v = static_cast<long double>(x0(i));
+      if (k > 0) {
+        auto draw = [&]() {
+          return static_cast<long double>(x0(i)) +
+                 static_cast<long double>(jitter_sigma[i]) *
+                     (gaussian ? nd(c.rng) : ud(c.rng));
+        };
+        v = draw();
+        (void)constrain_proposal(v, sp.low[i], sp.high[i], kb.boundary_mode,
+                                 draw);
+      }
+      c.x(i) = static_cast<double>(v);
+    }
+  } else {
+    for (std::size_t i = 0; i < dim; ++i)
+      c.x(i) = std::uniform_real_distribution<>(sp.low[i], sp.high[i])(c.rng);
+  }
+  c.best_x = c.x;
 }
 
 /* ---- near-bound floor-step audit ---------------------------------------

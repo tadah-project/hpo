@@ -248,9 +248,9 @@ template<typename Vec, typename HostT>
       oss << "ANNEAL[" << (kb.corana ? "CORANA" : "CLASSIC") << "]: "
           << "seed=" << seed
           << "  RT=" << kb.rt
-          << "  BOUNDARY_MODE=" << static_cast<int>(kb.boundary_mode)
+          << "  BOUNDARY_MODE="
           << (kb.boundary_mode == anneal::BoundaryMode::Reflect
-                  ? "(REFLECT)" : "(REDRAW)");
+                  ? "REFLECT" : "REDRAW");
       if (kb.t_start) oss << "  T_INIT=" << *kb.t_start;
       if (kb.t_min) oss << "  T_MIN=" << *kb.t_min;
       else          oss << "  T_MIN=auto(T0*1e-6)";
@@ -260,7 +260,7 @@ template<typename Vec, typename HostT>
         else           oss << "  NT=auto";
         oss << "  CORANA_C=" << kb.corana_c
             << "  V_FLOOR_FRAC=" << kb.v_floor_frac;
-        if (kb.reset_to_best) oss << "  RESET_TO_BEST=1";
+        if (kb.reset_to_best) oss << "  RESET_TO_BEST=ON";
       } else {
         if (kb.chain_length > 0) oss << "  CHAIN_LENGTH=" << kb.chain_length;
         else                     oss << "  CHAIN_LENGTH=auto";
@@ -268,7 +268,7 @@ template<typename Vec, typename HostT>
       oss << "  STEP_FRAC=" << kb.step_frac
           << (kb.corana ? " (Corana V half-width/width)"
                         : " (CLASSIC Gaussian sigma/width)");
-      oss << "  REANNEAL=" << (kb.reanneal ? 1 : 0);
+      oss << "  REANNEAL=" << (kb.reanneal ? "ON" : "OFF");
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }

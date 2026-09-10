@@ -54,10 +54,26 @@ static void print_anneal_family_caps(std::ostream& os, unsigned kind_mask)
                     head << " (default "
                          << k->enum_values[static_cast<std::size_t>(def)]
                          << ")";
+            } else if (has && k->accepts_auto && def == k->auto_value) {
+                /* 1.5.0: print the TOKEN the user has to type. These keys
+                 * carry their AUTO sentinel as the numeric default, so the
+                 * raw value would advertise "(default -1)" for a key that
+                 * rejects -1. */
+                head << " (default AUTO)";
+            } else if (has && k->accepts_off && def == k->off_value) {
+                head << " (default OFF)";
             } else if (has) {
                 head << " (default " << def << ")";
             } else {
                 head << " (default auto)";
+            }
+            if (k->type != reg::AnnealKeyType::Enum &&
+                (k->accepts_auto || k->accepts_off)) {
+                head << " [accepts ";
+                if (k->accepts_auto) head << "AUTO";
+                if (k->accepts_auto && k->accepts_off) head << "/";
+                if (k->accepts_off) head << "OFF";
+                head << "]";
             }
             os << "     " << head.str() << "\n"
                << "        " << k->doc << "\n";
@@ -77,7 +93,7 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
     {
         os<<"   * Serial simulated annealing: classic whole-vector Gaussian kernel\n"
             "     (Kirkpatrick et al. 1983; Metropolis et al. 1953) by default;\n"
-            "     PARAM CORANA 1 selects the per-dimension adaptive kernel\n"
+            "     PARAM CORANA ON selects the per-dimension adaptive kernel\n"
             "     (Corana et al. 1987). Geometric cooling T <- T*RT; automatic T0\n"
             "     calibration unless PARAM T_INIT is set; CHAIN_LENGTH/NT default\n"
             "     AUTO (MAXEVAL budget spread over the cooling schedule).\n"
@@ -93,7 +109,7 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
     else if(algo=="ANNEAL_PT")
     {
         os<<"   * Parallel tempering (replica exchange): K replicas on a static\n"
-            "     (optionally self-adapting) log temperature ladder, slot 0 coldest.\n"
+            "     (optionally self-adapting) log temperature ladder, slot 1 coldest.\n"
             "     A replica runs ONE sweep per epoch (CLASSIC: one whole-vector\n"
             "     proposal; CORANA: dim single-coordinate moves), then adjacent pairs\n"
             "     attempt a state swap every SWAP_EVERY epochs with deterministic\n"
@@ -108,13 +124,16 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
             "     fan-out + MLIP train/predict); also the REPLICAS default.\n"
             "   * Diagnostics: per-pair swap tables + step reports every SWAP_WINDOW\n"
             "     epochs; ladder updates in hpo_temperature_ladder.tsv; calibrated\n"
-            "     step scales in hpo_step_scales.tsv.\n";
+            "     step scales in hpo_step_scales.tsv. Under CORANA, the\n"
+            "     per-dimension acceptance the stepper adapts on is summarised per\n"
+            "     slot in the journal and written in full to\n"
+            "     hpo_corana_acceptance.tsv (per SLOT/temperature, not per walker).\n";
         print_anneal_family_caps(os, tadah::hpo::anneal_registry::KIND_PT);
     }
     else if(algo=="ANNEAL_PA")
     {
         os<<"   * Population annealing over the ANNEAL stepper (classic by\n"
-            "     default, PARAM CORANA 1 for the adaptive variant). R walkers\n"
+            "     default, PARAM CORANA ON for the adaptive variant). R walkers\n"
             "     anneal from T_HOT to T_MIN; each temperature step reweights by\n"
             "     exp(-dbeta*f), resamples (systematic; FAILSCORE walkers receive zero\n"
             "     weight when at least one feasible walker exists; all-fail skips\n"

@@ -36,6 +36,7 @@
  */
 
 #include <tadah/hpo/optimizer_caps.h>
+#include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_spec.h>
 
 #include <cmath>
@@ -240,7 +241,7 @@ inline std::string format_step_report(const StepPlan&             plan,
     const bool have_start = start_internal.size() == plan.dx.size();
     for (std::size_t i = 0; i < plan.dx.size(); ++i) {
         const std::string lbl = i < sp.parameter_labels.size()
-                                ? sp.parameter_labels[i] : "dim[" + std::to_string(i) + "]";
+                                ? sp.parameter_labels[i] : logidx::dim_label(i);
         std::ostringstream row;
         row.setf(std::ios::scientific); row.precision(3);
         row << plan.dx[i];

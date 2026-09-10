@@ -22,3 +22,10 @@ coverage*.info
 coverage_html/
 perf.data
 perf.data.old
+
+# --- Run artifacts dropped in the repo root by ctest / a CLI run started here
+Testing/
+hpo_*.tsv
+hpo_*.hpo
+hpo_run.log
+*.tadah.lock

@@ -219,7 +219,7 @@ TEST_CASE("Corana step adaptation is stationary at fixed temperature",
      * max/min of V_gm over the second half < 3. */
     auto sp = anneal_test::serial_spec({-10.0, -10.0}, {10.0, 10.0});
     sp.stop.maxeval = 1;
-    sp.param["CORANA"] = 1.0;
+    sp.param_raw["CORANA"] = "ON";
     /* NS = 20 (the paper default): each per-dimension acceptance ratio
      * is measured on 20 samples per adjustment. At small NS the
      * controller adjusts on pure binomial noise (with NS = 5 and

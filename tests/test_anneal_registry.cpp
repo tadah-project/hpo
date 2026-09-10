@@ -62,12 +62,21 @@ void enable_context(OptimizerSpec& sp, const std::string& key,
     (void)kind;
     if (key == "NS" || key == "NT" || key == "CORANA_C" ||
         key == "V_FLOOR_FRAC")
-        sp.param["CORANA"] = 1.0;
+        sp.param_raw["CORANA"] = "ON";
     if (key.rfind("LADDER_ADAPT_", 0) == 0 || key == "LADDER_MIN_GAP" ||
         key == "LADDER_FREEZE")
-        sp.param["LADDER_ADAPT"] = 1.0;
+        sp.param_raw["LADDER_ADAPT"] = "ON";
     if (key == "STEP_TRUST_FACTOR" || key == "STEP_ADAPT_EVERY")
         sp.param_raw["STEP_MODE"] = "ADAPTIVE";
+    /* The INIT_JITTER_* shape/cost keys are meaningful only under the
+     * multi-token `INIT_MODE JITTER AUTO <p>` form. The rule table can only
+     * express "requires INIT_MODE == JITTER" (AUTO is an EXTRA on the enum
+     * value, not an enum value of its own), so the rest is a hand-written
+     * check in Knobs::parse and the context here has to match it. */
+    if (key.rfind("INIT_JITTER_", 0) == 0) {
+        sp.param_raw["INIT_MODE"] = "JITTER";
+        sp.param_tokens["INIT_MODE"] = {"JITTER", "AUTO", "0.05"};
+    }
 }
 
 /* A value that passes the key's declared range (customs get literals). */
@@ -94,13 +103,16 @@ double good_value(const reg::AnnealKeyInfo& ki)
     return ki.max / 2.0;
 }
 
-/* Write a valid value for the key into the spec: numeric keys go to
- * `param`, enum keys take their token form in `param_raw`. */
+/* Write a valid value for the key into the spec. Since 1.5.0 the value
+ * vocabulary is token-first: enum keys take their token, booleans take
+ * ON/OFF, and only genuinely numeric keys go to `param`. */
 void set_good(OptimizerSpec& sp, const reg::AnnealKeyInfo& ki)
 {
     if (ki.type == reg::AnnealKeyType::Enum)
         sp.param_raw[ki.name] =
             ki.enum_values[static_cast<std::size_t>(good_value(ki))];
+    else if (ki.type == reg::AnnealKeyType::Bool)
+        sp.param_raw[ki.name] = good_value(ki) != 0.0 ? "ON" : "OFF";
     else
         sp.param[ki.name] = good_value(ki);
 }
@@ -112,7 +124,8 @@ std::vector<double> bad_values(const reg::AnnealKeyInfo& ki)
     std::vector<double> bad;
     if (ki.type == reg::AnnealKeyType::Enum) return bad;
     if (ki.type == reg::AnnealKeyType::Bool) {
-        bad.push_back(2.0);
+        /* Booleans no longer have a numeric range: ANY number is rejected
+         * with the ON/OFF migration message, which has its own test. */
         return bad;
     }
     if (!ki.range_msg) return bad;
@@ -237,13 +250,13 @@ TEST_CASE("registry: every cross-key rule fires with its exact message",
                 /* flag absent -> rule fires */
                 break;
             case reg::AnnealRuleType::ConflictsFlag:
-                sp.param[rule.arg] = 1.0;
+                sp.param_raw[rule.arg] = "ON";   /* flags are ON/OFF (1.5.0) */
                 break;
             case reg::AnnealRuleType::UnusedWhenSet:
                 set_good(sp, *reg::find_key(rule.arg));
                 break;
             case reg::AnnealRuleType::UnusedWhenFlagOff:
-                sp.param[rule.arg] = 0.0;
+                sp.param_raw[rule.arg] = "OFF";
                 break;
             case reg::AnnealRuleType::RequiresEnum:
                 /* enum stays at its default, which the rule requires

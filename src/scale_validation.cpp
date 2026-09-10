@@ -1,4 +1,5 @@
 #include <tadah/hpo/scale_validation.h>
+#include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/initial_step.h>
 #include <tadah/hpo/hpo_log.h>
@@ -25,7 +26,7 @@ std::string dim_label(const OptimizerSpec& sp, std::size_t i)
 {
     if (i < sp.parameter_labels.size() && !sp.parameter_labels[i].empty())
         return sp.parameter_labels[i];
-    return "dim[" + std::to_string(i) + "]";
+    return logidx::dim_label(i);
 }
 
 bool is_log(const OptimizerSpec& sp, std::size_t i)

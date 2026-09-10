@@ -1,4 +1,5 @@
 #include <tadah/hpo/algorithms_pa.h>
+#include <tadah/hpo/anneal_jitter.h>
 #include <tadah/hpo/algorithms_pt.h>
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/optimizer_spec.h>
@@ -6,9 +7,15 @@
 #include <dlib/matrix.h>
 #include <mpi.h>
 
+#include <atomic>
+#include <cmath>
+#include <functional>
+#include <optional>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <limits>
 #include <mutex>
 #include <stdexcept>
@@ -24,6 +31,27 @@ struct Signature {
   std::uint64_t sum = 0;
   std::uint64_t xors = 0;
 };
+
+/* FNV-1a over a whole file. Used on hpo_corana_acceptance.tsv: the eval
+ * signature above proves the TRAJECTORY is rank-invariant, but says nothing
+ * about a diagnostic assembled by a gatherv -- a census that mis-ordered or
+ * dropped a rank's slot block would hash differently at 2 and 4 ranks while
+ * every evaluated point still matched. Returns {rows, hash}; rows is carried
+ * so an empty or missing file cannot pass as agreement. */
+std::pair<std::uint64_t, std::uint64_t> file_digest(const char* path)
+{
+  std::ifstream in(path, std::ios::binary);
+  if (!in) return {0, 0};
+  std::ostringstream body;
+  body << in.rdbuf();
+  const std::string text = body.str();
+  std::uint64_t h = 1469598103934665603ULL, rows = 0;
+  for (unsigned char c : text) {
+    if (c == '\n') ++rows;
+    h = (h ^ c) * 1099511628211ULL;
+  }
+  return {rows, h};
+}
 
 std::uint64_t point_hash(const Vec& x)
 {
@@ -102,12 +130,12 @@ tadah::hpo::OptimizerSpec base_spec(const char* algo, std::uint64_t maxeval)
   sp.seed = 20260809;
   sp.num_threads = 2;
   sp.stop.maxeval = maxeval;
-  sp.param["CORANA"] = 1.0;
+  sp.param_raw["CORANA"] = "ON";
   sp.param["NS"] = 1.0;
   /* NT is serial/PA-only now (ANNEAL_PT runs one sweep per epoch);
    * run_pa() adds it back for the population annealer. */
   sp.param["T_HOT"] = 1.0;
-  sp.param["BOUNDARY_MODE"] = 1.0;
+  sp.param_raw["BOUNDARY_MODE"] = "REDRAW";   /* enum since 1.5.0 */
   return sp;
 }
 
@@ -129,7 +157,7 @@ Signature run_pt_adaptive(std::uint64_t cap, RecordingHost& host)
   sp.param["REPLICAS"] = 8.0;
   sp.param["T_COLD"] = 0.1;
   sp.param["LADDER_POWER"] = 0.5;
-  sp.param["LADDER_ADAPT"] = 1.0;
+  sp.param_raw["LADDER_ADAPT"] = "ON";
   sp.param["LADDER_ADAPT_EVERY"] = 1.0;
   sp.param["LADDER_ADAPT_GAIN"] = 1.0;
   sp.param["LADDER_ADAPT_DECAY"] = 0.6;
@@ -140,7 +168,12 @@ Signature run_pt_adaptive(std::uint64_t cap, RecordingHost& host)
 Signature run_pt_auto(std::uint64_t cap, RecordingHost& host)
 {
   auto sp = base_spec("ANNEAL_PT", cap);
-  sp.param.erase("CORANA");
+  /* param_raw, not param: CORANA became an ON/OFF token in 1.5.0 and
+   * base_spec sets it there. Erasing the (now unused) numeric entry left
+   * CORANA ON, and under CORANA the driver SKIPS the step warm-up
+   * entirely -- so everything this case claims to cover below was in fact
+   * unreachable. */
+  sp.param_raw.erase("CORANA");
   sp.param.erase("NS");
   /* T_HOT is erased too: with STEP_MODE at its FROZEN default this
    * exercises the full auto path -- T0 pass 1, per-slot coordinate
@@ -324,9 +357,78 @@ int main(int argc, char** argv)
                   rank);
     }
 
+    /* ---- INIT_MODE JITTER AUTO is rank-invariant ------------------------
+     * The calibration splits DIMENSIONS across ranks and broadcasts the
+     * result. The broadcast is the correctness-critical half: every rank
+     * seeds its OWN replicas, so if each kept only its own block the ranks
+     * would jitter their slots from vectors nobody else agrees on and the
+     * ensemble would stop being one ensemble.
+     *
+     * The kernel consumes no RNG and the anchor (x0, f0) is shared, so the
+     * measured sigma must be bit-identical on every rank AND independent of
+     * how many ranks there are. Both are checked. */
+    {
+      auto jitter_spec = base_spec("ANNEAL_PT", 40);
+      jitter_spec.param["REPLICAS"] = 8.0;   /* PT needs REPLICAS >= world */
+      jitter_spec.param["T_COLD"] = 0.1;
+      jitter_spec.param_tokens["INIT_MODE"] = {"JITTER", "AUTO", "0.05"};
+      jitter_spec.param_raw["INIT_MODE"] = "JITTER";
+      RecordingHost jitter_host{rank, world};
+      tadah::hpo::run_anneal_pt_impl<Vec>(jitter_spec, jitter_host);
+
+      const auto kb = tadah::hpo::anneal::Knobs::parse(
+          jitter_spec, tadah::hpo::anneal::AlgoKind::PT);
+      require_all(kb.init_jitter_mode ==
+                      tadah::hpo::anneal::Knobs::JitterMode::Auto,
+                  "AUTO jitter mode did not survive the multi-token PARAM",
+                  rank);
+
+      /* Re-run the calibration directly so the sigma vector is inspectable,
+       * then compare rank 0's copy against every other rank's bit for bit. */
+      Vec x0(2);
+      x0(0) = 0.2; x0(1) = -0.1;
+      const double f0 = jitter_host(x0);
+      std::atomic<bool> stop_flag{false};
+      tadah::hpo::anneal::SharedBudget budget(1000000);
+      std::function<bool()> never = [] { return false; };
+      tadah::hpo::anneal::StopCtx jctx{budget, stop_flag, never, std::nullopt};
+      const std::vector<double> fallback(2, 0.1);
+      const auto plan = tadah::hpo::anneal::run_jitter_calibration<Vec>(
+          jitter_spec, kb, x0, f0, fallback, jitter_host, jctx, 0.0,
+          "ANNEAL_PT", rank, world);
+
+      /* Guard against a VACUOUS test: if the calibration abandoned (or never
+       * probed), every rank would trivially hold the same fallback vector
+       * and the rank-invariance check below would prove nothing. */
+      require_all(!plan.abandoned,
+                  "AUTO jitter calibration abandoned -- rank-invariance check "
+                  "would be vacuous", rank);
+      require_all(plan.probes > 0,
+                  "AUTO jitter calibration spent no probes -- rank-invariance "
+                  "check would be vacuous", rank);
+      require_all(plan.sigma.size() == 2,
+                  "AUTO jitter plan lost dimensions across the gather", rank);
+      std::vector<double> from_root = plan.sigma;
+      tadah::hpo::hpo_bcast(from_root);
+      require_all(from_root == plan.sigma,
+                  "AUTO jitter sigma differs between ranks -- the broadcast "
+                  "after the per-rank gather is missing or wrong", rank);
+      for (double s : plan.sigma)
+        require_all(std::isfinite(s) && s > 0.0,
+                    "AUTO jitter sigma is not a usable displacement", rank);
+    }
+
     RecordingHost pt{rank, world};
     const Signature pt_sig = run_pt(113, pt);
     require_all(pt_sig.count == 113, "PT did not consume exact MAXEVAL", rank);
+    /* Snapshot the Corana census this run just wrote, before the next run
+     * overwrites it. base_spec() sets CORANA ON and REPLICAS 8, so the file
+     * must exist with a header plus 8 slots x 2 dimensions = 17 lines --
+     * asserted here so a silently missing file cannot make the cross-rank
+     * comparison below vacuous. */
+    const auto census_digest = file_digest("hpo_corana_acceptance.tsv");
+    require_all(census_digest.first == 17,
+                "Corana acceptance census is missing or the wrong size", rank);
 
     RecordingHost pt_adaptive{rank, world};
     const Signature pt_adaptive_sig = run_pt_adaptive(113, pt_adaptive);
@@ -397,6 +499,15 @@ int main(int argc, char** argv)
     }
 
     if (rank == 0) {
+      /* The harness compares signatures across 1/2/4 ranks, which proves
+       * nothing if the launcher silently started N independent 1-rank jobs
+       * instead of one N-rank job -- a real hazard when several MPI
+       * installations are on PATH and the one matching the linked libmpi is
+       * not the one CMake found. Report the world size so the driver script
+       * can insist it got the ranks it asked for. */
+      std::cout << "ANNEAL_MPI_WORLD " << world << '\n';
+      std::cout << "ANNEAL_MPI_CENSUS " << census_digest.first << ':'
+                << census_digest.second << '\n';
       std::cout << "ANNEAL_MPI_SIGNATURE PT:" << pt_sig.count << ':'
                 << pt_sig.sum << ':' << pt_sig.xors
                 << " PT_ADAPT:" << pt_adaptive_sig.count << ':'

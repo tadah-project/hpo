@@ -12,6 +12,7 @@
  * rethrows after asa() returns (log-then-unwind, the PT precedent). */
 
 #include <tadah/hpo/algorithms_asa.h>
+#include <tadah/hpo/log_index.h>
 #include <tadah/hpo/asa_options.h>
 #include <tadah/hpo/asa_testing.h>
 #include <tadah/hpo/anneal_parallel.h>
@@ -363,7 +364,7 @@ struct AsaWorkspace {
                 if (x[i] == 0.0) {
                     if (!zeros.empty()) zeros += ", ";
                     zeros += (i < sp.parameter_labels.size() ? sp.parameter_labels[i]
-                                                             : "dim[" + std::to_string(i) + "]");
+                                                             : logidx::dim_label(i));
                 }
             if (!zeros.empty())
                 HPOLog::instance().info(

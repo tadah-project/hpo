@@ -33,7 +33,7 @@ OptimizerSpec anneal_spec(bool normalise)
     sp.param["T_MIN"] = 0.05;
     sp.param["RT"] = 0.8;
     sp.param["CHAIN_LENGTH"] = 10.0;
-    sp.param["REANNEAL"] = 0.0;
+    sp.param_raw["REANNEAL"] = "OFF";
     sp.param["STEP_FRAC"] = 0.2;
     return sp;
 }

@@ -21,7 +21,7 @@
  * and the benchmark harness -- to the paper's published results.
  *
  * Protocol-fidelity settings applied to every run (paper, Section 2):
- *   BOUNDARY_MODE 1  -- out-of-domain coordinates are redrawn (Step 2);
+ *   BOUNDARY_MODE REDRAW -- out-of-domain coordinates are redrawn (Step 2);
  *   REANNEAL 0       -- the paper has no re-annealing;
  *   T_MIN 1e-10      -- the paper has no temperature floor; the plateau
  *                       rule (eps over N_eps reductions, Step 7) is the
@@ -201,14 +201,14 @@ TEST_CASE("Corana 1987 protocol replication against the paper's Table II",
                     std::vector<double>(r.dim, r.high));
                 sp.optim_init.assign(1, r.start);
                 sp.seed = 1000 + 10 * std::uint64_t(ri) + std::uint64_t(s);
-                sp.param["CORANA"] = 1.0;
+                sp.param_raw["CORANA"] = "ON";
                 sp.param["T_INIT"] = r.t_init;
                 sp.param["RT"] = r.rt;
                 sp.param["NS"] = double(r.ns);
                 sp.param["NT"] = double(r.nt);
                 sp.param["NEPS"] = double(r.neps);
-                sp.param["BOUNDARY_MODE"] = 1.0;
-                sp.param["REANNEAL"] = 0.0;
+                sp.param_raw["BOUNDARY_MODE"] = "REDRAW";
+                sp.param_raw["REANNEAL"] = "OFF";
                 sp.param["T_MIN"] = 1e-10;
                 sp.param["V_FLOOR_FRAC"] = 1e-12;
                 if (r.v0 > 0.0)

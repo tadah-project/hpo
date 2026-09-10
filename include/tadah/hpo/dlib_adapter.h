@@ -1,5 +1,6 @@
 #pragma once
 #include <dlib/global_optimization.h>
+#include <tadah/hpo/log_index.h>
 #include <dlib/optimization.h>
 #include <tadah/hpo/gradient_provider.h>
 #include <tadah/hpo/optimizer_spec.h>
@@ -145,7 +146,7 @@ template<class Vec,class Runner>
         std::ostringstream oss;
         oss << "DLIB:GFS: dlib applies its own ln transform to "
             << (i < sp.parameter_labels.size() ? sp.parameter_labels[i]
-                                               : "dim[" + std::to_string(i) + "]")
+                                               : logidx::dim_label(i))
             << " (internal bounds [" << sp.low[i] << ", " << sp.high[i]
             << "], ratio >= 1000) and does not transform the INIT seeds "
                "handed to it; tag the dim LOG on its OPTIM line (or set "

@@ -79,6 +79,7 @@
 #include <vector>
 
 #include <tadah/hpo/durable_best.h>
+#include <tadah/hpo/probe_phase.h>
 
 namespace tadah::hpo::warmstart {
 
@@ -158,9 +159,22 @@ inline std::optional<durable_best::Key>& best_hot_key() {
  * STATIC warm-prime fallback, else nullopt (caller then uses the decl's
  * `initial`). Never consults best_hot, so a concurrent new-best promotion
  * cannot perturb a first eval. */
+/* Cache key for the calling context. During an off-budget probe phase the
+ * probes get their own key space above every real chain index, so a probe's
+ * converged hot variable can never be handed to a chain as if the chain had
+ * produced it (warm-start selection bias was the run15/16/17 artefact).
+ *
+ * This offsets the CACHE KEY only. current_chain() itself is untouched: it
+ * becomes EvalResult::chain_id and from there the fixed-width SLOT column,
+ * the durable-best comparison key, `# HPO_SOURCE_SLOT` and the resume key. */
+inline std::size_t cache_chain(std::size_t chain) {
+    return probe::active() ? probe::kWarmstartBase + chain : chain;
+}
+
 inline std::optional<double> get(std::size_t chain,
                                  const std::string& script,
                                  const std::string& name) {
+    chain = cache_chain(chain);
     std::lock_guard<std::mutex> lg(mtx());
     auto it = chain_cache().find({chain, script, name});
     if (it != chain_cache().end()) return it->second;
@@ -175,6 +189,7 @@ inline void set(std::size_t chain,
                 const std::string& script,
                 const std::string& name,
                 double value) {
+    chain = cache_chain(chain);
     std::lock_guard<std::mutex> lg(mtx());
     chain_cache()[{chain, script, name}] = value;
 }

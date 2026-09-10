@@ -3,6 +3,7 @@
  * pc_worker_pool.h; wire codec in pc_worker_wire.h. */
 
 #include <tadah/hpo/pc_worker_pool.h>
+#include <tadah/hpo/log_index.h>
 #include <tadah/hpo/pc_worker_wire.h>
 #include <tadah/hpo/hpo_log.h>
 
@@ -123,7 +124,7 @@ void PcWorkerPool::spawn_locked(Channel& ch, int slot) {
    * call), so the gate correctly treats the channel as idle. */
   if (ch.consec_deaths >= PC_MAX_CONSEC_DEATHS) {
     HPOLog::instance().warning(
-        "pc-worker slot " + std::to_string(slot) + ": "
+        "pc-worker " + logidx::uis(static_cast<std::size_t>(slot)) + ": "
         + std::to_string(ch.consec_deaths)
         + " consecutive worker deaths with no successful task -- backing off "
         + std::to_string(PC_RESPAWN_BACKOFF_MS) + " ms, then respawning");
@@ -189,9 +190,10 @@ void PcWorkerPool::spawn_locked(Channel& ch, int slot) {
       throw std::runtime_error("protocol version mismatch");
   } catch (const std::exception& e) {
     kill_reap_locked(ch, slot, e.what());
-    throw std::runtime_error(std::string("pc-worker slot ")
-                             + std::to_string(slot)
-                             + ": handshake failed: " + e.what());
+    throw std::runtime_error(
+        std::string("pc-worker ")
+        + logidx::uis(static_cast<std::size_t>(slot))
+        + ": handshake failed: " + e.what());
   }
 }
 
@@ -217,7 +219,7 @@ void PcWorkerPool::kill_reap_locked(Channel& ch, int slot, const char* why) {
   /* ALWAYS journaled: silent respawns would mask crash-loops and sanitizer
    * aborts inside workers. */
   HPOLog::instance().warning(
-      std::string("pc-worker slot ") + std::to_string(slot)
+      std::string("pc-worker ") + logidx::uis(static_cast<std::size_t>(slot))
       + " killed/died: " + why + "; wait: " + status
       + (deliberate
              ? "; deliberate (FAILPROBE gate) -- not counted as a slot fault"

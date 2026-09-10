@@ -100,6 +100,7 @@ kinds = ["serial", "pa"]
 group = "steps"
 rank = 3
 doc = "CLASSIC kernel: whole-vector proposals per temperature rung. Serial default AUTO: the MAXEVAL budget spread evenly over the cooling schedule (journaled)."
+accepts_auto = 0.0
 min = 1
 # serial default is AUTO (derived in the driver from MAXEVAL and the
 # schedule length; hard error when neither CHAIN_LENGTH nor MAXEVAL is set)
@@ -123,6 +124,7 @@ kinds = ["serial", "pa"]
 group = "steps"
 rank = 5
 doc = "Corana kernel: step-adjustment cycles per temperature rung. Serial default AUTO: budget-derived, capped at the Corana 1987 value max(100, 5n)."
+accepts_auto = 0.0
 min = 1
 range_note = "(Corana variant)"
 
@@ -151,14 +153,13 @@ max = 1.0
 
 [[key]]
 name = "BOUNDARY_MODE"
-type = "count"
-default = "0"
+type = "enum"
+values = ["REFLECT", "REDRAW"]
+default = "REFLECT"
 kinds = ["serial", "pt", "pa"]
 group = "steps"
 rank = 8
-doc = "Out-of-box proposal handling: 0 = REFLECT (exact mirror fold), 1 = REDRAW the offending coordinate."
-max = 1
-range_msg = "must be 0 (REFLECT) or 1 (REDRAW)"
+doc = "Out-of-box proposal handling: REFLECT = exact mirror fold; REDRAW = resample the offending coordinate."
 
 [[key]]
 name = "RESET_TO_BEST"
@@ -281,8 +282,9 @@ default = "0"
 kinds = ["pt"]
 group = "ladder"
 rank = 1
-doc = "Number of ladder slots K; 0 resolves to max(THREADS, 2)."
-custom_range = true   # >= 2 enforced only when explicitly set
+doc = "Number of ladder slots K. AUTO resolves to max(THREADS, 2)."
+accepts_auto = 0.0
+custom_range = true   # >= 2 enforced only when explicitly set numerically
 
 [[key]]
 name = "T_COLD"
@@ -397,7 +399,10 @@ default = "20"
 kinds = ["pt"]
 group = "swaps"
 rank = 2
-doc = "Epochs per swap-diagnostics window (windowed tables, step reports, epoch summary cadence); 0 = cumulative tables only."
+doc = "Epochs per swap-diagnostics window (windowed tables, step reports, epoch summary cadence); OFF = cumulative tables only."
+accepts_off = 0.0
+min = 1
+range_msg = "must be >= 1 (or OFF for cumulative tables only)"
 
 [[key]]
 name = "STEP_MODE"
@@ -426,8 +431,9 @@ default = "64.0"
 kinds = ["pt"]
 group = "steps"
 rank = 12
-doc = "Clamp adapted step scales to [baseline/f, baseline*f] around the calibrated baseline; 0 = off (STEP_MODE ADAPTIVE)."
-custom_range = true   # 0 (off) or > 1
+doc = "Clamp adapted step scales to [baseline/f, baseline*f] around the calibrated baseline; OFF disables the clamp (STEP_MODE ADAPTIVE)."
+accepts_off = 0.0
+custom_range = true   # OFF, or > 1; 0 is no longer accepted
 
 # ------------------------------------------------------- parallel shared ----
 
@@ -439,7 +445,90 @@ default = "JITTER"
 kinds = ["pt", "pa"]
 group = "init"
 rank = 1
-doc = "Replica initialisation: JITTER = slot 0 exactly at the seed, others Gaussian-jittered around it; UNIFORM = others drawn uniformly in the OPTIM box."
+doc = "Replica initialisation. JITTER (default): slot 1 sits exactly at the seed and the others are displaced around it -- `JITTER` alone uses a Gaussian of sigma = STEP_FRAC*width, `JITTER <fraction>` a uniform draw on +/-fraction*width, `JITTER AUTO <p>` a uniform draw on +/-sigma_d with sigma_d MEASURED per dimension as the largest displacement holding the loss within p of the seed. UNIFORM: the others are drawn uniformly in the OPTIM box. Under ANNEAL_PT the displacement is additionally ladder-scaled -- see INIT_JITTER_LADDER."
+
+# NOTE the INIT_JITTER_* keys below are gated on `INIT_MODE JITTER AUTO <p>`,
+# which the rule table cannot express: AUTO is an EXTRA token on the JITTER
+# enum value, not an enum value of its own. A `requires_enum ... value = "JITTER"`
+# rule would also be DEAD, because JITTER is INIT_MODE's default and the rule
+# could never fire. The check is hand-written in anneal::Knobs::parse instead.
+[[key]]
+name = "INIT_JITTER_MAX"
+type = "float"
+default = "0.5"
+kinds = ["pt", "pa"]
+group = "init"
+rank = 2
+doc = "INIT_MODE JITTER AUTO: cap on the measured sigma as a fraction of the OPTIM interval; also the screen probe point."
+min = 0.0
+min_open = true
+max = 1.0
+range_msg = "must be in (0,1]"
+
+[[key]]
+name = "INIT_JITTER_PROBES"
+type = "count"
+default = "8"
+kinds = ["pt", "pa"]
+group = "init"
+rank = 3
+doc = "INIT_MODE JITTER AUTO: maximum objective probes per dimension, split between the two sides."
+min = 2
+range_msg = "must be >= 2 (one screen probe per side)"
+
+[[key]]
+name = "INIT_JITTER_MAXEVAL"
+type = "count"
+default = "0"
+accepts_auto = 0.0
+kinds = ["pt", "pa"]
+group = "init"
+rank = 4
+doc = "INIT_MODE JITTER AUTO: hard cap on calibration probes. AUTO resolves to the protocol's own worst case (dimensions x INIT_JITTER_PROBES). Never charged against MAXEVAL."
+custom_range = true   # AUTO, or >= 1 when set numerically
+
+[[key]]
+name = "INIT_JITTER_SAMPLE"
+type = "count"
+default = "0"
+kinds = ["pt", "pa"]
+group = "init"
+rank = 6
+doc = "INIT_MODE JITTER AUTO: measure only this many dimensions, chosen round-robin across parameter families; the rest inherit their family's median sigma/width and are flagged `inferred`. 0 = measure every dimension."
+
+[[key]]
+name = "INIT_JITTER_AUDIT"
+type = "count"
+default = "32"
+kinds = ["pt", "pa"]
+group = "init"
+rank = 7
+doc = "INIT_MODE JITTER AUTO: re-probe this many measured dimensions at sigma/2 to detect a loss that is non-monotone in displacement (sigma is a grid certificate, not a proof). 0 = skip the audit."
+
+[[key]]
+name = "INIT_JITTER_LADDER"
+type = "float"
+default = "-1"
+accepts_auto = -1.0
+accepts_off = 0.0
+kinds = ["pt"]
+group = "init"
+rank = 8
+doc = "Scale each slot's initial jitter by (T_k/T_HOT)^gamma, so cold slots start near the seed and hot ones explore. AUTO = gamma 0.5, the equipartition law (the equilibrium coordinate spread in a locally quadratic basin goes as sqrt(T)), floored at the resolvable coordinate scale so cold slots cannot collapse onto the seed. OFF = every slot uses the same sigma (pre-1.5.0 behaviour). A number in (0,4] sets gamma directly. Applies to every INIT_MODE JITTER variant, not only AUTO."
+custom_range = true   # AUTO, OFF, or 0 < gamma <= 4
+
+[[key]]
+name = "INIT_JITTER_MAXTIME_FRAC"
+type = "float"
+default = "0.25"
+kinds = ["pt", "pa"]
+group = "init"
+rank = 5
+doc = "INIT_MODE JITTER AUTO: share of OPTIMIZER MAXTIME the calibration may consume. MAXEVAL is not charged, so time is the axis that still bounds the phase."
+min = 0.0
+min_open = true
+max = 1.0
+range_msg = "must be in (0,1]"
 
 # -------------------------------------------------------------------- PA ----
 
@@ -460,11 +549,13 @@ default = "0.5"
 kinds = ["pa"]
 group = "temperature"
 rank = 9
-doc = "Adaptive temperature-step target for the effective sample size; 0 = geometric RT schedule."
+doc = "Adaptive temperature-step target for the effective sample size; OFF selects the geometric RT schedule."
+accepts_off = 0.0
 min = 0.0
+min_open = true
 max = 1.0
 max_open = true
-range_note = "(0 = geometric RT schedule)"
+range_msg = "must be in (0,1) (or OFF for the geometric RT schedule)"
 
 # ------------------------------------------------------------------ rules ----
 
@@ -472,25 +563,25 @@ range_note = "(0 = geometric RT schedule)"
 type = "requires_flag"
 key = "NS"
 flag = "CORANA"
-msg = "PARAM NS requires PARAM CORANA 1"
+msg = "PARAM NS requires PARAM CORANA ON"
 
 [[rule]]
 type = "requires_flag"
 key = "NT"
 flag = "CORANA"
-msg = "PARAM NT requires PARAM CORANA 1"
+msg = "PARAM NT requires PARAM CORANA ON"
 
 [[rule]]
 type = "requires_flag"
 key = "CORANA_C"
 flag = "CORANA"
-msg = "PARAM CORANA_C requires PARAM CORANA 1"
+msg = "PARAM CORANA_C requires PARAM CORANA ON"
 
 [[rule]]
 type = "requires_flag"
 key = "V_FLOOR_FRAC"
 flag = "CORANA"
-msg = "PARAM V_FLOOR_FRAC requires PARAM CORANA 1"
+msg = "PARAM V_FLOOR_FRAC requires PARAM CORANA ON"
 
 [[rule]]
 type = "conflicts_flag"
@@ -532,7 +623,7 @@ msg = "PARAM T0_ACCEPT is unused when T_HOT is set"
 type = "unused_when_flag_off"
 key = "REANNEAL_SCALE"
 flag = "REANNEAL"
-msg = "PARAM REANNEAL_SCALE is unused when REANNEAL is 0"
+msg = "PARAM REANNEAL_SCALE is unused when REANNEAL is OFF"
 
 [[rule]]
 type = "unused_when_set"
@@ -544,31 +635,31 @@ msg = "PARAM LADDER_SPAN is unused when T_COLD is set"
 type = "unused_when_flag_off"
 key = "LADDER_ADAPT_EVERY"
 flag = "LADDER_ADAPT"
-msg = "PARAM LADDER_ADAPT_EVERY is unused when LADDER_ADAPT is 0"
+msg = "PARAM LADDER_ADAPT_EVERY is unused when LADDER_ADAPT is OFF"
 
 [[rule]]
 type = "unused_when_flag_off"
 key = "LADDER_ADAPT_GAIN"
 flag = "LADDER_ADAPT"
-msg = "PARAM LADDER_ADAPT_GAIN is unused when LADDER_ADAPT is 0"
+msg = "PARAM LADDER_ADAPT_GAIN is unused when LADDER_ADAPT is OFF"
 
 [[rule]]
 type = "unused_when_flag_off"
 key = "LADDER_ADAPT_DECAY"
 flag = "LADDER_ADAPT"
-msg = "PARAM LADDER_ADAPT_DECAY is unused when LADDER_ADAPT is 0"
+msg = "PARAM LADDER_ADAPT_DECAY is unused when LADDER_ADAPT is OFF"
 
 [[rule]]
 type = "unused_when_flag_off"
 key = "LADDER_MIN_GAP"
 flag = "LADDER_ADAPT"
-msg = "PARAM LADDER_MIN_GAP is unused when LADDER_ADAPT is 0"
+msg = "PARAM LADDER_MIN_GAP is unused when LADDER_ADAPT is OFF"
 
 [[rule]]
 type = "unused_when_flag_off"
 key = "LADDER_FREEZE"
 flag = "LADDER_ADAPT"
-msg = "PARAM LADDER_FREEZE is unused when LADDER_ADAPT is 0"
+msg = "PARAM LADDER_FREEZE is unused when LADDER_ADAPT is OFF"
 
 [[rule]]
 type = "conflicts_flag"
@@ -661,3 +752,7 @@ msg = "PARAM NT is not used by ANNEAL_PT: slot temperatures are fixed, so there 
 old = "CHAIN_LENGTH"
 kinds = ["pt"]
 msg = "PARAM CHAIN_LENGTH is not used by ANNEAL_PT: a replica runs one sweep per epoch so exchange stays frequent; the diagnostics cadence is SWAP_WINDOW"
+
+
+
+

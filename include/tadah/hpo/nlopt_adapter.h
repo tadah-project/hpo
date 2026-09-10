@@ -1,5 +1,6 @@
 #pragma once
 #include <nlopt.hpp>
+#include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
@@ -290,7 +291,7 @@ void run_nlopt(const OptimizerSpec& sp,
                 std::ostringstream oss;
                 oss << sp.algo << ": "
                     << (i < sp.parameter_labels.size() ? sp.parameter_labels[i]
-                                                       : "dim[" + std::to_string(i) + "]")
+                                                       : logidx::dim_label(i))
                     << ": " << effective.note[i];
                 HPOLog::instance().warning(oss.str());
             }

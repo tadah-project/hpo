@@ -193,7 +193,7 @@ TEST_CASE("ANNEAL_PT skips the second calibration pass when the first "
     SECTION("CORANA: V starts at the pass-1 kernel and adapts live") {
         P2Log lr;
         auto sp = p2_pt_spec({-1.0}, {1.0});
-        sp.param["CORANA"] = 1.0;
+        sp.param_raw["CORANA"] = "ON";
         sp.seed = 8104;
         sp.num_threads = 1;
         sp.stop.maxeval = 200;
@@ -298,7 +298,7 @@ TEST_CASE("serial ANNEAL observer sees each rung end on the cooling "
     sp.param["T_MIN"] = 0.5;
     sp.param["RT"] = 0.9;
     sp.param["CHAIN_LENGTH"] = 5.0;
-    sp.param["REANNEAL"] = 0.0;
+    sp.param_raw["REANNEAL"] = "OFF";
 
     P2Stub stub{[](const Vec& x) { return x(0) * x(0); }};
     run_anneal_impl<Vec>(sp, stub);

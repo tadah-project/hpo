@@ -292,7 +292,8 @@ public:
     static constexpr int kSlotProbe = -2;   /* T0-calibration probe eval */
 
     /** Stamp the calling thread's evals as ladder slot @p slot of
-     *  @p n_slots (0 = coldest) at absolute temperature @p T. Stamp with
+     *  @p n_slots (0-based; the coldest slot, journalled as 1) at absolute
+     *  temperature @p T. Stamp with
      *  the T at eval time so a cooling ladder (RT < 1) stays correct.
      *  @p t_label names the temperature in the journal tag (default
      *  "T"; ASA block slots stamp the COST temperature as "Tcost").
@@ -506,6 +507,15 @@ private:
 
     /* ", slot 5/32 T=3.712e+00" | ", T0 probe" | "" -- mtx_ held. */
     std::string best_origin_str() const;
+
+    /* "slot 5/32 T=3.712e+00" from a ZERO-BASED slot. The single place the
+     * slot tag is rendered: the BEST line and best_origin_str() read the
+     * slot from different members (tl_slot vs cur_best_slot_), so formatting
+     * them separately is how the same best ends up reported under two
+     * different numbers in one file. Callers keep their 0-based value --
+     * it is also the key of the best_slot_* maps below. */
+    static std::string slot_tag(int slot, std::size_t n_slots, double T,
+                                const char* t_label);
 
     /* C3: suggested FTOL_REL from NOISE_CALIBRATION. Persisted so a
      * resumed BASINS run (which skips re-running NOISE_CALIBRATION)

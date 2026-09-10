@@ -743,8 +743,24 @@ void HPOTargets::read(const std::string& fn)
 
             /* Common opt-attribute keys (LIB/ALGO/MAXEVAL/...) accepted in
              * any block where active_opt is set. */
-            if (active_opt && dispatch_opt_attr(key, iss, *active_opt))
+            if (active_opt && dispatch_opt_attr(key, iss, *active_opt)) {
+                /* Strict arity. dispatch_opt_attr() reads exactly the value
+                 * tokens its key defines, so anything still on the line is a
+                 * typo, a stray word, or a value for a key that does not take
+                 * one -- e.g. `PARAM STEP_FRAC 0.15 0.3`, or the pre-1.5.0
+                 * `PARAM INIT_MODE JITTER AUTO 0.05` on a build that does not
+                 * know AUTO. All of those were silently discarded before.
+                 * This is safe only here: HPOTargets::read() is line-framed,
+                 * whereas read_optimizer_block() sees a flat token stream in
+                 * which "leftovers" are simply the next key. */
+                std::string extra_tok;
+                if (iss >> extra_tok)
+                    throw std::runtime_error(
+                        "line " + std::to_string(nline) + ": " + key +
+                        " takes no further value here (unexpected '" +
+                        extra_tok + "')");
                 continue;
+            }
 
             /* INIT / RESTART block keys */
             if (block == INIT_BLK || block == RESTART_BLK) {

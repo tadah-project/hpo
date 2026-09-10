@@ -1,4 +1,4 @@
-# 20 -- Corana adaptive simulated annealing (TADAH:ANNEAL, CORANA 1).
+# 20 -- Corana adaptive simulated annealing (TADAH:ANNEAL, CORANA ON).
 #
 # The serial annealer with the Corana et al. (1987) adaptive per-dim
 # step vector: one-dim-at-a-time proposals, V[i] adapted every NS-cycle
@@ -15,15 +15,15 @@ OPTIMIZER
     ALGO ANNEAL
     SEED 1234
     MAXEVAL 240
-    PARAM CORANA 1
+    PARAM CORANA ON
     PARAM NS 3
     PARAM NT 2
     PARAM RT 0.85
     PARAM STEP_FRAC 0.15
-    PARAM BOUNDARY_MODE 0      # exact reflection
+    PARAM BOUNDARY_MODE REFLECT      # exact reflection
     PARAM T0_PROBES 20
     PARAM T0_ACCEPT 0.8
-    PARAM REANNEAL 1
+    PARAM REANNEAL ON
   ENDSTRATEGY
 ENDOPTIMIZER
 

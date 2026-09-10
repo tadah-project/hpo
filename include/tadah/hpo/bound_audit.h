@@ -19,6 +19,7 @@
  */
 
 #include <tadah/hpo/search_space.h>
+#include <tadah/hpo/log_index.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -79,7 +80,7 @@ public:
     const std::vector<Mark>& marks() const noexcept { return marks_; }
     std::uint64_t last_eval() const noexcept { return last_eval_; }
     std::string label(std::size_t i) const
-    { return space_ && i < space_->dim() ? space_->labels()[i] : "dim[" + std::to_string(i) + "]"; }
+    { return space_ && i < space_->dim() ? space_->labels()[i] : logidx::dim_label(i); }
 
 private:
     SearchSpacePtr    space_;

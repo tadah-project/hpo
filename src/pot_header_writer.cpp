@@ -289,14 +289,33 @@ void PotHeaderWriter::write_optim_section(std::ostream& os,
     }
     if (sp.seed) kv(os, "Seed", std::to_string(*sp.seed));
     if (sp.pop)  kv(os, "Population", std::to_string(*sp.pop));
-    if (!sp.param.empty()) {
-        std::vector<std::pair<std::string, double>> params(sp.param.begin(), sp.param.end());
+    /* Token-valued and multi-token PARAMs too: the numeric-only walk left
+     * `PARAM INIT_MODE UNIFORM` out of the provenance header entirely. */
+    if (!sp.param.empty() || !sp.param_raw.empty()) {
+        std::vector<std::pair<std::string, std::string>> params;
+        params.reserve(sp.param.size() + sp.param_raw.size());
+        const auto rendered = [&sp](const std::string& name,
+                                    const std::string& fallback) {
+            const auto it = sp.param_tokens.find(name);
+            if (it == sp.param_tokens.end()) return fallback;
+            std::string joined;
+            for (const auto& t : it->second) {
+                if (!joined.empty()) joined += ' ';
+                joined += t;
+            }
+            return joined;
+        };
+        for (const auto& kvp : sp.param)
+            params.emplace_back(kvp.first,
+                                rendered(kvp.first, fmt_double(kvp.second)));
+        for (const auto& kvp : sp.param_raw)
+            params.emplace_back(kvp.first, rendered(kvp.first, kvp.second));
         std::sort(params.begin(), params.end(),
                   [](const auto& a, const auto& b) { return a.first < b.first; });
         std::vector<std::string> param_lines;
         param_lines.reserve(params.size());
         for (const auto& kvp : params)
-            param_lines.push_back(kvp.first + "=" + fmt_double(kvp.second));
+            param_lines.push_back(kvp.first + "=" + kvp.second);
         wrap(os, "Params:", param_lines);
     }
 

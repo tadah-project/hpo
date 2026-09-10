@@ -114,7 +114,7 @@ TEST_CASE("ANNEAL_PA: INIT_MODE JITTER uses Gaussian seed jitter for both steppe
         sp.param_raw["INIT_MODE"] = "JITTER";   /* the default, explicit */
         sp.param["T_HOT"] = 1.0;
         if (corana) {
-            sp.param["CORANA"] = 1.0;
+            sp.param_raw["CORANA"] = "ON";
             sp.param["NS"] = 1.0;
             sp.param["NT"] = 1.0;
         } else {
@@ -285,7 +285,7 @@ TEST_CASE("ANNEAL_PA: thread-count invariance (same SEED => same eval set)",
         sp.num_threads = threads;
         sp.pop = 16;
         sp.stop.maxeval = 700;
-        sp.param["CORANA"] = 1.0;
+        sp.param_raw["CORANA"] = "ON";
         sp.param["NS"]     = 2.0;
         sp.param["NT"]     = 1.0;
         sp.param["T_HOT"]  = 1.0;
@@ -479,7 +479,7 @@ TEST_CASE("ANNEAL_PA: subnormal temperatures make geometric progress",
           std::string::npos);
 }
 
-TEST_CASE("ANNEAL_PA: ESS_TARGET 0 gives the pure geometric schedule",
+TEST_CASE("ANNEAL_PA: ESS_TARGET OFF gives the pure geometric schedule",
           "[HPO][anneal_pa][log]")
 {
     using namespace tadah::hpo;
@@ -493,7 +493,7 @@ TEST_CASE("ANNEAL_PA: ESS_TARGET 0 gives the pure geometric schedule",
     sp.param["T_HOT"]      = 1.0;
     sp.param["T_MIN"]      = 0.2;
     sp.param["RT"]         = 0.5;
-    sp.param["ESS_TARGET"] = 0.0;
+    sp.param_raw["ESS_TARGET"] = "OFF";
 
     LoggedRun lr;
     MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
@@ -514,7 +514,7 @@ TEST_CASE("ANNEAL_PA: Corana banner and step diagnostics expose bounds",
     sp.num_threads = 2;
     sp.pop = 16;
     sp.stop.maxeval = 160;
-    sp.param["CORANA"] = 1.0;
+    sp.param_raw["CORANA"] = "ON";
     sp.param["NS"] = 1.0;
     sp.param["NT"] = 1.0;
     sp.param["T_HOT"] = 1.0;
@@ -530,7 +530,7 @@ TEST_CASE("ANNEAL_PA: Corana banner and step diagnostics expose bounds",
     CHECK(log.find("V_FLOOR_FRAC=") != std::string::npos);
     CHECK(log.find("STEP_FRAC=0.123 (Corana V half-width/width)")
           != std::string::npos);
-    CHECK(log.find("BOUNDARY_MODE=0(REFLECT)") != std::string::npos);
+    CHECK(log.find("BOUNDARY_MODE=REFLECT") != std::string::npos);
     CHECK(log.find("INIT_MODE=JITTER") != std::string::npos);
     CHECK(log.find("V_floor=") != std::string::npos);
     CHECK(log.find("V_cap=") != std::string::npos);
@@ -588,7 +588,7 @@ TEST_CASE("ANNEAL_PA: validation errors", "[HPO][anneal_pa][validation]")
         set_seed_point(sp, {0.0});
         sp.stop.maxeval = 10;
         sp.pop = 16;
-        sp.param["RESET_TO_BEST"] = 1.0;
+        sp.param_raw["RESET_TO_BEST"] = "ON";
         REQUIRE_THROWS_WITH(run_anneal_pa_impl<Vec>(sp, stub),
                             Catch::Contains("RESET_TO_BEST"));
     }
@@ -605,7 +605,7 @@ TEST_CASE("ANNEAL_PA: converges on a quadratic bowl",
     sp.num_threads = 4;
     sp.pop = 16;
     sp.stop.maxeval = 1500;
-    sp.param["CORANA"] = 1.0;
+    sp.param_raw["CORANA"] = "ON";
     sp.param["NS"]     = 2.0;
     sp.param["NT"]     = 1.0;
     sp.param["T_HOT"]  = 1.0;

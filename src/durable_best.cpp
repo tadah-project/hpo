@@ -242,6 +242,7 @@ void reset_for_fresh_run(const std::string& path)
 std::optional<Key> parse_key(const std::string& payload)
 {
     Key key;
+    int format_version = 0;
     bool have_format = false, have_loss = false, have_rank = false,
          have_slot = false, have_eval = false;
     std::istringstream input(payload);
@@ -251,8 +252,8 @@ std::optional<Key> parse_key(const std::string& payload)
         std::string hash, name;
         if (!(fields >> hash >> name) || hash != "#") continue;
         if (name == "HPO_BEST_FORMAT") {
-            int version = 0;
-            have_format = static_cast<bool>(fields >> version) && version == 1;
+            have_format = static_cast<bool>(fields >> format_version) &&
+                          (format_version == 1 || format_version == 2);
         } else if (name == "HPO_BEST_LOSS") {
             have_loss = static_cast<bool>(fields >> key.loss);
         } else if (name == "HPO_SOURCE_RANK") {
@@ -267,6 +268,13 @@ std::optional<Key> parse_key(const std::string& payload)
     if (!have_format || !have_loss || !have_rank || !have_slot || !have_eval ||
         !std::isfinite(key.loss) || key.rank < 0)
         return std::nullopt;
+    /* FORMAT 1 wrote the slot 0-based; FORMAT 2 writes it 1-based. Normalise
+     * to the internal 0-based value either way, so a Key parsed from an old
+     * best_pot.tadah still orders correctly against a freshly built one. */
+    if (format_version >= 2) {
+        if (key.slot == 0) return std::nullopt;   /* 1-based: 0 is malformed */
+        key.slot -= 1;
+    }
     return key;
 }
 

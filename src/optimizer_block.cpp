@@ -6,6 +6,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace tadah {
 namespace hpo {
@@ -37,6 +38,49 @@ std::string opt_attr_keys_joined(const char *sep) {
     out += k;
   }
   return out;
+}
+
+namespace {
+std::string up(std::string s) {
+  for (char &c : s) c = static_cast<char>(std::toupper((unsigned char)c));
+  return s;
+}
+}  // namespace
+
+namespace {
+bool looks_numeric(const std::string &t) {
+  try {
+    std::size_t pos = 0;
+    (void)std::stod(t, &pos);
+    return pos == t.size();
+  } catch (const std::exception &) {
+    return false;
+  }
+}
+}  // namespace
+
+bool param_takes_another_value(const std::string &key,
+                               const std::vector<std::string> &sofar,
+                               const std::string &next) {
+  /* Value grammar for `PARAM <key> ...`, family-agnostic on purpose:
+   * optimizer_block.cpp is shared with `tadah refit` and must not include an
+   * optimiser family's key registry. The annealers' registry is the authority
+   * on what the tokens MEAN; this decides only how many to read.
+   *
+   * It must be a GRAMMAR and not a maximum count. read_optimizer_block()
+   * presents the whole block as one flat token stream, so a key with "up to 3
+   * values" would happily read `JITTER SEED 1234` out of
+   *   PARAM INIT_MODE JITTER   SEED 1234
+   * and silently consume the next key. Deciding per token -- is this one
+   * actually part of my value? -- is correct in both framings. */
+  if (sofar.empty()) return true;          // every PARAM takes >= 1 value
+  if (key != "INIT_MODE") return false;
+
+  // INIT_MODE UNIFORM | JITTER [AUTO <p> | <frac>]
+  if (up(sofar[0]) != "JITTER") return false;
+  if (sofar.size() == 1) return up(next) == "AUTO" || looks_numeric(next);
+  if (sofar.size() == 2 && up(sofar[1]) == "AUTO") return true;   // the p value
+  return false;
 }
 
 bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
@@ -176,10 +220,32 @@ bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
           "(got '" +
           v + "')");
   } else if (key == "PARAM") {
-    std::string p, raw;
-    iss >> p >> raw;
-    if (p.empty() || raw.empty())
+    std::string p;
+    iss >> p;
+    /* Read at most this key's declared arity. Reading "the rest" is NOT
+     * an option: read_block_until() hands us a flat token stream over the
+     * whole block, so everything after the value -- the next key, the
+     * ENDSTRATEGY terminator -- is still in `iss`. A bounded read is
+     * correct in both framings; the line-framed caller
+     * (HPOTargets::read) additionally rejects whatever it leaves behind. */
+    std::vector<std::string> vals;
+    const std::string ukey = up(p);
+    for (;;) {
+      const std::streampos save = iss.tellg();
+      std::string t;
+      if (!(iss >> t)) { iss.clear(); break; }
+      if (!param_takes_another_value(ukey, vals, t)) {
+        /* Not ours -- put it back for the caller. Same rewind idiom the STEP
+         * override branch above uses. */
+        iss.clear();
+        iss.seekg(save);
+        break;
+      }
+      vals.push_back(std::move(t));
+    }
+    if (p.empty() || vals.empty())
       throw std::runtime_error("PARAM requires a name and a value");
+    const std::string& raw = vals.front();
     /* Numeric values land in `param`; anything else is kept verbatim in
      * `param_raw` for families with enum-valued keys (numeric-only
      * families reject raw entries with a hard error). The pre-registry
@@ -196,17 +262,18 @@ bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
       /* not numeric */
     }
     if (!numeric) a.param_raw[p] = raw;
+    /* Extra value tokens are kept for the family registry to accept or
+     * reject (validate_optimizer_scaling). They used to be swallowed by
+     * `iss >> p >> raw`, so `PARAM INIT_MODE JITTER AUTO 0.05` silently
+     * ran at the default. Recorded only when there IS an extra, so the
+     * map stays empty for every single-value config. */
+    if (vals.size() > 1) a.param_tokens[p] = std::move(vals);
   } else
     return false;
   return true;
 }
 
 namespace {
-
-std::string up(std::string s) {
-  for (char &c : s) c = static_cast<char>(std::toupper((unsigned char)c));
-  return s;
-}
 
 // Consume attributes from a flat token stream until `endTok` (case-insensitive)
 // is reached. Standard attributes go to dispatch_opt_attr(); an `INNER` opener

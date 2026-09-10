@@ -405,11 +405,11 @@ TEST_CASE("anneal::Knobs::parse defaults", "[HPO][anneal_core][knobs]")
     CHECK_FALSE(kb.reset_to_best);   // classic default
     CHECK(kb.boundary_mode == anneal::BoundaryMode::Reflect);
 
-    sp.param["CORANA"] = 1.0;
+    sp.param_raw["CORANA"] = "ON";
     const auto kc = anneal::Knobs::parse(sp, anneal::AlgoKind::Serial);
     CHECK(kc.corana);
     CHECK(kc.reset_to_best);          // flips ON under CORANA
-    sp.param["RESET_TO_BEST"] = 0.0;  // explicit override wins
+    sp.param_raw["RESET_TO_BEST"] = "OFF";  // explicit override wins
     CHECK_FALSE(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial).reset_to_best);
 
     /* PA keeps static defaults (values unchanged by the redesign). */
@@ -443,7 +443,7 @@ TEST_CASE("anneal::Knobs::parse serial AUTO lengths require MAXEVAL",
     sp.param["CHAIN_LENGTH"] = 10.0;
     REQUIRE_NOTHROW(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial));
     sp.param.erase("CHAIN_LENGTH");
-    sp.param["CORANA"] = 1.0;
+    sp.param_raw["CORANA"] = "ON";
     REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
                         Catch::Contains("NT AUTO needs MAXEVAL"));
     sp.param["NT"] = 3.0;
@@ -613,7 +613,7 @@ TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
                             Catch::Contains("non-negative integer"));
         sp.param.erase("CHAIN_LENGTH");
-        sp.param["CORANA"] = 1.0;
+        sp.param_raw["CORANA"] = "ON";
         sp.param["NS"] = -1.0;
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
                             Catch::Contains("non-negative integer"));
@@ -638,7 +638,7 @@ TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
                             Catch::Contains("STEP_FRAC"));
         sp.param["STEP_FRAC"] = 0.1;
-        sp.param["CORANA"] = 1.0;
+        sp.param_raw["CORANA"] = "ON";
         sp.param["V_FLOOR_FRAC"] = -0.1;
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
                             Catch::Contains("V_FLOOR_FRAC"));
@@ -661,24 +661,37 @@ TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
                             Catch::Contains("finite bound width"));
     }
-    SECTION("BOUNDARY_MODE is exactly 0 or 1") {
+    SECTION("BOUNDARY_MODE takes REFLECT or REDRAW") {
+        /* 1.5.0: this was a Count with a 0/1 range -- an enum wearing a
+         * number's clothes. The tokens are now the only spelling. */
         auto sp = bare_spec();
-        sp.param["BOUNDARY_MODE"] = 2.0;
-        REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
-                            Catch::Contains("BOUNDARY_MODE"));
-        sp.param["BOUNDARY_MODE"] = 1.0;
+        sp.param_raw["BOUNDARY_MODE"] = "REDRAW";
         CHECK(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial).boundary_mode
               == anneal::BoundaryMode::Redraw);
+
+        sp.param_raw["BOUNDARY_MODE"] = "REFLECT";
+        CHECK(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial).boundary_mode
+              == anneal::BoundaryMode::Reflect);
+
+        auto bad = bare_spec();
+        bad.param_raw["BOUNDARY_MODE"] = "MIRROR";
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(bad, anneal::AlgoKind::Serial),
+                            Catch::Contains("must be one of: REFLECT REDRAW"));
+
+        auto num = bare_spec();
+        num.param["BOUNDARY_MODE"] = 1.0;
+        REQUIRE_THROWS_WITH(anneal::Knobs::parse(num, anneal::AlgoKind::Serial),
+                            Catch::Contains("BOUNDARY_MODE takes a token"));
     }
     SECTION("variant-level no-op knobs are rejected") {
         auto classic = bare_spec();
         classic.param["NS"] = 2.0;
         REQUIRE_THROWS_WITH(
             anneal::Knobs::parse(classic, anneal::AlgoKind::Serial),
-            Catch::Contains("requires PARAM CORANA 1"));
+            Catch::Contains("requires PARAM CORANA ON"));
 
         auto corana = bare_spec();
-        corana.param["CORANA"] = 1.0;
+        corana.param_raw["CORANA"] = "ON";
         corana.param["NT"] = 1.0;             /* satisfy the AUTO gate */
         corana.param["CHAIN_LENGTH"] = 5.0;
         REQUIRE_THROWS_WITH(
@@ -688,7 +701,7 @@ TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
         auto pa = bare_spec();
         pa.algo = "ANNEAL_PA";
         pa.pop = 8;
-        pa.param["RESET_TO_BEST"] = 1.0;
+        pa.param_raw["RESET_TO_BEST"] = "ON";
         REQUIRE_THROWS_WITH(
             anneal::Knobs::parse(pa, anneal::AlgoKind::PA),
             Catch::Contains("not defined for population annealing"));
@@ -709,11 +722,11 @@ TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
             Catch::Contains("unused when T_INIT"));
 
         auto re = bare_spec();
-        re.param["REANNEAL"] = 0.0;
+        re.param_raw["REANNEAL"] = "OFF";
         re.param["REANNEAL_SCALE"] = 0.5;
         REQUIRE_THROWS_WITH(
             anneal::Knobs::parse(re, anneal::AlgoKind::Serial),
-            Catch::Contains("unused when REANNEAL is 0"));
+            Catch::Contains("unused when REANNEAL is OFF"));
 
         auto pt = bare_spec();
         pt.algo = "ANNEAL_PT";
@@ -1195,7 +1208,7 @@ TEST_CASE("anneal::run_rung retains the best graded FAILSCORE repair",
         sp.failscore = 100.0;
         sp.param["T_INIT"] = 1.0e300;
         if (corana) {
-            sp.param["CORANA"] = 1.0;
+            sp.param_raw["CORANA"] = "ON";
             sp.param["NS"] = 2.0;
             sp.param["NT"] = 1.0;
         } else {
@@ -1232,7 +1245,7 @@ TEST_CASE("anneal::run_rung releases reservations on pre-evaluation stops",
         auto sp = bare_spec();
         sp.param["T_INIT"] = 1.0;
         if (corana) {
-            sp.param["CORANA"] = 1.0;
+            sp.param_raw["CORANA"] = "ON";
             sp.param["NS"] = 2.0;
             sp.param["NT"] = 1.0;
         } else {
@@ -1406,7 +1419,7 @@ TEST_CASE("anneal::make_initial_steps enforces Corana floor and cap",
           "[HPO][anneal_core][corana][knobs]")
 {
     auto sp = bare_spec();
-    sp.param["CORANA"] = 1.0;
+    sp.param_raw["CORANA"] = "ON";
     sp.param["NT"] = 1.0;
     sp.param["STEP_FRAC"] = 0.01;
     sp.param["V_FLOOR_FRAC"] = 0.10;

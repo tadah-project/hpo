@@ -1,5 +1,6 @@
 #pragma once
 #include <unordered_map>
+#include <tadah/hpo/log_index.h>
 #include <optional>
 #include <vector>
 #include <string>
@@ -55,6 +56,19 @@ using ParamMap = std::unordered_map<std::string,double>;
  * a hard error. Before this map existed a non-numeric PARAM value was
  * silently stored as 0.0. */
 using RawParamMap = std::unordered_map<std::string,std::string>;
+
+/* Full value-token vector of a PARAM line (name -> all tokens after the
+ * key), populated ONLY when a PARAM carries more than one value token --
+ * e.g. `PARAM INIT_MODE JITTER AUTO 0.05` -> {"JITTER","AUTO","0.05"}.
+ * `param`/`param_raw` are still filled from token 0, so every consumer
+ * that predates multi-token PARAM is unaffected.
+ *
+ * Arity is per key, not global: `STEP KEY(1-4) 0.1` has always been
+ * multi-token, while a stray token on a single-value key used to be
+ * silently discarded by `iss >> p >> raw`. Keys that accept extras
+ * declare them in their family registry; validate_optimizer_scaling()
+ * rejects an entry here whose key declares none. */
+using ParamTokenMap = std::unordered_map<std::string,std::vector<std::string>>;
 
 /* Defined in anneal_core.h (test/tooling observation seam). */
 namespace anneal { struct ChainObserver; }
@@ -318,6 +332,7 @@ struct OptimizerSpec {
           step_overrides(o.step_overrides),
           grad_strategy(o.grad_strategy), stop(o.stop),
           param(o.param), param_raw(o.param_raw),
+          param_tokens(o.param_tokens),
           anneal_observer(o.anneal_observer), low(o.low), high(o.high),
           parameter_labels(o.parameter_labels), is_int(o.is_int),
           log_scaled(o.log_scaled), log_threshold(o.log_threshold),
@@ -383,6 +398,7 @@ struct OptimizerSpec {
     StopCriteria stop;
     ParamMap     param;             // algorithm-specific knobs
     RawParamMap  param_raw;         // PARAM values that were not numeric
+    ParamTokenMap param_tokens;     // full token vector, multi-token PARAMs only
 
     /* Test/tooling observation seam for the ANNEAL family (see
      * anneal::ChainObserver in anneal_core.h). Never config-parseable;
@@ -458,7 +474,7 @@ struct OptimizerSpec {
         std::vector<DimSpec> dims(low.size());
         for (std::size_t i = 0; i < low.size(); ++i) {
             dims[i].label = (i < parameter_labels.size() && !parameter_labels[i].empty())
-                            ? parameter_labels[i] : "dim[" + std::to_string(i) + "]";
+                            ? parameter_labels[i] : logidx::dim_label(i);
             dims[i].key = dims[i].label;
             dims[i].lo = low[i];
             dims[i].hi = high[i];

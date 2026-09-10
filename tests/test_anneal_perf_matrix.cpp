@@ -52,18 +52,18 @@ std::vector<MatrixConfig> matrix_configs()
 {
     std::vector<MatrixConfig> cs;
     cs.push_back({"serial-classic", false, {}, {}});
-    cs.push_back({"serial-corana", false, {{"CORANA", 1.0}}, {}});
+    cs.push_back({"serial-corana", false, {}, {{"CORANA", "ON"}}});
     cs.push_back({"serial-t0acc080-gate", false,
                   {{"T0_ACCEPT", 0.80}}, {}});
     cs.push_back({"pt-plain", true, {}, {{"STEP_MODE", "FIXED"}}});
-    cs.push_back({"pt-ladder-adapt", true, {{"LADDER_ADAPT", 1.0}},
-                  {{"STEP_MODE", "FIXED"}}});
+    cs.push_back({"pt-ladder-adapt", true, {},
+                  {{"LADDER_ADAPT", "ON"}, {"STEP_MODE", "FIXED"}}});
     cs.push_back({"pt-step-frozen", true, {}, {}});   /* FROZEN default */
     cs.push_back({"pt-step-adaptive", true, {}, {{"STEP_MODE", "ADAPTIVE"}}});
-    cs.push_back({"pt-corana", true, {{"CORANA", 1.0}}, {}});
+    cs.push_back({"pt-corana", true, {}, {{"CORANA", "ON"}}});
     cs.push_back({"pt-defaults", true, {}, {}});
-    cs.push_back({"pt-adapt-combo-gate", true, {{"LADDER_ADAPT", 1.0}},
-                  {{"STEP_MODE", "ADAPTIVE"}}});
+    cs.push_back({"pt-adapt-combo-gate", true, {},
+                  {{"LADDER_ADAPT", "ON"}, {"STEP_MODE", "ADAPTIVE"}}});
     return cs;
 }
 

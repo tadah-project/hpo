@@ -11,6 +11,7 @@ if(NOT DEFINED TEST_EXE OR TEST_EXE STREQUAL "")
 endif()
 
 set(_baseline "")
+set(_census_baseline "")
 foreach(_n 1 2 4)
   execute_process(
     COMMAND "${_mpiexec}" "${_numproc_flag}" "${_n}" ${_preflags}
@@ -27,12 +28,46 @@ foreach(_n 1 2 4)
   if(_sig STREQUAL "")
     message(FATAL_ERROR "${_n}-rank run emitted no signature\n${_out}")
   endif()
+  # Insist the launcher actually produced an ${_n}-rank job. Without this the
+  # whole matrix passes trivially when mpiexec belongs to a different MPI than
+  # the one the binary links: it then starts ${_n} INDEPENDENT single-rank
+  # jobs, every signature is the 1-rank signature, and the comparison below
+  # proves nothing.
+  string(REGEX MATCH "ANNEAL_MPI_WORLD ([0-9]+)" _world_match "${_out}")
+  if(NOT _world_match)
+    message(FATAL_ERROR "${_n}-rank run did not report its world size\n${_out}")
+  endif()
+  if(NOT CMAKE_MATCH_1 EQUAL _n)
+    message(FATAL_ERROR
+      "requested ${_n} ranks but the job reported world size ${CMAKE_MATCH_1}."
+      " The launcher (${_mpiexec}) probably does not match the MPI the test"
+      " links against; configure with -DMPIEXEC_EXECUTABLE=<matching mpiexec>.")
+  endif()
+  # The eval signature covers the TRAJECTORY. hpo_corana_acceptance.tsv is
+  # assembled by a separate gatherv over each rank's slot block, so it can
+  # be mis-ordered or truncated while every evaluated point still matches;
+  # compare its digest across rank counts too. The test aborts before
+  # printing this if the file is missing or the wrong size, so an empty
+  # digest here is a harness failure, not "nothing to compare".
+  string(REGEX MATCH "ANNEAL_MPI_CENSUS[^\r\n]*" _census "${_out}")
+  if(_census STREQUAL "")
+    message(FATAL_ERROR "${_n}-rank run emitted no Corana census digest\n${_out}")
+  endif()
   if(_baseline STREQUAL "")
     set(_baseline "${_sig}")
-  elseif(NOT "${_sig}" STREQUAL "${_baseline}")
-    message(FATAL_ERROR
-      "rank-count invariance failed\n1-rank: ${_baseline}\n${_n}-rank: ${_sig}")
+    set(_census_baseline "${_census}")
+  else()
+    if(NOT "${_sig}" STREQUAL "${_baseline}")
+      message(FATAL_ERROR
+        "rank-count invariance failed\n1-rank: ${_baseline}\n${_n}-rank: ${_sig}")
+    endif()
+    if(NOT "${_census}" STREQUAL "${_census_baseline}")
+      message(FATAL_ERROR
+        "Corana acceptance census is not rank-invariant"
+        "\n1-rank: ${_census_baseline}\n${_n}-rank: ${_census}")
+    endif()
   endif()
 endforeach()
 
 message(STATUS "MPI annealing 1/2/4-rank signature: ${_baseline}")
+message(STATUS "MPI annealing 1/2/4-rank Corana census: ${_census_baseline}")

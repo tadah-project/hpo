@@ -1,5 +1,6 @@
 #pragma once
 #include <tadah/hpo/pot_header_writer.h>
+#include <tadah/hpo/log_index.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/optimizer_spec.h>
@@ -150,12 +151,18 @@ void PotHeaderWriter::write_best_header(
      * depends only on these five fields; the human header may evolve. */
     const auto old_prec = os.precision();
     const auto old_flags = os.flags();
-    os << "# HPO_BEST_FORMAT 1\n"
+    /* FORMAT 2 (1.5.0): HPO_SOURCE_SLOT is written 1-based, like every other
+     * slot a person reads. durable_best::parse_key subtracts the offset back
+     * out, so the in-memory Key stays 0-based and identical to chain_id --
+     * publish_if_better byte-compares the two and throws on a mismatch.
+     * The version bump is what makes reading a FORMAT 1 file correct rather
+     * than off-by-one (and for slot 0, a size_t underflow). */
+    os << "# HPO_BEST_FORMAT 2\n"
        << "# HPO_BEST_LOSS " << std::scientific
        << std::setprecision(std::numeric_limits<double>::max_digits10)
        << result.loss << "\n"
        << "# HPO_SOURCE_RANK " << result.source_rank << "\n"
-       << "# HPO_SOURCE_SLOT " << result.chain_id << "\n"
+       << "# HPO_SOURCE_SLOT " << logidx::uis(result.chain_id) << "\n"
        << "# HPO_SOURCE_EVAL " << result.iter << "\n";
     os.flags(old_flags);
     os.precision(old_prec);

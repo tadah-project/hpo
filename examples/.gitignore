@@ -37,5 +37,9 @@ train.stdout
 newBestPotsDir/
 restart_pots/
 prestage_pots/
-hpo_search_space.tsv
 hpo_optim_resolved.hpo
+
+# Diagnostic tables written next to the run (search space, calibrated step
+# scales, ladder history, Corana per-dimension acceptance). run.sh removes
+# them before each run; this keeps a run's leftovers out of `git status`.
+hpo_*.tsv

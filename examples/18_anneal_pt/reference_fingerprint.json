@@ -3,35 +3,35 @@
   "example": "18_anneal_pt",
   "description": "",
   "best_loss": {
-    "value": 0.04572276,
+    "value": 0.04576035,
     "abs_tol": 1e-06,
     "rel_tol": 0.001
   },
   "components": {
     "L(ERMSE)[1]": {
-      "value": 0.01016264,
+      "value": 0.01016032,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(ERMSE)[avg]": {
-      "value": 0.01016264,
+      "value": 0.01016032,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(Ecoh)": {
-      "value": 0.08128288,
+      "value": 0.08136038,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     }
   },
   "hyperparameters": {
     "RCUT2B": {
-      "value": 4.207977,
+      "value": 4.205441,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     },
     "SGRIDMB": {
-      "value": 0.3450119,
+      "value": 0.3450849,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     }
@@ -45,7 +45,7 @@
     "COMPLETED"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "2.7s",
+  "walltime_hint": "2.9s",
   "fast": true,
   "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
 }

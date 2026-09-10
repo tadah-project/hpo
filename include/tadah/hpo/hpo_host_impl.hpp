@@ -1,5 +1,7 @@
 #pragma once
 #include <tadah/core/core_user_config_parser.h>
+#include <tadah/hpo/probe_phase.h>
+#include <tadah/hpo/log_index.h>
 #include <tadah/core/intercept_layout.h>
 #include <tadah/core/logger.h>
 #include <tadah/hpo/hpo_mpi.h>
@@ -466,7 +468,10 @@ void HPO_Host<P,R>::print_loss_line(std::ofstream& f, size_t it,const Result& e,
                                     std::size_t cw,int prec)
 {
     f << std::left << std::setw(iter_cw_) << it;
-    f << std::right << std::setw(slot_cw_) << e.chain_id;   /* D19 */
+    /* 1-based like every other slot a person reads (1.5.0); e.chain_id
+     * itself stays 0-based -- it is the warm-start cache key and the
+     * durable-best comparison key. */
+    f << std::right << std::setw(slot_cw_) << logidx::uis(e.chain_id);
     f << std::scientific << std::setprecision(prec);
 
     auto write_loss_metric = [&](bool used, const std::vector<double>& per_ds, double avg) {
@@ -504,7 +509,10 @@ void HPO_Host<P,R>::print_outvar_line(std::ofstream& f,size_t it,const Result& e
 {
     f << std::left << std::setw(iter_cw_) << it;
     f << std::left << std::setw(ittime_cw_) << e.wall_ms.count();
-    f << std::right << std::setw(slot_cw_) << e.chain_id;   /* D19 */
+    /* 1-based like every other slot a person reads (1.5.0); e.chain_id
+     * itself stays 0-based -- it is the warm-start cache key and the
+     * durable-best comparison key. */
+    f << std::right << std::setw(slot_cw_) << logidx::uis(e.chain_id);
 
     if(trg.use_emae)   f<<std::right<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.emae;
     if(trg.use_ermse)  f<<std::right<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.ermse;
@@ -541,7 +549,10 @@ void HPO_Host<P,R>::print_params_line(std::ofstream& f,size_t it,const Result& e
                                       std::size_t cw,int prec)
 {
   f << std::left << std::setw(iter_cw_) << it;
-  f << std::right << std::setw(slot_cw_) << e.chain_id;   /* D19 */
+  /* 1-based like every other slot a person reads (1.5.0); e.chain_id
+     * itself stays 0-based -- it is the warm-start cache key and the
+     * durable-best comparison key. */
+    f << std::right << std::setw(slot_cw_) << logidx::uis(e.chain_id);
 
   for(long i=0;i<e.params.size();++i)
   {
@@ -567,7 +578,10 @@ void HPO_Host<P,R>::print_stats_line(std::ofstream& f, size_t it, const Result& 
     return;
 
   f << std::left << std::setw(iter_cw_) << it;
-  f << std::right << std::setw(slot_cw_) << e.chain_id;   /* D19 */
+  /* 1-based like every other slot a person reads (1.5.0); e.chain_id
+     * itself stays 0-based -- it is the warm-start cache key and the
+     * durable-best comparison key. */
+    f << std::right << std::setw(slot_cw_) << logidx::uis(e.chain_id);
   f << std::scientific << std::setprecision(prec);
 
   auto write_metric = [&](const std::vector<double>& per_ds, double avg) {
@@ -2217,7 +2231,9 @@ double HPO_Host<P,R>::operator()(const P& p) const
         {
           const std::size_t threshold =
               stagnation_threshold_.load(std::memory_order_relaxed);
-          if (threshold > 0) {
+          /* A probe phase is deliberately non-improving; counting it would
+           * trip the threshold and fire a restart mid-calibration. */
+          if (threshold > 0 && !probe::active()) {
             const std::size_t last =
                 iter_at_last_best_.load(std::memory_order_relaxed);
             if (r.iter > last && r.iter - last >= threshold) {
@@ -2248,7 +2264,11 @@ double HPO_Host<P,R>::operator()(const P& p) const
         _census.done = true;   /* counted here, with the measured wall */
         log.record_fail_band(save_fail_band);
         log.record_bump_gate_reject();
-        core::CheckpointManager::instance().tick_eval(save_iter);
+        /* Not during a probe phase: the annealer has no state behind
+     * these evals, so a checkpoint here advances g_iter over
+     * nothing. */
+    if (!probe::active())
+      core::CheckpointManager::instance().tick_eval(save_iter);
         return save_loss;
       }
     }
@@ -2566,7 +2586,8 @@ double HPO_Host<P,R>::operator()(const P& p) const
     {
       const std::size_t threshold =
           stagnation_threshold_.load(std::memory_order_relaxed);
-      if (threshold > 0) {
+      /* See the BUMPGATE path above: probe evals do not count. */
+      if (threshold > 0 && !probe::active()) {
         const std::size_t last = iter_at_last_best_.load(std::memory_order_relaxed);
         if (r.iter > last && r.iter - last >= threshold) {
           throw StagnationStop{};
@@ -2752,7 +2773,11 @@ double HPO_Host<P,R>::operator()(const P& p) const
      * commits in BasinsPolicy are still authoritative; this fills the
      * gap inside long stages so CHECKPOINT_EVERY actually has effect.
      * Non-BASINS runs configure no period, making this a no-op. */
-    core::CheckpointManager::instance().tick_eval(save_iter);
+    /* Not during a probe phase: the annealer has no state behind
+     * these evals, so a checkpoint here advances g_iter over
+     * nothing. */
+    if (!probe::active())
+      core::CheckpointManager::instance().tick_eval(save_iter);
     }
 
     return save_loss;

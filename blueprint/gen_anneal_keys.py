@@ -34,7 +34,7 @@ RULE_TYPES = {"requires_flag", "conflicts_flag", "unused_when_set",
 KEY_FIELDS = {"name", "type", "default", "default_serial", "default_pt",
               "default_pa", "values", "kinds", "group", "rank", "doc",
               "min", "max", "min_open", "max_open", "range_msg", "range_note",
-              "report_value", "custom_range"}
+              "report_value", "custom_range", "accepts_auto", "accepts_off"}
 RULE_FIELDS = {"type", "key", "flag", "other", "kind", "enum_key", "value", "msg"}
 RENAMED_FIELDS = {"old", "kinds", "msg"}
 
@@ -247,6 +247,12 @@ def emit(data: dict) -> str:
     out("  bool report_value;       // append \" (got <v>)\" to the range message")
     out("  const char* const* enum_values;  // Enum type only, else nullptr")
     out("  std::size_t enum_count;")
+    out("  // 1.5.0 value vocabulary: a numeric key may also accept the token")
+    out("  // AUTO (\"derive at run time\") and/or OFF (\"feature disabled\"),")
+    out("  // each resolving to the internal value below. Keys where 0 is a")
+    out("  // literal value (V_FLOOR_FRAC, LADDER_MIN_GAP) declare neither.")
+    out("  bool accepts_auto, accepts_off;")
+    out("  double auto_value, off_value;")
     out("};")
     out("")
     out("struct AnnealKeyRule {")
@@ -292,8 +298,13 @@ def emit(data: dict) -> str:
         out(f"   {bool_lit(has_min)}, {bool_lit(bool(key.get('min_open')))}, "
             f"{bool_lit(has_max)}, {bool_lit(bool(key.get('max_open')))}, "
             f"{min_v}, {max_v},")
+        has_auto = "accepts_auto" in key
+        has_off = "accepts_off" in key
+        auto_v = fmt_double(float(key["accepts_auto"])) if has_auto else "0.0"
+        off_v = fmt_double(float(key["accepts_off"])) if has_off else "0.0"
         out(f"   {range_msg}, {bool_lit(bool(key.get('report_value')))}, "
-            f"{enum_vals}, {enum_count}}},")
+            f"{enum_vals}, {enum_count},")
+        out(f"   {bool_lit(has_auto)}, {bool_lit(has_off)}, {auto_v}, {off_v}}},")
     out("};")
     out("")
     rule_cpp = {"requires_flag": "RequiresFlag", "conflicts_flag": "ConflictsFlag",
