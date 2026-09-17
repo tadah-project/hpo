@@ -52,6 +52,19 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         "(FIXINDEX names which model weights the FIXWEIGHT values pin).");
   }
 
+  /* --- search-space dimension ------------------------------------------ */
+  if (trg.spec.low.empty()) {
+    const std::string &lib = trg.spec.lib;
+    if (lib == "NLOPT" || lib == "DLIB" || lib == "CERES") {
+      throw std::runtime_error(
+          "No OPTIM line: the search space has zero dimensions, and LIB " +
+          lib + " cannot optimise a zero-dimensional space (the failure "
+          "would only surface once the optimiser starts). Add at least one "
+          "OPTIM line, or use a TADAH-native optimiser, which evaluates the "
+          "INIT start point once.");
+    }
+  }
+
   /* --- FIXINDEX/FIXWEIGHT pairing + weight-source classification ------ */
   const bool has_fw = train_ctx.contains("FIXWEIGHT");
   const bool has_fi = train_ctx.contains("FIXINDEX");
