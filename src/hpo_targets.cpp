@@ -107,7 +107,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
   models::D_mJoin::expand_grids(context);
 
   read(fn);
-  std::sort(LS.begin(), LS.end(), LammpsSim::greater);
+  std::stable_sort(LS.begin(), LS.end(), LammpsSim::greater);
   /* read() records failprobe_idx against parse order; the sort above
    * invalidates it. Recover it from the flag carried on the sim itself
    * (exactly one probe -- enforced at parse). */
