@@ -222,6 +222,16 @@ bool try_parse_double(const std::string& s, double& value)
     }
 }
 
+/* An option token starts with '-' and is not a complete number: a negative
+ * target, weight, bound or loss parameter is a value; --outvar, -var and
+ * the other options are not numbers. */
+static bool is_option_token(const std::string& s)
+{
+    if (s.empty() || s[0] != '-') return false;
+    double v;
+    return !try_parse_double(s, v);
+}
+
 LammpsSim::LammpsSim() {}
 LammpsSim::LammpsSim(std::string& cmd_,
                      const std::string& MAX_TIME,
@@ -324,7 +334,7 @@ void LammpsSim::parse_tokens() {
     // Tadah! specific keywords
     else if (tokens[i] == "--varloss")
     {
-      auto is_flag = [](const std::string& s){ return s.rfind("-",0)==0; };
+      auto is_flag = is_option_token;
 
       std::size_t j=i+1;
 
@@ -405,7 +415,7 @@ void LammpsSim::parse_tokens() {
     }
     else if (tokens[i] == "--hotvar") {
       /* --hotvar <name> <min> <max> [<initial>] */
-      auto is_flag = [](const std::string& s){ return s.rfind("-",0)==0; };
+      auto is_flag = is_option_token;
       std::size_t j = i + 1;
       if (j+2 >= tokens.size())
         throw std::runtime_error("--hotvar requires <name> <min> <max> [<initial>]");
@@ -438,7 +448,7 @@ void LammpsSim::parse_tokens() {
        * natural units; <scale> maps to the dimensionless band-B measure).
        * When it reads > 0, the sim is classified band B, its outvars are
        * excluded from the fit, and scale*value grades the failure loss. */
-      auto is_flag = [](const std::string& s){ return s.rfind("-",0)==0; };
+      auto is_flag = is_option_token;
       std::size_t j = i + 1;
       if (j >= tokens.size())
         throw std::runtime_error("--failvar requires <name> [<scale>]");
