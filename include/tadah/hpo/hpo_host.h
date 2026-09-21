@@ -338,6 +338,7 @@ private:
     /* --validation is optional when the loss has other sources
      * (PC_OBSERVABLE / PC_LAMMPS); validated in validate_hpo_setup(). */
     bool                         has_validation_ = true;
+    std::shared_ptr<MetricSkipTracker> metric_skip_tracker_ = std::make_shared<MetricSkipTracker>();
     /* Knot-family channels (D2_Knot5 / DM_REAM knot bcode): RCUT2B/RCUTMB
      * are DERIVED from the largest knot — re-derived on every evaluation in
      * update_context (which is const, hence flags precomputed here) and

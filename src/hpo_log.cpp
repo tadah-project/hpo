@@ -822,12 +822,16 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
         kv(name, s.str());
     };
 
-    metric_line("EMAE   (meV/atom)",  trg.use_emae,   trg.emae   * 1000.0, trg.w_emae);
-    metric_line("ERMSE  (meV/atom)",  trg.use_ermse,  trg.ermse  * 1000.0, trg.w_ermse);
-    metric_line("ErRMSE (meV/atom)",  trg.use_errmse, trg.errmse * 1000.0, trg.w_errmse);
+    metric_line("EMAE   (meV/atom)",  trg.use_emae,   trg.emae, trg.w_emae);
+    metric_line("ErRMSE (meV/atom)",  trg.use_errmse, trg.errmse, trg.w_errmse);
     metric_line("ERSQ",               trg.use_ersq,   trg.ersq,            trg.w_ersq);
-    metric_line("FRMSE  (eV/Ang)",      trg.use_frmse,  trg.frmse,           trg.w_frmse);
     metric_line("SRMSE  (GPa)",       trg.use_srmse,  trg.srmse,           trg.w_srmse);
+
+    auto dataset_metric = [&](const std::string& name, const ValidationMetricTargets& targets) {
+        for (const auto& description : targets.descriptions()) kv(name, description);
+    };
+    dataset_metric("ERMSE (meV/at)", trg.ermse_targets);
+    dataset_metric("FRMSE (eV/A)", trg.frmse_targets);
 
     for (const auto& lsim : trg.LS) {
         for (std::size_t i = 0; i < lsim.n_varloss.size(); ++i) {

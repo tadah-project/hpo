@@ -58,6 +58,7 @@ double LossFunction::stable_log_cosh(double r) noexcept
 double LossFunction::loss(double y, double ypred, double w,
                           double eps) const
 {
+    if (w == 0.0) return 0.0;
     double r     = y - ypred;
     double abs_r = std::abs(r);
 
@@ -99,6 +100,7 @@ double LossFunction::loss(double y, double ypred, double w,
 double LossFunction::loss_prime(double y, double ypred, double w,
                                 double eps) const
 {
+    if (w == 0.0) return 0.0;
     /* dL/d(ypred). With r = y - ypred, dr/d(ypred) = -1, so for losses
      * that depend on r we return -(dL/dr). Subgradient kinks return 0
      * for L1/MAPE; HUBER/TUKEY return the smooth-side limit at the
@@ -151,10 +153,26 @@ double LossFunction::loss_prime(double y, double ypred, double w,
     return 0.0;
 }
 
+double LossFunction::loss_prime_observed(double measured, double target,
+                                         double w, double eps) const
+{
+    if (w == 0.0) return 0.0;
+    if (type_ == Type::MAPE) {
+        const double r = measured - target;
+        const double denom = std::abs(measured) + eps;
+        const double sign_r = (r > 0) - (r < 0);
+        const double sign_y = (measured > 0) - (measured < 0);
+        return w * (sign_r / denom - std::abs(r) * sign_y / (denom * denom));
+    }
+    if (type_ == Type::RMSLE)
+        return 2 * w * (std::log(measured + eps) - std::log(target + eps))
+             / (measured + eps);
+    return -loss_prime(measured, target, w, eps);
+}
+
 bool LossFunction::is_squared() const noexcept
 {
     return type_==Type::L2 || type_==Type::RMSLE;
 }
 
 }   // namespace tadah
-

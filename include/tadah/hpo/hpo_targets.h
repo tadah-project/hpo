@@ -7,6 +7,7 @@
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/observables/observable.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/validation_metric.h>
 
 #include <memory>
 #include <vector>
@@ -199,14 +200,18 @@ public:
     LossFunction globalLoss;
 
     bool use_emae = false; bool use_ermse = false; bool use_errmse = false; bool use_ersq = false;
-    double emae, ermse, errmse, ersq;
-    double w_emae, w_ermse, w_errmse, w_ersq;
+    double emae = 0, errmse = 0, ersq = 0;
+    double w_emae = 0, w_errmse = 0, w_ersq = 0;
+    ValidationMetricTargets ermse_targets{"PC_ERMSE"};
+    ValidationMetricTargets frmse_targets{"PC_FRMSE"};
+    void resolve_validation_targets(const std::vector<std::string>& files) {
+        ermse_targets.resolve(files);
+        frmse_targets.resolve(files);
+    }
     bool use_srmse = false;
     double srmse;
     double w_srmse;
     bool use_frmse = false;
-    double frmse;
-    double w_frmse;
 
     /* Bad-pot pre-LAMMPS skip thresholds, parsed from PC_* flags
      *   PC_ERMSE  <target> <weight> [--skip-above <cap_meV>] [--skip-rel <ratio>]
@@ -220,11 +225,8 @@ public:
      *
      * Replaces the legacy env vars TADAH_HPO_BAD_POT_ERMSE_MEV /
      * TADAH_HPO_BAD_POT_ERMSE_REL. Defaults are nullopt = no skip. */
-    struct SkipCaps {
-      std::optional<double> abs_above;
-      std::optional<double> rel_above;
-    };
-    SkipCaps skip_emae, skip_ermse, skip_errmse, skip_ersq, skip_frmse, skip_srmse;
+    using SkipCaps = MetricSkipCaps;
+    SkipCaps skip_emae, skip_errmse, skip_ersq, skip_srmse;
 };
 } // namespace hpo
 } // namespace tadah

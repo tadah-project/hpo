@@ -85,11 +85,11 @@ struct ScratchDir {
  *   ...
  *   <blank line>
  */
-void write_minimal_ta_dbfile(const fs::path& path, double offset_x) {
+void write_minimal_ta_dbfile(const fs::path& path, double offset_x, double energy = -0.001) {
     std::ofstream os(path);
     os << "test_bcc_ta\n"
        << "1.0 1.0 1.0\n"
-       << "-0.001 0.0\n"
+       << energy << " 0.0\n"
        << "3.301 0.0 0.0\n"
        << "0.0 3.301 0.0\n"
        << "0.0 0.0 6.602\n"
@@ -465,4 +465,162 @@ TEST_CASE("HPO_Host::analytical_gradient end-to-end with one PC_LAMMPS "
     CHECK(std::isfinite(g(0)));
 
     Host::reset_globals_for_test();
+}
+
+namespace {
+struct DatasetHostGuard {
+    bool restore = std::getenv("TADAH_HPO_FORCE_REBUILD") == nullptr;
+    DatasetHostGuard() {
+        if (restore) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1);
+        Host::reset_best_state_for_fresh_run();
+    }
+    ~DatasetHostGuard() {
+        Host::reset_best_state_for_fresh_run();
+        if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD");
+    }
+};
+std::string read_dataset_file(const fs::path& path) {
+    std::ifstream in(path);
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+std::vector<double> last_dataset_row(const fs::path& path) {
+    std::ifstream in(path);
+    std::string line;
+    std::vector<double> row;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        row.clear();
+        std::istringstream values(line);
+        double v;
+        while (values >> v) row.push_back(v);
+    }
+    return row;
+}
+const std::string dataset_host_head =
+    "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\n"
+    "LOSS L2\nQFLUSH 1\nDIGITS 12\nOPTIM CGRID2B (1) 0.0 4.0\n";
+}
+
+TEST_CASE("PC dataset host loss and reports match resolved targets", "[pc_dataset][host]") {
+    DatasetHostGuard guard;
+    ScratchDir sd;
+    const auto train = sd.dir / "train.db", first = sd.dir / "first.db", second = sd.dir / "second.db";
+    const auto val = sd.dir / "config.val", hpo = sd.dir / "config.hpo";
+    write_minimal_ta_dbfile(train, 0);
+    write_minimal_ta_dbfile(first, 0.07, -0.04);
+    write_minimal_ta_dbfile(second, 0.13, -0.16);
+    const auto second_body = read_dataset_file(second);
+    std::ofstream(second, std::ios::app) << second_body; // second dataset has two structures
+    std::ofstream(val) << "DBFILE " << first.string() << "\nDBFILE " << second.string() << "\n";
+    bool global_energy = false, global_force = false;
+    std::string lines;
+    SECTION("individually weighted energy and forces") {
+        lines = "PC_ERMSE (2) 20 3\nPC_ERMSE (1) 10 2\n"
+                "PC_FRMSE (1) 0.1 2\nPC_FRMSE (2) 0.2 0.5\n";
+    }
+    SECTION("indexed energy with global forces") {
+        global_force = true;
+        lines = "PC_ERMSE (2) 20 3\nPC_ERMSE (1) 10 2\nPC_FRMSE 0.1 2\n";
+    }
+    SECTION("legacy global targets") {
+        global_energy = global_force = true;
+        lines = "PC_ERMSE 10 2\nPC_FRMSE 0.1 2\n";
+    }
+    std::ofstream(hpo) << dataset_host_head << lines;
+    auto ctx = make_ta_master_context(train, hpo, val);
+    ctx.remove("FORCE"); ctx.add("FORCE", "true");
+    tadah::hpo::HPOTargets trg(ctx, hpo.string());
+    Host host(ctx, trg, val.string());
+    host.prepare_best_publication(false);
+    REQUIRE(host.val_size() == 3);
+    ParamVec p(1); p(0) = 0.5;
+    const double total = host(p);
+    host.flush_remaining();
+    const auto stats = last_dataset_row("stats.tadah");
+    const auto losses = last_dataset_row("loss.tadah");
+    REQUIRE(stats.size() == 8); // iteration, slot, E[1,2,avg], F[1,2,avg]
+    REQUIRE(losses.size() == 9);
+    CHECK(stats[4] == Approx((stats[2] + stats[3])/2));
+    CHECK(stats[7] == Approx((stats[5] + stats[6])/2));
+    const auto l2 = [](double x, double t, double w) { return (x-t)*(x-t)*w; };
+    const double e1 = l2(stats[2], 10, 2);
+    const double e2 = l2(stats[3], global_energy ? 10 : 20, global_energy ? 2 : 3);
+    const double f1 = l2(stats[5], 0.1, 2);
+    const double f2 = l2(stats[6], global_force ? 0.1 : 0.2, global_force ? 2 : 0.5);
+    const double e = global_energy ? l2(stats[4], 10, 2) : (e1+e2)/2;
+    const double f = global_force ? l2(stats[7], 0.1, 2) : (f1+f2)/2;
+    CHECK(total == Approx((e+f)/2).epsilon(1e-9));
+    CHECK(losses[2] == Approx(e1)); CHECK(losses[3] == Approx(e2)); CHECK(losses[4] == Approx(e));
+    CHECK(losses[5] == Approx(f1)); CHECK(losses[6] == Approx(f2)); CHECK(losses[7] == Approx(f));
+    CHECK(losses[8] == Approx(total));
+    const auto best = read_dataset_file(trg.canonicalBestPotFile);
+    CHECK(best.find(global_energy ? "global (loss of average metric)" : "indexed (average of dataset losses)")
+          != std::string::npos);
+    if (!global_energy) {
+        CHECK(best.find("[2] " + second.string() + " target=20 weight=3") != std::string::npos);
+    }
+    auto& log = tadah::hpo::HPOLog::instance();
+    log.open((sd.dir / "journal.log").string(), "test", sd.dir.string(), 1);
+    log.write_loss_section(trg);
+    log.finish("TEST");
+    const auto journal = read_dataset_file(sd.dir / "journal.log");
+    CHECK(journal.find("target=10 weight=2") != std::string::npos);
+    CHECK(journal.find("target=10000") == std::string::npos);
+}
+
+TEST_CASE("PC dataset host rejects incomplete coverage and empty validation files", "[pc_dataset][host]") {
+    DatasetHostGuard guard;
+    ScratchDir sd;
+    const auto train = sd.dir / "train.db", first = sd.dir / "first.db", second = sd.dir / "second.db";
+    const auto val = sd.dir / "config.val", hpo = sd.dir / "config.hpo";
+    write_minimal_ta_dbfile(train, 0);
+    write_minimal_ta_dbfile(first, 0.07);
+    write_minimal_ta_dbfile(second, 0.13);
+    std::string lines = "PC_ERMSE (1-2) 0 1\n";
+    std::string filter, message;
+    SECTION("missing assignment") {
+        lines = "PC_ERMSE (1) 0 1\n";
+        message = "dataset 2 (" + second.string() + ")";
+    }
+    SECTION("out of range") {
+        lines = "PC_FRMSE (1-3) 0 1\n";
+        message = "outside validation DBFILE range 1-2";
+    }
+    SECTION("empty file") {
+        std::ofstream(second).close();
+        message = "Empty validation dataset 2";
+    }
+    SECTION("filter empties a file") {
+        write_minimal_ta_dbfile(second, 0.13, -10);
+        filter = "EFILTER -1 1\n";
+        message = "Empty validation dataset 2";
+    }
+    std::ofstream(val) << "DBFILE " << first.string() << "\nDBFILE " << second.string() << "\n" << filter;
+    std::ofstream(hpo) << dataset_host_head << lines;
+    auto ctx = make_ta_master_context(train, hpo, val);
+    tadah::hpo::HPOTargets trg(ctx, hpo.string());
+    CHECK_THROWS_WITH(Host(ctx, trg, val.string()), Catch::Matchers::Contains(message));
+}
+
+TEST_CASE("PC dataset zero weight retains its dataset skip filter", "[pc_dataset][host]") {
+    DatasetHostGuard guard;
+    ScratchDir sd;
+    const auto train = sd.dir / "train.db", first = sd.dir / "first.db", second = sd.dir / "second.db";
+    const auto val = sd.dir / "config.val", hpo = sd.dir / "config.hpo";
+    write_minimal_ta_dbfile(train, 0);
+    write_minimal_ta_dbfile(first, 0.07, -0.04);
+    write_minimal_ta_dbfile(second, 0.13, -10);
+    std::ofstream(val) << "DBFILE " << first.string() << "\nDBFILE " << second.string() << "\n";
+    std::ofstream(hpo) << dataset_host_head
+        << "FAILSCORE 1000000\nPC_ERMSE (1) 0 1\nPC_ERMSE (2) 0 0 --skip-above 1\n";
+    auto ctx = make_ta_master_context(train, hpo, val);
+    tadah::hpo::HPOTargets trg(ctx, hpo.string());
+    Host host(ctx, trg, val.string());
+    host.prepare_best_publication(false);
+    ParamVec p(1); p(0) = 0.5;
+    CHECK(host(p) == trg.FAIL_SCORE);
+    host.flush_remaining();
+    const auto losses = last_dataset_row("loss.tadah");
+    REQUIRE(losses.size() == 6);
+    CHECK(losses[3] == 0);
 }

@@ -2257,7 +2257,7 @@ OPTIM CGRID2B (1) 0.0 4.0
         /* Mirror fit_loss: sum loss(metric, target, w) over active
          * metrics, then divide by loss_count. Two metrics here. */
         const double l = trg.globalLoss.loss(emae,  trg.emae,  trg.w_emae)
-                       + trg.globalLoss.loss(frmse, trg.frmse, trg.w_frmse);
+                       + trg.globalLoss.loss(frmse, trg.frmse_targets.global().target, trg.frmse_targets.global().weight);
         return l / 2.0;
     };
 
@@ -2988,7 +2988,7 @@ OPTIM CGRIDMB (1) 0.0 4.0
         const double emae  = emae_scaled (val_stdb, pred_e);
         const double frmse = frmse_scaled(val_stdb, pred_full);
         return (trg.globalLoss.loss(emae,  trg.emae,  trg.w_emae)
-              + trg.globalLoss.loss(frmse, trg.frmse, trg.w_frmse)) / 2.0;
+              + trg.globalLoss.loss(frmse, trg.frmse_targets.global().target, trg.frmse_targets.global().weight)) / 2.0;
     };
 
     const double h = 1e-5;
@@ -3205,7 +3205,7 @@ OPTIM WATOM   (1) 0.2 10.0
         const double emae  = emae_scaled (val_stdb, pred_e);
         const double frmse = frmse_scaled(val_stdb, pred_full);
         return (trg.globalLoss.loss(emae,  trg.emae,  trg.w_emae)
-              + trg.globalLoss.loss(frmse, trg.frmse, trg.w_frmse)) / 2.0;
+              + trg.globalLoss.loss(frmse, trg.frmse_targets.global().target, trg.frmse_targets.global().weight)) / 2.0;
     };
 
     const double h = 1e-5;
@@ -3376,3 +3376,60 @@ OPTIM WATOM   (1) 0.2 10.0
 #endif
 }
 
+
+TEST_CASE("Indexed ERMSE and FRMSE live trainer gradients match finite differences",
+          "[pc_dataset][analytical_gradient][live_trainer]")
+{
+    using tadah::mlip::memory::MLIPWorkspaceManager;
+    tadah::core::PeriodicTable::initialize();
+    const std::vector<double> cgrid{0.5, 1.4}, sgrid{3.0, 5.0};
+    const double rcut = 3.0, theta = cgrid[0];
+    auto train = make_h3_force_stdb(4, rcut, 1.0);
+    auto val = make_h3_force_stdb(3, rcut, 0.5);
+    val.dbidx = {0, 1, 3}; // unequal datasets: average datasets, not structures
+    for (std::size_t i = 0; i < train.size(); ++i) train(i).energy = 0.05*(i+1);
+    for (std::size_t i = 0; i < val.size(); ++i) val(i).energy = 0.07*(i+1);
+    MLIPWorkspaceManager ws;
+    Context ctx = make_minimal_trainer_context_force(cgrid, sgrid, rcut);
+    Trainer host(ctx, ws);
+    host.train(train);
+    for (const auto* loss_name : {"L1", "L2", "LOG_COSH", "MAPE", "HUBER", "RMSLE", "TUKEY"}) {
+        for (int mode = 0; mode < 3; ++mode) {
+            INFO("LOSS=" << loss_name << " mode=" << mode);
+            const bool energy = mode != 1, force = mode != 0;
+            std::string body = "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\nLOSS "
+                + std::string(loss_name) + "\nOPTIM CGRID2B (1) 0.0 4.0\n";
+            if (energy) body += "PC_ERMSE (1) 15 0.003\nPC_ERMSE (2) 5 0.007\n";
+            if (force) body += "PC_FRMSE (2) 0.08 0.5\nPC_FRMSE (1) 0.02 2\n";
+            ScopedTempFileLocal cfg(body);
+            auto target_ctx = make_minimal_trainer_context_force(cgrid, sgrid, rcut);
+            tadah::hpo::HPOTargets trg(target_ctx, cfg.path.string());
+            trg.resolve_validation_targets({"first.db", "second.db"});
+            const auto prefs = tadah::hpo::make_param_ref_table(trg);
+            std::vector<double> grad;
+            std::vector<int> needs_fd;
+            REQUIRE(tadah::hpo::compute_analytical_gradient_from_trainer(
+                host, train, val, trg, prefs, grad, needs_fd));
+            REQUIRE(needs_fd.empty());
+            REQUIRE(grad.size() == 1);
+            auto loss_at = [&](double x) {
+                auto cg = cgrid; cg[0] = x;
+                MLIPWorkspaceManager w;
+                auto c = make_minimal_trainer_context_force(cg, sgrid, rcut);
+                Trainer t(c, w); t.train(train);
+                const auto pred = predict_full(t, val);
+                tadah::mlip::Analytics a(val, pred);
+                const auto e = a.calc_e_rmse(), f = a.calc_f_rmse();
+                double sum = 0;
+                if (energy) sum += (trg.globalLoss.loss(e[0]*1000, 15, 0.003)
+                                  + trg.globalLoss.loss(e[1]*1000, 5, 0.007)) / 2;
+                if (force) sum += (trg.globalLoss.loss(f[0], 0.02, 2)
+                                 + trg.globalLoss.loss(f[1], 0.08, 0.5)) / 2;
+                return sum / (int(energy) + int(force));
+            };
+            const double h = 1e-5;
+            const double fd = (loss_at(theta+h) - loss_at(theta-h)) / (2*h);
+            CHECK(grad[0] == Approx(fd).epsilon(1e-3).margin(1e-7));
+        }
+    }
+}

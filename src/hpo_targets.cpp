@@ -37,60 +37,35 @@ size_t HPOTargets::ui_offset(std::vector<std::string> &tokens, size_t ui) {
   return offset;
 }
 
+namespace {
+// OPTIM and indexed PC lines share the same parenthesized selector grammar.
+std::string read_index_selector(std::istringstream& iss) {
+    iss >> std::ws;
+    if (iss.get() != '(') throw std::runtime_error("Expected (indices)");
+    std::string indices;
+    if (!std::getline(iss, indices, ')') || iss.eof())
+        throw std::runtime_error("Unmatched opening parenthesis in index selector");
+    if (indices.find('(') != std::string::npos)
+        throw std::runtime_error("Nested parentheses in index selector");
+    if (core::trim(indices).empty()) throw std::runtime_error("Empty index selector");
+    const int next = iss.peek();
+    if (next != std::char_traits<char>::eof() && !std::isspace(static_cast<unsigned char>(next)))
+        throw std::runtime_error("Expected whitespace after (indices)");
+    return indices;
+}
+}
+
 std::vector<std::string> HPOTargets::parse_optim_line(std::istringstream& iss) {
-  std::vector<std::string> elements;
-  std::string token, enclosed;
-  bool in_parens = false;
-  bool has_parens = false;
-  std::string processed_line;
-  std::string indices = "";
-
-  while (iss >> token) {
-    processed_line += token + " ";
-
-    if (token.front() == '(' || in_parens) {
-      has_parens = true;
-      if (token.front() == '(') {
-        if (in_parens) {
-          throw std::runtime_error(
-            "Nested parentheses are not supported up to: " + processed_line);
-        }
-        in_parens = true;
-        token.erase(token.begin());
-      }
-      size_t close_pos = token.find(')');
-      if (close_pos != std::string::npos) {
-        enclosed += token.substr(0, close_pos);
-        in_parens = false;
-        if (enclosed.empty()) {
-          throw std::runtime_error(
-            "Empty parentheses are not valid up to: " + processed_line);
-        }
-        indices += enclosed;
-        enclosed.clear();
-      } else {
-        enclosed += token + " ";
-      }
-    } else {
-      if (token.find(')') != std::string::npos && !in_parens) {
-        throw std::runtime_error(
-          "Unmatched closing parenthesis up to: " + processed_line);
-      }
-      elements.push_back(token);
+    const auto indices = read_index_selector(iss);
+    std::vector<std::string> elements;
+    std::string token;
+    while (iss >> token) {
+        if (token.find_first_of("()") != std::string::npos)
+            throw std::runtime_error("Only one (indices) selector is accepted");
+        elements.push_back(token);
     }
-  }
-
-  if (in_parens) {
-    throw std::runtime_error(
-      "Unmatched opening parenthesis up to: " + processed_line);
-  }
-
-  if (!has_parens) {
-    throw std::runtime_error("No parentheses found up to: " + processed_line);
-  }
-
-  elements.push_back(indices);
-  return elements;
+    elements.push_back(indices);
+    return elements;
 }
 
 void HPOTargets::Opti::resize(size_t s) {
@@ -1308,35 +1283,43 @@ void HPOTargets::read(const std::string& fn)
                   || key=="PC_SRMSE"
                   || key=="PC_FRMSE")
             {
-                double tgt, wgt;
-                iss >> tgt >> wgt;
-                if (!iss)
+                const bool dataset_metric = key == "PC_ERMSE" || key == "PC_FRMSE";
+                std::vector<std::size_t> indices;
+                iss >> std::ws;
+                if (iss.peek() == '(') {
+                    if (!dataset_metric)
+                        throw std::runtime_error(key + ": indexed targets are supported only for PC_ERMSE and PC_FRMSE");
+                    indices = core::parse_indices_strict(read_index_selector(iss));
+                }
+                std::string target_token, weight_token;
+                if (!(iss >> target_token >> weight_token))
                     throw std::runtime_error(key + " requires <target> <weight>");
-                /* Optional flags. Order is irrelevant; both are optional. */
+                const double tgt = parse_metric_number(target_token);
+                const double wgt = parse_metric_number(weight_token);
+                if (wgt < 0) throw std::runtime_error(key + " weight must be nonnegative");
                 HPOTargets::SkipCaps caps;
                 std::string flag;
                 while (iss >> flag) {
-                    if (flag == "--skip-above") {
-                        double v; iss >> v;
-                        if (!iss || !(v > 0.0))
-                            throw std::runtime_error(key + " --skip-above requires a positive number");
-                        caps.abs_above = v;
-                    } else if (flag == "--skip-rel") {
-                        double v; iss >> v;
-                        if (!iss || !(v > 0.0))
-                            throw std::runtime_error(key + " --skip-rel requires a positive number");
-                        caps.rel_above = v;
-                    } else {
-                        throw std::runtime_error(key + ": unknown flag '" + flag +
-                            "' (only --skip-above and --skip-rel are accepted)");
-                    }
+                    if (flag != "--skip-above" && flag != "--skip-rel")
+                        throw std::runtime_error(key + ": unknown flag '" + flag + "'");
+                    std::string token;
+                    if (!(iss >> token)) throw std::runtime_error(key + " " + flag + " requires a positive number");
+                    const double value = parse_metric_number(token);
+                    if (!(value > 0)) throw std::runtime_error(key + " " + flag + " requires a positive number");
+                    auto& cap = flag == "--skip-above" ? caps.abs_above : caps.rel_above;
+                    if (cap) throw std::runtime_error(key + ": repeated " + flag);
+                    cap = value;
                 }
-                if      (key=="PC_EMAE")   { emae=tgt;   w_emae=wgt;   use_emae=true;   skip_emae=caps; }
-                else if (key=="PC_ERMSE")  { ermse=tgt;  w_ermse=wgt;  use_ermse=true;  skip_ermse=caps; }
+                if (dataset_metric) {
+                    auto& targets = key == "PC_ERMSE" ? ermse_targets : frmse_targets;
+                    targets.add(indices, {tgt, wgt, caps, nline});
+                    if (key == "PC_ERMSE") use_ermse = true;
+                    else use_frmse = true;
+                }
+                else if (key=="PC_EMAE")   { emae=tgt;   w_emae=wgt;   use_emae=true;   skip_emae=caps; }
                 else if (key=="PC_ErRMSE") { errmse=tgt; w_errmse=wgt; use_errmse=true; skip_errmse=caps; }
                 else if (key=="PC_ERSQ")   { ersq=tgt;   w_ersq=wgt;   use_ersq=true;   skip_ersq=caps; }
                 else if (key=="PC_SRMSE")  { srmse=tgt;  w_srmse=wgt;  use_srmse=true;  skip_srmse=caps; }
-                else if (key=="PC_FRMSE")  { frmse=tgt;  w_frmse=wgt;  use_frmse=true;  skip_frmse=caps; }
             }
             else
                 throw std::runtime_error("unknown key \""+key+"\"");
@@ -1681,7 +1664,9 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
 
   std::vector<size_t> user_indices;
   try {
-    user_indices = core::parse_indices(tokens.back());
+    user_indices = core::parse_indices_strict(tokens.back());
+    if (std::find(user_indices.begin(), user_indices.end(), 0) != user_indices.end())
+      throw std::runtime_error("OPTIM indices start at 1");
   } catch (const std::exception& e) {
     throw std::runtime_error(
       "Error parsing indices on process_optim_config line "

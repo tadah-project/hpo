@@ -383,11 +383,15 @@ void PotHeaderWriter::write_loss_section(std::ostream& os,
         kv(os, name, s.str());
     };
     metric("EMAE   (meV/at)",  trg.use_emae,   trg.emae,   trg.w_emae);
-    metric("ERMSE  (meV/at)",  trg.use_ermse,  trg.ermse,  trg.w_ermse);
     metric("ErRMSE (meV/at)",  trg.use_errmse, trg.errmse, trg.w_errmse);
     metric("ERSQ",             trg.use_ersq,   trg.ersq,   trg.w_ersq);
-    metric("FRMSE  (eV/A)",    trg.use_frmse,  trg.frmse,  trg.w_frmse);
     metric("SRMSE  (GPa)",     trg.use_srmse,  trg.srmse,  trg.w_srmse);
+
+    auto dataset_metric = [&](const std::string& name, const ValidationMetricTargets& targets) {
+        for (const auto& description : targets.descriptions()) kv(os, name, description);
+    };
+    dataset_metric("ERMSE (meV/at)", trg.ermse_targets);
+    dataset_metric("FRMSE (eV/A)", trg.frmse_targets);
 
     /* LAMMPS simulation losses */
     if (!trg.LS.empty()) {

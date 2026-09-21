@@ -200,9 +200,8 @@ struct Scope {
  * --skip-rel:    skip when metric > rel * best_seen_so_far for that metric.
  *
  * Either trigger sets the eval's loss to FAIL_SCORE and bypasses LAMMPS.
- * The running-best tracker is per-metric; we keep them as static atomics
- * because the trigger is a thread-shared pre-LAMMPS gate, not a per-host
- * field. */
+ * Histories live in the run-owned MetricSkipTracker, keyed by metric and
+ * (for indexed declarations) dataset identity. */
 namespace header_detail {
   /* D18: truncated column labels must stay DISTINCT.
    *
@@ -236,29 +235,7 @@ namespace header_detail {
   }
 }  // namespace header_detail
 
-namespace bad_pot_detail {
-  /* One running best per metric. infinity = nothing seen yet. */
-  inline std::atomic<double>& best_for(const char* tag) {
-    static std::atomic<double> b_emae   {std::numeric_limits<double>::infinity()};
-    static std::atomic<double> b_ermse  {std::numeric_limits<double>::infinity()};
-    static std::atomic<double> b_errmse {std::numeric_limits<double>::infinity()};
-    static std::atomic<double> b_ersq   {std::numeric_limits<double>::infinity()};
-    static std::atomic<double> b_frmse  {std::numeric_limits<double>::infinity()};
-    static std::atomic<double> b_srmse  {std::numeric_limits<double>::infinity()};
-    /* Hand-rolled dispatch -- avoids string compare in the hot path's
-     * fallback (the call site already has a compile-time tag). */
-    if (tag[0]=='e' && tag[1]=='m')           return b_emae;
-    if (tag[0]=='e' && tag[1]=='r' && tag[2]=='m') return b_ermse;
-    if (tag[0]=='e' && tag[1]=='R')           return b_errmse;
-    if (tag[0]=='e' && tag[1]=='r' && tag[2]=='s') return b_ersq;
-    if (tag[0]=='f')                          return b_frmse;
-    return b_srmse;
-  }
-  inline std::atomic<std::size_t>& skip_count() {
-    static std::atomic<std::size_t> c{0};
-    return c;
-  }
-} // namespace bad_pot_detail
+
 
 /* ----------  per-script lattice cache (warm start) -------------------
  *
@@ -911,6 +888,8 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
 {    /* Arm the bound-occupancy audit on this run's search space (a pure
      * function of the config, so re-arming on every host construction is
      * idempotent across MULTISTART/BASINS policies). */
+    if (!has_validation_ && (trg_.use_ermse || trg_.use_frmse))
+        trg_.resolve_validation_targets({});
     {
         std::lock_guard<std::mutex> lg(bound_occ_mtx_);
         bound_occ_ = BoundOccupancy(trg.space());
@@ -957,6 +936,9 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     if (has_validation_) {
         val_ctx = core::Context(core::CoreUserConfigParser().parse(val_cfg));
         val_ctx_ = val_ctx;
+        std::vector<std::string> files;
+        if (val_ctx.contains("DBFILE")) files = val_ctx("DBFILE");
+        trg_.resolve_validation_targets(files);
         val_stdb_.add(val_ctx);
         n_val_datasets_ = val_stdb_.dbidx.size() > 1 ? val_stdb_.dbidx.size() - 1 : 1;
     }
@@ -1009,6 +991,14 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
             std::to_string(val_report_.n_dropped_force), " by FFILTER; ",
             std::to_string(val_stdb_.size()), " remain.");
 
+        // Filters preserve dataset identity; an empty segment has no RMSE
+        // and must never disappear or shift subsequent target assignments.
+        if (stats_have_columns()) {
+            for (std::size_t i = 0; i + 1 < val_stdb_.dbidx.size(); ++i)
+                if (val_stdb_.dbidx[i] == val_stdb_.dbidx[i + 1])
+                    throw std::runtime_error("Empty validation dataset " + std::to_string(i + 1)
+                        + " (" + val_ctx.get<std::string>("DBFILE", i) + ") after loading/filtering");
+        }
         nnf_.calc(val_stdb_, rcutmax);
     }
     if (has_train_data_) nnf_.calc(train_stdb_, rcutmax);
@@ -1039,6 +1029,14 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
             std::to_string(val_report_.n_dropped_force), " by FFILTER; ",
             std::to_string(val_stdb_.size()), " remain.");
 
+        // Filters preserve dataset identity; an empty segment has no RMSE
+        // and must never disappear or shift subsequent target assignments.
+        if (stats_have_columns()) {
+            for (std::size_t i = 0; i + 1 < val_stdb_.dbidx.size(); ++i)
+                if (val_stdb_.dbidx[i] == val_stdb_.dbidx[i + 1])
+                    throw std::runtime_error("Empty validation dataset " + std::to_string(i + 1)
+                        + " (" + val_ctx.get<std::string>("DBFILE", i) + ") after loading/filtering");
+        }
         nnf_.calc(val_stdb_, rcutmax);
     }
 #endif
@@ -1881,10 +1879,18 @@ void HPO_Host<P,R>::fit_loss(Result& r) const
       v_sink[i] = trg_.globalLoss.loss(v_y[i], ref, w);
   };
   if (trg_.use_emae)   add_global(r.emaeLoss,   r.emae,   trg_.emae,   trg_.w_emae,   r.v_emaeLoss,   r.v_emae);
-  if (trg_.use_ermse)  add_global(r.ermseLoss,  r.ermse,  trg_.ermse,  trg_.w_ermse,  r.v_ermseLoss,  r.v_ermse);
+  if (trg_.use_ermse) {
+    r.ermseLoss = trg_.ermse_targets.loss(trg_.globalLoss, r.ermse, r.v_ermse, r.v_ermseLoss);
+    r.loss_sum += r.ermseLoss;
+    ++r.loss_count;
+  }
   if (trg_.use_errmse) add_global(r.errmseLoss, r.errmse, trg_.errmse, trg_.w_errmse, r.v_errmseLoss, r.v_errmse);
   if (trg_.use_ersq)   add_global(r.ersqLoss,   r.ersq,   trg_.ersq,   trg_.w_ersq,   r.v_ersqLoss,   r.v_ersq);
-  if (trg_.use_frmse)  add_global(r.frmseLoss,  r.frmse,  trg_.frmse,  trg_.w_frmse,  r.v_frmseLoss,  r.v_frmse);
+  if (trg_.use_frmse) {
+    r.frmseLoss = trg_.frmse_targets.loss(trg_.globalLoss, r.frmse, r.v_frmse, r.v_frmseLoss);
+    r.loss_sum += r.frmseLoss;
+    ++r.loss_count;
+  }
   if (trg_.use_srmse)  add_global(r.srmseLoss,  r.srmse,  trg_.srmse,  trg_.w_srmse,  r.v_srmseLoss,  r.v_srmse);
 
   r.loss = r.loss_count ? r.loss_sum / static_cast<double>(r.loss_count) : 0.0;
@@ -2402,62 +2408,51 @@ double HPO_Host<P,R>::operator()(const P& p) const
     r.pot_ctx  = std::move(pot);
     if (has_validation_) fit_loss(r);
 
-    /* Bad-potential pre-filter. Each per-metric --skip-above / --skip-rel
-     * cap (declared on PC_* lines in config.hpo) is tested independently;
-     * the first trigger wins. Caps are optional -- a metric without flags
-     * never causes a skip. The metric -> tag mapping passed to
-     * bad_pot_detail::best_for() is a 2-3 char prefix that disambiguates
-     * the running-best slot for that metric.
-     *
-     * Runs before BOTH obs_loss and run_lammps so the gate gates every
-     * downstream phase, not just LAMMPS. Was previously wrapped in
-     * `if (use_lammps_)` -- silently no-op on PC_OBSERVABLE-only configs
-     * which is a usability footgun (the parser accepts --skip-above on
-     * a PC_OBSERVABLE-only run but nothing acts on it). */
+    // Pre-filters use raw metrics independently of the loss weights. Global
+    // declarations gate the average; indexed declarations gate each dataset.
     bool skip_bad_pot = false;
-    double skip_excess = -1.0;   /* graded band-D measure: metric/cap - 1 */
+    double skip_excess = -1.0;
     {
-      auto check_metric = [&](const char* tag,
-                              bool used,
-                              double value,
-                              const HPOTargets::SkipCaps& caps,
-                              const char* unit) -> bool {
-        if (!used || !std::isfinite(value)) return false;
-        const double best = bad_pot_detail::best_for(tag).load(std::memory_order_relaxed);
-        const bool bad_abs = caps.abs_above && (value > *caps.abs_above);
-        const bool bad_rel = caps.rel_above && std::isfinite(best)
-                             && (value > *caps.rel_above * best);
-        if (bad_abs || bad_rel) {
-          if (bad_abs)      skip_excess = value / *caps.abs_above - 1.0;
-          else if (bad_rel) skip_excess = value / (*caps.rel_above * best) - 1.0;
-          const auto skips = bad_pot_detail::skip_count().fetch_add(
-              1, std::memory_order_relaxed) + 1;
-          if (skips <= 5 || (skips & (skips - 1)) == 0) {
-            std::ostringstream os;
-            os << "eval " << r.iter << ": skipping downstream (obs+LAMMPS) -- "
-               << tag << "=" << value << " " << unit;
-            if (bad_abs) os << " > skip-above=" << *caps.abs_above;
-            if (bad_rel) os << " > skip-rel=" << *caps.rel_above
-                            << " * best(" << best << ")";
-            os << ", total skips=" << skips;
-            HPOLog::instance().warning(os.str());
-          }
-          return true;
+      auto check_metric = [&](const std::string& tag, bool used, double value,
+                              const HPOTargets::SkipCaps& caps, const char* unit) {
+        if (!used) return false;
+        const auto hit = metric_skip_tracker_->check(tag, value, caps);
+        if (!hit) return false;
+        skip_excess = hit->excess;
+        if (hit->count <= 5 || (hit->count & (hit->count - 1)) == 0) {
+          std::ostringstream os;
+          os << "eval " << r.iter << ": skipping downstream (obs+LAMMPS) -- "
+             << tag << "=" << value << " " << unit;
+          if (hit->absolute) os << " > skip-above=" << *caps.abs_above;
+          if (hit->relative) os << " > skip-rel=" << *caps.rel_above
+                               << " * best(" << hit->best << ")";
+          os << ", total skips=" << hit->count;
+          HPOLog::instance().warning(os.str());
         }
-        /* Update per-metric running best -- relaxed CAS, no ordering needed. */
-        double cur = bad_pot_detail::best_for(tag).load(std::memory_order_relaxed);
-        while (value < cur &&
-               !bad_pot_detail::best_for(tag).compare_exchange_weak(
-                   cur, value, std::memory_order_relaxed)) {}
+        return true;
+      };
+      auto check_targets = [&](const char* tag, bool used, double average,
+                               const std::vector<double>& values,
+                               const ValidationMetricTargets& targets, const char* unit) {
+        if (!used) return false;
+        if (!targets.indexed()) return check_metric(tag, true, average, targets.global().caps, unit);
+        const auto& assignments = targets.datasets();
+        if (values.size() != assignments.size())
+          throw std::logic_error("Validation skip-filter dataset count mismatch");
+        for (std::size_t i = 0; i < values.size(); ++i) {
+          const std::string label = std::string(tag) + "[" + std::to_string(i + 1)
+                                  + "] " + targets.files().at(i);
+          if (check_metric(label, true, values[i], assignments[i].caps, unit)) return true;
+        }
         return false;
       };
       skip_bad_pot =
-          check_metric("ermse",   trg_.use_ermse,   r.ermse,   trg_.skip_ermse,   "meV/at") ||
-          check_metric("emae",    trg_.use_emae,    r.emae,    trg_.skip_emae,    "meV/at") ||
-          check_metric("eRRMSE",  trg_.use_errmse,  r.errmse,  trg_.skip_errmse,  "meV/at") ||
-          check_metric("ersq",    trg_.use_ersq,    r.ersq,    trg_.skip_ersq,    "")       ||
-          check_metric("frmse",   trg_.use_frmse,   r.frmse,   trg_.skip_frmse,   "eV/A")   ||
-          check_metric("srmse",   trg_.use_srmse,   r.srmse,   trg_.skip_srmse,   "GPa");
+          check_targets("ermse", trg_.use_ermse, r.ermse, r.v_ermse, trg_.ermse_targets, "meV/at") ||
+          check_metric("emae", trg_.use_emae, r.emae, trg_.skip_emae, "meV/at") ||
+          check_metric("eRRMSE", trg_.use_errmse, r.errmse, trg_.skip_errmse, "meV/at") ||
+          check_metric("ersq", trg_.use_ersq, r.ersq, trg_.skip_ersq, "") ||
+          check_targets("frmse", trg_.use_frmse, r.frmse, r.v_frmse, trg_.frmse_targets, "eV/A") ||
+          check_metric("srmse", trg_.use_srmse, r.srmse, trg_.skip_srmse, "GPa");
       if (skip_bad_pot) {
         if (trg_.FAILSCORE_GRADING) {
           /* Band D graded by how far past the cap the metric landed --
@@ -3024,7 +3019,10 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                           + " io_buf_size=" + std::to_string(io_buf_.size())
                           + " next_flush=" + std::to_string(next_flush_.load()));
 
-        static std::ofstream loss_f  (trg.lossFile, std::ios::app),
+        // Streams belong to this flushed batch. Retaining process-static
+        // streams kept writing to the first run's files when a later host
+        // used a different working directory (or replaced its output files).
+        std::ofstream loss_f  (trg.lossFile, std::ios::app),
                              outv_f  (trg.outvarFile, std::ios::app),
                              par_f   (trg.paramsFile, std::ios::app),
                              stats_f (trg.statsFile, std::ios::app),

@@ -169,6 +169,7 @@ struct MetricValues {
     double ersq   = 0.0;
     double frmse  = 0.0;
     double srmse  = 0.0;
+    std::vector<double> v_ermse, v_frmse;
 };
 
 /* DLossDThetaPlan -- references-only bundle of live state passed to the
@@ -650,21 +651,19 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
 
         const long flat_l = static_cast<long>(flat);
 
-        /* loss_prime sign convention: fit_loss invokes
-         *   loss(y=measured, ypred=target, w)
-         * so loss_prime(measured, target, w) returns dL/dtarget -- not
-         * what we need. The chain rule wants dL/dmeasured. For losses
-         * that depend only on r = y - ypred (L1/L2/Huber/Tukey/
-         * LOG_COSH/RMSLE), dL/dmeasured = -dL/dtarget; equivalently we
-         * call loss_prime with the args swapped (target, measured, w),
-         * which then returns dL/dypred where ypred is the measured.
-         * The arg-swap form keeps the sign explicit at the call site.
-         *
-         * MAPE has an extra d(1/(|y|+eps))/dy term that the swap form
-         * does not capture -- flagged as a known caveat (not exercised
-         * by the Phase 2A pilot, which targets L2 by default). */
+        // HPO evaluates loss(measured, target, weight); differentiate its
+        // first argument, including the measured-value denominator of MAPE.
         auto dl_dmeasured = [&](double measured, double target, double w) {
-            return trg.globalLoss.loss_prime(target, measured, w);
+            return trg.globalLoss.loss_prime_observed(measured, target, w);
+        };
+        auto dataset_chain = [&](const std::vector<double>& slopes) {
+            return [&, slopes](std::size_t dataset, std::size_t struct_idx,
+                               tadah::mlip::PredCellKind kind, std::size_t comp,
+                               double partial) {
+                const auto row = val_cell_to_row(truth, struct_idx, kind, comp,
+                    plan.val_energy_row_for_struct, plan.val_force_row_start_for_struct);
+                g(flat_l) += slopes.at(dataset) * partial * compute_dy_pred(row);
+            };
         };
 
         if (trg.use_emae) {
@@ -675,11 +674,10 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
                        * dmetric_dtheta_i;
         }
         if (trg.use_ermse) {
-            dmetric_dtheta_i = 0.0;
-            tadah::mlip::analytics_grad::ermse(truth, pred, /*scale=*/1000.0,
-                                               set_dydp);
-            g(flat_l) += dl_dmeasured(plan.metrics.ermse, trg.ermse, trg.w_ermse)
-                       * dmetric_dtheta_i;
+            const auto slopes = trg.ermse_targets.slopes(trg.globalLoss,
+                plan.metrics.ermse, plan.metrics.v_ermse);
+            tadah::mlip::analytics_grad::ermse_per_dataset(truth, pred, 1000.0,
+                                                          dataset_chain(slopes));
         }
         if (trg.use_errmse) {
             dmetric_dtheta_i = 0.0;
@@ -709,11 +707,10 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
                     "orchestrator did not build val-side force rows. "
                     "compute_analytical_gradient_from_trainer wires this "
                     "automatically when ctx.FORCE=true and trg.use_frmse=true.");
-            dmetric_dtheta_i = 0.0;
-            tadah::mlip::analytics_grad::frmse(truth, pred, /*scale=*/1.0,
-                                               set_dydp);
-            g(flat_l) += dl_dmeasured(plan.metrics.frmse, trg.frmse, trg.w_frmse)
-                       * dmetric_dtheta_i;
+            const auto slopes = trg.frmse_targets.slopes(trg.globalLoss,
+                plan.metrics.frmse, plan.metrics.v_frmse);
+            tadah::mlip::analytics_grad::frmse_per_dataset(truth, pred, 1.0,
+                                                          dataset_chain(slopes));
         }
         /* use_srmse remains deferred -- analytics_grad::srmse emits STRESS
          * cells which val_cell_to_row rejects (stress requires positions
@@ -1133,10 +1130,20 @@ compute_analytical_gradient_from_trainer(
         mlip::Analytics a(val_stdb, pred_val);
         std::size_t lc = 0;
         if (trg.use_emae)   { plan.metrics.emae   = a.calc_e_mae().mean()   * 1000.0; ++lc; }
-        if (trg.use_ermse)  { plan.metrics.ermse  = a.calc_e_rmse().mean()  * 1000.0; ++lc; }
+        if (trg.use_ermse) {
+            const auto v = a.calc_e_rmse();
+            plan.metrics.ermse = v.mean() * 1000.0;
+            for (std::size_t i = 0; i < v.size(); ++i) plan.metrics.v_ermse.push_back(v[i] * 1000.0);
+            ++lc;
+        }
         if (trg.use_errmse) { plan.metrics.errmse = a.calc_e_rrmse().mean() * 1000.0; ++lc; }
         if (trg.use_ersq)   { plan.metrics.ersq   = a.calc_e_r_sq().mean()  * 1.0;    ++lc; }
-        if (trg.use_frmse)  { plan.metrics.frmse  = a.calc_f_rmse().mean()  * 1.0;    ++lc; }
+        if (trg.use_frmse) {
+            const auto v = a.calc_f_rmse();
+            plan.metrics.frmse = v.mean();
+            for (std::size_t i = 0; i < v.size(); ++i) plan.metrics.v_frmse.push_back(v[i]);
+            ++lc;
+        }
         plan.loss_count = lc;
     }
 

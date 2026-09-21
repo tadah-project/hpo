@@ -63,6 +63,11 @@ public:
     double loss_prime(double y, double ypred, double w = 1.0,
                       double eps = 1e-12) const;
 
+    // Derivative with respect to the FIRST argument of loss(). HPO uses
+    // loss(measured, target, weight); MAPE is not symmetric in its inputs.
+    double loss_prime_observed(double measured, double target, double w = 1.0,
+                               double eps = 1e-12) const;
+
     /* --- meta information ------------------------------------------- */
     bool is_squared() const noexcept;    // true  -> collect in RMS bucket
 
@@ -75,4 +80,3 @@ private:
 };
 
 }   // namespace tadah
-
