@@ -70,7 +70,7 @@ if(NOT TARGET tadah::compile_options)
   FetchContent_Declare (
     tadah_cmake
     GIT_REPOSITORY  https://git.ecdf.ed.ac.uk/tadah/cmake-tools.git
-    GIT_TAG         main
+    GIT_TAG         v1-dev
   )
   FetchContent_MakeAvailable(tadah_cmake)   # defines tadah::compile_options
 endif()
