@@ -505,7 +505,7 @@ TEST_CASE("HPO parser accepts ROOT-level keys after ENDOPTIMIZER",
      * only the OPTIMIZER scope), so once `ENDOPTIMIZER` set
      * `block = ROOT`, every subsequent ROOT-level key hit the catch-all
      * throw before reaching its handler. Real-world configs (every
-     * config.hpo under examples/ and the BASINS workdir) failed to
+     * config.hpo under examples/) failed to
      * parse with `Error on line N: unknown key 'LOSS' in this block`.
      *
      * This test exercises the most common ROOT-level keys to ensure

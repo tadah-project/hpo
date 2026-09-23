@@ -26,17 +26,20 @@
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
+#include <tadah/hpo/durable_best.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/runners.h>
 
 #include <dlib/matrix.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <system_error>
 
@@ -699,4 +702,79 @@ TEST_CASE("params.tadah columns: iteration then slot then OPTIM dimensions "
         CHECK(row[3] == Approx(1.4));
         CHECK(row[4] == Approx(5.0));
     }
+}
+
+TEST_CASE("A second run in the same process restarts the best comparator "
+          "and keeps the evaluation counter", "[HPO][host][durable_best]")
+{
+    /* prepare_best_publication() starts every run with
+     * reset_best_state_for_fresh_run(). An embedding that runs HPO twice in
+     * one process must not judge the second run against the first run's
+     * best -- its first feasible candidate owns the new best_pot.tadah even
+     * when the first run did better -- while the evaluation counter (and
+     * with it the ordered result writer) continues monotonically and
+     * stagnation counts from the new start. */
+    DatasetHostGuard guard;
+    ScratchDir sd;
+    const auto train = sd.dir / "train.db", valdb = sd.dir / "val.db";
+    const auto val = sd.dir / "config.val", hpo = sd.dir / "config.hpo";
+    write_minimal_ta_dbfile(train, 0);
+    write_minimal_ta_dbfile(valdb, 0.07, -0.04);
+    std::ofstream(val) << "DBFILE " << valdb.string() << "\n";
+    std::ofstream(hpo) << dataset_host_head << "PC_ERMSE 10 1\n";
+    auto ctx = make_ta_master_context(train, hpo, val);
+    tadah::hpo::HPOTargets trg(ctx, hpo.string());
+    Host host(ctx, trg, val.string());
+    namespace db = tadah::hpo::durable_best;
+
+    /* First run: two distinct candidates, then the worse one again, which
+     * is not an improvement and so leaves a stagnation count behind. */
+    host.prepare_best_publication(false);
+    ParamVec a(1); a(0) = 0.5;
+    ParamVec b(1); b(0) = 1.2;
+    const double la = host(a);
+    const double lb = host(b);
+    REQUIRE(std::isfinite(la));
+    REQUIRE(std::isfinite(lb));
+    REQUIRE(la != lb);
+    const ParamVec worse = la > lb ? a : b;
+    const double worse_loss = std::max(la, lb);
+    const double best_loss  = std::min(la, lb);
+    REQUIRE(host(worse) == worse_loss);
+    host.flush_remaining();
+
+    const std::size_t g = Host::g_iter_value();
+    REQUIRE(g >= 3u);
+    CHECK(Host::current_best() == best_loss);
+    CHECK(Host::current_best_iter() >= 1u);
+    CHECK(Host::stagnation_count() >= 1u);
+    const auto first = db::read_key_file(trg.canonicalBestPotFile);
+    REQUIRE(first);
+    CHECK(first->loss == best_loss);
+
+    /* Second run in the same process. */
+    host.prepare_best_publication(false);
+    CHECK(Host::current_best() == std::numeric_limits<double>::max());
+    CHECK(Host::current_best_iter() == 0u);
+    CHECK(Host::g_iter_value() == g);
+    CHECK(Host::current_last_best() == g);
+    CHECK(Host::stagnation_count() == 0u);
+    CHECK_FALSE(fs::exists(trg.canonicalBestPotFile));
+
+    /* Its first candidate is its best, although the first run did better. */
+    REQUIRE(host(worse) == worse_loss);
+    host.flush_remaining();
+    CHECK(Host::g_iter_value() == g + 1);
+    CHECK(Host::current_best() == worse_loss);
+    CHECK(Host::current_best_iter() == 1u);
+    CHECK(Host::current_last_best() == g + 1);
+    CHECK(Host::stagnation_count() == 0u);
+    const auto second = db::read_key_file(trg.canonicalBestPotFile);
+    REQUIRE(second);
+    CHECK(second->loss == worse_loss);
+    CHECK(second->eval == g + 1);
+    const auto best_row = last_dataset_row(trg.bestParamsFile);
+    REQUIRE(best_row.size() == 3);   // improvement ordinal, slot, CGRID2B[1]
+    CHECK(best_row[0] == 1.0);
+    CHECK(best_row[2] == Approx(worse(0)));
 }

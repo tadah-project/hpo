@@ -8,16 +8,11 @@
 #include <filesystem>
 #include <fstream>
 
-/* Bug 3 regression — NOISE_CALIBRATION must be skipped when the run is
- * resumed from a checkpoint. The prior run already calibrated noise;
- * re-running charges N extra LAMMPS evals against the resumed counter,
- * pollutes the per-eval logs, and (combined with Bug 1's missing
- * g_best_ persistence) sets up a spurious post-resume "NEW BEST".
- *
- * The gating logic was extracted into should_run_noise_calibration()
- * so the predicate is unit-testable without invoking the full
- * optimiser. End-to-end coverage of the ordering (try_load() runs
- * before noise calibration) lives in test_resume_idempotence. */
+/* NOISE_CALIBRATION gate -- hpo_run() repeats the seed point N times
+ * before the optimiser starts when the knob asks for at least two
+ * evaluations (one evaluation has no spread to measure). The predicate
+ * lives in should_run_noise_calibration() so the gating is unit-testable
+ * without invoking the full optimiser. */
 
 namespace {
 
@@ -41,36 +36,24 @@ struct ScopedTempFile {
 
 }  // namespace
 
-TEST_CASE("NOISE_CALIBRATION gate skips on resume",
-          "[noise][resume][bug3]")
+TEST_CASE("NOISE_CALIBRATION gate runs for N >= 2 only",
+          "[noise]")
 {
-    /* The bug: original code was `if (sp.noise.calibration_n >= 2)`
-     * with no resumed-flag check. Now the gate is two-armed: knob set AND
-     * not resumed. */
     using tadah::hpo::should_run_noise_calibration;
 
-    SECTION("fresh run with N>=2 → run") {
+    SECTION("N >= 2 -> run") {
         CHECK(should_run_noise_calibration(/*resumed=*/false, /*noise_n=*/2));
         CHECK(should_run_noise_calibration(/*resumed=*/false, /*noise_n=*/10));
         CHECK(should_run_noise_calibration(/*resumed=*/false, /*noise_n=*/100));
     }
-    SECTION("fresh run with N<2 → skip") {
+    SECTION("N < 2 -> skip") {
         CHECK_FALSE(should_run_noise_calibration(/*resumed=*/false, /*noise_n=*/0));
         CHECK_FALSE(should_run_noise_calibration(/*resumed=*/false, /*noise_n=*/1));
-    }
-    SECTION("resumed run with N>=2 → skip (Bug 3 fix)") {
-        CHECK_FALSE(should_run_noise_calibration(/*resumed=*/true, /*noise_n=*/2));
-        CHECK_FALSE(should_run_noise_calibration(/*resumed=*/true, /*noise_n=*/10));
-        CHECK_FALSE(should_run_noise_calibration(/*resumed=*/true, /*noise_n=*/100));
-    }
-    SECTION("resumed run with N<2 → skip") {
-        CHECK_FALSE(should_run_noise_calibration(/*resumed=*/true, /*noise_n=*/0));
-        CHECK_FALSE(should_run_noise_calibration(/*resumed=*/true, /*noise_n=*/1));
     }
 }
 
 TEST_CASE("HPOTargets parses NOISE.CALIBRATION value into spec",
-          "[noise][resume][bug3]")
+          "[noise]")
 {
     /* Sanity check: the parser populates spec.noise.calibration_n so the
      * gate has a value to inspect at hpo_run() time. */
@@ -79,21 +62,29 @@ NOISE
   CALIBRATION 5
 ENDNOISE
 STRATEGY
-  TYPE BASINS
+  TYPE PLAIN
+  LIB NLOPT
+  ALGO LN_BOBYQA
 ENDSTRATEGY
 ENDOPTIMIZER
 )");
     tadah::core::Context ctx;
     tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
     CHECK(trg.spec.noise.calibration_n == 5u);
+    using tadah::hpo::should_run_noise_calibration;
+    CHECK(should_run_noise_calibration(
+        /*resumed=*/false,
+        trg.spec.noise.calibration_n));
 }
 
 TEST_CASE("HPOTargets default NOISE.CALIBRATION is below the gate",
-          "[noise][resume][bug3]")
+          "[noise]")
 {
     ScopedTempFile cfg(R"(OPTIMIZER
 STRATEGY
-  TYPE BASINS
+  TYPE PLAIN
+  LIB NLOPT
+  ALGO LN_BOBYQA
 ENDSTRATEGY
 ENDOPTIMIZER
 )");

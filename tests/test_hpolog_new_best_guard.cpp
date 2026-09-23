@@ -10,14 +10,12 @@
 
 /* Bug 2 regression — HPOLog::log_new_best must reject calls whose loss is
  * not strictly better than cur_best_loss_. Without the guard, an upstream
- * is_best comparator that drifted (e.g. HPO_Host::g_best_ at +infinity
- * after a resume that did not restore it) would silently overwrite the
- * journal's running best with a worse value and downstream summaries
- * would report regression as progress.
+ * is_best comparator that drifted out of sync with the journal would
+ * silently overwrite the journal's running best with a worse value and
+ * downstream summaries would report regression as progress.
  *
- * The guard does NOT prevent the spurious comparator-side decision —
- * Bug 1's HPO_HOST checkpoint section does that. The guard's purpose
- * here is defence-in-depth so a future code path that miscalls
+ * The guard does NOT prevent the spurious comparator-side decision; its
+ * purpose is defence-in-depth so a future code path that miscalls
  * log_new_best cannot corrupt the running best. */
 
 namespace {

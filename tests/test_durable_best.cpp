@@ -159,22 +159,22 @@ TEST_CASE("best HOT batches cannot be rolled back by an older improvement",
     ws::clear();
 }
 
-TEST_CASE("fresh-run reset discards an unrelated incumbent while resume reads it",
-          "[durable_best][resume]")
+TEST_CASE("fresh-run reset discards an unrelated incumbent",
+          "[durable_best]")
 {
+    /* HPO runs are not resumable: every run starts by removing the best
+     * potential a previous run left in the working directory. */
     using namespace tadah::hpo::durable_best;
     Scratch scratch;
     const auto target = scratch.path / "best_pot.tadah";
     const Key prior{0.01, 0, 0, 1};
     REQUIRE(publish_if_better(target.string(), prior, payload(prior, "PRIOR_RUN")));
-
-    const auto retained = read_key_file(target.string());
-    REQUIRE(retained.has_value());
-    REQUIRE(retained->loss == Approx(prior.loss));
+    REQUIRE(read_key_file(target.string()).has_value());
     REQUIRE(slurp(target).find("PRIOR_RUN") != std::string::npos);
 
     reset_for_fresh_run(target.string());
     REQUIRE_FALSE(fs::exists(target));
+    REQUIRE_FALSE(read_key_file(target.string()).has_value());
 
     /* The new objective may have a numerically larger loss; it must still own
      * this run's output instead of being suppressed by the stale 0.01. */
@@ -185,7 +185,7 @@ TEST_CASE("fresh-run reset discards an unrelated incumbent while resume reads it
 }
 
 TEST_CASE("fresh-run HOT reset preserves WARM's first-evaluation fallback",
-          "[durable_best][warmstart][resume]")
+          "[durable_best][warmstart]")
 {
     namespace ws = tadah::hpo::warmstart;
     ws::clear();
@@ -243,7 +243,7 @@ TEST_CASE("canonical and MPI rank-local best histories remain independent",
     REQUIRE(publish_if_better(
         local.string(), local_better, payload(local_better, "LOCAL_BETTER")));
 
-    /* Resume binds the global comparator to canonical, not to this rank's
+    /* The global comparator is the canonical file, not this rank's
      * legitimately different local history. A candidate can improve global
      * while the local file correctly declines it. */
     const Key global_new{1.5, 3, 0, 30};
@@ -299,7 +299,7 @@ TEST_CASE("multi-rank HPO dispatch is limited to plain PT and PA",
     spec.algo = "ANNEAL";
     REQUIRE_FALSE(hpo_mpi_dispatch_supported(2, spec));
     spec.algo = "ANNEAL_PT";
-    spec.strategy_type = StrategyType::BASINS;
+    spec.strategy_type = StrategyType::PRESTAGE;
     REQUIRE_FALSE(hpo_mpi_dispatch_supported(2, spec));
     spec.strategy_type = StrategyType::MULTISTART;
     REQUIRE_FALSE(hpo_mpi_dispatch_supported(2, spec));
@@ -336,7 +336,7 @@ TEST_CASE("SIGKILL before rename preserves a complete incumbent",
         try {
             publish_if_better(target.string(), candidate,
                               payload(candidate, "CANDIDATE_COMPLETE"));
-            ::_exit(0); // reached only if the parent resumes instead of kills
+            ::_exit(0); // reached only if the parent lets it continue
         } catch (...) {
             ::_exit(70);
         }

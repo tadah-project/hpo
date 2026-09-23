@@ -387,24 +387,33 @@ ENDOPTIMIZER
                           Catch::Contains("LOG scale requires low > 0"));
     }
   }
-  SECTION("BASINSV2 stage specs are bound to the space") {
+  SECTION("PRESTAGE stage specs are bound to the space") {
     ScopedTempFile in(std::string(kOptim) + R"(OPTIMIZER
   STRATEGY
-    TYPE BASINSV2
+    TYPE PRESTAGE
+    LIB NLOPT
+    ALGO LN_BOBYQA
+    MAXEVAL 5
     EXPLORE
+      LIB NLOPT
+      ALGO GN_MLSL_LDS
       MAXEVAL 5
+      INNER
+        LIB NLOPT
+        ALGO LN_SBPLX
+      ENDINNER
     ENDEXPLORE
-    REFINE
-      MAXEVAL 5
-    ENDREFINE
   ENDSTRATEGY
 ENDOPTIMIZER
 )");
     auto ctx = watom_ctx();
     tadah::hpo::HPOTargets trg(ctx, in.path.string());
-    REQUIRE(trg.spec.basins_v2.explore);
-    CHECK(trg.spec.basins_v2.explore->space == trg.spec.space);
-    CHECK(trg.spec.basins_v2.refine->low.size() == 1);
+    REQUIRE(trg.spec.prestage);
+    CHECK(trg.spec.prestage->space == trg.spec.space);
+    CHECK(trg.spec.prestage->low.size() == 1);
+    REQUIRE(trg.spec.prestage->inner);
+    CHECK(trg.spec.prestage->inner->space == trg.spec.space);
+    CHECK(trg.spec.prestage->inner->low.size() == 1);
   }
 }
 

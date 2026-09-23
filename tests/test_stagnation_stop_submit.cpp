@@ -8,18 +8,17 @@
 #include <map>
 #include <sstream>
 
-/* Bug 7 root-cause regression — the BASINS GLOBAL→LOCAL boundary freeze.
+/* Bug 7 root-cause regression — the writer freeze at a stagnation stop.
  *
- * BasinsPolicy sets a stagnation threshold for the GLOBAL phase. Once
+ * RestartPolicy sets a stagnation threshold. Once
  * stagnation_count() >= threshold, operator() throws StagnationStop.
  * Before this fix, the catch chain rethrew StagnationStop (and
  * ShutdownRequested) WITHOUT submitting a Result for the iter slot
  * already consumed at `++g_iter_`. The optimiser propagated the throw
- * up to RestartPolicy/BasinsPolicy which transitioned to LOCAL — but
- * the writer's next_flush_ was permanently stuck at the abandoned
- * iter. Bug 6's writer gap-skip would eventually advance after 60 s,
- * but every BASINS GLOBAL→LOCAL transition cost a 60 s freeze plus
- * one lost per-eval log line.
+ * up to the policy, which restarted the search — but the writer's
+ * next_flush_ was permanently stuck at the abandoned iter. Bug 6's
+ * writer gap-skip would eventually advance after 60 s, but every
+ * stagnation stop cost a 60 s freeze plus one lost per-eval log line.
  *
  * The fix: both StagnationStop and ShutdownRequested catches now build
  * a synthetic FAIL_SCORE Result with the consumed r.iter, call
@@ -62,16 +61,15 @@ TEST_CASE("StagnationStop recovery: synthetic FAIL_SCORE keeps queue contiguous"
           "[stagnation-stop][bug7]")
 {
     /* Mirrors the live ITER5 scenario: ~3458 successful evals, then
-     * iter 3459 throws StagnationStop at the BASINS GLOBAL→LOCAL
-     * boundary. With the fix, a synthetic FAIL_SCORE for iter 3459 is
-     * submitted before the rethrow, so the writer drains 3459 and
-     * proceeds to 3460+. */
+     * iter 3459 throws StagnationStop. With the fix, a synthetic
+     * FAIL_SCORE for iter 3459 is submitted before the rethrow, so the
+     * writer drains 3459 and proceeds to 3460+. */
     DrainSim sim;
     sim.next_flush = 3450;
     /* Successful evals 3450..3458 (one short of the boundary). */
     for (std::size_t i = 3450; i <= 3458; ++i)
         sim.io_buf.emplace(i, FakeResult{i, false});
-    /* The LOCAL phase that follows resumes at 3460+. */
+    /* The restarted search continues at 3460+. */
     for (std::size_t i = 3460; i <= 3470; ++i)
         sim.io_buf.emplace(i, FakeResult{i, false});
 

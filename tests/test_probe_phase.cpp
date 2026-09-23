@@ -7,8 +7,6 @@
 //   * StagnationStop firing a restart partway through a calibration, because
 //     the annealers run inside RestartPolicy and hundreds of deliberately
 //     non-improving probes look exactly like a stalled search;
-//   * checkpoints written with g_iter advanced over evals the annealer has no
-//     state behind;
 //   * probes poisoning a chain's warm-start lineage -- the failure class
 //     behind the run15/16/17 artefact.
 //
@@ -47,8 +45,8 @@ TEST_CASE("probe::Scope clears the phase when an exception unwinds",
           "[HPO][probe_phase]")
 {
     /* A probe that throws must not leave the process permanently convinced
-     * it is calibrating -- stagnation and checkpointing would stay off for
-     * the rest of the run. */
+     * it is calibrating -- stagnation counting would stay off for the rest
+     * of the run. */
     try {
         probe::Scope s;
         REQUIRE(probe::active());

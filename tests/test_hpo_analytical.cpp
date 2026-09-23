@@ -2784,7 +2784,7 @@ OPTIM CGRIDMB (1) 0.0 4.0
 
 /* ------------------------------------------------------------------------
  * Phase 2C-DM — Layer-3 end-to-end FORCE parity on composite DM_mBlip
- * stack. Mirrors the user's BASINSv2_blip6_lambda_fix shape (DM_mBlip
+ * stack. Mirrors a production blip6 configuration's shape (DM_mBlip
  * with F_Blip embedding, D2_Blip + Cut_Cos, BF_Linear) but reduced to
  * tiny grids for test cost. PC_EMAE+PC_FRMSE drive both energy- and
  * force-row chains through `assemble_dphi_train_force_rows` (D2 + DM).
@@ -3025,7 +3025,7 @@ OPTIM CGRIDMB (1) 0.0 4.0
  * Mirrors the Phase 2C-DM composite test but adds WATOM[1] alongside
  * CGRID2B[1] and CGRIDMB[1]. The gate must accept WATOM (no FD fallback)
  * and the analytical gradient must match FD within 1e-3 relative.
- * Asserts the user's BASINSv2_blip6 config shape (D2_Blip + DM_mBlip +
+ * Asserts a production blip6 config shape (D2_Blip + DM_mBlip +
  * FORCE=true + EMAE+FRMSE) runs 100% analytical.
  * ------------------------------------------------------------------------ */
 

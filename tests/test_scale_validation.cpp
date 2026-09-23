@@ -223,20 +223,26 @@ TEST_CASE("scale_validation: log-scaled dims need positive seeds in real space",
                         Catch::Contains("outside its OPTIM bounds"));
 }
 
-TEST_CASE("scale_validation: STRATEGY-level STEP under BASINS has no consumer",
-          "[HPO][scale][step][basins]")
+TEST_CASE("scale_validation: the tree walk checks the PRESTAGE EXPLORE stage and its INNER",
+          "[HPO][scale][step][prestage]")
 {
-    OptimizerSpec root = make_spec("NOT SET", "NOT SET");
-    root.strategy_type = StrategyType::BASINS;
-    basins_spec_ensure_defaults(root.basins);
-    root.basins.explore->low = root.low;   root.basins.explore->high = root.high;
-    root.basins.refine->low  = root.low;   root.basins.refine->high  = root.high;
-    root.step = 0.1;
-    REQUIRE_THROWS_WITH(run_scale_validation(root),
-                        Catch::Contains("no consumer under TYPE BASINS"));
+    OptimizerSpec root = make_spec("NLOPT", "LN_BOBYQA");
+    root.strategy_type = StrategyType::PRESTAGE;
+    root.prestage = std::make_unique<OptimizerSpec>(make_spec("NLOPT", "GN_CRS2_LM"));
+    REQUIRE_NOTHROW(run_scale_validation(root));
 
-    root.step.reset();
-    root.basins.refine->step = 0.1;   /* REFINE LN_BOBYQA consumes it */
+    root.prestage->step = 0.1;       /* GN_CRS2_LM never reads a step */
+    REQUIRE_THROWS_WITH(run_scale_validation(root),
+                        Catch::Contains("NLOPT:GN_CRS2_LM (PRESTAGE) does not use STEP"));
+
+    root.prestage = std::make_unique<OptimizerSpec>(make_spec("NLOPT", "GN_MLSL_LDS"));
+    root.prestage->inner = std::make_unique<OptimizerSpec>(make_spec("NLOPT", "LD_LBFGS"));
+    root.prestage->inner->step = 0.1;   /* LD_LBFGS never reads a step */
+    REQUIRE_THROWS_WITH(run_scale_validation(root),
+                        Catch::Contains("NLOPT:LD_LBFGS (PRESTAGE.INNER) does not use STEP"));
+
+    root.prestage->inner = std::make_unique<OptimizerSpec>(make_spec("NLOPT", "LN_SBPLX"));
+    root.prestage->inner->step = 0.1;   /* LN_SBPLX consumes it */
     REQUIRE_NOTHROW(run_scale_validation(root));
 }
 

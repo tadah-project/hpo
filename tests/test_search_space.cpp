@@ -157,7 +157,7 @@ TEST_CASE("SearchSpace: vector maps on std::vector and dlib::matrix",
         CHECK(g_u[i] == Approx(g_real[i] * ss.dreal_dinternal(i, u[i])));
 }
 
-TEST_CASE("SearchSpace: require_inside_real, fingerprint, with_boxes",
+TEST_CASE("SearchSpace: require_inside_real, with_boxes",
           "[HPO][search_space]")
 {
     ScalePolicy pol; pol.normalise = true;
@@ -168,21 +168,10 @@ TEST_CASE("SearchSpace: require_inside_real, fingerprint, with_boxes",
     REQUIRE_THROWS_WITH(ss.require_inside_real({6.0, 0.1}, "seed"),
                         Catch::Contains("expected 3"));
 
-    const std::string f1 = ss.fingerprint();
-    CHECK(f1.size() == 16);
-    /* labels do not affect it; bounds/kinds/normalise do */
-    auto d2 = three(); d2[0].label = "renamed";
-    CHECK(SearchSpace::build(d2, pol).fingerprint() == f1);
-    ScalePolicy none; none.normalise = false;
-    CHECK(SearchSpace::build(three(), none).fingerprint() != f1);
-    auto d3 = three(); d3[0].hi = 7.0;
-    CHECK(SearchSpace::build(d3, pol).fingerprint() != f1);
-
     const auto grown = ss.with_boxes({{-2.0, 8.0}, {0.1, 10.0}, {-100.0, 100.0}});
     CHECK(grown.version() == 2);
     CHECK(grown.at(0).hi == 8.0);
     CHECK(grown.at(0).origin == BoxOrigin::Adapted);
     CHECK(grown.at(1).origin == BoxOrigin::Explicit);
     CHECK(grown.at(1).tf.kind == ScaleKind::Log);
-    CHECK(grown.fingerprint() != f1);
 }

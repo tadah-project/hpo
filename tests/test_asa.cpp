@@ -358,7 +358,6 @@ TEST_CASE("ASA caps registry entry", "[HPO][asa][caps]")
     CHECK_FALSE(c.supports_ftol_abs);
     CHECK_FALSE(c.supports_xtol_rel);
     CHECK_FALSE(c.supports_xtol_abs);
-    CHECK(c.ladder_ftol == tadah::hpo::OptimizerCaps::FtolKind::None);
 }
 
 TEST_CASE("ASA print_caps names the original option spellings",

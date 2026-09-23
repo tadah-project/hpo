@@ -18,8 +18,7 @@
  * StructureDB, ofstreams of fixed paths, the moodycamel queue), so this
  * test exercises the SAME try/catch + erase-on-throw + token-clear
  * pattern in isolation — using the real HPOLog singleton — to verify
- * the recovery semantics. The end-to-end test (test_resume_idempotence)
- * exercises the full path through submit_result.
+ * the recovery semantics.
  *
  * What the production writer does, and what this test mirrors:
  *
