@@ -80,16 +80,6 @@ endif()
 # cmake-tools/TadahTesting.cmake.
 tadah_declare_testing()
 
-# Single-source-of-truth version (from CORE's blueprint TOML).
-# Falls back to 0.0.0 when CORE isn't reachable or cmake-tools is old.
-if(COMMAND tadah_read_version_from_blueprint)
-  tadah_read_version_from_blueprint(TADAH_VERSION)
-else()
-  set(TADAH_VERSION "0.0.0")
-endif()
-project(Tadah.HPO VERSION ${TADAH_VERSION} LANGUAGES CXX C)
-message(STATUS "Tadah.HPO version: ${TADAH_VERSION}")
-
 option(TADAH_ENABLE_ASAN  "Enable AddressSanitizer (-fsanitize=address -fno-omit-frame-pointer)" OFF)
 option(TADAH_ENABLE_CERES "Enable Ceres Solver optimizer family (LBFGS/WOLFE/NLCG/STEEPEST_DESCENT)" ON)
 
@@ -116,6 +106,16 @@ FetchContent_Declare(
     GIT_TAG ${TADAH_GIT_BRANCH}
 )
 FetchContent_MakeAvailable(Tadah.MD)
+
+# Single-source-of-truth version (from CORE's blueprint TOML). Read after
+# the Tadah dependencies are available so CORE's blueprint is found in
+# every layout (sibling checkout or FetchContent); then re-state project().
+if(NOT COMMAND tadah_read_version_from_blueprint)
+  message(FATAL_ERROR "cmake-tools is too old: tadah_read_version_from_blueprint() is missing")
+endif()
+tadah_read_version_from_blueprint(TADAH_VERSION REQUIRED)
+project(Tadah.HPO VERSION ${TADAH_VERSION} LANGUAGES CXX C)
+message(STATUS "Tadah.HPO version: ${TADAH_VERSION}")
 
 # 5. External dependencies
 #

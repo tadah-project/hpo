@@ -5,6 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-09-23
+
+### Added
+- Per-dataset `PC_ERMSE` / `PC_FRMSE` targets and weights (indexed form `PC_ERMSE (i) <target> <weight>`).
+
+### Changed
+- Framework version `1.5.1`, read from CORE's `blueprint/blueprint_tadah.toml` after the Tadah dependencies are fetched, so the module reports the right version in every layout (sibling checkout or FetchContent). A missing blueprint is now a configure error instead of a silent `0.0.0`.
+
+### Fixed
+- A bare root `LOSS HUBER` / `LOSS TUKEY` used a zero parameter (Huber then scored every potential as 0). `LossFunction::resolve_params` is now the single place for defaults (Huber 50, Tukey 4.685) and validation, shared by root `LOSS`, `PC_LAMMPS --varloss` and `PC_OBSERVABLE --loss`; non-positive, non-numeric and surplus parameters are rejected.
+- `PC_WORKER_TIMEOUT` and `TADAH_PC_WORKER_TIMEOUT` are parsed strictly (finite, >= 0); a malformed environment value was silently ignored.
+- Error messages: MULTISTART / PRESTAGE-TOPK rejection of single-seed global backends states the real constraint; PRESTAGE without `EXPLORE` names the current grammar (it referenced the removed `PRESTAGE ... ENDPRESTAGE` block); the CERES `STEP` hint no longer names a `PARAM` the adapter rejects; INIT errors say `INIT METHOD`.
+- A configuration without any `OPTIM` line is rejected at startup for NLOPT, DLIB and CERES (it previously failed inside the optimiser after the whole setup had run); the TADAH-native optimisers still evaluate the start point once.
+- Negative numbers after `PC_LAMMPS` options (`--varloss` targets/weights, loss parameters, `--hotvar` bounds) are values, not options.
+- `PC_LAMMPS` lines keep their configuration order when sorted by `--ncpu`, so `outvar`/loss columns and the potential header no longer come out permuted with more than 16 lines.
+
 ## [1.5.0] — 2026-09-10
 
 ### Breaking
