@@ -13,8 +13,8 @@ What this shows:
   journal reports how many dimensions are at each clamp.
 - `RESET_TO_BEST` defaults ON under CORANA: after every cooling step
   the chain snaps back to the best-so-far point (step 7 of Corana et
-  al.'s original algorithm; basin memory against FAILSCORE-cliff
-  wander).
+  al.'s original algorithm; it keeps the chain anchored to the best
+  point instead of wandering off FAILSCORE cliffs).
 - `BOUNDARY_MODE 0` keeps TADAH's exact-reflection default;
   `BOUNDARY_MODE 1` selects the paper-compatible redraw rule. A 4096-draw
   guard turns a malformed proposal kernel into a hard error instead of

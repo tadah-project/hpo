@@ -112,8 +112,8 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
             "(host evaluation is single-threaded inside one optimizer step)");
     if (sp.step)
         throw std::runtime_error("CERES:" + algo + " does not support STEP "
-            "(initial trust-region step is auto; use PARAM "
-            "max_line_search_step_size if needed)");
+            "(Ceres chooses the initial line-search step itself; PARAM "
+            "max_ls_iter caps the line-search iterations)");
 
     if (sp.stop.maxtime)
         throw std::runtime_error("CERES:" + algo + " does not support MAXTIME");

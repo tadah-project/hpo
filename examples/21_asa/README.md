@@ -39,8 +39,9 @@ What this shows:
   sampled sequence vs serial ASA (upstream-documented caveat).
 - ASA's own journal goes to `asa_out` next to `hpo_run.log`.
 - Single-instance semantics: one `asa()` run per process at a time
-  (upstream statics); MULTISTART/BASINS run their starts sequentially,
-  so all strategy wrappers work unchanged.
+  (upstream statics). The RESTART decorator re-runs it sequentially and
+  works unchanged; `STRATEGY TYPE MULTISTART` (and a PRESTAGE refinement
+  over `TOPK > 1` seeds) rejects ASA, a single-seed global optimiser.
 
 Run it:
 

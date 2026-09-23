@@ -48,13 +48,13 @@ each subsequent one introduces one or two new features.
 | 03 | `03_nlopt_local`         | `LIB NLOPT ALGO LN_SBPLX` + `STEP` (fraction of each OPTIM width; derivative-free local). |
 | 04 | `04_skip_bad_pots`       | `PC_<METRIC> --skip-above / --skip-rel` early-reject filter. |
 | 05 | `05_extra_observables`   | `PC_LAMMPS --invar` / `--outvar` (extra LAMMPS observables). |
-| 06 | `06_init_random`         | `INIT { STRATEGY RANDOM, SEED }`. |
-| 07 | `07_init_lhs_multistart` | `INIT { STRATEGY LHS }` + `STRATEGY MULTISTART`. |
-| 08 | `08_init_sobol_gfs`      | `INIT { STRATEGY SOBOL }` + `DLIB:GFS` multi-seed consumer. |
-| 09 | `09_init_warm`           | `INIT { STRATEGY WARM <file> }`, warm-start cache. |
+| 06 | `06_init_random`         | `INIT { METHOD RANDOM, SEED }`. |
+| 07 | `07_init_lhs_multistart` | `INIT { METHOD LHS }` + `STRATEGY { TYPE MULTISTART }`. |
+| 08 | `08_init_sobol_gfs`      | `INIT { METHOD SOBOL }` + `DLIB:GFS` multi-seed consumer. |
+| 09 | `09_init_warm`           | `INIT { METHOD WARM <file> }`, warm-start cache. |
 | 10 | `10_init_chain`          | Multi-strategy INIT chain. |
 | 11 | `11_grid_sweep`          | `LIB TADAH ALGO GRID` exhaustive Cartesian sweep. |
-| 12 | `12_prestage`            | `STRATEGY PRESTAGE { EXPLORE { ... } }` global -> refine. |
+| 12 | `12_prestage`            | `STRATEGY { TYPE PRESTAGE EXPLORE { ... } }` global -> refine. |
 | 13 | `13_restart`             | `STRATEGY { ... RESTART { ... } }` decorator. |
 | 14 | `14_mlsl_inner`          | `STRATEGY { ... INNER { ... } }` for AUGLAG / MLSL. |
 | 15 | `15_simulated_annealing` | `LIB TADAH ALGO ANNEAL` with cooling-schedule PARAMs. |
@@ -82,13 +82,16 @@ is why `run.sh` `cd`s into the example before invoking `tadah`.
 
 ## Notes on coverage
 
-These examples exercise every `STRATEGY` and `INIT` flavour and the
-`LIB` families that today work with `PC_LAMMPS`. `STRATEGY BASINS` and
-`STRATEGY BASINSV2` are intentionally not shown -- both are still
-experimental. `CERES:LBFGS/WOLFE/NLCG/STEEPEST_DESCENT` are also not
-shown here: they are gradient-based and currently incompatible with
-`PC_LAMMPS` (use `LIB DLIB ALGO BFGS` or a gradient-free family for
-LAMMPS-driven loss terms).
+These examples exercise the documented `STRATEGY` types (`PLAIN`,
+`MULTISTART`, `PRESTAGE`, the `RESTART` decorator), every `INIT` method
+and the `LIB` families that today work with `PC_LAMMPS`.
+`CERES:LBFGS/WOLFE/NLCG/STEEPEST_DESCENT` and the gradient-based NLopt
+algorithms (`LD_*`, `GD_*`) are not shown here: `PC_LAMMPS` rejects
+every gradient-based backend except `DLIB:BFGS` (use it or a
+gradient-free family for LAMMPS-driven loss terms).
+
+The INIT examples write chain entries as `STRATEGY <method>`, the alias
+of the canonical `METHOD <method>`; both spellings parse identically.
 
 ## Tightening `--hotvar` against unphysical lattices
 

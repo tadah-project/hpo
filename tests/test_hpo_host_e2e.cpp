@@ -624,3 +624,79 @@ TEST_CASE("PC dataset zero weight retains its dataset skip filter", "[pc_dataset
     REQUIRE(losses.size() == 6);
     CHECK(losses[3] == 0);
 }
+
+TEST_CASE("params.tadah columns: iteration then slot then OPTIM dimensions "
+          "sorted by key and index", "[HPO][host][params_order]")
+{
+    /* The optimiser vector -- and with it params.tadah, best_params.tadah,
+     * hpo_search_space.tsv and the journal -- is ordered by the OPTIM
+     * key (std::map, i.e. byte-wise alphabetical), then by index within
+     * the key, regardless of the order of the OPTIM lines. */
+    DatasetHostGuard guard;
+    ScratchDir sd;
+    const auto train = sd.dir / "train.db", valdb = sd.dir / "val.db";
+    const auto val = sd.dir / "config.val", hpo = sd.dir / "config.hpo";
+    write_minimal_ta_dbfile(train, 0);
+    write_minimal_ta_dbfile(valdb, 0.07, -0.04);
+    std::ofstream(val) << "DBFILE " << valdb.string() << "\n";
+    std::ofstream(hpo)
+        << "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\n"
+           "LOSS L2\nQFLUSH 1\n"
+           "OPTIM SGRID2B (2) 4.0 6.0\n"
+           "OPTIM CGRID2B (2) 1.0 2.0\n"
+           "OPTIM CGRID2B (1) 0.1 0.9\n"
+           "PC_ERMSE 10 1\n";
+    auto ctx = make_ta_master_context(train, hpo, val);
+    tadah::hpo::HPOTargets trg(ctx, hpo.string());
+
+    const std::vector<std::string> expected = {"CGRID2B[1]", "CGRID2B[2]",
+                                               "SGRID2B[2]"};
+    CHECK(trg.spec.parameter_labels == expected);
+
+    trg.write_search_space_files(sd.dir.string());
+    {
+        std::ifstream tsv(sd.dir / "hpo_search_space.tsv");
+        std::vector<std::string> labels;
+        std::string line;
+        bool header = true;
+        while (std::getline(tsv, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            if (header) { header = false; continue; }
+            std::istringstream is(line);
+            std::string dim, label;
+            is >> dim >> label;
+            labels.push_back(label);
+        }
+        CHECK(labels == expected);
+    }
+
+    Host host(ctx, trg, val.string());
+    host.prepare_best_publication(false);
+    ParamVec p(3); p(0) = 0.5; p(1) = 1.4; p(2) = 5.0;
+    (void)host(p);
+    host.flush_remaining();
+
+    for (const auto* file : {&trg.paramsFile, &trg.bestParamsFile}) {
+        INFO(*file);
+        std::ifstream in(*file);
+        std::string head;
+        REQUIRE(std::getline(in, head));
+        std::istringstream hs(head);
+        std::vector<std::string> cols;
+        for (std::string c; hs >> c;) cols.push_back(c);
+        const std::vector<std::string> want = {"#ITERATION", "SLOT",
+                                               "CGRID2B[1]", "CGRID2B[2]",
+                                               "SGRID2B[2]"};
+        CHECK(cols == want);
+        const auto row = last_dataset_row(*file);
+        REQUIRE(row.size() == 5);
+        /* params.tadah: global evaluation number (process-wide counter);
+         * best_params.tadah: improvement ordinal -- 1 for the first best
+         * of a fresh run. */
+        if (file == &trg.bestParamsFile) CHECK(row[0] == 1.0);
+        else                             CHECK(row[0] >= 1.0);
+        CHECK(row[2] == Approx(0.5));
+        CHECK(row[3] == Approx(1.4));
+        CHECK(row[4] == Approx(5.0));
+    }
+}

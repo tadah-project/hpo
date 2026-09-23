@@ -110,7 +110,7 @@ private:
 class LhsInitStrategy : public InitStrategy {
 public:
     explicit LhsInitStrategy(std::size_t k) : k_(k) {
-        if (k_ == 0) throw std::runtime_error("INIT_STRATEGY LHS K must be > 0");
+        if (k_ == 0) throw std::runtime_error("INIT METHOD LHS K must be > 0");
     }
 
     std::vector<std::vector<double>>
@@ -152,7 +152,7 @@ private:
 class SobolInitStrategy : public InitStrategy {
 public:
     explicit SobolInitStrategy(std::size_t k) : k_(k) {
-        if (k_ == 0) throw std::runtime_error("INIT_STRATEGY SOBOL K must be > 0");
+        if (k_ == 0) throw std::runtime_error("INIT METHOD SOBOL K must be > 0");
     }
 
     std::vector<std::vector<double>>
@@ -460,34 +460,34 @@ make_one(const InitStrategySpec::Entry& e)
     auto parse_uint = [](const std::string& s) -> std::size_t {
         try { return static_cast<std::size_t>(std::stoul(s)); }
         catch (...) {
-            throw std::runtime_error("INIT_STRATEGY " + s +
+            throw std::runtime_error("INIT METHOD " + s +
                                      ": expected a non-negative integer");
         }
     };
 
     if (e.method == "CONFIG") {
         if (!e.args.empty())
-            throw std::runtime_error("INIT_STRATEGY CONFIG takes no arguments");
+            throw std::runtime_error("INIT METHOD CONFIG takes no arguments");
         return std::make_unique<ConfigInitStrategy>();
     }
     if (e.method == "RANDOM") {
         if (e.args.size() != 1)
-            throw std::runtime_error("INIT_STRATEGY RANDOM expects exactly one arg: K");
+            throw std::runtime_error("INIT METHOD RANDOM expects exactly one arg: K");
         return std::make_unique<RandomInitStrategy>(parse_uint(e.args[0]));
     }
     if (e.method == "LHS") {
         if (e.args.size() != 1)
-            throw std::runtime_error("INIT_STRATEGY LHS expects exactly one arg: K");
+            throw std::runtime_error("INIT METHOD LHS expects exactly one arg: K");
         return std::make_unique<LhsInitStrategy>(parse_uint(e.args[0]));
     }
     if (e.method == "SOBOL") {
         if (e.args.size() != 1)
-            throw std::runtime_error("INIT_STRATEGY SOBOL expects exactly one arg: K");
+            throw std::runtime_error("INIT METHOD SOBOL expects exactly one arg: K");
         return std::make_unique<SobolInitStrategy>(parse_uint(e.args[0]));
     }
     if (e.method == "WARM") {
         if (e.args.size() != 1)
-            throw std::runtime_error("INIT_STRATEGY WARM expects exactly one arg: <pot_file>");
+            throw std::runtime_error("INIT METHOD WARM expects exactly one arg: <pot_file>");
         return std::make_unique<WarmInitStrategy>(e.args[0]);
     }
     /* NOISE_AUTO is rejected up-front in the parser so the user gets

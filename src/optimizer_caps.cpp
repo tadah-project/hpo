@@ -177,8 +177,8 @@ Registry build_registry()
             c.supports_xtol_rel  = true;
             c.ladder_ftol        = OptimizerCaps::FtolKind::Rel;
             c.step_use           = StepUse::Rejected;
-            c.step_note          = "the initial trust-region/line-search step is automatic; "
-                                   "use PARAM max_line_search_step_size if needed";
+            c.step_note          = "Ceres chooses the initial line-search step itself; remove "
+                                   "STEP (PARAM max_ls_iter caps the line-search iterations)";
             c.ignores_bounds     = true;
             c.bounds_note        = "Ceres GradientProblemSolver enforces no box constraints: "
                                    "iterates may leave the OPTIM box (log-scaled dims stay "

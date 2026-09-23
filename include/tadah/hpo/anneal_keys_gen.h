@@ -306,7 +306,7 @@ inline constexpr AnnealKeyInfo kKeys[] = {
    nullptr, false, nullptr, 0,
    false, false, 0.0, 0.0},
   {"INIT_JITTER_LADDER", AnnealKeyType::Float, KIND_PT,
-   "init", 8, "Scale each slot's initial jitter by (T_k/T_HOT)^gamma, so cold slots start near the seed and hot ones explore. AUTO = gamma 0.5, the equipartition law (the equilibrium coordinate spread in a locally quadratic basin goes as sqrt(T)), floored at the resolvable coordinate scale so cold slots cannot collapse onto the seed. OFF = every slot uses the same sigma (pre-1.5.0 behaviour). A number in (0,4] sets gamma directly. Applies to every INIT_MODE JITTER variant, not only AUTO.",
+   "init", 8, "Scale each slot's initial jitter by (T_k/T_HOT)^gamma, so cold slots start near the seed and hot ones explore. AUTO = gamma 0.5, the equipartition law (the equilibrium coordinate spread about a locally quadratic minimum goes as sqrt(T)), floored at the resolvable coordinate scale so cold slots cannot collapse onto the seed. OFF = every slot uses the same sigma (pre-1.5.0 behaviour). A number in (0,4] sets gamma directly. Applies to every INIT_MODE JITTER variant, not only AUTO.",
    false, true, false, 0.0, -1.0, 0.0,
    false, false, false, false, 0.0, 0.0,
    nullptr, false, nullptr, 0,

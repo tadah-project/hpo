@@ -92,7 +92,7 @@ TEST_CASE("scale_validation: STEP is rejected on every non-consuming backend",
         {"TADAH", "ANNEAL_PT",  "STEP_FRAC"},
         {"ASA",   "ASA",        "temperatures"},
         {"DLIB",  "BFGS",       "fd_step"},
-        {"CERES", "LBFGS",      "max_line_search_step_size"},
+        {"CERES", "LBFGS",      "max_ls_iter"},
     };
     for (const auto& r : rows) {
         INFO(r.lib << ":" << r.algo);

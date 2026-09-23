@@ -89,10 +89,17 @@ public:
           [](const OptimizerCaps& c) {
             return !c.is_global || c.accepts_multi_seed;
           });
+      /* The check does not depend on N_STARTS: it also guards the
+       * PRESTAGE refinement, which multistarts the outer optimiser over
+       * TOPK > 1 seeds. */
       throw std::runtime_error(
-          "MULTISTART > 1 is incompatible with " + spec.lib + ":" +
-          spec.algo + " (single-seed global). Compatible alternatives: " +
-          format_caps_list(compat) + ". Or set N_STARTS 1.");
+          "STRATEGY TYPE MULTISTART (and the PRESTAGE refinement over "
+          "TOPK > 1 seeds) cannot run " + spec.lib + ":" + spec.algo +
+          ": it is a global optimiser that consumes a single starting "
+          "point, so restarting it from each INIT point is rejected for "
+          "any N_STARTS. Use a local or multi-seed optimiser (" +
+          format_caps_list(compat) + "), or STRATEGY TYPE PLAIN to run " +
+          spec.lib + ":" + spec.algo + " once.");
     }
   }
 
@@ -118,11 +125,11 @@ public:
     const std::size_t actual_k = std::min(k_, n_init);
     if (actual_k < k_) {
       HPOLog::instance().warning(
-          "MULTISTART " + std::to_string(k_) + " requested but the resolved "
-          "INIT_STRATEGY chain produced only " + std::to_string(n_init) +
+          "MULTISTART N_STARTS " + std::to_string(k_) + " requested but the "
+          "resolved INIT chain produced only " + std::to_string(n_init) +
           " starting point(s); running " + std::to_string(actual_k) +
-          " start(s). Add more INIT_STRATEGY entries (e.g. LHS/RANDOM/SOBOL "
-          "with K >= " + std::to_string(k_) + ") or lower MULTISTART.");
+          " start(s). Add INIT points (e.g. METHOD LHS/RANDOM/SOBOL "
+          "with K >= " + std::to_string(k_) + ") or lower N_STARTS.");
     }
     HPOLog::instance().info(
         "MULTISTART: running " + std::to_string(actual_k) +
@@ -133,7 +140,7 @@ public:
      * is parsed and validated but currently not honoured >1. */
     if (parallel_ > 1) {
       HPOLog::instance().warning(
-          "MULTISTART_PARALLEL > 1 not yet implemented; running starts "
+          "MULTISTART PARALLEL > 1 not yet implemented; running starts "
           "sequentially. The shared THREADS pool still parallelises the "
           "pc_lammps fan-out within each evaluation.");
     }
@@ -158,7 +165,7 @@ public:
     if (per_start_maxeval) {
       std::ostringstream oss;
       oss << "MULTISTART per-start MAXEVAL = " << *per_start_maxeval
-          << (budget_per_start_ ? " (from MULTISTART_BUDGET_PER_START)"
+          << (budget_per_start_ ? " (from BUDGET_PER_START)"
                                  : " (split from outer MAXEVAL)");
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
@@ -227,9 +234,10 @@ private:
  * collects the top-K best (loss, params) pairs, then refines each via
  * the outer optimiser.
  *
- * Triggered by the presence of an OptimizerSpec::prestage sub-spec
- * (parsed from a PRESTAGE ... ENDPRESTAGE block). No separate
- * STAGE_GLOBAL flag -- the block's presence is the signal.
+ * Selected by STRATEGY TYPE PRESTAGE; the exploration phase is the
+ * OptimizerSpec::prestage sub-spec parsed from the EXPLORE ... ENDEXPLORE
+ * block, the refinement is the outer spec (STRATEGY-level keys or an
+ * optional REFINE ... ENDREFINE block).
  *
  * The two phases:
  *   1. PRESTAGE (broad search):    spec.prestage          (e.g. DLIB:GFS)
@@ -243,13 +251,18 @@ public:
       throw std::runtime_error("Staged-global mode requires TOPK >= 1");
   }
 
-  void run(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host) override {
+  static void validate(const OptimizerSpec& spec) {
     if (!spec.prestage) {
       throw std::runtime_error(
-          "Staged-global mode requires a PRESTAGE ... ENDPRESTAGE block "
-          "inside OPTIMIZER (it defines the global exploration phase; the "
-          "outer OPTIMIZER block defines the local refinement).");
+          "STRATEGY TYPE PRESTAGE requires an EXPLORE ... ENDEXPLORE block "
+          "inside the STRATEGY block (it defines the exploration phase); "
+          "the refinement optimiser is the STRATEGY-level LIB/ALGO or an "
+          "optional REFINE ... ENDREFINE block.");
     }
+  }
+
+  void run(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host) override {
+    validate(spec);
 
     /* Step 1: enable top-K tracking, run the PRESTAGE. Real-space box
      * widths normalise the parameter half of the basin dedup (topk.h). */

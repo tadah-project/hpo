@@ -3,7 +3,7 @@
 # Multi-Level Single-Linkage with Low-Discrepancy Sampling is itself
 # a global+local hybrid: it samples the box on an LDS sequence and
 # launches a local descent from each sample, but skips starts that
-# fall in the basin of an already-found minimum. The INNER block
+# fall within the attraction region of an already-found minimum. The INNER block
 # specifies the local descent used by MLSL.
 
 OPTIMIZER

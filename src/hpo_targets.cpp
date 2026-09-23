@@ -301,13 +301,13 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
        * source of truth for who consumes >1 seed in one run. */
       auto multi_seed = filter_optimizer_caps(
           [](const OptimizerCaps& c) { return c.accepts_multi_seed; });
-      std::cerr << "[HPO] WARNING: INIT_STRATEGY chain produced "
+      std::cerr << "[HPO] WARNING: INIT chain produced "
                 << spec.optim_init.size() << " seeds but " << spec.lib
                 << ":" << spec.algo << " consumes only the first; "
                 << (spec.optim_init.size() - 1)
                 << " seed(s) will be discarded. "
-                << "Set MULTISTART, add a PRESTAGE block, or pick a "
-                   "multi-seed backend (" << format_caps_list(multi_seed)
+                << "Use STRATEGY TYPE MULTISTART (N_STARTS >= 2) or TYPE "
+                   "PRESTAGE, or pick a multi-seed backend (" << format_caps_list(multi_seed)
                 << ") to use them.\n";
     }
   }
@@ -416,7 +416,7 @@ static bool reject_old_keyword(const std::string& key)
     static const Rename map[] = {
         {"LOCAL",                       "renamed to INNER (the MLSL/AUGLAG inner sub-optimizer block). For BASINS' per-basin refinement use REFINE/ENDREFINE inside STRATEGY."},
         {"ENDLOCAL",                    "renamed to ENDINNER."},
-        {"PRESTAGE",                    "replaced by `STRATEGY { TYPE PRESTAGE EXPLORE { ... } REFINE { ... } }`."},
+        {"PRESTAGE",                    "replaced by `STRATEGY { TYPE PRESTAGE EXPLORE { ... } [REFINE { ... }] }` (REFINE is optional; without it the STRATEGY-level LIB/ALGO refines)."},
         {"ENDPRESTAGE",                 "replaced by ENDEXPLORE / ENDREFINE / ENDSTRATEGY (see STRATEGY block)."},
         {"GLOBAL_LIB",                  "moved into `STRATEGY { TYPE BASINS EXPLORE { LIB ... } }`."},
         {"GLOBAL_ALGO",                 "moved into `STRATEGY { TYPE BASINS EXPLORE { ALGO ... } }`."},
@@ -436,12 +436,12 @@ static bool reject_old_keyword(const std::string& key)
         {"STAGE_GLOBAL",                "removed. Use `STRATEGY { TYPE PRESTAGE ... }` for staged-global runs."},
         {"RESTART_AFTER_STAGNATION",    "moved into `STRATEGY { RESTART { AFTER_STAGNATION N } ENDRESTART }`."},
         {"RESTART_MAX",                 "moved into `STRATEGY { RESTART { MAX N } ENDRESTART }`."},
-        {"RESTART_INIT_STRATEGY",       "moved into `RESTART { STRATEGY <method> ... }` (re-uses INIT-block grammar)."},
-        {"INIT_STRATEGY",               "moved into `INIT { STRATEGY <method> ... } ENDINIT` block."},
+        {"RESTART_INIT_STRATEGY",       "moved into `RESTART { METHOD <method> ... }` (re-uses INIT-block grammar)."},
+        {"INIT_STRATEGY",               "moved into `INIT { METHOD <method> ... } ENDINIT` block."},
         {"INIT_K",                      "renamed to K_TOTAL inside an INIT block."},
         {"INIT_SEED",                   "renamed to SEED inside an INIT block."},
-        {"INIT_INCLUDE_CONFIG",         "removed. The in-config point is now included only when you list `STRATEGY CONFIG` explicitly inside the INIT block; omit it to leave the in-config point out."},
-        {"INCLUDE_CONFIG",              "removed. The in-config point is now included only when you list `STRATEGY CONFIG` explicitly inside the INIT block; omit it to leave the in-config point out."},
+        {"INIT_INCLUDE_CONFIG",         "removed. The in-config point is now included only when you list `METHOD CONFIG` explicitly inside the INIT block; omit it to leave the in-config point out."},
+        {"INCLUDE_CONFIG",              "removed. The in-config point is now included only when you list `METHOD CONFIG` explicitly inside the INIT block; omit it to leave the in-config point out."},
         {"NOISE_AUTO",                  "moved into `NOISE { AUTO true|false } ENDNOISE` block."},
         {"NOISE_CALIBRATION",           "moved into `NOISE { CALIBRATION N } ENDNOISE` block."},
         /* TOPK is now legal inside STRATEGY (TYPE PRESTAGE) -- don't reject it
@@ -1125,7 +1125,13 @@ void HPOTargets::read(const std::string& fn)
                         "PC_ISOLATION must be THREAD or PROCESS, got '"
                         + PC_ISOLATION + "'");
             }
-            else if (key=="PC_WORKER_TIMEOUT") { iss>>PC_WORKER_TIMEOUT; }
+            else if (key=="PC_WORKER_TIMEOUT") {
+                std::string v;
+                if (!(iss>>v))
+                    throw std::runtime_error(
+                        "PC_WORKER_TIMEOUT requires a value in seconds");
+                PC_WORKER_TIMEOUT = parse_pc_worker_timeout(v, "PC_WORKER_TIMEOUT");
+            }
             else if (key=="FAILSCORE_GRADING") {
                 std::string v; iss>>v;
                 if (v=="ON")       FAILSCORE_GRADING = true;
@@ -1224,9 +1230,23 @@ void HPOTargets::read(const std::string& fn)
             /* loss -------------------------------------------------- */
             else if (key=="LOSS")
             {
-                std::string type; iss>>type;
+                /* LOSS <type> [<param>]. The optional parameter (HUBER
+                 * delta, TUKEY c) is validated and defaulted by
+                 * LossFunction::resolve_params -- the same path the
+                 * PC_LAMMPS --varloss override takes. */
+                std::string type;
+                if (!(iss>>type))
+                    throw std::runtime_error("LOSS requires a loss type");
                 std::vector<double> params;
-                if (type=="HUBER" || type=="TUKEY"){ double p; iss>>p; params={p}; }
+                std::string tok;
+                while (iss>>tok) {
+                    double p = 0.0;
+                    if (!tadah::hpo::try_parse_double(tok, p))
+                        throw std::runtime_error(
+                            "LOSS " + type + ": parameter '" + tok +
+                            "' is not a number");
+                    params.push_back(p);
+                }
                 auto id = tadah::LossFunction::from_string(type);
                 globalLoss = tadah::LossFunction(id,params);
             }
@@ -1455,6 +1475,16 @@ void HPOTargets::read(const std::string& fn)
         if (spec.inner)
             reject_pc_lammps_grad(*spec.inner, spec.lib, "INNER's");
     }
+}
+
+double HPOTargets::parse_pc_worker_timeout(const std::string& token,
+                                           const std::string& origin) {
+  double v = 0.0;
+  if (!try_parse_double(token, v) || !std::isfinite(v) || v < 0.0)
+    throw std::runtime_error(
+        origin + " must be a finite number of seconds >= 0 (0 derives the "
+        "deadline from each script's timeout), got '" + token + "'");
+  return v;
 }
 
 void HPOTargets::handle_directory_creation(const std::string& directory) {

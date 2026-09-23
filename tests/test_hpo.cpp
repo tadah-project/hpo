@@ -413,9 +413,9 @@ TEST_CASE("HPO INCLUDE_CONFIG keyword is rejected with a helpful message",
           "[HPO][optim][init_strategy]")
 {
     /* INCLUDE_CONFIG was removed: the in-config point is now included
-     * only when the user lists `STRATEGY CONFIG` explicitly. The old
-     * keyword must fail with a message pointing at STRATEGY CONFIG
-     * rather than a generic "unknown key" error. */
+     * only when the user lists `METHOD CONFIG` explicitly. The old
+     * keyword must fail with a message pointing at METHOD CONFIG (the
+     * canonical INIT keyword) rather than a generic "unknown key" error. */
     ScopedTempFile input(R"(OPTIMIZER
 INIT
   INCLUDE_CONFIG false
@@ -437,7 +437,7 @@ ENDOPTIMIZER
         msg = e.what();
     }
     CHECK(caught);
-    CHECK(msg.find("STRATEGY CONFIG") != std::string::npos);
+    CHECK(msg.find("METHOD CONFIG") != std::string::npos);
 }
 
 TEST_CASE("HPO WARM_ON_MISMATCH rejects invalid values",

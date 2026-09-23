@@ -121,6 +121,11 @@ public:
      * derive from each sim's maxtime ("off" => no deadline, thread parity).
      * Env override: TADAH_PC_WORKER_TIMEOUT. */
     double PC_WORKER_TIMEOUT = 0.0;
+    /* Strict parser shared by the PC_WORKER_TIMEOUT key and the
+     * TADAH_PC_WORKER_TIMEOUT override: a finite number >= 0, else throws
+     * naming `origin`. */
+    static double parse_pc_worker_timeout(const std::string& token,
+                                          const std::string& origin);
 
     /* FAILSCORE_GRADING ON|OFF: graded ("smooth") failure losses inside the
      * band [0.999*FAILSCORE, FAILSCORE) -- severity bands A-D graded by

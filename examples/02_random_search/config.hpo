@@ -3,7 +3,7 @@
 # Uniform random sampling inside the bounds. Useful as a baseline:
 # if the best loss after N random samples matches what a gradient
 # optimiser produces with the same N, the gradient run is getting
-# stuck in a poor basin.
+# stuck in a poor local minimum.
 
 OPTIMIZER
   STRATEGY

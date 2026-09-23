@@ -24,17 +24,6 @@ namespace {
 
 using tadah::hpo::try_parse_double;
 
-/* provide an empty vector for loss types that need no parameters          */
-/* Huber[0]=delta , Tukey[0]=c                                                 */
-inline std::vector<double> defaultParams(int id,double dHuber,double tC)
-{
-    switch(id){
-      case 4: return {dHuber};
-      case 6: return {tC};
-      default: return {};
-    }
-}
-
 inline std::string to_lower_ascii(std::string s)
 {
     for (char &c : s)
@@ -350,7 +339,9 @@ void LammpsSim::parse_tokens() {
         throw std::runtime_error("--varloss "+vname+": missing <weight>");
       double wgt = std::stod(tokens[j++]);
 
-      /* optional override ---------------------------------------------- */
+      /* optional override: <type> [<param>]. Defaults and validation of
+       * the parameter come from LossFunction::resolve_params, shared with
+       * the root LOSS key. ---------------------------------------------- */
       tadah::LossFunction myLoss = defLoss;
       if(j<tokens.size() && !is_flag(tokens[j])){
         auto t = tadah::LossFunction::from_string(tokens[j++]);

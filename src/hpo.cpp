@@ -196,7 +196,8 @@ int hpo_run(core::Context& ctx)
         }
         double pc_wtimeout = trg.PC_WORKER_TIMEOUT;
         if (const char* e = std::getenv("TADAH_PC_WORKER_TIMEOUT")) {
-            if (*e) pc_wtimeout = std::atof(e);
+            if (*e) pc_wtimeout = HPOTargets::parse_pc_worker_timeout(
+                        e, "TADAH_PC_WORKER_TIMEOUT");
         }
         if (pc_mode != "THREAD" && pc_mode != "PROCESS")
             throw std::runtime_error(

@@ -10,7 +10,7 @@ What this shows:
   matters here because finite-difference gradients on a noisy LAMMPS
   loss are unreliable.
 - `POPULATION` caps the parallel-population size in algorithms that
-  use one (MLSL keeps it as a per-basin uniqueness check).
+  use one.
 
 The `INNER` block is mandatory for any AUGLAG- or MLSL-family algo;
 the parser fails the config without it.

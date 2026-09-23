@@ -28,16 +28,28 @@ public:
     /* ----------------------------------------------------------------- *
      *  Construction
      * ----------------------------------------------------------------- */
+    /* Every construction path (root LOSS, PC_LAMMPS --varloss,
+     * PC_OBSERVABLE --loss) goes through resolve_params(), so the
+     * parameter defaults and their validation live in one place. */
     explicit LossFunction(Type t = Type::L2,
                           const std::vector<double>& params = {})
     : type_(t)
-    , params_(params.empty()? default_params(t) : params)
+    , params_(resolve_params(t, params))
     {}
 
     /* from / to string ------------------------------------------------- */
     static Type                 from_string(const std::string&);
     static std::string          to_string  (Type);
+    /* Defaults used when a parameterised loss is given no parameter:
+     * HUBER delta = 50, TUKEY c = 4.685. Empty for the other types. */
     static std::vector<double>  default_params(Type);
+    /* Returns the parameter list a LossFunction of type t will hold:
+     * default_params(t) when `params` is empty, otherwise `params` after
+     * validation. HUBER and TUKEY take at most one parameter, which must
+     * be finite and > 0 (a zero Huber delta makes the loss identically
+     * zero); the other types take none. Throws std::runtime_error. */
+    static std::vector<double>  resolve_params(Type t,
+                                               const std::vector<double>& params);
 
     /* accessors -------------------------------------------------------- */
     Type                         type ()   const noexcept { return type_;   }

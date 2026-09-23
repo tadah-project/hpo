@@ -1,6 +1,7 @@
 #include <tadah/hpo/loss_function.h>
 
 #include <algorithm>    // std::transform
+#include <sstream>
 
 namespace tadah {
 
@@ -44,6 +45,33 @@ std::vector<double> LossFunction::default_params(Type t)
     }
 }
 
+std::vector<double> LossFunction::resolve_params(Type t,
+                                                 const std::vector<double>& params)
+{
+    if (params.empty()) return default_params(t);
+    const std::string name = to_string(t);
+    const std::size_t n_expected = default_params(t).size();
+    if (n_expected == 0)
+        throw std::runtime_error(
+            "loss " + name + " takes no parameter (got " +
+            std::to_string(params.size()) + ")");
+    if (params.size() > n_expected)
+        throw std::runtime_error(
+            "loss " + name + " takes at most " + std::to_string(n_expected) +
+            " parameter (got " + std::to_string(params.size()) + ")");
+    for (double p : params) {
+        if (!std::isfinite(p) || !(p > 0.0)) {
+            std::ostringstream oss;
+            oss << "loss " << name << " parameter ("
+                << (t == Type::HUBER ? "delta" : "c")
+                << ") must be finite and > 0 (got " << p
+                << "); omit it to use the default " << default_params(t)[0];
+            throw std::runtime_error(oss.str());
+        }
+    }
+    return params;
+}
+
 /* ----------  numerically safe log(cosh) ------------------------------ */
 double LossFunction::stable_log_cosh(double r) noexcept
 {
@@ -72,7 +100,7 @@ double LossFunction::loss(double y, double ypred, double w,
         case Type::MAPE :     return abs_r / (std::abs(y)+eps) * w;
 
         case Type::HUBER : {
-            double delta = params_.empty()? 1.0 : params_[0];
+            const double delta = params_[0];   // resolve_params() guarantees one
             return abs_r <= delta ? 0.5*r*r*w
                                   : delta*(abs_r-0.5*delta)*w;
         }
@@ -84,7 +112,7 @@ double LossFunction::loss(double y, double ypred, double w,
         }
 
         case Type::TUKEY : {
-            double c = params_.empty()? 4.685 : params_[0];
+            const double c = params_[0];       // resolve_params() guarantees one
             if(abs_r <= c){
                 double t = r/c;
                 return (1-std::pow(1-t*t,3))*w;
@@ -128,7 +156,7 @@ double LossFunction::loss_prime(double y, double ypred, double w,
         }
 
         case Type::HUBER : {
-            const double delta = params_.empty() ? 1.0 : params_[0];
+            const double delta = params_[0];
             if (abs_r <= delta) return -w * r;
             return -w * delta * sgn(r);
         }
@@ -140,7 +168,7 @@ double LossFunction::loss_prime(double y, double ypred, double w,
         }
 
         case Type::TUKEY : {
-            const double c = params_.empty() ? 4.685 : params_[0];
+            const double c = params_[0];
             if (abs_r > c) return 0.0;
             const double t = r / c;
             const double one_minus_t2 = 1.0 - t * t;
