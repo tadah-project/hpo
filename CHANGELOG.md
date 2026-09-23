@@ -12,8 +12,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Framework version `1.5.1`, read from CORE's `blueprint/blueprint_tadah.toml` after the Tadah dependencies are fetched, so the module reports the right version in every layout (sibling checkout or FetchContent). A missing blueprint is now a configure error instead of a silent `0.0.0`.
+- Tests take Catch2 and its test discovery from cmake-tools (`tadah_setup_tests()`, `include(Catch)`); the vendored `tests/catch2/catch.hpp`, `tests/Catch.cmake` and `tests/CatchAddTests.cmake` are removed. Every discovered CTest entry now selects exactly its own test case and passes `--warn NoTests`, so an entry that matches no test case fails instead of passing. New test sources are picked up without a manual re-configure (`CONFIGURE_DEPENDS`).
+- The test `MultiStartPolicy: validate rejects NLopt GN_*` is renamed `... rejects the NLopt global GN_DIRECT` (what it checks). Catch cannot select a name that ends in `*` on its own (the `*` is a wildcard), and discovery now refuses such names.
+- cmake-tools is fetched at `v1-dev` instead of `main`.
 
 ### Fixed
+- Five tests whose names contain `;` never ran under CTest: the vendored Catch discovery script split each into two entries, which matched no test case and still passed. They cover the NLopt step plan, `PcFailState` band grading, the validation filter and ESHIFT forwarding, the volume observable on anisotropic cells, and the removed `LADDER_ADAPT_UPDATES` key. All five now run and pass.
+- The explicit `hpo_anneal_statistical` and `hpo_corana1987_protocol` CTest entries pass `--warn NoTests`, so a hidden tag that matches no test case fails instead of passing.
 - A bare root `LOSS HUBER` / `LOSS TUKEY` used a zero parameter (Huber then scored every potential as 0). `LossFunction::resolve_params` is now the single place for defaults (Huber 50, Tukey 4.685) and validation, shared by root `LOSS`, `PC_LAMMPS --varloss` and `PC_OBSERVABLE --loss`; non-positive, non-numeric and surplus parameters are rejected.
 - `PC_WORKER_TIMEOUT` and `TADAH_PC_WORKER_TIMEOUT` are parsed strictly (finite, >= 0); a malformed environment value was silently ignored.
 - Error messages: MULTISTART / PRESTAGE-TOPK rejection of single-seed global backends states the real constraint; PRESTAGE without `EXPLORE` names the current grammar (it referenced the removed `PRESTAGE ... ENDPRESTAGE` block); the CERES `STEP` hint no longer names a `PARAM` the adapter rejects; INIT errors say `INIT METHOD`.
