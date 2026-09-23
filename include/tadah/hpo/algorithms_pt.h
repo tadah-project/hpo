@@ -3774,8 +3774,8 @@ template<typename Vec, typename HostT>
 
     /* --- multi-rank finalisation ------------------------------------------
      * Broadcast the winning coordinates for the driver's global result.
-     * Do not re-evaluate on rank 0: host-side best checkpoints are written
-     * at discovery time, and a synthetic final evaluation would violate the
+     * Do not re-evaluate on rank 0: the host publishes best_pot.tadah at
+     * discovery time, and a synthetic final evaluation would violate the
      * hard global MAXEVAL contract. */
     anneal::StepSaturation final_vsat;
     if (kb.corana) {

@@ -134,7 +134,7 @@ const std::map<std::string, const char*> kExcluded = {
   {"NoOfSamples",
    "ASA_FUZZY lives in ASA's un-vendored user module (asa_usr.c)."},
   {"Random_Array_Dim",
-   "ASA_SAVE checkpointing is compiled out; HPO has its own checkpoints."},
+   "ASA_SAVE checkpointing is compiled out (HPO runs are not resumable)."},
   {"Bias_Acceptance",
    "ASA_SAMPLE (importance sampling) is not built."},
   {"Limit_Weights",

@@ -499,8 +499,8 @@ JitterPlan run_jitter_calibration(const OptimizerSpec& sp, const Knobs& kb,
                std::chrono::steady_clock::now() - t_start).count();
   };
 
-  probe::Scope phase;          /* stagnation off, checkpoints off, warm-start
-                                * namespaced -- see probe_phase.h */
+  probe::Scope phase;          /* stagnation off, warm-start namespaced --
+                                * see probe_phase.h */
   std::size_t spent = 0, done_dims = 0, reported = 0;
   bool truncated = false;
   const std::size_t report_every = std::max<std::size_t>(1, dim / 10);

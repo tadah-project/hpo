@@ -2,8 +2,8 @@
 /*
  * scale_validation -- fail-fast checks of the search-space / initial-step
  * setup, run once after HPOTargets parsing (all specs) and again from
- * run_inner (defence in depth for specs assembled at run time, e.g. BASINS
- * stage specs and MULTISTART clones).
+ * run_inner (defence in depth for specs assembled at run time, e.g.
+ * MULTISTART and PRESTAGE clones).
  *
  * The STEP acceptance policy comes from the OptimizerCaps registry
  * (OptimizerCaps::step_use / step_note), so a backend that would silently
@@ -32,19 +32,18 @@
 namespace tadah::hpo {
 
 /** Validate one spec. `where` tags messages ("OUTER", "INNER",
- *  "PRESTAGE", "BASINS.EXPLORE", ...). Throws std::runtime_error on the
+ *  "PRESTAGE", "PRESTAGE.INNER", ...). Throws std::runtime_error on the
  *  first violated rule; journals warnings/hints. `check_start_points`
  *  is false on the run_inner path (seeds were validated at startup, and
- *  run-time stage seeds come from the basin pool / top-K, already inside
- *  the box). */
+ *  run-time stage seeds come from the INIT chain or the top-K, already
+ *  inside the box). */
 void validate_optimizer_scaling(const OptimizerSpec& sp,
                                 const std::string& where,
                                 bool check_start_points = true);
 
 /** Walk the whole spec tree of the parsed OPTIMIZER block (OUTER, INNER,
- *  PRESTAGE(+INNER), BASINS / BASINSV2 EXPLORE/REFINE(+INNER)), validate
- *  each and reject a STRATEGY-level STEP under BASINS/BASINSV2 (it has no
- *  consumer). Called twice: from the HPOTargets constructor with
+ *  PRESTAGE EXPLORE and its INNER) and validate each. Called twice: from
+ *  the HPOTargets constructor with
  *  check_start_points=false (config-level STEP policy, so a bad config
  *  fails at parse time and unit tests can exercise it without a
  *  training context), and from validate_hpo_setup() with

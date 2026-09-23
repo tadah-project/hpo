@@ -13,13 +13,13 @@
  *   walker lineage, a pc-worker pool slot -- is 0-based in memory and 1-based
  *   only where it is rendered for a person. It has to stay 0-based in memory
  *   because it round-trips as an IDENTITY through warmstart::current_chain()
- *   -> EvalResult::chain_id -> durable_best::Key -> `# HPO_SOURCE_SLOT` ->
- *   the resume checkpoint. Shifting it at the source would silently
- *   repartition the per-chain warm-start cache (the failure class that
- *   HPO d33e83e fixed) and make durable_best::publish_if_better throw.
+ *   -> EvalResult::chain_id -> durable_best::Key -> `# HPO_SOURCE_SLOT`.
+ *   Shifting it at the source would silently repartition the per-chain
+ *   warm-start cache (the failure class that HPO d33e83e fixed) and make
+ *   durable_best::publish_if_better throw.
  *
  * So: `ui()` on the way OUT, `from_ui()` on the way BACK IN, and nothing that
- * builds a cache key, a comparison key or a checkpoint field ever calls either.
+ * builds a cache key or a comparison key ever calls either.
  *
  * Everything that renders a slot/pair/walker index routes through here, so
  * there is exactly one `+1` in the tree rather than a dozen independent ones.

@@ -19,9 +19,8 @@
 #include <stdexcept>
 #include <string>
 
-/* RunPolicy<> + run_inner<> live in run_policy_base.h so basins_policy.h
- * can include them without pulling in the full decorator stack -- see
- * comments at the top of run_policy_base.h for the full rationale. */
+/* RunPolicy<> + run_inner<> (the single-shot dispatch) live in
+ * run_policy_base.h; this header builds the decorator stack on top. */
 #include <tadah/hpo/run_policy_base.h>
 #include <tadah/hpo/init_strategy.h>
 #include <tadah/hpo/optimizer_caps.h>
@@ -44,20 +43,19 @@ public:
  * MultiStartPolicy -- runs the inner optimiser K times from K starting
  * points, taking the K points from spec.optim_init (which the
  * InitStrategy chain has already populated). Local optimisers benefit
- * the most: each run explores a different basin; the host's
- * best-tracker collects the global best across the K runs.
+ * the most: each run can descend into a different local minimum; the
+ * host's best-tracker collects the global best across the K runs.
  *
- * Compatibility:
- *   - DLIB:BFGS, NLOPT:LD_*, NLOPT:LN_*  -> K independent runs (intended).
- *   - DLIB:GFS                            -> seeds the K points into
+ * Compatibility (from the caps registry, see validate()):
+ *   - local backends (DLIB:BFGS, CERES:*, NLOPT:LD_*, NLOPT:LN_*)
+ *                                         -> K independent runs (intended).
+ *   - multi-seed globals (DLIB:GFS)       -> seeds the K points into
  *     find_min_global's `initial_function_evals`; the global engine then
- *     runs once (single call). The dlib adapter already accepts K
- *     points (Increment 6 generalisation point).
- *   - NLOPT:GN_*                          -> no analogous API in NLopt;
- *     validate() throws so the user picks a different inner ALGO or
- *     drops MULTISTART.
- *   - TADAH:RANDOM, TADAH:GRID            -> already evaluate every
- *     init point as eval #1..#K via the existing prepend logic.
+ *     runs once (single call).
+ *   - every other global (NLOPT:G*, TADAH:RANDOM/GRID/ANNEAL*, ASA)
+ *                                         -> consumes a single starting
+ *     point, so validate() rejects it for any N_STARTS; the user picks a
+ *     local or multi-seed backend, or STRATEGY TYPE PLAIN.
  *
  * Parallelism: the inner optimisers are not natively thread-safe in all
  * cases (NLopt's `nlopt::opt` is, dlib's `find_min_box_constrained`
@@ -363,6 +361,13 @@ private:
  *
  * The refresh strategy and the host's HPOTargets are captured at
  * build_run_policy() time.
+ *
+ * A restart needs StagnationStop to propagate out of the inner policy.
+ * Three places absorb it today, so RESTART does not fire through them:
+ * MultiStartPolicy's per-start catch, StagedPolicy's exploration catch
+ * (deliberately: a stagnating exploration hands over to refinement), and
+ * the NLopt C++ wrapper, which turns any exception thrown by the
+ * objective into NLOPT_FAILURE.
  * -------------------------------------------------------------------- */
 template<class Vec, class Runner>
 class RestartPolicy : public RunPolicy<Vec,Runner> {
@@ -438,50 +443,24 @@ private:
  * parsed OptimizerSpec.
  *
  * Layering (innermost -> outermost):
- *    BasePolicy / MultiStartPolicy / StagedPolicy / BasinsPolicy   <- chosen by knobs
- *      +-- wrapped by RestartPolicy if RESTART_AFTER_STAGNATION > 0
+ *    BasePolicy / MultiStartPolicy / StagedPolicy   <- chosen by STRATEGY TYPE
+ *      +-- wrapped by RestartPolicy if RESTART sets both AFTER_STAGNATION
+ *          and MAX > 0
  *
- * Selection rules:
- *   - BasinsPolicy if LIB BASINS -- top-level "run and forget" strategy
- *     with its own checkpoint/restart loop. Bypasses the rest of the
- *     stack: BASINS already drives global+local internally and isn't
- *     compatible with PRESTAGE / MULTISTART / RESTART decorators.
- *   - StagedPolicy if a PRESTAGE block is present (spec.prestage != nullptr).
- *   - MultiStartPolicy if MULTISTART > 1.
- *   - BasePolicy otherwise.
+ * Selection rules (STRATEGY TYPE):
+ *   - PRESTAGE   -> StagedPolicy (EXPLORE block, then top-K refinement).
+ *   - MULTISTART -> MultiStartPolicy (N_STARTS starts of LIB/ALGO).
+ *   - PLAIN      -> BasePolicy (single shot).
  *
  * targets is captured for RestartPolicy's refresh_strategy.
  * -------------------------------------------------------------------- */
 template<class Vec, class Runner>
 std::unique_ptr<RunPolicy<Vec,Runner>>
-build_run_policy(const OptimizerSpec& spec, const HPOTargets* targets = nullptr);
-
-}  // namespace tadah::hpo
-
-/* BasinsPolicy / BasinsV2Policy are forward-included templates; deferring the
- * build_run_policy implementation past their includes keeps the include
- * graph acyclic. */
-#include <tadah/hpo/basins_policy.h>
-#include <tadah/hpo/basins_v2_policy.h>
-
-namespace tadah::hpo {
-
-template<class Vec, class Runner>
-std::unique_ptr<RunPolicy<Vec,Runner>>
-build_run_policy(const OptimizerSpec& spec, const HPOTargets* targets)
+build_run_policy(const OptimizerSpec& spec, const HPOTargets* targets = nullptr)
 {
   /* Strategy block dispatch -- TYPE chooses the inner policy. */
   std::unique_ptr<RunPolicy<Vec,Runner>> inner;
   switch (spec.strategy_type) {
-    case StrategyType::BASINS:
-      /* BASINS supersedes the decorator stack -- RESTART is not applied. */
-      return std::make_unique<BasinsPolicy<Vec,Runner>>(spec, targets);
-
-    case StrategyType::BASINSV2:
-      /* BASINSV2 also supersedes the decorator stack -- its lifecycle
-       * subsumes RESTART semantics. */
-      return std::make_unique<BasinsV2Policy<Vec,Runner>>(spec, targets);
-
     case StrategyType::PRESTAGE:
       inner = std::make_unique<StagedPolicy<Vec,Runner>>(spec.stage_topk);
       break;
@@ -498,7 +477,8 @@ build_run_policy(const OptimizerSpec& spec, const HPOTargets* targets)
       break;
   }
 
-  /* RESTART decorator (composes with PLAIN/MULTISTART/PRESTAGE). */
+  /* RESTART decorator: wraps every STRATEGY TYPE (see RestartPolicy for
+   * when a restart can fire). */
   const auto& rs = spec.restart;
   if (rs.after_stagnation > 0 && rs.max > 0) {
     auto refresh = build_init_strategy(rs.init_strategy);

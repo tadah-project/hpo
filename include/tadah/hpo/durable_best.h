@@ -42,8 +42,8 @@ std::optional<Key> parse_key(const std::string& payload);
 std::optional<Key> read_key_file(const std::string& path);
 
 /** Remove a prior run's artifact under the publication lock and fsync the
- * containing directory. Call only for a confirmed fresh run; checkpoint
- * resumes deliberately retain their incumbent. */
+ * containing directory. Called at the start of every run: HPO runs are not
+ * resumable, so a previous run's incumbent never carries over. */
 void reset_for_fresh_run(const std::string& path);
 
 /** Publish payload at path only when key beats the current file's key.

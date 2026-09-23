@@ -140,11 +140,9 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
      * dlib::derivative). The caps registry flags those; for everything
      * else the auto-derived fd_step would be a dead variable.
      *
-     * BASINS leaves the OUTER lib/algo unset (the per-stage EXPLORE/
-     * REFINE specs drive the work), so a caps lookup here would throw.
-     * Treat unset OUTER as "not gradient-based" -- NOISE_AUTO is a
-     * leaf-optimiser knob anyway and would have nothing to write into
-     * a stage sub-spec. */
+     * A configuration without LIB/ALGO leaves the OUTER spec "NOT SET",
+     * which has no caps entry; it fails later, when HPOEngine builds the
+     * optimiser ("unknown optimizer NOT SET:NOT SET"). */
     const bool gradient_based = (spec.lib != "NOT SET") &&
         optimizer_caps(spec).is_gradient_based;
     if (!gradient_based) {
@@ -281,17 +279,16 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
     /* Warn when the resolved OUTER chain produced more points than
      * the OUTER optimiser will actually consume. Backends declare
      * accepts_multi_seed=true in the caps registry when a single run
-     * ingests >1 seed; strategy decorators (MULTISTART/PRESTAGE/
-     * BASINS) consume the chain too. Every other path drops
-     * everything past optim_init.front().
+     * ingests >1 seed; strategy decorators (MULTISTART/PRESTAGE) consume
+     * the chain too. Every other path drops everything past
+     * optim_init.front().
      *
-     * BASINS leaves OUTER lib/algo unset; the strategy_type check
-     * already short-circuits, but we order it first so the caps lookup
-     * is only attempted when the OUTER spec has a real (lib, algo). */
+     * The caps lookup is only attempted when the OUTER spec has a real
+     * (lib, algo); a configuration without LIB/ALGO leaves it "NOT SET",
+     * which fails later, when HPOEngine builds the optimiser. */
     const bool strategy_consumes =
         (spec.strategy_type == StrategyType::MULTISTART && spec.multistart.n_starts >= 2) ||
-        (spec.strategy_type == StrategyType::PRESTAGE && spec.prestage != nullptr) ||
-        (spec.strategy_type == StrategyType::BASINS);
+        (spec.strategy_type == StrategyType::PRESTAGE && spec.prestage != nullptr);
     const bool backend_consumes =
         (spec.lib != "NOT SET") && optimizer_caps(spec).accepts_multi_seed;
     const bool multi_seed_consumer = strategy_consumes || backend_consumes;
@@ -335,21 +332,6 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
         resolve_init(*spec.prestage->inner, "PRESTAGE.INNER");
       }
     }
-  }
-
-  /* For BASINS: resolve INIT chains on EXPLORE/REFINE if they have one,
-   * else inherit OUTER's optim_init so the seed point flows in. */
-  if (spec.strategy_type == StrategyType::BASINS) {
-    auto resolve_or_inherit = [&](OptimizerSpec& s, const char* tag) {
-      if (s.init_strategy_spec.chain.empty()) {
-        if (s.optim_init.empty())
-          s.optim_init = spec.optim_init;
-      } else {
-        resolve_init(s, tag);
-      }
-    };
-    if (spec.basins.explore) resolve_or_inherit(*spec.basins.explore, "BASINS.EXPLORE");
-    if (spec.basins.refine ) resolve_or_inherit(*spec.basins.refine,  "BASINS.REFINE");
   }
 
   /* Fail fast on the initial-step policy (registry-driven). Seeds vs
@@ -414,22 +396,10 @@ static bool reject_old_keyword(const std::string& key)
 {
     struct Rename { const char* old_; const char* hint; };
     static const Rename map[] = {
-        {"LOCAL",                       "renamed to INNER (the MLSL/AUGLAG inner sub-optimizer block). For BASINS' per-basin refinement use REFINE/ENDREFINE inside STRATEGY."},
+        {"LOCAL",                       "renamed to INNER (the MLSL/AUGLAG inner sub-optimizer block)."},
         {"ENDLOCAL",                    "renamed to ENDINNER."},
         {"PRESTAGE",                    "replaced by `STRATEGY { TYPE PRESTAGE EXPLORE { ... } [REFINE { ... }] }` (REFINE is optional; without it the STRATEGY-level LIB/ALGO refines)."},
         {"ENDPRESTAGE",                 "replaced by ENDEXPLORE / ENDREFINE / ENDSTRATEGY (see STRATEGY block)."},
-        {"GLOBAL_LIB",                  "moved into `STRATEGY { TYPE BASINS EXPLORE { LIB ... } }`."},
-        {"GLOBAL_ALGO",                 "moved into `STRATEGY { TYPE BASINS EXPLORE { ALGO ... } }`."},
-        {"LOCAL_LIB",                   "moved into `STRATEGY { TYPE BASINS REFINE { LIB ... } }`."},
-        {"LOCAL_ALGO",                  "moved into `STRATEGY { TYPE BASINS REFINE { ALGO ... } }`."},
-        {"TOL_GLO_LADDER",              "moved into `EXPLORE { FTOL_LADDER ... }` inside STRATEGY."},
-        {"TOL_LOC_LADDER",              "moved into `REFINE { FTOL_LADDER ... }` inside STRATEGY."},
-        {"STAGE_RATE_FACTOR",           "split into per-stage `EXPLORE { BUDGET_RATE_FACTOR ... }` and `REFINE { BUDGET_RATE_FACTOR ... }`."},
-        {"STAGE_MIN_EVALS",             "split into per-stage `EXPLORE/REFINE { BUDGET_MIN_EVALS ... }`."},
-        {"STAGE_MAX_EVALS",             "split into per-stage `EXPLORE/REFINE { BUDGET_MAX_EVALS ... }`."},
-        {"EMERGENCY_NO_IMPROVE_ROUNDS", "renamed to STOP_NO_IMPROVE_ROUNDS (inside STRATEGY)."},
-        {"GLOBAL_SEED_TOP_N",           "renamed to SEED_TOP_N (inside STRATEGY)."},
-        {"CLAMP_LADDER_TO_NOISE_FLOOR", "renamed to CLAMP_TO_NOISE_FLOOR (inside STRATEGY)."},
         {"MULTISTART",                  "moved into `STRATEGY { TYPE MULTISTART N_STARTS N }`."},
         {"MULTISTART_PARALLEL",         "moved into `STRATEGY { TYPE MULTISTART PARALLEL N }`."},
         {"MULTISTART_BUDGET_PER_START", "moved into `STRATEGY { TYPE MULTISTART BUDGET_PER_START N }`."},
@@ -467,12 +437,12 @@ void HPOTargets::read(const std::string& fn)
      *   +-- OUTER         OPTIMIZER ... ENDOPTIMIZER
      *       +-- INIT_BLK    INIT ... ENDINIT          (optional, populates spec.init_strategy_spec)
      *       +-- NOISE_BLK   NOISE ... ENDNOISE        (optional, populates spec.noise)
-     *       +-- STRATEGY    STRATEGY ... ENDSTRATEGY  (required, drives StrategyType)
-     *           +-- EXPLORE     EXPLORE ... ENDEXPLORE    (only with TYPE BASINS or PRESTAGE)
-     *           |   +-- INNER       INNER ... ENDINNER       (MLSL inner sub-optimiser)
-     *           +-- REFINE      REFINE ... ENDREFINE      (only with TYPE BASINS or PRESTAGE)
+     *       +-- STRATEGY    STRATEGY ... ENDSTRATEGY  (drives StrategyType; PLAIN when absent)
+     *           +-- EXPLORE     EXPLORE ... ENDEXPLORE    (only with TYPE PRESTAGE; spec.prestage)
+     *           |   +-- INNER       INNER ... ENDINNER       (MLSL/AUGLAG inner sub-optimiser)
+     *           +-- REFINE      REFINE ... ENDREFINE      (only with TYPE PRESTAGE; the OUTER spec)
      *           |   +-- INNER       INNER ... ENDINNER
-     *           +-- INNER       INNER ... ENDINNER       (when LIB/ALGO at STRATEGY level -- TYPE PLAIN/MULTISTART)
+     *           +-- INNER       INNER ... ENDINNER       (inner sub-optimiser of the STRATEGY-level LIB/ALGO)
      *           +-- RESTART     RESTART ... ENDRESTART   (decorator; populates spec.restart) */
     enum Block { ROOT, OUTER, INIT_BLK, NOISE_BLK, STRATEGY_BLK,
                  EXPLORE_BLK, REFINE_BLK, INNER_BLK, RESTART_BLK };
@@ -487,21 +457,11 @@ void HPOTargets::read(const std::string& fn)
         switch (block) {
             case OUTER:        active_opt = &spec; break;
             case STRATEGY_BLK: active_opt = &spec; break;
-            case EXPLORE_BLK:
-                if (spec.strategy_type == StrategyType::BASINS)
-                    active_opt = spec.basins.explore.get();
-                else if (spec.strategy_type == StrategyType::BASINSV2)
-                    active_opt = spec.basins_v2.explore.get();
-                else  /* PRESTAGE */
-                    active_opt = spec.prestage.get();
+            case EXPLORE_BLK:  /* PRESTAGE's one-pass exploration */
+                active_opt = spec.prestage.get();
                 break;
-            case REFINE_BLK:
-                if (spec.strategy_type == StrategyType::BASINS)
-                    active_opt = spec.basins.refine.get();
-                else if (spec.strategy_type == StrategyType::BASINSV2)
-                    active_opt = spec.basins_v2.refine.get();
-                else  /* PRESTAGE -- REFINE is the OUTER spec */
-                    active_opt = &spec;
+            case REFINE_BLK:   /* PRESTAGE -- REFINE is the OUTER spec */
+                active_opt = &spec;
                 break;
             case INIT_BLK:
             case NOISE_BLK:
@@ -620,16 +580,12 @@ void HPOTargets::read(const std::string& fn)
             if (key=="EXPLORE") {
                 if (block != STRATEGY_BLK)
                     throw std::runtime_error("EXPLORE block must appear inside STRATEGY");
-                if (spec.strategy_type != StrategyType::BASINS &&
-                    spec.strategy_type != StrategyType::BASINSV2 &&
-                    spec.strategy_type != StrategyType::PRESTAGE)
+                if (spec.strategy_type != StrategyType::PRESTAGE)
                     throw std::runtime_error(
-                        "EXPLORE block is only valid with TYPE BASINS, BASINSV2, or PRESTAGE "
+                        "EXPLORE block is only valid with TYPE PRESTAGE "
                         "(declare TYPE before EXPLORE)");
-                if (spec.strategy_type == StrategyType::PRESTAGE) {
-                    if (!spec.prestage)
-                        spec.prestage = std::make_unique<OptimizerSpec>();
-                }
+                if (!spec.prestage)
+                    spec.prestage = std::make_unique<OptimizerSpec>();
                 block = EXPLORE_BLK;
                 refresh_active_opt();
                 continue;
@@ -645,11 +601,9 @@ void HPOTargets::read(const std::string& fn)
             if (key=="REFINE") {
                 if (block != STRATEGY_BLK)
                     throw std::runtime_error("REFINE block must appear inside STRATEGY");
-                if (spec.strategy_type != StrategyType::BASINS &&
-                    spec.strategy_type != StrategyType::BASINSV2 &&
-                    spec.strategy_type != StrategyType::PRESTAGE)
+                if (spec.strategy_type != StrategyType::PRESTAGE)
                     throw std::runtime_error(
-                        "REFINE block is only valid with TYPE BASINS, BASINSV2, or PRESTAGE "
+                        "REFINE block is only valid with TYPE PRESTAGE "
                         "(declare TYPE before REFINE)");
                 block = REFINE_BLK;
                 refresh_active_opt();
@@ -809,20 +763,9 @@ void HPOTargets::read(const std::string& fn)
                 if (key=="TYPE") {
                     std::string t; iss>>t;
                     if      (t=="PLAIN")      spec.strategy_type = StrategyType::PLAIN;
-                    else if (t=="BASINS")     spec.strategy_type = StrategyType::BASINS;
-                    else if (t=="BASINSV2")   spec.strategy_type = StrategyType::BASINSV2;
                     else if (t=="MULTISTART") spec.strategy_type = StrategyType::MULTISTART;
                     else if (t=="PRESTAGE")   spec.strategy_type = StrategyType::PRESTAGE;
-                    else throw std::runtime_error("STRATEGY TYPE must be PLAIN, BASINS, BASINSV2, MULTISTART, or PRESTAGE (got '" + t + "')");
-                    /* For BASINS / BASINSV2, allocate the EXPLORE/REFINE stage
-                     * sub-specs with NLopt defaults so a minimal
-                     * `STRATEGY { TYPE ... }` config is functional. (Not
-                     * done in the spec's default ctor to avoid recursive
-                     * default-construction -- see optimizer_spec.h comment.) */
-                    if (spec.strategy_type == StrategyType::BASINS)
-                        basins_spec_ensure_defaults(spec.basins);
-                    else if (spec.strategy_type == StrategyType::BASINSV2)
-                        basins_v2_spec_ensure_defaults(spec.basins_v2);
+                    else throw std::runtime_error("STRATEGY TYPE must be PLAIN, MULTISTART, or PRESTAGE (got '" + t + "')");
                     continue;
                 }
                 /* MULTISTART knobs (only meaningful with TYPE MULTISTART). */
@@ -851,238 +794,14 @@ void HPOTargets::read(const std::string& fn)
                     spec.stage_topk = v;
                     continue;
                 }
-                /* BASINS / BASINSV2 shared knobs. The destination depends
-                 * on STRATEGY TYPE (set above by the TYPE key).  */
-                const bool is_v1 = (spec.strategy_type == StrategyType::BASINS);
-                const bool is_v2 = (spec.strategy_type == StrategyType::BASINSV2);
-
-                if (key=="BASIN_POOL_MAX") {
-                    std::size_t v; iss>>v;
-                    if (v == 0) throw std::runtime_error("BASIN_POOL_MAX must be >= 1");
-                    if (is_v1)      spec.basins.basin_pool_max    = v;
-                    else if (is_v2) spec.basins_v2.basin_pool_max = v;
-                    else throw std::runtime_error("BASIN_POOL_MAX requires TYPE BASINS or BASINSV2");
-                    continue;
-                }
-                if (key=="BASIN_DEDUP_DIST") {
-                    double v; iss>>v;
-                    if (v < 0.0) throw std::runtime_error("BASIN_DEDUP_DIST must be >= 0");
-                    if (is_v1)      spec.basins.basin_dedup_dist    = v;
-                    else if (is_v2) spec.basins_v2.basin_dedup_dist = v;
-                    else throw std::runtime_error("BASIN_DEDUP_DIST requires TYPE BASINS or BASINSV2");
-                    continue;
-                }
-                if (key=="STOP_NO_IMPROVE_ROUNDS") {
-                    std::size_t v; iss>>v;
-                    if (!is_v1) throw std::runtime_error("STOP_NO_IMPROVE_ROUNDS requires TYPE BASINS (use STOP_NO_IMPROVE_ITERATIONS for BASINSV2)");
-                    spec.basins.stop_no_improve_rounds = v;
-                    continue;
-                }
-                if (key=="SEED_TOP_N") {
-                    std::size_t v; iss>>v;
-                    if (v == 0) throw std::runtime_error("SEED_TOP_N must be >= 1");
-                    if (!is_v1) throw std::runtime_error("SEED_TOP_N requires TYPE BASINS (BASINSV2 uses Sobol+filtered EXPLORE seeding)");
-                    spec.basins.seed_top_n = v;
-                    continue;
-                }
-                if (key=="CLAMP_TO_NOISE_FLOOR") {
-                    std::string v; iss>>v;
-                    const bool b = parse_bool(v, "CLAMP_TO_NOISE_FLOOR");
-                    if (is_v1)      spec.basins.clamp_to_noise_floor    = b;
-                    else if (is_v2) spec.basins_v2.clamp_to_noise_floor = b;
-                    else throw std::runtime_error("CLAMP_TO_NOISE_FLOOR requires TYPE BASINS or BASINSV2");
-                    continue;
-                }
-                if (key=="CHECKPOINT_EVERY") {
-                    std::string tok; iss>>tok;
-                    if (tok.empty())
-                        throw std::runtime_error("CHECKPOINT_EVERY requires a value (e.g. \"60s\" or \"100\")");
-                    double secs = 0.0; std::size_t evs = 0;
-                    if (tok.back() == 's' || tok.back() == 'S') {
-                        secs = std::stod(tok.substr(0, tok.size()-1));
-                        if (secs < 0.0) throw std::runtime_error("CHECKPOINT_EVERY seconds must be >= 0");
-                    } else {
-                        evs = std::stoul(tok);
-                    }
-                    if (is_v1) {
-                        spec.basins.checkpoint_seconds = secs;
-                        spec.basins.checkpoint_evals   = evs;
-                    } else if (is_v2) {
-                        spec.basins_v2.checkpoint_seconds = secs;
-                        spec.basins_v2.checkpoint_evals   = evs;
-                    } else {
-                        throw std::runtime_error("CHECKPOINT_EVERY requires TYPE BASINS or BASINSV2");
-                    }
-                    continue;
-                }
-
-                /* BASINSV2-only knobs. */
-                if (is_v2) {
-                    if (key=="BASIN_MERGE_DIST") {
-                        double v; iss>>v;
-                        if (v < 0.0) throw std::runtime_error("BASIN_MERGE_DIST must be >= 0");
-                        spec.basins_v2.basin_merge_dist = v; continue;
-                    }
-                    if (key=="BASIN_MERGE_LOSS_THRESHOLD") {
-                        double v; iss>>v;
-                        if (v < 0.0) throw std::runtime_error("BASIN_MERGE_LOSS_THRESHOLD must be >= 0");
-                        spec.basins_v2.basin_merge_loss_threshold = v; continue;
-                    }
-                    if (key=="ARCHIVE_MAX") {
-                        std::size_t v; iss>>v;
-                        spec.basins_v2.archive_max = v; continue;
-                    }
-                    if (key=="INACTIVE_AFTER_EVALS") {
-                        std::size_t v; iss>>v;
-                        spec.basins_v2.inactive_after_evals = v; continue;
-                    }
-                    if (key=="VERIFY_CADENCE") {
-                        std::size_t v; iss>>v;
-                        spec.basins_v2.verify_cadence = v; continue;
-                    }
-                    if (key=="VERIFY_MAX_ATTEMPTS") {
-                        std::size_t v; iss>>v;
-                        spec.basins_v2.verify_max_attempts = v; continue;
-                    }
-                    if (key=="VERIFY_EVALS_CAP") {
-                        std::size_t v; iss>>v;
-                        spec.basins_v2.verify_evals_cap = v; continue;
-                    }
-                    if (key=="MERGE_CADENCE") {
-                        std::size_t v; iss>>v;
-                        spec.basins_v2.merge_cadence = v; continue;
-                    }
-                    if (key=="EXPLORE_KICK_CADENCE") {
-                        std::size_t v; iss>>v;
-                        spec.basins_v2.explore_kick_cadence = v; continue;
-                    }
-                    if (key=="EXPLORE_DIST_FLOOR") {
-                        double v; iss>>v;
-                        if (v < 0.0) throw std::runtime_error("EXPLORE_DIST_FLOOR must be >= 0");
-                        spec.basins_v2.explore_dist_floor = v; continue;
-                    }
-                    if (key=="SUMMARY_CADENCE") {
-                        std::size_t v; iss>>v;
-                        spec.basins_v2.summary_cadence = v; continue;
-                    }
-                    if (key=="STARVATION_CAP") {
-                        std::size_t v; iss>>v;
-                        spec.basins_v2.starvation_cap = v; continue;
-                    }
-                    if (key=="STOP_NO_IMPROVE_ITERATIONS") {
-                        std::size_t v; iss>>v;
-                        spec.basins_v2.stop_no_improve_iterations = v; continue;
-                    }
-                    if (key=="PLATEAU_EPS_FACTOR") {
-                        double v; iss>>v;
-                        if (v <= 0.0) throw std::runtime_error("PLATEAU_EPS_FACTOR must be > 0");
-                        spec.basins_v2.plateau_eps_factor = v; continue;
-                    }
-                    if (key=="PATH_MAX_POINTS") {
-                        std::size_t v; iss>>v;
-                        spec.basins_v2.path_max_points = v; continue;
-                    }
-                    if (key=="PATH_LOSS_EPS") {
-                        double v; iss>>v;
-                        if (v < 0.0) throw std::runtime_error("PATH_LOSS_EPS must be >= 0");
-                        spec.basins_v2.path_loss_eps = v; continue;
-                    }
-                    if (key=="PATH_DIST_EPS") {
-                        double v; iss>>v;
-                        if (v < 0.0) throw std::runtime_error("PATH_DIST_EPS must be >= 0");
-                        spec.basins_v2.path_dist_eps = v; continue;
-                    }
-                    if (key=="PRIORITY_WEIGHTS") {
-                        /* Six floats: improve neglect distance tol_gap state age */
-                        double w_imp, w_neg, w_dist, w_tol, w_st, w_age;
-                        if (!(iss >> w_imp >> w_neg >> w_dist >> w_tol >> w_st >> w_age))
-                            throw std::runtime_error("PRIORITY_WEIGHTS expects 6 floats: improve neglect distance tol_gap state age");
-                        spec.basins_v2.w_improve  = w_imp;
-                        spec.basins_v2.w_neglect  = w_neg;
-                        spec.basins_v2.w_distance = w_dist;
-                        spec.basins_v2.w_tol_gap  = w_tol;
-                        spec.basins_v2.w_state    = w_st;
-                        spec.basins_v2.w_age      = w_age;
-                        continue;
-                    }
-                    if (key=="VERBOSE_DIAGNOSTICS") {
-                        std::string v; iss>>v;
-                        spec.basins_v2.verbose_diagnostics = parse_bool(v, "VERBOSE_DIAGNOSTICS");
-                        continue;
-                    }
-                }
-
                 throw std::runtime_error("unknown key '" + key + "' inside STRATEGY block");
             }
 
-            /* EXPLORE / REFINE block keys (per-stage BASINS knobs).
-             * Only meaningful for TYPE BASINS -- PRESTAGE doesn't iterate
-             * stages so it doesn't need ladders/budgets. */
+            /* EXPLORE / REFINE block keys: only the optimiser attributes
+             * dispatched above (LIB/ALGO/MAXEVAL/...) are valid there. */
             if (block == EXPLORE_BLK || block == REFINE_BLK) {
-                const bool is_explore = (block == EXPLORE_BLK);
-                const bool is_v1 = (spec.strategy_type == StrategyType::BASINS);
-                const bool is_v2 = (spec.strategy_type == StrategyType::BASINSV2);
-                /* FTOL_LADDER and BUDGET_* meaningful for BASINS / BASINSV2. */
-                if (key=="FTOL_LADDER") {
-                    if (!is_v1 && !is_v2)
-                        throw std::runtime_error("FTOL_LADDER only valid for TYPE BASINS or BASINSV2");
-                    std::vector<double> rungs; double v;
-                    while (iss >> v) {
-                        if (v <= 0.0) throw std::runtime_error("FTOL_LADDER entries must be positive");
-                        rungs.push_back(v);
-                    }
-                    if (rungs.empty()) throw std::runtime_error("FTOL_LADDER requires at least one positive value");
-                    if (is_v1) {
-                        if (is_explore) spec.basins.explore_ftol_ladder = std::move(rungs);
-                        else            spec.basins.refine_ftol_ladder  = std::move(rungs);
-                    } else {
-                        if (is_explore) spec.basins_v2.explore_ftol_ladder = std::move(rungs);
-                        else            spec.basins_v2.refine_ftol_ladder  = std::move(rungs);
-                    }
-                    continue;
-                }
-                if (key=="BUDGET_MAX_EVALS") {
-                    if (!is_v1 && !is_v2)
-                        throw std::runtime_error("BUDGET_MAX_EVALS only valid for TYPE BASINS or BASINSV2");
-                    std::size_t v; iss>>v;
-                    if (is_v1) {
-                        if (is_explore) spec.basins.explore_budget_max_evals = v;
-                        else            spec.basins.refine_budget_max_evals  = v;
-                    } else {
-                        if (is_explore) spec.basins_v2.explore_budget_max_evals = v;
-                        else            spec.basins_v2.refine_budget_max_evals  = v;
-                    }
-                    continue;
-                }
-                if (key=="BUDGET_MIN_EVALS") {
-                    if (!is_v1 && !is_v2)
-                        throw std::runtime_error("BUDGET_MIN_EVALS only valid for TYPE BASINS or BASINSV2");
-                    std::size_t v; iss>>v;
-                    if (is_v1) {
-                        if (is_explore) spec.basins.explore_budget_min_evals = v;
-                        else            spec.basins.refine_budget_min_evals  = v;
-                    } else {
-                        if (is_explore) spec.basins_v2.explore_budget_min_evals = v;
-                        else            spec.basins_v2.refine_budget_min_evals  = v;
-                    }
-                    continue;
-                }
-                if (key=="BUDGET_RATE_FACTOR") {
-                    if (!is_v1 && !is_v2)
-                        throw std::runtime_error("BUDGET_RATE_FACTOR only valid for TYPE BASINS or BASINSV2");
-                    double v; iss>>v;
-                    if (v < 0.0) throw std::runtime_error("BUDGET_RATE_FACTOR must be >= 0");
-                    if (is_v1) {
-                        if (is_explore) spec.basins.explore_budget_rate_factor = v;
-                        else            spec.basins.refine_budget_rate_factor  = v;
-                    } else {
-                        if (is_explore) spec.basins_v2.explore_budget_rate_factor = v;
-                        else            spec.basins_v2.refine_budget_rate_factor  = v;
-                    }
-                    continue;
-                }
                 throw std::runtime_error("unknown key '" + key + "' inside "
-                    + std::string(is_explore ? "EXPLORE" : "REFINE") + " block");
+                    + std::string(block == EXPLORE_BLK ? "EXPLORE" : "REFINE") + " block");
             }
 
             /* INNER block -- only opt attributes, dispatched above. */
@@ -1607,7 +1326,7 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
       "#   internal_lo, internal_hi   optimiser-side bounds (0 and 1 under AUTO)\n"
       "#   version      revision of the search space. 1 = the boxes parsed from the config; it\n"
       "#                would only increase if a bound-adaptation step rewrote the boxes during\n"
-      "#                the run (no such step exists yet), so a journal or checkpoint reference\n"
+      "#                the run (no such step exists yet), so a journal reference\n"
       "#                to a version can always be matched to one box set\n"
       "# Columns are tab-separated and space-padded to equal width -- strip whitespace when parsing\n"
       "# (pandas: read_csv(path, sep='\\t', comment='#') then .str.strip() on text columns).\n";
@@ -1653,13 +1372,6 @@ void HPOTargets::bind_space_recursive() {
   };
   bind(spec.inner.get());
   bind(spec.prestage.get());
-  if (spec.strategy_type == StrategyType::BASINS) {
-    bind(spec.basins.explore.get());
-    bind(spec.basins.refine.get());
-  } else if (spec.strategy_type == StrategyType::BASINSV2) {
-    bind(spec.basins_v2.explore.get());
-    bind(spec.basins_v2.refine.get());
-  }
 }
 
 void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {

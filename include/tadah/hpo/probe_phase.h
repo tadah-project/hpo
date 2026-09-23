@@ -6,9 +6,9 @@
  * search: the INIT_MODE JITTER AUTO calibration measures a per-dimension
  * displacement before the optimiser starts. Those evaluations are real (they
  * cost LAMMPS time, they can find a better point) but they are not steps of
- * the optimisation, and treating them as such breaks five different things at
+ * the optimisation, and treating them as such breaks several things at
  * once. This flag is the single switch the host consults, so the list below
- * is enforced in one place instead of five.
+ * is enforced in one place.
  *
  * While a probe phase is active:
  *
@@ -21,17 +21,13 @@
  *      build_run_policy(), outside the window by construction. It establishes
  *      MAXEVAL exemption only -- do not cite it as precedent here.)
  *
- *   2. CHECKPOINT TICKS ARE SUPPRESSED. Every eval calls
- *      CheckpointManager::tick_eval, so mid-calibration checkpoints would be
- *      written with g_iter advanced and zero annealer state behind it.
- *
- *   3. WARM STARTS ARE NAMESPACED. Probes must not pollute a chain's
+ *   2. WARM STARTS ARE NAMESPACED. Probes must not pollute a chain's
  *      warm-start lineage -- warm-start selection bias was the root cause of
  *      the run15/16/17 artefact. Note this is done WITHOUT touching
  *      warmstart::current_chain(): that value becomes EvalResult::chain_id and
  *      from there the SLOT column (fixed width), the durable-best comparison
- *      key, `# HPO_SOURCE_SLOT` and the resume key. Offsetting it by a large
- *      constant -- the obvious trick -- corrupts all four.
+ *      key and `# HPO_SOURCE_SLOT`. Offsetting it by a large constant -- the
+ *      obvious trick -- corrupts all three.
  *
  * The budget itself is NOT handled here: the drivers give the phase its own
  * anneal::SharedBudget, so "does not consume MAXEVAL" holds by construction

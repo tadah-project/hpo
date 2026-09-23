@@ -8,8 +8,8 @@
 #       --fast            run only examples flagged "fast": true (default)
 #       --full            run every numbered example
 #       --example=<NN>    run a single example by leading number (e.g. 03)
-#   * --no-clean          keep prior outputs / checkpoints; otherwise the
-#                         driver scrubs them before each run
+#   * Every run starts from a clean example directory (common/run.sh and
+#     the per-example run.sh scripts remove the previous outputs).
 #   * Exit codes:
 #       0  every executed example passed its fingerprint
 #       1  at least one example failed (numerical regression)
@@ -46,7 +46,6 @@ COMPARATOR="$HERE/tools/compare_fingerprint.py"
 
 mode="fast"
 target=""
-clean_first=1
 check_only=0
 
 usage() {
@@ -59,7 +58,6 @@ for arg in "$@"; do
     --fast)        mode="fast" ;;
     --full)        mode="full" ;;
     --example=*)   mode="single"; target="${arg#--example=}" ;;
-    --no-clean)    clean_first=0 ;;
     --check-only)  check_only=1 ;;
     -h|--help)     usage ;;
     *)             echo "unknown arg: $arg" >&2; exit 64 ;;
@@ -99,9 +97,6 @@ for dir in "${examples[@]}"; do
   name=$(basename "$dir")
 
   if (( check_only == 0 )); then
-    if (( clean_first )); then
-      rm -f "$dir/checkpoint.tadah"
-    fi
     # Use the example's own run.sh when present (it may bootstrap a
     # seed_pot.tadah or other prerequisites); otherwise fall through to
     # the shared driver.

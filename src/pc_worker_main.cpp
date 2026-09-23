@@ -4,7 +4,7 @@
  * init, or SignalHandler installation. The worker is a pure executor: it
  * receives its ScriptSpec table once (HELLO), then loops TASK -> RESULT,
  * calling the SAME execute_script_task the in-process THREAD path uses.
- * No HPOLog / bench CSV / warmstart / checkpoint / stage_watchdog here --
+ * No HPOLog / bench CSV / warmstart / best publication / stage_watchdog here --
  * all of that stays parent-side (design doc section 6). Socket on fd 3. */
 
 #include <tadah/hpo/pc_worker_pool.h>
@@ -62,7 +62,7 @@ int pc_worker_main(int /*argc*/, char** /*argv*/) {
 
   /* SIGINT/SIGTERM go to the whole foreground process group (Ctrl+C, SLURM);
    * shutdown must stay PARENT-driven (SHUTDOWN frame / EOF) so the parent's
-   * graceful checkpoint isn't polluted by a wave of dead-worker failscores.
+   * graceful shutdown isn't polluted by a wave of dead-worker failscores.
    * PR_SET_PDEATHSIG(SIGKILL) from the spawn recipe covers parent crashes. */
   std::signal(SIGINT, SIG_IGN);
   std::signal(SIGTERM, SIG_IGN);

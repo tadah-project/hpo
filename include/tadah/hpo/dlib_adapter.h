@@ -290,8 +290,8 @@ template<class Vec,class Runner>
         /* MAXEVAL is enforced externally because DLIB's stop strategies
          * count iterations (not evals). Hitting it is a normal termination
          * once BFGS has consumed its eval budget; the preamble explaining
-         * this design fires once per process so subsequent stage runs in
-         * BASINS don't repeat it. */
+         * this design fires once per process so subsequent runs (MULTISTART
+         * starts, PRESTAGE refinements, RESTART rounds) don't repeat it. */
         static std::atomic_flag preamble_emitted = ATOMIC_FLAG_INIT;
         if (!preamble_emitted.test_and_set(std::memory_order_relaxed)) {
             const std::string preamble =

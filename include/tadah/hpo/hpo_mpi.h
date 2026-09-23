@@ -101,7 +101,7 @@ inline MPI_Comm hpo_lammps_comm() { return MPI_COMM_SELF; }
 
 /* ".r<rank>" for every rank-local fixed-filename output when running
  * multi-rank.  Rank 0 is suffixed too: the unsuffixed namespace is reserved
- * for the canonical, cross-rank best checkpoint. */
+ * for the canonical, cross-rank best potential (best_pot.tadah). */
 inline std::string hpo_rank_suffix()
 {
   /* Do not cache this result: callers may legitimately query it before

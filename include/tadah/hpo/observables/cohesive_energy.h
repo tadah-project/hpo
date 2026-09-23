@@ -16,7 +16,7 @@ namespace hpo {
  *  with `PC_OBSERVABLE cohesive_energy --species X --lattice bcc
  *      --supercell nx ny nz --target T --weight w --hotvar a0 lo hi [init]`.
  *
- *  Definition (matches BASINSv2_blip6/Ecoh_fast.in's `Ecoh_raw`):
+ *  Definition (matches the reference Ecoh_fast.in script's `Ecoh_raw`):
  *      E_coh =  (E_bulk  N . E_iso) / N      [eV / atom]
  *  Sign convention: positive for bound systems (Ta DFT ~= 8.1 eV/atom).
  *
@@ -33,7 +33,7 @@ namespace hpo {
  *  no neighbour pairs -> dE_iso/dx is trivially zero. Total chain rule
  *  reduces to the direct d/dW path.
  *
- *  MVP scope: BCC lattice only (matches BASINSv2_blip6). FCC/HCP plug
+ *  MVP scope: BCC lattice only (the reference Ta workflow). FCC/HCP plug
  *  into the same observable with a `lattice=` enum extension once
  *  cells::fcc / cells::hcp are filled in.
  */

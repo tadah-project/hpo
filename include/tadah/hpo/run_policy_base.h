@@ -1,24 +1,11 @@
 #pragma once
 /*
- * run_policy_base.h -- minimum include surface for RunPolicy<> and
- * run_inner<>().
+ * run_policy_base.h -- the RunPolicy<> interface and run_inner<>(), the
+ * single-shot dispatch from an OptimizerSpec onto its optimiser driver.
  *
- * Why this header exists separately from run_policy.h
- * ---------------------------------------------------
- * run_policy.h's build_run_policy() needs to instantiate
- * BasinsPolicy<Vec,Runner> (defined in basins_policy.h). BasinsPolicy
- * in turn inherits from RunPolicy<Vec,Runner> and dispatches via
- * run_inner<Vec,Runner>. If basins_policy.h were to #include
- * run_policy.h, the resulting cycle (run_policy.h includes
- * basins_policy.h to call its constructor) would force partial-
- * include behaviour: when test_basins_policy.cpp includes
- * basins_policy.h first, run_policy.h's body gets parsed *while*
- * BasinsPolicy is still mid-declaration, which the compiler rejects
- * at build_run_policy()'s use of BasinsPolicy.
- *
- * Splitting the abstract base + run_inner into this small header
- * lets basins_policy.h depend on only the bits it needs (RunPolicy
- * and run_inner), so the cycle is broken.
+ * run_policy.h builds the decorator stack (MULTISTART, PRESTAGE,
+ * RESTART) on top of this layer; everything here depends only on the
+ * optimiser adapters, not on any policy.
  */
 
 #include <iostream>
@@ -51,7 +38,7 @@ namespace tadah::hpo {
  *      function (or one entry point per LIB).
  *   2. Register a CapsEntry in optimizer_caps.cpp.
  * Then add a single dispatch case below. No other call sites change --
- * BasinsPolicy / MultiStartPolicy / hpo_targets all derive their
+ * MultiStartPolicy / StagedPolicy / hpo_targets all derive their
  * behaviour from the caps registry rather than ad-hoc lib/algo strings.
  * -------------------------------------------------------------------- */
 template<class Vec, class Runner>
@@ -72,8 +59,9 @@ inline void run_inner(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host)
   const auto& caps = optimizer_caps(spec);
 
   /* Registry-driven STEP policy, re-checked here for specs assembled at
-   * run time (BASINS stage specs, MULTISTART clones). Seeds were validated
-   * at startup; run-time seeds come from the pool / top-K. */
+   * run time (MULTISTART and PRESTAGE clones, RESTART refreshes). Seeds
+   * were validated at startup; run-time seeds come from the INIT chain or
+   * the top-K. */
   validate_optimizer_scaling(spec, "run", /*check_start_points=*/false);
   if (spec.inner)
     validate_optimizer_scaling(*spec.inner, "run.INNER", false);

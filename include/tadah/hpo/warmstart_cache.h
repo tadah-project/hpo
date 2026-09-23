@@ -166,7 +166,7 @@ inline std::optional<durable_best::Key>& best_hot_key() {
  *
  * This offsets the CACHE KEY only. current_chain() itself is untouched: it
  * becomes EvalResult::chain_id and from there the fixed-width SLOT column,
- * the durable-best comparison key, `# HPO_SOURCE_SLOT` and the resume key. */
+ * the durable-best comparison key and `# HPO_SOURCE_SLOT`. */
 inline std::size_t cache_chain(std::size_t chain) {
     return probe::active() ? probe::kWarmstartBase + chain : chain;
 }
@@ -257,9 +257,9 @@ inline void clear() {
 }
 
 /* Start a new output generation without discarding WARM's static fallback.
- * HPOTargets parses/loads WARM before HPO learns whether a checkpoint exists;
- * a confirmed fresh run must forget the prior best snapshot/key while keeping
- * warm_prime_map available to seed the first evaluation. */
+ * HPOTargets parses/loads WARM before the run binds its best-potential
+ * publication; the fresh run must forget the prior best snapshot/key while
+ * keeping warm_prime_map available to seed the first evaluation. */
 inline void reset_best_snapshot_for_fresh_run() {
     std::lock_guard<std::mutex> lg(mtx());
     best_hot_map().clear();

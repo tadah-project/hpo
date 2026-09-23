@@ -42,13 +42,13 @@ TEST_CASE("NOISE_CALIBRATION gate runs for N >= 2 only",
     using tadah::hpo::should_run_noise_calibration;
 
     SECTION("N >= 2 -> run") {
-        CHECK(should_run_noise_calibration(/*resumed=*/false, /*noise_n=*/2));
-        CHECK(should_run_noise_calibration(/*resumed=*/false, /*noise_n=*/10));
-        CHECK(should_run_noise_calibration(/*resumed=*/false, /*noise_n=*/100));
+        CHECK(should_run_noise_calibration(/*noise_n=*/2));
+        CHECK(should_run_noise_calibration(/*noise_n=*/10));
+        CHECK(should_run_noise_calibration(/*noise_n=*/100));
     }
     SECTION("N < 2 -> skip") {
-        CHECK_FALSE(should_run_noise_calibration(/*resumed=*/false, /*noise_n=*/0));
-        CHECK_FALSE(should_run_noise_calibration(/*resumed=*/false, /*noise_n=*/1));
+        CHECK_FALSE(should_run_noise_calibration(/*noise_n=*/0));
+        CHECK_FALSE(should_run_noise_calibration(/*noise_n=*/1));
     }
 }
 
@@ -72,9 +72,7 @@ ENDOPTIMIZER
     tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
     CHECK(trg.spec.noise.calibration_n == 5u);
     using tadah::hpo::should_run_noise_calibration;
-    CHECK(should_run_noise_calibration(
-        /*resumed=*/false,
-        trg.spec.noise.calibration_n));
+    CHECK(should_run_noise_calibration(trg.spec.noise.calibration_n));
 }
 
 TEST_CASE("HPOTargets default NOISE.CALIBRATION is below the gate",
@@ -92,7 +90,5 @@ ENDOPTIMIZER
     tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
     /* Default should not trigger calibration. */
     using tadah::hpo::should_run_noise_calibration;
-    CHECK_FALSE(should_run_noise_calibration(
-        /*resumed=*/false,
-        trg.spec.noise.calibration_n));
+    CHECK_FALSE(should_run_noise_calibration(trg.spec.noise.calibration_n));
 }

@@ -15,7 +15,6 @@ outvar.tadah
 params.tadah
 stats.tadah
 pot.tadah
-checkpoint.tadah
 hpo_run.log
 log.lammps
 run.stdout

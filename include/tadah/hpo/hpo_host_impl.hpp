@@ -667,84 +667,9 @@ std::size_t HPO_Host<P,R>::stagnation_count() {
 }
 
 template<class P,class R>
-void HPO_Host<P,R>::set_g_iter_floor(std::size_t n) {
-  std::size_t cur = g_iter_.load(std::memory_order_relaxed);
-  while (n > cur) {
-    if (g_iter_.compare_exchange_weak(cur, n,
-                                      std::memory_order_relaxed,
-                                      std::memory_order_relaxed)) break;
-  }
-  /* Bug-7: writer's `next_flush_` is a static atomic default-init to 1.
-   * On resume it would otherwise stay at 1 -- the new io_buf_ starts empty
-   * and the resumed run's first eval submits at iter > n, so the writer's
-   * gap-skip timer fires for 60s before advancing. The "8499 hung iter
-   * slots" warning is misleading because the per-eval logs from the prior
-   * run are intact on disk. Push next_flush_ past the resumed iter so
-   * the writer starts where the prior run left off. */
-  std::size_t cur_nf = next_flush_.load(std::memory_order_relaxed);
-  while (n + 1 > cur_nf) {
-    if (next_flush_.compare_exchange_weak(cur_nf, n + 1,
-                                          std::memory_order_relaxed,
-                                          std::memory_order_relaxed)) break;
-  }
-  /* Reset gap-skip timer too so it doesn't carry stale state. */
-  next_flush_stuck_since_ms_.store(0, std::memory_order_relaxed);
-}
-
-template<class P,class R>
 std::size_t HPO_Host<P,R>::g_iter_value() {
   return g_iter_.load(std::memory_order_relaxed);
 }
-
-/* ---------- ICheckpointable: persist best-so-far comparator state ----- */
-template<class P,class R>
-void HPO_Host<P,R>::save_globals(core::Checkpoint& cp) {
-    std::lock_guard<std::mutex> lock(best_mtx_);
-    cp.section("HPO_HOST");
-    cp.put_dbl ("g_best",            g_best_.load(std::memory_order_relaxed));
-    cp.put_size("g_best_iter",       g_best_iter_.load(std::memory_order_relaxed));
-    cp.put_size("iter_at_last_best", iter_at_last_best_.load(std::memory_order_relaxed));
-    cp.put_size("g_iter",            g_iter_.load(std::memory_order_relaxed));
-    cp.put_bool("g_best_key_valid",  g_best_key_.has_value());
-    if (g_best_key_) {
-        cp.put_int ("g_best_rank", g_best_key_->rank);
-        cp.put_size("g_best_slot", g_best_key_->slot);
-        cp.put_size("g_best_eval", g_best_key_->eval);
-    }
-}
-
-template<class P,class R>
-void HPO_Host<P,R>::load_globals(const core::Checkpoint& cp) {
-    std::lock_guard<std::mutex> lock(best_mtx_);
-    if (auto v = cp.get_dbl ("HPO_HOST", "g_best"))
-        g_best_.store(*v, std::memory_order_relaxed);
-    if (auto v = cp.get_size("HPO_HOST", "g_best_iter"))
-        g_best_iter_.store(*v, std::memory_order_relaxed);
-    if (auto v = cp.get_size("HPO_HOST", "iter_at_last_best"))
-        iter_at_last_best_.store(*v, std::memory_order_relaxed);
-    if (auto v = cp.get_size("HPO_HOST", "g_iter"))
-        g_iter_.store(*v, std::memory_order_relaxed);
-
-    g_best_key_.reset();
-    const auto key_valid = cp.get_bool("HPO_HOST", "g_best_key_valid");
-    if (key_valid && *key_valid) {
-        const auto rank = cp.get_int ("HPO_HOST", "g_best_rank");
-        const auto slot = cp.get_size("HPO_HOST", "g_best_slot");
-        const auto eval = cp.get_size("HPO_HOST", "g_best_eval");
-        const double loss = g_best_.load(std::memory_order_relaxed);
-        if (rank && slot && eval && *rank >= 0 &&
-            *rank <= std::numeric_limits<int>::max() && std::isfinite(loss)) {
-            g_best_key_ = durable_best::Key{
-                loss, static_cast<int>(*rank), *slot, *eval};
-        }
-    }
-}
-
-template<class P,class R>
-void HPO_Host<P,R>::save(core::Checkpoint& cp) const { save_globals(cp); }
-
-template<class P,class R>
-void HPO_Host<P,R>::load(const core::Checkpoint& cp) { load_globals(cp); }
 
 template<class P,class R>
 void HPO_Host<P,R>::reset_globals_for_test() {
@@ -772,52 +697,13 @@ void HPO_Host<P,R>::reset_best_state_for_fresh_run() {
 }
 
 template<class P,class R>
-std::optional<durable_best::Key>
-HPO_Host<P,R>::current_best_key_for_test() {
-    std::lock_guard<std::mutex> lock(best_mtx_);
-    return g_best_key_;
-}
-
-template<class P,class R>
-void HPO_Host<P,R>::prepare_best_publication(bool resumed) const {
+void HPO_Host<P,R>::prepare_best_publication() const {
     std::string local_error;
-    std::optional<durable_best::Key> retained_key;
-    std::optional<durable_best::Key> checkpoint_key;
-    {
-        std::lock_guard<std::mutex> lock(best_mtx_);
-        checkpoint_key = g_best_key_;
-    }
-
     try {
-        if (!resumed) {
-            if (hpo_rank() == 0)
-                durable_best::reset_for_fresh_run(trg_.canonicalBestPotFile);
-            if (trg_.localBestPotFile != trg_.canonicalBestPotFile)
-                durable_best::reset_for_fresh_run(trg_.localBestPotFile);
-        } else {
-            /* The checkpoint comparator is global, so bind it only to the
-             * canonical global artifact. Rank-local files are independent
-             * history and can legitimately carry a different (worse) key. */
-            retained_key =
-                durable_best::read_key_file(trg_.canonicalBestPotFile);
-
-            const double checkpoint_loss =
-                g_best_.load(std::memory_order_relaxed);
-            if (retained_key &&
-                checkpoint_loss != std::numeric_limits<double>::max() &&
-                retained_key->loss != checkpoint_loss) {
-                throw durable_best::Error(
-                    "checkpoint best loss does not match retained best-potential metadata");
-            }
-            if (retained_key && checkpoint_key &&
-                (checkpoint_key->loss != retained_key->loss ||
-                 checkpoint_key->rank != retained_key->rank ||
-                 checkpoint_key->slot != retained_key->slot ||
-                 checkpoint_key->eval != retained_key->eval)) {
-                throw durable_best::Error(
-                    "checkpoint compound best key does not match retained canonical potential");
-            }
-        }
+        if (hpo_rank() == 0)
+            durable_best::reset_for_fresh_run(trg_.canonicalBestPotFile);
+        if (trg_.localBestPotFile != trg_.canonicalBestPotFile)
+            durable_best::reset_for_fresh_run(trg_.localBestPotFile);
     } catch (const std::exception& e) {
         local_error = e.what();
     } catch (...) {
@@ -834,18 +720,8 @@ void HPO_Host<P,R>::prepare_best_publication(bool resumed) const {
         throw durable_best::Error(local_error);
     }
 
-    if (!resumed) {
-        reset_best_state_for_fresh_run();
-        warmstart::reset_best_snapshot_for_fresh_run();
-    } else if (retained_key) {
-        std::lock_guard<std::mutex> lock(best_mtx_);
-        const double checkpoint_loss =
-            g_best_.load(std::memory_order_relaxed);
-        if (checkpoint_loss == std::numeric_limits<double>::max())
-            g_best_.store(retained_key->loss, std::memory_order_relaxed);
-        if (!g_best_key_)
-            g_best_key_ = retained_key;
-    }
+    reset_best_state_for_fresh_run();
+    warmstart::reset_best_snapshot_for_fresh_run();
 }
 
 template<class P, class R>
@@ -887,7 +763,7 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
 , max_title_len_(cw_ - 4)
 {    /* Arm the bound-occupancy audit on this run's search space (a pure
      * function of the config, so re-arming on every host construction is
-     * idempotent across MULTISTART/BASINS policies). */
+     * idempotent across policies). */
     if (!has_validation_ && (trg_.use_ermse || trg_.use_frmse))
         trg_.resolve_validation_targets({});
     {
@@ -2125,9 +2001,11 @@ template<class P, class R>
 double HPO_Host<P,R>::operator()(const P& p) const
 {
   /* Cooperative shutdown: SIGINT/SIGTERM/SIGUSR2 raised the stop flag.
-   * Throw before consuming an iter slot so the caller's run loop
-   * (RestartPolicy / BasinsPolicy / hpo_run) can flush a checkpoint
-   * and exit cleanly. SignalHandler::install() is wired in hpo_run(). */
+   * Throw before consuming an iter slot. The exception is meant to unwind
+   * the optimiser to hpo_run()'s ShutdownRequested arm, which flushes the
+   * result files and closes the journal; the NLopt C++ wrapper and
+   * MultiStartPolicy's per-start catch intercept it today (see hpo_run()).
+   * SignalHandler::install() is wired in hpo_run(). */
   if (core::SignalHandler::stop_requested()) {
     throw core::ShutdownRequested{};
   }
@@ -2198,7 +2076,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
      *
      * Excluded from the catch:
      *  - core::ShutdownRequested -- must propagate to hpo_run() so the
-     *    run shuts down cleanly with a final checkpoint.
+     *    run shuts down cleanly (result files flushed, journal closed).
      *  - StagnationStop -- must propagate to RestartPolicy. */
     try {
 
@@ -2270,11 +2148,6 @@ double HPO_Host<P,R>::operator()(const P& p) const
         _census.done = true;   /* counted here, with the measured wall */
         log.record_fail_band(save_fail_band);
         log.record_bump_gate_reject();
-        /* Not during a probe phase: the annealer has no state behind
-     * these evals, so a checkpoint here advances g_iter over
-     * nothing. */
-    if (!probe::active())
-      core::CheckpointManager::instance().tick_eval(save_iter);
         return save_loss;
       }
     }
@@ -2534,14 +2407,8 @@ double HPO_Host<P,R>::operator()(const P& p) const
       const bool tied_compound_winner =
           feasible && r.loss == cur && g_best_key_ &&
           durable_best::precedes(key, *g_best_key_);
-      /* A legacy checkpoint can carry g_best without the newer compound key.
-       * Its equal-loss candidate is allowed through once; durable publication
-       * remains the authoritative comparator against a metadata-bearing file. */
-      const bool legacy_equal =
-          r.loss == cur && !g_best_key_ &&
-          cur != std::numeric_limits<double>::max();
 
-      if (lower_loss || tied_compound_winner || legacy_equal) {
+      if (lower_loss || tied_compound_winner) {
         r.best_iter = g_best_iter_.load(std::memory_order_relaxed) + 1;
 
         /* On return the canonical artifact contains this candidate or an
@@ -2549,8 +2416,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
          * does not reject this rank's improvement: g_best_, r.is_best, and
          * best_hot_map are deliberately rank-local live-search state. The
          * early multi-rank dispatch guard limits this split ownership to plain
-         * PT/PA, which have no checkpoint/resume registration; the canonical
-         * file remains the sole global result. */
+         * PT/PA; the canonical file remains the sole global result. */
         persist_durable_best(r);
 
         if (!warmstart::promote_batch(key, r.hot_produced))
@@ -2764,22 +2630,13 @@ double HPO_Host<P,R>::operator()(const P& p) const
                             format_params_str(p),
                             bound_hints(p));
 
-    /* Drive the time-/eval-based checkpoint cadence. Stage-boundary
-     * commits in BasinsPolicy are still authoritative; this fills the
-     * gap inside long stages so CHECKPOINT_EVERY actually has effect.
-     * Non-BASINS runs configure no period, making this a no-op. */
-    /* Not during a probe phase: the annealer has no state behind
-     * these evals, so a checkpoint here advances g_iter over
-     * nothing. */
-    if (!probe::active())
-      core::CheckpointManager::instance().tick_eval(save_iter);
     }
 
     return save_loss;
 
     } catch (const core::ShutdownRequested&) {
         /* Cooperative shutdown -- pass through to hpo_run()'s outer
-         * catch which performs the final flush + checkpoint commit.
+         * catch, which drains the result queue and closes the journal.
          *
          * Bug 7: before rethrowing, submit a synthetic FAIL_SCORE
          * Result so the iter slot we consumed at `++g_iter_` does not

@@ -26,7 +26,6 @@
 #include <vector>
 
 #include <tadah/core/checkpoint.h>          // for ShutdownRequested
-#include <tadah/core/checkpoint_manager.h>  // for tick_eval cadence
 #include <tadah/core/context.h>
 #include <tadah/core/signal_handler.h>
 #include <tadah/hpo/bump_support_gate.h>
@@ -132,7 +131,7 @@ struct EvalResult
  *  HPO_Host  -  stateless evaluation functor
  * ========================================================================= */
 template<class ParamVec, class LammpsRunner>
-class HPO_Host : public core::ICheckpointable
+class HPO_Host
 {
     using Result = EvalResult<ParamVec>;
     using Queue  = moodycamel::BlockingConcurrentQueue<Result>;
@@ -180,25 +179,6 @@ public:
                               bool                         cache_miss,
                               bool                         ift_failed = false) const;
 
-    /* ICheckpointable -- persists the static best-so-far comparator state
-     * (g_best_, g_best_iter_, iter_at_last_best_, g_iter_) so that a
-     * resumed run uses the prior best as the comparator for the very
-     * first post-resume eval. Without this, g_best_ defaults to
-     * +infinity and the first post-resume eval always reports
-     * spuriously as a new best, corrupting best_pot.tadah and the
-     * journal's running best. The actual journal counters live in
-     * HPOLog and are persisted there. */
-    void save(core::Checkpoint& cp) const override;
-    void load(const core::Checkpoint& cp) override;
-    std::string tag() const override { return "HPO_HOST"; }
-
-    /* Static save/load helpers -- the ICheckpointable overrides delegate
-     * here so tests can exercise the round-trip without constructing a
-     * full HPO_Host (which requires datasets, a trainer, etc.). The
-     * checkpoint section tag is the same as tag(), i.e. HPO_HOST. */
-    static void save_globals(core::Checkpoint& cp);
-    static void load_globals(const core::Checkpoint& cp);
-
     /* Test-only: reset the static comparator atomics to their freshly-
      * constructed values. Used by regression tests to simulate process
      * restart without spawning a new process. */
@@ -207,17 +187,18 @@ public:
      * monotonic evaluation counter/writer cursor. Used by fresh-run startup
      * and exposed for the embedded two-runs-in-one-process regression. */
     static void reset_best_state_for_fresh_run();
-    /* Test-only accessors. */
+    /* Test-only accessors of the best comparator and the process-wide
+     * evaluation counter (test_hpo_host_e2e pins the fresh-run reset). */
     static double      current_best()       { return g_best_.load(); }
     static std::size_t current_best_iter()  { return g_best_iter_.load(); }
     static std::size_t current_last_best()  { return iter_at_last_best_.load(); }
-    static std::optional<durable_best::Key> current_best_key_for_test();
+    static std::size_t g_iter_value();
 
-    /** Establish the output generation after checkpoint detection. A fresh
-     * run removes stale best-potential incumbents; an explicit checkpoint
-     * resume retains them and restores the compound tie key. MPI ranks
+    /** Establish this run's output generation before the first evaluation.
+     * HPO runs are not resumable: every run removes stale best-potential
+     * incumbents and starts its comparator from scratch. MPI ranks
      * coordinate before any evaluation can publish. */
-    void prepare_best_publication(bool resumed) const;
+    void prepare_best_publication() const;
 
     std::size_t train_size() const;   // number of training structures
     std::size_t val_size()   const;   // number of validation structures
@@ -267,13 +248,6 @@ public:
     static void reset_stagnation();
     /** Current stagnation count: g_iter_ - iter_at_last_best_. */
     static std::size_t stagnation_count();
-
-    /* ---------- restart support ----------------------------------------- */
-    /** Bring the eval counter forward to at least @p n after a checkpoint
-     *  load -- eval numbering then continues monotonically across the
-     *  resume boundary. Idempotent: never lowers g_iter_. */
-    static void set_g_iter_floor(std::size_t n);
-    static std::size_t g_iter_value();
 
     /** Exception thrown by operator() to signal a stagnation-driven
      *  abort. The RestartPolicy catches and re-enters with a fresh init. */
@@ -390,8 +364,8 @@ private:
     static std::atomic_size_t   g_best_iter_;
     static std::atomic<double>  g_best_;
     /* Serializes the complete loss/rank/slot/eval comparison and synchronous
-     * publication. The atomics remain for cheap observers/checkpoint fields;
-     * this mutex makes exact-loss ties deterministic within one process. */
+     * publication. The atomics remain for cheap observers; this mutex makes
+     * exact-loss ties deterministic within one process. */
     static std::mutex                       best_mtx_;
     /* Bound-occupancy audit of the running best (bound_audit.h); armed
      * from trg.space() at construction, updated on the new-best path

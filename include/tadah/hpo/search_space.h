@@ -23,15 +23,15 @@
  *
  * The object is immutable after build() and shared (shared_ptr<const>)
  * between the outer OptimizerSpec, every sub-spec / stage-spec clone,
- * HPO_Host, the basin pools and the journal writer. It is a pure function
+ * HPO_Host and the journal writer. It is a pure function
  * of the configuration, so every MPI rank builds the identical space.
  *
  * Coordinate contract for the rest of HPO:
  *   - OptimizerSpec::low/high are INTERNAL bounds (filled by bind_space);
  *   - OptimizerSpec::in()/out() map REAL <-> INTERNAL through the space;
  *   - host(...) always receives REAL vectors (adapters call sp.out(u));
- *   - persisted artefacts (best_*.tadah, params, WARM seeds, basin pools)
- *     are REAL-space.
+ *   - persisted artefacts (best_*.tadah, params, WARM seeds) are
+ *     REAL-space.
  */
 
 #include <cstddef>
@@ -160,11 +160,6 @@ public:
     /* Throws std::runtime_error naming the dim when a REAL point lies
      * outside its box (bounds inclusive) or is non-finite. */
     void require_inside_real(const std::vector<double>& x, const std::string& what) const;
-
-    /* Stable identity of the coordinate system (kinds, c, lo, hi,
-     * normalise) -- used to tag basin-pool checkpoints. Labels excluded. */
-    std::string   fingerprint() const;       // 16 hex chars
-    std::uint64_t fingerprint_u64() const;   // same value, for checkpoints
 
     /* Same shapes/labels, new real boxes (version + 1). BOUND_ADAPT. */
     SearchSpace with_boxes(const std::vector<std::pair<double,double>>& boxes) const;

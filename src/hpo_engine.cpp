@@ -143,8 +143,9 @@ void HPOEngine::validate(const tadah::mlip::Task &task) {
   // canonical, HPOTargets-aware audit runs inside hpo_run() once the
   // HPOTARGET file has been parsed. Here we do a lightweight scan of
   // the raw HPOTARGET file for `OPTIM <KEY>` tokens -- enough to flag
-  // the BASINS-style failure mode (e.g. CGRIDMB fixed at the seed and
-  // absent from every OPTIM line) before any structures are loaded.
+  // a critical hyperparameter left out of the search (e.g. CGRIDMB fixed
+  // at the seed and absent from every OPTIM line) before any structures
+  // are loaded.
   // Always emits at WARNING; never throws -- the run-time audit will
   // emit again at FAIL severity when AUDIT=error if the issue stands.
   if (context.contains("HPOTARGET")) {

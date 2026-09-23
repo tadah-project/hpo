@@ -69,10 +69,9 @@ Registry build_registry()
         c.supports_stopval = true;
         /* eps-NEPS plateau rule (both SA variants): NEPS consecutive
          * rungs whose best improves by less than the tolerance stop the
-         * run. Rel is the natural ladder mapping (df < ftol_rel*|best|). */
+         * run. */
         c.supports_ftol_rel = true;
         c.supports_ftol_abs = true;
-        c.ladder_ftol = OptimizerCaps::FtolKind::Rel;
         c.step_use  = StepUse::WidthFraction;
         c.step_note = "set PARAM STEP_FRAC (and PARAM STEP_MODE for ANNEAL_PT) instead";
         add(r, c);
@@ -89,7 +88,6 @@ Registry build_registry()
          * + the global best. */
         c.supports_ftol_rel = true;
         c.supports_ftol_abs = true;
-        c.ladder_ftol = OptimizerCaps::FtolKind::Rel;
         c.step_use  = StepUse::WidthFraction;
         c.step_note = "set PARAM STEP_FRAC (and PARAM STEP_MODE for ANNEAL_PT) instead";
         add(r, c);
@@ -106,7 +104,6 @@ Registry build_registry()
          * best + the global best. */
         c.supports_ftol_rel = true;
         c.supports_ftol_abs = true;
-        c.ladder_ftol = OptimizerCaps::FtolKind::Rel;
         c.step_use  = StepUse::WidthFraction;
         c.step_note = "set PARAM STEP_FRAC (and PARAM STEP_MODE for ANNEAL_PT) instead";
         add(r, c);
@@ -121,8 +118,7 @@ Registry build_registry()
         c.supports_maxtime = true;
         c.supports_stopval = true;
         /* No ftol/xtol: ASA's own plateau stops are PARAM Cost_Precision
-         * + Maximum_Cost_Repeat and Accepted_To_Generated_Ratio, so
-         * ladder_ftol stays None (BASINS' FTOL_LADDER has no target). */
+         * + Maximum_Cost_Repeat and Accepted_To_Generated_Ratio. */
         c.step_use  = StepUse::Rejected;
         c.step_note = "the generating distribution width is driven by the per-dim "
                       "temperatures (Initial_Parameter_Temperature, Temperature_Ratio_Scale)";
@@ -137,7 +133,6 @@ Registry build_registry()
         c.accepts_multi_seed = true;
         c.supports_maxeval   = true;
         c.supports_ftol_abs  = true;     // solver_eps -- absolute-style
-        c.ladder_ftol        = OptimizerCaps::FtolKind::Abs;
         c.step_use  = StepUse::Rejected;
         c.step_note = "MaxLIPO+TR sizes its own trust region from the samples; remove STEP";
         add(r, c);
@@ -148,7 +143,6 @@ Registry build_registry()
         c.is_gradient_based  = true;
         c.supports_maxeval   = true;
         c.supports_ftol_abs  = true;     // objective_delta_stop_strategy
-        c.ladder_ftol        = OptimizerCaps::FtolKind::Abs;
         c.step_use  = StepUse::Rejected;
         c.step_note = "the line search starts from -grad; the finite-difference step is PARAM fd_step";
         add(r, c);
@@ -175,7 +169,6 @@ Registry build_registry()
             c.supports_maxeval   = true;
             c.supports_ftol_rel  = true;
             c.supports_xtol_rel  = true;
-            c.ladder_ftol        = OptimizerCaps::FtolKind::Rel;
             c.step_use           = StepUse::Rejected;
             c.step_note          = "Ceres chooses the initial line-search step itself; remove "
                                    "STEP (PARAM max_ls_iter caps the line-search iterations)";
@@ -202,7 +195,6 @@ Registry build_registry()
         c.supports_ftol_abs = true;
         c.supports_xtol_rel = true;
         c.supports_xtol_abs = true;
-        c.ladder_ftol       = OptimizerCaps::FtolKind::Rel;
 
         const std::string s = name;
         if (!s.empty() && s[0] == 'G')                    c.is_global = true;
@@ -306,16 +298,6 @@ const OptimizerCaps& optimizer_caps(const std::string& lib,
 const OptimizerCaps& optimizer_caps(const OptimizerSpec& sp)
 {
     return optimizer_caps(sp.lib, sp.algo);
-}
-
-void apply_ladder_ftol(OptimizerSpec& sp, double tol)
-{
-    const auto& c = optimizer_caps(sp);
-    switch (c.ladder_ftol) {
-        case OptimizerCaps::FtolKind::Rel:  sp.stop.ftol_rel = tol; break;
-        case OptimizerCaps::FtolKind::Abs:  sp.stop.ftol_abs = tol; break;
-        case OptimizerCaps::FtolKind::None: /* nothing useful to set */ break;
-    }
 }
 
 std::vector<const OptimizerCaps*> filter_optimizer_caps(CapsPredicate pred)

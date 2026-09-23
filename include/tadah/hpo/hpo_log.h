@@ -36,8 +36,6 @@
 #include <utility>
 #include <vector>
 
-#include <tadah/core/checkpoint.h>
-
 // Forward declarations of HPO types used in section writers
 namespace tadah::hpo { struct OptimizerSpec; class HPOTargets; }
 namespace tadah::core { class Context; class Element; }
@@ -60,14 +58,8 @@ struct PinnedDim {
 
 /* =========================================================================
  * HPOLog -- the logger.
- *
- * HPOLog also implements ICheckpointable so that the journal's running
- * counters (n_eval, best loss, best eval) survive across restarts. The
- * actual log file is opened in append mode by open() -- the
- * checkpointed counters let the journal stay coherent (eval numbers
- * keep monotonically increasing, "best so far" doesn't reset).
  * ========================================================================= */
-class HPOLog : public core::ICheckpointable
+class HPOLog
 {
 public:
     static HPOLog& instance()
@@ -311,8 +303,7 @@ public:
      *  (kSlotProbe) are not counted. Single-process semantics: under
      *  MPI the counts only cover THIS rank's slots. */
     std::vector<std::pair<int, std::size_t>> take_best_slot_window();
-    /** Same histogram accumulated over the whole session (not
-     *  checkpointed -- a resumed run restarts the counts). */
+    /** Same histogram accumulated over the whole session. */
     std::vector<std::pair<int, std::size_t>> best_slot_totals() const;
     /** D29: eval number of the LAST new best recorded per slot, sorted by
      *  slot.  Separates "this slot still contributes" from "this slot's
@@ -364,27 +355,6 @@ public:
         std::lock_guard<std::mutex> lg(mtx_);
         return cur_best_eval_;
     }
-
-    /** suggested FTOL_REL from NOISE_CALIBRATION (10 x rel_spread, floored
-     *  at 1e-6). Returns nullopt if NOISE_CALIBRATION did not run.
-     *  Persisted in the [HPOLOG] checkpoint section so a resumed BASINS
-     *  run (which gates NOISE_CALIBRATION on `!resumed`) can still apply
-     *  C3's `clamp_ladder_to_noise_floor`. */
-    std::optional<double> noise_suggested_ftol() const {
-        std::lock_guard<std::mutex> lg(mtx_);
-        return noise_suggested_ftol_;
-    }
-    /** Set by hpo_run() right after NOISE_CALIBRATION completes. */
-    void set_noise_suggested_ftol(double v) {
-        std::lock_guard<std::mutex> lg(mtx_);
-        noise_suggested_ftol_ = v;
-    }
-
-    /* ICheckpointable -- persists eval counters and best-so-far so an
-     * interrupted run resumes with consistent journal state. */
-    std::string tag() const override { return "HPOLOG"; }
-    void save(core::Checkpoint& cp) const override;
-    void load(const core::Checkpoint& cp) override;
 
     /* Test-only: reset the singleton's running counters and best-so-far
      * to their freshly-constructed values. Used by regression tests so
@@ -494,9 +464,7 @@ private:
     /* Where the current best was found: snapshot of the recording
      * thread's eval context at log_new_best() time, plus per-slot
      * new-best histograms (window = since last take_best_slot_window(),
-     * tot = whole session). Deliberately NOT checkpointed: after a
-     * resume the origin tag reappears with the first new best, and the
-     * histograms describe this session only. Protected by mtx_. */
+     * tot = whole session). Protected by mtx_. */
     int         cur_best_slot_   = kSlotNone;
     std::size_t cur_best_nslots_ = 0;
     double      cur_best_T_      = 0.0;
@@ -517,10 +485,6 @@ private:
     static std::string slot_tag(int slot, std::size_t n_slots, double T,
                                 const char* t_label);
 
-    /* C3: suggested FTOL_REL from NOISE_CALIBRATION. Persisted so a
-     * resumed BASINS run (which skips re-running NOISE_CALIBRATION)
-     * can still apply the ladder clamp on its first round. */
-    std::optional<double> noise_suggested_ftol_;
     double      best_emae_      = 0; bool has_emae_   = false;
     double      best_ermse_     = 0; bool has_ermse_  = false;
     double      best_errmse_    = 0; bool has_errmse_ = false;

@@ -146,7 +146,8 @@ void IterHealthMonitor::record(
   }
 
   // Per-block exact-zero blocks. block_max_abs == 0 means the regressor
-  // pruned the entire block -- the BASINS-style failure signature.
+  // pruned the entire block -- the signature of a descriptor block that
+  // collapsed (e.g. a fixed CGRIDMB outside the data's support).
   for (std::size_t b = 0; b < rec.block_max_abs.size(); ++b) {
     if (b >= layout.blocks.size()) break;
     if (rec.block_max_abs[b] == 0.0) {

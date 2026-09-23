@@ -534,7 +534,7 @@ TEST_CASE("PC dataset host loss and reports match resolved targets", "[pc_datase
     ctx.remove("FORCE"); ctx.add("FORCE", "true");
     tadah::hpo::HPOTargets trg(ctx, hpo.string());
     Host host(ctx, trg, val.string());
-    host.prepare_best_publication(false);
+    host.prepare_best_publication();
     REQUIRE(host.val_size() == 3);
     ParamVec p(1); p(0) = 0.5;
     const double total = host(p);
@@ -619,7 +619,7 @@ TEST_CASE("PC dataset zero weight retains its dataset skip filter", "[pc_dataset
     auto ctx = make_ta_master_context(train, hpo, val);
     tadah::hpo::HPOTargets trg(ctx, hpo.string());
     Host host(ctx, trg, val.string());
-    host.prepare_best_publication(false);
+    host.prepare_best_publication();
     ParamVec p(1); p(0) = 0.5;
     CHECK(host(p) == trg.FAIL_SCORE);
     host.flush_remaining();
@@ -674,7 +674,7 @@ TEST_CASE("params.tadah columns: iteration then slot then OPTIM dimensions "
     }
 
     Host host(ctx, trg, val.string());
-    host.prepare_best_publication(false);
+    host.prepare_best_publication();
     ParamVec p(3); p(0) = 0.5; p(1) = 1.4; p(2) = 5.0;
     (void)host(p);
     host.flush_remaining();
@@ -729,7 +729,7 @@ TEST_CASE("A second run in the same process restarts the best comparator "
 
     /* First run: two distinct candidates, then the worse one again, which
      * is not an improvement and so leaves a stagnation count behind. */
-    host.prepare_best_publication(false);
+    host.prepare_best_publication();
     ParamVec a(1); a(0) = 0.5;
     ParamVec b(1); b(0) = 1.2;
     const double la = host(a);
@@ -753,7 +753,7 @@ TEST_CASE("A second run in the same process restarts the best comparator "
     CHECK(first->loss == best_loss);
 
     /* Second run in the same process. */
-    host.prepare_best_publication(false);
+    host.prepare_best_publication();
     CHECK(Host::current_best() == std::numeric_limits<double>::max());
     CHECK(Host::current_best_iter() == 0u);
     CHECK(Host::g_iter_value() == g);

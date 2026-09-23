@@ -1191,7 +1191,7 @@ compute_analytical_gradient_from_trainer(
      * per gradient call, negligible vs the descriptor walk cost).
      *
      * Cost-aware scheduling (Phase 2F): on a config with n_theta close
-     * to n_threads (BASINSv2: 29 theta / 26 threads) and a long tail of
+     * to n_threads (a production blip6 config: 29 theta / 26 threads) and a long tail of
      * near-equal-cost heavy theta, plain schedule(dynamic) can leave a
      * heavy theta in the queue at wave-2 -- the cheap-theta threads pick it up
      * and the wall doubles. Sort theta by descending last-call cost (a

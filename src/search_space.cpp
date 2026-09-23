@@ -188,35 +188,6 @@ void SearchSpace::require_inside_real(const std::vector<double>& x,
     }
 }
 
-std::string SearchSpace::fingerprint() const
-{
-    std::ostringstream oss;
-    oss << std::hex << std::setw(16) << std::setfill('0') << fingerprint_u64();
-    return oss.str();
-}
-
-std::uint64_t SearchSpace::fingerprint_u64() const
-{
-    /* FNV-1a over the exact bit patterns of (kind, c, lo, hi) per dim plus
-     * the normalise flag: stable across processes and compilers for the
-     * same config, sensitive to any coordinate-system change. */
-    std::uint64_t h = 1469598103934665603ull;
-    auto mix = [&](const void* p, std::size_t n) {
-        const unsigned char* b = static_cast<const unsigned char*>(p);
-        for (std::size_t i = 0; i < n; ++i) { h ^= b[i]; h *= 1099511628211ull; }
-    };
-    const unsigned char nrm = policy_.normalise ? 1 : 0;
-    mix(&nrm, 1);
-    for (const DimSpec& d : dims_) {
-        const unsigned char k = static_cast<unsigned char>(d.tf.kind);
-        mix(&k, 1);
-        mix(&d.tf.c, sizeof d.tf.c);
-        mix(&d.lo, sizeof d.lo);
-        mix(&d.hi, sizeof d.hi);
-    }
-    return h;
-}
-
 SearchSpace SearchSpace::with_boxes(const std::vector<std::pair<double,double>>& boxes) const
 {
     if (boxes.size() != dims_.size())

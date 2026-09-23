@@ -8,8 +8,7 @@
 #include <tadah/hpo/pc_worker_pool.h>   // PC_ISOLATION worker-process pool
 #include <tadah/hpo/iter_health.h>
 #include <tadah/hpo/startup_validation.h>
-#include <tadah/core/checkpoint.h>
-#include <tadah/core/checkpoint_manager.h>
+#include <tadah/core/checkpoint.h>   // core::ShutdownRequested
 #include <tadah/core/context.h>
 #include <tadah/core/blueprint_parser.h>
 #include <tadah/core/signal_handler.h>
@@ -37,16 +36,13 @@ namespace tadah::hpo {
 using R = LammpsRunner;
 using V = dlib::matrix<double,0,1>;
 
-/* NOISE_CALIBRATION is gated by two predicates: a non-trivial knob
- * (>=2 evals) and a fresh start (no checkpoint to resume from). When
- * resuming, the prior run already calibrated noise -- repeating it
- * would charge N more LAMMPS evals against the resumed counter and
- * pollute the per-eval logs. Pulled out of hpo_run() into a small free
- * function so the gating is unit-testable without invoking the full
- * optimiser; see HPO/tests/test_noise_calibration_resume.cpp. */
-bool should_run_noise_calibration(bool resumed, std::size_t noise_n)
+/* NOISE_CALIBRATION runs only for a non-trivial knob (>= 2 evals: one
+ * evaluation has no spread to measure). Pulled out of hpo_run() into a
+ * small free function so the gating is unit-testable without invoking the
+ * full optimiser; see HPO/tests/test_noise_calibration.cpp. */
+bool should_run_noise_calibration(std::size_t noise_n)
 {
-    return !resumed && noise_n >= 2;
+    return noise_n >= 2;
 }
 
 bool hpo_mpi_dispatch_supported(int world_size,
@@ -106,19 +102,24 @@ int hpo_run(core::Context& ctx)
 #endif
 
     /* Cooperative shutdown: install SIGINT/SIGTERM/SIGUSR2 handlers so
-     * the BasinsPolicy and HPO_Host can drop a final checkpoint and
-     * exit cleanly under ctrl+C or SLURM cancellation. */
+     * HPO_Host stops evaluating (it throws core::ShutdownRequested) under
+     * ctrl+C or SLURM cancellation, and the ShutdownRequested arm around
+     * policy->run() below flushes the result files and closes the journal.
+     * Three paths bypass that arm today: a signal during NOISE_CALIBRATION
+     * (outside the try), and the NLopt C++ wrapper and MultiStartPolicy's
+     * per-start catch, which intercept the exception so the run ends as an
+     * ordinary stop. */
     core::SignalHandler::install();
 
     HPOTargets trg(ctx, ctx.get<std::string>("HPOTARGET"));
 
     /* This is more than a dispatch convenience: HPO_Host's live best/HOT
      * state is intentionally rank-local while best_pot.tadah is the global
-     * cross-rank artifact. PT/PA do not register checkpoint state, so a rank
-     * can safely keep its local incumbent when another rank wins canonical
-     * publication. Allowing a checkpointed/decorated strategy here would mix
-     * those ownership domains on resume. Keep size-one MPI launches identical
-     * to serial builds. */
+     * cross-rank artifact. The plain PT/PA drivers own the communicator, so a
+     * rank can safely keep its local incumbent when another rank wins
+     * canonical publication; any other driver, and the MULTISTART and
+     * PRESTAGE strategies, would drive the ranks outside that protocol.
+     * Keep size-one MPI launches identical to serial builds. */
     const int hpo_world = hpo_size();
     if (!hpo_mpi_dispatch_supported(hpo_world, trg.spec)) {
         throw std::runtime_error(
@@ -444,9 +445,9 @@ int hpo_run(core::Context& ctx)
 
     /* -- Pre-flight audit (Phase 5) -----------------------------------
      * Walk every configured descriptor's meta() and run the per-param /
-     * cross-param HealthChecks on the training StructureDB. This is the
-     * BASINS-style guard: a fixed-and-off-shell `CGRIDMB` is flagged
-     * here with a rho-collapse explanation BEFORE the optimiser runs. The
+     * cross-param HealthChecks on the training StructureDB. A fixed
+     * `CGRIDMB` outside the data's support is flagged here with a
+     * rho-collapse explanation BEFORE the optimiser runs. The
      * critical-fixed-not-optimised audit additionally flags Critical
      * params that lack any OPTIM block. Honours the AUDIT context key:
      *   off    -> skipped
@@ -480,66 +481,14 @@ int hpo_run(core::Context& ctx)
     /* Build the decorator stack from sp's MULTISTART / PRESTAGE block /
      * RESTART knobs. With no knobs set, this collapses to BasePolicy.
      * Targets pointer flows through to RestartPolicy for fresh-init
-     * generation on stagnation.
-     *
-     * BasinsPolicy registers itself + its BasinPool with
-     * CheckpointManager from its constructor, so build_run_policy()
-     * must run *before* try_load(). */
+     * generation on stagnation. */
     auto policy = build_run_policy<V,R>(sp, &trg);
 
-    /* -- Checkpoint subsystem wiring (LIB BASINS only for now) ----------
-     *
-     * Order is important: try_load() must run BEFORE NOISE_CALIBRATION
-     * so that a resumed run does not re-run the calibration evals (each
-     * one is a real LAMMPS evaluation that pollutes the eval counter,
-     * per-eval logs, and the best-so-far comparator). The host is
-     * registered alongside HPOLog so its load() restores g_best_ et al.
-     * before any further evals happen. */
-    auto& cpm = core::CheckpointManager::instance();
-    bool resumed = false;
-    if (sp.strategy_type == StrategyType::BASINS ||
-        sp.strategy_type == StrategyType::BASINSV2) {
-        cpm.set_path("checkpoint.tadah");
-        const double cp_secs = (sp.strategy_type == StrategyType::BASINS)
-            ? sp.basins.checkpoint_seconds
-            : sp.basins_v2.checkpoint_seconds;
-        const std::size_t cp_evs = (sp.strategy_type == StrategyType::BASINS)
-            ? sp.basins.checkpoint_evals
-            : sp.basins_v2.checkpoint_evals;
-        if (cp_secs > 0.0)
-            cpm.set_period_seconds(cp_secs);
-        if (cp_evs > 0)
-            cpm.set_period_evals(cp_evs);
-        /* HPOLog persists journal counters so eval numbering and
-         * best-so-far stay coherent across the resume boundary. */
-        cpm.register_(&log);
-        /* HPO_Host persists the static best-so-far comparator
-         * (g_best_, g_best_iter_, iter_at_last_best_, g_iter_) so the
-         * first post-resume eval is judged against the prior best, not
-         * +infinity. Without this, every resume produces a spurious
-         * "NEW BEST" event that overwrites best_pot.tadah. */
-        cpm.register_(&host);
-        resumed = cpm.try_load();
-        if (resumed) {
-            const std::string strat_name = (sp.strategy_type == StrategyType::BASINSV2)
-                ? "BASINSv2" : "BASINS";
-            log.info(strat_name + ": resumed from checkpoint " + cpm.path() +
-                     " (n_eval=" + std::to_string(log.n_eval()) +
-                     ", best_loss=" +
-                     std::to_string(log.best_loss()) + ")");
-            /* Belt-and-suspenders: HPO_Host::load() already restores
-             * g_iter_; the floor call below is idempotent and keeps
-             * the eval counter >= HPOLog's n_eval even if the
-             * checkpoint predates the HPO_HOST section. */
-            HPO_Host<V,R>::set_g_iter_floor(log.n_eval());
-        }
-    }
-
-    /* Bind best-potential publication to this run only after checkpoint
-     * detection. A confirmed fresh run atomically discards stale artifacts
-     * from an unrelated prior objective; an explicit resume retains and
-     * validates its incumbent. MPI ranks synchronize before any evaluation. */
-    host.prepare_best_publication(resumed);
+    /* Bind best-potential publication to this run. HPO runs are not
+     * resumable, so every run starts fresh: stale best potentials from an
+     * unrelated prior objective are discarded atomically before the first
+     * evaluation. MPI ranks synchronize before any evaluation. */
+    host.prepare_best_publication();
 
     /* -- Noise calibration (NOISE_CALIBRATION N): repeat the seed point
      * N times before the optimiser starts, surface the loss spread, and
@@ -548,14 +497,8 @@ int hpo_run(core::Context& ctx)
      * and the per-eval log files (loss.tadah / params.tadah / ...).
      * The overhead is N - 1 extra wall-clock evals; the user opted in
      * by setting NOISE_CALIBRATION, so we do not also charge it against
-     * MAXEVAL (the optimiser still gets its full budget).
-     *
-     * Skipped on resume: the prior run already calibrated noise, the
-     * suggested FTOL_REL is preserved by the BASINS state machine, and
-     * re-running would charge N more LAMMPS evals against the resumed
-     * counter. If the user changes the seed point or dataset between
-     * runs, they should delete checkpoint.tadah to recalibrate. */
-    if (should_run_noise_calibration(resumed, sp.noise.calibration_n)) {
+     * MAXEVAL (the optimiser still gets its full budget). */
+    if (should_run_noise_calibration(sp.noise.calibration_n)) {
         const std::size_t N = sp.noise.calibration_n;
         if (sp.optim_init.empty()) {
             log.warning("NOISE_CALIBRATION requested but no starting "
@@ -595,7 +538,6 @@ int hpo_run(core::Context& ctx)
             const double suggested_ftol = std::max(10.0 * rel_spread, 1.0e-6);
 
             log.write_noise_calibration_section(losses, suggested_ftol);
-            log.set_noise_suggested_ftol(suggested_ftol);
 
             std::ostringstream oss;
             oss << std::scientific << std::setprecision(3);
@@ -604,33 +546,6 @@ int hpo_run(core::Context& ctx)
                 << "  (mean=" << mean << ", min=" << mn << ", max=" << mx << ")";
             std::cout << "[HPO] " << oss.str() << "\n";
             log.info(oss.str());
-
-            /* C3: plumb the noise floor into BasinsPolicy so the (opt-in)
-             * ladder clamp can drop sub-noise rungs. dynamic_cast is local
-             * and safe -- BasinsPolicy is the only RunPolicy not wrapped
-             * by the decorator stack (run_policy.h:434-436). Using the
-             * cast keeps RunPolicy's interface free of noise-specific
-             * methods, per the ticket's "Do not change the RunPolicy
-             * decorator pattern" rule. */
-            if (auto* bp = dynamic_cast<BasinsPolicy<V,R>*>(policy.get())) {
-                bp->set_noise_floor(suggested_ftol);
-            }
-            if (auto* bp2 = dynamic_cast<BasinsV2Policy<V,R>*>(policy.get())) {
-                bp2->set_noise_floor(suggested_ftol);
-            }
-        }
-    } else if (resumed) {
-        /* C3 resume path: NOISE_CALIBRATION did not re-run (gated on
-         * !resumed), but the prior run's suggested_ftol was persisted in
-         * the [HPOLOG] section. Re-plumb it into BasinsPolicy / BasinsV2Policy
-         * so the (opt-in) clamp keeps applying across resumes. */
-        if (auto suggested = log.noise_suggested_ftol()) {
-            if (auto* bp = dynamic_cast<BasinsPolicy<V,R>*>(policy.get())) {
-                bp->set_noise_floor(*suggested);
-            }
-            if (auto* bp2 = dynamic_cast<BasinsV2Policy<V,R>*>(policy.get())) {
-                bp2->set_noise_floor(*suggested);
-            }
         }
     }
 
@@ -652,18 +567,12 @@ int hpo_run(core::Context& ctx)
         host.flush_remaining();
         log.finish();
     } catch (const core::ShutdownRequested& e) {
-        /* SIGINT/SIGTERM/SIGUSR2 -- the policy already attempted to
-         * commit a checkpoint on the way out. Drain the I/O queue,
-         * close the journal cleanly with the signal reason. */
+        /* SIGINT/SIGTERM/SIGUSR2 -- drain the I/O queue and close the
+         * journal cleanly with the signal reason. */
         log.warning(std::string("Shutdown requested: ") +
                     core::SignalHandler::reason());
         host.flush_remaining();
         log.finish(std::string("SHUTDOWN (") + core::SignalHandler::reason() + ")");
-        /* Final flush of the checkpoint after the queue drain so the
-         * persisted n_eval matches what the eval files contain. */
-        if (sp.strategy_type == StrategyType::BASINS) {
-            try { cpm.save_now(); } catch (...) { /* best effort */ }
-        }
     } catch (const std::exception& e) {
         const std::string err = std::string("STOPPED with error: ") + e.what();
         log.warning(std::string("Optimiser threw: ") + e.what());

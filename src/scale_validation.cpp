@@ -211,39 +211,12 @@ void audit_search_space_widths(const OptimizerSpec& sp)
 void run_scale_validation(const OptimizerSpec& root, bool check_start_points)
 {
     const bool csp = check_start_points;
-    const bool basins = (root.strategy_type == StrategyType::BASINS ||
-                         root.strategy_type == StrategyType::BASINSV2);
-    if (basins && (root.step || !root.step_overrides.empty()))
-        throw std::runtime_error(
-            "STEP at STRATEGY level has no consumer under TYPE BASINS/BASINSV2 "
-            "(the EXPLORE and REFINE stages run their own optimisers); put it "
-            "inside the EXPLORE or REFINE block");
-
     validate_optimizer_scaling(root, "OUTER", csp);
     if (root.inner) validate_optimizer_scaling(*root.inner, "INNER", csp);
     if (root.prestage) {
         validate_optimizer_scaling(*root.prestage, "PRESTAGE", csp);
         if (root.prestage->inner)
             validate_optimizer_scaling(*root.prestage->inner, "PRESTAGE.INNER", csp);
-    }
-    auto stage = [&](const OptimizerSpec* s, const char* tag) {
-        if (!s) return;
-        validate_optimizer_scaling(*s, tag, csp);
-        if (s->inner)
-            validate_optimizer_scaling(*s->inner, std::string(tag) + ".INNER",
-                                       /*check_start_points=*/false);
-    };
-    if (root.strategy_type == StrategyType::BASINS) {
-        stage(root.basins.explore.get(), "BASINS.EXPLORE");
-        stage(root.basins.refine.get(),  "BASINS.REFINE");
-    } else if (root.strategy_type == StrategyType::BASINSV2) {
-        /* BASINSV2 stage specs receive bounds/seeds at run time
-         * (build_stage_spec copies the outer spec), so only the STEP
-         * policy can be checked here. */
-        if (root.basins_v2.explore)
-            validate_optimizer_scaling(*root.basins_v2.explore, "BASINSV2.EXPLORE", false);
-        if (root.basins_v2.refine)
-            validate_optimizer_scaling(*root.basins_v2.refine,  "BASINSV2.REFINE",  false);
     }
 
     if (csp) audit_search_space_widths(root);

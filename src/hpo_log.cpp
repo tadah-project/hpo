@@ -338,59 +338,25 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
                                      const std::vector<std::string>& param_labels)
 {
     section("OPTIMISER");
-    /* Strategy-aware library/algo summary. With TYPE BASINS the OUTER
-     * lib/algo are unset (the policy uses spec.basins.explore/refine);
-     * surface those instead. PRESTAGE shows OUTER as the refinement
-     * driver and reports EXPLORE separately under Run policy below. */
+    /* Strategy-aware library/algo summary. PRESTAGE shows OUTER as the
+     * refinement driver and reports EXPLORE separately under Run policy
+     * below. */
     auto strategy_name = [&](StrategyType t) -> const char* {
         switch (t) {
             case StrategyType::PLAIN:      return "PLAIN";
-            case StrategyType::BASINS:     return "BASINS";
-            case StrategyType::BASINSV2:   return "BASINSV2";
             case StrategyType::MULTISTART: return "MULTISTART";
             case StrategyType::PRESTAGE:   return "PRESTAGE";
         }
         return "?";
     };
     kv("Strategy", std::string(strategy_name(sp.strategy_type)));
-    if (sp.strategy_type == StrategyType::BASINS) {
-        if (sp.basins.explore)
-            kv("EXPLORE library / algo",
-               sp.basins.explore->lib + " / " + sp.basins.explore->algo);
-        if (sp.basins.refine)
-            kv("REFINE library / algo",
-               sp.basins.refine->lib + " / " + sp.basins.refine->algo);
-    } else if (sp.strategy_type == StrategyType::BASINSV2) {
-        if (sp.basins_v2.explore)
-            kv("EXPLORE library / algo",
-               sp.basins_v2.explore->lib + " / " + sp.basins_v2.explore->algo);
-        if (sp.basins_v2.refine)
-            kv("REFINE library / algo",
-               sp.basins_v2.refine->lib + " / " + sp.basins_v2.refine->algo);
-    } else {
-        kv("Library / algo", sp.lib + " / " + sp.algo);
-    }
+    kv("Library / algo", sp.lib + " / " + sp.algo);
     kv("Dimensions",     std::to_string(sp.low.size()) + " parameter"
                          + (sp.low.size() != 1 ? "s" : "") + " being optimised");
 
     // ---- inner optimizer (NLopt MLSL/AUGLAG sub-algo)
     if (sp.inner)
         kv("Inner optimizer", sp.inner->lib + " / " + sp.inner->algo);
-    if (sp.strategy_type == StrategyType::BASINS) {
-        if (sp.basins.explore && sp.basins.explore->inner)
-            kv("EXPLORE inner",
-               sp.basins.explore->inner->lib + " / " + sp.basins.explore->inner->algo);
-        if (sp.basins.refine && sp.basins.refine->inner)
-            kv("REFINE inner",
-               sp.basins.refine->inner->lib + " / " + sp.basins.refine->inner->algo);
-    } else if (sp.strategy_type == StrategyType::BASINSV2) {
-        if (sp.basins_v2.explore && sp.basins_v2.explore->inner)
-            kv("EXPLORE inner",
-               sp.basins_v2.explore->inner->lib + " / " + sp.basins_v2.explore->inner->algo);
-        if (sp.basins_v2.refine && sp.basins_v2.refine->inner)
-            kv("REFINE inner",
-               sp.basins_v2.refine->inner->lib + " / " + sp.basins_v2.refine->inner->algo);
-    }
 
     auto write_stop_criteria = [&](const StopCriteria& s, const char* indent) {
         if (s.maxeval)
@@ -586,11 +552,9 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         const auto& rs = sp.restart;
         const auto& ns = sp.noise;
         const bool has_prestage = (sp.strategy_type == StrategyType::PRESTAGE && sp.prestage);
-        const bool is_basins    = (sp.strategy_type == StrategyType::BASINS);
-        const bool is_basins_v2 = (sp.strategy_type == StrategyType::BASINSV2);
         const bool is_multistart= (sp.strategy_type == StrategyType::MULTISTART && ms.n_starts > 1);
         const bool any_extra =
-            is_multistart || has_prestage || is_basins || is_basins_v2 ||
+            is_multistart || has_prestage ||
             (rs.after_stagnation > 0 && rs.max > 0) ||
             ns.autodetect || (ns.calibration_n >= 2);
         f_ << "  Run policy:\n";
@@ -629,31 +593,6 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
                     f_ << "      [" << (i+1) << "] " << s << "\n";
                 }
             }
-        }
-        if (is_basins_v2) {
-            const auto& bv = sp.basins_v2;
-            f_ << "    BASINSV2          : pool_max=" << bv.basin_pool_max
-               << " dedup=" << bv.basin_dedup_dist
-               << " merge_dist=" << bv.basin_merge_dist
-               << " archive_max=" << bv.archive_max << "\n";
-            f_ << "    Cadences          : merge=" << bv.merge_cadence
-               << " verify=" << bv.verify_cadence
-               << " explore_kick=" << bv.explore_kick_cadence
-               << " summary=" << bv.summary_cadence << "\n";
-            f_ << "    Verify            : max_attempts=" << bv.verify_max_attempts
-               << " evals_cap=" << (bv.verify_evals_cap == 0 ? "auto" : std::to_string(bv.verify_evals_cap)) << "\n";
-            f_ << "    Plateau           : eps_factor=" << bv.plateau_eps_factor << "\n";
-            f_ << "    Stop              : no_improve_iterations=" << bv.stop_no_improve_iterations
-               << " starvation_cap=" << bv.starvation_cap << "\n";
-            f_ << "    Path              : max_points=" << bv.path_max_points
-               << " loss_eps=" << bv.path_loss_eps
-               << " dist_eps=" << bv.path_dist_eps << "\n";
-            f_ << "    Priority weights  : improve=" << bv.w_improve
-               << " neglect=" << bv.w_neglect
-               << " distance=" << bv.w_distance
-               << " tol_gap=" << bv.w_tol_gap
-               << " state=" << bv.w_state
-               << " age=" << bv.w_age << "\n";
         }
         if (ns.autodetect) f_ << "    NOISE.AUTO        : true\n";
         if (ns.calibration_n >= 2)
@@ -1310,9 +1249,10 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
             }
             /* Stagnation hint: if we've spent more than half the recent
              * milestone window with no new best, point the user at the
-             * common causes (LOCAL too tight for noise, basin already
-             * exhausted, penalty cliff sampling). Single line, only
-             * once per milestone. */
+             * common causes (inner stop tolerance too tight for noise,
+             * the best point's basin of attraction already exhausted,
+             * penalty cliff sampling). Single line, only once per
+             * milestone. */
             if (cur_best_eval_ > 0 && evals_since_best >= 100 &&
                 evals_since_best * 2 >= eval_num) {
                 f_ << "[" << now_hms() << "]  HINT     "
@@ -1485,11 +1425,11 @@ void HPOLog::log_new_best(std::size_t eval_num,
     /* Defensive guard: refuse to record a "new best" that is not actually
      * better than the current best. This catches upstream bugs where the
      * is_best comparator (e.g. HPO_Host::g_best_) drifted out of sync with
-     * the persisted journal state across a resume -- without this guard, a
-     * stale comparator would silently overwrite cur_best_loss_ with a
-     * worse value and downstream summaries would report regression as
-     * progress. cur_best_loss_ defaults to numeric_limits<double>::max(),
-     * so the very first best at any finite loss is still accepted. */
+     * the journal -- without this guard, a stale comparator would silently
+     * overwrite cur_best_loss_ with a worse value and downstream summaries
+     * would report regression as progress. cur_best_loss_ defaults to
+     * numeric_limits<double>::max(), so the very first best at any finite
+     * loss is still accepted. */
     if (loss >= cur_best_loss_) return;
 
     cur_best_loss_ = loss;
@@ -1514,7 +1454,7 @@ void HPOLog::log_new_best(std::size_t eval_num,
 
     /* The "BEST" tag column already announces the event, so the message
      * itself carries only the data (the old "* NEW BEST" prefix was
-     * redundant; parse_hpo_log.py accepts both formats). */
+     * redundant). */
     std::ostringstream msg;
     msg << "* eval=" << std::setw(6) << eval_num
         << "  loss=" << fmt_double(loss);
@@ -1772,61 +1712,6 @@ std::string nlopt_result_str(int code)
         case -5: return "FORCED_STOP -- optimisation was interrupted";
         default: return "UNKNOWN (" + std::to_string(code) + ")";
     }
-}
-
-/* -------------------------------------------------------------------------
- * HPOLog -- checkpoint participant
- *
- * Persists the journal-running counters and best-so-far so an
- * interrupted run resumes with consistent state. The actual log file
- * is reopened in append mode by open(); these counters keep the
- * monotonic eval numbering and the "best so far" indicator coherent
- * across the boundary.
- * ------------------------------------------------------------------------- */
-
-void HPOLog::save(core::Checkpoint& cp) const
-{
-    std::lock_guard<std::mutex> lg(mtx_);
-    cp.section(tag());
-    cp.put_size("n_eval",        n_eval_.load(std::memory_order_relaxed));
-    cp.put_size("n_nan",         n_nan_ .load(std::memory_order_relaxed));
-    cp.put_dbl ("cur_best_loss", cur_best_loss_);
-    cp.put_size("cur_best_eval", cur_best_eval_);
-    cp.put_dbl ("best_emae",     best_emae_);
-    cp.put_dbl ("best_ermse",    best_ermse_);
-    cp.put_dbl ("best_errmse",   best_errmse_);
-    cp.put_dbl ("best_frmse",    best_frmse_);
-    cp.put_dbl ("best_srmse",    best_srmse_);
-    cp.put_bool("has_emae",      has_emae_);
-    cp.put_bool("has_ermse",     has_ermse_);
-    cp.put_bool("has_errmse",    has_errmse_);
-    cp.put_bool("has_frmse",     has_frmse_);
-    cp.put_bool("has_srmse",     has_srmse_);
-    /* C3: persist NOISE_CALIBRATION's suggested_ftol so a resumed BASINS
-     * run (NOISE_CALIBRATION is gated on `!resumed`) can still clamp the
-     * ladder against the noise floor on its first round. */
-    if (noise_suggested_ftol_)
-        cp.put_dbl("noise_suggested_ftol", *noise_suggested_ftol_);
-}
-
-void HPOLog::load(const core::Checkpoint& cp)
-{
-    std::lock_guard<std::mutex> lg(mtx_);
-    if (auto v = cp.get_size(tag(), "n_eval"))         n_eval_.store(*v);
-    if (auto v = cp.get_size(tag(), "n_nan"))          n_nan_ .store(*v);
-    if (auto v = cp.get_dbl (tag(), "cur_best_loss"))  cur_best_loss_ = *v;
-    if (auto v = cp.get_size(tag(), "cur_best_eval"))  cur_best_eval_ = *v;
-    if (auto v = cp.get_dbl (tag(), "best_emae"))      best_emae_   = *v;
-    if (auto v = cp.get_dbl (tag(), "best_ermse"))     best_ermse_  = *v;
-    if (auto v = cp.get_dbl (tag(), "best_errmse"))    best_errmse_ = *v;
-    if (auto v = cp.get_dbl (tag(), "best_frmse"))     best_frmse_  = *v;
-    if (auto v = cp.get_dbl (tag(), "best_srmse"))     best_srmse_  = *v;
-    if (auto v = cp.get_bool(tag(), "has_emae"))       has_emae_   = *v;
-    if (auto v = cp.get_bool(tag(), "has_ermse"))      has_ermse_  = *v;
-    if (auto v = cp.get_bool(tag(), "has_errmse"))     has_errmse_ = *v;
-    if (auto v = cp.get_bool(tag(), "has_frmse"))      has_frmse_  = *v;
-    if (auto v = cp.get_bool(tag(), "has_srmse"))      has_srmse_  = *v;
-    if (auto v = cp.get_dbl (tag(), "noise_suggested_ftol")) noise_suggested_ftol_ = *v;
 }
 
 } // namespace tadah::hpo
