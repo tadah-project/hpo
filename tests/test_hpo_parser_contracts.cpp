@@ -13,7 +13,12 @@
 //     max_line_search_step_size, which the adapter rejects);
 //   - INIT METHOD (canonical) and its STRATEGY alias;
 //   - OUTPUT / BOUTPUT / DUMP / BDUMP cadences reject 0;
-//   - PC_WORKER_TIMEOUT parsing.
+//   - PC_WORKER_TIMEOUT parsing;
+//   - STRATEGY TYPE is PLAIN, MULTISTART or PRESTAGE: the undocumented
+//     BASINS / BASINSV2 strategies, their knobs and their pre-release
+//     keyword hints are gone, no error text names them, and
+//     build_run_policy still wraps the remaining strategies in
+//     RestartPolicy when RESTART is set.
 
 #include "catch2/catch.hpp"
 
@@ -25,9 +30,11 @@
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/run_policy.h>
+#include <tadah/hpo/runners.h>
 
 #include <dlib/matrix.h>
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <filesystem>
@@ -445,4 +452,306 @@ TEST_CASE("PC_WORKER_TIMEOUT parses seconds and rejects invalid values",
         tadah::hpo::HPOTargets::parse_pc_worker_timeout("inf",
                                                         "TADAH_PC_WORKER_TIMEOUT"),
         Catch::Contains("TADAH_PC_WORKER_TIMEOUT"));
+}
+
+/* ------------------------------------------------------------------ */
+/*  STRATEGY TYPE: PLAIN, MULTISTART, PRESTAGE (BASINS removed)         */
+/* ------------------------------------------------------------------ */
+
+namespace {
+
+/* The parser's own wording: the "Error on line N: ..." diagnostic without
+ * the echoed config line and without the user's quoted token, so a check
+ * on it cannot be satisfied or broken by what the user typed. */
+std::string own_wording(const std::string& msg, const std::string& token)
+{
+    std::string s = msg.substr(0, msg.find("\nLine: "));
+    const std::string quoted = "'" + token + "'";
+    for (auto p = s.find(quoted); p != std::string::npos; p = s.find(quoted))
+        s.erase(p, quoted.size());
+    return s;
+}
+
+bool names_basins(std::string s)
+{
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return s.find("BASIN") != std::string::npos;
+}
+
+std::string strategy_block(const std::string& type, const std::string& body)
+{
+    return "OPTIMIZER\nSTRATEGY\n  TYPE " + type + "\n" + body +
+           "ENDSTRATEGY\nENDOPTIMIZER\n";
+}
+
+/* PRESTAGE with an EXPLORE block; `explore` and `refine` are extra lines
+ * appended inside the respective block. */
+std::string prestage_block(const std::string& explore,
+                           const std::string& refine = "")
+{
+    std::string s =
+        "OPTIMIZER\n"                     // 1
+        "STRATEGY\n"                      // 2
+        "  TYPE PRESTAGE\n"               // 3
+        "  EXPLORE\n"                     // 4
+        "    LIB NLOPT\n"                 // 5
+        "    ALGO GN_CRS2_LM\n"           // 6
+        "    MAXEVAL 20\n"                // 7
+        + explore +                       // 8...
+        "  ENDEXPLORE\n";
+    if (!refine.empty())
+        s += "  REFINE\n    LIB NLOPT\n    ALGO LN_BOBYQA\n" + refine +
+             "  ENDREFINE\n";
+    return s + "ENDSTRATEGY\nENDOPTIMIZER\n";
+}
+
+/* Pre-release keywords (never accepted by a tagged release) whose
+ * "removed from the grammar" hints pointed only at BASINS keys. */
+const std::vector<std::string> kDroppedBasinsEraKeys = {
+    "GLOBAL_LIB", "GLOBAL_ALGO", "LOCAL_LIB", "LOCAL_ALGO",
+    "TOL_GLO_LADDER", "TOL_LOC_LADDER",
+    "STAGE_RATE_FACTOR", "STAGE_MIN_EVALS", "STAGE_MAX_EVALS",
+    "EMERGENCY_NO_IMPROVE_ROUNDS", "GLOBAL_SEED_TOP_N",
+    "CLAMP_LADDER_TO_NOISE_FLOOR"};
+
+/* STRATEGY-level knobs shared by the removed BASINS / BASINSV2 strategies.
+ * Before the removal the parser recognised them under every TYPE and
+ * answered "<KEY> requires TYPE BASINS or BASINSV2" outside those two. */
+const std::vector<std::string> kRemovedStrategyKnobs = {
+    "BASIN_POOL_MAX 8", "BASIN_DEDUP_DIST 0.05", "STOP_NO_IMPROVE_ROUNDS 3",
+    "SEED_TOP_N 2", "CLAMP_TO_NOISE_FLOOR true", "CHECKPOINT_EVERY 60s"};
+
+/* BASINSV2-only knobs. The parser read them only after TYPE BASINSV2, so
+ * under PLAIN / MULTISTART / PRESTAGE they already got the generic
+ * unknown-key error before the removal: these entries guard against their
+ * return, they do not demonstrate the removal. */
+const std::vector<std::string> kRemovedBasinsV2OnlyKnobs = {
+    "BASIN_MERGE_DIST 0.1", "STOP_NO_IMPROVE_ITERATIONS 200",
+    "PRIORITY_WEIGHTS 2 0.5 0.3 0.5 1 0.05", "VERBOSE_DIAGNOSTICS true"};
+
+std::string first_token(const std::string& line)
+{
+    return line.substr(0, line.find(' '));
+}
+
+}  // namespace
+
+TEST_CASE("STRATEGY TYPE BASINS and BASINSV2 are rejected with the "
+          "PLAIN/MULTISTART/PRESTAGE list", "[HPO][hpo_targets][strategy]")
+{
+    for (const std::string t : {"BASINS", "BASINSV2", "BOGUS"}) {
+        INFO("TYPE " << t);
+        const std::string msg = parse_error(strategy_block(t, ""));
+        CHECK_THAT(msg, Catch::Contains("Error on line 3"));
+        CHECK_THAT(msg, Catch::Contains(
+            "STRATEGY TYPE must be PLAIN, MULTISTART, or PRESTAGE (got '" +
+            t + "')"));
+        CHECK_FALSE(names_basins(own_wording(msg, t)));
+    }
+
+    using tadah::hpo::StrategyType;
+    const std::vector<std::pair<std::string, StrategyType>> accepted = {
+        {"PLAIN", StrategyType::PLAIN},
+        {"MULTISTART", StrategyType::MULTISTART},
+        {"PRESTAGE", StrategyType::PRESTAGE}};
+    for (const auto& [name, type] : accepted) {
+        INFO("TYPE " << name);
+        TempFile cfg(strategy_block(name, "  LIB NLOPT\n  ALGO LN_BOBYQA\n"));
+        tadah::core::Context ctx;
+        tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+        CHECK(trg.spec.strategy_type == type);
+    }
+}
+
+TEST_CASE("LOCAL keeps its rename hint to INNER without naming BASINS",
+          "[HPO][hpo_targets][strategy]")
+{
+    /* LOCAL/ENDLOCAL shipped in v1.0.0 and v1.1.1, so their hints stay. */
+    const std::string local = parse_error("OPTIMIZER\nLOCAL\nENDOPTIMIZER\n");
+    CHECK_THAT(local, Catch::Contains(
+        "'LOCAL' was removed from the grammar: renamed to INNER"));
+    CHECK_THAT(local, Catch::Contains("MLSL/AUGLAG"));
+    CHECK_FALSE(names_basins(own_wording(local, "LOCAL")));
+
+    const std::string endlocal =
+        parse_error("OPTIMIZER\nENDLOCAL\nENDOPTIMIZER\n");
+    CHECK_THAT(endlocal, Catch::Contains(
+        "'ENDLOCAL' was removed from the grammar: renamed to ENDINNER"));
+}
+
+TEST_CASE("Pre-release BASINS-era keywords get the generic unknown-key error",
+          "[HPO][hpo_targets][strategy]")
+{
+    for (const auto& k : kDroppedBasinsEraKeys) {
+        INFO(k);
+        const std::string outer =
+            parse_error("OPTIMIZER\n" + k + " 1\nENDOPTIMIZER\n");
+        CHECK_THAT(outer, Catch::Contains("Error on line 2"));
+        CHECK_THAT(outer, Catch::Contains("unknown key '" + k + "' in this block"));
+        CHECK_THAT(outer, !Catch::Contains("was removed from the grammar"));
+
+        const std::string in_strategy =
+            parse_error(strategy_block("PLAIN", "  " + k + " 1\n"));
+        CHECK_THAT(in_strategy, Catch::Contains(
+            "unknown key '" + k + "' inside STRATEGY block"));
+    }
+}
+
+TEST_CASE("EXPLORE and REFINE blocks name TYPE PRESTAGE as their only home",
+          "[HPO][hpo_targets][strategy][prestage]")
+{
+    for (const std::string t : {"PLAIN", "MULTISTART"}) {
+        INFO("TYPE " << t);
+        const std::string explore =
+            parse_error(strategy_block(t, "  EXPLORE\n  ENDEXPLORE\n"));
+        CHECK_THAT(explore, Catch::Contains("Error on line 4"));
+        CHECK_THAT(explore, Catch::Contains(
+            "EXPLORE block is only valid with TYPE PRESTAGE "
+            "(declare TYPE before EXPLORE)"));
+        const std::string refine =
+            parse_error(strategy_block(t, "  REFINE\n  ENDREFINE\n"));
+        CHECK_THAT(refine, Catch::Contains(
+            "REFINE block is only valid with TYPE PRESTAGE "
+            "(declare TYPE before REFINE)"));
+    }
+    /* Without a TYPE line the strategy is PLAIN. */
+    CHECK_THAT(parse_error("OPTIMIZER\nSTRATEGY\n  EXPLORE\n  ENDEXPLORE\n"
+                           "ENDSTRATEGY\nENDOPTIMIZER\n"),
+               Catch::Contains("EXPLORE block is only valid with TYPE PRESTAGE"));
+}
+
+TEST_CASE("BASINS ladder/budget/pool knobs are unknown keys",
+          "[HPO][hpo_targets][strategy][prestage]")
+{
+    SECTION("FTOL_LADDER and BUDGET_* inside a PRESTAGE EXPLORE block") {
+        for (const std::string line : {"FTOL_LADDER 1e-3 1e-4",
+                                       "BUDGET_MAX_EVALS 100",
+                                       "BUDGET_MIN_EVALS 10",
+                                       "BUDGET_RATE_FACTOR 0.5"}) {
+            INFO(line);
+            const std::string k = first_token(line);
+            const std::string msg =
+                parse_error(prestage_block("    " + line + "\n"));
+            CHECK_THAT(msg, Catch::Contains("Error on line 8"));
+            CHECK_THAT(msg, Catch::Contains(
+                "unknown key '" + k + "' inside EXPLORE block"));
+        }
+    }
+    SECTION("FTOL_LADDER and BUDGET_* inside a PRESTAGE REFINE block") {
+        for (const std::string line : {"FTOL_LADDER 1e-5",
+                                       "BUDGET_MAX_EVALS 100"}) {
+            INFO(line);
+            const std::string k = first_token(line);
+            const std::string msg =
+                parse_error(prestage_block("", "    " + line + "\n"));
+            CHECK_THAT(msg, Catch::Contains(
+                "unknown key '" + k + "' inside REFINE block"));
+        }
+    }
+    SECTION("pool, stop and checkpoint knobs inside STRATEGY") {
+        for (const std::string t : {"PLAIN", "MULTISTART", "PRESTAGE"}) {
+            for (const auto* knobs : {&kRemovedStrategyKnobs,
+                                      &kRemovedBasinsV2OnlyKnobs}) {
+                for (const auto& line : *knobs) {
+                    INFO("TYPE " << t << ": " << line);
+                    const std::string k = first_token(line);
+                    const std::string msg =
+                        parse_error(strategy_block(t, "  " + line + "\n"));
+                    CHECK_THAT(msg, Catch::Contains("Error on line 4"));
+                    CHECK_THAT(msg, Catch::Contains(
+                        "unknown key '" + k + "' inside STRATEGY block"));
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("No parser error text names the removed BASINS strategies",
+          "[HPO][hpo_targets][strategy]")
+{
+    /* Every strategy-related rejection the grammar can produce, each paired
+     * with the token it echoes back to the user. */
+    std::vector<std::pair<std::string, std::string>> cases = {
+        {strategy_block("BASINS", ""), "BASINS"},
+        {strategy_block("BASINSV2", ""), "BASINSV2"},
+        {strategy_block("BOGUS", ""), "BOGUS"},
+        {"OPTIMIZER\nLOCAL\nENDOPTIMIZER\n", "LOCAL"},
+        {"OPTIMIZER\nENDLOCAL\nENDOPTIMIZER\n", "ENDLOCAL"},
+        {strategy_block("PLAIN", "  EXPLORE\n  ENDEXPLORE\n"), "EXPLORE"},
+        {strategy_block("MULTISTART", "  REFINE\n  ENDREFINE\n"), "REFINE"},
+        {"OPTIMIZER\nEXPLORE\nENDEXPLORE\nENDOPTIMIZER\n", "EXPLORE"},
+        {"OPTIMIZER\nREFINE\nENDREFINE\nENDOPTIMIZER\n", "REFINE"},
+        {"OPTIMIZER\nINNER\nENDINNER\nENDOPTIMIZER\n", "INNER"},
+        {prestage_block("    FTOL_LADDER 1e-3\n"), "FTOL_LADDER"},
+        {prestage_block("", "    BUDGET_RATE_FACTOR 0.5\n"), "BUDGET_RATE_FACTOR"},
+    };
+    for (const auto& k : kDroppedBasinsEraKeys)
+        cases.emplace_back("OPTIMIZER\n" + k + " 1\nENDOPTIMIZER\n", k);
+    for (const auto* knobs : {&kRemovedStrategyKnobs, &kRemovedBasinsV2OnlyKnobs})
+        for (const auto& line : *knobs)
+            cases.emplace_back(strategy_block("PLAIN", "  " + line + "\n"),
+                               first_token(line));
+
+    /* Every case is checked: one that parses (no error to inspect) fails
+     * without hiding the wording checks of the cases after it. */
+    for (const auto& [body, token] : cases) {
+        INFO(body);
+        const std::string msg = parse_error(body);
+        CHECK_FALSE(msg.empty());
+        if (msg.empty()) continue;
+        CHECK_FALSE(names_basins(own_wording(msg, token)));
+    }
+}
+
+TEST_CASE("build_run_policy wraps PLAIN/MULTISTART/PRESTAGE in RestartPolicy "
+          "when RESTART is set", "[HPO][run_policy][restart]")
+{
+    /* This pins the policy composition only. Whether RestartPolicy then
+     * restarts depends on HPO_Host::StagnationStop reaching it at run time;
+     * MultiStartPolicy's per-start catch and StagedPolicy's exploration
+     * catch absorb it today, which this case does not cover. */
+    using V = dlib::matrix<double, 0, 1>;
+    using R = ::LammpsRunner;
+    const std::string restart =
+        "  RESTART\n"
+        "    AFTER_STAGNATION 10\n"
+        "    MAX 2\n"
+        "    METHOD RANDOM 1\n"
+        "  ENDRESTART\n";
+    const std::string explore =
+        "  EXPLORE\n    LIB NLOPT\n    ALGO GN_CRS2_LM\n    MAXEVAL 20\n"
+        "  ENDEXPLORE\n";
+    for (const std::string t : {"PLAIN", "MULTISTART", "PRESTAGE"}) {
+        INFO("TYPE " << t);
+        const std::string common = "  LIB NLOPT\n  ALGO LN_SBPLX\n  MAXEVAL 50\n" +
+            std::string(t == "PRESTAGE" ? explore : "");
+        {
+            TempFile cfg(strategy_block(t, common + restart));
+            tadah::core::Context ctx;
+            tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+            CHECK(trg.spec.restart.after_stagnation == 10);
+            CHECK(trg.spec.restart.max == 2);
+            REQUIRE(trg.spec.restart.init_strategy.chain.size() == 1);
+            CHECK(trg.spec.restart.init_strategy.chain.front().method == "RANDOM");
+            const auto policy = tadah::hpo::build_run_policy<V, R>(trg.spec, &trg);
+            REQUIRE(policy);
+            CHECK(dynamic_cast<tadah::hpo::RestartPolicy<V, R>*>(policy.get()));
+        }
+        {
+            /* Without RESTART the strategy's own policy is returned. */
+            TempFile cfg(strategy_block(t, common));
+            tadah::core::Context ctx;
+            tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+            const auto policy = tadah::hpo::build_run_policy<V, R>(trg.spec, &trg);
+            REQUIRE(policy);
+            CHECK_FALSE(dynamic_cast<tadah::hpo::RestartPolicy<V, R>*>(policy.get()));
+            if (t == "PLAIN")
+                CHECK(dynamic_cast<tadah::hpo::BasePolicy<V, R>*>(policy.get()));
+            if (t == "MULTISTART")
+                CHECK(dynamic_cast<tadah::hpo::MultiStartPolicy<V, R>*>(policy.get()));
+            if (t == "PRESTAGE")
+                CHECK(dynamic_cast<tadah::hpo::StagedPolicy<V, R>*>(policy.get()));
+        }
+    }
 }
