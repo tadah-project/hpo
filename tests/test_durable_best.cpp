@@ -305,6 +305,39 @@ TEST_CASE("multi-rank HPO dispatch is limited to plain PT and PA",
     REQUIRE_FALSE(hpo_mpi_dispatch_supported(2, spec));
 }
 
+TEST_CASE("multi-rank HPO dispatch refuses an active RESTART",
+          "[durable_best][mpi][dispatch][restart]")
+{
+    /* The stagnation watchdog is per rank: a rank that stagnated would
+     * restart and wait in the driver's next collective while its peers
+     * fail. So a launch on more than one rank refuses RESTART, before any
+     * evaluation; one rank keeps it. This build has no multi-rank launch,
+     * so the rule is checked on the spec, for each world size. */
+    using namespace tadah::hpo;
+    OptimizerSpec spec;
+    spec.strategy_type = StrategyType::PLAIN;
+    spec.lib = "TADAH";
+    spec.restart.after_stagnation = 200;
+    spec.restart.max = 3;
+
+    for (const char* algo : {"ANNEAL_PT", "ANNEAL_PA"}) {
+        INFO(algo << " with RESTART AFTER_STAGNATION 200, MAX 3");
+        spec.algo = algo;
+        CHECK(hpo_mpi_dispatch_supported(1, spec));
+        CHECK_FALSE(hpo_mpi_dispatch_supported(2, spec));
+        CHECK_FALSE(hpo_mpi_dispatch_supported(8, spec));
+    }
+
+    /* RESTART is active only when both AFTER_STAGNATION and MAX are
+     * positive; an inactive block is no reason to refuse. */
+    spec.algo = "ANNEAL_PT";
+    spec.restart.max = 0;
+    CHECK(hpo_mpi_dispatch_supported(2, spec));
+    spec.restart.max = 3;
+    spec.restart.after_stagnation = 0;
+    CHECK(hpo_mpi_dispatch_supported(2, spec));
+}
+
 TEST_CASE("publication rejects payload/key metadata disagreement",
           "[durable_best]")
 {

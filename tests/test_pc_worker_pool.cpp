@@ -62,6 +62,29 @@ std::vector<std::vector<PcScriptSpec>> specs_for(int width,
   return per_slot;
 }
 
+/* The pid of the pool's worker: the only direct child of THIS process
+ * executing with argv[0] "tadah-pc-worker" (set by the spawn recipe); -1 if
+ * none is found. The pid is not exposed by the API. NB: use getpid(), not
+ * `$$` -- inside popen's shell `$$` would be the SHELL's pid. `args`'s first
+ * token is argv[0]; `comm` would show the binary basename instead (execve
+ * of /proc/self/exe). Also excludes the popen sh, which is a child of this
+ * process at scan time. */
+pid_t find_worker_child() {
+  char cmd[160];
+  std::snprintf(cmd, sizeof cmd,
+                "ps -o pid=,args= --ppid %d 2>/dev/null | "
+                "awk '$2==\"tadah-pc-worker\"{print $1; exit}'",
+                static_cast<int>(::getpid()));
+  pid_t child = -1;
+  FILE* p = ::popen(cmd, "r");
+  if (p) {
+    char buf[64] = {0};
+    if (::fgets(buf, sizeof buf, p)) child = ::atoi(buf);
+    ::pclose(p);
+  }
+  return child > 0 ? child : -1;
+}
+
 }  // namespace
 
 TEST_CASE("pc pool: spawn, handshake, task round-trip, shutdown",
@@ -132,35 +155,13 @@ TEST_CASE("pc pool: worker-side task error is reported in-band",
 TEST_CASE("pc pool: killing the worker process is contained and respawned",
           "[pc_pool][kill]") {
   /* Death containment via the REAL signal path: SIGKILL the child between
-   * tasks. The child pid is not exposed by the API, so find it as the only
-   * direct child of this process executing with argv[0] "tadah-pc-worker"
-   * (set by the spawn recipe): scan /proc/<pid>/stat ppid entries. */
+   * tasks. */
   PcWorkerPool pool(1, specs_for(1, minimal_spec()), 0.0);
   const auto pot = invalid_pot_map();
   REQUIRE(pool.execute(0, 0, 1, pot, {}, "off").status ==
           PcTaskStatus::POT_BUILD_FAIL);
 
-  pid_t child = -1;
-  {
-    /* Find the worker: the only direct child of THIS process whose comm is
-     * tadah-pc-worker (argv[0] set by the spawn recipe). NB: use getpid(),
-     * not `$$` -- inside popen's shell `$$` would be the SHELL's pid. */
-    /* Match argv[0] (spawn recipe sets it to "tadah-pc-worker"): `args`'s
-     * first token is argv[0]; `comm` would show the binary basename instead
-     * (execve of /proc/self/exe). Also excludes the popen sh, which is a
-     * child of this process at scan time. */
-    char cmd[160];
-    std::snprintf(cmd, sizeof cmd,
-                  "ps -o pid=,args= --ppid %d 2>/dev/null | "
-                  "awk '$2==\"tadah-pc-worker\"{print $1; exit}'",
-                  static_cast<int>(::getpid()));
-    FILE* p = ::popen(cmd, "r");
-    if (p) {
-      char buf[64] = {0};
-      if (::fgets(buf, sizeof buf, p)) child = ::atoi(buf);
-      ::pclose(p);
-    }
-  }
+  const pid_t child = find_worker_child();
   if (child <= 0) {
     WARN("could not locate worker child pid; skipping the SIGKILL leg");
     return;
@@ -177,6 +178,34 @@ TEST_CASE("pc pool: killing the worker process is contained and respawned",
   /* ...and the one after that runs on a fresh worker. */
   const PcTaskResult alive = pool.execute(0, 0, 3, pot, {}, "off");
   CHECK(alive.status == PcTaskStatus::POT_BUILD_FAIL);
+}
+
+TEST_CASE("pc pool: a worker survives the stop signals sent to its process "
+          "group", "[pc_pool][signals]") {
+  /* Ctrl+C, `kill -<sig> -<pgid>` and SLURM (`scancel`, `--signal=USR2@N`)
+   * deliver SIGINT, SIGTERM and SIGUSR2 to every process of the group or
+   * job step, the workers included. The parent stops the run itself, after
+   * the evaluations in flight; a worker killed by the signal would turn the
+   * evaluation it runs into a FAILSCORE (KILLED here). SIGUSR2 used to kill
+   * the worker. */
+  PcWorkerPool pool(1, specs_for(1, minimal_spec()), 0.0);
+  const auto pot = invalid_pot_map();
+  REQUIRE(pool.execute(0, 0, 1, pot, {}, "off").status ==
+          PcTaskStatus::POT_BUILD_FAIL);
+  const pid_t child = find_worker_child();
+  REQUIRE(child > 0);
+
+  std::size_t iter = 2;
+  for (const int signo : {SIGINT, SIGTERM, SIGUSR2}) {
+    INFO("signal " << signo);
+    REQUIRE(::kill(child, signo) == 0);
+    /* A signal that kills the worker is fatal before it can run the next
+     * task, which then comes back KILLED; an ignored one changes nothing. */
+    const PcTaskResult r = pool.execute(0, 0, iter++, pot, {}, "off");
+    CHECK(r.status == PcTaskStatus::POT_BUILD_FAIL);
+  }
+  /* Still the same worker process. */
+  CHECK(find_worker_child() == child);
 }
 
 TEST_CASE("pc pool: repeated deaths throttle a channel, they do not retire it",

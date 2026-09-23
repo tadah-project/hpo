@@ -46,6 +46,26 @@ set_tests_properties(hpo_corana1987_protocol PROPERTIES
     LABELS "anneal;statistical"
     TIMEOUT 900)
 
+# Real-signal termination tests (test_hpo_termination.cpp): each case raises
+# SIGINT/SIGTERM/SIGUSR2 against a live hpo_run(). CORE's stop flag can only
+# be raised by a real signal and is never lowered, and the HPOLog / HPO_Host
+# statics persist, so every case is a hidden tag with an entry -- a process --
+# of its own. `ctest -L shutdown` runs them. NB: no ';' in add_test()
+# arguments (MLIP's add_test() override splits them).
+set(_hpo_shutdown_cases
+    dlib sigterm sigusr2 nlopt multistart prestage gfs anneal_pt anneal_pa
+    anneal_pa_threads asa asa_block noise)
+if(TADAH_ENABLE_CERES)
+    list(APPEND _hpo_shutdown_cases ceres)
+endif()
+foreach(_case IN LISTS _hpo_shutdown_cases)
+    add_test(NAME hpo_shutdown_${_case}
+        COMMAND test_hpo "[.shutdown_${_case}]" --warn NoTests)
+    set_tests_properties(hpo_shutdown_${_case} PROPERTIES
+        LABELS "hpo;shutdown"
+        TIMEOUT 300)
+endforeach()
+
 # Registry drift gate: the checked-in anneal_keys_gen.h must match what the
 # generator produces from blueprint/anneal_keys.toml. Regenerate with
 #   python3 HPO/blueprint/gen_anneal_keys.py --header

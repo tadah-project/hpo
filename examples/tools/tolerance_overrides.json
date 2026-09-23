@@ -51,14 +51,11 @@
   },
   "12_prestage": {
     "description": "STRATEGY PRESTAGE; NLOPT:GN_CRS2_LM explore + DLIB:BFGS refine.",
-    "status_accepted": [
-      "COMPLETED",
-      "MAXEVAL_REACHED -- maximum evaluations exhausted"
-    ]
+    "status_accepted": ["COMPLETED"]
   },
   "13_restart": {
     "description": "DLIB:BFGS + RESTART decorator (stagnation-driven).",
-    "status_accepted": ["COMPLETED"]
+    "status_accepted": ["STOPPED -- stagnation, max restarts (2) used"]
   },
   "14_mlsl_inner": {
     "description": "NLOPT:G_MLSL_LDS + INNER NLOPT:LN_BOBYQA.",
