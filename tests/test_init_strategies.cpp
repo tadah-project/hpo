@@ -485,7 +485,7 @@ ENDOPTIMIZER
     CHECK_THROWS(tadah::hpo::HPOTargets(ctx, cfg.path.string()));
 }
 
-TEST_CASE("MultiStartPolicy: validate rejects NLopt GN_*",
+TEST_CASE("MultiStartPolicy: validate rejects the NLopt global GN_DIRECT",
           "[HPO][run_policy][multistart]")
 {
     using namespace tadah::hpo;
