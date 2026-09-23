@@ -263,7 +263,7 @@ public:
     validate(spec);
 
     /* Step 1: enable top-K tracking, run the PRESTAGE. Real-space box
-     * widths normalise the parameter half of the basin dedup (topk.h). */
+     * widths normalise the parameter half of the near-clone dedup (topk.h). */
     std::vector<double> widths(spec.low.size());
     for (std::size_t d = 0; d < widths.size(); ++d) {
       if (spec.space) {

@@ -2432,7 +2432,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
     }
 
     /* Top-K tracking -- cheap fast-path when disabled (capacity == 0).
-     * Basin dedup (loss + normalised parameter distance) lives in topk.h. */
+     * Near-clone dedup (loss + normalised parameter distance) lives in topk.h. */
     if (topk_capacity_ > 0) {
       std::lock_guard<std::mutex> lk(topk_mtx_);
       if (topk_capacity_ > 0) {  /* re-check inside lock */
