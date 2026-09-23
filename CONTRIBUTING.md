@@ -12,7 +12,7 @@ Tadah! module) should be discussed on the umbrella project first.
 ## Build & test in isolation
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=ON
 cmake --build build -j
 ctest --test-dir build/tests --output-on-failure
 ```
