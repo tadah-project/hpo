@@ -94,7 +94,7 @@ All hunks are fenced with `/* TADAH-PATCH begin */ ... /* TADAH-PATCH end */`
   `ASA_QUEUE`'s `Queue_Resolution` covers the dedup use case.
 - `ASA_SAVE*` uses `popen("/bin/cp ...")` (under `SYSTEM_CALL`),
   `#include "asa_opt"` as C source, and persists the statics above —
-  excluded; HPO has its own checkpointing.
+  excluded; HPO runs are not resumable.
 - `Gener_Mov_Avr < 1` is rejected by `asa_test_asa_options`; a frozen
   block size is expressed as `Gener_Block_Max == Gener_Block`.
 

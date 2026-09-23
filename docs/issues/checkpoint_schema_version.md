@@ -1,6 +1,6 @@
-# checkpoint.tadah META schema_version is never enforced
+# CORE Checkpoint META schema_version is never enforced
 
 `CORE` `Checkpoint` writes a META section with `schema_version` but `CheckpointManager` / loaders do not
-check it. Phase 1 added per-section contract tags for the basin pools (`params_real`,
-`space_fingerprint`) with explicit refusal on mismatch; a generic policy (refuse / migrate per section
-version, one place) would cover HPO_Host, HPOLog and future sections uniformly.
+check it. HPO no longer writes checkpoints (the BASINS strategies and the `checkpoint.tadah` resume were
+removed in 1.5.1), so nothing depends on it today. Any future user of the library needs a generic policy
+first (refuse / migrate per section version, in one place) rather than per-section contract tags.
