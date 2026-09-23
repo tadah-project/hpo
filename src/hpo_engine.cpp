@@ -27,6 +27,9 @@ namespace engines {
 
 int HPOEngine::run(mlip::Task &task) {
 
+  /* hpo_run()'s status is the process exit status: 0 for a normal end,
+   * 128 + signal after SIGINT/SIGTERM/SIGUSR2 (see run_driver.h). */
+  int status = EXIT_SUCCESS;
   try {
     core::Context context = task.getContext();
     models::D_mJoin::expand_grids(context);
@@ -74,7 +77,7 @@ int HPOEngine::run(mlip::Task &task) {
         return EXIT_FAILURE;
       }
       core::Logger::instance().log(tadah::core::LogLevel::INFO, "Optimising HPs...");
-      hpo_run(context);
+      status = hpo_run(context);
 
       // shut all workers
       int cont=0;
@@ -111,7 +114,7 @@ int HPOEngine::run(mlip::Task &task) {
     MPI_Group_free(&world_group);
 #else
     core::Logger::instance().log(tadah::core::LogLevel::INFO, "Optimising HPs...");
-    hpo_run(context);
+    status = hpo_run(context);
 #endif  // TADAH_BUILD_MPI
 
     // core::Logger::instance().log(
@@ -126,8 +129,14 @@ int HPOEngine::run(mlip::Task &task) {
   } catch (const std::exception &e) {
     std::cerr << "HPOEngine error: " << e.what() << std::endl;
     return EXIT_FAILURE;
+  } catch (...) {
+    /* hpo_run() rethrows a non-standard exception after writing its journal
+     * trailer ("STOPPED with unknown error"); fail like any other error
+     * instead of terminating. */
+    std::cerr << "HPOEngine error: unknown (non-standard) exception" << std::endl;
+    return EXIT_FAILURE;
   }
-  return EXIT_SUCCESS;
+  return status;
 }
 
 void HPOEngine::validate(const tadah::mlip::Task &task) {

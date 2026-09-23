@@ -327,10 +327,17 @@ public:
 
     /** Record an interim status string (e.g. NLopt's per-run termination
      *  reason). Repeated calls overwrite -- the last status before finish()
-     *  wins. Used by per-start drivers in MULTISTART so they don't have to
-     *  call finish() themselves and prematurely close the journal.
+     *  wins; open() and clear_status() clear it. Used by per-start drivers
+     *  in MULTISTART so they don't have to call finish() themselves and
+     *  prematurely close the journal.
      */
     void set_status(const std::string& status_str);
+
+    /** Forget the recorded status. Every optimiser run starts with none
+     *  (run_inner), so the trailer is the reason of the run that ended the
+     *  whole run, never one left behind by an earlier PRESTAGE phase,
+     *  MULTISTART start or RESTART round. */
+    void clear_status();
 
     /** Write DIAGNOSTICS + PERFORMANCE + RESULT sections and close the file.
      *  Best metrics are taken from what was recorded by log_new_best() calls.

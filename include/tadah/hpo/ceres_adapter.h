@@ -24,8 +24,14 @@
  *     unsupported feature and an alternative algo when relevant;
  *   - MAXEVAL is enforced externally via a shared atomic counter (Ceres
  *     iterations != host evaluations);
- *   - bad host evals propagate via FirstOrderFunction::Evaluate -> false
- *     rather than exceptions (Ceres is not exception-safe across Solve).
+ *   - bad host evals (non-finite loss, MAXEVAL overflow) are reported via
+ *     FirstOrderFunction::Evaluate -> false, which Ceres turns into a
+ *     termination type, rather than as exceptions;
+ *   - the run-level stops the host raises -- core::ShutdownRequested, the
+ *     RESTART StagnationStop, durable_best::Error -- are exceptions and
+ *     leave ceres::Solve with their own type (Ceres 2.x holds its solver
+ *     state in RAII members); test_hpo_termination.cpp's [.shutdown_ceres]
+ *     case runs that path under a real SIGINT.
  */
 
 #include <tadah/hpo/gradient_provider.h>

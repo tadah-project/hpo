@@ -338,6 +338,49 @@ TEST_CASE("multi-rank HPO dispatch refuses an active RESTART",
     CHECK(hpo_mpi_dispatch_supported(2, spec));
 }
 
+TEST_CASE("multi-rank HPO dispatch states why it refuses a launch",
+          "[durable_best][mpi][dispatch][restart]")
+{
+    /* hpo_run() raises this reason as its startup error. */
+    using namespace tadah::hpo;
+    using Catch::Matchers::Contains;
+    OptimizerSpec spec;
+    spec.strategy_type = StrategyType::PLAIN;
+    spec.lib = "TADAH";
+    spec.algo = "ANNEAL_PT";
+    CHECK(hpo_mpi_dispatch_refusal(4, spec).empty());
+
+    spec.restart.after_stagnation = 200;
+    spec.restart.max = 3;
+    CHECK(hpo_mpi_dispatch_refusal(1, spec).empty());
+    CHECK(hpo_mpi_dispatch_refusal(2, spec) ==
+          "multi-rank HPO does not support RESTART (AFTER_STAGNATION 200, "
+          "MAX 3 on 2 ranks): stagnation is tracked per rank; run on one "
+          "rank or remove RESTART");
+
+    /* An unsupported driver is named first, RESTART or not. */
+    spec.lib = "NLOPT";
+    spec.algo = "LN_SBPLX";
+    CHECK_THAT(hpo_mpi_dispatch_refusal(2, spec),
+               Contains("multi-rank HPO supports only STRATEGY TYPE PLAIN "
+                        "with LIB TADAH and ALGO ANNEAL_PT or ANNEAL_PA; "
+                        "got NLOPT:LN_SBPLX on 2 ranks"));
+    CHECK(hpo_mpi_dispatch_refusal(1, spec).empty());
+}
+
+TEST_CASE("RESTART is active only with AFTER_STAGNATION and MAX both "
+          "positive", "[restart]")
+{
+    tadah::hpo::RestartSpec rs;
+    CHECK_FALSE(rs.active());
+    rs.after_stagnation = 200;
+    CHECK_FALSE(rs.active());
+    rs.max = 3;
+    CHECK(rs.active());
+    rs.after_stagnation = 0;
+    CHECK_FALSE(rs.active());
+}
+
 TEST_CASE("publication rejects payload/key metadata disagreement",
           "[durable_best]")
 {

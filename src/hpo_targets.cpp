@@ -194,15 +194,16 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
     auto strategy = build_init_strategy(s.init_strategy_spec);
     /* A SEED with no seed-consuming METHOD in the chain is a silent
      * no-op for the starting point: an empty chain falls back to
-     * CONFIG, and CONFIG/WARM ignore ctx.seed. The seed still reaches
-     * nlopt::srand in make_nlopt, but only stochastic non-LDS NLopt
-     * algos (G_MLSL, CRS, ISRES, ESCH, ...) ever read that RNG.
-     * Surface it so "I set SEED and nothing changed" is answerable
-     * from the log. */
-    /* SEED inside the INIT block seeds the init-strategy chain ONLY --
-     * it does not seed the optimiser itself. For the ANNEAL family
-     * (whose proposal stream falls back to random_device without an
-     * optimiser-level SEED) this is a classic footgun: the user "set a
+     * CONFIG, and CONFIG/WARM ignore ctx.seed. For an NLopt phase without
+     * a SEED of its own the seed still reaches nlopt::srand in make_nlopt,
+     * but only stochastic non-LDS NLopt algos (G_MLSL, CRS, ISRES, ESCH,
+     * ...) ever read that RNG. Surface it so "I set SEED and nothing
+     * changed" is answerable from the log. */
+    /* SEED inside the INIT block seeds the init-strategy chain -- and
+     * NLopt only as a fallback, when the phase has no SEED of its own
+     * (make_nlopt); it does not seed any other optimiser. For the ANNEAL
+     * family (whose proposal stream falls back to random_device without
+     * an optimiser-level SEED) this is a classic footgun: the user "set a
      * seed" yet gets a non-reproducible run. */
     if (!s.seed && s.init_strategy_spec.seed &&
         ((s.lib == "TADAH" && s.algo.rfind("ANNEAL", 0) == 0) ||
@@ -235,8 +236,11 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
                                      } return m; }())
             << ") contains no stochastic method, so the seed does not "
                "affect the starting point. Add METHOD RANDOM/LHS/SOBOL "
-               "to randomise it. (The seed still feeds NLopt's global "
-               "RNG, which only stochastic non-LDS algos consume.)";
+               "to randomise it.";
+        if (s.lib == "NLOPT" && !s.seed)
+          oss << " (Without a SEED of its own, the NLopt optimiser still "
+                 "takes its random seed from it; only stochastic non-LDS "
+                 "NLopt algorithms read one.)";
         std::cerr << "[HPO] " << oss.str() << "\n";
         HPOLog::instance().warning(oss.str());
       }
@@ -314,24 +318,13 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
      * it inherits the OUTER's optim_init (legacy behaviour: a CONFIG
      * point flows in). If PRESTAGE has its own chain, that chain wins
      * and the OUTER's optim_init is *not* prepended -- PRESTAGE owns its
-     * starting points. */
-    if (spec.prestage->init_strategy_spec.chain.empty()) {
-      /* Default: inherit from OUTER. */
-      if (spec.prestage->optim_init.empty())
-        spec.prestage->optim_init = spec.optim_init;
-    } else {
+     * starting points. The same holds for PRESTAGE's nested INNER. */
+    if (!spec.prestage->init_strategy_spec.chain.empty())
       resolve_init(*spec.prestage, "PRESTAGE");
-    }
-    /* PRESTAGE's nested LOCAL: inherit OUTER's seed by default, or
-     * resolve its own chain when one was given. */
-    if (spec.prestage->inner) {
-      if (spec.prestage->inner->init_strategy_spec.chain.empty()) {
-        if (spec.prestage->inner->optim_init.empty())
-          spec.prestage->inner->optim_init = spec.optim_init;
-      } else {
-        resolve_init(*spec.prestage->inner, "PRESTAGE.INNER");
-      }
-    }
+    if (spec.prestage->inner &&
+        !spec.prestage->inner->init_strategy_spec.chain.empty())
+      resolve_init(*spec.prestage->inner, "PRESTAGE.INNER");
+    spec.share_init_with_nested_phases();
   }
 
   /* Fail fast on the initial-step policy (registry-driven). Seeds vs
@@ -387,6 +380,28 @@ static bool dispatch_init_attr(const std::string& key,
         return true;
     }
     return false;
+}
+
+/* An INNER block configures the local search that NLopt's MLSL and AUGLAG
+ * run inside the enclosing block's NLopt run. It takes every optimiser
+ * attribute but SEED: NLopt has one random stream per run, which
+ * make_nlopt seeds from the enclosing block (its SEED, else its INIT
+ * block's SEED), and the INNER search draws from that stream. An INNER
+ * SEED could only reseed it in place of the enclosing block's SEED. */
+static bool inner_takes_attr(const std::string& key)
+{
+    return key != "SEED";
+}
+
+static std::string inner_attr_keys_joined(const char* sep)
+{
+    std::string out;
+    for (const auto& k : opt_attr_keys()) {
+        if (!inner_takes_attr(k)) continue;
+        if (!out.empty()) out += sep;
+        out += k;
+    }
+    return out;
 }
 
 /* Helper: throw a "renamed to X" error for any old-grammar keyword.
@@ -670,6 +685,20 @@ void HPOTargets::read(const std::string& fn)
 
             /* ============== block-specific dispatch =============== */
 
+            /* SEED inside INNER: the INNER search draws from the random
+             * stream of the enclosing block's run (inner_takes_attr). An
+             * INNER block opens only inside STRATEGY, EXPLORE or REFINE. */
+            if (block == INNER_BLK && !inner_takes_attr(key)) {
+                const char* enclosing =
+                    prev_inner == STRATEGY_BLK ? "STRATEGY" :
+                    prev_inner == EXPLORE_BLK  ? "EXPLORE"  : "REFINE";
+                throw std::runtime_error(
+                    key + " is not accepted inside an INNER block: NLopt "
+                    "draws the INNER search from the enclosing run's random "
+                    "stream; set " + key + " on the enclosing " + enclosing +
+                    " block");
+            }
+
             /* Common opt-attribute keys (LIB/ALGO/MAXEVAL/...) accepted in
              * any block where active_opt is set. */
             if (active_opt && dispatch_opt_attr(key, iss, *active_opt)) {
@@ -807,7 +836,7 @@ void HPOTargets::read(const std::string& fn)
             /* INNER block -- only opt attributes, dispatched above. */
             if (block == INNER_BLK) {
                 throw std::runtime_error("unknown key '" + key + "' inside INNER block "
-                    "(only " + opt_attr_keys_joined("/") + " are valid)");
+                    "(only " + inner_attr_keys_joined("/") + " are valid)");
             }
 
             /* Anything still unhandled inside an OPTIMIZER-level block is

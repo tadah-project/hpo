@@ -707,10 +707,9 @@ TEST_CASE("No parser error text names the removed BASINS strategies",
 TEST_CASE("build_run_policy wraps PLAIN/MULTISTART/PRESTAGE in RestartPolicy "
           "when RESTART is set", "[HPO][run_policy][restart]")
 {
-    /* This pins the policy composition only. Whether RestartPolicy then
-     * restarts depends on HPO_Host::StagnationStop reaching it at run time;
-     * MultiStartPolicy's per-start catch and StagedPolicy's exploration
-     * catch absorb it today, which this case does not cover. */
+    /* This pins the policy composition. That a restart then fires under
+     * NLopt, MULTISTART and PRESTAGE is checked end to end by the
+     * [restart][termination] cases in test_hpo_termination.cpp. */
     using V = dlib::matrix<double, 0, 1>;
     using R = ::LammpsRunner;
     const std::string restart =

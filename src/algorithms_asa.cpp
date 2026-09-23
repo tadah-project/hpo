@@ -7,9 +7,11 @@
  * single-instance mutex (asa() is not re-entrant upstream).
  *
  * Exception discipline: no C++ exception may unwind through asa()'s C
- * frames. Every callback catches, stashes the first std::exception_ptr,
- * flags the state invalid, and requests IMMEDIATE_EXIT; the driver
- * rethrows after asa() returns (log-then-unwind, the PT precedent). */
+ * frames. Every callback catches, stashes the std::exception_ptr (the
+ * one that decides how the run ends when a block's evaluations throw
+ * several, run_stop.h), flags the state invalid, and requests
+ * IMMEDIATE_EXIT; the driver rethrows after asa() returns
+ * (log-then-unwind, the PT precedent). */
 
 #include <tadah/hpo/algorithms_asa.h>
 #include <tadah/hpo/log_index.h>
@@ -19,6 +21,7 @@
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/run_stop.h>
 #include <tadah/hpo/warmstart_cache.h>
 
 #include <atomic>
@@ -77,14 +80,10 @@ struct AsaRunCtx {
         pending_stop.store(true, std::memory_order_relaxed);
     }
 
-    std::mutex         err_mtx;
-    std::exception_ptr error;
+    ExceptionStash errors;
     void stash(std::exception_ptr e)
     {
-        {
-            std::lock_guard<std::mutex> lk(err_mtx);
-            if (!error) error = std::move(e);
-        }
+        errors.offer(std::move(e));
         set_why(Exception);
     }
 
@@ -653,14 +652,14 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
             << ")";
         std::cout << "[HPO] " << oss.str() << "\n";
         HPOLog::instance().info(oss.str());
-        HPOLog::instance().set_status("ASA: " + reason);
     }
 
     /* ---- unwind ------------------------------------------------------ */
-    {
-        std::lock_guard<std::mutex> lk(ctx.err_mtx);
-        if (ctx.error) std::rethrow_exception(ctx.error);
-    }
+    /* An exception raised during an evaluation ends this run: whoever
+     * handles it -- RestartPolicy, drive_run() -- records how the run
+     * ended, so ASA records no status of its own for it. */
+    ctx.errors.rethrow_if_any();
+    HPOLog::instance().set_status("ASA: " + reason);
     if (ctx.why.load() == AsaRunCtx::None &&
         (exit_status == 7 || exit_status == 8 || exit_status == -1))
         throw std::runtime_error(

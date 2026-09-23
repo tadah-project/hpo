@@ -2,6 +2,7 @@
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/runners.h>
 #include <tadah/hpo/run_policy.h>
+#include <tadah/hpo/run_driver.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/script_executor.h>
@@ -45,14 +46,97 @@ bool should_run_noise_calibration(std::size_t noise_n)
     return noise_n >= 2;
 }
 
-bool hpo_mpi_dispatch_supported(int world_size,
-                                const OptimizerSpec& spec) noexcept
+std::string hpo_mpi_dispatch_refusal(int world_size, const OptimizerSpec& spec)
 {
-    if (world_size <= 1) return true;
-    return spec.strategy_type == StrategyType::PLAIN &&
-           spec.lib == "TADAH" &&
-           (spec.algo == "ANNEAL_PT" || spec.algo == "ANNEAL_PA");
+    if (world_size <= 1) return {};
+    const std::string ranks = std::to_string(world_size) + " ranks";
+    if (!(spec.strategy_type == StrategyType::PLAIN &&
+          spec.lib == "TADAH" &&
+          (spec.algo == "ANNEAL_PT" || spec.algo == "ANNEAL_PA")))
+        return "multi-rank HPO supports only STRATEGY TYPE PLAIN with "
+               "LIB TADAH and ALGO ANNEAL_PT or ANNEAL_PA; got " +
+               spec.lib + ":" + spec.algo + " on " + ranks;
+    /* Each rank tracks stagnation over its own evaluations: the rank that
+     * stagnated would restart and block in the driver's next collective
+     * while its peers fail with "worker failed on another MPI rank". */
+    if (spec.restart.active())
+        return "multi-rank HPO does not support RESTART (AFTER_STAGNATION " +
+               std::to_string(spec.restart.after_stagnation) + ", MAX " +
+               std::to_string(spec.restart.max) + " on " + ranks +
+               "): stagnation is tracked per rank; run on one rank or "
+               "remove RESTART";
+    return {};
 }
+
+bool hpo_mpi_dispatch_supported(int world_size, const OptimizerSpec& spec)
+{
+    return hpo_mpi_dispatch_refusal(world_size, spec).empty();
+}
+
+namespace {
+
+/* NOISE_CALIBRATION N: repeat the seed point N times before the optimiser
+ * starts, surface the loss spread, and suggest a realistic FTOL_REL. Each
+ * repeat is a real evaluation -- it counts toward the global eval counter,
+ * the best-so-far tracker, and the per-eval log files (loss.tadah /
+ * params.tadah / ...). The overhead is N - 1 extra wall-clock evals; the user
+ * opted in by setting NOISE_CALIBRATION, so we do not also charge it against
+ * MAXEVAL (the optimiser still gets its full budget). Runs under drive_run()
+ * in hpo_run(), like the optimiser. */
+void run_noise_calibration(const OptimizerSpec& sp, const HPO_Host<V,R>& host,
+                           HPOLog& log)
+{
+    if (!should_run_noise_calibration(sp.noise.calibration_n)) return;
+    const std::size_t N = sp.noise.calibration_n;
+    if (sp.optim_init.empty()) {
+        log.warning("NOISE_CALIBRATION requested but no starting "
+                    "point is available; skipping.");
+        return;
+    }
+    std::cout << "[HPO] NOISE_CALIBRATION: running " << N
+              << " evals at the seed point to measure objective noise\n";
+    log.info("NOISE_CALIBRATION: running " + std::to_string(N) +
+             " evals at the seed point");
+
+    const auto seed_real = sp.optim_init.front();
+    V seed_vec;
+    seed_vec.set_size(static_cast<long>(seed_real.size()));
+    for (long i = 0; i < seed_vec.size(); ++i)
+        seed_vec(i) = seed_real[static_cast<std::size_t>(i)];
+
+    std::vector<double> losses;
+    losses.reserve(N);
+    for (std::size_t i = 0; i < N; ++i)
+        losses.push_back(host(seed_vec));
+
+    /* Suggest FTOL_REL = 10 * relative_spread, floored at 1e-6 (no point
+     * recommending tolerances below double precision times a sensible fudge
+     * factor). NLopt's FTOL_REL test fires when |Deltaf| < ftol_rel * |f|,
+     * so 10x the observed relative spread gives the local search room to
+     * terminate once it crosses the noise floor instead of chasing it. */
+    double mn = losses.front(), mx = losses.front(), sum = 0.0;
+    for (double v : losses) {
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+        sum += v;
+    }
+    const double mean = sum / static_cast<double>(losses.size());
+    const double rel_spread =
+        (mean != 0.0) ? (mx - mn) / std::fabs(mean) : 0.0;
+    const double suggested_ftol = std::max(10.0 * rel_spread, 1.0e-6);
+
+    log.write_noise_calibration_section(losses, suggested_ftol);
+
+    std::ostringstream oss;
+    oss << std::scientific << std::setprecision(3);
+    oss << "NOISE_CALIBRATION: rel_spread=" << rel_spread
+        << "  suggested FTOL_REL=" << suggested_ftol
+        << "  (mean=" << mean << ", min=" << mn << ", max=" << mx << ")";
+    std::cout << "[HPO] " << oss.str() << "\n";
+    log.info(oss.str());
+}
+
+}  // namespace
 
 int hpo_run(core::Context& ctx)
 {
@@ -102,13 +186,11 @@ int hpo_run(core::Context& ctx)
 #endif
 
     /* Cooperative shutdown: install SIGINT/SIGTERM/SIGUSR2 handlers so
-     * HPO_Host stops evaluating (it throws core::ShutdownRequested) under
-     * ctrl+C or SLURM cancellation, and the ShutdownRequested arm around
-     * policy->run() below flushes the result files and closes the journal.
-     * Three paths bypass that arm today: a signal during NOISE_CALIBRATION
-     * (outside the try), and the NLopt C++ wrapper and MultiStartPolicy's
-     * per-start catch, which intercept the exception so the run ends as an
-     * ordinary stop. */
+     * HPO_Host stops evaluating (it throws core::ShutdownRequested at the
+     * start of the next evaluation) under ctrl+C or SLURM cancellation. The
+     * exception unwinds every optimiser and strategy to drive_run() below,
+     * which flushes the result files, writes the SHUTDOWN trailer and makes
+     * hpo_run() return 128 + the signal number. */
     core::SignalHandler::install();
 
     HPOTargets trg(ctx, ctx.get<std::string>("HPOTARGET"));
@@ -118,16 +200,14 @@ int hpo_run(core::Context& ctx)
      * cross-rank artifact. The plain PT/PA drivers own the communicator, so a
      * rank can safely keep its local incumbent when another rank wins
      * canonical publication; any other driver, and the MULTISTART and
-     * PRESTAGE strategies, would drive the ranks outside that protocol.
-     * Keep size-one MPI launches identical to serial builds. */
-    const int hpo_world = hpo_size();
-    if (!hpo_mpi_dispatch_supported(hpo_world, trg.spec)) {
-        throw std::runtime_error(
-            "multi-rank HPO supports only STRATEGY TYPE PLAIN with "
-            "LIB TADAH and ALGO ANNEAL_PT or ANNEAL_PA; got " +
-            trg.spec.lib + ":" + trg.spec.algo +
-            " on " + std::to_string(hpo_world) + " ranks");
-    }
+     * PRESTAGE strategies, would drive the ranks outside that protocol, and
+     * so would RESTART, whose stagnation watchdog is per rank. Refused
+     * here, before any evaluation. Keep size-one MPI launches identical to
+     * serial builds. */
+    if (const std::string refusal =
+            hpo_mpi_dispatch_refusal(hpo_size(), trg.spec);
+        !refusal.empty())
+        throw std::runtime_error(refusal);
 
     /* Parallelisation model (Option A): THREADS is the TOTAL width of the shared
      * worker pool -- the number of threads that actually run pc_lammps scripts
@@ -490,103 +570,33 @@ int hpo_run(core::Context& ctx)
      * evaluation. MPI ranks synchronize before any evaluation. */
     host.prepare_best_publication();
 
-    /* -- Noise calibration (NOISE_CALIBRATION N): repeat the seed point
-     * N times before the optimiser starts, surface the loss spread, and
-     * suggest a realistic FTOL_REL. Each repeat is a real evaluation --
-     * it counts toward the global eval counter, the best-so-far tracker,
-     * and the per-eval log files (loss.tadah / params.tadah / ...).
-     * The overhead is N - 1 extra wall-clock evals; the user opted in
-     * by setting NOISE_CALIBRATION, so we do not also charge it against
-     * MAXEVAL (the optimiser still gets its full budget). */
-    if (should_run_noise_calibration(sp.noise.calibration_n)) {
-        const std::size_t N = sp.noise.calibration_n;
-        if (sp.optim_init.empty()) {
-            log.warning("NOISE_CALIBRATION requested but no starting "
-                        "point is available; skipping.");
-        } else {
-            std::cout << "[HPO] NOISE_CALIBRATION: running " << N
-                      << " evals at the seed point to measure objective noise\n";
-            log.info("NOISE_CALIBRATION: running " + std::to_string(N) +
-                     " evals at the seed point");
+    /* Everything from here evaluates candidates, so it runs under
+     * drive_run() (run_driver.h), which owns every way the run can end:
+     * the result queue is flushed and the journal trailer written whether
+     * the optimiser finishes, a signal stops it (the return value is then
+     * 128 + the signal number), or an error escapes (rethrown after the
+     * trailer). NOISE_CALIBRATION is inside for the same reason: its
+     * evaluations are real, and a signal during them must end the run the
+     * same way. Each optimiser run records its own termination reason with
+     * HPOLog::set_status(); the trailer shows the one of the run that ended
+     * the whole run (under MULTISTART the last start, under PRESTAGE the
+     * refinement), or RestartPolicy's when its MAX restarts were used up. */
+    const int status = drive_run(
+        [&]() {
+            run_noise_calibration(sp, host, log);
+            log.start_progress();
+            std::cout << "[HPO] " << sp.lib << ":" << sp.algo
+                      << "   dim=" << sp.low.size() << "\n";
+            policy->run(sp, host);
+        },
+        host, log);
 
-            const auto seed_real = sp.optim_init.front();
-            V seed_vec;
-            seed_vec.set_size(static_cast<long>(seed_real.size()));
-            for (long i = 0; i < seed_vec.size(); ++i)
-                seed_vec(i) = seed_real[static_cast<std::size_t>(i)];
-
-            std::vector<double> losses;
-            losses.reserve(N);
-            for (std::size_t i = 0; i < N; ++i)
-                losses.push_back(host(seed_vec));
-
-            /* Suggest FTOL_REL = 10 * relative_spread, floored at 1e-6
-             * (no point recommending tolerances below double precision
-             * times a sensible fudge factor). NLopt's FTOL_REL test
-             * fires when |Deltaf| < ftol_rel * |f|, so 10x the observed
-             * relative spread gives the local search room to terminate
-             * once it crosses the noise floor instead of chasing it. */
-            double mn = losses.front(), mx = losses.front(), sum = 0.0;
-            for (double v : losses) {
-                if (v < mn) mn = v;
-                if (v > mx) mx = v;
-                sum += v;
-            }
-            const double mean = sum / static_cast<double>(losses.size());
-            const double rel_spread =
-                (mean != 0.0) ? (mx - mn) / std::fabs(mean) : 0.0;
-            const double suggested_ftol = std::max(10.0 * rel_spread, 1.0e-6);
-
-            log.write_noise_calibration_section(losses, suggested_ftol);
-
-            std::ostringstream oss;
-            oss << std::scientific << std::setprecision(3);
-            oss << "NOISE_CALIBRATION: rel_spread=" << rel_spread
-                << "  suggested FTOL_REL=" << suggested_ftol
-                << "  (mean=" << mean << ", min=" << mn << ", max=" << mx << ")";
-            std::cout << "[HPO] " << oss.str() << "\n";
-            log.info(oss.str());
-        }
-    }
-
-    log.start_progress();
-
-    /* quick info */
-    std::cout<<"[HPO] "<<sp.lib<<":"<<sp.algo<<"   dim="<<sp.low.size()<<"\n";
-
-    try {
-        policy->run(sp, host);
-
-        /* Drain any in-flight evals, then write the journal trailer once.
-         * Passing an empty status_str makes HPOLog::finish() fall back to
-         * the most recent HPOLog::set_status() recorded by the inner
-         * driver (e.g. NLopt's "MAXEVAL_REACHED"), or "COMPLETED" if none
-         * was set. This is what makes MULTISTART + NLopt log correctly:
-         * each per-start run sets its status, the last one wins, and the
-         * journal stays open until we get here. */
-        host.flush_remaining();
-        log.finish();
-    } catch (const core::ShutdownRequested& e) {
-        /* SIGINT/SIGTERM/SIGUSR2 -- drain the I/O queue and close the
-         * journal cleanly with the signal reason. */
-        log.warning(std::string("Shutdown requested: ") +
-                    core::SignalHandler::reason());
-        host.flush_remaining();
-        log.finish(std::string("SHUTDOWN (") + core::SignalHandler::reason() + ")");
-    } catch (const std::exception& e) {
-        const std::string err = std::string("STOPPED with error: ") + e.what();
-        log.warning(std::string("Optimiser threw: ") + e.what());
-        host.flush_remaining();
-        log.finish(err);
-        throw;
-    }
-
-    /* PC_ISOLATION: deterministic worker-pool teardown on the clean paths
-     * (SHUTDOWN frames + reap). On the throwing path above, the singleton's
-     * static destructor performs the same shutdown at process exit. No-op in
-     * THREAD mode (pool never constructed). */
+    /* PC_ISOLATION: deterministic worker-pool teardown on the clean paths,
+     * including a signal stop (SHUTDOWN frames + reap). On the throwing path
+     * above, the singleton's static destructor performs the same shutdown at
+     * process exit. No-op in THREAD mode (pool never constructed). */
     pc_worker_pool_shutdown();
 
-    return 0;
+    return status;
 }
 } // namespace tadah::hpo

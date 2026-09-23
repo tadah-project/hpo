@@ -11,8 +11,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
+#include <exception>
 #include <limits>
 #include <sstream>
+#include <stdexcept>
 
 namespace tadah::hpo {
 
@@ -25,12 +28,35 @@ inline nlopt_algorithm nlopt_algo(const std::string& s)
     return a;
 }
 
-/* create an nlopt::opt recursively from OptimizerSpec -------------
- * `plan` is the per-dimension initial-step plan for THIS spec (nullptr
- * = STEP unset: NLopt's own per-dim heuristic stays in force). INNER
- * specs get a plan without a start point (MLSL picks the local starts). */
-inline nlopt::opt make_nlopt(const OptimizerSpec& sp, unsigned dim,
-                             const StepPlan* plan = nullptr)
+/* True when an exception out of nlopt::opt::optimize() is the algorithm
+ * terminating itself -- nothing left to explore, and the best result found
+ * so far is valid and already saved -- rather than a failed run:
+ *   NLOPT_FAILURE (-1): population converged, local mutation simplex
+ *     degenerated. The C++ wrapper throws runtime_error("nlopt failure"),
+ *     or runtime_error(<stop message>) when NLopt set one -- e.g.
+ *     LN_NELDERMEAD's "starting step size led to simplex that was too small
+ *     in dimension N" (`nlopt_msg` is that message, from get_errmsg());
+ *   NLOPT_ROUNDOFF_LIMITED (-4): progress blocked by floating-point
+ *     roundoff (nlopt::roundoff_limited).
+ * Everything else -- invalid arguments, out of memory, a forced stop -- is
+ * a failure. Exceptions raised by the objective are not classified at all:
+ * run_nlopt() rethrows them with their own type first. */
+inline bool nlopt_self_terminated(const std::exception& e,
+                                  const char* nlopt_msg)
+{
+    if (dynamic_cast<const nlopt::roundoff_limited*>(&e)) return true;
+    if (dynamic_cast<const nlopt::forced_stop*>(&e)) return false;
+    const std::string what = e.what();
+    return what == "nlopt failure" ||
+           (nlopt_msg && nlopt_msg[0] != '\0' && what == nlopt_msg);
+}
+
+namespace detail {
+
+/* The nlopt::opt of `sp` and of its INNER (one level), for make_nlopt. It
+ * leaves NLopt's random stream alone. */
+inline nlopt::opt build_nlopt(const OptimizerSpec& sp, unsigned dim,
+                              const StepPlan* plan)
 {
     nlopt::opt o(sp.algo.c_str(), dim);
 
@@ -51,14 +77,6 @@ inline nlopt::opt make_nlopt(const OptimizerSpec& sp, unsigned dim,
     /* algorithm-specific parameters */
     if (sp.vector_storage) o.set_vector_storage(*sp.vector_storage);
     if (sp.pop) o.set_population(*sp.pop);
-    /* NLopt's stochastic globals (CRS, MLSL, ISRES, ESCH, ...) draw from
-     * an internal RNG seeded only by `nlopt::srand`. The C library
-     * `srand()` does NOT propagate. Prefer INIT_SEED (the modern,
-     * init-strategy-scoped seed) over the legacy SEED keyword. */
-    if (sp.init_strategy_spec.seed)
-        nlopt::srand(static_cast<unsigned long>(*sp.init_strategy_spec.seed));
-    else if (sp.seed)
-        nlopt::srand(static_cast<unsigned long>(*sp.seed));
     /* STEP is a fraction of each dimension's internal width; the plan
      * carries the per-dim vector (see initial_step.h). Never the old
      * uniform scalar: identical dx on every dim made BOBYQA/COBYLA's
@@ -81,9 +99,43 @@ inline nlopt::opt make_nlopt(const OptimizerSpec& sp, unsigned dim,
             inner_plan = make_step_plan(*sp.inner, {}, optimizer_caps(*sp.inner));
             ip = &inner_plan;
         }
-        o.set_local_optimizer( make_nlopt(*sp.inner, dim, ip) );
+        o.set_local_optimizer( build_nlopt(*sp.inner, dim, ip) );
     }
 
+    return o;
+}
+
+}  // namespace detail
+
+/* create an nlopt::opt, with its INNER, from OptimizerSpec ---------
+ * `plan` is the per-dimension initial-step plan for THIS spec (nullptr
+ * = STEP unset: NLopt's own per-dim heuristic stays in force). INNER
+ * specs get a plan without a start point (MLSL picks the local starts).
+ *
+ * NLopt's stochastic algorithms (CRS, MLSL, ISRES, ESCH, PRAXIS, ...)
+ * draw from an internal RNG seeded only by `nlopt::srand`; the C library
+ * `srand()` does NOT propagate. The block's SEED seeds it -- the
+ * per-start SEED + i of MULTISTART and the PRESTAGE refinement, and the
+ * seeds RESTART derives, arrive here as sp.seed. The INIT block's SEED,
+ * which draws the block's INIT points, seeds NLopt only when the block has
+ * no SEED. NLopt has one random stream per run: MLSL and AUGLAG run their
+ * INNER search inside this run and draw it from the same stream, so the
+ * INNER spec has no seed of its own. HPOTargets rejects SEED inside an
+ * INNER block at startup (and has no INIT block there); a spec built
+ * another way with an INNER seed is refused here rather than ignored. */
+inline nlopt::opt make_nlopt(const OptimizerSpec& sp, unsigned dim,
+                             const StepPlan* plan = nullptr)
+{
+    if (sp.inner && (sp.inner->seed || sp.inner->init_strategy_spec.seed))
+        throw std::invalid_argument(
+            "NLopt INNER spec with a seed: NLopt draws the INNER search from "
+            "the enclosing run's random stream; set SEED on the enclosing "
+            "block");
+    nlopt::opt o = detail::build_nlopt(sp, dim, plan);
+    if (sp.seed)
+        nlopt::srand(static_cast<unsigned long>(*sp.seed));
+    else if (sp.init_strategy_spec.seed)
+        nlopt::srand(static_cast<unsigned long>(*sp.init_strategy_spec.seed));
     return o;
 }
 
@@ -177,13 +229,28 @@ void run_nlopt(const OptimizerSpec& sp,
 
     /* Userdata for the NLopt callback. The GradientProvider must
      * outlive opt.optimize(); it does, as a stack local in this
-     * function. */
+     * function.
+     *
+     * `error` keeps the first exception the objective raised. NLopt's C++
+     * wrapper would otherwise catch it itself, record NLOPT_FAILURE and
+     * rethrow a bare "nlopt failure" -- which this adapter has to treat as
+     * the algorithm's own self-termination (below), so a signal stop
+     * (core::ShutdownRequested), the RESTART stagnation stop and a fatal
+     * best-potential persistence failure (durable_best::Error) all ended
+     * the run as "algorithm converged". The objective catches everything,
+     * stops the optimisation (force_stop also reaches an MLSL/AUGLAG INNER
+     * run, which calls this same objective) and the exception is rethrown
+     * with its own type once optimize() has returned -- the pattern of the
+     * ASA driver (algorithms_asa.cpp). NLopt calls the objective from one
+     * thread at a time, so no lock is needed. */
     struct UData {
         const OptimizerSpec*               sp;
         HPO_Host<Vec,Runner>*              host;
         GradientProvider<Vec,Runner>*      gp;
+        nlopt::opt*                        opt;
+        std::exception_ptr                 error;
     };
-    UData udata{&sp, &host, &gp};
+    UData udata{&sp, &host, &gp, &opt, nullptr};
 
     /* objective adapter (handles log-scale automatically). For
      * gradient-based algorithms NLopt passes a writable `grad` vector
@@ -195,32 +262,45 @@ void run_nlopt(const OptimizerSpec& sp,
                       std::vector<double>& grad, void* userdata)->double
     {
         auto* u = static_cast<UData*>(userdata);
-        Vec v;
-        v.set_size(static_cast<long>(x.size()));
-        for(size_t i=0;i<x.size();++i) v(static_cast<long>(i))=x[i];
-
-        /* Compute f first so the trainer cache is populated at this x;
-         * host.analytical_gradient (Phase 2A.4 wiring) consumes the
-         * cached fit state. */
-        const double f = (*u->host)( u->sp->out(v) );
-
-        if (!grad.empty()) {
-            Vec g;
-            g.set_size(static_cast<long>(x.size()));
-            if (!u->gp->gradient(v, g)) {
-                /* gp.gradient returns false on bad eval (NaN clamp,
-                 * non-finite W*, or MAXEVAL overflow during masked FD).
-                 * Signal a bad step to NLopt's line search: zero the
-                 * gradient and return +inf so the optimizer rejects
-                 * this point and backs off. Matches how Phase 1's
-                 * Numerical path handles non-finite host returns. */
-                std::fill(grad.begin(), grad.end(), 0.0);
-                return std::numeric_limits<double>::infinity();
-            }
-            for (size_t i=0;i<x.size();++i)
-                grad[i] = g(static_cast<long>(i));
+        /* Stopping: an algorithm may still probe a point before it sees
+         * the forced stop; never evaluate again. */
+        if (u->error) {
+            u->opt->force_stop();
+            return HUGE_VAL;
         }
-        return f;
+        try {
+            Vec v;
+            v.set_size(static_cast<long>(x.size()));
+            for(size_t i=0;i<x.size();++i) v(static_cast<long>(i))=x[i];
+
+            /* Compute f first so the trainer cache is populated at this x;
+             * host.analytical_gradient (Phase 2A.4 wiring) consumes the
+             * cached fit state. */
+            const double f = (*u->host)( u->sp->out(v) );
+
+            if (!grad.empty()) {
+                Vec g;
+                g.set_size(static_cast<long>(x.size()));
+                if (!u->gp->gradient(v, g)) {
+                    /* gp.gradient returns false on bad eval (NaN clamp,
+                     * non-finite W*, or MAXEVAL overflow during masked FD).
+                     * Signal a bad step to NLopt's line search: zero the
+                     * gradient and return +inf so the optimizer rejects
+                     * this point and backs off. Matches how Phase 1's
+                     * Numerical path handles non-finite host returns. */
+                    std::fill(grad.begin(), grad.end(), 0.0);
+                    return std::numeric_limits<double>::infinity();
+                }
+                for (size_t i=0;i<x.size();++i)
+                    grad[i] = g(static_cast<long>(i));
+            }
+            return f;
+        } catch (...) {
+            u->error = std::current_exception();
+            u->opt->force_stop();
+            if (!grad.empty()) std::fill(grad.begin(), grad.end(), 0.0);
+            return HUGE_VAL;
+        }
     };
     opt.set_min_objective(wrapper,&udata);
 
@@ -303,6 +383,10 @@ void run_nlopt(const OptimizerSpec& sp,
     std::string status_str;
     try {
         nlopt::result res = opt.optimize(start, fmin);
+        /* A forced stop normally makes optimize() throw (below); an
+         * algorithm that returns a regular code after it must not hide
+         * the objective's exception either. */
+        if (udata.error) std::rethrow_exception(udata.error);
         result_code  = static_cast<int>(res);
         status_str   = nlopt_result_str(result_code);
 
@@ -348,6 +432,9 @@ void run_nlopt(const OptimizerSpec& sp,
             HPOLog::instance().info(nfo.str());
         }
     } catch (const std::invalid_argument& e) {
+        /* The objective's own exception comes first: it is why NLopt
+         * stopped (see UData). */
+        if (udata.error) std::rethrow_exception(udata.error);
         /* NLOPT_INVALID_ARGS: a rejected SETUP (e.g. BOBYQA 'insufficient
          * space between the bounds', 'invalid scaling', 'zero step size').
          * NLopt attaches its stop message to this exception too, so it
@@ -359,26 +446,13 @@ void run_nlopt(const OptimizerSpec& sp,
         HPOLog::instance().set_status(status);
         throw;
     } catch (const std::exception& e) {
+        /* The objective's own exception comes first (see UData): a signal
+         * stop, the RESTART stagnation stop or a fatal error must reach
+         * the policy and hpo_run() with its own type, never be read as
+         * the algorithm's self-termination. */
+        if (udata.error) std::rethrow_exception(udata.error);
         const std::string what = e.what();
-        /* NLOPT_FAILURE (-1): population converged, local mutation simplex
-         * degenerated -- algorithmic self-termination, not a bug.
-         * NLOPT_ROUNDOFF_LIMITED (-4): blocked by floating-point roundoff.
-         * Both mean the algorithm has nothing left to explore; the best
-         * result found so far is valid and already saved.
-         *
-         * When NLopt has set an internal stop message (nlopt_stop_msg), the
-         * C++ wrapper throws runtime_error(<that message>) instead of the
-         * bare "nlopt failure" -- e.g. LN_NELDERMEAD's "starting step size
-         * led to simplex that was too small in dimension N". That is the
-         * same algorithmic self-termination and must not be reported as a
-         * FAILED run. Compare against the opt's own errmsg so host
-         * exceptions (which propagate through the wrapper verbatim) are
-         * never misclassified. */
-        const char* nlopt_msg = opt.get_errmsg();
-        const bool graceful = (what == "nlopt failure" ||
-                               what == "roundoff-limited" ||
-                               (nlopt_msg && nlopt_msg[0] != '\0' &&
-                                what == nlopt_msg));
+        const bool graceful = nlopt_self_terminated(e, opt.get_errmsg());
         if (graceful) {
             status_str = "STOPPED -- " + what +
                 " (algorithm converged; consider adding ftol_rel / xtol_rel"

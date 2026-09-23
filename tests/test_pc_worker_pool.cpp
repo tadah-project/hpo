@@ -23,6 +23,8 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <iterator>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -206,6 +208,31 @@ TEST_CASE("pc pool: a worker survives the stop signals sent to its process "
   }
   /* Still the same worker process. */
   CHECK(find_worker_child() == child);
+}
+
+TEST_CASE("pc pool: workers ignore exactly the stop signals the parent "
+          "handles", "[pc_pool][signals]") {
+  /* kPcWorkerIgnoredSignals must follow core::SignalHandler: a stop signal
+   * the parent handles but the workers do not ignore kills the evaluations
+   * in flight when it reaches the whole group. The handled set comes from a
+   * fresh process (test_main.cpp's probe); inside popen's shell
+   * /proc/self/exe would be the shell, so resolve it here. */
+  char exe[4096] = {0};
+  const ssize_t n = ::readlink("/proc/self/exe", exe, sizeof exe - 1);
+  REQUIRE(n > 0);
+  const std::string cmd =
+      std::string("'") + exe + "' --tadah-signal-handler-probe";
+  FILE* p = ::popen(cmd.c_str(), "r");
+  REQUIRE(p != nullptr);
+  std::set<int> handled;
+  char line[32];
+  while (::fgets(line, sizeof line, p)) handled.insert(std::atoi(line));
+  REQUIRE(::pclose(p) == 0);
+
+  const std::set<int> ignored(std::begin(kPcWorkerIgnoredSignals),
+                              std::end(kPcWorkerIgnoredSignals));
+  CHECK(handled == ignored);
+  CHECK(ignored == std::set<int>{SIGINT, SIGTERM, SIGUSR2});
 }
 
 TEST_CASE("pc pool: repeated deaths throttle a channel, they do not retire it",

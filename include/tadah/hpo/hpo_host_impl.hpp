@@ -17,6 +17,7 @@
 #include <tadah/hpo/pc_worker_pool.h>
 #include <tadah/hpo/iter_health.h>
 #include <tadah/hpo/rcut_derivation.h>
+#include <tadah/hpo/result_drain.h>
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/hpo/topk.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
@@ -681,6 +682,20 @@ void HPO_Host<P,R>::reset_globals_for_test() {
         g_iter_.store(0, std::memory_order_relaxed);
         g_best_key_.reset();
     }
+    {
+        /* A new process also starts with an empty result writer. Results a
+         * test evaluated but never flushed belong to the simulated earlier
+         * process; the final drain would otherwise write them into the next
+         * test's files (and iteration numbers restart at 1 here). */
+        std::lock_guard<std::mutex> lock(io_mtx_);
+        Result item;
+        while (g_q_.try_dequeue(item)) {}
+        io_buf_.clear();
+        next_flush_.store(1, std::memory_order_relaxed);
+        next_flush_stuck_since_ms_.store(0, std::memory_order_relaxed);
+    }
+    stagnation_threshold_.store(0, std::memory_order_relaxed);
+    stagnation_warned_.store(false, std::memory_order_relaxed);
     warmstart::reset_best_snapshot_for_fresh_run();
 }
 
@@ -2001,11 +2016,10 @@ template<class P, class R>
 double HPO_Host<P,R>::operator()(const P& p) const
 {
   /* Cooperative shutdown: SIGINT/SIGTERM/SIGUSR2 raised the stop flag.
-   * Throw before consuming an iter slot. The exception is meant to unwind
-   * the optimiser to hpo_run()'s ShutdownRequested arm, which flushes the
-   * result files and closes the journal; the NLopt C++ wrapper and
-   * MultiStartPolicy's per-start catch intercept it today (see hpo_run()).
-   * SignalHandler::install() is wired in hpo_run(). */
+   * Throw before consuming an iter slot. The exception unwinds every
+   * optimiser and strategy to drive_run() (run_driver.h), which flushes
+   * the result files, writes the SHUTDOWN trailer and returns 128 + the
+   * signal number. SignalHandler::install() is wired in hpo_run(). */
   if (core::SignalHandler::stop_requested()) {
     throw core::ShutdownRequested{};
   }
@@ -3600,70 +3614,55 @@ void HPO_Host<P,R>::flush_remaining() const
                   best_par_f (trg_.bestParamsFile, std::ios::app),
                   best_stats_f(trg_.bestStatsFile, std::ios::app);
 
-    while(io_buf_.count(next_flush_))
-    {
-        try {
-            const auto& e = io_buf_[next_flush_];
+    auto write_row = [&](const Result& e) {
+        if(e.iter % trg_.outputEvery == 0){
+            print_loss_line  (loss_f , e.iter, e, trg_, cw_, prec_);
+            print_outvar_line(outv_f , e.iter, e, trg_, cw_, prec_);
+            print_params_line(par_f  , e.iter, e,       cw_, prec_);
+            print_stats_line (stats_f, e.iter, e, trg_, cw_, prec_);
+        }
+        if(e.is_best && e.best_iter % trg_.bestOutputEvery == 0) {
+            print_loss_line  (best_f      , e.best_iter, e, trg_, cw_, prec_);
+            print_outvar_line(best_outv_f , e.best_iter, e, trg_, cw_, prec_);
+            print_params_line(best_par_f  , e.best_iter, e,       cw_, prec_);
+            print_stats_line (best_stats_f, e.best_iter, e, trg_, cw_, prec_);
+        }
 
-            if(next_flush_ % trg_.outputEvery == 0){
-                print_loss_line  (loss_f , e.iter, e, trg_, cw_, prec_);
-                print_outvar_line(outv_f , e.iter, e, trg_, cw_, prec_);
-                print_params_line(par_f  , e.iter, e,       cw_, prec_);
-                print_stats_line (stats_f, e.iter, e, trg_, cw_, prec_);
-            }
-            if(e.is_best && e.best_iter % trg_.bestOutputEvery == 0) {
-                print_loss_line  (best_f      , e.best_iter, e, trg_, cw_, prec_);
-                print_outvar_line(best_outv_f , e.best_iter, e, trg_, cw_, prec_);
-                print_params_line(best_par_f  , e.best_iter, e,       cw_, prec_);
-                print_stats_line (best_stats_f, e.best_iter, e, trg_, cw_, prec_);
-            }
-
-            if(e.is_best) {
-                if(e.best_iter % trg_.dumpBestPotEvery == 0){
-                    std::ofstream bpa(std::string(trg_.dumpBestPotDir)
-                        + "/best_pot_" + std::to_string(e.best_iter) + ".tadah"
-                        + trg_.potArchiveSuffix);
-
-                    PotHeaderWriter::write_best_archive_header(
-                        bpa, e, trg_, cw_, prec_);
-
-                    PotHeaderWriter::write_candidate_hot(bpa, e);
-
-                    bpa << std::setprecision(
-                        e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
-                }
-            }
-
-            if(e.iter % trg_.dumpPotEvery == 0){
-                std::ofstream pa(std::string(trg_.dumpPotDir)
-                    + "/pot_" + std::to_string(e.iter) + ".tadah"
+        if(e.is_best) {
+            if(e.best_iter % trg_.dumpBestPotEvery == 0){
+                std::ofstream bpa(std::string(trg_.dumpBestPotDir)
+                    + "/best_pot_" + std::to_string(e.best_iter) + ".tadah"
                     + trg_.potArchiveSuffix);
 
-                PotHeaderWriter::write_archive_header(pa, e, cw_, prec_);
+                PotHeaderWriter::write_best_archive_header(
+                    bpa, e, trg_, cw_, prec_);
 
-                PotHeaderWriter::write_candidate_hot(pa, e);
+                PotHeaderWriter::write_candidate_hot(bpa, e);
 
-                pa << std::setprecision(
+                bpa << std::setprecision(
                     e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
             }
-
-            io_buf_.erase(next_flush_++);
-        } catch (const std::exception& ex) {
-            /* Same erase-on-throw as submit_result so the final drain
-             * cannot get stuck on a single bad iter. */
-            HPOLog::instance().warning(
-                std::string("HPO flush_remaining: dropping iter=") +
-                std::to_string(next_flush_.load()) +
-                " after exception: " + ex.what());
-            io_buf_.erase(next_flush_++);
-        } catch (...) {
-            HPOLog::instance().warning(
-                std::string("HPO flush_remaining: dropping iter=") +
-                std::to_string(next_flush_.load()) +
-                " after unknown exception");
-            io_buf_.erase(next_flush_++);
         }
-    }
+
+        if(e.iter % trg_.dumpPotEvery == 0){
+            std::ofstream pa(std::string(trg_.dumpPotDir)
+                + "/pot_" + std::to_string(e.iter) + ".tadah"
+                + trg_.potArchiveSuffix);
+
+            PotHeaderWriter::write_archive_header(pa, e, cw_, prec_);
+
+            PotHeaderWriter::write_candidate_hot(pa, e);
+
+            pa << std::setprecision(
+                e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
+        }
+    };
+
+    /* In iteration order; rows stranded behind a missing iteration are
+     * written too, with a journal warning (result_drain.h). The run is
+     * over, so no evaluation can fill the gap any more. */
+    drain_remaining_results(io_buf_, next_flush_, write_row,
+        [](const std::string& msg) { HPOLog::instance().warning(msg); });
 }
 
 #ifdef TADAH_BUILD_MPI

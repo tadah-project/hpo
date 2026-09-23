@@ -6,6 +6,7 @@
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/run_stop.h>
 
 #include <algorithm>
 #include <atomic>
@@ -172,6 +173,38 @@ template<class Vec,class Runner>
     auto feval = [&](const matrix<double,0,1>& x)->double
     {   return host( sp.out(x) ); };            // host expects real scale
 
+    /* find_min_global runs its evaluations on `tp`, and no exception may
+     * leave it while evaluations are still running. dlib rethrows a task's
+     * exception from its next add_task call, so find_min_global unwinds
+     * while the other tasks still use its stack frame, and ~thread_pool
+     * aborts the process when a second task threw as well -- which a
+     * signal (every evaluation started after it throws) and a RESTART
+     * stagnation stop (every evaluation ending after the window closed
+     * throws) make the rule with THREADS > 1. So a pool evaluation that
+     * throws stashes the exception (run_stop.h keeps the one that decides
+     * how the run ends), returns a placeholder loss and makes
+     * `stop_on_error` ask find_min_global to stop; the evaluations queued
+     * after it return the placeholder without running; find_min_global
+     * waits for the running ones and returns normally; and the stash is
+     * rethrown below -- the NLopt and ASA adapters' pattern. The
+     * placeholder is the loss a failed evaluation reports (FAILSCORE, by
+     * default the largest double); it never reaches the result files. */
+    ExceptionStash stopped;
+    const double not_evaluated =
+        sp.failscore.value_or(std::numeric_limits<double>::max());
+    auto pool_feval = [&](const matrix<double,0,1>& x)->double
+    {
+        if (stopped.has()) return not_evaluated;
+        try {
+            return feval(x);
+        } catch (...) {
+            stopped.offer(std::current_exception());
+            return not_evaluated;
+        }
+    };
+    const stop_condition stop_on_error =
+        [&stopped](double) { return stopped.has(); };
+
     /* ------- seed dlib with every point from sp.optim_init.
      * find_min_global() treats `initial_function_evals` as already-known
      * (x,y) pairs, so we evaluate each seed once here and hand the
@@ -194,6 +227,7 @@ template<class Vec,class Runner>
         x_seed.set_size(static_cast<long>(start_vec.size()));
         for (long i = 0; i < x_seed.size(); ++i)
           x_seed(i) = start_vec[static_cast<std::size_t>(i)];
+        /* Serial, before any pool task: an exception unwinds directly. */
         const double y_seed = feval(x_seed);
         init.emplace_back(x_seed, y_seed);
         if (maxeval != HUGE_UNSIGNED && maxeval > 0) --maxeval;
@@ -201,13 +235,15 @@ template<class Vec,class Runner>
       }
     }
 
-    find_min_global(tp, feval,
+    find_min_global(tp, pool_feval,
         lo, hi, sp.is_int,
         max_function_calls(maxeval),
         FOREVER,
         solver_eps,
-        init
+        init,
+        stop_on_error
         );
+    stopped.rethrow_if_any();
   }
 
 template<class Vec,class Runner>

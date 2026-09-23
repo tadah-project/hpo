@@ -60,12 +60,13 @@ int pc_worker_main(int /*argc*/, char** /*argv*/) {
 #else
   constexpr int kFd = 3;   /* inherited socketpair end (spawn recipe dup2) */
 
-  /* SIGINT/SIGTERM go to the whole foreground process group (Ctrl+C, SLURM);
-   * shutdown must stay PARENT-driven (SHUTDOWN frame / EOF) so the parent's
-   * graceful shutdown isn't polluted by a wave of dead-worker failscores.
+  /* The parent's stop signals go to the whole process group or job step
+   * (Ctrl+C, SLURM); shutdown must stay PARENT-driven (SHUTDOWN frame /
+   * EOF) so the parent's graceful shutdown isn't polluted by a wave of
+   * dead-worker failscores (kPcWorkerIgnoredSignals, pc_worker_pool.h).
    * PR_SET_PDEATHSIG(SIGKILL) from the spawn recipe covers parent crashes. */
-  std::signal(SIGINT, SIG_IGN);
-  std::signal(SIGTERM, SIG_IGN);
+  for (const int signo : kPcWorkerIgnoredSignals)
+    std::signal(signo, SIG_IGN);
 
   /* Minimal init (verified sufficient): the blueprint is embedded and lazily
    * parsed; model/descriptor registries are static-initialized; the only

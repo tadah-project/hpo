@@ -163,6 +163,16 @@ void HPOLog::open(const std::string& path,
 {
     std::lock_guard<std::mutex> lg(mtx_);
     t_start_ = std::chrono::system_clock::now();
+    /* A new journal starts without a termination status: a status recorded
+     * for an earlier run in this process (HPOLog is a singleton) must not
+     * become this run's trailer. */
+    last_status_.clear();
+    /* A journal an earlier run in this process left open -- one that ended
+     * before its trailer, with an error during its setup -- is closed
+     * first: opening an open stream fails, and this run's journal would
+     * silently go nowhere. */
+    if (f_.is_open()) f_.close();
+    f_.clear();
 
     f_.open(path, std::ios::out | std::ios::trunc);
     if (!f_.is_open()) {
@@ -555,7 +565,7 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         const bool is_multistart= (sp.strategy_type == StrategyType::MULTISTART && ms.n_starts > 1);
         const bool any_extra =
             is_multistart || has_prestage ||
-            (rs.after_stagnation > 0 && rs.max > 0) ||
+            rs.active() ||
             ns.autodetect || (ns.calibration_n >= 2);
         f_ << "  Run policy:\n";
         if (!any_extra) {
@@ -581,7 +591,7 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
                                     "PRESTAGE.EXPLORE.INNER init strategy:", "      ");
             }
         }
-        if (rs.after_stagnation > 0 && rs.max > 0) {
+        if (rs.active()) {
             f_ << "    RESTART AFTER_STAGNATION: " << rs.after_stagnation
                << "\n    RESTART MAX             : " << rs.max << "\n";
             if (!rs.init_strategy.chain.empty()) {
@@ -1517,6 +1527,12 @@ void HPOLog::set_status(const std::string& status_str)
 {
     std::lock_guard<std::mutex> lg(mtx_);
     last_status_ = status_str;
+}
+
+void HPOLog::clear_status()
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    last_status_.clear();
 }
 
 void HPOLog::finish(const std::string& status_str)

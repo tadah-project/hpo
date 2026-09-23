@@ -74,6 +74,13 @@ inline void run_inner(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host)
         "AUGLAG family)");
   }
 
+  /* This run starts without a termination status: the journal trailer
+   * of a run that ends on its own is the reason the optimiser run that
+   * ended it recorded (HPOLog::set_status), or COMPLETED -- never a status
+   * left behind by an earlier PRESTAGE phase, MULTISTART start or RESTART
+   * round. */
+  HPOLog::instance().clear_status();
+
   if (spec.lib == "TADAH") {
     if      (spec.algo == "RANDOM")    run_random   <Vec,Runner>(spec, host);
     else if (spec.algo == "GRID")      run_grid     <Vec,Runner>(spec, host);

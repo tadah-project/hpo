@@ -12,8 +12,10 @@
  * outside the optimiser adapters.
  */
 
+#include <cstdint>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -21,6 +23,8 @@
 
 /* RunPolicy<> + run_inner<> (the single-shot dispatch) live in
  * run_policy_base.h; this header builds the decorator stack on top. */
+#include <tadah/core/checkpoint.h>        // core::ShutdownRequested
+#include <tadah/hpo/durable_best.h>
 #include <tadah/hpo/run_policy_base.h>
 #include <tadah/hpo/init_strategy.h>
 #include <tadah/hpo/optimizer_caps.h>
@@ -64,6 +68,13 @@ public:
  * dlib::thread_pool in a follow-up. Each per-start run still
  * benefits from the shared worker pool (THREADS) that parallelises
  * the pc_lammps fan-out within a single evaluation.
+ *
+ * A start that fails is logged and the next one runs. Three exceptions
+ * end the whole multistart instead, because they are about the run, not
+ * the start: core::ShutdownRequested (a signal: hpo_run() ends the run),
+ * HPO_Host::StagnationStop (RESTART re-initialises the whole multistart
+ * from fresh points) and durable_best::Error (the incumbent can no longer
+ * be persisted).
  * -------------------------------------------------------------------- */
 template<class Vec, class Runner>
 class MultiStartPolicy : public RunPolicy<Vec,Runner> {
@@ -193,6 +204,12 @@ public:
       const double      best_before  = HPOLog::instance().best_loss();
       try {
         run_inner<Vec,Runner>(sub, host);
+      } catch (const core::ShutdownRequested&) {
+        throw;
+      } catch (const typename HPO_Host<Vec,Runner>::StagnationStop&) {
+        throw;
+      } catch (const durable_best::Error&) {
+        throw;
       } catch (const std::exception& e) {
         /* A failure in one start should not kill the whole batch. */
         HPOLog::instance().warning(
@@ -240,6 +257,12 @@ private:
  * The two phases:
  *   1. PRESTAGE (broad search):    spec.prestage          (e.g. DLIB:GFS)
  *   2. REFINEMENT (local sweep):   spec     (the outer)   (e.g. DLIB:BFGS)
+ *
+ * Under RESTART, a stagnating exploration hands its top-K over to the
+ * refinement early (the exploration catch below) instead of restarting,
+ * and the refinement starts with a fresh stagnation window. Stagnation in
+ * the refinement propagates, so RESTART re-runs the whole PRESTAGE --
+ * exploration and refinement -- from a fresh init.
  * -------------------------------------------------------------------- */
 template<class Vec, class Runner>
 class StagedPolicy : public RunPolicy<Vec,Runner> {
@@ -289,6 +312,11 @@ public:
       /* Stagnation during the PRESTAGE is a valid stop signal --
        * proceed to refinement with whatever we collected. */
     }
+    /* Stage boundary: the refinement gets a stagnation window of its own.
+     * Without this it inherited the exploration's count, so after a
+     * stagnating exploration its first evaluation already crossed the
+     * threshold. No-op without RESTART (threshold 0). */
+    HPO_Host<Vec,Runner>::reset_stagnation();
 
     /* Step 2: snapshot top-K, disable tracking. */
     auto topk = HPO_Host<Vec,Runner>::get_topk();
@@ -318,7 +346,8 @@ public:
 
     /* Step 3: prepare a refinement spec. Drop the PRESTAGE so we do not
      * recurse, replace optim_init with the top-K params, and run via
-     * MULTISTART (or a single-shot if K=1). */
+     * MULTISTART (or a single-shot if K=1), which runs candidate i with
+     * SEED + i (OptimizerSpec::seeded_starts() counts TOPK of them). */
     OptimizerSpec refine = spec;
     refine.prestage.reset();
     refine.optim_init.clear();
@@ -363,11 +392,31 @@ private:
  * build_run_policy() time.
  *
  * A restart needs StagnationStop to propagate out of the inner policy.
- * Three places absorb it today, so RESTART does not fire through them:
- * MultiStartPolicy's per-start catch, StagedPolicy's exploration catch
- * (deliberately: a stagnating exploration hands over to refinement), and
- * the NLopt C++ wrapper, which turns any exception thrown by the
- * objective into NLOPT_FAILURE.
+ * Every optimiser adapter lets it through (NLopt, DLIB:GFS and ASA stash
+ * the exception and rethrow it after the library returns; it leaves
+ * ceres::Solve and the other drivers by itself) and MultiStartPolicy
+ * rethrows it, so a restart re-initialises the whole
+ * inner policy: every MULTISTART start (as many as the fresh points
+ * allow), or the whole PRESTAGE -- its exploration starts from the fresh
+ * points unless it has an INIT chain of its own. The one place that
+ * absorbs it is StagedPolicy's exploration phase, which hands its top-K
+ * over to the refinement instead (see StagedPolicy).
+ *
+ * Restart r also runs every phase that has a SEED with a seed derived
+ * from it (OptimizerSpec::derive_restart_seeds: the outer spec
+ * SEED + r*seeded_starts() -- N_STARTS under MULTISTART, TOPK under
+ * PRESTAGE, 1 under PLAIN -- so no two starts of the run share a seed; the
+ * EXPLORE spec SEED + r), so a seeded stochastic optimiser draws new
+ * random numbers instead of replaying round 0's; round 0 keeps every SEED.
+ * An INNER block has no SEED: its search draws from the enclosing run's
+ * random stream. The journal's "RESTART r/MAX" line lists the derived
+ * seeds.
+ *
+ * When the MAX restarts are used up, the next stagnation ends the run
+ * normally, with the trailer "STOPPED -- stagnation, max restarts (MAX)
+ * used". The watchdog is armed only while this policy runs: however
+ * run() ends, the threshold is reset to 0, so a later run in the same
+ * process is not stopped by a stale window.
  * -------------------------------------------------------------------- */
 template<class Vec, class Runner>
 class RestartPolicy : public RunPolicy<Vec,Runner> {
@@ -389,6 +438,9 @@ public:
     OptimizerSpec cur = spec;
     std::size_t restarts = 0;
 
+    struct Disarm {
+      ~Disarm() { HPO_Host<Vec,Runner>::set_stagnation_threshold(0); }
+    } disarm;
     HPO_Host<Vec,Runner>::set_stagnation_threshold(window_);
     HPO_Host<Vec,Runner>::reset_stagnation();
 
@@ -398,9 +450,13 @@ public:
         break;
       } catch (const typename HPO_Host<Vec,Runner>::StagnationStop&) {
         if (restarts >= max_restarts_) {
+          const std::string used =
+              "max restarts (" + std::to_string(max_restarts_) + ") used";
           HPOLog::instance().info(
-              "RESTART: stagnation reached, max restarts ("
-              + std::to_string(max_restarts_) + ") used; stopping");
+              "RESTART: stagnation reached, " + used + "; stopping");
+          /* The run ends here, on stagnation: that is its trailer, not a
+           * status the stopped inner run may have recorded. */
+          HPOLog::instance().set_status("STOPPED -- stagnation, " + used);
           break;
         }
         ++restarts;
@@ -414,23 +470,48 @@ public:
           const std::size_t k_use = (refresh_k_ > 0) ? refresh_k_
                                                      : refresh_->default_k();
           auto pts = refresh_->generate(ic, k_use);
-          if (!pts.empty()) cur.optim_init = std::move(pts);
+          if (!pts.empty()) {
+            cur.optim_init = std::move(pts);
+            /* A PRESTAGE exploration that starts from the OUTER INIT
+             * points restarts from the fresh ones too. */
+            cur.share_init_with_nested_phases();
+          }
         }
+        /* Seeded phases draw new random numbers this round. */
+        cur.derive_restart_seeds(spec, restarts);
         HPO_Host<Vec,Runner>::reset_stagnation();
         {
           std::ostringstream oss;
           oss << "RESTART " << restarts << "/" << max_restarts_
               << " -- fresh init from "
               << (refresh_ ? refresh_->name() : std::string("(none)"));
+          const std::string seeds = describe_seeds(cur);
+          if (!seeds.empty()) oss << "; " << seeds;
           std::cout << "[HPO] " << oss.str() << "\n";
           HPOLog::instance().info(oss.str());
         }
       }
     }
-    HPO_Host<Vec,Runner>::set_stagnation_threshold(0);
   }
 
 private:
+  /* "SEED 6, EXPLORE SEED 1718": the seeds of the phases that have one
+   * (an INNER block has none); empty when none has. */
+  static std::string describe_seeds(const OptimizerSpec& s)
+  {
+    std::ostringstream oss;
+    const char* sep = "";
+    const auto add = [&](const char* phase,
+                         const std::optional<std::uint64_t>& seed) {
+      if (!seed) return;
+      oss << sep << phase << "SEED " << *seed;
+      sep = ", ";
+    };
+    add("", s.seed);
+    if (s.prestage) add("EXPLORE ", s.prestage->seed);
+    return oss.str();
+  }
+
   std::unique_ptr<RunPolicy<Vec,Runner>> inner_;
   std::size_t window_, max_restarts_;
   std::unique_ptr<InitStrategy> refresh_;
@@ -477,10 +558,10 @@ build_run_policy(const OptimizerSpec& spec, const HPOTargets* targets = nullptr)
       break;
   }
 
-  /* RESTART decorator: wraps every STRATEGY TYPE (see RestartPolicy for
-   * when a restart can fire). */
+  /* RESTART decorator: wraps every STRATEGY TYPE; a restart re-runs the
+   * whole inner policy (see RestartPolicy). */
   const auto& rs = spec.restart;
-  if (rs.after_stagnation > 0 && rs.max > 0) {
+  if (rs.active()) {
     auto refresh = build_init_strategy(rs.init_strategy);
     const std::size_t refresh_k = rs.init_strategy.k_total.value_or(0);
     return std::make_unique<RestartPolicy<Vec,Runner>>(

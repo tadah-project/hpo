@@ -38,8 +38,12 @@
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/nlopt_adapter.h>
 #include <tadah/hpo/optimizer_block.h>
+#include <tadah/hpo/result_drain.h>
+#include <tadah/hpo/run_driver.h>
 #include <tadah/hpo/run_policy.h>
+#include <tadah/hpo/run_stop.h>
 #include <tadah/hpo/runners.h>
 
 #include "anneal_test_support.h"
@@ -59,7 +63,9 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
+#include <new>
 #include <optional>
 #include <regex>
 #include <set>
@@ -1168,6 +1174,11 @@ TEST_CASE("Termination: a restarted seeded optimiser draws new points",
              it != std::sregex_iterator(); ++it)
             seeds.push_back((*it)[1]);
         CHECK(seeds == std::vector<std::string>{"5", "6", "7"});
+        /* The RESTART line names the derived seed. */
+        CHECK(journal.find("RESTART 1/2 -- fresh init from RANDOM; SEED 6\n")
+              != std::string::npos);
+        CHECK(journal.find("RESTART 2/2 -- fresh init from RANDOM; SEED 7\n")
+              != std::string::npos);
 
         const auto stops = stagnation_stops(journal);
         REQUIRE(stops.size() == 3u);
@@ -1229,6 +1240,8 @@ TEST_CASE("Termination: a restarted seeded exploration draws a new "
         CHECK(status == 0);
         const std::string journal = read_file("hpo_run.log");
         REQUIRE(journal.find("RESTART 1/1") != std::string::npos);
+        CHECK(journal.find("RESTART 1/1 -- fresh init from RANDOM; "
+                           "EXPLORE SEED 1718\n") != std::string::npos);
         CHECK(count_of(journal, "REFINEMENT: refining top-1") == 2u);
 
         /* One stagnation stop per round, in its refinement: round 1's
@@ -1279,6 +1292,10 @@ TEST_CASE("Termination: the MULTISTART starts of a restarted run never "
     const std::string journal = read_file("hpo_run.log");
     REQUIRE(journal_status(journal) ==
             "STOPPED -- stagnation, max restarts (2) used");
+    CHECK(journal.find("RESTART 1/2 -- fresh init from RANDOM; SEED 13\n")
+          != std::string::npos);
+    CHECK(journal.find("RESTART 2/2 -- fresh init from RANDOM; SEED 16\n")
+          != std::string::npos);
 
     check_start_seeds(journal, 10, 3, 3);
     check_run_files();
@@ -2247,4 +2264,261 @@ TEST_CASE("Termination: SIGINT during NOISE_CALIBRATION",
             CHECK(journal.find("NOISE CALIBRATION") == std::string::npos);
             CHECK(journal.find("-- PROGRESS ") == std::string::npos);
         });
+}
+
+/* ======================================================================
+ * drive_run(): every ending flushes the queued results and writes one
+ * trailer. The body evaluates known points through a real HPO_Host
+ * (QFLUSH 1000: nothing reaches the history files before the final flush)
+ * and then ends the way an optimiser can.
+ * ==================================================================== */
+
+namespace {
+
+constexpr std::size_t kDriverEvals = 7;
+
+void check_driver_files(const std::string& expected_status)
+{
+    CHECK(journal_status(read_file("hpo_run.log")) == expected_status);
+    CHECK(data_rows("loss.tadah").size() == kDriverEvals);
+    check_run_files();
+}
+
+}  // namespace
+
+TEST_CASE("Termination: drive_run completes a normal end with the "
+          "optimiser's status", "[HPO][termination][run_driver]")
+{
+    HostFixture fx;
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::drive_run(
+        [&] { fx.evaluate(kDriverEvals); }, fx.host, fx.log()));
+    CHECK(status == 0);
+    check_driver_files("COMPLETED");
+}
+
+TEST_CASE("Termination: drive_run ends a shutdown with the SHUTDOWN trailer "
+          "and the signal status", "[HPO][termination][run_driver]")
+{
+    HostFixture fx;
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::drive_run(
+        [&] {
+            fx.evaluate(kDriverEvals);
+            throw tadah::core::ShutdownRequested{};
+        }, fx.host, fx.log()));
+    /* No real signal in this process: the status is the no-signal case of
+     * shutdown_exit_status (the signal cases run in [.shutdown_*]). */
+    CHECK(status == tadah::hpo::shutdown_exit_status(
+                        tadah::core::SignalHandler::signal_seen()));
+    check_driver_files("SHUTDOWN (" + tadah::core::SignalHandler::reason() +
+                       ")");
+}
+
+TEST_CASE("Termination: drive_run rethrows an error after its trailer",
+          "[HPO][termination][run_driver]")
+{
+    HostFixture fx;
+    CHECK_THROWS_WITH(tadah::hpo::drive_run(
+        [&] {
+            fx.evaluate(kDriverEvals);
+            throw std::runtime_error("optimiser broke");
+        }, fx.host, fx.log()), "optimiser broke");
+    check_driver_files("STOPPED with error: optimiser broke");
+}
+
+TEST_CASE("Termination: drive_run rethrows a non-standard exception after "
+          "its trailer", "[HPO][termination][run_driver]")
+{
+    HostFixture fx;
+    CHECK_THROWS_AS(tadah::hpo::drive_run(
+        [&] {
+            fx.evaluate(kDriverEvals);
+            throw 42;
+        }, fx.host, fx.log()), int);
+    check_driver_files("STOPPED with unknown error");
+}
+
+TEST_CASE("Termination: drive_run ends a stagnation stop that no RESTART "
+          "consumed as an ordinary stop", "[HPO][termination][run_driver]")
+{
+    HostFixture fx;
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::drive_run(
+        [&] {
+            fx.evaluate(kDriverEvals);
+            throw Host::StagnationStop{};
+        }, fx.host, fx.log()));
+    CHECK(status == 0);
+    check_driver_files(
+        "STOPPED -- stagnation (no new best within the stagnation window)");
+}
+
+TEST_CASE("Termination: a signal stop exits with 128 + the signal number",
+          "[HPO][termination][run_driver]")
+{
+    using tadah::hpo::shutdown_exit_status;
+    CHECK(shutdown_exit_status(SIGINT) == 130);
+    CHECK(shutdown_exit_status(SIGTERM) == 143);
+    CHECK(shutdown_exit_status(SIGUSR2) == 128 + SIGUSR2);
+#ifdef __linux__
+    CHECK(shutdown_exit_status(SIGUSR2) == 140);
+#endif
+    /* A ShutdownRequested nobody's signal raised: not a success, and not a
+     * made-up signal either. */
+    CHECK(shutdown_exit_status(0) == EXIT_FAILURE);
+}
+
+/* ======================================================================
+ * The final flush writes every result, including those stranded behind
+ * an iteration that never arrived (the in-run writer must wait there).
+ * ==================================================================== */
+
+TEST_CASE("Termination: the final flush writes results stranded behind a "
+          "missing iteration, with a warning",
+          "[HPO][termination][flush]")
+{
+    struct Row { std::size_t iter; double loss; };
+    std::map<std::size_t, Row> buf;
+    std::atomic<std::size_t> next{1};
+    for (std::size_t it : {1u, 2u, 4u}) buf.emplace(it, Row{it, 0.5 * it});
+
+    std::vector<std::size_t> written;
+    std::vector<std::string> warnings;
+    const auto rep = tadah::hpo::drain_remaining_results(
+        buf, next,
+        [&](const Row& r) { written.push_back(r.iter); },
+        [&](const std::string& w) { warnings.push_back(w); });
+
+    CHECK(written == std::vector<std::size_t>{1, 2, 4});
+    CHECK(buf.empty());
+    CHECK(next.load() == 5u);
+    CHECK(rep.in_order == 2u);
+    CHECK(rep.stranded == 1u);
+    CHECK(rep.late == 0u);
+    CHECK(rep.dropped == 0u);
+    CHECK(rep.n_missing == 1u);
+    REQUIRE(warnings.size() == 1u);
+    CHECK(warnings[0] ==
+          "HPO flush_remaining: 1 result(s) stranded behind missing "
+          "iteration 3; writing them in iteration order (the missing "
+          "iteration has no row)");
+}
+
+TEST_CASE("Termination: the final flush writes late and stranded results and "
+          "reports every row it drops", "[HPO][termination][flush]")
+{
+    struct Row { std::size_t iter; };
+    std::map<std::size_t, Row> buf;
+    /* The in-run writer already skipped past 3 (gap-skip), so 3 is late;
+     * 7 and 9 have no result; 12 fails to write. */
+    std::atomic<std::size_t> next{6};
+    for (std::size_t it : {3u, 6u, 8u, 10u, 11u, 12u}) buf.emplace(it, Row{it});
+
+    std::vector<std::size_t> written;
+    std::vector<std::string> warnings;
+    const auto rep = tadah::hpo::drain_remaining_results(
+        buf, next,
+        [&](const Row& r) {
+            if (r.iter == 12) throw std::runtime_error("disk full");
+            written.push_back(r.iter);
+        },
+        [&](const std::string& w) { warnings.push_back(w); });
+
+    CHECK(written == std::vector<std::size_t>{6, 3, 8, 10, 11});
+    CHECK(buf.empty());
+    CHECK(next.load() == 13u);
+    CHECK(rep.in_order == 1u);
+    CHECK(rep.stranded == 3u);
+    CHECK(rep.late == 1u);
+    CHECK(rep.dropped == 1u);
+    CHECK(rep.n_missing == 2u);
+    REQUIRE(warnings.size() == 3u);
+    CHECK(warnings[0] ==
+          "HPO flush_remaining: 4 result(s) stranded behind missing "
+          "iterations 7, 9; writing them in iteration order (the missing "
+          "iterations have no row)");
+    CHECK(warnings[1] ==
+          "HPO flush_remaining: 1 late result(s) for iteration(s) 3 arrived "
+          "after the writer had skipped them; writing them out of sequence");
+    CHECK(warnings[2] ==
+          "HPO flush_remaining: dropping iter=12 after exception: disk full");
+}
+
+/* ======================================================================
+ * NLopt: which end of optimize() is the algorithm stopping itself.
+ * ==================================================================== */
+
+TEST_CASE("Termination: NLopt self-termination is told apart from failure",
+          "[HPO][termination][nlopt]")
+{
+    using tadah::hpo::nlopt_self_terminated;
+    /* NLOPT_FAILURE without and with an algorithm stop message. */
+    CHECK(nlopt_self_terminated(std::runtime_error("nlopt failure"), nullptr));
+    CHECK(nlopt_self_terminated(std::runtime_error("nlopt failure"), ""));
+    CHECK(nlopt_self_terminated(
+        std::runtime_error("starting step size led to simplex that was too "
+                           "small in dimension 0"),
+        "starting step size led to simplex that was too small in "
+        "dimension 0"));
+    /* NLOPT_ROUNDOFF_LIMITED: nlopt::roundoff_limited says
+     * "nlopt roundoff-limited", which a message test never matched. */
+    CHECK(nlopt_self_terminated(nlopt::roundoff_limited(), nullptr));
+    /* Failures. */
+    CHECK_FALSE(nlopt_self_terminated(nlopt::forced_stop(), nullptr));
+    CHECK_FALSE(nlopt_self_terminated(
+        std::invalid_argument("nlopt invalid argument"), nullptr));
+    CHECK_FALSE(nlopt_self_terminated(std::bad_alloc(), nullptr));
+    CHECK_FALSE(nlopt_self_terminated(std::runtime_error("something else"),
+                                      "a different stop message"));
+}
+
+/* ======================================================================
+ * Which exception ends a run when concurrent evaluations throw several
+ * (run_stop.h): an error, then a signal stop, then a stagnation stop.
+ * ==================================================================== */
+
+TEST_CASE("Termination: an error outranks a signal stop, which outranks a "
+          "stagnation stop", "[HPO][termination][stash]")
+{
+    using tadah::hpo::ExceptionStash;
+    using tadah::hpo::run_stop_rank;
+    const auto stagnation =
+        std::make_exception_ptr(tadah::hpo::StagnationStop{});
+    const auto signal =
+        std::make_exception_ptr(tadah::core::ShutdownRequested{});
+    const auto persist = std::make_exception_ptr(
+        tadah::hpo::durable_best::Error("cannot save best_pot.tadah"));
+
+    CHECK(run_stop_rank(nullptr) == -1);
+    CHECK(run_stop_rank(stagnation) == 0);
+    CHECK(run_stop_rank(signal) == 1);
+    CHECK(run_stop_rank(persist) == 2);
+    CHECK(run_stop_rank(std::make_exception_ptr(42)) == 2);
+    /* HPO_Host's stagnation stop is the same type for every host. */
+    CHECK(run_stop_rank(std::make_exception_ptr(Host::StagnationStop{})) == 0);
+
+    ExceptionStash stash;
+    CHECK_FALSE(stash.has());
+    CHECK(stash.take() == nullptr);
+    CHECK_NOTHROW(stash.rethrow_if_any());
+
+    stash.offer(stagnation);
+    stash.offer(signal);
+    stash.offer(stagnation);
+    CHECK_THROWS_AS(stash.rethrow_if_any(), tadah::core::ShutdownRequested);
+    CHECK_FALSE(stash.has());
+
+    stash.offer(signal);
+    stash.offer(persist);
+    stash.offer(signal);
+    stash.offer(std::make_exception_ptr(std::runtime_error("later error")));
+    REQUIRE(stash.has());
+    CHECK_THROWS_AS(stash.rethrow_if_any(), tadah::hpo::durable_best::Error);
+
+    /* A stash emptied by take() ranks from scratch. */
+    stash.offer(persist);
+    (void)stash.take();
+    stash.offer(stagnation);
+    CHECK_THROWS_AS(stash.rethrow_if_any(), tadah::hpo::StagnationStop);
 }

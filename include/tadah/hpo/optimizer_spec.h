@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <unordered_map>
 #include <tadah/hpo/log_index.h>
 #include <optional>
@@ -105,12 +106,17 @@ struct MultiStartSpec {
 
 /* RestartSpec -- `STRATEGY { RESTART/ENDRESTART }` decorator.
  * build_run_policy wraps every STRATEGY TYPE (PLAIN/MULTISTART/PRESTAGE)
- * in RestartPolicy; whether it restarts depends on HPO_Host::StagnationStop
- * reaching it (see RestartPolicy in run_policy.h). */
+ * in RestartPolicy; on HPO_Host::StagnationStop it re-runs the whole inner
+ * policy from a fresh init (see RestartPolicy in run_policy.h). */
 struct RestartSpec {
     std::size_t after_stagnation = 0;              // 0 disables
     std::size_t max              = 0;              // cap on restart count
     InitStrategySpec init_strategy;                // INIT chain to refresh on restart
+
+    /* RESTART takes effect only when both AFTER_STAGNATION and MAX are
+     * positive. The one rule for build_run_policy() and for the
+     * multi-rank dispatch, which refuses an active RESTART. */
+    bool active() const noexcept { return after_stagnation > 0 && max > 0; }
 };
 
 /* NoiseSpec -- `OPTIMIZER { NOISE/ENDNOISE }` block. */
@@ -184,7 +190,9 @@ struct OptimizerSpec {
 
     /* INNER/ENDINNER sub-block -- NLopt's local sub-algorithm
      * (used only with MLSL/G_MLSL_LDS/AUGLAG, which delegate inner
-     * work to a local optimiser via set_local_optimizer).
+     * work to a local optimiser via set_local_optimizer). It has no
+     * seed: NLopt draws the INNER search from the enclosing run's random
+     * stream (make_nlopt), so HPOTargets rejects SEED inside INNER.
      * The v1.0.0-v1.1.1 keyword `LOCAL/ENDLOCAL` was renamed to INNER. */
     std::unique_ptr<OptimizerSpec> inner;
 
@@ -276,6 +284,69 @@ struct OptimizerSpec {
             log_scaled[i] = (space->at(i).tf.kind == ScaleKind::Log);
         }
         parameter_labels = space ? space->labels() : std::vector<std::string>{};
+    }
+
+    /* The nested phases without an INIT chain of their own -- the
+     * PRESTAGE exploration and its INNER -- start from this spec's INIT
+     * points (optim_init). HPOTargets applies this once the OUTER chain is
+     * resolved, and RestartPolicy again after drawing the fresh points of a
+     * restart, so a restarted PRESTAGE explores from them. A phase with
+     * its own INIT chain keeps its own points. */
+    void share_init_with_nested_phases()
+    {
+        if (!prestage) return;
+        if (prestage->init_strategy_spec.chain.empty())
+            prestage->optim_init = optim_init;
+        if (prestage->inner &&
+            prestage->inner->init_strategy_spec.chain.empty())
+            prestage->inner->optim_init = optim_init;
+    }
+
+    /* The number of starts the strategy runs from this spec's SEED, start i
+     * with SEED + i: the N_STARTS starts of MULTISTART, the TOPK
+     * candidates a PRESTAGE refinement multistarts (StagedPolicy), and the
+     * one run of PLAIN. N_STARTS is parsed with every TYPE but counts only
+     * under MULTISTART. */
+    std::uint64_t seeded_starts() const noexcept
+    {
+        switch (strategy_type) {
+            case StrategyType::MULTISTART:
+                return std::max<std::uint64_t>(1, multistart.n_starts);
+            case StrategyType::PRESTAGE:
+                return std::max<std::uint64_t>(1, stage_topk);
+            case StrategyType::PLAIN:
+            default:
+                return 1;
+        }
+    }
+
+    /* The seeds of RESTART round `round` (1..MAX), derived from `round0`:
+     * the spec as parsed, whose SEEDs round 0 runs with. Every phase with
+     * a SEED gets a new one, so a restarted seeded stochastic optimiser
+     * draws a new random sequence instead of replaying round 0's from its
+     * new start point:
+     *  - this (outer) spec: SEED + round*seeded_starts(). Start i of the
+     *    strategy runs with SEED + i, so round r's starts use
+     *    SEED + r*seeded_starts() + i, which no other round uses (SEED 7,
+     *    TOPK 3: {7,8,9}, {10,11,12}, {13,14,15});
+     *  - the EXPLORE spec: SEED + round.
+     * An INNER spec has no SEED: NLopt draws the INNER search from the
+     * random stream of the enclosing block's run, which that block's
+     * derived SEED seeds (make_nlopt). A phase without SEED stays without
+     * one. The sums wrap modulo 2^64, like MULTISTART's. RestartPolicy
+     * applies this to its copy of the spec on every restart, together with
+     * share_init_with_nested_phases(); round 0 keeps every SEED. */
+    void derive_restart_seeds(const OptimizerSpec& round0, std::size_t round)
+    {
+        const std::uint64_t r = static_cast<std::uint64_t>(round);
+        const auto derive = [r](const std::optional<std::uint64_t>& s,
+                                std::uint64_t stride) {
+            return s ? std::optional<std::uint64_t>(*s + r * stride)
+                     : std::nullopt;
+        };
+        seed = derive(round0.seed, round0.seeded_starts());
+        if (prestage && round0.prestage)
+            prestage->seed = derive(round0.prestage->seed, 1);
     }
 
     /* Shim for hand-built specs (tests): low/high hold REAL bounds on

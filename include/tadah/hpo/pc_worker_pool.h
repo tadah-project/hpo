@@ -51,6 +51,7 @@
  * retired. */
 
 #include <atomic>
+#include <csignal>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -64,6 +65,16 @@
 
 namespace tadah {
 namespace hpo {
+
+/* The signals a worker ignores: exactly the stop signals the parent
+ * handles (core::SignalHandler::install(): SIGINT, SIGTERM, SIGUSR2). They
+ * reach the workers too when they are sent to the whole process group or
+ * job step -- Ctrl+C, `kill -<sig> -<pgid>`, SLURM `scancel` or
+ * `--signal=USR2@<seconds>` -- and a worker that died of one would turn
+ * the evaluation it is running into a FAILSCORE. The parent stops the
+ * run: the evaluations in flight finish and are recorded, then the
+ * workers are ended (SHUTDOWN frame / EOF). */
+inline constexpr int kPcWorkerIgnoredSignals[] = {SIGINT, SIGTERM, SIGUSR2};
 
 /* Raw key -> value-tokens map of a trial potential (Context::storage_snapshot
  * shape). The parent snapshots it once per eval; each channel diffs it

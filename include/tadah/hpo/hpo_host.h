@@ -36,6 +36,7 @@
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/bound_audit.h>
 #include <tadah/hpo/pot_header_writer.h>
+#include <tadah/hpo/run_stop.h>
 #include <tadah/mlip/analytics/analytics.h>
 #include <tadah/mlip/load_transforms.h>
 #include <tadah/mlip/structure_db.h>
@@ -179,9 +180,10 @@ public:
                               bool                         cache_miss,
                               bool                         ift_failed = false) const;
 
-    /* Test-only: reset the static comparator atomics to their freshly-
-     * constructed values. Used by regression tests to simulate process
-     * restart without spawning a new process. */
+    /* Test-only: reset the static comparator atomics, the evaluation
+     * counter, the result writer and the stagnation watchdog to their
+     * freshly-constructed values. Used by regression tests to simulate
+     * process restart without spawning a new process. */
     static void reset_globals_for_test();
     /** Reset only run-scoped best-comparator state while preserving the
      * monotonic evaluation counter/writer cursor. Used by fresh-run startup
@@ -221,7 +223,10 @@ public:
      *  filters and weighting knobs are deliberately not forwarded. */
     const mlip::LoadTransformReport& val_load_transform_report() const { return val_report_; }
 
-    /** Flush any results still in the queue (call after optimizer finishes). */
+    /** Write every result still queued, in iteration order -- including
+     *  results stranded behind an iteration that never arrived, with a
+     *  journal warning (result_drain.h). Call once the optimiser has
+     *  stopped; drive_run() does, however the run ends. */
     void flush_remaining() const;
 
     /* ---------- top-K tracking (used by StagedPolicy) ------------------ */
@@ -250,36 +255,14 @@ public:
     static std::size_t stagnation_count();
 
     /** Exception thrown by operator() to signal a stagnation-driven
-     *  abort. The RestartPolicy catches and re-enters with a fresh init. */
-    struct StagnationStop : public std::exception {
-      const char* what() const noexcept override { return "HPO stagnation threshold reached"; }
-    };
+     *  abort. The RestartPolicy catches and re-enters with a fresh init;
+     *  every optimiser adapter and MultiStartPolicy let it through. One
+     *  type for every host (run_stop.h), so the evaluation pools can rank
+     *  it against the other run-level stops. */
+    using StagnationStop = ::tadah::hpo::StagnationStop;
 
-
-    /* -------- adapter for NLopt C++ wrapper ----------------------------- */
-    static double nlopt_adapter_cpp(const std::vector<double>& x,
-        std::vector<double>&       grad,
-        void*                      data)
-    {
-      auto* self = static_cast<const HPO_Host*>(data);
-      if (!grad.empty()) {};               // no analytic gradient
-      return (*self)(make_param_vec(static_cast<unsigned>(x.size()),
-            x.data()));
-    }
 
 private:
-
-
-    // helper that converts the raw array coming from NLopt -----------------
-    static ParamVec make_param_vec(unsigned n, const double* x)
-    {
-      ParamVec v;                   // v is a dlib::matrix<double,0,1>
-      v.set_size(n);
-      for (unsigned i = 0; i < n; ++i)
-        v(i) = x[i];
-      return v;
-    }
-
 
     /* ---------- immutable after construction --------------------------- */
     core::Context                master_ctx_;
