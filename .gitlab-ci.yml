@@ -109,7 +109,7 @@ lint_codespell:
         }
       fi
       export PATH="$HOME/.local/bin:$PATH"
-      codespell --skip='./build*,./external,./_deps,./tests/data,./tests/catch2,./examples/*/best_*' --ignore-words-list='Strat,strat,MAPE,mape,lamda,lamdas,fof,unparseable,re-use,re-uses,re-used,re-using,nd,SEH' || true
+      codespell --skip='./build*,./external,./_deps,./tests/data,./examples/*/best_*' --ignore-words-list='Strat,strat,MAPE,mape,lamda,lamdas,fof,unparseable,re-use,re-uses,re-used,re-using,nd,SEH' || true
   allow_failure: true
 
 # ---- Source-tarball release (tag-gated) --------------------------------

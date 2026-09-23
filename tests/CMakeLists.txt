@@ -1,5 +1,7 @@
+# Catch2 and its test discovery come from cmake-tools (tadah_setup_tests()).
+tadah_setup_tests()
 
-file(GLOB tests_src "*.cpp")
+file(GLOB tests_src CONFIGURE_DEPENDS "*.cpp")
 #file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/tests_data DESTINATION .)
 
 add_executable(test_hpo ${tests_src})
@@ -22,14 +24,15 @@ if(DEFINED ENV{TADAH_PATH})
         "TADAH_BENCH_DEFAULT_POT=\"${_tadah_bench_default_pot}\"")
 endif()
 
-include(Catch.cmake)
+include(Catch)
 catch_discover_tests(test_hpo)
 
 # Statistical validation suite (equilibrium sampling, swap acceptance,
 # transport): hidden Catch2 tag [.statistical], excluded from the default
 # run; exposed as one labelled ctest entry for `ctest -L statistical`.
+# --warn NoTests: a tag that matches no test case fails instead of passing.
 add_test(NAME hpo_anneal_statistical
-    COMMAND test_hpo "[.statistical]")
+    COMMAND test_hpo "[.statistical]" --warn NoTests)
 set_tests_properties(hpo_anneal_statistical PROPERTIES
     LABELS "anneal;statistical"
     TIMEOUT 900)
@@ -38,7 +41,7 @@ set_tests_properties(hpo_anneal_statistical PROPERTIES
 # [.corana1987], armed by the transcribed reference table
 # tests/data/corana1987_protocol.tsv (reports SKIPPED while empty).
 add_test(NAME hpo_corana1987_protocol
-    COMMAND test_hpo "[.corana1987]")
+    COMMAND test_hpo "[.corana1987]" --warn NoTests)
 set_tests_properties(hpo_corana1987_protocol PROPERTIES
     LABELS "anneal;statistical"
     TIMEOUT 900)
