@@ -6,8 +6,11 @@
 
 #include <tadah/hpo/pc_worker_wire.h>
 
+#include <chrono>
+#include <climits>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <vector>
@@ -128,4 +131,36 @@ TEST_CASE("pcwire frames over a socketpair", "[pc_wire]") {
 
   if (sv[0] >= 0) ::close(sv[0]);
   if (sv[1] >= 0) ::close(sv[1]);
+}
+
+TEST_CASE("pcwire readn: a deadline beyond INT_MAX milliseconds is kept",
+          "[pc_wire][timeout]") {
+  /* poll() takes an int timeout. readn passed static_cast<int>(deadline),
+   * so a longer deadline wrapped: 2^32 + 50 ms (about 49.7 days, the
+   * derived deadline of a script timeout near 400 hours) became 50 ms, and
+   * the worker was killed at once; one in (INT_MAX, 2^32) became negative,
+   * i.e. no deadline at all. The wait is now sliced into polls of at most
+   * INT_MAX ms. */
+  int sv[2];
+  REQUIRE(::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+  const long deadline_ms = (1L << 32) + 50;
+  REQUIRE(deadline_ms > INT_MAX);
+  std::thread writer([&] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    const char c = 'x';
+    pcwire::writen(sv[0], &c, 1);
+  });
+  char got = 0;
+  const bool arrived = pcwire::readn(sv[1], &got, 1, deadline_ms);
+  writer.join();
+  CHECK(arrived);
+  CHECK(got == 'x');
+
+  /* A short deadline still expires, and 0 polls once. */
+  const auto t0 = std::chrono::steady_clock::now();
+  CHECK_FALSE(pcwire::readn(sv[1], &got, 1, 60));
+  CHECK(std::chrono::steady_clock::now() - t0 >= std::chrono::milliseconds(50));
+  CHECK_FALSE(pcwire::readn(sv[1], &got, 1, 0));
+  ::close(sv[0]);
+  ::close(sv[1]);
 }

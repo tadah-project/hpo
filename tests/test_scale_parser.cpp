@@ -198,7 +198,92 @@ ENDOPTIMIZER
 )");
   auto ctx = watom_ctx();
   REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, in.path.string()),
-                      Catch::Contains("expects a numeric fraction"));
+                      Catch::Contains("STEP WATOM must be a finite number, "
+                                      "got 'abc'"));
+}
+
+namespace {
+
+/* What HPOTargets says about a STRATEGY block of `lib`/`algo` with
+ * `lines` (from line 8) after WATOM's OPTIM line; "" when it accepts it. */
+std::string strategy_lines_error(const std::string& lib, const std::string& algo,
+                                 const std::string& lines)
+{
+  ScopedTempFile in(std::string(kOptim) +
+                    "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB " + lib +
+                    "\n    ALGO " + algo + "\n    MAXEVAL 5\n" + lines +
+                    "  ENDSTRATEGY\nENDOPTIMIZER\n");
+  auto ctx = watom_ctx();
+  try {
+    tadah::hpo::HPOTargets trg(ctx, in.path.string());
+  } catch (const std::exception& e) {
+    return e.what();
+  }
+  return "";
+}
+
+}  // namespace
+
+TEST_CASE("STEP values and override indices are parsed strictly at the line",
+          "[HPO][scale][parser][step][strict_numbers]")
+{
+  /* The STEP line is line 8. `STEP inf` passed the parser and failed
+   * later without a line; `STEP 5x` and `STEP 1e-320` were taken for an
+   * override key; the index list of `STEP KEY(3x) f` went through the
+   * lenient core::parse_indices, which dropped '3x' with a message on
+   * stderr, and the empty list then meant every index of the key. */
+  const auto err = [](const std::string& line) {
+    return strategy_lines_error("NLOPT", "LN_SBPLX", "    " + line + "\n");
+  };
+  CHECK(err("STEP 0.1") == "");
+  CHECK(err("STEP WATOM(1) 0.3") == "");
+  struct Case { std::string line, message; };
+  for (const auto& c : std::vector<Case>{
+           {"STEP inf", "STEP must be a finite number, got 'inf'"},
+           {"STEP nan", "STEP must be a finite number, got 'nan'"},
+           {"STEP -inf", "STEP must be a finite number, got '-inf'"},
+           {"STEP 5x", "STEP must be a finite number, got '5x'"},
+           {"STEP 1e-320", "STEP must be a finite number, got '1e-320' (too "
+                           "small"},
+           {"STEP WATOM inf", "STEP WATOM must be a finite number, got 'inf'"},
+           {"STEP WATOM(1) 0.3x",
+            "STEP WATOM(1) must be a finite number, got '0.3x'"},
+           {"STEP WATOM", "STEP WATOM requires a value"},
+           {"STEP WATOM(3x) 0.3",
+            "STEP override 'WATOM(3x)': bad index list (Invalid index number "
+            "'3x')"},
+           {"STEP WATOM(1,x) 0.3",
+            "STEP override 'WATOM(1,x)': bad index list (Invalid index number "
+            "'x')"},
+           {"STEP WATOM(0) 0.3",
+            "STEP override 'WATOM(0)': bad index list (indices start at 1)"}}) {
+    INFO(c.line);
+    CHECK_THAT(err(c.line),
+               Catch::StartsWith("Error on line 8: " + c.message) &&
+               Catch::EndsWith("Line:     " + c.line));
+  }
+}
+
+TEST_CASE("PARAM: a numeric value is a finite number checked at the line",
+          "[HPO][scale][parser][param][strict_numbers]")
+{
+  /* `PARAM fd_step inf` passed the parser and failed once the optimiser
+   * ran; `PARAM fd_step 5x` was kept as a text value, which DLIB:BFGS
+   * never reads, so the step silently stayed at its default. A value
+   * that starts like a number must be one; a word stays a text value. */
+  const auto err = [](const std::string& line) {
+    return strategy_lines_error("DLIB", "BFGS", "    " + line + "\n");
+  };
+  CHECK(err("PARAM fd_step 1e-3") == "");
+  CHECK(err("PARAM fd_kernel inhouse") == "");
+  for (const std::string tok : {"inf", "nan", "-inf", "5x", "1e-3x", "-.5x",
+                                "1e-320", "1e400"}) {
+    INFO(tok);
+    CHECK_THAT(err("PARAM fd_step " + tok),
+               Catch::StartsWith("Error on line 8: PARAM fd_step must be a "
+                                 "finite number, got '" + tok + "'") &&
+               Catch::EndsWith("Line:     PARAM fd_step " + tok));
+  }
 }
 
 TEST_CASE("OPTIM grammar is strict: stray tokens are an error",

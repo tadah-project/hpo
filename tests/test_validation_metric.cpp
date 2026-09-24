@@ -187,7 +187,8 @@ TEST_CASE("PC finite number validation survives release fast math", "[pc_dataset
     CHECK_FALSE(metric_value_is_finite(std::numeric_limits<double>::infinity()));
     CHECK_FALSE(metric_value_is_finite(std::numeric_limits<double>::quiet_NaN()));
     CHECK(metric_value_is_finite(std::numeric_limits<double>::max()));
-    for (const auto* token : {"nan", "inf", "-inf", "1e999", "1junk", "+-1", ""})
+    for (const auto* token : {"nan", "inf", "-inf", "1e999", "1junk", "+-1", "",
+                              "0x1p4", "0X10", "+0x1"})
         CHECK_THROWS(parse_metric_number(token));
     CHECK(parse_metric_number("+1e2") == 100);
 }

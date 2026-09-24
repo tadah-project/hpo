@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <iterator>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -88,6 +89,20 @@ pid_t find_worker_child() {
 }
 
 }  // namespace
+
+TEST_CASE("pc pool: a width below 1 is rejected", "[pc_pool]") {
+  /* THREADS is at least 1 at its line; a pool built with a width below 1
+   * used to be raised to one worker without a word (and then failed the
+   * per-slot table check with an unrelated message). It throws, as
+   * ScriptExecutor does, before any worker is spawned. */
+  for (const int width : {0, -1, -8}) {
+    INFO("width " << width);
+    CHECK_THROWS_AS(PcWorkerPool(width, {}, 0.0), std::invalid_argument);
+    CHECK_THROWS_WITH(PcWorkerPool(width, {}, 0.0),
+                      "PcWorkerPool: the width must be at least 1 worker, "
+                      "got " + std::to_string(width));
+  }
+}
 
 TEST_CASE("pc pool: spawn, handshake, task round-trip, shutdown",
           "[pc_pool]") {

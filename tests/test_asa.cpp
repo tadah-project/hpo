@@ -231,6 +231,13 @@ TEST_CASE("ASA options: indexed per-dim grammar", "[HPO][asa][options]")
         REQUIRE_THROWS_WITH(parse_asa_options(sp, 3),
                             Catch::Contains("malformed"));
     }
+    SECTION("an index too large for a long names the PARAM") {
+        /* std::stol threw a bare "stol". */
+        sp.param = {{"User_Quench_Param_Scale[99999999999999999999]", 0.5}};
+        REQUIRE_THROWS_WITH(parse_asa_options(sp, 3),
+                            Catch::Contains("PARAM 'User_Quench_Param_Scale"
+                                            "[99999999999999999999]'"));
+    }
     SECTION("indexed form on a scalar key") {
         sp.param = {{"Limit_Acceptances[0]", 10}};
         REQUIRE_THROWS_WITH(parse_asa_options(sp, 3),

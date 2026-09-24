@@ -360,3 +360,33 @@ TEST_CASE("registry: defaults in the generated header match the parsed "
         }
     }
 }
+
+TEST_CASE("registry: the INIT_MODE JITTER numbers take the decimal number "
+          "grammar", "[HPO][anneal_core][registry][hex]")
+{
+    /* PARAM INIT_MODE JITTER <fraction> | JITTER AUTO <p>: the extras are
+     * numbers of the one grammar every key reads, the decimal one LAMMPS
+     * reads. std::stod read hexadecimal floats, so `JITTER 0x1p-3` ran with
+     * a fraction of 0.125. */
+    auto jitter = [](std::vector<std::string> toks) {
+        auto sp = registry_base_spec(anneal::AlgoKind::PT);
+        sp.param_raw["INIT_MODE"] = "JITTER";
+        sp.param_tokens["INIT_MODE"] = std::move(toks);
+        return sp;
+    };
+    CHECK(anneal::Knobs::parse(jitter({"JITTER", "0.125"}),
+                               anneal::AlgoKind::PT)
+              .init_jitter_frac == 0.125);
+    CHECK(anneal::Knobs::parse(jitter({"JITTER", "AUTO", "5e-2"}),
+                               anneal::AlgoKind::PT)
+              .init_jitter_tol == 0.05);
+    REQUIRE_THROWS_WITH(
+        anneal::Knobs::parse(jitter({"JITTER", "0x1p-3"}), anneal::AlgoKind::PT),
+        Catch::Contains("PARAM INIT_MODE JITTER fraction must be a finite "
+                        "number (got '0x1p-3')"));
+    REQUIRE_THROWS_WITH(
+        anneal::Knobs::parse(jitter({"JITTER", "AUTO", "0x1p-4"}),
+                             anneal::AlgoKind::PT),
+        Catch::Contains("PARAM INIT_MODE JITTER AUTO tolerance must be a "
+                        "finite number (got '0x1p-4')"));
+}

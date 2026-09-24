@@ -106,6 +106,22 @@ TEST_CASE("LammpsSim does not inject when maxtime is off (default)",
     REQUIRE(count_timer_lines(sim.script_lines) == 0);
 }
 
+TEST_CASE("LammpsSim does not inject when maxtime is unlimited",
+          "[lammps_sim][timeout]") {
+    /* 'unlimited' is LAMMPS' other spelling of no limit. Injected, `timer
+     * timeout unlimited` leaves $(timeremain) at 0.0, so the section guard
+     * aborted every multi-section script as timed out. */
+    ScopedTempFile script(SIMPLE_BODY);
+    std::string cmd = "--script " + script.path.string() +
+                      " --varloss foo 0.0 1.0";
+    tadah::hpo::LammpsSim root(cmd, "unlimited", 1.0e6, tadah::LossFunction{});
+    CHECK(count_timer_lines(root.script_lines) == 0);
+
+    std::string own = cmd + " --maxtime unlimited";
+    tadah::hpo::LammpsSim line(own, "5", 1.0e6, tadah::LossFunction{});
+    CHECK(count_timer_lines(line.script_lines) == 0);
+}
+
 TEST_CASE("LammpsSim does not inject when the script has its own timer",
           "[lammps_sim][timeout]") {
     ScopedTempFile script("clear\nunits lj\ntimer timeout 30 every 10\n"

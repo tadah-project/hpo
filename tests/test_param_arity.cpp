@@ -81,6 +81,12 @@ TEST_CASE("param_takes_another_value: the INIT_MODE grammar",
      * read_optimizer_block()'s flat token stream being eaten. */
     CHECK_FALSE(param_takes_another_value("INIT_MODE", {"JITTER"}, "SEED"));
     CHECK_FALSE(param_takes_another_value("INIT_MODE", {"JITTER"}, "rubbish"));
+    /* A token shaped like a number is the fraction (is_number_shaped), read
+     * with the number grammar at its line: `5x` and `0x1p-3` are errors
+     * that name the fraction. `5x` used to be left behind as a stray token,
+     * and `0x1p-3` was read as 0.125. */
+    CHECK(param_takes_another_value("INIT_MODE", {"JITTER"}, "5x"));
+    CHECK(param_takes_another_value("INIT_MODE", {"JITTER"}, "0x1p-3"));
 
     /* Nothing follows a completed form. */
     CHECK_FALSE(param_takes_another_value("INIT_MODE", {"JITTER", "0.01"}, "9"));
@@ -140,7 +146,8 @@ TEST_CASE("PARAM: a stray token on a single-value key is left on the line",
           "[hpo][param][arity]")
 {
     /* dispatch_opt_attr consumes only what the key defines; HPOTargets::read
-     * turns this residue into "line N: PARAM takes no further value here". */
+     * turns this residue into "Error on line N: PARAM takes no further
+     * value here (unexpected '0.3')". */
     std::string leftover;
     const auto sp = parse_line("PARAM STEP_FRAC 0.15 0.3", leftover);
 

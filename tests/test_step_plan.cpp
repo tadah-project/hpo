@@ -9,7 +9,9 @@
 #include <tadah/hpo/scale_validation.h>
 
 #include <cmath>
+#include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 using namespace tadah::hpo;
@@ -188,6 +190,35 @@ TEST_CASE("NLopt adapter: the plan's vector reaches nlopt; default is read back"
         sp.inner = std::make_unique<OptimizerSpec>(spec("LN_BOBYQA", false));
         sp.inner->step = 0.1;
         REQUIRE_NOTHROW(make_nlopt(sp, 2, nullptr));
+    }
+}
+
+TEST_CASE("NLopt adapter: a MAXEVAL above the int NLopt counts in is refused, "
+          "not wrapped", "[HPO][nlopt][strict_numbers]")
+{
+    /* nlopt::opt::set_maxeval takes an int, and MAXEVAL (a uint64) was
+     * passed on with an implicit conversion: 4294967299 became 3 and
+     * 2147483648 a negative budget, which NLopt reads as no limit.
+     * HPOTargets bounds MAXEVAL at its line; a spec built another way, for
+     * the run or its INNER, is refused here. */
+    auto sp = spec("LN_SBPLX", false);
+    sp.stop.maxeval = 2147483647u;
+    CHECK(make_nlopt(sp, 2, nullptr).get_maxeval() == 2147483647);
+    for (const std::uint64_t n : {std::uint64_t{2147483648u},
+                                  std::uint64_t{4294967299u}}) {
+        INFO("MAXEVAL " << n);
+        sp.stop.maxeval = n;
+        CHECK_THROWS_WITH(make_nlopt(sp, 2, nullptr),
+                          "NLopt spec with MAXEVAL " + std::to_string(n) +
+                          ": NLopt counts evaluations in an int (at most "
+                          "2147483647)");
+        auto outer = spec("G_MLSL_LDS", false);
+        outer.inner = std::make_unique<OptimizerSpec>(spec("LN_SBPLX", false));
+        outer.inner->stop.maxeval = n;
+        CHECK_THROWS_WITH(make_nlopt(outer, 2, nullptr),
+                          "NLopt spec with MAXEVAL " + std::to_string(n) +
+                          ": NLopt counts evaluations in an int (at most "
+                          "2147483647)");
     }
 }
 

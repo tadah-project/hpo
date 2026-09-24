@@ -7,6 +7,7 @@
 #include <numeric>
 #include <set>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -114,4 +115,23 @@ TEST_CASE("ScriptExecutor reused across many batches keeps workers warm",
     });
   }
   REQUIRE(total == 20L * (49 * 50 / 2));   // 20 rounds * sum(0..49)
+}
+
+TEST_CASE("ScriptExecutor needs at least one worker", "[script_executor]") {
+  /* THREADS sizes the pool; the parser rejects THREADS 0. A width below
+   * one used to become one worker without a word, here and in
+   * init_script_executor. */
+  for (int width : {0, -1, -8}) {
+    INFO("width " << width);
+    CHECK_THROWS_WITH(ScriptExecutor(width),
+                      "ScriptExecutor needs at least one worker, got " +
+                          std::to_string(width));
+    const int before = tadah::hpo::detail::script_executor_width().load();
+    CHECK_THROWS_WITH(tadah::hpo::init_script_executor(width),
+                      "the script executor needs at least one worker "
+                      "(THREADS >= 1), got " + std::to_string(width));
+    CHECK(tadah::hpo::detail::script_executor_width().load() == before);
+  }
+  ScriptExecutor one(1);
+  CHECK(one.width() == 1);
 }

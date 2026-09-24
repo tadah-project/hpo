@@ -53,9 +53,23 @@ std::filesystem::path temp_path(const std::string& stem) {
             + std::to_string(++counter));
 }
 
+/* Every file this process writes, removed when it exits (they were left
+ * behind in TMPDIR, one set per test process). */
+struct WrittenFiles {
+    std::vector<std::filesystem::path> paths;
+    ~WrittenFiles() {
+        for (const auto& p : paths) {
+            std::error_code ec;
+            std::filesystem::remove(p, ec);
+        }
+    }
+};
+
 std::filesystem::path write_file(const std::string& stem,
                                  const std::string& body) {
+    static WrittenFiles written;
     auto p = temp_path(stem);
+    written.paths.push_back(p);
     std::ofstream f(p);
     f << body;
     return p;
