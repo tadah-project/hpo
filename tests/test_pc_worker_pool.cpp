@@ -114,18 +114,18 @@ TEST_CASE("pc pool: spawn, handshake, task round-trip, shutdown",
    * proving HELLO/TASK/RESULT framing, seq echo, and status transport. */
   for (int slot = 0; slot < 2; ++slot) {
     const PcTaskResult res =
-        pool.execute(slot, 0, /*iter=*/1, pot, {}, "off");
+        pool.execute(slot, 0, /*iter=*/1, pot, {}, /*script_timeout_s=*/std::nullopt);
     INFO("slot " << slot << " error: " << res.error_msg);
     CHECK(res.status == PcTaskStatus::POT_BUILD_FAIL);
   }
 
   /* Same iter again: has_pot=false (parent-side pot cache) and the worker's
    * per-iter negative cache answers without re-running the throwing ctor. */
-  const PcTaskResult res2 = pool.execute(0, 0, /*iter=*/1, pot, {}, "off");
+  const PcTaskResult res2 = pool.execute(0, 0, /*iter=*/1, pot, {}, /*script_timeout_s=*/std::nullopt);
   CHECK(res2.status == PcTaskStatus::POT_BUILD_FAIL);
 
   /* New iter: pot is re-shipped and the ctor re-attempted. */
-  const PcTaskResult res3 = pool.execute(0, 0, /*iter=*/2, pot, {}, "off");
+  const PcTaskResult res3 = pool.execute(0, 0, /*iter=*/2, pot, {}, /*script_timeout_s=*/std::nullopt);
   CHECK(res3.status == PcTaskStatus::POT_BUILD_FAIL);
 
   pool.shutdown();   /* explicit + idempotent (dtor calls it again) */
@@ -142,9 +142,9 @@ TEST_CASE("pc pool: CREATE_FAIL is reported and retried per task",
   PcWorkerPool pool(1, specs_for(1, sp), 0.0);
   const auto pot = invalid_pot_map();
 
-  const PcTaskResult r1 = pool.execute(0, 0, 1, pot, {}, "off");
+  const PcTaskResult r1 = pool.execute(0, 0, 1, pot, {}, /*script_timeout_s=*/std::nullopt);
   CHECK(r1.status == PcTaskStatus::CREATE_FAIL);
-  const PcTaskResult r2 = pool.execute(0, 0, 1, pot, {}, "off");
+  const PcTaskResult r2 = pool.execute(0, 0, 1, pot, {}, /*script_timeout_s=*/std::nullopt);
   CHECK(r2.status == PcTaskStatus::CREATE_FAIL);
 }
 
@@ -154,18 +154,18 @@ TEST_CASE("pc pool: worker-side task error is reported in-band",
   const auto pot = invalid_pot_map();
 
   /* Healthy round-trip first (also zeroes consec_deaths). */
-  CHECK(pool.execute(0, 0, 1, pot, {}, "off").status ==
+  CHECK(pool.execute(0, 0, 1, pot, {}, /*script_timeout_s=*/std::nullopt).status ==
         PcTaskStatus::POT_BUILD_FAIL);
 
   /* Out-of-range script_idx: the worker's task loop catches it and replies
    * RUN_FAIL with an error message -- the worker STAYS ALIVE (in-band error
    * path, no kill/respawn). */
-  const PcTaskResult oor = pool.execute(0, /*script_idx=*/99, 1, pot, {}, "off");
+  const PcTaskResult oor = pool.execute(0, /*script_idx=*/99, 1, pot, {}, /*script_timeout_s=*/std::nullopt);
   CHECK(oor.status == PcTaskStatus::RUN_FAIL);
   CHECK_FALSE(oor.error_msg.empty());
 
   /* And the same channel still works afterwards: */
-  CHECK(pool.execute(0, 0, 2, pot, {}, "off").status ==
+  CHECK(pool.execute(0, 0, 2, pot, {}, /*script_timeout_s=*/std::nullopt).status ==
         PcTaskStatus::POT_BUILD_FAIL);
 }
 
@@ -175,7 +175,7 @@ TEST_CASE("pc pool: killing the worker process is contained and respawned",
    * tasks. */
   PcWorkerPool pool(1, specs_for(1, minimal_spec()), 0.0);
   const auto pot = invalid_pot_map();
-  REQUIRE(pool.execute(0, 0, 1, pot, {}, "off").status ==
+  REQUIRE(pool.execute(0, 0, 1, pot, {}, /*script_timeout_s=*/std::nullopt).status ==
           PcTaskStatus::POT_BUILD_FAIL);
 
   const pid_t child = find_worker_child();
@@ -189,11 +189,11 @@ TEST_CASE("pc pool: killing the worker process is contained and respawned",
    * returns a parent-synthesized KILLED (distinct from the wire-returned
    * RUN_FAIL: the parent knows the worker died rather than the script
    * failing, so FAILSCORE_GRADING can band it as not-completed)... */
-  const PcTaskResult dead = pool.execute(0, 0, 2, pot, {}, "off");
+  const PcTaskResult dead = pool.execute(0, 0, 2, pot, {}, /*script_timeout_s=*/std::nullopt);
   CHECK(dead.status == PcTaskStatus::KILLED);
 
   /* ...and the one after that runs on a fresh worker. */
-  const PcTaskResult alive = pool.execute(0, 0, 3, pot, {}, "off");
+  const PcTaskResult alive = pool.execute(0, 0, 3, pot, {}, /*script_timeout_s=*/std::nullopt);
   CHECK(alive.status == PcTaskStatus::POT_BUILD_FAIL);
 }
 
@@ -207,7 +207,7 @@ TEST_CASE("pc pool: a worker survives the stop signals sent to its process "
    * the worker. */
   PcWorkerPool pool(1, specs_for(1, minimal_spec()), 0.0);
   const auto pot = invalid_pot_map();
-  REQUIRE(pool.execute(0, 0, 1, pot, {}, "off").status ==
+  REQUIRE(pool.execute(0, 0, 1, pot, {}, /*script_timeout_s=*/std::nullopt).status ==
           PcTaskStatus::POT_BUILD_FAIL);
   const pid_t child = find_worker_child();
   REQUIRE(child > 0);
@@ -218,7 +218,7 @@ TEST_CASE("pc pool: a worker survives the stop signals sent to its process "
     REQUIRE(::kill(child, signo) == 0);
     /* A signal that kills the worker is fatal before it can run the next
      * task, which then comes back KILLED; an ignored one changes nothing. */
-    const PcTaskResult r = pool.execute(0, 0, iter++, pot, {}, "off");
+    const PcTaskResult r = pool.execute(0, 0, iter++, pot, {}, /*script_timeout_s=*/std::nullopt);
     CHECK(r.status == PcTaskStatus::POT_BUILD_FAIL);
   }
   /* Still the same worker process. */
@@ -271,7 +271,7 @@ TEST_CASE("pc pool: repeated deaths throttle a channel, they do not retire it",
 
   for (int i = 0; i < PcWorkerPool::PC_MAX_CONSEC_DEATHS; ++i) {
     const PcTaskResult r = pool.execute(0, 0, static_cast<std::uint64_t>(i),
-                                        pot, {}, "off");
+                                        pot, {}, /*script_timeout_s=*/std::nullopt);
     CHECK(r.status == PcTaskStatus::KILLED);
   }
 
@@ -281,7 +281,7 @@ TEST_CASE("pc pool: repeated deaths throttle a channel, they do not retire it",
   PcTaskResult after;
   CHECK_NOTHROW(after = pool.execute(
       0, 0, static_cast<std::uint64_t>(PcWorkerPool::PC_MAX_CONSEC_DEATHS),
-      pot, {}, "off"));
+      pot, {}, /*script_timeout_s=*/std::nullopt));
   CHECK(after.status == PcTaskStatus::KILLED);
   CHECK_FALSE(after.error_msg.empty());
 
@@ -289,6 +289,6 @@ TEST_CASE("pc pool: repeated deaths throttle a channel, they do not retire it",
    * with a workable deadline the very next task completes a full round trip.
    * (A retired channel would fail here regardless of the deadline.) */
   PcWorkerPool healthy(1, specs_for(1, minimal_spec()), 0.0);
-  CHECK(healthy.execute(0, 0, 0, pot, {}, "off").status ==
+  CHECK(healthy.execute(0, 0, 0, pot, {}, /*script_timeout_s=*/std::nullopt).status ==
         PcTaskStatus::POT_BUILD_FAIL);
 }

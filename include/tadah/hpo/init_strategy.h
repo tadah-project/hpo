@@ -19,6 +19,8 @@
  *     exponentiated before being returned.
  */
 
+#include <tadah/hpo/optimizer_spec.h>   // InitStrategySpec::Entry
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -63,5 +65,11 @@ public:
  *     lines) a single CONFIG point is used as a safe default.
  */
 std::unique_ptr<InitStrategy> build_init_strategy(const struct InitStrategySpec& ispec);
+
+/* Checks one chain entry the way build_init_strategy() instantiates it:
+ * a known METHOD, its arity, and K a whole integer, >= 0 for RANDOM and
+ * >= 1 for LHS/SOBOL. HPOTargets::read() calls it at the METHOD line, so
+ * the error names that line. Throws std::runtime_error. */
+void validate_init_entry(const InitStrategySpec::Entry& e);
 
 }  // namespace tadah::hpo

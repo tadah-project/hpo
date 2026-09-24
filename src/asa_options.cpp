@@ -6,10 +6,12 @@
 #include <tadah/hpo/asa_options.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/strict_parse.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -198,7 +200,12 @@ std::pair<std::string, long> split_indexed(const std::string& key)
         throw std::runtime_error(
             "ASA:ASA: malformed index in PARAM '" + key +
             "' (expected a positive integer)");
-    return {base, std::stol(idx)};
+    /* Digits only, so the one failure left is an index too large for a
+     * long (std::stol threw a bare "stol"). */
+    return {base, static_cast<long>(parse_uint(
+                      idx, "ASA:ASA: the index in PARAM '" + key + "'", 0,
+                      static_cast<std::uint64_t>(
+                          std::numeric_limits<long>::max())))};
 }
 
 void check_value(const Desc& d, const std::string& key, double v)

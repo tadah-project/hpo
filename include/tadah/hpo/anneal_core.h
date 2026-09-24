@@ -22,6 +22,7 @@
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/pc_fail_grading.h>   /* kFailBandFloor, loss_is_feasible */
 #include <tadah/hpo/anneal_keys_gen.h>   /* generated key/rule registry      */
+#include <tadah/hpo/strict_parse.h>     /* parse_number                     */
 
 #include <algorithm>
 #include <atomic>
@@ -763,15 +764,15 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
           ctx + ": PARAM INIT_MODE " + toks[0] + " takes no further value "
                 "(got '" + toks[1] + "'); the jitter magnitude applies to "
                 "JITTER only");
+    /* The number grammar of every key (strict_parse.h, parse_number):
+     * std::stod also read hexadecimal floats. */
     auto as_number = [&](const std::string& t, const char* what) {
-      try {
-        std::size_t pos = 0;
-        const double v = std::stod(t, &pos);
-        if (pos == t.size() && std::isfinite(v)) return v;
-      } catch (const std::exception&) { /* fall through */ }
+      double v = 0.0;
+      if (parse_number(t, v)) return v;
       throw std::runtime_error(ctx + ": PARAM INIT_MODE JITTER " +
                                std::string(what) + " must be a finite "
-                               "number (got '" + t + "')");
+                               "number (got '" + t + "')" +
+                               number_underflow_note(t));
     };
     if (anneal_upper(toks[1]) == "AUTO") {
       if (toks.size() < 3)

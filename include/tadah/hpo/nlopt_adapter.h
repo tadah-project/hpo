@@ -12,10 +12,12 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <exception>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 
 namespace tadah::hpo {
 
@@ -60,8 +62,19 @@ inline nlopt::opt build_nlopt(const OptimizerSpec& sp, unsigned dim,
 {
     nlopt::opt o(sp.algo.c_str(), dim);
 
-    /* stopping criteria */
-    if (sp.stop.maxeval)   o.set_maxeval(*sp.stop.maxeval);
+    /* stopping criteria. NLopt counts evaluations in an int: a larger
+     * MAXEVAL wrapped (4294967299 ran 3 evaluations, 2147483648 became a
+     * negative budget, which NLopt reads as no limit). HPOTargets bounds
+     * MAXEVAL at its line; a spec built another way is refused here. */
+    if (sp.stop.maxeval) {
+        constexpr auto kIntMax =
+            static_cast<std::uint64_t>(std::numeric_limits<int>::max());
+        if (*sp.stop.maxeval > kIntMax)
+            throw std::invalid_argument(
+                "NLopt spec with MAXEVAL " + std::to_string(*sp.stop.maxeval) +
+                ": NLopt counts evaluations in an int (at most 2147483647)");
+        o.set_maxeval(static_cast<int>(*sp.stop.maxeval));
+    }
     if (sp.stop.maxtime)   o.set_maxtime(*sp.stop.maxtime);
     if (sp.stop.ftol_rel)  o.set_ftol_rel(*sp.stop.ftol_rel);
     if (sp.stop.ftol_abs)  o.set_ftol_abs(*sp.stop.ftol_abs);

@@ -56,6 +56,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -75,6 +76,34 @@ namespace hpo {
  * run: the evaluations in flight finish and are recorded, then the
  * workers are ended (SHUTDOWN frame / EOF). */
 inline constexpr int kPcWorkerIgnoredSignals[] = {SIGINT, SIGTERM, SIGUSR2};
+
+/* The hard deadline, in milliseconds, after which a PROCESS worker running
+ * one script task is killed; -1 for none (THREAD-mode parity).
+ *   - worker_timeout_s > 0 (PC_WORKER_TIMEOUT / TADAH_PC_WORKER_TIMEOUT):
+ *     that, for every script;
+ *   - otherwise derived from the script's own soft limit t, in seconds
+ *     (PC_SCRIPT_TIMEOUT or --maxtime, parsed by parse_script_timeout):
+ *     max(3t, t + 120 s), which covers multi-section scripts (`timer
+ *     timeout` re-arms after every `clear`) and the time `timer timeout`
+ *     cannot bound (create, pot build, neighbour lists);
+ *   - no deadline when t is off/unlimited (nullopt).
+ * A t <= 0 throws std::invalid_argument: parse_script_timeout rejects it
+ * at its line, so it never names a deadline. So does a deadline that does
+ * not fit in a long of milliseconds (pc_worker_deadline_fits); the parsers
+ * of the three timeouts reject it at their line.
+ * The seconds come from the parsed time spec: the string used to go
+ * through strtod, which read "2:00:00" as 2 s and "00:05:00" as 0 (no
+ * deadline). The deadline may exceed INT_MAX ms: the wire's readn() polls
+ * it in slices (poll() takes an int). */
+long pc_worker_deadline_ms(double worker_timeout_s,
+                           std::optional<double> script_timeout_s);
+
+/* True when the deadline pc_worker_deadline_ms() derives from these
+ * timeouts is none or fits in a long of milliseconds (below 2^63 ms:
+ * about 9.2e15 s for PC_WORKER_TIMEOUT, about 3.07e15 s for a script
+ * timeout t, whose deadline is max(3t, t + 120 s)). */
+bool pc_worker_deadline_fits(double worker_timeout_s,
+                             std::optional<double> script_timeout_s);
 
 /* Raw key -> value-tokens map of a trial potential (Context::storage_snapshot
  * shape). The parent snapshots it once per eval; each channel diffs it
@@ -118,15 +147,16 @@ public:
    * worker id -- 1:1 with channels). pot_map = the trial potential's raw
    * storage snapshot, taken ONCE per eval by the caller; the channel ships it
    * only when it has not seen `iter` yet -- as a DELTA vs the last map it
-   * shipped (FULL on first contact / after a respawn). maxtime is the sim's
-   * MAXTIME string ("off" or seconds) for the deadline policy. Thread-safe
+   * shipped (FULL on first contact / after a respawn). script_timeout_s is
+   * the sim's soft limit in seconds (LammpsSim::maxtime_seconds; nullopt =
+   * off) for the deadline policy (pc_worker_deadline_ms). Thread-safe
    * per channel (a mutex serializes the executor's nested-inline wid==0
    * path). Throws after PC_MAX_CONSEC_DEATHS consecutive worker deaths. */
   PcTaskResult execute(int slot, std::uint32_t script_idx,
                        std::uint64_t iter,
                        const PcPotMap& pot_map,
                        const std::vector<std::string>& inject_lines,
-                       const std::string& maxtime);
+                       std::optional<double> script_timeout_s);
 
   /* Graceful stop: SHUTDOWN to every live worker, then reap. Called by the
    * destructor; idempotent. */
@@ -170,7 +200,6 @@ private:
 
   void spawn_locked(Channel& ch, int slot);         /* fork+exec + HELLO   */
   void kill_reap_locked(Channel& ch, int slot, const char* why);
-  long deadline_ms_for(const std::string& maxtime) const;
 
   int width_;
   double worker_timeout_s_;

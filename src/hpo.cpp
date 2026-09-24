@@ -323,8 +323,9 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log)
      * in algorithms_p{t,a}.h -- which is enough to keep the THREADS-wide pool fed
      * since one replica's eval alone submits many more tasks than THREADS.) */
     {
+        /* THREADS is an integer from 1 to INT_MAX (checked at its line). */
         const int exec_width =
-            std::max<int>(1, static_cast<int>(trg.spec.num_threads.value_or(1)));
+            static_cast<int>(trg.spec.num_threads.value_or(1));
         init_script_executor(exec_width);
         /* Give the journal the true pool width -- the honest denominator
          * for the periodic pc_lammps pool-utilisation figure. */
@@ -459,18 +460,27 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log)
         {
             const std::string src = trg.MAX_TIME_key.empty()
                 ? "default" : trg.MAX_TIME_key;
-            const std::string soft = (trg.MAX_TIME == "off")
-                ? "off (no per-script limit)" : (trg.MAX_TIME + " s");
+            /* The spec as written, and its seconds when it is a time. */
+            std::string soft = trg.MAX_TIME + " (no per-script limit)";
+            if (trg.MAX_TIME_seconds) {
+                std::ostringstream t; t << *trg.MAX_TIME_seconds << " s";
+                soft = t.str();
+                if (t.str() != trg.MAX_TIME + " s")
+                    soft += " (" + trg.MAX_TIME + ")";
+            }
             std::string hard;
             if (pc_mode == "PROCESS") {
-                if (pc_wtimeout > 0.0) {
-                    std::ostringstream w; w << pc_wtimeout;
+                const long dl_ms = pc_worker_deadline_ms(pc_wtimeout,
+                                                         trg.MAX_TIME_seconds);
+                std::ostringstream w; w << static_cast<double>(dl_ms) / 1000.0;
+                if (pc_wtimeout > 0.0)
                     hard = w.str() + " s (PC_WORKER_TIMEOUT)";
-                } else if (trg.MAX_TIME == "off") {
+                else if (dl_ms < 0)
                     hard = "none";
-                } else {
-                    hard = "derived max(3x, x+120) s from the per-script limit";
-                }
+                else
+                    hard = w.str() + " s, derived as max(3t, t + 120 s) from "
+                           "the per-script limit t (a line's --maxtime "
+                           "derives its own)";
             } else {
                 hard = "n/a (THREAD mode)";
             }
@@ -480,7 +490,7 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log)
             if (trg.MAX_TIME_seen_new && trg.MAX_TIME_seen_legacy)
                 log.warning("both PC_SCRIPT_TIMEOUT and legacy MAXTIME were "
                             "given; the later line wins (effective: " +
-                            trg.MAX_TIME + " s from " + src + ")");
+                            soft + " from " + src + ")");
             else if (trg.MAX_TIME_seen_legacy)
                 log.info("MAXTIME is a legacy alias for PC_SCRIPT_TIMEOUT "
                          "(per-pc_script timeout, seconds); prefer "

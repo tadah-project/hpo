@@ -1441,7 +1441,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     if (pc_process_mode) {
       const PcTaskResult tres = pc_worker_pool().execute(
           tid, static_cast<std::uint32_t>(i), r.iter, pc_pot_map,
-          inject_lines, lsim.maxtime);
+          inject_lines, lsim.maxtime_seconds);
       return apply_task_result(i, tid, tres);
     }
 

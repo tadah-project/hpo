@@ -41,7 +41,7 @@ private:
     size_t ui_offset(std::vector<std::string> &tokens, size_t ui);
     std::vector<std::string> parse_optim_line(std::istringstream& iss);
     void handle_directory_creation(const std::string& directory);
-    void process_optim_config(std::istringstream& iss, size_t nline);
+    void process_optim_config(std::istringstream& iss);
     SearchSpace build_search_space() const;
     void bind_space_recursive();
 
@@ -79,14 +79,18 @@ public:
     // int THREADS = -1; // number of threads for parallel evaluation, -1 means all available threads
     double FAIL_SCORE = std::numeric_limits<double>::max();
     std::size_t QFLUSH_THRESHOLD = 10; // number of results to flush to disk at once
-    /* Per-pc_script wall-clock limit in SECONDS (LAMMPS `timer timeout`
-     * units), injected into every PC_LAMMPS script after each `clear`. "off"
-     * disables enforcement (the default -- opt in via the root
-     * PC_SCRIPT_TIMEOUT key, its legacy alias MAXTIME, or per-sim --maxtime).
+    /* Per-pc_script wall-clock limit, a LAMMPS `timer timeout` time spec
+     * ("off", "unlimited" or a positive [[HH:]MM:]SS), injected into every
+     * PC_LAMMPS script after each `clear`. "off" (the default) and
+     * "unlimited" disable enforcement -- opt in via the root
+     * PC_SCRIPT_TIMEOUT key, its legacy alias MAXTIME, or per-sim --maxtime.
      * A timed-out sim scores FAILSCORE. Distinct from the OPTIMIZER-block
      * MAXTIME (whole-run stop) and from PC_WORKER_TIMEOUT (the outer
      * per-worker-task hard deadline). */
     std::string MAX_TIME = "off";
+    /* MAX_TIME in seconds (parse_script_timeout), > 0: nullopt for "off"
+     * and "unlimited". Sizes the PROCESS worker deadline. */
+    std::optional<double> MAX_TIME_seconds;
     /* Which root key last supplied MAX_TIME, and whether each spelling was
      * seen -- consumed by the startup diagnostic line and the both-keys
      * warning. PC_SCRIPT_TIMEOUT is the self-describing name; MAXTIME is the
@@ -121,9 +125,9 @@ public:
      * derive from each sim's maxtime ("off" => no deadline, thread parity).
      * Env override: TADAH_PC_WORKER_TIMEOUT. */
     double PC_WORKER_TIMEOUT = 0.0;
-    /* Strict parser shared by the PC_WORKER_TIMEOUT key and the
-     * TADAH_PC_WORKER_TIMEOUT override: a finite number >= 0, else throws
-     * naming `origin`. */
+    /* Strict parser shared by the PC_WORKER_TIMEOUT key (a single value)
+     * and the TADAH_PC_WORKER_TIMEOUT override: a finite number >= 0, else
+     * throws naming `origin`. */
     static double parse_pc_worker_timeout(const std::string& token,
                                           const std::string& origin);
 

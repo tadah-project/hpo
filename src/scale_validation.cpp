@@ -3,6 +3,7 @@
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/initial_step.h>
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/validation_metric.h>   // metric_value_is_finite
 
 #include <algorithm>
 #include <cmath>
@@ -42,7 +43,7 @@ void warn(const std::string& msg)
 
 void check_step_value(double v, const std::string& ctx)
 {
-    if (!std::isfinite(v) || !(v > 0.0)) {
+    if (!metric_value_is_finite(v) || !(v > 0.0)) {
         std::ostringstream oss;
         oss << ctx << ": STEP must be > 0 and finite (got " << v << ")";
         throw std::runtime_error(oss.str());

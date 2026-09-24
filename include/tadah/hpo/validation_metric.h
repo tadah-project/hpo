@@ -16,7 +16,13 @@ struct MetricSkipCaps {
 
 // Works in the Release build too (-ffast-math may fold std::isfinite).
 bool metric_value_is_finite(double value);
-double parse_metric_number(const std::string& token);
+/* A finite number of the number grammar every key reads (strict_parse.h,
+ * parse_number: decimal, a leading '+' allowed, no hexadecimal). Otherwise
+ * throws "<what> must be a finite number, got '<tok>'" ("Expected a finite
+ * number, got '<tok>'" when `what` is empty), with parse_finite's
+ * too-small note. */
+double parse_metric_number(const std::string& token,
+                           const std::string& what = "");
 
 struct ValidationMetricAssignment {
     double target = 0.0;

@@ -1,8 +1,11 @@
 #include <tadah/hpo/optimizer_block.h>
+#include <tadah/hpo/strict_parse.h>
 #include <tadah/core/utils.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -47,18 +50,6 @@ std::string up(std::string s) {
 }
 }  // namespace
 
-namespace {
-bool looks_numeric(const std::string &t) {
-  try {
-    std::size_t pos = 0;
-    (void)std::stod(t, &pos);
-    return pos == t.size();
-  } catch (const std::exception &) {
-    return false;
-  }
-}
-}  // namespace
-
 bool param_takes_another_value(const std::string &key,
                                const std::vector<std::string> &sofar,
                                const std::string &next) {
@@ -76,74 +67,87 @@ bool param_takes_another_value(const std::string &key,
   if (sofar.empty()) return true;          // every PARAM takes >= 1 value
   if (key != "INIT_MODE") return false;
 
-  // INIT_MODE UNIFORM | JITTER [AUTO <p> | <frac>]
+  // INIT_MODE UNIFORM | JITTER [AUTO <p> | <frac>]. A token shaped like a
+  // number is the fraction; the registry judges it (the number grammar).
   if (up(sofar[0]) != "JITTER") return false;
-  if (sofar.size() == 1) return up(next) == "AUTO" || looks_numeric(next);
+  if (sofar.size() == 1) return up(next) == "AUTO" || is_number_shaped(next);
   if (sofar.size() == 2 && up(sofar[1]) == "AUTO") return true;   // the p value
   return false;
 }
 
+namespace {
+/* The value of a numeric attribute: exactly one token, parsed strictly
+ * (strict_parse.h). What follows it is the caller's: HPOTargets::read()
+ * rejects a leftover token on the line, and read_optimizer_block() reads
+ * the next key there. */
+std::uint64_t attr_uint(std::istringstream &iss, const std::string &key,
+                        std::uint64_t max =
+                            std::numeric_limits<std::uint64_t>::max(),
+                        std::uint64_t min = 0) {
+  return parse_uint(next_value(iss, key), key, min, max);
+}
+unsigned attr_unsigned(std::istringstream &iss, const std::string &key) {
+  return static_cast<unsigned>(
+      attr_uint(iss, key, std::numeric_limits<unsigned>::max()));
+}
+/* MAXEVAL is an evaluation budget, and NLopt counts evaluations in an int
+ * (nlopt::opt::set_maxeval), as `tadah refit` hands it to NLopt and Ceres:
+ * 0 to INT_MAX. MAXEVAL 4294967299 used to reach NLopt as 3. */
+std::uint64_t attr_budget(std::istringstream &iss, const std::string &key) {
+  return attr_uint(iss, key, std::numeric_limits<int>::max());
+}
+/* THREADS is the width of the worker pool (an int, ScriptExecutor): at
+ * least one worker. THREADS 0 used to become one worker without a word. */
+unsigned attr_threads(std::istringstream &iss, const std::string &key) {
+  return static_cast<unsigned>(
+      attr_uint(iss, key, std::numeric_limits<int>::max(), 1));
+}
+double attr_finite(std::istringstream &iss, const std::string &key) {
+  return parse_finite(next_value(iss, key), key);
+}
+/* MAXTIME, the optimiser's whole-run wall time: a positive number of
+ * seconds; the key is left out for no limit. 0 or a negative value used to
+ * mean no limit to NLopt and TADAH and a startup error to ASA and the
+ * annealers. */
+double attr_seconds(std::istringstream &iss, const std::string &key) {
+  return parse_positive(next_value(iss, key), key, "number of seconds");
+}
+}  // namespace
+
 bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
                        OptimizerSpec &a) {
   if (key == "LIB")
-    iss >> a.lib;
+    a.lib = next_value(iss, key);
   else if (key == "ALGO")
-    iss >> a.algo;
-  else if (key == "MAXEVAL") {
-    uint64_t v;
-    iss >> v;
-    a.stop.maxeval = v;
-  } else if (key == "MAXTIME") {
-    double v;
-    iss >> v;
-    a.stop.maxtime = v;
-  } else if (key == "STOPVAL") {
-    double v;
-    iss >> v;
-    a.stop.stopval = v;
-  } else if (key == "FTOL_REL") {
-    double v;
-    iss >> v;
-    a.stop.ftol_rel = v;
-  } else if (key == "FTOL_ABS") {
-    double v;
-    iss >> v;
-    a.stop.ftol_abs = v;
-  } else if (key == "XTOL_REL") {
-    double v;
-    iss >> v;
-    a.stop.xtol_rel = v;
-  } else if (key == "XTOL_ABS") {
-    double v;
-    iss >> v;
-    a.stop.xtol_abs = v;
-  } else if (key == "POPULATION") {
-    unsigned v;
-    iss >> v;
-    a.pop = v;
-  } else if (key == "STEP") {
+    a.algo = next_value(iss, key);
+  else if (key == "MAXEVAL")
+    a.stop.maxeval = attr_budget(iss, key);
+  else if (key == "MAXTIME")
+    a.stop.maxtime = attr_seconds(iss, key);
+  else if (key == "STOPVAL")
+    a.stop.stopval = attr_finite(iss, key);
+  else if (key == "FTOL_REL")
+    a.stop.ftol_rel = attr_finite(iss, key);
+  else if (key == "FTOL_ABS")
+    a.stop.ftol_abs = attr_finite(iss, key);
+  else if (key == "XTOL_REL")
+    a.stop.xtol_rel = attr_finite(iss, key);
+  else if (key == "XTOL_ABS")
+    a.stop.xtol_abs = attr_finite(iss, key);
+  else if (key == "POPULATION")
+    a.pop = attr_unsigned(iss, key);
+  else if (key == "STEP") {
     /* Two forms:
      *   STEP <number>                      -- the block-wide fraction
      *   STEP <KEY>[(indices)] <number>     -- per-key / per-index override
-     * A non-numeric first token that is not a key form used to leave v=0
-     * and surface later as NLopt's 'zero step size'; both forms are now
-     * parsed strictly. */
-    std::string first;
-    iss >> first;
-    if (first.empty())
-      throw std::runtime_error("STEP requires a value");
-    auto parse_num = [](const std::string& tok, double& out) {
-      try {
-        std::size_t pos = 0;
-        out = std::stod(tok, &pos);
-        return pos == tok.size();
-      } catch (const std::exception&) {
-        return false;
-      }
-    };
-    double v = 0.0;
-    if (parse_num(first, v)) {
-      a.step = v;
+     * A token shaped like a number is the block-wide fraction and must be
+     * a finite one (parse_finite): `STEP inf` used to pass here and fail
+     * only when the run validated it, without the line, and `STEP 5x` was
+     * taken for an override key. The range, 0 < STEP <= 0.5, is the
+     * backend's (validate_optimizer_scaling). */
+    const std::string first = next_value(iss, key);
+    if (is_number_shaped(first)) {
+      a.step = parse_finite(first, key);
     } else {
       StepOverride ov;
       /* KEY, KEY(3), KEY(1-4,7) or KEY (1,2) with a space before '(' */
@@ -169,8 +173,14 @@ bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
         if (idx.empty())
           throw std::runtime_error(
               "STEP override '" + spec + "': empty index list");
+        /* The strict grammar of the OPTIM lines: the lenient
+         * core::parse_indices dropped a bad segment with a message on
+         * stderr, and a list left empty meant every index of the key. */
         try {
-          ov.indices = core::parse_indices(idx);
+          ov.indices = core::parse_indices_strict(idx);
+          if (std::find(ov.indices.begin(), ov.indices.end(), 0) !=
+              ov.indices.end())
+            throw std::runtime_error("indices start at 1");
         } catch (const std::exception& e) {
           throw std::runtime_error("STEP override '" + spec +
                                    "': bad index list (" + e.what() + ")");
@@ -178,27 +188,17 @@ bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
       } else {
         ov.key = spec;
       }
-      std::string num;
-      iss >> num;
-      if (num.empty() || !parse_num(num, ov.frac))
-        throw std::runtime_error(
-            "STEP override for '" + ov.key + "' expects a numeric fraction "
-            "(got '" + num + "')");
+      const std::string what = "STEP " + spec;
+      ov.frac = parse_finite(next_value(iss, what), what);
       a.step_overrides.push_back(std::move(ov));
     }
-  } else if (key == "SEED") {
-    std::uint64_t v;
-    iss >> v;
-    a.seed = v;
-  } else if (key == "VECTOR_ARR") {
-    unsigned v;
-    iss >> v;
-    a.vector_storage = v;
-  } else if (key == "THREADS") {
-    unsigned v;
-    iss >> v;
-    a.num_threads = v;
-  } else if (key == "GRAD_STRATEGY") {
+  } else if (key == "SEED")
+    a.seed = attr_uint(iss, key);
+  else if (key == "VECTOR_ARR")
+    a.vector_storage = attr_unsigned(iss, key);
+  else if (key == "THREADS")
+    a.num_threads = attr_threads(iss, key);
+  else if (key == "GRAD_STRATEGY") {
     std::string v;
     iss >> v;
     if (v == "NUMERICAL")
@@ -246,22 +246,27 @@ bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
     if (p.empty() || vals.empty())
       throw std::runtime_error("PARAM requires a name and a value");
     const std::string& raw = vals.front();
-    /* Numeric values land in `param`; anything else is kept verbatim in
+    /* Numeric values land in `param`; a word is kept verbatim in
      * `param_raw` for families with enum-valued keys (numeric-only
      * families reject raw entries with a hard error). The pre-registry
-     * parser silently stored 0.0 for a non-numeric value. */
-    bool numeric = false;
-    try {
-      std::size_t pos = 0;
-      const double v = std::stod(raw, &pos);
-      if (pos == raw.size()) {
-        a.param[p] = v;
-        numeric = true;
-      }
-    } catch (const std::exception&) {
-      /* not numeric */
-    }
-    if (!numeric) a.param_raw[p] = raw;
+     * parser silently stored 0.0 for a non-numeric value. A value shaped
+     * like a number must be a finite one: `PARAM fd_step inf` failed only
+     * when the optimiser ran, and `PARAM fd_step 5x` was kept as a word
+     * that no backend read. */
+    if (is_number_shaped(raw))
+      a.param[p] = parse_finite(raw, "PARAM " + p);
+    else
+      a.param_raw[p] = raw;
+    /* The numbers of INIT_MODE JITTER <fraction> | JITTER AUTO <tolerance>
+     * (param_takes_another_value takes a number-shaped token as one) are
+     * read with the number grammar here, at the line; the registry judges
+     * their range when the annealer starts. */
+    if (ukey == "INIT_MODE")
+      for (std::size_t i = 1; i < vals.size(); ++i)
+        if (up(vals[i]) != "AUTO")
+          (void)parse_finite(vals[i],
+                             i == 2 ? "PARAM " + p + " JITTER AUTO <tolerance>"
+                                    : "PARAM " + p + " JITTER <fraction>");
     /* Extra value tokens are kept for the family registry to accept or
      * reject (validate_optimizer_scaling). They used to be swallowed by
      * `iss >> p >> raw`, so `PARAM INIT_MODE JITTER AUTO 0.05` silently
@@ -275,24 +280,41 @@ bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
 
 namespace {
 
+/* "<where>: <message>", or the message alone when the caller names no
+ * block. */
+std::runtime_error in_block(const std::string &where, const std::string &msg) {
+  return std::runtime_error(where.empty() ? msg : where + ": " + msg);
+}
+
 // Consume attributes from a flat token stream until `endTok` (case-insensitive)
 // is reached. Standard attributes go to dispatch_opt_attr(); an `INNER` opener
 // recurses into spec.inner (only at the OPTIMIZER level — INNER does not nest).
-// On return `pos` points just past `endTok`.
+// Every error of the block, the check's and a key's value's included, is
+// prefixed with `where` ("REFINE", "EXPLORE INNER"). On return `pos` points
+// just past `endTok`.
 void read_block_until(const std::vector<std::string> &tok, std::size_t &pos,
                       const std::string &endTok, OptimizerSpec &spec,
-                      const ExtraAttrFn &extra, bool allow_inner) {
+                      const ExtraAttrFn &extra, const KeyCheckFn &check,
+                      bool allow_inner, const std::string &where) {
+  const char *block = allow_inner ? "OPTIMIZER" : "INNER";
   while (pos < tok.size()) {
     const std::string u = up(tok[pos]);
     if (u == endTok) {
       ++pos;
       return;
     }
+    // The caller's gate sees every key, INNER included, before it is read.
+    try {
+      if (check) check(u, /*in_inner=*/!allow_inner);
+    } catch (const std::exception &e) {
+      throw in_block(where, e.what());
+    }
     if (allow_inner && u == "INNER") {
       ++pos;  // consume INNER
       spec.inner = std::make_unique<OptimizerSpec>();
-      read_block_until(tok, pos, "ENDINNER", *spec.inner, extra,
-                       /*allow_inner=*/false);
+      read_block_until(tok, pos, "ENDINNER", *spec.inner, extra, check,
+                       /*allow_inner=*/false,
+                       where.empty() ? where : where + " INNER");
       continue;
     }
     // Standard / command-specific attribute. dispatch_opt_attr() reads a fixed
@@ -304,30 +326,40 @@ void read_block_until(const std::vector<std::string> &tok, std::size_t &pos,
     std::string key;
     iss >> key;  // the attribute key (original case)
     const std::string ukey = up(key);
-    const bool consumed = dispatch_opt_attr(ukey, iss, spec) ||
-                          (extra && extra(ukey, iss, spec));
+    bool consumed = false;
+    try {
+      consumed = dispatch_opt_attr(ukey, iss, spec) ||
+                 (extra && extra(ukey, iss, spec));
+    } catch (const std::exception &e) {
+      throw in_block(where, e.what());
+    }
     if (!consumed)
-      throw std::runtime_error("OPTIMIZER block: unknown key '" + key + "'");
+      throw in_block(where, "unknown key '" + key + "' in the " +
+                                std::string(block) + " block");
     if (iss.fail())
-      throw std::runtime_error("OPTIMIZER block: bad value for '" + key + "'");
+      throw in_block(where, "bad value for '" + key + "' in the " +
+                                std::string(block) + " block");
     std::size_t before = tok.size() - pos;  // key + everything after it
     std::size_t remaining = 0;
     std::string t;
     while (iss >> t) ++remaining;
     pos += (before - remaining);
   }
-  throw std::runtime_error("OPTIMIZER block not closed with " + endTok);
+  throw in_block(where, std::string(block) + " block not closed with " +
+                            endTok);
 }
 
 }  // namespace
 
 void read_optimizer_block(const std::vector<std::string> &tok,
                           std::size_t &pos, OptimizerSpec &spec,
-                          const ExtraAttrFn &extra) {
+                          const ExtraAttrFn &extra, const KeyCheckFn &check,
+                          const std::string &where) {
   if (pos >= tok.size() || up(tok[pos]) != "OPTIMIZER")
     throw std::runtime_error("read_optimizer_block: expected OPTIMIZER");
   ++pos;  // consume OPTIMIZER
-  read_block_until(tok, pos, "ENDOPTIMIZER", spec, extra, /*allow_inner=*/true);
+  read_block_until(tok, pos, "ENDOPTIMIZER", spec, extra, check,
+                   /*allow_inner=*/true, where);
 }
 
 }  // namespace hpo

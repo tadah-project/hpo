@@ -1,10 +1,12 @@
 #include <tadah/hpo/refit/refit_parser.h>
 
 #include <tadah/hpo/optimizer_block.h>
+#include <tadah/hpo/strict_parse.h>
 #include <tadah/core/context.h>
 
+#include <algorithm>
 #include <cctype>
-#include <cstdlib>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -19,25 +21,85 @@ std::string up(std::string s) {
   return s;
 }
 
-// True if the whole token parses as a floating-point number (so the INIT line
-// reader can stop pulling MANUAL operands at the next keyword/channel token).
-bool looks_number(const std::string &s) {
-  if (s.empty()) return false;
-  char *end = nullptr;
-  std::strtod(s.c_str(), &end);
-  return end == s.c_str() + s.size();
+// True if the token is meant as a number (is_number_shaped), so the INIT and
+// MAX_ADD readers stop pulling operands at the next keyword or channel token;
+// the operand itself is then read with the number grammar (parse_finite,
+// parse_uint), which names a malformed one.
+bool looks_number(const std::string &s) { return is_number_shaped(s); }
+
+// The keys a stage's OPTIMIZER block (or its INNER block) reads. A stage reads
+// only some of the optimiser attributes of `tadah hpo`; any other one it would
+// silently ignore is an error naming the keys it does read (the rule of the
+// `tadah hpo` STRATEGY keys that would have no effect).
+struct StageKeys {
+  const char *stage;                  // EXPLORE, REFINE, FUSE
+  std::vector<std::string> outer;     // the OPTIMIZER block's keys
+  std::vector<std::string> inner;     // the INNER block's (empty: no INNER)
+};
+
+std::string reads_list(const std::vector<std::string> &keys) {
+  // MAXITER is listed with MAXEVAL, of which it is an alias.
+  std::string out;
+  for (const auto &k : keys) {
+    if (k == "MAXITER") continue;
+    if (!out.empty()) out += ", ";
+    out += k;
+    if (k == "MAXEVAL" &&
+        std::find(keys.begin(), keys.end(), "MAXITER") != keys.end())
+      out += "/MAXITER";
+  }
+  return out;
 }
 
-int as_int(const std::string &s, const char *what) {
-  try {
-    size_t p = 0;
-    int v = std::stoi(s, &p);
-    if (p != s.size()) throw std::invalid_argument(s);
-    return v;
-  } catch (...) {
-    throw std::runtime_error(std::string(what) + ": expected an integer, got '" +
-                             s + "'");
-  }
+// A key the refit OPTIMIZER blocks know: an optimiser attribute of the shared
+// grammar, the Ceres keys GTOL and MAXITER, or INNER. Anything else is left
+// to the "unknown key" error of read_optimizer_block().
+bool known_optimizer_key(const std::string &key) {
+  const auto &attrs = opt_attr_keys();
+  return key == "INNER" || key == "GTOL" || key == "MAXITER" ||
+         std::find(attrs.begin(), attrs.end(), key) != attrs.end();
+}
+
+// read_optimizer_block() prefixes these messages with the block
+// ("REFINE: ", "EXPLORE INNER: ").
+KeyCheckFn stage_key_check(const StageKeys &sk) {
+  return [sk](const std::string &key, bool in_inner) {
+    const std::vector<std::string> &reads = in_inner ? sk.inner : sk.outer;
+    if (std::find(reads.begin(), reads.end(), key) != reads.end()) return;
+    if (!known_optimizer_key(key)) return;
+    // SEED and FTOL_ABS say what to use instead.
+    if (key == "SEED")
+      throw std::runtime_error(
+          "SEED is not accepted in a tadah refit OPTIMIZER block: the "
+          "refit's random numbers come from REFIT_COMPACT_SEED; set "
+          "REFIT_COMPACT_SEED in the configuration instead.");
+    if (key == "FTOL_ABS" && std::string(sk.stage) != "EXPLORE")
+      throw std::runtime_error(
+          "FTOL_ABS is not supported — Ceres' function_tolerance is RELATIVE "
+          "and has no absolute form. Use FTOL_REL.");
+    throw std::runtime_error(key +
+                             " is not used by a tadah refit stage (it reads " +
+                             reads_list(reads) + ")");
+  };
+}
+
+const StageKeys kExploreKeys{"EXPLORE",
+                             {"LIB", "ALGO", "MAXEVAL", "INNER"},
+                             {"LIB", "ALGO", "MAXEVAL", "FTOL_REL", "XTOL_REL"}};
+const StageKeys kRefineKeys{
+    "REFINE", {"LIB", "ALGO", "MAXEVAL", "MAXITER", "FTOL_REL", "GTOL"}, {}};
+const StageKeys kFuseKeys{
+    "FUSE", {"LIB", "ALGO", "MAXEVAL", "MAXITER", "FTOL_REL"}, {}};
+
+// ALGO is what a stage's OPTIMIZER block, and its INNER block, is read for:
+// it must be set (NONE / UNIFORM are written out). An INNER block without
+// ALGO meant no local search, while an EXPLORE optimiser without an INNER
+// block runs the default one.
+void require_algo(const OptimizerSpec &o, const std::string &where,
+                  const char *block, const char *off) {
+  if (o.algo == "NOT SET")
+    throw std::runtime_error(where + ": ALGO is not set; set ALGO in the " +
+                             block + " block (" + off + ")");
 }
 
 bool as_bool(const std::string &s, const std::string &what) {
@@ -80,9 +142,11 @@ void parse_init(const std::vector<std::string> &tok, RefitConfig &cfg) {
       if (i >= tok.size() || !looks_number(tok[i]))
         throw std::runtime_error("INIT " + ch +
                                  " MANUAL requires at least <mu>");
-      b.mu = std::strtod(tok[i++].c_str(), nullptr);
+      /* looks_number() only tells an operand from the next keyword; the
+       * operand itself must be finite. */
+      b.mu = parse_finite(tok[i++], "INIT " + ch + " MANUAL <mu>");
       if (i < tok.size() && looks_number(tok[i])) {
-        b.eta = std::strtod(tok[i++].c_str(), nullptr);
+        b.eta = parse_finite(tok[i++], "INIT " + ch + " MANUAL <eta>");
         b.has_eta = true;
       }
     } else if (pl == "XMIN") {
@@ -116,11 +180,16 @@ void parse_explore(const std::vector<std::string> &tok, RefitConfig &cfg) {
     const std::string u = up(tok[i]);
     if (u == "MAX_ADD") {
       // 1 value (all functions) or 3 values (phi rho F). Pull the run of
-      // numeric operands (stops at the next keyword, e.g. OPTIMIZER).
+      // numeric operands (stops at the next keyword, e.g. OPTIMIZER). Each
+      // is an integer >= 0 (strict_parse.h): std::stoi read '+3' as 3, and
+      // a negative value silently meant no cap -- leaving MAX_ADD out is
+      // how to write that.
       std::vector<int> v;
       size_t j = i + 1;
       while (j < tok.size() && looks_number(tok[j]) && v.size() < 3) {
-        v.push_back(as_int(tok[j], "EXPLORE MAX_ADD"));
+        v.push_back(static_cast<int>(
+            parse_uint(tok[j], "EXPLORE MAX_ADD", 0,
+                       std::numeric_limits<int>::max())));
         ++j;
       }
       if (v.size() != 1 && v.size() != 3)
@@ -137,7 +206,9 @@ void parse_explore(const std::vector<std::string> &tok, RefitConfig &cfg) {
       cfg.explore.enabled = as_bool(tok[i + 1], "EXPLORE ENABLED");
       i += 2;
     } else if (u == "OPTIMIZER") {
-      read_optimizer_block(tok, i, cfg.explore.opt);  // outer + INNER
+      read_optimizer_block(tok, i, cfg.explore.opt, nullptr,
+                           stage_key_check(kExploreKeys),  // outer + INNER
+                           kExploreKeys.stage);
       cfg.explore.has_opt = true;
     } else {
       throw std::runtime_error("EXPLORE: unknown key '" + tok[i] +
@@ -147,43 +218,44 @@ void parse_explore(const std::vector<std::string> &tok, RefitConfig &cfg) {
 }
 
 // REFINE/FUSE OPTIMIZER blocks accept the Ceres-flavoured command-specific keys
-// GTOL (-> param["GTOL"], Ceres gradient_tolerance) and MAXITER (alias of
-// MAXEVAL -> Ceres max_num_iterations). The function tolerance key is FTOL_REL
-// (handled by dispatch_opt_attr -> Ceres function_tolerance): Ceres'
-// function_tolerance is RELATIVE — it stops when (new_cost - old_cost) <
-// ftol * old_cost. Ceres has NO absolute function tolerance, so FTOL_ABS (and
-// the bare FTOL) are rejected here with a pointer to FTOL_REL. (FTOL_ABS is
-// caught post-parse in RefitParser::parse, since dispatch_opt_attr consumes it
-// before this hook runs; the bare FTOL reaches here.)
+// GTOL (-> param["GTOL"], Ceres gradient_tolerance; REFINE only, FUSE does not
+// read it) and MAXITER (alias of MAXEVAL -> Ceres max_num_iterations). The
+// function tolerance key is FTOL_REL (handled by dispatch_opt_attr -> Ceres
+// function_tolerance): Ceres' function_tolerance is RELATIVE — it stops when
+// (new_cost - old_cost) < ftol * old_cost. Ceres has NO absolute function
+// tolerance, so FTOL_ABS (and the bare FTOL) are rejected with a pointer to
+// FTOL_REL: FTOL_ABS by the stage's key check (stage_key_check), before
+// dispatch_opt_attr would consume it, and the bare FTOL here.
 bool ceres_extra(const std::string &key, std::istringstream &iss,
                  OptimizerSpec &a) {
   if (key == "GTOL") {
-    double v;
-    iss >> v;
-    a.param["GTOL"] = v;
+    a.param["GTOL"] = parse_finite(next_value(iss, key), key);
     return true;
   }
   if (key == "MAXITER") {
-    uint64_t v;
-    iss >> v;
-    a.stop.maxeval = v;
+    // The alias of MAXEVAL, with its range: the int iteration cap Ceres
+    // takes (apply_stage_optimizers).
+    a.stop.maxeval = parse_uint(next_value(iss, key), key, 0,
+                                std::numeric_limits<int>::max());
     return true;
   }
   if (key == "FTOL" || key == "FTOL_ABS")
     throw std::runtime_error(
-        "REFINE/FUSE: '" + key +
+        "'" + key +
         "' is not supported — Ceres' function_tolerance is RELATIVE and has no "
         "absolute form. Use FTOL_REL.");
   return false;
 }
 
 void parse_ceres_stage(const std::vector<std::string> &tok, OptimizerSpec &opt,
-                       bool &has_opt, bool &enabled, const char *stage) {
+                       bool &has_opt, bool &enabled, const StageKeys &keys) {
+  const char *stage = keys.stage;
   size_t i = 0;
   while (i < tok.size()) {
     const std::string u = up(tok[i]);
     if (u == "OPTIMIZER") {
-      read_optimizer_block(tok, i, opt, ceres_extra);
+      read_optimizer_block(tok, i, opt, ceres_extra, stage_key_check(keys),
+                           stage);
       has_opt = true;
     } else if (u == "ENABLED") {
       if (i + 1 >= tok.size())
@@ -294,9 +366,24 @@ RefitConfig RefitParser::parse(const tadah::core::Context &c) {
   parse_init(stage_tokens(c, "INIT"), cfg);
   parse_explore(stage_tokens(c, "EXPLORE"), cfg);
   parse_ceres_stage(stage_tokens(c, "REFINE"), cfg.refine.opt,
-                    cfg.refine.has_opt, cfg.refine.enabled, "REFINE");
+                    cfg.refine.has_opt, cfg.refine.enabled, kRefineKeys);
   parse_ceres_stage(stage_tokens(c, "FUSE"), cfg.fuse.opt, cfg.fuse.has_opt,
-                    cfg.fuse.enabled, "FUSE");
+                    cfg.fuse.enabled, kFuseKeys);
+
+  // Every OPTIMIZER block, and an INNER block, names its ALGO. The keys a
+  // stage does not use (SEED, FTOL_ABS on the Ceres stages, THREADS, ...)
+  // were rejected as they were read (stage_key_check).
+  if (cfg.explore.has_opt) {
+    require_algo(cfg.explore.opt, "EXPLORE", "OPTIMIZER",
+                 "UNIFORM for no global search");
+    if (cfg.explore.opt.inner)
+      require_algo(*cfg.explore.opt.inner, "EXPLORE INNER", "INNER",
+                   "NONE for no local search");
+  }
+  if (cfg.refine.has_opt)
+    require_algo(cfg.refine.opt, "REFINE", "OPTIMIZER", "NONE to skip the stage");
+  if (cfg.fuse.has_opt)
+    require_algo(cfg.fuse.opt, "FUSE", "OPTIMIZER", "NONE to skip the stage");
 
   // Validate (and surface) the per-stage ALGO choices early — these throw on an
   // illegal LIB/ALGO pair so the user sees the error before any fitting.
@@ -307,20 +394,6 @@ RefitConfig RefitParser::parse(const tadah::core::Context &c) {
   }
   if (cfg.refine.has_opt) (void)refit_refine_algo(cfg.refine.opt);
   if (cfg.fuse.has_opt) (void)refit_fuse_algo(cfg.fuse.opt);
-
-  // Reject FTOL_ABS on the Ceres stages: dispatch_opt_attr consumes it (it is a
-  // valid attribute for the NLopt EXPLORE stage) before ceres_extra can, so the
-  // guard there never fires for it — catch it here. Ceres has no absolute
-  // function tolerance; FTOL_REL is the only function-tolerance key.
-  auto reject_ftol_abs = [](const OptimizerSpec &o, const char *stage) {
-    if (o.stop.ftol_abs)
-      throw std::runtime_error(
-          std::string(stage) +
-          ": FTOL_ABS is not supported — Ceres' function_tolerance is RELATIVE "
-          "and has no absolute form. Use FTOL_REL.");
-  };
-  if (cfg.refine.has_opt) reject_ftol_abs(cfg.refine.opt, "REFINE");
-  if (cfg.fuse.has_opt) reject_ftol_abs(cfg.fuse.opt, "FUSE");
 
   // EXPLORE cannot be disabled (it builds the ladder) — still a hard error.
   // REFINE/FUSE: ENABLED false is a master kill-switch that WINS over a

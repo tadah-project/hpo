@@ -68,16 +68,29 @@ using ExtraAttrFn = std::function<bool(const std::string &key,
                                        std::istringstream &iss,
                                        OptimizerSpec &a)>;
 
+/** Key gate for read_optimizer_block(): called with every key of the block
+ *  (uppercased, `INNER` included) before it is read; `in_inner` is true for
+ *  the keys of the INNER block. It throws to reject a key the caller does
+ *  not use (the `tadah refit` stages); read_optimizer_block() prefixes the
+ *  message with the block, as it does every error of the block. */
+using KeyCheckFn = std::function<void(const std::string &key, bool in_inner)>;
+
 /** Consume a balanced `OPTIMIZER ... ENDOPTIMIZER` block from the flat token
  *  stream `tok`, starting at `tok[pos] == "OPTIMIZER"`. Fills `spec`; a nested
- *  `INNER ... ENDINNER` fills `spec.inner`. Standard optimiser attributes go
- *  through dispatch_opt_attr(); anything it rejects is offered to `extra`
+ *  `INNER ... ENDINNER` fills `spec.inner`. Every key is first shown to
+ *  `check`; standard optimiser attributes then go through
+ *  dispatch_opt_attr(); anything it rejects is offered to `extra`
  *  (command-specific keys, e.g. refit's GTOL); an unconsumed key throws.
+ *  `where` names the block in every error it raises, the INNER block's as
+ *  "<where> INNER" ("REFINE: MAXEVAL must be ...", "EXPLORE INNER: unknown
+ *  key 'X' in the INNER block"); empty, the messages are unprefixed.
  *  On return `pos` points just past `ENDOPTIMIZER`. Keyword matching is
  *  case-insensitive. */
 void read_optimizer_block(const std::vector<std::string> &tok, std::size_t &pos,
                           OptimizerSpec &spec,
-                          const ExtraAttrFn &extra = nullptr);
+                          const ExtraAttrFn &extra = nullptr,
+                          const KeyCheckFn &check = nullptr,
+                          const std::string &where = "");
 
 }  // namespace hpo
 }  // namespace tadah

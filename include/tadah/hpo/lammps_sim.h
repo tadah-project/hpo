@@ -84,7 +84,15 @@ class LammpsSim {
     std::vector<double>      w_varloss; /**< Weight for varloss */
     std::vector<size_t>      i_varloss; /**< Map to n_outvar */
 
-    std::string maxtime; /**< Maximum allowed time for simulation execution */
+    /** Per-script wall-clock limit, a LAMMPS time spec ("off", "unlimited"
+     *  or a positive [[HH:]MM:]SS): the root PC_SCRIPT_TIMEOUT in force when
+     *  the line was read, or this line's --maxtime. Injected as `timer
+     *  timeout`. */
+    std::string maxtime;
+    /** maxtime in seconds (parse_script_timeout), > 0; nullopt for "off"
+     *  and "unlimited". Sizes the PROCESS worker deadline
+     *  (pc_worker_deadline_ms). */
+    std::optional<double> maxtime_seconds;
     double failscore; /**< Score given when a simulation fails */
 
     /**
@@ -179,7 +187,9 @@ class LammpsSim {
  * because the variable was never defined) as failed components rather
  * than letting the std::invalid_argument escape into NLopt's wrapper --
  * NLopt translates that exception to NLOPT_INVALID_ARGS and aborts the
- * whole optimisation.
+ * whole optimisation. It reads what LAMMPS returns (inf and nan included,
+ * for the callers to classify); the numbers of the configuration are read
+ * with the number grammar of strict_parse.h (parse_number).
  */
 bool try_parse_double(const std::string& s, double& value);
 

@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -56,12 +57,18 @@ std::string decode_wait_status(int st) {
 PcWorkerPool::PcWorkerPool(int width,
                            std::vector<std::vector<PcScriptSpec>> per_slot_specs,
                            double worker_timeout_s)
-    : width_(width < 1 ? 1 : width),
+    : width_(width),
       worker_timeout_s_(worker_timeout_s),
       specs_(std::move(per_slot_specs)),
       /* exec /proc/self/exe LITERALLY: the old inode stays valid even if the
        * on-disk binary is replaced mid-run, so respawns are build-consistent. */
       self_exe_("/proc/self/exe") {
+  /* THREADS is at least 1 at its line; a width below 1 used to be raised
+   * to one worker without a word. */
+  if (width_ < 1)
+    throw std::invalid_argument(
+        "PcWorkerPool: the width must be at least 1 worker, got " +
+        std::to_string(width_));
   if (specs_.size() != static_cast<std::size_t>(width_))
     throw std::runtime_error("PcWorkerPool: per_slot_specs size != width");
   channels_.reserve(width_);
@@ -77,18 +84,56 @@ PcWorkerPool::PcWorkerPool(int width,
 
 PcWorkerPool::~PcWorkerPool() { shutdown(); }
 
-long PcWorkerPool::deadline_ms_for(const std::string& maxtime) const {
-  if (worker_timeout_s_ > 0.0)
-    return static_cast<long>(worker_timeout_s_ * 1000.0);
-  if (maxtime == "off" || maxtime.empty()) return -1;   /* thread-mode parity */
-  char* endp = nullptr;
-  const double mt = std::strtod(maxtime.c_str(), &endp);
-  if (endp == maxtime.c_str() || mt <= 0.0) return -1;
-  /* Covers multi-section scripts (timer timeout re-arms after every `clear`)
-   * plus the non-run time timer timeout cannot bound (create, pot build,
-   * neighbor lists). */
-  const double s = (3.0 * mt > mt + 120.0) ? 3.0 * mt : mt + 120.0;
-  return static_cast<long>(s * 1000.0);
+namespace {
+
+/* The deadline in seconds; nullopt for none (thread-mode parity: no soft
+ * limit, no hard deadline). */
+std::optional<double> deadline_seconds(double worker_timeout_s,
+                                       std::optional<double> script_timeout_s) {
+  if (worker_timeout_s > 0.0) return worker_timeout_s;
+  if (!script_timeout_s) return std::nullopt;
+  const double t = *script_timeout_s;
+  return (3.0 * t > t + 120.0) ? 3.0 * t : t + 120.0;
+}
+
+/* s seconds in milliseconds fit a long: below 2^63, the first double a
+ * long cannot hold. */
+bool fits_long_ms(double s) {
+  static_assert(sizeof(long) == 8, "pc_worker_deadline_ms: 64-bit long");
+  return s * 1000.0 < 0x1p63;
+}
+
+}  // namespace
+
+bool pc_worker_deadline_fits(double worker_timeout_s,
+                             std::optional<double> script_timeout_s) {
+  const std::optional<double> s =
+      deadline_seconds(worker_timeout_s, script_timeout_s);
+  return !s || fits_long_ms(*s);
+}
+
+long pc_worker_deadline_ms(double worker_timeout_s,
+                           std::optional<double> script_timeout_s) {
+  /* parse_script_timeout rejects a limit <= 0 at its line; one reaching
+   * this point is a caller's error, not "no deadline". */
+  if (script_timeout_s && !(*script_timeout_s > 0.0)) {
+    std::ostringstream msg;
+    msg << "pc_worker_deadline_ms: the script timeout must be positive, got "
+        << *script_timeout_s << " s ('off' and 'unlimited' are no limit)";
+    throw std::invalid_argument(msg.str());
+  }
+  const std::optional<double> s =
+      deadline_seconds(worker_timeout_s, script_timeout_s);
+  if (!s) return -1;
+  /* The parsers reject such a timeout at its line; converting it would be
+   * undefined behaviour. */
+  if (!fits_long_ms(*s)) {
+    std::ostringstream msg;
+    msg << "pc_worker_deadline_ms: the deadline does not fit in 64-bit "
+           "milliseconds (" << *s << " s)";
+    throw std::invalid_argument(msg.str());
+  }
+  return static_cast<long>(*s * 1000.0);
 }
 
 void PcWorkerPool::spawn_locked(Channel& ch, int slot) {
@@ -230,7 +275,7 @@ PcTaskResult PcWorkerPool::execute(int slot, std::uint32_t script_idx,
                                    std::uint64_t iter,
                                    const PcPotMap& pot_map,
                                    const std::vector<std::string>& inject_lines,
-                                   const std::string& maxtime) {
+                                   std::optional<double> script_timeout_s) {
   if (slot < 0 || slot >= width_)
     throw std::runtime_error("PcWorkerPool::execute: bad slot");
   Channel& ch = *channels_[slot];
@@ -334,7 +379,7 @@ PcTaskResult PcWorkerPool::execute(int slot, std::uint32_t script_idx,
   FrameType t;
   std::string payload;
   try {
-    const long dl = deadline_ms_for(maxtime);
+    const long dl = pc_worker_deadline_ms(worker_timeout_s_, script_timeout_s);
     if (!pcwire::recv_frame(ch.fd, t, payload, dl)) {
       kill_reap_locked(ch, slot, ("task deadline expired ("
                                   + std::to_string(dl) + " ms)").c_str());

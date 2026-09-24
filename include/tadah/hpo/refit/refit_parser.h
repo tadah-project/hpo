@@ -26,7 +26,10 @@ class RefitParser {
 public:
   /** Parse the INIT/EXPLORE/REFINE/FUSE Context keys into a RefitConfig.
    *  Throws std::runtime_error on the old grammar (a top-level OPTIMIZER block)
-   *  and on invalid tokens. Missing blocks => default-constructed stages. */
+   *  and on invalid tokens. Missing blocks => default-constructed stages. A
+   *  stage's OPTIMIZER block (and EXPLORE's INNER block) accepts only the keys
+   *  that stage reads -- any other optimiser attribute is an error naming the
+   *  keys it does read -- and must set ALGO. */
   static RefitConfig parse(const tadah::core::Context &c);
 };
 

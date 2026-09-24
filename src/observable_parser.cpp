@@ -2,7 +2,9 @@
 
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/observables/cohesive_energy.h>
+#include <tadah/hpo/strict_parse.h>         // parse_number, parse_uint
 
+#include <cstdint>
 #include <limits>
 #include <optional>
 #include <sstream>
@@ -25,32 +27,27 @@ std::vector<std::string> ws_tokens(const std::string& s) {
     return out;
 }
 
+/* A finite number of the number grammar every key reads (strict_parse.h,
+ * parse_number). */
 double parse_double(const std::string& s, const std::string& flag) {
-    try {
-        std::size_t consumed = 0;
-        double v = std::stod(s, &consumed);
-        if (consumed != s.size())
-            throw std::invalid_argument("trailing chars");
-        return v;
-    } catch (const std::exception& e) {
+    double v = 0.0;
+    if (!parse_number(s, v))
         throw std::runtime_error(
-            "PC_OBSERVABLE: flag '" + flag + "' expected a number, got '"
-            + s + "'");
-    }
+            "PC_OBSERVABLE: flag '" + flag + "' expected a finite number, got '"
+            + s + "'" + number_underflow_note(s));
+    return v;
 }
 
-int parse_int(const std::string& s, const std::string& flag) {
-    try {
-        std::size_t consumed = 0;
-        long long v = std::stoll(s, &consumed);
-        if (consumed != s.size())
-            throw std::invalid_argument("trailing chars");
-        return static_cast<int>(v);
-    } catch (const std::exception& e) {
-        throw std::runtime_error(
-            "PC_OBSERVABLE: flag '" + flag + "' expected an integer, got '"
-            + s + "'");
-    }
+/* An integer flag: decimal digits only, from `min` to INT_MAX, the
+ * integer grammar of every key (strict_parse.h, parse_uint). It used to be
+ * narrowed from long long without a check (4294967300 became 4), and a
+ * sign was read: `--maxiter -0` was 0, and a negative value got a range
+ * error that did not name it. */
+int parse_int(const std::string& s, const std::string& flag, int min) {
+    return static_cast<int>(parse_uint(
+        s, "PC_OBSERVABLE: flag '" + flag + "'",
+        static_cast<std::uint64_t>(min),
+        static_cast<std::uint64_t>(std::numeric_limits<int>::max())));
 }
 
 std::unique_ptr<Observable>
@@ -90,9 +87,10 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
                     "PC_OBSERVABLE cohesive_energy: lattice='" + lattice
                     + "' not supported in MVP (only bcc).");
         } else if (t == "--supercell") {
-            cfg.nx = parse_int(need_value(i, t), "--supercell nx");
-            cfg.ny = parse_int(need_value(i, t), "--supercell ny");
-            cfg.nz = parse_int(need_value(i, t), "--supercell nz");
+            /* At least one cell along each axis. */
+            cfg.nx = parse_int(need_value(i, t), "--supercell nx", 1);
+            cfg.ny = parse_int(need_value(i, t), "--supercell ny", 1);
+            cfg.nz = parse_int(need_value(i, t), "--supercell nz", 1);
         } else if (t == "--hotvar") {
             /* --hotvar a0 <lo> <hi> [<init>] */
             const std::string& name = need_value(i, t);
@@ -120,11 +118,8 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
              * wanders without converging; cap to a small budget
              * (50-200) for HPO use where the optimiser sweeps theta
              * before any pot is good enough for a true ground state. */
-            const int v = parse_int(need_value(i, t), "--maxiter");
-            if (v < 0)
-                throw std::runtime_error(
-                    "PC_OBSERVABLE cohesive_energy: --maxiter must be >= 0");
-            cfg.relax_maxiter = static_cast<std::size_t>(v);
+            cfg.relax_maxiter = static_cast<std::size_t>(
+                parse_int(need_value(i, t), "--maxiter", 0));
         } else if (t == "--max-wall-time") {
             /* Per-relax wall-time cap (seconds). PC_OBSERVABLE's
              * analogue of LAMMPS's MAXTIME (per-eval subprocess kill).
@@ -145,11 +140,8 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
              * maxeval`. Critical for HPO: without it, a pathological theta
              * that never converges does maxiter x maxiter_ls evals and
              * burns minutes per HPO iter. */
-            const int v = parse_int(need_value(i, t), "--maxeval");
-            if (v < 0)
-                throw std::runtime_error(
-                    "PC_OBSERVABLE cohesive_energy: --maxeval must be >= 0");
-            cfg.relax_maxeval = static_cast<std::size_t>(v);
+            cfg.relax_maxeval = static_cast<std::size_t>(
+                parse_int(need_value(i, t), "--maxeval", 0));
         } else if (t == "--fmax-converged") {
             /* eq_ok threshold (matches Ecoh_fast.in's
              * `ternary($(fmax) < 0.1, 1, 0)`). If post-relax fmax

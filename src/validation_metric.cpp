@@ -1,5 +1,5 @@
 #include <tadah/hpo/validation_metric.h>
-#include <charconv>
+#include <tadah/hpo/strict_parse.h>
 #include <cstdint>
 #include <cstring>
 #include <iomanip>
@@ -17,18 +17,13 @@ bool metric_value_is_finite(double value) {
     return (bits & UINT64_C(0x7ff0000000000000)) != UINT64_C(0x7ff0000000000000);
 }
 
-double parse_metric_number(const std::string& token) {
+double parse_metric_number(const std::string& token, const std::string& what) {
     double value = 0.0;
-    const char* first = token.data();
-    const char* last = first + token.size();
-    if (first != last && *first == '+') {
-        ++first;
-        if (first != last && (*first == '-' || *first == '+'))
-            throw std::runtime_error("Invalid number '" + token + "'");
-    }
-    const auto r = std::from_chars(first, last, value);
-    if (first == last || r.ec != std::errc{} || r.ptr != last || !metric_value_is_finite(value))
-        throw std::runtime_error("Expected a finite number, got '" + token + "'");
+    if (!parse_number(token, value))
+        throw std::runtime_error(
+            (what.empty() ? std::string("Expected a finite number")
+                          : what + " must be a finite number") +
+            ", got '" + token + "'" + number_underflow_note(token));
     return value;
 }
 

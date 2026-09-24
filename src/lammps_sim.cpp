@@ -3,6 +3,7 @@
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/runners.h>
+#include <tadah/hpo/strict_parse.h>
 #include <iostream>
 
 #include <cstring>
@@ -211,14 +212,15 @@ bool try_parse_double(const std::string& s, double& value)
     }
 }
 
-/* An option token starts with '-' and is not a complete number: a negative
- * target, weight, bound or loss parameter is a value; --outvar, -var and
- * the other options are not numbers. */
+/* An option token starts with '-' and is not shaped like a number
+ * (strict_parse.h, is_number_shaped): a negative target, weight, bound or
+ * loss parameter is a value; --outvar, -var and the other options are not.
+ * A malformed number that starts with "-" and a digit or '.' ("-3x",
+ * "-0x1p3") or a signed inf/nan is a value too, which the number grammar
+ * rejects, rather than an option passed on to LAMMPS. */
 static bool is_option_token(const std::string& s)
 {
-    if (s.empty() || s[0] != '-') return false;
-    double v;
-    return !try_parse_double(s, v);
+    return !s.empty() && s[0] == '-' && !is_number_shaped(s);
 }
 
 LammpsSim::LammpsSim() {}
@@ -236,6 +238,9 @@ LammpsSim::LammpsSim(std::string& cmd_,
   invar.push_back(TADAH_LAMMPS_LIB);
   tokenise();
   parse_tokens();
+  /* The root PC_SCRIPT_TIMEOUT (checked at its own line) or this line's
+   * --maxtime (checked in parse_tokens). */
+  maxtime_seconds = parse_script_timeout(maxtime, "PC_SCRIPT_TIMEOUT");
 
   // set default values if not specified by user
   auto it_screen = std::find(invar.begin(), invar.end(), "-screen");
@@ -248,12 +253,12 @@ LammpsSim::LammpsSim(std::string& cmd_,
     invar.push_back("-log");
     invar.push_back("none");
   }
-  auto it_maxtime = std::find(invar.begin(), invar.end(), "maxtime");
-  if (it_maxtime == invar.end()) {
-    invar.push_back("-var");
-    invar.push_back("maxtime");
-    invar.push_back(maxtime+" every 1");
-  }
+  /* The script timeout, as `timer timeout ${maxtime}` reads it
+   * (prep_script_lines). parse_tokens() rejects a -var maxtime of the
+   * user's, which would replace it unchecked. */
+  invar.push_back("-var");
+  invar.push_back("maxtime");
+  invar.push_back(maxtime+" every 1");
 
   if (!script.length())
     throw std::runtime_error("LammpsSim object must have a script specified.\n");
@@ -310,12 +315,36 @@ void LammpsSim::tokenise() {
 }
 void LammpsSim::parse_tokens() {
 
+  /* A token that is not an option is a value: of the LAMMPS option before
+   * it (`-var x 1 2`, `-pk omp 4 neigh no`: LAMMPS decides how many it
+   * takes), or of an HPO option, which reads exactly its own values. A
+   * bare token after an HPO option's values (`--maxtime 1:30 00`, a typo
+   * for 1:30:00) used to reach LAMMPS as a command-line argument, and every
+   * run failed on it; it is an error naming the option. */
+  std::string hpo_values;       /* "<option> takes ...", after its values */
+  bool lammps_values = false;   /* after a LAMMPS option or its values */
+  auto hpo_option_read = [&](const std::string& takes) {
+    hpo_values = takes;
+    lammps_values = false;
+  };
+  /* The variable maxtime carries the script timeout (the constructor
+   * passes -var maxtime "<spec> every 1" for `timer timeout ${maxtime}`);
+   * a user's definition would replace the checked, reported value. */
+  auto reject_reserved = [](const std::string& option, const std::string& name) {
+    if (name == "maxtime")
+      throw std::runtime_error(
+          option + " maxtime: the variable maxtime is reserved for the "
+          "script timeout HPO injects (timer timeout ${maxtime}); set "
+          "--maxtime on this line or PC_SCRIPT_TIMEOUT instead");
+  };
+
   size_t i = 0;
   while (i < tokens.size()) {
     if (tokens[i] == "--script") { // LAMMPS script file
       if (i + 1 < tokens.size()) {
         script = tokens[++i];
         i++;
+        hpo_option_read("--script takes a single value");
       } else {
         throw std::runtime_error("Invalid number of arguments for --script");
       }
@@ -333,21 +362,24 @@ void LammpsSim::parse_tokens() {
 
       if(j>=tokens.size() || is_flag(tokens[j]))
         throw std::runtime_error("--varloss "+vname+": missing <target>");
-      double tgt = std::stod(tokens[j++]);
+      const double tgt = parse_finite(tokens[j++], "--varloss "+vname+" <target>");
 
       if(j>=tokens.size() || is_flag(tokens[j]))
         throw std::runtime_error("--varloss "+vname+": missing <weight>");
-      double wgt = std::stod(tokens[j++]);
+      /* Any finite weight; a negative one is accepted. */
+      const double wgt = parse_finite(tokens[j++], "--varloss "+vname+" <weight>");
 
       /* optional override: <type> [<param>]. Defaults and validation of
        * the parameter come from LossFunction::resolve_params, shared with
        * the root LOSS key. ---------------------------------------------- */
       tadah::LossFunction myLoss = defLoss;
       if(j<tokens.size() && !is_flag(tokens[j])){
+        const std::string tname = tokens[j];
         auto t = tadah::LossFunction::from_string(tokens[j++]);
         std::vector<double> pars;
         while(j<tokens.size() && !is_flag(tokens[j]))
-          pars.push_back(std::stod(tokens[j++]));
+          pars.push_back(parse_finite(tokens[j++],
+                                      "--varloss "+vname+" "+tname+" parameter"));
         myLoss = tadah::LossFunction(t, pars);
       }
 
@@ -363,13 +395,18 @@ void LammpsSim::parse_tokens() {
       lossFn   .push_back(std::move(myLoss));
 
       i = j;
+      /* Every value up to the next option was the loss override's. */
+      hpo_option_read("--varloss takes <name> <target> <weight> "
+                      "[<loss> [<param>...]]");
     }
     else if (tokens[i] == "--invar") {
       if (i + 2 < tokens.size()) {
+        reject_reserved("--invar", tokens[i + 1]);
         invar.push_back("-var");
         invar.push_back(tokens[++i].c_str());
         invar.push_back(tokens[++i].c_str());
         i++;
+        hpo_option_read("--invar takes <name> <value>");
       } else {
         throw std::runtime_error("Invalid number of arguments for --invar");
       }
@@ -382,16 +419,16 @@ void LammpsSim::parse_tokens() {
           n_outvar.push_back(vname);
         }
         i++;
-        // n_outvar.push_back(tokens[++i]);
-        // i++;
+        hpo_option_read("--outvar takes a single value");
       } else {
         throw std::runtime_error("Invalid number of arguments for --outvar");
       }
     }
     else if (tokens[i] == "--failscore") {
       if (i + 1 < tokens.size()) {
-        failscore = std::stod(tokens[++i]);
+        failscore = parse_finite(tokens[++i], "--failscore");
         i++;
+        hpo_option_read("--failscore takes a single value");
       } else {
         throw std::runtime_error("Invalid number of arguments for --failscore");
       }
@@ -399,7 +436,9 @@ void LammpsSim::parse_tokens() {
     else if (tokens[i] == "--maxtime") {
       if (i + 1 < tokens.size()) {
         maxtime = tokens[++i];
+        (void)parse_script_timeout(maxtime, "--maxtime");
         i++;
+        hpo_option_read("--maxtime takes a single value");
       } else {
         throw std::runtime_error("Invalid number of arguments for --maxtime");
       }
@@ -414,22 +453,17 @@ void LammpsSim::parse_tokens() {
       hv.name = tokens[j++];
       if (hv.name.empty() || is_flag(hv.name))
         throw std::runtime_error("--hotvar: <name> must be a non-empty identifier");
-      try { hv.min = std::stod(tokens[j++]); }
-      catch (...) { throw std::runtime_error("--hotvar " + hv.name + ": <min> not a number"); }
-      try { hv.max = std::stod(tokens[j++]); }
-      catch (...) { throw std::runtime_error("--hotvar " + hv.name + ": <max> not a number"); }
+      hv.min = parse_finite(tokens[j++], "--hotvar " + hv.name + " <min>");
+      hv.max = parse_finite(tokens[j++], "--hotvar " + hv.name + " <max>");
       if (!(hv.max > hv.min))
         throw std::runtime_error("--hotvar " + hv.name + ": <max> must exceed <min>");
-      /* optional initial -- must look like a positive number, not another flag */
-      if (j < tokens.size() && !is_flag(tokens[j])) {
-        double init;
-        if (try_parse_double(tokens[j], init)) {
-          hv.initial = init;
-          ++j;
-        }
-      }
+      /* Optional <initial>: a token that is not an option is it, and must
+       * be a number -- it used to be passed on to LAMMPS when it was not. */
+      if (j < tokens.size() && !is_flag(tokens[j]))
+        hv.initial = parse_finite(tokens[j++], "--hotvar " + hv.name + " <initial>");
       hotvars.push_back(std::move(hv));
       i = j;
+      hpo_option_read("--hotvar takes <name> <min> <max> [<initial>]");
     }
     else if (tokens[i] == "--failvar") {
       /* --failvar <name> [<scale>]  (graded-FAILSCORE Tier 2; see
@@ -447,18 +481,15 @@ void LammpsSim::parse_tokens() {
       fv.name = tokens[j++];
       if (fv.name.empty() || is_flag(fv.name))
         throw std::runtime_error("--failvar: <name> must be a non-empty identifier");
+      /* Optional <scale>: a token that is not an option is it, and must be
+       * a number -- it used to be passed on to LAMMPS when it was not. */
       if (j < tokens.size() && !is_flag(tokens[j])) {
-        double sc;
-        if (try_parse_double(tokens[j], sc)) {
-          if (!(sc > 0.0))
-            throw std::runtime_error("--failvar " + fv.name +
-                                     ": <scale> must be > 0");
-          fv.scale = sc;
-          ++j;
-        }
+        fv.scale = parse_positive(tokens[j++],
+                                  "--failvar " + fv.name + " <scale>");
       }
       failvars.push_back(std::move(fv));
       i = j;
+      hpo_option_read("--failvar takes <name> [<scale>]");
     }
     else if (tokens[i] == "--ncpu") {
       /* Rejected, not ignored: an unrecognised option would otherwise be
@@ -468,9 +499,27 @@ void LammpsSim::parse_tokens() {
           "PC_LAMMPS scripts is THREADS / PC_ISOLATION. Delete --ncpu from "
           "this line.");
     }
-    else {
-      // Otherwise we just push it to invar, as it might be a LAMMPS command line argument
+    else if (is_option_token(tokens[i])) {
+      /* A LAMMPS command-line option: it and the values that follow it go
+       * to LAMMPS. -var (-v) maxtime is reserved. */
+      if ((tokens[i] == "-var" || tokens[i] == "-v") && i + 1 < tokens.size())
+        reject_reserved(tokens[i], tokens[i + 1]);
       invar.push_back(tokens[i++]);
+      hpo_values.clear();
+      lammps_values = true;
+    }
+    else if (lammps_values) {
+      invar.push_back(tokens[i++]);   /* a value of the LAMMPS option */
+    }
+    else if (!hpo_values.empty()) {
+      throw std::runtime_error(hpo_values + " (unexpected '" + tokens[i] +
+                               "')");
+    }
+    else {
+      throw std::runtime_error(
+          "unexpected '" + tokens[i] + "': a PC_LAMMPS token is an option or "
+          "a value of one (HPO options start with --, LAMMPS command-line "
+          "options with -)");
     }
   }
 }
@@ -672,8 +721,13 @@ void LammpsSim::prep_script_lines()
    * classifies as a soft-timeout stop. This preserves the per-section
    * timeout semantics and cost profile of the old per-line executor. The
    * final section needs no guard: with no clear after it, the fired timer
-   * survives to the end-of-script is_timeout() check. */
-  if (maxtime != "off" && !script_lines.empty()) {
+   * survives to the end-of-script is_timeout() check.
+   *
+   * Only a limit in seconds is injected: "off" and "unlimited" (LAMMPS'
+   * two spellings of no limit; maxtime_seconds is empty) inject nothing.
+   * An injected `timer timeout unlimited` leaves $(timeremain) at 0.0, so
+   * the guard aborted every multi-section script as timed out. */
+  if (maxtime_seconds && !script_lines.empty()) {
     bool user_timer = false;
     for (const auto& l : script_lines) {
       std::istringstream ls(l);

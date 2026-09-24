@@ -4,8 +4,10 @@
 #include <tadah/hpo/init_strategy.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_block.h>
+#include <tadah/hpo/pc_worker_pool.h>
 #include <tadah/hpo/scale_validation.h>
 #include <tadah/hpo/strategy_rules.h>
+#include <tadah/hpo/strict_parse.h>
 #include <tadah/mlip/engines/hpotarget_writer.h>
 #include <cctype>
 #include <cstdlib>
@@ -350,13 +352,22 @@ static bool dispatch_init_attr(const std::string& key,
                 "(reserved keyword). Use RANDOM/LHS/SOBOL/WARM/CONFIG.");
         std::string tok;
         while (iss >> tok) e.args.push_back(tok);
+        /* Arity and K are checked here, at the line, not when the chain
+         * is resolved after the whole file has been read. */
+        validate_init_entry(e);
         a.chain.push_back(std::move(e));
         return true;
     }
-    if (key=="K_TOTAL") { std::size_t v; iss>>v; a.k_total=v; return true; }
-    if (key=="SEED")    { std::uint64_t v; iss>>v; a.seed=v; return true; }
+    if (key=="K_TOTAL") {
+        a.k_total = parse_uint(single_value(iss, key), key);
+        return true;
+    }
+    if (key=="SEED") {
+        a.seed = parse_uint(single_value(iss, key), key);
+        return true;
+    }
     if (key=="WARM_ON_MISMATCH") {
-        std::string v; iss>>v;
+        const std::string v = single_value(iss, key);
         if (v!="warn" && v!="error" && v!="skip")
             throw std::runtime_error("WARM_ON_MISMATCH must be one of: warn, error, skip");
         a.warm_on_mismatch = v;
@@ -768,8 +779,7 @@ void HPOTargets::read(const std::string& fn)
                 std::string extra_tok;
                 if (iss >> extra_tok)
                     throw std::runtime_error(
-                        "line " + std::to_string(nline) + ": " + key +
-                        " takes no further value here (unexpected '" +
+                        key + " takes no further value here (unexpected '" +
                         extra_tok + "')");
                 continue;
             }
@@ -780,13 +790,12 @@ void HPOTargets::read(const std::string& fn)
                     continue;
                 if (block == RESTART_BLK) {
                     if (key=="AFTER_STAGNATION") {
-                        std::size_t v; iss>>v;
-                        spec.restart.after_stagnation = v;
+                        spec.restart.after_stagnation =
+                            parse_uint(single_value(iss, key), key);
                         continue;
                     }
                     if (key=="MAX") {
-                        std::size_t v; iss>>v;
-                        spec.restart.max = v;
+                        spec.restart.max = parse_uint(single_value(iss, key), key);
                         continue;
                     }
                 }
@@ -797,14 +806,15 @@ void HPOTargets::read(const std::string& fn)
             /* NOISE block keys */
             if (block == NOISE_BLK) {
                 if (key=="AUTO") {
-                    std::string v; iss>>v;
+                    /* AUTO alone means AUTO true. */
+                    std::string v;
+                    iss >> v;
+                    expect_end(iss, "AUTO takes a single value");
                     spec.noise.autodetect = v.empty() ? true : parse_bool(v, "NOISE.AUTO");
                     continue;
                 }
                 if (key=="CALIBRATION") {
-                    std::size_t v; iss>>v;
-                    if (!iss)
-                        throw std::runtime_error("NOISE.CALIBRATION expects a non-negative integer");
+                    const std::size_t v = parse_uint(single_value(iss, key), key);
                     if (v == 1)
                         throw std::runtime_error("NOISE.CALIBRATION must be 0 (off) or >= 2");
                     spec.noise.calibration_n = v;
@@ -820,11 +830,13 @@ void HPOTargets::read(const std::string& fn)
              * OUTER -- and rejected inside stage / INNER / INIT blocks. */
             if (key=="LOG_HP") {
                 if (block == OUTER || block == STRATEGY_BLK) {
-                    double v = 0.0;
-                    if (!(iss >> v) || !std::isfinite(v) || !(v >= 1.0))
+                    const std::string tok = single_value(iss, key);
+                    const double v = parse_finite(tok, key);
+                    if (!(v >= 1.0))
                         throw std::runtime_error(
                             "LOG_HP must be a finite ratio >= 1 (a dimension is "
-                            "log-scaled when high/low >= LOG_HP and low > 0)");
+                            "log-scaled when high/low >= LOG_HP and low > 0), "
+                            "got '" + tok + "'");
                     if (spec.log_threshold) {
                         std::ostringstream oss;
                         oss << "LOG_HP given more than once; the last value ("
@@ -844,7 +856,7 @@ void HPOTargets::read(const std::string& fn)
             /* STRATEGY block keys */
             if (block == STRATEGY_BLK) {
                 if (key=="TYPE") {
-                    std::string t; iss>>t;
+                    const std::string t = single_value(iss, key);
                     if      (t=="PLAIN")      spec.strategy_type = StrategyType::PLAIN;
                     else if (t=="MULTISTART") spec.strategy_type = StrategyType::MULTISTART;
                     else if (t=="PRESTAGE")   spec.strategy_type = StrategyType::PRESTAGE;
@@ -858,28 +870,24 @@ void HPOTargets::read(const std::string& fn)
                     type_keys.push_back({key, nline, line});
                 /* MULTISTART knobs. */
                 if (key=="N_STARTS") {
-                    std::size_t v; iss>>v;
-                    if (v == 0) throw std::runtime_error("N_STARTS must be >= 1");
-                    spec.multistart.n_starts = v;
+                    spec.multistart.n_starts = parse_uint(single_value(iss, key), key, 1);
                     continue;
                 }
                 if (key=="PARALLEL") {
-                    std::size_t v; iss>>v;
-                    if (v == 0) throw std::runtime_error("PARALLEL must be >= 1");
-                    spec.multistart.parallel = v;
+                    spec.multistart.parallel = parse_uint(single_value(iss, key), key, 1);
                     continue;
                 }
                 if (key=="BUDGET_PER_START") {
-                    std::size_t v; iss>>v;
-                    if (v == 0) throw std::runtime_error("BUDGET_PER_START must be >= 1");
-                    spec.multistart.budget_per_start = v;
+                    /* Each start's MAXEVAL: the int budget MAXEVAL is
+                     * (optimizer_block.cpp). */
+                    spec.multistart.budget_per_start =
+                        parse_uint(single_value(iss, key), key, 1,
+                                   std::numeric_limits<int>::max());
                     continue;
                 }
                 /* PRESTAGE knob. */
                 if (key=="TOPK") {
-                    std::size_t v; iss>>v;
-                    if (v == 0) throw std::runtime_error("TOPK must be >= 1");
-                    spec.stage_topk = v;
+                    spec.stage_topk = parse_uint(single_value(iss, key), key, 1);
                     continue;
                 }
                 throw std::runtime_error("unknown key '" + key + "' inside STRATEGY block");
@@ -908,24 +916,32 @@ void HPOTargets::read(const std::string& fn)
 
             /* ==================  global (ROOT) section  =========== */
 
-            /* optimizer-independent settings ----------------------- */
-            // if      (key=="THREADS"){ double v; iss>>v; spec.param["THREADS"]=v; }
-            if (key=="FAILSCORE"){ iss>>FAIL_SCORE; }
-            /* PC_SCRIPT_TIMEOUT: per-pc_script soft wall-clock limit (SECONDS)
-             * injected as LAMMPS `timer timeout` after each clear. MAXTIME is
+            /* optimizer-independent settings ----------------------- *
+             * Every value is parsed strictly (strict_parse.h): the whole
+             * token, one per single-value key. */
+            if (key=="FAILSCORE") {
+                FAIL_SCORE = parse_finite(single_value(iss, key), key);
+            }
+            /* PC_SCRIPT_TIMEOUT: per-pc_script soft wall-clock limit (a LAMMPS
+             * time spec: off, unlimited or a positive [[HH:]MM:]SS) injected as
+             * LAMMPS `timer timeout` after each clear. MAXTIME is
              * the legacy alias, kept so existing .hpo configs keep parsing.
              * NOTE: the OPTIMIZER-block MAXTIME (whole-run stop) is a DIFFERENT
              * setting parsed in optimizer_block.cpp -- do not conflate. If both
              * spellings appear here, the later line wins (each overwrites
              * MAX_TIME); hpo.cpp warns when both were given. */
             else if (key=="PC_SCRIPT_TIMEOUT" || key=="MAXTIME") {
-                iss>>MAX_TIME;
+                /* A LAMMPS time spec that is off, unlimited or positive:
+                 * it becomes `timer timeout <spec>`, and its seconds size
+                 * the PROCESS worker deadline. */
+                MAX_TIME = single_value(iss, key);
+                MAX_TIME_seconds = parse_script_timeout(MAX_TIME, key);
                 MAX_TIME_key = key;
                 if (key=="MAXTIME") MAX_TIME_seen_legacy = true;
                 else                MAX_TIME_seen_new    = true;
             }
             else if (key=="PC_ISOLATION") {
-                iss>>PC_ISOLATION;
+                PC_ISOLATION = single_value(iss, key);
                 PC_ISOLATION_set = true;
                 if (PC_ISOLATION != "THREAD" && PC_ISOLATION != "PROCESS")
                     throw std::runtime_error(
@@ -933,21 +949,18 @@ void HPOTargets::read(const std::string& fn)
                         + PC_ISOLATION + "'");
             }
             else if (key=="PC_WORKER_TIMEOUT") {
-                std::string v;
-                if (!(iss>>v))
-                    throw std::runtime_error(
-                        "PC_WORKER_TIMEOUT requires a value in seconds");
-                PC_WORKER_TIMEOUT = parse_pc_worker_timeout(v, "PC_WORKER_TIMEOUT");
+                PC_WORKER_TIMEOUT = parse_pc_worker_timeout(
+                    single_value(iss, key), "PC_WORKER_TIMEOUT");
             }
             else if (key=="FAILSCORE_GRADING") {
-                std::string v; iss>>v;
+                const std::string v = single_value(iss, key);
                 if (v=="ON")       FAILSCORE_GRADING = true;
                 else if (v=="OFF") FAILSCORE_GRADING = false;
                 else throw std::runtime_error(
                         "FAILSCORE_GRADING must be ON or OFF, got '" + v + "'");
             }
             else if (key=="BUMPGATE") {
-                std::string v; iss>>v;
+                const std::string v = single_value(iss, key);
                 if (v=="STRICT")         BUMPGATE_STRICT = true;
                 else if (v=="CANDIDATE") BUMPGATE_STRICT = false;
                 else throw std::runtime_error(
@@ -972,14 +985,11 @@ void HPOTargets::read(const std::string& fn)
                         if (i2+1 >= toks.size())
                             throw std::runtime_error("PC_FAILPROBE " + toks[i2]
                                                      + " requires a value");
-                        const double v = std::stod(toks[i2+1]);
-                        if (toks[i2]=="--gate") failprobe_gate = v;
-                        else {
-                            if (!std::isfinite(v) || !(v > 0.0))
-                                throw std::runtime_error(
-                                    "PC_FAILPROBE --s0 must be finite and > 0");
-                            failprobe_s0 = v;
-                        }
+                        const std::string what = "PC_FAILPROBE " + toks[i2];
+                        if (toks[i2]=="--gate")
+                            failprobe_gate = parse_finite(toks[i2+1], what);
+                        else
+                            failprobe_s0 = parse_positive(toks[i2+1], what);
                         ++i2;
                     } else keep.push_back(toks[i2]);
                 }
@@ -1001,7 +1011,9 @@ void HPOTargets::read(const std::string& fn)
                 failprobe_idx  = static_cast<int>(LS.size()) - 1;
                 failprobe_svar = probe.n_outvar.front();
             }
-            else if (key=="QFLUSH")   { iss>>QFLUSH_THRESHOLD; }
+            else if (key=="QFLUSH") {
+                QFLUSH_THRESHOLD = parse_uint(single_value(iss, key), key);
+            }
             /* D14: these are moduli (`iter % every`), so 0 is an integer
              * division by zero -- SIGFPE on the first evaluation, with no
              * message. "0" is also the spelling a user naturally reaches for
@@ -1009,30 +1021,35 @@ void HPOTargets::read(const std::string& fn)
              * rather than a typo. Reject it at the parse site, where the
              * line number is still known, in the same shape as DIGITS
              * below. */
-            else if (key=="OUTPUT")   { iss>>outputEvery;
-                if (!iss || outputEvery < 1)
+            else if (key=="OUTPUT") {
+                outputEvery = parse_uint(single_value(iss, key), key, 1,
+                    std::numeric_limits<std::uint64_t>::max(),
+                    "it is a cadence: write every Nth evaluation; to write as "
+                    "little as possible, use a large value such as OUTPUT "
+                    "1000000");
+            }
+            else if (key=="BOUTPUT") {
+                bestOutputEvery = parse_uint(single_value(iss, key), key, 1,
+                    std::numeric_limits<std::uint64_t>::max(),
+                    "it is a cadence: write every Nth new best");
+            }
+            else if (key=="DIGITS") {
+                outputDigits = static_cast<int>(
+                    parse_uint(single_value(iss, key), key, 1, 15));
+            }
+            else if (key=="DUMP" || key=="BDUMP") {
+                /* <cadence> <directory>: the directory is created only once
+                 * the whole line is valid. */
+                std::string every, dir;
+                if (!(iss >> every >> dir))
                     throw std::runtime_error(
-                        "OUTPUT must be >= 1 (it is a cadence: write every "
-                        "Nth evaluation). To write as little as possible, "
-                        "use a large value such as OUTPUT 1000000."); }
-            else if (key=="BOUTPUT")  { iss>>bestOutputEvery;
-                if (!iss || bestOutputEvery < 1)
-                    throw std::runtime_error(
-                        "BOUTPUT must be >= 1 (it is a cadence: write every "
-                        "Nth new best)."); }
-            else if (key=="DIGITS")   { iss>>outputDigits;
-                if (outputDigits < 1 || outputDigits > 15)
-                    throw std::runtime_error("DIGITS must be 1-15"); }
-            else if (key=="DUMP")     { iss>>dumpPotEvery>>dumpPotDir;
-                if (!iss || dumpPotEvery < 1)
-                    throw std::runtime_error(
-                        "DUMP requires a cadence >= 1 and a directory");
-                handle_directory_creation(dumpPotDir); }
-            else if (key=="BDUMP")    { iss>>dumpBestPotEvery>>dumpBestPotDir;
-                if (!iss || dumpBestPotEvery < 1)
-                    throw std::runtime_error(
-                        "BDUMP requires a cadence >= 1 and a directory");
-                handle_directory_creation(dumpBestPotDir); }
+                        key + " requires a cadence and a directory");
+                expect_end(iss, key + " takes a cadence and a directory");
+                const std::size_t n = parse_uint(every, key + " cadence", 1);
+                if (key == "DUMP") { dumpPotEvery = n; dumpPotDir = dir; }
+                else { dumpBestPotEvery = n; dumpBestPotDir = dir; }
+                handle_directory_creation(dir);
+            }
 
             /* loss -------------------------------------------------- */
             else if (key=="LOSS")
@@ -1048,10 +1065,10 @@ void HPOTargets::read(const std::string& fn)
                 std::string tok;
                 while (iss>>tok) {
                     double p = 0.0;
-                    if (!tadah::hpo::try_parse_double(tok, p))
+                    if (!parse_number(tok, p))
                         throw std::runtime_error(
                             "LOSS " + type + ": parameter '" + tok +
-                            "' is not a number");
+                            "' is not a number" + number_underflow_note(tok));
                     params.push_back(p);
                 }
                 auto id = tadah::LossFunction::from_string(type);
@@ -1059,9 +1076,9 @@ void HPOTargets::read(const std::string& fn)
             }
 
             /* optimisation variables --------------------------------*/
-            else if (key=="OPTIM")   { process_optim_config(iss,nline); }
+            else if (key=="OPTIM")   { process_optim_config(iss); }
             else if (key=="OPTIM_SCALE") {
-                std::string v; iss >> v;
+                std::string v = single_value(iss, key);
                 for (auto& ch : v) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
                 if (scale_policy_set_)
                     throw std::runtime_error("OPTIM_SCALE given more than once");
@@ -1121,9 +1138,11 @@ void HPOTargets::read(const std::string& fn)
                 std::string target_token, weight_token;
                 if (!(iss >> target_token >> weight_token))
                     throw std::runtime_error(key + " requires <target> <weight>");
-                const double tgt = parse_metric_number(target_token);
-                const double wgt = parse_metric_number(weight_token);
-                if (wgt < 0) throw std::runtime_error(key + " weight must be nonnegative");
+                const double tgt = parse_metric_number(target_token, key + " <target>");
+                const double wgt = parse_metric_number(weight_token, key + " <weight>");
+                if (wgt < 0)
+                    throw std::runtime_error(key + " <weight> must be a number >= 0, got '" +
+                                             weight_token + "'");
                 HPOTargets::SkipCaps caps;
                 std::string flag;
                 while (iss >> flag) {
@@ -1131,8 +1150,7 @@ void HPOTargets::read(const std::string& fn)
                         throw std::runtime_error(key + ": unknown flag '" + flag + "'");
                     std::string token;
                     if (!(iss >> token)) throw std::runtime_error(key + " " + flag + " requires a positive number");
-                    const double value = parse_metric_number(token);
-                    if (!(value > 0)) throw std::runtime_error(key + " " + flag + " requires a positive number");
+                    const double value = parse_positive(token, key + " " + flag);
                     auto& cap = flag == "--skip-above" ? caps.abs_above : caps.rel_above;
                     if (cap) throw std::runtime_error(key + ": repeated " + flag);
                     cap = value;
@@ -1305,10 +1323,15 @@ void HPOTargets::read(const std::string& fn)
 double HPOTargets::parse_pc_worker_timeout(const std::string& token,
                                            const std::string& origin) {
   double v = 0.0;
-  if (!try_parse_double(token, v) || !std::isfinite(v) || v < 0.0)
+  if (!parse_number(token, v) || v < 0.0)
     throw std::runtime_error(
         origin + " must be a finite number of seconds >= 0 (0 derives the "
-        "deadline from each script's timeout), got '" + token + "'");
+        "deadline from each script's timeout), got '" + token + "'" +
+        number_underflow_note(token));
+  if (!pc_worker_deadline_fits(v, std::nullopt))
+    throw std::runtime_error(
+        origin + " is too large for the worker deadline, got '" + token +
+        "' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)");
   return v;
 }
 
@@ -1480,7 +1503,7 @@ void HPOTargets::bind_space_recursive() {
   bind(spec.prestage.get());
 }
 
-void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
+void HPOTargets::process_optim_config(std::istringstream& iss) {
   std::string k;
   if (!(iss >> k)) {
     throw std::runtime_error("Failed to read key from input.");
@@ -1503,11 +1526,12 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
 
   /* At least the (indices) group plus one token (AUTO, or <low> <high>);
    * the exact grammar is checked below. */
+  /* read() names the line of every error ("Error on line N: "). */
   if (tokens.size() < 2) {
     throw std::runtime_error(
-      "OPTIM " + k + " on line " + core::to_string(nline) +
-      ": expected `(indices) <low> <high>` or `(indices) AUTO ...` (got "
-      + core::to_string(tokens.size() - (tokens.empty() ? 0 : 1)) + " token(s))");
+      "OPTIM " + k + ": expected `(indices) <low> <high>` or `(indices) AUTO "
+      "...` (got " + core::to_string(tokens.size() - (tokens.empty() ? 0 : 1)) +
+      " token(s))");
   }
 
   std::vector<size_t> user_indices;
@@ -1516,10 +1540,8 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
     if (std::find(user_indices.begin(), user_indices.end(), 0) != user_indices.end())
       throw std::runtime_error("OPTIM indices start at 1");
   } catch (const std::exception& e) {
-    throw std::runtime_error(
-      "Error parsing indices on process_optim_config line "
-      + core::to_string(nline) + ": " + std::string(e.what()) +
-      "\nTokens: " + tokens.back());
+    throw std::runtime_error("OPTIM " + k + ": bad index list (" +
+                             tokens.back() + "): " + e.what());
   }
   tokens.pop_back();
 
@@ -1541,26 +1563,24 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
     for (auto& ch : t) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
     return t;
   };
+  /* Every number on an OPTIM line: a finite number of the number grammar
+   * (strict_parse.h). */
   auto parse_num = [&](const std::string& tok, const char* what) {
-    try {
-      std::size_t pos = 0;
-      const double v = std::stod(tok, &pos);
-      if (pos != tok.size()) throw std::invalid_argument("trailing chars");
-      return v;
-    } catch (const std::exception&) {
-      throw std::runtime_error("OPTIM " + k + " on line " + core::to_string(nline) +
-                               ": " + what + " must be a number (got '" + tok + "')");
-    }
+    double v = 0.0;
+    if (!parse_number(tok, v))
+      throw std::runtime_error("OPTIM " + k + ": " + what +
+                               " must be a finite number (got '" + tok + "')" +
+                               number_underflow_note(tok));
+    return v;
   };
   /* trailing shape tag (both forms) */
   auto take_tag = [&](std::vector<std::string>& toks) {
     if (toks.size() >= 2 && upper(toks[toks.size() - 2]) == "ASINH") {
       tf.kind = ScaleKind::Asinh;
       tf.c = parse_num(toks.back(), "ASINH <c>");
-      if (!std::isfinite(tf.c) || !(tf.c > 0.0))
-        throw std::runtime_error("OPTIM " + k + " on line " + core::to_string(nline) +
-                                 ": ASINH requires a positive linear scale c (got " +
-                                 toks.back() + ")");
+      if (!(tf.c > 0.0))
+        throw std::runtime_error("OPTIM " + k + ": ASINH requires a positive "
+                                 "linear scale c (got " + toks.back() + ")");
       toks.pop_back(); toks.pop_back();
       return;
     }
@@ -1569,8 +1589,8 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
       if (tag == "LIN")      { tf.kind = ScaleKind::Linear; toks.pop_back(); }
       else if (tag == "LOG") { tf.kind = ScaleKind::Log;    toks.pop_back(); }
       else if (tag == "ASINH")
-        throw std::runtime_error("OPTIM " + k + " on line " + core::to_string(nline) +
-                                 ": ASINH needs one argument <c> (the linear scale)");
+        throw std::runtime_error("OPTIM " + k + ": ASINH needs one argument <c> "
+                                 "(the linear scale)");
     }
   };
   const std::string grammar =
@@ -1588,8 +1608,8 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
     for (std::size_t t = 0; t < tokens.size(); t += 2) {
       const std::string opt = upper(tokens[t]);
       if (t + 1 >= tokens.size())
-        throw std::runtime_error("OPTIM " + k + " on line " + core::to_string(nline) +
-                                 ": AUTO option '" + tokens[t] + "' needs a value" + grammar);
+        throw std::runtime_error("OPTIM " + k + ": AUTO option '" + tokens[t] +
+                                 "' needs a value" + grammar);
       const double v = parse_num(tokens[t + 1], ("AUTO " + opt).c_str());
       if (opt == "RATIO") {
         if (mode_set) throw std::runtime_error("OPTIM " + k + ": RATIO and FRAC are mutually exclusive");
@@ -1606,8 +1626,8 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
         if (v < 0.0) throw std::runtime_error("OPTIM " + k + ": AUTO GROUP_FLOOR must be >= 0");
         rule.group_floor = v;
       } else {
-        throw std::runtime_error("OPTIM " + k + " on line " + core::to_string(nline) +
-                                 ": unexpected AUTO option '" + tokens[t] + "'" + grammar);
+        throw std::runtime_error("OPTIM " + k + ": unexpected AUTO option '" +
+                                 tokens[t] + "'" + grammar);
       }
     }
     if (k.rfind("RCUT", 0) == 0)
@@ -1622,25 +1642,11 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
     take_tag(tokens);
     if (tokens.size() != 2) {
       throw std::runtime_error(
-        "OPTIM " + k + " on line " + core::to_string(nline) +
-        ": unexpected token(s) '" + core::join(tokens) + "'" + grammar);
+        "OPTIM " + k + ": unexpected token(s) '" + core::join(tokens) + "'" +
+        grammar);
     }
-    try {
-      high = std::stod(tokens[1]);
-    } catch (const std::exception& e) {
-      throw std::runtime_error(
-        "Error converting high bound to double on process_optim_config line "
-        + core::to_string(nline) + ": " + std::string(e.what()) +
-        "\nTokens: " + tokens[1]);
-    }
-    try {
-      low = std::stod(tokens[0]);
-    } catch (const std::exception& e) {
-      throw std::runtime_error(
-        "Error converting low bound to double on process_optim_config line "
-        + core::to_string(nline) + ": " + std::string(e.what()) +
-        "\nTokens: " + tokens[0]);
-    }
+    low  = parse_num(tokens[0], "<low>");
+    high = parse_num(tokens[1], "<high>");
   }
 
   if (k == "FIXWEIGHT") {
@@ -1661,9 +1667,8 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
       auto it = std::find(fixidx.begin(), fixidx.end(), ui);
       if (it == fixidx.end()) {
         throw std::runtime_error(
-          "OPTIM FIXWEIGHT (" + core::to_string(ui) + ") on line "
-          + core::to_string(nline) + ": weight " + core::to_string(ui)
-          + " is not pinned by FIXINDEX (" + core::join(fi_str)
+          "OPTIM FIXWEIGHT (" + core::to_string(ui) + "): weight " +
+          core::to_string(ui) + " is not pinned by FIXINDEX (" + core::join(fi_str)
           + "). OPTIM FIXWEIGHT indices name MODEL WEIGHTS, not FIXWEIGHT "
           "slots; add the weight to FIXINDEX/FIXWEIGHT or drop it from "
           "this OPTIM line.");
@@ -1726,10 +1731,8 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
       omap.lowbound[i] = lo_i;
       omap.scale[i] = tf;
     } catch (const std::exception& e) {
-      throw std::runtime_error(
-        "Error processing user index on process_optim_config line "
-        + core::to_string(nline) + ": " + std::string(e.what()) +
-        "\nTokens: " + core::to_string(ui));
+      throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
+                               "): " + e.what());
     }
   }
   for (size_t i = 0; i < omap.lowbound.size(); ++i) {

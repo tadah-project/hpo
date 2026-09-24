@@ -12,6 +12,7 @@
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/strict_parse.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/warmstart_cache.h>
 #include <tadah/core/context.h>
@@ -457,12 +458,12 @@ private:
 std::unique_ptr<InitStrategy>
 make_one(const InitStrategySpec::Entry& e)
 {
-    auto parse_uint = [](const std::string& s) -> std::size_t {
-        try { return static_cast<std::size_t>(std::stoul(s)); }
-        catch (...) {
-            throw std::runtime_error("INIT METHOD " + s +
-                                     ": expected a non-negative integer");
-        }
+    /* K: a whole integer (strict_parse.h), >= 0 for RANDOM and >= 1 for
+     * LHS and SOBOL, which draw at least one point (their constructors
+     * check it too); stoul read "3x" as 3 and "-1" as 2^64-1. */
+    auto parse_k = [&](const std::string& s,
+                       std::uint64_t min) -> std::size_t {
+        return parse_uint(s, "INIT METHOD " + e.method + " K", min);
     };
 
     if (e.method == "CONFIG") {
@@ -473,17 +474,17 @@ make_one(const InitStrategySpec::Entry& e)
     if (e.method == "RANDOM") {
         if (e.args.size() != 1)
             throw std::runtime_error("INIT METHOD RANDOM expects exactly one arg: K");
-        return std::make_unique<RandomInitStrategy>(parse_uint(e.args[0]));
+        return std::make_unique<RandomInitStrategy>(parse_k(e.args[0], 0));
     }
     if (e.method == "LHS") {
         if (e.args.size() != 1)
             throw std::runtime_error("INIT METHOD LHS expects exactly one arg: K");
-        return std::make_unique<LhsInitStrategy>(parse_uint(e.args[0]));
+        return std::make_unique<LhsInitStrategy>(parse_k(e.args[0], 1));
     }
     if (e.method == "SOBOL") {
         if (e.args.size() != 1)
             throw std::runtime_error("INIT METHOD SOBOL expects exactly one arg: K");
-        return std::make_unique<SobolInitStrategy>(parse_uint(e.args[0]));
+        return std::make_unique<SobolInitStrategy>(parse_k(e.args[0], 1));
     }
     if (e.method == "WARM") {
         if (e.args.size() != 1)
@@ -498,6 +499,11 @@ make_one(const InitStrategySpec::Entry& e)
 }
 
 }  // namespace
+
+void validate_init_entry(const InitStrategySpec::Entry& e)
+{
+    (void)make_one(e);
+}
 
 std::unique_ptr<InitStrategy>
 build_init_strategy(const InitStrategySpec& ispec)

@@ -44,6 +44,8 @@
 #include <exception>
 #include <functional>
 #include <mutex>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -57,7 +59,7 @@ public:
   using TaskFn = std::function<void(std::size_t, int)>;
 
   explicit ScriptExecutor(int n_workers)
-      : n_workers_(n_workers < 1 ? 1 : n_workers)
+      : n_workers_(require_workers(n_workers))
   {
     workers_.reserve(static_cast<std::size_t>(n_workers_));
     for (int w = 0; w < n_workers_; ++w)
@@ -127,6 +129,16 @@ public:
   }
 
 private:
+  /* At least one worker: a pool of none would never run a task. */
+  static int require_workers(int n_workers)
+  {
+    if (n_workers < 1)
+      throw std::invalid_argument(
+          "ScriptExecutor needs at least one worker, got " +
+          std::to_string(n_workers));
+    return n_workers;
+  }
+
   struct Batch {
     std::size_t             remaining = 0;   /* guarded by m */
     std::mutex              m;
@@ -193,9 +205,13 @@ inline std::atomic<int>& script_executor_width() {
 }
 }  // namespace detail
 
+/* `width` is THREADS, at least one worker (the parser rejects THREADS 0). */
 inline void init_script_executor(int width) {
-  detail::script_executor_width().store(width < 1 ? 1 : width,
-                                        std::memory_order_relaxed);
+  if (width < 1)
+    throw std::invalid_argument(
+        "the script executor needs at least one worker (THREADS >= 1), got " +
+        std::to_string(width));
+  detail::script_executor_width().store(width, std::memory_order_relaxed);
 }
 
 inline ScriptExecutor& script_executor() {

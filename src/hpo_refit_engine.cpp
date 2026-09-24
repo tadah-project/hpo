@@ -65,7 +65,8 @@ bool bget(const Context &c, const std::string &k, bool def) {
 
 // Flatten the parsed EXPLORE/REFINE/FUSE OptimizerSpecs onto CompactConfig's
 // scalar fields. EXPLORE outer = the global seed at rung 0 (absorbs the old
-// GLOBAL stage); EXPLORE INNER = the per-rung local search.
+// GLOBAL stage); EXPLORE INNER = the per-rung local search. RefitParser keeps
+// MAXEVAL/MAXITER within an int (0 to INT_MAX), so the casts below are exact.
 void apply_stage_optimizers(const RefitConfig &rc, CompactConfig &lcfg) {
   if (rc.explore.has_opt) {
     const OptimizerSpec &o = rc.explore.opt;
@@ -689,12 +690,14 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
     // ladder grows from the INIT count (or n_min) up to base + MAX_ADD,
     // clamped to this function's NMAX.
     const int base_n = init.n() > 0 ? init.n() : fcfg.n_min;
+    /* In long long: MAX_ADD may be up to INT_MAX. */
+    const long long cap = static_cast<long long>(base_n) + max_add;
     if (max_add >= 0)
-      fcfg.n_max = std::min(nmax, base_n + max_add);
-    if (max_add >= 0 && base_n + max_add < nmax)
+      fcfg.n_max = static_cast<int>(std::min<long long>(nmax, cap));
+    if (max_add >= 0 && cap < nmax)
       rlog.line(std::string("[") + name + "] NOTE: EXPLORE MAX_ADD=" +
                 std::to_string(max_add) + " caps the ladder at n=" +
-                std::to_string(base_n + max_add) + " (base " +
+                std::to_string(cap) + " (base " +
                 std::to_string(base_n) + "+MAX_ADD) BELOW REFIT_COMPACT_NMAX=" +
                 std::to_string(nmax) +
                 " — raise MAX_ADD to let the ladder reach NMAX.");

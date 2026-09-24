@@ -12,7 +12,10 @@
  * length + bytes; vec<T> = u64 count + elements. All socket writes use
  * MSG_NOSIGNAL so a dead peer yields EPIPE instead of SIGPIPE. */
 
+#include <algorithm>
 #include <cerrno>
+#include <chrono>
+#include <climits>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -93,19 +96,36 @@ struct Reader {
 };
 
 /* ---- blocking-with-deadline socket I/O -------------------------------- */
+/* Waits until `fd` is readable, for up to deadline_ms >= 0 milliseconds.
+ * poll() takes an int timeout: a longer deadline -- the derived deadline
+ * of a script timeout above about 715828 s -- is polled in slices of at
+ * most INT_MAX ms against the steady clock (static_cast<int> wrapped it: to
+ * a few ms, or to a negative value, i.e. no deadline). Returns false when
+ * the deadline expires; EINTR resumes the wait with the time left. */
+inline bool wait_readable(int fd, long deadline_ms) {
+  using clock = std::chrono::steady_clock;
+  const clock::time_point start = clock::now();
+  long left = deadline_ms;
+  for (;;) {
+    struct pollfd pf{fd, POLLIN, 0};
+    const int slice = static_cast<int>(std::min<long>(left, INT_MAX));
+    const int pr = ::poll(&pf, 1, slice);
+    if (pr > 0) return true;
+    if (pr < 0 && errno != EINTR) throw std::runtime_error("pcwire: poll failed");
+    const long elapsed = static_cast<long>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            clock::now() - start).count());
+    if (elapsed >= deadline_ms) return false;          /* deadline expired */
+    left = deadline_ms - elapsed;
+  }
+}
+
 /* deadline_ms < 0 : wait indefinitely. Returns false on timeout; throws on
  * hard I/O errors and EOF (message names the condition). EINTR retried. */
 inline bool readn(int fd, void* dst, std::size_t n, long deadline_ms) {
   char* out = static_cast<char*>(dst);
   while (n > 0) {
-    if (deadline_ms >= 0) {
-      struct pollfd pf{fd, POLLIN, 0};
-      int pr;
-      do { pr = ::poll(&pf, 1, static_cast<int>(deadline_ms)); }
-      while (pr < 0 && errno == EINTR);
-      if (pr == 0) return false;                       /* deadline expired */
-      if (pr < 0) throw std::runtime_error("pcwire: poll failed");
-    }
+    if (deadline_ms >= 0 && !wait_readable(fd, deadline_ms)) return false;
     ssize_t k;
     do { k = ::recv(fd, out, n, 0); } while (k < 0 && errno == EINTR);
     if (k == 0) throw std::runtime_error("pcwire: peer closed (EOF)");
