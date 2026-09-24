@@ -1,5 +1,6 @@
 #pragma once
 #include <nlopt.hpp>
+#include <tadah/hpo/backend_rules.h>
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_host.h>
@@ -55,26 +56,16 @@ inline bool nlopt_self_terminated(const std::exception& e,
 
 namespace detail {
 
-/* The nlopt::opt of `sp` and of its INNER (one level), for make_nlopt. It
- * leaves NLopt's random stream alone. */
+/* The nlopt::opt of `sp` and of its INNER (one level), for make_nlopt,
+ * which has checked the spec (validate_nlopt_spec: MAXEVAL fits NLopt's
+ * int). It leaves NLopt's random stream alone. */
 inline nlopt::opt build_nlopt(const OptimizerSpec& sp, unsigned dim,
                               const StepPlan* plan)
 {
     nlopt::opt o(sp.algo.c_str(), dim);
 
-    /* stopping criteria. NLopt counts evaluations in an int: a larger
-     * MAXEVAL wrapped (4294967299 ran 3 evaluations, 2147483648 became a
-     * negative budget, which NLopt reads as no limit). HPOTargets bounds
-     * MAXEVAL at its line; a spec built another way is refused here. */
-    if (sp.stop.maxeval) {
-        constexpr auto kIntMax =
-            static_cast<std::uint64_t>(std::numeric_limits<int>::max());
-        if (*sp.stop.maxeval > kIntMax)
-            throw std::invalid_argument(
-                "NLopt spec with MAXEVAL " + std::to_string(*sp.stop.maxeval) +
-                ": NLopt counts evaluations in an int (at most 2147483647)");
-        o.set_maxeval(static_cast<int>(*sp.stop.maxeval));
-    }
+    /* stopping criteria */
+    if (sp.stop.maxeval)   o.set_maxeval(static_cast<int>(*sp.stop.maxeval));
     if (sp.stop.maxtime)   o.set_maxtime(*sp.stop.maxtime);
     if (sp.stop.ftol_rel)  o.set_ftol_rel(*sp.stop.ftol_rel);
     if (sp.stop.ftol_abs)  o.set_ftol_abs(*sp.stop.ftol_abs);
@@ -135,15 +126,13 @@ inline nlopt::opt build_nlopt(const OptimizerSpec& sp, unsigned dim,
  * INNER search inside this run and draw it from the same stream, so the
  * INNER spec has no seed of its own. HPOTargets rejects SEED inside an
  * INNER block at startup (and has no INIT block there); a spec built
- * another way with an INNER seed is refused here rather than ignored. */
+ * another way with an INNER seed, or with a MAXEVAL above NLopt's int, is
+ * refused here rather than ignored or wrapped (validate_nlopt_spec, which
+ * validate_hpo_setup() applies to every phase at startup). */
 inline nlopt::opt make_nlopt(const OptimizerSpec& sp, unsigned dim,
                              const StepPlan* plan = nullptr)
 {
-    if (sp.inner && (sp.inner->seed || sp.inner->init_strategy_spec.seed))
-        throw std::invalid_argument(
-            "NLopt INNER spec with a seed: NLopt draws the INNER search from "
-            "the enclosing run's random stream; set SEED on the enclosing "
-            "block");
+    validate_nlopt_spec(sp);
     nlopt::opt o = detail::build_nlopt(sp, dim, plan);
     if (sp.seed)
         nlopt::srand(static_cast<unsigned long>(*sp.seed));

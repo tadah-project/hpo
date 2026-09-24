@@ -44,8 +44,11 @@ Registry build_registry()
         c.lib = "TADAH";  c.algo = "RANDOM";
         c.is_global       = true;
         c.supports_maxeval = true;
-        c.supports_maxtime = true;
-        c.supports_stopval = true;
+        /* run_random draws until MAXEVAL is spent: it reads neither
+         * MAXTIME nor STOPVAL. */
+        c.needs_maxeval = true;
+        c.budget_note   = "it stops only when its MAXEVAL evaluations are "
+                          "spent (it reads neither MAXTIME nor STOPVAL)";
         c.step_use  = StepUse::Rejected;
         c.step_note = "uniform sampling in the OPTIM box has no initial step; remove STEP";
         add(r, c);
@@ -54,7 +57,9 @@ Registry build_registry()
         OptimizerCaps c;
         c.lib = "TADAH";  c.algo = "GRID";
         c.is_global       = true;
-        c.supports_maxeval = false;
+        /* Stops after MAXEVAL points in the order it visits them; without
+         * MAXEVAL it evaluates the whole (finite) grid. */
+        c.supports_maxeval = true;
         c.step_use  = StepUse::GridCount;
         c.step_note = "STEP is not the grid resolution; use PARAM GRID_POINTS <n> "
                       "(integer >= 2, default 20 points per dimension)";
@@ -132,6 +137,11 @@ Registry build_registry()
         c.is_global          = true;
         c.accepts_multi_seed = true;
         c.supports_maxeval   = true;
+        /* find_min_global runs until its call budget is spent (the run
+         * passes FOREVER as its time limit). */
+        c.needs_maxeval      = true;
+        c.budget_note        = "dlib's global search has no stopping rule of "
+                               "its own and reads neither MAXTIME nor STOPVAL";
         c.supports_ftol_abs  = true;     // solver_eps -- absolute-style
         c.step_use  = StepUse::Rejected;
         c.step_note = "MaxLIPO+TR sizes its own trust region from the samples; remove STEP";

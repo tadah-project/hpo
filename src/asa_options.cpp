@@ -468,6 +468,14 @@ AsaOptions parse_asa_options(const OptimizerSpec& sp, std::size_t dim)
         throw std::runtime_error(
             "ASA:ASA: PARAM Gener_Block_Max must be >= Gener_Block "
             "(buffers are sized once by the cap)");
+    /* The Queue_Resolution hint is the run's (announce_asa_options): this
+     * parse is also the startup check of the spec (backend_rules.h),
+     * which journals nothing. */
+    return o;
+}
+
+void announce_asa_options(const AsaOptions& o)
+{
     if (o.queue_size > 0 &&
         std::all_of(o.queue_resolution.begin(), o.queue_resolution.end(),
                     [](double r) { return r == 0.0; }))
@@ -475,7 +483,6 @@ AsaOptions parse_asa_options(const OptimizerSpec& sp, std::size_t dim)
             "ASA: Queue_Size > 0 with Queue_Resolution 0 caches only "
             "near-exact revisits; set PARAM Queue_Resolution to the "
             "per-dim scale below which two points are 'the same'");
-    return o;
 }
 
 const char* asa_exit_name(int exit_status)

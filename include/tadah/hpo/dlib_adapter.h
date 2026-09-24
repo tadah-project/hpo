@@ -2,6 +2,7 @@
 #include <dlib/global_optimization.h>
 #include <tadah/hpo/log_index.h>
 #include <dlib/optimization.h>
+#include <tadah/hpo/backend_rules.h>
 #include <tadah/hpo/gradient_provider.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_host.h>
@@ -121,6 +122,11 @@ template<class Vec,class Runner>
   {
     using namespace dlib;
 
+    /* find_min_global stops only when its call budget is spent (the time
+     * limit is FOREVER): MAXEVAL is required (the startup check, again for
+     * a spec built at run time). */
+    validate_dlib_gfs_spec(sp);
+
     /* find_min_global (MaxLIPO+TR) is a deterministic algorithm; a
      * SEED on this spec is never consulted. DLIB:BFGS rejects SEED
      * outright, but GFS configs with SEED already exist in the wild,
@@ -166,8 +172,7 @@ template<class Vec,class Runner>
     dlib::thread_pool tp(nthreads);
 
     double solver_eps = sp.stop.ftol_abs.value_or(1e-3);
-    constexpr uint64_t HUGE_UNSIGNED = std::numeric_limits<uint64_t>::max();
-    uint64_t maxeval = sp.stop.maxeval.value_or(HUGE_UNSIGNED);
+    uint64_t maxeval = *sp.stop.maxeval;
 
     /* ------- main call ------------------------------------------ */
     auto feval = [&](const matrix<double,0,1>& x)->double
@@ -230,7 +235,7 @@ template<class Vec,class Runner>
         /* Serial, before any pool task: an exception unwinds directly. */
         const double y_seed = feval(x_seed);
         init.emplace_back(x_seed, y_seed);
-        if (maxeval != HUGE_UNSIGNED && maxeval > 0) --maxeval;
+        if (maxeval > 0) --maxeval;
         if (maxeval == 0) break;
       }
     }

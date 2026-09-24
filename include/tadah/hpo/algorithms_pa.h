@@ -129,6 +129,7 @@ template<typename Vec, typename HostT>
     const std::uint64_t seed = sp.seed.value_or(std::random_device{}());
 
     const Knobs kb = Knobs::parse(sp, AlgoKind::PA);
+    anneal::announce_knobs(kb, AlgoKind::PA);
 
     const std::size_t threads = sp.num_threads.value_or(1);
     const std::size_t R = sp.pop ? static_cast<std::size_t>(*sp.pop)

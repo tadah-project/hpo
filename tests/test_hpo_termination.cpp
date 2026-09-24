@@ -40,6 +40,7 @@
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/nlopt_adapter.h>
 #include <tadah/hpo/optimizer_block.h>
+#include <tadah/hpo/phase_specs.h>
 #include <tadah/hpo/result_drain.h>
 #include <tadah/hpo/run_driver.h>
 #include <tadah/hpo/run_policy.h>
@@ -2856,5 +2857,77 @@ TEST_CASE("Termination: TADAH:GRID stops after MAXEVAL points in grid order",
             CHECK(read_file("hpo_run.log").find("GRID: MAXEVAL") ==
                   std::string::npos);
         }
+    }
+}
+
+/* ======================================================================
+ * The startup checks see the spec each phase runs with: MultiStartPolicy
+ * derives each start's spec with the functions strategy_phase_specs()
+ * (phase_specs.h) derives the startup phases from.
+ * ==================================================================== */
+
+TEST_CASE("Termination: each MULTISTART start runs with the MAXEVAL the "
+          "startup checks see", "[HPO][termination][multistart][phase_specs]")
+{
+    /* `init_k` INIT points, the STRATEGY lines `strategy`; the journal's
+     * per-start line, and the startup phase's MAXEVAL, must both be
+     * `per_start`. */
+    const auto multistart = [](std::size_t init_k, const std::string& strategy) {
+        return "OPTIMIZER\n  INIT\n    METHOD RANDOM " + std::to_string(init_k) +
+               "\n    SEED 3\n  ENDINIT\n  STRATEGY\n    TYPE MULTISTART\n" +
+               strategy + "  ENDSTRATEGY\nENDOPTIMIZER\n";
+    };
+    const auto startup_maxeval = [](TaRun& run) {
+        const tadah::hpo::HPOTargets trg(run.ctx, run.hpo.string());
+        const auto phases = tadah::hpo::strategy_phase_specs(trg.spec);
+        REQUIRE(phases.size() == 1u);
+        CHECK(phases[0].name == "each MULTISTART start");
+        return phases[0].spec.stop.maxeval;
+    };
+
+    SECTION("MAXEVAL split over N_STARTS") {
+        TaRun run(multistart(2, "    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 9\n"
+                                "    N_STARTS 2\n"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        check_run_files();
+        const std::string journal = read_file("hpo_run.log");
+        CHECK_THAT(journal, Catch::Contains("MULTISTART per-start MAXEVAL = 5 "
+                                            "(split from outer MAXEVAL)"));
+        CHECK(data_rows("loss.tadah").size() <= 10u);
+        CHECK(startup_maxeval(run) == std::optional<std::uint64_t>(5));
+    }
+    /* The INIT chain yields fewer points than N_STARTS: MAXEVAL is split
+     * over the starts that run (3), not over N_STARTS (4). SBPLX spends
+     * every evaluation of its 4-evaluation budget. */
+    SECTION("MAXEVAL split over the starts the INIT points allow") {
+        TaRun run(multistart(3, "    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                                "    MAXEVAL 12\n    N_STARTS 4\n"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        check_run_files();
+        const std::string journal = read_file("hpo_run.log");
+        CHECK_THAT(journal, Catch::Contains("MULTISTART per-start MAXEVAL = 4 "
+                                            "(split from outer MAXEVAL)") &&
+                            Catch::Contains("MULTISTART start 3/3"));
+        CHECK(data_rows("loss.tadah").size() == 12u);
+        CHECK(startup_maxeval(run) == std::optional<std::uint64_t>(4));
+    }
+    /* BUDGET_PER_START takes precedence over the outer MAXEVAL's split. */
+    SECTION("BUDGET_PER_START next to MAXEVAL") {
+        TaRun run(multistart(2, "    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                                "    MAXEVAL 12\n    N_STARTS 2\n"
+                                "    BUDGET_PER_START 3\n"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        check_run_files();
+        const std::string journal = read_file("hpo_run.log");
+        CHECK_THAT(journal, Catch::Contains("MULTISTART per-start MAXEVAL = 3 "
+                                            "(from BUDGET_PER_START)"));
+        CHECK(data_rows("loss.tadah").size() == 6u);
+        CHECK(startup_maxeval(run) == std::optional<std::uint64_t>(3));
     }
 }

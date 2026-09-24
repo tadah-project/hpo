@@ -1,6 +1,7 @@
 #pragma once
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/anneal_core.h>
+#include <tadah/hpo/backend_rules.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -22,6 +23,9 @@ template<typename Vec, typename Runner>
   void run_random(const OptimizerSpec& sp,
       HPO_Host<Vec,Runner>& host)
   {
+    /* RANDOM stops only when MAXEVAL is spent: without it the run would
+     * never end (the startup check, again for a spec built at run time). */
+    validate_random_spec(sp);
     uint64_t seed = sp.seed.value_or(std::random_device{}());  // default seed
     {
       std::ostringstream oss;
@@ -32,8 +36,7 @@ template<typename Vec, typename Runner>
     std::mt19937_64 rng(seed);
     const auto& lo = sp.low, &hi = sp.high;
 
-    constexpr uint64_t HUGE_UNSIGNED = std::numeric_limits<uint64_t>::max();
-    uint64_t max = sp.stop.maxeval.value_or(HUGE_UNSIGNED);
+    uint64_t max = *sp.stop.maxeval;
 
     /* evaluate the user's config point first so the prior is always part
      * of the explored set. */
@@ -43,7 +46,7 @@ template<typename Vec, typename Runner>
       Vec x_init(v.size());
       for (size_t i = 0; i < v.size(); ++i) x_init(i) = v[i];
       host(sp.out(x_init));
-      if (max != HUGE_UNSIGNED) --max;
+      --max;
     }
 
     for(uint64_t c=0;c<max;++c)
@@ -55,33 +58,33 @@ template<typename Vec, typename Runner>
     }
   }
 
-/* ----- GRID  (nave Cartesian product) --------------------------- */
+/* ----- GRID  (naive Cartesian product) --------------------------- *
+ *
+ * Visits the INIT point, then every node of a GRID_POINTS^dim grid, the
+ * first dimension varying fastest. MAXEVAL stops the sweep after that
+ * many points in this order (the journal says so); without MAXEVAL, or
+ * with one at least the number of points, the whole grid is evaluated. */
+namespace grid_detail {
+/* steps^dim, or UINT64_MAX when it does not fit. */
+inline std::uint64_t node_count(unsigned steps, std::size_t dim)
+{
+    std::uint64_t n = 1;
+    for (std::size_t d = 0; d < dim; ++d) {
+        if (n > std::numeric_limits<std::uint64_t>::max() / steps)
+            return std::numeric_limits<std::uint64_t>::max();
+        n *= steps;
+    }
+    return n;
+}
+}  // namespace grid_detail
+
 template<typename Vec, typename Runner>
   void run_grid(const OptimizerSpec& sp,
       HPO_Host<Vec,Runner>& host)
   {
-
-    /* Grid resolution: PARAM GRID_POINTS <n> (integer >= 2, default 20).
-     * The historic `STEP <n>` overload is rejected by the scale validator
-     * (StepUse::GridCount) -- STEP<1 used to truncate to 0 points and loop
-     * forever at the low corner, STEP 1 divided by zero. */
-    if (sp.step)
-      throw std::runtime_error(
-          "TADAH:GRID: STEP is not the grid resolution; use PARAM GRID_POINTS "
-          "<n> (integer >= 2, default 20 points per dimension)");
-    unsigned steps = 20;
-    if (auto it = sp.param.find("GRID_POINTS"); it != sp.param.end()) {
-      const double v = it->second;
-      if (!std::isfinite(v) || v < 2.0 || v != std::floor(v))
-        throw std::runtime_error(
-            "TADAH:GRID PARAM GRID_POINTS must be an integer >= 2 (got " +
-            std::to_string(v) + "; a 1-point grid divides by zero)");
-      steps = static_cast<unsigned>(v);
-    }
-    for (const auto& kv : sp.param)
-      if (kv.first != "GRID_POINTS")
-        throw std::runtime_error("TADAH:GRID: unknown PARAM '" + kv.first +
-                                 "' (the only GRID parameter is GRID_POINTS)");
+    /* Grid resolution: PARAM GRID_POINTS <n> (integer >= 2, default 20);
+     * STEP and any other PARAM are errors (validate_grid_spec). */
+    const unsigned steps = validate_grid_spec(sp);
 
     const size_t dim = sp.low.size();
     std::vector<unsigned> idx(dim,0);
@@ -94,22 +97,41 @@ template<typename Vec, typename Runner>
       HPOLog::instance().info(oss.str());
     }
 
-    auto total=[&](){
-      double t=1; for(size_t d=0;d<dim;++d) t*=steps; return static_cast<uint64_t>(t); }();
+    constexpr std::uint64_t kMax = std::numeric_limits<std::uint64_t>::max();
+    const bool with_init = !sp.optim_init.empty();
+    const std::uint64_t nodes = grid_detail::node_count(steps, dim);
+    const std::uint64_t total =
+        (with_init && nodes < kMax) ? nodes + 1 : nodes;
+    std::uint64_t budget = total;
+    if (sp.stop.maxeval && *sp.stop.maxeval < total) {
+      budget = *sp.stop.maxeval;
+      std::ostringstream oss;
+      oss << "GRID: MAXEVAL " << budget << " < ";
+      if (nodes == kMax) oss << "more than " << kMax;
+      else               oss << total;
+      oss << " grid points (" << (with_init ? "the INIT point, then " : "");
+      if (nodes == kMax) oss << "more than " << kMax;
+      else               oss << nodes;
+      oss << " = " << steps << "^" << dim << " grid nodes); evaluating the "
+          << "first " << budget << " in grid order";
+      std::cout << "[HPO] " << oss.str() << "\n";
+      HPOLog::instance().info(oss.str());
+    }
 
+    std::uint64_t done = 0;
     /* evaluate the user's config point first so the prior is always part
      * of the explored set (in addition to the regular grid sweep). */
-    if (!sp.optim_init.empty())
+    if (with_init && done < budget)
     {
       const auto v = sp.in(sp.optim_init.front());
       Vec x_init(v.size());
       for (size_t i = 0; i < v.size(); ++i) x_init(i) = v[i];
       host(sp.out(x_init));
+      ++done;
     }
 
-    uint64_t done=0;
     Vec x(dim);
-    while (true)
+    while (done < budget)
     {
       for(size_t d=0;d<dim;++d)
       {
@@ -117,7 +139,7 @@ template<typename Vec, typename Runner>
         x(d) = sp.low[d]*(1-t) + sp.high[d]*t;
       }
       host( sp.out(x) );
-      if (++done==total) break;
+      ++done;
 
       /* increment mixed-radix counter */
       for(size_t d=0;d<dim;++d)
@@ -177,6 +199,7 @@ template<typename Vec, typename HostT>
     const std::uint64_t seed = sp.seed.value_or(std::random_device{}());
 
     const Knobs kb = Knobs::parse(sp, AlgoKind::Serial);
+    anneal::announce_knobs(kb, AlgoKind::Serial);
     const std::vector<double> initial =
         anneal::make_initial_point(sp, AlgoKind::Serial);
 

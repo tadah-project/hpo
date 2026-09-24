@@ -949,35 +949,9 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     }
   }
   kb.boundary_mode = static_cast<BoundaryMode>(boundary_raw);
-  /* D23: REDRAW is not a symmetric proposal, and the acceptance rule does
-   * not correct for that.
-   *
-   * constrain_proposal's redraw branch resamples only the offending
-   * coordinate until it lands in range, which is a truncated Gaussian whose
-   * normalisation depends on how much of the kernel's mass sat inside the
-   * box -- i.e. on the CURRENT x. metropolis_accept applies no
-   * Metropolis-Hastings ratio q(x|x')/q(x'|x), so detailed balance does not
-   * hold near a bound and the stationary distribution is skewed away from
-   * the box edges. REFLECT (the default) has no such problem: it is an
-   * exact period-2w fold, hence an involution, hence symmetric.
-   *
-   * Announced rather than corrected, deliberately. The correct ratio for a
-   * SEQUENTIAL per-coordinate redraw depends on which coordinates were
-   * resampled and on each one's in-box mass at both x and x'; a plausible
-   * but wrong ratio would be worse than a documented, bounded bias. For a
-   * minimiser the practical cost is modest -- the deliverable is the best
-   * point visited, not the stationary measure -- but a user sampling near
-   * bounds must know. HINT, not WARNING: the magnitude depends on the
-   * objective and the geometry, so it is a caution, not a proof. */
-  if (kb.boundary_mode == BoundaryMode::Redraw)
-    HPOLog::instance().hint(
-        ctx + ": BOUNDARY_MODE REDRAW resamples out-of-box coordinates "
-        "from a truncated kernel whose normalisation depends on the current "
-        "point, and the Metropolis rule applies no Hastings correction for "
-        "it. Sampling near an OPTIM bound is therefore biased away from the "
-        "edge. This does not affect which best point is reported, but if you "
-        "care about the distribution rather than the optimum, use "
-        "BOUNDARY_MODE REFLECT, which is an exact symmetric fold.");
+  /* BOUNDARY_MODE REDRAW is announced by announce_knobs() when the
+   * driver starts (D23), not here: Knobs::parse() is also the startup
+   * check of the spec (backend_rules.h), which journals nothing. */
 
   /* -- validation beyond the registry ranges ------------------------- */
   if (kind != AlgoKind::PT && !(kb.rt > 0.0 && kb.rt < 1.0))
@@ -1055,6 +1029,62 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   }
 
   return kb;
+}
+
+/* The journal notes a run's knobs call for, written by the driver when the
+ * run starts (Knobs::parse() writes nothing, so the startup check of the
+ * spec does not repeat them).
+ *
+ * D23: REDRAW is not a symmetric proposal, and the acceptance rule does
+ * not correct for that.
+ *
+ * constrain_proposal's redraw branch resamples only the offending
+ * coordinate until it lands in range, which is a truncated Gaussian whose
+ * normalisation depends on how much of the kernel's mass sat inside the
+ * box -- i.e. on the CURRENT x. metropolis_accept applies no
+ * Metropolis-Hastings ratio q(x|x')/q(x'|x), so detailed balance does not
+ * hold near a bound and the stationary distribution is skewed away from
+ * the box edges. REFLECT (the default) has no such problem: it is an
+ * exact period-2w fold, hence an involution, hence symmetric.
+ *
+ * Announced rather than corrected, deliberately. The correct ratio for a
+ * SEQUENTIAL per-coordinate redraw depends on which coordinates were
+ * resampled and on each one's in-box mass at both x and x'; a plausible
+ * but wrong ratio would be worse than a documented, bounded bias. For a
+ * minimiser the practical cost is modest -- the deliverable is the best
+ * point visited, not the stationary measure -- but a user sampling near
+ * bounds must know. HINT, not WARNING: the magnitude depends on the
+ * objective and the geometry, so it is a caution, not a proof. */
+inline void announce_knobs(const Knobs& kb, AlgoKind kind)
+{
+  const std::string ctx = std::string("TADAH:") + algo_name(kind);
+  if (kb.boundary_mode == BoundaryMode::Redraw)
+    HPOLog::instance().hint(
+        ctx + ": BOUNDARY_MODE REDRAW resamples out-of-box coordinates "
+        "from a truncated kernel whose normalisation depends on the current "
+        "point, and the Metropolis rule applies no Hastings correction for "
+        "it. Sampling near an OPTIM bound is therefore biased away from the "
+        "edge. This does not affect which best point is reported, but if you "
+        "care about the distribution rather than the optimum, use "
+        "BOUNDARY_MODE REFLECT, which is an exact symmetric fold.");
+}
+
+/* The ladder size K of an ANNEAL_PT run: PARAM REPLICAS, or else THREADS
+ * (at least two). Throws the rules on K that Knobs::parse cannot check on
+ * its own (K follows THREADS when REPLICAS is AUTO): K >= 2, and
+ * LADDER_ADAPT needs K >= 3. The PT driver and the startup checks
+ * (backend_rules.h) apply the same rule. */
+inline std::size_t pt_replica_count(const OptimizerSpec& sp, const Knobs& kb)
+{
+  const std::size_t threads = sp.num_threads.value_or(1);
+  const std::size_t K = kb.replicas ? kb.replicas
+                                    : std::max<std::size_t>(threads, 2);
+  if (K < 2)
+    throw std::runtime_error("TADAH:ANNEAL_PT: needs REPLICAS >= 2");
+  if (kb.ladder_adapt && K < 3)
+    throw std::runtime_error(
+        "TADAH:ANNEAL_PT: LADDER_ADAPT requires REPLICAS >= 3");
+  return K;
 }
 
 /* Resolve the first starting point into transformed space and enforce the

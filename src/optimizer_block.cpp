@@ -92,9 +92,13 @@ unsigned attr_unsigned(std::istringstream &iss, const std::string &key) {
 }
 /* MAXEVAL is an evaluation budget, and NLopt counts evaluations in an int
  * (nlopt::opt::set_maxeval), as `tadah refit` hands it to NLopt and Ceres:
- * 0 to INT_MAX. MAXEVAL 4294967299 used to reach NLopt as 3. */
+ * 1 to INT_MAX. MAXEVAL 4294967299 used to reach NLopt as 3. MAXEVAL 0
+ * meant something different to every backend (no limit to NLopt, no
+ * evaluation to TADAH:RANDOM, the annealers and ASA, an error to DLIB:BFGS
+ * and CERES); the key is left out for no limit, which a backend without a
+ * stopping rule of its own refuses at startup (backend_rules.h). */
 std::uint64_t attr_budget(std::istringstream &iss, const std::string &key) {
-  return attr_uint(iss, key, std::numeric_limits<int>::max());
+  return attr_uint(iss, key, std::numeric_limits<int>::max(), 1);
 }
 /* THREADS is the width of the worker pool (an int, ScriptExecutor): at
  * least one worker. THREADS 0 used to become one worker without a word. */

@@ -37,7 +37,16 @@ public:
  *  for the given stage, validating the (LIB, ALGO) pair against that stage's
  *  legal set. Throw std::runtime_error on an illegal pair. NLOPT long names
  *  (e.g. GN_MLSL_LDS, LN_SBPLX, LD_LBFGS) and the short fitter names (MLSL,
- *  SBPLX, NLOPT_LBFGS) are both accepted. */
+ *  SBPLX, NLOPT_LBFGS) are both accepted. As in `tadah hpo`, a block that
+ *  runs an optimiser names the library of its ALGO in LIB (NLOPT, DLIB or
+ *  CERES; a missing or different LIB is an error naming the right one, and
+ *  the stage's algorithms of the LIB given when it has any), and a block
+ *  with ALGO NONE runs none, so LIB there is an error (it would have no
+ *  effect). The ALGO names are the refit's own, not those of `tadah hpo`:
+ *  its dlib global search is GLOBAL (`tadah hpo`'s DLIB GFS), and LBFGS is
+ *  dlib's L-BFGS (a CERES algorithm in `tadah hpo`; NLopt's is LD_LBFGS).
+ *  UNIFORM (EXPLORE: refit's own uniform start, no global search) belongs
+ *  to no library: LIB is neither required nor checked. */
 std::string refit_explore_outer_algo(const OptimizerSpec &s);  ///< -> seed_algo
 std::string refit_explore_inner_algo(const OptimizerSpec &s);  ///< -> explore_algo
 std::string refit_refine_algo(const OptimizerSpec &s);         ///< -> refine_algo

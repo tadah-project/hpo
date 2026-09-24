@@ -66,7 +66,7 @@ bool bget(const Context &c, const std::string &k, bool def) {
 // Flatten the parsed EXPLORE/REFINE/FUSE OptimizerSpecs onto CompactConfig's
 // scalar fields. EXPLORE outer = the global seed at rung 0 (absorbs the old
 // GLOBAL stage); EXPLORE INNER = the per-rung local search. RefitParser keeps
-// MAXEVAL/MAXITER within an int (0 to INT_MAX), so the casts below are exact.
+// MAXEVAL/MAXITER within an int (1 to INT_MAX), so the casts below are exact.
 void apply_stage_optimizers(const RefitConfig &rc, CompactConfig &lcfg) {
   if (rc.explore.has_opt) {
     const OptimizerSpec &o = rc.explore.opt;

@@ -234,8 +234,8 @@ bool ceres_extra(const std::string &key, std::istringstream &iss,
   }
   if (key == "MAXITER") {
     // The alias of MAXEVAL, with its range: the int iteration cap Ceres
-    // takes (apply_stage_optimizers).
-    a.stop.maxeval = parse_uint(next_value(iss, key), key, 0,
+    // takes (apply_stage_optimizers), at least one iteration.
+    a.stop.maxeval = parse_uint(next_value(iss, key), key, 1,
                                 std::numeric_limits<int>::max());
     return true;
   }
@@ -277,75 +277,165 @@ void parse_ceres_stage(const std::vector<std::string> &tok, OptimizerSpec &opt,
                            legal);
 }
 
+// The library an ALGO spelling belongs to, as `tadah hpo` names it.
+constexpr const char *kNoOptimiser = "";      // ALGO NONE: runs no optimiser
+constexpr const char *kRefitInternal = nullptr;  // UNIFORM: no library's
+
+// One ALGO spelling of a stage: the compact fitter's algorithm it selects,
+// the library the stage block must name in LIB, and whether the stage's
+// legal list names it (the NLopt long names, and the dlib and Ceres names).
+struct AlgoSpelling {
+  const char *spelling;   // uppercase
+  const char *canonical;  // the compact fitter's name
+  const char *lib;        // NLOPT | DLIB | CERES, kNoOptimiser, kRefitInternal
+  bool listed;            // named by the stage's legal list
+};
+constexpr bool kListed = true;
+constexpr bool kAlias = false;
+
+// Every spelling of each stage (the NLopt long names and the fitter's short
+// names alike), with the library of `tadah hpo` it belongs to. The ALGO
+// names are the refit's own: its dlib global search is GLOBAL (`tadah hpo`
+// calls dlib's GFS), and its LBFGS is dlib's L-BFGS (a CERES algorithm in
+// `tadah hpo`; NLopt's is LD_LBFGS).
+const std::vector<AlgoSpelling> kExploreOuterAlgos = {
+    {"UNIFORM", "UNIFORM", kRefitInternal, kListed},
+    {"NONE", "UNIFORM", kNoOptimiser, kAlias},
+    {"GLOBAL", "DLIB_GLOBAL", "DLIB", kListed},
+    {"DLIB_GLOBAL", "DLIB_GLOBAL", "DLIB", kAlias},
+    {"MLSL", "MLSL", "NLOPT", kAlias},
+    {"GN_MLSL_LDS", "MLSL", "NLOPT", kListed},
+    {"GN_MLSL", "MLSL", "NLOPT", kAlias},
+    {"DIRECT", "DIRECT", "NLOPT", kAlias},
+    {"GN_DIRECT_L", "DIRECT", "NLOPT", kListed},
+    {"GN_DIRECT", "DIRECT", "NLOPT", kAlias},
+    {"CRS2", "CRS2", "NLOPT", kAlias},
+    {"GN_CRS2_LM", "CRS2", "NLOPT", kListed},
+    {"GN_CRS2", "CRS2", "NLOPT", kAlias}};
+const std::vector<AlgoSpelling> kExploreInnerAlgos = {
+    {"NONE", "NONE", kNoOptimiser, kListed},
+    {"LBFGS", "DLIB_LBFGS", "DLIB", kListed},
+    {"DLIB_LBFGS", "DLIB_LBFGS", "DLIB", kAlias},
+    {"SBPLX", "SBPLX", "NLOPT", kAlias},
+    {"LN_SBPLX", "SBPLX", "NLOPT", kListed},
+    {"NELDERMEAD", "NELDERMEAD", "NLOPT", kAlias},
+    {"LN_NELDERMEAD", "NELDERMEAD", "NLOPT", kListed},
+    {"BOBYQA", "BOBYQA", "NLOPT", kAlias},
+    {"LN_BOBYQA", "BOBYQA", "NLOPT", kListed},
+    {"PRAXIS", "PRAXIS", "NLOPT", kAlias},
+    {"LN_PRAXIS", "PRAXIS", "NLOPT", kListed},
+    {"NLOPT_LBFGS", "NLOPT_LBFGS", "NLOPT", kAlias},
+    {"LD_LBFGS", "NLOPT_LBFGS", "NLOPT", kListed}};
+const std::vector<AlgoSpelling> kRefineAlgos = {
+    {"NONE", "NONE", kNoOptimiser, kListed},
+    {"LM", "CERES_LM", "CERES", kListed},
+    {"CERES_LM", "CERES_LM", "CERES", kAlias},
+    {"DOGLEG", "CERES_DOGLEG", "CERES", kListed},
+    {"CERES_DOGLEG", "CERES_DOGLEG", "CERES", kAlias},
+    {"LBFGS", "DLIB_LBFGS", "DLIB", kListed},
+    {"DLIB_LBFGS", "DLIB_LBFGS", "DLIB", kAlias},
+    {"LD_LBFGS", "NLOPT_LBFGS", "NLOPT", kListed},
+    {"NLOPT_LBFGS", "NLOPT_LBFGS", "NLOPT", kAlias}};
+const std::vector<AlgoSpelling> kFuseAlgos = {
+    {"NONE", "NONE", kNoOptimiser, kListed},
+    {"LM", "CERES_LM", "CERES", kListed},
+    {"CERES_LM", "CERES_LM", "CERES", kAlias},
+    {"DOGLEG", "CERES_DOGLEG", "CERES", kListed},
+    {"CERES_DOGLEG", "CERES_DOGLEG", "CERES", kAlias}};
+
+// The listed algorithms of a stage in library `lib`, "A|B", or "" when the
+// stage has none there (or `lib` is not a library).
+std::string listed_in(const std::vector<AlgoSpelling> &algos,
+                      const std::string &lib) {
+  std::string out;
+  for (const auto &a : algos) {
+    if (!a.listed || a.lib == kRefitInternal || *a.lib == '\0' ||
+        lib != a.lib)
+      continue;
+    if (!out.empty()) out += "|";
+    out += a.spelling;
+  }
+  return out;
+}
+
+std::string library_kind(const std::string &lib) {
+  if (lib == "NLOPT") return "an NLopt algorithm";
+  if (lib == "DLIB") return "a dlib algorithm";
+  return "a Ceres algorithm";
+}
+
+// The fitter's algorithm for `s` in a stage, with the LIB rule of `tadah hpo`:
+// a block that runs an optimiser names the library of its ALGO in LIB (a
+// missing or different LIB is an error), and a block with ALGO NONE runs none,
+// so a LIB there would have no effect. UNIFORM, refit's own uniform start,
+// belongs to no library: LIB is neither required nor checked there. `block`
+// names the block in the LIB messages ("EXPLORE INNER"), `stage` in the
+// unsupported-ALGO one ("EXPLORE inner"); `none_means` says what ALGO NONE
+// does in the block.
+std::string stage_algo(const OptimizerSpec &s,
+                       const std::vector<AlgoSpelling> &algos,
+                       const char *block, const char *stage,
+                       const char *none_means, const char *legal) {
+  const std::string lib = up(s.lib == "NOT SET" ? "" : s.lib);
+  const std::string algo = up(s.algo == "NOT SET" ? "" : s.algo);
+  for (const auto &a : algos) {
+    if (algo != a.spelling) continue;
+    if (a.lib == kRefitInternal) return a.canonical;
+    if (std::string(a.lib).empty()) {  // ALGO NONE
+      if (!lib.empty())
+        throw std::runtime_error(std::string(block) +
+                                 ": LIB has no effect with ALGO NONE (" +
+                                 none_means + "); remove LIB");
+      return a.canonical;
+    }
+    if (lib.empty())
+      throw std::runtime_error(std::string(block) + ": LIB is not set; set LIB " +
+                               a.lib + " (ALGO " + s.algo + " is " +
+                               library_kind(a.lib) + ")");
+    if (lib != a.lib) {
+      // The LIB may be the one meant and the ALGO the slip (LIB NLOPT ALGO
+      // LBFGS for NLopt's L-BFGS): name that library's algorithms of the
+      // stage too, when it has any.
+      const std::string in_lib = listed_in(algos, lib);
+      throw std::runtime_error(
+          std::string(block) + ": LIB " + s.lib + " does not match ALGO " +
+          s.algo + ", " + library_kind(a.lib) + "; set LIB " + a.lib +
+          (in_lib.empty() ? std::string()
+                          : ", or with LIB " + lib + " set ALGO " + in_lib));
+    }
+    return a.canonical;
+  }
+  algo_err(stage, lib, algo, legal);
+}
+
 }  // namespace
 
 std::string refit_explore_outer_algo(const OptimizerSpec &s) {
-  const std::string lib = up(s.lib == "NOT SET" ? "" : s.lib);
-  const std::string algo = up(s.algo == "NOT SET" ? "" : s.algo);
-  if (algo == "UNIFORM" || algo == "NONE") return "UNIFORM";
-  if (lib == "DLIB" || algo == "DLIB_GLOBAL") {
-    if (algo == "GLOBAL" || algo == "DLIB_GLOBAL") return "DLIB_GLOBAL";
-    algo_err("EXPLORE outer", lib, algo, "DLIB GLOBAL");
-  }
-  if (algo == "MLSL" || algo == "GN_MLSL_LDS" || algo == "GN_MLSL") return "MLSL";
-  if (algo == "DIRECT" || algo == "GN_DIRECT_L" || algo == "GN_DIRECT")
-    return "DIRECT";
-  if (algo == "CRS2" || algo == "GN_CRS2_LM" || algo == "GN_CRS2") return "CRS2";
-  algo_err("EXPLORE outer", lib, algo,
-           "NLOPT GN_MLSL_LDS|GN_DIRECT_L|GN_CRS2_LM, DLIB GLOBAL, or UNIFORM");
+  return stage_algo(s, kExploreOuterAlgos, "EXPLORE", "EXPLORE outer",
+                    "no global search runs",
+                    "NLOPT GN_MLSL_LDS|GN_DIRECT_L|GN_CRS2_LM, DLIB GLOBAL, or "
+                    "UNIFORM");
 }
 
 std::string refit_explore_inner_algo(const OptimizerSpec &s) {
-  const std::string lib = up(s.lib == "NOT SET" ? "" : s.lib);
-  const std::string algo = up(s.algo == "NOT SET" ? "" : s.algo);
-  if (algo.empty() || algo == "NONE") return "NONE";
-  if (lib == "DLIB") {
-    if (algo == "LBFGS" || algo == "DLIB_LBFGS") return "DLIB_LBFGS";
-    algo_err("EXPLORE inner", lib, algo, "DLIB LBFGS");
-  }
-  if (algo == "SBPLX" || algo == "LN_SBPLX") return "SBPLX";
-  if (algo == "NELDERMEAD" || algo == "LN_NELDERMEAD") return "NELDERMEAD";
-  if (algo == "BOBYQA" || algo == "LN_BOBYQA") return "BOBYQA";
-  if (algo == "PRAXIS" || algo == "LN_PRAXIS") return "PRAXIS";
-  if (algo == "NLOPT_LBFGS" || algo == "LD_LBFGS") return "NLOPT_LBFGS";
-  algo_err("EXPLORE inner", lib, algo,
-           "NLOPT LN_SBPLX|LN_NELDERMEAD|LN_BOBYQA|LN_PRAXIS|LD_LBFGS, "
-           "DLIB LBFGS, or NONE");
+  // An INNER block without ALGO (a spec built outside RefitParser, which
+  // requires ALGO) runs no local search.
+  if (s.algo == "NOT SET" || s.algo.empty()) return "NONE";
+  return stage_algo(s, kExploreInnerAlgos, "EXPLORE INNER", "EXPLORE inner",
+                    "no local search runs",
+                    "NLOPT LN_SBPLX|LN_NELDERMEAD|LN_BOBYQA|LN_PRAXIS|LD_LBFGS, "
+                    "DLIB LBFGS, or NONE");
 }
 
 std::string refit_refine_algo(const OptimizerSpec &s) {
-  const std::string lib = up(s.lib == "NOT SET" ? "" : s.lib);
-  const std::string algo = up(s.algo == "NOT SET" ? "" : s.algo);
-  if (algo == "NONE") return "NONE";
-  if (lib == "CERES" || algo == "CERES_LM" || algo == "CERES_DOGLEG" ||
-      algo == "LM" || algo == "DOGLEG") {
-    if (algo == "LM" || algo == "CERES_LM") return "CERES_LM";
-    if (algo == "DOGLEG" || algo == "CERES_DOGLEG") return "CERES_DOGLEG";
-    algo_err("REFINE", lib, algo, "CERES LM|DOGLEG");
-  }
-  if (lib == "DLIB") {
-    if (algo == "LBFGS" || algo == "DLIB_LBFGS") return "DLIB_LBFGS";
-    algo_err("REFINE", lib, algo, "DLIB LBFGS");
-  }
-  if (lib == "NLOPT") {
-    if (algo == "LD_LBFGS" || algo == "NLOPT_LBFGS") return "NLOPT_LBFGS";
-    algo_err("REFINE", lib, algo, "NLOPT LD_LBFGS");
-  }
-  algo_err("REFINE", lib, algo,
-           "CERES LM|DOGLEG, NLOPT LD_LBFGS, DLIB LBFGS, or NONE");
+  return stage_algo(s, kRefineAlgos, "REFINE", "REFINE",
+                    "the stage is skipped",
+                    "CERES LM|DOGLEG, NLOPT LD_LBFGS, DLIB LBFGS, or NONE");
 }
 
 std::string refit_fuse_algo(const OptimizerSpec &s) {
-  const std::string lib = up(s.lib == "NOT SET" ? "" : s.lib);
-  const std::string algo = up(s.algo == "NOT SET" ? "" : s.algo);
-  if (algo == "NONE") return "NONE";
-  if (lib == "CERES" || algo == "CERES_LM" || algo == "CERES_DOGLEG" ||
-      algo == "LM" || algo == "DOGLEG") {
-    if (algo == "LM" || algo == "CERES_LM") return "CERES_LM";
-    if (algo == "DOGLEG" || algo == "CERES_DOGLEG") return "CERES_DOGLEG";
-  }
-  algo_err("FUSE", lib, algo,
-           "CERES LM|DOGLEG or NONE (FUSE is a least-squares stage)");
+  return stage_algo(s, kFuseAlgos, "FUSE", "FUSE", "the stage is skipped",
+                    "CERES LM|DOGLEG or NONE (FUSE is a least-squares stage)");
 }
 
 RefitConfig RefitParser::parse(const tadah::core::Context &c) {

@@ -28,6 +28,7 @@
 #include <tadah/hpo/run_policy_base.h>
 #include <tadah/hpo/init_strategy.h>
 #include <tadah/hpo/optimizer_caps.h>
+#include <tadah/hpo/phase_specs.h>
 #include <tadah/hpo/strategy_rules.h>
 
 namespace tadah::hpo {
@@ -95,27 +96,23 @@ public:
   void run(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host) override {
     validate(spec);
 
-    const std::size_t n_init = spec.optim_init.size();
-    if (n_init == 0) {
+    /* The plan and each start's spec come from phase_specs.h, which
+     * validate_hpo_setup() derives the startup checks of each start from
+     * too. A multi-seed backend (DLIB:GFS) consumes every INIT point in a
+     * single run, and so does a spec without INIT points. */
+    const MultiStartPlan plan =
+        plan_multistart(spec, k_, budget_per_start_);
+    if (plan.single_run) {
       run_inner<Vec,Runner>(spec, host);
       return;
     }
 
-    /* Multi-seed-capable backends consume all K points as initial
-     * function evaluations in a single inner run; keyed by
-     * caps.accepts_multi_seed so future backends register the
-     * capability without touching this branch. For everything else,
-     * run the inner optimiser K times sequentially. */
-    if (optimizer_caps(spec).accepts_multi_seed) {
-      run_inner<Vec,Runner>(spec, host);
-      return;
-    }
-
-    const std::size_t actual_k = std::min(k_, n_init);
+    const std::size_t actual_k = plan.starts;
     if (actual_k < k_) {
       HPOLog::instance().warning(
           "MULTISTART N_STARTS " + std::to_string(k_) + " requested but the "
-          "resolved INIT chain produced only " + std::to_string(n_init) +
+          "resolved INIT chain produced only " +
+          std::to_string(spec.optim_init.size()) +
           " starting point(s); running " + std::to_string(actual_k) +
           " start(s). Add INIT points (e.g. METHOD LHS/RANDOM/SOBOL "
           "with K >= " + std::to_string(k_) + ") or lower N_STARTS.");
@@ -134,40 +131,20 @@ public:
           "pc_lammps fan-out within each evaluation.");
     }
 
-    /* BUDGET_PER_START -- override per-start MAXEVAL.
-     *
-     * If the user set BUDGET_PER_START explicitly, use it
-     * verbatim. Otherwise, when an outer MAXEVAL is set, split it
-     * equally across starts so the total still respects MAXEVAL (round
-     * up so K * per-start >= MAXEVAL when MAXEVAL is not divisible).
-     * If neither is set, leave per-start MAXEVAL as the user's spec
-     * (which may be unbounded -- explicit choice). */
-    std::optional<uint64_t> per_start_maxeval;
-    if (budget_per_start_) {
-      per_start_maxeval = static_cast<uint64_t>(*budget_per_start_);
-    } else if (spec.stop.maxeval) {
-      const uint64_t total = *spec.stop.maxeval;
-      const uint64_t k64 = static_cast<uint64_t>(actual_k);
-      per_start_maxeval =
-          (total + k64 - 1) / k64;   // ceil division
-    }
-    if (per_start_maxeval) {
+    /* Each start's MAXEVAL: BUDGET_PER_START, or the outer MAXEVAL split
+     * over the starts (plan_multistart); without either the starts run
+     * with the spec's own stop criteria. */
+    if (plan.per_start_maxeval) {
       std::ostringstream oss;
-      oss << "MULTISTART per-start MAXEVAL = " << *per_start_maxeval
-          << (budget_per_start_ ? " (from BUDGET_PER_START)"
-                                 : " (split from outer MAXEVAL)");
+      oss << "MULTISTART per-start MAXEVAL = " << *plan.per_start_maxeval
+          << (plan.from_budget_per_start ? " (from BUDGET_PER_START)"
+                                         : " (split from outer MAXEVAL)");
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
 
     for (std::size_t i = 0; i < actual_k; ++i) {
-      OptimizerSpec sub = spec;                  // deep copy
-      sub.optim_init = { spec.optim_init[i] };   // single start
-      if (per_start_maxeval) sub.stop.maxeval = *per_start_maxeval;
-      /* Decorrelate the starts: reusing one seed hands every start the
-       * same proposal stream, so stochastic inner optimisers (ANNEAL)
-       * produce near-duplicate chains that differ only by init point. */
-      if (spec.seed) sub.seed = *spec.seed + static_cast<std::uint64_t>(i);
+      const OptimizerSpec sub = multistart_start_spec(spec, plan, i);
 
       const std::string start_msg =
           "MULTISTART start " + std::to_string(i+1) + "/" +
@@ -283,7 +260,11 @@ public:
       std::ostringstream oss;
       oss << "PRESTAGE: exploration phase "
           << spec.prestage->lib << ":" << spec.prestage->algo
-          << " (MAXEVAL=" << spec.prestage->stop.maxeval.value_or(0) << ")";
+          << " (MAXEVAL=";
+      if (spec.prestage->stop.maxeval)
+        oss << *spec.prestage->stop.maxeval << ")";
+      else
+        oss << "none: no evaluation limit)";
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
@@ -325,19 +306,21 @@ public:
       HPOLog::instance().info(oss.str());
     }
 
-    /* Step 3: prepare a refinement spec. Drop the PRESTAGE so we do not
-     * recurse, replace optim_init with the top-K params, and run via
-     * MULTISTART (or a single-shot if K=1), which runs candidate i with
-     * SEED + i (OptimizerSpec::seeded_starts() counts TOPK of them). */
-    OptimizerSpec refine = spec;
-    refine.prestage.reset();
-    refine.optim_init.clear();
+    /* Step 3: the refinement spec (prestage_refinement_spec, phase_specs.h:
+     * the outer spec without the PRESTAGE, so we do not recurse, starting
+     * from the top-K params), run via MULTISTART (or a single-shot if K=1),
+     * which runs candidate i with SEED + i (OptimizerSpec::seeded_starts()
+     * counts TOPK of them). */
+    std::vector<std::vector<double>> candidates;
+    candidates.reserve(topk.size());
     for (const auto& kv : topk) {
       const Vec& params = kv.second;
       std::vector<double> v(params.size());
       for (long i = 0; i < params.size(); ++i) v[i] = params(i);
-      refine.optim_init.push_back(std::move(v));
+      candidates.push_back(std::move(v));
     }
+    const OptimizerSpec refine =
+        prestage_refinement_spec(spec, std::move(candidates));
 
     {
       std::ostringstream oss;

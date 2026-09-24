@@ -68,7 +68,10 @@ struct OptimizerCaps {
     bool accepts_multi_seed = false;  // a single run can consume >1 starting point
 
     /* Stop-criteria support: which fields of StopCriteria the backend
-     * actually honours. Used by validators to refuse silent drops. */
+     * actually honours. Descriptive: each backend's own validator
+     * (backend_rules.h) decides what it rejects, and TADAH:RANDOM,
+     * TADAH:GRID and DLIB:GFS do not yet reject the criteria they do not
+     * honour (MAXTIME, STOPVAL, the tolerances). */
     bool supports_maxeval   = true;
     bool supports_maxtime   = false;
     bool supports_stopval   = false;
@@ -82,6 +85,15 @@ struct OptimizerCaps {
      * consumption description printed in hpo_run.log for consumers. */
     StepUse     step_use  = StepUse::Rejected;
     const char* step_note = "";
+
+    /* The backend has no stopping rule of its own: without MAXEVAL it runs
+     * until it is interrupted (no convergence test, no finite schedule, and
+     * it reads neither MAXTIME nor STOPVAL). require_maxeval_budget()
+     * (backend_rules.h) refuses such a spec at startup; budget_note says
+     * why, for the message. Every other backend runs without an evaluation
+     * limit when MAXEVAL is left out. */
+    bool        needs_maxeval = false;
+    const char* budget_note   = "";
 
     /* The backend evaluates outside the OPTIM box: LN_NEWUOA is called with
      * lb=ub=NULL (nlopt optimize.c), CERES' GradientProblemSolver has no box

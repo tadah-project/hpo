@@ -1,4 +1,5 @@
 #include <tadah/hpo/startup_validation.h>
+#include <tadah/hpo/backend_rules.h>
 #include <tadah/hpo/scale_validation.h>
 #include <tadah/hpo/strategy_rules.h>
 
@@ -74,6 +75,16 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * runs (under PRESTAGE, after the whole exploration). The policies apply
    * the same rules again when they run (strategy_rules.h). */
   validate_run_policy(trg.spec);
+
+  /* --- each phase's backend settings -----------------------------------
+   * The attribute and PARAM checks of each backend, and its need for a
+   * MAXEVAL, on the spec each phase runs with (phase_specs.h: the
+   * STRATEGY-level optimiser, each MULTISTART start with its budget, the
+   * PRESTAGE exploration and refinement, every INNER block). They used to
+   * run only when that optimiser started: after the data were loaded, and
+   * for a PRESTAGE refinement after the whole exploration. Each driver
+   * applies its own checks again when it starts (backend_rules.h). */
+  validate_phase_backends(trg.spec);
 
   /* --- FIXINDEX/FIXWEIGHT pairing + weight-source classification ------ */
   const bool has_fw = train_ctx.contains("FIXWEIGHT");

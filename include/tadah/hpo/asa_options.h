@@ -80,6 +80,11 @@ struct AsaOptions {
  * STEP/GRAD_STRATEGY/VECTOR_ARR) with tailored messages. */
 AsaOptions parse_asa_options(const OptimizerSpec& sp, std::size_t dim);
 
+/* The journal hints the parsed options call for (Queue_Size with a zero
+ * Queue_Resolution), written when the run starts; parse_asa_options()
+ * itself writes nothing, as it is also the startup check of the spec. */
+void announce_asa_options(const AsaOptions& o);
+
 /* Human-readable name of an asa() exit_status code. */
 const char* asa_exit_name(int exit_status);
 

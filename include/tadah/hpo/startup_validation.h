@@ -28,6 +28,10 @@ std::size_t derive_weight_count(const core::Context &train_ctx);
  *     consumes a single starting point, for any N_STARTS; PRESTAGE needs
  *     an EXPLORE block and, with a configured TOPK > 1, a refinement
  *     optimiser MULTISTART accepts;
+ *   - each phase's backend accepts its settings (validate_phase_backends,
+ *     backend_rules.h): the backend's own attribute and PARAM checks on
+ *     the spec the phase runs with, and MAXEVAL for a backend that has
+ *     no stopping rule of its own (TADAH:RANDOM, DLIB:GFS);
  *   - FIXINDEX/FIXWEIGHT pairing: lone key, size mismatch, out-of-bounds
  *     index (via mlip::classify_weight_source);
  *   - no training DBFILE: FIXINDEX must cover every model weight;

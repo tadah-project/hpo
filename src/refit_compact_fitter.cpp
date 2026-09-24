@@ -15,9 +15,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <map>
 #include <stdexcept>
+#include <string>
 
 namespace tadah {
 namespace hpo {
@@ -664,6 +667,19 @@ double CompactBlipFitter::explore(BlipFit &f) const {
   return sbplx_explore(f, cfg_.sbplx_maxeval);
 }
 
+int lbfgs_refine_budget(int ceres_max_iter) {
+  if (ceres_max_iter < 1)
+    throw std::invalid_argument(
+        "lbfgs_refine_budget: the REFINE iteration cap "
+        "(CompactConfig::ceres_max_iter) must be at least 1, got " +
+        std::to_string(ceres_max_iter));
+  constexpr std::int64_t kPerIteration = 50;
+  const std::int64_t budget =
+      kPerIteration * static_cast<std::int64_t>(ceres_max_iter);
+  return static_cast<int>(std::min<std::int64_t>(
+      budget, std::numeric_limits<int>::max()));
+}
+
 double CompactBlipFitter::refine_dispatch(BlipFit &f) const {
   // REFINE runs the configured optimiser (cfg_.refine_algo) in BOTH objectives;
   // the legal set is enforced at parse time, and REFINE ALGO NONE (or ENABLED
@@ -674,7 +690,10 @@ double CompactBlipFitter::refine_dispatch(BlipFit &f) const {
   if (a == "CERES_LM" || a == "CERES_DOGLEG") return refine(f);
   if (a == "NONE") { last_refine_term_ = "NONE(linear-solve)"; return solve_coeffs(f); }
   if (a == "NLOPT_LBFGS" || a == "DLIB_LBFGS") {
-    // VARPRO reduced-gradient local, tight tolerances
+    // VARPRO reduced-gradient local, tight tolerances. The budget is taken
+    // before the optimisers' catch-alls, so an invalid cap is an error:
+    // NLopt's evaluation budget, dlib's L-BFGS iteration cap.
+    const int budget = lbfgs_refine_budget(cfg_.ceres_max_iter);
     ThetaBox b = theta_box(f, lo_, hi_, span_, cfg_.hard_rcut);
     const int dim = static_cast<int>(b.v.size());
     if (a == "NLOPT_LBFGS") {
@@ -683,7 +702,7 @@ double CompactBlipFitter::refine_dispatch(BlipFit &f) const {
       opt.set_upper_bounds(b.ub);
       opt.set_ftol_rel(cfg_.ceres_ftol);
       opt.set_xtol_rel(1e-14);
-      opt.set_maxeval(50 * cfg_.ceres_max_iter);
+      opt.set_maxeval(budget);
       BlipFit work = f;
       GradCtx ctx{this, &work};
       opt.set_min_objective(nlopt_grad_obj, &ctx);
@@ -717,8 +736,8 @@ double CompactBlipFitter::refine_dispatch(BlipFit &f) const {
     try {
       dlib::find_min_box_constrained(
           dlib::lbfgs_search_strategy(30),
-          dlib::objective_delta_stop_strategy(cfg_.ceres_ftol,
-                                              50 * cfg_.ceres_max_iter),
+          dlib::objective_delta_stop_strategy(
+              cfg_.ceres_ftol, static_cast<unsigned long>(budget)),
           obj, der, x, xl, xu);
     } catch (const std::exception &) {
       last_refine_term_ = "DLIB_LBFGS(threw)";

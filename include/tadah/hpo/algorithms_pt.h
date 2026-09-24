@@ -1189,17 +1189,12 @@ template<typename Vec, typename HostT>
     const std::uint64_t seed = sp.seed.value_or(std::random_device{}());
 
     const Knobs kb = Knobs::parse(sp, AlgoKind::PT);
+    anneal::announce_knobs(kb, AlgoKind::PT);
     const std::vector<double> initial =
         anneal::make_initial_point(sp, AlgoKind::PT);
 
     const std::size_t threads = sp.num_threads.value_or(1);
-    const std::size_t K = kb.replicas ? kb.replicas
-                                      : std::max<std::size_t>(threads, 2);
-    if (K < 2)
-      throw std::runtime_error("TADAH:ANNEAL_PT: needs REPLICAS >= 2");
-    if (kb.ladder_adapt && K < 3)
-      throw std::runtime_error(
-          "TADAH:ANNEAL_PT: LADDER_ADAPT requires REPLICAS >= 3");
+    const std::size_t K = anneal::pt_replica_count(sp, kb);
     const bool ladder_controls_explicit =
         sp.param.count("LADDER_POWER") || sp.param.count("LADDER_ADAPT");
 

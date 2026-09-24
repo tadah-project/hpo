@@ -6,7 +6,9 @@
 #include <tadah/models/descriptors/d_basis_functions.h>
 
 #include <cmath>
+#include <limits>
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 using namespace tadah::hpo::refit;
@@ -31,6 +33,36 @@ void sample(const BlipFit &f, double lo, double hi, int N,
   }
 }
 }  // namespace
+
+TEST_CASE("compact fitter: the LBFGS REFINE budget is 50 per MAXEVAL "
+          "iteration, computed without overflow", "[refit][compact][budget]")
+{
+  /* (Before <ceres/ceres.h>, whose miniglog CHECK would replace Catch's.)
+   * The REFINE L-BFGS budget is 50 per REFINE MAXEVAL/MAXITER iteration:
+   * NLopt's evaluation budget for NLOPT_LBFGS, dlib's L-BFGS iteration cap
+   * for DLIB_LBFGS. The product was taken in int: REFINE MAXEVAL 42949673
+   * (and anything up to the parser's 2147483647) overflowed, which is
+   * undefined behaviour (in practice a negative budget, which NLopt reads
+   * as no limit). It is taken in 64 bits and capped at INT_MAX, the most
+   * NLopt counts. */
+  constexpr int kIntMax = std::numeric_limits<int>::max();
+  CHECK(lbfgs_refine_budget(1) == 50);
+  CHECK(lbfgs_refine_budget(1000) == 50000);
+  CHECK(lbfgs_refine_budget(42949672) == 2147483600);
+  CHECK(lbfgs_refine_budget(42949673) == kIntMax);
+  CHECK(lbfgs_refine_budget(1000000000) == kIntMax);
+  CHECK(lbfgs_refine_budget(kIntMax) == kIntMax);
+  /* A cap below 1, which RefitParser does not accept, has no budget: a 0
+   * budget is no limit to NLopt and breaks dlib's precondition (its stop
+   * strategy asserts max_iter > 0), so it is an error, not a 0. */
+  CHECK_THROWS_WITH(lbfgs_refine_budget(0),
+                    "lbfgs_refine_budget: the REFINE iteration cap "
+                    "(CompactConfig::ceres_max_iter) must be at least 1, got 0");
+  CHECK_THROWS_WITH(lbfgs_refine_budget(-5),
+                    "lbfgs_refine_budget: the REFINE iteration cap "
+                    "(CompactConfig::ceres_max_iter) must be at least 1, got -5");
+  CHECK_THROWS_AS(lbfgs_refine_budget(0), std::invalid_argument);
+}
 
 #include <ceres/ceres.h>
 

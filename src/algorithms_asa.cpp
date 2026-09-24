@@ -497,6 +497,7 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
         throw std::runtime_error("ASA:ASA: bounds/dim mismatch");
 
     AsaOptions ao = parse_asa_options(sp, dim);
+    announce_asa_options(ao);
 
     const std::uint64_t seed = sp.seed.value_or(std::random_device{}());
     const int run_no =

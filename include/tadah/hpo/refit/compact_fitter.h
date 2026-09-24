@@ -390,6 +390,18 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
  *  re-solve coefficients — the caller owns that. */
 int clamp_bump_support_params(BlipFit &f, double hard_rcut, double span);
 
+/** The budget of the VARPRO reduced-gradient REFINE: 50 per REFINE
+ *  MAXEVAL/MAXITER iteration (CompactConfig::ceres_max_iter), computed in
+ *  64 bits and capped at INT_MAX, the most NLopt counts. NLOPT_LBFGS takes
+ *  it as its evaluation budget; DLIB_LBFGS as the iteration cap of dlib's
+ *  objective_delta_stop_strategy, which counts L-BFGS iterations, each a
+ *  line search of one or more evaluations. `50 * ceres_max_iter` in int
+ *  overflowed (undefined behaviour) above 42949672. A cap below 1, which
+ *  RefitParser does not allow, has no budget: 0 would be no limit to NLopt
+ *  and breaks dlib's precondition (max_iter > 0), so it throws
+ *  std::invalid_argument. */
+int lbfgs_refine_budget(int ceres_max_iter);
+
 }  // namespace refit
 }  // namespace hpo
 }  // namespace tadah

@@ -570,12 +570,18 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
                 f_ << "    BUDGET_PER_START  : " << *ms.budget_per_start << "\n";
         }
         if (has_prestage) {
+            /* A block without MAXEVAL has no evaluation limit (MAXEVAL 0
+             * is an error at its line, so it is not a budget to print). */
+            const auto maxeval = [](const StopCriteria& s) {
+                return s.maxeval ? std::to_string(*s.maxeval)
+                                 : std::string("none");
+            };
             const auto& ps = *sp.prestage;
             f_ << "    PRESTAGE EXPLORE  : " << ps.lib << ":" << ps.algo
-               << "  MAXEVAL=" << ps.stop.maxeval.value_or(0)
+               << "  MAXEVAL=" << maxeval(ps.stop)
                << "  TOPK=" << sp.stage_topk << "\n";
             f_ << "    PRESTAGE REFINE   : " << sp.lib << ":" << sp.algo
-               << "  MAXEVAL=" << sp.stop.maxeval.value_or(0) << "\n";
+               << "  MAXEVAL=" << maxeval(sp.stop) << "\n";
             write_init_strategy(ps.init_strategy_spec,
                                 "PRESTAGE.EXPLORE init strategy:", "    ");
             if (ps.inner) {
