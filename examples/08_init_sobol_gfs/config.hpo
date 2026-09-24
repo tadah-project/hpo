@@ -1,10 +1,12 @@
 # 08 -- Sobol init feeding DLIB:GFS.
 #
-# Sobol is a deterministic low-discrepancy sequence -- there is no
-# RNG variance between runs even without setting SEED. DLIB:GFS is a
-# global Bayesian-style optimiser that ingests every init point as an
-# already-evaluated (x, y) pair, tightening its UCB criterion from
-# iter 1.
+# Sobol is a deterministic low-discrepancy sequence. The SEED selects
+# which K points of it are drawn: block SEED of K points (here points
+# 4*31337 ... 4*31337 + 3). Without SEED the block comes from
+# std::random_device, so the starting points differ between runs.
+# DLIB:GFS is a global Bayesian-style optimiser that ingests every init
+# point as an already-evaluated (x, y) pair, tightening its UCB
+# criterion from iter 1.
 
 OPTIMIZER
   INIT
