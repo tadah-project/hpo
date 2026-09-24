@@ -1213,6 +1213,155 @@ TEST_CASE("Termination: a restarted seeded optimiser draws new points",
     }
 }
 
+namespace {
+
+/* One PLAIN TADAH:RANDOM run with SEED 5 under RESTART MAX 2, whose rounds
+ * each end at a stagnation stop. `restart_seed` is the RESTART block's SEED
+ * line ("" for none). */
+struct RestartRounds {
+    std::vector<std::vector<Point>> rounds;
+    std::string journal;
+};
+
+std::string random_search_block(std::size_t maxeval, std::uint64_t seed,
+                                const std::string& restart)
+{
+    return plain_block(
+        "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+        "    MAXEVAL " + std::to_string(maxeval) + "\n"
+        "    SEED " + std::to_string(seed) + "\n" + restart);
+}
+
+RestartRounds run_restart_rounds(const std::string& restart_seed)
+{
+    RestartRounds out;
+    TaRun run(random_search_block(
+        5000, 5,
+        "    RESTART\n      AFTER_STAGNATION 6\n      MAX 2\n"
+        "      METHOD RANDOM 1\n" + restart_seed + "    ENDRESTART\n"));
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    out.journal = read_file("hpo_run.log");
+    REQUIRE(journal_status(out.journal) ==
+            "STOPPED -- stagnation, max restarts (2) used");
+    const auto stops = stagnation_stops(out.journal);
+    REQUIRE(stops.size() == 3u);
+    const auto pts = evaluated_points();
+    std::size_t first = 1;
+    for (const auto& stop : stops) {
+        out.rounds.push_back(evals_between(pts, first, stop.first));
+        first = stop.first + 1;
+    }
+    CHECK(first == pts.size() + 1);
+    check_run_files();
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("Termination: a RESTART SEED draws restart round r's points with "
+          "SEED + r", "[HPO][termination][restart][seed]")
+{
+    /* The RESTART block's SEED used to be ignored: every restart drew its
+     * point from std::random_device, so no run with RESTART could be
+     * repeated. Round r now draws it with SEED + r, next to the optimiser
+     * seeds RESTART derives for the round (SEED 5 + r here). */
+    const std::string seed_line = "      SEED 42\n";
+    const auto a = run_restart_rounds(seed_line);
+    CHECK(a.journal.find("RESTART 1/2 -- fresh init from RANDOM; "
+                         "RESTART SEED 43, SEED 6\n") != std::string::npos);
+    CHECK(a.journal.find("RESTART 2/2 -- fresh init from RANDOM; "
+                         "RESTART SEED 44, SEED 7\n") != std::string::npos);
+
+    /* Round 0 is the run SEED 5 makes without RESTART. */
+    CHECK(a.rounds[0] ==
+          reference_points(random_search_block(a.rounds[0].size(), 5, "")));
+
+    for (std::uint64_t r = 1; r < a.rounds.size(); ++r) {
+        INFO("round " << r << ": " << a.rounds[r].size() << " evaluation(s)");
+        /* The round starts at the point an INIT block's METHOD RANDOM 1
+         * draws with SEED 42 + r ... */
+        const auto start = reference_points(
+            "OPTIMIZER\n"
+            "  INIT\n    METHOD RANDOM 1\n"
+            "    SEED " + std::to_string(42 + r) + "\n  ENDINIT\n"
+            "  STRATEGY\n"
+            "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+            "    MAXEVAL 1\n    SEED 5\n"
+            "  ENDSTRATEGY\n"
+            "ENDOPTIMIZER\n");
+        REQUIRE(start.size() == 1u);
+        CHECK(a.rounds[r].front() == start.front());
+        /* ... and then draws the points of the derived SEED 5 + r. */
+        const auto ref = reference_points(
+            random_search_block(a.rounds[r].size(), 5 + r, ""));
+        REQUIRE(ref.size() == a.rounds[r].size());
+        CHECK(drawn(a.rounds[r]) == drawn(ref));
+    }
+
+    /* The whole run repeats. */
+    const auto b = run_restart_rounds(seed_line);
+    CHECK(b.rounds == a.rounds);
+}
+
+TEST_CASE("Termination: without a RESTART SEED the restart points come from "
+          "std::random_device", "[HPO][termination][restart][seed]")
+{
+    /* The documented default: without a SEED in the RESTART block each
+     * restart draws its point from std::random_device, and the journal's
+     * RESTART line lists only the optimiser seeds. Round 0 and the drawn
+     * points still follow SEED 5 + r. */
+    const auto a = run_restart_rounds("");
+    const auto b = run_restart_rounds("");
+    for (const auto* run : {&a, &b}) {
+        CHECK(run->journal.find("RESTART 1/2 -- fresh init from RANDOM; "
+                                "SEED 6\n") != std::string::npos);
+        CHECK(run->journal.find("RESTART SEED") == std::string::npos);
+    }
+    CHECK(a.rounds[0] == b.rounds[0]);
+    CHECK(a.rounds[1].front() != b.rounds[1].front());
+    CHECK(a.rounds[2].front() != b.rounds[2].front());
+}
+
+TEST_CASE("RESTART: a SEED no METHOD of the chain draws from is reported at "
+          "startup", "[HPO][restart][seed]")
+{
+    /* Like an INIT block's SEED: CONFIG and WARM take no random numbers,
+     * and without a METHOD line a restart starts from CONFIG. */
+    const auto startup_stderr = [](const std::string& restart_body,
+                                   const std::string& after_stagnation = "6") {
+        TaRun run(random_search_block(
+            50, 5,
+            "    RESTART\n      AFTER_STAGNATION " + after_stagnation +
+                "\n      MAX 2\n" + restart_body + "    ENDRESTART\n"));
+        std::ostringstream err;
+        struct Redirect {
+            std::streambuf* old;
+            explicit Redirect(std::streambuf* to) : old(std::cerr.rdbuf(to)) {}
+            ~Redirect() { std::cerr.rdbuf(old); }
+        } redirect(err.rdbuf());
+        const tadah::hpo::HPOTargets trg(run.ctx, run.hpo.string());
+        return err.str();
+    };
+    const std::string unused = "RESTART: SEED is set but the METHOD chain";
+    CHECK_THAT(startup_stderr("      METHOD CONFIG\n      SEED 42\n"),
+               Catch::Contains(unused + " (CONFIG) contains no stochastic "
+                               "method, so the seed does not affect the "
+                               "restart points"));
+    CHECK_THAT(startup_stderr("      SEED 42\n"),
+               Catch::Contains(unused + " (empty -> CONFIG fallback)"));
+    CHECK_THAT(startup_stderr("      METHOD CONFIG\n      METHOD LHS 2\n"
+                              "      SEED 42\n"),
+               !Catch::Contains(unused));
+    CHECK_THAT(startup_stderr("      METHOD CONFIG\n"),
+               !Catch::Contains(unused));
+    /* An inactive RESTART block (AFTER_STAGNATION 0) draws no restart
+     * points at all, so its SEED is not reported. */
+    CHECK_THAT(startup_stderr("      METHOD CONFIG\n      SEED 42\n", "0"),
+               !Catch::Contains(unused));
+}
+
 TEST_CASE("Termination: a restarted seeded exploration draws a new "
           "population", "[HPO][termination][restart][seed]")
 {
