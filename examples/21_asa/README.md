@@ -41,7 +41,8 @@ What this shows:
 - Single-instance semantics: one `asa()` run per process at a time
   (upstream statics). The RESTART decorator re-runs it sequentially and
   works unchanged; `STRATEGY TYPE MULTISTART` (and a PRESTAGE refinement
-  over `TOPK > 1` seeds) rejects ASA, a single-seed global optimiser.
+  over `TOPK > 1` seeds) rejects ASA, a single-seed global optimiser, at
+  startup, before any data is loaded.
 
 Run it:
 
