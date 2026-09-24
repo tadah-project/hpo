@@ -15,9 +15,7 @@ What this shows:
 - `OPTIM FIXWEIGHT (2-4)`: search three coefficients, hold the rest;
 - the element set comes from the `ATOM` key carried by the pot header
   (required -- with neither training nor validation data there is
-  nothing to derive it from);
-- serial-only: MPI builds reject no-DBFILE runs (there is no design
-  matrix to distribute).
+  nothing to derive it from).
 
 Run:
 
