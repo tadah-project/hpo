@@ -1,13 +1,16 @@
 // test_hpo_targets_order.cpp
 //
-// PC_LAMMPS lines must keep their configuration order inside
-// HPOTargets::LS. The ncpu ordering applied after parsing exists for
-// scheduling only; sims with equal ncpu (the default for every line) have
-// to stay in the order they were written, because the outvar/loss column
-// headers, the per-evaluation rows and the potential-file header are all
-// emitted in LS order and are only identifiable by position once labels
-// are truncated. A comparator on an all-equal key gives an unspecified
-// permutation under std::sort for more than 16 elements.
+// PC_LAMMPS lines keep their configuration order inside HPOTargets::LS:
+// the outvar/loss column headers, the per-evaluation rows and the
+// potential-file header are all emitted in LS order and are only
+// identifiable by position once labels are truncated, and failprobe_idx is
+// recorded against that order at parse time. Nothing reorders LS after
+// parsing (24 lines: beyond the size where a sort could still happen to
+// keep an all-equal order).
+//
+// PC_LAMMPS --ncpu (the per-sim rank count of the legacy MPI build, removed
+// in 1.5.1) is rejected at parse time with the removal hint and the line
+// number, rather than being ignored or passed to LAMMPS.
 
 #include "catch2/catch.hpp"
 
@@ -15,9 +18,11 @@
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/hpo_targets.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include <unistd.h>
@@ -83,7 +88,7 @@ constexpr int kLines = 24;   // > 16: beyond libstdc++'s insertion-sort threshol
 
 }  // namespace
 
-TEST_CASE("HPOTargets keeps PC_LAMMPS configuration order for equal ncpu",
+TEST_CASE("HPOTargets: PC_LAMMPS lines keep configuration order",
           "[hpo_targets][order]")
 {
     tadah::core::PeriodicTable::initialize();
@@ -108,39 +113,81 @@ TEST_CASE("HPOTargets keeps PC_LAMMPS configuration order for equal ncpu",
     CHECK(observed == expected);
 }
 
-TEST_CASE("HPOTargets orders PC_LAMMPS lines by descending ncpu and keeps "
-          "configuration order within equal ncpu",
-          "[hpo_targets][order]")
+TEST_CASE("HPOTargets: PC_FAILPROBE keeps its configuration position",
+          "[hpo_targets][order][failprobe]")
 {
     tadah::core::PeriodicTable::initialize();
     auto ctx = make_context_for_targets();
     const auto script = write_script(kLines);
 
-    /* three lines ask for 2 cpus; every other line keeps the default 1 */
-    const std::vector<int> wide = {5, 13, 20};
+    /* the probe sits between PC_LAMMPS lines 12 and 13 */
+    const int probe_after = 12;
     std::string cfg = config_head();
     for (int k = 1; k <= kLines; ++k) {
         cfg += "PC_LAMMPS --script " + script.string()
-             + " --varloss " + var_name(k) + " 1.0 1.0";
-        for (int w : wide) if (w == k) cfg += " --ncpu 2";
-        cfg += "\n";
+             + " --varloss " + var_name(k) + " 1.0 1.0\n";
+        if (k == probe_after)
+            cfg += "PC_FAILPROBE --script " + script.string()
+                 + " --outvar " + var_name(1) + "\n";
     }
-    const auto cfg_path = write_file("cfg_mixed", cfg);
+    const auto cfg_path = write_file("cfg_probe", cfg);
 
     tadah::hpo::HPOTargets trg(ctx, cfg_path.string());
-    REQUIRE(trg.LS.size() == static_cast<std::size_t>(kLines));
-
-    std::vector<std::string> expected;
-    for (int w : wide) expected.push_back(var_name(w));
-    for (int k = 1; k <= kLines; ++k) {
-        bool is_wide = false;
-        for (int w : wide) is_wide |= (w == k);
-        if (!is_wide) expected.push_back(var_name(k));
-    }
-    std::vector<std::string> observed;
-    for (const auto& sim : trg.LS) {
+    REQUIRE(trg.LS.size() == static_cast<std::size_t>(kLines + 1));
+    CHECK(trg.failprobe_idx == probe_after);
+    std::vector<std::string> observed, expected;
+    for (int k = 1; k <= kLines; ++k) expected.push_back(var_name(k));
+    for (std::size_t i = 0; i < trg.LS.size(); ++i) {
+        const auto& sim = trg.LS[i];
+        CHECK(sim.is_failprobe == (static_cast<int>(i) == probe_after));
+        if (sim.is_failprobe) continue;
         REQUIRE(sim.n_varloss.size() == 1);
         observed.push_back(sim.n_varloss[0]);
     }
     CHECK(observed == expected);
+}
+
+TEST_CASE("HPOTargets: PC_LAMMPS --ncpu is rejected with the removal hint",
+          "[hpo_targets][parse][ncpu]")
+{
+    tadah::core::PeriodicTable::initialize();
+    auto ctx = make_context_for_targets();
+    const auto script = write_script(2);
+    const std::string ok_line = "PC_LAMMPS --script " + script.string()
+                              + " --varloss " + var_name(1) + " 1.0 1.0";
+
+    /* `--ncpu 1` was the default: it is rejected too, like any use. */
+    struct Case { std::string name, line; };
+    const std::vector<Case> cases = {
+        {"--ncpu 2 on PC_LAMMPS",
+         "PC_LAMMPS --script " + script.string() + " --varloss "
+             + var_name(2) + " 1.0 1.0 --ncpu 2"},
+        {"--ncpu 1 on PC_LAMMPS",
+         "PC_LAMMPS --script " + script.string() + " --ncpu 1 --varloss "
+             + var_name(2) + " 1.0 1.0"},
+        {"--ncpu without a value",
+         "PC_LAMMPS --script " + script.string() + " --varloss "
+             + var_name(2) + " 1.0 1.0 --ncpu"},
+        {"--ncpu on PC_FAILPROBE",
+         "PC_FAILPROBE --script " + script.string() + " --outvar "
+             + var_name(2) + " --ncpu 4"},
+    };
+    for (const auto& c : cases) {
+        INFO(c.name);
+        const std::string head = config_head() + ok_line + "\n";
+        const long bad_line = std::count(head.begin(), head.end(), '\n') + 1;
+        const auto cfg_path = write_file("cfg_ncpu", head + c.line + "\n");
+        try {
+            tadah::hpo::HPOTargets trg(ctx, cfg_path.string());
+            FAIL_CHECK("--ncpu was accepted");
+        } catch (const std::runtime_error& e) {
+            const std::string msg = e.what();
+            CHECK_THAT(msg, Catch::Contains(
+                "Error on line " + std::to_string(bad_line) + ":"));
+            CHECK_THAT(msg, Catch::Contains(
+                "--ncpu was removed in 1.5.1 (legacy MPI build)"));
+            CHECK_THAT(msg, Catch::Contains("THREADS / PC_ISOLATION"));
+            CHECK_THAT(msg, Catch::Contains("Line: " + c.line));
+        }
+    }
 }

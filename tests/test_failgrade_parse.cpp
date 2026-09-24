@@ -19,6 +19,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 #include <unistd.h>
 
 namespace {
@@ -205,13 +206,13 @@ TEST_CASE("PC_FAILPROBE: valid line, flags stripped, sim marked",
         CHECK(trg.failprobe_gate == Approx(50.0));
         CHECK(trg.failprobe_s0 == Approx(0.5));
     }
-    SECTION("failprobe_idx survives the post-parse LS sort") {
-        /* The ctor sorts LS after read(); the index recorded at parse
-         * time is against file order. Declare the probe FIRST and mix
-         * hot + cold sims after it so the sort has to move things --
-         * the recovered index must still point at the probe (this was
-         * a real bug: the probe journal named vac_bcc_P_fast.in and a
-         * mis-dispatched wave-1 "probe" corrupted every eval). */
+    SECTION("failprobe_idx is the probe's configuration position") {
+        /* LS keeps configuration order and failprobe_idx is recorded
+         * against it at parse time. Declare the probe FIRST and mix hot +
+         * cold sims after it: the index must point at the probe (an index
+         * that pointed elsewhere was a real bug: the probe journal named
+         * vac_bcc_P_fast.in and a mis-dispatched wave-1 "probe" corrupted
+         * every eval). */
         auto cfg = write_file("cfg", config_head()
             + "PC_FAILPROBE --script " + script.string() + " --outvar S\n"
             + "PC_LAMMPS --script " + script.string()
@@ -219,9 +220,11 @@ TEST_CASE("PC_FAILPROBE: valid line, flags stripped, sim marked",
             + "PC_LAMMPS --script " + script.string()
             + " --outvar B --varloss B 1.0 1.0\n");
         tadah::hpo::HPOTargets trg(ctx, cfg.string());
-        REQUIRE(trg.failprobe_idx >= 0);
-        REQUIRE(static_cast<std::size_t>(trg.failprobe_idx) < trg.LS.size());
+        REQUIRE(trg.failprobe_idx == 0);
+        REQUIRE(trg.LS.size() == 3);
         CHECK(trg.LS[trg.failprobe_idx].is_failprobe);
+        CHECK(trg.LS[1].n_varloss == std::vector<std::string>{"A"});
+        CHECK(trg.LS[2].n_varloss == std::vector<std::string>{"B"});
         /* exactly one probe entry in LS */
         int n_probe = 0;
         for (const auto& s : trg.LS) n_probe += s.is_failprobe ? 1 : 0;
