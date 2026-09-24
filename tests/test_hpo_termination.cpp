@@ -1091,9 +1091,10 @@ TEST_CASE("Termination: each RESTART round derives the seed of every "
     {
         /* The owner's worked example: SEED 7, TOPK 3, MAX 2. The
          * refinement multistarts the TOPK candidates, candidate i with the
-         * round's SEED + i (StagedPolicy -> MultiStartPolicy). N_STARTS is
-         * parsed with every TYPE but only MULTISTART runs N_STARTS starts,
-         * so it does not set the PRESTAGE stride. */
+         * round's SEED + i (StagedPolicy -> MultiStartPolicy). Only
+         * MULTISTART runs N_STARTS starts (the parser rejects N_STARTS under
+         * TYPE PRESTAGE), so a hand-built spec's N_STARTS does not set the
+         * PRESTAGE stride. */
         OptimizerSpec spec;
         spec.strategy_type = tadah::hpo::StrategyType::PRESTAGE;
         spec.stage_topk = 3;

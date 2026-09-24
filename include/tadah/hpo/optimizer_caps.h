@@ -106,9 +106,11 @@ using CapsPredicate = bool (*)(const OptimizerCaps&);
 std::vector<const OptimizerCaps*> filter_optimizer_caps(CapsPredicate pred);
 
 /* Format LIB:ALGO entries from filter_optimizer_caps as a comma-
- * separated list (truncated, with "..." suffix when the list is long).
- * NLopt enumerates ~40 algorithms, so an unfiltered list is unhelpful
- * to a human reader; max_show keeps the message scannable. */
+ * separated list, sorted by LIB:ALGO whatever the order of `caps` (the
+ * registry order is a hash order), truncated after max_show entries with
+ * a ", ... (N more)" suffix. NLopt enumerates ~40 algorithms, so an
+ * unfiltered list is unhelpful to a human reader; max_show keeps the
+ * message scannable. */
 std::string format_caps_list(const std::vector<const OptimizerCaps*>& caps,
                              std::size_t max_show = 6);
 

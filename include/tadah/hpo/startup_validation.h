@@ -22,6 +22,12 @@ std::size_t derive_weight_count(const core::Context &train_ctx);
  *
  *   - OPTIM WEIGHTS is rejected (silent no-op: LS overwrites weights);
  *   - OPTIM FIXWEIGHT requires FIXINDEX in the training configuration;
+ *   - NLOPT, DLIB and CERES need at least one OPTIM line;
+ *   - the STRATEGY TYPE must suit the optimiser (validate_run_policy,
+ *     strategy_rules.h): MULTISTART rejects a global optimiser that
+ *     consumes a single starting point, for any N_STARTS; PRESTAGE needs
+ *     an EXPLORE block and, with a configured TOPK > 1, a refinement
+ *     optimiser MULTISTART accepts;
  *   - FIXINDEX/FIXWEIGHT pairing: lone key, size mismatch, out-of-bounds
  *     index (via mlip::classify_weight_source);
  *   - no training DBFILE: FIXINDEX must cover every model weight;

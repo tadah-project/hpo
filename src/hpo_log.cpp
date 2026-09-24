@@ -2,6 +2,7 @@
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/strategy_rules.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/core/context.h>
 #include <tadah/core/blueprint_parser.h>
@@ -351,15 +352,7 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
     /* Strategy-aware library/algo summary. PRESTAGE shows OUTER as the
      * refinement driver and reports EXPLORE separately under Run policy
      * below. */
-    auto strategy_name = [&](StrategyType t) -> const char* {
-        switch (t) {
-            case StrategyType::PLAIN:      return "PLAIN";
-            case StrategyType::MULTISTART: return "MULTISTART";
-            case StrategyType::PRESTAGE:   return "PRESTAGE";
-        }
-        return "?";
-    };
-    kv("Strategy", std::string(strategy_name(sp.strategy_type)));
+    kv("Strategy", std::string(strategy_type_name(sp.strategy_type)));
     kv("Library / algo", sp.lib + " / " + sp.algo);
     kv("Dimensions",     std::to_string(sp.low.size()) + " parameter"
                          + (sp.low.size() != 1 ? "s" : "") + " being optimised");
@@ -433,8 +426,9 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
 
     // ---- initial step (config level; the effective per-dim vector is
     //      journaled by the NLopt adapter at run time, where the start
-    //      point is known)
-    if (sp.lib != "NOT SET" && sp.algo != "NOT SET") {
+    //      point is known). The parser requires LIB/ALGO and a registered
+    //      backend, so the caps lookup cannot fail on a parsed spec.
+    {
         std::string line;
         if (sp.step || !sp.step_overrides.empty()) {
             std::ostringstream oss;
@@ -466,11 +460,9 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
             line = "n/a (no initial-step concept)";
         }
         kv("Initial step", line);
-        try {
-            const auto& c = optimizer_caps(sp);
-            if (step_use_consumes(c.step_use) || sp.step)
-                kv("Step consumption", std::string(step_use_name(c.step_use)) + " -- " + c.step_note);
-        } catch (const std::exception&) { /* unregistered: skip */ }
+        const auto& c = optimizer_caps(sp);
+        if (step_use_consumes(c.step_use) || sp.step)
+            kv("Step consumption", std::string(step_use_name(c.step_use)) + " -- " + c.step_note);
     }
 
     // ---- algorithm-specific params

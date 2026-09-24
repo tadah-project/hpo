@@ -5,6 +5,7 @@
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_block.h>
 #include <tadah/hpo/scale_validation.h>
+#include <tadah/hpo/strategy_rules.h>
 #include <tadah/mlip/engines/hpotarget_writer.h>
 #include <cctype>
 #include <cstdlib>
@@ -129,13 +130,9 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
     /* fd_step is only consulted by gradient-based backends that take
      * finite-difference derivatives (today: DLIB:BFGS via
      * dlib::derivative). The caps registry flags those; for everything
-     * else the auto-derived fd_step would be a dead variable.
-     *
-     * A configuration without LIB/ALGO leaves the OUTER spec "NOT SET",
-     * which has no caps entry; it fails later, when HPOEngine builds the
-     * optimiser ("unknown optimizer NOT SET:NOT SET"). */
-    const bool gradient_based = (spec.lib != "NOT SET") &&
-        optimizer_caps(spec).is_gradient_based;
+     * else the auto-derived fd_step would be a dead variable. read()
+     * rejects a configuration without LIB/ALGO. */
+    const bool gradient_based = optimizer_caps(spec).is_gradient_based;
     if (!gradient_based) {
       std::cerr << "[HPO] NOISE_AUTO derives PARAM fd_step for gradient-"
                 << "based optimisers only (current: " << spec.lib << ":"
@@ -276,16 +273,11 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
      * accepts_multi_seed=true in the caps registry when a single run
      * ingests >1 seed; strategy decorators (MULTISTART/PRESTAGE) consume
      * the chain too. Every other path drops everything past
-     * optim_init.front().
-     *
-     * The caps lookup is only attempted when the OUTER spec has a real
-     * (lib, algo); a configuration without LIB/ALGO leaves it "NOT SET",
-     * which fails later, when HPOEngine builds the optimiser. */
+     * optim_init.front(). */
     const bool strategy_consumes =
         (spec.strategy_type == StrategyType::MULTISTART && spec.multistart.n_starts >= 2) ||
         (spec.strategy_type == StrategyType::PRESTAGE && spec.prestage != nullptr);
-    const bool backend_consumes =
-        (spec.lib != "NOT SET") && optimizer_caps(spec).accepts_multi_seed;
+    const bool backend_consumes = optimizer_caps(spec).accepts_multi_seed;
     const bool multi_seed_consumer = strategy_consumes || backend_consumes;
     if (spec.optim_init.size() > 1 && !multi_seed_consumer) {
       /* Surface compatible options from the live caps registry rather
@@ -458,6 +450,26 @@ void HPOTargets::read(const std::string& fn)
     InitStrategySpec* active_init  = nullptr;  // recipient of STRATEGY/K_TOTAL/...
     OptimizerSpec*   inner_parent  = nullptr;  // outer spec of an INNER block
 
+    /* STRATEGY keys that belong to one TYPE (strategy_rules.h), checked
+     * when the STRATEGY block ends: TYPE may come after them. So are the
+     * EXPLORE and REFINE blocks, which need TYPE PRESTAGE before them and
+     * still at the end of the block. */
+    struct TypeKeySeen { std::string key; std::size_t line; std::string text; };
+    std::vector<TypeKeySeen> type_keys;
+    std::vector<TypeKeySeen> prestage_blocks;
+    bool strategy_type_given = false;
+    /* The line of the STRATEGY block (0 before it): there is one. A second
+     * block reopened the first and could change the TYPE its keys had been
+     * checked against. */
+    std::size_t strategy_line = 0;
+
+    /* The block the open INNER block sits in: an INNER block opens only
+     * inside STRATEGY, EXPLORE or REFINE. */
+    auto inner_enclosing = [&]() -> std::string {
+        return prev_inner == STRATEGY_BLK ? "STRATEGY" :
+               prev_inner == EXPLORE_BLK  ? "EXPLORE"  : "REFINE";
+    };
+
     /* Helper: re-derive active_opt for a non-INNER block. */
     auto refresh_active_opt = [&]() {
         switch (block) {
@@ -480,6 +492,42 @@ void HPOTargets::read(const std::string& fn)
 
     std::string line;
     size_t      nline = 0;
+
+    /* Every parse error names the line it is about. */
+    auto at_line = [](std::size_t n, const std::string& what,
+                      const std::string& text) {
+        return "Error on line " + core::to_string(n) + ": " + what +
+               "\nLine: " + text;
+    };
+    /* An error about an earlier line than the one being read: a STRATEGY
+     * key found at the end of its block to have no effect. */
+    struct EarlierLineError : std::runtime_error {
+        std::size_t line;
+        std::string text;
+        EarlierLineError(std::size_t l, std::string t, const std::string& what)
+            : std::runtime_error(what), line(l), text(std::move(t)) {}
+    };
+    /* The keys of one TYPE, and the EXPLORE and REFINE blocks, must match
+     * the TYPE the block ends with. */
+    auto check_type_keys = [&]() {
+        for (const auto& k : type_keys) {
+            try {
+                require_strategy_key(k.key, spec.strategy_type,
+                                     strategy_type_given);
+            } catch (const std::exception& e) {
+                throw EarlierLineError(k.line, k.text, e.what());
+            }
+        }
+        type_keys.clear();
+        for (const auto& b : prestage_blocks) {
+            try {
+                require_prestage_block(b.key, spec.strategy_type);
+            } catch (const std::exception& e) {
+                throw EarlierLineError(b.line, b.text, e.what());
+            }
+        }
+        prestage_blocks.clear();
+    };
 
     auto strip_comment = [](std::string& s){
         auto p = s.find('#'); if (p!=std::string::npos) s.resize(p);
@@ -513,7 +561,12 @@ void HPOTargets::read(const std::string& fn)
             /* ============== block delimiters ====================== */
 
             if (key=="OPTIMIZER")    { block=OUTER; refresh_active_opt(); continue; }
-            if (key=="ENDOPTIMIZER") { block=ROOT;  active_opt=nullptr;  continue; }
+            if (key=="ENDOPTIMIZER") {
+                /* The STRATEGY-level optimiser is complete here: a short-form
+                 * LIB/ALGO may follow the STRATEGY block. */
+                require_driver(spec, DriverPhase::Run);
+                block=ROOT;  active_opt=nullptr;  continue;
+            }
 
             if (key=="INIT") {
                 if (block != OUTER && block != STRATEGY_BLK &&
@@ -571,6 +624,12 @@ void HPOTargets::read(const std::string& fn)
                 }
                 if (block != OUTER)
                     throw std::runtime_error("STRATEGY block must appear inside OPTIMIZER (OUTER level)");
+                if (strategy_line != 0)
+                    throw std::runtime_error(
+                        "STRATEGY block given more than once (the first opens "
+                        "on line " + std::to_string(strategy_line) + "); write "
+                        "every STRATEGY key in one block");
+                strategy_line = nline;
                 block = STRATEGY_BLK;
                 refresh_active_opt();
                 continue;
@@ -578,6 +637,7 @@ void HPOTargets::read(const std::string& fn)
             if (key=="ENDSTRATEGY") {
                 if (block != STRATEGY_BLK)
                     throw std::runtime_error("ENDSTRATEGY without matching STRATEGY");
+                check_type_keys();
                 block = OUTER;
                 refresh_active_opt();
                 continue;
@@ -592,6 +652,7 @@ void HPOTargets::read(const std::string& fn)
                         "(declare TYPE before EXPLORE)");
                 if (!spec.prestage)
                     spec.prestage = std::make_unique<OptimizerSpec>();
+                prestage_blocks.push_back({key, nline, line});
                 block = EXPLORE_BLK;
                 refresh_active_opt();
                 continue;
@@ -599,6 +660,7 @@ void HPOTargets::read(const std::string& fn)
             if (key=="ENDEXPLORE") {
                 if (block != EXPLORE_BLK)
                     throw std::runtime_error("ENDEXPLORE without matching EXPLORE");
+                require_driver(*spec.prestage, DriverPhase::Explore);
                 block = STRATEGY_BLK;
                 refresh_active_opt();
                 continue;
@@ -611,6 +673,7 @@ void HPOTargets::read(const std::string& fn)
                     throw std::runtime_error(
                         "REFINE block is only valid with TYPE PRESTAGE "
                         "(declare TYPE before REFINE)");
+                prestage_blocks.push_back({key, nline, line});
                 block = REFINE_BLK;
                 refresh_active_opt();
                 continue;
@@ -642,6 +705,9 @@ void HPOTargets::read(const std::string& fn)
             if (key=="ENDINNER") {
                 if (block != INNER_BLK)
                     throw std::runtime_error("ENDINNER without matching INNER");
+                /* The INNER optimiser is complete here, like an EXPLORE
+                 * block's at ENDEXPLORE. */
+                require_inner_driver(*active_opt, inner_enclosing());
                 block = prev_inner;
                 inner_parent = nullptr;
                 refresh_active_opt();
@@ -677,12 +743,9 @@ void HPOTargets::read(const std::string& fn)
             /* ============== block-specific dispatch =============== */
 
             /* SEED inside INNER: the INNER search draws from the random
-             * stream of the enclosing block's run (inner_takes_attr). An
-             * INNER block opens only inside STRATEGY, EXPLORE or REFINE. */
+             * stream of the enclosing block's run (inner_takes_attr). */
             if (block == INNER_BLK && !inner_takes_attr(key)) {
-                const char* enclosing =
-                    prev_inner == STRATEGY_BLK ? "STRATEGY" :
-                    prev_inner == EXPLORE_BLK  ? "EXPLORE"  : "REFINE";
+                const std::string enclosing = inner_enclosing();
                 throw std::runtime_error(
                     key + " is not accepted inside an INNER block: NLopt "
                     "draws the INNER search from the enclosing run's random "
@@ -786,9 +849,14 @@ void HPOTargets::read(const std::string& fn)
                     else if (t=="MULTISTART") spec.strategy_type = StrategyType::MULTISTART;
                     else if (t=="PRESTAGE")   spec.strategy_type = StrategyType::PRESTAGE;
                     else throw std::runtime_error("STRATEGY TYPE must be PLAIN, MULTISTART, or PRESTAGE (got '" + t + "')");
+                    strategy_type_given = true;
                     continue;
                 }
-                /* MULTISTART knobs (only meaningful with TYPE MULTISTART). */
+                /* The keys of one TYPE are checked against the block's TYPE
+                 * when it ends (TYPE may follow them). */
+                if (is_strategy_type_key(key))
+                    type_keys.push_back({key, nline, line});
+                /* MULTISTART knobs. */
                 if (key=="N_STARTS") {
                     std::size_t v; iss>>v;
                     if (v == 0) throw std::runtime_error("N_STARTS must be >= 1");
@@ -1083,12 +1151,27 @@ void HPOTargets::read(const std::string& fn)
             else
                 throw std::runtime_error("unknown key \""+key+"\"");
         }
+        catch (const EarlierLineError& e)
+        {
+            throw std::runtime_error(at_line(e.line, e.what(), e.text));
+        }
         catch(const std::exception& e)
         {
-            throw std::runtime_error("Error on line "+core::to_string(nline)+
-                                     ": "+e.what()+"\nLine: "+line);
+            throw std::runtime_error(at_line(nline, e.what(), line));
         }
     }
+
+    /* A block the file never closes, or no OPTIMIZER block at all: the end
+     * of the file is where these are known. */
+    try {
+        check_type_keys();
+    } catch (const EarlierLineError& e) {
+        throw std::runtime_error(at_line(e.line, e.what(), e.text));
+    }
+    if (block == INNER_BLK)
+        require_inner_driver(*active_opt, inner_enclosing());
+    require_driver(spec, DriverPhase::Run);
+    if (spec.prestage) require_driver(*spec.prestage, DriverPhase::Explore);
 
     /* Post-parse validation: PC_OBSERVABLE and PC_LAMMPS are mutually
      * exclusive paths in the experimental MVP. The typed-observable
@@ -1157,11 +1240,22 @@ void HPOTargets::read(const std::string& fn)
                     "entirely.");
             }
         };
-    if (!observables.empty()) {
-        reject_numerical_with_observable(spec, "OPTIMIZER's");
-        if (spec.inner)
-            reject_numerical_with_observable(*spec.inner, "INNER's");
+    /* Every block that configures an optimiser: the STRATEGY-level one
+     * (under PRESTAGE the refinement) and its INNER block, and the PRESTAGE
+     * EXPLORE block and its INNER block. The rules below hold for each:
+     * the exploration evaluates the same loss. */
+    std::vector<std::pair<const OptimizerSpec*, const char*>> optimiser_blocks =
+        {{&spec, "OPTIMIZER's"}};
+    if (spec.inner) optimiser_blocks.push_back({spec.inner.get(), "INNER's"});
+    if (spec.prestage) {
+        optimiser_blocks.push_back({spec.prestage.get(), "EXPLORE's"});
+        if (spec.prestage->inner)
+            optimiser_blocks.push_back(
+                {spec.prestage->inner.get(), "EXPLORE INNER's"});
     }
+    if (!observables.empty())
+        for (const auto& [sp, tag] : optimiser_blocks)
+            reject_numerical_with_observable(*sp, tag);
 
     /* PC_LAMMPS: gradient-support dropped 2026-05-13.
      *
@@ -1177,8 +1271,7 @@ void HPOTargets::read(const std::string& fn)
      * ANALYTICAL} when PC_LAMMPS is present -- these tags only make
      * sense in the PC_OBSERVABLE world post-2026-05-13. */
     auto reject_pc_lammps_grad =
-        [&](const OptimizerSpec& sp, const std::string& fallback_lib,
-            const char* tag) {
+        [&](const OptimizerSpec& sp, const char* tag) {
             if (sp.grad_strategy) {
                 throw std::runtime_error(
                     std::string("--hpotarget defines PC_LAMMPS but ") + tag
@@ -1186,22 +1279,17 @@ void HPOTargets::read(const std::string& fn)
                     "supports analytical/numerical/hybrid gradients "
                     "(2026-05-13). Drop the GRAD_STRATEGY line.");
             }
-            if (sp.algo == "NOT SET") return;
-            /* INNER block typically only sets ALGO; lib is inherited
-             * from the enclosing STRATEGY at run time. Use the outer
-             * lib here so the caps lookup works for inner specs that
-             * don't carry their own lib string. */
-            const std::string lib =
-                (sp.lib == "NOT SET") ? fallback_lib : sp.lib;
-            if (lib == "NOT SET") return;
+            /* read() has required LIB and ALGO of every block by now, the
+             * EXPLORE and INNER blocks included (require_driver,
+             * require_inner_driver). */
             const bool dlib_bfgs_exception =
-                (lib == "DLIB" && sp.algo == "BFGS");
+                (sp.lib == "DLIB" && sp.algo == "BFGS");
             if (dlib_bfgs_exception) return;
-            const auto& caps = optimizer_caps(lib, sp.algo);
+            const auto& caps = optimizer_caps(sp);
             if (caps.is_gradient_based) {
                 throw std::runtime_error(
                     std::string("--hpotarget defines PC_LAMMPS but ") + tag
-                    + " optimiser " + lib + ":" + sp.algo +
+                    + " optimiser " + sp.lib + ":" + sp.algo +
                     " is gradient-based. PC_LAMMPS requires a "
                     "gradient-free optimiser (NLOPT GN_*/LN_*, "
                     "TADAH RANDOM/GRID/ANNEAL). The only gradient-based "
@@ -1209,11 +1297,9 @@ void HPOTargets::read(const std::string& fn)
                     "dtheta, not a full gradient).");
             }
         };
-    if (!LS.empty()) {
-        reject_pc_lammps_grad(spec, "NOT SET", "OPTIMIZER's");
-        if (spec.inner)
-            reject_pc_lammps_grad(*spec.inner, spec.lib, "INNER's");
-    }
+    if (!LS.empty())
+        for (const auto& [sp, tag] : optimiser_blocks)
+            reject_pc_lammps_grad(*sp, tag);
 }
 
 double HPOTargets::parse_pc_worker_timeout(const std::string& token,

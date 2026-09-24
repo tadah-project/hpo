@@ -313,17 +313,22 @@ std::string format_caps_list(const std::vector<const OptimizerCaps*>& caps,
                              std::size_t max_show)
 {
     if (caps.empty()) return "<none registered>";
+    /* Sorted by LIB:ALGO: the registry is a hash map, so the order of
+     * filter_optimizer_caps() carries no meaning, and a message must read
+     * the same on every run. */
+    std::vector<std::string> names;
+    names.reserve(caps.size());
+    for (const auto* c : caps) names.push_back(c->lib + ":" + c->algo);
+    std::sort(names.begin(), names.end());
     std::string s;
-    const std::size_t n_show = std::min(max_show, caps.size());
+    const std::size_t n_show = std::min(max_show, names.size());
     for (std::size_t i = 0; i < n_show; ++i) {
         if (i) s += ", ";
-        s += caps[i]->lib;
-        s += ":";
-        s += caps[i]->algo;
+        s += names[i];
     }
-    if (n_show < caps.size()) {
+    if (n_show < names.size()) {
         s += ", ... (";
-        s += std::to_string(caps.size() - n_show);
+        s += std::to_string(names.size() - n_show);
         s += " more)";
     }
     return s;

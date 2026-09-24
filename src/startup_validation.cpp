@@ -1,5 +1,6 @@
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/hpo/scale_validation.h>
+#include <tadah/hpo/strategy_rules.h>
 
 #include <tadah/core/logger.h>
 #include <tadah/core/utils.h>
@@ -64,6 +65,15 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
           "INIT start point once.");
     }
   }
+
+  /* --- STRATEGY TYPE vs optimiser --------------------------------------
+   * MULTISTART needs an optimiser that can run from each INIT point, and
+   * so does the PRESTAGE refinement with a configured TOPK > 1; PRESTAGE
+   * needs an EXPLORE block. A property of the configuration alone, so it
+   * is reported here, before any data is loaded -- not once the policy
+   * runs (under PRESTAGE, after the whole exploration). The policies apply
+   * the same rules again when they run (strategy_rules.h). */
+  validate_run_policy(trg.spec);
 
   /* --- FIXINDEX/FIXWEIGHT pairing + weight-source classification ------ */
   const bool has_fw = train_ctx.contains("FIXWEIGHT");

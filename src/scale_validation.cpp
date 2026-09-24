@@ -135,6 +135,10 @@ void validate_optimizer_scaling(const OptimizerSpec& sp,
                                 const std::string& where,
                                 bool check_start_points)
 {
+    /* HPOTargets::read() requires LIB and ALGO in every block, INNER
+     * included. A spec built outside the parser may leave them "NOT SET";
+     * it has no caps entry to check against, and the run rejects it when it
+     * looks the optimiser up (run_inner, require_driver). */
     const bool has_backend = (sp.lib != "NOT SET" && sp.algo != "NOT SET");
     if (has_backend) {
         const OptimizerCaps& caps = optimizer_caps(sp);

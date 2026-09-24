@@ -138,6 +138,10 @@ void run_noise_calibration(const OptimizerSpec& sp, const HPO_Host<V,R>& host,
 
 }  // namespace
 
+namespace {
+int hpo_run_journaled(core::Context& ctx, HPOLog& log);
+}  // namespace
+
 int hpo_run(core::Context& ctx)
 {
     /* -- Open run journal first -------------------------------------
@@ -159,6 +163,24 @@ int hpo_run(core::Context& ctx)
                  static_cast<int>(getpid()));
     }
 
+    /* A startup error -- the parser, validate_hpo_setup(), building the
+     * host -- is recorded in the journal before it propagates; the journal
+     * used to end without a word and the reason went to stderr only. An
+     * error of the run itself arrives after drive_run() has written the
+     * trailer and closed the journal, and then nothing more is written. */
+    try {
+        return hpo_run_journaled(ctx, log);
+    } catch (const std::exception& e) {
+        log.event("ERROR", std::string("startup: ") + e.what());
+        throw;
+    }
+}
+
+namespace {
+
+/* hpo_run() once the journal is open. */
+int hpo_run_journaled(core::Context& ctx, HPOLog& log)
+{
 #ifdef TADAH_ENABLE_OPENMP
     {
         /* Under the shared-pool model (Option A) OpenMP no longer drives the
@@ -208,6 +230,86 @@ int hpo_run(core::Context& ctx)
             hpo_mpi_dispatch_refusal(hpo_size(), trg.spec);
         !refusal.empty())
         throw std::runtime_error(refusal);
+
+    /* ---- FAILSCORE_GRADING: graded ("smooth") failure losses --------
+     * ON: every failed eval returns a banded, monotone value inside
+     * [0.999*FAILSCORE, FAILSCORE) instead of the constant plateau.
+     * Env override TADAH_FAILSCORE_GRADING=ON|OFF (harness A/B).
+     * Design: INVESTIGATIONS/SMOOTH_FAILSCORE_analysis.md */
+    if (const char* e = std::getenv("TADAH_FAILSCORE_GRADING")) {
+        if (*e) {
+            const std::string v(e);
+            if (v == "ON")       trg.FAILSCORE_GRADING = true;
+            else if (v == "OFF") trg.FAILSCORE_GRADING = false;
+            else throw std::runtime_error(
+                    "TADAH_FAILSCORE_GRADING must be ON or OFF");
+        }
+    }
+    if (trg.FAILSCORE_GRADING) {
+        /* The band arithmetic needs a finite FAILSCORE: with the legacy
+         * DBL_MAX default, 0.999*FS and FS are not meaningfully ordered
+         * in loss space and L2 of the substituted value overflows. */
+        if (!std::isfinite(trg.FAIL_SCORE) ||
+            trg.FAIL_SCORE >= 1.0e300 || trg.FAIL_SCORE <= 0.0)
+            throw std::runtime_error(
+                "FAILSCORE_GRADING ON requires a finite positive "
+                "FAILSCORE (e.g. `FAILSCORE 1e9`); the default DBL_MAX "
+                "sentinel cannot be banded.");
+        if (!graded_failscore_is_ordered(trg.FAIL_SCORE))
+            throw std::runtime_error(
+                "FAILSCORE_GRADING ON requires a FAILSCORE large enough "
+                "to represent four strictly ordered grading bands.");
+        std::string probe_note = "no PC_FAILPROBE (bands C/D constant)";
+        if (trg.failprobe_idx >= 0) {
+            probe_note = "PC_FAILPROBE '" +
+                trg.LS[static_cast<std::size_t>(trg.failprobe_idx)].script +
+                "' S=" + trg.failprobe_svar;
+            if (std::isfinite(trg.failprobe_gate))
+                probe_note += " gate=" + std::to_string(trg.failprobe_gate);
+            else
+                probe_note += " gate=off";
+        }
+        log.info("FAILSCORE_GRADING: ON -- failed evals graded in "
+                 "[0.999*FS, FS), bands A-D (see docs); " + probe_note);
+    } else if (trg.failprobe_idx >= 0) {
+        log.warning("PC_FAILPROBE is defined but FAILSCORE_GRADING is "
+                    "OFF -- the probe runs as a plain diagnostic sim; "
+                    "no grading, no gate.");
+    }
+
+    /* ---- BUMPGATE: bump-support enforcement mode --------------------
+     * CANDIDATE (default): full OPTIM boxes; infeasible (c, eta)
+     * combinations are rejected per evaluation as graded band-D
+     * failures. STRICT: legacy startup box-corner hard-error.
+     * Env override TADAH_BUMPGATE=CANDIDATE|STRICT (harness A/B). */
+    if (const char* e = std::getenv("TADAH_BUMPGATE")) {
+        if (*e) {
+            const std::string v(e);
+            if (v == "STRICT")         trg.BUMPGATE_STRICT = true;
+            else if (v == "CANDIDATE") trg.BUMPGATE_STRICT = false;
+            else throw std::runtime_error(
+                    "TADAH_BUMPGATE must be CANDIDATE or STRICT");
+        }
+    }
+    if (trg.BUMPGATE_STRICT)
+        log.info("BUMPGATE: STRICT -- OPTIM boxes on hard-cutoff bump "
+                 "channels must be feasible at the worst corner "
+                 "(legacy startup gate); no per-candidate rejection.");
+
+    /* --validation is optional: PC_OBSERVABLE / PC_LAMMPS can carry the
+     * loss on their own; validate_hpo_setup below rejects setups where
+     * validation-set metrics are requested without a validation file. */
+    std::string val = ctx.contains("VALIDATION")
+        ? ctx.get<std::string>("VALIDATION") : "";
+
+    /* Fail fast on inconsistent weight-pinning / loss-source / strategy
+     * setups: before the worker pool is sized, any PC_ISOLATION PROCESS
+     * worker is spawned, any data is loaded or the optimiser starts. It
+     * depends on the configuration alone (BUMPGATE, with its environment
+     * override, is resolved above). */
+    const bool has_train_db =
+        ctx.contains("DBFILE") && ctx.size("DBFILE") > 0;
+    validate_hpo_setup(ctx, trg, has_train_db, !val.empty());
 
     /* Parallelisation model (Option A): THREADS is the TOTAL width of the shared
      * worker pool -- the number of threads that actually run pc_lammps scripts
@@ -384,84 +486,7 @@ int hpo_run(core::Context& ctx)
                          "(per-pc_script timeout, seconds); prefer "
                          "PC_SCRIPT_TIMEOUT in new configs");
         }
-
-        /* ---- FAILSCORE_GRADING: graded ("smooth") failure losses --------
-         * ON: every failed eval returns a banded, monotone value inside
-         * [0.999*FAILSCORE, FAILSCORE) instead of the constant plateau.
-         * Env override TADAH_FAILSCORE_GRADING=ON|OFF (harness A/B).
-         * Design: INVESTIGATIONS/SMOOTH_FAILSCORE_analysis.md */
-        if (const char* e = std::getenv("TADAH_FAILSCORE_GRADING")) {
-            if (*e) {
-                const std::string v(e);
-                if (v == "ON")       trg.FAILSCORE_GRADING = true;
-                else if (v == "OFF") trg.FAILSCORE_GRADING = false;
-                else throw std::runtime_error(
-                        "TADAH_FAILSCORE_GRADING must be ON or OFF");
-            }
-        }
-        if (trg.FAILSCORE_GRADING) {
-            /* The band arithmetic needs a finite FAILSCORE: with the legacy
-             * DBL_MAX default, 0.999*FS and FS are not meaningfully ordered
-             * in loss space and L2 of the substituted value overflows. */
-            if (!std::isfinite(trg.FAIL_SCORE) ||
-                trg.FAIL_SCORE >= 1.0e300 || trg.FAIL_SCORE <= 0.0)
-                throw std::runtime_error(
-                    "FAILSCORE_GRADING ON requires a finite positive "
-                    "FAILSCORE (e.g. `FAILSCORE 1e9`); the default DBL_MAX "
-                    "sentinel cannot be banded.");
-            if (!graded_failscore_is_ordered(trg.FAIL_SCORE))
-                throw std::runtime_error(
-                    "FAILSCORE_GRADING ON requires a FAILSCORE large enough "
-                    "to represent four strictly ordered grading bands.");
-            std::string probe_note = "no PC_FAILPROBE (bands C/D constant)";
-            if (trg.failprobe_idx >= 0) {
-                probe_note = "PC_FAILPROBE '" +
-                    trg.LS[static_cast<std::size_t>(trg.failprobe_idx)].script +
-                    "' S=" + trg.failprobe_svar;
-                if (std::isfinite(trg.failprobe_gate))
-                    probe_note += " gate=" + std::to_string(trg.failprobe_gate);
-                else
-                    probe_note += " gate=off";
-            }
-            log.info("FAILSCORE_GRADING: ON -- failed evals graded in "
-                     "[0.999*FS, FS), bands A-D (see docs); " + probe_note);
-        } else if (trg.failprobe_idx >= 0) {
-            log.warning("PC_FAILPROBE is defined but FAILSCORE_GRADING is "
-                        "OFF -- the probe runs as a plain diagnostic sim; "
-                        "no grading, no gate.");
-        }
-
-        /* ---- BUMPGATE: bump-support enforcement mode --------------------
-         * CANDIDATE (default): full OPTIM boxes; infeasible (c, eta)
-         * combinations are rejected per evaluation as graded band-D
-         * failures. STRICT: legacy startup box-corner hard-error.
-         * Env override TADAH_BUMPGATE=CANDIDATE|STRICT (harness A/B). */
-        if (const char* e = std::getenv("TADAH_BUMPGATE")) {
-            if (*e) {
-                const std::string v(e);
-                if (v == "STRICT")         trg.BUMPGATE_STRICT = true;
-                else if (v == "CANDIDATE") trg.BUMPGATE_STRICT = false;
-                else throw std::runtime_error(
-                        "TADAH_BUMPGATE must be CANDIDATE or STRICT");
-            }
-        }
-        if (trg.BUMPGATE_STRICT)
-            log.info("BUMPGATE: STRICT -- OPTIM boxes on hard-cutoff bump "
-                     "channels must be feasible at the worst corner "
-                     "(legacy startup gate); no per-candidate rejection.");
     }
-
-    /* --validation is optional: PC_OBSERVABLE / PC_LAMMPS can carry the
-     * loss on their own; validate_hpo_setup below rejects setups where
-     * validation-set metrics are requested without a validation file. */
-    std::string val = ctx.contains("VALIDATION")
-        ? ctx.get<std::string>("VALIDATION") : "";
-
-    /* Fail fast on inconsistent weight-pinning / loss-source setups
-     * before any data is loaded or the optimiser starts. */
-    const bool has_train_db =
-        ctx.contains("DBFILE") && ctx.size("DBFILE") > 0;
-    validate_hpo_setup(ctx, trg, has_train_db, !val.empty());
 
     /* -- Param labels for the search space section: built by the
      * HPOTargets constructor (canonical flattened OPTIM order). ------- */
@@ -598,4 +623,6 @@ int hpo_run(core::Context& ctx)
 
     return status;
 }
+
+}  // namespace
 } // namespace tadah::hpo

@@ -28,6 +28,7 @@
 #include <tadah/hpo/run_policy_base.h>
 #include <tadah/hpo/init_strategy.h>
 #include <tadah/hpo/optimizer_caps.h>
+#include <tadah/hpo/strategy_rules.h>
 
 namespace tadah::hpo {
 
@@ -50,23 +51,25 @@ public:
  * the most: each run can descend into a different local minimum; the
  * host's best-tracker collects the global best across the K runs.
  *
- * Compatibility (from the caps registry, see validate()):
- *   - local backends (DLIB:BFGS, CERES:*, NLOPT:LD_*, NLOPT:LN_*)
+ * Compatibility (from the caps registry; strategy_rules.h):
+ *   - backends the registry does not flag global (DLIB:BFGS, CERES:*,
+ *     NLOPT:LD_*, NLOPT:LN_*, NLOPT:AUGLAG*)
  *                                         -> K independent runs (intended).
  *   - multi-seed globals (DLIB:GFS)       -> seeds the K points into
  *     find_min_global's `initial_function_evals`; the global engine then
  *     runs once (single call).
  *   - every other global (NLOPT:G*, TADAH:RANDOM/GRID/ANNEAL*, ASA)
  *                                         -> consumes a single starting
- *     point, so validate() rejects it for any N_STARTS; the user picks a
- *     local or multi-seed backend, or STRATEGY TYPE PLAIN.
+ *     point, so require_multistart_backend() rejects it for any N_STARTS;
+ *     the user picks a local or multi-seed backend, or STRATEGY TYPE
+ *     PLAIN. validate_hpo_setup() applies the rule at startup; validate()
+ *     applies the same function again when the policy runs.
  *
  * Parallelism: the inner optimisers are not natively thread-safe in all
  * cases (NLopt's `nlopt::opt` is, dlib's `find_min_box_constrained`
- * uses local state). For correctness, we run sequentially today and
- * leave a parallel knob (multistart_parallel) wired through to a
- * dlib::thread_pool in a follow-up. Each per-start run still
- * benefits from the shared worker pool (THREADS) that parallelises
+ * uses local state). The starts run sequentially: PARALLEL is parsed and
+ * range-checked, and a value > 1 only draws a warning. Each per-start run
+ * still benefits from the shared worker pool (THREADS) that parallelises
  * the pc_lammps fan-out within a single evaluation.
  *
  * A start that fails is logged and the next one runs. Three exceptions
@@ -83,33 +86,10 @@ public:
                    std::optional<std::size_t> budget_per_start = std::nullopt)
       : k_(k), parallel_(parallel), budget_per_start_(budget_per_start) {}
 
+  /* The startup rule (strategy_rules.h), applied again when the policy
+   * runs: a safety net for specs built outside HPOTargets. */
   static void validate(const OptimizerSpec& spec) {
-    /* Globals that consume exactly one starting point per run can't
-     * be multistarted in the conventional "K independent restarts"
-     * sense: each restart re-seeds a stochastic global from a fresh
-     * box-uniform draw, defeating the user-resolved INIT chain. The
-     * caps registry tells us which backends accept multiple seeds in
-     * a single run; if a global doesn't, refuse MULTISTART > 1.
-     * Compatible alternatives are enumerated from the live registry
-     * so the message stays accurate as backends are added/removed. */
-    const auto& caps = optimizer_caps(spec);
-    if (caps.is_global && !caps.accepts_multi_seed) {
-      auto compat = filter_optimizer_caps(
-          [](const OptimizerCaps& c) {
-            return !c.is_global || c.accepts_multi_seed;
-          });
-      /* The check does not depend on N_STARTS: it also guards the
-       * PRESTAGE refinement, which multistarts the outer optimiser over
-       * TOPK > 1 seeds. */
-      throw std::runtime_error(
-          "STRATEGY TYPE MULTISTART (and the PRESTAGE refinement over "
-          "TOPK > 1 seeds) cannot run " + spec.lib + ":" + spec.algo +
-          ": it is a global optimiser that consumes a single starting "
-          "point, so restarting it from each INIT point is rejected for "
-          "any N_STARTS. Use a local or multi-seed optimiser (" +
-          format_caps_list(compat) + "), or STRATEGY TYPE PLAIN to run " +
-          spec.lib + ":" + spec.algo + " once.");
-    }
+    require_multistart_backend(spec);
   }
 
   void run(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host) override {
@@ -145,8 +125,8 @@ public:
         " starts (parallel=" + std::to_string(parallel_) + ")");
 
     /* Sequential per-start runs. Parallelism deferred until we have
-     * thread-safety audits for each inner adapter; multistart_parallel
-     * is parsed and validated but currently not honoured >1. */
+     * thread-safety audits for each inner adapter; PARALLEL is parsed
+     * and range-checked but not honoured > 1. */
     if (parallel_ > 1) {
       HPOLog::instance().warning(
           "MULTISTART PARALLEL > 1 not yet implemented; running starts "
@@ -154,9 +134,9 @@ public:
           "pc_lammps fan-out within each evaluation.");
     }
 
-    /* MULTISTART_BUDGET_PER_START -- override per-start MAXEVAL.
+    /* BUDGET_PER_START -- override per-start MAXEVAL.
      *
-     * If the user set MULTISTART_BUDGET_PER_START explicitly, use it
+     * If the user set BUDGET_PER_START explicitly, use it
      * verbatim. Otherwise, when an outer MAXEVAL is set, split it
      * equally across starts so the total still respects MAXEVAL (round
      * up so K * per-start >= MAXEVAL when MAXEVAL is not divisible).
@@ -252,7 +232,11 @@ private:
  * Selected by STRATEGY TYPE PRESTAGE; the exploration phase is the
  * OptimizerSpec::prestage sub-spec parsed from the EXPLORE ... ENDEXPLORE
  * block, the refinement is the outer spec (STRATEGY-level keys or an
- * optional REFINE ... ENDREFINE block).
+ * optional REFINE ... ENDREFINE block). With a configured TOPK > 1 the
+ * refinement is a multistart over the candidates, so its optimiser must be
+ * one MULTISTART accepts: require_prestage_refinement() (strategy_rules.h)
+ * says so at startup, whatever number of candidates the exploration will
+ * harvest.
  *
  * The two phases:
  *   1. PRESTAGE (broad search):    spec.prestage          (e.g. DLIB:GFS)
@@ -272,14 +256,11 @@ public:
       throw std::runtime_error("Staged-global mode requires TOPK >= 1");
   }
 
+  /* The startup rules (strategy_rules.h), applied again when the policy
+   * runs: a safety net for specs built outside HPOTargets. */
   static void validate(const OptimizerSpec& spec) {
-    if (!spec.prestage) {
-      throw std::runtime_error(
-          "STRATEGY TYPE PRESTAGE requires an EXPLORE ... ENDEXPLORE block "
-          "inside the STRATEGY block (it defines the exploration phase); "
-          "the refinement optimiser is the STRATEGY-level LIB/ALGO or an "
-          "optional REFINE ... ENDREFINE block.");
-    }
+    require_prestage_explore(spec);
+    require_prestage_refinement(spec);
   }
 
   void run(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host) override {
@@ -461,9 +442,8 @@ public:
         }
         ++restarts;
 
-        /* Refresh init points. Honor user-supplied INIT_K from
-         * RESTART_INIT_STRATEGY block when set; otherwise fall back to
-         * each strategy's default_k. */
+        /* Refresh init points. Honour the RESTART block's K_TOTAL when
+         * set; otherwise fall back to each strategy's default_k. */
         if (refresh_ && trg_) {
           std::random_device rd;
           InitContext ic{cur, *trg_, static_cast<std::uint64_t>(rd()) + restarts};

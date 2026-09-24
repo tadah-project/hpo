@@ -45,6 +45,7 @@
 #include <tadah/hpo/runners.h>
 #include <tadah/hpo/pc_worker_pool.h>
 #include <tadah/hpo/startup_validation.h>
+#include <tadah/hpo/strategy_rules.h>
 
 #include <dlib/matrix.h>
 
@@ -679,6 +680,27 @@ TEST_CASE("startup validation: an INNER block needs an optimiser that runs "
                        Catch::Contains("NLOPT:AUGLAG") &&
                        Catch::Contains("remove the INNER block"));
         }
+    }
+    SECTION("the same rules for a spec built outside the parser") {
+        OptimizerSpec sp;
+        sp.lib = "DLIB";
+        sp.algo = "BFGS";
+        sp.inner = std::make_unique<OptimizerSpec>();
+        sp.inner->lib = "NLOPT";
+        sp.inner->algo = "LN_SBPLX";
+        CHECK_THAT(error_of([&] { tadah::hpo::validate_run_policy(sp); }),
+                   Catch::StartsWith("DLIB:BFGS does not accept an INNER "
+                                     "sub-optimiser (the INNER block of the "
+                                     "STRATEGY-level optimiser): only NLopt"));
+        sp.lib = "NLOPT";
+        sp.algo = "AUGLAG";
+        sp.inner->lib = "DLIB";
+        sp.inner->algo = "BFGS";
+        CHECK_THAT(error_of([&] { tadah::hpo::validate_run_policy(sp); }),
+                   Catch::StartsWith("the INNER block of the STRATEGY-level "
+                                     "optimiser names DLIB:BFGS, but "
+                                     "NLOPT:AUGLAG runs its INNER search with "
+                                     "NLopt"));
     }
     SECTION("an NLopt INNER optimiser under MLSL or AUGLAG passes") {
         for (const std::string algo : {"G_MLSL_LDS", "AUGLAG"}) {

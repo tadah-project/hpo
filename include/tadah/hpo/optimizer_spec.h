@@ -305,8 +305,8 @@ struct OptimizerSpec {
     /* The number of starts the strategy runs from this spec's SEED, start i
      * with SEED + i: the N_STARTS starts of MULTISTART, the TOPK
      * candidates a PRESTAGE refinement multistarts (StagedPolicy), and the
-     * one run of PLAIN. N_STARTS is parsed with every TYPE but counts only
-     * under MULTISTART. */
+     * one run of PLAIN. N_STARTS counts only under MULTISTART (the parser
+     * rejects it under another TYPE; a spec built by hand may carry one). */
     std::uint64_t seeded_starts() const noexcept
     {
         switch (strategy_type) {
