@@ -14,8 +14,10 @@
 #include <tadah/hpo/run_policy.h>
 #include <tadah/hpo/warmstart_cache.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -249,6 +251,113 @@ TEST_CASE("SobolInitStrategy: cell coverage on unit square",
     }
     /* Sobol fills nearly all 64 cells with K=64; require ≥90% coverage. */
     CHECK(cells.size() >= 58);
+}
+
+namespace {
+
+/* The first `n` points of the Sobol sequence in this spec's box: SEED 0
+ * skips nothing. */
+std::vector<std::vector<double>>
+sobol_sequence(const tadah::hpo::OptimizerSpec& sp,
+               const tadah::hpo::HPOTargets& trg, std::size_t n)
+{
+    using namespace tadah::hpo;
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"SOBOL", {std::to_string(n)}});
+    InitContext ic{sp, trg, 0};
+    return build_init_strategy(ispec)->generate(ic, n);
+}
+
+/* The points METHOD SOBOL <k> draws with `seed` (K_TOTAL `k_total`, 0 for
+ * none). */
+std::vector<std::vector<double>>
+sobol_draw(const tadah::hpo::OptimizerSpec& sp,
+           const tadah::hpo::HPOTargets& trg, std::size_t k,
+           std::uint64_t seed, std::size_t k_total = 0)
+{
+    using namespace tadah::hpo;
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"SOBOL", {std::to_string(k)}});
+    InitContext ic{sp, trg, seed};
+    return build_init_strategy(ispec)->generate(ic, k_total);
+}
+
+}  // namespace
+
+TEST_CASE("SobolInitStrategy: a seed selects a whole block of K points",
+          "[HPO][init_strategy][sobol][seed]")
+{
+    /* A seed used to skip `seed` points, so the seeds s and s + 1 -- restart
+     * rounds r and r + 1 under a RESTART SEED, or an INIT SEED and restart
+     * 1 with the same SEED -- shared K - 1 of their K points. Seed s now
+     * draws block s of K points: points s*K ... s*K + K - 1. */
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({0.0, -1.0}, {1.0, 1.0});
+    StubTargets st;
+    const auto seq = sobol_sequence(sp, *st.trg, 200);
+    REQUIRE(seq.size() == 200u);
+
+    const std::size_t K = 3;
+    for (const std::uint64_t seed : {1u, 42u, 43u, 44u, 60u}) {
+        INFO("SOBOL 3, seed " << seed);
+        const auto pts = sobol_draw(sp, *st.trg, K, seed);
+        REQUIRE(pts.size() == K);
+        for (std::size_t i = 0; i < K; ++i)
+            CHECK(pts[i] == seq[seed * K + i]);
+    }
+
+    /* Consecutive seeds share no point. */
+    const auto a = sobol_draw(sp, *st.trg, K, 43);
+    const auto b = sobol_draw(sp, *st.trg, K, 44);
+    for (const auto& p : a)
+        CHECK(std::find(b.begin(), b.end(), p) == b.end());
+
+    /* The block is as long as the draw: K_TOTAL sets it for a lone SOBOL. */
+    const auto t = sobol_draw(sp, *st.trg, 2, 7, /*k_total=*/5);
+    REQUIRE(t.size() == 5u);
+    for (std::size_t i = 0; i < 5; ++i) CHECK(t[i] == seq[7 * 5 + i]);
+}
+
+TEST_CASE("SobolInitStrategy: SOBOL 1 still draws the point its seed "
+          "names", "[HPO][init_strategy][sobol][seed]")
+{
+    /* A block of one point is the point itself, so METHOD SOBOL 1 is
+     * unchanged: seed s draws point s. The seed's low 16 bits select the
+     * block (seed 65536 + s draws what seed s draws), as they always did. */
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({0.0, -1.0, 2.0}, {1.0, 1.0, 3.0});
+    StubTargets st;
+    const auto seq = sobol_sequence(sp, *st.trg, 100);
+    for (const std::uint64_t seed : {1u, 5u, 42u, 99u}) {
+        INFO("SOBOL 1, seed " << seed);
+        const auto pts = sobol_draw(sp, *st.trg, 1, seed);
+        REQUIRE(pts.size() == 1u);
+        CHECK(pts.front() == seq[seed]);
+        CHECK(sobol_draw(sp, *st.trg, 1, seed + 65536u) == pts);
+    }
+}
+
+TEST_CASE("SobolInitStrategy: a block past the end of the Sobol sequence is "
+          "an error", "[HPO][init_strategy][sobol][seed]")
+{
+    /* Block s of K points starts at point s*K; that product, and the end
+     * of the block, must stay within the 64-bit sequence. With K = 2^62,
+     * seeds 4 and 65535 fail the product (s*K wraps); seed 3 passes it
+     * (3 * 2^62 fits) and fails the end, which would lie at 2^64. */
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({0.0, 0.0}, {1.0, 1.0});
+    StubTargets st;
+    const std::size_t huge = std::size_t{1} << 62;
+    for (const std::uint64_t seed : {3u, 4u, 65535u}) {
+        INFO("seed " << seed);
+        CHECK_THROWS_WITH(
+            sobol_draw(sp, *st.trg, huge, seed),
+            Catch::StartsWith("INIT METHOD SOBOL: block " +
+                              std::to_string(seed) + " of " +
+                              std::to_string(huge) +
+                              " points lies beyond the end of the Sobol "
+                              "sequence"));
+    }
 }
 
 TEST_CASE("ChainStrategy: concatenates and de-dups across producers",

@@ -1305,6 +1305,72 @@ TEST_CASE("Termination: a RESTART SEED draws restart round r's points with "
     CHECK(b.rounds == a.rounds);
 }
 
+TEST_CASE("Termination: METHOD SOBOL K starts the INIT round and each "
+          "restart round at the first point of block SEED",
+          "[HPO][termination][restart][seed][sobol]")
+{
+    /* A Sobol seed used to skip `seed` points. With METHOD SOBOL 3 and SEED
+     * 42 in both blocks, the INIT block drew points 42-44, restart 1 (seed
+     * 43) points 43-45 and restart 2 (seed 44) points 44-46: two of each
+     * round's three fresh points were the previous round's. Seed s now
+     * draws block s, points 3s ... 3s + 2, and PLAIN starts each round from
+     * the first of them: this run checks that the seeds reach the blocks
+     * (the rounds start at points 126, 129 and 132, not 42, 43 and 44).
+     * That blocks share no point is SobolInitStrategy's (test_init_
+     * strategies.cpp); a PLAIN run evaluates only a block's first point. */
+    const std::string strategy =
+        "  STRATEGY\n"
+        "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+        "    MAXEVAL 5000\n    SEED 5\n"
+        "    RESTART\n      AFTER_STAGNATION 6\n      MAX 2\n"
+        "      METHOD SOBOL 3\n      SEED 42\n    ENDRESTART\n"
+        "  ENDSTRATEGY\n";
+    std::vector<std::vector<Point>> rounds;
+    {
+        TaRun run("OPTIMIZER\n  INIT\n    METHOD SOBOL 3\n    SEED 42\n"
+                  "  ENDINIT\n" + strategy + "ENDOPTIMIZER\n");
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const std::string journal = read_file("hpo_run.log");
+        REQUIRE(journal_status(journal) ==
+                "STOPPED -- stagnation, max restarts (2) used");
+        CHECK(journal.find("RESTART 1/2 -- fresh init from SOBOL; "
+                           "RESTART SEED 43, SEED 6\n") != std::string::npos);
+        CHECK(journal.find("RESTART 2/2 -- fresh init from SOBOL; "
+                           "RESTART SEED 44, SEED 7\n") != std::string::npos);
+        const auto stops = stagnation_stops(journal);
+        REQUIRE(stops.size() == 3u);
+        const auto pts = evaluated_points();
+        std::size_t first = 1;
+        for (const auto& stop : stops) {
+            rounds.push_back(evals_between(pts, first, stop.first));
+            first = stop.first + 1;
+        }
+        check_run_files();
+    }
+
+    /* Sobol point n is what METHOD SOBOL 1 draws with SEED n: a block of
+     * one point is the point itself. */
+    const auto sobol_point = [](std::uint64_t n) {
+        const auto pts = reference_points(
+            "OPTIMIZER\n"
+            "  INIT\n    METHOD SOBOL 1\n"
+            "    SEED " + std::to_string(n) + "\n  ENDINIT\n"
+            "  STRATEGY\n"
+            "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+            "    MAXEVAL 1\n    SEED 5\n"
+            "  ENDSTRATEGY\n"
+            "ENDOPTIMIZER\n");
+        REQUIRE(pts.size() == 1u);
+        return pts.front();
+    };
+    REQUIRE(rounds.size() == 3u);
+    CHECK(rounds[0].front() == sobol_point(3 * 42));   // INIT, seed 42
+    CHECK(rounds[1].front() == sobol_point(3 * 43));   // restart 1
+    CHECK(rounds[2].front() == sobol_point(3 * 44));   // restart 2
+}
+
 TEST_CASE("Termination: without a RESTART SEED the restart points come from "
           "std::random_device", "[HPO][termination][restart][seed]")
 {
