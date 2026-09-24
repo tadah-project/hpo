@@ -21,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 
@@ -312,6 +313,7 @@ PC_OBSERVABLE cohesive_energy --species Ta --target 8.100 --weight 1000 --hotvar
     ALGO GN_MLSL_LDS
     MAXEVAL 1
     INNER
+      LIB NLOPT
       ALGO LD_LBFGS
       GRAD_STRATEGY NUMERICAL
     ENDINNER
@@ -408,7 +410,8 @@ TEST_CASE("HPOTargets rejects PC_LAMMPS with gradient-based optimisers",
     {
         auto cfg = write_temp_config(
             std::string("OPTIMIZER\n  STRATEGY\n    LIB NLOPT\n    ALGO GN_MLSL_LDS\n")
-            + "    MAXEVAL 1\n    INNER\n      ALGO LD_LBFGS\n    ENDINNER\n"
+            + "    MAXEVAL 1\n    INNER\n      LIB NLOPT\n      ALGO LD_LBFGS\n"
+              "    ENDINNER\n"
             + "  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n" + pc_lammps_line);
         CHECK_THROWS_WITH(
             tadah::hpo::HPOTargets(ctx, cfg.string()),
@@ -461,5 +464,116 @@ TEST_CASE("HPOTargets rejects PC_OBSERVABLE and PC_LAMMPS side by side",
         && Catch::Matchers::Contains("mutually exclusive"));
 
     std::filesystem::remove(cfg);
+    std::filesystem::remove(script_path);
+}
+
+TEST_CASE("HPOTargets applies the PC_LAMMPS and PC_OBSERVABLE gradient rules "
+          "to the EXPLORE block and its INNER block",
+          "[hpo][pc_observable_parser][hpotargets][pc_lammps_grad_drop]")
+{
+    /* The rules above were checked for the STRATEGY-level optimiser and its
+     * INNER block only. Under TYPE PRESTAGE the EXPLORE block (and an
+     * INNER block inside it) configures an optimiser as well: NLOPT
+     * LD_LBFGS there ran with PC_LAMMPS, failed at once inside NLopt
+     * ("nlopt failure") and the run reported success after a wasted
+     * exploration; a GRAD_STRATEGY there failed only after the first
+     * evaluation. */
+    tadah::core::PeriodicTable::initialize();
+    auto script_path = std::filesystem::current_path() /
+                       "test_pc_lammps_grad_explore_stub.in";
+    {
+        std::ofstream f(script_path);
+        f << "# stub script\nprint \"hi\"\nvariable xyz equal 0.0\n";
+    }
+    auto ctx = make_context_for_targets();
+    const std::string pc_lammps =
+        "PC_LAMMPS --script " + script_path.string() +
+        " --varloss xyz 1.0 100 --outvar xyz\n";
+    const std::string pc_observable =
+        "PC_OBSERVABLE cohesive_energy --species Ta --target 8.100 "
+        "--weight 1000 --hotvar a0 2.7 3.9 3.3036\n";
+
+    /* A PRESTAGE run: the refinement at STRATEGY level, then `explore`. */
+    auto prestage = [](const std::string& refine, const std::string& explore) {
+        return "OPTIMIZER\n  STRATEGY\n    TYPE PRESTAGE\n" + refine +
+               "    MAXEVAL 1\n    EXPLORE\n" + explore +
+               "    ENDEXPLORE\n  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n";
+    };
+    const std::string bobyqa = "    LIB NLOPT\n    ALGO LN_BOBYQA\n";
+    const std::string mlsl_inner =
+        "      LIB NLOPT\n      ALGO GN_MLSL_LDS\n      MAXEVAL 1\n"
+        "      INNER\n        LIB NLOPT\n";
+    auto error = [&](const std::string& body) {
+        auto cfg = write_temp_config(body);
+        std::string what;
+        try {
+            tadah::hpo::HPOTargets trg(ctx, cfg.string());
+        } catch (const std::exception& e) {
+            what = e.what();
+        }
+        std::filesystem::remove(cfg);
+        return what;
+    };
+
+    struct Case { std::string explore, loss_line, message; };
+    for (const auto& c : std::vector<Case>{
+             /* PC_LAMMPS: a gradient-based optimiser ... */
+             {"      LIB NLOPT\n      ALGO LD_LBFGS\n      MAXEVAL 1\n",
+              pc_lammps,
+              "--hpotarget defines PC_LAMMPS but EXPLORE's optimiser "
+              "NLOPT:LD_LBFGS is gradient-based. PC_LAMMPS requires a "
+              "gradient-free optimiser"},
+             {mlsl_inner + "        ALGO LD_LBFGS\n      ENDINNER\n",
+              pc_lammps,
+              "--hpotarget defines PC_LAMMPS but EXPLORE INNER's optimiser "
+              "NLOPT:LD_LBFGS is gradient-based. PC_LAMMPS requires a "
+              "gradient-free optimiser"},
+             /* ... and any GRAD_STRATEGY. */
+             {"      LIB DLIB\n      ALGO BFGS\n      MAXEVAL 1\n"
+              "      GRAD_STRATEGY ANALYTICAL\n",
+              pc_lammps,
+              "--hpotarget defines PC_LAMMPS but EXPLORE's GRAD_STRATEGY is "
+              "set."},
+             {mlsl_inner + "        ALGO LN_SBPLX\n"
+                           "        GRAD_STRATEGY HYBRID\n      ENDINNER\n",
+              pc_lammps,
+              "--hpotarget defines PC_LAMMPS but EXPLORE INNER's "
+              "GRAD_STRATEGY is set."},
+             /* PC_OBSERVABLE: GRAD_STRATEGY NUMERICAL. */
+             {"      LIB NLOPT\n      ALGO LD_LBFGS\n      MAXEVAL 1\n"
+              "      GRAD_STRATEGY NUMERICAL\n",
+              pc_observable,
+              "--hpotarget defines PC_OBSERVABLE but EXPLORE's "
+              "GRAD_STRATEGY=NUMERICAL is set."},
+             {mlsl_inner + "        ALGO LD_LBFGS\n"
+                           "        GRAD_STRATEGY NUMERICAL\n      ENDINNER\n",
+              pc_observable,
+              "--hpotarget defines PC_OBSERVABLE but EXPLORE INNER's "
+              "GRAD_STRATEGY=NUMERICAL is set."}}) {
+        const std::string body = prestage(bobyqa, c.explore) + c.loss_line;
+        INFO(body);
+        CHECK_THAT(error(body), Catch::StartsWith(c.message));
+    }
+
+    /* What the rules allow in the EXPLORE block is still accepted: with
+     * PC_LAMMPS a gradient-free optimiser and DLIB:BFGS (its own
+     * per-theta differences), with PC_OBSERVABLE the analytical modes. */
+    for (const std::string& explore :
+         {std::string("      LIB NLOPT\n      ALGO GN_CRS2_LM\n"
+                      "      MAXEVAL 1\n"),
+          std::string("      LIB DLIB\n      ALGO BFGS\n      MAXEVAL 1\n"),
+          mlsl_inner + "        ALGO LN_SBPLX\n      ENDINNER\n"}) {
+        const std::string body = prestage(bobyqa, explore) + pc_lammps;
+        INFO(body);
+        CHECK(error(body) == "");
+    }
+    for (const std::string gs : {"HYBRID", "ANALYTICAL"}) {
+        const std::string body =
+            prestage(bobyqa, "      LIB NLOPT\n      ALGO LD_LBFGS\n"
+                             "      MAXEVAL 1\n      GRAD_STRATEGY " + gs +
+                             "\n") + pc_observable;
+        INFO(body);
+        CHECK(error(body) == "");
+    }
     std::filesystem::remove(script_path);
 }

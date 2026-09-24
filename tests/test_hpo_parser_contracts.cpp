@@ -257,6 +257,8 @@ TEST_CASE("PRESTAGE without EXPLORE names the current grammar",
     CHECK_THAT(msg, !Catch::Contains("ENDPRESTAGE"));
 
     sp.prestage = std::make_unique<tadah::hpo::OptimizerSpec>();
+    sp.prestage->lib = "DLIB";
+    sp.prestage->algo = "GFS";
     CHECK_NOTHROW(tadah::hpo::StagedPolicy<V, int>::validate(sp));
 }
 
