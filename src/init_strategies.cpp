@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <random>
 #include <sstream>
@@ -170,14 +171,32 @@ public:
         }
 
         boost::random::sobol engine(static_cast<unsigned>(dim));
-        if (ctx.seed != 0) {
-            /* Sobol is deterministic; "seeding" amounts to discarding
-             * the first N points so different runs sample different
-             * sub-sequences. We use the lower 16 bits as a discard
-             * count (0..65535) to keep the wait time bounded. */
-            const std::uint64_t skip = ctx.seed & 0xFFFFu;
-            engine.discard(skip * dim);
-        }
+        /* Sobol is deterministic; a seed selects which points to draw. Seed
+         * s draws block b = s mod 65536 of k points: points b*k ... b*k +
+         * k - 1 of the sequence. Distinct blocks share no point, so the
+         * seeds SEED + r of consecutive RESTART rounds, or an INIT block
+         * and a RESTART block with the same SEED and K, draw disjoint
+         * points; with k = 1 seed s draws point s, as it always did. (A
+         * seed used to skip s mod 65536 points, so the seeds s and s + 1
+         * shared k - 1 of their k points.) The block index keeps the 16
+         * low bits of the seed, as the skip always did: a chain's later
+         * methods and a run without SEED receive a pseudo-random 64-bit
+         * seed. */
+        const std::uint64_t block = ctx.seed & 0xFFFFu;
+        const std::uint64_t kk = k;   // >= 1
+        constexpr std::uint64_t kMax = std::numeric_limits<std::uint64_t>::max();
+        /* The block, points block*k ... block*k + k - 1, must lie within the
+         * sequence: neither the product nor the end may wrap. */
+        if (block > kMax / kk || kk > kMax - block * kk)
+            throw std::runtime_error(
+                "INIT METHOD SOBOL: block " + std::to_string(block) + " of " +
+                std::to_string(k) + " points lies beyond the end of the Sobol "
+                "sequence (2^64 - 1 points); lower K (or K_TOTAL)");
+        /* Position the engine at point `first` (the Gray-code state of that
+         * index): the same point discard(first * dim) reaches, without the
+         * product with the dimension. */
+        const std::uint64_t first = block * kk;
+        if (first != 0) engine.seed(first);
         const auto sobol_max = static_cast<double>(engine.max());
         const auto sobol_min = static_cast<double>(engine.min());
         const double range = sobol_max - sobol_min + 1.0;
