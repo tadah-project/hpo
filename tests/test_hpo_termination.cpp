@@ -2738,3 +2738,123 @@ TEST_CASE("Termination: an error outranks a signal stop, which outranks a "
     stash.offer(stagnation);
     CHECK_THROWS_AS(stash.rethrow_if_any(), tadah::hpo::StagnationStop);
 }
+
+/* ======================================================================
+ * The journal writes a PRESTAGE block without MAXEVAL as MAXEVAL=none: no
+ * evaluation limit. It wrote MAXEVAL=0, which is not a budget a block can
+ * have (MAXEVAL 0 is an error at its line).
+ * ==================================================================== */
+
+TEST_CASE("Termination: the journal writes a PRESTAGE block without MAXEVAL "
+          "as MAXEVAL=none", "[HPO][termination][prestage][journal]")
+{
+    /* TOPK 2 over a GRID exploration (1 + 2^3 points) and an SBPLX
+     * refinement; `explore` and `refine` are the stop criteria of each. */
+    const auto prestage = [](const std::string& explore,
+                             const std::string& refine) {
+        return plain_block(
+            "    TYPE PRESTAGE\n    TOPK 2\n"
+            "    EXPLORE\n      LIB TADAH\n      ALGO GRID\n"
+            "      PARAM GRID_POINTS 2\n" + explore + "    ENDEXPLORE\n"
+            "    REFINE\n      LIB NLOPT\n      ALGO LN_SBPLX\n" + refine +
+            "    ENDREFINE\n");
+    };
+    SECTION("EXPLORE without MAXEVAL") {
+        TaRun run(prestage("", "      MAXEVAL 6\n"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        check_run_files();
+        const std::string journal = read_file("hpo_run.log");
+        CHECK_THAT(journal,
+                   Catch::Contains("    PRESTAGE EXPLORE  : TADAH:GRID  "
+                                   "MAXEVAL=none  TOPK=2\n") &&
+                   Catch::Contains("    PRESTAGE REFINE   : NLOPT:LN_SBPLX  "
+                                   "MAXEVAL=6\n") &&
+                   Catch::Contains("PRESTAGE: exploration phase TADAH:GRID "
+                                   "(MAXEVAL=none: no evaluation limit)\n"));
+        CHECK(journal.find("MAXEVAL=0") == std::string::npos);
+    }
+    SECTION("REFINE without MAXEVAL") {
+        TaRun run(prestage("      MAXEVAL 5\n", "      FTOL_REL 1e-2\n"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        check_run_files();
+        const std::string journal = read_file("hpo_run.log");
+        CHECK_THAT(journal,
+                   Catch::Contains("    PRESTAGE EXPLORE  : TADAH:GRID  "
+                                   "MAXEVAL=5  TOPK=2\n") &&
+                   Catch::Contains("    PRESTAGE REFINE   : NLOPT:LN_SBPLX  "
+                                   "MAXEVAL=none\n") &&
+                   Catch::Contains("PRESTAGE: exploration phase TADAH:GRID "
+                                   "(MAXEVAL=5)\n"));
+        CHECK(journal.find("MAXEVAL=0") == std::string::npos);
+    }
+}
+
+/* ======================================================================
+ * TADAH:GRID honours MAXEVAL: it stops after MAXEVAL points in the order
+ * it visits them -- the INIT point, then the grid nodes, the first
+ * dimension varying fastest. It used to ignore MAXEVAL without a word and
+ * evaluate the whole grid. Without MAXEVAL it still does.
+ * ==================================================================== */
+
+TEST_CASE("Termination: TADAH:GRID stops after MAXEVAL points in grid order",
+          "[HPO][termination][stop_criteria][grid]")
+{
+    const std::string grid =
+        "    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n"
+        "    PARAM GRID_POINTS 3\n";
+
+    /* The whole grid: the INIT point and the 3^3 nodes of the three OPTIM
+     * dimensions. */
+    std::vector<Point> full;
+    {
+        TaRun run(plain_block(grid));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        check_run_files();
+        full = evaluated_points();
+        CHECK(full.size() == 28u);
+        CHECK(read_file("hpo_run.log").find("GRID: MAXEVAL") ==
+              std::string::npos);
+    }
+    REQUIRE(full.size() == 28u);
+
+    SECTION("MAXEVAL below the grid size: the first MAXEVAL points") {
+        TaRun run(plain_block(grid + "    MAXEVAL 5\n"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        check_run_files();
+        const auto pts = evaluated_points();
+        CHECK(pts.size() == 5u);
+        CHECK(pts == evals_between(full, 1, 5));
+        const std::string journal = read_file("hpo_run.log");
+        CHECK_THAT(journal,
+                   Catch::Contains("GRID: MAXEVAL 5 < 28 grid points") &&
+                   Catch::Contains("evaluating the first 5 in grid order"));
+    }
+    SECTION("MAXEVAL 1: the INIT point only") {
+        TaRun run(plain_block(grid + "    MAXEVAL 1\n"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const auto pts = evaluated_points();
+        CHECK(pts == evals_between(full, 1, 1));
+    }
+    SECTION("MAXEVAL at or above the grid size: the whole grid, no note") {
+        for (const std::string maxeval : {"28", "1000"}) {
+            INFO("MAXEVAL " << maxeval);
+            TaRun run(plain_block(grid + "    MAXEVAL " + maxeval + "\n"));
+            int status = -1;
+            REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+            CHECK(status == 0);
+            CHECK(evaluated_points() == full);
+            CHECK(read_file("hpo_run.log").find("GRID: MAXEVAL") ==
+                  std::string::npos);
+        }
+    }
+}

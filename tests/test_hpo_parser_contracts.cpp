@@ -56,9 +56,11 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <sstream>
 #include <string>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -1136,9 +1138,11 @@ TEST_CASE("Strict numbers: the optimiser attributes",
           "[HPO][hpo_targets][strict_numbers][optimizer_block]")
 {
     /* MAXEVAL 1e5 used to read 1 and then report the 'e5' as a stray
-     * value; -1 wrapped to 2^64-1; abc stored 0. */
-    check_uint_key(attr_home("MAXEVAL"), "an integer from 0 to 2147483647",
-                   {"30", "0", "2147483647"}, {"2147483648", "4294967299"},
+     * value; -1 wrapped to 2^64-1; abc stored 0. MAXEVAL 0 is no budget
+     * (its own case below). */
+    check_uint_key(attr_home("MAXEVAL"), "an integer from 1 to 2147483647",
+                   {"30", "1", "2147483647"},
+                   {"0", "2147483648", "4294967299"},
                    /*line_framed_attr=*/true);
     CHECK(parse_config(attr_home("MAXEVAL").config("30")).spec.stop.maxeval ==
           std::optional<std::uint64_t>(30));
@@ -1208,22 +1212,27 @@ TEST_CASE("Strict numbers: MAXTIME in an optimiser block is a positive "
                     .spec.stop.maxtime);
 }
 
-TEST_CASE("Strict numbers: MAXEVAL fits the int budget NLopt counts in, in "
+TEST_CASE("Strict numbers: MAXEVAL is an integer from 1 to 2147483647 in "
           "every optimiser block", "[HPO][hpo_targets][strict_numbers]"
           "[optimizer_block]")
 {
     /* NLopt counts evaluations in an int (nlopt::opt::set_maxeval), and the
      * adapter passed MAXEVAL on with an implicit conversion: MAXEVAL
      * 4294967299 ran 3 evaluations (MAXEVAL_REACHED), and 2147483648 became
-     * a negative budget, which NLopt reads as no limit. */
-    const std::string bound = "an integer from 0 to 2147483647";
+     * a negative budget, which NLopt reads as no limit. MAXEVAL 0 meant a
+     * different thing to every backend: no limit to NLopt, no evaluation
+     * to TADAH:RANDOM, the annealers and ASA, the first start point to
+     * DLIB:GFS, an error when DLIB:BFGS and CERES started, and nothing to
+     * TADAH:GRID. The key is left out for no limit. */
+    const std::string bound = "an integer from 1 to 2147483647";
     for (const auto& h : optimizer_block_homes("MAXEVAL")) {
         INFO(h.config("30"));
-        for (const std::string v : {"0", "30", "2147483647"}) {
+        for (const std::string v : {"1", "30", "2147483647"}) {
             INFO("accepted '" << v << "'");
             CHECK(parse_error(h.config(v)) == "");
         }
-        for (const std::string tok : {"2147483648", "4294967299", "-1"}) {
+        for (const std::string tok :
+             {"0", "-0", "00", "2147483648", "4294967299", "-1"}) {
             INFO("rejected '" << tok << "'");
             CHECK_THAT(parse_error(h.config(tok)),
                        Catch::StartsWith(h.at() + "MAXEVAL must be " + bound +
@@ -1233,6 +1242,11 @@ TEST_CASE("Strict numbers: MAXEVAL fits the int budget NLopt counts in, in "
     }
     CHECK(parse_config(attr_home("MAXEVAL").config("2147483647"))
               .spec.stop.maxeval == std::optional<std::uint64_t>(2147483647));
+    CHECK(parse_config(attr_home("MAXEVAL").config("1")).spec.stop.maxeval ==
+          std::optional<std::uint64_t>(1));
+    /* Without MAXEVAL the spec has no budget. */
+    CHECK_FALSE(parse_config(attr_home("MAXTIME").config("60"))
+                    .spec.stop.maxeval);
 }
 
 TEST_CASE("Strict numbers: single-value keys reject an extra token",
@@ -1703,9 +1717,11 @@ TEST_CASE("tadah refit: OPTIMIZER block numbers are strict",
           "[HPO][refit][strict_numbers]")
 {
     /* MAXEVAL and its alias MAXITER are the int budgets the refit hands
-     * NLopt and Ceres (static_cast<int>, which wrapped 4294967299 to 3). A
-     * malformed number names the stage block it is in. */
-    const std::string budget = "an integer from 0 to 2147483647";
+     * NLopt and Ceres (static_cast<int>, which wrapped 4294967299 to 3),
+     * and at least 1: MAXEVAL 0 ran the Ceres stages with no iteration and
+     * NLopt with no limit. A malformed number names the stage block it is
+     * in. */
+    const std::string budget = "an integer from 1 to 2147483647";
     CHECK_THAT(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 1e5 "
                                      "ENDOPTIMIZER"),
                Catch::StartsWith("REFINE: MAXEVAL must be " + budget +
@@ -1714,6 +1730,22 @@ TEST_CASE("tadah refit: OPTIMIZER block numbers are strict",
                                      "ENDOPTIMIZER"),
                Catch::StartsWith("REFINE: MAXEVAL must be " + budget +
                                  ", got '-1'"));
+    for (const std::string key : {"MAXEVAL", "MAXITER"}) {
+        INFO(key << " 0");
+        CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM " + key +
+                                        " 0 ENDOPTIMIZER") ==
+              "REFINE: " + key + " must be " + budget + ", got '0'");
+    }
+    CHECK(refit_error("FUSE", "OPTIMIZER LIB CERES ALGO DOGLEG MAXITER 0 "
+                              "ENDOPTIMIZER") ==
+          "FUSE: MAXITER must be " + budget + ", got '0'");
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                 "MAXEVAL 0 ENDOPTIMIZER") ==
+          "EXPLORE: MAXEVAL must be " + budget + ", got '0'");
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS INNER "
+                                 "LIB NLOPT ALGO LN_SBPLX MAXEVAL 0 ENDINNER "
+                                 "ENDOPTIMIZER") ==
+          "EXPLORE INNER: MAXEVAL must be " + budget + ", got '0'");
     CHECK_THAT(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXITER 5x "
                                      "ENDOPTIMIZER"),
                Catch::StartsWith("REFINE: MAXITER must be " + budget +
@@ -1728,15 +1760,17 @@ TEST_CASE("tadah refit: OPTIMIZER block numbers are strict",
                                  "got 'nan'"));
     struct Case { std::string key, body, message; };
     for (const auto& c : std::vector<Case>{
-             {"EXPLORE", "OPTIMIZER ALGO GN_MLSL_LDS MAXEVAL 4294967299 "
-                         "ENDOPTIMIZER",
+             {"EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                         "MAXEVAL 4294967299 ENDOPTIMIZER",
               "EXPLORE: MAXEVAL must be " + budget + ", got '4294967299'"},
-             {"EXPLORE", "OPTIMIZER ALGO GN_MLSL_LDS INNER ALGO LN_SBPLX "
-                         "MAXEVAL 2147483648 ENDINNER ENDOPTIMIZER",
+             {"EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS INNER "
+                         "LIB NLOPT ALGO LN_SBPLX MAXEVAL 2147483648 "
+                         "ENDINNER ENDOPTIMIZER",
               "EXPLORE INNER: MAXEVAL must be " + budget +
                   ", got '2147483648'"},
-             {"EXPLORE", "OPTIMIZER ALGO GN_MLSL_LDS INNER ALGO LN_SBPLX "
-                         "FTOL_REL 1e-7x ENDINNER ENDOPTIMIZER",
+             {"EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS INNER "
+                         "LIB NLOPT ALGO LN_SBPLX FTOL_REL 1e-7x ENDINNER "
+                         "ENDOPTIMIZER",
               "EXPLORE INNER: FTOL_REL must be a finite number, got '1e-7x'"},
              {"REFINE", "OPTIMIZER LIB CERES ALGO LM MAXITER 4294967299 "
                         "ENDOPTIMIZER",
@@ -1750,17 +1784,22 @@ TEST_CASE("tadah refit: OPTIMIZER block numbers are strict",
              /* The block's other errors name it too. */
              {"REFINE", "OPTIMIZER LIB CERES ALGO LM",
               "REFINE: OPTIMIZER block not closed with ENDOPTIMIZER"},
-             {"EXPLORE", "OPTIMIZER ALGO GN_MLSL_LDS INNER ALGO LN_SBPLX",
+             {"EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS INNER "
+                         "LIB NLOPT ALGO LN_SBPLX",
               "EXPLORE INNER: INNER block not closed with ENDINNER"},
-             {"EXPLORE", "OPTIMIZER ALGO GN_MLSL_LDS INNER ALGO LN_SBPLX "
-                         "FTOLREL 1e-7 ENDINNER ENDOPTIMIZER",
+             {"EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS INNER "
+                         "LIB NLOPT ALGO LN_SBPLX FTOLREL 1e-7 ENDINNER "
+                         "ENDOPTIMIZER",
               "EXPLORE INNER: unknown key 'FTOLREL' in the INNER block"}}) {
         INFO(c.key << ": " << c.body);
         CHECK(refit_error(c.key, c.body) == c.message);
     }
-    CHECK(refit_error("EXPLORE", "OPTIMIZER ALGO GN_MLSL_LDS MAXEVAL "
-                                 "2147483647 INNER ALGO LN_SBPLX MAXEVAL "
-                                 "2147483647 ENDINNER ENDOPTIMIZER") == "");
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                 "MAXEVAL 2147483647 INNER LIB NLOPT ALGO "
+                                 "LN_SBPLX MAXEVAL 2147483647 ENDINNER "
+                                 "ENDOPTIMIZER") == "");
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 1 "
+                                "ENDOPTIMIZER") == "");
     CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 1000 "
                                 "FTOL_REL 1e-14 GTOL 1e-14 MAXITER 50 "
                                 "ENDOPTIMIZER") == "");
@@ -2199,8 +2238,7 @@ TEST_CASE("tadah refit: every stage OPTIMIZER block and INNER block names "
     /* An INNER block without ALGO meant no local search (NONE), while an
      * EXPLORE optimiser without an INNER block runs the default one
      * (LN_SBPLX). ALGO is what the block is read for, so it is required;
-     * NONE is written out. LIB may still be left out when the ALGO names
-     * the optimiser. */
+     * NONE is written out. */
     CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
                                  "MAXEVAL 100 INNER LIB NLOPT MAXEVAL 50 "
                                  "ENDINNER ENDOPTIMIZER") ==
@@ -2222,8 +2260,7 @@ TEST_CASE("tadah refit: every stage OPTIMIZER block and INNER block names "
           "FUSE: ALGO is not set; set ALGO in the OPTIMIZER block (NONE to "
           "skip the stage)");
 
-    /* NONE is the explicit spelling; LIB may be left out when the ALGO
-     * names the optimiser. */
+    /* NONE is the explicit spelling, without LIB (it runs no optimiser). */
     const auto none = RefitParser::parse(refit_context(
         "EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS MAXEVAL 100 INNER "
                    "ALGO NONE ENDINNER ENDOPTIMIZER"));
@@ -2231,11 +2268,217 @@ TEST_CASE("tadah refit: every stage OPTIMIZER block and INNER block names "
     CHECK(tadah::hpo::refit::refit_explore_inner_algo(
               *none.explore.opt.inner) == "NONE");
     const auto sbplx = RefitParser::parse(refit_context(
-        "EXPLORE", "OPTIMIZER ALGO GN_MLSL_LDS MAXEVAL 100 INNER ALGO "
-                   "LN_SBPLX ENDINNER ENDOPTIMIZER"));
+        "EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS MAXEVAL 100 INNER LIB "
+                   "NLOPT ALGO LN_SBPLX ENDINNER ENDOPTIMIZER"));
     REQUIRE(sbplx.explore.opt.inner);
     CHECK(tadah::hpo::refit::refit_explore_inner_algo(
               *sbplx.explore.opt.inner) == "SBPLX");
+}
+
+TEST_CASE("tadah refit: a stage block that runs an optimiser names the "
+          "library of its ALGO in LIB", "[HPO][refit]")
+{
+    /* As in `tadah hpo`, where every block, INNER included, sets LIB and
+     * ALGO, a refit stage block that runs an optimiser names its library.
+     * LIB used to be optional wherever the ALGO named the optimiser
+     * (GN_MLSL_LDS, LN_SBPLX, LM, DLIB_GLOBAL, LD_LBFGS in an INNER block)
+     * and required elsewhere (LD_LBFGS in REFINE), and a LIB that did not
+     * match the ALGO was ignored (LIB CERES ALGO GN_MLSL_LDS ran MLSL). */
+    using tadah::hpo::refit::RefitParser;
+    using tadah::hpo::refit::refit_explore_inner_algo;
+    using tadah::hpo::refit::refit_explore_outer_algo;
+    using tadah::hpo::refit::refit_fuse_algo;
+    using tadah::hpo::refit::refit_refine_algo;
+
+    /* Every ALGO spelling of a stage, the library it belongs to and the
+     * optimiser it selects. */
+    struct Algo { std::string stage, algo, lib, canonical; };
+    const std::vector<Algo> algos = {
+        {"EXPLORE", "GN_MLSL_LDS", "NLOPT", "MLSL"},
+        {"EXPLORE", "GN_MLSL", "NLOPT", "MLSL"},
+        {"EXPLORE", "MLSL", "NLOPT", "MLSL"},
+        {"EXPLORE", "GN_DIRECT_L", "NLOPT", "DIRECT"},
+        {"EXPLORE", "GN_DIRECT", "NLOPT", "DIRECT"},
+        {"EXPLORE", "DIRECT", "NLOPT", "DIRECT"},
+        {"EXPLORE", "GN_CRS2_LM", "NLOPT", "CRS2"},
+        {"EXPLORE", "GN_CRS2", "NLOPT", "CRS2"},
+        {"EXPLORE", "CRS2", "NLOPT", "CRS2"},
+        {"EXPLORE", "GLOBAL", "DLIB", "DLIB_GLOBAL"},
+        {"EXPLORE", "DLIB_GLOBAL", "DLIB", "DLIB_GLOBAL"},
+        {"EXPLORE INNER", "LN_SBPLX", "NLOPT", "SBPLX"},
+        {"EXPLORE INNER", "SBPLX", "NLOPT", "SBPLX"},
+        {"EXPLORE INNER", "LN_NELDERMEAD", "NLOPT", "NELDERMEAD"},
+        {"EXPLORE INNER", "NELDERMEAD", "NLOPT", "NELDERMEAD"},
+        {"EXPLORE INNER", "LN_BOBYQA", "NLOPT", "BOBYQA"},
+        {"EXPLORE INNER", "BOBYQA", "NLOPT", "BOBYQA"},
+        {"EXPLORE INNER", "LN_PRAXIS", "NLOPT", "PRAXIS"},
+        {"EXPLORE INNER", "PRAXIS", "NLOPT", "PRAXIS"},
+        {"EXPLORE INNER", "LD_LBFGS", "NLOPT", "NLOPT_LBFGS"},
+        {"EXPLORE INNER", "NLOPT_LBFGS", "NLOPT", "NLOPT_LBFGS"},
+        {"EXPLORE INNER", "LBFGS", "DLIB", "DLIB_LBFGS"},
+        {"EXPLORE INNER", "DLIB_LBFGS", "DLIB", "DLIB_LBFGS"},
+        {"REFINE", "LM", "CERES", "CERES_LM"},
+        {"REFINE", "CERES_LM", "CERES", "CERES_LM"},
+        {"REFINE", "DOGLEG", "CERES", "CERES_DOGLEG"},
+        {"REFINE", "CERES_DOGLEG", "CERES", "CERES_DOGLEG"},
+        {"REFINE", "LD_LBFGS", "NLOPT", "NLOPT_LBFGS"},
+        {"REFINE", "NLOPT_LBFGS", "NLOPT", "NLOPT_LBFGS"},
+        {"REFINE", "LBFGS", "DLIB", "DLIB_LBFGS"},
+        {"REFINE", "DLIB_LBFGS", "DLIB", "DLIB_LBFGS"},
+        {"FUSE", "LM", "CERES", "CERES_LM"},
+        {"FUSE", "CERES_LM", "CERES", "CERES_LM"},
+        {"FUSE", "DOGLEG", "CERES", "CERES_DOGLEG"},
+        {"FUSE", "CERES_DOGLEG", "CERES", "CERES_DOGLEG"}};
+    const auto library = [](const std::string& lib) -> std::string {
+        if (lib == "NLOPT") return "an NLopt algorithm";
+        if (lib == "DLIB") return "a dlib algorithm";
+        return "a Ceres algorithm";
+    };
+    /* The algorithms of each stage in each library, as the stage's legal
+     * list names them: a LIB that does not match the ALGO may be the one
+     * meant, so the message names them too. */
+    const std::map<std::pair<std::string, std::string>, std::string> in_lib = {
+        {{"EXPLORE", "NLOPT"}, "GN_MLSL_LDS|GN_DIRECT_L|GN_CRS2_LM"},
+        {{"EXPLORE", "DLIB"}, "GLOBAL"},
+        {{"EXPLORE INNER", "NLOPT"},
+         "LN_SBPLX|LN_NELDERMEAD|LN_BOBYQA|LN_PRAXIS|LD_LBFGS"},
+        {{"EXPLORE INNER", "DLIB"}, "LBFGS"},
+        {{"REFINE", "CERES"}, "LM|DOGLEG"},
+        {{"REFINE", "NLOPT"}, "LD_LBFGS"},
+        {{"REFINE", "DLIB"}, "LBFGS"},
+        {{"FUSE", "CERES"}, "LM|DOGLEG"}};
+    const auto or_with = [&](const std::string& stage,
+                             const std::string& lib) -> std::string {
+        const auto it = in_lib.find({stage, lib});
+        return it == in_lib.end()
+                   ? ""
+                   : ", or with LIB " + lib + " set ALGO " + it->second;
+    };
+    /* `lib_line` is "" or "LIB <x> "; the stage block around the ALGO. */
+    const auto block = [](const Algo& a, const std::string& lib_line) {
+        if (a.stage == "EXPLORE")
+            return std::string("OPTIMIZER ") + lib_line + "ALGO " + a.algo +
+                   " MAXEVAL 100 ENDOPTIMIZER";
+        if (a.stage == "EXPLORE INNER")
+            return "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS MAXEVAL 100 INNER " +
+                   lib_line + "ALGO " + a.algo + " MAXEVAL 50 ENDINNER "
+                   "ENDOPTIMIZER";
+        return std::string("OPTIMIZER ") + lib_line + "ALGO " + a.algo +
+               " MAXEVAL 100 ENDOPTIMIZER";
+    };
+    const auto key = [](const Algo& a) {
+        return a.stage == "EXPLORE INNER" ? std::string("EXPLORE") : a.stage;
+    };
+    const auto canonical = [&](const Algo& a, const std::string& lib_line) {
+        const auto rc =
+            RefitParser::parse(refit_context(key(a), block(a, lib_line)));
+        if (a.stage == "EXPLORE") return refit_explore_outer_algo(rc.explore.opt);
+        if (a.stage == "EXPLORE INNER")
+            return refit_explore_inner_algo(*rc.explore.opt.inner);
+        if (a.stage == "REFINE") return refit_refine_algo(rc.refine.opt);
+        return refit_fuse_algo(rc.fuse.opt);
+    };
+    for (const auto& a : algos) {
+        INFO(a.stage << ": ALGO " << a.algo);
+        /* With its library the ALGO selects its optimiser, in any case. */
+        CHECK(canonical(a, "LIB " + a.lib + " ") == a.canonical);
+        std::string lower = a.lib;
+        for (char& ch : lower) ch = static_cast<char>(std::tolower(ch));
+        CHECK(canonical(a, "LIB " + lower + " ") == a.canonical);
+        /* Without LIB, or with another library, the block is rejected. */
+        CHECK(refit_error(key(a), block(a, "")) ==
+              a.stage + ": LIB is not set; set LIB " + a.lib + " (ALGO " +
+                  a.algo + " is " + library(a.lib) + ")");
+        for (const std::string other : {"NLOPT", "DLIB", "CERES", "TADAH"}) {
+            if (other == a.lib) continue;
+            INFO("LIB " << other);
+            CHECK(refit_error(key(a), block(a, "LIB " + other + " ")) ==
+                  a.stage + ": LIB " + other + " does not match ALGO " +
+                      a.algo + ", " + library(a.lib) + "; set LIB " + a.lib +
+                      or_with(a.stage, other));
+        }
+    }
+
+    /* LBFGS is dlib's L-BFGS in the refit (in `tadah hpo` LBFGS is a
+     * CERES algorithm, and NLopt's is LD_LBFGS): with another LIB the
+     * message also names that library's algorithms of the stage, whatever
+     * the case of LIB. */
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB NLOPT ALGO LBFGS ENDOPTIMIZER") ==
+          "REFINE: LIB NLOPT does not match ALGO LBFGS, a dlib algorithm; set "
+          "LIB DLIB, or with LIB NLOPT set ALGO LD_LBFGS");
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB nlopt ALGO LBFGS ENDOPTIMIZER") ==
+          "REFINE: LIB nlopt does not match ALGO LBFGS, a dlib algorithm; set "
+          "LIB DLIB, or with LIB NLOPT set ALGO LD_LBFGS");
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LBFGS ENDOPTIMIZER") ==
+          "REFINE: LIB CERES does not match ALGO LBFGS, a dlib algorithm; set "
+          "LIB DLIB, or with LIB CERES set ALGO LM|DOGLEG");
+    CHECK(refit_error("EXPLORE",
+                      "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS MAXEVAL 100 INNER "
+                      "LIB NLOPT ALGO LBFGS ENDINNER ENDOPTIMIZER") ==
+          "EXPLORE INNER: LIB NLOPT does not match ALGO LBFGS, a dlib "
+          "algorithm; set LIB DLIB, or with LIB NLOPT set ALGO "
+          "LN_SBPLX|LN_NELDERMEAD|LN_BOBYQA|LN_PRAXIS|LD_LBFGS");
+    /* A stage without an algorithm of the LIB given, or a LIB that is no
+     * library, gets the library of the ALGO only. */
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB CERES ALGO GN_MLSL_LDS "
+                                 "ENDOPTIMIZER") ==
+          "EXPLORE: LIB CERES does not match ALGO GN_MLSL_LDS, an NLopt "
+          "algorithm; set LIB NLOPT");
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB FOO ALGO LD_LBFGS "
+                                "ENDOPTIMIZER") ==
+          "REFINE: LIB FOO does not match ALGO LD_LBFGS, an NLopt algorithm; "
+          "set LIB NLOPT");
+    /* `tadah hpo`'s name of dlib's global search, GFS, is not a refit
+     * ALGO (the refit's is GLOBAL): the stage's legal list names it. */
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB DLIB ALGO GFS ENDOPTIMIZER") ==
+          "EXPLORE outer: unsupported optimiser LIB 'DLIB' ALGO 'GFS'. Legal: "
+          "NLOPT GN_MLSL_LDS|GN_DIRECT_L|GN_CRS2_LM, DLIB GLOBAL, or UNIFORM");
+
+    /* ALGO NONE runs no optimiser, so a LIB there would have no effect. */
+    struct None { std::string key, body, message; };
+    for (const auto& n : std::vector<None>{
+             {"EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS MAXEVAL 100 "
+                         "INNER LIB NLOPT ALGO NONE ENDINNER ENDOPTIMIZER",
+              "EXPLORE INNER: LIB has no effect with ALGO NONE (no local "
+              "search runs); remove LIB"},
+             {"EXPLORE", "OPTIMIZER LIB NLOPT ALGO NONE ENDOPTIMIZER",
+              "EXPLORE: LIB has no effect with ALGO NONE (no global search "
+              "runs); remove LIB"},
+             {"REFINE", "OPTIMIZER LIB CERES ALGO NONE ENDOPTIMIZER",
+              "REFINE: LIB has no effect with ALGO NONE (the stage is "
+              "skipped); remove LIB"},
+             {"FUSE", "OPTIMIZER LIB CERES ALGO NONE ENDOPTIMIZER",
+              "FUSE: LIB has no effect with ALGO NONE (the stage is "
+              "skipped); remove LIB"}}) {
+        INFO(n.key << ": " << n.body);
+        CHECK(refit_error(n.key, n.body) == n.message);
+    }
+    CHECK(refit_error("REFINE", "OPTIMIZER ALGO NONE ENDOPTIMIZER") == "");
+    CHECK(refit_error("FUSE", "OPTIMIZER ALGO NONE ENDOPTIMIZER") == "");
+    CHECK(refit_explore_outer_algo(
+              RefitParser::parse(refit_context(
+                  "EXPLORE", "OPTIMIZER ALGO NONE ENDOPTIMIZER"))
+                  .explore.opt) == "UNIFORM");
+
+    /* UNIFORM, refit's own uniform start, belongs to no library: LIB is
+     * neither required nor checked there (the behaviour kept for now). */
+    for (const std::string lib : {"", "LIB NLOPT ", "LIB DLIB "}) {
+        INFO("'" << lib << "ALGO UNIFORM'");
+        const auto rc = RefitParser::parse(refit_context(
+            "EXPLORE", "OPTIMIZER " + lib + "ALGO UNIFORM ENDOPTIMIZER"));
+        CHECK(refit_explore_outer_algo(rc.explore.opt) == "UNIFORM");
+    }
+
+    /* An ALGO the stage does not run is still named with the stage's
+     * legal list, whatever the LIB. */
+    CHECK_THAT(refit_error("FUSE", "OPTIMIZER LIB CERES ALGO LBFGS "
+                                   "ENDOPTIMIZER"),
+               Catch::StartsWith("FUSE: unsupported optimiser LIB 'CERES' "
+                                 "ALGO 'LBFGS'"));
+    CHECK_THAT(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO LN_SBPLX "
+                                      "ENDOPTIMIZER"),
+               Catch::StartsWith("EXPLORE outer: unsupported optimiser LIB "
+                                 "'NLOPT' ALGO 'LN_SBPLX'"));
 }
 
 TEST_CASE("Strict numbers: the PARAM INIT_MODE JITTER numbers are checked at "

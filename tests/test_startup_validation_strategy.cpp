@@ -903,3 +903,178 @@ TEST_CASE("startup validation: hpo_run rejects a strategy before it loads "
                                         "NLOPT:GN_DIRECT:"));
     }
 }
+
+/* ======================================================================
+ * Each phase's backend checks.
+ *
+ * A backend's own attribute and PARAM checks (DLIB:BFGS does not support
+ * MAXTIME, TADAH:ANNEAL's PARAM registry, ASA's options, GRID's
+ * GRID_POINTS, ...) ran only when that optimiser started: after the data
+ * were loaded, and for a PRESTAGE refinement after the whole exploration;
+ * under MULTISTART each start failed on its own, with a warning, and the
+ * run ended without an evaluation. validate_hpo_setup() now runs them on
+ * the spec each phase runs with -- the STRATEGY-level optimiser, each
+ * MULTISTART start (with its BUDGET_PER_START or its share of MAXEVAL),
+ * the PRESTAGE exploration and refinement, and every INNER block -- and a
+ * backend that cannot stop without MAXEVAL is named when it has none.
+ * ==================================================================== */
+
+TEST_CASE("startup validation: each phase's backend checks run at startup",
+          "[startup_validation][strategy][backend]")
+{
+    struct Case { std::string what, body, message; };
+    for (const auto& c : std::vector<Case>{
+             {"PLAIN DLIB:BFGS with MAXTIME",
+              "    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 20\n"
+              "    MAXTIME 60\n",
+              "the STRATEGY-level optimiser: DLIB:BFGS does not support "
+              "MAXTIME"},
+             {"each MULTISTART start: DLIB:BFGS with SEED",
+              multistart_body("DLIB", "BFGS", "2", "    SEED 3\n"),
+              "each MULTISTART start: DLIB:BFGS does not support SEED"},
+             {"the PRESTAGE refinement (REFINE block): DLIB:BFGS with MAXTIME",
+              "    TYPE PRESTAGE\n    EXPLORE\n      LIB TADAH\n"
+              "      ALGO RANDOM\n      MAXEVAL 3\n    ENDEXPLORE\n"
+              "    REFINE\n      LIB DLIB\n      ALGO BFGS\n"
+              "      MAXTIME 60\n    ENDREFINE\n",
+              "the PRESTAGE refinement: DLIB:BFGS does not support MAXTIME"},
+             {"the PRESTAGE exploration: CERES:LBFGS with STOPVAL",
+              "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+              "    MAXEVAL 20\n    EXPLORE\n      LIB CERES\n"
+              "      ALGO LBFGS\n      MAXEVAL 12\n      STOPVAL 0.1\n"
+              "    ENDEXPLORE\n",
+              "the PRESTAGE exploration (EXPLORE block): CERES:LBFGS does not "
+              "support STOPVAL"},
+             {"TADAH:ANNEAL with an unknown PARAM",
+              "    TYPE PLAIN\n    LIB TADAH\n    ALGO ANNEAL\n"
+              "    MAXEVAL 20\n    PARAM NOT_A_KEY 1\n",
+              "the STRATEGY-level optimiser: TADAH:ANNEAL: unknown PARAM "
+              "'NOT_A_KEY'"},
+             {"TADAH:ANNEAL_PT with LADDER_ADAPT on two replicas",
+              "    TYPE PLAIN\n    LIB TADAH\n    ALGO ANNEAL_PT\n"
+              "    MAXEVAL 20\n    PARAM REPLICAS 2\n"
+              "    PARAM LADDER_ADAPT ON\n",
+              "TADAH:ANNEAL_PT: LADDER_ADAPT requires REPLICAS >= 3"},
+             {"ASA:ASA with FTOL_REL",
+              "    TYPE PLAIN\n    LIB ASA\n    ALGO ASA\n    MAXEVAL 20\n"
+              "    FTOL_REL 1e-6\n",
+              "ASA:ASA does not implement FTOL_REL/FTOL_ABS"},
+             {"TADAH:GRID with an unknown PARAM",
+              "    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n"
+              "    PARAM GRID_STEPS 5\n",
+              "TADAH:GRID: unknown PARAM 'GRID_STEPS'"},
+             {"TADAH:GRID with a one-point grid",
+              "    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n"
+              "    PARAM GRID_POINTS 1\n",
+              "TADAH:GRID PARAM GRID_POINTS must be an integer >= 2"},
+             /* A backend with no stopping rule of its own needs MAXEVAL. */
+             {"TADAH:RANDOM without MAXEVAL",
+              "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+              "    MAXTIME 60\n",
+              "the STRATEGY-level optimiser: TADAH:RANDOM needs MAXEVAL"},
+             {"DLIB:GFS without MAXEVAL",
+              "    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n",
+              "the STRATEGY-level optimiser: DLIB:GFS needs MAXEVAL"},
+             {"DLIB:GFS under MULTISTART without MAXEVAL (one run from every "
+              "INIT point: BUDGET_PER_START does not split it)",
+              "    TYPE MULTISTART\n    LIB DLIB\n    ALGO GFS\n"
+              "    N_STARTS 2\n    BUDGET_PER_START 5\n",
+              "DLIB:GFS needs MAXEVAL"},
+             {"the PRESTAGE exploration: TADAH:RANDOM without MAXEVAL",
+              "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+              "    MAXEVAL 20\n    EXPLORE\n      LIB TADAH\n"
+              "      ALGO RANDOM\n    ENDEXPLORE\n",
+              "the PRESTAGE exploration (EXPLORE block): TADAH:RANDOM needs "
+              "MAXEVAL"},
+             {"TADAH:ANNEAL without MAXEVAL (AUTO chain lengths)",
+              "    TYPE PLAIN\n    LIB TADAH\n    ALGO ANNEAL\n"
+              "    MAXTIME 60\n",
+              "TADAH:ANNEAL: CHAIN_LENGTH AUTO needs MAXEVAL"}}) {
+        INFO(c.what);
+        const auto v = judge(strategy_config(c.body));
+        CHECK_THAT(v.startup, Catch::Contains(c.message));
+    }
+    /* The budget message says why, and what to set. */
+    CHECK_THAT(judge(strategy_config("    TYPE PLAIN\n    LIB TADAH\n"
+                                     "    ALGO RANDOM\n")).startup,
+               Catch::Contains("TADAH:RANDOM needs MAXEVAL: it stops only "
+                               "when its MAXEVAL evaluations are spent (it "
+                               "reads neither MAXTIME nor STOPVAL); set "
+                               "MAXEVAL"));
+}
+
+TEST_CASE("startup validation: the backend checks reject no valid "
+          "configuration", "[startup_validation][strategy][backend]")
+{
+    /* Leaving MAXEVAL out is no evaluation limit for a backend that stops
+     * on its own: a convergence test, a finite schedule, MAXTIME or
+     * STOPVAL, its own limits (ASA). */
+    for (const std::string& body : std::vector<std::string>{
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_SBPLX\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_CRS2_LM\n"
+             "    MAXTIME 60\n",
+             "    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n",
+             "    TYPE PLAIN\n    LIB CERES\n    ALGO LBFGS\n",
+             "    TYPE PLAIN\n    LIB ASA\n    ALGO ASA\n",
+             "    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n"
+             "    PARAM GRID_POINTS 4\n",
+             "    TYPE PLAIN\n    LIB TADAH\n    ALGO ANNEAL\n"
+             "    PARAM CHAIN_LENGTH 5\n    MAXTIME 60\n",
+             "    TYPE PLAIN\n    LIB TADAH\n    ALGO ANNEAL_PT\n"
+             "    MAXTIME 60\n",
+             "    TYPE PLAIN\n    LIB TADAH\n    ALGO ANNEAL_PA\n",
+             /* MULTISTART: BUDGET_PER_START is each start's budget. */
+             "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+             "    N_STARTS 2\n    BUDGET_PER_START 5\n",
+             multistart_body("DLIB", "GFS", "3"),
+             multistart_body("DLIB", "BFGS", "3"),
+             /* The PRESTAGE refinement over TOPK candidates, each with its
+              * share of MAXEVAL. */
+             prestage_body("DLIB", "BFGS", "    TOPK 3\n"),
+             prestage_body("NLOPT", "LN_SBPLX", "    TOPK 3\n"),
+             prestage_body("TADAH", "ANNEAL", "    TOPK 1\n"),
+             /* INNER blocks. */
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n"
+             "    MAXEVAL 20\n    INNER\n      LIB NLOPT\n"
+             "      ALGO LN_BOBYQA\n      MAXEVAL 5\n    ENDINNER\n",
+             "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+             "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
+             "      ALGO G_MLSL_LDS\n      MAXEVAL 12\n      INNER\n"
+             "        LIB NLOPT\n        ALGO LN_SBPLX\n      ENDINNER\n"
+             "    ENDEXPLORE\n"}) {
+        INFO(body);
+        const auto v = judge(strategy_config(body));
+        CHECK(v.startup == "");
+    }
+}
+
+TEST_CASE("startup validation: hpo_run rejects a backend setting of a "
+          "later phase before it loads any data",
+          "[startup_validation][strategy][backend][e2e]")
+{
+    struct ForceRebuild {
+        bool restore = std::getenv("TADAH_HPO_FORCE_REBUILD") == nullptr;
+        ForceRebuild() { if (restore) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1); }
+        ~ForceRebuild() { if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD"); }
+    } force_rebuild;
+
+    SECTION("the PRESTAGE refinement's MAXTIME, before the exploration") {
+        /* The exploration's 3 evaluations used to run first. */
+        const auto err = run_hpo(
+            "OPTIMIZER\n  STRATEGY\n    TYPE PRESTAGE\n"
+            "    EXPLORE\n      LIB TADAH\n      ALGO RANDOM\n"
+            "      MAXEVAL 3\n      SEED 1\n    ENDEXPLORE\n"
+            "    REFINE\n      LIB DLIB\n      ALGO BFGS\n"
+            "      MAXTIME 60\n    ENDREFINE\n  ENDSTRATEGY\nENDOPTIMIZER\n");
+        CHECK_THAT(err, Catch::Contains("DLIB:BFGS does not support MAXTIME"));
+    }
+    SECTION("each MULTISTART start's SEED, instead of a run without an "
+            "evaluation") {
+        const auto err = run_hpo(
+            "OPTIMIZER\n  INIT\n    METHOD RANDOM 2\n    SEED 3\n  ENDINIT\n"
+            "  STRATEGY\n    TYPE MULTISTART\n    LIB DLIB\n    ALGO BFGS\n"
+            "    MAXEVAL 10\n    N_STARTS 2\n    SEED 5\n  ENDSTRATEGY\n"
+            "ENDOPTIMIZER\n");
+        CHECK_THAT(err, Catch::Contains("DLIB:BFGS does not support SEED"));
+    }
+}
