@@ -210,19 +210,6 @@ if(NOT EXISTS ${TADAH_LAMMPS_LIB})
   message(FATAL_ERROR "The ${TADAH_LAMMPS_LIB} does not exist.")
 endif()
 
-#if(TADAH_BUILD_MPI)
-#  string(FIND "${TADAH_LAMMPS_LIB}" "mpi" FOUND_INDEX)
-#  if(${FOUND_INDEX} EQUAL -1)
-#    message(FATAL_ERROR "Error: You are linking the serial LAMMPS library against an MPI-enabled build. Please link the MPI version of #the LAMMPS library.")
-#  endif()
-#else()
-#  string(FIND "${TADAH_LAMMPS_LIB}" "serial" FOUND_INDEX)
-#  if(${FOUND_INDEX} EQUAL -1)
-#    message(FATAL_ERROR "Error: You are linking the MPI-enabled LAMMPS library against a serial build. Please link the serial version #of the LAMMPS library.")
-#
-#  endif()
-#endif()
-
 # add_compile_definitions(TADAH_LAMMPS_LIB=\"${TADAH_LAMMPS_LIB}\")
 
 # Vendored third-party ASA-30.53 (BSD-3, Lester Ingber) -- LIB ASA optimizer
@@ -353,38 +340,14 @@ add_compile_definitions(TADAH_LAMMPS_LIB=\"${_lammps_libname}\")
 # Opt-in MPI for the HPO parallel-annealing drivers (TADAH:ANNEAL_PT /
 # TADAH:ANNEAL_PA): replicas/walkers distribute over ranks, every rank
 # trains locally (plain Trainer) and runs its LAMMPS instances on
-# MPI_COMM_SELF. This is deliberately NARROW -- no ScaLAPACK, no
-# MPI_Trainer, no binary rename -- and mutually exclusive with the
-# legacy TADAH_BUILD_MPI machinery.
+# MPI_COMM_SELF. This is the only MPI build of Tadah: the legacy
+# ScaLAPACK training build (TADAH_BUILD_MPI) was removed in 1.5.1, and
+# cmake-tools rejects that option at configure time.
 option(TADAH_HPO_MPI
   "Distribute TADAH:ANNEAL_PT / ANNEAL_PA replicas over MPI ranks (requires an MPI LAMMPS library)"
   OFF)
-if (TADAH_HPO_MPI AND TADAH_BUILD_MPI)
-  message(FATAL_ERROR
-    "TADAH_HPO_MPI and TADAH_BUILD_MPI are mutually exclusive: the former "
-    "is the narrow parallel-annealing layer, the latter the legacy "
-    "ScaLAPACK-distributed training build. Pick one.")
-endif()
 
-if (TADAH_BUILD_MPI)
-  find_package(MPI REQUIRED)
-  # ScaLAPACK provides BLACS + PBLAS + ScaLAPACK (pdgels_, descinit_, blacs_*, numroc_)
-  find_package(PkgConfig)
-  pkg_check_modules(SCALAPACK QUIET scalapack-mpich scalapack-openmpi scalapack)
-  find_library(SCALAPACK_LIB
-    NAMES scalapack-mpich scalapack-openmpi scalapack
-    PATHS ${SCALAPACK_LIBRARY_DIRS}
-    PATH_SUFFIXES lib lib64)
-  if(SCALAPACK_LIB)
-    target_link_libraries(tadah.hpo PUBLIC ${SCALAPACK_LIB})
-  else()
-    message(FATAL_ERROR
-      "ScaLAPACK library not found. Install e.g. libscalapack-mpich-dev or libscalapack-openmpi-dev.")
-  endif()
-  set_target_properties(tadah.hpo PROPERTIES OUTPUT_NAME "tadah_mpi.hpo")
-  target_link_libraries(tadah.hpo PUBLIC MPI::MPI_CXX)
-  add_compile_definitions(TADAH_BUILD_MPI)
-elseif (TADAH_HPO_MPI)
+if (TADAH_HPO_MPI)
   find_package(MPI REQUIRED COMPONENTS CXX)
   # PUBLIC on tadah.hpo: the `tadah` executable inherits the link and the
   # compile definition transitively -- no Tadah.MLIP CMake change, no

@@ -1,9 +1,10 @@
 #pragma once
 /* hpo_mpi.h -- narrow MPI shim for the parallel annealing drivers
- * (TADAH_HPO_MPI builds). This header and the ANNEAL_PT / ANNEAL_PA
- * drivers are the ONLY places allowed to reference MPI: training stays
- * rank-local (plain Trainer), LAMMPS instances run on MPI_COMM_SELF,
- * and the stale ScaLAPACK TADAH_BUILD_MPI machinery is untouched.
+ * (TADAH_HPO_MPI, the only MPI build of Tadah). Apart from MPI start-up
+ * and shutdown in the `tadah` main(), this header and the ANNEAL_PT /
+ * ANNEAL_PA drivers are the ONLY places allowed to call MPI: training
+ * stays rank-local (plain Trainer) and LAMMPS instances run on
+ * MPI_COMM_SELF.
  *
  * Non-MPI builds get inline no-ops (rank 0 / size 1), so the drivers
  * compile identically with zero MPI dependence and the single-rank

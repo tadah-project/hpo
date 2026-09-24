@@ -591,10 +591,6 @@ template<class P, class R>
 std::mutex HPO_Host<P,R>::bound_occ_mtx_;
 template<class P, class R>
 std::optional<durable_best::Key> HPO_Host<P,R>::g_best_key_;
-#if defined(TADAH_BUILD_MPI)
-template<class P, class R>
-std::mutex          HPO_Host<P,R>::mpi_mutex_;
-#endif
 
 template<class P,class R> typename HPO_Host<P,R>::Queue  HPO_Host<P,R>::g_q_;
 template<class P,class R> std::atomic_flag               HPO_Host<P,R>::writer_token_;
@@ -745,22 +741,10 @@ HPO_Host<P,R>::tls_ws_{};
 
 template<class P, class R>
 thread_local bool HPO_Host<P,R>::tls_trainer_theta_stale_ = false;
-#if defined(TADAH_BUILD_MPI)
-template<class P, class R>
-thread_local tadah::mlip::memory::MLIPWorkspaceManager
-HPO_Host<P,R>::tls_ws2_{};
-#endif
 
-#ifndef TADAH_BUILD_MPI
 template<class P, class R>
 thread_local typename HPO_Host<P,R>::TrainerCache
 HPO_Host<P,R>::tls_trainer_cache_{};
-#endif
-#if defined(TADAH_BUILD_MPI)
-template<class P, class R>
-thread_local typename HPO_Host<P,R>::TrainerHostCache
-HPO_Host<P,R>::tls_trainer_host_cache_{};
-#endif
 
 /* ----------  constructor ---------------------------------------------- */
 template<class P, class R>
@@ -833,7 +817,6 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
         val_stdb_.add(val_ctx);
         n_val_datasets_ = val_stdb_.dbidx.size() > 1 ? val_stdb_.dbidx.size() - 1 : 1;
     }
-#ifndef TADAH_BUILD_MPI
     if (has_train_data_) {
         train_stdb_.add(master_ctx_);
 
@@ -853,7 +836,7 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
      * report_ so ESHIFT_ATOM / ESHIFT_DBATOM derivations on the training set
      * propagate consistently. Without training data report_ is empty, so
      * explicit ESHIFT values from the potential config are forwarded
-     * instead (same policy as the MPI host below). */
+     * instead. */
     if (has_validation_) {
         core::Context vt;
         if (master_ctx_.contains("LSCALE"))
@@ -893,44 +876,6 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
         nnf_.calc(val_stdb_, rcutmax);
     }
     if (has_train_data_) nnf_.calc(train_stdb_, rcutmax);
-#else
-    /* MPI host: training stdb lives on workers; validation stdb lives here.
-     * Global-view transforms (ESHIFT_ATOM, ESHIFT_DBATOM, EWEIGHT_TEMP,
-     * WDBFILE_AUTO) are not yet wired through TrainerHost; we rely on the
-     * fail-fast guard in TrainEngine for those. Explicit ESHIFT/LSCALE on
-     * validation can still be applied. EFILTER/FFILTER from the --validation
-     * file itself are also forwarded; master_ctx_ filters are not. */
-    if (has_validation_) {
-        core::Context vt;
-        if (master_ctx_.contains("LSCALE"))
-            vt.add("LSCALE", master_ctx_.get<std::string>("LSCALE"));
-        if (master_ctx_.contains("ESHIFT") && master_ctx_.size("ESHIFT") > 0) {
-            std::vector<double> es(master_ctx_.size("ESHIFT"));
-            master_ctx_.get<>("ESHIFT", es);
-            for (double e : es) vt.add("ESHIFT", core::to_string(e));
-        }
-        detail::forward_val_filters(vt, val_ctx);
-        const std::size_t n_val_before = val_stdb_.size();
-        val_report_ = mlip::apply_load_transforms(val_stdb_, vt);
-        core::Logger::instance().log(
-            tadah::core::LogLevel::INFO,
-            "Validation set: ", std::to_string(n_val_before),
-            " configs loaded; dropped ",
-            std::to_string(val_report_.n_dropped_energy), " by EFILTER, ",
-            std::to_string(val_report_.n_dropped_force), " by FFILTER; ",
-            std::to_string(val_stdb_.size()), " remain.");
-
-        // Filters preserve dataset identity; an empty segment has no RMSE
-        // and must never disappear or shift subsequent target assignments.
-        if (stats_have_columns()) {
-            for (std::size_t i = 0; i + 1 < val_stdb_.dbidx.size(); ++i)
-                if (val_stdb_.dbidx[i] == val_stdb_.dbidx[i + 1])
-                    throw std::runtime_error("Empty validation dataset " + std::to_string(i + 1)
-                        + " (" + val_ctx.get<std::string>("DBFILE", i) + ") after loading/filtering");
-        }
-        nnf_.calc(val_stdb_, rcutmax);
-    }
-#endif
 
     /* elements check ---------------------------------------------------- */
     if (has_train_data_ && has_validation_) {
@@ -1022,11 +967,7 @@ void HPO_Host<P,R>::update_context(core::Context& ctx,
 template<class P, class R>
 std::size_t HPO_Host<P,R>::train_size() const
 {
-#ifndef TADAH_BUILD_MPI
     return train_stdb_.size();
-#else
-    return 0; // not available on MPI host rank
-#endif
 }
 
 template<class P, class R>
@@ -1894,11 +1835,7 @@ void HPO_Host<P,R>::obs_loss(Result& r) const
   r.v_obs_value.resize(trg_.observables.size());
   r.v_obs_loss.resize(trg_.observables.size());
 
-#if defined(TADAH_BUILD_MPI)
-  auto& cache = tls_trainer_host_cache_;
-#else
   auto& cache = tls_trainer_cache_;
-#endif
 
   const bool have_trainer = cache.trainer && cache.trainer->model;
 
@@ -1955,14 +1892,7 @@ void HPO_Host<P,R>::persist_durable_best(const Result& r) const
 {
     try {
         std::ostringstream payload;
-#if defined(TADAH_BUILD_MPI)
-        /* Legacy distributed training has no complete rank-local training DB;
-         * this matches the historical queue-writer header behaviour. */
-        static const mlip::StructureDB empty_stdb;
-        const mlip::StructureDB& train_ref = empty_stdb;
-#else
         const mlip::StructureDB& train_ref = train_stdb_;
-#endif
         PotHeaderWriter::write_best_header(
             payload, r, trg_, master_ctx_, val_ctx_, train_ref, val_stdb_,
             param_labels_, report_, cw_, prec_);
@@ -2145,18 +2075,9 @@ double HPO_Host<P,R>::operator()(const P& p) const
         const double save_loss = r.loss;
         const double save_wall_ms = static_cast<double>(r.wall_ms.count());
         const int save_fail_band = r.fail.band;
-#ifndef TADAH_BUILD_MPI
         submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
                       train_stdb_, val_stdb_, param_labels_, report_,
                       cw_, prec_);
-#else
-        {
-          static const mlip::StructureDB empty_stdb;
-          submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
-                        empty_stdb, val_stdb_, param_labels_, report_,
-                        cw_, prec_);
-        }
-#endif
         auto& log = HPOLog::instance();
         log.record_eval(save_iter, save_wall_ms, /*nan=*/false);
         _census.done = true;   /* counted here, with the measured wall */
@@ -2173,45 +2094,6 @@ double HPO_Host<P,R>::operator()(const P& p) const
     t_train_start = std::chrono::high_resolution_clock::now();
     /* train ------------------------------------------------------------ */
     stage_watchdog::enter(r.iter, "train");
-#if defined(TADAH_BUILD_MPI)
-    int rank;
-    int ncpu;
-
-    MPI_Comm_size(MPI_COMM_WORLD, &ncpu);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-    // New context file must be communicated to all processes
-    std::vector<char> cs = ctx.serialize();
-    int cs_size = cs.size();
-    MPI_Bcast(&cs_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    MPI_Bcast(cs.data(), cs_size, MPI_CHAR, 0, MPI_COMM_WORLD);
-
-    std::lock_guard<std::mutex> lock(mpi_mutex_);     // serialise MPI
-    {
-        auto& cache = tls_trainer_host_cache_;
-        if (!cache.trainer) {
-            cache.trainer.reset(new (cache.buf) mlip::TrainerHost(ctx, tls_ws_, tls_ws2_));
-        } else {
-            bool needs_rebuild = false;
-            try {
-                update_context(cache.trainer->context, p);
-                needs_rebuild = cache.trainer->reinit();
-            } catch (const std::exception& e) {
-                HPOLog::instance().warning(
-                    std::string("reinit() threw (eval ") + std::to_string(r.iter)
-                    + "): " + e.what() + " -- rebuilding Trainer");
-                needs_rebuild = true;
-            }
-            if (needs_rebuild) {
-                cache.trainer.reset();
-                cache.trainer.reset(new (cache.buf) mlip::TrainerHost(ctx, tls_ws_, tls_ws2_));
-            }
-        }
-        cache.trainer->run();
-        cache.trainer->solve();
-    }
-    mlip::TrainerHost& host = *tls_trainer_host_cache_.trainer;
-#else
     {
         auto& cache = tls_trainer_cache_;
         const bool force_rebuild = std::getenv("TADAH_HPO_FORCE_REBUILD") != nullptr;
@@ -2247,7 +2129,6 @@ double HPO_Host<P,R>::operator()(const P& p) const
         }
     }
     mlip::Trainer& host = *tls_trainer_cache_.trainer;
-#endif
     /* Training succeeded: the trainer cache reflects theta = p again. */
     tls_trainer_theta_stale_ = false;
     t_train_end = std::chrono::high_resolution_clock::now();
@@ -2373,11 +2254,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
 
     if (use_lammps_ && r.loss < trg_.FAIL_SCORE && !skip_bad_pot) {
       stage_watchdog::enter(r.iter, "lammps");
-#ifdef TADAH_BUILD_MPI
-      run_lammps_mpi(r);
-#else
       run_lammps(r);
-#endif
       t_lammps_end = std::chrono::high_resolution_clock::now();
       sims_loss(r);
       t_sims_loss_end = std::chrono::high_resolution_clock::now();
@@ -2575,14 +2452,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
 
     {
     stage_watchdog::Scope<decltype(_stage_log)> _sg_submit(save_iter, "submit_result", _stage_log);
-#ifndef TADAH_BUILD_MPI
     submit_result(std::move(r), trg_, master_ctx_, val_ctx_, train_stdb_, val_stdb_, param_labels_, report_, cw_, prec_);
-#else
-    {
-      static const mlip::StructureDB empty_stdb;
-      submit_result(std::move(r), trg_, master_ctx_, val_ctx_, empty_stdb, val_stdb_, param_labels_, report_, cw_, prec_);
-    }
-#endif
     }
     t_submit_end = std::chrono::high_resolution_clock::now();
 
@@ -2664,16 +2534,9 @@ double HPO_Host<P,R>::operator()(const P& p) const
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
         try {
-#ifndef TADAH_BUILD_MPI
             submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
                           train_stdb_, val_stdb_, param_labels_, report_,
                           cw_, prec_);
-#else
-            static const mlip::StructureDB empty_stdb;
-            submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
-                          empty_stdb, val_stdb_, param_labels_, report_,
-                          cw_, prec_);
-#endif
         } catch (...) { /* swallow -- main shutdown path takes over */ }
         throw;
     } catch (const StagnationStop&) {
@@ -2708,16 +2571,9 @@ double HPO_Host<P,R>::operator()(const P& p) const
             } catch (...) {}
         }
         try {
-#ifndef TADAH_BUILD_MPI
             submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
                           train_stdb_, val_stdb_, param_labels_, report_,
                           cw_, prec_);
-#else
-            static const mlip::StructureDB empty_stdb;
-            submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
-                          empty_stdb, val_stdb_, param_labels_, report_,
-                          cw_, prec_);
-#endif
         } catch (...) {}
         throw;
     } catch (const durable_best::Error& e) {
@@ -2735,16 +2591,9 @@ double HPO_Host<P,R>::operator()(const P& p) const
                 std::to_string(r.iter) + ": " + e.what());
         } catch (...) {}
         try {
-#ifndef TADAH_BUILD_MPI
             submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
                           train_stdb_, val_stdb_, param_labels_, report_,
                           cw_, prec_);
-#else
-            static const mlip::StructureDB empty_stdb;
-            submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
-                          empty_stdb, val_stdb_, param_labels_, report_,
-                          cw_, prec_);
-#endif
         } catch (...) {
             /* Preserve the primary durability exception. The writer's
              * time-based gap recovery remains the last resort if enqueueing
@@ -2769,16 +2618,9 @@ double HPO_Host<P,R>::operator()(const P& p) const
                 "): " + e.what());
         } catch (...) { /* logging must never abort the recovery path */ }
         try {
-#ifndef TADAH_BUILD_MPI
             submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
                           train_stdb_, val_stdb_, param_labels_, report_,
                           cw_, prec_);
-#else
-            static const mlip::StructureDB empty_stdb;
-            submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
-                          empty_stdb, val_stdb_, param_labels_, report_,
-                          cw_, prec_);
-#endif
         } catch (...) {
             /* If the synthetic submit also throws (extremely
              * unlikely), the writer fix from Bug 4 will at worst drop
@@ -2801,16 +2643,9 @@ double HPO_Host<P,R>::operator()(const P& p) const
                 "FAIL_SCORE to keep writer queue contiguous");
         } catch (...) {}
         try {
-#ifndef TADAH_BUILD_MPI
             submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
                           train_stdb_, val_stdb_, param_labels_, report_,
                           cw_, prec_);
-#else
-            static const mlip::StructureDB empty_stdb;
-            submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
-                          empty_stdb, val_stdb_, param_labels_, report_,
-                          cw_, prec_);
-#endif
         } catch (...) {}
         return trg_.FAIL_SCORE;
     }
@@ -3226,11 +3061,6 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
         return fall_back_all_fd();
     }
 
-#if defined(TADAH_BUILD_MPI)
-    /* MPI build: trainer cache layout differs (TrainerHost). Phase 2A
-     * first cut targets the serial / OpenMP path only. */
-    return fall_back_all_fd();
-#else
     auto& cache = tls_trainer_cache_;
     /* tls_trainer_theta_stale_: the bump-gate reject path returned before
      * training, so the cache holds the PREVIOUS feasible theta, not x --
@@ -3507,7 +3337,6 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
         g(static_cast<long>(i)) = g_flat[i];
     emit_grad_diagnostic(prefs, needs_fd, /*cache_miss=*/false);
     return true;
-#endif
 }
 
 /* ---------- one-shot diagnostic for the analytical-gradient pipeline ---
@@ -3665,195 +3494,4 @@ void HPO_Host<P,R>::flush_remaining() const
         [](const std::string& msg) { HPOLog::instance().warning(msg); });
 }
 
-#ifdef TADAH_BUILD_MPI
-template<class P, class R>
-void HPO_Host<P,R>::run_lammps_mpi(Result& r) const {
-
-    if(!use_lammps_) return;
-
-    int rank;
-    int ncpu;
-
-    MPI_Comm_size(MPI_COMM_WORLD, &ncpu);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-
-    const static int CONFIG_TAG = 4;
-    const static int WAIT_TAG = 3;
-    const static int RELEASE_TAG = 2;
-    const static int DATA_TAG = 1;
-    const static int WORK_TAG = 0;
-
-    MPI_Status status;
-
-    const auto &wpkgs = trg_.LS;
-    // LS is sorted
-    std::vector<bool> is_wpkgs_avail(wpkgs.size(), true); // zero index is root
-
-    r.v_outvar.resize(wpkgs.size());
-
-    if (wpkgs[0].ncpu > ncpu - 1) {
-      throw std::runtime_error("Requested LAMMPS simulation size is bigger\n\
-than the total number of workers.\n");
-    }
-    std::vector<int> available_workers;
-    std::vector<int> distribution(
-        ncpu); // This array tracks the jobs assigned to each worker.
-    // zero index is root,
-
-    while (true) {
-      bool has_wpkgs = std::any_of(is_wpkgs_avail.begin(), is_wpkgs_avail.end(),
-                                   [](bool value) { return value; });
-
-      if (!has_wpkgs) {
-        break;
-      }
-
-      MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-      int tag = status.MPI_TAG;
-      int worker = status.MPI_SOURCE;
-
-      if (tag == WORK_TAG) {
-        MPI_Recv(NULL, 0, MPI_INT, worker, tag, MPI_COMM_WORLD, &status);
-
-        auto g_it = std::find(available_workers.begin(), available_workers.end(),
-                            worker);
-        if (g_it == available_workers.end()) { // new worker is available
-          available_workers.push_back(worker);
-          MPI_Send(NULL, 0, MPI_INT, worker, WAIT_TAG, MPI_COMM_WORLD);
-        } else {
-          // release an eager worker as we will select a group of workers here
-          MPI_Send(NULL, 0, MPI_INT, worker, WAIT_TAG, MPI_COMM_WORLD);
-
-          // There are no more new workers available at the moment.
-          // Let's find the biggest job we can fit to them
-          for (int j = 0; j < static_cast<int>(wpkgs.size()); ++j) {
-
-            if (!is_wpkgs_avail[j])
-              continue;
-
-            int job_size = wpkgs[j].ncpu;
-            if (job_size <= static_cast<int>(available_workers.size())) {
-              std::vector<int> granks(available_workers.end() - job_size,
-                                      available_workers.end());
-              for (int w : granks) {
-                distribution[w] = j;
-                MPI_Recv(NULL, 0, MPI_INT, w, WORK_TAG, MPI_COMM_WORLD,
-                         &status);
-                MPI_Send(granks.data(), granks.size(), MPI_INT, w,
-                         WORK_TAG, MPI_COMM_WORLD);
-                available_workers.pop_back();
-                // send wpkgs[j].script
-                MPI_Send(wpkgs[j].script.c_str(), wpkgs[j].script.size() + 1,
-                         MPI_CHAR, w, WORK_TAG, MPI_COMM_WORLD);
-
-                // send wpkgs[j].invar
-                // First, send the number of strings
-                int num_strings = static_cast<int>(wpkgs[j].invar.size());
-                MPI_Send(&num_strings, 1, MPI_INT, w, WORK_TAG,
-                         MPI_COMM_WORLD);
-                // Send each string
-                for (const std::string &message : wpkgs[j].invar) {
-                  int length =
-                      static_cast<int>(message.size()) + 1; // +1 for the null terminator
-                  MPI_Send(&length, 1, MPI_INT, w, WORK_TAG,
-                           MPI_COMM_WORLD);
-                  MPI_Send(message.c_str(), length, MPI_CHAR, w, WORK_TAG,
-                           MPI_COMM_WORLD);
-                }
-
-                // send wpkgs[j].n_outvar
-                // First, send the number of strings
-                num_strings = static_cast<int>(wpkgs[j].n_outvar.size());
-                MPI_Send(&num_strings, 1, MPI_INT, w, WORK_TAG,
-                         MPI_COMM_WORLD);
-                // Send each string
-                for (const std::string &message : wpkgs[j].n_outvar) {
-                  int length = static_cast<int>(message.size()) + 1; // +1 for the null terminator
-                  MPI_Send(&length, 1, MPI_INT, w, WORK_TAG,
-                           MPI_COMM_WORLD);
-                  MPI_Send(message.c_str(), length, MPI_CHAR, w, WORK_TAG,
-                           MPI_COMM_WORLD);
-                }
-
-                // send wpkgs[j].n_varloss
-                // First, send the number of strings
-                num_strings = static_cast<int>(wpkgs[j].n_varloss.size());
-                MPI_Send(&num_strings, 1, MPI_INT, w, WORK_TAG,
-                         MPI_COMM_WORLD);
-                // Send each string
-                for (const std::string &message : wpkgs[j].n_varloss) {
-                  int length = static_cast<int>(message.size()) + 1; // +1 for the null terminator
-                  MPI_Send(&length, 1, MPI_INT, w, WORK_TAG,
-                           MPI_COMM_WORLD);
-                  MPI_Send(message.c_str(), length, MPI_CHAR, w, WORK_TAG,
-                           MPI_COMM_WORLD);
-                }
-
-                // send failscore
-                double fs = wpkgs[j].failscore;
-                MPI_Send(&fs, 1, MPI_DOUBLE, w, WORK_TAG,
-                         MPI_COMM_WORLD);
-              }
-              is_wpkgs_avail[j] = false;
-              break; // break outer for loop
-            }
-          }
-        }
-      } else if (tag == DATA_TAG) {
-        int j = distribution[worker];
-        std::vector<double> v_varloss(wpkgs[j].n_varloss.size());
-        MPI_Recv(v_varloss.data(), static_cast<int>(v_varloss.size()),
-                 MPI_DOUBLE, worker, DATA_TAG, MPI_COMM_WORLD,
-                 MPI_STATUS_IGNORE);
-
-        r.v_outvar[j].resize(wpkgs[j].n_outvar.size());
-        for (std::size_t i = 0; i < wpkgs[j].n_outvar.size(); i++) {
-          int length;
-          MPI_Recv(&length, 1, MPI_INT, worker, DATA_TAG, MPI_COMM_WORLD,
-                   MPI_STATUS_IGNORE);
-          char *buffer = new char[length];
-          MPI_Recv(buffer, length, MPI_CHAR, worker, DATA_TAG, MPI_COMM_WORLD,
-                   MPI_STATUS_IGNORE);
-          r.v_outvar[j][i] = std::string(buffer);
-          delete[] buffer;
-        }
-      }
-    }
-    int count2 = 1;
-    while (true) {
-      MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-      int tag = status.MPI_TAG;
-      int worker = status.MPI_SOURCE;
-
-      if (tag == WORK_TAG) {
-        MPI_Recv(NULL, 0, MPI_INT, worker, WORK_TAG, MPI_COMM_WORLD,
-                 MPI_STATUS_IGNORE);
-        MPI_Send(NULL, 0, MPI_INT, worker, RELEASE_TAG, MPI_COMM_WORLD);
-        count2++;
-      } else if (tag == DATA_TAG) {
-        int j = distribution[worker];
-        std::vector<double> v_varloss(wpkgs[j].n_varloss.size());
-        MPI_Recv(v_varloss.data(), static_cast<int>(v_varloss.size()),
-                 MPI_DOUBLE, worker, DATA_TAG, MPI_COMM_WORLD,
-                 MPI_STATUS_IGNORE);
-
-        r.v_outvar[j].resize(wpkgs[j].n_outvar.size());
-        for (std::size_t i = 0; i < wpkgs[j].n_outvar.size(); i++) {
-          int length;
-          MPI_Recv(&length, 1, MPI_INT, worker, DATA_TAG, MPI_COMM_WORLD,
-                   MPI_STATUS_IGNORE);
-          char *buffer = new char[length];
-          MPI_Recv(buffer, length, MPI_CHAR, worker, DATA_TAG, MPI_COMM_WORLD,
-                   MPI_STATUS_IGNORE);
-          r.v_outvar[j][i] = std::string(buffer);
-          delete[] buffer;
-        }
-      }
-
-      if (count2 == ncpu)
-        break;
-    }
-}
-#endif
 }   // namespace tadah::hpo

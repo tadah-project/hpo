@@ -47,9 +47,6 @@
 #if defined(TADAH_ENABLE_OPENMP)
 #   include <omp.h>
 #endif
-#if defined(TADAH_BUILD_MPI)
-#   include <mpi.h>
-#endif
 
 #include <moodycamel/blockingconcurrentqueue.h>     // moodycamel
 #include <tadah/hpo/hpo_log.h>
@@ -278,9 +275,7 @@ private:
     std::size_t                  n_val_datasets_ = 0;
     const OptimizerSpec &spec_;
     mlip::StructureDB            val_stdb_;
-#ifndef TADAH_BUILD_MPI
     mlip::StructureDB            train_stdb_;
-#endif
     mlip::LoadTransformReport    report_;
     mlip::LoadTransformReport    val_report_;
     bool                         use_lammps_;
@@ -325,9 +320,6 @@ private:
     /** Legacy one-line bound hint for the NaN-clamp log path (compares in
      *  INTERNAL space). The generic audit is bound_occ_ / bound_audit.h. */
     std::string bound_hints(const ParamVec& p) const;
-#if defined(TADAH_BUILD_MPI)
-    void run_lammps_mpi (Result&) const;
-#endif
     void fit_loss(Result&) const;
     void sims_loss(Result&) const;
     /** Render and synchronously publish this completed candidate to the
@@ -399,11 +391,6 @@ private:
                               const mlip::LoadTransformReport& report,
                               std::size_t cw, int prec);
 
-#if defined(TADAH_BUILD_MPI)
-    static std::mutex           mpi_mutex_;
-    static thread_local tadah::mlip::memory::MLIPWorkspaceManager tls_ws2_;
-#endif
-
     /* per thread MLIP workspace ----------------------------------------- */
     static thread_local tadah::mlip::memory::MLIPWorkspaceManager tls_ws_;
 
@@ -415,7 +402,6 @@ private:
     static thread_local bool tls_trainer_theta_stale_;
 
     /* per-thread trainer cache ------------------------------------------ */
-#ifndef TADAH_BUILD_MPI
     struct TrainerDeleter {
         void operator()(mlip::Trainer* p) const noexcept { if (p) p->~Trainer(); }
     };
@@ -433,19 +419,6 @@ public:
         return tls_trainer_cache_.trainer.get();
     }
 private:
-#endif
-#if defined(TADAH_BUILD_MPI)
-    struct TrainerHostDeleter {
-        void operator()(mlip::TrainerHost* p) const noexcept { if (p) p->~TrainerHost(); }
-    };
-    struct TrainerHostCache {
-        alignas(mlip::TrainerHost) unsigned char                   buf[sizeof(mlip::TrainerHost)];
-        std::unique_ptr<mlip::TrainerHost, TrainerHostDeleter>     trainer;
-    };
-    static thread_local TrainerHostCache tls_trainer_host_cache_;
-#endif
-
-
 
     /* formatting -- fixed geometry */
     static constexpr std::size_t iter_cw_   = 12;  // #ITERATION(10) + 2; holds up to 10^6

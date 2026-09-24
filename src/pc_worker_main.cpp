@@ -50,12 +50,13 @@ std::vector<PcScriptSpec> decode_specs(pcwire::Reader& r) {
 }  // namespace
 
 int pc_worker_main(int /*argc*/, char** /*argv*/) {
-#if defined(TADAH_HPO_MPI) || defined(TADAH_BUILD_MPI)
+#ifdef TADAH_HPO_MPI
   /* A fork+exec'd child of an MPI parent must never touch MPI, and the
-   * parent hard-errors on PC_ISOLATION PROCESS in MPI builds -- reaching
+   * parent hard-errors on PC_ISOLATION PROCESS in the MPI build -- reaching
    * this code means something is badly wrong. */
   std::fprintf(stderr,
-               "tadah --tadah-pc-worker: not supported in MPI builds\n");
+               "tadah --tadah-pc-worker: not supported in the MPI build "
+               "(TADAH_HPO_MPI)\n");
   return 2;
 #else
   constexpr int kFd = 3;   /* inherited socketpair end (spawn recipe dup2) */

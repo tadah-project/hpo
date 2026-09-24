@@ -14,12 +14,7 @@
 #include <tadah/mlip/engines/train_engine.h>
 
 #include <tadah/hpo/hpo.h>
-#include <tadah/hpo/hpo_worker.h>
 #include <tadah/hpo/engines/hpo_engine.h>
-
-#ifdef TADAH_BUILD_MPI
-#include <mpi.h>
-#endif
 
 namespace tadah {
 namespace hpo {
@@ -55,67 +50,8 @@ int HPOEngine::run(mlip::Task &task) {
     }
     mlip::StructureDB::check_watom_key(context, unique_elements);
 
-#ifdef TADAH_BUILD_MPI
-    if (!has_train_db) {
-      throw std::runtime_error(
-          "HPO without a training DBFILE is serial-only: there is no design "
-          "matrix to distribute. Use the serial (non-MPI) tadah binary.");
-    }
-    int rank = 0;
-    int ncpu = 1;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &ncpu);
-    // MPI_Status status;
-    MPI_Group world_group;
-    MPI_Comm_group(MPI_COMM_WORLD, &world_group);
-
-    if (rank==0) {
-      if (ncpu<2) {
-        core::Logger::instance().log(
-            tadah::core::LogLevel::ERROR,
-            "Minimum number of cpus for an MPI version is 2");
-        return EXIT_FAILURE;
-      }
-      core::Logger::instance().log(tadah::core::LogLevel::INFO, "Optimising HPs...");
-      status = hpo_run(context);
-
-      // shut all workers
-      int cont=0;
-      MPI_Bcast(&cont, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    }
-    else { // WORKER
-      HPO_Worker hpoWorker(rank, ncpu, world_group);
-
-      tadah::mlip::memory::MLIPWorkspaceManager workspaceManager;
-      tadah::mlip::memory::MLIPWorkspaceManager workspaceManager2;
-      while (true) {
-        int cs_size;
-        MPI_Bcast(&cs_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
-        if (!cs_size)
-          break;
-
-        // Obtain updated config file from the HOST
-        std::vector<char> serialized(cs_size);
-        MPI_Bcast(serialized.data(), cs_size, MPI_CHAR, 0, MPI_COMM_WORLD);
-        core::Context workerContext;
-        workerContext.deserialize(serialized);
-
-        mlip::TrainerWorker worker(workerContext, workspaceManager, workspaceManager2);
-        worker.run();
-        worker.solve();
-
-        // Run LAMMPS
-        if (hpoWorker.use_lammps)
-          hpoWorker.runLammps();
-      } // end of WORKER external while loop
-    }
-    // Free the communicator and groups when done
-    //MPI_Comm_free(&lmp_comm);
-    MPI_Group_free(&world_group);
-#else
     core::Logger::instance().log(tadah::core::LogLevel::INFO, "Optimising HPs...");
     status = hpo_run(context);
-#endif  // TADAH_BUILD_MPI
 
     // core::Logger::instance().log(
     //     tadah::core::LogLevel::ERROR,

@@ -283,18 +283,17 @@ int hpo_run(core::Context& ctx)
         if (pc_mode != "THREAD" && pc_mode != "PROCESS")
             throw std::runtime_error(
                 "PC_ISOLATION must be THREAD or PROCESS, got '" + pc_mode + "'");
-#if defined(TADAH_HPO_MPI) || defined(TADAH_BUILD_MPI)
+#ifdef TADAH_HPO_MPI
         if (pc_mode == "PROCESS") {
             /* A fork+exec'd child of an MPI parent must never touch MPI
-             * (LAMMPS instances need an initialized MPI in these builds).
+             * (LAMMPS instances need an initialized MPI in this build).
              * EXPLICIT requests hard-error; the serial-build DEFAULT of
              * PROCESS quietly falls back to THREAD here. */
             if (pc_mode_explicit)
                 throw std::runtime_error(
-                    "PC_ISOLATION PROCESS is not supported in MPI builds "
-                    "(TADAH_HPO_MPI/TADAH_BUILD_MPI): the worker processes "
-                    "cannot initialize MPI. Use the serial build, or "
-                    "PC_ISOLATION THREAD.");
+                    "PC_ISOLATION PROCESS is not supported in the MPI build "
+                    "(TADAH_HPO_MPI): the worker processes cannot initialize "
+                    "MPI. Use the serial build, or PC_ISOLATION THREAD.");
             pc_mode = "THREAD";
             log.info("PC_ISOLATION: THREAD (MPI build -- the PROCESS worker "
                      "pool is serial-build only)");
@@ -302,7 +301,7 @@ int hpo_run(core::Context& ctx)
 #endif
         (void)pc_mode_explicit;
         if (pc_mode == "PROCESS") {
-#if defined(TADAH_HPO_MPI) || defined(TADAH_BUILD_MPI)
+#ifdef TADAH_HPO_MPI
             /* unreachable: handled above */
 #else
             if (!trg.LS.empty()) {
@@ -338,7 +337,7 @@ int hpo_run(core::Context& ctx)
             }
 #endif
         } else {
-#if !defined(TADAH_HPO_MPI) && !defined(TADAH_BUILD_MPI)
+#ifndef TADAH_HPO_MPI
             /* Serial build running THREAD => it was explicitly requested
              * (the default is PROCESS): always flag the deprecated mode. */
             log.warning("PC_ISOLATION: THREAD (deprecated fallback) -- "

@@ -5,10 +5,6 @@
 #include <vector>
 #include <string>
 
-#ifdef TADAH_BUILD_MPI
-#include <mpi.h>
-#endif
-
 #include <lammps.h>
 #include <input.h>
 #include <variable.h>
