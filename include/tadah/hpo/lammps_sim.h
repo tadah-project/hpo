@@ -84,7 +84,6 @@ class LammpsSim {
     std::vector<double>      w_varloss; /**< Weight for varloss */
     std::vector<size_t>      i_varloss; /**< Map to n_outvar */
 
-    int ncpu = 1; /**< Number of CPUs to be used */
     std::string maxtime; /**< Maximum allowed time for simulation execution */
     double failscore; /**< Score given when a simulation fails */
 
@@ -168,17 +167,6 @@ class LammpsSim {
      * @brief Parses the tokenised command line to set class parameters.
      */
     void parse_tokens();
-
-    /**
-     * @brief Compares two LammpsSim objects based on the number of CPUs.
-     * 
-     * @param lhs Left-hand side LammpsSim object.
-     * @param rhs Right-hand side LammpsSim object.
-     * @return True if lhs uses more CPUs than rhs, otherwise False.
-     */
-    static bool greater(const LammpsSim& lhs, const LammpsSim& rhs) {
-      return lhs.ncpu > rhs.ncpu;
-    }
 
     void prep_script_lines();
 };

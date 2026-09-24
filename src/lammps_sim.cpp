@@ -461,21 +461,12 @@ void LammpsSim::parse_tokens() {
       i = j;
     }
     else if (tokens[i] == "--ncpu") {
-      if (i + 1 < tokens.size()) {
-        ncpu = std::stoi(tokens[++i]);
-        i++;
-#ifndef TADAH_BUILD_MPI
-        if (ncpu > 1) {
-          tadah::core::Logger::instance().log(
-              tadah::core::LogLevel::WARNING,
-              "--ncpu=", ncpu,
-              " has no effect in non-MPI builds; parallelism over pc_lammps "
-              "scripts is controlled by THREADS (the shared worker pool).");
-        }
-#endif
-      } else {
-        throw std::runtime_error("Invalid number of arguments for -ncpu");
-      }
+      /* Rejected, not ignored: an unrecognised option would otherwise be
+       * forwarded to LAMMPS as a command-line argument below. */
+      throw std::runtime_error(
+          "--ncpu was removed in 1.5.1 (legacy MPI build); parallelism over "
+          "PC_LAMMPS scripts is THREADS / PC_ISOLATION. Delete --ncpu from "
+          "this line.");
     }
     else {
       // Otherwise we just push it to invar, as it might be a LAMMPS command line argument

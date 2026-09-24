@@ -81,19 +81,10 @@ void HPOTargets::Opti::resize(size_t s) {
 HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
   models::D_mJoin::expand_grids(context);
 
+  /* LS keeps configuration order: the outvar/loss columns, the
+   * per-evaluation rows and the potential-file header are emitted in LS
+   * order, and failprobe_idx is recorded against it at parse time. */
   read(fn);
-  std::stable_sort(LS.begin(), LS.end(), LammpsSim::greater);
-  /* read() records failprobe_idx against parse order; the sort above
-   * invalidates it. Recover it from the flag carried on the sim itself
-   * (exactly one probe -- enforced at parse). */
-  if (failprobe_idx >= 0) {
-    failprobe_idx = -1;
-    for (std::size_t i = 0; i < LS.size(); ++i)
-      if (LS[i].is_failprobe) { failprobe_idx = static_cast<int>(i); break; }
-    if (failprobe_idx < 0)
-      throw std::runtime_error(
-          "internal: PC_FAILPROBE sim lost during LS ordering");
-  }
   /* ---------- search space ----------------------------------------
    * One SearchSpace from the OPTIM lines (real boxes + per-line shape
    * tags), OPTIM_SCALE and LOG_HP; bound to the outer spec and, below,

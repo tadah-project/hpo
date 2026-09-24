@@ -401,7 +401,6 @@ void PotHeaderWriter::write_loss_section(std::ostream& os,
             const auto& lsim = trg.LS[si];
             std::ostringstream sh;
             sh << "Sim[" << (si + 1) << "]: " << lsim.script
-               << "  ncpu=" << lsim.ncpu
                << "  maxtime=" << lsim.maxtime
                << "  failscore=" << fmt_double(lsim.failscore, 2);
             line(os, sh.str());
