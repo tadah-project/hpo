@@ -56,6 +56,28 @@ std::string read_index_selector(std::istringstream& iss) {
         throw std::runtime_error("Expected whitespace after (indices)");
     return indices;
 }
+
+/* True when a METHOD of the chain draws from the chain's SEED: RANDOM,
+ * LHS and SOBOL. CONFIG and WARM take no random numbers, and an empty
+ * chain falls back to CONFIG. */
+bool chain_draws_from_seed(const InitStrategySpec& ispec) {
+    return std::any_of(ispec.chain.begin(), ispec.chain.end(),
+                       [](const InitStrategySpec::Entry& e) {
+                           return e.method == "RANDOM" || e.method == "LHS" ||
+                                  e.method == "SOBOL";
+                       });
+}
+
+/* "CONFIG, WARM" -- the chain's METHODs -- or "empty -> CONFIG fallback". */
+std::string chain_methods(const InitStrategySpec& ispec) {
+    if (ispec.chain.empty()) return "empty -> CONFIG fallback";
+    std::string m;
+    for (const auto& e : ispec.chain) {
+        if (!m.empty()) m += ", ";
+        m += e.method;
+    }
+    return m;
+}
 }
 
 std::vector<std::string> HPOTargets::parse_optim_line(std::istringstream& iss) {
@@ -208,22 +230,10 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
       HPOLog::instance().warning(oss.str());
     }
     if (s.init_strategy_spec.seed) {
-      const auto& chain = s.init_strategy_spec.chain;
-      const bool seed_consumed = std::any_of(
-          chain.begin(), chain.end(),
-          [](const InitStrategySpec::Entry& e) {
-            return e.method == "RANDOM" || e.method == "LHS" ||
-                   e.method == "SOBOL";
-          });
-      if (!seed_consumed) {
+      if (!chain_draws_from_seed(s.init_strategy_spec)) {
         std::ostringstream oss;
         oss << "INIT[" << where << "]: SEED is set but the strategy chain ("
-            << (chain.empty() ? std::string("empty -> CONFIG fallback")
-                              : [&]{ std::string m;
-                                     for (const auto& e : chain) {
-                                       if (!m.empty()) m += ", ";
-                                       m += e.method;
-                                     } return m; }())
+            << chain_methods(s.init_strategy_spec)
             << ") contains no stochastic method, so the seed does not "
                "affect the starting point. Add METHOD RANDOM/LHS/SOBOL "
                "to randomise it.";
@@ -310,6 +320,22 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
         !spec.prestage->inner->init_strategy_spec.chain.empty())
       resolve_init(*spec.prestage->inner, "PRESTAGE.INNER");
     spec.share_init_with_nested_phases();
+  }
+
+  /* The RESTART block's SEED seeds the METHOD chain that draws each
+   * restart's points (round r with SEED + r, RestartPolicy). Like an INIT
+   * block's SEED, it does nothing without a RANDOM/LHS/SOBOL method; say so,
+   * when the RESTART block is active at all. */
+  if (spec.restart.active() && spec.restart.init_strategy.seed &&
+      !chain_draws_from_seed(spec.restart.init_strategy)) {
+    std::ostringstream oss;
+    oss << "RESTART: SEED is set but the METHOD chain ("
+        << chain_methods(spec.restart.init_strategy)
+        << ") contains no stochastic method, so the seed does not affect "
+           "the restart points. Add METHOD RANDOM/LHS/SOBOL to randomise "
+           "them.";
+    std::cerr << "[HPO] " << oss.str() << "\n";
+    HPOLog::instance().warning(oss.str());
   }
 
   /* Fail fast on the initial-step policy (registry-driven). Seeds vs

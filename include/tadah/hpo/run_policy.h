@@ -369,8 +369,12 @@ private:
  *   - the inner policy returns naturally, or
  *   - max_restarts attempts have been used.
  *
- * The refresh strategy and the host's HPOTargets are captured at
- * build_run_policy() time.
+ * The refresh strategy, its SEED and the host's HPOTargets are captured
+ * at build_run_policy() time. With a SEED in the RESTART block, restart r
+ * draws its points with SEED + r (modulo 2^64), so the restart points of a
+ * run are reproducible; without one each restart draws from
+ * std::random_device. Round 0 does not use the RESTART chain: it starts
+ * from the INIT points.
  *
  * A restart needs StagnationStop to propagate out of the inner policy.
  * Every optimiser adapter lets it through (NLopt, DLIB:GFS and ASA stash
@@ -390,8 +394,9 @@ private:
  * EXPLORE spec SEED + r), so a seeded stochastic optimiser draws new
  * random numbers instead of replaying round 0's; round 0 keeps every SEED.
  * An INNER block has no SEED: its search draws from the enclosing run's
- * random stream. The journal's "RESTART r/MAX" line lists the derived
- * seeds.
+ * random stream. The journal's "RESTART r/MAX" line lists the round's
+ * seeds: the restart points' ("RESTART SEED"), when the RESTART block has
+ * a SEED, then the derived optimiser seeds.
  *
  * When the MAX restarts are used up, the next stagnation ends the run
  * normally, with the trailer "STOPPED -- stagnation, max restarts (MAX)
@@ -407,13 +412,15 @@ public:
                 std::size_t max_restarts,
                 std::unique_ptr<InitStrategy> refresh,
                 const HPOTargets* trg,
-                std::size_t refresh_k = 0)
+                std::size_t refresh_k = 0,
+                std::optional<std::uint64_t> refresh_seed = std::nullopt)
       : inner_(std::move(inner)),
         window_(window),
         max_restarts_(max_restarts),
         refresh_(std::move(refresh)),
         trg_(trg),
-        refresh_k_(refresh_k) {}
+        refresh_k_(refresh_k),
+        refresh_seed_(refresh_seed) {}
 
   void run(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host) override {
     OptimizerSpec cur = spec;
@@ -443,10 +450,20 @@ public:
         ++restarts;
 
         /* Refresh init points. Honour the RESTART block's K_TOTAL when
-         * set; otherwise fall back to each strategy's default_k. */
+         * set; otherwise fall back to each strategy's default_k. The
+         * RESTART block's SEED draws round r's points with SEED + r;
+         * without one they come from std::random_device. */
+        std::optional<std::uint64_t> point_seed;
         if (refresh_ && trg_) {
-          std::random_device rd;
-          InitContext ic{cur, *trg_, static_cast<std::uint64_t>(rd()) + restarts};
+          std::uint64_t seed = 0;
+          if (refresh_seed_) {
+            seed = *refresh_seed_ + static_cast<std::uint64_t>(restarts);
+            point_seed = seed;
+          } else {
+            std::random_device rd;
+            seed = static_cast<std::uint64_t>(rd()) + restarts;
+          }
+          InitContext ic{cur, *trg_, seed};
           const std::size_t k_use = (refresh_k_ > 0) ? refresh_k_
                                                      : refresh_->default_k();
           auto pts = refresh_->generate(ic, k_use);
@@ -465,7 +482,7 @@ public:
           oss << "RESTART " << restarts << "/" << max_restarts_
               << " -- fresh init from "
               << (refresh_ ? refresh_->name() : std::string("(none)"));
-          const std::string seeds = describe_seeds(cur);
+          const std::string seeds = describe_seeds(point_seed, cur);
           if (!seeds.empty()) oss << "; " << seeds;
           std::cout << "[HPO] " << oss.str() << "\n";
           HPOLog::instance().info(oss.str());
@@ -475,9 +492,12 @@ public:
   }
 
 private:
-  /* "SEED 6, EXPLORE SEED 1718": the seeds of the phases that have one
-   * (an INNER block has none); empty when none has. */
-  static std::string describe_seeds(const OptimizerSpec& s)
+  /* "RESTART SEED 43, SEED 6, EXPLORE SEED 1718": the seed the round's
+   * points were drawn with, when the RESTART block has a SEED, then the
+   * seeds of the phases that have one (an INNER block has none); empty
+   * when there is none. */
+  static std::string describe_seeds(
+      const std::optional<std::uint64_t>& point_seed, const OptimizerSpec& s)
   {
     std::ostringstream oss;
     const char* sep = "";
@@ -487,6 +507,7 @@ private:
       oss << sep << phase << "SEED " << *seed;
       sep = ", ";
     };
+    add("RESTART ", point_seed);
     add("", s.seed);
     if (s.prestage) add("EXPLORE ", s.prestage->seed);
     return oss.str();
@@ -497,6 +518,7 @@ private:
   std::unique_ptr<InitStrategy> refresh_;
   const HPOTargets* trg_;
   std::size_t refresh_k_ = 0;   // 0 => use refresh_->default_k()
+  std::optional<std::uint64_t> refresh_seed_;   // RESTART SEED; none => random_device
 };
 
 /* ----------------------------------------------------------------------
@@ -550,7 +572,8 @@ build_run_policy(const OptimizerSpec& spec, const HPOTargets* targets = nullptr)
         rs.max,
         std::move(refresh),
         targets,
-        refresh_k);
+        refresh_k,
+        rs.init_strategy.seed);
   }
   return inner;
 }

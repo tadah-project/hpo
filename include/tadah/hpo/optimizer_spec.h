@@ -111,7 +111,8 @@ struct MultiStartSpec {
 struct RestartSpec {
     std::size_t after_stagnation = 0;              // 0 disables
     std::size_t max              = 0;              // cap on restart count
-    InitStrategySpec init_strategy;                // INIT chain to refresh on restart
+    InitStrategySpec init_strategy;                // INIT chain to refresh on restart;
+                                                   // its SEED draws round r with SEED + r
 
     /* RESTART takes effect only when both AFTER_STAGNATION and MAX are
      * positive. The one rule for build_run_policy() and for the
