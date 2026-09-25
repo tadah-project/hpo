@@ -6,11 +6,7 @@
 
 namespace tadah::hpo {
 
-bool loss_grad_wrt_observed(const tadah::LossFunction& fn,
-                            double v_observed,
-                            double t_target,
-                            double w_weight,
-                            double& out)
+bool loss_has_derivative_wrt_observed(const tadah::LossFunction& fn)
 {
     using Type = tadah::LossFunction::Type;
     switch (fn.type()) {
@@ -20,7 +16,6 @@ bool loss_grad_wrt_observed(const tadah::LossFunction& fn,
         case Type::LOG_COSH:
         case Type::HUBER:
         case Type::TUKEY:
-            out = -fn.loss_prime(v_observed, t_target, w_weight);
             return true;
         /* Non-residual: MAPE depends on |y|, RMSLE on log(y); the
          * "negate loss_prime" trick doesn't hold. Phase 3.7+ can
@@ -30,6 +25,17 @@ bool loss_grad_wrt_observed(const tadah::LossFunction& fn,
             return false;
     }
     return false;
+}
+
+bool loss_grad_wrt_observed(const tadah::LossFunction& fn,
+                            double v_observed,
+                            double t_target,
+                            double w_weight,
+                            double& out)
+{
+    if (!loss_has_derivative_wrt_observed(fn)) return false;
+    out = -fn.loss_prime(v_observed, t_target, w_weight);
+    return true;
 }
 
 void apply_ift_chain_kernel(const Eigen::VectorXd& dg_dW,
@@ -276,13 +282,15 @@ bool compute_observables_grad_dWchain(
 
     for (const auto& obs : observables) {
         /* Phase A masking: provider-marked failure (relaxer diverged,
-         * NaN value, ...). Skip. dFAIL_SCORE/dtheta = 0. */
-        if (obs.failed) continue;
+         * NaN value, ...) or a constant value. Skip. dFAIL_SCORE/dtheta =
+         * d(const)/dtheta = 0. */
+        if (obs.failed || obs.constant) continue;
 
-        if (obs.needs_adjoint) {
+        if (obs.needs_adjoint || obs.dO_dW.size() == 0) {
             /* MVP only wires the closed-form (needs_adjoint=false)
              * path. LatticeParamObservable et al. will lift this once
-             * the IFT-adjoint seam threads through. */
+             * the IFT-adjoint seam threads through. An empty dO/dW is a
+             * value without an analytical derivative. */
             for (int idx : all_theta_indices) needs_fd_out.push_back(idx);
             return false;
         }
@@ -301,6 +309,27 @@ bool compute_observables_grad_dWchain(
         }
         apply_dWdtheta_chain(dL_dW, dWdtheta, n_cols,
                              theta_row_to_g_idx, stage);
+
+        /* The value's own dependence on theta at fixed weights. */
+        if (!obs.dO_dtheta_explicit.empty()) {
+            if (obs.dO_dtheta_explicit.size() != theta_row_to_g_idx.size())
+                throw std::runtime_error(
+                    "compute_observables_grad_dWchain: dO_dtheta_explicit "
+                    "size != number of theta rows");
+            double dL_dO = 0.0;
+            loss_grad_wrt_observed(obs.loss_fn, obs.value, obs.target,
+                                   obs.weight, dL_dO);  // supported: folded above
+            for (std::size_t r = 0; r < theta_row_to_g_idx.size(); ++r) {
+                const int g_idx = theta_row_to_g_idx[r];
+                if (g_idx < 0) continue;
+                if (g_idx >= static_cast<int>(stage.size()))
+                    throw std::runtime_error(
+                        "compute_observables_grad_dWchain: theta_row_to_g_idx "
+                        "maps outside g_out");
+                stage[static_cast<std::size_t>(g_idx)] +=
+                    dL_dO * obs.dO_dtheta_explicit[r];
+            }
+        }
     }
 
     /* Commit. */

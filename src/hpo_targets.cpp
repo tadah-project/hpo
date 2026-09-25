@@ -5,6 +5,7 @@
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_block.h>
 #include <tadah/hpo/pc_worker_pool.h>
+#include <tadah/hpo/phase_specs.h>
 #include <tadah/hpo/scale_validation.h>
 #include <tadah/hpo/strategy_rules.h>
 #include <tadah/hpo/strict_parse.h>
@@ -1261,45 +1262,75 @@ void HPOTargets::read(const std::string& fn)
         }
     }
 
-    /* PC_OBSERVABLE always engages the analytical gradient path. The
-     * MVP's only observable (cohesive_energy) provides closed-form
-     * dO/dW; combined with the Phase 2 fit-side walker, every theta has an
-     * analytical chain entry. NUMERICAL with PC_OBSERVABLE would run
-     * Ceres finite differences over the whole HPO objective -- correct
-     * but slow, and contrary to the redesign's purpose. Reject it at
-     * parse time with a clear message. ANALYTICAL and HYBRID are both
-     * accepted; HYBRID's masked-FD fallback never fires for
-     * PC_OBSERVABLE (every theta is registered), so the two strategies
-     * are observationally identical here. */
+    /* PC_OBSERVABLE is built for the analytical gradient path: its only
+     * observable (cohesive_energy) provides closed-form dO/dW and the
+     * descriptors of its structures, and the fit-side walker differentiates
+     * the refit. NUMERICAL with PC_OBSERVABLE would run finite differences
+     * over the whole HPO objective -- correct but slow, and contrary to the
+     * redesign's purpose. Reject it at parse time with a clear message.
+     * ANALYTICAL and HYBRID are both accepted; HYBRID differs only where
+     * the analytical gradient is unavailable (a parameter without a
+     * registered derivative, a model setting the analytical gradient does
+     * not cover), which it fills with finite differences. */
     auto reject_numerical_with_observable =
-        [&](const OptimizerSpec& sp, const char* tag) {
+        [&](const OptimizerSpec& sp, const char* tag, bool inner) {
             if (sp.grad_strategy
                 && *sp.grad_strategy == GradStrategy::Numerical) {
                 throw std::runtime_error(
                     std::string("--hpotarget defines PC_OBSERVABLE but ")
                     + tag + " GRAD_STRATEGY=NUMERICAL is set. PC_OBSERVABLE "
-                    "always uses analytical gradients. Set GRAD_STRATEGY "
-                    "to HYBRID or ANALYTICAL (they're equivalent for "
-                    "PC_OBSERVABLE), or drop the GRAD_STRATEGY line "
-                    "entirely.");
+                    "is built for the analytical gradient: use GRAD_STRATEGY "
+                    "ANALYTICAL (an unset GRAD_STRATEGY resolves to it in a "
+                    "block that obtains gradients; it needs the settings of "
+                    "the analytical gradient, such as OALGO 4 with a fixed "
+                    "LAMBDA >= 0, and startup names a missing one) or "
+                    "GRAD_STRATEGY HYBRID, which uses finite differences "
+                    "where the analytical gradient is unavailable." +
+                    std::string(inner
+                        ? " An INNER block's GRAD_STRATEGY does not apply: its "
+                          "search takes the gradients of the block it belongs "
+                          "to, so remove this line and set GRAD_STRATEGY "
+                          "there."
+                        : ""));
             }
         };
     /* Every block that configures an optimiser: the STRATEGY-level one
      * (under PRESTAGE the refinement) and its INNER block, and the PRESTAGE
      * EXPLORE block and its INNER block. The rules below hold for each:
      * the exploration evaluates the same loss. */
-    std::vector<std::pair<const OptimizerSpec*, const char*>> optimiser_blocks =
-        {{&spec, "OPTIMIZER's"}};
-    if (spec.inner) optimiser_blocks.push_back({spec.inner.get(), "INNER's"});
+    struct OptimiserBlock { OptimizerSpec* sp; const char* tag; bool inner; };
+    std::vector<OptimiserBlock> optimiser_blocks = {{&spec, "OPTIMIZER's", false}};
+    if (spec.inner)
+        optimiser_blocks.push_back({spec.inner.get(), "INNER's", true});
     if (spec.prestage) {
-        optimiser_blocks.push_back({spec.prestage.get(), "EXPLORE's"});
+        optimiser_blocks.push_back({spec.prestage.get(), "EXPLORE's", false});
         if (spec.prestage->inner)
             optimiser_blocks.push_back(
-                {spec.prestage->inner.get(), "EXPLORE INNER's"});
+                {spec.prestage->inner.get(), "EXPLORE INNER's", true});
     }
     if (!observables.empty())
-        for (const auto& [sp, tag] : optimiser_blocks)
-            reject_numerical_with_observable(*sp, tag);
+        for (const auto& b : optimiser_blocks)
+            reject_numerical_with_observable(*b.sp, b.tag, b.inner);
+
+    /* ...and an unset GRAD_STRATEGY, which means NUMERICAL, resolves to
+     * ANALYTICAL in each block that runs an optimiser and obtains gradients
+     * (obtains_gradients: a gradient-based backend, or an MLSL/AUGLAG whose
+     * local search is one) -- the STRATEGY-level block and EXPLORE.
+     * grad_strategy_resolved puts it in the journal. An INNER block runs
+     * no optimiser of its own: MLSL and AUGLAG hand their local search the
+     * gradient of their own objective, which the enclosing block's
+     * GRAD_STRATEGY obtains (nlopt_adapter.h), so an INNER block is left
+     * as written. The derivative-free blocks are left alone too: they
+     * never ask for a gradient, and ANNEAL and ASA reject any
+     * GRAD_STRATEGY. */
+    if (!observables.empty()) {
+        for (const auto& b : optimiser_blocks) {
+            if (b.inner || b.sp->grad_strategy || !obtains_gradients(*b.sp))
+                continue;
+            b.sp->grad_strategy = GradStrategy::Analytical;
+            b.sp->grad_strategy_resolved = true;
+        }
+    }
 
     /* PC_LAMMPS: gradient-support dropped 2026-05-13.
      *
@@ -1342,8 +1373,8 @@ void HPOTargets::read(const std::string& fn)
             }
         };
     if (!LS.empty())
-        for (const auto& [sp, tag] : optimiser_blocks)
-            reject_pc_lammps_grad(*sp, tag);
+        for (const auto& b : optimiser_blocks)
+            reject_pc_lammps_grad(*b.sp, b.tag);
 }
 
 double HPOTargets::parse_pc_worker_timeout(const std::string& token,

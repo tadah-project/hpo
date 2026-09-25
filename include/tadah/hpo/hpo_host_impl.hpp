@@ -1,6 +1,7 @@
 #pragma once
 #include <tadah/core/core_user_config_parser.h>
 #include <tadah/hpo/probe_phase.h>
+#include <tadah/hpo/column_titles.h>
 #include <tadah/hpo/log_index.h>
 #include <tadah/core/intercept_layout.h>
 #include <tadah/core/logger.h>
@@ -234,6 +235,9 @@ namespace header_detail {
     }
     return name;   /* unreachable in practice */
   }
+
+  /* fit_keep_index, which keeps the index of a label that does not fit,
+   * lives in column_titles.h: the journal names the columns with it. */
 }  // namespace header_detail
 
 
@@ -307,12 +311,13 @@ void HPO_Host<P,R>::init_loss(const std::string& fn) const
                                               seen_loss) + ")";
   }
 
-  /* PC_OBSERVABLE columns: one L(<kind>[k]) per observable. The k
-   * index disambiguates multiple entries of the same kind (e.g. two
-   * cohesive_energy observables for different species). */
+  /* PC_OBSERVABLE columns: L(<tag>)[k] for the k-th PC_OBSERVABLE line
+   * (1-based, configuration order), like the per-dataset L(ERMSE)[i]; the
+   * index tells entries of the same kind apart. L(Ecoh)[99] fits the
+   * narrowest column; a longer label keeps its index. */
   for (std::size_t k = 0; k < trg_.observables.size(); ++k) {
-    const std::string label = "L(" + trg_.observables[k]->kind() + "["
-                            + std::to_string(k) + "])";
+    const std::string label = header_detail::fit_keep_index(
+        observable_loss_label(*trg_.observables[k], k + 1), max_title_len_);
     f << std::setw(cw_)
       << header_detail::unique_label(label, max_title_len_, seen_loss);
   }
@@ -347,10 +352,10 @@ void HPO_Host<P,R>::init_outvar(const std::string& fn) const
       f << std::setw(cw_)
         << header_detail::unique_label(n_outvar, max_title_len_, seen_outvar);
   }
-  /* PC_OBSERVABLE values: <kind>[k] for each observable. */
+  /* PC_OBSERVABLE values: <tag>[k] for the k-th PC_OBSERVABLE line. */
   for (std::size_t k = 0; k < trg_.observables.size(); ++k) {
-    const std::string label = trg_.observables[k]->kind() + "["
-                            + std::to_string(k) + "]";
+    const std::string label = header_detail::fit_keep_index(
+        observable_value_label(*trg_.observables[k], k + 1), max_title_len_);
     f << std::setw(cw_)
       << header_detail::unique_label(label, max_title_len_, seen_outvar);
   }
@@ -374,22 +379,11 @@ void HPO_Host<P,R>::init_params(const std::string& fn) const
   std::set<std::string> seen_params;
   for (const auto &lbl : param_labels_) {
     /* Keep the INDEX when the label does not fit -- it is the part that
-     * distinguishes the columns. Plain truncation would cut "AMPGRIDMB[12]"
-     * down to "AMPGRIDMB[*" for every member of the family, leaving the
-     * collision resolver to number them ~2, ~3, ... which is unique but
-     * says nothing. Compressing the family name instead gives
-     * "AMPGRID*[12]": still unambiguous, and still readable as index 12. */
-    std::string shown = lbl;
-    if (shown.size() > max_title_len_) {
-      const std::size_t br = shown.rfind('[');
-      if (br != std::string::npos && br > 0) {
-        const std::string idx = shown.substr(br);          /* "[12]" */
-        if (idx.size() + 2 <= max_title_len_)
-          shown = shown.substr(0, max_title_len_ - idx.size() - 1) + "*" + idx;
-      }
-    }
+     * distinguishes the columns ("AMPGRID*[12]"). */
     f << std::setw(cw_)
-      << header_detail::unique_label(shown, max_title_len_, seen_params);
+      << header_detail::unique_label(
+             header_detail::fit_keep_index(lbl, max_title_len_),
+             max_title_len_, seen_params);
   }
   f << std::endl;
 }
@@ -758,8 +752,8 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                    && master_ctx_.size("DBFILE") > 0 )
 , has_validation_( !val_cfg.empty() )
 , prec_(trg.outputDigits)
-, cw_(static_cast<std::size_t>(std::max(prec_ + 9, static_cast<int>(min_cw_))))
-, max_title_len_(cw_ - 4)
+, cw_(column_width(prec_))
+, max_title_len_(column_title_budget(prec_))
 {    /* Arm the bound-occupancy audit on this run's search space (a pure
      * function of the config, so re-arming on every host construction is
      * idempotent across policies). */
@@ -2403,8 +2397,9 @@ double HPO_Host<P,R>::operator()(const P& p) const
             }
             /* PC_OBSERVABLE (D4c) -- typed observable contributions to
              * the top-breakdown. Symmetric with the PC_LAMMPS loop
-             * above: pull r.v_obs_loss[k] keyed by trg_.observables[k]'s
-             * kind() label. Without this, the journal's "top:" line
+             * above: pull r.v_obs_loss[k], named <kind>[k] (1-based) as
+             * in the journal's loss section, so two terms of one kind
+             * stay apart. Without this, the journal's "top:" line
              * silently omits cohesive_energy and similar observables,
              * leaving users wondering whether their PC_OBSERVABLE
              * weight is even being applied. */
@@ -2414,9 +2409,9 @@ double HPO_Host<P,R>::operator()(const P& p) const
                 const double v = r.v_obs_loss[k];
                 if (!(v > 0.0)) continue;
                 const auto& obs_ptr = trg_.observables[k];
-                std::string lbl = obs_ptr ? obs_ptr->kind()
-                                          : std::string("obs[")
-                                            + std::to_string(k) + "]";
+                std::string lbl = obs_ptr
+                    ? observable_journal_label(*obs_ptr, k + 1)
+                    : std::string("obs[") + std::to_string(k + 1) + "]";
                 comps.push_back({std::move(lbl), v});
             }
             std::sort(comps.begin(), comps.end(),
@@ -3040,23 +3035,23 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
         return true;
     };
 
-    /* No training data (weights provisioned from FIXWEIGHT), or FIXINDEX
-     * present: the IFT orchestrator assumes the unconstrained ridge
-     * solution map, which partial fixing invalidates (the free weights
-     * solve a reduced system against T_r = T - Phi_f * w_f). Route every
-     * theta onto the masked-FD path. Closed-form dL/dFIXWEIGHT and a
-     * fixed-aware IFT are follow-ups. */
-    if (!has_train_data_ || master_ctx_.contains("FIXINDEX")) {
+    /* A setup the analytical gradient does not cover (analytical_gate.h):
+     * e.g. no training data (weights provisioned from FIXWEIGHT) or
+     * FIXINDEX present -- the IFT orchestrator assumes the unconstrained
+     * ridge solution map, which partial fixing invalidates (the free
+     * weights solve a reduced system against T_r = T - Phi_f * w_f;
+     * closed-form dL/dFIXWEIGHT and a fixed-aware IFT are follow-ups) --
+     * or OALGO other than 4. Route every theta onto the masked-FD path
+     * (HYBRID). validate_hpo_setup refuses GRAD_STRATEGY ANALYTICAL on
+     * such a setup, so in a run only HYBRID gets here. */
+    if (const std::string why =
+            analytical_gradient_blocker(master_ctx_, trg_, has_train_data_);
+        !why.empty()) {
         static std::once_flag warn_once;
-        std::call_once(warn_once, [this]{
+        std::call_once(warn_once, [&why]{
             HPOLog::instance().warning(
-                has_train_data_
-                ? "FIXINDEX present: analytical/IFT gradients assume the "
-                  "unconstrained LS solution map, so all parameters use "
-                  "finite differences for this run."
-                : "No training DBFILE: analytical/IFT gradients need live "
-                  "Phi/T, so all parameters use finite differences for "
-                  "this run.");
+                "No analytical gradient for this setup: " + why +
+                "; every parameter uses finite differences in this run.");
         });
         return fall_back_all_fd();
     }
@@ -3159,6 +3154,8 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                     inputs[k].weight        = obs_ptr->weight();
                     inputs[k].loss_fn       = obs_ptr->lossfn();
                     inputs[k].needs_adjoint = res.needs_adjoint;
+                    inputs[k].constant      = res.value_is_constant;
+                    inputs[k].energy_terms  = std::move(res.energy_terms);
                     inputs[k].dO_dW.resize(static_cast<long>(res.dO_dW.size()));
                     for (std::size_t c = 0; c < res.dO_dW.size(); ++c)
                         inputs[k].dO_dW(static_cast<long>(c)) = res.dO_dW[c];
@@ -3374,14 +3371,8 @@ void HPO_Host<P,R>::emit_grad_diagnostic(
     const std::size_t n_fd    = needs_fd.size();
     const std::size_t n_anal  = n_total - n_fd;
 
-    const char* strat_name = "NUMERICAL";
-    if (spec_.grad_strategy) {
-        switch (*spec_.grad_strategy) {
-          case GradStrategy::Numerical:  strat_name = "NUMERICAL";  break;
-          case GradStrategy::Analytical: strat_name = "ANALYTICAL"; break;
-          case GradStrategy::Hybrid:     strat_name = "HYBRID";     break;
-        }
-    }
+    const char* strat_name = grad_strategy_name(
+        spec_.grad_strategy.value_or(GradStrategy::Numerical));
 
     std::ostringstream oss;
     oss << "Gradient-pipeline diagnostic (first eval): "
@@ -3401,9 +3392,9 @@ void HPO_Host<P,R>::emit_grad_diagnostic(
                "optimiser keeps making progress. Raise LAMBDA or "
                "switch to GRAD_STRATEGY=NUMERICAL to silence this]";
     } else if (n_total > 0 && n_fd == n_total) {
-        oss << "  [gate fall-back: every theta routed to FD. Check "
-               "STRESS/NORM/OALGO/LAMBDA/MODEL[1]/use_srmse/PC_LAMMPS "
-               "restrictions in compute_analytical_gradient_from_trainer]";
+        oss << "  [every theta routed to FD: none has an analytical "
+               "derivative here (no registered derivative, or a loss term "
+               "without one)]";
     }
     if (n_fd > 0 && n_fd < n_total) {
         oss << "\n  FD-fallback theta:";

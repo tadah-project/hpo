@@ -51,6 +51,7 @@
 
 #include <tadah/core/core_types.h>
 #include <tadah/core/intercept_layout.h>
+#include <tadah/hpo/analytical_gate.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/sims_grad.h>
@@ -234,9 +235,12 @@ struct DLossDThetaPlan {
      *  obtain dL/dmetric for the outer chain step. */
     MetricValues                             metrics{};
 
-    /** Number of active loss components -- matches r.loss_count. The
-     *  orchestrator divides the assembled g by this at the end so the
-     *  result matches r.loss = r.loss_sum / loss_count. */
+    /** Number of loss terms the host averages -- matches r.loss_count:
+     *  the active validation metrics, and every PC_OBSERVABLE line and
+     *  PC_LAMMPS varloss term. The orchestrator divides the assembled g
+     *  by this at the end so the result matches r.loss = r.loss_sum /
+     *  loss_count; the observable and LAMMPS chains added afterwards are
+     *  divided by it too. */
     std::size_t                              loss_count = 0;
 
     /** Param-ref table built by make_param_ref_table. Size == g.size(). */
@@ -591,16 +595,18 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
     const auto& pred    = *plan.pred_val;
     const std::size_t n_cols = static_cast<std::size_t>(plan.factor->n);
 
-    /* Validate phi_val presence when at least one theta is analytical.
-     * If the chain rule is trivial (Phi_val . dW = 0 everywhere) the
-     * caller can still pass phi_val=nullptr; we'd then only chain
-     * through dPhi_val . W. But that's an edge case and an explicit
-     * pointer check catches the more common omission. */
+    /* Validate phi_val presence when at least one theta is analytical
+     * and there are validation rows to chain through (a run without a
+     * validation set -- PC_OBSERVABLE alone -- has none, and no metric to
+     * differentiate). If the chain rule is trivial (Phi_val . dW = 0
+     * everywhere) the caller can still pass phi_val=nullptr; we'd then
+     * only chain through dPhi_val . W. But that's an edge case and an
+     * explicit pointer check catches the more common omission. */
     bool any_analytical = false;
     for (const auto& pt : *plan.per_theta) {
         if (pt.dPhi_train_aug != nullptr) { any_analytical = true; break; }
     }
-    if (any_analytical && !plan.phi_val)
+    if (any_analytical && plan.n_val_rows > 0 && !plan.phi_val)
         throw std::runtime_error(
             "compute_dloss_dtheta: phi_val missing -- required for the "
             "Phi_val . dW/dtheta term in the metric chain rule.");
@@ -869,43 +875,25 @@ compute_analytical_gradient_from_trainer(
     if (!trg.LS.empty() && !sims_grad_provider)
         return fall_back_all_fd();
 
-    /* Phase 2C (C-step) lifts FORCE=true for the training-side Phi
-     * (force rows in Phi_train_aug feed the IFT, fitting W* against
-     * energy+force targets). Validation-side Phi remains energy-only
-     * unless use_frmse or use_srmse is also lifted (separate sub-steps).
-     * STRESS=true still falls back -- separate sub-step. */
-    if (ctx.template get<bool>("STRESS"))
+    /* The settings the analytical gradient covers (analytical_gate.h, the
+     * rule validate_hpo_setup applies to GRAD_STRATEGY ANALYTICAL):
+     *   - training data with every weight fitted;
+     *   - STRESS false, no PC_SRMSE: stress rows (a position factor
+     *     (ri[x] - rj[x]) in the Phi row) are a separate sub-step;
+     *     FORCE=true is supported on the train side (Phase 2C C-step) and,
+     *     for PC_FRMSE, on the validation side (C-val);
+     *   - NORM false, OALGO 4 with a fixed LAMBDA >= 0;
+     *   - MODEL[1] BF_Linear or Kern_Linear. Phase 2A restricted Phi
+     *     assembly to BF_Linear (Phi[s, c] = sum_atoms aed_a[c]); Phase 2B
+     *     (B-HPO) extends to Kern_Linear: DM_Kern_Linear::calc_phi_energy_row
+     *     reduces to the same sum-of-AEDs Phi, and EKM projection is skipped
+     *     for Kern_Linear in M_KRR_Train::train1. Non-linear kernels
+     *     (Kern_RBF / Kern_Polynomial / Kern_Sigmoid) need a kernel-arm
+     *     walker and dEKM/dtheta -- deferred to Phase 2C (the kernel-arm
+     *     walker, assemble_dphi_train_energy_rows_d2_kern in MLIP, is
+     *     exercised by Layer-1.5 parity tests but not consumed here). */
+    if (!analytical_gradient_blocker(ctx, trg, train_stdb.size() > 0).empty())
         return fall_back_all_fd();
-    if (ctx.template get<bool>("NORM"))
-        return fall_back_all_fd();
-    if (ctx.template get<int>("OALGO", 0) != 4)
-        return fall_back_all_fd();
-    {
-        const double lambda = ctx.template get<double>("LAMBDA", 0);
-        if (std::abs(lambda + 1.0) < std::numeric_limits<double>::min())
-            return fall_back_all_fd();
-        if (lambda < 0.0) return fall_back_all_fd();
-    }
-    {
-        /* Phase 2A first cut restricted Phi assembly to BF_Linear (Phi[s, c] =
-         * sum_atoms aed_a[c]). Phase 2B (B-HPO) extends to Kern_Linear:
-         * DM_Kern_Linear::calc_phi_energy_row reduces to the same sum-of-AEDs
-         * Phi, and EKM projection is skipped for Kern_Linear in
-         * M_KRR_Train::train1 (`if (kernel.get_label() != "Kern_Linear")
-         * ekm.project(Phi)`). Weights are in descriptor-space for both
-         * MODEL[1] values, so the existing chain rule applies byte-for-byte.
-         *
-         * Non-linear kernels (Kern_RBF / Kern_Polynomial / Kern_Sigmoid) still
-         * fall back to FD: their Phi is `sum_atoms K(basis_b, aed_a)` and the
-         * trainer always applies EKM projection, so the analytical chain
-         * requires both a kernel-arm walker and the dEKM/dtheta derivative --
-         * deferred to Phase 2C. The kernel-arm walker landed alongside this
-         * gate lift (assemble_dphi_train_energy_rows_d2_kern in MLIP) and is
-         * exercised by Layer-1.5 parity tests, but is not consumed here. */
-        const std::string bf_label = ctx.template get<std::string>("MODEL", 1);
-        if (bf_label != "BF_Linear" && bf_label != "Kern_Linear")
-            return fall_back_all_fd();
-    }
 
     /* Rebuild phi_train_aug from train_stdb + dc.calc rather than
      * reading host.dm.getPhi(). Trainer::dm is *not* populated by
@@ -1036,20 +1024,13 @@ compute_analytical_gradient_from_trainer(
 
     if (profile_grad) t_chol = clk::now();
 
-    /* use_srmse still falls back -- stress chain rule deferred to a later
-     * Phase 2B sub-step (C-stress) because the Phi stress row carries a
-     * position factor (ri[x] - rj[x]) that needs separate handling. */
-    if (trg.use_srmse) return fall_back_all_fd();
-
     /* Validation Phi layout. Per-struct interleaved when use_frmse is
      * active (mirrors the train-side layout): 1 energy row + 3.natoms
      * force rows per struct. When use_frmse is off, a single energy row
      * per struct (energy_row_for_struct_val[s] == s -- preserves the
      * Phase 2A scalar layout). use_frmse requires ctx.FORCE=true so the
-     * walker on val_stdb has fd_ij populated; if FORCE=false the gate
-     * falls back. */
+     * walker on val_stdb has fd_ij populated (the gate above). */
     const bool use_frmse_val = trg.use_frmse;
-    if (use_frmse_val && !use_force) return fall_back_all_fd();
 
     std::vector<std::size_t> energy_row_for_struct_val(val_stdb.size(), 0);
     std::vector<std::size_t> force_row_start_for_struct_val(val_stdb.size(), 0);
@@ -1144,6 +1125,10 @@ compute_analytical_gradient_from_trainer(
             for (std::size_t i = 0; i < v.size(); ++i) plan.metrics.v_frmse.push_back(v[i]);
             ++lc;
         }
+        /* The host averages every loss term (fit_loss, sims_loss,
+         * obs_loss count into one r.loss_count). */
+        for (const auto& lsim : trg.LS) lc += lsim.i_varloss.size();
+        lc += trg.observables.size();
         plan.loss_count = lc;
     }
 
@@ -1309,8 +1294,12 @@ compute_analytical_gradient_from_trainer(
          * and force walkers must claim the theta for val too -- same
          * argument applies (a missing val force walker would silently
          * zero the dPhi_val force rows). */
+        /* No validation structures (a PC_OBSERVABLE-only run): there are
+         * no validation rows to differentiate, so the val side has nothing
+         * to claim. */
         const bool ok_train = ok_e_train && (!use_force      || ok_f_train);
-        const bool ok_val   = ok_e_val   && (!use_frmse_val  || ok_f_val);
+        const bool ok_val   = val_stdb.size() == 0 ||
+                              (ok_e_val && (!use_frmse_val || ok_f_val));
         if (!ok_train || !ok_val) continue;     /* -> needs_fd */
 
         /* Copy energy scratch rows into dphi_train_buf at the energy
@@ -1441,6 +1430,13 @@ compute_analytical_gradient_from_trainer(
             return true;
         };
 
+        /* The chains below add each LAMMPS / observable term's
+         * dL_k/dtheta; the host loss is the MEAN of every term
+         * (plan.loss_count of them), so their sum is divided by it once
+         * both have run -- compute_dloss_dtheta already divided the
+         * validation-metric part. */
+        std::vector<double> chain(prefs.size(), 0.0);
+
         if (want_sims_grad) {
             std::vector<SimsGradScriptInput> sims_inputs;
             bool provider_ok = false;
@@ -1470,7 +1466,7 @@ compute_analytical_gradient_from_trainer(
             const bool sims_ok = compute_sims_grad_dWchain(
                 sims_inputs, dWdtheta, n_cols,
                 theta_row_to_g_idx, analytical_theta,
-                g_out, needs_fd_sims);
+                chain, needs_fd_sims);
             if (!sims_ok || !needs_fd_sims.empty()) return fall_back_to_fd();
         }
 
@@ -1492,6 +1488,46 @@ compute_analytical_gradient_from_trainer(
                 provider_ok && obs_inputs.size() == trg.observables.size();
             if (!inputs_well_formed) return fall_back_to_fd();
 
+            /* The value's own dependence on theta at fixed weights: an
+             * observable value is linear in model energies
+             * (ObservableEvalResult::energy_terms), each E = Phi_row . W_star
+             * over its structure's descriptors, so dO/dtheta|_W =
+             * sum_k coeff_k * (dPhi_row_k/dtheta . W_star) -- the energy-row
+             * walker the training rows use. The relaxed geometry's own
+             * dependence on theta adds nothing at a stationary point, and
+             * dO/dW . dW_star/dtheta is the chain's other term. Without it the
+             * gradient missed the (usually dominant, and mostly cancelling)
+             * direct term. A value with dO/dW but no energy terms has an
+             * unknown direct term: finite differences for every theta. */
+            for (auto& in : obs_inputs) {
+                if (in.failed || in.constant || in.dO_dW.size() == 0)
+                    continue;
+                if (in.energy_terms.empty()) return fall_back_to_fd();
+                mlip::StructureDB terms;
+                for (const auto& t : in.energy_terms) terms.add(t.structure);
+                std::vector<double> rows(terms.size() * n_cols, 0.0);
+                in.dO_dtheta_explicit.assign(prefs.size(), 0.0);
+                for (const int ti : analytical_theta) {
+                    const auto i = static_cast<std::size_t>(ti);
+                    std::fill(rows.begin(), rows.end(), 0.0);
+                    /* The walker claims a theta for a structure only where
+                     * a neighbour pair contributes (none for the isolated
+                     * atom's pair terms): an unclaimed row is zero. */
+                    (void)mlip::assemble_dphi_train_both_rows(
+                        terms, host.DCS, prefs[i].theta_name, prefs[i].arg_pos,
+                        rows.data(), /*dphi_force_out=*/nullptr, n_cols,
+                        /*force_row_start_per_struct=*/{});
+                    double d = 0.0;
+                    for (std::size_t k = 0; k < terms.size(); ++k) {
+                        double dE = 0.0;
+                        for (std::size_t c = 0; c < n_cols; ++c)
+                            dE += rows[k * n_cols + c] * W_star[c];
+                        d += in.energy_terms[k].coeff * dE;
+                    }
+                    in.dO_dtheta_explicit[i] = d;
+                }
+            }
+
             /* Phase A masking applies symmetrically to PC_OBSERVABLE:
              * a per-observable `failed=true` (relaxer divergence,
              * non-finite value, NN-finder fault) -> skip-and-zero
@@ -1500,9 +1536,14 @@ compute_analytical_gradient_from_trainer(
             const bool obs_ok = compute_observables_grad_dWchain(
                 obs_inputs, dWdtheta, n_cols,
                 theta_row_to_g_idx, analytical_theta,
-                g_out, needs_fd_obs);
+                chain, needs_fd_obs);
             if (!obs_ok || !needs_fd_obs.empty()) return fall_back_to_fd();
         }
+
+        const double inv = plan.loss_count > 0
+            ? 1.0 / static_cast<double>(plan.loss_count) : 1.0;
+        for (std::size_t i = 0; i < g_out.size(); ++i)
+            g_out[i] += inv * chain[i];
     }
 
     if (profile_grad) {

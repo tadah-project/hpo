@@ -86,6 +86,13 @@ std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent)
     return run;
 }
 
+bool obtains_gradients(const OptimizerSpec& spec)
+{
+    if (optimizer_caps(spec).is_gradient_based) return true;
+    const std::optional<OptimizerSpec> local = inner_run_spec(spec);
+    return local && optimizer_caps(*local).is_gradient_based;
+}
+
 namespace {
 
 /* A point the refinement's candidates stand in for at startup: the spec's

@@ -33,6 +33,20 @@ CohesiveEnergyObservable(Config cfg)
     if (a0_current_ > cfg_.a0_max) a0_current_ = cfg_.a0_max;
 }
 
+std::string CohesiveEnergyObservable::analytical_gradient_gap() const
+{
+    /* A relaxation that does not converge reports the --unconverged value:
+     * the constant penalty (value_is_constant, a zero gradient), or
+     * target + slope * fmax, which depends on the weights and on theta
+     * through the partial relaxation and has no closed-form derivative
+     * (evaluate() returns it without dO_dW). */
+    if (cfg_.unconverged_strategy == Config::UnconvergedStrategy::ForceScaled)
+        return "--unconverged force-scaled reports target + slope x fmax "
+               "for a relaxation that does not converge, a value without an "
+               "analytical derivative";
+    return {};
+}
+
 ObservableEvalResult CohesiveEnergyObservable::
 evaluate(tadah::mlip::M_Tadah_Base& model,
          tadah::mlip::DC_Base& dc,
@@ -148,6 +162,7 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
             using Strat = Config::UnconvergedStrategy;
             case Strat::Const:
                 res.value = cfg_.unconverged_value;
+                res.value_is_constant = true;
                 break;
             case Strat::ForceScaled:
                 /* target + slope . fmax. With fmax -> 0 the value -> target
@@ -201,13 +216,17 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
     /* 6. Update hot-var for next eval (warm start). */
     a0_current_ = new_a0;
 
-    /* 7. Assemble result. needs_adjoint = false (dE_coh/dx = 0 at minimum). */
+    /* 7. Assemble result. needs_adjoint = false (dE_coh/dx = 0 at minimum).
+     *    E_coh = -E_bulk/N + E_iso: the host differentiates both energies
+     *    with respect to the descriptor parameters at fixed W. */
     ObservableEvalResult res;
     res.value                 = Ecoh;
     res.dO_dW                 = std::move(dEcoh_dW);
     res.needs_adjoint         = false;
     res.box_dofs              = 0;
     res.hotvar_updated_value  = new_a0;
+    res.energy_terms.push_back({std::move(bulk), -1.0 / static_cast<double>(N)});
+    res.energy_terms.push_back({std::move(iso), 1.0});
     return res;
 }
 

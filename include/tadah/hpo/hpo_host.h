@@ -426,12 +426,11 @@ private:
     // D19: replica/slot column (Result::chain_id). "SLOT"(4) + 2, wide
     // enough for any REPLICAS a shared-memory pool can drive.
     static constexpr std::size_t slot_cw_   = 6;
-    static constexpr std::size_t min_cw_    = 15;  // floor: fits L(ErRMSE)[avg](14) + 1 space
 
     /* formatting -- derived from outputDigits (set in constructor) */
     int          prec_;           // digits after decimal in scientific notation
-    std::size_t  cw_;             // max(prec_+9, min_cw_)
-    std::size_t  max_title_len_;  // cw_-4: L(VAR) always >=1 space gap; same truncation as VAR
+    std::size_t  cw_;             // column_width(prec_) (column_titles.h)
+    std::size_t  max_title_len_;  // column_title_budget(prec_) = cw_-4: L(VAR) always >=1 space gap; same truncation as VAR
 
     /* line printers ------------------------------------ */
     void init_loss   (const std::string& fn) const;

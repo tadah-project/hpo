@@ -11,11 +11,11 @@
  *                              selectable via PARAM diff_method).
  *   GradStrategy::Analytical -- strict closed-form. The caller provides
  *                              an `analytical_grad_fn` callback that
- *                              fills g[] and reports any unregistered
- *                              theta indices via a `needs_fd` out-list.
- *                              Throws if any index has no registered
- *                              analytical derivative -- use HYBRID for
- *                              graceful fallback.
+ *                              fills g[] and reports the theta indices
+ *                              it could not differentiate via a
+ *                              `needs_fd` out-list. Throws if any index
+ *                              is left -- use HYBRID for graceful
+ *                              fallback.
  *   GradStrategy::Hybrid     -- analytical for registered theta + masked
  *                              central-difference for unregistered
  *                              indices, in one gradient(x, g) call.
@@ -158,7 +158,7 @@ make_gradient_provider(const OptimizerSpec&     sp,
 
   // ---- ANALYTICAL: strict mode. Defer to the caller-supplied callback;
   // any index left in `needs_fd` is a hard error pointing the user at
-  // HYBRID or at registering the missing derivative.
+  // HYBRID.
   if (strat == GradStrategy::Analytical) {
     if (!analytical_grad_fn) {
       gp.gradient = [](const Vec&, Vec&)->bool {
@@ -178,17 +178,23 @@ make_gradient_provider(const OptimizerSpec&     sp,
       if (!analytical_grad_fn(x, g, needs_fd)) return false;
       pull_to_internal(x, g, needs_fd);
       if (!needs_fd.empty()) {
+        /* The host does not say which cause applies; name them all. The
+         * settings-level ones (analytical_gate.h) were refused at startup,
+         * so what is left is per parameter or per point. */
         std::ostringstream oss;
-        oss << "GRAD_STRATEGY=ANALYTICAL: " << needs_fd.size()
-            << " parameter index/indices have no registered analytical "
-               "derivative (indices: [";
+        oss << "GRAD_STRATEGY=ANALYTICAL: no analytical gradient for "
+            << needs_fd.size() << " parameter"
+            << (needs_fd.size() == 1 ? "" : "s")
+            << " at this point (indices: [";
         for (std::size_t i = 0; i < needs_fd.size(); ++i) {
           if (i) oss << ", ";
           oss << needs_fd[i];
         }
-        oss << "]). Use GRAD_STRATEGY=HYBRID to fall back to numerical "
-               "for these indices, or register the missing analytical "
-               "derivatives in dtheta_registry.";
+        oss << "]): a parameter without an analytical derivative, a "
+               "candidate whose fit cannot be differentiated (rejected "
+               "before training, or an ill-conditioned fit), or a loss term "
+               "without an analytical derivative at this point. Use "
+               "GRAD_STRATEGY=HYBRID to fill these with finite differences.";
         throw std::runtime_error(oss.str());
       }
       for (long i = 0; i < g.size(); ++i)

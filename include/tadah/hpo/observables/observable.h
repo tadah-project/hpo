@@ -6,7 +6,9 @@
 #include <tadah/hpo/loss_function.h>
 #include <tadah/mlip/descriptors_calc_base.h>
 #include <tadah/mlip/models/m_tadah_base.h>
+#include <tadah/mlip/structure.h>
 
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <vector>
@@ -56,6 +58,30 @@ struct ObservableEvalResult {
     /** Updated hot-var value to write back to the WarmStart cache.
      *  Set only for observables that maintain warm-start state. */
     std::optional<double> hotvar_updated_value;
+
+    /** One model energy the value is linear in (closed-form path). */
+    struct EnergyTerm {
+        /** The structure at the geometry the value was taken at (the
+         *  relaxed crystal, the isolated atom), neighbour list built. */
+        tadah::mlip::Structure structure;
+        double                 coeff = 0.0;
+    };
+
+    /** The value as value = sum_k coeff_k * E(structure_k) + const, the
+     *  energies E predicted by the model. dO_dW is sum_k coeff_k *
+     *  dE_k/dW; the host also differentiates each E_k with respect to
+     *  the descriptor parameters at fixed weights -- the part of
+     *  dO/dtheta the weights do not carry. A relaxed geometry's own
+     *  dependence on theta adds nothing at a stationary point. Empty when
+     *  the value is not such a combination (a constant, or a penalty such
+     *  as the force-scaled unconverged value): the host then has no
+     *  analytical dO/dtheta. */
+    std::vector<EnergyTerm> energy_terms;
+
+    /** The value is a constant (the penalty of an unconverged
+     *  relaxation): it depends on neither the weights nor theta, and its
+     *  gradient is zero. */
+    bool value_is_constant = false;
 };
 
 /** \brief Abstract base for typed PC_OBSERVABLE entries.
@@ -82,9 +108,23 @@ class Observable {
 public:
     virtual ~Observable() = default;
 
-    /** Short kind tag, e.g. "cohesive_energy". Used in logs and the
-     *  WarmStart cache key. */
+    /** Short kind tag, e.g. "cohesive_energy". Used in the journal and
+     *  as the WarmStart cache key (keep it stable). */
     virtual std::string kind() const = 0;
+
+    /** Column tag in loss.tadah / outvar.tadah, e.g. "Ecoh": short
+     *  enough that L(<tag>)[k] fits the narrowest column (11 characters)
+     *  for every k up to 99. */
+    virtual std::string column_tag() const = 0;
+
+    /** Why a value this observable reports under its settings can have no
+     *  analytical derivative (ObservableEvalResult::dO_dW empty, and not a
+     *  constant), naming the option; "" when every value has one or is a
+     *  constant. The startup rule of GRAD_STRATEGY ANALYTICAL refuses such
+     *  an observable (analytical_loss_term_blocker, analytical_gate.h):
+     *  ANALYTICAL would stop the run at the first such value, where HYBRID
+     *  uses finite differences. */
+    virtual std::string analytical_gradient_gap() const = 0;
 
     /** Evaluate observable value + W-derivative + (optional) adjoint
      *  rhs at the current model weights. */
@@ -102,6 +142,25 @@ public:
     /** Loss function (L1/L2/HUBER/...). */
     virtual const tadah::LossFunction& lossfn() const = 0;
 };
+
+/* Names of the k-th PC_OBSERVABLE line, k its 1-based ordinal among the
+ * PC_OBSERVABLE lines in configuration order: the loss.tadah column
+ * L(<tag>)[k], the outvar.tadah column <tag>[k] and the journal name
+ * <kind>[k] (the loss section, the new-best "top:" breakdown). */
+inline std::string observable_loss_label(const Observable& o, std::size_t k)
+{
+    return "L(" + o.column_tag() + ")[" + std::to_string(k) + "]";
+}
+
+inline std::string observable_value_label(const Observable& o, std::size_t k)
+{
+    return o.column_tag() + "[" + std::to_string(k) + "]";
+}
+
+inline std::string observable_journal_label(const Observable& o, std::size_t k)
+{
+    return o.kind() + "[" + std::to_string(k) + "]";
+}
 
 }  // namespace hpo
 }  // namespace tadah

@@ -34,9 +34,10 @@ struct StopCriteria {
  *                a per-theta derivative callback (descriptor + cutoff +
  *                kernel closed forms chained through the IFT-back-
  *                substitution on the cached Cholesky factor of the
- *                regression solve). Strict mode: any theta index without a
- *                registered analytical derivative throws a diagnostic
- *                naming the missing entry. Use HYBRID to fall back.
+ *                regression solve). Strict mode: a theta index the host
+ *                cannot differentiate throws a diagnostic naming it; a
+ *                setup it can never differentiate is refused at startup
+ *                (analytical_gate.h). Use HYBRID to fall back.
  *   HYBRID     -- analytical-where-registered + central-difference
  *                fallback for unregistered indices, evaluated in one
  *                gradient(x, g) call. Used when LAMMPS-derived loss
@@ -44,10 +45,25 @@ struct StopCriteria {
  *                (EAM SETFL) participate in theta.
  *
  * Configured at OPTIMIZER block level via `GRAD_STRATEGY {NUMERICAL|
- * ANALYTICAL|HYBRID}`. Default (unset) = NUMERICAL. The Phase-1 keyword
+ * ANALYTICAL|HYBRID}`. Default (unset) = NUMERICAL; with PC_OBSERVABLE
+ * an unset value resolves to ANALYTICAL in the blocks that run an
+ * optimiser and obtain gradients (HPOTargets::read). An INNER block's
+ * value does not apply: MLSL/AUGLAG hand their local search the
+ * gradient the enclosing block obtains. The Phase-1 keyword
  * `AUTODIFF` is no longer accepted; the parser emits a tailored error
  * pointing at ANALYTICAL. */
 enum class GradStrategy { Numerical, Analytical, Hybrid };
+
+/* The GRAD_STRATEGY keyword of `g`. */
+inline const char* grad_strategy_name(GradStrategy g)
+{
+    switch (g) {
+        case GradStrategy::Numerical:  return "NUMERICAL";
+        case GradStrategy::Analytical: return "ANALYTICAL";
+        case GradStrategy::Hybrid:     return "HYBRID";
+    }
+    return "NUMERICAL";
+}
 
 using ParamMap = std::unordered_map<std::string,double>;
 
@@ -158,7 +174,8 @@ struct OptimizerSpec {
           vector_storage(o.vector_storage), pop(o.pop),
           num_threads(o.num_threads), seed(o.seed), step(o.step),
           step_overrides(o.step_overrides),
-          grad_strategy(o.grad_strategy), stop(o.stop),
+          grad_strategy(o.grad_strategy),
+          grad_strategy_resolved(o.grad_strategy_resolved), stop(o.stop),
           param(o.param), param_raw(o.param_raw),
           param_tokens(o.param_tokens),
           anneal_observer(o.anneal_observer), low(o.low), high(o.high),
@@ -220,6 +237,12 @@ struct OptimizerSpec {
      * field lives at OptimizerSpec scope (not PARAM) because it is
      * shared across optimizer families. See GradStrategy doc above. */
     std::optional<GradStrategy> grad_strategy;
+    /* grad_strategy was not written in the block but set by the parser:
+     * with PC_OBSERVABLE an unset GRAD_STRATEGY resolves to ANALYTICAL in
+     * a block that runs an optimiser and obtains gradients (the
+     * STRATEGY-level block, EXPLORE; HPOTargets::read). The journal
+     * says so. */
+    bool grad_strategy_resolved = false;
 
     StopCriteria stop;
     ParamMap     param;             // algorithm-specific knobs

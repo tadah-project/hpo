@@ -114,6 +114,8 @@ public:
     explicit CohesiveEnergyObservable(Config cfg);
 
     std::string kind() const override { return "cohesive_energy"; }
+    std::string column_tag() const override { return "Ecoh"; }
+    std::string analytical_gradient_gap() const override;
 
     ObservableEvalResult evaluate(
         tadah::mlip::M_Tadah_Base& model,

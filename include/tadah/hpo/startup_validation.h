@@ -39,7 +39,16 @@ std::size_t derive_weight_count(const core::Context &train_ctx);
  *     PC_OBSERVABLE, or PC_LAMMPS);
  *   - validation metrics (PC_ERMSE, ...) require a --validation file;
  *   - NORM true is incompatible with FIXINDEX/FIXWEIGHT (fixed values
- *     would be interpreted in the normalized feature space).
+ *     would be interpreted in the normalized feature space);
+ *   - GRAD_STRATEGY ANALYTICAL (written out, or resolved for
+ *     PC_OBSERVABLE) in a block that runs an optimiser and obtains
+ *     gradients (the STRATEGY-level block, EXPLORE; an INNER search uses
+ *     its enclosing block's gradients) needs a setup the analytical
+ *     gradient covers and loss terms with an analytical derivative
+ *     (analytical_gradient_blocker, analytical_loss_term_blocker,
+ *     analytical_gate.h);
+ *   - FAILSCORE_GRADING ON needs a finite FAILSCORE that leaves room for
+ *     the four grading bands.
  */
 void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
                         bool has_train_db, bool has_validation);

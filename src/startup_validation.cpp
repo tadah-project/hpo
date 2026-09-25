@@ -1,5 +1,8 @@
 #include <tadah/hpo/startup_validation.h>
+#include <tadah/hpo/analytical_gate.h>
 #include <tadah/hpo/backend_rules.h>
+#include <tadah/hpo/pc_fail_grading.h>
+#include <tadah/hpo/phase_specs.h>
 #include <tadah/hpo/scale_validation.h>
 #include <tadah/hpo/strategy_rules.h>
 
@@ -151,6 +154,71 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         "FIXINDEX/FIXWEIGHT is not supported with NORM true: fixed values "
         "would be interpreted in the normalized feature space. Set NORM "
         "false.");
+  }
+
+  /* --- GRAD_STRATEGY ANALYTICAL needs the analytical gradient ----------
+   * ANALYTICAL -- written out, or resolved from an unset GRAD_STRATEGY for
+   * PC_OBSERVABLE -- stops the run when the analytical gradient cannot be
+   * formed. On a setup whose fit settings the analytical gradient does not
+   * cover that is every gradient, and with a loss term that has no
+   * analytical derivative it is every gradient or every one taken at such
+   * a value (analytical_gate.h), so refuse it here, not after the first
+   * evaluation with "no registered analytical derivative". The blocks
+   * that run an optimiser and obtain gradients: the STRATEGY-level block
+   * and EXPLORE. An INNER block's GRAD_STRATEGY does not apply -- MLSL and
+   * AUGLAG hand their local search the gradient of their own objective,
+   * which the enclosing block's GRAD_STRATEGY obtains (nlopt_adapter.h) --
+   * so it is not checked, and the message says so when it sets one. */
+  {
+    struct Block { const OptimizerSpec* sp; const char* name; };
+    std::vector<Block> blocks = {{&trg.spec, "OPTIMIZER"}};
+    if (trg.spec.prestage)
+      blocks.push_back({trg.spec.prestage.get(), "EXPLORE"});
+    std::string why;
+    bool checked = false;
+    for (const auto& b : blocks) {
+      if (b.sp->grad_strategy != GradStrategy::Analytical ||
+          !obtains_gradients(*b.sp))
+        continue;
+      if (!checked) {
+        why = analytical_gradient_blocker(train_ctx, trg, has_train_db);
+        if (why.empty()) why = analytical_loss_term_blocker(trg);
+        checked = true;
+      }
+      if (why.empty()) break;
+      std::string inner_note;
+      if (b.sp->inner && b.sp->inner->grad_strategy)
+        inner_note = std::string("; the INNER block's GRAD_STRATEGY ") +
+                     grad_strategy_name(*b.sp->inner->grad_strategy) +
+                     " does not apply: the INNER search takes the gradients "
+                     "of this block";
+      throw std::runtime_error(
+          std::string(b.name) + " block: GRAD_STRATEGY ANALYTICAL" +
+          (b.sp->grad_strategy_resolved
+               ? " (resolved for PC_OBSERVABLE: the block sets no "
+                 "GRAD_STRATEGY)"
+               : "") +
+          " needs the analytical gradient of the loss, which this setup "
+          "cannot form: " + why + ". Change that setting, or set "
+          "GRAD_STRATEGY HYBRID to use finite differences where no "
+          "analytical gradient is available" + inner_note + ".");
+    }
+  }
+
+  /* --- FAILSCORE_GRADING ON bands the failures below FAILSCORE ---------- */
+  if (trg.FAILSCORE_GRADING) {
+    /* The band arithmetic needs a finite FAILSCORE: with the legacy
+     * DBL_MAX default, 0.999*FS and FS are not meaningfully ordered in
+     * loss space and L2 of the substituted value overflows. */
+    if (!std::isfinite(trg.FAIL_SCORE) || trg.FAIL_SCORE >= 1.0e300 ||
+        trg.FAIL_SCORE <= 0.0)
+      throw std::runtime_error(
+          "FAILSCORE_GRADING ON requires a finite positive FAILSCORE (e.g. "
+          "`FAILSCORE 1e9`); the default DBL_MAX sentinel cannot be banded.");
+    if (!graded_failscore_is_ordered(trg.FAIL_SCORE))
+      throw std::runtime_error(
+          "FAILSCORE_GRADING ON requires a FAILSCORE large enough to "
+          "represent four strictly ordered grading bands.");
   }
 
   /* --- RCUT contract for refit-family channels -------------------------- */

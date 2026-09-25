@@ -66,6 +66,13 @@ OptimizerSpec prestage_refinement_spec(
  * (NLopt refuses the run). */
 std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent);
 
+/* True when a run of `spec` asks the host for gradients: a gradient-based
+ * backend (OptimizerCaps::is_gradient_based), or an MLSL/AUGLAG whose local
+ * search (inner_run_spec) is one -- NLopt hands that local optimiser the
+ * gradient the objective of `spec` computes, so the GRAD_STRATEGY of
+ * `spec` decides how it is obtained. */
+bool obtains_gradients(const OptimizerSpec& spec);
+
 /* One phase of a run: its name, for messages, and the spec it runs. */
 struct PhaseSpec {
     std::string   name;

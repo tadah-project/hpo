@@ -1,8 +1,10 @@
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/backend_rules.h>
+#include <tadah/hpo/column_titles.h>
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/phase_specs.h>
 #include <tadah/hpo/strategy_rules.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/core/context.h>
@@ -33,6 +35,30 @@ static std::string fmt_double(double v, int prec = 4)
     std::ostringstream s;
     s << std::scientific << std::setprecision(prec) << v;
     return s.str();
+}
+
+/* The GRAD_STRATEGY a block obtains its gradients with, for the journal:
+ * the keyword, "(resolved for PC_OBSERVABLE)" when the parser set it, or
+ * the NUMERICAL default. */
+static std::string grad_strategy_text(const OptimizerSpec& sp)
+{
+    if (!sp.grad_strategy)
+        return "NUMERICAL (default: finite differences)";
+    std::string s = grad_strategy_name(*sp.grad_strategy);
+    if (sp.grad_strategy_resolved)
+        s += " (resolved for PC_OBSERVABLE)";
+    return s;
+}
+
+/* The GRAD_STRATEGY an INNER block sets, for the journal. It does not
+ * apply: MLSL and AUGLAG hand their INNER search the gradient of their own
+ * objective, which the enclosing block's GRAD_STRATEGY obtains
+ * (nlopt_adapter.h). */
+static std::string inner_grad_strategy_text(const OptimizerSpec& inner)
+{
+    return std::string(grad_strategy_name(*inner.grad_strategy)) +
+           " (not used: the INNER search takes the gradients of the "
+           "enclosing block)";
 }
 
 static std::string fmt_millis(double ms)
@@ -362,6 +388,12 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
     if (sp.inner)
         kv("Inner optimizer", sp.inner->lib + " / " + sp.inner->algo);
 
+    // ---- how the block obtains gradients (for its INNER search too)
+    if (obtains_gradients(sp))
+        kv("GRAD_STRATEGY", grad_strategy_text(sp));
+    if (sp.inner && sp.inner->grad_strategy)
+        kv("Inner GRAD_STRATEGY", inner_grad_strategy_text(*sp.inner));
+
     auto write_stop_criteria = [&](const StopCriteria& s, const char* indent) {
         if (s.maxeval)
             f_ << indent << std::left << std::setw(KW-4) << "Max evaluations"
@@ -609,6 +641,12 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
                << "  TOPK=" << sp.stage_topk << "\n";
             f_ << "    PRESTAGE REFINE   : " << sp.lib << ":" << sp.algo
                << "  MAXEVAL=" << maxeval(sp.stop) << "\n";
+            if (obtains_gradients(ps))
+                f_ << "    EXPLORE GRAD_STRATEGY: " << grad_strategy_text(ps)
+                   << "\n";
+            if (ps.inner && ps.inner->grad_strategy)
+                f_ << "    EXPLORE INNER GRAD_STRATEGY: "
+                   << inner_grad_strategy_text(*ps.inner) << "\n";
             write_init_strategy(ps.init_strategy_spec,
                                 "PRESTAGE.EXPLORE init strategy:", "    ");
             if (ps.inner) {
@@ -818,16 +856,27 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
 
     /* PC_OBSERVABLE typed-observable components -- surface them in the
      * header so users see their cohesive_energy / etc. contribution
-     * alongside ERMSE and PC_LAMMPS varloss entries. Without this loop
-     * the section silently omits cohesive_energy and the user wonders
-     * whether their PC_OBSERVABLE line took effect. */
+     * alongside ERMSE and PC_LAMMPS varloss entries, named <kind>[k] for
+     * the k-th PC_OBSERVABLE line (1-based; its columns are L(<tag>)[k]
+     * and <tag>[k]). Without this loop the section silently omits
+     * cohesive_energy and the user wonders whether their PC_OBSERVABLE
+     * line took effect. */
+    /* The column titles as loss.tadah and outvar.tadah write them: past
+     * k = 99 a narrow DIGITS shortens the tag and keeps the index. */
+    const std::size_t title_budget = column_title_budget(trg.outputDigits);
     for (std::size_t k = 0; k < trg.observables.size(); ++k) {
         const auto& obs = trg.observables[k];
         if (!obs) continue;
         std::ostringstream s;
         s << "weight=" << std::fixed << std::setprecision(2) << obs->weight()
-          << "  target=" << std::scientific << std::setprecision(3) << obs->target();
-        kv(obs->kind() + "[" + std::to_string(k) + "]", s.str());
+          << "  target=" << std::scientific << std::setprecision(3) << obs->target()
+          << "  columns "
+          << header_detail::fit_keep_index(observable_loss_label(*obs, k + 1),
+                                           title_budget)
+          << ", "
+          << header_detail::fit_keep_index(observable_value_label(*obs, k + 1),
+                                           title_budget);
+        kv(observable_journal_label(*obs, k + 1), s.str());
     }
 
     kv("Aggregate",   "mean over active components");

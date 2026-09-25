@@ -4,6 +4,7 @@
 #include <tadah/hpo/adjoint_solver.h>
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/observable_registry.h>
+#include <tadah/hpo/observables/observable.h>
 
 #include <Eigen/Dense>
 
@@ -171,10 +172,19 @@ bool compute_sims_grad_dWchain(
     std::vector<int>&                       needs_fd_out);
 
 /* ---------------------------------------------------------------- *
+ *  Whether loss_grad_wrt_observed differentiates `fn`: the residual
+ *  losses (L1, L2, LOG_COSH, HUBER, TUKEY) yes, MAPE and RMSLE no. The
+ *  startup rule of GRAD_STRATEGY ANALYTICAL (analytical_loss_term_blocker,
+ *  analytical_gate.h) asks it of each PC_OBSERVABLE --loss.
+ * ---------------------------------------------------------------- */
+bool loss_has_derivative_wrt_observed(const LossFunction& fn);
+
+/* ---------------------------------------------------------------- *
  *  Convenience: dL/dv for the supported loss kinds.
  *  Public so tests and 3.6's integration glue can re-use the same
  *  dispatcher without duplicating the sign-flip rule.
- *  Returns false (and leaves out untouched) on unsupported losses.
+ *  Returns false (and leaves out untouched) on unsupported losses
+ *  (loss_has_derivative_wrt_observed).
  * ---------------------------------------------------------------- */
 bool loss_grad_wrt_observed(const LossFunction& fn,
                             double v_observed,
@@ -199,19 +209,26 @@ bool loss_grad_wrt_observed(const LossFunction& fn,
  *  observable seam.
  *
  *  The helper chains `dO_dW` through the loss prime, then through the
- *  Phase 2 dW/dtheta matrix (`apply_dWdtheta_chain`), and adds the
- *  contribution into `g_out_inout`.
+ *  Phase 2 dW/dtheta matrix (`apply_dWdtheta_chain`), adds the
+ *  observable's own dependence on theta at fixed weights
+ *  (`dO_dtheta_explicit`, through the same loss prime), and adds the
+ *  contribution into `g_out_inout`: dL/dtheta = dL/dO * (dO/dW . dW/dtheta
+ *  + dO/dtheta|_W).
  *
  *  Phase A masking: observables with `failed=true` (provider-detected
  *  relaxer divergence / NaN value) are SKIPPED -- their loss is
  *  FAIL_SCORE, a constant, so dFAIL_SCORE/dtheta = 0 and the missing chain
- *  contribution is exact in the continuous region.
+ *  contribution is exact in the continuous region. `constant=true`
+ *  entries (the fixed penalty of an unconverged relaxation) are skipped
+ *  for the same reason.
  *
- *  Returns true iff every NON-FAILED observable was handled
+ *  Returns true iff every NON-FAILED, non-constant observable was handled
  *  analytically. Returns false (and pushes all caller-supplied theta
  *  indices into `needs_fd_out`) only on STRUCTURAL failures:
- *  unsupported loss kind (MAPE/RMSLE) or needs_adjoint=true on the
- *  MVP path. Matches compute_sims_grad_dWchain's contract.
+ *  unsupported loss kind (MAPE/RMSLE), needs_adjoint=true on the
+ *  MVP path, or no dO/dW (a value with no analytical derivative, such as
+ *  the force-scaled penalty of an unconverged relaxation). Matches
+ *  compute_sims_grad_dWchain's contract.
  * ---------------------------------------------------------------- */
 struct ObservableGradInput {
     /** Observed value at current W (e.g. Ecoh in eV/atom). */
@@ -241,6 +258,20 @@ struct ObservableGradInput {
      *  contribution) rather than poisoning the whole gradient. Same
      *  dFAIL_SCORE/dtheta = 0 justification as SimsGradScriptInput. */
     bool            failed = false;
+
+    /** The value is a constant (ObservableEvalResult::value_is_constant,
+     *  e.g. the penalty of an unconverged relaxation): zero gradient,
+     *  skipped like a failed entry. */
+    bool            constant = false;
+
+    /** The model energies the value is linear in
+     *  (ObservableEvalResult::energy_terms), for the orchestrator to
+     *  differentiate into dO_dtheta_explicit. */
+    std::vector<ObservableEvalResult::EnergyTerm> energy_terms;
+
+    /** dO/dtheta at fixed weights, one entry per theta row of dWdtheta
+     *  (theta_row_to_g_idx order); empty for none. */
+    std::vector<double> dO_dtheta_explicit;
 };
 
 bool compute_observables_grad_dWchain(

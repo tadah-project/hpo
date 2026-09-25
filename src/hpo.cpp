@@ -246,19 +246,8 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log)
         }
     }
     if (trg.FAILSCORE_GRADING) {
-        /* The band arithmetic needs a finite FAILSCORE: with the legacy
-         * DBL_MAX default, 0.999*FS and FS are not meaningfully ordered
-         * in loss space and L2 of the substituted value overflows. */
-        if (!std::isfinite(trg.FAIL_SCORE) ||
-            trg.FAIL_SCORE >= 1.0e300 || trg.FAIL_SCORE <= 0.0)
-            throw std::runtime_error(
-                "FAILSCORE_GRADING ON requires a finite positive "
-                "FAILSCORE (e.g. `FAILSCORE 1e9`); the default DBL_MAX "
-                "sentinel cannot be banded.");
-        if (!graded_failscore_is_ordered(trg.FAIL_SCORE))
-            throw std::runtime_error(
-                "FAILSCORE_GRADING ON requires a FAILSCORE large enough "
-                "to represent four strictly ordered grading bands.");
+        /* validate_hpo_setup (below) refuses a FAILSCORE the bands do not
+         * fit. */
         std::string probe_note = "no PC_FAILPROBE (bands C/D constant)";
         if (trg.failprobe_idx >= 0) {
             probe_note = "PC_FAILPROBE '" +
