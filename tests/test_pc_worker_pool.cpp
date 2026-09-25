@@ -20,6 +20,8 @@
 #include <tadah/hpo/pc_task_exec.h>
 #include <tadah/hpo/pc_worker_pool.h>
 
+#include "scratch_tmpdir.h"
+
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -195,6 +197,36 @@ TEST_CASE("pc pool: killing the worker process is contained and respawned",
   /* ...and the one after that runs on a fresh worker. */
   const PcTaskResult alive = pool.execute(0, 0, 3, pot, {}, /*script_timeout_s=*/std::nullopt);
   CHECK(alive.status == PcTaskStatus::POT_BUILD_FAIL);
+}
+
+TEST_CASE("pc pool: a killed worker leaves no script file behind",
+          "[pc_pool][kill][tempfile]") {
+  /* A worker renders each script of its table once, to a file in the
+   * temporary directory, and runs it through LAMMPS's Input::file(). A
+   * worker killed at its hard deadline (SIGKILL), crashing inside LAMMPS,
+   * or killed with its parent (PR_SET_PDEATHSIG) runs no destructor, and
+   * used to leave that file behind: tadah_pc_<worker pid>_0.in, one per
+   * full ctest run from the SIGKILL case above. */
+  hpo_test::ScratchTmpdir tmp("pcpool");
+  {
+    PcWorkerPool pool(1, specs_for(1, minimal_spec()), 0.0);
+    const auto pot = invalid_pot_map();
+    /* The first task renders the script in the worker. */
+    REQUIRE(pool.execute(0, 0, 1, pot, {}, /*script_timeout_s=*/std::nullopt)
+                .status == PcTaskStatus::POT_BUILD_FAIL);
+    CHECK(tmp.count("tadah_pc_") == 0);
+
+    const pid_t child = find_worker_child();
+    REQUIRE(child > 0);
+    REQUIRE(::kill(child, SIGKILL) == 0);
+    CHECK(pool.execute(0, 0, 2, pot, {}, /*script_timeout_s=*/std::nullopt)
+              .status == PcTaskStatus::KILLED);
+    /* A fresh worker renders the script again. */
+    CHECK(pool.execute(0, 0, 3, pot, {}, /*script_timeout_s=*/std::nullopt)
+              .status == PcTaskStatus::POT_BUILD_FAIL);
+    pool.shutdown();
+  }
+  CHECK(tmp.count("tadah_pc_") == 0);
 }
 
 TEST_CASE("pc pool: a worker survives the stop signals sent to its process "

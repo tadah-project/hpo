@@ -39,13 +39,17 @@
 
 #include <pair_tadah.h>
 
+#include "scratch_tmpdir.h"
+
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 using tadah::hpo::ScriptFile;
@@ -168,6 +172,113 @@ TEST_CASE("ScriptFile renders once and unlinks on destruction",
 
     ScriptFile sf2(kr_loop_extern_lines());
     REQUIRE(sf2.has_extern());
+}
+
+TEST_CASE("ScriptFile leaves no file in the temporary directory, not even "
+          "while it is in use", "[script_file][tempfile]") {
+    /* A rendered script used to be a named file, tadah_pc_<pid>_<n>.in,
+     * removed by the destructor. A process that ends without running
+     * destructors -- a PC_ISOLATION worker killed at its hard deadline or
+     * crashing inside LAMMPS, or killed with its parent -- left the file
+     * behind, about one per full ctest run. The rendering must never own
+     * a name in the temporary directory, and must stay readable through
+     * path() for as long as the ScriptFile lives. */
+    hpo_test::ScratchTmpdir tmp("scriptfile");
+    REQUIRE(tmp.count("") == 0);
+
+    const std::vector<std::string> lines = backward_loop_lines();
+    std::string want;
+    for (const auto& l : lines) want += l + "\n";
+    auto read_all = [](const std::string& path) {
+        std::ifstream in(path, std::ios::binary);
+        REQUIRE(in.is_open());
+        return std::string(std::istreambuf_iterator<char>(in),
+                           std::istreambuf_iterator<char>());
+    };
+    {
+        ScriptFile sf(lines);
+        REQUIRE(sf.valid());
+        CHECK(tmp.count("") == 0);
+        /* LAMMPS opens the path afresh for every evaluation. */
+        CHECK(read_all(sf.path()) == want);
+        CHECK(read_all(sf.path()) == want);
+
+        ScriptFile moved(std::move(sf));
+        CHECK_FALSE(sf.valid());
+        REQUIRE(moved.valid());
+        CHECK(read_all(moved.path()) == want);
+        CHECK(tmp.count("") == 0);
+    }
+    CHECK(tmp.count("") == 0);
+}
+
+TEST_CASE("ScriptFile keeps one rendering per distinct script",
+          "[script_file][tempfile]") {
+    /* Every THREAD-mode slot renders the same scripts: one rendering per
+     * distinct script, shared while any of them is alive, keeps a wide
+     * THREADS run to a few descriptors. */
+    const ScriptFile a(backward_loop_lines());
+    const ScriptFile b(backward_loop_lines());
+    const ScriptFile c(kr_loop_extern_lines());
+    REQUIRE(a.valid());
+    REQUIRE(b.valid());
+    REQUIRE(c.valid());
+    CHECK(a.path() == b.path());
+    CHECK(a.path() != c.path());
+    CHECK_FALSE(a.has_extern());
+    CHECK(c.has_extern());
+}
+
+TEST_CASE("ScriptFile renders although files left by an earlier process "
+          "hold the names it would use", "[script_file][tempfile]") {
+    /* Earlier builds left tadah_pc_<pid>_<n>.in behind (a killed worker),
+     * and pids are reused: by a later process, or by a process in another
+     * PID namespace that shares the temporary directory. A rendering must
+     * not depend on such a name being free -- a failed rendering fails the
+     * script's evaluation -- and must leave files it did not create alone. */
+    hpo_test::ScratchTmpdir tmp("scriptfile_stale");
+    const std::string pid = std::to_string(::getpid());
+    constexpr int n_stale = 64;
+    auto stale_path = [&](int k) {
+        return tmp.path() / ("tadah_pc_" + pid + "_" + std::to_string(k) +
+                             ".in");
+    };
+    auto stale_text = [](int k) { return "stale " + std::to_string(k) + "\n"; };
+    for (int k = 0; k < n_stale; ++k)
+        std::ofstream(stale_path(k), std::ios::binary) << stale_text(k);
+    REQUIRE(tmp.count("tadah_pc_") == n_stale);
+
+    auto read_all = [](const std::filesystem::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        REQUIRE(in.is_open());
+        return std::string(std::istreambuf_iterator<char>(in),
+                           std::istreambuf_iterator<char>());
+    };
+    {
+        /* Distinct scripts: each one needs a rendering of its own. */
+        std::vector<ScriptFile> files;
+        std::vector<std::string> wants;
+        for (int k = 0; k < 4; ++k) {
+            std::vector<std::string> lines = backward_loop_lines();
+            lines.push_back("variable stale_probe equal " + std::to_string(k));
+            std::string want;
+            for (const auto& l : lines) want += l + "\n";
+            REQUIRE_NOTHROW(files.emplace_back(lines));
+            wants.push_back(want);
+        }
+        for (std::size_t k = 0; k < files.size(); ++k) {
+            REQUIRE(files[k].valid());
+            CHECK(read_all(files[k].path()) == wants[k]);
+        }
+        CHECK(tmp.count("tadah_pc_") == n_stale);
+    }
+    /* The files of the earlier process are untouched. */
+    CHECK(tmp.count("tadah_pc_") == n_stale);
+    for (int k = 0; k < n_stale; ++k) {
+        INFO("stale file " << stale_path(k));
+        REQUIRE(std::filesystem::exists(stale_path(k)));
+        CHECK(read_all(stale_path(k)) == stale_text(k));
+    }
 }
 
 TEST_CASE("backward label/next/jump loop executes with native semantics",
