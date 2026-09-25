@@ -26,7 +26,13 @@
  *     iterations != host evaluations);
  *   - bad host evals (non-finite loss, MAXEVAL overflow) are reported via
  *     FirstOrderFunction::Evaluate -> false, which Ceres turns into a
- *     termination type, rather than as exceptions;
+ *     termination type, rather than as exceptions. A gradient that is not
+ *     finite (GradientProvider::failure: Stencil or NotFinite) is such a
+ *     failed evaluation: Ceres' line search steps back from it. When the
+ *     solve then ends with FAILURE right after it -- at the starting point,
+ *     "Initial cost and jacobian evaluation failed", or a line search that
+ *     finds no valid step -- the gradient ended the search, which reports
+ *     it with its own status (report_gradient_stop);
  *   - the run-level stops the host raises -- core::ShutdownRequested, the
  *     RESTART StagnationStop, durable_best::Error -- are exceptions and
  *     leave ceres::Solve with their own type (Ceres 2.x holds its solver
@@ -213,6 +219,7 @@ public:
     bool Evaluate(const double* parameters,
                   double*       cost,
                   double*       gradient) const override {
+        last_rejected_ = false;
         Vec x;
         x.set_size(dim_);
         for (int i = 0; i < dim_; ++i) x(i) = parameters[i];
@@ -223,7 +230,15 @@ public:
 
         if (gradient) {
             Vec g;
-            if (!gp_->gradient(x, g)) return false;
+            if (!gp_->gradient(x, g)) {
+                const GradientFailure k = gp_->failure->kind;
+                if (k == GradientFailure::Stencil ||
+                    k == GradientFailure::NotFinite) {
+                    last_rejected_ = true;
+                    rejected_ = *gp_->failure;
+                }
+                return false;
+            }
             for (int i = 0; i < dim_; ++i) gradient[i] = g(i);
         }
         return true;
@@ -231,9 +246,16 @@ public:
 
     int NumParameters() const override { return dim_; }
 
+    /* Whether the last Evaluate() failed on a gradient that is not
+     * finite, and why. */
+    bool last_rejected() const { return last_rejected_; }
+    const GradientFailureInfo& rejected() const { return rejected_; }
+
 private:
     GradientProvider<Vec,Runner>* gp_;
     int dim_;
+    mutable bool                  last_rejected_ = false;
+    mutable GradientFailureInfo   rejected_;
 };
 
 inline std::optional<double> ceres_param(const OptimizerSpec& sp,
@@ -335,9 +357,11 @@ inline void run_ceres_gradient_problem(
     auto gp = make_gradient_provider<Vec, Runner>(
         sp, host, &evals_used, maxeval, agf);
 
-    /* GradientProblem takes ownership of the FirstOrderFunction. */
-    auto fof = std::make_unique<HPO_FirstOrderFunction<Vec, Runner>>(&gp, dim);
-    ceres::GradientProblem problem(fof.release());
+    /* GradientProblem takes ownership of the FirstOrderFunction; `fof`
+     * stays valid while `problem` lives. */
+    auto owned = std::make_unique<HPO_FirstOrderFunction<Vec, Runner>>(&gp, dim);
+    const HPO_FirstOrderFunction<Vec, Runner>* fof = owned.get();
+    ceres::GradientProblem problem(owned.release());
 
     auto opts = make_ceres_options(sp, dir, ls_type);
 
@@ -364,6 +388,16 @@ inline void run_ceres_gradient_problem(
              << " -- non-convergent: " << summary.message;
         HPOLog::instance().warning(oss2.str());
     }
+
+    /* A FAILURE right after an evaluation whose gradient was not finite:
+     * that gradient ended the search. */
+    if (summary.termination_type == ceres::FAILURE && fof->last_rejected())
+        report_gradient_stop(
+            "CERES:" + algo_label, fof->rejected(),
+            "Ceres ended right after it (" +
+                std::string(ceres::TerminationTypeToString(
+                    summary.termination_type)) +
+                ": " + summary.message + ")");
 }
 
 #else  // !TADAH_USE_CERES

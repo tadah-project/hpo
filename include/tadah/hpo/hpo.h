@@ -11,8 +11,10 @@ namespace hpo {
 struct OptimizerSpec;
 
 /* Runs one HPO job in the current directory. Returns the process exit
- * status: 0 when the optimiser ends on its own (stop criteria met) and an
- * evaluation, on any MPI rank, produced a usable loss; EXIT_FAILURE (1)
+ * status: 0 when the optimiser ends on its own (stop criteria met, or a
+ * gradient-based search ended by a gradient that is not finite, trailer
+ * "STOPPED -- gradient not finite: ...") and an evaluation, on any MPI
+ * rank, produced a usable loss; EXIT_FAILURE (1)
  * when it ends on its own without one (no best_pot.tadah; trailer
  * "STOPPED -- no evaluation produced a usable loss"); and 128 + the signal
  * number when SIGINT, SIGTERM or SIGUSR2 stopped it (130, 143, 140 on

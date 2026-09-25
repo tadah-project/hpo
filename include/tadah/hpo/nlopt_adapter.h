@@ -8,10 +8,12 @@
 #include <tadah/hpo/gradient_provider.h>
 #include <tadah/hpo/initial_step.h>
 #include <tadah/hpo/optimizer_caps.h>
+#include <tadah/hpo/phase_specs.h>
 #include <dlib/rand.h>
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <exception>
@@ -107,6 +109,52 @@ inline nlopt::opt build_nlopt(const OptimizerSpec& sp, unsigned dim,
     }
 
     return o;
+}
+
+/* The evaluations without a gradient that NLopt's AUGLAG makes after its
+ * local search has ended, in a run of `sp` that is one local search
+ * (single_local_search, phase_specs.h): auglag.c evaluates the point that
+ * search returned once more, when it returned a regular code (HPO sets no
+ * constraint, so it then ends), once per AUGLAG level. 0 for any other
+ * algorithm. */
+inline unsigned long auglag_reevaluations(const OptimizerSpec& sp)
+{
+    const OptimizerCaps& caps = optimizer_caps(sp);
+    if (caps.is_global || !caps.accepts_inner) return 0;
+    const std::optional<OptimizerSpec> local = inner_run_spec(sp);
+    return local ? 1 + auglag_reevaluations(*local) : 0;
+}
+
+/* run_nlopt()'s record of the last gradient request it rejected (a
+ * gradient that is not finite; see its UData). */
+struct RejectionRecord {
+    bool          last_rejected = false;   // the last gradient request was rejected
+    unsigned long calls = 0;               // objective calls so far
+    unsigned long calls_at_rejection = 0;  // `calls` at the last rejection
+    double        rejected_after = 0.0;    // seconds into optimize() at it
+};
+
+/* Whether a search that has ended ended because of the rejection `r`
+ * records: it made no objective call after it but AUGLAG's
+ * `reevaluations` of the point its local search returned
+ * (auglag_reevaluations), and neither the MAXEVAL nor the MAXTIME of
+ * `local`, the local search the run is (single_local_search), had been
+ * reached by then. NLopt reports those of a local LD_* search itself, but
+ * AUGLAG reports the ending of its local search as FTOL_REACHED (auglag.c
+ * without constraints); that search's evaluations are the calls up to the
+ * rejection. A call after the rejection -- a line-search point without a
+ * gradient (LD_SLSQP), a sample of a global search -- means the search
+ * went on past it. */
+inline bool ended_on_rejection(const RejectionRecord& r,
+                               unsigned long reevaluations,
+                               const std::optional<OptimizerSpec>& local)
+{
+    if (!r.last_rejected || r.calls - r.calls_at_rejection > reevaluations)
+        return false;
+    if (!local) return true;
+    if (local->stop.maxeval && r.calls_at_rejection >= *local->stop.maxeval)
+        return false;
+    return !(local->stop.maxtime && r.rejected_after >= *local->stop.maxtime);
 }
 
 }  // namespace detail
@@ -249,14 +297,46 @@ void run_nlopt(const OptimizerSpec& sp,
      * with its own type once optimize() has returned -- the pattern of the
      * ASA driver (algorithms_asa.cpp). NLopt calls the objective from one
      * thread at a time, so no lock is needed. */
+    /* A gradient that is not finite (GradientProvider::failure: Stencil
+     * or NotFinite) is a rejected point: the objective returns +inf and a
+     * zero gradient, and NLopt steps back, as its line searches and trust
+     * regions do for a failed evaluation. A local gradient search needs a
+     * finite gradient at its starting point, though: until it has had one,
+     * there is no point to step back to. LD_LBFGS, LD_TNEWTON*, LD_VAR*
+     * and LD_SLSQP stopped at once and reported success or
+     * "roundoff-limited"; LD_MMA and LD_CCSAQ asked for the same point again
+     * and again until MAXEVAL. Such a search is stopped at that rejection
+     * (force_stop) with its own status: a local LD_* algorithm, and an
+     * AUGLAG whose local search is one (single_local_search: HPO sets no
+     * constraint, so AUGLAG runs that search once, from the starting point;
+     * force_stop reaches it). MLSL and the global GD_* searches are not
+     * stopped: a rejected sample or local start leaves them the rest.
+     *
+     * `rejection` records the last gradient request that was rejected. A
+     * search that ends right after such a rejection ended because of it
+     * (detail::ended_on_rejection), unless a stop criterion ended it:
+     * MAXEVAL, MAXTIME or STOPVAL, which NLopt reports, or the MAXEVAL or
+     * MAXTIME of AUGLAG's local search, which AUGLAG does not. */
     struct UData {
         const OptimizerSpec*               sp;
         HPO_Host<Vec,Runner>*              host;
         GradientProvider<Vec,Runner>*      gp;
         nlopt::opt*                        opt;
         std::exception_ptr                 error;
+        bool                               local_gradient_search;
+        bool                               had_finite_gradient = false;
+        bool                               gradient_stop = false;
+        GradientFailureInfo                rejected;
+        detail::RejectionRecord            rejection;
+        std::chrono::steady_clock::time_point started;
     };
-    UData udata{&sp, &host, &gp, &opt, nullptr};
+    const std::optional<OptimizerSpec> local = single_local_search(sp);
+    const unsigned long reevaluations = detail::auglag_reevaluations(sp);
+    UData udata{&sp, &host, &gp, &opt, nullptr,
+                /*local_gradient_search=*/local &&
+                    optimizer_caps(*local).is_gradient_based,
+                /*had_finite_gradient=*/false, /*gradient_stop=*/false,
+                /*rejected=*/{}, /*rejection=*/{}, /*started=*/{}};
 
     /* objective adapter (handles log-scale automatically). For
      * gradient-based algorithms NLopt passes a writable `grad` vector
@@ -270,8 +350,9 @@ void run_nlopt(const OptimizerSpec& sp,
         auto* u = static_cast<UData*>(userdata);
         /* Stopping: an algorithm may still probe a point before it sees
          * the forced stop; never evaluate again. */
-        if (u->error) {
+        if (u->error || u->gradient_stop) {
             u->opt->force_stop();
+            if (!grad.empty()) std::fill(grad.begin(), grad.end(), 0.0);
             return HUGE_VAL;
         }
         try {
@@ -279,24 +360,43 @@ void run_nlopt(const OptimizerSpec& sp,
             v.set_size(static_cast<long>(x.size()));
             for(size_t i=0;i<x.size();++i) v(static_cast<long>(i))=x[i];
 
+            ++u->rejection.calls;
             /* Compute f first so the trainer cache is populated at this x;
              * host.analytical_gradient (Phase 2A.4 wiring) consumes the
              * cached fit state. */
             const double f = (*u->host)( u->sp->out(v) );
 
             if (!grad.empty()) {
+                u->rejection.last_rejected = false;
                 Vec g;
                 g.set_size(static_cast<long>(x.size()));
                 if (!u->gp->gradient(v, g)) {
-                    /* gp.gradient returns false on bad eval (NaN clamp,
-                     * non-finite W*, or MAXEVAL overflow during masked FD).
-                     * Signal a bad step to NLopt's line search: zero the
+                    /* No gradient here: the MAXEVAL budget of the
+                     * provider (Budget), or a gradient that is not finite
+                     * (see UData). Signal a bad step to NLopt: zero the
                      * gradient and return +inf so the optimizer rejects
-                     * this point and backs off. Matches how Phase 1's
-                     * Numerical path handles non-finite host returns. */
+                     * this point and backs off -- or, at the starting
+                     * point of a local gradient search, stop it. */
+                    const GradientFailureInfo& fi = *u->gp->failure;
+                    if (fi.kind == GradientFailure::Stencil ||
+                        fi.kind == GradientFailure::NotFinite) {
+                        u->rejected = fi;
+                        u->rejection.last_rejected = true;
+                        u->rejection.calls_at_rejection = u->rejection.calls;
+                        u->rejection.rejected_after =
+                            std::chrono::duration<double>(
+                                std::chrono::steady_clock::now() - u->started)
+                                .count();
+                        if (u->local_gradient_search &&
+                            !u->had_finite_gradient) {
+                            u->gradient_stop = true;
+                            u->opt->force_stop();
+                        }
+                    }
                     std::fill(grad.begin(), grad.end(), 0.0);
                     return std::numeric_limits<double>::infinity();
                 }
+                u->had_finite_gradient = true;
                 for (size_t i=0;i<x.size();++i)
                     grad[i] = g(static_cast<long>(i));
             }
@@ -384,10 +484,34 @@ void run_nlopt(const OptimizerSpec& sp,
         }
     }
 
+    const std::string backend = sp.lib + ":" + sp.algo;
+    /* The search ended because of a gradient that is not finite: HPO
+     * stopped it at its starting point, or it ended right after it
+     * rejected such a point without a stop criterion met (`ended`: how
+     * NLopt ended). */
+    const auto ended_on_gradient = [&](const std::string& ended) {
+        if (udata.gradient_stop) {
+            report_gradient_stop(backend, udata.rejected,
+                                 "a local gradient search has no step to "
+                                 "take from a starting point without a "
+                                 "finite gradient");
+            return true;
+        }
+        if (detail::ended_on_rejection(udata.rejection, reevaluations,
+                                       local)) {
+            report_gradient_stop(backend, udata.rejected,
+                                 "NLopt ended right after it (" + ended +
+                                 ")");
+            return true;
+        }
+        return false;
+    };
+
     double fmin=0;
     int result_code = 1;   // success by default
     std::string status_str;
     try {
+        udata.started = std::chrono::steady_clock::now();
         nlopt::result res = opt.optimize(start, fmin);
         /* A forced stop normally makes optimize() throw (below); an
          * algorithm that returns a regular code after it must not hide
@@ -395,6 +519,15 @@ void run_nlopt(const OptimizerSpec& sp,
         if (udata.error) std::rethrow_exception(udata.error);
         result_code  = static_cast<int>(res);
         status_str   = nlopt_result_str(result_code);
+        /* A stop criterion ends the search whatever the last point was
+         * (ended_on_rejection reads those of AUGLAG's local search). A
+         * tolerance is not one here: a search that ends with XTOL_REACHED
+         * or FTOL_REACHED right after a rejection ended on the steps it
+         * took back from the rejected point. */
+        const bool criterion = res == nlopt::MAXEVAL_REACHED ||
+                               res == nlopt::MAXTIME_REACHED ||
+                               res == nlopt::STOPVAL_REACHED;
+        if (!criterion && ended_on_gradient(status_str)) return;
 
         /* NLopt sets an internal stop_msg only on failure paths inside
          * an algorithm. A handful of algorithms catch that internal
@@ -459,6 +592,11 @@ void run_nlopt(const OptimizerSpec& sp,
         if (udata.error) std::rethrow_exception(udata.error);
         const std::string what = e.what();
         const bool graceful = nlopt_self_terminated(e, opt.get_errmsg());
+        /* HPO's own stop at a starting point without a finite gradient
+         * (a forced stop), or an algorithm that terminated itself right
+         * after it rejected such a point. */
+        if ((udata.gradient_stop || graceful) && ended_on_gradient(what))
+            return;
         if (graceful) {
             status_str = "STOPPED -- " + what +
                 " (algorithm converged; consider adding ftol_rel / xtol_rel"

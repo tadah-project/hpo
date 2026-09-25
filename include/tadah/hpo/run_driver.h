@@ -11,7 +11,9 @@
  *   normal end              flush; trailer = the status recorded by the
  *                           optimiser run that ended the run
  *                           (HPOLog::set_status; each run starts without
- *                           one) or COMPLETED; returns 0
+ *                           one: a stop criterion, "STOPPED -- gradient
+ *                           not finite: ..." from a gradient-based search,
+ *                           ...) or COMPLETED; returns 0
  *   core::ShutdownRequested flush; "SHUTDOWN (<signal>)"; returns
  *                           shutdown_exit_status(<signal>) = 128 + signal
  *   StagnationStop          flush; "STOPPED -- stagnation ..."; returns 0.

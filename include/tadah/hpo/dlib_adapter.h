@@ -21,6 +21,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace tadah::hpo {
 
@@ -37,6 +38,17 @@ namespace detail {
 struct MaxEvalReached : public std::exception {
   const char* what() const noexcept override {
     return "DLIB:BFGS reached MAXEVAL function evaluations (eval-counted, not iter-counted)";
+  }
+};
+
+/* The gradient BFGS asked for is not finite (GradientProvider::failure
+ * says why): dlib cannot reject a point, so the search ends there, with
+ * its own status (report_gradient_stop). */
+struct GradientNotFinite : public std::exception {
+  GradientFailureInfo info;
+  explicit GradientNotFinite(GradientFailureInfo i) : info(std::move(i)) {}
+  const char* what() const noexcept override {
+    return "DLIB:BFGS: gradient not finite";
   }
 };
 
@@ -526,10 +538,24 @@ template<class Vec,class Runner>
     }
     auto gp = make_gradient_provider<Vec, Runner>(
         sp, host, &evals_used, maxeval, agf);
+    /* A gradient that is not finite ends the search with its own status;
+     * dlib has no way to reject the point. Before 1.6.0 it was reported as
+     * "MAXEVAL=<n> reached". */
     const auto grad = [&gp](const matrix<double,0,1>& x) {
         matrix<double,0,1> g;
-        if (!gp.gradient(x, g))
-            throw detail::MaxEvalReached{};
+        if (!gp.gradient(x, g)) {
+            switch (gp.failure->kind) {
+                case GradientFailure::Budget:
+                    throw detail::MaxEvalReached{};
+                case GradientFailure::Stencil:
+                case GradientFailure::NotFinite:
+                    throw detail::GradientNotFinite{*gp.failure};
+                case GradientFailure::None:
+                    break;
+            }
+            throw std::logic_error(
+                "DLIB:BFGS: the gradient provider failed without a reason");
+        }
         return g;
     };
 
@@ -558,6 +584,8 @@ template<class Vec,class Runner>
             << " reached; preserving best-so-far";
         std::cout << "[HPO] " << oss.str() << "\n";
         HPOLog::instance().info(oss.str());
+      } catch (const detail::GradientNotFinite& e) {
+        report_gradient_stop("DLIB:BFGS", e.info);
       }
     };
 

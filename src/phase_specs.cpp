@@ -93,6 +93,16 @@ bool obtains_gradients(const OptimizerSpec& spec)
     return local && optimizer_caps(*local).is_gradient_based;
 }
 
+std::optional<OptimizerSpec> single_local_search(const OptimizerSpec& spec)
+{
+    const OptimizerCaps& caps = optimizer_caps(spec);
+    if (caps.is_global) return std::nullopt;
+    if (!caps.accepts_inner) return spec;
+    const std::optional<OptimizerSpec> local = inner_run_spec(spec);
+    if (!local) return std::nullopt;
+    return single_local_search(*local);
+}
+
 namespace {
 
 /* A point the refinement's candidates stand in for at startup: the spec's

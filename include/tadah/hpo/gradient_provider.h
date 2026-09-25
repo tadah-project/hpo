@@ -44,17 +44,36 @@
  * non-finite value, so they can terminate cleanly without exceptions
  * propagating across Ceres' Solve() frames (Ceres is not exception-safe).
  *
+ * Why a gradient() call returned false is recorded in
+ * GradientProvider::failure (GradientFailure): the MAXEVAL budget
+ * (Budget), a finite-difference gradient that is not finite because an
+ * evaluation of its stencil failed (Stencil: a non-finite loss, or a
+ * failed one -- FAILSCORE or a graded failure, loss_is_feasible() -- whose
+ * difference quotient overflows, as the default FAILSCORE, the largest
+ * double, does against a usable loss for any step h below 1/2), or a
+ * gradient not finite for another reason (NotFinite). The adapters turn Stencil and NotFinite into the search's
+ * own ending, "STOPPED -- gradient not finite: <cause>"
+ * (gradient_stop_status), where they used to report MAXEVAL or success.
+ * A failed stencil evaluation whose difference stays finite (a finite
+ * FAILSCORE such as 1e9 with a step that is not tiny) gives a finite,
+ * steep gradient, which the optimisers use.
+ *
  * Lifetime: capture by reference is safe because the provider is built
  * inside a `run_<lib>_<algo>` adapter and consumed within the same call.
  */
 
 #include <tadah/hpo/hpo_host.h>
+#include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/pc_fail_grading.h>
 
 #include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <iomanip>
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <sstream>
@@ -79,15 +98,166 @@
 
 namespace tadah::hpo {
 
+/* Why GradientProvider::gradient() returned false. */
+enum class GradientFailure {
+  None,      /* the last call returned a finite gradient */
+  Budget,    /* MAXEVAL was spent before the gradient was complete */
+  Stencil,   /* a finite-difference gradient that is not finite because an
+                evaluation of its stencil failed */
+  NotFinite  /* a gradient that is not finite for another reason */
+};
+
+/* The failure of the last gradient() call: `cause` is the fixed reason
+ * the status and the journal give, `detail` what failed, for the journal
+ * (the point, the stencil point and its loss). */
+struct GradientFailureInfo {
+  GradientFailure kind = GradientFailure::None;
+  std::string     cause;
+  std::string     detail;
+};
+
+/* The cause of a Stencil failure. */
+inline const std::string kGradientStencilCause =
+    "a failed evaluation in the finite-difference stencil";
+
+/* The run's status when a gradient that is not finite ended the search
+ * (HPOLog::set_status; the journal trailer of a run it ends). */
+inline std::string gradient_stop_status(const GradientFailureInfo& f)
+{
+  return "STOPPED -- gradient not finite: " + f.cause;
+}
+
+/* Records that a gradient that is not finite ended the search of
+ * `backend` ("DLIB:BFGS"): a journal warning, the same line on stdout, and
+ * the run's status. `ended` says how the optimiser ended right after it
+ * rejected the point, or what HPO did ("" for neither). */
+inline void report_gradient_stop(const std::string& backend,
+                                 const GradientFailureInfo& f,
+                                 const std::string& ended = "")
+{
+  std::string line = backend + " stopped: gradient not finite: " + f.cause;
+  if (!f.detail.empty()) line += " (" + f.detail + ")";
+  if (!ended.empty()) line += "; " + ended;
+  line += "; best-so-far preserved";
+  std::cout << "[HPO] " << line << "\n";
+  HPOLog::instance().warning(line);
+  HPOLog::instance().set_status(gradient_stop_status(f));
+}
+
 template<class Vec, class Runner>
 struct GradientProvider {
   /** Return host(sp.out(x)). +inf on bad eval or MAXEVAL overflow. */
   std::function<double(const Vec& x)>            cost;
 
   /** Fill g with d(host(sp.out(x)))/dx. Return false on bad eval or
-   *  MAXEVAL overflow; caller should treat as graceful termination. */
+   *  MAXEVAL overflow; `failure` then says which. */
   std::function<bool(const Vec& x, Vec& g)>      gradient;
+
+  /** Why the last gradient() call returned false (kind None after a call
+   *  that returned true). Shared with the gradient callable, which fills
+   *  it. */
+  std::shared_ptr<GradientFailureInfo> failure =
+      std::make_shared<GradientFailureInfo>();
 };
+
+namespace detail {
+
+/* Fills GradientFailureInfo for the finite-difference paths: what a
+ * stencil evaluation or quotient says about the gradient at x. */
+template<class Vec>
+struct StencilReport {
+  const OptimizerSpec*  sp;
+  GradientFailureInfo*  out;
+
+  /* Whether `y` is a failed evaluation: not a usable loss. */
+  bool failed(double y) const {
+    const double fs = sp->failscore.value_or(
+        std::numeric_limits<double>::infinity());
+    return !loss_is_feasible(y, fs);
+  }
+  std::string label(long i) const {
+    const auto k = static_cast<std::size_t>(i);
+    return (k < sp->parameter_labels.size() && !sp->parameter_labels[k].empty())
+               ? sp->parameter_labels[k] : logidx::dim_label(k);
+  }
+  /* "CGRID2B[2] = 1.4": dimension i of the internal point u, in real
+   * units. */
+  std::string at(const Vec& u, long i) const {
+    const Vec r = sp->out(u);
+    std::ostringstream os;
+    os << label(i) << " = " << std::setprecision(10) << r(i);
+    return os.str();
+  }
+  static std::string num(double v) {
+    std::ostringstream os;
+    os << std::setprecision(10) << v;
+    return os.str();
+  }
+
+  void budget() const { *out = {GradientFailure::Budget, "MAXEVAL spent", ""}; }
+
+  /* The loss at x itself is not finite. */
+  void centre(const Vec& x, double y) const {
+    std::ostringstream os;
+    os << "the loss at ";
+    const long n = x.size();
+    for (long i = 0; i < n; ++i) os << (i ? ", " : "") << at(x, i);
+    os << " is " << num(y);
+    *out = {GradientFailure::Stencil, kGradientStencilCause, os.str()};
+  }
+
+  /* The derivative along dimension i, from the stencil evaluations
+   * `pts` (point, loss), is not finite: Stencil when one of them failed,
+   * NotFinite (an overflow between usable losses) otherwise. */
+  void stencil(const Vec& x, long i,
+               const std::vector<std::pair<Vec, double>>& pts) const {
+    std::ostringstream os;
+    os << "at " << at(x, i) << ", ";
+    std::vector<const std::pair<Vec, double>*> bad;
+    for (const auto& p : pts)
+      if (failed(p.second)) bad.push_back(&p);
+    if (!bad.empty()) {
+      os << (bad.size() == 1 ? "the stencil point " : "the stencil points ");
+      for (std::size_t k = 0; k < bad.size(); ++k)
+        os << (k ? " and " : "") << at(bad[k]->first, i);
+      os << " failed: loss ";
+      for (std::size_t k = 0; k < bad.size(); ++k)
+        os << (k ? " and " : "") << num(bad[k]->second);
+      *out = {GradientFailure::Stencil, kGradientStencilCause, os.str()};
+      return;
+    }
+    os << "the losses ";
+    for (std::size_t k = 0; k < pts.size(); ++k)
+      os << (k ? " and " : "") << num(pts[k].second) << " at "
+         << at(pts[k].first, i);
+    os << " overflow their difference";
+    *out = {GradientFailure::NotFinite,
+            "the finite-difference quotient overflowed", os.str()};
+  }
+
+  /* The central difference of dimension i, from yp at xp and ym at xm,
+   * is not finite. */
+  void quotient(const Vec& x, long i, const Vec& xp, double yp,
+                const Vec& xm, double ym) const {
+    stencil(x, i, {{xp, yp}, {xm, ym}});
+  }
+
+  /* A stencil evaluation (xs, ys) of dimension i is not finite; the other
+   * point of the pair was not evaluated. */
+  void point(const Vec& x, long i, const Vec& xs, double ys) const {
+    std::ostringstream os;
+    os << "at " << at(x, i) << ", the stencil point " << at(xs, i)
+       << " failed: loss " << num(ys);
+    *out = {GradientFailure::Stencil, kGradientStencilCause, os.str()};
+  }
+
+  void analytical(const std::string& what) const {
+    *out = {GradientFailure::NotFinite,
+            "the analytical gradient " + what, ""};
+  }
+};
+
+}  // namespace detail
 
 /* Caller-injected analytical gradient lambda. Fills g with the
  * closed-form gradient where it can; pushes any theta indices for which no
@@ -122,6 +292,9 @@ make_gradient_provider(const OptimizerSpec&     sp,
 {
   const GradStrategy strat = sp.grad_strategy.value_or(GradStrategy::Numerical);
   GradientProvider<Vec, Runner> gp;
+  /* Each gradient callable owns a share of gp.failure and fills it. */
+  const std::shared_ptr<GradientFailureInfo> failure = gp.failure;
+  const detail::StencilReport<Vec> report{&sp, failure.get()};
 
   /* Chain rule for the analytical path: the host differentiates the loss
    * with respect to the REAL parameters (dL/dtheta), while the optimiser
@@ -170,12 +343,20 @@ make_gradient_provider(const OptimizerSpec&     sp,
       };
       return gp;
     }
-    gp.gradient = [analytical_grad_fn, eval_counter, maxeval, pull_to_internal]
+    gp.gradient = [analytical_grad_fn, eval_counter, maxeval, pull_to_internal,
+                   failure, report]
                   (const Vec& x, Vec& g)->bool {
-      if (maxeval > 0 && eval_counter->load() >= maxeval) return false;
+      *failure = {};
+      if (maxeval > 0 && eval_counter->load() >= maxeval) {
+        report.budget();
+        return false;
+      }
       eval_counter->fetch_add(1);
       std::vector<int> needs_fd;
-      if (!analytical_grad_fn(x, g, needs_fd)) return false;
+      if (!analytical_grad_fn(x, g, needs_fd)) {
+        report.analytical("could not be formed at this point");
+        return false;
+      }
       pull_to_internal(x, g, needs_fd);
       if (!needs_fd.empty()) {
         /* The host does not say which cause applies; name them all. The
@@ -198,7 +379,10 @@ make_gradient_provider(const OptimizerSpec&     sp,
         throw std::runtime_error(oss.str());
       }
       for (long i = 0; i < g.size(); ++i)
-        if (!std::isfinite(g(i))) return false;
+        if (!std::isfinite(g(i))) {
+          report.analytical("is not finite at this point");
+          return false;
+        }
       return true;
     };
     return gp;
@@ -223,16 +407,25 @@ make_gradient_provider(const OptimizerSpec&     sp,
       fd_step = it->second;
 
     gp.gradient = [&host, &sp, eval_counter, maxeval,
-                   analytical_grad_fn, fd_step, pull_to_internal]
+                   analytical_grad_fn, fd_step, pull_to_internal,
+                   failure, report]
                   (const Vec& x, Vec& g)->bool {
+      *failure = {};
       const auto over = [&]() {
-        return maxeval > 0 && eval_counter->load() >= maxeval;
+        if (maxeval > 0 && eval_counter->load() >= maxeval) {
+          report.budget();
+          return true;
+        }
+        return false;
       };
       if (over()) return false;
       eval_counter->fetch_add(1);
 
       std::vector<int> needs_fd;
-      if (!analytical_grad_fn(x, g, needs_fd)) return false;
+      if (!analytical_grad_fn(x, g, needs_fd)) {
+        report.analytical("could not be formed at this point");
+        return false;
+      }
       pull_to_internal(x, g, needs_fd);
 
       /* All-FD gate: when every theta falls back to FD the masked-FD pass
@@ -268,22 +461,34 @@ make_gradient_provider(const OptimizerSpec&     sp,
         if (over()) return false;
         eval_counter->fetch_add(1);
         const double yp = host(sp.out(xp));
-        if (!std::isfinite(yp)) return false;
+        if (!std::isfinite(yp)) {
+          report.point(x, idx, xp, yp);
+          return false;
+        }
 
         if (over()) return false;
         eval_counter->fetch_add(1);
         const double ym = host(sp.out(xm));
-        if (!std::isfinite(ym)) return false;
+        if (!std::isfinite(ym)) {
+          report.point(x, idx, xm, ym);
+          return false;
+        }
 
         const double gi = (yp - ym) / (2.0 * h);
-        if (!std::isfinite(gi)) return false;
+        if (!std::isfinite(gi)) {
+          report.quotient(x, idx, xp, yp, xm, ym);
+          return false;
+        }
         g(idx) = gi;
       }
 
       // Sanity check: every index should now be finite (the analytical
       // pass may have left bad entries even outside needs_fd).
       for (long i = 0; i < g.size(); ++i)
-        if (!std::isfinite(g(i))) return false;
+        if (!std::isfinite(g(i))) {
+          report.analytical("is not finite at this point");
+          return false;
+        }
       return true;
     };
     return gp;
@@ -317,17 +522,26 @@ make_gradient_provider(const OptimizerSpec&     sp,
       fd_step = it->second;
     if (!(fd_step > 0.0) || !std::isfinite(fd_step))
       throw std::runtime_error("PARAM fd_step must be a positive finite fraction of the box width");
-    gp.gradient = [&host, &sp, eval_counter, maxeval, fd_step]
+    gp.gradient = [&host, &sp, eval_counter, maxeval, fd_step, failure,
+                   report]
                   (const Vec& x, Vec& g)->bool {
+      *failure = {};
       const auto over = [&]() {
-        return maxeval > 0 && eval_counter->load() >= maxeval;
+        if (maxeval > 0 && eval_counter->load() >= maxeval) {
+          report.budget();
+          return true;
+        }
+        return false;
       };
       /* Centre evaluation first: a non-finite loss AT x means the
        * gradient is meaningless (bad-eval contract shared with the
        * Ceres kernel, which evaluates the residual at x as well). */
       if (over()) return false;
       eval_counter->fetch_add(1);
-      if (!std::isfinite(host(sp.out(x)))) return false;
+      if (const double y0 = host(sp.out(x)); !std::isfinite(y0)) {
+        report.centre(x, y0);
+        return false;
+      }
       const long n = x.size();
       g.set_size(n);
       for (long idx = 0; idx < n; ++idx) {
@@ -338,13 +552,22 @@ make_gradient_provider(const OptimizerSpec&     sp,
         if (over()) return false;
         eval_counter->fetch_add(1);
         const double yp = host(sp.out(xp));
-        if (!std::isfinite(yp)) return false;
+        if (!std::isfinite(yp)) {
+          report.point(x, idx, xp, yp);
+          return false;
+        }
         if (over()) return false;
         eval_counter->fetch_add(1);
         const double ym = host(sp.out(xm));
-        if (!std::isfinite(ym)) return false;
+        if (!std::isfinite(ym)) {
+          report.point(x, idx, xm, ym);
+          return false;
+        }
         const double gi = (yp - ym) / (2.0 * h);
-        if (!std::isfinite(gi)) return false;
+        if (!std::isfinite(gi)) {
+          report.quotient(x, idx, xp, yp, xm, ym);
+          return false;
+        }
         g(idx) = gi;
       }
       return true;
@@ -363,20 +586,31 @@ make_gradient_provider(const OptimizerSpec&     sp,
 
   // ---- Numerical: Ceres DynamicNumericDiffCostFunction over a host-
   // wrapping CostFunctor that bumps the same shared counter.
+  /* What the functor evaluated during one gradient() call, to tell why
+   * Ceres' gradient is not finite. */
+  struct StencilLog {
+    bool                                 budget = false;
+    std::vector<std::pair<Vec, double>>  evals;   /* (internal point, loss) */
+  };
   struct CostFunctor {
     HostT*                       host;
     const OptimizerSpec*         sp;
     std::atomic<unsigned long>*  counter;
     unsigned long                maxeval;
     int                          dim;
+    StencilLog*                  log;   /* owned by the gradient callable */
 
     bool operator()(double const* const* params, double* residuals) const {
-      if (maxeval > 0 && counter->load() >= maxeval) return false;
+      if (maxeval > 0 && counter->load() >= maxeval) {
+        log->budget = true;
+        return false;
+      }
       counter->fetch_add(1);
       Vec vlog;
       vlog.set_size(dim);
       for (int i = 0; i < dim; ++i) vlog(i) = params[0][i];
       const double y = (*host)(sp->out(vlog));
+      log->evals.emplace_back(vlog, y);
       if (!std::isfinite(y)) return false;
       residuals[0] = y;
       return true;
@@ -401,7 +635,9 @@ make_gradient_provider(const OptimizerSpec&     sp,
   // share it via shared_ptr (the gradient lambda needs to outlive the
   // factory call).
   std::shared_ptr<ceres::CostFunction> cf;
-  auto* functor = new CostFunctor{&host, &sp, eval_counter, maxeval, dim};
+  const auto stencil_log = std::make_shared<StencilLog>();
+  auto* functor = new CostFunctor{&host, &sp, eval_counter, maxeval, dim,
+                                  stencil_log.get()};
 
   using NDFC_Central = ceres::DynamicNumericDiffCostFunction<CostFunctor, ceres::CENTRAL>;
   using NDFC_Forward = ceres::DynamicNumericDiffCostFunction<CostFunctor, ceres::FORWARD>;
@@ -424,19 +660,63 @@ make_gradient_provider(const OptimizerSpec&     sp,
     cf.reset(p);
   }
 
-  gp.gradient = [cf, dim](const Vec& x, Vec& g)->bool {
+  /* The evaluations Ceres made along dimension i: the points that differ
+   * from x there, and x itself for FORWARD differences (a quotient over
+   * the centre). */
+  const bool forward = (diff_kind == 1);
+  const auto points_of = [stencil_log, forward](const Vec& x, long i) {
+    std::vector<std::pair<Vec, double>> pts;
+    for (const auto& e : stencil_log->evals) {
+      bool centre = true, along_i = true;
+      for (long k = 0; k < x.size(); ++k) {
+        if (e.first(k) == x(k)) continue;
+        centre = false;
+        if (k != i) along_i = false;
+      }
+      if ((!centre && along_i) || (centre && forward)) pts.push_back(e);
+    }
+    return pts;
+  };
+
+  gp.gradient = [cf, dim, stencil_log, points_of, failure, report]
+                (const Vec& x, Vec& g)->bool {
+    *failure = {};
+    *stencil_log = {};
     std::vector<double> px(static_cast<std::size_t>(dim));
     for (int i = 0; i < dim; ++i) px[static_cast<std::size_t>(i)] = x(i);
     const double* params[1] = { px.data() };
     double residual = 0.0;
     std::vector<double> jac(static_cast<std::size_t>(dim), 0.0);
     double* jacs[1] = { jac.data() };
-    if (!cf->Evaluate(params, &residual, jacs)) return false;
-    if (!std::isfinite(residual)) return false;
+    const bool ok = cf->Evaluate(params, &residual, jacs);
+    if (stencil_log->budget) {
+      report.budget();
+      return false;
+    }
+    /* A non-finite loss stops the functor: at x itself, or at a stencil
+     * point of the dimension it perturbs. */
+    for (const auto& e : stencil_log->evals) {
+      if (std::isfinite(e.second)) continue;
+      long along = -1;
+      for (long k = 0; k < x.size(); ++k)
+        if (e.first(k) != x(k)) { along = k; break; }
+      if (along < 0) report.centre(x, e.second);
+      else           report.point(x, along, e.first, e.second);
+      return false;
+    }
+    if (!ok || !std::isfinite(residual)) {
+      /* Every evaluation was finite, and Ceres still failed. */
+      *failure = {GradientFailure::NotFinite,
+                  "Ceres' numeric differentiation failed", ""};
+      return false;
+    }
     g.set_size(dim);
     for (int i = 0; i < dim; ++i) {
       const double v = jac[static_cast<std::size_t>(i)];
-      if (!std::isfinite(v)) return false;
+      if (!std::isfinite(v)) {
+        report.stencil(x, i, points_of(x, i));
+        return false;
+      }
       g(i) = v;
     }
     return true;
