@@ -1341,6 +1341,18 @@ RET1_asa:
         *exit_status = TOO_MANY_INVALID_STATES;
         goto EXIT_asa;
       }
+      /* TADAH-PATCH begin: upstream ignores Immediate_Exit while it samples
+       * the initial cost temperature. Once the TADAH driver has flagged a
+       * stop, every callback returns an invalid state without evaluating, so
+       * this retry loop ran on until Limit_Invalid_Generated_States, and for
+       * ever with -1: end the run at the stop (patch 6 in TADAH-PATCHES.md). */
+#if ASA_PARALLEL
+      if (OPTIONS->Immediate_Exit == TRUE) {
+        *exit_status = IMMEDIATE_EXIT;
+        goto EXIT_asa;
+      }
+#endif
+      /* TADAH-PATCH end */
     }
     while (*valid_state_generated_flag == FALSE);
     --(*number_invalid_generated_states);
@@ -1483,6 +1495,18 @@ RET1_asa:
         *exit_status = TOO_MANY_INVALID_STATES;
         goto EXIT_asa;
       }
+      /* TADAH-PATCH begin: upstream ignores Immediate_Exit while it samples a
+       * random valid starting state. Once the TADAH driver has flagged a
+       * stop, every callback returns an invalid state without evaluating, so
+       * this retry loop ran on until Limit_Invalid_Generated_States, and for
+       * ever with -1: end the run at the stop (patch 6 in TADAH-PATCHES.md). */
+#if ASA_PARALLEL
+      if (OPTIONS->Immediate_Exit == TRUE) {
+        *exit_status = IMMEDIATE_EXIT;
+        goto EXIT_asa;
+      }
+#endif
+      /* TADAH-PATCH end */
     }
     while (*valid_state_generated_flag == FALSE);
     --(*number_invalid_generated_states);
@@ -3309,6 +3333,17 @@ RET1_asa:
           ((double) tmp_var_lint / (double) (OPTIONS->Gener_Mov_Avr));
         OPTIONS->Gener_Block =
           MIN (OPTIONS->Gener_Block, OPTIONS->Gener_Block_Max);
+        /* TADAH-PATCH begin: upstream bug -- *recent_number_generated is
+         * reset to 0 whenever a new best is accepted, so a periodic test
+         * that follows a new best adds a 0 to the moving average, which
+         * then truncates to 0 (e.g. {1, 1, 0} / 3). With Gener_Block 0 the
+         * generation loop above generates and evaluates nothing and never
+         * exits: asa() spins for ever without evaluating, so no MAXEVAL or
+         * signal stop reaches it. A block holds at least one state
+         * (asa_test_asa_options rejects Gener_Block < 1); keep it there.
+         * Only a run that would have spun is changed. */
+        OPTIONS->Gener_Block = MAX (OPTIONS->Gener_Block, 1);
+        /* TADAH-PATCH end */
       }
 #endif /* ASA_PARALLEL */
 
@@ -3534,6 +3569,19 @@ RET1_asa:
               *exit_status = TOO_MANY_INVALID_STATES;
               goto EXIT_asa;
             }
+            /* TADAH-PATCH begin: upstream ignores Immediate_Exit while it
+             * samples the Reanneal_Cost deviation of the cost. Once the TADAH
+             * driver has flagged a stop, every callback returns an invalid
+             * state without evaluating, so this retry loop ran on until
+             * Limit_Invalid_Generated_States, and for ever with -1: end the
+             * run at the stop (patch 6 in TADAH-PATCHES.md). */
+#if ASA_PARALLEL
+            if (OPTIONS->Immediate_Exit == TRUE) {
+              *exit_status = IMMEDIATE_EXIT;
+              goto EXIT_asa;
+            }
+#endif
+            /* TADAH-PATCH end */
           }
           while (*valid_state_generated_flag == FALSE);
           --(*number_invalid_generated_states);

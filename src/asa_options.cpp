@@ -105,10 +105,12 @@ const Desc kDescs[] = {
   {"Queue_Resolution", Kind::Real, true, 0, kNaN, "0.0",
    "per-dim cache-hit resolution"},
   {"Gener_Block", Kind::Count, false, 1, kNaN, "1",
-   "generated-state block size; 1 = canonical serial sampling, >1 "
-   "evaluates the block concurrently (THREADS-wide) and changes sampling"},
+   "initial generated-state block size; 1 (with Gener_Block_Max 1) = "
+   "canonical serial sampling, >1 evaluates the block concurrently "
+   "(THREADS-wide) and changes sampling"},
   {"Gener_Block_Max", Kind::Count, false, 1, kNaN, "Gener_Block",
-   "block-size cap (buffers sized once); == Gener_Block freezes the size"},
+   "block-size cap (buffers sized once); the adaptive resizing keeps the "
+   "block between 1 and this cap, so it can shrink below Gener_Block"},
   {"Gener_Mov_Avr", Kind::Count, false, 1, kNaN, "3",
    "moving-average window of the adaptive block resizing (must be >= 1)"},
 };
