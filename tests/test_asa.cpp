@@ -20,14 +20,18 @@ extern "C" {
 #include <asa/tadah_asa_hook.h>  /* tadah_asa_cost_temp mirror */
 }
 
+#include "finish_within.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <mutex>
 #include <sstream>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -91,6 +95,57 @@ struct Recorder {
         return c;
     }
 };
+
+/* An objective whose every call returns less than any call before it,
+ * wherever ASA samples: every generated state is a new best, so ASA accepts
+ * it and restarts at 0 its count of the states generated since the last new
+ * best. ASA's periodic test (every Acceptance_Frequency_Modulus = 100
+ * acceptances) feeds that count into the moving average (Gener_Mov_Avr = 3
+ * tests) that resizes its block of generated states, Gener_Block. */
+struct AlwaysImproving {
+    std::atomic<long> n{0};
+    double next() { return 1.0 / (1.0 + static_cast<double>(++n)); }
+};
+
+/* Runs ASA with `sp` on `rec` under a 60 s watchdog (`what` names the run
+ * if it never returns) and returns ASA's "[HPO] ..." console lines. An
+ * exception from the run propagates, with the console restored. */
+std::string run_bounded(const OptimizerSpec& sp, std::size_t dim,
+                        const Recorder& rec, const std::string& what)
+{
+    const AsaHostFn fn = rec.fn();
+    std::ostringstream captured;
+    struct Restore {
+        std::streambuf* old;
+        ~Restore() { std::cout.rdbuf(old); }
+    } restore{std::cout.rdbuf(captured.rdbuf())};
+    hpo_test::finish_within(std::chrono::seconds(60), what,
+                            [&] { run_asa_erased(sp, dim, fn); });
+    return captured.str();
+}
+
+/* Runs ASA with `sp` on AlwaysImproving under a 60 s watchdog; returns the
+ * evaluated points and ASA's "[HPO] ..." console lines. */
+std::vector<std::vector<double>> run_always_improving(const OptimizerSpec& sp,
+                                                      std::size_t dim,
+                                                      std::string& console)
+{
+    AlwaysImproving obj;
+    Recorder rec;
+    rec.f = [&obj](const std::vector<double>&) { return obj.next(); };
+    console = run_bounded(
+        sp, dim, rec,
+        "run_asa_erased on an objective whose every state is a new best");
+    return rec.calls;
+}
+
+/* ASA's closing console line for a run that a stop ended after n host
+ * evaluations: the stop's reason and ASA's own exit code. */
+std::string stopped_line(const std::string& reason, std::size_t n)
+{
+    return "ASA stopped: " + reason + " after " + std::to_string(n) +
+           " host eval(s) (asa exit: IMMEDIATE_EXIT)";
+}
 
 }  // namespace
 
@@ -667,6 +722,26 @@ TEST_CASE("ASA P_TEMP_TOO_SMALL names the underflowed dimension",
     CHECK(s.find("[dim 1: RCUT2B]") != std::string::npos);
 }
 
+TEST_CASE("ASA keeps sampling after a periodic test that follows a new "
+          "best", "[HPO][asa]")
+{
+    /* The moving average starts at {1, 1, 1}. At acceptance 100 the count
+     * since the last new best is 0, and {1, 1, 0} averaged to 2/3, which
+     * truncated to a block of 0 states: asa() then looped for ever without
+     * generating or evaluating a state, so neither MAXEVAL nor a signal
+     * could end the run. With the default Gener_Block_Max 1 the block
+     * must stay at one state. */
+    auto sp = make_asa_spec({0.0, 0.0}, {1.0, 1.0});
+    set_seed_point(sp, {0.5, 0.5});
+    sp.stop.maxeval = 400;
+    std::string console;
+    const auto calls = run_always_improving(sp, 2, console);
+    INFO(console);
+    CHECK(calls.size() == 400);
+    CHECK(console.find("ASA stopped: MAXEVAL reached after 400 host eval(s)")
+          != std::string::npos);
+}
+
 TEST_CASE("ASA requires an OPTIM dimension", "[HPO][asa]")
 {
     OptimizerSpec sp;
@@ -730,4 +805,213 @@ TEST_CASE("ASA Gener_Block>1 results are THREADS-invariant",
     CHECK(t1 == t2);
     CHECK(t1 == t4);
     CHECK(!t1.empty());
+}
+
+TEST_CASE("ASA block runs keep at least one state per block when the "
+          "periodic tests follow new bests", "[HPO][asa][parallel]")
+{
+    /* Blocks of two states go through the hook (Gener_Block_Max > 1
+     * installs it); one worker keeps the evaluation order, and so the
+     * costs, deterministic. The moving average starts at {2, 2, 2}; with a
+     * periodic test every 7 acceptances, tests that follow new bests feed
+     * it counts of 1 and then 0 until it truncates to a block of 0 states
+     * well within 300 evaluations (for SEED 1 to 8), and the hook was then
+     * called with empty blocks for ever. */
+    auto sp = make_asa_spec({0.0, 0.0}, {1.0, 1.0});
+    set_seed_point(sp, {0.5, 0.5});
+    sp.seed = 1u;
+    sp.num_threads = 1;
+    sp.stop.maxeval = 300;
+    sp.param = {{"Gener_Block", 2.0}, {"Gener_Block_Max", 2.0},
+                {"Acceptance_Frequency_Modulus", 7.0}};
+    std::string console;
+    const auto calls = run_always_improving(sp, 2, console);
+    INFO(console);
+    CHECK(calls.size() == 300);
+    CHECK(console.find("ASA stopped: MAXEVAL reached after 300 host "
+                       "eval(s)") != std::string::npos);
+}
+
+/* ================= stops inside ASA's sampling loops =============== */
+
+/* Outside its main loop ASA samples states in three retry loops: the
+ * Number_Cost_Samples states of the initial cost temperature, the random
+ * start drawn with User_Initial_Parameters 0 (the default without an INIT
+ * seed), and the |Reanneal_Cost| states resampled at a periodic test when
+ * |Reanneal_Cost| > 1. Each draws states until one is valid, bounded only
+ * by Limit_Invalid_Generated_States. Once a stop is pending, every callback
+ * returns an invalid state without evaluating, and upstream ignores
+ * Immediate_Exit while it samples the cost temperature: the loop ran on
+ * until the invalid-state limit, and with the documented -1 (no limit) for
+ * ever, deaf to MAXEVAL, MAXTIME, STOPVAL, an evaluation's exception and
+ * signals. A stop must end the run at the callback that raised it, with
+ * ASA's IMMEDIATE_EXIT, in every loop and whatever the limit. */
+
+TEST_CASE("ASA stops at MAXEVAL inside the initial cost-temperature "
+          "sampling", "[HPO][asa]")
+{
+    auto bowl = [](const std::vector<double>& x) {
+        return x[0] * x[0] + x[1] * x[1];
+    };
+    /* The default Number_Cost_Samples 5 samples the cost temperature at
+     * evaluations 1 to 5; the stop is raised by the 4th callback. */
+    for (const double limit : {-1.0, 1000.0}) {
+        auto sp = make_asa_spec({-2.0, -2.0}, {2.0, 2.0});
+        set_seed_point(sp, {1.0, 1.0});
+        sp.stop.maxeval = 3;
+        sp.param = {{"Limit_Invalid_Generated_States", limit}};
+        Recorder rec;
+        rec.f = bowl;
+        const std::string console = run_bounded(
+            sp, 2, rec,
+            "ASA with MAXEVAL 3 and Limit_Invalid_Generated_States " +
+                std::to_string(static_cast<int>(limit)));
+        INFO("Limit_Invalid_Generated_States " << limit << "\n" << console);
+        CHECK(rec.calls.size() == 3);
+        CHECK(console.find(stopped_line("MAXEVAL reached", 3)) !=
+              std::string::npos);
+    }
+    /* A block run samples the cost temperature through the same serial
+     * callback. */
+    auto sp = make_asa_spec({-2.0, -2.0}, {2.0, 2.0});
+    set_seed_point(sp, {1.0, 1.0});
+    sp.num_threads = 4;
+    sp.stop.maxeval = 3;
+    sp.param = {{"Limit_Invalid_Generated_States", -1.0},
+                {"Gener_Block", 4.0}, {"Gener_Block_Max", 4.0}};
+    Recorder rec;
+    rec.f = bowl;
+    const std::string console = run_bounded(
+        sp, 2, rec,
+        "ASA block run (THREADS 4, Gener_Block 4) with MAXEVAL 3 and "
+        "Limit_Invalid_Generated_States -1");
+    INFO(console);
+    CHECK(rec.calls.size() == 3);
+    CHECK(console.find(stopped_line("MAXEVAL reached", 3)) !=
+          std::string::npos);
+}
+
+TEST_CASE("ASA stops at STOPVAL, MAXTIME and an evaluation's exception "
+          "inside the initial cost-temperature sampling", "[HPO][asa]")
+{
+    const tadah::hpo::ParamMap no_limit = {
+        {"Limit_Invalid_Generated_States", -1.0}};
+
+    SECTION("STOPVAL: the first evaluation meets it") {
+        auto sp = make_asa_spec({-2.0}, {2.0});
+        set_seed_point(sp, {1.0});
+        sp.stop.stopval = 1e9;
+        sp.param = no_limit;
+        Recorder rec;
+        rec.f = [](const std::vector<double>& x) { return x[0] * x[0]; };
+        const std::string console = run_bounded(
+            sp, 1, rec,
+            "ASA with STOPVAL met at the first evaluation and "
+            "Limit_Invalid_Generated_States -1");
+        INFO(console);
+        CHECK(rec.calls.size() == 1);
+        CHECK(console.find(stopped_line("STOPVAL reached", 1)) !=
+              std::string::npos);
+    }
+    SECTION("MAXTIME: passes while 100000 cost samples are drawn") {
+        auto sp = make_asa_spec({-2.0}, {2.0});
+        set_seed_point(sp, {1.0});
+        sp.stop.maxtime = 0.05;
+        sp.param = no_limit;
+        sp.param["Number_Cost_Samples"] = 100000.0;
+        Recorder rec;
+        rec.f = [](const std::vector<double>& x) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            return x[0] * x[0];
+        };
+        const std::string console = run_bounded(
+            sp, 1, rec,
+            "ASA with MAXTIME 0.05 s inside Number_Cost_Samples 100000 and "
+            "Limit_Invalid_Generated_States -1");
+        INFO(console);
+        CHECK(rec.calls.size() < 100000);
+        CHECK(console.find(stopped_line("MAXTIME exceeded",
+                                        rec.calls.size())) !=
+              std::string::npos);
+    }
+    SECTION("an exception thrown by the third evaluation") {
+        auto sp = make_asa_spec({-2.0}, {2.0});
+        set_seed_point(sp, {1.0});
+        sp.param = no_limit;
+        struct Boom {};
+        std::atomic<int> n{0};
+        Recorder rec;
+        rec.f = [&n](const std::vector<double>& x) -> double {
+            if (++n == 3) throw Boom{};
+            return x[0] * x[0];
+        };
+        REQUIRE_THROWS_AS(
+            run_bounded(sp, 1, rec,
+                        "ASA with an exception at the third evaluation and "
+                        "Limit_Invalid_Generated_States -1"),
+            Boom);
+        CHECK(n.load() == 3);
+        CHECK(rec.calls.size() == 2);
+    }
+}
+
+TEST_CASE("ASA stops at MAXEVAL while it draws a random start "
+          "(User_Initial_Parameters 0)", "[HPO][asa]")
+{
+    /* No INIT seed: User_Initial_Parameters resolves to 0, and after the 5
+     * cost-temperature samples ASA draws states until one is valid; the
+     * 6th callback raises the stop. */
+    auto sp = make_asa_spec({-2.0, -2.0}, {2.0, 2.0});
+    sp.stop.maxeval = 5;
+    sp.param = {{"Limit_Invalid_Generated_States", -1.0}};
+    Recorder rec;
+    rec.f = [](const std::vector<double>& x) {
+        return x[0] * x[0] + x[1] * x[1];
+    };
+    const std::string console = run_bounded(
+        sp, 2, rec,
+        "ASA drawing a random start with MAXEVAL 5 and "
+        "Limit_Invalid_Generated_States -1");
+    INFO(console);
+    CHECK(console.find("User_Initial_Parameters=0") != std::string::npos);
+    CHECK(rec.calls.size() == 5);
+    CHECK(console.find(stopped_line("MAXEVAL reached", 5)) !=
+          std::string::npos);
+}
+
+TEST_CASE("ASA stops at MAXEVAL inside the Reanneal_Cost resampling of a "
+          "periodic test", "[HPO][asa]")
+{
+    /* On an objective whose every state is a new best ASA accepts every
+     * state, so where it evaluates does not depend on the draws: 5
+     * cost-temperature samples, the INIT start, then one state per
+     * acceptance; with a periodic test every 10 acceptances and
+     * Reanneal_Parameters 0 (no tangent evaluations), the test after
+     * evaluation 16 resamples Reanneal_Cost 5 states at evaluations 17 to
+     * 21. MAXEVAL 16 to 20 raise the stop at each of those callbacks. */
+    for (const double limit : {-1.0, 1000.0}) {
+        for (std::uint64_t maxeval = 16; maxeval <= 20; ++maxeval) {
+            auto sp = make_asa_spec({0.0, 0.0}, {1.0, 1.0});
+            set_seed_point(sp, {0.5, 0.5});
+            sp.stop.maxeval = maxeval;
+            sp.param = {{"Limit_Invalid_Generated_States", limit},
+                        {"Acceptance_Frequency_Modulus", 10.0},
+                        {"Reanneal_Parameters", 0.0},
+                        {"Reanneal_Cost", 5.0}};
+            AlwaysImproving obj;
+            Recorder rec;
+            rec.f = [&obj](const std::vector<double>&) { return obj.next(); };
+            const std::string console = run_bounded(
+                sp, 2, rec,
+                "ASA with MAXEVAL " + std::to_string(maxeval) +
+                    " inside the Reanneal_Cost 5 resampling and "
+                    "Limit_Invalid_Generated_States " +
+                    std::to_string(static_cast<int>(limit)));
+            INFO("MAXEVAL " << maxeval << ", Limit_Invalid_Generated_States "
+                 << limit << "\n" << console);
+            CHECK(rec.calls.size() == maxeval);
+            CHECK(console.find(stopped_line("MAXEVAL reached", maxeval)) !=
+                  std::string::npos);
+        }
+    }
 }

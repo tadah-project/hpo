@@ -373,17 +373,39 @@ struct SignalOutcome {
     int                status = -1;
     std::exception_ptr error;
     bool               raised = false;
+    bool               stalled = false;   /* evaluations stopped first */
     std::size_t        evals_at_raise = 0;
     std::size_t        evals_final = 0;
 };
 
 /* Runs hpo_run(ctx) on a worker thread and raises `signo` on this thread
- * once three evaluations have started (so SignalHandler::install() has
- * run). None of the configurations can end by itself within the time this
- * takes: each runs for many seconds, or thousands of evaluations, without
- * the signal, so the signal is what ends the run. */
-SignalOutcome run_and_signal(tadah::core::Context& ctx, int signo)
+ * once `raise_at` (at least three) evaluations have started, so
+ * SignalHandler::install() has run. None of the configurations can end by
+ * itself within the time this takes: each runs for many seconds, or
+ * thousands of evaluations, without the signal, so the signal is what ends
+ * the run.
+ *
+ * An evaluation on this fixture takes milliseconds, so a run whose count of
+ * evaluations stops moving for kStalledAfter before `raise_at` is stuck. If
+ * three evaluations have started, the signal is raised at once, as a user
+ * would, and `stalled` records it. However it was raised, hpo_run() must
+ * return within kHonouredWithin of the signal. A run that does not can be
+ * neither interrupted nor joined, so the process reports it and exits with
+ * EXIT_FAILURE: the case's CTest entry fails with a message about 80 s after
+ * the run stalls (kStalledAfter + kHonouredWithin) instead of at the CTest
+ * timeout. A run that stalls before its third evaluation, when the handler
+ * may not be installed yet, or that neither ends nor reaches `raise_at`
+ * within kReachWithin, is reported the same way without a signal. */
+SignalOutcome run_and_signal(tadah::core::Context& ctx, int signo,
+                             std::size_t raise_at = 3)
 {
+    using Clock = std::chrono::steady_clock;
+    constexpr auto kStalledAfter   = std::chrono::seconds(20);
+    constexpr auto kHonouredWithin = std::chrono::seconds(60);
+    constexpr auto kReachWithin    = std::chrono::minutes(4);
+    constexpr std::size_t kHandlerInstalled = 3;
+    raise_at = std::max<std::size_t>(raise_at, kHandlerInstalled);
+
     SignalOutcome out;
     std::atomic<bool> finished{false};
     std::thread worker([&] {
@@ -394,18 +416,61 @@ SignalOutcome run_and_signal(tadah::core::Context& ctx, int signo)
         }
         finished.store(true);
     });
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::minutes(4);
-    while (!finished.load() && Host::g_iter_value() < 3 &&
-           std::chrono::steady_clock::now() < deadline)
+    const auto deadline = Clock::now() + kReachWithin;
+    std::size_t seen = 0;
+    auto seen_since = Clock::now();
+    while (!finished.load() && Host::g_iter_value() < raise_at &&
+           Clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::microseconds(200));
-    if (!finished.load() && Host::g_iter_value() >= 3) {
+        const std::size_t n = Host::g_iter_value();
+        if (n != seen) {
+            seen = n;
+            seen_since = Clock::now();
+        } else if (Clock::now() - seen_since >= kStalledAfter) {
+            out.stalled = true;
+            break;
+        }
+    }
+    const std::size_t reached = Host::g_iter_value();
+    if (!finished.load() && reached < raise_at &&
+        (!out.stalled || reached < kHandlerInstalled)) {
+        std::cerr << "FAILED: hpo_run() " << (out.stalled
+                         ? "stopped evaluating for "
+                               + std::to_string(kStalledAfter.count())
+                               + " s at "
+                         : "neither ended nor reached the signal's "
+                               + std::to_string(raise_at)
+                               + " evaluations within "
+                               + std::to_string(kReachWithin.count())
+                               + " minutes; it stood at ")
+                  << reached << " evaluation(s), before the signal could be "
+                  << "raised. Its thread cannot be joined, so the test "
+                  << "process exits now\n"
+                  << std::flush;
+        std::_Exit(EXIT_FAILURE);
+    }
+    if (!finished.load()) {
         /* The handler runs on this thread before raise() returns, so every
          * evaluation that starts after the count below is taken sees the
          * stop flag. */
         std::raise(signo);
         out.evals_at_raise = Host::g_iter_value();
         out.raised = true;
+        const auto honoured_by = Clock::now() + kHonouredWithin;
+        while (!finished.load() && Clock::now() < honoured_by)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (!finished.load()) {
+            std::cerr << "FAILED: hpo_run() did not return within "
+                      << kHonouredWithin.count() << " s of the signal; "
+                      << "evaluations " << (out.stalled ? "had stopped at "
+                                                        : "stood at ")
+                      << out.evals_at_raise << " when it was raised. The "
+                      << "run is stuck where the stop flag is never "
+                      << "polled, and its thread cannot be joined, so the "
+                      << "test process exits now\n"
+                      << std::flush;
+            std::_Exit(EXIT_FAILURE);
+        }
     }
     worker.join();
     out.evals_final = Host::g_iter_value();
@@ -430,9 +495,14 @@ std::string describe(const std::exception_ptr& e)
  * i.e. at most one per concurrent evaluation thread. */
 void check_signal_stop(const SignalOutcome& o, int signo,
                        const std::string& name, int expected_status,
-                       std::size_t in_flight)
+                       std::size_t in_flight, std::size_t raise_at)
 {
     REQUIRE(o.raised);
+    INFO("evaluations stopped before the signal: " << o.stalled
+         << " (at " << o.evals_at_raise << ", signal due at " << raise_at
+         << ")");
+    CHECK_FALSE(o.stalled);
+    CHECK(o.evals_at_raise >= raise_at);
     INFO("hpo_run exception: " << describe(o.error));
     CHECK_FALSE(o.error);
     CHECK(o.status == expected_status);
@@ -445,15 +515,17 @@ void check_signal_stop(const SignalOutcome& o, int signo,
     check_run_files();
 }
 
-/* `more` runs extra checks while the run's files still exist. */
+/* `more` runs extra checks while the run's files still exist; the signal
+ * is raised once `raise_at` evaluations have started. */
 void signal_case(const std::string& optimizer, int signo,
                  const std::string& name, int expected_status,
                  std::size_t in_flight = 1,
-                 const std::function<void()>& more = {})
+                 const std::function<void()>& more = {},
+                 std::size_t raise_at = 3)
 {
     TaRun run(optimizer);
-    const SignalOutcome o = run_and_signal(run.ctx, signo);
-    check_signal_stop(o, signo, name, expected_status, in_flight);
+    const SignalOutcome o = run_and_signal(run.ctx, signo, raise_at);
+    check_signal_stop(o, signo, name, expected_status, in_flight, raise_at);
     if (more) more();
 }
 
@@ -2448,6 +2520,45 @@ TEST_CASE("Termination: SIGINT stops ASA block-parallel with four threads",
         "    MAXEVAL 100000000\n    THREADS 4\n    SEED 7\n"
         "    PARAM Gener_Block 4\n    PARAM Gener_Block_Max 4\n"),
         SIGINT, "SIGINT", 130, 4);
+}
+
+TEST_CASE("Termination: SIGTERM stops ASA after the periodic test that "
+          "follows a new best", "[.shutdown_asa_periodic]")
+{
+    /* With SEED 8 and ASA's default options, the periodic test at
+     * acceptance 100 (evaluation 167 on this fixture) follows a new best.
+     * It averaged the count of states generated since that best (0) into
+     * the block of generated states and truncated the block to 0 states:
+     * asa() then looped for ever without evaluating, and the signal, which
+     * the next evaluation would have seen, was never honoured. The signal
+     * is raised well past that point. */
+    signal_case(plain_block(
+        "    TYPE PLAIN\n    LIB ASA\n    ALGO ASA\n"
+        "    MAXEVAL 100000\n    SEED 8\n"),
+        SIGTERM, "SIGTERM", 143, 1, {}, 500);
+}
+
+TEST_CASE("Termination: SIGINT stops ASA inside its initial cost-temperature "
+          "sampling with no invalid-state limit", "[.shutdown_asa_sampling]")
+{
+    /* The signal lands among the 1000000 states ASA samples for its initial
+     * cost temperature. Every callback after it returns an invalid state
+     * without evaluating, and the sampling loop, which upstream bounds only
+     * by Limit_Invalid_Generated_States and in which it ignores
+     * Immediate_Exit, drew states for ever with the limit off (-1). */
+    signal_case(plain_block(
+        "    TYPE PLAIN\n    LIB ASA\n    ALGO ASA\n"
+        "    MAXEVAL 100000000\n    SEED 7\n"
+        "    PARAM Number_Cost_Samples 1000000\n"
+        "    PARAM Limit_Invalid_Generated_States -1\n"),
+        SIGINT, "SIGINT", 130, 1, [] {
+            const std::string journal = read_file("hpo_run.log");
+            /* Still sampling: the main loop's progress lines, on the
+             * accepted-states cadence, never started. */
+            CHECK(journal.find("ASA gen=") == std::string::npos);
+            CHECK(journal.find("(asa exit: IMMEDIATE_EXIT)") !=
+                  std::string::npos);
+        });
 }
 
 #ifdef TADAH_USE_CERES

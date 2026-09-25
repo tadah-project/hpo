@@ -1,9 +1,9 @@
 #pragma once
-/* Shared deterministic problem for the ASA golden-neutrality gate:
+/* Shared deterministic problems for the ASA golden-neutrality gate:
  * the SAME cost function and the SAME explicit LCG drive both the
  * featured build (asa_testing::run_raw_featured) and the pristine
  * all-gates-off build (run_golden_pristine, defined in
- * test_asa_golden_pristine_tu.cpp). The cost function records every
+ * test_asa_golden_pristine_tu.cpp). The cost functions record every
  * evaluation so the two trajectories can be compared bitwise. */
 
 #include <cstddef>
@@ -57,6 +57,22 @@ inline double golden_cost(const double* x, long dim, int* flag)
     return f;
 }
 
+/* Returns less than every earlier call, wherever ASA samples: every
+ * generated state is a new best, so ASA accepts it and restarts at 0 its
+ * count of the states generated since the last new best -- the count its
+ * periodic test feeds into the adaptive block size of the featured build. */
+inline double improving_cost(const double* x, long dim, int* flag)
+{
+    auto& t = traj();
+    const double f = 1.0 / (2.0 + static_cast<double>(t.f.size()));
+    t.flat_x.insert(t.flat_x.end(), x, x + dim);
+    t.f.push_back(f);
+    *flag = 1;
+    return f;
+}
+
+using CostFn = double (*)(const double* x, long dim, int* flag);
+
 struct GoldenResult {
     int    exit_status = 0;
     double final_cost  = 0.0;
@@ -68,10 +84,10 @@ struct GoldenResult {
 }  // namespace asa_golden
 
 /* Runs the PRISTINE (all-algorithmic-gates-off, tadah_asaref_-renamed)
- * asa() at the canonical default options over the callbacks above.
- * Defined in test_asa_golden_pristine_tu.cpp. */
-asa_golden::GoldenResult run_golden_pristine(std::size_t dim,
-                                             const double* lo,
-                                             const double* hi,
-                                             const double* x0,
-                                             long limit_generated);
+ * asa() at the canonical default options over `cost` (one of the cost
+ * functions above) and golden_rng. Defined in
+ * test_asa_golden_pristine_tu.cpp. */
+asa_golden::GoldenResult run_golden_pristine(
+    std::size_t dim, const double* lo, const double* hi, const double* x0,
+    long limit_generated,
+    asa_golden::CostFn cost = &asa_golden::golden_cost);

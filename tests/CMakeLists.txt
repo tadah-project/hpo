@@ -54,7 +54,7 @@ set_tests_properties(hpo_corana1987_protocol PROPERTIES
 # arguments (MLIP's add_test() override splits them).
 set(_hpo_shutdown_cases
     dlib sigterm sigusr2 nlopt multistart prestage gfs anneal_pt anneal_pa
-    anneal_pa_threads asa asa_block noise)
+    anneal_pa_threads asa asa_block asa_periodic asa_sampling noise)
 if(TADAH_ENABLE_CERES)
     list(APPEND _hpo_shutdown_cases ceres)
 endif()

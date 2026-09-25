@@ -17,14 +17,18 @@ extern "C" {
 #include <cstring>
 #include <vector>
 
+namespace {
+/* The cost function of the run in progress (run_golden_pristine). */
+asa_golden::CostFn g_pristine_cost = nullptr;
+}  // namespace
+
 extern "C" double tadah_asa_golden_pristine_cost(
     double* x, double* /*lo*/, double* /*hi*/, double* /*tang*/,
     double* /*curv*/, ALLOC_INT* dim, int* /*type*/, int* cost_flag,
     int* /*exit_code*/, USER_DEFINES* /*o*/)
 {
     int fl = 1;
-    const double f =
-        asa_golden::golden_cost(x, static_cast<long>(*dim), &fl);
+    const double f = g_pristine_cost(x, static_cast<long>(*dim), &fl);
     *cost_flag = fl ? 1 : 0;
     return f;
 }
@@ -38,8 +42,10 @@ asa_golden::GoldenResult run_golden_pristine(std::size_t dim,
                                              const double* lo_in,
                                              const double* hi_in,
                                              const double* x0,
-                                             long limit_generated)
+                                             long limit_generated,
+                                             asa_golden::CostFn cost)
 {
+    g_pristine_cost = cost;
     std::vector<double> x(x0, x0 + dim), lo(lo_in, lo_in + dim),
         hi(hi_in, hi_in + dim);
     std::vector<double> tang(dim, 0.0), curv(1, 0.0); /* Curvature_0=1 */
@@ -87,6 +93,7 @@ asa_golden::GoldenResult run_golden_pristine(std::size_t dim,
         asa(&tadah_asa_golden_pristine_cost, &tadah_asa_golden_pristine_rng,
             &rand_seed, x.data(), lo.data(), hi.data(), tang.data(),
             curv.data(), &D, ptype.data(), &valid, &exit_status, &o);
+    g_pristine_cost = nullptr;
     r.exit_status = exit_status;
     r.n_accepted  = static_cast<long>(o.N_Accepted);
     r.n_generated = static_cast<long>(o.N_Generated);
