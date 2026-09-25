@@ -305,7 +305,9 @@ make_gradient_provider(const OptimizerSpec&     sp,
   bool use_ceres_kernel = !(sp.space && sp.space->normalised());
   if (auto it = sp.param_raw.find("fd_kernel"); it != sp.param_raw.end()) {
     if (it->second == "ceres" || it->second == "CERES") use_ceres_kernel = true;
-    else if (it->second != "inhouse" && it->second != "INHOUSE")
+    else if (it->second == "inhouse" || it->second == "INHOUSE")
+      use_ceres_kernel = false;
+    else
       throw std::runtime_error("PARAM fd_kernel must be inhouse (default) or ceres (got '" +
                                it->second + "')");
   }
