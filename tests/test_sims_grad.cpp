@@ -517,6 +517,185 @@ TEST_CASE("sims_grad — compute_observables_grad_dWchain skips failed=true "
     }
 }
 
+/* The loss kinds loss_grad_wrt_observed differentiates are the ones
+ * loss_has_derivative_wrt_observed reports: the startup rule for GRAD_STRATEGY
+ * ANALYTICAL (analytical_loss_term_blocker) refuses the others. */
+TEST_CASE("sims_grad — loss_has_derivative_wrt_observed agrees with "
+          "loss_grad_wrt_observed",
+          "[sims_grad][pc_observable][analytical_gradient]")
+{
+    for (auto t : {LossFunction::Type::L1, LossFunction::Type::L2,
+                   LossFunction::Type::LOG_COSH, LossFunction::Type::HUBER,
+                   LossFunction::Type::TUKEY, LossFunction::Type::MAPE,
+                   LossFunction::Type::RMSLE})
+    {
+        LossFunction fn(t);
+        INFO(LossFunction::to_string(t));
+        double g = 0.0;
+        CHECK(loss_has_derivative_wrt_observed(fn) ==
+              loss_grad_wrt_observed(fn, 1.0, 0.5, 1.0, g));
+    }
+    CHECK_FALSE(loss_has_derivative_wrt_observed(
+        LossFunction(LossFunction::Type::MAPE)));
+    CHECK_FALSE(loss_has_derivative_wrt_observed(
+        LossFunction(LossFunction::Type::RMSLE)));
+    CHECK(loss_has_derivative_wrt_observed(
+        LossFunction(LossFunction::Type::L2)));
+}
+
+/* compute_observables_grad_dWchain folds each PC_OBSERVABLE term into the
+ * gradient as dL/dO * (dO/dW . dW/dtheta + dO/dtheta|_W):
+ *   - a constant value (ObservableGradInput::constant, the fixed penalty of
+ *     an unconverged relaxation) contributes nothing and needs no finite
+ *     differences;
+ *   - a value without dO/dW (the force-scaled penalty of an unconverged
+ *     relaxation) has no analytical derivative: every theta goes to
+ *     finite differences, and g is left as it was;
+ *   - dO_dtheta_explicit, the value's own dependence on theta at fixed
+ *     weights, adds dL/dO * dO/dtheta on the theta rows;
+ *   - an explicit vector that does not match the theta rows is a wiring
+ *     error. */
+namespace {
+
+struct ObsChainFixture {
+    static constexpr std::size_t n_cols = 3;
+    std::vector<double> dWdtheta = std::vector<double>(2 * n_cols, 0.0);
+    std::vector<int>    theta_row_to_g_idx = {0, 1};
+    std::vector<int>    all_theta = {0, 1};
+
+    ObsChainFixture()
+    {
+        for (std::size_t r = 0; r < 2; ++r)
+            for (std::size_t c = 0; c < n_cols; ++c)
+                dWdtheta[r * n_cols + c] = 0.5 * static_cast<double>(r + 1)
+                                            + 0.1 * static_cast<double>(c);
+    }
+
+    static ObservableGradInput converged()
+    {
+        ObservableGradInput in;
+        in.value   = 0.6;
+        in.target  = 0.5;
+        in.weight  = 2.0;
+        in.loss_fn = LossFunction(LossFunction::Type::L2);
+        in.dO_dW   = Eigen::VectorXd(static_cast<long>(n_cols));
+        in.dO_dW << 0.1, 0.2, 0.3;
+        return in;
+    }
+
+    /* dL/dO * dO/dW . dW/dtheta_r for `in`, by hand (L2: dL/dO = 2w(v-t)). */
+    double chained(const ObservableGradInput& in, std::size_t r) const
+    {
+        const double dL_dO = 2.0 * in.weight * (in.value - in.target);
+        double s = 0.0;
+        for (std::size_t c = 0; c < n_cols; ++c)
+            s += in.dO_dW(static_cast<long>(c)) * dWdtheta[r * n_cols + c];
+        return dL_dO * s;
+    }
+};
+
+}  // namespace
+
+TEST_CASE("sims_grad — compute_observables_grad_dWchain: a constant value "
+          "contributes no gradient and needs no finite differences",
+          "[sims_grad][pc_observable][analytical_gradient]")
+{
+    ObsChainFixture f;
+    ObservableGradInput penalty;       /* --unconverged const: no dO/dW */
+    penalty.value    = 100.0;
+    penalty.target   = 8.1;
+    penalty.weight   = 800.0;
+    penalty.loss_fn  = LossFunction(LossFunction::Type::L2);
+    penalty.constant = true;
+
+    std::vector<double> g = {1.5, -2.5};
+    std::vector<int>    needs_fd;
+    REQUIRE(compute_observables_grad_dWchain({penalty}, f.dWdtheta, f.n_cols,
+                                              f.theta_row_to_g_idx, f.all_theta,
+                                              g, needs_fd));
+    CHECK(needs_fd.empty());
+    CHECK(g[0] == 1.5);
+    CHECK(g[1] == -2.5);
+
+    /* Next to a converged term the result is that term's alone. */
+    const ObservableGradInput good = ObsChainFixture::converged();
+    std::vector<double> g2(2, 0.0);
+    REQUIRE(compute_observables_grad_dWchain({penalty, good}, f.dWdtheta,
+                                              f.n_cols, f.theta_row_to_g_idx,
+                                              f.all_theta, g2, needs_fd));
+    CHECK(needs_fd.empty());
+    CHECK(g2[0] == Approx(f.chained(good, 0)));
+    CHECK(g2[1] == Approx(f.chained(good, 1)));
+}
+
+TEST_CASE("sims_grad — compute_observables_grad_dWchain: a value without "
+          "dO/dW sends every theta to finite differences",
+          "[sims_grad][pc_observable][analytical_gradient]")
+{
+    ObsChainFixture f;
+    ObservableGradInput force_scaled;  /* target + slope * fmax */
+    force_scaled.value   = 8.1 + 10.0 * 0.4;
+    force_scaled.target  = 8.1;
+    force_scaled.weight  = 800.0;
+    force_scaled.loss_fn = LossFunction(LossFunction::Type::L2);
+
+    for (auto order : std::vector<std::vector<ObservableGradInput>>{
+            {force_scaled}, {ObsChainFixture::converged(), force_scaled}}) {
+        std::vector<double> g = {1.5, -2.5};
+        std::vector<int>    needs_fd;
+        CHECK_FALSE(compute_observables_grad_dWchain(
+            order, f.dWdtheta, f.n_cols, f.theta_row_to_g_idx, f.all_theta, g,
+            needs_fd));
+        CHECK(needs_fd == f.all_theta);
+        /* All or nothing: the converged term is not half-applied. */
+        CHECK(g[0] == 1.5);
+        CHECK(g[1] == -2.5);
+    }
+}
+
+TEST_CASE("sims_grad — compute_observables_grad_dWchain adds the value's "
+          "own dependence on theta at fixed weights",
+          "[sims_grad][pc_observable][analytical_gradient]")
+{
+    ObsChainFixture f;
+    ObservableGradInput in = ObsChainFixture::converged();
+    in.dO_dtheta_explicit = {0.7, -0.3};
+    const double dL_dO = 2.0 * in.weight * (in.value - in.target);
+
+    std::vector<double> g(2, 0.0);
+    std::vector<int>    needs_fd;
+    REQUIRE(compute_observables_grad_dWchain({in}, f.dWdtheta, f.n_cols,
+                                              f.theta_row_to_g_idx, f.all_theta,
+                                              g, needs_fd));
+    CHECK(needs_fd.empty());
+    CHECK(g[0] == Approx(f.chained(in, 0) + dL_dO * 0.7));
+    CHECK(g[1] == Approx(f.chained(in, 1) + dL_dO * -0.3));
+
+    /* A theta row mapped to no gradient slot (-1) gets neither term. */
+    std::vector<double> g2(2, 0.0);
+    REQUIRE(compute_observables_grad_dWchain({in}, f.dWdtheta, f.n_cols,
+                                              {0, -1}, f.all_theta, g2,
+                                              needs_fd));
+    CHECK(g2[0] == Approx(f.chained(in, 0) + dL_dO * 0.7));
+    CHECK(g2[1] == 0.0);
+}
+
+TEST_CASE("sims_grad — compute_observables_grad_dWchain rejects an explicit "
+          "dO/dtheta that does not match the theta rows",
+          "[sims_grad][pc_observable][analytical_gradient]")
+{
+    ObsChainFixture f;
+    ObservableGradInput in = ObsChainFixture::converged();
+    in.dO_dtheta_explicit = {0.7, -0.3, 0.1};
+    std::vector<double> g(2, 0.0);
+    std::vector<int>    needs_fd;
+    CHECK_THROWS_WITH(
+        compute_observables_grad_dWchain({in}, f.dWdtheta, f.n_cols,
+                                         f.theta_row_to_g_idx, f.all_theta, g,
+                                         needs_fd),
+        Catch::Contains("dO_dtheta_explicit size != number of theta rows"));
+}
+
 TEST_CASE("sims_grad — IFT chain rule cross-check via central diff on W "
           "for a non-trivial λ (lattice-constant-style)",
           "[sims_grad][phase3]")

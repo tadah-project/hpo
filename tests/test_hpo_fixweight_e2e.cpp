@@ -315,8 +315,12 @@ TEST_CASE("case 3: no DBFILE, observable-only loss",
         ctx.add("FIXWEIGHT", 0.01 * static_cast<double>(k + 1));
 
     {
+        /* GRAD_STRATEGY HYBRID: an unset one resolves to ANALYTICAL with
+         * PC_OBSERVABLE, which needs training data (validate_hpo_setup
+         * refuses it); HYBRID uses finite differences. */
         std::ofstream os(hpo_cfg);
-        os << kOptimizerBlock
+        os << "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\n"
+              "GRAD_STRATEGY HYBRID\nENDOPTIMIZER\n"
            << "LOSS L2\nFAILSCORE 1e8\n"
            << "PC_OBSERVABLE cohesive_energy --species Ta --target 8.1 "
               "--weight 1 --supercell 2 2 2 --maxiter 50 --maxeval 200 "

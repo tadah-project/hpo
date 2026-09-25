@@ -24,6 +24,30 @@ if(DEFINED ENV{TADAH_PATH})
         "TADAH_BENCH_DEFAULT_POT=\"${_tadah_bench_default_pot}\"")
 endif()
 
+# Worked examples (HPO/examples). test_examples_parse.cpp gives every
+# examples/*/config.hpo a test case of its own: the list is generated here,
+# and CONFIGURE_DEPENDS re-globs the directory on every build, so a new
+# example is picked up (and fails until examples/tools/parse_guard.manifest
+# names what it needs). The PC_OBSERVABLE gradient tests
+# (test_hpo_host_e2e.cpp) train on the examples' shared Ta data.
+cmake_path(SET _hpo_examples_dir NORMALIZE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../examples")
+file(GLOB _hpo_example_configs CONFIGURE_DEPENDS
+    "${_hpo_examples_dir}/*/config.hpo")
+list(SORT _hpo_example_configs)
+set(_hpo_example_cases "")
+foreach(_cfg IN LISTS _hpo_example_configs)
+    cmake_path(GET _cfg PARENT_PATH _dir)
+    cmake_path(GET _dir FILENAME _name)
+    string(APPEND _hpo_example_cases "TADAH_EXAMPLE_PARSE_CASE(\"${_name}\")\n")
+endforeach()
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/examples_parse_cases.inc"
+     CONTENT "${_hpo_example_cases}" @ONLY)
+target_include_directories(test_hpo PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_compile_definitions(test_hpo PRIVATE
+    "TADAH_HPO_EXAMPLES_DIR=\"${_hpo_examples_dir}\"")
+
 include(Catch)
 catch_discover_tests(test_hpo)
 

@@ -202,9 +202,15 @@ TEST_CASE("startup validation: valid setups pass", "[startup_validation]") {
     REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
   }
   SECTION("no DBFILE, all weights pinned, observable-only loss") {
-    ScopedTempFile tf(target_with(
+    /* GRAD_STRATEGY HYBRID: an unset one resolves to ANALYTICAL with
+     * PC_OBSERVABLE, which needs training data (see the ANALYTICAL rules
+     * below). */
+    ScopedTempFile tf(
+        "OPTIM WATOM (1) 0.1 5.0\n"
         "PC_OBSERVABLE cohesive_energy --species H --target 8.1 "
-        "--weight 1.0 --lattice bcc --hotvar a0 2.5 4.5 3.3\n"));
+        "--weight 1.0 --lattice bcc --hotvar a0 2.5 4.5 3.3\n"
+        "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\nGRAD_STRATEGY HYBRID\n"
+        "ENDOPTIMIZER\n");
     Context ctx = make_model_ctx();
     const std::size_t K = derive_weight_count(ctx);
     REQUIRE(K > 0);
@@ -220,6 +226,346 @@ TEST_CASE("startup validation: valid setups pass", "[startup_validation]") {
     pin_all_weights(ctx, K);
     HPOTargets trg(ctx, tf.path.string());
     REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, false, true));
+  }
+}
+
+/* GRAD_STRATEGY ANALYTICAL -- written out, or resolved from an unset
+ * GRAD_STRATEGY in a PC_OBSERVABLE run -- differentiates the least-squares
+ * fit analytically. That needs training data with every weight fitted, the
+ * Cholesky normal equations (OALGO 4) with a fixed ridge LAMBDA >= 0, raw
+ * features (NORM false), a linear basis (BF_Linear or Kern_Linear) and no
+ * stress rows (STRESS false, no PC_SRMSE); PC_FRMSE needs FORCE true. A
+ * setup without them used to pass startup and stop at the first gradient
+ * with "no registered analytical derivative". HYBRID falls back to finite
+ * differences and is not affected. */
+TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs the settings "
+          "of the analytical gradient", "[startup_validation][grad_strategy]") {
+  PeriodicTable::initialize();
+  const auto target = [](const std::string& grad, const std::string& loss) {
+    return "OPTIM WATOM (1) 0.1 5.0\n" + loss +
+           "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\n" + grad +
+           "ENDOPTIMIZER\n";
+  };
+  const std::string analytical = "GRAD_STRATEGY ANALYTICAL\n";
+  const std::string ermse = "PC_ERMSE 0 1\n";
+  /* A model context that satisfies every rule; each section breaks one. */
+  const auto good_ctx = [] {
+    Context c = make_model_ctx();
+    c.add("DBFILE", "dummy.db");
+    c.remove("OALGO");
+    c.add("OALGO", 4);
+    c.remove("LAMBDA");
+    c.add("LAMBDA", 1e-8);
+    return c;
+  };
+  const auto set = [](Context& c, const std::string& key,
+                      const std::string& value) {
+    c.remove(key);
+    c.add(key, value);
+  };
+  const auto rejected = [&](Context& ctx, const std::string& body,
+                            bool has_train_db = true) {
+    ScopedTempFile tf(body);
+    HPOTargets trg(ctx, tf.path.string());
+    std::string what;
+    try {
+      validate_hpo_setup(ctx, trg, has_train_db, true);
+    } catch (const std::exception& e) {
+      what = e.what();
+    }
+    return what;
+  };
+
+  SECTION("a setup with the settings passes") {
+    Context ctx = good_ctx();
+    CHECK(rejected(ctx, target(analytical, ermse)) == "");
+  }
+  SECTION("OALGO other than 4") {
+    Context ctx = good_ctx();
+    set(ctx, "OALGO", "1");
+    const auto what = rejected(ctx, target(analytical, ermse));
+    CHECK_THAT(what, Catch::Contains("GRAD_STRATEGY ANALYTICAL") &&
+                     Catch::Contains("OALGO 4") &&
+                     Catch::Contains("GRAD_STRATEGY HYBRID"));
+  }
+  SECTION("LAMBDA -1 (evidence approximation) or negative") {
+    for (const char* lambda : {"-1", "-0.5"}) {
+      Context ctx = good_ctx();
+      set(ctx, "LAMBDA", lambda);
+      INFO("LAMBDA " << lambda);
+      CHECK_THAT(rejected(ctx, target(analytical, ermse)),
+                 Catch::Contains("LAMBDA"));
+    }
+  }
+  SECTION("NORM true") {
+    Context ctx = good_ctx();
+    set(ctx, "NORM", "true");
+    CHECK_THAT(rejected(ctx, target(analytical, ermse)), Catch::Contains("NORM"));
+  }
+  SECTION("STRESS true") {
+    Context ctx = good_ctx();
+    set(ctx, "STRESS", "true");
+    CHECK_THAT(rejected(ctx, target(analytical, ermse)),
+               Catch::Contains("STRESS"));
+  }
+  SECTION("a non-linear basis") {
+    Context ctx = good_ctx();
+    ctx.remove("MODEL");
+    ctx.add("MODEL", "M_BLR");
+    ctx.add("MODEL", "BF_Polynomial2");
+    CHECK_THAT(rejected(ctx, target(analytical, ermse)),
+               Catch::Contains("BF_Polynomial2") &&
+               Catch::Contains("BF_Linear"));
+  }
+  SECTION("PC_SRMSE") {
+    Context ctx = good_ctx();
+    CHECK_THAT(rejected(ctx, target(analytical, "PC_SRMSE 0 1\n")),
+               Catch::Contains("PC_SRMSE"));
+  }
+  SECTION("PC_FRMSE with FORCE false") {
+    Context ctx = good_ctx();
+    CHECK_THAT(rejected(ctx, target(analytical, "PC_FRMSE 0 1\n")),
+               Catch::Contains("PC_FRMSE") && Catch::Contains("FORCE true"));
+    set(ctx, "FORCE", "true");
+    CHECK(rejected(ctx, target(analytical, "PC_FRMSE 0 1\n")) == "");
+  }
+  SECTION("FIXINDEX") {
+    Context ctx = good_ctx();
+    ctx.add("FIXINDEX", "1");
+    ctx.add("FIXWEIGHT", 0.5);
+    CHECK_THAT(rejected(ctx, target(analytical, ermse)),
+               Catch::Contains("FIXINDEX"));
+  }
+  SECTION("no training DBFILE") {
+    Context ctx = good_ctx();
+    ctx.remove("DBFILE");
+    const std::size_t K = derive_weight_count(ctx);
+    REQUIRE(K > 0);
+    pin_all_weights(ctx, K);
+    CHECK_THAT(rejected(ctx, target(analytical, ermse), false),
+               Catch::Contains("training DBFILE"));
+  }
+  SECTION("HYBRID is not affected") {
+    Context ctx = good_ctx();
+    set(ctx, "OALGO", "1");
+    set(ctx, "NORM", "true");
+    CHECK(rejected(ctx, target("GRAD_STRATEGY HYBRID\n", ermse)) == "");
+  }
+  SECTION("an unset GRAD_STRATEGY resolved to ANALYTICAL for PC_OBSERVABLE") {
+    const std::string observable =
+        "PC_OBSERVABLE cohesive_energy --species H --target 8.1 "
+        "--weight 1.0 --lattice bcc --hotvar a0 2.5 4.5 3.3\n";
+    Context ctx = good_ctx();
+    CHECK(rejected(ctx, target("", observable)) == "");
+    set(ctx, "OALGO", "1");
+    CHECK_THAT(rejected(ctx, target("", observable)),
+               Catch::Contains("resolved for PC_OBSERVABLE") &&
+               Catch::Contains("OALGO 4"));
+    /* No training data: all weights pinned, observable-only loss. */
+    Context pinned = good_ctx();
+    pinned.remove("DBFILE");
+    const std::size_t K = derive_weight_count(pinned);
+    REQUIRE(K > 0);
+    pin_all_weights(pinned, K);
+    CHECK_THAT(rejected(pinned, target("", observable), false),
+               Catch::Contains("resolved for PC_OBSERVABLE") &&
+               Catch::Contains("training DBFILE"));
+  }
+}
+
+namespace {
+
+/* A model context that satisfies every setting the analytical gradient
+ * needs (analytical_gradient_blocker): training DBFILE, OALGO 4, a fixed
+ * LAMBDA >= 0, NORM/STRESS false, BF_Linear. */
+Context analytical_ready_ctx() {
+  Context c = make_model_ctx();
+  c.add("DBFILE", "dummy.db");
+  c.remove("OALGO");
+  c.add("OALGO", 4);
+  c.remove("LAMBDA");
+  c.add("LAMBDA", 1e-8);
+  return c;
+}
+
+/* The message validate_hpo_setup stops with, or "" when it passes. */
+std::string startup_error(Context& ctx, const std::string& body) {
+  ScopedTempFile tf(body);
+  HPOTargets trg(ctx, tf.path.string());
+  try {
+    validate_hpo_setup(ctx, trg, true, true);
+  } catch (const std::exception& e) {
+    return e.what();
+  }
+  return "";
+}
+
+const std::string kObservable =
+    "PC_OBSERVABLE cohesive_energy --species H --target 8.1 --weight 1.0 "
+    "--lattice bcc --hotvar a0 2.5 4.5 3.3";
+
+}  // namespace
+
+/* Loss terms whose value has no analytical derivative -- at every
+ * evaluation (a PC_OBSERVABLE --loss MAPE or RMSLE) or at some (an
+ * unconverged relaxation under --unconverged force-scaled) -- stop an
+ * ANALYTICAL run at the first such gradient. Startup refuses ANALYTICAL
+ * for them, written out or resolved for PC_OBSERVABLE, naming the line;
+ * HYBRID fills them with finite differences. They used to pass startup
+ * and stop the run after its first evaluation with "no registered
+ * analytical derivative ... dtheta_registry". */
+TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs loss terms "
+          "with an analytical derivative",
+          "[startup_validation][grad_strategy]") {
+  PeriodicTable::initialize();
+  const auto target = [](const std::string& grad, const std::string& loss) {
+    return "OPTIM WATOM (1) 0.1 5.0\n" + loss +
+           "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\n" + grad +
+           "ENDOPTIMIZER\n";
+  };
+  const std::string analytical = "GRAD_STRATEGY ANALYTICAL\n";
+  Context ctx = analytical_ready_ctx();
+
+  SECTION("--loss MAPE and RMSLE have no derivative with respect to the "
+          "value") {
+    for (const char* loss : {"MAPE", "RMSLE"}) {
+      INFO("--loss " << loss);
+      const std::string line = kObservable + " --loss " + loss + "\n";
+      for (const std::string& grad : {analytical, std::string()}) {
+        INFO("GRAD_STRATEGY line: '" << grad << "'");
+        CHECK_THAT(startup_error(ctx, target(grad, line)),
+                   Catch::Contains("GRAD_STRATEGY ANALYTICAL") &&
+                   Catch::Contains("cohesive_energy[1]") &&
+                   Catch::Contains(std::string("--loss ") + loss) &&
+                   Catch::Contains("GRAD_STRATEGY HYBRID"));
+      }
+      CHECK(startup_error(ctx, target("GRAD_STRATEGY HYBRID\n", line)) == "");
+    }
+    /* The residual losses have one. */
+    for (const char* loss : {"L1", "L2", "HUBER", "TUKEY", "LOG_COSH"}) {
+      INFO("--loss " << loss);
+      CHECK(startup_error(ctx, target(analytical, kObservable + " --loss " +
+                                                      loss + "\n")) == "");
+    }
+  }
+  SECTION("--unconverged force-scaled has none at an unconverged "
+          "relaxation") {
+    const std::string line = kObservable + " --unconverged force-scaled 1.0\n";
+    const auto what = startup_error(ctx, target("", line));
+    CHECK_THAT(what, Catch::Contains("resolved for PC_OBSERVABLE") &&
+                     Catch::Contains("cohesive_energy[1]") &&
+                     Catch::Contains("--unconverged force-scaled") &&
+                     Catch::Contains("GRAD_STRATEGY HYBRID"));
+    CHECK_THAT(startup_error(ctx, target(analytical, line)),
+               Catch::Contains("--unconverged force-scaled"));
+    CHECK(startup_error(ctx, target("GRAD_STRATEGY HYBRID\n", line)) == "");
+    /* The constant penalty contributes a zero gradient. */
+    CHECK(startup_error(ctx, target(analytical, kObservable +
+                                    " --unconverged const 100\n")) == "");
+  }
+  SECTION("the message names the PC_OBSERVABLE line by its 1-based index") {
+    const std::string two = kObservable + "\n" + kObservable + " --loss MAPE\n";
+    CHECK_THAT(startup_error(ctx, target(analytical, two)),
+               Catch::Contains("cohesive_energy[2]") &&
+               !Catch::Contains("cohesive_energy[1]"));
+  }
+}
+
+/* NLopt's MLSL and AUGLAG run their INNER search inside their own run and
+ * hand it the gradient of their objective, which the enclosing block's
+ * GRAD_STRATEGY obtains: an INNER block's GRAD_STRATEGY does not apply.
+ * The ANALYTICAL rule therefore checks the blocks that run an optimiser
+ * -- the STRATEGY-level one and EXPLORE -- and not an INNER block. A
+ * setup the analytical gradient does not cover (OALGO 1, the default)
+ * with HYBRID on the enclosing block and nothing in INNER used to be
+ * refused on the INNER block, whose resolved ANALYTICAL was never used. */
+TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
+          "whose gradient an INNER search uses",
+          "[startup_validation][grad_strategy]") {
+  PeriodicTable::initialize();
+  Context ctx = analytical_ready_ctx();
+  ctx.remove("OALGO");
+  ctx.add("OALGO", 1);  /* not covered by the analytical gradient */
+  const std::string hybrid = "    GRAD_STRATEGY HYBRID\n";
+  const auto mlsl = [](const std::string& outer_extra,
+                       const std::string& inner_extra) {
+    return "OPTIM WATOM (1) 0.1 5.0\n" + kObservable + "\n"
+           "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
+           "    ALGO GN_MLSL_LDS\n    MAXEVAL 5\n" + outer_extra +
+           "    INNER\n      LIB NLOPT\n      ALGO LD_LBFGS\n" + inner_extra +
+           "    ENDINNER\n  ENDSTRATEGY\nENDOPTIMIZER\n";
+  };
+
+  SECTION("HYBRID on the enclosing block serves the INNER search") {
+    CHECK(startup_error(ctx, mlsl(hybrid, "")) == "");
+    CHECK(startup_error(ctx, mlsl(hybrid, "  " + hybrid)) == "");
+    /* ANALYTICAL written in INNER does not apply either. */
+    CHECK(startup_error(ctx, mlsl(hybrid,
+                                  "      GRAD_STRATEGY ANALYTICAL\n")) == "");
+  }
+  SECTION("an unset enclosing block resolves to ANALYTICAL and is "
+          "refused, naming it") {
+    const auto neither = startup_error(ctx, mlsl("", ""));
+    CHECK_THAT(neither, Catch::StartsWith("OPTIMIZER block: GRAD_STRATEGY "
+                                          "ANALYTICAL (resolved") &&
+                        Catch::Contains("OALGO 4"));
+    /* HYBRID in INNER alone: the message says it does not apply. */
+    const auto inner_only = startup_error(ctx, mlsl("", "  " + hybrid));
+    CHECK_THAT(inner_only,
+               Catch::StartsWith("OPTIMIZER block: GRAD_STRATEGY ANALYTICAL "
+                                 "(resolved") &&
+               Catch::Contains("the INNER block's GRAD_STRATEGY HYBRID does "
+                               "not apply"));
+  }
+  SECTION("EXPLORE is checked like the STRATEGY-level block, its INNER like "
+          "an INNER block") {
+    const auto prestage = [](const std::string& explore) {
+      return "OPTIM WATOM (1) 0.1 5.0\n" + kObservable + "\n"
+             "OPTIMIZER\n  STRATEGY\n    TYPE PRESTAGE\n    LIB DLIB\n"
+             "    ALGO BFGS\n    MAXEVAL 5\n    GRAD_STRATEGY HYBRID\n"
+             "    EXPLORE\n" + explore + "    ENDEXPLORE\n  ENDSTRATEGY\n"
+             "ENDOPTIMIZER\n";
+    };
+    const std::string explore_mlsl =
+        "      LIB NLOPT\n      ALGO GN_MLSL_LDS\n      MAXEVAL 5\n";
+    const std::string explore_inner =
+        "      INNER\n        LIB NLOPT\n        ALGO LD_LBFGS\n"
+        "      ENDINNER\n";
+    CHECK_THAT(startup_error(ctx, prestage(explore_mlsl + explore_inner)),
+               Catch::StartsWith("EXPLORE block: GRAD_STRATEGY ANALYTICAL "
+                                 "(resolved"));
+    CHECK(startup_error(ctx, prestage(explore_mlsl +
+                                      "      GRAD_STRATEGY HYBRID\n" +
+                                      explore_inner)) == "");
+    CHECK_THAT(startup_error(ctx, prestage(
+                   "      LIB NLOPT\n      ALGO LD_LBFGS\n      MAXEVAL 5\n")),
+               Catch::StartsWith("EXPLORE block: GRAD_STRATEGY ANALYTICAL"));
+  }
+}
+
+/* FAILSCORE_GRADING ON bands the failure losses below FAILSCORE, so it
+ * needs a finite FAILSCORE. The rule used to live in hpo_run() alone, so a
+ * setup checked with validate_hpo_setup() -- the examples' parse guard,
+ * any embedding -- passed it. */
+TEST_CASE("startup validation: FAILSCORE_GRADING ON needs a finite FAILSCORE",
+          "[startup_validation][failscore_grading]") {
+  const std::string head = "OPTIM WATOM (1) 0.1 5.0\nPC_ERMSE 0 1\n"
+                           "FAILSCORE_GRADING ON\n";
+  SECTION("the default FAILSCORE is rejected") {
+    ScopedTempFile tf(head + kOptimizerBlock);
+    Context ctx = make_minimal_ctx();
+    ctx.add("DBFILE", "dummy.db");
+    HPOTargets trg(ctx, tf.path.string());
+    REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                        Catch::Contains("FAILSCORE_GRADING ON requires a "
+                                        "finite positive FAILSCORE"));
+  }
+  SECTION("a finite FAILSCORE passes") {
+    ScopedTempFile tf(head + "FAILSCORE 1e9\n" + kOptimizerBlock);
+    Context ctx = make_minimal_ctx();
+    ctx.add("DBFILE", "dummy.db");
+    HPOTargets trg(ctx, tf.path.string());
+    REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
   }
 }
 

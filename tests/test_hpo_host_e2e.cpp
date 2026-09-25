@@ -25,6 +25,7 @@
 #include "catch2/catch.hpp"
 
 #include <tadah/core/context.h>
+#include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/durable_best.h>
 #include <tadah/hpo/hpo_host.h>
@@ -40,8 +41,10 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <system_error>
+#include <vector>
 
 namespace {
 
@@ -777,4 +780,299 @@ TEST_CASE("A second run in the same process restarts the best comparator "
     REQUIRE(best_row.size() == 3);   // improvement ordinal, slot, CGRID2B[1]
     CHECK(best_row[0] == 1.0);
     CHECK(best_row[2] == Approx(worse(0)));
+}
+
+/* ---------------------------------------------------------------------
+ * PC_OBSERVABLE column labels and journal names.
+ *
+ * The k-th PC_OBSERVABLE line (k 1-based, in configuration order) owns the
+ * loss.tadah column L(<tag>)[k] and the outvar.tadah column <tag>[k], with
+ * <tag> the observable's column tag (cohesive_energy: Ecoh), like the
+ * per-dataset L(ERMSE)[i]. The journal names it <kind>[k]. The index used
+ * to be 0-based and the column L(cohesive_energy[0]) was cut at every
+ * DIGITS (the title budget is max(DIGITS + 9, 15) - 4, 11 to 20
+ * characters) to "L(cohesive*".
+ * ------------------------------------------------------------------- */
+namespace {
+
+std::vector<std::string> header_columns(const std::string& file)
+{
+    std::ifstream in(file);
+    std::string head;
+    std::getline(in, head);
+    std::istringstream is(head);
+    std::vector<std::string> cols;
+    for (std::string c; is >> c;) cols.push_back(c);
+    return cols;
+}
+
+std::string first_line(const std::string& file)
+{
+    std::ifstream in(file);
+    std::string head;
+    std::getline(in, head);
+    return head;
+}
+
+std::string observable_lines(std::size_t n)
+{
+    std::string s;
+    for (std::size_t k = 0; k < n; ++k)
+        s += "PC_OBSERVABLE cohesive_energy --species Ta --target 8.1 "
+             "--weight 1 --supercell 2 2 2 --hotvar a0 2.7 3.9 3.3\n";
+    return s;
+}
+
+/* An observable-only hpotarget on the minimal Ta fixture. */
+void write_observable_target(const fs::path& hpo, std::size_t n, int digits)
+{
+    std::ofstream(hpo)
+        << "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\n"
+        << "LOSS L2\nFAILSCORE 1e8\nDIGITS " << digits << "\n"
+        << observable_lines(n) << "OPTIM CGRID2B (1) 0.0 4.0\n";
+}
+
+}  // namespace
+
+TEST_CASE("PC_OBSERVABLE columns are L(Ecoh)[k] and Ecoh[k] with a 1-based "
+          "k, never truncated at any DIGITS",
+          "[HPO][host][pc_observable][observable_labels]")
+{
+    tadah::core::PeriodicTable::initialize();
+    DatasetHostGuard guard;
+    for (const std::size_t n : {std::size_t{1}, std::size_t{2}}) {
+        for (int digits = 1; digits <= 15; ++digits) {
+            INFO(n << " PC_OBSERVABLE line(s), DIGITS " << digits);
+            ScratchDir sd;
+            const auto train = sd.dir / "train.db", hpo = sd.dir / "config.hpo";
+            write_minimal_ta_dbfile(train, 0);
+            write_observable_target(hpo, n, digits);
+            auto ctx = make_ta_master_context(train, hpo, sd.dir / "unused.val");
+            tadah::hpo::HPOTargets trg(ctx, hpo.string());
+            Host host(ctx, trg, "");
+
+            std::vector<std::string> want_loss = {"#ITERATION", "SLOT"};
+            std::vector<std::string> want_outvar = {"#ITERATION", "IT-TIME/ms",
+                                                    "SLOT"};
+            for (std::size_t k = 1; k <= n; ++k) {
+                want_loss.push_back("L(Ecoh)[" + std::to_string(k) + "]");
+                want_outvar.push_back("Ecoh[" + std::to_string(k) + "]");
+            }
+            want_loss.push_back("TOTAL_LOSS/N");
+            CHECK(header_columns(trg.lossFile) == want_loss);
+            CHECK(header_columns(trg.bestLossFile) == want_loss);
+            CHECK(header_columns(trg.outvarFile) == want_outvar);
+            CHECK(header_columns(trg.bestOutvarFile) == want_outvar);
+            for (const auto* file :
+                 {&trg.lossFile, &trg.bestLossFile, &trg.outvarFile,
+                  &trg.bestOutvarFile, &trg.paramsFile, &trg.bestParamsFile,
+                  &trg.statsFile, &trg.bestStatsFile}) {
+                INFO(*file << ": " << first_line(*file));
+                CHECK(first_line(*file).find('*') == std::string::npos);
+            }
+        }
+    }
+    Host::reset_globals_for_test();
+}
+
+TEST_CASE("PC_OBSERVABLE columns past k = 99 keep their index when DIGITS "
+          "leaves no room for the whole label",
+          "[HPO][host][pc_observable][observable_labels]")
+{
+    /* L(Ecoh)[100] is 12 characters: DIGITS 1..6 give an 11-character
+     * title, so the tag is shortened and the index kept (the params.tadah
+     * rule); DIGITS 7 gives 12 characters and the label fits. */
+    tadah::core::PeriodicTable::initialize();
+    DatasetHostGuard guard;
+    for (const int digits : {1, 7}) {
+        INFO("DIGITS " << digits);
+        ScratchDir sd;
+        const auto train = sd.dir / "train.db", hpo = sd.dir / "config.hpo";
+        write_minimal_ta_dbfile(train, 0);
+        write_observable_target(hpo, 100, digits);
+        auto ctx = make_ta_master_context(train, hpo, sd.dir / "unused.val");
+        tadah::hpo::HPOTargets trg(ctx, hpo.string());
+        REQUIRE(trg.observables.size() == 100u);
+        Host host(ctx, trg, "");
+
+        const auto loss = header_columns(trg.lossFile);
+        const auto outvar = header_columns(trg.outvarFile);
+        REQUIRE(loss.size() == 2u + 100u + 1u);
+        REQUIRE(outvar.size() == 3u + 100u);
+        CHECK(loss[2] == "L(Ecoh)[1]");
+        CHECK(loss[2 + 98] == "L(Ecoh)[99]");
+        CHECK(loss[2 + 99] == (digits == 1 ? "L(Eco*[100]" : "L(Ecoh)[100]"));
+        CHECK(outvar[3] == "Ecoh[1]");
+        CHECK(outvar[3 + 99] == "Ecoh[100]");
+
+        /* The journal's loss section names the columns as the files do. */
+        const auto journal = sd.dir / "journal.log";
+        auto& log = tadah::hpo::HPOLog::instance();
+        log.open(journal.string(), "test", sd.dir.string(), 1);
+        log.write_loss_section(trg);
+        log.finish("TEST");
+        std::string entry;
+        {
+            std::istringstream lines(read_dataset_file(journal));
+            for (std::string line; std::getline(lines, line);)
+                if (line.find("cohesive_energy[100]") != std::string::npos) {
+                    entry = line;
+                    break;
+                }
+        }
+        INFO(entry);
+        CHECK(entry.find("columns " + loss[2 + 99] + ", " + outvar[3 + 99]) !=
+              std::string::npos);
+    }
+    Host::reset_globals_for_test();
+}
+
+TEST_CASE("The journal names the k-th PC_OBSERVABLE cohesive_energy[k], "
+          "1-based, in the loss section and the new-best breakdown",
+          "[HPO][host][pc_observable][observable_labels]")
+{
+    tadah::core::PeriodicTable::initialize();
+    DatasetHostGuard guard;
+    ScratchDir sd;
+    const auto train = sd.dir / "train.db", hpo = sd.dir / "config.hpo";
+    const auto journal = sd.dir / "journal.log";
+    write_minimal_ta_dbfile(train, 0);
+    write_observable_target(hpo, 2, 6);
+    auto ctx = make_ta_master_context(train, hpo, sd.dir / "unused.val");
+    /* The relaxation inside the observable needs forces. */
+    ctx.remove("FORCE");
+    ctx.add("FORCE", "true");
+    tadah::hpo::HPOTargets trg(ctx, hpo.string());
+    Host host(ctx, trg, "");
+
+    auto& log = tadah::hpo::HPOLog::instance();
+    log.open(journal.string(), "test", sd.dir.string(), 1);
+    log.write_loss_section(trg);
+    host.prepare_best_publication();
+    ParamVec p(1);
+    p(0) = 0.5;
+    const double loss = host(p);
+    host.flush_remaining();
+    log.finish("TEST");
+    REQUIRE(std::isfinite(loss));
+    REQUIRE(loss > 0.0);
+
+    const auto text = read_dataset_file(journal);
+    INFO(text);
+    CHECK(text.find("cohesive_energy[1]") != std::string::npos);
+    CHECK(text.find("cohesive_energy[2]") != std::string::npos);
+    CHECK(text.find("cohesive_energy[0]") == std::string::npos);
+
+    /* The new-best line of the first evaluation lists the observable
+     * terms by the same names. */
+    std::istringstream lines(text);
+    std::string top;
+    for (std::string line; std::getline(lines, line);)
+        if (line.find("top: ") != std::string::npos) { top = line; break; }
+    REQUIRE_FALSE(top.empty());
+    CHECK(top.find("cohesive_energy[1]=") != std::string::npos);
+    CHECK(top.find("cohesive_energy[2]=") != std::string::npos);
+    Host::reset_globals_for_test();
+}
+
+/* ---------------------------------------------------------------------
+ * PC_OBSERVABLE analytical gradient.
+ *
+ * GRAD_STRATEGY ANALYTICAL/HYBRID differentiate the host loss -- the mean
+ * of every term, validation metrics and PC_OBSERVABLE lines alike -- with
+ * respect to the OPTIM parameters. A cohesive energy depends on a
+ * descriptor parameter twice: through the refitted weights, and directly,
+ * through the descriptors of the relaxed crystal and of the isolated atom
+ * at fixed weights (the relaxation itself adds nothing at a stationary
+ * geometry). The model is the examples' shared Ta potential with the
+ * settings the analytical gradient needs (OALGO 4 and a ridge LAMBDA),
+ * i.e. the configuration of example 22_pc_observable.
+ * ------------------------------------------------------------------- */
+namespace {
+
+const fs::path& examples_common_dir()
+{
+    static const fs::path dir = fs::path(TADAH_HPO_EXAMPLES_DIR) / "common";
+    return dir;
+}
+
+tadah::core::Context examples_ta_context()
+{
+    const fs::path& common = examples_common_dir();
+    tadah::core::Context c(tadah::core::CoreUserConfigParser().parse(
+        (common / "config.tadah").string()));
+    c.remove("DBFILE");
+    c.add("DBFILE", (common / "data" / "elastic.tadahdb").string());
+    c.add("DBFILE", (common / "data" / "eos_bcc.tadahdb").string());
+    c.remove("OALGO");
+    c.add("OALGO", 4);
+    c.remove("LAMBDA");
+    c.add("LAMBDA", 1e-8);
+    return c;
+}
+
+}  // namespace
+
+TEST_CASE("PC_OBSERVABLE analytical gradient matches central differences of "
+          "the host loss",
+          "[HPO][host][pc_observable][analytical_gradient]")
+{
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    DatasetHostGuard guard;
+    std::string metric;
+    SECTION("the observable alone") {}
+    SECTION("the observable and a validation metric") {
+        metric = "PC_ERMSE 0 0.0001\n";
+    }
+    INFO("metric line: '" << metric << "'");
+
+    ScratchDir sd;
+    const auto hpo = sd.dir / "config.hpo", val = sd.dir / "config.val";
+    std::ofstream(val) << "DBFILE "
+                       << (examples_common_dir() / "data" / "elastic.tadahdb").string()
+                       << "\n";
+    std::ofstream(hpo)
+        << "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nGRAD_STRATEGY HYBRID\n"
+           "ENDOPTIMIZER\nLOSS L2\nFAILSCORE 1e16\n"
+        << metric
+        << "PC_OBSERVABLE cohesive_energy --species Ta --target 8.10 "
+           "--weight 800 --hotvar a0 2.5 4.5 3.302 --maxiter 500 "
+           "--maxeval 500 --etol 1e-12\n"
+           "OPTIM RCUT2B (1) 4.0 6.0\n"
+           "OPTIM SGRIDMB (1) 0.1 0.4\n";
+    auto ctx = examples_ta_context();
+    tadah::hpo::HPOTargets trg(ctx, hpo.string());
+    REQUIRE(trg.spec.parameter_labels ==
+            std::vector<std::string>{"RCUT2B", "SGRIDMB"});
+    Host host(ctx, trg, metric.empty() ? std::string() : val.string());
+    host.prepare_best_publication();
+
+    ParamVec p(2);
+    p(0) = 5.6;   // the configuration values
+    p(1) = 0.2;
+    const double f0 = host(p);
+    /* A converged relaxation: not the FAILSCORE, not the unconverged
+     * penalty (Ecoh = 100 eV/atom, a loss of about 3e6). */
+    REQUIRE(std::isfinite(f0));
+    REQUIRE(f0 < 1.0);
+
+    ParamVec g;
+    std::vector<int> needs_fd;
+    REQUIRE(host.analytical_gradient(p, g, needs_fd));
+    REQUIRE(needs_fd.empty());
+    REQUIRE(g.size() == 2);
+
+    const double step[2] = {1e-4, 1e-5};
+    for (long i = 0; i < 2; ++i) {
+        ParamVec up = p, down = p;
+        up(i) += step[i];
+        down(i) -= step[i];
+        const double fd = (host(up) - host(down)) / (2.0 * step[i]);
+        INFO(trg.spec.parameter_labels[static_cast<std::size_t>(i)]
+             << ": analytical " << g(i) << ", central difference " << fd);
+        CHECK(g(i) == Approx(fd).epsilon(1e-2).margin(1e-6));
+    }
+    host.flush_remaining();
+    Host::reset_globals_for_test();
 }

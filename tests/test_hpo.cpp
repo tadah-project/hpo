@@ -1181,10 +1181,17 @@ TEST_CASE("GradientProvider Analytical with leftover needs_fd throws strict diag
 
     DlibVec x; x.set_size(2); x(0)=1.0; x(1)=0.5;
     DlibVec g;
+    /* The message names the index and the possible causes, and points at
+     * HYBRID; it used to send the user to a "dtheta_registry" that does
+     * not exist. */
     CHECK_THROWS_WITH(gp.gradient(x, g),
                       Catch::Contains("ANALYTICAL") &&
                       Catch::Contains("HYBRID") &&
-                      Catch::Contains("1"));
+                      Catch::Contains("indices: [1]") &&
+                      Catch::Contains("no analytical gradient for 1 "
+                                      "parameter") &&
+                      Catch::Contains("a loss term") &&
+                      !Catch::Contains("dtheta_registry"));
 }
 
 #ifdef TADAH_USE_CERES

@@ -10,6 +10,7 @@
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
+#include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/observables/cohesive_energy.h>
 #include <tadah/hpo/observables/observable_parser.h>
@@ -18,6 +19,8 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unistd.h>
@@ -576,4 +579,272 @@ TEST_CASE("HPOTargets applies the PC_LAMMPS and PC_OBSERVABLE gradient rules "
         CHECK(error(body) == "");
     }
     std::filesystem::remove(script_path);
+}
+
+/* An unset GRAD_STRATEGY means NUMERICAL, which PC_OBSERVABLE rejects when
+ * it is written out; the analytical gradient is what PC_OBSERVABLE is
+ * built for. The parser therefore resolves an unset GRAD_STRATEGY to
+ * ANALYTICAL in every block that runs an optimiser and obtains gradients
+ * -- the STRATEGY-level optimiser and EXPLORE -- and leaves the
+ * derivative-free ones alone (ANNEAL and ASA reject any GRAD_STRATEGY).
+ * An INNER block runs no optimiser of its own: NLopt's MLSL and AUGLAG
+ * hand their local search the gradient of the enclosing block's
+ * objective, so the enclosing block's GRAD_STRATEGY decides how it is
+ * obtained and an INNER block is not resolved. An explicit HYBRID or
+ * ANALYTICAL is kept, NUMERICAL is still rejected, and without
+ * PC_OBSERVABLE nothing changes. */
+TEST_CASE("HPOTargets resolves an unset GRAD_STRATEGY to ANALYTICAL in the "
+          "gradient-based blocks of a PC_OBSERVABLE run",
+          "[hpo][pc_observable_parser][hpotargets][grad_strategy_resolution]")
+{
+    using tadah::hpo::GradStrategy;
+    tadah::core::PeriodicTable::initialize();
+    const std::string observable =
+        "LOSS L2\nPC_OBSERVABLE cohesive_energy --species Ta --target 8.100 "
+        "--weight 1000 --hotvar a0 2.7 3.9 3.3036\n";
+
+    struct Parsed {
+        std::optional<GradStrategy> outer, inner, explore, explore_inner;
+    };
+    auto parse = [](const std::string& body) {
+        auto ctx = make_context_for_targets();
+        auto cfg = write_temp_config(body);
+        Parsed out;
+        {
+            INFO(body);
+            tadah::hpo::HPOTargets trg(ctx, cfg.string());
+            const auto& sp = trg.spec;
+            out.outer = sp.grad_strategy;
+            if (sp.inner) out.inner = sp.inner->grad_strategy;
+            if (sp.prestage) {
+                out.explore = sp.prestage->grad_strategy;
+                if (sp.prestage->inner)
+                    out.explore_inner = sp.prestage->inner->grad_strategy;
+            }
+        }
+        std::filesystem::remove(cfg);
+        return out;
+    };
+    auto plain = [](const std::string& lib, const std::string& algo,
+                    const std::string& extra = "") {
+        return "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB " + lib +
+               "\n    ALGO " + algo + "\n    MAXEVAL 1\n" + extra +
+               "  ENDSTRATEGY\nENDOPTIMIZER\n";
+    };
+    const std::optional<GradStrategy> unset;
+    const auto analytical = std::optional<GradStrategy>(GradStrategy::Analytical);
+
+    SECTION("gradient-based backends resolve to ANALYTICAL") {
+        CHECK(parse(plain("DLIB", "BFGS") + observable).outer == analytical);
+        CHECK(parse(plain("NLOPT", "LD_LBFGS") + observable).outer == analytical);
+        CHECK(parse(plain("NLOPT", "LD_MMA", "    FTOL_REL 1e-6\n") +
+                    observable).outer == analytical);
+        CHECK(parse(plain("CERES", "LBFGS") + observable).outer == analytical);
+        /* GD_MLSL is gradient-based itself; LD_AUGLAG's default local
+         * search is LD_MMA. */
+        CHECK(parse(plain("NLOPT", "GD_MLSL_LDS") + observable).outer ==
+              analytical);
+        CHECK(parse(plain("NLOPT", "LD_AUGLAG") + observable).outer ==
+              analytical);
+        /* LN_AUGLAG's default local search is LN_COBYLA. */
+        CHECK(parse(plain("NLOPT", "LN_AUGLAG") + observable).outer == unset);
+    }
+    SECTION("an explicit HYBRID or ANALYTICAL is kept") {
+        CHECK(parse(plain("DLIB", "BFGS", "    GRAD_STRATEGY HYBRID\n") +
+                    observable).outer == GradStrategy::Hybrid);
+        CHECK(parse(plain("DLIB", "BFGS", "    GRAD_STRATEGY ANALYTICAL\n") +
+                    observable).outer == analytical);
+    }
+    SECTION("an explicit NUMERICAL is still rejected") {
+        auto ctx = make_context_for_targets();
+        auto cfg = write_temp_config(
+            plain("DLIB", "BFGS", "    GRAD_STRATEGY NUMERICAL\n") + observable);
+        /* The message names both alternatives and what sets them apart:
+         * ANALYTICAL (also what an unset GRAD_STRATEGY resolves to) needs
+         * the settings of the analytical gradient; HYBRID uses finite
+         * differences where it is unavailable. They used to be called
+         * equivalent. */
+        CHECK_THROWS_WITH(tadah::hpo::HPOTargets(ctx, cfg.string()),
+                          Catch::Matchers::Contains(
+                              "GRAD_STRATEGY=NUMERICAL is set") &&
+                          Catch::Matchers::Contains(
+                              "an unset GRAD_STRATEGY resolves to it") &&
+                          Catch::Matchers::Contains("finite differences") &&
+                          !Catch::Matchers::Contains("equivalent"));
+        std::filesystem::remove(cfg);
+    }
+    SECTION("derivative-free backends are left alone") {
+        CHECK(parse(plain("TADAH", "ANNEAL") + observable).outer == unset);
+        CHECK(parse(plain("ASA", "ASA") + observable).outer == unset);
+        CHECK(parse(plain("NLOPT", "LN_BOBYQA") + observable).outer == unset);
+        CHECK(parse(plain("DLIB", "GFS") + observable).outer == unset);
+        CHECK(parse(plain("TADAH", "RANDOM") + observable).outer == unset);
+    }
+    SECTION("INNER: the block that hands a gradient-based local search its "
+            "gradient resolves; the INNER block keeps what it says") {
+        const auto mlsl = [](const std::string& outer_extra,
+                             const std::string& algo,
+                             const std::string& inner_algo,
+                             const std::string& inner_extra) {
+            return "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
+                   "    ALGO " + algo + "\n    MAXEVAL 1\n" + outer_extra +
+                   "    INNER\n      LIB NLOPT\n      ALGO " + inner_algo +
+                   "\n" + inner_extra + "    ENDINNER\n  ENDSTRATEGY\n"
+                   "ENDOPTIMIZER\n";
+        };
+        const std::string hybrid = "    GRAD_STRATEGY HYBRID\n";
+        const auto hyb = std::optional<GradStrategy>(GradStrategy::Hybrid);
+
+        /* Neither block sets one: the enclosing block resolves. */
+        const auto neither = parse(mlsl("", "GN_MLSL_LDS", "LD_LBFGS", "") +
+                                   observable);
+        CHECK(neither.outer == analytical);
+        CHECK(neither.inner == unset);
+        /* The enclosing block sets one: it is kept, INNER stays unset. */
+        const auto outer_only = parse(
+            mlsl(hybrid, "GN_MLSL_LDS", "LD_LBFGS", "") + observable);
+        CHECK(outer_only.outer == hyb);
+        CHECK(outer_only.inner == unset);
+        /* Only INNER sets one: the enclosing block still resolves (its
+         * GRAD_STRATEGY is the one that serves the local search), and
+         * INNER keeps its own. */
+        const auto inner_only = parse(
+            mlsl("", "GN_MLSL_LDS", "LD_LBFGS", "  " + hybrid) + observable);
+        CHECK(inner_only.outer == analytical);
+        CHECK(inner_only.inner == hyb);
+        /* Both set one: both kept. */
+        const auto both = parse(
+            mlsl(hybrid, "GN_MLSL_LDS", "LD_LBFGS", "  " + hybrid) + observable);
+        CHECK(both.outer == hyb);
+        CHECK(both.inner == hyb);
+
+        /* A derivative-free local search obtains no gradients. */
+        const auto free = parse(mlsl("", "GN_MLSL_LDS", "LN_SBPLX", "") +
+                                observable);
+        CHECK(free.inner == unset);
+        CHECK(free.outer == unset);
+        /* AUGLAG with a gradient-based or a derivative-free INNER. */
+        const auto auglag = parse(mlsl("", "AUGLAG", "LD_LBFGS", "") +
+                                  observable);
+        CHECK(auglag.outer == analytical);
+        CHECK(auglag.inner == unset);
+        CHECK(parse(mlsl("", "AUGLAG", "LN_BOBYQA", "") + observable).outer ==
+              unset);
+    }
+    SECTION("EXPLORE resolves like the STRATEGY-level block, its INNER "
+            "like an INNER block") {
+        const auto prestage = [](const std::string& explore) {
+            return "OPTIMIZER\n  STRATEGY\n    TYPE PRESTAGE\n    LIB DLIB\n"
+                   "    ALGO BFGS\n    MAXEVAL 1\n    EXPLORE\n" + explore +
+                   "    ENDEXPLORE\n  ENDSTRATEGY\nENDOPTIMIZER\n";
+        };
+        const auto ld = parse(prestage("      LIB NLOPT\n      ALGO LD_LBFGS\n"
+                                       "      MAXEVAL 1\n") + observable);
+        CHECK(ld.outer == analytical);
+        CHECK(ld.explore == analytical);
+        const auto crs = parse(prestage("      LIB NLOPT\n      ALGO GN_CRS2_LM\n"
+                                        "      MAXEVAL 1\n") + observable);
+        CHECK(crs.outer == analytical);
+        CHECK(crs.explore == unset);
+        const auto mlsl = parse(prestage(
+            "      LIB NLOPT\n      ALGO GN_MLSL_LDS\n      MAXEVAL 1\n"
+            "      INNER\n        LIB NLOPT\n        ALGO LD_LBFGS\n"
+            "      ENDINNER\n") + observable);
+        CHECK(mlsl.explore == analytical);
+        CHECK(mlsl.explore_inner == unset);
+    }
+    SECTION("without PC_OBSERVABLE an unset GRAD_STRATEGY stays unset "
+            "(NUMERICAL)") {
+        CHECK(parse(plain("DLIB", "BFGS") + "LOSS L2\nPC_ERMSE 0 1\n").outer ==
+              unset);
+    }
+}
+
+TEST_CASE("The journal records a GRAD_STRATEGY resolved for PC_OBSERVABLE",
+          "[hpo][pc_observable_parser][hpotargets][grad_strategy_resolution]")
+{
+    tadah::core::PeriodicTable::initialize();
+    const std::string observable =
+        "LOSS L2\nPC_OBSERVABLE cohesive_energy --species Ta --target 8.100 "
+        "--weight 1000 --hotvar a0 2.7 3.9 3.3036\n";
+    auto journal_of = [](const std::string& body) {
+        auto ctx = make_context_for_targets();
+        auto cfg = write_temp_config(body);
+        const auto journal = std::filesystem::temp_directory_path() /
+            ("test_pc_observable_journal_" + std::to_string(::getpid()) +
+             ".log");
+        {
+            tadah::hpo::HPOTargets trg(ctx, cfg.string());
+            auto& log = tadah::hpo::HPOLog::instance();
+            log.open(journal.string(), "test",
+                     std::filesystem::temp_directory_path().string(), 1);
+            log.write_optimizer_section(trg.spec, trg.spec.parameter_labels);
+            log.finish("TEST");
+        }
+        std::ifstream in(journal);
+        std::stringstream ss;
+        ss << in.rdbuf();
+        std::filesystem::remove(cfg);
+        std::filesystem::remove(journal);
+        return ss.str();
+    };
+    auto line_with = [](const std::string& text, const std::string& what) {
+        std::istringstream is(text);
+        for (std::string line; std::getline(is, line);)
+            if (line.find(what) != std::string::npos) return line;
+        return std::string();
+    };
+
+    const std::string resolved = journal_of(
+        "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\n" + observable);
+    INFO(resolved);
+    CHECK_THAT(line_with(resolved, "GRAD_STRATEGY"),
+               Catch::Matchers::Contains("ANALYTICAL (resolved for PC_OBSERVABLE)"));
+
+    const std::string hybrid = journal_of(
+        "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nGRAD_STRATEGY HYBRID\n"
+        "ENDOPTIMIZER\n" + observable);
+    INFO(hybrid);
+    CHECK_THAT(line_with(hybrid, "GRAD_STRATEGY"),
+               Catch::Matchers::Contains("HYBRID"));
+    CHECK(hybrid.find("resolved for PC_OBSERVABLE") == std::string::npos);
+
+    /* MLSL with a gradient-based INNER search: the enclosing block's line
+     * is the one that counts; an INNER block that sets GRAD_STRATEGY gets
+     * a line saying it is not used, and one that sets none gets no line. */
+    const auto mlsl = [](const std::string& inner_extra) {
+        return "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
+               "    ALGO GN_MLSL_LDS\n    MAXEVAL 1\n    INNER\n"
+               "      LIB NLOPT\n      ALGO LD_LBFGS\n" + inner_extra +
+               "    ENDINNER\n  ENDSTRATEGY\nENDOPTIMIZER\n";
+    };
+    const std::string inner_unset = journal_of(mlsl("") + observable);
+    INFO(inner_unset);
+    CHECK_THAT(line_with(inner_unset, "GRAD_STRATEGY"),
+               Catch::Matchers::Contains("ANALYTICAL (resolved for PC_OBSERVABLE)"));
+    CHECK(line_with(inner_unset, "Inner GRAD_STRATEGY").empty());
+    const std::string inner_hybrid =
+        journal_of(mlsl("      GRAD_STRATEGY HYBRID\n") + observable);
+    INFO(inner_hybrid);
+    CHECK_THAT(line_with(inner_hybrid, "Inner GRAD_STRATEGY"),
+               Catch::Matchers::Contains("HYBRID") &&
+               Catch::Matchers::Contains("not used"));
+
+    /* PRESTAGE: the EXPLORE block's line, and its INNER block's. */
+    const auto prestage = [](const std::string& explore) {
+        return "OPTIMIZER\n  STRATEGY\n    TYPE PRESTAGE\n    LIB DLIB\n"
+               "    ALGO BFGS\n    MAXEVAL 1\n    GRAD_STRATEGY HYBRID\n"
+               "    EXPLORE\n" + explore + "    ENDEXPLORE\n  ENDSTRATEGY\n"
+               "ENDOPTIMIZER\n";
+    };
+    const std::string explore = journal_of(prestage(
+        "      LIB NLOPT\n      ALGO GN_MLSL_LDS\n      MAXEVAL 1\n"
+        "      INNER\n        LIB NLOPT\n        ALGO LD_LBFGS\n"
+        "        GRAD_STRATEGY ANALYTICAL\n      ENDINNER\n") + observable);
+    INFO(explore);
+    CHECK_THAT(line_with(explore, "EXPLORE GRAD_STRATEGY"),
+               Catch::Matchers::Contains("ANALYTICAL (resolved for PC_OBSERVABLE)"));
+    CHECK_THAT(line_with(explore, "EXPLORE INNER GRAD_STRATEGY"),
+               Catch::Matchers::Contains("ANALYTICAL") &&
+               Catch::Matchers::Contains("not used"));
 }
