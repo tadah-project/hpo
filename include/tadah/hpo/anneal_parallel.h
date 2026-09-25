@@ -12,12 +12,15 @@
  *     subset of chains and results are identical for ANY worker count
  *     (each chain draws only from its own RNG stream).
  *   - Exceptions (HPO_Host stagnation-stop, core::ShutdownRequested on
- *     SIGINT, anything else) are caught on the worker, the first one is
- *     stashed, an external stop flag is raised so sibling chains wind
- *     down at their next proposal, and the driver rethrows after the
- *     epoch barrier -- preserving the RestartPolicy / signal-handler
- *     semantics that rely on exceptions propagating out of host().
+ *     SIGINT, anything else) are caught on the worker, the most severe one
+ *     is kept (ExceptionSlot, exception_severity.h), an external stop flag
+ *     is raised so sibling chains wind down at their next proposal, and
+ *     the driver rethrows after the epoch barrier -- preserving the
+ *     RestartPolicy / signal-handler semantics that rely on exceptions
+ *     propagating out of host().
  */
+#include <tadah/hpo/exception_severity.h>
+
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -76,24 +79,13 @@ public:
     fn_ = nullptr;
   }
 
-  bool has_error() const
-  {
-    std::lock_guard<std::mutex> lk(m_);
-    return static_cast<bool>(error_);
-  }
+  bool has_error() const { return errors_.has_error(); }
 
-  /* Rethrow the FIRST exception any worker caught (then clears it).
-   * Call after run_epoch from the driver thread. */
-  void rethrow_if_error()
-  {
-    std::exception_ptr e;
-    {
-      std::lock_guard<std::mutex> lk(m_);
-      e = error_;
-      error_ = nullptr;
-    }
-    if (e) std::rethrow_exception(e);
-  }
+  /* Rethrow the most severe exception any worker caught -- the first one
+   * of that severity (then clears it). Call after run_epoch from the
+   * driver thread. Chains of one epoch can fail concurrently, and the one
+   * kept decides how the run ends (exception_severity.h). */
+  void rethrow_if_error() { errors_.rethrow_if_error(); }
 
 private:
   void worker_loop(std::size_t id)
@@ -114,10 +106,7 @@ private:
         try {
           (*fn)(t);
         } catch (...) {
-          {
-            std::lock_guard<std::mutex> lk(m_);
-            if (!error_) error_ = std::current_exception();
-          }
+          errors_.keep_current();
           ext_stop_.store(true, std::memory_order_relaxed);
         }
       }
@@ -139,7 +128,7 @@ private:
   const std::function<void(std::size_t)>* fn_ = nullptr;
   std::size_t              done_count_ = 0;
   bool                     shutdown_ = false;
-  std::exception_ptr       error_;
+  ExceptionSlot            errors_;
 };
 
 }  // namespace anneal

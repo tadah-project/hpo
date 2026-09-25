@@ -60,6 +60,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #ifdef TADAH_USE_CERES
@@ -97,6 +99,36 @@ struct GradientProvider {
 template<class Vec>
 using AnalyticalGradFn =
     std::function<bool(const Vec& x, Vec& g, std::vector<int>& needs_fd)>;
+
+namespace detail {
+template<class HostT, class Vec, class = void>
+struct has_analytical_gradient : std::false_type {};
+template<class HostT, class Vec>
+struct has_analytical_gradient<HostT, Vec, std::void_t<decltype(
+    std::declval<HostT&>().analytical_gradient(
+        std::declval<const Vec&>(), std::declval<Vec&>(),
+        std::declval<std::vector<int>&>()))>> : std::true_type {};
+}  // namespace detail
+
+/* The host's analytical_gradient member as an AnalyticalGradFn when sp asks
+ * for ANALYTICAL/HYBRID; nullptr for NUMERICAL. A stub host without the
+ * member (unit tests of the optimiser adapters) also gets nullptr, and the
+ * provider then reports the missing callback if an analytical strategy is
+ * requested. */
+template<class Vec, class HostT>
+AnalyticalGradFn<Vec> host_analytical_grad_fn(const OptimizerSpec& sp,
+                                              HostT& host)
+{
+  if constexpr (detail::has_analytical_gradient<HostT, Vec>::value) {
+    if (sp.grad_strategy && *sp.grad_strategy != GradStrategy::Numerical)
+      return [&host](const Vec& x_in, Vec& g_out,
+                     std::vector<int>& nfd) -> bool {
+        return host.analytical_gradient(x_in, g_out, nfd);
+      };
+  }
+  (void)sp; (void)host;
+  return nullptr;
+}
 
 /* Build a GradientProvider for `host`. Honours sp.grad_strategy
  * (default: Numerical). The eval_counter is shared with the optimizer

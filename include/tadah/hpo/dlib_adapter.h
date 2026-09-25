@@ -2,6 +2,7 @@
 #include <dlib/global_optimization.h>
 #include <tadah/hpo/log_index.h>
 #include <dlib/optimization.h>
+#include <tadah/hpo/exception_severity.h>
 #include <tadah/hpo/gradient_provider.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_host.h>
@@ -9,6 +10,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -114,9 +116,24 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
 
 }  // namespace detail
 
-template<class Vec,class Runner>
-  void run_dlib_global(const OptimizerSpec& sp,
-      HPO_Host<Vec,Runner>& host)
+/* DLIB:GFS on any host with `double operator()(const dlib::matrix<double,
+ * 0,1>&)` (real-space parameters); run_dlib_global binds HPO_Host, the unit
+ * tests a stub.
+ *
+ * Host exceptions never reach dlib's thread_pool. With THREADS > 1
+ * find_min_global evaluates on pool workers; a task that threw is rethrown
+ * by the next task submission while other tasks are still running (and
+ * still use find_min_global's locals), and a second one still stored when
+ * the pool is destroyed makes ~thread_pool call abort() -- two chains
+ * failing together (two StagnationStops under RESTART, a stagnation stop
+ * next to a persistence failure) killed the process with the journal
+ * open. The objective therefore catches every host exception into an
+ * ExceptionSlot (the most severe one is kept, exception_severity.h),
+ * returns the last finite loss so dlib records a harmless value, skips the
+ * host for every later call, and a stop condition ends the search loop;
+ * once the pool has drained, the kept exception is rethrown. */
+template<class HostT>
+  void run_dlib_global_impl(const OptimizerSpec& sp, HostT& host)
   {
     using namespace dlib;
 
@@ -169,8 +186,22 @@ template<class Vec,class Runner>
     uint64_t maxeval = sp.stop.maxeval.value_or(HUGE_UNSIGNED);
 
     /* ------- main call ------------------------------------------ */
+    ExceptionSlot errors;
+    std::atomic<double> last_y{0.0};
     auto feval = [&](const matrix<double,0,1>& x)->double
-    {   return host( sp.out(x) ); };            // host expects real scale
+    {
+      if (errors.has_error()) return last_y.load(std::memory_order_relaxed);
+      try {
+        const double y = host( sp.out(x) );     // host expects real scale
+        if (std::isfinite(y)) last_y.store(y, std::memory_order_relaxed);
+        return y;
+      } catch (...) {
+        errors.keep_current();
+        return last_y.load(std::memory_order_relaxed);
+      }
+    };
+    const stop_condition stop_on_error =
+        [&errors](double) { return errors.has_error(); };
 
     /* ------- seed dlib with every point from sp.optim_init.
      * find_min_global() treats `initial_function_evals` as already-known
@@ -194,7 +225,11 @@ template<class Vec,class Runner>
         x_seed.set_size(static_cast<long>(start_vec.size()));
         for (long i = 0; i < x_seed.size(); ++i)
           x_seed(i) = start_vec[static_cast<std::size_t>(i)];
-        const double y_seed = feval(x_seed);
+        /* Serial, on this thread, before any pool task: an exception
+         * leaves at once, as without THREADS. */
+        const double y_seed = host( sp.out(x_seed) );
+        if (std::isfinite(y_seed))
+          last_y.store(y_seed, std::memory_order_relaxed);
         init.emplace_back(x_seed, y_seed);
         if (maxeval != HUGE_UNSIGNED && maxeval > 0) --maxeval;
         if (maxeval == 0) break;
@@ -206,8 +241,18 @@ template<class Vec,class Runner>
         max_function_calls(maxeval),
         FOREVER,
         solver_eps,
-        init
+        init,
+        stop_on_error
         );
+    /* find_min_global waited for every task: nothing still runs. */
+    errors.rethrow_if_error();
+  }
+
+template<class Vec,class Runner>
+  void run_dlib_global(const OptimizerSpec& sp,
+      HPO_Host<Vec,Runner>& host)
+  {
+    run_dlib_global_impl(sp, host);
   }
 
 template<class Vec,class Runner>

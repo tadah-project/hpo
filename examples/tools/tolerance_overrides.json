@@ -60,7 +60,7 @@
   },
   "13_restart": {
     "description": "DLIB:BFGS + RESTART decorator (stagnation-driven).",
-    "status_accepted": ["COMPLETED"],
+    "status_accepted": ["STOPPED -- stagnation: no new best in 3 evals after 2 restart(s)"],
     "tolerance_rationale": "RESTART RANDOM seeds each restart from std::random_device, so the restart evaluations differ from run to run. Only values that do not depend on them are pinned: the best comes from the deterministic first launch, and each restart stops after exactly AFTER_STAGNATION evaluations because no start in the box beats the incumbent (see evaluations.note)."
   },
   "14_mlsl_inner": {

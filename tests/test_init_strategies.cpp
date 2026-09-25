@@ -1115,8 +1115,8 @@ TEST_CASE("HPOLog::set_status feeds finish() when status is empty",
 TEST_CASE("HPOLog::finish explicit arg overrides set_status",
           "[HPO][hpo_log][set_status]")
 {
-    /* If hpo_run()'s catch block passes "STOPPED with error: ..." it
-     * must override any status the inner driver recorded. */
+    /* If hpo_run()'s catch block passes "FAILED -- ..." it must
+     * override any status the inner driver recorded. */
     using namespace tadah::hpo;
     auto& log = HPOLog::instance();
     auto tmp_log = std::filesystem::temp_directory_path() /
@@ -1126,13 +1126,13 @@ TEST_CASE("HPOLog::finish explicit arg overrides set_status",
 
     log.open(tmp_log.string(), "test", "/tmp", 1);
     log.set_status("MAXEVAL_REACHED");
-    log.finish("STOPPED with error: kaboom");
+    log.finish("FAILED -- kaboom");
 
     std::ifstream lf(tmp_log);
     REQUIRE(lf.good());
     std::stringstream ss; ss << lf.rdbuf();
     const std::string body = ss.str();
-    CHECK(body.find("STOPPED with error: kaboom") != std::string::npos);
+    CHECK(body.find("FAILED -- kaboom") != std::string::npos);
     CHECK(body.find("MAXEVAL_REACHED")            == std::string::npos);
 
     std::error_code ec; std::filesystem::remove(tmp_log, ec);

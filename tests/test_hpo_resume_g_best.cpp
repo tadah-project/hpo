@@ -4,6 +4,7 @@
 #include <tadah/hpo/hpo_host.h>
 
 #include <chrono>
+#include <cmath>
 #include <dlib/matrix.h>
 #include <filesystem>
 #include <limits>
@@ -140,4 +141,27 @@ TEST_CASE("HPO_Host comparator atomics survive a checkpoint round-trip",
     std::error_code ec;
     std::filesystem::remove(cp_path, ec);
     Host::reset_globals_for_test();
+}
+
+/* Evaluations that cannot become the new best skip best_mtx_
+ * (they used to queue behind every publication, including a transient-I/O
+ * backoff of up to 30 s). The pre-check must never reject a candidate the
+ * locked decision could accept: lower_loss, tied_compound_winner and
+ * legacy_equal all need loss <= current best. */
+TEST_CASE("HPO_Host new-best pre-check rejects only losses that cannot win",
+          "[hpo_host][durable_best][io_retry]")
+{
+    constexpr double kMax = std::numeric_limits<double>::max();
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double inf = std::numeric_limits<double>::infinity();
+    static_assert(Host::may_become_best(1.0, 2.0), "lower loss may win");
+    static_assert(Host::may_become_best(2.0, 2.0), "an exact tie may win (compound key)");
+    static_assert(!Host::may_become_best(2.5, 2.0), "a higher loss cannot win");
+    CHECK(Host::may_become_best(1e9, kMax));      // first evaluation: reaches the gate
+    CHECK(Host::may_become_best(kMax, kMax));     // legacy_equal's domain
+    CHECK_FALSE(Host::may_become_best(nan, 1.0));
+    CHECK_FALSE(Host::may_become_best(1.0, nan));
+    CHECK_FALSE(Host::may_become_best(inf, kMax));
+    CHECK(Host::may_become_best(-inf, 0.0));
+    CHECK_FALSE(Host::may_become_best(std::nextafter(2.0, 3.0), 2.0));
 }

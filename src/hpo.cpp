@@ -486,6 +486,15 @@ int hpo_run(core::Context& ctx)
      * must run *before* try_load(). */
     auto policy = build_run_policy<V,R>(sp, &trg);
 
+    /* The stagnation threshold and top-K tracking are process-wide statics
+     * that each policy arms inside run() (RESTART, PRESTAGE, BASINS). A
+     * policy that ended by an exception in an earlier run in this process
+     * can leave them armed -- a stale window would stop a PLAIN run as
+     * "FAILED -- HPO stagnation threshold reached". Every run, fresh or
+     * resumed, starts disarmed. */
+    HPO_Host<V,R>::set_stagnation_threshold(0);
+    HPO_Host<V,R>::set_track_topk(0);
+
     /* -- Checkpoint subsystem wiring (LIB BASINS only for now) ----------
      *
      * Order is important: try_load() must run BEFORE NOISE_CALIBRATION
@@ -534,112 +543,136 @@ int hpo_run(core::Context& ctx)
         }
     }
 
-    /* Bind best-potential publication to this run only after checkpoint
-     * detection. A confirmed fresh run atomically discards stale artifacts
-     * from an unrelated prior objective; an explicit resume retains and
-     * validates its incumbent. MPI ranks synchronize before any evaluation. */
-    host.prepare_best_publication(resumed);
+    /* The best potential could not be saved even after retrying transient
+     * errors (see durable_best.h): the run cannot promise its result, so it
+     * fails loudly instead of optimising on. */
+    auto fail_persistence = [&](const std::string& what) {
+        log.warning("Best-potential persistence failed: " + what);
+        log.record_best_persistence_failure();
+        /* The storage has just failed for up to the whole durable budget:
+         * drain what is queued without backoff (a permanent errno still
+         * gets its one immediate re-attempt). */
+        host.flush_remaining(/*retry_io=*/false);
+        log.finish("FAILED -- best-potential persistence: " + what);
+    };
 
-    /* -- Noise calibration (NOISE_CALIBRATION N): repeat the seed point
-     * N times before the optimiser starts, surface the loss spread, and
-     * suggest a realistic FTOL_REL. Each repeat is a real evaluation --
-     * it counts toward the global eval counter, the best-so-far tracker,
-     * and the per-eval log files (loss.tadah / params.tadah / ...).
-     * The overhead is N - 1 extra wall-clock evals; the user opted in
-     * by setting NOISE_CALIBRATION, so we do not also charge it against
-     * MAXEVAL (the optimiser still gets its full budget).
-     *
-     * Skipped on resume: the prior run already calibrated noise, the
-     * suggested FTOL_REL is preserved by the BASINS state machine, and
-     * re-running would charge N more LAMMPS evals against the resumed
-     * counter. If the user changes the seed point or dataset between
-     * runs, they should delete checkpoint.tadah to recalibrate. */
-    if (should_run_noise_calibration(resumed, sp.noise.calibration_n)) {
-        const std::size_t N = sp.noise.calibration_n;
-        if (sp.optim_init.empty()) {
-            log.warning("NOISE_CALIBRATION requested but no starting "
-                        "point is available; skipping.");
-        } else {
-            std::cout << "[HPO] NOISE_CALIBRATION: running " << N
-                      << " evals at the seed point to measure objective noise\n";
-            log.info("NOISE_CALIBRATION: running " + std::to_string(N) +
-                     " evals at the seed point");
-
-            const auto seed_real = sp.optim_init.front();
-            V seed_vec;
-            seed_vec.set_size(static_cast<long>(seed_real.size()));
-            for (long i = 0; i < seed_vec.size(); ++i)
-                seed_vec(i) = seed_real[static_cast<std::size_t>(i)];
-
-            std::vector<double> losses;
-            losses.reserve(N);
-            for (std::size_t i = 0; i < N; ++i)
-                losses.push_back(host(seed_vec));
-
-            /* Suggest FTOL_REL = 10 * relative_spread, floored at 1e-6
-             * (no point recommending tolerances below double precision
-             * times a sensible fudge factor). NLopt's FTOL_REL test
-             * fires when |Deltaf| < ftol_rel * |f|, so 10x the observed
-             * relative spread gives the local search room to terminate
-             * once it crosses the noise floor instead of chasing it. */
-            double mn = losses.front(), mx = losses.front(), sum = 0.0;
-            for (double v : losses) {
-                if (v < mn) mn = v;
-                if (v > mx) mx = v;
-                sum += v;
-            }
-            const double mean = sum / static_cast<double>(losses.size());
-            const double rel_spread =
-                (mean != 0.0) ? (mx - mn) / std::fabs(mean) : 0.0;
-            const double suggested_ftol = std::max(10.0 * rel_spread, 1.0e-6);
-
-            log.write_noise_calibration_section(losses, suggested_ftol);
-            log.set_noise_suggested_ftol(suggested_ftol);
-
-            std::ostringstream oss;
-            oss << std::scientific << std::setprecision(3);
-            oss << "NOISE_CALIBRATION: rel_spread=" << rel_spread
-                << "  suggested FTOL_REL=" << suggested_ftol
-                << "  (mean=" << mean << ", min=" << mn << ", max=" << mx << ")";
-            std::cout << "[HPO] " << oss.str() << "\n";
-            log.info(oss.str());
-
-            /* C3: plumb the noise floor into BasinsPolicy so the (opt-in)
-             * ladder clamp can drop sub-noise rungs. dynamic_cast is local
-             * and safe -- BasinsPolicy is the only RunPolicy not wrapped
-             * by the decorator stack (run_policy.h:434-436). Using the
-             * cast keeps RunPolicy's interface free of noise-specific
-             * methods, per the ticket's "Do not change the RunPolicy
-             * decorator pattern" rule. */
-            if (auto* bp = dynamic_cast<BasinsPolicy<V,R>*>(policy.get())) {
-                bp->set_noise_floor(suggested_ftol);
-            }
-            if (auto* bp2 = dynamic_cast<BasinsV2Policy<V,R>*>(policy.get())) {
-                bp2->set_noise_floor(suggested_ftol);
-            }
-        }
-    } else if (resumed) {
-        /* C3 resume path: NOISE_CALIBRATION did not re-run (gated on
-         * !resumed), but the prior run's suggested_ftol was persisted in
-         * the [HPOLOG] section. Re-plumb it into BasinsPolicy / BasinsV2Policy
-         * so the (opt-in) clamp keeps applying across resumes. */
-        if (auto suggested = log.noise_suggested_ftol()) {
-            if (auto* bp = dynamic_cast<BasinsPolicy<V,R>*>(policy.get())) {
-                bp->set_noise_floor(*suggested);
-            }
-            if (auto* bp2 = dynamic_cast<BasinsV2Policy<V,R>*>(policy.get())) {
-                bp2->set_noise_floor(*suggested);
-            }
-        }
-    }
-
-    log.start_progress();
-
-    /* quick info */
-    std::cout<<"[HPO] "<<sp.lib<<":"<<sp.algo<<"   dim="<<sp.low.size()<<"\n";
-
+    /* Everything from here on can evaluate -- and therefore publish the
+     * best potential: the fresh-run reset below, NOISE_CALIBRATION, the
+     * optimiser. One handler set closes the journal with the right status
+     * for all of it and lets the error reach the caller (non-zero exit):
+     *   ShutdownRequested    -> "SHUTDOWN (<signal>)", clean return (0),
+     *                           unless a new best could not be saved;
+     *   durable_best::Error  -> "FAILED -- best-potential persistence: ...";
+     *   anything else        -> "FAILED -- <what>". */
     try {
+        /* Bind best-potential publication to this run only after checkpoint
+         * detection. A confirmed fresh run atomically discards stale artifacts
+         * from an unrelated prior objective; an explicit resume retains and
+         * validates its incumbent. MPI ranks synchronize before any evaluation. */
+        host.prepare_best_publication(resumed);
+
+        /* -- Noise calibration (NOISE_CALIBRATION N): repeat the seed point
+         * N times before the optimiser starts, surface the loss spread, and
+         * suggest a realistic FTOL_REL. Each repeat is a real evaluation --
+         * it counts toward the global eval counter, the best-so-far tracker,
+         * and the per-eval log files (loss.tadah / params.tadah / ...).
+         * The overhead is N - 1 extra wall-clock evals; the user opted in
+         * by setting NOISE_CALIBRATION, so we do not also charge it against
+         * MAXEVAL (the optimiser still gets its full budget).
+         *
+         * Skipped on resume: the prior run already calibrated noise, the
+         * suggested FTOL_REL is preserved by the BASINS state machine, and
+         * re-running would charge N more LAMMPS evals against the resumed
+         * counter. If the user changes the seed point or dataset between
+         * runs, they should delete checkpoint.tadah to recalibrate. */
+        if (should_run_noise_calibration(resumed, sp.noise.calibration_n)) {
+            const std::size_t N = sp.noise.calibration_n;
+            if (sp.optim_init.empty()) {
+                log.warning("NOISE_CALIBRATION requested but no starting "
+                            "point is available; skipping.");
+            } else {
+                std::cout << "[HPO] NOISE_CALIBRATION: running " << N
+                          << " evals at the seed point to measure objective noise\n";
+                log.info("NOISE_CALIBRATION: running " + std::to_string(N) +
+                         " evals at the seed point");
+
+                const auto seed_real = sp.optim_init.front();
+                V seed_vec;
+                seed_vec.set_size(static_cast<long>(seed_real.size()));
+                for (long i = 0; i < seed_vec.size(); ++i)
+                    seed_vec(i) = seed_real[static_cast<std::size_t>(i)];
+
+                std::vector<double> losses;
+                losses.reserve(N);
+                for (std::size_t i = 0; i < N; ++i)
+                    losses.push_back(host(seed_vec));
+
+                /* Suggest FTOL_REL = 10 * relative_spread, floored at 1e-6
+                 * (no point recommending tolerances below double precision
+                 * times a sensible fudge factor). NLopt's FTOL_REL test
+                 * fires when |Deltaf| < ftol_rel * |f|, so 10x the observed
+                 * relative spread gives the local search room to terminate
+                 * once it crosses the noise floor instead of chasing it. */
+                double mn = losses.front(), mx = losses.front(), sum = 0.0;
+                for (double v : losses) {
+                    if (v < mn) mn = v;
+                    if (v > mx) mx = v;
+                    sum += v;
+                }
+                const double mean = sum / static_cast<double>(losses.size());
+                const double rel_spread =
+                    (mean != 0.0) ? (mx - mn) / std::fabs(mean) : 0.0;
+                const double suggested_ftol = std::max(10.0 * rel_spread, 1.0e-6);
+
+                log.write_noise_calibration_section(losses, suggested_ftol);
+                log.set_noise_suggested_ftol(suggested_ftol);
+
+                std::ostringstream oss;
+                oss << std::scientific << std::setprecision(3);
+                oss << "NOISE_CALIBRATION: rel_spread=" << rel_spread
+                    << "  suggested FTOL_REL=" << suggested_ftol
+                    << "  (mean=" << mean << ", min=" << mn << ", max=" << mx << ")";
+                std::cout << "[HPO] " << oss.str() << "\n";
+                log.info(oss.str());
+
+                /* C3: plumb the noise floor into BasinsPolicy so the (opt-in)
+                 * ladder clamp can drop sub-noise rungs. dynamic_cast is local
+                 * and safe -- BasinsPolicy is the only RunPolicy not wrapped
+                 * by the decorator stack (run_policy.h:434-436). Using the
+                 * cast keeps RunPolicy's interface free of noise-specific
+                 * methods, per the ticket's "Do not change the RunPolicy
+                 * decorator pattern" rule. */
+                if (auto* bp = dynamic_cast<BasinsPolicy<V,R>*>(policy.get())) {
+                    bp->set_noise_floor(suggested_ftol);
+                }
+                if (auto* bp2 = dynamic_cast<BasinsV2Policy<V,R>*>(policy.get())) {
+                    bp2->set_noise_floor(suggested_ftol);
+                }
+            }
+        } else if (resumed) {
+            /* C3 resume path: NOISE_CALIBRATION did not re-run (gated on
+             * !resumed), but the prior run's suggested_ftol was persisted in
+             * the [HPOLOG] section. Re-plumb it into BasinsPolicy / BasinsV2Policy
+             * so the (opt-in) clamp keeps applying across resumes. */
+            if (auto suggested = log.noise_suggested_ftol()) {
+                if (auto* bp = dynamic_cast<BasinsPolicy<V,R>*>(policy.get())) {
+                    bp->set_noise_floor(*suggested);
+                }
+                if (auto* bp2 = dynamic_cast<BasinsV2Policy<V,R>*>(policy.get())) {
+                    bp2->set_noise_floor(*suggested);
+                }
+            }
+        }
+
+        log.start_progress();
+
+        /* quick info */
+        std::cout<<"[HPO] "<<sp.lib<<":"<<sp.algo<<"   dim="<<sp.low.size()<<"\n";
+
         policy->run(sp, host);
+        /* A new best that could not be saved fails the run even when the
+         * durable_best::Error was swallowed on its way up. */
+        detail::rethrow_if_best_unsaved();
 
         /* Drain any in-flight evals, then write the journal trailer once.
          * Passing an empty status_str makes HPOLog::finish() fall back to
@@ -651,9 +684,20 @@ int hpo_run(core::Context& ctx)
         host.flush_remaining();
         log.finish();
     } catch (const core::ShutdownRequested& e) {
+        /* A new best that could not be saved outranks the shutdown: the
+         * run did not keep its result (see the durable_best::Error
+         * handler below). */
+        if (const auto ub = log.unsaved_best()) {
+            fail_persistence(ub->what);
+            throw durable_best::Error(ub->what);
+        }
         /* SIGINT/SIGTERM/SIGUSR2 -- the policy already attempted to
          * commit a checkpoint on the way out. Drain the I/O queue,
-         * close the journal cleanly with the signal reason. */
+         * close the journal cleanly with the signal reason. (After the
+         * stop request this drain's retry budget is the 2 s stop grace for
+         * all files together, not 10 s: a blip still keeps its rows, and
+         * a dead mount cannot hold the exit past a scheduler's kill
+         * timeout.) */
         log.warning(std::string("Shutdown requested: ") +
                     core::SignalHandler::reason());
         host.flush_remaining();
@@ -663,11 +707,24 @@ int hpo_run(core::Context& ctx)
         if (sp.strategy_type == StrategyType::BASINS) {
             try { cpm.save_now(); } catch (...) { /* best effort */ }
         }
+    } catch (const durable_best::Error& e) {
+        /* Of several failed candidates (parallel chains) the one that
+         * failed first is the cause, even when a later one's error reaches
+         * this handler first (detail::durable_failure_cause). */
+        const std::string cause = detail::durable_failure_cause(e);
+        fail_persistence(cause);
+        if (cause != e.what()) throw durable_best::Error(cause);
+        throw;
     } catch (const std::exception& e) {
-        const std::string err = std::string("STOPPED with error: ") + e.what();
+        const std::string err = std::string("FAILED -- ") + e.what();
         log.warning(std::string("Optimiser threw: ") + e.what());
         host.flush_remaining();
         log.finish(err);
+        throw;
+    } catch (...) {
+        log.warning("Optimiser threw a non-standard exception");
+        host.flush_remaining();
+        log.finish("FAILED -- non-standard exception");
         throw;
     }
 

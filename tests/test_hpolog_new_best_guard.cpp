@@ -123,3 +123,44 @@ TEST_CASE("HPOLog::log_new_best rejects non-improving losses", "[hpolog][bug2]")
     std::error_code ec;
     std::filesystem::remove(path, ec);
 }
+
+TEST_CASE("HPOLog I/O diagnostics vouch for the best potential only when it "
+          "was persisted", "[hpolog][diagnostics][io_retry]")
+{
+    /* The note claimed "the best potential ... is complete" on a
+     * run that ended because it could not be persisted. */
+    auto& log = tadah::hpo::HPOLog::instance();
+    auto run = [&](bool persist_failed, bool with_best) {
+        const auto path = scratch_log_path();
+        log.reset_for_test();
+        log.open(path.string(), "test", "test_cwd", 0);
+        log.record_eval(1, 1.0, false);
+        if (with_best) log_best(1.0, 1);
+        log.record_io_retry_writer(2);
+        log.record_rows_lost(3);
+        if (persist_failed) log.record_best_persistence_failure();
+        log.finish(persist_failed ? "FAILED -- best-potential persistence: x"
+                                  : "COMPLETED");
+        const std::string text = read_log(path);
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        return text;
+    };
+
+    const std::string ok = run(false, true);
+    CHECK(ok.find("Transient I/O retries   : 2 (best-potential 0, per-eval "
+                  "logs/archives 2); rows lost 3; archives lost 0") != std::string::npos);
+    CHECK(ok.find("best potential is published separately and is complete")
+          != std::string::npos);
+
+    const std::string failed = run(true, true);
+    CHECK(failed.find("is complete") == std::string::npos);
+    CHECK(failed.find("The best potential could not be persisted either")
+          != std::string::npos);
+
+    const std::string none = run(false, false);
+    CHECK(none.find("is complete") == std::string::npos);
+    CHECK(none.find("not written after retrying; see the WARNING entries.")
+          != std::string::npos);
+    log.reset_for_test();
+}

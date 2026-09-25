@@ -478,6 +478,13 @@ void BasinsV2Policy<Vec, Runner>::do_explore(HPO_Host<Vec, Runner>& host)
             run_inner<Vec, Runner>(sub, host);
         } catch (const typename HPO_Host<Vec, Runner>::StagnationStop&) {
             /* expected */
+            if (HPOLog::instance().unsaved_best()) {
+                /* A new best could not be saved meanwhile (it may have
+                 * lost to this stop in a parallel stage): fail now. */
+                HPO_Host<Vec, Runner>::set_stagnation_threshold(0);
+                HPO_Host<Vec, Runner>::clear_topk();
+                detail::rethrow_if_best_unsaved();
+            }
         } catch (const core::ShutdownRequested&) {
             HPO_Host<Vec, Runner>::set_stagnation_threshold(0);
             HPO_Host<Vec, Runner>::clear_topk();
@@ -548,6 +555,13 @@ void BasinsV2Policy<Vec, Runner>::do_refine(HPO_Host<Vec, Runner>& host,
         optimizer_converged_naturally = true;
     } catch (const typename HPO_Host<Vec, Runner>::StagnationStop&) {
         /* plateau detected */
+        if (HPOLog::instance().unsaved_best()) {
+            /* A new best could not be saved meanwhile (it may have
+             * lost to this stop in a parallel stage): fail now. */
+            HPO_Host<Vec, Runner>::set_stagnation_threshold(0);
+            HPO_Host<Vec, Runner>::clear_topk();
+            detail::rethrow_if_best_unsaved();
+        }
     } catch (const core::ShutdownRequested&) {
         HPO_Host<Vec, Runner>::set_stagnation_threshold(0);
         throw;
@@ -697,6 +711,13 @@ void BasinsV2Policy<Vec, Runner>::do_verify_kill(HPO_Host<Vec, Runner>& host,
         run_inner<Vec, Runner>(sub, host);
     } catch (const typename HPO_Host<Vec, Runner>::StagnationStop&) {
         /* expected */
+        if (HPOLog::instance().unsaved_best()) {
+            /* A new best could not be saved meanwhile (it may have
+             * lost to this stop in a parallel stage): fail now. */
+            HPO_Host<Vec, Runner>::set_stagnation_threshold(0);
+            HPO_Host<Vec, Runner>::clear_topk();
+            detail::rethrow_if_best_unsaved();
+        }
     } catch (const core::ShutdownRequested&) {
         HPO_Host<Vec, Runner>::set_stagnation_threshold(0);
         throw;

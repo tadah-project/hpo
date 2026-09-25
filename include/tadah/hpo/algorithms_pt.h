@@ -101,6 +101,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <exception>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -1509,6 +1510,11 @@ template<typename Vec, typename HostT>
 
     bool calib_threw = false;
     std::string calib_what;
+    /* The original exception, rethrown unchanged on single-process runs
+     * and on rank 0: core::ShutdownRequested must reach hpo_run() as a
+     * shutdown and durable_best::Error as a persistence failure, not as a
+     * generic runtime_error. Other ranks only learn "rank 0 aborted". */
+    std::exception_ptr calib_exc;
     if (dim == 0) {
       stop_reason = StopReason::NoDims;
       if (rank == 0 && !sp.optim_init.empty()) {
@@ -1527,6 +1533,7 @@ template<typename Vec, typename HostT>
           } catch (const std::exception& e) {
             calib_threw = true;
             calib_what = e.what();
+            calib_exc = std::current_exception();
           } catch (...) {
             calib_threw = true;
             calib_what = "TADAH:ANNEAL_PT: non-standard exception during zero-dimensional evaluation";
@@ -1564,6 +1571,7 @@ template<typename Vec, typename HostT>
         } catch (const std::exception& e) {
           calib_threw = true;
           calib_what = e.what();
+          calib_exc = std::current_exception();
           proceed = false;
         } catch (...) {
           calib_threw = true;
@@ -1601,6 +1609,7 @@ template<typename Vec, typename HostT>
       } catch (const std::exception& e) {
         calib_threw = true;
         calib_what  = e.what();
+        calib_exc = std::current_exception();
       } catch (...) {
         calib_threw = true;
         calib_what =
@@ -1616,7 +1625,10 @@ template<typename Vec, typename HostT>
                            : (proceed ? 0 : 1 + static_cast<int>(stop_reason));
       hpo_bcast(code, 0);
       if (code == -1) {
-        if (rank == 0) throw std::runtime_error(calib_what);
+        if (rank == 0) {
+          if (calib_exc) std::rethrow_exception(calib_exc);
+          throw std::runtime_error(calib_what);
+        }
         throw std::runtime_error(
             "TADAH:ANNEAL_PT: rank 0 aborted during seed/T0 calibration");
       }
@@ -1641,6 +1653,7 @@ template<typename Vec, typename HostT>
         }
       }
     } else if (calib_threw) {
+      if (calib_exc) std::rethrow_exception(calib_exc);
       throw std::runtime_error(calib_what);
     }
     T_cold = kb.t_cold ? *kb.t_cold : T_hot / kb.ladder_span;
@@ -2519,6 +2532,7 @@ template<typename Vec, typename HostT>
       double t_hot_pass2 = 0.0;
       bool pass2_threw = false;
       std::string pass2_what;
+      std::exception_ptr pass2_exc;   // rethrown unchanged (see calib_exc)
       if (rank == 0) {
         try {
           Vec xa = x0;
@@ -2544,6 +2558,7 @@ template<typename Vec, typename HostT>
         } catch (const std::exception& e) {
           pass2_threw = true;
           pass2_what = e.what();
+          pass2_exc = std::current_exception();
         } catch (...) {
           pass2_threw = true;
           pass2_what = "TADAH:ANNEAL_PT: non-standard exception during "
@@ -2557,7 +2572,10 @@ template<typename Vec, typename HostT>
                              : (proceed ? 0 : 1 + static_cast<int>(stop_reason));
         hpo_bcast(code, 0);
         if (code == -1) {
-          if (rank == 0) throw std::runtime_error(pass2_what);
+          if (rank == 0) {
+            if (pass2_exc) std::rethrow_exception(pass2_exc);
+            throw std::runtime_error(pass2_what);
+          }
           throw std::runtime_error(
               "TADAH:ANNEAL_PT: rank 0 aborted during calibration pass 2");
         }
@@ -2569,6 +2587,7 @@ template<typename Vec, typename HostT>
           proceed = false;
         }
       } else if (pass2_threw) {
+        if (pass2_exc) std::rethrow_exception(pass2_exc);
         throw std::runtime_error(pass2_what);
       }
 

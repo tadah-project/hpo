@@ -25,7 +25,9 @@
  *   - MAXEVAL is enforced externally via a shared atomic counter (Ceres
  *     iterations != host evaluations);
  *   - bad host evals propagate via FirstOrderFunction::Evaluate -> false
- *     rather than exceptions (Ceres is not exception-safe across Solve).
+ *     rather than exceptions (Ceres is not exception-safe across Solve);
+ *     an exception from the host is captured there, the solve is aborted,
+ *     and the original is rethrown after Solve returns.
  */
 
 #include <tadah/hpo/gradient_provider.h>
@@ -36,6 +38,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <exception>
 #include <limits>
 #include <memory>
 #include <sstream>
@@ -197,30 +200,44 @@ inline void validate_ceres_steepest_spec(const OptimizerSpec& sp) {
 /* FirstOrderFunction adapter: bridges Ceres' const-double-pointer API to
  * the GradientProvider's Vec-typed callbacks. Returns false on bad-eval
  * propagated from the host or finite-diff functor; Ceres translates
- * that into LINE_SEARCH_FAILED / NUMERICAL_FAILURE termination. */
+ * that into LINE_SEARCH_FAILED / NUMERICAL_FAILURE termination.
+ *
+ * An exception from the host or the gradient provider (durable_best::Error,
+ * StagnationStop, core::ShutdownRequested, ...) is captured in *host_exc --
+ * the first one wins -- and reported to Ceres as a failed evaluation. Once
+ * captured, every later call fails at once without touching the host,
+ * HostExceptionAbort ends the solve, and run_ceres_gradient_problem
+ * rethrows the original after Solve returns. */
 template<class Vec, class Runner>
 class HPO_FirstOrderFunction : public ceres::FirstOrderFunction {
 public:
-    HPO_FirstOrderFunction(GradientProvider<Vec,Runner>* gp, int dim)
-        : gp_(gp), dim_(dim) {}
+    HPO_FirstOrderFunction(GradientProvider<Vec,Runner>* gp, int dim,
+                           std::exception_ptr* host_exc)
+        : gp_(gp), dim_(dim), host_exc_(host_exc) {}
 
     bool Evaluate(const double* parameters,
                   double*       cost,
                   double*       gradient) const override {
-        Vec x;
-        x.set_size(dim_);
-        for (int i = 0; i < dim_; ++i) x(i) = parameters[i];
+        if (*host_exc_) return false;
+        try {
+            Vec x;
+            x.set_size(dim_);
+            for (int i = 0; i < dim_; ++i) x(i) = parameters[i];
 
-        const double y = gp_->cost(x);
-        if (!std::isfinite(y)) return false;
-        *cost = y;
+            const double y = gp_->cost(x);
+            if (!std::isfinite(y)) return false;
+            *cost = y;
 
-        if (gradient) {
-            Vec g;
-            if (!gp_->gradient(x, g)) return false;
-            for (int i = 0; i < dim_; ++i) gradient[i] = g(i);
+            if (gradient) {
+                Vec g;
+                if (!gp_->gradient(x, g)) return false;
+                for (int i = 0; i < dim_; ++i) gradient[i] = g(i);
+            }
+            return true;
+        } catch (...) {
+            *host_exc_ = std::current_exception();
+            return false;
         }
-        return true;
     }
 
     int NumParameters() const override { return dim_; }
@@ -228,6 +245,22 @@ public:
 private:
     GradientProvider<Vec,Runner>* gp_;
     int dim_;
+    std::exception_ptr* host_exc_;
+};
+
+/* Ends the solve (SOLVER_ABORT -> USER_FAILURE) at the first iteration
+ * boundary after a host exception was captured. A failed evaluation alone
+ * normally ends it through a line-search failure; this makes the stop
+ * independent of how Ceres treats the failed trial step. */
+class HostExceptionAbort : public ceres::IterationCallback {
+public:
+    explicit HostExceptionAbort(const std::exception_ptr* host_exc)
+        : host_exc_(host_exc) {}
+    ceres::CallbackReturnType operator()(const ceres::IterationSummary&) override {
+        return *host_exc_ ? ceres::SOLVER_ABORT : ceres::SOLVER_CONTINUE;
+    }
+private:
+    const std::exception_ptr* host_exc_;
 };
 
 inline std::optional<double> ceres_param(const OptimizerSpec& sp,
@@ -288,11 +321,12 @@ make_ceres_options(const OptimizerSpec& sp,
 
 /* Common driver: build provider, run Ceres, report. Algo-specific
  * adapters (run_ceres_*) wrap this with the right direction + line
- * search type. */
-template<class Vec, class Runner>
+ * search type. Generic over the host (`double operator()(const Vec&)`;
+ * analytical_gradient optional) so unit tests can drive it with a stub. */
+template<class Vec, class Runner, class HostT>
 inline void run_ceres_gradient_problem(
     const OptimizerSpec&         sp,
-    HPO_Host<Vec, Runner>&       host,
+    HostT&                       host,
     ceres::LineSearchDirectionType dir,
     ceres::LineSearchType        ls_type,
     const std::string&           algo_label)
@@ -318,28 +352,29 @@ inline void run_ceres_gradient_problem(
     /* ANALYTICAL/HYBRID: route through the host's analytical_gradient
      * member function. NUMERICAL leaves the callback null so the
      * provider takes the Ceres-NumericDiff path. */
-    AnalyticalGradFn<Vec> agf = nullptr;
-    if (sp.grad_strategy &&
-        *sp.grad_strategy != GradStrategy::Numerical) {
-        agf = [&host](const Vec& x_in, Vec& g_out,
-                      std::vector<int>& nfd) -> bool {
-            return host.analytical_gradient(x_in, g_out, nfd);
-        };
-    }
+    AnalyticalGradFn<Vec> agf = host_analytical_grad_fn<Vec>(sp, host);
     auto gp = make_gradient_provider<Vec, Runner>(
         sp, host, &evals_used, maxeval, agf);
 
     /* GradientProblem takes ownership of the FirstOrderFunction. */
-    auto fof = std::make_unique<HPO_FirstOrderFunction<Vec, Runner>>(&gp, dim);
+    std::exception_ptr host_exc;
+    auto fof = std::make_unique<HPO_FirstOrderFunction<Vec, Runner>>(
+        &gp, dim, &host_exc);
     ceres::GradientProblem problem(fof.release());
 
     auto opts = make_ceres_options(sp, dir, ls_type);
+    HostExceptionAbort abort_on_host_exc(&host_exc);
+    opts.callbacks.push_back(&abort_on_host_exc);
 
     std::vector<double> x(static_cast<std::size_t>(dim));
     for (int i = 0; i < dim; ++i) x[i] = start[static_cast<std::size_t>(i)];
 
     ceres::GradientProblemSolver::Summary summary;
     ceres::Solve(opts, problem, x.data(), &summary);
+
+    /* The host's exception is the outcome (fatal persistence failure,
+     * stagnation restart, shutdown); Ceres' own termination is moot. */
+    if (host_exc) std::rethrow_exception(host_exc);
 
     std::ostringstream oss;
     oss << "CERES:" << algo_label
@@ -362,9 +397,9 @@ inline void run_ceres_gradient_problem(
 
 #else  // !TADAH_USE_CERES
 
-template<class Vec, class Runner>
+template<class Vec, class Runner, class HostT>
 inline void run_ceres_gradient_problem(const OptimizerSpec& sp,
-                                       HPO_Host<Vec, Runner>&,
+                                       HostT&,
                                        int /*dir*/, int /*ls_type*/,
                                        const std::string& algo_label)
 {

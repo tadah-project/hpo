@@ -31,6 +31,7 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -199,6 +200,66 @@ public:
      *  trailer so a high reject rate is visible. */
     void record_bump_gate_reject();
 
+    /** Transient-I/O accounting: retries of the durable best
+     *  potential and of the per-evaluation logs/archives, rows dropped after
+     *  a log writer exhausted its retries, and archives not written. Relaxed
+     *  counters, no file I/O; finish() prints one DIAGNOSTICS line only when
+     *  any is non-zero, so a clean run's journal is unchanged. HPOLog itself
+     *  is deliberately not retried: it is the reporting channel, and a retry
+     *  would hold mtx_ and serialise the evaluation threads. */
+    void record_io_retry_durable(std::size_t n = 1);
+    void record_io_retry_writer (std::size_t n = 1);
+    void record_rows_lost       (std::size_t n);
+    void record_archive_lost    ();
+    /** The run is ending because the best potential could not be persisted:
+     *  finish() must not describe it as complete. */
+    void record_best_persistence_failure();
+
+    /** A completed evaluation that was to become the new best could not be
+     *  persisted (HPO_Host, just before the durable_best::Error leaves the
+     *  evaluation). `may_be_on_disk`: the rename of that candidate over the
+     *  best potential may have happened, so the file may hold it,
+     *  unconfirmed (a failed directory fsync, or a rename that reported an
+     *  errno it can report after landing; durable_best::SysError::
+     *  may_have_landed). Of several such candidates (parallel chains) the
+     *  record keeps the lowest loss (its eval) and the FIRST error text
+     *  (the run's status), and lists separately every candidate that may
+     *  be on disk (maybe_on_disk, in record order). finish() reports the
+     *  candidate as NOT saved instead of claiming that no evaluation
+     *  produced a usable loss or that best_pot.tadah holds the reported
+     *  best -- unless a lower best was persisted after it, which then is
+     *  the result (the candidate is listed as superseded) -- and names the
+     *  candidates that may be in best_pot.tadah; hpo_run() and
+     *  RestartPolicy fail the run on the record either way, even if the
+     *  error was swallowed. */
+    struct UnsavedBest {
+        std::size_t eval = 0;
+        double      loss = 0.0;
+        std::string what;
+        /* (eval, loss) of each candidate whose rename may have landed. */
+        std::vector<std::pair<std::size_t, double>> maybe_on_disk;
+        bool may_be_on_disk() const noexcept { return !maybe_on_disk.empty(); }
+    };
+    void record_unsaved_best(std::size_t eval, double loss,
+                             const std::string& what, bool may_be_on_disk);
+    std::optional<UnsavedBest> unsaved_best() const;
+
+    /** MULTISTART starts (and PRESTAGE refinement seeds) over the whole run:
+     *  detail::run_starts adds every batch, so the status note "(N of M
+     *  MULTISTART starts failed ...)" survives RESTART relaunches and the
+     *  RESTART exhaustion status. Reset by open() and reset_for_test(). */
+    struct StartTally {
+        std::size_t ran     = 0;   // starts run
+        std::size_t failed  = 0;   // of which failed
+        std::size_t batches = 0;   // run_starts batches (launches)
+    };
+    void record_start_batch(std::size_t ran, std::size_t failed);
+    StartTally start_tally() const;
+    std::size_t io_retries_durable() const { return n_io_retry_durable_.load(std::memory_order_relaxed); }
+    std::size_t io_retries_writer () const { return n_io_retry_writer_ .load(std::memory_order_relaxed); }
+    std::size_t rows_lost         () const { return n_rows_lost_       .load(std::memory_order_relaxed); }
+    std::size_t archives_lost     () const { return n_archives_lost_   .load(std::memory_order_relaxed); }
+
     /** Register the shared script-executor pool width (Option A: THREADS).
      *  Enables the honest pool-utilisation figure in the periodic SUMMARY:
      *  util = Σ script busy / (pool width x window elapsed). Without it the
@@ -340,6 +401,8 @@ public:
      *  call finish() themselves and prematurely close the journal.
      */
     void set_status(const std::string& status_str);
+    /** The status last recorded by set_status() ("" if none). */
+    std::string status() const;
 
     /** Write DIAGNOSTICS + PERFORMANCE + RESULT sections and close the file.
      *  Best metrics are taken from what was recorded by log_new_best() calls.
@@ -423,6 +486,12 @@ private:
     std::atomic<std::size_t> n_fail_band_[5] = {};
     /* Bump-support per-candidate gate rejects (a band-D subset). */
     std::atomic<std::size_t> n_bump_gate_ {0};
+    /* Transient-I/O retries / losses (record_io_retry_* etc.). */
+    std::atomic<std::size_t> n_io_retry_durable_{0};
+    std::atomic<std::size_t> n_io_retry_writer_ {0};
+    std::atomic<std::size_t> n_rows_lost_       {0};
+    std::atomic<std::size_t> n_archives_lost_   {0};
+    std::atomic<bool>        best_persist_failed_{false};
 
     /* timing stats -- protected by mtx_ */
     double      sum_ms_    = 0.0;
@@ -529,6 +598,9 @@ private:
 
     /* last interim status set via set_status(); used as fallback in finish() */
     std::string last_status_;
+    /* new best(s) that could not be persisted (record_unsaved_best) */
+    std::optional<UnsavedBest> unsaved_best_;
+    StartTally                 start_tally_;
 
     /* Lazy-section bookkeeping. event() emits a "-- SETUP DIAGNOSTICS --"
      * header on its very first call when sections_started_ is still false,

@@ -134,6 +134,14 @@ void HPOLog::reset_for_test()
     n_nan_ .store(0, std::memory_order_relaxed);
     n_nan_logged_.store(0, std::memory_order_relaxed);
     for (auto& b : n_fail_band_) b.store(0, std::memory_order_relaxed);
+    n_io_retry_durable_.store(0, std::memory_order_relaxed);
+    n_io_retry_writer_ .store(0, std::memory_order_relaxed);
+    n_rows_lost_       .store(0, std::memory_order_relaxed);
+    n_archives_lost_   .store(0, std::memory_order_relaxed);
+    best_persist_failed_.store(false, std::memory_order_relaxed);
+    unsaved_best_.reset();
+    start_tally_ = StartTally{};
+    last_status_.clear();
     cur_best_loss_ = std::numeric_limits<double>::max();
     cur_best_eval_ = 0;
     best_emae_ = best_ermse_ = best_errmse_ = best_frmse_ = best_srmse_ = 0.0;
@@ -163,6 +171,7 @@ void HPOLog::open(const std::string& path,
 {
     std::lock_guard<std::mutex> lg(mtx_);
     t_start_ = std::chrono::system_clock::now();
+    start_tally_ = StartTally{};
 
     f_.open(path, std::ios::out | std::ios::trunc);
     if (!f_.is_open()) {
@@ -1059,6 +1068,67 @@ void HPOLog::record_bump_gate_reject()
     n_bump_gate_.fetch_add(1, std::memory_order_relaxed);
 }
 
+void HPOLog::record_io_retry_durable(std::size_t n)
+{
+    n_io_retry_durable_.fetch_add(n, std::memory_order_relaxed);
+}
+
+void HPOLog::record_io_retry_writer(std::size_t n)
+{
+    n_io_retry_writer_.fetch_add(n, std::memory_order_relaxed);
+}
+
+void HPOLog::record_rows_lost(std::size_t n)
+{
+    n_rows_lost_.fetch_add(n, std::memory_order_relaxed);
+}
+
+void HPOLog::record_best_persistence_failure()
+{
+    best_persist_failed_.store(true, std::memory_order_relaxed);
+}
+
+void HPOLog::record_archive_lost()
+{
+    n_archives_lost_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void HPOLog::record_unsaved_best(std::size_t eval, double loss,
+                                 const std::string& what, bool may_be_on_disk)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    /* Several chains can fail to persist before the run stops: report the
+     * lowest loss, keep the first error (the run's status), and list every
+     * candidate that may have reached the file. */
+    if (!unsaved_best_) {
+        unsaved_best_ = UnsavedBest{eval, loss, what, {}};
+    } else if (loss < unsaved_best_->loss) {
+        unsaved_best_->eval = eval;
+        unsaved_best_->loss = loss;
+    }
+    if (may_be_on_disk) unsaved_best_->maybe_on_disk.emplace_back(eval, loss);
+}
+
+void HPOLog::record_start_batch(std::size_t ran, std::size_t failed)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    start_tally_.ran    += ran;
+    start_tally_.failed += failed;
+    ++start_tally_.batches;
+}
+
+HPOLog::StartTally HPOLog::start_tally() const
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    return start_tally_;
+}
+
+std::optional<HPOLog::UnsavedBest> HPOLog::unsaved_best() const
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    return unsaved_best_;
+}
+
 void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
 {
     n_eval_.fetch_add(1, std::memory_order_relaxed);
@@ -1575,6 +1645,12 @@ void HPOLog::set_status(const std::string& status_str)
     last_status_ = status_str;
 }
 
+std::string HPOLog::status() const
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    return last_status_;
+}
+
 void HPOLog::finish(const std::string& status_str)
 {
     std::lock_guard<std::mutex> lg(mtx_);
@@ -1595,6 +1671,42 @@ void HPOLog::finish(const std::string& status_str)
     const double avg_ms      = total > 0 ? sum_ms_ / total : 0.0;
     const double wall_sec    = std::chrono::duration<double>(
                                    std::chrono::system_clock::now() - t_start_).count();
+
+    /* DX: cur_best_loss_ starts at DBL_MAX and log_new_best only lowers it,
+     * so a run that recorded no best printed the sentinel verbatim --
+     * "Best total loss : 1.7977e+308 (eval 0)" -- immediately followed by
+     * "Best potential saved : best_pot.tadah", a file that was never
+     * written. Both lines have to know that "no best" is a state. */
+    const bool have_best =
+        cur_best_eval_ > 0 &&
+        cur_best_loss_ < std::numeric_limits<double>::max();
+    /* A candidate that could not be persisted beat every best saved before
+     * it (the host compared it with the persisted best and did not advance
+     * that). So a saved best with a LOWER loss was persisted after it -- by
+     * another chain's single attempt once the storage recovered
+     * (durable_best::FailLatch) -- and replaced any rename of the candidate
+     * that did land. Of the candidates that may be on disk, only those at
+     * or below the saved best's loss can still be in best_pot.tadah
+     * (`on_disk`, lowest loss first; an equal loss is ambiguous). The
+     * reported candidate is superseded by a lower saved best, or by an
+     * equal one when no candidate can still be on disk: then
+     * best_pot.tadah holds the run's best. The run still ends FAILED (the
+     * status is the caller's); only what is reported as the best changes. */
+    std::vector<std::pair<std::size_t, double>> on_disk;
+    if (unsaved_best_) {
+        for (const auto& c : unsaved_best_->maybe_on_disk)
+            if (!have_best || c.second <= cur_best_loss_) on_disk.push_back(c);
+        std::stable_sort(on_disk.begin(), on_disk.end(),
+                         [](const auto& a, const auto& b) { return a.second < b.second; });
+    }
+    const bool unsaved_superseded =
+        unsaved_best_ && have_best &&
+        (cur_best_loss_ < unsaved_best_->loss ||
+         (cur_best_loss_ == unsaved_best_->loss && on_disk.empty()));
+    /* The best potential is not (or not confirmed) on disk. */
+    const bool best_unsaved =
+        unsaved_best_ ? !unsaved_superseded
+                      : best_persist_failed_.load(std::memory_order_relaxed);
 
     /* -- DIAGNOSTICS --------------------------------------------------- */
     f_ << "\n"; { std::string s = "-- DIAGNOSTICS "; while(s.size()<72) s+='-'; f_ << s << "\n"; }
@@ -1652,7 +1764,47 @@ void HPOLog::finish(const std::string& status_str)
                       "    may predate the onset -- check when the failures started\n"
                       "    before trusting it.\n";
         } else if (total > 0) {
-            f_ << "  [ok] Every evaluation produced a usable loss.\n";
+            /* Only when it is true: a NaN/Inf clamp (FAIL_SCORE) or an
+             * evaluation cut short (a shutdown) is not graded either, and
+             * RESULT must not answer "(none -- no evaluation produced a
+             * usable loss)" next to it. */
+            if (nnan == 0 && (have_best || unsaved_best_))
+                f_ << "  [ok] Every evaluation produced a usable loss.\n";
+            else if (nnan > 0)
+                f_ << "  [info] No graded failures were recorded (the NaN/Inf "
+                      "clampings above are not graded).\n";
+            else
+                f_ << "  [info] No graded failures were recorded; no evaluation "
+                      "produced a usable loss.\n";
+        }
+    }
+
+    /* Transient I/O. Printed only when something happened, so the
+     * DIAGNOSTICS of a clean run stay byte-identical. */
+    {
+        const std::size_t rd = n_io_retry_durable_.load(std::memory_order_relaxed);
+        const std::size_t rw = n_io_retry_writer_ .load(std::memory_order_relaxed);
+        const std::size_t rl = n_rows_lost_       .load(std::memory_order_relaxed);
+        const std::size_t al = n_archives_lost_   .load(std::memory_order_relaxed);
+        if (rd + rw + rl + al > 0) {
+            f_ << "  " << std::left << std::setw(KW) << "Transient I/O retries"
+               << ": " << rd + rw << " (best-potential " << rd
+               << ", per-eval logs/archives " << rw << "); rows lost " << rl
+               << "; archives lost " << al << "\n";
+            if (rl + al > 0) {
+                f_ << "  [!] Some per-evaluation log rows or potential archives were\n"
+                      "    not written after retrying; see the WARNING entries.";
+                /* The best potential has its own, fatal path: only vouch for
+                 * it when it was persisted -- a run ending on a persistence
+                 * failure may have no best_pot.tadah, or a stale one. */
+                if (best_unsaved)
+                    f_ << "\n    The best potential could not be persisted either;\n"
+                          "    see Optimiser status under RESULT.\n";
+                else if (have_best)
+                    f_ << " The\n    best potential is published separately and is complete.\n";
+                else
+                    f_ << "\n";
+            }
         }
     }
 
@@ -1704,18 +1856,31 @@ void HPOLog::finish(const std::string& status_str)
     { std::string s = "-- RESULT "; while(s.size()<72) s+='-'; f_ << "\n" << s << "\n"; }
     f_ << "  " << std::left << std::setw(KW) << "Optimiser status"
        << ": " << status_str_local << "\n";
-    /* DX: cur_best_loss_ starts at DBL_MAX and log_new_best only lowers it,
-     * so a run that recorded no best printed the sentinel verbatim --
-     * "Best total loss : 1.7977e+308 (eval 0)" -- immediately followed by
-     * "Best potential saved : best_pot.tadah", a file that was never
-     * written. Both lines have to know that "no best" is a state. */
-    const bool have_best =
-        cur_best_eval_ > 0 &&
-        cur_best_loss_ < std::numeric_limits<double>::max();
-    if (have_best) {
+    /* A new best that could not be persisted is the run's best loss, but it
+     * is NOT in best_pot.tadah (or not confirmed there); the last persisted
+     * best, if any, follows as "Last saved best". A superseded candidate
+     * (see unsaved_superseded) is listed after the saved best instead. */
+    if (unsaved_best_ && !unsaved_superseded) {
+        f_ << "  " << std::left << std::setw(KW) << "Best total loss"
+           << ": " << fmt_double(unsaved_best_->loss)
+           << "  (eval " << unsaved_best_->eval
+           << ") -- NOT saved (best-potential persistence failed)\n";
+        if (have_best)
+            f_ << "  " << std::left << std::setw(KW) << "Last saved best"
+               << ": " << fmt_double(cur_best_loss_)
+               << "  (eval " << cur_best_eval_ << best_origin_str() << ")\n";
+    } else if (have_best) {
         f_ << "  " << std::left << std::setw(KW) << "Best total loss"
            << ": " << fmt_double(cur_best_loss_)
            << "  (eval " << cur_best_eval_ << best_origin_str() << ")\n";
+        if (unsaved_superseded)
+            f_ << "  " << std::left << std::setw(KW) << "Unsaved candidate"
+               << ": " << fmt_double(unsaved_best_->loss)
+               << "  (eval " << unsaved_best_->eval
+               << ") -- could not be persisted; "
+               << (cur_best_loss_ < unsaved_best_->loss ? "superseded by eval "
+                                                        : "same loss as eval ")
+               << cur_best_eval_ << "\n";
     } else {
         f_ << "  " << std::left << std::setw(KW) << "Best total loss"
            << ": (none -- no evaluation produced a usable loss)\n";
@@ -1736,8 +1901,25 @@ void HPOLog::finish(const std::string& status_str)
         f_ << "  " << std::left << std::setw(KW) << "Best SRMSE"
            << ": " << std::fixed << std::setprecision(4) << best_srmse_ << " GPa\n";
     f_ << "  " << std::left << std::setw(KW) << "Best potential saved"
-       << ": " << (have_best ? "best_pot.tadah"
-                             : "(none written)") << "\n";
+       << ": ";
+    if (!unsaved_best_) {
+        f_ << (have_best ? "best_pot.tadah" : "(none written)");
+    } else if (unsaved_superseded) {
+        f_ << "best_pot.tadah (eval " << cur_best_eval_ << ")";
+    } else if (!on_disk.empty()) {
+        f_ << "not confirmed -- best_pot.tadah may hold eval ";
+        for (std::size_t k = 0; k < on_disk.size(); ++k)
+            f_ << (k ? " or eval " : "") << on_disk[k].first;
+        f_ << " (write not synced) or ";
+        if (have_best) f_ << "eval " << cur_best_eval_;
+        else           f_ << "be absent";
+        f_ << "; check its HPO_SOURCE_EVAL header";
+    } else if (have_best) {
+        f_ << "best_pot.tadah (eval " << cur_best_eval_ << ")";
+    } else {
+        f_ << "(none written)";
+    }
+    f_ << "\n";
 
     auto now = std::chrono::system_clock::now();
     auto tt  = std::chrono::system_clock::to_time_t(now);

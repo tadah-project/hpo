@@ -319,6 +319,13 @@ void BasinsPolicy<Vec, Runner>::run_global_stage(HPO_Host<Vec, Runner>& host)
         run_inner<Vec, Runner>(sub, host);
     } catch (const typename HPO_Host<Vec, Runner>::StagnationStop&) {
         /* Expected -- stage is done. */
+        if (HPOLog::instance().unsaved_best()) {
+            /* A new best could not be saved meanwhile (it may have
+             * lost to this stop in a parallel stage): fail now. */
+            HPO_Host<Vec, Runner>::set_track_topk(0);
+            HPO_Host<Vec, Runner>::set_stagnation_threshold(0);
+            detail::rethrow_if_best_unsaved();
+        }
     } catch (const core::ShutdownRequested&) {
         /* Honour shutdown -- flush top-K into the pool, commit, rethrow. */
         auto found = HPO_Host<Vec, Runner>::get_topk();
@@ -423,6 +430,13 @@ void BasinsPolicy<Vec, Runner>::run_local_stage(HPO_Host<Vec, Runner>& host,
                 optimizer_converged_naturally = true;
             } catch (const typename HPO_Host<Vec, Runner>::StagnationStop&) {
                 /* Stage stagnated; treat the basin as exhausted-at-tol. */
+                if (HPOLog::instance().unsaved_best()) {
+                    /* A new best could not be saved meanwhile (it may have
+                     * lost to this stop in a parallel stage): fail now. */
+                    HPO_Host<Vec, Runner>::set_track_topk(0);
+                    HPO_Host<Vec, Runner>::set_stagnation_threshold(0);
+                    detail::rethrow_if_best_unsaved();
+                }
             }
 
             HPO_Host<Vec, Runner>::set_stagnation_threshold(0);

@@ -5,7 +5,72 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Transient filesystem errors are retried before a write fails.** On
+  network filesystems a lock, write, fsync or rename can fail for a moment
+  (EBUSY, EAGAIN, ESTALE, ETXTBSY, EIO, ENOLCK, ETIMEDOUT, EDEADLK; EACCES
+  only when the directory is on a network filesystem -- on a local disk it
+  is a permission error and fails at once) and succeed when repeated. The
+  durable best potential retries its whole lock → read → compare → replace
+  transaction with exponential backoff (10 ms doubling to 2 s, ±20 %
+  jitter), releasing its locks between attempts, until 30 s have passed
+  since the first failure (the failing calls' own time counts; a call that
+  blocks by itself can add its duration at either end). A retry that finds
+  its own earlier rename in place (the directory fsync failed, or an NFS
+  rename reported ENOENT after landing) completes that commit. Other
+  permanent errors (ENOSPC, EROFS, ENOENT, ...) are not retried. The
+  per-evaluation logs (`loss.tadah`, `outvar.tadah`, `params.tadah`,
+  `stats.tadah` and their `best_*` twins), whose write errors were never
+  checked, are appended one batch per writer drain
+  (`io::RetryingAppendFile`): a failed batch -- a partial write included --
+  is truncated back and rewritten, with ONE 10 s budget per drain shared by
+  every file and `DUMP`/`BDUMP` archive (each still makes its own attempt,
+  plus one immediate re-attempt after a permanent errno). A batch that
+  still fails is dropped whole and reported with the rows lost, and that
+  file gets single attempts until a write succeeds (repeats summarised, an
+  INFO line when writes resume); the run goes on. Archives are written
+  whole or not at all. After a shutdown signal retrying goes on for at most
+  2 s (`BackoffPolicy::stop_grace`, per durable publication and per drain),
+  so one blip after a scheduler's time-limit warning does not lose the
+  in-flight best or the last rows. Every retry is a WARNING; DIAGNOSTICS
+  gains `Transient I/O retries : N (best-potential a, per-eval
+  logs/archives b); rows lost c; archives lost d` only when one of them is
+  non-zero, so clean runs write byte-identical journals and files. New API:
+  `durable_best::SysError` (errno, operation, path, `may_have_landed()`),
+  `durable_best::Options` with `default_backoff()` and 4-argument overloads
+  (the 3-argument forms keep the default policy), `io::BackoffPolicy`,
+  `io::retry`. Test-only knobs: `TADAH_HPO_TEST_IO_FAULT="site,ERRNO
+  [,skip=K][,count=N|always][,partial=B][,land][,latency=MS][;...]"` and
+  `TADAH_HPO_TEST_IO_BACKOFF_MS="initial,cap,budget[,jitter]"`
+  (`io::testing::ScopedFaults` in-process); with no faults installed an I/O
+  call costs one relaxed atomic load. Tests: `test_durable_best.cpp`,
+  `test_append_log.cpp`, `[durable_e2e]` in `test_hpo_fixweight_e2e.cpp`.
+
 ### Changed
+- Journal status after an optimiser exception reads `FAILED -- <what>`
+  (was `STOPPED with error: <what>`).
+- RESTART with an NLopt inner optimiser now restarts on stagnation (the
+  `StagnationStop` ended as a graceful "nlopt failure"), and BASINS stages
+  driven by NLopt see stagnation as stagnation, not convergence. MAXEVAL
+  applies per launch, so a RESTART run can use up to (MAX + 1) x MAXEVAL
+  evaluations.
+- SIGINT/SIGTERM/SIGUSR2 during NLopt, a MULTISTART start, PT/PA
+  calibration or NOISE_CALIBRATION ends as `SHUTDOWN (<signal>)` with exit
+  code 0 on single-process runs. In a multi-rank `TADAH_HPO_MPI` PT/PA run
+  the ranks other than 0 still end `FAILED -- ...: rank 0 aborted during
+  ... calibration`, exit code 1.
+- `NLOPT_ROUNDOFF_LIMITED` is a graceful stop (was FAILED); an error inside
+  an NLopt gradient (e.g. a GRAD_STRATEGY ANALYTICAL wiring error) fails
+  the run.
+- A transient durable-best failure can hold the evaluations whose loss may
+  become the new best for up to about 30 s (the others carry on).
+- DIAGNOSTICS says `[ok] Every evaluation produced a usable loss.` only
+  when that is so (not next to NaN/Inf clamps, not when no evaluation
+  produced a loss), and its note calls the best potential complete only
+  when one was persisted.
+- `StagnationStop` moved to namespace scope (`tadah/hpo/stagnation_stop.h`;
+  `HPO_Host<...>::StagnationStop` is an alias). New
+  `host_analytical_grad_fn()` (`gradient_provider.h`).
 - Numerics shift at the rounding level: a start point the plain map
   rounded is now evaluated exactly (3e-11 relative for a small weight in a
   wide box), and grids, LSCALE/ESHIFT and LAMMPS read-backs are unrounded,
@@ -82,6 +147,78 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Validation ESHIFT is forwarded exactly (it had 6 significant digits), and
   `hpo_optim_resolved.hpo` writes its bounds exactly (10 digits), so the
   pasted block pins the box the run searched.
+- **A fatal error fails the run, with a non-zero exit code.** NLopt's C++
+  wrapper turns any exception from the objective into `NLOPT_FAILURE`,
+  which the adapter treated as convergence: a best potential that could not
+  be saved ended as `STOPPED -- nlopt failure (algorithm converged; ...)`,
+  exit code 0, with a stale `best_pot.tadah`. The NLopt objective and
+  gradient and Ceres' `Evaluate` now capture the host exception, stop the
+  solver and rethrow it unchanged afterwards; NLopt's own exceptions are
+  classified by type (`classify_nlopt_exception`). MULTISTART
+  (`detail::run_start_guarded`) and the ANNEAL_PT/PA seed and T0
+  calibration no longer swallow or retype run-level exceptions. `hpo_run()`
+  also covers the fresh-run reset and NOISE_CALIBRATION, and closes the
+  journal with `FAILED -- best-potential persistence: <error>` (other
+  errors `FAILED -- <error>`) before rethrowing. Tests:
+  `test_nlopt_host_exceptions.cpp`, `test_policy_host_exceptions.cpp`,
+  `[durable_e2e]`; `tadah` exit status: `test_tadah_cli_exit_status.cpp`
+  (Tadah.MLIP).
+- **Parallel optimisers keep the most severe of concurrent exceptions.**
+  The ANNEAL_PT/PA replica pool and ASA's block evaluations kept the first,
+  so a stagnation stop or shutdown request caught first masked a concurrent
+  persistence failure (the run could end COMPLETED, exit code 0). Errors
+  now outrank a shutdown request, which outranks a stagnation stop
+  (`exception_severity.h`). `DLIB:GFS` with THREADS > 1 no longer aborts
+  (exit 134, journal left open) when two evaluations throw together.
+- **RESULT reports a best potential that could not be saved.** It said
+  `(none -- no evaluation produced a usable loss)` or named the older best.
+  Now: `Best total loss : <loss> (eval N) -- NOT saved (best-potential
+  persistence failed)`, `Last saved best : ...` when there is one, and
+  `Best potential saved : not confirmed -- best_pot.tadah may hold eval N
+  (write not synced) ...` only when the candidate's rename may have
+  happened (not after e.g. EROFS). A lower best that another chain saved
+  after the failure is the result, the lost candidate listed as `Unsaved
+  candidate : ... superseded by eval M`. The record also backs the error
+  up: the run fails on it even where a policy swallowed the exception, and
+  a PRESTAGE, MULTISTART or BASINS stage that stops on stagnation ends the
+  run at once.
+- **After a fatal best-potential failure, later candidates get a single
+  attempt.** Every new best of another chain queued behind the failure
+  spent its own retry budget (a `DLIB:GFS` THREADS 8 run took 8 x 30 s to
+  end). Once a publication has failed for good (`durable_best::FailLatch`,
+  `Options::no_backoff`), later ones make one attempt without backoff: a
+  transient or permanent error fails at once, and only a rename reporting
+  ENOENT gets one immediate re-attempt. A failure is journalled as
+  `best-potential persistence failure at eval K (no backoff after the
+  failure at eval N): <error>`, the error ending in `(gave up after 1
+  attempt over 0 s)` after a transient errno. Storage that has recovered
+  still saves a later best (`best potential of eval K saved after the
+  persistence failure at eval N (no backoff); the run still ends FAILED`),
+  but the run ends FAILED with a non-zero exit and the first failure as its
+  status (`detail::durable_failure_cause`). The GFS run above now ends
+  after one budget when failing calls fail fast; with a soft-mount timeout
+  of T s each of the up to THREADS - 1 queued candidates adds about T.
+- **Evaluations that cannot become the new best no longer wait on best
+  publication** (`HPO_Host::may_become_best`, a lock-free pre-check), so a
+  publication's fsync or backoff holds up only the evaluations that may
+  win; a stagnation check that would fire first waits for the new-best
+  decisions in progress (`detail::throw_if_stagnated`). The rank-local
+  mirror of an MPI run (`best_pot.tadah.r<rank>`) retries for at most 1 s,
+  then makes single attempts until one succeeds.
+- **MULTISTART, PRESTAGE and RESTART.** A MULTISTART whose every start
+  fails now fails the run (it ended COMPLETED, exit code 0), and failed
+  starts are noted in the status (`(N of M MULTISTART starts failed; see
+  the WARNINGs)`, counted over the whole run). Under RESTART each
+  MULTISTART start and each PRESTAGE refinement seed gets its own
+  stagnation window (a start used to stop at its first evaluation after
+  the first stagnation); MULTISTART relaunches all K starts after the last
+  one, and PRESTAGE restarts only when the refinement stagnated without
+  improving the best. An exhausted RESTART ends `STOPPED -- stagnation: no
+  new best in W evals after R restart(s)` (was COMPLETED or a stale
+  per-start status; example 13's fingerprint now expects it). `hpo_run()`
+  starts with the stagnation window and top-K tracking disarmed: a policy
+  that ended by an exception left them armed for a later run in the same
+  process.
 
 ## [1.5.0] — 2026-09-10
 

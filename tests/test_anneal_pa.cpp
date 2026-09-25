@@ -8,12 +8,15 @@
 #include "catch2/catch.hpp"
 
 #include <tadah/hpo/algorithms_pa.h>
+#include <tadah/core/checkpoint.h>
+#include <tadah/hpo/durable_best.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/optimizer_spec.h>
 
 #include <dlib/matrix.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -623,4 +626,52 @@ TEST_CASE("ANNEAL_PA: converges on a quadratic bowl",
         best = std::min(best, dx * dx + dy * dy);
     }
     CHECK(best < 0.05);
+}
+
+/* Seed/T0 calibration used to re-throw whatever the host threw as a
+ * plain runtime_error(what), so SIGINT during calibration ended the run
+ * with an error (non-zero exit) instead of SHUTDOWN, and a fatal
+ * best-potential persistence failure lost its type. Eval 1 is the seed,
+ * eval 2 the first T0 probe (T_HOT unset). */
+TEST_CASE("ANNEAL_PA: calibration rethrows the host's exception unchanged",
+          "[HPO][anneal_pa][failure_handling]")
+{
+    using namespace tadah::hpo;
+    for (std::size_t throw_at : {std::size_t{1}, std::size_t{2}}) {
+        CAPTURE(throw_at);
+        auto make = [&] {
+            auto sp = make_pa_spec({-1.0, -1.0}, {1.0, 1.0});
+            set_seed_point(sp, {0.0, 0.0});
+            sp.seed = 5;
+            sp.num_threads = 2;
+            sp.stop.maxeval = 200;
+            sp.pop = 8;
+            return sp;
+        };
+        {
+            auto sp = make();
+            std::atomic<std::size_t> n{0};
+            MtStubHost stub{[&](const Vec& x) {
+                if (++n == throw_at) throw tadah::core::ShutdownRequested{};
+                return x(0) * x(0) + x(1) * x(1);
+            }, {}, {}};
+            CHECK_THROWS_AS(run_anneal_pa_impl<Vec>(sp, stub),
+                            tadah::core::ShutdownRequested);
+        }
+        {
+            auto sp = make();
+            std::atomic<std::size_t> n{0};
+            MtStubHost stub{[&](const Vec& x) {
+                if (++n == throw_at)
+                    throw durable_best::Error("best_pot.tadah: gave up");
+                return x(0) * x(0) + x(1) * x(1);
+            }, {}, {}};
+            try {
+                run_anneal_pa_impl<Vec>(sp, stub);
+                FAIL("run_anneal_pa_impl returned normally");
+            } catch (const durable_best::Error& e) {
+                CHECK(std::string(e.what()) == "best_pot.tadah: gave up");
+            }
+        }
+    }
 }

@@ -29,6 +29,7 @@
 #include <tadah/core/checkpoint_manager.h>  // for tick_eval cadence
 #include <tadah/core/context.h>
 #include <tadah/core/signal_handler.h>
+#include <tadah/hpo/append_log.h>
 #include <tadah/hpo/bump_support_gate.h>
 #include <tadah/hpo/dloss_dtheta.h>
 #include <tadah/hpo/durable_best.h>
@@ -37,6 +38,7 @@
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/bound_audit.h>
 #include <tadah/hpo/pot_header_writer.h>
+#include <tadah/hpo/stagnation_stop.h>     // StagnationStop
 #include <tadah/mlip/analytics/analytics.h>
 #include <tadah/mlip/load_transforms.h>
 #include <tadah/mlip/structure_db.h>
@@ -240,8 +242,12 @@ public:
      *  filters and weighting knobs are deliberately not forwarded. */
     const mlip::LoadTransformReport& val_load_transform_report() const { return val_report_; }
 
-    /** Flush any results still in the queue (call after optimizer finishes). */
-    void flush_remaining() const;
+    /** Flush any results still in the queue (call after optimizer finishes).
+     *  retry_io=false: no backoff, only a permanent errno's one immediate
+     *  re-attempt (after a best-potential persistence failure the storage is
+     *  known to be failing). After a shutdown request the drain's retry
+     *  budget is the 2 s stop grace either way. */
+    void flush_remaining(bool retry_io = true) const;
 
     /* ---------- top-K tracking (used by StagedPolicy) ------------------ */
     /** Enable a buffer that records the top-K (lowest loss) (loss, params)
@@ -275,11 +281,8 @@ public:
     static void set_g_iter_floor(std::size_t n);
     static std::size_t g_iter_value();
 
-    /** Exception thrown by operator() to signal a stagnation-driven
-     *  abort. The RestartPolicy catches and re-enters with a fresh init. */
-    struct StagnationStop : public std::exception {
-      const char* what() const noexcept override { return "HPO stagnation threshold reached"; }
-    };
+    /** Thrown by operator() on stagnation; see ::tadah::hpo::StagnationStop. */
+    using StagnationStop = ::tadah::hpo::StagnationStop;
 
 
     /* -------- adapter for NLopt C++ wrapper ----------------------------- */
@@ -373,8 +376,28 @@ private:
     void fit_loss(Result&) const;
     void sims_loss(Result&) const;
     /** Render and synchronously publish this completed candidate to the
-     * canonical cross-rank best file and this rank's local best file. */
-    void persist_durable_best(const Result&) const;
+     * canonical cross-rank best file and this rank's local best file. On
+     * failure it trips durable_latch_, records the candidate as unsaved,
+     * journals the failure, sets `journalled` and throws
+     * durable_best::Error. */
+    void persist_durable_best(const Result&, bool& journalled) const;
+    static void note_failed_publication(const Result&, const durable_best::Error&,
+                                        std::optional<std::size_t> failed_before);
+    /* Retry policy of every durable_best call: durable_best::default_backoff()
+     * (30 s, abandoned on a shutdown request), each retried failure logged
+     * as a WARNING and counted (record_io_retry_*). Built in the ctor. */
+    durable_best::Options        dbopts_;
+    /* The canonical publication once durable_latch_ is tripped: dbopts_
+     * with no_backoff (a single attempt; only a rename reporting ENOENT
+     * gets one immediate re-attempt). */
+    durable_best::Options        dbopts_latched_;
+    /* The non-fatal rank-local mirror (MPI multi-rank runs): a 1 s budget,
+     * and none at all (single attempt) once a mirror publication has failed
+     * until one succeeds again (mirror_degraded_, guarded by best_mtx_), so a
+     * failing mirror cannot stall every new best by the full 30 s. */
+    durable_best::Options        dbopts_mirror_;
+    durable_best::Options        dbopts_mirror_single_;
+    mutable bool                 mirror_degraded_ = false;
     /* PC_OBSERVABLE (D4c) loss aggregation: evaluates every entry of
      * trg_.observables at the current trained model, populates
      * r.v_obs_value / r.v_obs_loss, and folds the per-observable loss
@@ -392,6 +415,26 @@ private:
      * publication. The atomics remain for cheap observers/checkpoint fields;
      * this mutex makes exact-loss ties deterministic within one process. */
     static std::mutex                       best_mtx_;
+    /* New-best decisions started / done (the would-fire stagnation check
+     * waits for those in progress; stagnation_stop.h). */
+    static detail::BestPublications         best_pubs_;
+    /* Tripped by the first canonical best-potential publication that fails
+     * for good; every later candidate of the run then gets a single attempt
+     * without backoff (dbopts_latched_, durable_best::FailLatch). The
+     * non-fatal rank-local mirror never trips it. Guarded by best_mtx_;
+     * reset by prepare_best_publication() (every run) and
+     * reset_globals_for_test(). */
+    static durable_best::FailLatch          durable_latch_;
+public:
+    /** The lock-free pre-check of the new-best decision: false when `loss`
+     *  cannot become the best against a best-so-far snapshot `cur_best`
+     *  (loss above it, or NaN), so the evaluation skips best_mtx_. Exact
+     *  because g_best_ only decreases while evaluations run. */
+    static constexpr bool may_become_best(double loss, double cur_best) noexcept
+    {
+        return loss <= cur_best;
+    }
+private:
     /* Bound-occupancy audit of the running best (bound_audit.h); armed
      * from trg.space() at construction, updated on the new-best path
      * under its own mutex, reported by HPOLog. */
@@ -432,6 +475,20 @@ private:
      * (recovering from a hung eval thread that consumed the slot but
      * never returned). */
     static std::atomic<std::int64_t>               next_flush_stuck_since_ms_;
+    /* The eight per-eval logs, opened lazily by the first drain after the
+     * ctor wrote their headers (reset there and in reset_globals_for_test so
+     * the offsets follow the current run's files). Both drains stage rows
+     * and commit once per drain with io::BackoffPolicy::writer(), one budget
+     * shared by the whole drain; a batch that still fails is dropped whole
+     * and reported. Guarded by io_mtx_. */
+    struct WriterFiles;
+    static std::unique_ptr<WriterFiles>            writer_files_;
+    static WriterFiles& writer_files(const HPOTargets& trg);     // io_mtx_ held
+    static void reset_writer_files();                            // takes io_mtx_
+    static void commit_writer_files(WriterFiles& wf);            // io_mtx_ held
+    /* Archive (DUMP/BDUMP) writer: whole file or nothing, retried. */
+    static void write_archive(WriterFiles& wf, const std::string& path,
+                              const std::string& bytes);             // io_mtx_ held
     static void submit_result(Result&&, const HPOTargets& trg_,
                               const core::Context& master_ctx,
                               const core::Context& val_ctx,
@@ -512,13 +569,13 @@ private:
      * beyond #ITERATION and its rows are suppressed. */
     bool stats_have_columns() const;
 
-    static void print_loss_line  (std::ofstream&, size_t it, const Result&,
+    static void print_loss_line  (std::ostream&, size_t it, const Result&,
                                   const HPOTargets&, std::size_t cw, int prec);
-    static void print_outvar_line(std::ofstream&, size_t it, const Result&,
+    static void print_outvar_line(std::ostream&, size_t it, const Result&,
                                   const HPOTargets&, std::size_t cw, int prec);
-    static void print_params_line(std::ofstream&, size_t it, const Result&,
+    static void print_params_line(std::ostream&, size_t it, const Result&,
                                   std::size_t cw, int prec);
-    static void print_stats_line (std::ofstream&, size_t it, const Result&,
+    static void print_stats_line (std::ostream&, size_t it, const Result&,
                                   const HPOTargets&, std::size_t cw, int prec);
 
 };

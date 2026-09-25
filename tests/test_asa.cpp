@@ -8,8 +8,11 @@
 
 #include "catch2/catch.hpp"
 
+#include <tadah/core/checkpoint.h>
 #include <tadah/hpo/algorithms_asa.h>
 #include <tadah/hpo/asa_options.h>
+#include <tadah/hpo/durable_best.h>
+#include <tadah/hpo/stagnation_stop.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_spec.h>
@@ -724,4 +727,52 @@ TEST_CASE("ASA Gener_Block>1 results are THREADS-invariant",
     CHECK(t1 == t2);
     CHECK(t1 == t4);
     CHECK(!t1.empty());
+}
+
+/* ASA's block evaluations catch host exceptions themselves
+ * (AsaRunCtx::stash), so the ReplicaPool's severity ranking never saw them
+ * and the FIRST one won: a StagnationStop caught first masked a concurrent
+ * best potential that could not be saved (and PRESTAGE / BASINS, which
+ * swallow the stop, optimised on for the rest of their budget). */
+TEST_CASE("ASA keeps the most severe of concurrent block exceptions",
+          "[HPO][asa][parallel][failure_handling]")
+{
+    auto run_with = [](std::function<void()> first, std::function<void()> second) {
+        auto sp = make_asa_spec({-2.0, -2.0}, {2.0, 2.0});
+        set_seed_point(sp, {1.0, -1.0});
+        sp.num_threads = 4;
+        sp.stop.maxeval = 400;
+        sp.param = {{"Gener_Block", 4.0}, {"Gener_Block_Max", 4.0}};
+        const auto main_id = std::this_thread::get_id();
+        std::atomic<int> block_calls{0}, arrived{0};
+        const AsaHostFn fn = [&](const std::vector<double>& x) -> double {
+            /* Serial calls (cost-temperature sampling) run on this thread;
+             * block evaluations on the pool's workers. */
+            if (std::this_thread::get_id() != main_id) {
+                const int n = ++block_calls;
+                if (n <= 2) {
+                    ++arrived;
+                    const auto t0 = std::chrono::steady_clock::now();
+                    while (arrived.load() < 2 &&
+                           std::chrono::steady_clock::now() - t0 <
+                               std::chrono::seconds(5))
+                        std::this_thread::yield();
+                    if (n == 1) first();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+                    second();
+                }
+            }
+            return x[0] * x[0] + x[1] * x[1];
+        };
+        run_asa_erased(sp, 2, fn);
+    };
+    auto stagnation = [] { throw tadah::hpo::StagnationStop{}; };
+    auto shutdown   = [] { throw tadah::core::ShutdownRequested{}; };
+    auto durable    = [] { throw tadah::hpo::durable_best::Error("disk full"); };
+
+    CHECK_THROWS_AS(run_with(stagnation, durable), tadah::hpo::durable_best::Error);
+    CHECK_THROWS_AS(run_with(stagnation, shutdown), tadah::core::ShutdownRequested);
+    CHECK_THROWS_AS(run_with(shutdown, stagnation), tadah::core::ShutdownRequested);
+    /* Equal severity: the first stays. */
+    CHECK_THROWS_AS(run_with(stagnation, stagnation), tadah::hpo::StagnationStop);
 }
