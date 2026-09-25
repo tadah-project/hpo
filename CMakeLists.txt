@@ -341,7 +341,7 @@ add_compile_definitions(TADAH_LAMMPS_LIB=\"${_lammps_libname}\")
 # TADAH:ANNEAL_PA): replicas/walkers distribute over ranks, every rank
 # trains locally (plain Trainer) and runs its LAMMPS instances on
 # MPI_COMM_SELF. This is the only MPI build of Tadah: the legacy
-# ScaLAPACK training build (TADAH_BUILD_MPI) was removed in 1.5.1, and
+# ScaLAPACK training build (TADAH_BUILD_MPI) was removed in 1.6.0, and
 # cmake-tools rejects that option at configure time.
 option(TADAH_HPO_MPI
   "Distribute TADAH:ANNEAL_PT / ANNEAL_PA replicas over MPI ranks (requires an MPI LAMMPS library)"

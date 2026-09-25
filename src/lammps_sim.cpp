@@ -495,7 +495,7 @@ void LammpsSim::parse_tokens() {
       /* Rejected, not ignored: an unrecognised option would otherwise be
        * forwarded to LAMMPS as a command-line argument below. */
       throw std::runtime_error(
-          "--ncpu was removed in 1.5.1 (legacy MPI build); parallelism over "
+          "--ncpu was removed in 1.6.0 (legacy MPI build); parallelism over "
           "PC_LAMMPS scripts is THREADS / PC_ISOLATION. Delete --ncpu from "
           "this line.");
     }
