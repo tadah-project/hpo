@@ -21,6 +21,7 @@
 #include "catch2/catch.hpp"
 
 #include <tadah/core/context.h>
+#include <tadah/core/number_format.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/loss_function.h>
@@ -28,12 +29,15 @@
 #include <tadah/hpo/strict_parse.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <limits>
 #include <optional>
+#include <random>
 #include <sstream>
 #include <string>
 #include <unistd.h>
@@ -242,6 +246,53 @@ TEST_CASE("parse_number rejects a subnormal whatever the floating-point mode",
     CHECK(n == std::numeric_limits<double>::min());
 }
 #endif
+
+/* The lossless writers (core::format_roundtrip: hpo_optim_resolved.hpo, the
+ * hpotargets `tadah refit` writes) and the strict readers of the hpotarget
+ * grammar meet: every double they write that is zero or normal reads back
+ * through parse_number to the same bits. A subnormal is the one value the
+ * grammar refuses (it would compare equal to 0 under denormals-are-zero);
+ * its text says so with the too-small note. */
+TEST_CASE("parse_number reads what format_roundtrip writes, bit for bit",
+          "[HPO][strict_parse][lossless]")
+{
+    auto same_bits = [](double a, double b) {
+        return std::memcmp(&a, &b, sizeof a) == 0;
+    };
+    std::vector<double> values = {
+        0.0, -0.0, 1.0, -1.0, 0.1, -2.87486722631648e-4, 1.2e-14, 1e-300,
+        std::numeric_limits<double>::min(),
+        -std::numeric_limits<double>::min(),
+        std::numeric_limits<double>::max(),
+        -std::numeric_limits<double>::max(),
+        std::nextafter(1.0, 2.0), 9007199254740992.0, 9007199254740993.0,
+        123456789012345678.0, 1.0 / 3.0, 6.02214076e23};
+    std::mt19937_64 rng(20260925);
+    std::uniform_int_distribution<std::uint64_t> bits;
+    while (values.size() < 20000) {
+        const std::uint64_t b = bits(rng);
+        double v;
+        std::memcpy(&v, &b, sizeof v);
+        if (std::isfinite(v) &&
+            (v == 0.0 || std::fabs(v) >= std::numeric_limits<double>::min()))
+            values.push_back(v);
+    }
+    for (const double v : values) {
+        const std::string text = tadah::core::format_roundtrip(v);
+        double back = 12345.0;
+        INFO("value " << text);
+        REQUIRE(tadah::hpo::parse_number(text, back));
+        CHECK(same_bits(back, v));
+    }
+
+    const double sub = std::numeric_limits<double>::denorm_min();
+    const std::string sub_text = tadah::core::format_roundtrip(sub);
+    double untouched = 7.0;
+    CHECK_FALSE(tadah::hpo::parse_number(sub_text, untouched));
+    CHECK(untouched == 7.0);
+    CHECK_THAT(tadah::hpo::number_underflow_note(sub_text),
+               Catch::Contains("too small"));
+}
 
 TEST_CASE("is_number_shaped: a token meant as a number",
           "[HPO][strict_parse]")

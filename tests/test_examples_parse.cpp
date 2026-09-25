@@ -18,6 +18,9 @@
  * parses config.hpo against the local config.tadah (else
  * ../common/config.tadah), resolves the validation targets against the
  * local config.val (else ../common/config.val) and runs validate_hpo_setup.
+ * An example whose driver passes another file of its own as the training
+ * configuration (`tadah hpo -c <file>`) names it with the `config`
+ * directive; the guard copies that file and parses config.hpo against it.
  */
 
 #include "catch2/catch.hpp"
@@ -114,6 +117,7 @@ std::map<std::string, Directives> read_manifest()
                 const std::string& d = words.front();
                 const bool ok =
                     (d == "copy" && words.size() == 3) ||
+                    (d == "config" && words.size() == 2) ||
                     (d == "no-validation" && words.size() == 1) ||
                     (d == "drop" && words.size() == 2) ||
                     (d == "add" && words.size() >= 3);
@@ -190,12 +194,19 @@ void check_example(const std::string& name)
     fs::current_path(dir);
 
     bool validation = true;
+    std::string config_file;
     std::vector<std::string> drops;
     std::vector<std::vector<std::string>> adds;
     for (const auto& d : entry->second) {
         if (d[0] == "copy") {
             REQUIRE(fs::exists(d[1]));
             fs::copy_file(d[1], d[2], fs::copy_options::overwrite_existing);
+        } else if (d[0] == "config") {
+            /* The example's own file its driver passes with -c. */
+            INFO("config directive: examples/" << name << "/" << d[1]);
+            REQUIRE(fs::exists(src / d[1]));
+            fs::copy_file(src / d[1], d[1], fs::copy_options::overwrite_existing);
+            config_file = d[1];
         } else if (d[0] == "no-validation") {
             validation = false;
         } else if (d[0] == "drop") {
@@ -206,7 +217,9 @@ void check_example(const std::string& name)
     }
 
     const std::string train_cfg =
-        fs::exists("config.tadah") ? "config.tadah" : "../common/config.tadah";
+        !config_file.empty()        ? config_file
+        : fs::exists("config.tadah") ? "config.tadah"
+                                     : "../common/config.tadah";
     tadah::core::Context ctx(tadah::core::CoreUserConfigParser().parse(train_cfg));
     for (const auto& key : drops) ctx.remove(key);
     for (const auto& a : adds)

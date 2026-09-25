@@ -376,7 +376,7 @@ TEST_CASE("rcut e2e: OPTIM'd knot beyond the stated RCUT evaluates exactly",
     { std::ofstream os(val_cfg); os << "DBFILE " << val_db.string() << "\n"; }
     {
         std::ofstream os(hpo_cfg);
-        os << "OPTIM CGRID2B (1) 5.5 6.0\nPC_ERMSE 0 1\n" << kOptimizerBlock;
+        os << "OPTIM CGRID2B (1) 5.0 6.0\nPC_ERMSE 0 1\n" << kOptimizerBlock;
     }
 
     /* Host A: master knot 1 sits at 5.0 (RCUT2B 5.0) but the OPTIM bound

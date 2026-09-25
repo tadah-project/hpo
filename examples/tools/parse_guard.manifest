@@ -16,6 +16,8 @@
 #
 #   copy <from> <to>      a file the example's run.sh creates before the run,
 #                         from a stand-in (paths relative to the example)
+#   config <file>         the driver passes this file of the example as the
+#                         training configuration (tadah hpo -c <file>)
 #   no-validation         the driver runs without --validation
 #   drop <KEY>            remove KEY from the training configuration
 #   add <KEY> <value>...  add KEY (one value per word) to it
@@ -55,3 +57,6 @@
 24_optim_auto           | -
 25_failprobe_grading    | -
 26_pc_isolation         | -
+# run.sh passes the example's own refit seed with -c and runs without
+# --validation: every weight is pinned, the loss is the LAMMPS Ecoh.
+27_dm_ream_embf0        | config ta2_refit_seed.tadah ; no-validation

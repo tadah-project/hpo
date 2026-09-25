@@ -1,4 +1,4 @@
-#include "catch2/catch.hpp"
+#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 
 #include <tadah/hpo/append_log.h>
 #include <tadah/hpo/io_retry.h>
@@ -911,10 +911,8 @@ TEST_CASE("archive writer never deletes a file it could not open",
 {
     /* A read-only archive kept from an earlier run in a reused
      * DUMP directory was retried, then unlinked. */
-    if (::geteuid() == 0) {
-        SUCCEED("Skipped as root: permissions are not enforced.");
-        return;
-    }
+    if (::geteuid() == 0)
+        TADAH_SKIP("running as root: file permissions are not enforced");
     /* EACCES is a permission error only on a local filesystem: pin that
      * classification, TMPDIR may be on NFS/Lustre/FUSE. */
     io::testing::ScopedNetworkFs local(false);

@@ -10,7 +10,8 @@
 //   - rattled bcc: forces, fnorm and every pressure component bitwise equal
 //     between ZERO and FREE on the same kernel (F' is unchanged);
 //   - (E_ZERO - E_FREE)/N == -F(0);
-//   - EAMFAST vs generic parity (relative 1e-9, as for pure 2B);
+//   - EAMFAST vs generic parity under ZERO and FREE: energy (relative
+//     1e-9, as for pure 2B), fnorm, virial pressure and forces;
 //   - a potential without an EMBF0 line is evaluated as ZERO;
 //   - pair_coeff prints a LAMMPS WARNING (screen + log.lammps) for such a
 //     potential on every load, and nothing new for a declared one (BUG-08).
@@ -26,12 +27,14 @@
 #include <pair.h>
 #include <pair_tadah.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <limits>
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <tuple>
 #include <unistd.h>
 #include <vector>
 
@@ -180,6 +183,39 @@ Run run_case(LammpsRunner& runner, bool eamfast, const char* embf0) {
     return r;
 }
 
+/* The largest kernel-to-kernel differences of two runs' observables:
+ * fnorm relative to itself; the six virial pressure components relative to
+ * the largest of them; the sampled force components relative to the
+ * largest sampled magnitude (a component near zero is measured against the
+ * scale of the forces, not against itself). */
+struct Parity {
+    double fnorm = 0.0, pressure = 0.0, force = 0.0;
+};
+
+Parity parity(const Run& a, const Run& b) {
+    REQUIRE(a.exact.size() == b.exact.size());
+    REQUIRE(a.exact.size() > 7);
+    std::vector<double> x(a.exact.size()), y(b.exact.size());
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        x[i] = std::stod(a.exact[i]);
+        y[i] = std::stod(b.exact[i]);
+    }
+    const auto max_rel = [&](std::size_t lo, std::size_t hi) {
+        double scale = 0.0, diff = 0.0;
+        for (std::size_t i = lo; i < hi; ++i) {
+            scale = std::max({scale, std::fabs(x[i]), std::fabs(y[i])});
+            diff = std::max(diff, std::fabs(x[i] - y[i]));
+        }
+        REQUIRE(scale > 0.0);
+        return diff / scale;
+    };
+    Parity p;
+    p.fnorm = max_rel(0, 1);          // exact[0]: fnorm
+    p.pressure = max_rel(1, 7);       // exact[1..6]: c_pv[1..6]
+    p.force = max_rel(7, x.size());   // sampled fx, fy, fz
+    return p;
+}
+
 std::string slurp(const std::string& path) {
     std::ifstream ifs(path);
     return std::string(std::istreambuf_iterator<char>(ifs),
@@ -262,8 +298,26 @@ TEST_CASE("DM_REAM fast path: EMBF0 ZERO/FREE on EAMFAST and generic kernels",
     REQUIRE(std::fabs((zg.e - fg.e) + zg.n * f0) < tol);
     REQUIRE(std::fabs((zf.e - ff.e) + zf.n * f0) < tol);
 
-    /* EAMFAST vs generic (same tolerance as the pure-2B collapse). */
+    /* EAMFAST vs generic, under both references: the energy to the
+     * pure-2B collapse tolerance; fnorm, the virial pressure and the
+     * sampled forces too. The tables are certified to rel 1e-9
+     * (kCollapseRelTol); a force or a virial component sums many pair and
+     * embedding terms, and differs by about 1.3e-9 of the force scale (1.4e-9
+     * of the pressure scale) here. 1e-8 leaves an order of magnitude for
+     * the rounding, where a wrong table, derivative or embedding shift in
+     * either kernel shows at the percent level. */
     REQUIRE(zf.e == Approx(zg.e).epsilon(1e-9));
+    REQUIRE(ff.e == Approx(fg.e).epsilon(1e-9));
+    for (const auto& [name, fast, gen] :
+         {std::tuple<const char*, const Run*, const Run*>{"ZERO", &zf, &zg},
+          std::tuple<const char*, const Run*, const Run*>{"FREE", &ff, &fg}}) {
+        INFO("EMBF0 " << name);
+        const Parity p = parity(*fast, *gen);
+        CAPTURE(p.fnorm, p.pressure, p.force);
+        CHECK(p.fnorm <= 1e-9);
+        CHECK(p.pressure <= 1e-8);
+        CHECK(p.force <= 1e-8);
+    }
 
     /* No EMBF0 line: evaluated as ZERO. */
     REQUIRE(af.e_iso == 0.0);

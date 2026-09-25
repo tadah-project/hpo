@@ -94,6 +94,48 @@ foreach(_case IN LISTS _hpo_shutdown_cases)
         TIMEOUT 300)
 endforeach()
 
+# Host end-to-end groups: hidden tags, like the other HPO_Host end-to-end
+# cases, because they drive real hpo_run()/HPO_Host evaluations whose
+# process-wide state (HPOLog, the HPO_Host statics, the thread-local
+# trainer cache) the cases of a group share; each group is one entry -- a
+# process -- of its own. `ctest -L e2e` runs them.
+#   fixweight_e2e  test_hpo_fixweight_e2e.cpp: pinned/OPTIM'd weights, exact
+#                  potential files, seed anchors, LAMMPS read-backs
+#   durable_e2e    test_hpo_fixweight_e2e.cpp: best-potential persistence and
+#                  run endings; spawns test_hpo children
+#                  ([.durable_e2e_child], [.durable_latch_child])
+#   embf0_e2e      test_hpo_embf0_e2e.cpp: DM_REAM EMBF0 per candidate
+#   rcut_e2e       test_rcut_autoderive.cpp: knot RCUT re-derivation
+set(_hpo_e2e_groups fixweight_e2e durable_e2e embf0_e2e rcut_e2e)
+foreach(_group IN LISTS _hpo_e2e_groups)
+    add_test(NAME hpo_${_group}
+        COMMAND test_hpo "[${_group}]" --warn NoTests)
+    set_tests_properties(hpo_${_group} PROPERTIES
+        LABELS "hpo;e2e"
+        TIMEOUT 600)
+endforeach()
+
+# End-to-end cases that run the built `tadah` executable, named by the
+# TADAH_BINARY environment variable (test_hpo_fixweight_e2e.cpp, tag
+# [tadah_cli]). Each is a hidden tag with an entry of its own, so that the
+# TADAH-SKIP marker applies to exactly one case: without TADAH_BINARY a
+# case calls TADAH_SKIP and CTest reports it as Skipped, not Passed. In a
+# build that has the `tadah` executable target (Tadah.MLIP, which adds this
+# directory) the entry sets TADAH_BINARY to it, so the case runs; in one
+# without it (a standalone HPO build) TADAH_BINARY comes from the
+# environment of ctest, if at all.
+set(_hpo_tadah_cli_cases seed_anchor_warm seed_anchor_nlopt durable_exit)
+foreach(_case IN LISTS _hpo_tadah_cli_cases)
+    add_test(NAME hpo_tadah_cli_${_case}
+        COMMAND test_hpo "[.tadah_cli_${_case}]" --warn NoTests)
+    set_tests_properties(hpo_tadah_cli_${_case} PROPERTIES
+        LABELS "hpo;e2e"
+        TIMEOUT 600
+        SKIP_REGULAR_EXPRESSION "${TADAH_TEST_SKIP_REGULAR_EXPRESSION}"
+        ENVIRONMENT
+            "$<$<TARGET_EXISTS:tadah>:TADAH_BINARY=$<TARGET_FILE:tadah>>")
+endforeach()
+
 # Registry drift gate: the checked-in anneal_keys_gen.h must match what the
 # generator produces from blueprint/anneal_keys.toml. Regenerate with
 #   python3 HPO/blueprint/gen_anneal_keys.py --header

@@ -132,6 +132,8 @@ TEST_CASE("classify_nlopt_exception decides by type, not by message",
           == NloptOutcome::Graceful);
     CHECK(classify_nlopt_exception(make_eptr(std::runtime_error("nlopt failure")),
                                    no_msg) == NloptOutcome::Graceful);
+    CHECK(classify_nlopt_exception(make_eptr(std::runtime_error("nlopt failure")),
+                                   "") == NloptOutcome::Graceful);
     CHECK(classify_nlopt_exception(make_eptr(std::runtime_error(simplex)), simplex)
           == NloptOutcome::Graceful);
 

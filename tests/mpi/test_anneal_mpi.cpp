@@ -211,7 +211,7 @@ struct DriverHost {
   struct StagnationStop {};
   bool usable = false;
   bool flush_fails = false;
-  void flush_remaining() const
+  void flush_remaining(bool /*retry_io*/ = true) const
   {
     if (flush_fails) throw std::runtime_error("injected final flush failure");
   }

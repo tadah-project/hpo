@@ -8,9 +8,14 @@
 // thread-local trainer cache, and interleaving with other host tests in one
 // binary can leave stale descriptor state behind. Run explicitly with:
 //   ./test_hpo "[fixweight_e2e]"
+// The cases that run the built `tadah` executable ([tadah_cli]) read it
+// from TADAH_BINARY and call TADAH_SKIP without it; each has a hidden tag
+// and a CTest entry of its own ([.tadah_cli_<case>], tests/CMakeLists.txt),
+// which sets TADAH_BINARY in a build with the `tadah` target and reports
+// the case as Skipped in one without it.
 // Every test here sets TADAH_HPO_FORCE_REBUILD for hygiene.
 
-#include "catch2/catch.hpp"
+#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 
 #include <tadah/core/context.h>
 #include <tadah/core/number_format.h>
@@ -20,6 +25,7 @@
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/io_retry.h>
+#include <tadah/hpo/run_driver.h>       // shutdown_exit_status
 #include <tadah/hpo/run_policy_base.h>
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/hpo/runners.h>
@@ -775,15 +781,15 @@ TEST_CASE("seed anchor: a WARM seed is evaluated exactly and re-seeding is a no-
 /* The same through the real executable (hpo_run -> policy -> run_inner):
  * `tadah hpo` WARM-started from a seed file with MAXEVAL 1 writes a
  * best_pot.tadah whose OPTIM'd FIXWEIGHT tokens re-parse to the seed.
- * Needs TADAH_BINARY; skipped otherwise. */
+ * Needs TADAH_BINARY (the tadah_cli entries of tests/CMakeLists.txt set
+ * it); Skipped without it. */
 TEST_CASE("seed anchor: tadah hpo WARM + MAXEVAL 1 reproduces the seed file",
-          "[fixweight_e2e][seed_anchor][.]")
+          "[seed_anchor][tadah_cli][.tadah_cli_seed_anchor_warm]")
 {
     const char* bin = std::getenv("TADAH_BINARY");
-    if (!bin || !*bin) {
-        SUCCEED("Skipped -- set TADAH_BINARY to the built tadah executable.");
-        return;
-    }
+    if (!bin || !*bin)
+        TADAH_SKIP("TADAH_BINARY is not set: it names the built tadah "
+                   "executable");
     REQUIRE(fs::exists(bin));
     tadah::core::PeriodicTable::initialize();
     ScratchDir sd;
@@ -834,15 +840,15 @@ TEST_CASE("seed anchor: tadah hpo WARM + MAXEVAL 1 reproduces the seed file",
  * example 17's FIXWEIGHT (2-11) in explicit [-300, 300] boxes on an
  * 11-weight D2_BP model; DUMP keeps the
  * first evaluation's potential (PRAXIS makes a second one even at
- * MAXEVAL 1). Needs TADAH_BINARY; skipped otherwise. */
+ * MAXEVAL 1). Needs TADAH_BINARY (the tadah_cli entries of
+ * tests/CMakeLists.txt set it); Skipped without it. */
 TEST_CASE("seed anchor: tadah hpo NLopt BOBYQA/COBYLA/PRAXIS evaluate the WARM "
-          "seed exactly", "[fixweight_e2e][seed_anchor][.]")
+          "seed exactly", "[seed_anchor][tadah_cli][.tadah_cli_seed_anchor_nlopt]")
 {
     const char* bin = std::getenv("TADAH_BINARY");
-    if (!bin || !*bin) {
-        SUCCEED("Skipped -- set TADAH_BINARY to the built tadah executable.");
-        return;
-    }
+    if (!bin || !*bin)
+        TADAH_SKIP("TADAH_BINARY is not set: it names the built tadah "
+                   "executable");
     REQUIRE(fs::exists(bin));
     tadah::core::PeriodicTable::initialize();
     const std::vector<double> seed = {
@@ -1125,9 +1131,10 @@ const char* const kShortBackoff = "TADAH_HPO_TEST_IO_BACKOFF_MS=5,20,200,0";
 }  // namespace
 
 /* The re-executed half: hpo_run() on the fixture in the working directory.
- * TADAH_TEST_DURABLE_E2E_EXPECT=throw|fail|ok|any says which outcome is
- * required (throw: a durable_best::Error; fail: any exception; any: the
- * parent inspects the journal).
+ * TADAH_TEST_DURABLE_E2E_EXPECT=throw|fail|ok|sigint|any says which outcome
+ * is required (throw: a durable_best::Error; fail: any exception; ok: exit
+ * status 0; sigint: the SIGINT exit status 128 + 2, drive_run's
+ * shutdown_exit_status; any: the parent inspects the journal).
  * TADAH_TEST_DURABLE_E2E_STALE_STATE=1 first arms the host's process-wide
  * stagnation threshold and top-K tracking, as a policy that ended by an
  * exception in an earlier run of this process would leave them. */
@@ -1150,6 +1157,8 @@ TEST_CASE("durable e2e child: hpo_run in the working directory",
         CHECK_THROWS(tadah::hpo::hpo_run(ctx));
     } else if (std::string(expect) == "any") {
         try { (void)tadah::hpo::hpo_run(ctx); } catch (...) {}
+    } else if (std::string(expect) == "sigint") {
+        CHECK(tadah::hpo::hpo_run(ctx) == tadah::hpo::shutdown_exit_status(SIGINT));
     } else {
         CHECK(tadah::hpo::hpo_run(ctx) == 0);
     }
@@ -1190,6 +1199,45 @@ TEST_CASE("durable best: a persistent failure fails the run",
     CHECK_FALSE(fs::exists(sd.dir / "best_pot.tadah"));
 }
 
+/* The fresh-run reset of best_pot.tadah, before the first evaluation, is
+ * a publication like any other: when its lock cannot be taken the run fails
+ * the same way. It used to be a startup error: the journal ended with an
+ * ERROR line, without a RESULT section, a trailer or the persistence
+ * failure in DIAGNOSTICS. */
+TEST_CASE("durable best: a failed fresh-run reset fails the run",
+          "[durable_e2e][failure_handling][.]")
+{
+    ScratchDir sd;
+    write_durable_fixture(sd.dir);
+    /* No skip: the reset's own lock open fails, until the budget is spent. */
+    const ChildRun r = run_self(
+        "[.durable_e2e_child]", sd.dir,
+        {"TADAH_HPO_TEST_IO_FAULT=durable.lock_open,EBUSY,count=always",
+         kShortBackoff, "TADAH_TEST_DURABLE_E2E_EXPECT=throw",
+         "TADAH_HPO_FORCE_REBUILD=1"});
+    INFO(r.output);
+    REQUIRE(WIFEXITED(r.status));
+    REQUIRE(WEXITSTATUS(r.status) == 0);
+    REQUIRE(r.output.find("All tests passed") != std::string::npos);
+
+    const std::string journal = read_text(sd.dir / "hpo_run.log");
+    INFO(journal);
+    CHECK(line_with(journal, "Optimiser status").find(
+              "FAILED -- best-potential persistence: cannot open durable-best "
+              "lock") != std::string::npos);
+    CHECK(journal.find("Best-potential persistence failed: cannot open "
+                       "durable-best lock") != std::string::npos);
+    CHECK(journal.find("startup: cannot open durable-best lock") ==
+          std::string::npos);
+    CHECK(line_with(journal, "Transient I/O retries").find(
+              "(best-potential ") != std::string::npos);
+    /* Nothing was evaluated. */
+    REQUIRE_FALSE(line_with(journal, "Total evaluations").empty());
+    CHECK(total_evaluations(journal) == 0u);
+    CHECK(data_rows(sd.dir / "loss.tadah") == 0u);
+    CHECK_FALSE(fs::exists(sd.dir / "best_pot.tadah"));
+}
+
 TEST_CASE("durable best: a transient failure is retried and reported",
           "[durable_e2e][failure_handling][.]")
 {
@@ -1222,15 +1270,15 @@ TEST_CASE("durable best: a transient failure is retried and reported",
 }
 
 /* The same through the real executable: `tadah hpo` must exit non-zero.
- * Needs TADAH_BINARY (the built `tadah`); skipped otherwise. */
+ * Needs TADAH_BINARY, the built `tadah` (the tadah_cli entries of
+ * tests/CMakeLists.txt set it); Skipped without it. */
 TEST_CASE("durable best: tadah hpo exits non-zero on a persistence failure",
-          "[durable_e2e][failure_handling][.]")
+          "[failure_handling][tadah_cli][.tadah_cli_durable_exit]")
 {
     const char* bin = std::getenv("TADAH_BINARY");
-    if (!bin || !*bin) {
-        SUCCEED("Skipped -- set TADAH_BINARY to the built tadah executable.");
-        return;
-    }
+    if (!bin || !*bin)
+        TADAH_SKIP("TADAH_BINARY is not set: it names the built tadah "
+                   "executable");
     REQUIRE(fs::exists(bin));
     tadah::core::PeriodicTable::initialize();
     ScratchDir sd;
@@ -1463,7 +1511,7 @@ TEST_CASE("durable best: a blip right after SIGINT still saves the best",
         {"TADAH_HPO_TEST_IO_FAULT=durable.rename,EBUSY,count=1,latency=300;"
          "writer.append,EIO,count=1",
          "TADAH_HPO_TEST_STOP_DURABLE_BEST_BEFORE_RENAME=1",
-         "TADAH_TEST_DURABLE_E2E_EXPECT=ok", "TADAH_HPO_FORCE_REBUILD=1"});
+         "TADAH_TEST_DURABLE_E2E_EXPECT=sigint", "TADAH_HPO_FORCE_REBUILD=1"});
     int status = 0, stops = 0;
     for (;;) {
         REQUIRE(::waitpid(pid, &status, WUNTRACED) == pid);
@@ -1618,14 +1666,18 @@ TEST_CASE("PRESTAGE under RESTART: every refinement seed gets a fair run",
                                "after 1 restart(s)"));
 }
 
-/* A MULTISTART whose every start failed ended COMPLETED with exit
- * code 0 (the same error under PLAIN fails the run). */
-TEST_CASE("MULTISTART: every start failing fails the run",
-          "[durable_e2e][failure_handling][.]")
+/* A MULTISTART whose every start failed ended COMPLETED with exit code 0
+ * (the same error under PLAIN fails the run). The configuration that made
+ * every start fail here -- GRAD_STRATEGY ANALYTICAL without a training
+ * DBFILE, so each start's first gradient request threw -- is now refused
+ * at startup, before any evaluation or start (startup_validation): the run
+ * fails at once. A failure confined to the starts themselves is covered by
+ * "MULTISTART: all starts failing fails the run" (run_starts,
+ * test_policy_host_exceptions.cpp). */
+TEST_CASE("MULTISTART: a setup that would fail every start fails the run "
+          "at startup", "[durable_e2e][failure_handling][.]")
 {
     ScratchDir sd;
-    /* No analytical derivative is registered for FIXWEIGHT: each start's
-     * first gradient request throws. */
     write_policy_fixture(sd.dir,
         "OPTIMIZER\nINIT\nSTRATEGY LHS 3\nSEED 11\nENDINIT\n"
         "STRATEGY\nTYPE MULTISTART\nLIB NLOPT\nALGO LD_LBFGS\nMAXEVAL 30\n"
@@ -1635,16 +1687,12 @@ TEST_CASE("MULTISTART: every start failing fails the run",
     REQUIRE(WIFEXITED(r.status));
     REQUIRE(WEXITSTATUS(r.status) == 0);
     REQUIRE(contains(r.output, "All tests passed"));
-    /* Each start's failure also reaches the console. */
-    CHECK(contains(r.output, "[HPO] WARNING: MULTISTART start 3/3 failed: "
-                             "GRAD_STRATEGY=ANALYTICAL"));
     const std::string journal = read_text(sd.dir / "hpo_run.log");
     INFO(journal);
-    for (int i = 1; i <= 3; ++i)
-        CHECK(contains(journal, "MULTISTART start " + std::to_string(i) +
-                                "/3 failed: GRAD_STRATEGY=ANALYTICAL"));
-    CHECK(contains(line_with(journal, "Optimiser status"),
-                   ": FAILED -- GRAD_STRATEGY=ANALYTICAL"));
+    CHECK(contains(journal, "ERROR     startup: OPTIMIZER block: GRAD_STRATEGY "
+                            "ANALYTICAL"));
+    CHECK_FALSE(contains(journal, "MULTISTART start 1/3"));
+    CHECK(total_evaluations(journal) == 0u);
 }
 
 /* The stagnation threshold and top-K tracking are process-wide

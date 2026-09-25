@@ -37,7 +37,6 @@ namespace {
 namespace fs = std::filesystem;
 using tadah::hpo::HPOLog;
 using tadah::hpo::StagnationStop;
-using tadah::hpo::detail::StagnationReport;
 using tadah::hpo::detail::StartOutcome;
 using tadah::hpo::detail::report_stagnation;
 using tadah::hpo::detail::run_start_guarded;
@@ -143,21 +142,23 @@ TEST_CASE("MULTISTART: every start runs in its own stagnation window",
               "stagnation") == std::string::npos);
 }
 
-TEST_CASE("Stagnation reaches RESTART by the batch's rule",
+/* One rule for MULTISTART's starts and the PRESTAGE refinement's seeds:
+ * any stagnating start makes RESTART relaunch the whole strategy, whether
+ * or not the batch improved the global best (as under PLAIN). A
+ * refinement that improved and then stagnated ended the run instead, with
+ * the status of whatever seed ran last (COMPLETED, say), its RESTART budget
+ * unused. */
+TEST_CASE("Stagnation reaches RESTART from any stagnating start or seed",
           "[HPO][multistart][prestage][failure_handling]")
 {
-    /* No stagnating start: nothing to report, whatever the rule. */
-    CHECK_NOTHROW(report_stagnation(StagnationReport::AnyStart, 0, false));
-    CHECK_NOTHROW(report_stagnation(StagnationReport::NoImprovement, 0, false));
-    /* MULTISTART: any stagnating start makes RESTART relaunch the batch. */
-    CHECK_THROWS_AS(report_stagnation(StagnationReport::AnyStart, 1, true),
-                    StagnationStop);
-    /* PRESTAGE refinement: only without an improvement. */
-    CHECK_NOTHROW(report_stagnation(StagnationReport::NoImprovement, 2, true));
-    CHECK_THROWS_AS(report_stagnation(StagnationReport::NoImprovement, 2, false),
-                    StagnationStop);
+    /* No stagnating start: nothing to report. */
+    CHECK_NOTHROW(report_stagnation(0));
+    CHECK_THROWS_AS(report_stagnation(1), StagnationStop);
+    CHECK_THROWS_AS(report_stagnation(2), StagnationStop);
 }
 
+/* The improvement a batch reports (the refinement's journal line says
+ * when a restarting refinement improved the global best). */
 TEST_CASE("run_starts: improvement is measured over the whole batch",
           "[HPO][prestage][failure_handling]")
 {
@@ -836,35 +837,38 @@ TEST_CASE("hpo_run reports the first recorded persistence failure",
 
 /* DIAGNOSTICS vouched "[ok] Every evaluation produced a usable loss" above
  * RESULT's "Best total loss : (none -- no evaluation produced a usable
- * loss)", and next to NaN/Inf clamps. */
+ * loss)", and next to NaN/Inf clamps. The verdict reads the count of
+ * unusable losses (HPOLog::record_eval's EvalLoss): only a usable loss can
+ * become the incumbent. */
 TEST_CASE("DIAGNOSTICS claims usable losses only when there were",
           "[hpolog][failure_handling]")
 {
-    auto diagnostics = [](bool best, std::size_t nan_evals) {
+    using tadah::hpo::EvalLoss;
+    auto diagnostics = [](EvalLoss first, bool best, std::size_t nan_evals) {
         Journal j;
         HPOLog& log = HPOLog::instance();
-        log.record_eval(1, 1.0, tadah::hpo::EvalLoss::Usable);
-        for (std::size_t i = 0; i < nan_evals; ++i) log.record_eval(2 + i, 1.0, tadah::hpo::EvalLoss::NanClamped);
+        log.record_eval(1, 1.0, first);
+        for (std::size_t i = 0; i < nan_evals; ++i)
+            log.record_eval(2 + i, 1.0, EvalLoss::NanClamped);
         if (best) new_best(0.5, 1);
         return j.finish_and_read("SHUTDOWN (SIGINT)");
     };
-    const std::string none = diagnostics(false, 0);
+    const std::string none = diagnostics(EvalLoss::Failed, false, 0);
     CHECK(none.find("Every evaluation produced a usable loss") == std::string::npos);
-    CHECK(none.find("[info] No graded failures were recorded; no evaluation "
-                    "produced a usable loss.") != std::string::npos);
+    CHECK(none.find("[!] No evaluation produced a usable loss.") != std::string::npos);
     CHECK(line_with(none, "Best total loss").find("(none -- no evaluation produced "
                                                   "a usable loss)") != std::string::npos);
 
-    const std::string nan = diagnostics(true, 1);
+    const std::string nan = diagnostics(EvalLoss::Usable, true, 1);
     CHECK(nan.find("Every evaluation produced a usable loss") == std::string::npos);
-    CHECK(nan.find("(the NaN/Inf clampings above are not graded)") != std::string::npos);
+    CHECK(line_with(nan, "Unusable losses").find(": 1  (50.0%)") != std::string::npos);
 
-    const std::string clean = diagnostics(true, 0);
+    const std::string clean = diagnostics(EvalLoss::Usable, true, 0);
     CHECK(clean.find("[ok] Every evaluation produced a usable loss.") != std::string::npos);
 
     /* A best that could not be saved was still a usable loss. */
     Journal j;
-    HPOLog::instance().record_eval(1, 1.0, tadah::hpo::EvalLoss::Usable);
+    HPOLog::instance().record_eval(1, 1.0, EvalLoss::Usable);
     HPOLog::instance().record_unsaved_best(1, 0.5, "x", false);
     const std::string unsaved = j.finish_and_read("FAILED -- x");
     CHECK(unsaved.find("[ok] Every evaluation produced a usable loss.") !=

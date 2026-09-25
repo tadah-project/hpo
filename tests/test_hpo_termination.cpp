@@ -262,6 +262,14 @@ std::string journal_status(const std::string& journal)
     return "(no RESULT section)";
 }
 
+/* The trailer of a run whose RESTART used up its MAX restarts: the
+ * stagnation window (AFTER_STAGNATION) and the restarts made. */
+std::string restarts_used_status(std::size_t window, std::size_t restarts)
+{
+    return "STOPPED -- stagnation: no new best in " + std::to_string(window) +
+           " evals after " + std::to_string(restarts) + " restart(s)";
+}
+
 std::size_t count_of(const std::string& text, const std::string& what)
 {
     std::size_t n = 0;
@@ -805,7 +813,7 @@ TEST_CASE("Termination: RESTART fires when the stop is raised inside an "
     CHECK(journal.find("nlopt failure") == std::string::npos);
     /* The RESTART budget ended the run, not NLopt. */
     CHECK(journal_status(journal) ==
-          "STOPPED -- stagnation, max restarts (2) used");
+          restarts_used_status(4, 2));
     check_run_files();
 }
 
@@ -839,14 +847,16 @@ TEST_CASE("Termination: RESTART re-initialises the whole MULTISTART",
 }
 
 TEST_CASE("Termination: under PRESTAGE, RESTART re-runs exploration and "
-          "refinement, and the refinement gets its own stagnation window",
-          "[HPO][termination][restart]")
+          "refinement, and each refinement seed gets its own stagnation "
+          "window", "[HPO][termination][restart]")
 {
     /* A stagnating exploration hands its top-K to the refinement early. The
      * refinement used to inherit the exploration's stagnation count, so its
      * first evaluation already crossed the threshold; and MULTISTART (the
      * TOPK > 1 refinement) then swallowed the stop start by start, so
-     * RESTART never fired. */
+     * RESTART never fired. Now each refinement seed runs in a window of its
+     * own, and after the last seed a refinement in which a seed stagnated
+     * restarts the whole PRESTAGE. */
     TaRun run(
         "OPTIMIZER\n"
         "  STRATEGY\n"
@@ -866,19 +876,63 @@ TEST_CASE("Termination: under PRESTAGE, RESTART re-runs exploration and "
     CHECK(journal.find("max restarts (1) used") != std::string::npos);
     CHECK(journal.find("failed: HPO stagnation threshold reached")
           == std::string::npos);
+    CHECK(count_of(journal, "REFINEMENT: 2 of 2 seed(s) stopped on "
+                            "stagnation") == 2u);
     CHECK(journal_status(journal) ==
-          "STOPPED -- stagnation, max restarts (1) used");
+          restarts_used_status(4, 1));
 
-    /* One stagnation stop per phase and round -- exploration, refinement,
-     * exploration, refinement -- each a full window after the previous. */
+    /* One stagnation stop per phase, seed and round -- exploration, seed 1,
+     * seed 2, exploration, seed 1, seed 2 -- each a full window after the
+     * previous. */
     const auto stops = stagnation_stops(journal);
-    REQUIRE(stops.size() == 4u);
+    REQUIRE(stops.size() == 6u);
     for (std::size_t i = 1; i < stops.size(); ++i) {
         INFO("stagnation stop " << i << " at eval " << stops[i].first
              << ", previous at " << stops[i - 1].first);
         CHECK(stops[i].first >= stops[i - 1].first + 4);
     }
     CHECK(count_of(journal, "REFINEMENT: refining top-2") == 2u);
+    check_run_files();
+}
+
+TEST_CASE("Termination: under PRESTAGE, a refinement that improved the "
+          "global best and then stagnated restarts the PRESTAGE",
+          "[HPO][termination][restart]")
+{
+    /* The short exploration hands over its best point; the refinement
+     * improves on it, then runs out of its stagnation window. The run used
+     * to end there, with a status the stopped refinement never set
+     * (COMPLETED, exit status 0) and its two restarts unused. A stagnating
+     * refinement now restarts the PRESTAGE whether or not it improved the
+     * global best, as a PLAIN run does, and the run ends with RESTART's
+     * status once its MAX restarts are used. */
+    TaRun run(
+        "OPTIMIZER\n"
+        "  STRATEGY\n"
+        "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+        "    MAXEVAL 400\n    TOPK 1\n"
+        "    EXPLORE\n      LIB TADAH\n      ALGO RANDOM\n"
+        "      MAXEVAL 3\n      SEED 5\n    ENDEXPLORE\n"
+        "    RESTART\n      AFTER_STAGNATION 5\n      MAX 2\n"
+        "      METHOD RANDOM 1\n      SEED 11\n    ENDRESTART\n"
+        "  ENDSTRATEGY\n"
+        "ENDOPTIMIZER\n");
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    const std::string journal = read_file("hpo_run.log");
+    /* Round 0's refinement improved on the exploration, then stagnated,
+     * and the PRESTAGE restarted. */
+    const auto improved_then_stagnated = journal.find(
+        "REFINEMENT: 1 of 1 seed(s) stopped on stagnation (the refinement "
+        "improved the global best); reporting stagnation to RESTART");
+    const auto restart1 = journal.find("RESTART 1/2 -- fresh init");
+    REQUIRE(improved_then_stagnated != std::string::npos);
+    REQUIRE(restart1 != std::string::npos);
+    CHECK(improved_then_stagnated < restart1);
+    CHECK(journal.find("RESTART 2/2 -- fresh init") != std::string::npos);
+    CHECK(count_of(journal, "REFINEMENT: refining top-1") == 3u);
+    CHECK(journal_status(journal) == restarts_used_status(5, 2));
     check_run_files();
 }
 
@@ -953,7 +1007,7 @@ TEST_CASE("Termination: RESTART under ASA block parallelism ends with the "
     CHECK(journal.find("RESTART 2/2") != std::string::npos);
     CHECK(journal.find("max restarts (2) used") != std::string::npos);
     CHECK(journal_status(journal) ==
-          "STOPPED -- stagnation, max restarts (2) used");
+          restarts_used_status(6, 2));
     check_run_files();
 }
 
@@ -975,7 +1029,7 @@ TEST_CASE("Termination: RESTART fires under DLIB GFS with four threads",
     CHECK(journal.find("RESTART 3/3") != std::string::npos);
     CHECK(journal.find("max restarts (3) used") != std::string::npos);
     CHECK(journal_status(journal) ==
-          "STOPPED -- stagnation, max restarts (3) used");
+          restarts_used_status(5, 3));
     check_run_files();
 }
 
@@ -1324,7 +1378,7 @@ TEST_CASE("Termination: a restarted seeded optimiser draws new points",
         CHECK(status == 0);
         const std::string journal = read_file("hpo_run.log");
         REQUIRE(journal_status(journal) ==
-                "STOPPED -- stagnation, max restarts (2) used");
+                restarts_used_status(6, 2));
 
         /* The seed each round's search reports. */
         std::vector<std::string> seeds;
@@ -1403,7 +1457,7 @@ RestartRounds run_restart_rounds(const std::string& restart_seed)
     CHECK(status == 0);
     out.journal = read_file("hpo_run.log");
     REQUIRE(journal_status(out.journal) ==
-            "STOPPED -- stagnation, max restarts (2) used");
+            restarts_used_status(6, 2));
     const auto stops = stagnation_stops(out.journal);
     REQUIRE(stops.size() == 3u);
     const auto pts = evaluated_points();
@@ -1493,7 +1547,7 @@ TEST_CASE("Termination: METHOD SOBOL K starts the INIT round and each "
         CHECK(status == 0);
         const std::string journal = read_file("hpo_run.log");
         REQUIRE(journal_status(journal) ==
-                "STOPPED -- stagnation, max restarts (2) used");
+                restarts_used_status(6, 2));
         CHECK(journal.find("RESTART 1/2 -- fresh init from SOBOL; "
                            "RESTART SEED 43, SEED 6\n") != std::string::npos);
         CHECK(journal.find("RESTART 2/2 -- fresh init from SOBOL; "
@@ -1666,7 +1720,7 @@ TEST_CASE("Termination: the MULTISTART starts of a restarted run never "
     CHECK(status == 0);
     const std::string journal = read_file("hpo_run.log");
     REQUIRE(journal_status(journal) ==
-            "STOPPED -- stagnation, max restarts (2) used");
+            restarts_used_status(3, 2));
     CHECK(journal.find("RESTART 1/2 -- fresh init from RANDOM; SEED 13\n")
           != std::string::npos);
     CHECK(journal.find("RESTART 2/2 -- fresh init from RANDOM; SEED 16\n")
@@ -1688,15 +1742,15 @@ TEST_CASE("Termination: the PRESTAGE refinement starts of a restarted run "
      * The run is deterministic: every round starts from the configuration's
      * point (RESTART METHOD CONFIG) and explores with a seeded random
      * search, which stagnates early and hands over its top 3. Each
-     * refinement start re-evaluates its candidate once (MAXEVAL 3 split
-     * over TOPK 3), so the third start's evaluation is the third without a
-     * new best and restarts the PRESTAGE: every round runs all three
+     * refinement start (MAXEVAL 12 split over TOPK 3) runs in a stagnation
+     * window of its own; after the third start a refinement in which a
+     * start stagnated restarts the PRESTAGE: every round runs all three
      * starts. */
     TaRun run(
         "OPTIMIZER\n"
         "  STRATEGY\n"
         "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
-        "    MAXEVAL 3\n    TOPK 3\n    SEED 7\n"
+        "    MAXEVAL 12\n    TOPK 3\n    SEED 7\n"
         "    EXPLORE\n      LIB TADAH\n      ALGO RANDOM\n"
         "      MAXEVAL 20\n      SEED 1717\n    ENDEXPLORE\n"
         "    RESTART\n      AFTER_STAGNATION 3\n      MAX 2\n"
@@ -1708,7 +1762,7 @@ TEST_CASE("Termination: the PRESTAGE refinement starts of a restarted run "
     CHECK(status == 0);
     const std::string journal = read_file("hpo_run.log");
     REQUIRE(journal_status(journal) ==
-            "STOPPED -- stagnation, max restarts (2) used");
+            restarts_used_status(3, 2));
     CHECK(journal.find("RESTART 1/2 -- fresh init from CONFIG; SEED 10, "
                        "EXPLORE SEED 1718\n") != std::string::npos);
     CHECK(journal.find("RESTART 2/2 -- fresh init from CONFIG; SEED 13, "
@@ -1827,7 +1881,7 @@ TEST_CASE("Termination: a restarted NLopt run with an INIT SEED draws from "
         CHECK(status == 0);
         const std::string journal = read_file("hpo_run.log");
         REQUIRE(journal_status(journal) ==
-                "STOPPED -- stagnation, max restarts (2) used");
+                restarts_used_status(6, 2));
         CHECK(journal.find("RESTART 1/2 -- fresh init from RANDOM; "
                            "SEED 1718\n") != std::string::npos);
         CHECK(journal.find("RESTART 2/2 -- fresh init from RANDOM; "
@@ -2383,7 +2437,8 @@ void check_persist_failure(const PersistFailure& o)
     CHECK_THROWS_AS(std::rethrow_exception(o.error),
                     tadah::hpo::durable_best::Error);
     const std::string journal = read_file("hpo_run.log");
-    CHECK(journal_status(journal).rfind("STOPPED with error: ", 0) == 0);
+    CHECK(journal_status(journal).rfind(
+              "FAILED -- best-potential persistence: ", 0) == 0);
     CHECK(journal.find("fatal best-potential persistence failure at eval")
           != std::string::npos);
 }
@@ -2829,7 +2884,7 @@ TEST_CASE("Termination: drive_run rethrows an error after its trailer",
             fx.evaluate(kDriverEvals);
             throw std::runtime_error("optimiser broke");
         }, fx.host, fx.log()), "optimiser broke");
-    check_driver_files("STOPPED with error: optimiser broke");
+    check_driver_files("FAILED -- optimiser broke");
 }
 
 TEST_CASE("Termination: drive_run rethrows a non-standard exception after "
@@ -2841,7 +2896,58 @@ TEST_CASE("Termination: drive_run rethrows a non-standard exception after "
             fx.evaluate(kDriverEvals);
             throw 42;
         }, fx.host, fx.log()), int);
-    check_driver_files("STOPPED with unknown error");
+    check_driver_files("FAILED -- non-standard exception");
+}
+
+/* Best-potential persistence is one rule: a new best that could not be
+ * saved fails the run -- trailer "FAILED -- best-potential persistence:
+ * <cause>", the durable_best::Error rethrown (tadah hpo exits 1) -- however
+ * the run ends: by the error itself, or, when the error was outranked or
+ * swallowed on its way up, by a normal end, a signal stop or a stagnation
+ * stop. The cause is the first recorded failure. */
+TEST_CASE("Termination: drive_run fails a run whose best potential could "
+          "not be saved, however it ends", "[HPO][termination][run_driver]"
+          "[durable_best]")
+{
+    const std::string kCause = "cannot fsync durable-best directory";
+    const std::string kTrailer = "FAILED -- best-potential persistence: " + kCause;
+    auto check_failed = [&](const std::function<void(HostFixture&)>& end) {
+        HostFixture fx;
+        CHECK_THROWS_MATCHES(
+            tadah::hpo::drive_run([&] {
+                fx.evaluate(kDriverEvals);
+                fx.log().record_unsaved_best(kDriverEvals, 0.5, kCause, false);
+                end(fx);
+            }, fx.host, fx.log()),
+            tadah::hpo::durable_best::Error,
+            Catch::Matchers::Message(kCause));
+        check_driver_files(kTrailer);
+        const std::string journal = read_file("hpo_run.log");
+        CHECK(journal.find("Best-potential persistence failed: " + kCause) !=
+              std::string::npos);
+    };
+    SECTION("the error itself") {
+        check_failed([&](HostFixture&) {
+            throw tadah::hpo::durable_best::Error(kCause);
+        });
+    }
+    SECTION("a later candidate's error arrives first: the first failure is "
+            "the cause") {
+        check_failed([&](HostFixture&) {
+            throw tadah::hpo::durable_best::Error("a later candidate's error");
+        });
+    }
+    SECTION("a normal end after a policy swallowed the error") {
+        check_failed([&](HostFixture&) {});
+    }
+    SECTION("a signal stop that outranked nothing") {
+        check_failed([&](HostFixture&) {
+            throw tadah::core::ShutdownRequested{};
+        });
+    }
+    SECTION("a stagnation stop that no RESTART consumed") {
+        check_failed([&](HostFixture&) { throw Host::StagnationStop{}; });
+    }
 }
 
 TEST_CASE("Termination: drive_run ends a stagnation stop that no RESTART "
@@ -2948,34 +3054,6 @@ TEST_CASE("Termination: the final flush writes late and stranded results and "
           "after the writer had skipped them; writing them out of sequence");
     CHECK(warnings[2] ==
           "HPO flush_remaining: dropping iter=12 after exception: disk full");
-}
-
-/* ======================================================================
- * NLopt: which end of optimize() is the algorithm stopping itself.
- * ==================================================================== */
-
-TEST_CASE("Termination: NLopt self-termination is told apart from failure",
-          "[HPO][termination][nlopt]")
-{
-    using tadah::hpo::nlopt_self_terminated;
-    /* NLOPT_FAILURE without and with an algorithm stop message. */
-    CHECK(nlopt_self_terminated(std::runtime_error("nlopt failure"), nullptr));
-    CHECK(nlopt_self_terminated(std::runtime_error("nlopt failure"), ""));
-    CHECK(nlopt_self_terminated(
-        std::runtime_error("starting step size led to simplex that was too "
-                           "small in dimension 0"),
-        "starting step size led to simplex that was too small in "
-        "dimension 0"));
-    /* NLOPT_ROUNDOFF_LIMITED: nlopt::roundoff_limited says
-     * "nlopt roundoff-limited", which a message test never matched. */
-    CHECK(nlopt_self_terminated(nlopt::roundoff_limited(), nullptr));
-    /* Failures. */
-    CHECK_FALSE(nlopt_self_terminated(nlopt::forced_stop(), nullptr));
-    CHECK_FALSE(nlopt_self_terminated(
-        std::invalid_argument("nlopt invalid argument"), nullptr));
-    CHECK_FALSE(nlopt_self_terminated(std::bad_alloc(), nullptr));
-    CHECK_FALSE(nlopt_self_terminated(std::runtime_error("something else"),
-                                      "a different stop message"));
 }
 
 /* ======================================================================
@@ -3590,7 +3668,7 @@ TEST_CASE("Termination: the RESTART stagnation stop ends a search that has "
             if (c.ends_on_stagnation) {
                 CHECK_THAT(journal, Catch::Contains("RESTART 1/1"));
                 CHECK(journal_status(journal) ==
-                      "STOPPED -- stagnation, max restarts (1) used");
+                      restarts_used_status(20, 1));
                 /* The journal says what ends a run without a stop of its
                  * own. */
                 if (c.what == "NLOPT:GN_DIRECT_L")
@@ -3620,7 +3698,7 @@ TEST_CASE("Termination: the RESTART stagnation stop ends a search that has "
  * loss" (they counted NaN/Inf clampings and graded failures only). Such a
  * run now ends with status 1, an ERROR line and the trailer "STOPPED -- no
  * evaluation produced a usable loss", unless a signal (128 + N) or an
- * error (1, "STOPPED with error: ...") ended it first.
+ * error (1, "FAILED -- ...") ended it first.
  *
  * DLIB:GFS used to hand dlib the failed evaluations' loss, FAILSCORE, by
  * default the largest double. find_min_global maximises the negated loss,
@@ -3926,7 +4004,7 @@ TEST_CASE("No usable loss: an error still ends the run with its own "
             throw std::runtime_error("optimiser broke");
         }, fx.host, fx.log()), "optimiser broke");
     check_no_usable_loss(kDriverEvals, kDefaultFailScoreRow,
-                         "STOPPED with error: optimiser broke");
+                         "FAILED -- optimiser broke");
 }
 
 TEST_CASE("No usable loss: a shutdown still ends the run with the SHUTDOWN "
@@ -3992,7 +4070,7 @@ struct AgreementProbeHost {
     bool usable = true;
     bool flush_fails = false;
     mutable std::vector<std::string> calls;
-    void flush_remaining() const
+    void flush_remaining(bool /*retry_io*/ = true) const
     {
         calls.emplace_back("flush");
         if (flush_fails) throw std::runtime_error("disk full");
@@ -4750,6 +4828,6 @@ TEST_CASE("Gradient not finite: the ending keeps the run driver's order",
                 throw std::runtime_error("optimiser broke");
             }, fx.host, fx.log()), "optimiser broke");
         CHECK(journal_status(read_file("hpo_run.log")) ==
-              "STOPPED with error: optimiser broke");
+              "FAILED -- optimiser broke");
     }
 }

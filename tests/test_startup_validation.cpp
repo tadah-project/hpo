@@ -804,9 +804,11 @@ TEST_CASE("startup validation: OPTIM EMBF0 is rejected",
       Context ctx = make_ream_model_ctx();
       ScopedTempFile tf(std::string("OPTIM ") + key + " (1) 0 1\n" +
                         "PC_ERMSE 0 1\n" + kOptimizerBlock);
+      /* The error names its line, like every hpotarget error. */
       REQUIRE_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
-                          Catch::Contains("OPTIM EMBF0 is not a valid "
-                                          "search target") &&
+                          Catch::StartsWith("Error on line 1: ") &&
+                              Catch::Contains("OPTIM EMBF0 is not a valid "
+                                              "search target") &&
                               Catch::Contains("-c potential/configuration"));
       /* The rejection comes before context.size(k): the default is not
        * materialised into the run context. */
@@ -828,7 +830,8 @@ TEST_CASE("startup validation: OPTIM EMBF0 is rejected",
     ScopedTempFile tf("EMBF0 FREE\nPC_ERMSE 0 1\n" +
                       std::string(kOptimizerBlock));
     REQUIRE_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
-                        Catch::Contains("unknown key \"EMBF0\""));
+                        Catch::StartsWith("Error on line 1: ") &&
+                            Catch::Contains("unknown key \"EMBF0\""));
   }
   SECTION("an invalid stored EMBF0 of a DM_REAM configuration fails fast") {
     Context ctx = make_ream_model_ctx();
