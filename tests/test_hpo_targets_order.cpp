@@ -9,7 +9,7 @@
 // keep an all-equal order).
 //
 // PC_LAMMPS --ncpu (the per-sim rank count of the legacy MPI build, removed
-// in 1.5.1) is rejected at parse time with the removal hint and the line
+// in 1.6.0) is rejected at parse time with the removal hint and the line
 // number, rather than being ignored or passed to LAMMPS.
 
 #include "catch2/catch.hpp"
@@ -199,7 +199,7 @@ TEST_CASE("HPOTargets: PC_LAMMPS --ncpu is rejected with the removal hint",
             CHECK_THAT(msg, Catch::Contains(
                 "Error on line " + std::to_string(bad_line) + ":"));
             CHECK_THAT(msg, Catch::Contains(
-                "--ncpu was removed in 1.5.1 (legacy MPI build)"));
+                "--ncpu was removed in 1.6.0 (legacy MPI build)"));
             CHECK_THAT(msg, Catch::Contains("THREADS / PC_ISOLATION"));
             CHECK_THAT(msg, Catch::Contains("Line: " + c.line));
         }
