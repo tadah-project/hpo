@@ -16,6 +16,7 @@
 #include <tadah/hpo/algorithms.h>
 #include <tadah/hpo/algorithms_asa.h>
 #include <tadah/hpo/durable_best.h>
+#include <tadah/hpo/run_driver.h>   // detail::rethrow_if_best_unsaved
 #include <tadah/hpo/algorithms_pt.h>
 #include <tadah/hpo/algorithms_pa.h>
 #include <tadah/hpo/ceres_adapter.h>
@@ -29,36 +30,6 @@
 #include <tadah/hpo/optimizer_spec.h>
 
 namespace tadah::hpo {
-
-namespace detail {
-/* Backstop for a new best that could not be persisted (HPO_Host records it
- * before the durable_best::Error leaves the evaluation): whatever swallowed
- * the error on its way up -- a concurrent exception that won a pool's
- * stash, say -- the run must still fail, not restart or complete. Every
- * catch that swallows a StagnationStop or a failed start calls it
- * (run_policy.h), so a lost best stops the run at once rather than after
- * the rest of a stage or batch. */
-inline void rethrow_if_best_unsaved()
-{
-  if (const auto ub = HPOLog::instance().unsaved_best())
-    throw durable_best::Error(ub->what);
-}
-
-/* The cause hpo_run() reports a best-potential persistence failure with:
- * the first recorded failure (HPOLog::unsaved_best()->what, the one that
- * tripped HPO_Host's durable_best::FailLatch), else e's own message. Of
- * several failed candidates (parallel chains) a later one's error -- a
- * latched single attempt that failed too -- can reach hpo_run() first:
- * the evaluation pools' ExceptionStash (DLIB:GFS, ASA, the annealers'
- * ReplicaPool) keeps the first exception of the highest rank to ARRIVE,
- * and the tripping candidate submits its result before its exception
- * does. */
-inline std::string durable_failure_cause(const durable_best::Error& e)
-{
-  if (const auto ub = HPOLog::instance().unsaved_best()) return ub->what;
-  return e.what();
-}
-}  // namespace detail
 
 /* ----------------------------------------------------------------------
  * run_inner -- single-shot dispatch from an OptimizerSpec onto its

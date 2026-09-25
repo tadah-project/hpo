@@ -68,8 +68,8 @@ int HPOEngine::run(mlip::Task &task) {
     return EXIT_FAILURE;
   } catch (...) {
     /* hpo_run() rethrows a non-standard exception after writing its journal
-     * trailer ("STOPPED with unknown error"); fail like any other error
-     * instead of terminating. */
+     * trailer ("FAILED -- non-standard exception"); fail like any other
+     * error instead of terminating. */
     std::cerr << "HPOEngine error: unknown (non-standard) exception" << std::endl;
     return EXIT_FAILURE;
   }

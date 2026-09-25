@@ -639,33 +639,34 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log)
     HPO_Host<V,R>::set_stagnation_threshold(0);
     HPO_Host<V,R>::set_track_topk(0);
 
-    /* Bind best-potential publication to this run. HPO runs are not
-     * resumable, so every run starts fresh: stale best potentials from an
-     * unrelated prior objective are discarded atomically before the first
-     * evaluation. MPI ranks synchronize before any evaluation. */
-    host.prepare_best_publication();
-
-    /* Everything from here evaluates candidates, so it runs under
-     * drive_run() (run_driver.h), which owns every way the run can end:
-     * the result queue is flushed and the journal trailer written whether
-     * the optimiser finishes, a signal stops it (the return value is then
-     * 128 + the signal number), or an error escapes (rethrown after the
-     * trailer). NOISE_CALIBRATION is inside for the same reason: its
-     * evaluations are real, and a signal during them must end the run the
-     * same way. Each optimiser run records its own termination reason with
-     * HPOLog::set_status(); the trailer shows the one of the run that ended
-     * the whole run (under MULTISTART the last start, under PRESTAGE the
-     * refinement), or RestartPolicy's when its MAX restarts were used up. */
+    /* Everything from here publishes the best potential or evaluates
+     * candidates, so it runs under drive_run() (run_driver.h), which owns
+     * every way the run can end: the result queue is flushed and the journal
+     * trailer written whether the optimiser finishes, a signal stops it (the
+     * return value is then 128 + the signal number), or an error escapes
+     * (rethrown after the trailer). NOISE_CALIBRATION is inside for the same
+     * reason: its evaluations are real, and a signal during them must end
+     * the run the same way. Each optimiser run records its own termination
+     * reason with HPOLog::set_status(); the trailer shows the one of the run
+     * that ended the whole run (under MULTISTART the last start, under
+     * PRESTAGE the refinement), or RestartPolicy's when its MAX restarts
+     * were used up. */
     const int status = drive_run(
         [&]() {
+            /* Bind best-potential publication to this run. HPO runs are not
+             * resumable, so every run starts fresh: stale best potentials
+             * from an unrelated prior objective are discarded atomically
+             * before the first evaluation. MPI ranks synchronize before any
+             * evaluation; a rank whose reset failed makes every rank throw
+             * the same durable_best::Error, so all of them reach drive_run's
+             * collective and end "FAILED -- best-potential persistence:
+             * <cause>" like any other persistence failure. */
+            host.prepare_best_publication();
             run_noise_calibration(sp, host, log);
             log.start_progress();
             std::cout << "[HPO] " << sp.lib << ":" << sp.algo
                       << "   dim=" << sp.low.size() << "\n";
             policy->run(sp, host);
-            /* A new best that could not be saved fails the run even when
-             * the durable_best::Error was swallowed on its way up. */
-            detail::rethrow_if_best_unsaved();
         },
         host, log);
 

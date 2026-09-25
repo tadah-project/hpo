@@ -34,29 +34,6 @@ inline nlopt_algorithm nlopt_algo(const std::string& s)
     return a;
 }
 
-/* True when an exception out of nlopt::opt::optimize() is the algorithm
- * terminating itself -- nothing left to explore, and the best result found
- * so far is valid and already saved -- rather than a failed run:
- *   NLOPT_FAILURE (-1): population converged, local mutation simplex
- *     degenerated. The C++ wrapper throws runtime_error("nlopt failure"),
- *     or runtime_error(<stop message>) when NLopt set one -- e.g.
- *     LN_NELDERMEAD's "starting step size led to simplex that was too small
- *     in dimension N" (`nlopt_msg` is that message, from get_errmsg());
- *   NLOPT_ROUNDOFF_LIMITED (-4): progress blocked by floating-point
- *     roundoff (nlopt::roundoff_limited).
- * Everything else -- invalid arguments, out of memory, a forced stop -- is
- * a failure. Exceptions raised by the objective are not classified at all:
- * run_nlopt() rethrows them with their own type first. */
-inline bool nlopt_self_terminated(const std::exception& e,
-                                  const char* nlopt_msg)
-{
-    if (dynamic_cast<const nlopt::roundoff_limited*>(&e)) return true;
-    if (dynamic_cast<const nlopt::forced_stop*>(&e)) return false;
-    const std::string what = e.what();
-    return what == "nlopt failure" ||
-           (nlopt_msg && nlopt_msg[0] != '\0' && what == nlopt_msg);
-}
-
 /* How run_nlopt treats an exception that escaped nlopt::opt::optimize()
  * while the objective raised none (the objective's own exceptions are not
  * classified at all: run_nlopt_impl() rethrows them with their own type
@@ -646,7 +623,10 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
          * the algorithm's self-termination. */
         if (udata.error) std::rethrow_exception(udata.error);
         const std::string what = e.what();
-        const bool graceful = nlopt_self_terminated(e, opt.get_errmsg());
+        const bool graceful =
+            classify_nlopt_exception(std::current_exception(),
+                                     opt.get_errmsg()) ==
+            NloptOutcome::Graceful;
         /* HPO's own stop at a starting point without a finite gradient
          * (a forced stop), or an algorithm that terminated itself right
          * after it rejected such a point. */

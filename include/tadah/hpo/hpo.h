@@ -20,7 +20,13 @@ struct OptimizerSpec;
  * number when SIGINT, SIGTERM or SIGUSR2 stopped it (130, 143, 140 on
  * Linux), with or without a usable loss. The result files are flushed and
  * the journal trailer written in every case. An error is thrown after the
- * trailer ("STOPPED with error: ..."). See run_driver.h. */
+ * trailer: "FAILED -- best-potential persistence: <cause>" when a best
+ * potential could not be saved (durable_best::Error, however the run then
+ * ended; the fresh-run reset of best_pot.tadah included), "FAILED --
+ * <what>" for another std::exception and "FAILED -- non-standard
+ * exception" for any other; the caller exits with 1. A startup error
+ * (the configuration, validate_hpo_setup()) is thrown before any trailer,
+ * after an "ERROR startup: ..." journal line. See run_driver.h. */
 int hpo_run(core::Context&);
 
 /* NOISE_CALIBRATION gate: run only for a non-trivial calibration knob
