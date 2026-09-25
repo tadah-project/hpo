@@ -359,9 +359,14 @@ TEST_CASE("INNER unknown-key message lists the shared attribute vocabulary",
 ENDOPTIMIZER
 )");
   auto ctx = watom_ctx();
+  /* The shared table (opt_attr_keys) less the two attributes that belong
+   * to the enclosing block, SEED and GRAD_STRATEGY. */
   REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, in.path.string()),
                       Catch::Contains("inside INNER block") &&
-                      Catch::Contains("GRAD_STRATEGY"));
+                      Catch::Contains("/MAXTIME/STOPVAL/") &&
+                      Catch::Contains("/XTOL_REL/XTOL_ABS/") &&
+                      !Catch::Contains("GRAD_STRATEGY") &&
+                      !Catch::Contains("SEED"));
 }
 
 TEST_CASE("OPTIM shape tags and OPTIM_SCALE build the search space",

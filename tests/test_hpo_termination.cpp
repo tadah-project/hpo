@@ -2030,6 +2030,13 @@ std::string inner_seed_error(const std::string& enclosing)
            "on the enclosing " + enclosing + " block";
 }
 
+std::string inner_grad_strategy_error(const std::string& enclosing)
+{
+    return "GRAD_STRATEGY is not accepted inside an INNER block: the "
+           "enclosing block's GRAD_STRATEGY applies to its local search; "
+           "set GRAD_STRATEGY on the enclosing " + enclosing + " block";
+}
+
 }  // namespace
 
 TEST_CASE("NLopt: SEED inside an INNER block is rejected at startup, naming "
@@ -2062,12 +2069,58 @@ TEST_CASE("NLopt: SEED inside an INNER block is rejected at startup, naming "
     }
 }
 
+/* NLopt's MLSL and AUGLAG run their INNER search inside their own run and
+ * hand it the gradient of their own objective, which the enclosing block's
+ * GRAD_STRATEGY obtains (nlopt_adapter.h). A GRAD_STRATEGY written in the
+ * INNER block was accepted and never used; it is a startup error at its
+ * line, like an INNER SEED. */
+TEST_CASE("NLopt: GRAD_STRATEGY inside an INNER block is rejected at "
+          "startup, naming its line",
+          "[HPO][grad_strategy][nlopt][hpo_targets]")
+{
+    using tadah::hpo::GradStrategy;
+    for (const auto& c : inner_contexts()) {
+        INFO("INNER inside " << c.enclosing);
+        for (const std::string value : {"NUMERICAL", "ANALYTICAL", "HYBRID"}) {
+            const std::string inner_gs =
+                c.indent + "  GRAD_STRATEGY " + value;
+            /* Whether or not the enclosing block sets one of its own. */
+            for (const std::string outer : {"", "GRAD_STRATEGY HYBRID"}) {
+                const std::string cfg = c.config(
+                    outer.empty() ? "" : c.indent + outer + "\n",
+                    inner_gs + "\n");
+                INFO(cfg);
+                const std::string msg = startup_error(cfg);
+                CHECK_THAT(msg, Catch::StartsWith(
+                    "Error on line " +
+                    std::to_string(line_number(cfg, inner_gs)) + ": " +
+                    inner_grad_strategy_error(c.enclosing)));
+                CHECK_THAT(msg, Catch::EndsWith("\nLine: " + inner_gs));
+            }
+        }
+
+        /* Moved to the enclosing block, the GRAD_STRATEGY is that block's,
+         * and the INNER spec carries none. */
+        TaRun run(c.config(c.indent + "GRAD_STRATEGY HYBRID\n", ""));
+        const tadah::hpo::HPOTargets trg(run.ctx, run.hpo.string());
+        const auto& block = c.block(trg.spec);
+        CHECK(block.grad_strategy ==
+              std::optional<GradStrategy>(GradStrategy::Hybrid));
+        REQUIRE(block.inner);
+        CHECK_FALSE(block.inner->grad_strategy);
+    }
+}
+
 TEST_CASE("NLopt: the unknown-key error of an INNER block lists every "
-          "optimiser attribute but SEED", "[HPO][seed][nlopt][hpo_targets]")
+          "optimiser attribute but SEED and GRAD_STRATEGY",
+          "[HPO][seed][nlopt][hpo_targets]")
 {
     std::string keys;
     for (const auto& k : tadah::hpo::opt_attr_keys())
-        if (k != "SEED") keys += (keys.empty() ? "" : "/") + k;
+        if (k != "SEED" && k != "GRAD_STRATEGY")
+            keys += (keys.empty() ? "" : "/") + k;
+    REQUIRE(keys.find("GRAD_STRATEGY") == std::string::npos);
+    REQUIRE(keys.find("MAXEVAL") != std::string::npos);
     for (const auto& c : inner_contexts()) {
         INFO("INNER inside " << c.enclosing);
         const std::string bogus = c.indent + "  BOGUS 1";
@@ -2140,6 +2193,38 @@ TEST_CASE("NLopt: make_nlopt seeds a run with an INNER once, from the block "
         CHECK_THROWS_WITH(
             tadah::hpo::make_nlopt(sp, 2, tadah::hpo::RestartStop::Off),
             refused);
+    }
+}
+
+TEST_CASE("NLopt: make_nlopt refuses an INNER spec with a GRAD_STRATEGY",
+          "[HPO][grad_strategy][nlopt]")
+{
+    /* The parser rejects GRAD_STRATEGY inside INNER; an INNER spec with
+     * one can only come from outside it, and its value would not be used:
+     * the enclosing run hands its INNER search the gradient its own
+     * GRAD_STRATEGY obtains. */
+    using tadah::hpo::GradStrategy;
+    tadah::hpo::OptimizerSpec sp;
+    sp.lib = "NLOPT";
+    sp.algo = "AUGLAG";
+    sp.stop.maxeval = 12;
+    sp.grad_strategy = GradStrategy::Hybrid;
+    sp.inner = std::make_unique<tadah::hpo::OptimizerSpec>();
+    sp.inner->lib = "NLOPT";
+    sp.inner->algo = "GN_CRS2_LM";
+    REQUIRE_NOTHROW(
+        tadah::hpo::make_nlopt(sp, 2, tadah::hpo::RestartStop::Off));
+
+    for (const auto g : {GradStrategy::Numerical, GradStrategy::Analytical,
+                         GradStrategy::Hybrid}) {
+        INFO(tadah::hpo::grad_strategy_name(g));
+        sp.inner->grad_strategy = g;
+        CHECK_THROWS_WITH(
+            tadah::hpo::make_nlopt(sp, 2, tadah::hpo::RestartStop::Off),
+            Catch::StartsWith("NLopt INNER spec with a GRAD_STRATEGY: the "
+                              "enclosing block's GRAD_STRATEGY applies to "
+                              "its local search; set GRAD_STRATEGY on the "
+                              "enclosing block"));
     }
 }
 

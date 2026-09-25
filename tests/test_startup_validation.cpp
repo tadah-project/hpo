@@ -473,12 +473,13 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs loss terms "
 
 /* NLopt's MLSL and AUGLAG run their INNER search inside their own run and
  * hand it the gradient of their objective, which the enclosing block's
- * GRAD_STRATEGY obtains: an INNER block's GRAD_STRATEGY does not apply.
- * The ANALYTICAL rule therefore checks the blocks that run an optimiser
- * -- the STRATEGY-level one and EXPLORE -- and not an INNER block. A
- * setup the analytical gradient does not cover (OALGO 1, the default)
- * with HYBRID on the enclosing block and nothing in INNER used to be
- * refused on the INNER block, whose resolved ANALYTICAL was never used. */
+ * GRAD_STRATEGY obtains; an INNER block takes no GRAD_STRATEGY (a parse
+ * error at its line). The ANALYTICAL rule therefore checks the blocks that
+ * run an optimiser -- the STRATEGY-level one and EXPLORE -- and not an
+ * INNER block. A setup the analytical gradient does not cover (OALGO 1,
+ * the default) with HYBRID on the enclosing block and nothing in INNER
+ * used to be refused on the INNER block, whose resolved ANALYTICAL was
+ * never used. */
 TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
           "whose gradient an INNER search uses",
           "[startup_validation][grad_strategy]") {
@@ -498,24 +499,24 @@ TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
 
   SECTION("HYBRID on the enclosing block serves the INNER search") {
     CHECK(startup_error(ctx, mlsl(hybrid, "")) == "");
-    CHECK(startup_error(ctx, mlsl(hybrid, "  " + hybrid)) == "");
-    /* ANALYTICAL written in INNER does not apply either. */
-    CHECK(startup_error(ctx, mlsl(hybrid,
-                                  "      GRAD_STRATEGY ANALYTICAL\n")) == "");
   }
   SECTION("an unset enclosing block resolves to ANALYTICAL and is "
           "refused, naming it") {
     const auto neither = startup_error(ctx, mlsl("", ""));
     CHECK_THAT(neither, Catch::StartsWith("OPTIMIZER block: GRAD_STRATEGY "
                                           "ANALYTICAL (resolved") &&
-                        Catch::Contains("OALGO 4"));
-    /* HYBRID in INNER alone: the message says it does not apply. */
-    const auto inner_only = startup_error(ctx, mlsl("", "  " + hybrid));
-    CHECK_THAT(inner_only,
-               Catch::StartsWith("OPTIMIZER block: GRAD_STRATEGY ANALYTICAL "
-                                 "(resolved") &&
-               Catch::Contains("the INNER block's GRAD_STRATEGY HYBRID does "
-                               "not apply"));
+                        Catch::Contains("OALGO 4") &&
+                        !Catch::Contains("INNER"));
+  }
+  SECTION("a GRAD_STRATEGY in INNER stops the parse before startup "
+          "validation") {
+    for (const std::string& outer : {std::string(), hybrid}) {
+      INFO(outer);
+      ScopedTempFile tf(mlsl(outer, "  " + hybrid));
+      CHECK_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
+                        Catch::Contains("GRAD_STRATEGY is not accepted "
+                                        "inside an INNER block"));
+    }
   }
   SECTION("EXPLORE is checked like the STRATEGY-level block, its INNER like "
           "an INNER block") {
