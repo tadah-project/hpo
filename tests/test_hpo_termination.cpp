@@ -173,9 +173,21 @@ tadah::core::Context make_ta_context(const fs::path& dbfile,
     return c;
 }
 
+/* The root lines of config.hpo after the OPTIMIZER block that most cases
+ * share: the objective and the three-dimensional search space. */
+const std::string kRootLines =
+    "LOSS L2\n"
+    "FAILSCORE 1e9\n"
+    "QFLUSH 1000\n"
+    "DIGITS 15\n"
+    "PC_ERMSE 0 1\n"
+    "OPTIM CGRID2B (1) 0.1 0.9\n"
+    "OPTIM CGRID2B (2) 1.0 2.0\n"
+    "OPTIM SGRID2B (2) 4.0 6.0\n";
+
 /* One hpo_run() setup in a scratch directory. `optimizer` is the complete
- * OPTIMIZER ... ENDOPTIMIZER block; the objective and the three-dimensional
- * search space are shared by every case. */
+ * OPTIMIZER ... ENDOPTIMIZER block and `root` the rest of config.hpo (by
+ * default the objective and search space every case shares). */
 struct TaRun {
     /* Rebuild the per-thread trainer on every evaluation, as the host
      * end-to-end tests do: a trainer cached on this thread by another test
@@ -189,7 +201,8 @@ struct TaRun {
     tadah::core::Context ctx;
     fs::path hpo, val;
 
-    explicit TaRun(const std::string& optimizer)
+    explicit TaRun(const std::string& optimizer,
+                   const std::string& root = kRootLines)
     {
         tadah::core::PeriodicTable::initialize();
         /* HPOLog and the HPO_Host statics are process-wide; a run in the
@@ -203,16 +216,7 @@ struct TaRun {
         write_ta_db(train, 0.0, -0.001);
         write_ta_db(valdb, 0.07, -0.04);
         std::ofstream(val) << "DBFILE " << valdb.string() << "\n";
-        std::ofstream(hpo)
-            << optimizer
-            << "LOSS L2\n"
-               "FAILSCORE 1e9\n"
-               "QFLUSH 1000\n"
-               "DIGITS 15\n"
-               "PC_ERMSE 0 1\n"
-               "OPTIM CGRID2B (1) 0.1 0.9\n"
-               "OPTIM CGRID2B (2) 1.0 2.0\n"
-               "OPTIM SGRID2B (2) 4.0 6.0\n";
+        std::ofstream(hpo) << optimizer << root;
         ctx = make_ta_context(train, hpo, val);
     }
 };
@@ -282,6 +286,20 @@ stagnation_stops(const std::string& journal)
     return stops;
 }
 
+/* A loss.tadah value. The default FAILSCORE, the largest double, prints as
+ * 1.797693134862316e+308 with DIGITS 15, which rounds above it: std::stod
+ * throws on it, and this reads it as +inf, which is no feasible loss
+ * either. */
+double loss_value(const std::string& token)
+{
+    char* end = nullptr;
+    const double v = std::strtod(token.c_str(), &end);
+    INFO("loss.tadah value '" << token << "'");
+    REQUIRE(end != token.c_str());
+    REQUIRE(*end == '\0');
+    return v;
+}
+
 /* The invariants every ending must leave behind, read from the files in
  * the current directory. */
 void check_run_files()
@@ -308,7 +326,7 @@ void check_run_files()
     std::vector<Row> feasible;
     double lowest = std::numeric_limits<double>::infinity();
     for (const auto& row : loss) {
-        const double l = std::stod(row.back());
+        const double l = loss_value(row.back());
         if (!(std::isfinite(l) && l < kFailScore)) continue;
         feasible.push_back({std::stoull(row.at(0)), std::stoull(row.at(1)), l});
         lowest = std::min(lowest, l);
@@ -554,8 +572,8 @@ struct HostFixture {
     tadah::hpo::HPOTargets trg;
     Host host;
 
-    HostFixture()
-        : run(plain_block(kBfgsLong)),
+    explicit HostFixture(const std::string& root = kRootLines)
+        : run(plain_block(kBfgsLong), root),
           journal(run.sd.dir),
           trg(run.ctx, run.hpo.string()),
           host(run.ctx, trg, run.val.string())
@@ -3588,4 +3606,478 @@ TEST_CASE("Termination: the RESTART stagnation stop ends a search that has "
             }
         }
     }
+}
+
+/* ======================================================================
+ * Runs in which no evaluation produced a usable loss, and DLIB:GFS with
+ * failed evaluations.
+ *
+ * A usable loss is a feasible one (loss_is_feasible: finite and below the
+ * failure band); only a usable loss can become the incumbent. A run none
+ * of whose evaluations produced one writes no best_pot.tadah. It used to
+ * end with status 0 and "COMPLETED" like a successful run, and its
+ * journal's DIAGNOSTICS said "[ok] Every evaluation produced a usable
+ * loss" (they counted NaN/Inf clampings and graded failures only). Such a
+ * run now ends with status 1, an ERROR line and the trailer "STOPPED -- no
+ * evaluation produced a usable loss", unless a signal (128 + N) or an
+ * error (1, "STOPPED with error: ...") ended it first.
+ *
+ * DLIB:GFS used to hand dlib the failed evaluations' loss, FAILSCORE, by
+ * default the largest double. find_min_global maximises the negated loss,
+ * and its trust-region step takes as best sample the first whose value
+ * exceeds -1e300: with every sample at or above 1e300 there is none, and
+ * it indexed an empty vector (SIGSEGV). That happens at the first
+ * trust-region step, after dims + 2 evaluations that all failed, whether
+ * or not later evaluations would have produced a usable loss.
+ * ==================================================================== */
+
+namespace {
+
+/* The fixture's validation ERMSE is about 9.75-10 meV/atom everywhere in
+ * the box, so a skip cap of 1e-30 fails every evaluation (its loss is
+ * FAILSCORE). No FAILSCORE line: the default, the largest double. */
+const std::string kAllFailRoot =
+    "LOSS L2\n"
+    "QFLUSH 1000\n"
+    "DIGITS 15\n"
+    "PC_ERMSE 0 1 --skip-above 1e-30\n"
+    "OPTIM CGRID2B (1) 0.1 0.9\n"
+    "OPTIM CGRID2B (2) 1.0 2.0\n"
+    "OPTIM SGRID2B (2) 4.0 6.0\n";
+
+/* The default FAILSCORE as loss.tadah prints it (DIGITS 15). */
+const std::string kDefaultFailScoreRow = "1.797693134862316e+308";
+
+const std::string kNoUsableLossStatus =
+    "STOPPED -- no evaluation produced a usable loss";
+const std::string kNoUsableLossError =
+    "no evaluation produced a usable loss; no best_pot.tadah was written";
+
+/* The journal's note that DLIB:GFS gives dlib a stand-in for a failed
+ * evaluation: once per DLIB:GFS search that has a failed evaluation. */
+const std::string kGfsStandInNote =
+    "DLIB:GFS: dlib is given a finite stand-in for each failed evaluation";
+
+/* The "Unusable losses" count of the journal's DIAGNOSTICS, or -1. */
+long unusable_losses(const std::string& journal)
+{
+    std::smatch m;
+    if (std::regex_search(journal, m,
+                          std::regex(R"(Unusable losses\s*: (\d+))")))
+        return std::stol(m[1]);
+    return -1;
+}
+
+/* What a run of `evals` evaluations that all failed leaves behind: one
+ * loss.tadah row per evaluation, numbered 1, 2, ..., each `fail_row`; no
+ * best_pot.tadah and no improvement row; DIAGNOSTICS that count every
+ * evaluation as unusable. The trailer is `status`: the no-usable-loss
+ * one, or the one of a signal or error that ended the run first. */
+void check_no_usable_loss(std::size_t evals, const std::string& fail_row,
+                          const std::string& status)
+{
+    const auto loss = data_rows("loss.tadah");
+    CHECK(loss.size() == evals);
+    CHECK(loss.size() == Host::g_iter_value());
+    for (std::size_t i = 0; i < loss.size(); ++i) {
+        INFO("loss.tadah row " << i);
+        CHECK(std::stoull(loss[i].at(0)) == i + 1);
+        CHECK(loss[i].back() == fail_row);
+    }
+    CHECK_FALSE(fs::exists("best_pot.tadah"));
+    CHECK(data_rows("best_params.tadah").empty());
+
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(journal_status(journal) == status);
+    CHECK(std::regex_search(
+        journal, std::regex(R"(Best potential saved\s*: \(none written\))")));
+    /* The ERROR line belongs to the no-usable-loss ending only. */
+    CHECK((journal.find("ERROR     " + kNoUsableLossError) !=
+           std::string::npos) == (status == kNoUsableLossStatus));
+    CHECK(journal.find("[ok] Every evaluation produced a usable loss") ==
+          std::string::npos);
+    CHECK(journal.find("[!] No evaluation produced a usable loss.") !=
+          std::string::npos);
+    CHECK(unusable_losses(journal) == static_cast<long>(evals));
+}
+
+const std::string kRandomAllFail = plain_block(
+    "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n    MAXEVAL 20\n"
+    "    SEED 3\n");
+
+}  // namespace
+
+TEST_CASE("No usable loss: a TADAH:RANDOM run whose every evaluation fails "
+          "exits with status 1 and says so",
+          "[HPO][termination][no_usable_loss]")
+{
+    TaRun run(kRandomAllFail, kAllFailRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                        "an all-failed TADAH:RANDOM run"));
+    CHECK(status == 1);
+    check_no_usable_loss(20, kDefaultFailScoreRow, kNoUsableLossStatus);
+    /* The optimiser's own ending is still in the progress section. */
+    CHECK_THAT(read_file("hpo_run.log"),
+               Catch::Contains("TADAH:RANDOM stopped: MAXEVAL reached after "
+                               "20 evaluation(s)"));
+}
+
+TEST_CASE("No usable loss: evaluations that throw count as unusable losses",
+          "[HPO][termination][no_usable_loss]")
+{
+    /* OALGO 3 cannot exclude the bias from the regularisation: with BIAS
+     * true and LAMBDA != 0 every training throws, and the host records
+     * each evaluation as FAILSCORE (and counts it as a NaN/Inf clamping).
+     * The journal used to follow "100.0% of evaluations produced a
+     * non-finite loss" with "[ok] Every evaluation produced a usable
+     * loss". */
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+                          "    MAXEVAL 6\n    SEED 3\n"));
+    run.ctx.storage_update("OALGO", {"3"});
+    run.ctx.storage_update("BIAS", {"true"});
+    int status = -1;
+    REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                        "a TADAH:RANDOM run whose "
+                                        "evaluations throw"));
+    CHECK(status == 1);
+    check_no_usable_loss(6, "1.000000000000000e+09", kNoUsableLossStatus);
+    const std::string journal = read_file("hpo_run.log");
+    CHECK_THAT(journal, Catch::Contains("eval-thread caught throw"));
+    CHECK_THAT(journal, Catch::Contains("100.0% of evaluations produced a "
+                                        "non-finite loss"));
+}
+
+TEST_CASE("DLIB:GFS: a run whose every evaluation fails with the default "
+          "FAILSCORE reaches MAXEVAL",
+          "[HPO][termination][no_usable_loss][gfs]")
+{
+    /* It used to end in SIGSEGV at the first trust-region step, after
+     * five failed evaluations of this three-dimensional search. */
+    for (const char* threads : {"1", "4"}) {
+        DYNAMIC_SECTION("THREADS " << threads) {
+            TaRun run(plain_block(std::string(
+                          "    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n"
+                          "    MAXEVAL 24\n    THREADS ") + threads + "\n"),
+                      kAllFailRoot);
+            int status = -1;
+            REQUIRE_NOTHROW(status = run_within(
+                                run, std::chrono::seconds(120),
+                                "an all-failed DLIB:GFS run"));
+            CHECK(status == 1);
+            check_no_usable_loss(24, kDefaultFailScoreRow,
+                                 kNoUsableLossStatus);
+            const std::string journal = read_file("hpo_run.log");
+            CHECK_THAT(journal, Catch::Contains("DLIB:GFS stopped: MAXEVAL "
+                                                "reached after 24 "
+                                                "evaluation(s)"));
+            CHECK(count_of(journal, kGfsStandInNote) == 1u);
+        }
+    }
+}
+
+TEST_CASE("DLIB:GFS: each search notes its stand-in for failed evaluations "
+          "once and a RESTART round is a new search",
+          "[HPO][termination][no_usable_loss][gfs][restart]")
+{
+    /* Every evaluation fails, so no evaluation is a new best and the
+     * stagnation window closes after 5 evaluations of each round: round 0
+     * and RESTART 1/1 are two DLIB:GFS searches, each with its own
+     * stand-ins, and then the RESTART budget ends a run that has no usable
+     * loss. */
+    TaRun run(plain_block(
+                  "    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n"
+                  "    MAXEVAL 400\n    THREADS 1\n"
+                  "    RESTART\n      AFTER_STAGNATION 5\n      MAX 1\n"
+                  "      METHOD RANDOM 1\n      SEED 7\n    ENDRESTART\n"),
+              kAllFailRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                        "an all-failed DLIB:GFS run with "
+                                        "RESTART"));
+    CHECK(status == 1);
+    const std::string journal = read_file("hpo_run.log");
+    CHECK_THAT(journal, Catch::Contains("RESTART 1/1"));
+    CHECK_THAT(journal, Catch::Contains("RESTART: stagnation reached, max "
+                                        "restarts (1) used; stopping"));
+    CHECK(journal_status(journal) == kNoUsableLossStatus);
+    CHECK(count_of(journal, kGfsStandInNote) == 2u);
+    check_no_usable_loss(data_rows("loss.tadah").size(), kDefaultFailScoreRow,
+                         kNoUsableLossStatus);
+}
+
+TEST_CASE("DLIB:GFS: a run without failed evaluations hands dlib its losses "
+          "and notes no stand-in", "[HPO][termination][gfs]")
+{
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n"
+                          "    MAXEVAL 12\n    THREADS 1\n"));
+    int status = -1;
+    REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                        "a DLIB:GFS run without failures"));
+    CHECK(status == 0);
+    const std::string journal = read_file("hpo_run.log");
+    REQUIRE(unusable_losses(journal) == 0);
+    CHECK(count_of(journal, kGfsStandInNote) == 0u);
+    CHECK(journal_status(journal) == "COMPLETED");
+    check_run_files();
+}
+
+TEST_CASE("DLIB:GFS: a run whose first evaluations all fail goes on to "
+          "usable losses and ends as usual",
+          "[HPO][termination][gfs]")
+{
+    /* One dimension, CGRID2B[2] in [1, 2]. On this fixture the validation
+     * ERMSE falls from 10 meV/atom at 1.0 to 9.76 at 2.0, but only in the
+     * sixth decimal up to 1.4: 9.9999994 at 1.25, 9.9999974 at 1.375,
+     * 9.9999944 at 1.4, 9.99989 at 1.5. The skip cap 9.99999 fails the box
+     * below a point between 1.4 and 1.5 and leaves the rest usable. The
+     * three starting points -- Sobol points 2 and 3 (SEED 1 selects block 1
+     * of METHOD SOBOL 2; the chain hands its first method the SEED itself),
+     * 1.25 and 1.375, and the configuration's 1.4 -- all fail: dims + 2
+     * failed evaluations reach dlib's first trust-region step, which used
+     * to end the run in SIGSEGV. GFS picks some points at random, and which
+     * ones depends on whether an evaluation has finished when it asks for
+     * the next point, so the usable half of the box is wide enough for a
+     * run of 40 evaluations to reach it whatever GFS picks. */
+    TaRun run(
+        "OPTIMIZER\n"
+        "  INIT\n    METHOD SOBOL 2\n    METHOD CONFIG\n    SEED 1\n"
+        "  ENDINIT\n"
+        "  STRATEGY\n    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n"
+        "    MAXEVAL 40\n    THREADS 1\n  ENDSTRATEGY\n"
+        "ENDOPTIMIZER\n",
+        "LOSS L2\n"
+        "QFLUSH 1000\n"
+        "DIGITS 15\n"
+        "PC_ERMSE 0 1 --skip-above 9.99999\n"
+        "OPTIM CGRID2B (2) 1.0 2.0\n");
+    int status = -1;
+    REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                        "a DLIB:GFS run that starts with "
+                                        "failures"));
+    CHECK(status == 0);
+    const std::string journal = read_file("hpo_run.log");
+    CHECK_THAT(journal, Catch::Contains("DLIB:GFS seeding with 3 starting "
+                                        "points"));
+    CHECK(journal_status(journal) == "COMPLETED");
+
+    /* Every row is a usable loss (an ERMSE of at most 9.99999, so a loss of
+     * at most 99.9998) or the FAILSCORE the evaluation returned: whatever
+     * dlib is told about a failure, the files record FAILSCORE. */
+    const auto loss = data_rows("loss.tadah");
+    REQUIRE(loss.size() == 40u);
+    std::size_t failed = 0;
+    for (std::size_t i = 0; i < loss.size(); ++i) {
+        INFO("loss.tadah row " << i + 1 << ": " << loss[i].back());
+        if (loss[i].back() == kDefaultFailScoreRow) {
+            ++failed;
+        } else {
+            CHECK(loss_value(loss[i].back()) <= 99.9998);
+        }
+    }
+    for (std::size_t i = 0; i < 3; ++i) {
+        INFO("starting point " << i + 1 << " must fail");
+        CHECK(loss[i].back() == kDefaultFailScoreRow);
+    }
+    CHECK(failed < loss.size());
+    CHECK(unusable_losses(journal) == static_cast<long>(failed));
+    CHECK(journal.find("[ok] Every evaluation produced a usable loss") ==
+          std::string::npos);
+    CHECK(count_of(journal, kGfsStandInNote) == 1u);
+    check_run_files();
+}
+
+TEST_CASE("No usable loss: drive_run ends a normal end without a usable "
+          "loss with status 1", "[HPO][termination][no_usable_loss]"
+          "[run_driver]")
+{
+    HostFixture fx(kAllFailRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::drive_run(
+        [&] { fx.evaluate(kDriverEvals); }, fx.host, fx.log()));
+    CHECK(status == 1);
+    check_no_usable_loss(kDriverEvals, kDefaultFailScoreRow,
+                         kNoUsableLossStatus);
+}
+
+TEST_CASE("No usable loss: drive_run ends a stagnation stop without a "
+          "usable loss with status 1", "[HPO][termination][no_usable_loss]"
+          "[run_driver]")
+{
+    HostFixture fx(kAllFailRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::drive_run(
+        [&] {
+            fx.evaluate(kDriverEvals);
+            throw Host::StagnationStop{};
+        }, fx.host, fx.log()));
+    CHECK(status == 1);
+    check_no_usable_loss(kDriverEvals, kDefaultFailScoreRow,
+                         kNoUsableLossStatus);
+}
+
+TEST_CASE("No usable loss: an error still ends the run with its own "
+          "trailer", "[HPO][termination][no_usable_loss][run_driver]")
+{
+    HostFixture fx(kAllFailRoot);
+    CHECK_THROWS_WITH(tadah::hpo::drive_run(
+        [&] {
+            fx.evaluate(kDriverEvals);
+            throw std::runtime_error("optimiser broke");
+        }, fx.host, fx.log()), "optimiser broke");
+    check_no_usable_loss(kDriverEvals, kDefaultFailScoreRow,
+                         "STOPPED with error: optimiser broke");
+}
+
+TEST_CASE("No usable loss: a shutdown still ends the run with the SHUTDOWN "
+          "trailer", "[HPO][termination][no_usable_loss][run_driver]")
+{
+    HostFixture fx(kAllFailRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::drive_run(
+        [&] {
+            fx.evaluate(kDriverEvals);
+            throw tadah::core::ShutdownRequested{};
+        }, fx.host, fx.log()));
+    /* No real signal in this process (the SIGINT case is
+     * [.shutdown_no_usable_loss]). */
+    CHECK(status == tadah::hpo::shutdown_exit_status(
+                        tadah::core::SignalHandler::signal_seen()));
+    check_no_usable_loss(kDriverEvals, kDefaultFailScoreRow,
+                         "SHUTDOWN (" + tadah::core::SignalHandler::reason() +
+                             ")");
+}
+
+TEST_CASE("No usable loss: one usable loss among failures ends the run as "
+          "before", "[HPO][termination][no_usable_loss][run_driver]")
+{
+    /* The fixture's points run CGRID2B[2] from 1.875 down to 1.125: the
+     * first ones pass the 9.9 meV/atom skip cap, the last ones fail it. */
+    HostFixture fx(
+        "LOSS L2\n"
+        "QFLUSH 1000\n"
+        "DIGITS 15\n"
+        "PC_ERMSE 0 1 --skip-above 9.9\n"
+        "OPTIM CGRID2B (1) 0.1 0.9\n"
+        "OPTIM CGRID2B (2) 1.0 2.0\n"
+        "OPTIM SGRID2B (2) 4.0 6.0\n");
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::drive_run(
+        [&] { fx.evaluate(kDriverEvals); }, fx.host, fx.log()));
+    CHECK(status == 0);
+    const auto loss = data_rows("loss.tadah");
+    REQUIRE(loss.size() == kDriverEvals);
+    std::size_t failed = 0;
+    for (const auto& row : loss)
+        if (row.back() == kDefaultFailScoreRow) ++failed;
+    INFO("failed evaluations: " << failed);
+    REQUIRE(failed > 0);
+    REQUIRE(failed < kDriverEvals);
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(journal_status(journal) == "COMPLETED");
+    CHECK(journal.find(kNoUsableLossError) == std::string::npos);
+    CHECK(unusable_losses(journal) == static_cast<long>(failed));
+    CHECK(journal.find("[ok] Every evaluation produced a usable loss") ==
+          std::string::npos);
+    check_run_files();
+}
+
+namespace {
+
+/* A host that records when drive_run() asks it whether it produced a
+ * usable loss -- the question of the run's one cross-rank collective
+ * (detail::run_has_usable_loss) -- and when it drains its results. */
+struct AgreementProbeHost {
+    struct StagnationStop {};
+    bool usable = true;
+    bool flush_fails = false;
+    mutable std::vector<std::string> calls;
+    void flush_remaining() const
+    {
+        calls.emplace_back("flush");
+        if (flush_fails) throw std::runtime_error("disk full");
+    }
+    bool has_usable_loss() const
+    {
+        calls.emplace_back("usable");
+        return usable;
+    }
+};
+
+}  // namespace
+
+TEST_CASE("No usable loss: every ending of drive_run reaches the cross-rank "
+          "agreement once and before the final flush",
+          "[HPO][termination][no_usable_loss][run_driver]")
+{
+    /* On several MPI ranks the question is a collective every rank must
+     * reach, and exactly once. A rank that skipped it -- its final flush
+     * failed, or an error or a signal ended its run after the drivers'
+     * last collective -- left the other ranks waiting in it for ever. So
+     * every ending asks, and before the rank-local flush that can fail. */
+    struct Ending {
+        const char* what;
+        std::function<void()> body;
+        bool flush_fails;
+        bool rethrows;
+    };
+    const Ending endings[] = {
+        {"a normal end", [] {}, false, false},
+        {"a normal end whose final flush fails", [] {}, true, true},
+        {"a stagnation stop",
+         [] { throw AgreementProbeHost::StagnationStop{}; }, false, false},
+        {"a shutdown", [] { throw tadah::core::ShutdownRequested{}; }, false,
+         false},
+        {"an error", [] { throw std::runtime_error("optimiser broke"); },
+         false, true},
+        {"a non-standard exception", [] { throw 42; }, false, true},
+    };
+    for (const auto& e : endings) {
+        DYNAMIC_SECTION(e.what) {
+            ScratchDir sd;
+            auto& log = tadah::hpo::HPOLog::instance();
+            log.reset_for_test();
+            log.open((sd.dir / "hpo_run.log").string(), "test",
+                     sd.dir.string(), 1);
+            AgreementProbeHost host;
+            host.flush_fails = e.flush_fails;
+            bool rethrown = false;
+            try {
+                (void)tadah::hpo::drive_run(e.body, host, log);
+            } catch (...) {
+                rethrown = true;
+            }
+            CHECK(rethrown == e.rethrows);
+            INFO("calls: " << [&] {
+                std::string s;
+                for (const auto& c : host.calls) s += c + " ";
+                return s;
+            }());
+            CHECK(std::count(host.calls.begin(), host.calls.end(),
+                             "usable") == 1);
+            REQUIRE_FALSE(host.calls.empty());
+            CHECK(host.calls.front() == "usable");
+            CHECK(std::count(host.calls.begin(), host.calls.end(),
+                             "flush") >= 1);
+            log.reset_for_test();
+        }
+    }
+}
+
+TEST_CASE("No usable loss: SIGINT ends a run without a usable loss with 130",
+          "[.shutdown_no_usable_loss]")
+{
+    /* The signal decides the status, not the missing usable loss. */
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+                          "    MAXEVAL 100000000\n    SEED 3\n"),
+              kAllFailRoot);
+    const SignalOutcome o = run_and_signal(run.ctx, SIGINT);
+    REQUIRE(o.raised);
+    CHECK_FALSE(o.stalled);
+    INFO("hpo_run exception: " << describe(o.error));
+    CHECK_FALSE(o.error);
+    CHECK(o.status == 130);
+    CHECK(o.evals_final <= o.evals_at_raise + 1);
+    check_no_usable_loss(o.evals_final, kDefaultFailScoreRow,
+                         "SHUTDOWN (SIGINT)");
 }

@@ -1,8 +1,12 @@
 #include <tadah/hpo/algorithms_pa.h>
 #include <tadah/hpo/anneal_jitter.h>
 #include <tadah/hpo/algorithms_pt.h>
+#include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/run_driver.h>
+#include <tadah/core/checkpoint.h>
+#include <tadah/core/signal_handler.h>
 
 #include <dlib/matrix.h>
 #include <mpi.h>
@@ -12,6 +16,7 @@
 #include <functional>
 #include <optional>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -199,6 +204,19 @@ Signature run_pa(std::uint64_t cap, RecordingHost& host,
   tadah::hpo::run_anneal_pa_impl<Vec>(sp, host);
   return host.global_signature();
 }
+
+/* A host for drive_run(): whether this rank produced a usable loss, and
+ * whether its final flush fails. */
+struct DriverHost {
+  struct StagnationStop {};
+  bool usable = false;
+  bool flush_fails = false;
+  void flush_remaining() const
+  {
+    if (flush_fails) throw std::runtime_error("injected final flush failure");
+  }
+  bool has_usable_loss() const { return usable; }
+};
 
 void require_all(bool condition, const std::string& message, int rank)
 {
@@ -496,6 +514,77 @@ int main(int argc, char** argv)
       };
       check_remote_failure(true);
       check_remote_failure(false);
+    }
+
+    /* ---- drive_run(): one agreement on a usable loss over the ranks -----
+     * drive_run() asks every rank, in one collective, whether any produced
+     * a usable loss: a run in which one did ends as a completed one on
+     * every rank (best_pot.tadah is global), one in which none did ends
+     * with status 1 on every rank. Every ending reaches that collective
+     * once, before the rank-local final flush, so a rank whose flush fails,
+     * or whose run an error or a signal ends after the drivers' last
+     * collective, leaves no rank waiting in it; each rank still ends its
+     * own way. */
+    {
+      const bool last = rank == world - 1;
+      struct Outcome {
+        int status = -1;
+        bool rethrown = false;
+      };
+      const auto drive = [](bool usable, bool flush_fails,
+                            const std::function<void()>& body) {
+        DriverHost host;
+        host.usable = usable;
+        host.flush_fails = flush_fails;
+        Outcome o;
+        try {
+          o.status = tadah::hpo::drive_run(body, host,
+                                           tadah::hpo::HPOLog::instance());
+        } catch (...) {
+          o.rethrown = true;
+        }
+        return o;
+      };
+      const auto completed = [](const Outcome& o) {
+        return !o.rethrown && o.status == 0;
+      };
+      const std::function<void()> nothing = [] {};
+
+      Outcome o = drive(last, false, nothing);
+      require_all(completed(o),
+                  "drive_run: a usable loss on one rank did not end the run "
+                  "as a completed one on every rank", rank);
+
+      o = drive(false, false, nothing);
+      require_all(!o.rethrown && o.status == EXIT_FAILURE,
+                  "drive_run: a run without a usable loss on any rank did "
+                  "not end with status 1 on every rank", rank);
+
+      o = drive(rank == 0, last, nothing);
+      require_all(last ? o.rethrown : completed(o),
+                  "drive_run: a failed final flush on the last rank did not "
+                  "end that rank with its error and the others as before",
+                  rank);
+
+      o = drive(rank == 0, false, [last] {
+        if (last) throw tadah::core::ShutdownRequested{};
+      });
+      require_all(last ? (!o.rethrown &&
+                          o.status == tadah::hpo::shutdown_exit_status(
+                                          tadah::core::SignalHandler::
+                                              signal_seen()))
+                       : completed(o),
+                  "drive_run: a shutdown of the last rank after the drivers' "
+                  "last collective did not end that rank with its status and "
+                  "the others as before", rank);
+
+      o = drive(rank == 0, false, [last] {
+        if (last) throw std::runtime_error("injected error");
+      });
+      require_all(last ? o.rethrown : completed(o),
+                  "drive_run: an error on the last rank after the drivers' "
+                  "last collective did not end that rank with its error and "
+                  "the others as before", rank);
     }
 
     if (rank == 0) {
