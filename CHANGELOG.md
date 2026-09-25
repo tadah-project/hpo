@@ -9,6 +9,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - Per-dataset `PC_ERMSE` / `PC_FRMSE` targets and weights (indexed form `PC_ERMSE (i) <target> <weight>`).
+- ASA: `PARAM Gener_Mov_Avr 0` is accepted and switches off the adaptive block resizing, so every generated block holds `Gener_Block` states. Upstream's README documents 0 as "`Gener_Block` is not changed thereafter" and `asa()` resizes only when the window is above 0, but its option check rejected every value below 1, so no setting kept the block size fixed: with `Gener_Block = Gener_Block_Max` the moving average could still shrink it to 1. TADAH-PATCH 7 in `external/asa/asa.c` (`TADAH-PATCHES.md`). Opt-in: the default window (3) and the golden-neutrality gate are unchanged. The block-run banner prints `Gener_Mov_Avr`. Tests: `test_asa.cpp` (every block of a `Gener_Block = Gener_Block_Max = 4`, `Gener_Mov_Avr 0` run holds 4 states; the default window shrinks them).
 
 ### Changed
 - Framework version `1.5.1`, read from CORE's `blueprint/blueprint_tadah.toml` after the Tadah dependencies are fetched, so the module reports the right version in every layout (sibling checkout or FetchContent). A missing blueprint is now a configure error instead of a silent `0.0.0`.

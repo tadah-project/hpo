@@ -30,6 +30,9 @@ driver, RNG, and option handling (`src/algorithms_asa.cpp`).
 
 All hunks are fenced with `/* TADAH-PATCH begin */ ... /* TADAH-PATCH end */`
 (grep for `TADAH-PATCH`). The annealing algorithm itself is untouched.
+`asa.c`, like the other upstream files, keeps upstream's CRLF line endings:
+edit it without converting them, so that the diff of a patch shows only its
+hunks and `git blame` keeps crediting the rest to the vendoring.
 
 1. **Hook include + layout check** (top of file, after `#include "asa.h"`,
    under `#if ASA_PARALLEL`): includes `tadah_asa_hook.h` and
@@ -134,6 +137,20 @@ All hunks are fenced with `/* TADAH-PATCH begin */ ... /* TADAH-PATCH end */`
    The bounded calls of `cost_derivatives()` (reanneal tangents, exit
    curvature) need no guard: they end after a fixed number of calls.
 
+7. **`Gener_Mov_Avr 0` is accepted (upstream inconsistency)**: the README
+   documents `Gener_Mov_Avr 0` as "`Gener_Block` is not changed
+   thereafter" (`OPTIONS->Gener_Mov_Avr`, and the `ASA_PARALLEL`
+   section), and the periodic-test resizing (patch 5's section) already
+   runs only when `Gener_Mov_Avr > 0`, but `asa_test_asa_options` rejected
+   every value below 1. The patched check rejects only negative values,
+   and the moving-average buffer `parallel_gen_ratio_block` is allocated
+   with at least one element (`calloc(0, ...)` may return NULL, which
+   would read as `CALLOC_FAILED`); the buffer is not read at 0. With
+   `PARAM Gener_Mov_Avr 0` every generated block holds `Gener_Block`
+   states. Opt-in: the default window stays 3, and a run that does not set
+   it is unchanged (golden-gated). Both hunks are inside `#if
+   ASA_PARALLEL` (featured build only).
+
 ## Known upstream quirks the embedding must respect
 
 - `ASA_PRINT` must stay `1`: `asa_exit()` calls
@@ -158,11 +175,10 @@ All hunks are fenced with `/* TADAH-PATCH begin */ ... /* TADAH-PATCH end */`
 - `ASA_SAVE*` uses `popen("/bin/cp ...")` (under `SYSTEM_CALL`),
   `#include "asa_opt"` as C source, and persists the statics above —
   excluded; HPO runs are not resumable.
-- `Gener_Mov_Avr < 1` is rejected by `asa_test_asa_options`, although
-  the README documents `Gener_Mov_Avr 0` as freezing the block size; no
-  setting freezes it. `Gener_Block_Max` caps the resizing from above
-  only: with `Gener_Block_Max == Gener_Block` the moving average can
-  still shrink the block below `Gener_Block` (down to 1, patch 5).
+- `Gener_Block_Max` caps the block resizing from above only: with
+  `Gener_Block_Max == Gener_Block` the moving average can still shrink the
+  block below `Gener_Block` (down to 1, patch 5). `Gener_Mov_Avr 0`
+  switches the resizing off (patch 7).
 
 ## Gate-set change procedure
 
