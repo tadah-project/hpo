@@ -150,6 +150,7 @@ void HPOLog::reset_for_test()
     n_eval_.store(0, std::memory_order_relaxed);
     n_nan_ .store(0, std::memory_order_relaxed);
     n_nan_logged_.store(0, std::memory_order_relaxed);
+    n_unusable_.store(0, std::memory_order_relaxed);
     for (auto& b : n_fail_band_) b.store(0, std::memory_order_relaxed);
     cur_best_loss_ = std::numeric_limits<double>::max();
     cur_best_eval_ = 0;
@@ -170,7 +171,16 @@ void HPOLog::reset_for_test()
     pin_unit_   = 0;
     next_milestone_       = 100;
     last_milestone_evals_ = 0;
+    scope_rank_  = 0;
+    scope_world_ = 1;
     clear_eval_context();
+}
+
+void HPOLog::set_rank_scope(int rank, int world)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    scope_rank_  = rank;
+    scope_world_ = world;
 }
 
 void HPOLog::open(const std::string& path,
@@ -1071,10 +1081,11 @@ void HPOLog::record_bump_gate_reject()
     n_bump_gate_.fetch_add(1, std::memory_order_relaxed);
 }
 
-void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
+void HPOLog::record_eval(std::size_t eval_num, double wall_ms, EvalLoss loss)
 {
     n_eval_.fetch_add(1, std::memory_order_relaxed);
-    if (was_nan) n_nan_.fetch_add(1, std::memory_order_relaxed);
+    if (loss == EvalLoss::NanClamped) n_nan_.fetch_add(1, std::memory_order_relaxed);
+    if (loss != EvalLoss::Usable) n_unusable_.fetch_add(1, std::memory_order_relaxed);
 
     {
         std::lock_guard<std::mutex> lg(mtx_);
@@ -1663,15 +1674,50 @@ void HPOLog::finish(const std::string& status_str)
             if (bg > 0)
                 f_ << "    of which bump-support gate rejects: " << bg
                    << " (c + w/eta past RCUT, rejected before training)\n";
-            const double fpct = total > 0
-                ? 100.0 * static_cast<double>(ft) / static_cast<double>(total)
-                : 0.0;
-            if (fpct >= 50.0)
+        }
+    }
+
+    /* Unusable losses: every evaluation whose loss cannot become the
+     * incumbent -- NaN/Inf clamped, FAILSCORE (a skip cap, a failed script,
+     * an evaluation that threw) or a graded failure. The two counts above
+     * see only part of them, so the verdict reads this one: the journal
+     * used to follow "100.0% of evaluations produced a non-finite loss"
+     * with "[ok] Every evaluation produced a usable loss", which it printed
+     * whenever no failure was graded. */
+    {
+        const std::size_t nu = n_unusable_.load(std::memory_order_relaxed);
+        f_ << "  " << std::left << std::setw(KW) << "Unusable losses"
+           << ": " << nu;
+        if (total > 0)
+            f_ << "  (" << std::fixed << std::setprecision(1)
+               << 100.0 * static_cast<double>(nu) / static_cast<double>(total)
+               << "%)";
+        f_ << "\n";
+        /* A multi-rank run keeps one journal per rank, and these counts are
+         * this rank's: the verdict names the rank, since whether the run
+         * produced a usable loss is decided over every rank. */
+        const std::string on_rank = scope_world_ > 1
+            ? " on MPI rank " + std::to_string(scope_rank_) + " (of " +
+                  std::to_string(scope_world_) + ")"
+            : std::string();
+        if (total == 0) {
+            /* nothing to judge; the NaN/Inf line says so */
+        } else if (nu == 0) {
+            f_ << "  [ok] Every evaluation" << on_rank
+               << " produced a usable loss.\n";
+        } else if (nu == total) {
+            f_ << "  [!] No evaluation" << on_rank
+               << " produced a usable loss.\n";
+        } else if (2 * nu >= total) {
+            if (on_rank.empty())
                 f_ << "  [!] The majority of evaluations failed. The reported best\n"
                       "    may predate the onset -- check when the failures started\n"
                       "    before trusting it.\n";
-        } else if (total > 0) {
-            f_ << "  [ok] Every evaluation produced a usable loss.\n";
+            else
+                f_ << "  [!] The majority of evaluations" << on_rank
+                   << " failed.\n"
+                      "    The reported best may predate the onset -- check when\n"
+                      "    the failures started before trusting it.\n";
         }
     }
 

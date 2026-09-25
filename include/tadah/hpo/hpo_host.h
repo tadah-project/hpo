@@ -226,6 +226,16 @@ public:
      *  stopped; drive_run() does, however the run ends. */
     void flush_remaining() const;
 
+    /** Whether an evaluation of this run on this rank produced a usable
+     *  (feasible) loss. The first one always becomes the incumbent, so this
+     *  is whether this rank published a best potential since
+     *  prepare_best_publication(). drive_run() ends a run without one with
+     *  status 1. */
+    bool has_usable_loss() const
+    {
+        return g_best_iter_.load(std::memory_order_acquire) > 0;
+    }
+
     /* ---------- top-K tracking (used by StagedPolicy) ------------------ */
     /** Enable a buffer that records the top-K (lowest loss) (loss, params)
      *  pairs across operator() calls. Capacity = k; older worse-loss

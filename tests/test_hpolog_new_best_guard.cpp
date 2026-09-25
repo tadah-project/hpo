@@ -2,11 +2,13 @@
 
 #include <tadah/hpo/hpo_log.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 /* Bug 2 regression — HPOLog::log_new_best must reject calls whose loss is
  * not strictly better than cur_best_loss_. Without the guard, an upstream
@@ -72,8 +74,8 @@ TEST_CASE("HPOLog diagnostics state observations without inferring causes",
     const auto mixed_path = scratch_log_path();
     log.reset_for_test();
     log.open(mixed_path.string(), "test", "test_cwd", 0);
-    log.record_eval(1, 1.0, false);
-    log.record_eval(2, 1.0, true);
+    log.record_eval(1, 1.0, tadah::hpo::EvalLoss::Usable);
+    log.record_eval(2, 1.0, tadah::hpo::EvalLoss::NanClamped);
     log.log_nan_clamped(2, "", "");
     log.finish("MIXED");
     const std::string mixed = read_log(mixed_path);
@@ -87,6 +89,125 @@ TEST_CASE("HPOLog diagnostics state observations without inferring causes",
     std::filesystem::remove(mixed_path, mixed_ec);
 
     CHECK(tadah::hpo::nlopt_result_str(-1) == "FAILURE -- generic failure");
+}
+
+TEST_CASE("HPOLog diagnostics judge every unusable loss, not only NaN/Inf "
+          "clampings and graded failures", "[hpolog][diagnostics]")
+{
+    /* The verdict used to read the graded-failure count alone, so a run
+     * whose losses were all NaN/Inf clamped or FAILSCORE said "[ok] Every
+     * evaluation produced a usable loss". */
+    using tadah::hpo::EvalLoss;
+    auto& log = tadah::hpo::HPOLog::instance();
+    struct Case {
+        const char* what;
+        std::vector<EvalLoss> evals;
+        const char* count;     // the "Unusable losses" value
+        const char* verdict;   // expected line, or nullptr for none
+    };
+    const Case cases[] = {
+        {"all usable", {EvalLoss::Usable, EvalLoss::Usable},
+         "0  (0.0%)", "[ok] Every evaluation produced a usable loss."},
+        {"all NaN/Inf clamped", {EvalLoss::NanClamped, EvalLoss::NanClamped},
+         "2  (100.0%)", "[!] No evaluation produced a usable loss."},
+        {"all FAILSCORE", {EvalLoss::Failed, EvalLoss::Failed, EvalLoss::Failed},
+         "3  (100.0%)", "[!] No evaluation produced a usable loss."},
+        {"a majority failed",
+         {EvalLoss::Usable, EvalLoss::Failed, EvalLoss::NanClamped},
+         "2  (66.7%)", "[!] The majority of evaluations failed."},
+        {"a minority failed",
+         {EvalLoss::Usable, EvalLoss::Usable, EvalLoss::Failed},
+         "1  (33.3%)", nullptr},
+    };
+    for (const auto& c : cases) {
+        DYNAMIC_SECTION(c.what) {
+            const auto path = scratch_log_path();
+            log.reset_for_test();
+            log.open(path.string(), "test", "test_cwd", 0);
+            std::size_t n = 0;
+            for (const auto e : c.evals) log.record_eval(++n, 1.0, e);
+            CHECK(log.n_unusable() ==
+                  static_cast<std::size_t>(std::count_if(
+                      c.evals.begin(), c.evals.end(),
+                      [](EvalLoss e) { return e != EvalLoss::Usable; })));
+            log.finish("TEST_DONE");
+            const std::string text = read_log(path);
+            CHECK(text.find("Unusable losses         : " +
+                            std::string(c.count)) != std::string::npos);
+            for (const char* line :
+                 {"[ok] Every evaluation produced a usable loss.",
+                  "[!] No evaluation produced a usable loss.",
+                  "[!] The majority of evaluations failed."}) {
+                const bool expected =
+                    c.verdict && std::string(c.verdict) == line;
+                INFO(line);
+                CHECK((text.find(line) != std::string::npos) == expected);
+            }
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+        }
+    }
+}
+
+TEST_CASE("HPOLog diagnostics of a multi-rank run judge this rank's "
+          "evaluations and name the rank", "[hpolog][diagnostics]")
+{
+    /* Each rank keeps its own journal, which counts its own evaluations,
+     * while whether the run produced a usable loss is decided over every
+     * rank: a rank whose evaluations all failed ends as a completed run
+     * when another rank's did not. Its verdict must not read as the
+     * run's. */
+    using tadah::hpo::EvalLoss;
+    auto& log = tadah::hpo::HPOLog::instance();
+    struct Case {
+        const char* what;
+        std::vector<EvalLoss> evals;
+        const char* verdict;
+    };
+    const Case cases[] = {
+        {"all usable", {EvalLoss::Usable, EvalLoss::Usable},
+         "[ok] Every evaluation on MPI rank 1 (of 2) produced a usable loss."},
+        {"none usable", {EvalLoss::Failed, EvalLoss::NanClamped},
+         "[!] No evaluation on MPI rank 1 (of 2) produced a usable loss."},
+        {"a majority failed",
+         {EvalLoss::Usable, EvalLoss::Failed, EvalLoss::Failed},
+         "[!] The majority of evaluations on MPI rank 1 (of 2) failed."},
+    };
+    for (const auto& c : cases) {
+        DYNAMIC_SECTION(c.what) {
+            const auto path = scratch_log_path();
+            log.reset_for_test();
+            log.open(path.string(), "test", "test_cwd", 0);
+            log.set_rank_scope(1, 2);
+            std::size_t n = 0;
+            for (const auto e : c.evals) log.record_eval(++n, 1.0, e);
+            log.finish("TEST_DONE");
+            const std::string text = read_log(path);
+            CHECK(text.find(c.verdict) != std::string::npos);
+            for (const char* unscoped :
+                 {"[ok] Every evaluation produced a usable loss.",
+                  "[!] No evaluation produced a usable loss.",
+                  "[!] The majority of evaluations failed."}) {
+                INFO(unscoped);
+                CHECK(text.find(unscoped) == std::string::npos);
+            }
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+        }
+    }
+    /* A single-rank journal (the default, and what reset_for_test()
+     * restores) keeps the plain verdict. */
+    log.reset_for_test();
+    const auto path = scratch_log_path();
+    log.open(path.string(), "test", "test_cwd", 0);
+    log.record_eval(1, 1.0, EvalLoss::Failed);
+    log.finish("TEST_DONE");
+    const std::string text = read_log(path);
+    CHECK(text.find("[!] No evaluation produced a usable loss.") !=
+          std::string::npos);
+    CHECK(text.find("MPI rank") == std::string::npos);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
 }
 
 TEST_CASE("HPOLog::log_new_best rejects non-improving losses", "[hpolog][bug2]")

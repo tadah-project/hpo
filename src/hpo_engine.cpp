@@ -23,6 +23,7 @@ namespace engines {
 int HPOEngine::run(mlip::Task &task) {
 
   /* hpo_run()'s status is the process exit status: 0 for a normal end,
+   * 1 for a normal end in which no evaluation produced a usable loss,
    * 128 + signal after SIGINT/SIGTERM/SIGUSR2 (see run_driver.h). */
   int status = EXIT_SUCCESS;
   try {

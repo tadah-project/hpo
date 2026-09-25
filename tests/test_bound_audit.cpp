@@ -76,7 +76,7 @@ TEST_CASE("HPOLog prints the bound-occupancy tables",
     BoundOccupancy occ(space());
     occ.on_new_best(7, {5.99, 1.0});
     log.record_bound_occupancy(occ.marks(), 7, occ.edge());
-    log.record_eval(100, 1.0, false);          /* milestone 1 */
+    log.record_eval(100, 1.0, tadah::hpo::EvalLoss::Usable);          /* milestone 1 */
     std::string t = slurp(path);
     CHECK(t.find("sits within 2% of an OPTIM limit on 1 dim(s)") != std::string::npos);
     CHECK(t.find("RCUT2B") != std::string::npos);

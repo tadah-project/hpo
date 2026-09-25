@@ -1985,16 +1985,26 @@ double HPO_Host<P,R>::operator()(const P& p) const
     struct EvalCensus {
         std::size_t iter;
         std::chrono::high_resolution_clock::time_point t0;
-        bool  nan  = false;
-        bool  done = false;
+        /* An evaluation that leaves without saying otherwise produced no
+         * usable loss. */
+        EvalLoss loss = EvalLoss::Failed;
+        bool     done = false;
         ~EvalCensus() {
             if (done) return;
             const double ms = static_cast<double>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::high_resolution_clock::now() - t0).count());
-            HPOLog::instance().record_eval(iter, ms, nan);
+            HPOLog::instance().record_eval(iter, ms, loss);
         }
-    } _census{r.iter, t0, false, false};
+    } _census{r.iter, t0, EvalLoss::Failed, false};
+
+    /* The census kind of a completed evaluation's loss: only a usable
+     * (feasible) loss can become the incumbent. */
+    const auto loss_kind = [this](const Result& res) {
+        if (res.was_nan_clamped) return EvalLoss::NanClamped;
+        return loss_is_feasible(res.loss, trg_.FAIL_SCORE) ? EvalLoss::Usable
+                                                           : EvalLoss::Failed;
+    };
 
     /* Bug 5: wrap the entire eval pipeline in try/catch.
      *
@@ -2073,7 +2083,8 @@ double HPO_Host<P,R>::operator()(const P& p) const
                       train_stdb_, val_stdb_, param_labels_, report_,
                       cw_, prec_);
         auto& log = HPOLog::instance();
-        log.record_eval(save_iter, save_wall_ms, /*nan=*/false);
+        /* A gate reject is a failure (graded band D, or FAILSCORE). */
+        log.record_eval(save_iter, save_wall_ms, EvalLoss::Failed);
         _census.done = true;   /* counted here, with the measured wall */
         log.record_fail_band(save_fail_band);
         log.record_bump_gate_reject();
@@ -2351,6 +2362,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
     const double      save_wall_ms = static_cast<double>(r.wall_ms.count());
     const bool        save_best    = r.is_best;
     const bool        save_nan     = r.was_nan_clamped;
+    const EvalLoss    save_kind    = loss_kind(r);
     /* D4: the graded-failure band of this eval. Disjoint from save_nan --
      * a killed worker or a failed script yields a finite failscore, so it
      * never trips the NaN path. Worst band wins within the eval. */
@@ -2479,7 +2491,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
     {
     stage_watchdog::Scope<decltype(_stage_log)> _sg_journal(save_iter, "journal_log", _stage_log);
     auto& log = HPOLog::instance();
-    log.record_eval(save_iter, save_wall_ms, save_nan);
+    log.record_eval(save_iter, save_wall_ms, save_kind);
     _census.done = true;   /* counted here, with the exact measured wall */
     log.record_fail_band(save_fail_band);
     log.record_fanout(save_fo_busy,
@@ -2525,7 +2537,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
          * but by then per-eval logs are lost). */
         r.loss = trg_.FAIL_SCORE;
         r.was_nan_clamped = true;
-        _census.nan = true;      /* D3: this eval still counts, as a NaN */
+        _census.loss = EvalLoss::NanClamped;  /* D3: it still counts, as a NaN */
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
         try {
@@ -2547,6 +2559,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
          * We still need to submit so the writer's next_flush_ does not
          * stall on the iter slot consumed at ++g_iter_ -- but with the
          * real loss, not a synthetic FAIL_SCORE. */
+        _census.loss = loss_kind(r);   /* counted with its real loss too */
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
         /* Diagnostic at most once per stagnation event. Concurrent
@@ -2578,6 +2591,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
          * evaluation itself is nevertheless complete and consumed an ordered
          * iter slot; enqueue its real loss before rethrowing so final cleanup
          * does not discard every later result behind a permanent gap. */
+        _census.loss = loss_kind(r);
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
         try {
@@ -2602,7 +2616,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
          * cursor can advance past this iter. */
         r.loss = trg_.FAIL_SCORE;
         r.was_nan_clamped = true;
-        _census.nan = true;      /* D3: this eval still counts, as a NaN */
+        _census.loss = EvalLoss::NanClamped;  /* D3: it still counts, as a NaN */
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
         try {
@@ -2628,7 +2642,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
         /* Same path for non-std::exception throws. */
         r.loss = trg_.FAIL_SCORE;
         r.was_nan_clamped = true;
-        _census.nan = true;      /* D3: this eval still counts, as a NaN */
+        _census.loss = EvalLoss::NanClamped;  /* D3: it still counts, as a NaN */
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
         try {

@@ -114,7 +114,7 @@ TEST_CASE("HPOLog pinned-dim audit -- mark/unmark + milestone table",
     log.record_pin_state(3, 5, {{0, false, 0.0, 1e-3}});
     log.record_pin_state(7, 5, {{0, false, 1e-6, 1e-3}, {2, true, 0.0, 1e-3}});
 
-    log.record_eval(100, 1.0, false);          /* milestone 1 */
+    log.record_eval(100, 1.0, tadah::hpo::EvalLoss::Usable);          /* milestone 1 */
     std::string s1 = slurp(path);
     CHECK(s1.find("2 OPTIM dim(s) near a bound") != std::string::npos);
     CHECK(s1.find("WARNING") != std::string::npos);
@@ -133,7 +133,7 @@ TEST_CASE("HPOLog pinned-dim audit -- mark/unmark + milestone table",
     log.record_pin_state(3, 6, {});
     log.record_pin_state(7, 6, {{0, false, 2e-6, 1e-3}});
 
-    log.record_eval(200, 1.0, false);          /* milestone 2 */
+    log.record_eval(200, 1.0, tadah::hpo::EvalLoss::Usable);          /* milestone 2 */
     std::string s2 = slurp(path).substr(s1.size());
     CHECK(s2.find("1 OPTIM dim(s) near a bound") != std::string::npos);
     CHECK(s2.find("1/64") != std::string::npos);
@@ -142,7 +142,7 @@ TEST_CASE("HPOLog pinned-dim audit -- mark/unmark + milestone table",
 
     /* Epoch 7: everything released -- the table must stop printing. */
     log.record_pin_state(7, 7, {});
-    log.record_eval(300, 1.0, false);          /* milestone 3 */
+    log.record_eval(300, 1.0, tadah::hpo::EvalLoss::Usable);          /* milestone 3 */
     std::string s3 = slurp(path).substr(s1.size() + s2.size());
     CHECK(s3.find("SUMMARY") != std::string::npos);    /* milestone fired */
     CHECK(s3.find("OPTIM dim(s) pinned") == std::string::npos);

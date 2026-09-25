@@ -43,6 +43,15 @@ namespace tadah::mlip { struct LoadTransformReport; }
 
 namespace tadah::hpo {
 
+/* What one evaluation's loss was, for the journal's DIAGNOSTICS census.
+ * Only a usable loss can become the incumbent. */
+enum class EvalLoss {
+    Usable,      /* a usable (feasible) loss */
+    Failed,      /* FAILSCORE or a graded failure: finite, not usable */
+    NanClamped   /* NaN/Inf, or an evaluation that threw: recorded as
+                    FAILSCORE and counted as a NaN/Inf clamping */
+};
+
 /* One near-bound observation reported by an annealing driver: the
  * chain sits within one proposal step of an OPTIM bound (under CORANA
  * the step has additionally bottomed out at its floor, so no further
@@ -84,6 +93,15 @@ public:
               int pid);
 
     bool is_open() const { return f_.is_open(); }
+
+    /** The MPI rank whose journal this is, and the number of ranks of the
+     *  run. Each rank of a multi-rank run keeps its own journal, which
+     *  counts that rank's evaluations only; with `world` > 1 the
+     *  DIAGNOSTICS verdict on usable losses names the rank ("No evaluation
+     *  on MPI rank 1 (of 2) produced a usable loss."), since whether the
+     *  run as a whole produced one is decided over every rank (drive_run).
+     *  Default rank 0 of 1; hpo_run() sets it after open(). */
+    void set_rank_scope(int rank, int world);
 
     /* ------------------------------------------------------------------
      * Primitive writers (all thread-safe, append to file)
@@ -164,12 +182,14 @@ public:
      * Per-eval recording (called from worker threads, no file I/O here)
      * ------------------------------------------------------------------ */
 
-    /** Record timing and NaN flag for one completed evaluation.
+    /** Record timing and the kind of loss of one completed evaluation.
      *  @param eval_num   Global evaluation counter (1-based)
      *  @param wall_ms    Wall time for this evaluation in milliseconds
-     *  @param was_nan    True if NaN/Inf was detected and loss was clamped
+     *  @param loss       Usable, failed, or NaN/Inf clamped. Every kind but
+     *                    Usable counts as an unusable loss in DIAGNOSTICS;
+     *                    NanClamped also as a NaN/Inf clamping.
      */
-    void record_eval(std::size_t eval_num, double wall_ms, bool was_nan);
+    void record_eval(std::size_t eval_num, double wall_ms, EvalLoss loss);
 
     /** Record the graded-FAILSCORE band of one completed evaluation.
      *
@@ -352,6 +372,8 @@ public:
      * ------------------------------------------------------------------ */
     std::size_t n_eval()  const { return n_eval_.load(std::memory_order_relaxed); }
     std::size_t n_nan()   const { return n_nan_ .load(std::memory_order_relaxed); }
+    /** Evaluations whose loss was not usable (EvalLoss other than Usable). */
+    std::size_t n_unusable() const { return n_unusable_.load(std::memory_order_relaxed); }
     /** Current best total loss (max double if no BEST yet). */
     double      best_loss() const {
         std::lock_guard<std::mutex> lg(mtx_);
@@ -389,11 +411,19 @@ private:
     std::ofstream  f_;
     mutable std::mutex     mtx_;
     std::chrono::system_clock::time_point t_start_;
+    /* set_rank_scope(): this journal's MPI rank and the run's rank count. */
+    int scope_rank_  = 0;
+    int scope_world_ = 1;
 
     /* thread-safe counters */
     std::atomic<std::size_t> n_eval_     {0};
     std::atomic<std::size_t> n_nan_      {0};
     std::atomic<std::size_t> n_nan_logged_{0};  // how many NaN events written
+    /* Evaluations without a usable loss, whatever the reason: NaN/Inf
+     * clampings, FAILSCORE (a skip cap, a failed script, an evaluation that
+     * threw) and graded failures. The DIAGNOSTICS verdict reads this count,
+     * not the partial ones above and below. */
+    std::atomic<std::size_t> n_unusable_ {0};
     /* Graded-FAILSCORE band tallies, index 1..4 = A..D (0 unused). Cheap
      * relaxed counters; surfaced in the milestone SUMMARY and the RESULT
      * trailer so a failing run is visibly failing. */

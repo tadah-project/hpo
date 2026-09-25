@@ -5,6 +5,7 @@
 #include <tadah/hpo/run_driver.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/hpo_mpi.h>     // hpo_rank(), hpo_size(), hpo_rank_suffix()
 #include <tadah/hpo/script_executor.h>
 #include <tadah/hpo/pc_worker_pool.h>   // PC_ISOLATION worker-process pool
 #include <tadah/hpo/iter_health.h>
@@ -161,6 +162,7 @@ int hpo_run(core::Context& ctx)
          * runs sharing one working directory keep separate journals. */
         log.open("hpo_run.log" + hpo_rank_suffix(), version, cwd,
                  static_cast<int>(getpid()));
+        log.set_rank_scope(hpo_rank(), hpo_size());
     }
 
     /* A startup error -- the parser, validate_hpo_setup(), building the
