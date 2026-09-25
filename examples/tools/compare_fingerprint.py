@@ -4,6 +4,14 @@
 Reads the same files generate_fingerprint.py reads, then for each tracked
 quantity checks |actual - reference| <= max(abs_tol, rel_tol * |reference|).
 
+An optional "journal" list names lines hpo_run.log must contain, for what
+the losses and hyperparameters cannot show (e.g. example 25's graded
+failures): each entry is {"what": <text>, "regex": <Python regex, matched
+per line>} and may carry "skip_if_env": {<VAR>: <value>}, which leaves the
+check out -- with a NOTE line -- when the environment sets VAR to that
+value (e.g. TADAH_PC_ISOLATION=THREAD, which overrides the mode a check
+is about).
+
 Exit codes:
   0 -- all checks passed (within tolerance)
   1 -- at least one check failed
@@ -14,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -48,6 +57,22 @@ def parse_log(path: Path):
     return out
 
 
+def check_journal(fp: dict, log_text: str):
+    """Failures and notes of the fingerprint's "journal" checks."""
+    failures, notes = [], []
+    for chk in fp.get("journal", []):
+        forced = {var: val for var, val in (chk.get("skip_if_env") or {}).items()
+                  if os.environ.get(var) == val}
+        if forced:
+            notes.append(f"journal check not applied ({chk['what']}): "
+                         + ", ".join(f"{var}={val}" for var, val in forced.items()))
+            continue
+        if not re.search(chk["regex"], log_text, re.MULTILINE):
+            failures.append(f"journal: no hpo_run.log line matches "
+                            f"{chk['regex']!r} ({chk['what']})")
+    return failures, notes
+
+
 def within_tol(actual: float, ref: float, abs_tol: float, rel_tol: float) -> bool:
     return abs(actual - ref) <= max(abs_tol, rel_tol * abs(ref))
 
@@ -55,7 +80,7 @@ def within_tol(actual: float, ref: float, abs_tol: float, rel_tol: float) -> boo
 def compare(example_dir: Path):
     fp_path = example_dir / "reference_fingerprint.json"
     if not fp_path.exists():
-        return 2, [f"no fingerprint at {fp_path}"]
+        return 2, [f"no fingerprint at {fp_path}"], []
 
     fp = json.loads(fp_path.read_text())
 
@@ -63,7 +88,7 @@ def compare(example_dir: Path):
     loss_path = example_dir / "best_loss.tadah"
     params_path = example_dir / "best_params.tadah"
     if not (log_path.exists() and loss_path.exists() and params_path.exists()):
-        return 3, [f"run output missing in {example_dir} (run example first)"]
+        return 3, [f"run output missing in {example_dir} (run example first)"], []
 
     log = parse_log(log_path)
     loss_hdr, loss_row = parse_tabular_last_row(loss_path)
@@ -153,7 +178,11 @@ def compare(example_dir: Path):
             f"nan_clampings: actual={log['nan_clampings']} > max={nan_max}"
         )
 
-    return (0 if not failures else 1), failures
+    # journal lines
+    journal_failures, notes = check_journal(fp, log_path.read_text())
+    failures += journal_failures
+
+    return (0 if not failures else 1), failures, notes
 
 
 def main(argv):
@@ -162,7 +191,7 @@ def main(argv):
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args(argv)
 
-    code, msgs = compare(args.example_dir)
+    code, msgs, notes = compare(args.example_dir)
     name = args.example_dir.name
     if code == 0:
         if not args.quiet:
@@ -175,6 +204,8 @@ def main(argv):
         print(f"  SKIP  {name}: {msgs[0]}")
     elif code == 3:
         print(f"  MISSING {name}: {msgs[0]}")
+    for n in notes:
+        print(f"  NOTE  {name}: {n}")
     return code
 
 

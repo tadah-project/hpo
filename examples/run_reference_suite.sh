@@ -16,8 +16,10 @@
 #       2  at least one example skipped (missing fingerprint) -- non-fatal
 #          unless mixed with code 1
 #       3  one or more runs aborted before producing output (build broken)
-#   * Output: one line per example (PASS / FAIL / SKIP / MISSING) plus a
-#     final summary table.
+#   * Output: one line per example (PASS / FAIL / SKIP / MISSING), a
+#     NOTE line for each journal check a fingerprint leaves out under the
+#     current environment (e.g. 26's under TADAH_PC_ISOLATION=THREAD),
+#     plus a final summary table.
 #
 # ENVIRONMENT
 #   TADAH                 path to tadah CLI (defaults to `tadah` on PATH).

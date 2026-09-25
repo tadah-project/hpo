@@ -6,6 +6,10 @@ Reads:
   <example>/best_params.tadah -- last row gives final hyperparameter vector
   <example>/hpo_run.log       -- Best total loss, Total evaluations, Optimiser status
 
+The optional "journal" checks (lines hpo_run.log must contain; see
+compare_fingerprint.py) come from the example's entry in
+tolerance_overrides.json, so a regeneration keeps them.
+
 Tolerance policy (overridable per example via tolerance_overrides.json):
   best_loss:    abs 1e-6,  rel 1e-3
   components:   abs 1e-6,  rel 5e-3
@@ -140,7 +144,7 @@ def build_fingerprint(example_dir: Path, overrides: dict) -> dict:
         except (ValueError, IndexError):
             continue
 
-    return {
+    fp = {
         "schema_version": 1,
         "example": name,
         "description": overrides.get("description", ""),
@@ -169,6 +173,9 @@ def build_fingerprint(example_dir: Path, overrides: dict) -> dict:
             "still flagging a material regression."
         ),
     }
+    if overrides.get("journal"):
+        fp["journal"] = overrides["journal"]
+    return fp
 
 
 def main(argv):
