@@ -38,13 +38,16 @@ set_tests_properties(hpo_anneal_statistical PROPERTIES
     TIMEOUT 900)
 
 # Corana et al. (1987) protocol-replication oracle: hidden tag
-# [.corana1987], armed by the transcribed reference table
-# tests/data/corana1987_protocol.tsv (reports SKIPPED while empty).
+# [.corana1987] (one test case), armed by the transcribed reference table
+# tests/data/corana1987_protocol.tsv. While the table is empty the case
+# calls TADAH_SKIP and the entry is reported as Skipped (cmake-tools'
+# TADAH-SKIP marker; include(Catch) sets the regular expression).
 add_test(NAME hpo_corana1987_protocol
     COMMAND test_hpo "[.corana1987]" --warn NoTests)
 set_tests_properties(hpo_corana1987_protocol PROPERTIES
     LABELS "anneal;statistical"
-    TIMEOUT 900)
+    TIMEOUT 900
+    SKIP_REGULAR_EXPRESSION "${TADAH_TEST_SKIP_REGULAR_EXPRESSION}")
 
 # Real-signal termination tests (test_hpo_termination.cpp): each case raises
 # SIGINT/SIGTERM/SIGUSR2 against a live hpo_run(). CORE's stop flag can only
@@ -69,16 +72,16 @@ endforeach()
 # Registry drift gate: the checked-in anneal_keys_gen.h must match what the
 # generator produces from blueprint/anneal_keys.toml. Regenerate with
 #   python3 HPO/blueprint/gen_anneal_keys.py --header
-find_package(Python3 COMPONENTS Interpreter QUIET)
-if(Python3_Interpreter_FOUND)
-    add_test(NAME hpo_anneal_registry_sync
-        COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/../blueprint/gen_anneal_keys.py
-            --check)
-    set_tests_properties(hpo_anneal_registry_sync PROPERTIES
-        LABELS "anneal"
-        TIMEOUT 30)
-endif()
+# Python 3 is required to build the tests (as in the umbrella build, whose
+# tests need it too): without it the gate would silently not exist.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME hpo_anneal_registry_sync
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../blueprint/gen_anneal_keys.py
+        --check)
+set_tests_properties(hpo_anneal_registry_sync PROPERTIES
+    LABELS "anneal"
+    TIMEOUT 30)
 
 if(TADAH_HPO_MPI)
     add_executable(test_hpo_anneal_mpi mpi/test_anneal_mpi.cpp)
@@ -99,9 +102,11 @@ endif()
 
 # Integration matrix — opt-in via `ctest -L slow`. Requires a bundle
 # directory; the env var TADAH_HPO_INTEGRATION_BUNDLE selects which one.
-# Skipped (gracefully) when the env var is not set.
+# Without it the wrapper exits with 77, which CTest reports as Skipped.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/run_matrix_ctest.sh")
     add_test(NAME hpo_strategy_matrix
         COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/integration/run_matrix_ctest.sh)
-    set_tests_properties(hpo_strategy_matrix PROPERTIES LABELS "slow")
+    set_tests_properties(hpo_strategy_matrix PROPERTIES
+        LABELS "slow"
+        SKIP_RETURN_CODE 77)
 endif()

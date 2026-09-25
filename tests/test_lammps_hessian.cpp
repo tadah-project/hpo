@@ -6,11 +6,12 @@
 // zero modes, positive interior spectrum) and a self-consistency check
 // (eigenvector probe matches its eigenvalue under independent FD).
 //
-// Pot resolution follows the same convention as bench_pair_tadah:
+// Pot resolution follows the same convention as bench_pair_tadah
+// (bench_pot.h):
 //   1. TADAH_BENCH_POT env var.
-//   2. TADAH_BENCH_DEFAULT_POT compile-time macro.
-// Missing pot ⇒ test SUCCEEDs with WARN (CI without the fixture
-// shouldn't fail spuriously).
+//   2. TADAH_BENCH_DEFAULT_POT compile-time macro, when the file exists.
+// Missing pot ⇒ the test case reports itself as skipped (TADAH_SKIP). A pot
+// that is named but cannot be read, parsed or run is a failure.
 //
 // Tag scheme: every LAMMPS-using case carries `[.][!benchmark]` (hidden
 // by default), mirroring bench_pair_tadah. Reason: the test_hpo binary
@@ -29,9 +30,13 @@
 //   build_tadah/_deps/tadah.hpo-build/tests/test_hpo \
 //       "[lammps_hessian]" --benchmark-samples 1
 
+#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
+#include "bench_pot.h"
+
 #include <tadah/core/core_user_config_parser.h>
+#include <tadah/core/periodic_table.h>
 #include <tadah/hpo/lammps_hessian.h>
 #include <tadah/hpo/runners.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
@@ -51,25 +56,11 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace {
-
-std::string env_or(const char* name) {
-    const char* v = std::getenv(name);
-    return v ? std::string(v) : std::string();
-}
-
-std::string resolve_pot_path() {
-    std::string env = env_or("TADAH_BENCH_POT");
-    if (!env.empty()) return env;
-#ifdef TADAH_BENCH_DEFAULT_POT
-    return std::string(TADAH_BENCH_DEFAULT_POT);
-#else
-    return std::string();
-#endif
-}
 
 // 4-atom bcc Ta: 1×1×2 supercell (BCC unit has 2 atoms ⇒ 4 atoms total).
 // a0 is intentionally a few percent off the relaxed value so that the
@@ -99,33 +90,33 @@ std::vector<std::string> bcc_ta_4atom_script() {
     };
 }
 
+/* LAMMPS with pair_style tadah on the relaxed 4-atom bcc Ta cell. The
+ * potential was found (bench_pot.h), so a potential that does not parse, a
+ * LAMMPS instance that cannot be created or a script that fails is a
+ * failure: the constructor throws, and Catch reports the exception. */
 struct LammpsFixture {
     LammpsRunner            runner;
     LammpsRunner::LMPPtr    lmp;
     LAMMPS_NS::PairTadah*   pair = nullptr;
-    bool                    skipped = false;
 
-    LammpsFixture() {
-        const std::string pot_path = resolve_pot_path();
-        if (pot_path.empty()) { skipped = true; return; }
-        {
-            std::ifstream ifs(pot_path);
-            if (!ifs.good()) { skipped = true; return; }
-        }
-
-        tadah::core::Context pot_ctx;
-        try {
-            pot_ctx = tadah::core::CoreUserConfigParser().parse(pot_path);
-        } catch (...) { skipped = true; return; }
+    explicit LammpsFixture(const std::string& pot_path) {
+        tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
+        const tadah::core::Context pot_ctx =
+            tadah::core::CoreUserConfigParser().parse(pot_path);
 
         lmp = runner.create_instance(
             0, {"lmp", "-log", "none", "-screen", "none"});
-        if (!lmp) { skipped = true; return; }
-        if (!runner.run_script(lmp, bcc_ta_4atom_script(), pot_ctx)) {
-            skipped = true; return;
-        }
+        if (!lmp)
+            throw std::runtime_error(
+                "LammpsFixture: cannot create a LAMMPS instance");
+        if (!runner.run_script(lmp, bcc_ta_4atom_script(), pot_ctx))
+            throw std::runtime_error(
+                "LammpsFixture: the 4-atom bcc Ta script failed with the "
+                "potential " + pot_path);
         pair = dynamic_cast<LAMMPS_NS::PairTadah*>(lmp->force->pair);
-        if (!pair) skipped = true;
+        if (!pair)
+            throw std::runtime_error(
+                "LammpsFixture: the pair style is not pair_style tadah");
     }
 };
 
@@ -135,13 +126,9 @@ TEST_CASE("LammpsHessianAssembler — atom-only block is symmetric and "
           "has 3 near-zero acoustic modes (4-atom BCC Ta)",
           "[lammps_hessian][phase3][.][!benchmark]")
 {
-    LammpsFixture fx;
-    if (fx.skipped) {
-        WARN("test_lammps_hessian skipped: no pot. Set TADAH_BENCH_POT or "
-             "re-cmake with TADAH_PATH.");
-        SUCCEED("skipped (no pot)");
-        return;
-    }
+    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
+    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
+    LammpsFixture fx(pot.path);
 
     const int nlocal = fx.lmp->atom->nlocal;
     REQUIRE(nlocal == 4);
@@ -185,12 +172,9 @@ TEST_CASE("LammpsHessianAssembler — Hessian-vector probe matches force "
           "central diff along a non-trivial direction",
           "[lammps_hessian][phase3][.][!benchmark]")
 {
-    LammpsFixture fx;
-    if (fx.skipped) {
-        WARN("test_lammps_hessian skipped: no pot.");
-        SUCCEED("skipped (no pot)");
-        return;
-    }
+    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
+    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
+    LammpsFixture fx(pot.path);
     const int nlocal = fx.lmp->atom->nlocal;
     REQUIRE(nlocal == 4);
 
@@ -294,12 +278,9 @@ TEST_CASE("LammpsHessianAssembler — iso box DOF is positive and "
           "consistent with energy curvature",
           "[lammps_hessian][phase3][.][!benchmark]")
 {
-    LammpsFixture fx;
-    if (fx.skipped) {
-        WARN("test_lammps_hessian skipped: no pot.");
-        SUCCEED("skipped (no pot)");
-        return;
-    }
+    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
+    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
+    LammpsFixture fx(pot.path);
     const int nlocal = fx.lmp->atom->nlocal;
     REQUIRE(nlocal == 4);
 
@@ -331,12 +312,9 @@ TEST_CASE("LammpsHessianAssembler — box-box off-diagonals are populated "
           "for box_dofs=6 on a cubic crystal (Phase 3.7E)",
           "[lammps_hessian][phase3][.][!benchmark]")
 {
-    LammpsFixture fx;
-    if (fx.skipped) {
-        WARN("test_lammps_hessian skipped: no pot.");
-        SUCCEED("skipped (no pot)");
-        return;
-    }
+    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
+    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
+    LammpsFixture fx(pot.path);
     const int nlocal = fx.lmp->atom->nlocal;
     REQUIRE(nlocal == 4);
 
@@ -407,12 +385,9 @@ TEST_CASE("LammpsHessianAssembler — Tikhonov shifts diagonal by exactly "
           "the configured magnitude",
           "[lammps_hessian][phase3][.][!benchmark]")
 {
-    LammpsFixture fx;
-    if (fx.skipped) {
-        WARN("test_lammps_hessian skipped: no pot.");
-        SUCCEED("skipped (no pot)");
-        return;
-    }
+    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
+    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
+    LammpsFixture fx(pot.path);
     const int nlocal = fx.lmp->atom->nlocal;
     REQUIRE(nlocal == 4);
 
@@ -438,12 +413,9 @@ TEST_CASE("LammpsHessianAssembler — refreshes capture_adjoint_state "
           "snapshot at x* after the central-diff sweep destroys it",
           "[lammps_hessian][phase3][.][!benchmark]")
 {
-    LammpsFixture fx;
-    if (fx.skipped) {
-        WARN("test_lammps_hessian skipped: no pot.");
-        SUCCEED("skipped (no pot)");
-        return;
-    }
+    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
+    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
+    LammpsFixture fx(pot.path);
     auto* lt = fx.pair->lammps_tadah();
     REQUIRE(lt != nullptr);
 
@@ -521,13 +493,9 @@ TEST_CASE("LammpsHessianAssembler — vflag=1 overhead microbench "
           "(Phase 3.7E follow-up)",
           "[lammps_hessian_perf][lammps_hessian][phase3][.][!benchmark]")
 {
-    LammpsFixture fx;
-    if (fx.skipped) {
-        WARN("test_lammps_hessian vflag bench skipped: no pot. Set "
-             "TADAH_BENCH_POT or re-cmake with TADAH_PATH.");
-        SUCCEED("skipped (no pot)");
-        return;
-    }
+    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
+    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
+    LammpsFixture fx(pot.path);
 
     LAMMPS_NS::Pair* pair = fx.lmp->force->pair;
     LAMMPS_NS::Atom* atom = fx.lmp->atom;

@@ -18,10 +18,14 @@
 // cost. Run manually with:
 //   ./test_hpo "[phase3_pilot]" --benchmark-samples 1
 
+#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
+
+#include "bench_pot.h"
 
 #include <tadah/core/aeds_type.h>
 #include <tadah/core/core_user_config_parser.h>
+#include <tadah/core/periodic_table.h>
 #include <tadah/hpo/dloss_dtheta.h>
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/runners.h>
@@ -45,23 +49,6 @@
 #include <vector>
 
 namespace {
-
-std::string env_or(const char* name)
-{
-    const char* v = std::getenv(name);
-    return v ? std::string(v) : std::string();
-}
-
-std::string resolve_pot_path()
-{
-    const std::string env = env_or("TADAH_BENCH_POT");
-    if (!env.empty()) return env;
-#ifdef TADAH_BENCH_DEFAULT_POT
-    return std::string(TADAH_BENCH_DEFAULT_POT);
-#else
-    return std::string();
-#endif
-}
 
 /* Phase 3.7C BCC iso script: lattice constant observable. Same shape
  * as the pilot script but exposes `var_lx = lx` (and a redundant
@@ -231,21 +218,10 @@ TEST_CASE("phase3_pilot — chain rule on cohesive E per atom matches "
           "the closed-form (Σ aeds) / N for L2 loss",
           "[phase3_pilot][phase3][.][!benchmark]")
 {
-    const std::string pot_path = resolve_pot_path();
-    if (pot_path.empty()) {
-        WARN("phase3_pilot skipped: no pot. Set TADAH_BENCH_POT or "
-             "re-cmake with TADAH_PATH.");
-        SUCCEED("skipped (no pot)");
-        return;
-    }
-    {
-        std::ifstream ifs(pot_path);
-        if (!ifs.good()) {
-            WARN("phase3_pilot skipped: pot unreadable.");
-            SUCCEED("skipped (pot unreadable)");
-            return;
-        }
-    }
+    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
+    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
+    const std::string& pot_path = pot.path;
+    tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
 
     tadah::core::Context pot_ctx;
     REQUIRE_NOTHROW(pot_ctx = tadah::core::CoreUserConfigParser().parse(pot_path));
@@ -346,12 +322,10 @@ TEST_CASE("phase3_pilot — pair_tadah dvirial_dW matches FD of Σ aed under "
           "iso strain to 1e-5 relative",
           "[phase3_pilot][phase3][.][!benchmark]")
 {
-    const std::string pot_path = resolve_pot_path();
-    if (pot_path.empty()) { SUCCEED("skipped (no pot)"); return; }
-    {
-        std::ifstream ifs(pot_path);
-        if (!ifs.good()) { SUCCEED("skipped"); return; }
-    }
+    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
+    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
+    const std::string& pot_path = pot.path;
+    tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
     tadah::core::Context pot_ctx;
     REQUIRE_NOTHROW(pot_ctx = tadah::core::CoreUserConfigParser().parse(pot_path));
 
@@ -511,12 +485,10 @@ TEST_CASE("phase3_pilot — pair_tadah Voigt-6 dvirial_dW matches FD of "
           "Σ aed under each Voigt strain to 1e-4 relative (Phase 3.7D)",
           "[phase3_pilot][phase3][.][!benchmark]")
 {
-    const std::string pot_path = resolve_pot_path();
-    if (pot_path.empty()) { SUCCEED("skipped (no pot)"); return; }
-    {
-        std::ifstream ifs(pot_path);
-        if (!ifs.good()) { SUCCEED("skipped"); return; }
-    }
+    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
+    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
+    const std::string& pot_path = pot.path;
+    tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
     tadah::core::Context pot_ctx;
     REQUIRE_NOTHROW(pot_ctx = tadah::core::CoreUserConfigParser().parse(pot_path));
 
@@ -709,12 +681,10 @@ TEST_CASE("phase3_pilot — adjoint snapshot is captured at the post-"
           "central-diff sweep",
           "[phase3_pilot][phase3][.][!benchmark]")
 {
-    const std::string pot_path = resolve_pot_path();
-    if (pot_path.empty()) { SUCCEED("skipped (no pot)"); return; }
-    {
-        std::ifstream ifs(pot_path);
-        if (!ifs.good()) { SUCCEED("skipped"); return; }
-    }
+    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
+    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
+    const std::string& pot_path = pot.path;
+    tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
     tadah::core::Context pot_ctx;
     REQUIRE_NOTHROW(pot_ctx = tadah::core::CoreUserConfigParser().parse(pot_path));
 
@@ -769,12 +739,10 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW matches FD over W[c] "
           "to 1e-4 relative (Phase 3.7C)",
           "[phase3_pilot][phase3][.][!benchmark]")
 {
-    const std::string pot_path = resolve_pot_path();
-    if (pot_path.empty()) { SUCCEED("skipped (no pot)"); return; }
-    {
-        std::ifstream ifs(pot_path);
-        if (!ifs.good()) { SUCCEED("skipped"); return; }
-    }
+    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
+    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
+    const std::string& pot_path = pot.path;
+    tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
     tadah::core::Context pot_ctx_base;
     REQUIRE_NOTHROW(pot_ctx_base =
                        tadah::core::CoreUserConfigParser().parse(pot_path));
@@ -949,12 +917,10 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW via Voigt-6 chain "
           "matches FD over W[c] to 1e-4 relative (Phase 3.7E)",
           "[phase3_pilot][phase3][.][!benchmark]")
 {
-    const std::string pot_path = resolve_pot_path();
-    if (pot_path.empty()) { SUCCEED("skipped (no pot)"); return; }
-    {
-        std::ifstream ifs(pot_path);
-        if (!ifs.good()) { SUCCEED("skipped"); return; }
-    }
+    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
+    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
+    const std::string& pot_path = pot.path;
+    tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
     tadah::core::Context pot_ctx_base;
     REQUIRE_NOTHROW(pot_ctx_base =
                        tadah::core::CoreUserConfigParser().parse(pot_path));
@@ -1123,21 +1089,10 @@ TEST_CASE("phase3_orchestrator — SimsGradProvider lambda body matches "
           "the closed-form on the pilot script (helpers + populate + chain)",
           "[phase3_orchestrator][phase3][.][!benchmark]")
 {
-    const std::string pot_path = resolve_pot_path();
-    if (pot_path.empty()) {
-        WARN("phase3_orchestrator skipped: no pot. Set TADAH_BENCH_POT or "
-             "re-cmake with TADAH_PATH.");
-        SUCCEED("skipped (no pot)");
-        return;
-    }
-    {
-        std::ifstream ifs(pot_path);
-        if (!ifs.good()) {
-            WARN("phase3_orchestrator skipped: pot unreadable.");
-            SUCCEED("skipped (pot unreadable)");
-            return;
-        }
-    }
+    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
+    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
+    const std::string& pot_path = pot.path;
+    tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
 
     tadah::core::Context pot_ctx;
     REQUIRE_NOTHROW(pot_ctx = tadah::core::CoreUserConfigParser().parse(pot_path));
@@ -1250,20 +1205,10 @@ TEST_CASE("phase3_orchestrator — hot-var script analytical path: "
           "the closed-form (Phase 3.7B-warmstart)",
           "[phase3_orchestrator][phase3][.][!benchmark]")
 {
-    const std::string pot_path = resolve_pot_path();
-    if (pot_path.empty()) {
-        WARN("phase3_orchestrator (warmstart) skipped: no pot.");
-        SUCCEED("skipped (no pot)");
-        return;
-    }
-    {
-        std::ifstream ifs(pot_path);
-        if (!ifs.good()) {
-            WARN("phase3_orchestrator (warmstart) skipped: pot unreadable.");
-            SUCCEED("skipped (pot unreadable)");
-            return;
-        }
-    }
+    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
+    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
+    const std::string& pot_path = pot.path;
+    tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
     tadah::core::Context pot_ctx;
     REQUIRE_NOTHROW(pot_ctx = tadah::core::CoreUserConfigParser().parse(pot_path));
 

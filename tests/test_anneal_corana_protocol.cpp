@@ -11,7 +11,8 @@
  * tests/data/corana1987_protocol.tsv (provenance notes there); they are
  * deliberately not hard-coded so that nothing in this file can drift
  * from the primary source.  While the table has no data rows the test
- * reports itself as SKIPPED.
+ * reports itself as skipped (TADAH_SKIP: its CTest entry,
+ * hpo_corana1987_protocol, is reported as Skipped).
  *
  * The multiminima function q_n itself is the shared, transcription-
  * verified definition anneal_functions::corana1987_q (see the notes in
@@ -31,6 +32,7 @@
  *                       ~1e-6-scale steps the final refinement needs.
  */
 
+#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
 #include "anneal_test_functions.h"
@@ -164,11 +166,9 @@ TEST_CASE("Corana 1987 protocol replication against the paper's Table II",
 {
     const auto rows = load_rows();
     if (rows.empty()) {
-        WARN("SKIPPED: tests/data/corana1987_protocol.tsv has no data "
-             "rows yet. Transcribe the paper's tables (instructions in "
-             "that file) to arm this oracle.");
-        SUCCEED();
-        return;
+        TADAH_SKIP("tests/data/corana1987_protocol.tsv has no data rows "
+                   "yet. Transcribe the paper's tables (instructions in "
+                   "that file) to arm this oracle.");
     }
 
     /* The paper ran each starting point once; two seeds per row double

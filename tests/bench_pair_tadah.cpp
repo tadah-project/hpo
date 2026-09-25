@@ -14,13 +14,13 @@
 // default console reporter prints the bench summary inline; parse from
 // stdout for CI gating, or use --reporter xml --out bench.xml.
 //
-// Pot resolution (in order):
+// Pot resolution (bench_pot.h, in order):
 //   1. TADAH_BENCH_POT env var (run-time override).
 //   2. TADAH_BENCH_DEFAULT_POT compile-time macro (set in HPO/tests/
-//      CMakeLists.txt, points at $TADAH_PATH/HPO_test/pot.tadah).
-// If neither is set or the file is unreadable the test SUCCEEDs with a
-// WARN explaining the miss — CI builds without the fixture do not fail
-// spuriously.
+//      CMakeLists.txt, points at $TADAH_PATH/HPO_test/pot.tadah), when the
+//      file exists.
+// Without either the test case reports itself as skipped (TADAH_SKIP). A
+// pot that is named but cannot be read, parsed or run is a failure.
 //
 // Cell resolution (in order):
 //   1. TADAH_BENCH_CELL_DATA env var: path to a LAMMPS read_data file.
@@ -29,9 +29,13 @@
 //      default pot (RCUTMB = 6.0 Å), so neighbour lists are
 //      non-degenerate and the timing reflects realistic pair counts.
 
+#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
+#include "bench_pot.h"
+
 #include <tadah/core/core_user_config_parser.h>
+#include <tadah/core/periodic_table.h>
 #include <tadah/hpo/runners.h>
 
 #include <force.h>
@@ -47,16 +51,6 @@ namespace {
 std::string env_or(const char* name) {
     const char* v = std::getenv(name);
     return v ? std::string(v) : std::string();
-}
-
-std::string resolve_pot_path() {
-    std::string env = env_or("TADAH_BENCH_POT");
-    if (!env.empty()) return env;
-#ifdef TADAH_BENCH_DEFAULT_POT
-    return std::string(TADAH_BENCH_DEFAULT_POT);
-#else
-    return std::string();
-#endif
 }
 
 // 256-atom bcc Ta cell at a₀ ≈ 3.301 Å. 4×4×8 supercell — every box
@@ -104,22 +98,10 @@ std::vector<std::string> data_file_script(const std::string& cell_path) {
 TEST_CASE("pair_tadah microbench gate (256-atom bcc Ta)",
           "[bench][pair_tadah][.][!benchmark]")
 {
-    const std::string pot_path = resolve_pot_path();
-    if (pot_path.empty()) {
-        WARN("pair_tadah microbench skipped: no pot path. Set TADAH_BENCH_POT "
-             "or re-cmake with TADAH_PATH so TADAH_BENCH_DEFAULT_POT resolves.");
-        SUCCEED("skipped (no pot)");
-        return;
-    }
-    {
-        std::ifstream ifs(pot_path);
-        if (!ifs.good()) {
-            WARN("pair_tadah microbench skipped: pot path '" + pot_path
-                 + "' not readable.");
-            SUCCEED("skipped (pot unreadable)");
-            return;
-        }
-    }
+    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
+    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
+    const std::string& pot_path = pot.path;
+    tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
 
     tadah::core::Context pot_ctx;
     REQUIRE_NOTHROW(pot_ctx =
