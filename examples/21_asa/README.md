@@ -32,10 +32,13 @@ What this shows:
   `Limit_*`, `Accepted_To_Generated_Ratio`, `Cost_Precision` x
   `Maximum_Cost_Repeat` (plateau) and temperature-underflow exits.
   `FTOL_REL`/`FTOL_ABS` are rejected with a pointer to `Cost_Precision`.
-- Parallelism: `PARAM Gener_Block N` (+ `Gener_Block_Max`) evaluates
-  each generated block of N states concurrently on the THREADS-wide
-  pool; results are THREADS-invariant, and `Gener_Block 1` (default)
-  reproduces canonical serial ASA exactly. Block mode changes the
+- Parallelism: `PARAM Gener_Block N` (+ `Gener_Block_Max`, which
+  defaults to N) evaluates each generated block of states concurrently
+  on `min(THREADS, Gener_Block_Max)` workers. The block starts at N
+  states; ASA's periodic tests then resize it to between 1 and
+  `Gener_Block_Max`, so fewer workers may be busy. Results are
+  THREADS-invariant, and `Gener_Block 1` (default, with its default cap
+  of 1) reproduces canonical serial ASA exactly. Block mode changes the
   sampled sequence vs serial ASA (upstream-documented caveat).
 - ASA's own journal goes to `asa_out` next to `hpo_run.log`.
 - Single-instance semantics: one `asa()` run per process at a time

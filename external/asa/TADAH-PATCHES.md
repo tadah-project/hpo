@@ -61,7 +61,8 @@ All hunks are fenced with `/* TADAH-PATCH begin */ ... /* TADAH-PATCH end */`
    condition also stops when the limit is exceeded (the existing check
    right after the loop then raises `TOO_MANY_INVALID_STATES`) or when
    `Immediate_Exit` is pending (so a stop request cannot be starved by
-   `Limit_Invalid_Generated_States = -1`).
+   `Limit_Invalid_Generated_States = -1` in the main loop; patch 6 does
+   the same for the sampling loops outside it).
 
 4. **P_TEMP_TOO_SMALL dimension mirror**: upstream records the index of
    the dimension whose temperature underflowed only in an internal
@@ -70,6 +71,68 @@ All hunks are fenced with `/* TADAH-PATCH begin */ ... /* TADAH-PATCH end */`
    `tadah_asa_exit_index` (declared in `tadah_asa_hook.h`) at the exit
    site so the driver can name the dimension in the stop-reason line.
    A plain store; no trajectory effect (golden-gated).
+
+5. **Adaptive block size floor (upstream bug fix)**: the `ASA_PARALLEL`
+   periodic test (the `Acceptance_Frequency_Modulus` /
+   `Generated_Frequency_Modulus` / `Accepted_To_Generated_Ratio`
+   section) resizes `OPTIONS->Gener_Block` to the moving average, over
+   the last `Gener_Mov_Avr` tests, of `*recent_number_generated`,
+   truncated to an integer and capped at `Gener_Block_Max`.
+   `*recent_number_generated` is reset to 0 whenever a new best is
+   accepted, and at a periodic test whose accepted-to-generated ratio is
+   below `Accepted_To_Generated_Ratio` (after the resize), so a test that
+   follows a new best adds a 0 and the average
+   can truncate to 0 -- `{1, 1, 0} / 3` at the first test of a run at the
+   default options (6 of 30 seeds on the HPO termination-test fixture;
+   the HPO examples' data with `OPTIM RCUT2B (1)` and `SGRIDMB (1)`,
+   `SEED 1`). With `Gener_Block` 0 the block-generation loop generates
+   and evaluates nothing, and its exit conditions cannot change without
+   an evaluation: serial `asa()` spun for ever without calling the cost
+   function, so no `MAXEVAL`, `MAXTIME` or signal stop could end it; with
+   the TADAH hook installed the hook was called with empty blocks, and
+   only its `MAXTIME` check could. The patch keeps the resized
+   block at 1 or more (upstream's own `asa_test_asa_options` rejects
+   `Gener_Block < 1`). Only runs that would have spun change; a run at
+   `Gener_Block = Gener_Block_Max = 1` now stays canonical serial ASA
+   throughout (golden-gated on a cost whose every state is a new best).
+   The patch does not change what the resizing averages. The README
+   (section `ASA_PARALLEL`) describes the average as one over "the
+   previous numbers of generated states required to find a new best
+   accepted state", but the code samples the running count at each
+   periodic test, which restarts at 0 at every new best: a test soon
+   after a new best feeds a small count, so the block leans towards 1
+   and fewer than `min(THREADS, Gener_Block_Max)` workers may be busy
+   (in a standalone sweep, 63 of 300 `Gener_Block = Gener_Block_Max = 4`
+   runs ended with blocks of 1 to 3 states, most of them on an objective
+   that kept improving or with a periodic test every 1 or 7
+   acceptances). Recording the count at each new best instead would
+   change the trajectory of every block run; it is left as upstream
+   wrote it.
+
+6. **A pending stop ends the sampling loops (upstream limitation)**:
+   outside its main loop `asa()` samples states in three retry loops
+   that draw until a state is valid, bounded only by
+   `Limit_Invalid_Generated_States`: the `Number_Cost_Samples` states of
+   the initial cost temperature, a random valid start with
+   `User_Initial_Parameters = FALSE`, and the `|Reanneal_Cost|` states
+   of the cost-temperature resampling at a periodic test
+   (`|Reanneal_Cost| > 1`). The README says `Immediate_Exit` is ignored
+   while the cost function is called to calculate derivatives or the
+   cost temperature, and the resampling restores the value
+   `Immediate_Exit` had before it. Once the TADAH driver has flagged a
+   stop (`MAXEVAL`, `MAXTIME`, `STOPVAL`, a signal, an evaluation's
+   exception), every callback returns an invalid state without
+   evaluating, so the loop ran on for the whole limit (1000 no-op
+   callbacks by default, then `TOO_MANY_INVALID_STATES`), and with
+   `Limit_Invalid_Generated_States = -1` for ever, at full CPU and deaf
+   to further signals. After upstream's own limit check in each of the
+   three loops, the patch exits with `IMMEDIATE_EXIT` when
+   `Immediate_Exit` is set, skipping the resampling's restore. Guarded
+   `#if ASA_PARALLEL` (featured build only, as patch 4). Only a run with
+   a stop already pending changes, and it evaluates nothing more either
+   way: it ends at the stop with `IMMEDIATE_EXIT`, as in the main loop.
+   The bounded calls of `cost_derivatives()` (reanneal tangents, exit
+   curvature) need no guard: they end after a fixed number of calls.
 
 ## Known upstream quirks the embedding must respect
 
@@ -95,8 +158,11 @@ All hunks are fenced with `/* TADAH-PATCH begin */ ... /* TADAH-PATCH end */`
 - `ASA_SAVE*` uses `popen("/bin/cp ...")` (under `SYSTEM_CALL`),
   `#include "asa_opt"` as C source, and persists the statics above —
   excluded; HPO runs are not resumable.
-- `Gener_Mov_Avr < 1` is rejected by `asa_test_asa_options`; a frozen
-  block size is expressed as `Gener_Block_Max == Gener_Block`.
+- `Gener_Mov_Avr < 1` is rejected by `asa_test_asa_options`, although
+  the README documents `Gener_Mov_Avr 0` as freezing the block size; no
+  setting freezes it. `Gener_Block_Max` caps the resizing from above
+  only: with `Gener_Block_Max == Gener_Block` the moving average can
+  still shrink the block below `Gener_Block` (down to 1, patch 5).
 
 ## Gate-set change procedure
 
