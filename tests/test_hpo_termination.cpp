@@ -587,6 +587,72 @@ struct HostFixture {
  * Stop criteria: an ordinary end leaves the same invariants.
  * ==================================================================== */
 
+/* PROCESS is the serial build's default PC_ISOLATION. With no PC_LAMMPS
+ * line there is nothing to isolate, and the journal said PROCESS was
+ * "requested" whether or not the configuration (or TADAH_PC_ISOLATION)
+ * asked for it. */
+TEST_CASE("Journal: without PC_LAMMPS lines the PC_ISOLATION line says "
+          "whether PROCESS was requested or is the default",
+          "[HPO][pc_isolation][journal]")
+{
+    /* The environment override counts as a request; this case controls
+     * it. */
+    struct NoIsolationEnv {
+        std::optional<std::string> saved;
+        NoIsolationEnv()
+        {
+            if (const char* e = std::getenv("TADAH_PC_ISOLATION"))
+                saved = e;
+            ::unsetenv("TADAH_PC_ISOLATION");
+        }
+        ~NoIsolationEnv()
+        {
+            /* Leave the variable as the case found it: a later case in
+             * this process must not see the PROCESS a section set. */
+            if (saved) ::setenv("TADAH_PC_ISOLATION", saved->c_str(), 1);
+            else       ::unsetenv("TADAH_PC_ISOLATION");
+        }
+    } no_env;
+    const std::string optimizer = plain_block(
+        "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n    MAXEVAL 1\n"
+        "    SEED 1\n");
+    const auto isolation_line = [](const std::string& journal) {
+        std::istringstream in(journal);
+        std::string found;
+        for (std::string l; std::getline(in, l);)
+            if (l.find("PC_ISOLATION:") != std::string::npos) {
+                REQUIRE(found.empty());
+                found = l;
+            }
+        return found;
+    };
+
+    SECTION("PROCESS by default") {
+        TaRun run(optimizer);
+        REQUIRE(tadah::hpo::hpo_run(run.ctx) == 0);
+        const std::string line = isolation_line(read_file("hpo_run.log"));
+        CHECK_THAT(line, Catch::EndsWith(
+            "PC_ISOLATION: PROCESS (default) -- no PC_LAMMPS sims are "
+            "configured, nothing to isolate"));
+        CHECK(line.find("requested") == std::string::npos);
+    }
+    SECTION("PROCESS written in the configuration") {
+        TaRun run(optimizer + "PC_ISOLATION PROCESS\n");
+        REQUIRE(tadah::hpo::hpo_run(run.ctx) == 0);
+        CHECK_THAT(isolation_line(read_file("hpo_run.log")), Catch::EndsWith(
+            "PC_ISOLATION: PROCESS requested but no PC_LAMMPS sims are "
+            "configured -- nothing to isolate"));
+    }
+    SECTION("PROCESS set by TADAH_PC_ISOLATION") {
+        ::setenv("TADAH_PC_ISOLATION", "PROCESS", 1);
+        TaRun run(optimizer);
+        REQUIRE(tadah::hpo::hpo_run(run.ctx) == 0);
+        CHECK_THAT(isolation_line(read_file("hpo_run.log")), Catch::EndsWith(
+            "PC_ISOLATION: PROCESS requested but no PC_LAMMPS sims are "
+            "configured -- nothing to isolate"));
+    }
+}
+
 TEST_CASE("Termination: DLIB BFGS MAXEVAL ends with best_pot.tadah = the "
           "best loss.tadah row", "[HPO][termination][stop_criteria]")
 {
