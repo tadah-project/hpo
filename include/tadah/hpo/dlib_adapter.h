@@ -8,12 +8,16 @@
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/run_stop.h>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <limits>
+#include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -116,6 +120,133 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
         "DLIB:BFGS accepts either FTOL_ABS or PARAM tol_gradinf, but not both");
 }
 
+/* The value DLIB:GFS is given for an evaluation's loss (run_dlib_global).
+ *
+ * find_min_global maximises the negated loss, and the trust-region step of
+ * its search (dlib::qopt_impl::pick_next_sample_using_trust_region) takes as
+ * best sample the first one whose negated value exceeds -1e300. A failed
+ * evaluation reports FAILSCORE, by default the largest double: once the
+ * dims + 2 samples dlib had when it first took that step all sat at or above
+ * 1e300 it found no best sample and, its assertions compiled out, indexed an
+ * empty vector (SIGSEGV) -- whether or not later evaluations would have
+ * produced usable losses. Values that large also overflow the squares of
+ * dlib's upper-bound model, which normalises the samples by their standard
+ * deviation. So dlib is given a finite stand-in for a failed evaluation;
+ * loss.tadah, the journal and the incumbent keep the loss the evaluation
+ * reported.
+ *
+ * A failed evaluation is one without a usable loss (loss_is_feasible):
+ * non-finite, FAILSCORE, or a graded failure in [0.999 FS, FS). Its grade
+ * g in [0, 1] places it among the failures -- (loss - 0.999 FS) /
+ * (0.001 FS) for a graded failure, 1 for any other:
+ *
+ *   once usable losses exist, with W the worst and B the best so far:
+ *     W + m (1 + g),  m = max(W - B, |W|), or 1 when both are 0
+ *   -- above every usable loss seen, by one to two times the larger of their
+ *   spread and magnitude: a step of the size of the landscape dlib has seen,
+ *   not a cliff that dwarfs it;
+ *
+ *   before any usable loss:  K (0.999 + 0.001 g),  K = min(FS, kCeiling)
+ *   (kCeiling when FS is not positive) -- a positive FAILSCORE up to
+ *   kCeiling gives exactly the loss the evaluation reported, the default
+ *   largest double gives kCeiling.
+ *
+ * A stand-in is fixed when dlib is given it and never revised, and "so
+ * far" is this object's: one per DLIB:GFS search (run_dlib_global), so a
+ * RESTART round starts afresh with its fresh dlib model. Graded failures
+ * therefore keep their order (FAILSCORE_GRADING's way out of a failing
+ * region), below the ungraded ones, only among the failures handed over
+ * in the same state: all before the first usable loss, or all while the
+ * same W and B hold. Across states the order is not kept: a failure
+ * before the first usable loss keeps its value near K, far above the W +
+ * 2m of a later ungraded failure, and an ungraded failure handed over
+ * while W is small can rank below a graded one handed over after W has
+ * grown.
+ *
+ * No value handed to dlib exceeds kCeiling in magnitude: a usable loss
+ * beyond it is clamped as well, and a stand-in capped at it, so a stand-in
+ * can rank below a usable loss only when that loss is above 1e100 itself.
+ * kCeiling = 1e100 lies 200 orders of magnitude below dlib's 1e300
+ * sentinel; its square, and a sum of such squares over any feasible number
+ * of evaluations, stays finite in the standard deviation dlib normalises by,
+ * and so do its products with the quadratic model's interpolation
+ * coefficients, which grow like the inverse square of the trust-region
+ * radius, for any radius above 1e-100. Yet it lies far above any loss a
+ * potential produces.
+ *
+ * Thread-safe: find_min_global evaluates on a pool. */
+class GfsLossForDlib {
+public:
+  static constexpr double kCeiling = 1e100;
+
+  explicit GfsLossForDlib(std::optional<double> failscore)
+      : failscore_(failscore)
+  {}
+
+  /* Is `loss` a failed evaluation's, one dlib is given a stand-in for? */
+  bool failed(double loss) const
+  {
+    return failscore_ ? !loss_is_feasible(loss, *failscore_)
+                      : !std::isfinite(loss);
+  }
+
+  /* The value dlib is given for an evaluation that reported `loss`; a
+   * usable loss also joins the worst and best usable losses so far. */
+  double operator()(double loss)
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    if (failed(loss))
+      return stand_in_locked(grade(loss));
+    const double v = std::clamp(loss, -kCeiling, kCeiling);
+    if (!have_usable_) {
+      best_ = worst_ = v;
+      have_usable_ = true;
+    } else {
+      best_  = std::min(best_, v);
+      worst_ = std::max(worst_, v);
+    }
+    return v;
+  }
+
+  /* The value dlib is given for an evaluation that did not run (queued
+   * after a stop): an ungraded failure's. */
+  double not_evaluated() const
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    return stand_in_locked(1.0);
+  }
+
+private:
+  double grade(double loss) const
+  {
+    if (!failscore_ || !std::isfinite(loss)) return 1.0;
+    const double fs = *failscore_;
+    if (!(fs > 0.0) || !std::isfinite(fs)) return 1.0;
+    const double floor = kFailBandFloor * fs;
+    if (!(loss >= floor && loss < fs)) return 1.0;
+    return std::clamp((loss - floor) / (fs - floor), 0.0, 1.0);
+  }
+
+  double stand_in_locked(double g) const
+  {
+    if (have_usable_) {
+      double m = std::max(worst_ - best_, std::fabs(worst_));
+      if (!(m > 0.0)) m = 1.0;
+      return std::min(worst_ + m * (1.0 + g), kCeiling);
+    }
+    double k = kCeiling;
+    if (failscore_ && *failscore_ > 0.0)
+      k = std::min(*failscore_, kCeiling);
+    return k * (kFailBandFloor + (1.0 - kFailBandFloor) * g);
+  }
+
+  std::optional<double> failscore_;
+  mutable std::mutex m_;
+  bool   have_usable_ = false;
+  double best_  = 0.0;
+  double worst_ = 0.0;
+};
+
 }  // namespace detail
 
 template<class Vec,class Runner>
@@ -205,6 +336,25 @@ template<class Vec,class Runner>
     auto feval = [&](const matrix<double,0,1>& x)->double
     {   return host( sp.out(x) ); };            // host expects real scale
 
+    /* dlib is given a finite stand-in for a failed evaluation's loss
+     * (detail::GfsLossForDlib): FAILSCORE, by default the largest double,
+     * crashed its trust-region step. The journal says so once per search,
+     * at its first failed evaluation. */
+    detail::GfsLossForDlib to_dlib(sp.failscore);
+    std::atomic<bool> stand_in_noted{false};
+    const auto dlib_value = [&](double loss) {
+        if (to_dlib.failed(loss) && !stand_in_noted.exchange(true)) {
+            const std::string msg =
+                "DLIB:GFS: dlib is given a finite stand-in for each failed "
+                "evaluation of this search (the worst usable loss of the "
+                "search so far plus a margin; before any, FAILSCORE, at "
+                "most 1e100); loss.tadah records the loss the evaluation "
+                "reported";
+            HPOLog::instance().info(msg);
+        }
+        return to_dlib(loss);
+    };
+
     /* find_min_global runs its evaluations on `tp`, and no exception may
      * leave it while evaluations are still running. dlib rethrows a task's
      * exception from its next add_task call, so find_min_global unwinds
@@ -219,24 +369,22 @@ template<class Vec,class Runner>
      * after it return the placeholder without running; find_min_global
      * waits for the running ones and returns normally; and the stash is
      * rethrown below -- the NLopt and ASA adapters' pattern. The
-     * placeholder is the loss a failed evaluation reports (FAILSCORE, by
-     * default the largest double); it never reaches the result files. */
+     * placeholder is what dlib is given for a failed evaluation; it never
+     * reaches the result files. */
     ExceptionStash stopped;
-    const double not_evaluated =
-        sp.failscore.value_or(std::numeric_limits<double>::max());
     /* A STOPVAL stop is taken the same way: the evaluations queued after
      * the one that reached it return the placeholder without running. */
     auto pool_feval = [&](const matrix<double,0,1>& x)->double
     {
         if (stopped.has() || stopval_hit.load(std::memory_order_relaxed))
-            return not_evaluated;
+            return to_dlib.not_evaluated();
         try {
             const double y = feval(x);
             note_loss(y);
-            return y;
+            return dlib_value(y);
         } catch (...) {
             stopped.offer(std::current_exception());
-            return not_evaluated;
+            return to_dlib.not_evaluated();
         }
     };
     const stop_condition stop_on_error_or_stopval = [&](double) {
@@ -270,7 +418,7 @@ template<class Vec,class Runner>
          * STOPVAL and MAXTIME end the search among them too. */
         const double y_seed = feval(x_seed);
         note_loss(y_seed);
-        init.emplace_back(x_seed, y_seed);
+        init.emplace_back(x_seed, dlib_value(y_seed));
         if (maxeval != std::numeric_limits<std::size_t>::max()) --maxeval;
         if (maxeval == 0 || stopval_hit.load() || time_up()) break;
       }
