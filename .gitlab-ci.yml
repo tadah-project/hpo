@@ -17,12 +17,14 @@ before_script:
   - export OMP_NUM_THREADS=${CPU_SIM}
 
 # HPO standalone build requires TADAH_LAMMPS_DIR and a pre-built LAMMPS library
-# (HPO CMakeLists.txt:187 enforces this since 2024-04-09). The current runner image
+# (HPO CMakeLists.txt enforces this since 2024-04-09). The current runner image
 # does not provide LAMMPS, so these jobs are gated to `when: manual` and marked
-# `allow_failure: true`. Routine HPO coverage runs via the Tadah.MLIP umbrella build
-# (which co-fetches HPO and supplies the LAMMPS dependency through tadah.lammps).
-# To exercise HPO standalone, click the manual trigger after ensuring TADAH_LAMMPS_DIR
-# is provided through CI variables, or replace this gate with a build_lammps prep stage.
+# `allow_failure: true`. No other pipeline builds or tests HPO either: the
+# Tadah.MLIP umbrella jobs configure without TADAH_ENABLE_NFP, so they do not
+# fetch HPO. Validate HPO locally before pushing or tagging (Tadah.MLIP
+# RELEASING.md). To exercise HPO here, click the manual trigger after ensuring
+# TADAH_LAMMPS_DIR is provided through CI variables, or replace this gate with a
+# build_lammps prep stage.
 build_debug:
   stage: build_debug
   rules:
