@@ -3,8 +3,9 @@
 #
 # Each example dir does `bash ../common/run.sh` to:
 #   - clean prior outputs
-#   - invoke `tadah hpo` from the example dir with the shared config.tadah
-#     and config.val
+#   - invoke `tadah hpo` from the example dir with the example's own
+#     config.tadah and config.val when it has them, else the shared ones in
+#     common/ (it prints which files it uses)
 #   - print a one-line summary on completion
 #
 # Defaults are conservative (single-thread, lenient bad-pot filter) so
@@ -30,15 +31,25 @@ rm -f best_*.tadah loss.tadah outvar.tadah params.tadah stats.tadah \
       hpo_corana_acceptance.tsv
 rm -rf newBestPotsDir
 
+# An example's own config.tadah / config.val take precedence over the
+# shared ones (e.g. 22_pc_observable's model settings, 23's two validation
+# datasets).
+CONFIG_TADAH="$COMMON_DIR/config.tadah"
+if [[ -f config.tadah ]]; then CONFIG_TADAH="$EXAMPLE_DIR/config.tadah"; fi
+CONFIG_VAL="$COMMON_DIR/config.val"
+if [[ -f config.val ]]; then CONFIG_VAL="$EXAMPLE_DIR/config.val"; fi
+
 echo "[run.sh] running $(basename "$EXAMPLE_DIR") (OMP_NUM_THREADS=$T)"
+echo "[run.sh]   -c $CONFIG_TADAH"
+echo "[run.sh]   --validation $CONFIG_VAL"
 # Hot-var ranges and bad-pot caps live in the example's config.hpo as
 # PC_LAMMPS --hotvar / PC_<METRIC> --skip-above / --skip-rel flags.
 # The legacy TADAH_HPO_* env vars are no longer consulted.
 OMP_NUM_THREADS=$T \
 "$TADAH" hpo \
   --hpotarget config.hpo \
-  --validation "$COMMON_DIR/config.val" \
-  -c "$COMMON_DIR/config.tadah" \
+  --validation "$CONFIG_VAL" \
+  -c "$CONFIG_TADAH" \
   > run.stdout 2>&1 || true
 
 if [[ -f hpo_run.log ]]; then
