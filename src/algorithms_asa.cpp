@@ -556,6 +556,7 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
         if (parallel_blocks)
             oss << "  Gener_Block=" << ao.gener_block
                 << "  Gener_Block_Max=" << ao.gener_block_max
+                << "  Gener_Mov_Avr=" << ao.gener_mov_avr
                 << "  workers="
                 << std::min<unsigned>(
                        threads, static_cast<unsigned>(ao.gener_block_max));

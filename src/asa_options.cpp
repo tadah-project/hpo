@@ -111,8 +111,9 @@ const Desc kDescs[] = {
   {"Gener_Block_Max", Kind::Count, false, 1, kNaN, "Gener_Block",
    "block-size cap (buffers sized once); the adaptive resizing keeps the "
    "block between 1 and this cap, so it can shrink below Gener_Block"},
-  {"Gener_Mov_Avr", Kind::Count, false, 1, kNaN, "3",
-   "moving-average window of the adaptive block resizing (must be >= 1)"},
+  {"Gener_Mov_Avr", Kind::Count, false, 0, kNaN, "3",
+   "moving-average window of the adaptive block resizing; 0 = no "
+   "resizing: every block holds Gener_Block states (TADAH-PATCH 7)"},
 };
 
 /* Upstream option names deliberately not exposed: tailored errors. */

@@ -425,9 +425,13 @@ asa (user_cost_function,
     return (-1);
   }
 
+  /* TADAH-PATCH begin: Gener_Mov_Avr 0 (no resizing, TADAH-PATCH 7 in
+   * asa_test_asa_options) allocates one unused element: calloc(0, ...)
+   * may return NULL, which would read as CALLOC_FAILED. */
   if ((parallel_gen_ratio_block =
-       (LONG_INT *) calloc (OPTIONS->Gener_Mov_Avr,
+       (LONG_INT *) calloc (MAX (OPTIONS->Gener_Mov_Avr, 1),
                             sizeof (LONG_INT))) == NULL) {
+  /* TADAH-PATCH end */
     strcpy (exit_msg, "asa(): parallel_gen_ratio_block");
     Exit_ASA (exit_msg);
     *exit_status = CALLOC_FAILED;
@@ -6706,11 +6710,16 @@ asa_test_asa_options (seed,
     print_string (ptr_asa_out, exit_msg);
     ++invalid;
   }
-  if (OPTIONS->Gener_Mov_Avr < 1) {
-    strcpy (exit_msg, "*** Gener_Mov_Avr < 1 ***");
+  /* TADAH-PATCH begin: upstream documents Gener_Mov_Avr 0 as "Gener_Block
+   * is not changed thereafter" (README, OPTIONS->Gener_Mov_Avr), and the
+   * resizing at the periodic test runs only when Gener_Mov_Avr > 0, but
+   * this check rejected every value below 1. Accept 0; reject negatives. */
+  if (OPTIONS->Gener_Mov_Avr < 0) {
+    strcpy (exit_msg, "*** Gener_Mov_Avr < 0 ***");
     print_string (ptr_asa_out, exit_msg);
     ++invalid;
   }
+  /* TADAH-PATCH end */
 #endif /* ASA_PARALLEL */
 
   return (invalid);
