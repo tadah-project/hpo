@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-09-25
+
 ### Added
 - Tests: `test_ream_fastpath.cpp` (DM_REAM through the real pair style, EAMFAST vs generic, EMBF0 ZERO/FREE: isolated atom 0.0, forces/virial bitwise equal across references), `test_hpo_embf0_e2e.cpp` (hidden `[embf0_e2e]`: CEMBFUNC/SEMBFUNC-only search, every candidate's isolated atom exactly 0), `test_hpo_embf0_journal.cpp`, EMBF0 cases in the startup-validation, init-strategy and compact-fitter tests.
 - **Transient filesystem errors are retried before a write fails.** On
