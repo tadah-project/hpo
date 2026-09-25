@@ -11,7 +11,7 @@ unreported, and meant something different per backend.
   byte-identical to 1.4.x). Built once by `HPOTargets`, shared by every sub-spec (`bind_space_recursive`), the
   host and the journal.
 - `OptimizerSpec::low/high` are INTERNAL; `in()/out()` map REAL<->INTERNAL; `host()` receives REAL;
-  persisted artefacts are REAL-space. (The BASINS basin pools, removed in 1.5.1, were REAL-space too.)
+  persisted artefacts are REAL-space. (The BASINS basin pools, removed in 1.6.0, were REAL-space too.)
 - `STEP` = fraction of each dim's internal width, `(0, 0.5]`, per-key overrides, per-dim vector to
   NLopt (`initial_step.h`); rejected via `OptimizerCaps::StepUse` where a backend would ignore it.
 - Analytical gradients are pulled back by `dtheta/du`; NUMERICAL FD uses the in-house width-relative

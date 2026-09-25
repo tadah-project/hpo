@@ -2,7 +2,7 @@
 
 The full multi-repo contributor guide for the Tadah! project lives on
 the umbrella repository:
-<https://git.ecdf.ed.ac.uk/tadah/tadah.mlip/-/blob/develop/CONTRIBUTING.md>
+<https://git.ecdf.ed.ac.uk/tadah/tadah.mlip/-/blob/v1-dev/CONTRIBUTING.md>
 
 This file covers what is specific to HPO. Bug reports and
 feature requests on this module use the GitLab issue tracker on this
@@ -36,7 +36,7 @@ build directory.
 - A LAMMPS library built with [Tadah!LAMMPS](https://git.ecdf.ed.ac.uk/tadah/tadah.lammps)
   is needed at link time only when building HPO against the
   LAMMPS-driven targets (`PC_LAMMPS`). See the umbrella
-  [installation guide](https://tadah.readthedocs.io/develop/installation.html#installation-nfp).
+  [installation guide](https://tadah.readthedocs.io/v1-dev/installation.html#installation-nfp).
 
 ## Layout
 
