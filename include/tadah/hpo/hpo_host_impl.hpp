@@ -5,6 +5,7 @@
 #include <tadah/hpo/log_index.h>
 #include <tadah/core/intercept_layout.h>
 #include <tadah/core/logger.h>
+#include <tadah/core/number_format.h>
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/sims_grad_lammps.h>
@@ -21,8 +22,10 @@
 #include <tadah/hpo/result_drain.h>
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/hpo/topk.h>
+#include <tadah/models/descriptors/dm/embf0.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
 #include <tadah/mlip/analytics/dphi_dtheta_walk.h>
+#include <cstring>
 #include <fstream>
 #include <mutex>
 #include <set>
@@ -435,7 +438,7 @@ bool HPO_Host<P,R>::stats_have_columns() const
 /* ----------  line printers (append) ---------------------------------- */
 /* ======= line writers ================================================ */
 template<class P,class R>
-void HPO_Host<P,R>::print_loss_line(std::ofstream& f, size_t it,const Result& e,
+void HPO_Host<P,R>::print_loss_line(std::ostream& f, size_t it,const Result& e,
                                     const HPOTargets& trg,
                                     std::size_t cw,int prec)
 {
@@ -475,7 +478,7 @@ void HPO_Host<P,R>::print_loss_line(std::ofstream& f, size_t it,const Result& e,
 }
 
 template<class P,class R>
-void HPO_Host<P,R>::print_outvar_line(std::ofstream& f,size_t it,const Result& e,
+void HPO_Host<P,R>::print_outvar_line(std::ostream& f,size_t it,const Result& e,
                                       const HPOTargets& trg,
                                       std::size_t cw,int prec)
 {
@@ -517,7 +520,7 @@ void HPO_Host<P,R>::print_outvar_line(std::ofstream& f,size_t it,const Result& e
 }
 
 template<class P,class R>
-void HPO_Host<P,R>::print_params_line(std::ofstream& f,size_t it,const Result& e,
+void HPO_Host<P,R>::print_params_line(std::ostream& f,size_t it,const Result& e,
                                       std::size_t cw,int prec)
 {
   f << std::left << std::setw(iter_cw_) << it;
@@ -537,7 +540,7 @@ void HPO_Host<P,R>::print_params_line(std::ofstream& f,size_t it,const Result& e
 
 
 template<class P,class R>
-void HPO_Host<P,R>::print_stats_line(std::ofstream& f, size_t it, const Result& e,
+void HPO_Host<P,R>::print_stats_line(std::ostream& f, size_t it, const Result& e,
                                      const HPOTargets& trg,
                                      std::size_t cw, int prec)
 {
@@ -580,6 +583,10 @@ std::atomic<double> HPO_Host<P,R>::g_best_{std::numeric_limits<double>::max()};
 template<class P, class R>
 std::mutex HPO_Host<P,R>::best_mtx_;
 template<class P, class R>
+detail::BestPublications HPO_Host<P,R>::best_pubs_;
+template<class P, class R>
+durable_best::FailLatch HPO_Host<P,R>::durable_latch_;
+template<class P, class R>
 BoundOccupancy HPO_Host<P,R>::bound_occ_;
 template<class P, class R>
 std::mutex HPO_Host<P,R>::bound_occ_mtx_;
@@ -593,6 +600,245 @@ template<class P,class R> std::map<std::size_t,
   typename HPO_Host<P,R>::Result> HPO_Host<P,R>::io_buf_;
 template<class P,class R> std::atomic<std::size_t>       HPO_Host<P,R>::next_flush_{1};
 template<class P,class R> std::atomic<std::int64_t>      HPO_Host<P,R>::next_flush_stuck_since_ms_{0};
+
+/* ----------  per-eval log writer files ------------------------------ */
+template<class P,class R>
+struct HPO_Host<P,R>::WriterFiles {
+    io::RetryingAppendFile loss, outv, par, stats,
+                           best, best_outv, best_par, best_stats;
+    /* BackoffPolicy::writer(); after a shutdown request a retry goes on
+     * for at most its stop_grace (2 s), and see drain_policy(). */
+    io::BackoffPolicy      policy = [] {
+        io::BackoffPolicy p = io::BackoffPolicy::writer();
+        p.should_abort = &core::SignalHandler::stop_requested;
+        return p;
+    }();
+    /* ONE retry budget per drain, shared by every commit and archive of
+     * that drain: begin_drain() resets it, each failure path's time
+     * (Commit/WriteFileResult::seconds, 0 on success) is charged to it, and
+     * once it is spent the rest of the drain gets no backoff -- the first
+     * drain after a mount goes bad stalls for about one budget, not one
+     * per file. Every file still makes its own attempt (plus one immediate
+     * re-attempt after a permanent errno), not charged before it fails:
+     * slowly failing calls add their own time on top. drain_no_retry (the
+     * final drain after a best-potential persistence failure) gives the
+     * whole drain no backoff. */
+    double                 drain_spent_s  = 0.0;
+    bool                   drain_no_retry = false;
+    /* After an archive exhausted its retries, later archive failures get
+     * no backoff until one succeeds (same idea as the logs' degraded mode):
+     * a dead DUMP directory must not stall every drain for the budget. */
+    bool                   archive_degraded = false;
+    /* Degraded-mode reporting, per file (in commit order) and for the
+     * archives. The first failure of an outage is a full WARNING; repeats
+     * only on the 2^k-th failure or 10 min after the last report, carrying
+     * the outage's totals; the first success after an outage is an INFO
+     * line. HPOLog's rows/archives-lost counters stay exact. Touched only on
+     * the failure path (and the one success that ends an outage). */
+    struct Outage {
+        std::size_t failures = 0;   // failed commits (archives) in this outage
+        std::size_t lost     = 0;   // rows (archives) lost in this outage
+        std::chrono::steady_clock::time_point since{}, last_report{};
+    };
+    Outage                 outage[8];
+    Outage                 archive_outage;
+    /* Counts transient retries only: a permanent errno's single immediate
+     * re-attempt is logged but is not a "Transient I/O retry". */
+    io::OnRetryFn          on_retry = [](const io::RetryEvent& ev) {
+        if (ev.transient) HPOLog::instance().record_io_retry_writer();
+        try {
+            HPOLog::instance().warning(
+                "HPO writer: I/O error on '" + ev.path + "' (" +
+                ev.op + ": " + io::errno_name(ev.err) + ", " +
+                std::strerror(ev.err) + "), attempt " +
+                std::to_string(ev.attempt) +
+                (ev.transient
+                     ? "; retrying in " + std::to_string(ev.next_delay.count()) + " ms"
+                     : std::string("; permanent error, re-trying once")));
+        } catch (...) {}
+    };
+
+    explicit WriterFiles(const HPOTargets& trg)
+        : loss(trg.lossFile), outv(trg.outvarFile),
+          par(trg.paramsFile), stats(trg.statsFile),
+          best(trg.bestLossFile), best_outv(trg.bestOutvarFile),
+          best_par(trg.bestParamsFile), best_stats(trg.bestStatsFile) {}
+
+    void begin_drain(bool no_retry = false) noexcept
+    {
+        drain_spent_s  = 0.0;
+        drain_no_retry = no_retry;
+    }
+    /* The policy with what is left of this drain's budget: 0 once spent, or
+     * once too little is left for even the first backoff delay. After a
+     * shutdown request the whole drain's budget is the stop grace (2 s),
+     * not 10 s: the final drain of a SIGTERM'd run keeps its rows through
+     * a blip but stays well inside a scheduler's kill timeout. */
+    io::BackoffPolicy drain_policy() const noexcept
+    {
+        io::BackoffPolicy p = policy;
+        long long total = policy.budget.count();
+        if (policy.abort_requested())
+            total = std::min<long long>(total, policy.stop_grace.count());
+        long long left = drain_no_retry ? 0
+            : total - static_cast<long long>(drain_spent_s * 1000.0);
+        if (left < policy.initial.count()) left = 0;
+        p.budget = std::chrono::milliseconds(left);
+        return p;
+    }
+    /* Failure path: count one failure into `o`; true when it is reported. */
+    static bool count_failure(Outage& o, std::size_t lost)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (o.failures == 0) o.since = now;
+        ++o.failures;
+        o.lost += lost;
+        const bool power_of_two = (o.failures & (o.failures - 1)) == 0;
+        if (!power_of_two && now - o.last_report < std::chrono::minutes(10))
+            return false;
+        o.last_report = now;
+        return true;
+    }
+    static std::string outage_span(const Outage& o)
+    {
+        char buf[64];
+        std::snprintf(buf, sizeof buf, "%.3g s", std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - o.since).count());
+        return buf;
+    }
+};
+
+template<class P,class R>
+std::unique_ptr<typename HPO_Host<P,R>::WriterFiles> HPO_Host<P,R>::writer_files_;
+
+template<class P,class R>
+typename HPO_Host<P,R>::WriterFiles&
+HPO_Host<P,R>::writer_files(const HPOTargets& trg)
+{
+    if (!writer_files_) writer_files_ = std::make_unique<WriterFiles>(trg);
+    return *writer_files_;
+}
+
+template<class P,class R>
+void HPO_Host<P,R>::reset_writer_files()
+{
+    std::lock_guard<std::mutex> lg(io_mtx_);
+    writer_files_.reset();
+}
+
+/* One write(2) per file with staged rows. A batch that still fails after
+ * its retries is dropped whole (the file is truncated back to where it
+ * started), counted and reported; the run continues. All eight files share
+ * the drain's retry budget (WriterFiles::drain_policy). */
+template<class P,class R>
+void HPO_Host<P,R>::commit_writer_files(WriterFiles& wf)
+{
+    std::size_t i = 0;
+    for (io::RetryingAppendFile* f : {&wf.loss, &wf.outv, &wf.par, &wf.stats,
+                                      &wf.best, &wf.best_outv, &wf.best_par,
+                                      &wf.best_stats}) {
+        auto& o = wf.outage[i++];
+        const io::BackoffPolicy policy = wf.drain_policy();
+        const auto c = f->commit(policy, {}, wf.on_retry);
+        wf.drain_spent_s += c.seconds;
+        auto& log = HPOLog::instance();
+        if (c.ok) {
+            if (o.failures > 0 && c.attempts > 0) {
+                try {
+                    log.info("HPO writer: writes to '" + f->path() +
+                             "' resumed; " + std::to_string(o.lost) +
+                             " row(s) were lost during the outage (" +
+                             std::to_string(o.failures) + " failed drain(s) over " +
+                             WriterFiles::outage_span(o) + ")");
+                } catch (...) {}
+                o = typename WriterFiles::Outage{};
+            }
+            continue;
+        }
+        log.record_rows_lost(c.rows_lost);
+        if (!WriterFiles::count_failure(o, c.rows_lost)) continue;
+        const std::string error = c.op + " failed with " + io::errno_name(c.err) +
+                                  " (" + std::strerror(c.err) + ")";
+        try {
+            if (o.failures > 1) {
+                log.warning("HPO writer: '" + f->path() + "' still failing (" +
+                            error + "): " + std::to_string(o.lost) +
+                            " row(s) lost over " + std::to_string(o.failures) +
+                            " failed drains in " + WriterFiles::outage_span(o) +
+                            " (reported on the 2^k-th failure or every 10 min)");
+            } else {
+                /* "not retried" only when nothing was: a permanent errno
+                 * still gets its one immediate re-attempt without budget. */
+                const std::string why =
+                    c.abandoned ? io::gave_up_suffix(c.attempts, c.seconds,
+                                                     io::GiveUp::abandoned)
+                    : c.degraded ? std::string(" (not retried: this file has been failing)")
+                    : c.attempts > 1 ? io::gave_up_suffix(c.attempts, c.seconds)
+                    : wf.drain_no_retry
+                        ? std::string(" (not retried: best-potential persistence failed)")
+                    : policy.budget.count() <= 0
+                        ? std::string(" (not retried: this drain's retry budget was spent)")
+                        : io::gave_up_suffix(c.attempts, c.seconds);
+                log.warning("HPO writer: " + std::to_string(c.rows_lost) +
+                            " row(s) of '" + f->path() + "' lost: " + error + why +
+                            "; until a write to this file succeeds, further "
+                            "failures are not retried and only summarised");
+            }
+        } catch (...) {}
+    }
+}
+
+template<class P,class R>
+void HPO_Host<P,R>::write_archive(WriterFiles& wf, const std::string& path,
+                                  const std::string& bytes)
+{
+    const bool degraded = wf.archive_degraded;
+    io::BackoffPolicy policy = wf.drain_policy();
+    if (degraded) policy.budget = std::chrono::milliseconds(0);
+    const auto r = io::write_whole_file(path, bytes, policy, {}, wf.on_retry);
+    wf.drain_spent_s += r.seconds;
+    wf.archive_degraded = !r.ok;
+    auto& o = wf.archive_outage;
+    auto& log = HPOLog::instance();
+    if (r.ok) {
+        if (o.failures > 0) {
+            try {
+                log.info("HPO writer: archives are written again ('" + path +
+                         "'); " + std::to_string(o.lost) +
+                         " archive(s) were not written during the outage (over " +
+                         WriterFiles::outage_span(o) + ")");
+            } catch (...) {}
+            o = typename WriterFiles::Outage{};
+        }
+        return;
+    }
+    log.record_archive_lost();
+    if (!WriterFiles::count_failure(o, 1)) return;
+    const std::string error = r.op + " failed with " + io::errno_name(r.err) +
+                              " (" + std::strerror(r.err) + ")";
+    try {
+        if (o.failures > 1) {
+            log.warning("HPO writer: archives still failing (latest '" + path +
+                        "': " + error + "): " + std::to_string(o.lost) +
+                        " archive(s) not written in " + WriterFiles::outage_span(o) +
+                        " (reported on the 2^k-th failure or every 10 min)");
+        } else {
+            const std::string why =
+                r.abandoned ? io::gave_up_suffix(r.attempts, r.seconds,
+                                                 io::GiveUp::abandoned)
+                : degraded ? std::string(" (no backoff: archives have been failing)")
+                : r.attempts > 1 ? io::gave_up_suffix(r.attempts, r.seconds)
+                : wf.drain_no_retry
+                    ? std::string(" (not retried: best-potential persistence failed)")
+                : policy.budget.count() <= 0
+                    ? std::string(" (not retried: this drain's retry budget was spent)")
+                    : io::gave_up_suffix(r.attempts, r.seconds);
+            log.warning("HPO writer: archive '" + path + "' not written: " +
+                        error + why + "; later archive failures get no backoff "
+                        "until one is written, and are only summarised");
+        }
+    } catch (...) {}
+}
 template<class P,class R> std::atomic_bool               HPO_Host<P,R>::stagnation_warned_{false};
 
 /* Top-K + stagnation static state. Capacity 0 means top-K tracking is
@@ -671,6 +917,7 @@ void HPO_Host<P,R>::reset_globals_for_test() {
         iter_at_last_best_.store(0, std::memory_order_relaxed);
         g_iter_.store(0, std::memory_order_relaxed);
         g_best_key_.reset();
+        durable_latch_.reset();
     }
     {
         /* A new process also starts with an empty result writer. Results a
@@ -687,6 +934,7 @@ void HPO_Host<P,R>::reset_globals_for_test() {
     stagnation_threshold_.store(0, std::memory_order_relaxed);
     stagnation_warned_.store(false, std::memory_order_relaxed);
     warmstart::reset_best_snapshot_for_fresh_run();
+    reset_writer_files();
 }
 
 template<class P,class R>
@@ -704,11 +952,17 @@ void HPO_Host<P,R>::reset_best_state_for_fresh_run() {
 template<class P,class R>
 void HPO_Host<P,R>::prepare_best_publication() const {
     std::string local_error;
+    {
+        /* A new run publishes again: its first failure trips the latch
+         * afresh (durable_best::FailLatch). */
+        std::lock_guard<std::mutex> lock(best_mtx_);
+        durable_latch_.reset();
+    }
     try {
         if (hpo_rank() == 0)
-            durable_best::reset_for_fresh_run(trg_.canonicalBestPotFile);
+            durable_best::reset_for_fresh_run(trg_.canonicalBestPotFile, dbopts_);
         if (trg_.localBestPotFile != trg_.canonicalBestPotFile)
-            durable_best::reset_for_fresh_run(trg_.localBestPotFile);
+            durable_best::reset_for_fresh_run(trg_.localBestPotFile, dbopts_);
     } catch (const std::exception& e) {
         local_error = e.what();
     } catch (...) {
@@ -840,13 +1094,17 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
             Z_sorted.reserve(report_.eshift.size());
             for (const auto &p : report_.eshift) Z_sorted.push_back(p.first);
             std::sort(Z_sorted.begin(), Z_sorted.end());
+            /* Added as doubles: Context stores them losslessly (the old
+             * core::to_string kept 6 significant digits, so validation
+             * references were shifted by a slightly different ESHIFT
+             * than training). */
             for (int Z : Z_sorted)
-                vt.add("ESHIFT", core::to_string(report_.eshift.at(Z)));
+                vt.add("ESHIFT", report_.eshift.at(Z));
         } else if (!has_train_data_ && master_ctx_.contains("ESHIFT")
                    && master_ctx_.size("ESHIFT") > 0) {
             std::vector<double> es(master_ctx_.size("ESHIFT"));
             master_ctx_.get<>("ESHIFT", es);
-            for (double e : es) vt.add("ESHIFT", core::to_string(e));
+            for (double e : es) vt.add("ESHIFT", e);
         }
         detail::forward_val_filters(vt, val_ctx);
         const std::size_t n_val_before = val_stdb_.size();
@@ -906,6 +1164,13 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
         }
     }
 
+    /* EMBF0 journal (hpo_run arms HPOLog): stored values only, no default
+     * inserted into master_ctx_. */
+    /* (NORM does not matter: a linear model's trained weights are
+     * converted back to raw-descriptor weights, convert_to_nweights.) */
+    embf0_diag_ = models::context_has_ream(master_ctx_)
+               && models::model_is_linear(master_ctx_);
+
     /* param labels: ONE builder (HPOTargets::build_search_space), the same
      * optimap traversal that orders the optimiser vector, so params.tadah
      * columns, the journal and hpo_search_space.tsv agree by construction.
@@ -932,6 +1197,36 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     init_params (trg_.bestParamsFile);
     init_stats  (trg_.bestStatsFile);
 
+    /* The writer opens these files at its first drain and takes their
+     * header-only sizes as committed offsets; drop any it still holds from
+     * an earlier run in this process (their offsets are stale now). */
+    reset_writer_files();
+
+    /* Durable-best retries are visible: one WARNING per retried failure,
+     * counted for the DIAGNOSTICS line (transient retries only: the
+     * latched mode's single re-attempt after a possibly landed rename is
+     * logged but is not a "Transient I/O retry"). The callback captures
+     * nothing. */
+    dbopts_.on_retry = [](const io::RetryEvent& ev) {
+        if (ev.transient) HPOLog::instance().record_io_retry_durable();
+        try {
+            HPOLog::instance().warning(
+                "best-potential I/O: " + ev.op + " on '" + ev.path +
+                "' failed with " + io::errno_name(ev.err) + " (" +
+                std::strerror(ev.err) + "), attempt " +
+                std::to_string(ev.attempt) +
+                (ev.transient
+                     ? "; retrying in " + std::to_string(ev.next_delay.count()) + " ms"
+                     : std::string("; re-trying once, no backoff")));
+        } catch (...) {}
+    };
+    dbopts_latched_ = dbopts_;
+    dbopts_latched_.no_backoff = true;
+    dbopts_mirror_ = dbopts_;
+    dbopts_mirror_.backoff.budget =
+        std::min(dbopts_.backoff.budget, std::chrono::milliseconds(1000));
+    dbopts_mirror_single_ = dbopts_;
+    dbopts_mirror_single_.backoff.budget = std::chrono::milliseconds(0);
 }
 
 /* ----------  helper: update context ----------------------------------- */
@@ -1184,7 +1479,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       if (fg_on) fail_state.record_infra();
       for (const auto& n : lsim.n_outvar) {
         (void)n;
-        r.v_outvar[i].emplace_back(std::to_string(lsim.failscore));
+        r.v_outvar[i].emplace_back(failscore_token(lsim.failscore));
       }
       return false;
     }
@@ -1199,7 +1494,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
      * arrive decoded from a socket with no arity check on either side, so a
      * short vector is an out-of-bounds operator[]: plain undefined
      * behaviour, and specifically NOT caught by the try/catch around the
-     * hot-var block, which only guards std::stod. The arities match by
+     * hot-var block, which only guards the number parse. The arities match by
      * construction today (both sides build from the same spec table), so
      * this can only fire on frame corruption or a version-skewed worker
      * binary -- exactly the cases where UB is least acceptable and, because
@@ -1238,7 +1533,11 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
         const std::string& s = tres.failvar_values[j];
         if (s.empty()) continue;
         double v = 0.0;
-        try { v = std::stod(s); } catch (...) { continue; }
+        /* core::to_double (std::stod, but an underflowing literal is a
+         * value), like every reader of numbers here. LAMMPS' compute_equal
+         * flushes |v| < DBL_MIN to 0, so no subnormal reaches this parse
+         * today; the parse is not where one would be lost. */
+        try { v = tadah::core::to_double(s); } catch (...) { continue; }
         if (std::isfinite(v) && v > 0.0) {
           fail_state.record(FailBand::B, lsim.failvars[j].scale * v);
           fail = true;
@@ -1265,7 +1564,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
             const std::string& s = tres.failvar_values[j];
             if (s.empty()) continue;
             double v = 0.0;
-            try { v = std::stod(s); } catch (...) { continue; }
+            try { v = tadah::core::to_double(s); } catch (...) { continue; }
             if (std::isfinite(v) && v > 0.0) {
               fail_state.record(FailBand::B, lsim.failvars[j].scale * v);
               graded = true;
@@ -1306,7 +1605,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     }
 
     for (std::size_t j = 0; j < lsim.n_outvar.size(); ++j) {
-      if (fail) r.v_outvar[i].emplace_back(std::to_string(lsim.failscore));
+      if (fail) r.v_outvar[i].emplace_back(failscore_token(lsim.failscore));
       else      r.v_outvar[i].emplace_back(tres.outvar_values[j]);
     }
 
@@ -1323,7 +1622,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
           const std::string& s = tres.hotvar_values[j];
           if (s.empty()) continue;
           double v = 0.0;
-          try { v = std::stod(s); }
+          try { v = tadah::core::to_double(s); }
           catch (...) { continue; }
           if (!std::isfinite(v) || v < hv.min || v > hv.max) {
             /* Out of range -- clamp this script's outputs and raise the
@@ -1342,7 +1641,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
               }
               fail_state.record(FailBand::A, dist);
             }
-            for (auto& vs : r.v_outvar[i]) vs = std::to_string(lsim.failscore);
+            for (auto& vs : r.v_outvar[i]) vs = failscore_token(lsim.failscore);
             eval_aborted.store(true, std::memory_order_relaxed);
             /* Log at most once per eval (run-local latch), rate-limited
              * across evals by the global reject_count. */
@@ -1503,7 +1802,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     r.v_outvar[i].clear();
     for (const auto& n : LS[i].n_outvar) {
       (void)n;
-      r.v_outvar[i].emplace_back(std::to_string(LS[i].failscore));
+      r.v_outvar[i].emplace_back(failscore_token(LS[i].failscore));
     }
   };
 
@@ -1535,13 +1834,13 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       run_one(i, wid, {});
       double S = std::numeric_limits<double>::quiet_NaN();
       if (!r.v_outvar[i].empty()) {
-        try { S = std::stod(r.v_outvar[i].front()); } catch (...) {}
+        try { S = tadah::core::to_double(r.v_outvar[i].front()); } catch (...) {}
       }
       /* S >= failscore means the probe task itself failed (its outvars
        * were clamped to failscore strings) -- that is "probe garbage",
        * not a huge-but-real S: fall through to the band-D branch below
        * so a broken probe consistently reads as "potential sick". */
-      if (std::isfinite(S) && S >= 0.0 && S < LS[i].failscore) {
+      if (failprobe_value_is_real(S, LS[i].failscore)) {
         fail_state.set_S(S);
         if (fg_on && S > trg_.failprobe_gate) {
           /* GATE: potential too sick to be worth the fan-out. Classify the
@@ -1574,7 +1873,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     if (eval_aborted.load(std::memory_order_relaxed)) {
       for (const auto& n : LS[i].n_outvar) {
         (void)n;
-        r.v_outvar[i].emplace_back(std::to_string(LS[i].failscore));
+        r.v_outvar[i].emplace_back(failscore_token(LS[i].failscore));
       }
       return;
     }
@@ -1660,7 +1959,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     if (eval_aborted.load(std::memory_order_relaxed)) {
       for (const auto& n : LS[i].n_outvar) {
         (void)n;
-        r.v_outvar[i].emplace_back(std::to_string(LS[i].failscore));
+        r.v_outvar[i].emplace_back(failscore_token(LS[i].failscore));
       }
       return;
     }
@@ -1819,6 +2118,19 @@ struct ObsForceFlagGuard {
     }
 };
 
+/* EMBF0 journal: sum_m w_m g_m(0) of a trainer's DM_REAM block with its
+ * current weights, NaN when the weight vector is not the linear model's
+ * descriptor-space vector. Reads only; diagnostic, never an output. */
+template<class TrainerT>
+double raw_embedding_f0_of(const TrainerT& tr)
+{
+    const auto& w = tr.model->get_weights();
+    if (w.size() != tr.DCS.dsize)
+        return std::numeric_limits<double>::quiet_NaN();
+    const auto v = tr.DCS.dmb->raw_embedding_f0(w);
+    return v ? *v : std::numeric_limits<double>::quiet_NaN();
+}
+
 }  // namespace detail
 
 template<class P, class R>
@@ -1882,8 +2194,11 @@ void HPO_Host<P,R>::obs_loss(Result& r) const
 
 /* ---------- synchronous crash-safe best potential ------------------- */
 template<class P, class R>
-void HPO_Host<P,R>::persist_durable_best(const Result& r) const
+void HPO_Host<P,R>::persist_durable_best(const Result& r, bool& journalled) const
 {
+    /* Called with best_mtx_ held (operator()), which guards durable_latch_
+     * and mirror_degraded_. */
+    const std::optional<std::size_t> failed_before = durable_latch_.failed_eval();
     try {
         std::ostringstream payload;
         const mlip::StructureDB& train_ref = train_stdb_;
@@ -1891,8 +2206,9 @@ void HPO_Host<P,R>::persist_durable_best(const Result& r) const
             payload, r, trg_, master_ctx_, val_ctx_, train_ref, val_stdb_,
             param_labels_, report_, cw_, prec_);
         PotHeaderWriter::write_candidate_hot(payload, r);
-        payload << std::setprecision(
-            r.pot_ctx.template get<std::size_t>("NUMERIC")) << r.pot_ctx;
+        /* NUMERIC significant digits (default 18: exact); never writes
+         * NUMERIC itself. The header lines above keep their own formats. */
+        r.pot_ctx.write_potential(payload, trg_.pot_digits);
         if (!payload.good())
             throw durable_best::Error("failed to render best-potential payload");
 
@@ -1900,39 +2216,106 @@ void HPO_Host<P,R>::persist_durable_best(const Result& r) const
         const std::string bytes = payload.str();
 
         /* Canonical first: if SIGKILL lands between the two commits, the
-         * globally useful artifact still contains the improvement. */
-        (void)durable_best::publish_if_better(
-            trg_.canonicalBestPotFile, key, bytes);
+         * globally useful artifact still contains the improvement. Once an
+         * earlier candidate's publication has failed for good the run ends
+         * FAILED whatever this one does, so it gets a single attempt
+         * without backoff (dbopts_latched_) instead of a retry budget of
+         * its own: candidates of parallel chains queued on best_mtx_
+         * behind the failure end within about one budget (plus one call's
+         * duration per queued candidate when failing calls are slow), and
+         * storage that has recovered still saves this lower best. */
+        const bool replaced = durable_best::publish_if_better(
+            trg_.canonicalBestPotFile, key, bytes,
+            durable_latch_.select(dbopts_, dbopts_latched_));
+        if (failed_before && replaced) {
+            try {
+                HPOLog::instance().info(
+                    "best potential of eval " + std::to_string(r.iter) +
+                    " saved after the persistence failure at eval " +
+                    std::to_string(*failed_before) +
+                    " (no backoff); the run still ends FAILED");
+            } catch (...) {}
+        }
         if (trg_.localBestPotFile != trg_.canonicalBestPotFile) {
             /* The canonical file is the correctness boundary. A rank-local
              * mirror is useful diagnostics/history, but a pre-existing better
              * local key (or a local I/O failure) must not undo or invalidate an
-             * already durable canonical commit. */
+             * already durable canonical commit. Its retry budget is short (1 s,
+             * none while degraded), since every evaluation that may become a
+             * new best waits on best_mtx_; only the change of state is logged. */
+            std::string mirror_error;
             try {
                 (void)durable_best::publish_if_better(
-                    trg_.localBestPotFile, key, bytes);
+                    trg_.localBestPotFile, key, bytes,
+                    mirror_degraded_ ? dbopts_mirror_single_ : dbopts_mirror_);
             } catch (const std::exception& e) {
-                try {
-                    HPOLog::instance().warning(
-                        std::string("rank-local best-potential mirror failed: ") +
-                        e.what());
-                } catch (...) {}
+                mirror_error = e.what();
             } catch (...) {
-                try {
-                    HPOLog::instance().warning(
-                        "rank-local best-potential mirror failed: unknown exception");
-                } catch (...) {}
+                mirror_error = "unknown exception";
             }
+            try {
+                if (!mirror_error.empty() && !mirror_degraded_)
+                    HPOLog::instance().warning(
+                        "rank-local best-potential mirror failed: " + mirror_error +
+                        "; later mirror failures get a single attempt and are "
+                        "not logged until one succeeds");
+                else if (mirror_error.empty() && mirror_degraded_)
+                    HPOLog::instance().info(
+                        "rank-local best-potential mirror '" +
+                        trg_.localBestPotFile + "' is written again");
+            } catch (...) {}
+            mirror_degraded_ = !mirror_error.empty();
         }
-    } catch (const durable_best::Error&) {
+    } catch (const durable_best::Error& e) {
+        /* Only the canonical publication (or rendering its payload) gets
+         * here: a failing rank-local mirror is handled above and never
+         * trips the latch. */
+        note_failed_publication(r, e, failed_before);
+        journalled = true;
         throw;
     } catch (const std::exception& e) {
-        throw durable_best::Error(
+        durable_best::Error err(
             std::string("cannot persist completed best candidate: ") + e.what());
+        note_failed_publication(r, err, failed_before);
+        journalled = true;
+        throw err;
     } catch (...) {
-        throw durable_best::Error(
+        durable_best::Error err(
             "cannot persist completed best candidate: unknown exception");
+        note_failed_publication(r, err, failed_before);
+        journalled = true;
+        throw err;
     }
+}
+
+/* A completed candidate could not be persisted. Trip the latch (the first
+ * failure is the run's cause), record the candidate -- the RESULT section
+ * reports it as NOT saved, and hpo_run() / RestartPolicy fail the run on it
+ * even if the error is swallowed on its way up -- and journal the failure. Called with best_mtx_ held, so the failure that
+ * tripped the latch is journalled before any later candidate's attempt.
+ * Failure path only; never throws (the durable error is what must
+ * propagate). */
+template<class P, class R>
+void HPO_Host<P,R>::note_failed_publication(
+    const Result& r, const durable_best::Error& e,
+    std::optional<std::size_t> failed_before)
+{
+    durable_latch_.trip(r.iter);
+    try {
+        const auto* se = dynamic_cast<const durable_best::SysError*>(&e);
+        HPOLog::instance().record_unsaved_best(
+            r.iter, r.loss, e.what(), se != nullptr && se->may_have_landed());
+    } catch (...) {}
+    try {
+        HPOLog::instance().warning(
+            failed_before
+                ? "best-potential persistence failure at eval " +
+                      std::to_string(r.iter) + " (no backoff after the "
+                      "failure at eval " + std::to_string(*failed_before) +
+                      "): " + e.what()
+                : "fatal best-potential persistence failure at eval " +
+                      std::to_string(r.iter) + ": " + e.what());
+    } catch (...) {}
 }
 
 /* ----------  operator()  (thread-safe) ------------------------------- */
@@ -2006,6 +2389,12 @@ double HPO_Host<P,R>::operator()(const P& p) const
                                                            : EvalLoss::Failed;
     };
 
+    /* Set by persist_durable_best when it has journalled its own failure
+     * (under best_mtx_, so the journal orders a run's publication failures
+     * as the latch saw them); the durable_best::Error catch below then does
+     * not log it again. */
+    bool durable_failure_journalled = false;
+
     /* Bug 5: wrap the entire eval pipeline in try/catch.
      *
      * Without this guard, a throw between `r.iter = ++g_iter_` above
@@ -2064,14 +2453,12 @@ double HPO_Host<P,R>::operator()(const P& p) const
           const std::size_t threshold =
               stagnation_threshold_.load(std::memory_order_relaxed);
           /* A probe phase is deliberately non-improving; counting it would
-           * trip the threshold and fire a restart mid-calibration. */
-          if (threshold > 0 && !probe::active()) {
-            const std::size_t last =
-                iter_at_last_best_.load(std::memory_order_relaxed);
-            if (r.iter > last && r.iter - last >= threshold) {
-              throw StagnationStop{};
-            }
-          }
+           * trip the threshold and fire a restart mid-calibration. A
+           * check that would fire waits out a new best being published
+           * (detail::throw_if_stagnated). */
+          if (threshold > 0 && !probe::active())
+            detail::throw_if_stagnated(r.iter, threshold, iter_at_last_best_,
+                                       best_mtx_, best_pubs_);
         }
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
@@ -2160,6 +2547,10 @@ double HPO_Host<P,R>::operator()(const P& p) const
     /* validation ------------------------------------------------------- */
     stage_watchdog::enter(r.iter, "predict_validate");
     core::Context pot = host.model->get_param_file();
+    /* EMBF0 journal: eval 1's raw F(0) (a new best's is taken at the best
+     * decision below). Diagnostic only. */
+    if (embf0_diag_ && r.iter == 1)
+        r.embf0_raw = detail::raw_embedding_f0_of(host);
     /* Stamp LSCALE/ESHIFT into the per-eval pot context so any best_pot.tadah
      * derived from this eval round-trips through `tadah predict`. The trainer
      * itself doesn't know about load-time transforms, so the host injects them. */
@@ -2276,9 +2667,34 @@ double HPO_Host<P,R>::operator()(const P& p) const
      * loss-only CAS cannot resolve exact-loss ties deterministically: a later
      * finishing (rank,slot,eval)-smaller candidate would never reach the file
      * comparator. New-best commits are rare, so holding this mutex across the
-     * two fsync+rename operations is preferable to split-brain metadata/HOT. */
+     * two fsync+rename operations is preferable to split-brain metadata/HOT.
+     *
+     * Lock-free early-out: an evaluation whose loss is above the current
+     * best cannot pass any test in the block (lower_loss and
+     * tied_compound_winner both need r.loss <= cur), and the block makes no
+     * other decision. During evaluations g_best_ only ever decreases -- its
+     * only other stores (the fresh-run reset, prepare_best_publication) run
+     * before the first evaluation -- so the
+     * value read under the lock is <= this snapshot and a loss above the
+     * snapshot is above it too; a NaN fails both comparisons. Such
+     * evaluations therefore skip best_mtx_ and do not queue behind a
+     * publication (fsync + rename, or a transient-I/O backoff of up to
+     * 30 s). The lock was also where the stagnation check below waited for
+     * an in-flight publication to store iter_at_last_best_; that wait now
+     * happens only on the path that would throw StagnationStop: until as
+     * many decisions have finished as had been counted (best_pubs_) when
+     * the check began -- holding the lock or queued for it. They finish in
+     * lock order, which is not FIFO, so one overtaken at the lock by a
+     * decision counted later can still be missed (rare; see
+     * detail::throw_if_stagnated). */
+    if (may_become_best(r.loss, g_best_.load(std::memory_order_acquire)))
     {
+      /* Counted before waiting for the lock and done while still holding
+       * it: a stagnation check that would fire and began after the count
+       * waits until as many decisions are done (detail::throw_if_stagnated). */
+      best_pubs_.started.fetch_add(1);
       std::lock_guard<std::mutex> best_lock(best_mtx_);
+      detail::PublicationDone best_pub_done(best_pubs_);
       const durable_best::Key key{
           r.loss, r.source_rank, r.chain_id, r.iter};
       const double cur = g_best_.load(std::memory_order_relaxed);
@@ -2313,7 +2729,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
          * best_hot_map are deliberately rank-local live-search state. The
          * early multi-rank dispatch guard limits this split ownership to plain
          * PT/PA; the canonical file remains the sole global result. */
-        persist_durable_best(r);
+        persist_durable_best(r, durable_failure_journalled);
 
         if (!warmstart::promote_batch(key, r.hot_produced))
           throw durable_best::Error(
@@ -2324,6 +2740,11 @@ double HPO_Host<P,R>::operator()(const P& p) const
         g_best_iter_.store(r.best_iter, std::memory_order_relaxed);
         iter_at_last_best_.store(r.iter, std::memory_order_relaxed);
         r.is_best = true;
+        /* EMBF0 journal: `host` still holds this eval's weights (nothing
+         * since the potential was built retrains this thread's trainer).
+         * Diagnostic only. */
+        if (embf0_diag_ && std::isnan(r.embf0_raw))
+            r.embf0_raw = detail::raw_embedding_f0_of(host);
       }
     }
 
@@ -2339,17 +2760,17 @@ double HPO_Host<P,R>::operator()(const P& p) const
 
     /* Stagnation check -- throw to short-circuit the optimiser loop. The
      * surrounding RestartPolicy catches StagnationStop and decides
-     * whether to restart from a fresh init. */
+     * whether to restart from a fresh init. A check that would fire first
+     * waits until as many new-best decisions have finished as were in
+     * progress when it began (this evaluation may have skipped the lock
+     * above) and checks again. */
     {
       const std::size_t threshold =
           stagnation_threshold_.load(std::memory_order_relaxed);
       /* See the BUMPGATE path above: probe evals do not count. */
-      if (threshold > 0 && !probe::active()) {
-        const std::size_t last = iter_at_last_best_.load(std::memory_order_relaxed);
-        if (r.iter > last && r.iter - last >= threshold) {
-          throw StagnationStop{};
-        }
-      }
+      if (threshold > 0 && !probe::active())
+        detail::throw_if_stagnated(r.iter, threshold, iter_at_last_best_,
+                                   best_mtx_, best_pubs_);
     }
     } /* end post_lammps_finalize watchdog */
 
@@ -2376,6 +2797,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
     const double      save_fo_min   = r.fanout_min_ms;
     const double      save_fo_max   = r.fanout_max_ms;
     const std::string save_fo_slow  = r.fanout_slowest;
+    const double      save_embf0    = r.embf0_raw;
 
     /* Build a one-line "top loss components" breakdown when this eval
      * is a new best. Defensive: any failure here must not crash the
@@ -2496,6 +2918,8 @@ double HPO_Host<P,R>::operator()(const P& p) const
     log.record_fail_band(save_fail_band);
     log.record_fanout(save_fo_busy,
                       save_fo_nsc, save_fo_min, save_fo_max, save_fo_slow);
+    if (save_iter == 1 && !std::isnan(save_embf0))
+        log.record_embf0_start(save_iter, save_embf0);
 
     if (save_best) {
         log.log_new_best(save_iter, save_loss,
@@ -2506,6 +2930,8 @@ double HPO_Host<P,R>::operator()(const P& p) const
                          save_srmse,  trg_.use_srmse,
                          save_wall_ms,
                          save_top_breakdown);
+        if (!std::isnan(save_embf0))
+            log.record_embf0_best(save_iter, save_loss, save_embf0);
         /* Bound-occupancy audit on the new best (REAL coordinates). */
         std::lock_guard<std::mutex> lg(bound_occ_mtx_);
         if (bound_occ_.armed()) {
@@ -2594,11 +3020,13 @@ double HPO_Host<P,R>::operator()(const P& p) const
         _census.loss = loss_kind(r);
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
-        try {
-            HPOLog::instance().warning(
-                std::string("fatal best-potential persistence failure at eval ") +
-                std::to_string(r.iter) + ": " + e.what());
-        } catch (...) {}
+        if (!durable_failure_journalled) {
+            try {
+                HPOLog::instance().warning(
+                    std::string("fatal best-potential persistence failure at eval ") +
+                    std::to_string(r.iter) + ": " + e.what());
+            } catch (...) {}
+        }
         try {
             submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
                           train_stdb_, val_stdb_, param_labels_, report_,
@@ -2734,17 +3162,19 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                           + " io_buf_size=" + std::to_string(io_buf_.size())
                           + " next_flush=" + std::to_string(next_flush_.load()));
 
-        // Streams belong to this flushed batch. Retaining process-static
-        // streams kept writing to the first run's files when a later host
-        // used a different working directory (or replaced its output files).
-        std::ofstream loss_f  (trg.lossFile, std::ios::app),
-                             outv_f  (trg.outvarFile, std::ios::app),
-                             par_f   (trg.paramsFile, std::ios::app),
-                             stats_f (trg.statsFile, std::ios::app),
-                             best_f  (trg.bestLossFile, std::ios::app),
-                             best_outv_f(trg.bestOutvarFile, std::ios::app),
-                             best_par_f (trg.bestParamsFile, std::ios::app),
-                             best_stats_f(trg.bestStatsFile, std::ios::app);
+        /* Rows are staged per file and appended with one write per file
+         * at the end of this drain (commit_writer_files), retried on a
+         * transient error within one budget for the whole drain. */
+        WriterFiles& wf = writer_files(trg);
+        wf.begin_drain();
+        std::ostream& loss_f       = wf.loss.stage();
+        std::ostream& outv_f       = wf.outv.stage();
+        std::ostream& par_f        = wf.par.stage();
+        std::ostream& stats_f      = wf.stats.stage();
+        std::ostream& best_f       = wf.best.stage();
+        std::ostream& best_outv_f  = wf.best_outv.stage();
+        std::ostream& best_par_f   = wf.best_par.stage();
+        std::ostream& best_stats_f = wf.best_stats.stage();
 
         std::size_t _written = 0;
         std::size_t _last_iter_processed = 0;
@@ -2778,32 +3208,32 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
 
           /* archive best_pot_N.tadah ---------------------------------- */
           if(e.best_iter % trg.dumpBestPotEvery == 0){
-            std::ofstream bpa(std::string(trg.dumpBestPotDir)
-                +"/best_pot_" + std::to_string(e.best_iter) + ".tadah"
-                + trg.potArchiveSuffix);
+            std::ostringstream bpa;
 
             PotHeaderWriter::write_best_archive_header(
                 bpa, e, trg, cw, prec);
 
             PotHeaderWriter::write_candidate_hot(bpa, e);
 
-            bpa << std::setprecision(
-                e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
+            e.pot_ctx.write_potential(bpa, trg.pot_digits);
+            write_archive(wf, std::string(trg.dumpBestPotDir)
+                +"/best_pot_" + std::to_string(e.best_iter) + ".tadah"
+                + trg.potArchiveSuffix, bpa.str());
           }
         }
 
         /* ---- archive ANY pot every ---------------------------------- */
         if(e.iter % trg.dumpPotEvery == 0){
-            std::ofstream pa(std::string(trg.dumpPotDir)
-                +"/pot_"+std::to_string(e.iter)+".tadah"
-                + trg.potArchiveSuffix);
+            std::ostringstream pa;
 
             PotHeaderWriter::write_archive_header(pa, e, cw, prec);
 
             PotHeaderWriter::write_candidate_hot(pa, e);
 
-            pa << std::setprecision(
-                e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
+            e.pot_ctx.write_potential(pa, trg.pot_digits);
+            write_archive(wf, std::string(trg.dumpPotDir)
+                +"/pot_"+std::to_string(e.iter)+".tadah"
+                + trg.potArchiveSuffix, pa.str());
         }
 
                 io_buf_.erase(next_flush_++);
@@ -2812,16 +3242,17 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                 /* Drop the offending iter's logs and advance so the queue
                  * keeps draining. One iter's logs are lost; the journal
                  * records the failure for follow-up. The Result fields
-                 * (is_best, has pot_ctx NUMERIC?) are included so the
-                 * journal entry alone is enough to differentiate the
-                 * pot_ctx.get / archive-header / per-iter print
-                 * candidate throw sites without needing a second
-                 * reproduction. */
-                bool is_best = false, has_numeric = false;
+                 * (is_best, pot_ctx size) are included so the journal
+                 * entry alone is enough to differentiate the potential /
+                 * archive-header / per-iter print candidate throw sites
+                 * without needing a second reproduction. (The pot writers
+                 * no longer read NUMERIC -- trg.pot_digits is resolved
+                 * once at startup -- so the old "has NUMERIC" field, whose
+                 * contains() probe default-inserted the key, is gone.) */
+                bool is_best = false;
                 std::size_t pot_ctx_size = 0;
                 if (auto it = io_buf_.find(next_flush_); it != io_buf_.end()) {
                     is_best = it->second.is_best;
-                    has_numeric = it->second.pot_ctx.contains("NUMERIC");
                     pot_ctx_size = it->second.pot_ctx.size();
                 }
                 HPOLog::instance().warning(
@@ -2829,7 +3260,6 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                     std::to_string(next_flush_.load()) +
                     " (is_best=" + (is_best ? "true" : "false") +
                     ", pot_ctx.size=" + std::to_string(pot_ctx_size) +
-                    ", has NUMERIC=" + (has_numeric ? "true" : "false") +
                     ", exception type=" + typeid(ex).name() +
                     "): " + ex.what());
                 io_buf_.erase(next_flush_++);
@@ -2928,23 +3358,23 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                                     print_stats_line (best_stats_f, e.best_iter, e, trg, cw, prec);
                                 }
                                 if (e.best_iter % trg.dumpBestPotEvery == 0) {
-                                    std::ofstream bpa(std::string(trg.dumpBestPotDir)
-                                        +"/best_pot_" + std::to_string(e.best_iter) + ".tadah"
-                                        + trg.potArchiveSuffix);
+                                    std::ostringstream bpa;
                                     PotHeaderWriter::write_best_archive_header(bpa, e, trg, cw, prec);
                                     PotHeaderWriter::write_candidate_hot(bpa, e);
-                                    bpa << std::setprecision(
-                                        e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
+                                    e.pot_ctx.write_potential(bpa, trg.pot_digits);
+                                    write_archive(wf, std::string(trg.dumpBestPotDir)
+                                        +"/best_pot_" + std::to_string(e.best_iter) + ".tadah"
+                                        + trg.potArchiveSuffix, bpa.str());
                                 }
                             }
                             if (e.iter % trg.dumpPotEvery == 0) {
-                                std::ofstream pa(std::string(trg.dumpPotDir)
-                                    +"/pot_"+std::to_string(e.iter)+".tadah"
-                                    + trg.potArchiveSuffix);
+                                std::ostringstream pa;
                                 PotHeaderWriter::write_archive_header(pa, e, cw, prec);
                                 PotHeaderWriter::write_candidate_hot(pa, e);
-                                pa << std::setprecision(
-                                    e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
+                                e.pot_ctx.write_potential(pa, trg.pot_digits);
+                                write_archive(wf, std::string(trg.dumpPotDir)
+                                    +"/pot_"+std::to_string(e.iter)+".tadah"
+                                    + trg.potArchiveSuffix, pa.str());
                             }
                             io_buf_.erase(next_flush_++);
                             ++_written;
@@ -2965,20 +3395,15 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
             }
         }
 
-        _writer_debug_log("FLUSH_BEGIN wid=" + std::to_string(_wid));
-        loss_f.flush();
-        outv_f.flush();
-        par_f.flush();
-        stats_f.flush();
-        best_f.flush();
-        best_outv_f.flush();
-        best_par_f.flush();
-        best_stats_f.flush();
-        _writer_debug_log("FLUSH_DONE wid=" + std::to_string(_wid)
-                          + " loss_good=" + (loss_f.good() ? "Y" : "N")
-                          + " loss_fail=" + (loss_f.fail() ? "Y" : "N")
-                          + " loss_bad=" + (loss_f.bad() ? "Y" : "N")
-                          + " loss_eof=" + (loss_f.eof() ? "Y" : "N"));
+        if (_writer_debug_enabled)
+            _writer_debug_log("FLUSH_BEGIN wid=" + std::to_string(_wid)
+                              + " loss_pending_bytes="
+                              + std::to_string(wf.loss.pending_bytes()));
+        commit_writer_files(wf);
+        if (_writer_debug_enabled)
+            _writer_debug_log("FLUSH_DONE wid=" + std::to_string(_wid)
+                              + " loss_offset=" + std::to_string(wf.loss.offset())
+                              + " loss_degraded=" + (wf.loss.degraded() ? "Y" : "N"));
     } catch (const std::exception& ex) {
         /* Belt-and-suspenders: covers throws outside the per-iter block
          * (e.g. dequeue, ofstream construction). Token is cleared below. */
@@ -3428,7 +3853,7 @@ void HPO_Host<P,R>::emit_grad_diagnostic(
 
 /* ---------- final drain (call after optimizer returns) --------------- */
 template<class P,class R>
-void HPO_Host<P,R>::flush_remaining() const
+void HPO_Host<P,R>::flush_remaining(bool retry_io) const
 {
     // Drain g_q_ into the ordered buffer, then write everything pending.
     std::lock_guard<std::mutex> lg(io_mtx_);
@@ -3437,16 +3862,18 @@ void HPO_Host<P,R>::flush_remaining() const
     while(g_q_.try_dequeue(item))
         io_buf_.emplace(item.iter, std::move(item));
 
-    // Re-open (append) the same files that submit_result uses.
-    // Using named ofstream objects so they close + flush on scope exit.
-    std::ofstream loss_f  (trg_.lossFile,       std::ios::app),
-                  outv_f  (trg_.outvarFile,      std::ios::app),
-                  par_f   (trg_.paramsFile,      std::ios::app),
-                  stats_f (trg_.statsFile,       std::ios::app),
-                  best_f  (trg_.bestLossFile,    std::ios::app),
-                  best_outv_f(trg_.bestOutvarFile, std::ios::app),
-                  best_par_f (trg_.bestParamsFile, std::ios::app),
-                  best_stats_f(trg_.bestStatsFile, std::ios::app);
+    // Stage into the same writer files submit_result uses; committed once
+    // (with retries, one budget for the whole drain) after the loop.
+    WriterFiles& wf = writer_files(trg_);
+    wf.begin_drain(/*no_retry=*/!retry_io);
+    std::ostream& loss_f       = wf.loss.stage();
+    std::ostream& outv_f       = wf.outv.stage();
+    std::ostream& par_f        = wf.par.stage();
+    std::ostream& stats_f      = wf.stats.stage();
+    std::ostream& best_f       = wf.best.stage();
+    std::ostream& best_outv_f  = wf.best_outv.stage();
+    std::ostream& best_par_f   = wf.best_par.stage();
+    std::ostream& best_stats_f = wf.best_stats.stage();
 
     auto write_row = [&](const Result& e) {
         if(e.iter % trg_.outputEvery == 0){
@@ -3464,31 +3891,31 @@ void HPO_Host<P,R>::flush_remaining() const
 
         if(e.is_best) {
             if(e.best_iter % trg_.dumpBestPotEvery == 0){
-                std::ofstream bpa(std::string(trg_.dumpBestPotDir)
-                    + "/best_pot_" + std::to_string(e.best_iter) + ".tadah"
-                    + trg_.potArchiveSuffix);
+                std::ostringstream bpa;
 
                 PotHeaderWriter::write_best_archive_header(
                     bpa, e, trg_, cw_, prec_);
 
                 PotHeaderWriter::write_candidate_hot(bpa, e);
 
-                bpa << std::setprecision(
-                    e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
+                e.pot_ctx.write_potential(bpa, trg_.pot_digits);
+                write_archive(wf, std::string(trg_.dumpBestPotDir)
+                    + "/best_pot_" + std::to_string(e.best_iter) + ".tadah"
+                    + trg_.potArchiveSuffix, bpa.str());
             }
         }
 
         if(e.iter % trg_.dumpPotEvery == 0){
-            std::ofstream pa(std::string(trg_.dumpPotDir)
-                + "/pot_" + std::to_string(e.iter) + ".tadah"
-                + trg_.potArchiveSuffix);
+            std::ostringstream pa;
 
             PotHeaderWriter::write_archive_header(pa, e, cw_, prec_);
 
             PotHeaderWriter::write_candidate_hot(pa, e);
 
-            pa << std::setprecision(
-                e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
+            e.pot_ctx.write_potential(pa, trg_.pot_digits);
+            write_archive(wf, std::string(trg_.dumpPotDir)
+                + "/pot_" + std::to_string(e.iter) + ".tadah"
+                + trg_.potArchiveSuffix, pa.str());
         }
     };
 
@@ -3497,6 +3924,7 @@ void HPO_Host<P,R>::flush_remaining() const
      * over, so no evaluation can fill the gap any more. */
     drain_remaining_results(io_buf_, next_flush_, write_row,
         [](const std::string& msg) { HPOLog::instance().warning(msg); });
+    commit_writer_files(wf);
 }
 
 }   // namespace tadah::hpo

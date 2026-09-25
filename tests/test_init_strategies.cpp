@@ -9,6 +9,7 @@
 #include "catch2/catch.hpp"
 
 #include <tadah/core/context.h>
+#include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/init_strategy.h>
 #include <tadah/hpo/run_policy.h>
@@ -23,6 +24,7 @@
 #include <random>
 #include <set>
 #include <sstream>
+#include <vector>
 
 namespace {
 
@@ -523,6 +525,50 @@ TEST_CASE("WarmInitStrategy: HOT round-trip primes warmstart cache",
     warmstart::clear();
 }
 
+TEST_CASE("WarmInitStrategy / CONFIG: a subnormal OPTIM value is a number "
+          "(no ordinal shift)", "[HPO][init_strategy][warm][lossless]")
+{
+    /* The lossless writers keep a subnormal value ("1e-310"; the old
+     * fixed-decimal Context text flushed it to 0). core::is_number and
+     * std::stod used to reject it (ERANGE underflow): WARM skipped the token
+     * when counting numeric ordinals, so every later OPTIM'd dimension of
+     * the key silently took its neighbour's value, and CONFIG threw. */
+    using namespace tadah::hpo;
+    StrategyTempFile target(
+        "OPTIM CGRID2B (1-3) 0 10\n"
+        "OPTIMIZER\nLIB DLIB\nALGO BFGS\nENDOPTIMIZER\n");
+    tadah::core::Context ctx;
+    ctx.add("CGRID2B", std::vector<double>{1.0, 1e-310, 3.0});
+    HPOTargets trg(ctx, target.path.string());
+    REQUIRE(trg.spec.low.size() == 3);
+
+    SECTION("CONFIG seed") {
+        InitStrategySpec ispec;
+        ispec.chain.push_back({"CONFIG", {}});
+        auto strat = build_init_strategy(ispec);
+        InitContext ic{trg.spec, trg, 0};
+        const auto pts = strat->generate(ic, 1);
+        REQUIRE(pts.size() == 1);
+        REQUIRE(pts[0].size() == 3);
+        CHECK(pts[0][0] == 1.0);
+        CHECK(pts[0][1] == 1e-310);
+        CHECK(pts[0][2] == 3.0);
+    }
+    SECTION("WARM seed with a subnormal middle token") {
+        StrategyTempFile pot("CGRID2B 1.5 9.99999999999996945e-311 2.5\n");
+        InitStrategySpec ispec;
+        ispec.chain.push_back({"WARM", {pot.path.string()}});
+        auto strat = build_init_strategy(ispec);
+        InitContext ic{trg.spec, trg, 0};
+        const auto pts = strat->generate(ic, 1);
+        REQUIRE(pts.size() == 1);
+        REQUIRE(pts[0].size() == 3);
+        CHECK(pts[0][0] == 1.5);
+        CHECK(pts[0][1] == 1e-310);
+        CHECK(pts[0][2] == 2.5);    /* its own value, not the fallback 3.0 */
+    }
+}
+
 TEST_CASE("WarmInitStrategy: legacy HOT_A0 line still primes cache",
           "[HPO][init_strategy][warm][hot]")
 {
@@ -552,6 +598,119 @@ TEST_CASE("WarmInitStrategy: legacy HOT_A0 line still primes cache",
     CHECK(*cached == Approx(a0_in).margin(1e-12));
 
     warmstart::clear();
+}
+
+namespace {
+
+/* The journal line holding `needle` ("" when absent). */
+std::string journal_line(const std::string& txt, const std::string& needle)
+{
+    const auto at = txt.find(needle);
+    if (at == std::string::npos) return "";
+    const auto b = txt.rfind('\n', at);
+    const auto e = txt.find('\n', at);
+    return txt.substr(b == std::string::npos ? 0 : b + 1,
+                      e == std::string::npos ? std::string::npos
+                                             : e - (b == std::string::npos ? 0 : b + 1));
+}
+
+/* Run WARM on a seed file against a run context declaring `run_embf0`
+ * (nullptr: key absent) and return the journal. */
+std::string warm_embf0_journal(const std::string& seed_body,
+                               const char* run_embf0,
+                               bool pass_run_context = true,
+                               bool run_has_ream = true)
+{
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({0.0}, {1.0});
+    StubTargets st;   // no OPTIM line: the WARM point is zero-dimensional
+    StrategyTempFile pot(seed_body);
+    tadah::core::Context run;
+    if (run_has_ream) {
+        run.add("INITMB", "true");
+        for (const char* t : {"DM_REAM", "0", "2", "2", "2", "3", "3", "0",
+                              "0", "Ta", "Ta"})
+            run.add("TYPEMB", t);
+    }
+    if (run_embf0) run.add("EMBF0", run_embf0);
+
+    auto& log = HPOLog::instance();
+    if (log.is_open()) log.finish("closed");
+    const auto tmp_log = std::filesystem::temp_directory_path() /
+        ("hpo_warm_embf0_" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+         ".log");
+    log.open(tmp_log.string(), "test", "/tmp", 1);
+
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"WARM", {pot.path.string()}});
+    auto strat = build_init_strategy(ispec);
+    InitContext ic{sp, *st.trg, 0, pass_run_context ? &run : nullptr};
+    (void) strat->generate(ic, 1);
+    log.finish("TEST");
+
+    std::ifstream lf(tmp_log);
+    std::stringstream ss; ss << lf.rdbuf();
+    std::error_code ec; std::filesystem::remove(tmp_log, ec);
+    /* WARM reads only the OPTIM dims: nothing inserted into the run context. */
+    CHECK(run.has_stored("EMBF0") == (run_embf0 != nullptr));
+    return ss.str();
+}
+
+const std::string kReamSeed =
+    "INITMB true\nTYPEMB DM_REAM 0 2 2 2 3 3 0 0 Ta Ta\n";
+
+}  // namespace
+
+TEST_CASE("WarmInitStrategy: EMBF0 of the seed vs the run's -c",
+          "[HPO][init_strategy][warm][embf0]")
+{
+    SECTION("seed FREE, run ZERO (key absent): WARNING") {
+        const std::string txt = warm_embf0_journal(kReamSeed + "EMBF0 FREE\n",
+                                                   nullptr);
+        const std::string ln = journal_line(txt, "declares EMBF0 FREE");
+        CHECK(ln.find("WARNING") != std::string::npos);
+        CHECK(ln.find("; this run evaluates EMBF0 ZERO (from -c). WARM takes "
+                      "only the OPTIM values from the seed and evaluates them "
+                      "unchanged in the run's reference (no conversion)")
+              != std::string::npos);
+    }
+    SECTION("seed ZERO, run FREE: WARNING") {
+        const std::string txt = warm_embf0_journal(kReamSeed + "EMBF0 ZERO\n",
+                                                   "FREE");
+        const std::string ln = journal_line(txt, "declares EMBF0 ZERO");
+        CHECK(ln.find("WARNING") != std::string::npos);
+        CHECK(ln.find("this run evaluates EMBF0 FREE (from -c)")
+              != std::string::npos);
+    }
+    SECTION("seed without the key, run ZERO: INFO, read as ZERO") {
+        const std::string txt = warm_embf0_journal(kReamSeed, "ZERO");
+        const std::string ln = journal_line(txt, "does not declare EMBF0");
+        CHECK(ln.find("INFO") != std::string::npos);
+        CHECK(ln.find("read as EMBF0 ZERO") != std::string::npos);
+        CHECK(txt.find("no conversion") == std::string::npos);
+    }
+    SECTION("seed without the key, run FREE: WARNING") {
+        const std::string txt = warm_embf0_journal(kReamSeed, "FREE");
+        const std::string ln = journal_line(txt, "does not declare EMBF0");
+        CHECK(ln.find("WARNING") != std::string::npos);
+        CHECK(ln.find("(read as EMBF0 ZERO); this run evaluates EMBF0 FREE")
+              != std::string::npos);
+    }
+    SECTION("matching modes, no DM_REAM seed, or no run context: silent") {
+        CHECK(warm_embf0_journal(kReamSeed + "EMBF0 FREE\n", "FREE")
+                  .find("EMBF0") == std::string::npos);
+        CHECK(warm_embf0_journal("INITMB false\nEMBF0 FREE\n", nullptr)
+                  .find("EMBF0") == std::string::npos);
+        CHECK(warm_embf0_journal(kReamSeed + "EMBF0 FREE\n", nullptr,
+                                 /*pass_run_context=*/false)
+                  .find("EMBF0") == std::string::npos);
+        /* the run itself has no DM_REAM block: EMBF0 does not apply */
+        CHECK(warm_embf0_journal(kReamSeed + "EMBF0 FREE\n", nullptr,
+                                 /*pass_run_context=*/true,
+                                 /*run_has_ream=*/false)
+                  .find("EMBF0") == std::string::npos);
+    }
 }
 
 TEST_CASE("HPO parses MULTISTART knobs",
@@ -1179,8 +1338,8 @@ TEST_CASE("HPOLog::set_status feeds finish() when status is empty",
 TEST_CASE("HPOLog::finish explicit arg overrides set_status",
           "[HPO][hpo_log][set_status]")
 {
-    /* If hpo_run()'s catch block passes "STOPPED with error: ..." it
-     * must override any status the inner driver recorded. */
+    /* If hpo_run()'s catch block passes "FAILED -- ..." it must
+     * override any status the inner driver recorded. */
     using namespace tadah::hpo;
     auto& log = HPOLog::instance();
     auto tmp_log = std::filesystem::temp_directory_path() /
@@ -1190,13 +1349,13 @@ TEST_CASE("HPOLog::finish explicit arg overrides set_status",
 
     log.open(tmp_log.string(), "test", "/tmp", 1);
     log.set_status("MAXEVAL_REACHED");
-    log.finish("STOPPED with error: kaboom");
+    log.finish("FAILED -- kaboom");
 
     std::ifstream lf(tmp_log);
     REQUIRE(lf.good());
     std::stringstream ss; ss << lf.rdbuf();
     const std::string body = ss.str();
-    CHECK(body.find("STOPPED with error: kaboom") != std::string::npos);
+    CHECK(body.find("FAILED -- kaboom") != std::string::npos);
     CHECK(body.find("MAXEVAL_REACHED")            == std::string::npos);
 
     std::error_code ec; std::filesystem::remove(tmp_log, ec);

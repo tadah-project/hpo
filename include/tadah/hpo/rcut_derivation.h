@@ -41,8 +41,12 @@ namespace detail {
  *  HPO_Host::update_context on every evaluation, so it is deliberately
  *  silent (the one-time user-facing explanation is logged by
  *  validate_hpo_setup at startup) and cheap (a max over the grid; no-op
- *  add/remove churn is avoided). Returns true when a key changed —
- *  Context::add refreshes RCUT2BMAX/RCUTMBMAX/RCUTMAX automatically. */
+ *  add/remove churn is avoided). The comparison is EXACT: Context text is
+ *  lossless, so an unchanged cutoff compares equal, while any tolerance
+ *  would make the cutoff depend on the evaluation history of the
+ *  (persistent, per-thread) trainer context rather than on theta alone.
+ *  Returns true when a key changed — Context::add refreshes
+ *  RCUT2BMAX/RCUTMBMAX/RCUTMAX automatically. */
 inline bool apply_knot_rcut_derivation(core::Context &ctx, bool knot2b,
                                        bool knotmb) {
   bool changed = false;
@@ -50,11 +54,9 @@ inline bool apply_knot_rcut_derivation(core::Context &ctx, bool knot2b,
     const auto d = models::potedit::derived_knot_rcut(ctx, sfx);
     if (!d) return;
     const std::string key = std::string("RCUT") + sfx;
-    if (ctx.contains(key) && ctx.size(key) > 0) {
-      const double cur = ctx.get<double>(key);
-      if (std::fabs(cur - *d) <= 1e-12 * std::max(1.0, std::fabs(*d)))
-        return;
-    }
+    if (ctx.contains(key) && ctx.size(key) > 0 &&
+        ctx.get<double>(key) == *d)
+      return;
     ctx.remove(key);
     ctx.add(key, *d);
     changed = true;

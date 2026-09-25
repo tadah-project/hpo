@@ -1,7 +1,7 @@
 # 13 -- RESTART decorator: auto-recover from stagnation.
 #
 # The host tracks how many evals have passed without a new best.
-# If that count exceeds AFTER_STAGNATION, HPO short-circuits the
+# When that count reaches AFTER_STAGNATION, HPO short-circuits the
 # inner optimiser with a StagnationStop exception, the RESTART
 # decorator catches it, draws a fresh seed from its own INIT chain,
 # and re-enters the optimiser. After MAX restarts the run exits.
@@ -13,7 +13,7 @@ OPTIMIZER
     ALGO BFGS
     MAXEVAL 60
     RESTART
-      AFTER_STAGNATION 4
+      AFTER_STAGNATION 3
       MAX 2
       STRATEGY RANDOM 1
     ENDRESTART

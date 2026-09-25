@@ -17,6 +17,7 @@
 #include <tadah/mlip/structure_db.h>
 #include <tadah/mlip/preflight_audit.h>
 #include <tadah/mlip/parallel.h>   // set_parallel_backend (Stage 2.3)
+#include <tadah/models/descriptors/dm/embf0.h>
 
 #include <algorithm>  // std::max
 #include <cstdlib>    // getenv()
@@ -31,6 +32,7 @@
 
 #include <nlopt.hpp>
 
+#include <optional>
 #include <random>
 #include <variant>
 
@@ -532,7 +534,18 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log)
 
     /* Build HPO_Host (loads train + val structures, applies load transforms) */
     HPO_Host<V,R> host(ctx, trg, val);
-    log.write_potential_section(ctx, host.train_size(), host.val_size(), elem_str);
+    /* EMBF0 (DM_REAM only): the -c potential's raw F(0) for POTENTIAL SETUP,
+     * and the RESULT line's start/best values. Reads stored values only. */
+    const bool has_ream = models::context_has_ream(ctx);
+    const bool embf0_zero =
+        has_ream &&
+        models::stored_embf0(ctx).value_or(models::EmbF0Mode::Zero) ==
+            models::EmbF0Mode::Zero;
+    std::optional<RawEmbeddingF0> embf0_seed;
+    if (has_ream) embf0_seed = derive_raw_embedding_f0(ctx);
+    log.write_potential_section(ctx, host.train_size(), host.val_size(), elem_str,
+                                embf0_seed ? &*embf0_seed : nullptr);
+    if (has_ream) log.arm_embf0(embf0_zero, host.embf0_diagnostic());
     {
         const auto& tr = host.load_transform_report();
         const auto& vr = host.val_load_transform_report();
@@ -542,6 +555,31 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log)
             host.val_size() + vr.n_dropped_energy + vr.n_dropped_force;
         log.write_load_transforms_section(tr, n_train_loaded,
                                           vr, n_val_loaded);
+
+        /* EMBF0 ZERO fixes the DM_REAM isolated-atom energy at 0: fitting
+         * absolute reference energies then needs another per-atom constant.
+         * n_intercept_columns > 0, from stored values (no BIAS default
+         * inserted). */
+        const auto bias = ctx.stored_value("BIAS");
+        const bool intercepts =
+            bias && *bias == "true" && ctx.stored_value("ATOM").has_value();
+        // The stored keys as well as the reports: on the MPI host the
+        // training report is not filled.
+        const bool eshift_keys =
+            ctx.has_stored("ESHIFT") ||
+            ctx.stored_value("ESHIFT_ATOM") == std::optional<std::string>("true") ||
+            ctx.stored_value("ESHIFT_DBATOM") == std::optional<std::string>("true");
+        if ((has_train_db || !val.empty()) && has_ream && embf0_zero &&
+            !intercepts && !eshift_keys && tr.eshift.empty() &&
+            vr.eshift.empty())
+            log.hint("EMBF0 ZERO fixes the DM_REAM isolated-atom energy at 0 "
+                     "and the model has no other per-atom constant (BIAS "
+                     "false, no ESHIFT). If reference energies are absolute "
+                     "(e.g. DFT totals), set ESHIFT_ATOM, ESHIFT_DBATOM or "
+                     "ESHIFT (compatible with EAMFAST). BIAS true also adds "
+                     "a per-atom constant, but its intercept column precedes "
+                     "the descriptor weights (FIXINDEX/FIXWEIGHT indices "
+                     "shift) and it disables EAMFAST.");
     }
     log.write_loss_section(trg);
 
@@ -593,6 +631,14 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log)
      * generation on stagnation. */
     auto policy = build_run_policy<V,R>(sp, &trg);
 
+    /* The stagnation threshold and top-K tracking are process-wide statics
+     * that each policy arms inside run() (RESTART, PRESTAGE). A policy that
+     * ended by an exception in an earlier run in this process can leave
+     * them armed -- a stale window would stop a PLAIN run with a
+     * StagnationStop. Every run starts disarmed. */
+    HPO_Host<V,R>::set_stagnation_threshold(0);
+    HPO_Host<V,R>::set_track_topk(0);
+
     /* Bind best-potential publication to this run. HPO runs are not
      * resumable, so every run starts fresh: stale best potentials from an
      * unrelated prior objective are discarded atomically before the first
@@ -617,6 +663,9 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log)
             std::cout << "[HPO] " << sp.lib << ":" << sp.algo
                       << "   dim=" << sp.low.size() << "\n";
             policy->run(sp, host);
+            /* A new best that could not be saved fails the run even when
+             * the durable_best::Error was swallowed on its way up. */
+            detail::rethrow_if_best_unsaved();
         },
         host, log);
 

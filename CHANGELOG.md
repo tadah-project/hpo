@@ -109,6 +109,226 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **A search that a gradient that is not finite ended says so** (`STOPPED -- gradient not finite: a failed evaluation in the finite-difference stencil`), where it reported success or a spent `MAXEVAL`. With the default `FAILSCORE`, the largest double, a failed evaluation in the finite-difference stencil makes the difference with a usable loss overflow (for any step below 1/2 in the optimiser's internal coordinates: half the box width under `OPTIM_SCALE AUTO`). In one dimension with `PARAM fd_step 0.2`, `MAXEVAL 60` and a skip cap that fails the stencil point 1.4 of the start point 1.6, every gradient-based backend stopped after the same four evaluations and reported `MAXEVAL=60 reached` and `COMPLETED` (`DLIB:BFGS`), `SUCCESS -- generic success` (NLopt `LD_LBFGS`, `LD_TNEWTON*`, `LD_VAR1`, `LD_VAR2`), `roundoff-limited` (`LD_SLSQP`) or `COMPLETED` (every CERES driver); `LD_MMA` and `LD_CCSAQ` asked for the same point until NLopt's `MAXEVAL` (120 evaluations of three points), and so did `LD_AUGLAG` (its default local search `LD_MMA`) and an `INNER` `LD_MMA` or `LD_CCSAQ`, while `AUGLAG` with an `INNER` `LD_LBFGS` or `LD_TNEWTON` reported `FTOL_REACHED` after the same evaluations and one more, AUGLAG's evaluation of the point its local search returned. The adapters now read why the gradient failed (`GradientProvider::failure`, *Added*). `DLIB:BFGS` cannot reject a point: such a gradient ends the search (`detail::GradientNotFinite`). NLopt and Ceres reject the point (`+inf`; a failed evaluation) and step back, as before; a local NLopt gradient search that has had no finite gradient yet is stopped at that rejection (`force_stop`: the same evaluations, except the repeats) — an `LD_*` algorithm without an `INNER` block, or an `AUGLAG` whose local search is one (`single_local_search`, *Added*; `force_stop` reaches that search). An NLopt search that ends right after a rejection ended because of it: no evaluation after the rejection but `AUGLAG`'s evaluation of the point its local search returned (`detail::ended_on_rejection`), and neither `MAXEVAL`, `MAXTIME` nor `STOPVAL` met, nor the `MAXEVAL` or `MAXTIME` of `AUGLAG`'s local search, which `AUGLAG` reports as `FTOL_REACHED`; a tolerance (`XTOL_REACHED`, `FTOL_REACHED`) reached there is reported as the rejection's ending. So does a Ceres solve that ends with `FAILURE` right after one. `MLSL` and the global `GD_*` searches are not stopped at a rejection. The journal has a warning that names the backend, the point and the stencil point (`DLIB:BFGS stopped: gradient not finite: a failed evaluation in the finite-difference stencil (at CGRID2B[2] = 1.6, the stencil point CGRID2B[2] = 1.4 failed: loss 1.797693135e+308); best-so-far preserved`), and the status is the trailer of a run the search ends. Another non-finite gradient ends it the same way with its own cause (`the finite-difference quotient overflowed`, `the analytical gradient could not be formed at this point`, `… is not finite at this point`). Such a run ends with status 0 when an evaluation produced a usable loss (the stencil's other points normally did), and with status 1 and the no-usable-loss trailer otherwise; a signal or an error still decides the ending first (`run_driver.h`). Nothing stands in for the failed evaluation and the search does not go on past the point where it ends. Tests: `test_hpo_termination.cpp` ("Gradient not finite: …", per backend, `AUGLAG` and its local search's `MAXEVAL`, a tolerance, `MLSL` and `GD_STOGO`, `MULTISTART`, and for a later point), `test_phase_specs.cpp` (`single_local_search`), `test_gradient_failure.cpp`.
 - **`PARAM fd_kernel inhouse` selects the in-house finite-difference kernel under `OPTIM_SCALE NONE`**, as documented; it was accepted and ignored there, and the Ceres kernel, `NONE`'s default, ran. Test: `test_gradient_space.cpp`.
 
+## [1.5.1] — 2026-09-25
+
+### Added
+- Tests: `test_ream_fastpath.cpp` (DM_REAM through the real pair style, EAMFAST vs generic, EMBF0 ZERO/FREE: isolated atom 0.0, forces/virial bitwise equal across references), `test_hpo_embf0_e2e.cpp` (hidden `[embf0_e2e]`: CEMBFUNC/SEMBFUNC-only search, every candidate's isolated atom exactly 0), `test_hpo_embf0_journal.cpp`, EMBF0 cases in the startup-validation, init-strategy and compact-fitter tests.
+- **Transient filesystem errors are retried before a write fails.** On
+  network filesystems a lock, write, fsync or rename can fail for a moment
+  (EBUSY, EAGAIN, ESTALE, ETXTBSY, EIO, ENOLCK, ETIMEDOUT, EDEADLK; EACCES
+  only when the directory is on a network filesystem -- on a local disk it
+  is a permission error and fails at once) and succeed when repeated. The
+  durable best potential retries its whole lock → read → compare → replace
+  transaction with exponential backoff (10 ms doubling to 2 s, ±20 %
+  jitter), releasing its locks between attempts, until 30 s have passed
+  since the first failure (the failing calls' own time counts; a call that
+  blocks by itself can add its duration at either end). A retry that finds
+  its own earlier rename in place (the directory fsync failed, or an NFS
+  rename reported ENOENT after landing) completes that commit. Other
+  permanent errors (ENOSPC, EROFS, ENOENT, ...) are not retried. The
+  per-evaluation logs (`loss.tadah`, `outvar.tadah`, `params.tadah`,
+  `stats.tadah` and their `best_*` twins), whose write errors were never
+  checked, are appended one batch per writer drain
+  (`io::RetryingAppendFile`): a failed batch -- a partial write included --
+  is truncated back and rewritten, with ONE 10 s budget per drain shared by
+  every file and `DUMP`/`BDUMP` archive (each still makes its own attempt,
+  plus one immediate re-attempt after a permanent errno). A batch that
+  still fails is dropped whole and reported with the rows lost, and that
+  file gets single attempts until a write succeeds (repeats summarised, an
+  INFO line when writes resume); the run goes on. Archives are written
+  whole or not at all. After a shutdown signal retrying goes on for at most
+  2 s (`BackoffPolicy::stop_grace`, per durable publication and per drain),
+  so one blip after a scheduler's time-limit warning does not lose the
+  in-flight best or the last rows. Every retry is a WARNING; DIAGNOSTICS
+  gains `Transient I/O retries : N (best-potential a, per-eval
+  logs/archives b); rows lost c; archives lost d` only when one of them is
+  non-zero, so clean runs write byte-identical journals and files. New API:
+  `durable_best::SysError` (errno, operation, path, `may_have_landed()`),
+  `durable_best::Options` with `default_backoff()` and 4-argument overloads
+  (the 3-argument forms keep the default policy), `io::BackoffPolicy`,
+  `io::retry`. Test-only knobs: `TADAH_HPO_TEST_IO_FAULT="site,ERRNO
+  [,skip=K][,count=N|always][,partial=B][,land][,latency=MS][;...]"` and
+  `TADAH_HPO_TEST_IO_BACKOFF_MS="initial,cap,budget[,jitter]"`
+  (`io::testing::ScopedFaults` in-process); with no faults installed an I/O
+  call costs one relaxed atomic load. Tests: `test_durable_best.cpp`,
+  `test_append_log.cpp`, `[durable_e2e]` in `test_hpo_fixweight_e2e.cpp`.
+
+### Changed
+- **DM_REAM `EMBF0`** (F(0) = 0 by construction, default ZERO): no change to the search, the evaluated numbers or the written rows is needed — each candidate's DM_REAM recomputes g_m(0) from its own CEMBFUNC/SEMBFUNC (fresh and cached-trainer paths), and every written potential carries the `EMBF0` line. Added: `OPTIM EMBF0` is rejected at startup (and in `validate_hpo_setup`); `hpo_run.log` POTENTIAL SETUP rows `Embedding F(0)` and the raw F(0) of the `-c` potential, and a RESULT line with the raw F(0) of the first and best evaluation (linear models only; diagnostic, never in any output row); a HINT when a DM_REAM model under ZERO is trained without BIAS/ESHIFT; a WARNING when an INIT WARM seed declares a different `EMBF0` than the run.
+- **Compact refit (`tadah refit`, REFIT_MODE compact) fits the zero-referenced embedding under `EMBF0 ZERO`**: `BlipFit`/`CurveCost`/`EnergyCost`/VARPRO carry an F-only `zero_ref` flag with the matching Jacobians (∂c = b - b0, ∂μ = -c(db - db0), ∂η = c[(x-μ)db - (0-μ)db0]/η), and the engine's energy/curve targets use F_tab - F_tab(0). FREE is textually unchanged. Compact ZERO results change for embedding bumps covering rho = 0 and knots below 0.
+- Journal status after an optimiser exception reads `FAILED -- <what>`
+  (was `STOPPED with error: <what>`).
+- RESTART with an NLopt inner optimiser now restarts on stagnation (the
+  `StagnationStop` ended as a graceful "nlopt failure"), and BASINS stages
+  driven by NLopt see stagnation as stagnation, not convergence. MAXEVAL
+  applies per launch, so a RESTART run can use up to (MAX + 1) x MAXEVAL
+  evaluations.
+- SIGINT/SIGTERM/SIGUSR2 during NLopt, a MULTISTART start, PT/PA
+  calibration or NOISE_CALIBRATION ends as `SHUTDOWN (<signal>)` with exit
+  code 0 on single-process runs. In a multi-rank `TADAH_HPO_MPI` PT/PA run
+  the ranks other than 0 still end `FAILED -- ...: rank 0 aborted during
+  ... calibration`, exit code 1.
+- `NLOPT_ROUNDOFF_LIMITED` is a graceful stop (was FAILED); an error inside
+  an NLopt gradient (e.g. a GRAD_STRATEGY ANALYTICAL wiring error) fails
+  the run.
+- A transient durable-best failure can hold the evaluations whose loss may
+  become the new best for up to about 30 s (the others carry on).
+- DIAGNOSTICS says `[ok] Every evaluation produced a usable loss.` only
+  when that is so (not next to NaN/Inf clamps, not when no evaluation
+  produced a loss), and its note calls the best potential complete only
+  when one was persisted.
+- `StagnationStop` moved to namespace scope (`tadah/hpo/stagnation_stop.h`;
+  `HPO_Host<...>::StagnationStop` is an alias). New
+  `host_analytical_grad_fn()` (`gradient_provider.h`).
+- Numerics shift at the rounding level: a start point the plain map
+  rounded is now evaluated exactly (3e-11 relative for a small weight in a
+  wide box), and grids, LSCALE/ESHIFT and LAMMPS read-backs are unrounded,
+  so first losses and possibly trajectories differ from 1.5.0 at that
+  level; `OPTIM_SCALE NONE` runs are no longer byte-identical to earlier
+  releases.
+- Examples: `common/lammps/Ecoh.in` and `Ecoh_param.in` pass values to and
+  from LAMMPS exactly (see Fixed), which exposes the ~1e-13 relative
+  re-evaluation noise of the warm-started lattice relaxation. Examples 05,
+  13 and 16 have new reference fingerprints; best losses, loss components
+  and pinned hyperparameters are unchanged. In 05 that noise decides
+  whether DLIB:BFGS's line search accepts a re-evaluation on the clamped
+  bound RCUT2B = 6.0: 30 evaluations on the reference machine, 16 or 17
+  after a 1-ulp perturbation (`evals_tol` 14 accepts 16..44). 13 sets
+  `AFTER_STAGNATION 3` so both restarts still fire (23 -> 20
+  evaluations); its restarts draw from `std::random_device`, so only what
+  does not depend on them is pinned. In 16 the loss is flat along
+  FIXWEIGHT(14), and which tied evaluation is best is no longer pinned.
+  `examples/tools/generate_fingerprint.py` keeps hand-written fingerprint
+  fields on regeneration.
+
+### Fixed
+- **Potential files are exact and never carry `NUMERIC`.** Every HPO
+  potential writer (`best_pot.tadah` and its `.r<rank>` mirrors, `DUMP`
+  `pot_<N>.tadah`, `BDUMP` `best_pot_<N>.tadah`) goes through
+  `Context::write_potential`: every non-integer number with NUMERIC
+  significant digits, default 18, so a best potential re-parses to exactly
+  the doubles the evaluation used. The old writer default-inserted and
+  wrote `NUMERIC 12` into every 1.5.0 potential; such a potential used as
+  a configuration makes that line an explicit setting, so `tadah hpo`
+  writes 12-digit potentials and prints a WARNING (`hpo_run.log` and
+  stderr) naming the line. *Migration:* delete `NUMERIC 12` from
+  configurations made from 1.5.0 potentials. The `# HPO_BEST_*` and `# HOT`
+  header lines are unchanged. Tests: `test_hpo_pot_digits.cpp`,
+  `[fixweight_e2e]`.
+- **Values read back from LAMMPS are exact.** `LammpsRunner::get_variable`
+  evaluates equal-style variables with `compute_equal` and renders the
+  double losslessly; LAMMPS' `retrieve()` used `%.15g`, so every PC_LAMMPS
+  outvar, hot value, failvar and gradient observable lost up to ~2
+  significant digits. Other styles are returned verbatim. Inside a script
+  LAMMPS still expands `${name}` and `v_name` of equal-style variables with
+  15 digits; `hpo.rst` ("Precision of values passed to and read from
+  LAMMPS") gives the lossless idioms, which the example scripts now use.
+  Test: `test_lammps_variable_readback.cpp`.
+- **Optimiser start points are evaluated at exactly their loaded values.**
+  The real → internal → real map of the OPTIM dimensions is not the
+  identity (in a `[-300, 300]` box a small weight came back 3e-11 relative
+  off and `1.2e-14` as `0`), so even a `MAXEVAL 1` WARM run did not
+  evaluate the input potential. Every optimiser run now anchors its start
+  points (`anchor_seed_points`, `SearchSpace::with_seed_anchors`): CONFIG,
+  WARM and INIT points, MULTISTART starts, RESTART refreshes, PRESTAGE
+  top-K and BASINS pool seeds map back to their loaded doubles in every
+  adapter, and a coordinate the optimiser has not moved keeps its seed
+  value. NLopt BOBYQA/COBYLA/PRAXIS round the start before evaluating it,
+  so any u within 4 ulp of the internal box of a seed maps to the seed
+  (capped at 2^-27, below the finite-difference steps with the default
+  `fd_step`, but never below 2 ulp of the seed). One exception remains:
+  PRAXIS under `OPTIM_SCALE NONE` on a LIN box reaching 2^24 (1.7e7) can
+  start a few ulp of the box off a seed of smaller magnitude than the box
+  (`hpo.rst` gives the measured range). Tests: `test_search_space.cpp`,
+  `test_seed_anchor.cpp`, `[seed_anchor]` in `test_hpo_fixweight_e2e.cpp`.
+- **Knot-channel RCUT is re-derived exactly every evaluation.** A value
+  within 1e-12 relative of the largest knot was kept, so the cutoff
+  depended on what the thread evaluated before. Test:
+  `test_rcut_autoderive.cpp`.
+- Configuration and seed readers accept subnormal values (`1e-310`, which
+  the lossless writers produce): the WARM reader skipped such a token and
+  gave every later OPTIM'd dimension of the key its neighbour's value.
+  Test: `test_init_strategies.cpp`.
+- FAILSCORE clamps in outvar slots are exact (`failscore_token()`):
+  `std::to_string` wrote 6 decimals, so `FAILSCORE 1.0000004` read back
+  below the failscore and a failed `PC_FAILPROBE` passed as a real S(θ).
+  Test: `test_failscore_token.cpp`.
+- Validation ESHIFT is forwarded exactly (it had 6 significant digits), and
+  `hpo_optim_resolved.hpo` writes its bounds exactly (10 digits), so the
+  pasted block pins the box the run searched.
+- **A fatal error fails the run, with a non-zero exit code.** NLopt's C++
+  wrapper turns any exception from the objective into `NLOPT_FAILURE`,
+  which the adapter treated as convergence: a best potential that could not
+  be saved ended as `STOPPED -- nlopt failure (algorithm converged; ...)`,
+  exit code 0, with a stale `best_pot.tadah`. The NLopt objective and
+  gradient and Ceres' `Evaluate` now capture the host exception, stop the
+  solver and rethrow it unchanged afterwards; NLopt's own exceptions are
+  classified by type (`classify_nlopt_exception`). MULTISTART
+  (`detail::run_start_guarded`) and the ANNEAL_PT/PA seed and T0
+  calibration no longer swallow or retype run-level exceptions. `hpo_run()`
+  also covers the fresh-run reset and NOISE_CALIBRATION, and closes the
+  journal with `FAILED -- best-potential persistence: <error>` (other
+  errors `FAILED -- <error>`) before rethrowing. Tests:
+  `test_nlopt_host_exceptions.cpp`, `test_policy_host_exceptions.cpp`,
+  `[durable_e2e]`; `tadah` exit status: `test_tadah_cli_exit_status.cpp`
+  (Tadah.MLIP).
+- **Parallel optimisers keep the most severe of concurrent exceptions.**
+  The ANNEAL_PT/PA replica pool and ASA's block evaluations kept the first,
+  so a stagnation stop or shutdown request caught first masked a concurrent
+  persistence failure (the run could end COMPLETED, exit code 0). Errors
+  now outrank a shutdown request, which outranks a stagnation stop
+  (`exception_severity.h`). `DLIB:GFS` with THREADS > 1 no longer aborts
+  (exit 134, journal left open) when two evaluations throw together.
+- **RESULT reports a best potential that could not be saved.** It said
+  `(none -- no evaluation produced a usable loss)` or named the older best.
+  Now: `Best total loss : <loss> (eval N) -- NOT saved (best-potential
+  persistence failed)`, `Last saved best : ...` when there is one, and
+  `Best potential saved : not confirmed -- best_pot.tadah may hold eval N
+  (write not synced) ...` only when the candidate's rename may have
+  happened (not after e.g. EROFS). A lower best that another chain saved
+  after the failure is the result, the lost candidate listed as `Unsaved
+  candidate : ... superseded by eval M`. The record also backs the error
+  up: the run fails on it even where a policy swallowed the exception, and
+  a PRESTAGE, MULTISTART or BASINS stage that stops on stagnation ends the
+  run at once.
+- **After a fatal best-potential failure, later candidates get a single
+  attempt.** Every new best of another chain queued behind the failure
+  spent its own retry budget (a `DLIB:GFS` THREADS 8 run took 8 x 30 s to
+  end). Once a publication has failed for good (`durable_best::FailLatch`,
+  `Options::no_backoff`), later ones make one attempt without backoff: a
+  transient or permanent error fails at once, and only a rename reporting
+  ENOENT gets one immediate re-attempt. A failure is journalled as
+  `best-potential persistence failure at eval K (no backoff after the
+  failure at eval N): <error>`, the error ending in `(gave up after 1
+  attempt over 0 s)` after a transient errno. Storage that has recovered
+  still saves a later best (`best potential of eval K saved after the
+  persistence failure at eval N (no backoff); the run still ends FAILED`),
+  but the run ends FAILED with a non-zero exit and the first failure as its
+  status (`detail::durable_failure_cause`). The GFS run above now ends
+  after one budget when failing calls fail fast; with a soft-mount timeout
+  of T s each of the up to THREADS - 1 queued candidates adds about T.
+- **Evaluations that cannot become the new best no longer wait on best
+  publication** (`HPO_Host::may_become_best`, a lock-free pre-check), so a
+  publication's fsync or backoff holds up only the evaluations that may
+  win; a stagnation check that would fire first waits for the new-best
+  decisions in progress (`detail::throw_if_stagnated`). The rank-local
+  mirror of an MPI run (`best_pot.tadah.r<rank>`) retries for at most 1 s,
+  then makes single attempts until one succeeds.
+- **MULTISTART, PRESTAGE and RESTART.** A MULTISTART whose every start
+  fails now fails the run (it ended COMPLETED, exit code 0), and failed
+  starts are noted in the status (`(N of M MULTISTART starts failed; see
+  the WARNINGs)`, counted over the whole run). Under RESTART each
+  MULTISTART start and each PRESTAGE refinement seed gets its own
+  stagnation window (a start used to stop at its first evaluation after
+  the first stagnation); MULTISTART relaunches all K starts after the last
+  one, and PRESTAGE restarts only when the refinement stagnated without
+  improving the best. An exhausted RESTART ends `STOPPED -- stagnation: no
+  new best in W evals after R restart(s)` (was COMPLETED or a stale
+  per-start status; example 13's fingerprint now expects it). `hpo_run()`
+  starts with the stagnation window and top-K tracking disarmed: a policy
+  that ended by an exception left them armed for a later run in the same
+  process.
+
 ## [1.5.0] — 2026-09-10
 
 ### Breaking

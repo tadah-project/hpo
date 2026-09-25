@@ -228,6 +228,48 @@ TEST_CASE("rcut derivation: per-eval hook tracks the largest knot",
     }
 }
 
+TEST_CASE("rcut derivation: exact, so the cutoff is a function of theta "
+          "alone (no evaluation-history hysteresis)",
+          "[rcut_autoderive][lossless]") {
+    /* The trainer context persists per thread, so the RCUT2B the hook sees
+     * is the previous evaluation's. A tolerance there (was 1e-12 relative)
+     * kept a stale cutoff for knot moves below it: the same theta got a
+     * cutoff that depended on which theta that thread evaluated before. */
+    tadah::core::PeriodicTable::initialize();
+    const double target = 5.0 + 3e-12;
+    auto set_knot = [](Context& c, double k) {
+        c.remove("CGRID2B");
+        c.add("CGRID2B", k);
+        c.add("CGRID2B", 3.0);
+        c.add("CGRID2B", 4.2);
+    };
+    SECTION("a sub-1e-12 knot move is applied exactly") {
+        Context ctx = make_knot_ctx();
+        set_knot(ctx, target);
+        REQUIRE(apply_knot_rcut_derivation(ctx, true, true));
+        REQUIRE(ctx.get<double>("RCUT2B") == target);
+        REQUIRE(ctx.get<double>("RCUT2BMAX") == target);
+        REQUIRE_FALSE(apply_knot_rcut_derivation(ctx, true, true));
+    }
+    SECTION("two histories ending at the same theta agree bit-for-bit") {
+        Context a = make_knot_ctx();   // thread A: 5.0 -> target
+        set_knot(a, 5.0);
+        apply_knot_rcut_derivation(a, true, true);
+        set_knot(a, target);
+        apply_knot_rcut_derivation(a, true, true);
+
+        Context b = make_knot_ctx();   // thread B: 5+1e-11 -> target
+        set_knot(b, 5.0 + 1e-11);
+        apply_knot_rcut_derivation(b, true, true);
+        set_knot(b, target);
+        apply_knot_rcut_derivation(b, true, true);
+
+        REQUIRE(a.get<double>("RCUT2B") == b.get<double>("RCUT2B"));
+        REQUIRE(a.get<double>("RCUT2BMAX") == b.get<double>("RCUT2BMAX"));
+        REQUIRE(a.get<double>("RCUT2B") == target);
+    }
+}
+
 TEST_CASE("rcut derivation: NN-safe cutoff covers OPTIM'd knot bounds",
           "[rcut_autoderive]") {
     tadah::core::PeriodicTable::initialize();

@@ -87,6 +87,15 @@ struct BlipFit {
   bool is_pinned(int k) const {
     return k >= 0 && k < static_cast<int>(pinned.size()) && pinned[k];
   }
+  /** EMBF0 ZERO zero-referenced embedding (the F channel only; never phi/rho):
+   *  f(x) = sum_k c_k [g(eta_k(x - mu_k)) - g(eta_k(0 - mu_k))], so f(0) = 0
+   *  exactly for any parameters (eval returns 0.0 at x == 0). (c, mu, eta)
+   *  are the RAW parameters — the same numbers DM_REAM and EAMRefit::F_fit
+   *  evaluate zero-referenced under EMBF0 ZERO. deriv/deriv2 are unchanged
+   *  (the g(0) terms are constants in x). false (default) = the raw basis
+   *  (phi, rho, EMBF0 FREE), byte-identical to tadah 1.5.0. A fitter stamps
+   *  it from CompactConfig::zero_ref on every fit it solves. */
+  bool zero_ref = false;
   double curve_rmse = 1e300;   ///< weighted value RMSE over the fit samples
                                ///< (pressure-relaxed weights; plain RMSE if none)
   double metric = 1e300;       ///< caller's energy metric (<=1 == within tol)
@@ -146,6 +155,14 @@ struct CompactConfig {
    *  sets it to rcut for the phi and rho ladders. Ignored by the one-sided
    *  knot families (their box already ends at the largest sample). */
   double hard_rcut = 0.0;
+
+  /** EMBF0 ZERO: fit the zero-referenced embedding basis g - g(0) (see
+   *  BlipFit::zero_ref). The engine sets it for the F ladder / FUSE only,
+   *  when the refit writes EMBF0 ZERO; the caller then supplies the
+   *  zero-referenced target F_ref = F_tab - F_tab(0). Every fit this fitter
+   *  solves or refines is stamped with it. false (default) = the raw basis,
+   *  the phi/rho channels and EMBF0 FREE (textually the 1.5.0 code paths). */
+  bool zero_ref = false;
 
   /** Objective the whole chain optimises toward (REFIT_OBJECTIVE). Energy =
    *  the caller's energy metric (default, regression-gated). Curve = the
@@ -401,7 +418,11 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
                     std::string *term_out = nullptr,
                     double phi_hard_rcut = 0.0, double rho_hard_rcut = 0.0);
                     // algo: CERES_LM | CERES_DOGLEG | NONE
-                    // (basis families are carried by each BlipFit's `kind`)
+                    // (basis families are carried by each BlipFit's `kind`;
+                    // the EMBF0 ZERO reference by F.zero_ref — F's curve
+                    // rows and the E-V embedding term are then zero-
+                    // referenced, and dF.ys / e_orig must use F_ref.
+                    // phi/rho must not carry zero_ref: throws)
                     // term_out (optional): receives the Ceres termination tag
                     // (e.g. "CONVERGENCE(143it, cost 2.1e-09)")
                     // phi/rho_hard_rcut > 0: bump-support gate on the radial
@@ -446,16 +467,21 @@ namespace ceres { class CostFunction; }
 namespace tadah {
 namespace hpo {
 namespace refit {
+// zero_ref / F_zero_ref: the EMBF0 ZERO zero-referenced basis (curve cost /
+// the energy cost's F block); deg / dF: per-atom knot degrees (empty = all 5).
 ceres::CostFunction *make_curve_cost(std::vector<double> xs,
                                      std::vector<double> ys,
                                      std::vector<double> wts, int n,
-                                     BasisKind kind = BasisKind::Blip);
+                                     BasisKind kind = BasisKind::Blip,
+                                     bool zero_ref = false,
+                                     std::vector<int> deg = {});
 ceres::CostFunction *make_energy_cost(
     const std::vector<std::vector<double>> &dists,
     const std::vector<double> &e_orig, const std::vector<double> &e_weight,
     int nphi, int nrho, int nF,
     BasisKind kphi = BasisKind::Blip, BasisKind krho = BasisKind::Blip,
-    BasisKind kF = BasisKind::Blip);
+    BasisKind kF = BasisKind::Blip, bool F_zero_ref = false,
+    std::vector<int> dF = {});
 
 }  // namespace refit
 }  // namespace hpo

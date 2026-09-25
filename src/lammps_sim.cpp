@@ -1,4 +1,5 @@
 #include <tadah/core/logger.h>
+#include <tadah/core/number_format.h>
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/hpo_targets.h>
@@ -203,13 +204,8 @@ namespace tadah::hpo {
 
 bool try_parse_double(const std::string& s, double& value)
 {
-    try {
-        std::size_t pos = 0;
-        value = std::stod(s, &pos);
-        return pos == s.size();
-    } catch (...) {
-        return false;
-    }
+    /* std::stod over the whole string, but a subnormal is a number. */
+    return tadah::core::parse_number(s, value);
 }
 
 /* An option token starts with '-' and is not shaped like a number

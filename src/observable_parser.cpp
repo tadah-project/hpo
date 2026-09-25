@@ -1,5 +1,7 @@
 #include <tadah/hpo/observables/observable_parser.h>
 
+#include <tadah/core/number_format.h>
+
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/observables/cohesive_energy.h>
 #include <tadah/hpo/strict_parse.h>         // parse_number, parse_uint

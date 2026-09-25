@@ -13,10 +13,12 @@
 #include <tadah/mlip/weight_provisioning.h>
 #include <tadah/mlip/memory/mlip_workspace_manager.h>
 #include <tadah/models/descriptors/d_base.h>
+#include <tadah/models/descriptors/dm/embf0.h>
 #include <tadah/models/eam/pot_curve_edit.h>
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -40,6 +42,57 @@ std::size_t derive_weight_count(const core::Context &train_ctx) {
   }
 }
 
+RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx) {
+  RawEmbeddingF0 out;
+  if (!models::context_has_ream(train_ctx)) {
+    out.reason = "no DM_REAM many-body block";
+    return out;
+  }
+  if (!models::model_is_linear(train_ctx)) {
+    out.reason = "the model is not linear in the descriptor";
+    return out;
+  }
+  try {
+    core::Context ctx_copy = train_ctx;
+    tadah::mlip::memory::MLIPWorkspaceManager ws;
+    tadah::mlip::Trainer probe(ctx_copy, ws);
+    const core::Context &pc = probe.context;
+    const std::size_t K = probe.fb->get_phi_cols(pc);
+    core::t_type w;
+    if (pc.has_stored("FIXINDEX") && pc.has_stored("FIXWEIGHT")) {
+      std::vector<std::string> fi(pc.size("FIXINDEX"));
+      pc.get("FIXINDEX", fi);
+      if (core::parse_indices(fi).size() == K) {
+        probe.provision_fixed_weights();
+        w = probe.model->get_weights();
+        out.source = "FIXWEIGHT";
+      }
+    }
+    if (w.size() == 0 && pc.has_stored("WEIGHTS") && pc.size("WEIGHTS") == K) {
+      w = core::t_type(K);
+      for (std::size_t i = 0; i < K; ++i) w(i) = pc.get<double>("WEIGHTS", i);
+      out.source = "WEIGHTS";
+    }
+    if (w.size() == 0) {
+      out.kind = RawEmbeddingF0::Kind::PerEvaluation;
+      return out;
+    }
+    std::optional<double> v;
+    if (w.size() == probe.DCS.dsize) v = probe.DCS.dmb->raw_embedding_f0(w);
+    if (!v) {
+      out.source.clear();
+      out.reason = "the weight vector does not match the descriptor";
+      return out;
+    }
+    out.kind = RawEmbeddingF0::Kind::Value;
+    out.value = *v;
+  } catch (const std::exception &e) {
+    out = RawEmbeddingF0{};
+    out.reason = std::string("not derivable: ") + e.what();
+  }
+  return out;
+}
+
 void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
                         bool has_train_db, bool has_validation) {
   /* --- OPTIM key sanity (parse-time rules, re-checked cheaply) -------- */
@@ -51,6 +104,18 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         "FIXINDEX + FIXWEIGHT in the training configuration and use "
         "`OPTIM FIXWEIGHT (<weight-index>) <low> <high>`.");
   }
+  for (const auto &kv : trg.optimap) {
+    if (core::to_upper(kv.first) == "EMBF0") {
+      throw std::runtime_error(
+          "OPTIM EMBF0 is not a valid search target: EMBF0 (ZERO|FREE) "
+          "selects the DM_REAM embedding reference, a discrete property of "
+          "the potential; set it in the -c potential/configuration.");
+    }
+  }
+  /* An invalid stored EMBF0 value fails here, not at the first evaluation.
+   * stored_embf0 never inserts the default. */
+  if (models::context_has_ream(train_ctx))
+    (void)models::stored_embf0(train_ctx);
   if (trg.optimap.count("FIXWEIGHT") && !train_ctx.contains("FIXINDEX")) {
     throw std::runtime_error(
         "OPTIM FIXWEIGHT requires FIXINDEX in the training configuration "

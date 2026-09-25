@@ -261,9 +261,13 @@ private:
 
 }  // namespace detail
 
-template<class Vec,class Runner>
-  void run_dlib_global(const OptimizerSpec& sp,
-      HPO_Host<Vec,Runner>& host)
+/* DLIB:GFS on any host with `double operator()(const dlib::matrix<double,
+ * 0,1>&)` (real-space parameters); run_dlib_global binds HPO_Host and
+ * passes whether RestartPolicy has armed the stagnation stop (`restart`),
+ * the unit tests a stub host. */
+template<class HostT>
+  void run_dlib_global_impl(const OptimizerSpec& sp, HostT& host,
+                            RestartStop restart = RestartStop::Off)
   {
     using namespace dlib;
 
@@ -272,7 +276,7 @@ template<class Vec,class Runner>
      * on nothing else: one of them, or an armed RESTART's stagnation stop,
      * is required, and the tolerances it cannot apply and any PARAM are
      * refused (the startup check, again for a spec built at run time). */
-    validate_dlib_gfs_spec(sp, restart_stop_armed<HPO_Host<Vec,Runner>>());
+    validate_dlib_gfs_spec(sp, restart);
     const auto t0 = std::chrono::steady_clock::now();
 
     /* find_min_global (MaxLIPO+TR) is a deterministic algorithm; a
@@ -472,6 +476,14 @@ template<class Vec,class Runner>
     }
     std::cout << "[HPO] " << msg << "\n";
     HPOLog::instance().info(msg);
+  }
+
+template<class Vec,class Runner>
+  void run_dlib_global(const OptimizerSpec& sp,
+      HPO_Host<Vec,Runner>& host)
+  {
+    run_dlib_global_impl(sp, host,
+                         restart_stop_armed<HPO_Host<Vec,Runner>>());
   }
 
 template<class Vec,class Runner>

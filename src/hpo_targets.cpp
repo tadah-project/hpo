@@ -15,6 +15,7 @@
 #include <tadah/models/descriptors/d_base.h>
 #include <tadah/models/descriptors/d_mjoin.h>
 #include <tadah/core/registry.h>
+#include <tadah/core/number_format.h>
 #include <tadah/hpo/loss_function.h>
 
 #include <algorithm>
@@ -105,6 +106,25 @@ void HPOTargets::Opti::resize(size_t s) {
 }
 
 HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
+  /* Potential-file precision. Resolved first, before anything
+   * below can default-insert NUMERIC into the context: only a NUMERIC the
+   * configuration really carries counts as explicit. */
+  {
+    const core::PotDigits pd = core::resolve_pot_digits(context);
+    pot_digits = pd.digits;
+    pot_digits_explicit = pd.explicit_;
+    const std::string w = core::pot_digits_warning(pd);
+    if (!w.empty()) {
+      const std::string msg =
+          "HPO potential files (best_pot.tadah, BDUMP/DUMP archives): " + w +
+          " Potential files written by tadah 1.5.0 hpo carry an "
+          "auto-inserted 'NUMERIC 12' line; if this configuration is (or "
+          "was copied from) such a best_pot.tadah, delete that line.";
+      std::cerr << "[HPO] WARNING: " << msg << "\n";
+      HPOLog::instance().warning(msg);
+    }
+  }
+
   models::D_mJoin::expand_grids(context);
 
   /* LS keeps configuration order: the outvar/loss columns, the
@@ -248,7 +268,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
     }
     std::uint64_t seed = s.init_strategy_spec.seed.value_or(
         static_cast<std::uint64_t>(std::random_device{}()));
-    InitContext ictx{s, *this, seed};
+    InitContext ictx{s, *this, seed, &context};
     std::size_t k = s.init_strategy_spec.k_total.value_or(strategy->default_k());
     s.optim_init = strategy->generate(ictx, k);
     if (s.optim_init.empty()) {
@@ -1473,7 +1493,7 @@ SearchSpace HPOTargets::build_search_space() const {
       d.tf = i < o.scale.size() ? o.scale[i] : DimTransform{};
       d.origin = i < o.origin.size() ? o.origin[i] : BoxOrigin::Explicit;
       if (numeric) {
-        try { d.x0 = std::stod(o.config[i]); } catch (const std::exception&) {}
+        try { d.x0 = core::to_double(o.config[i]); } catch (const std::exception&) {}
       }
       dims.push_back(std::move(d));
     }
@@ -1556,13 +1576,15 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
   hpo << "# Resolved OPTIM block (explicit bounds for every searched dimension).\n"
          "# Written by tadah hpo because at least one box was derived by an AUTO rule;\n"
          "# paste these lines in place of the AUTO lines to pin exactly this search space.\n";
-  hpo << std::setprecision(10);
+  /* Lossless numbers (shortest round-trip text): pasted back, every bound
+   * must parse to the very double this run searched -- 10 digits moved AUTO
+   * bounds by up to 5e-11 relative. */
   for (std::size_t i = 0; i < ss.dim(); ++i) {
     const DimSpec& d = ss.at(i);
     hpo << "OPTIM " << d.key << " (" << (d.user_index ? d.user_index : 1) << ") "
-        << d.lo << " " << d.hi;
+        << core::format_roundtrip(d.lo) << " " << core::format_roundtrip(d.hi);
     if (d.tf.kind == ScaleKind::Log)   hpo << " LOG";
-    if (d.tf.kind == ScaleKind::Asinh) hpo << " ASINH " << d.tf.c;
+    if (d.tf.kind == ScaleKind::Asinh) hpo << " ASINH " << core::format_roundtrip(d.tf.c);
     hpo << "   # " << box_origin_name(d.origin) << '\n';
   }
 }
@@ -1596,6 +1618,14 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
       "is a silent no-op. To search linear coefficients, pin them with "
       "FIXINDEX + FIXWEIGHT in the training configuration and use "
       "`OPTIM FIXWEIGHT (<weight-index>) <low> <high>`.");
+  }
+  /* Before context.size(k) below, which would materialise the blueprint
+   * default EMBF0 ZERO into the run context. */
+  if (core::to_upper(k) == "EMBF0") {
+    throw std::runtime_error(
+      "OPTIM EMBF0 is not a valid search target: EMBF0 (ZERO|FREE) selects "
+      "the DM_REAM embedding reference, a discrete property of the "
+      "potential; set it in the -c potential/configuration.");
   }
 
   Opti& omap = optimap[k];
@@ -1765,7 +1795,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
     for (const auto& ui : user_indices) {
       const size_t i = ui_offset(omap.config, ui);
       if (i < s && core::is_number(omap.config[i]))
-        group_max = std::max(group_max, std::fabs(std::stod(omap.config[i])));
+        group_max = std::max(group_max, std::fabs(core::to_double(omap.config[i])));
     }
   }
 
@@ -1779,7 +1809,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
           throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
                                    "): AUTO needs a numeric CONFIG seed (got '" +
                                    omap.config[i] + "')");
-        const double x0 = std::stod(omap.config[i]);
+        const double x0 = core::to_double(omap.config[i]);
         if (rule.geometric) {
           if (!(x0 != 0.0))
             throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +

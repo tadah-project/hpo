@@ -431,4 +431,26 @@ struct OptimizerSpec {
                            const std::string& algo);
 };
 
+/* Seed anchoring for one optimiser run (SearchSpace::with_seed_anchors):
+ * a copy of `sp` whose space maps every start point in sp.optim_init back
+ * to exactly its loaded doubles, or std::nullopt when there is no space or
+ * no in-box seed coordinate. run_inner() applies it to every run, so
+ * CONFIG and WARM seeds, MULTISTART starts, RESTART refreshes and PRESTAGE
+ * top-K points are evaluated exactly where they came from.
+ * An optimiser that perturbs its start by rounding before evaluating it
+ * (NLopt BOBYQA/COBYLA rescale unequal initial steps, u -> (u/s)*s, by at
+ * most 1 ulp(u0); PRAXIS maps the start through atanh/tanh, a few ulp of
+ * the internal box) lands within the anchor's window
+ * (SearchSpace::seed_anchor_tolerance) and is anchored too -- except,
+ * possibly, PRAXIS on an OPTIM_SCALE NONE dimension whose box reaches
+ * 2^24, for a seed of smaller magnitude than the box: PRAXIS rounds its
+ * start by a few ulp of the box's midpoint and half-width, while the
+ * window there is capped (kSeedAnchorMaxTol) or 2 ulp of the seed
+ * (measured with NLopt 2.10: seeds up to ~0.3 of max(|lo|, |hi|) on a
+ * [0, W] box, up to ~0.6, rarely 0.8, on a box straddling 0; only on boxes
+ * of 2^25 or more). A start NLopt moves on purpose (PRAXIS clamps a start
+ * on a bound 1e-12 inside, BOBYQA shifts a start within its initial step
+ * of a bound) keeps the plain mapping. */
+std::optional<OptimizerSpec> anchor_seed_points(const OptimizerSpec& sp);
+
 }   // namespace

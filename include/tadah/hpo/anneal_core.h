@@ -18,6 +18,7 @@
  *   - Knobs / Knobs::parse       PARAM parsing, validation, whitelists
  *   - CoranaPlateau              Corana et al. 1987 sec. 4 eps-NEPS stop
  */
+#include <tadah/core/number_format.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/pc_fail_grading.h>   /* kFailBandFloor, loss_is_feasible */

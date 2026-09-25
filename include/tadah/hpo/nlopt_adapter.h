@@ -21,6 +21,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <typeinfo>
 
 namespace tadah::hpo {
 
@@ -54,6 +55,62 @@ inline bool nlopt_self_terminated(const std::exception& e,
     const std::string what = e.what();
     return what == "nlopt failure" ||
            (nlopt_msg && nlopt_msg[0] != '\0' && what == nlopt_msg);
+}
+
+/* How run_nlopt treats an exception that escaped nlopt::opt::optimize()
+ * while the objective raised none (the objective's own exceptions are not
+ * classified at all: run_nlopt_impl() rethrows them with their own type
+ * first).
+ *   Graceful     the algorithm terminated itself -- nothing left to
+ *                explore; the best result found so far is valid and
+ *                already saved;
+ *   InvalidArgs  NLopt rejected the setup; FAILED, rethrown;
+ *   Failed       anything else (out of memory, a forced stop, ...);
+ *                FAILED, rethrown. */
+enum class NloptOutcome {
+    Graceful,
+    InvalidArgs,
+    Failed
+};
+
+/** Classify by TYPE, not message text alone (`errmsg` = opt.get_errmsg(),
+ *  may be null):
+ *    nlopt::roundoff_limited (NLOPT_ROUNDOFF_LIMITED, -4: progress blocked
+ *      by floating-point roundoff)                  -> Graceful
+ *    exactly std::runtime_error with what() "nlopt failure" or == errmsg
+ *      (NLOPT_FAILURE, -1: population converged, local mutation simplex
+ *      degenerated; the C++ wrapper throws runtime_error(<stop message>)
+ *      when NLopt set one, e.g. LN_NELDERMEAD's "starting step size led to
+ *      simplex that was too small in dimension N")  -> Graceful
+ *    std::invalid_argument (NLOPT_INVALID_ARGS)     -> InvalidArgs
+ *    nlopt::forced_stop, std::bad_alloc, a subclass of runtime_error
+ *      (durable_best::Error, ... -- never NLopt's), any other type or
+ *      message                                      -> Failed */
+inline NloptOutcome classify_nlopt_exception(std::exception_ptr e,
+                                             const char* errmsg)
+{
+    try {
+        std::rethrow_exception(e);
+    } catch (const nlopt::roundoff_limited&) {
+        return NloptOutcome::Graceful;
+    } catch (const nlopt::forced_stop&) {
+        return NloptOutcome::Failed;
+    } catch (const std::invalid_argument&) {
+        return NloptOutcome::InvalidArgs;
+    } catch (const std::runtime_error& ex) {
+        /* nlopt::opt::mythrow(NLOPT_FAILURE) throws a plain runtime_error
+         * carrying the opt's stop message, or "nlopt failure" without
+         * one. A subclass (durable_best::Error, ...) is never NLopt's. */
+        if (typeid(ex) != typeid(std::runtime_error))
+            return NloptOutcome::Failed;
+        const std::string what = ex.what();
+        if (what == "nlopt failure" ||
+            (errmsg && errmsg[0] != '\0' && what == errmsg))
+            return NloptOutcome::Graceful;
+        return NloptOutcome::Failed;
+    } catch (...) {
+        return NloptOutcome::Failed;
+    }
 }
 
 namespace detail {
@@ -192,10 +249,15 @@ inline nlopt::opt make_nlopt(const OptimizerSpec& sp, unsigned dim,
     return o;
 }
 
-/* main driver ----------------------------------------------------- */
-template<class Vec,class Runner>
-void run_nlopt(const OptimizerSpec& sp,
-               HPO_Host<Vec,Runner>& host)
+/* main driver -----------------------------------------------------
+ * Generic over the host (`double operator()(const Vec&)`; an
+ * analytical_gradient member is optional) so unit tests can drive it with
+ * a stub; run_nlopt<Vec,Runner> below is the production entry point and
+ * passes whether RestartPolicy has armed the stagnation stop (`restart`,
+ * require_stop in backend_rules.h). */
+template<class Vec,class Runner,class HostT>
+void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
+                    RestartStop restart = RestartStop::Off)
 {
     const unsigned dim = static_cast<unsigned>(sp.low.size());
     const OptimizerCaps& caps = optimizer_caps(sp);
@@ -216,7 +278,7 @@ void run_nlopt(const OptimizerSpec& sp,
      * per-dim near-bound rules) -- see initial_step.h. */
     const StepPlan plan = make_step_plan(sp, start, caps);
     nlopt::opt opt =
-        make_nlopt(sp, dim, restart_stop_armed<HPO_Host<Vec,Runner>>(), &plan);
+        make_nlopt(sp, dim, restart, &plan);
 
     /* The *_MLSL_LDS variants explore with a deterministic Sobol
      * low-discrepancy sequence -- nlopt's RNG (seeded in make_nlopt)
@@ -270,14 +332,7 @@ void run_nlopt(const OptimizerSpec& sp,
             ? static_cast<unsigned long>(*sp.stop.maxeval)
             : 0ul;
 
-    AnalyticalGradFn<Vec> agf = nullptr;
-    if (sp.grad_strategy &&
-        *sp.grad_strategy != GradStrategy::Numerical) {
-        agf = [&host](const Vec& x_in, Vec& g_out,
-                      std::vector<int>& nfd) -> bool {
-            return host.analytical_gradient(x_in, g_out, nfd);
-        };
-    }
+    AnalyticalGradFn<Vec> agf = host_analytical_grad_fn<Vec>(sp, host);
     auto gp = make_gradient_provider<Vec, Runner>(
         sp, host, &evals_used, maxeval, agf);
 
@@ -319,7 +374,7 @@ void run_nlopt(const OptimizerSpec& sp,
      * MAXTIME of AUGLAG's local search, which AUGLAG does not. */
     struct UData {
         const OptimizerSpec*               sp;
-        HPO_Host<Vec,Runner>*              host;
+        HostT*                             host;
         GradientProvider<Vec,Runner>*      gp;
         nlopt::opt*                        opt;
         std::exception_ptr                 error;
@@ -623,6 +678,15 @@ void run_nlopt(const OptimizerSpec& sp,
      * finished. Calling finish() here would close the journal after the
      * first start and silence subsequent ones. */
     HPOLog::instance().set_status(status_str);
+}
+
+/* Production entry point used by run_inner(). */
+template<class Vec,class Runner>
+void run_nlopt(const OptimizerSpec& sp,
+               HPO_Host<Vec,Runner>& host)
+{
+    run_nlopt_impl<Vec,Runner>(sp, host,
+                               restart_stop_armed<HPO_Host<Vec,Runner>>());
 }
 
 }   // namespace tadah::hpo

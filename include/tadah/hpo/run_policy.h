@@ -12,7 +12,10 @@
  * outside the optimiser adapters.
  */
 
+#include <algorithm>
 #include <cstdint>
+#include <exception>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -25,13 +28,196 @@
  * run_policy_base.h; this header builds the decorator stack on top. */
 #include <tadah/core/checkpoint.h>        // core::ShutdownRequested
 #include <tadah/hpo/durable_best.h>
+#include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/run_policy_base.h>
 #include <tadah/hpo/init_strategy.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/phase_specs.h>
+#include <tadah/hpo/stagnation_stop.h>
 #include <tadah/hpo/strategy_rules.h>
 
 namespace tadah::hpo {
+
+namespace detail {
+
+/* How one MULTISTART start (or PRESTAGE refinement seed) ended. */
+enum class StartOutcome { Completed, Stagnated, Failed };
+
+/* Run MULTISTART start i (0-based) of k.
+ *   Completed  the inner optimiser returned;
+ *   Stagnated  it stopped on StagnationStop: the RESTART window of this
+ *              start ran out; the batch decides what that means
+ *              (report_stagnation);
+ *   Failed     a failure confined to that start -- a rejected setup, an
+ *              optimiser error -- logged (journal WARNING and stderr) and,
+ *              when `failure` is given and still empty, stored there.
+ * Exceptions about the whole run propagate:
+ *   durable_best::Error      the best potential can no longer be saved;
+ *   core::ShutdownRequested  SIGINT/SIGTERM/SIGUSR2 -- stop now;
+ * and so do non-standard exceptions. A Stagnated or Failed start whose run
+ * has recorded a best potential that could not be saved (a concurrent
+ * exception won over the durable_best::Error) throws that error instead
+ * (rethrow_if_best_unsaved). */
+template<class Fn>
+StartOutcome run_start_guarded(std::size_t i, std::size_t k, Fn&& fn,
+                               std::exception_ptr* failure = nullptr)
+{
+  try {
+    fn();
+    return StartOutcome::Completed;
+  } catch (const durable_best::Error&) {
+    throw;
+  } catch (const core::ShutdownRequested&) {
+    throw;
+  } catch (const StagnationStop&) {
+    /* A concurrent persistence failure may have lost to this stop. */
+    rethrow_if_best_unsaved();
+    return StartOutcome::Stagnated;
+  } catch (const std::exception& e) {
+    rethrow_if_best_unsaved();
+    const std::string msg = "MULTISTART start " + std::to_string(i+1) + "/" +
+                            std::to_string(k) + " failed: " + e.what();
+    HPOLog::instance().warning(msg);
+    std::cerr << "[HPO] WARNING: " << msg << "\n";
+    if (failure && !*failure) *failure = std::current_exception();
+    return StartOutcome::Failed;
+  }
+}
+
+/* `status` without the failed-starts note (failed_starts_suffix) at its end. */
+inline std::string strip_failed_starts_note(std::string status)
+{
+  static const std::string tail = "; see the WARNINGs)";
+  if (status.size() >= tail.size() &&
+      status.compare(status.size() - tail.size(), tail.size(), tail) == 0) {
+    const auto open = status.rfind(" (");
+    if (open != std::string::npos &&
+        status.find(" MULTISTART starts failed", open) != std::string::npos)
+      status.erase(open);
+  }
+  return status;
+}
+
+/* " (N of M MULTISTART starts failed[ across L launches]; see the
+ * WARNINGs)" for the run's start tally (HPOLog::start_tally), or "" when no
+ * start failed. */
+inline std::string failed_starts_suffix(const HPOLog::StartTally& t)
+{
+  if (t.failed == 0) return {};
+  std::string out = " (" + std::to_string(t.failed) + " of " +
+                    std::to_string(t.ran) + " MULTISTART starts failed";
+  if (t.batches > 1) out += " across " + std::to_string(t.batches) + " launches";
+  return out + "; see the WARNINGs)";
+}
+
+/* Counts of one batch of starts (run_starts). */
+struct StartsReport {
+  std::size_t k           = 0;
+  std::size_t n_failed    = 0;
+  std::size_t n_stagnated = 0;
+  bool        improved    = false;   // the global best improved during the batch
+};
+
+/* Run starts 0..k-1 in order. `reset_window()` runs before each start, so
+ * every start gets its own stagnation window (a no-op without RESTART:
+ * the threshold is 0); `run_one(i)` runs start i. A start that stagnates
+ * or fails ends, and the next one runs.
+ *
+ * Status: a failed start's own status (NLopt records "FAILED -- ..."
+ * before it rethrows) is replaced by the last good one, so it cannot become
+ * the RESULT of an otherwise successful batch. Every batch adds to the
+ * run's start tally (HPOLog::record_start_batch). After the batch:
+ *   - every start failed  -> the first failure is rethrown: the run fails
+ *     (FAILED, non-zero exit) as it would without MULTISTART;
+ *   - a start of this or an earlier batch (a RESTART relaunch) failed ->
+ *     the status gets "(N of M MULTISTART starts failed[ across L
+ *     launches]; see the WARNINGs)" -- counted over the run, so a later
+ *     clean batch neither drops nor misstates it, and a note carried in
+ *     from an earlier batch is replaced, not stacked.
+ * Stagnation is reported by the caller (report_stagnation). Generic over
+ * the two callables so it runs without an HPO_Host in the unit tests. */
+template<class ResetFn, class RunOne>
+StartsReport run_starts(std::size_t k, ResetFn&& reset_window, RunOne&& run_one)
+{
+  HPOLog& log = HPOLog::instance();
+  StartsReport rep;
+  rep.k = k;
+  std::exception_ptr first_failure;
+  /* A note from an earlier batch is rewritten from the run's tally below. */
+  std::string ok_status = strip_failed_starts_note(log.status());
+  const double best_at_start = log.best_loss();
+
+  for (std::size_t i = 0; i < k; ++i) {
+    /* Snapshot global state at start so we can summarise this start's
+     * contribution: how many evals it consumed and whether it produced
+     * a new global best. Without this each start beyond the first
+     * appears "silent" in the journal whenever its local fmin doesn't
+     * beat the running global best. */
+    const std::size_t evals_before = log.n_eval();
+    const double      best_before  = log.best_loss();
+    reset_window();
+    const StartOutcome out =
+        run_start_guarded(i, k, [&] { run_one(i); }, &first_failure);
+    const std::size_t evals_after = log.n_eval();
+    const double      best_after  = log.best_loss();
+
+    if (out == StartOutcome::Failed) {
+      ++rep.n_failed;
+      log.set_status(ok_status);
+    } else {
+      if (out == StartOutcome::Stagnated) ++rep.n_stagnated;
+      ok_status = strip_failed_starts_note(log.status());
+    }
+
+    std::ostringstream done;
+    done << "MULTISTART start " << (i+1) << "/" << k
+         << " done: " << (evals_after - evals_before) << " eval(s) consumed";
+    {
+      std::ostringstream tmp;
+      tmp << std::scientific << std::setprecision(4);
+      if (best_after < best_before)
+        tmp << ", improved global best " << best_before << " -> " << best_after;
+      else
+        tmp << ", no global improvement (best stays at " << best_after << ")";
+      done << tmp.str();
+    }
+    if (out == StartOutcome::Stagnated)
+      done << "; stopped on stagnation (RESTART window)";
+    else if (out == StartOutcome::Failed)
+      done << "; FAILED (see the WARNING above)";
+    std::cout << "[HPO] " << done.str() << "\n";
+    log.info(done.str());
+  }
+
+  rep.improved = log.best_loss() < best_at_start;
+  log.record_start_batch(k, rep.n_failed);
+  if (k > 0 && rep.n_failed == k) std::rethrow_exception(first_failure);
+  const HPOLog::StartTally tally = log.start_tally();
+  if (tally.failed > 0) {
+    if (ok_status.empty()) ok_status = "COMPLETED";
+    log.set_status(ok_status + failed_starts_suffix(tally));
+  }
+  return rep;
+}
+
+/* When a batch that had stagnating starts reports StagnationStop upwards
+ * (to RestartPolicy, which then draws fresh points and relaunches).
+ *   AnyStart       MULTISTART: after the last start, when any start ran out
+ *                  of its stagnation window;
+ *   NoImprovement  PRESTAGE refinement: ...and the refinement did not
+ *                  improve the global best -- the exploration is what a
+ *                  restart renews, so an improving refinement ends the run. */
+enum class StagnationReport { AnyStart, NoImprovement };
+
+inline void report_stagnation(StagnationReport rule, std::size_t n_stagnated,
+                              bool improved)
+{
+  if (n_stagnated == 0) return;
+  if (rule == StagnationReport::NoImprovement && improved) return;
+  throw StagnationStop{};
+}
+
+}  // namespace detail
 
 /* ----------------------------------------------------------------------
  * BasePolicy -- single-shot. Used as the default and as the innermost
@@ -73,19 +259,28 @@ public:
  * still benefits from the shared worker pool (THREADS) that parallelises
  * the pc_lammps fan-out within a single evaluation.
  *
- * A start that fails is logged and the next one runs. Three exceptions
- * end the whole multistart instead, because they are about the run, not
- * the start: core::ShutdownRequested (a signal: hpo_run() ends the run),
- * HPO_Host::StagnationStop (RESTART re-initialises the whole multistart
- * from fresh points) and durable_best::Error (the incumbent can no longer
- * be persisted).
+ * A start that fails is logged and the next one runs; a batch in which
+ * every start failed fails the run (detail::run_starts). Two exceptions
+ * end the whole multistart at once, because they are about the run, not
+ * the start: core::ShutdownRequested (a signal: drive_run() ends the run)
+ * and durable_best::Error (the incumbent can no longer be persisted).
+ *
+ * Under RESTART every start gets its own stagnation window; a start that
+ * runs out of it ends and the next start runs. After the last start the
+ * batch reports StagnationStop to RestartPolicy (which relaunches all K
+ * starts from K fresh points) when any start stagnated -- `report`
+ * AnyStart -- or, for the PRESTAGE refinement, only when the refinement
+ * did not improve the global best (NoImprovement).
  * -------------------------------------------------------------------- */
 template<class Vec, class Runner>
 class MultiStartPolicy : public RunPolicy<Vec,Runner> {
 public:
   MultiStartPolicy(std::size_t k, std::size_t parallel,
-                   std::optional<std::size_t> budget_per_start = std::nullopt)
-      : k_(k), parallel_(parallel), budget_per_start_(budget_per_start) {}
+                   std::optional<std::size_t> budget_per_start = std::nullopt,
+                   detail::StagnationReport report =
+                       detail::StagnationReport::AnyStart)
+      : k_(k), parallel_(parallel), budget_per_start_(budget_per_start),
+        report_(report) {}
 
   /* The startup rule (strategy_rules.h), applied again when the policy
    * runs: a safety net for specs built outside HPOTargets. */
@@ -103,7 +298,7 @@ public:
     const MultiStartPlan plan =
         plan_multistart(spec, k_, budget_per_start_);
     if (plan.single_run) {
-      run_inner<Vec,Runner>(spec, host);
+      run_single(spec, host);
       return;
     }
 
@@ -143,62 +338,79 @@ public:
       HPOLog::instance().info(oss.str());
     }
 
-    for (std::size_t i = 0; i < actual_k; ++i) {
-      const OptimizerSpec sub = multistart_start_spec(spec, plan, i);
+    /* A failure in one start does not stop the batch; a run-level
+     * exception (fatal persistence, shutdown) does. Each start runs in its
+     * own stagnation window (reset_stagnation; a no-op without RESTART). */
+    const detail::StartsReport rep = detail::run_starts(
+        actual_k,
+        [] { HPO_Host<Vec,Runner>::reset_stagnation(); },
+        [&](std::size_t i) {
+          /* Start i: its INIT point, its MAXEVAL and SEED + i
+           * (multistart_start_spec, phase_specs.h). */
+          const OptimizerSpec sub = multistart_start_spec(spec, plan, i);
 
-      const std::string start_msg =
-          "MULTISTART start " + std::to_string(i+1) + "/" +
-          std::to_string(actual_k) + " -- running inner optimiser" +
-          (sub.seed ? " (seed=" + std::to_string(*sub.seed) + ")" : "");
-      std::cout << "[HPO] " << start_msg << "\n";
-      HPOLog::instance().info(start_msg);
-      /* Snapshot global state at start so we can summarise this start's
-       * contribution: how many evals it consumed and whether it produced
-       * a new global best. Without this each start beyond the first
-       * appears "silent" in the journal whenever its local fmin doesn't
-       * beat the running global best. */
-      const std::size_t evals_before = HPOLog::instance().n_eval();
-      const double      best_before  = HPOLog::instance().best_loss();
-      try {
-        run_inner<Vec,Runner>(sub, host);
-      } catch (const core::ShutdownRequested&) {
-        throw;
-      } catch (const typename HPO_Host<Vec,Runner>::StagnationStop&) {
-        throw;
-      } catch (const durable_best::Error&) {
-        throw;
-      } catch (const std::exception& e) {
-        /* A failure in one start should not kill the whole batch. */
-        HPOLog::instance().warning(
-            "MULTISTART start " + std::to_string(i+1) + "/" +
-            std::to_string(actual_k) + " failed: " + e.what());
-      }
-      const std::size_t evals_after = HPOLog::instance().n_eval();
-      const double      best_after  = HPOLog::instance().best_loss();
-      std::ostringstream done;
-      done << "MULTISTART start " << (i+1) << "/" << actual_k
-           << " done: " << (evals_after - evals_before) << " eval(s) consumed";
-      if (best_after < best_before) {
-        std::ostringstream tmp;
-        tmp << std::scientific << std::setprecision(4)
-            << ", improved global best " << best_before
-            << " -> " << best_after;
-        done << tmp.str();
-      } else {
-        std::ostringstream tmp;
-        tmp << std::scientific << std::setprecision(4)
-            << ", no global improvement (best stays at " << best_after << ")";
-        done << tmp.str();
-      }
-      std::cout << "[HPO] " << done.str() << "\n";
-      HPOLog::instance().info(done.str());
+          const std::string start_msg =
+              "MULTISTART start " + std::to_string(i+1) + "/" +
+              std::to_string(actual_k) + " -- running inner optimiser" +
+              (sub.seed ? " (seed=" + std::to_string(*sub.seed) + ")" : "");
+          std::cout << "[HPO] " << start_msg << "\n";
+          HPOLog::instance().info(start_msg);
+          run_inner<Vec,Runner>(sub, host);
+        });
+    report(rep.n_stagnated, rep.improved, actual_k);
+  }
+
+  /* One inner run (all of spec's points) in its own stagnation window; a
+   * StagnationStop ends it and is reported by this policy's rule. A
+   * failure propagates (nothing else runs to carry the result). */
+  void run_one_windowed(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host) {
+    const double best_before = HPOLog::instance().best_loss();
+    HPO_Host<Vec,Runner>::reset_stagnation();
+    bool stagnated = false;
+    try {
+      run_inner<Vec,Runner>(spec, host);
+    } catch (const StagnationStop&) {
+      detail::rethrow_if_best_unsaved();
+      stagnated = true;
     }
+    report(stagnated ? 1 : 0, HPOLog::instance().best_loss() < best_before, 1);
   }
 
 private:
+  /* One inner run for all points (no per-start loop). MULTISTART: a
+   * StagnationStop propagates as under PLAIN. PRESTAGE refinement: see
+   * run_one_windowed. */
+  void run_single(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host) {
+    if (report_ == detail::StagnationReport::AnyStart) {
+      run_inner<Vec,Runner>(spec, host);
+      return;
+    }
+    run_one_windowed(spec, host);
+  }
+
+  /* Journal the stagnation decision of a batch, then apply the rule. */
+  void report(std::size_t n_stagnated, bool improved, std::size_t k) const {
+    if (n_stagnated == 0) return;
+    const bool any = report_ == detail::StagnationReport::AnyStart;
+    std::ostringstream oss;
+    oss << (any ? "MULTISTART: " : "REFINEMENT: ") << n_stagnated << " of "
+        << k << (any ? " start(s)" : " seed(s)") << " stopped on stagnation";
+    if (any)
+      oss << "; reporting stagnation to RESTART";
+    else if (!improved)
+      oss << " without improving the global best; reporting stagnation to "
+             "RESTART";
+    else
+      oss << "; the global best improved, so the refinement ends the run";
+    std::cout << "[HPO] " << oss.str() << "\n";
+    HPOLog::instance().info(oss.str());
+    detail::report_stagnation(report_, n_stagnated, improved);
+  }
+
   std::size_t k_;
   std::size_t parallel_;
   std::optional<std::size_t> budget_per_start_;
+  detail::StagnationReport report_;
 };
 
 /* ----------------------------------------------------------------------
@@ -219,11 +431,12 @@ private:
  *   1. PRESTAGE (broad search):    spec.prestage          (e.g. DLIB:GFS)
  *   2. REFINEMENT (local sweep):   spec     (the outer)   (e.g. DLIB:BFGS)
  *
- * Under RESTART, a stagnating exploration hands its top-K over to the
- * refinement early (the exploration catch below) instead of restarting,
- * and the refinement starts with a fresh stagnation window. Stagnation in
- * the refinement propagates, so RESTART re-runs the whole PRESTAGE --
- * exploration and refinement -- from a fresh init.
+ * Under RESTART a stagnating exploration hands its top-K over to the
+ * refinement early (the exploration catch below) instead of restarting;
+ * each refinement seed then gets its own stagnation window. The staged run
+ * reports StagnationStop to RestartPolicy (which re-runs both phases from a
+ * fresh init) only when a refinement seed stagnated AND the refinement did
+ * not improve the global best (detail::StagnationReport::NoImprovement).
  * -------------------------------------------------------------------- */
 template<class Vec, class Runner>
 class StagedPolicy : public RunPolicy<Vec,Runner> {
@@ -272,22 +485,30 @@ public:
       run_inner<Vec,Runner>(*spec.prestage, host);
     } catch (const typename HPO_Host<Vec,Runner>::StagnationStop&) {
       /* Stagnation during the PRESTAGE is a valid stop signal --
-       * proceed to refinement with whatever we collected. */
+       * proceed to refinement with whatever we collected -- unless a new
+       * best could not be saved meanwhile (it may have lost to this stop
+       * in a parallel explorer): then the run fails now. */
+      detail::rethrow_if_best_unsaved();
     }
-    /* Stage boundary: the refinement gets a stagnation window of its own.
-     * Without this it inherited the exploration's count, so after a
-     * stagnating exploration its first evaluation already crossed the
-     * threshold. No-op without RESTART (threshold 0). */
-    HPO_Host<Vec,Runner>::reset_stagnation();
-
-    /* Step 2: snapshot top-K, disable tracking. */
+    /* Step 2: snapshot top-K, disable tracking. Stage boundary: the
+     * refinement starts a stagnation window of its own (every path; each
+     * seed also gets its own). Without this it inherited the exploration's
+     * count, so after a stagnating exploration its first evaluation
+     * already crossed the threshold. No-op without RESTART (threshold 0). */
     auto topk = HPO_Host<Vec,Runner>::get_topk();
     HPO_Host<Vec,Runner>::set_track_topk(0);
+    HPO_Host<Vec,Runner>::reset_stagnation();
+
+    /* Refinement batches report stagnation only when they did not improve
+     * the global best. */
+    MultiStartPolicy<Vec,Runner> refiner(
+        std::max<std::size_t>(topk.size(), 1), 1, std::nullopt,
+        detail::StagnationReport::NoImprovement);
 
     if (topk.empty()) {
       HPOLog::instance().warning(
           "PRESTAGE: produced no candidates -- running outer optimiser as-is");
-      run_inner<Vec,Runner>(spec, host);
+      refiner.run_one_windowed(spec, host);
       return;
     }
 
@@ -330,10 +551,9 @@ public:
       HPOLog::instance().info(oss.str());
     }
     if (topk.size() > 1) {
-      MultiStartPolicy<Vec,Runner> ms(topk.size(), 1);
-      ms.run(refine, host);
+      refiner.run(refine, host);
     } else {
-      run_inner<Vec,Runner>(refine, host);
+      refiner.run_one_windowed(refine, host);
     }
   }
 
@@ -350,7 +570,14 @@ private:
  * fresh init via the configured strategy, and re-enters the inner
  * policy with the new starting point. The cycle terminates when:
  *   - the inner policy returns naturally, or
- *   - max_restarts attempts have been used.
+ *   - max_restarts attempts have been used: the journal status then reads
+ *     "STOPPED -- stagnation: no new best in W evals after R restart(s)".
+ * MULTISTART gives each start its own window and, after its last
+ * start, reports stagnation when any start stagnated: a restart relaunches
+ * all K starts from K fresh points. PRESTAGE reports it only when its
+ * refinement stagnated without improving the global best (see
+ * StagedPolicy). MAXEVAL applies per launch, so a run can use up to
+ * (max_restarts + 1) x MAXEVAL evaluations.
  *
  * The refresh strategy, its SEED and the host's HPOTargets are captured
  * at build_run_policy() time. With a SEED in the RESTART block, restart r
@@ -360,15 +587,14 @@ private:
  * from the INIT points.
  *
  * A restart needs StagnationStop to propagate out of the inner policy.
- * Every optimiser adapter lets it through (NLopt, DLIB:GFS and ASA stash
- * the exception and rethrow it after the library returns; it leaves
- * ceres::Solve and the other drivers by itself) and MultiStartPolicy
- * rethrows it, so a restart re-initialises the whole
- * inner policy: every MULTISTART start (as many as the fresh points
+ * Every optimiser adapter lets it through (NLopt, Ceres, DLIB:GFS and ASA
+ * capture the exception and rethrow it after the library returns; it
+ * leaves the other drivers by itself), and a restart re-initialises the
+ * whole inner policy: every MULTISTART start (as many as the fresh points
  * allow), or the whole PRESTAGE -- its exploration starts from the fresh
- * points unless it has an INIT chain of its own. The one place that
- * absorbs it is StagedPolicy's exploration phase, which hands its top-K
- * over to the refinement instead (see StagedPolicy).
+ * points unless it has an INIT chain of its own. MULTISTART and the
+ * PRESTAGE refinement report it by their rules above; StagedPolicy's
+ * exploration phase absorbs it and hands its top-K over to the refinement.
  *
  * Restart r also runs every phase that has a SEED with a seed derived
  * from it (OptimizerSpec::derive_restart_seeds: the outer spec
@@ -382,10 +608,11 @@ private:
  * a SEED, then the derived optimiser seeds.
  *
  * When the MAX restarts are used up, the next stagnation ends the run
- * normally, with the trailer "STOPPED -- stagnation, max restarts (MAX)
- * used". The watchdog is armed only while this policy runs: however
- * run() ends, the threshold is reset to 0, so a later run in the same
- * process is not stopped by a stale window.
+ * normally, with the trailer "STOPPED -- stagnation: no new best in W
+ * evals after MAX restart(s)" (and the failed-starts note of a MULTISTART
+ * run whose starts failed). The watchdog is armed only while this policy
+ * runs: however run() ends, the threshold is reset to 0, so a later run
+ * in the same process is not stopped by a stale window.
  * -------------------------------------------------------------------- */
 template<class Vec, class Runner>
 class RestartPolicy : public RunPolicy<Vec,Runner> {
@@ -409,8 +636,11 @@ public:
     OptimizerSpec cur = spec;
     std::size_t restarts = 0;
 
-    struct Disarm {
-      ~Disarm() { HPO_Host<Vec,Runner>::set_stagnation_threshold(0); }
+    /* Disarm the process-wide threshold on EVERY exit, including a
+     * durable-best failure or a shutdown: a later run in this process
+     * would otherwise start with a stale window. */
+    struct ThresholdGuard {
+      ~ThresholdGuard() { HPO_Host<Vec,Runner>::set_stagnation_threshold(0); }
     } disarm;
     HPO_Host<Vec,Runner>::set_stagnation_threshold(window_);
     HPO_Host<Vec,Runner>::reset_stagnation();
@@ -420,14 +650,22 @@ public:
         inner_->run(cur, host);
         break;
       } catch (const typename HPO_Host<Vec,Runner>::StagnationStop&) {
+        /* A new best that could not be saved ends the run even when a
+         * concurrent StagnationStop got here first. */
+        detail::rethrow_if_best_unsaved();
         if (restarts >= max_restarts_) {
-          const std::string used =
-              "max restarts (" + std::to_string(max_restarts_) + ") used";
-          HPOLog::instance().info(
-              "RESTART: stagnation reached, " + used + "; stopping");
-          /* The run ends here, on stagnation: that is its trailer, not a
-           * status the stopped inner run may have recorded. */
-          HPOLog::instance().set_status("STOPPED -- stagnation, " + used);
+          const std::string msg =
+              "RESTART: stagnation reached, max restarts (" +
+              std::to_string(max_restarts_) + ") used; stopping";
+          std::cout << "[HPO] " << msg << "\n";
+          HPOLog::instance().info(msg);
+          /* Say why the run ended: whatever an inner run recorded last (a
+           * per-start MAXEVAL_REACHED, say) is not the reason. */
+          HPOLog::instance().set_status(
+              "STOPPED -- stagnation: no new best in " +
+              std::to_string(window_) + " evals after " +
+              std::to_string(max_restarts_) + " restart(s)" +
+              detail::failed_starts_suffix(HPOLog::instance().start_tally()));
           break;
         }
         ++restarts;

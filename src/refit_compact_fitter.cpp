@@ -190,10 +190,46 @@ inline double bval2_d(BasisKind k, int d, double xc) {
   }
   return 0.0;
 }
+// EMBF0 ZERO reference terms of an n-atom expansion at x = 0: b0[k] =
+// g(x_c0) and db0[k] = eta_k g'(x_c0) with x_c0 = eta_k (0 - mu_k) — the same
+// primitives (and the same x_c expression with x = 0.0) as the x-dependent
+// terms, so the zero-referenced column g(x_c) - b0 is exactly 0 at x = 0.
+// Parameter-only constants: callers compute them once per evaluation, and
+// ONLY under zero_ref (the FREE paths never evaluate the basis at 0).
+// Knot5R with mu >= 0 gives exactly 0; only bumps covering 0 and negative
+// knots contribute.
+inline void ref_terms(BasisKind kind, int n, const double *mu,
+                      const double *eta, const std::vector<int> &deg,
+                      std::vector<double> &b0, std::vector<double> &db0) {
+  b0.resize(n);
+  db0.resize(n);
+  for (int k = 0; k < n; ++k) {
+    const int d = (k < static_cast<int>(deg.size())) ? deg[k] : 5;
+    const double xc0 = eta[k] * (0.0 - mu[k]);
+    b0[k] = bval_d(kind, d, xc0);
+    db0[k] = bder_d(kind, d, xc0, eta[k]);
+  }
+}
+inline void ref_terms(const BlipFit &f, std::vector<double> &b0,
+                      std::vector<double> &db0) {
+  ref_terms(f.kind, f.n(), f.mu.data(), f.eta.data(), f.deg, b0, db0);
+}
 }  // namespace
 
 // ---------------------------------------------------------------- BlipFit
 double BlipFit::eval(double x) const {
+  if (zero_ref) {
+    // EMBF0 ZERO: f(x) = sum_k c_k (g(x_c) - g(x_c0)). F(0) = 0 exactly by
+    // construction — returned explicitly, independent of FP contraction.
+    if (x == 0.0) return 0.0;
+    double acc = 0.0;
+    for (std::size_t k = 0; k < mu.size(); ++k) {
+      const int d = degree(static_cast<int>(k));
+      acc += c[k] * (bval_d(kind, d, eta[k] * (x - mu[k])) -
+                     bval_d(kind, d, eta[k] * (0.0 - mu[k])));
+    }
+    return acc;
+  }
   double acc = 0.0;
   for (std::size_t k = 0; k < mu.size(); ++k)
     acc += c[k] * bval_d(kind, degree(static_cast<int>(k)),
@@ -222,19 +258,22 @@ double BlipFit::deriv2(double x) const {
 // blocks {c, mu, eta}. Analytic Jacobian uses only B and B' = dB/eta — the
 // B'' knot discontinuities never enter, which is why LM stays healthy where
 // quadratic-model DFO (BOBYQA) failed on blips.
+// zero_ref (EMBF0 ZERO, F channel): the model is the zero-referenced
+// sum_k c_k (B(x_c) - B(x_c0)), x_c0 = eta_k (0 - mu_k) — evaluate_zero_ref.
 class CurveCost : public ceres::CostFunction {
 public:
   CurveCost(std::vector<double> xs, std::vector<double> ys,
             std::vector<double> wts, int n, BasisKind kind = BasisKind::Blip,
-            std::vector<int> deg = {})
+            std::vector<int> deg = {}, bool zero_ref = false)
       : xs_(std::move(xs)), ys_(std::move(ys)), wts_(std::move(wts)), n_(n),
-        kind_(kind), deg_(std::move(deg)) {
+        kind_(kind), deg_(std::move(deg)), zero_ref_(zero_ref) {
     set_num_residuals(static_cast<int>(xs_.size()));
     mutable_parameter_block_sizes()->assign(3, n_);  // c, mu, eta
   }
 
   bool Evaluate(double const *const *p, double *residuals,
                 double **jacobians) const override {
+    if (zero_ref_) return evaluate_zero_ref(p, residuals, jacobians);
     const double *c = p[0], *mu = p[1], *eta = p[2];
     const std::size_t N = xs_.size();
     for (std::size_t i = 0; i < N; ++i) {
@@ -261,11 +300,50 @@ public:
   }
 
 private:
+  // EMBF0 ZERO twin of Evaluate. With b0 = B(x_c0), db0 = eta B'(x_c0) (the
+  // parameter-only reference terms, once per call):
+  //   d/dc   = sw (b - b0)
+  //   d/dmu  = -sw c (db - db0)                      (dx_c/dmu = -eta)
+  //   d/deta = sw c ((x - mu) db - (0 - mu) db0) / eta  (dx_c/deta = x - mu)
+  // At x == 0 the column is exactly 0 (b == b0 bitwise), matching
+  // BlipFit::eval's explicit F(0) = 0.
+  bool evaluate_zero_ref(double const *const *p, double *residuals,
+                         double **jacobians) const {
+    const double *c = p[0], *mu = p[1], *eta = p[2];
+    std::vector<double> b0, db0;
+    ref_terms(kind_, n_, mu, eta, deg_, b0, db0);
+    const std::size_t N = xs_.size();
+    for (std::size_t i = 0; i < N; ++i) {
+      const double x = xs_[i];
+      const double sw = wts_.empty() ? 1.0 : std::sqrt(wts_[i]);
+      double m = 0.0;
+      for (int k = 0; k < n_; ++k) {
+        const int d = (k < static_cast<int>(deg_.size())) ? deg_[k] : 5;
+        const double xc = eta[k] * (x - mu[k]);
+        const double b = bval_d(kind_, d, xc) - b0[k];
+        m += c[k] * b;
+        if (jacobians) {
+          const double db = bder_d(kind_, d, xc, eta[k]);  // = eta * g'(xc)
+          if (jacobians[0]) jacobians[0][i * n_ + k] = sw * b;
+          if (jacobians[1])
+            jacobians[1][i * n_ + k] = -sw * c[k] * (db - db0[k]);
+          if (jacobians[2])
+            jacobians[2][i * n_ + k] =
+                sw * c[k] *
+                ((x - mu[k]) * (db / eta[k]) - (0.0 - mu[k]) * (db0[k] / eta[k]));
+        }
+      }
+      residuals[i] = sw * (m - ys_[i]);
+    }
+    return true;
+  }
+
   // by-value copies: the cost may outlive the caller's buffers (joint refine)
   std::vector<double> xs_, ys_, wts_;
   int n_;
   BasisKind kind_;
   std::vector<int> deg_;  // per-atom degree (knot kinds; empty = all 5)
+  bool zero_ref_ = false;  // EMBF0 ZERO zero-referenced basis (F channel)
 };
 
 // ---------------------------------------------------------- CompactBlipFitter
@@ -335,8 +413,15 @@ CompactBlipFitter::CompactBlipFitter(std::vector<double> xs,
 }
 
 double CompactBlipFitter::solve_coeffs(BlipFit &f) const {
+  // Every candidate passes through here before any eval / metric, so this is
+  // the one place the channel's EMBF0 reference is stamped onto the fit.
+  f.zero_ref = cfg_.zero_ref;
   const int n = f.n();
   const std::size_t N = xs_.size();
+  // EMBF0 ZERO: the VALUE columns are g(x_c) - g(x_c0) (derivative columns
+  // unchanged); the reference terms exist only under zero_ref.
+  std::vector<double> b0, db0;
+  if (f.zero_ref) ref_terms(f, b0, db0);
 
   if (cfg_.objective == RefitObjective::Curve) {
     // STACKED value + 1st-deriv + 2nd-deriv least squares. value, f', f'' are
@@ -357,8 +442,14 @@ double CompactBlipFitter::solve_coeffs(BlipFit &f) const {
     std::size_t r = 0;
     for (std::size_t i = 0; i < N; ++i) {  // value block
       const double sw = (wts_.empty() ? 1.0 : std::sqrt(wts_[i])) / ny_;
-      for (int k = 0; k < n; ++k)
-        A(r, k) = sw * bval_d(f.kind, f.degree(k), f.eta[k] * (xs_[i] - f.mu[k]));
+      if (f.zero_ref) {
+        for (int k = 0; k < n; ++k)
+          A(r, k) = sw * (bval_d(f.kind, f.degree(k),
+                                 f.eta[k] * (xs_[i] - f.mu[k])) - b0[k]);
+      } else {
+        for (int k = 0; k < n; ++k)
+          A(r, k) = sw * bval_d(f.kind, f.degree(k), f.eta[k] * (xs_[i] - f.mu[k]));
+      }
       b(r) = sw * ys_[i];
       ++r;
     }
@@ -404,9 +495,15 @@ double CompactBlipFitter::solve_coeffs(BlipFit &f) const {
   Eigen::VectorXd b(N);
   for (std::size_t i = 0; i < N; ++i) {
     const double sw = wts_.empty() ? 1.0 : std::sqrt(wts_[i]);
-    for (int k = 0; k < n; ++k)
-      A(i, k) = sw * bval_d(f.kind, f.degree(k),
-                            f.eta[k] * (xs_[i] - f.mu[k]));
+    if (f.zero_ref) {
+      for (int k = 0; k < n; ++k)
+        A(i, k) = sw * (bval_d(f.kind, f.degree(k),
+                               f.eta[k] * (xs_[i] - f.mu[k])) - b0[k]);
+    } else {
+      for (int k = 0; k < n; ++k)
+        A(i, k) = sw * bval_d(f.kind, f.degree(k),
+                              f.eta[k] * (xs_[i] - f.mu[k]));
+    }
     b(i) = sw * ys_[i];
   }
   // rank-revealing: a blip pushed outside the sampled range yields a ~zero
@@ -516,11 +613,25 @@ double CompactBlipFitter::reduced_mse(BlipFit &f, std::vector<double> *grad) con
   const std::size_t N = xs_.size();
   double sse = 0.0;
   if (grad) grad->assign(os ? n : 2 * n, 0.0);
+  // EMBF0 ZERO: the columns are g(x_c) - g(x_c0), so dA/dtheta carries the
+  // reference terms too (same mu/eta Jacobian as CurveCost::evaluate_zero_ref)
+  std::vector<double> b0, db0;
+  if (grad && f.zero_ref) ref_terms(f, b0, db0);
   for (std::size_t i = 0; i < N; ++i) {
     const double sw = wts_.empty() ? 1.0 : std::sqrt(wts_[i]);
     const double r = sw * (f.eval(xs_[i]) - ys_[i]);
     sse += r * r;
-    if (grad) {
+    if (grad && f.zero_ref) {
+      for (int k = 0; k < n; ++k) {
+        const double xc = f.eta[k] * (xs_[i] - f.mu[k]);
+        const double db = bder_d(f.kind, f.degree(k), xc, f.eta[k]);
+        (*grad)[k] += 2.0 * r * sw * f.c[k] * (-(db - db0[k]));
+        if (!os)
+          (*grad)[n + k] += 2.0 * r * sw * f.c[k] *
+                            ((xs_[i] - f.mu[k]) * (db / f.eta[k]) -
+                             (0.0 - f.mu[k]) * (db0[k] / f.eta[k]));
+      }
+    } else if (grad) {
       // Golub-Pereyra: A^T r = 0 at the inner optimum, so the c-variation
       // term vanishes and d(SSE)/dtheta = 2 r^T (dA/dtheta) c exactly.
       for (int k = 0; k < n; ++k) {
@@ -792,6 +903,7 @@ BlipFit CompactBlipFitter::seed_mlsl() const {
   const double eta0 = std::max(1, n - 1) / span_;
   BlipFit f;
   f.kind = kind_;
+  f.zero_ref = cfg_.zero_ref;  // EMBF0 ZERO (F channel); re-stamped per solve
   f.mu.resize(n);
   f.eta.assign(n, one_sided(kind_) ? 1.0 : eta0);  // knot families: eta gauge
   if (one_sided(kind_) && cfg_.knot_degree != 5)
@@ -894,10 +1006,12 @@ BlipFit CompactBlipFitter::seed_global(BlipFit f) const {
 
 double CompactBlipFitter::refine(BlipFit &f) const {
   const int n = f.n();
+  f.zero_ref = cfg_.zero_ref;  // the channel's EMBF0 reference (cf. solve_coeffs)
   ceres::Problem prob;
   std::vector<double> &c = f.c, &mu = f.mu, &eta = f.eta;
-  prob.AddResidualBlock(new CurveCost(xs_, ys_, wts_, n, f.kind, f.deg),
-                        nullptr, c.data(), mu.data(), eta.data());
+  prob.AddResidualBlock(
+      new CurveCost(xs_, ys_, wts_, n, f.kind, f.deg, f.zero_ref), nullptr,
+      c.data(), mu.data(), eta.data());
   std::vector<int> pin;
   for (int k = 0; k < n; ++k)
     if (f.is_pinned(k)) pin.push_back(k);
@@ -1552,6 +1666,9 @@ namespace {
 // Parameter blocks: {c,mu,eta} x {phi,rho,F} (9 blocks). All derivatives are
 // analytic: the only nontrivial chain is d(F(rho_i))/d(theta_rho) =
 // F'(rho_i) * sum_d d(rho(r_d))/d(theta_rho).
+// F_zero_ref (EMBF0 ZERO): F(rho) = sum_m c_m (g(x_c) - g(x_c0)) — the F
+// block's value and F-parameter Jacobians carry the reference terms (as in
+// CurveCost::evaluate_zero_ref); F'(rho) and the chain into rho are unchanged.
 class EnergyCost : public ceres::CostFunction {
 public:
   EnergyCost(const std::vector<std::vector<double>> &dists,
@@ -1559,10 +1676,10 @@ public:
              int nphi, int nrho, int nF, BasisKind kphi = BasisKind::Blip,
              BasisKind krho = BasisKind::Blip, BasisKind kF = BasisKind::Blip,
              std::vector<int> dphi = {}, std::vector<int> drho = {},
-             std::vector<int> dF = {})
+             std::vector<int> dF = {}, bool F_zero_ref = false)
       : dists_(dists), e0_(e0), w_(w), nphi_(nphi), nrho_(nrho), nF_(nF),
         kphi_(kphi), krho_(krho), kF_(kF), dphi_(std::move(dphi)),
-        drho_(std::move(drho)), dF_(std::move(dF)) {
+        drho_(std::move(drho)), dF_(std::move(dF)), F_zero_ref_(F_zero_ref) {
     set_num_residuals(static_cast<int>(dists_.size()));
     auto *s = mutable_parameter_block_sizes();
     s->assign({nphi_, nphi_, nphi_, nrho_, nrho_, nrho_, nF_, nF_, nF_});
@@ -1577,6 +1694,9 @@ public:
     const double *cR = p[3], *mR = p[4], *eR = p[5];
     const double *cF = p[6], *mF = p[7], *eF = p[8];
     const std::size_t M = dists_.size();
+    // EMBF0 ZERO reference terms of the F block (parameter-only; ZERO only)
+    std::vector<double> bF0, dbF0;
+    if (F_zero_ref_) ref_terms(kF_, nF_, mF, eF, dF_, bF0, dbF0);
     for (std::size_t i = 0; i < M; ++i) {
       const auto &dd = dists_[i];
       const double w = w_[i];
@@ -1608,17 +1728,36 @@ public:
       }
       // embedding value + F'(rho_i)
       double Fv = 0.0, Fp = 0.0;
-      for (int m = 0; m < nF_; ++m) {
-        const double xc = eF[m] * (rho_i - mF[m]);
-        const double b = bval_d(kF_, deg_of(dF_, m), xc);
-        const double db = bder_d(kF_, deg_of(dF_, m), xc, eF[m]);
-        Fv += cF[m] * b;
-        Fp += cF[m] * db;
-        if (jac) {
-          if (jac[6]) jac[6][i * nF_ + m] = w * b;
-          if (jac[7]) jac[7][i * nF_ + m] = -w * cF[m] * db;
-          if (jac[8])
-            jac[8][i * nF_ + m] = w * cF[m] * (rho_i - mF[m]) * (db / eF[m]);
+      if (F_zero_ref_) {
+        for (int m = 0; m < nF_; ++m) {
+          const double xc = eF[m] * (rho_i - mF[m]);
+          const double b = bval_d(kF_, deg_of(dF_, m), xc) - bF0[m];
+          const double db = bder_d(kF_, deg_of(dF_, m), xc, eF[m]);
+          Fv += cF[m] * b;
+          Fp += cF[m] * db;
+          if (jac) {
+            if (jac[6]) jac[6][i * nF_ + m] = w * b;
+            if (jac[7]) jac[7][i * nF_ + m] = -w * cF[m] * (db - dbF0[m]);
+            if (jac[8])
+              jac[8][i * nF_ + m] =
+                  w * cF[m] *
+                  ((rho_i - mF[m]) * (db / eF[m]) -
+                   (0.0 - mF[m]) * (dbF0[m] / eF[m]));
+          }
+        }
+      } else {
+        for (int m = 0; m < nF_; ++m) {
+          const double xc = eF[m] * (rho_i - mF[m]);
+          const double b = bval_d(kF_, deg_of(dF_, m), xc);
+          const double db = bder_d(kF_, deg_of(dF_, m), xc, eF[m]);
+          Fv += cF[m] * b;
+          Fp += cF[m] * db;
+          if (jac) {
+            if (jac[6]) jac[6][i * nF_ + m] = w * b;
+            if (jac[7]) jac[7][i * nF_ + m] = -w * cF[m] * db;
+            if (jac[8])
+              jac[8][i * nF_ + m] = w * cF[m] * (rho_i - mF[m]) * (db / eF[m]);
+          }
         }
       }
       // chain rule into the density parameters
@@ -1646,6 +1785,7 @@ private:
   int nphi_, nrho_, nF_;
   BasisKind kphi_, krho_, kF_;
   std::vector<int> dphi_, drho_, dF_;  // per-atom degrees (empty = all 5)
+  bool F_zero_ref_ = false;  // EMBF0 ZERO zero-referenced embedding block
 };
 }  // namespace
 
@@ -1661,6 +1801,12 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
   if (algo != "NONE" && algo != "CERES_LM" && algo != "CERES_DOGLEG")
     throw std::runtime_error("joint_refine: unknown algo '" + algo +
                              "' (CERES_LM|CERES_DOGLEG|NONE)");
+  // The EMBF0 zero reference is an EMBEDDING property: the E-V cost
+  // evaluates phi/rho raw, so a zero-referenced radial fit would be
+  // silently fitted as a different function than it evaluates.
+  if (phi.zero_ref || rho.zero_ref)
+    throw std::runtime_error("joint_refine: the EMBF0 zero reference applies "
+                             "to the embedding F only, not to phi/rho");
   if (term_out) *term_out = "NONE(skipped)";
   ceres::Problem prob;
   auto add_curve = [&](BlipFit &f, const JointCurveData &d) {
@@ -1670,7 +1816,8 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
     if (!d.wts.empty())
       for (auto &w : wts) w *= curve_weight;
     prob.AddResidualBlock(
-        new CurveCost(d.xs, d.ys, std::move(wts), f.n(), f.kind, f.deg),
+        new CurveCost(d.xs, d.ys, std::move(wts), f.n(), f.kind, f.deg,
+                      f.zero_ref),  // EMBF0 ZERO: F only (d.ys = F_ref)
         nullptr, f.c.data(), f.mu.data(), f.eta.data());
   };
   add_curve(phi, dphi);
@@ -1678,7 +1825,8 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
   add_curve(F, dF);
   prob.AddResidualBlock(
       new EnergyCost(dists, e_orig, e_weight, phi.n(), rho.n(), F.n(),
-                     phi.kind, rho.kind, F.kind, phi.deg, rho.deg, F.deg),
+                     phi.kind, rho.kind, F.kind, phi.deg, rho.deg, F.deg,
+                     F.zero_ref),
       nullptr, phi.c.data(), phi.mu.data(), phi.eta.data(), rho.c.data(),
       rho.mu.data(), rho.eta.data(), F.c.data(), F.mu.data(), F.eta.data());
 
@@ -1783,16 +1931,18 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
 ceres::CostFunction *make_curve_cost(std::vector<double> xs,
                                      std::vector<double> ys,
                                      std::vector<double> wts, int n,
-                                     BasisKind kind) {
-  return new CurveCost(std::move(xs), std::move(ys), std::move(wts), n, kind);
+                                     BasisKind kind, bool zero_ref,
+                                     std::vector<int> deg) {
+  return new CurveCost(std::move(xs), std::move(ys), std::move(wts), n, kind,
+                       std::move(deg), zero_ref);
 }
 ceres::CostFunction *make_energy_cost(
     const std::vector<std::vector<double>> &dists,
     const std::vector<double> &e_orig, const std::vector<double> &e_weight,
     int nphi, int nrho, int nF, BasisKind kphi, BasisKind krho,
-    BasisKind kF) {
+    BasisKind kF, bool F_zero_ref, std::vector<int> dF) {
   return new EnergyCost(dists, e_orig, e_weight, nphi, nrho, nF, kphi, krho,
-                        kF);
+                        kF, {}, {}, std::move(dF), F_zero_ref);
 }
 
 }  // namespace refit

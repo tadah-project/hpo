@@ -140,7 +140,10 @@ class LammpsRunner {
   /**
    * @brief Retrieves the value of a LAMMPS variable.
    *
-   * Throws std::runtime_error if the instance pointer is null.
+   * Numeric (equal-style) variables are evaluated and returned as the
+   * shortest text that parses back to the identical double
+   * (core::format_roundtrip) -- not LAMMPS' own "%.15g" string. Every
+   * other style is returned verbatim; an undefined variable gives "".
    *
    * @param lmp_ptr Unique pointer to a LAMMPS instance.
    * @param varname Name of the variable to retrieve.

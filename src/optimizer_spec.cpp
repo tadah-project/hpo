@@ -245,6 +245,19 @@ static void print_asa_caps(std::ostream& os, const std::string& algo)
     print_asa_param_table(os);
 }
 
+std::optional<OptimizerSpec> tadah::hpo::anchor_seed_points(const OptimizerSpec& sp)
+{
+    if (!sp.space) return std::nullopt;
+    if (sp.optim_init.empty() && sp.space->anchor_count() == 0) return std::nullopt;
+    auto anchored = std::make_shared<const SearchSpace>(
+        sp.space->with_seed_anchors(sp.optim_init));
+    if (anchored->anchor_count() == 0 && sp.space->anchor_count() == 0)
+        return std::nullopt;      // the plain map already returns every seed
+    OptimizerSpec out = sp;
+    out.space = std::move(anchored);
+    return out;
+}
+
 void OptimizerSpec::print_caps(const std::string& lib,
                                const std::string& algo)
 {

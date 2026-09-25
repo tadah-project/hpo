@@ -21,10 +21,11 @@ not multiply it. Each run cleans its previous output (`best_*.tadah`,
 when the example directory has them (22 and 23 do), else the shared ones
 in `common/`, and prints which files it uses.
 
-Four examples ship their own `run.sh`: 09 and 10 bootstrap a
+Five examples ship their own `run.sh`: 09 and 10 bootstrap a
 `seed_pot.tadah` on first invocation (and reuse it thereafter), 16 runs
-with its local `config.tadah`, and 17 trains the shared model and pins
-its weights before the HPO run. Run those with `bash ./run.sh`.
+with its local `config.tadah`, 17 trains the shared model and pins its
+weights before the HPO run, and 27 checks the EMBF0 ZERO contract on its
+outputs. Run those with `bash ./run.sh`.
 
 ## How to run them all
 
@@ -79,6 +80,7 @@ each subsequent one introduces one or two new features.
 | 24 | `24_optim_auto`           | `OPTIM SGRIDMB (1) AUTO`: a seed-relative box; resolves to 03's `[0.1, 0.4]` and reproduces 03. |
 | 25 | `25_failprobe_grading`    | `FAILSCORE_GRADING ON`, `PC_FAILPROBE` (`common/lammps/failprobe.in`); a lattice window makes graded (band A) failures. |
 | 26 | `26_pc_isolation`         | `PC_ISOLATION PROCESS` + `PC_WORKER_TIMEOUT`; same results as 01. |
+| 27 | `27_dm_ream_embf0`        | DM_REAM `tadah refit` seed with the zero-referenced embedding (`EMBF0 ZERO`): `OPTIM CEMBFUNC` on the negative embedding knots; `run.sh` asserts the isolated-atom energy is exactly 0 for every candidate. |
 
 ## Files in `common/`
 

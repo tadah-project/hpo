@@ -186,7 +186,8 @@ class LammpsSim {
 
 /**
  * Strict double parser. Returns true and writes to `value` only when the
- * full string `s` is consumed by std::stod (no trailing junk). On parse
+ * full string `s` is consumed by std::stod (no trailing junk; an
+ * underflowing literal is accepted, see core::parse_number). On parse
  * failure, returns false and leaves `value` unchanged. Used by the eval
  * path to treat unparseable LAMMPS variable retrievals (e.g. nullptr -> ""
  * because the variable was never defined) as failed components rather

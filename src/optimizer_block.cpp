@@ -1,6 +1,7 @@
 #include <tadah/hpo/optimizer_block.h>
 #include <tadah/hpo/strict_parse.h>
 #include <tadah/core/utils.h>
+#include <tadah/core/number_format.h>
 
 #include <algorithm>
 #include <cctype>

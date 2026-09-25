@@ -32,15 +32,16 @@
     }
   },
   "evaluations": {
-    "value": 16,
-    "tol": 0
+    "value": 30,
+    "tol": 14,
+    "note": "30 on the reference machine (was 16) since common/lammps/Ecoh_param.in switched to exact captures: HPO now reads Ecoh, Eiso and Ebulk and the relaxed lattice constant back without rounding, which exposes the ~1e-13 relative re-evaluation noise of the warm-started lattice relaxation. From eval 13 on, DLIB:BFGS's line search re-evaluates the clamped upper bound RCUT2B = 6.0; whether its sufficient-decrease test passes there depends on the sign of that noise. Here it never passes and the run continues to MAXEVAL; a 1-ulp change of the hot_a0 start or of one training energy lets it pass after two or three evaluations at the bound, and BFGS then ends after its finite-difference pair: 16 or 17 evaluations (16 with the previous 15-digit scripts). So the count is not pinned (evals_tol 14: 16..44, see tolerance_rationale); the status stays COMPLETED in every case, and best loss, components and RCUT2B are unchanged (1.003482e-01 at eval 11)."
   },
   "best_ermse_meV_per_atom": 5.09,
   "status_accepted": [
     "COMPLETED"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "0.4s",
+  "walltime_hint": "0.6s",
   "fast": true,
-  "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
+  "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances. The evaluation count is not deterministic across machines: the optimum is on the clamped bound RCUT2B = 6.0, and whether DLIB:BFGS's line search accepts a re-evaluation there depends on the sign of a ~1e-13 relative, rounding-level drift of the warm-started lattice relaxation. The run stops after 16-17 evaluations or runs to MAXEVAL = 30 (the reference machine), and a 1-ulp change of the hot_a0 start or of one training energy flips it; evals_tol 14 accepts 16..44."
 }
