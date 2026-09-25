@@ -21,6 +21,7 @@
 #include <random>
 #include <set>
 #include <sstream>
+#include <vector>
 
 namespace {
 
@@ -412,6 +413,50 @@ TEST_CASE("WarmInitStrategy: HOT round-trip primes warmstart cache",
 
     /* Cleanup so subsequent tests don't see this stale entry. */
     warmstart::clear();
+}
+
+TEST_CASE("WarmInitStrategy / CONFIG: a subnormal OPTIM value is a number "
+          "(no ordinal shift)", "[HPO][init_strategy][warm][lossless]")
+{
+    /* The lossless writers keep a subnormal value ("1e-310"; the old
+     * fixed-decimal Context text flushed it to 0). core::is_number and
+     * std::stod used to reject it (ERANGE underflow): WARM skipped the token
+     * when counting numeric ordinals, so every later OPTIM'd dimension of
+     * the key silently took its neighbour's value, and CONFIG threw. */
+    using namespace tadah::hpo;
+    StrategyTempFile target(
+        "OPTIM CGRID2B (1-3) 0 10\n"
+        "OPTIMIZER\nLIB DLIB\nALGO BFGS\nENDOPTIMIZER\n");
+    tadah::core::Context ctx;
+    ctx.add("CGRID2B", std::vector<double>{1.0, 1e-310, 3.0});
+    HPOTargets trg(ctx, target.path.string());
+    REQUIRE(trg.spec.low.size() == 3);
+
+    SECTION("CONFIG seed") {
+        InitStrategySpec ispec;
+        ispec.chain.push_back({"CONFIG", {}});
+        auto strat = build_init_strategy(ispec);
+        InitContext ic{trg.spec, trg, 0};
+        const auto pts = strat->generate(ic, 1);
+        REQUIRE(pts.size() == 1);
+        REQUIRE(pts[0].size() == 3);
+        CHECK(pts[0][0] == 1.0);
+        CHECK(pts[0][1] == 1e-310);
+        CHECK(pts[0][2] == 3.0);
+    }
+    SECTION("WARM seed with a subnormal middle token") {
+        StrategyTempFile pot("CGRID2B 1.5 9.99999999999996945e-311 2.5\n");
+        InitStrategySpec ispec;
+        ispec.chain.push_back({"WARM", {pot.path.string()}});
+        auto strat = build_init_strategy(ispec);
+        InitContext ic{trg.spec, trg, 0};
+        const auto pts = strat->generate(ic, 1);
+        REQUIRE(pts.size() == 1);
+        REQUIRE(pts[0].size() == 3);
+        CHECK(pts[0][0] == 1.5);
+        CHECK(pts[0][1] == 1e-310);
+        CHECK(pts[0][2] == 2.5);    /* its own value, not the fallback 3.0 */
+    }
 }
 
 TEST_CASE("WarmInitStrategy: legacy HOT_A0 line still primes cache",

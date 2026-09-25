@@ -11,6 +11,7 @@
 #include <tadah/models/descriptors/d_base.h>
 #include <tadah/models/descriptors/d_mjoin.h>
 #include <tadah/core/registry.h>
+#include <tadah/core/number_format.h>
 #include <tadah/hpo/loss_function.h>
 
 #include <algorithm>
@@ -104,6 +105,25 @@ void HPOTargets::Opti::resize(size_t s) {
 }
 
 HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
+  /* Potential-file precision. Resolved first, before anything
+   * below can default-insert NUMERIC into the context: only a NUMERIC the
+   * configuration really carries counts as explicit. */
+  {
+    const core::PotDigits pd = core::resolve_pot_digits(context);
+    pot_digits = pd.digits;
+    pot_digits_explicit = pd.explicit_;
+    const std::string w = core::pot_digits_warning(pd);
+    if (!w.empty()) {
+      const std::string msg =
+          "HPO potential files (best_pot.tadah, BDUMP/DUMP archives): " + w +
+          " Potential files written by tadah 1.5.0 hpo carry an "
+          "auto-inserted 'NUMERIC 12' line; if this configuration is (or "
+          "was copied from) such a best_pot.tadah, delete that line.";
+      std::cerr << "[HPO] WARNING: " << msg << "\n";
+      HPOLog::instance().warning(msg);
+    }
+  }
+
   models::D_mJoin::expand_grids(context);
 
   read(fn);
@@ -924,7 +944,7 @@ void HPOTargets::read(const std::string& fn)
                         throw std::runtime_error("CHECKPOINT_EVERY requires a value (e.g. \"60s\" or \"100\")");
                     double secs = 0.0; std::size_t evs = 0;
                     if (tok.back() == 's' || tok.back() == 'S') {
-                        secs = std::stod(tok.substr(0, tok.size()-1));
+                        secs = core::to_double(tok.substr(0, tok.size()-1));
                         if (secs < 0.0) throw std::runtime_error("CHECKPOINT_EVERY seconds must be >= 0");
                     } else {
                         evs = std::stoul(tok);
@@ -1184,7 +1204,7 @@ void HPOTargets::read(const std::string& fn)
                         if (i2+1 >= toks.size())
                             throw std::runtime_error("PC_FAILPROBE " + toks[i2]
                                                      + " requires a value");
-                        const double v = std::stod(toks[i2+1]);
+                        const double v = core::to_double(toks[i2+1]);
                         if (toks[i2]=="--gate") failprobe_gate = v;
                         else {
                             if (!std::isfinite(v) || !(v > 0.0))
@@ -1532,7 +1552,7 @@ SearchSpace HPOTargets::build_search_space() const {
       d.tf = i < o.scale.size() ? o.scale[i] : DimTransform{};
       d.origin = i < o.origin.size() ? o.origin[i] : BoxOrigin::Explicit;
       if (numeric) {
-        try { d.x0 = std::stod(o.config[i]); } catch (const std::exception&) {}
+        try { d.x0 = core::to_double(o.config[i]); } catch (const std::exception&) {}
       }
       dims.push_back(std::move(d));
     }
@@ -1615,13 +1635,15 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
   hpo << "# Resolved OPTIM block (explicit bounds for every searched dimension).\n"
          "# Written by tadah hpo because at least one box was derived by an AUTO rule;\n"
          "# paste these lines in place of the AUTO lines to pin exactly this search space.\n";
-  hpo << std::setprecision(10);
+  /* Lossless numbers (shortest round-trip text): pasted back, every bound
+   * must parse to the very double this run searched -- 10 digits moved AUTO
+   * bounds by up to 5e-11 relative. */
   for (std::size_t i = 0; i < ss.dim(); ++i) {
     const DimSpec& d = ss.at(i);
     hpo << "OPTIM " << d.key << " (" << (d.user_index ? d.user_index : 1) << ") "
-        << d.lo << " " << d.hi;
+        << core::format_roundtrip(d.lo) << " " << core::format_roundtrip(d.hi);
     if (d.tf.kind == ScaleKind::Log)   hpo << " LOG";
-    if (d.tf.kind == ScaleKind::Asinh) hpo << " ASINH " << d.tf.c;
+    if (d.tf.kind == ScaleKind::Asinh) hpo << " ASINH " << core::format_roundtrip(d.tf.c);
     hpo << "   # " << box_origin_name(d.origin) << '\n';
   }
 }
@@ -1711,7 +1733,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
   auto parse_num = [&](const std::string& tok, const char* what) {
     try {
       std::size_t pos = 0;
-      const double v = std::stod(tok, &pos);
+      const double v = core::to_double(tok, &pos);
       if (pos != tok.size()) throw std::invalid_argument("trailing chars");
       return v;
     } catch (const std::exception&) {
@@ -1793,7 +1815,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
         ": unexpected token(s) '" + core::join(tokens) + "'" + grammar);
     }
     try {
-      high = std::stod(tokens[1]);
+      high = core::to_double(tokens[1]);
     } catch (const std::exception& e) {
       throw std::runtime_error(
         "Error converting high bound to double on process_optim_config line "
@@ -1801,7 +1823,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
         "\nTokens: " + tokens[1]);
     }
     try {
-      low = std::stod(tokens[0]);
+      low = core::to_double(tokens[0]);
     } catch (const std::exception& e) {
       throw std::runtime_error(
         "Error converting low bound to double on process_optim_config line "
@@ -1847,7 +1869,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
     for (const auto& ui : user_indices) {
       const size_t i = ui_offset(omap.config, ui);
       if (i < s && core::is_number(omap.config[i]))
-        group_max = std::max(group_max, std::fabs(std::stod(omap.config[i])));
+        group_max = std::max(group_max, std::fabs(core::to_double(omap.config[i])));
     }
   }
 
@@ -1861,7 +1883,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
           throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
                                    "): AUTO needs a numeric CONFIG seed (got '" +
                                    omap.config[i] + "')");
-        const double x0 = std::stod(omap.config[i]);
+        const double x0 = core::to_double(omap.config[i]);
         if (rule.geometric) {
           if (!(x0 != 0.0))
             throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +

@@ -2,6 +2,7 @@
 #define HPO_TARGETS_H
 
 #include "tadah/core/context.h"
+#include "tadah/core/number_format.h"
 #include "tadah/core/utils.h"
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/lammps_sim.h>
@@ -164,6 +165,13 @@ public:
     OptimizerSpec spec;
 
     int    outputDigits = 6;      // decimal digits in scientific notation columns (DIGITS key)
+    /* Significant digits of the numbers in every potential file HPO writes
+     * (best_pot.tadah, BDUMP best_pot_N / DUMP pot_N archives): NUMERIC,
+     * resolved once in the constructor WITHOUT default insertion
+     * (core::resolve_pot_digits). Absent -> 18, an exact round trip;
+     * pot_digits_explicit is true iff the configuration carried NUMERIC. */
+    int    pot_digits = core::kPotDigitsDefault;
+    bool   pot_digits_explicit = false;
     size_t outputEvery = 1;
     /* Cadence over NEW BESTS (not over evaluations): best_*.tadah rows are
      * written every Nth improvement, keyed by best_iter. Was parsed as a

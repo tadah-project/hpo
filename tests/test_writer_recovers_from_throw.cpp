@@ -62,8 +62,11 @@ struct WriterSim {
                 try {
                     const auto& e = io_buf[next_flush];
                     if (e.throw_on_write) {
+                        /* Any per-iter write failure. (Historically a
+                         * NUMERIC lookup; the pot writers no longer read
+                         * NUMERIC.) */
                         throw std::runtime_error(
-                            "Key not found in the Context object: NUMERIC");
+                            "simulated per-iter write failure");
                     }
                     last_written_iter = e.iter;
                     io_buf.erase(next_flush++);
@@ -138,7 +141,7 @@ TEST_CASE("Writer recovers from a per-iter throw and keeps draining",
                      std::istreambuf_iterator<char>());
     in.close();
     CHECK(body.find("dropping iter=50") != std::string::npos);
-    CHECK(body.find("NUMERIC") != std::string::npos);
+    CHECK(body.find("simulated per-iter write failure") != std::string::npos);
 
     std::error_code ec;
     std::filesystem::remove(log_path, ec);

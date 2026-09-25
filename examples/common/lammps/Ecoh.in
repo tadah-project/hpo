@@ -32,8 +32,12 @@ compute eatoms all reduce sum c_eng
 
 run 0
 
-variable tmp equal c_eatoms
-variable Eiso equal ${tmp}
+# Capture E_iso exactly. An internal-style variable holds the double
+# itself; ${name} and v_name of an equal-style variable carry only 15
+# significant digits (hpo.rst: "Precision of values passed to and read
+# from LAMMPS"). Eiso stays equal-style: HPO reads it (--outvar Eiso).
+variable Eiso_i internal $(c_eatoms)
+variable Eiso equal v_Eiso_i
 
 # ---------- Relaxed bulk ----------
 clear
@@ -43,7 +47,10 @@ boundary p p p
 atom_style atomic
 atom_modify map array
 
-lattice bcc ${hot_a0}
+# ${hot_a0} would print the injected value with 15 digits; a format-style
+# copy prints all 17.
+variable hot_a0_s format hot_a0 %.17g
+lattice bcc ${hot_a0_s}
 region box block 0 4 0 4 0 4 units lattice
 create_box 1 box
 create_atoms 1 region box
@@ -70,9 +77,10 @@ variable eq_ok equal ternary($(fmax) < 0.1, 1, 0)
 # that LAMMPS accepts without a prior `variable delete`.
 variable hot_a0 equal lx/4.0
 
-variable tmp equal atoms
-variable N equal ${tmp}
-variable tmp equal c_eatoms
-variable Ebulk equal ${tmp}
-variable Ecoh_raw equal -(1/${N})*(${Ebulk}-${N}*${Eiso})
-variable Ecoh equal ternary(v_eq_ok, v_Ecoh_raw, 100.0)
+# Exact captures and one formula over them: every variable HPO reads
+# (Ecoh, Eiso, Ebulk, hot_a0) is equal-style, and none is built from
+# another equal-style variable.
+variable N_i internal $(atoms)
+variable Ebulk_i internal $(c_eatoms)
+variable Ebulk equal v_Ebulk_i
+variable Ecoh equal ternary(v_eq_ok, -(v_Ebulk_i-v_N_i*v_Eiso_i)/v_N_i, 100.0)

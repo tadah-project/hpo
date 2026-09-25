@@ -9,8 +9,11 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -576,6 +579,56 @@ TEST_CASE("FIXWEIGHT dimensions are addressed by the model weight everywhere",
   while (std::getline(t, line)) if (line.find("FIXWEIGHT[7]") != std::string::npos) saw = true;
   CHECK(saw);
   std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("hpo_optim_resolved.hpo pins the searched box bit-exactly",
+          "[HPO][scale][parser][autobox][lossless]")
+{
+  /* Seed 1/3: the AUTO FRAC box is not representable in the 10 significant
+   * digits the block used to be written with, so pasting it back searched a
+   * slightly different box. The ASINH scale is a literal with more digits
+   * than a double holds. Pasted back, the resolved line alone must rebuild
+   * the identical box (same bits for lo, hi and c). */
+  auto make_ctx = [] {
+    tadah::core::Context ctx;
+    ctx.add("ATOM", "C"); ctx.add("ATOM", "H");
+    ctx.add("WATOM", "C"); ctx.add("WATOM", "H"); ctx.add("WATOM", 1.0 / 3.0);
+    return ctx;
+  };
+  auto same_bits = [](double a, double b) { return std::memcmp(&a, &b, sizeof a) == 0; };
+  const std::string block = "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\nENDOPTIMIZER\n";
+
+  ScopedTempFile in("OPTIM WATOM (1) AUTO FRAC 0.2 ASINH 0.123456789012345678\n" + block);
+  auto ctx = make_ctx();
+  tadah::hpo::HPOTargets trg(ctx, in.path.string());
+  const auto& d = trg.spec.space->at(0);
+  REQUIRE(d.origin == tadah::hpo::BoxOrigin::AutoLinear);
+  REQUIRE(d.tf.kind == tadah::hpo::ScaleKind::Asinh);
+
+  const auto dir = std::filesystem::temp_directory_path() /
+      ("tadah_ss_exact_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(dir);
+  trg.write_search_space_files(dir.string());
+  std::ifstream f(dir / "hpo_optim_resolved.hpo");
+  std::string line, optim_line;
+  while (std::getline(f, line))
+    if (line.rfind("OPTIM ", 0) == 0) optim_line = line;
+  std::filesystem::remove_all(dir);
+  REQUIRE_FALSE(optim_line.empty());
+
+  ScopedTempFile pasted(optim_line + "\n" + block);
+  auto ctx2 = make_ctx();
+  tadah::hpo::HPOTargets trg2(ctx2, pasted.path.string());
+  const auto& d2 = trg2.spec.space->at(0);
+  CHECK(d2.origin == tadah::hpo::BoxOrigin::Explicit);
+  CHECK(d2.tf.kind == tadah::hpo::ScaleKind::Asinh);
+  CHECK(same_bits(d2.lo, d.lo));
+  CHECK(same_bits(d2.hi, d.hi));
+  CHECK(same_bits(d2.tf.c, d.tf.c));
+
+  /* The old 10-digit rendering would not have reproduced the box. */
+  std::ostringstream ten; ten << std::setprecision(10) << d.lo;
+  CHECK_FALSE(same_bits(std::stod(ten.str()), d.lo));
 }
 
 TEST_CASE("STEP FIXWEIGHT(i) names the model weight, like OPTIM FIXWEIGHT (i)",

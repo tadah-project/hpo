@@ -1,5 +1,6 @@
 #include <tadah/hpo/optimizer_block.h>
 #include <tadah/core/utils.h>
+#include <tadah/core/number_format.h>
 
 #include <cctype>
 #include <cstdint>
@@ -51,7 +52,7 @@ namespace {
 bool looks_numeric(const std::string &t) {
   try {
     std::size_t pos = 0;
-    (void)std::stod(t, &pos);
+    (void)tadah::core::to_double(t, &pos);
     return pos == t.size();
   } catch (const std::exception &) {
     return false;
@@ -135,7 +136,7 @@ bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
     auto parse_num = [](const std::string& tok, double& out) {
       try {
         std::size_t pos = 0;
-        out = std::stod(tok, &pos);
+        out = tadah::core::to_double(tok, &pos);
         return pos == tok.size();
       } catch (const std::exception&) {
         return false;
@@ -253,7 +254,7 @@ bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
     bool numeric = false;
     try {
       std::size_t pos = 0;
-      const double v = std::stod(raw, &pos);
+      const double v = tadah::core::to_double(raw, &pos);
       if (pos == raw.size()) {
         a.param[p] = v;
         numeric = true;

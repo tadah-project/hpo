@@ -13,7 +13,9 @@
  * so under AUTO (the default) every dimension spans [0,1] and one STEP /
  * XTOL_ABS / fd_step means the same fraction of every box; under NONE the
  * internal coordinates are exactly the pre-1.5 ones (raw values, ln for
- * LOG_HP dims), which reproduces every legacy trajectory byte-identically.
+ * LOG dims). Runs under NONE are not byte-identical to 1.5.0 and earlier:
+ * numbers are no longer rounded on their way through the code, and seed
+ * points are evaluated exactly (anchors below).
  *
  * Shapes:
  *   LIN      t = x
@@ -32,6 +34,21 @@
  *   - host(...) always receives REAL vectors (adapters call sp.out(u));
  *   - persisted artefacts (best_*.tadah, params, WARM seeds, basin pools)
  *     are REAL-space.
+ *
+ * Seed anchors. A REAL start point x0 (CONFIG or WARM value, a pool or
+ * top-K point) enters an optimiser as u0 = to_internal(x0), and the plain
+ * map need not give x0 back: lo + u0*(hi - lo) rounds (a small |x0| in a
+ * wide LIN box comes back as a multiple of ulp(lo)), LOG and ASINH add
+ * exp/log rounding. Some optimisers also move the start by rounding
+ * before evaluating it (NLopt BOBYQA/COBYLA rescale it, u -> (u/s)*s;
+ * PRAXIS maps it through atanh/tanh). with_seed_anchors() returns a copy
+ * of the space whose to_real() maps each such u0 to its x0 -- exactly
+ * equal u first, then any u within the anchor's window of a few units in
+ * the last place (seed_anchor_tolerance()) -- so the start point is
+ * evaluated at precisely the loaded doubles and every coordinate an
+ * optimiser has not moved keeps its seed value. Every other u maps as
+ * before. run_inner() anchors each optimiser run on its own
+ * spec.optim_init; the anchored copy is immutable like every space.
  */
 
 #include <cstddef>
@@ -45,6 +62,78 @@
 #include <vector>
 
 namespace tadah::hpo {
+
+/* Seed-anchor window: the half-width, in u, around an anchored seed's u0
+ * within which to_real() returns the seed's exact x0. Per anchor
+ * (seed_anchor_tolerance(i, u0)):
+ *
+ *   min(kSeedAnchorUlps * ulp(max(|internal lo|, |internal hi|)),
+ *       max(kSeedAnchorMaxTol, kSeedAnchorSeedUlps * ulp(u0)))
+ *
+ * i.e. 4 ulp of the dimension's internal box (ulp(1) = 2.2e-16 under
+ * OPTIM_SCALE AUTO), capped at 2^-27 -- but never below 2 ulp of the
+ * seed's own u0.
+ *
+ * Why the box and not ulp(u0): the start-point rounding of NLopt PRAXIS
+ * (x_bound_inv/x_bound: v = (u - mid)/half, atanh, tanh, mid + v*half) is
+ * a few ulp of the box's midpoint/half-width, not of u0 -- near the lower
+ * bound of the unit box (u0 ~ 1e-8) it is ~1e6 ulp(u0). Measured with
+ * NLopt 2.10's code and glibc's atanh/tanh over 1e7 random boxes and
+ * seeds: at most 3 ulp(box) (0.625 ulp(1) under AUTO); BOBYQA/COBYLA's
+ * rescaling (u/s)*s is at most 1 ulp(u0) <= 1 ulp(box). 4 keeps one ulp
+ * of margin over the worst measured case (3 ulp, once in 1e7) for other
+ * libm implementations.
+ *
+ * Which points it remaps: every u with 0 < |u - u0| <= the window maps to
+ * x0 (when u0 is the nearest anchor). Where
+ * x = T^-1(T(lo) + u*(T(hi) - T(lo))) is only accurate to about ulp(box)
+ * anyway, that changes nothing the map could resolve. It does replace a
+ * resolvable move where the plain map is finer than the box: near t = 0
+ * when T(lo) = 0 (a LIN box [0, W] near its lower bound keeps the relative
+ * precision of u), and under OPTIM_SCALE NONE on every LIN dimension (the
+ * identity map).
+ *
+ * Why that is harmless: only a point within the window of a seed -- an
+ * optimiser's rounded start, or a step smaller than the window -- is
+ * affected, and no optimiser takes such a step on purpose. Derivative-free
+ * steps and STEP fractions are orders of magnitude larger. The finite-
+ * difference kernels step by fd_step*max(|u|, 1) (in-house) or
+ * max(sqrt(eps), fd_step*|u|) with sqrt(eps) = 2^-26 (Ceres); with the
+ * default fd_step 1e-6 (NOISE_AUTO never goes below it) both steps exceed
+ * the window (8.9e-16 under AUTO, at most the cap under NONE unless the
+ * seed is large, 2 ulp(u0) for a large one), so no difference is ever taken
+ * between two points that both map to the seed. Only a PARAM fd_step set
+ * by hand below window/max(|u|, 1) -- under NONE on a LIN box of 2^24 or
+ * more with fd_kernel inhouse, below ~7.5e-9 -- can put a step inside the
+ * window, and that gradient component is then 0. A stochastic proposal
+ * that small (annealers, ASA; the annealers' resolvable-step floor
+ * max(ulp(u), eps*width) is 2.2e-16 under AUTO) made from a seed evaluates
+ * the seed again: a wasted proposal at a converged scale, not a frozen
+ * dimension. A seed NLopt deliberately moves (PRAXIS clamps a start ON a
+ * bound 1e-12 inside; BOBYQA shifts a start closer than its initial step
+ * to a bound) stays outside the window and maps as any other point. */
+constexpr int kSeedAnchorUlps = 4;
+
+/* Cap of the box term: half the Ceres finite-difference kernel's smallest
+ * step sqrt(eps) = 2^-26. It binds only under OPTIM_SCALE NONE on a LIN
+ * dimension with max(|lo|, |hi|) >= 2^24 (~1.7e7), where 4 ulp(box) would
+ * reach that step: the Ceres kernel (the default under NONE) would then
+ * difference two points that both map to a small seed, a zero gradient
+ * component that keeps the dimension at its seed for the whole local run.
+ * With the cap, PRAXIS's start rounding (up to 3 ulp(box): it scales with
+ * the box's midpoint and half-width) can exceed the window of a seed of
+ * smaller magnitude than the box on such a dimension -- not only of a
+ * small one -- and its first evaluation then lands a few ulp(box) off the
+ * seed. */
+constexpr double kSeedAnchorMaxTol = 0x1p-27;
+
+/* Floor of an anchor's window, in ulp of its own u0: BOBYQA/COBYLA's start
+ * rescaling moves u0 by up to 1 ulp(u0), which exceeds the cap once
+ * |u0| >= 2^26 (~6.7e7; only under NONE can u0 be that large), so such a
+ * seed is still anchored. The floor widens a window from |u0| >= 2^25
+ * on; both finite-difference kernels step by at least fd_step*|u0| there,
+ * above 2 ulp(u0) for any fd_step > 4.4e-16. */
+constexpr int kSeedAnchorSeedUlps = 2;
 
 enum class ScaleKind : std::uint8_t { Linear, Log, Asinh };
 const char* scale_kind_name(ScaleKind k);
@@ -114,7 +203,7 @@ public:
     const ScalePolicy&               policy()     const noexcept { return policy_; }
     std::uint32_t                    version()    const noexcept { return version_; }
 
-    /* scalar maps */
+    /* scalar maps (to_real honours the seed anchors, if any) */
     double to_internal    (std::size_t i, double x) const;
     double to_real        (std::size_t i, double u) const;
     double dreal_dinternal(std::size_t i, double u) const;   // dx/du at u
@@ -166,8 +255,34 @@ public:
     std::string   fingerprint() const;       // 16 hex chars
     std::uint64_t fingerprint_u64() const;   // same value, for checkpoints
 
-    /* Same shapes/labels, new real boxes (version + 1). BOUND_ADAPT. */
+    /* Same shapes/labels, new real boxes (version + 1). BOUND_ADAPT.
+     * Seed anchors are dropped: they belong to the old boxes. */
     SearchSpace with_boxes(const std::vector<std::pair<double,double>>& boxes) const;
+
+    /* Copy of this space anchored on `seeds` (REAL points; see the file
+     * comment). Every in-box coordinate of every seed gets an anchor --
+     * also one whose plain round trip is exact, because an optimiser that
+     * perturbs its start by rounding (BOBYQA, COBYLA, PRAXIS) evaluates a
+     * u next to u0, which the plain map would move off x0. Per dimension,
+     * the first seed that reaches a given u owns it: a later seed with a
+     * different value but the same u (the two are closer than the box
+     * resolves) is evaluated at the owner's value. to_real() returns an
+     * anchor's x0 for its exact u0 and, failing every exact match, for u
+     * whose nearest anchor u0 is within seed_anchor_tolerance(i, u0) of
+     * it. Seeds of the wrong size
+     * and non-finite or out-of-box values are ignored. The anchors replace
+     * any this space had; they do not enter fingerprint() or version().
+     * to_real() pays one test per dimension plus, on an anchored
+     * dimension with A anchors (A is 1 per seed of the run), one
+     * distance compare per anchor for A <= 24, else a binary search and
+     * two compares; no allocation. */
+    SearchSpace with_seed_anchors(const std::vector<std::vector<double>>& seeds) const;
+    std::size_t anchor_count() const noexcept { return anc_u_.size(); }
+    /* min(kSeedAnchorUlps * ulp(max(|internal_lo(i)|, |internal_hi(i)|)),
+     *     max(kSeedAnchorMaxTol, kSeedAnchorSeedUlps * ulp(u0))): the
+     * half-width, in u (absolute), of the window of an anchor at u0 on
+     * dimension i. */
+    double seed_anchor_tolerance(std::size_t i, double u0) const;
 
 private:
     SearchSpace() = default;
@@ -176,6 +291,12 @@ private:
     std::vector<double>       t_lo_, t_hi_;   // T_i(lo_i), T_i(hi_i)
     ScalePolicy               policy_;
     std::uint32_t             version_ = 1;
+    /* Seed anchors, CSR by dimension: dim i owns [anc_off_[i],
+     * anc_off_[i+1]) of anc_u_/anc_x_/anc_tol_ (sorted by u); anc_tol_[k]
+     * is anchor k's window half-width (seed_anchor_tolerance). All four
+     * are empty when the space has no anchor at all. */
+    std::vector<std::size_t>  anc_off_;
+    std::vector<double>       anc_u_, anc_x_, anc_tol_;
 };
 
 using SearchSpacePtr = std::shared_ptr<const SearchSpace>;

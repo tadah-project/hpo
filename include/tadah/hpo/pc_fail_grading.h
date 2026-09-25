@@ -46,6 +46,8 @@
  * half-saturation scale) is uncritical; ordering, not magnitude, carries the
  * signal. v < 0 is clamped to 0; non-finite v saturates the band (top). */
 
+#include <tadah/core/number_format.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -54,6 +56,24 @@
 
 namespace tadah {
 namespace hpo {
+
+/* Text of a FAILSCORE clamp written into an outvar slot (r.v_outvar holds
+ * LAMMPS readback STRINGS). Lossless on purpose: the failprobe check below
+ * and every consumer that parses the slot back must see exactly the
+ * configured value. std::to_string (%f, 6 decimals) wrote 1.0000004 as
+ * "1.000000" -- read back BELOW the failscore, so a failed probe passed as
+ * a real S -- and any failscore below 5e-7 as "0.000000". */
+inline std::string failscore_token(double fs) {
+  return core::format_roundtrip(fs);
+}
+
+/* Is the parsed first outvar of the failprobe a real S(theta)? A failed
+ * probe task has its outvars clamped to failscore_token(failscore), which
+ * parses back to exactly failscore: that is probe garbage, not a
+ * huge-but-real S (and neither is a negative or non-finite value). */
+inline bool failprobe_value_is_real(double S, double failscore) {
+  return std::isfinite(S) && S >= 0.0 && S < failscore;
+}
 
 enum class FailBand : int {
   NONE = 0,   /* evaluation feasible (or grading disabled)          */

@@ -1,5 +1,7 @@
 #include <tadah/hpo/observables/observable_parser.h>
 
+#include <tadah/core/number_format.h>
+
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/observables/cohesive_energy.h>
 
@@ -28,7 +30,7 @@ std::vector<std::string> ws_tokens(const std::string& s) {
 double parse_double(const std::string& s, const std::string& flag) {
     try {
         std::size_t consumed = 0;
-        double v = std::stod(s, &consumed);
+        double v = tadah::core::to_double(s, &consumed);
         if (consumed != s.size())
             throw std::invalid_argument("trailing chars");
         return v;

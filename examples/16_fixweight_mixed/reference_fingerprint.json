@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "example": "16_fixweight_mixed",
-  "description": "",
+  "description": "NLOPT:LN_BOBYQA over a flat OPTIM FIXWEIGHT(14); mixed LS-fit + pinned + OPTIM'd weights.",
   "best_loss": {
     "value": 0.09568511,
     "abs_tol": 1e-06,
@@ -27,7 +27,7 @@
   "hyperparameters": {
     "FIXWEI*[14]": {
       "value": 0.0,
-      "abs_tol": 0.001,
+      "abs_tol": 100.0,
       "rel_tol": 0.001
     }
   },
@@ -40,7 +40,7 @@
     "MAXEVAL_REACHED -- maximum evaluations exhausted"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "0.4s",
+  "walltime_hint": "0.5s",
   "fast": true,
-  "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
+  "tolerance_rationale": "Weight 14 multiplies a descriptor that is zero on this dataset, so the loss does not depend on it: every evaluation ties up to ~2e-13 relative, the rounding-level noise of the warm-started lattice relaxation (exact Ecoh.in read-back), and that noise decides which evaluation is the best (weight 0, -25 or +25). The loss and components are pinned at the default tolerances; FIXWEIGHT[14] is checked only for presence: abs_tol 100 (the box width) accepts any value in its box [-50, 50]."
 }

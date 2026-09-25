@@ -12,12 +12,16 @@ Tolerance policy (overridable per example via tolerance_overrides.json):
   hyperparams:  abs 1e-3,  rel 1e-3
   evals:        exact (tol 0) by default
 
-The TADAH HPO bundle is bit-for-bit deterministic when SEED is set
-(verified for examples 03, 13, 15). The defaults absorb cross-machine
-BLAS/LAPACK reorder and double-precision printf rounding while still
-detecting a material regression in the optimiser path. Override per
+Examples that set SEED repeat run to run on one machine. 13_restart does
+not: RESTART RANDOM reseeds from std::random_device, so it pins only
+values that do not depend on the restarts. The defaults absorb
+cross-machine BLAS/LAPACK reorder and double-precision printf rounding
+while still detecting a material regression in the optimiser path -- but
+a few examples react to last-ulp changes of the LAMMPS read-back (05's
+evaluation count, which evaluation is best along 16's flat FIXWEIGHT(14)),
+and their overrides in tolerance_overrides.json say so. Override per
 example when a wider tolerance is justified (stochastic-without-seed,
-adaptive eval-count, etc.).
+adaptive eval-count, rounding-decided stops or ties, etc.).
 """
 from __future__ import annotations
 
@@ -188,8 +192,10 @@ def main(argv):
     fp = build_fingerprint(args.example_dir, overrides)
     out_path = args.out or (args.example_dir / "reference_fingerprint.json")
     # Hand-written fields of an existing fingerprint survive a regeneration:
-    # the description (when the overrides file has none) and the free-text
-    # note on the evaluation count. Everything measured is refreshed.
+    # the description (when the overrides file has none), the free-text note
+    # on the evaluation count, and every top-level field this script does
+    # not produce (e.g. a "status_note"), each kept after the field it
+    # followed. Everything measured is refreshed.
     if out_path.exists():
         try:
             prev = json.loads(out_path.read_text())
@@ -200,8 +206,31 @@ def main(argv):
         note = (prev.get("evaluations") or {}).get("note")
         if note and "note" not in fp["evaluations"]:
             fp["evaluations"]["note"] = note
+            old_evals = (prev.get("evaluations") or {}).get("value")
+            if old_evals != fp["evaluations"]["value"]:
+                print(f"note: evaluations changed {old_evals} -> "
+                      f"{fp['evaluations']['value']}; check the carried-over "
+                      f"evaluations.note", file=sys.stderr)
+        fp = keep_hand_written(fp, prev)
     out_path.write_text(json.dumps(fp, indent=2) + "\n")
     print(f"wrote {out_path}")
+
+
+def keep_hand_written(fp: dict, prev: dict) -> dict:
+    """fp plus every top-level key of prev that fp lacks, each inserted
+    after the key it followed in prev (at the front if it was first)."""
+    out = dict(fp)
+    order = list(prev)
+    for i, key in enumerate(order):
+        if key in out:
+            continue
+        anchor = next((k for k in reversed(order[:i]) if k in out), None)
+        keys = list(out)
+        pos = keys.index(anchor) + 1 if anchor is not None else 0
+        items = list(out.items())
+        items.insert(pos, (key, prev[key]))
+        out = dict(items)
+    return out
 
 
 if __name__ == "__main__":

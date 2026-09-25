@@ -1,4 +1,5 @@
 #include <tadah/core/logger.h>
+#include <tadah/core/number_format.h>
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/hpo_targets.h>
@@ -213,13 +214,8 @@ namespace tadah::hpo {
 
 bool try_parse_double(const std::string& s, double& value)
 {
-    try {
-        std::size_t pos = 0;
-        value = std::stod(s, &pos);
-        return pos == s.size();
-    } catch (...) {
-        return false;
-    }
+    /* std::stod over the whole string, but a subnormal is a number. */
+    return tadah::core::parse_number(s, value);
 }
 
 /* An option token starts with '-' and is not a complete number: a negative
@@ -344,11 +340,11 @@ void LammpsSim::parse_tokens() {
 
       if(j>=tokens.size() || is_flag(tokens[j]))
         throw std::runtime_error("--varloss "+vname+": missing <target>");
-      double tgt = std::stod(tokens[j++]);
+      double tgt = tadah::core::to_double(tokens[j++]);
 
       if(j>=tokens.size() || is_flag(tokens[j]))
         throw std::runtime_error("--varloss "+vname+": missing <weight>");
-      double wgt = std::stod(tokens[j++]);
+      double wgt = tadah::core::to_double(tokens[j++]);
 
       /* optional override ---------------------------------------------- */
       tadah::LossFunction myLoss = defLoss;
@@ -356,7 +352,7 @@ void LammpsSim::parse_tokens() {
         auto t = tadah::LossFunction::from_string(tokens[j++]);
         std::vector<double> pars;
         while(j<tokens.size() && !is_flag(tokens[j]))
-          pars.push_back(std::stod(tokens[j++]));
+          pars.push_back(tadah::core::to_double(tokens[j++]));
         myLoss = tadah::LossFunction(t, pars);
       }
 
@@ -399,7 +395,7 @@ void LammpsSim::parse_tokens() {
     }
     else if (tokens[i] == "--failscore") {
       if (i + 1 < tokens.size()) {
-        failscore = std::stod(tokens[++i]);
+        failscore = tadah::core::to_double(tokens[++i]);
         i++;
       } else {
         throw std::runtime_error("Invalid number of arguments for --failscore");
@@ -423,9 +419,9 @@ void LammpsSim::parse_tokens() {
       hv.name = tokens[j++];
       if (hv.name.empty() || is_flag(hv.name))
         throw std::runtime_error("--hotvar: <name> must be a non-empty identifier");
-      try { hv.min = std::stod(tokens[j++]); }
+      try { hv.min = tadah::core::to_double(tokens[j++]); }
       catch (...) { throw std::runtime_error("--hotvar " + hv.name + ": <min> not a number"); }
-      try { hv.max = std::stod(tokens[j++]); }
+      try { hv.max = tadah::core::to_double(tokens[j++]); }
       catch (...) { throw std::runtime_error("--hotvar " + hv.name + ": <max> not a number"); }
       if (!(hv.max > hv.min))
         throw std::runtime_error("--hotvar " + hv.name + ": <max> must exceed <min>");

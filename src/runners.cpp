@@ -5,8 +5,10 @@
 #include <force.h>
 #include <pair.h>
 #include <timer.h>
+#include <variable.h>
 #include <pair_tadah.h>
 
+#include <tadah/core/number_format.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
 
 using LMPPtr = LammpsRunner::LMPPtr;
@@ -195,14 +197,32 @@ LammpsRunner::get_variable(const LammpsRunner::LMPPtr& lmp_ptr,
     throw std::runtime_error("get_variable(): LAMMPS instance is invalid.");
   }
 
-  // LAMMPS' Variable::retrieve() returns nullptr (not "") when the
-  // requested variable is undefined, has not been computed yet, or its
-  // expression evaluates to a non-numeric tag. Constructing a
-  // std::string from nullptr is undefined behaviour (libstdc++ throws
-  // std::logic_error on it). Convert nullptr to empty string so the
-  // caller can decide how to handle the missing value (typically
-  // std::stod() on "" throws std::invalid_argument, which the LAMMPS
-  // sims_loss path treats as a failed eval and clamps to FAIL_SCORE).
-  const char* raw = lmp_ptr->input->variable->retrieve(varname.c_str());
+  LAMMPS_NS::Variable* var = lmp_ptr->input->variable;
+
+  // Undefined variable -> "" (Variable::retrieve() would return nullptr;
+  // constructing a std::string from nullptr is undefined behaviour). The
+  // caller decides how to handle the missing value (typically std::stod()
+  // on "" throws std::invalid_argument, which the LAMMPS sims_loss path
+  // treats as a failed eval and clamps to FAIL_SCORE).
+  const int ivar = var->find(varname.c_str());
+  if (ivar < 0) return std::string();
+
+  // Numeric (equal-style: EQUAL, TIMER, INTERNAL, numeric PYTHON): read the
+  // DOUBLE and render it losslessly. retrieve() would format it with
+  // "%.15g", losing up to ~2 digits of every observable, hot value and
+  // gradient readback. compute_equal() runs the same evaluation with the
+  // same circular-dependency guard (and the same underflow-to-0 rounding
+  // for EQUAL); it only skips retrieve()'s string cache. equalstyle() raises
+  // a LAMMPS error for a python-style variable whose function returns a
+  // STRING (LAMMPS built with PYTHON): that one is text, read below.
+  bool numeric = false;
+  try { numeric = var->equalstyle(ivar) != 0; }
+  catch (const std::exception&) { numeric = false; }
+  if (numeric)
+    return tadah::core::format_roundtrip(var->compute_equal(ivar));
+
+  // Every other style (string, index, format, getenv, loop, vector, ...) is
+  // text by definition: returned verbatim. nullptr (e.g. atom-style) -> "".
+  const char* raw = var->retrieve(varname.c_str());
   return raw ? std::string(raw) : std::string();
 }

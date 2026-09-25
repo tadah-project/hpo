@@ -5,6 +5,84 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Numerics shift at the rounding level: a start point the plain map
+  rounded is now evaluated exactly (3e-11 relative for a small weight in a
+  wide box), and grids, LSCALE/ESHIFT and LAMMPS read-backs are unrounded,
+  so first losses and possibly trajectories differ from 1.5.0 at that
+  level; `OPTIM_SCALE NONE` runs are no longer byte-identical to earlier
+  releases.
+- Examples: `common/lammps/Ecoh.in` and `Ecoh_param.in` pass values to and
+  from LAMMPS exactly (see Fixed), which exposes the ~1e-13 relative
+  re-evaluation noise of the warm-started lattice relaxation. Examples 05,
+  13 and 16 have new reference fingerprints; best losses, loss components
+  and pinned hyperparameters are unchanged. In 05 that noise decides
+  whether DLIB:BFGS's line search accepts a re-evaluation on the clamped
+  bound RCUT2B = 6.0: 30 evaluations on the reference machine, 16 or 17
+  after a 1-ulp perturbation (`evals_tol` 14 accepts 16..44). 13 sets
+  `AFTER_STAGNATION 3` so both restarts still fire (23 -> 20
+  evaluations); its restarts draw from `std::random_device`, so only what
+  does not depend on them is pinned. In 16 the loss is flat along
+  FIXWEIGHT(14), and which tied evaluation is best is no longer pinned.
+  `examples/tools/generate_fingerprint.py` keeps hand-written fingerprint
+  fields on regeneration.
+
+### Fixed
+- **Potential files are exact and never carry `NUMERIC`.** Every HPO
+  potential writer (`best_pot.tadah` and its `.r<rank>` mirrors, `DUMP`
+  `pot_<N>.tadah`, `BDUMP` `best_pot_<N>.tadah`) goes through
+  `Context::write_potential`: every non-integer number with NUMERIC
+  significant digits, default 18, so a best potential re-parses to exactly
+  the doubles the evaluation used. The old writer default-inserted and
+  wrote `NUMERIC 12` into every 1.5.0 potential; such a potential used as
+  a configuration makes that line an explicit setting, so `tadah hpo`
+  writes 12-digit potentials and prints a WARNING (`hpo_run.log` and
+  stderr) naming the line. *Migration:* delete `NUMERIC 12` from
+  configurations made from 1.5.0 potentials. The `# HPO_BEST_*` and `# HOT`
+  header lines are unchanged. Tests: `test_hpo_pot_digits.cpp`,
+  `[fixweight_e2e]`.
+- **Values read back from LAMMPS are exact.** `LammpsRunner::get_variable`
+  evaluates equal-style variables with `compute_equal` and renders the
+  double losslessly; LAMMPS' `retrieve()` used `%.15g`, so every PC_LAMMPS
+  outvar, hot value, failvar and gradient observable lost up to ~2
+  significant digits. Other styles are returned verbatim. Inside a script
+  LAMMPS still expands `${name}` and `v_name` of equal-style variables with
+  15 digits; `hpo.rst` ("Precision of values passed to and read from
+  LAMMPS") gives the lossless idioms, which the example scripts now use.
+  Test: `test_lammps_variable_readback.cpp`.
+- **Optimiser start points are evaluated at exactly their loaded values.**
+  The real → internal → real map of the OPTIM dimensions is not the
+  identity (in a `[-300, 300]` box a small weight came back 3e-11 relative
+  off and `1.2e-14` as `0`), so even a `MAXEVAL 1` WARM run did not
+  evaluate the input potential. Every optimiser run now anchors its start
+  points (`anchor_seed_points`, `SearchSpace::with_seed_anchors`): CONFIG,
+  WARM and INIT points, MULTISTART starts, RESTART refreshes, PRESTAGE
+  top-K and BASINS pool seeds map back to their loaded doubles in every
+  adapter, and a coordinate the optimiser has not moved keeps its seed
+  value. NLopt BOBYQA/COBYLA/PRAXIS round the start before evaluating it,
+  so any u within 4 ulp of the internal box of a seed maps to the seed
+  (capped at 2^-27, below the finite-difference steps with the default
+  `fd_step`, but never below 2 ulp of the seed). One exception remains:
+  PRAXIS under `OPTIM_SCALE NONE` on a LIN box reaching 2^24 (1.7e7) can
+  start a few ulp of the box off a seed of smaller magnitude than the box
+  (`hpo.rst` gives the measured range). Tests: `test_search_space.cpp`,
+  `test_seed_anchor.cpp`, `[seed_anchor]` in `test_hpo_fixweight_e2e.cpp`.
+- **Knot-channel RCUT is re-derived exactly every evaluation.** A value
+  within 1e-12 relative of the largest knot was kept, so the cutoff
+  depended on what the thread evaluated before. Test:
+  `test_rcut_autoderive.cpp`.
+- Configuration and seed readers accept subnormal values (`1e-310`, which
+  the lossless writers produce): the WARM reader skipped such a token and
+  gave every later OPTIM'd dimension of the key its neighbour's value.
+  Test: `test_init_strategies.cpp`.
+- FAILSCORE clamps in outvar slots are exact (`failscore_token()`):
+  `std::to_string` wrote 6 decimals, so `FAILSCORE 1.0000004` read back
+  below the failscore and a failed `PC_FAILPROBE` passed as a real S(θ).
+  Test: `test_failscore_token.cpp`.
+- Validation ESHIFT is forwarded exactly (it had 6 significant digits), and
+  `hpo_optim_resolved.hpo` writes its bounds exactly (10 digits), so the
+  pasted block pins the box the run searched.
+
 ## [1.5.0] — 2026-09-10
 
 ### Breaking

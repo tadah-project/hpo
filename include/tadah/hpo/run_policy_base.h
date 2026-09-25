@@ -54,8 +54,28 @@ namespace tadah::hpo {
  * BasinsPolicy / MultiStartPolicy / hpo_targets all derive their
  * behaviour from the caps registry rather than ad-hoc lib/algo strings.
  * -------------------------------------------------------------------- */
+namespace detail {
+template<class Vec, class Runner>
+void run_inner_dispatch(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host);
+}  // namespace detail
+
 template<class Vec, class Runner>
 inline void run_inner(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host)
+{
+  /* Every start point this run takes from spec.optim_init is evaluated at
+   * exactly its REAL doubles (anchor_seed_points, search_space.h): the
+   * run iterates on an anchored copy of the space, alive for this run
+   * only -- nested policies call run_inner with their own seeds. */
+  if (auto anchored = anchor_seed_points(spec)) {
+    detail::run_inner_dispatch<Vec,Runner>(*anchored, host);
+    return;
+  }
+  detail::run_inner_dispatch<Vec,Runner>(spec, host);
+}
+
+template<class Vec, class Runner>
+inline void detail::run_inner_dispatch(const OptimizerSpec& spec,
+                                       HPO_Host<Vec,Runner>& host)
 {
   /* Early-reject deferred CERES NLLS-family algos before the caps
    * lookup so users see the tailored "use CERES:LBFGS" message rather

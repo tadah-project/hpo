@@ -4,6 +4,7 @@
 #include <tadah/hpo/log_index.h>
 #include <tadah/core/intercept_layout.h>
 #include <tadah/core/logger.h>
+#include <tadah/core/number_format.h>
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/sims_grad_lammps.h>
@@ -990,13 +991,17 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
             Z_sorted.reserve(report_.eshift.size());
             for (const auto &p : report_.eshift) Z_sorted.push_back(p.first);
             std::sort(Z_sorted.begin(), Z_sorted.end());
+            /* Added as doubles: Context stores them losslessly (the old
+             * core::to_string kept 6 significant digits, so validation
+             * references were shifted by a slightly different ESHIFT
+             * than training). */
             for (int Z : Z_sorted)
-                vt.add("ESHIFT", core::to_string(report_.eshift.at(Z)));
+                vt.add("ESHIFT", report_.eshift.at(Z));
         } else if (!has_train_data_ && master_ctx_.contains("ESHIFT")
                    && master_ctx_.size("ESHIFT") > 0) {
             std::vector<double> es(master_ctx_.size("ESHIFT"));
             master_ctx_.get<>("ESHIFT", es);
-            for (double e : es) vt.add("ESHIFT", core::to_string(e));
+            for (double e : es) vt.add("ESHIFT", e);
         }
         detail::forward_val_filters(vt, val_ctx);
         const std::size_t n_val_before = val_stdb_.size();
@@ -1026,7 +1031,7 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
         if (master_ctx_.contains("ESHIFT") && master_ctx_.size("ESHIFT") > 0) {
             std::vector<double> es(master_ctx_.size("ESHIFT"));
             master_ctx_.get<>("ESHIFT", es);
-            for (double e : es) vt.add("ESHIFT", core::to_string(e));
+            for (double e : es) vt.add("ESHIFT", e);
         }
         detail::forward_val_filters(vt, val_ctx);
         const std::size_t n_val_before = val_stdb_.size();
@@ -1360,7 +1365,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       if (fg_on) fail_state.record_infra();
       for (const auto& n : lsim.n_outvar) {
         (void)n;
-        r.v_outvar[i].emplace_back(std::to_string(lsim.failscore));
+        r.v_outvar[i].emplace_back(failscore_token(lsim.failscore));
       }
       return false;
     }
@@ -1375,7 +1380,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
      * arrive decoded from a socket with no arity check on either side, so a
      * short vector is an out-of-bounds operator[]: plain undefined
      * behaviour, and specifically NOT caught by the try/catch around the
-     * hot-var block, which only guards std::stod. The arities match by
+     * hot-var block, which only guards the number parse. The arities match by
      * construction today (both sides build from the same spec table), so
      * this can only fire on frame corruption or a version-skewed worker
      * binary -- exactly the cases where UB is least acceptable and, because
@@ -1414,7 +1419,11 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
         const std::string& s = tres.failvar_values[j];
         if (s.empty()) continue;
         double v = 0.0;
-        try { v = std::stod(s); } catch (...) { continue; }
+        /* core::to_double (std::stod, but an underflowing literal is a
+         * value), like every reader of numbers here. LAMMPS' compute_equal
+         * flushes |v| < DBL_MIN to 0, so no subnormal reaches this parse
+         * today; the parse is not where one would be lost. */
+        try { v = tadah::core::to_double(s); } catch (...) { continue; }
         if (std::isfinite(v) && v > 0.0) {
           fail_state.record(FailBand::B, lsim.failvars[j].scale * v);
           fail = true;
@@ -1441,7 +1450,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
             const std::string& s = tres.failvar_values[j];
             if (s.empty()) continue;
             double v = 0.0;
-            try { v = std::stod(s); } catch (...) { continue; }
+            try { v = tadah::core::to_double(s); } catch (...) { continue; }
             if (std::isfinite(v) && v > 0.0) {
               fail_state.record(FailBand::B, lsim.failvars[j].scale * v);
               graded = true;
@@ -1482,7 +1491,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     }
 
     for (std::size_t j = 0; j < lsim.n_outvar.size(); ++j) {
-      if (fail) r.v_outvar[i].emplace_back(std::to_string(lsim.failscore));
+      if (fail) r.v_outvar[i].emplace_back(failscore_token(lsim.failscore));
       else      r.v_outvar[i].emplace_back(tres.outvar_values[j]);
     }
 
@@ -1499,7 +1508,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
           const std::string& s = tres.hotvar_values[j];
           if (s.empty()) continue;
           double v = 0.0;
-          try { v = std::stod(s); }
+          try { v = tadah::core::to_double(s); }
           catch (...) { continue; }
           if (!std::isfinite(v) || v < hv.min || v > hv.max) {
             /* Out of range -- clamp this script's outputs and raise the
@@ -1518,7 +1527,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
               }
               fail_state.record(FailBand::A, dist);
             }
-            for (auto& vs : r.v_outvar[i]) vs = std::to_string(lsim.failscore);
+            for (auto& vs : r.v_outvar[i]) vs = failscore_token(lsim.failscore);
             eval_aborted.store(true, std::memory_order_relaxed);
             /* Log at most once per eval (run-local latch), rate-limited
              * across evals by the global reject_count. */
@@ -1679,7 +1688,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     r.v_outvar[i].clear();
     for (const auto& n : LS[i].n_outvar) {
       (void)n;
-      r.v_outvar[i].emplace_back(std::to_string(LS[i].failscore));
+      r.v_outvar[i].emplace_back(failscore_token(LS[i].failscore));
     }
   };
 
@@ -1711,13 +1720,13 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       run_one(i, wid, {});
       double S = std::numeric_limits<double>::quiet_NaN();
       if (!r.v_outvar[i].empty()) {
-        try { S = std::stod(r.v_outvar[i].front()); } catch (...) {}
+        try { S = tadah::core::to_double(r.v_outvar[i].front()); } catch (...) {}
       }
       /* S >= failscore means the probe task itself failed (its outvars
        * were clamped to failscore strings) -- that is "probe garbage",
        * not a huge-but-real S: fall through to the band-D branch below
        * so a broken probe consistently reads as "potential sick". */
-      if (std::isfinite(S) && S >= 0.0 && S < LS[i].failscore) {
+      if (failprobe_value_is_real(S, LS[i].failscore)) {
         fail_state.set_S(S);
         if (fg_on && S > trg_.failprobe_gate) {
           /* GATE: potential too sick to be worth the fan-out. Classify the
@@ -1750,7 +1759,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     if (eval_aborted.load(std::memory_order_relaxed)) {
       for (const auto& n : LS[i].n_outvar) {
         (void)n;
-        r.v_outvar[i].emplace_back(std::to_string(LS[i].failscore));
+        r.v_outvar[i].emplace_back(failscore_token(LS[i].failscore));
       }
       return;
     }
@@ -1836,7 +1845,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     if (eval_aborted.load(std::memory_order_relaxed)) {
       for (const auto& n : LS[i].n_outvar) {
         (void)n;
-        r.v_outvar[i].emplace_back(std::to_string(LS[i].failscore));
+        r.v_outvar[i].emplace_back(failscore_token(LS[i].failscore));
       }
       return;
     }
@@ -2070,8 +2079,9 @@ void HPO_Host<P,R>::persist_durable_best(const Result& r) const
             payload, r, trg_, master_ctx_, val_ctx_, train_ref, val_stdb_,
             param_labels_, report_, cw_, prec_);
         PotHeaderWriter::write_candidate_hot(payload, r);
-        payload << std::setprecision(
-            r.pot_ctx.template get<std::size_t>("NUMERIC")) << r.pot_ctx;
+        /* NUMERIC significant digits (default 18: exact); never writes
+         * NUMERIC itself. The header lines above keep their own formats. */
+        r.pot_ctx.write_potential(payload, trg_.pot_digits);
         if (!payload.good())
             throw durable_best::Error("failed to render best-potential payload");
 
@@ -3074,8 +3084,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
 
             PotHeaderWriter::write_candidate_hot(bpa, e);
 
-            bpa << std::setprecision(
-                e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
+            e.pot_ctx.write_potential(bpa, trg.pot_digits);
           }
         }
 
@@ -3089,8 +3098,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
 
             PotHeaderWriter::write_candidate_hot(pa, e);
 
-            pa << std::setprecision(
-                e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
+            e.pot_ctx.write_potential(pa, trg.pot_digits);
         }
 
                 io_buf_.erase(next_flush_++);
@@ -3099,16 +3107,17 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                 /* Drop the offending iter's logs and advance so the queue
                  * keeps draining. One iter's logs are lost; the journal
                  * records the failure for follow-up. The Result fields
-                 * (is_best, has pot_ctx NUMERIC?) are included so the
-                 * journal entry alone is enough to differentiate the
-                 * pot_ctx.get / archive-header / per-iter print
-                 * candidate throw sites without needing a second
-                 * reproduction. */
-                bool is_best = false, has_numeric = false;
+                 * (is_best, pot_ctx size) are included so the journal
+                 * entry alone is enough to differentiate the potential /
+                 * archive-header / per-iter print candidate throw sites
+                 * without needing a second reproduction. (The pot writers
+                 * no longer read NUMERIC -- trg.pot_digits is resolved
+                 * once at startup -- so the old "has NUMERIC" field, whose
+                 * contains() probe default-inserted the key, is gone.) */
+                bool is_best = false;
                 std::size_t pot_ctx_size = 0;
                 if (auto it = io_buf_.find(next_flush_); it != io_buf_.end()) {
                     is_best = it->second.is_best;
-                    has_numeric = it->second.pot_ctx.contains("NUMERIC");
                     pot_ctx_size = it->second.pot_ctx.size();
                 }
                 HPOLog::instance().warning(
@@ -3116,7 +3125,6 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                     std::to_string(next_flush_.load()) +
                     " (is_best=" + (is_best ? "true" : "false") +
                     ", pot_ctx.size=" + std::to_string(pot_ctx_size) +
-                    ", has NUMERIC=" + (has_numeric ? "true" : "false") +
                     ", exception type=" + typeid(ex).name() +
                     "): " + ex.what());
                 io_buf_.erase(next_flush_++);
@@ -3220,8 +3228,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                                         + trg.potArchiveSuffix);
                                     PotHeaderWriter::write_best_archive_header(bpa, e, trg, cw, prec);
                                     PotHeaderWriter::write_candidate_hot(bpa, e);
-                                    bpa << std::setprecision(
-                                        e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
+                                    e.pot_ctx.write_potential(bpa, trg.pot_digits);
                                 }
                             }
                             if (e.iter % trg.dumpPotEvery == 0) {
@@ -3230,8 +3237,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                                     + trg.potArchiveSuffix);
                                 PotHeaderWriter::write_archive_header(pa, e, cw, prec);
                                 PotHeaderWriter::write_candidate_hot(pa, e);
-                                pa << std::setprecision(
-                                    e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
+                                e.pot_ctx.write_potential(pa, trg.pot_digits);
                             }
                             io_buf_.erase(next_flush_++);
                             ++_written;
@@ -3774,8 +3780,7 @@ void HPO_Host<P,R>::flush_remaining() const
 
                     PotHeaderWriter::write_candidate_hot(bpa, e);
 
-                    bpa << std::setprecision(
-                        e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
+                    e.pot_ctx.write_potential(bpa, trg_.pot_digits);
                 }
             }
 
@@ -3788,8 +3793,7 @@ void HPO_Host<P,R>::flush_remaining() const
 
                 PotHeaderWriter::write_candidate_hot(pa, e);
 
-                pa << std::setprecision(
-                    e.pot_ctx.template get<size_t>("NUMERIC")) << e.pot_ctx;
+                e.pot_ctx.write_potential(pa, trg_.pot_digits);
             }
 
             io_buf_.erase(next_flush_++);

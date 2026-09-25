@@ -18,6 +18,7 @@
  *   - Knobs / Knobs::parse       PARAM parsing, validation, whitelists
  *   - CoranaPlateau              Corana et al. 1987 sec. 4 eps-NEPS stop
  */
+#include <tadah/core/number_format.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/pc_fail_grading.h>   /* kFailBandFloor, loss_is_feasible */
@@ -766,7 +767,7 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     auto as_number = [&](const std::string& t, const char* what) {
       try {
         std::size_t pos = 0;
-        const double v = std::stod(t, &pos);
+        const double v = tadah::core::to_double(t, &pos);
         if (pos == t.size() && std::isfinite(v)) return v;
       } catch (const std::exception&) { /* fall through */ }
       throw std::runtime_error(ctx + ": PARAM INIT_MODE JITTER " +

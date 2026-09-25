@@ -16,6 +16,7 @@
 #include <tadah/hpo/warmstart_cache.h>
 #include <tadah/core/context.h>
 #include <tadah/core/utils.h>
+#include <tadah/core/number_format.h>
 
 #include <algorithm>
 #include <cmath>
@@ -60,7 +61,7 @@ config_point_from_targets(const HPOTargets& trg)
         const auto& o = kv.second;
         for (std::size_t i = 0; i < o.opt.size(); ++i) {
             if (!o.opt[i]) continue;
-            point.push_back(std::stod(o.config[i]));
+            point.push_back(core::to_double(o.config[i]));
         }
     }
     return point;
@@ -301,7 +302,7 @@ public:
                         if (!core::is_number(tok)) continue;
                         if (++found == ord) {
                             try {
-                                point.push_back(std::stod(tok));
+                                point.push_back(core::to_double(tok));
                                 resolved = true;
                             } catch (...) { /* fall through to fallback */ }
                             break;
@@ -321,7 +322,7 @@ public:
                      * is still a valid point. The chain semantics let
                      * the user follow WARM with CONFIG to override
                      * the per-dim fallback if desired. */
-                    point.push_back(std::stod(opti.config[i]));
+                    point.push_back(core::to_double(opti.config[i]));
                 }
             }
         }

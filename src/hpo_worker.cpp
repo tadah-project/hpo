@@ -1,5 +1,6 @@
 #include <tadah/hpo/hpo_worker.h>
 #include <tadah/hpo/runners.h>
+#include <tadah/core/number_format.h>
 #ifdef TADAH_BUILD_MPI
 
 namespace tadah {
@@ -117,7 +118,8 @@ void HPO_Worker::runLammps() {
         else {
           for (size_t i = 0; i < varloss.size(); ++i) {
             const auto& v = varloss[i];
-            v_varloss[i] = std::stod(runner.get_variable(lmp, v));
+            /* core::to_double: std::stod, but a subnormal is a value */
+            v_varloss[i] = tadah::core::to_double(runner.get_variable(lmp, v));
           }
           for (size_t i = 0; i < outvar.size(); ++i) {
             const auto& o = outvar[i];

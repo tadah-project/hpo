@@ -292,9 +292,9 @@ make_gradient_provider(const OptimizerSpec&     sp,
   //   ceres   -- Ceres DynamicNumericDiffCostFunction with per-parameter
   //              delta max(sqrt(eps), fd_step*|u|): the pre-existing
   //              kernel, kept as the default under OPTIM_SCALE NONE so
-  //              legacy runs stay byte-identical; unsuitable in the unit
-  //              box because the delta collapses to 1.5e-8 next to u = 0
-  //              (every lower bound).
+  //              legacy runs keep their pre-1.5 finite-difference kernel;
+  //              unsuitable in the unit box because the delta collapses to
+  //              1.5e-8 next to u = 0 (every lower bound).
   // PARAM fd_kernel inhouse|ceres overrides the default either way.
   bool use_ceres_kernel = !(sp.space && sp.space->normalised());
   if (auto it = sp.param_raw.find("fd_kernel"); it != sp.param_raw.end()) {
