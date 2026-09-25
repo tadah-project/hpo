@@ -118,3 +118,71 @@ TEST_CASE("GradientProvider legacy ln mask (no space) still gets the chain rule"
     CHECK(g(0) == Approx(2.0));
     CHECK(g(1) == Approx(3.0 * 2.0));
 }
+
+namespace {
+
+/* f = 2*theta0 + 3*theta1, recording every point it is asked for. */
+struct RecordingHost {
+    mutable std::vector<std::vector<double>> points;
+    double operator()(const DlibVec& theta) const {
+        points.push_back({theta(0), theta(1)});
+        return 2.0 * theta(0) + 3.0 * theta(1);
+    }
+    /* The values of dimension 1 at the points that differ from x there. */
+    std::vector<double> stencil_of_dim1(const DlibVec& x) const {
+        std::vector<double> v;
+        for (const auto& p : points)
+            if (p[1] != x(1)) v.push_back(p[1]);
+        return v;
+    }
+};
+
+}  // namespace
+
+TEST_CASE("GradientProvider NUMERICAL: PARAM fd_kernel selects the kernel "
+          "under either OPTIM_SCALE",
+          "[HPO][grad_provider][search_space][fd_kernel]")
+{
+    /* The in-house kernel steps h = fd_step * max(|u|, 1), Ceres' numeric
+     * differentiation fd_step * |u|: at u = 0.5 with fd_step 0.2 the
+     * stencil of dimension 1 is 0.7 and 0.3 in-house, 0.6 and 0.4 with
+     * Ceres. `PARAM fd_kernel inhouse` under OPTIM_SCALE NONE was accepted
+     * and ignored: the Ceres kernel, NONE's default, ran. */
+    auto sp = spec_with_space(/*normalise=*/false, /*log_second=*/false);
+    sp.param["fd_step"] = 0.2;
+    DlibVec x; x.set_size(2); x(0) = 1.0; x(1) = 0.5;
+    DlibVec g;
+
+    sp.param_raw["fd_kernel"] = "inhouse";
+    {
+        RecordingHost host;
+        std::atomic<unsigned long> counter{0};
+        auto gp = make_gradient_provider<DlibVec, void>(sp, host, &counter, 0);
+        REQUIRE(gp.gradient(x, g));
+        const auto s = host.stencil_of_dim1(x);
+        REQUIRE(s.size() == 2u);
+        CHECK(s[0] == Approx(0.7));
+        CHECK(s[1] == Approx(0.3));
+        CHECK(g(1) == Approx(3.0));
+    }
+#ifdef TADAH_USE_CERES
+    /* And the other way: ceres in the unit box, where in-house is the
+     * default. */
+    auto unit = spec_with_space(/*normalise=*/true, /*log_second=*/false);
+    unit.param["fd_step"] = 0.2;
+    unit.param_raw["fd_kernel"] = "ceres";
+    {
+        RecordingHost host;
+        std::atomic<unsigned long> counter{0};
+        auto gp = make_gradient_provider<DlibVec, void>(unit, host, &counter,
+                                                        0);
+        REQUIRE(gp.gradient(x, g));
+        /* u = 0.5 of dimension 1 is 0.1 + 0.5 * 9.9 = 5.05; Ceres' step
+         * 0.1 of the unit width is 0.99. */
+        const auto s = host.stencil_of_dim1(unit.out(x));
+        REQUIRE(s.size() == 2u);
+        CHECK(s[0] == Approx(5.05 + 0.99));
+        CHECK(s[1] == Approx(5.05 - 0.99));
+    }
+#endif
+}
