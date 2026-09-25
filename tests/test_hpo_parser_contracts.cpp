@@ -941,21 +941,27 @@ void check_uint_key(const KeyHome& h, const std::string& bound,
                                                   : single_extra(h, "7")));
 }
 
+/* A real key: `kind` is how the messages state what it holds ("a finite
+ * number", "a positive finite number"), and `out_of_range` lists numbers
+ * in the grammar the key refuses with that message. */
 void check_finite_key(const KeyHome& h,
                       const std::vector<std::string>& accepted,
-                      bool line_framed_attr = false)
+                      bool line_framed_attr = false,
+                      const std::string& kind = "a finite number",
+                      const std::vector<std::string>& out_of_range = {})
 {
     INFO("key " << h.key << " on line " << h.line());
     for (const auto& v : accepted) {
         INFO("accepted value '" << v << "'");
         CHECK(parse_error(h.config(v)) == "");
     }
-    for (const auto& tok : kNotFinite) {
+    std::vector<std::string> rejected = kNotFinite;
+    rejected.insert(rejected.end(), out_of_range.begin(), out_of_range.end());
+    for (const auto& tok : rejected) {
         INFO("rejected value '" << tok << "'");
         CHECK_THAT(parse_error(h.config(tok)),
-                   Catch::StartsWith(h.at() + h.key +
-                                     " must be a finite number, got '" + tok +
-                                     "'"));
+                   Catch::StartsWith(h.at() + h.key + " must be " + kind +
+                                     ", got '" + tok + "'"));
     }
     INFO("missing value");
     CHECK_THAT(parse_error(h.config("")),
@@ -975,13 +981,28 @@ tadah::hpo::HPOTargets parse_config(const std::string& body)
 
 }  // namespace
 
-TEST_CASE("Strict numbers: FAILSCORE is a finite number",
-          "[HPO][hpo_targets][strict_numbers]")
+TEST_CASE("Strict numbers: FAILSCORE is a positive finite number",
+          "[HPO][hpo_targets][strict_numbers][failscore]")
 {
+    /* A FAILSCORE of 0 or below has no failure band: every finite loss,
+     * FAILSCORE itself included, counted as usable. A run whose every
+     * evaluation failed ended COMPLETED with "[ok] Every evaluation
+     * produced a usable loss" and a best_pot.tadah that held a failed
+     * evaluation, and without a skip cap the ceiling clipped every
+     * positive loss to FAILSCORE. Such a value is an error at its line. */
     const auto h = root_home("FAILSCORE");
-    check_finite_key(h, {"1e16", "-5", "0"});
+    check_finite_key(h, {"1e16", "0.5", "1e-300"}, false,
+                     "a positive finite number",
+                     {"0", "-0", "+0", "0.0", "-5", "-1e-300", "-1e16"});
     CHECK(parse_config(h.config("1e16")).FAIL_SCORE == 1e16);
-    CHECK(parse_config(h.config("-5")).FAIL_SCORE == -5.0);
+    CHECK(parse_config(h.config("0.5")).FAIL_SCORE == 0.5);
+    CHECK_THAT(parse_error(h.config("0")),
+               Catch::StartsWith(h.at() + "FAILSCORE must be a positive "
+                                 "finite number, got '0'"));
+
+    /* The default is still the largest double. */
+    CHECK(parse_config(kOptimizer).FAIL_SCORE ==
+          std::numeric_limits<double>::max());
 }
 
 TEST_CASE("Strict numbers: QFLUSH, DIGITS, OUTPUT and BOUTPUT are integers "
@@ -1537,8 +1558,8 @@ TEST_CASE("Strict numbers: a number too small for a double says so",
                              "normal double, 2.2250738585072014e-308)";
     const auto fs = root_home("FAILSCORE");
     CHECK_THAT(parse_error(fs.config("1e-320")),
-               Catch::StartsWith(fs.at() + "FAILSCORE must be a finite number, "
-                                 "got '1e-320' " + note));
+               Catch::StartsWith(fs.at() + "FAILSCORE must be a positive "
+                                 "finite number, got '1e-320' " + note));
     const auto ts = root_home("PC_SCRIPT_TIMEOUT");
     CHECK_THAT(parse_error(ts.config("1e-320")),
                Catch::StartsWith(ts.at() + "PC_SCRIPT_TIMEOUT must be 'off', "
@@ -1974,6 +1995,59 @@ TEST_CASE("Strict numbers: a value outside its range is named in the error",
     CHECK(lammps_sim_error(head + "--failvar F 0.5") == "");
 }
 
+TEST_CASE("Strict numbers: PC_FAILPROBE --failscore is a positive finite "
+          "number; PC_LAMMPS --failscore any finite number",
+          "[HPO][hpo_targets][lammps_sim][strict_numbers][failscore]"
+          "[failprobe]")
+{
+    /* On the PC_FAILPROBE line --failscore is a failure score: the value
+     * the probe's S reads when the probe itself fails, and an S at or above
+     * it is taken for a failed probe (HPO_Host::run_lammps). S is a
+     * nonnegative measure, so with 0 or below every probe read as failed --
+     * band D for every evaluation under FAILSCORE_GRADING ON. It takes the
+     * rule of FAILSCORE, at its line. */
+    TempFile probe("clear\nrun 0\nvariable S equal 0.0\n", ".in");
+    const std::string head =
+        "PC_FAILPROBE --script " + probe.path.string() + " --outvar S ";
+    for (const std::string tok : {"0", "-0", "-1", "-1e9", "abc", "5x",
+                                  "inf", "0x1p4"}) {
+        INFO("PC_FAILPROBE --failscore " << tok);
+        const std::string line = head + "--failscore " + tok;
+        CHECK_THAT(parse_error(kOptimizer + line + "\n"),
+                   Catch::StartsWith("Error on line 9: PC_FAILPROBE "
+                                     "--failscore must be a positive finite "
+                                     "number, got '" + tok + "'") &&
+                   Catch::EndsWith("Line: " + line));
+    }
+    /* A positive value; without the option, the root FAILSCORE in force. */
+    const auto own = parse_root("FAILSCORE 1e9\n" + head + "--failscore 1e6\n");
+    REQUIRE(own.failprobe_idx >= 0);
+    CHECK(own.LS.at(static_cast<std::size_t>(own.failprobe_idx)).failscore ==
+          1e6);
+    const auto dflt = parse_root("FAILSCORE 1e9\n" + head + "\n");
+    REQUIRE(dflt.failprobe_idx >= 0);
+    CHECK(dflt.LS.at(static_cast<std::size_t>(dflt.failprobe_idx)).failscore ==
+          1e9);
+
+    /* On a PC_LAMMPS line --failscore is no failure score: it is the value
+     * substituted for the line's variables when its simulation fails, which
+     * then goes through the loss against the target like a measured value
+     * (a variable of either sign). 0 and negative values stay accepted, next
+     * to a negative-weight --varloss term. */
+    TempFile script(kSimScript, ".in");
+    for (const std::string tok : {"0", "-1e6"}) {
+        INFO("PC_LAMMPS --failscore " << tok);
+        const auto trg = parse_root("FAILSCORE 1e9\nPC_LAMMPS --script " +
+                                    script.path.string() +
+                                    " --varloss E -8.1 -2 --failscore " + tok +
+                                    "\n");
+        REQUIRE(trg.LS.size() == 1u);
+        CHECK(trg.LS.front().failscore == std::stod(tok));
+        CHECK(trg.LS.front().w_varloss.at(0) == -2.0);
+        CHECK(trg.FAIL_SCORE == 1e9);
+    }
+}
+
 TEST_CASE("Strict numbers: a hexadecimal float is an error for every key",
           "[HPO][hpo_targets][strict_numbers][hex]")
 {
@@ -1985,7 +2059,7 @@ TEST_CASE("Strict numbers: a hexadecimal float is an error for every key",
     struct Case { std::string line, message; };
     for (const auto& c : std::vector<Case>{
              {"FAILSCORE 0x1p40",
-              "FAILSCORE must be a finite number, got '0x1p40'"},
+              "FAILSCORE must be a positive finite number, got '0x1p40'"},
              {"LOSS HUBER 0x1p-3",
               "LOSS HUBER: parameter '0x1p-3' is not a number"},
              {"PC_WORKER_TIMEOUT 0x10",

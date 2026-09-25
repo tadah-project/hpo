@@ -49,6 +49,21 @@ TEST_CASE("fail_sigma: bounded, monotone, safe", "[fail_grading]") {
 }
 
 
+TEST_CASE("loss_is_feasible: with any positive FAILSCORE a negative loss is "
+          "usable and FAILSCORE is not", "[fail_grading][failscore]") {
+  /* FAILSCORE must be positive (a startup error otherwise). A landscape
+   * with negative losses -- negative-weight --varloss terms -- works with
+   * any positive FAILSCORE: the failures sit above every loss. */
+  for (double fs : {1.0e-3, 1.0, FS, std::numeric_limits<double>::max()}) {
+    INFO("FAILSCORE " << fs);
+    CHECK(loss_is_feasible(-1.0e6, fs));
+    CHECK(loss_is_feasible(0.0, fs));
+    CHECK_FALSE(loss_is_feasible(fs, fs));
+    CHECK_FALSE(loss_is_feasible(kFailBandFloor * fs, fs));
+    CHECK_FALSE(loss_is_feasible(std::nan(""), fs));
+  }
+}
+
 TEST_CASE("graded FAILSCORE scale preserves representable band ordering",
           "[fail_grading]") {
   CHECK(graded_failscore_is_ordered(FS));

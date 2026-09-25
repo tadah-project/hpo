@@ -576,6 +576,60 @@ TEST_CASE("phase specs: the local search NLopt's MLSL and AUGLAG run",
         bare, tadah::hpo::RestartStop::On));
 }
 
+TEST_CASE("phase specs: the single local search a run is",
+          "[HPO][phase_specs][auglag]")
+{
+    using tadah::hpo::single_local_search;
+    const auto spec = [](const std::string& lib, const std::string& algo) {
+        OptimizerSpec s;
+        s.lib = lib;
+        s.algo = algo;
+        return s;
+    };
+    const auto nlopt = [&](const std::string& algo) {
+        return spec("NLOPT", algo);
+    };
+    /* A local backend without a local search of its own is one. */
+    for (const auto& s : {nlopt("LD_LBFGS"), nlopt("LN_SBPLX"),
+                          spec("DLIB", "BFGS")}) {
+        const auto local = single_local_search(s);
+        REQUIRE(local);
+        CHECK(local->lib == s.lib);
+        CHECK(local->algo == s.algo);
+    }
+    /* A global backend is not: MLSL starts a local search from each of
+     * many points, GD_STOGO samples the box. */
+    auto mlsl = nlopt("G_MLSL_LDS");
+    mlsl.inner = std::make_unique<OptimizerSpec>(nlopt("LD_LBFGS"));
+    CHECK_FALSE(single_local_search(mlsl));
+    CHECK_FALSE(single_local_search(nlopt("GD_MLSL_LDS")));
+    CHECK_FALSE(single_local_search(nlopt("GD_STOGO")));
+
+    /* AUGLAG (HPO sets no constraint) runs its local search once: the run
+     * is that search, as inner_run_spec derives it. */
+    auto local = single_local_search(nlopt("LD_AUGLAG"));
+    REQUIRE(local);
+    CHECK(local->algo == "LD_MMA");
+    auto auglag = nlopt("AUGLAG");
+    auglag.stop.maxeval = 60;
+    auglag.inner = std::make_unique<OptimizerSpec>(nlopt("LD_SLSQP"));
+    auglag.inner->stop.maxeval = 7;
+    local = single_local_search(auglag);
+    REQUIRE(local);
+    CHECK(local->algo == "LD_SLSQP");
+    CHECK(local->stop.maxeval == std::optional<std::uint64_t>(7));
+    /* An AUGLAG inside it runs its own once in turn. */
+    auglag.inner = std::make_unique<OptimizerSpec>(nlopt("LD_AUGLAG"));
+    local = single_local_search(auglag);
+    REQUIRE(local);
+    CHECK(local->algo == "LD_MMA");
+    CHECK(local->stop.maxeval == std::optional<std::uint64_t>(60));
+    /* Not a local search: a global INNER, or none (NLopt refuses it). */
+    auglag.inner = std::make_unique<OptimizerSpec>(nlopt("GN_ESCH"));
+    CHECK_FALSE(single_local_search(auglag));
+    CHECK_FALSE(single_local_search(nlopt("AUGLAG")));
+}
+
 TEST_CASE("backend rules: the ALGO help lists the stops that end a run",
           "[HPO][backend_rules][help]")
 {
