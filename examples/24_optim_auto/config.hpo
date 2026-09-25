@@ -1,0 +1,36 @@
+# 24 -- seed-relative search boxes: OPTIM ... AUTO.
+#
+# Example 03 (NLOPT:LN_SBPLX, STEP 0.1) with the SGRIDMB box derived from
+# the seed instead of written out. OPTIM SGRIDMB (1) AUTO sizes the box
+# around the value in ../common/config.tadah (SGRIDMB 0.2). SGRIDMB is
+# positive-only, so the default rule is RATIO 2: the geometric box
+# [0.2/2, 0.2*2] = [0.1, 0.4], 03's explicit box. hpo_optim_resolved.hpo
+# gets the resolved boxes as a paste-ready explicit OPTIM block, and
+# hpo_search_space.tsv names the rule in its origin column (AUTO RATIO).
+# The same box gives the same run: loss.tadah, params.tadah and the
+# reference fingerprint are 03's.
+#
+# RCUT* keys cannot be AUTO (the neighbour list is sized from an explicit
+# upper bound), so RCUT2B keeps its 4.0 6.0 box. STEP 0.1 is 10% of each
+# box width, as in 03.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB NLOPT
+    ALGO LN_SBPLX
+    MAXEVAL 60
+    STEP 0.1
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 4.5 3.302 --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B  (1) 4.0 6.0
+OPTIM SGRIDMB (1) AUTO
+
+OUTPUT 1
+BOUTPUT 1

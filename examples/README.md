@@ -17,9 +17,14 @@ not multiply it. Each run cleans its previous output (`best_*.tadah`,
 `loss.tadah`, `outvar.tadah`, `params.tadah`, `stats.tadah`,
 `hpo_run.log`).
 
-A handful of examples (09, 10) ship their own `run.sh` because they
-need a `seed_pot.tadah` bootstrapped first; that script handles the
-bootstrap on first invocation and reuses the seed thereafter.
+`common/run.sh` passes the example's own `config.tadah` and `config.val`
+when the example directory has them (22 and 23 do), else the shared ones
+in `common/`, and prints which files it uses.
+
+Four examples ship their own `run.sh`: 09 and 10 bootstrap a
+`seed_pot.tadah` on first invocation (and reuse it thereafter), 16 runs
+with its local `config.tadah`, and 17 trains the shared model and pins
+its weights before the HPO run. Run those with `bash ./run.sh`.
 
 ## How to run them all
 
@@ -33,8 +38,13 @@ prints a one-line summary per example (best loss, eval count, status).
 
 re-runs every example and compares the output to a checked-in
 `reference_fingerprint.json` (loss, hyperparameter values, eval count,
-optimiser status). Use `--example=NN` to check a single example or
-`--check-only` to skip the re-run.
+optimiser status, and for 25 and 26 lines that `hpo_run.log` must
+contain: 25's six band-A graded failures, 26's worker processes and
+hard deadline). Use `--example=NN` to check a single example or
+`--check-only` to skip the re-run. With `TADAH_PC_ISOLATION=THREAD` set
+(for environments that block the worker socket) 26's journal checks are
+not applied and the suite prints a `NOTE` line for each, so PROCESS mode
+is only checked by a run without that override.
 
 ## The sequence
 
@@ -64,6 +74,11 @@ each subsequent one introduces one or two new features.
 | 19 | `19_anneal_pa`            | `LIB TADAH ALGO ANNEAL_PA` population annealing with ESS-controlled resampling and explicit all-failed handling. |
 | 20 | `20_anneal_corana`        | `LIB TADAH ALGO ANNEAL` with adaptive Corana coordinate steps and boundary-policy diagnostics. |
 | 21 | `21_asa`                  | `LIB ASA ALGO ASA` — vendored Ingber ASA-30.53 (adaptive simulated annealing) with original option spellings (`PARAM Temperature_Ratio_Scale` etc.). |
+| 22 | `22_pc_observable`        | `PC_OBSERVABLE cohesive_energy` in place of `PC_LAMMPS` (no LAMMPS); an unset `GRAD_STRATEGY` resolves to `ANALYTICAL` for `DLIB:BFGS` (local `config.tadah`: `OALGO 4`, `LAMBDA`). |
+| 23 | `23_per_dataset_targets`  | `PC_ERMSE (1)` / `PC_ERMSE (2)`: a target and weight per validation dataset, per-dataset `--skip-above` (local `config.val`). |
+| 24 | `24_optim_auto`           | `OPTIM SGRIDMB (1) AUTO`: a seed-relative box; resolves to 03's `[0.1, 0.4]` and reproduces 03. |
+| 25 | `25_failprobe_grading`    | `FAILSCORE_GRADING ON`, `PC_FAILPROBE` (`common/lammps/failprobe.in`); a lattice window makes graded (band A) failures. |
+| 26 | `26_pc_isolation`         | `PC_ISOLATION PROCESS` + `PC_WORKER_TIMEOUT`; same results as 01. |
 
 ## Files in `common/`
 
@@ -75,7 +90,8 @@ each subsequent one introduces one or two new features.
 | `data/eos_bcc.tadahdb`    | EOS sweep over the BCC volume. |
 | `lammps/Ecoh.in`          | Cohesive-energy LAMMPS script (4x4x4 BCC). |
 | `lammps/Ecoh_param.in`    | Same, but the supercell is `${nx} x ${ny} x ${nz}`. |
-| `run.sh`                  | Driver script: clean, invoke `tadah hpo`, summarise. |
+| `lammps/failprobe.in`     | Minimiser-free sanity probe `S` for `PC_FAILPROBE` (the documentation's example). |
+| `run.sh`                  | Driver script: clean, invoke `tadah hpo` (with the example's own `config.tadah` / `config.val` when present), summarise. |
 
 All paths in `config.tadah` are relative to the example directory; that
 is why `run.sh` `cd`s into the example before invoking `tadah`.
@@ -88,7 +104,14 @@ and the `LIB` families that today work with `PC_LAMMPS`.
 `CERES:LBFGS/WOLFE/NLCG/STEEPEST_DESCENT` and the gradient-based NLopt
 algorithms (`LD_*`, `GD_*`) are not shown here: `PC_LAMMPS` rejects
 every gradient-based backend except `DLIB:BFGS` (use it or a
-gradient-free family for LAMMPS-driven loss terms).
+gradient-free family for LAMMPS-driven loss terms). They do run with
+`PC_OBSERVABLE` and validation metrics, where example 22 shows the
+analytical gradient with `DLIB:BFGS`.
+
+`tests/test_examples_parse.cpp` (a CTest case per example) parses every
+`config.hpo` and applies the startup checks. A new example needs a line
+in `tools/parse_guard.manifest`, which also lists the files an example's
+`run.sh` creates before the run (e.g. 09's `seed_pot.tadah`).
 
 The INIT examples write chain entries as `STRATEGY <method>`, the alias
 of the canonical `METHOD <method>`; both spellings parse identically.

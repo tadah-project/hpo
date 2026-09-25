@@ -1,5 +1,5 @@
 {
-  "_comment": "Per-example overrides for fingerprint tolerance and accepted-status. Defaults in generate_fingerprint.py: best_loss abs=1e-6 rel=1e-3; component abs=1e-6 rel=5e-3; hyperparam abs=1e-3 rel=1e-3; evals_tol=0. Override only when justified.",
+  "_comment": "Per-example overrides for fingerprint tolerance and accepted-status, and the optional journal checks (lines hpo_run.log must contain; see compare_fingerprint.py). Defaults in generate_fingerprint.py: best_loss abs=1e-6 rel=1e-3; component abs=1e-6 rel=5e-3; hyperparam abs=1e-3 rel=1e-3; evals_tol=0. Override only when justified.",
 
   "01_minimal": {
     "description": "DLIB:BFGS, 1-dim, implicit CONFIG seed.",
@@ -67,5 +67,40 @@
   "15_simulated_annealing": {
     "description": "TADAH:ANNEAL classic with seed-local auto-T0 calibration (post T_HOT rename).",
     "status_accepted": ["COMPLETED"]
+  },
+  "22_pc_observable": {
+    "description": "PC_OBSERVABLE cohesive_energy; DLIB:BFGS with GRAD_STRATEGY resolved to ANALYTICAL; no LAMMPS.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "23_per_dataset_targets": {
+    "description": "PC_ERMSE (1) / (2): per-dataset targets and weights over a local config.val.",
+    "status_accepted": ["COMPLETED"]
+  },
+  "24_optim_auto": {
+    "description": "Example 03 with OPTIM SGRIDMB (1) AUTO, which resolves to 03's box [0.1, 0.4]: same results as 03.",
+    "status_accepted": [
+      "COMPLETED",
+      "MAXEVAL_REACHED -- maximum evaluations exhausted"
+    ]
+  },
+  "25_failprobe_grading": {
+    "description": "FAILSCORE_GRADING ON + PC_FAILPROBE over example 02's seeded search; a lattice window grades 6 failures (band A).",
+    "status_accepted": ["COMPLETED"],
+    "journal": [
+      {"what": "six failures, all graded", "regex": "^\\s*Graded failures\\s*:\\s*6\\s"},
+      {"what": "all six in band A (hot-var out of range)", "regex": "^\\s*A=6 \\(hot-var out of range\\)"}
+    ]
+  },
+  "26_pc_isolation": {
+    "description": "Example 01 with PC_ISOLATION PROCESS and PC_WORKER_TIMEOUT: 01's results in either isolation mode.",
+    "status_accepted": ["COMPLETED"],
+    "journal": [
+      {"what": "PC_LAMMPS runs in worker processes",
+       "regex": "PC_ISOLATION: PROCESS -- pc_lammps tasks execute in \\d+ persistent worker processes",
+       "skip_if_env": {"TADAH_PC_ISOLATION": "THREAD"}},
+      {"what": "the PC_WORKER_TIMEOUT hard deadline",
+       "regex": "hard per-worker-task deadline: 600 s \\(PC_WORKER_TIMEOUT\\)",
+       "skip_if_env": {"TADAH_PC_ISOLATION": "THREAD"}}
+    ]
   }
 }

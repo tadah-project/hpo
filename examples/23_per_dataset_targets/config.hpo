@@ -1,0 +1,36 @@
+# 23 -- per-dataset validation targets: PC_ERMSE (i).
+#
+# Example 01 without PC_LAMMPS, validated on two datasets instead of one:
+# the local config.val lists the elastic set (1) and the bcc
+# equation-of-state set (2), and common/run.sh uses it in place of
+# ../common/config.val. Each dataset gets its own target and weight.
+# The EOS set's RMSE is nearly 3x smaller than the elastic set's, so it
+# is weighted 10x to count about as much in the L2 loss. loss.tadah and
+# stats.tadah get one column per dataset (L(ERMSE)[1], L(ERMSE)[2]);
+# with indexed targets the reported L(ERMSE)[avg] is the average of the
+# dataset losses.
+#
+# --skip-above 5 on dataset 2 is a per-dataset bad-potential filter: a
+# candidate whose EOS error exceeds 5 meV/atom scores FAILSCORE and skips
+# the rest of its evaluation. In this box that is RCUT2B below about
+# 4.25 A (7.5 meV/atom at 4.0 A). This run's path (RCUT2B 5.6 to 6.0,
+# about 2 meV/atom) never goes there, so the filter does not fire here.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB DLIB
+    ALGO BFGS
+    MAXEVAL 30
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE (1) 0 1e-4
+PC_ERMSE (2) 0 1e-3 --skip-above 5
+
+OPTIM RCUT2B (1) 4.0 6.0
+
+OUTPUT 1
+BOUTPUT 1

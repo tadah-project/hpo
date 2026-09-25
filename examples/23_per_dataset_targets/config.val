@@ -1,0 +1,4 @@
+# 23_per_dataset_targets -- two validation datasets. PC_ERMSE (i) in
+# config.hpo refers to the i-th DBFILE line here.
+DBFILE ../common/data/elastic.tadahdb
+DBFILE ../common/data/eos_bcc.tadahdb

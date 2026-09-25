@@ -48,3 +48,10 @@
 19_anneal_pa            | -
 20_anneal_corana        | -
 21_asa                  | -
+# Local config.tadah (OALGO 4, LAMBDA: the analytical gradient's settings).
+22_pc_observable        | -
+# Local config.val (two validation datasets).
+23_per_dataset_targets  | -
+24_optim_auto           | -
+25_failprobe_grading    | -
+26_pc_isolation         | -
