@@ -79,5 +79,9 @@
     "status_accepted": ["MAXEVAL_REACHED -- maximum evaluations exhausted"],
     "hyperparam_tol": {"abs_tol": 100.0, "rel_tol": 0.001},
     "tolerance_rationale": "Weight 14 multiplies a descriptor that is zero on this dataset, so the loss does not depend on it: every evaluation ties up to ~2e-13 relative, the rounding-level noise of the warm-started lattice relaxation (exact Ecoh.in read-back), and that noise decides which evaluation is the best (weight 0, -25 or +25). The loss and components are pinned at the default tolerances; FIXWEIGHT[14] is checked only for presence: abs_tol 100 (the box width) accepts any value in its box [-50, 50]."
+  },
+  "22_dm_ream_embf0": {
+    "description": "NLOPT:LN_SBPLX over the two negative DM_REAM embedding knots of a tadah refit seed (EMBF0 ZERO); run.sh asserts Eiso == 0 exactly for every evaluated candidate.",
+    "status_accepted": ["MAXEVAL_REACHED -- maximum evaluations exhausted"]
   }
 }

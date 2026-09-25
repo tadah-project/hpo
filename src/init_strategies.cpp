@@ -17,6 +17,7 @@
 #include <tadah/core/context.h>
 #include <tadah/core/utils.h>
 #include <tadah/core/number_format.h>
+#include <tadah/models/descriptors/dm/embf0.h>
 
 #include <algorithm>
 #include <cmath>
@@ -24,6 +25,7 @@
 #include <fstream>
 #include <iostream>
 #include <numeric>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -269,6 +271,53 @@ public:
                 "': " + e.what());
         }
 
+        /* EMBF0: WARM reads only the OPTIM dimensions, so the run evaluates
+         * the embedding reference of its -c configuration. Stored values
+         * only (no default inserted into either context). */
+        if (ctx.run_context && models::context_has_ream(*ctx.run_context) &&
+            models::context_has_ream(loaded)) {
+            using models::EmbF0Mode;
+            std::optional<EmbF0Mode> seed_mode;
+            bool seed_valid = true;
+            try { seed_mode = models::stored_embf0(loaded); }
+            catch (const std::exception&) { seed_valid = false; }
+            const EmbF0Mode run_mode =
+                models::stored_embf0(*ctx.run_context)
+                    .value_or(EmbF0Mode::Zero);
+            if (!seed_valid) {
+                const std::string msg =
+                    "WARM seed " + file_ + " declares an invalid EMBF0 value "
+                    "(ZERO|FREE); ignored: this run evaluates EMBF0 " +
+                    models::embf0_name(run_mode) + " (from -c).";
+                std::cerr << "[HPO] " << msg << "\n";
+                HPOLog::instance().warning(msg);
+            } else if (seed_mode.value_or(EmbF0Mode::Zero) != run_mode) {
+                const std::string seed_decl =
+                    seed_mode ? std::string("declares EMBF0 ") +
+                                    models::embf0_name(*seed_mode)
+                              : std::string("does not declare EMBF0 (read as "
+                                            "EMBF0 ZERO)");
+                const std::string msg =
+                    "WARM seed " + file_ + " " + seed_decl + "; this run "
+                    "evaluates EMBF0 " + models::embf0_name(run_mode) +
+                    " (from -c). WARM takes only the OPTIM values from the "
+                    "seed and evaluates them unchanged in the run's reference "
+                    "(no conversion): pinned embedding weights give energies "
+                    "shifted by a constant per atom (linear models: forces "
+                    "unchanged), weights re-fitted by least squares can "
+                    "differ, so the seed's recorded loss need not be "
+                    "reproduced";
+                std::cerr << "[HPO] " << msg << "\n";
+                HPOLog::instance().warning(msg);
+            } else if (!seed_mode) {
+                const std::string msg =
+                    "WARM seed " + file_ + " does not declare EMBF0: it is "
+                    "read as EMBF0 ZERO (the default), as this run evaluates.";
+                std::cout << "[HPO] " << msg << "\n";
+                HPOLog::instance().info(msg);
+            }
+        }
+
         std::vector<double> point;
         std::vector<std::string> missing;
 
@@ -415,7 +464,7 @@ public:
         std::vector<std::vector<double>> out;
         std::uint64_t base_seed = ctx.seed;
         for (const auto& s : children_) {
-            InitContext sub{ctx.spec, ctx.targets, base_seed};
+            InitContext sub{ctx.spec, ctx.targets, base_seed, ctx.run_context};
             auto pts = s->generate(sub, s->default_k());
             for (auto& p : pts) {
                 if (!duplicate(out, p, ctx.spec))

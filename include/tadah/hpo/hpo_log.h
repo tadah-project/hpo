@@ -13,12 +13,12 @@
  *   -- FILES         --  -- config / output files
  *   -- OPTIMISER     --  -- algorithm, stop criteria, params
  *   -- SEARCH SPACE  --  -- per-dimension bounds (optimiser-internal space)
- *   -- POTENTIAL      --  -- 2B/MB, cutoffs, element list
+ *   -- POTENTIAL      --  -- 2B/MB, cutoffs, EMBF0 (DM_REAM), element list
  *   -- LOSS FUNCTION --  -- targets, weights, FAIL_SCORE
  *   -- PROGRESS      --  -- timestamped events: bests, NaN warnings, milestones
  *   -- DIAGNOSTICS   --  -- NaN rate, bound-proximity analysis
  *   -- PERFORMANCE   --  -- timing statistics
- *   -- RESULT        --  -- final status, best loss, best metrics
+ *   -- RESULT        --  -- final status, best loss, best metrics, EMBF0 F(0)
  */
 
 #include <atomic>
@@ -40,7 +40,7 @@
 #include <tadah/core/checkpoint.h>
 
 // Forward declarations of HPO types used in section writers
-namespace tadah::hpo { struct OptimizerSpec; class HPOTargets; }
+namespace tadah::hpo { struct OptimizerSpec; class HPOTargets; struct RawEmbeddingF0; }
 namespace tadah::core { class Context; class Element; }
 namespace tadah::mlip { struct LoadTransformReport; }
 
@@ -131,11 +131,16 @@ public:
         const OptimizerSpec&             sp,
         const std::vector<std::string>&  param_labels);
 
+    /** POTENTIAL SETUP section. For a context with a DM_REAM block it adds
+     *  the "Embedding F(0)" row (the EMBF0 mode, read without inserting the
+     *  default) and, when @p embf0_seed is given, the raw F(0) of the -c
+     *  potential (derive_raw_embedding_f0). */
     void write_potential_section(
-        const core::Context& ctx,
-        std::size_t          n_train,
-        std::size_t          n_val,
-        const std::string&   elements_str);
+        const core::Context&  ctx,
+        std::size_t           n_train,
+        std::size_t           n_val,
+        const std::string&    elements_str,
+        const RawEmbeddingF0* embf0_seed = nullptr);
 
     /** LOAD TRANSFORMS section -- emitted once at host construction summarising
      *  what load-time transforms (LSCALE, ESHIFT, EFILTER, FFILTER, WDBFILE,
@@ -339,6 +344,22 @@ public:
                       double      srmse,  bool has_srmse,
                       double      wall_ms,
                       const std::string& top_breakdown = "");
+
+    /** EMBF0 journal line (DM_REAM runs only: hpo_run() arms it once the
+     *  host is built; never armed, finish() prints nothing). finish() then
+     *  prints one RESULT line with the raw embedding value at zero density,
+     *  sum_m w_m g_m(0), of eval 1 and of the final best: the per-atom
+     *  constant EMBF0 ZERO removes, or the isolated-atom embedding energy
+     *  under FREE. HPO_Host records values only when @p derivable (a model
+     *  linear in the raw descriptor); a value not recorded prints n/a.
+     *  Diagnostic only: never feeds a loss, row or potential. Not
+     *  checkpointed: a resumed run reports what this session recorded. */
+    void arm_embf0(bool zero_mode, bool derivable);
+    void record_embf0_start(std::size_t eval_num, double f0);
+    /** Same guard as log_new_best(): kept only when @p loss is below the
+     *  loss recorded with the previous value, so out-of-order journal calls
+     *  from concurrent evaluations cannot leave a superseded best. */
+    void record_embf0_best(std::size_t eval_num, double loss, double f0);
 
     /* ------------------------------------------------------------------
      * Annealer eval context (thread-local): which ladder slot / absolute
@@ -559,6 +580,18 @@ private:
     /* best result tracking -- set by log_new_best(), used by finish() */
     double      cur_best_loss_  = std::numeric_limits<double>::max();
     std::size_t cur_best_eval_  = 0;
+
+    /* EMBF0 journal line (arm_embf0 / record_embf0_*) -- protected by mtx_;
+     * reset by open() and reset_for_test(). */
+    bool        embf0_armed_      = false;
+    bool        embf0_zero_       = true;
+    bool        embf0_derivable_  = false;
+    std::size_t embf0_start_eval_ = 0;
+    double      embf0_start_      = 0.0;
+    std::size_t embf0_best_eval_  = 0;
+    double      embf0_best_       = 0.0;
+    double      embf0_best_loss_  = std::numeric_limits<double>::max();
+    void reset_embf0_locked();
 
     /* Where the current best was found: snapshot of the recording
      * thread's eval context at log_new_best() time, plus per-slot

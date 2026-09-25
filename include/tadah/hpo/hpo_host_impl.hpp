@@ -20,6 +20,7 @@
 #include <tadah/hpo/rcut_derivation.h>
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/hpo/topk.h>
+#include <tadah/models/descriptors/dm/embf0.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
 #include <tadah/mlip/analytics/dphi_dtheta_walk.h>
 #include <cstring>
@@ -1331,6 +1332,13 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
         }
     }
 
+    /* EMBF0 journal (hpo_run arms HPOLog): stored values only, no default
+     * inserted into master_ctx_. */
+    /* (NORM does not matter: a linear model's trained weights are
+     * converted back to raw-descriptor weights, convert_to_nweights.) */
+    embf0_diag_ = models::context_has_ream(master_ctx_)
+               && models::model_is_linear(master_ctx_);
+
     /* param labels: ONE builder (HPOTargets::build_search_space), the same
      * optimap traversal that orders the optimiser vector, so params.tadah
      * columns, the journal and hpo_search_space.tsv agree by construction.
@@ -2274,6 +2282,19 @@ struct ObsForceFlagGuard {
     }
 };
 
+/* EMBF0 journal: sum_m w_m g_m(0) of a trainer's DM_REAM block with its
+ * current weights, NaN when the weight vector is not the linear model's
+ * descriptor-space vector. Reads only; diagnostic, never an output. */
+template<class TrainerT>
+double raw_embedding_f0_of(const TrainerT& tr)
+{
+    const auto& w = tr.model->get_weights();
+    if (w.size() != tr.DCS.dsize)
+        return std::numeric_limits<double>::quiet_NaN();
+    const auto v = tr.DCS.dmb->raw_embedding_f0(w);
+    return v ? *v : std::numeric_limits<double>::quiet_NaN();
+}
+
 }  // namespace detail
 
 template<class P, class R>
@@ -2743,6 +2764,10 @@ double HPO_Host<P,R>::operator()(const P& p) const
     /* validation ------------------------------------------------------- */
     stage_watchdog::enter(r.iter, "predict_validate");
     core::Context pot = host.model->get_param_file();
+    /* EMBF0 journal: eval 1's raw F(0) (a new best's is taken at the best
+     * decision below). Diagnostic only. */
+    if (embf0_diag_ && r.iter == 1)
+        r.embf0_raw = detail::raw_embedding_f0_of(host);
     /* Stamp LSCALE/ESHIFT into the per-eval pot context so any best_pot.tadah
      * derived from this eval round-trips through `tadah predict`. The trainer
      * itself doesn't know about load-time transforms, so the host injects them. */
@@ -2954,6 +2979,11 @@ double HPO_Host<P,R>::operator()(const P& p) const
         g_best_iter_.store(r.best_iter, std::memory_order_relaxed);
         iter_at_last_best_.store(r.iter, std::memory_order_relaxed);
         r.is_best = true;
+        /* EMBF0 journal: `host` still holds this eval's weights (nothing
+         * since the potential was built retrains this thread's trainer).
+         * Diagnostic only. */
+        if (embf0_diag_ && std::isnan(r.embf0_raw))
+            r.embf0_raw = detail::raw_embedding_f0_of(host);
       }
     }
 
@@ -3005,6 +3035,7 @@ double HPO_Host<P,R>::operator()(const P& p) const
     const double      save_fo_min   = r.fanout_min_ms;
     const double      save_fo_max   = r.fanout_max_ms;
     const std::string save_fo_slow  = r.fanout_slowest;
+    const double      save_embf0    = r.embf0_raw;
 
     /* Build a one-line "top loss components" breakdown when this eval
      * is a new best. Defensive: any failure here must not crash the
@@ -3131,6 +3162,8 @@ double HPO_Host<P,R>::operator()(const P& p) const
     log.record_fail_band(save_fail_band);
     log.record_fanout(save_fo_busy,
                       save_fo_nsc, save_fo_min, save_fo_max, save_fo_slow);
+    if (save_iter == 1 && !std::isnan(save_embf0))
+        log.record_embf0_start(save_iter, save_embf0);
 
     if (save_best) {
         log.log_new_best(save_iter, save_loss,
@@ -3141,6 +3174,8 @@ double HPO_Host<P,R>::operator()(const P& p) const
                          save_srmse,  trg_.use_srmse,
                          save_wall_ms,
                          save_top_breakdown);
+        if (!std::isnan(save_embf0))
+            log.record_embf0_best(save_iter, save_loss, save_embf0);
         /* Bound-occupancy audit on the new best (REAL coordinates). */
         std::lock_guard<std::mutex> lg(bound_occ_mtx_);
         if (bound_occ_.armed()) {

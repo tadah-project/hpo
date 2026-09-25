@@ -3,10 +3,12 @@
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/startup_validation.h>
 #include <tadah/core/context.h>
 #include <tadah/core/blueprint_parser.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/mlip/load_transforms.h>
+#include <tadah/models/descriptors/dm/embf0.h>
 
 #include <algorithm>
 #include <cmath>
@@ -161,7 +163,20 @@ void HPOLog::reset_for_test()
     pin_unit_   = 0;
     next_milestone_       = 100;
     last_milestone_evals_ = 0;
+    reset_embf0_locked();
     clear_eval_context();
+}
+
+void HPOLog::reset_embf0_locked()
+{
+    embf0_armed_      = false;
+    embf0_zero_       = true;
+    embf0_derivable_  = false;
+    embf0_start_eval_ = 0;
+    embf0_start_      = 0.0;
+    embf0_best_eval_  = 0;
+    embf0_best_       = 0.0;
+    embf0_best_loss_  = std::numeric_limits<double>::max();
 }
 
 void HPOLog::open(const std::string& path,
@@ -172,6 +187,7 @@ void HPOLog::open(const std::string& path,
     std::lock_guard<std::mutex> lg(mtx_);
     t_start_ = std::chrono::system_clock::now();
     start_tally_ = StartTally{};
+    reset_embf0_locked();
 
     f_.open(path, std::ios::out | std::ios::trunc);
     if (!f_.is_open()) {
@@ -772,10 +788,11 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
     }
 }
 
-void HPOLog::write_potential_section(const core::Context& ctx,
-                                     std::size_t          n_train,
-                                     std::size_t          n_val,
-                                     const std::string&   elements_str)
+void HPOLog::write_potential_section(const core::Context&  ctx,
+                                     std::size_t           n_train,
+                                     std::size_t           n_val,
+                                     const std::string&    elements_str,
+                                     const RawEmbeddingF0* embf0_seed)
 {
     section("POTENTIAL SETUP");
 
@@ -804,6 +821,40 @@ void HPOLog::write_potential_section(const core::Context& ctx,
         kv("Cutoff 2B (Ang)", rcut_str("RCUT2B"));
     if (initmb && ctx.contains("RCUTMB"))
         kv("Cutoff MB (Ang)", rcut_str("RCUTMB"));
+
+    /* DM_REAM embedding reference. stored_embf0: never Context::get or
+     * contains on EMBF0 here (that would insert the default). */
+    if (models::context_has_ream(ctx)) {
+        const auto stored = models::stored_embf0(ctx);
+        const bool zero =
+            stored.value_or(models::EmbF0Mode::Zero) == models::EmbF0Mode::Zero;
+        kv("Embedding F(0)",
+           zero ? std::string("EMBF0 ZERO") +
+                      (stored ? "" : " (key absent -> default)") +
+                      ": DM_REAM embedding zero-referenced, isolated-atom "
+                      "embedding energy 0 by construction"
+                : std::string("EMBF0 FREE: raw embedding (tadah <= 1.5.0), "
+                              "F(0) = sum w g(0)"));
+        if (embf0_seed) {
+            std::string v;
+            switch (embf0_seed->kind) {
+                case RawEmbeddingF0::Kind::Value:
+                    v = fmt_double(embf0_seed->value, 6) + " eV = sum w g(0), " +
+                        embf0_seed->source + " of the -c potential (" +
+                        (zero ? "removed per atom by EMBF0 ZERO)"
+                              : "isolated-atom embedding energy)");
+                    break;
+                case RawEmbeddingF0::Kind::PerEvaluation:
+                    v = "determined per evaluation (the weights are fitted on "
+                        "every evaluation; start/best under RESULT)";
+                    break;
+                case RawEmbeddingF0::Kind::NotApplicable:
+                    v = "n/a (" + embf0_seed->reason + ")";
+                    break;
+            }
+            kv("Raw F(0) of -c pot", v);
+        }
+    }
 
     kv("Training structures",   std::to_string(n_train));
     kv("Validation structures", std::to_string(n_val));
@@ -1531,6 +1582,30 @@ void HPOLog::record_fanout(double busy_ms,
     ++fo_evals_;
 }
 
+void HPOLog::arm_embf0(bool zero_mode, bool derivable)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    embf0_armed_     = true;
+    embf0_zero_      = zero_mode;
+    embf0_derivable_ = derivable;
+}
+
+void HPOLog::record_embf0_start(std::size_t eval_num, double f0)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    embf0_start_eval_ = eval_num;
+    embf0_start_      = f0;
+}
+
+void HPOLog::record_embf0_best(std::size_t eval_num, double loss, double f0)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    if (!(loss < embf0_best_loss_)) return;   /* log_new_best's guard */
+    embf0_best_loss_ = loss;
+    embf0_best_eval_ = eval_num;
+    embf0_best_      = f0;
+}
+
 /* -------------------------------------------------------------------------
  * Progress events
  * ------------------------------------------------------------------------- */
@@ -1900,6 +1975,32 @@ void HPOLog::finish(const std::string& status_str)
     if (has_srmse_)
         f_ << "  " << std::left << std::setw(KW) << "Best SRMSE"
            << ": " << std::fixed << std::setprecision(4) << best_srmse_ << " GPa\n";
+    if (embf0_armed_) {
+        std::ostringstream s;
+        s << (embf0_zero_ ? "EMBF0 ZERO (removed per atom): "
+                          : "EMBF0 FREE (isolated-atom embedding energy): ");
+        if (!embf0_derivable_) {
+            s << "n/a (the model is not linear in the descriptor)";
+        } else {
+            s << "start ";
+            if (embf0_start_eval_ > 0)
+                s << "(eval " << embf0_start_eval_ << ") "
+                  << fmt_double(embf0_start_, 6) << " eV";
+            else
+                s << "n/a";
+            s << ", best ";
+            /* The recorded best must be the reported one (a resumed run's
+             * checkpointed best has no value in this session). */
+            if (embf0_best_eval_ > 0 && have_best &&
+                embf0_best_eval_ == cur_best_eval_)
+                s << "(eval " << embf0_best_eval_ << ") "
+                  << fmt_double(embf0_best_, 6) << " eV";
+            else
+                s << "n/a";
+        }
+        f_ << "  " << std::left << std::setw(KW) << "Embedding F(0)"
+           << ": " << s.str() << "\n";
+    }
     f_ << "  " << std::left << std::setw(KW) << "Best potential saved"
        << ": ";
     if (!unsaved_best_) {

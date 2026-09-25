@@ -900,4 +900,403 @@ TEST_CASE("compact fitter: ladder under hard_rcut keeps every bump inside",
   REQUIRE(best.curve_rmse < 1e-2);
 }
 
+// ============ EMBF0 ZERO: zero-referenced embedding basis g - g(0) ============
+// The FREE tests above are the regression for the raw basis; these cover the
+// zero_ref paths (BlipFit::eval, CurveCost, solve_coeffs, the VARPRO gradient,
+// the EnergyCost F block, joint_refine).
+
+namespace {
+// Independent zero-referenced model sum_k c_k (g_k(x) - g_k(0)) built straight
+// from the MODELS primitives (not the fitter's dispatch).
+double zero_ref_model(const BlipFit &f, double x) {
+  namespace tm = tadah::models;
+  double acc = 0.0;
+  for (int k = 0; k < f.n(); ++k) {
+    auto g = [&](double u) {
+      const double xc = f.eta[k] * (u - f.mu[k]);
+      switch (f.kind) {
+        case BasisKind::Blip:   return tm::B(xc);
+        case BasisKind::Blip5:  return tm::B5(xc);
+        case BasisKind::Knot5L: return f.degree(k) == 3 ? tm::K3L(xc) : tm::K5L(xc);
+        case BasisKind::Knot5R: return f.degree(k) == 3 ? tm::K3R(xc) : tm::K5R(xc);
+      }
+      return 0.0;
+    };
+    acc += f.c[k] * (g(x) - g(0.0));
+  }
+  return acc;
+}
+
+// Embedding cases whose atoms have g(0) != 0 — bumps covering rho = 0 and
+// right-active knots below 0 — each mixed with atoms that have g(0) == 0.
+struct ZeroCase {
+  const char *name;
+  BlipFit f;
+  double lo, hi;
+};
+std::vector<ZeroCase> zero_ref_cases() {
+  std::vector<ZeroCase> v;
+  BlipFit b;
+  b.kind = BasisKind::Blip;
+  b.mu = {0.3, 1.5, 2.6, 4.0};  // x_c0 = -0.27, -1.65 (cover 0), -2.08, -4
+  b.eta = {0.9, 1.1, 0.8, 1.0};
+  b.c = {2.0, -1.3, 0.7, -0.4};
+  v.push_back({"Blip", b, 0.0, 5.0});
+  BlipFit b5 = b;
+  b5.kind = BasisKind::Blip5;  // support 3: the first three cover 0
+  v.push_back({"Blip5", b5, 0.0, 5.0});
+  BlipFit k5;
+  k5.kind = BasisKind::Knot5R;
+  k5.mu = {-0.8, -0.3, 0.4, 1.1};  // two knots below 0 (g(0) != 0)
+  k5.eta = {1.0, 1.0, 1.0, 1.0};
+  k5.c = {0.3, -0.2, 0.1, -0.05};
+  v.push_back({"Knot5R deg 5", k5, 0.0, 2.0});
+  BlipFit k3 = k5;
+  k3.deg = {3, 3, 3, 3};
+  v.push_back({"Knot5R deg 3", k3, 0.0, 2.0});
+  return v;
+}
+}  // namespace
+
+TEST_CASE("compact fitter: EMBF0 ZERO curve cost — model, F(0) = 0, Jacobian",
+          "[compact][embf0]") {
+  for (const ZeroCase &zc : zero_ref_cases()) {
+    INFO("case " << zc.name);
+    BlipFit f = zc.f;
+    f.zero_ref = true;
+    BlipFit raw = f;
+    raw.zero_ref = false;
+    REQUIRE(std::fabs(raw.eval(0.0)) > 1e-3);  // g(0) != 0: the case bites
+    REQUIRE(f.eval(0.0) == 0.0);               // explicit F(0) = 0
+
+    const int N = 160;
+    std::vector<double> xs, ys, wts;
+    for (int i = 0; i < N; ++i) {
+      const double x = zc.lo + (zc.hi - zc.lo) * i / (N - 1);
+      xs.push_back(x);
+      ys.push_back(0.3 * std::cos(1.7 * x));  // any target, nonzero at 0
+      wts.push_back(0.5 + static_cast<double>(i) / N);
+      REQUIRE(f.eval(x) == Approx(zero_ref_model(f, x)).margin(1e-12));
+      // derivatives are reference-free
+      REQUIRE(f.deriv(x) == raw.deriv(x));
+      REQUIRE(f.deriv2(x) == raw.deriv2(x));
+    }
+    REQUIRE(xs[0] == 0.0);
+
+    std::unique_ptr<ceres::CostFunction> cost(make_curve_cost(
+        xs, ys, wts, f.n(), f.kind, /*zero_ref=*/true, f.deg));
+    const int n = f.n();
+    std::vector<double> r(N), j0(N * n), j1(N * n), j2(N * n);
+    const double *pp[3] = {f.c.data(), f.mu.data(), f.eta.data()};
+    double *jj[3] = {j0.data(), j1.data(), j2.data()};
+    REQUIRE(cost->Evaluate(pp, r.data(), jj));
+    for (int i = 0; i < N; ++i)
+      REQUIRE(r[i] == Approx(std::sqrt(wts[i]) *
+                             (zero_ref_model(f, xs[i]) - ys[i]))
+                          .margin(1e-12));
+    // the rho = 0 row: model exactly 0, and every Jacobian entry exactly 0
+    // (F(0) = 0 identically in the parameters)
+    REQUIRE(r[0] == -std::sqrt(wts[0]) * ys[0]);
+    for (int k = 0; k < n; ++k) {
+      REQUIRE(j0[k] == 0.0);
+      REQUIRE(j1[k] == 0.0);
+      REQUIRE(j2[k] == 0.0);
+    }
+    audit_jacobian(cost.get(), {f.c, f.mu, f.eta});
+  }
+}
+
+TEST_CASE("compact fitter: EMBF0 ZERO equals FREE where every g(0) == 0",
+          "[compact][embf0]") {
+  // right-active knots at/above 0 vanish at rho = 0 (with their derivative),
+  // so the zero reference is an exact no-op: bitwise-equal model, residuals
+  // and least-squares coefficients
+  BlipFit k;
+  k.kind = BasisKind::Knot5R;
+  k.mu = {0.0, 0.4, 0.9, 1.3};
+  k.eta = {1.0, 1.0, 1.0, 1.0};
+  k.c = {0.3, -0.2, 0.1, -0.05};
+  std::vector<double> xs, ys;
+  sample(k, 0.0, 2.0, 200, xs, ys);
+  for (auto &y : ys) y += 0.01 * std::sin(3.0 * y);  // not exactly in class
+
+  BlipFit z = k;
+  z.zero_ref = true;
+  for (double x : xs) REQUIRE(z.eval(x) == k.eval(x));
+
+  std::unique_ptr<ceres::CostFunction> cf(
+      make_curve_cost(xs, ys, {}, k.n(), k.kind));
+  std::unique_ptr<ceres::CostFunction> cz(
+      make_curve_cost(xs, ys, {}, k.n(), k.kind, /*zero_ref=*/true));
+  std::vector<double> rf(xs.size()), rz(xs.size());
+  const double *pp[3] = {k.c.data(), k.mu.data(), k.eta.data()};
+  REQUIRE(cf->Evaluate(pp, rf.data(), nullptr));
+  REQUIRE(cz->Evaluate(pp, rz.data(), nullptr));
+  for (std::size_t i = 0; i < xs.size(); ++i) REQUIRE(rz[i] == rf[i]);
+
+  CompactConfig cfree, czero;
+  czero.zero_ref = true;
+  CompactBlipFitter ffree(xs, ys, {}, 0.0, 2.0, cfree, BasisKind::Knot5R);
+  CompactBlipFitter fzero(xs, ys, {}, 0.0, 2.0, czero, BasisKind::Knot5R);
+  BlipFit a = k, b = k;
+  ffree.solve_coeffs(a);
+  fzero.solve_coeffs(b);
+  REQUIRE(!a.zero_ref);
+  REQUIRE(b.zero_ref);  // stamped from the fitter's config
+  for (int j = 0; j < k.n(); ++j) REQUIRE(b.c[j] == a.c[j]);
+  REQUIRE(b.curve_rmse == a.curve_rmse);
+}
+
+TEST_CASE("compact fitter: EMBF0 ZERO energy Jacobian (F block) matches FD",
+          "[compact][embf0]") {
+  const std::vector<std::vector<double>> dists = {
+      {2.5, 2.5, 2.9, 2.9, 3.6}, {2.3, 2.3, 2.7, 2.7, 3.3},
+      {2.1, 2.1, 2.45, 2.45, 3.0}};
+  const std::vector<double> e0 = {-1.0, 0.5, 2.0};
+  const std::vector<double> ew = {1.0, 2.0, 0.5};
+
+  auto check = [&](BlipFit phi, BlipFit rho, BlipFit F) {
+    F.zero_ref = true;
+    std::unique_ptr<ceres::CostFunction> cost(make_energy_cost(
+        dists, e0, ew, phi.n(), rho.n(), F.n(), phi.kind, rho.kind, F.kind,
+        /*F_zero_ref=*/true, F.deg));
+    // the residual is w (sum 0.5 phi + F~(rho_i) - e0) with the zero-
+    // referenced F~ (phi, rho raw)
+    std::vector<double> r(dists.size());
+    const double *pp[9] = {phi.c.data(), phi.mu.data(), phi.eta.data(),
+                           rho.c.data(), rho.mu.data(), rho.eta.data(),
+                           F.c.data(),   F.mu.data(),   F.eta.data()};
+    REQUIRE(cost->Evaluate(pp, r.data(), nullptr));
+    for (std::size_t i = 0; i < dists.size(); ++i) {
+      double hp = 0.0, ri = 0.0;
+      for (double d : dists[i]) {
+        hp += 0.5 * phi.eval(d);
+        ri += rho.eval(d);
+      }
+      const double Fz = zero_ref_model(F, ri);
+      REQUIRE(std::fabs(Fz - F.eval(ri)) <= 1e-12 * (1.0 + std::fabs(Fz)));
+      REQUIRE(r[i] == Approx(ew[i] * (hp + Fz - e0[i]))
+                          .epsilon(1e-12)
+                          .margin(1e-12));
+    }
+    audit_jacobian(cost.get(), {phi.c, phi.mu, phi.eta, rho.c, rho.mu,
+                                rho.eta, F.c, F.mu, F.eta});
+  };
+
+  SECTION("bump embeddings covering rho = 0 (Blip, Blip5)") {
+    BlipFit rho;
+    rho.mu = {2.0, 3.2, 4.4};
+    rho.eta = {0.9, 0.8, 0.9};
+    rho.c = {0.6, 0.35, 0.15};
+    for (BasisKind kF : {BasisKind::Blip, BasisKind::Blip5}) {
+      INFO("F kind " << static_cast<int>(kF));
+      BlipFit F;
+      F.kind = kF;
+      F.mu = {1.0, 4.0, 7.0};  // x_c0 = -0.45, -1.6 (cover 0), -3.15
+      F.eta = {0.45, 0.4, 0.45};
+      F.c = {-2.0, -0.8, 0.5};
+      check(make_truth(), rho, F);
+    }
+  }
+  SECTION("right-active knots below 0 (quintic, cubic)") {
+    BlipFit rho;
+    rho.kind = BasisKind::Knot5L;
+    rho.mu = {2.8, 3.9, 5.0};
+    rho.eta = {1.0, 1.0, 1.0};
+    rho.c = {0.05, 0.03, 0.01};
+    for (int d : {5, 3}) {
+      INFO("F knot degree " << d);
+      BlipFit F;
+      F.kind = BasisKind::Knot5R;
+      F.mu = {-1.0, -0.3, 0.4};
+      F.eta = {1.0, 1.0, 1.0};
+      F.c = {-0.4, -0.2, 0.1};
+      if (d == 3) F.deg = {3, 3, 3};
+      check(make_knot_truth(), rho, F);
+    }
+  }
+}
+
+TEST_CASE("compact fitter: EMBF0 ZERO VARPRO gradient matches finite differences",
+          "[compact][embf0]") {
+  for (const ZeroCase &zc : zero_ref_cases()) {
+    INFO("case " << zc.name);
+    BlipFit truth = zc.f;
+    truth.zero_ref = true;
+    std::vector<double> xs, ys;
+    sample(truth, zc.lo, zc.hi, 220, xs, ys);  // zero-referenced samples
+    CompactConfig cfg;
+    cfg.zero_ref = true;
+    CompactBlipFitter fit(xs, ys, {}, zc.lo, zc.hi, cfg, truth.kind);
+
+    const bool os = one_sided(truth.kind);
+    BlipFit f = truth;
+    f.zero_ref = false;  // the fitter stamps it
+    std::mt19937 rng(13);
+    std::normal_distribution<double> g(0.0, 1.0);
+    for (int k = 0; k < f.n(); ++k) {
+      f.mu[k] += 0.05 * g(rng);
+      if (!os) f.eta[k] *= std::exp(0.05 * g(rng));
+    }
+    std::vector<double> grad;
+    fit.reduced_mse(f, &grad);
+    REQUIRE(f.zero_ref);
+    const int n = f.n();
+    REQUIRE(grad.size() == static_cast<std::size_t>(os ? n : 2 * n));
+    double scale = 0.0;
+    for (double v : grad) scale = std::max(scale, std::fabs(v));
+    REQUIRE(scale > 0.0);
+
+    double worst = 0.0;
+    for (int i = 0; i < static_cast<int>(grad.size()); ++i) {
+      auto &p = (i < n) ? f.mu[i] : f.eta[i - n];
+      const double h = 1e-6 * std::max(1.0, std::fabs(p));
+      const double save = p;
+      p = save + h;
+      const double fp = fit.reduced_mse(f, nullptr);
+      p = save - h;
+      const double fm = fit.reduced_mse(f, nullptr);
+      p = save;
+      worst = std::max(worst, std::fabs(grad[i] - (fp - fm) / (2 * h)) / scale);
+    }
+    INFO("worst |grad - FD| / scale = " << worst);
+    REQUIRE(worst < 1e-5);
+  }
+}
+
+TEST_CASE("compact fitter: EMBF0 ZERO refine recovers exact zero-referenced "
+          "blips", "[compact][embf0]") {
+  BlipFit truth = zero_ref_cases()[0].f;  // Blip, two bumps cover rho = 0
+  truth.zero_ref = true;
+  std::vector<double> xs, ys;
+  sample(truth, 0.0, 5.0, 400, xs, ys);
+  CompactConfig cfg;
+  cfg.zero_ref = true;
+  CompactBlipFitter fit(xs, ys, {}, 0.0, 5.0, cfg);
+
+  BlipFit f = truth;
+  f.zero_ref = false;
+  std::mt19937 rng(11);
+  std::normal_distribution<double> g(0.0, 1.0);
+  for (int k = 0; k < f.n(); ++k) {
+    f.mu[k] += 0.03 * g(rng);
+    f.eta[k] *= std::exp(0.03 * g(rng));
+  }
+  fit.solve_coeffs(f);
+  REQUIRE(f.zero_ref);
+  const double before = f.curve_rmse;
+  const double after = fit.refine(f);
+  INFO("before = " << before << " after = " << after);
+  REQUIRE(after < before);
+  REQUIRE(after < 1e-9);  // representable target, exact zero-ref Jacobians
+  REQUIRE(f.eval(0.0) == 0.0);
+}
+
+TEST_CASE("compact fitter: EMBF0 ZERO joint refine drives E-V residuals to "
+          "~noise", "[compact][embf0]") {
+  // the FREE joint test with a zero-referenced embedding truth (two bumps
+  // cover rho = 0): scan energies and the F curve are zero-referenced
+  BlipFit phi = make_truth();
+  BlipFit rho;
+  rho.mu = {2.0, 3.2, 4.4};
+  rho.eta = {0.9, 0.8, 0.9};
+  rho.c = {0.6, 0.35, 0.15};
+  BlipFit F;
+  F.mu = {1.0, 4.0, 7.0};
+  F.eta = {0.45, 0.4, 0.45};
+  F.c = {-2.0, -0.8, 0.5};
+  F.zero_ref = true;
+
+  std::vector<std::vector<double>> dists = {
+      {2.5, 2.5, 2.9, 2.9, 3.6}, {2.3, 2.3, 2.7, 2.7, 3.3},
+      {2.1, 2.1, 2.45, 2.45, 3.0}};
+  std::vector<double> e0, ew(dists.size(), 1.0);
+  for (const auto &dd : dists) {
+    double hp = 0.0, ri = 0.0;
+    for (double r : dd) {
+      hp += 0.5 * phi.eval(r);
+      ri += rho.eval(r);
+    }
+    e0.push_back(hp + F.eval(ri));
+  }
+  JointCurveData dphi, drho, dF;
+  sample(phi, 1.0, 5.5, 300, dphi.xs, dphi.ys);
+  sample(rho, 1.0, 5.5, 300, drho.xs, drho.ys);
+  sample(F, 0.0, 9.0, 300, dF.xs, dF.ys);
+  REQUIRE(dF.ys[0] == 0.0);
+
+  // the zero reference is an embedding property: radial fits reject it
+  {
+    BlipFit bad = phi;
+    bad.zero_ref = true;
+    BlipFit r2 = rho, F2 = F;
+    REQUIRE_THROWS_WITH(
+        joint_refine(bad, r2, F2, dphi, drho, dF, dists, e0, ew, 1.0, 10,
+                     1e-15),
+        Catch::Contains("embedding F only"));
+  }
+
+  std::mt19937 rng(23);
+  std::normal_distribution<double> g(0.0, 1.0);
+  auto perturb = [&](BlipFit &f) {
+    for (int k = 0; k < f.n(); ++k) {
+      f.mu[k] += 0.04 * g(rng);
+      f.eta[k] *= std::exp(0.04 * g(rng));
+      f.c[k] *= 1.0 + 0.04 * g(rng);
+    }
+  };
+  perturb(phi);
+  perturb(rho);
+  perturb(F);
+
+  const double final_max =
+      joint_refine(phi, rho, F, dphi, drho, dF, dists, e0, ew,
+                   /*curve_weight=*/1.0, /*max_iter=*/500, /*ftol=*/1e-15);
+  REQUIRE(final_max < 1e-8);
+  REQUIRE(F.zero_ref);
+  REQUIRE(F.eval(0.0) == 0.0);
+}
+
+TEST_CASE("compact fitter: EMBF0 ZERO ladder fits F_ref with F(0) == 0",
+          "[compact][embf0]") {
+  // An embedding-like table with F_tab(0) != 0 (the isolated-atom constant).
+  // The ZERO chain fits F_ref = F_tab - F_tab(0) (the engine's target) in the
+  // zero-referenced basis; FREE fits the same shifted target in the raw basis
+  // as the quality reference.
+  auto F_tab = [](double x) {
+    return 0.37 + std::exp(-(x - 2.0)) - 2.0 * std::exp(-0.5 * (x - 2.0));
+  };
+  const int N = 300;
+  std::vector<double> xs(N), ys(N);
+  for (int i = 0; i < N; ++i) {
+    xs[i] = 5.0 * i / (N - 1);
+    ys[i] = F_tab(xs[i]) - F_tab(0.0);
+  }
+  REQUIRE(ys[0] == 0.0);
+  auto run = [&](bool zero) {
+    CompactConfig cfg;  // the Morse ladder test's budget
+    cfg.n_max = 16;
+    cfg.sbplx_maxeval = 4000;  // keep the unit test quick
+    cfg.mlsl_maxeval = 8000;
+    cfg.target = 1.0;
+    cfg.zero_ref = zero;
+    CompactBlipFitter fit(xs, ys, {}, 0.0, 5.0, cfg);
+    std::vector<LadderRow> trace;
+    return fit.fit([](const BlipFit &f) { return f.curve_rmse / 1e-4; },
+                   trace);
+  };
+  const BlipFit bz = run(true);
+  const BlipFit bf = run(false);
+  INFO("ZERO: n = " << bz.n() << " rmse = " << bz.curve_rmse
+                    << "   FREE: n = " << bf.n() << " rmse = "
+                    << bf.curve_rmse);
+  REQUIRE(bz.zero_ref);
+  REQUIRE(!bf.zero_ref);
+  REQUIRE(bz.eval(0.0) == 0.0);                  // exact, by construction
+  REQUIRE(std::fabs(bz.eval(1e-12)) < 1e-6);     // and continuous there
+  REQUIRE(bz.curve_rmse < 1e-2);                 // |F_ref| ~ 3: a real fit
+  // comparable to FREE on the same target (both normally reach 1e-4)
+  REQUIRE(bz.curve_rmse <= 5.0 * bf.curve_rmse + 1e-4);
+}
+
 #endif  // TADAH_USE_CERES

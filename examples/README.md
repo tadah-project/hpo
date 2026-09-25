@@ -17,9 +17,11 @@ not multiply it. Each run cleans its previous output (`best_*.tadah`,
 `loss.tadah`, `outvar.tadah`, `params.tadah`, `stats.tadah`,
 `hpo_run.log`).
 
-A handful of examples (09, 10) ship their own `run.sh` because they
-need a `seed_pot.tadah` bootstrapped first; that script handles the
-bootstrap on first invocation and reuses the seed thereafter.
+A handful of examples ship their own `run.sh`: 09 and 10 need a
+`seed_pot.tadah` bootstrapped first (the script handles the bootstrap on
+first invocation and reuses the seed thereafter), 16 uses a local
+`config.tadah`, 17 trains its seed first, and 22 checks the EMBF0 ZERO
+contract on its outputs.
 
 ## How to run them all
 
@@ -64,6 +66,7 @@ each subsequent one introduces one or two new features.
 | 19 | `19_anneal_pa`            | `LIB TADAH ALGO ANNEAL_PA` population annealing with ESS-controlled resampling and explicit all-failed handling. |
 | 20 | `20_anneal_corana`        | `LIB TADAH ALGO ANNEAL` with adaptive Corana coordinate steps and boundary-policy diagnostics. |
 | 21 | `21_asa`                  | `LIB ASA ALGO ASA` — vendored Ingber ASA-30.53 (adaptive simulated annealing) with original option spellings (`PARAM Temperature_Ratio_Scale` etc.). |
+| 22 | `22_dm_ream_embf0`        | DM_REAM `tadah refit` seed with the zero-referenced embedding (`EMBF0 ZERO`): `OPTIM CEMBFUNC` on the negative embedding knots; `run.sh` asserts the isolated-atom energy is exactly 0 for every candidate. |
 
 ## Files in `common/`
 

@@ -174,11 +174,13 @@ bool resolve_init_mu(const InitBasis &b, const JointCurveData &d, double lo,
 }
 
 // Build the per-channel INIT seed (empty BlipFit if no INIT bases on `ch`).
+// zero_ref: the EMBF0 ZERO zero-referenced basis (the F channel only).
 BlipFit build_init_seed(const RefitConfig &rc, InitBasis::Channel ch,
                         BasisKind kind, const JointCurveData &d, double lo,
-                        double hi, int knot_degree) {
+                        double hi, int knot_degree, bool zero_ref) {
   BlipFit f;
   f.kind = kind;
+  f.zero_ref = zero_ref;
   const bool os = one_sided(kind);
   const double eta_def = os ? 1.0 : 4.0 / std::max(1e-12, hi - lo);
   bool any_nondefault_deg = false;
@@ -222,6 +224,21 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   const double r_reach = probe.r_reach();
   const double rho_reach = probe.rho_reach();
   const double smin = cfg.reach_smin;
+
+  // ---- EMBF0: the embedding reference the written pot declares ----
+  // "Fit what you evaluate": under EMBF0 ZERO the pot's DM_REAM (and
+  // EAMRefit::F_fit) evaluate the zero-referenced embedding with F(0) = 0, so
+  // every ABSOLUTE use of the table's F below — the E-V scan energies, the F
+  // curve target, the F ladder metric — uses F_ref = F_tab - F_tab(0), and
+  // the F ladder / FUSE fit the zero-referenced basis (CompactConfig /
+  // BlipFit zero_ref). FREE: the raw table verbatim (tadah 1.5.0). F' / F''
+  // and differences of F are reference-free and stay on the table. The table
+  // spline itself is never modified (DM_EAM reads it).
+  const bool zero = cfg.embf0_zero;
+  const double F0_tab = zero ? eam.F_tab(0.0) : 0.0;
+  auto Fref = [&](double x) {
+    return zero ? eam.F_tab(x) - F0_tab : eam.F_tab(x);
+  };
 
   // fit windows: same margins as the dense path
   const double rwin_lo =
@@ -489,6 +506,17 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
             "0.95) = " +
             core::to_string(tol_amb * 1e3, 3) + "/" +
             core::to_string(tol_cmp * 1e3, 3) + " meV/atom");
+  {
+    char f0[32];
+    std::snprintf(f0, sizeof(f0), "%.10g", F0_tab);
+    rlog.line(zero ? "embedding: EMBF0 ZERO — F is fitted in the zero-"
+                     "referenced basis g - g(0) (F(0) = 0 exactly) against "
+                     "F_tab - F_tab(0); table F(0) = " + std::string(f0) +
+                     " eV removed (E/atom relative to the isolated atom; "
+                     "forces unchanged)"
+                   : "embedding: EMBF0 FREE — raw basis against the raw "
+                     "table F (legacy, tadah 1.5.0)");
+  }
 
   // ---- the E-V scan backbone shared by metric + joint refinement ----
   // Rows 0..M_nat-1: the native lattice across the pressure regimes (these
@@ -511,7 +539,7 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
       }
       sum_phi.push_back(hp);
       rho_i.push_back(ri);
-      e_orig.push_back(hp + eam.F_tab(ri));
+      e_orig.push_back(hp + Fref(ri));  // EMBF0 ZERO: vs the isolated atom
       e_w.push_back(1.0 / (s >= 0.95 ? tol_amb : tol_cmp));  // 1 == at tol
     }
   };
@@ -568,8 +596,8 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                 dphi.xs, dphi.ys);
   linspace_eval(rwin_lo, rcut, [&](double r) { return eam.rho_tab(r); },
                 drho.xs, drho.ys);
-  linspace_eval(0.0, rho_reach, [&](double x) { return eam.F_tab(x); },
-                dF.xs, dF.ys);
+  linspace_eval(0.0, rho_reach, [&](double x) { return Fref(x); },
+                dF.xs, dF.ys);  // EMBF0 ZERO: the zero-referenced target
   // ANALYTIC target derivatives straight from the EAM cubic spline (no finite
   // differencing): used by the curve objective and the d1/d2 log diagnostics.
   for (double r : dphi.xs) { dphi.dys.push_back(eam.dphi_tab(r));
@@ -628,12 +656,12 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   // ---- INIT seeds: resolved anchors + pins per channel (empty => uniform) ----
   const BlipFit init_phi =
       build_init_seed(rcfg, InitBasis::PHI, k_rad, dphi, rwin_lo, rcut,
-                      lcfg.knot_degree);
+                      lcfg.knot_degree, /*zero_ref=*/false);
   const BlipFit init_rho =
       build_init_seed(rcfg, InitBasis::RHO, k_rad, drho, rwin_lo, rcut,
-                      lcfg.knot_degree);
+                      lcfg.knot_degree, /*zero_ref=*/false);
   const BlipFit init_F = build_init_seed(rcfg, InitBasis::F, k_emb, dF, 0.0,
-                                         rho_reach, lcfg.knot_degree);
+                                         rho_reach, lcfg.knot_degree, zero);
 
   // Bump-support gate on the INIT anchors (authoring surface, radial bump
   // channels): an anchor whose support reaches past rcut cannot be honoured
@@ -676,9 +704,11 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                         const CompactBlipFitter::Metric &metric,
                         const char *name, std::vector<LadderRow> &trace,
                         BasisKind kind, const BlipFit &init, int nmax,
-                        int max_add, double hard_rcut) {
+                        int max_add, double hard_rcut, bool zero_ref) {
     CompactConfig fcfg = lcfg;
     fcfg.n_max = nmax;  // this function's REFIT_COMPACT_NMAX ceiling
+    // EMBF0 ZERO zero-referenced basis: the F ladder only (d.ys = F_ref)
+    fcfg.zero_ref = zero_ref;
     // Bump-support gate (radial bump channels only; 0 = off): the emitted
     // pot is hard-truncated at rcut, so every bump must keep mu + w/eta <=
     // rcut — spilling tails are fitted against no data and `tadah hpo`
@@ -748,7 +778,7 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
         return worst;
       },
       "phi", tr_phi, k_rad, init_phi, nmax_fn[0], rcfg.explore.max_add[0],
-      knotfam ? 0.0 : rcut);
+      knotfam ? 0.0 : rcut, /*zero_ref=*/false);
 
   BlipFit frho = run_ladder(
       drho, rwin_lo, rcut,
@@ -763,20 +793,21 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
         return worst;
       },
       "rho", tr_rho, k_rad, init_rho, nmax_fn[1], rcfg.explore.max_add[1],
-      knotfam ? 0.0 : rcut);
+      knotfam ? 0.0 : rcut, /*zero_ref=*/false);
 
+  // F metric: absolute F values -> Fref (EMBF0 ZERO: f is zero-referenced)
   BlipFit fF = run_ladder(
       dF, 0.0, rho_reach,
       [&](const BlipFit &f) {
         double worst = 0.0;
         for (int i = 0; i < M; ++i)
           worst = std::max(worst, std::fabs(f.eval(rho_i[i]) -
-                                            eam.F_tab(rho_i[i])) *
+                                            Fref(rho_i[i])) *
                                       e_w[i] / share);
         return worst;
       },
       "F", tr_F, k_emb, init_F, nmax_fn[2], rcfg.explore.max_add[2],
-      /*hard_rcut=*/0.0);  // embedding: no r cutoff
+      /*hard_rcut=*/0.0, zero);  // embedding: no r cutoff
 
   // ---- FUSE stage ----
   std::string joint_term;
@@ -818,10 +849,11 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                 " refine, weighted, no E-V) ----");
       auto fuse_one = [&](BlipFit &fit, const JointCurveData &d, double lo,
                           double hi, BasisKind kind, const char *nm,
-                          double hard_rcut) {
+                          double hard_rcut, bool zero_ref) {
         CompactConfig ffcfg = lcfg;
         ffcfg.refine_algo = joint_algo;  // FUSE honours its configured optimiser
         ffcfg.hard_rcut = hard_rcut;     // bump-support gate (radial bumps)
+        ffcfg.zero_ref = zero_ref;       // EMBF0 ZERO basis (F only)
         CompactBlipFitter ff(d.xs, d.ys, d.wts, lo, hi, ffcfg, kind, d.dys,
                              d.d2ys);
         const double before = ff.combined_curve_score(fit);
@@ -834,15 +866,19 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
         rlog.line(std::string("FUSE[") + nm + "] curve score " +
                   core::to_string(before, 4) + " -> " + core::to_string(after, 4));
       };
-      fuse_one(fphi, dphi, rwin_lo, rcut, k_rad, "phi", knotfam ? 0.0 : rcut);
-      fuse_one(frho, drho, rwin_lo, rcut, k_rad, "rho", knotfam ? 0.0 : rcut);
-      fuse_one(fF, dF, 0.0, rho_reach, k_emb, "F", 0.0);
+      fuse_one(fphi, dphi, rwin_lo, rcut, k_rad, "phi", knotfam ? 0.0 : rcut,
+               /*zero_ref=*/false);
+      fuse_one(frho, drho, rwin_lo, rcut, k_rad, "rho", knotfam ? 0.0 : rcut,
+               /*zero_ref=*/false);
+      fuse_one(fF, dF, 0.0, rho_reach, k_emb, "F", 0.0, zero);
     }
     report_fuse("curve, weighted curve refine");
   } else {
     // ---- joint refinement: curves + E-V residuals, analytic gradients ----
     rlog.line("---- joint refinement (curves + E-V residuals, " + joint_algo +
               ") ----");
+    // EMBF0: joint_refine takes the reference from fF.zero_ref (stamped by
+    // the F ladder); dF.ys and e_orig are already on F_ref.
     e_resid_max =
         joint_refine(fphi, frho, fF, dphi, drho, dF, dists, e_orig, e_w,
                      /*curve_weight=*/1.0, lcfg.joint_max_iter, lcfg.joint_ftol,
@@ -931,6 +967,17 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   }
 
   // ---- assemble the EAMRefit (injection) + self-test ----
+  // EMBF0 handoff: fF holds the RAW parameters (c, mu, eta) of the embedding
+  // it was fitted as (zero-referenced iff fF.zero_ref). EAMRefit (built from
+  // the same cfg) evaluates F_fit zero-referenced iff cfg.embf0_zero,
+  // subtracting g(0) itself from the injected raw parameters, and writes the
+  // matching EMBF0 line — so the two must agree, or the pot would evaluate a
+  // different F than was fitted.
+  if (fF.zero_ref != zero)
+    throw std::logic_error(
+        "tadah refit[compact]: the fitted embedding's zero reference does not "
+        "match EMBF0 " + std::string(zero ? "ZERO" : "FREE") +
+        " (internal error)");
   cfg.n2b = fphi.n();
   cfg.nrho = frho.n();
   cfg.nF = fF.n();
@@ -952,7 +999,10 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
     rlog.raw("    compressed RMSE=" + core::to_string(1000.0 * st.rmse_c, 4) +
              " meV/atom  max=" + core::to_string(1000.0 * st.mx_c, 4) +
              "  (worst at a/a0=" + core::to_string(st.worst_s, 3) + ")");
-    rlog.raw("    cohesive: original=" + core::to_string(st.e_orig, 6) +
+    rlog.raw(std::string(zero ? "    cohesive (relative to the isolated "
+                                "atom): original="
+                              : "    cohesive: original=") +
+             core::to_string(st.e_orig, 6) +
              " refit=" + core::to_string(st.e_fit, 6) + " delta=" +
              core::to_string(1000.0 * (st.e_fit - st.e_orig), 4) +
              " meV/atom");

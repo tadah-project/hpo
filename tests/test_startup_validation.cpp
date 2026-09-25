@@ -2,7 +2,8 @@
 //
 // Fail-fast rules enforced by validate_hpo_setup() before HPO_Host
 // construction: FIXINDEX/FIXWEIGHT pairing and coverage, loss-source
-// presence, validation-file requirements, and the NORM restriction.
+// presence, validation-file requirements, the NORM restriction and the
+// OPTIM EMBF0 rejection; plus derive_raw_embedding_f0 (EMBF0 journal).
 
 #include "catch2/catch.hpp"
 
@@ -10,18 +11,23 @@
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/startup_validation.h>
+#include <tadah/models/descriptors/basis_dispatch.h>
 
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace {
 
 using tadah::core::Context;
 using tadah::core::PeriodicTable;
 using tadah::hpo::HPOTargets;
+using tadah::hpo::RawEmbeddingF0;
+using tadah::hpo::derive_raw_embedding_f0;
 using tadah::hpo::derive_weight_count;
 using tadah::hpo::validate_hpo_setup;
 
@@ -399,5 +405,171 @@ TEST_CASE("startup validation: bump-support gate",
     REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
                         Catch::Contains("bump-support gate") &&
                             Catch::Contains("no feasible point"));
+  }
+}
+
+namespace {
+
+/* make_bump_ctx + the model keys a probe Trainer needs: D2_Blip (3) + DM_REAM
+ * Blip embedding CEMBFUNC 0.9 2.9 0.1 / SEMBFUNC 1.5 2.0 1.8, so bumps 1 and 3
+ * cover rho = 0 and bump 2 does not. K = 3 + 3 weights, BIAS false. */
+Context make_ream_model_ctx() {
+  Context c = make_bump_ctx();
+  c.add("DIMER", "false");
+  c.add("DIMER", 0);
+  c.add("DIMER", "false");
+  c.add("FORCE", "false");
+  c.add("STRESS", "false");
+  c.add("EWEIGHT", 1.0);
+  c.add("FWEIGHT", 1.0);
+  c.add("SWEIGHT", 1.0);
+  c.add("BIAS", "false");
+  c.add("NORM", "false");
+  c.add("LAMBDA", 0);
+  c.add("OALGO", 1);
+  return c;
+}
+
+const std::vector<double> kReamWeights = {0.8, -0.3, 0.1, -0.5, 2.0, 1.5};
+
+/* sum_m w_m g_m(0) over the embedding weights (4..6), from the basis
+ * primitive itself. */
+double expected_raw_f0() {
+  using tadah::models::BasisKind;
+  using tadah::models::embedding_value;
+  const double cemb[] = {0.9, 2.9, 0.1};
+  const double semb[] = {1.5, 2.0, 1.8};
+  double acc = 0.0;
+  for (int m = 0; m < 3; ++m)
+    acc += kReamWeights[3 + m] * embedding_value(BasisKind::Blip, 0.0,
+                                                 semb[m], cemb[m]);
+  return acc;
+}
+
+}  // namespace
+
+TEST_CASE("startup validation: OPTIM EMBF0 is rejected",
+          "[startup_validation][embf0]") {
+  PeriodicTable::initialize();
+
+  SECTION("at parse, before the key is looked up in the context") {
+    for (const char* key : {"EMBF0", "embf0"}) {
+      Context ctx = make_ream_model_ctx();
+      ScopedTempFile tf(std::string("OPTIM ") + key + " (1) 0 1\n" +
+                        "PC_ERMSE 0 1\n" + kOptimizerBlock);
+      REQUIRE_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
+                          Catch::Contains("OPTIM EMBF0 is not a valid "
+                                          "search target") &&
+                              Catch::Contains("-c potential/configuration"));
+      /* The rejection comes before context.size(k): the default is not
+       * materialised into the run context. */
+      CHECK_FALSE(ctx.has_stored("EMBF0"));
+    }
+  }
+  SECTION("mirrored in validate_hpo_setup") {
+    Context ctx = make_ream_model_ctx();
+    ctx.add("DBFILE", "dummy.db");
+    ScopedTempFile tf(target_with("PC_ERMSE 0 1\n"));
+    HPOTargets trg(ctx, tf.path.string());
+    trg.optimap["EMBF0"];  // a search space assembled without the parser
+    REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                        Catch::Contains("OPTIM EMBF0 is not a valid "
+                                        "search target"));
+  }
+  SECTION("a top-level EMBF0 line in the hpotarget is an unknown key") {
+    Context ctx = make_ream_model_ctx();
+    ScopedTempFile tf("EMBF0 FREE\nPC_ERMSE 0 1\n" +
+                      std::string(kOptimizerBlock));
+    REQUIRE_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
+                        Catch::Contains("unknown key \"EMBF0\""));
+  }
+  SECTION("an invalid stored EMBF0 of a DM_REAM configuration fails fast") {
+    Context ctx = make_ream_model_ctx();
+    ctx.add("DBFILE", "dummy.db");
+    ctx.add("EMBF0", "MAYBE");
+    ScopedTempFile tf(target_with("PC_ERMSE 0 1\n"));
+    HPOTargets trg(ctx, tf.path.string());
+    REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                        Catch::Contains("EMBF0 must be ZERO or FREE"));
+  }
+  SECTION("a valid DM_REAM setup without the key passes, key not inserted") {
+    Context ctx = make_ream_model_ctx();
+    ctx.add("DBFILE", "dummy.db");
+    ScopedTempFile tf(target_with("PC_ERMSE 0 1\n"));
+    HPOTargets trg(ctx, tf.path.string());
+    REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
+    CHECK_FALSE(ctx.has_stored("EMBF0"));
+  }
+}
+
+TEST_CASE("derive_raw_embedding_f0: raw F(0) of the -c potential",
+          "[startup_validation][embf0]") {
+  PeriodicTable::initialize();
+  using Kind = RawEmbeddingF0::Kind;
+  const double expected = expected_raw_f0();
+  REQUIRE(expected != 0.0);  // bumps 1 and 3 cover rho = 0
+
+  SECTION("all weights pinned: provisioned FIXWEIGHT, sum w g(0)") {
+    for (const char* mode : {"", "ZERO", "FREE"}) {
+      Context ctx = make_ream_model_ctx();
+      if (*mode) ctx.add("EMBF0", mode);
+      REQUIRE(derive_weight_count(ctx) == kReamWeights.size());
+      ctx.add("FIXINDEX", "1-6");
+      for (double w : kReamWeights) ctx.add("FIXWEIGHT", w);
+      const RawEmbeddingF0 r = derive_raw_embedding_f0(ctx);
+      REQUIRE(r.kind == Kind::Value);
+      CHECK(r.source == "FIXWEIGHT");
+      /* The raw value does not depend on the embedding reference. */
+      CHECK(r.value == Approx(expected).epsilon(1e-13).margin(1e-15));
+      /* Probe on a copy: nothing inserted into the caller's context. */
+      CHECK(ctx.has_stored("EMBF0") == (*mode != '\0'));
+    }
+  }
+  SECTION("stored WEIGHTS of the model size") {
+    Context ctx = make_ream_model_ctx();
+    for (double w : kReamWeights) ctx.add("WEIGHTS", w);
+    const RawEmbeddingF0 r = derive_raw_embedding_f0(ctx);
+    REQUIRE(r.kind == Kind::Value);
+    CHECK(r.source == "WEIGHTS");
+    CHECK(r.value == Approx(expected).epsilon(1e-13).margin(1e-15));
+  }
+  SECTION("partial pins and no WEIGHTS: determined per evaluation") {
+    Context ctx = make_ream_model_ctx();
+    ctx.add("DBFILE", "dummy.db");
+    ctx.add("FIXINDEX", "4");
+    ctx.add("FIXWEIGHT", 0.5);
+    CHECK(derive_raw_embedding_f0(ctx).kind == Kind::PerEvaluation);
+  }
+  SECTION("WEIGHTS of the wrong size are not used") {
+    Context ctx = make_ream_model_ctx();
+    ctx.add("WEIGHTS", 1.0);
+    CHECK(derive_raw_embedding_f0(ctx).kind == Kind::PerEvaluation);
+  }
+  SECTION("a model not linear in the descriptor: n/a") {
+    Context ctx = make_ream_model_ctx();
+    ctx.remove("MODEL");
+    ctx.add("MODEL", "M_BLR");
+    ctx.add("MODEL", "BF_Polynomial2");
+    for (double w : kReamWeights) ctx.add("WEIGHTS", w);
+    const RawEmbeddingF0 r = derive_raw_embedding_f0(ctx);
+    CHECK(r.kind == Kind::NotApplicable);
+    CHECK(std::isnan(r.value));
+    CHECK_THAT(r.reason, Catch::Contains("not linear"));
+  }
+  SECTION("NORM true: a linear model's stored WEIGHTS are raw-descriptor "
+          "weights (convert_to_nweights), so the value is reported") {
+    Context ctx = make_ream_model_ctx();
+    ctx.remove("NORM");
+    ctx.add("NORM", "true");
+    for (double w : kReamWeights) ctx.add("WEIGHTS", w);
+    const RawEmbeddingF0 r = derive_raw_embedding_f0(ctx);
+    REQUIRE(r.kind == Kind::Value);
+    CHECK(r.value == Approx(expected).epsilon(1e-13).margin(1e-15));
+  }
+  SECTION("no DM_REAM block: n/a") {
+    Context ctx = make_model_ctx();
+    const RawEmbeddingF0 r = derive_raw_embedding_f0(ctx);
+    CHECK(r.kind == Kind::NotApplicable);
+    CHECK_THAT(r.reason, Catch::Contains("DM_REAM"));
   }
 }

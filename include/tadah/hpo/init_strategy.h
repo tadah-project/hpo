@@ -24,6 +24,8 @@
 #include <string>
 #include <vector>
 
+namespace tadah::core { class Context; }
+
 namespace tadah::hpo {
 
 class HPOTargets;        // forward-declared -- full type pulled in by .cpp
@@ -33,6 +35,9 @@ struct InitContext {
     const OptimizerSpec& spec;            // bounds, log_scaled (post-transform)
     const HPOTargets&    targets;         // optimap, ui_offset
     std::uint64_t        seed;            // resolved INIT_SEED or random_device
+    /* The run's -c configuration (HPOTargets' context), for WARM's EMBF0
+     * check; nullptr skips the check (e.g. RESTART re-seeding). */
+    const core::Context* run_context = nullptr;
 };
 
 class InitStrategy {

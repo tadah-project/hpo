@@ -1,0 +1,31 @@
+# 22 -- DM_REAM refit potential with the zero-referenced embedding (EMBF0).
+#
+# ta2_refit_seed.tadah is a `tadah refit` of the Ta2 EAM (see README.md). Every
+# linear coefficient is pinned (FIXINDEX/FIXWEIGHT), so the run needs no
+# training data and no --validation: the loss is the LAMMPS cohesive energy.
+#
+# The search moves the two NEGATIVE embedding knots (CEMBFUNC 1 and 4) --
+# exactly the parameters that change the raw F(0) = sum_m w_m g_m(0). Under
+# EMBF0 ZERO (the seed declares it) every candidate's DM_REAM subtracts its
+# own g_m(0), so the isolated-atom energy Eiso (read back from Ecoh.in) is
+# exactly 0 for EVERY evaluation; run.sh asserts it.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB NLOPT
+    ALGO LN_SBPLX
+    MAXEVAL 20
+    STEP 0.2
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 4.5 3.304 --varloss Ecoh 8.10 800 --outvar Eiso
+
+OPTIM CEMBFUNC (1) -2.19 -2.15
+OPTIM CEMBFUNC (4) -0.1665 -0.1630
+
+OUTPUT 1
+BOUTPUT 1

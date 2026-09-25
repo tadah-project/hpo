@@ -5,6 +5,8 @@
 #include <tadah/hpo/hpo_targets.h>
 
 #include <cstddef>
+#include <limits>
+#include <string>
 
 namespace tadah {
 namespace hpo {
@@ -16,11 +18,39 @@ namespace hpo {
  *  rules that need K. */
 std::size_t derive_weight_count(const core::Context &train_ctx);
 
+/** Raw DM_REAM embedding value at zero density, F_raw(0) = sum_m w_m g_m(0),
+ *  of the potential the training configuration describes: the constant per
+ *  atom that EMBF0 ZERO removes, or the isolated-atom embedding energy under
+ *  EMBF0 FREE. Journal only: never feeds an evaluated number. */
+struct RawEmbeddingF0 {
+  enum class Kind {
+    Value,          ///< `value` holds F_raw(0); `source` names the weights
+    PerEvaluation,  ///< no fixed weight vector: fitted on every evaluation
+    NotApplicable   ///< `reason` says why
+  };
+  Kind        kind  = Kind::NotApplicable;
+  double      value = std::numeric_limits<double>::quiet_NaN();
+  std::string source;  ///< "FIXWEIGHT" | "WEIGHTS" (Kind::Value)
+  std::string reason;  ///< Kind::NotApplicable
+};
+
+/** Derive F_raw(0) from the training configuration alone, on a probe Trainer
+ *  built from a COPY of the context (as derive_weight_count does). Weights:
+ *  the provisioned FIXWEIGHT when FIXINDEX pins every weight, else a stored
+ *  WEIGHTS vector of the model size, else Kind::PerEvaluation.
+ *  Kind::NotApplicable unless the context has a DM_REAM block and a model
+ *  linear in the descriptor (BF_Linear / Kern_Linear; with NORM the trained
+ *  weights are raw-descriptor weights too) and
+ *  the weight vector matches the descriptor size. Never throws. */
+RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
+
 /** Fail-fast validation of the HPO setup, run once after HPOTargets
  *  parsing and before HPO_Host construction. Throws std::runtime_error
  *  with an actionable message on the first violated rule:
  *
  *   - OPTIM WEIGHTS is rejected (silent no-op: LS overwrites weights);
+ *   - OPTIM EMBF0 is rejected (a discrete property of the potential), and
+ *     a stored EMBF0 of a DM_REAM configuration must be ZERO or FREE;
  *   - OPTIM FIXWEIGHT requires FIXINDEX in the training configuration;
  *   - FIXINDEX/FIXWEIGHT pairing: lone key, size mismatch, out-of-bounds
  *     index (via mlip::classify_weight_source);

@@ -6,6 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Tests: `test_ream_fastpath.cpp` (DM_REAM through the real pair style, EAMFAST vs generic, EMBF0 ZERO/FREE: isolated atom 0.0, forces/virial bitwise equal across references), `test_hpo_embf0_e2e.cpp` (hidden `[embf0_e2e]`: CEMBFUNC/SEMBFUNC-only search, every candidate's isolated atom exactly 0), `test_hpo_embf0_journal.cpp`, EMBF0 cases in the startup-validation, init-strategy and compact-fitter tests.
 - **Transient filesystem errors are retried before a write fails.** On
   network filesystems a lock, write, fsync or rename can fail for a moment
   (EBUSY, EAGAIN, ESTALE, ETXTBSY, EIO, ENOLCK, ETIMEDOUT, EDEADLK; EACCES
@@ -47,6 +48,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `test_append_log.cpp`, `[durable_e2e]` in `test_hpo_fixweight_e2e.cpp`.
 
 ### Changed
+- **DM_REAM `EMBF0`** (F(0) = 0 by construction, default ZERO): no change to the search, the evaluated numbers or the written rows is needed — each candidate's DM_REAM recomputes g_m(0) from its own CEMBFUNC/SEMBFUNC (fresh and cached-trainer paths), and every written potential carries the `EMBF0` line. Added: `OPTIM EMBF0` is rejected at startup (and in `validate_hpo_setup`); `hpo_run.log` POTENTIAL SETUP rows `Embedding F(0)` and the raw F(0) of the `-c` potential, and a RESULT line with the raw F(0) of the first and best evaluation (linear models only; diagnostic, never in any output row); a HINT when a DM_REAM model under ZERO is trained without BIAS/ESHIFT; a WARNING when an INIT WARM seed declares a different `EMBF0` than the run.
+- **Compact refit (`tadah refit`, REFIT_MODE compact) fits the zero-referenced embedding under `EMBF0 ZERO`**: `BlipFit`/`CurveCost`/`EnergyCost`/VARPRO carry an F-only `zero_ref` flag with the matching Jacobians (∂c = b - b0, ∂μ = -c(db - db0), ∂η = c[(x-μ)db - (0-μ)db0]/η), and the engine's energy/curve targets use F_tab - F_tab(0). FREE is textually unchanged. Compact ZERO results change for embedding bumps covering rho = 0 and knots below 0.
 - Journal status after an optimiser exception reads `FAILED -- <what>`
   (was `STOPPED with error: <what>`).
 - RESTART with an NLopt inner optimiser now restarts on stagnation (the

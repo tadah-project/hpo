@@ -290,7 +290,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
     }
     std::uint64_t seed = s.init_strategy_spec.seed.value_or(
         static_cast<std::uint64_t>(std::random_device{}()));
-    InitContext ictx{s, *this, seed};
+    InitContext ictx{s, *this, seed, &context};
     std::size_t k = s.init_strategy_spec.k_total.value_or(strategy->default_k());
     s.optim_init = strategy->generate(ictx, k);
     if (s.optim_init.empty()) {
@@ -1684,6 +1684,14 @@ void HPOTargets::process_optim_config(std::istringstream& iss, size_t nline) {
       "is a silent no-op. To search linear coefficients, pin them with "
       "FIXINDEX + FIXWEIGHT in the training configuration and use "
       "`OPTIM FIXWEIGHT (<weight-index>) <low> <high>`.");
+  }
+  /* Before context.size(k) below, which would materialise the blueprint
+   * default EMBF0 ZERO into the run context. */
+  if (core::to_upper(k) == "EMBF0") {
+    throw std::runtime_error(
+      "OPTIM EMBF0 is not a valid search target: EMBF0 (ZERO|FREE) selects "
+      "the DM_REAM embedding reference, a discrete property of the "
+      "potential; set it in the -c potential/configuration.");
   }
 
   Opti& omap = optimap[k];

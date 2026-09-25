@@ -122,6 +122,12 @@ struct EvalResult
     double                                 fanout_max_ms   = 0.0;
     std::string                            fanout_slowest;        // slowest script name
 
+    /* EMBF0 journal (DM_REAM + linear model only): the raw embedding value
+     * at zero density, sum_m w_m g_m(0), of this eval's weights. Filled only
+     * for eval 1 and for an eval that becomes the new best; NaN otherwise.
+     * Diagnostic only: never feeds a loss, row or potential. */
+    double                                 embf0_raw = std::numeric_limits<double>::quiet_NaN();
+
     ParamVec                               params;
 
     bool                                   is_best         = false;
@@ -242,6 +248,10 @@ public:
      *  filters and weighting knobs are deliberately not forwarded. */
     const mlip::LoadTransformReport& val_load_transform_report() const { return val_report_; }
 
+    /** True when the EMBF0 journal records per-evaluation values: the model
+     *  has a DM_REAM block and is linear in the raw descriptor. */
+    bool embf0_diagnostic() const { return embf0_diag_; }
+
     /** Flush any results still in the queue (call after optimizer finishes).
      *  retry_io=false: no backoff, only a permanent errno's one immediate
      *  re-attempt (after a best-potential persistence failure the storage is
@@ -338,6 +348,11 @@ private:
      * provisions the weights directly and skips the design-matrix
      * build. Computed once in the ctor. */
     bool                         all_weights_fixed_ = false;
+    /* EMBF0 journal: a DM_REAM model linear in the raw descriptor
+     * (BF_Linear / Kern_Linear; NORM irrelevant), so sum_m w_m g_m(0) of the
+     * trained weights is the raw F(0). Computed once in the ctor; false ->
+     * no per-evaluation work at all. */
+    bool                         embf0_diag_ = false;
     /* --validation is optional when the loss has other sources
      * (PC_OBSERVABLE / PC_LAMMPS); validated in validate_hpo_setup(). */
     bool                         has_validation_ = true;
