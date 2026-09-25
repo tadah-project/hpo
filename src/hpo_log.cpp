@@ -1,4 +1,5 @@
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/backend_rules.h>
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_spec.h>
@@ -394,8 +395,32 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         std::lock_guard<std::mutex> lg(mtx_);
         f_ << "  Stop criteria:\n";
         write_stop_criteria(sp.stop, "    ");
-        if (stop_is_empty(sp.stop))
-            f_ << "    (none set -- optimiser may run indefinitely)\n";
+        /* A backend that cannot end without a stop was refused at startup
+         * (require_stop, backend_rules.h), unless an active RESTART's
+         * stagnation stop ends it. */
+        const OptimizerCaps* caps = nullptr;
+        try { caps = &optimizer_caps(sp); } catch (const std::exception&) {}
+        const bool budget_per_start =
+            sp.strategy_type == StrategyType::MULTISTART &&
+            sp.multistart.budget_per_start.has_value();
+        if (stop_is_empty(sp.stop) && budget_per_start) {
+            f_ << "    (none set here -- each MULTISTART start runs with "
+                  "BUDGET_PER_START " << *sp.multistart.budget_per_start
+               << ")\n";
+        } else if (caps && caps->needs_stop && sp.restart.active() &&
+                   !sets_own_stop(sp)) {
+            f_ << "    (" << (stop_is_empty(sp.stop) ? "none set" :
+                              "none that ends it")
+               << " -- the RESTART stagnation stop ends " << sp.lib << ":"
+               << sp.algo << ": once its MAX " << sp.restart.max
+               << " restart(s) are used, AFTER_STAGNATION "
+               << sp.restart.after_stagnation
+               << " evaluations without a new best)\n";
+        } else if (stop_is_empty(sp.stop)) {
+            f_ << "    (none set -- " << sp.lib << ":" << sp.algo
+               << " ends on its own: a convergence test, a finite "
+                  "schedule or limits of its own)\n";
+        }
         f_.flush();
     }
 
@@ -418,7 +443,9 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
                       "ftol_rel=1e-15 xtol_rel=1e-7 for inner local searches; "
                       "loosen these if inner descents stall on a noisy objective)\n";
             } else {
-                f_ << "    (none set -- inner sub-algo may run indefinitely)\n";
+                f_ << "    (none set -- the INNER search runs with the "
+                      "enclosing block's MAXEVAL, MAXTIME and STOPVAL, or ends "
+                      "on its own)\n";
             }
         }
         f_.flush();

@@ -143,7 +143,12 @@ bool runs_from_each_start(const OptimizerCaps& caps)
 void require_multistart_backend(const OptimizerSpec& spec)
 {
     require_driver(spec, DriverPhase::Run);
-    if (runs_from_each_start(optimizer_caps(spec))) return;
+    const OptimizerCaps& caps = optimizer_caps(spec);
+    if (caps.accepts_multi_seed && spec.multistart.budget_per_start)
+        throw std::runtime_error(
+            "BUDGET_PER_START has no effect with " + backend_name(spec) +
+            ", which runs every start in one optimiser; use MAXEVAL");
+    if (runs_from_each_start(caps)) return;
     const std::string name = backend_name(spec);
     throw std::runtime_error(
         "STRATEGY TYPE MULTISTART cannot run " + name + ": it is a global "

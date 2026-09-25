@@ -128,11 +128,14 @@ inline nlopt::opt build_nlopt(const OptimizerSpec& sp, unsigned dim,
  * INNER block at startup (and has no INIT block there); a spec built
  * another way with an INNER seed, or with a MAXEVAL above NLopt's int, is
  * refused here rather than ignored or wrapped (validate_nlopt_spec, which
- * validate_hpo_setup() applies to every phase at startup). */
+ * validate_hpo_setup() applies to every phase at startup). `restart` says
+ * whether the RESTART stagnation stop bounds the run (require_stop,
+ * backend_rules.h): run_nlopt() passes whether RestartPolicy has armed it. */
 inline nlopt::opt make_nlopt(const OptimizerSpec& sp, unsigned dim,
+                             RestartStop restart,
                              const StepPlan* plan = nullptr)
 {
-    validate_nlopt_spec(sp);
+    validate_nlopt_spec(sp, restart);
     nlopt::opt o = detail::build_nlopt(sp, dim, plan);
     if (sp.seed)
         nlopt::srand(static_cast<unsigned long>(*sp.seed));
@@ -164,7 +167,8 @@ void run_nlopt(const OptimizerSpec& sp,
     /* Per-dimension initial-step plan (fraction of width, overrides,
      * per-dim near-bound rules) -- see initial_step.h. */
     const StepPlan plan = make_step_plan(sp, start, caps);
-    nlopt::opt opt = make_nlopt(sp, dim, &plan);
+    nlopt::opt opt =
+        make_nlopt(sp, dim, restart_stop_armed<HPO_Host<Vec,Runner>>(), &plan);
 
     /* The *_MLSL_LDS variants explore with a deterministic Sobol
      * low-discrepancy sequence -- nlopt's RNG (seeded in make_nlopt)

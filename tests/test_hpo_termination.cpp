@@ -1699,7 +1699,8 @@ TEST_CASE("NLopt takes its random seed from SEED, and from the INIT "
         tadah::hpo::OptimizerSpec sp = base;
         sp.seed = seed;
         sp.init_strategy_spec.seed = init_seed;
-        return crs2_draws(tadah::hpo::make_nlopt(sp, 2));
+        return crs2_draws(
+            tadah::hpo::make_nlopt(sp, 2, tadah::hpo::RestartStop::Off));
     };
     const auto reference = [](unsigned long seed) {
         nlopt::opt opt("GN_CRS2_LM", 2);
@@ -2120,7 +2121,8 @@ TEST_CASE("NLopt: make_nlopt seeds a run with an INNER once, from the block "
     const auto seed_1717 = reference(1717);
     REQUIRE(seed_1717.size() >= 3u);
     REQUIRE(seed_1717 != reference(99));
-    CHECK(crs2_draws(tadah::hpo::make_nlopt(sp, 2)) == seed_1717);
+    CHECK(crs2_draws(tadah::hpo::make_nlopt(
+              sp, 2, tadah::hpo::RestartStop::Off)) == seed_1717);
 
     /* An INNER spec with a seed can only come from outside the parser. It
      * used to reseed the stream in place of SEED 1717. */
@@ -2129,11 +2131,15 @@ TEST_CASE("NLopt: make_nlopt seeds a run with an INNER once, from the block "
         "stream");
     SECTION("an INNER SEED") {
         sp.inner->seed = 99;
-        CHECK_THROWS_WITH(tadah::hpo::make_nlopt(sp, 2), refused);
+        CHECK_THROWS_WITH(
+            tadah::hpo::make_nlopt(sp, 2, tadah::hpo::RestartStop::Off),
+            refused);
     }
     SECTION("an INNER INIT SEED") {
         sp.inner->init_strategy_spec.seed = 99;
-        CHECK_THROWS_WITH(tadah::hpo::make_nlopt(sp, 2), refused);
+        CHECK_THROWS_WITH(
+            tadah::hpo::make_nlopt(sp, 2, tadah::hpo::RestartStop::Off),
+            refused);
     }
 }
 

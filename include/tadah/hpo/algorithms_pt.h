@@ -86,6 +86,7 @@
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/anneal_core.h>
+#include <tadah/hpo/backend_rules.h>
 #include <tadah/hpo/anneal_jitter.h>
 #include <tadah/hpo/corana_census.h>
 #include <tadah/hpo/log_index.h>
@@ -4192,6 +4193,10 @@ template<typename Vec, typename Runner>
   void run_anneal_pt(const OptimizerSpec& sp,
       HPO_Host<Vec,Runner>& host)
   {
+    /* The replica ladder keeps its temperatures, so no schedule ends a run:
+     * it needs a stop, or an armed RESTART's stagnation stop (the startup
+     * check, again for a spec built at run time). */
+    require_stop(sp, restart_stop_armed<HPO_Host<Vec,Runner>>());
     run_anneal_pt_impl<Vec>(sp, host);
   }
 

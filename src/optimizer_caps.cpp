@@ -43,12 +43,14 @@ Registry build_registry()
         OptimizerCaps c;
         c.lib = "TADAH";  c.algo = "RANDOM";
         c.is_global       = true;
+        /* run_random draws until MAXEVAL is spent, MAXTIME has passed or a
+         * loss reaches STOPVAL: nothing else ends it. */
         c.supports_maxeval = true;
-        /* run_random draws until MAXEVAL is spent: it reads neither
-         * MAXTIME nor STOPVAL. */
-        c.needs_maxeval = true;
-        c.budget_note   = "it stops only when its MAXEVAL evaluations are "
-                          "spent (it reads neither MAXTIME nor STOPVAL)";
+        c.supports_maxtime = true;
+        c.supports_stopval = true;
+        c.needs_stop = true;
+        c.stop_note  = "uniform random search has no convergence test and "
+                       "runs until it is interrupted";
         c.step_use  = StepUse::Rejected;
         c.step_note = "uniform sampling in the OPTIM box has no initial step; remove STEP";
         add(r, c);
@@ -57,9 +59,12 @@ Registry build_registry()
         OptimizerCaps c;
         c.lib = "TADAH";  c.algo = "GRID";
         c.is_global       = true;
-        /* Stops after MAXEVAL points in the order it visits them; without
-         * MAXEVAL it evaluates the whole (finite) grid. */
+        /* Evaluates the whole (finite) grid, or stops earlier: after
+         * MAXEVAL points in the order it visits them, once MAXTIME has
+         * passed, or at a loss at or below STOPVAL. */
         c.supports_maxeval = true;
+        c.supports_maxtime = true;
+        c.supports_stopval = true;
         c.step_use  = StepUse::GridCount;
         c.step_note = "STEP is not the grid resolution; use PARAM GRID_POINTS <n> "
                       "(integer >= 2, default 20 points per dimension)";
@@ -93,6 +98,12 @@ Registry build_registry()
          * + the global best. */
         c.supports_ftol_rel = true;
         c.supports_ftol_abs = true;
+        /* The replica ladder keeps its temperatures: no end of schedule
+         * (the phase 4b and 4c probes ran it until it was killed). */
+        c.needs_stop = true;
+        c.stop_note  = "parallel tempering keeps its temperature ladder, so "
+                       "no schedule ends it, and it runs until it is "
+                       "interrupted";
         c.step_use  = StepUse::WidthFraction;
         c.step_note = "set PARAM STEP_FRAC (and PARAM STEP_MODE for ANNEAL_PT) instead";
         add(r, c);
@@ -136,13 +147,16 @@ Registry build_registry()
         c.lib = "DLIB";  c.algo = "GFS";
         c.is_global          = true;
         c.accepts_multi_seed = true;
+        /* find_min_global ends when its call budget is spent (MAXEVAL),
+         * its run time (MAXTIME) is up or its stop condition (STOPVAL)
+         * holds. FTOL_ABS is its solver epsilon, which ends nothing. */
         c.supports_maxeval   = true;
-        /* find_min_global runs until its call budget is spent (the run
-         * passes FOREVER as its time limit). */
-        c.needs_maxeval      = true;
-        c.budget_note        = "dlib's global search has no stopping rule of "
-                               "its own and reads neither MAXTIME nor STOPVAL";
-        c.supports_ftol_abs  = true;     // solver_eps -- absolute-style
+        c.supports_maxtime   = true;
+        c.supports_stopval   = true;
+        c.needs_stop = true;
+        c.stop_note  = "dlib's global search has no convergence test (FTOL_ABS "
+                       "sets its solver's precision, which stops nothing) and "
+                       "runs until it is interrupted";
         c.step_use  = StepUse::Rejected;
         c.step_note = "MaxLIPO+TR sizes its own trust region from the samples; remove STEP";
         add(r, c);
@@ -190,9 +204,32 @@ Registry build_registry()
         }
     }
 
-    /* NLopt -- enumerate the catalogue. Every NLopt algorithm honours
-     * the same StopCriteria via nlopt::opt::set_*; algorithm-class
-     * flags are inferred from the canonical name prefix. */
+    /* NLopt -- enumerate the catalogue. Every NLopt algorithm takes the
+     * same StopCriteria via nlopt::opt::set_*; algorithm-class flags are
+     * inferred from the canonical name prefix.
+     *
+     * Which stops end a run (nlopt 2.10 sources; the phase 4c probes ran
+     * each algorithm without any, on a synthetic objective and through
+     * hpo_run, and with each criterion alone):
+     *   - MAXEVAL, MAXTIME and STOPVAL end every algorithm.
+     *   - No convergence test and no finite schedule, so a stop is needed:
+     *     DIRECT (cdirect.c: an FTOL test at each improvement, an XTOL test
+     *     on every rectangle it divides, the largest included), CRS2 and
+     *     ISRES (an FTOL and an XTOL test at each improvement), ESCH and
+     *     AGS (no tolerance test; AGS's own eps is 0), StoGO (none: the
+     *     tolerances reach its local searches), MLSL (none: the tolerances
+     *     reach its local searches only), and LD_MMA, LD_CCSAQ and LD_SLSQP,
+     *     whose only convergence test is the tolerances.
+     *   - The original DIRECT (GN_ORIG_DIRECT, _L) stops itself after
+     *     about 100000 evaluations (DIRect.c's cap, checked once per
+     *     iteration: the probes ended after 100011 to 100071), and the
+     *     other local algorithms
+     *     converge on their own (a simplex, trust region or line search
+     *     that shrinks to roundoff): they keep NLopt's generic set.
+     *   - AUGLAG (HPO sets no constraint) runs its local search once and
+     *     ends when that ends: an INNER block, or NLopt's default local
+     *     optimiser (LN_COBYLA for LN_AUGLAG, LD_MMA for LD_AUGLAG). MLSL
+     *     has the same defaults; G_MLSL and AUGLAG need an INNER block. */
     for (int i = 0; i < NLOPT_NUM_ALGORITHMS; ++i) {
         const char* name = nlopt_algorithm_to_string(static_cast<nlopt_algorithm>(i));
         if (!name || !name[0]) continue;
@@ -211,6 +248,51 @@ Registry build_registry()
         if (s.size() >= 2 && s[1] == 'D')                 c.is_gradient_based = true;
         if (s.find("MLSL")   != std::string::npos ||
             s.find("AUGLAG") != std::string::npos)        c.accepts_inner = true;
+
+        const auto starts = [&](const char* p) { return s.rfind(p, 0) == 0; };
+        const bool no_tolerance_test =
+            starts("GN_ESCH") || starts("GN_AGS") || starts("GD_STOGO") ||
+            s.find("MLSL") != std::string::npos;
+        if (starts("GN_DIRECT") || starts("GN_CRS2") || starts("GN_ISRES") ||
+            no_tolerance_test) {
+            c.needs_stop = true;
+            c.stop_note = s.find("MLSL") != std::string::npos
+                ? "MLSL's multistart loop has no convergence test (the "
+                  "tolerances reach only its local searches) and runs until "
+                  "it is interrupted"
+                : "NLopt's global search has no convergence test of its own "
+                  "and runs until it is interrupted";
+        } else if (s == "LD_MMA" || s == "LD_CCSAQ" || s == "LD_SLSQP") {
+            c.needs_stop = true;
+            c.stop_note  = "without a tolerance it has no convergence test "
+                           "and runs until it is interrupted";
+        }
+        /* cdirect.c tests XTOL on the rectangles it divides in a sweep, and
+         * divides the largest one in every sweep: XTOL is met only once
+         * every rectangle is that small, about (1/XTOL_REL)^n rectangles,
+         * one evaluation each (the probes: XTOL_REL 1e-4 in three
+         * dimensions ran past 300000 evaluations). It does end the run, a
+         * finite schedule, so it stays a stop. */
+        if (starts("GN_DIRECT"))
+            c.tolerance_note =
+                "DIRECT's XTOL_REL and XTOL_ABS end it only once every "
+                "rectangle is that small, after roughly (1/XTOL_REL)^n "
+                "evaluations in n dimensions";
+        if (no_tolerance_test) {
+            c.supports_ftol_rel = c.supports_ftol_abs = false;
+            c.supports_xtol_rel = c.supports_xtol_abs = false;
+        } else if (starts("GN_ORIG_DIRECT")) {
+            /* direct_optimize() takes XTOL_REL as its volume tolerance and
+             * no other tolerance. */
+            c.supports_ftol_rel = c.supports_ftol_abs = false;
+            c.supports_xtol_abs = false;
+        }
+        if (s == "GN_MLSL" || s == "GN_MLSL_LDS" || s == "LN_AUGLAG" ||
+            s == "LN_AUGLAG_EQ")
+            c.default_inner = "LN_COBYLA";
+        else if (s == "GD_MLSL" || s == "GD_MLSL_LDS" || s == "LD_AUGLAG" ||
+                 s == "LD_AUGLAG_EQ")
+            c.default_inner = "LD_MMA";
         if (s.find("CRS")    != std::string::npos ||
             s.find("ESCH")   != std::string::npos ||
             s.find("ISRES")  != std::string::npos ||

@@ -7,11 +7,15 @@
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/phase_specs.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace tadah::hpo {
 
@@ -36,26 +40,176 @@ void require_nlopt_maxeval(const OptimizerSpec& sp)
             ": NLopt counts evaluations in an int (at most 2147483647)");
 }
 
+/* "A, B or C" ("A" for one item). */
+std::string or_list(const std::vector<std::string>& items)
+{
+    std::string out;
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        if (i) out += (i + 1 == items.size()) ? " or " : ", ";
+        out += items[i];
+    }
+    return out;
+}
+
+/* The tolerances that end a run of `caps`. */
+std::vector<std::string> honoured_tolerances(const OptimizerCaps& caps)
+{
+    std::vector<std::string> t;
+    if (caps.supports_ftol_rel) t.push_back("FTOL_REL");
+    if (caps.supports_ftol_abs) t.push_back("FTOL_ABS");
+    if (caps.supports_xtol_rel) t.push_back("XTOL_REL");
+    if (caps.supports_xtol_abs) t.push_back("XTOL_ABS");
+    return t;
+}
+
+/* The stops to set, as a message lists them: `keys` (MAXEVAL, MAXTIME,
+ * STOPVAL, as they apply) and the tolerances of `caps`. */
+std::string stop_list(std::vector<std::string> keys, const OptimizerCaps& caps,
+                      bool say_none)
+{
+    const std::vector<std::string> tol = honoured_tolerances(caps);
+    if (tol.empty())
+        return or_list(keys) + (say_none ? " (it honours no tolerance)" : "");
+    std::string joined;
+    for (const auto& k : tol) joined += (joined.empty() ? "" : ", ") + k;
+    keys.push_back("a positive tolerance it honours (" + joined + ")");
+    return or_list(keys);
+}
+
+/* The caps' note on how its tolerances end it, as a message's last
+ * clause ("" when it has none). */
+std::string tolerance_note(const OptimizerCaps& caps)
+{
+    if (!caps.tolerance_note[0] || honoured_tolerances(caps).empty())
+        return "";
+    return std::string("; ") + caps.tolerance_note;
+}
+
+/* MAXEVAL, MAXTIME and STOPVAL, as `caps` honours them. */
+std::vector<std::string> budget_keys(const OptimizerCaps& caps, bool stopval)
+{
+    std::vector<std::string> k;
+    if (caps.supports_maxeval) k.push_back("MAXEVAL");
+    if (caps.supports_maxtime) k.push_back("MAXTIME");
+    if (stopval && caps.supports_stopval) k.push_back("STOPVAL");
+    return k;
+}
+
+/* `spec` sets a stop that ends a run of `caps`, or the RESTART stagnation
+ * stop bounds the run. A tolerance counts only above 0: NLopt switches a
+ * tolerance of 0 or below off (its stop tests compare a change with it),
+ * and ANNEAL_PT's best-stall rule arms only above 0, so FTOL_REL 0 -- a
+ * common way to write "no tolerance" -- ends nothing. MAXEVAL and MAXTIME
+ * are positive by their grammar, and any STOPVAL is a target. */
+bool has_stop(const OptimizerSpec& spec, const OptimizerCaps& caps,
+              RestartStop restart)
+{
+    if (restart == RestartStop::On) return true;
+    const StopCriteria& st = spec.stop;
+    const auto positive = [](const std::optional<double>& v) {
+        return v && *v > 0.0;
+    };
+    return (st.maxeval && caps.supports_maxeval) ||
+           (st.maxtime && caps.supports_maxtime) ||
+           (st.stopval && caps.supports_stopval) ||
+           (positive(st.ftol_rel) && caps.supports_ftol_rel) ||
+           (positive(st.ftol_abs) && caps.supports_ftol_abs) ||
+           (positive(st.xtol_rel) && caps.supports_xtol_rel) ||
+           (positive(st.xtol_abs) && caps.supports_xtol_abs);
+}
+
+/* TADAH:RANDOM and DLIB:GFS read no PARAM, TADAH:GRID only GRID_POINTS
+ * (validate_grid_spec): a PARAM they do not read, numeric or a word, is
+ * refused with the list of those they take. */
+void reject_unknown_params(const OptimizerSpec& spec,
+                           const std::vector<std::string>& takes)
+{
+    const auto known = [&](const std::string& k) {
+        return std::find(takes.begin(), takes.end(), k) != takes.end();
+    };
+    std::string takes_list;
+    for (const auto& k : takes) takes_list += (takes_list.empty() ? "" : ", ") + k;
+    if (takes_list.empty()) takes_list = "none";
+    const auto refuse = [&](const std::string& key) {
+        throw std::runtime_error(backend_name(spec) + ": unknown PARAM '" +
+                                 key + "' (it takes " + takes_list + ")");
+    };
+    for (const auto& kv : spec.param)
+        if (!known(kv.first)) refuse(kv.first);
+    for (const auto& kv : spec.param_raw)
+        if (!known(kv.first)) refuse(kv.first);
+}
+
 }  // namespace
 
-void require_maxeval_budget(const OptimizerSpec& spec)
+RestartStop restart_stop_of(const OptimizerSpec& root)
 {
-    if (spec.stop.maxeval) return;
+    return root.restart.active() ? RestartStop::On : RestartStop::Off;
+}
+
+bool sets_own_stop(const OptimizerSpec& spec)
+{
+    return has_stop(spec, optimizer_caps(spec), RestartStop::Off);
+}
+
+void require_stop(const OptimizerSpec& spec, RestartStop restart)
+{
     const OptimizerCaps& caps = optimizer_caps(spec);
-    if (!caps.needs_maxeval) return;
+    if (!caps.needs_stop || has_stop(spec, caps, restart)) return;
     throw std::runtime_error(
-        backend_name(spec) + " needs MAXEVAL: " + caps.budget_note +
-        "; set MAXEVAL (an integer from 1 to 2147483647)");
+        backend_name(spec) + " needs a stop: " + caps.stop_note + "; set " +
+        stop_list(budget_keys(caps, true), caps, true) +
+        tolerance_note(caps));
 }
 
-void validate_random_spec(const OptimizerSpec& spec)
+void require_inner_run_stop(const OptimizerSpec& parent, RestartStop restart)
 {
-    require_maxeval_budget(spec);
+    const std::optional<OptimizerSpec> run = inner_run_spec(parent);
+    if (!run) return;
+    const OptimizerCaps& caps = optimizer_caps(*run);
+    if (!caps.needs_stop || has_stop(*run, caps, restart)) return;
+    const std::string outer = backend_name(parent);
+    const std::string inner = backend_name(*run);
+    const OptimizerCaps& outer_caps = optimizer_caps(parent);
+    const std::string handed_on =
+        or_list(budget_keys(outer_caps, true)) + " in the " + outer +
+        " block, which NLopt hands on to it";
+    if (parent.inner)
+        throw std::runtime_error(
+            "the INNER search of " + outer + " (" + inner + ") needs a stop: " +
+            caps.stop_note + "; set " +
+            stop_list(budget_keys(caps, false), caps, false) +
+            " in the INNER block, or " + handed_on + tolerance_note(caps));
+    /* NLopt's default local optimiser: it takes the block's tolerances
+     * too. */
+    throw std::runtime_error(
+        "the local search of " + outer + " (NLopt's default " + inner +
+        ", as the block has no INNER block) needs a stop: " + caps.stop_note +
+        "; set " + stop_list(budget_keys(caps, true), caps, false) +
+        " in the " + outer + " block, which NLopt hands on to it" +
+        tolerance_note(caps));
 }
 
-void validate_dlib_gfs_spec(const OptimizerSpec& spec)
+void validate_random_spec(const OptimizerSpec& spec, RestartStop restart)
 {
-    require_maxeval_budget(spec);
+    reject_unknown_params(spec, {});
+    require_stop(spec, restart);
+}
+
+void validate_dlib_gfs_spec(const OptimizerSpec& spec, RestartStop restart)
+{
+    reject_unknown_params(spec, {});
+    const StopCriteria& st = spec.stop;
+    for (const auto& [set, key] :
+         {std::pair<bool, const char*>{st.ftol_rel.has_value(), "FTOL_REL"},
+          {st.xtol_rel.has_value(), "XTOL_REL"},
+          {st.xtol_abs.has_value(), "XTOL_ABS"}})
+        if (set)
+            throw std::runtime_error(
+                backend_name(spec) + " does not support " + key +
+                ": dlib's global search has no convergence test to apply it "
+                "to; stop it with MAXEVAL, MAXTIME or STOPVAL");
+    require_stop(spec, restart);
 }
 
 unsigned validate_grid_spec(const OptimizerSpec& sp)
@@ -77,24 +231,17 @@ unsigned validate_grid_spec(const OptimizerSpec& sp)
                 std::to_string(v) + "; a 1-point grid divides by zero)");
         steps = static_cast<unsigned>(v);
     }
-    for (const auto& kv : sp.param)
-        if (kv.first != "GRID_POINTS")
-            throw std::runtime_error("TADAH:GRID: unknown PARAM '" + kv.first +
-                                     "' (the only GRID parameter is "
-                                     "GRID_POINTS)");
+    reject_unknown_params(sp, {"GRID_POINTS"});
     /* A word where a number belongs (PARAM GRID_POINTS AUTO) was stored as
      * a word and ignored. */
-    for (const auto& kv : sp.param_raw)
+    if (auto it = sp.param_raw.find("GRID_POINTS"); it != sp.param_raw.end())
         throw std::runtime_error(
-            kv.first == "GRID_POINTS"
-                ? "TADAH:GRID PARAM GRID_POINTS must be an integer >= 2 (got '" +
-                      kv.second + "')"
-                : "TADAH:GRID: unknown PARAM '" + kv.first +
-                      "' (the only GRID parameter is GRID_POINTS)");
+            "TADAH:GRID PARAM GRID_POINTS must be an integer >= 2 (got '" +
+            it->second + "')");
     return steps;
 }
 
-void validate_nlopt_spec(const OptimizerSpec& sp)
+void validate_nlopt_spec(const OptimizerSpec& sp, RestartStop restart)
 {
     if (sp.inner && (sp.inner->seed || sp.inner->init_strategy_spec.seed))
         throw std::invalid_argument(
@@ -103,6 +250,8 @@ void validate_nlopt_spec(const OptimizerSpec& sp)
             "block");
     require_nlopt_maxeval(sp);
     if (sp.inner) require_nlopt_maxeval(*sp.inner);
+    require_stop(sp, restart);
+    require_inner_run_stop(sp, restart);
 }
 
 void validate_asa_spec(const OptimizerSpec& sp)
@@ -114,7 +263,7 @@ void validate_asa_spec(const OptimizerSpec& sp)
     (void)parse_asa_options(sp, dim);
 }
 
-void validate_backend(const OptimizerSpec& spec)
+void validate_backend(const OptimizerSpec& spec, RestartStop restart)
 {
     if (spec.lib == "NOT SET" || spec.algo == "NOT SET") return;
     /* The same order as run_inner(): the deferred CERES least-squares
@@ -127,7 +276,7 @@ void validate_backend(const OptimizerSpec& spec)
     const std::string& algo = spec.algo;
     if (lib == "TADAH") {
         if (algo == "RANDOM") {
-            validate_random_spec(spec);
+            validate_random_spec(spec, restart);
         } else if (algo == "GRID") {
             (void)validate_grid_spec(spec);
         } else if (algo == "ANNEAL") {
@@ -135,14 +284,15 @@ void validate_backend(const OptimizerSpec& spec)
         } else if (algo == "ANNEAL_PT") {
             const auto kb = anneal::Knobs::parse(spec, anneal::AlgoKind::PT);
             (void)anneal::pt_replica_count(spec, kb);
+            require_stop(spec, restart);
         } else if (algo == "ANNEAL_PA") {
             (void)anneal::Knobs::parse(spec, anneal::AlgoKind::PA);
         }
     } else if (lib == "DLIB") {
-        if (algo == "GFS")       validate_dlib_gfs_spec(spec);
+        if (algo == "GFS")       validate_dlib_gfs_spec(spec, restart);
         else if (algo == "BFGS") detail::validate_dlib_bfgs_spec(spec);
     } else if (lib == "NLOPT") {
-        validate_nlopt_spec(spec);
+        validate_nlopt_spec(spec, restart);
     } else if (lib == "ASA") {
         validate_asa_spec(spec);
     } else if (lib == "CERES") {
@@ -157,13 +307,18 @@ void validate_backend(const OptimizerSpec& spec)
         else if (algo == "STEEPEST_DESCENT") detail::validate_ceres_steepest_spec(spec);
 #endif
     }
+    /* Every backend that needs a stop has checked it above; this covers
+     * one registered later without a validator of its own. */
+    require_stop(spec, restart);
 }
 
 void validate_phase_backends(const OptimizerSpec& root)
 {
+    /* RESTART wraps every phase (RestartPolicy, run_policy.h). */
+    const RestartStop restart = restart_stop_of(root);
     for (const PhaseSpec& phase : strategy_phase_specs(root)) {
         try {
-            validate_backend(phase.spec);
+            validate_backend(phase.spec, restart);
         } catch (const std::exception& e) {
             throw std::runtime_error(phase.name + ": " + e.what());
         }

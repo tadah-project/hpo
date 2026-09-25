@@ -3,6 +3,7 @@
 #include <tadah/hpo/optimizer_caps.h>
 
 #include <algorithm>
+#include <type_traits>
 #include <utility>
 
 namespace tadah::hpo {
@@ -53,6 +54,36 @@ OptimizerSpec prestage_refinement_spec(
     refine.prestage.reset();          // the refinement does not explore again
     refine.optim_init = std::move(candidates);
     return refine;
+}
+
+std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent)
+{
+    const OptimizerCaps& caps = optimizer_caps(parent);
+    if (!caps.accepts_inner) return std::nullopt;
+    OptimizerSpec run;
+    if (parent.inner) {
+        run = *parent.inner;
+    } else if (caps.default_inner) {
+        /* NLopt creates the default local optimiser with the block's
+         * tolerances (optimize.c) and no evaluation limit of its own. */
+        run.lib  = "NLOPT";
+        run.algo = caps.default_inner;
+        run.stop.ftol_rel = parent.stop.ftol_rel;
+        run.stop.ftol_abs = parent.stop.ftol_abs;
+        run.stop.xtol_rel = parent.stop.xtol_rel;
+        run.stop.xtol_abs = parent.stop.xtol_abs;
+    } else {
+        return std::nullopt;
+    }
+    const auto tighter = [](const auto& own, const auto& enclosing) {
+        using T = std::decay_t<decltype(own)>;
+        if (own && enclosing) return T(std::min(*own, *enclosing));
+        return own ? own : enclosing;
+    };
+    run.stop.maxeval = tighter(run.stop.maxeval, parent.stop.maxeval);
+    run.stop.maxtime = tighter(run.stop.maxtime, parent.stop.maxtime);
+    run.stop.stopval = parent.stop.stopval;
+    return run;
 }
 
 namespace {
@@ -114,10 +145,15 @@ std::vector<PhaseSpec> strategy_phase_specs(const OptimizerSpec& spec)
         }
     }
     const std::size_t n = phases.size();
-    for (std::size_t i = 0; i < n; ++i)
-        if (phases[i].spec.inner)
-            phases.push_back({"the INNER block of " + phases[i].name,
-                              *phases[i].spec.inner});
+    for (std::size_t i = 0; i < n; ++i) {
+        if (!phases[i].spec.inner) continue;
+        /* An INNER block under a backend that runs none is the business of
+         * require_inner_backend() (strategy_rules.h); it is checked as it
+         * stands. */
+        std::optional<OptimizerSpec> run = inner_run_spec(phases[i].spec);
+        phases.push_back({"the INNER block of " + phases[i].name,
+                          run ? std::move(*run) : *phases[i].spec.inner});
+    }
     return phases;
 }
 

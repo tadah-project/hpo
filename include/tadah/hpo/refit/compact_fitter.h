@@ -30,6 +30,8 @@
  *  (TADAH_USE_CERES); the engine falls back to dense mode otherwise.
  */
 
+#include <tadah/hpo/refit/refit_config.h>
+
 #include <functional>
 #include <random>
 #include <string>
@@ -108,11 +110,21 @@ struct CompactConfig {
   int n_min = 2;
   int n_max = 40;              ///< per-function blip ceiling
   int jitters = 2;             ///< randomised warm restarts per rung
-  int sbplx_maxeval = 20000;   ///< explore budget per candidate
+  // Budgets (tadah refit MAXEVAL/MAXITER, apply_stage_optimizers). Each
+  // counts OBJECTIVE EVALUATIONS, as NLopt does, except Ceres', which counts
+  // its iterations by definition (max_num_iterations).
+  int sbplx_maxeval = 20000;   ///< EXPLORE inner, per candidate: evaluations
+                               ///< (also each local search of the MLSL seed)
   double sbplx_xtol = 1e-11;
   double sbplx_ftol = 1e-13;
-  int mlsl_maxeval = 60000;    ///< n_min seed only
-  int ceres_max_iter = 1000;
+  int mlsl_maxeval = 60000;    ///< EXPLORE seed MLSL|DIRECT|CRS2: evaluations
+  int dlib_global_maxeval = 3000;  ///< EXPLORE seed DLIB_GLOBAL: evaluations
+                                   ///< (MaxLIPO+TR's cost per evaluation
+                                   ///< grows with the samples it holds)
+  int ceres_max_iter = 1000;   ///< REFINE CERES_LM|CERES_DOGLEG: iterations
+                               ///< (also the curve-mode FUSE refine's)
+  int lbfgs_refine_maxeval = 50000;  ///< REFINE NLOPT_LBFGS|DLIB_LBFGS:
+                                     ///< evaluations
   double ceres_ftol = 1e-15;   ///< "close to numerical noise" refine
   double ceres_gtol = 1e-14;
   double target = 1.0;         ///< stop when metric <= target
@@ -270,6 +282,13 @@ public:
    *  Exposed for tests. */
   int merge_close_knots(BlipFit &f) const;
 
+  /** The objective evaluations the stage optimisers (EXPLORE's seed and
+   *  inner search, the VARPRO L-BFGS REFINE) have made on this fitter: each
+   *  call of the VARPRO objective, for its value or its gradient, once --
+   *  what their MAXEVAL budgets count. The Ceres LM/DOGLEG refine is not
+   *  counted (its budget is iterations). Exposed for tests. */
+  long long objective_evaluations() const { return n_obj_evals_; }
+
   /** Bump-support projection (cfg.hard_rcut gate; see CompactConfig): for
    *  the bump families, pull any bump with `mu + w/eta > hard_rcut` back
    *  into the feasible set (centre first if even the narrowest legal bump
@@ -306,6 +325,13 @@ public:
 
 private:
   double sbplx_explore(BlipFit &f, int maxeval) const;  ///< VARPRO objective
+  /** dlib's box-constrained L-BFGS on the VARPRO objective from `f` (which
+   *  it updates), ending at `min_delta` (objective_delta_stop_strategy) or
+   *  after `maxeval` objective evaluations, counted in its objective wrapper
+   *  (dlib's own cap counts iterations). Returns the stage's termination
+   *  tag, e.g. "DLIB_LBFGS:MAXEVAL_REACHED(7ev)". */
+  std::string dlib_lbfgs(BlipFit &f, int maxeval, double min_delta,
+                         unsigned long history) const;
   double explore(BlipFit &f) const;        ///< dispatch on cfg_.explore_algo
   double refine_dispatch(BlipFit &f) const;
   BlipFit seed_mlsl() const;               ///< uniform n_min seed -> seed_global
@@ -348,6 +374,9 @@ private:
   mutable std::string last_seed_term_;
   mutable std::string last_explore_term_;
   mutable std::string last_refine_term_;
+
+  // objective_evaluations(); counted by the optimisers' objective wrappers.
+  mutable long long n_obj_evals_ = 0;
 };
 
 /** Joint Ceres refinement of all three functions against their curve residuals
@@ -390,17 +419,20 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
  *  re-solve coefficients — the caller owns that. */
 int clamp_bump_support_params(BlipFit &f, double hard_rcut, double span);
 
-/** The budget of the VARPRO reduced-gradient REFINE: 50 per REFINE
- *  MAXEVAL/MAXITER iteration (CompactConfig::ceres_max_iter), computed in
- *  64 bits and capped at INT_MAX, the most NLopt counts. NLOPT_LBFGS takes
- *  it as its evaluation budget; DLIB_LBFGS as the iteration cap of dlib's
- *  objective_delta_stop_strategy, which counts L-BFGS iterations, each a
- *  line search of one or more evaluations. `50 * ceres_max_iter` in int
- *  overflowed (undefined behaviour) above 42949672. A cap below 1, which
- *  RefitParser does not allow, has no budget: 0 would be no limit to NLopt
- *  and breaks dlib's precondition (max_iter > 0), so it throws
- *  std::invalid_argument. */
-int lbfgs_refine_budget(int ceres_max_iter);
+/** Flatten the parsed EXPLORE/REFINE/FUSE optimisers onto `cfg`: each
+ *  stage's ALGO (ENABLED false switches REFINE or FUSE off, whatever its
+ *  optimiser), tolerances, and MAXEVAL/MAXITER, which counts objective
+ *  evaluations for every optimiser but Ceres (iterations):
+ *    - EXPLORE MAXEVAL: the seed's budget, whichever algorithm runs it
+ *      (mlsl_maxeval, dlib_global_maxeval);
+ *    - EXPLORE INNER MAXEVAL: sbplx_maxeval;
+ *    - REFINE MAXEVAL/MAXITER: lbfgs_refine_maxeval (NLOPT_LBFGS,
+ *      DLIB_LBFGS) and ceres_max_iter (CERES_LM/DOGLEG, and the FUSE curve
+ *      refine of REFIT_OBJECTIVE curve, which runs with REFINE's settings);
+ *    - FUSE MAXEVAL/MAXITER: joint_max_iter (Ceres iterations).
+ *  RefitParser keeps them within an int (1 to INT_MAX). A stage without an
+ *  OPTIMIZER block keeps `cfg`'s defaults. */
+void apply_stage_optimizers(const RefitConfig &rc, CompactConfig &cfg);
 
 }  // namespace refit
 }  // namespace hpo

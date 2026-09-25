@@ -2,6 +2,8 @@
 
 #ifdef TADAH_USE_CERES
 
+#include <tadah/hpo/refit/refit_parser.h>
+
 #include <tadah/models/descriptors/basis_kind.h>
 #include <tadah/models/descriptors/d_basis_functions.h>
 
@@ -28,6 +30,54 @@ namespace refit {
 
 using tadah::models::B;
 using tadah::models::dB;
+
+void apply_stage_optimizers(const RefitConfig &rc, CompactConfig &cfg) {
+  // EXPLORE outer = the global seed at rung 0 (absorbs the old GLOBAL stage);
+  // EXPLORE INNER = the per-rung local search. MAXEVAL is the seed's budget
+  // whichever algorithm runs it.
+  if (rc.explore.has_opt) {
+    const OptimizerSpec &o = rc.explore.opt;
+    cfg.seed_algo = refit_explore_outer_algo(o);
+    if (o.stop.maxeval) {
+      cfg.mlsl_maxeval = static_cast<int>(*o.stop.maxeval);
+      cfg.dlib_global_maxeval = static_cast<int>(*o.stop.maxeval);
+    }
+    if (o.inner) {
+      const OptimizerSpec &in = *o.inner;
+      cfg.explore_algo = refit_explore_inner_algo(in);
+      if (in.stop.maxeval) cfg.sbplx_maxeval = static_cast<int>(*in.stop.maxeval);
+      if (in.stop.ftol_rel) cfg.sbplx_ftol = *in.stop.ftol_rel;
+      if (in.stop.xtol_rel) cfg.sbplx_xtol = *in.stop.xtol_rel;
+    }
+  }
+  // ceres_ftol / joint_ftol feed Ceres' function_tolerance, which is RELATIVE
+  // ((new_cost - old_cost) < ftol * old_cost) — Ceres has no absolute function
+  // tolerance, so FTOL_REL is the only accepted key (FTOL / FTOL_ABS are
+  // rejected by RefitParser). REFINE's MAXEVAL/MAXITER is the L-BFGS
+  // algorithms' evaluations and Ceres' iterations; the curve-mode FUSE
+  // refine runs with the Ceres one.
+  if (rc.refine.has_opt) {
+    const OptimizerSpec &o = rc.refine.opt;
+    cfg.refine_algo = refit_refine_algo(o);
+    if (o.stop.maxeval) {
+      cfg.ceres_max_iter = static_cast<int>(*o.stop.maxeval);
+      cfg.lbfgs_refine_maxeval = static_cast<int>(*o.stop.maxeval);
+    }
+    if (o.stop.ftol_rel) cfg.ceres_ftol = *o.stop.ftol_rel;
+    auto it = o.param.find("GTOL");
+    if (it != o.param.end()) cfg.ceres_gtol = it->second;
+  }
+  if (rc.fuse.has_opt) {
+    const OptimizerSpec &o = rc.fuse.opt;
+    cfg.joint_algo = refit_fuse_algo(o);
+    if (o.stop.maxeval) cfg.joint_max_iter = static_cast<int>(*o.stop.maxeval);
+    if (o.stop.ftol_rel) cfg.joint_ftol = *o.stop.ftol_rel;
+  }
+  // ENABLED false is a master kill-switch: it wins over any configured
+  // optimiser (the engine says so in its log).
+  if (!rc.refine.enabled) cfg.refine_algo = "NONE";
+  if (!rc.fuse.enabled) cfg.joint_algo = "NONE";
+}
 
 // ---- optimiser termination → short tag (for the per-stage convergence log)
 namespace {
@@ -379,6 +429,7 @@ struct VarproCtx {
   BlipFit *work;
   double span;
   bool guard = true;  ///< apply the soft anti-coalescence penalty (knot guard)
+  long long *evals;   ///< the fitter's objective-evaluation count
 };
 // Soft anti-coalescence factor for the knot families (>= 1): a coalesced
 // +-c knot pair is a derivative impostor whose VALUE rmse often beats any
@@ -407,6 +458,7 @@ double varpro_obj(const std::vector<double> &v, std::vector<double> &grad,
                   void *data) {
   (void)grad;  // SBPLX is derivative-free
   auto *ctx = static_cast<VarproCtx *>(data);
+  ++*ctx->evals;
   const int n = ctx->work->n();
   for (int k = 0; k < n; ++k) ctx->work->mu[k] = v[k];
   if (!one_sided(ctx->work->kind))  // knot families: eta pinned (gauge)
@@ -549,10 +601,12 @@ void theta_unpack(const std::vector<double> &v, BlipFit &f) {
 struct GradCtx {
   const CompactBlipFitter *self;
   BlipFit *work;
+  long long *evals;  ///< the fitter's objective-evaluation count
 };
 double nlopt_grad_obj(const std::vector<double> &v, std::vector<double> &grad,
                       void *data) {
   auto *ctx = static_cast<GradCtx *>(data);
+  ++*ctx->evals;
   theta_unpack(v, *ctx->work);
   if (!grad.empty()) {
     std::vector<double> g;
@@ -562,7 +616,62 @@ double nlopt_grad_obj(const std::vector<double> &v, std::vector<double> &grad,
   }
   return ctx->self->reduced_mse(*ctx->work, nullptr);
 }
+
+// Thrown by the objective wrapper of dlib_lbfgs() at the call past MAXEVAL.
+struct EvalBudgetSpent {};
 }  // namespace
+
+std::string CompactBlipFitter::dlib_lbfgs(BlipFit &f, int maxeval,
+                                          double min_delta,
+                                          unsigned long history) const {
+  // dlib's stop strategies count L-BFGS iterations (each a line search of
+  // one or more evaluations), not evaluations: MAXEVAL is counted here, in
+  // the objective wrapper, as NLopt counts it. dlib asks for the value and
+  // the gradient of the VARPRO objective in separate calls, each of which
+  // solves the linear coefficients: each is one evaluation, and the call
+  // past the budget ends the search at the last iterate.
+  ThetaBox b = theta_box(f, lo_, hi_, span_, cfg_.hard_rcut);
+  const int dim = static_cast<int>(b.v.size());
+  using dvec = dlib::matrix<double, 0, 1>;
+  dvec x(dim), xl(dim), xu(dim);
+  for (int i = 0; i < dim; ++i) { x(i) = b.v[i]; xl(i) = b.lb[i]; xu(i) = b.ub[i]; }
+  BlipFit work = f;
+  long long used = 0;
+  const auto spend = [&]() {
+    if (used >= maxeval) throw EvalBudgetSpent{};
+    ++used;
+    ++n_obj_evals_;
+  };
+  auto obj = [&](const dvec &p) {
+    spend();
+    std::vector<double> v(p.begin(), p.end());
+    theta_unpack(v, work);
+    return reduced_mse(work, nullptr);
+  };
+  auto der = [&](const dvec &p) {
+    spend();
+    std::vector<double> v(p.begin(), p.end()), g;
+    theta_unpack(v, work);
+    reduced_mse(work, &g);
+    dvec out(dim);
+    for (int i = 0; i < dim; ++i) out(i) = g[i];
+    return out;
+  };
+  std::string term;
+  try {
+    dlib::find_min_box_constrained(dlib::lbfgs_search_strategy(history),
+                                   dlib::objective_delta_stop_strategy(min_delta),
+                                   obj, der, x, xl, xu);
+    term = "FTOL_REACHED";
+  } catch (const EvalBudgetSpent &) {
+    term = "MAXEVAL_REACHED";
+  } catch (const std::exception &) {
+    term = "threw";
+  }
+  std::vector<double> v(x.begin(), x.end());
+  theta_unpack(v, f);
+  return "DLIB_LBFGS:" + term + "(" + std::to_string(used) + "ev)";
+}
 
 double CompactBlipFitter::sbplx_explore(BlipFit &f, int maxeval) const {
   const int n = f.n();
@@ -582,37 +691,9 @@ double CompactBlipFitter::sbplx_explore(BlipFit &f, int maxeval) const {
   else if (a == "PRAXIS") algo = nlopt::LN_PRAXIS;
   else if (a == "NLOPT_LBFGS") { algo = nlopt::LD_LBFGS; use_grad = true; }
   else if (a == "DLIB_LBFGS") {
-    // dlib box-constrained LBFGS on the VARPRO reduced objective
-    ThetaBox b = theta_box(f, lo_, hi_, span_, cfg_.hard_rcut);
-    const int dim = static_cast<int>(b.v.size());
-    using dvec = dlib::matrix<double, 0, 1>;
-    dvec x(dim), xl(dim), xu(dim);
-    for (int i = 0; i < dim; ++i) { x(i) = b.v[i]; xl(i) = b.lb[i]; xu(i) = b.ub[i]; }
-    BlipFit work = f;
-    auto obj = [&](const dvec &p) {
-      std::vector<double> v(p.begin(), p.end());
-      theta_unpack(v, work);
-      return reduced_mse(work, nullptr);
-    };
-    auto der = [&](const dvec &p) {
-      std::vector<double> v(p.begin(), p.end()), g;
-      theta_unpack(v, work);
-      reduced_mse(work, &g);
-      dvec out(dim);
-      for (int i = 0; i < dim; ++i) out(i) = g[i];
-      return out;
-    };
-    last_explore_term_ = "DLIB_LBFGS(delta/maxeval)";
-    try {
-      dlib::find_min_box_constrained(
-          dlib::lbfgs_search_strategy(20),
-          dlib::objective_delta_stop_strategy(cfg_.sbplx_ftol, maxeval),
-          obj, der, x, xl, xu);
-    } catch (const std::exception &) {
-      last_explore_term_ = "DLIB_LBFGS(threw)";
-    }
-    std::vector<double> v(x.begin(), x.end());
-    theta_unpack(v, f);
+    // dlib box-constrained LBFGS on the VARPRO reduced objective, MAXEVAL
+    // objective evaluations
+    last_explore_term_ = dlib_lbfgs(f, maxeval, cfg_.sbplx_ftol, 20);
     return solve_coeffs(f);
   } else if (a == "NONE") {
     last_explore_term_ = "NONE(linear-solve)";
@@ -638,21 +719,15 @@ double CompactBlipFitter::sbplx_explore(BlipFit &f, int maxeval) const {
   opt.set_maxeval(maxeval);
   BlipFit work = f;
   double fval = 1e300;
-  if (use_grad) {
-    GradCtx ctx{this, &work};
+  // Both objectives outlive optimize(): the gradient one used to be a local
+  // of the if-branch that set it, so NLOPT_LBFGS optimised through a
+  // dangling pointer.
+  GradCtx ctx{this, &work, &n_obj_evals_};
+  VarproCtx ctx_df{this, &work, span_, cfg_.merge_guard, &n_obj_evals_};
+  if (use_grad)
     opt.set_min_objective(nlopt_grad_obj, &ctx);
-  } else {
-    VarproCtx ctx_df{this, &work, span_, cfg_.merge_guard};
+  else
     opt.set_min_objective(varpro_obj, &ctx_df);
-    try {
-      last_explore_term_ = nlopt_term(opt.optimize(b.v, fval));
-    } catch (const std::exception &) {
-      last_explore_term_ = nlopt_term(opt.last_optimize_result());
-    }
-    last_explore_term_ += "(" + std::to_string(opt.get_numevals()) + "ev)";
-    theta_unpack(b.v, f);
-    return solve_coeffs(f);
-  }
   try {
     last_explore_term_ = nlopt_term(opt.optimize(b.v, fval));
   } catch (const std::exception &) {
@@ -667,19 +742,6 @@ double CompactBlipFitter::explore(BlipFit &f) const {
   return sbplx_explore(f, cfg_.sbplx_maxeval);
 }
 
-int lbfgs_refine_budget(int ceres_max_iter) {
-  if (ceres_max_iter < 1)
-    throw std::invalid_argument(
-        "lbfgs_refine_budget: the REFINE iteration cap "
-        "(CompactConfig::ceres_max_iter) must be at least 1, got " +
-        std::to_string(ceres_max_iter));
-  constexpr std::int64_t kPerIteration = 50;
-  const std::int64_t budget =
-      kPerIteration * static_cast<std::int64_t>(ceres_max_iter);
-  return static_cast<int>(std::min<std::int64_t>(
-      budget, std::numeric_limits<int>::max()));
-}
-
 double CompactBlipFitter::refine_dispatch(BlipFit &f) const {
   // REFINE runs the configured optimiser (cfg_.refine_algo) in BOTH objectives;
   // the legal set is enforced at parse time, and REFINE ALGO NONE (or ENABLED
@@ -690,60 +752,34 @@ double CompactBlipFitter::refine_dispatch(BlipFit &f) const {
   if (a == "CERES_LM" || a == "CERES_DOGLEG") return refine(f);
   if (a == "NONE") { last_refine_term_ = "NONE(linear-solve)"; return solve_coeffs(f); }
   if (a == "NLOPT_LBFGS" || a == "DLIB_LBFGS") {
-    // VARPRO reduced-gradient local, tight tolerances. The budget is taken
-    // before the optimisers' catch-alls, so an invalid cap is an error:
-    // NLopt's evaluation budget, dlib's L-BFGS iteration cap.
-    const int budget = lbfgs_refine_budget(cfg_.ceres_max_iter);
-    ThetaBox b = theta_box(f, lo_, hi_, span_, cfg_.hard_rcut);
-    const int dim = static_cast<int>(b.v.size());
-    if (a == "NLOPT_LBFGS") {
-      nlopt::opt opt(nlopt::LD_LBFGS, static_cast<unsigned>(dim));
-      opt.set_lower_bounds(b.lb);
-      opt.set_upper_bounds(b.ub);
-      opt.set_ftol_rel(cfg_.ceres_ftol);
-      opt.set_xtol_rel(1e-14);
-      opt.set_maxeval(budget);
-      BlipFit work = f;
-      GradCtx ctx{this, &work};
-      opt.set_min_objective(nlopt_grad_obj, &ctx);
-      double fval = 1e300;
-      try {
-        last_refine_term_ = nlopt_term(opt.optimize(b.v, fval));
-      } catch (const std::exception &) {
-        last_refine_term_ = nlopt_term(opt.last_optimize_result());
-      }
-      theta_unpack(b.v, f);
+    // VARPRO reduced-gradient local, tight tolerances, at most
+    // cfg_.lbfgs_refine_maxeval objective evaluations: NLopt counts them,
+    // and dlib_lbfgs() counts them in its objective wrapper.
+    if (a == "DLIB_LBFGS") {
+      last_refine_term_ =
+          dlib_lbfgs(f, cfg_.lbfgs_refine_maxeval, cfg_.ceres_ftol, 30);
       return solve_coeffs(f);
     }
-    using dvec = dlib::matrix<double, 0, 1>;
-    dvec x(dim), xl(dim), xu(dim);
-    for (int i = 0; i < dim; ++i) { x(i) = b.v[i]; xl(i) = b.lb[i]; xu(i) = b.ub[i]; }
+    ThetaBox b = theta_box(f, lo_, hi_, span_, cfg_.hard_rcut);
+    const int dim = static_cast<int>(b.v.size());
+    nlopt::opt opt(nlopt::LD_LBFGS, static_cast<unsigned>(dim));
+    opt.set_lower_bounds(b.lb);
+    opt.set_upper_bounds(b.ub);
+    opt.set_ftol_rel(cfg_.ceres_ftol);
+    opt.set_xtol_rel(1e-14);
+    opt.set_maxeval(cfg_.lbfgs_refine_maxeval);
     BlipFit work = f;
-    auto obj = [&](const dvec &p) {
-      std::vector<double> v(p.begin(), p.end());
-      theta_unpack(v, work);
-      return reduced_mse(work, nullptr);
-    };
-    auto der = [&](const dvec &p) {
-      std::vector<double> v(p.begin(), p.end()), g;
-      theta_unpack(v, work);
-      reduced_mse(work, &g);
-      dvec out(dim);
-      for (int i = 0; i < dim; ++i) out(i) = g[i];
-      return out;
-    };
-    last_refine_term_ = "DLIB_LBFGS(delta/maxeval)";
+    GradCtx ctx{this, &work, &n_obj_evals_};
+    opt.set_min_objective(nlopt_grad_obj, &ctx);
+    double fval = 1e300;
     try {
-      dlib::find_min_box_constrained(
-          dlib::lbfgs_search_strategy(30),
-          dlib::objective_delta_stop_strategy(
-              cfg_.ceres_ftol, static_cast<unsigned long>(budget)),
-          obj, der, x, xl, xu);
+      last_refine_term_ = nlopt_term(opt.optimize(b.v, fval));
     } catch (const std::exception &) {
-      last_refine_term_ = "DLIB_LBFGS(threw)";
+      last_refine_term_ = nlopt_term(opt.last_optimize_result());
     }
-    std::vector<double> v(x.begin(), x.end());
-    theta_unpack(v, f);
+    last_refine_term_ = std::string("NLOPT_LBFGS:") + last_refine_term_ +
+                        "(" + std::to_string(opt.get_numevals()) + "ev)";
+    theta_unpack(b.v, f);
     return solve_coeffs(f);
   }
   throw std::runtime_error("compact_fitter: unknown refine algo '" + a +
@@ -799,15 +835,22 @@ BlipFit CompactBlipFitter::seed_global(BlipFit f) const {
     dvec xl(gdim), xu(gdim);
     for (int i = 0; i < gdim; ++i) { xl(i) = b.lb[i]; xu(i) = b.ub[i]; }
     BlipFit work = f;
+    // dlib calls the objective exactly max_function_calls times (MAXEVAL
+    // objective evaluations); it used to take max(500, MAXEVAL/20) calls.
+    long long used = 0;
     auto obj = [&](const dvec &p) {
+      ++used;
+      ++n_obj_evals_;
       std::vector<double> v(p.begin(), p.end());
       theta_unpack(v, work);
       return reduced_mse(work, nullptr);
     };
-    const int calls = std::max(500, cfg_.mlsl_maxeval / 20);
-    last_seed_term_ = "DLIB_GLOBAL(maxcalls=" + std::to_string(calls) + ")";
     auto res = dlib::find_min_global(
-        obj, xl, xu, dlib::max_function_calls(static_cast<std::size_t>(calls)));
+        obj, xl, xu,
+        dlib::max_function_calls(
+            static_cast<std::size_t>(cfg_.dlib_global_maxeval)));
+    last_seed_term_ =
+        "DLIB_GLOBAL:MAXEVAL_REACHED(" + std::to_string(used) + "ev)";
     std::vector<double> v(res.x.begin(), res.x.end());
     theta_unpack(v, f);
     solve_coeffs(f);
@@ -835,7 +878,7 @@ BlipFit CompactBlipFitter::seed_global(BlipFit f) const {
   opt.set_maxeval(cfg_.mlsl_maxeval);
   opt.set_population(8 * n);
   BlipFit work = f;
-  VarproCtx ctx{this, &work, span_, cfg_.merge_guard};
+  VarproCtx ctx{this, &work, span_, cfg_.merge_guard, &n_obj_evals_};
   opt.set_min_objective(varpro_obj, &ctx);
   double fval = 1e300;
   try {

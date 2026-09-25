@@ -81,14 +81,51 @@ static void print_anneal_family_caps(std::ostream& os, unsigned kind_mask)
     }
 }
 
+/* The stop criteria that end a run of (lib, algo), from the caps registry
+ * (supports_*), and whether one is required (needs_stop). */
+static void print_stops(std::ostream& os, const std::string& lib,
+                        const std::string& algo)
+{
+    const OptimizerCaps* c = nullptr;
+    try { c = &optimizer_caps(lib, algo); } catch (const std::exception&) { return; }
+    std::string list;
+    const auto add = [&](bool on, const char* key) {
+        if (!on) return;
+        if (!list.empty()) list += ", ";
+        list += key;
+    };
+    add(c->supports_maxeval, "MAXEVAL");
+    add(c->supports_maxtime, "MAXTIME");
+    add(c->supports_stopval, "STOPVAL");
+    add(c->supports_ftol_rel, "FTOL_REL");
+    add(c->supports_ftol_abs, "FTOL_ABS");
+    add(c->supports_xtol_rel, "XTOL_REL");
+    add(c->supports_xtol_abs, "XTOL_ABS");
+    os << "   * Stops that end a run: " << list << "\n";
+    if (c->tolerance_note[0])
+        os << "     " << c->tolerance_note << ".\n";
+    /* require_stop() (backend_rules.h): a tolerance counts above 0, and an
+     * active RESTART's stagnation stop counts too. */
+    const bool tolerances = c->supports_ftol_rel || c->supports_ftol_abs ||
+                            c->supports_xtol_rel || c->supports_xtol_abs;
+    if (c->needs_stop)
+        os << "     One of them is required"
+           << (tolerances ? " (a tolerance above 0)" : "")
+           << ", or an active RESTART: " << c->stop_note << ".\n";
+}
+
 /* One, easily extendable, registry ---------------------------------*/
 static void print_tadah_caps(std::ostream& os, const std::string& algo)
 {
-    if (algo=="RANDOM")
-        os<<"   * No parameters.\n";
-    else if(algo=="GRID")
+    if (algo=="RANDOM") {
+        os<<"   * The INIT point, then uniform draws in the OPTIM box. No PARAM.\n";
+        print_stops(os, "TADAH", algo);
+    } else if(algo=="GRID") {
         os<<"   * PARAM GRID_POINTS <int>  (default 20 points per dimension;\n"
-            "     spacing = width/(n-1); total cost = n^dim). STEP is rejected.\n";
+            "     spacing = width/(n-1); total cost = n^dim). STEP and any other\n"
+            "     PARAM are rejected. The INIT point, then the grid in order.\n";
+        print_stops(os, "TADAH", algo);
+    }
     else if(algo=="ANNEAL")
     {
         os<<"   * Serial simulated annealing: classic whole-vector Gaussian kernel\n"
@@ -118,8 +155,9 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
             "     same evaluated set for any THREADS.\n"
             "   * Stops: MAXEVAL / MAXTIME / STOPVAL; FTOL_REL/FTOL_ABS (> 0) arm the\n"
             "     best-stall stop (global best unimproved over NEPS diagnostics\n"
-            "     windows). Cooling schedules belong to serial ANNEAL: RT/T_MIN are\n"
-            "     rejected here.\n"
+            "     windows). One of them is required: the ladder keeps its\n"
+            "     temperatures, so no schedule ends a run. Cooling schedules\n"
+            "     belong to serial ANNEAL: RT/T_MIN are rejected here.\n"
             "   * THREADS <n>  shared worker-pool width (replica evals + pc_lammps\n"
             "     fan-out + MLIP train/predict); also the REPLICAS default.\n"
             "   * Diagnostics: per-pair swap tables + step reports every SWAP_WINDOW\n"
@@ -152,11 +190,16 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
 
 static void print_dlib_caps(std::ostream& os, const std::string& algo)
 {
-    if(algo=="GFS")
-        os<<"   * SOLVER_EPS   (double, default 1e-7)\n"
-            "   * REL_NOISE    (double, default 1e-12)\n";
+    if(algo=="GFS") {
+        os<<"   * dlib find_min_global (MaxLIPO+TR); every INIT point seeds it.\n"
+            "     No PARAM.\n"
+            "   * FTOL_ABS     (dlib's solver epsilon, default 1e-3; it ends no\n"
+            "                   run). FTOL_REL/XTOL_REL/XTOL_ABS are rejected.\n";
+        print_stops(os, "DLIB", algo);
+    }
     else if(algo=="BFGS")
-        os<<"   * MAXEVAL      (iteration limit)\n"
+        os<<"   * MAXEVAL      (objective evaluations, the finite-difference\n"
+            "                   ones included)\n"
             "   * FTOL_ABS     (objective-delta stop, default 1e-7)\n"
             "   * PARAM fd_step <double>      (approx-derivative step, default 1e-6)\n"
             "   * PARAM tol_gradinf <double>  (gradient-inf-norm stop; alternative to FTOL_ABS)\n";
@@ -169,8 +212,8 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
   nlopt_algorithm a = nlopt_algorithm_from_string(algo.c_str());
     if (a==NLOPT_NUM_ALGORITHMS) { os<<"   * (unknown)\n"; return; }
 
-    os<<"   * any NLopt stopping criterion\n"
-        "   * PARAM <name> <value> - any nlopt::opt::set_param key\n";
+    print_stops(os, "NLOPT", algo);
+    os<<"   * PARAM <name> <value> - any nlopt::opt::set_param key\n";
     if (algo[0]=='G')        os<<"   * global optimizer\n";
     if (algo[1]=='N') os<<"   * derivative-free\n";
     /* Initial-step policy from the registry (single source of truth). */

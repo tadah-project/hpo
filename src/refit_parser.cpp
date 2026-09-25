@@ -60,12 +60,22 @@ bool known_optimizer_key(const std::string &key) {
          std::find(attrs.begin(), attrs.end(), key) != attrs.end();
 }
 
+// The keys a stage's OPTIMIZER block and its INNER block set, in order and
+// in the spelling used (MAXITER, not MAXEVAL): a key that has no effect with
+// the block's ALGO is named as written (reject_no_effect_keys).
+struct SeenKeys {
+  std::vector<std::string> outer, inner;
+};
+
 // read_optimizer_block() prefixes these messages with the block
 // ("REFINE: ", "EXPLORE INNER: ").
-KeyCheckFn stage_key_check(const StageKeys &sk) {
-  return [sk](const std::string &key, bool in_inner) {
+KeyCheckFn stage_key_check(const StageKeys &sk, SeenKeys *seen) {
+  return [sk, seen](const std::string &key, bool in_inner) {
     const std::vector<std::string> &reads = in_inner ? sk.inner : sk.outer;
-    if (std::find(reads.begin(), reads.end(), key) != reads.end()) return;
+    if (std::find(reads.begin(), reads.end(), key) != reads.end()) {
+      (in_inner ? seen->inner : seen->outer).push_back(key);
+      return;
+    }
     if (!known_optimizer_key(key)) return;
     // SEED and FTOL_ABS say what to use instead.
     if (key == "SEED")
@@ -174,7 +184,8 @@ void parse_init(const std::vector<std::string> &tok, RefitConfig &cfg) {
   }
 }
 
-void parse_explore(const std::vector<std::string> &tok, RefitConfig &cfg) {
+void parse_explore(const std::vector<std::string> &tok, RefitConfig &cfg,
+                   SeenKeys &seen) {
   size_t i = 0;
   while (i < tok.size()) {
     const std::string u = up(tok[i]);
@@ -207,7 +218,7 @@ void parse_explore(const std::vector<std::string> &tok, RefitConfig &cfg) {
       i += 2;
     } else if (u == "OPTIMIZER") {
       read_optimizer_block(tok, i, cfg.explore.opt, nullptr,
-                           stage_key_check(kExploreKeys),  // outer + INNER
+                           stage_key_check(kExploreKeys, &seen),  // + INNER
                            kExploreKeys.stage);
       cfg.explore.has_opt = true;
     } else {
@@ -248,14 +259,15 @@ bool ceres_extra(const std::string &key, std::istringstream &iss,
 }
 
 void parse_ceres_stage(const std::vector<std::string> &tok, OptimizerSpec &opt,
-                       bool &has_opt, bool &enabled, const StageKeys &keys) {
+                       bool &has_opt, bool &enabled, const StageKeys &keys,
+                       SeenKeys &seen) {
   const char *stage = keys.stage;
   size_t i = 0;
   while (i < tok.size()) {
     const std::string u = up(tok[i]);
     if (u == "OPTIMIZER") {
-      read_optimizer_block(tok, i, opt, ceres_extra, stage_key_check(keys),
-                           stage);
+      read_optimizer_block(tok, i, opt, ceres_extra,
+                           stage_key_check(keys, &seen), stage);
       has_opt = true;
     } else if (u == "ENABLED") {
       if (i + 1 >= tok.size())
@@ -277,9 +289,9 @@ void parse_ceres_stage(const std::vector<std::string> &tok, OptimizerSpec &opt,
                            legal);
 }
 
-// The library an ALGO spelling belongs to, as `tadah hpo` names it.
-constexpr const char *kNoOptimiser = "";      // ALGO NONE: runs no optimiser
-constexpr const char *kRefitInternal = nullptr;  // UNIFORM: no library's
+// The library an ALGO spelling belongs to, as `tadah hpo` names it; none
+// for NONE and UNIFORM, which run no optimiser.
+constexpr const char *kNoOptimiser = "";
 
 // One ALGO spelling of a stage: the compact fitter's algorithm it selects,
 // the library the stage block must name in LIB, and whether the stage's
@@ -287,7 +299,7 @@ constexpr const char *kRefitInternal = nullptr;  // UNIFORM: no library's
 struct AlgoSpelling {
   const char *spelling;   // uppercase
   const char *canonical;  // the compact fitter's name
-  const char *lib;        // NLOPT | DLIB | CERES, kNoOptimiser, kRefitInternal
+  const char *lib;        // NLOPT | DLIB | CERES, or kNoOptimiser
   bool listed;            // named by the stage's legal list
 };
 constexpr bool kListed = true;
@@ -297,9 +309,10 @@ constexpr bool kAlias = false;
 // names alike), with the library of `tadah hpo` it belongs to. The ALGO
 // names are the refit's own: its dlib global search is GLOBAL (`tadah hpo`
 // calls dlib's GFS), and its LBFGS is dlib's L-BFGS (a CERES algorithm in
-// `tadah hpo`; NLopt's is LD_LBFGS).
+// `tadah hpo`; NLopt's is LD_LBFGS). UNIFORM, the refit's own uniform
+// start, runs no global search: like NONE, it belongs to no library.
 const std::vector<AlgoSpelling> kExploreOuterAlgos = {
-    {"UNIFORM", "UNIFORM", kRefitInternal, kListed},
+    {"UNIFORM", "UNIFORM", kNoOptimiser, kListed},
     {"NONE", "UNIFORM", kNoOptimiser, kAlias},
     {"GLOBAL", "DLIB_GLOBAL", "DLIB", kListed},
     {"DLIB_GLOBAL", "DLIB_GLOBAL", "DLIB", kAlias},
@@ -349,9 +362,7 @@ std::string listed_in(const std::vector<AlgoSpelling> &algos,
                       const std::string &lib) {
   std::string out;
   for (const auto &a : algos) {
-    if (!a.listed || a.lib == kRefitInternal || *a.lib == '\0' ||
-        lib != a.lib)
-      continue;
+    if (!a.listed || *a.lib == '\0' || lib != a.lib) continue;
     if (!out.empty()) out += "|";
     out += a.spelling;
   }
@@ -366,12 +377,11 @@ std::string library_kind(const std::string &lib) {
 
 // The fitter's algorithm for `s` in a stage, with the LIB rule of `tadah hpo`:
 // a block that runs an optimiser names the library of its ALGO in LIB (a
-// missing or different LIB is an error), and a block with ALGO NONE runs none,
-// so a LIB there would have no effect. UNIFORM, refit's own uniform start,
-// belongs to no library: LIB is neither required nor checked there. `block`
-// names the block in the LIB messages ("EXPLORE INNER"), `stage` in the
+// missing or different LIB is an error), and a block with ALGO NONE or
+// UNIFORM runs none, so a LIB there would have no effect. `block` names the
+// block in the LIB messages ("EXPLORE INNER"), `stage` in the
 // unsupported-ALGO one ("EXPLORE inner"); `none_means` says what ALGO NONE
-// does in the block.
+// (or UNIFORM) does in the block.
 std::string stage_algo(const OptimizerSpec &s,
                        const std::vector<AlgoSpelling> &algos,
                        const char *block, const char *stage,
@@ -380,12 +390,12 @@ std::string stage_algo(const OptimizerSpec &s,
   const std::string algo = up(s.algo == "NOT SET" ? "" : s.algo);
   for (const auto &a : algos) {
     if (algo != a.spelling) continue;
-    if (a.lib == kRefitInternal) return a.canonical;
-    if (std::string(a.lib).empty()) {  // ALGO NONE
+    if (std::string(a.lib).empty()) {  // ALGO NONE or UNIFORM
       if (!lib.empty())
         throw std::runtime_error(std::string(block) +
-                                 ": LIB has no effect with ALGO NONE (" +
-                                 none_means + "); remove LIB");
+                                 ": LIB has no effect with ALGO " +
+                                 a.spelling + " (" + none_means +
+                                 "); remove LIB");
       return a.canonical;
     }
     if (lib.empty())
@@ -408,11 +418,45 @@ std::string stage_algo(const OptimizerSpec &s,
   algo_err(stage, lib, algo, legal);
 }
 
+// What ALGO NONE (UNIFORM in EXPLORE) does in each block, for the messages.
+constexpr const char *kExploreOff = "no global search runs";
+constexpr const char *kInnerOff = "no local search runs";
+constexpr const char *kStageOff = "the stage is skipped";
+
+// A block with ALGO NONE or UNIFORM runs no optimiser, so a stop criterion
+// it sets has no effect: the first of `keys` (the block's, as written) other
+// than LIB, ALGO and INNER is an error naming it. (LIB is the LIB rule's,
+// stage_algo(); EXPLORE's INNER block configures the per-rung local search
+// whatever the EXPLORE optimiser.)
+void reject_no_effect_keys(const std::string &block, const OptimizerSpec &s,
+                           const std::vector<std::string> &keys,
+                           const char *off) {
+  for (const auto &key : keys) {
+    if (key == "LIB" || key == "ALGO" || key == "INNER") continue;
+    throw std::runtime_error(block + ": " + key + " has no effect with ALGO " +
+                             up(s.algo) + " (" + off + "); remove " + key);
+  }
+}
+
 }  // namespace
+
+bool refit_curve_objective(const tadah::core::Context &c) {
+  std::string obj =
+      (c.contains("REFIT_OBJECTIVE") && c.size("REFIT_OBJECTIVE") > 0)
+          ? c.get<std::string>("REFIT_OBJECTIVE")
+          : std::string("energy");
+  for (auto &ch : obj)
+    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  if (obj == "curve") return true;
+  if (obj == "energy") return false;
+  throw std::runtime_error(
+      "tadah refit: REFIT_OBJECTIVE must be 'energy' (default) or 'curve'; "
+      "got '" + obj + "'");
+}
 
 std::string refit_explore_outer_algo(const OptimizerSpec &s) {
   return stage_algo(s, kExploreOuterAlgos, "EXPLORE", "EXPLORE outer",
-                    "no global search runs",
+                    kExploreOff,
                     "NLOPT GN_MLSL_LDS|GN_DIRECT_L|GN_CRS2_LM, DLIB GLOBAL, or "
                     "UNIFORM");
 }
@@ -422,19 +466,18 @@ std::string refit_explore_inner_algo(const OptimizerSpec &s) {
   // requires ALGO) runs no local search.
   if (s.algo == "NOT SET" || s.algo.empty()) return "NONE";
   return stage_algo(s, kExploreInnerAlgos, "EXPLORE INNER", "EXPLORE inner",
-                    "no local search runs",
+                    kInnerOff,
                     "NLOPT LN_SBPLX|LN_NELDERMEAD|LN_BOBYQA|LN_PRAXIS|LD_LBFGS, "
                     "DLIB LBFGS, or NONE");
 }
 
 std::string refit_refine_algo(const OptimizerSpec &s) {
-  return stage_algo(s, kRefineAlgos, "REFINE", "REFINE",
-                    "the stage is skipped",
+  return stage_algo(s, kRefineAlgos, "REFINE", "REFINE", kStageOff,
                     "CERES LM|DOGLEG, NLOPT LD_LBFGS, DLIB LBFGS, or NONE");
 }
 
 std::string refit_fuse_algo(const OptimizerSpec &s) {
-  return stage_algo(s, kFuseAlgos, "FUSE", "FUSE", "the stage is skipped",
+  return stage_algo(s, kFuseAlgos, "FUSE", "FUSE", kStageOff,
                     "CERES LM|DOGLEG or NONE (FUSE is a least-squares stage)");
 }
 
@@ -453,12 +496,14 @@ RefitConfig RefitParser::parse(const tadah::core::Context &c) {
   }
 
   RefitConfig cfg;
+  SeenKeys explore_keys, refine_keys, fuse_keys;
   parse_init(stage_tokens(c, "INIT"), cfg);
-  parse_explore(stage_tokens(c, "EXPLORE"), cfg);
+  parse_explore(stage_tokens(c, "EXPLORE"), cfg, explore_keys);
   parse_ceres_stage(stage_tokens(c, "REFINE"), cfg.refine.opt,
-                    cfg.refine.has_opt, cfg.refine.enabled, kRefineKeys);
+                    cfg.refine.has_opt, cfg.refine.enabled, kRefineKeys,
+                    refine_keys);
   parse_ceres_stage(stage_tokens(c, "FUSE"), cfg.fuse.opt, cfg.fuse.has_opt,
-                    cfg.fuse.enabled, kFuseKeys);
+                    cfg.fuse.enabled, kFuseKeys, fuse_keys);
 
   // Every OPTIMIZER block, and an INNER block, names its ALGO. The keys a
   // stage does not use (SEED, FTOL_ABS on the Ceres stages, THREADS, ...)
@@ -484,6 +529,33 @@ RefitConfig RefitParser::parse(const tadah::core::Context &c) {
   }
   if (cfg.refine.has_opt) (void)refit_refine_algo(cfg.refine.opt);
   if (cfg.fuse.has_opt) (void)refit_fuse_algo(cfg.fuse.opt);
+
+  // A block with ALGO NONE or UNIFORM runs no optimiser: its stop criteria
+  // have no effect, and are rejected -- unless another stage reads them:
+  //  - EXPLORE INNER's MAXEVAL, FTOL_REL and XTOL_REL also set the local
+  //    searches (LN_SBPLX) of the EXPLORE optimiser GN_MLSL_LDS;
+  //  - under REFIT_OBJECTIVE curve the FUSE curve refine runs with REFINE's
+  //    MAXEVAL/MAXITER, FTOL_REL and GTOL (the engine's fuse_one), while
+  //    FUSE runs at all.
+  if (cfg.explore.has_opt) {
+    const std::string outer = refit_explore_outer_algo(cfg.explore.opt);
+    if (outer == "UNIFORM")
+      reject_no_effect_keys("EXPLORE", cfg.explore.opt, explore_keys.outer,
+                            kExploreOff);
+    if (cfg.explore.opt.inner && outer != "MLSL" &&
+        refit_explore_inner_algo(*cfg.explore.opt.inner) == "NONE")
+      reject_no_effect_keys("EXPLORE INNER", *cfg.explore.opt.inner,
+                            explore_keys.inner, kInnerOff);
+  }
+  const bool fuse_runs =
+      cfg.fuse.enabled &&
+      (!cfg.fuse.has_opt || refit_fuse_algo(cfg.fuse.opt) != "NONE");
+  if (cfg.refine.has_opt && refit_refine_algo(cfg.refine.opt) == "NONE" &&
+      !(refit_curve_objective(c) && fuse_runs))
+    reject_no_effect_keys("REFINE", cfg.refine.opt, refine_keys.outer,
+                          kStageOff);
+  if (cfg.fuse.has_opt && refit_fuse_algo(cfg.fuse.opt) == "NONE")
+    reject_no_effect_keys("FUSE", cfg.fuse.opt, fuse_keys.outer, kStageOff);
 
   // EXPLORE cannot be disabled (it builds the ladder) — still a hard error.
   // REFINE/FUSE: ENABLED false is a master kill-switch that WINS over a

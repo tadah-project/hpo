@@ -67,11 +67,17 @@ struct OptimizerCaps {
     bool accepts_inner      = false;  // INNER/ENDINNER sub-optimiser block
     bool accepts_multi_seed = false;  // a single run can consume >1 starting point
 
-    /* Stop-criteria support: which fields of StopCriteria the backend
-     * actually honours. Descriptive: each backend's own validator
-     * (backend_rules.h) decides what it rejects, and TADAH:RANDOM,
-     * TADAH:GRID and DLIB:GFS do not yet reject the criteria they do not
-     * honour (MAXTIME, STOPVAL, the tolerances). */
+    /* Stop criteria: which fields of StopCriteria end the backend's run
+     * when they are met. require_stop() (backend_rules.h) counts these as
+     * the stops of a backend that needs one, a tolerance only above 0 (0
+     * or below switches it off); each backend's own validator decides what
+     * it rejects. A key the backend reads for another purpose is not a
+     * stop: DLIB:GFS reads FTOL_ABS as dlib's solver epsilon (the precision
+     * of its local model fits), so its supports_ftol_abs is false. NLopt:
+     * the global algorithms and LD_MMA/LD_CCSAQ/LD_SLSQP list the
+     * tolerances their stop tests read (nlopt 2.10 sources, checked by the
+     * phase 4c probes); the other NLopt algorithms keep NLopt's generic
+     * set. */
     bool supports_maxeval   = true;
     bool supports_maxtime   = false;
     bool supports_stopval   = false;
@@ -86,14 +92,29 @@ struct OptimizerCaps {
     StepUse     step_use  = StepUse::Rejected;
     const char* step_note = "";
 
-    /* The backend has no stopping rule of its own: without MAXEVAL it runs
-     * until it is interrupted (no convergence test, no finite schedule, and
-     * it reads neither MAXTIME nor STOPVAL). require_maxeval_budget()
-     * (backend_rules.h) refuses such a spec at startup; budget_note says
-     * why, for the message. Every other backend runs without an evaluation
-     * limit when MAXEVAL is left out. */
-    bool        needs_maxeval = false;
-    const char* budget_note   = "";
+    /* The backend has no convergence test and no finite schedule: without
+     * a stop criterion it runs until it is interrupted (each measured by
+     * the phase 4c probes). require_stop() (backend_rules.h) refuses such
+     * a spec at startup unless it sets MAXEVAL or another criterion the
+     * supports_* flags mark; stop_note says why, for the message. Every
+     * other backend ends on its own when no criterion is set: a
+     * convergence test, a finite schedule or limits of its own. */
+    bool        needs_stop = false;
+    const char* stop_note  = "";
+
+    /* How the tolerances end the run when one of them is costly, the last
+     * clause of require_stop()'s message and a line of the ALGO help (""
+     * for none): DIRECT tests XTOL on every rectangle it divides, the
+     * largest included, so an XTOL ends it only once the whole box is
+     * divided that finely. */
+    const char* tolerance_note = "";
+
+    /* NLopt's MLSL and AUGLAG run a local optimiser inside their run
+     * (accepts_inner); with no INNER block NLopt creates this one, handing
+     * it the block's tolerances (nullptr: NLopt requires an INNER block).
+     * inner_run_spec() (phase_specs.h) derives the spec that local search
+     * runs with. */
+    const char* default_inner = nullptr;
 
     /* The backend evaluates outside the OPTIM box: LN_NEWUOA is called with
      * lb=ub=NULL (nlopt optimize.c), CERES' GradientProblemSolver has no box

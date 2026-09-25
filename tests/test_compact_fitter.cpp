@@ -2,13 +2,18 @@
 
 #ifdef TADAH_USE_CERES
 
+#include <tadah/core/context.h>
 #include <tadah/hpo/refit/compact_fitter.h>
+#include <tadah/hpo/refit/refit_parser.h>
 #include <tadah/models/descriptors/d_basis_functions.h>
 
 #include <cmath>
 #include <limits>
 #include <random>
+#include <sstream>
 #include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
 using namespace tadah::hpo::refit;
@@ -34,34 +39,185 @@ void sample(const BlipFit &f, double lo, double hi, int N,
 }
 }  // namespace
 
-TEST_CASE("compact fitter: the LBFGS REFINE budget is 50 per MAXEVAL "
-          "iteration, computed without overflow", "[refit][compact][budget]")
+/* (Before <ceres/ceres.h>, whose miniglog CHECK would replace Catch's.)
+ * tadah refit's MAXEVAL counts objective evaluations exactly, for every
+ * optimiser but Ceres (iterations), as NLopt counts them. dlib's GLOBAL seed
+ * used to take max(500, MAXEVAL/20) calls, and dlib's L-BFGS (EXPLORE INNER
+ * and REFINE) capped its iterations -- in REFINE 50 x MAXEVAL of them, as
+ * NLopt's REFINE L-BFGS took 50 x MAXEVAL evaluations. */
+namespace {
+
+/* A perturbed copy of the truth: a refine start that is not converged. */
+BlipFit perturbed_truth() {
+  BlipFit f = make_truth();
+  std::mt19937 rng(11);
+  std::normal_distribution<double> g(0.0, 1.0);
+  for (int k = 0; k < f.n(); ++k) {
+    f.mu[k] += 0.05 * g(rng);
+    f.eta[k] *= std::exp(0.05 * g(rng));
+  }
+  return f;
+}
+
+/* The log lines of a ladder run with `cfg`, and its objective evaluations:
+ * the seed at n_min and, with n_max = n_min + 1, one rung of one candidate
+ * (no jitter), whose metric never reaches the target. */
+struct LadderRun {
+  std::vector<std::string> log;
+  long long evaluations = 0;
+};
+
+LadderRun run_ladder(CompactConfig cfg) {
+  std::vector<double> xs, ys;
+  sample(make_truth(), 1.0, 5.5, 160, xs, ys);
+  LadderRun out;
+  cfg.log_fn = [&out](const std::string &line) { out.log.push_back(line); };
+  cfg.jitters = 0;
+  cfg.target = 0.0;
+  CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
+  std::vector<LadderRow> trace;
+  (void)fit.fit([](const BlipFit &f) { return f.curve_rmse; }, trace);
+  out.evaluations = fit.objective_evaluations();
+  return out;
+}
+
+bool logged(const LadderRun &r, const std::string &what) {
+  for (const auto &line : r.log)
+    if (line.find(what) != std::string::npos) return true;
+  return false;
+}
+
+}  // namespace
+
+TEST_CASE("compact fitter: REFINE MAXEVAL counts the L-BFGS objective "
+          "evaluations", "[refit][compact][budget]")
 {
-  /* (Before <ceres/ceres.h>, whose miniglog CHECK would replace Catch's.)
-   * The REFINE L-BFGS budget is 50 per REFINE MAXEVAL/MAXITER iteration:
-   * NLopt's evaluation budget for NLOPT_LBFGS, dlib's L-BFGS iteration cap
-   * for DLIB_LBFGS. The product was taken in int: REFINE MAXEVAL 42949673
-   * (and anything up to the parser's 2147483647) overflowed, which is
-   * undefined behaviour (in practice a negative budget, which NLopt reads
-   * as no limit). It is taken in 64 bits and capped at INT_MAX, the most
-   * NLopt counts. */
-  constexpr int kIntMax = std::numeric_limits<int>::max();
-  CHECK(lbfgs_refine_budget(1) == 50);
-  CHECK(lbfgs_refine_budget(1000) == 50000);
-  CHECK(lbfgs_refine_budget(42949672) == 2147483600);
-  CHECK(lbfgs_refine_budget(42949673) == kIntMax);
-  CHECK(lbfgs_refine_budget(1000000000) == kIntMax);
-  CHECK(lbfgs_refine_budget(kIntMax) == kIntMax);
-  /* A cap below 1, which RefitParser does not accept, has no budget: a 0
-   * budget is no limit to NLopt and breaks dlib's precondition (its stop
-   * strategy asserts max_iter > 0), so it is an error, not a 0. */
-  CHECK_THROWS_WITH(lbfgs_refine_budget(0),
-                    "lbfgs_refine_budget: the REFINE iteration cap "
-                    "(CompactConfig::ceres_max_iter) must be at least 1, got 0");
-  CHECK_THROWS_WITH(lbfgs_refine_budget(-5),
-                    "lbfgs_refine_budget: the REFINE iteration cap "
-                    "(CompactConfig::ceres_max_iter) must be at least 1, got -5");
-  CHECK_THROWS_AS(lbfgs_refine_budget(0), std::invalid_argument);
+  std::vector<double> xs, ys;
+  sample(make_truth(), 1.0, 5.5, 400, xs, ys);
+  for (const char *algo : {"NLOPT_LBFGS", "DLIB_LBFGS"}) {
+    for (const int maxeval : {1, 7, 40}) {
+      INFO(algo << " with MAXEVAL " << maxeval);
+      CompactConfig cfg;
+      cfg.refine_algo = algo;
+      cfg.lbfgs_refine_maxeval = maxeval;
+      cfg.ceres_ftol = 0.0;  // no convergence test: the budget ends it
+      CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
+      BlipFit f = perturbed_truth();
+      fit.solve_coeffs(f);
+      const double before = f.curve_rmse;
+      REQUIRE(fit.objective_evaluations() == 0);
+      const double after = fit.refine_with_cfg(f);
+      CHECK(fit.objective_evaluations() == maxeval);
+      CHECK(after <= before);
+    }
+  }
+}
+
+TEST_CASE("compact fitter: EXPLORE MAXEVAL counts the seed's objective "
+          "evaluations for every seed algorithm", "[refit][compact][budget]")
+{
+  /* The seed alone: n_max = n_min, no local search or refine. */
+  for (const char *seed : {"DLIB_GLOBAL", "MLSL", "DIRECT", "CRS2"}) {
+    INFO("seed " << seed);
+    CompactConfig cfg;
+    cfg.n_max = cfg.n_min;
+    cfg.seed_algo = seed;
+    cfg.mlsl_maxeval = 40;
+    cfg.dlib_global_maxeval = 40;
+    cfg.explore_algo = "NONE";
+    cfg.refine_algo = "NONE";
+    const LadderRun r = run_ladder(cfg);
+    CHECK(r.evaluations == 40);
+    CHECK(logged(r, "(40ev)"));
+  }
+  /* dlib's line: exactly MAXEVAL, even below its old 500-call floor. */
+  CompactConfig cfg;
+  cfg.n_max = cfg.n_min;
+  cfg.seed_algo = "DLIB_GLOBAL";
+  cfg.dlib_global_maxeval = 25;
+  cfg.explore_algo = "NONE";
+  cfg.refine_algo = "NONE";
+  const LadderRun r = run_ladder(cfg);
+  CHECK(r.evaluations == 25);
+  CHECK(logged(r, "term=DLIB_GLOBAL:MAXEVAL_REACHED(25ev)"));
+}
+
+TEST_CASE("compact fitter: EXPLORE INNER MAXEVAL counts the local search's "
+          "objective evaluations", "[refit][compact][budget]")
+{
+  /* No seed search (UNIFORM) and no refine: one rung of one candidate,
+   * whose local search stops at its budget (no tolerance ends it). */
+  for (const char *algo : {"DLIB_LBFGS", "NLOPT_LBFGS", "SBPLX"}) {
+    INFO("inner " << algo);
+    CompactConfig cfg;
+    cfg.n_max = cfg.n_min + 1;
+    cfg.seed_algo = "UNIFORM";
+    cfg.explore_algo = algo;
+    cfg.sbplx_maxeval = 9;
+    cfg.sbplx_ftol = 0.0;
+    cfg.sbplx_xtol = 0.0;
+    cfg.refine_algo = "NONE";
+    const LadderRun r = run_ladder(cfg);
+    CHECK(r.evaluations == 9);
+    CHECK(logged(r, "(9ev)"));
+    if (std::string(algo) == "DLIB_LBFGS")
+      CHECK(logged(r, "explore=DLIB_LBFGS:MAXEVAL_REACHED(9ev)"));
+  }
+}
+
+TEST_CASE("compact fitter: each stage's MAXEVAL sets the budget of the "
+          "optimiser that runs it", "[refit][compact][budget]")
+{
+  const auto parsed = [](const std::vector<std::pair<std::string,
+                                                     std::string>> &blocks) {
+    tadah::core::Context c;
+    for (const auto &[key, body] : blocks) {
+      std::istringstream iss(body);
+      for (std::string t; iss >> t;) c.add(key, t);
+    }
+    return RefitParser::parse(c);
+  };
+  CompactConfig cfg;
+  apply_stage_optimizers(
+      parsed({{"EXPLORE", "OPTIMIZER LIB DLIB ALGO GLOBAL MAXEVAL 40 INNER "
+                          "LIB DLIB ALGO LBFGS MAXEVAL 9 ENDINNER "
+                          "ENDOPTIMIZER"},
+              {"REFINE", "OPTIMIZER LIB DLIB ALGO LBFGS MAXITER 7 "
+                         "ENDOPTIMIZER"},
+              {"FUSE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 11 "
+                       "ENDOPTIMIZER"}}),
+      cfg);
+  CHECK(cfg.seed_algo == "DLIB_GLOBAL");
+  CHECK(cfg.dlib_global_maxeval == 40);
+  CHECK(cfg.mlsl_maxeval == 40);
+  CHECK(cfg.explore_algo == "DLIB_LBFGS");
+  CHECK(cfg.sbplx_maxeval == 9);
+  CHECK(cfg.refine_algo == "DLIB_LBFGS");
+  CHECK(cfg.lbfgs_refine_maxeval == 7);
+  CHECK(cfg.ceres_max_iter == 7);  // what the curve-mode FUSE refine reads
+  CHECK(cfg.joint_algo == "CERES_LM");
+  CHECK(cfg.joint_max_iter == 11);
+
+  /* Without MAXEVAL each keeps its default. */
+  CompactConfig dflt;
+  apply_stage_optimizers(
+      parsed({{"EXPLORE", "OPTIMIZER LIB DLIB ALGO GLOBAL ENDOPTIMIZER"},
+              {"REFINE", "OPTIMIZER LIB NLOPT ALGO LD_LBFGS ENDOPTIMIZER"}}),
+      dflt);
+  CHECK(dflt.dlib_global_maxeval == 3000);
+  CHECK(dflt.mlsl_maxeval == 60000);
+  CHECK(dflt.lbfgs_refine_maxeval == 50000);
+  CHECK(dflt.ceres_max_iter == 1000);
+
+  /* ENABLED false switches a stage off whatever its optimiser. */
+  CompactConfig off;
+  apply_stage_optimizers(
+      parsed({{"REFINE", "ENABLED false OPTIMIZER LIB CERES ALGO LM "
+                         "ENDOPTIMIZER"},
+              {"FUSE", "ENABLED false"}}),
+      off);
+  CHECK(off.refine_algo == "NONE");
+  CHECK(off.joint_algo == "NONE");
 }
 
 #include <ceres/ceres.h>

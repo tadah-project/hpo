@@ -60,7 +60,12 @@ void require_inner_backend(const OptimizerSpec& parent,
 bool runs_from_each_start(const OptimizerCaps& caps);
 
 /* STRATEGY TYPE MULTISTART: `spec` names an optimiser, and one that
- * runs_from_each_start() accepts, for any N_STARTS. */
+ * runs_from_each_start() accepts, for any N_STARTS. A multi-seed backend
+ * (OptimizerCaps::accepts_multi_seed: DLIB:GFS) runs every start in one
+ * optimiser (plan_multistart(), phase_specs.h), so BUDGET_PER_START, each
+ * start's budget, has no effect there and is rejected: "BUDGET_PER_START
+ * has no effect with DLIB:GFS, which runs every start in one optimiser;
+ * use MAXEVAL". */
 void require_multistart_backend(const OptimizerSpec& spec);
 
 /* STRATEGY TYPE PRESTAGE: an EXPLORE block that names an optimiser. */

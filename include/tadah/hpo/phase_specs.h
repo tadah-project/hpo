@@ -54,6 +54,18 @@ OptimizerSpec multistart_start_spec(const OptimizerSpec& spec,
 OptimizerSpec prestage_refinement_spec(
     const OptimizerSpec& spec, std::vector<std::vector<double>> candidates);
 
+/* The local search NLopt's MLSL or AUGLAG (OptimizerCaps::accepts_inner)
+ * runs inside a run of `parent`, as NLopt runs it: the INNER block, or
+ * without one NLopt's default local optimiser (OptimizerCaps::
+ * default_inner) with the tolerances of `parent`; its MAXEVAL and MAXTIME
+ * the tighter of its own and those of `parent` (NLopt hands each local run
+ * what is left of the enclosing budget, nlopt_optimize_limited), and its
+ * STOPVAL that of `parent`, if any (mlsl.c and auglag.c replace the local
+ * optimiser's own). nullopt when `parent` runs no local search: an
+ * algorithm without one, or one that needs an INNER block and has none
+ * (NLopt refuses the run). */
+std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent);
+
 /* One phase of a run: its name, for messages, and the spec it runs. */
 struct PhaseSpec {
     std::string   name;
@@ -75,8 +87,8 @@ struct PhaseSpec {
  *               the centre of the box): what a backend checks is how many
  *               start points there are, not where they lie.
  * followed by "the INNER block of <phase>" for each phase with an INNER
- * block. RESTART changes no phase's settings, only its start points and
- * seeds. A PRESTAGE without an EXPLORE block has only its refinement here
+ * block, as inner_run_spec() derives the search it runs. RESTART changes
+ * no phase's settings, only its start points and seeds. A PRESTAGE without an EXPLORE block has only its refinement here
  * (validate_run_policy() rejects it). */
 std::vector<PhaseSpec> strategy_phase_specs(const OptimizerSpec& spec);
 

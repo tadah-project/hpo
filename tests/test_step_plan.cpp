@@ -165,7 +165,7 @@ TEST_CASE("NLopt adapter: the plan's vector reaches nlopt; default is read back"
         sp.step = 0.1;
         const auto start = sp.in(sp.optim_init.front());
         const auto plan = make_step_plan(sp, start, optimizer_caps(sp));
-        nlopt::opt opt = make_nlopt(sp, 2, &plan);
+        nlopt::opt opt = make_nlopt(sp, 2, RestartStop::Off, &plan);
         std::vector<double> dx(2, 0.0);
         opt.get_initial_step(start, dx);
         CHECK(dx[0] == Approx(0.2));
@@ -173,7 +173,7 @@ TEST_CASE("NLopt adapter: the plan's vector reaches nlopt; default is read back"
     }
     SECTION("STEP unset: NLopt heuristic, x-dependent, not persisted") {
         auto sp = spec("LN_SBPLX", false);
-        nlopt::opt opt = make_nlopt(sp, 2, nullptr);
+        nlopt::opt opt = make_nlopt(sp, 2, RestartStop::Off, nullptr);
         opt.set_lower_bounds(sp.low);
         opt.set_upper_bounds(sp.high);
         std::vector<double> mid = {1.0, 0.004}, near = {1.9, 0.004};
@@ -187,9 +187,10 @@ TEST_CASE("NLopt adapter: the plan's vector reaches nlopt; default is read back"
     }
     SECTION("INNER STEP builds its own plan when the outer has none") {
         auto sp = spec("G_MLSL_LDS", false);
+        sp.stop.maxeval = 100;   // MLSL needs a stop (require_stop)
         sp.inner = std::make_unique<OptimizerSpec>(spec("LN_BOBYQA", false));
         sp.inner->step = 0.1;
-        REQUIRE_NOTHROW(make_nlopt(sp, 2, nullptr));
+        REQUIRE_NOTHROW(make_nlopt(sp, 2, RestartStop::Off, nullptr));
     }
 }
 
@@ -203,19 +204,20 @@ TEST_CASE("NLopt adapter: a MAXEVAL above the int NLopt counts in is refused, "
      * the run or its INNER, is refused here. */
     auto sp = spec("LN_SBPLX", false);
     sp.stop.maxeval = 2147483647u;
-    CHECK(make_nlopt(sp, 2, nullptr).get_maxeval() == 2147483647);
+    CHECK(make_nlopt(sp, 2, RestartStop::Off, nullptr).get_maxeval() ==
+          2147483647);
     for (const std::uint64_t n : {std::uint64_t{2147483648u},
                                   std::uint64_t{4294967299u}}) {
         INFO("MAXEVAL " << n);
         sp.stop.maxeval = n;
-        CHECK_THROWS_WITH(make_nlopt(sp, 2, nullptr),
+        CHECK_THROWS_WITH(make_nlopt(sp, 2, RestartStop::Off, nullptr),
                           "NLopt spec with MAXEVAL " + std::to_string(n) +
                           ": NLopt counts evaluations in an int (at most "
                           "2147483647)");
         auto outer = spec("G_MLSL_LDS", false);
         outer.inner = std::make_unique<OptimizerSpec>(spec("LN_SBPLX", false));
         outer.inner->stop.maxeval = n;
-        CHECK_THROWS_WITH(make_nlopt(outer, 2, nullptr),
+        CHECK_THROWS_WITH(make_nlopt(outer, 2, RestartStop::Off, nullptr),
                           "NLopt spec with MAXEVAL " + std::to_string(n) +
                           ": NLopt counts evaluations in an int (at most "
                           "2147483647)");
@@ -251,7 +253,7 @@ TEST_CASE("StepPlan: review fixes -- BOBYQA-only near-bound rule, 0.5 cap, cover
         CHECK(plan.dx[0] > 0.499 * 2.0);
         CHECK(plan.note[0].find("capped") != std::string::npos);
         /* and NLopt accepts the setup: optimize() on a trivial objective */
-        nlopt::opt opt = make_nlopt(sp, 2, &plan);
+        nlopt::opt opt = make_nlopt(sp, 2, RestartStop::Off, &plan);
         opt.set_lower_bounds(sp.low); opt.set_upper_bounds(sp.high);
         opt.set_min_objective([](const std::vector<double>& x, std::vector<double>&, void*) {
             return (x[0] - 1.0) * (x[0] - 1.0) + x[1] * x[1]; }, nullptr);

@@ -29,9 +29,22 @@ public:
    *  and on invalid tokens. Missing blocks => default-constructed stages. A
    *  stage's OPTIMIZER block (and EXPLORE's INNER block) accepts only the keys
    *  that stage reads -- any other optimiser attribute is an error naming the
-   *  keys it does read -- and must set ALGO. */
+   *  keys it does read -- and must set ALGO. A block with ALGO NONE (or
+   *  UNIFORM, EXPLORE's) runs no optimiser, so a key there that no stage
+   *  reads (MAXEVAL, MAXITER, FTOL_REL, XTOL_REL, GTOL) is an error too:
+   *  "REFINE: MAXITER has no effect with ALGO NONE (the stage is skipped);
+   *  remove MAXITER". Two stay accepted because another stage reads them:
+   *  EXPLORE INNER's under the EXPLORE optimiser GN_MLSL_LDS (its local
+   *  searches), and REFINE's under REFIT_OBJECTIVE curve while FUSE runs
+   *  (the FUSE curve refine). */
   static RefitConfig parse(const tadah::core::Context &c);
 };
+
+/** REFIT_OBJECTIVE, in any case: true for 'curve', false for 'energy' (the
+ *  default without the key). Throws std::runtime_error for anything else.
+ *  The engine sets CompactConfig::objective from it, and RefitParser::parse()
+ *  reads it for the REFINE keys that FUSE reads in curve mode. */
+bool refit_curve_objective(const tadah::core::Context &c);
 
 /** Map a parsed OPTIMIZER spec to the compact fitter's flat algorithm string
  *  for the given stage, validating the (LIB, ALGO) pair against that stage's
@@ -45,8 +58,8 @@ public:
  *  effect). The ALGO names are the refit's own, not those of `tadah hpo`:
  *  its dlib global search is GLOBAL (`tadah hpo`'s DLIB GFS), and LBFGS is
  *  dlib's L-BFGS (a CERES algorithm in `tadah hpo`; NLopt's is LD_LBFGS).
- *  UNIFORM (EXPLORE: refit's own uniform start, no global search) belongs
- *  to no library: LIB is neither required nor checked. */
+ *  UNIFORM (EXPLORE: refit's own uniform start, no global search) runs no
+ *  optimiser either: a LIB with it is an error, as with NONE. */
 std::string refit_explore_outer_algo(const OptimizerSpec &s);  ///< -> seed_algo
 std::string refit_explore_inner_algo(const OptimizerSpec &s);  ///< -> explore_algo
 std::string refit_refine_algo(const OptimizerSpec &s);         ///< -> refine_algo

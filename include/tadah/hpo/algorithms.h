@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -18,14 +19,79 @@
 
 namespace tadah::hpo {
 
+/* ----- stops of the sampling searches ----------------------------- *
+ *
+ * TADAH:RANDOM and TADAH:GRID (and DLIB:GFS, dlib_adapter.h) end on
+ * MAXEVAL, on MAXTIME -- no evaluation starts once MAXTIME seconds have
+ * passed since the search began -- or at the first evaluation whose loss is
+ * at or below STOPVAL (a feasible loss: FAILSCORE never reaches it,
+ * anneal::stopval_reached). RANDOM runs until one of them (or the RESTART
+ * stagnation stop) ends it (require_stop), GRID at the latest after its
+ * whole grid. The journal says which stop ended the search, and a MAXTIME
+ * or STOPVAL stop is the run's status (HPOLog::set_status); a search that
+ * spends its MAXEVAL or its grid ends COMPLETED, even when MAXTIME has
+ * passed by then (no evaluation was left to start), as DLIB:GFS reports
+ * it. */
+namespace sampling_detail {
+
+enum class Stop { None, StopVal, MaxTime };
+
+class StopWatch {
+public:
+    explicit StopWatch(const OptimizerSpec& sp)
+        : sp_(sp), t0_(std::chrono::steady_clock::now()) {}
+
+    /* The stop `loss`, the loss of the evaluation just made, triggers:
+     * STOPVAL first, then MAXTIME -- only when `more`, another evaluation
+     * would start (MAXEVAL or the grid not yet spent): MAXTIME keeps
+     * evaluations from starting, and after the last one none would. */
+    Stop after(double loss, bool more) const
+    {
+        if (anneal::stopval_reached(loss, sp_.stop.stopval, sp_.failscore))
+            return Stop::StopVal;
+        if (more && sp_.stop.maxtime &&
+            std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                          t0_).count() >= *sp_.stop.maxtime)
+            return Stop::MaxTime;
+        return Stop::None;
+    }
+
+private:
+    const OptimizerSpec& sp_;
+    std::chrono::steady_clock::time_point t0_;
+};
+
+inline const char* stop_reason(Stop s)
+{
+    return s == Stop::StopVal ? "STOPVAL reached" : "MAXTIME exceeded";
+}
+
+/* The journal line of a search that `stop` ended after `detail`
+ * ("7 evaluation(s)"), and the run's status. */
+inline void report_stop(const std::string& backend, Stop stop,
+                        const std::string& detail)
+{
+    const std::string msg =
+        backend + " stopped: " + stop_reason(stop) + " after " + detail;
+    std::cout << "[HPO] " << msg << "\n";
+    HPOLog::instance().info(msg);
+    HPOLog::instance().set_status(backend + ": " + stop_reason(stop));
+}
+
+}  // namespace sampling_detail
+
 /* ----- RANDOM ---------------------------------------------------- */
 template<typename Vec, typename Runner>
   void run_random(const OptimizerSpec& sp,
       HPO_Host<Vec,Runner>& host)
   {
-    /* RANDOM stops only when MAXEVAL is spent: without it the run would
-     * never end (the startup check, again for a spec built at run time). */
-    validate_random_spec(sp);
+    /* RANDOM stops only on MAXEVAL, MAXTIME or STOPVAL, or under an armed
+     * RESTART on its stagnation stop: without one the run would never end,
+     * and it takes no PARAM (the startup check, again for a spec built at
+     * run time). */
+    validate_random_spec(sp, restart_stop_armed<HPO_Host<Vec,Runner>>());
+    using sampling_detail::Stop;
+    const sampling_detail::StopWatch watch(sp);
     uint64_t seed = sp.seed.value_or(std::random_device{}());  // default seed
     {
       std::ostringstream oss;
@@ -36,25 +102,41 @@ template<typename Vec, typename Runner>
     std::mt19937_64 rng(seed);
     const auto& lo = sp.low, &hi = sp.high;
 
-    uint64_t max = *sp.stop.maxeval;
+    const std::optional<uint64_t> budget = sp.stop.maxeval;
+    uint64_t done = 0;
+    Stop stop = Stop::None;
+    const auto more = [&] { return !budget || done < *budget; };
 
     /* evaluate the user's config point first so the prior is always part
      * of the explored set. */
-    if (!sp.optim_init.empty() && max > 0)
+    if (!sp.optim_init.empty())
     {
       const auto v = sp.in(sp.optim_init.front());
       Vec x_init(v.size());
       for (size_t i = 0; i < v.size(); ++i) x_init(i) = v[i];
-      host(sp.out(x_init));
-      --max;
+      const double loss = host(sp.out(x_init));
+      ++done;
+      stop = watch.after(loss, more());
     }
 
-    for(uint64_t c=0;c<max;++c)
+    while (stop == Stop::None && more())
     {
       Vec x(lo.size());
       for(size_t i=0;i<lo.size();++i)
         x(i)=std::uniform_real_distribution<>(lo[i],hi[i])(rng);
-      host( sp.out(x) );           // evaluate in original scale
+      const double loss = host( sp.out(x) );   // evaluate in original scale
+      ++done;
+      stop = watch.after(loss, more());
+    }
+
+    const std::string detail = std::to_string(done) + " evaluation(s)";
+    if (stop != Stop::None) {
+      sampling_detail::report_stop("TADAH:RANDOM", stop, detail);
+    } else {
+      const std::string msg =
+          "TADAH:RANDOM stopped: MAXEVAL reached after " + detail;
+      std::cout << "[HPO] " << msg << "\n";
+      HPOLog::instance().info(msg);
     }
   }
 
@@ -63,7 +145,9 @@ template<typename Vec, typename Runner>
  * Visits the INIT point, then every node of a GRID_POINTS^dim grid, the
  * first dimension varying fastest. MAXEVAL stops the sweep after that
  * many points in this order (the journal says so); without MAXEVAL, or
- * with one at least the number of points, the whole grid is evaluated. */
+ * with one at least the number of points, the whole grid is evaluated.
+ * MAXTIME and STOPVAL end it earlier, still in grid order
+ * (sampling_detail). */
 namespace grid_detail {
 /* steps^dim, or UINT64_MAX when it does not fit. */
 inline std::uint64_t node_count(unsigned steps, std::size_t dim)
@@ -85,6 +169,8 @@ template<typename Vec, typename Runner>
     /* Grid resolution: PARAM GRID_POINTS <n> (integer >= 2, default 20);
      * STEP and any other PARAM are errors (validate_grid_spec). */
     const unsigned steps = validate_grid_spec(sp);
+    using sampling_detail::Stop;
+    const sampling_detail::StopWatch watch(sp);
 
     const size_t dim = sp.low.size();
     std::vector<unsigned> idx(dim,0);
@@ -119,6 +205,7 @@ template<typename Vec, typename Runner>
     }
 
     std::uint64_t done = 0;
+    Stop stop = Stop::None;
     /* evaluate the user's config point first so the prior is always part
      * of the explored set (in addition to the regular grid sweep). */
     if (with_init && done < budget)
@@ -126,24 +213,43 @@ template<typename Vec, typename Runner>
       const auto v = sp.in(sp.optim_init.front());
       Vec x_init(v.size());
       for (size_t i = 0; i < v.size(); ++i) x_init(i) = v[i];
-      host(sp.out(x_init));
+      const double loss = host(sp.out(x_init));
       ++done;
+      stop = watch.after(loss, done < budget);
     }
 
     Vec x(dim);
-    while (done < budget)
+    while (stop == Stop::None && done < budget)
     {
       for(size_t d=0;d<dim;++d)
       {
         double t= static_cast<double>(idx[d])/(steps-1);
         x(d) = sp.low[d]*(1-t) + sp.high[d]*t;
       }
-      host( sp.out(x) );
+      const double loss = host( sp.out(x) );
       ++done;
+      stop = watch.after(loss, done < budget);
 
       /* increment mixed-radix counter */
       for(size_t d=0;d<dim;++d)
         if(++idx[d] < steps) break; else idx[d]=0;
+    }
+
+    std::ostringstream points;
+    points << done << " of ";
+    if (nodes == kMax) points << "more than " << kMax;
+    else               points << total;
+    points << " grid points";
+    if (stop != Stop::None) {
+      sampling_detail::report_stop("TADAH:GRID", stop, points.str());
+    } else {
+      const std::string msg =
+          done < total ? "TADAH:GRID stopped: MAXEVAL reached after " +
+                             points.str()
+                       : "TADAH:GRID finished: all " + std::to_string(total) +
+                             " grid points evaluated";
+      std::cout << "[HPO] " << msg << "\n";
+      HPOLog::instance().info(msg);
     }
   }
 

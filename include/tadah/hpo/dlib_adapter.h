@@ -2,6 +2,7 @@
 #include <dlib/global_optimization.h>
 #include <tadah/hpo/log_index.h>
 #include <dlib/optimization.h>
+#include <tadah/hpo/anneal_core.h>
 #include <tadah/hpo/backend_rules.h>
 #include <tadah/hpo/gradient_provider.h>
 #include <tadah/hpo/optimizer_spec.h>
@@ -11,6 +12,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -122,10 +124,13 @@ template<class Vec,class Runner>
   {
     using namespace dlib;
 
-    /* find_min_global stops only when its call budget is spent (the time
-     * limit is FOREVER): MAXEVAL is required (the startup check, again for
-     * a spec built at run time). */
-    validate_dlib_gfs_spec(sp);
+    /* find_min_global ends when its call budget (MAXEVAL) is spent, its
+     * run time (MAXTIME) is up or its stop condition (STOPVAL) holds, and
+     * on nothing else: one of them, or an armed RESTART's stagnation stop,
+     * is required, and the tolerances it cannot apply and any PARAM are
+     * refused (the startup check, again for a spec built at run time). */
+    validate_dlib_gfs_spec(sp, restart_stop_armed<HPO_Host<Vec,Runner>>());
+    const auto t0 = std::chrono::steady_clock::now();
 
     /* find_min_global (MaxLIPO+TR) is a deterministic algorithm; a
      * SEED on this spec is never consulted. DLIB:BFGS rejects SEED
@@ -172,7 +177,29 @@ template<class Vec,class Runner>
     dlib::thread_pool tp(nthreads);
 
     double solver_eps = sp.stop.ftol_abs.value_or(1e-3);
-    uint64_t maxeval = *sp.stop.maxeval;
+    /* Without MAXEVAL, dlib's own default: no limit on the calls. */
+    std::size_t maxeval = sp.stop.maxeval
+        ? static_cast<std::size_t>(*sp.stop.maxeval)
+        : std::numeric_limits<std::size_t>::max();
+
+    /* STOPVAL: the first loss at or below it ends the search
+     * (anneal::stopval_reached: a feasible loss). MAXTIME: no evaluation
+     * starts once it has passed since the search began. Evaluations
+     * already running on the pool when a stop comes finish. */
+    std::atomic<bool> stopval_hit{false};
+    std::atomic<std::size_t> evaluations{0};
+    const auto elapsed = [&t0]() {
+        return std::chrono::duration<double>(
+                   std::chrono::steady_clock::now() - t0).count();
+    };
+    const auto time_up = [&]() {
+        return sp.stop.maxtime && elapsed() >= *sp.stop.maxtime;
+    };
+    const auto note_loss = [&](double y) {
+        evaluations.fetch_add(1, std::memory_order_relaxed);
+        if (anneal::stopval_reached(y, sp.stop.stopval, sp.failscore))
+            stopval_hit.store(true, std::memory_order_relaxed);
+    };
 
     /* ------- main call ------------------------------------------ */
     auto feval = [&](const matrix<double,0,1>& x)->double
@@ -197,18 +224,24 @@ template<class Vec,class Runner>
     ExceptionStash stopped;
     const double not_evaluated =
         sp.failscore.value_or(std::numeric_limits<double>::max());
+    /* A STOPVAL stop is taken the same way: the evaluations queued after
+     * the one that reached it return the placeholder without running. */
     auto pool_feval = [&](const matrix<double,0,1>& x)->double
     {
-        if (stopped.has()) return not_evaluated;
+        if (stopped.has() || stopval_hit.load(std::memory_order_relaxed))
+            return not_evaluated;
         try {
-            return feval(x);
+            const double y = feval(x);
+            note_loss(y);
+            return y;
         } catch (...) {
             stopped.offer(std::current_exception());
             return not_evaluated;
         }
     };
-    const stop_condition stop_on_error =
-        [&stopped](double) { return stopped.has(); };
+    const stop_condition stop_on_error_or_stopval = [&](double) {
+        return stopped.has() || stopval_hit.load(std::memory_order_relaxed);
+    };
 
     /* ------- seed dlib with every point from sp.optim_init.
      * find_min_global() treats `initial_function_evals` as already-known
@@ -232,23 +265,53 @@ template<class Vec,class Runner>
         x_seed.set_size(static_cast<long>(start_vec.size()));
         for (long i = 0; i < x_seed.size(); ++i)
           x_seed(i) = start_vec[static_cast<std::size_t>(i)];
-        /* Serial, before any pool task: an exception unwinds directly. */
+        /* Serial, before any pool task: an exception unwinds directly. The
+         * seeds are evaluations of the search: MAXEVAL counts them, and
+         * STOPVAL and MAXTIME end the search among them too. */
         const double y_seed = feval(x_seed);
+        note_loss(y_seed);
         init.emplace_back(x_seed, y_seed);
-        if (maxeval > 0) --maxeval;
-        if (maxeval == 0) break;
+        if (maxeval != std::numeric_limits<std::size_t>::max()) --maxeval;
+        if (maxeval == 0 || stopval_hit.load() || time_up()) break;
       }
     }
 
-    find_min_global(tp, pool_feval,
-        lo, hi, sp.is_int,
-        max_function_calls(maxeval),
-        FOREVER,
-        solver_eps,
-        init,
-        stop_on_error
-        );
+    /* dlib's run time: what MAXTIME leaves after the seeds (FOREVER
+     * without MAXTIME). */
+    std::chrono::nanoseconds runtime = FOREVER;
+    if (sp.stop.maxtime) {
+      const double left = std::max(0.0, *sp.stop.maxtime - elapsed());
+      runtime = std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::duration<double>(left));
+    }
+    if (maxeval > 0 && !stopval_hit.load() && !time_up())
+      find_min_global(tp, pool_feval,
+          lo, hi, sp.is_int,
+          max_function_calls(maxeval),
+          runtime,
+          solver_eps,
+          init,
+          stop_on_error_or_stopval
+          );
     stopped.rethrow_if_any();
+
+    /* Which stop ended the search: the journal line, and the run's status
+     * for a STOPVAL or MAXTIME stop (a spent MAXEVAL ends it COMPLETED). */
+    const std::size_t n_evals = evaluations.load();
+    const bool budget_spent = sp.stop.maxeval && n_evals >= *sp.stop.maxeval;
+    const std::string done = std::to_string(n_evals) + " evaluation(s)";
+    std::string msg;
+    if (stopval_hit.load()) {
+      msg = "DLIB:GFS stopped: STOPVAL reached after " + done;
+      HPOLog::instance().set_status("DLIB:GFS: STOPVAL reached");
+    } else if (!budget_spent && time_up()) {
+      msg = "DLIB:GFS stopped: MAXTIME exceeded after " + done;
+      HPOLog::instance().set_status("DLIB:GFS: MAXTIME exceeded");
+    } else {
+      msg = "DLIB:GFS stopped: MAXEVAL reached after " + done;
+    }
+    std::cout << "[HPO] " << msg << "\n";
+    HPOLog::instance().info(msg);
   }
 
 template<class Vec,class Runner>

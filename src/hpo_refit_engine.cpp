@@ -63,45 +63,10 @@ bool bget(const Context &c, const std::string &k, bool def) {
 // there into a RefitConfig, which compact_fit() flattens into CompactConfig
 // (apply_stage_optimizers) and resolves into per-channel INIT seeds.
 
-// Flatten the parsed EXPLORE/REFINE/FUSE OptimizerSpecs onto CompactConfig's
-// scalar fields. EXPLORE outer = the global seed at rung 0 (absorbs the old
-// GLOBAL stage); EXPLORE INNER = the per-rung local search. RefitParser keeps
-// MAXEVAL/MAXITER within an int (1 to INT_MAX), so the casts below are exact.
-void apply_stage_optimizers(const RefitConfig &rc, CompactConfig &lcfg) {
-  if (rc.explore.has_opt) {
-    const OptimizerSpec &o = rc.explore.opt;
-    lcfg.seed_algo = refit_explore_outer_algo(o);
-    if (o.stop.maxeval) lcfg.mlsl_maxeval = static_cast<int>(*o.stop.maxeval);
-    if (o.inner) {
-      const OptimizerSpec &in = *o.inner;
-      lcfg.explore_algo = refit_explore_inner_algo(in);
-      if (in.stop.maxeval) lcfg.sbplx_maxeval = static_cast<int>(*in.stop.maxeval);
-      if (in.stop.ftol_rel) lcfg.sbplx_ftol = *in.stop.ftol_rel;
-      if (in.stop.xtol_rel) lcfg.sbplx_xtol = *in.stop.xtol_rel;
-    }
-  }
-  // ceres_ftol / joint_ftol feed Ceres' function_tolerance, which is RELATIVE
-  // ((new_cost - old_cost) < ftol * old_cost) — Ceres has no absolute function
-  // tolerance, so FTOL_REL is the only accepted key (FTOL / FTOL_ABS are
-  // rejected by RefitParser).
-  if (rc.refine.has_opt) {
-    const OptimizerSpec &o = rc.refine.opt;
-    lcfg.refine_algo = refit_refine_algo(o);
-    if (o.stop.maxeval) lcfg.ceres_max_iter = static_cast<int>(*o.stop.maxeval);
-    if (o.stop.ftol_rel) lcfg.ceres_ftol = *o.stop.ftol_rel;
-    auto it = o.param.find("GTOL");
-    if (it != o.param.end()) lcfg.ceres_gtol = it->second;
-  }
-  if (rc.fuse.has_opt) {
-    const OptimizerSpec &o = rc.fuse.opt;
-    lcfg.joint_algo = refit_fuse_algo(o);
-    if (o.stop.maxeval) lcfg.joint_max_iter = static_cast<int>(*o.stop.maxeval);
-    if (o.stop.ftol_rel) lcfg.joint_ftol = *o.stop.ftol_rel;
-  }
-  // Explicit per-stage ON/OFF (ENABLED false) is a master kill-switch: it WINS
-  // over any configured optimiser (sets the stage's algo to NONE). If an
-  // optimiser was also configured, log that it is being ignored so the override
-  // is never silent. (EXPLORE cannot be disabled — enforced by the parser.)
+// Say when ENABLED false switches off a stage whose optimiser was configured
+// (apply_stage_optimizers sets its algo to NONE): the override is never
+// silent. (EXPLORE cannot be disabled -- enforced by the parser.)
+void log_disabled_stages(const RefitConfig &rc) {
   if (!rc.refine.enabled) {
     if (rc.refine.has_opt && refit_refine_algo(rc.refine.opt) != "NONE")
       Logger::instance().log(LogLevel::WARNING,
@@ -111,7 +76,6 @@ void apply_stage_optimizers(const RefitConfig &rc, CompactConfig &lcfg) {
     else
       Logger::instance().log(LogLevel::INFO,
           "tadah refit: REFINE disabled (ENABLED false).");
-    lcfg.refine_algo = "NONE";
   }
   if (!rc.fuse.enabled) {
     if (rc.fuse.has_opt && refit_fuse_algo(rc.fuse.opt) != "NONE")
@@ -121,7 +85,6 @@ void apply_stage_optimizers(const RefitConfig &rc, CompactConfig &lcfg) {
     else
       Logger::instance().log(LogLevel::INFO,
           "tadah refit: FUSE disabled (ENABLED false).");
-    lcfg.joint_algo = "NONE";
   }
 }
 
@@ -306,22 +269,8 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   // REFIT_OBJECTIVE: what the whole chain optimises toward. energy (default) =
   // the crystal energy metric; curve = the normalised value+1st+2nd-derivative
   // combined RMSE (energy is then unused end-to-end; FUSE drops its E-V term).
-  {
-    std::string obj = (c.contains("REFIT_OBJECTIVE") &&
-                       c.size("REFIT_OBJECTIVE") > 0)
-                          ? c.get<std::string>("REFIT_OBJECTIVE")
-                          : std::string("energy");
-    for (auto &ch : obj)
-      ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    if (obj == "curve")
-      lcfg.objective = RefitObjective::Curve;
-    else if (obj == "energy")
-      lcfg.objective = RefitObjective::Energy;
-    else
-      throw std::runtime_error(
-          "tadah refit: REFIT_OBJECTIVE must be 'energy' (default) or 'curve'; "
-          "got '" + obj + "'");
-  }
+  lcfg.objective = refit_curve_objective(c) ? RefitObjective::Curve
+                                           : RefitObjective::Energy;
   const bool curve_obj = (lcfg.objective == RefitObjective::Curve);
   // Coalescence guard (Knot families): soft anti-coalescence penalty in EXPLORE
   // + post-REFINE merge/re-insert of near-coincident knot pairs.
@@ -373,6 +322,7 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   // EXPLORE/REFINE/FUSE optimisers onto the CompactConfig scalar fields.
   const RefitConfig rcfg = RefitParser::parse(c);
   apply_stage_optimizers(rcfg, lcfg);
+  log_disabled_stages(rcfg);
   if (lcfg.seed_algo == "UNIFORM" && rcfg.init.empty())
     Logger::instance().log(LogLevel::WARNING,
         "tadah refit: EXPLORE rung 0 is UNIFORM (no global search) and INIT is "
@@ -454,20 +404,35 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
     std::snprintf(b, sizeof(b), "%.2g", v);
     return std::string(b);
   };
+  // Each stage's budget in the unit of the algorithm that runs it.
+  const std::string seed_budget =
+      lcfg.seed_algo == "UNIFORM"
+          ? std::string()
+          : " maxeval=" + std::to_string(lcfg.seed_algo == "DLIB_GLOBAL"
+                                             ? lcfg.dlib_global_maxeval
+                                             : lcfg.mlsl_maxeval);
+  const bool refine_lbfgs = lcfg.refine_algo == "NLOPT_LBFGS" ||
+                            lcfg.refine_algo == "DLIB_LBFGS";
+  const std::string refine_budget =
+      lcfg.refine_algo == "NONE"
+          ? std::string()
+          : refine_lbfgs
+                ? " maxeval=" + std::to_string(lcfg.lbfgs_refine_maxeval)
+                : " maxiter=" + std::to_string(lcfg.ceres_max_iter);
   rlog.line(
-      "optimiser: EXPLORE.seed{algo=" + lcfg.seed_algo + " maxeval=" +
-      std::to_string(lcfg.mlsl_maxeval) + "}  EXPLORE.inner{algo=" +
+      "optimiser: EXPLORE.seed{algo=" + lcfg.seed_algo + seed_budget +
+      "}  EXPLORE.inner{algo=" +
       lcfg.explore_algo + " maxeval=" + std::to_string(lcfg.sbplx_maxeval) +
       " ftol_rel=" + g(lcfg.sbplx_ftol) + " xtol_rel=" + g(lcfg.sbplx_xtol) +
-      "}  REFINE{algo=" + lcfg.refine_algo + " maxiter=" +
-      std::to_string(lcfg.ceres_max_iter) + " ftol_rel=" + g(lcfg.ceres_ftol) +
-      " gtol=" + g(lcfg.ceres_gtol) + "}  FUSE{algo=" + joint_algo +
-      " maxiter=" + std::to_string(lcfg.joint_max_iter) + " ftol_rel=" +
-      g(lcfg.joint_ftol) + "}");
-  rlog.line("  (maxeval = NLopt objective-function evaluations [each call to "
-            "the loss], not optimiser iterations; for EXPLORE.seed=MLSL it is "
-            "the TOTAL budget across all inner restarts, EXPLORE.inner is the "
-            "per-restart budget; maxiter = Ceres solver iterations)");
+      "}  REFINE{algo=" + lcfg.refine_algo + refine_budget + " ftol_rel=" +
+      g(lcfg.ceres_ftol) + " gtol=" + g(lcfg.ceres_gtol) + "}  FUSE{algo=" +
+      joint_algo + " maxiter=" + std::to_string(lcfg.joint_max_iter) +
+      " ftol_rel=" + g(lcfg.joint_ftol) + "}");
+  rlog.line("  (maxeval = objective evaluations [each call to the loss, or "
+            "to its gradient], not optimiser iterations, for every optimiser "
+            "(NLopt, dlib); for EXPLORE.seed=MLSL it is the TOTAL budget "
+            "across all its local searches, EXPLORE.inner the budget of each; "
+            "maxiter = Ceres solver iterations)");
   rlog.line("schedule: opt_every=" + std::to_string(lcfg.opt_every) +
             " stall=" + std::to_string(lcfg.stall_rungs) + " insert_topk=" +
             std::to_string(lcfg.insert_topk) + " jitters=" +
