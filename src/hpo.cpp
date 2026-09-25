@@ -391,7 +391,6 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log)
                      "pool is serial-build only)");
         }
 #endif
-        (void)pc_mode_explicit;
         if (pc_mode == "PROCESS") {
 #ifdef TADAH_HPO_MPI
             /* unreachable: handled above */
@@ -423,9 +422,14 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log)
                          + std::to_string(exec_width)
                          + " persistent worker processes (LAMMPS globals "
                            "unshared); MLIP train/predict stays in-process");
-            } else {
+            } else if (pc_mode_explicit) {
                 log.info("PC_ISOLATION: PROCESS requested but no PC_LAMMPS "
                          "sims are configured -- nothing to isolate");
+            } else {
+                /* PROCESS is the serial build's default: nothing asked
+                 * for it. */
+                log.info("PC_ISOLATION: PROCESS (default) -- no PC_LAMMPS "
+                         "sims are configured, nothing to isolate");
             }
 #endif
         } else {
