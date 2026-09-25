@@ -13,6 +13,7 @@
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/warmstart_cache.h>  /* current_chain(): the block slot */
 
 #include <dlib/matrix.h>
 
@@ -139,6 +140,53 @@ std::vector<std::vector<double>> run_always_improving(const OptimizerSpec& sp,
     return rec.calls;
 }
 
+/* Runs ASA with `sp` on AlwaysImproving and returns the size of every
+ * block of generated states the block hook evaluated, in order. The hook
+ * evaluates a block's slots t = 0, 1, ... on the pool, setting
+ * warmstart::current_chain() = t for each; with THREADS 1 the pool has one
+ * worker, which evaluates them in slot order. Evaluations on asa()'s own
+ * thread (the initial cost-temperature samples, reanneal tangents) are not
+ * block evaluations and are left out. A slot sequence that is not
+ * 0, 1, 2, ... per block is reported through `anomalies`. */
+std::vector<std::size_t> block_sizes(const OptimizerSpec& sp, std::size_t dim,
+                                     std::string& console,
+                                     std::vector<std::string>& anomalies)
+{
+    AlwaysImproving obj;
+    std::mutex m;
+    std::vector<std::pair<std::thread::id, std::size_t>> tags;
+    Recorder rec;
+    rec.f = [&](const std::vector<double>&) {
+        {
+            std::lock_guard<std::mutex> lk(m);
+            tags.emplace_back(std::this_thread::get_id(),
+                              tadah::hpo::warmstart::current_chain());
+        }
+        return obj.next();
+    };
+    console = run_bounded(sp, dim, rec, "run_asa_erased counting blocks");
+
+    /* The pool worker: the thread of the first evaluation of a slot > 0. */
+    std::thread::id worker;
+    for (const auto& t : tags)
+        if (t.second > 0) { worker = t.first; break; }
+    std::vector<std::size_t> sizes;
+    for (const auto& t : tags) {
+        if (t.first != worker) continue;
+        if (t.second == 0) {
+            sizes.push_back(1);
+        } else if (sizes.empty() || t.second != sizes.back()) {
+            anomalies.push_back("slot " + std::to_string(t.second) +
+                                " after a block of " +
+                                std::to_string(sizes.empty() ? 0
+                                                             : sizes.back()));
+        } else {
+            ++sizes.back();
+        }
+    }
+    return sizes;
+}
+
 /* ASA's closing console line for a run that a stop ended after n host
  * evaluations: the stop's reason and ASA's own exit code. */
 std::string stopped_line(const std::string& reason, std::size_t n)
@@ -237,6 +285,26 @@ TEST_CASE("ASA options: every documented key is accepted",
     CHECK(o.gener_block == 4);
     CHECK(o.gener_block_max == 8);
     CHECK(o.gener_mov_avr == 5);
+}
+
+TEST_CASE("ASA options: Gener_Mov_Avr 0 switches the block resizing off",
+          "[HPO][asa][options]")
+{
+    /* Upstream's README documents Gener_Mov_Avr 0 as "Gener_Block is not
+     * changed thereafter", and asa()'s periodic test resizes the block only
+     * when Gener_Mov_Avr > 0, but upstream's own option check rejected
+     * every value below 1 (TADAH-PATCH 7 accepts 0). */
+    auto sp = make_asa_spec({0.0, 0.0}, {1.0, 1.0});
+    sp.param = {{"Gener_Block", 4.0}, {"Gener_Block_Max", 4.0},
+                {"Gener_Mov_Avr", 0.0}};
+    const AsaOptions o = parse_asa_options(sp, 2);
+    CHECK(o.gener_block == 4);
+    CHECK(o.gener_block_max == 4);
+    CHECK(o.gener_mov_avr == 0);
+
+    sp.param = {{"Gener_Mov_Avr", -1.0}};
+    CHECK_THROWS_WITH(parse_asa_options(sp, 2),
+                      Catch::Contains("Gener_Mov_Avr"));
 }
 
 TEST_CASE("ASA options: indexed per-dim grammar", "[HPO][asa][options]")
@@ -830,6 +898,50 @@ TEST_CASE("ASA block runs keep at least one state per block when the "
     CHECK(calls.size() == 300);
     CHECK(console.find("ASA stopped: MAXEVAL reached after 300 host "
                        "eval(s)") != std::string::npos);
+}
+
+TEST_CASE("ASA Gener_Mov_Avr 0 keeps every generated block at Gener_Block",
+          "[HPO][asa][parallel]")
+{
+    /* With Gener_Block = Gener_Block_Max = 4 the moving average of the
+     * periodic tests still resizes the block, down to 1 (TADAH-PATCH 5
+     * floor), on an objective whose every state is a new best. With
+     * Gener_Mov_Avr 0 no periodic test resizes it: every block holds 4
+     * states, except the last one, which MAXEVAL may cut short. */
+    auto sp = make_asa_spec({0.0, 0.0}, {1.0, 1.0});
+    set_seed_point(sp, {0.5, 0.5});
+    sp.seed = 1u;
+    sp.num_threads = 1;
+    sp.stop.maxeval = 300;
+    sp.param = {{"Gener_Block", 4.0}, {"Gener_Block_Max", 4.0},
+                {"Gener_Mov_Avr", 0.0},
+                {"Acceptance_Frequency_Modulus", 7.0}};
+    std::string console;
+    std::vector<std::string> anomalies;
+    const auto sizes = block_sizes(sp, 2, console, anomalies);
+    INFO(console);
+    CHECK(anomalies.empty());
+    REQUIRE(sizes.size() > 20);
+    std::size_t evaluated = 0;
+    for (std::size_t i = 0; i < sizes.size(); ++i) {
+        INFO("block " << i << " of " << sizes.size());
+        if (i + 1 < sizes.size()) CHECK(sizes[i] == 4);
+        else CHECK((sizes[i] >= 1 && sizes[i] <= 4));
+        evaluated += sizes[i];
+    }
+    CHECK(evaluated <= 300);
+    CHECK(console.find("ASA stopped: MAXEVAL reached after 300 host "
+                       "eval(s)") != std::string::npos);
+
+    /* Control: the same run at the default window (Gener_Mov_Avr 3)
+     * shrinks blocks, so the count above would see a resize. */
+    sp.param.erase("Gener_Mov_Avr");
+    std::vector<std::string> control_anomalies;
+    const auto resized = block_sizes(sp, 2, console, control_anomalies);
+    CHECK(control_anomalies.empty());
+    REQUIRE(resized.size() > 1);
+    CHECK(std::any_of(resized.begin(), resized.end() - 1,
+                      [](std::size_t n) { return n < 4; }));
 }
 
 /* ================= stops inside ASA's sampling loops =============== */
