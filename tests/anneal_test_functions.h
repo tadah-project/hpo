@@ -17,6 +17,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <dlib/matrix.h>
@@ -252,12 +253,16 @@ inline std::vector<Problem> standard_set()
     return ps;
 }
 
+/* The problem called `name` in ps. The result refers to ps, which must
+ * outlive it. `name` is a view: with a `const std::string&` parameter a
+ * literal bound a temporary std::string, and GCC 13's -Wdangling-reference
+ * reported the result as possibly dangling. */
 inline const Problem& by_name(const std::vector<Problem>& ps,
-                              const std::string& name)
+                              std::string_view name)
 {
     for (const auto& p : ps)
         if (p.name == name) return p;
-    throw std::runtime_error("unknown test function: " + name);
+    throw std::runtime_error("unknown test function: " + std::string(name));
 }
 
 }  // namespace anneal_functions
