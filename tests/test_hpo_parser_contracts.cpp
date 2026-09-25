@@ -2460,13 +2460,19 @@ TEST_CASE("tadah refit: a stage block that runs an optimiser names the "
                   "EXPLORE", "OPTIMIZER ALGO NONE ENDOPTIMIZER"))
                   .explore.opt) == "UNIFORM");
 
-    /* UNIFORM, refit's own uniform start, belongs to no library: LIB is
-     * neither required nor checked there (the behaviour kept for now). */
-    for (const std::string lib : {"", "LIB NLOPT ", "LIB DLIB "}) {
-        INFO("'" << lib << "ALGO UNIFORM'");
-        const auto rc = RefitParser::parse(refit_context(
-            "EXPLORE", "OPTIMIZER " + lib + "ALGO UNIFORM ENDOPTIMIZER"));
-        CHECK(refit_explore_outer_algo(rc.explore.opt) == "UNIFORM");
+    /* UNIFORM, the refit's own uniform start, runs no optimiser either:
+     * a LIB there is rejected as it is with NONE (it used to be neither
+     * required nor checked, even LIB FOO). */
+    CHECK(refit_explore_outer_algo(
+              RefitParser::parse(refit_context(
+                  "EXPLORE", "OPTIMIZER ALGO UNIFORM ENDOPTIMIZER"))
+                  .explore.opt) == "UNIFORM");
+    for (const std::string lib : {"NLOPT", "DLIB", "nlopt", "FOO"}) {
+        INFO("LIB " << lib << " ALGO UNIFORM");
+        CHECK(refit_error("EXPLORE", "OPTIMIZER LIB " + lib +
+                                         " ALGO UNIFORM ENDOPTIMIZER") ==
+              "EXPLORE: LIB has no effect with ALGO UNIFORM (no global search "
+              "runs); remove LIB");
     }
 
     /* An ALGO the stage does not run is still named with the stage's
@@ -2524,4 +2530,129 @@ TEST_CASE("Strict numbers: the PARAM INIT_MODE JITTER numbers are checked at "
     CHECK_THAT(parse_error(h.config("INIT_MODE JITTER rubbish")),
                Catch::StartsWith(h.at() + "PARAM takes no further value "
                                  "here (unexpected 'rubbish')"));
+}
+
+namespace {
+
+/* A `tadah refit` Context with several stage blocks, and REFIT_OBJECTIVE
+ * when `objective` is not empty. */
+tadah::core::Context refit_stages(
+    const std::vector<std::pair<std::string, std::string>>& blocks,
+    const std::string& objective = "")
+{
+    tadah::core::Context c;
+    for (const auto& [key, body] : blocks) {
+        std::istringstream iss(body);
+        for (std::string t; iss >> t;) c.add(key, t);
+    }
+    if (!objective.empty()) c.add("REFIT_OBJECTIVE", objective);
+    return c;
+}
+
+std::string refit_stages_error(
+    const std::vector<std::pair<std::string, std::string>>& blocks,
+    const std::string& objective = "")
+{
+    try {
+        (void)tadah::hpo::refit::RefitParser::parse(
+            refit_stages(blocks, objective));
+    } catch (const std::exception& e) {
+        return e.what();
+    }
+    return "";
+}
+
+}  // namespace
+
+TEST_CASE("tadah refit: a key that has no effect with ALGO NONE or UNIFORM "
+          "is rejected", "[HPO][refit]")
+{
+    /* A block with ALGO NONE or UNIFORM runs no optimiser, so its stop
+     * criteria stop nothing: they were accepted and ignored. They are
+     * rejected, as LIB is, naming what NONE means in the block. The
+     * spelling the block used (MAXITER, the alias of MAXEVAL) is named. */
+    struct Case { std::string key, body, message; };
+    for (const auto& c : std::vector<Case>{
+             {"EXPLORE", "OPTIMIZER ALGO UNIFORM MAXEVAL 100 ENDOPTIMIZER",
+              "EXPLORE: MAXEVAL has no effect with ALGO UNIFORM (no global "
+              "search runs); remove MAXEVAL"},
+             {"EXPLORE", "OPTIMIZER ALGO NONE MAXEVAL 100 ENDOPTIMIZER",
+              "EXPLORE: MAXEVAL has no effect with ALGO NONE (no global "
+              "search runs); remove MAXEVAL"},
+             {"EXPLORE", "OPTIMIZER MAXEVAL 100 ALGO uniform ENDOPTIMIZER",
+              "EXPLORE: MAXEVAL has no effect with ALGO UNIFORM (no global "
+              "search runs); remove MAXEVAL"},
+             {"REFINE", "OPTIMIZER ALGO NONE MAXEVAL 100 ENDOPTIMIZER",
+              "REFINE: MAXEVAL has no effect with ALGO NONE (the stage is "
+              "skipped); remove MAXEVAL"},
+             {"REFINE", "OPTIMIZER ALGO NONE MAXITER 100 ENDOPTIMIZER",
+              "REFINE: MAXITER has no effect with ALGO NONE (the stage is "
+              "skipped); remove MAXITER"},
+             {"REFINE", "OPTIMIZER ALGO NONE FTOL_REL 1e-12 ENDOPTIMIZER",
+              "REFINE: FTOL_REL has no effect with ALGO NONE (the stage is "
+              "skipped); remove FTOL_REL"},
+             {"REFINE", "OPTIMIZER ALGO NONE GTOL 1e-12 ENDOPTIMIZER",
+              "REFINE: GTOL has no effect with ALGO NONE (the stage is "
+              "skipped); remove GTOL"},
+             {"FUSE", "OPTIMIZER ALGO NONE MAXITER 100 ENDOPTIMIZER",
+              "FUSE: MAXITER has no effect with ALGO NONE (the stage is "
+              "skipped); remove MAXITER"},
+             {"FUSE", "OPTIMIZER ALGO NONE FTOL_REL 1e-12 ENDOPTIMIZER",
+              "FUSE: FTOL_REL has no effect with ALGO NONE (the stage is "
+              "skipped); remove FTOL_REL"}}) {
+        INFO(c.key << ": " << c.body);
+        CHECK(refit_error(c.key, c.body) == c.message);
+    }
+
+    /* EXPLORE's INNER block configures the per-rung local search whatever
+     * the EXPLORE optimiser, so UNIFORM takes one. */
+    CHECK(refit_error("EXPLORE", "OPTIMIZER ALGO UNIFORM INNER LIB NLOPT ALGO "
+                                 "LN_SBPLX MAXEVAL 50 FTOL_REL 1e-7 ENDINNER "
+                                 "ENDOPTIMIZER") == "");
+
+    /* INNER ALGO NONE runs no local search per rung. Its MAXEVAL,
+     * FTOL_REL and XTOL_REL also set the local searches of the EXPLORE
+     * optimiser GN_MLSL_LDS (LN_SBPLX), so only there they have an
+     * effect. */
+    for (const std::string outer :
+         {"LIB NLOPT ALGO GN_DIRECT_L MAXEVAL 100",
+          "LIB NLOPT ALGO GN_CRS2_LM MAXEVAL 100",
+          "LIB DLIB ALGO GLOBAL MAXEVAL 100", "ALGO UNIFORM"}) {
+        for (const std::string kv :
+             {"MAXEVAL 50", "FTOL_REL 1e-7", "XTOL_REL 1e-6"}) {
+            const std::string key = kv.substr(0, kv.find(' '));
+            INFO(outer << " / INNER ALGO NONE " << kv);
+            CHECK(refit_error("EXPLORE", "OPTIMIZER " + outer +
+                                             " INNER ALGO NONE " + kv +
+                                             " ENDINNER ENDOPTIMIZER") ==
+                  "EXPLORE INNER: " + key + " has no effect with ALGO NONE (no "
+                  "local search runs); remove " + key);
+        }
+    }
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                 "MAXEVAL 100 INNER ALGO NONE MAXEVAL 50 "
+                                 "FTOL_REL 1e-7 XTOL_REL 1e-6 ENDINNER "
+                                 "ENDOPTIMIZER") == "");
+
+    /* Under REFIT_OBJECTIVE curve the FUSE curve refine runs with REFINE's
+     * MAXEVAL/MAXITER, FTOL_REL and GTOL, so REFINE NONE's have an effect
+     * while FUSE runs (its default optimiser, or one it names); not when
+     * FUSE is skipped too. */
+    const std::pair<std::string, std::string> refine_none{
+        "REFINE", "OPTIMIZER ALGO NONE MAXITER 100 FTOL_REL 1e-12 GTOL 1e-12 "
+                  "ENDOPTIMIZER"};
+    CHECK(refit_stages_error({refine_none}, "curve") == "");
+    CHECK(refit_stages_error({refine_none, {"FUSE", "OPTIMIZER LIB CERES ALGO "
+                                                    "LM ENDOPTIMIZER"}},
+                             "CURVE") == "");
+    const std::string skipped =
+        "REFINE: MAXITER has no effect with ALGO NONE (the stage is skipped); "
+        "remove MAXITER";
+    CHECK(refit_stages_error({refine_none}) == skipped);
+    CHECK(refit_stages_error({refine_none}, "energy") == skipped);
+    CHECK(refit_stages_error({refine_none, {"FUSE", "OPTIMIZER ALGO NONE "
+                                                    "ENDOPTIMIZER"}},
+                             "curve") == skipped);
+    CHECK(refit_stages_error({refine_none, {"FUSE", "ENABLED false"}},
+                             "curve") == skipped);
 }

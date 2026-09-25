@@ -225,6 +225,39 @@ TEST_CASE("compact fitter: alternative refine backends recover blips",
   }
 }
 
+TEST_CASE("compact fitter: each EXPLORE INNER local search lowers the "
+          "rung's objective", "[refit][compact]") {
+  /* One optimised rung of one candidate (no jitter), from a uniform start
+   * (no seed search) with no refine: the rung's curve RMSE after the local
+   * search, against the insertion alone (ALGO NONE, a linear solve). The
+   * NLopt L-BFGS search used to optimise through a dangling pointer: its
+   * objective context was a local of the branch that set it, gone when
+   * optimize() ran (a stack-use-after-scope under AddressSanitizer). */
+  std::vector<double> xs, ys;
+  sample(make_truth(), 1.0, 5.5, 160, xs, ys);
+  const auto rung_rmse = [&](const char *inner) {
+    CompactConfig cfg;
+    cfg.n_max = cfg.n_min + 1;
+    cfg.jitters = 0;
+    cfg.target = 0.0;
+    cfg.seed_algo = "UNIFORM";
+    cfg.explore_algo = inner;
+    cfg.sbplx_maxeval = 200;
+    cfg.refine_algo = "NONE";
+    CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
+    std::vector<LadderRow> trace;
+    (void)fit.fit([](const BlipFit &f) { return f.curve_rmse; }, trace);
+    REQUIRE(trace.size() == 2u);  // the seed, then the rung
+    return trace.back().curve_rmse;
+  };
+  const double insertion_only = rung_rmse("NONE");
+  for (const char *inner : {"NLOPT_LBFGS", "DLIB_LBFGS", "SBPLX"}) {
+    INFO("EXPLORE INNER " << inner << ", insertion alone "
+                          << insertion_only);
+    CHECK(rung_rmse(inner) < insertion_only);
+  }
+}
+
 TEST_CASE("compact fitter: Ceres refine recovers exact blips to ~noise",
           "[compact]") {
   const BlipFit truth = make_truth();

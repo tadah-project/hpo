@@ -231,6 +231,11 @@ const std::string kExploreGfs =
     "    EXPLORE\n      LIB DLIB\n      ALGO GFS\n      MAXEVAL 12\n"
     "    ENDEXPLORE\n";
 
+/* An active RESTART: AFTER_STAGNATION and MAX both positive. */
+const std::string kRestart =
+    "    RESTART\n      AFTER_STAGNATION 60\n      MAX 1\n"
+    "      METHOD RANDOM 1\n      SEED 5\n    ENDRESTART\n";
+
 std::string prestage_body(const std::string& lib, const std::string& algo,
                           const std::string& topk_line)
 {
@@ -967,25 +972,25 @@ TEST_CASE("startup validation: each phase's backend checks run at startup",
               "    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n"
               "    PARAM GRID_POINTS 1\n",
               "TADAH:GRID PARAM GRID_POINTS must be an integer >= 2"},
-             /* A backend with no stopping rule of its own needs MAXEVAL. */
-             {"TADAH:RANDOM without MAXEVAL",
-              "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
-              "    MAXTIME 60\n",
-              "the STRATEGY-level optimiser: TADAH:RANDOM needs MAXEVAL"},
-             {"DLIB:GFS without MAXEVAL",
+             /* A backend with no convergence test and no finite schedule
+              * needs a stop (the cases of its own test case below). */
+             {"TADAH:RANDOM without a stop",
+              "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n",
+              "the STRATEGY-level optimiser: TADAH:RANDOM needs a stop"},
+             {"DLIB:GFS without a stop",
               "    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n",
-              "the STRATEGY-level optimiser: DLIB:GFS needs MAXEVAL"},
-             {"DLIB:GFS under MULTISTART without MAXEVAL (one run from every "
-              "INIT point: BUDGET_PER_START does not split it)",
+              "the STRATEGY-level optimiser: DLIB:GFS needs a stop"},
+             {"DLIB:GFS under MULTISTART without a stop (one run from every "
+              "INIT point)",
               "    TYPE MULTISTART\n    LIB DLIB\n    ALGO GFS\n"
-              "    N_STARTS 2\n    BUDGET_PER_START 5\n",
-              "DLIB:GFS needs MAXEVAL"},
-             {"the PRESTAGE exploration: TADAH:RANDOM without MAXEVAL",
+              "    N_STARTS 2\n",
+              "the MULTISTART run: DLIB:GFS needs a stop"},
+             {"the PRESTAGE exploration: TADAH:RANDOM without a stop",
               "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
               "    MAXEVAL 20\n    EXPLORE\n      LIB TADAH\n"
               "      ALGO RANDOM\n    ENDEXPLORE\n",
               "the PRESTAGE exploration (EXPLORE block): TADAH:RANDOM needs "
-              "MAXEVAL"},
+              "a stop"},
              {"TADAH:ANNEAL without MAXEVAL (AUTO chain lengths)",
               "    TYPE PLAIN\n    LIB TADAH\n    ALGO ANNEAL\n"
               "    MAXTIME 60\n",
@@ -994,13 +999,13 @@ TEST_CASE("startup validation: each phase's backend checks run at startup",
         const auto v = judge(strategy_config(c.body));
         CHECK_THAT(v.startup, Catch::Contains(c.message));
     }
-    /* The budget message says why, and what to set. */
-    CHECK_THAT(judge(strategy_config("    TYPE PLAIN\n    LIB TADAH\n"
-                                     "    ALGO RANDOM\n")).startup,
-               Catch::Contains("TADAH:RANDOM needs MAXEVAL: it stops only "
-                               "when its MAXEVAL evaluations are spent (it "
-                               "reads neither MAXTIME nor STOPVAL); set "
-                               "MAXEVAL"));
+    /* The message says why, and which stops the backend honours. */
+    CHECK(judge(strategy_config("    TYPE PLAIN\n    LIB TADAH\n"
+                                "    ALGO RANDOM\n")).startup ==
+          "the STRATEGY-level optimiser: TADAH:RANDOM needs a stop: uniform "
+          "random search has no convergence test and runs until it is "
+          "interrupted; set MAXEVAL, MAXTIME or STOPVAL (it honours no "
+          "tolerance)");
 }
 
 TEST_CASE("startup validation: the backend checks reject no valid "
@@ -1041,11 +1046,378 @@ TEST_CASE("startup validation: the backend checks reject no valid "
              "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
              "      ALGO G_MLSL_LDS\n      MAXEVAL 12\n      INNER\n"
              "        LIB NLOPT\n        ALGO LN_SBPLX\n      ENDINNER\n"
-             "    ENDEXPLORE\n"}) {
+             "    ENDEXPLORE\n",
+             /* A backend without a convergence test stops on any stop it
+              * honours: MAXTIME or STOPVAL alone, or a tolerance its
+              * algorithm tests. */
+             "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+             "    MAXTIME 60\n",
+             "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+             "    STOPVAL 0.1\n",
+             "    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n    MAXTIME 60\n",
+             "    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n    STOPVAL 0.1\n",
+             "    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n    MAXEVAL 20\n"
+             "    FTOL_ABS 1e-3\n",
+             "    TYPE PLAIN\n    LIB TADAH\n    ALGO ANNEAL_PT\n"
+             "    FTOL_REL 1e-6\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_CRS2_LM\n"
+             "    FTOL_REL 1e-6\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_DIRECT_L\n"
+             "    XTOL_ABS 1e-4\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_ISRES\n"
+             "    STOPVAL 0.1\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_ESCH\n"
+             "    MAXTIME 60\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_MMA\n"
+             "    FTOL_REL 1e-8\n",
+             /* The algorithms that end on their own. */
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_ORIG_DIRECT_L\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_COBYLA\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_LBFGS\n",
+             /* AUGLAG ends when its local search ends: with NLopt's default
+              * LN_COBYLA, or an INNER search that has a stop of its own or
+              * one of the enclosing block's. */
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_AUGLAG\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_AUGLAG\n"
+             "    FTOL_REL 1e-8\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO AUGLAG\n"
+             "    MAXEVAL 20\n    INNER\n      LIB NLOPT\n"
+             "      ALGO GN_DIRECT_L\n    ENDINNER\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO AUGLAG\n"
+             "    STOPVAL 0.1\n    INNER\n      LIB NLOPT\n"
+             "      ALGO GN_DIRECT_L\n    ENDINNER\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO AUGLAG\n"
+             "    INNER\n      LIB NLOPT\n      ALGO GN_DIRECT_L\n"
+             "      XTOL_REL 1e-4\n    ENDINNER\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO AUGLAG\n"
+             "    INNER\n      LIB NLOPT\n      ALGO LN_BOBYQA\n"
+             "    ENDINNER\n",
+             /* MLSL hands its stop on to the INNER search. */
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n"
+             "    MAXTIME 60\n    INNER\n      LIB NLOPT\n"
+             "      ALGO GN_DIRECT_L\n    ENDINNER\n",
+             /* Each MULTISTART start with its share of MAXEVAL, or its
+              * BUDGET_PER_START. */
+             "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LD_MMA\n"
+             "    MAXEVAL 20\n    N_STARTS 2\n",
+             "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LD_MMA\n"
+             "    N_STARTS 2\n    BUDGET_PER_START 5\n",
+             "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+             "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
+             "      ALGO GN_CRS2_LM\n      MAXTIME 60\n    ENDEXPLORE\n",
+             /* An active RESTART (AFTER_STAGNATION and MAX > 0) ends every
+              * phase it wraps: once its MAX restarts are used, the next
+              * AFTER_STAGNATION evaluations without a new best end the
+              * run. */
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_DIRECT_L\n" +
+                 kRestart,
+             "    TYPE PLAIN\n    LIB TADAH\n    ALGO ANNEAL_PT\n" + kRestart,
+             "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n" + kRestart,
+             "    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n" + kRestart,
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_MLSL_LDS\n" +
+                 kRestart,
+             "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LD_MMA\n"
+             "    N_STARTS 2\n" + kRestart,
+             "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+             "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
+             "      ALGO GN_CRS2_LM\n    ENDEXPLORE\n" + kRestart,
+             "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO GN_DIRECT_L\n"
+             "    EXPLORE\n      LIB DLIB\n      ALGO GFS\n"
+             "      MAXEVAL 12\n    ENDEXPLORE\n" + kRestart,
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO AUGLAG\n"
+             "    INNER\n      LIB NLOPT\n      ALGO GN_DIRECT_L\n"
+             "    ENDINNER\n" + kRestart,
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_AUGLAG\n" +
+                 kRestart}) {
         INFO(body);
         const auto v = judge(strategy_config(body));
         CHECK(v.startup == "");
     }
+}
+
+/* ======================================================================
+ * A backend with no convergence test and no finite schedule needs a stop:
+ * MAXEVAL, MAXTIME, STOPVAL or a tolerance it honours. Without one it ran
+ * until it was interrupted (the probes of phase 4c: NLopt's global
+ * searches, MLSL, LD_MMA/LD_CCSAQ/LD_SLSQP, TADAH:ANNEAL_PT, TADAH:RANDOM,
+ * DLIB:GFS).
+ * ==================================================================== */
+
+namespace {
+
+const std::string kAnyTolerance =
+    "; set MAXEVAL, MAXTIME, STOPVAL or a positive tolerance it honours "
+    "(FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS)";
+const std::string kNoTolerance =
+    "; set MAXEVAL, MAXTIME or STOPVAL (it honours no tolerance)";
+/* DIRECT tests XTOL on every rectangle it divides, the largest included:
+ * an XTOL ends it, but only once the whole box is divided that finely. */
+const std::string kDirectXtol =
+    "; DIRECT's XTOL_REL and XTOL_ABS end it only once every rectangle is "
+    "that small, after roughly (1/XTOL_REL)^n evaluations in n dimensions";
+
+}  // namespace
+
+TEST_CASE("startup validation: a backend with no convergence test and no "
+          "finite schedule needs a stop", "[startup_validation][strategy][stop]")
+{
+    struct Case { std::string what, body, starts, ends; };
+    const std::string plain = "    TYPE PLAIN\n";
+    const auto nlopt = [&](const std::string& algo, const std::string& extra) {
+        return plain + "    LIB NLOPT\n    ALGO " + algo + "\n" + extra;
+    };
+    const std::string top = "the STRATEGY-level optimiser: ";
+    std::vector<Case> cases;
+    for (const std::string algo :
+         {"GN_DIRECT", "GN_DIRECT_L", "GN_DIRECT_L_RAND", "GN_DIRECT_NOSCAL",
+          "GN_DIRECT_L_NOSCAL", "GN_DIRECT_L_RAND_NOSCAL"})
+        cases.push_back({"NLOPT:" + algo + " without a stop", nlopt(algo, ""),
+                         top + "NLOPT:" + algo + " needs a stop: ",
+                         kAnyTolerance + kDirectXtol});
+    for (const std::string algo :
+         {"GN_CRS2_LM", "GN_ISRES", "LD_MMA", "LD_CCSAQ", "LD_SLSQP"})
+        cases.push_back({"NLOPT:" + algo + " without a stop", nlopt(algo, ""),
+                         top + "NLOPT:" + algo + " needs a stop: ",
+                         kAnyTolerance});
+    /* A tolerance of 0 or below is no stop: NLopt switches such a
+     * tolerance off, and ANNEAL_PT's best-stall rule arms only above 0.
+     * (FTOL_REL 0 is a common way to write "no tolerance".) */
+    for (const std::string& tol :
+         {std::string("FTOL_REL 0"), std::string("FTOL_ABS 0"),
+          std::string("XTOL_REL -1"), std::string("XTOL_ABS 0")}) {
+        cases.push_back({"NLOPT:GN_DIRECT_L with " + tol,
+                         nlopt("GN_DIRECT_L", "    " + tol + "\n"),
+                         top + "NLOPT:GN_DIRECT_L needs a stop: ",
+                         kAnyTolerance + kDirectXtol});
+        cases.push_back({"NLOPT:LD_MMA with " + tol,
+                         nlopt("LD_MMA", "    " + tol + "\n"),
+                         top + "NLOPT:LD_MMA needs a stop: ", kAnyTolerance});
+        cases.push_back({"NLOPT:GN_CRS2_LM with " + tol,
+                         nlopt("GN_CRS2_LM", "    " + tol + "\n"),
+                         top + "NLOPT:GN_CRS2_LM needs a stop: ",
+                         kAnyTolerance});
+    }
+    for (const std::string& tol :
+         {std::string("FTOL_REL 0"), std::string("FTOL_ABS 0"),
+          std::string("FTOL_REL 0\n    FTOL_ABS 0")})
+        cases.push_back({"TADAH:ANNEAL_PT with " + tol,
+                         plain + "    LIB TADAH\n    ALGO ANNEAL_PT\n    " +
+                             tol + "\n",
+                         top + "TADAH:ANNEAL_PT needs a stop: ",
+                         "; set MAXEVAL, MAXTIME, STOPVAL or a positive "
+                         "tolerance it honours (FTOL_REL, FTOL_ABS)"});
+    /* A RESTART that is not active (MAX 0, or no AFTER_STAGNATION) arms no
+     * stagnation stop. */
+    for (const std::string& restart :
+         {std::string("      AFTER_STAGNATION 60\n      MAX 0\n"),
+          std::string("      MAX 2\n")})
+        cases.push_back({"NLOPT:GN_DIRECT_L under an inactive RESTART",
+                         nlopt("GN_DIRECT_L", "    RESTART\n" + restart +
+                                                  "      METHOD RANDOM 1\n"
+                                                  "    ENDRESTART\n"),
+                         top + "NLOPT:GN_DIRECT_L needs a stop: ",
+                         kAnyTolerance + kDirectXtol});
+    for (const std::string algo :
+         {"GN_ESCH", "GN_AGS", "GD_STOGO", "GD_STOGO_RAND"})
+        cases.push_back({"NLOPT:" + algo + " without a stop", nlopt(algo, ""),
+                         top + "NLOPT:" + algo + " needs a stop: ",
+                         kNoTolerance});
+    /* A tolerance the algorithm does not test is no stop. */
+    cases.push_back({"NLOPT:GN_ESCH with FTOL_REL",
+                     nlopt("GN_ESCH", "    FTOL_REL 1e-6\n"),
+                     top + "NLOPT:GN_ESCH needs a stop: ", kNoTolerance});
+    /* MLSL hands its tolerances to its local searches only. */
+    for (const std::string algo :
+         {"GN_MLSL", "GN_MLSL_LDS", "GD_MLSL", "GD_MLSL_LDS"})
+        cases.push_back({"NLOPT:" + algo + " with XTOL_REL",
+                         nlopt(algo, "    XTOL_REL 1e-4\n"),
+                         top + "NLOPT:" + algo + " needs a stop: ",
+                         kNoTolerance});
+    for (const std::string algo : {"G_MLSL", "G_MLSL_LDS"})
+        cases.push_back({"NLOPT:" + algo + " with an INNER block",
+                         nlopt(algo, "    FTOL_REL 1e-6\n    INNER\n"
+                                     "      LIB NLOPT\n      ALGO LN_BOBYQA\n"
+                                     "      MAXEVAL 5\n    ENDINNER\n"),
+                         top + "NLOPT:" + algo + " needs a stop: ",
+                         kNoTolerance});
+    cases.push_back({"TADAH:ANNEAL_PT without a stop",
+                     plain + "    LIB TADAH\n    ALGO ANNEAL_PT\n",
+                     top + "TADAH:ANNEAL_PT needs a stop: ",
+                     "; set MAXEVAL, MAXTIME, STOPVAL or a positive tolerance "
+                     "it honours (FTOL_REL, FTOL_ABS)"});
+    cases.push_back({"TADAH:RANDOM with a tolerance only",
+                     plain + "    LIB TADAH\n    ALGO RANDOM\n"
+                             "    FTOL_REL 1e-6\n",
+                     top + "TADAH:RANDOM needs a stop: ", kNoTolerance});
+    /* DLIB:GFS reads FTOL_ABS as its solver's precision, which stops
+     * nothing. */
+    cases.push_back({"DLIB:GFS with FTOL_ABS only",
+                     plain + "    LIB DLIB\n    ALGO GFS\n"
+                             "    FTOL_ABS 1e-3\n",
+                     top + "DLIB:GFS needs a stop: ", kNoTolerance});
+    /* Each phase, named. */
+    cases.push_back({"each MULTISTART start: NLOPT:LD_MMA without a stop",
+                     "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LD_MMA\n"
+                     "    N_STARTS 2\n",
+                     "each MULTISTART start: NLOPT:LD_MMA needs a stop: ",
+                     kAnyTolerance});
+    cases.push_back({"the PRESTAGE exploration: NLOPT:GN_CRS2_LM without a stop",
+                     "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+                     "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
+                     "      ALGO GN_CRS2_LM\n    ENDEXPLORE\n",
+                     "the PRESTAGE exploration (EXPLORE block): "
+                     "NLOPT:GN_CRS2_LM needs a stop: ", kAnyTolerance});
+    cases.push_back({"the PRESTAGE refinement: NLOPT:GN_DIRECT_L without a stop",
+                     "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO GN_DIRECT_L\n"
+                     "    EXPLORE\n      LIB DLIB\n      ALGO GFS\n"
+                     "      MAXEVAL 12\n    ENDEXPLORE\n",
+                     "the PRESTAGE refinement: NLOPT:GN_DIRECT_L needs a stop: ",
+                     kAnyTolerance + kDirectXtol});
+    /* AUGLAG ends when its local search ends: an INNER search that needs a
+     * stop takes MAXEVAL, MAXTIME and STOPVAL from the enclosing block
+     * (NLopt hands them on, and replaces the INNER block's own STOPVAL),
+     * and its own MAXEVAL, MAXTIME and tolerances. */
+    const std::string auglag_direct =
+        "; set MAXEVAL, MAXTIME or a positive tolerance it honours (FTOL_REL, "
+        "FTOL_ABS, XTOL_REL, XTOL_ABS) in the INNER block, or MAXEVAL, "
+        "MAXTIME or STOPVAL in the NLOPT:AUGLAG block, which NLopt hands on "
+        "to it" + kDirectXtol;
+    cases.push_back({"NLOPT:AUGLAG with an INNER NLOPT:GN_DIRECT_L, no stop",
+                     nlopt("AUGLAG", "    INNER\n      LIB NLOPT\n"
+                                     "      ALGO GN_DIRECT_L\n    ENDINNER\n"),
+                     top + "the INNER search of NLOPT:AUGLAG "
+                           "(NLOPT:GN_DIRECT_L) needs a stop: ",
+                     auglag_direct});
+    cases.push_back({"NLOPT:AUGLAG with an INNER STOPVAL (NLopt replaces it)",
+                     nlopt("AUGLAG", "    INNER\n      LIB NLOPT\n"
+                                     "      ALGO GN_DIRECT_L\n"
+                                     "      STOPVAL 0.1\n    ENDINNER\n"),
+                     top + "the INNER search of NLOPT:AUGLAG "
+                           "(NLOPT:GN_DIRECT_L) needs a stop: ",
+                     auglag_direct});
+    cases.push_back({"NLOPT:AUGLAG with an INNER XTOL_REL of 0",
+                     nlopt("AUGLAG", "    INNER\n      LIB NLOPT\n"
+                                     "      ALGO GN_DIRECT_L\n"
+                                     "      XTOL_REL 0\n    ENDINNER\n"),
+                     top + "the INNER search of NLOPT:AUGLAG "
+                           "(NLOPT:GN_DIRECT_L) needs a stop: ",
+                     auglag_direct});
+    cases.push_back({"NLOPT:AUGLAG with an INNER NLOPT:GN_ESCH and a tolerance",
+                     nlopt("AUGLAG", "    FTOL_REL 1e-6\n    INNER\n"
+                                     "      LIB NLOPT\n      ALGO GN_ESCH\n"
+                                     "      FTOL_REL 1e-6\n    ENDINNER\n"),
+                     top + "the INNER search of NLOPT:AUGLAG (NLOPT:GN_ESCH) "
+                           "needs a stop: ",
+                     "; set MAXEVAL or MAXTIME in the INNER block, or MAXEVAL, "
+                     "MAXTIME or STOPVAL in the NLOPT:AUGLAG block, which "
+                     "NLopt hands on to it"});
+    /* Without an INNER block NLopt runs its default local optimiser, which
+     * takes the block's tolerances too: LD_MMA for LD_AUGLAG. */
+    for (const std::string& extra :
+         {std::string(""), std::string("    FTOL_REL 0\n")})
+        cases.push_back({"NLOPT:LD_AUGLAG without an INNER block or a stop "
+                         "(block lines: '" + extra + "')",
+                         nlopt("LD_AUGLAG", extra),
+                         top + "the local search of NLOPT:LD_AUGLAG (NLopt's "
+                               "default NLOPT:LD_MMA, as the block has no "
+                               "INNER block) needs a stop: ",
+                         "; set MAXEVAL, MAXTIME, STOPVAL or a positive "
+                         "tolerance it honours (FTOL_REL, FTOL_ABS, XTOL_REL, "
+                         "XTOL_ABS) in the NLOPT:LD_AUGLAG block, which NLopt "
+                         "hands on to it"});
+    for (const auto& c : cases) {
+        INFO(c.what << "\n" << c.body);
+        const auto v = judge(strategy_config(c.body));
+        CHECK_THAT(v.startup,
+                   Catch::StartsWith(c.starts) && Catch::EndsWith(c.ends));
+    }
+
+    /* The whole message of one NLopt global search. */
+    CHECK(judge(strategy_config(nlopt("GN_DIRECT", ""))).startup ==
+          top + "NLOPT:GN_DIRECT needs a stop: NLopt's global search has no "
+                "convergence test of its own and runs until it is "
+                "interrupted" + kAnyTolerance + kDirectXtol);
+}
+
+/* ======================================================================
+ * TADAH:RANDOM, TADAH:GRID and DLIB:GFS: the stops they honour, and what
+ * they reject. RANDOM and GRID honour MAXTIME and STOPVAL (they used to
+ * accept them and ignore them), GFS through dlib's own run-time limit and
+ * stop condition; GFS rejects the tolerances it cannot apply, and each
+ * rejects a PARAM it does not take, naming the ones it does.
+ * ==================================================================== */
+
+TEST_CASE("startup validation: TADAH:RANDOM/GRID and DLIB:GFS reject what "
+          "they cannot honour", "[startup_validation][strategy][stop]")
+{
+    struct Case { std::string what, body, message; };
+    const std::string top = "the STRATEGY-level optimiser: ";
+    const std::string random = "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+                               "    MAXEVAL 5\n";
+    const std::string grid = "    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n";
+    const std::string gfs = "    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n"
+                            "    MAXEVAL 5\n";
+    const std::string gfs_why =
+        ": dlib's global search has no convergence test to apply it to; stop "
+        "it with MAXEVAL, MAXTIME or STOPVAL";
+    for (const auto& c : std::vector<Case>{
+             {"RANDOM PARAM", random + "    PARAM FOO 1\n",
+              top + "TADAH:RANDOM: unknown PARAM 'FOO' (it takes none)"},
+             {"RANDOM word PARAM", random + "    PARAM FOO AUTO\n",
+              top + "TADAH:RANDOM: unknown PARAM 'FOO' (it takes none)"},
+             {"GFS PARAM", gfs + "    PARAM solver_eps 1e-3\n",
+              top + "DLIB:GFS: unknown PARAM 'solver_eps' (it takes none)"},
+             {"GRID PARAM", grid + "    PARAM GRID_STEPS 5\n",
+              top + "TADAH:GRID: unknown PARAM 'GRID_STEPS' (it takes "
+                    "GRID_POINTS)"},
+             {"GRID word PARAM", grid + "    PARAM FOO AUTO\n",
+              top + "TADAH:GRID: unknown PARAM 'FOO' (it takes GRID_POINTS)"},
+             {"GFS FTOL_REL", gfs + "    FTOL_REL 1e-6\n",
+              top + "DLIB:GFS does not support FTOL_REL" + gfs_why},
+             {"GFS XTOL_REL", gfs + "    XTOL_REL 1e-6\n",
+              top + "DLIB:GFS does not support XTOL_REL" + gfs_why},
+             {"GFS XTOL_ABS", gfs + "    XTOL_ABS 1e-6\n",
+              top + "DLIB:GFS does not support XTOL_ABS" + gfs_why}}) {
+        INFO(c.what << "\n" << c.body);
+        CHECK(judge(strategy_config(c.body)).startup == c.message);
+    }
+    /* The stops they honour. */
+    for (const std::string& body : std::vector<std::string>{
+             random + "    MAXTIME 60\n    STOPVAL 0.1\n",
+             grid + "    MAXTIME 60\n    STOPVAL 0.1\n",
+             gfs + "    MAXTIME 60\n    STOPVAL 0.1\n    FTOL_ABS 1e-3\n"}) {
+        INFO(body);
+        CHECK(judge(strategy_config(body)).startup == "");
+    }
+}
+
+/* ======================================================================
+ * MULTISTART runs a multi-seed backend (DLIB:GFS) once, from every INIT
+ * point: BUDGET_PER_START, each start's budget, has no effect there.
+ * ==================================================================== */
+
+TEST_CASE("startup validation: BUDGET_PER_START with a multi-seed backend is "
+          "rejected", "[startup_validation][strategy][multistart]")
+{
+    const std::string message =
+        "BUDGET_PER_START has no effect with DLIB:GFS, which runs every start "
+        "in one optimiser; use MAXEVAL";
+    for (const std::string& extra :
+         {std::string("    MAXEVAL 40\n    BUDGET_PER_START 5\n"),
+          std::string("    BUDGET_PER_START 5\n")}) {
+        INFO(extra);
+        const auto v = judge(strategy_config(
+            "    TYPE MULTISTART\n    LIB DLIB\n    ALGO GFS\n"
+            "    N_STARTS 2\n" + extra));
+        CHECK(v.startup == message);
+        CHECK(v.policy == message);
+    }
+    /* A backend that runs from each start takes it. */
+    const auto v = judge(strategy_config(
+        "    TYPE MULTISTART\n    LIB DLIB\n    ALGO BFGS\n"
+        "    N_STARTS 2\n    BUDGET_PER_START 5\n"));
+    CHECK(v.startup == "");
+    CHECK(v.policy == "");
 }
 
 TEST_CASE("startup validation: hpo_run rejects a backend setting of a "

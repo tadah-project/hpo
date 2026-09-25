@@ -48,6 +48,7 @@
 #include <tadah/hpo/runners.h>
 
 #include "anneal_test_support.h"
+#include "finish_within.h"
 
 #include <dlib/matrix.h>
 
@@ -62,6 +63,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -2948,6 +2950,12 @@ TEST_CASE("Termination: TADAH:GRID stops after MAXEVAL points in grid order",
         CHECK_THAT(journal,
                    Catch::Contains("GRID: MAXEVAL 5 < 28 grid points") &&
                    Catch::Contains("evaluating the first 5 in grid order"));
+        /* A spent MAXEVAL ends the run COMPLETED, and the journal says
+         * which stop ended the sweep. */
+        CHECK_THAT(journal, Catch::Contains("TADAH:GRID stopped: MAXEVAL "
+                                            "reached after 5 of 28 grid "
+                                            "points"));
+        CHECK(journal_status(journal) == "COMPLETED");
     }
     SECTION("MAXEVAL 1: the INIT point only") {
         TaRun run(plain_block(grid + "    MAXEVAL 1\n"));
@@ -2956,6 +2964,11 @@ TEST_CASE("Termination: TADAH:GRID stops after MAXEVAL points in grid order",
         CHECK(status == 0);
         const auto pts = evaluated_points();
         CHECK(pts == evals_between(full, 1, 1));
+        const std::string journal = read_file("hpo_run.log");
+        CHECK_THAT(journal, Catch::Contains("TADAH:GRID stopped: MAXEVAL "
+                                            "reached after 1 of 28 grid "
+                                            "points"));
+        CHECK(journal_status(journal) == "COMPLETED");
     }
     SECTION("MAXEVAL at or above the grid size: the whole grid, no note") {
         for (const std::string maxeval : {"28", "1000"}) {
@@ -2965,8 +2978,11 @@ TEST_CASE("Termination: TADAH:GRID stops after MAXEVAL points in grid order",
             REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
             CHECK(status == 0);
             CHECK(evaluated_points() == full);
-            CHECK(read_file("hpo_run.log").find("GRID: MAXEVAL") ==
-                  std::string::npos);
+            const std::string journal = read_file("hpo_run.log");
+            CHECK(journal.find("GRID: MAXEVAL") == std::string::npos);
+            CHECK_THAT(journal, Catch::Contains("TADAH:GRID finished: all 28 "
+                                                "grid points evaluated"));
+            CHECK(journal_status(journal) == "COMPLETED");
         }
     }
 }
@@ -3040,5 +3056,379 @@ TEST_CASE("Termination: each MULTISTART start runs with the MAXEVAL the "
                                             "(from BUDGET_PER_START)"));
         CHECK(data_rows("loss.tadah").size() == 6u);
         CHECK(startup_maxeval(run) == std::optional<std::uint64_t>(3));
+    }
+}
+
+/* ======================================================================
+ * TADAH:RANDOM, TADAH:GRID and DLIB:GFS honour MAXTIME and STOPVAL: a run
+ * ends after the first evaluation whose loss is at or below STOPVAL, or
+ * once MAXTIME seconds have passed (no evaluation starts after that), and
+ * the journal and the trailer say which. They used to accept both keys and
+ * ignore them, and RANDOM and GFS could not run without MAXEVAL.
+ * ==================================================================== */
+
+namespace {
+
+/* The losses of loss.tadah, by evaluation number (1-based). */
+std::vector<double> evaluated_losses()
+{
+    const auto loss = data_rows("loss.tadah");
+    std::vector<double> out(loss.size());
+    for (const auto& row : loss) {
+        const std::size_t eval = std::stoull(row.at(0));
+        REQUIRE(eval >= 1);
+        REQUIRE(eval <= out.size());
+        out[eval - 1] = std::stod(row.back());
+    }
+    return out;
+}
+
+/* The first evaluation after the first one whose loss improves on every
+ * earlier loss, and a STOPVAL halfway between the two: the first loss at
+ * or below that STOPVAL is that evaluation's. */
+struct FirstImprovement {
+    std::size_t eval;
+    std::string stopval;
+};
+
+FirstImprovement first_improvement(const std::vector<double>& losses)
+{
+    REQUIRE_FALSE(losses.empty());
+    double best = losses.front();
+    for (std::size_t i = 1; i < losses.size(); ++i) {
+        if (losses[i] < best) {
+            std::ostringstream os;
+            os << std::setprecision(17) << 0.5 * (losses[i] + best);
+            return {i + 1, os.str()};
+        }
+    }
+    FAIL("no evaluation improves on the first one");
+    return {0, ""};
+}
+
+/* The evaluated points and losses of a run of `optimizer`, and its
+ * journal. */
+struct Reference {
+    std::vector<Point> points;
+    std::vector<double> losses;
+    std::string journal;
+};
+
+Reference reference_run(const std::string& optimizer)
+{
+    TaRun run(optimizer);
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    REQUIRE(status == 0);
+    return {evaluated_points(), evaluated_losses(), read_file("hpo_run.log")};
+}
+
+/* hpo_run() of `run`, which must end within `limit`: a run that ignores
+ * its stop would not. */
+int run_within(TaRun& run, std::chrono::seconds limit, const std::string& what)
+{
+    int status = -1;
+    hpo_test::finish_within(limit, what, [&] {
+        status = tadah::hpo::hpo_run(run.ctx);
+    });
+    return status;
+}
+
+}  // namespace
+
+TEST_CASE("Termination: TADAH:RANDOM stops at the first loss at or below "
+          "STOPVAL", "[HPO][termination][stop_criteria][random]")
+{
+    const std::string random =
+        "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n    SEED 11\n";
+    const Reference ref = reference_run(plain_block(random + "    MAXEVAL 30\n"));
+    REQUIRE(ref.points.size() == 30u);
+    /* The reference run spends its MAXEVAL: it ends COMPLETED, and the
+     * journal says so. */
+    CHECK_THAT(ref.journal, Catch::Contains("TADAH:RANDOM stopped: MAXEVAL "
+                                            "reached after 30 "
+                                            "evaluation(s)"));
+    CHECK(journal_status(ref.journal) == "COMPLETED");
+    const FirstImprovement stop = first_improvement(ref.losses);
+    INFO("STOPVAL " << stop.stopval << ", first reached at evaluation "
+         << stop.eval);
+
+    /* With MAXEVAL, and on its own: STOPVAL is a stop of its own. */
+    for (const std::string maxeval : {"    MAXEVAL 30\n", ""}) {
+        INFO("MAXEVAL line: '" << maxeval << "'");
+        TaRun run(plain_block(random + maxeval + "    STOPVAL " +
+                              stop.stopval + "\n"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                            "TADAH:RANDOM with STOPVAL"));
+        CHECK(status == 0);
+        check_run_files();
+        CHECK(evaluated_points() == evals_between(ref.points, 1, stop.eval));
+        const std::string journal = read_file("hpo_run.log");
+        CHECK_THAT(journal, Catch::Contains(
+                                "TADAH:RANDOM stopped: STOPVAL reached after " +
+                                std::to_string(stop.eval) + " evaluation(s)"));
+        CHECK(journal_status(journal) == "TADAH:RANDOM: STOPVAL reached");
+    }
+}
+
+TEST_CASE("Termination: TADAH:RANDOM stops once MAXTIME has passed",
+          "[HPO][termination][stop_criteria][random]")
+{
+    /* On its own, and next to a MAXEVAL it would take far longer to
+     * spend. */
+    for (const std::string maxeval : {"", "    MAXEVAL 100000000\n"}) {
+        INFO("MAXEVAL line: '" << maxeval << "'");
+        TaRun run(plain_block("    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+                              "    SEED 5\n    MAXTIME 1\n" + maxeval));
+        int status = -1;
+        REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(90),
+                                            "TADAH:RANDOM with MAXTIME 1"));
+        CHECK(status == 0);
+        check_run_files();
+        const std::string journal = read_file("hpo_run.log");
+        CHECK_THAT(journal, Catch::Contains(
+                                "TADAH:RANDOM stopped: MAXTIME exceeded after "));
+        CHECK(journal_status(journal) == "TADAH:RANDOM: MAXTIME exceeded");
+    }
+}
+
+TEST_CASE("Termination: TADAH:GRID stops at the first loss at or below "
+          "STOPVAL in grid order", "[HPO][termination][stop_criteria][grid]")
+{
+    const std::string grid =
+        "    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n"
+        "    PARAM GRID_POINTS 3\n";
+    const Reference ref = reference_run(plain_block(grid));
+    REQUIRE(ref.points.size() == 28u);
+    const FirstImprovement stop = first_improvement(ref.losses);
+    INFO("STOPVAL " << stop.stopval << ", first reached at grid point "
+         << stop.eval);
+
+    TaRun run(plain_block(grid + "    STOPVAL " + stop.stopval + "\n"));
+    int status = -1;
+    REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                        "TADAH:GRID with STOPVAL"));
+    CHECK(status == 0);
+    check_run_files();
+    CHECK(evaluated_points() == evals_between(ref.points, 1, stop.eval));
+    const std::string journal = read_file("hpo_run.log");
+    CHECK_THAT(journal, Catch::Contains(
+                            "TADAH:GRID stopped: STOPVAL reached after " +
+                            std::to_string(stop.eval) + " of 28 grid points"));
+    CHECK(journal_status(journal) == "TADAH:GRID: STOPVAL reached");
+}
+
+TEST_CASE("Termination: TADAH:GRID stops once MAXTIME has passed",
+          "[HPO][termination][stop_criteria][grid]")
+{
+    /* 1 + 100^3 grid points: far more than a second's evaluations. */
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n"
+                          "    PARAM GRID_POINTS 100\n    MAXTIME 1\n"));
+    int status = -1;
+    REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(90),
+                                        "TADAH:GRID with MAXTIME 1"));
+    CHECK(status == 0);
+    check_run_files();
+    const std::string journal = read_file("hpo_run.log");
+    CHECK_THAT(journal, Catch::Contains("TADAH:GRID stopped: MAXTIME exceeded "
+                                        "after ") &&
+                        Catch::Contains(" of 1000001 grid points"));
+    CHECK(journal_status(journal) == "TADAH:GRID: MAXTIME exceeded");
+    CHECK(data_rows("loss.tadah").size() < 1000001u);
+}
+
+TEST_CASE("Termination: DLIB:GFS stops at the first loss at or below STOPVAL",
+          "[HPO][termination][stop_criteria][gfs]")
+{
+    /* One worker: dlib evaluates one point at a time, so no evaluation
+     * runs after the one that reaches STOPVAL. */
+    const std::string gfs =
+        "    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n    THREADS 1\n";
+    const Reference ref = reference_run(plain_block(gfs + "    MAXEVAL 30\n"));
+    REQUIRE(ref.points.size() == 30u);
+    CHECK_THAT(ref.journal, Catch::Contains("DLIB:GFS stopped: MAXEVAL "
+                                            "reached after 30 "
+                                            "evaluation(s)"));
+    CHECK(journal_status(ref.journal) == "COMPLETED");
+    const FirstImprovement stop = first_improvement(ref.losses);
+    INFO("STOPVAL " << stop.stopval << ", first reached at evaluation "
+         << stop.eval);
+
+    for (const std::string maxeval : {"    MAXEVAL 30\n", ""}) {
+        INFO("MAXEVAL line: '" << maxeval << "'");
+        TaRun run(plain_block(gfs + maxeval + "    STOPVAL " + stop.stopval +
+                              "\n"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                            "DLIB:GFS with STOPVAL"));
+        CHECK(status == 0);
+        check_run_files();
+        CHECK(evaluated_points() == evals_between(ref.points, 1, stop.eval));
+        const std::string journal = read_file("hpo_run.log");
+        CHECK_THAT(journal, Catch::Contains(
+                                "DLIB:GFS stopped: STOPVAL reached after " +
+                                std::to_string(stop.eval) + " evaluation(s)"));
+        CHECK(journal_status(journal) == "DLIB:GFS: STOPVAL reached");
+    }
+}
+
+TEST_CASE("Termination: DLIB:GFS stops once MAXTIME has passed",
+          "[HPO][termination][stop_criteria][gfs]")
+{
+    for (const std::string maxeval : {"", "    MAXEVAL 100000000\n"}) {
+        INFO("MAXEVAL line: '" << maxeval << "'");
+        TaRun run(plain_block("    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n"
+                              "    MAXTIME 1\n" + maxeval));
+        int status = -1;
+        REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(90),
+                                            "DLIB:GFS with MAXTIME 1"));
+        CHECK(status == 0);
+        check_run_files();
+        const std::string journal = read_file("hpo_run.log");
+        CHECK_THAT(journal, Catch::Contains(
+                                "DLIB:GFS stopped: MAXTIME exceeded after "));
+        CHECK(journal_status(journal) == "DLIB:GFS: MAXTIME exceeded");
+    }
+}
+
+TEST_CASE("Termination: the journal says how a run without stop criteria "
+          "ends", "[HPO][termination][stop_criteria][journal]")
+{
+    /* A backend without a stop criterion either ends on its own or is
+     * refused at startup (it needs a stop), so "may run indefinitely" no
+     * longer holds of any run that starts. */
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n"
+                          "    PARAM GRID_POINTS 2\n"));
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    const std::string journal = read_file("hpo_run.log");
+    CHECK_THAT(journal,
+               Catch::Contains("(none set -- TADAH:GRID ends on its own: a "
+                               "convergence test, a finite schedule or "
+                               "limits of its own)") &&
+               !Catch::Contains("may run indefinitely"));
+    CHECK_THAT(journal, Catch::Contains("TADAH:GRID finished: all 9 grid "
+                                        "points evaluated"));
+}
+
+/* ======================================================================
+ * MAXTIME is a stop only while another evaluation would start: a run whose
+ * last evaluation spends MAXEVAL (or the grid) ends on MAXEVAL, COMPLETED,
+ * however long that evaluation took -- as DLIB:GFS reports it.
+ * ==================================================================== */
+
+TEST_CASE("Termination: TADAH:RANDOM and TADAH:GRID report MAXEVAL when "
+          "their last evaluation spends it after MAXTIME has passed",
+          "[HPO][termination][stop_criteria][random][grid]")
+{
+    /* MAXTIME 0.0001 s has passed after the first evaluation. */
+    struct Case { std::string what, body, maxeval_line, maxtime_line; };
+    for (const auto& c : std::vector<Case>{
+             {"TADAH:RANDOM",
+              "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n    SEED 1\n",
+              "TADAH:RANDOM stopped: MAXEVAL reached after 1 evaluation(s)",
+              "TADAH:RANDOM stopped: MAXTIME exceeded after 1 evaluation(s)"},
+             {"TADAH:GRID",
+              "    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n"
+              "    PARAM GRID_POINTS 2\n",
+              "TADAH:GRID stopped: MAXEVAL reached after 1 of 9 grid points",
+              "TADAH:GRID stopped: MAXTIME exceeded after 1 of 9 grid "
+              "points"}}) {
+        INFO(c.what);
+        {
+            TaRun run(plain_block(c.body + "    MAXEVAL 1\n"
+                                           "    MAXTIME 0.0001\n"));
+            int status = -1;
+            REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(90),
+                                                c.what + " MAXEVAL 1"));
+            CHECK(status == 0);
+            check_run_files();
+            CHECK(data_rows("loss.tadah").size() == 1u);
+            const std::string journal = read_file("hpo_run.log");
+            CHECK_THAT(journal, Catch::Contains(c.maxeval_line) &&
+                                !Catch::Contains("MAXTIME exceeded"));
+            CHECK(journal_status(journal) == "COMPLETED");
+        }
+        /* With evaluations left, the same MAXTIME ends the run after the
+         * first one. */
+        {
+            TaRun run(plain_block(c.body + "    MAXEVAL 5\n"
+                                           "    MAXTIME 0.0001\n"));
+            int status = -1;
+            REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(90),
+                                                c.what + " MAXEVAL 5"));
+            CHECK(status == 0);
+            CHECK(data_rows("loss.tadah").size() == 1u);
+            const std::string journal = read_file("hpo_run.log");
+            CHECK_THAT(journal, Catch::Contains(c.maxtime_line));
+            CHECK(journal_status(journal) == c.what + ": MAXTIME exceeded");
+        }
+    }
+}
+
+/* ======================================================================
+ * An active RESTART (AFTER_STAGNATION and MAX > 0) is a stop of every
+ * phase it wraps: once its MAX restarts are used, the next
+ * AFTER_STAGNATION evaluations without a new best end the run. A backend
+ * that needs a stop runs under it without one of its own -- at startup,
+ * and when its driver checks its spec again at run time (the PRESTAGE
+ * exploration runs its EXPLORE block's spec, which has no RESTART).
+ * ==================================================================== */
+
+TEST_CASE("Termination: the RESTART stagnation stop ends a search that has "
+          "no stop of its own", "[HPO][termination][restart][stop_criteria]")
+{
+    const std::string restart =
+        "    RESTART\n      AFTER_STAGNATION 20\n      MAX 1\n"
+        "      METHOD RANDOM 1\n      SEED 5\n    ENDRESTART\n";
+    struct Case { std::string what, body; bool ends_on_stagnation; };
+    for (const auto& c : std::vector<Case>{
+             {"NLOPT:GN_DIRECT_L",
+              "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_DIRECT_L\n",
+              true},
+             {"TADAH:RANDOM",
+              "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+              "    SEED 3\n",
+              true},
+             {"NLOPT:AUGLAG over an INNER NLOPT:GN_DIRECT_L",
+              "    TYPE PLAIN\n    LIB NLOPT\n    ALGO AUGLAG\n"
+              "    INNER\n      LIB NLOPT\n      ALGO GN_DIRECT_L\n"
+              "    ENDINNER\n",
+              true},
+             /* The exploration ends at its first stagnation and hands its
+              * best point to the refinement, which ends on its own. */
+             {"the PRESTAGE exploration NLOPT:GN_CRS2_LM",
+              "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+              "    MAXEVAL 15\n    TOPK 1\n    EXPLORE\n      LIB NLOPT\n"
+              "      ALGO GN_CRS2_LM\n      SEED 7\n    ENDEXPLORE\n",
+              false}}) {
+        DYNAMIC_SECTION(c.what) {
+            TaRun run(plain_block(c.body + restart));
+            int status = -1;
+            REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(180),
+                                                c.what + " under RESTART"));
+            CHECK(status == 0);
+            check_run_files();
+            const std::string journal = read_file("hpo_run.log");
+            if (c.ends_on_stagnation) {
+                CHECK_THAT(journal, Catch::Contains("RESTART 1/1"));
+                CHECK(journal_status(journal) ==
+                      "STOPPED -- stagnation, max restarts (1) used");
+                /* The journal says what ends a run without a stop of its
+                 * own. */
+                if (c.what == "NLOPT:GN_DIRECT_L")
+                    CHECK_THAT(journal,
+                               Catch::Contains(
+                                   "(none set -- the RESTART stagnation stop "
+                                   "ends NLOPT:GN_DIRECT_L: once its MAX 1 "
+                                   "restart(s) are used, AFTER_STAGNATION 20 "
+                                   "evaluations without a new best)"));
+            } else {
+                CHECK_THAT(journal,
+                           Catch::Contains("REFINEMENT: refining top-1"));
+            }
+        }
     }
 }
