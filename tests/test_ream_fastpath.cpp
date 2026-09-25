@@ -11,7 +11,9 @@
 //     between ZERO and FREE on the same kernel (F' is unchanged);
 //   - (E_ZERO - E_FREE)/N == -F(0);
 //   - EAMFAST vs generic parity (relative 1e-9, as for pure 2B);
-//   - a potential without an EMBF0 line is evaluated as ZERO.
+//   - a potential without an EMBF0 line is evaluated as ZERO;
+//   - pair_coeff prints a LAMMPS WARNING (screen + log.lammps) for such a
+//     potential on every load, and nothing new for a declared one (BUG-08).
 
 #include "catch2/catch.hpp"
 
@@ -28,6 +30,7 @@
 #include <cstdio>
 #include <limits>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <unistd.h>
 #include <vector>
@@ -177,6 +180,47 @@ Run run_case(LammpsRunner& runner, bool eamfast, const char* embf0) {
     return r;
 }
 
+std::string slurp(const std::string& path) {
+    std::ifstream ifs(path);
+    return std::string(std::istreambuf_iterator<char>(ifs),
+                       std::istreambuf_iterator<char>());
+}
+
+int count_of(const std::string& hay, const std::string& needle) {
+    int n = 0;
+    for (auto p = hay.find(needle); p != std::string::npos;
+         p = hay.find(needle, p + needle.size()))
+        ++n;
+    return n;
+}
+
+/* log.lammps of one isolated-atom run that loads @p pot_path by file name
+ * (pair_coeff * * <file> Ta, the plain LAMMPS user path). */
+std::string log_of_file_load(LammpsRunner& runner, const std::string& pot_path,
+                             const std::string& tag) {
+    const std::string stem = "ream_notice_" + std::to_string(::getpid())
+        + "_" + tag;
+    const std::string script = stem + ".in", log = stem + ".log";
+    {
+        std::ofstream ofs(script);
+        for (const auto& line : isolated_atom())
+            ofs << (line == "pair_coeff * * EXTERN Ta"
+                        ? "pair_coeff * * " + pot_path + " Ta"
+                        : line)
+                << "\n";
+    }
+    {
+        auto lmp = runner.create_instance(
+            0, {"lmp", "-log", log, "-screen", "none"});
+        REQUIRE(lmp != nullptr);
+        REQUIRE(runner.run_script(lmp, script));
+    }   // LAMMPS destroyed: log.lammps flushed and closed
+    const std::string text = slurp(log);
+    std::remove(script.c_str());
+    std::remove(log.c_str());
+    return text;
+}
+
 }  // namespace
 
 TEST_CASE("DM_REAM fast path: EMBF0 ZERO/FREE on EAMFAST and generic kernels",
@@ -225,4 +269,65 @@ TEST_CASE("DM_REAM fast path: EMBF0 ZERO/FREE on EAMFAST and generic kernels",
     REQUIRE(af.e_iso == 0.0);
     REQUIRE(af.e == zf.e);
     REQUIRE(af.exact == zf.exact);
+}
+
+TEST_CASE("pair_coeff warns when a DM_REAM potential has no EMBF0 line",
+          "[pair_tadah][ream][embf0][notice]") {
+    tadah::core::PeriodicTable::initialize();
+    LammpsRunner runner;
+    const std::string warn = "has no EMBF0 line";
+    const std::string absent_banner =
+        "EMBF0 ZERO (key absent: default ZERO, F(0) = 0 by construction; "
+        "add EMBF0 FREE to reproduce tadah <= 1.5.0 energies)";
+
+    SECTION("pair_coeff * * <file>: WARNING only for the key-less potential") {
+        const std::string p_abs = write_pot(true, nullptr);
+        const std::string p_zero = write_pot(true, "ZERO");
+        const std::string p_free = write_pot(true, "FREE");
+        const std::string l_abs = log_of_file_load(runner, p_abs, "absent");
+        const std::string l_zero = log_of_file_load(runner, p_zero, "zero");
+        const std::string l_free = log_of_file_load(runner, p_free, "free");
+        for (const auto& p : {p_abs, p_zero, p_free}) std::remove(p.c_str());
+
+        REQUIRE(count_of(l_abs, "WARNING: pair tadah: potential '" + p_abs +
+                                    "' " + warn) == 1);
+        REQUIRE(count_of(l_abs, absent_banner) == 1);
+        // linear model: the energies-only text, with the migration
+        REQUIRE(count_of(l_abs, "forces and stresses are unchanged") == 1);
+        REQUIRE(count_of(l_abs, "add 'EMBF0 FREE' to the potential") == 1);
+
+        for (const auto* l : {&l_zero, &l_free}) {
+            REQUIRE(count_of(*l, warn) == 0);
+            REQUIRE(count_of(*l, "key absent") == 0);
+        }
+        REQUIRE(count_of(l_zero, "Tadah! DM_REAM embedding reference EMBF0 "
+                                 "ZERO (F(0) = 0 by construction)\n") == 1);
+        REQUIRE(count_of(l_free, "Tadah! DM_REAM embedding reference EMBF0 "
+                                 "FREE (raw embedding of tadah <= 1.5.0)\n")
+                == 1);
+    }
+
+    SECTION("pair_coeff * * EXTERN: WARNING on every load") {
+        const std::string pot_path = write_pot(true, nullptr);
+        tadah::core::Context pot_ctx;
+        REQUIRE_NOTHROW(pot_ctx =
+            tadah::core::CoreUserConfigParser().parse(pot_path));
+        std::remove(pot_path.c_str());
+        const std::string log = "ream_notice_" + std::to_string(::getpid())
+            + "_extern.log";
+        {
+            auto lmp = runner.create_instance(
+                0, {"lmp", "-log", log, "-screen", "none"});
+            REQUIRE(lmp != nullptr);
+            REQUIRE(runner.run_script(lmp, isolated_atom(), pot_ctx));
+            REQUIRE(runner.run_script(lmp, isolated_atom(), pot_ctx));
+        }
+        const std::string text = slurp(log);
+        std::remove(log.c_str());
+        REQUIRE(count_of(text, "WARNING: pair tadah: potential 'EXTERN "
+                               "(driver-provided)' " + warn) == 2);
+        REQUIRE(count_of(text, absent_banner) == 2);
+        // the parsed context itself is untouched (LammpsTadah copies it)
+        REQUIRE_FALSE(pot_ctx.has_stored("EMBF0"));
+    }
 }
