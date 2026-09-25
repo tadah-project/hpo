@@ -93,7 +93,12 @@ class LammpsSim {
      *  and "unlimited". Sizes the PROCESS worker deadline
      *  (pc_worker_deadline_ms). */
     std::optional<double> maxtime_seconds;
-    double failscore; /**< Score given when a simulation fails */
+    /** The value each --varloss / --outvar variable of this line takes when
+     *  its simulation fails (--failscore; default: the root FAILSCORE in
+     *  force when the line is read). On a PC_LAMMPS line any finite number;
+     *  on the PC_FAILPROBE line a positive one, the S at or above which the
+     *  probe counts as failed. */
+    double failscore;
 
     /**
      * Hot-variable declaration: `--hotvar <name> <min> <max> [<initial>]`.

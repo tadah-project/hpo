@@ -104,8 +104,10 @@ inline constexpr double kFailBandFloor = 0.999;
  * << kFailBandFloor*FS, failures are >= it. Anything that must not treat a
  * failure as an achievement -- publishing a best potential, seeding a warm
  * start, reporting a result -- has to ask this rather than merely checking
- * isfinite(), because a graded failure IS finite by construction. With no
- * FAILSCORE configured, only finiteness is knowable.
+ * isfinite(), because a graded failure IS finite by construction. The
+ * configured FAILSCORE is a positive finite number (HPOTargets refuses any
+ * other at its line); a caller without one passes a non-positive or
+ * non-finite value, and then only finiteness is knowable.
  *
  * (anneal_core.h spells the same predicate `anneal::loss_is_finite`, kept
  * for the annealer call sites; it delegates here.) */

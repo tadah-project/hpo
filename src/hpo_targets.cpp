@@ -963,8 +963,17 @@ void HPOTargets::read(const std::string& fn)
             /* optimizer-independent settings ----------------------- *
              * Every value is parsed strictly (strict_parse.h): the whole
              * token, one per single-value key. */
+            /* A positive finite number: the failure band [0.999 FS, FS)
+             * lies below it, and a loss is usable only below the band. With
+             * 0 or below there is no band: every finite loss, FAILSCORE
+             * itself included, would count as usable, a run whose every
+             * evaluation failed would end as a completed one with a failed
+             * best_pot.tadah, and the ceiling would clip every positive loss
+             * to FAILSCORE. Negative losses (negative-weight --varloss
+             * terms) stay usable under any positive FAILSCORE. */
             if (key=="FAILSCORE") {
-                FAIL_SCORE = parse_finite(single_value(iss, key), key);
+                FAIL_SCORE = parse_positive(single_value(iss, key), key,
+                                            "finite number");
             }
             /* PC_SCRIPT_TIMEOUT: per-pc_script soft wall-clock limit (a LAMMPS
              * time spec: off, unlimited or a positive [[HH:]MM:]SS) injected as
