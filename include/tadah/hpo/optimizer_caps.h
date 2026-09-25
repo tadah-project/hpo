@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace tadah::hpo {
@@ -124,9 +125,13 @@ struct OptimizerCaps {
 };
 
 /* Lookup capabilities for (lib, algo). Throws std::runtime_error if
- * the (lib, algo) pair is not registered. */
-const OptimizerCaps& optimizer_caps(const std::string& lib,
-                                    const std::string& algo);
+ * the (lib, algo) pair is not registered. The result refers to the static
+ * registry, never to the arguments, and stays valid for the whole run. The
+ * names are views: with `const std::string&` parameters every call with a
+ * literal bound a temporary std::string, and GCC 13's -Wdangling-reference
+ * reported a reference bound to the result as possibly dangling. */
+const OptimizerCaps& optimizer_caps(std::string_view lib,
+                                    std::string_view algo);
 
 /* Convenience: look up by spec.lib / spec.algo. */
 const OptimizerCaps& optimizer_caps(const OptimizerSpec& sp);

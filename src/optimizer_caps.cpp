@@ -376,13 +376,14 @@ bool step_use_consumes(StepUse u)
     }
 }
 
-const OptimizerCaps& optimizer_caps(const std::string& lib,
-                                    const std::string& algo)
+const OptimizerCaps& optimizer_caps(std::string_view lib,
+                                    std::string_view algo)
 {
     const auto& reg = registry();
-    auto it = reg.find({lib, algo});
+    auto it = reg.find({std::string(lib), std::string(algo)});
     if (it == reg.end())
-        throw std::runtime_error("unknown optimizer " + lib + ":" + algo +
+        throw std::runtime_error("unknown optimizer " + std::string(lib) +
+                                 ":" + std::string(algo) +
                                  " (not registered in optimizer_caps)");
     return it->second;
 }
