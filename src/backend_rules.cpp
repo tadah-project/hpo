@@ -248,6 +248,13 @@ void validate_nlopt_spec(const OptimizerSpec& sp, RestartStop restart)
             "NLopt INNER spec with a seed: NLopt draws the INNER search from "
             "the enclosing run's random stream; set SEED on the enclosing "
             "block");
+    /* The parser rejects GRAD_STRATEGY inside INNER; a spec built outside
+     * it must not carry one either, since it would not be used. */
+    if (sp.inner && sp.inner->grad_strategy)
+        throw std::invalid_argument(
+            "NLopt INNER spec with a GRAD_STRATEGY: the enclosing block's "
+            "GRAD_STRATEGY applies to its local search; set GRAD_STRATEGY on "
+            "the enclosing block");
     require_nlopt_maxeval(sp);
     if (sp.inner) require_nlopt_maxeval(*sp.inner);
     require_stop(sp, restart);

@@ -405,13 +405,30 @@ static bool dispatch_init_attr(const std::string& key,
 
 /* An INNER block configures the local search that NLopt's MLSL and AUGLAG
  * run inside the enclosing block's NLopt run. It takes every optimiser
- * attribute but SEED: NLopt has one random stream per run, which
- * make_nlopt seeds from the enclosing block (its SEED, else its INIT
- * block's SEED), and the INNER search draws from that stream. An INNER
- * SEED could only reseed it in place of the enclosing block's SEED. */
+ * attribute but two, which belong to the enclosing block:
+ *   - SEED: NLopt has one random stream per run, which make_nlopt seeds
+ *     from the enclosing block (its SEED, else its INIT block's SEED), and
+ *     the INNER search draws from that stream. An INNER SEED could only
+ *     reseed it in place of the enclosing block's SEED.
+ *   - GRAD_STRATEGY: MLSL and AUGLAG hand their local search the gradient
+ *     of their own objective, which the enclosing block's GRAD_STRATEGY
+ *     obtains (nlopt_adapter.h). An INNER GRAD_STRATEGY would never be
+ *     used.
+ * Returns why `key` is not accepted inside INNER, or nullptr when it is. */
+static const char* inner_rejects_attr(const std::string& key)
+{
+    if (key == "SEED")
+        return "NLopt draws the INNER search from the enclosing run's random "
+               "stream";
+    if (key == "GRAD_STRATEGY")
+        return "the enclosing block's GRAD_STRATEGY applies to its local "
+               "search";
+    return nullptr;
+}
+
 static bool inner_takes_attr(const std::string& key)
 {
-    return key != "SEED";
+    return inner_rejects_attr(key) == nullptr;
 }
 
 static std::string inner_attr_keys_joined(const char* sep)
@@ -780,15 +797,15 @@ void HPOTargets::read(const std::string& fn)
 
             /* ============== block-specific dispatch =============== */
 
-            /* SEED inside INNER: the INNER search draws from the random
-             * stream of the enclosing block's run (inner_takes_attr). */
+            /* SEED and GRAD_STRATEGY inside INNER: the INNER search draws
+             * from the random stream of the enclosing block's run and
+             * takes the gradient its GRAD_STRATEGY obtains
+             * (inner_rejects_attr). */
             if (block == INNER_BLK && !inner_takes_attr(key)) {
-                const std::string enclosing = inner_enclosing();
                 throw std::runtime_error(
-                    key + " is not accepted inside an INNER block: NLopt "
-                    "draws the INNER search from the enclosing run's random "
-                    "stream; set " + key + " on the enclosing " + enclosing +
-                    " block");
+                    key + " is not accepted inside an INNER block: " +
+                    inner_rejects_attr(key) + "; set " + key +
+                    " on the enclosing " + inner_enclosing() + " block");
             }
 
             /* Common opt-attribute keys (LIB/ALGO/MAXEVAL/...) accepted in
@@ -1273,7 +1290,7 @@ void HPOTargets::read(const std::string& fn)
      * registered derivative, a model setting the analytical gradient does
      * not cover), which it fills with finite differences. */
     auto reject_numerical_with_observable =
-        [&](const OptimizerSpec& sp, const char* tag, bool inner) {
+        [&](const OptimizerSpec& sp, const char* tag) {
             if (sp.grad_strategy
                 && *sp.grad_strategy == GradStrategy::Numerical) {
                 throw std::runtime_error(
@@ -1285,19 +1302,16 @@ void HPOTargets::read(const std::string& fn)
                     "the analytical gradient, such as OALGO 4 with a fixed "
                     "LAMBDA >= 0, and startup names a missing one) or "
                     "GRAD_STRATEGY HYBRID, which uses finite differences "
-                    "where the analytical gradient is unavailable." +
-                    std::string(inner
-                        ? " An INNER block's GRAD_STRATEGY does not apply: its "
-                          "search takes the gradients of the block it belongs "
-                          "to, so remove this line and set GRAD_STRATEGY "
-                          "there."
-                        : ""));
+                    "where the analytical gradient is unavailable.");
             }
         };
     /* Every block that configures an optimiser: the STRATEGY-level one
      * (under PRESTAGE the refinement) and its INNER block, and the PRESTAGE
      * EXPLORE block and its INNER block. The rules below hold for each:
-     * the exploration evaluates the same loss. */
+     * the exploration evaluates the same loss. An INNER block never holds
+     * a GRAD_STRATEGY (the parser rejects one where it is written), so of
+     * the GRAD_STRATEGY rules only the PC_LAMMPS optimiser rule has
+     * something to check there. */
     struct OptimiserBlock { OptimizerSpec* sp; const char* tag; bool inner; };
     std::vector<OptimiserBlock> optimiser_blocks = {{&spec, "OPTIMIZER's", false}};
     if (spec.inner)
@@ -1310,7 +1324,7 @@ void HPOTargets::read(const std::string& fn)
     }
     if (!observables.empty())
         for (const auto& b : optimiser_blocks)
-            reject_numerical_with_observable(*b.sp, b.tag, b.inner);
+            reject_numerical_with_observable(*b.sp, b.tag);
 
     /* ...and an unset GRAD_STRATEGY, which means NUMERICAL, resolves to
      * ANALYTICAL in each block that runs an optimiser and obtains gradients
@@ -1319,10 +1333,10 @@ void HPOTargets::read(const std::string& fn)
      * grad_strategy_resolved puts it in the journal. An INNER block runs
      * no optimiser of its own: MLSL and AUGLAG hand their local search the
      * gradient of their own objective, which the enclosing block's
-     * GRAD_STRATEGY obtains (nlopt_adapter.h), so an INNER block is left
-     * as written. The derivative-free blocks are left alone too: they
-     * never ask for a gradient, and ANNEAL and ASA reject any
-     * GRAD_STRATEGY. */
+     * GRAD_STRATEGY obtains (nlopt_adapter.h), so an INNER block takes no
+     * GRAD_STRATEGY and is not resolved. The derivative-free blocks are
+     * left alone too: they never ask for a gradient, and ANNEAL and ASA
+     * reject any GRAD_STRATEGY. */
     if (!observables.empty()) {
         for (const auto& b : optimiser_blocks) {
             if (b.inner || b.sp->grad_strategy || !obtains_gradients(*b.sp))

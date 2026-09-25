@@ -165,10 +165,10 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * a value (analytical_gate.h), so refuse it here, not after the first
    * evaluation with "no registered analytical derivative". The blocks
    * that run an optimiser and obtain gradients: the STRATEGY-level block
-   * and EXPLORE. An INNER block's GRAD_STRATEGY does not apply -- MLSL and
-   * AUGLAG hand their local search the gradient of their own objective,
-   * which the enclosing block's GRAD_STRATEGY obtains (nlopt_adapter.h) --
-   * so it is not checked, and the message says so when it sets one. */
+   * and EXPLORE. An INNER block has no GRAD_STRATEGY (the parser rejects
+   * one): MLSL and AUGLAG hand their local search the gradient of their
+   * own objective, which the enclosing block's GRAD_STRATEGY obtains
+   * (nlopt_adapter.h). */
   {
     struct Block { const OptimizerSpec* sp; const char* name; };
     std::vector<Block> blocks = {{&trg.spec, "OPTIMIZER"}};
@@ -186,12 +186,6 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         checked = true;
       }
       if (why.empty()) break;
-      std::string inner_note;
-      if (b.sp->inner && b.sp->inner->grad_strategy)
-        inner_note = std::string("; the INNER block's GRAD_STRATEGY ") +
-                     grad_strategy_name(*b.sp->inner->grad_strategy) +
-                     " does not apply: the INNER search takes the gradients "
-                     "of this block";
       throw std::runtime_error(
           std::string(b.name) + " block: GRAD_STRATEGY ANALYTICAL" +
           (b.sp->grad_strategy_resolved
@@ -201,7 +195,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
           " needs the analytical gradient of the loss, which this setup "
           "cannot form: " + why + ". Change that setting, or set "
           "GRAD_STRATEGY HYBRID to use finite differences where no "
-          "analytical gradient is available" + inner_note + ".");
+          "analytical gradient is available.");
     }
   }
 

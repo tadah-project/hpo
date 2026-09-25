@@ -47,9 +47,9 @@ struct StopCriteria {
  * Configured at OPTIMIZER block level via `GRAD_STRATEGY {NUMERICAL|
  * ANALYTICAL|HYBRID}`. Default (unset) = NUMERICAL; with PC_OBSERVABLE
  * an unset value resolves to ANALYTICAL in the blocks that run an
- * optimiser and obtain gradients (HPOTargets::read). An INNER block's
- * value does not apply: MLSL/AUGLAG hand their local search the
- * gradient the enclosing block obtains. The Phase-1 keyword
+ * optimiser and obtain gradients (HPOTargets::read). An INNER block
+ * takes none (a parse error at its line): MLSL/AUGLAG hand their local
+ * search the gradient the enclosing block obtains. The Phase-1 keyword
  * `AUTODIFF` is no longer accepted; the parser emits a tailored error
  * pointing at ANALYTICAL. */
 enum class GradStrategy { Numerical, Analytical, Hybrid };
@@ -210,7 +210,11 @@ struct OptimizerSpec {
      * (used only with MLSL/G_MLSL_LDS/AUGLAG, which delegate inner
      * work to a local optimiser via set_local_optimizer). It has no
      * seed: NLopt draws the INNER search from the enclosing run's random
-     * stream (make_nlopt), so HPOTargets rejects SEED inside INNER.
+     * stream (make_nlopt), so HPOTargets rejects SEED inside INNER. It
+     * has no GRAD_STRATEGY either: MLSL/AUGLAG hand the local search the
+     * gradient the enclosing block's GRAD_STRATEGY obtains, so HPOTargets
+     * rejects GRAD_STRATEGY inside INNER too. validate_nlopt_spec (and so
+     * make_nlopt) refuses an INNER spec that carries either.
      * The v1.0.0-v1.1.1 keyword `LOCAL/ENDLOCAL` was renamed to INNER. */
     std::unique_ptr<OptimizerSpec> inner;
 

@@ -50,17 +50,6 @@ static std::string grad_strategy_text(const OptimizerSpec& sp)
     return s;
 }
 
-/* The GRAD_STRATEGY an INNER block sets, for the journal. It does not
- * apply: MLSL and AUGLAG hand their INNER search the gradient of their own
- * objective, which the enclosing block's GRAD_STRATEGY obtains
- * (nlopt_adapter.h). */
-static std::string inner_grad_strategy_text(const OptimizerSpec& inner)
-{
-    return std::string(grad_strategy_name(*inner.grad_strategy)) +
-           " (not used: the INNER search takes the gradients of the "
-           "enclosing block)";
-}
-
 static std::string fmt_millis(double ms)
 {
     if (ms < 1000.0)  return std::to_string(static_cast<int>(ms)) + " ms";
@@ -388,11 +377,10 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
     if (sp.inner)
         kv("Inner optimizer", sp.inner->lib + " / " + sp.inner->algo);
 
-    // ---- how the block obtains gradients (for its INNER search too)
+    // ---- how the block obtains gradients (for its INNER search too; an
+    //      INNER block takes no GRAD_STRATEGY of its own)
     if (obtains_gradients(sp))
         kv("GRAD_STRATEGY", grad_strategy_text(sp));
-    if (sp.inner && sp.inner->grad_strategy)
-        kv("Inner GRAD_STRATEGY", inner_grad_strategy_text(*sp.inner));
 
     auto write_stop_criteria = [&](const StopCriteria& s, const char* indent) {
         if (s.maxeval)
@@ -644,9 +632,6 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
             if (obtains_gradients(ps))
                 f_ << "    EXPLORE GRAD_STRATEGY: " << grad_strategy_text(ps)
                    << "\n";
-            if (ps.inner && ps.inner->grad_strategy)
-                f_ << "    EXPLORE INNER GRAD_STRATEGY: "
-                   << inner_grad_strategy_text(*ps.inner) << "\n";
             write_init_strategy(ps.init_strategy_spec,
                                 "PRESTAGE.EXPLORE init strategy:", "    ");
             if (ps.inner) {
