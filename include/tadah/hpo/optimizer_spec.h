@@ -308,10 +308,10 @@ struct OptimizerSpec {
     /* Provenance of each optim_init point, as resolved at startup by
      * HPOTargets (the INIT chains of OUTER, PRESTAGE and PRESTAGE.INNER; a
      * phase that shares the OUTER's points, share_init_with_nested_phases,
-     * shares their origins). Run policies that later replace optim_init
-     * (MULTISTART, PRESTAGE refine, RESTART) do not maintain it: a consumer
-     * uses it only when its size equals optim_init's. Empty for hand-built
-     * specs. */
+     * shares their origins) and by a RESTART refresh. MULTISTART and the
+     * PRESTAGE refinement, which run from single points or exploration
+     * candidates, do not maintain it: a consumer uses it only when its
+     * size equals optim_init's. Empty for hand-built specs. */
     std::vector<InitOrigin> optim_init_origin;
 
     /* FAILSCORE from the enclosing HPOTargets, copied in so optimisers

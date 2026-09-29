@@ -35,16 +35,13 @@ namespace fs = std::filesystem;
 namespace {
 
 /* The density-gate lines (RHOGATE, RHOBARGATE): strict grammar. Every
- * number is one whole finite token (core::to_double accepts "nan", "inf"
- * and trailing junk), keywords and their values are case-insensitive, and
- * an unknown, repeated or value-less keyword is an error, so a typo cannot
- * pass silently. */
+ * number is in the number grammar of every hpotarget key (strict_parse.h):
+ * a real one whole finite decimal token (parse_finite), NPTS an integer in
+ * decimal digits (parse_uint). Keywords and their values are
+ * case-insensitive, and an unknown, repeated or value-less keyword is an
+ * error, so a typo cannot pass silently. read() names the line. */
 double gate_number(const std::string& tok, const std::string& what) {
-  char* end = nullptr;
-  const double v = std::strtod(tok.c_str(), &end);
-  if (tok.empty() || end != tok.c_str() + tok.size() || !std::isfinite(v))
-    throw std::runtime_error(what + " must be a finite number, got '" + tok + "'");
-  return v;
+  return parse_finite(tok, what);
 }
 
 std::string gate_upper(std::string s) {
@@ -71,12 +68,8 @@ void parse_gate_options(const std::string& key, const std::string& grammar,
       throw std::runtime_error(key + ": " + kw + " needs a value; " + grammar);
     const std::string& val = toks[t + 1];
     if (kw == "NPTS") {
-      const double v = gate_number(val, key + " NPTS");
-      if (v != std::floor(v) || v < static_cast<double>(npts_min) || v > 1e7)
-        throw std::runtime_error(key + " NPTS must be an integer in [" +
-                                 std::to_string(npts_min) + ", 10000000], got '" +
-                                 val + "'");
-      npts = static_cast<std::size_t>(v);
+      npts = static_cast<std::size_t>(
+          parse_uint(val, key + " NPTS", npts_min, 10000000));
     } else if (kw == "SEED") {
       const std::string m = gate_upper(val);
       if (m != "ERROR" && m != "WARN")

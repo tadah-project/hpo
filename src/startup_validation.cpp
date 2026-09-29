@@ -58,29 +58,28 @@ void validate_ream_density(const core::Context &train_ctx) {
   }
 }
 
-/* The optimisers of the spec tree that can evaluate outside the OPTIM box:
- * an ignores_bounds backend (optimizer_caps) or PARAM fd_kernel ceres on a
- * gradient-based one. "<stage> <LIB>:<ALGO> (<why>)" per entry. */
+/* The phases of the run (strategy_phase_specs, phase_specs.h: the
+ * STRATEGY-level optimiser, each MULTISTART start, the PRESTAGE exploration
+ * and refinement, every INNER block) whose optimiser can evaluate outside
+ * the OPTIM box: an ignores_bounds backend (optimizer_caps) or PARAM
+ * fd_kernel ceres on a phase that asks the host for gradients
+ * (obtains_gradients: a gradient-based backend, or an MLSL/AUGLAG whose
+ * local search, inner_run_spec, is one). "<phase> <LIB>:<ALGO> (<why>)"
+ * per entry. Called after validate_phase_backends, so every phase names a
+ * known optimiser. */
 std::vector<std::string> unbounded_optimisers(const OptimizerSpec &root) {
-  std::vector<std::pair<std::string, const OptimizerSpec *>> tree = {
-      {"OUTER", &root}, {"INNER", root.inner.get()}};
-  if (root.prestage) {
-    tree.push_back({"PRESTAGE", root.prestage.get()});
-    tree.push_back({"PRESTAGE.INNER", root.prestage->inner.get()});
-  }
   std::vector<std::string> out;
-  for (const auto &e : tree) {
-    const OptimizerSpec *s = e.second;
-    if (!s || s->lib == "NOT SET") continue;
-    const OptimizerCaps *caps = nullptr;
-    try { caps = &optimizer_caps(*s); } catch (const std::exception &) { continue; }
-    const std::string name = e.first + " " + s->lib + ":" + s->algo;
-    if (caps->ignores_bounds) {
+  for (const PhaseSpec &phase : strategy_phase_specs(root)) {
+    const OptimizerSpec &s = phase.spec;
+    if (s.lib == "NOT SET") continue;
+    const OptimizerCaps &caps = optimizer_caps(s);
+    const std::string name = phase.name + " " + s.lib + ":" + s.algo;
+    if (caps.ignores_bounds) {
       out.push_back(name + " (ignores the OPTIM bounds)");
       continue;
     }
-    const auto fk = s->param_raw.find("fd_kernel");
-    if (caps->is_gradient_based && fk != s->param_raw.end() &&
+    const auto fk = s.param_raw.find("fd_kernel");
+    if (obtains_gradients(s) && fk != s.param_raw.end() &&
         core::to_upper(fk->second) == "CERES")
       out.push_back(name + " (PARAM fd_kernel ceres: unclamped "
                     "finite-difference steps)");
@@ -196,33 +195,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * DM_REAM only with FIXINDEX/FIXWEIGHT, without a training DB or for a
    * linear model, and rethrow models::DensityFormError when they do. */
   if (models::context_has_ream(train_ctx)) {
-    const models::RhoForm form = models::require_rhoform(train_ctx, "tadah hpo");
+    (void)models::require_rhoform(train_ctx, "tadah hpo");
     validate_ream_density(train_ctx);
-    /* Positive forms: the evaluated AMPGRIDMB coordinates are projected
-     * onto [0, inf) (HPO_Host); say so when an optimiser can put them
-     * outside the (non-negative) box. */
-    bool amp_optim = false;
-    for (const auto &kv : trg.optimap)
-      if (models::optim_key_lower_bound(kv.first, form) ==
-          models::OptimLowerBound::NonNegative)
-        for (bool b : kv.second.opt) amp_optim = amp_optim || b;
-    if (amp_optim) {
-      const std::vector<std::string> ub = unbounded_optimisers(trg.spec);
-      if (!ub.empty()) {
-        std::string msg = std::string("RHOFORM ") + models::rhoform_name(form) +
-                          ": ";
-        for (std::size_t i = 0; i < ub.size(); ++i)
-          msg += (i ? ", " : "") + ub[i];
-        msg += " can evaluate AMPGRIDMB amplitudes outside the non-negative "
-               "OPTIM box. An amplitude below 0 is not a valid " +
-               std::string(models::rhoform_name(form)) + " density: every "
-               "such point is projected onto AMPGRIDMB >= 0, evaluated and "
-               "recorded there (the optimiser still sees its own point); "
-               "DIAGNOSTICS counts the projections.";
-        std::cerr << "[HPO] WARNING: " << msg << "\n";
-        HPOLog::instance().warning(msg);
-      }
-    }
   }
   if (trg.optimap.count("FIXWEIGHT") && !train_ctx.contains("FIXINDEX")) {
     throw std::runtime_error(
@@ -261,6 +235,37 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * for a PRESTAGE refinement after the whole exploration. Each driver
    * applies its own checks again when it starts (backend_rules.h). */
   validate_phase_backends(trg.spec);
+
+  /* --- RHOFORM NONNEG / MONOTONE: optimisers that can leave the box -----
+   * The evaluated AMPGRIDMB coordinates are projected onto [0, inf)
+   * (HPO_Host); say so when the optimiser of a phase can put them outside
+   * the (non-negative) box. After the phase checks above, on the same
+   * phases. */
+  if (models::context_has_ream(train_ctx)) {
+    const models::RhoForm form = models::require_rhoform(train_ctx, "tadah hpo");
+    bool amp_optim = false;
+    for (const auto &kv : trg.optimap)
+      if (models::optim_key_lower_bound(kv.first, form) ==
+          models::OptimLowerBound::NonNegative)
+        for (bool b : kv.second.opt) amp_optim = amp_optim || b;
+    if (amp_optim) {
+      const std::vector<std::string> ub = unbounded_optimisers(trg.spec);
+      if (!ub.empty()) {
+        std::string msg = std::string("RHOFORM ") + models::rhoform_name(form) +
+                          ": ";
+        for (std::size_t i = 0; i < ub.size(); ++i)
+          msg += (i ? ", " : "") + ub[i];
+        msg += " can evaluate AMPGRIDMB amplitudes outside the non-negative "
+               "OPTIM box. An amplitude below 0 is not a valid " +
+               std::string(models::rhoform_name(form)) + " density: every "
+               "such point is projected onto AMPGRIDMB >= 0, evaluated and "
+               "recorded there (the optimiser still sees its own point); "
+               "DIAGNOSTICS counts the projections.";
+        std::cerr << "[HPO] WARNING: " << msg << "\n";
+        HPOLog::instance().warning(msg);
+      }
+    }
+  }
 
   /* --- FIXINDEX/FIXWEIGHT pairing + weight-source classification ------ */
   const bool has_fw = train_ctx.contains("FIXWEIGHT");

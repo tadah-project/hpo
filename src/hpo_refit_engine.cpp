@@ -501,7 +501,7 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
       std::string("density: RHOFORM ") + rhoform_name(rho_form) +
       (rho_form == RhoForm::Signed
            ? " — rho = sum_k c_k g(eta_k (r - mu_k)) with signed amplitudes "
-             "(tadah <= 1.5.1)"
+             "(the density before tadah 1.6.0)"
        : rho_form == RhoForm::NonNeg
            ? " — rho = sum_k c_k g(eta_k (r - mu_k)) with every c_k >= 0 "
              "(non-negative least squares; Ceres lower bounds in REFINE / "

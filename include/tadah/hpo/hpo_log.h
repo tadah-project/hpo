@@ -255,7 +255,8 @@ public:
      *  EMBF0 pattern): kept only when @p loss is below the loss recorded
      *  with the previous summary, so out-of-order journal calls cannot
      *  leave a superseded best. finish() prints it under RESULT, or "n/a
-     *  (the best predates this session)" for a resumed run's older best.
+     *  (not derivable)" for a best without one (the host records one for
+     *  every new best unless it could not build the density at startup).
      *  Never throws. */
     void record_density_best(std::size_t eval_num, double loss,
                              const detail::DensitySummary& summary);

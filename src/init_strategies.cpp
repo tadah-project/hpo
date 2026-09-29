@@ -501,16 +501,16 @@ private:
             : !seed_form ? std::string("does not declare RHOFORM")
                          : std::string("declares RHOFORM ") +
                                models::rhoform_name(*seed_form);
-        /* A tadah <= 1.5.1 seed (no RHOFORM) is SIGNED: declaring that
-         * repairs it for a SIGNED run only; a positive form needs a seed
-         * fitted in that form. */
+        /* A seed written before tadah 1.6.0 (no RHOFORM) is SIGNED:
+         * declaring that repairs it for a SIGNED run only; a positive form
+         * needs a seed fitted in that form. */
         const std::string remedy =
             run_form == models::RhoForm::Signed
-                ? "Use a seed written in RHOFORM SIGNED (a tadah <= 1.5.1 "
-                  "potential is SIGNED: add 'RHOFORM SIGNED' to it), or drop "
-                  "the WARM line."
-                : "Use a seed written in RHOFORM " + run_name + " (a tadah "
-                  "<= 1.5.1 potential is SIGNED and cannot seed a " +
+                ? "Use a seed written in RHOFORM SIGNED (a potential written "
+                  "before tadah 1.6.0 is SIGNED: add 'RHOFORM SIGNED' to it), "
+                  "or drop the WARM line."
+                : "Use a seed written in RHOFORM " + run_name + " (a potential "
+                  "written before tadah 1.6.0 is SIGNED and cannot seed a " +
                   run_name + " density; refit it by tadah refit with "
                   "RHOFORM " + run_name + "), or drop the WARM line.";
         if (!density_dims.empty())

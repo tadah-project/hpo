@@ -689,9 +689,11 @@ public:
           InitContext ic{cur, *trg_, seed, &trg_->run_context()};
           const std::size_t k_use = (refresh_k_ > 0) ? refresh_k_
                                                      : refresh_->default_k();
-          auto pts = refresh_->generate(ic, k_use);
+          std::vector<InitOrigin> origins;
+          auto pts = refresh_->generate_tagged(ic, k_use, origins);
           if (!pts.empty()) {
             cur.optim_init = std::move(pts);
+            cur.optim_init_origin = std::move(origins);
             /* A PRESTAGE exploration that starts from the OUTER INIT
              * points restarts from the fresh ones too. */
             cur.share_init_with_nested_phases();

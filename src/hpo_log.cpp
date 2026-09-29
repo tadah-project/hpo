@@ -2183,13 +2183,14 @@ void HPOLog::finish(const std::string& status_str)
            << ": " << s.str() << "\n";
     }
     /* DM_REAM density of the best (write_density_report armed it). The
-     * recorded summary must be the reported best's: a resumed run's
-     * checkpointed best has none in this session. */
+     * recorded summary must be the reported best's. The host records one
+     * for every new best unless it could not build the density at startup
+     * (the -c pot row then reads "not derivable: <reason>"). */
     if (density_armed_) {
         const bool recorded = density_best_eval_ > 0 && have_best &&
                               density_best_eval_ == cur_best_eval_;
         const std::string none = have_best
-            ? "n/a (the best predates this session)" : "n/a (no best)";
+            ? "n/a (not derivable)" : "n/a (no best)";
         const std::string at = "best (eval " + std::to_string(density_best_eval_) + ") ";
         f_ << "  " << std::left << std::setw(KW) << "Density rho(r)"
            << ": " << (recorded ? at + density_best_rho_ : none) << "\n";

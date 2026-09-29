@@ -237,7 +237,8 @@ inline double sder2(BasisKind k, double xc, double eta) {  // d2S/dr2
 }
 // Form-aware column: the step kinds under MONOTONE, the family itself
 // otherwise (SIGNED, NONNEG and every phi / F fit — the same call, so those
-// stay bit-for-bit the 1.5.1 values). cval = value, cder = r-derivative.
+// stay bit-for-bit the values before RHOFORM). cval = value, cder =
+// r-derivative.
 inline double cval(BasisKind k, RhoForm form, int d, double xc) {
   return form == RhoForm::Monotone ? sval(k, xc) : bval_d(k, d, xc);
 }

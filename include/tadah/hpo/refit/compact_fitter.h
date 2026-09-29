@@ -106,7 +106,7 @@ struct BlipFit {
   bool zero_ref = false;
   /** RHOFORM of the density channel (never phi/F, which stay Signed):
    *  - Signed (default): f(x) = sum_k c_k g(x_c), any sign; byte-identical
-   *    to tadah 1.5.1.
+   *    to the fitter before RHOFORM (HPO 3ce1001).
    *  - NonNeg: the same expansion with every c_k >= 0.
    *  - Monotone: the STEP kinds, f(x) = sum_k c_k S(x_c) with S the
    *    integrated bump of the family (MODELS SB / SB5: 1 inside the inner
@@ -190,7 +190,7 @@ struct CompactConfig {
    *  (models::nnls) and bound them at 0 in refine(); Monotone fits the step
    *  kinds and refuses the one-sided knot families (the fitter ctor throws),
    *  as does any non-Signed form combined with zero_ref. Signed (default) =
-   *  the 1.5.1 code paths, byte-identical. */
+   *  the code paths before RHOFORM, byte-identical. */
   tadah::models::RhoForm rho_form = tadah::models::RhoForm::Signed;
 
   /** Objective the whole chain optimises toward (REFIT_OBJECTIVE). Energy =
