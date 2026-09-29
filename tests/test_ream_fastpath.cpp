@@ -40,7 +40,9 @@
 #include <cstdio>
 #include <limits>
 #include <fstream>
+#include <iostream>
 #include <iterator>
+#include <sstream>
 #include <string>
 #include <tuple>
 #include <unistd.h>
@@ -656,4 +658,86 @@ TEST_CASE("DM_REAM density forms through pair_style tadah: NONNEG equals "
         REQUIRE(f.fn == Approx(g.fn).epsilon(1e-6));
         REQUIRE(f.p == Approx(g.p).epsilon(1e-6));
     }
+}
+
+TEST_CASE("pair_coeff: an element the potential does not have is a LAMMPS "
+          "ERROR with the reason, in log.lammps",
+          "[pair_tadah][pair_coeff]") {
+    /* pair_coeff * * <file> W on a Ta potential: LammpsTadah::initialize()
+     * throws "Symbol not in potential file: W". The exception left coeff()
+     * outside error->all, so log.lammps recorded nothing and the reason
+     * reached only a driver's catch (and stderr through LAMMPS' main). */
+    tadah::core::PeriodicTable::initialize();
+    LammpsRunner runner;
+    const std::string pot_path = write_pot(true, "ZERO");
+    const RemoveOnExit rm_pot{pot_path};
+    const std::string stem = "pair_coeff_symbol_" + std::to_string(::getpid());
+    const std::string script = stem + ".in", log = stem + ".log";
+    const RemoveOnExit rm_script{script}, rm_log{log};
+    {
+        std::ofstream ofs(script);
+        for (const auto& line : isolated_atom())
+            ofs << (line == "pair_coeff * * EXTERN Ta"
+                        ? "pair_coeff * * " + pot_path + " W"
+                        : line)
+                << "\n";
+    }
+    const std::string reason = "pair_coeff: failed to initialise Tadah "
+        "potential '" + pot_path + "': Symbol not in potential file: W";
+    std::string what;
+    {
+        auto lmp = runner.create_instance(
+            0, {"lmp", "-log", log, "-screen", "none"});
+        REQUIRE(lmp != nullptr);
+        try {
+            lmp->input->file(script.c_str());
+        } catch (const std::exception& ex) {
+            what = ex.what();
+        }
+    }   // LAMMPS destroyed: log.lammps flushed and closed
+    CHECK(what.find(reason) != std::string::npos);
+    const std::string text = slurp(log);
+    INFO(text);
+    CHECK(count_of(text, "ERROR: " + reason) == 1);
+}
+
+TEST_CASE("PairTadah::load(Context) keeps a failure's reason for pair_coeff "
+          "and prints nothing itself",
+          "[pair_tadah][pair_coeff][rhoform]") {
+    /* The reason reaches LAMMPS' error->all through pair_coeff * * EXTERN
+     * (last_load_error()); the overloads also wrote it to stderr, so a
+     * failed load was reported twice. */
+    tadah::core::PeriodicTable::initialize();
+    LammpsRunner runner;
+    const std::string pot_path = write_pot(true, "ZERO", false);
+    const RemoveOnExit rm_pot{pot_path};
+    tadah::core::Context pot_ctx;
+    REQUIRE_NOTHROW(pot_ctx =
+        tadah::core::CoreUserConfigParser().parse(pot_path));
+    LAMMPS_NS::PairTadah::clear_staged_extern();
+    auto lmp = runner.create_instance(
+        0, {"lmp", "-log", "none", "-screen", "none"});
+    REQUIRE(lmp != nullptr);
+    for (const auto& line : isolated_atom()) {
+        if (line == "pair_coeff * * EXTERN Ta") break;
+        lmp->input->one(line.c_str());
+    }
+    auto* pt = dynamic_cast<LAMMPS_NS::PairTadah*>(lmp->force->pair);
+    REQUIRE(pt != nullptr);
+    std::ostringstream err;
+    std::streambuf* old = std::cerr.rdbuf(err.rdbuf());
+    bool ok_copy = true, ok_move = true;
+    try {
+        ok_copy = pt->load(pot_ctx);
+        ok_move = pt->load(tadah::core::Context(pot_ctx));
+    } catch (...) {
+        std::cerr.rdbuf(old);
+        throw;
+    }
+    std::cerr.rdbuf(old);
+    CHECK_FALSE(ok_copy);
+    CHECK_FALSE(ok_move);
+    CHECK(pt->last_load_error().find("DM_REAM: RHOFORM is required")
+          != std::string::npos);
+    CHECK(err.str().find("PairTadah::load") == std::string::npos);
 }
