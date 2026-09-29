@@ -312,6 +312,35 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: explicit boxes that reach an invalid "
   }
 }
 
+TEST_CASE("RHOFORM NONNEG: the SGRIDMB box of a Gaussian density needs a "
+          "low bound > 0", "[hpo][rhoform]") {
+  // The Gaussian exp(-s (r - c)^2) grows without bound for s < 0, so
+  // DM_REAM refuses s <= 0 under NONNEG (ReamDensity::validate); a box
+  // reaching there passed startup and every such candidate then failed
+  // when its model was built.
+  PeriodicTable::initialize();
+  auto gaussian = [](const char* form) {
+    Context c = make_ream_ctx(form);
+    std::vector<std::string> t(c.size("TYPEMB"));
+    c.get("TYPEMB", t);
+    t[1] = "1";  // the Gaussian basis code
+    c.remove("TYPEMB");
+    for (const auto& tok : t) c.add("TYPEMB", tok);
+    return c;
+  };
+  auto err = [&](const char* form, const std::string& optim) {
+    return targets_error(gaussian(form), optim + "PC_ERMSE 0 1\n" + kOptimizer);
+  };
+  CHECK_THAT(err("NONNEG", "OPTIM SGRIDMB (1) -0.5 2.0\n"),
+             Catch::Contains("RHOFORM NONNEG requires every SGRIDMB width > 0 "
+                             "for the Gaussian basis"));
+  CHECK_THAT(err("NONNEG", "OPTIM SGRIDMB (2) 0 4\n"),
+             Catch::Contains("for the Gaussian basis"));
+  CHECK(err("NONNEG", "OPTIM SGRIDMB (1) 0.5 2.0\n").empty());
+  CHECK_THAT(err("MONOTONE", "OPTIM SGRIDMB (1) -0.5 2.0\n"),
+             Catch::Contains("requires every SGRIDMB width > 0"));
+}
+
 TEST_CASE("RHOFORM: WARM seed form vs the run's", "[hpo][rhoform][warm]") {
   PeriodicTable::initialize();
   auto warm_target = [](const fs::path& seed, const std::string& optim,
