@@ -1146,5 +1146,12 @@ std::string LammpsSim::expand_includes(const fs::path &file)
     return expand_includes_rec(file, recursion_guard);
 }
 
+std::string hotvar_reject_what(const LammpsSim::HotVarDecl& hv, double v)
+{
+    return hv.name + "=" + tadah::core::format_roundtrip(v) + " outside [" +
+           tadah::core::format_roundtrip(hv.min) + ", " +
+           tadah::core::format_roundtrip(hv.max) + "]";
+}
+
 
 } // namespace tadah::hpo

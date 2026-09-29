@@ -1717,10 +1717,8 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
                 HPOLog::instance().warning(
                     std::string("eval ") + std::to_string(r.iter)
                     + " script " + lsim.script
-                    + ": rejecting (" + hv.name + "=" + std::to_string(v)
-                    + " outside [" + std::to_string(hv.min) + ", "
-                    + std::to_string(hv.max) + "], total rejects="
-                    + std::to_string(rejs) + ")");
+                    + ": rejecting (" + hotvar_reject_what(hv, v)
+                    + ", total rejects=" + std::to_string(rejs) + ")");
               }
             }
             break; /* one out-of-range hot var is enough */

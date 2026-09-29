@@ -199,5 +199,15 @@ class LammpsSim {
  */
 bool try_parse_double(const std::string& s, double& value);
 
+/**
+ * The journal text of a hot value `v` outside the --hotvar window of `hv`
+ * (the eval's reject line): "<name>=<v> outside [<min>, <max>]", each
+ * number in the shortest round-trip form (core::format_roundtrip). It used
+ * std::to_string's six decimals, which print a value below 5e-7 as
+ * 0.000000 and a value one ulp above a max of 3.6 as 3.600000, the max
+ * itself.
+ */
+std::string hotvar_reject_what(const LammpsSim::HotVarDecl& hv, double v);
+
 } // namespace tadah::hpo
 #endif // LAMMPS_SIM_H
