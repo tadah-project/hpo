@@ -1193,6 +1193,20 @@ TEST_CASE("compact fitter: bump-support clamp projects spilling bumps",
     k.c = {1.0};
     REQUIRE(clamp_bump_support_params(k, rcut, span) == 0);
   }
+  SECTION("a radial bump width <= 0 is refused, not skipped") {
+    // every radial width is > 0 (INIT refuses eta <= 0, the ladder and
+    // FUSE keep their width floors): a width <= 0 here is a broken
+    // invariant, and its support edge c + w/eta says nothing
+    for (double eta : {0.0, -0.8}) {
+      BlipFit f = make_truth();
+      f.eta[1] = eta;
+      REQUIRE_THROWS_AS(clamp_bump_support_params(f, rcut, span),
+                        std::logic_error);
+      REQUIRE_THROWS_WITH(clamp_bump_support_params(f, rcut, span),
+                          Catch::Contains("bump 2") &&
+                              Catch::Contains("width"));
+    }
+  }
   SECTION("a pinned violating anchor throws with the eta hint") {
     BlipFit f = make_truth();
     f.pinned.assign(f.mu.size(), false);

@@ -308,7 +308,12 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: explicit boxes that reach an invalid "
     CHECK_THAT(err("MONOTONE", "OPTIM SGRIDMB (2) -1 4\n"),
                Catch::Contains("requires every SGRIDMB width > 0"));
     CHECK(err("MONOTONE", "OPTIM SGRIDMB (2) 1 4\n").empty());
-    CHECK(err("NONNEG", "OPTIM SGRIDMB (2) 0 4\n").empty());
+    // Owner decision (2026-09-29, C8): every radial bump width > 0 in every
+    // form, so the Blip5 density's box that passed under NONNEG is refused
+    CHECK_THAT(err("NONNEG", "OPTIM SGRIDMB (2) 0 4\n"),
+               Catch::Contains("the DM_REAM Blip5 density basis requires "
+                               "every SGRIDMB width > 0"));
+    CHECK(err("NONNEG", "OPTIM SGRIDMB (2) 0.5 4\n").empty());
   }
 }
 

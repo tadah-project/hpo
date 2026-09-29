@@ -276,4 +276,39 @@ TEST_CASE_METHOD(PTFixture,
   }
 }
 
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: a radial INIT anchor with eta <= 0 is "
+                 "an error in every RHOFORM",
+                 "[compact][refit][rhoform][bump_width]") {
+  // Owner decision (2026-09-29, C8): a radial bump needs a width > 0 in
+  // every form. INIT PHI MANUAL 5.0 -1.0 PIN was fitted as its mirror (the
+  // bump is even in eta) and the bump-support checks skipped it.
+  ScopedTempDir tmp;
+  write_synth_eam("synth.eam.alloy");
+  for (const char *form : {"SIGNED", "NONNEG"}) {
+    for (const char *ch : {"PHI", "RHO"}) {
+      // the value as written, and as the message prints it (shortest
+      // round trip)
+      for (const auto &[eta, shown] :
+           {std::pair<const char *, const char *>{"-1.0", "-1"},
+            std::pair<const char *, const char *>{"0", "0"}}) {
+        INFO(form << " INIT " << ch << " eta " << eta);
+        Context c = compact_context(form);
+        add_block(c, "INIT", std::string(ch) + " MANUAL 3.0 2.0 " + ch +
+                                 " MANUAL 3.5 " + eta + " PIN");
+        const auto [what, logged] = run_compact(c);
+        INFO("error: " << what);
+        const std::string lower = std::string(ch) == "PHI" ? "phi" : "rho";
+        CHECK(what.find("tadah refit INIT [" + lower +
+                        "]: the basis at mu 3.5 (INIT " + ch +
+                        " anchor 2) has eta " + shown + " <= 0") !=
+              std::string::npos);
+        CHECK(what.find("a radial bump needs a width eta > 0") !=
+              std::string::npos);
+        CHECK_FALSE(fs::exists("pot.tadah"));
+      }
+    }
+  }
+}
+
 #endif  // TADAH_USE_CERES
