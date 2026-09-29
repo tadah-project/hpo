@@ -2469,7 +2469,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * coordinates projected onto [0, inf) -- before the gates and the
      * context build -- and record the projected point (params rows, pots),
      * so every recorded point is a valid potential. `p` below is that
-     * point: p_in itself when no such coordinate is negative, and always
+     * point: p_box itself when no such coordinate is negative, and always
      * under SIGNED (form_proj_idx_ is empty). */
     P p_proj;
     const P& p = form_proj_idx_.empty()
