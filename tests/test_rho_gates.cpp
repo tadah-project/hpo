@@ -915,7 +915,8 @@ TEST_CASE("Density report: startup rows, RESULT, not derivable",
     CHECK(dt::format_density_rho(s) == "not derivable: DM_REAM density: AMPGRIDMB "
                                        "is missing.");
   }
-  SECTION("startup rows, the RESULT line for the best and the resume case") {
+  SECTION("startup rows, the RESULT line for the best and a best without a "
+          "density summary") {
     Context ctx = make_ream_ctx("SIGNED");
     TempFile seed(ream_seed("0.5 0.3 0.05"));
     TempFile tf("OPTIMIZER\nINIT\nSTRATEGY CONFIG\nSTRATEGY WARM " +
