@@ -148,8 +148,21 @@ double SearchSpace::to_real(std::size_t i, double u) const
         }
         if (best != e && best_d <= anc_tol_[best]) return anc_x_[best];
     }
+    /* The ends of the internal box map to exactly the ends of the real
+     * one, and a u inside it into [lo, hi]: T^-1 rounds (exp, sinh, the
+     * affine map of the unit box), and LOG / ASINH ends used to come back
+     * one ulp outside the box (LOG [0.01, 10] at u = 1: 10.000000000000002)
+     * -- an evaluation outside the box, recorded as it was. A u outside the
+     * internal box (an optimiser that ignores the bounds) maps as it
+     * always did. (Owner decision D6, 2026-09-29.) */
+    const DimSpec& d = dims_[i];
+    const double ulo = internal_lo(i), uhi = internal_hi(i);
+    if (u == ulo) return d.lo;
+    if (u == uhi) return d.hi;
     const double t = policy_.normalise ? t_lo_[i] + u * (t_hi_[i] - t_lo_[i]) : u;
-    return dims_[i].tf.inv(t);
+    const double x = d.tf.inv(t);
+    if (u > ulo && u < uhi) return std::clamp(x, d.lo, d.hi);
+    return x;
 }
 
 double SearchSpace::seed_anchor_tolerance(std::size_t i, double u0) const

@@ -293,9 +293,9 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
     opt.set_upper_bounds(sp.high);
 
     /* GradientProvider for gradient-based NLopt algorithms (LD_*).
-     * Mirrors DLIB / CERES adapters: NUMERICAL routes through Ceres
-     * DynamicNumericDiffCostFunction; ANALYTICAL / HYBRID consume the
-     * host's analytical_gradient member with masked FD on the
+     * Mirrors DLIB / CERES adapters: NUMERICAL takes finite differences
+     * (fd_stencil.h); ANALYTICAL / HYBRID consume the host's
+     * analytical_gradient member with finite differences on the
      * unregistered indices. Derivative-free algos (LN_*, GN_*) leave
      * grad empty on each call -- the wrapper skips the gradient path.
      *
@@ -402,7 +402,9 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                 u->rejection.last_rejected = false;
                 Vec g;
                 g.set_size(static_cast<long>(x.size()));
-                if (!u->gp->gradient(v, g)) {
+                /* f is the loss of exactly v, just evaluated: HYBRID takes
+                 * it as the loss at the point (gradient_at). */
+                if (!u->gp->gradient_at(v, f, g)) {
                     /* No gradient here: the MAXEVAL budget of the
                      * provider (Budget), or a gradient that is not finite
                      * (see UData). Signal a bad step to NLopt: zero the

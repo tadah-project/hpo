@@ -145,8 +145,10 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
         throw std::runtime_error("CERES:" + algo + " requires MAXEVAL > 0 when provided");
 
     /* PARAM keys recognised across all four CERES gradient algos:
-     *   fd_step           -- relative finite-diff step (numerical strategy)
-     *   diff_method       -- 0 CENTRAL (default), 1 FORWARD, 2 RIDDERS
+     *   fd_step           -- finite-difference step (fd_stencil.h)
+     *   diff_method       -- 0 CENTRAL (default), 1 FORWARD (2, RIDDERS,
+     *                        is refused)
+     *   (fd_kernel        -- the step rule, a word: param_raw)
      *   tol_gradinf       -- gradient_tolerance (infinity norm)
      *   max_lbfgs_rank    -- LBFGS only
      *   nlcg_type         -- NLCG only: 0 FR, 1 PR, 2 HS
@@ -169,16 +171,10 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
                 "max_ls_iter, max_lbfgs_rank, nlcg_type");
         }
     }
-    if (auto it = sp.param.find("fd_step"); it != sp.param.end())
-        if (!(it->second > 0.0))
-            throw std::runtime_error("CERES:" + algo + " requires PARAM fd_step > 0");
-    if (auto it = sp.param.find("diff_method"); it != sp.param.end()) {
-        const int v = static_cast<int>(it->second);
-        if (v < 0 || v > 2)
-            throw std::runtime_error(
-                "CERES:" + algo + " PARAM diff_method must be 0 (CENTRAL), "
-                "1 (FORWARD), or 2 (RIDDERS)");
-    }
+    /* PARAM fd_step, fd_kernel and diff_method are the gradient's finite
+     * differences: validate_hpo_setup checks them on every phase that takes
+     * them, and the gradient before its first evaluation (fd_settings_of,
+     * fd_stencil.h). */
     if (auto it = sp.param.find("tol_gradinf"); it != sp.param.end())
         if (!(it->second > 0.0))
             throw std::runtime_error("CERES:" + algo + " requires PARAM tol_gradinf > 0");
@@ -242,8 +238,10 @@ public:
             *cost = y;
 
             if (gradient) {
+                /* y is the loss of exactly x, just evaluated: HYBRID takes
+                 * it as the loss at the point (gradient_at). */
                 Vec g;
-                if (!gp_->gradient(x, g)) {
+                if (!gp_->gradient_at(x, y, g)) {
                     const GradientFailure k = gp_->failure->kind;
                     if (k == GradientFailure::Stencil ||
                         k == GradientFailure::NotFinite) {
@@ -379,7 +377,7 @@ inline void run_ceres_gradient_problem(
 
     /* ANALYTICAL/HYBRID: route through the host's analytical_gradient
      * member function. NUMERICAL leaves the callback null so the
-     * provider takes the Ceres-NumericDiff path. */
+     * provider takes finite differences (fd_stencil.h). */
     AnalyticalGradFn<Vec> agf = host_analytical_grad_fn<Vec>(sp, host);
     auto gp = make_gradient_provider<Vec, Runner>(
         sp, host, &evals_used, maxeval, agf);

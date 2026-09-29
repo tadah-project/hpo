@@ -303,6 +303,9 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
       double fd = 1e-3 * diag / std::sqrt(dim);
       if (!(fd > 1e-6)) fd = 1e-6;
       spec.param["fd_step"] = fd;
+      /* Provenance: a box too narrow for this step is refused at startup
+       * naming NOISE AUTO (fd_box_error), and the journal names it. */
+      spec.fd_step_from_noise_auto = true;
       std::ostringstream oss;
       oss << "NOISE_AUTO: PARAM fd_step set to " << fd
           << " (diag=" << diag << ", dim=" << spec.low.size() << ")";

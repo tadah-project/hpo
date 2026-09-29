@@ -117,4 +117,11 @@ struct PhaseSpec {
  * (validate_run_policy() rejects it). */
 std::vector<PhaseSpec> strategy_phase_specs(const OptimizerSpec& spec);
 
+/* Whether `phase` takes finite-difference gradients with its own settings
+ * (PARAM fd_step, fd_kernel, diff_method; fd_stencil.h): it names an
+ * optimiser that asks the host for gradients (obtains_gradients), its
+ * GRAD_STRATEGY is NUMERICAL (the default) or HYBRID, and it is not an
+ * INNER block -- which takes the gradient of the phase it runs in. */
+bool takes_fd_gradients(const PhaseSpec& phase);
+
 }  // namespace tadah::hpo

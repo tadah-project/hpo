@@ -175,4 +175,15 @@ std::vector<PhaseSpec> strategy_phase_specs(const OptimizerSpec& spec)
     return phases;
 }
 
+bool takes_fd_gradients(const PhaseSpec& phase)
+{
+    if (phase.inner || phase.spec.lib == "NOT SET" ||
+        phase.spec.algo == "NOT SET")
+        return false;
+    if (phase.spec.grad_strategy.value_or(GradStrategy::Numerical) ==
+        GradStrategy::Analytical)
+        return false;
+    return obtains_gradients(phase.spec);
+}
+
 }  // namespace tadah::hpo

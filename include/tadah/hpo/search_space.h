@@ -97,8 +97,9 @@ namespace tadah::hpo {
  * optimiser's rounded start, or a step smaller than the window -- is
  * affected, and no optimiser takes such a step on purpose. Derivative-free
  * steps and STEP fractions are orders of magnitude larger. The finite-
- * difference kernels step by fd_step*max(|u|, 1) (in-house) or
- * max(sqrt(eps), fd_step*|u|) with sqrt(eps) = 2^-26 (Ceres); with the
+ * difference step rules (fd_stencil.h) step by fd_step*max(|u|, 1)
+ * (in-house) or max(sqrt(eps), fd_step*|u|) with sqrt(eps) = 2^-26
+ * (Ceres' rule); with the
  * default fd_step 1e-6 (NOISE_AUTO never goes below it) both steps exceed
  * the window (8.9e-16 under AUTO, at most the cap under NONE unless the
  * seed is large, 2 ulp(u0) for a large one), so no difference is ever taken
@@ -114,10 +115,10 @@ namespace tadah::hpo {
  * to a bound) stays outside the window and maps as any other point. */
 constexpr int kSeedAnchorUlps = 4;
 
-/* Cap of the box term: half the Ceres finite-difference kernel's smallest
- * step sqrt(eps) = 2^-26. It binds only under OPTIM_SCALE NONE on a LIN
+/* Cap of the box term: half the smallest step of Ceres' finite-difference
+ * step rule, sqrt(eps) = 2^-26. It binds only under OPTIM_SCALE NONE on a LIN
  * dimension with max(|lo|, |hi|) >= 2^24 (~1.7e7), where 4 ulp(box) would
- * reach that step: the Ceres kernel (the default under NONE) would then
+ * reach that step: Ceres' rule (the default under NONE) would then
  * difference two points that both map to a small seed, a zero gradient
  * component that keeps the dimension at its seed for the whole local run.
  * With the cap, PRAXIS's start rounding (up to 3 ulp(box): it scales with
@@ -206,7 +207,9 @@ public:
     const ScalePolicy&               policy()     const noexcept { return policy_; }
     std::uint32_t                    version()    const noexcept { return version_; }
 
-    /* scalar maps (to_real honours the seed anchors, if any) */
+    /* scalar maps (to_real honours the seed anchors, if any; it maps the
+     * ends of the internal box to exactly lo and hi, and a u between them
+     * into [lo, hi]; a u outside the box maps through T^-1 unclamped) */
     double to_internal    (std::size_t i, double x) const;
     double to_real        (std::size_t i, double u) const;
     double dreal_dinternal(std::size_t i, double u) const;   // dx/du at u

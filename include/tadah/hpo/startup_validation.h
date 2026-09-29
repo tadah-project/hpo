@@ -62,16 +62,11 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
  *     WARNING that walks the phases of the run (strategy_phase_specs: the
  *     STRATEGY-level optimiser, each MULTISTART start, the PRESTAGE
  *     exploration and refinement, every INNER block, the local search of
- *     an MLSL or AUGLAG included) and names each one whose optimiser can
- *     still evaluate outside the box: a backend that ignores the bounds
- *     (OptimizerCaps::ignores_bounds: the CERES drivers, NLopt LN_NEWUOA),
- *     or a phase that takes GRAD_STRATEGY NUMERICAL gradients with Ceres'
- *     numeric differentiation (PARAM fd_kernel ceres, or no fd_kernel
- *     under OPTIM_SCALE NONE), whose steps cannot be bounded. Such
- *     amplitudes are projected onto [0, inf) by HPO_Host. The in-house
- *     finite-difference stencil (fd_stencil.h: fd_kernel inhouse, the
- *     default under OPTIM_SCALE AUTO, and HYBRID's) is one-sided within a
- *     step of a bound and never leaves the box, so it is not named;
+ *     an MLSL or AUGLAG included) and names each one whose optimiser
+ *     ignores the bounds (OptimizerCaps::ignores_bounds: the CERES drivers,
+ *     NLopt LN_NEWUOA) and so can evaluate outside the box. Such
+ *     amplitudes are projected onto [0, inf) by HPO_Host. Finite
+ *     differences keep to the box (fd_stencil.h), so they are not named;
  *   - every width of a radial bump channel (SGRID2B of D2_Blip/D2_Blip5,
  *     SGRIDMB of a Blip/Blip5 density) is > 0, in every form
  *     (models::optim_low_bound_rule(key, ctx));
@@ -94,12 +89,19 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
  *     backend_rules.h): the backend's own attribute and PARAM checks on
  *     the spec the phase runs with, and MAXEVAL for a backend that has
  *     no stopping rule of its own (TADAH:RANDOM, DLIB:GFS);
- *   - each phase that takes gradients with its own settings (not an
- *     INNER block, which takes those of the phase it runs in) and uses
- *     the in-house finite-difference stencil has a valid PARAM fd_kernel
- *     and fd_step, and every OPTIM box holds the stencil: three steps of
- *     fd_step * max(|u|, 1) in internal coordinates (fd_box_error,
- *     fd_stencil.h), which the one-sided stencil at a bound needs;
+ *   - finite differences (fd_stencil.h): each phase that takes
+ *     finite-difference gradients with its own settings
+ *     (takes_fd_gradients: GRAD_STRATEGY NUMERICAL or HYBRID, not an INNER
+ *     block, which takes the gradient of the phase it runs in) has a valid
+ *     PARAM fd_step, fd_kernel and diff_method (diff_method 2, RIDDERS,
+ *     refused), and every OPTIM box gives each of its points a stencil
+ *     inside it (fd_box_error: the message names the step's source --
+ *     PARAM or the NOISE block's AUTO -- the largest fd_step that fits,
+ *     and OPTIM_SCALE AUTO or a LOG box as alternatives); a phase that
+ *     takes none refuses those PARAMs, which never take effect (an INNER
+ *     block, GRAD_STRATEGY ANALYTICAL, a derivative-free optimiser); ASA's
+ *     reannealing and curvature probes fit its boxes
+ *     (asa_probe_box_error);
  *   - FIXINDEX/FIXWEIGHT pairing: lone key, size mismatch, out-of-bounds
  *     index (via mlip::classify_weight_source);
  *   - no training DBFILE: FIXINDEX must cover every model weight;

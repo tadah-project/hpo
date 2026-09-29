@@ -1,6 +1,7 @@
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/backend_rules.h>
 #include <tadah/hpo/column_titles.h>
+#include <tadah/hpo/fd_stencil.h>
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_spec.h>
@@ -159,6 +160,7 @@ void HPOLog::reset_for_test()
     for (auto& g : n_gate_) g.store(0, std::memory_order_relaxed);
     for (auto& g : n_gate_note_) g.store(0, std::memory_order_relaxed);
     n_form_proj_.store(0, std::memory_order_relaxed);
+    reset_fd_counters_locked();
     n_io_retry_durable_.store(0, std::memory_order_relaxed);
     n_io_retry_writer_ .store(0, std::memory_order_relaxed);
     n_rows_lost_       .store(0, std::memory_order_relaxed);
@@ -283,6 +285,8 @@ void HPOLog::open(const std::string& path,
      * table, nor its notes silence or number this run's. */
     reset_occupancy_locked();
     run_notes_.clear();
+    /* The finite-difference counters of DIAGNOSTICS are this run's. */
+    reset_fd_counters_locked();
 
     f_.open(path, std::ios::out | std::ios::trunc);
     if (!f_.is_open()) {
@@ -474,6 +478,37 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
     //      INNER block takes no GRAD_STRATEGY of its own)
     if (obtains_gradients(sp))
         kv("GRAD_STRATEGY", grad_strategy_text(sp));
+
+    // ---- how each phase that takes finite-difference gradients takes them
+    //      (fd_stencil.h): the step, its rule and source, and what happens
+    //      next to a bound
+    {
+        std::vector<std::pair<std::string, std::string>> fd_lines;
+        try {
+            for (const PhaseSpec& phase : strategy_phase_specs(sp)) {
+                if (!takes_fd_gradients(phase)) continue;
+                std::string d;
+                try {
+                    const bool hybrid =
+                        phase.spec.grad_strategy.value_or(
+                            GradStrategy::Numerical) == GradStrategy::Hybrid;
+                    d = fd_describe(fd_settings_of(phase.spec),
+                                    phase.spec.space &&
+                                        phase.spec.space->normalised(),
+                                    hybrid);
+                } catch (const std::exception& e) {
+                    d = std::string("invalid: ") + e.what();
+                }
+                fd_lines.emplace_back(phase.name, d);
+            }
+        } catch (const std::exception&) {
+            /* an optimiser the registry does not know: validate_hpo_setup
+             * reports it */
+        }
+        for (const auto& l : fd_lines)
+            kv("Finite differences",
+               fd_lines.size() == 1 ? l.second : l.first + ": " + l.second);
+    }
 
     auto write_stop_criteria = [&](const StopCriteria& s, const char* indent) {
         if (s.maxeval)
@@ -1218,6 +1253,46 @@ std::size_t HPOLog::next_gate_note(GateKind kind)
 std::size_t HPOLog::record_form_projection()
 {
     return n_form_proj_.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
+std::size_t HPOLog::record_out_of_box_eval()
+{
+    return n_oob_eval_.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
+std::size_t HPOLog::record_out_of_box_gradient()
+{
+    return n_oob_grad_.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
+std::size_t HPOLog::record_hybrid_centre()
+{
+    return n_hybrid_centre_.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
+std::size_t HPOLog::record_one_sided(const std::string& label)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    for (auto& e : one_sided_)
+        if (e.first == label) return ++e.second;
+    one_sided_.emplace_back(label, 1);
+    return 1;
+}
+
+std::size_t HPOLog::one_sided(const std::string& label) const
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    for (const auto& e : one_sided_)
+        if (e.first == label) return e.second;
+    return 0;
+}
+
+void HPOLog::reset_fd_counters_locked()
+{
+    n_oob_eval_.store(0, std::memory_order_relaxed);
+    n_oob_grad_.store(0, std::memory_order_relaxed);
+    n_hybrid_centre_.store(0, std::memory_order_relaxed);
+    one_sided_.clear();
 }
 
 void HPOLog::record_io_retry_durable(std::size_t n)
@@ -2058,8 +2133,43 @@ void HPOLog::finish(const std::string& status_str)
         if (np > 0)
             f_ << "  " << std::left << std::setw(KW) << "Positive-form projection"
                << ": " << np << " evaluation(s) with an AMPGRIDMB amplitude < 0,\n"
-                  "    evaluated and recorded at 0 (Ceres finite-difference steps at a\n"
-                  "    zero amplitude, or an optimiser that ignores bounds)\n";
+                  "    evaluated and recorded at 0 (points outside the OPTIM box: an\n"
+                  "    optimiser that ignores the bounds)\n";
+    }
+
+    /* Finite differences and the OPTIM box (fd_stencil.h): each line only
+     * when its count is > 0, so the DIAGNOSTICS of a run that never came
+     * within a step of a bound stay byte-identical. */
+    {
+        const std::size_t oe = n_oob_eval_.load(std::memory_order_relaxed);
+        const std::size_t og = n_oob_grad_.load(std::memory_order_relaxed);
+        const std::size_t hc = n_hybrid_centre_.load(std::memory_order_relaxed);
+        if (oe > 0)
+            f_ << "  Evaluations outside the OPTIM box: " << oe
+               << " (evaluated there: an optimiser that ignores the bounds;\n"
+                  "    see the first such WARNING)\n";
+        if (og > 0)
+            f_ << "  Gradients at points outside the OPTIM box: " << og
+               << " (each finite difference\n"
+                  "    stepped towards the box)\n";
+        if (!one_sided_.empty()) {
+            std::size_t total_os = 0;
+            std::string per_dim;
+            for (const auto& e : one_sided_) {
+                total_os += e.second;
+                per_dim += (per_dim.empty() ? "" : ", ") + e.first + " " +
+                           std::to_string(e.second);
+            }
+            f_ << "  " << std::left << std::setw(KW) << "One-sided differences"
+               << ": " << total_os << " (a coordinate within a step of its "
+                  "bound, or outside\n"
+                  "    the box, differenced into it): " << per_dim << "\n";
+        }
+        if (hc > 0)
+            f_ << "  HYBRID centre evaluations: " << hc
+               << " (the loss at a gradient's point, for its one-sided\n"
+                  "    or forward differences, where the optimiser's own value "
+                  "could not be reused)\n";
     }
 
     /* Transient I/O. Printed only when something happened, so the

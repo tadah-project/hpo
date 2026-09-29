@@ -262,18 +262,49 @@ public:
                              const detail::DensitySummary& summary);
 
     /** Tally one evaluation whose AMPGRIDMB coordinates were projected onto
-     *  [0, inf) under RHOFORM NONNEG / MONOTONE (HPO_Host::operator()): an
-     *  out-of-box point -- a step of the Ceres finite-difference kernel
-     *  next to a zero amplitude, or an optimiser that ignores bounds (the
-     *  in-house stencil keeps to the box) -- evaluated and recorded at its
-     *  projection. Returns the running count (the host
-     *  journals the first projection). DIAGNOSTICS prints the total when it
-     *  is > 0, so other runs are unchanged. */
+     *  [0, inf) under RHOFORM NONNEG / MONOTONE (HPO_Host::operator()): a
+     *  point outside the OPTIM box, which only an optimiser that ignores
+     *  the bounds evaluates (finite differences keep to the box,
+     *  fd_stencil.h), evaluated and recorded at its projection. Returns the
+     *  running count (the host journals the first projection). DIAGNOSTICS
+     *  prints the total when it is > 0, so other runs are unchanged. */
     std::size_t record_form_projection();
     /** Evaluations projected so far (record_form_projection). */
     std::size_t form_projections() const {
         return n_form_proj_.load(std::memory_order_relaxed);
     }
+
+    /** Finite differences and the OPTIM box (fd_stencil.h,
+     *  gradient_provider.h, HPO_Host::operator()). Relaxed counters, no file
+     *  I/O; DIAGNOSTICS prints each only when it is > 0, so the DIAGNOSTICS
+     *  of a run that never came near a bound are unchanged. Reset by open()
+     *  and reset_for_test(). Each returns the running count.
+     *   - record_out_of_box_eval: an evaluated REAL point outside its
+     *     OPTIM box, counted before any projection (the host warns at the
+     *     first);
+     *   - record_out_of_box_gradient: a finite-difference gradient at an
+     *     internal point outside the box (differenced towards it);
+     *   - record_one_sided: a finite-difference component of dimension
+     *     `label` that a bound turned (one-sided into the box, backward
+     *     instead of forward, or towards the box from outside it); the
+     *     count is per dimension, and the caller journals the first;
+     *   - record_hybrid_centre: the loss at a HYBRID gradient's point,
+     *     evaluated for its one-sided or forward differences. */
+    std::size_t record_out_of_box_eval();
+    std::size_t record_out_of_box_gradient();
+    std::size_t record_one_sided(const std::string& label);
+    std::size_t record_hybrid_centre();
+    std::size_t out_of_box_evals() const {
+        return n_oob_eval_.load(std::memory_order_relaxed);
+    }
+    std::size_t out_of_box_gradients() const {
+        return n_oob_grad_.load(std::memory_order_relaxed);
+    }
+    std::size_t hybrid_centres() const {
+        return n_hybrid_centre_.load(std::memory_order_relaxed);
+    }
+    /** The one-sided components counted so far for `label` (0 if none). */
+    std::size_t one_sided(const std::string& label) const;
 
     /** Transient-I/O accounting: retries of the durable best
      *  potential and of the per-evaluation logs/archives, rows dropped after
@@ -588,6 +619,14 @@ private:
     std::atomic<std::size_t> n_gate_note_[kGateKinds] = {};
     /* Positive-form projections (record_form_projection). */
     std::atomic<std::size_t> n_form_proj_ {0};
+    /* Finite differences and the OPTIM box (record_out_of_box_eval, ...). */
+    std::atomic<std::size_t> n_oob_eval_      {0};
+    std::atomic<std::size_t> n_oob_grad_      {0};
+    std::atomic<std::size_t> n_hybrid_centre_ {0};
+    /* One-sided components per dimension, in the order first seen --
+     * protected by mtx_. */
+    std::vector<std::pair<std::string, std::size_t>> one_sided_;
+    void reset_fd_counters_locked();
     /* Transient-I/O retries / losses (record_io_retry_* etc.). */
     std::atomic<std::size_t> n_io_retry_durable_{0};
     std::atomic<std::size_t> n_io_retry_writer_ {0};

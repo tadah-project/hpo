@@ -364,6 +364,13 @@ private:
      *  journals the first one (eval @p iter). Never throws. */
     const ParamVec& project_positive_form(const ParamVec& p, ParamVec& buf,
                                           std::size_t iter) const;
+    /** Counts evaluation @p iter in HPOLog when a coordinate of the REAL
+     *  point @p p lies outside its OPTIM box (record_out_of_box_eval), and
+     *  warns at the first: finite differences keep to the box
+     *  (fd_stencil.h), so only an optimiser that ignores the bounds, or a
+     *  start it handed on, evaluates there. Before any projection. Never
+     *  throws. */
+    void note_out_of_box(const ParamVec& p, std::size_t iter) const;
     void fill_validation(Result&, const mlip::Analytics&)  const;
     void run_lammps     (Result&) const;
 

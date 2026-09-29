@@ -112,16 +112,19 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
     throw std::runtime_error("DLIB:BFGS requires MAXEVAL > 0 when provided");
 
   for (const auto& kv : sp.param) {
-    if (kv.first != "fd_step" && kv.first != "tol_gradinf") {
+    if (kv.first != "fd_step" && kv.first != "diff_method" &&
+        kv.first != "tol_gradinf") {
       throw std::runtime_error(
           "DLIB:BFGS does not support PARAM " + kv.first +
-          "; supported PARAM keys are fd_step and tol_gradinf");
+          "; supported PARAM keys are fd_step, fd_kernel, diff_method and "
+          "tol_gradinf");
     }
   }
 
-  const double fd_step = dlib_param(sp, "fd_step").value_or(1.0e-6);
-  if (!(fd_step > 0.0))
-    throw std::runtime_error("DLIB:BFGS requires PARAM fd_step > 0");
+  /* PARAM fd_step, fd_kernel and diff_method are the gradient's finite
+   * differences: validate_hpo_setup checks them on every phase that takes
+   * them, and the gradient before its first evaluation (fd_settings_of,
+   * fd_stencil.h). */
 
   const auto tol_gradinf = dlib_param(sp, "tol_gradinf");
   if (tol_gradinf && !(*tol_gradinf > 0.0))
@@ -519,27 +522,40 @@ template<class Vec,class Runner>
      * counter. The same counter is handed to the GradientProvider so
      * that gradient-side evaluations also count toward MAXEVAL -- without
      * this, dlib::derivative used to count 2*D extra cost calls per
-     * iteration via the feval lambda; now Ceres' NumericDiff calls go
-     * through gp.gradient and bump the same counter. When the user's
-     * MAXEVAL is reached, throw detail::MaxEvalReached; the catch site
+     * iteration via the feval lambda; now the finite-difference
+     * evaluations go through gp.gradient and bump the same counter. When
+     * the user's MAXEVAL is reached, throw detail::MaxEvalReached; the catch site
      * below treats it as graceful termination so the best-so-far tracked
      * by HPO_Host is preserved. */
     std::atomic<unsigned long> evals_used{0};
+    /* The last evaluation feval made, and the count after it: dlib asks
+     * for the gradient of the point it has just evaluated (its start, and
+     * the point its line search accepted, its last evaluation), and HYBRID
+     * then takes that loss as the loss at the point (gradient_at) -- when
+     * the point is the same doubles and nothing was evaluated since. */
+    struct LastEval {
+        matrix<double,0,1> x;
+        double             y = 0.0;
+        unsigned long      count = 0;
+        bool               valid = false;
+    } last;
     auto feval = [&, maxeval](const matrix<double,0,1>& xin)->double {
       if (maxeval > 0 && evals_used.load() >= maxeval)
           throw detail::MaxEvalReached{};
       evals_used.fetch_add(1);
-      return host( sp.out(xin) );
+      const double y = host( sp.out(xin) );
+      last.x = xin;
+      last.y = y;
+      last.count = evals_used.load();
+      last.valid = true;
+      return y;
     };
 
     /* Gradient via the unified provider. Default GRAD_STRATEGY is
-     * NUMERICAL -- Ceres DynamicNumericDiffCostFunction with CENTRAL
-     * differences (PARAM diff_method 0|1|2 = CENTRAL/FORWARD/RIDDERS).
-     * ANALYTICAL/HYBRID consume an analytical_grad_fn that delegates
-     * to HPO_Host::analytical_gradient (Phase 2A.4 wiring; see
-     * hpo_host_impl.hpp). PARAM fd_step still works (forwarded to the
-     * provider as the relative step size, both for NUMERICAL and
-     * HYBRID's masked FD pass). */
+     * NUMERICAL -- finite differences (fd_stencil.h: PARAM fd_step,
+     * fd_kernel, diff_method). ANALYTICAL/HYBRID consume an
+     * analytical_grad_fn that delegates to HPO_Host::analytical_gradient
+     * (Phase 2A.4 wiring; see hpo_host_impl.hpp). */
     AnalyticalGradFn<Vec> agf = nullptr;
     if (sp.grad_strategy &&
         *sp.grad_strategy != GradStrategy::Numerical) {
@@ -553,9 +569,13 @@ template<class Vec,class Runner>
     /* A gradient that is not finite ends the search with its own status;
      * dlib has no way to reject the point. Before 1.6.0 it was reported as
      * "MAXEVAL=<n> reached". */
-    const auto grad = [&gp](const matrix<double,0,1>& x) {
+    const auto grad = [&gp, &last, &evals_used](const matrix<double,0,1>& x) {
         matrix<double,0,1> g;
-        if (!gp.gradient(x, g)) {
+        const bool just_evaluated = last.valid &&
+                                    last.count == evals_used.load() &&
+                                    detail::same_point(last.x, x);
+        if (!(just_evaluated ? gp.gradient_at(x, last.y, g)
+                             : gp.gradient(x, g))) {
             switch (gp.failure->kind) {
                 case GradientFailure::Budget:
                     throw detail::MaxEvalReached{};

@@ -201,7 +201,9 @@ static void print_dlib_caps(std::ostream& os, const std::string& algo)
         os<<"   * MAXEVAL      (objective evaluations, the finite-difference\n"
             "                   ones included)\n"
             "   * FTOL_ABS     (objective-delta stop, default 1e-7)\n"
-            "   * PARAM fd_step <double>      (approx-derivative step, default 1e-6)\n"
+            "   * PARAM fd_step <double>      (finite-difference step, default 1e-6)\n"
+            "   * PARAM fd_kernel inhouse|ceres (the step rule)\n"
+            "   * PARAM diff_method 0|1       (CENTRAL, default, or FORWARD)\n"
             "   * PARAM tol_gradinf <double>  (gradient-inf-norm stop; alternative to FTOL_ABS)\n";
     else
         os<<"   * (unknown DLIB algo; registered: GFS, BFGS)\n";

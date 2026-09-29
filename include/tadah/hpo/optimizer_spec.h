@@ -29,9 +29,9 @@ struct StopCriteria {
  * STEEPEST_DESCENT, future NLOPT:LD_*).
  *
  *   NUMERICAL  -- finite differences on full forward passes through the
- *                host: the in-house stencil, kept inside the OPTIM box
- *                (one-sided within a step of a bound), or Ceres
- *                DynamicNumericDiffCostFunction (PARAM fd_kernel;
+ *                host, kept inside the OPTIM box (one-sided within a step
+ *                of a bound), with the in-house step rule or Ceres' (PARAM
+ *                fd_kernel), CENTRAL or FORWARD (PARAM diff_method;
  *                fd_stencil.h).
  *   ANALYTICAL -- closed-form analytical gradient. The HPO host injects
  *                a per-theta derivative callback (descriptor + cutoff +
@@ -42,8 +42,10 @@ struct StopCriteria {
  *                setup it can never differentiate is refused at startup
  *                (analytical_gate.h). Use HYBRID to fall back.
  *   HYBRID     -- analytical-where-registered + finite-difference
- *                fallback (the in-house stencil) for unregistered
- *                indices, evaluated in one
+ *                fallback (the stencil of NUMERICAL, PARAM fd_kernel and
+ *                diff_method honoured) for unregistered indices -- every
+ *                index when no analytical derivative can be formed --
+ *                evaluated in one
  *                gradient(x, g) call. Used when LAMMPS-derived loss
  *                components (`sims_loss`) or tabulated descriptors
  *                (EAM SETFL) participate in theta.
@@ -215,6 +217,7 @@ struct OptimizerSpec {
           grad_strategy_resolved(o.grad_strategy_resolved), stop(o.stop),
           param(o.param), param_raw(o.param_raw),
           param_tokens(o.param_tokens),
+          fd_step_from_noise_auto(o.fd_step_from_noise_auto),
           anneal_observer(o.anneal_observer), low(o.low), high(o.high),
           parameter_labels(o.parameter_labels), is_int(o.is_int),
           log_scaled(o.log_scaled), log_threshold(o.log_threshold),
@@ -290,6 +293,10 @@ struct OptimizerSpec {
     ParamMap     param;             // algorithm-specific knobs
     RawParamMap  param_raw;         // PARAM values that were not numeric
     ParamTokenMap param_tokens;     // full token vector, multi-token PARAMs only
+    /* PARAM fd_step was derived by the NOISE block's AUTO (HPOTargets), not
+     * written: the startup refusal of a box too narrow for the step, and
+     * the journal, name it as the step's source (fd_stencil.h). */
+    bool          fd_step_from_noise_auto = false;
 
     /* Test/tooling observation seam for the ANNEAL family (see
      * anneal::ChainObserver in anneal_core.h). Never config-parseable;

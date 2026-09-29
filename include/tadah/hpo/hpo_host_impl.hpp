@@ -1053,11 +1053,10 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
 
     /* RHOFORM NONNEG / MONOTONE: every evaluated AMPGRIDMB amplitude must be
      * >= 0 (DM_REAM refuses a negative one). The boxes are non-negative
-     * (HPOTargets), and the in-house finite-difference stencil keeps to
-     * them (fd_stencil.h), but a step of the Ceres kernel can pass a zero
-     * amplitude and some optimisers ignore bounds, so operator() evaluates
-     * -- and records -- the candidate projected onto AMPGRIDMB >= 0. Flat
-     * indices in the update_context order. */
+     * (HPOTargets), and finite differences keep to them (fd_stencil.h),
+     * but an optimiser that ignores the bounds can step below 0, so
+     * operator() evaluates -- and records -- the candidate projected onto
+     * AMPGRIDMB >= 0. Flat indices in the update_context order. */
     if (models::context_has_ream(master_ctx_)) {
         const auto form = models::stored_rhoform(master_ctx_);
         if (form && models::rhoform_is_positive(*form)) {
@@ -1306,13 +1305,51 @@ const P& HPO_Host<P,R>::project_positive_form(const P& p, P& buf,
                                  " more AMPGRIDMB coordinate(s))"
                            : std::string()) +
                 " below 0 is evaluated and recorded as 0: the candidate is "
-                "projected onto AMPGRIDMB >= 0 (a step of the Ceres "
-                "finite-difference kernel next to a zero amplitude, or an "
-                "optimiser that ignores bounds); DIAGNOSTICS counts every "
-                "projection");
+                "projected onto AMPGRIDMB >= 0 (a point outside the OPTIM "
+                "box, which only an optimiser that ignores the bounds "
+                "evaluates); DIAGNOSTICS counts every projection");
         }
     } catch (...) { /* journalling must never fail an evaluation */ }
     return buf;
+}
+
+/* ----------  helper: evaluations outside the OPTIM box ---------------- */
+template<class P, class R>
+void HPO_Host<P,R>::note_out_of_box(const P& p, std::size_t iter) const
+{
+    const SearchSpacePtr space = trg_.space();
+    if (!space) return;
+    const std::size_t n =
+        std::min(space->dim(), static_cast<std::size_t>(p.size()));
+    std::size_t n_out = 0, first = 0;
+    for (std::size_t k = 0; k < n; ++k) {
+        const double v = p(static_cast<long>(k));
+        const DimSpec& d = space->at(k);
+        /* NaN is not outside: its evaluation is reported as it fails */
+        if ((v < d.lo || v > d.hi) && n_out++ == 0) first = k;
+    }
+    if (n_out == 0) return;
+    try {
+        if (HPOLog::instance().record_out_of_box_eval() != 1) return;
+        const DimSpec& d = space->at(first);
+        const std::string label =
+            first < param_labels_.size() ? param_labels_[first] : d.key;
+        const std::string msg =
+            "eval " + std::to_string(iter) + ": " + label + " = " +
+            core::format_roundtrip(p(static_cast<long>(first))) +
+            " lies outside its OPTIM box [" + core::format_roundtrip(d.lo) +
+            ", " + core::format_roundtrip(d.hi) + "]" +
+            (n_out > 1 ? " (and " + std::to_string(n_out - 1) +
+                             " more coordinate(s))"
+                       : std::string()) +
+            " and is evaluated there: finite differences keep to the box, so "
+            "an optimiser that ignores the bounds (CERES:*, NLopt LN_NEWUOA), "
+            "or a start it handed on, stepped outside it; the loss of such a "
+            "point can become the best. DIAGNOSTICS counts every evaluation "
+            "outside the box";
+        std::cerr << "[HPO] WARNING: " << msg << "\n";
+        HPOLog::instance().warning(msg);
+    } catch (...) { /* journalling must never fail an evaluation */ }
 }
 
 /* ----------  helper: train/val structure counts ----------------------- */
@@ -2395,6 +2432,9 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
 
   Result r;
   r.iter   = ++g_iter_;
+    /* A point outside the OPTIM box is counted (and the first warned
+     * about) before any projection. */
+    note_out_of_box(p_in, r.iter);
     /* RHOFORM NONNEG / MONOTONE: evaluate the candidate with its AMPGRIDMB
      * coordinates projected onto [0, inf) -- before the gates and the
      * context build -- and record the projected point (params rows, pots),

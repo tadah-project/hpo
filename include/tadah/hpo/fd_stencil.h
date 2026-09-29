@@ -1,214 +1,247 @@
 #pragma once
 /*
- * fd_stencil.h -- the finite-difference stencil of HPO's in-house kernel,
- * and which kernel the gradients of a spec use (gradient_provider.h).
+ * fd_stencil.h -- the finite-difference stencil of HPO's gradients
+ * (gradient_provider.h: GRAD_STRATEGY NUMERICAL, and HYBRID's pass over the
+ * parameters without an analytical derivative), and the box checks that
+ * go with it.
  *
- * Kernels. A GRAD_STRATEGY NUMERICAL gradient is taken by the in-house
- * kernel (PARAM fd_kernel inhouse; the default under OPTIM_SCALE AUTO) or
- * by Ceres' numeric differentiation (fd_kernel ceres; the default under
- * OPTIM_SCALE NONE). HYBRID's finite-difference pass -- the parameters
- * without an analytical derivative -- always uses the in-house stencil;
- * ANALYTICAL takes no finite difference.
+ * Settings (fd_settings_of). Three PARAMs of the block that takes the
+ * gradient:
+ *   fd_kernel    the step rule: inhouse (FdRule::Width) or ceres
+ *                (FdRule::Ceres). The default is inhouse under
+ *                OPTIM_SCALE AUTO and for HYBRID, ceres for NUMERICAL
+ *                under OPTIM_SCALE NONE (and a spec without a
+ *                normalised space);
+ *   fd_step      the step (default 1e-6), positive and finite; the
+ *                NOISE block's AUTO may have derived it
+ *                (OptimizerSpec::fd_step_from_noise_auto);
+ *   diff_method  0 CENTRAL (default) or 1 FORWARD. 2 (RIDDERS) is
+ *                refused: Ridders' extrapolation ignored fd_step, started
+ *                from a step of 0.32 x max(|u|, 1) and could not be kept
+ *                inside the box.
  *
- * Step. Along internal coordinate u (what the optimiser iterates on) the
- * in-house step is h = fd_step * max(|u|, 1): PARAM fd_step of the box
- * width in the unit box of OPTIM_SCALE AUTO, absolute below |u| = 1 and
- * relative above under OPTIM_SCALE NONE.
+ * Step along internal coordinate u (what the optimiser iterates on):
+ *   Width   h = fd_step * max(|u|, 1)       -- fd_step of the box width in
+ *                                              the unit box (OPTIM_SCALE
+ *                                              AUTO), absolute below |u| = 1
+ *                                              and relative above under NONE;
+ *   Ceres   h = max(2^-26, |u| * fd_step)   -- the rule of Ceres'
+ *                                              NumericDiff (relative_step_
+ *                                              size = fd_step; 2^-26 is
+ *                                              sqrt(DBL_EPSILON)).
+ * The step is never shrunk or grown; only its direction changes.
  *
- * Stencil. A point u in its OPTIM box [lo, hi] (the internal bounds,
- * OptimizerSpec::low/high) is differenced without evaluating outside the
- * box:
+ * Stencil (fd_plan) of u in its OPTIM box [a, b] (internal bounds,
+ * OptimizerSpec::low/high). The conditions are tested on the very points
+ * evaluated, as computed, so a chosen stencil never leaves the box:
+ *   CENTRAL   u + h, u - h, when both lie in the box:
+ *               Width  (f(u+h) - f(u-h)) / (2h)
+ *               Ceres  (f(u+h) - f(u-h)) * ((1/h) / 2)
+ *             otherwise one-sided into the box, towards the side with
+ *             room: u + s, u + 2s (s = +h or -h), with f(u):
+ *               (4 (f(u+s) - f(u)) - (f(u+2s) - f(u))) / (2s)
+ *             = (-3 f(u) + 4 f(u+s) - f(u+2s)) / (2s), written with
+ *             differences so that two large, close losses do not overflow;
+ *   FORWARD   u + h, or u - h when u + h lies above the box (SciPy's
+ *             2-point flip), with f(u):
+ *               Width  (f(u+s) - f(u)) / s
+ *               Ceres  (f(u+s) - f(u)) * (1/s)
+ * In the interior each rule is its old kernel bit for bit: the in-house
+ * stencil of Tadah 1.5, and Ceres' DynamicNumericDiffCostFunction (the
+ * same points in the same order -- the centre, then per dimension +h and
+ * -h -- and the same arithmetic; the naive (f+ - f-) / (2h) differs in
+ * the last bit in about a quarter of the components). The Ceres library
+ * is not used.
  *
- *   central   (f(u+h) - f(u-h)) / (2h)                  u-h >= lo, u+h <= hi
- *   forward   (4 (f(u+h) - f(u)) - (f(u+2h) - f(u))) / (2h)   u-h < lo
- *   backward  the forward formula with -h:   u+h > hi
- *             (4 (f(u-h) - f(u)) - (f(u-2h) - f(u))) / (-2h)
+ * Accuracy. The central and the one-sided 3-point differences are second
+ * order: truncation error h^2 f'''/6 and -h^2 f'''/3. Noise sigma on the
+ * loss becomes 0.71 sigma/h (central) and sqrt(26)/2 sigma/h = 2.55
+ * sigma/h (one-sided). The forward difference is first order (h f''/2,
+ * 1.41 sigma/h). Cost: the same number of evaluations as the interior
+ * stencil (NUMERICAL evaluates the centre anyway).
  *
- * The one-sided formulas are (-3 f(u) + 4 f(u+h) - f(u+2h)) / (2h) and its
- * mirror, written with differences so that two large, close losses do not
- * overflow. All three are second order: the errors are h^2 f'''/6
- * (central) and -h^2 f'''/3 (one-sided, twice the central constant). The
- * conditions are tested on the very points evaluated (u - h, u + 2.0*h,
- * ... as computed), so a chosen stencil never leaves the box, and away
- * from the bounds the central stencil is the one used before 1.6.0, bit
- * for bit.
+ * A centre outside the box -- only an optimiser that ignores the bounds
+ * (OptimizerCaps::ignores_bounds: the CERES drivers, NLopt LN_NEWUOA), or
+ * a start it handed on, gets one -- is differenced one-sided towards the
+ * box (FORWARD: the one step towards it): no point of its stencil lies
+ * further outside than the centre (the owner's decision D4, 2026-09-29).
  *
- * Cost. A one-sided stencil needs f(u), which the NUMERICAL in-house kernel
- * evaluates anyway (the centre, for its bad-evaluation contract): two
- * evaluations per dimension either way. HYBRID's analytical pass does not
- * evaluate the loss, so a HYBRID gradient with a finite-difference
- * coordinate within h of a bound evaluates the centre once: one evaluation
- * more than the central stencil would take.
+ * Narrow boxes (fd_fit, fd_box_error). A box in which some u has no
+ * stencil is refused at startup (validate_hpo_setup, every phase that
+ * takes finite-difference gradients) and by the gradient before it
+ * evaluates anything, naming the largest fd_step that fits
+ * (fd_largest_fitting_step): shrinking the step at run time would change
+ * what PARAM fd_step means, and the noise it was chosen to step over.
+ * Under OPTIM_SCALE AUTO a CENTRAL step fits exactly when fd_step <= 1/3,
+ * a FORWARD one when fd_step <= 1/2; under NONE the check runs over the
+ * whole box. It is exact up to a few units in the last place, and sound:
+ * a box it accepts gives every u a stencil.
  *
- * A point outside its box -- only an optimiser that ignores the bounds
- * (OptimizerCaps::ignores_bounds: the CERES drivers, NLopt LN_NEWUOA)
- * evaluates one -- keeps the central stencil: the search itself is outside
- * the box there. Ceres' numeric differentiation cannot be bounded: it
- * perturbs each coordinate by +-delta (CENTRAL, RIDDERS) or +delta
- * (FORWARD) inside Ceres (internal/numeric_diff.h), and NumericDiffOptions
- * has no bounds.
- *
- * Narrow boxes. Every point of a box has a stencil that fits when
- * lo + 3H <= hi, H = fd_step * max(|lo|, |hi|, 1) being the largest step
- * in it (fd_box_error, with the rounding of the computed points included).
- * A narrower box is refused -- at startup (validate_hpo_setup, for every
- * phase whose gradients use the in-house stencil) and by the gradient of a
- * GradientProvider before it evaluates anything -- naming the dimension,
- * its box and the largest fd_step it takes: a derivative whose step is a third of the box
- * or more says little about the slope, and shrinking the step for that
- * dimension alone would silently change what PARAM fd_step means (and
- * the noise it was chosen to step over: the NOISE block's AUTO).
+ * ASA's probes (asa_probe_fit): the reannealing and exit tangents of
+ * external/asa (cost_derivatives) evaluate (1 + Delta) x, or (1 - Delta) x
+ * when the first lies outside the box, and the exit curvature (Curvature_0
+ * 0 or -1) x +- Delta |x|, one-sided x -+ Delta |x|, x -+ 2 Delta |x| next
+ * to a bound; algorithms_asa.cpp refuses a box in which they cannot fit.
  */
 
-#include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_spec.h>
 
 #include <algorithm>
 #include <cmath>
-#include <cstddef>
 #include <cstdint>
-#include <iomanip>
 #include <limits>
 #include <optional>
-#include <sstream>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
 namespace tadah::hpo {
 
-/* The kernel of a GRAD_STRATEGY NUMERICAL gradient. */
-enum class FdKernel : std::uint8_t { InHouse, Ceres };
+/* The step rule (PARAM fd_kernel). */
+enum class FdRule : std::uint8_t {
+    Width,  /* fd_kernel inhouse: h = fd_step * max(|u|, 1) */
+    Ceres   /* fd_kernel ceres:   h = max(2^-26, |u| * fd_step) */
+};
 
-/* PARAM fd_kernel of `sp`, or the default of its OPTIM_SCALE: InHouse in
- * the unit box (OPTIM_SCALE AUTO), Ceres otherwise (OPTIM_SCALE NONE, and
- * a spec without a normalised space). Throws std::runtime_error for
- * another value. */
-inline FdKernel fd_kernel_of(const OptimizerSpec& sp)
+/* PARAM diff_method. */
+enum class FdScheme : std::uint8_t { Central, Forward };
+
+/* Where fd_step came from. */
+enum class FdStepSource : std::uint8_t {
+    Default,    /* not set: 1e-6 */
+    Param,      /* PARAM fd_step */
+    NoiseAuto   /* the NOISE block's AUTO derived it */
+};
+
+/* Ceres' smallest step, sqrt(DBL_EPSILON) = 2^-26 (numeric_diff.h:
+ * min_step_size). */
+inline constexpr double kCeresMinStep = 0x1p-26;
+
+/* The finite-difference settings of a spec (fd_settings_of). */
+struct FdSettings {
+    FdRule       rule    = FdRule::Width;
+    FdScheme     scheme  = FdScheme::Central;
+    double       fd_step = 1.0e-6;
+    FdStepSource source  = FdStepSource::Default;
+    bool         rule_written = false;   /* PARAM fd_kernel was given */
+};
+
+/* The finite-difference settings of `sp` (see the file comment): PARAM
+ * fd_kernel, fd_step and diff_method, with the defaults of its
+ * GRAD_STRATEGY and OPTIM_SCALE. Throws std::runtime_error for an invalid
+ * value, and for diff_method 2 (RIDDERS). */
+FdSettings fd_settings_of(const OptimizerSpec& sp);
+
+/* Whether `sp` sets PARAM fd_step, fd_kernel or diff_method (or the NOISE
+ * block's AUTO derived fd_step); "" when not, else their names, "PARAM
+ * fd_step and diff_method". */
+std::string fd_params_written(const OptimizerSpec& sp);
+
+/* The step of `rule` at internal coordinate u. Ceres' arithmetic:
+ * std::max(min_step_size, |u| * relative_step_size). */
+inline double fd_step_at(FdRule rule, double fd_step, double u)
 {
-    FdKernel k = (sp.space && sp.space->normalised()) ? FdKernel::InHouse
-                                                      : FdKernel::Ceres;
-    if (auto it = sp.param_raw.find("fd_kernel"); it != sp.param_raw.end()) {
-        if (it->second == "ceres" || it->second == "CERES")
-            k = FdKernel::Ceres;
-        else if (it->second == "inhouse" || it->second == "INHOUSE")
-            k = FdKernel::InHouse;
-        else
-            throw std::runtime_error(
-                "PARAM fd_kernel must be inhouse (default) or ceres (got '" +
-                it->second + "')");
-    }
-    return k;
+    if (rule == FdRule::Width) return fd_step * std::max(std::abs(u), 1.0);
+    return std::max(kCeresMinStep, std::abs(u) * fd_step);
 }
 
-/* PARAM fd_step of the in-house stencil (default 1e-6). Throws
- * std::runtime_error unless it is positive and finite. */
-inline double fd_step_of(const OptimizerSpec& sp)
-{
-    double fd_step = 1.0e-6;
-    if (auto it = sp.param.find("fd_step"); it != sp.param.end())
-        fd_step = it->second;
-    if (!(fd_step > 0.0) || !std::isfinite(fd_step))
-        throw std::runtime_error(
-            "PARAM fd_step must be a positive finite fraction of the box width");
-    return fd_step;
-}
-
-/* Whether the gradients of a run of `sp` (GradientProvider) take finite
- * differences with the in-house stencil: GRAD_STRATEGY NUMERICAL with the
- * in-house kernel, or HYBRID. Throws for an invalid PARAM fd_kernel under
- * NUMERICAL, as the provider does. */
-inline bool uses_in_house_stencil(const OptimizerSpec& sp)
-{
-    const GradStrategy g = sp.grad_strategy.value_or(GradStrategy::Numerical);
-    if (g == GradStrategy::Hybrid) return true;
-    return g == GradStrategy::Numerical &&
-           fd_kernel_of(sp) == FdKernel::InHouse;
-}
-
-/* Whether they take them with Ceres' numeric differentiation, whose steps
- * are not bounded: GRAD_STRATEGY NUMERICAL with the Ceres kernel. */
-inline bool uses_ceres_kernel(const OptimizerSpec& sp)
-{
-    return sp.grad_strategy.value_or(GradStrategy::Numerical) ==
-               GradStrategy::Numerical &&
-           fd_kernel_of(sp) == FdKernel::Ceres;
-}
-
-/* The in-house step at internal coordinate u. */
-inline double fd_step_at(double fd_step, double u)
-{
-    return fd_step * std::max(std::abs(u), 1.0);
-}
-
-/* Which stencil differences a coordinate (see the file comment). */
-enum class FdSide : std::uint8_t { Central, Forward, Backward };
-
-/* The stencil of internal coordinate u with step h in the box [lo, hi]:
- * central when u - h and u + h lie in it, forward (u + h, u + 2.0*h) when
- * u - h lies below it and u + 2.0*h does not lie above, backward
- * (u - h, u - 2.0*h) in the mirror case; nullopt when u lies in the box
- * and none fits (a box narrower than the stencil: fd_box_error refuses
- * one). A u outside the box, or NaN, is Central. Pass an infinite box for
- * a dimension without one. */
-inline std::optional<FdSide> fd_side(double u, double h, double lo, double hi)
-{
-    if (!(u >= lo && u <= hi)) return FdSide::Central;
-    const bool below = u - h < lo;
-    const bool above = u + h > hi;
-    if (!below && !above) return FdSide::Central;
-    if (below && !above && u + 2.0 * h <= hi) return FdSide::Forward;
-    if (above && !below && u - 2.0 * h >= lo) return FdSide::Backward;
-    return std::nullopt;
-}
-
-/* Whether the in-house stencil with PARAM fd_step fits at every point of
- * the box [lo, hi]: lo + 3H <= hi and hi - 3H >= lo, H = fd_step *
- * max(|lo|, |hi|, 1), each rounded outwards (the step at any u of the box
- * is at most H; u - h < lo as computed implies u < lo + h exactly, so
- * u + 2h < lo + 3H, and rounding is monotone). */
-inline bool fd_box_fits(double lo, double hi, double fd_step)
-{
-    const double H = fd_step_at(fd_step, std::max(std::abs(lo), std::abs(hi)));
-    const double inf = std::numeric_limits<double>::infinity();
-    return std::isfinite(H) &&
-           std::nextafter(std::fma(3.0, H, lo), inf) <= hi &&
-           std::nextafter(std::fma(-3.0, H, hi), -inf) >= lo;
-}
-
-/* "" when the in-house stencil with `fd_step` fits every OPTIM box of `sp`
- * (its internal bounds low/high; fd_box_fits), else the error: each
- * dimension that does not, with its box, the stencil's span there and the
- * largest fd_step it takes. */
-inline std::string fd_box_error(const OptimizerSpec& sp, double fd_step)
-{
-    const auto num = [](double v) {
-        std::ostringstream os;
-        os << std::setprecision(10) << v;
-        return os.str();
+/* One dimension's stencil (fd_plan). */
+struct FdStencil {
+    enum class Kind : std::uint8_t {
+        Central,   /* p1 = u + h, p2 = u - h */
+        OneSided,  /* p1 = u + s, p2 = u + 2.0 * s, with f(u) */
+        Forward    /* p1 = u + s, with f(u) */
     };
-    std::string bad;
-    const std::size_t n = std::min(sp.low.size(), sp.high.size());
-    for (std::size_t i = 0; i < n; ++i) {
-        const double lo = sp.low[i], hi = sp.high[i];
-        if (fd_box_fits(lo, hi, fd_step)) continue;
-        const double m = std::max({std::abs(lo), std::abs(hi), 1.0});
-        const std::string label =
-            (i < sp.parameter_labels.size() && !sp.parameter_labels[i].empty())
-                ? sp.parameter_labels[i] : logidx::dim_label(i);
-        bad += "\n  - " + label + ": box [" + num(lo) + ", " + num(hi) +
-               "], width " + num(hi - lo) + " < 3 x " +
-               num(fd_step_at(fd_step, m)) + " (fd_step below " +
-               num((hi - lo) / (3.0 * m)) + " fits it)";
+    Kind   kind = Kind::Central;
+    double h  = 0.0;   /* the step, > 0 */
+    double s  = 0.0;   /* the signed step of OneSided / Forward (+h or -h) */
+    double p1 = 0.0;   /* the coordinates evaluated, in this order */
+    double p2 = 0.0;
+    bool   outside = false;   /* u lies outside the box */
+    /* A stencil a bound turned: one-sided into the box instead of central,
+     * backward instead of forward, or towards the box from outside it. */
+    bool   turned = false;
+
+    bool needs_centre() const { return kind != Kind::Central; }
+};
+
+/* The stencil of internal coordinate u in the box [a, b] with `rule`,
+ * `scheme` and `fd_step` (see the file comment); std::nullopt when u lies
+ * in the box and none fits (fd_fit refuses such a box). A NaN u gets the
+ * central stencil (its evaluations fail). Throws std::logic_error if a
+ * stencil of a u outside the box would reach further outside than u, which
+ * a box fd_fit accepts rules out (it bounds fd_step by 1). */
+std::optional<FdStencil> fd_plan(double u, double a, double b, FdRule rule,
+                                 FdScheme scheme, double fd_step);
+
+/* The derivative from the stencil's losses: y0 = f(u) (unused by Central),
+ * y1 = f(p1), y2 = f(p2) (unused by Forward). The interior arithmetic of
+ * each rule's old kernel; see the file comment. */
+inline double fd_combine(const FdStencil& st, FdRule rule, double y0,
+                         double y1, double y2)
+{
+    switch (st.kind) {
+        case FdStencil::Kind::Central:
+            if (rule == FdRule::Width) return (y1 - y2) / (2.0 * st.h);
+            {
+                /* Ceres (numeric_diff.h, EvaluateJacobianColumn):
+                 * residuals -= temp; one_over_delta /= 2;
+                 * residuals *= one_over_delta. */
+                double one_over_delta = 1.0 / st.h;
+                one_over_delta /= 2;
+                return (y1 - y2) * one_over_delta;
+            }
+        case FdStencil::Kind::OneSided:
+            return (4.0 * (y1 - y0) - (y2 - y0)) / (2.0 * st.s);
+        case FdStencil::Kind::Forward:
+            if (rule == FdRule::Width) return (y1 - y0) / st.s;
+            return (y1 - y0) * (1.0 / st.s);
     }
-    if (bad.empty()) return "";
-    return "PARAM fd_step " + num(fd_step) + ": the finite-difference "
-           "stencil takes three steps of fd_step x max(|u|, 1) inside the "
-           "OPTIM box, in internal coordinates (the unit box under "
-           "OPTIM_SCALE AUTO), so that it never evaluates outside it; these "
-           "boxes are narrower:" + bad +
-           "\n  Lower PARAM fd_step (set it by hand when the NOISE block's "
-           "AUTO derived it) or widen these boxes.";
+    return std::numeric_limits<double>::quiet_NaN();
 }
+
+/* Whether every u of the box [a, b] gets a stencil (fd_plan) with `rule`,
+ * `scheme` and `fd_step`; when not, `where` is a u of the box without
+ * one. */
+struct FdFit {
+    bool   ok = true;
+    double where = std::numeric_limits<double>::quiet_NaN();
+};
+FdFit fd_fit(double a, double b, FdRule rule, FdScheme scheme, double fd_step);
+
+/* The largest fd_step for which fd_fit accepts the box, or std::nullopt
+ * when none does (a box narrower than three of Ceres' smallest steps,
+ * 3 x 2^-26, somewhere). */
+std::optional<double> fd_largest_fitting_step(double a, double b,
+                                              FdRule rule, FdScheme scheme);
+
+/* "" when every OPTIM box of `sp` (its internal bounds) fits the stencil of
+ * `s`, else the error: each dimension that does not, with its box, a
+ * point without a stencil and the largest fd_step that fits it, the step's
+ * source, and what to change. */
+std::string fd_box_error(const OptimizerSpec& sp, const FdSettings& s);
+
+/* What the finite differences of `s` are, for the journal's OPTIMISER
+ * section and the messages: "CENTRAL, h = 1e-06 of each box width (PARAM
+ * fd_step; in-house rule); next to a bound: one-sided 3-point, same h,
+ * same cost". `normalised`: OPTIM_SCALE AUTO; `hybrid`: HYBRID's pass. */
+std::string fd_describe(const FdSettings& s, bool normalised, bool hybrid);
+
+/* `v` with `digits` significant digits, rounded towards zero, so that the
+ * printed value itself fits where `v` is the largest that does. */
+std::string fd_floor_text(double v, int digits = 6);
+
+/* ASA's finite-difference probes of a coordinate in [lo, hi] with Delta
+ * `delta` (external/asa cost_derivatives): the tangents, (1 + Delta) x or,
+ * when that lies outside the box, (1 - Delta) x -- also the rule of the
+ * off-diagonal curvature -- and with `curvature` (Curvature_0 0 or -1) the
+ * diagonal curvature, x +- Delta |x|, or next to a bound x -+ Delta |x| and
+ * x -+ 2 Delta |x|. `where`: an x of the box where a probe would lie
+ * outside it. */
+FdFit asa_probe_fit(double lo, double hi, double delta, bool curvature);
+
+/* The largest Delta asa_probe_fit accepts for [lo, hi] (std::nullopt: none
+ * does). */
+std::optional<double> asa_largest_fitting_delta(double lo, double hi,
+                                                bool curvature);
 
 }  // namespace tadah::hpo

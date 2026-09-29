@@ -197,9 +197,13 @@ Registry build_registry()
             c.step_note          = "Ceres chooses the initial line-search step itself; remove "
                                    "STEP (PARAM max_ls_iter caps the line-search iterations)";
             c.ignores_bounds     = true;
-            c.bounds_note        = "Ceres GradientProblemSolver enforces no box constraints: "
-                                   "iterates may leave the OPTIM box (log-scaled dims stay "
-                                   "positive; linear dims are unbounded)";
+            c.bounds_note        = "ignores the OPTIM box: Ceres' GradientProblemSolver has no "
+                                   "bounds, so its iterates can leave the box (a LOG dimension "
+                                   "stays positive, a linear one is unbounded) and are evaluated "
+                                   "there, and such a point can become the best; the first is "
+                                   "reported with a WARNING and DIAGNOSTICS counts them all "
+                                   "(finite differences at such a point step towards the box). "
+                                   "DLIB:BFGS and the NLopt LD_* algorithms keep to the box";
             add(r, c);
         }
     }
@@ -327,9 +331,11 @@ Registry build_registry()
         }
         if (s == "LN_NEWUOA") {
             c.ignores_bounds = true;
-            c.bounds_note    = "LN_NEWUOA is called without bounds (nlopt optimize.c passes "
-                               "lb=ub=NULL): evaluations may leave the OPTIM box; use "
-                               "LN_NEWUOA_BOUND or LN_BOBYQA";
+            c.bounds_note    = "ignores the OPTIM box: NLopt calls LN_NEWUOA without bounds "
+                               "(optimize.c passes lb = ub = NULL), so its evaluations can "
+                               "leave the box, and such a point can become the best; the "
+                               "first is reported with a WARNING and DIAGNOSTICS counts them "
+                               "all. LN_NEWUOA_BOUND and LN_BOBYQA keep to the box";
         }
 
         add(r, c);

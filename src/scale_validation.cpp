@@ -173,7 +173,12 @@ void validate_optimizer_scaling(const OptimizerSpec& sp,
                    "optimiser); keep one of them";
             warn(oss.str());
         }
-        if (caps.ignores_bounds && caps.bounds_note && caps.bounds_note[0])
+        /* An optimiser that ignores the bounds: one WARNING per run and
+         * backend (this check runs at parse time, at startup and when each
+         * phase starts). */
+        if (caps.ignores_bounds && caps.bounds_note && caps.bounds_note[0] &&
+            HPOLog::instance().first_in_run("ignores the OPTIM bounds: " +
+                                            sp.lib + ":" + sp.algo))
             warn(name + ": " + caps.bounds_note);
     }
 

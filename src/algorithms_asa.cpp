@@ -17,6 +17,7 @@
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/asa_options.h>
 #include <tadah/hpo/asa_testing.h>
+#include <tadah/hpo/fd_stencil.h>
 #include <tadah/hpo/anneal_parallel.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_mpi.h>
@@ -487,6 +488,74 @@ std::string stop_reason_string(const AsaRunCtx& c, int exit_status)
 
 }  // namespace
 
+std::string asa_probe_box_error(const OptimizerSpec& sp)
+{
+    const std::size_t dim = sp.low.size();
+    if (dim == 0 || sp.high.size() != dim) return "";
+    const AsaOptions ao = parse_asa_options(sp, dim);
+    /* cost_derivatives: the diagonal curvature unless Curvature_0 is TRUE */
+    const bool curvature = ao.curvature_0 != TRUE;
+    const auto num = [](double v) {
+        std::ostringstream os;
+        os << std::setprecision(10) << v;
+        return os.str();
+    };
+    std::string bad;
+    for (std::size_t i = 0; i < dim; ++i) {
+#if DELTA_PARAMETERS
+        const double delta = ao.user_delta_parameter[i];
+#else
+        const double delta = ao.delta_x;
+#endif
+        if (delta < SMALL_FLOAT) continue;   /* no probe */
+        const bool is_int = i < sp.is_int.size() && sp.is_int[i];
+        if (is_int && ao.include_integer_parameters != TRUE) continue;
+        const double lo = sp.low[i], hi = sp.high[i];
+        if (std::fabs(lo - hi) < EPS_DOUBLE) continue;
+        const FdFit fit = asa_probe_fit(lo, hi, delta, curvature);
+        if (fit.ok) continue;
+        const std::string label =
+            (i < sp.parameter_labels.size() && !sp.parameter_labels[i].empty())
+                ? sp.parameter_labels[i] : logidx::dim_label(i);
+        const std::string indexed =
+            "User_Delta_Parameter[" + std::to_string(i + 1) + "]";
+        const std::string key =
+            sp.param.count(indexed) ? indexed
+            : sp.param.count("User_Delta_Parameter") ? "User_Delta_Parameter"
+                                                     : "Delta_X";
+        std::string box = "[" + num(lo) + ", " + num(hi) + "]";
+        double where = fit.where;
+        if (sp.space && i < sp.space->dim()) {
+            const DimSpec& d = sp.space->at(i);
+            const std::string real = "[" + num(d.lo) + ", " + num(d.hi) + "]";
+            if (real != box) box = real + " (internal " + box + ")";
+            where = sp.space->to_real(i, fit.where);
+        }
+        bad += "\n  - " + label + ": OPTIM box " + box + ", PARAM " + key +
+               " " + num(delta) + ": a probe of " + label + " = " +
+               num(where) + " lies outside the box; ";
+        if (const auto best = asa_largest_fitting_delta(lo, hi, curvature))
+            bad += key + " up to " + fd_floor_text(*best) + " fits it";
+        else
+            bad += "no Delta fits it";
+    }
+    if (bad.empty()) return "";
+    std::string msg =
+        "ASA's finite-difference probes -- the reannealing and exit tangents "
+        "at (1 + Delta) x, or (1 - Delta) x when that lies outside the box";
+    if (curvature)
+        msg += ", and the exit curvature at x +- Delta |x|, or x -+ Delta |x| "
+               "and x -+ 2 Delta |x| next to a bound (Curvature_0 " +
+               std::to_string(ao.curvature_0) + ")";
+    msg += " -- would be evaluated outside the OPTIM box of these "
+           "dimensions:" + bad + "\n  Lower the Delta";
+    if (!(sp.space && sp.space->normalised()))
+        msg += std::string("; or use OPTIM_SCALE AUTO, where every box is "
+                           "the unit box (the tangents fit for Delta <= 1") +
+               (curvature ? ", the curvature for Delta <= 0.5)" : ")");
+    return msg + ".";
+}
+
 void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
                     const AsaHostFn& eval)
 {
@@ -497,6 +566,10 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
         throw std::runtime_error("ASA:ASA: bounds/dim mismatch");
 
     AsaOptions ao = parse_asa_options(sp, dim);
+    /* No probe of ASA's lies outside the box (validate_hpo_setup refused
+     * such a setup at startup already). */
+    if (const std::string e = asa_probe_box_error(sp); !e.empty())
+        throw std::runtime_error("ASA:ASA: " + e);
     announce_asa_options(ao);
 
     const std::uint64_t seed = sp.seed.value_or(std::random_device{}());
