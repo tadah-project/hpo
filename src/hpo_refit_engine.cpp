@@ -868,7 +868,10 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
     // dropped — curve mode stays independent of the crystal-energy metric). It
     // HONOURS the configured FUSE optimiser (joint_algo) per function, on the
     // SAME pressure-relaxed weighted curve as the ladder (d.wts). FUSE ALGO NONE
-    // (or ENABLED false) skips it.
+    // (or ENABLED false) skips it. On the radial bump channels it optimises
+    // the outer support edges bounded at rcut, as the energy-mode FUSE does
+    // (fuse_curve_refine): the bump-support projection after it then moves
+    // nothing and cannot undo the fit.
     joint_term = "curve (no E-V coupling)";
     if (joint_algo == "NONE") {
       rlog.line("---- FUSE (curve: skipped, ALGO NONE / disabled) ----");
@@ -886,8 +889,7 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
         CompactBlipFitter ff(d.xs, d.ys, d.wts, lo, hi, ffcfg, kind, d.dys,
                              d.d2ys);
         const double before = ff.combined_curve_score(fit);
-        ff.refine_with_cfg(fit);
-        const int moved = ff.clamp_bump_support(fit);  // + coeff re-solve
+        const int moved = fuse_curve_refine(ff, fit);  // + clamp, re-solve
         if (moved > 0)
           rlog.line(std::string("FUSE[") + nm + "] bump-support clamp moved " +
                     std::to_string(moved) + " bump(s) back inside rcut.");

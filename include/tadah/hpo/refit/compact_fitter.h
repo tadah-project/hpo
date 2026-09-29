@@ -319,6 +319,18 @@ public:
    *  VARPRO reduced-gradient NLOPT_LBFGS / DLIB_LBFGS | NONE). */
   double refine_with_cfg(BlipFit &f) const { return refine_dispatch(f); }
 
+  /** refine() in joint_refine's edge parametrisation, for a bump family
+   *  under a hard cutoff (cfg.hard_rcut > 0): (c, e, eta) with the outer
+   *  support edges e = mu + w/eta bounded at the cutoff and every free
+   *  width at or above the ladder's floor 0.03 eta0 (a start outside is
+   *  lifted onto the bound), so every free bump ends inside the cutoff and
+   *  clamp_bump_support moves nothing. Pinned bumps are held. Throws
+   *  std::logic_error for a knot family or without a hard cutoff. */
+  double refine_edges(BlipFit &f) const;
+
+  /** The configuration the fitter was built with. */
+  const CompactConfig &config() const { return cfg_; }
+
   /** VARPRO reduced objective (mean squared error over samples) and, when
    *  grad is non-null, its EXACT gradient — Golub-Pereyra: at the inner
    *  least-squares optimum d(SSE)/dtheta = 2 r^T (dPhi/dtheta) c. Under
@@ -529,6 +541,15 @@ HeldPasses run_held_passes(int max_passes, FuseBudget &budget,
                            const std::function<int()> &hold,
                            const std::function<int(int)> &solve,
                            const std::function<void(const std::string &)> &log);
+
+/** Curve-mode FUSE for one function (REFIT_OBJECTIVE curve): the
+ *  configured Ceres refine of @p ff's curve (cfg.refine_algo), in the edge
+ *  parametrisation (refine_edges) on a bump family under a hard cutoff --
+ *  the owner's compact-mode FUSE rule, so the bump-support projection after
+ *  it cannot undo the fit -- else refine_with_cfg; ALGO NONE re-solves the
+ *  coefficients only. Then clamp_bump_support (with its coefficient
+ *  re-solve), which guards a pinned bump; returns the bumps it moved. */
+int fuse_curve_refine(const CompactBlipFitter &ff, BlipFit &fit);
 
 /** Free-function core of CompactBlipFitter::clamp_bump_support (no fitter
  *  needed — used by the engine after joint_refine): project every bump of a

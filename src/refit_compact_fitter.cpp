@@ -2047,6 +2047,83 @@ private:
 };
 }  // namespace
 
+double CompactBlipFitter::refine_edges(BlipFit &f) const {
+  if (one_sided(f.kind) || !(cfg_.hard_rcut > 0.0))
+    throw std::logic_error("compact_fitter refine_edges: a bump family under "
+                           "a hard cutoff only");
+  const int n = f.n();
+  f.zero_ref = cfg_.zero_ref;
+  f.form = cfg_.rho_form;
+  const double w = bump_w(f.kind), rc = cfg_.hard_rcut;
+  // the ladder's width floor (joint_refine's): 0.03 eta0
+  const double floor = 0.03 * std::max(1, n - 1) / span_;
+  require_positive_bump_widths(f, "refine_edges");
+  std::vector<double> &c = f.c, &eta = f.eta;
+  std::vector<double> e(n);
+  for (int k = 0; k < n; ++k) {
+    if (!f.is_pinned(k) && eta[k] < floor) eta[k] = floor;
+    e[k] = f.mu[k] + w / eta[k];
+    if (!f.is_pinned(k) && e[k] > rc) e[k] = rc;  // a spilling start: on the bound
+  }
+  ceres::Problem prob;
+  prob.AddResidualBlock(
+      new EdgeParamCost(new CurveCost(xs_, ys_, wts_, n, f.kind, f.deg,
+                                      f.zero_ref, f.form),
+                        {{1, 2, w}}),
+      nullptr, c.data(), e.data(), eta.data());
+  if (rhoform_is_positive(f.form))
+    for (int k = 0; k < n; ++k) {
+      if (c[k] < 0.0) c[k] = 0.0;
+      prob.SetParameterLowerBound(c.data(), k, 0.0);
+    }
+  std::vector<int> pin;
+  for (int k = 0; k < n; ++k) {
+    if (f.is_pinned(k)) {
+      pin.push_back(k);
+      continue;
+    }
+    prob.SetParameterUpperBound(e.data(), k, rc);
+    prob.SetParameterLowerBound(eta.data(), k, floor);
+  }
+  if (!pin.empty()) {  // hold pinned bumps (see refine())
+    if (static_cast<int>(pin.size()) == n) {
+      prob.SetParameterBlockConstant(e.data());
+      prob.SetParameterBlockConstant(eta.data());
+    } else {
+      prob.SetManifold(e.data(), new ceres::SubsetManifold(n, pin));
+      prob.SetManifold(eta.data(), new ceres::SubsetManifold(n, pin));
+    }
+  }
+  ceres::Solver::Options opt;
+  opt.linear_solver_type = ceres::DENSE_QR;
+  if (cfg_.refine_algo == "CERES_DOGLEG")
+    opt.trust_region_strategy_type = ceres::DOGLEG;
+  opt.max_num_iterations = cfg_.ceres_max_iter;
+  opt.function_tolerance = cfg_.ceres_ftol;
+  opt.gradient_tolerance = cfg_.ceres_gtol;
+  opt.parameter_tolerance = 1e-16;
+  opt.logging_type = ceres::SILENT;
+  ceres::Solver::Summary sum;
+  ceres::Solve(opt, &prob, &sum);
+  for (int k = 0; k < n; ++k)  // back to centres (a pinned bump keeps its)
+    if (!f.is_pinned(k)) f.mu[k] = e[k] - w / eta[k];
+  last_refine_term_ = std::string(ceres_term(sum.termination_type)) + "(" +
+                      std::to_string(sum.iterations.size()) + "it, " +
+                      ceres_reason(sum) + ", edges)";
+  return solve_coeffs(f);
+}
+
+int fuse_curve_refine(const CompactBlipFitter &ff, BlipFit &fit) {
+  const CompactConfig &cfg = ff.config();
+  const bool ceres =
+      cfg.refine_algo == "CERES_LM" || cfg.refine_algo == "CERES_DOGLEG";
+  if (ceres && !one_sided(fit.kind) && cfg.hard_rcut > 0.0)
+    ff.refine_edges(fit);
+  else
+    ff.refine_with_cfg(fit);
+  return ff.clamp_bump_support(fit);
+}
+
 double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
                     const JointCurveData &dphi, const JointCurveData &drho,
                     const JointCurveData &dF,
