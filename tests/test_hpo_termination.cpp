@@ -5177,3 +5177,41 @@ TEST_CASE("Finite differences: LD_SLSQP from 1.8 runs to MAXEVAL, "
           "MAXEVAL_REACHED -- maximum evaluations exhausted");
     check_run_files();
 }
+
+TEST_CASE("Snap onto the box: NLopt LN_COBYLA under OPTIM_SCALE NONE rounds a "
+          "point on a bound past it, and it is evaluated on the bound",
+          "[HPO][termination][fd_bounds][snap]")
+{
+    /* LN_COBYLA pressed against CGRID2B[2] <= 1.7 asks for 1.7000000000000002,
+     * one ulp above the box, from eval 4 on (NLopt's own arithmetic on the
+     * bound; OPTIM_SCALE NONE hands it the real box). It was evaluated
+     * there -- 29 of the 60 evaluations -- and warned about as a point
+     * outside the box; it is evaluated on the bound now and counted as
+     * snapped (owner decision D10). */
+    const std::string root =
+        "OPTIM_SCALE NONE\nLOSS L2\nQFLUSH 1000\nDIGITS 15\n"
+        "PC_ERMSE 0 1 --skip-above 9.99995\n"
+        "OPTIM CGRID2B (1) 0.3 0.6\nOPTIM CGRID2B (2) 1.5 1.7\n";
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_COBYLA\n"
+                          "    MAXEVAL 60\n"),
+              root);
+    run.ctx.storage_update("CGRID2B", {"0.5", "1.6"});
+    int status = -1;
+    REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                        "NLOPT:LN_COBYLA"));
+    CHECK(status == 0);
+    const auto x = evaluated_cgrid2();
+    CHECK(x.size() == 60u);
+    for (double xi : x) {
+        CAPTURE(xi);
+        CHECK((xi >= 1.5 && xi <= 1.7));
+    }
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(journal.find("lies outside its OPTIM box") == std::string::npos);
+    CHECK(journal.find("Out-of-box evaluations") == std::string::npos);
+    std::smatch m;
+    REQUIRE(std::regex_search(journal, m,
+                              std::regex(R"(Snapped onto the box\s*: (\d+) )")));
+    CHECK(std::stoul(m[1]) >= 1u);
+    check_run_files();
+}

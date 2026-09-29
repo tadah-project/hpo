@@ -40,7 +40,9 @@
 
 #include <cctype>
 #include <chrono>
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -843,28 +845,24 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
                           Catch::Contains("eval 1: AMPGRIDMB[3] = -1e-06 lies "
                                           "outside its OPTIM box [0, 0.5] and "
                                           "is evaluated there") &&
-                          /* what can evaluate outside the box: an NLopt
-                           * algorithm's rounding past a bound under NONE
-                           * too, not only an optimiser that ignores the
-                           * bounds (review 2, finding 3) */
+                          /* a point proposed within rounding of a bound
+                           * is evaluated on it (owner decision D10), so
+                           * what is evaluated outside the box is an
+                           * optimiser that ignores the bounds, or a start
+                           * it handed on (review 2, finding 3) */
                           Catch::Contains("Out-of-box evaluations  : 1 (points "
                                           "outside the OPTIM box, evaluated "
                                           "there: an\n    optimiser that "
-                                          "ignores the bounds, or NLopt "
-                                          "rounding past a bound under\n    "
-                                          "OPTIM_SCALE NONE; see the first such "
-                                          "WARNING)\n") &&
+                                          "ignores the bounds; see the first "
+                                          "such WARNING)\n") &&
                           Catch::Contains("is evaluated there: finite "
-                                          "differences keep to the box, so the "
-                                          "optimiser put it there: one that "
-                                          "ignores the bounds (CERES:*, NLopt "
-                                          "LN_NEWUOA), under OPTIM_SCALE NONE "
-                                          "an NLopt algorithm whose own "
-                                          "arithmetic rounds a point on a "
-                                          "bound past it (seen with LN_PRAXIS, "
-                                          "LN_COBYLA, the GN_DIRECT*_NOSCAL "
-                                          "variants), or a start such a search "
-                                          "handed on;"));
+                                          "differences keep to the box, and a "
+                                          "point proposed within rounding of a "
+                                          "bound is evaluated on it, so an "
+                                          "optimiser that ignores the bounds "
+                                          "(CERES:*, NLopt LN_NEWUOA), or a "
+                                          "start it handed on, stepped outside "
+                                          "it;"));
       CHECK(count_of_text(txt, "lies outside its OPTIM box") == 1u);
       /* the best sits on the form's zero lower bound: a hard bound, no
        * widen-that-side advisory */
@@ -1025,4 +1023,127 @@ TEST_CASE("HPO_Host: the all-weights-fixed probe rethrows DensityFormError",
   HPOTargets trg(ctx, hpo_cfg.string());
   REQUIRE_THROWS_AS(Host(ctx, trg, val_cfg.string()), DensityFormError);
   Host::reset_globals_for_test();
+}
+
+TEST_CASE("HPO_Host: a point proposed within rounding outside its box is "
+          "evaluated on the bound", "[rhoform_e2e][snap_e2e][.]") {
+  /* Owner decision D10 (2026-09-29): a coordinate the optimiser proposes
+   * outside its OPTIM box by no more than rounding -- 8 units in the last
+   * place of the box's scale, in the real or the optimiser's coordinates --
+   * is evaluated on the bound, recorded there and counted in DIAGNOSTICS
+   * ("Snapped onto the box"), with no WARNING; one further out is evaluated
+   * where it was proposed, counted and warned about. NLopt rounds points on
+   * a bound up to 2 ulps past it under OPTIM_SCALE NONE (LN_COBYLA,
+   * LN_PRAXIS, LN_BOBYQA, the unscaled DIRECT variants): each was evaluated
+   * outside the box, warned about, and a NONNEG amplitude a hair below 0
+   * was projected. */
+  PeriodicTable::initialize();
+  ScratchDir sd("tadah_snap_e2e_");
+  const fs::path val_db  = sd.dir / "val.db";
+  const fs::path val_cfg = sd.dir / "config.val";
+  write_ta_db(val_db);
+  { std::ofstream os(val_cfg); os << "DBFILE " << val_db.string() << "\n"; }
+  const auto ulp = [](double m) {
+    return std::nextafter(std::fabs(m), HUGE_VAL) - std::fabs(m);
+  };
+  const auto config = [&](const std::string& name, const std::string& lines) {
+    const fs::path p = sd.dir / name;
+    std::ofstream os(p);
+    os << "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\n"
+       << "LOSS L2\nPC_EMAE 0 1\nFAILSCORE 1e9\n" << lines;
+    return p;
+  };
+  struct Probe { double x, evaluated; };
+
+  SECTION("OPTIM_SCALE AUTO: a linear box [0, 0.5]") {
+    Journal j;
+    Host::reset_globals_for_test();
+    ForceRebuildGuard rebuild;
+    const fs::path hpo_cfg = config("auto.hpo", "OPTIM AMPGRIDMB (3) 0 0.5\n");
+    Context ctx = make_ream_ctx("NONNEG", "0.5 0.3 0.0");
+    ctx.add("HPOTARGET", hpo_cfg.string());
+    HPOTargets trg(ctx, hpo_cfg.string());
+    REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, false, true));
+    const double u = ulp(0.5);   /* the box's scale: max(|lo|, |hi|) */
+    const std::vector<Probe> probes = {
+        {std::nextafter(0.5, 1.0), 0.5},     /* 1 ulp above */
+        {0.5 + 8 * u, 0.5},                  /* 8 ulps above */
+        {-std::numeric_limits<double>::denorm_min(), 0.0},   /* below 0 */
+        {-8 * u, 0.0},
+        {0.5 + 16 * u, 0.5 + 16 * u},        /* beyond: evaluated as asked */
+        {0.6, 0.6}};
+    {
+      Host host(ctx, trg, val_cfg.string());
+      ParamVec p(1);
+      for (const Probe& pr : probes) {
+        CAPTURE(pr.x);
+        p(0) = pr.x;
+        double loss = 0.0;
+        REQUIRE_NOTHROW(loss = host(p));
+        CHECK(std::isfinite(loss));
+        CHECK(pot_amplitude(Host::tls_trainer_for_test(), 2) == pr.evaluated);
+      }
+      /* the two below 0 were snapped onto 0, not projected; the two
+       * beyond the tolerance are evaluated outside the box */
+      CHECK(HPOLog::instance().form_projections() == 0);
+      CHECK(HPOLog::instance().out_of_box_evals() == 2);
+      host.flush_remaining();
+    }
+    const auto rows = table_rows("params.tadah");
+    REQUIRE(rows.size() == probes.size());
+    CHECK(rows[0].back() == 0.5);   /* the recorded point is the snapped one */
+    CHECK(rows[2].back() == 0.0);
+    CHECK(rows[5].back() == 0.6);
+    const std::string txt = j.finish();
+    CHECK_THAT(txt, Catch::Contains("Snapped onto the box    : 4 (points "
+                                    "proposed outside the OPTIM box within\n"
+                                    "    rounding, 8 units in the last place, "
+                                    "and evaluated on the bound)\n") &&
+                        Catch::Contains("Out-of-box evaluations  : 2 ("));
+    /* one WARNING, at the first evaluation beyond the tolerance */
+    CHECK(count_of_text(txt, "lies outside its OPTIM box") == 1u);
+    CHECK_THAT(txt, Catch::Contains("eval 5: AMPGRIDMB[3] = 0.500000000000001") &&
+                        Catch::Contains("lies outside its OPTIM box [0, 0.5]"));
+    Host::reset_globals_for_test();
+  }
+
+  SECTION("OPTIM_SCALE NONE: a LOG box [0.01, 0.5], in the optimiser's "
+          "coordinates") {
+    /* The optimiser works on u = ln x: 4 ulps of max(|ln 0.01|, |ln 0.5|)
+     * past ln 0.5 is 16 ulps of 0.5 past 0.5 in x -- snapped by the
+     * tolerance in the optimiser's coordinates. */
+    Journal j;
+    Host::reset_globals_for_test();
+    ForceRebuildGuard rebuild;
+    const fs::path hpo_cfg = config(
+        "none.hpo", "OPTIM_SCALE NONE\nOPTIM AMPGRIDMB (3) 0.01 0.5 LOG\n");
+    Context ctx = make_ream_ctx("NONNEG", "0.5 0.3 0.1");
+    ctx.add("HPOTARGET", hpo_cfg.string());
+    HPOTargets trg(ctx, hpo_cfg.string());
+    REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, false, true));
+    const double m = std::max(std::fabs(std::log(0.01)), std::fabs(std::log(0.5)));
+    const double above = std::exp(std::log(0.5) + 4 * ulp(m));
+    REQUIRE(above - 0.5 > 8 * ulp(0.5));   /* beyond 8 ulps in x */
+    const std::vector<Probe> probes = {
+        {above, 0.5},
+        {std::nextafter(0.01, 0.0), 0.01},
+        {0.5 * (1 + 1e-9), 0.5 * (1 + 1e-9)}};
+    {
+      Host host(ctx, trg, val_cfg.string());
+      ParamVec p(1);
+      for (const Probe& pr : probes) {
+        CAPTURE(pr.x);
+        p(0) = pr.x;
+        REQUIRE_NOTHROW(host(p));
+        CHECK(pot_amplitude(Host::tls_trainer_for_test(), 2) == pr.evaluated);
+      }
+      CHECK(HPOLog::instance().out_of_box_evals() == 1);
+      host.flush_remaining();
+    }
+    const std::string txt = j.finish();
+    CHECK_THAT(txt, Catch::Contains("Snapped onto the box    : 2 (") &&
+                        Catch::Contains("Out-of-box evaluations  : 1 ("));
+    CHECK(count_of_text(txt, "lies outside its OPTIM box") == 1u);
+    Host::reset_globals_for_test();
+  }
 }
