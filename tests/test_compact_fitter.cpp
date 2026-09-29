@@ -558,6 +558,46 @@ TEST_CASE("compact FUSE: the held re-run passes share the stage's MAXEVAL",
   }
 }
 
+TEST_CASE("compact FUSE, curve mode: the result is never worse than FUSE's "
+          "start on a spilling truth", "[compact][fuse_curve]") {
+  // Curve-mode FUSE refines each function against its curve (the
+  // configured Ceres solver), then the bump-support projection moves a bump
+  // that ends past the hard cutoff back inside it and re-solves the
+  // coefficients. The refine bounded only the centres, so on a target
+  // whose best fit spills it pushed bumps out, and the projection undid
+  // the fit: the result could be worse than the start. (REQUIRE: past the
+  // ceres include above, CHECK is glog's.)
+  const double rcut = 5.5, lo = 1.0;
+  const BlipFit truth = make_truth();  // bumps 3 and 4 reach past 5.5
+  std::vector<double> xs, ys;
+  sample(truth, lo, rcut, 300, xs, ys);
+  for (const char *algo : {"CERES_LM", "CERES_DOGLEG"}) {
+    INFO(algo);
+    CompactConfig cfg;
+    cfg.objective = RefitObjective::Curve;
+    cfg.refine_algo = algo;
+    cfg.hard_rcut = rcut;
+    CompactBlipFitter ff(xs, ys, {}, lo, rcut, cfg);
+    // FUSE's start: a feasible fit near the truth (the ladder's result),
+    // here the truth moved inside the cutoff with bump 2 shifted inward and
+    // the coefficients re-solved. The old step refined to the spilling
+    // truth, the projection moved bumps 3 and 4 back, and the curve score
+    // went from 0.0948 to 0.1020.
+    BlipFit fit = truth;
+    fit.mu[1] -= 0.1;
+    REQUIRE(clamp_bump_support_params(fit, rcut, rcut - lo) == 2);
+    ff.solve_coeffs(fit);
+    const double before = ff.combined_curve_score(fit);
+    const int moved = fuse_curve_refine(ff, fit);
+    const double after = ff.combined_curve_score(fit);
+    INFO("curve score " << before << " -> " << after << ", moved " << moved);
+    REQUIRE(moved == 0);
+    REQUIRE(after <= before);
+    for (int k = 0; k < fit.n(); ++k)
+      REQUIRE(fit.mu[k] + 2.0 / fit.eta[k] <= rcut + 1e-6 * rcut);
+  }
+}
+
 TEST_CASE("compact fitter: VARPRO reduced gradient matches finite differences",
           "[compact]") {
   const BlipFit truth = make_truth();
