@@ -6,6 +6,7 @@
 
 #include <tadah/models/descriptors/basis_kind.h>
 #include <tadah/models/descriptors/d_basis_functions.h>
+#include <tadah/core/logger.h>
 #include <tadah/models/nnls.h>
 
 #include <ceres/ceres.h>
@@ -33,6 +34,7 @@ using tadah::models::B;
 using tadah::models::dB;
 using tadah::models::RhoForm;
 using tadah::models::rhoform_is_positive;
+using tadah::models::rhoform_name;
 
 void apply_stage_optimizers(const RefitConfig &rc, CompactConfig &cfg) {
   // EXPLORE outer = the global seed at rung 0 (absorbs the old GLOBAL stage);
@@ -253,16 +255,23 @@ inline double cder(BasisKind k, RhoForm form, int d, double xc, double eta) {
 // stay at 0, which is what the rank-revealing solve does for SIGNED. A
 // non-finite system (which the SIGNED solve turns into NaN coefficients)
 // gives NaN coefficients here too, so the candidate loses every comparison.
-// A solve stopped at nnls' iteration cap is still feasible (every c_k >= 0).
-void solve_nonneg(const Eigen::MatrixXd &A, const Eigen::VectorXd &b,
-                  std::vector<double> &c) {
+// A solve that stopped before a Kuhn-Tucker point (nnls' iteration cap, or
+// every column with a dual above the tolerance refused) is feasible (every
+// c_k >= 0) but not proven optimal: it returns the nnls result, whose
+// `converged` the caller counts and reports (CompactBlipFitter::fit).
+tadah::models::NnlsResult solve_nonneg(const Eigen::MatrixXd &A,
+                                       const Eigen::VectorXd &b,
+                                       std::vector<double> &c) {
   c.assign(static_cast<std::size_t>(A.cols()), 0.0);
   try {
-    tadah::models::nnls(A.data(), static_cast<std::size_t>(A.rows()),
-                        static_cast<std::size_t>(A.cols()), b.data(),
-                        c.data());
+    return tadah::models::nnls(A.data(), static_cast<std::size_t>(A.rows()),
+                               static_cast<std::size_t>(A.cols()), b.data(),
+                               c.data());
   } catch (const std::invalid_argument &) {
+    // a non-finite system: NaN coefficients (as the SIGNED solve gives), a
+    // failed candidate rather than a non-converged solve
     c.assign(c.size(), std::numeric_limits<double>::quiet_NaN());
+    return tadah::models::NnlsResult{};
   }
 }
 // EMBF0 ZERO reference terms of an n-atom expansion at x = 0: b0[k] =
@@ -514,6 +523,14 @@ CompactBlipFitter::CompactBlipFitter(std::vector<double> xs,
   if (!use_d2_) nd2_ = 1.0;
 }
 
+void CompactBlipFitter::note_nonneg(
+    const tadah::models::NnlsResult &res) const {
+  ++n_nonneg_solves_;
+  if (res.converged) return;
+  ++n_nonneg_unproven_;
+  last_nonneg_stop_ = res.stop;
+}
+
 double CompactBlipFitter::solve_coeffs(BlipFit &f) const {
   // Every candidate passes through here before any eval / metric, so this is
   // the one place the channel's EMBF0 reference and RHOFORM are stamped onto
@@ -585,7 +602,7 @@ double CompactBlipFitter::solve_coeffs(BlipFit &f) const {
           ++r;
         }
     if (positive) {
-      solve_nonneg(A, b, f.c);
+      note_nonneg(solve_nonneg(A, b, f.c));
     } else {
       Eigen::VectorXd c = A.completeOrthogonalDecomposition().solve(b);
       f.c.assign(c.data(), c.data() + n);
@@ -621,7 +638,7 @@ double CompactBlipFitter::solve_coeffs(BlipFit &f) const {
     b(i) = sw * ys_[i];
   }
   if (positive) {
-    solve_nonneg(A, b, f.c);
+    note_nonneg(solve_nonneg(A, b, f.c));
   } else {
     // rank-revealing: a blip pushed outside the sampled range yields a ~zero
     // column, which plain QR mishandles
@@ -1794,6 +1811,23 @@ BlipFit CompactBlipFitter::fit(const Metric &metric,
     }
   }
   log("ladder DONE: " + describe(best));
+  // Positive forms: say how many coefficient solves were not proven
+  // optimal (feasible, every c_k >= 0, but stopped before a Kuhn-Tucker
+  // point), in the refit log and as a WARNING.
+  if (n_nonneg_unproven_ > 0) {
+    const std::string msg =
+        std::string("WARNING: RHOFORM ") + rhoform_name(cfg_.rho_form) +
+        ": " + std::to_string(n_nonneg_unproven_) + " of " +
+        std::to_string(n_nonneg_solves_) +
+        " non-negative least-squares coefficient solves stopped before a "
+        "Kuhn-Tucker point (the last: " +
+        tadah::models::nnls_stop_text(last_nonneg_stop_) +
+        "): those candidates' coefficients are >= 0 but not proven "
+        "optimal, so their scores can be worse than their basis allows.";
+    log(msg);
+    tadah::core::Logger::instance().log(tadah::core::LogLevel::WARNING,
+                                        msg.substr(9));
+  }
   return best;
 }
 

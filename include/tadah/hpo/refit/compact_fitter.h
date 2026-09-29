@@ -39,6 +39,7 @@
 
 #include <tadah/hpo/refit/refit_config.h>
 #include <tadah/models/descriptors/dm/rhoform.h>
+#include <tadah/models/nnls.h>
 
 #include <functional>
 #include <random>
@@ -343,6 +344,15 @@ public:
    *  counted (its budget is iterations). Exposed for tests. */
   long long objective_evaluations() const { return n_obj_evals_; }
 
+  /** RHOFORM NonNeg/Monotone: the non-negative coefficient solves made so
+   *  far (solve_coeffs), and those that stopped before a Kuhn-Tucker point
+   *  (models::nnls not converged: its iteration cap, or every column with a
+   *  dual above the tolerance refused). Their coefficients are feasible but
+   *  not proven optimal; fit() reports a non-zero count as a WARNING (the
+   *  refit log and the Logger). Exposed for tests. */
+  long long nonneg_solves() const { return n_nonneg_solves_; }
+  long long nonneg_unproven_solves() const { return n_nonneg_unproven_; }
+
   /** Bump-support projection (cfg.hard_rcut gate; see CompactConfig): for
    *  the bump families, pull any bump with `mu + w/eta > hard_rcut` back
    *  into the feasible set (centre first if even the narrowest legal bump
@@ -431,6 +441,14 @@ private:
 
   // objective_evaluations(); counted by the optimisers' objective wrappers.
   mutable long long n_obj_evals_ = 0;
+
+  // nonneg_solves() / nonneg_unproven_solves(), and the stop reason of the
+  // last unproven solve (note_nonneg, called by solve_coeffs).
+  void note_nonneg(const tadah::models::NnlsResult &res) const;
+  mutable long long n_nonneg_solves_ = 0;
+  mutable long long n_nonneg_unproven_ = 0;
+  mutable tadah::models::NnlsStop last_nonneg_stop_ =
+      tadah::models::NnlsStop::KuhnTucker;
 };
 
 /** Joint Ceres refinement of all three functions against their curve residuals
