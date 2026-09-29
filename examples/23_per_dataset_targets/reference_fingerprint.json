@@ -3,30 +3,30 @@
   "example": "23_per_dataset_targets",
   "description": "PC_ERMSE (1) / (2): per-dataset targets and weights over a local config.val.",
   "best_loss": {
-    "value": 0.002946557,
+    "value": 0.00294656,
     "abs_tol": 1e-06,
     "rel_tol": 0.001
   },
   "components": {
     "L(ERMSE)[1]": {
-      "value": 0.002588025,
+      "value": 0.002588027,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(ERMSE)[2]": {
-      "value": 0.003305089,
+      "value": 0.003305092,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(ERMSE)[avg]": {
-      "value": 0.002946557,
+      "value": 0.00294656,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     }
   },
   "hyperparameters": {
     "RCUT2B": {
-      "value": 6.000002,
+      "value": 6.0,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     }
