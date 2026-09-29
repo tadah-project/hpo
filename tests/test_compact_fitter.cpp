@@ -7,6 +7,7 @@
 #include <tadah/hpo/refit/refit_parser.h>
 #include <tadah/models/descriptors/basis_dispatch.h>
 #include <tadah/models/descriptors/d_basis_functions.h>
+#include <tadah/models/nnls.h>
 
 #include <Eigen/Dense>
 
@@ -2547,6 +2548,84 @@ TEST_CASE("compact fitter RHOFORM: SIGNED reproduces the numbers of the "
         golden_params({static_cast<double>(f.n()), f.curve_rmse}, {&f}),
         golden::ladder, "ladder");
   }
+}
+
+TEST_CASE("compact fitter RHOFORM NONNEG: a coefficient solve that stops "
+          "before a Kuhn-Tucker point is counted and reported",
+          "[compact][rhoform][nnls]") {
+  // Two Blip columns that differ only by a few ulps of eta: the second is
+  // numerically dependent on the first (models::nnls refuses it), yet with
+  // y = a1 + e (da/deta) its dual is above the tolerance once the first has
+  // entered. nnls then stops by refusal: the coefficients are feasible but
+  // not a proven Kuhn-Tucker point. The fitter must count such a solve
+  // (nonneg_unproven_solves) and fit() report it, not accept it silently.
+  // The eta offset is searched (deterministically) for a refusal stop,
+  // confirmed on the same system with models::nnls. (REQUIRE only: after
+  // <ceres/ceres.h> above, CHECK is miniglog's, not Catch's.)
+  const std::vector<double> xs = {0.35, 0.6, 0.85, 1.1, 1.35, 1.6};
+  const double mu = 1.75, eta0 = 1.0;
+  auto column = [&xs](double m, double e) {
+    std::vector<double> a(xs.size());
+    for (std::size_t i = 0; i < xs.size(); ++i) {
+      BlipFit unit;
+      unit.kind = BasisKind::Blip;
+      unit.mu = {m};
+      unit.eta = {e};
+      unit.c = {1.0};
+      a[i] = unit.eval(xs[i]);
+    }
+    return a;
+  };
+  const std::vector<double> a1 = column(mu, eta0);
+  // d a / d eta by central differences (the direction the offset moves a2)
+  const double h = 1e-6;
+  const std::vector<double> ap = column(mu, eta0 + h), am = column(mu, eta0 - h);
+  std::vector<double> u(xs.size());
+  double ua = 0.0, uu = 0.0;
+  for (std::size_t i = 0; i < xs.size(); ++i) {
+    u[i] = (ap[i] - am[i]) / (2.0 * h);
+    ua += u[i] * a1[i];
+    uu += u[i] * u[i];
+  }
+  REQUIRE(ua < 0.0);  // a narrower bump: every value down
+  const double e = -0.2 * ua / uu;  // a1 still enters first
+  std::vector<double> ys(xs.size());
+  for (std::size_t i = 0; i < xs.size(); ++i) ys[i] = a1[i] + e * u[i];
+
+  bool found = false;
+  for (int k = 4; k <= 400 && !found; ++k) {
+    const double eta1 = eta0 + k * std::numeric_limits<double>::epsilon();
+    const std::vector<double> a2 = column(mu, eta1);
+    std::vector<double> A(a1);
+    A.insert(A.end(), a2.begin(), a2.end());
+    std::vector<double> x(2);
+    const tadah::models::NnlsResult ref = tadah::models::nnls(
+        A.data(), xs.size(), 2, ys.data(), x.data());
+    if (ref.stop != tadah::models::NnlsStop::Refused) continue;
+    found = true;
+    INFO("eta offset " << k << " eps");
+    REQUIRE_FALSE(ref.converged);
+
+    std::vector<std::string> log;
+    CompactConfig cfg;
+    cfg.rho_form = RhoForm::NonNeg;
+    cfg.log_fn = [&log](const std::string &line) { log.push_back(line); };
+    CompactBlipFitter fit(xs, ys, {}, 0.3, 1.7, cfg, BasisKind::Blip);
+    BlipFit f;
+    f.kind = BasisKind::Blip;
+    f.mu = {mu, mu};
+    f.eta = {eta0, eta1};
+    f.c = {0.0, 0.0};
+    const long long before = fit.nonneg_solves();
+    fit.solve_coeffs(f);
+    REQUIRE(fit.nonneg_solves() == before + 1);
+    REQUIRE(fit.nonneg_unproven_solves() == 1);
+    REQUIRE(f.c[0] == x[0]);  // the solution nnls returned, feasible
+    REQUIRE(f.c[1] == x[1]);
+    REQUIRE(f.c[0] >= 0.0);
+    REQUIRE(f.c[1] >= 0.0);
+  }
+  REQUIRE(found);
 }
 
 #endif  // TADAH_USE_CERES
