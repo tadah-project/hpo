@@ -1188,21 +1188,15 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
      * vacuous — the train stage can scatter the FIXWEIGHT values
      * directly and skip the design-matrix build. NORM must be off
      * (validate_hpo_setup rejects NORM+FIXINDEX; re-checked here since
-     * tests construct HPO_Host directly). Classification failures fall
-     * back to the ordinary train() path, which surfaces the error with
-     * full context. */
+     * tests construct HPO_Host directly). A model that does not build, or
+     * pins that do not classify, would fail every evaluation: the error
+     * (validate_hpo_setup's, which runs first in hpo_run) propagates. */
     if (has_train_data_ && master_ctx_.contains("FIXINDEX")
         && !(master_ctx_.contains("NORM") && master_ctx_.get<bool>("NORM"))) {
-        try {
-            const std::size_t K = derive_weight_count(master_ctx_);
-            all_weights_fixed_ =
-                K > 0 && mlip::classify_weight_source(master_ctx_, K)
-                             == mlip::WeightSource::AllFixedData;
-        } catch (const models::DensityFormError&) {
-            throw;   // an invalid density form is a configuration error
-        } catch (const std::exception&) {
-            all_weights_fixed_ = false;
-        }
+        const std::size_t K = derive_weight_count(master_ctx_);
+        all_weights_fixed_ =
+            K > 0 && mlip::classify_weight_source(master_ctx_, K)
+                         == mlip::WeightSource::AllFixedData;
         if (all_weights_fixed_) {
             core::Logger::instance().log(
                 tadah::core::LogLevel::INFO,

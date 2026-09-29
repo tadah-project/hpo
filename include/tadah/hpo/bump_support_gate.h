@@ -31,6 +31,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <tadah/core/context.h>
@@ -63,6 +64,33 @@ struct BindingRcut {
   double max_reachable = -std::numeric_limits<double>::infinity();
 };
 
+/** \brief The centres and widths of a bump channel (@p ckey, @p skey),
+ *  read as its descriptor reads them (D_Base::get_grid). A channel whose
+ *  grids cannot be read, or do not pair up, cannot build its descriptor:
+ *  that is an error naming the key, not a channel to skip
+ *  (validate_hpo_setup refuses such a configuration first). */
+inline std::pair<core::v_type, core::v_type>
+read_bump_grids(const core::Context &ctx, const std::string &ckey,
+                const std::string &skey) {
+  std::pair<core::v_type, core::v_type> g;
+  for (const auto &[key, out] :
+       {std::pair<const std::string &, core::v_type &>{ckey, g.first},
+        std::pair<const std::string &, core::v_type &>{skey, g.second}}) {
+    try {
+      models::D_Base::get_grid(ctx, key, out);
+    } catch (const std::exception &e) {
+      throw std::runtime_error("bump-support gate: " + key +
+                               " cannot be read: " + e.what());
+    }
+  }
+  if (g.first.empty() || g.first.size() != g.second.size())
+    throw std::runtime_error(
+        "bump-support gate: " + ckey + " (" +
+        std::to_string(g.first.size()) + " value(s)) and " + skey + " (" +
+        std::to_string(g.second.size()) + ") do not pair up");
+  return g;
+}
+
 inline BindingRcut derive_binding_rcut(const core::Context &ctx,
                                        const HPOTargets &trg,
                                        const std::string &sfx) {
@@ -70,13 +98,16 @@ inline BindingRcut derive_binding_rcut(const core::Context &ctx,
   const std::string rkey = std::string("RCUT") + sfx;
   if (!ctx.contains(rkey) || ctx.size(rkey) == 0) return rc;
 
+  /* the per-pair RCUT list (or its one value), as the cutoff reads it */
   core::v_type rvals;
   try {
     models::D_Base::get_grid(ctx, rkey, rvals);
-  } catch (const std::exception &) {
-    rvals.clear();
+  } catch (const std::exception &e) {
+    throw std::runtime_error("bump-support gate: " + rkey +
+                             " cannot be read: " + e.what());
   }
-  if (rvals.empty()) rvals.push_back(ctx.get<double>(rkey));
+  if (rvals.empty())
+    throw std::runtime_error("bump-support gate: " + rkey + " has no value");
 
   /* the OPTIM entry of rkey (OPTIM keys are upper-cased at parse; the
    * density gates' reach shares this range) */
@@ -146,15 +177,7 @@ build_bump_gate_table(const core::Context &ctx, const HPOTargets &trg) {
     ch.ckey = std::string("CGRID") + sfx;
     ch.skey = std::string("SGRID") + sfx;
     ch.rkey = std::string("RCUT") + sfx;
-    if (!ctx.contains(ch.ckey) || !ctx.contains(ch.skey) ||
-        !ctx.contains(ch.rkey))
-      continue;
-    core::v_type mu, eta;
-    try {
-      models::D_Base::get_grid(ctx, ch.ckey, mu);
-      models::D_Base::get_grid(ctx, ch.skey, eta);
-    } catch (const std::exception &) { continue; }
-    if (mu.empty() || mu.size() != eta.size()) continue;
+    const auto [mu, eta] = read_bump_grids(ctx, ch.ckey, ch.skey);
 
     ch.rcut = derive_binding_rcut(ctx, trg, sfx);
     if (!std::isfinite(ch.rcut.min_reachable)) continue;

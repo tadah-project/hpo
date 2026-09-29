@@ -12,12 +12,10 @@ namespace tadah {
 namespace hpo {
 
 /** Derive the total model weight count K from the training configuration
- *  alone (no data): replicate the Trainer's descriptor init on a copy of
- *  the context and query the basis-function column count. Returns 0 when
- *  K cannot be derived (a WARNING is logged) — callers must then skip the
- *  rules that need K. A models::DensityFormError (an invalid DM_REAM
- *  density form: RHOFORM, the density grids, the pair weights) is
- *  rethrown: that is a configuration error, not an underivable K. */
+ *  alone (no data): build the Trainer on a copy of the context and query
+ *  the basis-function column count. A configuration whose model does not
+ *  build throws (the construction error; models::DensityFormError for an
+ *  invalid DM_REAM density): every evaluation would fail on it. */
 std::size_t derive_weight_count(const core::Context &train_ctx);
 
 /** Raw DM_REAM embedding value at zero density, F_raw(0) = sum_m w_m g_m(0),
@@ -64,12 +62,17 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
  *     WARNING when an optimiser of the spec tree can evaluate outside the
  *     box (ignores_bounds, PARAM fd_kernel ceres): such amplitudes are
  *     projected onto [0, inf) by HPO_Host;
+ *   - every width of a radial bump channel (SGRID2B of D2_Blip/D2_Blip5,
+ *     SGRIDMB of a Blip/Blip5 density) is > 0, in every form
+ *     (models::optim_low_bound_rule(key, ctx));
+ *   - the model of the -c configuration builds (the Trainer, as every
+ *     evaluation builds it): a construction error would fail every
+ *     evaluation;
  *   - RHOGATE / RHOBARGATE (rho_gates.h): a bare DM_REAM many-body term
  *     (DM_mJoin refused), RHOGATE under RHOFORM SIGNED only, R_LO and the
  *     first RHOBARGATE shell inside the smallest reachable RCUTMB; every
- *     CONFIG/WARM seed evaluated as a candidate (SEED ERROR throws, SEED
- *     WARN warns), and a failing -c density with an unarmed gate is an
- *     error in either mode;
+ *     CONFIG/WARM seed of the INIT and RESTART chains evaluated as a
+ *     candidate (SEED ERROR throws, SEED WARN warns);
  *   - OPTIM FIXWEIGHT requires FIXINDEX in the training configuration;
  *   - NLOPT, DLIB and CERES need at least one OPTIM line;
  *   - the STRATEGY TYPE must suit the optimiser (validate_run_policy,

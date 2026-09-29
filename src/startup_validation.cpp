@@ -36,25 +36,38 @@ namespace hpo {
 
 namespace {
 
-/* The DM_REAM density of the -c configuration, validated for its form as
- * the DM_REAM constructor does, so an invalid density is a startup error
- * and not a failure of every evaluation. A bare DM_REAM is checked from
- * the context (ReamDensity::validate_context); inside a DM_mJoin the
- * many-body descriptor is built once on a copy, and each DM_REAM child
- * validates itself. Other construction errors are left to the probes and
- * the first evaluation, as before. Throws models::DensityFormError. */
+/* The DM_REAM density of a bare DM_REAM block of the -c configuration,
+ * validated for its form from the context (ReamDensity::validate_context),
+ * as the DM_REAM constructor does, so an invalid density is a startup
+ * error with its own message. Inside a DM_mJoin each DM_REAM child
+ * validates itself when probe_model() builds the model. Throws
+ * models::DensityFormError. */
 void validate_ream_density(const core::Context &train_ctx) {
-  core::Context c = train_ctx;   // the probes below may materialise defaults
+  core::Context c = train_ctx;   // validate_context may materialise defaults
   const auto label = c.stored_value("TYPEMB", 0);
-  if (label && *label == "DM_REAM") {
-    models::ReamDensity::validate_context(c);
-    return;
-  }
+  if (label && *label == "DM_REAM") models::ReamDensity::validate_context(c);
+}
+
+/* The model of the -c configuration builds, as every evaluation builds
+ * it (the Trainer: the descriptors, the basis function or kernel and the
+ * model): a construction error here -- a DIMER potential with element-
+ * named TYPE2B pairs, a descriptor that refuses its grids -- would fail
+ * every evaluation (the run then ends "no evaluation produced a usable
+ * loss"). Returns the model's weight count (derive_weight_count).
+ * models::DensityFormError keeps its type and message. */
+std::size_t probe_model(const core::Context &train_ctx) {
   try {
-    models::DC_Selector probe(c);
+    core::Context c = train_ctx;
+    tadah::mlip::memory::MLIPWorkspaceManager ws;
+    tadah::mlip::Trainer probe(c, ws);
+    return probe.fb->get_phi_cols(probe.context);
   } catch (const models::DensityFormError &) {
     throw;
-  } catch (const std::exception &) {
+  } catch (const std::exception &e) {
+    throw std::runtime_error(
+        std::string("the -c configuration does not build a model: ") +
+        e.what() + ". Every evaluation would fail; fix the -c "
+        "potential/configuration.");
   }
 }
 
@@ -90,21 +103,10 @@ std::vector<std::string> unbounded_optimisers(const OptimizerSpec &root) {
 }  // namespace
 
 std::size_t derive_weight_count(const core::Context &train_ctx) {
-  try {
-    core::Context ctx_copy = train_ctx;
-    tadah::mlip::memory::MLIPWorkspaceManager ws;
-    tadah::mlip::Trainer probe(ctx_copy, ws);
-    return probe.fb->get_phi_cols(probe.context);
-  } catch (const models::DensityFormError &) {
-    throw;   // an invalid density form is a configuration error
-  } catch (const std::exception &e) {
-    core::Logger::instance().log(
-        core::LogLevel::WARNING,
-        "startup validation: could not derive the model weight count (",
-        e.what(), "); FIXINDEX bounds/coverage checks are deferred to the "
-        "first training evaluation.");
-    return 0;
-  }
+  core::Context ctx_copy = train_ctx;
+  tadah::mlip::memory::MLIPWorkspaceManager ws;
+  tadah::mlip::Trainer probe(ctx_copy, ws);
+  return probe.fb->get_phi_cols(probe.context);
 }
 
 RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx) {
@@ -187,11 +189,10 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     (void)models::stored_embf0(train_ctx);
 
   /* --- DM_REAM density form (RHOFORM) ---------------------------------- */
-  /* Mandatory (HPOTargets already read it). The density is validated for
-   * its form here, bare or inside a DM_mJoin: the probes below
-   * (derive_weight_count, derive_raw_embedding_f0, the host's) build
-   * DM_REAM only with FIXINDEX/FIXWEIGHT, without a training DB or for a
-   * linear model, and rethrow models::DensityFormError when they do. */
+  /* Mandatory (HPOTargets already read it). A bare DM_REAM density is
+   * validated for its form here, with its own message; inside a DM_mJoin
+   * each DM_REAM child validates itself when probe_model() builds the
+   * model below (models::DensityFormError keeps its type). */
   if (models::context_has_ream(train_ctx)) {
     (void)models::require_rhoform(train_ctx, "tadah hpo");
     validate_ream_density(train_ctx);
@@ -302,18 +303,48 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     }
   }
 
-  /* --- FIXINDEX/FIXWEIGHT pairing + weight-source classification ------ */
   const bool has_fw = train_ctx.contains("FIXWEIGHT");
   const bool has_fi = train_ctx.contains("FIXINDEX");
+
+  /* --- Loss sources ---------------------------------------------------- */
+  const bool has_val_metrics = trg.use_emae || trg.use_ermse ||
+                               trg.use_errmse || trg.use_ersq ||
+                               trg.use_frmse || trg.use_srmse;
+  if (!has_val_metrics && trg.observables.empty() && trg.LS.empty()) {
+    throw std::runtime_error(
+        "No loss source: declare at least one of PC_EMAE/PC_ERMSE/"
+        "PC_ErRMSE/PC_ERSQ/PC_FRMSE/PC_SRMSE (requires --validation), "
+        "PC_OBSERVABLE, or PC_LAMMPS in the hpotarget file.");
+  }
+  if (has_val_metrics && !has_validation) {
+    throw std::runtime_error(
+        "PC_EMAE/PC_ERMSE/PC_ErRMSE/PC_ERSQ/PC_FRMSE/PC_SRMSE target "
+        "validation-set errors but no --validation file was given.");
+  }
+
+  /* --- NORM is incompatible with fixed weights -------------------------- */
+  if ((has_fw || has_fi) && train_ctx.contains("NORM") &&
+      train_ctx.get<bool>("NORM")) {
+    throw std::runtime_error(
+        "FIXINDEX/FIXWEIGHT is not supported with NORM true: fixed values "
+        "would be interpreted in the normalized feature space. Set NORM "
+        "false.");
+  }
+
+  /* --- the model of the -c configuration -------------------------------
+   * It must build (probe_model): a construction error fails every
+   * evaluation. Its weight count K serves the FIXINDEX rules below. */
+  const std::size_t K = probe_model(train_ctx);
+
+  /* --- FIXINDEX/FIXWEIGHT pairing + weight-source classification ------ */
   if (has_fw || has_fi || !has_train_db) {
-    const std::size_t K = derive_weight_count(train_ctx);
     if (K > 0) {
       /* classify_weight_source enforces: lone FIXINDEX/FIXWEIGHT, size
        * mismatch, out-of-bounds indices, no-DB-without-pins and
        * no-DB-with-partial-coverage — with actionable messages. */
       (void)tadah::mlip::classify_weight_source(train_ctx, K);
     } else {
-      /* K underivable: enforce what does not need K. */
+      /* A model without weights (K = 0): enforce what does not need K. */
       if (has_fw != has_fi) {
         throw std::runtime_error(
             "FIXINDEX requires FIXWEIGHT (and vice versa). Provide both "
@@ -342,31 +373,6 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
             "FIXINDEX/FIXWEIGHT.");
       }
     }
-  }
-
-  /* --- Loss sources ---------------------------------------------------- */
-  const bool has_val_metrics = trg.use_emae || trg.use_ermse ||
-                               trg.use_errmse || trg.use_ersq ||
-                               trg.use_frmse || trg.use_srmse;
-  if (!has_val_metrics && trg.observables.empty() && trg.LS.empty()) {
-    throw std::runtime_error(
-        "No loss source: declare at least one of PC_EMAE/PC_ERMSE/"
-        "PC_ErRMSE/PC_ERSQ/PC_FRMSE/PC_SRMSE (requires --validation), "
-        "PC_OBSERVABLE, or PC_LAMMPS in the hpotarget file.");
-  }
-  if (has_val_metrics && !has_validation) {
-    throw std::runtime_error(
-        "PC_EMAE/PC_ERMSE/PC_ErRMSE/PC_ERSQ/PC_FRMSE/PC_SRMSE target "
-        "validation-set errors but no --validation file was given.");
-  }
-
-  /* --- NORM is incompatible with fixed weights -------------------------- */
-  if ((has_fw || has_fi) && train_ctx.contains("NORM") &&
-      train_ctx.get<bool>("NORM")) {
-    throw std::runtime_error(
-        "FIXINDEX/FIXWEIGHT is not supported with NORM true: fixed values "
-        "would be interpreted in the normalized feature space. Set NORM "
-        "false.");
   }
 
   /* --- GRAD_STRATEGY ANALYTICAL needs the analytical gradient ----------
@@ -470,15 +476,10 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     const std::string ckey = std::string("CGRID") + sfx;
     const std::string skey = std::string("SGRID") + sfx;
     const std::string rkey = std::string("RCUT") + sfx;
-    if (!train_ctx.contains(ckey) || !train_ctx.contains(skey) ||
-        !train_ctx.contains(rkey))
-      continue;
-    core::v_type mu, eta;
-    try {
-      models::D_Base::get_grid(train_ctx, ckey, mu);
-      models::D_Base::get_grid(train_ctx, skey, eta);
-    } catch (const std::exception &) { continue; }
-    if (mu.empty() || mu.size() != eta.size()) continue;
+    /* The descriptor of this channel was built by probe_model() above, so
+     * its grids are readable and pair up (read_bump_grids throws
+     * otherwise). */
+    const auto [mu, eta] = detail::read_bump_grids(train_ctx, ckey, skey);
 
     const bool hard =
         models::potedit::channel_cutoff_is_discontinuous(train_ctx, sfx);
