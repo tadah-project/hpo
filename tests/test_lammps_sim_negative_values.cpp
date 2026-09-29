@@ -4,16 +4,19 @@
 // with '-' is an option only when it is not a number: a target such as a
 // cohesive energy (-8.1 eV) or a phase-enthalpy difference (-0.0674 eV/atom)
 // is a value, and so are negative --hotvar bounds. Options (--outvar,
-// --script, ...) must still terminate a value list.
+// --script, ...) must still terminate a value list. The reject line of a
+// hot value outside its window prints every number losslessly.
 
 #include "catch2/catch.hpp"
 
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/loss_function.h>
 
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <unistd.h>
@@ -106,4 +109,31 @@ TEST_CASE("PC_LAMMPS options still terminate a --varloss value list",
                                      + " --varloss E --outvar F"),
                             Catch::Contains("missing <target>"));
     }
+}
+
+TEST_CASE("PC_LAMMPS --hotvar: the reject line prints the value and the "
+          "window losslessly", "[lammps_sim][hotvar]")
+{
+    /* std::to_string's six decimals printed a value one ulp above a max of
+     * 3.6 as 3.600000 -- the max itself, so the line read as a value
+     * inside its window -- and one below 5e-7 as 0.000000. The line now
+     * carries the shortest round-trip form (core::format_roundtrip), as
+     * BUMPGATE's reject line does. */
+    tadah::hpo::LammpsSim::HotVarDecl hv;
+    hv.name = "a0";
+    hv.min = 3.0;
+    hv.max = 3.6;
+    CHECK(tadah::hpo::hotvar_reject_what(hv, std::nextafter(3.6, 4.0)) ==
+          "a0=3.6000000000000005 outside [3, 3.6]");
+    hv.name = "rho";
+    hv.min = 1e-6;
+    hv.max = 1.0;
+    CHECK(tadah::hpo::hotvar_reject_what(hv, 2.5e-7) ==
+          "rho=2.5e-07 outside [1e-06, 1]");
+    CHECK(tadah::hpo::hotvar_reject_what(hv, -std::numeric_limits<double>::infinity()) ==
+          "rho=-inf outside [1e-06, 1]");
+    const double third = 1.0 / 3.0;
+    hv.min = 0.5;
+    const std::string t = tadah::hpo::hotvar_reject_what(hv, third);
+    CHECK(std::stod(t.substr(4, t.find(' ') - 4)) == third);
 }
