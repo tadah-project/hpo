@@ -478,3 +478,27 @@ TEST_CASE("The parsed timeout seconds reach HPOTargets and LammpsSim",
         CHECK_FALSE(trg.LS.at(0).maxtime_seconds);
     }
 }
+
+TEST_CASE("parse_number and core::parse_decimal_normal are one number grammar",
+          "[strict_parse][strict_numbers]") {
+  // tadah refit --retarget reads its --pct and --set numbers with
+  // core::parse_decimal_normal (MLIP cannot use HPO) and writes them into
+  // an hpotarget, which tadah hpo reads with parse_number: the two must
+  // accept the same tokens with the same values.
+  const std::vector<std::string> tokens = {
+      "0", "-0", "+0", "5", "-5", "+5", "5.", ".5", "-.5", "+.5", "5.25",
+      "1e3", "1E3", "1e+3", "1e-3", "2.5E+07", "0e-400", "0.0e5",
+      "1.7976931348623157e308", "1.7976931348623158e308", "1e308", "1e309",
+      "2.2250738585072014e-308", "2.2250738585072009e-308", "1e-310",
+      "4.9e-324", "1e-400", "-1e-400", "", "+", "-", ".", "e5", "1e", "1e+",
+      "5x", "x5", "0x10", "0x1p-1", "inf", "-inf", "Infinity", "nan", "NaN",
+      " 1", "1 ", "1,5", "1.5.2", "--1", "+-1", "1e5.5", "0000.0001"};
+  for (const auto &tok : tokens) {
+    INFO("token '" << tok << "'");
+    double a = 42.0, b = 42.0;
+    const bool pa = tadah::hpo::parse_number(tok, a);
+    const bool pb = tadah::core::parse_decimal_normal(tok, b);
+    CHECK(pa == pb);
+    if (pa && pb) CHECK(std::memcmp(&a, &b, sizeof a) == 0);
+  }
+}
