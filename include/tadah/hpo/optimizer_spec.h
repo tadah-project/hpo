@@ -87,6 +87,31 @@ struct InitStrategySpec {
     std::string warm_on_mismatch = "warn";     // warn | error | skip (used by WarmInitStrategy)
 };
 
+/* InitOrigin -- where one resolved INIT start point came from
+ * (OptimizerSpec::optim_init_origin, parallel to optim_init): the in-config
+ * OPTIM values (CONFIG, also the empty-chain default), a WARM seed file, or
+ * a sampled point (RANDOM, LHS, SOBOL). Lets startup code tell the user's
+ * seeds (CONFIG, WARM) from sampled candidates. */
+struct InitOrigin {
+    enum class Kind { Config, Warm, Random, Lhs, Sobol };
+    Kind        kind = Kind::Config;
+    std::string file;                          // WARM: the seed file as written in INIT
+
+    /* "CONFIG" | "WARM <file>" | "RANDOM" | "LHS" | "SOBOL" */
+    std::string name() const {
+        switch (kind) {
+            case Kind::Config: return "CONFIG";
+            case Kind::Warm:   return "WARM " + file;
+            case Kind::Random: return "RANDOM";
+            case Kind::Lhs:    return "LHS";
+            case Kind::Sobol:  return "SOBOL";
+        }
+        return "CONFIG";
+    }
+    /* A user seed (CONFIG or WARM), as opposed to a sampled point. */
+    bool is_seed() const { return kind == Kind::Config || kind == Kind::Warm; }
+};
+
 /* StrategyType -- selected by `STRATEGY { TYPE <X> }` in the parser.
  * Drives build_run_policy() in run_policy.h to assemble the right
  * RunPolicy decorator stack. */
@@ -338,6 +363,7 @@ struct OptimizerSpec {
           log_scaled(o.log_scaled), log_threshold(o.log_threshold),
           space(o.space), scale(o.scale),
           optim_init(o.optim_init),
+          optim_init_origin(o.optim_init_origin),
           failscore(o.failscore),
           init_strategy_spec(o.init_strategy_spec),
           noise(o.noise),
@@ -426,6 +452,14 @@ struct OptimizerSpec {
     SearchSpacePtr        space;
     ScalePolicy           scale;            // OPTIM_SCALE + LOG_HP as parsed
     std::vector<std::vector<double>> optim_init;
+    /* Provenance of each optim_init point, as resolved at startup by
+     * HPOTargets (the INIT chains of OUTER, PRESTAGE, PRESTAGE.INNER,
+     * BASINS.EXPLORE and BASINS.REFINE; a spec that inherits the OUTER's
+     * points inherits their origins). Run policies that later replace
+     * optim_init (MULTISTART, PRESTAGE refine, BASINS seeds, RESTART) do
+     * not maintain it: a consumer uses it only when its size equals
+     * optim_init's. Empty for hand-built specs. */
+    std::vector<InitOrigin> optim_init_origin;
 
     /* FAILSCORE from the enclosing HPOTargets, copied in so optimisers
      * can tell a real loss from a failed-evaluation sentinel (the

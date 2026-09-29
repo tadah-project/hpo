@@ -11,7 +11,9 @@
  * outside the box (a bound can be the physically right answer); the
  * journal prints the marks as INFO facts and one HINT with the concrete
  * remedy (widen that side, restart WARM). Bounds are never changed by
- * the audit itself.
+ * the audit itself. A lower bound that is a limit of the admissible
+ * domain (set_hard_lo: AMPGRIDMB at 0 under RHOFORM NONNEG/MONOTONE) is
+ * not bound pressure: its marks are flagged hard and get no remedy.
  *
  * Replaces HPO_Host::bound_hints, which compared REAL coordinates with
  * INTERNAL bounds (wrong for any transformed dim) and only fired on the
@@ -37,6 +39,7 @@ public:
         double        real_value = 0.0;    // the best's real coordinate
         double        real_bound = 0.0;    // the bound it sits at
         std::uint64_t since_eval = 0;      // first eval of the persisting mark
+        bool          hard = false;        // LO on a hard lower bound (set_hard_lo)
     };
 
     BoundOccupancy() = default;
@@ -44,6 +47,10 @@ public:
         : space_(std::move(space)), edge_(edge) {}
 
     bool armed() const noexcept { return static_cast<bool>(space_); }
+
+    /* Per dim: its lower bound is a hard limit of the admissible domain,
+     * not a choice of box (widening it is refused at startup). */
+    void set_hard_lo(std::vector<bool> hard) { hard_lo_ = std::move(hard); }
     double edge() const noexcept { return edge_; }
 
     /* Recompute the marks for a new best at `eval` (REAL coordinates).
@@ -68,6 +75,7 @@ public:
             m.real_value = x_real[i];
             m.real_bound = m.hi ? space_->at(i).hi : space_->at(i).lo;
             m.since_eval = eval;
+            m.hard = !m.hi && i < hard_lo_.size() && hard_lo_[i];
             for (const auto& old : marks_)
                 if (old.dim == i && old.hi == m.hi) { m.since_eval = old.since_eval; break; }
             next.push_back(m);
@@ -86,6 +94,7 @@ private:
     SearchSpacePtr    space_;
     double            edge_ = 0.02;
     std::vector<Mark> marks_;
+    std::vector<bool> hard_lo_;
     std::uint64_t     last_eval_ = 0;
 };
 

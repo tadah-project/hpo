@@ -8,6 +8,7 @@
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/observables/observable.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/models/descriptors/dm/rhoform.h>
 
 #include <memory>
 #include <vector>
@@ -21,6 +22,34 @@
 
 namespace tadah {
 namespace hpo {
+
+/* RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN] -- the rho(r) sign
+ * gate of a bare DM_REAM many-body term (RHOFORM SIGNED only; rho_gates.h).
+ * A candidate whose rho_raw(r) on [R_LO, RCUTMB] (default window
+ * [0.15 RCUTMB, RCUTMB]) has rho_min < -tol * rho_max is rejected before
+ * training as a graded band-D failure. SEED: what a failing CONFIG/WARM
+ * seed does at startup (ERROR, the default, stops the run; WARN evaluates
+ * it as a rejected start). */
+struct RhoGateSpec {
+    double                tol = 0.0;     // finite, >= 0
+    std::optional<double> r_lo;          // R_LO: finite, >= 0
+    std::size_t           npts = 20001;  // 2 <= NPTS <= 1e7
+    bool                  seed_warn = false;
+};
+
+/* RHOBARGATE <lattice> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN] --
+ * the lattice rhobar(a) gate (any RHOFORM; rho_gates.h): the monatomic
+ * lattice density rhobar(a) = sum_s m_s rho_raw(d_s a) must decrease
+ * strictly on a in [f_lo a0, f_hi a0] (NPTS points, numpy.linspace order);
+ * a candidate with a rise is rejected before training as a graded band-D
+ * failure. hcp takes the ideal c/a; a0 is its in-plane constant. */
+struct RhoBarGateSpec {
+    std::string lattice;                 // "bcc" | "fcc" | "hcp" (lower case)
+    double      a0 = 0.0;                // finite, > 0
+    double      f_lo = 0.0, f_hi = 0.0;  // finite, 0 < f_lo < f_hi
+    std::size_t npts = 1001;             // 3 <= NPTS <= 1e7
+    bool        seed_warn = false;
+};
 
 class HPOTargets {
 private:
@@ -52,6 +81,8 @@ private:
      * ln for LOG dims). LOG_HP lands on spec.log_threshold. */
     ScalePolicy    scale_policy_{std::nullopt, /*normalise=*/true};
     bool           scale_policy_set_ = false;
+    /* RHOFORM of the -c configuration; see rho_form(). */
+    std::optional<models::RhoForm> rho_form_;
 
 public:
     HPOTargets(core::Context &c, std::string fn);
@@ -65,6 +96,24 @@ public:
     /* Positive-only OPTIM keys (geometric AUTO boxes by default), from the
      * refit hpotarget writer's key table. */
     static bool optim_key_positive_only(const std::string& key);
+    /* OPTIM on structure data is refused: the density form (RHOFORM), the
+     * descriptor types (TYPE2B, TYPEMB), the cutoff classes (RCTYPE2B,
+     * RCTYPEMB) and the knot-degree lists (KDEG2B, KDEGMB, KDEGEMB);
+     * compared case-insensitively. Returns the error message for such a
+     * key, "" for a searchable one. (OPTIM EMBF0 has its own message.) */
+    static std::string optim_structure_key_error(const std::string& key);
+    /* The DM_REAM density form of the -c configuration: RHOFORM, mandatory
+     * on a configuration with a DM_REAM block and read at the top of the
+     * constructor (the migration message when absent or invalid), before
+     * the OPTIM boxes and the WARM seeds that depend on it. nullopt: no
+     * DM_REAM block. Under NONNEG and MONOTONE the AMPGRIDMB boxes are
+     * non-negative (process_optim_config). */
+    std::optional<models::RhoForm> rho_form() const { return rho_form_; }
+    /* The -c configuration these targets were read against (the reference
+     * the constructor holds): the run context of every InitContext, so the
+     * WARM seed rules (EMBF0, RHOFORM) apply to each resolution, a RESTART
+     * refresh included. */
+    const core::Context& run_context() const { return context; }
     /* hpo_search_space.tsv (always) + hpo_optim_resolved.hpo (when any
      * OPTIM box was derived by an AUTO rule) into `dir`. */
     void write_search_space_files(const std::string& dir) const;
@@ -145,6 +194,16 @@ public:
      * The seed pot's own bumps must fit in both modes. Env override:
      * TADAH_BUMPGATE. */
     bool BUMPGATE_STRICT = false;
+
+    /* RHOGATE / RHOBARGATE: the density gates of a bare DM_REAM many-body
+     * term (RhoGateSpec, RhoBarGateSpec above; rho_gates.h). Absent -- the
+     * default -- means no density gate: every evaluation is as without
+     * the keys. The semantic checks (a bare DM_REAM, RHOGATE under RHOFORM
+     * SIGNED only, R_LO and the first RHOBARGATE shell inside the smallest
+     * reachable RCUTMB) and the seed checks run in validate_hpo_setup. No
+     * environment override. */
+    std::optional<RhoGateSpec>    RHOGATE;
+    std::optional<RhoBarGateSpec> RHOBARGATE;
 
     /* PC_FAILPROBE --script <f> --outvar <S> [--gate <T>] [--s0 <v0>]
      * A minimiser-free potential-sanity probe (single-point run-0 script;

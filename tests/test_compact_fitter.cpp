@@ -3,9 +3,15 @@
 #ifdef TADAH_USE_CERES
 
 #include <tadah/hpo/refit/compact_fitter.h>
+#include <tadah/models/descriptors/basis_dispatch.h>
 #include <tadah/models/descriptors/d_basis_functions.h>
 
+#include <Eigen/Dense>
+
+#include <algorithm>
 #include <cmath>
+#include <limits>
+#include <memory>
 #include <random>
 #include <vector>
 
@@ -123,6 +129,132 @@ TEST_CASE("compact fitter: energy Jacobian matches finite differences",
       dists, e0, ew, phi.n(), rho.n(), F.n()));
   audit_jacobian(cost.get(), {phi.c, phi.mu, phi.eta, rho.c, rho.mu, rho.eta,
                               F.c, F.mu, F.eta});
+}
+
+namespace {
+// The outer support edges e = mu + w/eta of a bump channel (joint_refine's
+// edge parametrisation).
+std::vector<double> support_edges(const BlipFit &f, double w) {
+  std::vector<double> e(f.n());
+  for (int k = 0; k < f.n(); ++k) e[k] = f.mu[k] + w / f.eta[k];
+  return e;
+}
+}  // namespace
+
+TEST_CASE("compact fitter: edge-parametrised curve and energy Jacobians match "
+          "finite differences", "[compact]") {
+  // joint_refine's bump-support gate optimises a radial channel in its outer
+  // support edges (EdgeParamCost): d/de = d/dmu, d/deta|e = d/deta|mu +
+  // (w/eta^2) d/dmu.
+  const BlipFit truth = make_truth();
+  std::vector<double> xs, ys;
+  sample(truth, 1.0, 5.5, 160, xs, ys);
+  BlipFit f = truth;
+  std::mt19937 rng(11);
+  std::normal_distribution<double> g(0.0, 1.0);
+  for (int k = 0; k < f.n(); ++k) {
+    f.mu[k] += 0.05 * g(rng);
+    f.eta[k] *= std::exp(0.05 * g(rng));
+  }
+  for (const BasisKind kind : {BasisKind::Blip, BasisKind::Blip5}) {
+    INFO("kind " << static_cast<int>(kind));
+    const double w = kind == BasisKind::Blip5 ? 3.0 : 2.0;
+    std::unique_ptr<ceres::CostFunction> cost(make_edge_param_cost(
+        make_curve_cost(xs, ys, {}, f.n(), kind), {{1, 2, w}}));
+    audit_jacobian(cost.get(), {f.c, support_edges(f, w), f.eta});
+
+    // the eta Jacobian alone (no edge Jacobian requested) carries the chain
+    std::vector<double> c = f.c, e = support_edges(f, w), eta = f.eta;
+    const double *p[3] = {c.data(), e.data(), eta.data()};
+    const int M = cost->num_residuals(), n = f.n();
+    std::vector<double> r(M), jc(M * n), je(M * n), jeta(M * n), jeta2(M * n);
+    double *all[3] = {jc.data(), je.data(), jeta.data()};
+    double *only_eta[3] = {nullptr, nullptr, jeta2.data()};
+    REQUIRE(cost->Evaluate(p, r.data(), all));
+    REQUIRE(cost->Evaluate(p, r.data(), only_eta));
+    CHECK(jeta2 == jeta);
+  }
+
+  BlipFit phi = make_truth();
+  BlipFit rho;
+  rho.mu = {2.0, 3.2, 4.4};
+  rho.eta = {0.9, 0.8, 0.9};
+  rho.c = {0.6, 0.35, 0.15};
+  BlipFit F;
+  F.mu = {1.0, 4.0, 7.0};
+  F.eta = {0.45, 0.4, 0.45};
+  F.c = {-2.0, -0.8, 0.5};
+  std::vector<std::vector<double>> dists = {
+      {2.5, 2.5, 2.9, 2.9, 3.6}, {2.3, 2.3, 2.7, 2.7, 3.3},
+      {2.1, 2.1, 2.45, 2.45, 3.0}};
+  std::vector<double> e0 = {0.0, 0.0, 0.0};
+  std::vector<double> ew = {1.0, 2.0, 0.5};
+  std::unique_ptr<ceres::CostFunction> cost(make_edge_param_cost(
+      make_energy_cost(dists, e0, ew, phi.n(), rho.n(), F.n()),
+      {{1, 2, 2.0}, {4, 5, 2.0}}));
+  audit_jacobian(cost.get(),
+                 {phi.c, support_edges(phi, 2.0), phi.eta, rho.c,
+                  support_edges(rho, 2.0), rho.eta, F.c, F.mu, F.eta});
+}
+
+TEST_CASE("compact fitter: the joint refinement keeps every free bump inside "
+          "the hard cutoff", "[compact]") {
+  // Truths whose outer bumps reach past 5.5: without a hard cutoff the joint
+  // refinement spills; with one, the edges are bounded, the post-solve
+  // projection has nothing to move, and a pinned bump keeps its exact place.
+  BlipFit phi = make_truth();
+  BlipFit rho;
+  rho.mu = {2.0, 3.2, 4.4};
+  rho.eta = {0.9, 0.8, 0.9};
+  rho.c = {0.6, 0.35, 0.15};
+  BlipFit F;
+  F.mu = {1.0, 4.0, 7.0};
+  F.eta = {0.45, 0.4, 0.45};
+  F.c = {-2.0, -0.8, 0.5};
+  std::vector<std::vector<double>> dists = {
+      {2.5, 2.5, 2.9, 2.9, 3.6}, {2.3, 2.3, 2.7, 2.7, 3.3},
+      {2.1, 2.1, 2.45, 2.45, 3.0}};
+  std::vector<double> e0, ew(dists.size(), 1.0);
+  for (const auto &dd : dists) {
+    double hp = 0.0, ri = 0.0;
+    for (double r : dd) {
+      hp += 0.5 * phi.eval(r);
+      ri += rho.eval(r);
+    }
+    e0.push_back(hp + F.eval(ri));
+  }
+  JointCurveData dphi, drho, dF;
+  sample(phi, 1.0, 5.5, 300, dphi.xs, dphi.ys);
+  sample(rho, 1.0, 5.5, 300, drho.xs, drho.ys);
+  sample(F, 0.0, 9.0, 300, dF.xs, dF.ys);
+  const double rc = 5.5, w = 2.0;
+
+  auto spills = [&](const BlipFit &f) {
+    int n = 0;
+    for (int k = 0; k < f.n(); ++k)
+      if (f.mu[k] + w / f.eta[k] > rc + 1e-6 * rc) ++n;
+    return n;
+  };
+  {
+    BlipFit p = phi, r = rho, Fc = F;
+    joint_refine(p, r, Fc, dphi, drho, dF, dists, e0, ew, 1.0, 300, 1e-15);
+    REQUIRE(spills(p) + spills(r) > 0);  // the case exercises the gate
+  }
+  BlipFit p = phi, r = rho, Fc = F;
+  p.pinned = {true, false, false, false};  // mu 1.5, eta 1.2: inside rc
+  const double mu0 = p.mu[0], eta0 = p.eta[0];
+  std::string term;
+  const double mx = joint_refine(p, r, Fc, dphi, drho, dF, dists, e0, ew, 1.0,
+                                 300, 1e-15, "CERES_LM", &term, rc, rc);
+  INFO("term " << term << ", max |dE| " << mx);
+  REQUIRE(std::isfinite(mx));
+  CHECK(spills(p) == 0);
+  CHECK(spills(r) == 0);
+  CHECK(p.mu[0] == mu0);
+  CHECK(p.eta[0] == eta0);
+  BlipFit pc = p, rcp = r;
+  CHECK(clamp_bump_support_params(pc, rc, 4.5) == 0);
+  CHECK(clamp_bump_support_params(rcp, rc, 4.5) == 0);
 }
 
 TEST_CASE("compact fitter: VARPRO reduced gradient matches finite differences",
@@ -1297,6 +1429,903 @@ TEST_CASE("compact fitter: EMBF0 ZERO ladder fits F_ref with F(0) == 0",
   REQUIRE(bz.curve_rmse < 1e-2);                 // |F_ref| ~ 3: a real fit
   // comparable to FREE on the same target (both normally reach 1e-4)
   REQUIRE(bz.curve_rmse <= 5.0 * bf.curve_rmse + 1e-4);
+}
+
+// ================ RHOFORM: the density forms of the rho channel ================
+// SIGNED is the raw bump expansion (every test above); NONNEG the same with
+// c >= 0 (non-negative least squares, Ceres lower bounds); MONOTONE the
+// integrated-bump step kinds S with c >= 0. These cover the step kinds'
+// values and Jacobians, the non-negative solve against brute force, the
+// passive-set VARPRO gradient, the Ceres bounds and small ladders per form.
+
+namespace {
+using tadah::models::RhoForm;
+namespace tm = tadah::models;
+
+// The bump area in x_c units: dS/dr = -eta B(x_c)/A.
+double step_area(BasisKind k) {
+  return k == BasisKind::Blip5 ? 20.0 / 11.0 : 1.5;
+}
+double bump(BasisKind k, double xc) {
+  return k == BasisKind::Blip5 ? tm::B5(xc) : tm::B(xc);
+}
+double step(BasisKind k, double xc) {
+  return k == BasisKind::Blip5 ? tm::SB5(xc) : tm::SB(xc);
+}
+// The column of basis k under a form, built straight from the MODELS
+// primitives (not the fitter's dispatch).
+double form_column(RhoForm form, BasisKind kind, double eta, double mu,
+                   double x) {
+  const double xc = eta * (x - mu);
+  return form == RhoForm::Monotone ? step(kind, xc) : bump(kind, xc);
+}
+
+// A positive steps truth (MONOTONE) / bumps truth (NONNEG) on [1.0, 5.5].
+BlipFit make_positive_truth(BasisKind kind, RhoForm form) {
+  BlipFit t;
+  t.kind = kind;
+  t.form = form;
+  t.mu = {1.8, 2.9, 3.8, 4.6};
+  t.eta = {1.1, 0.9, 1.3, 1.6};
+  t.c = {0.9, 0.5, 0.3, 0.1};
+  return t;
+}
+
+// min ||A c - y|| over c >= 0 by enumerating every support set: the
+// unconstrained least squares on the set, kept only when strictly positive
+// (the zero vector is the empty set). Small n only.
+std::vector<double> brute_force_nnls(const Eigen::MatrixXd &A,
+                                     const Eigen::VectorXd &y,
+                                     double *best_sse) {
+  const int n = static_cast<int>(A.cols());
+  std::vector<double> best(n, 0.0);
+  double bsse = y.squaredNorm();
+  for (int mask = 1; mask < (1 << n); ++mask) {
+    std::vector<int> cols;
+    for (int k = 0; k < n; ++k)
+      if (mask & (1 << k)) cols.push_back(k);
+    Eigen::MatrixXd As(A.rows(), static_cast<int>(cols.size()));
+    for (std::size_t q = 0; q < cols.size(); ++q) As.col(q) = A.col(cols[q]);
+    const Eigen::VectorXd cs = As.colPivHouseholderQr().solve(y);
+    if ((cs.array() <= 0.0).any()) continue;
+    const double sse = (As * cs - y).squaredNorm();
+    if (sse < bsse) {
+      bsse = sse;
+      best.assign(n, 0.0);
+      for (std::size_t q = 0; q < cols.size(); ++q) best[cols[q]] = cs(q);
+    }
+  }
+  *best_sse = bsse;
+  return best;
+}
+}  // namespace
+
+TEST_CASE("compact fitter RHOFORM: defaults are SIGNED", "[compact][rhoform]") {
+  REQUIRE(CompactConfig{}.rho_form == RhoForm::Signed);
+  REQUIRE(BlipFit{}.form == RhoForm::Signed);
+  // a SIGNED solve keeps its negative coefficients: the truth is signed
+  const BlipFit truth = make_truth();
+  std::vector<double> xs, ys;
+  sample(truth, 1.0, 5.5, 200, xs, ys);
+  CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, CompactConfig{});
+  BlipFit f = truth;
+  f.c.assign(f.n(), 0.0);
+  fit.solve_coeffs(f);
+  REQUIRE(f.form == RhoForm::Signed);
+  REQUIRE(f.curve_rmse < 1e-12);
+  REQUIRE(*std::min_element(f.c.begin(), f.c.end()) < -1.0);
+}
+
+TEST_CASE("compact fitter RHOFORM: step kinds against the closed forms",
+          "[compact][rhoform]") {
+  for (BasisKind kind : {BasisKind::Blip, BasisKind::Blip5}) {
+    INFO("kind " << static_cast<int>(kind));
+    const double A = step_area(kind);
+    BlipFit f = make_positive_truth(kind, RhoForm::Monotone);
+    BlipFit bumps = f;
+    bumps.form = RhoForm::NonNeg;
+    for (double x = 0.3; x < 6.8; x += 0.0137) {
+      double v = 0.0, d = 0.0, d2 = 0.0, vb = 0.0;
+      for (int k = 0; k < f.n(); ++k) {
+        const double xc = f.eta[k] * (x - f.mu[k]);
+        // the MODELS step primitive the written DM_REAM evaluates (bitwise)
+        v += f.c[k] * tm::radial_step_value_bare(
+                          kind == BasisKind::Blip5 ? tm::BasisKind::Blip5
+                                                   : tm::BasisKind::Blip,
+                          x, f.eta[k], f.mu[k]);
+        vb += f.c[k] * bump(kind, xc);
+        // dS/dr = -eta B/A, d2S/dr2 = -eta^2 B'/A
+        d += f.c[k] * (-f.eta[k] * bump(kind, xc) / A);
+        const double bp = kind == BasisKind::Blip5 ? tm::dB5(xc, 1.0)
+                                                   : tm::dB(xc, 1.0);
+        d2 += f.c[k] * (-f.eta[k] * f.eta[k] * bp / A);
+      }
+      REQUIRE(f.eval(x) == v);
+      REQUIRE(bumps.eval(x) == vb);  // NONNEG evaluates the SIGNED columns
+      REQUIRE(f.deriv(x) == Approx(d).epsilon(1e-12).margin(1e-14));
+      REQUIRE(f.deriv2(x) == Approx(d2).epsilon(1e-12).margin(1e-13));
+      // and against finite differences of eval / deriv
+      const double h = 1e-6;
+      REQUIRE(f.deriv(x) ==
+              Approx((f.eval(x + h) - f.eval(x - h)) / (2 * h)).margin(1e-8));
+      REQUIRE(f.deriv2(x) ==
+              Approx((f.deriv(x + h) - f.deriv(x - h)) / (2 * h)).margin(1e-7));
+      // a positive steps expansion is >= 0 and non-increasing
+      REQUIRE(f.eval(x) >= 0.0);
+      REQUIRE(f.deriv(x) <= 0.0);
+    }
+  }
+}
+
+TEST_CASE("compact fitter RHOFORM: step curve Jacobian — closed forms and FD",
+          "[compact][rhoform]") {
+  for (BasisKind kind : {BasisKind::Blip, BasisKind::Blip5}) {
+    INFO("kind " << static_cast<int>(kind));
+    const double A = step_area(kind);
+    // one step, c = 1, unit weights, target 0: residual = S, and the
+    // mu / eta columns are exactly dS/dmu = eta B/A, dS/deta = -(x-mu) B/A
+    const double mu = 3.1, eta = 0.8, c = 1.0;
+    std::vector<double> xs;
+    for (int i = 0; i < 120; ++i) xs.push_back(0.5 + 5.5 * i / 119.0);
+    std::unique_ptr<ceres::CostFunction> one(make_curve_cost(
+        xs, std::vector<double>(xs.size(), 0.0), {}, 1, kind, false, {},
+        RhoForm::Monotone));
+    const std::size_t N = xs.size();
+    std::vector<double> r(N), j0(N), j1(N), j2(N);
+    const double *pp[3] = {&c, &mu, &eta};
+    double *jj[3] = {j0.data(), j1.data(), j2.data()};
+    REQUIRE(one->Evaluate(pp, r.data(), jj));
+    for (std::size_t i = 0; i < N; ++i) {
+      const double xc = eta * (xs[i] - mu);
+      REQUIRE(r[i] == step(kind, xc));
+      REQUIRE(j0[i] == step(kind, xc));
+      REQUIRE(j1[i] ==
+              Approx(eta * bump(kind, xc) / A).epsilon(1e-12).margin(1e-15));
+      REQUIRE(j2[i] == Approx(-(xs[i] - mu) * bump(kind, xc) / A)
+                           .epsilon(1e-12)
+                           .margin(1e-15));
+    }
+
+    // FD audit on a weighted multi-step fit (the signed audit's recipe)
+    const BlipFit truth = make_positive_truth(kind, RhoForm::Monotone);
+    std::vector<double> sx, sy, wts;
+    sample(truth, 1.0, 5.5, 160, sx, sy);
+    for (std::size_t i = 0; i < sx.size(); ++i)
+      wts.push_back(0.5 + static_cast<double>(i) / sx.size());
+    BlipFit f = truth;
+    std::mt19937 rng(7);
+    std::normal_distribution<double> g(0.0, 1.0);
+    for (int k = 0; k < f.n(); ++k) {
+      f.mu[k] += 0.05 * g(rng);
+      f.eta[k] *= std::exp(0.05 * g(rng));
+    }
+    std::unique_ptr<ceres::CostFunction> cost(make_curve_cost(
+        sx, sy, wts, f.n(), kind, false, {}, RhoForm::Monotone));
+    audit_jacobian(cost.get(), {f.c, f.mu, f.eta});
+  }
+}
+
+TEST_CASE("compact fitter RHOFORM: NONNEG curve cost is the SIGNED cost",
+          "[compact][rhoform]") {
+  // same columns: NONNEG differs only by the Ceres bounds and the solve
+  const BlipFit truth = make_truth();
+  std::vector<double> xs, ys;
+  sample(truth, 1.0, 5.5, 160, xs, ys);
+  for (BasisKind kind : {BasisKind::Blip, BasisKind::Blip5}) {
+    std::unique_ptr<ceres::CostFunction> cs(
+        make_curve_cost(xs, ys, {}, truth.n(), kind));
+    std::unique_ptr<ceres::CostFunction> cn(make_curve_cost(
+        xs, ys, {}, truth.n(), kind, false, {}, RhoForm::NonNeg));
+    const int n = truth.n();
+    const std::size_t N = xs.size();
+    std::vector<double> rs(N), rn(N), s0(N * n), s1(N * n), s2(N * n),
+        n0(N * n), n1(N * n), n2(N * n);
+    const double *pp[3] = {truth.c.data(), truth.mu.data(), truth.eta.data()};
+    double *js[3] = {s0.data(), s1.data(), s2.data()};
+    double *jn[3] = {n0.data(), n1.data(), n2.data()};
+    REQUIRE(cs->Evaluate(pp, rs.data(), js));
+    REQUIRE(cn->Evaluate(pp, rn.data(), jn));
+    REQUIRE(rs == rn);
+    REQUIRE(s0 == n0);
+    REQUIRE(s1 == n1);
+    REQUIRE(s2 == n2);
+  }
+}
+
+TEST_CASE("compact fitter RHOFORM: step energy Jacobian (rho block) matches FD",
+          "[compact][rhoform]") {
+  const std::vector<std::vector<double>> dists = {
+      {2.5, 2.5, 2.9, 2.9, 3.6}, {2.3, 2.3, 2.7, 2.7, 3.3},
+      {2.1, 2.1, 2.45, 2.45, 3.0}};
+  const std::vector<double> e0 = {-1.0, 0.5, 2.0};
+  const std::vector<double> ew = {1.0, 2.0, 0.5};
+  for (BasisKind kind : {BasisKind::Blip, BasisKind::Blip5}) {
+    INFO("rho kind " << static_cast<int>(kind));
+    BlipFit phi = make_truth();
+    BlipFit rho;
+    rho.kind = kind;
+    rho.form = RhoForm::Monotone;
+    rho.mu = {2.4, 3.1, 3.7};
+    rho.eta = {1.2, 0.9, 1.4};
+    rho.c = {0.4, 0.25, 0.1};
+    BlipFit F;
+    F.mu = {0.5, 1.5, 2.5};
+    F.eta = {0.9, 0.8, 0.9};
+    F.c = {-2.0, -0.8, 0.5};
+    std::unique_ptr<ceres::CostFunction> cost(make_energy_cost(
+        dists, e0, ew, phi.n(), rho.n(), F.n(), phi.kind, rho.kind, F.kind,
+        false, {}, RhoForm::Monotone));
+    // the residual evaluates the step density sum_d sum_k c_k S(x_c)
+    std::vector<double> r(dists.size());
+    const double *pp[9] = {phi.c.data(), phi.mu.data(), phi.eta.data(),
+                           rho.c.data(), rho.mu.data(), rho.eta.data(),
+                           F.c.data(),   F.mu.data(),   F.eta.data()};
+    REQUIRE(cost->Evaluate(pp, r.data(), nullptr));
+    for (std::size_t i = 0; i < dists.size(); ++i) {
+      double hp = 0.0, ri = 0.0;
+      for (double d : dists[i]) {
+        hp += 0.5 * phi.eval(d);
+        ri += rho.eval(d);
+      }
+      REQUIRE(ri > 0.0);
+      REQUIRE(r[i] == Approx(ew[i] * (hp + F.eval(ri) - e0[i]))
+                          .epsilon(1e-12)
+                          .margin(1e-12));
+    }
+    audit_jacobian(cost.get(), {phi.c, phi.mu, phi.eta, rho.c, rho.mu,
+                                rho.eta, F.c, F.mu, F.eta});
+  }
+}
+
+TEST_CASE("compact fitter RHOFORM: non-negative solve_coeffs equals brute force",
+          "[compact][rhoform]") {
+  // Targets the form cannot follow exactly, so the constraints bind: NONNEG
+  // on a curve with a negative lobe, MONOTONE on a curve with a rise.
+  struct Case {
+    const char *name;
+    BasisKind kind;
+    RhoForm form;
+  };
+  for (const Case &cs : {Case{"Blip NONNEG", BasisKind::Blip, RhoForm::NonNeg},
+                         Case{"Blip5 NONNEG", BasisKind::Blip5, RhoForm::NonNeg},
+                         Case{"Knot5L NONNEG", BasisKind::Knot5L, RhoForm::NonNeg},
+                         Case{"Blip MONOTONE", BasisKind::Blip, RhoForm::Monotone},
+                         Case{"Blip5 MONOTONE", BasisKind::Blip5,
+                              RhoForm::Monotone}}) {
+    INFO(cs.name);
+    const int N = 180;
+    std::vector<double> xs(N), ys(N);
+    for (int i = 0; i < N; ++i) {
+      const double x = 1.0 + 4.5 * i / (N - 1);
+      xs[i] = x;
+      const double s = 1.0 - x / 5.5;
+      ys[i] = s * s * (1.0 + 0.6 * std::exp(-8.0 * (x - 3.6) * (x - 3.6))) -
+              0.4 * std::exp(-10.0 * (x - 2.4) * (x - 2.4));
+    }
+    BlipFit f;
+    f.kind = cs.kind;
+    if (one_sided(cs.kind)) {
+      f.mu = {2.2, 3.0, 3.7, 4.4, 5.5};
+      f.eta.assign(5, 1.0);
+    } else {
+      f.mu = {1.4, 2.3, 3.0, 3.6, 4.3};
+      f.eta = {1.5, 2.0, 1.2, 2.2, 1.4};
+    }
+    f.c.assign(f.n(), 0.0);
+
+    CompactConfig cfg;
+    cfg.rho_form = cs.form;
+    CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg, cs.kind);
+    fit.solve_coeffs(f);
+    REQUIRE(f.form == cs.form);
+
+    // the same design, from the MODELS primitives (knots: the fitter's own
+    // SIGNED columns, read back through a unit-coefficient eval)
+    Eigen::MatrixXd A(N, f.n());
+    Eigen::VectorXd y(N);
+    for (int i = 0; i < N; ++i) {
+      y(i) = ys[i];
+      for (int k = 0; k < f.n(); ++k) {
+        if (one_sided(cs.kind)) {
+          BlipFit unit;
+          unit.kind = cs.kind;
+          unit.mu = {f.mu[k]};
+          unit.eta = {1.0};
+          unit.c = {1.0};
+          A(i, k) = unit.eval(xs[i]);
+        } else {
+          A(i, k) = form_column(cs.form, cs.kind, f.eta[k], f.mu[k], xs[i]);
+        }
+      }
+    }
+    // the constraints bind: the unconstrained solution has a negative c
+    const Eigen::VectorXd cu = A.completeOrthogonalDecomposition().solve(y);
+    REQUIRE(cu.minCoeff() < 0.0);
+
+    double sse_bf = 0.0;
+    const std::vector<double> cbf = brute_force_nnls(A, y, &sse_bf);
+    double sse = 0.0;
+    for (int i = 0; i < N; ++i) {
+      const double d = f.eval(xs[i]) - ys[i];
+      sse += d * d;
+    }
+    INFO("sse = " << sse << "  brute force = " << sse_bf);
+    REQUIRE(sse == Approx(sse_bf).epsilon(1e-9));
+    REQUIRE(f.curve_rmse == Approx(std::sqrt(sse_bf / N)).epsilon(1e-9));
+    int n_zero = 0;
+    for (int k = 0; k < f.n(); ++k) {
+      REQUIRE(f.c[k] >= 0.0);
+      REQUIRE(f.c[k] == Approx(cbf[k]).margin(1e-8));
+      if (f.c[k] == 0.0) ++n_zero;
+    }
+    REQUIRE(n_zero >= 1);  // an active bound, held at exactly 0
+  }
+}
+
+TEST_CASE("compact fitter RHOFORM: passive-set VARPRO gradient matches FD",
+          "[compact][rhoform]") {
+  // truth: positive terms, plus a small term of the WRONG sign at x = 2.3
+  // whose fit column (the 5th) is then held at c = 0 by the constraint —
+  // its (mu, eta) gradient is 0 and FD agrees
+  for (RhoForm form : {RhoForm::NonNeg, RhoForm::Monotone}) {
+    for (BasisKind kind : {BasisKind::Blip, BasisKind::Blip5}) {
+      INFO("form " << tm::rhoform_name(form) << " kind "
+                   << static_cast<int>(kind));
+      BlipFit truth = make_positive_truth(kind, form);
+      BlipFit wrong = truth;
+      wrong.mu = {2.3};
+      wrong.eta = {2.5};
+      wrong.c = {form == RhoForm::Monotone ? -0.04 : -0.08};
+      std::vector<double> xs, ys, yw, tmp;
+      sample(truth, 1.0, 5.5, 220, xs, ys);
+      sample(wrong, 1.0, 5.5, 220, tmp, yw);
+      for (std::size_t i = 0; i < ys.size(); ++i) ys[i] += yw[i];
+
+      CompactConfig cfg;
+      cfg.rho_form = form;
+      CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg, kind);
+      BlipFit f = truth;
+      f.form = RhoForm::Signed;  // the fitter stamps it
+      f.mu.push_back(2.3);
+      f.eta.push_back(2.5);
+      f.c.push_back(0.0);
+      std::mt19937 rng(13);
+      std::normal_distribution<double> g(0.0, 1.0);
+      for (int k = 0; k < f.n(); ++k) {
+        f.mu[k] += 0.03 * g(rng);
+        f.eta[k] *= std::exp(0.03 * g(rng));
+      }
+      std::vector<double> grad;
+      fit.reduced_mse(f, &grad);
+      REQUIRE(f.form == form);
+      const int n = f.n();
+      REQUIRE(grad.size() == static_cast<std::size_t>(2 * n));
+      for (int k = 0; k < n; ++k) REQUIRE(f.c[k] >= 0.0);
+      REQUIRE(f.c[n - 1] == 0.0);           // held at the bound
+      REQUIRE(grad[n - 1] == 0.0);          // ... so no mu gradient
+      REQUIRE(grad[2 * n - 1] == 0.0);      // ... and no eta gradient
+      double scale = 0.0;
+      for (double v : grad) scale = std::max(scale, std::fabs(v));
+      REQUIRE(scale > 0.0);
+      double worst = 0.0;
+      for (int i = 0; i < 2 * n; ++i) {
+        auto &p = (i < n) ? f.mu[i] : f.eta[i - n];
+        const double h = 1e-6 * std::max(1.0, std::fabs(p));
+        const double save = p;
+        p = save + h;
+        const double fp = fit.reduced_mse(f, nullptr);
+        p = save - h;
+        const double fm = fit.reduced_mse(f, nullptr);
+        p = save;
+        worst = std::max(worst, std::fabs(grad[i] - (fp - fm) / (2 * h)) / scale);
+      }
+      INFO("worst |grad - FD| / scale = " << worst);
+      REQUIRE(worst < 1e-5);
+    }
+  }
+}
+
+TEST_CASE("compact fitter RHOFORM: refine keeps c >= 0 and recovers "
+          "in-form truths", "[compact][rhoform]") {
+  for (RhoForm form : {RhoForm::NonNeg, RhoForm::Monotone}) {
+    for (BasisKind kind : {BasisKind::Blip, BasisKind::Blip5}) {
+      INFO("form " << tm::rhoform_name(form) << " kind "
+                   << static_cast<int>(kind));
+      const BlipFit truth = make_positive_truth(kind, form);
+      std::vector<double> xs, ys;
+      sample(truth, 1.0, 5.5, 400, xs, ys);
+      CompactConfig cfg;
+      cfg.rho_form = form;
+      CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg, kind);
+
+      BlipFit f = truth;
+      f.form = RhoForm::Signed;  // the fitter stamps it
+      std::mt19937 rng(11);
+      std::normal_distribution<double> g(0.0, 1.0);
+      for (int k = 0; k < f.n(); ++k) {
+        f.mu[k] += 0.04 * g(rng);
+        f.eta[k] *= std::exp(0.04 * g(rng));
+      }
+      fit.solve_coeffs(f);
+      const double before = f.curve_rmse;
+      f.c[1] = -0.2;  // an infeasible start is lifted to the bound
+      const double after = fit.refine(f);
+      INFO("before = " << before << " after = " << after);
+      REQUIRE(f.form == form);
+      REQUIRE(after < before);
+      REQUIRE(after < 1e-8);  // representable target, exact Jacobians
+      for (double c : f.c) REQUIRE(c >= 0.0);
+    }
+  }
+}
+
+TEST_CASE("compact fitter RHOFORM: refine on a table outside the form ends "
+          "at the bound", "[compact][rhoform]") {
+  // the signed truth needs negative coefficients: under NONNEG the refine
+  // must stay feasible (Ceres lower bounds + the final non-negative solve)
+  const BlipFit truth = make_truth();
+  std::vector<double> xs, ys;
+  sample(truth, 1.0, 5.5, 300, xs, ys);
+  for (const char *algo : {"CERES_LM", "CERES_DOGLEG", "NLOPT_LBFGS"}) {
+    INFO(algo);
+    CompactConfig cfg;
+    cfg.rho_form = RhoForm::NonNeg;
+    cfg.refine_algo = algo;
+    CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
+    BlipFit f = truth;
+    fit.solve_coeffs(f);
+    const double before = f.curve_rmse;
+    const double after = fit.refine_with_cfg(f);
+    INFO("before = " << before << " after = " << after);
+    REQUIRE(f.form == RhoForm::NonNeg);
+    REQUIRE(after <= before * (1.0 + 1e-12));
+    for (double c : f.c) REQUIRE(c >= 0.0);
+    for (double x = 0.0; x <= 7.0; x += 0.01) REQUIRE(f.eval(x) >= 0.0);
+  }
+}
+
+TEST_CASE("compact fitter RHOFORM: joint refine bounds the density "
+          "amplitudes", "[compact][rhoform]") {
+  for (RhoForm form : {RhoForm::NonNeg, RhoForm::Monotone}) {
+    for (BasisKind kind : {BasisKind::Blip, BasisKind::Blip5}) {
+      INFO("form " << tm::rhoform_name(form) << " kind "
+                   << static_cast<int>(kind));
+      BlipFit phi = make_truth();
+      BlipFit rho;
+      rho.kind = kind;
+      rho.form = form;
+      rho.mu = {2.4, 3.2, 4.2};
+      rho.eta = {1.2, 0.9, 1.1};
+      rho.c = {0.4, 0.25, 0.1};
+      BlipFit F;
+      F.mu = {1.0, 4.0, 7.0};
+      F.eta = {0.45, 0.4, 0.45};
+      F.c = {-2.0, -0.8, 0.5};
+
+      std::vector<std::vector<double>> dists = {
+          {2.5, 2.5, 2.9, 2.9, 3.6}, {2.3, 2.3, 2.7, 2.7, 3.3},
+          {2.1, 2.1, 2.45, 2.45, 3.0}};
+      std::vector<double> e0, ew(dists.size(), 1.0);
+      for (const auto &dd : dists) {
+        double hp = 0.0, ri = 0.0;
+        for (double r : dd) {
+          hp += 0.5 * phi.eval(r);
+          ri += rho.eval(r);
+        }
+        e0.push_back(hp + F.eval(ri));
+      }
+      JointCurveData dphi, drho, dF;
+      sample(phi, 1.0, 5.5, 300, dphi.xs, dphi.ys);
+      sample(rho, 1.0, 5.5, 300, drho.xs, drho.ys);
+      sample(F, 0.0, 9.0, 300, dF.xs, dF.ys);
+
+      // the form is a density property: phi / F must stay SIGNED
+      {
+        BlipFit bad = phi, r2 = rho, F2 = F;
+        bad.form = form;
+        REQUIRE_THROWS_WITH(
+            joint_refine(bad, r2, F2, dphi, drho, dF, dists, e0, ew, 1.0, 10,
+                         1e-15),
+            Catch::Contains("density rho only"));
+      }
+
+      std::mt19937 rng(23);
+      std::normal_distribution<double> g(0.0, 1.0);
+      auto perturb = [&](BlipFit &f) {
+        for (int k = 0; k < f.n(); ++k) {
+          f.mu[k] += 0.03 * g(rng);
+          f.eta[k] *= std::exp(0.03 * g(rng));
+          f.c[k] *= 1.0 + 0.03 * g(rng);
+        }
+      };
+      perturb(phi);
+      perturb(rho);
+      perturb(F);
+      const double eta_floor = 0.03 * (rho.n() - 1) / 4.5;
+      {
+        // infeasible starts are lifted to the bounds, c >= 0 and
+        // eta >= 0.03 eta0 (here a mirrored width), before any solve
+        BlipFit p2 = phi, r2 = rho, F2 = F;
+        r2.c[2] = -0.05;
+        r2.eta[1] = -0.9;
+        joint_refine(p2, r2, F2, dphi, drho, dF, dists, e0, ew, 1.0, 10,
+                     1e-15, "NONE");
+        REQUIRE(r2.c[2] == 0.0);
+        REQUIRE(r2.eta[1] == Approx(eta_floor).epsilon(1e-12));
+      }
+      rho.c[2] = -0.05;  // an infeasible start is lifted to the bound
+      const double final_max =
+          joint_refine(phi, rho, F, dphi, drho, dF, dists, e0, ew,
+                       /*curve_weight=*/1.0, /*max_iter=*/500, /*ftol=*/1e-15);
+      INFO("final max |dE| = " << final_max);
+      REQUIRE(final_max < 1e-8);
+      REQUIRE(rho.form == form);
+      for (int k = 0; k < rho.n(); ++k) {
+        REQUIRE(rho.c[k] >= 0.0);
+        REQUIRE(rho.eta[k] >= eta_floor * (1.0 - 1e-12));
+      }
+    }
+  }
+}
+
+TEST_CASE("compact fitter RHOFORM: refusals", "[compact][rhoform]") {
+  std::vector<double> xs, ys;
+  sample(make_knot_truth(), 1.0, 5.5, 100, xs, ys);
+  // MONOTONE has no step form for the knot kinds
+  CompactConfig mono;
+  mono.rho_form = RhoForm::Monotone;
+  REQUIRE_THROWS_WITH(
+      CompactBlipFitter(xs, ys, {}, 1.0, 5.5, mono, BasisKind::Knot5L),
+      Catch::Contains("RHOFORM MONOTONE is not defined for the one-sided"));
+  REQUIRE_THROWS_WITH(make_curve_cost(xs, ys, {}, 2, BasisKind::Knot5L, false,
+                                      {}, RhoForm::Monotone),
+                      Catch::Contains("no step form"));
+  REQUIRE_THROWS_WITH(
+      make_energy_cost({{2.5}}, {0.0}, {1.0}, 1, 1, 1, BasisKind::Blip,
+                       BasisKind::Knot5L, BasisKind::Blip, false, {},
+                       RhoForm::Monotone),
+      Catch::Contains("no step form"));
+  // NONNEG with the knot kinds is fine (non-negative knot amplitudes)
+  CompactConfig nn;
+  nn.rho_form = RhoForm::NonNeg;
+  REQUIRE_NOTHROW(
+      CompactBlipFitter(xs, ys, {}, 1.0, 5.5, nn, BasisKind::Knot5L));
+  // a density form and the EMBF0 zero reference never share a fit
+  CompactConfig both = nn;
+  both.zero_ref = true;
+  REQUIRE_THROWS_WITH(CompactBlipFitter(xs, ys, {}, 1.0, 5.5, both),
+                      Catch::Contains("cannot share a fit"));
+  REQUIRE_THROWS_WITH(make_curve_cost(xs, ys, {}, 2, BasisKind::Blip, true,
+                                      {}, RhoForm::NonNeg),
+                      Catch::Contains("cannot share a fit"));
+  // joint_refine: a MONOTONE knot density
+  BlipFit phi = make_knot_truth(), rho = make_knot_truth(), F;
+  rho.form = RhoForm::Monotone;
+  F.kind = BasisKind::Knot5R;
+  F.mu = {0.0};
+  F.eta = {1.0};
+  F.c = {1.0};
+  JointCurveData d;
+  d.xs = xs;
+  d.ys = ys;
+  REQUIRE_THROWS_WITH(joint_refine(phi, rho, F, d, d, d, {{2.5}}, {0.0},
+                                   {1.0}, 1.0, 10, 1e-15),
+                      Catch::Contains("no step form"));
+}
+
+TEST_CASE("compact fitter RHOFORM: ladders per form on a density-like table",
+          "[compact][rhoform]") {
+  // rho-like: positive, decreasing, a shoulder near the first shells; vanishes
+  // at the cutoff 5.5 (hard_rcut: the bump-support gate of the engine)
+  const double rcut = 5.5;
+  const int N = 300;
+  std::vector<double> xs(N), ys(N);
+  for (int i = 0; i < N; ++i) {
+    const double x = 1.5 + (rcut - 1.5) * i / (N - 1);
+    xs[i] = x;
+    const double s = 1.0 - x / rcut;
+    ys[i] = s * s * s * (1.0 + 0.5 * std::exp(-4.0 * (x - 2.8) * (x - 2.8)));
+  }
+  for (RhoForm form : {RhoForm::Signed, RhoForm::NonNeg, RhoForm::Monotone}) {
+    INFO("form " << tm::rhoform_name(form));
+    CompactConfig cfg;
+    cfg.rho_form = form;
+    cfg.n_max = 8;
+    cfg.jitters = 1;
+    cfg.sbplx_maxeval = 1500;  // keep the unit test quick
+    cfg.mlsl_maxeval = 3000;
+    cfg.ceres_max_iter = 200;
+    cfg.target = 1.0;
+    cfg.hard_rcut = rcut;
+    CompactBlipFitter fit(xs, ys, {}, 1.5, rcut, cfg, BasisKind::Blip5);
+    std::vector<LadderRow> trace;
+    const BlipFit best = fit.fit(
+        [&](const BlipFit &f) { return f.curve_rmse / 1e-4; }, trace);
+    INFO("n = " << best.n() << " rmse = " << best.curve_rmse);
+    REQUIRE(best.form == form);
+    REQUIRE(best.curve_rmse < 5e-4);  // |rho| ~ 0.4: a real fit
+    for (int k = 0; k < best.n(); ++k) {
+      REQUIRE(best.mu[k] + 3.0 / best.eta[k] <= rcut * (1.0 + 1e-6));
+      if (form != RhoForm::Signed) REQUIRE(best.c[k] >= 0.0);
+    }
+    if (form == RhoForm::Signed) continue;
+    // the guarantees on a fine grid: rho >= 0 everywhere, and non-increasing
+    // to rounding under MONOTONE
+    double prev = best.eval(0.0), scale = 0.0;
+    for (double c : best.c) scale += c;
+    for (int i = 1; i <= 20000; ++i) {
+      const double x = 7.0 * i / 20000.0;
+      const double v = best.eval(x);
+      REQUIRE(v >= 0.0);
+      if (form == RhoForm::Monotone)
+        REQUIRE(v - prev <= 8.0 * std::numeric_limits<double>::epsilon() * scale);
+      prev = v;
+    }
+  }
+}
+
+// =========== RHOFORM SIGNED: the tadah 1.5.1 numbers, bit for bit ===========
+
+#include "compact_fitter_signed_goldens.h"
+
+#include <cstdint>
+#include <cstring>
+#include <sstream>
+
+namespace {
+// The goldens were produced by the tadah 1.5.1 fitter (HPO 3ce1001) in the
+// HPO library's own build: -O3 without -march=native or -ffast-math, where
+// every value below is reproducible to the bit (no libm call on these paths
+// except inside Ceres), so SIGNED must match them bit for bit (DESIGN 9).
+// A build with -ffast-math or a wider vector ISA (FMA / AVX Eigen kernels)
+// rounds differently (measured: 1e-14 relative on the closed-form values);
+// there every value is compared to 1e-6 relative, and the ladder, whose
+// derivative-free path follows every rounding, is not compared.
+#if defined(__x86_64__) && !defined(__FAST_MATH__) && !defined(__FMA__) && \
+    !defined(__AVX__)
+constexpr bool golden_bits = true;
+#else
+constexpr bool golden_bits = false;
+#endif
+
+// `got` is `want`: the same bits in the golden build, else within 1e-6
+// relative. Reports the first differing entry.
+void check_golden(const std::vector<double> &got,
+                  const std::vector<double> &want, const char *name) {
+  INFO("golden " << name);
+  REQUIRE(got.size() == want.size());
+  std::size_t at = 0;
+  for (; at < got.size(); ++at) {
+    std::uint64_t a, b;
+    std::memcpy(&a, &got[at], sizeof a);
+    std::memcpy(&b, &want[at], sizeof b);
+    const bool same =
+        golden_bits ? a == b
+                    : std::fabs(got[at] - want[at]) <=
+                          1e-6 * std::max(1.0, std::fabs(want[at]));
+    if (!same) break;
+  }
+  std::ostringstream first;
+  if (at < got.size())
+    first << "entry " << at << ": " << std::hexfloat << got[at]
+          << " vs golden " << want[at];
+  INFO(first.str());
+  CHECK(at == got.size());
+}
+
+// The golden table: a rational, libm-free function that changes sign on
+// [1, 5.5] and lies outside every basis; row weights 1, 1.5, 2, ...
+void golden_table(int N, std::vector<double> &xs, std::vector<double> &ys,
+                  std::vector<double> &wts) {
+  xs.resize(N);
+  ys.resize(N);
+  wts.resize(N);
+  for (int i = 0; i < N; ++i) {
+    const double x = 1.0 + 4.5 * i / (N - 1);
+    xs[i] = x;
+    ys[i] = 1.0 / (1.0 + x * x) - 0.3;
+    wts[i] = 1.0 + 0.5 * (i % 3);
+  }
+}
+
+BlipFit golden_basis(BasisKind kind, std::vector<double> mu,
+                     std::vector<double> eta) {
+  BlipFit f;
+  f.kind = kind;
+  f.mu = std::move(mu);
+  f.eta = std::move(eta);
+  f.c.assign(f.mu.size(), 0.0);
+  return f;
+}
+
+// residuals, then every Jacobian block (row-major), in block order
+std::vector<double> golden_cost_values(
+    ceres::CostFunction *cost, std::vector<std::vector<double>> params) {
+  const int M = cost->num_residuals();
+  const auto &sizes = cost->parameter_block_sizes();
+  std::vector<double *> p;
+  for (auto &b : params) p.push_back(b.data());
+  std::vector<std::vector<double>> jac(sizes.size());
+  std::vector<double *> jp;
+  for (std::size_t b = 0; b < sizes.size(); ++b) {
+    jac[b].assign(static_cast<std::size_t>(M) * sizes[b], 0.0);
+    jp.push_back(jac[b].data());
+  }
+  std::vector<double> out(M);
+  REQUIRE(cost->Evaluate(p.data(), out.data(), jp.data()));
+  for (const auto &j : jac) out.insert(out.end(), j.begin(), j.end());
+  return out;
+}
+
+std::vector<double> golden_params(std::vector<double> head,
+                                  std::initializer_list<const BlipFit *> fs) {
+  for (const BlipFit *f : fs) {
+    head.insert(head.end(), f->c.begin(), f->c.end());
+    head.insert(head.end(), f->mu.begin(), f->mu.end());
+    head.insert(head.end(), f->eta.begin(), f->eta.end());
+  }
+  return head;
+}
+}  // namespace
+
+TEST_CASE("compact fitter RHOFORM: SIGNED reproduces the tadah 1.5.1 numbers",
+          "[compact][rhoform]") {
+  namespace golden = compact_signed_golden;
+  INFO("golden comparison: " << (golden_bits
+                                     ? "bit for bit"
+                                     : "1e-6 relative (not the golden build)"));
+  std::vector<double> xs, ys, wts;
+  golden_table(120, xs, ys, wts);
+  const CompactConfig cfg{};  // SIGNED, value objective
+
+  SECTION("closed-form solve, evaluation and VARPRO gradient, per kind") {
+    struct Case {
+      const char *name;
+      BlipFit basis;
+      const std::vector<double> *want;
+    };
+    const std::vector<Case> cases = {
+        {"blip", golden_basis(BasisKind::Blip, {1.6, 2.5, 3.4, 4.3, 5.0},
+                              {1.1, 0.9, 1.0, 1.2, 1.4}), &golden::blip},
+        {"blip5", golden_basis(BasisKind::Blip5, {1.5, 2.6, 3.7, 4.6},
+                               {0.8, 0.9, 1.0, 1.1}), &golden::blip5},
+        {"knot5", golden_basis(BasisKind::Knot5L, {2.0, 3.0, 4.0, 5.5},
+                               {1.0, 1.0, 1.0, 1.0}), &golden::knot5}};
+    for (const auto &[name, basis, want] : cases) {
+      CompactBlipFitter fit(xs, ys, wts, 1.0, 5.5, cfg, basis.kind);
+      BlipFit f = basis;
+      const double rmse = fit.solve_coeffs(f);
+      REQUIRE(f.form == RhoForm::Signed);
+      std::vector<double> v = f.c;
+      v.push_back(rmse);
+      for (double x : {1.3, 2.75, 4.1}) {
+        v.push_back(f.eval(x));
+        v.push_back(f.deriv(x));
+        v.push_back(f.deriv2(x));
+      }
+      std::vector<double> grad;
+      BlipFit g = basis;
+      v.push_back(fit.reduced_mse(g, &grad));
+      v.insert(v.end(), grad.begin(), grad.end());
+      check_golden(v, *want, name);
+    }
+  }
+
+  SECTION("stacked value + d1 + d2 solve (curve objective)") {
+    CompactConfig cc;
+    cc.objective = RefitObjective::Curve;
+    cc.curve_deriv_weight = 1.0;
+    CompactBlipFitter fit(xs, ys, wts, 1.0, 5.5, cc);
+    BlipFit f = golden_basis(BasisKind::Blip, {1.6, 2.5, 3.4, 4.3, 5.0},
+                             {1.1, 0.9, 1.0, 1.2, 1.4});
+    std::vector<double> v = {fit.solve_coeffs(f)};
+    v.insert(v.end(), f.c.begin(), f.c.end());
+    v.push_back(fit.d2_rmse(f));
+    v.push_back(fit.combined_curve_score(f));
+    check_golden(v, golden::stacked, "stacked");
+  }
+
+  SECTION("curve and energy costs: residuals and Jacobians") {
+    std::vector<double> x6, y6, w6;
+    golden_table(6, x6, y6, w6);
+    std::unique_ptr<ceres::CostFunction> curve(
+        make_curve_cost(x6, y6, w6, 3, BasisKind::Blip5));
+    check_golden(golden_cost_values(curve.get(), {{0.3, -0.7, 0.2},
+                                                  {1.8, 3.1, 4.4},
+                                                  {0.7, 0.9, 1.2}}),
+                 golden::curve_cost, "curve_cost");
+    const std::vector<std::vector<double>> dists = {
+        {2.5, 2.5, 2.9, 2.9, 3.6}, {2.1, 2.1, 2.45, 2.45, 3.0}};
+    const std::vector<double> e0 = {-1.0, -0.5}, ew = {1.0, 2.0};
+    std::unique_ptr<ceres::CostFunction> energy(
+        make_energy_cost(dists, e0, ew, 2, 2, 2));  // holds the references
+    check_golden(golden_cost_values(energy.get(),
+                                    {{1.5, -0.6}, {2.0, 3.4}, {0.9, 1.1},
+                                     {0.6, -0.2}, {2.2, 3.5}, {0.8, 0.9},
+                                     {-2.0, 0.5}, {1.0, 4.0}, {0.45, 0.4}}),
+                 golden::energy_cost, "energy_cost");
+  }
+
+  SECTION("Ceres refine from a displaced start") {
+    // a signed truth plus a small out-of-basis term: the optimum is near the
+    // truth, not on it
+    BlipFit truth = golden_basis(BasisKind::Blip, {1.5, 2.4, 3.6, 4.8},
+                                 {1.2, 0.9, 0.8, 1.1});
+    truth.c = {2.0, -1.3, 0.7, -0.4};
+    std::vector<double> yr(xs.size());
+    for (std::size_t i = 0; i < xs.size(); ++i)
+      yr[i] = truth.eval(xs[i]) + 0.02 / (1.0 + xs[i] * xs[i]);
+    CompactBlipFitter fit(xs, yr, wts, 1.0, 5.5, cfg);
+    BlipFit f = golden_basis(BasisKind::Blip, {1.55, 2.35, 3.65, 4.75},
+                             {1.15, 0.95, 0.85, 1.05});
+    const double rmse = fit.refine(f);
+    check_golden(golden_params({rmse}, {&f}), golden::refine, "refine");
+  }
+
+  SECTION("joint refine with a negative density amplitude") {
+    BlipFit phi = golden_basis(BasisKind::Blip, {1.5, 2.4, 3.6, 4.8},
+                               {1.2, 0.9, 0.8, 1.1});
+    phi.c = {2.0, -1.3, 0.7, -0.4};
+    BlipFit rho =
+        golden_basis(BasisKind::Blip, {2.0, 3.2, 4.4}, {0.9, 0.8, 0.9});
+    rho.c = {0.6, -0.2, 0.15};
+    BlipFit F =
+        golden_basis(BasisKind::Blip, {1.0, 4.0, 7.0}, {0.45, 0.4, 0.45});
+    F.c = {-2.0, -0.8, 0.5};
+    const std::vector<std::vector<double>> dists = {
+        {2.5, 2.5, 2.9, 2.9, 3.6}, {2.3, 2.3, 2.7, 2.7, 3.3},
+        {2.1, 2.1, 2.45, 2.45, 3.0}};
+    std::vector<double> e0, ew = {1.0, 2.0, 0.5};
+    for (const auto &dd : dists) {
+      double hp = 0.0, ri = 0.0;
+      for (double r : dd) {
+        hp += 0.5 * phi.eval(r);
+        ri += rho.eval(r);
+      }
+      e0.push_back(hp + F.eval(ri));
+    }
+    JointCurveData dphi, drho, dF;
+    auto curve = [](const BlipFit &f, double lo, double hi, JointCurveData &d) {
+      for (int i = 0; i < 150; ++i) {
+        d.xs.push_back(lo + (hi - lo) * i / 149);
+        d.ys.push_back(f.eval(d.xs.back()));
+      }
+    };
+    curve(phi, 1.0, 5.5, dphi);
+    curve(rho, 1.0, 5.5, drho);
+    curve(F, 0.0, 9.0, dF);
+    auto displace = [](BlipFit &f, double s) {
+      for (int k = 0; k < f.n(); ++k) {
+        f.mu[k] += s * (k % 2 ? -1.0 : 1.0);
+        f.eta[k] *= 1.0 + s;
+        f.c[k] *= 1.0 - s;
+      }
+    };
+    displace(phi, 0.03);
+    displace(rho, -0.02);
+    displace(F, 0.04);
+    const double mx = joint_refine(phi, rho, F, dphi, drho, dF, dists, e0, ew,
+                                   1.0, 500, 1e-15);
+    check_golden(golden_params({mx}, {&phi, &rho, &F}), golden::joint, "joint");
+  }
+
+  SECTION("a short ladder (bit for bit in the golden build only)") {
+    if (!golden_bits) return;
+    CompactConfig lc;
+    lc.n_max = 5;
+    lc.jitters = 0;
+    lc.mlsl_maxeval = 2000;
+    lc.sbplx_maxeval = 400;
+    lc.ceres_max_iter = 100;
+    lc.stall_rungs = 2;
+    CompactBlipFitter fit(xs, ys, wts, 1.0, 5.5, lc);
+    std::vector<LadderRow> trace;
+    const BlipFit f = fit.fit(
+        [](const BlipFit &b) { return b.curve_rmse / 1e-5; }, trace);
+    check_golden(
+        golden_params({static_cast<double>(f.n()), f.curve_rmse}, {&f}),
+        golden::ladder, "ladder");
+  }
 }
 
 #endif  // TADAH_USE_CERES

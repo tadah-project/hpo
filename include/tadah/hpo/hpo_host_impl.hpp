@@ -17,12 +17,15 @@
 #include <tadah/hpo/pc_task_exec.h>
 #include <tadah/hpo/pc_worker_pool.h>
 #include <tadah/hpo/iter_health.h>
+#include <tadah/hpo/candidate_context.h>
 #include <tadah/hpo/rcut_derivation.h>
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/hpo/topk.h>
 #include <tadah/models/descriptors/dm/embf0.h>
+#include <tadah/models/descriptors/dm/rhoform.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
 #include <tadah/mlip/analytics/dphi_dtheta_walk.h>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <mutex>
@@ -1026,6 +1029,14 @@ void HPO_Host<P,R>::reset_globals_for_test() {
         g_best_key_.reset();
         durable_latch_.reset();
     }
+    {
+        std::lock_guard<std::mutex> lg(io_mtx_);
+        Result item;
+        while (g_q_.try_dequeue(item)) {}
+        io_buf_.clear();
+        next_flush_.store(1, std::memory_order_relaxed);
+        next_flush_stuck_since_ms_.store(0, std::memory_order_relaxed);
+    }
     warmstart::reset_best_snapshot_for_fresh_run();
     reset_writer_files();
 }
@@ -1196,6 +1207,49 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
             "before training as graded band-D failures");
     }
 
+    /* RHOFORM NONNEG / MONOTONE: every evaluated AMPGRIDMB amplitude must be
+     * >= 0 (DM_REAM refuses a negative one). The boxes are non-negative
+     * (HPOTargets), but finite-difference probes step past a zero amplitude
+     * and some optimisers ignore bounds, so operator() evaluates -- and
+     * records -- the candidate projected onto AMPGRIDMB >= 0. Flat indices
+     * in the update_context order. */
+    if (models::context_has_ream(master_ctx_)) {
+        const auto form = models::stored_rhoform(master_ctx_);
+        if (form && models::rhoform_is_positive(*form)) {
+            for (const auto& r : make_param_ref_table(trg_))
+                if (models::optim_key_lower_bound(r.theta_name, form) ==
+                    models::OptimLowerBound::NonNegative)
+                    form_proj_idx_.push_back(r.flat_idx);
+            form_proj_name_ = models::rhoform_name(*form);
+            /* A zero lower bound on those dims is the form's limit, not a
+             * choice of box: the bound audit does not read a best sitting
+             * there as bound pressure. */
+            if (const SearchSpacePtr sp = trg_.space()) {
+                std::vector<bool> hard(sp->dim(), false);
+                for (std::size_t k : form_proj_idx_)
+                    if (k < hard.size() && sp->at(k).lo == 0.0) hard[k] = true;
+                std::lock_guard<std::mutex> lg(bound_occ_mtx_);
+                bound_occ_.set_hard_lo(std::move(hard));
+            }
+        }
+    }
+
+    /* DM_REAM density (rho_gates.h): the RHOGATE / RHOBARGATE tables --
+     * arming, the RHOBARGATE shells and a-grid, the cached verdict of an
+     * unarmed gate -- and the settings of the density summary recorded at
+     * each new best. validate_hpo_setup has checked the settings and the
+     * seeds with the same functions. Without a gate, a context whose
+     * density cannot be read only loses the RESULT density line. */
+    if (trg_.RHOGATE || trg_.RHOBARGATE) {
+        density_ = detail::build_density_gates(master_ctx_, trg_);
+    } else if (detail::context_is_bare_ream(master_ctx_)) {
+        try {
+            density_ = detail::build_density_gates(master_ctx_, trg_);
+        } catch (const std::exception&) {
+            density_.reset();
+        }
+    }
+
     /* neighbours -------------------------------------------------------- */
     /* One-time build: sized for the largest cutoff any evaluation can
      * reach — stated RCUTMAX, OPTIM RCUT2B/RCUTMB upper bounds, and (knot
@@ -1320,6 +1374,8 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
             all_weights_fixed_ =
                 K > 0 && mlip::classify_weight_source(master_ctx_, K)
                              == mlip::WeightSource::AllFixedData;
+        } catch (const models::DensityFormError&) {
+            throw;   // an invalid density form is a configuration error
         } catch (const std::exception&) {
             all_weights_fixed_ = false;
         }
@@ -1402,22 +1458,41 @@ template<class P, class R>
 void HPO_Host<P,R>::update_context(core::Context& ctx,
                                    const P& p) const
 {
-    for(auto& kv : trg_.optimap) ctx.remove(kv.first);
+    detail::update_candidate_context(ctx, trg_, p, knot2b_, knotmb_);
+}
 
-    std::size_t idx=0;
-    for(const auto& kv : trg_.optimap){
-        for(std::size_t i=0;i<kv.second.opt.size();++i){
-            if(kv.second.opt[i]) ctx.add(kv.first, p(idx++));
-            else                 ctx.add(kv.first, kv.second.config[i]);
-        }
+/* ----------  helper: positive-form projection ------------------------- */
+template<class P, class R>
+const P& HPO_Host<P,R>::project_positive_form(const P& p, P& buf,
+                                              std::size_t iter) const
+{
+    std::size_t n_neg = 0, first = 0;
+    for (std::size_t k : form_proj_idx_)
+        if (p(static_cast<long>(k)) < 0.0 && n_neg++ == 0) first = k;
+    if (n_neg == 0) return p;   // in the box (NaN is left to DM_REAM)
+
+    buf = p;
+    for (std::size_t k : form_proj_idx_) {
+        const long i = static_cast<long>(k);
+        if (buf(i) < 0.0) buf(i) = 0.0;
     }
-
-    /* Knot channels: the effective cutoff follows the (possibly OPTIM'd)
-     * largest knot — re-derive RCUT2B/RCUTMB so Trainer::reinit applies it
-     * via fcut->set_rcut(RCUT*MAX). Overrides a user OPTIM RCUT* dimension
-     * deliberately (warned once at startup). The prebuilt NN list already
-     * covers every reachable cutoff (detail::nn_safe_rcutmax). */
-    detail::apply_knot_rcut_derivation(ctx, knot2b_, knotmb_);
+    try {
+        if (HPOLog::instance().record_form_projection() == 1) {
+            char v[32];
+            std::snprintf(v, sizeof v, "%.4e", p(static_cast<long>(first)));
+            HPOLog::instance().info(
+                "eval " + std::to_string(iter) + ": RHOFORM " +
+                form_proj_name_ + ": " + param_labels_[first] + " = " + v +
+                (n_neg > 1 ? " (and " + std::to_string(n_neg - 1) +
+                                 " more AMPGRIDMB coordinate(s))"
+                           : std::string()) +
+                " below 0 is evaluated and recorded as 0: the candidate is "
+                "projected onto AMPGRIDMB >= 0 (a finite-difference probe "
+                "next to a zero amplitude, or an optimiser that ignores "
+                "bounds); DIAGNOSTICS counts every projection");
+        }
+    } catch (...) { /* journalling must never fail an evaluation */ }
+    return buf;
 }
 
 /* ----------  helper: train/val structure counts ----------------------- */
@@ -2495,7 +2570,7 @@ void HPO_Host<P,R>::note_failed_publication(
 
 /* ----------  operator()  (thread-safe) ------------------------------- */
 template<class P, class R>
-double HPO_Host<P,R>::operator()(const P& p) const
+double HPO_Host<P,R>::operator()(const P& p_in) const
 {
   /* Cooperative shutdown: SIGINT/SIGTERM/SIGUSR2 raised the stop flag.
    * Throw before consuming an iter slot so the caller's run loop
@@ -2507,6 +2582,16 @@ double HPO_Host<P,R>::operator()(const P& p) const
 
   Result r;
   r.iter   = ++g_iter_;
+    /* RHOFORM NONNEG / MONOTONE: evaluate the candidate with its AMPGRIDMB
+     * coordinates projected onto [0, inf) -- before the gates and the
+     * context build -- and record the projected point (params rows, pots),
+     * so every recorded point is a valid potential. `p` below is that
+     * point: p_in itself when no such coordinate is negative, and always
+     * under SIGNED (form_proj_idx_ is empty). */
+    P p_proj;
+    const P& p = form_proj_idx_.empty()
+                     ? p_in
+                     : project_positive_form(p_in, p_proj, r.iter);
     /* Which chain (PT replica / PA walker) is this? Bridged from the driver
      * via a thread_local; keys the per-chain warm-start cache so results are
      * independent of fan-out execution order. 0 for serial / NLOPT / dlib. */
@@ -2581,31 +2666,27 @@ double HPO_Host<P,R>::operator()(const P& p) const
      *  - StagnationStop -- must propagate to RestartPolicy. */
     try {
 
-    /* Bump-support per-candidate gate (BUMPGATE CANDIDATE): an infeasible
-     * (c, eta[, rcut]) combination would be a hard-truncated bump -- an
-     * energy/force STEP at the cutoff -- so it is rejected BEFORE any
-     * training work with a graded band-D loss (the pre-LAMMPS skip-caps
-     * idiom below). The table is empty unless startup armed it, so
-     * feasible-only searches pay a single branch. */
-    if (!bump_gate_.empty()) {
-      const double v = detail::bump_gate_violation(bump_gate_, p);
-      if (v > 0.0) {
+    /* Pre-training reject (the feasibility gates below): a graded band-D
+     * loss BEFORE any training work (the pre-LAMMPS skip-caps idiom
+     * below), with the bookkeeping of a completed evaluation. The note is
+     * rate-limited per gate -- first 5, then powers of two, parity with the
+     * bad-pot skip counter -- and the gate's reject counter moves strictly
+     * after record_fail_band, so no SUMMARY shows more gate rejects than
+     * band-D failures. A rejected candidate's DUMP potential is header-only
+     * (no pot_ctx). */
+    auto reject_pre_training = [&](GateKind kind, double v,
+                                   const std::string& what) -> double {
         r.fail.band = std::max(r.fail.band, static_cast<int>(FailBand::D));
         r.fail.vD = v;
         r.loss = trg_.FAILSCORE_GRADING
                      ? graded_eval_loss(r.fail, trg_.FAIL_SCORE,
                                         trg_.failprobe_s0)
                      : trg_.FAIL_SCORE;
-        /* Rate-limited journal note: first 5, then powers of two --
-         * parity with the bad-pot skip counter. */
-        static std::atomic<std::size_t> n_rejects{0};
-        const auto k = n_rejects.fetch_add(1, std::memory_order_relaxed) + 1;
+        const auto k = HPOLog::instance().next_gate_note(kind);
         if (k <= 5 || (k & (k - 1)) == 0) {
             HPOLog::instance().info(
-                "eval " + std::to_string(r.iter) + ": bump-support gate "
-                "reject (c + w/eta past the cutoff, violation=" +
-                std::to_string(v) + ", graded band D); total rejects=" +
-                std::to_string(k));
+                "eval " + std::to_string(r.iter) + ": " + what +
+                "; total rejects=" + std::to_string(k));
         }
         /* The trainer cache still holds the previous feasible theta; the
          * next analytical_gradient() must not read it as "current x". */
@@ -2646,19 +2727,51 @@ double HPO_Host<P,R>::operator()(const P& p) const
         log.record_eval(save_iter, save_wall_ms, /*nan=*/false);
         _census.done = true;   /* counted here, with the measured wall */
         log.record_fail_band(save_fail_band);
-        log.record_bump_gate_reject();
+        log.record_gate_reject(kind);
         /* Not during a probe phase: the annealer has no state behind
-     * these evals, so a checkpoint here advances g_iter over
-     * nothing. */
-    if (!probe::active())
-      core::CheckpointManager::instance().tick_eval(save_iter);
+         * these evals, so a checkpoint here advances g_iter over
+         * nothing. */
+        if (!probe::active())
+          core::CheckpointManager::instance().tick_eval(save_iter);
         return save_loss;
+    };
+
+    /* Bump-support per-candidate gate (BUMPGATE CANDIDATE): an infeasible
+     * (c, eta[, rcut]) combination would be a hard-truncated bump -- an
+     * energy/force STEP at the cutoff -- so it is rejected before any
+     * training work. The table is empty unless startup armed it, so
+     * feasible-only searches pay a single branch. Its v needs no context:
+     * without a density gate a violating candidate is rejected here. */
+    const bool density_gated = density_ && density_->gated();
+    double v_bump = 0.0;
+    std::string bump_what;
+    if (!bump_gate_.empty()) {
+      v_bump = detail::bump_gate_violation(bump_gate_, p);
+      if (v_bump > 0.0) {
+        bump_what = "bump-support gate reject (c + w/eta past the cutoff, "
+                    "violation=" + std::to_string(v_bump) + ", graded band D)";
+        if (!density_gated)
+          return reject_pre_training(GateKind::Bump, v_bump, bump_what);
       }
     }
 
     /* build context ---------------------------------------------------- */
     core::Context ctx = master_ctx_;
     update_context(ctx, p);
+
+    /* DM_REAM density gates (RHOGATE, RHOBARGATE; rho_gates.h), on the
+     * candidate context and before any training work or MPI traffic (the
+     * workers wait in the next cs_size broadcast, as for a BUMPGATE
+     * reject). The gates read ctx through stored values only and never
+     * change it. When any gate fails -- BUMPGATE included -- every
+     * configured gate has been evaluated: the candidate is graded by the
+     * sum of their measures and counted for the first failing one. */
+    if (density_gated) {
+      const auto rej = detail::combine_gate_verdicts(
+          v_bump, bump_what, *density_,
+          detail::check_density_gates(*density_, ctx));
+      if (rej) return reject_pre_training(rej->kind, rej->v, rej->what);
+    }
 
     t_train_start = std::chrono::high_resolution_clock::now();
     /* train ------------------------------------------------------------ */
@@ -3176,6 +3289,12 @@ double HPO_Host<P,R>::operator()(const P& p) const
                          save_top_breakdown);
         if (!std::isnan(save_embf0))
             log.record_embf0_best(save_iter, save_loss, save_embf0);
+        /* DM_REAM density of the new best (the RESULT line), summarised
+         * from this candidate's context now that best_mtx_ is released.
+         * Diagnostic only; never throws. */
+        if (density_)
+            log.record_density_best(save_iter, save_loss,
+                                    detail::summarise_density(*density_, ctx));
         /* Bound-occupancy audit on the new best (REAL coordinates). */
         std::lock_guard<std::mutex> lg(bound_occ_mtx_);
         if (bound_occ_.armed()) {

@@ -24,19 +24,21 @@
 #include <string>
 #include <vector>
 
+#include <tadah/hpo/optimizer_spec.h>   // OptimizerSpec, InitOrigin
+
 namespace tadah::core { class Context; }
 
 namespace tadah::hpo {
 
 class HPOTargets;        // forward-declared -- full type pulled in by .cpp
-struct OptimizerSpec;
 
 struct InitContext {
     const OptimizerSpec& spec;            // bounds, log_scaled (post-transform)
     const HPOTargets&    targets;         // optimap, ui_offset
     std::uint64_t        seed;            // resolved INIT_SEED or random_device
-    /* The run's -c configuration (HPOTargets' context), for WARM's EMBF0
-     * check; nullptr skips the check (e.g. RESTART re-seeding). */
+    /* The run's -c configuration (HPOTargets::run_context()), for WARM's
+     * EMBF0 and RHOFORM checks; every resolution in a run passes it (the
+     * INIT chains, a RESTART refresh). nullptr skips the checks. */
     const core::Context* run_context = nullptr;
 };
 
@@ -50,6 +52,22 @@ public:
     virtual std::vector<std::vector<double>>
     generate(const InitContext& ctx, std::size_t k) const = 0;
 
+    /** generate() plus the provenance of every returned point: @p origins
+     *  is overwritten, parallel to the result. The default tags every point
+     *  with origin(); ChainStrategy tags each point with the child that
+     *  produced it and keeps the first origin when it drops a duplicate. */
+    virtual std::vector<std::vector<double>>
+    generate_tagged(const InitContext& ctx, std::size_t k,
+                    std::vector<InitOrigin>& origins) const
+    {
+        auto pts = generate(ctx, k);
+        origins.assign(pts.size(), origin());
+        return pts;
+    }
+
+    /** Provenance of this strategy's points (CONFIG unless overridden). */
+    virtual InitOrigin origin() const { return InitOrigin{}; }
+
     /** Human-readable name for logs (matches the parser keyword). */
     virtual std::string name() const = 0;
 
@@ -57,6 +75,12 @@ public:
      *  K is given. Used by build_init_strategy() to size INIT_K. */
     virtual std::size_t default_k() const { return 1; }
 };
+
+/* The -c configuration's point: the config value of every OPTIM-flagged
+ * dim, walking targets.optimap in its (lex-sorted) order, i.e. the dim
+ * order of spec.low / spec.high / spec.optim_init. What INIT CONFIG
+ * produces, and what the density gates recognise as the -c seed. */
+std::vector<double> config_point_from_targets(const HPOTargets& trg);
 
 /* Build the polymorphic InitStrategy from the parsed spec.
  *

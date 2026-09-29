@@ -90,3 +90,66 @@ TEST_CASE("HPOLog prints the bound-occupancy tables",
     log.reset_for_test();
     std::error_code ec; std::filesystem::remove(path, ec);
 }
+
+TEST_CASE("BoundOccupancy: a hard lower bound is flagged, not read as bound "
+          "pressure", "[HPO][bound_audit][hpolog]")
+{
+    /* AMPGRIDMB under RHOFORM NONNEG/MONOTONE: lo = 0 is the form's limit */
+    DimSpec a; a.key = "AMPGRIDMB"; a.label = "AMPGRIDMB[3]"; a.lo = 0.0; a.hi = 0.5;
+    DimSpec b; b.key = b.label = "RCUT2B"; b.lo = 4.0; b.hi = 6.0;
+    ScalePolicy pol; pol.normalise = true;
+    const auto sp = std::make_shared<const SearchSpace>(SearchSpace::build({a, b}, pol));
+    BoundOccupancy occ(sp);
+    occ.set_hard_lo({true, false});
+    REQUIRE(occ.on_new_best(3, {0.0, 5.0}));
+    REQUIRE(occ.marks().size() == 1);
+    CHECK_FALSE(occ.marks()[0].hi);
+    CHECK(occ.marks()[0].hard);
+    /* only the lower side is hard */
+    REQUIRE(occ.on_new_best(4, {0.5, 4.0}));
+    REQUIRE(occ.marks().size() == 2);
+    CHECK(occ.marks()[0].hi);
+    CHECK_FALSE(occ.marks()[0].hard);
+    CHECK_FALSE(occ.marks()[1].hard);
+
+    auto& log = HPOLog::instance();
+    const auto path = std::filesystem::temp_directory_path() /
+        ("tadah_bound_audit_hard_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
+    OptimizerSpec spec; spec.lib = "NLOPT"; spec.algo = "LN_SBPLX";
+    spec.bind_space(sp);
+    auto run = [&](const std::vector<double>& best) {
+        if (log.is_open()) log.finish("reopen-for-test");
+        log.reset_for_test();
+        log.open(path.string(), "test", "test_cwd", 0);
+        REQUIRE(log.is_open());
+        log.write_optimizer_section(spec, spec.parameter_labels);
+        occ.on_new_best(7, best);
+        log.record_bound_occupancy(occ.marks(), 7, occ.edge());
+        log.record_eval(100, 1.0, false);          /* milestone 1 */
+        log.finish("TEST");
+        return slurp(path);
+    };
+    const std::string note = "(* a hard lower bound: RHOFORM NONNEG/MONOTONE require "
+                             "AMPGRIDMB >= 0, so an amplitude at 0 is an admissible "
+                             "optimum, not bound pressure)";
+
+    /* hard only: the marks and the note, no remedy at the milestone or at
+     * the end */
+    std::string t = run({0.0, 5.0});
+    CHECK(t.find("AMPGRIDMB[3]            LO*") != std::string::npos);
+    CHECK(t.find("Bound occupancy of the final best (eval 7)") != std::string::npos);
+    CHECK(t.find("    " + note + "\n") != std::string::npos);
+    CHECK(t.find("suggests bound pressure") == std::string::npos);
+    CHECK(t.find("advisory") == std::string::npos);
+
+    /* a soft mark next to it keeps the remedy */
+    t = run({0.0, 4.0});
+    CHECK(t.find("AMPGRIDMB[3]            LO*") != std::string::npos);
+    CHECK(t.find("RCUT2B                  LO ") != std::string::npos);
+    CHECK(t.find(note) != std::string::npos);
+    CHECK(t.find("HINT") != std::string::npos);
+    CHECK(t.find("advisory") != std::string::npos);
+
+    log.reset_for_test();
+    std::error_code ec; std::filesystem::remove(path, ec);
+}

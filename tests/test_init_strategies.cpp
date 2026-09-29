@@ -522,6 +522,7 @@ std::string warm_embf0_journal(const std::string& seed_body,
         for (const char* t : {"DM_REAM", "0", "2", "2", "2", "3", "3", "0",
                               "0", "Ta", "Ta"})
             run.add("TYPEMB", t);
+        run.add("RHOFORM", "SIGNED");
     }
     if (run_embf0) run.add("EMBF0", run_embf0);
 
@@ -549,7 +550,7 @@ std::string warm_embf0_journal(const std::string& seed_body,
 }
 
 const std::string kReamSeed =
-    "INITMB true\nTYPEMB DM_REAM 0 2 2 2 3 3 0 0 Ta Ta\n";
+    "INITMB true\nTYPEMB DM_REAM 0 2 2 2 3 3 0 0 Ta Ta\nRHOFORM SIGNED\n";
 
 }  // namespace
 

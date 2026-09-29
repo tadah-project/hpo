@@ -32,6 +32,7 @@
 #include <vector>
 
 #include <tadah/core/context.h>
+#include <tadah/core/utils.h>
 #include <tadah/hpo/dloss_dtheta.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/models/descriptors/basis_kind.h>
@@ -74,7 +75,14 @@ inline BindingRcut derive_binding_rcut(const core::Context &ctx,
   }
   if (rvals.empty()) rvals.push_back(ctx.get<double>(rkey));
 
-  const auto itr = trg.optimap.find(rkey);
+  /* the OPTIM entry of rkey; keys compare case-insensitively, as the
+   * Context compares them (the density gates' reach shares this range) */
+  auto itr = trg.optimap.find(rkey);
+  if (itr == trg.optimap.end())
+    itr = std::find_if(trg.optimap.begin(), trg.optimap.end(),
+                       [&rkey](const auto &kv) {
+                         return core::to_upper(kv.first) == rkey;
+                       });
   const bool has_opt = itr != trg.optimap.end();
 
   /* flat theta indices come from the one shared flattening contract */
@@ -85,7 +93,7 @@ inline BindingRcut derive_binding_rcut(const core::Context &ctx,
                      itr->second.opt[i];
     if (opt) {
       for (const auto &r : prefs)
-        if (r.theta_name == rkey && r.arg_pos == static_cast<int>(i + 1))
+        if (r.theta_name == itr->first && r.arg_pos == static_cast<int>(i + 1))
           rc.flat_idx.push_back(static_cast<long>(r.flat_idx));
       rc.min_reachable = std::max(rc.min_reachable, itr->second.lowbound[i]);
       rc.max_reachable = std::max(rc.max_reachable, itr->second.highbound[i]);

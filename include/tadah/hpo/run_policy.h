@@ -656,7 +656,8 @@ public:
          * each strategy's default_k. */
         if (refresh_ && trg_) {
           std::random_device rd;
-          InitContext ic{cur, *trg_, static_cast<std::uint64_t>(rd()) + restarts};
+          InitContext ic{cur, *trg_, static_cast<std::uint64_t>(rd()) + restarts,
+                         &trg_->run_context()};
           const std::size_t k_use = (refresh_k_ > 0) ? refresh_k_
                                                      : refresh_->default_k();
           auto pts = refresh_->generate(ic, k_use);

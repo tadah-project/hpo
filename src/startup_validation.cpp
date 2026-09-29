@@ -4,22 +4,98 @@
 #include <tadah/core/logger.h>
 #include <tadah/core/utils.h>
 #include <tadah/hpo/bump_support_gate.h>
+#include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/optimizer_caps.h>
+#include <tadah/hpo/rho_gates.h>
 #include <tadah/mlip/trainer.h>
 #include <tadah/mlip/weight_provisioning.h>
 #include <tadah/mlip/memory/mlip_workspace_manager.h>
+#include <tadah/models/dc_selector.h>
 #include <tadah/models/descriptors/d_base.h>
 #include <tadah/models/descriptors/dm/embf0.h>
+#include <tadah/models/descriptors/dm/ream_density.h>
+#include <tadah/models/descriptors/dm/rhoform.h>
 #include <tadah/models/eam/pot_curve_edit.h>
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace tadah {
 namespace hpo {
+
+namespace {
+
+/* The DM_REAM density of the -c configuration, validated for its form as
+ * the DM_REAM constructor does, so an invalid density is a startup error
+ * and not a failure of every evaluation. A bare DM_REAM is checked from
+ * the context (ReamDensity::validate_context); inside a DM_mJoin the
+ * many-body descriptor is built once on a copy, and each DM_REAM child
+ * validates itself. Other construction errors are left to the probes and
+ * the first evaluation, as before. Throws models::DensityFormError. */
+void validate_ream_density(const core::Context &train_ctx) {
+  core::Context c = train_ctx;   // the probes below may materialise defaults
+  const auto label = c.stored_value("TYPEMB", 0);
+  if (label && *label == "DM_REAM") {
+    models::ReamDensity::validate_context(c);
+    return;
+  }
+  try {
+    models::DC_Selector probe(c);
+  } catch (const models::DensityFormError &) {
+    throw;
+  } catch (const std::exception &) {
+  }
+}
+
+/* The optimisers of the spec tree that can evaluate outside the OPTIM box:
+ * an ignores_bounds backend (optimizer_caps) or PARAM fd_kernel ceres on a
+ * gradient-based one. "<stage> <LIB>:<ALGO> (<why>)" per entry. */
+std::vector<std::string> unbounded_optimisers(const OptimizerSpec &root) {
+  std::vector<std::pair<std::string, const OptimizerSpec *>> tree = {
+      {"OUTER", &root}, {"INNER", root.inner.get()}};
+  if (root.prestage) {
+    tree.push_back({"PRESTAGE", root.prestage.get()});
+    tree.push_back({"PRESTAGE.INNER", root.prestage->inner.get()});
+  }
+  auto stage = [&](const OptimizerSpec *s, const std::string &tag) {
+    if (!s) return;
+    tree.push_back({tag, s});
+    tree.push_back({tag + ".INNER", s->inner.get()});
+  };
+  if (root.strategy_type == StrategyType::BASINS) {
+    stage(root.basins.explore.get(), "BASINS.EXPLORE");
+    stage(root.basins.refine.get(), "BASINS.REFINE");
+  } else if (root.strategy_type == StrategyType::BASINSV2) {
+    stage(root.basins_v2.explore.get(), "BASINSV2.EXPLORE");
+    stage(root.basins_v2.refine.get(), "BASINSV2.REFINE");
+  }
+  std::vector<std::string> out;
+  for (const auto &e : tree) {
+    const OptimizerSpec *s = e.second;
+    if (!s || s->lib == "NOT SET") continue;
+    const OptimizerCaps *caps = nullptr;
+    try { caps = &optimizer_caps(*s); } catch (const std::exception &) { continue; }
+    const std::string name = e.first + " " + s->lib + ":" + s->algo;
+    if (caps->ignores_bounds) {
+      out.push_back(name + " (ignores the OPTIM bounds)");
+      continue;
+    }
+    const auto fk = s->param_raw.find("fd_kernel");
+    if (caps->is_gradient_based && fk != s->param_raw.end() &&
+        core::to_upper(fk->second) == "CERES")
+      out.push_back(name + " (PARAM fd_kernel ceres: unclamped "
+                    "finite-difference steps)");
+  }
+  return out;
+}
+
+}  // namespace
 
 std::size_t derive_weight_count(const core::Context &train_ctx) {
   try {
@@ -27,6 +103,8 @@ std::size_t derive_weight_count(const core::Context &train_ctx) {
     tadah::mlip::memory::MLIPWorkspaceManager ws;
     tadah::mlip::Trainer probe(ctx_copy, ws);
     return probe.fb->get_phi_cols(probe.context);
+  } catch (const models::DensityFormError &) {
+    throw;   // an invalid density form is a configuration error
   } catch (const std::exception &e) {
     core::Logger::instance().log(
         core::LogLevel::WARNING,
@@ -81,6 +159,8 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx) {
     }
     out.kind = RawEmbeddingF0::Kind::Value;
     out.value = *v;
+  } catch (const models::DensityFormError &) {
+    throw;   // an invalid density form is a configuration error
   } catch (const std::exception &e) {
     out = RawEmbeddingF0{};
     out.reason = std::string("not derivable: ") + e.what();
@@ -107,10 +187,50 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
           "the potential; set it in the -c potential/configuration.");
     }
   }
+  for (const auto &kv : trg.optimap) {
+    const std::string e = HPOTargets::optim_structure_key_error(kv.first);
+    if (!e.empty()) throw std::runtime_error(e);
+  }
   /* An invalid stored EMBF0 value fails here, not at the first evaluation.
    * stored_embf0 never inserts the default. */
   if (models::context_has_ream(train_ctx))
     (void)models::stored_embf0(train_ctx);
+
+  /* --- DM_REAM density form (RHOFORM) ---------------------------------- */
+  /* Mandatory (HPOTargets already read it). The density is validated for
+   * its form here, bare or inside a DM_mJoin: the probes below
+   * (derive_weight_count, derive_raw_embedding_f0, the host's) build
+   * DM_REAM only with FIXINDEX/FIXWEIGHT, without a training DB or for a
+   * linear model, and rethrow models::DensityFormError when they do. */
+  if (models::context_has_ream(train_ctx)) {
+    const models::RhoForm form = models::require_rhoform(train_ctx, "tadah hpo");
+    validate_ream_density(train_ctx);
+    /* Positive forms: the evaluated AMPGRIDMB coordinates are projected
+     * onto [0, inf) (HPO_Host); say so when an optimiser can put them
+     * outside the (non-negative) box. */
+    bool amp_optim = false;
+    for (const auto &kv : trg.optimap)
+      if (models::optim_key_lower_bound(kv.first, form) ==
+          models::OptimLowerBound::NonNegative)
+        for (bool b : kv.second.opt) amp_optim = amp_optim || b;
+    if (amp_optim) {
+      const std::vector<std::string> ub = unbounded_optimisers(trg.spec);
+      if (!ub.empty()) {
+        std::string msg = std::string("RHOFORM ") + models::rhoform_name(form) +
+                          ": ";
+        for (std::size_t i = 0; i < ub.size(); ++i)
+          msg += (i ? ", " : "") + ub[i];
+        msg += " can evaluate AMPGRIDMB amplitudes outside the non-negative "
+               "OPTIM box. An amplitude below 0 is not a valid " +
+               std::string(models::rhoform_name(form)) + " density: every "
+               "such point is projected onto AMPGRIDMB >= 0, evaluated and "
+               "recorded there (the optimiser still sees its own point); "
+               "DIAGNOSTICS counts the projections.";
+        std::cerr << "[HPO] WARNING: " << msg << "\n";
+        HPOLog::instance().warning(msg);
+      }
+    }
+  }
   if (trg.optimap.count("FIXWEIGHT") && !train_ctx.contains("FIXINDEX")) {
     throw std::runtime_error(
         "OPTIM FIXWEIGHT requires FIXINDEX in the training configuration "
@@ -438,10 +558,18 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     throw std::runtime_error(msg);
   }
 
+  /* DM_REAM density gates (RHOGATE, RHOBARGATE; rho_gates.h): the
+   * semantic checks, then every CONFIG/WARM seed evaluated as a candidate
+   * by the per-candidate functions (SEED ERROR | WARN), before any data is
+   * loaded. After the knot-RCUT normalisation above, so each seed sees the
+   * cutoff the host will. */
+  detail::validate_density_gates(train_ctx, trg);
+
   /* Search-space / initial-step rules (scale_validation.h): STEP policy
    * from the caps registry (already applied at parse time), every
    * resolved seed inside its OPTIM box, and the width audit. Runs last so
-   * the physics gates above (knot RCUT, bump support) report first. */
+   * the physics gates above (knot RCUT, bump support, density) report
+   * first. */
   run_scale_validation(trg.spec, /*check_start_points=*/true);
 }
 

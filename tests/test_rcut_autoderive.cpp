@@ -115,6 +115,7 @@ Context make_knot_ctx(double first_knot = 5.0, double stale_rcut2b = -1.0) {
     c.add("CGRIDMB",  2.5);
     c.add("AMPGRIDMB", 0.01);
     c.add("AMPGRIDMB", -1.2);
+    c.add("RHOFORM",  "SIGNED");  // a negative amplitude
     c.add("CEMBFUNC", "0.9 -2.9 0.1");
     c.add("RCUTMB",   4.8);
     c.add("RCTYPEMB", "Cut_Dummy");
@@ -165,6 +166,7 @@ Context make_blip_ctx() {
     c.add("CGRIDMB",  "2.8 2.5");
     c.add("SGRIDMB",  "1.0 1.1");
     c.add("AMPGRIDMB", "0.01 -1.2");
+    c.add("RHOFORM",  "SIGNED");  // a negative amplitude
     c.add("CEMBFUNC", "0.9 2.9 0.1");
     c.add("SEMBFUNC", "1.5 2.0 1.8");
     c.add("RCUTMB",   4.8);
@@ -375,8 +377,10 @@ TEST_CASE("rcut e2e: OPTIM'd knot beyond the stated RCUT evaluates exactly",
     write_minimal_ta_dbfile(val_db,   0.07);
     { std::ofstream os(val_cfg); os << "DBFILE " << val_db.string() << "\n"; }
     {
+        /* The box holds Host A's seed knot (5.0): a seed outside its OPTIM
+         * box is refused at startup. */
         std::ofstream os(hpo_cfg);
-        os << "OPTIM CGRID2B (1) 5.5 6.0\nPC_ERMSE 0 1\n" << kOptimizerBlock;
+        os << "OPTIM CGRID2B (1) 5.0 6.0\nPC_ERMSE 0 1\n" << kOptimizerBlock;
     }
 
     /* Host A: master knot 1 sits at 5.0 (RCUT2B 5.0) but the OPTIM bound

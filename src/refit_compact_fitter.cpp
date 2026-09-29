@@ -4,6 +4,7 @@
 
 #include <tadah/models/descriptors/basis_kind.h>
 #include <tadah/models/descriptors/d_basis_functions.h>
+#include <tadah/models/nnls.h>
 
 #include <ceres/ceres.h>
 #include <ceres/manifold.h>
@@ -16,6 +17,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <map>
 #include <stdexcept>
 
@@ -25,6 +27,8 @@ namespace refit {
 
 using tadah::models::B;
 using tadah::models::dB;
+using tadah::models::RhoForm;
+using tadah::models::rhoform_is_positive;
 
 // ---- optimiser termination → short tag (for the per-stage convergence log)
 namespace {
@@ -137,6 +141,77 @@ inline double bval2_d(BasisKind k, int d, double xc) {
   }
   return 0.0;
 }
+// ---- RHOFORM MONOTONE step kinds: the integrated bump S of the bump
+// families, from the MODELS step primitives (the ones DM_REAM and
+// EAMRefit::rho_fit evaluate). With x_c = eta (x - mu) and A the bump area in
+// x_c (1.5 Blip, 20/11 Blip5):
+//   value S(x_c);  dS/dr = -eta B(x_c)/A;  d2S/dr2 = -eta^2 B'(x_c)/A
+// and, since S depends on (mu, eta) only through x_c, the Jacobians follow
+// from dS/dr exactly as for the bumps: dS/dmu = -dS/dr = eta B(x_c)/A and
+// dS/deta = (x - mu) (dS/dr)/eta = -(x - mu) B(x_c)/A. The one-sided knot
+// families have no step form (the fitter refuses them under MONOTONE).
+[[noreturn]] void no_step_kind(BasisKind k) {
+  throw std::runtime_error(
+      "compact_fitter: RHOFORM MONOTONE has no step form for the one-sided "
+      "knot kind " + std::to_string(static_cast<int>(k)) +
+      " (bump kinds Blip and Blip5 only)");
+}
+inline double sval(BasisKind k, double xc) {
+  switch (k) {
+    case BasisKind::Blip:   return tadah::models::SB(xc);
+    case BasisKind::Blip5:  return tadah::models::SB5(xc);
+    case BasisKind::Knot5L:
+    case BasisKind::Knot5R: break;
+  }
+  no_step_kind(k);
+}
+inline double sder(BasisKind k, double xc, double eta) {  // dS/dr
+  switch (k) {
+    case BasisKind::Blip:   return tadah::models::dSB(xc, eta);
+    case BasisKind::Blip5:  return tadah::models::dSB5(xc, eta);
+    case BasisKind::Knot5L:
+    case BasisKind::Knot5R: break;
+  }
+  no_step_kind(k);
+}
+inline double sder2(BasisKind k, double xc, double eta) {  // d2S/dr2
+  switch (k) {
+    case BasisKind::Blip:   return tadah::models::d2SB(xc, eta);
+    case BasisKind::Blip5:  return tadah::models::d2SB5(xc, eta);
+    case BasisKind::Knot5L:
+    case BasisKind::Knot5R: break;
+  }
+  no_step_kind(k);
+}
+// Form-aware column: the step kinds under MONOTONE, the family itself
+// otherwise (SIGNED, NONNEG and every phi / F fit — the same call, so those
+// stay bit-for-bit the 1.5.1 values). cval = value, cder = r-derivative.
+inline double cval(BasisKind k, RhoForm form, int d, double xc) {
+  return form == RhoForm::Monotone ? sval(k, xc) : bval_d(k, d, xc);
+}
+inline double cder(BasisKind k, RhoForm form, int d, double xc, double eta) {
+  return form == RhoForm::Monotone ? sder(k, xc, eta) : bder_d(k, d, xc, eta);
+}
+// RHOFORM NONNEG / MONOTONE coefficients: min ||A c - b|| over c >= 0 by
+// Lawson-Hanson (models::nnls, Householder QR on the passive columns — never
+// the normal equations: step columns reach cond ~1e9). Eigen stores A
+// column-major, the layout nnls() takes; the row weights are already folded
+// into A and b. Numerically zero columns (a basis pushed off the samples)
+// stay at 0, which is what the rank-revealing solve does for SIGNED. A
+// non-finite system (which the SIGNED solve turns into NaN coefficients)
+// gives NaN coefficients here too, so the candidate loses every comparison.
+// A solve stopped at nnls' iteration cap is still feasible (every c_k >= 0).
+void solve_nonneg(const Eigen::MatrixXd &A, const Eigen::VectorXd &b,
+                  std::vector<double> &c) {
+  c.assign(static_cast<std::size_t>(A.cols()), 0.0);
+  try {
+    tadah::models::nnls(A.data(), static_cast<std::size_t>(A.rows()),
+                        static_cast<std::size_t>(A.cols()), b.data(),
+                        c.data());
+  } catch (const std::invalid_argument &) {
+    c.assign(c.size(), std::numeric_limits<double>::quiet_NaN());
+  }
+}
 // EMBF0 ZERO reference terms of an n-atom expansion at x = 0: b0[k] =
 // g(x_c0) and db0[k] = eta_k g'(x_c0) with x_c0 = eta_k (0 - mu_k) — the same
 // primitives (and the same x_c expression with x = 0.0) as the x-dependent
@@ -179,21 +254,26 @@ double BlipFit::eval(double x) const {
   }
   double acc = 0.0;
   for (std::size_t k = 0; k < mu.size(); ++k)
-    acc += c[k] * bval_d(kind, degree(static_cast<int>(k)),
-                         eta[k] * (x - mu[k]));
+    acc += c[k] * cval(kind, form, degree(static_cast<int>(k)),
+                       eta[k] * (x - mu[k]));
   return acc;
 }
 
 double BlipFit::deriv(double x) const {
   double acc = 0.0;
   for (std::size_t k = 0; k < mu.size(); ++k)
-    acc += c[k] * bder_d(kind, degree(static_cast<int>(k)),
-                         eta[k] * (x - mu[k]), eta[k]);
+    acc += c[k] * cder(kind, form, degree(static_cast<int>(k)),
+                       eta[k] * (x - mu[k]), eta[k]);
   return acc;
 }
 
 double BlipFit::deriv2(double x) const {
   double acc = 0.0;
+  if (form == RhoForm::Monotone) {  // step kinds: sder2 carries the eta^2
+    for (std::size_t k = 0; k < mu.size(); ++k)
+      acc += c[k] * sder2(kind, eta[k] * (x - mu[k]), eta[k]);
+    return acc;
+  }
   for (std::size_t k = 0; k < mu.size(); ++k)
     acc += c[k] * eta[k] * eta[k] *
            bval2_d(kind, degree(static_cast<int>(k)), eta[k] * (x - mu[k]));
@@ -207,13 +287,22 @@ double BlipFit::deriv2(double x) const {
 // quadratic-model DFO (BOBYQA) failed on blips.
 // zero_ref (EMBF0 ZERO, F channel): the model is the zero-referenced
 // sum_k c_k (B(x_c) - B(x_c0)), x_c0 = eta_k (0 - mu_k) — evaluate_zero_ref.
+// form (RHOFORM, rho channel): MONOTONE evaluates the step kinds S (cval /
+// cder), with the same Jacobian expressions in S and dS/dr; SIGNED and
+// NONNEG share the bump columns (NONNEG's c >= 0 is a Ceres bound).
 class CurveCost : public ceres::CostFunction {
 public:
   CurveCost(std::vector<double> xs, std::vector<double> ys,
             std::vector<double> wts, int n, BasisKind kind = BasisKind::Blip,
-            std::vector<int> deg = {}, bool zero_ref = false)
+            std::vector<int> deg = {}, bool zero_ref = false,
+            RhoForm form = RhoForm::Signed)
       : xs_(std::move(xs)), ys_(std::move(ys)), wts_(std::move(wts)), n_(n),
-        kind_(kind), deg_(std::move(deg)), zero_ref_(zero_ref) {
+        kind_(kind), deg_(std::move(deg)), zero_ref_(zero_ref), form_(form) {
+    if (zero_ref_ && form_ != RhoForm::Signed)
+      throw std::logic_error("compact_fitter: a density form (rho) and the "
+                             "EMBF0 zero reference (F) cannot share a fit");
+    if (form_ == RhoForm::Monotone && one_sided(kind_))
+      no_step_kind(kind_);  // refused here, never inside a Ceres Evaluate
     set_num_residuals(static_cast<int>(xs_.size()));
     mutable_parameter_block_sizes()->assign(3, n_);  // c, mu, eta
   }
@@ -230,10 +319,11 @@ public:
       for (int k = 0; k < n_; ++k) {
         const int d = (k < static_cast<int>(deg_.size())) ? deg_[k] : 5;
         const double xc = eta[k] * (x - mu[k]);
-        const double b = bval_d(kind_, d, xc);
+        const double b = cval(kind_, form_, d, xc);
         m += c[k] * b;
         if (jacobians) {
-          const double db = bder_d(kind_, d, xc, eta[k]);  // = eta * g'(xc)
+          // = eta * g'(xc); for the steps dS/dr = -eta B(xc)/A
+          const double db = cder(kind_, form_, d, xc, eta[k]);
           if (jacobians[0]) jacobians[0][i * n_ + k] = sw * b;
           if (jacobians[1]) jacobians[1][i * n_ + k] = -sw * c[k] * db;
           if (jacobians[2])
@@ -291,6 +381,7 @@ private:
   BasisKind kind_;
   std::vector<int> deg_;  // per-atom degree (knot kinds; empty = all 5)
   bool zero_ref_ = false;  // EMBF0 ZERO zero-referenced basis (F channel)
+  RhoForm form_ = RhoForm::Signed;  // RHOFORM (rho channel)
 };
 
 // ---------------------------------------------------------- CompactBlipFitter
@@ -302,6 +393,17 @@ CompactBlipFitter::CompactBlipFitter(std::vector<double> xs,
                                      std::vector<double> d2ys)
     : xs_(std::move(xs)), ys_(std::move(ys)), wts_(std::move(wts)), lo_(lo),
       hi_(hi), span_(hi - lo), cfg_(cfg), kind_(kind) {
+  // RHOFORM is a density-channel property: the step kinds exist for the bump
+  // families only, and the EMBF0 zero reference belongs to the F channel.
+  if (cfg_.rho_form == RhoForm::Monotone && one_sided(kind_))
+    throw std::runtime_error(
+        std::string("compact_fitter: RHOFORM MONOTONE is not defined for the "
+                    "one-sided knot families (use a bump basis, Blip or "
+                    "Blip5, or RHOFORM NONNEG: ") +
+        tadah::models::monotone_knot_refusal_text() + ")");
+  if (cfg_.rho_form != RhoForm::Signed && cfg_.zero_ref)
+    throw std::logic_error("compact_fitter: a density form (rho) and the "
+                           "EMBF0 zero reference (F) cannot share a fit");
   eta0_ = (cfg_.n_min > 1) ? (cfg_.n_min - 1) / span_ : 1.0 / span_;
 
   // Target 1st/2nd derivatives for the curve objective + the d1/d2 diagnostics.
@@ -361,8 +463,12 @@ CompactBlipFitter::CompactBlipFitter(std::vector<double> xs,
 
 double CompactBlipFitter::solve_coeffs(BlipFit &f) const {
   // Every candidate passes through here before any eval / metric, so this is
-  // the one place the channel's EMBF0 reference is stamped onto the fit.
+  // the one place the channel's EMBF0 reference and RHOFORM are stamped onto
+  // the fit. NONNEG / MONOTONE: every coefficient >= 0 (solve_nonneg);
+  // MONOTONE also takes the step columns (cval / cder / sder2).
   f.zero_ref = cfg_.zero_ref;
+  f.form = cfg_.rho_form;
+  const bool positive = rhoform_is_positive(f.form);
   const int n = f.n();
   const std::size_t N = xs_.size();
   // EMBF0 ZERO: the VALUE columns are g(x_c) - g(x_c0) (derivative columns
@@ -378,7 +484,8 @@ double CompactBlipFitter::solve_coeffs(BlipFit &f) const {
     // so VALUE stays dominant (crystal energy depends on the curve VALUES — an
     // equal weighting lets the solver trade value accuracy away). A
     // numerically-flat block (use_dX_ false) is dropped. Basis columns: value =
-    // bval_d, f' = bder_d (= eta*g'), f'' = eta^2 * bval2_d.
+    // bval_d, f' = bder_d (= eta*g'), f'' = eta^2 * bval2_d (RHOFORM
+    // MONOTONE: the step kinds S, dS/dr, d2S/dr2).
     const double dwr = std::sqrt(std::max(0.0, cfg_.curve_deriv_weight));
     std::size_t Nd = 0;
     for (std::size_t i = 0; i < N; ++i) Nd += fd_ok_[i];
@@ -395,7 +502,7 @@ double CompactBlipFitter::solve_coeffs(BlipFit &f) const {
                                  f.eta[k] * (xs_[i] - f.mu[k])) - b0[k]);
       } else {
         for (int k = 0; k < n; ++k)
-          A(r, k) = sw * bval_d(f.kind, f.degree(k), f.eta[k] * (xs_[i] - f.mu[k]));
+          A(r, k) = sw * cval(f.kind, f.form, f.degree(k), f.eta[k] * (xs_[i] - f.mu[k]));
       }
       b(r) = sw * ys_[i];
       ++r;
@@ -405,8 +512,8 @@ double CompactBlipFitter::solve_coeffs(BlipFit &f) const {
         if (fd_ok_[i]) {  // first-derivative block (value-dominant: x dwr)
           const double sw = dwr * (wts_.empty() ? 1.0 : std::sqrt(wts_[i])) / nd1_;
           for (int k = 0; k < n; ++k)
-            A(r, k) = sw * bder_d(f.kind, f.degree(k),
-                                  f.eta[k] * (xs_[i] - f.mu[k]), f.eta[k]);
+            A(r, k) = sw * cder(f.kind, f.form, f.degree(k),
+                                f.eta[k] * (xs_[i] - f.mu[k]), f.eta[k]);
           b(r) = sw * dy_[i];
           ++r;
         }
@@ -416,13 +523,20 @@ double CompactBlipFitter::solve_coeffs(BlipFit &f) const {
           const double sw = dwr * (wts_.empty() ? 1.0 : std::sqrt(wts_[i])) / nd2_;
           for (int k = 0; k < n; ++k) {
             const double xc = f.eta[k] * (xs_[i] - f.mu[k]);
-            A(r, k) = sw * f.eta[k] * f.eta[k] * bval2_d(f.kind, f.degree(k), xc);
+            A(r, k) = f.form == RhoForm::Monotone
+                          ? sw * sder2(f.kind, xc, f.eta[k])
+                          : sw * f.eta[k] * f.eta[k] *
+                                bval2_d(f.kind, f.degree(k), xc);
           }
           b(r) = sw * d2y_[i];
           ++r;
         }
-    Eigen::VectorXd c = A.completeOrthogonalDecomposition().solve(b);
-    f.c.assign(c.data(), c.data() + n);
+    if (positive) {
+      solve_nonneg(A, b, f.c);
+    } else {
+      Eigen::VectorXd c = A.completeOrthogonalDecomposition().solve(b);
+      f.c.assign(c.data(), c.data() + n);
+    }
     // f.curve_rmse is the WEIGHTED VALUE rmse (sum w_i d_i^2 / sum w_i) so the
     // reported/selection value error matches the weighted fit (empty wts_ => the
     // plain mean, unchanged).
@@ -448,16 +562,20 @@ double CompactBlipFitter::solve_coeffs(BlipFit &f) const {
                                f.eta[k] * (xs_[i] - f.mu[k])) - b0[k]);
     } else {
       for (int k = 0; k < n; ++k)
-        A(i, k) = sw * bval_d(f.kind, f.degree(k),
-                              f.eta[k] * (xs_[i] - f.mu[k]));
+        A(i, k) = sw * cval(f.kind, f.form, f.degree(k),
+                            f.eta[k] * (xs_[i] - f.mu[k]));
     }
     b(i) = sw * ys_[i];
   }
-  // rank-revealing: a blip pushed outside the sampled range yields a ~zero
-  // column, which plain QR mishandles
-  Eigen::VectorXd c =
-      A.completeOrthogonalDecomposition().solve(b);
-  f.c.assign(c.data(), c.data() + n);
+  if (positive) {
+    solve_nonneg(A, b, f.c);
+  } else {
+    // rank-revealing: a blip pushed outside the sampled range yields a ~zero
+    // column, which plain QR mishandles
+    Eigen::VectorXd c =
+        A.completeOrthogonalDecomposition().solve(b);
+    f.c.assign(c.data(), c.data() + n);
+  }
   double se = 0.0;
   for (std::size_t i = 0; i < N; ++i) {
     const double d = f.eval(xs_[i]) - ys_[i];
@@ -553,6 +671,7 @@ double CompactBlipFitter::combined_curve_score(const BlipFit &f) const {
 
 double CompactBlipFitter::reduced_mse(BlipFit &f, std::vector<double> *grad) const {
   solve_coeffs(f);  // inner closed-form c at the current (mu, eta)
+  const bool positive = rhoform_is_positive(f.form);
   const int n = f.n();
   const bool os = one_sided(f.kind);  // knot families: mu-only theta space
   const std::size_t N = xs_.size();
@@ -579,9 +698,15 @@ double CompactBlipFitter::reduced_mse(BlipFit &f, std::vector<double> *grad) con
     } else if (grad) {
       // Golub-Pereyra: A^T r = 0 at the inner optimum, so the c-variation
       // term vanishes and d(SSE)/dtheta = 2 r^T (dA/dtheta) c exactly.
+      // RHOFORM NONNEG / MONOTONE (non-negative least squares): the same on
+      // the passive set P = {k : c_k > 0}, whose columns satisfy
+      // A_P^T r = 0; a column held at c_k = 0 stays there under a small
+      // change of theta and contributes nothing, so it is skipped. The step
+      // kinds enter through dS/dr (cder), as the bump columns through g'.
       for (int k = 0; k < n; ++k) {
+        if (positive && f.c[k] == 0.0) continue;
         const double xc = f.eta[k] * (xs_[i] - f.mu[k]);
-        const double db = bder_d(f.kind, f.degree(k), xc, f.eta[k]);
+        const double db = cder(f.kind, f.form, f.degree(k), xc, f.eta[k]);
         (*grad)[k] += 2.0 * r * sw * f.c[k] * (-db);
         if (!os)
           (*grad)[n + k] +=
@@ -849,6 +974,7 @@ BlipFit CompactBlipFitter::seed_mlsl() const {
   BlipFit f;
   f.kind = kind_;
   f.zero_ref = cfg_.zero_ref;  // EMBF0 ZERO (F channel); re-stamped per solve
+  f.form = cfg_.rho_form;      // RHOFORM (rho channel); likewise
   f.mu.resize(n);
   f.eta.assign(n, one_sided(kind_) ? 1.0 : eta0);  // knot families: eta gauge
   if (one_sided(kind_) && cfg_.knot_degree != 5)
@@ -945,11 +1071,21 @@ BlipFit CompactBlipFitter::seed_global(BlipFit f) const {
 double CompactBlipFitter::refine(BlipFit &f) const {
   const int n = f.n();
   f.zero_ref = cfg_.zero_ref;  // the channel's EMBF0 reference (cf. solve_coeffs)
+  f.form = cfg_.rho_form;      // and its RHOFORM
   ceres::Problem prob;
   std::vector<double> &c = f.c, &mu = f.mu, &eta = f.eta;
   prob.AddResidualBlock(
-      new CurveCost(xs_, ys_, wts_, n, f.kind, f.deg, f.zero_ref), nullptr,
-      c.data(), mu.data(), eta.data());
+      new CurveCost(xs_, ys_, wts_, n, f.kind, f.deg, f.zero_ref, f.form),
+      nullptr, c.data(), mu.data(), eta.data());
+  // RHOFORM NONNEG / MONOTONE: the coefficients stay >= 0 through the refine
+  // too (solve_coeffs' non-negative least squares does not bind Ceres, which
+  // moves c freely). Ceres needs a feasible start: a negative c_k (a
+  // caller's arbitrary start) begins at the bound.
+  if (rhoform_is_positive(f.form))
+    for (int k = 0; k < n; ++k) {
+      if (c[k] < 0.0) c[k] = 0.0;
+      prob.SetParameterLowerBound(c.data(), k, 0.0);
+    }
   std::vector<int> pin;
   for (int k = 0; k < n; ++k)
     if (f.is_pinned(k)) pin.push_back(k);
@@ -1022,7 +1158,9 @@ double CompactBlipFitter::refine(BlipFit &f) const {
   last_refine_term_ = std::string(ceres_term(sum.termination_type)) + "(" +
                       std::to_string(sum.iterations.size()) + "it, " +
                       ceres_reason(sum) + ")";
-  return solve_coeffs(f);  // final closed-form coeffs at the refined (mu,eta)
+  // final closed-form coeffs at the refined (mu,eta); NONNEG / MONOTONE: by
+  // non-negative least squares, so c >= 0 whatever Ceres returned
+  return solve_coeffs(f);
 }
 
 std::vector<double> CompactBlipFitter::residual_peaks(const BlipFit &f,
@@ -1607,6 +1745,9 @@ namespace {
 // F_zero_ref (EMBF0 ZERO): F(rho) = sum_m c_m (g(x_c) - g(x_c0)) — the F
 // block's value and F-parameter Jacobians carry the reference terms (as in
 // CurveCost::evaluate_zero_ref); F'(rho) and the chain into rho are unchanged.
+// rho_form (RHOFORM): MONOTONE evaluates the density block in the step kinds
+// (rho_i = sum_d sum_k c_k S(x_c)); the chain into its parameters takes S and
+// dS/dr where the bumps take g and eta g' (cval / cder).
 class EnergyCost : public ceres::CostFunction {
 public:
   EnergyCost(const std::vector<std::vector<double>> &dists,
@@ -1614,10 +1755,14 @@ public:
              int nphi, int nrho, int nF, BasisKind kphi = BasisKind::Blip,
              BasisKind krho = BasisKind::Blip, BasisKind kF = BasisKind::Blip,
              std::vector<int> dphi = {}, std::vector<int> drho = {},
-             std::vector<int> dF = {}, bool F_zero_ref = false)
+             std::vector<int> dF = {}, bool F_zero_ref = false,
+             RhoForm rho_form = RhoForm::Signed)
       : dists_(dists), e0_(e0), w_(w), nphi_(nphi), nrho_(nrho), nF_(nF),
         kphi_(kphi), krho_(krho), kF_(kF), dphi_(std::move(dphi)),
-        drho_(std::move(drho)), dF_(std::move(dF)), F_zero_ref_(F_zero_ref) {
+        drho_(std::move(drho)), dF_(std::move(dF)), F_zero_ref_(F_zero_ref),
+        rho_form_(rho_form) {
+    if (rho_form_ == RhoForm::Monotone && one_sided(krho_))
+      no_step_kind(krho_);  // refused here, never inside a Ceres Evaluate
     set_num_residuals(static_cast<int>(dists_.size()));
     auto *s = mutable_parameter_block_sizes();
     s->assign({nphi_, nphi_, nphi_, nrho_, nrho_, nrho_, nF_, nF_, nF_});
@@ -1661,8 +1806,8 @@ public:
           }
         }
         for (int k = 0; k < nrho_; ++k)
-          rho_i += cR[k] * bval_d(krho_, deg_of(drho_, k),
-                                  eR[k] * (r - mR[k]));
+          rho_i += cR[k] * cval(krho_, rho_form_, deg_of(drho_, k),
+                                eR[k] * (r - mR[k]));
       }
       // embedding value + F'(rho_i)
       double Fv = 0.0, Fp = 0.0;
@@ -1703,8 +1848,9 @@ public:
         for (double r : dd)
           for (int k = 0; k < nrho_; ++k) {
             const double xc = eR[k] * (r - mR[k]);
-            const double b = bval_d(krho_, deg_of(drho_, k), xc);
-            const double db = bder_d(krho_, deg_of(drho_, k), xc, eR[k]);
+            const double b = cval(krho_, rho_form_, deg_of(drho_, k), xc);
+            const double db =
+                cder(krho_, rho_form_, deg_of(drho_, k), xc, eR[k]);
             if (jac[3]) jac[3][i * nrho_ + k] += w * Fp * b;
             if (jac[4]) jac[4][i * nrho_ + k] += -w * Fp * cR[k] * db;
             if (jac[5])
@@ -1724,6 +1870,67 @@ private:
   BasisKind kphi_, krho_, kF_;
   std::vector<int> dphi_, drho_, dF_;  // per-atom degrees (empty = all 5)
   bool F_zero_ref_ = false;  // EMBF0 ZERO zero-referenced embedding block
+  RhoForm rho_form_ = RhoForm::Signed;  // RHOFORM of the density block
+};
+
+// A bump channel parametrised by its outer support edges e = mu + w/eta
+// instead of its centres mu (joint_refine's bump-support gate: e <= rcut is
+// a Ceres box, mu + w/eta <= rcut is not). Wraps a cost function whose
+// parameter block mu_block holds a channel's centres and eta_block its
+// widths, evaluating it at mu = e - w/eta; chain rule d/de = d/dmu,
+// d/deta|e = d/deta|mu + (w/eta^2) d/dmu. Owns the wrapped cost function.
+class EdgeParamCost : public ceres::CostFunction {
+public:
+  EdgeParamCost(ceres::CostFunction *inner, std::vector<EdgeParamMap> maps)
+      : inner_(inner), maps_(std::move(maps)) {
+    set_num_residuals(inner_->num_residuals());
+    *mutable_parameter_block_sizes() = inner_->parameter_block_sizes();
+  }
+  ~EdgeParamCost() override { delete inner_; }
+
+  bool Evaluate(double const *const *p, double *residuals,
+                double **jacobians) const override {
+    const auto &sizes = parameter_block_sizes();
+    std::vector<const double *> q(p, p + sizes.size());
+    std::vector<std::vector<double>> mu(maps_.size());
+    for (std::size_t m = 0; m < maps_.size(); ++m) {
+      const EdgeParamMap &g = maps_[m];
+      const double *e = p[g.mu_block], *eta = p[g.eta_block];
+      mu[m].resize(sizes[g.mu_block]);
+      for (int k = 0; k < sizes[g.mu_block]; ++k)
+        mu[m][k] = e[k] - g.w / eta[k];
+      q[g.mu_block] = mu[m].data();
+    }
+    if (!jacobians) return inner_->Evaluate(q.data(), residuals, nullptr);
+    // d/de = d/dmu, so the mu Jacobian goes straight into the edge block's;
+    // the eta chain needs it even when the edge block's is not requested.
+    const int R = num_residuals();
+    std::vector<double *> jac(jacobians, jacobians + sizes.size());
+    std::vector<std::vector<double>> jmu(maps_.size());
+    for (std::size_t m = 0; m < maps_.size(); ++m) {
+      const EdgeParamMap &g = maps_[m];
+      if (!jac[g.mu_block] && jac[g.eta_block]) {
+        jmu[m].resize(static_cast<std::size_t>(R) * sizes[g.mu_block]);
+        jac[g.mu_block] = jmu[m].data();
+      }
+    }
+    if (!inner_->Evaluate(q.data(), residuals, jac.data())) return false;
+    for (const EdgeParamMap &g : maps_) {
+      if (!jacobians[g.eta_block]) continue;
+      const int n = sizes[g.mu_block];
+      const double *eta = p[g.eta_block];
+      const double *jm = jac[g.mu_block];
+      double *je = jacobians[g.eta_block];
+      for (int i = 0; i < R; ++i)
+        for (int k = 0; k < n; ++k)
+          je[i * n + k] += jm[i * n + k] * (g.w / (eta[k] * eta[k]));
+    }
+    return true;
+  }
+
+private:
+  ceres::CostFunction *inner_;
+  std::vector<EdgeParamMap> maps_;
 };
 }  // namespace
 
@@ -1745,28 +1952,125 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
   if (phi.zero_ref || rho.zero_ref)
     throw std::runtime_error("joint_refine: the EMBF0 zero reference applies "
                              "to the embedding F only, not to phi/rho");
+  // Likewise the density form is a DENSITY property: the E-V cost evaluates
+  // phi and F in their raw bases.
+  if (phi.form != RhoForm::Signed || F.form != RhoForm::Signed)
+    throw std::runtime_error("joint_refine: RHOFORM applies to the density "
+                             "rho only, not to phi/F");
+  if (rho.form == RhoForm::Monotone && one_sided(rho.kind))
+    no_step_kind(rho.kind);
   if (term_out) *term_out = "NONE(skipped)";
+
+  // Feasible starting values for the bounds below: the density amplitudes
+  // of the positive forms at >= 0 (a caller's arbitrary rho.c begins at the
+  // bound) and every free radial bump width at or above the ladder's floor.
+  if (rhoform_is_positive(rho.form))
+    for (int k = 0; k < rho.n(); ++k)
+      if (rho.c[k] < 0.0) rho.c[k] = 0.0;
+  auto eta_floor = [](const BlipFit &f, const JointCurveData &d) {
+    if (one_sided(f.kind) || d.xs.size() < 2) return 0.0;
+    const auto [mn, mx] = std::minmax_element(d.xs.begin(), d.xs.end());
+    return 0.03 * std::max(1, f.n() - 1) / (*mx - *mn);
+  };
+  const double phi_eta_lb = eta_floor(phi, dphi);
+  const double rho_eta_lb = eta_floor(rho, drho);
+  for (auto [f, lb] : {std::pair<BlipFit *, double>{&phi, phi_eta_lb},
+                       std::pair<BlipFit *, double>{&rho, rho_eta_lb}})
+    if (lb > 0.0)
+      for (int k = 0; k < f->n(); ++k)
+        if (!f->is_pinned(k) && f->eta[k] < lb) f->eta[k] = lb;
+
+  // Bump-support gate on the radial channels, inside the solve: a bump
+  // channel with a hard cutoff is optimised in its outer support edges
+  // e = mu + w/eta (EdgeParamCost), bounded at the cutoff, so every free bump
+  // ends inside it and the caller's clamp_bump_support_params projection has
+  // nothing to move. A spilling start begins on the bound (its centre moves
+  // inward). Pinned bumps are held, knots and a fully pinned channel keep
+  // their centres, and algo NONE only lifts the centres (no solve).
+  struct Edge {
+    bool on = false;
+    double w = 0.0;
+    std::vector<double> e;
+  };
+  auto make_edge = [&](const BlipFit &f, double hard_rcut) {
+    Edge g;
+    if (algo == "NONE" || hard_rcut <= 0.0 || one_sided(f.kind)) return g;
+    int npin = 0;
+    for (int k = 0; k < f.n(); ++k)
+      if (f.is_pinned(k)) ++npin;
+    if (npin == f.n()) return g;
+    g.on = true;
+    g.w = bump_w(f.kind);
+    g.e.resize(f.n());
+    for (int k = 0; k < f.n(); ++k) {
+      g.e[k] = f.mu[k] + g.w / f.eta[k];
+      if (!f.is_pinned(k) && g.e[k] > hard_rcut) g.e[k] = hard_rcut;
+    }
+    return g;
+  };
+  Edge ephi = make_edge(phi, phi_hard_rcut);
+  Edge erho = make_edge(rho, rho_hard_rcut);
+  // the parameter block holding a channel's positions (edges or centres)
+  auto pos_block = [&](BlipFit &f) {
+    if (&f == &phi && ephi.on) return ephi.e.data();
+    if (&f == &rho && erho.on) return erho.e.data();
+    return f.mu.data();
+  };
+
   ceres::Problem prob;
-  auto add_curve = [&](BlipFit &f, const JointCurveData &d) {
+  auto add_curve = [&](BlipFit &f, const JointCurveData &d, const Edge *g) {
     // scale curve rows by curve_weight (fold into per-sample weights)
     std::vector<double> wts =
         d.wts.empty() ? std::vector<double>(d.xs.size(), curve_weight) : d.wts;
     if (!d.wts.empty())
       for (auto &w : wts) w *= curve_weight;
-    prob.AddResidualBlock(
+    ceres::CostFunction *cost =
         new CurveCost(d.xs, d.ys, std::move(wts), f.n(), f.kind, f.deg,
-                      f.zero_ref),  // EMBF0 ZERO: F only (d.ys = F_ref)
-        nullptr, f.c.data(), f.mu.data(), f.eta.data());
+                      f.zero_ref,  // EMBF0 ZERO: F only (d.ys = F_ref)
+                      f.form);     // RHOFORM: rho only
+    if (g && g->on) cost = new EdgeParamCost(cost, {{1, 2, g->w}});
+    prob.AddResidualBlock(cost, nullptr, f.c.data(), pos_block(f),
+                          f.eta.data());
   };
-  add_curve(phi, dphi);
-  add_curve(rho, drho);
-  add_curve(F, dF);
-  prob.AddResidualBlock(
-      new EnergyCost(dists, e_orig, e_weight, phi.n(), rho.n(), F.n(),
-                     phi.kind, rho.kind, F.kind, phi.deg, rho.deg, F.deg,
-                     F.zero_ref),
-      nullptr, phi.c.data(), phi.mu.data(), phi.eta.data(), rho.c.data(),
-      rho.mu.data(), rho.eta.data(), F.c.data(), F.mu.data(), F.eta.data());
+  add_curve(phi, dphi, &ephi);
+  add_curve(rho, drho, &erho);
+  add_curve(F, dF, nullptr);
+  {
+    ceres::CostFunction *cost =
+        new EnergyCost(dists, e_orig, e_weight, phi.n(), rho.n(), F.n(),
+                       phi.kind, rho.kind, F.kind, phi.deg, rho.deg, F.deg,
+                       F.zero_ref, rho.form);
+    std::vector<EdgeParamMap> maps;
+    if (ephi.on) maps.push_back({1, 2, ephi.w});
+    if (erho.on) maps.push_back({4, 5, erho.w});
+    if (!maps.empty()) cost = new EdgeParamCost(cost, std::move(maps));
+    prob.AddResidualBlock(cost, nullptr, phi.c.data(), pos_block(phi),
+                          phi.eta.data(), rho.c.data(), pos_block(rho),
+                          rho.eta.data(), F.c.data(), F.mu.data(),
+                          F.eta.data());
+  }
+
+  // RHOFORM NONNEG / MONOTONE: the density amplitudes stay >= 0 through the
+  // joint refinement (the ladder's non-negative solve does not bind Ceres).
+  if (rhoform_is_positive(rho.form))
+    for (int k = 0; k < rho.n(); ++k)
+      prob.SetParameterLowerBound(rho.c.data(), k, 0.0);
+  // The radial bump widths stay > 0 in every form. Unlike the ladder's
+  // refine, the joint solve has no width box, and a bump is even in eta, so
+  // it can walk a width through 0 to its mirror: harmless for the bump's
+  // values, but the bump-support clamp and BUMPGATE skip eta <= 0 (a
+  // written pot then reaches past its hard cutoff), and a MONOTONE step with
+  // eta < 0 RISES (DM_REAM refuses SGRIDMB <= 0). phi and rho keep the
+  // ladder's own width floor 0.03 eta0 (eta0 = max(1, n - 1)/span over the
+  // channel's samples); a start below it is lifted. Pinned widths are held
+  // constant (the starts were lifted above).
+  auto bound_bump_eta = [&](BlipFit &f, double lb) {
+    if (lb <= 0.0) return;
+    for (int k = 0; k < f.n(); ++k)
+      if (!f.is_pinned(k)) prob.SetParameterLowerBound(f.eta.data(), k, lb);
+  };
+  bound_bump_eta(phi, phi_eta_lb);
+  bound_bump_eta(rho, rho_eta_lb);
 
   // Knot families: eta is a gauge (hold it) and the knots must stay inside
   // their box THROUGH the joint refinement too — a knot pushed past the last
@@ -1787,11 +2091,10 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
   pin_one_sided(rho, drho);
   pin_one_sided(F, dF);
 
-  // Bump-support gate on the radial channels (FUSE previously had NO bump
-  // bounds at all): bound the centres at the hard cutoff. The joint
-  // mu + w/eta <= rcut constraint cannot be a Ceres box — the caller runs
-  // clamp_bump_support_params + a linear re-solve after the solve.
-  auto bound_bump_mu = [&](BlipFit &f, double hard_rcut) {
+  // Bump-support gate on the radial channels: the outer support edges of
+  // an edge-parametrised channel are bounded at the hard cutoff (see
+  // make_edge). Otherwise (algo NONE) the centres are bounded at it.
+  auto bound_bump = [&](BlipFit &f, const Edge &g, double hard_rcut) {
     if (hard_rcut <= 0.0 || one_sided(f.kind)) return;
     int npin = 0;
     for (int k = 0; k < f.n(); ++k)
@@ -1799,12 +2102,16 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
     if (npin == f.n()) return;  // whole block held constant below
     for (int k = 0; k < f.n(); ++k) {
       if (f.is_pinned(k)) continue;  // held constant by the manifold below
-      prob.SetParameterUpperBound(f.mu.data(), k, hard_rcut);
-      if (f.mu[k] > hard_rcut) f.mu[k] = hard_rcut;  // feasible start
+      if (g.on) {
+        prob.SetParameterUpperBound(pos_block(f), k, hard_rcut);
+      } else {
+        prob.SetParameterUpperBound(f.mu.data(), k, hard_rcut);
+        if (f.mu[k] > hard_rcut) f.mu[k] = hard_rcut;  // feasible start
+      }
     }
   };
-  bound_bump_mu(phi, phi_hard_rcut);
-  bound_bump_mu(rho, rho_hard_rcut);
+  bound_bump(phi, ephi, phi_hard_rcut);
+  bound_bump(rho, erho, rho_hard_rcut);
 
   // INIT-pinned positions: hold them constant with a SubsetManifold. (An equal
   // lower==upper bound makes Ceres' bounded trust region return FAILURE at
@@ -1816,9 +2123,9 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
       if (f.is_pinned(k)) pin.push_back(k);
     if (pin.empty()) return;
     if (static_cast<int>(pin.size()) == n)
-      prob.SetParameterBlockConstant(f.mu.data());
+      prob.SetParameterBlockConstant(pos_block(f));
     else
-      prob.SetManifold(f.mu.data(), new ceres::SubsetManifold(n, pin));
+      prob.SetManifold(pos_block(f), new ceres::SubsetManifold(n, pin));
     if (!one_sided(f.kind)) {  // bump families: hold the pinned widths too
       if (static_cast<int>(pin.size()) == n)
         prob.SetParameterBlockConstant(f.eta.data());
@@ -1842,6 +2149,13 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
     opt.logging_type = ceres::SILENT;
     ceres::Solver::Summary sum;
     ceres::Solve(opt, &prob, &sum);
+    // back to centres: mu = e - w/eta for every free bump of an
+    // edge-parametrised channel (a pinned bump keeps its exact centre)
+    for (auto [f, g] : {std::pair<BlipFit *, const Edge *>{&phi, &ephi},
+                        std::pair<BlipFit *, const Edge *>{&rho, &erho}})
+      if (g->on)
+        for (int k = 0; k < f->n(); ++k)
+          if (!f->is_pinned(k)) f->mu[k] = g->e[k] - g->w / f->eta[k];
     if (term_out)
       *term_out = std::string(ceres_term(sum.termination_type)) + "(" +
                   std::to_string(sum.iterations.size()) + "it, " +
@@ -1866,21 +2180,25 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
 }
 
 // ---- test hooks (see header) ----
+ceres::CostFunction *make_edge_param_cost(ceres::CostFunction *inner,
+                                          std::vector<EdgeParamMap> maps) {
+  return new EdgeParamCost(inner, std::move(maps));
+}
 ceres::CostFunction *make_curve_cost(std::vector<double> xs,
                                      std::vector<double> ys,
                                      std::vector<double> wts, int n,
                                      BasisKind kind, bool zero_ref,
-                                     std::vector<int> deg) {
+                                     std::vector<int> deg, RhoForm form) {
   return new CurveCost(std::move(xs), std::move(ys), std::move(wts), n, kind,
-                       std::move(deg), zero_ref);
+                       std::move(deg), zero_ref, form);
 }
 ceres::CostFunction *make_energy_cost(
     const std::vector<std::vector<double>> &dists,
     const std::vector<double> &e_orig, const std::vector<double> &e_weight,
     int nphi, int nrho, int nF, BasisKind kphi, BasisKind krho,
-    BasisKind kF, bool F_zero_ref, std::vector<int> dF) {
+    BasisKind kF, bool F_zero_ref, std::vector<int> dF, RhoForm rho_form) {
   return new EnergyCost(dists, e_orig, e_weight, nphi, nrho, nF, kphi, krho,
-                        kF, {}, {}, std::move(dF), F_zero_ref);
+                        kF, {}, {}, std::move(dF), F_zero_ref, rho_form);
 }
 
 }  // namespace refit

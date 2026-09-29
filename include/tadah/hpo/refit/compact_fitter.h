@@ -26,9 +26,18 @@
  *  against curve residuals PLUS the E-V residuals themselves (analytic
  *  d(E)/d(parameter) through the lattice sums).
  *
+ *  The density channel is fitted in the potential's declared RHOFORM
+ *  (CompactConfig::rho_form, BlipFit::form): SIGNED is the bump expansion
+ *  above with free coefficients; NONNEG the same with every coefficient >= 0
+ *  (non-negative least squares in the closed-form solve, lower bounds in the
+ *  Ceres refines); MONOTONE the integrated-bump STEP expansion
+ *  sum_k c_k S(eta_k (x - mu_k)) with every c_k >= 0 (bump families only).
+ *
  *  Built only when the HPO library is configured with Ceres
  *  (TADAH_USE_CERES); the engine falls back to dense mode otherwise.
  */
+
+#include <tadah/models/descriptors/dm/rhoform.h>
 
 #include <functional>
 #include <random>
@@ -94,6 +103,18 @@ struct BlipFit {
    *  (phi, rho, EMBF0 FREE), byte-identical to tadah 1.5.0. A fitter stamps
    *  it from CompactConfig::zero_ref on every fit it solves. */
   bool zero_ref = false;
+  /** RHOFORM of the density channel (never phi/F, which stay Signed):
+   *  - Signed (default): f(x) = sum_k c_k g(x_c), any sign; byte-identical
+   *    to tadah 1.5.1.
+   *  - NonNeg: the same expansion with every c_k >= 0.
+   *  - Monotone: the STEP kinds, f(x) = sum_k c_k S(x_c) with S the
+   *    integrated bump of the family (MODELS SB / SB5: 1 inside the inner
+   *    support edge, 1/2 at mu, 0 beyond the outer edge mu + w/eta), every
+   *    c_k >= 0, so f >= 0 and non-increasing. Bump kinds only.
+   *  (c, mu, eta) are the numbers the written DM_REAM potential and
+   *  EAMRefit::rho_fit evaluate in that form (AMPGRIDMB, CGRIDMB, SGRIDMB).
+   *  A fitter stamps it from CompactConfig::rho_form on every fit it solves. */
+  tadah::models::RhoForm form = tadah::models::RhoForm::Signed;
   double curve_rmse = 1e300;   ///< weighted value RMSE over the fit samples
                                ///< (pressure-relaxed weights; plain RMSE if none)
   double metric = 1e300;       ///< caller's energy metric (<=1 == within tol)
@@ -151,6 +172,15 @@ struct CompactConfig {
    *  solves or refines is stamped with it. false (default) = the raw basis,
    *  the phi/rho channels and EMBF0 FREE (textually the 1.5.0 code paths). */
   bool zero_ref = false;
+
+  /** RHOFORM of the channel (see BlipFit::form). The engine sets it for the
+   *  rho ladder / FUSE only, to the form the refit writes. NonNeg and
+   *  Monotone solve the coefficients by non-negative least squares
+   *  (models::nnls) and bound them at 0 in refine(); Monotone fits the step
+   *  kinds and refuses the one-sided knot families (the fitter ctor throws),
+   *  as does any non-Signed form combined with zero_ref. Signed (default) =
+   *  the 1.5.1 code paths, byte-identical. */
+  tadah::models::RhoForm rho_form = tadah::models::RhoForm::Signed;
 
   /** Objective the whole chain optimises toward (REFIT_OBJECTIVE). Energy =
    *  the caller's energy metric (default, regression-gated). Curve = the
@@ -261,12 +291,16 @@ public:
               const BlipFit *init = nullptr);
 
   /** Closed-form linear coefficients for fixed (mu, eta); returns curve rmse.
+   *  Stamps f.zero_ref and f.form from the config. RHOFORM NonNeg/Monotone:
+   *  non-negative least squares (models::nnls), every c_k >= 0.
    *  Exposed for tests. */
   double solve_coeffs(BlipFit &f) const;
 
   /** Ceres trust-region refine of (c, mu, eta) jointly, analytic Jacobian
    *  (LM, or DOGLEG when cfg.refine_algo == CERES_DOGLEG); returns final
-   *  curve rmse (also refreshes f.curve_rmse). Exposed for tests. */
+   *  curve rmse (also refreshes f.curve_rmse). RHOFORM NonNeg/Monotone:
+   *  every c_k is bounded below at 0 (a negative start is lifted to 0).
+   *  Exposed for tests. */
   double refine(BlipFit &f) const;
 
   /** Polish with the backend selected by cfg.refine_algo (CERES_* | the
@@ -275,9 +309,13 @@ public:
 
   /** VARPRO reduced objective (mean squared error over samples) and, when
    *  grad is non-null, its EXACT gradient — Golub-Pereyra: at the inner
-   *  least-squares optimum d(SSE)/dtheta = 2 r^T (dPhi/dtheta) c. Gradient
-   *  layout: (mu..., eta...) for Blip; (mu...) only for the one-sided knot
-   *  families (eta is a gauge, pinned). Exposed for tests. */
+   *  least-squares optimum d(SSE)/dtheta = 2 r^T (dPhi/dtheta) c. Under
+   *  RHOFORM NonNeg/Monotone the inner solve is non-negative least squares
+   *  and the same formula is taken on its passive set (the columns with
+   *  c_k > 0, which satisfy A_P^T r = 0); a column held at c_k = 0
+   *  contributes nothing. Gradient layout: (mu..., eta...) for Blip;
+   *  (mu...) only for the one-sided knot families (eta is a gauge, pinned).
+   *  Exposed for tests. */
   double reduced_mse(BlipFit &f, std::vector<double> *grad) const;
 
   /** Coalescence guard for the knot families: merge knots closer than
@@ -393,14 +431,23 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
                     // the EMBF0 ZERO reference by F.zero_ref — F's curve
                     // rows and the E-V embedding term are then zero-
                     // referenced, and dF.ys / e_orig must use F_ref.
-                    // phi/rho must not carry zero_ref: throws)
+                    // phi/rho must not carry zero_ref: throws. The density
+                    // form by rho.form — rho's curve rows and the E-V
+                    // density sums use the form's terms, and under
+                    // NonNeg/Monotone every rho.c is bounded below at 0.
+                    // phi/F must be Signed and Monotone rho a bump kind:
+                    // throws. Every free radial bump width is bounded at the
+                    // ladder's floor 0.03 eta0 in every form; a start below
+                    // a bound is lifted to it)
                     // term_out (optional): receives the Ceres termination tag
                     // (e.g. "CONVERGENCE(143it, cost 2.1e-09)")
                     // phi/rho_hard_rcut > 0: bump-support gate on the radial
-                    // channels — Ceres bounds bump centres at hard_rcut; the
-                    // caller runs clamp_bump_support_params + a linear
-                    // re-solve afterwards (Ceres boxes cannot express the
-                    // joint mu + w/eta <= rcut constraint).
+                    // bump channels — they are optimised in their outer
+                    // support edges e = mu + w/eta (EdgeParamMap) bounded at
+                    // hard_rcut, so every free bump ends inside the cutoff
+                    // and the caller's clamp_bump_support_params projection
+                    // moves nothing (it still guards pinned bumps and algo
+                    // NONE, where only the centres are bounded).
 
 /** Free-function core of CompactBlipFitter::clamp_bump_support (no fitter
  *  needed — used by the engine after joint_refine): project every bump of a
@@ -424,20 +471,36 @@ namespace tadah {
 namespace hpo {
 namespace refit {
 // zero_ref / F_zero_ref: the EMBF0 ZERO zero-referenced basis (curve cost /
-// the energy cost's F block); deg / dF: per-atom knot degrees (empty = all 5).
-ceres::CostFunction *make_curve_cost(std::vector<double> xs,
-                                     std::vector<double> ys,
-                                     std::vector<double> wts, int n,
-                                     BasisKind kind = BasisKind::Blip,
-                                     bool zero_ref = false,
-                                     std::vector<int> deg = {});
+// the energy cost's F block); deg / dF: per-atom knot degrees (empty = all 5);
+// form / rho_form: the RHOFORM of the curve / of the energy cost's rho block
+// (Monotone = the step kinds).
+ceres::CostFunction *make_curve_cost(
+    std::vector<double> xs, std::vector<double> ys, std::vector<double> wts,
+    int n, BasisKind kind = BasisKind::Blip, bool zero_ref = false,
+    std::vector<int> deg = {},
+    tadah::models::RhoForm form = tadah::models::RhoForm::Signed);
 ceres::CostFunction *make_energy_cost(
     const std::vector<std::vector<double>> &dists,
     const std::vector<double> &e_orig, const std::vector<double> &e_weight,
     int nphi, int nrho, int nF,
     BasisKind kphi = BasisKind::Blip, BasisKind krho = BasisKind::Blip,
     BasisKind kF = BasisKind::Blip, bool F_zero_ref = false,
-    std::vector<int> dF = {});
+    std::vector<int> dF = {},
+    tadah::models::RhoForm rho_form = tadah::models::RhoForm::Signed);
+/** A bump channel in joint_refine's edge parametrisation: the wrapped cost
+ *  function's parameter block mu_block holds the channel's outer support
+ *  edges e = mu + w/eta (bounded at the hard cutoff), eta_block its widths,
+ *  and the wrapper evaluates the cost at mu = e - w/eta (w: the bump
+ *  half-width, 2 Blip, 3 Blip5). */
+struct EdgeParamMap {
+  int mu_block;
+  int eta_block;
+  double w;
+};
+/** Test hook: joint_refine's edge-parametrisation wrapper around @p inner
+ *  (takes ownership of it). */
+ceres::CostFunction *make_edge_param_cost(ceres::CostFunction *inner,
+                                          std::vector<EdgeParamMap> maps);
 
 }  // namespace refit
 }  // namespace hpo

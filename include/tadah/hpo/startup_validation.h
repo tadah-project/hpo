@@ -15,7 +15,9 @@ namespace hpo {
  *  alone (no data): replicate the Trainer's descriptor init on a copy of
  *  the context and query the basis-function column count. Returns 0 when
  *  K cannot be derived (a WARNING is logged) — callers must then skip the
- *  rules that need K. */
+ *  rules that need K. A models::DensityFormError (an invalid DM_REAM
+ *  density form: RHOFORM, the density grids, the pair weights) is
+ *  rethrown: that is a configuration error, not an underivable K. */
 std::size_t derive_weight_count(const core::Context &train_ctx);
 
 /** Raw DM_REAM embedding value at zero density, F_raw(0) = sum_m w_m g_m(0),
@@ -41,7 +43,9 @@ struct RawEmbeddingF0 {
  *  Kind::NotApplicable unless the context has a DM_REAM block and a model
  *  linear in the descriptor (BF_Linear / Kern_Linear; with NORM the trained
  *  weights are raw-descriptor weights too) and
- *  the weight vector matches the descriptor size. Never throws. */
+ *  the weight vector matches the descriptor size. Throws only
+ *  models::DensityFormError (an invalid density form of the potential, a
+ *  configuration error); every other failure is Kind::NotApplicable. */
 RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
 
 /** Fail-fast validation of the HPO setup, run once after HPOTargets
@@ -51,6 +55,21 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
  *   - OPTIM WEIGHTS is rejected (silent no-op: LS overwrites weights);
  *   - OPTIM EMBF0 is rejected (a discrete property of the potential), and
  *     a stored EMBF0 of a DM_REAM configuration must be ZERO or FREE;
+ *   - OPTIM on structure data is rejected (RHOFORM, TYPE2B, TYPEMB,
+ *     RCTYPE2B, RCTYPEMB, KDEG2B, KDEGMB, KDEGEMB);
+ *   - a DM_REAM configuration must declare RHOFORM, and a bare DM_REAM
+ *     density must be valid for its form (models::DensityFormError): the
+ *     grids, the MONOTONE cutoff whitelist and, under NONNEG / MONOTONE,
+ *     WATOM > 0. Under NONNEG / MONOTONE with an OPTIM AMPGRIDMB, one
+ *     WARNING when an optimiser of the spec tree can evaluate outside the
+ *     box (ignores_bounds, PARAM fd_kernel ceres): such amplitudes are
+ *     projected onto [0, inf) by HPO_Host;
+ *   - RHOGATE / RHOBARGATE (rho_gates.h): a bare DM_REAM many-body term
+ *     (DM_mJoin refused), RHOGATE under RHOFORM SIGNED only, R_LO and the
+ *     first RHOBARGATE shell inside the smallest reachable RCUTMB; every
+ *     CONFIG/WARM seed evaluated as a candidate (SEED ERROR throws, SEED
+ *     WARN warns), and a failing -c density with an unarmed gate is an
+ *     error in either mode;
  *   - OPTIM FIXWEIGHT requires FIXINDEX in the training configuration;
  *   - FIXINDEX/FIXWEIGHT pairing: lone key, size mismatch, out-of-bounds
  *     index (via mlip::classify_weight_source);

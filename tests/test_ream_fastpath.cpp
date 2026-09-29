@@ -13,7 +13,14 @@
 //   - EAMFAST vs generic parity (relative 1e-9, as for pure 2B);
 //   - a potential without an EMBF0 line is evaluated as ZERO;
 //   - pair_coeff prints a LAMMPS WARNING (screen + log.lammps) for such a
-//     potential on every load, and nothing new for a declared one (BUG-08).
+//     potential on every load, and nothing new for a declared one (BUG-08);
+//   - pair_coeff states the density form (RHOFORM) on every load, and a
+//     potential without RHOFORM fails with the migration text in the
+//     pair_coeff ERROR (log.lammps and the exception the driver catches),
+//     also on pair_coeff * * EXTERN after a driver's failed load();
+//   - the density forms through both kernels (a Blip5 fixture, since
+//     MONOTONE refuses the knot family): NONNEG equals SIGNED exactly,
+//     MONOTONE differs and its EAMFAST run matches the generic one.
 
 #include "catch2/catch.hpp"
 
@@ -23,6 +30,7 @@
 #include <tadah/tadah.lammps/lammps_tadah.h>
 
 #include <force.h>
+#include <input.h>
 #include <pair.h>
 #include <pair_tadah.h>
 
@@ -57,19 +65,28 @@ const char* TA_REAM_POT_BODY =
     "RCTYPEMB          Cut_Dummy\n"
     "RCUT2B            5.581907420240000306\n"
     "RCUTMB            5.581907420240000306\n"
+    "RHOFORM           SIGNED\n"
     "STRESS            false\n"
     "TYPE2B            D2_Knot5   13   0   Ta   Ta\n"
     "TYPEMB            DM_REAM   2   8   0   8   15   0   0   0   Ta   Ta\n"
     "WATOM             1.000000000000000000\n"
     "WEIGHTS           -0.014641348094898586   -0.051535959944426050   -41.156393764756018072   3.808410339336090633   0.188032523218672837   -3058.915888454833293508   -3.511803288240705534   36.979581171997139677   -0.549561123341020474   -0.334973899538970332   2.145274625352853182   0.142458455160975661   35.268028553999059227   222.913408871893182095   223.783694639092914258   -168.806095957493624837   90.719128161416477951   5304.663560913277251530   78.628875194741951304   7.352619952010690518   29.817892005298819669   5136.174514981846186856   -298.436161734381755650   -23120.745531707521877252   -51.786960138537409648   -121.723616579840154373   -25539.485778202957590111   38206.820714959903853014\n";
 
-/* Unique per process (ctest runs cases as concurrent processes). */
-std::string write_pot(bool eamfast, const char* embf0) {
+/* Unique per process (ctest runs cases as concurrent processes). With
+ * rhoform false the body's RHOFORM line is left out. */
+std::string write_pot(bool eamfast, const char* embf0, bool rhoform = true) {
     const std::string path = "ream_fast_" + std::to_string(::getpid()) + "_"
         + (eamfast ? "on" : "off") + "_" + (embf0 ? embf0 : "absent")
-        + ".tadah";
+        + (rhoform ? "" : "_no_rhoform") + ".tadah";
+    std::string body = TA_REAM_POT_BODY;
+    if (!rhoform) {
+        const std::string line = "RHOFORM           SIGNED\n";
+        const auto at = body.find(line);
+        REQUIRE(at != std::string::npos);
+        body.erase(at, line.size());
+    }
     std::ofstream ofs(path);
-    ofs << TA_REAM_POT_BODY;
+    ofs << body;
     ofs << "EAMFAST           " << (eamfast ? "true" : "false") << "\n";
     if (embf0) ofs << "EMBF0             " << embf0 << "\n";
     return path;
@@ -195,9 +212,10 @@ int count_of(const std::string& hay, const std::string& needle) {
 }
 
 /* log.lammps of one isolated-atom run that loads @p pot_path by file name
- * (pair_coeff * * <file> Ta, the plain LAMMPS user path). */
+ * (pair_coeff * * <file> Ta, the plain LAMMPS user path); @p expect_ok:
+ * whether the run must succeed. */
 std::string log_of_file_load(LammpsRunner& runner, const std::string& pot_path,
-                             const std::string& tag) {
+                             const std::string& tag, bool expect_ok = true) {
     const std::string stem = "ream_notice_" + std::to_string(::getpid())
         + "_" + tag;
     const std::string script = stem + ".in", log = stem + ".log";
@@ -213,7 +231,7 @@ std::string log_of_file_load(LammpsRunner& runner, const std::string& pot_path,
         auto lmp = runner.create_instance(
             0, {"lmp", "-log", log, "-screen", "none"});
         REQUIRE(lmp != nullptr);
-        REQUIRE(runner.run_script(lmp, script));
+        REQUIRE(runner.run_script(lmp, script) == expect_ok);
     }   // LAMMPS destroyed: log.lammps flushed and closed
     const std::string text = slurp(log);
     std::remove(script.c_str());
@@ -329,5 +347,252 @@ TEST_CASE("pair_coeff warns when a DM_REAM potential has no EMBF0 line",
         REQUIRE(count_of(text, absent_banner) == 2);
         // the parsed context itself is untouched (LammpsTadah copies it)
         REQUIRE_FALSE(pot_ctx.has_stored("EMBF0"));
+    }
+}
+
+TEST_CASE("pair_coeff states RHOFORM, and a potential without it fails with "
+          "the migration text",
+          "[pair_tadah][ream][rhoform]") {
+    tadah::core::PeriodicTable::initialize();
+    LammpsRunner runner;
+    const std::string banner =
+        "Tadah! DM_REAM density form RHOFORM SIGNED (signed amplitudes, the "
+        "tadah <= 1.5.1 density)\n";
+    const std::string absent = "DM_REAM: RHOFORM is required: SIGNED";
+
+    SECTION("pair_coeff * * <file>: the RHOFORM line next to EMBF0") {
+        const std::string pot_path = write_pot(true, "ZERO");
+        const std::string text = log_of_file_load(runner, pot_path, "rhoform");
+        std::remove(pot_path.c_str());
+        REQUIRE(count_of(text, banner) == 1);
+        const auto e = text.find("Tadah! DM_REAM embedding reference EMBF0");
+        REQUIRE(e != std::string::npos);
+        REQUIRE(text.find(banner) > e);
+    }
+
+    SECTION("pair_coeff * * EXTERN: the RHOFORM line on every load") {
+        const std::string pot_path = write_pot(true, "ZERO");
+        tadah::core::Context pot_ctx;
+        REQUIRE_NOTHROW(pot_ctx =
+            tadah::core::CoreUserConfigParser().parse(pot_path));
+        std::remove(pot_path.c_str());
+        const std::string log = "ream_rhoform_" + std::to_string(::getpid())
+            + "_extern.log";
+        {
+            auto lmp = runner.create_instance(
+                0, {"lmp", "-log", log, "-screen", "none"});
+            REQUIRE(lmp != nullptr);
+            REQUIRE(runner.run_script(lmp, isolated_atom(), pot_ctx));
+            REQUIRE(runner.run_script(lmp, isolated_atom(), pot_ctx));
+        }
+        const std::string text = slurp(log);
+        std::remove(log.c_str());
+        REQUIRE(count_of(text, banner) == 2);
+    }
+
+    SECTION("pair_coeff * * <file> without RHOFORM: the reason is in the "
+            "ERROR") {
+        const std::string pot_path = write_pot(true, "ZERO", false);
+        // log.lammps: the pair_coeff ERROR carries the load failure's text
+        const std::string text =
+            log_of_file_load(runner, pot_path, "no_rhoform", false);
+        REQUIRE(count_of(text, "ERROR: pair_coeff: failed to load Tadah "
+                               "potential from '" + pot_path + "': " +
+                               absent) == 1);
+        REQUIRE(count_of(text, "add 'RHOFORM SIGNED' to use an existing "
+                               "potential unchanged") == 1);
+        REQUIRE(count_of(text, "Tadah! DM_REAM density form") == 0);
+
+        // the exception a library driver catches carries it as well
+        const std::string script = "ream_rhoform_" +
+            std::to_string(::getpid()) + "_no_rhoform.in";
+        {
+            std::ofstream ofs(script);
+            for (const auto& line : isolated_atom())
+                ofs << (line == "pair_coeff * * EXTERN Ta"
+                            ? "pair_coeff * * " + pot_path + " Ta"
+                            : line)
+                    << "\n";
+        }
+        std::string what;
+        {
+            auto lmp = runner.create_instance(
+                0, {"lmp", "-log", "none", "-screen", "none"});
+            REQUIRE(lmp != nullptr);
+            try {
+                lmp->input->file(script.c_str());
+            } catch (const std::exception& ex) {
+                what = ex.what();
+            }
+        }
+        std::remove(script.c_str());
+        std::remove(pot_path.c_str());
+        REQUIRE(what.find("pair_coeff: failed to load Tadah potential from '"
+                          + pot_path + "': " + absent) != std::string::npos);
+    }
+
+    SECTION("pair_coeff * * EXTERN after a failed driver load(): the reason "
+            "is in the ERROR") {
+        // The legacy per-line driver pattern: pair_style, then load() on the
+        // pair style, then pair_coeff * * EXTERN with nothing staged.
+        const std::string pot_path = write_pot(true, "ZERO", false);
+        tadah::core::Context pot_ctx;
+        REQUIRE_NOTHROW(pot_ctx =
+            tadah::core::CoreUserConfigParser().parse(pot_path));
+        std::remove(pot_path.c_str());
+        LAMMPS_NS::PairTadah::clear_staged_extern();
+        std::string what;
+        {
+            auto lmp = runner.create_instance(
+                0, {"lmp", "-log", "none", "-screen", "none"});
+            REQUIRE(lmp != nullptr);
+            for (const auto& line : isolated_atom()) {
+                if (line == "pair_coeff * * EXTERN Ta") break;
+                lmp->input->one(line.c_str());
+            }
+            auto* pt = dynamic_cast<LAMMPS_NS::PairTadah*>(lmp->force->pair);
+            REQUIRE(pt != nullptr);
+            REQUIRE_FALSE(pt->load(pot_ctx));
+            REQUIRE(pt->last_load_error().find(absent) != std::string::npos);
+            try {
+                lmp->input->one("pair_coeff * * EXTERN Ta");
+            } catch (const std::exception& ex) {
+                what = ex.what();
+            }
+        }
+        REQUIRE(what.find("pair_coeff * * EXTERN: no staged or pre-loaded "
+                          "Tadah potential (last load() failed: " + absent)
+                != std::string::npos);
+    }
+}
+
+namespace {
+
+/* Synthetic single-species Blip5 DM_REAM potential (Tadah.LAMMPS
+ * tests_data/pots/ta_ream_blip5.tadah): every density amplitude > 0, SGRIDMB
+ * > 0, WATOM 1 and Cut_Dummy, so it is valid under all three forms. */
+const char* TA_REAM_BLIP5_BODY =
+    "ATOM              Ta\n"
+    "BIAS              false\n"
+    "INIT2B            true\n"
+    "INITMB            true\n"
+    "MODEL             M_BLR   BF_Linear\n"
+    "NORM              false\n"
+    "TYPE2B            D2_Blip5   4   4   Ta   Ta\n"
+    "CGRID2B           2.5   3.2   3.9   4.5\n"
+    "SGRID2B           3.0   3.0   3.0   3.0\n"
+    "TYPEMB            DM_REAM   3   3   3   3   5   5   0   0   Ta   Ta\n"
+    "CGRIDMB           2.8   3.6   4.4\n"
+    "SGRIDMB           3.0   3.0   3.0\n"
+    "AMPGRIDMB         0.5   0.3   0.1\n"
+    "CEMBFUNC          -0.2   0.3   0.8   1.3   1.8\n"
+    "SEMBFUNC          2.0   2.0   2.0   2.0   2.0\n"
+    "RCTYPE2B          Cut_Dummy\n"
+    "RCTYPEMB          Cut_Dummy\n"
+    "RCUT2B            5.5\n"
+    "RCUTMB            5.5\n"
+    "WATOM             1.0\n"
+    "EMBF0             ZERO\n"
+    "WEIGHTS           0.8   -0.3   0.1   -0.05   -2.0   1.5   -0.7   0.4   0.2\n";
+
+/* 3x3x3 bcc Ta at 4.2 A (expanded, so the lattice density lies inside the
+ * embedding bumps and the energy depends on the density form), rattled. */
+std::vector<std::string> rattled_bcc_expanded() {
+    std::vector<std::string> s = {
+        "clear",
+        "units metal",
+        "boundary p p p",
+        "atom_style atomic",
+        "atom_modify map array",
+        "lattice bcc 4.2",
+        "region box block 0 3 0 3 0 3 units lattice",
+        "create_box 1 box",
+        "create_atoms 1 region box",
+        "mass 1 180.94788",
+        "pair_style tadah",
+        "pair_coeff * * EXTERN Ta",
+        "neighbor 2.0 nsq",
+        "displace_atoms all random 0.05 0.05 0.05 777 units box",
+        "variable e equal pe",
+        "variable fn equal fnorm",
+        "variable p equal press",
+        "run 0 post no",
+    };
+    return s;
+}
+
+struct FormRun {
+    bool fast = false;
+    double e = 0.0, fn = 0.0, p = 0.0;
+    std::vector<std::string> exact;   // e, fnorm, press (lossless)
+};
+
+FormRun run_form(LammpsRunner& runner, const char* form, bool eamfast) {
+    tadah::core::Context pot_ctx;
+    {
+        const std::string path = "ream_form_" + std::to_string(::getpid())
+            + "_" + form + (eamfast ? "_on" : "_off") + ".tadah";
+        {
+            std::ofstream ofs(path);
+            ofs << TA_REAM_BLIP5_BODY << "RHOFORM           " << form << "\n"
+                << "EAMFAST           " << (eamfast ? "true" : "false") << "\n";
+        }
+        REQUIRE_NOTHROW(pot_ctx =
+            tadah::core::CoreUserConfigParser().parse(path));
+        std::remove(path.c_str());
+    }
+    auto lmp = runner.create_instance(
+        0, {"lmp", "-log", "none", "-screen", "none"});
+    REQUIRE(lmp != nullptr);
+    REQUIRE(runner.run_script(lmp, rattled_bcc_expanded(), pot_ctx));
+    auto* pt = dynamic_cast<LAMMPS_NS::PairTadah*>(lmp->force->pair);
+    REQUIRE(pt != nullptr);
+    FormRun r;
+    r.fast = pt->lammps_tadah()->eam_fast;
+    for (const char* v : {"e", "fn", "p"})
+        r.exact.push_back(runner.get_variable(lmp, v));
+    r.e = std::stod(r.exact[0]);
+    r.fn = std::stod(r.exact[1]);
+    r.p = std::stod(r.exact[2]);
+    return r;
+}
+
+}  // namespace
+
+TEST_CASE("DM_REAM density forms through pair_style tadah: NONNEG equals "
+          "SIGNED, MONOTONE EAMFAST matches the generic kernel",
+          "[pair_tadah][ream][eamfast][rhoform]") {
+    tadah::core::PeriodicTable::initialize();
+    LammpsRunner runner;
+    const FormRun sf = run_form(runner, "SIGNED", true);
+    const FormRun sg = run_form(runner, "SIGNED", false);
+    const FormRun nf = run_form(runner, "NONNEG", true);
+    const FormRun ng = run_form(runner, "NONNEG", false);
+    const FormRun mf = run_form(runner, "MONOTONE", true);
+    const FormRun mg = run_form(runner, "MONOTONE", false);
+
+    REQUIRE(sf.fast);
+    REQUIRE(nf.fast);
+    REQUIRE(mf.fast);
+    REQUIRE_FALSE(sg.fast);
+    REQUIRE_FALSE(ng.fast);
+    REQUIRE_FALSE(mg.fast);
+
+    /* Every amplitude >= 0 and Cut_Dummy >= 0: the NONNEG density is the
+     * SIGNED one, and both kernels run the same code on it. */
+    REQUIRE(nf.exact == sf.exact);
+    REQUIRE(ng.exact == sg.exact);
+
+    /* MONOTONE is a different density (integrated-bump steps). */
+    REQUIRE(std::fabs(mg.e - sg.e) > 1e-3 * std::fabs(sg.e));
+
+    /* EAMFAST vs generic under every form (the pure-2B / EMBF0 tolerance for
+     * the energy; forces and pressure carry the table's interpolation). */
+    for (const auto* pr : {&sf, &mf}) {
+        const FormRun& f = *pr;
+        const FormRun& g = pr == &sf ? sg : mg;
+        REQUIRE(f.e == Approx(g.e).epsilon(1e-9));
+        REQUIRE(f.fn == Approx(g.fn).epsilon(1e-6));
+        REQUIRE(f.p == Approx(g.p).epsilon(1e-6));
     }
 }

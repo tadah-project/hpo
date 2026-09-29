@@ -112,6 +112,7 @@ tadah::core::Context make_ctx(const fs::path &hpo_cfg, const char *embf0) {
   c.add("CGRIDMB", "2.8 3.6 4.4");
   c.add("SGRIDMB", "3.0 3.0 3.0");
   c.add("AMPGRIDMB", "0.5 0.3 0.1");
+  c.add("RHOFORM", "SIGNED");
   c.add("CEMBFUNC", "-0.2 0.3 0.8 1.3 1.8");
   c.add("SEMBFUNC", "2.0 2.0 2.0 2.0 2.0");
   c.add("RCTYPE2B", "Cut_Dummy");

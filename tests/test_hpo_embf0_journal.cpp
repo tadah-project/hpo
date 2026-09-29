@@ -67,6 +67,7 @@ Context make_ream_ctx(const char* embf0) {
   c.add("TYPEMB", "Ta");
   c.add("TYPEMB", "Ta");
   c.add("RCUTMB", 4.8);
+  c.add("RHOFORM", "SIGNED");
   if (embf0) c.add("EMBF0", embf0);
   return c;
 }

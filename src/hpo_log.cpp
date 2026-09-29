@@ -3,6 +3,7 @@
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/rho_gates.h>
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/core/context.h>
 #include <tadah/core/blueprint_parser.h>
@@ -12,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -136,6 +138,9 @@ void HPOLog::reset_for_test()
     n_nan_ .store(0, std::memory_order_relaxed);
     n_nan_logged_.store(0, std::memory_order_relaxed);
     for (auto& b : n_fail_band_) b.store(0, std::memory_order_relaxed);
+    for (auto& g : n_gate_) g.store(0, std::memory_order_relaxed);
+    for (auto& g : n_gate_note_) g.store(0, std::memory_order_relaxed);
+    n_form_proj_.store(0, std::memory_order_relaxed);
     n_io_retry_durable_.store(0, std::memory_order_relaxed);
     n_io_retry_writer_ .store(0, std::memory_order_relaxed);
     n_rows_lost_       .store(0, std::memory_order_relaxed);
@@ -163,7 +168,22 @@ void HPOLog::reset_for_test()
     pin_unit_   = 0;
     next_milestone_       = 100;
     last_milestone_evals_ = 0;
+    /* timing and fan-out statistics (PERFORMANCE, SUMMARY) */
+    sum_ms_   = 0.0;
+    min_ms_   = std::numeric_limits<double>::max();
+    max_ms_   = 0.0;
+    min_eval_ = 0;
+    max_eval_ = 0;
+    fo_busy_win_       = 0.0;
+    fo_smin_win_       = std::numeric_limits<double>::max();
+    fo_smax_win_       = 0.0;
+    fo_scount_win_     = 0;
+    fo_slowest_win_.clear();
+    fo_busy_tot_       = 0.0;
+    fo_evals_          = 0;
+    fanout_pool_width_ = 0;
     reset_embf0_locked();
+    reset_density_locked();
     clear_eval_context();
 }
 
@@ -179,6 +199,16 @@ void HPOLog::reset_embf0_locked()
     embf0_best_loss_  = std::numeric_limits<double>::max();
 }
 
+void HPOLog::reset_density_locked()
+{
+    density_armed_     = false;
+    density_rhobar_    = false;
+    density_best_eval_ = 0;
+    density_best_loss_ = std::numeric_limits<double>::max();
+    density_best_rho_.clear();
+    density_best_rhobar_.clear();
+}
+
 void HPOLog::open(const std::string& path,
                   const std::string& version,
                   const std::string& cwd,
@@ -188,6 +218,7 @@ void HPOLog::open(const std::string& path,
     t_start_ = std::chrono::system_clock::now();
     start_tally_ = StartTally{};
     reset_embf0_locked();
+    reset_density_locked();
 
     f_.open(path, std::ios::out | std::ios::trunc);
     if (!f_.is_open()) {
@@ -752,8 +783,13 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
                 if (s.size() < w) s.resize(w, ' ');
                 return s;
             };
+            /* origin column: 11 wide, wider only when a longer origin name
+             * ("AUTO FRAC>=0") occurs */
+            std::size_t ow = 11;
+            for (std::size_t i = 0; i < n; ++i)
+                ow = std::max(ow, std::strlen(box_origin_name(ss.at(i).origin)) + 1);
             f_ << "   " << pad("#", 4) << pad("parameter", 24) << pad("scale", 13)
-               << pad("origin", 11) << pad("real bounds", 30)
+               << pad("origin", ow) << pad("real bounds", 30)
                << pad("internal bounds", 26) << pad("start (real)", 14)
                << "u0\n";
             for (std::size_t i = 0; i < n; ++i) {
@@ -761,7 +797,7 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
                 std::string row = "   " + pad(std::to_string(i + 1), 4)
                                 + pad(pin_labels_[i], 24)
                                 + pad(ss.describe_dim(i), 13)
-                                + pad(box_origin_name(d.origin), 11)
+                                + pad(box_origin_name(d.origin), ow)
                                 + pad("[" + fmt_double(d.lo, 3) + ", " + fmt_double(d.hi, 3) + "]", 30)
                                 + pad("[" + fmt_double(sp.low[i], 3) + ", " + fmt_double(sp.high[i], 3) + "]", 26);
                 if (start && i < start->size()) {
@@ -1114,9 +1150,25 @@ void HPOLog::record_fail_band(int band)
         n_fail_band_[band].fetch_add(1, std::memory_order_relaxed);
 }
 
+void HPOLog::record_gate_reject(GateKind kind)
+{
+    n_gate_[static_cast<std::size_t>(kind)].fetch_add(1, std::memory_order_relaxed);
+}
+
 void HPOLog::record_bump_gate_reject()
 {
-    n_bump_gate_.fetch_add(1, std::memory_order_relaxed);
+    record_gate_reject(GateKind::Bump);
+}
+
+std::size_t HPOLog::next_gate_note(GateKind kind)
+{
+    return n_gate_note_[static_cast<std::size_t>(kind)].fetch_add(
+               1, std::memory_order_relaxed) + 1;
+}
+
+std::size_t HPOLog::record_form_projection()
+{
+    return n_form_proj_.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
 void HPOLog::record_io_retry_durable(std::size_t n)
@@ -1263,9 +1315,14 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, bool was_nan)
                     msg << "   failed=" << ft << " (" << std::fixed
                         << std::setprecision(1) << fpct << "%; A=" << fa
                         << " B=" << fb << " C=" << fc << " D=" << fd << ")";
-                    const std::size_t bg =
-                        n_bump_gate_.load(std::memory_order_relaxed);
-                    if (bg > 0) msg << " bumpgate=" << bg;
+                    /* per-gate subsets of D (pre-training rejects) */
+                    static const char* const gate_tag[kGateKinds] = {
+                        " bumpgate=", " rhogate=", " rhobargate="};
+                    for (std::size_t g = 0; g < kGateKinds; ++g) {
+                        const std::size_t n =
+                            n_gate_[g].load(std::memory_order_relaxed);
+                        if (n > 0) msg << gate_tag[g] << n;
+                    }
                 }
             }
             /* The milestone SUMMARY is one logical block: the head line
@@ -1482,26 +1539,38 @@ void HPOLog::write_bound_occupancy_locked(const char* /*indent_tag*/, bool final
         << std::left << std::setw(24) << "dim" << std::setw(6) << "side"
         << std::setw(14) << "value" << std::setw(14) << "bound"
         << std::setw(11) << "gap/width" << "since eval\n";
+    bool any_hard = false, any_soft = false;
     for (const auto& m : occ_marks_) {
         const std::string lbl = m.dim < pin_labels_.size() ? pin_labels_[m.dim]
                                                            : logidx::param_label(m.dim);
+        if (m.hard) any_hard = true;
+        else        any_soft = true;
         tbl << (final_table ? "    " : "  ")
-            << std::left << std::setw(24) << lbl << std::setw(6) << (m.hi ? "HI" : "LO")
+            << std::left << std::setw(24) << lbl
+            << std::setw(6) << (m.hi ? "HI" : m.hard ? "LO*" : "LO")
             << std::setw(14) << fmt_double(m.real_value, 4)
             << std::setw(14) << fmt_double(m.real_bound, 4)
             << std::setw(11) << fmt_double(m.gap_u, 2)
             << m.since_eval << "\n";
     }
+    /* A hard lower bound (BoundOccupancy::set_hard_lo) cannot be widened:
+     * a best there is an admissible optimum, so it gets no remedy. */
+    if (any_hard)
+        tbl << (final_table ? "    " : "  ")
+            << "(* a hard lower bound: RHOFORM NONNEG/MONOTONE require AMPGRIDMB >= 0,"
+               " so an amplitude at 0 is an admissible optimum, not bound pressure)\n";
     std::string text = tbl.str();
     if (!text.empty() && text.back() == '\n') text.pop_back();
     if (final_table) {
-        f_ << text << "\n"
-           << "    (advisory: a best that rides a bound suggests bound pressure -- widen that side\n"
-              "     and rerun with INIT METHOD WARM; the run never changes OPTIM bounds by itself)\n";
+        f_ << text << "\n";
+        if (any_soft)
+            f_ << "    (advisory: a best that rides a bound suggests bound pressure -- widen that side\n"
+                  "     and rerun with INIT METHOD WARM; the run never changes OPTIM bounds by itself)\n";
     } else {
         event_locked("INFO", text);
-        event_locked("HINT", "a best that keeps riding a bound suggests bound pressure -- widen that "
-                             "side (where the physics permits) and rerun with INIT METHOD WARM");
+        if (any_soft)
+            event_locked("HINT", "a best that keeps riding a bound suggests bound pressure -- widen that "
+                                 "side (where the physics permits) and rerun with INIT METHOD WARM");
     }
     f_.flush();
 }
@@ -1604,6 +1673,43 @@ void HPOLog::record_embf0_best(std::size_t eval_num, double loss, double f0)
     embf0_best_loss_ = loss;
     embf0_best_eval_ = eval_num;
     embf0_best_      = f0;
+}
+
+void HPOLog::write_density_report(
+    const std::vector<detail::DensityReportEntry>& entries, bool rhobar)
+{
+    try {
+        if (!entries.empty()) {
+            const detail::DensitySummary& c = entries.front().summary;
+            kv("Density form", c.derivable ? detail::describe_density_form(c.form)
+                                           : "not derivable: " + c.reason);
+        }
+        for (const auto& e : entries) {
+            kv("Density rho(r), " + e.label,
+               detail::format_density_rho(e.summary) + e.note);
+            if (rhobar)
+                kv("Density rhobar, " + e.label,
+                   detail::format_density_rhobar(e.summary));
+        }
+        std::lock_guard<std::mutex> lg(mtx_);
+        density_armed_  = true;
+        density_rhobar_ = rhobar;
+    } catch (...) { /* the report must never fail a run */ }
+}
+
+void HPOLog::record_density_best(std::size_t eval_num, double loss,
+                                 const detail::DensitySummary& summary)
+{
+    try {
+        std::string rho = detail::format_density_rho(summary);
+        std::string rb = detail::format_density_rhobar(summary);
+        std::lock_guard<std::mutex> lg(mtx_);
+        if (!(loss < density_best_loss_)) return;   /* log_new_best's guard */
+        density_best_loss_   = loss;
+        density_best_eval_   = eval_num;
+        density_best_rho_    = std::move(rho);
+        density_best_rhobar_ = std::move(rb);
+    } catch (...) { /* diagnostic only */ }
 }
 
 /* -------------------------------------------------------------------------
@@ -1827,10 +1933,20 @@ void HPOLog::finish(const std::string& status_str)
                << "  B=" << fb << " (script failed)"
                << "  C=" << fc << " (did not complete)"
                << "  D=" << fd << " (pot build / gated)\n";
-            const std::size_t bg = n_bump_gate_.load(std::memory_order_relaxed);
-            if (bg > 0)
-                f_ << "    of which bump-support gate rejects: " << bg
-                   << " (c + w/eta past RCUT, rejected before training)\n";
+            static const char* const gate_line[kGateKinds] = {
+                "    of which bump-support gate rejects: ",
+                "    of which rho-sign gate rejects: ",
+                "    of which lattice-rhobar gate rejects: "};
+            static const char* const gate_why[kGateKinds] = {
+                " (c + w/eta past RCUT, rejected before training)\n",
+                " (rho_min < -tol*rho_max on the RHOGATE window, rejected "
+                "before training)\n",
+                " (rhobar(a) not strictly decreasing, rejected before "
+                "training)\n"};
+            for (std::size_t g = 0; g < kGateKinds; ++g) {
+                const std::size_t n = n_gate_[g].load(std::memory_order_relaxed);
+                if (n > 0) f_ << gate_line[g] << n << gate_why[g];
+            }
             const double fpct = total > 0
                 ? 100.0 * static_cast<double>(ft) / static_cast<double>(total)
                 : 0.0;
@@ -1852,6 +1968,17 @@ void HPOLog::finish(const std::string& status_str)
                 f_ << "  [info] No graded failures were recorded; no evaluation "
                       "produced a usable loss.\n";
         }
+    }
+
+    /* RHOFORM NONNEG / MONOTONE: evaluations whose AMPGRIDMB coordinates
+     * were projected onto [0, inf). Printed only when one was. */
+    {
+        const std::size_t np = n_form_proj_.load(std::memory_order_relaxed);
+        if (np > 0)
+            f_ << "  " << std::left << std::setw(KW) << "Positive-form projection"
+               << ": " << np << " evaluation(s) with an AMPGRIDMB amplitude < 0,\n"
+                  "    evaluated and recorded at 0 (finite-difference probes at a zero\n"
+                  "    amplitude or an optimiser that ignores bounds)\n";
     }
 
     /* Transient I/O. Printed only when something happened, so the
@@ -2000,6 +2127,21 @@ void HPOLog::finish(const std::string& status_str)
         }
         f_ << "  " << std::left << std::setw(KW) << "Embedding F(0)"
            << ": " << s.str() << "\n";
+    }
+    /* DM_REAM density of the best (write_density_report armed it). The
+     * recorded summary must be the reported best's: a resumed run's
+     * checkpointed best has none in this session. */
+    if (density_armed_) {
+        const bool recorded = density_best_eval_ > 0 && have_best &&
+                              density_best_eval_ == cur_best_eval_;
+        const std::string none = have_best
+            ? "n/a (the best predates this session)" : "n/a (no best)";
+        const std::string at = "best (eval " + std::to_string(density_best_eval_) + ") ";
+        f_ << "  " << std::left << std::setw(KW) << "Density rho(r)"
+           << ": " << (recorded ? at + density_best_rho_ : none) << "\n";
+        if (density_rhobar_)
+            f_ << "  " << std::left << std::setw(KW) << "Density rhobar"
+               << ": " << (recorded ? at + density_best_rhobar_ : none) << "\n";
     }
     f_ << "  " << std::left << std::setw(KW) << "Best potential saved"
        << ": ";
