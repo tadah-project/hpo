@@ -21,6 +21,7 @@
 #include "rhoform_test_support.h"
 
 #include <tadah/core/context.h>
+#include <tadah/core/number_format.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/bump_support_gate.h>
 #include <tadah/hpo/hpo.h>
@@ -757,8 +758,7 @@ TEST_CASE("Density gates: combined grading and the reject text",
   auto verdict = [&](double a2, double a3) {
     return dt::check_density_gates(g, dt::seed_context(ctx, trg, {a2, a3}, g));
   };
-  const std::string bump = "bump-support gate reject (c + w/eta past the "
-                           "cutoff, violation=0.800000, graded band D)";
+  const std::string bump = dt::bump_gate_reject_what(0.8);
 
   SECTION("all pass: no reject") {
     CHECK_FALSE(dt::combine_gate_verdicts(0.0, "", g, verdict(0.3, 0.1)));
@@ -1152,12 +1152,12 @@ TEST_CASE("HPO_Host RHOGATE: graded reject before training, silent pass",
       p(0) = 0.1; p(1) = 5.2; p(2) = 2.0;
       const double v_bump = dt::bump_gate_violation(bump_tbl, p);
       REQUIRE(v_bump > 0.0);
-      /* bump only (rho >= 0): tadah 1.5.0's loss and line, with or without
-       * RHOGATE */
+      /* bump only (rho >= 0): tadah 1.5.0's loss, with or without RHOGATE;
+       * the line prints the violation losslessly */
       CHECK(host(p) == graded(v_bump));
       const std::string line1 =
           "eval 1: bump-support gate reject (c + w/eta past the cutoff, "
-          "violation=" + std::to_string(v_bump) +
+          "violation=" + tadah::core::format_roundtrip(v_bump) +
           ", graded band D); total rejects=1\n";
       p(0) = -0.2;   /* now RHOGATE fails too */
       const double l2 = host(p);

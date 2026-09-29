@@ -233,3 +233,23 @@ TEST_CASE("BUMPGATE: a candidate width <= 0 is a violation, not a skip",
                       Catch::Contains("SGRID2B (2) = -1"));
   }
 }
+
+TEST_CASE("BUMPGATE's reject text prints the violation losslessly",
+          "[HPO][bumpgate][bumpgate_text]") {
+  // std::to_string printed six decimals: a violation below 5e-7 read
+  // "violation=0.000000" and every value lost its digits. The text now
+  // carries the shortest round-trip form (core::format_roundtrip), as
+  // hpo_optim_resolved.hpo does.
+  CHECK(bg::bump_gate_reject_what(2.5e-7) ==
+        "bump-support gate reject (c + w/eta past the cutoff, "
+        "violation=2.5e-07, graded band D)");
+  CHECK(bg::bump_gate_reject_what(0.8) ==
+        "bump-support gate reject (c + w/eta past the cutoff, "
+        "violation=0.8, graded band D)");
+  const double third = 1.0 / 3.0;
+  const std::string t = bg::bump_gate_reject_what(third);
+  const auto at = t.find("violation=") + 10;
+  CHECK(std::stod(t.substr(at, t.find(',', at) - at)) == third);
+  CHECK(bg::bump_gate_reject_what(std::numeric_limits<double>::infinity())
+            .find("violation=inf") != std::string::npos);
+}
