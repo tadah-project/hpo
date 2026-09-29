@@ -9,12 +9,12 @@
   },
   "components": {
     "L(ERMSE)[1]": {
-      "value": 0.002588025,
+      "value": 0.002588027,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(ERMSE)[avg]": {
-      "value": 0.002588025,
+      "value": 0.002588027,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
@@ -26,15 +26,15 @@
   },
   "hyperparameters": {
     "RCUT2B": {
-      "value": 6.000002,
+      "value": 6.0,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     }
   },
   "evaluations": {
-    "value": 20,
+    "value": 18,
     "tol": 0,
-    "note": "Lowered 23 -> 20 with AFTER_STAGNATION 4 -> 3 when common/lammps/Ecoh.in switched to exact captures (HPO reads Ecoh and the relaxed lattice constant back without rounding). With a 4-eval window, the warm-started re-evaluation of the incumbent RCUT2B = 6.000002 at eval 15 came out 4.5e-13 (relative) lower, counted as a new best, reset the window, and BFGS ended COMPLETED at eval 16 without a single restart. A 3-eval window fires at eval 14, before that re-evaluation, so both restarts run: 14 + 3 + 3 = 20. Best loss, components and RCUT2B are unchanged (1.003482e-01 at eval 11). RESTART RANDOM draws its restart points from std::random_device, so evals 15-20 differ from run to run; nothing pinned here depends on them: the best comes from the deterministic first launch (evals 1-14), and every restart stops after exactly 3 evals because no start in [4, 6] beats the incumbent at the upper bound (24 repeated runs: identical count, status, best loss and parameters)."
+    "note": "18 since the in-house finite-difference stencil stays inside the OPTIM box (one-sided within a step of a bound; owner decision 2026-09-29, C4). BFGS's line search reaches the upper bound RCUT2B = 6 at eval 9, the best (1.003482e-01), and the gradient there evaluates 5.999998 and 5.999996 (evals 11-12). The central stencil evaluated 6.000002 at eval 11, outside the box [4, 6]; the ERMSE keeps falling past the bound, so that point came out 2e-9 lower, became the best (RCUT2B = 6.000002) and reset the stagnation window: 14 + 3 + 3 = 20. The window now fires at eval 12: 12 + 3 + 3 = 18. Built without the one-sided stencil, the run still gives 20 and the previous fingerprint. Earlier: lowered 23 -> 20 with AFTER_STAGNATION 4 -> 3 when common/lammps/Ecoh.in switched to exact captures (with a 4-eval window the warm-started re-evaluation of the incumbent came out 4.5e-13 (relative) lower, reset the window, and BFGS ended COMPLETED without a restart). RESTART RANDOM draws its restart points from std::random_device, so evals 13-18 differ from run to run; nothing pinned here depends on them: the best comes from the deterministic first launch (evals 1-12), and every restart stops after exactly 3 evals because no start in [4, 6] beats the incumbent at the upper bound (24 repeated runs: identical count, status, best loss and parameters)."
   },
   "best_ermse_meV_per_atom": 5.09,
   "status_accepted": [
@@ -42,7 +42,7 @@
   ],
   "status_note": "Was COMPLETED: when RESTART used all its restarts and the last launch stagnated again, the journal fell back to the generic status. RestartPolicy now records why the run stopped; the window in the status is AFTER_STAGNATION.",
   "nan_clampings_max": 0,
-  "walltime_hint": "0.5s",
+  "walltime_hint": "0.3s",
   "fast": true,
   "tolerance_rationale": "RESTART RANDOM seeds each restart from std::random_device, so the restart evaluations differ from run to run. Only values that do not depend on them are pinned: the best comes from the deterministic first launch, and each restart stops after exactly AFTER_STAGNATION evaluations because no start in the box beats the incumbent (see evaluations.note)."
 }
