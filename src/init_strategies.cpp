@@ -486,7 +486,7 @@ private:
 
         std::string density_dims;   // the OPTIM'd density keys, if any
         for (const auto& kv : ctx.targets.optimap) {
-            const std::string key = core::to_upper(kv.first);
+            const std::string& key = kv.first;   // upper-case (OPTIM)
             if (key != "AMPGRIDMB" && key != "CGRIDMB" && key != "SGRIDMB")
                 continue;
             const auto& opt = kv.second.opt;

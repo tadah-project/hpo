@@ -168,12 +168,12 @@ RhoBarGateResult rhobar_verdict(RhoBarGateResult r, const models::RhoBarScan &rb
   return r;
 }
 
-/* The OPTIM entry of @p key (case-insensitive), or nullptr. */
+/* The OPTIM entry of @p key (OPTIM keys are upper-cased at parse), or
+ * nullptr. */
 using Opti = decltype(HPOTargets::optimap)::mapped_type;
 const Opti *find_optim(const HPOTargets &trg, const std::string &key) {
-  for (const auto &kv : trg.optimap)
-    if (core::to_upper(kv.first) == key) return &kv.second;
-  return nullptr;
+  const auto it = trg.optimap.find(key);
+  return it == trg.optimap.end() ? nullptr : &it->second;
 }
 
 /* What keeps a density pair weight from being finite and > 0 on EVERY
@@ -185,12 +185,12 @@ std::string fixed_weight_problem(const core::Context &train_ctx,
                                  const HPOTargets &trg, const DensityGates &g) {
   std::vector<double> p = config_point_from_targets(trg);
   for (const ParamRef &r : make_param_ref_table(trg))
-    if (core::to_upper(r.theta_name) == "WATOM")
+    if (r.theta_name == "WATOM")
       p[r.flat_idx] = trg.optimap.at(r.theta_name).highbound[r.arg_pos - 1];
   return weight_problem(seed_context(train_ctx, trg, p, g));
 }
 
-/* The two per-gate arming facts, from the OPTIM keys (case-insensitive). */
+/* The two per-gate arming facts, from the OPTIM keys (upper-case). */
 struct Arming {
   std::vector<std::string> density_dims;   // AMPGRIDMB, CGRIDMB, SGRIDMB, RCUTMB
   bool watom = false;
@@ -199,7 +199,7 @@ Arming arming(const HPOTargets &trg) {
   Arming a;
   const std::vector<std::string> &labels = trg.spec.parameter_labels;
   for (const ParamRef &r : make_param_ref_table(trg)) {
-    const std::string key = core::to_upper(r.theta_name);
+    const std::string &key = r.theta_name;
     if (key == "AMPGRIDMB" || key == "CGRIDMB" || key == "SGRIDMB" ||
         key == "RCUTMB")
       a.density_dims.push_back(r.flat_idx < labels.size()

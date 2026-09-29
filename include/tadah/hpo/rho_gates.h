@@ -52,7 +52,7 @@ bool context_is_bare_ream(const core::Context &ctx);
  *  max = max_n(opt_n ? highbound_n : c_n) (an OPTIM RCUTMB is overridden).
  *  A bump channel's is RCUTMB, the range derive_binding_rcut gives the
  *  BUMPGATE: the max over the per-pair list with each OPTIM'd entry at its
- *  bounds. OPTIM keys are compared case-insensitively. */
+ *  bounds. An OPTIM key counts in any case (HPOTargets upper-cases it). */
 struct ReachableRcut {
   double min_reachable = 0.0;
   double max_reachable = 0.0;
@@ -105,7 +105,7 @@ struct RhoBarGateResult {
 
 /** \brief RHOGATE of a run: settings, arming and the cached verdict.
  *
- *  Armed per candidate iff an OPTIM key (case-insensitive) is AMPGRIDMB,
+ *  Armed per candidate iff an OPTIM key (in any case) is AMPGRIDMB,
  *  CGRIDMB, SGRIDMB or RCUTMB -- the dimensions that change rho_raw or the
  *  window. An OPTIM'd WATOM alone arms only the per-candidate pair-weight
  *  check (the verdict is scale-invariant). Unarmed, every candidate has the

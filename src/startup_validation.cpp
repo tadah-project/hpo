@@ -171,13 +171,11 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         "FIXINDEX + FIXWEIGHT in the training configuration and use "
         "`OPTIM FIXWEIGHT (<weight-index>) <low> <high>`.");
   }
-  for (const auto &kv : trg.optimap) {
-    if (core::to_upper(kv.first) == "EMBF0") {
-      throw std::runtime_error(
-          "OPTIM EMBF0 is not a valid search target: EMBF0 (ZERO|FREE) "
-          "selects the DM_REAM embedding reference, a discrete property of "
-          "the potential; set it in the -c potential/configuration.");
-    }
+  if (trg.optimap.count("EMBF0")) {
+    throw std::runtime_error(
+        "OPTIM EMBF0 is not a valid search target: EMBF0 (ZERO|FREE) "
+        "selects the DM_REAM embedding reference, a discrete property of "
+        "the potential; set it in the -c potential/configuration.");
   }
   for (const auto &kv : trg.optimap) {
     const std::string e = HPOTargets::optim_structure_key_error(kv.first);

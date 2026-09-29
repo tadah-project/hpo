@@ -195,6 +195,7 @@ std::vector<std::string> HPOTargets::parse_optim_line(std::istringstream& iss) {
 void HPOTargets::Opti::resize(size_t s) {
   if (opt.size() >= s) return;
   opt.resize(s, false);
+  line.resize(s, 0);
   config.resize(s);
   scale.resize(s);
   origin.resize(s, BoxOrigin::Explicit);
@@ -1268,7 +1269,7 @@ void HPOTargets::read(const std::string& fn)
             }
 
             /* optimisation variables --------------------------------*/
-            else if (key=="OPTIM")   { process_optim_config(iss); }
+            else if (key=="OPTIM")   { process_optim_config(iss, nline); }
             else if (key=="OPTIM_SCALE") {
                 std::string v = single_value(iss, key);
                 for (auto& ch : v) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
@@ -1750,11 +1751,18 @@ void HPOTargets::bind_space_recursive() {
   bind(spec.prestage.get());
 }
 
-void HPOTargets::process_optim_config(std::istringstream& iss) {
+void HPOTargets::process_optim_config(std::istringstream& iss,
+                                      std::size_t nline) {
   std::string k;
   if (!(iss >> k)) {
     throw std::runtime_error("Failed to read key from input.");
   }
+  /* A configuration key, and configuration keys are case-insensitive
+   * (core::Context stores them upper-case): the OPTIM key is upper-cased
+   * here, so optimap, the labels and every rule and lookup keyed on it
+   * (below, startup_validation, the gates, the neighbour-list cutoff) see
+   * one spelling whatever the case the line used. */
+  k = core::to_upper(k);
 
   if (k == "WEIGHTS") {
     throw std::runtime_error(
@@ -1766,7 +1774,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
   }
   /* Before context.size(k) below, which would materialise the blueprint
    * default EMBF0 ZERO into the run context. */
-  if (core::to_upper(k) == "EMBF0") {
+  if (k == "EMBF0") {
     throw std::runtime_error(
       "OPTIM EMBF0 is not a valid search target: EMBF0 (ZERO|FREE) selects "
       "the DM_REAM embedding reference, a discrete property of the "
@@ -1793,7 +1801,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
       " token(s))");
   }
 
-  std::vector<size_t> user_indices;
+  std::vector<size_t> user_indices;   // FIXWEIGHT: mapped to slots below
   try {
     user_indices = core::parse_indices_strict(tokens.back());
     if (std::find(user_indices.begin(), user_indices.end(), 0) != user_indices.end())
@@ -1927,6 +1935,8 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
     high = parse_num(tokens[1], "<high>");
   }
 
+  /* The indices as the line wrote them (for FIXWEIGHT, model weights). */
+  const std::vector<size_t> typed_indices = user_indices;
   if (k == "FIXWEIGHT") {
     /* OPTIM FIXWEIGHT indices name MODEL WEIGHTS (the weights FIXINDEX
      * pins), not positions in the FIXWEIGHT value list. Map each user
@@ -1981,10 +1991,20 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
     }
   }
 
-  for (const auto& ui : user_indices) {
+  for (std::size_t j = 0; j < user_indices.size(); ++j) {
+    const size_t ui = user_indices[j];
     try {
       size_t i = ui_offset(omap.config, ui);
       if (i>=s) throw std::runtime_error("Out of bound index: " + core::to_string(ui));
+      /* One OPTIM line per index: a second box for an index would replace
+       * the first without a word. Lines of one key that select other
+       * indices add to it (in any case, the key being upper-cased). */
+      if (omap.opt[i])
+        throw std::runtime_error(
+            "the index is already selected by the OPTIM " + k +
+            " line on line " + core::to_string(omap.line[i]) +
+            " (OPTIM keys are case-insensitive); give each index one OPTIM "
+            "line");
       double lo_i = low, hi_i = high;
       if (auto_box) {
         if (!core::is_number(omap.config[i]))
@@ -2045,12 +2065,14 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
                                  (low_rule->strict ? "> 0"
                                                    : ">= 0 (0 is allowed) or AUTO"));
       omap.opt[i] = true;
+      omap.line[i] = nline;
       omap.highbound[i] = hi_i;
       omap.lowbound[i] = lo_i;
       omap.scale[i] = tf;
     } catch (const std::exception& e) {
-      throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
-                               "): " + e.what());
+      throw std::runtime_error("OPTIM " + k + " (" +
+                               core::to_string(typed_indices[j]) + "): " +
+                               e.what());
     }
   }
   for (size_t i = 0; i < omap.lowbound.size(); ++i) {

@@ -56,6 +56,9 @@ class HPOTargets {
 private:
     struct Opti {
         std::vector<bool> opt;
+        /* The line of the OPTIM line that selected each token (0: none),
+         * so a second line selecting it names the first. */
+        std::vector<std::size_t> line;
         std::vector<std::string> config;
         std::vector<double> lowbound;
         std::vector<double> highbound;
@@ -71,7 +74,10 @@ private:
     size_t ui_offset(std::vector<std::string> &tokens, size_t ui);
     std::vector<std::string> parse_optim_line(std::istringstream& iss);
     void handle_directory_creation(const std::string& directory);
-    void process_optim_config(std::istringstream& iss);
+    /* One OPTIM line (on line @p nline of the file). The key is
+     * upper-cased: OPTIM keys are case-insensitive, as configuration keys
+     * are. */
+    void process_optim_config(std::istringstream& iss, std::size_t nline);
     SearchSpace build_search_space() const;
     void bind_space_recursive();
 

@@ -75,14 +75,9 @@ inline BindingRcut derive_binding_rcut(const core::Context &ctx,
   }
   if (rvals.empty()) rvals.push_back(ctx.get<double>(rkey));
 
-  /* the OPTIM entry of rkey; keys compare case-insensitively, as the
-   * Context compares them (the density gates' reach shares this range) */
-  auto itr = trg.optimap.find(rkey);
-  if (itr == trg.optimap.end())
-    itr = std::find_if(trg.optimap.begin(), trg.optimap.end(),
-                       [&rkey](const auto &kv) {
-                         return core::to_upper(kv.first) == rkey;
-                       });
+  /* the OPTIM entry of rkey (OPTIM keys are upper-cased at parse; the
+   * density gates' reach shares this range) */
+  const auto itr = trg.optimap.find(rkey);
   const bool has_opt = itr != trg.optimap.end();
 
   /* flat theta indices come from the one shared flattening contract */
