@@ -428,13 +428,17 @@ std::string describe_rhobar_reject(const RhoBarGateResult &r,
 }
 
 std::string GateSeed::label() const {
-  const std::string init = origins.empty() ? "" : "INIT " + join(origins, ", ");
+  std::string init = origins.empty() ? "" : "INIT " + join(origins, ", ");
+  if (!restart_origins.empty())
+    init += (init.empty() ? "" : "; ") + std::string("RESTART ") +
+            join(restart_origins, ", ");
   if (!c_pot) {
     // A WARM seed is evaluated with its OPTIM dimensions over the -c
     // potential (seed_context), not as the file's own density.
-    for (const auto &o : origins)
-      if (o.rfind("WARM", 0) == 0)
-        return init + " (its OPTIM dimensions over the -c potential)";
+    for (const auto *list : {&origins, &restart_origins})
+      for (const auto &o : *list)
+        if (o.rfind("WARM", 0) == 0)
+          return init + " (its OPTIM dimensions over the -c potential)";
     return init;
   }
   return init.empty() ? "-c pot" : "-c pot (" + init + ")";
@@ -444,23 +448,26 @@ std::vector<GateSeed> collect_gate_seeds(const HPOTargets &trg) {
   std::vector<GateSeed> out(1);
   out[0].point = config_point_from_targets(trg);
   out[0].c_pot = true;
+  auto add = [&](const std::vector<double> &point, const InitOrigin &o,
+                 bool restart) {
+    if (!o.is_seed()) return;
+    const std::string name = o.name();
+    auto it = std::find_if(out.begin(), out.end(), [&](const GateSeed &e) {
+      return e.point == point;
+    });
+    if (it == out.end()) {
+      out.push_back(GateSeed{point, {}, false, true, {}});
+      it = std::prev(out.end());
+    }
+    it->in_seed_set = true;
+    auto &names = restart ? it->restart_origins : it->origins;
+    if (std::find(names.begin(), names.end(), name) == names.end())
+      names.push_back(name);
+  };
   auto scan = [&](const OptimizerSpec *s) {
     if (!s || s->optim_init_origin.size() != s->optim_init.size()) return;
-    for (std::size_t i = 0; i < s->optim_init.size(); ++i) {
-      const InitOrigin &o = s->optim_init_origin[i];
-      if (!o.is_seed()) continue;
-      const std::string name = o.name();
-      auto it = std::find_if(out.begin(), out.end(), [&](const GateSeed &e) {
-        return e.point == s->optim_init[i];
-      });
-      if (it == out.end()) {
-        out.push_back(GateSeed{s->optim_init[i], {}, false, true});
-        it = std::prev(out.end());
-      }
-      it->in_seed_set = true;
-      if (std::find(it->origins.begin(), it->origins.end(), name) == it->origins.end())
-        it->origins.push_back(name);
-    }
+    for (std::size_t i = 0; i < s->optim_init.size(); ++i)
+      add(s->optim_init[i], s->optim_init_origin[i], false);
   };
   const OptimizerSpec &sp = trg.spec;
   scan(&sp);
@@ -468,6 +475,10 @@ std::vector<GateSeed> collect_gate_seeds(const HPOTargets &trg) {
     scan(sp.prestage.get());
     scan(sp.prestage->inner.get());
   }
+  const RestartSpec &rs = sp.restart;
+  if (rs.seed_origins.size() == rs.seed_points.size())
+    for (std::size_t i = 0; i < rs.seed_points.size(); ++i)
+      add(rs.seed_points[i], rs.seed_origins[i], true);
   return out;
 }
 

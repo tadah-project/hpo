@@ -154,6 +154,14 @@ struct RestartSpec {
     std::size_t max              = 0;              // cap on restart count
     InitStrategySpec init_strategy;                // INIT chain to refresh on restart;
                                                    // its SEED draws round r with SEED + r
+    /* The chain's seeds -- its CONFIG and WARM points, the user's starting
+     * points as opposed to sampled ones -- resolved once at startup
+     * (HPOTargets) when the block is active: a WARM file is read, and its
+     * EMBF0/RHOFORM rules applied, when the target is read, and the
+     * density gates check these points as seeds. seed_origins is parallel
+     * to seed_points. Every round draws the chain afresh (RestartPolicy). */
+    std::vector<std::vector<double>> seed_points;
+    std::vector<InitOrigin>          seed_origins;
 
     /* RESTART takes effect only when both AFTER_STAGNATION and MAX are
      * positive. The one rule for build_run_policy() and for the

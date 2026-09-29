@@ -465,6 +465,27 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
     HPOLog::instance().warning(oss.str());
   }
 
+  /* The RESTART chain's seeds (CONFIG, WARM), resolved once here as a
+   * round draws them (RestartPolicy: the outer spec, the run context, the
+   * block's K_TOTAL), so a WARM file that is missing or unreadable, or
+   * whose RHOFORM the run refuses, is a startup error and not the first
+   * stagnation's, the EMBF0 note comes at startup, and the density gates
+   * check these points as seeds (collect_gate_seeds). The sampled points
+   * of the draw are dropped: each round draws its own. */
+  if (spec.restart.active()) {
+    const InitStrategySpec& rs = spec.restart.init_strategy;
+    auto refresh = build_init_strategy(rs);
+    InitContext ictx{spec, *this, rs.seed.value_or(0), &context};
+    std::vector<InitOrigin> origins;
+    const auto pts = refresh->generate_tagged(
+        ictx, rs.k_total.value_or(refresh->default_k()), origins);
+    for (std::size_t i = 0; i < pts.size() && i < origins.size(); ++i) {
+      if (!origins[i].is_seed()) continue;
+      spec.restart.seed_points.push_back(pts[i]);
+      spec.restart.seed_origins.push_back(origins[i]);
+    }
+  }
+
   /* Fail fast on the initial-step policy (registry-driven). Seeds vs
    * box and the width audit run in validate_hpo_setup(), with the other
    * startup rules. */

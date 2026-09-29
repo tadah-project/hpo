@@ -214,19 +214,24 @@ std::string describe_rhobar_reject(const RhoBarGateResult &r,
  *  potential. */
 struct GateSeed {
   std::vector<double>      point;     ///< real space, the optimap order
-  std::vector<std::string> origins;   ///< InitOrigin::name() of each chain entry
+  std::vector<std::string> origins;   ///< InitOrigin::name() of each INIT entry
   bool                     c_pot = false;        ///< the -c potential (the CONFIG point)
-  bool                     in_seed_set = false;  ///< an INIT start (CONFIG / WARM)
+  bool                     in_seed_set = false;  ///< a start (CONFIG / WARM)
+  /** InitOrigin::name() of each RESTART entry (RestartSpec::seed_points). */
+  std::vector<std::string> restart_origins;
 
-  /** "-c pot (INIT CONFIG)", "INIT WARM seed.tadah", "-c pot". */
+  /** "-c pot (INIT CONFIG)", "INIT WARM seed.tadah", "RESTART WARM
+   *  seed.tadah", "-c pot". */
   std::string label() const;
 };
 
 /** The seeds the gates check at startup: the -c potential first (always;
  *  in the seed set when some chain starts from CONFIG or from a WARM point
- *  equal to it), then every other distinct CONFIG/WARM point. A chain whose
- *  provenance does not match its points (hand-built specs) contributes
- *  none. RANDOM, LHS and SOBOL points are ordinary candidates. */
+ *  equal to it), then every other distinct CONFIG/WARM point of the INIT
+ *  chains and of the RESTART chain (RestartSpec::seed_points: a restart
+ *  round starts from them). A chain whose provenance does not match its
+ *  points (hand-built specs) contributes none. RANDOM, LHS and SOBOL points
+ *  are ordinary candidates. */
 std::vector<GateSeed> collect_gate_seeds(const HPOTargets &trg);
 
 /** A copy of @p base with the candidate @p point written in, exactly as
