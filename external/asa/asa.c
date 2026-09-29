@@ -5506,7 +5506,18 @@ cost_derivatives (user_cost_function,
                                   (double) EPS_DOUBLE);
       } else {
         /* generate the first sample point */
+        /* TADAH-PATCH begin: upstream tests x + Delta |x| and x - Delta |x|
+         * against the bounds but evaluates (1 + Delta) x and (1 - Delta) x,
+         * which can round an ulp beyond a bound: evaluate the points tested,
+         * in upstream's order (patch 8 in TADAH-PATCHES.md). */
+#if ASA_PARALLEL
+        parameter_v_offset = parameter_v < ZERO
+          ? parameter_v - delta_parameter_v * fabs (parameter_v)
+          : parameter_v + delta_parameter_v * fabs (parameter_v);
+#else
         parameter_v_offset = (ONE + delta_parameter_v) * parameter_v;
+#endif
+        /* TADAH-PATCH end */
         current_generated_state->parameter[index_v] = parameter_v_offset;
         *valid_state_generated_flag = TRUE;
 #if USER_ACCEPTANCE_TEST
@@ -5536,8 +5547,17 @@ cost_derivatives (user_cost_function,
         new_cost_state_1 = current_generated_state->cost;
 
         /* generate the second sample point */
+        /* TADAH-PATCH begin: the other point tested (patch 8 in
+         * TADAH-PATCHES.md). */
+#if ASA_PARALLEL
+        current_generated_state->parameter[index_v] = parameter_v < ZERO
+          ? parameter_v + delta_parameter_v * fabs (parameter_v)
+          : parameter_v - delta_parameter_v * fabs (parameter_v);
+#else
         current_generated_state->parameter[index_v] =
           (ONE - delta_parameter_v) * parameter_v;
+#endif
+        /* TADAH-PATCH end */
 
         *valid_state_generated_flag = TRUE;
 #if USER_ACCEPTANCE_TEST

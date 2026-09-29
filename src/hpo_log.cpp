@@ -2147,7 +2147,8 @@ void HPOLog::finish(const std::string& status_str)
         if (oe > 0)
             f_ << "  " << std::left << std::setw(KW) << "Out-of-box evaluations"
                << ": " << oe << " (points outside the OPTIM box, evaluated "
-                  "there:\n    an optimiser that ignores the bounds; see the "
+                  "there: an\n    optimiser that ignores the bounds, or NLopt "
+                  "rounding past a bound under\n    OPTIM_SCALE NONE; see the "
                   "first such WARNING)\n";
         if (og > 0)
             f_ << "  " << std::left << std::setw(KW) << "Out-of-box gradients"

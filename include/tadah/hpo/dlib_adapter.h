@@ -527,12 +527,14 @@ template<class Vec,class Runner>
      * below treats it as graceful termination so the best-so-far tracked
      * by HPO_Host is preserved. */
     std::atomic<unsigned long> evals_used{0};
-    /* The last evaluation feval made, and the count after it: dlib asks
-     * for each gradient right after the loss at the same point -- at its
-     * start (find_min) and at each point of its line search, f(alpha) then
-     * der(alpha) -- and HYBRID then takes that loss as the loss at the
-     * point (gradient_at) -- when the point is the same doubles and nothing
-     * was evaluated since. */
+    /* The last evaluation feval made, and the count after it.
+     * find_min_box_constrained asks for a gradient at its start, right
+     * after the loss there, and after each line search at the point the
+     * search ended on -- the last point it evaluated (backtracking_line_search
+     * evaluates the loss alone and returns the step it evaluated last) --
+     * and HYBRID then takes that loss as the loss at the point
+     * (gradient_at) when the point is the same doubles and nothing was
+     * evaluated since. */
     struct LastEval {
         matrix<double,0,1> x;
         double             y = 0.0;

@@ -151,6 +151,27 @@ hunks and `git blame` keeps crediting the rest to the vendoring.
    it is unchanged (golden-gated). Both hunks are inside `#if
    ASA_PARALLEL` (featured build only).
 
+8. **The exit curvature evaluates the points it tests (upstream
+   inconsistency)**: the diagonal curvature of `cost_derivatives()`
+   (`Curvature_0` 0 or -1) tests `x + Delta |x|` against the upper bound
+   and `x - Delta |x|` against the lower one, and evaluates `x - 2 Delta
+   |x|` and `x - Delta |x|`, or `x + 2 Delta |x|` and `x + Delta |x|`, next
+   to a bound; where both tests pass it evaluated `(1 + Delta) x` and
+   `(1 - Delta) x` instead. The two forms round differently: at a point or
+   two of about one box in six, whatever `Delta`, the evaluated point lay
+   one ulp outside `[parameter_minimum, parameter_maximum]` although the
+   tested one was inside (`x = 0.58058058058058049` in `[0.58, 1.16]` with
+   `Delta_X 0.001`: `x - Delta |x| = 0.58`, `(1 - Delta) x =
+   0.57999999999999985`). The patch evaluates the tested points, in
+   upstream's order (`(1 + Delta) x` first: `x + Delta |x|` for `x >= 0`,
+   `x - Delta |x|` for `x < 0`); the curvature formula, symmetric in the
+   two costs, is unchanged. Guarded `#if ASA_PARALLEL` (featured build
+   only, as patch 4). Only runs with `Curvature_0` 0 or -1 change, by an
+   ulp of these two probes; the default `Curvature_0 1` computes no
+   curvature (golden-gated). HPO checks that ASA's probes fit the `OPTIM`
+   boxes (`asa_probe_box_error`, `src/algorithms_asa.cpp`); with this
+   patch every probe it checks is the probe evaluated.
+
 ## Known upstream quirks the embedding must respect
 
 - `ASA_PRINT` must stay `1`: `asa_exit()` calls

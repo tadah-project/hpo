@@ -309,7 +309,7 @@ struct StencilReport {
       os << "finite differences: " << at(x, i);
       if (st.outside)
         os << " lies outside its OPTIM box " << box
-           << " (an optimiser that ignores the bounds): the difference steps "
+           << " (where the optimiser put it): the difference steps "
               "towards the box";
       else
         os << " lies within a step of its "

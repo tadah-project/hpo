@@ -1343,9 +1343,12 @@ void HPO_Host<P,R>::note_out_of_box(const P& p, std::size_t iter) const
                              " more coordinate(s))"
                        : std::string()) +
             " and is evaluated there: finite differences keep to the box, so "
-            "an optimiser that ignores the bounds (CERES:*, NLopt LN_NEWUOA), "
-            "or a start it handed on, stepped outside it; the loss of such a "
-            "point can become the best. DIAGNOSTICS counts every evaluation "
+            "the optimiser put it there: one that ignores the bounds "
+            "(CERES:*, NLopt LN_NEWUOA), under OPTIM_SCALE NONE an NLopt "
+            "algorithm whose own arithmetic rounds a point on a bound past it "
+            "(seen with LN_PRAXIS, LN_COBYLA, the GN_DIRECT*_NOSCAL "
+            "variants), or a start such a search handed on; the loss of such "
+            "a point can become the best. DIAGNOSTICS counts every evaluation "
             "outside the box";
         std::cerr << "[HPO] WARNING: " << msg << "\n";
         HPOLog::instance().warning(msg);

@@ -367,9 +367,13 @@ private:
     /** Counts evaluation @p iter in HPOLog when a coordinate of the REAL
      *  point @p p lies outside its OPTIM box (record_out_of_box_eval), and
      *  warns at the first: finite differences keep to the box
-     *  (fd_stencil.h), so only an optimiser that ignores the bounds, or a
-     *  start it handed on, evaluates there. Before any projection. Never
-     *  throws. */
+     *  (fd_stencil.h), and so do ASA's probes (asa_probe_box_error,
+     *  TADAH-PATCH 8), so the optimiser put it there -- one that ignores
+     *  the bounds (OptimizerCaps::ignores_bounds), under OPTIM_SCALE NONE
+     *  an NLopt algorithm whose own arithmetic rounds a point on a bound
+     *  past it (LN_PRAXIS's tanh map, LN_COBYLA, the unscaled DIRECT
+     *  variants: a rounding error), or a start such a search handed on.
+     *  Before any projection. Never throws. */
     void note_out_of_box(const ParamVec& p, std::size_t iter) const;
     void fill_validation(Result&, const mlip::Analytics&)  const;
     void run_lammps     (Result&) const;

@@ -26,8 +26,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -319,7 +321,18 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     if (takes_fd_gradients(phase)) {
       std::string e;
       try {
-        e = fd_box_error(s, fd_settings_of(s));
+        const FdSettings fs = fd_settings_of(s);
+        /* The NOISE block's AUTO beside a PARAM fd_step written in the
+         * block: the written step is the one taken (owner decision D8). */
+        if (!phase.inner && s.noise.autodetect &&
+            fs.source == FdStepSource::Param) {
+          std::ostringstream os;
+          os << std::setprecision(10) << fs.fd_step;
+          e = "NOISE AUTO has no effect: PARAM fd_step " + os.str() +
+              " is set; remove one of them.";
+        } else {
+          e = fd_box_error(s, fs);
+        }
       } catch (const std::exception &ex) {
         e = ex.what();
       }

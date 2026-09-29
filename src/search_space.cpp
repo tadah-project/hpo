@@ -153,8 +153,8 @@ double SearchSpace::to_real(std::size_t i, double u) const
      * affine map of the unit box), and LOG / ASINH ends used to come back
      * one ulp outside the box (LOG [0.01, 10] at u = 1: 10.000000000000002)
      * -- an evaluation outside the box, recorded as it was. A u outside the
-     * internal box (an optimiser that ignores the bounds) maps as it
-     * always did. (Owner decision D6, 2026-09-29.) */
+     * internal box (where the optimiser put it) maps as it always did.
+     * (Owner decision D6, 2026-09-29.) */
     const DimSpec& d = dims_[i];
     const double ulo = internal_lo(i), uhi = internal_hi(i);
     if (u == ulo) return d.lo;

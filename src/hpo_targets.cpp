@@ -282,13 +282,14 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
    * read() has resolved an unset GRAD_STRATEGY by now). Where it takes
    * none -- a derivative-free optimiser, GRAD_STRATEGY ANALYTICAL --
    * validate_hpo_setup refuses the AUTO, which would have no effect (owner
-   * decision D7, 2026-09-29; it printed "ignored" to stderr). read()
-   * rejects a configuration without LIB/ALGO. */
+   * decision D7, 2026-09-29; it printed "ignored" to stderr), and so it
+   * does beside a PARAM fd_step written in the block (owner decision D8:
+   * the written step won, with a note on stderr). read() rejects a
+   * configuration without LIB/ALGO. */
   if (spec.noise.autodetect &&
       takes_fd_gradients(PhaseSpec{"the STRATEGY-level optimiser", spec})) {
-    if (spec.param.count("fd_step")) {
-      std::cerr << "[HPO] NOISE_AUTO: PARAM fd_step already set "
-                   "explicitly; user value retained\n";
+    if (spec.param.count("fd_step") || spec.param_raw.count("fd_step")) {
+      /* refused by validate_hpo_setup */
     } else if (spec.low.empty()) {
       std::cerr << "[HPO] NOISE_AUTO: no optimisable dimensions; "
                    "skipping\n";

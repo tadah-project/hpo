@@ -60,11 +60,12 @@
  * 1.41 sigma/h). Cost: the same number of evaluations as the interior
  * stencil (NUMERICAL evaluates the centre anyway).
  *
- * A centre outside the box -- only an optimiser that ignores the bounds
- * (OptimizerCaps::ignores_bounds: the CERES drivers, NLopt LN_NEWUOA), or
- * a start it handed on, gets one -- is differenced one-sided towards the
- * box (FORWARD: the one step towards it): no point of its stencil lies
- * further outside than the centre (the owner's decision D4, 2026-09-29).
+ * A centre outside the box -- a gradient search that ignores the bounds
+ * (OptimizerCaps::ignores_bounds: the CERES drivers) gets one, and so does
+ * a search started at a point another one left outside the box -- is
+ * differenced one-sided towards the box (FORWARD: the one step towards
+ * it): no point of its stencil lies further outside than the centre (the
+ * owner's decision D4, 2026-09-29).
  *
  * Narrow boxes (fd_fit, fd_box_error). A box in which some u has no
  * stencil is refused at startup (validate_hpo_setup, every phase that
@@ -75,19 +76,23 @@
  * Under OPTIM_SCALE AUTO a CENTRAL step fits exactly when fd_step <= 1/3,
  * a FORWARD one when fd_step <= 1/2 (the in-house rule; Ceres' rule: 1/2
  * and 1); under NONE the check runs over the whole box. It is sound -- a
- * box it accepts gives every u a stencil -- and exact where the computed
- * step is (a power-of-two fd_step), else within an ulp of fd_step.
+ * box it accepts gives every u a stencil. Its bound on the computed step
+ * is exact where the step is (a power-of-two fd_step), else within an ulp
+ * of fd_step; but it treats u +- h as exact reals, where fd_plan tests
+ * them rounded, so in a box only hundreds or thousands of ulps wide it can
+ * refuse an fd_step that every double of the box accepts, up to a few per
+ * cent below the true limit ([16820343.156662896, 16820343.156663369],
+ * FORWARD, fd_step 2^-46: 1.6%). The AUTO limits above are exact.
  *
  * ASA's probes (asa_probe_fit): the reannealing and exit tangents of
  * external/asa (cost_derivatives) evaluate (1 + Delta) x, or (1 - Delta) x
  * when the first lies outside the box, and the exit curvature (Curvature_0
  * 0 or -1) x +- Delta |x|, one-sided x -+ Delta |x|, x -+ 2 Delta |x| next
- * to a bound; algorithms_asa.cpp refuses a box in which they cannot fit,
- * as ASA computes them. The curvature's middle branch tests x +- Delta |x|
- * and evaluates (1 +- Delta) x, which can round an ulp apart: at a point
- * or two of some boxes (about one in six), whatever the Delta, that probe
- * can lie an ulp outside the box; HPO_Host counts and warns about such an
- * evaluation.
+ * to a bound, and elsewhere x +- Delta |x|, the points it tests
+ * (TADAH-PATCH 8 in external/asa/TADAH-PATCHES.md: upstream evaluated
+ * (1 +- Delta) x there, which can round an ulp beyond a bound whatever the
+ * Delta); algorithms_asa.cpp refuses a box in which they cannot fit, as
+ * ASA computes them.
  */
 
 #include <tadah/hpo/optimizer_spec.h>
@@ -253,10 +258,10 @@ std::string fd_floor_text(double v, int digits = 6);
  * the tangents, (1 + Delta) x or, when that lies outside the box, (1 -
  * Delta) x -- also the rule of the off-diagonal curvature -- and with
  * `curvature` (Curvature_0 0 or -1) the diagonal curvature, x +- Delta
- * |x|, or next to a bound x -+ Delta |x| and x -+ 2 Delta |x| (not the
- * middle branch's ulp: see the file comment). Sound: a box it accepts
- * keeps these probes in it; within an ulp of Delta of exact. `where`: an x
- * of the box where a probe could lie outside it. */
+ * |x|, or next to a bound x -+ Delta |x| and x -+ 2 Delta |x| (the middle
+ * branch evaluates the x +- Delta |x| it tested: TADAH-PATCH 8). Sound: a
+ * box it accepts keeps these probes in it; within an ulp of Delta of
+ * exact. `where`: an x of the box where a probe could lie outside it. */
 FdFit asa_probe_fit(double lo, double hi, double delta, bool curvature);
 
 /* The largest Delta asa_probe_fit accepts for [lo, hi] (std::nullopt: none

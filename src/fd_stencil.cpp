@@ -53,9 +53,14 @@ std::string label_of(const OptimizerSpec& sp, std::size_t i)
  * whose ends are among the piece's ends and the roots of the linear
  * functions; it is found by testing the midpoint of each pair of
  * consecutive such candidates, in long double. So the check is sound -- a
- * box it accepts gives every double u a stencil -- and exact where the
- * step is (a power-of-two fd_step: 1/2 and 1 with Ceres' rule in the unit
- * box), else within the ulp by which F exceeds f. */
+ * box it accepts gives every double u a stencil. H is the computed step
+ * where that is exact (a power-of-two fd_step: 1/2 and 1 with Ceres' rule
+ * in the unit box), else above it by the ulp by which F exceeds f. The
+ * inequalities take u +- h as exact reals, while fd_plan tests them
+ * rounded (fl(u - h^) can round up onto a even where u - h^ < a), so in a
+ * box only hundreds or thousands of ulps wide the check can refuse a step
+ * that every double of the box accepts, by up to a few per cent of the
+ * step. */
 
 using LD = long double;
 
@@ -331,8 +336,8 @@ std::optional<FdStencil> fd_plan(double u, double a, double b, FdRule rule,
         return st;
     }
     if (u < a || u > b) {
-        /* Outside the box (an optimiser that ignores the bounds): towards
-         * it (owner decision D4). */
+        /* Outside the box (where the optimiser put it): towards it (owner
+         * decision D4). */
         st.outside = true;
         st.turned = true;
         st.s = u < a ? h : -h;
@@ -567,11 +572,14 @@ std::string fd_box_error(const OptimizerSpec& sp, const FdSettings& s)
         ") inside it; the step is not shrunk:" + bad + "\n  ";
     std::vector<std::string> fixes;
     if (smallest_fit) {
-        std::string f = "set PARAM fd_step to at most " +
-                        fd_floor_text(*smallest_fit);
-        if (s.source == FdStepSource::NoiseAuto)
-            f += " (a PARAM fd_step overrides NOISE AUTO)";
-        fixes.push_back(f);
+        /* NOISE AUTO is refused beside a PARAM fd_step (owner decision
+         * D8) */
+        fixes.push_back(std::string(s.source == FdStepSource::NoiseAuto
+                                        ? "remove AUTO from the NOISE block "
+                                          "and set"
+                                        : "set") +
+                        " PARAM fd_step to at most " +
+                        fd_floor_text(*smallest_fit));
     }
     if (none_fits && s.rule == FdRule::Ceres)
         fixes.push_back("use PARAM fd_kernel inhouse, whose step has no "
@@ -610,11 +618,9 @@ FdFit asa_fit(double lo, double hi, double delta, bool curvature)
      * |x|), and 2t, to x; t <= D |x| + c with D = upper_factor(Delta), where
      * c = 2^-1075, half the smallest double, covers a subnormal product (|x|
      * below DBL_MIN / Delta). The strict inequalities are then decided as in
-     * fit_pieces. Not covered: ASA's third curvature branch tests x +-
-     * Delta |x| and evaluates (1 +- Delta) x, which round differently by an
-     * ulp at a point or two of some boxes (about one in six), whatever the
-     * Delta; the host counts such an evaluation and warns at the first
-     * (fd_stencil.h). */
+     * fit_pieces. The middle branch of the curvature evaluates the x +-
+     * Delta |x| it tested inside the box (TADAH-PATCH 8), so it needs no
+     * condition. */
     FdFit fit;
     const LD L = lo, Hh = hi;
     const LD E = 1.0 + delta, Em = 1.0 - delta;
