@@ -52,6 +52,15 @@ std::string slurp(const std::filesystem::path& p)
     return s.str();
 }
 
+std::size_t count_of(const std::string& text, const std::string& what)
+{
+    std::size_t n = 0;
+    for (auto p = text.find(what); p != std::string::npos;
+         p = text.find(what, p + what.size()))
+        ++n;
+    return n;
+}
+
 /* HPOLog is a process-wide singleton whose open() cannot re-open an
  * already-open journal (the ofstream keeps the old file), so the fixture
  * closes any journal a previous test left behind, opens its own, and
@@ -159,14 +168,38 @@ TEST_CASE("scale_validation: OUTER STEP overriding an INNER STEP is journaled",
 TEST_CASE("scale_validation: bounds-ignoring backends warn at startup",
           "[HPO][scale][bounds][journal]")
 {
+    /* Once per run and backend: the check runs at parse time, at startup
+     * and when each phase starts, and it printed the same WARNING each
+     * time (three times in a plain run). The text says what an evaluation
+     * outside the box does -- it is evaluated there and can become the
+     * best, warned about and counted -- and which optimisers keep to the
+     * box (review item 4). */
     JournalCapture j;
     auto sp = make_spec("NLOPT", "LN_NEWUOA");
-    REQUIRE_NOTHROW(validate_optimizer_scaling(sp, "OUTER"));
-    CHECK(j.text().find("called without bounds") != std::string::npos);
+    for (const char* where : {"OUTER", "OUTER", "run"})
+        REQUIRE_NOTHROW(validate_optimizer_scaling(sp, where));
+    const std::string newuoa =
+        "NLOPT:LN_NEWUOA (OUTER): ignores the OPTIM box: NLopt calls "
+        "LN_NEWUOA without bounds (optimize.c passes lb = ub = NULL), so its "
+        "evaluations can leave the box, and such a point can become the "
+        "best; the first is reported with a WARNING and DIAGNOSTICS counts "
+        "them all. LN_NEWUOA_BOUND and LN_BOBYQA keep to the box";
+    CHECK(count_of(j.text(), newuoa) == 1u);
+    CHECK(count_of(j.text(), "ignores the OPTIM box") == 1u);
 
     auto ce = make_spec("CERES", "LBFGS");
-    REQUIRE_NOTHROW(validate_optimizer_scaling(ce, "OUTER"));
-    CHECK(j.text().find("no box constraints") != std::string::npos);
+    for (const char* where : {"OUTER", "run"})
+        REQUIRE_NOTHROW(validate_optimizer_scaling(ce, where));
+    const std::string ceres =
+        "CERES:LBFGS (OUTER): ignores the OPTIM box: Ceres' "
+        "GradientProblemSolver has no bounds, so its iterates can leave the "
+        "box (a LOG dimension stays positive, a linear one is unbounded) and "
+        "are evaluated there, and such a point can become the best; the "
+        "first is reported with a WARNING and DIAGNOSTICS counts them all "
+        "(finite differences at such a point step towards the box). "
+        "DLIB:BFGS and the NLopt LD_* algorithms keep to the box";
+    CHECK(count_of(j.text(), ceres) == 1u);
+    CHECK(count_of(j.text(), "ignores the OPTIM box") == 2u);
 }
 
 TEST_CASE("scale_validation: start points must lie inside the OPTIM box",

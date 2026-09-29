@@ -14,8 +14,8 @@
 //     that swallow construction errors rethrow models::DensityFormError;
 //   - one startup WARNING names each phase that can still evaluate an
 //     amplitude outside a NONNEG / MONOTONE box: an optimiser that ignores
-//     the bounds, or the Ceres finite-difference kernel (the in-house
-//     stencil keeps to the box, fd_stencil.h);
+//     the bounds (finite differences keep to the box with either step
+//     rule, fd_stencil.h);
 //   - HPO_Host evaluates a NONNEG / MONOTONE candidate projected onto
 //     AMPGRIDMB >= 0 (hidden host-level cases, run explicitly with
 //     ./test_hpo "[rhoform_e2e]").
@@ -596,10 +596,12 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: one WARNING when an optimiser can leave "
   };
   const std::string needle = "can evaluate AMPGRIDMB amplitudes outside the "
                              "non-negative OPTIM box";
-  const std::string halves =
-      "A Ceres finite-difference step projected onto a zero amplitude halves "
-      "the derivative there; PARAM fd_kernel inhouse keeps the stencil inside "
-      "the box.";
+  /* The warning named the Ceres finite-difference kernel too (the first
+   * attempt at a bounded stencil): Ceres' step rule is now evaluated by
+   * Tadah and keeps to the box (owner decision D2(a), 2026-09-29), so only
+   * optimisers that ignore the bounds are named, and the sentence about
+   * the kernel is gone. */
+  const std::string kernel_words = "finite-difference step";
 
   SECTION("an ignores_bounds optimiser") {
     const std::string txt = journal(
@@ -607,8 +609,13 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: one WARNING when an optimiser can leave "
     CHECK_THAT(txt, Catch::Contains("RHOFORM NONNEG: the STRATEGY-level "
                                     "optimiser CERES:LBFGS (ignores the OPTIM "
                                     "bounds) " + needle) &&
-                        Catch::Contains("projected onto AMPGRIDMB >= 0"));
-    CHECK(txt.find(halves) == std::string::npos);   /* no kernel named */
+                        Catch::Contains("projected onto AMPGRIDMB >= 0, "
+                                        "evaluated and recorded there (the "
+                                        "optimiser is given that loss for its "
+                                        "own point); DIAGNOSTICS counts the "
+                                        "projections and every evaluation "
+                                        "outside the box."));
+    CHECK(txt.find(kernel_words) == std::string::npos);
   }
   SECTION("named by the phase that runs it (phase_specs)") {
     const std::string txt = journal(
@@ -621,68 +628,51 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: one WARNING when an optimiser can leave "
     CHECK(txt.find("PRESTAGE exploration (EXPLORE block) DLIB:GFS") ==
           std::string::npos);   // GFS keeps to the box
   }
-  SECTION("PARAM fd_kernel ceres on a gradient-based optimiser") {
-    const std::string txt = journal(
-        "MONOTONE", "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\n"
-                    "PARAM fd_kernel ceres\nENDOPTIMIZER\n");
-    CHECK_THAT(txt, Catch::Contains("RHOFORM MONOTONE: the STRATEGY-level "
-                                    "optimiser DLIB:BFGS (PARAM fd_kernel "
-                                    "ceres: Ceres' finite-difference steps "
-                                    "are not bounded) " + needle) &&
-                        Catch::Contains(halves));
-  }
-  SECTION("the Ceres kernel by default under OPTIM_SCALE NONE") {
-    /* It was not named: only a written PARAM fd_kernel ceres was. */
-    const std::string txt = journal(
-        "NONNEG", kOptimizer,
-        "OPTIM_SCALE NONE\nOPTIM AMPGRIDMB (3) 0 0.5\n");
-    CHECK_THAT(txt, Catch::Contains("RHOFORM NONNEG: the STRATEGY-level "
-                                    "optimiser DLIB:BFGS (fd_kernel ceres, "
-                                    "the default under OPTIM_SCALE NONE: "
-                                    "Ceres' finite-difference steps are not "
-                                    "bounded) " + needle) &&
-                        Catch::Contains(halves));
-  }
-  SECTION("the in-house stencil keeps to the box: not named") {
-    /* One-sided within a step of a bound (fd_stencil.h): the default under
-     * OPTIM_SCALE AUTO, fd_kernel inhouse under NONE, and HYBRID, whose
-     * finite differences are the in-house stencil whatever fd_kernel
-     * says (it was named for PARAM fd_kernel ceres). */
+  SECTION("finite differences keep to the box with either step rule: not "
+          "named") {
+    /* One-sided within a step of a bound (fd_stencil.h): the in-house rule,
+     * the default under OPTIM_SCALE AUTO; Ceres' rule, the default under
+     * NONE and PARAM fd_kernel ceres (named until D2(a)); HYBRID; an MLSL
+     * whose local search takes gradients. */
     CHECK(journal("NONNEG", kOptimizer).find(needle) == std::string::npos);
-    CHECK(journal("NONNEG",
-                  "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\n"
-                  "PARAM fd_kernel inhouse\nENDOPTIMIZER\n",
-                  "OPTIM_SCALE NONE\nOPTIM AMPGRIDMB (3) 0 0.5\n")
-              .find(needle) == std::string::npos);
-    CHECK(journal("NONNEG",
-                  "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\n"
-                  "GRAD_STRATEGY HYBRID\nPARAM fd_kernel ceres\n"
-                  "ENDOPTIMIZER\n").find(needle) == std::string::npos);
+    for (const std::string& opt :
+         {std::string("OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\n"
+                      "PARAM fd_kernel ceres\nENDOPTIMIZER\n"),
+          std::string("OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\n"
+                      "GRAD_STRATEGY HYBRID\nPARAM fd_kernel ceres\n"
+                      "ENDOPTIMIZER\n"),
+          std::string("OPTIMIZER\nSTRATEGY\nTYPE PLAIN\nLIB NLOPT\n"
+                      "ALGO G_MLSL_LDS\nMAXEVAL 50\nPARAM fd_kernel ceres\n"
+                      "INNER\nLIB NLOPT\nALGO LD_LBFGS\nMAXEVAL 10\nENDINNER\n"
+                      "ENDSTRATEGY\nENDOPTIMIZER\n")}) {
+      INFO(opt);
+      const std::string txt = journal("MONOTONE", opt);
+      CHECK(txt.find(needle) == std::string::npos);
+      CHECK(txt.find(kernel_words) == std::string::npos);
+    }
+    for (const char* opt :
+         {kOptimizer, "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\n"
+                      "PARAM fd_kernel inhouse\nENDOPTIMIZER\n"}) {
+      INFO(opt);
+      const std::string txt = journal("NONNEG", opt,
+                                      "OPTIM_SCALE NONE\nOPTIM AMPGRIDMB (3) 0 "
+                                      "0.5\n");
+      CHECK(txt.find(needle) == std::string::npos);
+      CHECK(txt.find(kernel_words) == std::string::npos);
+    }
   }
-  SECTION("an INNER block's PARAM fd_kernel is not what differentiates") {
+  SECTION("an INNER block's PARAM fd_kernel never takes effect: refused") {
     /* NLopt hands the INNER search the gradient of the MLSL objective,
-     * which the MLSL block's settings take: here the in-house stencil. The
-     * INNER block was named for its own PARAM fd_kernel ceres. */
-    const std::string txt = journal(
+     * which the MLSL block's settings take. The INNER block's own PARAM
+     * fd_kernel ceres was named in this warning, and then accepted and
+     * ignored; it is refused at startup now (owner decision D5(a)). */
+    CHECK_THROWS_WITH(journal(
         "NONNEG", "OPTIMIZER\nSTRATEGY\nTYPE PLAIN\nLIB NLOPT\nALGO G_MLSL_LDS\n"
                   "MAXEVAL 50\nINNER\nLIB NLOPT\nALGO LD_LBFGS\nMAXEVAL 10\n"
                   "PARAM fd_kernel ceres\nENDINNER\nENDSTRATEGY\n"
-                  "ENDOPTIMIZER\n");
-    CHECK(txt.find(needle) == std::string::npos);
-  }
-  SECTION("PARAM fd_kernel ceres on an MLSL whose local search takes gradients") {
-    /* G_MLSL_LDS itself is derivative-free, but NLopt hands its local
-     * search the gradient the MLSL objective computes (inner_run_spec,
-     * obtains_gradients). */
-    const std::string txt = journal(
-        "NONNEG", "OPTIMIZER\nSTRATEGY\nTYPE PLAIN\nLIB NLOPT\nALGO G_MLSL_LDS\n"
-                  "MAXEVAL 50\nPARAM fd_kernel ceres\nINNER\nLIB NLOPT\n"
-                  "ALGO LD_LBFGS\nMAXEVAL 10\nENDINNER\nENDSTRATEGY\n"
-                  "ENDOPTIMIZER\n");
-    CHECK_THAT(txt, Catch::Contains("RHOFORM NONNEG: the STRATEGY-level "
-                                    "optimiser NLOPT:G_MLSL_LDS (PARAM fd_kernel "
-                                    "ceres") &&
-                        Catch::Contains(needle));
+                  "ENDOPTIMIZER\n"),
+        Catch::Contains("the INNER block of the STRATEGY-level optimiser "
+                        "NLOPT:LD_LBFGS: PARAM fd_kernel never takes effect"));
   }
   SECTION("none: bounded optimiser, SIGNED, or no OPTIM AMPGRIDMB") {
     CHECK(journal("NONNEG", kOptimizer).find(needle) == std::string::npos);
@@ -761,6 +751,19 @@ double file_amplitude(const fs::path& path, std::size_t i) {
 
 }  // namespace
 
+namespace {
+
+std::size_t count_of_text(const std::string& text, const std::string& what)
+{
+  std::size_t n = 0;
+  for (auto p = text.find(what); p != std::string::npos;
+       p = text.find(what, p + what.size()))
+    ++n;
+  return n;
+}
+
+}  // namespace
+
 TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
           "AMPGRIDMB >= 0", "[rhoform_e2e][rhoform_projection_e2e][.]") {
   PeriodicTable::initialize();
@@ -795,9 +798,8 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
       {
         Host host(ctx, trg, val_cfg.string());
         ParamVec p(1);
-        /* below the box: a step of the Ceres finite-difference kernel at
-         * the lower bound, or an optimiser that ignores bounds (the
-         * in-house stencil keeps to the box) */
+        /* below the box: only an optimiser that ignores the bounds asks
+         * for it (finite differences keep to the box) */
         p(0) = -1e-6;
         REQUIRE_NOTHROW(loss_probe = host(p));
         CHECK(std::isfinite(loss_probe));
@@ -822,18 +824,27 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
       CHECK(rows[0].back() == 0.0);   // the recorded point is the projection
       CHECK(rows[2].back() == 0.25);
       const std::string txt = j.finish();
+      /* The projection texts named the Ceres finite-difference kernel,
+       * which keeps to the box now (owner decision D2(a)); the point is
+       * also counted as an evaluation outside the box, before the
+       * projection (D4(a)). */
       CHECK_THAT(txt, Catch::Contains(std::string("eval 1: RHOFORM ") + form +
                                       ": AMPGRIDMB[3] = "
                                       "-1.0000e-06 below 0 is evaluated and "
                                       "recorded as 0: the candidate is "
-                                      "projected onto AMPGRIDMB >= 0 (a step "
-                                      "of the Ceres finite-difference kernel "
-                                      "next to a zero amplitude, or an "
-                                      "optimiser that ignores bounds)") &&
+                                      "projected onto AMPGRIDMB >= 0 (a point "
+                                      "outside the OPTIM box, which only an "
+                                      "optimiser that ignores the bounds "
+                                      "evaluates)") &&
                           Catch::Contains("Positive-form projection: 1 evaluation(s)") &&
-                          Catch::Contains("(Ceres finite-difference steps at a\n"
-                                          "    zero amplitude, or an optimiser "
-                                          "that ignores bounds)"));
+                          Catch::Contains("(points outside the OPTIM box: an\n"
+                                          "    optimiser that ignores the "
+                                          "bounds)") &&
+                          Catch::Contains("eval 1: AMPGRIDMB[3] = -1e-06 lies "
+                                          "outside its OPTIM box [0, 0.5] and "
+                                          "is evaluated there") &&
+                          Catch::Contains("Evaluations outside the OPTIM box: 1 "));
+      CHECK(count_of_text(txt, "lies outside its OPTIM box") == 1u);
       /* the best sits on the form's zero lower bound: a hard bound, no
        * widen-that-side advisory */
       REQUIRE(loss_probe <= loss_in);
@@ -872,13 +883,15 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
 
   SECTION("a gradient-based optimiser from a zero amplitude: no FAIL_SCORE, "
           "no projection") {
-    /* DLIB:BFGS with the in-house kernel (the default under OPTIM_SCALE
+    /* DLIB:BFGS with the in-house rule (the default under OPTIM_SCALE
      * AUTO) from the seed amplitude 0, on its lower bound. The central
      * stencil probed -5e-7 (u = -1e-6 of the width 0.5), which was
      * projected and recorded at 0, and its derivative was half the
      * one-sided slope; the stencil is now one-sided into the box
      * (fd_stencil.h, owner decision 2026-09-29, C4): the centre, then
-     * 5e-7 and 1e-6, and nothing is projected. */
+     * 5e-7 and 1e-6, and nothing is projected. The journal names the
+     * one-sided difference and DIAGNOSTICS counts it (D4, design 2026-09-29),
+     * and no warning names a finite-difference kernel. */
     Journal j;
     Host::reset_globals_for_test();
     ForceRebuildGuard rebuild;
@@ -915,7 +928,53 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
     CHECK(txt.find("Positive-form projection") == std::string::npos);
     CHECK(txt.find("below 0 is evaluated and recorded as 0") ==
           std::string::npos);
-    CHECK_THAT(txt, Catch::Contains("[ok] No NaN/Inf clampings were recorded."));
+    CHECK_THAT(txt, Catch::Contains("[ok] No NaN/Inf clampings were recorded.") &&
+                        Catch::Contains("finite differences: AMPGRIDMB[3] = 0 "
+                                        "lies within a step of its lower bound "
+                                        "(OPTIM box [0, 0.5]): one-sided 3-point "
+                                        "difference, at AMPGRIDMB[3] = 5e-07 and "
+                                        "AMPGRIDMB[3] = 1e-06") &&
+                        Catch::Contains("One-sided differences   : "));
+    CHECK(txt.find("outside the OPTIM box") == std::string::npos);
+    CHECK(txt.find("fd_kernel") == std::string::npos);   // no kernel warning
+    Host::reset_globals_for_test();
+  }
+
+  SECTION("OPTIM_SCALE NONE: Ceres' step rule from a zero amplitude, no "
+          "projection") {
+    /* Ceres' rule, the default under NONE: its central stencil at 0 probed
+     * -2^-26, which was projected onto 0 and took half the slope (the
+     * Ceres library could not be bounded); Tadah evaluates the rule now,
+     * one-sided into the box: 2^-26 and 2^-25 (owner decision D2(a)). */
+    Journal j;
+    Host::reset_globals_for_test();
+    ForceRebuildGuard rebuild;
+    const fs::path p = sd.dir / "config_none.hpo";
+    {
+      std::ofstream os(p);
+      os << "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 8\nENDOPTIMIZER\n"
+         << "LOSS L2\nPC_EMAE 0 1\nFAILSCORE 1e9\nOPTIM_SCALE NONE\n"
+         << "OPTIM AMPGRIDMB (3) 0 0.5\n";
+    }
+    Context ctx = make_ream_ctx("NONNEG", "0.5 0.3 0.0");
+    ctx.add("HPOTARGET", p.string());
+    HPOTargets trg(ctx, p.string());
+    REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, false, true));
+    {
+      Host host(ctx, trg, val_cfg.string());
+      REQUIRE_NOTHROW(tadah::hpo::run_inner<ParamVec, ::LammpsRunner>(trg.spec, host));
+      host.flush_remaining();
+    }
+    CHECK(HPOLog::instance().form_projections() == 0);
+    const auto par_rows = table_rows("params.tadah");
+    REQUIRE(par_rows.size() >= 4);
+    CHECK(par_rows[1].back() == 0.0);
+    CHECK(par_rows[2].back() == Approx(0x1p-26).epsilon(1e-6));
+    CHECK(par_rows[3].back() == Approx(0x1p-25).epsilon(1e-6));
+    for (const auto& row : par_rows) CHECK(row.back() >= 0.0);
+    const std::string txt = j.finish();
+    CHECK(txt.find("Positive-form projection") == std::string::npos);
+    CHECK_THAT(txt, Catch::Contains("One-sided differences   : "));
     Host::reset_globals_for_test();
   }
 }

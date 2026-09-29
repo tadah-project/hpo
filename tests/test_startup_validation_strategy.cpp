@@ -1463,85 +1463,251 @@ TEST_CASE("startup validation: hpo_run rejects a backend setting of a "
     }
 }
 
-TEST_CASE("startup validation: the in-house finite-difference stencil fits "
-          "every OPTIM box", "[startup_validation][strategy][fd_stencil]")
+TEST_CASE("startup validation: finite differences fit every OPTIM box, "
+          "with valid settings that take effect",
+          "[startup_validation][strategy][fd_stencil]")
 {
-    /* Within a step of a bound the in-house stencil (fd_stencil.h) is
-     * one-sided into the box, which needs three steps of fd_step *
-     * max(|u|, 1) inside it; a narrower box is refused at startup, on each
-     * phase that takes gradients with its own settings, before any data is
-     * loaded. The central stencil used to evaluate outside such a box. */
-    const std::string refusal =
-        ": PARAM fd_step 0.4: the finite-difference stencil takes three "
-        "steps of fd_step x max(|u|, 1) inside the OPTIM box, in internal "
-        "coordinates (the unit box under OPTIM_SCALE AUTO), so that it never "
-        "evaluates outside it; these boxes are narrower:\n  - WATOM: box "
-        "[0, 1], width 1 < 3 x 0.4 (fd_step below 0.3333333333 fits it)\n"
-        "  Lower PARAM fd_step (set it by hand when the NOISE block's AUTO "
-        "derived it) or widen these boxes.";
+    /* No finite-difference point is evaluated outside the OPTIM box, with
+     * either step rule (fd_stencil.h): next to a bound a CENTRAL stencil is
+     * one-sided and needs two steps inside the box, a FORWARD one steps
+     * back. A box in which some point has no stencil is refused at startup
+     * on each phase that takes finite-difference gradients with its own
+     * settings, naming the step's source and the largest fd_step that fits
+     * (owner decision D1(a)); the step is not shrunk. PARAM fd_step,
+     * fd_kernel and diff_method must be valid there (diff_method 2,
+     * RIDDERS, is refused: D3(a)), and a phase that takes no
+     * finite-difference gradients refuses them: they never took effect
+     * (D5(a)). The first attempt named only the in-house stencil and its
+     * three steps of the largest step anywhere in the box; the owner's
+     * decisions D1-D5 change the messages and the cases below. */
     const std::string bfgs =
         "    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 20\n";
-    SECTION("NUMERICAL with the in-house kernel, the default under AUTO") {
+    const std::string auto_refusal =
+        "PARAM fd_step 0.4 does not fit these OPTIM boxes: no "
+        "finite-difference point is evaluated outside the box, and next to a "
+        "bound the CENTRAL stencil turns one-sided and needs two steps of "
+        "h = 0.4 of each box width (in-house rule) inside it; the step is not "
+        "shrunk:\n  - WATOM: OPTIM box [0.1, 5] (internal [0, 1]); no stencil "
+        "fits at WATOM = 1.57; fd_step up to 0.333333 fits it\n  Set PARAM "
+        "fd_step to at most 0.333333.";
+    SECTION("OPTIM_SCALE AUTO: fd_step up to 1/3 (CENTRAL), 1/2 (FORWARD)") {
         CHECK(judge(strategy_config(bfgs + "    PARAM fd_step 0.4\n")).startup ==
-              "the STRATEGY-level optimiser DLIB:BFGS" + refusal);
-        CHECK(judge(strategy_config(bfgs + "    PARAM fd_step 0.3\n")).startup ==
+              "the STRATEGY-level optimiser DLIB:BFGS: " + auto_refusal);
+        CHECK(judge(strategy_config(bfgs + "    PARAM fd_step 0.33\n")).startup ==
               "");
-    }
-    SECTION("HYBRID") {
+        CHECK(judge(strategy_config(bfgs + "    PARAM fd_step "
+                                    "0.3333333333333333\n")).startup == "");
+        CHECK(judge(strategy_config(bfgs + "    PARAM fd_step 0.5\n"
+                                    "    PARAM diff_method 1\n")).startup == "");
+        CHECK_THAT(judge(strategy_config(bfgs + "    PARAM fd_step 0.51\n"
+                                         "    PARAM diff_method 1\n")).startup,
+                   Catch::StartsWith("the STRATEGY-level optimiser DLIB:BFGS: "
+                                     "PARAM fd_step 0.51 does not fit these "
+                                     "OPTIM boxes: no finite-difference point "
+                                     "is evaluated outside the box, and next "
+                                     "to a bound the FORWARD stencil steps "
+                                     "backward and needs one step of h = 0.51 "
+                                     "of each box width (in-house rule) inside "
+                                     "it") &&
+                       Catch::EndsWith("fd_step up to 0.5 fits it\n  Set PARAM "
+                                       "fd_step to at most 0.5."));
+        /* HYBRID: any parameter may need finite differences */
         CHECK(judge(strategy_config(bfgs + "    GRAD_STRATEGY HYBRID\n"
                                     "    PARAM fd_step 0.4\n")).startup ==
-              "the STRATEGY-level optimiser DLIB:BFGS" + refusal);
+              "the STRATEGY-level optimiser DLIB:BFGS: " + auto_refusal);
+        /* Ceres' rule is bounded too (D2(a)); in the unit box its step,
+         * fd_step x |u|, is largest at the upper bound, where the one-sided
+         * stencil needs 1 - 2 fd_step >= 0: up to 1/2 */
+        CHECK_THAT(judge(strategy_config(bfgs + "    PARAM fd_kernel ceres\n"
+                                         "    PARAM fd_step 0.51\n")).startup,
+                   Catch::Contains("h = max(2^-26, 0.51 x |u|) in the unit box "
+                                   "(Ceres' rule)") &&
+                       Catch::EndsWith("fd_step up to 0.499999 fits it\n  Set "
+                                       "PARAM fd_step to at most 0.499999."));
+        CHECK(judge(strategy_config(bfgs + "    PARAM fd_kernel ceres\n"
+                                    "    PARAM fd_step 0.49\n")).startup == "");
     }
-    SECTION("the Ceres kernel takes no in-house stencil") {
-        CHECK(judge(strategy_config(bfgs + "    PARAM fd_step 0.4\n"
-                                    "    PARAM fd_kernel ceres\n")).startup ==
-              "");
-    }
-    SECTION("OPTIM_SCALE NONE with fd_kernel inhouse: a step relative to "
-            "|u|") {
-        const std::string root =
-            "OPTIM_SCALE NONE\nOPTIM WATOM (1) 0.1 5.0\nPC_ERMSE 0 1\n";
-        const auto body = [&](const std::string& extra) {
-            return root + "OPTIMIZER\n  STRATEGY\n" + bfgs + extra +
-                   "  ENDSTRATEGY\nENDOPTIMIZER\n";
-        };
-        CHECK_THAT(judge(body("    PARAM fd_kernel inhouse\n"
-                              "    PARAM fd_step 0.4\n")).startup,
-                   Catch::StartsWith("the STRATEGY-level optimiser DLIB:BFGS: "
-                                     "PARAM fd_step 0.4: ") &&
-                       Catch::Contains("\n  - WATOM: box [0.1, 5], width "
-                                       "4.9 < 3 x 2 (fd_step below "
-                                       "0.3266666667 fits it)"));
-        CHECK(judge(body("    PARAM fd_kernel inhouse\n"
-                         "    PARAM fd_step 0.3\n")).startup == "");
-        /* the default kernel under NONE is Ceres' */
-        CHECK(judge(body("    PARAM fd_step 0.4\n")).startup == "");
-    }
-    SECTION("the phase whose objective an INNER search differentiates") {
-        const std::string mlsl =
-            "    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n"
-            "    MAXEVAL 50\n";
+    SECTION("each phase that takes finite-difference gradients") {
         const std::string inner =
             "    INNER\n      LIB NLOPT\n      ALGO LD_LBFGS\n"
-            "      MAXEVAL 10\n";
-        CHECK(judge(strategy_config(mlsl + "    PARAM fd_step 0.4\n" + inner +
-                                    "    ENDINNER\n")).startup ==
-              "the STRATEGY-level optimiser NLOPT:G_MLSL_LDS" + refusal);
-        /* the INNER block's own PARAM does not differentiate anything */
-        CHECK(judge(strategy_config(mlsl + inner + "      PARAM fd_step 0.4\n"
-                                    "    ENDINNER\n")).startup == "");
+            "      MAXEVAL 10\n    ENDINNER\n";
+        const std::vector<std::pair<std::string, std::string>> phases = {
+            {"the STRATEGY-level optimiser DLIB:BFGS",
+             bfgs + "    PARAM fd_step 0.4\n"},
+            {"each MULTISTART start DLIB:BFGS",
+             "    TYPE MULTISTART\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 20\n"
+             "    N_STARTS 2\n    PARAM fd_step 0.4\n"},
+            {"the PRESTAGE refinement DLIB:BFGS",
+             "    TYPE PRESTAGE\n    EXPLORE\n      LIB TADAH\n      ALGO RANDOM\n"
+             "      MAXEVAL 3\n      SEED 1\n    ENDEXPLORE\n    REFINE\n"
+             "      LIB DLIB\n      ALGO BFGS\n      MAXEVAL 20\n"
+             "      PARAM fd_step 0.4\n    ENDREFINE\n"},
+            {"the PRESTAGE exploration (EXPLORE block) NLOPT:LD_LBFGS",
+             "    TYPE PRESTAGE\n    EXPLORE\n      LIB NLOPT\n      ALGO LD_LBFGS\n"
+             "      MAXEVAL 5\n      PARAM fd_step 0.4\n    ENDEXPLORE\n"
+             "    REFINE\n      LIB DLIB\n      ALGO BFGS\n      MAXEVAL 20\n"
+             "    ENDREFINE\n"},
+            {"the STRATEGY-level optimiser NLOPT:G_MLSL_LDS",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n    MAXEVAL 50\n"
+             "    PARAM fd_step 0.4\n" + inner},
+            {"the STRATEGY-level optimiser NLOPT:AUGLAG",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO AUGLAG\n    MAXEVAL 50\n"
+             "    PARAM fd_step 0.4\n" + inner}};
+        for (const auto& [name, body] : phases) {
+            INFO(body);
+            CHECK(judge(strategy_config(body)).startup ==
+                  name + ": " + auto_refusal);
+        }
+        /* RIDDERS on each of them */
+        for (const auto& [name, body] : phases) {
+            std::string b = body;
+            b.replace(b.find("PARAM fd_step 0.4"), 17, "PARAM diff_method 2");
+            INFO(b);
+            CHECK(judge(strategy_config(b)).startup ==
+                  name + ": PARAM diff_method 2 (RIDDERS) is refused: Ridders' "
+                  "extrapolation ignored PARAM fd_step, started from a step of "
+                  "0.32 x max(|u|, 1) -- outside most OPTIM boxes -- and took "
+                  "up to 20 evaluations per parameter; use diff_method 0 "
+                  "(CENTRAL, the default) or 1 (FORWARD)");
+        }
     }
-    SECTION("a phase that takes no gradient") {
-        CHECK(judge(strategy_config("    TYPE PLAIN\n    LIB NLOPT\n"
-                                    "    ALGO LN_SBPLX\n    MAXEVAL 20\n"
-                                    "    PARAM fd_step 0.4\n")).startup == "");
+    SECTION("OPTIM_SCALE NONE: Ceres' rule, the default, over the whole box") {
+        const auto none = [&](const std::string& optim,
+                              const std::string& extra) {
+            return "OPTIM_SCALE NONE\n" + optim + "PC_ERMSE 0 1\nOPTIMIZER\n"
+                   "  STRATEGY\n" + bfgs + extra + "  ENDSTRATEGY\n"
+                   "ENDOPTIMIZER\n";
+        };
+        /* a box of relative width 1e-6 ([1000, 1000.001] alike; the seed
+         * WATOM = 1 lies in this one) */
+        CHECK(judge(none("OPTIM WATOM (1) 1 1.000001\n", "")).startup ==
+              "the STRATEGY-level optimiser DLIB:BFGS: the default fd_step "
+              "1e-06 does not fit these OPTIM boxes: no finite-difference "
+              "point is evaluated outside the box, and next to a bound the "
+              "CENTRAL stencil turns one-sided and needs two steps of h = "
+              "max(2^-26, 1e-06 x |u|) in internal units (Ceres' rule) inside "
+              "it; the step is not shrunk:\n  - WATOM: OPTIM box [1, "
+              "1.000001]; no stencil fits at WATOM = 1.0000005; fd_step up to "
+              "3.33333e-07 fits it\n  Set PARAM fd_step to at most "
+              "3.33333e-07; or use OPTIM_SCALE AUTO (fd_step is then a "
+              "fraction of each box width).");
+        CHECK(judge(none("OPTIM WATOM (1) 1 1.000001\n",
+                         "    PARAM fd_step 3.3e-7\n")).startup == "");
+        /* the in-house rule under NONE, h = fd_step x max(|u|, 1): the
+         * exact limit of [0.1, 5] is 4.9 / 10.1 = 0.48515 (it was refused
+         * above 0.3267, three steps of the largest step anywhere) */
+        CHECK_THAT(judge(none("OPTIM WATOM (1) 0.1 5.0\n",
+                              "    PARAM fd_kernel inhouse\n"
+                              "    PARAM fd_step 0.5\n")).startup,
+                   Catch::Contains("\n  - WATOM: OPTIM box [0.1, 5]; no stencil "
+                                   "fits at WATOM = ") &&
+                       Catch::Contains("; fd_step up to 0.485148 fits it\n  Set "
+                                       "PARAM fd_step to at most 0.485148; or "
+                                       "use OPTIM_SCALE AUTO (fd_step is then "
+                                       "a fraction of each box width); or give "
+                                       "a positive parameter that spans "
+                                       "decades a LOG box."));
+        CHECK(judge(none("OPTIM WATOM (1) 0.1 5.0\n",
+                         "    PARAM fd_kernel inhouse\n"
+                         "    PARAM fd_step 0.48\n")).startup == "");
+        /* the step the NOISE block's AUTO derived: 1e-3 of the RMS width,
+         * 0.0707107, far wider than the CGRID2B box */
+        const std::string noise =
+            "OPTIM_SCALE NONE\nOPTIM WATOM (1) 0.1 100.1\n"
+            "OPTIM CGRID2B (1) 1.0 1.001\nPC_ERMSE 0 1\nOPTIMIZER\n"
+            "  NOISE\n    AUTO true\n  ENDNOISE\n  STRATEGY\n" + bfgs +
+            "  ENDSTRATEGY\nENDOPTIMIZER\n";
+        CHECK_THAT(judge(noise).startup,
+                   Catch::StartsWith("the STRATEGY-level optimiser DLIB:BFGS: "
+                                     "fd_step 0.07071067812, derived by the "
+                                     "NOISE block's AUTO from the box "
+                                     "diagonal, does not fit these OPTIM "
+                                     "boxes") &&
+                       Catch::Contains("\n  - CGRID2B[1]: OPTIM box [1, 1.001]; "
+                                       "no stencil fits at CGRID2B[1] = ") &&
+                       Catch::Contains("  Set PARAM fd_step to at most ") &&
+                       Catch::Contains(" (a PARAM fd_step overrides NOISE "
+                                       "AUTO); or use OPTIM_SCALE AUTO") &&
+                       !Catch::Contains("WATOM"));
     }
-    SECTION("an invalid PARAM fd_kernel of a phase that takes gradients") {
-        /* it was refused by the first gradient, after the data were
-         * loaded */
+    SECTION("invalid settings") {
         CHECK(judge(strategy_config(bfgs + "    PARAM fd_kernel fast\n"))
                   .startup ==
               "the STRATEGY-level optimiser DLIB:BFGS: PARAM fd_kernel must "
-              "be inhouse (default) or ceres (got 'fast')");
+              "be inhouse or ceres (got 'fast')");
+        /* HYBRID ignored an invalid fd_kernel (review item 5) */
+        CHECK(judge(strategy_config(bfgs + "    GRAD_STRATEGY HYBRID\n"
+                                    "    PARAM fd_kernel fast\n")).startup ==
+              "the STRATEGY-level optimiser DLIB:BFGS: PARAM fd_kernel must "
+              "be inhouse or ceres (got 'fast')");
+        CHECK(judge(strategy_config(bfgs + "    PARAM diff_method 3\n"))
+                  .startup ==
+              "the STRATEGY-level optimiser DLIB:BFGS: PARAM diff_method must "
+              "be 0 (CENTRAL, the default) or 1 (FORWARD) (got 3)");
+        CHECK(judge(strategy_config(
+                        "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_LBFGS\n"
+                        "    MAXEVAL 20\n    PARAM fd_step 0\n")).startup ==
+              "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM fd_step must "
+              "be a positive finite number (got 0)");
+    }
+    SECTION("settings that never take effect are refused") {
+        /* an INNER block takes the gradient of the block it runs in: its
+         * own PARAM was accepted and ignored (NLopt set_param) */
+        const std::string mlsl =
+            "    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n"
+            "    MAXEVAL 50\n";
+        CHECK(judge(strategy_config(mlsl +
+                                    "    INNER\n      LIB NLOPT\n"
+                                    "      ALGO LD_LBFGS\n      MAXEVAL 10\n"
+                                    "      PARAM fd_step 0.4\n"
+                                    "      PARAM fd_kernel ceres\n"
+                                    "    ENDINNER\n")).startup ==
+              "the INNER block of the STRATEGY-level optimiser NLOPT:LD_LBFGS: "
+              "PARAM fd_step and fd_kernel never take effect: an INNER search "
+              "takes the gradient of the block it runs in, with that block's "
+              "finite-difference settings; set them in the enclosing block.");
+        /* a derivative-free optimiser */
+        CHECK(judge(strategy_config("    TYPE PLAIN\n    LIB NLOPT\n"
+                                    "    ALGO LN_SBPLX\n    MAXEVAL 20\n"
+                                    "    PARAM fd_step 0.4\n")).startup ==
+              "the STRATEGY-level optimiser NLOPT:LN_SBPLX: PARAM fd_step "
+              "never takes effect: NLOPT:LN_SBPLX takes no gradient; remove "
+              "it.");
+        /* GRAD_STRATEGY ANALYTICAL takes no finite differences */
+        CHECK(judge(strategy_config(bfgs + "    GRAD_STRATEGY ANALYTICAL\n"
+                                    "    PARAM diff_method 1\n")).startup ==
+              "the STRATEGY-level optimiser DLIB:BFGS: PARAM diff_method never "
+              "takes effect: GRAD_STRATEGY ANALYTICAL takes no finite "
+              "differences; remove it.");
+    }
+    SECTION("ASA's probes fit its boxes") {
+        const std::string asa =
+            "    TYPE PLAIN\n    LIB ASA\n    ALGO ASA\n    MAXEVAL 20\n";
+        CHECK(judge(strategy_config(asa)).startup == "");
+        CHECK(judge("OPTIM_SCALE NONE\nOPTIM WATOM (1) 1 1.000001\n"
+                    "PC_ERMSE 0 1\nOPTIMIZER\n  STRATEGY\n" + asa +
+                    "  ENDSTRATEGY\nENDOPTIMIZER\n").startup ==
+              "the STRATEGY-level optimiser ASA:ASA: ASA's finite-difference "
+              "probes -- the reannealing and exit tangents at (1 + Delta) x, "
+              "or (1 - Delta) x when that lies outside the box -- would be "
+              "evaluated outside the OPTIM box of these dimensions:\n  - "
+              "WATOM: OPTIM box [1, 1.000001], PARAM Delta_X 0.001: a probe of "
+              "WATOM = 1.0000005 lies outside the box; Delta_X up to "
+              "4.99999e-07 fits it\n  Lower the Delta; or use OPTIM_SCALE "
+              "AUTO, where every box is the unit box (the tangents fit for "
+              "Delta <= 1).");
+        /* the unit box: tangents up to Delta 1, the exit curvature up to
+         * 0.5 */
+        CHECK(judge(strategy_config(asa + "    PARAM Delta_X 1\n")).startup == "");
+        CHECK(judge(strategy_config(asa + "    PARAM Delta_X 1.5\n")).startup !=
+              "");
+        CHECK(judge(strategy_config(asa + "    PARAM Delta_X 0.5\n"
+                                    "    PARAM Curvature_0 0\n")).startup == "");
+        CHECK_THAT(judge(strategy_config(asa + "    PARAM Delta_X 0.6\n"
+                                         "    PARAM Curvature_0 0\n")).startup,
+                   Catch::Contains("and the exit curvature at x +- Delta |x|, "
+                                   "or x -+ Delta |x| and x -+ 2 Delta |x| next "
+                                   "to a bound (Curvature_0 0)") &&
+                       Catch::Contains("Delta_X up to 0.5 fits it"));
     }
 }

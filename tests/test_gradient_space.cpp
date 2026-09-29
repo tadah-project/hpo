@@ -143,8 +143,8 @@ TEST_CASE("GradientProvider NUMERICAL: PARAM fd_kernel selects the kernel "
           "under either OPTIM_SCALE",
           "[HPO][grad_provider][search_space][fd_kernel]")
 {
-    /* The in-house kernel steps h = fd_step * max(|u|, 1), Ceres' numeric
-     * differentiation fd_step * |u|: at u = 0.5 with fd_step 0.2 the
+    /* The in-house rule steps h = fd_step * max(|u|, 1), Ceres' rule
+     * fd_step * |u| (evaluated in Tadah): at u = 0.5 with fd_step 0.2 the
      * stencil of dimension 1 is 0.7 and 0.3 in-house, 0.6 and 0.4 with
      * Ceres. `PARAM fd_kernel inhouse` under OPTIM_SCALE NONE was accepted
      * and ignored: the Ceres kernel, NONE's default, ran. */
@@ -165,7 +165,6 @@ TEST_CASE("GradientProvider NUMERICAL: PARAM fd_kernel selects the kernel "
         CHECK(s[1] == Approx(0.3));
         CHECK(g(1) == Approx(3.0));
     }
-#ifdef TADAH_USE_CERES
     /* And the other way: ceres in the unit box, where in-house is the
      * default. */
     auto unit = spec_with_space(/*normalise=*/true, /*log_second=*/false);
@@ -184,5 +183,4 @@ TEST_CASE("GradientProvider NUMERICAL: PARAM fd_kernel selects the kernel "
         CHECK(s[0] == Approx(5.05 + 0.99));
         CHECK(s[1] == Approx(5.05 - 0.99));
     }
-#endif
 }

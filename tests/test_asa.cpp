@@ -1179,3 +1179,30 @@ TEST_CASE("ASA keeps the most severe of concurrent block exceptions",
     /* Equal severity: the first stays. */
     CHECK_THROWS_AS(run_with(stagnation, stagnation), tadah::hpo::StagnationStop);
 }
+
+TEST_CASE("ASA refuses a box its finite-difference probes cannot fit, before "
+          "it evaluates anything", "[HPO][asa][fd_bounds]")
+{
+    /* ASA's reannealing and exit tangents evaluate (1 + Delta) x, or
+     * (1 - Delta) x when that lies outside the box (cost_derivatives). In a
+     * box of relative width 1e-6 both lie outside it for Delta_X 0.001:
+     * they were evaluated there. */
+    auto sp = make_asa_spec({1.0}, {1.000001});
+    sp.stop.maxeval = 20;
+    std::size_t calls = 0;
+    const AsaHostFn eval = [&calls](const std::vector<double>& x) {
+        ++calls;
+        return (x[0] - 1.0000005) * (x[0] - 1.0000005);
+    };
+    REQUIRE_THROWS_WITH(run_asa_erased(sp, 1, eval),
+                        Catch::StartsWith("ASA:ASA: ASA's finite-difference "
+                                          "probes") &&
+                            Catch::Contains("PARAM Delta_X 0.001") &&
+                            Catch::Contains("Delta_X up to 4.99999e-07 fits "
+                                            "it"));
+    CHECK(calls == 0u);
+    /* a Delta that fits: the run goes ahead */
+    sp.param = {{"Delta_X", 4e-7}};
+    REQUIRE_NOTHROW(run_asa_erased(sp, 1, eval));
+    CHECK(calls > 0u);
+}

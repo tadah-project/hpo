@@ -5,6 +5,7 @@
 #include <dlib/matrix.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -538,5 +539,66 @@ TEST_CASE("SearchSpace: seed anchors on vectors and several seeds; edge cases",
         const double back = anch.to_real(0, anch.to_internal(0, -0.0));
         CHECK(back == 0.0);
         CHECK(std::signbit(back));
+    }
+}
+
+TEST_CASE("SearchSpace: the ends of the internal box map to exactly the ends "
+          "of the real one, and a u inside it into [lo, hi]",
+          "[HPO][search_space][fd_bounds]")
+{
+    /* T^-1 rounds (exp, sinh, the affine map of the unit box): LOG and
+     * ASINH ends came back one ulp outside the box -- LOG [0.01, 10] at
+     * u = 1 gave 10.000000000000002, an evaluation outside the box that was
+     * recorded as the best when an optimiser pressed against the bound
+     * (owner decision D6, 2026-09-29). A u outside the internal box still
+     * maps through T^-1, unclamped. */
+    for (const bool normalise : {true, false}) {
+        CAPTURE(normalise);
+        ScalePolicy pol;
+        pol.normalise = normalise;
+        const auto ss = SearchSpace::build(
+            {dim("A", 0.01, 10.0, ScaleKind::Log), dim("B", 0.3, 3.0, ScaleKind::Log)},
+            pol);
+        CHECK(ss.to_real(0, ss.internal_hi(0)) == 10.0);
+        CHECK(ss.to_real(0, ss.internal_lo(0)) == 0.01);
+        CHECK(ss.to_real(1, ss.internal_hi(1)) == 3.0);
+        CHECK(ss.to_real(1, ss.internal_lo(1)) == 0.3);
+        /* just outside: unclamped (above the box, not snapped onto it) */
+        const double beyond = std::nextafter(
+            ss.internal_hi(0), std::numeric_limits<double>::infinity());
+        CHECK(ss.to_real(0, beyond) > 10.0);
+    }
+    /* random boxes of every shape: the ends exactly, the inside inside */
+    std::uint64_t state = 0x9e3779b97f4a7c15ULL;
+    const auto next = [&state]() {
+        state ^= state << 13; state ^= state >> 7; state ^= state << 17;
+        return static_cast<double>(state >> 11) * 0x1p-53;
+    };
+    for (int k = 0; k < 3000; ++k) {
+        const ScaleKind kind = k % 3 == 0 ? ScaleKind::Linear
+                             : k % 3 == 1 ? ScaleKind::Log : ScaleKind::Asinh;
+        double lo, hi;
+        if (kind == ScaleKind::Log) {
+            lo = std::pow(10.0, -6.0 + 8.0 * next());
+            hi = lo * std::pow(10.0, 0.01 + 5.0 * next());
+        } else {
+            lo = -50.0 + 100.0 * next();
+            hi = lo + 1e-3 + 50.0 * next();
+        }
+        ScalePolicy pol;
+        pol.normalise = (k / 3) % 2 == 0;
+        const auto ss = SearchSpace::build(
+            {dim("X", lo, hi, kind, 0.01 + next())}, pol);
+        const double ulo = ss.internal_lo(0), uhi = ss.internal_hi(0);
+        CAPTURE(k, lo, hi, pol.normalise);
+        CHECK(ss.to_real(0, ulo) == lo);
+        CHECK(ss.to_real(0, uhi) == hi);
+        for (const double w : {1e-12, 0.5, 1.0 - 1e-12}) {
+            const double u = ulo + w * (uhi - ulo);
+            if (!(u > ulo && u < uhi)) continue;
+            const double x = ss.to_real(0, u);
+            CHECK(x >= lo);
+            CHECK(x <= hi);
+        }
     }
 }

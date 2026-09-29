@@ -526,19 +526,24 @@ TEST_CASE("fd stencil: a box narrower than the stencil is refused",
             CAPTURE(u);
             const std::string what = refused(spec_over(box, 0.4), box,
                                              vec({u, 0.5}));
+            /* The message names the step's source, the rule, a point
+             * without a stencil and the largest fd_step that fits (owner
+             * decision D1(a); review item 8). */
             CHECK_THAT(what,
-                       Catch::StartsWith("PARAM fd_step 0.4: the "
-                                         "finite-difference stencil takes "
-                                         "three steps of fd_step x max(|u|, "
-                                         "1) inside the OPTIM box") &&
-                           Catch::Contains("\n  - X[1]: box [0, 1], width 1 "
-                                           "< 3 x 0.4 (fd_step below "
-                                           "0.3333333333 fits it)") &&
-                           Catch::Contains("\n  - X[2]: box [0, 1]") &&
-                           Catch::EndsWith("Lower PARAM fd_step (set it by "
-                                           "hand when the NOISE block's AUTO "
-                                           "derived it) or widen these "
-                                           "boxes."));
+                       Catch::StartsWith("PARAM fd_step 0.4 does not fit these "
+                                         "OPTIM boxes: no finite-difference "
+                                         "point is evaluated outside the box, "
+                                         "and next to a bound the CENTRAL "
+                                         "stencil turns one-sided and needs "
+                                         "two steps of h = 0.4 of each box "
+                                         "width (in-house rule) inside it; the "
+                                         "step is not shrunk:") &&
+                           Catch::Contains("\n  - X[1]: OPTIM box [0, 1]; no "
+                                           "stencil fits at X[1] = 0.3; fd_step "
+                                           "up to 0.333333 fits it") &&
+                           Catch::Contains("\n  - X[2]: OPTIM box [0, 1]") &&
+                           Catch::EndsWith("\n  Set PARAM fd_step to at most "
+                                           "0.333333."));
         }
         /* a third of the width fits */
         ProjectingHost host{f, box, {}};
@@ -549,10 +554,13 @@ TEST_CASE("fd stencil: a box narrower than the stencil is refused",
         const std::vector<std::pair<double, double>> box = {{1000.0, 1000.001}};
         const std::string what = refused(
             spec_over(box, 1e-6, /*normalise=*/false), box, vec({1000.0005}));
-        CHECK_THAT(what, Catch::Contains("\n  - X[1]: box [1000, 1000.001], "
-                                         "width 0.001 < 3 x 0.001000001 "
-                                         "(fd_step below 3.33333e-07 fits "
-                                         "it)"));
+        CHECK_THAT(what, Catch::Contains("\n  - X[1]: OPTIM box [1000, "
+                                         "1000.001]; no stencil fits at X[1] = "
+                                         "1000.0005; fd_step up to 3.33333e-07 "
+                                         "fits it\n  Set PARAM fd_step to at "
+                                         "most 3.33333e-07; or use OPTIM_SCALE "
+                                         "AUTO (fd_step is then a fraction of "
+                                         "each box width)."));
     }
     SECTION("HYBRID") {
         const std::vector<std::pair<double, double>> box = {{0.0, 1.0}};
@@ -570,17 +578,19 @@ TEST_CASE("fd stencil: a box narrower than the stencil is refused",
             sp, host, &counter, 0, agf);
         Vec g;
         CHECK_THROWS_WITH(gp.gradient(vec({0.5}), g),
-                          Catch::StartsWith("PARAM fd_step 0.4: the "
-                                            "finite-difference stencil"));
+                          Catch::StartsWith("PARAM fd_step 0.4 does not fit "
+                                            "these OPTIM boxes"));
         CHECK(host.asked.empty());
     }
 }
 
-TEST_CASE("fd stencil: a point outside its box keeps the central stencil",
+TEST_CASE("fd stencil: a point outside its box is differenced towards it",
           "[HPO][grad_provider][fd_stencil]")
 {
     /* Only an optimiser that ignores the bounds (CERES, NLopt LN_NEWUOA)
-     * evaluates such a point; the search itself is outside the box. */
+     * evaluates such a point. It kept the central stencil, which reached
+     * further outside (-0.51); owner decision D4 (2026-09-29): one-sided
+     * towards the box. */
     const std::vector<std::pair<double, double>> box = {{0.0, 1.0}};
     const auto sp = spec_over(box, 1e-2);
     std::vector<Vec> asked;
@@ -598,6 +608,6 @@ TEST_CASE("fd stencil: a point outside its box keeps the central stencil",
     REQUIRE(gp.gradient(vec({-0.5}), g));
     REQUIRE(asked.size() == 3u);
     CHECK(asked[1](0) == -0.5 + 1e-2);
-    CHECK(asked[2](0) == -0.5 - 1e-2);
+    CHECK(asked[2](0) == -0.5 + 2.0 * 1e-2);
     CHECK(g(0) == Approx(-1.0));
 }

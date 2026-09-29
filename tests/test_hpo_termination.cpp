@@ -4974,3 +4974,207 @@ TEST_CASE("Gradient not finite: the ending keeps the run driver's order",
               "FAILED -- optimiser broke");
     }
 }
+
+/* ======================================================================
+ * Finite differences and the OPTIM box, end to end (fd_stencil.h; owner
+ * decisions D1-D6, 2026-09-29). The straddle objective with the ERMSE
+ * target 0 falls towards CGRID2B[2] = 2, the upper bound of [1, 2], and
+ * the searches start on it (PARAM fd_step 0.2: h = 0.2 of the width).
+ * ==================================================================== */
+
+namespace {
+
+/* The DIAGNOSTICS count of one-sided differences of CGRID2B[2], 0 without
+ * the line. */
+std::size_t one_sided_count(const std::string& journal)
+{
+    std::smatch m;
+    if (std::regex_search(journal, m,
+                          std::regex(R"(One-sided differences\s*: (\d+) )")))
+        return static_cast<std::size_t>(std::stoul(m[1]));
+    return 0;
+}
+
+const std::string kOneSidedAt2 =
+    "finite differences: CGRID2B[2] = 2 lies within a step of its upper "
+    "bound (OPTIM box [1, 2]): one-sided 3-point difference, at CGRID2B[2] "
+    "= 1.8 and CGRID2B[2] = 1.6 with the loss at the point itself";
+
+}  // namespace
+
+TEST_CASE("Finite differences: a search on the upper bound evaluates nothing "
+          "outside the box, with every gradient backend and step rule",
+          "[HPO][termination][fd_gradient][fd_bounds]")
+{
+    /* The gradient at the start, CGRID2B[2] = 2, is the one-sided
+     * difference at 1.8 and 1.6. Ceres' step rule (PARAM fd_kernel ceres,
+     * the default under OPTIM_SCALE NONE) evaluated 2.2, outside the box;
+     * HYBRID, with no analytical derivative (OALGO 1), took none and ended
+     * at its start. The CERES drivers ignore the bounds: their iterates
+     * leave the box (counted and warned about), and every gradient there
+     * steps towards the box (D4). */
+    struct Case {
+        std::string lib, algo, extra, label;
+        bool hybrid = false;
+        bool start_gradient = true;   /* its first request is the start's */
+    };
+    const std::vector<Case> cases = {
+        {"DLIB", "BFGS", "", "DLIB:BFGS"},
+        {"NLOPT", "LD_LBFGS", "", "NLOPT:LD_LBFGS"},
+        {"NLOPT", "LD_MMA", "", "NLOPT:LD_MMA"},
+        {"NLOPT", "LD_SLSQP", "", "NLOPT:LD_SLSQP"},
+        /* MLSL samples first; a local search reaches the bound later */
+        {"NLOPT", "G_MLSL_LDS", inner_block("LD_LBFGS", "      MAXEVAL 10\n"),
+         "NLOPT:G_MLSL_LDS, INNER LD_LBFGS", false, false},
+        {"DLIB", "BFGS", "    PARAM fd_kernel ceres\n",
+         "DLIB:BFGS, fd_kernel ceres"},
+        {"DLIB", "BFGS", "    GRAD_STRATEGY HYBRID\n", "DLIB:BFGS, HYBRID", true},
+        {"NLOPT", "LD_LBFGS", "    GRAD_STRATEGY HYBRID\n",
+         "NLOPT:LD_LBFGS, HYBRID", true},
+#ifdef TADAH_USE_CERES
+        {"CERES", "LBFGS", "", "CERES:LBFGS"},
+        {"CERES", "LBFGS", "    PARAM fd_kernel ceres\n",
+         "CERES:LBFGS, fd_kernel ceres"},
+#endif
+    };
+    for (const Case& c : cases) {
+        DYNAMIC_SECTION(c.label) {
+            TaRun run(straddle_block(c.lib, c.algo, c.extra), straddle_root("0"));
+            if (c.hybrid) run.ctx.storage_update("OALGO", {"1"});
+            int status = -1;
+            REQUIRE_NOTHROW(status = straddle_run(run, "2.0", c.label));
+            CHECK(status == 0);
+            const auto x = evaluated_cgrid2();
+            REQUIRE(x.size() >= 3u);
+            const std::string journal = read_file("hpo_run.log");
+            /* the start's gradient; HYBRID takes the optimiser's own loss
+             * at the start (no second evaluation of it) */
+            const std::size_t first = c.hybrid ? 1 : 2;
+            CHECK(x[0] == 2.0);
+            if (c.start_gradient) {
+                if (!c.hybrid) CHECK(x[1] == 2.0);
+                CHECK(x[first] == Approx(1.8).epsilon(1e-12));
+                CHECK(x[first + 1] == Approx(1.6).epsilon(1e-12));
+            }
+            /* one INFO line for the dimension: the first one-sided
+             * difference */
+            CHECK(count_of(journal, "finite differences: CGRID2B[2] = ") == 1u);
+            if (c.start_gradient) CHECK(count_of(journal, kOneSidedAt2) == 1u);
+            CHECK(one_sided_count(journal) >= 1u);
+            CHECK(journal.find("HYBRID centre evaluations") == std::string::npos);
+            if (c.lib != "CERES") {
+                for (double xi : x) {
+                    CAPTURE(xi);
+                    CHECK((xi >= 1.0 && xi <= 2.0));
+                }
+                CHECK(journal.find("outside the OPTIM box") == std::string::npos);
+            } else {
+                /* once, at startup, and once at the first evaluation outside
+                 * the box */
+                CHECK(count_of(journal, "CERES:LBFGS (OUTER): ignores the OPTIM "
+                                        "box: Ceres' GradientProblemSolver has "
+                                        "no bounds") == 1u);
+                CHECK(count_of(journal, "lies outside its OPTIM box [1, 2] and "
+                                        "is evaluated there") == 1u);
+                std::size_t outside = 0;
+                for (double xi : x)
+                    if (xi < 1.0 || xi > 2.0) ++outside;
+                REQUIRE(outside > 0u);
+                CHECK_THAT(journal,
+                           Catch::Contains("Evaluations outside the OPTIM box: " +
+                                           std::to_string(outside) + " ") &&
+                               Catch::Contains("Gradients at points outside the "
+                                               "OPTIM box: "));
+                /* a gradient at a point above the box (its loss, then the
+                 * centre, the stencil) steps down, towards the box */
+                std::size_t gradients_above = 0;
+                for (std::size_t k = 1; k + 2 < x.size(); ++k)
+                    if (x[k] > 2.0 && x[k] == x[k - 1]) {
+                        ++gradients_above;
+                        CHECK(x[k + 1] < x[k]);
+                        CHECK(x[k + 2] < x[k + 1]);
+                    }
+                CHECK(gradients_above > 0u);
+            }
+            if (c.hybrid) {
+                /* HYBRID reuses the loss the optimiser evaluated at the
+                 * gradient's point: no point twice in a row */
+                for (std::size_t k = 1; k < x.size(); ++k) {
+                    CAPTURE(k);
+                    CHECK(x[k] != x[k - 1]);
+                }
+            }
+            check_run_files();
+        }
+    }
+}
+
+TEST_CASE("Finite differences: HYBRID differences every parameter when no "
+          "analytical derivative can be formed", "[HPO][termination]"
+          "[fd_gradient][hybrid]")
+{
+    /* OALGO 1: the analytical gradient does not cover the setup, and the
+     * journal says every parameter uses finite differences. HYBRID
+     * returned g = 0 instead: DLIB:BFGS ended COMPLETED at its start after
+     * two evaluations (review item 9, fixed at the owner's request). From
+     * 1.9 the search now reaches the bound 2, where the loss is lowest. */
+    TaRun run(straddle_block("DLIB", "BFGS", "    GRAD_STRATEGY HYBRID\n"),
+              straddle_root("0"));
+    run.ctx.storage_update("OALGO", {"1"});
+    int status = -1;
+    REQUIRE_NOTHROW(status = straddle_run(run, "1.9", "DLIB:BFGS HYBRID"));
+    CHECK(status == 0);
+    const auto x = evaluated_cgrid2();
+    REQUIRE(x.size() > 2u);
+    CHECK(x[1] == Approx(1.7).epsilon(1e-12));   /* one-sided: 2.1 is outside */
+    CHECK(x[2] == Approx(1.5).epsilon(1e-12));
+    CHECK(std::find(x.begin(), x.end(), 2.0) != x.end());
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(count_of(journal, "No analytical gradient for this setup: OALGO is 1") ==
+          1u);
+    const auto best = data_rows("best_params.tadah");
+    REQUIRE_FALSE(best.empty());
+    CHECK(std::stod(best.back().back()) == 2.0);
+    check_run_files();
+}
+
+TEST_CASE("Finite differences: LD_SLSQP from 1.8 runs to MAXEVAL, "
+          "120 evaluations for MAXEVAL 60",
+          "[HPO][termination][fd_gradient]")
+{
+    /* A pin, like LD_MMA's 120 in "NLopt and Ceres reject a later point
+     * ...": with the ERMSE target 10.5 LD_SLSQP from 1.8 rejects points in
+     * the failure region and goes on. The gradient provider counts its
+     * stencil evaluations against MAXEVAL and NLopt its objective calls, so
+     * the search makes 120 evaluations for MAXEVAL 60; once the provider's
+     * budget is spent, SLSQP converges on 1.67768940 and asks for that
+     * point again and again -- the last 25 evaluations -- until NLopt's own
+     * count ends it. That
+     * accounting is an existing open issue (RELEASE-1.6.0-FOLLOWUPS.md,
+     * "NLopt MAXEVAL accounting"); this case pins it as it is. Until the
+     * bounded stencil (2026-09-29) the central stencil of 1.143 took a zero
+     * difference of two failures at 1.343 and 0.943, outside the box, and
+     * the search ended after 22 evaluations. */
+    TaRun run(straddle_block("NLOPT", "LD_SLSQP"), straddle_root("10.5"));
+    int status = -1;
+    REQUIRE_NOTHROW(status = straddle_run(run, "1.8", "NLOPT:LD_SLSQP"));
+    CHECK(status == 0);
+    const auto rows = data_rows("params.tadah");
+    CHECK(rows.size() == 120u);
+    REQUIRE_FALSE(rows.empty());
+    std::size_t repeats = 0;
+    for (auto it = rows.rbegin(); it != rows.rend() &&
+                                  it->back() == rows.back().back(); ++it)
+        ++repeats;
+    CHECK(repeats == 25u);
+    CHECK(std::stod(rows.back().back()) == Approx(1.677689403).epsilon(1e-9));
+    for (double xi : evaluated_cgrid2()) {
+        CAPTURE(xi);
+        CHECK((xi >= 1.0 && xi <= 2.0));
+    }
+    CHECK(went_on_past_a_failure(data_rows("loss.tadah")));
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(journal_status(journal) ==
+          "MAXEVAL_REACHED -- maximum evaluations exhausted");
+    check_run_files();
+}

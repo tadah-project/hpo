@@ -242,7 +242,8 @@ TEST_CASE("GradientProvider: HYBRID's masked pass and the analytical pass "
     }
 }
 
-#ifdef TADAH_USE_CERES
+/* Ceres' step rule is evaluated in Tadah (fd_stencil.h): no Ceres build
+ * needed. */
 TEST_CASE("GradientProvider: the Ceres kernel reports a failed stencil "
           "evaluation, a non-finite loss and MAXEVAL",
           "[HPO][grad_provider][gradient_failure][ceres]")
@@ -285,4 +286,3 @@ TEST_CASE("GradientProvider: the Ceres kernel reports a failed stencil "
         CHECK(gp.failure->kind == GradientFailure::Budget);
     }
 }
-#endif

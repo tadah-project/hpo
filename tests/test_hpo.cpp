@@ -1023,7 +1023,8 @@ tadah::hpo::OptimizerSpec make_provider_test_spec() {
 }
 }  // namespace
 
-#ifdef TADAH_USE_CERES
+/* NUMERICAL and HYBRID take their finite differences in Tadah
+ * (fd_stencil.h), Ceres' step rule included: no Ceres build needed. */
 TEST_CASE("GradientProvider Numerical matches analytic on f=sin(x)+y^2",
           "[HPO][grad_provider][parity]")
 {
@@ -1102,11 +1103,11 @@ TEST_CASE("GradientProvider Numerical propagates non-finite host eval",
     /* Cost at the bad point returns +inf. */
     CHECK_FALSE(std::isfinite(gp.cost(x)));
 
-    /* Gradient at the bad point returns false (NumericDiff sees NaN). */
+    /* Gradient at the bad point returns false (the loss at the centre is
+     * not finite). */
     DlibVec g;
     CHECK_FALSE(gp.gradient(x, g));
 }
-#endif  // TADAH_USE_CERES
 
 TEST_CASE("GradientProvider Analytical without callback throws wiring error",
           "[HPO][grad_provider][analytical]")
@@ -1194,7 +1195,6 @@ TEST_CASE("GradientProvider Analytical with leftover needs_fd throws strict diag
                       !Catch::Contains("dtheta_registry"));
 }
 
-#ifdef TADAH_USE_CERES
 TEST_CASE("GradientProvider Hybrid runs masked FD on needs_fd indices",
           "[HPO][grad_provider][hybrid][parity]")
 {
@@ -1250,9 +1250,9 @@ TEST_CASE("GradientProvider Hybrid respects MAXEVAL on FD pass",
     DlibVec g;
     CHECK_FALSE(gp.gradient(x, g));
 }
-#endif
 
-TEST_CASE("GradientProvider Hybrid all-FD gate skips central differences",
+TEST_CASE("GradientProvider Hybrid takes finite differences on every "
+          "parameter when none has an analytical derivative",
           "[HPO][grad_provider][hybrid][all_fd]")
 {
     auto sp = make_provider_test_spec();
@@ -1260,13 +1260,14 @@ TEST_CASE("GradientProvider Hybrid all-FD gate skips central differences",
     StubHostSinXY2 host;
     std::atomic<unsigned long> counter{0};
 
-    /* Callback returns success but routes EVERY index to needs_fd — the
-     * degenerate case the analytical helper hits with PC_LAMMPS-only
-     * setups whose sims-grad chain can't be registered. HYBRID must
-     * skip the FD pass (otherwise the gradient-based inner monopolises
-     * the budget on slow, noisy FD on LAMMPS-driven losses) and return
-     * the analytical pass's zeros so an outer global sampler keeps
-     * making progress. */
+    /* Callback returns success but routes EVERY index to needs_fd -- a
+     * setup the analytical gradient does not cover (OALGO other than 4,
+     * FIXINDEX, ...), a candidate rejected before training, a PC_LAMMPS
+     * chain that failed. HYBRID skipped the finite differences there and
+     * returned g = 0, so DLIB:BFGS ended COMPLETED at its start after two
+     * evaluations (example 01 without PC_LAMMPS, GRAD_STRATEGY HYBRID).
+     * The owner's decision (2026-09-29, review item 9): difference every
+     * parameter, as the host's journal line already said it would. */
     auto agf = [](const DlibVec& x, DlibVec& g, std::vector<int>& nfd) -> bool {
         g.set_size(2);
         g(0) = 0.0;
@@ -1283,10 +1284,10 @@ TEST_CASE("GradientProvider Hybrid all-FD gate skips central differences",
     DlibVec x; x.set_size(2); x(0)=1.0; x(1)=0.5;
     DlibVec g;
     REQUIRE(gp.gradient(x, g));
-    CHECK(g(0) == 0.0);
-    CHECK(g(1) == 0.0);
-    /* Only the analytical pass is counted; no FD host calls were made. */
-    CHECK(counter.load() == 1u);
+    CHECK(g(0) == Approx(std::cos(1.0)).margin(1e-6));
+    CHECK(g(1) == Approx(1.0).margin(1e-6));
+    /* The analytical pass and the central pair of each parameter. */
+    CHECK(counter.load() == 5u);
 }
 
 TEST_CASE("GradientProvider Hybrid without callback throws wiring error",
