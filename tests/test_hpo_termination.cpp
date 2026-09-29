@@ -202,14 +202,21 @@ struct TaRun {
     tadah::core::Context ctx;
     fs::path hpo, val;
 
+    /* `new_process`: reset the process-wide HPOLog and HPO_Host state
+     * first, as a new process would start; false runs as a later run of an
+     * embedding in the same process, with only hpo_run()'s own per-run
+     * resets. */
     explicit TaRun(const std::string& optimizer,
-                   const std::string& root = kRootLines)
+                   const std::string& root = kRootLines,
+                   bool new_process = true)
     {
         tadah::core::PeriodicTable::initialize();
         /* HPOLog and the HPO_Host statics are process-wide; a run in the
          * same process as another test must start as a new process would. */
-        tadah::hpo::HPOLog::instance().reset_for_test();
-        Host::reset_globals_for_test();
+        if (new_process) {
+            tadah::hpo::HPOLog::instance().reset_for_test();
+            Host::reset_globals_for_test();
+        }
         const fs::path train = sd.dir / "train.db";
         const fs::path valdb = sd.dir / "val.db";
         val = sd.dir / "config.val";
@@ -692,6 +699,47 @@ TEST_CASE("Termination: DLIB BFGS MAXEVAL ends with best_pot.tadah = the "
     CHECK(data_rows("loss.tadah").size() <= 9u);
     const std::string journal = read_file("hpo_run.log");
     CHECK(journal.find("DLIB:BFGS -- MAXEVAL=9 reached") != std::string::npos);
+}
+
+TEST_CASE("Two runs in one process: each journal carries its own "
+          "once-per-run notes", "[HPO][termination][two_runs]")
+{
+    /* The notes a run prints once (the DLIB:BFGS MAXEVAL preamble, the
+     * gradient-pipeline diagnostic, the no-analytical-gradient fallback)
+     * were function statics: the second run of an embedding, or of a test
+     * process, printed none of them, and the rate-limited counts (a
+     * pc-worker error's occurrence, the FAILPROBE "total gated=N") went
+     * on from the first run's. The second run here has only hpo_run()'s
+     * own per-run resets. */
+    for (const char* oalgo : {"4", "1"}) {
+        CAPTURE(oalgo);
+        const std::string optimizer = plain_block(
+            "    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 9\n"
+            "    GRAD_STRATEGY HYBRID\n");
+        std::vector<std::string> journals;
+        for (int run = 0; run < 2; ++run) {
+            TaRun r(optimizer, kRootLines, /*new_process=*/run == 0);
+            r.ctx.remove("OALGO");
+            r.ctx.add("OALGO", std::stoi(oalgo));
+            REQUIRE(tadah::hpo::hpo_run(r.ctx) == 0);
+            journals.push_back(read_file("hpo_run.log"));
+        }
+        /* OALGO 4: the analytical gradient, and BFGS reaches MAXEVAL;
+         * OALGO 1: finite differences (the fallback note), and BFGS
+         * converges before MAXEVAL */
+        for (const std::string& j : journals) {
+            INFO("journal:\n" << j);
+            if (std::string(oalgo) == "4") {
+                CHECK(j.find("DLIB:BFGS -- MAXEVAL is enforced externally") !=
+                      std::string::npos);
+                CHECK(j.find("Gradient-pipeline diagnostic (first eval)") !=
+                      std::string::npos);
+            } else {
+                CHECK(j.find("No analytical gradient for this setup") !=
+                      std::string::npos);
+            }
+        }
+    }
 }
 
 TEST_CASE("Termination: NLopt MAXEVAL ends with best_pot.tadah = the best "

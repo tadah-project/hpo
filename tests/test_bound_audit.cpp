@@ -153,3 +153,62 @@ TEST_CASE("BoundOccupancy: a hard lower bound is flagged, not read as bound "
     log.reset_for_test();
     std::error_code ec; std::filesystem::remove(path, ec);
 }
+
+TEST_CASE("HPOLog: a second run's journal starts without the first run's "
+          "bound occupancy and per-run notes", "[HPO][bound_audit][hpolog][two_runs]")
+{
+    /* HPOLog is a process-wide singleton. The occupancy snapshot of the
+     * first run's best was printed as the final table of the second run's
+     * journal ("Bound occupancy of the final best (eval 7)"), and the notes
+     * a run prints once, or rate-limits by its own count, carried over.
+     * A new journal (open(), every run) and reset_for_test() start them
+     * afresh. */
+    auto& log = HPOLog::instance();
+    if (log.is_open()) log.finish("reopen-for-test");
+    log.reset_for_test();
+    const auto stamp = std::to_string(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto dir = std::filesystem::temp_directory_path();
+    const auto path1 = dir / ("tadah_two_runs_1_" + stamp + ".log");
+    const auto path2 = dir / ("tadah_two_runs_2_" + stamp + ".log");
+    const auto path3 = dir / ("tadah_two_runs_3_" + stamp + ".log");
+    OptimizerSpec sp; sp.lib = "NLOPT"; sp.algo = "LN_SBPLX";
+    sp.bind_space(space());
+
+    /* run 1: a best on the RCUT2B bound, and a few per-run notes */
+    log.open(path1.string(), "test", "test_cwd", 0);
+    log.write_optimizer_section(sp, sp.parameter_labels);
+    BoundOccupancy occ(space());
+    occ.on_new_best(7, {5.99, 1.0});
+    log.record_bound_occupancy(occ.marks(), 7, occ.edge());
+    CHECK(log.first_in_run("note"));
+    CHECK_FALSE(log.first_in_run("note"));
+    CHECK(log.count_in_run("failure") == 1u);
+    CHECK(log.count_in_run("failure") == 2u);
+    log.finish("TEST");
+    CHECK(slurp(path1).find("Bound occupancy of the final best (eval 7)") !=
+          std::string::npos);
+
+    /* run 2: a new journal, no new best */
+    log.open(path2.string(), "test", "test_cwd", 0);
+    log.write_optimizer_section(sp, sp.parameter_labels);
+    CHECK(log.first_in_run("note"));
+    CHECK(log.count_in_run("failure") == 1u);
+    log.finish("TEST");
+    CHECK(slurp(path2).find("Bound occupancy") == std::string::npos);
+
+    /* reset_for_test() starts them afresh too */
+    log.open(path3.string(), "test", "test_cwd", 0);
+    log.record_bound_occupancy(occ.marks(), 7, occ.edge());
+    CHECK(log.first_in_run("note"));
+    CHECK_FALSE(log.first_in_run("note"));
+    log.reset_for_test();
+    CHECK(log.first_in_run("note"));
+    CHECK(log.count_in_run("failure") == 1u);
+    log.finish("TEST");
+    CHECK(slurp(path3).find("Bound occupancy") == std::string::npos);
+
+    log.reset_for_test();
+    std::error_code ec;
+    for (const auto& p : {path1, path2, path3}) std::filesystem::remove(p, ec);
+}
