@@ -442,6 +442,41 @@ TEST_CASE("Density gates: saturation, abstention and the knife edge",
   }
 }
 
+TEST_CASE("Density gates read WATOM and RCUTMBMAX with the number grammar "
+          "of the model", "[hpo][rhogate][rhobargate]") {
+  // The gates read WATOM (D_Base::density_pair_weights) and RCUTMBMAX with
+  // strtod, the model with istringstream: "0x1p-1" was a weight of 0.5 in
+  // a gate and 0 in the model, and a hexadecimal RCUTMBMAX a cutoff the
+  // model never used. Both now read the decimal grammar of the files.
+  PeriodicTable::initialize();
+  const auto t = rho_table(1e-5, std::nullopt);
+  const auto tb = rhobar_table("bcc", 3.304, 0.98, 1.1, 101, 5.5);
+  Context w = make_ream_ctx("SIGNED", "0.5 0.3 0.1");
+  w.remove("WATOM");
+  w.add("WATOM", std::string("0x1p-1"));
+  const auto r = dt::eval_rho_gate(t, w);
+  CHECK(r.fail);
+  CHECK(r.saturated);
+  CHECK_THAT(r.reason, Catch::Contains("WATOM entry 1 ('0x1p-1') is not a "
+                                       "decimal number"));
+  CHECK(dt::eval_rhobar_gate(tb, w).saturated);
+  // a decimal weight passes as before
+  Context ok = make_ream_ctx("SIGNED", "0.5 0.3 0.1");
+  ok.remove("WATOM");
+  ok.add("WATOM", std::string("0.5"));
+  CHECK_FALSE(dt::eval_rho_gate(t, ok).fail);
+
+  Context rc = make_ream_ctx("SIGNED", "0.5 0.3 0.1");
+  // the raw token (add/addInternal would re-derive RCUTMBMAX from RCUTMB)
+  rc.storage_update("RCUTMBMAX", {"0x1.6p2"});  // 5.5 to strtod
+  REQUIRE(rc.stored_value("RCUTMBMAX").value_or("") == "0x1.6p2");
+  const auto a = dt::eval_rho_gate(t, rc);
+  CHECK(a.abstain);
+  CHECK_FALSE(a.fail);
+  CHECK_THAT(a.reason, Catch::Contains("RCUTMBMAX ('0x1.6p2') is not a "
+                                       "decimal number"));
+}
+
 TEST_CASE("Density gates: arming, the reachable RCUTMB and the cached verdict",
           "[hpo][rhogate]") {
   PeriodicTable::initialize();
