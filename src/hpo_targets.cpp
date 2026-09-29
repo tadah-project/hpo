@@ -227,8 +227,10 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
   /* RHOFORM (the DM_REAM density form) is mandatory and has no default:
    * read it before the OPTIM lines (non-negative AMPGRIDMB boxes) and the
    * WARM seeds (form check) that depend on it. Stored value only. */
-  if (models::context_has_ream(context))
+  if (models::context_has_ream(context)) {
     rho_form_ = models::require_rhoform(context, "tadah hpo");
+    rho_basis_ = models::optim_rule_basis(context);
+  }
 
   /* LS keeps configuration order: the outvar/loss columns, the
    * per-evaluation rows and the potential-file header are emitted in LS
@@ -1858,11 +1860,12 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
   /* RHOFORM NONNEG / MONOTONE (rho >= 0 by construction): the AMPGRIDMB
    * boxes are non-negative (models::optim_key_lower_bound: AUTO lo =
    * max(0, x0 - d), an explicit lo < 0 is refused), the WATOM boxes
-   * positive and, under MONOTONE, the SGRIDMB boxes positive
-   * (models::optim_low_bound_rule). */
+   * positive and the SGRIDMB boxes positive under MONOTONE and, for the
+   * Gaussian basis, under NONNEG (models::optim_low_bound_rule with the
+   * configuration's basis). */
   const bool nonneg_amp = models::optim_key_lower_bound(k, rho_form_) ==
                           models::OptimLowerBound::NonNegative;
-  const auto low_rule = models::optim_low_bound_rule(k, rho_form_);
+  const auto low_rule = models::optim_low_bound_rule(k, rho_form_, rho_basis_);
   const std::string form_name =
       rho_form_ ? std::string("RHOFORM ") + models::rhoform_name(*rho_form_) : "";
 

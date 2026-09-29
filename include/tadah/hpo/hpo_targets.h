@@ -84,6 +84,9 @@ private:
     bool           scale_policy_set_ = false;
     /* RHOFORM of the -c configuration; see rho_form(). */
     std::optional<models::RhoForm> rho_form_;
+    /* The DM_REAM basis the OPTIM box rules take (models::optim_rule_basis:
+     * the Gaussian SGRIDMB rule under NONNEG); nullopt without DM_REAM. */
+    std::optional<models::BasisKind> rho_basis_;
 
 public:
     HPOTargets(core::Context &c, std::string fn);
