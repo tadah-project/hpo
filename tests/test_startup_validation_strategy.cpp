@@ -1641,9 +1641,12 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
                                      "boxes") &&
                        Catch::Contains("\n  - CGRID2B[1]: OPTIM box [1, 1.001]; "
                                        "no stencil fits at CGRID2B[1] = ") &&
-                       Catch::Contains("  Set PARAM fd_step to at most ") &&
-                       Catch::Contains(" (a PARAM fd_step overrides NOISE "
-                                       "AUTO); or use OPTIM_SCALE AUTO") &&
+                       /* not "set PARAM fd_step", which NOISE AUTO now
+                        * refuses beside it (owner decision D8) */
+                       Catch::Contains("\n  Remove AUTO from the NOISE block "
+                                       "and set PARAM fd_step to at most ") &&
+                       Catch::Contains("; or use OPTIM_SCALE AUTO") &&
+                       !Catch::Contains("overrides NOISE AUTO") &&
                        !Catch::Contains("WATOM"));
     }
     SECTION("invalid settings") {
@@ -1769,7 +1772,8 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
      * or GRAD_STRATEGY ANALYTICAL, written or resolved. A derivative-free
      * optimiser printed "NOISE_AUTO derives PARAM fd_step for
      * gradient-based optimisers only ...; ignored" to stderr and ran (owner
-     * decision D7, 2026-09-29). */
+     * decision D7, 2026-09-29). Beside an explicit PARAM fd_step it has no
+     * effect either, and is refused too (owner decision D8). */
     struct Run {
         std::unique_ptr<HPOTargets> trg;
         std::string startup;
@@ -1870,6 +1874,31 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
               "effect: ASA:ASA measures its slopes with probes of its own "
               "(PARAM Delta_X), not with fd_step; remove AUTO from the NOISE "
               "block.");
+    }
+    SECTION("refused beside an explicit PARAM fd_step") {
+        /* The explicit step won, with "[HPO] NOISE_AUTO: PARAM fd_step
+         * already set explicitly; user value retained" on stderr (owner
+         * decision D8, 2026-09-29: refused on the phase concerned). */
+        const Run plain = run(noise("    TYPE PLAIN\n    LIB DLIB\n"
+                                    "    ALGO BFGS\n    MAXEVAL 20\n"
+                                    "    PARAM fd_step 1e-4\n"));
+        CHECK(plain.startup ==
+              "the STRATEGY-level optimiser DLIB:BFGS: NOISE AUTO has no "
+              "effect: PARAM fd_step 0.0001 is set; remove one of them.");
+        CHECK(plain.journal.find("NOISE_AUTO") == std::string::npos);
+        CHECK(run(noise("    TYPE PRESTAGE\n    EXPLORE\n      LIB TADAH\n"
+                        "      ALGO RANDOM\n      MAXEVAL 3\n      SEED 1\n"
+                        "    ENDEXPLORE\n    REFINE\n      LIB DLIB\n"
+                        "      ALGO BFGS\n      MAXEVAL 20\n"
+                        "      PARAM fd_step 1e-4\n    ENDREFINE\n"))
+                  .startup ==
+              "the PRESTAGE refinement DLIB:BFGS: NOISE AUTO has no effect: "
+              "PARAM fd_step 0.0001 is set; remove one of them.");
+        CHECK(run(noise("    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n"
+                        "    MAXEVAL 50\n    PARAM fd_step 1e-4\n" + inner))
+                  .startup ==
+              "the STRATEGY-level optimiser NLOPT:G_MLSL_LDS: NOISE AUTO has "
+              "no effect: PARAM fd_step 0.0001 is set; remove one of them.");
     }
     SECTION("refused under GRAD_STRATEGY ANALYTICAL, written or resolved") {
         const Run written = run(noise("    TYPE PLAIN\n    LIB DLIB\n"

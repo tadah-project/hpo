@@ -1217,10 +1217,10 @@ namespace {
  * (1 + Delta) x, or (1 - Delta) x when that lies outside [lo, hi]; with
  * `curvature` (Curvature_0 0 or -1) the diagonal curvature -- x - 2 Delta
  * |x| and x - Delta |x| when x + Delta |x| lies above the box, x + 2 Delta
- * |x| and x + Delta |x| when x - Delta |x| lies below it. Its third branch,
- * (1 + Delta) x and (1 - Delta) x where both tests pass, is left out: it
- * tests x +- Delta |x| and evaluates (1 +- Delta) x, which can round one
- * ulp apart at any Delta. */
+ * |x| and x + Delta |x| when x - Delta |x| lies below it, and else the two
+ * points it tested, x + Delta |x| and x - Delta |x| (TADAH-PATCH 8: upstream
+ * evaluated (1 + Delta) x and (1 - Delta) x there, which can round an ulp
+ * beyond a bound whatever the Delta). */
 std::vector<double> asa_probes(double x, double delta, bool curvature,
                                double lo, double hi)
 {
@@ -1239,6 +1239,9 @@ std::vector<double> asa_probes(double x, double delta, bool curvature,
     } else if (x - delta * std::fabs(x) < lo) {
         out.push_back(x + 2.0 * delta * std::fabs(x));
         out.push_back(x + delta * std::fabs(x));
+    } else {
+        out.push_back(x + delta * std::fabs(x));
+        out.push_back(x - delta * std::fabs(x));
     }
     return out;
 }
@@ -1323,4 +1326,43 @@ TEST_CASE("ASA probes stay in the box at the largest Delta the check "
      * curvature up to 1/2, exactly (asa.rst) */
     CHECK(asa_largest_fitting_delta(0.0, 1.0, false) == std::optional<double>(1.0));
     CHECK(asa_largest_fitting_delta(0.0, 1.0, true) == std::optional<double>(0.5));
+}
+
+TEST_CASE("ASA's exit curvature evaluates the points it tests (TADAH-PATCH 8)",
+          "[HPO][asa][fd_bounds]")
+{
+    /* Where x + Delta |x| and x - Delta |x| both lie in the box, the
+     * middle branch of cost_derivatives' diagonal curvature (Curvature_0 0
+     * or -1) evaluated (1 + Delta) x and (1 - Delta) x instead, which round
+     * differently: at x = 0.58058058058058049 in [0.58, 1.16] with the
+     * default Delta_X 0.001, x - Delta |x| = 0.58 exactly, but (1 - Delta) x
+     * = 0.57999999999999985, an ulp below the box, and ASA evaluated it at
+     * its exit (owner decision D9: patch the bundled ASA). The box passes
+     * asa_probe_fit, so no Delta could have ruled it out. */
+    const double lo = 0.58, hi = 1.16, x0 = 0.58058058058058049;
+    const double delta = 0.001;
+    /* the middle branch at x0, and upstream's probe outside the box */
+    REQUIRE(x0 + delta * std::fabs(x0) <= hi);
+    REQUIRE(x0 - delta * std::fabs(x0) >= lo);
+    REQUIRE((1.0 - delta) * x0 < lo);
+    auto sp = make_asa_spec({lo}, {hi});
+    set_seed_point(sp, {x0});
+    /* the exit curvature, at the best point: x0, where the loss is 0 */
+    sp.param = {{"Curvature_0", 0.0}, {"Limit_Generated", 30.0}};
+    Recorder rec;
+    rec.f = [x0](const std::vector<double>& x) {
+        return (x[0] - x0) * (x[0] - x0);
+    };
+    const AsaHostFn fn = rec.fn();
+    run_asa_erased(sp, 1, fn);
+    std::size_t outside = 0;
+    bool probed_low = false, probed_high = false;
+    for (const auto& x : rec.calls) {
+        if (x[0] < lo || x[0] > hi) ++outside;
+        if (x[0] == x0 - delta * std::fabs(x0)) probed_low = true;
+        if (x[0] == x0 + delta * std::fabs(x0)) probed_high = true;
+    }
+    CHECK(probed_low);
+    CHECK(probed_high);
+    CHECK(outside == 0u);
 }

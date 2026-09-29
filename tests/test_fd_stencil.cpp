@@ -589,10 +589,10 @@ TEST_CASE("fd stencil: a box narrower than the stencil is refused",
 TEST_CASE("fd stencil: a point outside its box is differenced towards it",
           "[HPO][grad_provider][fd_stencil]")
 {
-    /* Only an optimiser that ignores the bounds (CERES, NLopt LN_NEWUOA)
-     * evaluates such a point. It kept the central stencil, which reached
-     * further outside (-0.51); owner decision D4 (2026-09-29): one-sided
-     * towards the box. */
+    /* Only a gradient search that leaves the box (CERES), or one started
+     * at a point another search left outside, asks for such a gradient. It
+     * kept the central stencil, which reached further outside (-0.51);
+     * owner decision D4 (2026-09-29): one-sided towards the box. */
     const std::vector<std::pair<double, double>> box = {{0.0, 1.0}};
     const auto sp = spec_over(box, 1e-2);
     std::vector<Vec> asked;

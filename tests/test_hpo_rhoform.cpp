@@ -798,8 +798,8 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
       {
         Host host(ctx, trg, val_cfg.string());
         ParamVec p(1);
-        /* below the box: only an optimiser that ignores the bounds asks
-         * for it (finite differences keep to the box) */
+        /* below the box: finite differences keep to the box, so only the
+         * optimiser asks for it (one that ignores the bounds) */
         p(0) = -1e-6;
         REQUIRE_NOTHROW(loss_probe = host(p));
         CHECK(std::isfinite(loss_probe));
@@ -843,11 +843,28 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
                           Catch::Contains("eval 1: AMPGRIDMB[3] = -1e-06 lies "
                                           "outside its OPTIM box [0, 0.5] and "
                                           "is evaluated there") &&
+                          /* what can evaluate outside the box: an NLopt
+                           * algorithm's rounding past a bound under NONE
+                           * too, not only an optimiser that ignores the
+                           * bounds (review 2, finding 3) */
                           Catch::Contains("Out-of-box evaluations  : 1 (points "
                                           "outside the OPTIM box, evaluated "
-                                          "there:\n    an optimiser that ignores "
-                                          "the bounds; see the first such "
-                                          "WARNING)\n"));
+                                          "there: an\n    optimiser that "
+                                          "ignores the bounds, or NLopt "
+                                          "rounding past a bound under\n    "
+                                          "OPTIM_SCALE NONE; see the first such "
+                                          "WARNING)\n") &&
+                          Catch::Contains("is evaluated there: finite "
+                                          "differences keep to the box, so the "
+                                          "optimiser put it there: one that "
+                                          "ignores the bounds (CERES:*, NLopt "
+                                          "LN_NEWUOA), under OPTIM_SCALE NONE "
+                                          "an NLopt algorithm whose own "
+                                          "arithmetic rounds a point on a "
+                                          "bound past it (seen with LN_PRAXIS, "
+                                          "LN_COBYLA, the GN_DIRECT*_NOSCAL "
+                                          "variants), or a start such a search "
+                                          "handed on;"));
       CHECK(count_of_text(txt, "lies outside its OPTIM box") == 1u);
       /* the best sits on the form's zero lower bound: a hard bound, no
        * widen-that-side advisory */

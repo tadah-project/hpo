@@ -555,9 +555,10 @@ TEST_CASE("fd bounds: diff_method 1 takes forward differences, 1 + n "
 TEST_CASE("fd bounds: a point outside the box is differenced towards it, and "
           "counted", "[HPO][grad_provider][fd_bounds]")
 {
-    /* Only an optimiser that ignores the bounds (the CERES drivers, NLopt
-     * LN_NEWUOA) asks for it. The central stencil of 1.02 evaluated 1.03,
-     * further outside (owner decision D4). */
+    /* Only a gradient search that leaves the box (the CERES drivers), or
+     * one started at a point another search left outside, asks for it. The
+     * central stencil of 1.02 evaluated 1.03, further outside (owner
+     * decision D4). */
     Journal j;
     const auto sp = spec_on({dim("X[1]", 0.0, 1.0)}, true, 1e-2);
     Recorder host{[](const Vec& x) { return x(0) * x(0); }, {}};
