@@ -25,6 +25,7 @@ What this shows:
 Seed provenance (`ta2_refit_seed.tadah`): `tadah refit` with
 
     EAM          MODELS/tests/tests_data/eam.alloy   (Ta2, Ravelo 2013)
+    RHOFORM      SIGNED
     REFIT_MODE   compact
     REFIT_LEVEL  coarse
 
