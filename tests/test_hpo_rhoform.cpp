@@ -561,10 +561,12 @@ TEST_CASE("RHOFORM: validate_hpo_setup validates the -c density, probes "
     REQUIRE_THROWS_AS(
         tadah::hpo::derive_weight_count(make_ream_ctx("NONNEG", "0.5 -0.3 0.1")),
         DensityFormError);
-    /* other construction errors still give K = 0 */
+    /* other construction errors are reported too (they gave K = 0 and a
+     * WARNING, and every evaluation then failed on them) */
     Context bad = make_ream_ctx("SIGNED");
     bad.remove("CEMBFUNC");
-    CHECK(tadah::hpo::derive_weight_count(bad) == 0);
+    CHECK_THROWS_WITH(tadah::hpo::derive_weight_count(bad),
+                      Catch::Contains("CEMBFUNC"));
   }
   SECTION("derive_raw_embedding_f0 rethrows (it reported n/a before)") {
     REQUIRE_THROWS_AS(

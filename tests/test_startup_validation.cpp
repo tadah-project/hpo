@@ -60,7 +60,9 @@ std::string target_with(const std::string& loss_lines) {
 }
 
 /* Minimal context: enough for HPOTargets + OPTIM WATOM, but no model
- * keys — derive_weight_count returns 0 (light-path validation). */
+ * keys: the rules checked before the model is built (the loss sources)
+ * can use it; validate_hpo_setup refuses it after them (the model of the
+ * -c configuration must build). */
 Context make_minimal_ctx() {
   Context c;
   c.add("ATOM", "H");
@@ -113,12 +115,15 @@ void pin_all_weights(Context& c, std::size_t K) {
 
 }  // namespace
 
-TEST_CASE("startup validation: FIXINDEX/FIXWEIGHT pairing (no model keys)",
+TEST_CASE("startup validation: FIXINDEX/FIXWEIGHT pairing",
           "[startup_validation]") {
+  /* On a model context: without model keys the configuration is refused
+   * before these rules (validate_hpo_setup builds the model). */
+  PeriodicTable::initialize();
   ScopedTempFile tf(target_with("PC_ERMSE 0 1\n"));
 
   SECTION("lone FIXINDEX throws") {
-    Context ctx = make_minimal_ctx();
+    Context ctx = make_model_ctx();
     ctx.add("DBFILE", "dummy.db");
     ctx.add("FIXINDEX", "2");
     HPOTargets trg(ctx, tf.path.string());
@@ -126,7 +131,7 @@ TEST_CASE("startup validation: FIXINDEX/FIXWEIGHT pairing (no model keys)",
                         Catch::Contains("requires FIXWEIGHT"));
   }
   SECTION("size mismatch throws") {
-    Context ctx = make_minimal_ctx();
+    Context ctx = make_model_ctx();
     ctx.add("DBFILE", "dummy.db");
     ctx.add("FIXINDEX", "1,2,3");
     ctx.add("FIXWEIGHT", 0.5);
@@ -203,7 +208,7 @@ TEST_CASE("startup validation: a -c configuration that does not build a "
     CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
                       Catch::Contains("does not build a model") &&
                           Catch::Contains("DIMER evaluates every atom as Z=1") &&
-                          Catch::Contains("every evaluation would fail"));
+                          Catch::Contains("Every evaluation would fail"));
   }
   SECTION("without them") {
     Context ctx = dimer_ctx();
@@ -242,7 +247,7 @@ TEST_CASE("startup validation: valid setups pass", "[startup_validation]") {
 
   SECTION("DBFILE + validation metrics") {
     ScopedTempFile tf(target_with("PC_ERMSE 0 1\n"));
-    Context ctx = make_minimal_ctx();
+    Context ctx = make_model_ctx();
     ctx.add("DBFILE", "dummy.db");
     HPOTargets trg(ctx, tf.path.string());
     REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
@@ -598,9 +603,10 @@ TEST_CASE("startup validation: FAILSCORE_GRADING ON needs a finite FAILSCORE",
           "[startup_validation][failscore_grading]") {
   const std::string head = "OPTIM WATOM (1) 0.1 5.0\nPC_ERMSE 0 1\n"
                            "FAILSCORE_GRADING ON\n";
+  PeriodicTable::initialize();
   SECTION("the default FAILSCORE is rejected") {
     ScopedTempFile tf(head + kOptimizerBlock);
-    Context ctx = make_minimal_ctx();
+    Context ctx = make_model_ctx();
     ctx.add("DBFILE", "dummy.db");
     HPOTargets trg(ctx, tf.path.string());
     REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
@@ -609,7 +615,7 @@ TEST_CASE("startup validation: FAILSCORE_GRADING ON needs a finite FAILSCORE",
   }
   SECTION("a finite FAILSCORE passes") {
     ScopedTempFile tf(head + "FAILSCORE 1e9\n" + kOptimizerBlock);
-    Context ctx = make_minimal_ctx();
+    Context ctx = make_model_ctx();
     ctx.add("DBFILE", "dummy.db");
     HPOTargets trg(ctx, tf.path.string());
     REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));

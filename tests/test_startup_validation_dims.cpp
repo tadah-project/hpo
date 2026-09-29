@@ -47,6 +47,18 @@ Context make_minimal_ctx() {
   c.add("ATOM", "H");
   c.add("WATOM", 1.0);
   c.add("DBFILE", "dummy.db");
+  /* the smallest configuration whose model builds: validate_hpo_setup
+   * builds the model of the -c configuration (a construction error fails
+   * every evaluation) */
+  c.add("INIT2B", "true");
+  c.add("INITMB", "false");
+  c.add("TYPE2B", "D2_BP 2 2 H H");
+  c.add("CGRID2B", "1.0 2.0");
+  c.add("SGRID2B", "0.5 1.0");
+  c.add("RCTYPE2B", "Cut_Cos");
+  c.add("RCUT2B", 5.0);
+  c.add("VERBOSE", 0);
+  c.add("MODEL", "M_BLR BF_Linear");
   return c;
 }
 
