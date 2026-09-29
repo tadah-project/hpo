@@ -1,5 +1,6 @@
 #include <tadah/hpo/rho_gates.h>
 
+#include <tadah/core/number_format.h>
 #include <tadah/core/registry.h>
 #include <tadah/core/utils.h>
 #include <tadah/hpo/bump_support_gate.h>
@@ -56,27 +57,31 @@ std::string f4(double v) { return fmt("%.4f", v); }
 std::string gnum(double v) { return fmt("%.10g", v); }
 std::string vtext(double v) { return v == kVSat ? std::string("saturated") : e4(v); }
 
-/* The number a stored token spells (the lossless context text), nullopt
- * when the key or token is absent or is not one whole number. */
+/* The number a stored token spells (the lossless context text): the
+ * decimal grammar of the files and of the model's readers
+ * (core::parse_decimal_finite; D_Base::watom_value for WATOM). nullopt when
+ * the key is absent; throws when the token is outside the grammar (strtod
+ * read "0x1.6p2" as 5.5, where the model reads a different number). */
 std::optional<double> stored_double(const core::Context &c, const char *key,
                                     std::size_t n = 0) {
   const auto tok = c.stored_value(key, n);
-  if (!tok || tok->empty()) return std::nullopt;
-  char *end = nullptr;
-  const double v = std::strtod(tok->c_str(), &end);
-  if (end != tok->c_str() + tok->size()) return std::nullopt;
+  if (!tok) return std::nullopt;
+  double v = 0.0;
+  if (!core::parse_decimal_finite(*tok, v))
+    throw std::runtime_error(std::string(key) + " ('" + *tok +
+                             "') is not a decimal number");
   return v;
 }
 
 /* The many-body cutoff of a candidate as DC_Selector builds it,
  * factory<Cut_Base, double&>(RCTYPEMB, RCUTMBMAX), from stored values; a
  * fresh object per call (no shared mutable instance). Throws when a key is
- * absent or the class unknown. */
+ * absent or not a number, or the class unknown. */
 std::unique_ptr<models::Cut_Base> candidate_cutoff(const core::Context &c,
                                                    double &r_hi) {
   const auto label = c.stored_value("RCTYPEMB");
   const auto rc = stored_double(c, "RCUTMBMAX");
-  if (!label || !rc || !std::isfinite(*rc))
+  if (!label || !rc)
     throw std::runtime_error("RCTYPEMB or RCUTMBMAX is not set");
   r_hi = *rc;
   std::unique_ptr<models::Cut_Base> fc(
