@@ -445,6 +445,119 @@ TEST_CASE("compact fitter: the joint refinement keeps every free bump inside "
   CHECK(clamp_bump_support_params(rcp, rc, 4.5) == 0);
 }
 
+TEST_CASE("compact FUSE: the held re-run passes share the stage's MAXEVAL",
+          "[compact][fuse_budget]") {
+  // Owner decision (2026-09-29): FUSE MAXEVAL (Ceres iterations) bounds the
+  // whole FUSE stage. The held re-run passes -- the fallback when the
+  // linear re-solve after the bump-support projection leaves the E-V
+  // residuals above tolerance -- ran up to n_phi + n_rho more joint solves
+  // with the full MAXEVAL each; they now use what the stage has left, and
+  // none runs when nothing is left (the re-solve result is kept).
+  // (REQUIRE: past the ceres include above, CHECK is glog's.)
+  std::vector<std::string> lines;
+  auto log = [&](const std::string &l) { lines.push_back(l); };
+  auto logged = [&](const std::string &needle) {
+    for (const auto &l : lines)
+      if (l.find(needle) != std::string::npos) return true;
+    return false;
+  };
+
+  SECTION("a spent budget skips the re-run") {
+    FuseBudget b{100};
+    b.spend(100);
+    int holds = 0, solves = 0;
+    const HeldPasses r = run_held_passes(
+        5, b, [&] { ++holds; return 1; },
+        [&](int) { ++solves; return 0; }, log);
+    REQUIRE(r.skipped);
+    REQUIRE(r.passes == 0);
+    REQUIRE(holds == 0);
+    REQUIRE(solves == 0);
+    REQUIRE(logged("FUSE held re-run skipped: MAXEVAL 100 spent"));
+  }
+  SECTION("a partly spent budget limits the passes") {
+    FuseBudget b{100};
+    b.spend(70);
+    std::vector<int> budgets;
+    const HeldPasses r = run_held_passes(
+        5, b, [] { return 1; },
+        [&](int max_iter) {
+          budgets.push_back(max_iter);
+          return std::min(max_iter, 20);
+        },
+        log);
+    // 30 left: a pass takes 20, the next the 10 that remain, then nothing
+    REQUIRE(budgets == (std::vector<int>{30, 10}));
+    REQUIRE(r.passes == 2);
+    REQUIRE_FALSE(r.skipped);
+    REQUIRE(r.budget_spent);
+    REQUIRE(b.spent == 100);
+    REQUIRE(logged("FUSE held re-run stopped after pass 2 of 5: MAXEVAL 100 "
+                 "spent"));
+  }
+  SECTION("the stage never uses more than MAXEVAL") {
+    for (int maxeval : {1, 7, 50, 2000}) {
+      for (int first : {0, maxeval / 2, maxeval - 1}) {
+        INFO("MAXEVAL " << maxeval << ", joint solve " << first);
+        FuseBudget b{maxeval};
+        b.spend(first);
+        run_held_passes(
+            8, b, [] { return 1; }, [](int max_iter) { return max_iter; },
+            [](const std::string &) {});
+        REQUIRE(b.spent <= maxeval);
+        REQUIRE(b.remaining() == 0);
+      }
+    }
+  }
+  SECTION("nothing more to hold ends the passes") {
+    FuseBudget b{100};
+    int n = 0;
+    const HeldPasses r = run_held_passes(
+        5, b, [&] { return ++n <= 2 ? 1 : 0; }, [](int) { return 3; }, log);
+    REQUIRE(r.passes == 2);
+    REQUIRE_FALSE(r.budget_spent);
+    REQUIRE(b.spent == 6);
+  }
+  SECTION("joint_refine reports the iterations it used, at most max_iter") {
+    BlipFit phi = make_truth(), rho, F;
+    rho.mu = {2.0, 3.2, 4.4};
+    rho.eta = {0.9, 0.8, 0.9};
+    rho.c = {0.6, 0.35, 0.15};
+    F.mu = {1.0, 4.0, 7.0};
+    F.eta = {0.45, 0.4, 0.45};
+    F.c = {-2.0, -0.8, 0.5};
+    const std::vector<std::vector<double>> dists = {{2.5, 2.5, 2.9, 3.6},
+                                                    {2.2, 2.2, 2.6, 3.2}};
+    std::vector<double> e0, ew(dists.size(), 1.0);
+    for (const auto &dd : dists) {
+      double hp = 0.0, ri = 0.0;
+      for (double r : dd) {
+        hp += 0.5 * phi.eval(r);
+        ri += rho.eval(r);
+      }
+      e0.push_back(hp + F.eval(ri) + 0.01);
+    }
+    JointCurveData dphi, drho, dF;
+    sample(phi, 1.0, 5.5, 200, dphi.xs, dphi.ys);
+    sample(rho, 1.0, 5.5, 200, drho.xs, drho.ys);
+    sample(F, 0.0, 9.0, 200, dF.xs, dF.ys);
+    for (int max_iter : {1, 3, 300}) {
+      BlipFit p = phi, r = rho, Fc = F;
+      int iters = -1;
+      joint_refine(p, r, Fc, dphi, drho, dF, dists, e0, ew, 1.0, max_iter,
+                   1e-15, "CERES_LM", nullptr, 5.5, 5.5, &iters);
+      INFO("max_iter " << max_iter);
+      REQUIRE(iters >= 1);
+      REQUIRE(iters <= max_iter);
+    }
+    BlipFit p = phi, r = rho, Fc = F;
+    int iters = -1;
+    joint_refine(p, r, Fc, dphi, drho, dF, dists, e0, ew, 1.0, 10, 1e-15,
+                 "NONE", nullptr, 5.5, 5.5, &iters);
+    REQUIRE(iters == 0);
+  }
+}
+
 TEST_CASE("compact fitter: VARPRO reduced gradient matches finite differences",
           "[compact]") {
   const BlipFit truth = make_truth();
