@@ -2563,8 +2563,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     if (!bump_gate_.empty()) {
       v_bump = detail::bump_gate_violation(bump_gate_, p);
       if (v_bump > 0.0) {
-        bump_what = "bump-support gate reject (c + w/eta past the cutoff, "
-                    "violation=" + std::to_string(v_bump) + ", graded band D)";
+        bump_what = detail::bump_gate_reject_what(v_bump);
         if (!density_gated)
           return reject_pre_training(GateKind::Bump, v_bump, bump_what);
       }

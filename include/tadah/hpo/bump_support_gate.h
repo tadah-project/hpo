@@ -34,6 +34,7 @@
 #include <vector>
 
 #include <tadah/core/context.h>
+#include <tadah/core/number_format.h>
 #include <tadah/core/utils.h>
 #include <tadah/hpo/dloss_dtheta.h>
 #include <tadah/hpo/hpo_targets.h>
@@ -234,6 +235,14 @@ inline double bump_gate_violation(const std::vector<BumpGateChannel> &tbl,
     }
   }
   return v;
+}
+
+/** \brief The journal text of a BUMPGATE reject, with the violation @p v
+ *  (bump_gate_violation) in the shortest round-trip form
+ *  (core::format_roundtrip): exact, and a v below 5e-7 does not read 0. */
+inline std::string bump_gate_reject_what(double v) {
+  return "bump-support gate reject (c + w/eta past the cutoff, violation=" +
+         core::format_roundtrip(v) + ", graded band D)";
 }
 
 } // namespace detail
