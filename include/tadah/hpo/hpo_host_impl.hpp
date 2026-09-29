@@ -1079,8 +1079,8 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     }
 
     /* DM_REAM density (rho_gates.h): the RHOGATE / RHOBARGATE tables --
-     * arming, the RHOBARGATE shells and a-grid, the cached verdict of an
-     * unarmed gate -- and the settings of the density summary recorded at
+     * arming, the RHOBARGATE shells and a-grid -- and the settings of the
+     * density summary recorded at
      * each new best. validate_hpo_setup has checked the settings and the
      * seeds with the same functions. Without a gate, a context whose
      * density cannot be read only loses the RESULT density line. */

@@ -119,6 +119,11 @@ public:
      * index. */
     static std::string optim_discrete_index_error(const std::string& key,
                                                   std::size_t index);
+    /* The OPTIM keys that arm the density gates (RHOGATE, RHOBARGATE):
+     * AMPGRIDMB, CGRIDMB, SGRIDMB, RCUTMB, the dimensions that change
+     * rho_raw or the window. A gate without an OPTIM dimension on one of
+     * them cannot act, and read() refuses it at the gate's line. */
+    static const std::vector<std::string>& density_gate_keys();
     /* The DM_REAM density form of the -c configuration: RHOFORM, mandatory
      * on a configuration with a DM_REAM block and read at the top of the
      * constructor (the migration message when absent or invalid), before

@@ -103,19 +103,16 @@ struct RhoBarGateResult {
   double      first_rise = 0.0;  ///< a/a0 at the first rising step
 };
 
-/** \brief RHOGATE of a run: settings, arming and the cached verdict.
+/** \brief RHOGATE of a run: settings and arming.
  *
- *  Armed per candidate iff an OPTIM key (in any case) is AMPGRIDMB,
- *  CGRIDMB, SGRIDMB or RCUTMB -- the dimensions that change rho_raw or the
- *  window. An OPTIM'd WATOM alone arms only the per-candidate pair-weight
- *  check (the verdict is scale-invariant). Unarmed, every candidate has the
- *  -c density, whose verdict (`fixed`, computed once) is reused. */
+ *  Armed by the OPTIM dimensions on HPOTargets::density_gate_keys()
+ *  (AMPGRIDMB, CGRIDMB, SGRIDMB, RCUTMB: they change rho_raw or the
+ *  window); every candidate is evaluated. A gate without one cannot act
+ *  (every candidate would have the -c density and its verdict): HPOTargets
+ *  refuses it at the gate's line. */
 struct RhoGateTable {
   RhoGateSpec                  spec;
-  bool                         armed = false;
-  bool                         watom_armed = false;
   std::vector<std::string>     armed_on;   ///< labels of the arming dims
-  std::optional<RhoGateResult> fixed;      ///< !armed: the -c verdict
 };
 
 /** Largest shell radius RHOBARGATE enumerates, in lattice constants:
@@ -124,7 +121,7 @@ struct RhoGateTable {
 constexpr double kRhoBarMaxShellRadius = 20.0;
 
 /** \brief RHOBARGATE of a run: settings, the lattice and the a-grid (built
- *  once), arming and the cached verdict (as RhoGateTable).
+ *  once) and arming (as RhoGateTable).
  *
  *  The shells are enumerated once, for the largest reachable RCUTMB at the
  *  smallest lattice constant (limit max_reachable / (f_lo a0) (1 + 1e-12),
@@ -137,10 +134,7 @@ struct RhoBarGateTable {
   std::vector<models::eam_lattice::Shell> shells;
   std::vector<double>                     f;   ///< a/a0 grid
   std::vector<double>                     a;   ///< a0 * f
-  bool                                    armed = false;
-  bool                                    watom_armed = false;
   std::vector<std::string>                armed_on;
-  std::optional<RhoBarGateResult>         fixed;
 };
 
 /** \brief The DM_REAM density settings of a run (a bare DM_REAM many-body
@@ -157,9 +151,9 @@ struct DensityGates {
 };
 
 /** Build the density settings of a run from the -c configuration @p master
- *  and the parsed targets: arming, the RHOBARGATE shells and grid, and the
- *  cached verdict of each unarmed gate (the -c density, evaluated as a
- *  candidate at the CONFIG point). Throws std::runtime_error when a gate is
+ *  and the parsed targets: arming and the RHOBARGATE shells and grid (a
+ *  gate that no OPTIM dimension arms is std::logic_error: HPOTargets
+ *  refuses it at the gate's line). Throws std::runtime_error when a gate is
  *  configured but @p master is not a bare DM_REAM (validate_hpo_setup gives
  *  the full message first) or the lattice cannot be enumerated (the shell
  *  radius is not finite, or above kRhoBarMaxShellRadius: a message naming
@@ -179,8 +173,7 @@ RhoBarGateResult eval_rhobar_gate(const RhoBarGateTable &t,
                                   bool check_weights = true);
 
 /** The configured density gates' verdicts on one candidate (nullopt: that
- *  gate is not configured). An armed gate is evaluated; an unarmed one
- *  reuses its cached verdict after the pair-weight check (OPTIM WATOM). */
+ *  gate is not configured); every configured gate is evaluated. */
 struct DensityGateVerdict {
   std::optional<RhoGateResult>    rho;
   std::optional<RhoBarGateResult> rhobar;
@@ -248,10 +241,10 @@ core::Context seed_context(const core::Context &base, const HPOTargets &trg,
  *  the smallest reachable RCUTMB -- then the seed checks: every seed is
  *  evaluated through seed_context and the per-candidate functions. A
  *  failing seed is an error under SEED ERROR and a WARNING under SEED
- *  WARN; a failing -c density with an unarmed gate, and a density pair
- *  weight no candidate can make positive (WATOM fixed at <= 0, or an OPTIM
- *  WATOM box not reaching above 0), are errors under either (every
- *  evaluation would be rejected). Logs one INFO state line per gate. No-op
+ *  WARN; a density pair weight no candidate can make positive (WATOM fixed
+ *  at <= 0, or an OPTIM WATOM box not reaching above 0) is an error under
+ *  either (every evaluation would be rejected). Logs one INFO state line
+ *  per gate. No-op
  *  when neither gate is configured. */
 void validate_density_gates(const core::Context &train_ctx,
                             const HPOTargets &trg);
@@ -314,10 +307,6 @@ std::string format_density_rho(const DensitySummary &s);
 
 /** The report row of rhobar(a) (RHOBARGATE configured). */
 std::string format_density_rhobar(const DensitySummary &s);
-
-/** Full density evaluations (scans) so far, process-wide: a test hook
- *  showing that an unarmed gate reuses its cached verdict. */
-std::size_t density_gate_scans_for_test();
 
 } // namespace detail
 } // namespace hpo

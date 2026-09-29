@@ -15,7 +15,6 @@
 #include <tadah/models/eam/pot_curve_edit.h>
 
 #include <algorithm>
-#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -37,10 +36,6 @@ namespace hpo {
 namespace detail {
 
 namespace {
-
-/* Full density evaluations (density_gate_scans_for_test). A statistic, not
- * state: no verdict reads it. */
-std::atomic<std::size_t> g_scans{0};
 
 /* A genuine violation measure is capped here; a saturated one is DBL_MAX,
  * which fail_sigma maps to the top of band D, above every genuine value. */
@@ -190,24 +185,18 @@ std::string fixed_weight_problem(const core::Context &train_ctx,
   return weight_problem(seed_context(train_ctx, trg, p, g));
 }
 
-/* The two per-gate arming facts, from the OPTIM keys (upper-case). */
-struct Arming {
-  std::vector<std::string> density_dims;   // AMPGRIDMB, CGRIDMB, SGRIDMB, RCUTMB
-  bool watom = false;
-};
-Arming arming(const HPOTargets &trg) {
-  Arming a;
+/* The labels of the OPTIM dimensions that arm the gates
+ * (HPOTargets::density_gate_keys; the keys are upper-case). */
+std::vector<std::string> arming_dims(const HPOTargets &trg) {
+  std::vector<std::string> dims;
   const std::vector<std::string> &labels = trg.spec.parameter_labels;
-  for (const ParamRef &r : make_param_ref_table(trg)) {
-    const std::string &key = r.theta_name;
-    if (key == "AMPGRIDMB" || key == "CGRIDMB" || key == "SGRIDMB" ||
-        key == "RCUTMB")
-      a.density_dims.push_back(r.flat_idx < labels.size()
-                                   ? labels[r.flat_idx]
-                                   : key + "[" + std::to_string(r.arg_pos) + "]");
-    if (key == "WATOM") a.watom = true;
-  }
-  return a;
+  const auto &keys = HPOTargets::density_gate_keys();
+  for (const ParamRef &r : make_param_ref_table(trg))
+    if (std::find(keys.begin(), keys.end(), r.theta_name) != keys.end())
+      dims.push_back(r.flat_idx < labels.size()
+                         ? labels[r.flat_idx]
+                         : r.theta_name + "[" + std::to_string(r.arg_pos) + "]");
+  return dims;
 }
 
 std::string join(const std::vector<std::string> &v, const std::string &sep) {
@@ -286,16 +275,17 @@ DensityGates build_density_gates(const core::Context &master,
   g.reach = knot_aware_reachable_rcut(master, trg);
   if (!gated) return g;
 
-  const Arming arm = arming(trg);
-  const core::Context cfg =
-      seed_context(master, trg, config_point_from_targets(trg), g);
+  /* HPOTargets refuses a gate that no OPTIM dimension arms (it cannot
+   * act), at the gate's line. */
+  const std::vector<std::string> armed_on = arming_dims(trg);
+  if (armed_on.empty())
+    throw std::logic_error(
+        "RHOGATE / RHOBARGATE without an OPTIM dimension that arms them "
+        "(HPOTargets refuses such a gate)");
   if (trg.RHOGATE) {
     RhoGateTable t;
     t.spec = *trg.RHOGATE;
-    t.armed = !arm.density_dims.empty();
-    t.watom_armed = arm.watom;
-    t.armed_on = arm.density_dims;
-    if (!t.armed) t.fixed = eval_rho_gate(t, cfg, !t.watom_armed);
+    t.armed_on = armed_on;
     g.rho = std::move(t);
   }
   if (trg.RHOBARGATE) {
@@ -319,10 +309,7 @@ DensityGates build_density_gates(const core::Context &master,
     t.f = models::ReamDensity::linspace(t.spec.f_lo, t.spec.f_hi, t.spec.npts);
     t.a.reserve(t.f.size());
     for (const double x : t.f) t.a.push_back(t.spec.a0 * x);
-    t.armed = !arm.density_dims.empty();
-    t.watom_armed = arm.watom;
-    t.armed_on = arm.density_dims;
-    if (!t.armed) t.fixed = eval_rhobar_gate(t, cfg, !t.watom_armed);
+    t.armed_on = armed_on;
     g.rhobar = std::move(t);
   }
   return g;
@@ -349,7 +336,6 @@ RhoGateResult eval_rho_gate(const RhoGateTable &t, const core::Context &cand,
   }
   if (!(r.r_lo < r.r_hi))
     return saturate(r, "the window [r_lo, RCUTMB] is empty");
-  g_scans.fetch_add(1, std::memory_order_relaxed);
   std::vector<double> rho;
   const models::DensityScan sc = d.scan_grid(r.r_lo, r.r_hi, t.spec.npts, *fc, &rho);
   return rho_verdict(r, sc, rho, t.spec.tol);
@@ -373,37 +359,14 @@ RhoBarGateResult eval_rhobar_gate(const RhoBarGateTable &t,
     const std::string w = weight_problem(cand);
     if (!w.empty()) return saturate(r, w);
   }
-  g_scans.fetch_add(1, std::memory_order_relaxed);
   return rhobar_verdict(r, d.rhobar_scan(t.shells, t.a, *fc), t);
 }
 
 DensityGateVerdict check_density_gates(const DensityGates &g,
                                        const core::Context &cand) {
   DensityGateVerdict out;
-  if (g.rho) {
-    const RhoGateTable &t = *g.rho;
-    if (t.armed || !t.fixed) {
-      out.rho = eval_rho_gate(t, cand);
-    } else {
-      out.rho = *t.fixed;
-      if (t.watom_armed) {
-        const std::string w = weight_problem(cand);
-        if (!w.empty()) out.rho = saturate(*out.rho, w);
-      }
-    }
-  }
-  if (g.rhobar) {
-    const RhoBarGateTable &t = *g.rhobar;
-    if (t.armed || !t.fixed) {
-      out.rhobar = eval_rhobar_gate(t, cand);
-    } else {
-      out.rhobar = *t.fixed;
-      if (t.watom_armed) {
-        const std::string w = weight_problem(cand);
-        if (!w.empty()) out.rhobar = saturate(*out.rhobar, w);
-      }
-    }
-  }
+  if (g.rho) out.rho = eval_rho_gate(*g.rho, cand);
+  if (g.rhobar) out.rhobar = eval_rhobar_gate(*g.rhobar, cand);
   return out;
 }
 
@@ -575,8 +538,8 @@ void validate_density_gates(const core::Context &train_ctx,
 
   /* A density pair weight no candidate can make positive (WATOM fixed at
    * <= 0, or its OPTIM box not reaching above 0) saturates both gates on
-   * every evaluation, armed or not: an error under either SEED mode, which
-   * stands in for the per-gate errors below. */
+   * every evaluation: an error under either SEED mode, which stands in for
+   * the per-seed errors below. */
   std::vector<std::string> errors;
   const std::string fixed_w = fixed_weight_problem(train_ctx, trg, g);
   if (!fixed_w.empty())
@@ -609,28 +572,11 @@ void validate_density_gates(const core::Context &train_ctx,
   if (g.rho) {
     const RhoGateTable &t = *g.rho;
     const std::string arm_why =
-        t.armed ? "armed per candidate on " + join(t.armed_on, ", ") +
-                      ": candidates with rho_min < -tol*rho_max are rejected "
-                      "before training as graded band-D failures"
-                : std::string("not armed per candidate (no OPTIM dimension "
-                              "changes rho(r)): every candidate has the -c "
-                              "density, whose verdict (") +
-                      (t.fixed && t.fixed->fail ? "FAIL" : "PASS") +
-                      ") is reused" +
-                      (t.watom_armed ? "; OPTIM WATOM: each candidate's "
-                                       "density pair weights are checked"
-                                     : "");
+        "armed per candidate on " + join(t.armed_on, ", ") +
+        ": candidates with rho_min < -tol*rho_max are rejected before "
+        "training as graded band-D failures";
     std::vector<std::string> verdicts;
-    bool all_rejected = !fixed_w.empty();
-    if (!all_rejected && !t.armed && t.fixed && t.fixed->fail) {
-      all_rejected = true;
-      errors.push_back(
-          "RHOGATE: the -c density fails the rho(r) sign gate (" +
-          rho_fail_detail(*t.fixed, t.spec) + ") and no OPTIM dimension "
-          "changes rho(r) (AMPGRIDMB, CGRIDMB, SGRIDMB, RCUTMB): every "
-          "evaluation would be rejected, under SEED ERROR or WARN. Repair the "
-          "potential (tadah refit --edit), raise tol, or OPTIM the density.");
-    }
+    const bool all_rejected = !fixed_w.empty();
     for (const GateSeed &s : seeds) {
       const RhoGateResult r = eval_rho_gate(t, seed_context(train_ctx, trg, s.point, g));
       const std::string v = r.abstain ? "not evaluated" : r.fail ? "FAIL" : "PASS";
@@ -658,29 +604,11 @@ void validate_density_gates(const core::Context &train_ctx,
   if (g.rhobar) {
     const RhoBarGateTable &t = *g.rhobar;
     const std::string arm_why =
-        t.armed ? "armed per candidate on " + join(t.armed_on, ", ") +
-                      ": candidates whose rhobar(a) is not strictly "
-                      "decreasing are rejected before training as graded "
-                      "band-D failures"
-                : std::string("not armed per candidate (no OPTIM dimension "
-                              "changes rho(r)): every candidate has the -c "
-                              "density, whose verdict (") +
-                      (t.fixed && t.fixed->fail ? "FAIL" : "PASS") +
-                      ") is reused" +
-                      (t.watom_armed ? "; OPTIM WATOM: each candidate's "
-                                       "density pair weights are checked"
-                                     : "");
+        "armed per candidate on " + join(t.armed_on, ", ") +
+        ": candidates whose rhobar(a) is not strictly decreasing are "
+        "rejected before training as graded band-D failures";
     std::vector<std::string> verdicts;
-    bool all_rejected = !fixed_w.empty();
-    if (!all_rejected && !t.armed && t.fixed && t.fixed->fail) {
-      all_rejected = true;
-      errors.push_back(
-          "RHOBARGATE: the -c density fails the lattice rhobar(a) gate (" +
-          rhobar_fail_detail(*t.fixed, t.spec) + ") and no OPTIM dimension "
-          "changes rho(r) (AMPGRIDMB, CGRIDMB, SGRIDMB, RCUTMB): every "
-          "evaluation would be rejected, under SEED ERROR or WARN. Repair the "
-          "potential, narrow [f_lo, f_hi], or OPTIM the density.");
-    }
+    const bool all_rejected = !fixed_w.empty();
     for (const GateSeed &s : seeds) {
       const RhoBarGateResult r =
           eval_rhobar_gate(t, seed_context(train_ctx, trg, s.point, g));
@@ -860,10 +788,6 @@ std::string format_density_rhobar(const DensitySummary &s) {
   return grid + "rises at " + std::to_string(r.rises) + " of " +
          std::to_string(s.rhobar_spec.npts - 1) + " steps, first at a/a0 = " +
          f4(r.first_rise) + " (v = " + e4(r.v) + "): RHOBARGATE FAIL";
-}
-
-std::size_t density_gate_scans_for_test() {
-  return g_scans.load(std::memory_order_relaxed);
 }
 
 } // namespace detail

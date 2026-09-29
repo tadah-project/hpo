@@ -673,6 +673,10 @@ void HPOTargets::read(const std::string& fn)
 
     std::string line;
     size_t      nline = 0;
+    /* The density gate lines, for the arming rule at the end of the file
+     * (an OPTIM line that arms a gate may follow it). */
+    struct GateLine { const char* key; std::size_t line; std::string text; };
+    std::vector<GateLine> gate_lines;
 
     /* Every parse error names the line it is about. */
     auto at_line = [](std::size_t n, const std::string& what,
@@ -1151,11 +1155,13 @@ void HPOTargets::read(const std::string& fn)
                 if (RHOGATE)
                     throw std::runtime_error("RHOGATE given more than once");
                 RHOGATE = parse_rhogate(iss);
+                gate_lines.push_back({"RHOGATE", nline, line});
             }
             else if (key=="RHOBARGATE") {
                 if (RHOBARGATE)
                     throw std::runtime_error("RHOBARGATE given more than once");
                 RHOBARGATE = parse_rhobargate(iss);
+                gate_lines.push_back({"RHOBARGATE", nline, line});
             }
 
             /* PC_FAILPROBE: minimiser-free potential-sanity probe (graded-
@@ -1377,6 +1383,34 @@ void HPOTargets::read(const std::string& fn)
     } catch (const EarlierLineError& e) {
         throw std::runtime_error(at_line(e.line, e.what(), e.text));
     }
+    /* A density gate that no OPTIM line arms cannot act: no dimension of
+     * the search changes rho(r) or its window, so every candidate has the
+     * -c density and its one verdict (OPTIM WATOM only scales the density,
+     * and the gate verdicts are scale-invariant). Refused at the gate's
+     * line, the first in the file (owner decision 2026-09-29). */
+    {
+        bool armed = false;
+        for (const auto& k : density_gate_keys()) {
+            const auto it = optimap.find(k);
+            if (it == optimap.end()) continue;
+            for (bool b : it->second.opt) armed = armed || b;
+        }
+        if (!armed && !gate_lines.empty()) {
+            const GateLine& g = gate_lines.front();
+            std::string keys;
+            const auto& dk = density_gate_keys();
+            for (std::size_t i = 0; i < dk.size(); ++i)
+                keys += (i == 0 ? "" : i + 1 == dk.size() ? " or " : ", ") + dk[i];
+            throw std::runtime_error(at_line(g.line,
+                std::string(g.key) + " cannot act: no OPTIM line searches a key "
+                "that changes the DM_REAM density or its window (" + keys +
+                "), so every candidate has the -c density and its one verdict "
+                "(OPTIM WATOM only scales the density; the verdict does not "
+                "change). Add an OPTIM line on " + keys + ", or remove the " +
+                g.key + " line.", g.text));
+        }
+    }
+
     if (block == INNER_BLK)
         require_inner_driver(*active_opt, inner_enclosing());
     require_driver(spec, DriverPhase::Run);
@@ -1621,6 +1655,12 @@ std::string HPOTargets::optim_discrete_index_error(const std::string& key,
            "the rcond M of options 1 and 3, is continuous: OPTIM OALGO (2) "
            "<low> <high>.";
   return "";
+}
+
+const std::vector<std::string>& HPOTargets::density_gate_keys() {
+  static const std::vector<std::string> keys = {"AMPGRIDMB", "CGRIDMB",
+                                                "SGRIDMB", "RCUTMB"};
+  return keys;
 }
 
 SearchSpace HPOTargets::build_search_space() const {
