@@ -263,9 +263,10 @@ public:
 
     /** Tally one evaluation whose AMPGRIDMB coordinates were projected onto
      *  [0, inf) under RHOFORM NONNEG / MONOTONE (HPO_Host::operator()): an
-     *  out-of-box point -- a finite-difference probe next to a zero
-     *  amplitude, or an optimiser that ignores bounds -- evaluated and
-     *  recorded at its projection. Returns the running count (the host
+     *  out-of-box point -- a step of the Ceres finite-difference kernel
+     *  next to a zero amplitude, or an optimiser that ignores bounds (the
+     *  in-house stencil keeps to the box) -- evaluated and recorded at its
+     *  projection. Returns the running count (the host
      *  journals the first projection). DIAGNOSTICS prints the total when it
      *  is > 0, so other runs are unchanged. */
     std::size_t record_form_projection();

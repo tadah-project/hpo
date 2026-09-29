@@ -2058,8 +2058,8 @@ void HPOLog::finish(const std::string& status_str)
         if (np > 0)
             f_ << "  " << std::left << std::setw(KW) << "Positive-form projection"
                << ": " << np << " evaluation(s) with an AMPGRIDMB amplitude < 0,\n"
-                  "    evaluated and recorded at 0 (finite-difference probes at a zero\n"
-                  "    amplitude or an optimiser that ignores bounds)\n";
+                  "    evaluated and recorded at 0 (Ceres finite-difference steps at a\n"
+                  "    zero amplitude, or an optimiser that ignores bounds)\n";
     }
 
     /* Transient I/O. Printed only when something happened, so the

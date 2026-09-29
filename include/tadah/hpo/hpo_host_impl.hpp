@@ -1053,10 +1053,11 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
 
     /* RHOFORM NONNEG / MONOTONE: every evaluated AMPGRIDMB amplitude must be
      * >= 0 (DM_REAM refuses a negative one). The boxes are non-negative
-     * (HPOTargets), but finite-difference probes step past a zero amplitude
-     * and some optimisers ignore bounds, so operator() evaluates -- and
-     * records -- the candidate projected onto AMPGRIDMB >= 0. Flat indices
-     * in the update_context order. */
+     * (HPOTargets), and the in-house finite-difference stencil keeps to
+     * them (fd_stencil.h), but a step of the Ceres kernel can pass a zero
+     * amplitude and some optimisers ignore bounds, so operator() evaluates
+     * -- and records -- the candidate projected onto AMPGRIDMB >= 0. Flat
+     * indices in the update_context order. */
     if (models::context_has_ream(master_ctx_)) {
         const auto form = models::stored_rhoform(master_ctx_);
         if (form && models::rhoform_is_positive(*form)) {
@@ -1305,9 +1306,10 @@ const P& HPO_Host<P,R>::project_positive_form(const P& p, P& buf,
                                  " more AMPGRIDMB coordinate(s))"
                            : std::string()) +
                 " below 0 is evaluated and recorded as 0: the candidate is "
-                "projected onto AMPGRIDMB >= 0 (a finite-difference probe "
-                "next to a zero amplitude, or an optimiser that ignores "
-                "bounds); DIAGNOSTICS counts every projection");
+                "projected onto AMPGRIDMB >= 0 (a step of the Ceres "
+                "finite-difference kernel next to a zero amplitude, or an "
+                "optimiser that ignores bounds); DIAGNOSTICS counts every "
+                "projection");
         }
     } catch (...) { /* journalling must never fail an evaluation */ }
     return buf;

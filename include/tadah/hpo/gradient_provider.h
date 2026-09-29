@@ -6,7 +6,10 @@
  *
  * Three strategies, selected by OptimizerSpec::grad_strategy (or default):
  *
- *   GradStrategy::Numerical  -- Ceres DynamicNumericDiffCostFunction
+ *   GradStrategy::Numerical  -- finite differences with one of two kernels
+ *                              (PARAM fd_kernel, fd_stencil.h): the
+ *                              in-house stencil, bounded to the OPTIM
+ *                              box, or Ceres DynamicNumericDiffCostFunction
  *                              (CENTRAL by default; FORWARD or RIDDERS
  *                              selectable via PARAM diff_method).
  *   GradStrategy::Analytical -- strict closed-form. The caller provides
@@ -17,8 +20,9 @@
  *                              is left -- use HYBRID for graceful
  *                              fallback.
  *   GradStrategy::Hybrid     -- analytical for registered theta + masked
- *                              central-difference for unregistered
- *                              indices, in one gradient(x, g) call.
+ *                              finite differences (the in-house stencil)
+ *                              for unregistered indices, in one
+ *                              gradient(x, g) call.
  *                              Same `analytical_grad_fn` signature.
  *                              Degenerate "no theta registered" case:
  *                              skip the FD pass and return g=0 so a
@@ -34,7 +38,7 @@
  * Returning false signals a bad eval (e.g. r.was_nan_clamped or
  * non-finite W*). Returning true means "g[i] is filled for every i not
  * in needs_fd; for i in needs_fd, the caller must source g[i]
- * elsewhere". The Hybrid strategy then runs central differences on
+ * elsewhere". The Hybrid strategy then takes finite differences on
  * exactly those indices, sharing the same eval_counter so MAXEVAL
  * accounting works uniformly. Numerical ignores the callback.
  *
@@ -51,9 +55,12 @@
  * failed one -- FAILSCORE or a graded failure, loss_is_feasible() -- whose
  * difference quotient overflows, as the default FAILSCORE, the largest
  * double, does against a usable loss for any step h below 1/2), or a
- * gradient not finite for another reason (NotFinite). The adapters turn Stencil and NotFinite into the search's
- * own ending, "STOPPED -- gradient not finite: <cause>"
- * (gradient_stop_status), where they used to report MAXEVAL or success.
+ * gradient not finite for another reason (NotFinite). A one-sided stencil
+ * (a coordinate within h of its bound, fd_stencil.h) takes the loss at x
+ * itself, so a failed evaluation at x is one of its stencil's. The
+ * adapters turn Stencil and NotFinite into the search's own ending,
+ * "STOPPED -- gradient not finite: <cause>" (gradient_stop_status), where
+ * they used to report MAXEVAL or success.
  * A failed stencil evaluation whose difference stays finite (a finite
  * FAILSCORE such as 1e9 with a step that is not tiny) gives a finite,
  * steep gradient, which the optimisers use.
@@ -62,6 +69,7 @@
  * inside a `run_<lib>_<algo>` adapter and consumed within the same call.
  */
 
+#include <tadah/hpo/fd_stencil.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/log_index.h>
@@ -210,7 +218,8 @@ struct StencilReport {
 
   /* The derivative along dimension i, from the stencil evaluations
    * `pts` (point, loss), is not finite: Stencil when one of them failed,
-   * NotFinite (an overflow between usable losses) otherwise. */
+   * NotFinite (an overflow between usable losses) otherwise. The points of
+   * a one-sided stencil include x itself. */
   void stencil(const Vec& x, long i,
                const std::vector<std::pair<Vec, double>>& pts) const {
     std::ostringstream os;
@@ -238,7 +247,7 @@ struct StencilReport {
   }
 
   /* The central difference of dimension i, from yp at xp and ym at xm,
-   * is not finite. */
+   * is not finite (a one-sided difference: stencil(), with x). */
   void quotient(const Vec& x, long i, const Vec& xp, double yp,
                 const Vec& xm, double ym) const {
     stencil(x, i, {{xp, yp}, {xm, ym}});
@@ -258,6 +267,98 @@ struct StencilReport {
             "the analytical gradient " + what, ""};
   }
 };
+
+/* The OPTIM box of the in-house stencil: the internal bounds of `sp`
+ * (OptimizerSpec::low/high), or none for a spec built without bounds. */
+struct FdBox {
+  std::vector<double> lo, hi;
+
+  explicit FdBox(const OptimizerSpec& sp) : lo(sp.low), hi(sp.high) {
+    if (lo.size() != hi.size())
+      throw std::logic_error("GradientProvider: the spec's low and high "
+                             "bounds differ in size");
+  }
+  /* The bounds of dimension i of a point with n dimensions (+-inf without
+   * a box). */
+  std::pair<double, double> of(long i, long n) const {
+    if (lo.empty()) return {-std::numeric_limits<double>::infinity(),
+                            std::numeric_limits<double>::infinity()};
+    if (static_cast<std::size_t>(n) != lo.size())
+      throw std::logic_error("GradientProvider: a point of " +
+                             std::to_string(n) + " dimensions in a box of " +
+                             std::to_string(lo.size()));
+    return {lo[static_cast<std::size_t>(i)], hi[static_cast<std::size_t>(i)]};
+  }
+};
+
+/* Component idx of the in-house finite-difference gradient at x
+ * (fd_stencil.h): the central stencil, or within h of a bound the
+ * one-sided one pointing into the box. `eval(p, y)` evaluates point p into
+ * y, counting it (false: MAXEVAL spent, reported); `centre(y0)` gives the
+ * loss at x itself, finite (false: MAXEVAL spent or a loss that is not
+ * finite, reported). The central stencil evaluates x + h, then x - h, as
+ * before 1.6.0; a one-sided one takes the centre, then evaluates x +- h,
+ * then x +- 2h. Returns false with `report` filled. */
+template<class Vec, class Eval, class Centre>
+bool fd_component(const Vec& x, long idx, double fd_step, const FdBox& box,
+                  Eval& eval, Centre& centre, const StencilReport<Vec>& report,
+                  double& gi)
+{
+  const double xi = x(idx);
+  const double h  = fd_step_at(fd_step, xi);
+  const auto bounds = box.of(idx, x.size());
+  const std::optional<FdSide> side = fd_side(xi, h, bounds.first,
+                                             bounds.second);
+  if (!side)   /* the gradient refused such a box first (fd_box_error) */
+    throw std::logic_error(
+        "GradientProvider: no finite-difference stencil fits the box of " +
+        report.label(idx) + " at " + StencilReport<Vec>::num(xi));
+
+  if (*side == FdSide::Central) {
+    Vec xp = x; xp(idx) = xi + h;
+    Vec xm = x; xm(idx) = xi - h;
+    double yp = 0.0, ym = 0.0;
+    if (!eval(xp, yp)) return false;
+    if (!std::isfinite(yp)) {
+      report.point(x, idx, xp, yp);
+      return false;
+    }
+    if (!eval(xm, ym)) return false;
+    if (!std::isfinite(ym)) {
+      report.point(x, idx, xm, ym);
+      return false;
+    }
+    gi = (yp - ym) / (2.0 * h);
+    if (!std::isfinite(gi)) {
+      report.quotient(x, idx, xp, yp, xm, ym);
+      return false;
+    }
+    return true;
+  }
+
+  /* One-sided, into the box: hs = h (forward) or -h (backward). */
+  const double hs = (*side == FdSide::Forward) ? h : -h;
+  double y0 = 0.0, y1 = 0.0, y2 = 0.0;
+  if (!centre(y0)) return false;
+  Vec x1 = x; x1(idx) = xi + hs;
+  Vec x2 = x; x2(idx) = xi + 2.0 * hs;
+  if (!eval(x1, y1)) return false;
+  if (!std::isfinite(y1)) {
+    report.point(x, idx, x1, y1);
+    return false;
+  }
+  if (!eval(x2, y2)) return false;
+  if (!std::isfinite(y2)) {
+    report.point(x, idx, x2, y2);
+    return false;
+  }
+  gi = (4.0 * (y1 - y0) - (y2 - y0)) / (2.0 * hs);
+  if (!std::isfinite(gi)) {
+    report.stencil(x, idx, {{x, y0}, {x1, y1}, {x2, y2}});
+    return false;
+  }
+  return true;
+}
 
 }  // namespace detail
 
@@ -421,9 +522,10 @@ make_gradient_provider(const OptimizerSpec&     sp,
   }
 
   // ---- HYBRID: analytical fills what it can; remaining indices get a
-  // masked central-difference pass that varies only the unregistered
-  // indices. fd_step honours PARAM fd_step (default 1e-6). The shared
-  // eval_counter accounts for FD calls so MAXEVAL stays correct.
+  // masked finite-difference pass, the in-house stencil (fd_stencil.h),
+  // that varies only the unregistered indices. fd_step honours PARAM
+  // fd_step (default 1e-6). The shared eval_counter accounts for FD calls
+  // so MAXEVAL stays correct.
   if (strat == GradStrategy::Hybrid) {
     if (!analytical_grad_fn) {
       gp.gradient = [](const Vec&, Vec&)->bool {
@@ -434,15 +536,20 @@ make_gradient_provider(const OptimizerSpec&     sp,
       };
       return gp;
     }
-    double fd_step = 1.0e-6;
-    if (auto it = sp.param.find("fd_step"); it != sp.param.end())
-      fd_step = it->second;
+    const double fd_step = fd_step_of(sp);
+    const detail::FdBox box(sp);
 
     gp.gradient = [&host, &sp, eval_counter, maxeval,
                    analytical_grad_fn, fd_step, pull_to_internal,
-                   failure, report]
+                   failure, report, box]
                   (const Vec& x, Vec& g)->bool {
       *failure = {};
+      /* Any parameter may need finite differences (the analytical pass
+       * routes every one there when it cannot be formed), so every box
+       * must hold the stencil (validate_hpo_setup refuses one that does
+       * not). */
+      if (const std::string e = fd_box_error(sp, fd_step); !e.empty())
+        throw std::runtime_error(e);
       const auto over = [&]() {
         if (maxeval > 0 && eval_counter->load() >= maxeval) {
           report.budget();
@@ -461,7 +568,7 @@ make_gradient_provider(const OptimizerSpec&     sp,
       pull_to_internal(x, g, needs_fd);
 
       /* All-FD gate: when every theta falls back to FD the masked-FD pass
-       * degenerates into pure central differences on the whole vector.
+       * degenerates into pure finite differences on the whole vector.
        * On LAMMPS-driven loss components (`PC_LAMMPS`, see
        * `compute_analytical_gradient_from_trainer`'s sims-grad chain
        * failure path) this is both very expensive (2.dim host calls per
@@ -482,35 +589,35 @@ make_gradient_provider(const OptimizerSpec&     sp,
         return true;
       }
 
-      // Central differences over the masked indices.
+      const auto eval = [&](const Vec& p, double& y) {
+        if (over()) return false;
+        eval_counter->fetch_add(1);
+        y = host(sp.out(p));
+        return true;
+      };
+      /* The analytical pass does not evaluate the loss: a one-sided
+       * stencil evaluates the centre, once per gradient. */
+      bool have_y0 = false;
+      double y0 = 0.0;
+      const auto centre = [&](double& y) {
+        if (!have_y0) {
+          if (!eval(x, y0)) return false;
+          if (!std::isfinite(y0)) {
+            report.centre(x, y0);
+            return false;
+          }
+          have_y0 = true;
+        }
+        y = y0;
+        return true;
+      };
+
+      // Finite differences over the masked indices.
       for (int idx : needs_fd) {
-        const double xi = x(idx);
-        const double h  = fd_step * std::max(std::abs(xi), 1.0);
-
-        Vec xp = x; xp(idx) = xi + h;
-        Vec xm = x; xm(idx) = xi - h;
-
-        if (over()) return false;
-        eval_counter->fetch_add(1);
-        const double yp = host(sp.out(xp));
-        if (!std::isfinite(yp)) {
-          report.point(x, idx, xp, yp);
+        double gi = 0.0;
+        if (!detail::fd_component(x, idx, fd_step, box, eval, centre, report,
+                                  gi))
           return false;
-        }
-
-        if (over()) return false;
-        eval_counter->fetch_add(1);
-        const double ym = host(sp.out(xm));
-        if (!std::isfinite(ym)) {
-          report.point(x, idx, xm, ym);
-          return false;
-        }
-
-        const double gi = (yp - ym) / (2.0 * h);
-        if (!std::isfinite(gi)) {
-          report.quotient(x, idx, xp, yp, xm, ym);
-          return false;
-        }
         g(idx) = gi;
       }
 
@@ -526,80 +633,64 @@ make_gradient_provider(const OptimizerSpec&     sp,
     return gp;
   }
 
-  // ---- NUMERICAL: two kernels.
-  //   inhouse -- central differences in INTERNAL coordinates with
+  // ---- NUMERICAL: two kernels (fd_kernel_of, fd_stencil.h).
+  //   inhouse -- finite differences in INTERNAL coordinates with
   //              h_i = fd_step * max(|u_i|, 1): in the unit box
   //              (OPTIM_SCALE AUTO) exactly fd_step * width on every
   //              dimension, which is what PARAM fd_step is documented to
-  //              mean there; the same kernel serves HYBRID's masked pass.
+  //              mean there. Central, or one-sided into the box within h
+  //              of a bound; the same stencil serves HYBRID's masked pass.
   //   ceres   -- Ceres DynamicNumericDiffCostFunction with per-parameter
   //              delta max(sqrt(eps), fd_step*|u|): the pre-existing
   //              kernel, kept as the default under OPTIM_SCALE NONE so
   //              legacy runs keep their pre-1.5 finite-difference kernel;
   //              unsuitable in the unit box because the delta collapses to
-  //              1.5e-8 next to u = 0 (every lower bound).
+  //              1.5e-8 next to u = 0 (every lower bound). Its steps are
+  //              not bounded (Ceres has no bounds for numeric
+  //              differentiation).
   // PARAM fd_kernel inhouse|ceres overrides the default either way.
-  bool use_ceres_kernel = !(sp.space && sp.space->normalised());
-  if (auto it = sp.param_raw.find("fd_kernel"); it != sp.param_raw.end()) {
-    if (it->second == "ceres" || it->second == "CERES") use_ceres_kernel = true;
-    else if (it->second == "inhouse" || it->second == "INHOUSE")
-      use_ceres_kernel = false;
-    else
-      throw std::runtime_error("PARAM fd_kernel must be inhouse (default) or ceres (got '" +
-                               it->second + "')");
-  }
-  if (!use_ceres_kernel) {
-    double fd_step = 1.0e-6;
-    if (auto it = sp.param.find("fd_step"); it != sp.param.end())
-      fd_step = it->second;
-    if (!(fd_step > 0.0) || !std::isfinite(fd_step))
-      throw std::runtime_error("PARAM fd_step must be a positive finite fraction of the box width");
+  if (fd_kernel_of(sp) == FdKernel::InHouse) {
+    const double fd_step = fd_step_of(sp);
+    const detail::FdBox box(sp);
     gp.gradient = [&host, &sp, eval_counter, maxeval, fd_step, failure,
-                   report]
+                   report, box]
                   (const Vec& x, Vec& g)->bool {
       *failure = {};
-      const auto over = [&]() {
+      /* A box narrower than the stencil (validate_hpo_setup refuses it):
+       * before any evaluation. The provider of a derivative-free NLopt
+       * run is built but never asked. */
+      if (const std::string e = fd_box_error(sp, fd_step); !e.empty())
+        throw std::runtime_error(e);
+      const auto eval = [&](const Vec& p, double& y) {
         if (maxeval > 0 && eval_counter->load() >= maxeval) {
           report.budget();
-          return true;
+          return false;
         }
-        return false;
+        eval_counter->fetch_add(1);
+        y = host(sp.out(p));
+        return true;
       };
       /* Centre evaluation first: a non-finite loss AT x means the
        * gradient is meaningless (bad-eval contract shared with the
-       * Ceres kernel, which evaluates the residual at x as well). */
-      if (over()) return false;
-      eval_counter->fetch_add(1);
-      if (const double y0 = host(sp.out(x)); !std::isfinite(y0)) {
+       * Ceres kernel, which evaluates the residual at x as well). A
+       * one-sided stencil uses it. */
+      double y0 = 0.0;
+      if (!eval(x, y0)) return false;
+      if (!std::isfinite(y0)) {
         report.centre(x, y0);
         return false;
       }
+      const auto centre = [&](double& y) {
+        y = y0;
+        return true;
+      };
       const long n = x.size();
       g.set_size(n);
       for (long idx = 0; idx < n; ++idx) {
-        const double xi = x(idx);
-        const double h  = fd_step * std::max(std::abs(xi), 1.0);
-        Vec xp = x; xp(idx) = xi + h;
-        Vec xm = x; xm(idx) = xi - h;
-        if (over()) return false;
-        eval_counter->fetch_add(1);
-        const double yp = host(sp.out(xp));
-        if (!std::isfinite(yp)) {
-          report.point(x, idx, xp, yp);
+        double gi = 0.0;
+        if (!detail::fd_component(x, idx, fd_step, box, eval, centre, report,
+                                  gi))
           return false;
-        }
-        if (over()) return false;
-        eval_counter->fetch_add(1);
-        const double ym = host(sp.out(xm));
-        if (!std::isfinite(ym)) {
-          report.point(x, idx, xm, ym);
-          return false;
-        }
-        const double gi = (yp - ym) / (2.0 * h);
-        if (!std::isfinite(gi)) {
-          report.quotient(x, idx, xp, yp, xm, ym);
-          return false;
-        }
         g(idx) = gi;
       }
       return true;

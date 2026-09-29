@@ -28,8 +28,11 @@ struct StopCriteria {
  * gradient-based HPO optimizers (DLIB:BFGS, CERES:LBFGS/WOLFE/NLCG/
  * STEEPEST_DESCENT, future NLOPT:LD_*).
  *
- *   NUMERICAL  -- Ceres DynamicNumericDiffCostFunction; finite differences
- *                on full forward passes through the host.
+ *   NUMERICAL  -- finite differences on full forward passes through the
+ *                host: the in-house stencil, kept inside the OPTIM box
+ *                (one-sided within a step of a bound), or Ceres
+ *                DynamicNumericDiffCostFunction (PARAM fd_kernel;
+ *                fd_stencil.h).
  *   ANALYTICAL -- closed-form analytical gradient. The HPO host injects
  *                a per-theta derivative callback (descriptor + cutoff +
  *                kernel closed forms chained through the IFT-back-
@@ -38,8 +41,9 @@ struct StopCriteria {
  *                cannot differentiate throws a diagnostic naming it; a
  *                setup it can never differentiate is refused at startup
  *                (analytical_gate.h). Use HYBRID to fall back.
- *   HYBRID     -- analytical-where-registered + central-difference
- *                fallback for unregistered indices, evaluated in one
+ *   HYBRID     -- analytical-where-registered + finite-difference
+ *                fallback (the in-house stencil) for unregistered
+ *                indices, evaluated in one
  *                gradient(x, g) call. Used when LAMMPS-derived loss
  *                components (`sims_loss`) or tabulated descriptors
  *                (EAM SETFL) participate in theta.

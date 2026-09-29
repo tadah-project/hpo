@@ -1,6 +1,7 @@
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/hpo/analytical_gate.h>
 #include <tadah/hpo/backend_rules.h>
+#include <tadah/hpo/fd_stencil.h>
 #include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/phase_specs.h>
 #include <tadah/hpo/scale_validation.h>
@@ -71,17 +72,33 @@ std::size_t probe_model(const core::Context &train_ctx) {
   }
 }
 
+/* Whether the gradients of `phase` take finite differences, with which
+ * spec's settings: a phase that asks the host for gradients
+ * (obtains_gradients: a gradient-based backend, or an MLSL/AUGLAG whose
+ * local search, inner_run_spec, is one) with its own GRAD_STRATEGY and
+ * PARAM fd_step / fd_kernel. An INNER block takes the gradient of the
+ * phase it runs in (PhaseSpec::inner), checked with that phase. */
+bool takes_own_gradients(const PhaseSpec &phase) {
+  return !phase.inner && phase.spec.lib != "NOT SET" &&
+         obtains_gradients(phase.spec);
+}
+
 /* The phases of the run (strategy_phase_specs, phase_specs.h: the
  * STRATEGY-level optimiser, each MULTISTART start, the PRESTAGE exploration
  * and refinement, every INNER block) whose optimiser can evaluate outside
- * the OPTIM box: an ignores_bounds backend (optimizer_caps) or PARAM
- * fd_kernel ceres on a phase that asks the host for gradients
- * (obtains_gradients: a gradient-based backend, or an MLSL/AUGLAG whose
- * local search, inner_run_spec, is one). "<phase> <LIB>:<ALGO> (<why>)"
- * per entry. Called after validate_phase_backends, so every phase names a
- * known optimiser. */
-std::vector<std::string> unbounded_optimisers(const OptimizerSpec &root) {
+ * the OPTIM box: an ignores_bounds backend (optimizer_caps), or a phase
+ * whose gradients use Ceres' numeric differentiation (uses_ceres_kernel:
+ * GRAD_STRATEGY NUMERICAL with PARAM fd_kernel ceres, or with no
+ * fd_kernel under OPTIM_SCALE NONE), whose steps cannot be bounded. The
+ * in-house stencil (the default under OPTIM_SCALE AUTO, and HYBRID's) keeps
+ * to the box (fd_stencil.h). "<phase> <LIB>:<ALGO> (<why>)" per entry;
+ * `kernel` is set when an entry is the Ceres kernel's. Called after
+ * validate_phase_backends and the stencil check, so every phase names a
+ * known optimiser and a valid fd_kernel. */
+std::vector<std::string> unbounded_optimisers(const OptimizerSpec &root,
+                                              bool &kernel) {
   std::vector<std::string> out;
+  kernel = false;
   for (const PhaseSpec &phase : strategy_phase_specs(root)) {
     const OptimizerSpec &s = phase.spec;
     if (s.lib == "NOT SET") continue;
@@ -91,11 +108,14 @@ std::vector<std::string> unbounded_optimisers(const OptimizerSpec &root) {
       out.push_back(name + " (ignores the OPTIM bounds)");
       continue;
     }
-    const auto fk = s.param_raw.find("fd_kernel");
-    if (obtains_gradients(s) && fk != s.param_raw.end() &&
-        core::to_upper(fk->second) == "CERES")
-      out.push_back(name + " (PARAM fd_kernel ceres: unclamped "
-                    "finite-difference steps)");
+    if (takes_own_gradients(phase) && uses_ceres_kernel(s)) {
+      kernel = true;
+      out.push_back(name + (s.param_raw.count("fd_kernel")
+                                ? " (PARAM fd_kernel ceres"
+                                : " (fd_kernel ceres, the default under "
+                                  "OPTIM_SCALE NONE") +
+                    ": Ceres' finite-difference steps are not bounded)");
+    }
   }
   return out;
 }
@@ -272,11 +292,33 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * applies its own checks again when it starts (backend_rules.h). */
   validate_phase_backends(trg.spec);
 
+  /* --- the in-house finite-difference stencil fits every OPTIM box -----
+   * The in-house stencil (fd_stencil.h: GRAD_STRATEGY NUMERICAL with
+   * fd_kernel inhouse, the default under OPTIM_SCALE AUTO, and HYBRID)
+   * never evaluates outside the box: within a step of a bound it is
+   * one-sided, which needs three steps inside the box. A box narrower than
+   * that is refused here, on each phase that takes gradients with its own
+   * settings, rather than by the gradient once the data are loaded. */
+  for (const PhaseSpec &phase : strategy_phase_specs(trg.spec)) {
+    if (!takes_own_gradients(phase)) continue;
+    std::string e;
+    try {
+      if (uses_in_house_stencil(phase.spec))
+        e = fd_box_error(phase.spec, fd_step_of(phase.spec));
+    } catch (const std::exception &ex) {
+      e = ex.what();
+    }
+    if (!e.empty())
+      throw std::runtime_error(phase.name + " " + phase.spec.lib + ":" +
+                               phase.spec.algo + ": " + e);
+  }
+
   /* --- RHOFORM NONNEG / MONOTONE: optimisers that can leave the box -----
    * The evaluated AMPGRIDMB coordinates are projected onto [0, inf)
    * (HPO_Host); say so when the optimiser of a phase can put them outside
-   * the (non-negative) box. After the phase checks above, on the same
-   * phases. */
+   * the (non-negative) box: a backend that ignores the bounds, or the
+   * Ceres finite-difference kernel. The in-house stencil keeps to the box
+   * (fd_stencil.h). After the phase checks above, on the same phases. */
   if (models::context_has_ream(train_ctx)) {
     const models::RhoForm form = models::require_rhoform(train_ctx, "tadah hpo");
     bool amp_optim = false;
@@ -285,7 +327,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
           models::OptimLowerBound::NonNegative)
         for (bool b : kv.second.opt) amp_optim = amp_optim || b;
     if (amp_optim) {
-      const std::vector<std::string> ub = unbounded_optimisers(trg.spec);
+      bool kernel = false;
+      const std::vector<std::string> ub = unbounded_optimisers(trg.spec, kernel);
       if (!ub.empty()) {
         std::string msg = std::string("RHOFORM ") + models::rhoform_name(form) +
                           ": ";
@@ -297,6 +340,10 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
                "such point is projected onto AMPGRIDMB >= 0, evaluated and "
                "recorded there (the optimiser still sees its own point); "
                "DIAGNOSTICS counts the projections.";
+        if (kernel)
+          msg += " A Ceres finite-difference step projected onto a zero "
+                 "amplitude halves the derivative there; PARAM fd_kernel "
+                 "inhouse keeps the stencil inside the box.";
         std::cerr << "[HPO] WARNING: " << msg << "\n";
         HPOLog::instance().warning(msg);
       }

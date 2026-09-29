@@ -169,7 +169,8 @@ std::vector<PhaseSpec> strategy_phase_specs(const OptimizerSpec& spec)
          * stands. */
         std::optional<OptimizerSpec> run = inner_run_spec(phases[i].spec);
         phases.push_back({"the INNER block of " + phases[i].name,
-                          run ? std::move(*run) : *phases[i].spec.inner});
+                          run ? std::move(*run) : *phases[i].spec.inner,
+                          /*inner=*/true});
     }
     return phases;
 }

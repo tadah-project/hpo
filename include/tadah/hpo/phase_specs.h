@@ -87,10 +87,14 @@ bool obtains_gradients(const OptimizerSpec& spec);
  * MAXTIME, which AUGLAG does not report. */
 std::optional<OptimizerSpec> single_local_search(const OptimizerSpec& spec);
 
-/* One phase of a run: its name, for messages, and the spec it runs. */
+/* One phase of a run: its name, for messages, and the spec it runs.
+ * `inner` marks the search an INNER block runs: it takes the gradient of
+ * the phase it runs in (obtains_gradients), which that phase's
+ * GRAD_STRATEGY and PARAM fd_step / fd_kernel decide, not its own. */
 struct PhaseSpec {
     std::string   name;
     OptimizerSpec spec;
+    bool          inner = false;
 };
 
 /* The phases the policy of `spec` (STRATEGY TYPE) runs, derived as the
@@ -108,7 +112,7 @@ struct PhaseSpec {
  *               the centre of the box): what a backend checks is how many
  *               start points there are, not where they lie.
  * followed by "the INNER block of <phase>" for each phase with an INNER
- * block, as inner_run_spec() derives the search it runs. RESTART changes
+ * block, as inner_run_spec() derives the search it runs (PhaseSpec::inner). RESTART changes
  * no phase's settings, only its start points and seeds. A PRESTAGE without an EXPLORE block has only its refinement here
  * (validate_run_policy() rejects it). */
 std::vector<PhaseSpec> strategy_phase_specs(const OptimizerSpec& spec);
