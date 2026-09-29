@@ -1658,13 +1658,13 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
      *
      * Rate-limited on powers of two: a systematically broken potential
      * fails identically on every script of every eval, and the first few
-     * occurrences carry all the information. */
+     * occurrences carry all the information. Counted per run
+     * (HPOLog::count_in_run). */
     if ((tres.status == PcTaskStatus::POT_BUILD_FAIL ||
          tres.status == PcTaskStatus::RUN_FAIL) &&
         !tres.error_msg.empty()) {
-      static std::atomic<std::size_t> n_worker_err{0};
-      const std::size_t n = n_worker_err.fetch_add(1,
-                                                   std::memory_order_relaxed) + 1;
+      const std::size_t n =
+          HPOLog::instance().count_in_run("pc-worker task failed");
       if ((n & (n - 1)) == 0)
         HPOLog::instance().warning(
             "pc-worker task failed (" + lsim.script + ", occurrence "
@@ -1920,8 +1920,9 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
           fail_state.set_gated();
           eval_aborted.store(true, std::memory_order_relaxed);
           if (pc_process_mode) pc_worker_pool().kill_matching(r.iter);
-          static std::atomic<std::size_t> gate_count{0};
-          const auto n = gate_count.fetch_add(1, std::memory_order_relaxed) + 1;
+          /* counted per run (HPOLog::count_in_run) */
+          const std::size_t n =
+              HPOLog::instance().count_in_run("FAILPROBE gate");
           if (n <= 5 || (n & (n - 1)) == 0) {
             HPOLog::instance().warning(
                 "eval " + std::to_string(r.iter) + " FAILPROBE gate: S="
@@ -3596,12 +3597,10 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
     if (const std::string why =
             analytical_gradient_blocker(master_ctx_, trg_, has_train_data_);
         !why.empty()) {
-        static std::once_flag warn_once;
-        std::call_once(warn_once, [&why]{
+        if (HPOLog::instance().first_in_run("no analytical gradient"))
             HPOLog::instance().warning(
                 "No analytical gradient for this setup: " + why +
                 "; every parameter uses finite differences in this run.");
-        });
         return fall_back_all_fd();
     }
 
@@ -3913,8 +3912,9 @@ void HPO_Host<P,R>::emit_grad_diagnostic(
     bool                         cache_miss,
     bool                         ift_failed) const
 {
-    static std::atomic_flag emitted = ATOMIC_FLAG_INIT;
-    if (emitted.test_and_set(std::memory_order_relaxed)) return;
+    /* once per run (HPOLog::first_in_run) */
+    if (!HPOLog::instance().first_in_run("gradient-pipeline diagnostic"))
+        return;
 
     const std::size_t n_total = prefs.size();
     const std::size_t n_fd    = needs_fd.size();

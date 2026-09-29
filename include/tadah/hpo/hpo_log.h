@@ -526,9 +526,20 @@ public:
         return cur_best_eval_;
     }
 
+    /* The notes a run prints once, and the counts of the notes it
+     * rate-limits, are run state: a new journal (open(), every run) and
+     * reset_for_test() start them afresh, so the second run of a process
+     * prints its own and counts from 1. first_in_run(key) is true the
+     * first time @p key is asked in this run; count_in_run(key) returns
+     * the occurrences of @p key in this run, this one included. Thread-
+     * safe. */
+    bool        first_in_run(const std::string& key);
+    std::size_t count_in_run(const std::string& key);
+
     /* Test-only: reset the singleton's running counters and best-so-far
      * to their freshly-constructed values (including the per-gate reject
-     * and note counters, the timing statistics and the fan-out tallies).
+     * and note counters, the timing statistics, the fan-out tallies, the
+     * bound-occupancy snapshot and the per-run notes).
      * Used by regression tests so one Catch2 test case's state does not
      * leak into the next. Does not close the underlying file -- call after
      * open() if you also want a fresh log file on disk. */
@@ -625,12 +636,17 @@ private:
     struct PinInfo { std::uint64_t since; double gap; double tol; };
     std::map<std::tuple<int, std::size_t, int>, PinInfo> pin_state_;
     std::vector<std::string> pin_labels_;
-    /* Bound-occupancy audit snapshot (latest new best). */
+    /* Bound-occupancy audit snapshot (latest new best of this run) --
+     * reset by open() and reset_for_test(). */
     std::vector<BoundOccupancy::Mark> occ_marks_;
     std::uint64_t                     occ_eval_ = 0;
     double                            occ_edge_ = 0.02;
     bool                              occ_seen_ = false;   // any new best reported
     void write_bound_occupancy_locked(const char* indent_tag, bool final_table);
+    void reset_occupancy_locked();
+    /* first_in_run / count_in_run -- protected by mtx_; reset by open()
+     * and reset_for_test(). */
+    std::map<std::string, std::size_t> run_notes_;
     std::vector<double>      pin_low_, pin_high_;
     std::vector<char>        pin_log_;             // 1 = log-scaled dim
     double                   pin_floor_frac_ = 0.0;

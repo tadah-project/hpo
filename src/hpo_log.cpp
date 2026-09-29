@@ -204,7 +204,29 @@ void HPOLog::reset_for_test()
     fanout_pool_width_ = 0;
     reset_embf0_locked();
     reset_density_locked();
+    reset_occupancy_locked();
+    run_notes_.clear();
     clear_eval_context();
+}
+
+void HPOLog::reset_occupancy_locked()
+{
+    occ_marks_.clear();
+    occ_eval_ = 0;
+    occ_edge_ = 0.02;
+    occ_seen_ = false;
+}
+
+bool HPOLog::first_in_run(const std::string& key)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    return ++run_notes_[key] == 1;
+}
+
+std::size_t HPOLog::count_in_run(const std::string& key)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    return ++run_notes_[key];
 }
 
 void HPOLog::set_rank_scope(int rank, int world)
@@ -256,6 +278,11 @@ void HPOLog::open(const std::string& path,
     start_tally_ = StartTally{};
     reset_embf0_locked();
     reset_density_locked();
+    /* The bound-occupancy snapshot and the per-run notes belong to the
+     * run: an earlier run's best must not become this journal's final
+     * table, nor its notes silence or number this run's. */
+    reset_occupancy_locked();
+    run_notes_.clear();
 
     f_.open(path, std::ios::out | std::ios::trunc);
     if (!f_.is_open()) {
