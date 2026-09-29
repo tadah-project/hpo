@@ -114,7 +114,6 @@ dt::RhoGateTable rho_table(double tol, std::optional<double> r_lo,
   t.spec.tol = tol;
   t.spec.r_lo = r_lo;
   t.spec.npts = npts;
-  t.armed = true;
   return t;
 }
 
@@ -131,7 +130,6 @@ dt::RhoBarGateTable rhobar_table(const std::string& lattice, double a0,
       lattice, rcut / (f_lo * a0) * (1.0 + 1e-12));
   t.f = tadah::models::ReamDensity::linspace(f_lo, f_hi, npts);
   for (double x : t.f) t.a.push_back(a0 * x);
-  t.armed = true;
   return t;
 }
 
@@ -477,7 +475,49 @@ TEST_CASE("Density gates read WATOM and RCUTMBMAX with the number grammar "
                                        "decimal number"));
 }
 
-TEST_CASE("Density gates: arming, the reachable RCUTMB and the cached verdict",
+TEST_CASE("Density gates: a gate that no OPTIM line arms is refused at its "
+          "line", "[hpo][rhogate][rhobargate][gate_arming]") {
+  // Owner decision (2026-09-29, C6): a gate whose verdict no search can
+  // change -- no OPTIM dimension on AMPGRIDMB, CGRIDMB, SGRIDMB or RCUTMB
+  // (OPTIM WATOM only scales the density) -- cannot act: every candidate
+  // has the -c density and its one verdict. It was accepted with an INFO
+  // line ("not armed per candidate") and the -c verdict reused; it is now
+  // an error at the gate's line naming the keys that would arm it.
+  PeriodicTable::initialize();
+  const std::string tail = "PC_ERMSE 0 1\n" + std::string(kOptimizer);
+  auto err = [&](const std::string& lines) {
+    return targets_error(make_ream_ctx("SIGNED"), lines + tail);
+  };
+  const std::string keys = "AMPGRIDMB, CGRIDMB, SGRIDMB or RCUTMB";
+  for (const std::string gate : {"RHOGATE 1e-5 SEED WARN",
+                                 "RHOBARGATE bcc 3.304 0.98 1.1"}) {
+    const std::string name = gate.substr(0, gate.find(' '));
+    for (const std::string setup : {"", "OPTIM CEMBFUNC (1) -0.5 0.1\n",
+                                     "OPTIM WATOM (1) 0.5 2\n"}) {
+      CAPTURE(gate, setup);
+      const std::string line = setup.empty() ? "1" : "2";
+      CHECK_THAT(err(setup + gate + "\n"),
+                 Catch::Contains("Error on line " + line + ": " + name +
+                                 " cannot act") &&
+                     Catch::Contains(keys) &&
+                     Catch::Contains("Line: " + gate));
+    }
+    // the arming OPTIM line may follow the gate, in any case
+    CHECK(err(gate + "\nOPTIM AMPGRIDMB (3) -0.5 0.5\n").empty());
+    CHECK(err(gate + "\nOPTIM sgridmb (2) 2.5 3.5\n").empty());
+    CHECK(err(gate + "\nOPTIM RCUTMB (1) 5.0 5.5\n").empty());
+  }
+  // both unarmed: the first gate's line
+  CHECK_THAT(err("RHOBARGATE bcc 3.304 0.98 1.1\nRHOGATE 1e-5\n"),
+             Catch::Contains("Error on line 1: RHOBARGATE cannot act"));
+  // a failing -c density under SEED WARN: refused when the target is read
+  CHECK_THAT(targets_error(make_ream_ctx("SIGNED", "0.5 0.3 -0.2"),
+                           "OPTIM CEMBFUNC (1) -0.5 0.1\nRHOGATE 1e-5 SEED "
+                           "WARN\n" + tail),
+             Catch::Contains("Error on line 2: RHOGATE cannot act"));
+}
+
+TEST_CASE("Density gates: arming and the reachable RCUTMB",
           "[hpo][rhogate]") {
   PeriodicTable::initialize();
   auto build = [](Context ctx, const std::string& lines) {
@@ -497,45 +537,21 @@ TEST_CASE("Density gates: arming, the reachable RCUTMB and the cached verdict",
                                     "RHOGATE 1e-5\nRHOBARGATE bcc 3.304 0.98 1.1\n");
       REQUIRE(g.rho);
       REQUIRE(g.rhobar);
-      CHECK(g.rho->armed);
-      CHECK(g.rhobar->armed);
-      CHECK_FALSE(g.rho->fixed);
       CHECK(g.rho->armed_on.size() == 1);
+      CHECK(g.rhobar->armed_on.size() == 1);
     }
   }
-  SECTION("unarmed: the cached -c verdict is reused, no scan per candidate") {
-    const auto g = build(ctx, "OPTIM CEMBFUNC (1) -0.5 0.1\nRHOGATE 1e-5\n"
-                              "RHOBARGATE bcc 3.304 0.98 1.1\n");
+  SECTION("an armed gate checks each candidate's density pair weights") {
+    const auto g = build(ctx, "OPTIM AMPGRIDMB (3) -0.5 0.5\n"
+                              "OPTIM WATOM (1) -1 2\nRHOGATE 1e-5\n");
     REQUIRE(g.rho);
-    CHECK_FALSE(g.rho->armed);
-    CHECK_FALSE(g.rho->watom_armed);
-    REQUIRE(g.rho->fixed);
-    CHECK_FALSE(g.rho->fixed->fail);
-    REQUIRE(g.rhobar->fixed);
-    const std::size_t scans = dt::density_gate_scans_for_test();
-    for (int i = 0; i < 3; ++i) {
-      const auto v = dt::check_density_gates(g, ctx);
-      REQUIRE(v.rho);
-      REQUIRE(v.rhobar);
-      CHECK_FALSE(v.rho->fail);
-      CHECK_FALSE(v.rhobar->fail);
-    }
-    CHECK(dt::density_gate_scans_for_test() == scans);
-  }
-  SECTION("OPTIM WATOM alone: the pair-weight check per candidate") {
-    const auto g = build(ctx, "OPTIM WATOM (1) -1 2\nRHOGATE 1e-5\n");
-    REQUIRE(g.rho);
-    CHECK_FALSE(g.rho->armed);
-    CHECK(g.rho->watom_armed);
     Context neg = ctx;
     neg.remove("WATOM");
     neg.add("WATOM", -0.5);
-    const std::size_t scans = dt::density_gate_scans_for_test();
     const auto v = dt::check_density_gates(g, neg);
     CHECK(v.rho->fail);
     CHECK(v.rho->saturated);
     CHECK_FALSE(dt::check_density_gates(g, ctx).rho->fail);
-    CHECK(dt::density_gate_scans_for_test() == scans);
   }
   SECTION("bump channel: the RCUTMB range over its OPTIM box") {
     TempFile tf("OPTIM rcutmb (1) 5.0 6.0\nPC_ERMSE 0 1\n" + std::string(kOptimizer));
@@ -645,23 +661,6 @@ TEST_CASE("Density gates: startup refusals and seed checks",
                                         "armed per candidate on AMPGRIDMB[3]") &&
                         Catch::Contains("seeds: -c pot (INIT CONFIG) FAIL"));
   }
-  SECTION("unarmed: a failing -c density is an error under SEED WARN too") {
-    for (const char* mode : {"", " SEED WARN"}) {
-      CAPTURE(mode);
-      const std::string e = gates_error(
-          make_ream_ctx("SIGNED", "0.5 0.3 -0.2"),
-          "OPTIM CEMBFUNC (1) -0.5 0.1\nRHOGATE 1e-5" + std::string(mode) + "\n" + tail);
-      CHECK_THAT(e, Catch::Contains("RHOGATE: the -c density fails the rho(r) sign "
-                                    "gate") &&
-                        Catch::Contains("every evaluation would be rejected"));
-    }
-    CHECK_THAT(gates_error(make_ream_ctx("SIGNED"),
-                           "OPTIM CEMBFUNC (1) -0.5 0.1\n"
-                           "RHOBARGATE bcc 3.304 0.75 1.1 SEED WARN\n" + tail),
-               Catch::Contains("RHOBARGATE: the -c density fails the lattice "
-                               "rhobar(a) gate") &&
-                   Catch::Contains("first at a/a0 = 0.7500, v = 1.9432e-01"));
-  }
   SECTION("a density pair weight no candidate can make positive is an error "
           "under SEED WARN too, armed or not") {
     Context wneg = make_ream_ctx("SIGNED");
@@ -672,24 +671,25 @@ TEST_CASE("Density gates: startup refusals and seed checks",
     for (const char* gate : {"RHOGATE 1e-5 SEED WARN\n",
                              "RHOBARGATE bcc 3.304 0.98 1.1 SEED WARN\n"}) {
       CAPTURE(gate);
-      /* armed with WATOM fixed; the -c pot outside the seed set; unarmed
-       * with an OPTIM WATOM box below 0 */
+      /* WATOM fixed; the -c pot outside the seed set; an OPTIM WATOM box
+       * below 0 */
       for (const std::string& setup :
            {"OPTIM AMPGRIDMB (3) -0.5 0.5\n" + tail,
             "OPTIM AMPGRIDMB (3) -0.5 0.5\nPC_ERMSE 0 1\n" + lhs,
-            "OPTIM WATOM (1) -2 -0.5\n" + tail}) {
+            "OPTIM AMPGRIDMB (3) -0.5 0.5\nOPTIM WATOM (1) -2 -0.5\n" + tail}) {
         CAPTURE(setup);
         const std::string e = gates_error(wneg, gate + setup);
         CHECK_THAT(e, Catch::Contains("(WATOM) is not finite and > 0 on every "
                                       "candidate") &&
                           Catch::Contains("every evaluation would be rejected, "
                                           "under SEED ERROR or WARN"));
-        /* it stands in for the per-seed and unarmed messages */
+        /* it stands in for the per-seed messages */
         CHECK(e.find('\n') == std::string::npos);
       }
     }
     /* an OPTIM WATOM box reaching above 0: only the failing seed is named */
-    const std::string reach = "OPTIM WATOM (1) -2 1\n" + tail;
+    const std::string reach =
+        "OPTIM AMPGRIDMB (3) -0.5 0.5\nOPTIM WATOM (1) -2 1\n" + tail;
     CHECK_THAT(gates_error(wneg, "RHOGATE 1e-5\n" + reach),
                Catch::Contains("RHOGATE: seed -c pot (INIT CONFIG) fails the rho(r) "
                                "sign gate: a density pair weight W = -1 (WATOM)"));
@@ -1122,32 +1122,13 @@ TEST_CASE("HPO_Host RHOGATE: graded reject before training, silent pass",
     host.flush_remaining();
     Host::reset_globals_for_test();
   }
-  SECTION("unarmed: the cached verdict rejects every candidate, no rescan") {
-    Journal j;
-    Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
+  SECTION("unarmed: refused when the target is read, before any host") {
     const fs::path cfg = e.target("unarmed.hpo", "FAILSCORE_GRADING ON\n"
                                                  "OPTIM CEMBFUNC (1) -0.5 0.1\n"
                                                  "RHOGATE 1e-5 SEED WARN\n");
     Context ctx = make_ream_ctx("SIGNED", "0.5 0.3 -0.2");
-    ctx.add("HPOTARGET", cfg.string());
-    HPOTargets trg(ctx, cfg.string());
-    /* startup refuses it under either SEED mode ... */
-    REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, false, true),
-                        Catch::Contains("every evaluation would be rejected"));
-    /* ... and a host built anyway rejects every candidate alike */
-    Host host(ctx, trg, e.val_cfg.string());
-    const std::size_t scans = dt::density_gate_scans_for_test();
-    ParamVec p(1);
-    p(0) = -0.3;
-    const double l1 = host(p);
-    p(0) = 0.05;
-    const double l2 = host(p);
-    CHECK(l1 == graded(0x1.c7d66cd418f32p-2));
-    CHECK(l2 == l1);
-    CHECK(dt::density_gate_scans_for_test() == scans);
-    host.flush_remaining();
-    Host::reset_globals_for_test();
+    REQUIRE_THROWS_WITH(HPOTargets(ctx, cfg.string()),
+                        Catch::Contains("RHOGATE cannot act"));
   }
   SECTION("BUMPGATE and RHOGATE: the first failing gate is counted, the sum "
           "grades; a bump-only reject is as in tadah 1.5.0") {

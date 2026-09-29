@@ -59,6 +59,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <unistd.h>
@@ -2063,20 +2064,29 @@ TEST_CASE("Strict numbers: RHOGATE and RHOBARGATE", "[HPO][hpo_targets][strict_n
         return parse_error(kOptimizer + line + "\n");
     };
     SECTION("accepted") {
+        /* a gate needs an OPTIM line that arms it (a density key) */
+        const std::string arm = "OPTIM AMPGRIDMB (1) 0 1\n";
+        auto armed = [&](const std::string& lines) {
+            TempFile cfg(kOptimizer + lines + arm);
+            tadah::core::Context ctx;
+            ctx.add("AMPGRIDMB", 0.5);
+            return std::make_unique<tadah::hpo::HPOTargets>(
+                ctx, cfg.path.string());
+        };
         for (const std::string line :
                  {"RHOGATE 1e-5", "RHOGATE 0 R_LO 1.7168 NPTS 2 SEED WARN",
                   "RHOGATE +1e-5 npts 10000000", "RHOGATE 1E-5 R_LO 0",
                   "RHOBARGATE bcc 3.304 0.98 1.1",
                   "RHOBARGATE fcc 4.05 .9 1.10 NPTS 3 SEED ERROR"}) {
             INFO(line);
-            CHECK(err(line) == "");
+            CHECK_NOTHROW(armed(line + "\n"));
         }
-        auto trg = parse_config(kOptimizer + "RHOGATE 1e-5 NPTS 2000\n"
-                                "RHOBARGATE hcp 2.9 0.9 1.1 NPTS 3501\n");
-        REQUIRE(trg.RHOGATE);
-        CHECK(trg.RHOGATE->npts == 2000u);
-        REQUIRE(trg.RHOBARGATE);
-        CHECK(trg.RHOBARGATE->npts == 3501u);
+        auto trg = armed("RHOGATE 1e-5 NPTS 2000\n"
+                         "RHOBARGATE hcp 2.9 0.9 1.1 NPTS 3501\n");
+        REQUIRE(trg->RHOGATE);
+        CHECK(trg->RHOGATE->npts == 2000u);
+        REQUIRE(trg->RHOBARGATE);
+        CHECK(trg->RHOBARGATE->npts == 3501u);
     }
     SECTION("a real number is one finite decimal token") {
         std::vector<std::string> bad = kNotFinite;
