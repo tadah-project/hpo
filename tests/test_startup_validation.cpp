@@ -178,6 +178,46 @@ TEST_CASE("startup validation: K-dependent rules on a real model context",
   }
 }
 
+TEST_CASE("startup validation: a -c configuration that does not build a "
+          "model is refused", "[startup_validation][model_probe]") {
+  /* A construction error of the model (a DIMER potential with element-
+   * named TYPE2B pairs: DIMER evaluates every atom as Z=1) failed every
+   * evaluation. With FIXINDEX the weight-count probe met it and printed a
+   * WARNING ("FIXINDEX bounds/coverage checks are deferred to the first
+   * training evaluation"); without, startup said nothing. The run then
+   * ended "no evaluation produced a usable loss". */
+  PeriodicTable::initialize();
+  ScopedTempFile tf(target_with("PC_ERMSE 0 1\n"));
+  auto dimer_ctx = [] {
+    Context c = make_model_ctx();
+    c.remove("DIMER");
+    c.add("DIMER", "true 1.104 true");
+    c.add("DBFILE", "dummy.db");
+    return c;
+  };
+  SECTION("with FIXINDEX/FIXWEIGHT (the weight-count probe)") {
+    Context ctx = dimer_ctx();
+    ctx.add("FIXINDEX", "1");
+    ctx.add("FIXWEIGHT", 0.5);
+    HPOTargets trg(ctx, tf.path.string());
+    CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                      Catch::Contains("does not build a model") &&
+                          Catch::Contains("DIMER evaluates every atom as Z=1") &&
+                          Catch::Contains("every evaluation would fail"));
+  }
+  SECTION("without them") {
+    Context ctx = dimer_ctx();
+    HPOTargets trg(ctx, tf.path.string());
+    CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                      Catch::Contains("does not build a model") &&
+                          Catch::Contains("DIMER evaluates every atom as Z=1"));
+  }
+  SECTION("derive_weight_count reports the error instead of 0") {
+    CHECK_THROWS_WITH(derive_weight_count(dimer_ctx()),
+                      Catch::Contains("DIMER evaluates every atom as Z=1"));
+  }
+}
+
 TEST_CASE("startup validation: loss-source rules", "[startup_validation]") {
   SECTION("no loss source at all throws") {
     ScopedTempFile tf(target_with(""));

@@ -253,3 +253,31 @@ TEST_CASE("BUMPGATE's reject text prints the violation losslessly",
   CHECK(bg::bump_gate_reject_what(std::numeric_limits<double>::infinity())
             .find("violation=inf") != std::string::npos);
 }
+
+TEST_CASE("BUMPGATE: grids that cannot be read are an error, not a skipped "
+          "channel", "[HPO][bumpgate][model_probe]") {
+  /* The gate table and the startup gate skipped a bump channel whose
+   * CGRID/SGRID could not be read, and the binding cutoff fell back to the
+   * first RCUT token when the per-pair list could not be read. Such a
+   * channel cannot build its descriptor (validate_hpo_setup refuses the
+   * configuration first); the gate says so instead of skipping it. */
+  tadah::core::PeriodicTable::initialize();
+  SECTION("CGRID2B") {
+    Context ctx = blip_ctx();
+    WidthTempFile tf("OPTIM SGRID2B (1) 1.0 3.0\nPC_ERMSE 0 1\n" +
+                     std::string(kWidthOptimizer));
+    HPOTargets trg(ctx, tf.path.string());
+    ctx.storage_update("CGRID2B", {"4.0", "x"});
+    CHECK_THROWS_WITH(bg::build_bump_gate_table(ctx, trg),
+                      Catch::Contains("CGRID2B"));
+  }
+  SECTION("RCUT2B") {
+    Context ctx = blip_ctx();
+    WidthTempFile tf("OPTIM SGRID2B (1) 1.0 3.0\nPC_ERMSE 0 1\n" +
+                     std::string(kWidthOptimizer));
+    HPOTargets trg(ctx, tf.path.string());
+    ctx.storage_update("RCUT2B", {"5.0", "x"});
+    CHECK_THROWS_WITH(bg::derive_binding_rcut(ctx, trg, "2B"),
+                      Catch::Contains("RCUT2B"));
+  }
+}
