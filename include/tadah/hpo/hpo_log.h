@@ -289,8 +289,15 @@ public:
      *     instead of forward, or towards the box from outside it); the
      *     count is per dimension, and the caller journals the first;
      *   - record_hybrid_centre: the loss at a HYBRID gradient's point,
-     *     evaluated for its one-sided or forward differences. */
+     *     evaluated for its one-sided or forward differences;
+     *   - record_snap: an evaluation with a coordinate proposed outside its
+     *     box within rounding (SearchSpace::snapped_onto_box), evaluated on
+     *     the bound (the host; owner decision D10). */
     std::size_t record_out_of_box_eval();
+    std::size_t record_snap();
+    std::size_t snaps() const {
+        return n_snap_.load(std::memory_order_relaxed);
+    }
     std::size_t record_out_of_box_gradient();
     std::size_t record_one_sided(const std::string& label);
     std::size_t record_hybrid_centre();
@@ -621,6 +628,7 @@ private:
     std::atomic<std::size_t> n_form_proj_ {0};
     /* Finite differences and the OPTIM box (record_out_of_box_eval, ...). */
     std::atomic<std::size_t> n_oob_eval_      {0};
+    std::atomic<std::size_t> n_snap_          {0};
     std::atomic<std::size_t> n_oob_grad_      {0};
     std::atomic<std::size_t> n_hybrid_centre_ {0};
     /* One-sided components per dimension, in the order first seen --

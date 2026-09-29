@@ -9,6 +9,7 @@
 #include <tadah/hpo/strategy_rules.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/rho_gates.h>
+#include <tadah/hpo/search_space.h>
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/core/context.h>
 #include <tadah/core/blueprint_parser.h>
@@ -1255,6 +1256,11 @@ std::size_t HPOLog::record_form_projection()
     return n_form_proj_.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
+std::size_t HPOLog::record_snap()
+{
+    return n_snap_.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
 std::size_t HPOLog::record_out_of_box_eval()
 {
     return n_oob_eval_.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -1290,6 +1296,7 @@ std::size_t HPOLog::one_sided(const std::string& label) const
 void HPOLog::reset_fd_counters_locked()
 {
     n_oob_eval_.store(0, std::memory_order_relaxed);
+    n_snap_.store(0, std::memory_order_relaxed);
     n_oob_grad_.store(0, std::memory_order_relaxed);
     n_hybrid_centre_.store(0, std::memory_order_relaxed);
     one_sided_.clear();
@@ -2142,13 +2149,18 @@ void HPOLog::finish(const std::string& status_str)
      * within a step of a bound stay byte-identical. */
     {
         const std::size_t oe = n_oob_eval_.load(std::memory_order_relaxed);
+        const std::size_t sn = n_snap_.load(std::memory_order_relaxed);
         const std::size_t og = n_oob_grad_.load(std::memory_order_relaxed);
         const std::size_t hc = n_hybrid_centre_.load(std::memory_order_relaxed);
+        if (sn > 0)
+            f_ << "  " << std::left << std::setw(KW) << "Snapped onto the box"
+               << ": " << sn << " (points proposed outside the OPTIM box "
+                  "within\n    rounding, " << SearchSpace::kSnapUlps
+               << " units in the last place, and evaluated on the bound)\n";
         if (oe > 0)
             f_ << "  " << std::left << std::setw(KW) << "Out-of-box evaluations"
                << ": " << oe << " (points outside the OPTIM box, evaluated "
-                  "there: an\n    optimiser that ignores the bounds, or NLopt "
-                  "rounding past a bound under\n    OPTIM_SCALE NONE; see the "
+                  "there: an\n    optimiser that ignores the bounds; see the "
                   "first such WARNING)\n";
         if (og > 0)
             f_ << "  " << std::left << std::setw(KW) << "Out-of-box gradients"

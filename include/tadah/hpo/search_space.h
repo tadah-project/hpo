@@ -194,6 +194,19 @@ std::size_t len(const V& v) { return static_cast<std::size_t>(v.size()); }
 
 class SearchSpace final {
 public:
+    /* A coordinate proposed outside its box by no more than this many
+     * units in the last place is evaluated on the bound (snapped_onto_box;
+     * owner decision D10). The survey of every NLopt algorithm pressed
+     * against a bound under OPTIM_SCALE NONE (13 of them round a point on a
+     * bound past it: LN_COBYLA, LN_PRAXIS, LN_BOBYQA, the unscaled DIRECT
+     * variants, MLSL and AUGLAG with such a local search; 1 to 4 dimensions,
+     * 200 boxes each, about 900k evaluations) found at most 2 ulps of the
+     * box's scale; the host sees the point after the map to real
+     * coordinates, and measures it back in the optimiser's, an ulp or two
+     * more. 8 is four times the largest excursion seen. */
+    static constexpr int kSnapUlps = 8;
+
+public:
     /* Validates (finite hi > lo; LOG needs lo > 0; ASINH needs finite c > 0;
      * integer dims cannot be normalised) and throws std::runtime_error
      * naming the dimension label on the first violation. Applies the
@@ -212,6 +225,15 @@ public:
      * into [lo, hi]; a u outside the box maps through T^-1 unclamped) */
     double to_internal    (std::size_t i, double x) const;
     double to_real        (std::size_t i, double u) const;
+    /* The bound onto which a REAL coordinate x of dimension i proposed
+     * outside its box within rounding is evaluated, std::nullopt when x
+     * lies in the box (or is NaN) or further out. Within rounding: at most
+     * kSnapUlps units in the last place from the bound, either in real
+     * coordinates -- of max(|lo|, |hi|) on a linear dimension, of the bound
+     * itself on a LOG or ASINH one, which can span decades -- or in the
+     * optimiser's (to_internal), of max(|internal lo|, |internal hi|).
+     * Owner decision D10, 2026-09-29. */
+    std::optional<double> snapped_onto_box(std::size_t i, double x) const;
     double dreal_dinternal(std::size_t i, double u) const;   // dx/du at u
     double internal_lo    (std::size_t i) const;
     double internal_hi    (std::size_t i) const;

@@ -1315,6 +1315,31 @@ const P& HPO_Host<P,R>::project_positive_form(const P& p, P& buf,
 
 /* ----------  helper: evaluations outside the OPTIM box ---------------- */
 template<class P, class R>
+const P& HPO_Host<P,R>::snap_onto_box(const P& p, P& buf) const
+{
+    const SearchSpacePtr space = trg_.space();
+    if (!space) return p;
+    const std::size_t n =
+        std::min(space->dim(), static_cast<std::size_t>(p.size()));
+    bool snapped = false;
+    for (std::size_t k = 0; k < n; ++k) {
+        const std::optional<double> b =
+            space->snapped_onto_box(k, p(static_cast<long>(k)));
+        if (!b) continue;
+        if (!snapped) {
+            buf = p;
+            snapped = true;
+        }
+        buf(static_cast<long>(k)) = *b;
+    }
+    if (!snapped) return p;
+    try {
+        HPOLog::instance().record_snap();
+    } catch (...) { /* journalling must never fail an evaluation */ }
+    return buf;
+}
+
+template<class P, class R>
 void HPO_Host<P,R>::note_out_of_box(const P& p, std::size_t iter) const
 {
     const SearchSpacePtr space = trg_.space();
@@ -1342,14 +1367,12 @@ void HPO_Host<P,R>::note_out_of_box(const P& p, std::size_t iter) const
             (n_out > 1 ? " (and " + std::to_string(n_out - 1) +
                              " more coordinate(s))"
                        : std::string()) +
-            " and is evaluated there: finite differences keep to the box, so "
-            "the optimiser put it there: one that ignores the bounds "
-            "(CERES:*, NLopt LN_NEWUOA), under OPTIM_SCALE NONE an NLopt "
-            "algorithm whose own arithmetic rounds a point on a bound past it "
-            "(seen with LN_PRAXIS, LN_COBYLA, the GN_DIRECT*_NOSCAL "
-            "variants), or a start such a search handed on; the loss of such "
-            "a point can become the best. DIAGNOSTICS counts every evaluation "
-            "outside the box";
+            " and is evaluated there: finite differences keep to the box, and "
+            "a point proposed within rounding of a bound is evaluated on it, "
+            "so an optimiser that ignores the bounds (CERES:*, NLopt "
+            "LN_NEWUOA), or a start it handed on, stepped outside it; the "
+            "loss of such a point can become the best. DIAGNOSTICS counts "
+            "every evaluation outside the box";
         std::cerr << "[HPO] WARNING: " << msg << "\n";
         HPOLog::instance().warning(msg);
     } catch (...) { /* journalling must never fail an evaluation */ }
@@ -2435,9 +2458,13 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
 
   Result r;
   r.iter   = ++g_iter_;
-    /* A point outside the OPTIM box is counted (and the first warned
-     * about) before any projection. */
-    note_out_of_box(p_in, r.iter);
+    /* A coordinate proposed outside its box within rounding is evaluated
+     * on the bound (owner decision D10); a point further out is counted
+     * (and the first warned about) -- both before any projection. `p_box`
+     * is p_in itself when nothing was snapped. */
+    P p_snap;
+    const P& p_box = snap_onto_box(p_in, p_snap);
+    note_out_of_box(p_box, r.iter);
     /* RHOFORM NONNEG / MONOTONE: evaluate the candidate with its AMPGRIDMB
      * coordinates projected onto [0, inf) -- before the gates and the
      * context build -- and record the projected point (params rows, pots),
@@ -2446,8 +2473,8 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * under SIGNED (form_proj_idx_ is empty). */
     P p_proj;
     const P& p = form_proj_idx_.empty()
-                     ? p_in
-                     : project_positive_form(p_in, p_proj, r.iter);
+                     ? p_box
+                     : project_positive_form(p_box, p_proj, r.iter);
     /* Which chain (PT replica / PA walker) is this? Bridged from the driver
      * via a thread_local; keys the per-chain warm-start cache so results are
      * independent of fan-out execution order. 0 for serial / NLOPT / dlib. */

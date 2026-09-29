@@ -118,6 +118,40 @@ double SearchSpace::to_internal(std::size_t i, double x) const
     return (t - t_lo_[i]) / (t_hi_[i] - t_lo_[i]);
 }
 
+namespace {
+
+/* The spacing of the doubles at |m| (the smallest positive double at 0). */
+double ulp_at(double m)
+{
+    m = std::fabs(m);
+    return std::nextafter(m, std::numeric_limits<double>::infinity()) - m;
+}
+
+}  // namespace
+
+std::optional<double> SearchSpace::snapped_onto_box(std::size_t i,
+                                                    double x) const
+{
+    const DimSpec& d = dims_[i];
+    if (!(x < d.lo || x > d.hi)) return std::nullopt;   /* inside, or NaN */
+    const double bound = x < d.lo ? d.lo : d.hi;
+    const double tol = static_cast<double>(kSnapUlps);
+    /* real coordinates (x and the bound are close: the difference is
+     * exact) */
+    const double scale = d.tf.kind == ScaleKind::Linear
+                             ? std::max(std::fabs(d.lo), std::fabs(d.hi))
+                             : std::fabs(bound);
+    if (std::fabs(x - bound) <= tol * ulp_at(scale)) return bound;
+    /* the optimiser's coordinates */
+    const double u = to_internal(i, x);
+    const double a = internal_lo(i), b = internal_hi(i);
+    const double ub = x < d.lo ? a : b;
+    if (std::isfinite(u) &&
+        std::fabs(u - ub) <= tol * ulp_at(std::max(std::fabs(a), std::fabs(b))))
+        return bound;
+    return std::nullopt;
+}
+
 double SearchSpace::to_real(std::size_t i, double u) const
 {
     if (!anc_off_.empty() && anc_off_[i] != anc_off_[i + 1]) {

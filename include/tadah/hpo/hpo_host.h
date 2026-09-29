@@ -364,16 +364,22 @@ private:
      *  journals the first one (eval @p iter). Never throws. */
     const ParamVec& project_positive_form(const ParamVec& p, ParamVec& buf,
                                           std::size_t iter) const;
+    /** @p p with each coordinate proposed outside its OPTIM box within
+     *  rounding (SearchSpace::snapped_onto_box) moved onto the bound: @p p
+     *  itself when there is none, else @p buf. Counts such an evaluation
+     *  in HPOLog (record_snap), with no warning: NLopt's own arithmetic
+     *  rounds a point on a bound past it under OPTIM_SCALE NONE (owner
+     *  decision D10). Before the out-of-box count and any projection.
+     *  Never throws. */
+    const ParamVec& snap_onto_box(const ParamVec& p, ParamVec& buf) const;
     /** Counts evaluation @p iter in HPOLog when a coordinate of the REAL
      *  point @p p lies outside its OPTIM box (record_out_of_box_eval), and
      *  warns at the first: finite differences keep to the box
      *  (fd_stencil.h), and so do ASA's probes (asa_probe_box_error,
-     *  TADAH-PATCH 8), so the optimiser put it there -- one that ignores
-     *  the bounds (OptimizerCaps::ignores_bounds), under OPTIM_SCALE NONE
-     *  an NLopt algorithm whose own arithmetic rounds a point on a bound
-     *  past it (LN_PRAXIS's tanh map, LN_COBYLA, the unscaled DIRECT
-     *  variants: a rounding error), or a start such a search handed on.
-     *  Before any projection. Never throws. */
+     *  TADAH-PATCH 8), and a point within rounding of a bound was snapped
+     *  onto it, so an optimiser that ignores the bounds
+     *  (OptimizerCaps::ignores_bounds), or a start it handed on, put it
+     *  there. After snap_onto_box, before any projection. Never throws. */
     void note_out_of_box(const ParamVec& p, std::size_t iter) const;
     void fill_validation(Result&, const mlip::Analytics&)  const;
     void run_lammps     (Result&) const;
