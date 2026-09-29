@@ -10,10 +10,10 @@ What this shows:
 - a DM_REAM seed (`D2_Knot5` + `DM_REAM` knot family) with every
   coefficient pinned (`FIXINDEX`/`FIXWEIGHT`): no training `DBFILE`, no
   `--validation`, the loss is the LAMMPS cohesive energy;
-- the mandatory density form `RHOFORM SIGNED`: 4 of the seed's 8 density
-  amplitudes are negative, so it keeps the signed density of tadah 1.5.1
-  and earlier (the line is the only change to the potential, and the run
-  is bit for bit the same);
+- the mandatory density form `RHOFORM SIGNED` (new in tadah 1.6.0): 4 of
+  the seed's 8 density amplitudes are negative, so it keeps the signed
+  density of every tadah before 1.6.0 (the line is the only change to the
+  potential, and the run is bit for bit the same);
 - `OPTIM CEMBFUNC (1)` / `(4)`: the two NEGATIVE embedding knots, the
   parameters that change the raw F(0) = sum_m w_m g_m(0) (the journal
   prints it: about -6.07 eV for this seed);
