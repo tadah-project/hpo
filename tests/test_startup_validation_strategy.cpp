@@ -1462,3 +1462,86 @@ TEST_CASE("startup validation: hpo_run rejects a backend setting of a "
         CHECK_THAT(err, Catch::Contains("DLIB:BFGS does not support SEED"));
     }
 }
+
+TEST_CASE("startup validation: the in-house finite-difference stencil fits "
+          "every OPTIM box", "[startup_validation][strategy][fd_stencil]")
+{
+    /* Within a step of a bound the in-house stencil (fd_stencil.h) is
+     * one-sided into the box, which needs three steps of fd_step *
+     * max(|u|, 1) inside it; a narrower box is refused at startup, on each
+     * phase that takes gradients with its own settings, before any data is
+     * loaded. The central stencil used to evaluate outside such a box. */
+    const std::string refusal =
+        ": PARAM fd_step 0.4: the finite-difference stencil takes three "
+        "steps of fd_step x max(|u|, 1) inside the OPTIM box, in internal "
+        "coordinates (the unit box under OPTIM_SCALE AUTO), so that it never "
+        "evaluates outside it; these boxes are narrower:\n  - WATOM: box "
+        "[0, 1], width 1 < 3 x 0.4 (fd_step below 0.3333333333 fits it)\n"
+        "  Lower PARAM fd_step (set it by hand when the NOISE block's AUTO "
+        "derived it) or widen these boxes.";
+    const std::string bfgs =
+        "    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 20\n";
+    SECTION("NUMERICAL with the in-house kernel, the default under AUTO") {
+        CHECK(judge(strategy_config(bfgs + "    PARAM fd_step 0.4\n")).startup ==
+              "the STRATEGY-level optimiser DLIB:BFGS" + refusal);
+        CHECK(judge(strategy_config(bfgs + "    PARAM fd_step 0.3\n")).startup ==
+              "");
+    }
+    SECTION("HYBRID") {
+        CHECK(judge(strategy_config(bfgs + "    GRAD_STRATEGY HYBRID\n"
+                                    "    PARAM fd_step 0.4\n")).startup ==
+              "the STRATEGY-level optimiser DLIB:BFGS" + refusal);
+    }
+    SECTION("the Ceres kernel takes no in-house stencil") {
+        CHECK(judge(strategy_config(bfgs + "    PARAM fd_step 0.4\n"
+                                    "    PARAM fd_kernel ceres\n")).startup ==
+              "");
+    }
+    SECTION("OPTIM_SCALE NONE with fd_kernel inhouse: a step relative to "
+            "|u|") {
+        const std::string root =
+            "OPTIM_SCALE NONE\nOPTIM WATOM (1) 0.1 5.0\nPC_ERMSE 0 1\n";
+        const auto body = [&](const std::string& extra) {
+            return root + "OPTIMIZER\n  STRATEGY\n" + bfgs + extra +
+                   "  ENDSTRATEGY\nENDOPTIMIZER\n";
+        };
+        CHECK_THAT(judge(body("    PARAM fd_kernel inhouse\n"
+                              "    PARAM fd_step 0.4\n")).startup,
+                   Catch::StartsWith("the STRATEGY-level optimiser DLIB:BFGS: "
+                                     "PARAM fd_step 0.4: ") &&
+                       Catch::Contains("\n  - WATOM: box [0.1, 5], width "
+                                       "4.9 < 3 x 2 (fd_step below "
+                                       "0.3266666667 fits it)"));
+        CHECK(judge(body("    PARAM fd_kernel inhouse\n"
+                         "    PARAM fd_step 0.3\n")).startup == "");
+        /* the default kernel under NONE is Ceres' */
+        CHECK(judge(body("    PARAM fd_step 0.4\n")).startup == "");
+    }
+    SECTION("the phase whose objective an INNER search differentiates") {
+        const std::string mlsl =
+            "    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n"
+            "    MAXEVAL 50\n";
+        const std::string inner =
+            "    INNER\n      LIB NLOPT\n      ALGO LD_LBFGS\n"
+            "      MAXEVAL 10\n";
+        CHECK(judge(strategy_config(mlsl + "    PARAM fd_step 0.4\n" + inner +
+                                    "    ENDINNER\n")).startup ==
+              "the STRATEGY-level optimiser NLOPT:G_MLSL_LDS" + refusal);
+        /* the INNER block's own PARAM does not differentiate anything */
+        CHECK(judge(strategy_config(mlsl + inner + "      PARAM fd_step 0.4\n"
+                                    "    ENDINNER\n")).startup == "");
+    }
+    SECTION("a phase that takes no gradient") {
+        CHECK(judge(strategy_config("    TYPE PLAIN\n    LIB NLOPT\n"
+                                    "    ALGO LN_SBPLX\n    MAXEVAL 20\n"
+                                    "    PARAM fd_step 0.4\n")).startup == "");
+    }
+    SECTION("an invalid PARAM fd_kernel of a phase that takes gradients") {
+        /* it was refused by the first gradient, after the data were
+         * loaded */
+        CHECK(judge(strategy_config(bfgs + "    PARAM fd_kernel fast\n"))
+                  .startup ==
+              "the STRATEGY-level optimiser DLIB:BFGS: PARAM fd_kernel must "
+              "be inhouse (default) or ceres (got 'fast')");
+    }
+}

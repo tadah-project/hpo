@@ -4466,6 +4466,7 @@ struct TrialCase {
     std::size_t     evals;   /* the evaluations of the search, as before */
     std::string     ending;  /* what the journal adds after the stop line,
                                 or the trailer of a search that goes on */
+    std::string     start = "1.8";   /* CGRID2B[2] at the start */
 };
 
 /* Whether a failed evaluation of loss.tadah is followed by a usable one:
@@ -4533,14 +4534,23 @@ TEST_CASE("Gradient not finite: NLopt and Ceres reject a later point whose "
 TEST_CASE("Gradient not finite: a search that ends right after it rejected "
           "such a point says so", "[HPO][termination][fd_gradient]")
 {
-    /* LD_SLSQP rejects 1.6676, whose stencil reaches 1.4676, and ends
-     * "roundoff-limited"; the CERES drivers reject 1.429 (1.229 fails) and
-     * end "Numerical failure in line search" (the trailer was COMPLETED).
-     * With no stop criterion met, the rejection ended the search. The
-     * evaluations are the same as before. */
+    /* LD_SLSQP from 1.72 rejects 1.6554, whose stencil reaches 1.4554,
+     * and ends "roundoff-limited"; the CERES drivers reject 1.429 (1.229
+     * fails) and end "Numerical failure in line search" (the trailer was
+     * COMPLETED). With no stop criterion met, the rejection ended the
+     * search. The evaluations are the same as before, but for the
+     * one-sided stencil of the point 1.074 near the lower bound (1.274 and
+     * 1.474; the central one evaluated 0.874, outside the box: fd_stencil.h,
+     * owner decision 2026-09-29, C4), whose gradient is 0 either way (every
+     * point of it fails).
+     *
+     * LD_SLSQP ran from 1.8 until C4: it rejected 1.6676 and ended. From
+     * 1.8 it now rejects 1.143, whose one-sided stencil (1.343 fails, 1.543
+     * does not) overflows where the central one took a zero difference of
+     * two failures at 1.343 and 0.943, outside the box, and it goes on to
+     * MAXEVAL. */
     std::vector<TrialCase> cases = {
-        {{"NLOPT", "LD_SLSQP"}, 22u,
-         " (at CGRID2B[2] = 1.6675"}};
+        {{"NLOPT", "LD_SLSQP"}, 13u, " (at CGRID2B[2] = 1.65540558", "1.72"}};
 #ifdef TADAH_USE_CERES
     for (const char* a : {"LBFGS", "WOLFE", "NLCG"})
         cases.push_back({{"CERES", a}, 12u, " (at CGRID2B[2] = 1.429"});
@@ -4550,12 +4560,18 @@ TEST_CASE("Gradient not finite: a search that ends right after it rejected "
         DYNAMIC_SECTION(name) {
             TaRun run(straddle_block(c.b.lib, c.b.algo), straddle_root("10.5"));
             int status = -1;
-            REQUIRE_NOTHROW(status = straddle_run(run, "1.8", name));
+            REQUIRE_NOTHROW(status = straddle_run(run, c.start, name));
             CHECK(status == 0);
             const auto loss = data_rows("loss.tadah");
             CHECK(loss.size() == c.evals);
             REQUIRE_FALSE(loss.empty());
             CHECK(loss.back().back() == kDefaultFailScoreRow);
+            /* every evaluation in the box [1, 2], the stencils near its
+             * lower bound included */
+            for (double xi : evaluated_cgrid2()) {
+                CAPTURE(xi);
+                CHECK((xi >= 1.0 && xi <= 2.0));
+            }
 
             const std::string journal = read_file("hpo_run.log");
             CHECK(journal_status(journal) == kStencilStatus);
@@ -4645,18 +4661,23 @@ TEST_CASE("Gradient not finite: a search that ends with a tolerance, or "
           "AUGLAG's ending, right after it rejected such a point says so",
           "[HPO][termination][fd_gradient][auglag]")
 {
-    /* From 1.8 with the ERMSE target 10.5, LD_SLSQP rejects 1.6676, whose
-     * stencil reaches 1.4676 (its seventh objective call; the calls
-     * without a gradient are its line-search points), as in "a search that
-     * ends right after it rejected such a point says so". With XTOL_REL
-     * set NLopt returns XTOL_REACHED there instead of throwing
-     * roundoff-limited: a tolerance is no stop criterion of that rule, the
-     * search ended on the steps it took back from the rejected point.
+    /* From 1.72 with the ERMSE target 10.5, LD_SLSQP rejects 1.6554, whose
+     * stencil reaches 1.4554 (its fourth objective call; the calls without
+     * a gradient are its line-search points), as in "a search that ends
+     * right after it rejected such a point says so". With XTOL_REL set
+     * NLopt returns XTOL_REACHED there instead of throwing roundoff-
+     * limited: a tolerance is no stop criterion of that rule, the search
+     * ended on the steps it took back from the rejected point.
      *
      * The same search as AUGLAG's local search ends there too, and AUGLAG
-     * then evaluates the point it returned (1.6676) once more, without a
+     * then evaluates the point it returned (1.6554) once more, without a
      * gradient, and returns FTOL_REACHED. That call cleared the rejection,
-     * and the run reported FTOL_REACHED, a converged search. */
+     * and the run reported FTOL_REACHED, a converged search.
+     *
+     * The cases ran from 1.8 (rejecting 1.6676) until the one-sided
+     * stencil near the bounds (owner decision 2026-09-29, C4) changed that
+     * search: see "a search that ends right after it rejected such a point
+     * says so". */
     const std::string tolerances = "    XTOL_REL 1e-3\n    FTOL_REL 1e-6\n";
     struct Case {
         std::string algo, extra, label, ended;
@@ -4664,36 +4685,36 @@ TEST_CASE("Gradient not finite: a search that ends with a tolerance, or "
     };
     const std::vector<Case> cases = {
         {"LD_SLSQP", tolerances, "LD_SLSQP",
-         "XTOL_REACHED -- parameter tolerance converged", 22u},
+         "XTOL_REACHED -- parameter tolerance converged", 13u},
         {"AUGLAG",
          inner_block("LD_SLSQP", "      XTOL_REL 1e-3\n      FTOL_REL 1e-6\n"),
          "AUGLAG, INNER LD_SLSQP",
-         "FTOL_REACHED -- function tolerance converged", 23u}};
+         "FTOL_REACHED -- function tolerance converged", 14u}};
     for (const auto& c : cases) {
         const std::string name = "NLOPT:" + c.algo;
         DYNAMIC_SECTION(c.label) {
             TaRun run(straddle_block("NLOPT", c.algo, c.extra),
                       straddle_root("10.5"));
             int status = -1;
-            REQUIRE_NOTHROW(status = straddle_run(run, "1.8", name));
+            REQUIRE_NOTHROW(status = straddle_run(run, "1.72", name));
             CHECK(status == 0);
             const auto x = evaluated_cgrid2();
             const auto loss = data_rows("loss.tadah");
             REQUIRE(x.size() == c.evals);
             REQUIRE(loss.size() == c.evals);
-            CHECK(x[21] == Approx(1.4675787811).epsilon(1e-9));
-            CHECK(loss[21].back() == kDefaultFailScoreRow);
-            if (c.evals == 23u) {
-                CHECK(x[22] == Approx(1.6675787811).epsilon(1e-9));
-                CHECK(loss[22].back() != kDefaultFailScoreRow);
+            CHECK(x[12] == Approx(1.4554055798).epsilon(1e-9));
+            CHECK(loss[12].back() == kDefaultFailScoreRow);
+            if (c.evals == 14u) {
+                CHECK(x[13] == Approx(1.6554055798).epsilon(1e-9));
+                CHECK(loss[13].back() != kDefaultFailScoreRow);
             }
 
             const std::string journal = read_file("hpo_run.log");
             CHECK(journal_status(journal) == kStencilStatus);
             CHECK(count_of(journal,
                            name + " stopped: " + kStencilCause +
-                           " (at CGRID2B[2] = 1.667578781, the stencil point "
-                           "CGRID2B[2] = 1.467578781 failed: loss "
+                           " (at CGRID2B[2] = 1.65540558, the stencil point "
+                           "CGRID2B[2] = 1.45540558 failed: loss "
                            "1.797693135e+308); NLopt ended right after it (" +
                            c.ended + ")") == 1u);
             check_run_files();
@@ -4706,12 +4727,14 @@ TEST_CASE("Gradient not finite: AUGLAG's local search that spends its own "
           "[HPO][termination][fd_gradient][auglag]")
 {
     /* The search of the case above, with an INNER MAXEVAL: the rejection
-     * is its seventh objective call. With MAXEVAL 7 it ends there on its
+     * is its fourth objective call. With MAXEVAL 4 it ends there on its
      * MAXEVAL, which AUGLAG reports as FTOL_REACHED, like any ending of its
-     * local search: the run keeps AUGLAG's own status. With MAXEVAL 8 the
-     * rejection ended it, as without one. */
+     * local search: the run keeps AUGLAG's own status. With MAXEVAL 5 the
+     * rejection ended it, as without one. (The case ran from 1.8, with
+     * the rejection its seventh call, until owner decision C4; see the
+     * case above.) */
     const std::string tolerances = "      XTOL_REL 1e-3\n      FTOL_REL 1e-6\n";
-    for (const std::string maxeval : {"7", "8"}) {
+    for (const std::string maxeval : {"4", "5"}) {
         DYNAMIC_SECTION("INNER MAXEVAL " << maxeval) {
             TaRun run(straddle_block(
                           "NLOPT", "AUGLAG",
@@ -4719,11 +4742,11 @@ TEST_CASE("Gradient not finite: AUGLAG's local search that spends its own "
                                                       "\n" + tolerances)),
                       straddle_root("10.5"));
             int status = -1;
-            REQUIRE_NOTHROW(status = straddle_run(run, "1.8", "NLOPT:AUGLAG"));
+            REQUIRE_NOTHROW(status = straddle_run(run, "1.72", "NLOPT:AUGLAG"));
             CHECK(status == 0);
-            CHECK(data_rows("loss.tadah").size() == 23u);
+            CHECK(data_rows("loss.tadah").size() == 14u);
             const std::string journal = read_file("hpo_run.log");
-            if (maxeval == "7") {
+            if (maxeval == "4") {
                 CHECK(journal_status(journal) ==
                       "FTOL_REACHED -- function tolerance converged");
                 CHECK(journal.find("stopped: gradient not finite") ==
