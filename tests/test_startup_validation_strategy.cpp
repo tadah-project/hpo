@@ -1517,15 +1517,31 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
               "the STRATEGY-level optimiser DLIB:BFGS: " + auto_refusal);
         /* Ceres' rule is bounded too (D2(a)); in the unit box its step,
          * fd_step x |u|, is largest at the upper bound, where the one-sided
-         * stencil needs 1 - 2 fd_step >= 0: up to 1/2 */
+         * stencil needs 1 - 2 fd_step >= 0: up to 1/2, and 1/2 itself -- the
+         * step 0.5 u is exact, and 1 - 2 (0.5 x 1) = 0 lies on the bound.
+         * The check refused 0.5, with a margin of an ulp or two on every
+         * step, and named 0.499999 as the largest fd_step that fits
+         * (review 2, finding 3). */
         CHECK_THAT(judge(strategy_config(bfgs + "    PARAM fd_kernel ceres\n"
                                          "    PARAM fd_step 0.51\n")).startup,
                    Catch::Contains("h = max(2^-26, 0.51 x |u|) in the unit box "
                                    "(Ceres' rule)") &&
-                       Catch::EndsWith("fd_step up to 0.499999 fits it\n  Set "
-                                       "PARAM fd_step to at most 0.499999."));
+                       Catch::EndsWith("fd_step up to 0.5 fits it\n  Set "
+                                       "PARAM fd_step to at most 0.5."));
+        CHECK(judge(strategy_config(bfgs + "    PARAM fd_kernel ceres\n"
+                                    "    PARAM fd_step 0.5\n")).startup == "");
         CHECK(judge(strategy_config(bfgs + "    PARAM fd_kernel ceres\n"
                                     "    PARAM fd_step 0.49\n")).startup == "");
+        /* FORWARD with Ceres' rule: up to 1, the backward step from u to
+         * u - u = 0 */
+        CHECK(judge(strategy_config(bfgs + "    PARAM fd_kernel ceres\n"
+                                    "    PARAM diff_method 1\n"
+                                    "    PARAM fd_step 1\n")).startup == "");
+        CHECK_THAT(judge(strategy_config(bfgs + "    PARAM fd_kernel ceres\n"
+                                         "    PARAM diff_method 1\n"
+                                         "    PARAM fd_step 1.01\n")).startup,
+                   Catch::EndsWith("fd_step up to 1 fits it\n  Set PARAM "
+                                   "fd_step to at most 1."));
     }
     SECTION("each phase that takes finite-difference gradients") {
         const std::string inner =
@@ -1649,6 +1665,23 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
                         "    MAXEVAL 20\n    PARAM fd_step 0\n")).startup ==
               "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM fd_step must "
               "be a positive finite number (got 0)");
+        /* a number for fd_kernel: the same message on every backend. DLIB:BFGS
+         * said it "does not support PARAM fd_kernel" while listing it as
+         * supported, and the CERES drivers left it out of their list (review
+         * 2, finding 2). */
+        for (const std::string& backend :
+             {std::string("DLIB:BFGS"), std::string("CERES:LBFGS"),
+              std::string("NLOPT:LD_LBFGS")}) {
+            const std::string lib = backend.substr(0, backend.find(':'));
+            const std::string algo = backend.substr(backend.find(':') + 1);
+            INFO(backend);
+            CHECK(judge(strategy_config("    TYPE PLAIN\n    LIB " + lib +
+                                        "\n    ALGO " + algo +
+                                        "\n    MAXEVAL 20\n"
+                                        "    PARAM fd_kernel 1\n")).startup ==
+                  "the STRATEGY-level optimiser " + backend + ": PARAM "
+                  "fd_kernel must be inhouse or ceres (got 1)");
+        }
     }
     SECTION("settings that never take effect are refused") {
         /* an INNER block takes the gradient of the block it runs in: its
@@ -1691,11 +1724,20 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
               "probes -- the reannealing and exit tangents at (1 + Delta) x, "
               "or (1 - Delta) x when that lies outside the box -- would be "
               "evaluated outside the OPTIM box of these dimensions:\n  - "
-              "WATOM: OPTIM box [1, 1.000001], PARAM Delta_X 0.001: a probe of "
+              "WATOM: OPTIM box [1, 1.000001], the default Delta_X 0.001: a "
+              "probe of "
               "WATOM = 1.0000005 lies outside the box; Delta_X up to "
               "4.99999e-07 fits it\n  Lower the Delta; or use OPTIM_SCALE "
               "AUTO, where every box is the unit box (the tangents fit for "
               "Delta <= 1).");
+        /* the message said "PARAM Delta_X 0.001" of the default too (review
+         * 2, finding 9); a written one is a PARAM */
+        CHECK_THAT(judge("OPTIM_SCALE NONE\nOPTIM WATOM (1) 1 1.000001\n"
+                         "PC_ERMSE 0 1\nOPTIMIZER\n  STRATEGY\n" + asa +
+                         "    PARAM Delta_X 0.002\n  ENDSTRATEGY\n"
+                         "ENDOPTIMIZER\n").startup,
+                   Catch::Contains("\n  - WATOM: OPTIM box [1, 1.000001], "
+                                   "PARAM Delta_X 0.002: a probe of WATOM = "));
         /* the unit box: tangents up to Delta 1, the exit curvature up to
          * 0.5 */
         CHECK(judge(strategy_config(asa + "    PARAM Delta_X 1\n")).startup == "");
@@ -1709,5 +1751,148 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
                                    "or x -+ Delta |x| and x -+ 2 Delta |x| next "
                                    "to a bound (Curvature_0 0)") &&
                        Catch::Contains("Delta_X up to 0.5 fits it"));
+    }
+}
+
+TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
+          "STRATEGY-level phase takes finite differences, and is refused "
+          "where no slope is measured",
+          "[startup_validation][strategy][fd_stencil][noise_auto]")
+{
+    /* The NOISE block's AUTO derives PARAM fd_step for the finite
+     * differences of the STRATEGY-level phase (each MULTISTART start, the
+     * PRESTAGE refinement). It follows the rule of the finite-difference
+     * PARAMs (owner decision D5(a)): used where that phase takes
+     * finite-difference gradients -- an MLSL or AUGLAG whose local search
+     * takes gradients included, which were left without it -- and refused
+     * at startup where it measures no slopes: a derivative-free optimiser,
+     * or GRAD_STRATEGY ANALYTICAL, written or resolved. A derivative-free
+     * optimiser printed "NOISE_AUTO derives PARAM fd_step for
+     * gradient-based optimisers only ...; ignored" to stderr and ran (owner
+     * decision D7, 2026-09-29). */
+    struct Run {
+        std::unique_ptr<HPOTargets> trg;
+        std::string startup;
+        std::string journal;
+    };
+    const auto run = [](const std::string& config) {
+        PeriodicTable::initialize();
+        ScopedTempFile tf(config);
+        Context ctx = make_minimal_ctx();
+        auto& log = tadah::hpo::HPOLog::instance();
+        if (log.is_open()) log.finish("reopen-for-test");
+        log.reset_for_test();
+        const fs::path jp = fs::temp_directory_path() /
+                            (unique_name("tadah_svs_journal_") + ".log");
+        log.open(jp.string(), "test", "test_cwd", 0);
+        Run r;
+        const std::string parse = error_of([&] {
+            r.trg = std::make_unique<HPOTargets>(ctx, tf.path.string());
+        });
+        INFO("config:\n" << config);
+        REQUIRE(parse == "");
+        r.startup = error_of([&] { validate_hpo_setup(ctx, *r.trg, true, true); });
+        log.finish("test-end");
+        log.reset_for_test();
+        std::ifstream is(jp);
+        std::ostringstream os;
+        os << is.rdbuf();
+        r.journal = os.str();
+        std::error_code ec;
+        fs::remove(jp, ec);
+        return r;
+    };
+    const auto noise = [](const std::string& strategy_body,
+                          const std::string& root = kRoot) {
+        return root + "OPTIMIZER\n  NOISE\n    AUTO true\n  ENDNOISE\n"
+                      "  STRATEGY\n" + strategy_body +
+               "  ENDSTRATEGY\nENDOPTIMIZER\n";
+    };
+    const std::string inner =
+        "    INNER\n      LIB NLOPT\n      ALGO LD_LBFGS\n      MAXEVAL 10\n"
+        "    ENDINNER\n";
+    SECTION("derived where the STRATEGY-level phase takes finite "
+            "differences") {
+        /* WATOM [0.1, 5] is the unit box under OPTIM_SCALE AUTO: 1e-3 of
+         * the RMS width */
+        for (const std::string& body :
+             {std::string("    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n"
+                          "    MAXEVAL 20\n"),
+              std::string("    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_LBFGS\n"
+                          "    MAXEVAL 20\n"),
+              "    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n"
+              "    MAXEVAL 50\n" + inner,
+              "    TYPE PLAIN\n    LIB NLOPT\n    ALGO AUGLAG\n"
+              "    MAXEVAL 50\n" + inner}) {
+            INFO(body);
+            const Run r = run(noise(body));
+            CHECK(r.startup == "");
+            CHECK(r.trg->spec.param.count("fd_step") == 1u);
+            if (r.trg->spec.param.count("fd_step"))
+                CHECK(r.trg->spec.param.at("fd_step") == 1e-3);
+            CHECK(r.trg->spec.fd_step_from_noise_auto);
+            CHECK_THAT(r.journal,
+                       Catch::Contains("NOISE_AUTO: PARAM fd_step set to 0.001 "
+                                       "(diag=1, dim=1)"));
+        }
+    }
+    SECTION("refused where no slope is measured") {
+        const Run sbplx = run(noise("    TYPE PLAIN\n    LIB NLOPT\n"
+                                    "    ALGO LN_SBPLX\n    MAXEVAL 20\n"));
+        CHECK(sbplx.startup ==
+              "the STRATEGY-level optimiser NLOPT:LN_SBPLX: NOISE AUTO has no "
+              "effect: NLOPT:LN_SBPLX measures no slopes; remove AUTO from "
+              "the NOISE block.");
+        CHECK(sbplx.trg->spec.param.count("fd_step") == 0u);
+        CHECK(sbplx.journal.find("NOISE_AUTO") == std::string::npos);
+        /* each MULTISTART start; the PRESTAGE refinement, whatever its
+         * exploration takes */
+        CHECK(run(noise("    TYPE MULTISTART\n    LIB NLOPT\n"
+                        "    ALGO LN_NELDERMEAD\n    MAXEVAL 20\n"
+                        "    N_STARTS 2\n"))
+                  .startup ==
+              "each MULTISTART start NLOPT:LN_NELDERMEAD: NOISE AUTO has no "
+              "effect: NLOPT:LN_NELDERMEAD measures no slopes; remove AUTO "
+              "from the NOISE block.");
+        CHECK(run(noise("    TYPE PRESTAGE\n    EXPLORE\n      LIB NLOPT\n"
+                        "      ALGO LD_LBFGS\n      MAXEVAL 5\n    ENDEXPLORE\n"
+                        "    REFINE\n      LIB NLOPT\n      ALGO LN_SBPLX\n"
+                        "      MAXEVAL 20\n    ENDREFINE\n"))
+                  .startup ==
+              "the PRESTAGE refinement NLOPT:LN_SBPLX: NOISE AUTO has no "
+              "effect: NLOPT:LN_SBPLX measures no slopes; remove AUTO from "
+              "the NOISE block.");
+        /* ASA takes its slopes with probes of its own */
+        CHECK(run(noise("    TYPE PLAIN\n    LIB ASA\n    ALGO ASA\n"
+                        "    MAXEVAL 20\n"))
+                  .startup ==
+              "the STRATEGY-level optimiser ASA:ASA: NOISE AUTO has no "
+              "effect: ASA:ASA measures its slopes with probes of its own "
+              "(PARAM Delta_X), not with fd_step; remove AUTO from the NOISE "
+              "block.");
+    }
+    SECTION("refused under GRAD_STRATEGY ANALYTICAL, written or resolved") {
+        const Run written = run(noise("    TYPE PLAIN\n    LIB DLIB\n"
+                                      "    ALGO BFGS\n    MAXEVAL 20\n"
+                                      "    GRAD_STRATEGY ANALYTICAL\n"));
+        CHECK(written.startup ==
+              "the STRATEGY-level optimiser DLIB:BFGS: NOISE AUTO has no "
+              "effect: GRAD_STRATEGY ANALYTICAL takes no finite differences; "
+              "remove AUTO from the NOISE block.");
+        CHECK(written.trg->spec.param.count("fd_step") == 0u);
+        /* an unset GRAD_STRATEGY resolves to ANALYTICAL with PC_OBSERVABLE
+         * (the check comes before the one that ANALYTICAL needs training
+         * data) */
+        const Run resolved = run(noise(
+            "    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 20\n",
+            "OPTIM WATOM (1) 0.1 5.0\nPC_EMAE 0 1\nPC_OBSERVABLE "
+            "cohesive_energy --species Ta --target 8.1 --weight 1 --hotvar a0 "
+            "2.7 3.9 3.3\n"));
+        CHECK(resolved.startup ==
+              "the STRATEGY-level optimiser DLIB:BFGS: NOISE AUTO has no "
+              "effect: GRAD_STRATEGY ANALYTICAL takes no finite differences "
+              "(the resolution of an unset GRAD_STRATEGY with PC_OBSERVABLE); "
+              "remove AUTO from the NOISE block.");
+        CHECK(resolved.trg->spec.param.count("fd_step") == 0u);
     }
 }

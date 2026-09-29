@@ -12,6 +12,7 @@
 #include <tadah/hpo/algorithms_asa.h>
 #include <tadah/hpo/asa_options.h>
 #include <tadah/hpo/durable_best.h>
+#include <tadah/hpo/fd_stencil.h>
 #include <tadah/hpo/run_stop.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/optimizer_caps.h>
@@ -34,6 +35,8 @@ extern "C" {
 #include <filesystem>
 #include <iostream>
 #include <mutex>
+#include <optional>
+#include <random>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -1197,7 +1200,7 @@ TEST_CASE("ASA refuses a box its finite-difference probes cannot fit, before "
     REQUIRE_THROWS_WITH(run_asa_erased(sp, 1, eval),
                         Catch::StartsWith("ASA:ASA: ASA's finite-difference "
                                           "probes") &&
-                            Catch::Contains("PARAM Delta_X 0.001") &&
+                            Catch::Contains("the default Delta_X 0.001") &&
                             Catch::Contains("Delta_X up to 4.99999e-07 fits "
                                             "it"));
     CHECK(calls == 0u);
@@ -1205,4 +1208,119 @@ TEST_CASE("ASA refuses a box its finite-difference probes cannot fit, before "
     sp.param = {{"Delta_X", 4e-7}};
     REQUIRE_NOTHROW(run_asa_erased(sp, 1, eval));
     CHECK(calls > 0u);
+}
+
+namespace {
+
+/* The points ASA's cost_derivatives evaluates to differentiate at x (the
+ * probes of one coordinate), computed as asa.c computes them: the tangent
+ * (1 + Delta) x, or (1 - Delta) x when that lies outside [lo, hi]; with
+ * `curvature` (Curvature_0 0 or -1) the diagonal curvature -- x - 2 Delta
+ * |x| and x - Delta |x| when x + Delta |x| lies above the box, x + 2 Delta
+ * |x| and x + Delta |x| when x - Delta |x| lies below it. Its third branch,
+ * (1 + Delta) x and (1 - Delta) x where both tests pass, is left out: it
+ * tests x +- Delta |x| and evaluates (1 +- Delta) x, which can round one
+ * ulp apart at any Delta. */
+std::vector<double> asa_probes(double x, double delta, bool curvature,
+                               double lo, double hi)
+{
+    std::vector<double> out;
+    double d = delta;
+    double p = (1.0 + d) * x;
+    if (p > hi || p < lo) {
+        d = -d;
+        p = (1.0 + d) * x;
+    }
+    out.push_back(p);
+    if (!curvature) return out;
+    if (x + delta * std::fabs(x) > hi) {
+        out.push_back(x - 2.0 * delta * std::fabs(x));
+        out.push_back(x - delta * std::fabs(x));
+    } else if (x - delta * std::fabs(x) < lo) {
+        out.push_back(x + 2.0 * delta * std::fabs(x));
+        out.push_back(x + delta * std::fabs(x));
+    }
+    return out;
+}
+
+/* The x of [lo, hi] whose probes the test below checks: the bounds, the
+ * doubles around the points where a probe meets a bound, and a sweep. */
+std::vector<double> asa_probe_points(double lo, double hi, double delta,
+                                     std::mt19937_64& rng)
+{
+    std::vector<double> xs = {lo, hi};
+    for (double c : {hi / (1 + delta), lo / (1 - delta), hi / (1 - delta),
+                     lo / (1 + delta), hi / (1 + 2 * delta),
+                     lo / (1 - 2 * delta), lo / (1 + 2 * delta),
+                     hi / (1 - 2 * delta), lo, hi, 0.0}) {
+        if (!std::isfinite(c)) continue;
+        double x = c;
+        for (int k = 0; k < 200; ++k) x = std::nextafter(x, -HUGE_VAL);
+        for (int k = 0; k < 401; ++k, x = std::nextafter(x, HUGE_VAL))
+            if (x >= lo && x <= hi) xs.push_back(x);
+    }
+    std::uniform_real_distribution<double> u(lo, hi);
+    for (int k = 0; k < 500; ++k) xs.push_back(u(rng));
+    return xs;
+}
+
+}  // namespace
+
+TEST_CASE("ASA probes stay in the box at the largest Delta the check "
+          "accepts", "[HPO][asa][fd_bounds]")
+{
+    /* asa_probe_fit decided on the real probes, (1 +- Delta) x and x +-
+     * Delta |x|; ASA evaluates them in double. At the largest Delta it
+     * accepted, a probe ASA computed could lie a few ulps outside the box
+     * where the real one met its bound: x - 2 Delta |x| at x = hi below lo
+     * in these boxes (the exit curvature, Curvature_0 0). The check now
+     * bounds the probes as computed (review 2, finding 7). */
+    using tadah::hpo::asa_largest_fitting_delta;
+    const std::vector<std::pair<double, double>> boxes = {
+        {-0.0077981798734812714, 0.12877021024572782},
+        {-0.011093119698940893, 21.577341420066467},
+        {-2.8872224549622936, 29.237396712996667},
+        {-0.013895641427448169, 0.027586208707990213}};
+    std::mt19937_64 rng(11);
+    for (const auto& [lo, hi] : boxes) {
+        CAPTURE(lo, hi);
+        const auto delta = asa_largest_fitting_delta(lo, hi, true);
+        REQUIRE(delta);
+        std::size_t outside = 0;
+        for (double q : asa_probes(hi, *delta, true, lo, hi))
+            if (q < lo || q > hi) ++outside;
+        CHECK(outside == 0u);
+    }
+    /* boxes of every sign and width, with and without the curvature */
+    std::uniform_real_distribution<double> e(-6.0, 6.0), w(-14.0, 2.0);
+    std::size_t cases = 0, outside = 0;
+    for (int it = 0; it < 400; ++it) {
+        double lo = 0.0, hi = 0.0;
+        switch (it % 4) {
+            case 0: lo = std::exp(e(rng)); hi = lo * (1 + std::exp(w(rng))); break;
+            case 1: hi = -std::exp(e(rng)); lo = hi * (1 + std::exp(w(rng))); break;
+            case 2: lo = -std::exp(e(rng)); hi = std::exp(e(rng)); break;
+            default: lo = 0.0; hi = std::exp(e(rng)); break;
+        }
+        for (bool curvature : {false, true}) {
+            const auto delta = asa_largest_fitting_delta(lo, hi, curvature);
+            if (!delta) continue;
+            ++cases;
+            for (double x : asa_probe_points(lo, hi, *delta, rng))
+                for (double q : asa_probes(x, *delta, curvature, lo, hi))
+                    if (q < lo || q > hi) {
+                        if (outside == 0)
+                            UNSCOPED_INFO("lo " << lo << " hi " << hi
+                                          << " Delta " << *delta << " x " << x
+                                          << " probe " << q);
+                        ++outside;
+                    }
+        }
+    }
+    CHECK(cases > 700u);
+    CHECK(outside == 0u);
+    /* the unit box of OPTIM_SCALE AUTO: the tangents up to Delta 1, the
+     * curvature up to 1/2, exactly (asa.rst) */
+    CHECK(asa_largest_fitting_delta(0.0, 1.0, false) == std::optional<double>(1.0));
+    CHECK(asa_largest_fitting_delta(0.0, 1.0, true) == std::optional<double>(0.5));
 }

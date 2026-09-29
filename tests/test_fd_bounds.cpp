@@ -581,7 +581,9 @@ TEST_CASE("fd bounds: a point outside the box is differenced towards it, and "
     REQUIRE(host.asked.size() == 2u);
     CHECK(host.asked[1](0) == -0.5 + 1e-2);
     const std::string t = j.text();
-    CHECK_THAT(t, Catch::Contains("Gradients at points outside the OPTIM box: 2") &&
+    CHECK_THAT(t, Catch::Contains("Out-of-box gradients    : 2 (at points outside the OPTIM "
+                                  "box, each finite\n    difference stepped "
+                                  "towards the box)\n") &&
                   Catch::Contains("finite differences: X[1] = 1.02 lies outside "
                                   "its OPTIM box [0, 1]"));
 }
@@ -615,7 +617,7 @@ TEST_CASE("fd bounds: the journal names the first one-sided difference of "
                                       "within a step of its bound, or outside\n"
                                       "    the box, differenced into it): "
                                       "RCUT2B 3, CGRID2B[2] 1\n"));
-        CHECK(t.find("Gradients at points outside") == std::string::npos);
+        CHECK(t.find("Out-of-box gradients") == std::string::npos);
     }
     SECTION("away from the bounds: DIAGNOSTICS as before") {
         Journal j;
@@ -628,7 +630,7 @@ TEST_CASE("fd bounds: the journal names the first one-sided difference of "
         CHECK(t.find("finite differences:") == std::string::npos);
         CHECK(t.find("One-sided differences") == std::string::npos);
         CHECK(t.find("outside the OPTIM box") == std::string::npos);
-        CHECK(t.find("HYBRID centre evaluations") == std::string::npos);
+        CHECK(t.find("HYBRID centre losses") == std::string::npos);
     }
 }
 
@@ -719,7 +721,7 @@ TEST_CASE("fd bounds: HYBRID takes the optimiser's own loss at the point for "
             hybrid_bowl_spec("NLOPT", "LD_LBFGS"), host);
         REQUIRE(host.asked.size() >= 3u);
         CHECK_FALSE(host.start_repeated());
-        CHECK(j.text().find("HYBRID centre evaluations") == std::string::npos);
+        CHECK(j.text().find("HYBRID centre losses") == std::string::npos);
     }
 #ifdef TADAH_USE_CERES
     SECTION("CERES:LBFGS") {
@@ -730,7 +732,7 @@ TEST_CASE("fd bounds: HYBRID takes the optimiser's own loss at the point for "
             ceres::WOLFE, "LBFGS");
         REQUIRE(host.asked.size() >= 3u);
         CHECK_FALSE(host.start_repeated());
-        CHECK(j.text().find("HYBRID centre evaluations") == std::string::npos);
+        CHECK(j.text().find("HYBRID centre losses") == std::string::npos);
     }
 #endif
     SECTION("a gradient without the caller's loss evaluates it, counted") {
@@ -745,6 +747,7 @@ TEST_CASE("fd bounds: HYBRID takes the optimiser's own loss at the point for "
         REQUIRE(gp.gradient(vec({0.0, 0.2}), g));
         CHECK(counter.load() == 4u);   /* the analytical pass, the centre, 2 */
         CHECK(g(0) == Approx(-0.6).epsilon(1e-9));
-        CHECK_THAT(j.text(), Catch::Contains("HYBRID centre evaluations: 1 "));
+        CHECK_THAT(j.text(), Catch::Contains("HYBRID centre losses    : 1 (evaluations of a "
+                                             "gradient's point"));
     }
 }

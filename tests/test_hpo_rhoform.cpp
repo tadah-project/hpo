@@ -843,7 +843,11 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
                           Catch::Contains("eval 1: AMPGRIDMB[3] = -1e-06 lies "
                                           "outside its OPTIM box [0, 0.5] and "
                                           "is evaluated there") &&
-                          Catch::Contains("Evaluations outside the OPTIM box: 1 "));
+                          Catch::Contains("Out-of-box evaluations  : 1 (points "
+                                          "outside the OPTIM box, evaluated "
+                                          "there:\n    an optimiser that ignores "
+                                          "the bounds; see the first such "
+                                          "WARNING)\n"));
       CHECK(count_of_text(txt, "lies outside its OPTIM box") == 1u);
       /* the best sits on the form's zero lower bound: a hard bound, no
        * widen-that-side advisory */

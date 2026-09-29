@@ -17,6 +17,7 @@
 
 #include "catch2/catch.hpp"
 
+#include <tadah/hpo/fd_stencil.h>
 #include <tadah/hpo/gradient_provider.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/search_space.h>
@@ -30,6 +31,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -610,4 +612,113 @@ TEST_CASE("fd stencil: a point outside its box is differenced towards it",
     CHECK(asked[1](0) == -0.5 + 1e-2);
     CHECK(asked[2](0) == -0.5 + 2.0 * 1e-2);
     CHECK(g(0) == Approx(-1.0));
+}
+
+TEST_CASE("fd stencil: the largest fd_step that fits is exact where the step "
+          "is, and every point of the box has a stencil at it",
+          "[HPO][fd_stencil][fd_fit]")
+{
+    using tadah::hpo::FdRule;
+    using tadah::hpo::FdScheme;
+    using tadah::hpo::fd_fit;
+    using tadah::hpo::fd_largest_fitting_step;
+    using tadah::hpo::fd_plan;
+    /* The unit box of OPTIM_SCALE AUTO. The step of Ceres' rule,
+     * max(2^-26, fd_step |u|), is exact for fd_step 1/2 and 1, and the
+     * stencils at u = 1 then end exactly on the lower bound (1 - 2 x 0.5,
+     * and 1 - 1 backward): 1/2 fits CENTRAL and 1 FORWARD. The check kept
+     * a margin of an ulp or two on every step and refused both (the
+     * largest it accepted: 0.49999999999999989 and 0.99999999999999978),
+     * against the documented limits (review 2, finding 3). The in-house
+     * rule: 1/3 (the largest double below it) and 1/2. */
+    struct Limit {
+        FdRule rule;
+        FdScheme scheme;
+        double largest;
+    };
+    for (const Limit& c : {Limit{FdRule::Ceres, FdScheme::Central, 0.5},
+                           Limit{FdRule::Ceres, FdScheme::Forward, 1.0},
+                           Limit{FdRule::Width, FdScheme::Central, 1.0 / 3.0},
+                           Limit{FdRule::Width, FdScheme::Forward, 0.5}}) {
+        CAPTURE(static_cast<int>(c.rule), static_cast<int>(c.scheme));
+        const auto largest = fd_largest_fitting_step(0.0, 1.0, c.rule, c.scheme);
+        REQUIRE(largest);
+        CHECK(same_bits(*largest, c.largest));
+        CHECK(fd_fit(0.0, 1.0, c.rule, c.scheme, c.largest).ok);
+        CHECK_FALSE(fd_fit(0.0, 1.0, c.rule, c.scheme,
+                           std::nextafter(c.largest, 2.0)).ok);
+        /* a smaller step fits too */
+        CHECK(fd_fit(0.0, 1.0, c.rule, c.scheme,
+                     std::nextafter(c.largest, 0.0)).ok);
+        /* sound: at the largest step every u of the box has a stencil
+         * inside it -- the bounds, the doubles next to them and to the
+         * points where a stencil turns, and a sweep */
+        std::vector<double> us;
+        for (double centre : {0.0, 1.0, 0.5, 1.0 / 3.0, 2.0 / 3.0, 0.25, 0.75,
+                              std::ldexp(1.0, -26), std::ldexp(1.0, -25)}) {
+            double u = centre;
+            for (int k = 0; k < 64; ++k) u = std::nextafter(u, -1.0);
+            for (int k = 0; k < 129; ++k, u = std::nextafter(u, 2.0))
+                us.push_back(u);
+        }
+        for (int k = 0; k <= 4096; ++k) us.push_back(k / 4096.0);
+        std::size_t missing = 0, outside = 0;
+        for (double u : us) {
+            if (u < 0.0 || u > 1.0) continue;
+            const auto st = fd_plan(u, 0.0, 1.0, c.rule, c.scheme, c.largest);
+            if (!st) {
+                ++missing;
+                continue;
+            }
+            const bool two = st->kind != tadah::hpo::FdStencil::Kind::Forward;
+            if (st->p1 < 0.0 || st->p1 > 1.0 ||
+                (two && (st->p2 < 0.0 || st->p2 > 1.0)))
+                ++outside;
+        }
+        CHECK(missing == 0u);
+        CHECK(outside == 0u);
+    }
+}
+
+TEST_CASE("fd stencil: a box that fits keeps the stencil of a point outside "
+          "it from reaching further out, FORWARD with fd_step up to 2",
+          "[HPO][fd_stencil][fd_fit]")
+{
+    using tadah::hpo::FdRule;
+    using tadah::hpo::FdScheme;
+    using tadah::hpo::fd_largest_fitting_step;
+    using tadah::hpo::fd_plan;
+    /* fd_plan throws std::logic_error if the stencil of a point outside the
+     * box would reach further outside than the point, which a box fd_fit
+     * accepts rules out. Its message and comment said such a box bounds
+     * fd_step by 1: so it does for CENTRAL (u - 2h >= a at the bound of
+     * larger magnitude), but FORWARD needs only u - h >= a there, and a box
+     * symmetric about 0 fits fd_step up to 2 (review 2, finding 4). A
+     * guard of the invariant at that step: it held before the message was
+     * corrected. */
+    const double a = -100.0, b = 100.0;
+    for (FdRule rule : {FdRule::Width, FdRule::Ceres}) {
+        CAPTURE(static_cast<int>(rule));
+        const auto largest =
+            fd_largest_fitting_step(a, b, rule, FdScheme::Forward);
+        REQUIRE(largest);
+        CHECK(*largest > 1.0);
+        CHECK(*largest <= 2.0);
+        const auto out_by = [&](double x) {
+            return x < a ? a - x : (x > b ? x - b : 0.0);
+        };
+        for (double u : {-100.5, -101.0, -150.0, -1e3, -1e6, 100.5, 101.0,
+                         150.0, 1e3, 1e6}) {
+            CAPTURE(u);
+            std::optional<tadah::hpo::FdStencil> st;
+            REQUIRE_NOTHROW(st = fd_plan(u, a, b, rule, FdScheme::Forward,
+                                         *largest));
+            REQUIRE(st);
+            CHECK(out_by(st->p1) <= out_by(u));
+        }
+        const auto central =
+            fd_largest_fitting_step(a, b, rule, FdScheme::Central);
+        REQUIRE(central);
+        CHECK(*central <= 1.0);
+    }
 }

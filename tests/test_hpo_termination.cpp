@@ -5061,7 +5061,7 @@ TEST_CASE("Finite differences: a search on the upper bound evaluates nothing "
             CHECK(count_of(journal, "finite differences: CGRID2B[2] = ") == 1u);
             if (c.start_gradient) CHECK(count_of(journal, kOneSidedAt2) == 1u);
             CHECK(one_sided_count(journal) >= 1u);
-            CHECK(journal.find("HYBRID centre evaluations") == std::string::npos);
+            CHECK(journal.find("HYBRID centre losses") == std::string::npos);
             if (c.lib != "CERES") {
                 for (double xi : x) {
                     CAPTURE(xi);
@@ -5081,10 +5081,9 @@ TEST_CASE("Finite differences: a search on the upper bound evaluates nothing "
                     if (xi < 1.0 || xi > 2.0) ++outside;
                 REQUIRE(outside > 0u);
                 CHECK_THAT(journal,
-                           Catch::Contains("Evaluations outside the OPTIM box: " +
+                           Catch::Contains("Out-of-box evaluations  : " +
                                            std::to_string(outside) + " ") &&
-                               Catch::Contains("Gradients at points outside the "
-                                               "OPTIM box: "));
+                               Catch::Contains("Out-of-box gradients    : "));
                 /* a gradient at a point above the box (its loss, then the
                  * centre, the stencil) steps down, towards the box */
                 std::size_t gradients_above = 0;
