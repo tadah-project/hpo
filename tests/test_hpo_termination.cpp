@@ -49,6 +49,7 @@
 
 #include "anneal_test_support.h"
 #include "finish_within.h"
+#include "rhoform_test_support.h"
 
 #include <dlib/matrix.h>
 
@@ -1114,6 +1115,77 @@ TEST_CASE("Termination: RESTART disarms the stagnation watchdog however "
     CHECK_NOTHROW(restart.run(spec, fx.host));
     CHECK(probe->runs == 3u);   // the first run and two restarts
     CHECK(Host::get_stagnation_threshold() == 0u);
+}
+
+namespace {
+
+/* What RecordingPolicy saw: its runs, and the INIT points and their
+ * origins of the last run. Outlives the policy, which RestartPolicy owns. */
+struct RunRecord {
+    std::size_t runs = 0;
+    std::vector<std::vector<double>> init;
+    std::vector<tadah::hpo::InitOrigin> origin;
+};
+
+/* Stagnates on its first run and records every run in `rec`. */
+struct RecordingPolicy : tadah::hpo::RunPolicy<ParamVec, ::LammpsRunner> {
+    RunRecord& rec;
+    explicit RecordingPolicy(RunRecord& r) : rec(r) {}
+    void run(const tadah::hpo::OptimizerSpec& spec, Host&) override
+    {
+        ++rec.runs;
+        rec.init = spec.optim_init;
+        rec.origin = spec.optim_init_origin;
+        if (rec.runs == 1) throw Host::StagnationStop{};
+    }
+};
+
+}  // namespace
+
+TEST_CASE("Termination: a RESTART refresh applies the run's WARM density-form "
+          "rule and tags the fresh points", "[HPO][termination][restart][rhoform]")
+{
+    /* The refresh draws its points with the run's -c configuration in its
+     * InitContext, so a WARM seed meets the RHOFORM (and EMBF0) rules there
+     * as it does at startup, and the fresh points carry their origin
+     * (optim_init_origin), as the INIT chains' points do. */
+    HostFixture fx;   // RestartPolicy uses the host's statics only
+    tadah::core::Context ctx = rhoform_test::make_ream_ctx("SIGNED");
+    rhoform_test::TempFile target(std::string("OPTIM AMPGRIDMB (1) 0 1\n"
+                                              "PC_ERMSE 0 1\n") +
+                                  rhoform_test::kOptimizer);
+    tadah::hpo::HPOTargets trg(ctx, target.path.string());
+    REQUIRE(trg.spec.optim_init_origin.size() == 1);
+    REQUIRE(trg.spec.optim_init_origin[0].kind ==
+            tadah::hpo::InitOrigin::Kind::Config);
+
+    auto restart_from = [&](const std::string& rhoform_line, RunRecord& rec) {
+        rhoform_test::TempFile seed(
+            rhoform_test::ream_seed("0.4 0.3 0.1", rhoform_line));
+        tadah::hpo::InitStrategySpec is;
+        is.chain.push_back({"WARM", {seed.path.string()}});
+        tadah::hpo::RestartPolicy<ParamVec, ::LammpsRunner> restart(
+            std::make_unique<RecordingPolicy>(rec), 5, 1,
+            tadah::hpo::build_init_strategy(is), &trg);
+        restart.run(trg.spec, fx.host);
+    };
+    SECTION("a seed without RHOFORM is refused when a density key is searched") {
+        RunRecord rec;
+        REQUIRE_THROWS_WITH(restart_from("", rec),
+                            Catch::Contains("does not declare RHOFORM") &&
+                                Catch::Contains("this run evaluates RHOFORM "
+                                                "SIGNED"));
+        CHECK(rec.runs == 1u);
+    }
+    SECTION("a seed in the run's form: the fresh point is tagged WARM") {
+        RunRecord rec;
+        REQUIRE_NOTHROW(restart_from("RHOFORM SIGNED\n", rec));
+        CHECK(rec.runs == 2u);
+        REQUIRE(rec.init.size() == 1u);
+        CHECK(rec.init[0][0] == 0.4);
+        REQUIRE(rec.origin.size() == 1u);
+        CHECK(rec.origin[0].kind == tadah::hpo::InitOrigin::Kind::Warm);
+    }
 }
 
 /* ======================================================================

@@ -2284,7 +2284,7 @@ TEST_CASE("compact fitter RHOFORM: ladders per form on a density-like table",
   }
 }
 
-// =========== RHOFORM SIGNED: the tadah 1.5.1 numbers, bit for bit ===========
+// ====== RHOFORM SIGNED: the numbers of the fitter before RHOFORM, bit for bit ======
 
 #include "compact_fitter_signed_goldens.h"
 
@@ -2293,7 +2293,7 @@ TEST_CASE("compact fitter RHOFORM: ladders per form on a density-like table",
 #include <sstream>
 
 namespace {
-// The goldens were produced by the tadah 1.5.1 fitter (HPO 3ce1001) in the
+// The goldens were produced by the fitter before RHOFORM (HPO 3ce1001) in the
 // HPO library's own build: -O3 without -march=native or -ffast-math, where
 // every value below is reproducible to the bit (no libm call on these paths
 // except inside Ceres), so SIGNED must match them bit for bit (DESIGN 9).
@@ -2388,7 +2388,8 @@ std::vector<double> golden_params(std::vector<double> head,
 }
 }  // namespace
 
-TEST_CASE("compact fitter RHOFORM: SIGNED reproduces the tadah 1.5.1 numbers",
+TEST_CASE("compact fitter RHOFORM: SIGNED reproduces the numbers of the "
+          "fitter before RHOFORM",
           "[compact][rhoform]") {
   namespace golden = compact_signed_golden;
   INFO("golden comparison: " << (golden_bits

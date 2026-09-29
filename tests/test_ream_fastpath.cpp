@@ -247,6 +247,13 @@ int count_of(const std::string& hay, const std::string& needle) {
     return n;
 }
 
+/* Removes a scratch file however the test case ends (a failed REQUIRE
+ * throws past a trailing std::remove). */
+struct RemoveOnExit {
+    std::string path;
+    ~RemoveOnExit() { std::remove(path.c_str()); }
+};
+
 /* log.lammps of one isolated-atom run that loads @p pot_path by file name
  * (pair_coeff * * <file> Ta, the plain LAMMPS user path); @p expect_ok:
  * whether the run must succeed. */
@@ -411,13 +418,13 @@ TEST_CASE("pair_coeff states RHOFORM, and a potential without it fails with "
     LammpsRunner runner;
     const std::string banner =
         "Tadah! DM_REAM density form RHOFORM SIGNED (signed amplitudes, the "
-        "tadah <= 1.5.1 density)\n";
+        "density before tadah 1.6.0)\n";
     const std::string absent = "DM_REAM: RHOFORM is required: SIGNED";
 
     SECTION("pair_coeff * * <file>: the RHOFORM line next to EMBF0") {
         const std::string pot_path = write_pot(true, "ZERO");
+        const RemoveOnExit rm_pot{pot_path};
         const std::string text = log_of_file_load(runner, pot_path, "rhoform");
-        std::remove(pot_path.c_str());
         REQUIRE(count_of(text, banner) == 1);
         const auto e = text.find("Tadah! DM_REAM embedding reference EMBF0");
         REQUIRE(e != std::string::npos);
@@ -426,12 +433,13 @@ TEST_CASE("pair_coeff states RHOFORM, and a potential without it fails with "
 
     SECTION("pair_coeff * * EXTERN: the RHOFORM line on every load") {
         const std::string pot_path = write_pot(true, "ZERO");
+        const RemoveOnExit rm_pot{pot_path};
         tadah::core::Context pot_ctx;
         REQUIRE_NOTHROW(pot_ctx =
             tadah::core::CoreUserConfigParser().parse(pot_path));
-        std::remove(pot_path.c_str());
         const std::string log = "ream_rhoform_" + std::to_string(::getpid())
             + "_extern.log";
+        const RemoveOnExit rm_log{log};
         {
             auto lmp = runner.create_instance(
                 0, {"lmp", "-log", log, "-screen", "none"});
@@ -440,13 +448,13 @@ TEST_CASE("pair_coeff states RHOFORM, and a potential without it fails with "
             REQUIRE(runner.run_script(lmp, isolated_atom(), pot_ctx));
         }
         const std::string text = slurp(log);
-        std::remove(log.c_str());
         REQUIRE(count_of(text, banner) == 2);
     }
 
     SECTION("pair_coeff * * <file> without RHOFORM: the reason is in the "
             "ERROR") {
         const std::string pot_path = write_pot(true, "ZERO", false);
+        const RemoveOnExit rm_pot{pot_path};
         // log.lammps: the pair_coeff ERROR carries the load failure's text
         const std::string text =
             log_of_file_load(runner, pot_path, "no_rhoform", false);
@@ -460,6 +468,7 @@ TEST_CASE("pair_coeff states RHOFORM, and a potential without it fails with "
         // the exception a library driver catches carries it as well
         const std::string script = "ream_rhoform_" +
             std::to_string(::getpid()) + "_no_rhoform.in";
+        const RemoveOnExit rm_script{script};
         {
             std::ofstream ofs(script);
             for (const auto& line : isolated_atom())
@@ -479,8 +488,6 @@ TEST_CASE("pair_coeff states RHOFORM, and a potential without it fails with "
                 what = ex.what();
             }
         }
-        std::remove(script.c_str());
-        std::remove(pot_path.c_str());
         REQUIRE(what.find("pair_coeff: failed to load Tadah potential from '"
                           + pot_path + "': " + absent) != std::string::npos);
     }
@@ -490,10 +497,10 @@ TEST_CASE("pair_coeff states RHOFORM, and a potential without it fails with "
         // The legacy per-line driver pattern: pair_style, then load() on the
         // pair style, then pair_coeff * * EXTERN with nothing staged.
         const std::string pot_path = write_pot(true, "ZERO", false);
+        const RemoveOnExit rm_pot{pot_path};
         tadah::core::Context pot_ctx;
         REQUIRE_NOTHROW(pot_ctx =
             tadah::core::CoreUserConfigParser().parse(pot_path));
-        std::remove(pot_path.c_str());
         LAMMPS_NS::PairTadah::clear_staged_extern();
         std::string what;
         {
@@ -586,6 +593,7 @@ FormRun run_form(LammpsRunner& runner, const char* form, bool eamfast) {
     {
         const std::string path = "ream_form_" + std::to_string(::getpid())
             + "_" + form + (eamfast ? "_on" : "_off") + ".tadah";
+        const RemoveOnExit rm{path};
         {
             std::ofstream ofs(path);
             ofs << TA_REAM_BLIP5_BODY << "RHOFORM           " << form << "\n"
@@ -593,7 +601,6 @@ FormRun run_form(LammpsRunner& runner, const char* form, bool eamfast) {
         }
         REQUIRE_NOTHROW(pot_ctx =
             tadah::core::CoreUserConfigParser().parse(path));
-        std::remove(path.c_str());
     }
     auto lmp = runner.create_instance(
         0, {"lmp", "-log", "none", "-screen", "none"});

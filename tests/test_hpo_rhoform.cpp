@@ -34,6 +34,7 @@
 
 #include <dlib/matrix.h>
 
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -118,7 +119,11 @@ TEST_CASE("RHOFORM: OPTIM on structure keys is refused",
     const std::string e = targets_error(
         make_ream_ctx("SIGNED"),
         std::string("OPTIM ") + key + " (1) 0 1\nPC_ERMSE 0 1\n" + kOptimizer);
-    CHECK_THAT(e, Catch::Contains("is not a valid search target") &&
+    /* at its line, as every hpotarget error */
+    std::string up(key);
+    for (auto& ch : up) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    CHECK_THAT(e, Catch::StartsWith("Error on line 1: OPTIM " + up +
+                                    " is not a valid search target") &&
                       Catch::Contains("structure data") &&
                       Catch::Contains("-c potential/configuration"));
   }
@@ -331,10 +336,24 @@ TEST_CASE("RHOFORM: WARM seed form vs the run's", "[hpo][rhoform][warm]") {
               make_ream_ctx("SIGNED"), warm_target(seed.path, optim, policy));
           CHECK_THAT(e, Catch::Contains(c.what) &&
                             Catch::Contains("this run evaluates RHOFORM SIGNED") &&
-                            Catch::Contains("add 'RHOFORM SIGNED' to it"));
+                            Catch::Contains("a potential written before tadah "
+                                            "1.6.0 is SIGNED: add 'RHOFORM "
+                                            "SIGNED' to it"));
         }
       }
     }
+  }
+  SECTION("a positive run: a seed from before the forms cannot seed it") {
+    TempFile seed(ream_seed("0.4 0.3 0.1", ""));
+    const std::string e =
+        targets_error(make_ream_ctx("NONNEG"),
+                      warm_target(seed.path, "OPTIM AMPGRIDMB (1) 0 1\n"));
+    CHECK_THAT(e, Catch::Contains("does not declare RHOFORM") &&
+                      Catch::Contains("this run evaluates RHOFORM NONNEG") &&
+                      Catch::Contains("a potential written before tadah 1.6.0 "
+                                      "is SIGNED and cannot seed a NONNEG "
+                                      "density; refit it by tadah refit with "
+                                      "RHOFORM NONNEG"));
   }
   SECTION("no density key OPTIM'd: a WARNING, the seed is used") {
     Journal j;
@@ -541,16 +560,42 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: one WARNING when an optimiser can leave "
   SECTION("an ignores_bounds optimiser") {
     const std::string txt = journal(
         "NONNEG", "OPTIMIZER\nLIB CERES\nALGO LBFGS\nMAXEVAL 5\nENDOPTIMIZER\n");
-    CHECK_THAT(txt, Catch::Contains("RHOFORM NONNEG: OUTER CERES:LBFGS (ignores "
-                                    "the OPTIM bounds) " + needle) &&
+    CHECK_THAT(txt, Catch::Contains("RHOFORM NONNEG: the STRATEGY-level "
+                                    "optimiser CERES:LBFGS (ignores the OPTIM "
+                                    "bounds) " + needle) &&
                         Catch::Contains("projected onto AMPGRIDMB >= 0"));
+  }
+  SECTION("named by the phase that runs it (phase_specs)") {
+    const std::string txt = journal(
+        "NONNEG", "OPTIMIZER\nSTRATEGY\nTYPE PRESTAGE\nLIB CERES\nALGO LBFGS\n"
+                  "MAXEVAL 5\nTOPK 1\nEXPLORE\nLIB DLIB\nALGO GFS\nMAXEVAL 10\n"
+                  "ENDEXPLORE\nENDSTRATEGY\nENDOPTIMIZER\n");
+    CHECK_THAT(txt, Catch::Contains("RHOFORM NONNEG: the PRESTAGE refinement "
+                                    "CERES:LBFGS (ignores the OPTIM bounds) " +
+                                    needle));
+    CHECK(txt.find("PRESTAGE exploration (EXPLORE block) DLIB:GFS") ==
+          std::string::npos);   // GFS keeps to the box
   }
   SECTION("PARAM fd_kernel ceres on a gradient-based optimiser") {
     const std::string txt = journal(
         "MONOTONE", "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\n"
                     "PARAM fd_kernel ceres\nENDOPTIMIZER\n");
-    CHECK_THAT(txt, Catch::Contains("RHOFORM MONOTONE: OUTER DLIB:BFGS (PARAM "
-                                    "fd_kernel ceres") &&
+    CHECK_THAT(txt, Catch::Contains("RHOFORM MONOTONE: the STRATEGY-level "
+                                    "optimiser DLIB:BFGS (PARAM fd_kernel ceres") &&
+                        Catch::Contains(needle));
+  }
+  SECTION("PARAM fd_kernel ceres on an MLSL whose local search takes gradients") {
+    /* G_MLSL_LDS itself is derivative-free, but NLopt hands its local
+     * search the gradient the MLSL objective computes (inner_run_spec,
+     * obtains_gradients). */
+    const std::string txt = journal(
+        "NONNEG", "OPTIMIZER\nSTRATEGY\nTYPE PLAIN\nLIB NLOPT\nALGO G_MLSL_LDS\n"
+                  "MAXEVAL 50\nPARAM fd_kernel ceres\nINNER\nLIB NLOPT\n"
+                  "ALGO LD_LBFGS\nMAXEVAL 10\nENDINNER\nENDSTRATEGY\n"
+                  "ENDOPTIMIZER\n");
+    CHECK_THAT(txt, Catch::Contains("RHOFORM NONNEG: the STRATEGY-level "
+                                    "optimiser NLOPT:G_MLSL_LDS (PARAM fd_kernel "
+                                    "ceres") &&
                         Catch::Contains(needle));
   }
   SECTION("none: bounded optimiser, SIGNED, or no OPTIM AMPGRIDMB") {

@@ -106,7 +106,15 @@ endforeach()
 #                  ([.durable_e2e_child], [.durable_latch_child])
 #   embf0_e2e      test_hpo_embf0_e2e.cpp: DM_REAM EMBF0 per candidate
 #   rcut_e2e       test_rcut_autoderive.cpp: knot RCUT re-derivation
-set(_hpo_e2e_groups fixweight_e2e durable_e2e embf0_e2e rcut_e2e)
+#   rhoform_e2e    test_hpo_rhoform.cpp: RHOFORM through hpo_run (an invalid
+#                  density form stops the run; the NONNEG/MONOTONE
+#                  projection, [rhoform_projection_e2e], is one of its cases)
+#   rhogate_e2e    test_rho_gates.cpp: RHOGATE rejects before training
+#   rhobargate_e2e test_rho_gates.cpp: RHOBARGATE rejects before training
+#   bumpgate_e2e   test_bump_support_gate.cpp: BUMPGATE rejects before
+#                  training (also tagged [!benchmark])
+set(_hpo_e2e_groups fixweight_e2e durable_e2e embf0_e2e rcut_e2e
+                    rhoform_e2e rhogate_e2e rhobargate_e2e bumpgate_e2e)
 foreach(_group IN LISTS _hpo_e2e_groups)
     add_test(NAME hpo_${_group}
         COMMAND test_hpo "[${_group}]" --warn NoTests)

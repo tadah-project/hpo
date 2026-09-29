@@ -1,10 +1,10 @@
-// SIGNED goldens of the compact fitter: the tadah 1.5.1 fitter (HPO 3ce1001)
-// on the inputs of test_compact_fitter.cpp "compact fitter RHOFORM: SIGNED
-// reproduces the tadah 1.5.1 numbers", printed as C99 hexfloats by a driver
-// built with the flags of the HPO library (-O3, no -march=native, no
-// -ffast-math) against the 3ce1001 sources. The FEAT-02 fitter reproduced
-// every value bit for bit when these were generated. Frozen reference data;
-// do not edit.
+// SIGNED goldens of the compact fitter: the fitter before RHOFORM (HPO
+// 3ce1001) on the inputs of test_compact_fitter.cpp "compact fitter RHOFORM:
+// SIGNED reproduces the numbers of the fitter before RHOFORM", printed as C99
+// hexfloats by a driver built with the flags of the HPO library (-O3, no
+// -march=native, no -ffast-math) against the 3ce1001 sources. The FEAT-02
+// fitter reproduced every value bit for bit when these were generated.
+// Frozen reference data; do not edit.
 #ifndef TADAH_HPO_TESTS_COMPACT_FITTER_SIGNED_GOLDENS_H
 #define TADAH_HPO_TESTS_COMPACT_FITTER_SIGNED_GOLDENS_H
 

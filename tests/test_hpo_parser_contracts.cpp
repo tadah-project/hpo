@@ -27,6 +27,8 @@
 //     small for a double says so, and PC_<METRIC> errors name the key;
 //     `tadah refit` OPTIMIZER blocks reject SEED, and EXPLORE MAX_ADD is
 //     an integer >= 0;
+//   - the density gates RHOGATE and RHOBARGATE read their numbers in the
+//     same grammar (NPTS an integer, the rest finite decimal numbers);
 //   - STRATEGY TYPE is PLAIN, MULTISTART or PRESTAGE: the undocumented
 //     BASINS / BASINSV2 strategies, their knobs and their pre-release
 //     keyword hints are gone, no error text names them, and
@@ -2045,6 +2047,93 @@ TEST_CASE("Strict numbers: PC_FAILPROBE --failscore is a positive finite "
         CHECK(trg.LS.front().failscore == std::stod(tok));
         CHECK(trg.LS.front().w_varloss.at(0) == -2.0);
         CHECK(trg.FAIL_SCORE == 1e9);
+    }
+}
+
+TEST_CASE("Strict numbers: RHOGATE and RHOBARGATE", "[HPO][hpo_targets][strict_numbers][rhogate]")
+{
+    /* The density gates read their numbers in the grammar of every other
+     * key: a real one whole finite decimal token (no hexadecimal float, no
+     * inf or nan, no subnormal), NPTS an integer in decimal digits only (no
+     * sign, fraction or exponent). Their first reader took strtod's forms
+     * (`RHOGATE 0x1p-10`, a subnormal R_LO) and an NPTS written as a real
+     * (`NPTS 2e3`, `NPTS +100`, `NPTS 100.0`). Errors name the line. */
+    const std::string at = "Error on line 9: ";
+    const auto err = [](const std::string& line) {
+        return parse_error(kOptimizer + line + "\n");
+    };
+    SECTION("accepted") {
+        for (const std::string line :
+                 {"RHOGATE 1e-5", "RHOGATE 0 R_LO 1.7168 NPTS 2 SEED WARN",
+                  "RHOGATE +1e-5 npts 10000000", "RHOGATE 1E-5 R_LO 0",
+                  "RHOBARGATE bcc 3.304 0.98 1.1",
+                  "RHOBARGATE fcc 4.05 .9 1.10 NPTS 3 SEED ERROR"}) {
+            INFO(line);
+            CHECK(err(line) == "");
+        }
+        auto trg = parse_config(kOptimizer + "RHOGATE 1e-5 NPTS 2000\n"
+                                "RHOBARGATE hcp 2.9 0.9 1.1 NPTS 3501\n");
+        REQUIRE(trg.RHOGATE);
+        CHECK(trg.RHOGATE->npts == 2000u);
+        REQUIRE(trg.RHOBARGATE);
+        CHECK(trg.RHOBARGATE->npts == 3501u);
+    }
+    SECTION("a real number is one finite decimal token") {
+        std::vector<std::string> bad = kNotFinite;
+        bad.insert(bad.end(), {"0x1p-17", "1e-320"});
+        for (const auto& tok : bad) {
+            INFO(tok);
+            CHECK_THAT(err("RHOGATE " + tok),
+                       Catch::StartsWith(at + "RHOGATE tol must be a finite "
+                                         "number, got '" + tok + "'"));
+            CHECK_THAT(err("RHOGATE 1e-5 R_LO " + tok),
+                       Catch::StartsWith(at + "RHOGATE R_LO must be a finite "
+                                         "number, got '" + tok + "'"));
+            CHECK_THAT(err("RHOBARGATE bcc " + tok + " 0.9 1.1"),
+                       Catch::StartsWith(at + "RHOBARGATE a0 must be a finite "
+                                         "number, got '" + tok + "'"));
+            CHECK_THAT(err("RHOBARGATE bcc 3.3 " + tok + " 1.1"),
+                       Catch::StartsWith(at + "RHOBARGATE f_lo must be a "
+                                         "finite number, got '" + tok + "'"));
+            CHECK_THAT(err("RHOBARGATE bcc 3.3 0.9 " + tok),
+                       Catch::StartsWith(at + "RHOBARGATE f_hi must be a "
+                                         "finite number, got '" + tok + "'"));
+        }
+        CHECK_THAT(err("RHOGATE 1e-320"), Catch::Contains("(too small"));
+    }
+    SECTION("NPTS is an integer in decimal digits within its range") {
+        std::vector<std::string> bad = kNotUnsigned;
+        bad.insert(bad.end(), {"100.0", "2e3", "+500", "10000001"});
+        for (const auto& tok : bad) {
+            INFO(tok);
+            CHECK_THAT(err("RHOGATE 1e-5 NPTS " + tok),
+                       Catch::StartsWith(at + "RHOGATE NPTS must be an "
+                                         "integer from 2 to 10000000, got '" +
+                                         tok + "'"));
+            CHECK_THAT(err("RHOBARGATE bcc 3.3 0.9 1.1 NPTS " + tok),
+                       Catch::StartsWith(at + "RHOBARGATE NPTS must be an "
+                                         "integer from 3 to 10000000, got '" +
+                                         tok + "'"));
+        }
+        CHECK_THAT(err("RHOGATE 1e-5 NPTS 1"),
+                   Catch::StartsWith(at + "RHOGATE NPTS must be an integer "
+                                     "from 2 to 10000000, got '1'"));
+        CHECK_THAT(err("RHOBARGATE bcc 3.3 0.9 1.1 NPTS 2"),
+                   Catch::StartsWith(at + "RHOBARGATE NPTS must be an integer "
+                                     "from 3 to 10000000, got '2'"));
+    }
+    SECTION("a missing value and an extra token") {
+        CHECK_THAT(err("RHOGATE"),
+                   Catch::StartsWith(at + "RHOGATE: the tolerance is missing"));
+        CHECK_THAT(err("RHOGATE 1e-5 NPTS"),
+                   Catch::StartsWith(at + "RHOGATE: NPTS needs a value"));
+        CHECK_THAT(err("RHOGATE 1e-5 7"),
+                   Catch::StartsWith(at + "RHOGATE: unexpected token '7'"));
+        CHECK_THAT(err("RHOBARGATE bcc 3.3 0.9"),
+                   Catch::StartsWith(at + "RHOBARGATE: the lattice, a0, f_lo "
+                                     "and f_hi are required"));
+        CHECK_THAT(err("RHOBARGATE bcc 3.3 0.9 1.1 7"),
+                   Catch::StartsWith(at + "RHOBARGATE: unexpected token '7'"));
     }
 }
 

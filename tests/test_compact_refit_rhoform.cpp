@@ -1,8 +1,8 @@
 // `tadah refit` compact mode in every RHOFORM, end to end through the HPO
 // refit engine (the compact fitter's ladders, FUSE and the EAMRefit
 // handoff), on a synthesised single-element setfl with small optimiser
-// budgets. The density is fitted in the declared form: SIGNED (the 1.5.1
-// fit), NONNEG (every amplitude >= 0) and MONOTONE (integrated-bump steps,
+// budgets. The density is fitted in the declared form: SIGNED (the fit
+// before RHOFORM), NONNEG (every amplitude >= 0) and MONOTONE (integrated-bump steps,
 // every amplitude >= 0).
 #include "catch2/catch.hpp"
 
@@ -176,6 +176,10 @@ TEST_CASE_METHOD(PTFixture,
     CHECK(olog.find("compact mode") != std::string::npos);
     CHECK(olog.find(std::string("density: RHOFORM ") + form + " — ") !=
           std::string::npos);
+    // SIGNED names the release that introduced the forms
+    if (f == RhoForm::Signed)
+      CHECK(olog.find("with signed amplitudes (the density before tadah "
+                      "1.6.0)") != std::string::npos);
     CHECK(olog.find("self-test (crystal E-V") != std::string::npos);
 
     // The joint refinement optimises the radial bumps in their outer support

@@ -173,7 +173,7 @@ TEST_CASE("RHOGATE / RHOBARGATE: strict grammar", "[hpo][rhogate][grammar]") {
     CHECK_FALSE(a->RHOGATE->r_lo);
     CHECK(a->RHOGATE->npts == 20001);
     CHECK_FALSE(a->RHOGATE->seed_warn);
-    auto b = parse("RHOGATE 0 seed warn npts 2e3 r_lo 1.7168\n");
+    auto b = parse("RHOGATE 0 seed warn npts 2000 r_lo 1.7168\n");
     REQUIRE(b->RHOGATE);
     CHECK(b->RHOGATE->tol == 0.0);
     CHECK(*b->RHOGATE->r_lo == 1.7168);
@@ -204,7 +204,8 @@ TEST_CASE("RHOGATE / RHOBARGATE: strict grammar", "[hpo][rhogate][grammar]") {
              Case{"RHOGATE nan\n", "RHOGATE tol must be a finite number"},
              Case{"RHOGATE inf\n", "RHOGATE tol must be a finite number"},
              Case{"RHOGATE 1e-5x\n", "RHOGATE tol must be a finite number"},
-             Case{"RHOGATE 1e-5 NPTS 1\n", "RHOGATE NPTS must be an integer in [2, 10000000]"},
+             Case{"RHOGATE 1e-5 NPTS 1\n", "RHOGATE NPTS must be an integer from 2 to 10000000"},
+             Case{"RHOGATE 1e-5 NPTS 2e3\n", "RHOGATE NPTS must be an integer"},
              Case{"RHOGATE 1e-5 NPTS 10000001\n", "RHOGATE NPTS must be an integer"},
              Case{"RHOGATE 1e-5 NPTS 2.5\n", "RHOGATE NPTS must be an integer"},
              Case{"RHOGATE 1e-5 R_LO -1\n", "RHOGATE R_LO must be >= 0"},
@@ -222,7 +223,7 @@ TEST_CASE("RHOGATE / RHOBARGATE: strict grammar", "[hpo][rhogate][grammar]") {
              Case{"RHOBARGATE bcc 3.3 1.1 0.75\n", "needs 0 < f_lo < f_hi"},
              Case{"RHOBARGATE bcc 3.3 0 1.1\n", "needs 0 < f_lo < f_hi"},
              Case{"RHOBARGATE bcc 3.3 0.9 0.9\n", "needs 0 < f_lo < f_hi"},
-             Case{"RHOBARGATE bcc 3.3 0.9 1.1 NPTS 2\n", "RHOBARGATE NPTS must be an integer in [3, 10000000]"},
+             Case{"RHOBARGATE bcc 3.3 0.9 1.1 NPTS 2\n", "RHOBARGATE NPTS must be an integer from 3 to 10000000"},
              Case{"RHOBARGATE bcc 3.3 0.9 1.1 R_LO 1\n", "unexpected token 'R_LO'"},
              Case{"RHOBARGATE bcc 3.3 0.9 1.1 SEED WARN extra\n", "unexpected token 'extra'"},
              Case{"RHOBARGATE bcc 3.3 0.9 1.1\nRHOBARGATE fcc 4 0.9 1.1\n",
@@ -825,7 +826,7 @@ TEST_CASE("HPOLog: per-gate counters, SUMMARY and DIAGNOSTICS lines, reset",
   }
   log.reset_for_test();
 
-  SECTION("a bump-only run prints exactly the tadah 1.5.1 lines") {
+  SECTION("a bump-only run prints exactly the BUMPGATE lines of tadah 1.5.0") {
     Journal j2;
     for (std::size_t i = 1; i <= 100; ++i) {
       log.record_eval(i, 1.0,
@@ -845,7 +846,7 @@ TEST_CASE("HPOLog: per-gate counters, SUMMARY and DIAGNOSTICS lines, reset",
   }
 }
 
-TEST_CASE("Density report: startup rows, RESULT, not derivable, resume",
+TEST_CASE("Density report: startup rows, RESULT, not derivable",
           "[hpo][rhogate][journal]") {
   PeriodicTable::initialize();
 
@@ -916,13 +917,18 @@ TEST_CASE("Density report: startup rows, RESULT, not derivable, resume",
                                           "bcc a0 3.304 A"));
     }
     {
-      Journal j;   /* a resumed run: its best has no summary in this session */
+      /* A best without a density summary: the host records one for every
+       * new best unless it could not build the density (the -c pot row of
+       * the report then says "not derivable: <reason>"). HPO runs are not
+       * resumed, so no best comes from an earlier session. */
+      Journal j;
       HPOLog::instance().write_density_report(entries, false);
       HPOLog::instance().log_new_best(3, 1.0, 0, false, 0, false, 0, false, 0, false,
                                       0, false, 0.0, "");
       const std::string txt = j.finish();
-      CHECK_THAT(txt, Catch::Contains("  Density rho(r)          : n/a (the best "
-                                      "predates this session)"));
+      CHECK_THAT(txt, Catch::Contains("  Density rho(r)          : n/a (not "
+                                      "derivable)"));
+      CHECK(txt.find("predates") == std::string::npos);
       CHECK(txt.find("Density rhobar          :") == std::string::npos);
     }
     {
@@ -1109,7 +1115,7 @@ TEST_CASE("HPO_Host RHOGATE: graded reject before training, silent pass",
     Host::reset_globals_for_test();
   }
   SECTION("BUMPGATE and RHOGATE: the first failing gate is counted, the sum "
-          "grades; a bump-only reject is as in tadah 1.5.1") {
+          "grades; a bump-only reject is as in tadah 1.5.0") {
     const std::string boxes = "FAILSCORE_GRADING ON\nOPTIM AMPGRIDMB (3) -0.5 0.5\n"
                               "OPTIM CGRIDMB (3) 4.0 5.2\nOPTIM SGRIDMB (3) 2.0 4.0\n";
     for (int gated = 0; gated < 2; ++gated) {
@@ -1130,7 +1136,7 @@ TEST_CASE("HPO_Host RHOGATE: graded reject before training, silent pass",
       p(0) = 0.1; p(1) = 5.2; p(2) = 2.0;
       const double v_bump = dt::bump_gate_violation(bump_tbl, p);
       REQUIRE(v_bump > 0.0);
-      /* bump only (rho >= 0): tadah 1.5.1's loss and line, with or without
+      /* bump only (rho >= 0): tadah 1.5.0's loss and line, with or without
        * RHOGATE */
       CHECK(host(p) == graded(v_bump));
       const std::string line1 =
