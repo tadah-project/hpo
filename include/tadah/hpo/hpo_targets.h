@@ -108,10 +108,20 @@ public:
     static bool optim_key_positive_only(const std::string& key);
     /* OPTIM on structure data is refused: the density form (RHOFORM), the
      * descriptor types (TYPE2B, TYPEMB), the cutoff classes (RCTYPE2B,
-     * RCTYPEMB) and the knot-degree lists (KDEG2B, KDEGMB, KDEGEMB);
-     * compared case-insensitively. Returns the error message for such a
-     * key, "" for a searchable one. (OPTIM EMBF0 has its own message.) */
+     * RCTYPEMB), the knot-degree lists (KDEG2B, KDEGMB, KDEGEMB), the
+     * rigid-dimer layout (DIMER), the pinned-weight indices (FIXINDEX) and
+     * the model (MODEL); compared case-insensitively. Their values are
+     * discrete or describe the data, so a searched value is truncated,
+     * refused or meaningless. Returns the error message for such a key,
+     * "" for a searchable one. (OPTIM EMBF0 has its own message.) */
     static std::string optim_structure_key_error(const std::string& key);
+    /* A discrete value of a key whose other values are continuous: the
+     * first OALGO value (the training algorithm; the second, the rcond M,
+     * is searchable). @p index is the OPTIM index (1-based among the key's
+     * numeric values). Returns the error message, "" for a searchable
+     * index. */
+    static std::string optim_discrete_index_error(const std::string& key,
+                                                  std::size_t index);
     /* The DM_REAM density form of the -c configuration: RHOFORM, mandatory
      * on a configuration with a DM_REAM block and read at the top of the
      * constructor (the migration message when absent or invalid), before

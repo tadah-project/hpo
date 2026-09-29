@@ -1595,6 +1595,14 @@ std::string HPOTargets::optim_structure_key_error(const std::string& key) {
     {"KDEG2B",   "KDEG2B lists the two-body knot degrees (3|5)"},
     {"KDEGMB",   "KDEGMB lists the density knot degrees (3|5)"},
     {"KDEGEMB",  "KDEGEMB lists the embedding knot degrees (3|5)"},
+    {"DIMER",    "DIMER (on/off, the bond length, whether the intramolecular "
+                 "distance enters the descriptors) declares the rigid-dimer "
+                 "layout of the training data (its bond length is that of "
+                 "the data's molecules)"},
+    {"FIXINDEX", "FIXINDEX names which model weights FIXWEIGHT pins (search "
+                 "their values with OPTIM FIXWEIGHT)"},
+    {"MODEL",    "MODEL names the model and its basis function or kernel "
+                 "(and an integer option)"},
   };
   const std::string k = core::to_upper(key);
   for (const auto& e : structure)
@@ -1602,6 +1610,18 @@ std::string HPOTargets::optim_structure_key_error(const std::string& key) {
       return "OPTIM " + k + " is not a valid search target: " + e.what +
              ", structure data rather than a continuous parameter; set it "
              "in the -c potential/configuration.";
+  return "";
+}
+
+std::string HPOTargets::optim_discrete_index_error(const std::string& key,
+                                                   std::size_t index) {
+  if (core::to_upper(key) == "OALGO" && index == 1)
+    return "OPTIM OALGO (1) is not a valid search target: the first OALGO "
+           "value selects the training algorithm (1 GELSD, 2 GELS, 3 SVD, "
+           "4 Cholesky), a discrete choice rather than a continuous "
+           "parameter; set it in the -c configuration. The second value, "
+           "the rcond M of options 1 and 3, is continuous: OPTIM OALGO (2) "
+           "<low> <high>.";
   return "";
 }
 
@@ -1811,6 +1831,9 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
                              tokens.back() + "): " + e.what());
   }
   tokens.pop_back();
+  for (const size_t ui : user_indices)
+    if (const std::string e = optim_discrete_index_error(k, ui); !e.empty())
+      throw std::runtime_error(e);
 
   /* Strict grammar: OPTIM <KEY> (indices) <low> <high>. Anything else
    * used to be silently ignored (the bounds were popped from the END of
