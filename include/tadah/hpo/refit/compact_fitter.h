@@ -471,7 +471,8 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
                     double curve_weight, int max_iter, double ftol,
                     const std::string &algo = "CERES_LM",
                     std::string *term_out = nullptr,
-                    double phi_hard_rcut = 0.0, double rho_hard_rcut = 0.0);
+                    double phi_hard_rcut = 0.0, double rho_hard_rcut = 0.0,
+                    int *iterations_out = nullptr);
                     // algo: CERES_LM | CERES_DOGLEG | NONE
                     // (basis families are carried by each BlipFit's `kind`;
                     // the EMBF0 ZERO reference by F.zero_ref — F's curve
@@ -494,6 +495,40 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
                     // and the caller's clamp_bump_support_params projection
                     // moves nothing (it still guards pinned bumps and algo
                     // NONE, where only the centres are bounded).
+                    // iterations_out (optional): receives the Ceres
+                    // iterations the solve used (after the initial point;
+                    // at most max_iter, 0 under NONE), what the FUSE stage
+                    // budget counts (FuseBudget).
+
+/** The FUSE stage budget of compact refit: FUSE MAXEVAL (Ceres iterations)
+ *  bounds the whole stage -- the joint solve and the held re-run passes
+ *  after it draw from it (owner decision 2026-09-29). */
+struct FuseBudget {
+  int maxeval = 0;  ///< the stage's MAXEVAL
+  int spent = 0;    ///< iterations used so far
+  int remaining() const { return spent < maxeval ? maxeval - spent : 0; }
+  void spend(int iterations) { spent += iterations; }
+};
+
+/** What run_held_passes did. */
+struct HeldPasses {
+  int passes = 0;             ///< passes run (joint solves)
+  bool skipped = false;       ///< none: the budget was spent before the first
+  bool budget_spent = false;  ///< the passes stopped because it ran out
+};
+
+/** The held re-run of compact FUSE: up to @p max_passes passes, each holding
+ *  the bumps @p hold moves back inside the cutoff (it returns how many; 0
+ *  ends the passes) and re-running the joint solve with what is left of
+ *  @p budget (@p solve takes that iteration cap and returns the iterations
+ *  it used, which are spent). With nothing left no pass runs and @p hold is
+ *  not called ("FUSE held re-run skipped: MAXEVAL <n> spent"); passes that
+ *  spend the rest stop there ("FUSE held re-run stopped after pass k of m:
+ *  MAXEVAL <n> spent"). @p log receives those lines. */
+HeldPasses run_held_passes(int max_passes, FuseBudget &budget,
+                           const std::function<int()> &hold,
+                           const std::function<int(int)> &solve,
+                           const std::function<void(const std::string &)> &log);
 
 /** Free-function core of CompactBlipFitter::clamp_bump_support (no fitter
  *  needed — used by the engine after joint_refine): project every bump of a

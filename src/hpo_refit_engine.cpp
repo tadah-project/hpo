@@ -912,13 +912,20 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
     // takes the density form from frho.form (stamped by the rho ladder);
     // under NONNEG / MONOTONE it bounds the amplitudes at 0 and the bump
     // widths at the ladder's floor.
-    auto run_joint = [&]() {
-      return joint_refine(fphi, frho, fF, dphi, drho, dF, dists, e_orig, e_w,
-                          /*curve_weight=*/1.0, lcfg.joint_max_iter,
-                          lcfg.joint_ftol, joint_algo, &joint_term,
-                          knotfam ? 0.0 : rcut, knotfam ? 0.0 : rcut);
+    // FUSE MAXEVAL (Ceres iterations) bounds the whole stage: the joint
+    // solve and the held re-run passes below draw from one budget (owner
+    // decision 2026-09-29). run_joint(cap) returns the iterations it used.
+    FuseBudget fuse_budget{lcfg.joint_max_iter};
+    auto run_joint = [&](int max_iter) {
+      int used = 0;
+      e_resid_max =
+          joint_refine(fphi, frho, fF, dphi, drho, dF, dists, e_orig, e_w,
+                       /*curve_weight=*/1.0, max_iter, lcfg.joint_ftol,
+                       joint_algo, &joint_term, knotfam ? 0.0 : rcut,
+                       knotfam ? 0.0 : rcut, &used);
+      return used;
     };
-    e_resid_max = run_joint();
+    fuse_budget.spend(run_joint(fuse_budget.remaining()));
     // Bump-support gate: joint_refine optimises the radial bumps in their
     // outer support edges bounded at rcut, so this projection (the clamp
     // core shared with the ladder's clamp_bump_support) normally moves
@@ -960,10 +967,19 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
       // >= 0 bounds); a bump a re-run pushes out is held in the next pass.
       // Every pass holds at least one more bump, so the passes end, within
       // the radial bump count, when nothing spills any more; a bump that
-      // still spills after that gets the linear re-solve. The result with the
-      // smaller max |dE|/tol is kept. Within tolerance the re-solve stands (it
-      // follows the curves more closely). Every density form.
-      if (moved_any && e_resid_max > 1.0) {
+      // still spills after that gets the linear re-solve. The passes share
+      // the stage's MAXEVAL with the joint solve (run_held_passes): each gets
+      // what is left, and with nothing left the re-run is skipped and the
+      // re-solve result is kept. The result with the smaller max |dE|/tol is
+      // kept. Within tolerance the re-solve stands (it follows the curves
+      // more closely). Every density form.
+      if (moved_any && e_resid_max > 1.0 && fuse_budget.remaining() == 0) {
+        rlog.line("joint: the linear re-solve leaves max |dE|/tol = " +
+                  core::to_string(e_resid_max, 4) + " (RHOFORM " +
+                  rhoform_name(rho_form) + "); FUSE held re-run skipped: "
+                  "MAXEVAL " + std::to_string(fuse_budget.maxeval) +
+                  " spent by the joint solve, the re-solve result is kept");
+      } else if (moved_any && e_resid_max > 1.0) {
         const BlipFit phi_lin = fphi, rho_lin = frho, F_lin = fF;
         const double e_lin = e_resid_max;
         const std::string term_lin = joint_term;
@@ -986,16 +1002,27 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
               fit.pinned[k] = true;
           return moved;
         };
-        for (int pass = 1; pass <= held_passes; ++pass) {
-          const int mphi = hold_clamped(fphi), mrho = hold_clamped(frho);
-          if (mphi + mrho == 0) break;
-          e_resid_max = run_joint();
-          rlog.line("joint: pass " + std::to_string(pass) + "/" +
-                    std::to_string(held_passes) + " held " +
-                    std::to_string(mphi) + " phi / " + std::to_string(mrho) +
-                    " rho bump(s) moved back inside rcut: max |dE|/tol = " +
-                    core::to_string(e_resid_max, 4) + "  term=" + joint_term);
-        }
+        int pass = 0, mphi = 0, mrho = 0;
+        run_held_passes(
+            held_passes, fuse_budget,
+            [&] {
+              mphi = hold_clamped(fphi);
+              mrho = hold_clamped(frho);
+              return mphi + mrho;
+            },
+            [&](int max_iter) {
+              const int used = run_joint(max_iter);
+              rlog.line("joint: pass " + std::to_string(++pass) + "/" +
+                        std::to_string(held_passes) + " held " +
+                        std::to_string(mphi) + " phi / " +
+                        std::to_string(mrho) +
+                        " rho bump(s) moved back inside rcut: max |dE|/tol = " +
+                        core::to_string(e_resid_max, 4) + "  term=" +
+                        joint_term + " (" + std::to_string(used) + " of " +
+                        std::to_string(max_iter) + " iterations left)");
+              return used;
+            },
+            [&](const std::string &l) { rlog.line("joint: " + l); });
         fphi.pinned = phi_joint.pinned;
         frho.pinned = rho_joint.pinned;
         moved_any = false;

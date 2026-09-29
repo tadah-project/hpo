@@ -2055,7 +2055,8 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
                     const std::vector<double> &e_weight, double curve_weight,
                     int max_iter, double ftol, const std::string &algo,
                     std::string *term_out, double phi_hard_rcut,
-                    double rho_hard_rcut) {
+                    double rho_hard_rcut, int *iterations_out) {
+  if (iterations_out) *iterations_out = 0;
   if (algo != "NONE" && algo != "CERES_LM" && algo != "CERES_DOGLEG")
     throw std::runtime_error("joint_refine: unknown algo '" + algo +
                              "' (CERES_LM|CERES_DOGLEG|NONE)");
@@ -2262,6 +2263,12 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
     opt.logging_type = ceres::SILENT;
     ceres::Solver::Summary sum;
     ceres::Solve(opt, &prob, &sum);
+    // the iterations max_num_iterations bounds: sum.iterations holds the
+    // initial point (iteration 0) too
+    if (iterations_out)
+      *iterations_out = sum.iterations.empty()
+                            ? 0
+                            : static_cast<int>(sum.iterations.size()) - 1;
     // back to centres: mu = e - w/eta for every free bump of an
     // edge-parametrised channel (a pinned bump keeps its exact centre)
     for (auto [f, g] : {std::pair<BlipFit *, const Edge *>{&phi, &ephi},
@@ -2290,6 +2297,32 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
     mx = std::max(mx, std::fabs(e_weight[i] * (hp + F.eval(ri) - e_orig[i])));
   }
   return mx;
+}
+
+HeldPasses run_held_passes(int max_passes, FuseBudget &budget,
+                           const std::function<int()> &hold,
+                           const std::function<int(int)> &solve,
+                           const std::function<void(const std::string &)> &log) {
+  HeldPasses r;
+  if (budget.remaining() == 0) {
+    r.skipped = true;
+    log("FUSE held re-run skipped: MAXEVAL " + std::to_string(budget.maxeval) +
+        " spent");
+    return r;
+  }
+  for (int pass = 1; pass <= max_passes; ++pass) {
+    if (budget.remaining() == 0) {
+      r.budget_spent = true;
+      log("FUSE held re-run stopped after pass " + std::to_string(r.passes) +
+          " of " + std::to_string(max_passes) + ": MAXEVAL " +
+          std::to_string(budget.maxeval) + " spent");
+      break;
+    }
+    if (hold() == 0) break;
+    budget.spend(solve(budget.remaining()));
+    ++r.passes;
+  }
+  return r;
 }
 
 // ---- test hooks (see header) ----
