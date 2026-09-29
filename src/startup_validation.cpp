@@ -196,6 +196,43 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     (void)models::require_rhoform(train_ctx, "tadah hpo");
     validate_ream_density(train_ctx);
   }
+
+  /* --- radial bump widths of the seed ----------------------------------
+   * Every width of a radial bump channel -- SGRID2B of a D2_Blip/D2_Blip5
+   * pair term, SGRIDMB of a DM_REAM Blip/Blip5 density -- is > 0, in every
+   * form: the rule of the OPTIM boxes (models::optim_low_bound_rule(key,
+   * ctx)) holds for the seed too. A bump spans [c - w/eta, c + w/eta]: a
+   * width <= 0 has no support edge (the bump is even in eta and evaluates
+   * as its mirror), and the bump-support gate below cannot keep it inside
+   * the cutoff. Owner decision 2026-09-29. */
+  {
+    std::vector<std::string> bad;
+    for (const char *key : {"SGRID2B", "SGRIDMB"}) {
+      const auto rule = models::optim_low_bound_rule(key, train_ctx);
+      if (!rule) continue;   // not the width key of a radial bump channel
+      core::v_type eta;
+      try {
+        models::D_Base::get_grid(train_ctx, key, eta);
+      } catch (const std::exception &e) {
+        throw std::runtime_error(std::string(key) + " of the -c potential "
+                                 "cannot be read (" + e.what() + "): " +
+                                 rule->by + " needs its widths");
+      }
+      for (std::size_t i = 0; i < eta.size(); ++i)
+        if (!rule->admits(eta[i]))
+          bad.push_back(std::string(key) + " (" + core::to_string(i + 1) +
+                        ") = " + core::to_string(eta[i]) + ": " + rule->by +
+                        " requires " + rule->requirement);
+    }
+    if (!bad.empty()) {
+      std::string msg = "the -c potential has a radial bump width <= 0:";
+      for (const auto &b : bad) msg += "\n  - " + b;
+      msg += "\n  Set every width > 0 in the -c potential/configuration "
+             "(tadah refit --edit rewrites a potential).";
+      throw std::runtime_error(msg);
+    }
+  }
+
   if (trg.optimap.count("FIXWEIGHT") && !train_ctx.contains("FIXINDEX")) {
     throw std::runtime_error(
         "OPTIM FIXWEIGHT requires FIXINDEX in the training configuration "
@@ -493,9 +530,9 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
       }
     }
 
-    /* (a) the seed pot's own bumps must fit */
+    /* (a) the seed pot's own bumps must fit (every width > 0: checked
+     * above) */
     for (std::size_t i = 0; i < mu.size(); ++i) {
-      if (eta[i] <= 0.0) continue;
       const double reach = mu[i] + w / eta[i];
       if (mu[i] > rcut + tol) {
         const std::string m =
@@ -533,11 +570,12 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         if (itc != trg.optimap.end() && i < itc->second.opt.size() &&
             itc->second.opt[i])
           hi_mu = itc->second.highbound[i];
+        /* the OPTIM low bound of a width is > 0
+         * (models::optim_low_bound_rule, at parse) */
         double eta_i = eta[i];
         if (its != trg.optimap.end() && i < its->second.opt.size() &&
-            its->second.opt[i] && its->second.lowbound[i] > 0.0)
+            its->second.opt[i])
           eta_i = std::min(eta_i, its->second.lowbound[i]);
-        if (eta_i <= 0.0) continue;
         if (hi_mu + w / eta_i <= rcut + tol) continue;
         if (hi_mu >= rcut - tol) {
           gate_errors.push_back(
@@ -571,13 +609,10 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
           continue;  /* fully static bump: the seed check (a) owns it */
         const double lo_mu = c_opt ? itc->second.lowbound[i] : mu[i];
         const double hi_mu = c_opt ? itc->second.highbound[i] : mu[i];
-        const double eta_hi =
-            (s_opt && its->second.highbound[i] > 0.0) ? its->second.highbound[i]
-                                                      : eta[i];
-        const double eta_lo =
-            (s_opt && its->second.lowbound[i] > 0.0) ? its->second.lowbound[i]
-                                                     : eta[i];
-        if (eta_hi <= 0.0 || eta_lo <= 0.0) continue;
+        /* every width, seed and box, is > 0 (checked above; the OPTIM
+         * low bound at parse) */
+        const double eta_hi = s_opt ? its->second.highbound[i] : eta[i];
+        const double eta_lo = s_opt ? its->second.lowbound[i] : eta[i];
         /* best corner: is there ANY feasible point in the box? */
         if (lo_mu + w / eta_hi > brc.max_reachable + tol_best) {
           if (lo_mu >= brc.max_reachable - tol_best) {

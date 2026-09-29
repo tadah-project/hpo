@@ -2,6 +2,7 @@
 #include <tadah/mlip/engines/refit_log.h>
 
 #include <tadah/core/logger.h>
+#include <tadah/core/number_format.h>
 #include <tadah/models/eam/eam_lattice.h>
 
 #ifdef TADAH_USE_CERES
@@ -659,29 +660,48 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   // Bump-support gate on the INIT anchors (authoring surface, radial bump
   // channels): an anchor whose support reaches past rcut cannot be honoured
   // — the ladder's clamp would silently move it, so reject it up front with
-  // the minimal --eta that fits.
+  // the minimal eta that fits.
   if (!knotfam) {
     const double w_rad = tadah::models::bump_halfwidth(
         blip5 ? tadah::models::BasisKind::Blip5 : tadah::models::BasisKind::Blip);
     const double tol = tadah::models::bump_rcut_tol(rcut);
-    // `step`: the density channel under RHOFORM MONOTONE, whose written
-    // SGRIDMB must be > 0 (an eta <= 0 step is not non-increasing), so an
-    // anchor with --eta <= 0 is an error there instead of being skipped.
-    auto check_init = [&](const BlipFit &f, const char *nm, bool step) {
+    // A radial bump needs a width eta > 0 in every form (owner decision
+    // 2026-09-29): it spans [mu - w/eta, mu + w/eta], so eta <= 0 has no
+    // support edge (the bump is even in eta and was fitted as its mirror),
+    // and a MONOTONE step with eta <= 0 is not non-increasing. Only a
+    // MANUAL placement states a width; the others take eta_def > 0. The
+    // anchor is named by its place among its channel's INIT lines.
+    {
+      int n_phi = 0, n_rho = 0;
+      for (const InitBasis &b : rcfg.init) {
+        if (b.channel == InitBasis::F) continue;
+        const bool phi = b.channel == InitBasis::PHI;
+        const int ordinal = phi ? ++n_phi : ++n_rho;
+        if (!b.has_eta || b.eta > 0.0) continue;
+        const std::string nm = phi ? "phi" : "rho";
+        const std::string up = phi ? "PHI" : "RHO";
+        throw std::runtime_error(
+            "tadah refit INIT [" + nm + "]: the basis at mu " +
+            core::format_roundtrip(b.mu) + " (INIT " + up + " anchor " +
+            std::to_string(ordinal) + ") has eta " +
+            core::format_roundtrip(b.eta) + " <= 0; a radial bump needs a "
+            "width eta > 0 (it spans [mu - w/eta, mu + w/eta]; tadah hpo "
+            "refuses a width <= 0)" +
+            (!phi && rho_form == RhoForm::Monotone
+                 ? std::string("; RHOFORM MONOTONE fits the density in "
+                               "integrated-bump steps, which need eta > 0 "
+                               "(SGRIDMB > 0)")
+                 : std::string()) +
+            ". Set the anchor's width > 0: INIT " + up + " MANUAL <mu> <eta>.");
+      }
+    }
+    auto check_init = [&](const BlipFit &f, const char *nm) {
       for (int k = 0; k < f.n(); ++k) {
-        if (f.eta[k] <= 0.0 && step)
-          throw std::runtime_error(
-              std::string("tadah refit INIT [") + nm + "]: the basis at mu " +
-              core::to_string(f.mu[k], 6) + " has eta " +
-              core::to_string(f.eta[k], 6) + " <= 0; RHOFORM MONOTONE fits "
-              "the density in integrated-bump steps, which need eta > 0 "
-              "(SGRIDMB > 0). Set --eta > 0 on the anchor.");
-        if (f.eta[k] <= 0.0) continue;
         const double reach = f.mu[k] + w_rad / f.eta[k];
         if (reach <= rcut + tol) continue;
         const std::string hint =
             f.mu[k] < rcut - tol
-                ? "Set --eta >= " +
+                ? "Set its eta >= " +
                       core::to_string(w_rad / (rcut - f.mu[k]), 6) +
                       " or move the anchor inward."
                 : "Move the anchor below rcut (no width can fit a bump "
@@ -695,8 +715,8 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
             "there (bump-support gate). " + hint);
       }
     };
-    check_init(init_phi, "phi", /*step=*/false);
-    check_init(init_rho, "rho", /*step=*/rho_form == RhoForm::Monotone);
+    check_init(init_phi, "phi");
+    check_init(init_rho, "rho");
   }
 
   // ---- per-function ladders with energy-metric rung selection ----

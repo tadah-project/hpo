@@ -1408,6 +1408,23 @@ int CompactBlipFitter::merge_close_knots(BlipFit &f) const {
   return n_merged;
 }
 
+namespace {
+// Every radial bump width is > 0: INIT refuses an anchor with eta <= 0
+// (HPORefitEngine), the ladder searches widths in [0.03 eta0, 80 eta0] and
+// FUSE keeps them at or above its width floor. A width <= 0 here is a
+// broken invariant, not a bump to pass over: its c + w/eta is no support
+// edge (owner decision 2026-09-29).
+void require_positive_bump_widths(const BlipFit &f, const char *who) {
+  for (int k = 0; k < f.n(); ++k)
+    if (!(f.eta[k] > 0.0))
+      throw std::logic_error(
+          std::string("compact_fitter ") + who + ": radial bump " +
+          std::to_string(k + 1) + " (mu " + std::to_string(f.mu[k]) +
+          ") has width eta " + std::to_string(f.eta[k]) +
+          " <= 0; every radial bump width must be > 0");
+}
+}  // namespace
+
 int clamp_bump_support_params(BlipFit &f, double hard_rcut, double span) {
   // Bump-support projection: the optimisers' boxes cap the CENTRE at
   // hard_rcut but cannot express the JOINT constraint mu + w/eta <= rcut
@@ -1420,9 +1437,9 @@ int clamp_bump_support_params(BlipFit &f, double hard_rcut, double span) {
   const double w = bump_w(f.kind);
   const double tol = tadah::models::bump_rcut_tol(hard_rcut);
   const double eta_ub = 80.0 * (std::max(1, f.n() - 1) / span);
+  require_positive_bump_widths(f, "clamp_bump_support_params");
   int moved = 0;
   for (int k = 0; k < f.n(); ++k) {
-    if (f.eta[k] <= 0.0) continue;
     if (f.mu[k] + w / f.eta[k] <= hard_rcut + tol) continue;
     if (f.is_pinned(k))
       throw std::runtime_error(
@@ -1454,9 +1471,9 @@ double CompactBlipFitter::bump_spill_guard(const BlipFit &f) const {
   if (cfg_.hard_rcut <= 0.0 || one_sided(f.kind)) return 1.0;
   const double w = bump_w(f.kind);
   const double s = 0.02 * span_;
+  require_positive_bump_widths(f, "bump_spill_guard");
   double pen = 0.0;
   for (int k = 0; k < f.n(); ++k) {
-    if (f.eta[k] <= 0.0) continue;
     const double over = f.mu[k] + w / f.eta[k] - cfg_.hard_rcut;
     if (over > 0.0) {
       const double v = over / s;
@@ -2154,9 +2171,9 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
   // The radial bump widths stay > 0 in every form. Unlike the ladder's
   // refine, the joint solve has no width box, and a bump is even in eta, so
   // it can walk a width through 0 to its mirror: harmless for the bump's
-  // values, but the bump-support clamp and BUMPGATE skip eta <= 0 (a
-  // written pot then reaches past its hard cutoff), and a MONOTONE step with
-  // eta < 0 RISES (DM_REAM refuses SGRIDMB <= 0). phi and rho keep the
+  // values, but eta <= 0 has no support edge (the bump-support clamp
+  // refuses it, and tadah hpo refuses such a width in a potential), and a
+  // MONOTONE step with eta < 0 RISES (DM_REAM refuses SGRIDMB <= 0). phi and rho keep the
   // ladder's own width floor 0.03 eta0 (eta0 = max(1, n - 1)/span over the
   // channel's samples); a start below it is lifted. Pinned widths are held
   // constant (the starts were lifted above).

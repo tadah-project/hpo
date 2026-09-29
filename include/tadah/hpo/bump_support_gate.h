@@ -26,8 +26,10 @@
 // arms nothing and evaluates byte-identically.
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -160,6 +162,21 @@ build_bump_gate_table(const core::Context &ctx, const HPOTargets &trg) {
     const auto itc = trg.optimap.find(ch.ckey);
     const auto its = trg.optimap.find(ch.skey);
     for (std::size_t i = 0; i < mu.size(); ++i) {
+      /* A radial bump width is > 0, seed and OPTIM box alike:
+       * validate_hpo_setup refuses a seed width <= 0 and HPOTargets a box
+       * low bound <= 0 (models::optim_low_bound_rule). */
+      const bool s_opt_i = its != trg.optimap.end() &&
+                           i < its->second.opt.size() && its->second.opt[i];
+      const double w_seed = eta[i];
+      const double w_lo = s_opt_i ? its->second.lowbound[i] : w_seed;
+      if (!(w_seed > 0.0) || !(w_lo > 0.0))
+        throw std::logic_error(
+            "bump-support gate: " + ch.skey + " (" + std::to_string(i + 1) +
+            ") = " + core::to_string(w_seed) +
+            (s_opt_i ? " (OPTIM low bound " + core::to_string(w_lo) + ")"
+                     : std::string()) +
+            ": a radial bump width must be > 0 (validate_hpo_setup and the "
+            "OPTIM box rules refuse it)");
       BumpGateChannel::Bump b;
       b.index = i;
       b.c_fix = mu[i];
@@ -177,11 +194,7 @@ build_bump_gate_table(const core::Context &ctx, const HPOTargets &trg) {
        * violates — otherwise no candidate in the boxes can spill and the
        * per-eval check would be dead weight. */
       const double c_hi = b.c_flat >= 0 ? itc->second.highbound[i] : b.c_fix;
-      double eta_lo = b.s_flat >= 0 && its->second.lowbound[i] > 0.0
-                          ? its->second.lowbound[i]
-                          : b.s_fix;
-      if (!(eta_lo > 0.0)) continue;  /* startup parity: eta <= 0 skipped */
-      if (c_hi + ch.w / eta_lo <= ch.rcut.min_reachable + tol) continue;
+      if (c_hi + ch.w / w_lo <= ch.rcut.min_reachable + tol) continue;
       ch.bumps.push_back(b);
     }
     if (!ch.bumps.empty()) tbl.push_back(std::move(ch));
@@ -194,6 +207,11 @@ build_bump_gate_table(const core::Context &ctx, const HPOTargets &trg) {
  *  sum_violating (c + w/eta - rcut) / (w/eta) — additive across bumps and
  *  strictly monotone in every violating coordinate, so within the graded
  *  band any move that shrinks any violation is strictly downhill.
+ *  A width eta <= 0 (only an optimiser that leaves the OPTIM box, whose
+ *  width low bound is > 0, evaluates one) has no support edge and is a
+ *  violation too: it counts 1 - eta rcut / w, the continuation of the
+ *  overhang measure (which tends to 1 as eta -> 0+), growing as eta falls;
+ *  a NaN width counts +inf (the top of the graded band).
  *  p is the REAL-space theta vector (optimizers call host(sp.out(x))). */
 template <class ParamVec>
 inline double bump_gate_violation(const std::vector<BumpGateChannel> &tbl,
@@ -206,7 +224,11 @@ inline double bump_gate_violation(const std::vector<BumpGateChannel> &tbl,
     for (const auto &b : ch.bumps) {
       const double c = b.c_flat >= 0 ? p(b.c_flat) : b.c_fix;
       const double eta = b.s_flat >= 0 ? p(b.s_flat) : b.s_fix;
-      if (!(eta > 0.0)) continue;
+      if (!(eta > 0.0)) {
+        v += std::isnan(eta) ? std::numeric_limits<double>::infinity()
+                             : 1.0 - eta * rcut / ch.w;
+        continue;
+      }
       const double reach = c + ch.w / eta;
       if (reach > rcut + tol) v += (reach - rcut) * eta / ch.w;
     }
