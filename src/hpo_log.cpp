@@ -2197,8 +2197,9 @@ void HPOLog::finish(const std::string& status_str)
             else
                 s << "n/a";
             s << ", best ";
-            /* The recorded best must be the reported one (a resumed run's
-             * checkpointed best has no value in this session). */
+            /* The recorded best must be the reported one: a value is
+             * recorded for every new best of this run (runs are not
+             * resumed), so n/a means the model was not derivable. */
             if (embf0_best_eval_ > 0 && have_best &&
                 embf0_best_eval_ == cur_best_eval_)
                 s << "(eval " << embf0_best_eval_ << ") "

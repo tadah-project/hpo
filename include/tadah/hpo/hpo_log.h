@@ -421,8 +421,8 @@ public:
      *  constant EMBF0 ZERO removes, or the isolated-atom embedding energy
      *  under FREE. HPO_Host records values only when @p derivable (a model
      *  linear in the raw descriptor); a value not recorded prints n/a.
-     *  Diagnostic only: never feeds a loss, row or potential. Not
-     *  checkpointed: a resumed run reports what this session recorded. */
+     *  Diagnostic only: never feeds a loss, row or potential. HPO runs
+     *  are not resumed: the values are this run's. */
     void arm_embf0(bool zero_mode, bool derivable);
     void record_embf0_start(std::size_t eval_num, double f0);
     /** Same guard as log_new_best(): kept only when @p loss is below the

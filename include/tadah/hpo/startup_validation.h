@@ -59,9 +59,13 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
  *     density must be valid for its form (models::DensityFormError): the
  *     grids, the MONOTONE cutoff whitelist and, under NONNEG / MONOTONE,
  *     WATOM > 0. Under NONNEG / MONOTONE with an OPTIM AMPGRIDMB, one
- *     WARNING when an optimiser of the spec tree can evaluate outside the
- *     box (ignores_bounds, PARAM fd_kernel ceres): such amplitudes are
- *     projected onto [0, inf) by HPO_Host;
+ *     WARNING that walks the phases of the run (strategy_phase_specs: the
+ *     STRATEGY-level optimiser, each MULTISTART start, the PRESTAGE
+ *     exploration and refinement, every INNER block, the local search of
+ *     an MLSL or AUGLAG included) and names each one whose optimiser can
+ *     evaluate outside the box (ignores_bounds; PARAM fd_kernel ceres on a
+ *     phase that takes gradients): such amplitudes are projected onto
+ *     [0, inf) by HPO_Host;
  *   - every width of a radial bump channel (SGRID2B of D2_Blip/D2_Blip5,
  *     SGRIDMB of a Blip/Blip5 density) is > 0, in every form
  *     (models::optim_low_bound_rule(key, ctx));
