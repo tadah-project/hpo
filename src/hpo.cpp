@@ -9,6 +9,7 @@
 #include <tadah/hpo/script_executor.h>
 #include <tadah/hpo/pc_worker_pool.h>   // PC_ISOLATION worker-process pool
 #include <tadah/hpo/iter_health.h>
+#include <tadah/hpo/rho_gates.h>
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/core/checkpoint.h>   // core::ShutdownRequested
 #include <tadah/core/context.h>
@@ -546,6 +547,13 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log)
     log.write_potential_section(ctx, host.train_size(), host.val_size(), elem_str,
                                 embf0_seed ? &*embf0_seed : nullptr);
     if (has_ream) log.arm_embf0(embf0_zero, host.embf0_diagnostic());
+    /* DM_REAM density report (a bare DM_REAM many-body term): the -c
+     * potential's and each WARM seed's rho_raw(r) -- and rhobar(a) under
+     * RHOBARGATE -- in POTENTIAL SETUP; RESULT repeats it for the best.
+     * Stored values only; never throws. */
+    if (detail::context_is_bare_ream(ctx))
+        log.write_density_report(detail::startup_density_report(ctx, trg),
+                                 trg.RHOBARGATE.has_value());
     {
         const auto& tr = host.load_transform_report();
         const auto& vr = host.val_load_transform_report();

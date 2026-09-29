@@ -149,8 +149,11 @@ struct DimTransform {
 };
 
 /* How a real box came to be (journal "origin" column; AUTO boxes and
- * BOUND_ADAPT arrive in later phases). */
-enum class BoxOrigin : std::uint8_t { Explicit, AutoLinear, AutoGeometric, Adapted };
+ * BOUND_ADAPT arrive in later phases). AutoLinearNonneg ("AUTO FRAC>=0")
+ * is the linear AUTO rule with lo = max(0, x0 - d): AMPGRIDMB under
+ * RHOFORM NONNEG / MONOTONE. */
+enum class BoxOrigin : std::uint8_t { Explicit, AutoLinear, AutoGeometric, Adapted,
+                                      AutoLinearNonneg };
 const char* box_origin_name(BoxOrigin o);
 
 struct DimSpec {

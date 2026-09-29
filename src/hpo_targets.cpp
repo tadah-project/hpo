@@ -19,6 +19,7 @@
 #include <tadah/hpo/loss_function.h>
 
 #include <algorithm>
+#include <cmath>
 #include <iomanip>
 #include <random>
 #include <fstream>
@@ -30,6 +31,109 @@ namespace tadah {
 namespace hpo {
 
 namespace fs = std::filesystem;
+
+namespace {
+
+/* The density-gate lines (RHOGATE, RHOBARGATE): strict grammar. Every
+ * number is one whole finite token (core::to_double accepts "nan", "inf"
+ * and trailing junk), keywords and their values are case-insensitive, and
+ * an unknown, repeated or value-less keyword is an error, so a typo cannot
+ * pass silently. */
+double gate_number(const std::string& tok, const std::string& what) {
+  char* end = nullptr;
+  const double v = std::strtod(tok.c_str(), &end);
+  if (tok.empty() || end != tok.c_str() + tok.size() || !std::isfinite(v))
+    throw std::runtime_error(what + " must be a finite number, got '" + tok + "'");
+  return v;
+}
+
+std::string gate_upper(std::string s) {
+  for (auto& ch : s) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+  return s;
+}
+
+/* The optional keyword pairs of a gate line from tokens[first] on: NPTS
+ * (both gates, [npts_min, 1e7]), SEED ERROR|WARN (both), R_LO (RHOGATE). */
+void parse_gate_options(const std::string& key, const std::string& grammar,
+                        const std::vector<std::string>& toks, std::size_t first,
+                        std::size_t npts_min, std::size_t& npts, bool& seed_warn,
+                        std::optional<double>* r_lo) {
+  std::vector<std::string> seen;
+  for (std::size_t t = first; t < toks.size(); t += 2) {
+    const std::string kw = gate_upper(toks[t]);
+    const bool known = kw == "NPTS" || kw == "SEED" || (r_lo && kw == "R_LO");
+    if (!known)
+      throw std::runtime_error(key + ": unexpected token '" + toks[t] + "'; " + grammar);
+    if (std::find(seen.begin(), seen.end(), kw) != seen.end())
+      throw std::runtime_error(key + ": " + kw + " given more than once; " + grammar);
+    seen.push_back(kw);
+    if (t + 1 >= toks.size())
+      throw std::runtime_error(key + ": " + kw + " needs a value; " + grammar);
+    const std::string& val = toks[t + 1];
+    if (kw == "NPTS") {
+      const double v = gate_number(val, key + " NPTS");
+      if (v != std::floor(v) || v < static_cast<double>(npts_min) || v > 1e7)
+        throw std::runtime_error(key + " NPTS must be an integer in [" +
+                                 std::to_string(npts_min) + ", 10000000], got '" +
+                                 val + "'");
+      npts = static_cast<std::size_t>(v);
+    } else if (kw == "SEED") {
+      const std::string m = gate_upper(val);
+      if (m != "ERROR" && m != "WARN")
+        throw std::runtime_error(key + " SEED must be ERROR or WARN, got '" + val + "'");
+      seed_warn = m == "WARN";
+    } else {
+      const double v = gate_number(val, key + " R_LO");
+      if (v < 0.0)
+        throw std::runtime_error(key + " R_LO must be >= 0, got '" + val + "'");
+      *r_lo = v;
+    }
+  }
+}
+
+RhoGateSpec parse_rhogate(std::istringstream& iss) {
+  static const std::string grammar =
+      "expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]";
+  std::vector<std::string> toks;
+  for (std::string t; iss >> t;) toks.push_back(t);
+  if (toks.empty())
+    throw std::runtime_error("RHOGATE: the tolerance is missing; " + grammar);
+  RhoGateSpec s;
+  s.tol = gate_number(toks[0], "RHOGATE tol");
+  if (s.tol < 0.0)
+    throw std::runtime_error("RHOGATE tol must be >= 0, got '" + toks[0] + "'");
+  parse_gate_options("RHOGATE", grammar, toks, 1, 2, s.npts, s.seed_warn, &s.r_lo);
+  return s;
+}
+
+RhoBarGateSpec parse_rhobargate(std::istringstream& iss) {
+  static const std::string grammar =
+      "expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] "
+      "[SEED ERROR|WARN]";
+  std::vector<std::string> toks;
+  for (std::string t; iss >> t;) toks.push_back(t);
+  if (toks.size() < 4)
+    throw std::runtime_error("RHOBARGATE: the lattice, a0, f_lo and f_hi are "
+                             "required; " + grammar);
+  RhoBarGateSpec s;
+  s.lattice = toks[0];
+  for (auto& ch : s.lattice) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  if (s.lattice != "bcc" && s.lattice != "fcc" && s.lattice != "hcp")
+    throw std::runtime_error("RHOBARGATE lattice must be bcc, fcc or hcp, got '" +
+                             toks[0] + "'");
+  s.a0   = gate_number(toks[1], "RHOBARGATE a0");
+  s.f_lo = gate_number(toks[2], "RHOBARGATE f_lo");
+  s.f_hi = gate_number(toks[3], "RHOBARGATE f_hi");
+  if (!(s.a0 > 0.0))
+    throw std::runtime_error("RHOBARGATE a0 must be > 0, got '" + toks[1] + "'");
+  if (!(s.f_lo > 0.0) || !(s.f_lo < s.f_hi))
+    throw std::runtime_error("RHOBARGATE needs 0 < f_lo < f_hi, got f_lo '" +
+                             toks[2] + "', f_hi '" + toks[3] + "'");
+  parse_gate_options("RHOBARGATE", grammar, toks, 4, 3, s.npts, s.seed_warn, nullptr);
+  return s;
+}
+
+}  // namespace
 
 size_t HPOTargets::ui_offset(std::vector<std::string> &tokens, size_t ui) {
   size_t offset = 0;
@@ -126,6 +230,12 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
   }
 
   models::D_mJoin::expand_grids(context);
+
+  /* RHOFORM (the DM_REAM density form) is mandatory and has no default:
+   * read it before the OPTIM lines (non-negative AMPGRIDMB boxes) and the
+   * WARM seeds (form check) that depend on it. Stored value only. */
+  if (models::context_has_ream(context))
+    rho_form_ = models::require_rhoform(context, "tadah hpo");
 
   /* LS keeps configuration order: the outvar/loss columns, the
    * per-evaluation rows and the potential-file header are emitted in LS
@@ -270,7 +380,9 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
         static_cast<std::uint64_t>(std::random_device{}()));
     InitContext ictx{s, *this, seed, &context};
     std::size_t k = s.init_strategy_spec.k_total.value_or(strategy->default_k());
-    s.optim_init = strategy->generate(ictx, k);
+    /* with the provenance of every point (CONFIG, WARM <file>, RANDOM, LHS,
+     * SOBOL; an empty chain is CONFIG) */
+    s.optim_init = strategy->generate_tagged(ictx, k, s.optim_init_origin);
     if (s.optim_init.empty()) {
       /* A non-empty chain can still come back empty (e.g. WARM with a
        * missing file under WARM_ON_MISMATCH warn/skip and no further
@@ -1039,6 +1151,18 @@ void HPOTargets::read(const std::string& fn)
                 else throw std::runtime_error(
                         "BUMPGATE must be CANDIDATE or STRICT, got '" + v + "'");
             }
+            /* RHOGATE / RHOBARGATE: the DM_REAM density gates (strict
+             * grammar above; semantic checks in validate_hpo_setup). */
+            else if (key=="RHOGATE") {
+                if (RHOGATE)
+                    throw std::runtime_error("RHOGATE given more than once");
+                RHOGATE = parse_rhogate(iss);
+            }
+            else if (key=="RHOBARGATE") {
+                if (RHOBARGATE)
+                    throw std::runtime_error("RHOBARGATE given more than once");
+                RHOBARGATE = parse_rhobargate(iss);
+            }
 
             /* PC_FAILPROBE: minimiser-free potential-sanity probe (graded-
              * FAILSCORE Tier 3). Strips the probe-only flags (--gate, --s0)
@@ -1461,6 +1585,30 @@ bool HPOTargets::optim_key_positive_only(const std::string& key) {
   return false;
 }
 
+std::string HPOTargets::optim_structure_key_error(const std::string& key) {
+  static const struct { const char* key; const char* what; } structure[] = {
+    {"RHOFORM",  "RHOFORM (SIGNED|NONNEG|MONOTONE) selects the DM_REAM density "
+                 "form, a discrete property of the potential (its amplitudes "
+                 "were fitted in that form)"},
+    {"TYPE2B",   "TYPE2B names the two-body descriptor and its structure "
+                 "tokens (basis code, sizes, species)"},
+    {"TYPEMB",   "TYPEMB names the many-body descriptor and its structure "
+                 "tokens (basis code, sizes, species)"},
+    {"RCTYPE2B", "RCTYPE2B names the two-body cutoff function"},
+    {"RCTYPEMB", "RCTYPEMB names the many-body cutoff function"},
+    {"KDEG2B",   "KDEG2B lists the two-body knot degrees (3|5)"},
+    {"KDEGMB",   "KDEGMB lists the density knot degrees (3|5)"},
+    {"KDEGEMB",  "KDEGEMB lists the embedding knot degrees (3|5)"},
+  };
+  const std::string k = core::to_upper(key);
+  for (const auto& e : structure)
+    if (k == e.key)
+      return "OPTIM " + k + " is not a valid search target: " + e.what +
+             ", structure data rather than a continuous parameter; set it "
+             "in the -c potential/configuration.";
+  return "";
+}
+
 SearchSpace HPOTargets::build_search_space() const {
   std::vector<DimSpec> dims;
   for (const auto& kv : optimap) {
@@ -1547,7 +1695,9 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
       "#   label        KEY[n]: n is the OPTIM index (1-based; for FIXWEIGHT the model weight\n"
       "#                named in FIXINDEX); single-value keys carry no index\n"
       "#   lo, hi       real bounds the optimiser may not leave\n"
-      "#   origin       OPTIM = explicit bounds; AUTO FRAC / AUTO RATIO = derived from the seed\n"
+      "#   origin       OPTIM = explicit bounds; AUTO FRAC / AUTO RATIO = derived from the seed;\n"
+      "#                AUTO FRAC>=0 = AUTO FRAC with lo = max(0, x0 - d) (AMPGRIDMB under\n"
+      "#                RHOFORM NONNEG / MONOTONE); lo is 0 only where x0 - d < 0\n"
       "#   x0           starting point (real units)\n"
       "#   scale, c     shape of the internal coordinate: LIN, LOG (ln x) or ASINH (asinh(x/c));\n"
       "#                c is the ASINH linear scale, 1 for the other shapes\n"
@@ -1627,6 +1777,10 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
       "the DM_REAM embedding reference, a discrete property of the "
       "potential; set it in the -c potential/configuration.");
   }
+  /* Structure keys, also before context.size(k): RHOFORM has no blueprint
+   * default, so size() would log an ERROR and throw a generic message. */
+  if (const std::string e = optim_structure_key_error(k); !e.empty())
+    throw std::runtime_error(e);
 
   Opti& omap = optimap[k];
   size_t s = context.size(k);
@@ -1708,9 +1862,21 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
     " or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>]"
     " [LIN | LOG | ASINH <c>]";
 
+  /* RHOFORM NONNEG / MONOTONE (rho >= 0 by construction): the AMPGRIDMB
+   * boxes are non-negative (models::optim_key_lower_bound: AUTO lo =
+   * max(0, x0 - d), an explicit lo < 0 is refused), the WATOM boxes
+   * positive and, under MONOTONE, the SGRIDMB boxes positive
+   * (models::optim_low_bound_rule). */
+  const bool nonneg_amp = models::optim_key_lower_bound(k, rho_form_) ==
+                          models::OptimLowerBound::NonNegative;
+  const auto low_rule = models::optim_low_bound_rule(k, rho_form_);
+  const std::string form_name =
+      rho_form_ ? std::string("RHOFORM ") + models::rhoform_name(*rho_form_) : "";
+
   const bool auto_box = !tokens.empty() && upper(tokens.front()) == "AUTO";
   double low = 0.0, high = 0.0;
   struct AutoRule { bool geometric = false; double factor = 0.0; double floor = 0.0; double group_floor = 0.0; } rule;
+  bool floor_set = false;   // FLOOR or GROUP_FLOOR given
   if (auto_box) {
     tokens.erase(tokens.begin());
     take_tag(tokens);
@@ -1732,9 +1898,11 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
       } else if (opt == "FLOOR") {
         if (v < 0.0) throw std::runtime_error("OPTIM " + k + ": AUTO FLOOR must be >= 0");
         rule.floor = v;
+        floor_set = true;
       } else if (opt == "GROUP_FLOOR") {
         if (v < 0.0) throw std::runtime_error("OPTIM " + k + ": AUTO GROUP_FLOOR must be >= 0");
         rule.group_floor = v;
+        floor_set = true;
       } else {
         throw std::runtime_error("OPTIM " + k + ": unexpected AUTO option '" +
                                  tokens[t] + "'" + grammar);
@@ -1748,6 +1916,10 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
       rule.geometric = optim_key_positive_only(k);
       rule.factor    = rule.geometric ? 2.0 : 0.5;
     }
+    /* Non-negative amplitudes: NNLS fits put amplitudes at exactly 0, so a
+     * linear rule without a floor gets the refit writer's group floor
+     * (1e-3 max|x0| of the line) and the box [0, d] for a zero seed. */
+    if (nonneg_amp && !rule.geometric && !floor_set) rule.group_floor = 1e-3;
   } else {
     take_tag(tokens);
     if (tokens.size() != 2) {
@@ -1798,6 +1970,20 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
         group_max = std::max(group_max, std::fabs(core::to_double(omap.config[i])));
     }
   }
+  /* A geometric box cannot reach 0: non-negative amplitudes take RATIO only
+   * when every seed of the line is > 0. */
+  if (auto_box && nonneg_amp && rule.geometric) {
+    for (const auto& ui : user_indices) {
+      const size_t i = ui_offset(omap.config, ui);
+      if (i >= s || !core::is_number(omap.config[i])) continue;  // reported below
+      if (core::to_double(omap.config[i]) > 0.0) continue;
+      throw std::runtime_error(
+          "OPTIM " + k + " (" + core::to_string(ui) + "): AUTO RATIO under " +
+          form_name + " needs every seed on the line > 0 (got " +
+          omap.config[i] + "); use FRAC (the default), whose box is clamped "
+          "at 0");
+    }
+  }
 
   for (const auto& ui : user_indices) {
     try {
@@ -1810,6 +1996,10 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
                                    "): AUTO needs a numeric CONFIG seed (got '" +
                                    omap.config[i] + "')");
         const double x0 = core::to_double(omap.config[i]);
+        if (nonneg_amp && x0 < 0.0)
+          throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
+                                   "): the seed " + omap.config[i] + " is negative, but " +
+                                   form_name + " requires every AMPGRIDMB amplitude >= 0");
         if (rule.geometric) {
           if (!(x0 != 0.0))
             throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
@@ -1820,6 +2010,14 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
         } else {
           const double d = std::max({rule.factor * std::fabs(x0), rule.floor,
                                      rule.group_floor * group_max});
+          if (!(d > 0.0) && nonneg_amp && !floor_set)
+            throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
+                                     "): every seed on this line is 0, so the AUTO box has "
+                                     "zero width (FRAC and the GROUP_FLOOR 1e-3 that " +
+                                     form_name + " implies for AMPGRIDMB are relative to the "
+                                     "seeds); set FLOOR <a> for the box [0, a], or give "
+                                     "explicit bounds `OPTIM " + k + " (" +
+                                     core::to_string(ui) + ") 0 <high>`");
           if (!(d > 0.0))
             throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
                                      "): AUTO FRAC gives a zero-width box (seed 0 or FRAC 0); " +
@@ -1829,6 +2027,12 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
                                         : "set FLOOR or GROUP_FLOOR"));
           lo_i = x0 - d; hi_i = x0 + d;
           omap.origin[i] = BoxOrigin::AutoLinear;
+          /* non-negative amplitudes: lo = max(0, x0 - d), before the LOG
+           * check below (a LOG box cannot start at 0) */
+          if (nonneg_amp) {
+            if (lo_i < 0.0) lo_i = 0.0;
+            omap.origin[i] = BoxOrigin::AutoLinearNonneg;
+          }
         }
         if (tf.kind == ScaleKind::Log && lo_i <= 0.0)
           throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
@@ -1836,6 +2040,14 @@ void HPOTargets::process_optim_config(std::istringstream& iss) {
                                    core::to_string(hi_i) + "] is not positive but the dim is "
                                    "tagged LOG; use RATIO (geometric) or drop the tag");
       }
+      if (low_rule && !low_rule->admits(lo_i))
+        throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
+                                 "): the low bound " + core::to_string(lo_i) +
+                                 (low_rule->strict ? " is not > 0" : " is negative") +
+                                 ", but " + form_name + " requires " +
+                                 low_rule->requirement + "; use a low bound " +
+                                 (low_rule->strict ? "> 0"
+                                                   : ">= 0 (0 is allowed) or AUTO"));
       omap.opt[i] = true;
       omap.highbound[i] = hi_i;
       omap.lowbound[i] = lo_i;

@@ -686,7 +686,7 @@ public:
             std::random_device rd;
             seed = static_cast<std::uint64_t>(rd()) + restarts;
           }
-          InitContext ic{cur, *trg_, seed};
+          InitContext ic{cur, *trg_, seed, &trg_->run_context()};
           const std::size_t k_use = (refresh_k_ > 0) ? refresh_k_
                                                      : refresh_->default_k();
           auto pts = refresh_->generate(ic, k_use);

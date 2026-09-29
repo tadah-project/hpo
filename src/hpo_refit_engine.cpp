@@ -9,6 +9,7 @@
 #include <tadah/hpo/refit/refit_config.h>
 #include <tadah/hpo/refit/refit_parser.h>
 #include <tadah/models/descriptors/basis_kind.h>
+#include <tadah/models/descriptors/dm/ream_density.h>
 #endif
 
 #include <algorithm>
@@ -44,6 +45,9 @@ using tadah::core::LogLevel;
 using tadah::models::EAMRefit;
 using tadah::models::EAMRefitConfig;
 using tadah::models::EAMSetflIO;
+using tadah::models::RhoForm;
+using tadah::models::rhoform_is_positive;
+using tadah::models::rhoform_name;
 namespace lat = tadah::models::eam_lattice;
 using namespace tadah::hpo::refit;
 
@@ -209,6 +213,16 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
       std::max({0.8 * r_reach, cfg.r_lo_frac * rcut, eam.dr()});
   // the final EAMRefit joins the setfl continuations exactly at the window
   cfg.r_lo_frac = rwin_lo / rcut;
+
+  // ---- RHOFORM: the density form the written pot declares ----
+  // "Fit what you evaluate" again: the rho ladder, FUSE and the handoff fit
+  // the density in cfg.rho_form (CompactConfig / BlipFit form): NONNEG =
+  // the bump expansion with every amplitude >= 0, MONOTONE = the integrated-
+  // bump steps with every amplitude >= 0 (the knot families were refused by
+  // RefitEngine). A table the form cannot follow is refused before any
+  // fitting, with the dense path's pre-checks on this path's fit window.
+  const RhoForm rho_form = cfg.rho_form;
+  probe.check_rho_table(rwin_lo);
 
   // ---- basis family (REFIT_BASIS, validated by the base engine) ----
   // Knot5: one-sided quintic knot functions — phi/rho LEFT-active (vanish
@@ -483,6 +497,19 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                    : "embedding: EMBF0 FREE — raw basis against the raw "
                      "table F (legacy, tadah 1.5.0)");
   }
+  rlog.line(
+      std::string("density: RHOFORM ") + rhoform_name(rho_form) +
+      (rho_form == RhoForm::Signed
+           ? " — rho = sum_k c_k g(eta_k (r - mu_k)) with signed amplitudes "
+             "(tadah <= 1.5.1)"
+       : rho_form == RhoForm::NonNeg
+           ? " — rho = sum_k c_k g(eta_k (r - mu_k)) with every c_k >= 0 "
+             "(non-negative least squares; Ceres lower bounds in REFINE / "
+             "FUSE): rho >= 0"
+           : " — rho = sum_k c_k S(eta_k (r - mu_k)), S the integrated bump "
+             "(1 inside, 0 beyond mu + w/eta), every c_k >= 0 (non-negative "
+             "least squares; Ceres lower bounds in REFINE / FUSE): rho >= 0 "
+             "and non-increasing"));
 
   // ---- the E-V scan backbone shared by metric + joint refinement ----
   // Rows 0..M_nat-1: the native lattice across the pressure regimes (these
@@ -637,8 +664,18 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
     const double w_rad = tadah::models::bump_halfwidth(
         blip5 ? tadah::models::BasisKind::Blip5 : tadah::models::BasisKind::Blip);
     const double tol = tadah::models::bump_rcut_tol(rcut);
-    auto check_init = [&](const BlipFit &f, const char *nm) {
+    // `step`: the density channel under RHOFORM MONOTONE, whose written
+    // SGRIDMB must be > 0 (an eta <= 0 step is not non-increasing), so an
+    // anchor with --eta <= 0 is an error there instead of being skipped.
+    auto check_init = [&](const BlipFit &f, const char *nm, bool step) {
       for (int k = 0; k < f.n(); ++k) {
+        if (f.eta[k] <= 0.0 && step)
+          throw std::runtime_error(
+              std::string("tadah refit INIT [") + nm + "]: the basis at mu " +
+              core::to_string(f.mu[k], 6) + " has eta " +
+              core::to_string(f.eta[k], 6) + " <= 0; RHOFORM MONOTONE fits "
+              "the density in integrated-bump steps, which need eta > 0 "
+              "(SGRIDMB > 0). Set --eta > 0 on the anchor.");
         if (f.eta[k] <= 0.0) continue;
         const double reach = f.mu[k] + w_rad / f.eta[k];
         if (reach <= rcut + tol) continue;
@@ -658,8 +695,8 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
             "there (bump-support gate). " + hint);
       }
     };
-    check_init(init_phi, "phi");
-    check_init(init_rho, "rho");
+    check_init(init_phi, "phi", /*step=*/false);
+    check_init(init_rho, "rho", /*step=*/rho_form == RhoForm::Monotone);
   }
 
   // ---- per-function ladders with energy-metric rung selection ----
@@ -670,11 +707,14 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                         const CompactBlipFitter::Metric &metric,
                         const char *name, std::vector<LadderRow> &trace,
                         BasisKind kind, const BlipFit &init, int nmax,
-                        int max_add, double hard_rcut, bool zero_ref) {
+                        int max_add, double hard_rcut, bool zero_ref,
+                        RhoForm form) {
     CompactConfig fcfg = lcfg;
     fcfg.n_max = nmax;  // this function's REFIT_COMPACT_NMAX ceiling
     // EMBF0 ZERO zero-referenced basis: the F ladder only (d.ys = F_ref)
     fcfg.zero_ref = zero_ref;
+    // RHOFORM: the rho ladder only (phi and F pass Signed)
+    fcfg.rho_form = form;
     // Bump-support gate (radial bump channels only; 0 = off): the emitted
     // pot is hard-truncated at rcut, so every bump must keep mu + w/eta <=
     // rcut — spilling tails are fitted against no data and `tadah hpo`
@@ -746,7 +786,7 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
         return worst;
       },
       "phi", tr_phi, k_rad, init_phi, nmax_fn[0], rcfg.explore.max_add[0],
-      knotfam ? 0.0 : rcut, /*zero_ref=*/false);
+      knotfam ? 0.0 : rcut, /*zero_ref=*/false, RhoForm::Signed);
 
   BlipFit frho = run_ladder(
       drho, rwin_lo, rcut,
@@ -761,7 +801,7 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
         return worst;
       },
       "rho", tr_rho, k_rad, init_rho, nmax_fn[1], rcfg.explore.max_add[1],
-      knotfam ? 0.0 : rcut, /*zero_ref=*/false);
+      knotfam ? 0.0 : rcut, /*zero_ref=*/false, rho_form);
 
   // F metric: absolute F values -> Fref (EMBF0 ZERO: f is zero-referenced)
   BlipFit fF = run_ladder(
@@ -775,7 +815,7 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
         return worst;
       },
       "F", tr_F, k_emb, init_F, nmax_fn[2], rcfg.explore.max_add[2],
-      /*hard_rcut=*/0.0, zero);  // embedding: no r cutoff
+      /*hard_rcut=*/0.0, zero, RhoForm::Signed);  // embedding: no r cutoff
 
   // ---- FUSE stage ----
   std::string joint_term;
@@ -817,11 +857,12 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                 " refine, weighted, no E-V) ----");
       auto fuse_one = [&](BlipFit &fit, const JointCurveData &d, double lo,
                           double hi, BasisKind kind, const char *nm,
-                          double hard_rcut, bool zero_ref) {
+                          double hard_rcut, bool zero_ref, RhoForm form) {
         CompactConfig ffcfg = lcfg;
         ffcfg.refine_algo = joint_algo;  // FUSE honours its configured optimiser
         ffcfg.hard_rcut = hard_rcut;     // bump-support gate (radial bumps)
         ffcfg.zero_ref = zero_ref;       // EMBF0 ZERO basis (F only)
+        ffcfg.rho_form = form;           // RHOFORM (rho only)
         CompactBlipFitter ff(d.xs, d.ys, d.wts, lo, hi, ffcfg, kind, d.dys,
                              d.d2ys);
         const double before = ff.combined_curve_score(fit);
@@ -835,10 +876,11 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                   core::to_string(before, 4) + " -> " + core::to_string(after, 4));
       };
       fuse_one(fphi, dphi, rwin_lo, rcut, k_rad, "phi", knotfam ? 0.0 : rcut,
-               /*zero_ref=*/false);
+               /*zero_ref=*/false, RhoForm::Signed);
       fuse_one(frho, drho, rwin_lo, rcut, k_rad, "rho", knotfam ? 0.0 : rcut,
-               /*zero_ref=*/false);
-      fuse_one(fF, dF, 0.0, rho_reach, k_emb, "F", 0.0, zero);
+               /*zero_ref=*/false, rho_form);
+      fuse_one(fF, dF, 0.0, rho_reach, k_emb, "F", 0.0, zero,
+               RhoForm::Signed);
     }
     report_fuse("curve, weighted curve refine");
   } else {
@@ -846,23 +888,34 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
     rlog.line("---- joint refinement (curves + E-V residuals, " + joint_algo +
               ") ----");
     // EMBF0: joint_refine takes the reference from fF.zero_ref (stamped by
-    // the F ladder); dF.ys and e_orig are already on F_ref.
-    e_resid_max =
-        joint_refine(fphi, frho, fF, dphi, drho, dF, dists, e_orig, e_w,
-                     /*curve_weight=*/1.0, lcfg.joint_max_iter, lcfg.joint_ftol,
-                     joint_algo, &joint_term, knotfam ? 0.0 : rcut,
-                     knotfam ? 0.0 : rcut);
-    // Bump-support gate: Ceres bounded the centres, but the joint
-    // mu + w/eta <= rcut constraint needs the projection + a linear re-solve
-    // (the clamp core is shared with the ladder's clamp_bump_support).
+    // the F ladder); dF.ys and e_orig are already on F_ref. RHOFORM: it
+    // takes the density form from frho.form (stamped by the rho ladder);
+    // under NONNEG / MONOTONE it bounds the amplitudes at 0 and the bump
+    // widths at the ladder's floor.
+    auto run_joint = [&]() {
+      return joint_refine(fphi, frho, fF, dphi, drho, dF, dists, e_orig, e_w,
+                          /*curve_weight=*/1.0, lcfg.joint_max_iter,
+                          lcfg.joint_ftol, joint_algo, &joint_term,
+                          knotfam ? 0.0 : rcut, knotfam ? 0.0 : rcut);
+    };
+    e_resid_max = run_joint();
+    // Bump-support gate: joint_refine optimises the radial bumps in their
+    // outer support edges bounded at rcut, so this projection (the clamp
+    // core shared with the ladder's clamp_bump_support) normally moves
+    // nothing; it still guards what the solve does not bound (a pinned INIT
+    // anchor, FUSE ALGO NONE). A moved channel gets a linear re-solve in its
+    // form: rho under NONNEG / MONOTONE through non-negative least squares.
     if (!knotfam) {
+      const BlipFit phi_joint = fphi, rho_joint = frho;  // the joint solution
       bool moved_any = false;
       auto reclamp = [&](BlipFit &fit, const JointCurveData &d, double lo,
                          double hi, const char *nm) {
         const int moved = clamp_bump_support_params(fit, rcut, hi - lo);
         if (moved == 0) return;
         moved_any = true;
-        CompactBlipFitter lin(d.xs, d.ys, d.wts, lo, hi, lcfg, fit.kind,
+        CompactConfig lincfg = lcfg;
+        lincfg.rho_form = fit.form;  // Signed for phi, the form for rho
+        CompactBlipFitter lin(d.xs, d.ys, d.wts, lo, hi, lincfg, fit.kind,
                               d.dys, d.d2ys);
         lin.solve_coeffs(fit);
         rlog.line(std::string("joint[") + nm + "]: bump-support clamp moved " +
@@ -872,6 +925,77 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
       reclamp(fphi, dphi, rwin_lo, rcut, "phi");
       reclamp(frho, drho, rwin_lo, rcut, "rho");
       if (moved_any) e_resid_max = report_energy_residual();
+
+      // The linear re-solve refits a moved channel's coefficients to its
+      // curve alone, which can drop the E-V coupling the joint solve
+      // converged to (before the edge bound: Ravelo Ta setfl, NONNEG, seed
+      // 12345, one phi bump moved after a cost-0.0098 joint solve, max
+      // |dE|/tol went to 426.9 and the self-test failed at 42 / 88
+      // meV/atom). When it leaves the E-V residuals above tolerance, the
+      // joint refinement is re-run from the joint solution with the moved
+      // bumps held: each pass projects both radial channels, holds every
+      // moved bump's (mu, eta) through the INIT pin mask (restored
+      // afterwards) and refits every coefficient and every other bump against
+      // curves + E-V (under NONNEG / MONOTONE the rho amplitudes keep their
+      // >= 0 bounds); a bump a re-run pushes out is held in the next pass.
+      // Every pass holds at least one more bump, so the passes end, within
+      // the radial bump count, when nothing spills any more; a bump that
+      // still spills after that gets the linear re-solve. The result with the
+      // smaller max |dE|/tol is kept. Within tolerance the re-solve stands (it
+      // follows the curves more closely). Every density form.
+      if (moved_any && e_resid_max > 1.0) {
+        const BlipFit phi_lin = fphi, rho_lin = frho, F_lin = fF;
+        const double e_lin = e_resid_max;
+        const std::string term_lin = joint_term;
+        rlog.line("joint: the linear re-solve leaves max |dE|/tol = " +
+                  core::to_string(e_lin, 4) + " (RHOFORM " +
+                  rhoform_name(rho_form) + "): joint refinement re-run from "
+                  "the joint solution with the moved bumps held");
+        fphi = phi_joint;
+        frho = rho_joint;
+        // each pass holds >= 1 more bump: the loop ends once nothing spills
+        const int held_passes = fphi.n() + frho.n();
+        auto hold_clamped = [&](BlipFit &fit) {
+          const std::vector<double> mu0 = fit.mu, eta0 = fit.eta;
+          const int moved =
+              clamp_bump_support_params(fit, rcut, rcut - rwin_lo);
+          if (moved == 0) return 0;
+          fit.pinned.resize(fit.mu.size(), false);
+          for (int k = 0; k < fit.n(); ++k)
+            if (fit.mu[k] != mu0[k] || fit.eta[k] != eta0[k])
+              fit.pinned[k] = true;
+          return moved;
+        };
+        for (int pass = 1; pass <= held_passes; ++pass) {
+          const int mphi = hold_clamped(fphi), mrho = hold_clamped(frho);
+          if (mphi + mrho == 0) break;
+          e_resid_max = run_joint();
+          rlog.line("joint: pass " + std::to_string(pass) + "/" +
+                    std::to_string(held_passes) + " held " +
+                    std::to_string(mphi) + " phi / " + std::to_string(mrho) +
+                    " rho bump(s) moved back inside rcut: max |dE|/tol = " +
+                    core::to_string(e_resid_max, 4) + "  term=" + joint_term);
+        }
+        fphi.pinned = phi_joint.pinned;
+        frho.pinned = rho_joint.pinned;
+        moved_any = false;
+        reclamp(fphi, dphi, rwin_lo, rcut, "phi");
+        reclamp(frho, drho, rwin_lo, rcut, "rho");
+        if (moved_any) e_resid_max = report_energy_residual();
+        const bool held = e_resid_max < e_lin;
+        rlog.line(std::string("joint: kept the ") +
+                  (held ? "held re-run" : "linear re-solve") +
+                  " (max |dE|/tol " + core::to_string(e_lin, 4) +
+                  " linear re-solve, " + core::to_string(e_resid_max, 4) +
+                  " held re-run)");
+        if (!held) {
+          fphi = phi_lin;
+          frho = rho_lin;
+          fF = F_lin;
+          e_resid_max = e_lin;
+          joint_term = term_lin;
+        }
+      }
     }
     rlog.line("joint: max |dE|/tol = " + core::to_string(e_resid_max, 4) +
               "  params n2b/nrho/nF = " + std::to_string(fphi.n()) + "/" +
@@ -946,6 +1070,39 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
         "tadah refit[compact]: the fitted embedding's zero reference does not "
         "match EMBF0 " + std::string(zero ? "ZERO" : "FREE") +
         " (internal error)");
+  // RHOFORM handoff: frho holds the amplitudes of the terms it was fitted in
+  // (g, or the steps S under MONOTONE). EAMRefit (built from the same cfg)
+  // evaluates rho_fit and writes RHOFORM in cfg.rho_form, so the two must
+  // agree, and a positive form's density must pass the checks DM_REAM
+  // applies when the pot is loaded: ReamDensity::validate on the grids the
+  // pot gets (every amplitude finite and >= 0, every centre and width
+  // finite, under MONOTONE every width > 0 and the cutoff whitelisted). A
+  // step with eta <= 0 rises; the self-test evaluates rho_fit and cannot
+  // see that, and RefitEngine writes pot.tadah without loading it. The
+  // ladder's non-negative solves, the Ceres bounds, the joint width floor
+  // and the INIT width check guarantee all of it.
+  if (frho.form != cfg.rho_form)
+    throw std::logic_error(
+        std::string("tadah refit[compact]: the fitted density's form ") +
+        rhoform_name(frho.form) + " does not match RHOFORM " +
+        rhoform_name(cfg.rho_form) + " (internal error)");
+  if (rhoform_is_positive(cfg.rho_form)) {
+    tadah::models::ReamDensity dens;
+    dens.form = cfg.rho_form;
+    dens.basis = knotfam ? tadah::models::BasisKind::Knot5
+                 : blip5 ? tadah::models::BasisKind::Blip5
+                         : tadah::models::BasisKind::Blip;
+    dens.crho = frho.mu;
+    if (!knotfam) dens.srho = frho.eta;   // the knot width is a gauge
+    dens.arho = frho.c;
+    dens.rho_deg.assign(frho.deg.begin(), frho.deg.end());
+    try {
+      dens.validate(cfg.rctype);
+    } catch (const tadah::models::DensityFormError &e) {
+      throw std::logic_error(std::string("tadah refit[compact]: ") + e.what() +
+                             " (internal error)");
+    }
+  }
   cfg.n2b = fphi.n();
   cfg.nrho = frho.n();
   cfg.nF = fF.n();

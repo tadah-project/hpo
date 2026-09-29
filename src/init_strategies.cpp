@@ -19,6 +19,7 @@
 #include <tadah/core/utils.h>
 #include <tadah/core/number_format.h>
 #include <tadah/models/descriptors/dm/embf0.h>
+#include <tadah/models/descriptors/dm/rhoform.h>
 
 #include <algorithm>
 #include <cmath>
@@ -39,6 +40,20 @@
 
 namespace tadah::hpo {
 
+std::vector<double>
+config_point_from_targets(const HPOTargets& trg)
+{
+    std::vector<double> point;
+    for (const auto& kv : trg.optimap) {
+        const auto& o = kv.second;
+        for (std::size_t i = 0; i < o.opt.size(); ++i) {
+            if (!o.opt[i]) continue;
+            point.push_back(core::to_double(o.config[i]));
+        }
+    }
+    return point;
+}
+
 namespace {
 
 /* Map a unit-cube point [0,1]^d to a point in real space, respecting
@@ -54,23 +69,6 @@ unit_to_real(const OptimizerSpec& sp,
     return sp.out(t);   // INTERNAL -> REAL through the search space
 }
 
-/* Walk targets.optimap in deterministic (lex-sorted) order and pull the
- * scalar config value for every OPTIM-flagged dim. The returned vector
- * is in the same dim order as spec.low / spec.high / spec.optim_init. */
-std::vector<double>
-config_point_from_targets(const HPOTargets& trg)
-{
-    std::vector<double> point;
-    for (const auto& kv : trg.optimap) {
-        const auto& o = kv.second;
-        for (std::size_t i = 0; i < o.opt.size(); ++i) {
-            if (!o.opt[i]) continue;
-            point.push_back(core::to_double(o.config[i]));
-        }
-    }
-    return point;
-}
-
 /* ---------------- CONFIG ----------------------------------------- */
 class ConfigInitStrategy : public InitStrategy {
 public:
@@ -80,6 +78,7 @@ public:
         return { config_point_from_targets(ctx.targets) };
     }
     std::string name() const override { return "CONFIG"; }
+    InitOrigin origin() const override { return {InitOrigin::Kind::Config, {}}; }
 };
 
 /* ---------------- RANDOM ----------------------------------------- */
@@ -106,6 +105,7 @@ public:
         return out;
     }
     std::string name() const override { return "RANDOM"; }
+    InitOrigin origin() const override { return {InitOrigin::Kind::Random, {}}; }
     std::size_t default_k() const override { return k_; }
 private:
     std::size_t k_;
@@ -148,6 +148,7 @@ public:
         return out;
     }
     std::string name() const override { return "LHS"; }
+    InitOrigin origin() const override { return {InitOrigin::Kind::Lhs, {}}; }
     std::size_t default_k() const override { return k_; }
 private:
     std::size_t k_;
@@ -219,6 +220,7 @@ public:
         return out;
     }
     std::string name() const override { return "SOBOL"; }
+    InitOrigin origin() const override { return {InitOrigin::Kind::Sobol, {}}; }
     std::size_t default_k() const override { return k_; }
 private:
     std::size_t k_;
@@ -337,6 +339,16 @@ public:
                 HPOLog::instance().info(msg);
             }
         }
+
+        /* RHOFORM: density amplitudes mean something only in the form they
+         * were fitted in, so a seed whose form is absent or differs from
+         * the run's is an ERROR when WARM would read density values from
+         * it (an OPTIM'd AMPGRIDMB, CGRIDMB or SGRIDMB), else a WARNING.
+         * Independent of WARM_ON_MISMATCH (that policy is about missing and
+         * clamped values). Stored values only. */
+        if (ctx.run_context && models::context_has_ream(*ctx.run_context) &&
+            models::context_has_ream(loaded))
+            check_seed_rhoform(ctx, loaded);
 
         std::vector<double> point;
         std::vector<std::string> missing;
@@ -459,8 +471,64 @@ public:
         return { std::move(point) };
     }
     std::string name() const override { return "WARM"; }
+    InitOrigin origin() const override { return {InitOrigin::Kind::Warm, file_}; }
 
 private:
+    void check_seed_rhoform(const InitContext& ctx,
+                            const core::Context& loaded) const {
+        const models::RhoForm run_form =
+            models::require_rhoform(*ctx.run_context, "tadah hpo");
+        std::optional<models::RhoForm> seed_form;
+        bool seed_valid = true;
+        try { seed_form = models::stored_rhoform(loaded); }
+        catch (const std::exception&) { seed_valid = false; }
+        if (seed_valid && seed_form && *seed_form == run_form) return;
+
+        std::string density_dims;   // the OPTIM'd density keys, if any
+        for (const auto& kv : ctx.targets.optimap) {
+            const std::string key = core::to_upper(kv.first);
+            if (key != "AMPGRIDMB" && key != "CGRIDMB" && key != "SGRIDMB")
+                continue;
+            const auto& opt = kv.second.opt;
+            if (std::find(opt.begin(), opt.end(), true) == opt.end()) continue;
+            if (!density_dims.empty()) density_dims += ", ";
+            density_dims += key;
+        }
+        const std::string run_name = models::rhoform_name(run_form);
+        const std::string seed_decl =
+            !seed_valid ? "declares an invalid RHOFORM value '" +
+                              loaded.stored_value("RHOFORM").value_or("") + "'"
+            : !seed_form ? std::string("does not declare RHOFORM")
+                         : std::string("declares RHOFORM ") +
+                               models::rhoform_name(*seed_form);
+        /* A tadah <= 1.5.1 seed (no RHOFORM) is SIGNED: declaring that
+         * repairs it for a SIGNED run only; a positive form needs a seed
+         * fitted in that form. */
+        const std::string remedy =
+            run_form == models::RhoForm::Signed
+                ? "Use a seed written in RHOFORM SIGNED (a tadah <= 1.5.1 "
+                  "potential is SIGNED: add 'RHOFORM SIGNED' to it), or drop "
+                  "the WARM line."
+                : "Use a seed written in RHOFORM " + run_name + " (a tadah "
+                  "<= 1.5.1 potential is SIGNED and cannot seed a " +
+                  run_name + " density; refit it by tadah refit with "
+                  "RHOFORM " + run_name + "), or drop the WARM line.";
+        if (!density_dims.empty())
+            throw std::runtime_error(
+                "WARM seed " + file_ + " " + seed_decl + ", but this run "
+                "evaluates RHOFORM " + run_name + " (from -c) and takes the "
+                "OPTIM density parameters (" + density_dims + ") from the "
+                "seed: density parameters are meaningful only in the form "
+                "they were fitted in. " + remedy);
+        const std::string msg =
+            "WARM seed " + file_ + " " + seed_decl + "; this run evaluates "
+            "RHOFORM " + run_name + " (from -c). No OPTIM dimension is a "
+            "density key (AMPGRIDMB, CGRIDMB, SGRIDMB), so the seed's density "
+            "is not read: every candidate has the -c density.";
+        std::cerr << "[HPO] " << msg << "\n";
+        HPOLog::instance().warning(msg);
+    }
+
     static void handle_mismatch(const std::string& policy, const std::string& msg) {
         if (policy == "error") throw std::runtime_error(msg);
         std::cerr << "[HPO] " << msg << "\n";
@@ -481,14 +549,27 @@ public:
     std::vector<std::vector<double>>
     generate(const InitContext& ctx, std::size_t k_total) const override
     {
+        std::vector<InitOrigin> origins;
+        return generate_tagged(ctx, k_total, origins);
+    }
+    /* Each point carries the origin of the child that produced it; a
+     * de-duplicated point keeps the first (the later duplicate is dropped). */
+    std::vector<std::vector<double>>
+    generate_tagged(const InitContext& ctx, std::size_t k_total,
+                    std::vector<InitOrigin>& origins) const override
+    {
         std::vector<std::vector<double>> out;
+        origins.clear();
         std::uint64_t base_seed = ctx.seed;
         for (const auto& s : children_) {
             InitContext sub{ctx.spec, ctx.targets, base_seed, ctx.run_context};
-            auto pts = s->generate(sub, s->default_k());
-            for (auto& p : pts) {
-                if (!duplicate(out, p, ctx.spec))
-                    out.push_back(std::move(p));
+            std::vector<InitOrigin> sub_origins;
+            auto pts = s->generate_tagged(sub, s->default_k(), sub_origins);
+            for (std::size_t i = 0; i < pts.size(); ++i) {
+                if (!duplicate(out, pts[i], ctx.spec)) {
+                    out.push_back(std::move(pts[i]));
+                    origins.push_back(sub_origins[i]);
+                }
                 if (k_total > 0 && out.size() >= k_total) return out;
             }
             base_seed = base_seed * 6364136223846793005ull + 1442695040888963407ull;

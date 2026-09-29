@@ -37,6 +37,7 @@
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/bound_audit.h>
 #include <tadah/hpo/pot_header_writer.h>
+#include <tadah/hpo/rho_gates.h>
 #include <tadah/hpo/run_stop.h>          // StagnationStop, ExceptionStash
 #include <tadah/hpo/stagnation_stop.h>    // BestPublications, throw_if_stagnated
 #include <tadah/mlip/analytics/analytics.h>
@@ -188,7 +189,10 @@ public:
     /* Test-only: reset the static comparator atomics, the evaluation
      * counter, the result writer and the stagnation watchdog to their
      * freshly-constructed values. Used by regression tests to simulate
-     * process restart without spawning a new process. */
+     * process restart without spawning a new process. The per-eval writer
+     * starts over too: rows an earlier host left queued or buffered are
+     * dropped and the row cursor rewinds to eval 1, so the next host's rows
+     * are written whatever ran before it in this process. */
     static void reset_globals_for_test();
     /** Reset only run-scoped best-comparator state while preserving the
      * monotonic evaluation counter/writer cursor. Used by fresh-run startup
@@ -334,6 +338,18 @@ private:
      * channel. Empty -- the common case, and always under BUMPGATE
      * STRICT -- means no per-eval check. Built once in the ctor. */
     std::vector<detail::BumpGateChannel> bump_gate_;
+    /* RHOFORM NONNEG / MONOTONE: the flat indices of the OPTIM'd AMPGRIDMB
+     * coordinates, projected onto [0, inf) before every evaluation
+     * (project_positive_form). Empty -- SIGNED, no DM_REAM block, or no
+     * OPTIM AMPGRIDMB -- means no per-eval work. Built once in the ctor. */
+    std::vector<std::size_t>     form_proj_idx_;
+    std::string                  form_proj_name_;   // "NONNEG" | "MONOTONE"
+    /* DM_REAM density (a bare DM_REAM many-body term; rho_gates.h): the
+     * RHOGATE / RHOBARGATE tables, checked right after update_context and
+     * before training, and the settings of the density summary recorded at
+     * each new best. nullopt -- no bare DM_REAM -- means no per-eval work.
+     * Built once in the ctor; operator() only reads it. */
+    std::optional<detail::DensityGates> density_;
     mlip::NNFinder               nnf_;
 
     /* ---------- data for pot header writer ----------------------------- */
@@ -342,6 +358,12 @@ private:
 
     /* ---------- helpers (pure) ----------------------------------------- */
     void update_context(core::Context&, const ParamVec&) const;
+    /** @p p with its AMPGRIDMB coordinates projected onto [0, inf)
+     *  (form_proj_idx_): @p p itself when none is negative, else @p buf
+     *  holding the projection. Counts the projection in HPOLog and
+     *  journals the first one (eval @p iter). Never throws. */
+    const ParamVec& project_positive_form(const ParamVec& p, ParamVec& buf,
+                                          std::size_t iter) const;
     void fill_validation(Result&, const mlip::Analytics&)  const;
     void run_lammps     (Result&) const;
 

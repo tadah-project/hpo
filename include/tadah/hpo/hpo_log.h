@@ -13,12 +13,14 @@
  *   -- FILES         --  -- config / output files
  *   -- OPTIMISER     --  -- algorithm, stop criteria, params
  *   -- SEARCH SPACE  --  -- per-dimension bounds (optimiser-internal space)
- *   -- POTENTIAL      --  -- 2B/MB, cutoffs, EMBF0 (DM_REAM), element list
+ *   -- POTENTIAL      --  -- 2B/MB, cutoffs, EMBF0 (DM_REAM), element list,
+ *                            DM_REAM density report
  *   -- LOSS FUNCTION --  -- targets, weights, FAIL_SCORE
  *   -- PROGRESS      --  -- timestamped events: bests, NaN warnings, milestones
  *   -- DIAGNOSTICS   --  -- NaN rate, bound-proximity analysis
  *   -- PERFORMANCE   --  -- timing statistics
- *   -- RESULT        --  -- final status, best loss, best metrics, EMBF0 F(0)
+ *   -- RESULT        --  -- final status, best loss, best metrics, EMBF0 F(0),
+ *                            the best's DM_REAM density
  */
 
 #include <atomic>
@@ -39,6 +41,7 @@
 
 // Forward declarations of HPO types used in section writers
 namespace tadah::hpo { struct OptimizerSpec; class HPOTargets; struct RawEmbeddingF0; }
+namespace tadah::hpo::detail { struct DensitySummary; struct DensityReportEntry; }
 namespace tadah::core { class Context; class Element; }
 namespace tadah::mlip { struct LoadTransformReport; }
 
@@ -52,6 +55,13 @@ enum class EvalLoss {
     NanClamped   /* NaN/Inf, or an evaluation that threw: recorded as
                     FAILSCORE and counted as a NaN/Inf clamping */
 };
+
+/* The pre-training feasibility gates of HPO_Host::operator(), in the order
+ * they are checked: BUMPGATE (c + w/eta past the cutoff), RHOGATE (the
+ * DM_REAM rho(r) sign) and RHOBARGATE (the lattice rhobar(a)). A reject is
+ * a graded band-D failure, counted for the first failing gate. */
+enum class GateKind : std::size_t { Bump = 0, RhoSign = 1, RhoBar = 2 };
+inline constexpr std::size_t kGateKinds = 3;
 
 /* One near-bound observation reported by an annealing driver: the
  * chain sits within one proposal step of an OPTIM bound (under CORANA
@@ -211,11 +221,57 @@ public:
      *               Bands 1..4 are tallied; 0 is ignored. */
     void record_fail_band(int band);
 
-    /** Tally one bump-support per-candidate gate reject (a band-D subset:
-     *  the trial's c + w/eta reached past RCUT and was rejected before
-     *  training). Surfaced in the SUMMARY failure census and the RESULT
-     *  trailer so a high reject rate is visible. */
+    /** Tally one pre-training gate reject (a band-D subset: the candidate
+     *  was rejected before training by @p kind, the first gate it failed).
+     *  Surfaced in the SUMMARY failure census (" bumpgate=N rhogate=N
+     *  rhobargate=N", each when > 0) and the DIAGNOSTICS trailer so a high
+     *  reject rate is visible. Call strictly after record_fail_band: the
+     *  SUMMARY that record_eval may emit must never show a gate count above
+     *  its band-D count. */
+    void record_gate_reject(GateKind kind);
+    /** record_gate_reject(GateKind::Bump): a bump-support per-candidate
+     *  gate reject (the trial's c + w/eta reached past RCUT). */
     void record_bump_gate_reject();
+    /** Rejects counted so far for @p kind (record_gate_reject). */
+    std::size_t gate_rejects(GateKind kind) const {
+        return n_gate_[static_cast<std::size_t>(kind)].load(std::memory_order_relaxed);
+    }
+    /** The rate limit of the per-reject journal notes, one counter per
+     *  gate: returns the running count of @p kind's rejects including this
+     *  one; the host writes the note when it is <= 5 or a power of two
+     *  ("total rejects=N"). Reset by reset_for_test(). */
+    std::size_t next_gate_note(GateKind kind);
+
+    /** DM_REAM density report (a model whose many-body term is a bare
+     *  DM_REAM; hpo_run() calls it after write_potential_section): one
+     *  "Density ..." block per entry -- the -c potential and each WARM
+     *  seed, built by detail::startup_density_report -- and arms the RESULT
+     *  line for the best (plus its rhobar line when @p rhobar, i.e.
+     *  RHOBARGATE is configured). A summary that could not be computed
+     *  prints "not derivable: <reason>". Never throws. */
+    void write_density_report(const std::vector<detail::DensityReportEntry>& entries,
+                              bool rhobar);
+    /** The density of a new best (HPO_Host, after the best decision, the
+     *  EMBF0 pattern): kept only when @p loss is below the loss recorded
+     *  with the previous summary, so out-of-order journal calls cannot
+     *  leave a superseded best. finish() prints it under RESULT, or "n/a
+     *  (the best predates this session)" for a resumed run's older best.
+     *  Never throws. */
+    void record_density_best(std::size_t eval_num, double loss,
+                             const detail::DensitySummary& summary);
+
+    /** Tally one evaluation whose AMPGRIDMB coordinates were projected onto
+     *  [0, inf) under RHOFORM NONNEG / MONOTONE (HPO_Host::operator()): an
+     *  out-of-box point -- a finite-difference probe next to a zero
+     *  amplitude, or an optimiser that ignores bounds -- evaluated and
+     *  recorded at its projection. Returns the running count (the host
+     *  journals the first projection). DIAGNOSTICS prints the total when it
+     *  is > 0, so other runs are unchanged. */
+    std::size_t record_form_projection();
+    /** Evaluations projected so far (record_form_projection). */
+    std::size_t form_projections() const {
+        return n_form_proj_.load(std::memory_order_relaxed);
+    }
 
     /** Transient-I/O accounting: retries of the durable best
      *  potential and of the per-evaluation logs/archives, rows dropped after
@@ -470,10 +526,11 @@ public:
     }
 
     /* Test-only: reset the singleton's running counters and best-so-far
-     * to their freshly-constructed values. Used by regression tests so
-     * one Catch2 test case's state does not leak into the next. Does
-     * not close the underlying file -- call after open() if you also
-     * want a fresh log file on disk. */
+     * to their freshly-constructed values (including the per-gate reject
+     * and note counters, the timing statistics and the fan-out tallies).
+     * Used by regression tests so one Catch2 test case's state does not
+     * leak into the next. Does not close the underlying file -- call after
+     * open() if you also want a fresh log file on disk. */
     void reset_for_test();
 
     /** "12.3 s" / "4.5 min" / "2.1 h" -- shared duration formatter (also
@@ -512,8 +569,12 @@ private:
      * relaxed counters; surfaced in the milestone SUMMARY and the RESULT
      * trailer so a failing run is visibly failing. */
     std::atomic<std::size_t> n_fail_band_[5] = {};
-    /* Bump-support per-candidate gate rejects (a band-D subset). */
-    std::atomic<std::size_t> n_bump_gate_ {0};
+    /* Pre-training gate rejects per GateKind (a band-D subset), and the
+     * per-gate rate-limit counters of the reject notes (next_gate_note). */
+    std::atomic<std::size_t> n_gate_[kGateKinds] = {};
+    std::atomic<std::size_t> n_gate_note_[kGateKinds] = {};
+    /* Positive-form projections (record_form_projection). */
+    std::atomic<std::size_t> n_form_proj_ {0};
     /* Transient-I/O retries / losses (record_io_retry_* etc.). */
     std::atomic<std::size_t> n_io_retry_durable_{0};
     std::atomic<std::size_t> n_io_retry_writer_ {0};
@@ -599,6 +660,17 @@ private:
     double      embf0_best_       = 0.0;
     double      embf0_best_loss_  = std::numeric_limits<double>::max();
     void reset_embf0_locked();
+
+    /* Density RESULT line (write_density_report arms it; record_density_best
+     * keeps the best's formatted rows) -- protected by mtx_; reset by
+     * open() and reset_for_test(). */
+    bool        density_armed_     = false;
+    bool        density_rhobar_    = false;
+    std::size_t density_best_eval_ = 0;
+    double      density_best_loss_ = std::numeric_limits<double>::max();
+    std::string density_best_rho_;
+    std::string density_best_rhobar_;
+    void reset_density_locked();
 
     /* Where the current best was found: snapshot of the recording
      * thread's eval context at log_new_best() time, plus per-slot

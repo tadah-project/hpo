@@ -1,7 +1,8 @@
 # Seed for example 27: `tadah refit` (REFIT_MODE compact, REFIT_LEVEL coarse)
 # of MODELS/tests/tests_data/eam.alloy (Ta2, Ravelo 2013), EMBF0 ZERO.
 # D2_Knot5 13 + DM_REAM Knot5 (8 density / 15 embedding knots; CEMBFUNC 1
-# and 4 are negative, so the raw embedding has F(0) != 0).
+# and 4 are negative, so the raw embedding has F(0) != 0). RHOFORM SIGNED:
+# 4 of the 8 density amplitudes are negative.
 AMPGRIDMB         0.00966122526470333809   0.0100139565759109761   -0.0253281652013605148   -0.00857601015607164022   -0.108962712629620248   -0.00229964054346002431   0.0150345011541523407   0.75129148581104388
 ATOM              Ta
 BIAS              false
@@ -22,6 +23,7 @@ RCTYPE2B          Cut_Dummy
 RCTYPEMB          Cut_Dummy
 RCUT2B            5.43979260471782755
 RCUTMB            5.48403662021928628
+RHOFORM           SIGNED
 STRESS            false
 TYPE2B            D2_Knot5   13   0   Ta   Ta
 TYPEMB            DM_REAM   2   8   0   8   15   0   0   0   Ta   Ta

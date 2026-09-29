@@ -607,6 +607,7 @@ Context make_bump_ctx(const char* rctype = "Cut_Dummy") {
   c.add("CGRIDMB", "2.8 2.5");
   c.add("SGRIDMB", "1.0 1.1");
   c.add("AMPGRIDMB", "0.01 -1.2");
+  c.add("RHOFORM", "SIGNED");  // a negative amplitude
   c.add("CEMBFUNC", "0.9 2.9 0.1");
   c.add("SEMBFUNC", "1.5 2.0 1.8");
   c.add("RCUTMB", 4.8);
