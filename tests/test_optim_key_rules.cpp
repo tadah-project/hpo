@@ -200,3 +200,72 @@ TEST_CASE("an OPTIM index selected twice is an error at the second line",
     CHECK(trg.space()->at(1).hi == 4.0);
   }
 }
+
+TEST_CASE("OPTIM on DIMER, FIXINDEX, MODEL and the OALGO algorithm is refused "
+          "at its line, as on the other structure keys",
+          "[HPO][optim][optim_structure_keys]") {
+  /* Each refused line comes second, after a valid one, so the error must
+   * name line 2. */
+  const std::string first = "OPTIM WATOM (1) 0.5 2.0\n";
+  auto base_ctx = [] {
+    Context c;
+    c.add("WATOM", 1.0);
+    return c;
+  };
+  struct Case {
+    const char* line;
+    const char* key;
+    const char* what;
+  };
+  const Case cases[] = {
+    {"OPTIM DIMER (1) 1.0 1.2", "DIMER", "rigid-dimer"},
+    {"OPTIM dimer (1) 1.0 1.2", "DIMER", "rigid-dimer"},
+    {"OPTIM FIXINDEX (1) 1 5", "FIXINDEX", "OPTIM FIXWEIGHT"},
+    {"OPTIM MODEL (1) 1 3", "MODEL", "model"},
+    {"OPTIM Model (1) 1 3", "MODEL", "model"},
+  };
+  for (const Case& c : cases) {
+    INFO(c.line);
+    Context ctx = base_ctx();
+    ctx.add("DIMER", "true 1.104 true");
+    ctx.add("FIXINDEX", 4);
+    ctx.add("FIXINDEX", 1);
+    ctx.add("FIXINDEX", 7);
+    ctx.add("FIXWEIGHT", "0.4 0.1 0.8");
+    ctx.add("MODEL", "M_BLR BF_Polynomial2 2");
+    KeyRulesTempFile tf(first + c.line + "\n" + kKeyRulesOptimizer);
+    CHECK_THROWS_WITH(
+        HPOTargets(ctx, tf.path.string()),
+        Catch::Contains("Error on line 2") &&
+        Catch::Contains(std::string("OPTIM ") + c.key +
+                        " is not a valid search target") &&
+        Catch::Contains(c.what) &&
+        Catch::Contains("structure data rather than a continuous parameter"));
+  }
+
+  SECTION("OALGO: the algorithm (its first value) is refused") {
+    for (const char* line : {"OPTIM OALGO (1) 1 4", "OPTIM oalgo (1,2) 1 4"}) {
+      INFO(line);
+      Context ctx = base_ctx();
+      ctx.add("OALGO", "1 1e-8");
+      KeyRulesTempFile tf(first + line + "\n" + kKeyRulesOptimizer);
+      CHECK_THROWS_WITH(
+          HPOTargets(ctx, tf.path.string()),
+          Catch::Contains("Error on line 2") &&
+          Catch::Contains("OPTIM OALGO (1) is not a valid search target") &&
+          Catch::Contains("training algorithm") &&
+          Catch::Contains("OPTIM OALGO (2)"));
+    }
+  }
+  SECTION("OALGO: the rcond M of options 1 and 3 (its second value) is a "
+          "continuous parameter") {
+    Context ctx = base_ctx();
+    ctx.add("OALGO", "1 1e-8");
+    KeyRulesTempFile tf(first + "OPTIM OALGO (2) 1e-10 1e-6 LOG\n" +
+                        kKeyRulesOptimizer);
+    HPOTargets trg(ctx, tf.path.string());
+    REQUIRE(trg.spec.parameter_labels.size() == 2);
+    CHECK(trg.spec.parameter_labels[0] == "OALGO[2]");
+    CHECK(trg.spec.parameter_labels[1] == "WATOM");
+  }
+}
