@@ -111,6 +111,18 @@ std::string fd_params_unused_why(const PhaseSpec &phase) {
   return s.lib + ":" + s.algo + " takes no gradient";
 }
 
+/* Why the NOISE block's AUTO has no effect on `phase`, the STRATEGY-level
+ * phase, which takes no finite-difference gradients (takes_fd_gradients):
+ * it measures no slopes, or not with fd_step. */
+std::string noise_auto_unused_why(const PhaseSpec &phase) {
+  const OptimizerSpec &s = phase.spec;
+  if (obtains_gradients(s)) return fd_params_unused_why(phase);
+  if (s.lib == "ASA")
+    return s.lib + ":" + s.algo + " measures its slopes with probes of its "
+           "own (PARAM Delta_X), not with fd_step";
+  return s.lib + ":" + s.algo + " measures no slopes";
+}
+
 }  // namespace
 
 std::size_t derive_weight_count(const core::Context &train_ctx) {
@@ -293,7 +305,10 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * point is ever evaluated outside the box, and the step is not shrunk.
    * A phase that takes none refuses those PARAMs, which would never take
    * effect: an INNER block (it takes the gradient of the phase it runs
-   * in), GRAD_STRATEGY ANALYTICAL, a derivative-free optimiser. ASA's
+   * in), GRAD_STRATEGY ANALYTICAL, a derivative-free optimiser; the
+   * STRATEGY-level phase refuses the NOISE block's AUTO likewise, which
+   * derives fd_step for that phase's finite differences (HPOTargets) and
+   * has no effect without them (owner decision D7). ASA's
    * finite-difference probes must fit its boxes too (asa_probe_box_error).
    * Refused here, before any data is loaded, rather than by the first
    * gradient. */
@@ -311,6 +326,12 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
       if (!e.empty()) throw std::runtime_error(who + ": " + e);
       continue;
     }
+    /* Only the STRATEGY-level phase carries the NOISE block (spec.noise:
+     * EXPLORE and INNER blocks have none). */
+    if (!phase.inner && s.noise.autodetect)
+      throw std::runtime_error(who + ": NOISE AUTO has no effect: " +
+                               noise_auto_unused_why(phase) +
+                               "; remove AUTO from the NOISE block.");
     const std::string written = fd_params_written(s);
     if (!written.empty()) {
       const bool several = written.find(" and ") != std::string::npos;
@@ -318,18 +339,11 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
       if (phase.inner)
         remove = std::string("set ") + (several ? "them" : "it") +
                  " in the enclosing block";
-      else if (s.fd_step_from_noise_auto)
-        remove = std::string("remove AUTO from the NOISE block") +
-                 (several ? " and the other PARAMs" : "");
       else
         remove = std::string("remove ") + (several ? "them" : "it");
       throw std::runtime_error(
-          who + ": " + written +
-          (s.fd_step_from_noise_auto
-               ? " (fd_step derived by the NOISE block's AUTO)"
-               : "") +
-          (several ? " never take" : " never takes") + " effect: " +
-          fd_params_unused_why(phase) + "; " + remove + ".");
+          who + ": " + written + (several ? " never take" : " never takes") +
+          " effect: " + fd_params_unused_why(phase) + "; " + remove + ".");
     }
     if (s.lib == "ASA") {
       const std::string e = asa_probe_box_error(s);

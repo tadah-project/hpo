@@ -155,11 +155,16 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
      *   max_iter          -- max_num_iterations cap (defaults to MAXEVAL or INT_MAX)
      *   max_ls_iter       -- max line search step size iterations
      */
+    /* PARAM fd_step, fd_kernel and diff_method are the gradient's finite
+     * differences: validate_hpo_setup checks them on every phase that takes
+     * them, and the gradient before its first evaluation (fd_settings_of,
+     * fd_stencil.h), with the same message on every backend -- a number for
+     * fd_kernel too, which this list refused as unsupported. */
     static const std::vector<std::string> common_params = {
-        "fd_step", "diff_method", "tol_gradinf",
-        "max_iter", "max_ls_iter"
+        "tol_gradinf", "max_iter", "max_ls_iter"
     };
     for (const auto& kv : sp.param) {
+        if (is_fd_param(kv.first)) continue;
         if (std::find(common_params.begin(), common_params.end(), kv.first)
                 == common_params.end()
             && kv.first != "max_lbfgs_rank"   // LBFGS-only, accepted everywhere
@@ -167,14 +172,10 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
             && kv.first != "nlcg_type") {     // NLCG-only, idem
             throw std::runtime_error(
                 "CERES:" + algo + " does not support PARAM " + kv.first +
-                "; supported: fd_step, diff_method, tol_gradinf, max_iter, "
-                "max_ls_iter, max_lbfgs_rank, nlcg_type");
+                "; supported: fd_step, fd_kernel, diff_method, tol_gradinf, "
+                "max_iter, max_ls_iter, max_lbfgs_rank, nlcg_type");
         }
     }
-    /* PARAM fd_step, fd_kernel and diff_method are the gradient's finite
-     * differences: validate_hpo_setup checks them on every phase that takes
-     * them, and the gradient before its first evaluation (fd_settings_of,
-     * fd_stencil.h). */
     if (auto it = sp.param.find("tol_gradinf"); it != sp.param.end())
         if (!(it->second > 0.0))
             throw std::runtime_error("CERES:" + algo + " requires PARAM tol_gradinf > 0");

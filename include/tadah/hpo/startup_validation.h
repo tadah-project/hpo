@@ -99,7 +99,9 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
  *     PARAM or the NOISE block's AUTO -- the largest fd_step that fits,
  *     and OPTIM_SCALE AUTO or a LOG box as alternatives); a phase that
  *     takes none refuses those PARAMs, which never take effect (an INNER
- *     block, GRAD_STRATEGY ANALYTICAL, a derivative-free optimiser); ASA's
+ *     block, GRAD_STRATEGY ANALYTICAL, a derivative-free optimiser), and
+ *     the STRATEGY-level phase the NOISE block's AUTO likewise ("NOISE
+ *     AUTO has no effect: NLOPT:LN_SBPLX measures no slopes"); ASA's
  *     reannealing and curvature probes fit its boxes
  *     (asa_probe_box_error);
  *   - FIXINDEX/FIXWEIGHT pairing: lone key, size mismatch, out-of-bounds

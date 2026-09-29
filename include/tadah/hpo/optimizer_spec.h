@@ -179,7 +179,10 @@ struct RestartSpec {
 struct NoiseSpec {
     bool        autodetect    = false;             // AUTO TRUE -- derive PARAM fd_step
                                                    // from box diagonal in transformed
-                                                   // space (DLIB:BFGS only)
+                                                   // space, for the finite differences
+                                                   // of the STRATEGY-level phase
+                                                   // (HPOTargets; refused at startup
+                                                   // where it takes none)
     std::size_t calibration_n = 0;                 // CALIBRATION N -- repeat seed point
                                                    // N times to surface objective noise
                                                    // and suggest FTOL_REL. 0 = off.

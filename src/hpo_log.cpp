@@ -2145,13 +2145,14 @@ void HPOLog::finish(const std::string& status_str)
         const std::size_t og = n_oob_grad_.load(std::memory_order_relaxed);
         const std::size_t hc = n_hybrid_centre_.load(std::memory_order_relaxed);
         if (oe > 0)
-            f_ << "  Evaluations outside the OPTIM box: " << oe
-               << " (evaluated there: an optimiser that ignores the bounds;\n"
-                  "    see the first such WARNING)\n";
+            f_ << "  " << std::left << std::setw(KW) << "Out-of-box evaluations"
+               << ": " << oe << " (points outside the OPTIM box, evaluated "
+                  "there:\n    an optimiser that ignores the bounds; see the "
+                  "first such WARNING)\n";
         if (og > 0)
-            f_ << "  Gradients at points outside the OPTIM box: " << og
-               << " (each finite difference\n"
-                  "    stepped towards the box)\n";
+            f_ << "  " << std::left << std::setw(KW) << "Out-of-box gradients"
+               << ": " << og << " (at points outside the OPTIM box, each "
+                  "finite\n    difference stepped towards the box)\n";
         if (!one_sided_.empty()) {
             std::size_t total_os = 0;
             std::string per_dim;
@@ -2166,10 +2167,10 @@ void HPOLog::finish(const std::string& status_str)
                   "    the box, differenced into it): " << per_dim << "\n";
         }
         if (hc > 0)
-            f_ << "  HYBRID centre evaluations: " << hc
-               << " (the loss at a gradient's point, for its one-sided\n"
-                  "    or forward differences, where the optimiser's own value "
-                  "could not be reused)\n";
+            f_ << "  " << std::left << std::setw(KW) << "HYBRID centre losses"
+               << ": " << hc << " (evaluations of a gradient's point for its\n"
+                  "    one-sided or forward differences, where the optimiser's "
+                  "own loss could not\n    be reused)\n";
     }
 
     /* Transient I/O. Printed only when something happened, so the

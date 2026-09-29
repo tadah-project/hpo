@@ -523,6 +523,11 @@ std::string asa_probe_box_error(const OptimizerSpec& sp)
             sp.param.count(indexed) ? indexed
             : sp.param.count("User_Delta_Parameter") ? "User_Delta_Parameter"
                                                      : "Delta_X";
+        /* the Delta of this dimension: a PARAM, or Delta_X's default */
+        const std::string setting = sp.param.count(key)
+                                        ? "PARAM " + key + " " + num(delta)
+                                        : "the default " + key + " " +
+                                              num(delta);
         std::string box = "[" + num(lo) + ", " + num(hi) + "]";
         double where = fit.where;
         if (sp.space && i < sp.space->dim()) {
@@ -531,9 +536,9 @@ std::string asa_probe_box_error(const OptimizerSpec& sp)
             if (real != box) box = real + " (internal " + box + ")";
             where = sp.space->to_real(i, fit.where);
         }
-        bad += "\n  - " + label + ": OPTIM box " + box + ", PARAM " + key +
-               " " + num(delta) + ": a probe of " + label + " = " +
-               num(where) + " lies outside the box; ";
+        bad += "\n  - " + label + ": OPTIM box " + box + ", " + setting +
+               ": a probe of " + label + " = " + num(where) +
+               " lies outside the box; ";
         if (const auto best = asa_largest_fitting_delta(lo, hi, curvature))
             bad += key + " up to " + fd_floor_text(*best) + " fits it";
         else

@@ -111,20 +111,19 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
   if (sp.stop.maxeval && *sp.stop.maxeval == 0)
     throw std::runtime_error("DLIB:BFGS requires MAXEVAL > 0 when provided");
 
-  for (const auto& kv : sp.param) {
-    if (kv.first != "fd_step" && kv.first != "diff_method" &&
-        kv.first != "tol_gradinf") {
-      throw std::runtime_error(
-          "DLIB:BFGS does not support PARAM " + kv.first +
-          "; supported PARAM keys are fd_step, fd_kernel, diff_method and "
-          "tol_gradinf");
-    }
-  }
-
   /* PARAM fd_step, fd_kernel and diff_method are the gradient's finite
    * differences: validate_hpo_setup checks them on every phase that takes
    * them, and the gradient before its first evaluation (fd_settings_of,
-   * fd_stencil.h). */
+   * fd_stencil.h), with the same message on every backend -- a number for
+   * fd_kernel too, which this list refused as unsupported. */
+  for (const auto& kv : sp.param) {
+    if (is_fd_param(kv.first) || kv.first == "tol_gradinf") continue;
+    throw std::runtime_error(
+        "DLIB:BFGS does not support PARAM " + kv.first +
+        "; supported PARAM keys are fd_step, fd_kernel, diff_method and "
+        "tol_gradinf");
+  }
+
 
   const auto tol_gradinf = dlib_param(sp, "tol_gradinf");
   if (tol_gradinf && !(*tol_gradinf > 0.0))
@@ -529,10 +528,11 @@ template<class Vec,class Runner>
      * by HPO_Host is preserved. */
     std::atomic<unsigned long> evals_used{0};
     /* The last evaluation feval made, and the count after it: dlib asks
-     * for the gradient of the point it has just evaluated (its start, and
-     * the point its line search accepted, its last evaluation), and HYBRID
-     * then takes that loss as the loss at the point (gradient_at) -- when
-     * the point is the same doubles and nothing was evaluated since. */
+     * for each gradient right after the loss at the same point -- at its
+     * start (find_min) and at each point of its line search, f(alpha) then
+     * der(alpha) -- and HYBRID then takes that loss as the loss at the
+     * point (gradient_at) -- when the point is the same doubles and nothing
+     * was evaluated since. */
     struct LastEval {
         matrix<double,0,1> x;
         double             y = 0.0;

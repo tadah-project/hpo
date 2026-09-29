@@ -12,6 +12,7 @@
 #include <cstring>
 #include <iomanip>
 #include <sstream>
+#include <tuple>
 #include <vector>
 
 namespace tadah::hpo {
@@ -34,25 +35,64 @@ std::string label_of(const OptimizerSpec& sp, std::size_t i)
 
 /* ---- the fit check ----------------------------------------------------
  *
- * The computed step h^(u) of each rule is bounded above by a piecewise
- * linear H(u) = c0 + c1 u (Width: f exactly for |u| <= 1, where
- * max(|u|, 1) = 1 and f * 1.0 is exact, and nextafter(f) |u| above, which
- * is not below the rounded f |u|; Ceres: max(2^-26, nextafter(f) |u|),
- * with a margin for the long double breakpoint). A double u of the box
- * without a stencil (fd_plan, on computed doubles) then satisfies the
- * strict real inequalities below with H in place of h^: rounding to
- * nearest is monotone and a, b are doubles, so fl(u - h^) < a implies
- * u - h^ < a, and u - H <= u - h^. On each linear piece the set where a
- * conjunction of two strict inequalities holds is an open interval whose
- * ends are among the piece's ends and the roots of the linear functions;
- * it is found by testing the midpoint of each pair of consecutive such
- * candidates, in long double. An interval narrower than that precision
- * holds no double. So the check is sound -- a box it accepts gives every
- * double u a stencil -- and exact but for the ulp by which H may exceed
- * the computed step. */
+ * The computed step h^(u) of each rule is bounded above, at every double u,
+ * by a piecewise linear H(u) = c0 + c1 u:
+ *   Width  f for |u| <= 1, where max(|u|, 1) = 1 and f * 1.0 is exact, and
+ *          F |u| for |u| > 1;
+ *   Ceres  2^-26 for |u| below u*, the smallest double with
+ *          fl(f u*) > 2^-26, and F |u| from u* on.
+ * F = upper_factor(f) bounds the rounded product: f itself when f is a
+ * normal power of two, whose products are exact, else nextafter(f), which
+ * is not below the rounded f |u|. The pieces meet at doubles (1, u*), and
+ * the gap between a piece's end and the next double holds no double. A
+ * double u of the box without a stencil (fd_plan, on computed doubles)
+ * then satisfies the strict real inequalities below with H in place of
+ * h^: rounding to nearest is monotone and a, b are doubles, so fl(u - h^)
+ * < a implies u - h^ < a, and u - H <= u - h^. On each linear piece the set
+ * where a conjunction of two strict inequalities holds is an open interval
+ * whose ends are among the piece's ends and the roots of the linear
+ * functions; it is found by testing the midpoint of each pair of
+ * consecutive such candidates, in long double. So the check is sound -- a
+ * box it accepts gives every double u a stencil -- and exact where the
+ * step is (a power-of-two fd_step: 1/2 and 1 with Ceres' rule in the unit
+ * box), else within the ulp by which F exceeds f. */
 
 using LD = long double;
-const LD kLdEps = std::numeric_limits<LD>::epsilon();
+
+/* An upper bound F of the factor f of a rounded product: fl(f x) <= F x for
+ * every double x with |f x| >= DBL_MIN (a normal result). f itself when f
+ * is a normal power of two (the product is then exact), else the next
+ * double above f: fl(f x) exceeds f x by at most half an ulp of f x, which
+ * is at most ulp(f) x. */
+double upper_factor(double f)
+{
+    int e = 0;
+    if (f >= std::numeric_limits<double>::min() && std::frexp(f, &e) == 0.5)
+        return f;
+    return std::nextafter(f, std::numeric_limits<double>::infinity());
+}
+
+/* The smallest double u >= 0 with fl(f u) > m (f > 0), or +inf when there
+ * is none: fl(f u) grows with u, so bisect on the bit patterns of the
+ * non-negative doubles, which order them. */
+double first_product_above(double f, double m)
+{
+    const double top = std::numeric_limits<double>::max();
+    if (!(f * top > m)) return std::numeric_limits<double>::infinity();
+    std::uint64_t lo = 0, hi = 0;
+    std::memcpy(&hi, &top, sizeof hi);
+    /* invariant: fl(f from_bits(hi)) > m; fl(f from_bits(lo)) <= m (u = 0) */
+    while (hi - lo > 1) {
+        const std::uint64_t mid = lo + (hi - lo) / 2;
+        double u;
+        std::memcpy(&u, &mid, sizeof u);
+        if (f * u > m) hi = mid;
+        else lo = mid;
+    }
+    double u;
+    std::memcpy(&u, &hi, sizeof u);
+    return u;
+}
 
 struct Piece {
     LD s, t;      /* the piece, clipped to the box */
@@ -62,19 +102,25 @@ struct Piece {
 std::vector<Piece> step_pieces(double a, double b, FdRule rule, double f)
 {
     const LD inf = std::numeric_limits<LD>::infinity();
-    /* A margin for the long double arithmetic of the Ceres breakpoint. */
-    const LD kappa = 1 + 64 * kLdEps;
-    const LD F = static_cast<LD>(
-        std::nextafter(f, std::numeric_limits<double>::infinity()));
+    const LD F = upper_factor(f);
     std::vector<Piece> raw;
     if (rule == FdRule::Width) {
-        raw = {{-inf, -1, 0, -F}, {-1, 1, static_cast<LD>(f), 0},
-               {1, inf, 0, F}};
+        /* the doubles |u| > 1 start at nextafter(1) */
+        const LD n1 = std::nextafter(1.0, 2.0);
+        raw = {{-inf, -n1, 0, -F}, {-1, 1, static_cast<LD>(f), 0},
+               {n1, inf, 0, F}};
     } else {
-        const LD m = kCeresMinStep;
-        const LD t = m / F;
-        raw = {{-inf, -t, 0, -F * kappa}, {-t, t, m * kappa, 0},
-               {t, inf, 0, F * kappa}};
+        const double m = kCeresMinStep;
+        const double us = first_product_above(f, m);
+        if (std::isinf(us)) {
+            raw = {{-inf, inf, static_cast<LD>(m), 0}};
+        } else {
+            /* the doubles below u* have fl(f |u|) <= 2^-26 */
+            const LD below = std::nextafter(us, 0.0);
+            const LD U = us;
+            raw = {{-inf, -U, 0, -F}, {-below, below, static_cast<LD>(m), 0},
+                   {U, inf, 0, F}};
+        }
     }
     std::vector<Piece> out;
     for (Piece p : raw) {
@@ -307,7 +353,9 @@ std::optional<FdStencil> fd_plan(double u, double a, double b, FdRule rule,
                 "fd_plan: the finite-difference stencil of u = " + num(u) +
                 ", outside the box [" + num(a) + ", " + num(b) +
                 "], reaches further outside than u with h = " + num(h) +
-                " (a box fd_fit accepts bounds fd_step by 1)");
+                " (a box fd_fit accepts rules this out: the stencil of its "
+                "bound of larger magnitude fits inside it, which bounds "
+                "fd_step by 1 for CENTRAL and by 2 for FORWARD)");
         return st;
     }
     if (scheme == FdScheme::Forward) {
@@ -553,17 +601,28 @@ namespace {
 
 FdFit asa_fit(double lo, double hi, double delta, bool curvature)
 {
-    /* The real probes; ASA computes them in double, and differs from them
-     * by a few ulps where a probe meets a bound exactly (the host counts,
-     * and warns about, such an evaluation). The strict inequalities are
-     * decided as in fit_pieces. */
+    /* The probes as ASA computes them, in double (asa.c), bounded by real
+     * linear functions of x as fit_pieces bounds the step, so that a
+     * computed probe outside the box implies a strict real inequality: the
+     * tangents are fl(E x) with E = fl(1 + Delta), or fl(E' x) with E' =
+     * fl(1 - Delta) -- the factors ASA multiplies by, computed here the same
+     * way, so fl(E x) > hi implies E x > hi. The curvature adds t = fl(Delta
+     * |x|), and 2t, to x; t <= D |x| + c with D = upper_factor(Delta), where
+     * c = 2^-1075, half the smallest double, covers a subnormal product (|x|
+     * below DBL_MIN / Delta). The strict inequalities are then decided as in
+     * fit_pieces. Not covered: ASA's third curvature branch tests x +-
+     * Delta |x| and evaluates (1 +- Delta) x, which round differently by an
+     * ulp at a point or two of some boxes (about one in six), whatever the
+     * Delta; the host counts such an evaluation and warns at the first
+     * (fd_stencil.h). */
     FdFit fit;
-    const LD L = lo, Hh = hi, D = delta;
-    /* g(x) < 0 forms, with P = (1 + D) x, M = (1 - D) x. */
-    const Lin p_over{-(1 + D), Hh};    /* hi - P < 0: P over the box */
-    const Lin p_under{1 + D, -L};      /* P - lo < 0: P under it */
-    const Lin m_over{-(1 - D), Hh};
-    const Lin m_under{1 - D, -L};
+    const LD L = lo, Hh = hi;
+    const LD E = 1.0 + delta, Em = 1.0 - delta;
+    /* g(x) < 0 forms, with P = E x, M = E' x. */
+    const Lin p_over{-E, Hh};      /* hi - P < 0: P over the box */
+    const Lin p_under{E, -L};      /* P - lo < 0: P under it */
+    const Lin m_over{-Em, Hh};
+    const Lin m_under{Em, -L};
     {
         const std::vector<std::pair<Lin, Lin>> conj = {
             {p_over, m_over}, {p_over, m_under},
@@ -578,22 +637,40 @@ FdFit asa_fit(double lo, double hi, double delta, bool curvature)
     }
     if (!curvature) return fit;
     /* The diagonal curvature, on x <= 0 and x >= 0 (|x| = sg x): Q+ = x +
-     * D|x|, Q- = x - D|x|, Q2+ = x + 2D|x|, Q2- = x - 2D|x|. Next to the
-     * upper bound (Q+ over it) ASA evaluates Q2- and Q-, next to the lower
-     * one (Q- under it) Q2+ and Q+; elsewhere (1 + D) x and (1 - D) x, which
-     * are Q+ and Q- (or Q- and Q+). */
+     * t, Q- = x - t, Q2+ = x + 2t, Q2- = x - 2t, each bounded with t <= D
+     * |x| + c; c only where the product can be subnormal, |x| < DBL_MIN /
+     * Delta (a piece of its own, overlapping the other at its end). Next to
+     * the upper bound (Q+ over it) ASA evaluates Q2- and Q-, next to the
+     * lower one (Q- under it) Q2+ and Q+. */
+    const LD D = upper_factor(delta);
+    const LD c = std::ldexp(static_cast<LD>(1), -1075);
+    const LD tiny = static_cast<LD>(std::numeric_limits<double>::min()) /
+                    static_cast<LD>(delta) * (1 + std::ldexp(static_cast<LD>(1), -60));
+    struct Part { LD sg, s, t, c; };
+    std::vector<Part> parts;
     for (const LD sg : {static_cast<LD>(-1), static_cast<LD>(1)}) {
-        const LD s = sg < 0 ? L : std::max(L, static_cast<LD>(0));
-        const LD t = sg < 0 ? std::min(Hh, static_cast<LD>(0)) : Hh;
-        if (!(s <= t)) continue;
-        const Lin qp_over{-(1 + D * sg), Hh};
-        const Lin qm_under{1 - D * sg, -L};
-        const Lin q2m_under{1 - 2 * D * sg, -L};
-        const Lin q2p_over{-(1 + 2 * D * sg), Hh};
+        /* sg x in [0, tiny] with c, [tiny, inf) without */
+        const LD inf = std::numeric_limits<LD>::infinity();
+        for (const auto& [from, to, cc] :
+             {std::tuple<LD, LD, LD>{0, tiny, c},
+              std::tuple<LD, LD, LD>{tiny, inf, 0}}) {
+            LD s0 = sg < 0 ? -to : from, t0 = sg < 0 ? -from : to;
+            s0 = std::max(s0, L);
+            t0 = std::min(t0, Hh);
+            if (s0 <= t0) parts.push_back({sg, s0, t0, cc});
+        }
+    }
+    for (const Part& q : parts) {
+        const LD k = D * q.sg;
+        const Lin qp_over{-(1 + k), Hh - q.c};         /* hi - (x + t) */
+        const Lin qm_under{1 - k, -L - q.c};           /* x - t - lo */
+        const Lin q2m_under{1 - 2 * k, -L - 2 * q.c};  /* x - 2t - lo */
+        const Lin q2p_over{-(1 + 2 * k), Hh - 2 * q.c}; /* hi - (x + 2t) */
         const std::vector<std::pair<Lin, Lin>> conj = {
             {qp_over, q2m_under}, {qp_over, qm_under}, {qm_under, q2p_over}};
         const LD w = first_failure(
-            candidates(s, t, {qp_over, qm_under, q2m_under, q2p_over}), conj);
+            candidates(q.s, q.t, {qp_over, qm_under, q2m_under, q2p_over}),
+            conj);
         if (!std::isnan(w)) {
             fit.ok = false;
             fit.where = std::clamp(static_cast<double>(w), lo, hi);

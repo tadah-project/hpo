@@ -267,26 +267,26 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
 
   /* ---------- NOISE_AUTO: heuristic for finite-difference fd_step ---
    *
-   * For DLIB:BFGS the user can ask the engine to pick a sensible
-   * fd_step from the search-space geometry. Heuristic:
+   * The NOISE block's AUTO derives PARAM fd_step from the search-space
+   * geometry:
    *
    *     fd_step = max(1e-3 * box_diagonal / sqrt(dim), 1e-6)
    *
    * where box_diagonal is the L2 norm of (high - low) in the
    * post-transform space. The hand-set PARAM fd_step always wins so
-   * users keep an escape hatch. */
-  if (spec.noise.autodetect) {
-    /* fd_step is only consulted by gradient-based backends that take
-     * finite-difference derivatives (today: DLIB:BFGS via
-     * dlib::derivative). The caps registry flags those; for everything
-     * else the auto-derived fd_step would be a dead variable. read()
-     * rejects a configuration without LIB/ALGO. */
-    const bool gradient_based = optimizer_caps(spec).is_gradient_based;
-    if (!gradient_based) {
-      std::cerr << "[HPO] NOISE_AUTO derives PARAM fd_step for gradient-"
-                << "based optimisers only (current: " << spec.lib << ":"
-                << spec.algo << "); ignored\n";
-    } else if (spec.param.count("fd_step")) {
+   * users keep an escape hatch. It is derived where the STRATEGY-level
+   * phase -- which carries the NOISE block: each MULTISTART start, the
+   * PRESTAGE refinement -- takes finite-difference gradients
+   * (takes_fd_gradients: a gradient-based backend, or an MLSL/AUGLAG
+   * whose local search is one, under GRAD_STRATEGY NUMERICAL or HYBRID;
+   * read() has resolved an unset GRAD_STRATEGY by now). Where it takes
+   * none -- a derivative-free optimiser, GRAD_STRATEGY ANALYTICAL --
+   * validate_hpo_setup refuses the AUTO, which would have no effect (owner
+   * decision D7, 2026-09-29; it printed "ignored" to stderr). read()
+   * rejects a configuration without LIB/ALGO. */
+  if (spec.noise.autodetect &&
+      takes_fd_gradients(PhaseSpec{"the STRATEGY-level optimiser", spec})) {
+    if (spec.param.count("fd_step")) {
       std::cerr << "[HPO] NOISE_AUTO: PARAM fd_step already set "
                    "explicitly; user value retained\n";
     } else if (spec.low.empty()) {

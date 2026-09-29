@@ -73,15 +73,21 @@
  * (fd_largest_fitting_step): shrinking the step at run time would change
  * what PARAM fd_step means, and the noise it was chosen to step over.
  * Under OPTIM_SCALE AUTO a CENTRAL step fits exactly when fd_step <= 1/3,
- * a FORWARD one when fd_step <= 1/2; under NONE the check runs over the
- * whole box. It is exact up to a few units in the last place, and sound:
- * a box it accepts gives every u a stencil.
+ * a FORWARD one when fd_step <= 1/2 (the in-house rule; Ceres' rule: 1/2
+ * and 1); under NONE the check runs over the whole box. It is sound -- a
+ * box it accepts gives every u a stencil -- and exact where the computed
+ * step is (a power-of-two fd_step), else within an ulp of fd_step.
  *
  * ASA's probes (asa_probe_fit): the reannealing and exit tangents of
  * external/asa (cost_derivatives) evaluate (1 + Delta) x, or (1 - Delta) x
  * when the first lies outside the box, and the exit curvature (Curvature_0
  * 0 or -1) x +- Delta |x|, one-sided x -+ Delta |x|, x -+ 2 Delta |x| next
- * to a bound; algorithms_asa.cpp refuses a box in which they cannot fit.
+ * to a bound; algorithms_asa.cpp refuses a box in which they cannot fit,
+ * as ASA computes them. The curvature's middle branch tests x +- Delta |x|
+ * and evaluates (1 +- Delta) x, which can round an ulp apart: at a point
+ * or two of some boxes (about one in six), whatever the Delta, that probe
+ * can lie an ulp outside the box; HPO_Host counts and warns about such an
+ * evaluation.
  */
 
 #include <tadah/hpo/optimizer_spec.h>
@@ -131,6 +137,15 @@ struct FdSettings {
  * value, and for diff_method 2 (RIDDERS). */
 FdSettings fd_settings_of(const OptimizerSpec& sp);
 
+/* Whether `key` is one of the finite-difference PARAMs, fd_step,
+ * fd_kernel and diff_method: fd_settings_of checks them, with the same
+ * message on every backend, and a backend's own PARAM list passes them
+ * on. */
+inline bool is_fd_param(const std::string& key)
+{
+    return key == "fd_step" || key == "fd_kernel" || key == "diff_method";
+}
+
 /* Whether `sp` sets PARAM fd_step, fd_kernel or diff_method (or the NOISE
  * block's AUTO derived fd_step); "" when not, else their names, "PARAM
  * fd_step and diff_method". */
@@ -169,7 +184,10 @@ struct FdStencil {
  * in the box and none fits (fd_fit refuses such a box). A NaN u gets the
  * central stencil (its evaluations fail). Throws std::logic_error if a
  * stencil of a u outside the box would reach further outside than u, which
- * a box fd_fit accepts rules out (it bounds fd_step by 1). */
+ * a box fd_fit accepts rules out: the stencil of the bound nearer u fits
+ * inside the box, the step grows with |u| by at most fd_step per unit, and
+ * the stencil of the bound of larger magnitude bounds fd_step by 1 for
+ * CENTRAL (two steps inside the box) and by 2 for FORWARD (one step). */
 std::optional<FdStencil> fd_plan(double u, double a, double b, FdRule rule,
                                  FdScheme scheme, double fd_step);
 
@@ -231,12 +249,14 @@ std::string fd_describe(const FdSettings& s, bool normalised, bool hybrid);
 std::string fd_floor_text(double v, int digits = 6);
 
 /* ASA's finite-difference probes of a coordinate in [lo, hi] with Delta
- * `delta` (external/asa cost_derivatives): the tangents, (1 + Delta) x or,
- * when that lies outside the box, (1 - Delta) x -- also the rule of the
- * off-diagonal curvature -- and with `curvature` (Curvature_0 0 or -1) the
- * diagonal curvature, x +- Delta |x|, or next to a bound x -+ Delta |x| and
- * x -+ 2 Delta |x|. `where`: an x of the box where a probe would lie
- * outside it. */
+ * `delta` (external/asa cost_derivatives), as ASA computes them in double:
+ * the tangents, (1 + Delta) x or, when that lies outside the box, (1 -
+ * Delta) x -- also the rule of the off-diagonal curvature -- and with
+ * `curvature` (Curvature_0 0 or -1) the diagonal curvature, x +- Delta
+ * |x|, or next to a bound x -+ Delta |x| and x -+ 2 Delta |x| (not the
+ * middle branch's ulp: see the file comment). Sound: a box it accepts
+ * keeps these probes in it; within an ulp of Delta of exact. `where`: an x
+ * of the box where a probe could lie outside it. */
 FdFit asa_probe_fit(double lo, double hi, double delta, bool curvature);
 
 /* The largest Delta asa_probe_fit accepts for [lo, hi] (std::nullopt: none
