@@ -3,35 +3,35 @@
   "example": "02_random_search",
   "description": "TADAH:RANDOM, seeded uniform sampler.",
   "best_loss": {
-    "value": 0.05297687,
+    "value": 0.06794962,
     "abs_tol": 1e-06,
     "rel_tol": 0.001
   },
   "components": {
     "L(ERMSE)[1]": {
-      "value": 0.01589551,
+      "value": 0.0226753,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(ERMSE)[avg]": {
-      "value": 0.01589551,
+      "value": 0.0226753,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(Ecoh)": {
-      "value": 0.09005823,
+      "value": 0.1132239,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     }
   },
   "hyperparameters": {
     "RCUT2B": {
-      "value": 4.413583,
+      "value": 4.402276,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     },
     "SGRIDMB": {
-      "value": 0.342938,
+      "value": 0.3962463,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     }
@@ -40,12 +40,12 @@
     "value": 60,
     "tol": 0
   },
-  "best_ermse_meV_per_atom": 12.61,
+  "best_ermse_meV_per_atom": 15.06,
   "status_accepted": [
     "COMPLETED"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "1.4s",
+  "walltime_hint": "1.7s",
   "fast": true,
   "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
 }
