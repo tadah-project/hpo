@@ -1387,9 +1387,14 @@ template<class P, class R>
 std::shared_ptr<const typename HPO_Host<P,R>::RebuiltLists>
 HPO_Host<P,R>::rebuilt_lists(double cutoff, std::size_t iter) const
 {
+    /* Only the datasets this evaluation reads: the training set when it
+     * is fitted (pinned weights are scattered without it), the validation
+     * set when there is one. A run that reads neither needs no lists. */
+    const bool train_read = has_train_data_ && !all_weights_fixed_;
+    if (!train_read && !has_validation_) return nullptr;
     auto lists = std::make_shared<RebuiltLists>();
     lists->cutoff = cutoff;
-    if (has_train_data_) {
+    if (train_read) {
         lists->train = train_stdb_;
         nnf_.calc(lists->train, cutoff);
     }
@@ -2691,6 +2696,14 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     t_train_start = std::chrono::high_resolution_clock::now();
     /* train ------------------------------------------------------------ */
     stage_watchdog::enter(r.iter, "train");
+    /* From here until training succeeds the trainer cache and this thread's
+     * rebuilt lists do not describe a trained theta = p: reinit writes p
+     * into the cached trainer before its lists are known to be buildable.
+     * If anything below throws, the next analytical_gradient() must fall
+     * back to finite differences instead of differentiating that state
+     * (on lists that may not cover p's cutoff). */
+    tls_trainer_theta_stale_ = true;
+    tls_rebuilt_lists_.reset();
     {
         auto& cache = tls_trainer_cache_;
         const bool force_rebuild = std::getenv("TADAH_HPO_FORCE_REBUILD") != nullptr;
@@ -2721,9 +2734,8 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
          * a shorter list would silently lack pairs (DescriptorsCalc
          * refuses one). */
         const double nn_needed = cache.trainer->dc.neighbour_cutoff();
-        tls_rebuilt_lists_ = nn_needed > nn_list_cutoff_
-                                 ? rebuilt_lists(nn_needed, r.iter)
-                                 : nullptr;
+        if (nn_needed > nn_list_cutoff_)
+            tls_rebuilt_lists_ = rebuilt_lists(nn_needed, r.iter);
         if (has_train_data_ && !all_weights_fixed_) {
             cache.trainer->train(tls_rebuilt_lists_ ? tls_rebuilt_lists_->train
                                                     : train_stdb_);

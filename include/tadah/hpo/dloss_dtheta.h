@@ -58,6 +58,7 @@
 #include <tadah/mlip/analytics/analytics.h>
 #include <tadah/mlip/analytics/analytics_grad.h>
 #include <tadah/mlip/analytics/dphi_dtheta_walk.h>
+#include <tadah/mlip/detail/nn_guard.h>
 #include <tadah/mlip/structure_db.h>
 #include <tadah/mlip/trainer.h>
 #include <tadah/models/dc_selector.h>
@@ -77,6 +78,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <functional>
 #include <numeric>
 #include <stdexcept>
@@ -860,6 +862,17 @@ compute_analytical_gradient_from_trainer(
 
     auto& ctx = host.context;
 
+    /* The lists must cover the trainer's cutoff. The loops below compute
+     * descriptors inside OpenMP regions; checked here, a short list is an
+     * exception the caller catches (it then uses finite differences). */
+    {
+        const double rc = host.dc.neighbour_cutoff();
+        mlip::detail::require_db_nn_cutoff(
+            train_stdb, rc, "compute_analytical_gradient_from_trainer");
+        mlip::detail::require_db_nn_cutoff(
+            val_stdb, rc, "compute_analytical_gradient_from_trainer");
+    }
+
     /* PC_LAMMPS interaction.
      *
      * Pre-Phase 3.7B (Option A from PROMPT_NEXT_NLOPT_LBFGS.md): any
@@ -944,55 +957,64 @@ compute_analytical_gradient_from_trainer(
      * construction). host.dc.calc is const, holds no mutable state, and
      * returns a fresh StDescriptors per call (already used in parallel
      * by DescriptorsCalc::calc(stdb) in MLIP). */
+    /* An exception may not leave the OpenMP loop (std::terminate): each
+     * iteration keeps its own, and the lowest index's is rethrown after it. */
+    std::vector<std::exception_ptr> train_phi_errors(train_stdb.size());
 #if defined(TADAH_ENABLE_OPENMP)
 #   pragma omp parallel for schedule(dynamic)
 #endif
     for (std::size_t s = 0; s < train_stdb.size(); ++s) {
-        const auto&        st = train_stdb(s);
-        mlip::StDescriptors std_d = host.dc.calc(st);
+        try {
+            const auto&        st = train_stdb(s);
+            mlip::StDescriptors std_d = host.dc.calc(st);
 
-        /* Energy row: sum atoms' aed, scaled by sqrt(eweight*eweightglob). */
-        const double w_e = std::sqrt(st.eweight * eweightglob);
-        const std::size_t e_off = energy_row_for_struct[s] * n_cols;
-        for (std::size_t a = 0; a < std_d.naed(); ++a) {
-            const tadah::core::aed_type& aed = std_d.get_aed(a);
+            /* Energy row: sum atoms' aed, scaled by sqrt(eweight*eweightglob). */
+            const double w_e = std::sqrt(st.eweight * eweightglob);
+            const std::size_t e_off = energy_row_for_struct[s] * n_cols;
+            for (std::size_t a = 0; a < std_d.naed(); ++a) {
+                const tadah::core::aed_type& aed = std_d.get_aed(a);
+                for (std::size_t c = 0; c < n_cols; ++c)
+                    phi_train_aug[e_off + c] += aed[c];
+            }
             for (std::size_t c = 0; c < n_cols; ++c)
-                phi_train_aug[e_off + c] += aed[c];
-        }
-        for (std::size_t c = 0; c < n_cols; ++c)
-            phi_train_aug[e_off + c] *= w_e;
-        t_train_aug[energy_row_for_struct[s]] = st.energy * w_e;
+                phi_train_aug[e_off + c] *= w_e;
+            t_train_aug[energy_row_for_struct[s]] = st.energy * w_e;
 
-        if (use_force) {
-            /* Force rows: mirror dm_bf_linear::calc_phi_force_rows
-             *   Phi(row+k, c) -= (fij(c,k) - fji(c,k))
-             * where fij = st_d.fd[a][jj], fji = st_d.fd[j][aa]. Both
-             * sides were already axis-expanded by dc.calc when
-             * FORCE=true (descriptors_calc.hpp:226-238). */
-            const double w_f = std::sqrt(st.fweight * fweightglob);
-            const std::size_t f_start = force_row_start_for_struct[s];
-            for (std::size_t a = 0; a < st.natoms(); ++a) {
-                for (std::size_t jj = 0; jj < std_d.fd[a].size(); ++jj) {
-                    const std::size_t j  = st.nn->idx[a][jj];
-                    const std::size_t aa = st.get_nn_iindex(a, j, jj);
-                    const tadah::core::fd_type& fij = std_d.fd[a][jj];
-                    const tadah::core::fd_type& fji = std_d.fd[j][aa];
+            if (use_force) {
+                /* Force rows: mirror dm_bf_linear::calc_phi_force_rows
+                 *   Phi(row+k, c) -= (fij(c,k) - fji(c,k))
+                 * where fij = st_d.fd[a][jj], fji = st_d.fd[j][aa]. Both
+                 * sides were already axis-expanded by dc.calc when
+                 * FORCE=true (descriptors_calc.hpp:226-238). */
+                const double w_f = std::sqrt(st.fweight * fweightglob);
+                const std::size_t f_start = force_row_start_for_struct[s];
+                for (std::size_t a = 0; a < st.natoms(); ++a) {
+                    for (std::size_t jj = 0; jj < std_d.fd[a].size(); ++jj) {
+                        const std::size_t j  = st.nn->idx[a][jj];
+                        const std::size_t aa = st.get_nn_iindex(a, j, jj);
+                        const tadah::core::fd_type& fij = std_d.fd[a][jj];
+                        const tadah::core::fd_type& fji = std_d.fd[j][aa];
+                        for (std::size_t k = 0; k < 3; ++k) {
+                            const std::size_t row_off = (f_start + 3 * a + k) * n_cols;
+                            for (std::size_t c = 0; c < n_cols; ++c)
+                                phi_train_aug[row_off + c] -= (fij(c, k) - fji(c, k));
+                        }
+                    }
+                    /* Force-row scaling and force targets per axis. */
                     for (std::size_t k = 0; k < 3; ++k) {
-                        const std::size_t row_off = (f_start + 3 * a + k) * n_cols;
+                        const std::size_t row = f_start + 3 * a + k;
                         for (std::size_t c = 0; c < n_cols; ++c)
-                            phi_train_aug[row_off + c] -= (fij(c, k) - fji(c, k));
+                            phi_train_aug[row * n_cols + c] *= w_f;
+                        t_train_aug[row] = st(a).force[k] * w_f;
                     }
                 }
-                /* Force-row scaling and force targets per axis. */
-                for (std::size_t k = 0; k < 3; ++k) {
-                    const std::size_t row = f_start + 3 * a + k;
-                    for (std::size_t c = 0; c < n_cols; ++c)
-                        phi_train_aug[row * n_cols + c] *= w_f;
-                    t_train_aug[row] = st(a).force[k] * w_f;
-                }
             }
+        } catch (...) {
+            train_phi_errors[s] = std::current_exception();
         }
     }
+    for (const auto& e : train_phi_errors)
+        if (e) std::rethrow_exception(e);
 
     /* Ridge augmentation block -- written into the bottom n_cols rows. */
     const double      lambda = ctx.template get<double>("LAMBDA", 0);
@@ -1057,50 +1079,59 @@ compute_analytical_gradient_from_trainer(
     /* Same per-struct parallelism as the train-side build: pred_val.structures
      * is pre-sized and each iteration writes only to its own [s] slot;
      * phi_val rows are non-overlapping by row-offset construction. */
+    /* An exception may not leave the OpenMP loop (std::terminate): each
+     * iteration keeps its own, and the lowest index's is rethrown after it. */
+    std::vector<std::exception_ptr> val_phi_errors(val_stdb.size());
 #if defined(TADAH_ENABLE_OPENMP)
 #   pragma omp parallel for schedule(dynamic)
 #endif
     for (std::size_t s = 0; s < val_stdb.size(); ++s) {
-        const auto& st = val_stdb(s);
-        mlip::StDescriptors std_d = host.dc.calc(st);
+        try {
+            const auto& st = val_stdb(s);
+            mlip::StDescriptors std_d = host.dc.calc(st);
 
-        const std::size_t e_off = energy_row_for_struct_val[s] * n_cols;
-        for (std::size_t a = 0; a < std_d.naed(); ++a) {
-            const tadah::core::aed_type& aed = std_d.get_aed(a);
+            const std::size_t e_off = energy_row_for_struct_val[s] * n_cols;
+            for (std::size_t a = 0; a < std_d.naed(); ++a) {
+                const tadah::core::aed_type& aed = std_d.get_aed(a);
+                for (std::size_t c = 0; c < n_cols; ++c)
+                    phi_val[e_off + c] += aed[c];
+            }
+            double pred_e = 0.0;
             for (std::size_t c = 0; c < n_cols; ++c)
-                phi_val[e_off + c] += aed[c];
-        }
-        double pred_e = 0.0;
-        for (std::size_t c = 0; c < n_cols; ++c)
-            pred_e += phi_val[e_off + c] * W_star[c];
-        pred_val.structures[s].atoms.resize(st.natoms());
-        pred_val.structures[s].energy = pred_e;
+                pred_e += phi_val[e_off + c] * W_star[c];
+            pred_val.structures[s].atoms.resize(st.natoms());
+            pred_val.structures[s].energy = pred_e;
 
-        if (use_frmse_val) {
-            /* Force rows + per-atom force predictions. */
-            const std::size_t f_start = force_row_start_for_struct_val[s];
-            for (std::size_t a = 0; a < st.natoms(); ++a) {
-                for (std::size_t jj = 0; jj < std_d.fd[a].size(); ++jj) {
-                    const std::size_t j  = st.nn->idx[a][jj];
-                    const std::size_t aa = st.get_nn_iindex(a, j, jj);
-                    const tadah::core::fd_type& fij = std_d.fd[a][jj];
-                    const tadah::core::fd_type& fji = std_d.fd[j][aa];
+            if (use_frmse_val) {
+                /* Force rows + per-atom force predictions. */
+                const std::size_t f_start = force_row_start_for_struct_val[s];
+                for (std::size_t a = 0; a < st.natoms(); ++a) {
+                    for (std::size_t jj = 0; jj < std_d.fd[a].size(); ++jj) {
+                        const std::size_t j  = st.nn->idx[a][jj];
+                        const std::size_t aa = st.get_nn_iindex(a, j, jj);
+                        const tadah::core::fd_type& fij = std_d.fd[a][jj];
+                        const tadah::core::fd_type& fji = std_d.fd[j][aa];
+                        for (std::size_t k = 0; k < 3; ++k) {
+                            const std::size_t row_off = (f_start + 3 * a + k) * n_cols;
+                            for (std::size_t c = 0; c < n_cols; ++c)
+                                phi_val[row_off + c] -= (fij(c, k) - fji(c, k));
+                        }
+                    }
                     for (std::size_t k = 0; k < 3; ++k) {
-                        const std::size_t row_off = (f_start + 3 * a + k) * n_cols;
+                        const std::size_t row = f_start + 3 * a + k;
+                        double pf = 0.0;
                         for (std::size_t c = 0; c < n_cols; ++c)
-                            phi_val[row_off + c] -= (fij(c, k) - fji(c, k));
+                            pf += phi_val[row * n_cols + c] * W_star[c];
+                        pred_val.structures[s].atoms[a].force[k] = pf;
                     }
                 }
-                for (std::size_t k = 0; k < 3; ++k) {
-                    const std::size_t row = f_start + 3 * a + k;
-                    double pf = 0.0;
-                    for (std::size_t c = 0; c < n_cols; ++c)
-                        pf += phi_val[row * n_cols + c] * W_star[c];
-                    pred_val.structures[s].atoms[a].force[k] = pf;
-                }
             }
+        } catch (...) {
+            val_phi_errors[s] = std::current_exception();
         }
     }
+    for (const auto& e : val_phi_errors)
+        if (e) std::rethrow_exception(e);
 
     if (profile_grad) t_val_phi = clk::now();
 
@@ -1219,129 +1250,138 @@ compute_analytical_gradient_from_trainer(
      * that matters for tail behaviour. Filled under profile_grad. */
     std::vector<double> per_theta_start_ms(prefs.size(), 0.0);
     const auto t_loop_start = clk::now();
+    /* An exception may not leave the OpenMP loop (std::terminate): each
+     * iteration keeps its own, and the lowest index's is rethrown after it. */
+    std::vector<std::exception_ptr> per_theta_errors(theta_order.size());
 #if defined(TADAH_ENABLE_OPENMP)
 #   pragma omp parallel for schedule(dynamic, 1)
 #endif
     for (std::size_t ord = 0; ord < theta_order.size(); ++ord) {
-        const std::size_t i = theta_order[ord];
-        const auto t_th_start = clk::now();
-        if (profile_grad) per_theta_start_ms[i] = ms(t_loop_start, t_th_start);
-        /* Thread-local scratch (one struct's energy row, dense). */
-        std::vector<double> energy_scratch_train(train_stdb.size() * n_cols, 0.0);
-        std::vector<double> energy_scratch_val  (val_stdb.size()   * n_cols, 0.0);
+        try {
+            const std::size_t i = theta_order[ord];
+            const auto t_th_start = clk::now();
+            if (profile_grad) per_theta_start_ms[i] = ms(t_loop_start, t_th_start);
+            /* Thread-local scratch (one struct's energy row, dense). */
+            std::vector<double> energy_scratch_train(train_stdb.size() * n_cols, 0.0);
+            std::vector<double> energy_scratch_val  (val_stdb.size()   * n_cols, 0.0);
 
-        dphi_train_buf[i].assign(n_aug_rows * n_cols, 0.0);
-        dphi_val_buf  [i].assign(n_val_rows * n_cols, 0.0);
+            dphi_train_buf[i].assign(n_aug_rows * n_cols, 0.0);
+            dphi_val_buf  [i].assign(n_val_rows * n_cols, 0.0);
 
-        /* Combined energy + force walker with rho cache (Phase 2E P1+P3):
-         * one pass per side sharing the per-pair iteration (D2) and the
-         * per-atom rho/drho pre-pass (DM) across the energy and force
-         * derivative kernels, AND reusing the theta-independent rho/F'(rho)
-         * field across all theta via dm_cache_{train,val}. Pre-Phase-2E this
-         * was four walker calls per theta each rebuilding the rho pre-pass;
-         * Phase 2E folds the rho pre-pass into a single one-shot build
-         * outside the per-theta loop.
-         *
-         * Train-side energy rows go to energy_scratch_train (dense
-         * n_struct x n_cols, copied later into the interleaved
-         * dphi_train_buf with weight scaling). Force rows go directly
-         * into the interleaved dphi_train_buf at the force-row offsets. */
-        const auto pr_train = disable_dm_cache
-            ? mlip::assemble_dphi_train_both_rows(
-                  train_stdb, host.DCS,
-                  prefs[i].theta_name, prefs[i].arg_pos,
-                  energy_scratch_train.data(),
-                  use_force ? dphi_train_buf[i].data() : nullptr,
-                  n_cols, force_row_start_for_struct)
-            : mlip::assemble_dphi_train_both_rows_cached(
-                  train_stdb, host.DCS, dm_cache_train,
-                  prefs[i].theta_name, prefs[i].arg_pos,
-                  energy_scratch_train.data(),
-                  use_force ? dphi_train_buf[i].data() : nullptr,
-                  n_cols, force_row_start_for_struct);
-        const bool ok_e_train = pr_train.first;
-        const bool ok_f_train = pr_train.second;
+            /* Combined energy + force walker with rho cache (Phase 2E P1+P3):
+             * one pass per side sharing the per-pair iteration (D2) and the
+             * per-atom rho/drho pre-pass (DM) across the energy and force
+             * derivative kernels, AND reusing the theta-independent rho/F'(rho)
+             * field across all theta via dm_cache_{train,val}. Pre-Phase-2E this
+             * was four walker calls per theta each rebuilding the rho pre-pass;
+             * Phase 2E folds the rho pre-pass into a single one-shot build
+             * outside the per-theta loop.
+             *
+             * Train-side energy rows go to energy_scratch_train (dense
+             * n_struct x n_cols, copied later into the interleaved
+             * dphi_train_buf with weight scaling). Force rows go directly
+             * into the interleaved dphi_train_buf at the force-row offsets. */
+            const auto pr_train = disable_dm_cache
+                ? mlip::assemble_dphi_train_both_rows(
+                      train_stdb, host.DCS,
+                      prefs[i].theta_name, prefs[i].arg_pos,
+                      energy_scratch_train.data(),
+                      use_force ? dphi_train_buf[i].data() : nullptr,
+                      n_cols, force_row_start_for_struct)
+                : mlip::assemble_dphi_train_both_rows_cached(
+                      train_stdb, host.DCS, dm_cache_train,
+                      prefs[i].theta_name, prefs[i].arg_pos,
+                      energy_scratch_train.data(),
+                      use_force ? dphi_train_buf[i].data() : nullptr,
+                      n_cols, force_row_start_for_struct);
+            const bool ok_e_train = pr_train.first;
+            const bool ok_f_train = pr_train.second;
 
-        /* Val-side: same cached walker on val_stdb with dm_cache_val.
-         * No weight scaling (val Phi has no eweight/fweight factors --
-         * they only weigh the training fit). force_row_start_for_struct_val
-         * is consumed only when use_frmse_val is true. */
-        const auto pr_val = disable_dm_cache
-            ? mlip::assemble_dphi_train_both_rows(
-                  val_stdb, host.DCS,
-                  prefs[i].theta_name, prefs[i].arg_pos,
-                  energy_scratch_val.data(),
-                  use_frmse_val ? dphi_val_buf[i].data() : nullptr,
-                  n_cols, force_row_start_for_struct_val)
-            : mlip::assemble_dphi_train_both_rows_cached(
-                  val_stdb, host.DCS, dm_cache_val,
-                  prefs[i].theta_name, prefs[i].arg_pos,
-                  energy_scratch_val.data(),
-                  use_frmse_val ? dphi_val_buf[i].data() : nullptr,
-                  n_cols, force_row_start_for_struct_val);
-        const bool ok_e_val = pr_val.first;
-        const bool ok_f_val = pr_val.second;
+            /* Val-side: same cached walker on val_stdb with dm_cache_val.
+             * No weight scaling (val Phi has no eweight/fweight factors --
+             * they only weigh the training fit). force_row_start_for_struct_val
+             * is consumed only when use_frmse_val is true. */
+            const auto pr_val = disable_dm_cache
+                ? mlip::assemble_dphi_train_both_rows(
+                      val_stdb, host.DCS,
+                      prefs[i].theta_name, prefs[i].arg_pos,
+                      energy_scratch_val.data(),
+                      use_frmse_val ? dphi_val_buf[i].data() : nullptr,
+                      n_cols, force_row_start_for_struct_val)
+                : mlip::assemble_dphi_train_both_rows_cached(
+                      val_stdb, host.DCS, dm_cache_val,
+                      prefs[i].theta_name, prefs[i].arg_pos,
+                      energy_scratch_val.data(),
+                      use_frmse_val ? dphi_val_buf[i].data() : nullptr,
+                      n_cols, force_row_start_for_struct_val);
+            const bool ok_e_val = pr_val.first;
+            const bool ok_f_val = pr_val.second;
 
-        /* Train-side ownership requires BOTH energy and (if FORCE) force
-         * walkers to claim the theta. A descriptor that owns theta for
-         * energy but not yet for force (e.g. D2_LJ, D2_ZBL today: only
-         * calc_dDdtheta is implemented) would otherwise produce a
-         * dphi_train_aug with correct energy rows but zero force rows,
-         * silently giving the IFT a wrong gradient. Force the whole
-         * theta to needs_fd instead.
-         *
-         * Val-side ownership: when use_frmse_val is true, both energy
-         * and force walkers must claim the theta for val too -- same
-         * argument applies (a missing val force walker would silently
-         * zero the dPhi_val force rows). */
-        /* No validation structures (a PC_OBSERVABLE-only run): there are
-         * no validation rows to differentiate, so the val side has nothing
-         * to claim. */
-        const bool ok_train = ok_e_train && (!use_force      || ok_f_train);
-        const bool ok_val   = val_stdb.size() == 0 ||
-                              (ok_e_val && (!use_frmse_val || ok_f_val));
-        if (!ok_train || !ok_val) continue;     /* -> needs_fd */
+            /* Train-side ownership requires BOTH energy and (if FORCE) force
+             * walkers to claim the theta. A descriptor that owns theta for
+             * energy but not yet for force (e.g. D2_LJ, D2_ZBL today: only
+             * calc_dDdtheta is implemented) would otherwise produce a
+             * dphi_train_aug with correct energy rows but zero force rows,
+             * silently giving the IFT a wrong gradient. Force the whole
+             * theta to needs_fd instead.
+             *
+             * Val-side ownership: when use_frmse_val is true, both energy
+             * and force walkers must claim the theta for val too -- same
+             * argument applies (a missing val force walker would silently
+             * zero the dPhi_val force rows). */
+            /* No validation structures (a PC_OBSERVABLE-only run): there are
+             * no validation rows to differentiate, so the val side has nothing
+             * to claim. */
+            const bool ok_train = ok_e_train && (!use_force      || ok_f_train);
+            const bool ok_val   = val_stdb.size() == 0 ||
+                                  (ok_e_val && (!use_frmse_val || ok_f_val));
+            if (!ok_train || !ok_val) continue;     /* -> needs_fd */
 
-        /* Copy energy scratch rows into dphi_train_buf at the energy
-         * row offsets and scale by w_e. */
-        for (std::size_t s = 0; s < train_stdb.size(); ++s) {
-            const double w_e = std::sqrt(train_stdb(s).eweight * eweightglob);
-            const std::size_t src_off = s * n_cols;
-            const std::size_t dst_off = energy_row_for_struct[s] * n_cols;
-            for (std::size_t c = 0; c < n_cols; ++c)
-                dphi_train_buf[i][dst_off + c] = energy_scratch_train[src_off + c] * w_e;
-        }
-        if (use_force) {
-            /* Scale force rows by w_f. */
+            /* Copy energy scratch rows into dphi_train_buf at the energy
+             * row offsets and scale by w_e. */
             for (std::size_t s = 0; s < train_stdb.size(); ++s) {
-                const double w_f = std::sqrt(train_stdb(s).fweight * fweightglob);
-                const std::size_t f_start = force_row_start_for_struct[s];
-                for (std::size_t a = 0; a < train_stdb(s).natoms(); ++a) {
-                    for (std::size_t k = 0; k < 3; ++k) {
-                        const std::size_t row_off = (f_start + 3 * a + k) * n_cols;
-                        for (std::size_t c = 0; c < n_cols; ++c)
-                            dphi_train_buf[i][row_off + c] *= w_f;
+                const double w_e = std::sqrt(train_stdb(s).eweight * eweightglob);
+                const std::size_t src_off = s * n_cols;
+                const std::size_t dst_off = energy_row_for_struct[s] * n_cols;
+                for (std::size_t c = 0; c < n_cols; ++c)
+                    dphi_train_buf[i][dst_off + c] = energy_scratch_train[src_off + c] * w_e;
+            }
+            if (use_force) {
+                /* Scale force rows by w_f. */
+                for (std::size_t s = 0; s < train_stdb.size(); ++s) {
+                    const double w_f = std::sqrt(train_stdb(s).fweight * fweightglob);
+                    const std::size_t f_start = force_row_start_for_struct[s];
+                    for (std::size_t a = 0; a < train_stdb(s).natoms(); ++a) {
+                        for (std::size_t k = 0; k < 3; ++k) {
+                            const std::size_t row_off = (f_start + 3 * a + k) * n_cols;
+                            for (std::size_t c = 0; c < n_cols; ++c)
+                                dphi_train_buf[i][row_off + c] *= w_f;
+                        }
                     }
                 }
             }
+
+            /* Copy val energy scratch rows into dphi_val_buf at the
+             * energy-row offsets. No weight scaling on the val side. */
+            for (std::size_t s = 0; s < val_stdb.size(); ++s) {
+                const std::size_t src_off = s * n_cols;
+                const std::size_t dst_off = energy_row_for_struct_val[s] * n_cols;
+                for (std::size_t c = 0; c < n_cols; ++c)
+                    dphi_val_buf[i][dst_off + c] = energy_scratch_val[src_off + c];
+            }
+            /* Val force rows were written directly by the walker into the
+             * interleaved positions -- no copy needed, and no weight scaling. */
+
+            per_theta[i].dPhi_train_aug = dphi_train_buf[i].data();
+            per_theta[i].dPhi_val       = dphi_val_buf  [i].data();
+
+            per_theta_ms[i] = ms(t_th_start, clk::now());
+        } catch (...) {
+            per_theta_errors[ord] = std::current_exception();
         }
-
-        /* Copy val energy scratch rows into dphi_val_buf at the
-         * energy-row offsets. No weight scaling on the val side. */
-        for (std::size_t s = 0; s < val_stdb.size(); ++s) {
-            const std::size_t src_off = s * n_cols;
-            const std::size_t dst_off = energy_row_for_struct_val[s] * n_cols;
-            for (std::size_t c = 0; c < n_cols; ++c)
-                dphi_val_buf[i][dst_off + c] = energy_scratch_val[src_off + c];
-        }
-        /* Val force rows were written directly by the walker into the
-         * interleaved positions -- no copy needed, and no weight scaling. */
-
-        per_theta[i].dPhi_train_aug = dphi_train_buf[i].data();
-        per_theta[i].dPhi_val       = dphi_val_buf  [i].data();
-
-        per_theta_ms[i] = ms(t_th_start, clk::now());
     }
+    for (const auto& e : per_theta_errors)
+        if (e) std::rethrow_exception(e);
 
     if (profile_grad) t_per_theta = clk::now();
 
