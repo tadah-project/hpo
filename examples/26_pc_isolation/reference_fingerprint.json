@@ -3,23 +3,23 @@
   "example": "26_pc_isolation",
   "description": "Example 01 with PC_ISOLATION PROCESS and PC_WORKER_TIMEOUT: 01's results in either isolation mode.",
   "best_loss": {
-    "value": 0.1004806,
+    "value": 0.1031156,
     "abs_tol": 1e-06,
     "rel_tol": 0.001
   },
   "components": {
     "L(ERMSE)[1]": {
-      "value": 0.002318189,
+      "value": 0.00232794,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(ERMSE)[avg]": {
-      "value": 0.002318189,
+      "value": 0.00232794,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(Ecoh)": {
-      "value": 0.1986431,
+      "value": 0.2039032,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     }
@@ -32,17 +32,18 @@
     }
   },
   "evaluations": {
-    "value": 16,
-    "tol": 0
+    "value": 30,
+    "tol": 14,
+    "note": "As example 01 (the same search in worker processes): 30 on the reference machine since the neighbour lists are exact (2026-09-30; 16 before). BFGS reaches the upper bound RCUT2B = 6.0 at eval 9 (the best, 1.031156e-01), and from eval 13 on its line search re-evaluates the clamped bound; its sufficient-decrease test there depends on the sign of the ~1e-13 relative re-evaluation noise of the warm-started lattice relaxation. On the reference machine it never passes and the run continues to MAXEVAL (30, status COMPLETED); with the hot_a0 start 1 ulp lower it passes and BFGS ends after 17 evaluations (as example 05's run with the same search does after 16). So the count is not pinned (evals_tol 14: 16..30, see tolerance_rationale); best loss, components and RCUT2B do not depend on it."
   },
-  "best_ermse_meV_per_atom": 4.81,
+  "best_ermse_meV_per_atom": 4.82,
   "status_accepted": [
     "COMPLETED"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "0.5s",
+  "walltime_hint": "0.6s",
   "fast": true,
-  "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression.",
+  "tolerance_rationale": "Example 01's search in worker processes, with 01's tolerances: best loss, components and RCUT2B at the defaults, and the evaluation count within evals_tol 14 (16..30), for the reason given in 01's tolerance_rationale (the count at the clamped bound RCUT2B = 6.0 depends on rounding-level noise).",
   "journal": [
     {
       "what": "PC_LAMMPS runs in worker processes",

@@ -4,9 +4,9 @@
 # the local config.val lists the elastic set (1) and the bcc
 # equation-of-state set (2), and common/run.sh uses it in place of
 # ../common/config.val. Each dataset gets its own target and weight.
-# The EOS set's RMSE is about 2.5x smaller than the elastic set's, so it
+# The EOS set's RMSE is about 2.8x smaller than the elastic set's, so it
 # is weighted 10x, which makes its term comparable to the elastic one in
-# the L2 loss (about 1.5x it at the optimum). loss.tadah and
+# the L2 loss (about 1.25x it at the optimum). loss.tadah and
 # stats.tadah get one column per dataset (L(ERMSE)[1], L(ERMSE)[2]);
 # with indexed targets the reported L(ERMSE)[avg] is the average of the
 # dataset losses.
@@ -14,8 +14,8 @@
 # --skip-above 5 on dataset 2 is a per-dataset bad-potential filter: a
 # candidate whose EOS error exceeds 5 meV/atom scores FAILSCORE and skips
 # the rest of its evaluation. In this box that is RCUT2B below about
-# 4.24 A (6.8 meV/atom at 4.0 A). This run's path (RCUT2B 5.6 to 6.0,
-# about 2 meV/atom) never goes there, so the filter does not fire here.
+# 4.06 A (5.6 meV/atom at 4.0 A). This run's path (RCUT2B 5.6 to 6.0,
+# 1.7 to 1.9 meV/atom) never goes there, so the filter does not fire here.
 
 OPTIMIZER
   STRATEGY
