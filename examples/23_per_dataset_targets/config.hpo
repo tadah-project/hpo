@@ -4,8 +4,9 @@
 # the local config.val lists the elastic set (1) and the bcc
 # equation-of-state set (2), and common/run.sh uses it in place of
 # ../common/config.val. Each dataset gets its own target and weight.
-# The EOS set's RMSE is nearly 3x smaller than the elastic set's, so it
-# is weighted 10x to count about as much in the L2 loss. loss.tadah and
+# The EOS set's RMSE is about 2.5x smaller than the elastic set's, so it
+# is weighted 10x, which makes its term comparable to the elastic one in
+# the L2 loss (about 1.5x it at the optimum). loss.tadah and
 # stats.tadah get one column per dataset (L(ERMSE)[1], L(ERMSE)[2]);
 # with indexed targets the reported L(ERMSE)[avg] is the average of the
 # dataset losses.

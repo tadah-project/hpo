@@ -10,8 +10,9 @@ What this shows:
   uses.
 - `PC_ERMSE (1) 0 1e-4` and `PC_ERMSE (2) 0 1e-3`: the index names the
   `DBFILE` line of `config.val`. The equation-of-state errors are about
-  2.5x smaller than the elastic ones, so that set is weighted 10x to
-  count about as much in the L2 loss.
+  2.5x smaller than the elastic ones, so that set is weighted 10x, which
+  makes its term comparable to the elastic one in the L2 loss (about
+  1.5x it at the optimum).
 - One column per dataset: `L(ERMSE)[1]`, `L(ERMSE)[2]` in `loss.tadah`
   and `ERMSE[1]`, `ERMSE[2]` in `stats.tadah`. With indexed targets
   `L(ERMSE)[avg]` is the average of the dataset losses (the journal's
