@@ -13,7 +13,7 @@
 # --skip-above 5 on dataset 2 is a per-dataset bad-potential filter: a
 # candidate whose EOS error exceeds 5 meV/atom scores FAILSCORE and skips
 # the rest of its evaluation. In this box that is RCUT2B below about
-# 4.25 A (7.5 meV/atom at 4.0 A). This run's path (RCUT2B 5.6 to 6.0,
+# 4.24 A (6.8 meV/atom at 4.0 A). This run's path (RCUT2B 5.6 to 6.0,
 # about 2 meV/atom) never goes there, so the filter does not fire here.
 
 OPTIMIZER

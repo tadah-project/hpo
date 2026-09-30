@@ -24,7 +24,7 @@
     "description": "PC_LAMMPS --invar / --outvar via parametric Ecoh_param.in.",
     "status_accepted": ["COMPLETED"],
     "evals_tol": 14,
-    "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances. The evaluation count is not deterministic across machines: the optimum is on the clamped bound RCUT2B = 6.0, and whether DLIB:BFGS's line search accepts a re-evaluation there depends on the sign of a ~1e-13 relative, rounding-level drift of the warm-started lattice relaxation. The run stops after 16-17 evaluations or runs to MAXEVAL = 30 (the reference machine), and a 1-ulp change of the hot_a0 start or of one training energy flips it; evals_tol 14 accepts 16..44."
+    "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances. The evaluation count is not deterministic across machines: the optimum is on the clamped bound RCUT2B = 6.0, and whether DLIB:BFGS's line search accepts a re-evaluation there depends on the sign of a ~1e-13 relative, rounding-level drift of the warm-started lattice relaxation. The run stops after 16-17 evaluations (17 on the reference machine) or runs to MAXEVAL = 30, and a 1-ulp change of the hot_a0 start or of one training energy flips it; evals_tol 14 accepts 3..31."
   },
   "06_init_random": {
     "description": "INIT { STRATEGY RANDOM, SEED, INCLUDE_CONFIG false }.",
@@ -73,9 +73,10 @@
   },
   "16_fixweight_mixed": {
     "description": "NLOPT:LN_BOBYQA over a flat OPTIM FIXWEIGHT(14); mixed LS-fit + pinned + OPTIM'd weights.",
-    "status_accepted": ["MAXEVAL_REACHED -- maximum evaluations exhausted"],
+    "status_accepted": ["MAXEVAL_REACHED -- maximum evaluations exhausted", "STOPPED -- nlopt roundoff-limited (algorithm converged; consider adding ftol_rel / xtol_rel / maxeval to stop cleanly next time)"],
+    "evals_tol": 15,
     "hyperparam_tol": {"abs_tol": 100.0, "rel_tol": 0.001},
-    "tolerance_rationale": "Weight 14 multiplies a descriptor that is zero on this dataset, so the loss does not depend on it: every evaluation ties up to ~2e-13 relative, the rounding-level noise of the warm-started lattice relaxation (exact Ecoh.in read-back), and that noise decides which evaluation is the best (weight 0, -25 or +25). The loss and components are pinned at the default tolerances; FIXWEIGHT[14] is checked only for presence: abs_tol 100 (the box width) accepts any value in its box [-50, 50]."
+    "tolerance_rationale": "Weight 14 multiplies a descriptor that is zero on this dataset, so the loss does not depend on it: every evaluation ties up to ~2e-13 relative, the rounding-level noise of the warm-started lattice relaxation (exact Ecoh.in read-back), and that noise decides which evaluation is the best (weight 0, -25 or +25) and when LN_BOBYQA stops: roundoff-limited after 15 evaluations on the reference machine since the sheared cells of common/data/elastic.tadahdb were corrected (2026-09-30; 4 repeated runs identical), at MAXEVAL = 30 before. Both statuses are accepted, and evals_tol 15 accepts 0..30. The loss and components are pinned at the default tolerances; FIXWEIGHT[14] is checked only for presence: abs_tol 100 (the box width) accepts any value in its box [-50, 50]."
   },
   "22_pc_observable": {
     "description": "PC_OBSERVABLE cohesive_energy; DLIB:BFGS with GRAD_STRATEGY resolved to ANALYTICAL; no LAMMPS.",
@@ -93,11 +94,11 @@
     ]
   },
   "25_failprobe_grading": {
-    "description": "FAILSCORE_GRADING ON + PC_FAILPROBE over example 02's seeded search; a lattice window grades 6 failures (band A).",
+    "description": "FAILSCORE_GRADING ON + PC_FAILPROBE over example 02's seeded search; a lattice window grades 4 failures (band A).",
     "status_accepted": ["COMPLETED"],
     "journal": [
-      {"what": "six failures, all graded", "regex": "^\\s*Graded failures\\s*:\\s*6\\s"},
-      {"what": "all six in band A (hot-var out of range)", "regex": "^\\s*A=6 \\(hot-var out of range\\)"}
+      {"what": "four failures, all graded", "regex": "^\\s*Graded failures\\s*:\\s*4\\s"},
+      {"what": "all four in band A (hot-var out of range)", "regex": "^\\s*A=4 \\(hot-var out of range\\)"}
     ]
   },
   "26_pc_isolation": {

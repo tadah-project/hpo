@@ -7,9 +7,7 @@
 # STEP is the initial step as a FRACTION of each OPTIM width (0 < STEP
 # <= 0.5): 0.1 here means 10% of [4,6] on RCUT2B and 10% of [0.1,0.4]
 # on SGRIDMB -- the "one tenth of the expected change" rule of thumb.
-# hpo_run.log prints the effective per-dimension step. (A 5% step is
-# too timid for this 60-evaluation budget: SBPLX then contracts around
-# the seed's RCUT2B and needs ~200 evaluations to reach the optimum.)
+# hpo_run.log prints the effective per-dimension step.
 
 OPTIMIZER
   STRATEGY

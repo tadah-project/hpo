@@ -3,35 +3,35 @@
   "example": "07_init_lhs_multistart",
   "description": "INIT { STRATEGY LHS } + STRATEGY MULTISTART.",
   "best_loss": {
-    "value": 0.05728028,
+    "value": 0.07458667,
     "abs_tol": 1e-06,
     "rel_tol": 0.001
   },
   "components": {
     "L(ERMSE)[1]": {
-      "value": 0.01929662,
+      "value": 0.03642353,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(ERMSE)[avg]": {
-      "value": 0.01929662,
+      "value": 0.03642353,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(Ecoh)": {
-      "value": 0.09526395,
+      "value": 0.1127498,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     }
   },
   "hyperparameters": {
     "RCUT2B": {
-      "value": 4.524445,
+      "value": 4.529941,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     },
     "SGRIDMB": {
-      "value": 0.3428071,
+      "value": 0.3430364,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     }
@@ -40,12 +40,12 @@
     "value": 80,
     "tol": 0
   },
-  "best_ermse_meV_per_atom": 13.89,
+  "best_ermse_meV_per_atom": 19.08,
   "status_accepted": [
     "COMPLETED"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "1.0s",
+  "walltime_hint": "1.9s",
   "fast": true,
   "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
 }

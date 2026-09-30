@@ -3,35 +3,35 @@
   "example": "03_nlopt_local",
   "description": "NLOPT:LN_SBPLX derivative-free local.",
   "best_loss": {
-    "value": 0.0738873,
+    "value": 0.07958207,
     "abs_tol": 1e-06,
     "rel_tol": 0.001
   },
   "components": {
     "L(ERMSE)[1]": {
-      "value": 0.01175245,
+      "value": 0.004926895,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(ERMSE)[avg]": {
-      "value": 0.01175245,
+      "value": 0.004926895,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(Ecoh)": {
-      "value": 0.1360221,
+      "value": 0.1542372,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     }
   },
   "hyperparameters": {
     "RCUT2B": {
-      "value": 4.427551,
+      "value": 5.547827,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     },
     "SGRIDMB": {
-      "value": 0.2363844,
+      "value": 0.238269,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     }
@@ -40,13 +40,13 @@
     "value": 60,
     "tol": 0
   },
-  "best_ermse_meV_per_atom": 10.84,
+  "best_ermse_meV_per_atom": 7.02,
   "status_accepted": [
     "COMPLETED",
     "MAXEVAL_REACHED -- maximum evaluations exhausted"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "1.1s",
+  "walltime_hint": "1.7s",
   "fast": true,
   "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
 }
