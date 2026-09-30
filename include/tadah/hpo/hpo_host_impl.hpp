@@ -997,6 +997,10 @@ template<class P, class R>
 thread_local typename HPO_Host<P,R>::TrainerCache
 HPO_Host<P,R>::tls_trainer_cache_{};
 
+template<class P, class R>
+thread_local std::shared_ptr<const typename HPO_Host<P,R>::RebuiltLists>
+HPO_Host<P,R>::tls_rebuilt_lists_{};
+
 /* ----------  constructor ---------------------------------------------- */
 template<class P, class R>
 HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
@@ -1099,6 +1103,7 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
      * reach — stated RCUTMAX, OPTIM RCUT2B/RCUTMB upper bounds, and (knot
      * channels) OPTIM CGRID2B/CGRIDMB upper bounds. */
     const double rcutmax = detail::nn_safe_rcutmax(master_ctx_, trg_);
+    nn_list_cutoff_ = rcutmax;
 
     /* validation set (optional: PC_OBSERVABLE/PC_LAMMPS-only runs) ------- */
     core::Context val_ctx;
@@ -1376,6 +1381,37 @@ void HPO_Host<P,R>::note_out_of_box(const P& p, std::size_t iter) const
         std::cerr << "[HPO] WARNING: " << msg << "\n";
         HPOLog::instance().warning(msg);
     } catch (...) { /* journalling must never fail an evaluation */ }
+}
+
+template<class P, class R>
+std::shared_ptr<const typename HPO_Host<P,R>::RebuiltLists>
+HPO_Host<P,R>::rebuilt_lists(double cutoff, std::size_t iter) const
+{
+    auto lists = std::make_shared<RebuiltLists>();
+    lists->cutoff = cutoff;
+    if (has_train_data_) {
+        lists->train = train_stdb_;
+        nnf_.calc(lists->train, cutoff);
+    }
+    if (has_validation_) {
+        lists->val = val_stdb_;
+        nnf_.calc(lists->val, cutoff);
+    }
+    try {
+        if (HPOLog::instance().record_nn_rebuild() == 1) {
+            const std::string msg =
+                "eval " + std::to_string(iter) + ": the model reads pairs up to " +
+                core::format_roundtrip(cutoff) + " A, beyond the one-time "
+                "neighbour lists (" + core::format_roundtrip(nn_list_cutoff_) +
+                " A, sized for the OPTIM box), so it is evaluated with lists "
+                "rebuilt for it: a point outside the OPTIM box, from an "
+                "optimiser that ignores the bounds. DIAGNOSTICS counts every "
+                "such evaluation";
+            std::cerr << "[HPO] WARNING: " << msg << "\n";
+            HPOLog::instance().warning(msg);
+        }
+    } catch (...) { /* journalling must never fail an evaluation */ }
+    return lists;
 }
 
 /* ----------  helper: train/val structure counts ----------------------- */
@@ -2678,8 +2714,19 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
                 cache.trainer.reset(new (cache.buf) mlip::Trainer(ctx, tls_ws_));
             }
         }
+        /* Neighbour lists: the one-time lists hold every pair up to
+         * nn_list_cutoff_ (the OPTIM box tops). A candidate whose model
+         * reads pairs further out -- a point outside the box -- is
+         * trained, validated and differentiated on lists rebuilt for it;
+         * a shorter list would silently lack pairs (DescriptorsCalc
+         * refuses one). */
+        const double nn_needed = cache.trainer->dc.neighbour_cutoff();
+        tls_rebuilt_lists_ = nn_needed > nn_list_cutoff_
+                                 ? rebuilt_lists(nn_needed, r.iter)
+                                 : nullptr;
         if (has_train_data_ && !all_weights_fixed_) {
-            cache.trainer->train(train_stdb_);
+            cache.trainer->train(tls_rebuilt_lists_ ? tls_rebuilt_lists_->train
+                                                    : train_stdb_);
         } else {
             /* No training DBFILE, or FIXINDEX pins every weight: the LS
              * solve is absent/vacuous, so scatter the FIXWEIGHT values
@@ -2734,8 +2781,12 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     pot.remove("AUDIT");
     pot.remove("HEALTH_LOG");
     if (has_validation_) {
-        auto pred = host.model->predict(pot, val_stdb_, host.dc);
-        mlip::Analytics   a(val_stdb_, pred); // we do not need to recalc NN as each descriptor checks cutoffs internally
+        /* The one-time lists (or this candidate's rebuilt ones) cover the
+         * model cutoff; the descriptors filter pairs by their own cutoffs. */
+        const mlip::StructureDB& val_db =
+            tls_rebuilt_lists_ ? tls_rebuilt_lists_->val : val_stdb_;
+        auto pred = host.model->predict(pot, val_db, host.dc);
+        mlip::Analytics   a(val_db, pred);
         fill_validation(r, a);
     }
     r.pot_ctx  = std::move(pot);
@@ -3901,8 +3952,12 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
     }
 
     try {
+        /* The lists of the evaluation the trainer cache holds: rebuilt
+         * ones when its cutoff exceeded the one-time lists. */
+        const auto& lists = tls_rebuilt_lists_;
         helper_ok = compute_analytical_gradient_from_trainer(
-            *cache.trainer, train_stdb_, val_stdb_, trg_, prefs,
+            *cache.trainer, lists ? lists->train : train_stdb_,
+            lists ? lists->val : val_stdb_, trg_, prefs,
             g_flat, needs_fd, sims_grad_provider, obs_grad_provider);
     } catch (const std::exception& e) {
         /* Any throw from the analytical helper (out-of-range, walker

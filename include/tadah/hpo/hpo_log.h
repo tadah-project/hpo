@@ -310,6 +310,14 @@ public:
     std::size_t hybrid_centres() const {
         return n_hybrid_centre_.load(std::memory_order_relaxed);
     }
+    /** An evaluation whose model cutoff exceeds the one-time neighbour
+     *  lists (HPO_Host builds them at detail::nn_safe_rcutmax), evaluated
+     *  with lists rebuilt for it; DIAGNOSTICS prints the count when it is
+     *  > 0. Reset with the counters above. Returns the running count. */
+    std::size_t record_nn_rebuild();
+    std::size_t nn_rebuilds() const {
+        return n_nn_rebuild_.load(std::memory_order_relaxed);
+    }
     /** The one-sided components counted so far for `label` (0 if none). */
     std::size_t one_sided(const std::string& label) const;
 
@@ -631,6 +639,8 @@ private:
     std::atomic<std::size_t> n_snap_          {0};
     std::atomic<std::size_t> n_oob_grad_      {0};
     std::atomic<std::size_t> n_hybrid_centre_ {0};
+    /* Evaluations with rebuilt neighbour lists (record_nn_rebuild). */
+    std::atomic<std::size_t> n_nn_rebuild_    {0};
     /* One-sided components per dimension, in the order first seen --
      * protected by mtx_. */
     std::vector<std::pair<std::string, std::size_t>> one_sided_;

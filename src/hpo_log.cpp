@@ -1276,6 +1276,11 @@ std::size_t HPOLog::record_hybrid_centre()
     return n_hybrid_centre_.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
+std::size_t HPOLog::record_nn_rebuild()
+{
+    return n_nn_rebuild_.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
 std::size_t HPOLog::record_one_sided(const std::string& label)
 {
     std::lock_guard<std::mutex> lg(mtx_);
@@ -1299,6 +1304,7 @@ void HPOLog::reset_fd_counters_locked()
     n_snap_.store(0, std::memory_order_relaxed);
     n_oob_grad_.store(0, std::memory_order_relaxed);
     n_hybrid_centre_.store(0, std::memory_order_relaxed);
+    n_nn_rebuild_.store(0, std::memory_order_relaxed);
     one_sided_.clear();
 }
 
@@ -2166,6 +2172,13 @@ void HPOLog::finish(const std::string& status_str)
             f_ << "  " << std::left << std::setw(KW) << "Out-of-box gradients"
                << ": " << og << " (at points outside the OPTIM box, each "
                   "finite\n    difference stepped towards the box)\n";
+        const std::size_t nr = n_nn_rebuild_.load(std::memory_order_relaxed);
+        if (nr > 0)
+            f_ << "  " << std::left << std::setw(KW) << "Neighbour lists rebuilt"
+               << ": " << nr << " evaluation(s) with a cutoff above the "
+                  "one-time neighbour\n    lists (sized for the OPTIM box), "
+                  "evaluated with lists rebuilt for them;\n    see the first "
+                  "such WARNING\n";
         if (!one_sided_.empty()) {
             std::size_t total_os = 0;
             std::string per_dim;
