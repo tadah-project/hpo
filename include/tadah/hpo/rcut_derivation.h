@@ -23,8 +23,10 @@
 // point and rejects violating trials per evaluation BEFORE training
 // (bump_support_gate.h, graded band-D). Either way no spilling trial is
 // ever trained, and the prebuilt NN list needs no bump-side padding:
-// nn_safe_rcutmax below covers every OPTIM RCUT high bound, so any
-// candidate the gate passes is inside the list.
+// nn_safe_rcutmax below covers every OPTIM RCUT high bound, so any in-box
+// candidate the gate passes is inside the list (a candidate beyond it,
+// outside the box, is evaluated on lists rebuilt for it:
+// HPO_Host::rebuilt_lists).
 
 #include <cmath>
 #include <string>

@@ -16,7 +16,7 @@ What this shows:
   graded value in `[0.999e9, 1e9)` that falls as the lattice approaches
   the window (band A), instead of the constant `FAILSCORE`: the four
   failed rows of `loss.tadah` have a `TOTAL_LOSS/N` of about `9.990e8`
-  (from `9.99007e8` to `9.99057e8`).
+  (from `9.99007e8` to `9.99053e8`).
   Feasible candidates are scored as usual: the best is example 02's
   (the same `SEED`). The reference fingerprint is example 02's too, and
   also requires the two summary lines of the journal.

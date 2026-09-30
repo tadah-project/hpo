@@ -351,6 +351,12 @@ private:
      * Built once in the ctor; operator() only reads it. */
     std::optional<detail::DensityGates> density_;
     mlip::NNFinder               nnf_;
+    /* Cutoff of the one-time neighbour lists of train_stdb_ / val_stdb_
+     * (detail::nn_safe_rcutmax: the stated RCUTMAX and the OPTIM box tops).
+     * A candidate whose model reads pairs further out -- a point outside
+     * the OPTIM box, from an optimiser that ignores the bounds -- is
+     * evaluated with lists rebuilt at its cutoff (rebuilt_lists). */
+    double                       nn_list_cutoff_ = 0.0;
 
     /* ---------- data for pot header writer ----------------------------- */
     core::Context                val_ctx_;
@@ -535,6 +541,28 @@ private:
         std::unique_ptr<mlip::Trainer, TrainerDeleter>   trainer;
     };
     static thread_local TrainerCache tls_trainer_cache_;
+
+    /* Neighbour lists rebuilt for one evaluation whose model cutoff exceeds
+     * nn_list_cutoff_: copies of the datasets the evaluation reads (the
+     * training set when it is fitted, the validation set when there is
+     * one) with lists at `cutoff`; a set it does not read stays empty. */
+    struct RebuiltLists {
+        double            cutoff = 0.0;
+        mlip::StructureDB train;
+        mlip::StructureDB val;
+    };
+    /* The rebuilt lists of this thread's latest evaluation, or nullptr when
+     * the one-time lists covered it (or it reads no dataset):
+     * analytical_gradient differentiates the evaluation the trainer cache
+     * holds, on the same lists. Cleared, with tls_trainer_theta_stale_ set,
+     * before an evaluation touches the trainer, so a failed evaluation
+     * leaves no state for the gradient to use. */
+    static thread_local std::shared_ptr<const RebuiltLists> tls_rebuilt_lists_;
+    /* Build RebuiltLists at @p cutoff for evaluation @p iter, counted in
+     * DIAGNOSTICS (the first one also warned); nullptr, and not counted,
+     * when the evaluation reads no dataset. */
+    std::shared_ptr<const RebuiltLists> rebuilt_lists(double cutoff,
+                                                      std::size_t iter) const;
 
 public:
     /** Test hook: expose this thread's cached trainer so e2e tests can

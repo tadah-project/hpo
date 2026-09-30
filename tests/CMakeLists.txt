@@ -113,8 +113,13 @@ endforeach()
 #   rhobargate_e2e test_rho_gates.cpp: RHOBARGATE rejects before training
 #   bumpgate_e2e   test_bump_support_gate.cpp: BUMPGATE rejects before
 #                  training (also tagged [!benchmark])
+#   nn_e2e         test_nn_exact_e2e.cpp: exact neighbour lists -- thin,
+#                  triclinic, sheared and unwrapped validation cells give
+#                  the loss of their supercells; a candidate cutoff beyond
+#                  the one-time lists is evaluated with rebuilt lists
 set(_hpo_e2e_groups fixweight_e2e durable_e2e embf0_e2e rcut_e2e
-                    rhoform_e2e rhogate_e2e rhobargate_e2e bumpgate_e2e)
+                    rhoform_e2e rhogate_e2e rhobargate_e2e bumpgate_e2e
+                    nn_e2e)
 foreach(_group IN LISTS _hpo_e2e_groups)
     add_test(NAME hpo_${_group}
         COMMAND test_hpo "[${_group}]" --warn NoTests)

@@ -14,6 +14,10 @@
 //      byte (modulo float noise).
 //   4. Hot-var updates: with relax enabled, a0_current changes after
 //      evaluate.
+//   5. Neighbour lists (workstream C): the E_coh of a relaxation whose cell
+//      changed equals a fresh neighbour-list evaluation of the relaxed bulk
+//      (the relaxer's cached list must carry the image displacements of
+//      the current cell); and --supercell 1 1 1 gives the E_coh of 4 4 4.
 
 #include "catch2/catch.hpp"
 
@@ -29,6 +33,7 @@
 #include <tadah/mlip/trainer.h>
 #include <tadah/mlip/memory/mlip_workspace_manager.h>
 
+#include <algorithm>
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
@@ -108,6 +113,62 @@ StructureDB make_ta_train_db() {
         db.structures.push_back(st);
     }
     return db;
+}
+
+/* n x n x n copies of @p st along its cell rows, built here (independent of
+ * StructureTransformation::replicate): rows scaled by n, copy (x, y, z) of
+ * atom i at r_i + x a0 + y a1 + z a2. */
+Structure supercell_along_rows(const Structure& st, int n) {
+    Structure out = st;
+    out.atoms.clear();
+    out.nn.reset();
+    for (int k = 0; k < 3; ++k)
+        for (int c = 0; c < 3; ++c) out.cell(k, c) = st.cell(k, c) * n;
+    for (int x = 0; x < n; ++x)
+        for (int y = 0; y < n; ++y)
+            for (int z = 0; z < n; ++z)
+                for (auto at : st.atoms) {
+                    for (int c = 0; c < 3; ++c)
+                        at.position[c] += x * st.cell(0, c) +
+                                          y * st.cell(1, c) + z * st.cell(2, c);
+                    out.atoms.push_back(at);
+                }
+    return out;
+}
+
+/* 2x2x2 bcc cells, a = 3.0 ... 3.6, labelled with E/atom = -8 + 5 (a - 3.3)^2:
+ * a D2_BP model fitted to them has a bcc energy minimum inside the hot-var
+ * range [2.7, 3.9] (near a = 3.34 for the grids used below), so an Iso
+ * relaxation from a0 = 3.27 moves the cell by about 2%. */
+StructureDB make_parabola_train_db() {
+    StructureDB db;
+    const std::vector<double> a0s = {3.0, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6};
+    db.dbidx = {0, a0s.size()};
+    for (double a : a0s) {
+        Structure st = supercell_along_rows(tadah::mlip::cells::bcc("Ta", a), 2);
+        st.energy = static_cast<double>(st.natoms()) *
+                    (-8.0 + 5.0 * (a - 3.3) * (a - 3.3));
+        db.structures.push_back(st);
+    }
+    return db;
+}
+
+/* E_coh = -(E_bulk - N E_iso) / N of the observable's relaxed bulk and
+ * isolated atom, with neighbour lists built afresh here at the model's
+ * cutoff. */
+double fresh_ecoh(Trainer& host, const ObservableEvalResult& r) {
+    REQUIRE(r.energy_terms.size() == 2u);
+    Structure bulk = r.energy_terms[0].structure;
+    Structure iso  = r.energy_terms[1].structure;
+    REQUIRE(iso.natoms() == 1u);
+    bulk.nn.reset();
+    iso.nn.reset();
+    NNFinder().calc(bulk, host.context);
+    NNFinder().calc(iso, host.context);
+    const double E_bulk = host.model->epredict(host.dc.calc(bulk));
+    const double E_iso  = host.model->epredict(host.dc.calc(iso));
+    const double N = static_cast<double>(bulk.natoms());
+    return -(E_bulk - N * E_iso) / N;
 }
 
 }  // namespace
@@ -283,4 +344,113 @@ TEST_CASE("CohesiveEnergyObservable updates hot-var after relaxation",
     /* Hot-var didn't escape the bounds. */
     CHECK(obs.current_a0() >= cfg.a0_min * 0.5);   /* leniency for sneak-out */
     CHECK(obs.current_a0() <= cfg.a0_max * 2.0);
+}
+
+/* The relaxed bulk's neighbour list is the relaxer's cached one (built at
+ * rcut + skin and reused while it covers the cutoff). Its image
+ * displacements must be those of the relaxed cell: before the exact-image
+ * fix a cache hit kept the displacements of the cell the list was built
+ * for, so after an Iso step the images sat where the old cell put them --
+ * a perfect bcc lattice felt spurious forces (the relaxation stalls on
+ * them) and E_coh was computed from misplaced images.
+ *
+ * relax_etol and a lenient eq_fmax_threshold make the observable report the
+ * E_coh it computes for the bulk the relaxation ends at, whether it stops on
+ * the force criterion (exact lists: every atomic force ~1e-15 on a perfect
+ * lattice) or stalls on an energy plateau (misplaced images); that value
+ * must be the relaxed bulk's energy. */
+TEST_CASE("CohesiveEnergyObservable: relaxed E_coh equals a fresh "
+          "neighbour-list evaluation of the relaxed bulk",
+          "[hpo][observable][cohesive_energy][nn]")
+{
+    PeriodicTable::initialize();
+
+    MLIPWorkspaceManager ws;
+    Context ctx = make_ta_context(4.5, {2.4, 3.0, 3.6}, {2.0, 2.0, 2.0});
+    Trainer host(ctx, ws);
+    auto train_db = make_parabola_train_db();
+    host.train(train_db);
+
+    CohesiveEnergyObservable::Config cfg;
+    cfg.species = "Ta";
+    cfg.nx = cfg.ny = cfg.nz = 2;
+    cfg.target = 8.0;
+    cfg.weight = 1.0;
+    cfg.a0_min = 2.7;
+    cfg.a0_max = 3.9;
+    cfg.a0_initial = 3.27;           /* about 2% below the model's minimum */
+    cfg.relax_atom_ftol = 1.0e-4;    /* the strain must converge: several Iso steps */
+    cfg.relax_etol = 1.0e-12;
+    cfg.relax_maxiter = 500;
+    cfg.eq_fmax_threshold = 1.0e3;
+
+    CohesiveEnergyObservable obs(cfg);
+    const ObservableEvalResult r = obs.evaluate(*host.model, host.dc, host.context);
+
+    INFO("a0 " << *cfg.a0_initial << " -> " << obs.current_a0()
+         << ", E_coh " << r.value);
+    /* Precondition: the relaxation changed the cell (accepted Iso steps
+     * after the list was built), so the cached list's cell is not the
+     * relaxed one. Each Iso step changes the scale by at most 0.1%. */
+    REQUIRE(std::abs(obs.current_a0() / *cfg.a0_initial - 1.0) > 5.0e-3);
+    /* The observable's own value, not the unconverged penalty. */
+    REQUIRE_FALSE(r.value_is_constant);
+    REQUIRE(std::isfinite(r.value));
+    REQUIRE(r.energy_terms.size() == 2u);
+    REQUIRE(r.energy_terms[0].structure.cell(0, 0) ==
+            Approx(2.0 * obs.current_a0()).epsilon(1e-12));
+
+    const double ecoh = fresh_ecoh(host, r);
+    INFO("fresh-list E_coh " << ecoh);
+    CHECK(std::abs(r.value - ecoh) <= 1.0e-10 * std::max(1.0, std::abs(ecoh)));
+}
+
+/* A guard, expected to pass before and after the exact-image fix: the E_coh
+ * of the 2-atom bcc cell (--supercell 1 1 1) equals that of 4 4 4 at the
+ * same a0, without relaxation (relax_maxiter 0; a relax_atom_ftol no
+ * pressure reaches, so the iteration-0 check accepts the cell as it is).
+ * At rcut 6 and a0 3.3 (rcut/a0 = 1.82) a list built at the model's cutoff
+ * would miss images of the 2-atom cell before the fix, but the relaxer
+ * builds its list at rcut + skin (2 A), wide enough that no pair inside
+ * rcut is lost (DESIGN-nnfinder-exact-images.md, section 0 item 8). */
+TEST_CASE("CohesiveEnergyObservable: supercell 1 1 1 and 4 4 4 give the "
+          "same E_coh",
+          "[hpo][observable][cohesive_energy][nn][supercell]")
+{
+    PeriodicTable::initialize();
+
+    MLIPWorkspaceManager ws;
+    Context ctx = make_ta_context(6.0, {2.4, 3.0, 3.6, 4.5}, {2.0, 2.0, 2.0, 2.0});
+    Trainer host(ctx, ws);
+    auto train_db = make_parabola_train_db();
+    host.train(train_db);
+
+    auto ecoh = [&](int n) {
+        CohesiveEnergyObservable::Config cfg;
+        cfg.species = "Ta";
+        cfg.nx = cfg.ny = cfg.nz = n;
+        cfg.target = 8.0;
+        cfg.weight = 1.0;
+        cfg.a0_min = 2.7;
+        cfg.a0_max = 3.9;
+        cfg.a0_initial = 3.3;
+        cfg.relax_maxiter = 0;
+        cfg.relax_atom_ftol = 1.0e6;
+        CohesiveEnergyObservable obs(cfg);
+        const ObservableEvalResult r =
+            obs.evaluate(*host.model, host.dc, host.context);
+        CAPTURE(n, r.value);
+        REQUIRE_FALSE(r.value_is_constant);
+        REQUIRE(std::isfinite(r.value));
+        REQUIRE(r.energy_terms.size() == 2u);
+        REQUIRE(r.energy_terms[0].structure.natoms() ==
+                static_cast<std::size_t>(2 * n * n * n));
+        CHECK(obs.current_a0() == 3.3);   /* not relaxed */
+        return r.value;
+    };
+
+    const double e1 = ecoh(1);
+    const double e4 = ecoh(4);
+    INFO("E_coh 1x1x1 " << e1 << ", 4x4x4 " << e4);
+    CHECK(std::abs(e1 - e4) <= 1.0e-10 * std::max(1.0, std::abs(e4)));
 }

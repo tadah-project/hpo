@@ -47,8 +47,9 @@ void update_candidate_context(core::Context &ctx, const HPOTargets &trg,
   /* Knot channels: the effective cutoff follows the (possibly OPTIM'd)
    * largest knot -- re-derive RCUT2B/RCUTMB so Trainer::reinit applies it
    * via fcut->set_rcut(RCUT*MAX). Overrides a user OPTIM RCUT* dimension
-   * deliberately (warned once at startup). The prebuilt NN list already
-   * covers every reachable cutoff (detail::nn_safe_rcutmax). */
+   * deliberately (warned once at startup). The prebuilt NN list covers
+   * every cutoff inside the OPTIM box (detail::nn_safe_rcutmax); the host
+   * rebuilds the lists for a candidate beyond it (HPO_Host::rebuilt_lists). */
   apply_knot_rcut_derivation(ctx, knot2b, knotmb);
 }
 

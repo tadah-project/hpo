@@ -3,35 +3,35 @@
   "example": "18_anneal_pt",
   "description": "",
   "best_loss": {
-    "value": 0.04853095,
+    "value": 0.04890901,
     "abs_tol": 1e-06,
     "rel_tol": 0.001
   },
   "components": {
     "L(ERMSE)[1]": {
-      "value": 0.007274191,
+      "value": 0.007654796,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(ERMSE)[avg]": {
-      "value": 0.007274191,
+      "value": 0.007654796,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     },
     "L(Ecoh)": {
-      "value": 0.08978771,
+      "value": 0.09016323,
       "abs_tol": 1e-06,
       "rel_tol": 0.005
     }
   },
   "hyperparameters": {
     "RCUT2B": {
-      "value": 4.195995,
+      "value": 4.212658,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     },
     "SGRIDMB": {
-      "value": 0.3426865,
+      "value": 0.3426172,
       "abs_tol": 0.001,
       "rel_tol": 0.001
     }
@@ -40,12 +40,12 @@
     "value": 260,
     "tol": 0
   },
-  "best_ermse_meV_per_atom": 8.53,
+  "best_ermse_meV_per_atom": 8.75,
   "status_accepted": [
     "COMPLETED"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "4.1s",
+  "walltime_hint": "3.0s",
   "fast": true,
   "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
 }
