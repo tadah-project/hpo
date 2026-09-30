@@ -185,7 +185,9 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
     Structure iso = cells::isolated_atom(cfg_.species);
 
     /* 4. Descriptor + energy evaluation on both. NN-build on iso explicitly
-     *    (bulk's NN was just refreshed inside relaxer.relax). */
+     *    (bulk's list is the relaxer's: it holds every pair within the
+     *    cutoff at the relaxed cell, with that cell's image displacements,
+     *    nn_cache::is_fresh). */
     NNFinder nnf;
     nnf.calc(iso, ctx);
 
