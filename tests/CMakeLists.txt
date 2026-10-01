@@ -182,6 +182,14 @@ add_test(NAME hpo_example_fingerprint_overrides_sync
 set_tests_properties(hpo_example_fingerprint_overrides_sync PROPERTIES
     LABELS "examples"
     TIMEOUT 30)
+# The generator's and the gate's handling of the overrides, on a synthetic
+# run (examples/tools/test_generate_fingerprint.py).
+add_test(NAME hpo_example_fingerprint_tool
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../examples/tools/test_generate_fingerprint.py)
+set_tests_properties(hpo_example_fingerprint_tool PROPERTIES
+    LABELS "examples"
+    TIMEOUT 30)
 
 if(TADAH_HPO_MPI)
     add_executable(test_hpo_anneal_mpi mpi/test_anneal_mpi.cpp)
