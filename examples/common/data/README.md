@@ -10,7 +10,7 @@ with `tadah data convert`:
 
 The labels keep the source paths (`examples/data/...`).
 
-**What they store** (since 1.6.0):
+**What they store** (since the re-conversion of 2026-10-01):
 - **Energy:** the free energy F (VASP's `free  energy   TOTEN`), whose
   gradient the forces and the stress are, plus 3.69807734 eV per atom.
   That reference is minus the free energy of a spin-polarised free Ta
@@ -21,8 +21,9 @@ The labels keep the source paths (`examples/data/...`).
   are the lattice vectors.
 
 **History.**
-- Before 1.6.0 these files held the energy without entropy and VASP's
-  pressure-signed stress.
+- Every earlier version of these files, the 1.6.0 development snapshots
+  included, held the energy without entropy and VASP's pressure-signed
+  stress.
 - They were re-converted on 2026-10-01 from the same OUTCARs with the 1.6.0
   readers.
 - Cells, positions and forces are unchanged. The stress is negated, and each
