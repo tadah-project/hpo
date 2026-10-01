@@ -42,6 +42,22 @@ DEFAULT_TOL = {
     "evals_tol":  0,
 }
 
+TOL_KEYS = ("abs_tol", "rel_tol")
+
+
+def tolerances(overrides: dict) -> dict:
+    """The tolerances a fingerprint records, by kind (best_loss, component,
+    hyperparam): the defaults with the entry's *_tol overrides, abs_tol and
+    rel_tol only (another key in a *_tol entry is a comment)."""
+    out = {}
+    for kind, key in (("best_loss", "best_loss_tol"),
+                      ("component", "component_tol"),
+                      ("hyperparam", "hyperparam_tol")):
+        merged = {**DEFAULT_TOL[kind], **(overrides.get(key) or {})}
+        out[kind] = {k: merged[k] for k in TOL_KEYS}
+    return out
+
+
 DEFAULT_RATIONALE = (
     "Bundle is bit-deterministic when SEED is set; tolerances absorb "
     "cross-machine BLAS/LAPACK reorder and FP printf rounding while "
@@ -112,9 +128,8 @@ def build_fingerprint(example_dir: Path, overrides: dict) -> dict:
         except (ValueError, IndexError):
             pass
 
-    tol_loss = {**DEFAULT_TOL["best_loss"], **(overrides.get("best_loss_tol") or {})}
-    tol_comp = {**DEFAULT_TOL["component"], **(overrides.get("component_tol") or {})}
-    tol_hp   = {**DEFAULT_TOL["hyperparam"], **(overrides.get("hyperparam_tol") or {})}
+    tol = tolerances(overrides)
+    tol_loss, tol_comp, tol_hp = tol["best_loss"], tol["component"], tol["hyperparam"]
     evals_tol = overrides.get("evals_tol", DEFAULT_TOL["evals_tol"])
 
     # best_loss columns: skip leading "ITERATION", trailing "TOTAL_LOSS/N"
@@ -170,9 +185,8 @@ def build_fingerprint(example_dir: Path, overrides: dict) -> dict:
             "tol": evals_tol,
         },
         "best_ermse_meV_per_atom": log.get("best_ermse_meV_per_atom"),
-        "status_accepted": overrides.get(
-            "status_accepted", [log["optimiser_status"]]
-        ),
+        "status_accepted": (overrides.get("status_accepted")
+                            or [log["optimiser_status"]]),
         "nan_clampings_max": overrides.get("nan_clampings_max", 0),
         "walltime_hint": log.get("total_walltime_str"),
         "fast": overrides.get("fast", True),
@@ -184,33 +198,66 @@ def build_fingerprint(example_dir: Path, overrides: dict) -> dict:
     return fp
 
 
+def carry_over(fp: dict, prev: dict) -> dict:
+    """`fp`, a fingerprint just built, with the hand-written fields of the
+    fingerprint it replaces: the description (when the overrides entry has
+    none), the free-text note on the evaluation count, and every top-level
+    field build_fingerprint() does not produce (e.g. a "status_note"), each
+    kept after the field it followed. The journal checks come from the
+    overrides entry only, so removing them there removes them here."""
+    fp = dict(fp)
+    fp["evaluations"] = dict(fp["evaluations"])
+    if not fp.get("description") and prev.get("description"):
+        fp["description"] = prev["description"]
+    note = (prev.get("evaluations") or {}).get("note")
+    if note and "note" not in fp["evaluations"]:
+        fp["evaluations"]["note"] = note
+        old_evals = (prev.get("evaluations") or {}).get("value")
+        if old_evals != fp["evaluations"]["value"]:
+            print(f"note: evaluations changed {old_evals} -> "
+                  f"{fp['evaluations']['value']}; check the carried-over "
+                  f"evaluations.note", file=sys.stderr)
+    return keep_hand_written(fp, {k: v for k, v in prev.items() if k != "journal"})
+
+
 def override_mismatches(fp: dict, overrides: dict) -> list:
     """The fields build_fingerprint() takes from an example's overrides
     entry that `fp` does not hold as the entry gives them: an overrides
     entry changed without regenerating the fingerprint, or a fingerprint
-    edited by hand. Fields a regeneration keeps from the old fingerprint
-    when the entry has none (description, journal) are compared only when
-    the entry sets them."""
+    edited by hand. A fingerprint that build_fingerprint() and carry_over()
+    just wrote has none, whatever the entry holds. Without accepted
+    statuses in the entry, the fingerprint accepts one, the measured
+    status; without journal checks, it has none; without a description, it
+    may keep a hand-written one."""
     out = []
 
     def cmp(field, have, want):
         if have != want:
             out.append(f"{field}: fingerprint {have!r}, overrides {want!r}")
 
-    tol_loss = {**DEFAULT_TOL["best_loss"], **(overrides.get("best_loss_tol") or {})}
-    tol_comp = {**DEFAULT_TOL["component"], **(overrides.get("component_tol") or {})}
-    tol_hp   = {**DEFAULT_TOL["hyperparam"], **(overrides.get("hyperparam_tol") or {})}
+    tol = tolerances(overrides)
     bl = fp.get("best_loss") or {}
-    cmp("best_loss tolerances", {k: bl.get(k) for k in tol_loss}, tol_loss)
+    cmp("best_loss tolerances", {k: bl.get(k) for k in TOL_KEYS}, tol["best_loss"])
     for name, c in (fp.get("components") or {}).items():
-        cmp(f"components.{name} tolerances", {k: c.get(k) for k in tol_comp}, tol_comp)
+        cmp(f"components.{name} tolerances", {k: c.get(k) for k in TOL_KEYS},
+            tol["component"])
     for name, h in (fp.get("hyperparameters") or {}).items():
-        cmp(f"hyperparameters.{name} tolerances", {k: h.get(k) for k in tol_hp}, tol_hp)
+        cmp(f"hyperparameters.{name} tolerances", {k: h.get(k) for k in TOL_KEYS},
+            tol["hyperparam"])
     cmp("evaluations.tol", (fp.get("evaluations") or {}).get("tol"),
         overrides.get("evals_tol", DEFAULT_TOL["evals_tol"]))
-    for field in ("description", "status_accepted", "journal"):
-        if field in overrides:
-            cmp(field, fp.get(field), overrides[field])
+    if overrides.get("description"):
+        cmp("description", fp.get("description"), overrides["description"])
+    if overrides.get("status_accepted"):
+        cmp("status_accepted", fp.get("status_accepted"), overrides["status_accepted"])
+    elif len(fp.get("status_accepted") or []) != 1:
+        out.append(f"status_accepted: fingerprint {fp.get('status_accepted')!r}, "
+                   f"overrides none (a regeneration accepts only the measured "
+                   f"status)")
+    if overrides.get("journal"):
+        cmp("journal", fp.get("journal"), overrides["journal"])
+    elif "journal" in fp:
+        out.append(f"journal: fingerprint {fp['journal']!r}, overrides none")
     cmp("nan_clampings_max", fp.get("nan_clampings_max"),
         overrides.get("nan_clampings_max", 0))
     cmp("fast", fp.get("fast"), overrides.get("fast", True))
@@ -272,27 +319,14 @@ def main(argv):
 
     fp = build_fingerprint(args.example_dir, overrides)
     out_path = args.out or (args.example_dir / "reference_fingerprint.json")
-    # Hand-written fields of an existing fingerprint survive a regeneration:
-    # the description (when the overrides file has none), the free-text note
-    # on the evaluation count, and every top-level field this script does
-    # not produce (e.g. a "status_note"), each kept after the field it
-    # followed. Everything measured is refreshed.
+    # Hand-written fields of an existing fingerprint survive a regeneration
+    # (carry_over); everything measured is refreshed.
     if out_path.exists():
         try:
             prev = json.loads(out_path.read_text())
         except (ValueError, OSError):
             prev = {}
-        if not fp.get("description") and prev.get("description"):
-            fp["description"] = prev["description"]
-        note = (prev.get("evaluations") or {}).get("note")
-        if note and "note" not in fp["evaluations"]:
-            fp["evaluations"]["note"] = note
-            old_evals = (prev.get("evaluations") or {}).get("value")
-            if old_evals != fp["evaluations"]["value"]:
-                print(f"note: evaluations changed {old_evals} -> "
-                      f"{fp['evaluations']['value']}; check the carried-over "
-                      f"evaluations.note", file=sys.stderr)
-        fp = keep_hand_written(fp, prev)
+        fp = carry_over(fp, prev)
     out_path.write_text(json.dumps(fp, indent=2) + "\n")
     print(f"wrote {out_path}")
 
