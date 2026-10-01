@@ -51,6 +51,7 @@
 
 #include <tadah/core/core_types.h>
 #include <tadah/core/intercept_layout.h>
+#include <tadah/hpo/fit_switch_guard.h>
 #include <tadah/hpo/analytical_gate.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/loss_function.h>
@@ -1050,8 +1051,10 @@ compute_analytical_gradient_from_trainer(
      * active (mirrors the train-side layout): 1 energy row + 3.natoms
      * force rows per struct. When use_frmse is off, a single energy row
      * per struct (energy_row_for_struct_val[s] == s -- preserves the
-     * Phase 2A scalar layout). use_frmse requires ctx.FORCE=true so the
-     * walker on val_stdb has fd_ij populated (the gate above). */
+     * Phase 2A scalar layout). The validation descriptors carry their
+     * force parts whenever use_frmse is set, whatever FORCE training used:
+     * the loop below runs under validation_switches(trg), as the
+     * prediction in HPO_Host::operator() does. */
     const bool use_frmse_val = trg.use_frmse;
 
     std::vector<std::size_t> energy_row_for_struct_val(val_stdb.size(), 0);
@@ -1082,6 +1085,12 @@ compute_analytical_gradient_from_trainer(
     /* An exception may not leave the OpenMP loop (std::terminate): each
      * iteration keeps its own, and the lowest index's is rethrown after it. */
     std::vector<std::exception_ptr> val_phi_errors(val_stdb.size());
+    {
+    /* dc.calc reads FORCE/STRESS from the trainer's context: set them to
+     * what validation measures for this loop only (outside the parallel
+     * region), and restore the training ones after it. */
+    const auto val_sw = detail::validation_switches(trg);
+    detail::ScopedFitSwitches val_switches(ctx, val_sw.force, val_sw.stress);
 #if defined(TADAH_ENABLE_OPENMP)
 #   pragma omp parallel for schedule(dynamic)
 #endif
@@ -1130,6 +1139,7 @@ compute_analytical_gradient_from_trainer(
             val_phi_errors[s] = std::current_exception();
         }
     }
+    }  // the training FORCE/STRESS are restored here
     for (const auto& e : val_phi_errors)
         if (e) std::rethrow_exception(e);
 

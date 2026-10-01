@@ -46,8 +46,6 @@ std::string analytical_gradient_blocker(const core::Context& ctx,
     }
     if (trg.use_srmse)
         return "PC_SRMSE is set (stress metrics are not differentiated)";
-    if (trg.use_frmse && !ctx.get<bool>("FORCE"))
-        return "PC_FRMSE needs FORCE true";
     return {};
 }
 

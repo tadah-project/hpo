@@ -52,7 +52,7 @@ int HPOEngine::run(mlip::Task &task) {
     mlip::StructureDB::check_watom_key(context, unique_elements);
 
     core::Logger::instance().log(tadah::core::LogLevel::INFO, "Optimising HPs...");
-    status = hpo_run(context);
+    status = hpo_run(context, task.getKeyProvenance());
 
     // core::Logger::instance().log(
     //     tadah::core::LogLevel::ERROR,

@@ -19,6 +19,7 @@
 #include <tadah/hpo/pc_worker_pool.h>
 #include <tadah/hpo/iter_health.h>
 #include <tadah/hpo/candidate_context.h>
+#include <tadah/hpo/fit_switch_guard.h>
 #include <tadah/hpo/rcut_derivation.h>
 #include <tadah/hpo/result_drain.h>
 #include <tadah/hpo/startup_validation.h>
@@ -1108,7 +1109,20 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     /* validation set (optional: PC_OBSERVABLE/PC_LAMMPS-only runs) ------- */
     core::Context val_ctx;
     if (has_validation_) {
-        val_ctx = core::Context(core::CoreUserConfigParser().parse(val_cfg));
+        /* FORCE and STRESS say what training fits; validation predicts what
+         * its metrics measure. In this file they would have no effect, so
+         * they are refused at their line. */
+        core::CoreUserConfigParser val_parser;
+        val_parser.refuse_keys({
+            {"FORCE", "the validation set is not fitted; it is validated on "
+                      "forces whenever the hpotarget sets PC_FRMSE, and FORCE "
+                      "in the training configuration (or -F) decides whether "
+                      "training fits forces"},
+            {"STRESS", "the validation set is not fitted; it is validated on "
+                       "stresses whenever the hpotarget sets PC_SRMSE, and "
+                       "STRESS in the training configuration (or -S) decides "
+                       "whether training fits stresses"}});
+        val_ctx = core::Context(val_parser.parse(val_cfg));
         val_ctx_ = val_ctx;
         std::vector<std::string> files;
         if (val_ctx.contains("DBFILE")) files = val_ctx("DBFILE");
@@ -2249,39 +2263,15 @@ void HPO_Host<P,R>::sims_loss(Result& r) const
 
 namespace detail {
 
-/* RAII guard that temporarily sets FORCE=true on a Context and
- * restores the prior value on scope exit. Used to bracket observable
- * evaluations: NativeRelaxer + IFT adjoint paths consume fd_ij
- * arrays that dc.calc only fills when FORCE=true, even when the
- * training fit itself doesn't use forces (force-free dataset). The
- * trainer's context is per-thread (TLS cache), so mutating it during
- * the host's eval/gradient call is safe. */
-struct ObsForceFlagGuard {
-    tadah::core::Context& ctx;
-    bool                  had_key;
-    bool                  prev_val;
-    ObsForceFlagGuard(tadah::core::Context& c) : ctx(c), had_key(false), prev_val(false) {
-        try {
-            prev_val = ctx.template get<bool>("FORCE");
-            had_key = true;
-        } catch (...) {
-            had_key = false;
-        }
-        if (!had_key || !prev_val) {
-            ctx.remove("FORCE");
-            ctx.add("FORCE", "true");
-        }
-    }
-    ~ObsForceFlagGuard() {
-        if (had_key && !prev_val) {
-            ctx.remove("FORCE");
-            ctx.add("FORCE", "false");
-        } else if (!had_key) {
-            ctx.remove("FORCE");
-        }
-        /* If had_key && prev_val: FORCE was already true; nothing to
-         * restore. */
-    }
+/* Sets FORCE=true on a Context for a scope and restores the prior state
+ * (ScopedFitSwitches). Used to bracket observable evaluations: NativeRelaxer
+ * + IFT adjoint paths consume fd_ij arrays that dc.calc only fills when
+ * FORCE=true, even when the training fit itself doesn't use forces
+ * (force-free dataset). The trainer's context is per-thread (TLS cache), so
+ * mutating it during the host's eval/gradient call is safe. */
+struct ObsForceFlagGuard : ScopedFitSwitches {
+    explicit ObsForceFlagGuard(tadah::core::Context& c)
+        : ScopedFitSwitches(c, true, std::nullopt) {}
 };
 
 /* EMBF0 journal: sum_m w_m g_m(0) of a trainer's DM_REAM block with its
@@ -2797,7 +2787,22 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
          * model cutoff; the descriptors filter pairs by their own cutoffs. */
         const mlip::StructureDB& val_db =
             tls_rebuilt_lists_ ? tls_rebuilt_lists_->val : val_stdb_;
-        auto pred = host.model->predict(pot, val_db, host.dc);
+        /* What validation predicts follows its metrics, not what training
+         * fitted: forces whenever PC_FRMSE is set, stresses whenever
+         * PC_SRMSE is set (validation_switches()). The model's predict reads
+         * the switches from vctx, the descriptor calculator from the
+         * trainer's context; both get the same values. `pot` keeps the
+         * training ones: it becomes best_pot.tadah and the LAMMPS context. */
+        const auto sw = detail::validation_switches(trg_);
+        core::Context vctx = pot;
+        detail::set_fit_switch(vctx, "FORCE", sw.force);
+        detail::set_fit_switch(vctx, "STRESS", sw.stress);
+        mlip::StructureDB pred;
+        {
+            detail::ScopedFitSwitches switches(host.context, sw.force,
+                                               sw.stress);
+            pred = host.model->predict(vctx, val_db, host.dc);
+        }
         mlip::Analytics   a(val_db, pred);
         fill_validation(r, a);
     }

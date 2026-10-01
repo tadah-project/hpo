@@ -162,6 +162,23 @@ public:
         const std::string&    elements_str,
         const RawEmbeddingF0* embf0_seed = nullptr);
 
+    /** What training fits (FORCE, STRESS: their values and where each came
+     *  from) and what validation predicts, for POTENTIAL SETUP. */
+    struct FitSwitchReport {
+        bool        force = false;
+        std::string force_source;
+        bool        stress = false;
+        std::string stress_source;
+        bool        has_validation = false;
+        bool        val_forces = false;    // PC_FRMSE
+        bool        val_stresses = false;  // PC_SRMSE
+    };
+
+    /** The rows "Fit forces (FORCE)", "Fit stresses (STRESS)" and
+     *  "Validation predicts", in the current section (POTENTIAL SETUP:
+     *  hpo_run() calls it after write_potential_section). */
+    void write_fit_switches(const FitSwitchReport& report);
+
     /** LOAD TRANSFORMS section -- emitted once at host construction summarising
      *  what load-time transforms (LSCALE, ESHIFT, EFILTER, FFILTER, WDBFILE,
      *  EWEIGHT_TEMP, ZERO_COM_FORCE, equilibrium-volume) were applied to the

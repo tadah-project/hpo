@@ -974,6 +974,24 @@ void HPOLog::write_potential_section(const core::Context&  ctx,
     }
 }
 
+void HPOLog::write_fit_switches(const FitSwitchReport& r)
+{
+    auto row = [](bool on, const std::string& source) {
+        return std::string(on ? "yes" : "no") + "  (" + source + ")";
+    };
+    kv("Fit forces (FORCE)",    row(r.force, r.force_source));
+    kv("Fit stresses (STRESS)", row(r.stress, r.stress_source));
+    std::string v;
+    if (!r.has_validation) {
+        v = "no validation set";
+    } else {
+        v = "energies";
+        if (r.val_forces)   v += ", forces (PC_FRMSE)";
+        if (r.val_stresses) v += ", stresses (PC_SRMSE)";
+    }
+    kv("Validation predicts", v);
+}
+
 void HPOLog::write_loss_section(const HPOTargets& trg)
 {
     section("LOSS FUNCTION");

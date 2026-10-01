@@ -3,6 +3,7 @@
 #include <tadah/hpo/runners.h>
 #include <tadah/hpo/run_policy.h>
 #include <tadah/hpo/run_driver.h>
+#include <tadah/mlip/key_provenance.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_mpi.h>     // hpo_rank(), hpo_size(), hpo_rank_suffix()
@@ -143,11 +144,38 @@ void run_noise_calibration(const OptimizerSpec& sp, const HPO_Host<V,R>& host,
 }  // namespace
 
 namespace {
-int hpo_run_journaled(core::Context& ctx, HPOLog& log);
+
+/* Where FORCE and STRESS came from, in words for the journal. Read when
+ * hpo_run() starts, before any code can insert a default into ctx. */
+struct FitSwitchSources {
+    std::string force;
+    std::string stress;
+};
+
+FitSwitchSources fit_switch_sources(const core::Context& ctx,
+                                    const mlip::KeyProvenance* provenance)
+{
+    auto source = [&](const char* key) -> std::string {
+        if (!ctx.stored_value(key)) return "default";
+        if (provenance) return provenance->origin(key).describe(key);
+        return "source not recorded";
+    };
+    return {source("FORCE"), source("STRESS")};
+}
+
+int hpo_run_journaled(core::Context& ctx, HPOLog& log,
+                      const FitSwitchSources& fit_sources);
 }  // namespace
 
 int hpo_run(core::Context& ctx)
 {
+    return hpo_run(ctx, nullptr);
+}
+
+int hpo_run(core::Context& ctx, const mlip::KeyProvenance* provenance)
+{
+    const FitSwitchSources fit_sources = fit_switch_sources(ctx, provenance);
+
     /* -- Open run journal first -------------------------------------
      * This must precede HPOTargets construction so that diagnostics
      * emitted while parsing OPTIMIZER, OPTIM, and INIT_STRATEGY blocks
@@ -174,7 +202,7 @@ int hpo_run(core::Context& ctx)
      * error of the run itself arrives after drive_run() has written the
      * trailer and closed the journal, and then nothing more is written. */
     try {
-        return hpo_run_journaled(ctx, log);
+        return hpo_run_journaled(ctx, log, fit_sources);
     } catch (const std::exception& e) {
         log.event("ERROR", std::string("startup: ") + e.what());
         throw;
@@ -184,7 +212,8 @@ int hpo_run(core::Context& ctx)
 namespace {
 
 /* hpo_run() once the journal is open. */
-int hpo_run_journaled(core::Context& ctx, HPOLog& log)
+int hpo_run_journaled(core::Context& ctx, HPOLog& log,
+                      const FitSwitchSources& fit_sources)
 {
 #ifdef TADAH_ENABLE_OPENMP
     {
@@ -546,6 +575,17 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log)
     if (has_ream) embf0_seed = derive_raw_embedding_f0(ctx);
     log.write_potential_section(ctx, host.train_size(), host.val_size(), elem_str,
                                 embf0_seed ? &*embf0_seed : nullptr);
+    {
+        HPOLog::FitSwitchReport fit;
+        fit.force          = ctx.get<bool>("FORCE");
+        fit.force_source   = fit_sources.force;
+        fit.stress         = ctx.get<bool>("STRESS");
+        fit.stress_source  = fit_sources.stress;
+        fit.has_validation = !val.empty();
+        fit.val_forces     = trg.use_frmse;
+        fit.val_stresses   = trg.use_srmse;
+        log.write_fit_switches(fit);
+    }
     if (has_ream) log.arm_embf0(embf0_zero, host.embf0_diagnostic());
     /* DM_REAM density report (a bare DM_REAM many-body term): the -c
      * potential's and each WARM seed's rho_raw(r) -- and rhobar(a) under
