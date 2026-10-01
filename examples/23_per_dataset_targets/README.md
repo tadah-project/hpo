@@ -12,7 +12,7 @@ What this shows:
   `DBFILE` line of `config.val`. The equation-of-state errors are about
   2.8x smaller than the elastic ones, so that set is weighted 10x, which
   makes its term comparable to the elastic one in the L2 loss (about
-  1.25x it at the optimum).
+  1.3x it at the optimum).
 - One column per dataset: `L(ERMSE)[1]`, `L(ERMSE)[2]` in `loss.tadah`
   and `ERMSE[1]`, `ERMSE[2]` in `stats.tadah`. With indexed targets
   `L(ERMSE)[avg]` is the average of the dataset losses (the journal's
@@ -21,8 +21,8 @@ What this shows:
   filter. A candidate whose equation-of-state error exceeds 5 meV/atom
   scores `FAILSCORE` and skips the rest of its evaluation; the journal
   warns `skipping downstream (obs+LAMMPS) -- ermse[2] ... > skip-above=5`.
-  In this box that is `RCUT2B` below about 4.06 A (the error is
-  5.6 meV/atom at 4.0 A, 4.6 at 4.1 A, 4.0 at 4.2 A). This run's path
+  In this box that is `RCUT2B` below about 4.07 A (the error is
+  5.7 meV/atom at 4.0 A, 4.6 at 4.1 A, 4.1 at 4.2 A). This run's path
   (`RCUT2B` 5.6 to 6.0, 1.7 to 1.9 meV/atom) never goes there, so the
   filter does not fire here.
 

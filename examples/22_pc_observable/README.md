@@ -16,8 +16,9 @@ What this shows:
   `ANALYTICAL` for `DLIB:BFGS`, and the OPTIMISER section of
   `hpo_run.log` says so (`GRAD_STRATEGY : ANALYTICAL (resolved for
   PC_OBSERVABLE)`). BFGS reaches the optimum (`RCUT2B` at its upper
-  bound, as in 01) in 4 evaluations instead of 01's 17 or more (30 on
-  the reference machine; see 05 for why that count varies), because its
+  bound, as in 01) in 4 evaluations instead of 01's 16 or more (16 on
+  the reference machine, 30 in example 05's run of the same search; see
+  05 for why that count varies), because its
   gradient costs no finite-difference evaluations.
 - A local `config.tadah` (picked up by `common/run.sh`): the shared model
   with `OALGO 4` and `LAMBDA 1e-6`. The analytical gradient
