@@ -302,7 +302,7 @@ StructureDB read_db(const fs::path& path) {
 }
 
 /* ---------------------------------------------------------------------------
- * Potentials: D2_BP (3 Gaussians, Cut_Cos at 4.5 A) + DM_Dummy, no bias,
+ * Potentials: D2_BP (3 Gaussians, Cut_Cos at 4.5 A), no many-body term, no bias,
  * raw features, so a linear model has 3 weights.
  * ------------------------------------------------------------------------- */
 
@@ -335,11 +335,10 @@ Context potential_context(const std::vector<std::string>& model,
     c.add("SGRID2B",  "1.0 1.0 1.0");
     c.add("RCTYPE2B", "Cut_Cos");
     c.add("RCUT2B",   4.5);
-    c.add("TYPEMB",   "DM_Dummy");
-    c.add("TYPEMB",   "Ta");
-    c.add("TYPEMB",   "Ta");
-    c.add("RCTYPEMB", "Cut_Cos");
-    c.add("RCUTMB",   4.0);
+    /* No TYPEMB/RCTYPEMB/RCUTMB with INITMB false, as in a configuration a
+     * user writes: best_pot.tadah is read back with the configuration
+     * parser, which refuses "TYPEMB DM_Dummy Ta Ta" (its schema needs a
+     * number after the type). */
     c.add("DIMER",    "false");
     c.add("DIMER",    0);
     c.add("DIMER",    "false");
