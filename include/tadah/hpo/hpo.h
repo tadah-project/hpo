@@ -6,6 +6,9 @@
 #include <string>
 
 namespace tadah {
+namespace mlip {
+class KeyProvenance;
+}
 namespace hpo {
 
 struct OptimizerSpec;
@@ -28,6 +31,11 @@ struct OptimizerSpec;
  * (the configuration, validate_hpo_setup()) is thrown before any trailer,
  * after an "ERROR startup: ..." journal line. See run_driver.h. */
 int hpo_run(core::Context&);
+/* The same, with where the context's keys came from (the command line, the
+ * configuration file, the defaults): the journal's POTENTIAL SETUP names
+ * the source of FORCE and STRESS. hpo_run(ctx) records "default" for a key
+ * the context does not hold and "source not recorded" for one it does. */
+int hpo_run(core::Context&, const mlip::KeyProvenance* provenance);
 
 /* NOISE_CALIBRATION gate: run only for a non-trivial calibration knob
  * (N >= 2 evaluations). Defined in hpo.cpp; declared here so unit tests

@@ -2274,6 +2274,239 @@ OPTIM CGRID2B (1) 0.0 4.0
 }
 
 /* ------------------------------------------------------------------------
+ * PC_FRMSE on an energy-only trainer (FORCE false, or no FORCE key: the
+ * default). FORCE decides only what training fits; validation predicts
+ * forces whenever PC_FRMSE is set. The analytical gradient must therefore
+ * form its validation force rows from PC_FRMSE alone while the training
+ * side keeps energy rows only.
+ * ------------------------------------------------------------------------ */
+
+namespace {
+
+/* The energy-only trainer context of the variant: M_BLR + BF_Linear or
+ * M_KRR + Kern_Linear, with FORCE false written out or with no FORCE key
+ * (the blueprint default, false). */
+Context make_energy_only_trainer_context(const std::vector<double>& cgrid,
+                                         const std::vector<double>& sgrid,
+                                         double rcut,
+                                         bool kern_linear,
+                                         bool force_key_written)
+{
+    Context c = kern_linear
+        ? make_minimal_trainer_context_kern_linear(cgrid, sgrid, rcut)
+        : make_minimal_trainer_context(cgrid, sgrid, rcut);
+    c.remove("FORCE");
+    if (force_key_written) c.add("FORCE", "false");
+    return c;
+}
+
+/* Energies and forces of a trainer fitted to energies only, predicted the
+ * way `tadah predict -F` predicts them: a FORCE true context for the
+ * descriptor calculator and for M_Tadah_Base::predict. This is independent
+ * of the validation force rows that compute_analytical_gradient_from_trainer
+ * assembles itself. FORCE is switched on after training, so the fit stays
+ * energy-only; the trainer is not trained again. */
+StructureDB predict_forces_of_energy_fit(Trainer& t, const StructureDB& db) {
+    t.context.remove("FORCE");
+    t.context.add("FORCE", "true");
+    StructureDB pred = predict_full(t, db);
+    for (std::size_t s = 0; s < db.size(); ++s)
+        REQUIRE(pred(s).atoms.size() == db(s).natoms());
+    return pred;
+}
+
+/* The predicted energy of one structure after moving atom a along axis k
+ * by `shift` (the structure's neighbour list is rebuilt after the move). */
+double energy_with_atom_moved(Trainer& t, const Structure& st0,
+                              std::size_t a, std::size_t k, double shift,
+                              double rcut)
+{
+    Structure st = st0;
+    st.atoms[a].position[k] += shift;
+    NNFinder finder;
+    finder.calc(st, rcut);
+    tadah::mlip::StDescriptors d = t.dc.calc(st);
+    return t.model->epredict(d);
+}
+
+}  // namespace
+
+/* Pins: with FORCE false (written, or absent: the default) and PC_FRMSE,
+ * compute_analytical_gradient_from_trainer computes the gradient
+ * analytically for every parameter (needs_fd empty), the gradient equals
+ * central differences of the validation loss whose FRMSE is computed from
+ * forces predicted independently (predict_forces_of_energy_fit, checked
+ * against -dE/dx of the same energy model), for M_BLR + BF_Linear and for
+ * M_KRR + Kern_Linear, with PC_FRMSE alone (the whole gradient is the
+ * force term) and with PC_EMAE + PC_FRMSE (the energy rows sit between the
+ * validation force rows), and the trainer's FORCE/STRESS are left as they
+ * were. Before the fix analytical_gradient_blocker returned "PC_FRMSE
+ * needs FORCE true", every parameter went to finite differences, and
+ * REQUIRE(needs_fd.empty()) failed on the first variant. */
+TEST_CASE("compute_analytical_gradient_from_trainer matches FD on an "
+          "energy-only trainer with PC_FRMSE (FORCE false or absent)",
+          "[HPO][analytical_gradient][live_trainer][parity][frmse][fit_switches]")
+{
+    using tadah::mlip::memory::MLIPWorkspaceManager;
+    tadah::core::PeriodicTable::initialize();
+
+    /* The fixtures of the FORCE=true + EMAE+FRMSE case above: the training
+     * cells carry force targets that an energy-only fit does not use. */
+    const std::vector<double> cgrid_0 = {0.5, 1.4};
+    const std::vector<double> sgrid_0 = {3.0, 5.0};
+    const double rcut    = 3.0;
+    const double theta_0 = cgrid_0[0];
+
+    auto train_stdb = make_h3_force_stdb(/*N=*/4, rcut, /*force_scale=*/1.0);
+    auto val_stdb   = make_h3_force_stdb(/*N=*/3, rcut, /*force_scale=*/0.5);
+    for (auto& s : val_stdb.structures) {
+        for (auto& a : s.atoms) a.position[1] += 0.07;
+    }
+    {
+        NNFinder finder;
+        for (auto& s : val_stdb.structures) finder.calc(s, rcut);
+    }
+    for (std::size_t i = 0; i < train_stdb.size(); ++i)
+        train_stdb.structures[i].energy = 0.05 * static_cast<double>(i + 1);
+    for (std::size_t i = 0; i < val_stdb.size(); ++i)
+        val_stdb.structures[i].energy = 0.07 * static_cast<double>(i + 1);
+
+    const std::string head =
+        "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\n"
+        "LOSS L2\nOPTIM CGRID2B (1) 0.0 4.0\n";
+
+    for (const bool kern_linear : {false, true}) {
+    for (const bool force_key_written : {true, false}) {
+    for (const bool with_emae : {false, true}) {
+        INFO("MODEL " << (kern_linear ? "M_KRR Kern_Linear" : "M_BLR BF_Linear")
+             << ", FORCE " << (force_key_written ? "false" : "absent")
+             << ", metrics " << (with_emae ? "PC_EMAE + PC_FRMSE" : "PC_FRMSE"));
+
+        const auto make_ctx = [&](const std::vector<double>& cg) {
+            return make_energy_only_trainer_context(cg, sgrid_0, rcut,
+                                                    kern_linear,
+                                                    force_key_written);
+        };
+
+        MLIPWorkspaceManager ws_main;
+        Context c_main = make_ctx(cgrid_0);
+        Trainer host(c_main, ws_main);
+        host.train(train_stdb);
+        /* get() inserts the blueprint default for an absent key, so from
+         * here on the trainer context stores FORCE false in both variants;
+         * the restore check below compares stored values. */
+        REQUIRE_FALSE(host.context.template get<bool>("FORCE"));
+
+        ScopedTempFileLocal cfg(head + (with_emae ? "PC_EMAE 0 1\n" : "")
+                                + "PC_FRMSE 0 1\n");
+        Context ctx_for_targets = make_ctx(cgrid_0);
+        tadah::hpo::HPOTargets trg(ctx_for_targets, cfg.path.string());
+        REQUIRE(trg.use_frmse);
+        REQUIRE(trg.use_emae == with_emae);
+
+        auto prefs = tadah::hpo::make_param_ref_table(trg);
+        REQUIRE(prefs.size() == 1);
+
+        const auto force_before  = host.context.stored_value("FORCE");
+        const auto stress_before = host.context.stored_value("STRESS");
+
+        std::vector<double> g_anal;
+        std::vector<int>    needs_fd;
+        REQUIRE(tadah::hpo::compute_analytical_gradient_from_trainer(
+            host, train_stdb, val_stdb, trg, prefs, g_anal, needs_fd));
+        REQUIRE(g_anal.size() == 1);
+        /* No parameter is left to finite differences: FORCE false is not a
+         * reason to give up the analytical gradient. */
+        REQUIRE(needs_fd.empty());
+
+        /* The trainer's training switches are what they were (the
+         * validation pass may switch force descriptors on, but only for
+         * itself). */
+        CHECK(host.context.stored_value("FORCE")  == force_before);
+        CHECK(host.context.stored_value("STRESS") == stress_before);
+        CHECK_FALSE(host.context.template get<bool>("FORCE"));
+
+        /* The reference forces are the forces of the energy model:
+         * F = -dE/dx by central differences, step dx = 1e-5 A. Truncation
+         * dx^2/6 * |E'''|: with Gaussians of eta <= 5 1/A^2 at
+         * |r - r_s| <= 1.1 A on the pairs that carry weight and fitted
+         * weights below 1, |E'''| is at most of order 1e1 eV/A^3, so
+         * <= 2e-10 eV/A; round-off ~ 1e-16 * |E| / dx ~ 1e-11 eV/A. The
+         * margin 1e-7 eV/A leaves a factor >= 500. A force prediction that
+         * came back empty or zero would fail here. */
+        {
+            MLIPWorkspaceManager ws_ref;
+            Context c_ref = make_ctx(cgrid_0);
+            Trainer t_ref(c_ref, ws_ref);
+            t_ref.train(train_stdb);
+            const auto pred_ref = predict_forces_of_energy_fit(t_ref, val_stdb);
+            const double dx = 1e-5;
+            for (std::size_t s = 0; s < val_stdb.size(); ++s) {
+                for (std::size_t a = 0; a < val_stdb(s).natoms(); ++a) {
+                    for (std::size_t k = 0; k < 3; ++k) {
+                        const double ep = energy_with_atom_moved(
+                            t_ref, val_stdb(s), a, k, +dx, rcut);
+                        const double em = energy_with_atom_moved(
+                            t_ref, val_stdb(s), a, k, -dx, rcut);
+                        const double f_fd = -(ep - em) / (2.0 * dx);
+                        INFO("structure " << s << " atom " << a << " axis " << k);
+                        CHECK(pred_ref(s).atoms[a].force(k) ==
+                              Approx(f_fd).epsilon(0.0).margin(1e-7));
+                    }
+                }
+            }
+        }
+
+        /* Mirror fit_loss: the sum of loss(metric, target, weight) over the
+         * active metrics, divided by their count. FRMSE from the
+         * independent force prediction of an energy-only fit at theta. */
+        auto loss_at = [&](double theta_val) {
+            std::vector<double> cg = cgrid_0;
+            cg[0] = theta_val;
+            MLIPWorkspaceManager ws_h;
+            Context c_h = make_ctx(cg);
+            Trainer t_h(c_h, ws_h);
+            t_h.train(train_stdb);
+            const auto pred = predict_forces_of_energy_fit(t_h, val_stdb);
+            const double frmse = frmse_scaled(val_stdb, pred);
+            double l = trg.globalLoss.loss(frmse,
+                                           trg.frmse_targets.global().target,
+                                           trg.frmse_targets.global().weight);
+            if (!with_emae) return l;
+            std::vector<double> pred_e(val_stdb.size(), 0.0);
+            for (std::size_t i = 0; i < val_stdb.size(); ++i)
+                pred_e[i] = pred(i).energy;
+            l += trg.globalLoss.loss(emae_scaled(val_stdb, pred_e),
+                                     trg.emae, trg.w_emae);
+            return l / 2.0;
+        };
+
+        /* Step h = 1e-4 A on the Gaussian centre. Relative truncation
+         * h^2/6 * |L'''/L'| with |L'''/L'| ~ (2 eta |r - r_s|)^2
+         * <= (2 * 5 * 1.1)^2 ~ 1.2e2 is ~ 2e-7. Round-off: the ridge
+         * normal equations (LAMBDA 1e-3) have a condition number ~ 1e3,
+         * so L carries a relative error ~ 1e-13 and the difference
+         * quotient ~ 1e-13 * |L| / (h |L'|), below 1e-7 for an L/L' of
+         * order 1e1. Both stay a factor >= 50 below rel 1e-5. The
+         * analytical side (implicit-function derivative of the same normal
+         * equations) is exact up to round-off. */
+        const double h = 1e-4;
+        const double dl_fd = (loss_at(theta_0 + h) - loss_at(theta_0 - h))
+                           / (2.0 * h);
+
+        INFO("analytical=" << g_anal[0] << "  FD=" << dl_fd);
+        /* The comparison is not vacuous: the energy-only fit's forces
+         * depend on CGRID2B[1] through W*(theta) and the descriptors. */
+        REQUIRE(std::abs(dl_fd) > 1e-6);
+        const double rel = std::abs(g_anal[0] - dl_fd)
+                         / std::max(std::abs(g_anal[0]), std::abs(dl_fd));
+        CHECK(rel < 1e-5);
+    }
+    }
+    }
+}
+
+/* ------------------------------------------------------------------------
  * P2 (PROMPT_NEXT_NLOPT_LBFGS.md / Option A) — PC_LAMMPS falls back to FD
  *
  * sims_loss from LAMMPS scripts is not differentiable analytically (LAMMPS

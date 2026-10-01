@@ -285,8 +285,10 @@ TEST_CASE("startup validation: valid setups pass", "[startup_validation]") {
  * fit analytically. That needs training data with every weight fitted, the
  * Cholesky normal equations (OALGO 4) with a fixed ridge LAMBDA >= 0, raw
  * features (NORM false), a linear basis (BF_Linear or Kern_Linear) and no
- * stress rows (STRESS false, no PC_SRMSE); PC_FRMSE needs FORCE true. A
- * setup without them used to pass startup and stop at the first gradient
+ * stress rows (STRESS false, no PC_SRMSE). PC_FRMSE does not need FORCE
+ * true: FORCE decides only what training fits, and the validation force
+ * rows of the gradient are formed whenever PC_FRMSE is set. A setup
+ * without the settings used to pass startup and stop at the first gradient
  * with "no registered analytical derivative". HYBRID falls back to finite
  * differences and is not affected. */
 TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs the settings "
@@ -373,12 +375,29 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs the settings "
     CHECK_THAT(rejected(ctx, target(analytical, "PC_SRMSE 0 1\n")),
                Catch::Contains("PC_SRMSE"));
   }
-  SECTION("PC_FRMSE with FORCE false") {
-    Context ctx = good_ctx();
-    CHECK_THAT(rejected(ctx, target(analytical, "PC_FRMSE 0 1\n")),
-               Catch::Contains("PC_FRMSE") && Catch::Contains("FORCE true"));
-    set(ctx, "FORCE", "true");
-    CHECK(rejected(ctx, target(analytical, "PC_FRMSE 0 1\n")) == "");
+  /* Approved behaviour change (MK, known-issues session 2026-09-30,
+   * workstream 1), not a weakening: this SECTION used to assert that
+   * ANALYTICAL + PC_FRMSE + FORCE false is refused with "PC_FRMSE needs
+   * FORCE true". FORCE now decides only what training fits; validation
+   * predicts forces whenever PC_FRMSE is set, and the analytical gradient
+   * forms its validation force rows from PC_FRMSE alone (its parity with
+   * central differences is pinned in test_hpo_analytical.cpp). So the setup
+   * is accepted with FORCE false, with FORCE true, and with no FORCE key
+   * (the default, false). Before the fix the FORCE false and the
+   * absent-key runs were refused by analytical_gradient_blocker ("PC_FRMSE
+   * needs FORCE true"). */
+  SECTION("PC_FRMSE is accepted whatever FORCE is") {
+    for (const char* force : {"false", "true", ""}) {
+      Context ctx = good_ctx();
+      if (*force == '\0')
+        ctx.remove("FORCE");
+      else
+        set(ctx, "FORCE", force);
+      INFO("FORCE " << (*force == '\0' ? "(absent)" : force));
+      CHECK(rejected(ctx, target(analytical, "PC_FRMSE 0 1\n")) == "");
+      CHECK(rejected(ctx, target(analytical, ermse + "PC_FRMSE 0 1\n")) ==
+            "");
+    }
   }
   SECTION("FIXINDEX") {
     Context ctx = good_ctx();

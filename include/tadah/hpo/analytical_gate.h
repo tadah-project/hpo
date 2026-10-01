@@ -29,8 +29,10 @@ class HPOTargets;
  * factor, so it needs training data (`has_train_db`) with every weight
  * fitted (no FIXINDEX), the normal equations (OALGO 4) with a fixed ridge
  * LAMBDA >= 0, raw features (NORM false), a linear basis (MODEL ...
- * BF_Linear or Kern_Linear), no stress rows (STRESS false, no PC_SRMSE),
- * and FORCE true for PC_FRMSE. Settings only: a parameter without a
+ * BF_Linear or Kern_Linear) and no stress rows (STRESS false, no
+ * PC_SRMSE). PC_FRMSE is covered whatever FORCE is: the validation
+ * descriptors carry their force parts whenever it is set
+ * (fit_switch_guard.h). Settings only: a parameter without a
  * registered derivative still has none (ANALYTICAL stops there, HYBRID
  * uses finite differences for it). */
 std::string analytical_gradient_blocker(const core::Context& ctx,

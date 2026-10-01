@@ -383,9 +383,9 @@ void PotHeaderWriter::write_loss_section(std::ostream& os,
         kv(os, name, s.str());
     };
     metric("EMAE   (meV/at)",  trg.use_emae,   trg.emae,   trg.w_emae);
-    metric("ErRMSE (meV/at)",  trg.use_errmse, trg.errmse, trg.w_errmse);
+    metric("ErRMSE (per mille)",  trg.use_errmse, trg.errmse, trg.w_errmse);
     metric("ERSQ",             trg.use_ersq,   trg.ersq,   trg.w_ersq);
-    metric("SRMSE  (GPa)",     trg.use_srmse,  trg.srmse,  trg.w_srmse);
+    metric("SRMSE  (eV/A^3)",  trg.use_srmse,  trg.srmse,  trg.w_srmse);
 
     auto dataset_metric = [&](const std::string& name, const ValidationMetricTargets& targets) {
         for (const auto& description : targets.descriptions()) kv(os, name, description);

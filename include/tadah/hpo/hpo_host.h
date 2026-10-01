@@ -541,6 +541,9 @@ private:
         std::unique_ptr<mlip::Trainer, TrainerDeleter>   trainer;
     };
     static thread_local TrainerCache tls_trainer_cache_;
+    /* See last_validation_switches_for_test(). */
+    static thread_local std::optional<detail::FitSwitches>
+        tls_last_validation_switches_;
 
     /* Neighbour lists rebuilt for one evaluation whose model cutoff exceeds
      * nn_list_cutoff_: copies of the datasets the evaluation reads (the
@@ -570,6 +573,13 @@ public:
      *  nullptr before the first evaluation on this thread. */
     static const mlip::Trainer* tls_trainer_for_test() {
         return tls_trainer_cache_.trainer.get();
+    }
+    /* The FORCE/STRESS the most recent validation prediction on this thread
+     * used (detail::validation_switches()), or nullopt before any. For
+     * tests: no output shows what validation predicted when no metric
+     * reads it. */
+    static std::optional<detail::FitSwitches> last_validation_switches_for_test() {
+        return tls_last_validation_switches_;
     }
 private:
 

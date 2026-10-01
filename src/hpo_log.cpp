@@ -974,6 +974,24 @@ void HPOLog::write_potential_section(const core::Context&  ctx,
     }
 }
 
+void HPOLog::write_fit_switches(const FitSwitchReport& r)
+{
+    auto row = [](bool on, const std::string& source) {
+        return std::string(on ? "yes" : "no") + "  (" + source + ")";
+    };
+    kv("Fit forces (FORCE)",    row(r.force, r.force_source));
+    kv("Fit stresses (STRESS)", row(r.stress, r.stress_source));
+    std::string v;
+    if (!r.has_validation) {
+        v = "no validation set";
+    } else {
+        v = "energies";
+        if (r.val_forces)   v += ", forces (PC_FRMSE)";
+        if (r.val_stresses) v += ", stresses (PC_SRMSE)";
+    }
+    kv("Validation predicts", v);
+}
+
 void HPOLog::write_loss_section(const HPOTargets& trg)
 {
     section("LOSS FUNCTION");
@@ -989,9 +1007,9 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
     };
 
     metric_line("EMAE   (meV/atom)",  trg.use_emae,   trg.emae, trg.w_emae);
-    metric_line("ErRMSE (meV/atom)",  trg.use_errmse, trg.errmse, trg.w_errmse);
+    metric_line("ErRMSE (per mille)",  trg.use_errmse, trg.errmse, trg.w_errmse);
     metric_line("ERSQ",               trg.use_ersq,   trg.ersq,            trg.w_ersq);
-    metric_line("SRMSE  (GPa)",       trg.use_srmse,  trg.srmse,           trg.w_srmse);
+    metric_line("SRMSE  (eV/A^3)",    trg.use_srmse,  trg.srmse,           trg.w_srmse);
 
     auto dataset_metric = [&](const std::string& name, const ValidationMetricTargets& targets) {
         for (const auto& description : targets.descriptions()) kv(name, description);
@@ -1909,11 +1927,11 @@ void HPOLog::log_new_best(std::size_t eval_num,
     if (has_ermse)  msg << "  ERMSE="  << std::fixed << std::setprecision(2)
                         << ermse  << " meV/at";
     if (has_errmse) msg << "  ErRMSE=" << std::fixed << std::setprecision(2)
-                        << errmse << " meV/at";
+                        << errmse << " per mille";
     if (has_frmse)  msg << "  FRMSE="  << std::fixed << std::setprecision(3)
                         << frmse  << " eV/Ang";
     if (has_srmse)  msg << "  SRMSE="  << std::fixed << std::setprecision(3)
-                        << srmse  << " GPa";
+                        << srmse  << " eV/A^3";
     msg << "  (" << fmt_millis(wall_ms) << ")";
     if (tl_slot == kSlotProbe) {
         msg << "  [T0 probe]";
@@ -2313,13 +2331,13 @@ void HPOLog::finish(const std::string& status_str)
            << ": " << std::fixed << std::setprecision(2) << best_ermse_ << " meV/atom\n";
     if (has_errmse_)
         f_ << "  " << std::left << std::setw(KW) << "Best ErRMSE"
-           << ": " << std::fixed << std::setprecision(2) << best_errmse_ << " meV/atom\n";
+           << ": " << std::fixed << std::setprecision(2) << best_errmse_ << " per mille\n";
     if (has_frmse_)
         f_ << "  " << std::left << std::setw(KW) << "Best FRMSE"
            << ": " << std::fixed << std::setprecision(4) << best_frmse_ << " eV/Ang\n";
     if (has_srmse_)
         f_ << "  " << std::left << std::setw(KW) << "Best SRMSE"
-           << ": " << std::fixed << std::setprecision(4) << best_srmse_ << " GPa\n";
+           << ": " << std::fixed << std::setprecision(4) << best_srmse_ << " eV/A^3\n";
     if (embf0_armed_) {
         std::ostringstream s;
         s << (embf0_zero_ ? "EMBF0 ZERO (removed per atom): "

@@ -51,6 +51,7 @@
 
 #include <tadah/core/core_types.h>
 #include <tadah/core/intercept_layout.h>
+#include <tadah/hpo/fit_switch_guard.h>
 #include <tadah/hpo/analytical_gate.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/loss_function.h>
@@ -714,7 +715,7 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
                     "compute_dloss_dtheta: use_frmse is active but the "
                     "orchestrator did not build val-side force rows. "
                     "compute_analytical_gradient_from_trainer wires this "
-                    "automatically when ctx.FORCE=true and trg.use_frmse=true.");
+                    "automatically when trg.use_frmse=true.");
             const auto slopes = trg.frmse_targets.slopes(trg.globalLoss,
                 plan.metrics.frmse, plan.metrics.v_frmse);
             tadah::mlip::analytics_grad::frmse_per_dataset(truth, pred, 1.0,
@@ -793,9 +794,10 @@ using ObservableGradProvider =
  *  Restrictions for the analytical path: STRESS=false, NORM=false,
  *  OALGO=4, LAMBDA != -1, MODEL[1] in {BF_Linear, Kern_Linear},
  *  use_srmse=false. FORCE=true is supported on the train side
- *  (Phase 2B C-step), and use_frmse=true is supported on the val side
- *  (Phase 2B C-val -- requires ctx.FORCE=true so the descriptor calc
- *  populates fd_ij). On any restriction violation the helper routes
+ *  (Phase 2B C-step), and use_frmse=true on the val side (Phase 2B C-val)
+ *  whatever FORCE is: the val-side descriptors are computed under
+ *  validation_switches(trg), so they carry fd_ij whenever use_frmse is
+ *  set. On any restriction violation the helper routes
  *  everything to needs_fd and returns true. Non-linear kernels
  *  (Kern_RBF / Kern_Polynomial / Kern_Sigmoid) use EKM projection in
  *  M_KRR_Train, so the analytical chain requires dEKM/dtheta --
@@ -893,8 +895,8 @@ compute_analytical_gradient_from_trainer(
      *   - training data with every weight fitted;
      *   - STRESS false, no PC_SRMSE: stress rows (a position factor
      *     (ri[x] - rj[x]) in the Phi row) are a separate sub-step;
-     *     FORCE=true is supported on the train side (Phase 2C C-step) and,
-     *     for PC_FRMSE, on the validation side (C-val);
+     *     FORCE=true is supported on the train side (Phase 2C C-step), and
+     *     PC_FRMSE on the validation side (C-val) whatever FORCE is;
      *   - NORM false, OALGO 4 with a fixed LAMBDA >= 0;
      *   - MODEL[1] BF_Linear or Kern_Linear. Phase 2A restricted Phi
      *     assembly to BF_Linear (Phi[s, c] = sum_atoms aed_a[c]); Phase 2B
@@ -1050,8 +1052,10 @@ compute_analytical_gradient_from_trainer(
      * active (mirrors the train-side layout): 1 energy row + 3.natoms
      * force rows per struct. When use_frmse is off, a single energy row
      * per struct (energy_row_for_struct_val[s] == s -- preserves the
-     * Phase 2A scalar layout). use_frmse requires ctx.FORCE=true so the
-     * walker on val_stdb has fd_ij populated (the gate above). */
+     * Phase 2A scalar layout). The validation descriptors carry their
+     * force parts whenever use_frmse is set, whatever FORCE training used:
+     * the loop below runs under validation_switches(trg), as the
+     * prediction in HPO_Host::operator() does. */
     const bool use_frmse_val = trg.use_frmse;
 
     std::vector<std::size_t> energy_row_for_struct_val(val_stdb.size(), 0);
@@ -1082,6 +1086,12 @@ compute_analytical_gradient_from_trainer(
     /* An exception may not leave the OpenMP loop (std::terminate): each
      * iteration keeps its own, and the lowest index's is rethrown after it. */
     std::vector<std::exception_ptr> val_phi_errors(val_stdb.size());
+    {
+    /* dc.calc reads FORCE/STRESS from the trainer's context: set them to
+     * what validation measures for this loop only (outside the parallel
+     * region), and restore the training ones after it. */
+    const auto val_sw = detail::validation_switches(trg);
+    detail::ScopedFitSwitches val_switches(ctx, val_sw.force, val_sw.stress);
 #if defined(TADAH_ENABLE_OPENMP)
 #   pragma omp parallel for schedule(dynamic)
 #endif
@@ -1130,6 +1140,7 @@ compute_analytical_gradient_from_trainer(
             val_phi_errors[s] = std::current_exception();
         }
     }
+    }  // the training FORCE/STRESS are restored here
     for (const auto& e : val_phi_errors)
         if (e) std::rethrow_exception(e);
 
