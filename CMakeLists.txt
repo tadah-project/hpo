@@ -225,7 +225,10 @@ target_include_directories(tadah.hpo
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/external>
 )
 target_link_libraries(tadah.hpo PUBLIC tadah::compile_options )
-target_link_libraries(tadah.hpo PRIVATE nlopt)
+# PUBLIC: the public headers nlopt_adapter.h and run_policy_base.h include
+# <nlopt.hpp>, so every target that includes them (test_hpo, the CLI) needs
+# NLopt's include directories, not only its library.
+target_link_libraries(tadah.hpo PUBLIC nlopt)
 target_link_libraries(tadah.hpo PRIVATE tadah_asa)
 
 # Phase 3 LammpsHessianAssembler uses Eigen3 directly (already fetched
