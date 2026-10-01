@@ -43,7 +43,7 @@
   "nan_clampings_max": 0,
   "walltime_hint": "0.3s",
   "fast": true,
-  "tolerance_rationale": "Example 01's search in worker processes, with 01's tolerances: best loss, components and RCUT2B at the defaults, and the evaluation count within evals_tol 14 (16..30), for the reason given in 01's tolerance_rationale (the count at the clamped bound RCUT2B = 6.0 depends on rounding-level noise).",
+  "tolerance_rationale": "Example 01's search in worker processes, with 01's tolerances: best loss, components and RCUT2B at the defaults, and the evaluation count within evals_tol 14 (2..30), for the reason given in 01's tolerance_rationale (the count at the clamped bound RCUT2B = 6.0 depends on rounding-level noise).",
   "journal": [
     {
       "what": "PC_LAMMPS runs in worker processes",

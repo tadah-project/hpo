@@ -40,7 +40,7 @@ prints a one-line summary per example (best loss, eval count, status).
 re-runs every example and compares the output to a checked-in
 `reference_fingerprint.json` (loss, hyperparameter values, eval count,
 optimiser status, and for 25 and 26 lines that `hpo_run.log` must
-contain: 25's four band-A graded failures, 26's worker processes and
+contain: 25's six band-A graded failures, 26's worker processes and
 hard deadline). Use `--example=NN` to check a single example or
 `--check-only` to skip the re-run. With `TADAH_PC_ISOLATION=THREAD` set
 (for environments that block the worker socket) 26's journal checks are

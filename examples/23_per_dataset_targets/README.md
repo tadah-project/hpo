@@ -21,7 +21,7 @@ What this shows:
   filter. A candidate whose equation-of-state error exceeds 5 meV/atom
   scores `FAILSCORE` and skips the rest of its evaluation; the journal
   warns `skipping downstream (obs+LAMMPS) -- ermse[2] ... > skip-above=5`.
-  In this box that is `RCUT2B` below about 4.07 A (the error is
+  In this box that is `RCUT2B` below about 4.06 A (the error is
   5.7 meV/atom at 4.0 A, 4.6 at 4.1 A, 4.1 at 4.2 A). This run's path
   (`RCUT2B` 5.6 to 6.0, 1.7 to 1.9 meV/atom) never goes there, so the
   filter does not fire here.

@@ -1,12 +1,12 @@
 # Shared example data
 
-Two bcc Ta datasets from VASP 5.4.4 (ENCUT 600 eV, ISMEAR = 1, SIGMA = 0.20),
-converted with `tadah data convert`:
+Two bcc Ta datasets from VASP 5.4.4 (ISMEAR = 1, SIGMA = 0.20), converted
+with `tadah data convert`:
 
 | File | Structures | Source |
 |---|---|---|
-| `eos_bcc.tadahdb` | 138 two-atom cubic cells, a = 2.60-3.68 A (with a fine scan 3.3202-3.3246 A) | one single-point OUTCAR per lattice constant, `E_vs_V/bcc_reduced/a*/OUTCAR` and `E_vs_V/bcc_reduced/MINIMA/a*/OUTCAR` |
-| `elastic.tadahdb` | 29 two-atom cells: the reference a0 = 3.320087 A and +-1 %, +-2 % uniaxial and shear strains | one finite-difference OUTCAR (IBRION = 6), `ELASTIC/OUTCAR` |
+| `eos_bcc.tadahdb` | 138 two-atom cubic cells (ENCUT 600 eV): 37 with a = 2.60-3.68 A in 0.03 A steps, and a fine scan of 101 with a = 3.3200-3.3400 A in 0.0002 A steps | one single-point OUTCAR per lattice constant, `E_vs_V/bcc_reduced/a*/OUTCAR` and `E_vs_V/bcc_reduced/MINIMA/a*/OUTCAR` |
+| `elastic.tadahdb` | 29 two-atom cells (ENCUT 630 eV): structure 1 is the reference, a0 = 3.320087 A; 2-13 uniaxial strains of +-1 % and +-2 % along x, y and z; 14-25 shear strains of +-1 % and +-2 % in the xy, yz and zx planes; 26-29 the reference cell with atom 1 moved by +-0.01 and +-0.02 A along x | one finite-difference OUTCAR (IBRION = 6), `ELASTIC/OUTCAR` |
 
 The labels keep the source paths (`examples/data/...`).
 
@@ -14,7 +14,7 @@ The labels keep the source paths (`examples/data/...`).
 - **Energy:** the free energy F (VASP's `free  energy   TOTEN`), whose
   gradient the forces and the stress are, plus 3.69807734 eV per atom.
   That reference is minus the free energy of a spin-polarised free Ta
-  atom, so the energies are cohesive-energy-like.
+  atom (ENCUT 630 eV), so the energies are cohesive-energy-like.
 - **Stress:** the Cauchy stress in eV/A^3, positive under tension: minus
   VASP's `in kB` tensor times 6.241509074e-4.
 - **Forces and cells** as VASP printed them. The rows of the cell block
