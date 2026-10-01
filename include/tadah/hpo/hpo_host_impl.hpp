@@ -999,6 +999,10 @@ thread_local typename HPO_Host<P,R>::TrainerCache
 HPO_Host<P,R>::tls_trainer_cache_{};
 
 template<class P, class R>
+thread_local std::optional<detail::FitSwitches>
+HPO_Host<P,R>::tls_last_validation_switches_{};
+
+template<class P, class R>
 thread_local std::shared_ptr<const typename HPO_Host<P,R>::RebuiltLists>
 HPO_Host<P,R>::tls_rebuilt_lists_{};
 
@@ -2803,6 +2807,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
                                                sw.stress);
             pred = host.model->predict(vctx, val_db, host.dc);
         }
+        tls_last_validation_switches_ = sw;
         mlip::Analytics   a(val_db, pred);
         fill_validation(r, a);
     }
@@ -2850,10 +2855,10 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
       skip_bad_pot =
           check_targets("ermse", trg_.use_ermse, r.ermse, r.v_ermse, trg_.ermse_targets, "meV/at") ||
           check_metric("emae", trg_.use_emae, r.emae, trg_.skip_emae, "meV/at") ||
-          check_metric("eRRMSE", trg_.use_errmse, r.errmse, trg_.skip_errmse, "meV/at") ||
+          check_metric("eRRMSE", trg_.use_errmse, r.errmse, trg_.skip_errmse, "per mille") ||
           check_metric("ersq", trg_.use_ersq, r.ersq, trg_.skip_ersq, "") ||
           check_targets("frmse", trg_.use_frmse, r.frmse, r.v_frmse, trg_.frmse_targets, "eV/A") ||
-          check_metric("srmse", trg_.use_srmse, r.srmse, trg_.skip_srmse, "GPa");
+          check_metric("srmse", trg_.use_srmse, r.srmse, trg_.skip_srmse, "eV/A^3");
       if (skip_bad_pot) {
         if (trg_.FAILSCORE_GRADING) {
           /* Band D graded by how far past the cap the metric landed --

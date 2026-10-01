@@ -78,7 +78,9 @@ private:
     void save_and_set(const char* key, bool value)
     {
         Saved s{key, std::nullopt};
-        if (ctx_.contains(key)) s.prior = ctx_(key);
+        /* has_stored, not contains(): contains() inserts the blueprint
+         * default, so an absent key would come back stored. */
+        if (ctx_.has_stored(key)) s.prior = ctx_(key);
         saved_.push_back(std::move(s));
         set_fit_switch(ctx_, key, value);
     }
