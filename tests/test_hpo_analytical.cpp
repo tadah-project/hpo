@@ -2340,9 +2340,9 @@ double energy_with_atom_moved(Trainer& t, const Structure& st0,
  * M_KRR + Kern_Linear, with PC_FRMSE alone (the whole gradient is the
  * force term) and with PC_EMAE + PC_FRMSE (the energy rows sit between the
  * validation force rows), and the trainer's FORCE/STRESS are left as they
- * were. Fails today: analytical_gradient_blocker returns "PC_FRMSE needs
- * FORCE true", every parameter goes to finite differences, and
- * REQUIRE(needs_fd.empty()) fails on the first variant. */
+ * were. Before the fix analytical_gradient_blocker returned "PC_FRMSE
+ * needs FORCE true", every parameter went to finite differences, and
+ * REQUIRE(needs_fd.empty()) failed on the first variant. */
 TEST_CASE("compute_analytical_gradient_from_trainer matches FD on an "
           "energy-only trainer with PC_FRMSE (FORCE false or absent)",
           "[HPO][analytical_gradient][live_trainer][parity][frmse][fit_switches]")

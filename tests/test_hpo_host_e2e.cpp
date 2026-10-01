@@ -630,9 +630,9 @@ void construct_host_on_validation_file(const fs::path& train,
 
 /* Pins: `FORCE true` on line 2 of the --validation file (after its DBFILE
  * line) makes the HPO_Host constructor throw a message that names FORCE,
- * says "not accepted", names line 2 and the validation file. Fails today:
- * the key is parsed into the validation context and silently ignored, so
- * the constructor does not throw. */
+ * says "not accepted", names line 2 and the validation file. Before the
+ * fix the key was parsed into the validation context and silently ignored,
+ * so the constructor did not throw. */
 TEST_CASE("A FORCE key in the --validation file is refused at its line",
           "[validation_file][host]") {
     DatasetHostGuard guard;
@@ -650,8 +650,8 @@ TEST_CASE("A FORCE key in the --validation file is refused at its line",
                       Catch::Matchers::Contains(val.string()));
 }
 
-/* Pins: the same for `STRESS true` on line 2. Fails today: the key is
- * silently ignored and the constructor does not throw. */
+/* Pins: the same for `STRESS true` on line 2. Before the fix the key was
+ * silently ignored and the constructor did not throw. */
 TEST_CASE("A STRESS key in the --validation file is refused at its line",
           "[validation_file][host]") {
     DatasetHostGuard guard;
@@ -673,8 +673,8 @@ TEST_CASE("A STRESS key in the --validation file is refused at its line",
  * CONFIG (on line 2 of the validation file) is refused too, and the
  * message names the included file and the key's line there (line 3: a
  * comment and a blank line come first), not the validation file's CONFIG
- * line. Fails today: the included FORCE is merged into the validation
- * context and silently ignored, so the constructor does not throw. */
+ * line. Before the fix the included FORCE was merged into the validation
+ * context and silently ignored, so the constructor did not throw. */
 TEST_CASE("A FORCE key in a file included by the --validation file is "
           "refused at its line", "[validation_file][host]") {
     DatasetHostGuard guard;

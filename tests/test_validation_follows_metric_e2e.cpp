@@ -9,7 +9,9 @@
 //   * HPO validation predicts forces whenever PC_FRMSE is set and stresses
 //     whenever PC_SRMSE is set (and only then), whatever FORCE/STRESS the
 //     potential was fitted with. best_pot.tadah keeps the TRAINING
-//     FORCE/STRESS, and the trainer's own context is left as it was.
+//     FORCE/STRESS -- for MODEL M_KRR too, whose get_param_file() keeps
+//     them as M_BLR's does -- and the trainer's own context is left as it
+//     was.
 //
 // Before the fix validation predicted with the trained model's context
 // (HPO_Host::operator(), `pot = host.model->get_param_file()`), so:
@@ -18,12 +20,20 @@
 //   - STRESS false + PC_SRMSE compared the reference stresses with the
 //     zero-initialised prediction: SRMSE == RMS(reference), the same for
 //     every candidate, and a --skip-above cap could reject them all;
-//   - MODEL M_KRR, whose get_param_file() drops FORCE and STRESS, did both
-//     even when it was fitted with FORCE/STRESS true;
+//   - MODEL M_KRR, whose get_param_file() dropped FORCE and STRESS, did both
+//     even when it was fitted with FORCE/STRESS true, and its
+//     best_pot.tadah stated neither (so FORCE false on a retrain);
+//   - FORCE/STRESS true without PC_FRMSE/PC_SRMSE predicted forces and
+//     stresses no metric read;
 //   - GRAD_STRATEGY ANALYTICAL was refused at startup ("PC_FRMSE needs
 //     FORCE true") and HYBRID crashed like the first item;
 //   - the journal never said what training fitted or what validation
 //     measured.
+//
+// What a validation prediction used is read from the host's test hook
+// HPO_Host::last_validation_switches_for_test(). It is detected at compile
+// time (validation_switches_seen()): before the host had it, this file
+// compiled and every hook check failed at run time.
 //
 // Every reference value comes from predict_with(), an independent
 // prediction built the way `tadah predict` builds one
@@ -87,6 +97,7 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -439,7 +450,8 @@ std::string target_head(const std::string& optimizer) {
  * with FORCE = @p force and STRESS = @p stress, DC_Selector,
  * DescriptorsCalc and the model factory, on a copy of @p db with neighbour
  * lists of its own at the potential's RCUTMAX. Whatever FORCE/STRESS
- * @p pot_ctx states (or omits, as M_KRR's does) does not matter. */
+ * @p pot_ctx states (or omits, as M_KRR's did before the fix) does not
+ * matter. */
 StructureDB predict_with(const Context& pot_ctx, const StructureDB& db,
                          bool force, bool stress) {
     Context c = pot_ctx;
@@ -536,6 +548,12 @@ bool effective(const Context& ctx, const std::string& key) {
     return c.get<bool>(key);
 }
 
+/* The token @p key stores in @p ctx, or "<not stored>"; never inserts a
+ * default. A failed CHECK on it prints both sides. */
+std::string stored_text(const Context& ctx, const std::string& key) {
+    return ctx.stored_value(key).value_or("<not stored>");
+}
+
 /* ---------------------------------------------------------------------------
  * Reading the run's files back.
  * ------------------------------------------------------------------------- */
@@ -593,6 +611,56 @@ void require_real_loss(double loss) {
     REQUIRE(loss < kFailScore);
 }
 
+/* The FORCE/STRESS the most recent validation prediction on this thread
+ * used, as HPO_Host::last_validation_switches_for_test() reports them. */
+struct ValidationSwitchesSeen {
+    bool hook = false;      // the host has the test hook
+    bool recorded = false;  // it reported a prediction (nullopt before any)
+    bool force = false;
+    bool stress = false;
+};
+
+/* Whether H has the static test hook last_validation_switches_for_test(). */
+template <typename H, typename = void>
+struct has_validation_switch_hook : std::false_type {};
+template <typename H>
+struct has_validation_switch_hook<
+    H, std::void_t<decltype(H::last_validation_switches_for_test())>>
+    : std::true_type {};
+
+/* H::last_validation_switches_for_test() when H has it; hook == false
+ * otherwise, so this file compiles without the hook and a check of `hook`
+ * fails at run time instead. */
+template <typename H>
+ValidationSwitchesSeen validation_switches_seen() {
+    ValidationSwitchesSeen out;
+    if constexpr (has_validation_switch_hook<H>::value) {
+        out.hook = true;
+        const auto sw = H::last_validation_switches_for_test();
+        if (sw) {
+            out.recorded = true;
+            out.force    = static_cast<bool>(sw->force);
+            out.stress   = static_cast<bool>(sw->stress);
+        }
+    }
+    return out;
+}
+
+/* Checks that the hook exists and that the last validation prediction
+ * used FORCE = @p force and STRESS = @p stress. */
+void check_validation_switches(const ValidationSwitchesSeen& seen,
+                               bool force, bool stress) {
+    INFO("HPO_Host::last_validation_switches_for_test() "
+         << (seen.hook ? "exists" : "does not exist"));
+    CHECK(seen.hook);
+    if (!seen.hook) return;
+    CHECK(seen.recorded);
+    if (!seen.recorded) return;
+    CAPTURE(seen.force, seen.stress);
+    CHECK(seen.force == force);
+    CHECK(seen.stress == stress);
+}
+
 /* What one evaluation of a fresh host left behind. */
 struct EvalOutcome {
     double loss = 0.0;
@@ -601,6 +669,12 @@ struct EvalOutcome {
     Context pot;                          // best_pot.tadah
     Context trainer_ctx;                  // the trainer's context afterwards
     std::vector<double> live_weights;     // the trainer's weights
+    /* The trained model's get_param_file() after the evaluation: what
+     * `tadah train` writes to pot.tadah (MLIP/src/train_engine.cpp). */
+    Context model_pot;
+    /* The FORCE/STRESS of the evaluation's validation prediction, read
+     * right after operator() returned. */
+    ValidationSwitchesSeen validation_switches;
 };
 
 /* Validates the setup like hpo_run() does, builds a fresh host on @p ctx
@@ -622,12 +696,14 @@ EvalOutcome evaluate_once(Context ctx, const fs::path& hpo_cfg,
         REQUIRE(host.val_size() == n_val);
         host.prepare_best_publication();
         REQUIRE_NOTHROW(out.loss = host(p));
+        out.validation_switches = validation_switches_seen<Host>();
         host.flush_remaining();
         const auto* tr = Host::tls_trainer_for_test();
         REQUIRE(tr != nullptr);
         out.trainer_ctx = tr->context;
         const auto& w = tr->model->get_weights();
         out.live_weights.assign(w.begin(), w.end());
+        out.model_pot = tr->model->get_param_file();
     }
     const auto rows = stats_rows(trg.statsFile);
     REQUIRE(rows.size() == 1u);
@@ -711,9 +787,12 @@ std::string entry_value(const std::string& text, const std::string& key) {
  * order (~1e-15) and stats.tadah rounding (5e-16). best_pot.tadah and the
  * trainer's context keep the training FORCE/STRESS, and the weights are
  * bitwise those of an independent Trainer fitted with that FORCE (which a
- * FORCE-true fit would not give).
- * Today: SIGSEGV in Analytics::calc_f_rmse (validation predicted no forces
- * because the training FORCE is false). */
+ * FORCE-true fit would not give). The validation prediction used FORCE
+ * true and STRESS false (the test hook): no stresses, even where training
+ * fitted them, since no PC_SRMSE reads them.
+ * Before the fix: SIGSEGV in Analytics::calc_f_rmse (validation predicted
+ * no forces because the training FORCE is false). Before the host had
+ * last_validation_switches_for_test(), the hook check failed. */
 TEST_CASE("valmetric e2e: an energy-only fit is validated on forces when "
           "PC_FRMSE asks for them", "[valmetric_e2e][.]")
 {
@@ -768,6 +847,11 @@ TEST_CASE("valmetric e2e: an energy-only fit is validated on forces when "
     CHECK(e.loss == Approx((1e-4 * ermse * ermse + frmse * frmse) / 2.0)
                         .epsilon(1e-12));
 
+    /* Validation predicted forces (PC_FRMSE) and no stresses (no
+     * PC_SRMSE), whatever training fitted. */
+    check_validation_switches(e.validation_switches, /*force=*/true,
+                              /*stress=*/false);
+
     /* best_pot.tadah keeps the training switches. */
     CHECK_FALSE(effective(e.pot, "FORCE"));
     CHECK(effective(e.pot, "STRESS") == fit_stress);
@@ -818,11 +902,15 @@ TEST_CASE("valmetric e2e: an energy-only fit is validated on forces when "
  *   - both also equal predict_with() on best_pot.tadah to 1e-12;
  *   - delta_s is 1% of the RMS of the predicted stresses, so RMS(reference)
  *     >> delta_s, and 'PC_SRMSE 0 1 --skip-above 10 delta_s' accepts the
- *     candidate.
- * The stress-only SECTION runs first: it fails today without a crash.
- * Today: SRMSE == RMS(reference) (~100 delta_s), above the skip cap, so the
- * candidate is skipped (loss = FAILSCORE); with PC_FRMSE, SIGSEGV in
- * Analytics::calc_f_rmse. */
+ *     candidate;
+ *   - the validation prediction used FORCE = PC_FRMSE set and STRESS =
+ *     PC_SRMSE set (the test hook).
+ * The stress-only SECTION runs first, so that before the fix the group
+ * failed there without a crash.
+ * Before the fix: SRMSE == RMS(reference) (~100 delta_s), above the skip
+ * cap, so the candidate was skipped (loss = FAILSCORE); with PC_FRMSE,
+ * SIGSEGV in Analytics::calc_f_rmse. Before the host had
+ * last_validation_switches_for_test(), the hook check failed. */
 TEST_CASE("valmetric e2e: pinned weights are validated on forces and "
           "stresses that were not fitted", "[valmetric_e2e][.]")
 {
@@ -946,6 +1034,9 @@ TEST_CASE("valmetric e2e: pinned weights are validated on forces and "
     }
     CHECK(e.loss == Approx(expected_loss / n_terms).epsilon(1e-10));
 
+    /* Validation predicted what the metrics measure. */
+    check_validation_switches(e.validation_switches, use_f, use_s);
+
     /* Nothing was fitted with forces or stresses, and nothing says so. */
     CHECK(e.pot.stored_value("FORCE") == std::optional<std::string>("false"));
     CHECK(e.pot.stored_value("STRESS") == std::optional<std::string>("false"));
@@ -958,17 +1049,28 @@ TEST_CASE("valmetric e2e: pinned weights are validated on forces and "
         CHECK(same_bits(e.live_weights[k], kPinned[k]));
 }
 
-/* Case 3. MODEL M_KRR Kern_Linear 1, whose get_param_file() drops FORCE
- * and STRESS, fitted with STRESS true and validated with PC_ERMSE +
+/* Case 3. MODEL M_KRR Kern_Linear 1 (FORCE and STRESS both written in the
+ * configuration), fitted with STRESS true and validated with PC_ERMSE +
  * PC_SRMSE, and fitted with FORCE true and validated with PC_ERMSE +
- * PC_FRMSE: ERMSE, SRMSE / FRMSE and the loss equal those of
- * predict_with() on the evaluation's best_pot.tadah to 1e-12 relative (as
- * in case 1). The SRMSE of the fixture differs from RMS(reference) by more
- * than 0.1%, so the zero prediction cannot pass. The STRESS SECTION runs
- * first: it fails today without a crash.
- * Today: SRMSE == RMS(reference) (the prediction stays zero: the potential
- * context has no STRESS); with FORCE true + PC_FRMSE, SIGSEGV in
- * Analytics::calc_f_rmse (the potential context has no FORCE). */
+ * PC_FRMSE:
+ *   - ERMSE, SRMSE / FRMSE and the loss equal those of predict_with() on
+ *     the evaluation's best_pot.tadah to 1e-12 relative (as in case 1). The
+ *     SRMSE of the fixture differs from RMS(reference) by more than 0.1%, so
+ *     the zero prediction cannot pass;
+ *   - the validation prediction used FORCE = use_f, STRESS = use_s (the
+ *     test hook);
+ *   - best_pot.tadah, and the model's own get_param_file() (what `tadah
+ *     train` writes to pot.tadah), store the training FORCE and STRESS, as
+ *     for M_BLR: retraining from best_pot.tadah fits what HPO fitted.
+ * The STRESS SECTION runs first, so that before the fix the group failed
+ * there without a crash.
+ * Before the fix: SRMSE == RMS(reference) (the prediction stayed zero: the
+ * potential context had no STRESS); with FORCE true + PC_FRMSE, SIGSEGV in
+ * Analytics::calc_f_rmse (the potential context had no FORCE). Before
+ * M_KRR::get_param_file() kept FORCE and STRESS, best_pot.tadah and
+ * get_param_file() stored neither key (stored_text() "<not stored>"), also
+ * once validation followed the metrics; before the host had
+ * last_validation_switches_for_test(), the hook check failed. */
 TEST_CASE("valmetric e2e: MODEL M_KRR Kern_Linear validates the forces "
           "and stresses it fitted", "[valmetric_e2e][.]")
 {
@@ -1039,9 +1141,29 @@ TEST_CASE("valmetric e2e: MODEL M_KRR Kern_Linear validates the forces "
     }
     CHECK(e.loss == Approx(expected_loss / 2.0).epsilon(1e-12));
 
+    /* Validation predicted what the metrics measure. */
+    check_validation_switches(e.validation_switches, use_f, use_s);
+
     /* The trainer's context keeps the training switches. */
     CHECK(effective(e.trainer_ctx, "FORCE") == use_f);
     CHECK(effective(e.trainer_ctx, "STRESS") == use_s);
+
+    /* best_pot.tadah and the model's potential context state the training
+     * switches, both written in the configuration (sw.force == use_f,
+     * sw.stress == use_s): M_KRR keeps them as M_BLR does. */
+    REQUIRE(sw.force.has_value());
+    REQUIRE(sw.stress.has_value());
+    const std::string fit_f = use_f ? "true" : "false";
+    const std::string fit_s = use_s ? "true" : "false";
+    CHECK(stored_text(e.pot, "FORCE") == fit_f);
+    CHECK(stored_text(e.pot, "STRESS") == fit_s);
+    CHECK(stored_text(e.model_pot, "FORCE") == fit_f);
+    CHECK(stored_text(e.model_pot, "STRESS") == fit_s);
+    /* ALPHA, BETA and DBFILE stay out of an M_KRR potential. */
+    CHECK_FALSE(e.pot.has_stored("DBFILE"));
+    CHECK_FALSE(e.model_pot.has_stored("DBFILE"));
+    CHECK_FALSE(e.model_pot.has_stored("ALPHA"));
+    CHECK_FALSE(e.model_pot.has_stored("BETA"));
 }
 
 /* Case 4. GRAD_STRATEGY ANALYTICAL and HYBRID with FORCE false + PC_ERMSE
@@ -1059,10 +1181,11 @@ TEST_CASE("valmetric e2e: MODEL M_KRR Kern_Linear validates the forces "
  * PC_ERMSE has weight 1e-6 so the force term dominates the loss (checked
  * on eval 1): the gradient cannot pass on its energy part alone. The
  * journal no longer says "PC_FRMSE needs FORCE true". The ANALYTICAL
- * SECTION runs first: it fails today without a crash.
- * Today: ANALYTICAL is refused by validate_hpo_setup ("PC_FRMSE needs FORCE
- * true"); HYBRID passes startup and the first evaluation gets SIGSEGV in
- * Analytics::calc_f_rmse. */
+ * SECTION runs first, so that before the fix the group failed there
+ * without a crash.
+ * Before the fix: ANALYTICAL was refused by validate_hpo_setup ("PC_FRMSE
+ * needs FORCE true"); HYBRID passed startup and the first evaluation got
+ * SIGSEGV in Analytics::calc_f_rmse. */
 TEST_CASE("valmetric e2e: the analytical gradient covers PC_FRMSE with "
           "FORCE false", "[valmetric_e2e][.]")
 {
@@ -1173,9 +1296,9 @@ TEST_CASE("valmetric e2e: the analytical gradient covers PC_FRMSE with "
  *     "stresses (PC_SRMSE)" exactly when those metrics are set, or "no
  *     validation set".
  * Key phrases only (substrings), never whole lines. The SECTION with no
- * FORCE key and PC_FRMSE runs last: it crashes today.
- * Today: none of the three lines exists; the last SECTION gets SIGSEGV in
- * Analytics::calc_f_rmse. */
+ * FORCE key and PC_FRMSE runs last, because before the fix it crashed.
+ * Before the fix: none of the three lines existed; the last SECTION got
+ * SIGSEGV in Analytics::calc_f_rmse. */
 TEST_CASE("valmetric e2e: the journal states what training fits and what "
           "validation predicts", "[valmetric_e2e][.]")
 {
@@ -1282,4 +1405,100 @@ TEST_CASE("valmetric e2e: the journal states what training fits and what "
     CHECK(contains(fit_f, force_source));
     CHECK(starts_with(fit_s, stress_yes_no));
     CHECK(contains(fit_s, stress_source));
+}
+
+/* Case 6. A fit of forces and stresses (MODEL M_BLR BF_Linear, FORCE true
+ * and STRESS true written) validated on energies alone (PC_ERMSE only):
+ * validation predicts neither forces nor stresses -- PC_FRMSE and PC_SRMSE
+ * decide, and only they -- while training is unchanged. Two evaluations of
+ * the same fit at the same candidate, each by a fresh host:
+ *   - a control with PC_ERMSE + PC_FRMSE + PC_SRMSE: the test hook reports
+ *     FORCE true / STRESS true, so the value read after the energy-only
+ *     evaluation is that evaluation's own;
+ *   - PC_ERMSE only: the hook reports FORCE false / STRESS false. The loss
+ *     is a real one, and ERMSE and the loss equal those of predict_with()
+ *     on its best_pot.tadah (energies only) to 1e-12 relative;
+ *   - best_pot.tadah and the trainer's context store FORCE true and STRESS
+ *     true, and both evaluations fitted the same weights (to 1e-12): what
+ *     validation measures does not change what training fits.
+ * Nothing else can tell: no metric reads the extra forces or stresses, and
+ * the journal row "Validation predicts" is built from the targets.
+ * Before the fix: the host had no last_validation_switches_for_test(), so
+ * both hook checks failed (the rest held). Before validation followed the
+ * metrics, this prediction used the training FORCE/STRESS (true, true):
+ * the energy-only hook check fails for that behaviour. */
+TEST_CASE("valmetric e2e: a force and stress fit validated on energies alone "
+          "predicts neither forces nor stresses", "[valmetric_e2e][.]")
+{
+    PeriodicTable::initialize();
+    const FitSwitches sw{true, true};
+    const ParamVec p = trained_point();
+
+    struct Run {
+        EvalOutcome e;
+        StructureDB vdb;
+    };
+    auto run = [&](const std::string& metrics) {
+        ScratchDir sd;
+        const fs::path train_db = sd.dir / "train.db";
+        const fs::path val_db   = sd.dir / "val.db";
+        const fs::path val_cfg  = sd.dir / "config.val";
+        const fs::path hpo_cfg  = sd.dir / "config.hpo";
+        write_db(train_db, training_cells());
+        write_db(val_db, validation_cells());
+        std::ofstream(val_cfg) << "DBFILE " << val_db.string() << "\n";
+        std::ofstream(hpo_cfg) << target_head(kDerivativeFree) << metrics
+                               << kTrainedOptim;
+        Run r{evaluate_once(
+                  trained_context(kBLR, sw, train_db, val_cfg, hpo_cfg),
+                  hpo_cfg, val_cfg, p, true, 5u, 2u),
+              read_db(val_db)};
+        return r;
+    };
+
+    /* The control: every metric, so validation predicts everything. */
+    const Run all = run("PC_ERMSE 0 0.0001\nPC_FRMSE 0 1\nPC_SRMSE 0 1\n");
+    {
+        INFO("control: PC_ERMSE + PC_FRMSE + PC_SRMSE");
+        require_real_loss(all.e.loss);
+        check_validation_switches(all.e.validation_switches, /*force=*/true,
+                                  /*stress=*/true);
+    }
+
+    /* Energies alone. */
+    const Run energy = run("PC_ERMSE 0 0.0001\n");
+    const EvalOutcome& e = energy.e;
+    INFO("PC_ERMSE only");
+    require_real_loss(e.loss);
+    check_validation_switches(e.validation_switches, /*force=*/false,
+                              /*stress=*/false);
+
+    /* The loss is that of the evaluation's own potential. */
+    const StructureDB pred = predict_with(e.pot, energy.vdb, /*force=*/false,
+                                          /*stress=*/false);
+    const double ermse = ermse_mev(energy.vdb, pred);
+    CAPTURE(ermse);
+    REQUIRE(ermse > 0.0);
+    /* ERMSE: also an absolute 1e-9 meV/atom, as in case 1. */
+    CHECK(column(e.stats, "ERMSE[avg]") ==
+          Approx(ermse).epsilon(1e-12).margin(1e-9));
+    /* L2 with one term: 1e-4 ERMSE^2. */
+    CHECK(e.loss == Approx(1e-4 * ermse * ermse).epsilon(1e-12));
+
+    /* Training is unchanged: the switches it fitted with are kept, in
+     * best_pot.tadah and in the trainer's context ... */
+    CHECK(stored_text(e.pot, "FORCE") == "true");
+    CHECK(stored_text(e.pot, "STRESS") == "true");
+    CHECK(stored_text(e.trainer_ctx, "FORCE") == "true");
+    CHECK(stored_text(e.trainer_ctx, "STRESS") == "true");
+
+    /* ... and the fit is the control's (same data, candidate and
+     * switches). */
+    REQUIRE(all.e.live_weights.size() == 3u);
+    REQUIRE(e.live_weights.size() == all.e.live_weights.size());
+    for (std::size_t k = 0; k < e.live_weights.size(); ++k) {
+        CAPTURE(k, e.live_weights[k], all.e.live_weights[k]);
+        CHECK(e.live_weights[k] ==
+              Approx(all.e.live_weights[k]).epsilon(1e-12));
+    }
 }

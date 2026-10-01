@@ -383,9 +383,9 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs the settings "
    * forms its validation force rows from PC_FRMSE alone (its parity with
    * central differences is pinned in test_hpo_analytical.cpp). So the setup
    * is accepted with FORCE false, with FORCE true, and with no FORCE key
-   * (the default, false). Fails today: the FORCE false and the absent-key
-   * runs are refused by analytical_gradient_blocker ("PC_FRMSE needs FORCE
-   * true"). */
+   * (the default, false). Before the fix the FORCE false and the
+   * absent-key runs were refused by analytical_gradient_blocker ("PC_FRMSE
+   * needs FORCE true"). */
   SECTION("PC_FRMSE is accepted whatever FORCE is") {
     for (const char* force : {"false", "true", ""}) {
       Context ctx = good_ctx();
