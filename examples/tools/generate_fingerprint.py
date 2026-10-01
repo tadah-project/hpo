@@ -42,6 +42,12 @@ DEFAULT_TOL = {
     "evals_tol":  0,
 }
 
+DEFAULT_RATIONALE = (
+    "Bundle is bit-deterministic when SEED is set; tolerances absorb "
+    "cross-machine BLAS/LAPACK reorder and FP printf rounding while "
+    "still flagging a material regression."
+)
+
 
 def parse_tabular_last_row(path: Path):
     """Parse files like best_loss.tadah / best_params.tadah.
@@ -171,25 +177,93 @@ def build_fingerprint(example_dir: Path, overrides: dict) -> dict:
         "walltime_hint": log.get("total_walltime_str"),
         "fast": overrides.get("fast", True),
         "tolerance_rationale": overrides.get(
-            "tolerance_rationale",
-            "Bundle is bit-deterministic when SEED is set; tolerances absorb "
-            "cross-machine BLAS/LAPACK reorder and FP printf rounding while "
-            "still flagging a material regression."
-        ),
+            "tolerance_rationale", DEFAULT_RATIONALE),
     }
     if overrides.get("journal"):
         fp["journal"] = overrides["journal"]
     return fp
 
 
+def override_mismatches(fp: dict, overrides: dict) -> list:
+    """The fields build_fingerprint() takes from an example's overrides
+    entry that `fp` does not hold as the entry gives them: an overrides
+    entry changed without regenerating the fingerprint, or a fingerprint
+    edited by hand. Fields a regeneration keeps from the old fingerprint
+    when the entry has none (description, journal) are compared only when
+    the entry sets them."""
+    out = []
+
+    def cmp(field, have, want):
+        if have != want:
+            out.append(f"{field}: fingerprint {have!r}, overrides {want!r}")
+
+    tol_loss = {**DEFAULT_TOL["best_loss"], **(overrides.get("best_loss_tol") or {})}
+    tol_comp = {**DEFAULT_TOL["component"], **(overrides.get("component_tol") or {})}
+    tol_hp   = {**DEFAULT_TOL["hyperparam"], **(overrides.get("hyperparam_tol") or {})}
+    bl = fp.get("best_loss") or {}
+    cmp("best_loss tolerances", {k: bl.get(k) for k in tol_loss}, tol_loss)
+    for name, c in (fp.get("components") or {}).items():
+        cmp(f"components.{name} tolerances", {k: c.get(k) for k in tol_comp}, tol_comp)
+    for name, h in (fp.get("hyperparameters") or {}).items():
+        cmp(f"hyperparameters.{name} tolerances", {k: h.get(k) for k in tol_hp}, tol_hp)
+    cmp("evaluations.tol", (fp.get("evaluations") or {}).get("tol"),
+        overrides.get("evals_tol", DEFAULT_TOL["evals_tol"]))
+    for field in ("description", "status_accepted", "journal"):
+        if field in overrides:
+            cmp(field, fp.get(field), overrides[field])
+    cmp("nan_clampings_max", fp.get("nan_clampings_max"),
+        overrides.get("nan_clampings_max", 0))
+    cmp("fast", fp.get("fast"), overrides.get("fast", True))
+    cmp("tolerance_rationale", fp.get("tolerance_rationale"),
+        overrides.get("tolerance_rationale", DEFAULT_RATIONALE))
+    return out
+
+
+def check_all(examples_dir: Path, overrides_path: Path) -> int:
+    """Checks every <examples_dir>/*/reference_fingerprint.json against
+    the overrides file (and that every overrides entry has a fingerprint);
+    prints each mismatch and returns the number of examples that have
+    one."""
+    all_over = json.loads(overrides_path.read_text())
+    names = sorted(k for k in all_over if not k.startswith("_"))
+    fps = sorted(examples_dir.glob("*/reference_fingerprint.json"))
+    bad = 0
+    for name in names:
+        if not (examples_dir / name / "reference_fingerprint.json").exists():
+            print(f"{name}: has an overrides entry but no reference_fingerprint.json")
+            bad += 1
+    for path in fps:
+        name = path.parent.name
+        fp = json.loads(path.read_text())
+        problems = override_mismatches(fp, all_over.get(name, {}))
+        if fp.get("example") != name:
+            problems.insert(0, f"example: {fp.get('example')!r}, directory {name!r}")
+        for problem in problems:
+            print(f"{name}: {problem}")
+        bad += bool(problems)
+    print(f"{len(fps)} fingerprints checked against {overrides_path.name}: "
+          f"{bad} with mismatches")
+    return bad
+
+
 def main(argv):
     p = argparse.ArgumentParser()
-    p.add_argument("example_dir", type=Path)
+    p.add_argument("example_dir", type=Path,
+                   help="the example to fingerprint; with --check, the "
+                        "directory that holds the examples")
     p.add_argument("--overrides", type=Path, default=None,
                    help="JSON file with per-example overrides")
     p.add_argument("--out", type=Path, default=None,
                    help="Write fingerprint here (default: <dir>/reference_fingerprint.json)")
+    p.add_argument("--check", action="store_true",
+                   help="write nothing; exit 1 if any fingerprint's fields "
+                        "that come from --overrides differ from it")
     args = p.parse_args(argv)
+
+    if args.check:
+        if args.overrides is None:
+            p.error("--check needs --overrides")
+        return 1 if check_all(args.example_dir, args.overrides) else 0
 
     overrides = {}
     if args.overrides and args.overrides.exists():
@@ -241,4 +315,4 @@ def keep_hand_written(fp: dict, prev: dict) -> dict:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    sys.exit(main(sys.argv[1:]))
