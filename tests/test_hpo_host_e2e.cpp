@@ -608,6 +608,93 @@ TEST_CASE("PC dataset host rejects incomplete coverage and empty validation file
     CHECK_THROWS_WITH(Host(ctx, trg, val.string()), Catch::Matchers::Contains(message));
 }
 
+/* FORCE and STRESS decide only what training fits (the -c configuration,
+ * or -F/-S); validation predicts forces whenever PC_FRMSE is set and
+ * stresses whenever PC_SRMSE is set. A FORCE or STRESS key in the
+ * --validation file therefore has no role: the host refuses it at its line
+ * (through CoreUserConfigParser::refuse_keys), naming the key, the line and
+ * the file, instead of ignoring it. The host is only constructed: nothing
+ * is trained or evaluated. */
+namespace {
+const std::string kRefusalTarget = dataset_host_head + "PC_ERMSE 0 1\n";
+
+/* Constructs the host on the --validation file `val`. */
+void construct_host_on_validation_file(const fs::path& train,
+                                       const fs::path& hpo,
+                                       const fs::path& val) {
+    auto ctx = make_ta_master_context(train, hpo, val);
+    tadah::hpo::HPOTargets trg(ctx, hpo.string());
+    Host host(ctx, trg, val.string());
+}
+}  // namespace
+
+/* Pins: `FORCE true` on line 2 of the --validation file (after its DBFILE
+ * line) makes the HPO_Host constructor throw a message that names FORCE,
+ * says "not accepted", names line 2 and the validation file. Fails today:
+ * the key is parsed into the validation context and silently ignored, so
+ * the constructor does not throw. */
+TEST_CASE("A FORCE key in the --validation file is refused at its line",
+          "[validation_file][host]") {
+    DatasetHostGuard guard;
+    ScratchDir sd;
+    const auto train = sd.dir / "train.db", vdb = sd.dir / "val.db";
+    const auto val = sd.dir / "config.val", hpo = sd.dir / "config.hpo";
+    write_minimal_ta_dbfile(train, 0);
+    write_minimal_ta_dbfile(vdb, 0.07, -0.04);
+    std::ofstream(val) << "DBFILE " << vdb.string() << "\nFORCE true\n";
+    std::ofstream(hpo) << kRefusalTarget;
+    CHECK_THROWS_WITH(construct_host_on_validation_file(train, hpo, val),
+                      Catch::Matchers::Contains("FORCE") &&
+                      Catch::Matchers::Contains("not accepted") &&
+                      Catch::Matchers::Contains("line 2") &&
+                      Catch::Matchers::Contains(val.string()));
+}
+
+/* Pins: the same for `STRESS true` on line 2. Fails today: the key is
+ * silently ignored and the constructor does not throw. */
+TEST_CASE("A STRESS key in the --validation file is refused at its line",
+          "[validation_file][host]") {
+    DatasetHostGuard guard;
+    ScratchDir sd;
+    const auto train = sd.dir / "train.db", vdb = sd.dir / "val.db";
+    const auto val = sd.dir / "config.val", hpo = sd.dir / "config.hpo";
+    write_minimal_ta_dbfile(train, 0);
+    write_minimal_ta_dbfile(vdb, 0.07, -0.04);
+    std::ofstream(val) << "DBFILE " << vdb.string() << "\nSTRESS true\n";
+    std::ofstream(hpo) << kRefusalTarget;
+    CHECK_THROWS_WITH(construct_host_on_validation_file(train, hpo, val),
+                      Catch::Matchers::Contains("STRESS") &&
+                      Catch::Matchers::Contains("not accepted") &&
+                      Catch::Matchers::Contains("line 2") &&
+                      Catch::Matchers::Contains(val.string()));
+}
+
+/* Pins: a FORCE key in a file that the --validation file includes with
+ * CONFIG (on line 2 of the validation file) is refused too, and the
+ * message names the included file and the key's line there (line 3: a
+ * comment and a blank line come first), not the validation file's CONFIG
+ * line. Fails today: the included FORCE is merged into the validation
+ * context and silently ignored, so the constructor does not throw. */
+TEST_CASE("A FORCE key in a file included by the --validation file is "
+          "refused at its line", "[validation_file][host]") {
+    DatasetHostGuard guard;
+    ScratchDir sd;
+    const auto train = sd.dir / "train.db", vdb = sd.dir / "val.db";
+    const auto val = sd.dir / "config.val", hpo = sd.dir / "config.hpo";
+    const auto inc = sd.dir / "shared_val_settings.tadah";
+    write_minimal_ta_dbfile(train, 0);
+    write_minimal_ta_dbfile(vdb, 0.07, -0.04);
+    std::ofstream(inc) << "# shared validation settings\n\nFORCE true\n";
+    std::ofstream(val) << "DBFILE " << vdb.string() << "\nCONFIG "
+                       << inc.string() << "\n";
+    std::ofstream(hpo) << kRefusalTarget;
+    CHECK_THROWS_WITH(construct_host_on_validation_file(train, hpo, val),
+                      Catch::Matchers::Contains("FORCE") &&
+                      Catch::Matchers::Contains("not accepted") &&
+                      Catch::Matchers::Contains("line 3") &&
+                      Catch::Matchers::Contains(inc.string()));
+}
+
 TEST_CASE("PC dataset zero weight retains its dataset skip filter", "[pc_dataset][host]") {
     DatasetHostGuard guard;
     ScratchDir sd;
