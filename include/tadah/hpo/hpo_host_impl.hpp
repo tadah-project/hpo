@@ -3693,12 +3693,12 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
  * the descriptor walker can't supply analytically (registry returns
  * false) end up in `needs_fd` for HYBRID's masked-FD pass.
  *
- * Phase 2A first-cut restrictions -- fall back to all-FD if violated:
- *   - FORCE=false, STRESS=false  (energy-only chain rule)
- *   - NORM=false                 (raw-feature W; chain rule lives in raw space)
- *   - BF_Linear                  (the only basis the walker handles)
- *   - OALGO=4 with LAMBDA != -1  (NormalEquations + fixed lambda)
- * Each restriction lifts in a follow-up sub-task.
+ * The settings the gradient covers (every parameter goes to finite
+ * differences otherwise) are stated once, in analytical_gradient_blocker()
+ * (analytical_gate.h): training data with every weight fitted, STRESS
+ * false and no PC_SRMSE, NORM false, OALGO 4 with a fixed LAMBDA >= 0, and
+ * a BF_Linear or Kern_Linear basis; FORCE may be either, and PC_FRMSE is
+ * covered whatever FORCE is.
  *
  * The body delegates to compute_analytical_gradient_from_trainer (see
  * dloss_dtheta.h), a free helper that takes a Trainer + train/val DBs +
