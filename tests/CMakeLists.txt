@@ -199,9 +199,16 @@ add_test(NAME hpo_vendored_boost_includes
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/check_vendored_boost.py
         ${CMAKE_CURRENT_SOURCE_DIR}/..
-        "$<JOIN:$<TARGET_PROPERTY:boost_iostream,INTERFACE_INCLUDE_DIRECTORIES>,:>")
+        "$<JOIN:$<TARGET_PROPERTY:boost_iostream,INTERFACE_INCLUDE_DIRECTORIES>,:>"
+        --cxx ${CMAKE_CXX_COMPILER})
 set_tests_properties(hpo_vendored_boost_includes PROPERTIES
-    TIMEOUT 30)
+    TIMEOUT 60)
+# The gate itself, on fake trees (tests/test_check_vendored_boost.py).
+add_test(NAME hpo_vendored_boost_gate_tool
+    COMMAND ${CMAKE_COMMAND} -E env CXX=${CMAKE_CXX_COMPILER}
+        ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_check_vendored_boost.py)
+set_tests_properties(hpo_vendored_boost_gate_tool PROPERTIES
+    TIMEOUT 60)
 
 if(TADAH_HPO_MPI)
     add_executable(test_hpo_anneal_mpi mpi/test_anneal_mpi.cpp)
