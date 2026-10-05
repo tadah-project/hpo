@@ -42,6 +42,14 @@
 #include <string>
 #include <vector>
 
+// ASA's headers include <omp.h> inside their extern "C" blocks (ASA_PARALLEL
+// with OpenMP). GCC 15's omp.h declares C++ templates, which C linkage
+// forbids; included here first, at C++ linkage, the include inside is a
+// no-op (its include guard).
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 extern "C" {
 #include <tadah_asa_hook.h>   /* pins the gate set + asa_usr_asa.h;
                                * SYSTEM include dir of target tadah_asa */
