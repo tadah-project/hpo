@@ -286,6 +286,29 @@ sobol_draw(const tadah::hpo::OptimizerSpec& sp,
 
 }  // namespace
 
+TEST_CASE("SobolInitStrategy: the first points are the Sobol sequence's",
+          "[HPO][init_strategy][sobol]")
+{
+    /* Pins the Sobol points (Boost's boost::random::sobol, Joe-Kuo
+     * direction numbers, the zero point skipped) in the unit cube, SEED 0:
+     * exact binary fractions, so equality is exact. They must not change
+     * with the Boost the build uses (example 08's fingerprint depends on
+     * them). */
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({0.0, 0.0, 0.0}, {1.0, 1.0, 1.0});
+    StubTargets st;
+    const std::vector<std::vector<double>> want = {
+        {0.5, 0.5, 0.5},       {0.75, 0.25, 0.25},     {0.25, 0.75, 0.75},
+        {0.375, 0.375, 0.625}, {0.875, 0.875, 0.125},  {0.625, 0.125, 0.875},
+        {0.125, 0.625, 0.375}, {0.1875, 0.3125, 0.9375}};
+    const auto pts = sobol_sequence(sp, *st.trg, 8);
+    REQUIRE(pts.size() == want.size());
+    for (std::size_t i = 0; i < want.size(); ++i) {
+        INFO("point " << i);
+        CHECK(pts[i] == want[i]);
+    }
+}
+
 TEST_CASE("SobolInitStrategy: a seed selects a whole block of K points",
           "[HPO][init_strategy][sobol][seed]")
 {
