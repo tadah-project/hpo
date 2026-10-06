@@ -103,7 +103,7 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
      *
      * Instead, use the early-bail predicate to abort once a successful
      * line-search step has placed a0 outside [a0_min, a0_max]. The
-     * post-hoc hot-var gate at line 99 rejects on the same condition,
+     * post-hoc hot-var gate below the relax rejects on the same condition,
      * so any relax that crosses the boundary is guaranteed to be
      * rejected -- burning the rest of the maxeval budget is wasted
      * work. Because the predicate fires AFTER an accepted LS step
@@ -122,8 +122,12 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
     NativeRelaxer relaxer;
     NativeRelaxer::Result rr = relaxer.relax(bulk, model, dc, ctx, relax_opts);
 
-    /* Capture relaxed a0 for warmstart. cell(0,0)/nx after Iso scaling. */
-    const double new_a0 = bulk.cell(0, 0) / static_cast<double>(cfg_.nx);
+    /* Capture relaxed a0 for warmstart: the Iso relax scales the cell built
+     * from a0, so a0 times its scale factor, for any lattice and supercell
+     * (cell(0,0)/nx was one ulp off for nx = 3 and wrong for a cell whose
+     * first row is not a0 x nx along x). The early-reject predicate above
+     * uses the same quantity. */
+    const double new_a0 = a0_current_ * rr.scale_factor;
 
     /* Reject if the relax drove a0 outside the user-declared hot-var
      * range. Mirrors PC_LAMMPS's `rejecting (hot_a0=... outside [..])`
