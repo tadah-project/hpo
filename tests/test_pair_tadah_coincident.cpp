@@ -393,7 +393,9 @@ std::vector<std::string> dimer_script(double x3) {
 /* Pins: compute_dimers (DIMER true) refuses two atoms at the same position
  * too: with the second N2 molecule placed on the first (atoms 3 and 4 on
  * atoms 1 and 2), `run 0` throws, naming LAMMPS atom IDs and saying they are
- * at the same position; with the molecules 4 A apart it completes.
+ * at the same position ("atom IDs 1 and 3"); with only atom 3 on atom 2
+ * (molecule 2 from x = 11.1014) it names "atom IDs 2 and 3"; with the
+ * molecules 4 A apart it completes.
  * Before the fix: compute_dimers had no check, so the intermolecular
  * distance 0 was divided by and `run 0` completed with NaN forces (err
  * empty, both message CHECKs failed). */
@@ -423,7 +425,20 @@ TEST_CASE("pair_style tadah: a DIMER potential refuses two atoms at the same "
         REQUIRE(setup.empty());
         const std::string err = run0_error(lmp);
         INFO("run 0 with the molecules on each other: " << err);
-        CHECK(contains(err, "atom IDs"));
+        CHECK(contains(err, "atom IDs 1 and 3"));
+        CHECK(contains(err, "same position"));
+    }
+    {
+        // Molecule 2 from x = 11.1014: only atom 3 sits on atom 2 (the first
+        // atoms of the molecules are 1.1014 A apart), a pair the
+        // intermolecular distances other than i1-j1 reach.
+        LMPPtr lmp = make_instance();
+        const std::string setup = execute(lmp, dimer_script(11.1014), pot);
+        INFO("setup: " << setup);
+        REQUIRE(setup.empty());
+        const std::string err = run0_error(lmp);
+        INFO("run 0 with atom 3 on atom 2: " << err);
+        CHECK(contains(err, "atom IDs 2 and 3"));
         CHECK(contains(err, "same position"));
     }
 }
