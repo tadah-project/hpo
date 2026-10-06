@@ -1302,6 +1302,9 @@ TEST_CASE("valmetric e2e: PC_FRMSE and PC_SRMSE leave out validation "
  *     without forces is not measured: the run returns 0, FRMSE[2] is nan
  *     and FRMSE[avg] is FRMSE[1], bit for bit, while both datasets have a
  *     stress (SRMSE[2] finite);
+ *   - with a global PC_SRMSE of weight 0 and the second dataset without a
+ *     stress tensor, SRMSE[2] and its loss term L(SRMSE)[2] (loss.tadah)
+ *     are nan, not the loss of nan (0 at weight 0);
  *   - with indexed PC_FRMSE, weight 0 on that dataset runs the same, and a
  *     weight above 0 on it is refused at startup, naming the metric, the
  *     dataset and the force weight;
@@ -1321,6 +1324,7 @@ TEST_CASE("valmetric e2e: a validation dataset whose structures all have "
     std::string refused_by, weight_named; // empty: the run starts
     std::string measured;                 // the column a started run fills
     bool second_unmeasured = false;       // FRMSE[2] nan, FRMSE[avg] = FRMSE[1]
+    bool second_unmeasured_s = false;     // SRMSE[2] and L(SRMSE)[2] nan
     SECTION("PC_FRMSE and no dataset with forces") {
         metrics = "PC_FRMSE 0 1\n";
         zero_f = true;
@@ -1340,6 +1344,14 @@ TEST_CASE("valmetric e2e: a validation dataset whose structures all have "
         weighted_first = true;
         measured = "SRMSE[2]";
         second_unmeasured = true;
+    }
+    SECTION("global PC_SRMSE of weight 0, the second of two datasets without "
+            "a stress tensor") {
+        metrics = "PC_ERMSE 0 1\nPC_SRMSE 0 0\n";
+        zero_s = true;
+        weighted_first = true;
+        measured = "SRMSE[1]";
+        second_unmeasured_s = true;
     }
     SECTION("indexed PC_FRMSE, weight 0 on the dataset without forces") {
         metrics = "PC_FRMSE (1) 0 1\nPC_FRMSE (2) 0 0\n";
@@ -1426,6 +1438,20 @@ TEST_CASE("valmetric e2e: a validation dataset whose structures all have "
     CAPTURE(measured, v);
     CHECK(std::isfinite(v));
     CHECK(v > 0.0);
+    if (second_unmeasured_s) {
+        /* Its loss term is nan too (not loss(nan): 0 at weight 0), in
+         * loss.tadah as in stats.tadah. */
+        const double s2 = column(rows.front(), "SRMSE[2]");
+        const double savg = column(rows.front(), "SRMSE[avg]");
+        CAPTURE(s2, savg);
+        CHECK(is_nan_bits(s2));
+        CHECK(same_bits(savg, column(rows.front(), "SRMSE[1]")));
+        const auto losses = stats_rows((sd.dir / "loss.tadah").string());
+        REQUIRE_FALSE(losses.empty());
+        const double l2 = column(losses.front(), "L(SRMSE)[2]");
+        CAPTURE(l2);
+        CHECK(is_nan_bits(l2));
+    }
     if (second_unmeasured) {
         const double f1 = column(rows.front(), "FRMSE[1]");
         const double f2 = column(rows.front(), "FRMSE[2]");
@@ -1682,7 +1708,8 @@ TEST_CASE("valmetric e2e: the analytical gradient covers PC_FRMSE with "
  * false, PC_ERMSE weight 1e-6): the average and its derivative run over the
  * measured dataset only (the slope of dataset 1 is L'(FRMSE[avg]) / 1, not
  * / 2), and the unmeasured dataset has no force cells. FRMSE[2] is nan and
- * FRMSE[avg] is FRMSE[1].
+ * FRMSE[avg] is FRMSE[1], and the journal names the dataset as not
+ * measured.
  * Before the fix: the run was refused at startup (the dataset has no
  * structure with forces). */
 TEST_CASE("valmetric e2e: the analytical gradient of PC_FRMSE averages the "
@@ -1756,8 +1783,14 @@ TEST_CASE("valmetric e2e: the analytical gradient of PC_FRMSE averages the "
         }
         host->flush_remaining();
     }
-    (void)j.finish();
+    const std::string journal = j.finish();
     Host::reset_globals_for_test();
+    {
+        /* The journal names the dataset that is not measured. */
+        INFO(journal);
+        CHECK(contains(journal, nof_db.string()));
+        CHECK(contains(journal, "not measured"));
+    }
 
     {
         const auto rows = stats_rows(trg.statsFile);
