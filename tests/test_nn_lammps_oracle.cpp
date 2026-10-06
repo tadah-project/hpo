@@ -26,6 +26,10 @@
 //     reads the unwrapped positions, LAMMPS remaps them.
 // Before the exact-image fix the MLIP side loses periodic images on every
 // cell but the control.
+//
+// A second case pins the stress sign shared by the two sides: LAMMPS'
+// virial pressure tensor is minus the stress the MLIP model predicts
+// (the Cauchy stress a Tadah dataset stores; workstream D).
 
 #include "catch2/catch.hpp"
 
@@ -42,6 +46,8 @@
 #include <tadah/mlip/nn_finder.h>
 #include <tadah/mlip/structure.h>
 #include <tadah/models/dc_selector.h>
+
+#include <force.h>
 
 #include <algorithm>
 #include <array>
@@ -90,22 +96,22 @@ const char* kPotential =
     "LAMBDA            0\n"
     "WEIGHTS           6.5 -3.5 1.25 -0.4 -0.3 0.175 -0.06 0.25 -0.15 0.075\n";
 
-Context parse_potential(bool forces) {
+Context parse_potential(bool forces, bool stress = false) {
     std::istringstream in(kPotential);
     Context ctx = tadah::core::CoreUserConfigParser().parse(in);
     ctx.remove("FORCE");
     ctx.add("FORCE", forces ? "true" : "false");
     ctx.remove("STRESS");
-    ctx.add("STRESS", "false");
+    ctx.add("STRESS", stress ? "true" : "false");
     return ctx;
 }
 
-/* The potential as `tadah predict -F` evaluates it: NNFinder at RCUTMAX,
- * DescriptorsCalc and the model. */
+/* The potential as `tadah predict -F` (with @p stress: `-F -S`) evaluates
+ * it: NNFinder at RCUTMAX, DescriptorsCalc and the model. */
 class MlipPotential {
 public:
-    MlipPotential()
-        : ctx_(parse_potential(true)), dcs_(ctx_),
+    explicit MlipPotential(bool stress = false)
+        : ctx_(parse_potential(true, stress)), dcs_(ctx_),
           dc_(ctx_, *dcs_.d2b, *dcs_.dmb, *dcs_.c2b, *dcs_.cmb),
           fb_(tadah::core::factory<DM_Function_Base, const Context&>(
               ctx_.get<std::string>("MODEL", 1), ctx_)),
@@ -165,8 +171,9 @@ std::string num(double v) {
 
 /* The LAMMPS script of @p st: a prism box from its rows, one
  * create_atoms single per atom (ids 1..N in order, remapped into the box),
- * pair_style tadah with the staged potential, run 0. */
-std::vector<std::string> lammps_script(const Structure& st) {
+ * pair_style tadah with the staged potential, the lines @p before_run, run 0. */
+std::vector<std::string> lammps_script(
+    const Structure& st, const std::vector<std::string>& before_run = {}) {
     std::vector<std::string> s = {
         "clear",
         "units metal",
@@ -194,6 +201,7 @@ std::vector<std::string> lammps_script(const Structure& st) {
             s.push_back(std::string("variable ") + c + k + " equal " + c + "[" +
                         k + "]");
     }
+    s.insert(s.end(), before_run.begin(), before_run.end());
     s.push_back("run 0 post no");
     return s;
 }
@@ -289,4 +297,106 @@ TEST_CASE("pair_style tadah and the MLIP prediction agree on thin triclinic "
             CHECK(max_df <= 1e-8);
         }
     }
+}
+
+/* Pins (it passes before and after the stress-convention fix): pair_style
+ * tadah and the MLIP model agree on the sign of the stress. LAMMPS' pressure
+ * tensor without the kinetic part ('compute pressure NULL virial': P = W/V,
+ * W = sum r_ij (x) F_ij over pairs, positive under compression, in bar for
+ * units metal) equals minus the stress the model predicts (sigma = (1/V)
+ * dE/d(strain), eV/A^3, positive under tension: the convention a Tadah
+ * dataset stores), all six components, on a 16-atom bcc a = 3 supercell that
+ * is sheared (xy, xz, yz tilts), strained and rattled, so that no component
+ * vanishes by symmetry. The potential is kPotential (D2_BP + DM_EAD), the
+ * one the neighbour-list case above uses.
+ * The conversion is LAMMPS' own metal-units factor (force->nktv2p =
+ * 1.6021765e6 bar per eV/A^3, LAMMPS src/update.cpp), read from the
+ * instance: it is 7.5e-8 below 1602176.6208 (CODATA 2014 e; checked here to
+ * 1e-7), so the hard-coded 1602176.6208 leaves a 7.5e-8 relative offset in
+ * every component. With the instance's factor both sides add the same pair
+ * terms in double precision in a different order (measured: <= 5e-15
+ * relative per component), so 1e-8 relative per component is generous for
+ * rounding, 2e8 times below the 2|sigma| of a flipped sign, and still below
+ * the 7.5e-8 of a wrong conversion constant.
+ * Fails if the sign of either side flips: the model stress (MLIP
+ * m_tadah_base.cpp, spredict / stress_force_predict, `s(x,y) -= ...` made
+ * `+=`) or pair_tadah's virial (ev_tally / ev_tally_xyz given -delij, or the
+ * fdotr virial negated). Scratch builds of this case: negating the predicted
+ * stress fails every component with relative difference 2; converting with
+ * the hard-coded 1602176.6208 fails every component with 7.5e-8. */
+TEST_CASE("pair_style tadah: the LAMMPS virial pressure tensor is minus the "
+          "MLIP predicted stress", "[lammps_oracle][stress_convention]")
+{
+    PeriodicTable::initialize();
+
+    /* 2x2x2 bcc a = 3: rows (6,0,0), (0.45,5.9,0), (-0.35,0.3,6.1) (LAMMPS'
+     * restricted triclinic box; heights >= 5.9 > the 5.5 A cutoff), every
+     * atom moved by up to 0.03 in each fractional coordinate (0.18 A). */
+    Cell cell{"sheared, strained, rattled 2x2x2 bcc a=3",
+              {{{6.0, 0.0, 0.0}, {0.45, 5.9, 0.0}, {-0.35, 0.3, 6.1}}}, {}, {}};
+    for (int x = 0; x < 2; ++x)
+        for (int y = 0; y < 2; ++y)
+            for (int z = 0; z < 2; ++z)
+                for (double h : {0.0, 0.5}) {
+                    const double i = static_cast<double>(cell.fracs.size());
+                    const int n[3] = {x, y, z};
+                    Frac f{};
+                    for (int k = 0; k < 3; ++k)
+                        f[k] = (n[k] + h) / 2.0 + 0.01 +
+                               0.03 * std::sin(1.3 * i + 0.7 * k + 0.4);
+                    cell.fracs.push_back(f);
+                }
+    const Structure st = to_structure(cell);
+    REQUIRE(st.natoms() == 16);
+
+    /* MLIP: energy, forces and stress, as `tadah predict -F -S`. */
+    MlipPotential pot(true);
+    const Structure pred = pot.predict(st);
+
+    /* LAMMPS: the pressure compute is invoked by the thermo output of
+     * step 0, so the variables read it as current after the run. */
+    LammpsRunner runner;
+    auto lmp = runner.create_instance(
+        0, {"lmp", "-log", "none", "-screen", "none"});
+    REQUIRE(lmp != nullptr);
+    std::vector<std::string> extra = {
+        "compute pv all pressure NULL virial",
+        "thermo_style custom step pe c_pv[1] c_pv[2] c_pv[3] c_pv[4] c_pv[5] "
+        "c_pv[6]"};
+    for (int k = 1; k <= 6; ++k)
+        extra.push_back("variable p" + std::to_string(k) + " equal c_pv[" +
+                        std::to_string(k) + "]");
+    REQUIRE(runner.run_script(lmp, lammps_script(st, extra),
+                              parse_potential(false)));
+    REQUIRE(std::stoi(runner.get_variable(lmp, "n")) == 16);
+
+    /* The same potential on both sides (energy to 1e-9, as above). */
+    const double e_lmp = std::stod(runner.get_variable(lmp, "e"));
+    INFO("MLIP energy " << num(pred.energy) << ", LAMMPS energy "
+                        << num(e_lmp));
+    REQUIRE(std::fabs(e_lmp) > 1.0);
+    CHECK(pred.energy == Approx(e_lmp).epsilon(1e-9));
+
+    const double nktv2p = lmp->force->nktv2p;   // bar per eV/A^3
+    CHECK(nktv2p == Approx(1602176.6208).epsilon(1e-7));
+
+    /* compute pressure's vector: pxx pyy pzz pxy pxz pyz; the model fills
+     * the upper triangle of Structure::stress. */
+    const int comp[6][2] = {{0, 0}, {1, 1}, {2, 2}, {0, 1}, {0, 2}, {1, 2}};
+    double max_rel = 0.0;
+    for (int k = 0; k < 6; ++k) {
+        const int r = comp[k][0], c = comp[k][1];
+        const double p_bar =
+            std::stod(runner.get_variable(lmp, "p" + std::to_string(k + 1)));
+        const double sigma = pred.stress(r, c);
+        const double minus_sigma_bar = -sigma * nktv2p;
+        CAPTURE(r, c, num(sigma), num(p_bar), num(minus_sigma_bar));
+        REQUIRE(std::fabs(sigma) > 1e-3);   // no component vanishes
+        const double rel = std::fabs(p_bar - minus_sigma_bar) /
+                           std::fabs(minus_sigma_bar);
+        max_rel = std::max(max_rel, rel);
+        CHECK(rel <= 1e-8);
+    }
+    INFO("largest relative difference " << max_rel);
+    CHECK(max_rel <= 1e-8);
 }

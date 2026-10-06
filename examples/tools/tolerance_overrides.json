@@ -5,7 +5,7 @@
     "description": "DLIB:BFGS, 1-dim, implicit CONFIG seed.",
     "status_accepted": ["COMPLETED"],
     "evals_tol": 14,
-    "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances. The evaluation count is not deterministic across machines: the optimum is on the clamped bound RCUT2B = 6.0 (eval 9), and whether DLIB:BFGS's line search accepts a re-evaluation there depends on the sign of a ~1e-13 relative, rounding-level drift of the warm-started lattice relaxation. With exact neighbour lists (2026-09-30) the run goes on re-evaluating the bound to MAXEVAL = 30 on the reference machine (3 repeated runs identical), and a 1-ulp lower hot_a0 start makes it stop after 17 (it stopped after 16 before); evals_tol 14 accepts 16..30. The status is COMPLETED either way."
+    "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances. The evaluation count is not deterministic across machines: the optimum is on the clamped bound RCUT2B = 6.0 (eval 9), and whether DLIB:BFGS's line search accepts a re-evaluation there depends on the sign of a ~1e-13 relative, rounding-level drift of the warm-started lattice relaxation. With the HPO data holding the free energy and the Cauchy stress (2026-10-01) the run ends after 16 evaluations on the reference machine (3 repeated runs identical); it ran to MAXEVAL = 30 with the energies without entropy, as example 05 now does; evals_tol 14 accepts 2..30. The status is COMPLETED either way."
   },
   "02_random_search": {
     "description": "TADAH:RANDOM, seeded uniform sampler.",
@@ -26,7 +26,7 @@
     "description": "PC_LAMMPS --invar / --outvar via parametric Ecoh_param.in.",
     "status_accepted": ["COMPLETED"],
     "evals_tol": 14,
-    "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances. The evaluation count is not deterministic across machines: the optimum is on the clamped bound RCUT2B = 6.0 (eval 9), and whether DLIB:BFGS's line search accepts a re-evaluation there depends on the sign of a ~1e-13 relative, rounding-level drift of the warm-started lattice relaxation. The run stops after 16 evaluations on the reference machine (with exact neighbour lists, 2026-09-30; 17 before) or runs to MAXEVAL = 30 (as example 01 does with the same search), and a 1-ulp change of the hot_a0 start or of one training energy flips it; evals_tol 14 accepts 2..30."
+    "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances. The evaluation count is not deterministic across machines: the optimum is on the clamped bound RCUT2B = 6.0 (eval 9), and whether DLIB:BFGS's line search accepts a re-evaluation there depends on the sign of a ~1e-13 relative, rounding-level drift of the warm-started lattice relaxation. The run goes on to MAXEVAL = 30 on the reference machine with the HPO data holding the free energy and the Cauchy stress (2026-10-01; 3 repeated runs identical; it stopped after 16 before) or stops after 16 (as example 01 now does with the same search), and a 1-ulp change of the hot_a0 start or of one training energy flips it; evals_tol 14 accepts 16..30 (MAXEVAL is 30)."
   },
   "06_init_random": {
     "description": "INIT { STRATEGY RANDOM, SEED, INCLUDE_CONFIG false }.",
@@ -77,7 +77,7 @@
     "description": "NLOPT:LN_BOBYQA over a flat OPTIM FIXWEIGHT(14); mixed LS-fit + pinned + OPTIM'd weights.",
     "status_accepted": ["MAXEVAL_REACHED -- maximum evaluations exhausted"],
     "hyperparam_tol": {"abs_tol": 100.0, "rel_tol": 0.001},
-    "tolerance_rationale": "Weight 14 multiplies a descriptor that is zero on this dataset, so the loss does not depend on it: every evaluation ties up to ~2e-13 relative, the rounding-level noise of the warm-started lattice relaxation (exact Ecoh.in read-back), and that noise decides which evaluation is the best (weight 0, -25 or +25) and when LN_BOBYQA stops: runs to MAXEVAL = 30 on the reference machine with exact neighbour lists (2026-09-30; 3 repeated runs identical; roundoff-limited after 15 evaluations after the sheared cells of common/data/elastic.tadahdb were corrected, 30 before that). That count and status are pinned; another machine's rounding can move them, and the fingerprint must then be regenerated there with that reason. The loss and components are pinned at the default tolerances; FIXWEIGHT[14] is checked only for presence: abs_tol 100 (the box width) accepts any value in its box [-50, 50]."
+    "tolerance_rationale": "Weight 14 multiplies a descriptor that is zero on this dataset, so the loss does not depend on it: every evaluation ties up to ~2e-13 relative, the rounding-level noise of the warm-started lattice relaxation (exact Ecoh.in read-back), and that noise decides which evaluation is the best (any weight LN_BOBYQA probes: -22.99, eval 6, on the reference machine with the free energy and the Cauchy stress in the HPO data, 2026-10-01; +25 before) and when LN_BOBYQA stops: runs to MAXEVAL = 30 on the reference machine with exact neighbour lists (2026-09-30; 3 repeated runs identical; roundoff-limited after 15 evaluations after the sheared cells of common/data/elastic.tadahdb were corrected, 30 before that). That count and status are pinned; another machine's rounding can move them, and the fingerprint must then be regenerated there with that reason. The loss and components are pinned at the default tolerances; FIXWEIGHT[14] is checked only for presence: abs_tol 100 (the box width) accepts any value in its box [-50, 50]."
   },
   "22_pc_observable": {
     "description": "PC_OBSERVABLE cohesive_energy; DLIB:BFGS with GRAD_STRATEGY resolved to ANALYTICAL; no LAMMPS.",
@@ -95,18 +95,18 @@
     ]
   },
   "25_failprobe_grading": {
-    "description": "FAILSCORE_GRADING ON + PC_FAILPROBE over example 02's seeded search; a lattice window grades 4 failures (band A).",
+    "description": "FAILSCORE_GRADING ON + PC_FAILPROBE over example 02's seeded search; a lattice window grades 6 failures (band A).",
     "status_accepted": ["COMPLETED"],
     "journal": [
-      {"what": "four failures, all graded", "regex": "^\\s*Graded failures\\s*:\\s*4\\s"},
-      {"what": "all four in band A (hot-var out of range)", "regex": "^\\s*A=4 \\(hot-var out of range\\)"}
+      {"what": "six failures, all graded", "regex": "^\\s*Graded failures\\s*:\\s*6\\s"},
+      {"what": "all six in band A (hot-var out of range)", "regex": "^\\s*A=6 \\(hot-var out of range\\)"}
     ]
   },
   "26_pc_isolation": {
     "description": "Example 01 with PC_ISOLATION PROCESS and PC_WORKER_TIMEOUT: 01's results in either isolation mode.",
     "status_accepted": ["COMPLETED"],
     "evals_tol": 14,
-    "tolerance_rationale": "Example 01's search in worker processes, with 01's tolerances: best loss, components and RCUT2B at the defaults, and the evaluation count within evals_tol 14 (16..30), for the reason given in 01's tolerance_rationale (the count at the clamped bound RCUT2B = 6.0 depends on rounding-level noise).",
+    "tolerance_rationale": "Example 01's search in worker processes, with 01's tolerances: best loss, components and RCUT2B at the defaults, and the evaluation count within evals_tol 14 (2..30), for the reason given in 01's tolerance_rationale (the count at the clamped bound RCUT2B = 6.0 depends on rounding-level noise).",
     "journal": [
       {"what": "PC_LAMMPS runs in worker processes",
        "regex": "PC_ISOLATION: PROCESS -- pc_lammps tasks execute in \\d+ persistent worker processes",

@@ -168,6 +168,29 @@ set_tests_properties(hpo_anneal_registry_sync PROPERTIES
     LABELS "anneal"
     TIMEOUT 30)
 
+# Fingerprint drift gate: the fields of each example's
+# reference_fingerprint.json that come from tools/tolerance_overrides.json
+# (tolerances, accepted statuses, journal checks, the rationale) must equal
+# that file, so an overrides edit cannot leave a fingerprint behind.
+# Regenerate with tools/generate_fingerprint.py <example> --overrides ...
+add_test(NAME hpo_example_fingerprint_overrides_sync
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../examples/tools/generate_fingerprint.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/../examples
+        --overrides ${CMAKE_CURRENT_SOURCE_DIR}/../examples/tools/tolerance_overrides.json
+        --check)
+set_tests_properties(hpo_example_fingerprint_overrides_sync PROPERTIES
+    LABELS "examples"
+    TIMEOUT 30)
+# The generator's and the gate's handling of the overrides, on a synthetic
+# run (examples/tools/test_generate_fingerprint.py).
+add_test(NAME hpo_example_fingerprint_tool
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../examples/tools/test_generate_fingerprint.py)
+set_tests_properties(hpo_example_fingerprint_tool PROPERTIES
+    LABELS "examples"
+    TIMEOUT 30)
+
 # Boost drift gate: every Boost header HPO includes must be in the Boost
 # Tadah vendors (MLIP's external/boost, on HPO's include path through
 # tadah.mlip), so the build never depends on a system Boost. The include
@@ -176,9 +199,16 @@ add_test(NAME hpo_vendored_boost_includes
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/check_vendored_boost.py
         ${CMAKE_CURRENT_SOURCE_DIR}/..
-        "$<JOIN:$<TARGET_PROPERTY:boost_iostream,INTERFACE_INCLUDE_DIRECTORIES>,:>")
+        "$<JOIN:$<TARGET_PROPERTY:boost_iostream,INTERFACE_INCLUDE_DIRECTORIES>,:>"
+        --cxx ${CMAKE_CXX_COMPILER})
 set_tests_properties(hpo_vendored_boost_includes PROPERTIES
-    TIMEOUT 30)
+    TIMEOUT 60)
+# The gate itself, on fake trees (tests/test_check_vendored_boost.py).
+add_test(NAME hpo_vendored_boost_gate_tool
+    COMMAND ${CMAKE_COMMAND} -E env CXX=${CMAKE_CXX_COMPILER}
+        ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_check_vendored_boost.py)
+set_tests_properties(hpo_vendored_boost_gate_tool PROPERTIES
+    TIMEOUT 60)
 
 if(TADAH_HPO_MPI)
     add_executable(test_hpo_anneal_mpi mpi/test_anneal_mpi.cpp)
