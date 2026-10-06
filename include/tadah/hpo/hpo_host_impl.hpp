@@ -1194,6 +1194,19 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                     throw std::runtime_error("Empty validation dataset " + std::to_string(i + 1)
                         + " (" + val_ctx.get<std::string>("DBFILE", i) + ") after loading/filtering");
         }
+        /* PC_FRMSE leaves out structures with force weight 0, PC_SRMSE those
+         * with stress weight 0; a dataset of only such structures has no
+         * metric, and is refused here rather than at every evaluation. */
+        {
+            std::vector<std::string> files;
+            if (val_ctx.contains("DBFILE")) files = val_ctx("DBFILE");
+            if (trg_.use_frmse)
+                mlip::require_metric_structures(val_stdb_, mlip::MetricQuantity::Forces,
+                    "tadah hpo: PC_FRMSE on the validation set", files);
+            if (trg_.use_srmse)
+                mlip::require_metric_structures(val_stdb_, mlip::MetricQuantity::Stress,
+                    "tadah hpo: PC_SRMSE on the validation set", files);
+        }
         nnf_.calc(val_stdb_, rcutmax);
     }
     if (has_train_data_) nnf_.calc(train_stdb_, rcutmax);
