@@ -26,7 +26,7 @@ namespace hpo {
  *      3. Iso-relax bulk under P=0 (NativeRelaxer, box_mode=Iso).
  *      4. dc.calc + model.predict_E + model.predict_dE_dW on both.
  *      5. Closed-form E_coh and dE_coh/dW (linear chain rule).
- *      6. Update hot-var with relaxed a0 (= cell(0,0) / nx).
+ *      6. Update hot-var with relaxed a0 (= a0 x the Iso scale factor).
  *
  *  Why `needs_adjoint=false`: at the energy minimum dE_bulk/dx = 0, so
  *  the IFT correction to dE_coh/dW vanishes. Isolated atom has 1 atom ->

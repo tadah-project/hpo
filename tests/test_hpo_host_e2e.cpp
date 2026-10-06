@@ -42,6 +42,7 @@
 #include <fstream>
 #include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -1162,4 +1163,70 @@ TEST_CASE("PC_OBSERVABLE analytical gradient matches central differences of "
     }
     host.flush_remaining();
     Host::reset_globals_for_test();
+}
+
+/* ---- two atoms at the same position -------------------------------------
+ * NNFinder refuses a structure with two atoms at one position, naming the
+ * structure and the atoms (report_leftovers.md section 3, option A), and
+ * HPO_Host builds the neighbour lists of the validation and training sets
+ * in its constructor. So `tadah hpo` stops at startup with that message
+ * instead of failing every evaluation ("Error in DGELSD: info = -4" in
+ * training, a NaN force metric in validation) or measuring an energy
+ * silently. The host is only constructed. */
+namespace {
+/* Appends to @p path a 3-atom Ta structure in a 3.301 A cube labelled
+ * @p label, with atoms 1 and 3 both at the origin and atom 2 at the cube
+ * centre. */
+void append_coincident_ta(const fs::path& path, const std::string& label) {
+    std::ofstream os(path, std::ios::app);
+    os << label << "\n"
+       << "1.0 1.0 1.0\n"
+       << "-0.03 0.0\n"
+       << "3.301 0.0 0.0\n"
+       << "0.0 3.301 0.0\n"
+       << "0.0 0.0 3.301\n"
+       << "0.0 0.0 0.0\n"
+       << "0.0 0.0 0.0\n"
+       << "0.0 0.0 0.0\n"
+       << "Ta 0.0 0.0 0.0  0.0 0.0 0.0\n"
+       << "Ta 1.6505 1.6505 1.6505  0.0 0.0 0.0\n"
+       << "Ta 0.0 0.0 0.0  0.0 0.0 0.0\n"
+       << "\n";
+}
+}  // namespace
+
+/* Pins: a validation DBFILE, or a training DBFILE, whose second structure
+ * has two Ta atoms at the same position makes the HPO_Host constructor
+ * throw std::invalid_argument naming the structure ("structure 2 of 2" and
+ * its label) and the atoms ("atoms 1 and 3 (Ta, Ta)", "same position").
+ * Before the fix: the constructor built the lists with the pair at
+ * distance 0 and did not throw, so the CHECK_THROWS_AS and the
+ * CHECK_THROWS_WITH failed ("no exception was thrown") in both sections. */
+TEST_CASE("A structure with two atoms at the same position stops the host at "
+          "startup, naming the structure and the atoms",
+          "[coincident][host]") {
+    DatasetHostGuard guard;
+    ScratchDir sd;
+    const auto train = sd.dir / "train.db", vdb = sd.dir / "val.db";
+    const auto val = sd.dir / "config.val", hpo = sd.dir / "config.hpo";
+    write_minimal_ta_dbfile(train, 0);
+    write_minimal_ta_dbfile(vdb, 0.07, -0.04);
+    std::string label;
+    SECTION("in the validation set") {
+        label = "Ta3 coincident (validation)";
+        append_coincident_ta(vdb, label);
+    }
+    SECTION("in the training set") {
+        label = "Ta3 coincident (training)";
+        append_coincident_ta(train, label);
+    }
+    std::ofstream(val) << "DBFILE " << vdb.string() << "\n";
+    std::ofstream(hpo) << kRefusalTarget;
+    CHECK_THROWS_AS(construct_host_on_validation_file(train, hpo, val),
+                    std::invalid_argument);
+    CHECK_THROWS_WITH(construct_host_on_validation_file(train, hpo, val),
+                      Catch::Matchers::Contains("structure 2 of 2") &&
+                      Catch::Matchers::Contains("'" + label + "'") &&
+                      Catch::Matchers::Contains("atoms 1 and 3 (Ta, Ta)") &&
+                      Catch::Matchers::Contains("same position"));
 }
