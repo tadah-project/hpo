@@ -20,7 +20,8 @@
 //   compute_2b_mb_full          D2_BP, M_BLR BF_Polynomial2 (not linear)
 // Each case checks the LammpsTadah flags that compute() dispatches on, so a
 // potential that took another kernel fails at that REQUIRE, not at the
-// refusal. compute_dimers (DIMER true, rigid molecules) is not covered.
+// refusal. compute_dimers (DIMER true, rigid molecules) has its own case,
+// with the published Tadah!N2 potential.
 //
 // The cell: a 3.3 A cube with atom 1 at (0, 0, 0), atom 2 at its centre and
 // atom 3 at (dx, 0, 0), created in that order (atom IDs 1, 2, 3).
@@ -326,4 +327,103 @@ TEST_CASE("pair_style tadah: single() refuses a pair at distance 0, naming "
     INFO("single() at r = 0: " << msg);
     CHECK(contains(msg, "atom IDs 1 and 3"));
     CHECK(contains(msg, "same position"));
+}
+
+namespace {
+
+/* The published Tadah!N2 potential (Tadah.MLIP docs/source/mlips/tadah.n2,
+ * as Tadah.LAMMPS tests_data/pots/tadah.n2): a DIMER model, rigid N2
+ * molecules with bond 1.1014 A; compute() takes compute_dimers. */
+const char* const kN2Potential = R"(ALPHA      1.0
+ATOM      N
+BETA      1.0
+BIAS      false
+CGRID2B     2.61066139096906     0.102282581669174     11.9012832034265     1.56876280610699
+CGRIDMB     0.0047213950373977     1.63499413497487     0.00355931367024822     0.00361552428610945
+DIMER     true     1.1014     true
+EWEIGHT      1.0
+FWEIGHT      1.0
+INIT2B      true
+INITMB      true
+LAMBDA      1e-11
+MODEL     M_BLR     BF_Polynomial2
+NORM      false
+NUMERIC      15
+RCTYPE2B      Cut_Cos
+RCTYPEMB      Cut_Cos
+RCUT2B      12.0
+RCUTMB      12.0
+SGRID2B     1.02994852292367     7.79076437642021     0.0404023556055661     0.0134051926882054
+SGRIDMB     0.108542496599043     0.781220614205158     0.641210266525736     0.314482746078487
+SWEIGHT      1.0
+TYPE2B      D2_Blip     4     4     *     *
+TYPEMB      DM_Blip     1     4     4     *     *
+WEIGHTS     0.00445086389172505     1.00378291362207e-05     -15.9344558555831     15.6937903259764     -0.836205309596988     -0.141981149593015     -7.45081049608157     0.123600090851046     0.0857644060871572     -0.209101032703681     -40.2816489956399     -1.80220843968726     -2.55575189882311e-07     3.28238480132507e-07     -3.95278592763395e-07     5.00416898717367e-07     -7.53881567477933e-08     6.54086529543389e-07     4.21307161103432e-07     -2.94058530912738e-07     -5.82737292073481e-07     5.57984064738969e-07     -1.21702009421608e-08     52.8243237738234     -114.190596040572     3.95280685849392     -61.9069220774056     46.0333186059243     60.9479447557331     -0.0166638222546779     438.261724061192     -193.650473526688     352.263835028459     61.794014336796     -4.68878411330738     56.6820518480946     -38.0195299644728     -60.0552177292047     -0.0139624551612181     -371.079908034338     -231.429187171372     -341.154437531118     0.121529261603785     -2.17714535002752     -3.11787443767483     2.98125476313837     0.079687306132553     8.1714536593802     149.213269003904     15.3678419492162     0.422361776792     -4.78418404882885     -1.36117669766873     0.535102619893635     -10.2536278051023     -88.9036123059436     -0.51403132790596     -15.7944156411714     25.3656589635711     -6.06941241174525     -152.027369003374     -45.3730912759781     154.061043016328     0.791138191086959     0.568424850518922     21.0334923247851     215.770429265422     4.59632817517586     0.0214715643650998     -0.710370564113948     106.858247653415     3.3324114494258     34.2156643304449     160.545973931592     -17.3553521718853     4.38885263985965     86.1015341166423     -12.6781424039517
+)";
+
+/* Two N2 molecules (atoms 1-2 and 3-4, bonded, along x) in a 30 A box, the
+ * second molecule from x = x3; `newton off`, as the potential requires. */
+std::vector<std::string> dimer_script(double x3) {
+    return {
+        "clear",
+        "units metal",
+        "boundary p p p",
+        "newton off",
+        "atom_style bond",
+        "atom_modify map array",
+        "region box block 0 30 0 30 0 30 units box",
+        "create_box 1 box bond/types 1 extra/bond/per/atom 1 extra/special/per/atom 1",
+        "create_atoms 1 single 10 10 10 units box",
+        "create_atoms 1 single 11.1014 10 10 units box",
+        "create_atoms 1 single " + num(x3) + " 10 10 units box",
+        "create_atoms 1 single " + num(x3 + 1.1014) + " 10 10 units box",
+        "mass 1 14.0067",
+        "bond_style zero",
+        "bond_coeff 1 1.1014",
+        "create_bonds single/bond 1 1 2",
+        "create_bonds single/bond 1 3 4",
+        "pair_style tadah",
+        "pair_coeff * * EXTERN N",
+        "neighbor 1.0 nsq",
+    };
+}
+
+}  // namespace
+
+/* Pins: compute_dimers (DIMER true) refuses two atoms at the same position
+ * too: with the second N2 molecule placed on the first (atoms 3 and 4 on
+ * atoms 1 and 2), `run 0` throws, naming LAMMPS atom IDs and saying they are
+ * at the same position; with the molecules 4 A apart it completes.
+ * Before the fix: compute_dimers had no check, so the intermolecular
+ * distance 0 was divided by and `run 0` completed with NaN forces (err
+ * empty, both message CHECKs failed). */
+TEST_CASE("pair_style tadah: a DIMER potential refuses two atoms at the same "
+          "position, naming the atom IDs",
+          "[pair_tadah][coincident][dimer]") {
+    PeriodicTable::initialize();
+    std::istringstream in(kN2Potential);
+    const Context pot = tadah::core::CoreUserConfigParser().parse(in);
+    {
+        LMPPtr lmp = make_instance();
+        const std::string setup = execute(lmp, dimer_script(14.0), pot);
+        INFO("setup: " << setup);
+        REQUIRE(setup.empty());
+        auto* pt = dynamic_cast<LAMMPS_NS::PairTadah*>(lmp->force->pair);
+        REQUIRE(pt != nullptr);
+        REQUIRE(pt->lammps_tadah() != nullptr);
+        REQUIRE(pt->lammps_tadah()->dimer);
+        const std::string err = run0_error(lmp);
+        INFO("run 0 with the molecules 4 A apart: " << err);
+        CHECK(err.empty());
+    }
+    {
+        LMPPtr lmp = make_instance();
+        const std::string setup = execute(lmp, dimer_script(10.0), pot);
+        INFO("setup: " << setup);
+        REQUIRE(setup.empty());
+        const std::string err = run0_error(lmp);
+        INFO("run 0 with the molecules on each other: " << err);
+        CHECK(contains(err, "atom IDs"));
+        CHECK(contains(err, "same position"));
+    }
 }
