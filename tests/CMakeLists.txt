@@ -168,6 +168,18 @@ set_tests_properties(hpo_anneal_registry_sync PROPERTIES
     LABELS "anneal"
     TIMEOUT 30)
 
+# Boost drift gate: every Boost header HPO includes must be in the Boost
+# Tadah vendors (MLIP's external/boost, on HPO's include path through
+# tadah.mlip), so the build never depends on a system Boost. The include
+# directories are joined with ':' (no ';' in add_test() arguments).
+add_test(NAME hpo_vendored_boost_includes
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/check_vendored_boost.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/..
+        "$<JOIN:$<TARGET_PROPERTY:boost_iostream,INTERFACE_INCLUDE_DIRECTORIES>,:>")
+set_tests_properties(hpo_vendored_boost_includes PROPERTIES
+    TIMEOUT 30)
+
 if(TADAH_HPO_MPI)
     add_executable(test_hpo_anneal_mpi mpi/test_anneal_mpi.cpp)
     target_link_libraries(test_hpo_anneal_mpi PRIVATE
