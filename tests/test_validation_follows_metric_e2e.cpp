@@ -95,6 +95,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -214,6 +215,15 @@ bool contains(const std::string& text, const std::string& needle) {
 
 bool starts_with(const std::string& text, const std::string& prefix) {
     return text.rfind(prefix, 0) == 0;
+}
+
+/* Whether @p v is a NaN, from its bits: the build may use -ffast-math, under
+ * which std::isnan can be folded to false. */
+bool is_nan_bits(double v) {
+    std::uint64_t b;
+    std::memcpy(&b, &v, sizeof b);
+    return (b & UINT64_C(0x7ff0000000000000)) == UINT64_C(0x7ff0000000000000) &&
+                 (b & UINT64_C(0x000fffffffffffff)) != 0;
 }
 
 bool same_bits(double a, double b) {
@@ -1421,7 +1431,7 @@ TEST_CASE("valmetric e2e: a validation dataset whose structures all have "
         const double f2 = column(rows.front(), "FRMSE[2]");
         const double favg = column(rows.front(), "FRMSE[avg]");
         CAPTURE(f1, f2, favg);
-        CHECK(std::isnan(f2));
+        CHECK(is_nan_bits(f2));
         CHECK(std::isfinite(f1));
         CHECK(same_bits(favg, f1));
     }
@@ -1757,7 +1767,7 @@ TEST_CASE("valmetric e2e: the analytical gradient of PC_FRMSE averages the "
         const double favg = column(rows.front(), "FRMSE[avg]");
         const double ermse = column(rows.front(), "ERMSE[avg]");
         CAPTURE(f1, f2, favg, ermse);
-        CHECK(std::isnan(f2));
+        CHECK(is_nan_bits(f2));
         CHECK(same_bits(favg, f1));
         REQUIRE(favg * favg > 1e-6 * ermse * ermse);
     }
