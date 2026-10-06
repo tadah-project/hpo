@@ -119,7 +119,8 @@ endforeach()
 #                  the one-time lists is evaluated with rebuilt lists
 #   valmetric_e2e  test_validation_follows_metric_e2e.cpp: validation
 #                  predicts forces/stresses when PC_FRMSE/PC_SRMSE ask,
-#                  whatever FORCE/STRESS training used; and
+#                  whatever FORCE/STRESS training used, and leaves out the
+#                  structures stored with force/stress weight 0; and
 #                  test_metric_unit_labels.cpp: the --skip-above message
 #                  gives ErRMSE and SRMSE in their units
 set(_hpo_e2e_groups fixweight_e2e durable_e2e embf0_e2e rcut_e2e
