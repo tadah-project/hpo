@@ -454,3 +454,70 @@ TEST_CASE("CohesiveEnergyObservable: supercell 1 1 1 and 4 4 4 give the "
     INFO("E_coh 1x1x1 " << e1 << ", 4x4x4 " << e4);
     CHECK(std::abs(e1 - e4) <= 1.0e-10 * std::max(1.0, std::abs(e4)));
 }
+
+/* Pins: the hot-var a0 that an evaluation hands on (current_a0() and
+ * hotvar_updated_value) is the a0 it started from times the Iso
+ * relaxation's scale factor (NativeRelaxer::Result::scale_factor), the
+ * quantity the early-reject predicate already uses, and not the relaxed
+ * cell(0,0) divided by nx. An evaluation that does not move the cell
+ * (relax_maxiter 0 and a relax_atom_ftol that no force reaches, so the
+ * iteration-0 check accepts the cell with scale factor 1) therefore hands
+ * on its a0 bit for bit, whatever the supercell.
+ *
+ * a0 = 3.3 (0x1.a666666666666p+1) with --supercell 3 3 3: replicate()
+ * stores cell(0,0) = fl(3 x 3.3) = 0x1.3ccccccccccccp+3, and that divided
+ * by 3 is 0x1.a666666666665p+1 = 3.2999999999999994, one ulp below 3.3.
+ * A power-of-two supercell (1, 2, 4, 8) multiplies and divides exactly,
+ * which is why the 1 1 1 and 4 4 4 case above passes either way; for
+ * a0 = 3.3 the supercells 3 and 6 are the ones up to 8 that change it.
+ * The expected values are written as literals, not computed here, so the
+ * test does no arithmetic that -ffast-math could rewrite.
+ *
+ * Before the fix: new_a0 was bulk.cell(0,0) / nx, so current_a0() and
+ * hotvar_updated_value were 3.2999999999999994 (0x1.a666666666665p+1)
+ * instead of 3.3 (0x1.a666666666666p+1). */
+TEST_CASE("CohesiveEnergyObservable: an evaluation that does not move the "
+          "cell hands on its a0 bit for bit with --supercell 3 3 3",
+          "[hpo][observable][cohesive_energy][hotvar][supercell]")
+{
+    PeriodicTable::initialize();
+
+    MLIPWorkspaceManager ws;
+    Context ctx = make_ta_context(4.5, {2.5, 3.5}, {2.0, 3.0});
+    Trainer host(ctx, ws);
+    auto train_db = make_ta_train_db();
+    host.train(train_db);
+
+    CohesiveEnergyObservable::Config cfg;
+    cfg.species = "Ta";
+    cfg.nx = cfg.ny = cfg.nz = 3;
+    cfg.target = 8.0;
+    cfg.weight = 1.0;
+    cfg.a0_min = 2.7;
+    cfg.a0_max = 3.9;
+    cfg.a0_initial = 3.3;
+    cfg.relax_maxiter = 0;
+    cfg.relax_atom_ftol = 1.0e6;
+
+    CohesiveEnergyObservable obs(cfg);
+    REQUIRE(obs.current_a0() == 0x1.a666666666666p+1);   /* 3.3 */
+    const ObservableEvalResult r =
+        obs.evaluate(*host.model, host.dc, host.context);
+
+    /* The observable's own value: the relaxation accepted the cell at
+     * iteration 0, so the relaxed bulk is the bulk as built. */
+    REQUIRE_FALSE(r.value_is_constant);
+    REQUIRE(r.energy_terms.size() == 2u);
+    const Structure& bulk = r.energy_terms[0].structure;
+    REQUIRE(bulk.natoms() == 54u);
+    /* Fixture check: the cell is fl(3 x 3.3), the value whose third is
+     * one ulp below 3.3. */
+    REQUIRE(bulk.cell(0, 0) == 0x1.3ccccccccccccp+3);
+
+    REQUIRE(r.hotvar_updated_value.has_value());
+    INFO("current_a0 " << std::hexfloat << obs.current_a0()
+         << ", hotvar_updated_value " << *r.hotvar_updated_value
+         << ", expected 0x1.a666666666666p+1 (3.3)");
+    CHECK(obs.current_a0() == 0x1.a666666666666p+1);
+    CHECK(*r.hotvar_updated_value == 0x1.a666666666666p+1);
+}
