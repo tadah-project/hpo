@@ -1209,11 +1209,13 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
             auto note = [&](const char* metric, const std::vector<bool>& m,
                             const char* data, const char* weight, const char* column) {
                 for (std::size_t d = 0; d < m.size(); ++d)
-                    if (!m[d])
-                        core::Logger::instance().log(tadah::core::LogLevel::INFO,
-                            std::string(metric) + ": " + name(d) + " has no structure with "
-                            + data + " (" + weight + " 0 everywhere): not measured (nan), "
-                            "left out of " + column);
+                    if (!m[d]) {
+                        const std::string msg = std::string(metric) + ": " + name(d)
+                            + " has no structure with " + data + " (" + weight
+                            + " 0 everywhere): not measured (nan), left out of " + column;
+                        core::Logger::instance().log(tadah::core::LogLevel::INFO, msg);
+                        HPOLog::instance().info(msg);  // the journal names it too
+                    }
             };
             if (trg_.use_frmse) {
                 mlip::require_metric_structures(val_stdb_, mlip::MetricQuantity::Forces,
@@ -2231,15 +2233,20 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
 template<class P, class R>
 void HPO_Host<P,R>::fit_loss(Result& r) const
 {
+  /* @p measured: the datasets the metric measures (empty: every one); the
+   * loss term of one that is not is nan, as its value. */
   auto add_global = [&](double& sink, double y, double ref, double w,
-                        std::vector<double>& v_sink, const std::vector<double>& v_y)
+                        std::vector<double>& v_sink, const std::vector<double>& v_y,
+                        const std::vector<bool>& measured = {})
   {
     sink = trg_.globalLoss.loss(y, ref, w);
     r.loss_sum += sink;
     ++r.loss_count;
     v_sink.resize(v_y.size());
     for (std::size_t i = 0; i < v_y.size(); ++i)
-      v_sink[i] = trg_.globalLoss.loss(v_y[i], ref, w);
+      v_sink[i] = measured.empty() || measured[i]
+                      ? trg_.globalLoss.loss(v_y[i], ref, w)
+                      : std::numeric_limits<double>::quiet_NaN();
   };
   if (trg_.use_emae)   add_global(r.emaeLoss,   r.emae,   trg_.emae,   trg_.w_emae,   r.v_emaeLoss,   r.v_emae);
   if (trg_.use_ermse) {
@@ -2254,7 +2261,8 @@ void HPO_Host<P,R>::fit_loss(Result& r) const
     r.loss_sum += r.frmseLoss;
     ++r.loss_count;
   }
-  if (trg_.use_srmse)  add_global(r.srmseLoss,  r.srmse,  trg_.srmse,  trg_.w_srmse,  r.v_srmseLoss,  r.v_srmse);
+  if (trg_.use_srmse)  add_global(r.srmseLoss,  r.srmse,  trg_.srmse,  trg_.w_srmse,  r.v_srmseLoss,  r.v_srmse,
+                                  val_measured_srmse_);
 
   r.loss = r.loss_count ? r.loss_sum / static_cast<double>(r.loss_count) : 0.0;
   if (!std::isfinite(r.loss) || r.loss > trg_.FAIL_SCORE) {
