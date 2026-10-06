@@ -1163,7 +1163,11 @@ compute_analytical_gradient_from_trainer(
         if (trg.use_ersq)   { plan.metrics.ersq   = a.calc_e_r_sq().mean()  * 1.0;    ++lc; }
         if (trg.use_frmse) {
             const auto v = a.calc_f_rmse();
-            plan.metrics.frmse = v.mean();
+            /* The average over the measured datasets (a dataset without
+             * forces is not measured: nan, slope 0). */
+            const auto& measured = trg.frmse_targets.measured();
+            plan.metrics.frmse = measured.empty() ? v.mean()
+                                                  : mlip::measured_mean(v, measured);
             for (std::size_t i = 0; i < v.size(); ++i) plan.metrics.v_frmse.push_back(v[i]);
             ++lc;
         }

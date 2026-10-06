@@ -326,6 +326,10 @@ private:
     /* --validation is optional when the loss has other sources
      * (PC_OBSERVABLE / PC_LAMMPS); validated in validate_hpo_setup(). */
     bool                         has_validation_ = true;
+    /* The validation datasets PC_SRMSE measures (a dataset without a stress
+     * tensor is not; PC_FRMSE keeps its own in trg_.frmse_targets). Empty:
+     * every dataset. */
+    std::vector<bool>            val_measured_srmse_;
     std::shared_ptr<MetricSkipTracker> metric_skip_tracker_ = std::make_shared<MetricSkipTracker>();
     /* Knot-family channels (D2_Knot5 / DM_REAM knot bcode): RCUT2B/RCUTMB
      * are DERIVED from the largest knot — re-derived on every evaluation in

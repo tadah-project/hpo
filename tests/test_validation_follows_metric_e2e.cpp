@@ -30,6 +30,15 @@
 //   - the journal never said what training fitted or what validation
 //     measured.
 //
+// Weight 0 (branch fix/weight0-metrics, MK 2026-10-05/06): PC_FRMSE leaves
+// out the validation structures stored with force weight 0 (fweight) and
+// PC_SRMSE those stored with stress weight 0 (sweight), per dataset; a
+// validation dataset in which every structure has that weight 0 is not
+// measured (nan, left out of the average), and a run is refused at startup
+// when no dataset has the data or an indexed weight above 0 targets such a
+// dataset (cases 2a, 2b and 4a). Before that fix they were measured like
+// any other structure.
+//
 // What a validation prediction used is read from the host's test hook
 // HPO_Host::last_validation_switches_for_test(). It is detected at compile
 // time (validation_switches_seen()): before the host had it, this file
@@ -86,6 +95,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -95,6 +105,7 @@
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <type_traits>
@@ -204,6 +215,15 @@ bool contains(const std::string& text, const std::string& needle) {
 
 bool starts_with(const std::string& text, const std::string& prefix) {
     return text.rfind(prefix, 0) == 0;
+}
+
+/* Whether @p v is a NaN, from its bits: the build may use -ffast-math, under
+ * which std::isnan can be folded to false. */
+bool is_nan_bits(double v) {
+    std::uint64_t b;
+    std::memcpy(&b, &v, sizeof b);
+    return (b & UINT64_C(0x7ff0000000000000)) == UINT64_C(0x7ff0000000000000) &&
+                 (b & UINT64_C(0x000fffffffffffff)) != 0;
 }
 
 bool same_bits(double a, double b) {
@@ -327,7 +347,7 @@ struct FitSwitches {
 const std::vector<std::string> kBLR = {"M_BLR", "BF_Linear"};
 const std::vector<std::string> kKRR = {"M_KRR", "Kern_Linear", "1"};
 
-/* The pinned weights of the fixed potential (case 2). */
+/* The pinned weights of the fixed potential (cases 2, 2a and 2b). */
 const std::array<double, 3> kPinned = {0.8, -0.35, 0.2};
 
 Context potential_context(const std::vector<std::string>& model,
@@ -424,7 +444,8 @@ ParamVec trained_point() {
 }
 
 /* A derivative-free optimiser block: the cases call the objective directly
- * (cases 1-3) or let hpo_run() evaluate once (case 5). */
+ * (cases 1, 2, 2a, 3 and 6) or let hpo_run() evaluate once (cases 2b and
+ * 5). */
 constexpr const char* kDerivativeFree =
     "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 1\nENDOPTIMIZER\n";
 
@@ -519,6 +540,57 @@ double srmse_of(const StructureDB& ref, const StructureDB& pred) {
                 ++n;
             }
     return std::sqrt(s / static_cast<double>(n));
+}
+
+/* frmse_of() over the structures of @p ref stored with a nonzero force
+ * weight only: a structure with fweight 0 is left out as PC_FRMSE leaves
+ * it out, its components counted neither in the sum nor in N. @p ref is
+ * one dataset (one DBFILE), with at least one such structure. */
+double frmse_over_weighted(const StructureDB& ref, const StructureDB& pred) {
+    double s = 0.0;
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < ref.size(); ++i) {
+        if (ref(i).fweight == 0.0) continue;
+        REQUIRE(pred(i).atoms.size() == ref(i).natoms());
+        for (std::size_t a = 0; a < ref(i).natoms(); ++a)
+            for (int k = 0; k < 3; ++k) {
+                const double d =
+                    ref(i).atoms[a].force(k) - pred(i).atoms[a].force(k);
+                s += d * d;
+                ++n;
+            }
+    }
+    REQUIRE(n > 0u);
+    return std::sqrt(s / static_cast<double>(n));
+}
+
+/* srmse_of() over the structures of @p ref stored with a nonzero stress
+ * weight only: a structure with sweight 0 is left out as PC_SRMSE leaves
+ * it out. @p ref is one dataset (one DBFILE), with at least one such
+ * structure. */
+double srmse_over_weighted(const StructureDB& ref, const StructureDB& pred) {
+    double s = 0.0;
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < ref.size(); ++i) {
+        if (ref(i).sweight == 0.0) continue;
+        for (int x = 0; x < 3; ++x)
+            for (int y = x; y < 3; ++y) {
+                const double d = ref(i).stress(x, y) - pred(i).stress(x, y);
+                s += d * d;
+                ++n;
+            }
+    }
+    REQUIRE(n > 0u);
+    return std::sqrt(s / static_cast<double>(n));
+}
+
+/* The mean of per-dataset values (one per DBFILE of the --validation
+ * file): the [avg] column of stats.tadah. */
+double mean_over_datasets(const std::vector<double>& per_dataset) {
+    REQUIRE_FALSE(per_dataset.empty());
+    double s = 0.0;
+    for (double v : per_dataset) s += v;
+    return s / static_cast<double>(per_dataset.size());
 }
 
 /* RMS of the six independent stress components of @p db: the SRMSE of a
@@ -709,6 +781,44 @@ EvalOutcome evaluate_once(Context ctx, const fs::path& hpo_cfg,
     REQUIRE(rows.size() == 1u);
     out.stats = rows.front();
     out.pot = read_potential(trg.canonicalBestPotFile);
+    Host::reset_globals_for_test();
+    return out;
+}
+
+/* How hpo_run() ended on the fixed potential (pinned_context). */
+struct RunStart {
+    bool threw = false;          // hpo_run() threw
+    bool runtime_error = false;  // ... a std::runtime_error
+    std::string what;            // the exception's message
+    int status = -1;             // what hpo_run() returned when it did
+};
+
+/* hpo_run() of the fixed potential (pinned_context) with the --validation
+ * file @p val_cfg and the hpotarget @p hpo_cfg, in the working directory:
+ * whether it threw (a startup error: hpo_run() records it in the journal
+ * and rethrows) and the message, or its status. The journal is closed
+ * either way. */
+RunStart start_pinned_run(const fs::path& val_cfg, const fs::path& hpo_cfg) {
+    if (HPOLog::instance().is_open()) HPOLog::instance().finish("closed");
+    HPOLog::instance().reset_for_test();
+    Host::reset_globals_for_test();
+    RunStart out;
+    {
+        ForceRebuildGuard rebuild;
+        Context ctx = pinned_context(val_cfg, hpo_cfg);
+        try {
+            out.status = tadah::hpo::hpo_run(ctx);
+        } catch (const std::runtime_error& ex) {
+            out.threw = true;
+            out.runtime_error = true;
+            out.what = ex.what();
+        } catch (const std::exception& ex) {
+            out.threw = true;
+            out.what = ex.what();
+        }
+    }
+    if (HPOLog::instance().is_open()) HPOLog::instance().finish("closed");
+    HPOLog::instance().reset_for_test();
     Host::reset_globals_for_test();
     return out;
 }
@@ -1049,6 +1159,310 @@ TEST_CASE("valmetric e2e: pinned weights are validated on forces and "
         CHECK(same_bits(e.live_weights[k], kPinned[k]));
 }
 
+/* Case 2a. Pins: PC_FRMSE and PC_SRMSE leave out, per dataset, the
+ * validation structures stored with weight 0. The fixed potential of case
+ * 2 (no training DBFILE, every weight pinned, FORCE and STRESS false
+ * written), whose prediction is predict_with() on pinned_potential(), is
+ * validated with PC_ERMSE + PC_FRMSE + PC_SRMSE on two datasets of three
+ * cells. One cell of each, never the first (the last of dataset 1, at the
+ * dataset boundary; the middle one of dataset 2), is stored with fweight 0
+ * and sweight 0 and garbage references: every force component 50 eV/A and
+ * every stress entry 5 eV/A^3. The other cells keep their references and
+ * weight 1; eweight is 1 throughout.
+ *   - FRMSE[d] and SRMSE[d] (stats.tadah) equal the RMSEs over the cells of
+ *     weight 1 of dataset d (frmse_over_weighted, srmse_over_weighted), and
+ *     FRMSE[avg] and SRMSE[avg] their mean over the datasets, to 1e-12
+ *     relative (the same arithmetic on the same weights, as in case 1). The
+ *     garbage moves each all-cells RMSE (frmse_of, srmse_of) by more than 1
+ *     (eV/A, eV/A^3; hence 5 eV/A^3 rather than a realistic stress), so a
+ *     metric that kept those cells cannot pass;
+ *   - the cells of weight 0 stay in the validation set (six structures)
+ *     and in PC_ERMSE (eweight 1): ERMSE[d], ERMSE[avg] and the L2 loss of
+ *     the three metrics agree to 1e-12;
+ *   - the evaluation used the pinned weights, and validation predicted
+ *     forces and stresses (the test hook).
+ * Before the fix: the cells of weight 0 were measured, so FRMSE[d] and
+ * SRMSE[d] were the all-cells values, off by more than 1. */
+TEST_CASE("valmetric e2e: PC_FRMSE and PC_SRMSE leave out validation "
+          "structures with weight 0", "[valmetric_e2e][.]")
+{
+    PeriodicTable::initialize();
+    const double garbage_force  = 50.0;  // eV/A, every component
+    const double garbage_stress = 5.0;   // eV/A^3, every entry
+
+    ScratchDir sd;
+    const std::vector<fs::path> val_dbs = {sd.dir / "val_1.db",
+                                           sd.dir / "val_2.db"};
+    const fs::path val_cfg = sd.dir / "config.val";
+    const fs::path hpo_cfg = sd.dir / "config.hpo";
+
+    /* Two datasets of three cells; the cell of weight 0 is the last of
+     * dataset 1 and the middle one of dataset 2. */
+    std::vector<std::vector<Structure>> sets(2);
+    sets[0] = {bcc_cell(11, 3.10, 1.9), bcc_cell(12, 3.20, 0.6),
+               bcc_cell(13, 3.00, 2.6)};
+    sets[1] = {bcc_cell(14, 3.05, 0.4), bcc_cell(15, 3.15, 2.1),
+               bcc_cell(16, 3.30, 1.2)};
+    const std::array<std::size_t, 2> zero_at = {2u, 1u};
+    for (std::size_t d = 0; d < sets.size(); ++d) {
+        Structure& st = sets[d][zero_at[d]];
+        st.fweight = 0.0;
+        st.sweight = 0.0;
+        for (std::size_t a = 0; a < st.natoms(); ++a)
+            for (int k = 0; k < 3; ++k) st.atoms[a].force(k) = garbage_force;
+        for (int x = 0; x < 3; ++x)
+            for (int y = 0; y < 3; ++y) st.stress(x, y) = garbage_stress;
+        write_db(val_dbs[d], sets[d]);
+    }
+    {
+        std::ofstream os(val_cfg);
+        for (const fs::path& db : val_dbs)
+            os << "DBFILE " << db.string() << "\n";
+    }
+    std::ofstream(hpo_cfg) << target_head(kDerivativeFree)
+                           << "PC_ERMSE 0 0.0001\nPC_FRMSE 0 1\n"
+                              "PC_SRMSE 0 1\n"
+                           << "OPTIM FIXWEIGHT (1) -1.0 1.0\n";
+
+    /* FIXWEIGHT (1) evaluated at its pinned value: the weights are
+     * kPinned. All six structures stay in the validation set. */
+    ParamVec p(1);
+    p(0) = kPinned[0];
+    const EvalOutcome e = evaluate_once(pinned_context(val_cfg, hpo_cfg),
+                                        hpo_cfg, val_cfg, p, false, 0u, 6u);
+    require_real_loss(e.loss);
+    REQUIRE(e.live_weights.size() == kPinned.size());
+    for (std::size_t k = 0; k < kPinned.size(); ++k)
+        CHECK(same_bits(e.live_weights[k], kPinned[k]));
+    check_validation_switches(e.validation_switches, /*force=*/true,
+                              /*stress=*/true);
+
+    /* The references, per dataset, on the data as the host reads it (the
+     * weights included). */
+    std::vector<double> ermse, frmse, srmse, frmse_all, srmse_all;
+    for (std::size_t d = 0; d < val_dbs.size(); ++d) {
+        const StructureDB vdb = read_db(val_dbs[d]);
+        REQUIRE(vdb.size() == 3u);
+        for (std::size_t i = 0; i < vdb.size(); ++i) {
+            const double w = (i == zero_at[d]) ? 0.0 : 1.0;
+            CAPTURE(d, i);
+            REQUIRE(vdb(i).eweight == 1.0);
+            REQUIRE(vdb(i).fweight == w);
+            REQUIRE(vdb(i).sweight == w);
+        }
+        const StructureDB pred = predict_with(pinned_potential(), vdb,
+                                              /*force=*/true, /*stress=*/true);
+        ermse.push_back(ermse_mev(vdb, pred));
+        frmse.push_back(frmse_over_weighted(vdb, pred));
+        srmse.push_back(srmse_over_weighted(vdb, pred));
+        frmse_all.push_back(frmse_of(vdb, pred));
+        srmse_all.push_back(srmse_of(vdb, pred));
+    }
+
+    for (std::size_t d = 0; d < val_dbs.size(); ++d) {
+        const std::string n = "[" + std::to_string(d + 1) + "]";
+        const double f_reported = column(e.stats, "FRMSE" + n);
+        const double s_reported = column(e.stats, "SRMSE" + n);
+        CAPTURE(d, frmse[d], frmse_all[d], f_reported, srmse[d],
+                srmse_all[d], s_reported);
+        /* The fixture: the garbage would move both metrics by more than
+         * 1. */
+        REQUIRE(std::fabs(frmse_all[d] - frmse[d]) > 1.0);
+        REQUIRE(std::fabs(srmse_all[d] - srmse[d]) > 1.0);
+        CHECK(f_reported == Approx(frmse[d]).epsilon(1e-12));
+        CHECK(s_reported == Approx(srmse[d]).epsilon(1e-12));
+        /* ERMSE: also an absolute 1e-9 meV/atom, as in case 1. */
+        CHECK(column(e.stats, "ERMSE" + n) ==
+              Approx(ermse[d]).epsilon(1e-12).margin(1e-9));
+    }
+
+    const double e_avg = mean_over_datasets(ermse);
+    const double f_avg = mean_over_datasets(frmse);
+    const double s_avg = mean_over_datasets(srmse);
+    CAPTURE(e_avg, f_avg, s_avg);
+    CHECK(column(e.stats, "ERMSE[avg]") ==
+          Approx(e_avg).epsilon(1e-12).margin(1e-9));
+    CHECK(column(e.stats, "FRMSE[avg]") == Approx(f_avg).epsilon(1e-12));
+    CHECK(column(e.stats, "SRMSE[avg]") == Approx(s_avg).epsilon(1e-12));
+    /* L2: the mean of 1e-4 ERMSE^2, FRMSE^2 and SRMSE^2. */
+    CHECK(e.loss == Approx((1e-4 * e_avg * e_avg + f_avg * f_avg +
+                            s_avg * s_avg) / 3.0)
+                        .epsilon(1e-12));
+}
+
+/* Case 2b. Pins (MK, 2026-10-06): a validation dataset in which every
+ * structure has force weight 0 has no PC_FRMSE ("not measured"), and one
+ * in which every structure has stress weight 0 no PC_SRMSE. On the fixed
+ * potential of case 2, through hpo_run():
+ *   - a run in which no dataset has the data is refused at startup: a
+ *     std::runtime_error naming the metric, the DBFILE as the --validation
+ *     file gives it and the weight ("force weight 0" / "stress weight 0"),
+ *     before any evaluation (stats.tadah has no row);
+ *   - with a global PC_FRMSE (and PC_SRMSE), the second of two datasets
+ *     without forces is not measured: the run returns 0, FRMSE[2] is nan
+ *     and FRMSE[avg] is FRMSE[1], bit for bit, while both datasets have a
+ *     stress (SRMSE[2] finite);
+ *   - with a global PC_SRMSE of weight 0 and the second dataset without a
+ *     stress tensor, SRMSE[2] and its loss term L(SRMSE)[2] (loss.tadah)
+ *     are nan, not the loss of nan (0 at weight 0);
+ *   - with indexed PC_FRMSE, weight 0 on that dataset runs the same, and a
+ *     weight above 0 on it is refused at startup, naming the metric, the
+ *     dataset and the force weight;
+ *   - a weight no metric reads refuses nothing: with PC_SRMSE alone and
+ *     force weight 0 everywhere, or PC_FRMSE alone and stress weight 0
+ *     everywhere, the run measures its metric (finite and positive).
+ * Before the fix: every dataset without the data was refused at startup
+ * (the three run SECTIONs failed); before that, no dataset was refused and
+ * the zeros stored for the missing data were measured. */
+TEST_CASE("valmetric e2e: a validation dataset whose structures all have "
+          "weight 0 is not measured", "[valmetric_e2e][.]")
+{
+    PeriodicTable::initialize();
+    std::string metrics;                  // the PC_ lines of the hpotarget
+    bool zero_f = false, zero_s = false;  // the weights of the last dataset
+    bool weighted_first = false;          // a dataset of weight 1 before it
+    std::string refused_by, weight_named; // empty: the run starts
+    std::string measured;                 // the column a started run fills
+    bool second_unmeasured = false;       // FRMSE[2] nan, FRMSE[avg] = FRMSE[1]
+    bool second_unmeasured_s = false;     // SRMSE[2] and L(SRMSE)[2] nan
+    SECTION("PC_FRMSE and no dataset with forces") {
+        metrics = "PC_FRMSE 0 1\n";
+        zero_f = true;
+        refused_by = "PC_FRMSE";
+        weight_named = "force weight 0";
+    }
+    SECTION("PC_SRMSE and no dataset with a stress tensor") {
+        metrics = "PC_SRMSE 0 1\n";
+        zero_s = true;
+        refused_by = "PC_SRMSE";
+        weight_named = "stress weight 0";
+    }
+    SECTION("global PC_FRMSE and PC_SRMSE, the second of two datasets "
+            "without forces") {
+        metrics = "PC_FRMSE 0 1\nPC_SRMSE 0 1\n";
+        zero_f = true;
+        weighted_first = true;
+        measured = "SRMSE[2]";
+        second_unmeasured = true;
+    }
+    SECTION("global PC_SRMSE of weight 0, the second of two datasets without "
+            "a stress tensor") {
+        metrics = "PC_ERMSE 0 1\nPC_SRMSE 0 0\n";
+        zero_s = true;
+        weighted_first = true;
+        measured = "SRMSE[1]";
+        second_unmeasured_s = true;
+    }
+    SECTION("indexed PC_FRMSE, weight 0 on the dataset without forces") {
+        metrics = "PC_FRMSE (1) 0 1\nPC_FRMSE (2) 0 0\n";
+        zero_f = true;
+        weighted_first = true;
+        measured = "FRMSE[1]";
+        second_unmeasured = true;
+    }
+    SECTION("indexed PC_FRMSE, weight 0.5 on the dataset without forces") {
+        metrics = "PC_FRMSE (1) 0 1\nPC_FRMSE (2) 0 0.5\n";
+        zero_f = true;
+        weighted_first = true;
+        refused_by = "PC_FRMSE";
+        weight_named = "force weight 0";
+    }
+    SECTION("PC_SRMSE alone and every structure with force weight 0") {
+        metrics = "PC_SRMSE 0 1\n";
+        zero_f = true;
+        measured = "SRMSE[avg]";
+    }
+    SECTION("PC_FRMSE alone and every structure with stress weight 0") {
+        metrics = "PC_FRMSE 0 1\n";
+        zero_s = true;
+        measured = "FRMSE[avg]";
+    }
+    CAPTURE(metrics, zero_f, zero_s, weighted_first);
+
+    ScratchDir sd;
+    const fs::path weighted_db = sd.dir / "val_weighted.db";
+    const fs::path zero_db     = sd.dir / "val_zero.db";
+    const fs::path val_cfg     = sd.dir / "config.val";
+    const fs::path hpo_cfg     = sd.dir / "config.hpo";
+    std::vector<Structure> zero = validation_cells();
+    for (Structure& st : zero) {
+        if (zero_f) st.fweight = 0.0;
+        if (zero_s) st.sweight = 0.0;
+    }
+    write_db(zero_db, zero);
+    {
+        std::ofstream os(val_cfg);
+        if (weighted_first) {
+            const std::vector<Structure> weighted = {bcc_cell(13, 3.00, 2.6),
+                                                     bcc_cell(14, 3.30, 1.2)};
+            write_db(weighted_db, weighted);
+            os << "DBFILE " << weighted_db.string() << "\n";
+        }
+        os << "DBFILE " << zero_db.string() << "\n";
+    }
+    std::ofstream(hpo_cfg) << target_head(kDerivativeFree) << metrics
+                           << "OPTIM FIXWEIGHT (1) -1.0 1.0\n";
+
+    /* The fixture: the weights as the host reads them. */
+    {
+        const StructureDB db = read_db(zero_db);
+        REQUIRE(db.size() == 2u);
+        for (std::size_t i = 0; i < db.size(); ++i) {
+            CAPTURE(i);
+            REQUIRE(db(i).fweight == (zero_f ? 0.0 : 1.0));
+            REQUIRE(db(i).sweight == (zero_s ? 0.0 : 1.0));
+        }
+    }
+
+    const RunStart r = start_pinned_run(val_cfg, hpo_cfg);
+    INFO("hpo_run() " << (r.threw ? "threw: " + r.what
+                                  : "returned " + std::to_string(r.status)));
+    if (!refused_by.empty()) {
+        CHECK(r.threw);
+        CHECK(r.runtime_error);
+        CHECK(contains(r.what, refused_by));
+        CHECK(contains(r.what, zero_db.string()));
+        CHECK(contains(r.what, weight_named));
+        /* At startup: no evaluation wrote a stats.tadah row. */
+        const fs::path stats = sd.dir / "stats.tadah";
+        if (fs::exists(stats)) CHECK(stats_rows(stats.string()).empty());
+        return;
+    }
+
+    /* Not refused: the run started and measured its metric. */
+    CHECK_FALSE(r.threw);
+    REQUIRE(r.status == 0);
+    const auto rows = stats_rows((sd.dir / "stats.tadah").string());
+    REQUIRE_FALSE(rows.empty());
+    const double v = column(rows.front(), measured);
+    CAPTURE(measured, v);
+    CHECK(std::isfinite(v));
+    CHECK(v > 0.0);
+    if (second_unmeasured_s) {
+        /* Its loss term is nan too (not loss(nan): 0 at weight 0), in
+         * loss.tadah as in stats.tadah. */
+        const double s2 = column(rows.front(), "SRMSE[2]");
+        const double savg = column(rows.front(), "SRMSE[avg]");
+        CAPTURE(s2, savg);
+        CHECK(is_nan_bits(s2));
+        CHECK(same_bits(savg, column(rows.front(), "SRMSE[1]")));
+        const auto losses = stats_rows((sd.dir / "loss.tadah").string());
+        REQUIRE_FALSE(losses.empty());
+        const double l2 = column(losses.front(), "L(SRMSE)[2]");
+        CAPTURE(l2);
+        CHECK(is_nan_bits(l2));
+    }
+    if (second_unmeasured) {
+        const double f1 = column(rows.front(), "FRMSE[1]");
+        const double f2 = column(rows.front(), "FRMSE[2]");
+        const double favg = column(rows.front(), "FRMSE[avg]");
+        CAPTURE(f1, f2, favg);
+        CHECK(is_nan_bits(f2));
+        CHECK(std::isfinite(f1));
+        CHECK(same_bits(favg, f1));
+    }
+}
+
 /* Case 3. MODEL M_KRR Kern_Linear 1 (FORCE and STRESS both written in the
  * configuration), fitted with STRESS true and validated with PC_ERMSE +
  * PC_SRMSE, and fitted with FORCE true and validated with PC_ERMSE +
@@ -1285,6 +1699,122 @@ TEST_CASE("valmetric e2e: the analytical gradient covers PC_FRMSE with "
 
     INFO(journal);
     CHECK_FALSE(contains(journal, "PC_FRMSE needs FORCE true"));
+}
+
+/* Case 4a. Pins: the analytical gradient of a global PC_FRMSE whose second
+ * validation dataset is not measured (every structure with force weight 0,
+ * forces far from any prediction) equals the Richardson-extrapolated
+ * central difference of the host loss, as in case 4 (ANALYTICAL, FORCE
+ * false, PC_ERMSE weight 1e-6): the average and its derivative run over the
+ * measured dataset only (the slope of dataset 1 is L'(FRMSE[avg]) / 1, not
+ * / 2), and the unmeasured dataset has no force cells. FRMSE[2] is nan and
+ * FRMSE[avg] is FRMSE[1], and the journal names the dataset as not
+ * measured.
+ * Before the fix: the run was refused at startup (the dataset has no
+ * structure with forces). */
+TEST_CASE("valmetric e2e: the analytical gradient of PC_FRMSE averages the "
+          "measured datasets", "[valmetric_e2e][.]")
+{
+    PeriodicTable::initialize();
+    ScratchDir sd;
+    const fs::path train_db = sd.dir / "train.db";
+    const fs::path val_db   = sd.dir / "val.db";
+    const fs::path nof_db   = sd.dir / "val_noforces.db";
+    const fs::path val_cfg  = sd.dir / "config.val";
+    const fs::path hpo_cfg  = sd.dir / "config.hpo";
+    write_db(train_db, training_cells());
+    write_db(val_db, validation_cells());
+    {
+        std::vector<Structure> nof = {bcc_cell(17, 3.12, 0.9),
+                                      bcc_cell(18, 3.24, 2.2)};
+        for (Structure& st : nof) {
+            st.fweight = 0.0;
+            for (std::size_t a = 0; a < st.natoms(); ++a)
+                for (int k = 0; k < 3; ++k) st.atoms[a].force(k) = 50.0;
+        }
+        write_db(nof_db, nof);
+    }
+    std::ofstream(val_cfg) << "DBFILE " << val_db.string() << "\n"
+                           << "DBFILE " << nof_db.string() << "\n";
+    std::ofstream(hpo_cfg) << target_head(gradient_block("ANALYTICAL"))
+                           << "PC_ERMSE 0 0.000001\nPC_FRMSE 0 1\n"
+                           << kTrainedOptim;
+
+    Host::reset_globals_for_test();
+    ForceRebuildGuard rebuild;
+    Context ctx = trained_context(kBLR, FitSwitches{false, false}, train_db,
+                                  val_cfg, hpo_cfg);
+    JournalFile j;
+    HPOTargets trg(ctx, hpo_cfg.string());
+    REQUIRE(trg.use_frmse);
+    REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
+
+    const ParamVec p = trained_point();
+    const double h = 1e-3;
+    ParamVec g;
+    std::vector<int> needs_fd;
+    std::vector<double> richardson(2, 0.0);
+    {
+        std::unique_ptr<Host> host;
+        REQUIRE_NOTHROW(host = std::make_unique<Host>(ctx, trg, val_cfg.string()));
+        REQUIRE(host->val_size() == 4u);
+        double f0 = 0.0;
+        REQUIRE_NOTHROW(f0 = (*host)(p));
+        require_real_loss(f0);
+        bool ok = false;
+        REQUIRE_NOTHROW(ok = host->analytical_gradient(p, g, needs_fd));
+        REQUIRE(ok);
+        REQUIRE(g.size() == 2);
+        auto central = [&](long i, double step) {
+            ParamVec up = p, down = p;
+            up(i) += step;
+            down(i) -= step;
+            double fu = 0.0, fd = 0.0;
+            REQUIRE_NOTHROW(fu = (*host)(up));
+            REQUIRE_NOTHROW(fd = (*host)(down));
+            require_real_loss(fu);
+            require_real_loss(fd);
+            return (fu - fd) / (2.0 * step);
+        };
+        for (long i = 0; i < 2; ++i) {
+            const double d2h = central(i, 2.0 * h);
+            const double dh  = central(i, h);
+            richardson[static_cast<std::size_t>(i)] = (4.0 * dh - d2h) / 3.0;
+        }
+        host->flush_remaining();
+    }
+    const std::string journal = j.finish();
+    Host::reset_globals_for_test();
+    {
+        /* The journal names the dataset that is not measured. */
+        INFO(journal);
+        CHECK(contains(journal, nof_db.string()));
+        CHECK(contains(journal, "not measured"));
+    }
+
+    {
+        const auto rows = stats_rows(trg.statsFile);
+        REQUIRE_FALSE(rows.empty());
+        const double f1 = column(rows.front(), "FRMSE[1]");
+        const double f2 = column(rows.front(), "FRMSE[2]");
+        const double favg = column(rows.front(), "FRMSE[avg]");
+        const double ermse = column(rows.front(), "ERMSE[avg]");
+        CAPTURE(f1, f2, favg, ermse);
+        CHECK(is_nan_bits(f2));
+        CHECK(same_bits(favg, f1));
+        REQUIRE(favg * favg > 1e-6 * ermse * ermse);
+    }
+    CHECK(needs_fd.empty());
+    double gmax = 0.0;
+    for (double d : richardson) gmax = std::max(gmax, std::fabs(d));
+    CAPTURE(gmax);
+    REQUIRE(gmax > 0.0);
+    for (long i = 0; i < 2; ++i) {
+        const double fd = richardson[static_cast<std::size_t>(i)];
+        CAPTURE(kTrainedLabels[static_cast<std::size_t>(i)], g(i), fd);
+        CHECK(std::isfinite(g(i)));
+        CHECK(g(i) == Approx(fd).epsilon(1e-5).margin(1e-5 * gmax));
+    }
 }
 
 /* Case 5. hpo_run(ctx) without key provenance on a one-evaluation run:

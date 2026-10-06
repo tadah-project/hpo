@@ -1194,6 +1194,57 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                     throw std::runtime_error("Empty validation dataset " + std::to_string(i + 1)
                         + " (" + val_ctx.get<std::string>("DBFILE", i) + ") after loading/filtering");
         }
+        /* PC_FRMSE leaves out structures with force weight 0, PC_SRMSE those
+         * with stress weight 0; a dataset of only such structures is not
+         * measured (nan, left out of the average; MK, 2026-10-06). A run in
+         * which no dataset is measured, or in which an indexed PC_FRMSE
+         * weights a dataset that is not, is refused here. */
+        {
+            std::vector<std::string> files;
+            if (val_ctx.contains("DBFILE")) files = val_ctx("DBFILE");
+            auto name = [&](std::size_t d) {
+                return "validation dataset " + std::to_string(d + 1)
+                    + (d < files.size() ? " (" + files[d] + ")" : std::string());
+            };
+            auto note = [&](const char* metric, const std::vector<bool>& m,
+                            const char* data, const char* weight, const char* column) {
+                for (std::size_t d = 0; d < m.size(); ++d)
+                    if (!m[d]) {
+                        const std::string msg = std::string(metric) + ": " + name(d)
+                            + " has no structure with " + data + " (" + weight
+                            + " 0 everywhere): not measured (nan), left out of " + column;
+                        core::Logger::instance().log(tadah::core::LogLevel::INFO, msg);
+                        HPOLog::instance().info(msg);  // the journal names it too
+                    }
+            };
+            if (trg_.use_frmse) {
+                mlip::require_metric_structures(val_stdb_, mlip::MetricQuantity::Forces,
+                    "tadah hpo: PC_FRMSE on the validation set", files);
+                const std::vector<bool> m =
+                    mlip::measured_datasets(val_stdb_, mlip::MetricQuantity::Forces);
+                if (trg_.frmse_targets.indexed())
+                    for (std::size_t d = 0; d < m.size(); ++d)
+                        if (!m[d] && trg_.frmse_targets.datasets()[d].weight > 0) {
+                            std::ostringstream w;
+                            w << trg_.frmse_targets.datasets()[d].weight;
+                            throw std::runtime_error("tadah hpo: PC_FRMSE ("
+                                + std::to_string(d + 1) + ") gives weight " + w.str() + " to "
+                                + name(d) + ", which has no structure with forces: every "
+                                "one has force weight 0 (fweight). Give it weight 0, or "
+                                "remove the file from the validation set");
+                        }
+                trg_.frmse_targets.set_measured(m);
+                note("PC_FRMSE", m, "forces", "force weight", "FRMSE[avg]");
+            }
+            if (trg_.use_srmse) {
+                mlip::require_metric_structures(val_stdb_, mlip::MetricQuantity::Stress,
+                    "tadah hpo: PC_SRMSE on the validation set", files);
+                val_measured_srmse_ =
+                    mlip::measured_datasets(val_stdb_, mlip::MetricQuantity::Stress);
+                note("PC_SRMSE", val_measured_srmse_, "a stress tensor", "stress weight",
+                     "SRMSE[avg]");
+            }
+        }
         nnf_.calc(val_stdb_, rcutmax);
     }
     if (has_train_data_) nnf_.calc(train_stdb_, rcutmax);
@@ -1509,10 +1560,13 @@ template<class P, class R>
 void HPO_Host<P,R>::fill_validation(Result& r,
                                     const mlip::Analytics& a) const
 {
+    /* @p measured: the datasets a force or stress metric measures (empty:
+     * every one); the average runs over them. */
     auto fill = [](double& avg, std::vector<double>& per_ds,
-                   const core::t_type& v, double scale)
+                   const core::t_type& v, double scale,
+                   const std::vector<bool>& measured = {})
     {
-        avg = v.mean() * scale;
+        avg = (measured.empty() ? v.mean() : mlip::measured_mean(v, measured)) * scale;
         per_ds.resize(v.size());
         for (std::size_t i = 0; i < v.size(); ++i)
             per_ds[i] = v[i] * scale;
@@ -1521,8 +1575,10 @@ void HPO_Host<P,R>::fill_validation(Result& r,
     if(trg_.use_ermse)  fill(r.ermse,  r.v_ermse,  a.calc_e_rmse(),  1000.0);
     if(trg_.use_errmse) fill(r.errmse, r.v_errmse, a.calc_e_rrmse(), 1000.0);
     if(trg_.use_ersq)   fill(r.ersq,   r.v_ersq,   a.calc_e_r_sq(),     1.0);
-    if(trg_.use_frmse)  fill(r.frmse,  r.v_frmse,  a.calc_f_rmse(),     1.0);
-    if(trg_.use_srmse)  fill(r.srmse,  r.v_srmse,  a.calc_s_rmse(),     1.0);
+    if(trg_.use_frmse)  fill(r.frmse,  r.v_frmse,  a.calc_f_rmse(),     1.0,
+                             trg_.frmse_targets.measured());
+    if(trg_.use_srmse)  fill(r.srmse,  r.v_srmse,  a.calc_s_rmse(),     1.0,
+                             val_measured_srmse_);
 }
 
 /* ----------  helper: run LAMMPS (serial + OpenMP) ---------------------
@@ -2177,15 +2233,20 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
 template<class P, class R>
 void HPO_Host<P,R>::fit_loss(Result& r) const
 {
+  /* @p measured: the datasets the metric measures (empty: every one); the
+   * loss term of one that is not is nan, as its value. */
   auto add_global = [&](double& sink, double y, double ref, double w,
-                        std::vector<double>& v_sink, const std::vector<double>& v_y)
+                        std::vector<double>& v_sink, const std::vector<double>& v_y,
+                        const std::vector<bool>& measured = {})
   {
     sink = trg_.globalLoss.loss(y, ref, w);
     r.loss_sum += sink;
     ++r.loss_count;
     v_sink.resize(v_y.size());
     for (std::size_t i = 0; i < v_y.size(); ++i)
-      v_sink[i] = trg_.globalLoss.loss(v_y[i], ref, w);
+      v_sink[i] = measured.empty() || measured[i]
+                      ? trg_.globalLoss.loss(v_y[i], ref, w)
+                      : std::numeric_limits<double>::quiet_NaN();
   };
   if (trg_.use_emae)   add_global(r.emaeLoss,   r.emae,   trg_.emae,   trg_.w_emae,   r.v_emaeLoss,   r.v_emae);
   if (trg_.use_ermse) {
@@ -2200,7 +2261,8 @@ void HPO_Host<P,R>::fit_loss(Result& r) const
     r.loss_sum += r.frmseLoss;
     ++r.loss_count;
   }
-  if (trg_.use_srmse)  add_global(r.srmseLoss,  r.srmse,  trg_.srmse,  trg_.w_srmse,  r.v_srmseLoss,  r.v_srmse);
+  if (trg_.use_srmse)  add_global(r.srmseLoss,  r.srmse,  trg_.srmse,  trg_.w_srmse,  r.v_srmseLoss,  r.v_srmse,
+                                  val_measured_srmse_);
 
   r.loss = r.loss_count ? r.loss_sum / static_cast<double>(r.loss_count) : 0.0;
   if (!std::isfinite(r.loss) || r.loss > trg_.FAIL_SCORE) {

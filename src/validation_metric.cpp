@@ -93,6 +93,10 @@ double ValidationMetricTargets::loss(const LossFunction& fn, double average,
     per_dataset.resize(measured.size());
     double sum = 0.0;
     for (std::size_t i = 0; i < measured.size(); ++i) {
+        if (!is_measured(i)) {  // no data: no loss term
+            per_dataset[i] = std::numeric_limits<double>::quiet_NaN();
+            continue;
+        }
         const auto& a = indexed() ? resolved_[i] : *global_;
         per_dataset[i] = fn.loss(measured[i], a.target, a.weight);
         sum += per_dataset[i];
@@ -102,13 +106,24 @@ double ValidationMetricTargets::loss(const LossFunction& fn, double average,
 std::vector<double> ValidationMetricTargets::slopes(const LossFunction& fn, double average,
                                                     const std::vector<double>& measured) const {
     check_size(measured.size());
-    std::vector<double> out(measured.size());
+    std::vector<double> out(measured.size(), 0.0);
+    // A global target is the loss of the average over the measured datasets.
+    std::size_t n_measured = 0;
+    for (std::size_t i = 0; i < measured.size(); ++i) n_measured += is_measured(i);
     for (std::size_t i = 0; i < measured.size(); ++i) {
+        if (!is_measured(i)) continue;  // no data: slope 0
         const auto& a = indexed() ? resolved_[i] : *global_;
-        out[i] = fn.loss_prime_observed(indexed() ? measured[i] : average, a.target, a.weight)
-               / measured.size();
+        out[i] = indexed()
+            ? fn.loss_prime_observed(measured[i], a.target, a.weight) / measured.size()
+            : fn.loss_prime_observed(average, a.target, a.weight) / n_measured;
     }
     return out;
+}
+
+void ValidationMetricTargets::set_measured(std::vector<bool> measured) {
+    if (!measured.empty() && !resolved_.empty() && measured.size() != resolved_.size())
+        throw std::logic_error(key_ + ": measured-dataset count mismatch");
+    measured_ = std::move(measured);
 }
 
 std::vector<std::string> ValidationMetricTargets::descriptions() const {
