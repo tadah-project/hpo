@@ -800,6 +800,31 @@ TEST_CASE("validate_hpo_setup: NORM with Kern_Linear needs BIAS; FIXINDEX "
   }
 }
 
+namespace {
+
+/* @p structures in Tadah's dataset format: structure s labelled "cell s",
+ * energy -130 - s, no forces or stresses. */
+std::string dataset_of(const std::vector<Structure> &structures) {
+  std::ostringstream db;
+  for (std::size_t s = 0; s < structures.size(); ++s) {
+    const Structure &st = structures[s];
+    db << "cell " << s << "\n1.0 1.0 1.0\n" << num(-130.0 - double(s))
+       << " 0.0\n";
+    for (int r = 0; r < 3; ++r)
+      db << num(st.cell(r, 0)) << " " << num(st.cell(r, 1)) << " "
+         << num(st.cell(r, 2)) << "\n";
+    db << "0 0 0\n0 0 0\n0 0 0\n";
+    for (const Atom &a : st.atoms)
+      db << a.symbol << " " << num(a.position[0]) << " "
+         << num(a.position[1]) << " " << num(a.position[2])
+         << " 0 0 0\n";
+    db << "\n";
+  }
+  return db.str();
+}
+
+}  // namespace
+
 // Pins: tadah hpo refuses, when it loads the training data (HPO_Host),
 // BIAS true data whose energy-weighted compositions cannot determine the
 // per-species intercepts (every structure 8 Nb + 8 Ta), naming the rank
@@ -813,21 +838,8 @@ TEST_CASE("tadah hpo refuses BIAS true training data of one composition",
   PeriodicTable::initialize();
   Host::reset_globals_for_test();
   // Two structures of 8 Nb + 8 Ta in Tadah's dataset format.
-  std::ostringstream db;
-  for (unsigned s = 0; s < 2; ++s) {
-    const Structure st = tanb_cell(8, 90 + s);
-    db << "cell " << s << "\n1.0 1.0 1.0\n" << num(-130.0 - s) << " 0.0\n";
-    for (int r = 0; r < 3; ++r)
-      db << num(st.cell(r, 0)) << " " << num(st.cell(r, 1)) << " "
-         << num(st.cell(r, 2)) << "\n";
-    db << "0 0 0\n0 0 0\n0 0 0\n";
-    for (const Atom &a : st.atoms)
-      db << a.symbol << " " << num(a.position[0]) << " "
-         << num(a.position[1]) << " " << num(a.position[2])
-         << " 0 0 0\n";
-    db << "\n";
-  }
-  ScopedFile train_db(db.str(), ".db");
+  ScopedFile train_db(dataset_of({tanb_cell(8, 90), tanb_cell(8, 91)}),
+                      ".db");
   ScopedFile val_cfg("DBFILE " + train_db.path.string() + "\n");
   ScopedFile cfg(kHpoTarget);
   std::vector<std::string> l = nbta_lines(false);
@@ -844,4 +856,246 @@ TEST_CASE("tadah hpo refuses BIAS true training data of one composition",
   CHECK(m.find("cannot determine") != std::string::npos);
   CHECK(m.find("rank 1") != std::string::npos);
   CHECK(m.find("Nb8 Ta8") != std::string::npos);
+}
+
+namespace {
+
+using ParamVec = dlib::matrix<double, 0, 1>;
+using MsbHost = tadah::hpo::HPO_Host<ParamVec, ::LammpsRunner>;
+
+/* nbta_lines (ATOM Nb Ta, BIAS true, D2_BP: DSIZE 5) with MODEL @p model
+ * and the lines @p extra. */
+std::vector<std::string> model_lines(const std::string &model,
+                                     const std::vector<std::string> &extra) {
+  std::vector<std::string> l = nbta_lines(false);
+  for (auto &x : l)
+    if (x == "MODEL M_BLR BF_Linear") x = "MODEL " + model;
+  l.insert(l.end(), extra.begin(), extra.end());
+  return l;
+}
+
+/* An HPO_Host built from @p lines and the training structures @p train
+ * (also the validation set): "<built>", or the message of its refusal. */
+std::string host_error(std::vector<std::string> lines,
+                       const std::vector<Structure> &train) {
+  MsbHost::reset_globals_for_test();
+  ScopedFile train_db(dataset_of(train), ".db");
+  ScopedFile val_cfg("DBFILE " + train_db.path.string() + "\n");
+  ScopedFile cfg(kHpoTarget);
+  lines.push_back("DBFILE " + train_db.path.string());
+  Context ctx = parse(lines);
+  tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+  try {
+    MsbHost host(ctx, trg, val_cfg.path.string());
+  } catch (const std::exception &e) {
+    return e.what();
+  }
+  return "<built>";
+}
+
+/* What validate_hpo_setup writes to standard error for @p lines (a
+ * training DBFILE named, not read), or "<refused> " and its message. */
+std::string startup_output(std::vector<std::string> lines) {
+  ScopedFile cfg(kHpoTarget);
+  lines.push_back("DBFILE train.db");
+  Context ctx = parse(lines);
+  tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+  std::ostringstream captured;
+  std::streambuf *old = std::cerr.rdbuf(captured.rdbuf());
+  std::string refused;
+  try {
+    tadah::hpo::validate_hpo_setup(ctx, trg, true, true);
+  } catch (const std::exception &e) {
+    refused = std::string("<refused> ") + e.what();
+  }
+  std::cerr.rdbuf(old);
+  return refused.empty() ? captured.str() : refused;
+}
+
+/* @p n structures of 8 Nb + 8 Ta. */
+std::vector<Structure> one_composition(unsigned n) {
+  std::vector<Structure> v;
+  for (unsigned s = 0; s < n; ++s) v.push_back(tanb_cell(8, 90 + s));
+  return v;
+}
+
+/* Structures of 0, 4, 8, 12 and 16 Nb atoms of 16. */
+std::vector<Structure> varied_compositions() {
+  std::vector<Structure> v;
+  for (int k = 0; k < 5; ++k) v.push_back(tanb_cell(4 * k, 70 + k));
+  return v;
+}
+
+/* BASIS values of the basis vectors e_0, e_1 and @p more vectors of 5
+ * values (an intercept component 1 and three descriptor values each), and
+ * SBASIS their number. */
+std::vector<std::string> basis_lines(int more) {
+  std::ostringstream b;
+  b << "BASIS 1 0 0 0 0 0 1 0 0 0";
+  for (int k = 0; k < more; ++k)
+    b << " " << (k % 2 == 0 ? "1 0 " : "0 1 ") << num(0.2 + 0.1 * k) << " "
+      << num(0.5 - 0.05 * k) << " " << num(0.1 + 0.02 * k);
+  return {"SBASIS " + std::to_string(2 + more), b.str()};
+}
+
+}  // namespace
+
+// Pins: tadah hpo's composition check at startup (HPO_Host, when it loads
+// the training data) is that of the model's function, built as an
+// evaluation builds it, on two structures of 8 Nb + 8 Ta: M_BLR
+// BF_Polynomial2 (DSIZE 5, 15 weights) is refused naming "rank 1" and its
+// intercept weights "weights 1 (Nb) and 6 (Ta)", the products (0,0) and
+// (1,1); with FIXINDEX 6 / FIXWEIGHT -8.9, which pin the Ta constant, the
+// host is built; M_KRR Kern_RBF (MPARAMS 1.0, SBASIS 6), whose basis
+// vectors are no intercepts, is built.
+// Before the fix (HPO before 2fa6344, with MLIP before 0e65254, whose
+// check took the weights 1 to N for the intercepts whatever the function;
+// this case came after the fix, which had no HPO test): BF_Polynomial2 was
+// refused naming "weights 1 to 2 are the intercepts of Nb Ta", with
+// FIXINDEX 6 it was refused too ("rank 1, while 2 intercepts are fitted"),
+// and Kern_RBF was refused.
+TEST_CASE("tadah hpo's startup composition check takes the intercepts of "
+          "the model's function",
+          "[multispecies_bias][startup]") {
+  PeriodicTable::initialize();
+  SECTION("M_BLR BF_Polynomial2") {
+    const std::string m =
+        host_error(model_lines("M_BLR BF_Polynomial2", {}), one_composition(2));
+    INFO(m);
+    CHECK(m.find("cannot determine") != std::string::npos);
+    CHECK(m.find("rank 1") != std::string::npos);
+    CHECK(m.find("weights 1 (Nb) and 6 (Ta)") != std::string::npos);
+  }
+  SECTION("M_BLR BF_Polynomial2, FIXINDEX 6: the Ta constant pinned") {
+    const std::string m = host_error(
+        model_lines("M_BLR BF_Polynomial2", {"FIXINDEX 6", "FIXWEIGHT -8.9"}),
+        one_composition(2));
+    INFO(m);
+    CHECK(m == "<built>");
+  }
+  SECTION("M_KRR Kern_RBF") {
+    const std::string m = host_error(
+        model_lines("M_KRR Kern_RBF 1", {"MPARAMS 1.0", "SBASIS 6"}),
+        one_composition(2));
+    INFO(m);
+    CHECK(m == "<built>");
+  }
+}
+
+// Pins: the startup FIXINDEX WARNING (validate_hpo_setup, standard error)
+// with BIAS true on ATOM Nb Ta names the intercept weights of the model's
+// function: for M_BLR BF_Polynomial2 (FIXINDEX 4) "weights 1 (Nb) and 6
+// (Ta)", without the linear models' "start at index 3"; for M_KRR
+// Kern_Quadratic (FIXINDEX 3, SBASIS 6) "its intercepts are weights 1 (Nb)
+// and 2 (Ta)", the intercept vectors e_0 and e_1 its fit draws first.
+// Before the fix: BF_Polynomial2 got the linear models' WARNING, "weights
+// 1 to 2 are the per-species intercepts ... the descriptor weights start at
+// index 3" (HPO before 2fa6344, with MLIP before 0e65254); Kern_Quadratic
+// got "weights 1 to 2 belong to its intercept basis vectors e_0 .. e_1"
+// without its intercepts (the probe's kernel has no basis before its
+// fit).
+TEST_CASE("validate_hpo_setup: the FIXINDEX WARNING names the intercept "
+          "weights of the model's function",
+          "[multispecies_bias][startup]") {
+  PeriodicTable::initialize();
+  SECTION("M_BLR BF_Polynomial2") {
+    const std::string out = startup_output(model_lines(
+        "M_BLR BF_Polynomial2", {"FIXINDEX 4", "FIXWEIGHT 0.05"}));
+    INFO(out);
+    CHECK(out.find("FIXINDEX with BIAS true") != std::string::npos);
+    CHECK(out.find("weights 1 (Nb) and 6 (Ta)") != std::string::npos);
+    CHECK(out.find("start at index 3") == std::string::npos);
+  }
+  SECTION("M_KRR Kern_Quadratic") {
+    const std::string out = startup_output(model_lines(
+        "M_KRR Kern_Quadratic 1", {"SBASIS 6", "FIXINDEX 3", "FIXWEIGHT 0.05"}));
+    INFO(out);
+    CHECK(out.find("FIXINDEX with BIAS true") != std::string::npos);
+    CHECK(out.find("its intercepts are weights 1 (Nb) and 2 (Ta)") !=
+          std::string::npos);
+  }
+}
+
+// Pins: tadah hpo checks a non-linear kernel's intercepts at startup
+// (HPO_Host) on the basis its fit draws, whose first vectors are the
+// intercept vectors e_0 and e_1, and reads no basis of a -c potential:
+// M_KRR Kern_Quadratic 1 (SBASIS 6) on four structures of 8 Nb + 8 Ta is
+// refused naming "rank 1" and "weights 1 (Nb) and 2 (Ta)"; M_KRR
+// Kern_Quadratic 2 (SBASIS 5), whose energies-only solve is not checked,
+// builds the host on the same data, from a training configuration and from
+// a potential (BASIS e_0, e_1 and three more vectors, 5 WEIGHTS); a
+// Kern_Quadratic 1 potential of SBASIS 6 (30 BASIS values, 6 WEIGHTS) with
+// SBASIS 7, a seed whose basis the fit redraws, builds it on structures of
+// five compositions.
+// Before the fix: Kern_Quadratic 1 passed startup (the probe's kernel has
+// no basis before its fit, so nothing was checked), and every evaluation
+// failed ("cannot determine"); the Kern_Quadratic 2 potential was refused,
+// "rank 1", the intercepts taken from its basis e_0, e_1; the SBASIS 7 seed
+// was refused, "BASIS has 30 values, which is not a multiple of SBASIS
+// 7".
+TEST_CASE("tadah hpo checks a non-linear kernel's intercepts at startup on "
+          "the basis its fit draws",
+          "[multispecies_bias][startup]") {
+  PeriodicTable::initialize();
+  SECTION("Kern_Quadratic 1, one composition") {
+    const std::string m = host_error(
+        model_lines("M_KRR Kern_Quadratic 1", {"SBASIS 6"}),
+        one_composition(4));
+    INFO(m);
+    CHECK(m.find("cannot determine") != std::string::npos);
+    CHECK(m.find("rank 1") != std::string::npos);
+    CHECK(m.find("weights 1 (Nb) and 2 (Ta)") != std::string::npos);
+  }
+  SECTION("Kern_Quadratic 2, one composition") {
+    const std::string m = host_error(
+        model_lines("M_KRR Kern_Quadratic 2", {"SBASIS 5"}),
+        one_composition(4));
+    INFO(m);
+    CHECK(m == "<built>");
+  }
+  SECTION("Kern_Quadratic 2 potential, one composition") {
+    std::vector<std::string> extra = basis_lines(3);
+    extra.push_back("WEIGHTS -4.1 -4.4 0.3 -0.2 0.1");
+    const std::string m = host_error(
+        model_lines("M_KRR Kern_Quadratic 2", extra), one_composition(4));
+    INFO(m);
+    CHECK(m == "<built>");
+  }
+  SECTION("Kern_Quadratic 1 potential of SBASIS 6 seeding SBASIS 7") {
+    std::vector<std::string> extra = basis_lines(4);
+    extra[0] = "SBASIS 7";
+    extra.push_back("WEIGHTS -4.1 -4.4 0.3 -0.2 0.1 0.05");
+    const std::string m = host_error(
+        model_lines("M_KRR Kern_Quadratic 1", extra), varied_compositions());
+    INFO(m);
+    CHECK(m == "<built>");
+  }
+}
+
+// Pins: tadah hpo's startup (validate_hpo_setup) refuses SBASIS 2 for
+// M_KRR Kern_RBF with BIAS true on ATOM Nb Ta, naming "does not build a
+// model", "SBASIS 2", "at least 3 basis vectors" and "the 2 intercept
+// vectors" (with one drawn vector, the fewest a fit takes); SBASIS 3
+// passes.
+// Before the fix: SBASIS 2 passed startup (the bound was 2 whatever the
+// species), and every evaluation failed ("needs at least 3 basis
+// vectors").
+TEST_CASE("validate_hpo_setup: SBASIS of a non-linear kernel with BIAS true "
+          "on two species counts one intercept vector per species",
+          "[multispecies_bias][startup]") {
+  PeriodicTable::initialize();
+  {
+    const std::string out = startup_output(
+        model_lines("M_KRR Kern_RBF 1", {"MPARAMS 1.0", "SBASIS 2"}));
+    INFO(out);
+    CHECK(out.find("<refused>") == 0);
+    CHECK(out.find("does not build a model") != std::string::npos);
+    CHECK(out.find("SBASIS 2") != std::string::npos);
+    CHECK(out.find("at least 3 basis vectors") != std::string::npos);
+    CHECK(out.find("the 2 intercept vectors") != std::string::npos);
+  }
+  const std::string out = startup_output(
+      model_lines("M_KRR Kern_RBF 1", {"MPARAMS 1.0", "SBASIS 3"}));
+  INFO(out);
+  CHECK(out.find("<refused>") == std::string::npos);
 }
