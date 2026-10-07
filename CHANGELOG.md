@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Tests: `tadah.hpo_headers` (`ctest -L headers`, cmake-tools' `tadah_add_header_check`) compiles every header of `include/` on its own and twice in a row, with what a user of `tadah.hpo` gets and the module's `TADAH_USE_DLIB`.
+
+### Fixed
+- `hpo_host_impl.hpp` includes `hpo_host.h`, whose `HPO_Host` templates it defines: included before `hpo_host.h` it did not compile (`expected initializer before '<'`). Including `hpo_host.h`, as the code does, was not affected.
+
 ## [1.6.0] — 2026-09-25
 
 ### Added
