@@ -1256,7 +1256,11 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
                          top + "NLOPT:" + algo + " needs a stop: ",
                          kNoTolerance});
     /* The INNER block's MAXEVAL ends each local search, not the MLSL
-     * loop. */
+     * loop. The block has no tolerance: one on an MLSL block with an
+     * INNER block is refused for itself (the Exact cases below), so these
+     * cases dropped their FTOL_REL 1e-6, which was no stop either. Before
+     * the fix: passes as well (a pin of the MLSL loop's stop, with or
+     * without that FTOL_REL). */
     for (const std::string algo : {"G_MLSL", "G_MLSL_LDS"})
         cases.push_back({"NLOPT:" + algo + " with an INNER block",
                          nlopt(algo, "    INNER\n"
@@ -1386,14 +1390,66 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
               top + "TADAH:RANDOM does not support FTOL_REL: uniform random "
                     "search has no convergence test to apply it to; stop it "
                     "with MAXEVAL, MAXTIME or STOPVAL"},
+             /* Pins: where the INNER search does not test the tolerance
+              * either, the message names the stops that search honours
+              * instead of sending the tolerance into the INNER block,
+              * which would refuse it there.
+              * Before the review fix: "...; set it in the INNER block,
+              * whose local search tests it" for every INNER algorithm
+              * (the case wrote FTOL_REL in its INNER GN_ESCH block too,
+              * which is refused there; that block is the case "INNER
+              * GN_ESCH FTOL_REL under AUGLAG" of the test case below). */
              {"NLOPT:AUGLAG with an INNER NLOPT:GN_ESCH and a tolerance",
               nlopt("AUGLAG", "    FTOL_REL 1e-6\n    INNER\n"
                               "      LIB NLOPT\n      ALGO GN_ESCH\n"
-                              "      FTOL_REL 1e-6\n    ENDINNER\n"),
+                              "      MAXEVAL 5\n    ENDINNER\n"),
               top + "NLOPT:AUGLAG does not support FTOL_REL with an INNER "
                     "block: AUGLAG ends when its INNER search ends (HPO sets "
                     "no constraint) and tests the block's tolerances only to "
                     "name that ending, and NLopt passes them to no INNER "
+                    "search; the INNER block's NLOPT:GN_ESCH does not test "
+                    "it either: stop that search with MAXEVAL or MAXTIME in "
+                    "the INNER block, or MAXEVAL, MAXTIME or STOPVAL in the "
+                    "NLOPT:AUGLAG block, which NLopt hands on to it"},
+             {"NLOPT:GN_MLSL_LDS with XTOL_ABS and an INNER NLOPT:GD_STOGO",
+              nlopt("GN_MLSL_LDS", "    MAXEVAL 20\n    XTOL_ABS 1e-4\n"
+                                   "    INNER\n      LIB NLOPT\n"
+                                   "      ALGO GD_STOGO\n      MAXEVAL 5\n"
+                                   "    ENDINNER\n"),
+              top + "NLOPT:GN_MLSL_LDS does not support XTOL_ABS with an "
+                    "INNER block: MLSL's multistart loop tests no tolerance, "
+                    "and NLopt passes the block's tolerances to no INNER "
+                    "search; the INNER block's NLOPT:GD_STOGO does not test "
+                    "it either: stop that search with MAXEVAL or MAXTIME in "
+                    "the INNER block, or MAXEVAL, MAXTIME or STOPVAL in the "
+                    "NLOPT:GN_MLSL_LDS block, which NLopt hands on to it"},
+             /* The original DIRECT tests XTOL_REL only: FTOL_REL is not
+              * sent into its INNER block, XTOL_REL is (the second case
+              * passes before the review fix as well: a pin of the advice
+              * the fix keeps). */
+             {"NLOPT:GN_MLSL_LDS with FTOL_REL and an INNER "
+              "NLOPT:GN_ORIG_DIRECT",
+              nlopt("GN_MLSL_LDS", "    MAXEVAL 20\n    FTOL_REL 1e-4\n"
+                                   "    INNER\n      LIB NLOPT\n"
+                                   "      ALGO GN_ORIG_DIRECT\n"
+                                   "      MAXEVAL 5\n    ENDINNER\n"),
+              top + "NLOPT:GN_MLSL_LDS does not support FTOL_REL with an "
+                    "INNER block: MLSL's multistart loop tests no tolerance, "
+                    "and NLopt passes the block's tolerances to no INNER "
+                    "search; the INNER block's NLOPT:GN_ORIG_DIRECT does not "
+                    "test it either: stop that search with MAXEVAL, MAXTIME "
+                    "or a positive tolerance it honours (XTOL_REL) in the "
+                    "INNER block, or MAXEVAL, MAXTIME or STOPVAL in the "
+                    "NLOPT:GN_MLSL_LDS block, which NLopt hands on to it"},
+             {"NLOPT:GN_MLSL_LDS with XTOL_REL and an INNER "
+              "NLOPT:GN_ORIG_DIRECT",
+              nlopt("GN_MLSL_LDS", "    MAXEVAL 20\n    XTOL_REL 1e-4\n"
+                                   "    INNER\n      LIB NLOPT\n"
+                                   "      ALGO GN_ORIG_DIRECT\n"
+                                   "      MAXEVAL 5\n    ENDINNER\n"),
+              top + "NLOPT:GN_MLSL_LDS does not support XTOL_REL with an "
+                    "INNER block: MLSL's multistart loop tests no tolerance, "
+                    "and NLopt passes the block's tolerances to no INNER "
                     "search; set it in the INNER block, whose local search "
                     "tests it"}}) {
         INFO(c.what << "\n" << c.body);
@@ -2107,6 +2163,23 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
               "the STRATEGY-level optimiser NLOPT:LN_SBPLX: PARAM fd_step "
               "never takes effect: NLOPT:LN_SBPLX takes no gradient; remove "
               "it.");
+        /* Pins: NLopt's MLSL or AUGLAG whose local search is
+         * derivative-free takes no gradient, whatever the D of its name
+         * (it only picks the default local optimiser, LD_MMA, which the
+         * INNER block replaces), and says why.
+         * Before the review fix: startup "" (obtains_gradients() answered
+         * from GD_MLSL_LDS's own caps), and the step was never used. */
+        CHECK(judge(strategy_config("    TYPE PLAIN\n    LIB NLOPT\n"
+                                    "    ALGO GD_MLSL_LDS\n    MAXEVAL 12\n"
+                                    "    PARAM fd_step 0.01\n    INNER\n"
+                                    "      LIB NLOPT\n      ALGO LN_BOBYQA\n"
+                                    "      MAXEVAL 4\n    ENDINNER\n"))
+                  .startup ==
+              "the STRATEGY-level optimiser NLOPT:GD_MLSL_LDS: PARAM fd_step "
+              "never takes effect: NLOPT:GD_MLSL_LDS takes no gradient: "
+              "NLopt's MLSL and AUGLAG take a gradient only for their local "
+              "search, and the INNER block's NLOPT:LN_BOBYQA takes none; "
+              "remove it.");
         /* GRAD_STRATEGY ANALYTICAL takes no finite differences */
         CHECK(judge(strategy_config(bfgs + "    GRAD_STRATEGY ANALYTICAL\n"
                                     "    PARAM diff_method 1\n")).startup ==
@@ -2193,16 +2266,89 @@ TEST_CASE("startup validation: GRAD_STRATEGY on a phase that takes no "
               c.who + ": GRAD_STRATEGY never takes effect: " + backend +
                   " takes no gradient; remove it.");
     }
-    /* A phase that obtains gradients keeps it: MLSL with a gradient-based
-     * INNER search (its GRAD_STRATEGY obtains the gradient that search
-     * uses), LD_AUGLAG with NLopt's default LD_MMA, DLIB:BFGS. */
+    /* Pins: NLopt's MLSL and AUGLAG take a gradient only for their local
+     * search (mlsl.c and auglag.c evaluate their own points with none), so
+     * one whose local search is derivative-free -- a derivative-free INNER
+     * block, or NLopt's default LN_COBYLA -- refuses GRAD_STRATEGY in every
+     * phase, whatever the D or N of its name (the D only picks the default
+     * LD_MMA, which an INNER block replaces), and says which search takes
+     * none.
+     * Before the review fix: the GD_/LD_ cases were accepted (startup "":
+     * obtains_gradients() answered from their own caps), the journal printed
+     * "GRAD_STRATEGY : NUMERICAL" and the losses were byte-identical to a run
+     * without it; GN_MLSL_LDS and LN_AUGLAG without an INNER block were
+     * refused without the reason ("... NLOPT:GN_MLSL_LDS takes no gradient;
+     * remove it."). */
+    const auto inner = [](const std::string& indent, const std::string& algo) {
+        return indent + "INNER\n" + indent + "  LIB NLOPT\n" + indent +
+               "  ALGO " + algo + "\n" + indent + "  MAXEVAL 4\n" + indent +
+               "ENDINNER\n";
+    };
+    const std::string the_inner = "the INNER block's ";
+    const std::string the_default = "NLopt's default local optimiser, ";
+    struct LocalCase { std::string body, who, local; };
+    for (const auto& c : std::vector<LocalCase>{
+             {"    TYPE PLAIN\n    LIB NLOPT\n    ALGO GD_MLSL_LDS\n"
+              "    MAXEVAL 12\n    SEED 3\n    GRAD_STRATEGY NUMERICAL\n" +
+                  inner("    ", "LN_BOBYQA"),
+              "the STRATEGY-level optimiser NLOPT:GD_MLSL_LDS",
+              the_inner + "NLOPT:LN_BOBYQA"},
+             {"    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_AUGLAG\n"
+              "    MAXEVAL 12\n    GRAD_STRATEGY NUMERICAL\n" +
+                  inner("    ", "LN_BOBYQA"),
+              "the STRATEGY-level optimiser NLOPT:LD_AUGLAG",
+              the_inner + "NLOPT:LN_BOBYQA"},
+             {"    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LD_AUGLAG_EQ\n"
+              "    MAXEVAL 20\n    N_STARTS 2\n    GRAD_STRATEGY HYBRID\n" +
+                  inner("    ", "LN_SBPLX"),
+              "each MULTISTART start NLOPT:LD_AUGLAG_EQ",
+              the_inner + "NLOPT:LN_SBPLX"},
+             {"    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+              "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
+              "      ALGO GD_MLSL\n      MAXEVAL 12\n"
+              "      GRAD_STRATEGY NUMERICAL\n" +
+                  inner("      ", "LN_COBYLA") + "    ENDEXPLORE\n",
+              "the PRESTAGE exploration (EXPLORE block) NLOPT:GD_MLSL",
+              the_inner + "NLOPT:LN_COBYLA"},
+             {"    TYPE PRESTAGE\n    EXPLORE\n      LIB TADAH\n"
+              "      ALGO RANDOM\n      MAXEVAL 3\n    ENDEXPLORE\n"
+              "    REFINE\n      LIB NLOPT\n      ALGO LD_AUGLAG\n"
+              "      MAXEVAL 10\n      GRAD_STRATEGY HYBRID\n" +
+                  inner("      ", "LN_BOBYQA") + "    ENDREFINE\n",
+              "the PRESTAGE refinement NLOPT:LD_AUGLAG",
+              the_inner + "NLOPT:LN_BOBYQA"},
+             {"    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_MLSL_LDS\n"
+              "    MAXEVAL 20\n    GRAD_STRATEGY NUMERICAL\n",
+              "the STRATEGY-level optimiser NLOPT:GN_MLSL_LDS",
+              the_default + "NLOPT:LN_COBYLA,"},
+             {"    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_AUGLAG\n"
+              "    MAXEVAL 20\n    GRAD_STRATEGY HYBRID\n",
+              "the STRATEGY-level optimiser NLOPT:LN_AUGLAG",
+              the_default + "NLOPT:LN_COBYLA,"}}) {
+        INFO(c.body);
+        const std::string backend = c.who.substr(c.who.rfind(' ') + 1);
+        CHECK(judge(strategy_config(c.body)).startup ==
+              c.who + ": GRAD_STRATEGY never takes effect: " + backend +
+                  " takes no gradient: NLopt's MLSL and AUGLAG take a "
+                  "gradient only for their local search, and " + c.local +
+                  " takes none; remove it.");
+    }
+    /* A phase that obtains gradients keeps it: MLSL or AUGLAG with a
+     * gradient-based INNER search (its GRAD_STRATEGY obtains the gradient
+     * that search uses), whatever the N of its name, or with NLopt's
+     * default LD_MMA, DLIB:BFGS. */
     for (const std::string& body : std::vector<std::string>{
              "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_MLSL_LDS\n"
              "    MAXEVAL 20\n    GRAD_STRATEGY HYBRID\n    INNER\n"
              "      LIB NLOPT\n      ALGO LD_LBFGS\n      MAXEVAL 5\n"
              "    ENDINNER\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO AUGLAG\n"
+             "    MAXEVAL 20\n    GRAD_STRATEGY NUMERICAL\n" +
+                 inner("    ", "LD_SLSQP"),
              "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_AUGLAG\n"
              "    MAXEVAL 20\n    GRAD_STRATEGY NUMERICAL\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GD_MLSL_LDS\n"
+             "    MAXEVAL 20\n    GRAD_STRATEGY HYBRID\n",
              "    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 20\n"
              "    GRAD_STRATEGY HYBRID\n"}) {
         INFO(body);
@@ -2319,6 +2465,24 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
               "the PRESTAGE refinement NLOPT:LN_SBPLX: NOISE AUTO has no "
               "effect: NLOPT:LN_SBPLX measures no slopes; remove AUTO from "
               "the NOISE block.");
+        /* Pins: NLopt's MLSL or AUGLAG whose local search is
+         * derivative-free measures no slopes, whatever the D of its name,
+         * and the message says which search takes no gradient.
+         * Before the review fix: startup "", and fd_step was derived
+         * (NOISE_AUTO: PARAM fd_step set to 0.001) for finite differences
+         * no evaluation took. */
+        const Run auglag = run(noise(
+            "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_AUGLAG\n"
+            "    MAXEVAL 20\n    INNER\n      LIB NLOPT\n"
+            "      ALGO LN_BOBYQA\n      MAXEVAL 10\n    ENDINNER\n"));
+        CHECK(auglag.startup ==
+              "the STRATEGY-level optimiser NLOPT:LD_AUGLAG: NOISE AUTO has no "
+              "effect: NLOPT:LD_AUGLAG measures no slopes: NLopt's MLSL and "
+              "AUGLAG take a gradient only for their local search, and the "
+              "INNER block's NLOPT:LN_BOBYQA takes none; remove AUTO from the "
+              "NOISE block.");
+        CHECK(auglag.trg->spec.param.count("fd_step") == 0u);
+        CHECK(auglag.journal.find("NOISE_AUTO") == std::string::npos);
         /* ASA takes its slopes with probes of its own */
         CHECK(run(noise("    TYPE PLAIN\n    LIB ASA\n    ALGO ASA\n"
                         "    MAXEVAL 20\n"))

@@ -683,6 +683,76 @@ TEST_CASE("phase specs: the single local search a run is",
     CHECK_FALSE(single_local_search(nlopt("AUGLAG")));
 }
 
+/* Pins: obtains_gradients() is true exactly when a run asks the host for a
+ * gradient. A backend without a local search of its own answers from its
+ * caps (LD_*, GD_STOGO, DLIB:BFGS, CERES); NLopt's MLSL and AUGLAG evaluate
+ * their own points without one (mlsl.c, auglag.c: grad NULL) and hand the
+ * objective only the gradient their local search asks for, so their local
+ * search decides (inner_run_spec): an INNER block, which replaces the
+ * default the D or N of their name picks (LD_MMA or LN_COBYLA), or that
+ * default. An INNER MLSL or AUGLAG of a default local search of its own is
+ * decided by that one in turn.
+ * Before the fix: true for GD_MLSL, GD_MLSL_LDS, LD_AUGLAG and LD_AUGLAG_EQ
+ * with a derivative-free INNER block (their caps are is_gradient_based),
+ * and for GD_MLSL_LDS with an INNER LN_AUGLAG; the other cases pass as
+ * well (a pin of the rule the fix keeps). */
+TEST_CASE("phase specs: a run obtains gradients when its search takes them",
+          "[HPO][phase_specs][gradients]")
+{
+    using tadah::hpo::obtains_gradients;
+    const auto spec = [](const std::string& lib, const std::string& algo) {
+        OptimizerSpec s;
+        s.lib = lib;
+        s.algo = algo;
+        return s;
+    };
+    const auto nlopt = [&](const std::string& algo) {
+        return spec("NLOPT", algo);
+    };
+    const auto with_inner = [&](const std::string& algo,
+                                const std::string& inner) {
+        OptimizerSpec s = nlopt(algo);
+        s.inner = std::make_unique<OptimizerSpec>(nlopt(inner));
+        return s;
+    };
+    /* A backend without a local search of its own. */
+    CHECK(obtains_gradients(nlopt("LD_LBFGS")));
+    CHECK(obtains_gradients(nlopt("GD_STOGO")));
+    CHECK(obtains_gradients(spec("DLIB", "BFGS")));
+    CHECK(obtains_gradients(spec("CERES", "LBFGS")));
+    CHECK_FALSE(obtains_gradients(nlopt("LN_SBPLX")));
+    CHECK_FALSE(obtains_gradients(nlopt("GN_CRS2_LM")));
+    CHECK_FALSE(obtains_gradients(spec("TADAH", "RANDOM")));
+    CHECK_FALSE(obtains_gradients(spec("DLIB", "GFS")));
+    /* MLSL and AUGLAG without an INNER block: NLopt's default local
+     * optimiser; AUGLAG has none (refused at startup). */
+    for (const std::string algo :
+         {"GD_MLSL", "GD_MLSL_LDS", "LD_AUGLAG", "LD_AUGLAG_EQ"}) {
+        INFO(algo);
+        CHECK(obtains_gradients(nlopt(algo)));
+    }
+    for (const std::string algo :
+         {"GN_MLSL", "GN_MLSL_LDS", "LN_AUGLAG", "LN_AUGLAG_EQ", "AUGLAG",
+          "G_MLSL_LDS"}) {
+        INFO(algo);
+        CHECK_FALSE(obtains_gradients(nlopt(algo)));
+    }
+    /* With an INNER block, that search alone, whatever the D or N of the
+     * enclosing algorithm. */
+    for (const std::string algo :
+         {"GD_MLSL", "GD_MLSL_LDS", "LD_AUGLAG", "LD_AUGLAG_EQ", "GN_MLSL_LDS",
+          "G_MLSL_LDS", "AUGLAG", "LN_AUGLAG"}) {
+        INFO(algo);
+        CHECK_FALSE(obtains_gradients(with_inner(algo, "LN_BOBYQA")));
+        CHECK(obtains_gradients(with_inner(algo, "LD_LBFGS")));
+    }
+    /* An INNER MLSL or AUGLAG with a default local search: that one. */
+    CHECK(obtains_gradients(with_inner("AUGLAG", "LD_AUGLAG")));
+    CHECK_FALSE(obtains_gradients(with_inner("GD_MLSL_LDS", "LN_AUGLAG")));
+    CHECK_FALSE(obtains_gradients(with_inner("LD_AUGLAG", "GN_MLSL_LDS")));
+    CHECK(obtains_gradients(with_inner("GN_MLSL_LDS", "GD_MLSL")));
+}
+
 TEST_CASE("backend rules: the ALGO help lists the stops that end a run",
           "[HPO][backend_rules][help]")
 {

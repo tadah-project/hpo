@@ -52,18 +52,27 @@ const std::string kHpoOptions =
     "--hotvar and --failvar";
 const std::string kLammpsNote =
     "; LAMMPS command-line options start with a single '-'";
+/* The options a PC_FAILPROBE line takes: HPOTargets reads --gate and --s0
+ * and refuses --varloss, --hotvar and --failvar on it. */
+const std::string kProbeOptions =
+    "--script, --invar, --outvar, --failscore, --maxtime, --gate and --s0";
 
 }  // namespace
 
 /* Pins: the exact message for an unknown "--" option: the line's kind, the
- * option, the closest HPO option when it is within two edits, HPO's
- * options (PC_FAILPROBE's --gate and --s0 on a probe line), and where
- * LAMMPS options go; --gate and --s0 on a PC_LAMMPS line are named as
- * PC_FAILPROBE options.
- * Before the fix: sim_error() was "" for --hotvars, --foo and --gate (the
+ * option, the closest option of the line when it is within two edits, the
+ * options of the line (on a probe line those a PC_FAILPROBE line takes:
+ * --gate and --s0, and not --varloss, --hotvar or --failvar, which it
+ * refuses), and where LAMMPS options go; --gate and --s0 on a PC_LAMMPS
+ * line are named as PC_FAILPROBE options.
+ * Before the fix: sim_error() was "" for every case but --varlos (the
  * option and its values went to LAMMPS, and every evaluation failed with
  * "Invalid command-line argument"), and "LammpsSim: --varloss variable is
- * not defined." for --varlos. */
+ * not defined." for --varlos.
+ * Before the review fix: the probe line's list named --varloss, --hotvar
+ * and --failvar too, and --hotvars and --varlos there were answered "did
+ * you mean '--hotvar'?" and "did you mean '--varloss'?", options the probe
+ * line refuses. */
 TEST_CASE("PC_LAMMPS: an unknown -- option is an error naming HPO's options",
           "[HPO][lammps_sim][parse]")
 {
@@ -95,15 +104,21 @@ TEST_CASE("PC_LAMMPS: an unknown -- option is an error naming HPO's options",
               "'--maxtime'?): HPO's options are " + kHpoOptions +
                   kLammpsNote},
              {head + "--outvar S --foo", true,
-              "PC_FAILPROBE: unknown option '--foo': HPO's options are "
-              "--script, --varloss, --invar, --outvar, --failscore, "
-              "--maxtime, --hotvar, --failvar, --gate and --s0" +
-                  kLammpsNote},
+              "PC_FAILPROBE: unknown option '--foo': HPO's options are " +
+                  kProbeOptions + kLammpsNote},
              {head + "--outvar S --gates 1", true,
               "PC_FAILPROBE: unknown option '--gates' (did you mean "
-              "'--gate'?): HPO's options are --script, --varloss, --invar, "
-              "--outvar, --failscore, --maxtime, --hotvar, --failvar, --gate "
-              "and --s0" + kLammpsNote}}) {
+              "'--gate'?): HPO's options are " + kProbeOptions + kLammpsNote},
+             {head + "--outvar S --hotvars h 1 2", true,
+              "PC_FAILPROBE: unknown option '--hotvars': HPO's options are " +
+                  kProbeOptions + kLammpsNote},
+             {head + "--outvar S --varlos S 1 1", true,
+              "PC_FAILPROBE: unknown option '--varlos': HPO's options are " +
+                  kProbeOptions + kLammpsNote},
+             {head + "--outvar S --outvars T", true,
+              "PC_FAILPROBE: unknown option '--outvars' (did you mean "
+              "'--outvar'?): HPO's options are " + kProbeOptions +
+                  kLammpsNote}}) {
         INFO(c.cmd);
         CHECK(sim_error(c.cmd, c.failprobe) == c.message);
     }

@@ -210,12 +210,21 @@ TEST_CASE("HPOTargets: PC_LAMMPS --ncpu is rejected with the removal hint",
 /* Pins: an option that starts with "--" and is not one of HPO's (a typo
  * such as --hotvars, or PC_FAILPROBE's --gate on a PC_LAMMPS line) is an
  * error at its line naming HPO's options, with the closest one when it is
- * a near miss; on a PC_FAILPROBE line the list has --gate and --s0 too.
- * LAMMPS has no "--" option (src/lammps.cpp at the pinned commit).
- * Before the fix: the constructor accepted each line and passed the token
- * and its values to LAMMPS as command-line arguments; every evaluation
- * then failed ("ERROR: Invalid command-line argument: --hotvars") and the
- * run spent its whole MAXEVAL before ending with no usable loss. */
+ * a near miss; on a PC_FAILPROBE line the list and the closest one are the
+ * options a probe line takes: --gate and --s0, and not --varloss, --hotvar
+ * or --failvar, which it refuses. LAMMPS has no "--" option
+ * (src/lammps.cpp at the pinned commit).
+ * Before the fix: the constructor accepted the --hotvars, --gate and --foo
+ * lines and passed the token and its values to LAMMPS as command-line
+ * arguments; every evaluation then failed ("ERROR: Invalid command-line
+ * argument: --hotvars") and the run spent its whole MAXEVAL before ending
+ * with no usable loss. The --varlos line, which then had no --varloss, was
+ * refused with "Error on line 10: LammpsSim: --varloss variable is not
+ * defined.".
+ * Before the review fix: the PC_FAILPROBE list also named --varloss,
+ * --hotvar and --failvar, and --hotvars there was answered "did you mean
+ * '--hotvar'?", which the probe line refuses ("PC_FAILPROBE must not
+ * declare --hotvar/--failvar"). */
 TEST_CASE("HPOTargets: an unknown -- option on a PC_LAMMPS or PC_FAILPROBE "
           "line is rejected at its line", "[hpo_targets][parse][lammps_sim]")
 {
@@ -227,6 +236,9 @@ TEST_CASE("HPOTargets: an unknown -- option on a PC_LAMMPS or PC_FAILPROBE "
     const std::string hpo_options =
         "--script, --varloss, --invar, --outvar, --failscore, --maxtime, "
         "--hotvar and --failvar";
+    const std::string probe_options =
+        "--script, --invar, --outvar, --failscore, --maxtime, --gate and "
+        "--s0";
     const std::string lammps_note =
         "; LAMMPS command-line options start with a single '-'";
 
@@ -250,9 +262,13 @@ TEST_CASE("HPOTargets: an unknown -- option on a PC_LAMMPS or PC_FAILPROBE "
         {"--foo on PC_FAILPROBE",
          "PC_FAILPROBE --script " + script.string() + " --outvar "
              + var_name(2) + " --foo",
-         "PC_FAILPROBE: unknown option '--foo': HPO's options are --script, "
-         "--varloss, --invar, --outvar, --failscore, --maxtime, --hotvar, "
-         "--failvar, --gate and --s0" + lammps_note},
+         "PC_FAILPROBE: unknown option '--foo': HPO's options are " +
+             probe_options + lammps_note},
+        {"--hotvars on PC_FAILPROBE",
+         "PC_FAILPROBE --script " + script.string() + " --outvar "
+             + var_name(2) + " --s0 0.5 --hotvars h 1 2",
+         "PC_FAILPROBE: unknown option '--hotvars': HPO's options are " +
+             probe_options + lammps_note},
     };
     for (const auto& c : cases) {
         INFO(c.name);
