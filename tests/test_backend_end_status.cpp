@@ -48,6 +48,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using Vec = dlib::matrix<double, 0, 1>;
@@ -570,6 +571,72 @@ TEST_CASE("End status: CERES records a line-search failure as STOPPED with "
                        "size") != std::string::npos);
 }
 #endif  // TADAH_USE_CERES
+
+/* Pins: the head of a Ceres termination message, which the status of an
+ * ending that Ceres names itself quotes (detail::ceres_message_head): the
+ * text before the message's first ". ", ", " or ": ", or before its closing
+ * ".". For every termination message of the line-search minimizer and the
+ * option check of the Ceres version HPO builds (2.2; the numbers are
+ * examples of what Ceres prints) it is a fixed text without a number. A
+ * text without such a stop is its own head.
+ * Before the fix: does not compile (no ceres_message_head; the status
+ * quoted the whole message). */
+TEST_CASE("End status: the head of a Ceres message names its ending without "
+          "its numbers", "[HPO][stop_status][ceres]")
+{
+    using tadah::hpo::detail::ceres_message_head;
+    const std::pair<std::string, std::string> cases[] = {
+        {"Numerical failure in line search, failed to find a valid step "
+         "size, (did not run out of iterations) using initial_step_size: "
+         "1.25000e-02, initial_cost: 1.70000e+01, initial_gradient: "
+         "-6.40000e+03.",
+         "Numerical failure in line search"},
+        {"Numerical failure in line search, initial_step_size is negative: "
+         "-2.00000e-01, directional_derivative: 1.00000e+00, (current_cost "
+         "- previous_cost): -1.00000e-01",
+         "Numerical failure in line search"},
+        {"Initial cost and jacobian evaluation failed.",
+         "Initial cost and jacobian evaluation failed"},
+        {"Initial cost and jacobian evaluation failed. More details: "
+         "projected_gradient_step = Plus(x, -gradient) failed.",
+         "Initial cost and jacobian evaluation failed"},
+        {"Cost and jacobian evaluation failed.",
+         "Cost and jacobian evaluation failed"},
+        {"Line search direction failure: specified "
+         "max_num_line_search_direction_restarts: 5 reached.",
+         "Line search direction failure"},
+        {"Step failed to evaluate. This should not happen as the step was "
+         "valid when it was selected by the line search. More details: "
+         "projected_gradient_step = Plus(x, -gradient) failed.",
+         "Step failed to evaluate"},
+        {"Invalid configuration. Solver::Options::max_num_iterations = -1. "
+         "Violated constraint: Solver::Options::max_num_iterations >= 0",
+         "Invalid configuration"},
+        {"Function tolerance reached. |cost_change|/cost: 9.876543e-07 <= "
+         "1.000000e-06",
+         "Function tolerance reached"},
+        {"Parameter tolerance reached. Relative step_norm: 4.567890e-09 <= "
+         "1.000000e-08.",
+         "Parameter tolerance reached"},
+        {"Gradient tolerance reached. Gradient max norm: 3.000000e-11 <= "
+         "1.000000e-10",
+         "Gradient tolerance reached"},
+        {"Maximum number of iterations reached.",
+         "Maximum number of iterations reached"},
+        {"Maximum solver time reached.", "Maximum solver time reached"},
+        {"User callback returned SOLVER_ABORT.",
+         "User callback returned SOLVER_ABORT"},
+        {"ceres::GradientProblemSolve was not called.",
+         "ceres::GradientProblemSolve was not called"},
+        {"a text without a stop", "a text without a stop"},
+        {"", ""},
+    };
+    for (const auto& c : cases) {
+        INFO("message: " << c.first);
+        CHECK(ceres_message_head(c.first) == c.second);
+        CHECK(c.second.find_first_of("0123456789") == std::string::npos);
+    }
+}
 
 /* ======================================================================
  * The ALGO help of DLIB:BFGS
