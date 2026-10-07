@@ -535,18 +535,23 @@ TEST_CASE("health monitor: every evaluation's weights are checked by the "
     }
 }
 
-/* Pins: a fit whose weights are not finite is reported: the first D2_BP
- * weight pinned at 1e308 (FIXINDEX 2) overflows the residual target the
- * other five are fitted to, the fitted weights print as nan/inf, and
- * HEALTH_LOG full prints "iter_health: eval <n> -- weights contain NaN/Inf
- * entries (training likely diverged)." for that evaluation, on standard
- * output at WARNING.
- * Before the fix: nothing was printed (no evaluation was recorded). */
+/* Pins: a fit whose weights are not finite is reported: the intercept
+ * pinned at 1e308 (FIXINDEX 1; its column counts each structure's atoms, so
+ * its share of the target overflows whatever the descriptors are) makes the
+ * residual target the four fitted weights solve for infinite, the fitted
+ * weights print as nan/inf, and HEALTH_LOG full prints "iter_health: eval
+ * <n> -- weights contain NaN/Inf entries (training likely diverged)." for
+ * that evaluation, on standard output at WARNING.
+ * Before the fix: nothing was printed (no evaluation was recorded).
+ * Until fix/multispecies-bias merged, the case pinned the first D2_BP weight
+ * at 1e308 (FIXINDEX 2) instead; the merged FIXINDEX ridge keeps that
+ * residual finite (the fitted weights came out near -1e304), so the case
+ * pins the intercept, which overflows by construction. */
 TEST_CASE("health monitor: a fit with weights that are not finite is "
           "reported", "[fixweight_e2e][.]")
 {
     FullHealthMonitor fm;
-    HealthHost h("1,2", {0.0, 1e308}, "OPTIM FIXWEIGHT (1) -1.0 1.0");
+    HealthHost h("1,2", {1e308, 0.0}, "OPTIM FIXWEIGHT (2) -1.0 1.0");
     std::string printed;
     {
         LoggerCapture cap;
@@ -558,7 +563,8 @@ TEST_CASE("health monitor: a fit with weights that are not finite is "
     REQUIRE(tr != nullptr);
     const auto& w = tr->model->get_weights();
     REQUIRE(w.size() == 6u);
-    CHECK(w[1] == 1e308);
+    CHECK(w[0] == 1e308);
+    CHECK(w[1] == 0.25);
     bool fitted_not_finite = false;
     for (std::size_t k = 2; k < 6; ++k) fitted_not_finite |= prints_not_finite(w[k]);
     REQUIRE(fitted_not_finite);
