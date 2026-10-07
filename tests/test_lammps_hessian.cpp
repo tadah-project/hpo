@@ -13,9 +13,9 @@
 //
 // Tags: every LAMMPS-using case carries `[.][!benchmark]` (hidden, so not
 // discovered) and runs in the CTest entry hpo_lammps_hessian (label bench),
-// `test_hpo "[lammps_hessian][.]"`, one process for the seven cases. They
+// `test_hpo "[lammps_hessian][.]"`, one process for the eight cases. They
 // were hidden because of a crash when LAMMPS with pair_style tadah was
-// destroyed; that crash is gone (the seven cases, and the eight of
+// destroyed; that crash is gone (the eight cases, and the eight of
 // test_hpo_phase3_pilot.cpp, create and destroy their LAMMPS instances in one
 // process). The two LAMMPS-free cases at the end are discovered as usual.
 //
@@ -346,7 +346,8 @@ TEST_CASE("LammpsHessianAssembler — the box block is the strain derivative "
      * 1e-10 multiplies the energy's round-off by 1e10; the virial is a
      * first derivative, so its difference over 2h does not.
      * Pins: H(iso, iso) (box_dofs 1), H(xx, xx) and H(xx, yy) (box_dofs 6)
-     * each within 1e-7 relative of the reference.
+     * each within 1e-7 relative of the reference (measured with the shipped
+     * potential: 2.1e-11, 4.9e-11 and 2.5e-12).
      * Before the fix: the diagonal was the energy's second difference
      * (E+ - 2 E0 + E-) / h^2: H(iso, iso) 528.561870 against 528.560497
      * (2.6e-6 relative), H(xx, xx) 94.694101 against 94.692578 (1.6e-5);
@@ -425,18 +426,21 @@ TEST_CASE("LammpsHessianAssembler — box-box off-diagonals are populated "
     /* Shear diagonal (yz, xz, xy). This cell is an orthogonal box, and
      * LAMMPS ignores the tilt factors of an orthogonal box: the assembler's
      * shear strains (apply_strain sets xy, xz, yz) move nothing, and their
-     * energy stencil is round-off. This is the recorded box-convention issue
-     * of the analytic-gradient path (RELEASE-1.6.0-FOLLOWUPS.md, "HPO LAMMPS
-     * analytic-gradient box conventions": the shears are no-ops on an
-     * orthogonal box), recorded and not fixed by the owner's decision of
+     * rows of the box block are 0 (the strained boxes are the saved one and
+     * the virial does not change). This is the recorded box-convention
+     * issue of the analytic-gradient path (RELEASE-1.6.0-FOLLOWUPS.md, "HPO
+     * LAMMPS analytic-gradient box conventions": the shears are no-ops on
+     * an orthogonal box), recorded and not fixed by the owner's decision of
      * 2026-09-30, as that path is unreachable with PC_LAMMPS. Fixing it
      * changes this check.
      * Pins: the box is orthogonal, and |H(shear, shear)| < 1e-2. Measured
-     * with the shipped potential: 9.95e-4 (about 1e-13 eV of energy
-     * round-off over h_strain^2 = 1e-10); with the HPO examples' model
-     * exactly 0. The same cell made triclinic (change_box all triclinic)
-     * gives 9.155 eV, V.C44/4 for C44 = 82 GPa (the assembler applies half
-     * the shear): the bound is three orders below a shear that is applied.
+     * with the shipped potential: exactly 0 (9.95e-4 while the diagonal was
+     * the energy's second difference: about 1e-13 eV of energy round-off
+     * over h_strain^2 = 1e-10; with the HPO examples' model exactly 0
+     * either way). The same cell made triclinic (change_box all triclinic)
+     * gives 9.154 eV (9.155 eV from the energy), V.C44/4 for C44 = 82 GPa
+     * (the assembler applies half the shear): the bound is three orders
+     * below a shear that is applied.
      * Before the fix (the case had no CTest entry then): it checked
      * H(alpha, alpha) > 0 for all six, which passed or failed on the sign of
      * the round-off: it passed with the shipped potential and failed
@@ -484,8 +488,8 @@ TEST_CASE("LammpsHessianAssembler — box-box off-diagonals are populated "
      * crystals at zero stress (selection rules from cubic symmetry).
      * Bound by FD step-size noise, h_strain² · |∂³E/∂ε³| ~ 1e-3 abs. On
      * this orthogonal box they are zero for the reason above as well
-     * (measured below 1e-9 with the shipped potential, and on the cell made
-     * triclinic too). */
+     * (exactly 0 with the shipped potential; below 1e-9 on the cell made
+     * triclinic). */
     for (int alpha = 0; alpha < 3; ++alpha) {
         for (int beta = 3; beta < 6; ++beta) {
             CHECK(std::abs(H(box0 + alpha, box0 + beta)) < 1.0);

@@ -848,15 +848,17 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW matches FD over W[c] "
      * We want |Δlx|/h_w ~ stable and |Δlx| > 1e-5 · lx_0 to stay above
      * the minimize floor.
      *
-     * Pre-sweep results on a 16-atom BCC Ta with the potential these
-     * cases were written against:
-     *   1e-3·|W| → 57% rel (deep into cubic)
-     *   1e-4·|W| → ~5% rel (still cubic-dominated)
-     *   1e-5·|W| → ~1e-3 rel (linear regime, minor noise)
-     *   1e-6·|W| → noise floor too high
-     * → 1e-5·|W| is the sweet spot. With the shipped potential the
-     * relative error is 6.3e-5 at 1e-2·|W| and 6.0e-6 to 6.5e-6 from
-     * 1e-3·|W| to 1e-7·|W| (measured 2026-10-07). */
+     * Measured 2026-10-07 on this 16-atom cell, the relative difference
+     * to the chain, with the potential these cases were written against
+     * (an HPO-trained M_BLR Ta potential, WEIGHTS[2] = 711; not shipped):
+     *   1e-3·|W| → 0.57, 1e-4·|W| → 3.9e-3 (the curvature of lx(W))
+     *   1e-5·|W| → 3.7e-5 (of which 3.8e-5 is that curvature)
+     *   1e-6·|W|, 1e-7·|W| → 1.1e-6, 1.5e-6 (the plateau)
+     * and with the shipped potential 6.9e-5 at 1e-2·|W| and 1.2e-5 from
+     * 1e-3·|W| to 1e-7·|W|. 1e-5·|W| keeps the curvature below the
+     * tolerance for both. (The sweep the case was written with, on the
+     * first potential and the box Hessian of that time: 57% at 1e-3, ~5%
+     * at 1e-4 and ~1e-3 at 1e-5·|W|.) */
     const double h_w = 1.0e-5 * std::abs(w_c0);
     REQUIRE(h_w > 0.0);
 
@@ -874,10 +876,14 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW matches FD over W[c] "
 
     const double dlx_dW_anal_c = dlx_dW_anal(c_fd);
 
-    /* Tolerance: 1e-4 relative. Observed at the chosen h_w: ~3e-5
-     * relative with the potential the case was written against, 6.0e-6
-     * with the shipped one. The step-size sweep documented above bounds
-     * the cubic-noise term at <1e-4 for this h. */
+    /* Tolerance: 1e-4 relative. Observed at the chosen h_w (2026-10-07):
+     * 3.7e-5 with the potential the case was written against, nearly all
+     * of it the central difference's curvature (the chain is 1.1e-6 from
+     * the plateau), and 1.2e-5 with the shipped one, all of it the atom
+     * part checked below. Before the box Hessian's fix (its iso entry the
+     * energy's second difference): 1.1e-4 with the first, which failed,
+     * and 6.0e-6 with the shipped one, where the box part's error, 5.7e-6,
+     * offset part of the atom part's. */
     const double diff   = std::abs(dlx_dW_anal_c - dlx_dW_fd_c);
     const double denom  = std::max(1.0e-6, std::abs(dlx_dW_fd_c));
     const double relerr = diff / denom;
@@ -1083,16 +1089,15 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW via Voigt-6 chain "
          << "  rel = " << relerr);
     /* Tolerance: 5e-4 relative for Voigt-6.
      *
-     * The 3.7C iso case ran at ~3e-5 relative on the same h_w. Voigt-6
-     * is ~4× looser because the analytical path here picks up extra
-     * step-size noise from the Hessian assembler's off-diagonal virial-
-     * derivative central diffs (12 box-block off-diagonals on cubic
-     * crystal: each is `±virial(±h_strain)` with h_strain=1e-5). The
-     * 6-component λ solve and the 6-row dvirial_dW contraction add
-     * further noise channels. Observed at h_w = 1e-5·|W| on this
-     * config: ~1.3e-4 relative with the potential the case was written
-     * against; 3.3e-6 with the shipped one (2.7e-6 to 3.3e-6 from
-     * 1e-3·|W| to 1e-7·|W|, 5.4e-5 at 1e-2·|W|).
+     * Observed 2026-10-07 at h_w = 1e-5·|W|: 1.6e-4 relative with the
+     * potential the case was written against (1.3e-4 of it from the chain:
+     * its box part is within 3.8e-7 of the plateau, the rest is the atom
+     * part checked below), and 2.4e-5 with the shipped one (2.4e-5 from
+     * 1e-3·|W| to 1e-7·|W|, 8.0e-5 at 1e-2·|W|; the atom part). The
+     * 6-component lambda solve leaves more round-off in lambda's atom
+     * entries (1.4e-5 here, 2.1e-6 in the iso case), which the snapshot's
+     * dF/dW turns into the larger error. Before the box Hessian's fix:
+     * 1.3e-4 and 3.3e-6.
      *
      * 5e-4 leaves comfortable headroom against natural variation
      * across descriptor types / cells / step-sizes while staying tight

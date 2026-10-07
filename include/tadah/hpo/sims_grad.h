@@ -32,8 +32,11 @@ namespace tadah::hpo {
  * The last line is theta's own effect at fixed weights: a theta that is a
  * descriptor parameter changes the energy and the forces of the same W. By
  * the implicit function theorem dO_k/dtheta is the sum of the chain through
- * W and that direct term; the provider gives its partial derivatives
- * (SimsGradScriptInput::dg_dtheta, dF_dtheta).
+ * W and that direct term. SimsGradScriptInput carries its partial
+ * derivatives (dg_dtheta, dF_dtheta, with direct_theta true) when the
+ * provider can compute them; HPO_Host's provider does not (the adjoint
+ * snapshot holds no derivative with respect to theta), so a script with
+ * observables sends every theta to finite differences.
  *
  * Sign conventions:
  * - `AdjointSnapshot::dF_dW[(3*atom+axis) * n_desc + c]` is dF/dW
