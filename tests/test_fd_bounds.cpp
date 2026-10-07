@@ -913,6 +913,150 @@ TEST_CASE("No usable gradient: MLSL and the global GD_* searches from a start "
     }
 }
 
+namespace {
+
+/* The LD_* algorithms an INNER block of MLSL or AUGLAG can name (NLopt
+ * 2.10; LD_LBFGS_NOCEDAL is refused). */
+const std::vector<std::string> kLocalGradientAlgorithms = {
+    "LD_LBFGS",   "LD_MMA",    "LD_CCSAQ",
+    "LD_SLSQP",   "LD_TNEWTON", "LD_TNEWTON_RESTART",
+    "LD_TNEWTON_PRECOND", "LD_TNEWTON_PRECOND_RESTART",
+    "LD_VAR1",    "LD_VAR2",   "LD_AUGLAG", "LD_AUGLAG_EQ"};
+
+/* A wall: the default FAILSCORE below 1.53, 1 + (x - 1.53) from it up, so
+ * that the best usable points lie next to the failure region, where their
+ * stencils fail. 1.53 is no stencil point of the points these cases ask
+ * for (with the boundary on one, 1.5 for the start 1.9, a point an ulp
+ * away fails where the point does not). */
+double wall(double x, std::size_t)
+{
+    return x < 1.53 ? kMax : 1.0 + (x - 1.53);
+}
+
+/* The gradient requests at `x` from the call `from` on: consecutive
+ * (x, x + h, x - h) calls, the point and its central stencil. */
+std::size_t requests_at(const std::vector<double>& asked, std::size_t from,
+                        double x, double h)
+{
+    std::size_t n = 0;
+    for (std::size_t i = from;
+         i + 2 < asked.size() && asked[i] == Approx(x).margin(1e-12) &&
+         asked[i + 1] == Approx(x + h).margin(1e-12) &&
+         asked[i + 2] == Approx(x - h).margin(1e-12);
+         i += 3)
+        ++n;
+    return n;
+}
+
+}  // namespace
+
+TEST_CASE("No usable gradient: MLSL moves on from a rejected local start "
+          "with every LD_* local search, and AUGLAG is stopped there",
+          "[HPO][grad_provider][fd_bounds][gradient_failure][nlopt][mlsl]"
+          "[auglag]")
+{
+    /* MLSL and the global GD_* searches are not stopped at a rejected
+     * local start (the case above); this probes whether the local search
+     * MLSL runs, any LD_* algorithm, moves on from one or asks for it again
+     * and again (a stall that would spend the budget there). The wall stub
+     * from 1.9; MAXEVAL 60 (the enclosing block's, which NLopt hands on).
+     *
+     * G_MLSL_LDS, POPULATION 3, with an INNER block of each LD_* algorithm,
+     * and GD_MLSL_LDS without one (NLopt's default local search, LD_MMA):
+     * MLSL samples 1.9 (the start), 1.6875, 1.9375 and 1.4375 (failed),
+     * and starts its first local search at the best of them, 1.6875, whose
+     * stencil point 1.4875 fails: the local start is rejected.
+     * Pins: the requests at 1.6875 (1.6875, 1.8875, 1.4875): 1 for LD_LBFGS,
+     * LD_SLSQP, LD_TNEWTON*, LD_VAR1 and LD_VAR2, 2 for LD_MMA, LD_CCSAQ and
+     * the default local search, 2 for LD_AUGLAG and LD_AUGLAG_EQ and then
+     * AUGLAG's evaluation of the point its local search returned; no later
+     * evaluation of 1.6875; a usable loss after them; MAXEVAL_REACHED after
+     * exactly 60 evaluations; no stop line.
+     *
+     * AUGLAG and LD_AUGLAG with an INNER block of each LD_* algorithm run
+     * one local search, from 1.9, whose stencil point 1.5 fails.
+     * Pins: they are stopped there: 3 evaluations (1.9, 1.7, 1.5), the stop
+     * line once and the status "STOPPED -- no usable gradient: ...".
+     *
+     * Before the fix: passes as well (a pin: probed 2026-10-07, every LD_*
+     * local search moves on from a rejected start, under G_MLSL_LDS,
+     * GD_MLSL_LDS, G_MLSL and GD_MLSL alike, so no code changed; the
+     * follow-up had probed only GD_MLSL_LDS's default LD_MMA). */
+    struct MlslCase { std::string inner; std::size_t requests, reevaluations; };
+    std::vector<MlslCase> mlsl;
+    for (const auto& a : kLocalGradientAlgorithms) {
+        const bool trust_region = a == "LD_MMA" || a == "LD_CCSAQ";
+        const bool auglag = a.rfind("LD_AUGLAG", 0) == 0;
+        mlsl.push_back({a, trust_region || auglag ? 2u : 1u, auglag ? 1u : 0u});
+    }
+    mlsl.push_back({"", 2u, 0u});   /* GD_MLSL_LDS, NLopt's default LD_MMA */
+    for (const auto& c : mlsl) {
+        const std::string name =
+            c.inner.empty() ? "GD_MLSL_LDS" : "G_MLSL_LDS, INNER " + c.inner;
+        DYNAMIC_SECTION(name) {
+            Journal j;
+            auto sp = region_spec("NLOPT",
+                                  c.inner.empty() ? "GD_MLSL_LDS" : "G_MLSL_LDS",
+                                  1.9);
+            sp.pop = 3;
+            if (!c.inner.empty()) {
+                sp.inner = std::make_unique<OptimizerSpec>(
+                    region_spec("NLOPT", c.inner, 1.9));
+                sp.inner->stop.maxeval.reset();
+            }
+            RegionHost host{wall, {}, {}};
+            const std::string status = run_region(sp, host);
+            const auto& x = host.asked;
+            REQUIRE(x.size() > 4u);
+            CHECK(x[0] == Approx(1.9));
+            CHECK(x[1] == Approx(1.6875));
+            CHECK(x[2] == Approx(1.9375));
+            CHECK(x[3] == Approx(1.4375));
+            CHECK(host.losses[3] == kMax);
+            CHECK(requests_at(x, 4, 1.6875, 0.2) == c.requests);
+            const std::size_t moved_on = 4 + 3 * c.requests + c.reevaluations;
+            REQUIRE(x.size() > moved_on);
+            CHECK(std::count_if(x.begin(), x.end(), [](double v) {
+                      return v == Approx(1.6875).margin(1e-12);
+                  }) == static_cast<long>(1 + c.requests + c.reevaluations));
+            bool usable_after = false;
+            for (std::size_t i = moved_on; i < x.size(); ++i)
+                usable_after = usable_after || host.losses[i] < 1e300;
+            CHECK(usable_after);
+            CHECK(x.size() == 60u);
+            CHECK(status == "MAXEVAL_REACHED -- maximum evaluations exhausted");
+            CHECK(j.text().find("stopped: no usable gradient") ==
+                  std::string::npos);
+        }
+    }
+    for (const std::string outer : {"AUGLAG", "LD_AUGLAG"}) {
+        for (const auto& inner : kLocalGradientAlgorithms) {
+            DYNAMIC_SECTION(outer << ", INNER " << inner) {
+                Journal j;
+                auto sp = region_spec("NLOPT", outer, 1.9);
+                sp.inner = std::make_unique<OptimizerSpec>(
+                    region_spec("NLOPT", inner, 1.9));
+                sp.inner->stop.maxeval.reset();
+                RegionHost host{wall, {}, {}};
+                const std::string status = run_region(sp, host);
+                REQUIRE(host.asked.size() == 3u);
+                CHECK(host.asked[0] == Approx(1.9));
+                CHECK(host.asked[1] == Approx(1.7));
+                CHECK(host.asked[2] == Approx(1.5));
+                CHECK(status == "STOPPED -- " + kNoUsableStencil);
+                CHECK(count_of(j.text(),
+                               "NLOPT:" + outer + " stopped: " +
+                                   kNoUsableStencil +
+                                   " (at X[1] = 1.9, the stencil point X[1] = "
+                                   "1.5 failed: loss 1.797693135e+308); a local "
+                                   "gradient search has no step to take from a "
+                                   "starting point without a usable gradient") ==
+                      1u);
+            }
+        }
+    }
+}
+
 TEST_CASE("No usable gradient: under FAILSCORE_GRADING a search from a graded "
           "failure follows the graded slope to usable points",
           "[HPO][grad_provider][fd_bounds][gradient_failure]"
