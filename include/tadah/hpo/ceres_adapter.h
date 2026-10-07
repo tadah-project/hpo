@@ -62,6 +62,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <exception>
 #include <limits>
@@ -124,6 +125,33 @@ inline std::string ceres_message_head(const std::string& message)
     return message;
 }
 
+/* `v` as a PARAM value in a message: "2.5", "3e+09". */
+inline std::string ceres_value_text(double v)
+{
+    std::ostringstream o;
+    o << v;
+    return o.str();
+}
+
+/* Throws unless PARAM `key` of `sp`, when set, is an integer from `lo` to
+ * 2147483647: Ceres takes it as an int (a fraction would be cut, and a
+ * value past an int does not convert). `what` names Ceres' option. */
+inline void validate_ceres_int_param_(const OptimizerSpec& sp,
+                                      const std::string& algo,
+                                      const std::string& key, int lo,
+                                      const std::string& what)
+{
+    const auto it = sp.param.find(key);
+    if (it == sp.param.end()) return;
+    const double v = it->second;
+    if (!(v >= lo && v <= std::numeric_limits<int>::max() &&
+          std::floor(v) == v))
+        throw std::runtime_error(
+            "CERES:" + algo + " requires PARAM " + key +
+            " to be an integer from " + std::to_string(lo) +
+            " to 2147483647 (" + what + "), got " + ceres_value_text(v));
+}
+
 /* Common checks shared by all Ceres GradientProblemSolver validators. */
 inline void validate_ceres_common_(const OptimizerSpec& sp,
                                    const std::string& algo)
@@ -177,6 +205,16 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
     if (sp.stop.xtol_abs)
         throw std::runtime_error("CERES:" + algo + " uses relative tolerance; "
             "use XTOL_REL (mapped to parameter_tolerance) instead of XTOL_ABS");
+    /* Ceres refuses a negative tolerance before it evaluates anything
+     * (Solver::Options::IsValid); 0 switches the test off in effect. */
+    if (sp.stop.ftol_rel && !(*sp.stop.ftol_rel >= 0.0))
+        throw std::runtime_error("CERES:" + algo + " requires FTOL_REL >= 0 "
+            "(Ceres' function_tolerance), got " +
+            ceres_value_text(*sp.stop.ftol_rel));
+    if (sp.stop.xtol_rel && !(*sp.stop.xtol_rel >= 0.0))
+        throw std::runtime_error("CERES:" + algo + " requires XTOL_REL >= 0 "
+            "(Ceres' parameter_tolerance), got " +
+            ceres_value_text(*sp.stop.xtol_rel));
 
     if (sp.stop.maxeval && *sp.stop.maxeval == 0)
         throw std::runtime_error("CERES:" + algo + " requires MAXEVAL > 0 when provided");
@@ -216,13 +254,20 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
     if (auto it = sp.param.find("tol_gradinf"); it != sp.param.end())
         if (!(it->second > 0.0))
             throw std::runtime_error("CERES:" + algo + " requires PARAM tol_gradinf > 0");
+    /* Ceres' iteration caps, as Ceres checks them: max_num_iterations may
+     * be 0 (the start is evaluated and the solve ends), a line search
+     * takes at least one step size. */
+    validate_ceres_int_param_(sp, algo, "max_iter", 0,
+                              "Ceres' max_num_iterations");
+    validate_ceres_int_param_(sp, algo, "max_ls_iter", 1,
+                              "Ceres' max_num_line_search_step_size_"
+                              "iterations");
 }
 
 inline void validate_ceres_lbfgs_spec(const OptimizerSpec& sp) {
     validate_ceres_common_(sp, "LBFGS");
-    if (auto it = sp.param.find("max_lbfgs_rank"); it != sp.param.end())
-        if (!(it->second >= 1.0))
-            throw std::runtime_error("CERES:LBFGS requires PARAM max_lbfgs_rank >= 1");
+    validate_ceres_int_param_(sp, "LBFGS", "max_lbfgs_rank", 1,
+                              "Ceres' max_lbfgs_rank");
 }
 inline void validate_ceres_wolfe_spec(const OptimizerSpec& sp) {
     validate_ceres_common_(sp, "WOLFE");
@@ -230,11 +275,12 @@ inline void validate_ceres_wolfe_spec(const OptimizerSpec& sp) {
 inline void validate_ceres_nlcg_spec(const OptimizerSpec& sp) {
     validate_ceres_common_(sp, "NLCG");
     if (auto it = sp.param.find("nlcg_type"); it != sp.param.end()) {
-        const int v = static_cast<int>(it->second);
-        if (v < 0 || v > 2)
+        const double v = it->second;
+        if (!(v == 0.0 || v == 1.0 || v == 2.0))
             throw std::runtime_error(
                 "CERES:NLCG PARAM nlcg_type must be 0 (FLETCHER_REEVES), "
-                "1 (POLAK_RIBIERE), or 2 (HESTENES_STIEFEL)");
+                "1 (POLAK_RIBIERE), or 2 (HESTENES_STIEFEL), got " +
+                ceres_value_text(v));
     }
 }
 inline void validate_ceres_steepest_spec(const OptimizerSpec& sp) {
@@ -446,6 +492,16 @@ inline void run_ceres_gradient_problem(
     auto opts = make_ceres_options(sp, dir, ls_type);
     HostExceptionAbort abort_on_host_exc(&host_exc);
     opts.callbacks.push_back(&abort_on_host_exc);
+
+    /* Ceres checks its options before it evaluates anything and, when it
+     * refuses them, ends with FAILURE "Invalid configuration. ...". The
+     * validators refuse every setting Ceres would (validate_ceres_common_),
+     * so options Ceres refuses here are HPO's error, not an ending of the
+     * search. */
+    if (std::string refused; !opts.IsValid(&refused))
+        throw std::logic_error(
+            "internal error: CERES:" + algo_label + ": Ceres refuses the "
+            "options built from a validated spec: " + refused);
 
     std::vector<double> x(static_cast<std::size_t>(dim));
     for (int i = 0; i < dim; ++i) x[i] = start[static_cast<std::size_t>(i)];
