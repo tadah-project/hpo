@@ -198,14 +198,18 @@ TEST_CASE("startup validation: K-dependent rules on a real model context",
  * the trainers do, on the D2_BP model (2 weights) with a training DBFILE:
  *  - FIXINDEX given as separate values, '1 2' (FIXWEIGHT 0.5 0.6), passes,
  *    as '1,2' does;
- *  - '1,1,2' is refused: with 2 FIXWEIGHT values as 3 indices for 2
- *    values, with 3 as weight 1 named twice;
+ *  - '1,1,2' is refused as weight 1 named twice, with 2 FIXWEIGHT values
+ *    (one per distinct weight) as with 3;
  *  - '2-1' is refused as a descending range.
  * Before the fix: the lenient core::parse_indices dropped '1 2' and
  * expanded '2-1' to nothing ("FIXINDEX names 0 weights but FIXWEIGHT
  * provides 2 values"), and deduplicated '1,1,2' to weights 1, 2: with 2
  * values the setup passed (the run then trained with it), with 3 it was
- * "FIXINDEX names 2 weights but FIXWEIGHT provides 3 values". */
+ * "FIXINDEX names 2 weights but FIXWEIGHT provides 3 values". After
+ * core::parse_fixindex first read FIXINDEX, '1,1,2' with 2 values was
+ * refused as "FIXINDEX 1,1,2 has 3 indices but FIXWEIGHT has 2 values"
+ * (this case pinned that): it compared the count before it looked for a
+ * repeat. */
 TEST_CASE("startup validation: FIXINDEX is read strictly, separate values as "
           "one list",
           "[startup_validation][fixindex]") {
@@ -232,8 +236,7 @@ TEST_CASE("startup validation: FIXINDEX is read strictly, separate values as "
     Context two = ctx_with("1,1,2", {0.5, 0.6});
     HPOTargets trg2(two, tf.path.string());
     CHECK_THROWS_WITH(validate_hpo_setup(two, trg2, true, true),
-                      Catch::Contains("FIXINDEX 1,1,2 has 3 indices but "
-                                      "FIXWEIGHT has 2 values"));
+                      Catch::Contains("FIXINDEX 1,1,2 names weight 1 twice"));
     Context three = ctx_with("1,1,2", {0.5, 0.6, 0.7});
     HPOTargets trg3(three, tf.path.string());
     CHECK_THROWS_WITH(validate_hpo_setup(three, trg3, true, true),

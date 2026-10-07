@@ -137,14 +137,19 @@ TEST_CASE("OPTIM fixweight maps its indices through FIXINDEX",
  * configuration gives them) and FIXWEIGHT 14.0 2500, selects FIXWEIGHT
  * slot 2 (weight 14), labelled FIXWEIGHT[14] with user index 14 in the
  * search space, as 'FIXINDEX 13,14' does; 'FIXINDEX 14-13' is refused as a
- * descending range, and 'FIXINDEX 13,13,14' (two FIXWEIGHT values) as 3
- * indices for 2 values, when the OPTIM line is read.
+ * descending range, and 'FIXINDEX 13,13,14' (two FIXWEIGHT values, one
+ * per distinct weight) as weight 13 named twice, when the OPTIM line is
+ * read.
  * Before the fix: HPOTargets read FIXINDEX with the lenient
  * core::parse_indices, which dropped '13 14' (the values joined into one
  * malformed segment) and expanded '14-13' to nothing, so both were refused
  * with the self-contradicting "OPTIM FIXWEIGHT (14): weight 14 is not
  * pinned by FIXINDEX (13 14)" ("(14-13)"); '13,13,14' was deduplicated to
- * 13, 14 and accepted ('13, 14' was read, its joined text a comma list). */
+ * 13, 14 and accepted ('13, 14' was read, its joined text a comma list).
+ * After core::parse_fixindex first read FIXINDEX, '13,13,14' was refused
+ * as "FIXINDEX 13,13,14 has 3 indices but FIXWEIGHT has 2 values" (this
+ * case pinned that): it compared the count before it looked for a
+ * repeat. */
 TEST_CASE("OPTIM FIXWEIGHT maps through FIXINDEX given as separate values",
           "[HPO][optim][fixweight][fixindex]") {
   auto ctx_with = [](const std::string& fixindex, std::size_t n_values) {
@@ -183,8 +188,8 @@ TEST_CASE("OPTIM FIXWEIGHT maps through FIXINDEX given as separate values",
     Context ctx = ctx_with("13,13,14", 2);
     KeyRulesTempFile tf(line);
     CHECK_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
-                      Catch::Contains("FIXINDEX 13,13,14 has 3 indices but "
-                                      "FIXWEIGHT has 2 values"));
+                      Catch::Contains("FIXINDEX 13,13,14 names weight 13 "
+                                      "twice"));
   }
 }
 
