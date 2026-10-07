@@ -425,6 +425,13 @@ TEST_CASE("fd stencil: failed evaluations of a one-sided stencil",
               "1.797693135e+308");
     }
     SECTION("the loss at the point itself is part of the stencil") {
+        /* Pins: the failed loss at the upper bound fails the gradient
+         * before its one-sided stencil is evaluated: a Stencil failure that
+         * names the loss at the point, one evaluation.
+         * Before the fix: the stencil 0.99 and 0.98 was evaluated too (three
+         * evaluations) and the failure named the point as a stencil point
+         * ("at X[1] = 1, the stencil point X[1] = 1 failed: ..."), found
+         * only because the difference overflowed. */
         ProjectingHost host{[](const Vec& u) {
                                 return u(0) == 1.0 ? kMax : u(0);
                             },
@@ -435,11 +442,15 @@ TEST_CASE("fd stencil: failed evaluations of a one-sided stencil",
         Vec g;
         CHECK_FALSE(gp.gradient(vec({1.0}), g));
         CHECK(gp.failure->kind == GradientFailure::Stencil);
-        CHECK(gp.failure->detail ==
-              "at X[1] = 1, the stencil point X[1] = 1 failed: loss "
-              "1.797693135e+308");
+        CHECK(gp.failure->detail == "the loss at X[1] = 1 is 1.797693135e+308");
+        CHECK(host.asked.size() == 1u);
     }
-    SECTION("a finite FAILSCORE gives a finite, steep gradient") {
+    SECTION("a finite FAILSCORE: a failed stencil point fails the gradient") {
+        /* FAILSCORE 1e9 above u = 0.015: at u = 0 the stencil is 0.01
+         * (usable) and 0.02.
+         * Pins: a Stencil failure naming 0.02 and its loss 1e9.
+         * Before the fix: the finite, steep difference (4 x 0.01 - 1e9) /
+         * 0.02 was the gradient (this section pinned it). */
         auto sp9 = sp;
         sp9.failscore = 1e9;
         ProjectingHost host{[](const Vec& u) {
@@ -450,8 +461,11 @@ TEST_CASE("fd stencil: failed evaluations of a one-sided stencil",
         auto gp = tadah::hpo::make_gradient_provider<Vec, void>(sp9, host,
                                                                 &counter, 0);
         Vec g;
-        REQUIRE(gp.gradient(vec({0.0}), g));
-        CHECK(g(0) == Approx((4.0 * 0.01 - 1e9) / 0.02));
+        CHECK_FALSE(gp.gradient(vec({0.0}), g));
+        CHECK(gp.failure->kind == GradientFailure::Stencil);
+        CHECK(gp.failure->detail ==
+              "at X[1] = 0, the stencil point X[1] = 0.02 failed: loss "
+              "1000000000");
     }
     SECTION("a non-finite loss at a stencil point") {
         ProjectingHost host{[](const Vec& u) {
