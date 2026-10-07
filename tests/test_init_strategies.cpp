@@ -1431,6 +1431,67 @@ ENDOPTIMIZER
     CHECK(journal.find("INIT_K") == std::string::npos);
 }
 
+TEST_CASE("The journal says where the starting points come from and that "
+          "an EXPLORE without INIT shares the OUTER's",
+          "[HPO][hpo_log][run_policy][prestage]")
+{
+    /* Pins: "Starting point:" counts the points of the INIT chain by
+     * origin, and an EXPLORE block without an INIT block of its own is
+     * shown starting from the OUTER INIT points
+     * (share_init_with_nested_phases), while one with its own chain shows
+     * that chain.
+     * Before the fix: "Starting point: user-supplied (3 seeds)" for three
+     * LHS points, and "PRESTAGE.EXPLORE init strategy: (default -- CONFIG
+     * only)" for an exploration that starts from them. The second
+     * SECTION's check of the EXPLORE's own chain passes as well (a pin). */
+    std::string explore_init;
+    bool own = false;
+    SECTION("an EXPLORE without INIT") {}
+    SECTION("an EXPLORE with its own INIT") {
+        own = true;
+        explore_init = "    INIT\n      METHOD SOBOL 4\n      SEED 3\n    ENDINIT\n";
+    }
+    StrategyTempFile cfg(R"(OPTIMIZER
+INIT
+  METHOD LHS 3
+  SEED 9
+ENDINIT
+STRATEGY
+  TYPE PRESTAGE
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 80
+  TOPK 2
+  EXPLORE
+    LIB TADAH
+    ALGO RANDOM
+    MAXEVAL 10
+    SEED 5
+)" + explore_init + R"(  ENDEXPLORE
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    REQUIRE(trg.spec.optim_init.size() == 3);
+    const std::string journal = optimizer_section(trg.spec);
+    INFO(journal);
+    CHECK(journal.find("Starting point: 3 points from the INIT chain (3 LHS)") !=
+          std::string::npos);
+    CHECK(journal.find("user-supplied") == std::string::npos);
+    const std::string explore =
+        journal_block(journal, "PRESTAGE.EXPLORE init strategy:");
+    REQUIRE_FALSE(explore.empty());
+    if (own) {
+        CHECK(explore.find("[1] SOBOL 4") != std::string::npos);
+        CHECK(explore.find("OUTER") == std::string::npos);
+    } else {
+        CHECK(explore.find("(the OUTER INIT points, shared)") !=
+              std::string::npos);
+        CHECK(explore.find("(default -- CONFIG only)") == std::string::npos);
+    }
+}
+
 TEST_CASE("HPOLog::set_status feeds finish() when status is empty",
           "[HPO][hpo_log][set_status]")
 {
