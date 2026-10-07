@@ -100,7 +100,8 @@ endforeach()
 # trainer cache) the cases of a group share; each group is one entry -- a
 # process -- of its own. `ctest -L e2e` runs them.
 #   fixweight_e2e  test_hpo_fixweight_e2e.cpp: pinned/OPTIM'd weights, exact
-#                  potential files, seed anchors, LAMMPS read-backs
+#                  potential files, seed anchors, LAMMPS read-backs, the
+#                  weights' health monitor (HEALTH_LOG)
 #   durable_e2e    test_hpo_fixweight_e2e.cpp: best-potential persistence and
 #                  run endings; spawns test_hpo children
 #                  ([.durable_e2e_child], [.durable_latch_child])

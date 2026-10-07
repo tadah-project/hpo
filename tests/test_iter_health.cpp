@@ -9,16 +9,25 @@
 //     per (block, kind) per window.
 //   * IterHealthMonitor in full mode emits every offending iter.
 //   * Off mode is a no-op.
+//   * Every weight is checked for NaN/Inf, whatever the layout; a layout
+//     that does not describe the weights is reported as such.
+//   * Records from concurrent evaluations are all counted.
 
 #include "catch2/catch.hpp"
 
 #include <tadah/core/aed_type.h>
 #include <tadah/core/core_types.h>
+#include <tadah/core/logger.h>
 #include <tadah/hpo/iter_health.h>
 #include <tadah/mlip/design_matrix/column_block.h>
 
 #include <cmath>
+#include <iostream>
 #include <limits>
+#include <sstream>
+#include <string>
+#include <thread>
+#include <vector>
 
 using namespace tadah::hpo;
 using tadah::core::t_type;
@@ -33,6 +42,24 @@ static ColumnLayout make_two_block_layout() {
   L.blocks.push_back(b);
   return L;
 }
+
+/* What core::Logger prints on standard output at WARNING (the level of the
+ * tadah CLI; a test process starts at ERROR) while this lives. */
+struct LoggerCapture {
+  std::ostringstream out;
+  std::streambuf* saved_buf;
+  tadah::core::LogLevel saved_level;
+  LoggerCapture()
+      : saved_buf(std::cout.rdbuf(out.rdbuf())),
+        saved_level(tadah::core::Logger::instance().getLogLevel()) {
+    tadah::core::Logger::instance().setLogLevel(tadah::core::LogLevel::WARNING);
+  }
+  ~LoggerCapture() {
+    tadah::core::Logger::instance().setLogLevel(saved_level);
+    std::cout.rdbuf(saved_buf);
+  }
+  std::string text() const { return out.str(); }
+};
 
 TEST_CASE("iter_health: parse_health_log_mode", "[iter_health]") {
   REQUIRE(parse_health_log_mode("off")     == HealthLogMode::Off);
@@ -138,10 +165,84 @@ TEST_CASE("iter_health: off mode is a no-op", "[iter_health]") {
   REQUIRE(mon.warning_count(0, "max_abs") == 0);
 }
 
-TEST_CASE("iter_health: layout/weights size mismatch sets nan_inf flag", "[iter_health]") {
+/* Pins: a non-finite weight is found wherever it is: an Inf at weight 11
+ * of 12, past the 10 columns of the layout's two blocks, sets
+ * weights_have_nan_inf.
+ * Before the fix: only the weights inside the blocks were scanned, so the
+ * flag stayed false. */
+TEST_CASE("iter_health: a non-finite weight outside the layout's blocks is "
+          "found", "[iter_health]") {
+  auto layout = make_two_block_layout();   // 10 columns
+  t_type w(12);
+  for (std::size_t i = 0; i < 12; ++i) w[i] = 1.0;
+  w[11] = std::numeric_limits<double>::infinity();
+  auto rec = compute_iter_health(0, w, layout);
+  REQUIRE(rec.weights_have_nan_inf);
+}
+
+/* Pins: a layout that does not describe the weights (10 columns for 5
+ * finite weights) is not taken for NaN/Inf weights: weights_have_nan_inf is
+ * false, and record() in full mode prints "iter_health: eval 7 -- the
+ * model has 5 weights but its column layout has 10 columns: the per-block
+ * checks are skipped." and no block warning (neither block's max_abs
+ * count moves) and no NaN/Inf line.
+ * Before the fix (this case was "layout/weights size mismatch sets nan_inf
+ * flag" and required the flag): the block past the weights set
+ * weights_have_nan_inf as a sentinel, so record() printed "weights contain
+ * NaN/Inf entries" for finite weights, and warned that the block it could
+ * not read (max_abs left 0) had only zero weights. */
+TEST_CASE("iter_health: a layout that does not describe the weights is "
+          "reported as such, not as NaN/Inf weights", "[iter_health]") {
   auto layout = make_two_block_layout();   // claims 10 cols
   t_type w(5);                              // only 5 weights
   for (std::size_t i = 0; i < 5; ++i) w[i] = 1.0;
-  auto rec = compute_iter_health(0, w, layout);
-  REQUIRE(rec.weights_have_nan_inf);   // sentinel for structural mismatch
+  auto rec = compute_iter_health(7, w, layout);
+  CHECK_FALSE(rec.weights_have_nan_inf);
+
+  IterHealthMonitor mon(HealthLogMode::Full);
+  std::string printed;
+  {
+    LoggerCapture cap;
+    mon.record(rec, layout);
+    printed = cap.text();
+  }
+  INFO(printed);
+  CHECK(printed.find("iter_health: eval 7 -- the model has 5 weights but "
+                     "its column layout has 10 columns: the per-block "
+                     "checks are skipped.") != std::string::npos);
+  CHECK(printed.find("NaN/Inf") == std::string::npos);
+  CHECK(mon.warning_count(0, "max_abs") == 0);
+  CHECK(mon.warning_count(1, "max_abs") == 0);
+}
+
+/* Pins: one monitor recorded from 8 threads at once, as HPO_Host's
+ * concurrent evaluations (ANNEAL_PT/PA replicas, DLIB:GFS batches) record
+ * into the process' monitor, 400 records each of a dead DM block in full
+ * mode: every warning is counted, 3200 for block 1, none for block 0, and
+ * the case completes.
+ * Before the fix: record() changed its maps without a lock (the header
+ * asked callers to funnel records through one thread, which the host never
+ * did): a data race, which lost counts in each of 9 runs (2730 to 3021 of
+ * 3200). */
+TEST_CASE("iter_health: records from concurrent evaluations are all "
+          "counted", "[iter_health]") {
+  auto layout = make_two_block_layout();
+  t_type w(10);
+  for (std::size_t i = 0; i < 4; ++i) w[i] = 1.0;
+  for (std::size_t i = 4; i < 10; ++i) w[i] = 0.0;
+
+  IterHealthMonitor mon(HealthLogMode::Full);
+  constexpr std::size_t kThreads = 8, kRecords = 400;
+  std::vector<std::thread> threads;
+  for (std::size_t t = 0; t < kThreads; ++t) {
+    threads.emplace_back([&, t] {
+      for (std::size_t k = 0; k < kRecords; ++k) {
+        const auto rec = compute_iter_health(t * kRecords + k, w, layout);
+        mon.record(rec, layout);
+      }
+    });
+  }
+  for (auto& th : threads) th.join();
+  CHECK(mon.warning_count(1, "max_abs") == kThreads * kRecords);
+  CHECK(mon.warning_count(0, "max_abs") == 0);
 }

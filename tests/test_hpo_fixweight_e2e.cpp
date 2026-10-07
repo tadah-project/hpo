@@ -1,6 +1,7 @@
 // FIXWEIGHT end-to-end host tests: mixed LS/fixed/OPTIM weights (case 2),
 // no-training-DBFILE operation (case 3), best_pot precision and exact
-// CONFIG/WARM seed evaluation ([seed_anchor]).
+// CONFIG/WARM seed evaluation ([seed_anchor]), the per-evaluation health
+// monitor of the weights (HEALTH_LOG).
 // Best-potential persistence failures and the run's exit status
 // ([durable_e2e]).
 //
@@ -17,6 +18,7 @@
 #include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 
 #include <tadah/core/context.h>
+#include <tadah/core/logger.h>
 #include <tadah/core/number_format.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/durable_best.h>
@@ -24,6 +26,8 @@
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/io_retry.h>
+#include <tadah/hpo/iter_health.h>
+#include <tadah/mlip/parallel.h>
 #include <tadah/hpo/run_driver.h>       // shutdown_exit_status
 #include <tadah/hpo/run_policy_base.h>
 #include <tadah/hpo/startup_validation.h>
@@ -44,6 +48,7 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -144,6 +149,93 @@ tadah::core::Context make_ta_base_context(const fs::path& hpo_cfg)
 
 constexpr const char* kOptimizerBlock =
     "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\n";
+
+/* The structures of write_minimal_ta_dbfile, one per offset, in one
+ * file. */
+void write_ta_dbfile_of(const fs::path& path,
+                        const std::vector<double>& offsets_x) {
+    std::ofstream os(path);
+    for (const double x : offsets_x) {
+        const fs::path one = path.string() + ".one";
+        write_minimal_ta_dbfile(one, x);
+        std::ifstream in(one);
+        os << in.rdbuf();
+        in.close();
+        fs::remove(one);
+    }
+}
+
+/* The length of every MLIP parallel loop (tadah::mlip::parallel_for: a
+ * design-matrix build, a descriptor calculation, a prediction) run while
+ * this lives; each loop runs serially. The backend found is put back. */
+struct ParallelLoopProbe {
+    std::mutex m;
+    std::vector<std::size_t> lengths;
+    tadah::mlip::ParallelBackend saved;
+    ParallelLoopProbe() {
+        if (tadah::mlip::has_parallel_backend())
+            saved = tadah::mlip::detail_parallel_backend();
+        tadah::mlip::set_parallel_backend(
+            [this](std::size_t n,
+                   const std::function<void(std::size_t)>& body) {
+                {
+                    std::lock_guard<std::mutex> lk(m);
+                    lengths.push_back(n);
+                }
+                for (std::size_t i = 0; i < n; ++i) body(i);
+            });
+    }
+    ~ParallelLoopProbe() { tadah::mlip::set_parallel_backend(saved); }
+    std::size_t loops_of(std::size_t n) {
+        std::lock_guard<std::mutex> lk(m);
+        return static_cast<std::size_t>(
+            std::count(lengths.begin(), lengths.end(), n));
+    }
+};
+
+/* What core::Logger prints on standard output at WARNING (the tadah CLI's
+ * level; a test process starts at ERROR) while this lives. */
+struct LoggerCapture {
+    std::ostringstream out;
+    std::streambuf* saved_buf;
+    tadah::core::LogLevel saved_level;
+    LoggerCapture()
+        : saved_buf(std::cout.rdbuf(out.rdbuf())),
+          saved_level(tadah::core::Logger::instance().getLogLevel()) {
+        tadah::core::Logger::instance().setLogLevel(
+            tadah::core::LogLevel::WARNING);
+    }
+    ~LoggerCapture() {
+        tadah::core::Logger::instance().setLogLevel(saved_level);
+        std::cout.rdbuf(saved_buf);
+    }
+    std::string text() const { return out.str(); }
+};
+
+/* The process' health monitor in full mode with no counts, as hpo_run()
+ * arms it with HEALTH_LOG full; off and cleared again afterwards. */
+struct FullHealthMonitor {
+    tadah::hpo::IterHealthMonitor& mon =
+        tadah::hpo::global_iter_health_monitor();
+    FullHealthMonitor() {
+        mon.set_mode(tadah::hpo::HealthLogMode::Full);
+        mon.clear_state();
+    }
+    ~FullHealthMonitor() {
+        mon.set_mode(tadah::hpo::HealthLogMode::Off);
+        mon.clear_state();
+    }
+};
+
+/* "nan", "-nan", "inf" or "-inf": a value that is not finite, read from its
+ * printed text. */
+bool prints_not_finite(double v) {
+    std::ostringstream os;
+    os << v;
+    const std::string t = os.str();
+    return t.find("nan") != std::string::npos ||
+           t.find("inf") != std::string::npos;
+}
 
 }  // namespace
 
@@ -248,7 +340,14 @@ TEST_CASE("fixweight mixed mode: LS + pinned + OPTIM'd weights",
 
 /* All-fixed with a DBFILE present (the `tadah refit` coefficient-search
  * workload): the fast path provisions weights directly and skips the
- * per-eval design-matrix build. */
+ * per-eval design-matrix build.
+ * Pins: the evaluation's weights are the candidate's, and none of its MLIP
+ * parallel loops runs over the training set (2 structures; validation has
+ * 1): no design matrix is built; a host whose last weight is fitted (FIXINDEX
+ * 1-(K-1)) runs one such loop per evaluation, so the probe sees a build.
+ * Before the fix: passes as well (a pin: the fast path already skipped the
+ * build). The check it replaces, CHECK(tr->dm.layout().blocks.empty()),
+ * held for every evaluation: Trainer::dm is never built. */
 TEST_CASE("fixweight all-fixed with DBFILE: DM-skip fast path",
           "[fixweight_e2e][.]")
 {
@@ -260,7 +359,7 @@ TEST_CASE("fixweight all-fixed with DBFILE: DM-skip fast path",
     const fs::path val_db   = sd.dir / "val.db";
     const fs::path val_cfg  = sd.dir / "config.val";
     const fs::path hpo_cfg  = sd.dir / "config.hpo";
-    write_minimal_ta_dbfile(train_db, 0.0);
+    write_ta_dbfile_of(train_db, {0.0, 0.03});
     write_minimal_ta_dbfile(val_db,   0.07);
     { std::ofstream os(val_cfg); os << "DBFILE " << val_db.string() << "\n"; }
 
@@ -289,7 +388,14 @@ TEST_CASE("fixweight all-fixed with DBFILE: DM-skip fast path",
     for (std::size_t k = 0; k < K; ++k)
         p(static_cast<long>(k)) = 0.05 * static_cast<double>(k + 1);
     double loss = 0.0;
-    REQUIRE_NOTHROW(loss = host(p));
+    {
+        ParallelLoopProbe probe;
+        REQUIRE_NOTHROW(loss = host(p));
+        /* Fast path: no loop over the 2 training structures (a design
+         * matrix build); validation predicts its 1 structure. */
+        CHECK(probe.loops_of(2) == 0u);
+        CHECK(probe.loops_of(1) > 0u);
+    }
     CHECK(std::isfinite(loss));
 
     const auto* tr = Host::tls_trainer_for_test();
@@ -300,10 +406,166 @@ TEST_CASE("fixweight all-fixed with DBFILE: DM-skip fast path",
     for (std::size_t k = 0; k < K; ++k)
         CHECK(w[k] == Approx(0.05 * static_cast<double>(k + 1)).epsilon(1e-12));
 
-    /* Fast path: no design matrix was built for the training set. */
-    CHECK(tr->dm.layout().blocks.empty());
+    /* The probe sees a build: with the last weight left to the fit, the
+     * evaluation builds the design matrix of the training structures. */
+    {
+        tadah::core::Context fit_ctx = make_ta_base_context(hpo_cfg);
+        fit_ctx.add("DBFILE", train_db.string());
+        fit_ctx.add("VALIDATION", val_cfg.string());
+        fit_ctx.add("FIXINDEX", "1-" + std::to_string(K - 1));
+        for (std::size_t k = 0; k + 1 < K; ++k)
+            fit_ctx.add("FIXWEIGHT", 0.01 * static_cast<double>(k + 1));
+        const fs::path fit_cfg = sd.dir / "config_fit.hpo";
+        {
+            std::ofstream os(fit_cfg);
+            os << kOptimizerBlock
+               << "LOSS L2\nPC_EMAE 0 1\n"
+               << "OPTIM FIXWEIGHT (1-" << (K - 1) << ") -1.0 1.0\n";
+        }
+        fit_ctx.remove("HPOTARGET");
+        fit_ctx.add("HPOTARGET", fit_cfg.string());
+        tadah::hpo::HPOTargets fit_trg(fit_ctx, fit_cfg.string());
+        REQUIRE_NOTHROW(
+            tadah::hpo::validate_hpo_setup(fit_ctx, fit_trg, true, true));
+        Host fit_host(fit_ctx, fit_trg, val_cfg.string());
+        ParamVec q(static_cast<long>(K - 1));
+        for (std::size_t k = 0; k + 1 < K; ++k)
+            q(static_cast<long>(k)) = 0.05 * static_cast<double>(k + 1);
+        ParallelLoopProbe probe;
+        REQUIRE_NOTHROW(fit_host(q));
+        CHECK(probe.loops_of(2) == 1u);
+    }
 
     Host::reset_globals_for_test();
+}
+
+/* The health monitor's host: the D2_BP[5,5] BF_Linear context with BIAS
+ * true -- its weights are two blocks, the bias (block 0, one weight) and
+ * D2_BP (block 1, five) -- on the minimal Ta data, FIXINDEX/FIXWEIGHT as
+ * given and the hpotarget `optim` (the OPTIM line). */
+struct HealthHost {
+    ScratchDir sd;
+    tadah::core::Context ctx;
+    std::optional<tadah::hpo::HPOTargets> trg;
+    std::optional<Host> host;
+    HealthHost(const std::string& fixindex,
+               const std::vector<double>& fixweight,
+               const std::string& optim) {
+        tadah::core::PeriodicTable::initialize();
+        Host::reset_globals_for_test();
+        const fs::path train_db = sd.dir / "train.db";
+        const fs::path val_db   = sd.dir / "val.db";
+        const fs::path val_cfg  = sd.dir / "config.val";
+        const fs::path hpo_cfg  = sd.dir / "config.hpo";
+        write_minimal_ta_dbfile(train_db, 0.0);
+        write_minimal_ta_dbfile(val_db,   0.07);
+        { std::ofstream os(val_cfg); os << "DBFILE " << val_db.string() << "\n"; }
+        ctx = make_ta_base_context(hpo_cfg);
+        ctx.remove("BIAS");
+        ctx.add("BIAS", "true");
+        ctx.add("DBFILE", train_db.string());
+        ctx.add("VALIDATION", val_cfg.string());
+        ctx.add("FIXINDEX", fixindex);
+        for (const double v : fixweight) ctx.add("FIXWEIGHT", v);
+        {
+            std::ofstream os(hpo_cfg);
+            os << kOptimizerBlock << "LOSS L2\nPC_EMAE 0 1\n" << optim << "\n";
+        }
+        trg.emplace(ctx, hpo_cfg.string());
+        REQUIRE_NOTHROW(tadah::hpo::validate_hpo_setup(ctx, *trg, true, true));
+        host.emplace(ctx, *trg, val_cfg.string());
+    }
+    ~HealthHost() {
+        host.reset();
+        Host::reset_globals_for_test();
+    }
+    double eval(const std::vector<double>& x) {
+        ParamVec p(static_cast<long>(x.size()));
+        for (std::size_t i = 0; i < x.size(); ++i)
+            p(static_cast<long>(i)) = x[i];
+        double loss = 0.0;
+        REQUIRE_NOTHROW(loss = (*host)(p));
+        return loss;
+    }
+};
+
+/* Pins: HEALTH_LOG full checks the weights of every evaluation, block by
+ * block of the model's column layout (bias = block 0, D2_BP = block 1):
+ *  - FIXINDEX pins all 6 weights (the fast path, no fit): the candidate
+ *    with the bias weight 0 warns block 0 "max_abs" (all its weights are
+ *    exactly zero) once and block 1 not; the next, with the five D2_BP
+ *    weights 0, warns block 1 once (block 0 stays at one);
+ *  - a least-squares fit with the bias pinned at 0 (FIXINDEX 1, OPTIM
+ *    FIXWEIGHT (1) at 0): block 0 is warned, the fitted block 1 not.
+ * Before the fix: no evaluation was recorded (the host read the layout of
+ * Trainer::dm, which nothing builds, and skipped the empty layout): every
+ * count is 0. */
+TEST_CASE("health monitor: every evaluation's weights are checked by the "
+          "blocks of the model's column layout", "[fixweight_e2e][.]")
+{
+    FullHealthMonitor fm;
+    SECTION("FIXINDEX pins every weight") {
+        HealthHost h("1-6", {0.01, 0.02, 0.03, 0.04, 0.05, 0.06},
+                     "OPTIM FIXWEIGHT (1-6) -1.0 1.0");
+        REQUIRE(tadah::hpo::derive_weight_count(h.ctx) == 6u);
+        h.eval({0.0, 0.1, 0.2, 0.3, 0.4, 0.5});
+        const auto* tr = Host::tls_trainer_for_test();
+        REQUIRE(tr != nullptr);
+        REQUIRE(tr->model->get_weights().size() == 6u);
+        CHECK(tr->model->get_weights()[0] == 0.0);
+        CHECK(fm.mon.warning_count(0, "max_abs") == 1u);
+        CHECK(fm.mon.warning_count(1, "max_abs") == 0u);
+        h.eval({0.3, 0.0, 0.0, 0.0, 0.0, 0.0});
+        CHECK(fm.mon.warning_count(0, "max_abs") == 1u);
+        CHECK(fm.mon.warning_count(1, "max_abs") == 1u);
+    }
+    SECTION("a fit with the bias weight pinned at 0") {
+        HealthHost h("1", {0.5}, "OPTIM FIXWEIGHT (1) -1.0 1.0");
+        h.eval({0.0});
+        const auto* tr = Host::tls_trainer_for_test();
+        REQUIRE(tr != nullptr);
+        const auto& w = tr->model->get_weights();
+        REQUIRE(w.size() == 6u);
+        CHECK(w[0] == 0.0);
+        bool fitted_nonzero = false;
+        for (std::size_t k = 1; k < 6; ++k) fitted_nonzero |= w[k] != 0.0;
+        REQUIRE(fitted_nonzero);
+        CHECK(fm.mon.warning_count(0, "max_abs") == 1u);
+        CHECK(fm.mon.warning_count(1, "max_abs") == 0u);
+    }
+}
+
+/* Pins: a fit whose weights are not finite is reported: the first D2_BP
+ * weight pinned at 1e308 (FIXINDEX 2) overflows the residual target the
+ * other five are fitted to, the fitted weights print as nan/inf, and
+ * HEALTH_LOG full prints "iter_health: eval <n> -- weights contain NaN/Inf
+ * entries (training likely diverged)." for that evaluation, on standard
+ * output at WARNING.
+ * Before the fix: nothing was printed (no evaluation was recorded). */
+TEST_CASE("health monitor: a fit with weights that are not finite is "
+          "reported", "[fixweight_e2e][.]")
+{
+    FullHealthMonitor fm;
+    HealthHost h("1,2", {0.0, 1e308}, "OPTIM FIXWEIGHT (1) -1.0 1.0");
+    std::string printed;
+    {
+        LoggerCapture cap;
+        h.eval({0.25});
+        printed = cap.text();
+    }
+    INFO(printed);
+    const auto* tr = Host::tls_trainer_for_test();
+    REQUIRE(tr != nullptr);
+    const auto& w = tr->model->get_weights();
+    REQUIRE(w.size() == 6u);
+    CHECK(w[1] == 1e308);
+    bool fitted_not_finite = false;
+    for (std::size_t k = 2; k < 6; ++k) fitted_not_finite |= prints_not_finite(w[k]);
+    REQUIRE(fitted_not_finite);
+    const std::string eval_no = std::to_string(Host::g_iter_value());
+    CHECK(printed.find("iter_health: eval " + eval_no +
+                       " -- weights contain NaN/Inf entries (training likely "
+                       "diverged).") != std::string::npos);
 }
 
 /* Pins: M_KRR Kern_RBF (MPARAMS 1.0, SBASIS 3) on the D2_BP[5,5] context
