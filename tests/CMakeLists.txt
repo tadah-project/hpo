@@ -245,3 +245,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/run_matrix_ctest.sh")
         LABELS "slow"
         SKIP_RETURN_CODE 77)
 endif()
+
+# tadah.hpo_headers (ctest -L headers): every header of include/
+# compiles on its own and twice in a row (cmake-tools'
+# tadah_add_header_check). Before the fix: fails on hpo_host_impl.hpp,
+# which does not include hpo_host.h ('expected initializer before <').
+tadah_add_header_check(tadah.hpo)
