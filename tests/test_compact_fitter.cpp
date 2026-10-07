@@ -107,7 +107,10 @@ TEST_CASE("compact fitter: REFINE MAXEVAL counts the L-BFGS objective "
       CompactConfig cfg;
       cfg.refine_algo = algo;
       cfg.lbfgs_refine_maxeval = maxeval;
-      cfg.ceres_ftol = 0.0;  // no convergence test: the budget ends it
+      // no convergence test (NLopt's FTOL_REL, dlib's FTOL_ABS): the budget
+      // ends it
+      cfg.ceres_ftol = 0.0;
+      cfg.dlib_refine_ftol_abs = 0.0;
       CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
       BlipFit f = perturbed_truth();
       fit.solve_coeffs(f);
@@ -163,6 +166,7 @@ TEST_CASE("compact fitter: EXPLORE INNER MAXEVAL counts the local search's "
     cfg.sbplx_maxeval = 9;
     cfg.sbplx_ftol = 0.0;
     cfg.sbplx_xtol = 0.0;
+    cfg.dlib_inner_ftol_abs = 0.0;  // dlib's LBFGS stops on FTOL_ABS
     cfg.refine_algo = "NONE";
     const LadderRun r = run_ladder(cfg);
     CHECK(r.evaluations == 9);

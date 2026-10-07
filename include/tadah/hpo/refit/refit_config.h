@@ -53,8 +53,8 @@ struct ExploreStage {
 
 /** REFINE stage: per-rung Ceres LM/DOGLEG (or NLOPT/DLIB local) refine.
  *  `enabled` false (ENABLED false) skips the stage (engine maps it to ALGO
- *  NONE); combining ENABLED false with a non-NONE optimiser is a contradiction
- *  the parser rejects. */
+ *  NONE); ENABLED false with an OPTIMIZER block, which would have no effect,
+ *  is an error the parser raises. */
 struct RefineStage {
   OptimizerSpec opt;
   bool has_opt = false;

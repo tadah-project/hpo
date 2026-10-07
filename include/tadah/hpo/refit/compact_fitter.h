@@ -145,8 +145,13 @@ struct CompactConfig {
   // its iterations by definition (max_num_iterations).
   int sbplx_maxeval = 20000;   ///< EXPLORE inner, per candidate: evaluations
                                ///< (also each local search of the MLSL seed)
-  double sbplx_xtol = 1e-11;
-  double sbplx_ftol = 1e-13;
+  double sbplx_xtol = 1e-11;   ///< EXPLORE INNER NLopt searches (and MLSL's
+  double sbplx_ftol = 1e-13;   ///< local LN_SBPLX): XTOL_REL, FTOL_REL
+  /** EXPLORE INNER DLIB_LBFGS: FTOL_ABS, the absolute change of the
+   *  objective dlib's L-BFGS stops at (objective_delta_stop_strategy). It
+   *  took sbplx_ftol, the INNER FTOL_REL, before 1.6.0; the default is
+   *  sbplx_ftol's. */
+  double dlib_inner_ftol_abs = 1e-13;
   int mlsl_maxeval = 60000;    ///< EXPLORE seed MLSL|DIRECT|CRS2: evaluations
   int dlib_global_maxeval = 3000;  ///< EXPLORE seed DLIB_GLOBAL: evaluations
                                    ///< (MaxLIPO+TR's cost per evaluation
@@ -154,8 +159,13 @@ struct CompactConfig {
   int ceres_max_iter = 1000;   ///< REFINE CERES_LM|CERES_DOGLEG: iterations
   int lbfgs_refine_maxeval = 50000;  ///< REFINE NLOPT_LBFGS|DLIB_LBFGS:
                                      ///< evaluations
-  double ceres_ftol = 1e-15;   ///< "close to numerical noise" refine
-  double ceres_gtol = 1e-14;
+  double ceres_ftol = 1e-15;   ///< "close to numerical noise" refine: REFINE
+                               ///< FTOL_REL (Ceres, NLOPT_LBFGS)
+  double ceres_gtol = 1e-14;   ///< REFINE GTOL (Ceres)
+  /** REFINE DLIB_LBFGS: FTOL_ABS (as dlib_inner_ftol_abs). It took
+   *  ceres_ftol, the REFINE FTOL_REL, before 1.6.0; the default is
+   *  ceres_ftol's. */
+  double dlib_refine_ftol_abs = 1e-15;
   double target = 1.0;         ///< stop when metric <= target
   int stall_rungs = 6;         ///< stop after this many rungs w/o improvement
   unsigned seed = 12345;       ///< deterministic jitter
@@ -588,15 +598,18 @@ int fuse_curve_refine(const CompactBlipFitter &ff, BlipFit &fit);
 int clamp_bump_support_params(BlipFit &f, double hard_rcut, double span);
 
 /** Flatten the parsed EXPLORE/REFINE/FUSE optimisers onto `cfg`: each
- *  stage's ALGO (ENABLED false switches REFINE or FUSE off, whatever its
- *  optimiser), tolerances, and MAXEVAL/MAXITER, which counts objective
+ *  stage's ALGO (ENABLED false switches REFINE or FUSE off; RefitParser
+ *  refuses it with an OPTIMIZER block), tolerances, and MAXEVAL/MAXITER, which counts objective
  *  evaluations for every optimiser but Ceres (iterations):
  *    - EXPLORE MAXEVAL: the seed's budget, whichever algorithm runs it
  *      (mlsl_maxeval, dlib_global_maxeval);
- *    - EXPLORE INNER MAXEVAL: sbplx_maxeval;
+ *    - EXPLORE INNER MAXEVAL: sbplx_maxeval; FTOL_REL, XTOL_REL:
+ *      sbplx_ftol, sbplx_xtol (the NLopt searches, and MLSL's local
+ *      LN_SBPLX); FTOL_ABS: dlib_inner_ftol_abs (DLIB_LBFGS);
  *    - REFINE MAXEVAL/MAXITER: lbfgs_refine_maxeval for NLOPT_LBFGS and
  *      DLIB_LBFGS (evaluations), ceres_max_iter for CERES_LM/DOGLEG
- *      (iterations); FTOL_REL: ceres_ftol, GTOL: ceres_gtol;
+ *      (iterations); FTOL_REL: ceres_ftol, GTOL: ceres_gtol, FTOL_ABS:
+ *      dlib_refine_ftol_abs (DLIB_LBFGS);
  *    - FUSE MAXEVAL/MAXITER: joint_max_iter (Ceres iterations), FTOL_REL:
  *      joint_ftol, GTOL: joint_gtol (the joint solve's, and each curve-mode
  *      FUSE refine's, fuse_curve_config).

@@ -29,12 +29,18 @@ public:
    *  and on invalid tokens. Missing blocks => default-constructed stages. A
    *  stage's OPTIMIZER block (and EXPLORE's INNER block) accepts only the keys
    *  that stage reads -- any other optimiser attribute is an error naming the
-   *  keys it does read -- and must set ALGO. A block with ALGO NONE (or
-   *  UNIFORM, EXPLORE's) runs no optimiser, so a key there that no stage
-   *  reads (MAXEVAL, MAXITER, FTOL_REL, XTOL_REL, GTOL) is an error too:
-   *  "REFINE: MAXITER has no effect with ALGO NONE (the stage is skipped);
-   *  remove MAXITER". EXPLORE INNER's stay accepted under the EXPLORE
-   *  optimiser GN_MLSL_LDS, whose local searches read them. */
+   *  keys it does read -- and must set ALGO. A stop criterion (MAXEVAL,
+   *  MAXITER, FTOL_REL, FTOL_ABS, XTOL_REL, GTOL) the block's ALGO does not
+   *  read is an error too, naming the keys it reads: "REFINE: GTOL has no
+   *  effect with ALGO LD_LBFGS (it reads MAXEVAL, FTOL_REL); remove GTOL";
+   *  with ALGO NONE (or UNIFORM, EXPLORE's), which runs no optimiser, "REFINE:
+   *  MAXITER has no effect with ALGO NONE (the stage is skipped); remove
+   *  MAXITER". MAXITER (Ceres iterations) is read by LM and DOGLEG only;
+   *  dlib's LBFGS reads FTOL_ABS, not FTOL_REL. EXPLORE INNER's MAXEVAL,
+   *  FTOL_REL and XTOL_REL stay accepted under the EXPLORE optimiser
+   *  GN_MLSL_LDS, whose local LN_SBPLX searches read them. ENABLED false
+   *  with an OPTIMIZER block in REFINE or FUSE is an error. Every tolerance
+   *  is a finite number >= 0. */
   static RefitConfig parse(const tadah::core::Context &c);
 };
 

@@ -68,29 +68,17 @@ bool bget(const Context &c, const std::string &k, bool def) {
 // there into a RefitConfig, which compact_fit() flattens into CompactConfig
 // (apply_stage_optimizers) and resolves into per-channel INIT seeds.
 
-// Say when ENABLED false switches off a stage whose optimiser was configured
-// (apply_stage_optimizers sets its algo to NONE): the override is never
-// silent. (EXPLORE cannot be disabled -- enforced by the parser.)
+// Say when ENABLED false switches off REFINE or FUSE (apply_stage_optimizers
+// sets its algo to NONE). RefitParser refuses ENABLED false beside an
+// OPTIMIZER block, so there is no configured optimiser to ignore. (EXPLORE
+// cannot be disabled -- enforced by the parser.)
 void log_disabled_stages(const RefitConfig &rc) {
-  if (!rc.refine.enabled) {
-    if (rc.refine.has_opt && refit_refine_algo(rc.refine.opt) != "NONE")
-      Logger::instance().log(LogLevel::WARNING,
-          "tadah refit: REFINE ENABLED false — stage DISABLED; the configured "
-          "REFINE optimiser (" + refit_refine_algo(rc.refine.opt) +
-          ") is ignored.");
-    else
-      Logger::instance().log(LogLevel::INFO,
-          "tadah refit: REFINE disabled (ENABLED false).");
-  }
-  if (!rc.fuse.enabled) {
-    if (rc.fuse.has_opt && refit_fuse_algo(rc.fuse.opt) != "NONE")
-      Logger::instance().log(LogLevel::WARNING,
-          "tadah refit: FUSE ENABLED false — stage DISABLED; the configured "
-          "FUSE optimiser (" + refit_fuse_algo(rc.fuse.opt) + ") is ignored.");
-    else
-      Logger::instance().log(LogLevel::INFO,
-          "tadah refit: FUSE disabled (ENABLED false).");
-  }
+  if (!rc.refine.enabled)
+    Logger::instance().log(LogLevel::INFO,
+        "tadah refit: REFINE disabled (ENABLED false).");
+  if (!rc.fuse.enabled)
+    Logger::instance().log(LogLevel::INFO,
+        "tadah refit: FUSE disabled (ENABLED false).");
 }
 
 // Resolve one INIT anchor's centre on a channel's window [lo,hi] / target d.
@@ -436,35 +424,55 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
     std::snprintf(b, sizeof(b), "%.2g", v);
     return std::string(b);
   };
-  // Each stage's budget in the unit of the algorithm that runs it.
-  const std::string seed_budget =
-      lcfg.seed_algo == "UNIFORM"
+  // Each stage's settings as the algorithm that runs it reads them, in its
+  // unit (RefitParser refuses a key the ALGO does not read): the NLopt
+  // searches maxeval/ftol_rel/xtol_rel, dlib's LBFGS maxeval/ftol_abs,
+  // NLopt's LD_LBFGS REFINE maxeval/ftol_rel, Ceres maxiter/ftol_rel/gtol,
+  // NONE (UNIFORM) nothing; the MLSL seed also its local LN_SBPLX searches'.
+  const std::string nlopt_local = "maxeval=" +
+                                  std::to_string(lcfg.sbplx_maxeval) +
+                                  " ftol_rel=" + g(lcfg.sbplx_ftol) +
+                                  " xtol_rel=" + g(lcfg.sbplx_xtol);
+  std::string seed_reads;
+  if (lcfg.seed_algo == "DLIB_GLOBAL")
+    seed_reads = " maxeval=" + std::to_string(lcfg.dlib_global_maxeval);
+  else if (lcfg.seed_algo != "UNIFORM")
+    seed_reads = " maxeval=" + std::to_string(lcfg.mlsl_maxeval);
+  if (lcfg.seed_algo == "MLSL")
+    seed_reads += " local=LN_SBPLX{" + nlopt_local + "}";
+  std::string inner_reads;
+  if (lcfg.explore_algo == "DLIB_LBFGS")
+    inner_reads = " maxeval=" + std::to_string(lcfg.sbplx_maxeval) +
+                  " ftol_abs=" + g(lcfg.dlib_inner_ftol_abs);
+  else if (lcfg.explore_algo != "NONE")
+    inner_reads = " " + nlopt_local;
+  const auto ceres_reads = [&](int maxiter, double ftol, double gtol) {
+    return " maxiter=" + std::to_string(maxiter) + " ftol_rel=" + g(ftol) +
+           " gtol=" + g(gtol);
+  };
+  std::string refine_reads;
+  if (lcfg.refine_algo == "NLOPT_LBFGS")
+    refine_reads = " maxeval=" + std::to_string(lcfg.lbfgs_refine_maxeval) +
+                   " ftol_rel=" + g(lcfg.ceres_ftol);
+  else if (lcfg.refine_algo == "DLIB_LBFGS")
+    refine_reads = " maxeval=" + std::to_string(lcfg.lbfgs_refine_maxeval) +
+                   " ftol_abs=" + g(lcfg.dlib_refine_ftol_abs);
+  else if (lcfg.refine_algo != "NONE")
+    refine_reads =
+        ceres_reads(lcfg.ceres_max_iter, lcfg.ceres_ftol, lcfg.ceres_gtol);
+  const std::string fuse_reads =
+      joint_algo == "NONE"
           ? std::string()
-          : " maxeval=" + std::to_string(lcfg.seed_algo == "DLIB_GLOBAL"
-                                             ? lcfg.dlib_global_maxeval
-                                             : lcfg.mlsl_maxeval);
-  const bool refine_lbfgs = lcfg.refine_algo == "NLOPT_LBFGS" ||
-                            lcfg.refine_algo == "DLIB_LBFGS";
-  const std::string refine_budget =
-      lcfg.refine_algo == "NONE"
-          ? std::string()
-          : refine_lbfgs
-                ? " maxeval=" + std::to_string(lcfg.lbfgs_refine_maxeval)
-                : " maxiter=" + std::to_string(lcfg.ceres_max_iter);
-  rlog.line(
-      "optimiser: EXPLORE.seed{algo=" + lcfg.seed_algo + seed_budget +
-      "}  EXPLORE.inner{algo=" +
-      lcfg.explore_algo + " maxeval=" + std::to_string(lcfg.sbplx_maxeval) +
-      " ftol_rel=" + g(lcfg.sbplx_ftol) + " xtol_rel=" + g(lcfg.sbplx_xtol) +
-      "}  REFINE{algo=" + lcfg.refine_algo + refine_budget + " ftol_rel=" +
-      g(lcfg.ceres_ftol) + " gtol=" + g(lcfg.ceres_gtol) + "}  FUSE{algo=" +
-      joint_algo + " maxiter=" + std::to_string(lcfg.joint_max_iter) +
-      " ftol_rel=" + g(lcfg.joint_ftol) + " gtol=" + g(lcfg.joint_gtol) +
-      "}");
+          : ceres_reads(lcfg.joint_max_iter, lcfg.joint_ftol, lcfg.joint_gtol);
+  rlog.line("optimiser: EXPLORE.seed{algo=" + lcfg.seed_algo + seed_reads +
+            "}  EXPLORE.inner{algo=" + lcfg.explore_algo + inner_reads +
+            "}  REFINE{algo=" + lcfg.refine_algo + refine_reads +
+            "}  FUSE{algo=" + joint_algo + fuse_reads + "}");
   rlog.line("  (maxeval = objective evaluations [each call to the loss, or "
             "to its gradient], not optimiser iterations, for every optimiser "
             "(NLopt, dlib); for EXPLORE.seed=MLSL it is the TOTAL budget "
-            "across all its local searches, EXPLORE.inner the budget of each; "
+            "across all its local searches, local= the budget of each, and "
+            "EXPLORE.inner's that of each rung candidate's search; "
             "maxiter = Ceres solver iterations; FUSE's bounds the whole "
             "stage in energy mode, each function's refine in curve mode)");
   rlog.line("schedule: opt_every=" + std::to_string(lcfg.opt_every) +

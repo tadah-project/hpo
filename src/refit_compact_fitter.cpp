@@ -53,6 +53,7 @@ void apply_stage_optimizers(const RefitConfig &rc, CompactConfig &cfg) {
       if (in.stop.maxeval) cfg.sbplx_maxeval = static_cast<int>(*in.stop.maxeval);
       if (in.stop.ftol_rel) cfg.sbplx_ftol = *in.stop.ftol_rel;
       if (in.stop.xtol_rel) cfg.sbplx_xtol = *in.stop.xtol_rel;
+      if (in.stop.ftol_abs) cfg.dlib_inner_ftol_abs = *in.stop.ftol_abs;
     }
   }
   // ceres_ftol / joint_ftol feed Ceres' function_tolerance, which is RELATIVE
@@ -72,6 +73,7 @@ void apply_stage_optimizers(const RefitConfig &rc, CompactConfig &cfg) {
         cfg.ceres_max_iter = static_cast<int>(*o.stop.maxeval);
     }
     if (o.stop.ftol_rel) cfg.ceres_ftol = *o.stop.ftol_rel;
+    if (o.stop.ftol_abs) cfg.dlib_refine_ftol_abs = *o.stop.ftol_abs;
     auto it = o.param.find("GTOL");
     if (it != o.param.end()) cfg.ceres_gtol = it->second;
   }
@@ -83,8 +85,8 @@ void apply_stage_optimizers(const RefitConfig &rc, CompactConfig &cfg) {
     auto it = o.param.find("GTOL");
     if (it != o.param.end()) cfg.joint_gtol = it->second;
   }
-  // ENABLED false is a master kill-switch: it wins over any configured
-  // optimiser (the engine says so in its log).
+  // ENABLED false switches the stage off (RefitParser refuses it beside an
+  // OPTIMIZER block).
   if (!rc.refine.enabled) cfg.refine_algo = "NONE";
   if (!rc.fuse.enabled) cfg.joint_algo = "NONE";
 }
@@ -963,8 +965,8 @@ double CompactBlipFitter::sbplx_explore(BlipFit &f, int maxeval) const {
   else if (a == "NLOPT_LBFGS") { algo = nlopt::LD_LBFGS; use_grad = true; }
   else if (a == "DLIB_LBFGS") {
     // dlib box-constrained LBFGS on the VARPRO reduced objective, MAXEVAL
-    // objective evaluations
-    last_explore_term_ = dlib_lbfgs(f, maxeval, cfg_.sbplx_ftol, 20);
+    // objective evaluations, ending at FTOL_ABS (an absolute change)
+    last_explore_term_ = dlib_lbfgs(f, maxeval, cfg_.dlib_inner_ftol_abs, 20);
     return solve_coeffs(f);
   } else if (a == "NONE") {
     last_explore_term_ = "NONE(linear-solve)";
@@ -1027,8 +1029,8 @@ double CompactBlipFitter::refine_dispatch(BlipFit &f) const {
     // cfg_.lbfgs_refine_maxeval objective evaluations: NLopt counts them,
     // and dlib_lbfgs() counts them in its objective wrapper.
     if (a == "DLIB_LBFGS") {
-      last_refine_term_ =
-          dlib_lbfgs(f, cfg_.lbfgs_refine_maxeval, cfg_.ceres_ftol, 30);
+      last_refine_term_ = dlib_lbfgs(f, cfg_.lbfgs_refine_maxeval,
+                                     cfg_.dlib_refine_ftol_abs, 30);
       return solve_coeffs(f);
     }
     ThetaBox b = theta_box(f, lo_, hi_, span_, cfg_.hard_rcut);
