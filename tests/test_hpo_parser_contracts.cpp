@@ -1603,7 +1603,7 @@ TEST_CASE("Strict numbers: a PC_LAMMPS option takes only its own values",
     /* A bare token after an HPO option's values fell through to the LAMMPS
      * command line: `--maxtime 1:30 00` (a typo for 1:30:00) loaded, and
      * every LAMMPS run failed on 'Invalid command-line argument: 00'. A
-     * bare token belongs to a LAMMPS option (-var x 1 2, -sf omp) or is an
+     * bare token belongs to a LAMMPS option (-var x 1 2, -echo none) or is an
      * error naming the option it follows. */
     TempFile script(kSimScript, ".in");
     const std::string head = "--script " + script.path.string() + " ";
@@ -1639,12 +1639,16 @@ TEST_CASE("Strict numbers: a PC_LAMMPS option takes only its own values",
                Catch::StartsWith("unexpected 'junk': a PC_LAMMPS token is an "
                                  "option or a value of one"));
 
-    /* LAMMPS options keep every value that follows them. */
-    std::string cmd = head + vl + "-var x 1 2 -sf omp -pk omp 4 neigh no "
+    /* LAMMPS options keep every value that follows them. (They were
+     * "-var x 1 2 -sf omp -pk omp 4 neigh no -var y -5" until LAMMPS judged
+     * them when the line is read: a LAMMPS built without the OPENMP
+     * package, as this test's may be, cannot start with -sf omp or -pk omp,
+     * so they are options every build starts with.) */
+    std::string cmd = head + vl + "-var x 1 2 -echo none -nocite "
                       "-var y -5";
     tadah::hpo::LammpsSim sim(cmd, "off", 1.0e6, tadah::LossFunction{});
     const std::vector<std::string> expected = {
-        "-var", "x", "1", "2", "-sf", "omp", "-pk", "omp", "4", "neigh", "no",
+        "-var", "x", "1", "2", "-echo", "none", "-nocite",
         "-var", "y", "-5"};
     const auto it = std::search(sim.invar.begin(), sim.invar.end(),
                                 expected.begin(), expected.end());
