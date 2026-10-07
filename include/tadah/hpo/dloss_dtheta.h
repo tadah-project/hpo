@@ -82,6 +82,7 @@
 #include <exception>
 #include <functional>
 #include <numeric>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -517,7 +518,8 @@ val_cell_to_row(const tadah::mlip::StructureDB&         truth_val,
  *               not supply analytically -- passed back to the HYBRID
  *               strategy for masked central-difference fallback.
  *
- * Returns: false if plan.was_nan_clamped is set; true otherwise.
+ * Returns: false if plan.was_nan_clamped is set or the normal equations
+ * are not positive definite (compute_dWdtheta); true otherwise.
  *
  * Routing:
  *   - When `plan.per_theta` is null/empty, every index is pushed onto
@@ -578,7 +580,8 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
     std::vector<double>& dWdtheta = dWdtheta_out ? *dWdtheta_out : dWdtheta_local;
     std::vector<int>    needs_fd_internal;
     if (!detail::compute_dWdtheta(plan, dWdtheta, needs_fd_internal)) {
-        /* Cholesky failed -> factor non-PD; signal as NaN-clamp. */
+        /* Cholesky failed -> factor non-PD: no gradient at this point
+         * (compute_analytical_gradient_from_trainer throws on it). */
         if (dWdtheta_out) dWdtheta_out->clear();
         return false;
     }
@@ -821,8 +824,17 @@ using ObservableGradProvider =
  *  Phase A masking is deferred).
  *
  *  g_out is sized to prefs.size() and pre-zeroed by this helper.
- *  Returns false only when an internal step failed in a way the
- *  optimiser should treat as a clamp event (today: Cholesky non-PD).
+ *  Returns true once it has formed the gradient (`needs_fd` lists the
+ *  parameters it has no analytical derivative for). Where the gradient
+ *  cannot be formed at this point it throws, saying why: the normal
+ *  equations of the fit, Phi^T Phi + LAMBDA I over the training rows, are
+ *  not positive definite in its Cholesky factorisation (the implicit-
+ *  function solve dW/dtheta has no solution), or an inconsistency between
+ *  the trainer and the lists or descriptors it is given. It used to route
+ *  every parameter to finite differences for the first of these and return
+ *  true, which is also what a setup the analytical gradient does not cover
+ *  returns, so nothing said why (HPO_Host::analytical_gradient now turns a
+ *  throw into analytical_gradient_gap()).
  */
 inline bool
 compute_analytical_gradient_from_trainer(
@@ -1043,6 +1055,18 @@ compute_analytical_gradient_from_trainer(
 
     tadah::core::t_type W_star = host.model->get_weights();
 
+    /* The normal equations of the fit that are not positive definite: the
+     * implicit-function solve dW/dtheta has no solution at this point, so
+     * the gradient cannot be formed here (see the function comment). */
+    const auto no_ift_solution = [lambda]() {
+        std::ostringstream os;
+        os << "the implicit-function solve has no solution at this point: "
+              "the normal equations of the fit (Phi^T Phi + LAMBDA I over "
+              "the training rows, LAMBDA = " << lambda << ") are not "
+              "positive definite in the gradient's Cholesky factorisation";
+        return std::runtime_error(os.str());
+    };
+
     /* Build the Cholesky factor. */
     tadah::models::FactorHandle factor;
     {
@@ -1050,7 +1074,7 @@ compute_analytical_gradient_from_trainer(
         detail::compute_normal_equations(
             phi_train_aug.data(), n_aug_rows, n_cols, AtA);
         if (!detail::cholesky_upper(AtA.data(), static_cast<int>(n_cols)))
-            return fall_back_all_fd();
+            throw no_ift_solution();
         factor.AtA    = std::move(AtA);
         factor.n      = static_cast<int>(n_cols);
         factor.n_bias = n_bias;
@@ -1461,17 +1485,17 @@ compute_analytical_gradient_from_trainer(
     const bool want_obs_grad  = obs_grad_provider && !trg.observables.empty();
     const bool want_dWdtheta  = want_sims_grad || want_obs_grad;
     std::vector<double> dWdtheta;
-    const bool ok = compute_dloss_dtheta(
-        plan, x_dummy, g_adapter, needs_fd,
-        want_dWdtheta ? &dWdtheta : nullptr);
+    /* compute_dloss_dtheta factorises the same normal equations again
+     * (compute_dWdtheta): false is that factorisation failing. */
+    if (!compute_dloss_dtheta(plan, x_dummy, g_adapter, needs_fd,
+                              want_dWdtheta ? &dWdtheta : nullptr))
+        throw no_ift_solution();
 
     /* Chain rule for both LAMMPS-script (Tier 3, Phase 3.7B) and
      * typed-observable (Tier 1/2, D4b) gradients. Runs only when the
-     * caller supplied at least one provider AND fit-side
-     * compute_dloss_dtheta succeeded; the IFT Cholesky failure path
-     * (ok=false) already routes the optimiser to a clamp, so we don't
-     * bother chaining downstream losses in that case. */
-    if (ok && want_dWdtheta && dWdtheta.size() == prefs.size() * n_cols) {
+     * caller supplied at least one provider (compute_dloss_dtheta has
+     * succeeded: its failure threw above). */
+    if (want_dWdtheta && dWdtheta.size() == prefs.size() * n_cols) {
         /* Build the set of theta for which the fit-side produced an
          * analytical dW/dtheta. needs_fd already lists indices that fell back
          * to FD; the complement is the candidate set for analytical
@@ -1672,7 +1696,7 @@ compute_analytical_gradient_from_trainer(
         std::fprintf(stderr, "\n");
     }
 
-    return ok;
+    return true;
 }
 
 }  // namespace tadah::hpo

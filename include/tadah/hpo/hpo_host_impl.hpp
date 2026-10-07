@@ -1030,6 +1030,8 @@ template<class P, class R>
 thread_local bool HPO_Host<P,R>::tls_trainer_theta_stale_ = false;
 template<class P,class R>
 thread_local std::string HPO_Host<P,R>::tls_untrained_why_;
+template<class P,class R>
+thread_local std::string HPO_Host<P,R>::tls_analytical_failure_why_;
 
 template<class P, class R>
 thread_local typename HPO_Host<P,R>::TrainerCache
@@ -2979,6 +2981,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         tls_trainer_theta_stale_ = true;
         tls_untrained_why_ = "the candidate was rejected before training (" +
                              what + "): it has no fit to differentiate";
+        tls_analytical_failure_why_.clear();
         /* Stagnation check (parity with post_lammps_finalize): an
          * all-infeasible run must still trip StagnationStop -- its catch
          * submits r with the real graded loss. */
@@ -3058,6 +3061,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     tls_trainer_theta_stale_ = true;
     tls_untrained_why_ = "its training did not complete: there is no fit "
                          "to differentiate";
+    tls_analytical_failure_why_.clear();
     tls_rebuilt_lists_.reset();
     {
         /* Every evaluation trains a Trainer built from its own candidate
@@ -4112,7 +4116,7 @@ std::string HPO_Host<P,R>::analytical_gradient_gap() const
         return "this thread holds no trained model of this run's evaluation "
                "at this point";
     if (tls_trainer_theta_stale_) return tls_untrained_why_;
-    return {};
+    return tls_analytical_failure_why_;
 }
 
 template<class P, class R>
@@ -4125,6 +4129,8 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
     needs_fd.clear();
     needs_fd.reserve(prefs.size());
     (void)x;  /* unused: compute_dloss_dtheta reads everything from the plan. */
+    /* Set below when this pass cannot form the gradient at the point. */
+    tls_analytical_failure_why_.clear();
 
     auto fall_back_all_fd = [&]() {
         for (std::size_t i = 0; i < prefs.size(); ++i)
@@ -4165,8 +4171,6 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
         return true;
     }
     std::vector<double> g_flat;
-    bool helper_ok = false;
-    std::string helper_throw_msg;
 
     /* Phase 3.7B-orchestrator -- SimsGradProvider construction.
      *
@@ -4393,46 +4397,49 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
             };
     }
 
+    std::string failure;
     try {
         /* The lists of the evaluation the trainer slot holds: rebuilt
          * ones when its cutoff exceeded the one-time lists. */
         const auto& lists = tls_rebuilt_lists_;
-        helper_ok = compute_analytical_gradient_from_trainer(
-            *cache.trainer, lists ? lists->train : train_stdb_,
-            lists ? lists->val : val_stdb_, trg_, prefs,
-            g_flat, needs_fd, sims_grad_provider, obs_grad_provider);
+        if (!compute_analytical_gradient_from_trainer(
+                *cache.trainer, lists ? lists->train : train_stdb_,
+                lists ? lists->val : val_stdb_, trg_, prefs,
+                g_flat, needs_fd, sims_grad_provider, obs_grad_provider))
+            throw std::logic_error(
+                "compute_analytical_gradient_from_trainer returned false "
+                "without saying why");
     } catch (const std::exception& e) {
-        /* Any throw from the analytical helper (out-of-range, walker
-         * mismatch, internal Cholesky, ...) is gracefully degraded
-         * here: route all theta to FD, surface the message in the
-         * diagnostic and the journal so the user can debug. Without
-         * this catch the exception would propagate through gp.gradient
-         * into NLopt, which translates to a generic NLOPT_FAILURE with
-         * no useful information. */
-        helper_throw_msg = e.what();
-        helper_ok = false;
+        /* The helper cannot form the gradient at this point and says why:
+         * the normal equations of the fit are not positive definite in its
+         * implicit-function solve (the trainer's LAPACK factorisation of
+         * the same matrix succeeded: the two differ at rounding level on a
+         * numerically singular one), or an inconsistency between the
+         * trainer and the lists or descriptors. Caught here: through
+         * gp.gradient NLopt would turn it into a generic NLOPT_FAILURE. */
+        failure = e.what();
     }
-    if (!helper_ok) {
-        if (!helper_throw_msg.empty()) {
-            std::ostringstream oss;
-            oss << "analytical_gradient: helper threw '"
-                << helper_throw_msg << "' -- routing every theta to FD";
-            std::cerr << "[HPO] " << oss.str() << "\n";
-            HPOLog::instance().warning(oss.str());
-        }
-        /* Analytical helper signalled a hard failure (today the only
-         * path: IFT-side Cholesky non-PD even though the trainer's
-         * Cholesky succeeded -- rare but happens when LAMBDA is tiny
-         * relative to Phi^TPhi's smallest non-trivial eigenvalue, or when
-         * a per-theta dPhi row is itself rank-deficient). Returning
-         * false propagates to gp.gradient and the NLopt wrapper, where
-         * LD_LBFGS sees +inf gradient and bails out as NLOPT_FAILURE.
-         *
-         * Instead, route every theta onto needs_fd so HYBRID's masked
-         * FD pass produces a valid (slower) gradient and the
-         * optimiser keeps making progress. The diagnostic surfaces
-         * `ift_failed` so the user can tell this from a clean
-         * fall_back_all_fd inside the helper. */
+    if (!failure.empty()) {
+        /* A point without an analytical gradient, as a candidate rejected
+         * before training is: every parameter goes to finite differences
+         * (HYBRID takes them), and analytical_gradient_gap() says why, so
+         * GRAD_STRATEGY ANALYTICAL fails the gradient there as a point
+         * without a usable gradient. The gap used to stay empty: ANALYTICAL
+         * took the all-FD list for parameters without a derivative and
+         * ended the run ("no analytical gradient for N parameters").
+         * Journalled at occurrences 1, 2, 4, ... of the run (it was written
+         * to the journal and to stderr at every call). */
+        tls_analytical_failure_why_ =
+            "its analytical gradient could not be formed: " + failure;
+        const std::size_t n = HPOLog::instance().count_in_run(
+            "analytical gradient could not be formed");
+        if ((n & (n - 1)) == 0)
+            HPOLog::instance().warning(
+                "Analytical gradient could not be formed at this point "
+                "(occurrence " + std::to_string(n) + "): " + failure +
+                "; GRAD_STRATEGY HYBRID takes finite differences for every "
+                "parameter there, and under ANALYTICAL the point has no "
+                "usable gradient");
         needs_fd.clear();
         fall_back_all_fd();
         emit_grad_diagnostic(prefs, needs_fd, /*cache_miss=*/false,
@@ -4497,12 +4504,11 @@ void HPO_Host<P,R>::emit_grad_diagnostic(
                "a rejected candidate); calls that follow an evaluation "
                "engage the analytical path]";
     } else if (ift_failed) {
-        oss << "  [IFT-side Cholesky non-PD even though the trainer "
-               "fitted OK. Likely LAMBDA is small relative to Phi^TPhi's "
-               "smallest eigenvalue, or a per-theta dPhi row is "
-               "rank-deficient. Routed every theta to FD so the "
-               "optimiser keeps making progress. Raise LAMBDA or "
-               "switch to GRAD_STRATEGY=NUMERICAL to silence this]";
+        oss << "  [the analytical gradient could not be formed at this "
+               "point (the WARNING above says why; normal equations of the "
+               "fit that are not positive definite want a larger LAMBDA): "
+               "HYBRID takes finite differences for every parameter there, "
+               "under ANALYTICAL the point has no usable gradient]";
     } else if (n_total > 0 && n_fd == n_total) {
         oss << "  [every theta routed to FD: none has an analytical "
                "derivative here (no registered derivative, or a loss term "

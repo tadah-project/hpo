@@ -201,15 +201,19 @@ public:
     bool analytical_gradient(const ParamVec& x, ParamVec& g,
                              std::vector<int>& needs_fd) const;
 
-    /** Why this thread's trainer slot holds no fit of the point the thread
-     *  evaluated last, so that the analytical gradient cannot be formed
-     *  there -- "the candidate was rejected before training (<the gate's
-     *  reject note>): it has no fit to differentiate", "its training did
-     *  not complete ...", or no model of this host's evaluation at all --
-     *  or "" when the slot holds that fit. analytical_gradient() hands
-     *  every parameter to finite differences at such a point; under
-     *  GRAD_STRATEGY ANALYTICAL the GradientProvider reads this, and the
-     *  point has no usable gradient (gradient_provider.h). */
+    /** Why the analytical gradient cannot be formed at the point this
+     *  thread evaluated last: its trainer slot holds no fit of it -- "the
+     *  candidate was rejected before training (<the gate's reject note>):
+     *  it has no fit to differentiate", "its training did not complete
+     *  ...", or no model of this host's evaluation at all -- or this
+     *  thread's last analytical_gradient() could not form it there: "its
+     *  analytical gradient could not be formed: <why>" (the normal
+     *  equations of the fit not positive definite in the implicit-function
+     *  solve, ...); "" otherwise. analytical_gradient() hands every
+     *  parameter to finite differences at such a point; under
+     *  GRAD_STRATEGY ANALYTICAL the GradientProvider reads this after the
+     *  analytical pass, and the point has no usable gradient
+     *  (gradient_provider.h). */
     std::string analytical_gradient_gap() const;
 
     /** One-shot log on the first analytical_gradient call: prints
@@ -219,8 +223,10 @@ public:
      *    - cache_miss:  no trainer of this host's evaluation at x in
      *                   the thread's slot (before its first evaluation,
      *                   after a rejected candidate; transient)
-     *    - ift_failed:  analytical helper returned false (IFT Cholesky
-     *                   non-PD); rare numerical edge case
+     *    - ift_failed:  the analytical helper could not form the
+     *                   gradient at this point (journalled with why:
+     *                   e.g. the IFT normal equations not positive
+     *                   definite)
      *    - default:     orchestrator gate (STRESS/NORM/OALGO/LAMBDA/
      *                   MODEL[1]/use_srmse/PC_LAMMPS) rejected the run */
     void emit_grad_diagnostic(const std::vector<ParamRef>& prefs,
@@ -600,6 +606,11 @@ private:
      * the bump-support or a density gate rejected before training, or that
      * its training did not complete (analytical_gradient_gap). */
     static thread_local std::string tls_untrained_why_;
+    /* Why this thread's latest analytical_gradient() could not form the
+     * gradient at the point its trainer slot holds ("" when it did, or when
+     * it did not run there): cleared at every pass and when an evaluation
+     * starts (analytical_gradient_gap). */
+    static thread_local std::string tls_analytical_failure_why_;
 
     /* per-thread trainer slot -------------------------------------------
      * The Trainer of this thread's latest evaluation: every evaluation
