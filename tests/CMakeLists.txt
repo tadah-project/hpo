@@ -191,6 +191,16 @@ add_test(NAME hpo_example_fingerprint_tool
 set_tests_properties(hpo_example_fingerprint_tool PROPERTIES
     LABELS "examples"
     TIMEOUT 30)
+# The status the example scripts print (examples/common/journal_status.sh,
+# sourced by common/run.sh, run_all.sh and the run.sh of 16, 17 and 27):
+# the whole "Optimiser status" value, colons included
+# (examples/tools/test_journal_status.py; it needs bash).
+add_test(NAME hpo_example_journal_status
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../examples/tools/test_journal_status.py)
+set_tests_properties(hpo_example_journal_status PROPERTIES
+    LABELS "examples"
+    TIMEOUT 30)
 
 # Boost drift gate: every Boost header HPO includes must be in the Boost
 # Tadah vendors (MLIP's external/boost, on HPO's include path through

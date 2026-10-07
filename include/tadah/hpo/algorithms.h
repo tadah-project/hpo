@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <optional>
@@ -293,9 +294,18 @@ template<typename Vec, typename Runner>
  * (`double operator()(const Vec&) const`) so unit tests can drive the
  * SA loop with a stub instead of a full HPO_Host. The public
  * `run_anneal<Vec, Runner>(...)` wrapper below delegates here.
+ *
+ * `elapsed_seconds` is the clock MAXTIME is measured with: the seconds
+ * since the search began. Empty (the default, and what run_anneal()
+ * passes) reads std::chrono::steady_clock from the start of this call; a
+ * unit test passes a scripted clock to place the MAXTIME deadline between
+ * two of the driver's checks.
  */
+using AnnealElapsedSeconds = std::function<double()>;
+
 template<typename Vec, typename HostT>
-  void run_anneal_impl(const OptimizerSpec& sp, HostT& host)
+  void run_anneal_impl(const OptimizerSpec& sp, HostT& host,
+                       const AnnealElapsedSeconds& elapsed_seconds = {})
   {
     using anneal::Knobs;
     using anneal::AlgoKind;
@@ -324,6 +334,7 @@ template<typename Vec, typename HostT>
     const double max_time = sp.stop.maxtime.value_or(0.0);
     const std::function<bool()> time_exceeded = [&]() {
       if (max_time <= 0.0) return false;
+      if (elapsed_seconds) return elapsed_seconds() >= max_time;
       using Sec = std::chrono::duration<double>;
       return std::chrono::duration_cast<Sec>(
                std::chrono::steady_clock::now() - t0_wall).count() >= max_time;

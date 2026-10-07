@@ -1,0 +1,554 @@
+/*
+ * Every optimiser driver records why its search ended (HPOLog::set_status),
+ * in one vocabulary: "<LIB>:<ALGO>: <reason>" with a fixed reason text
+ * (MAXEVAL reached, MAXTIME exceeded, STOPVAL reached, FTOL_ABS reached,
+ * FTOL_REL reached, XTOL_REL reached, tol_gradinf reached, max_iter
+ * reached, T_MIN reached, FTOL plateau, all grid points evaluated, no
+ * optimisable dimensions), and the journal's stop line gives the numbers.
+ * The run's trailer ("Optimiser status") is that status; a normal end
+ * with none is an internal error (run_driver.h).
+ *
+ * DLIB:GFS, the ANNEAL family and the Ceres drivers had endings that set no
+ * status, and the trailer then read COMPLETED: a spent MAXEVAL, the
+ * annealers' every stop (STOPVAL and MAXTIME included), Ceres' every ending
+ * but one (its convergence tests, its iteration cap, a spent MAXEVAL and a
+ * genuine line-search FAILURE alike).
+ *
+ * The drivers run here on stub hosts through their HostT-generic
+ * implementations (run_anneal_impl, run_anneal_pt_impl, run_anneal_pa_impl,
+ * run_dlib_global_impl, detail::run_ceres_gradient_problem). The status
+ * tests of the annealers' other stops are next to their stop-line tests
+ * (test_anneal.cpp, test_anneal_pt.cpp, test_anneal_pa.cpp); DLIB:BFGS,
+ * TADAH:RANDOM and TADAH:GRID, which need an HPO_Host, are tested end to
+ * end in test_hpo_termination.cpp.
+ */
+
+#include "catch2/catch.hpp"
+
+#include <tadah/hpo/algorithms.h>
+#include <tadah/hpo/algorithms_pa.h>
+#include <tadah/hpo/algorithms_pt.h>
+#include <tadah/hpo/ceres_adapter.h>
+#include <tadah/hpo/dlib_adapter.h>
+#include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/optimizer_spec.h>
+
+#include <dlib/matrix.h>
+
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <cstddef>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <limits>
+#include <mutex>
+#include <sstream>
+#include <string>
+#include <thread>
+#include <vector>
+
+using Vec = dlib::matrix<double, 0, 1>;
+
+namespace {
+
+namespace fs = std::filesystem;
+using tadah::hpo::HPOLog;
+using tadah::hpo::OptimizerSpec;
+
+struct NoRunner {};   // GradientProvider's Runner is only a type tag
+
+/* An open journal; status() is the status the driver recorded. */
+struct LoggedRun {
+    fs::path path;
+    LoggedRun() : path(fs::temp_directory_path() /
+                       ("end_status_" +
+                        std::to_string(std::chrono::steady_clock::now()
+                                       .time_since_epoch().count()) +
+                        ".log"))
+    {
+        HPOLog::instance().reset_for_test();
+        HPOLog::instance().open(path.string(), "test", "/", 0);
+    }
+    ~LoggedRun() {
+        HPOLog::instance().finish("test-end");
+        HPOLog::instance().reset_for_test();
+        std::error_code ec;
+        fs::remove(path, ec);
+    }
+    std::string status() const { return HPOLog::instance().status(); }
+    std::string read() const {
+        std::ifstream is(path);
+        std::ostringstream oss;
+        oss << is.rdbuf();
+        return oss.str();
+    }
+};
+
+OptimizerSpec make_spec(const std::string& lib, const std::string& algo,
+                        std::vector<double> low, std::vector<double> high,
+                        std::vector<double> start)
+{
+    OptimizerSpec sp;
+    sp.lib  = lib;
+    sp.algo = algo;
+    sp.low  = std::move(low);
+    sp.high = std::move(high);
+    sp.is_int.assign(sp.low.size(), false);
+    sp.log_scaled.assign(sp.low.size(), false);
+    sp.analyse_logscale();
+    sp.optim_init = {std::move(start)};
+    return sp;
+}
+
+/* Thread-safe counting stub over `f`; `sleep` before each evaluation. */
+struct StubHost {
+    std::function<double(const Vec&)> f;
+    std::chrono::milliseconds sleep{0};
+    mutable std::mutex m;
+    mutable std::size_t calls = 0;
+    double operator()(const Vec& x) const {
+        if (sleep.count() > 0) std::this_thread::sleep_for(sleep);
+        {
+            std::lock_guard<std::mutex> lk(m);
+            ++calls;
+        }
+        return f(x);
+    }
+    std::size_t n() const {
+        std::lock_guard<std::mutex> lk(m);
+        return calls;
+    }
+};
+
+/* 1 + sum_i (x_i - 0.1 (i+1))^2: a smooth bowl, minimum 1 at (0.1, 0.2, ...). */
+double bowl(const Vec& x)
+{
+    double s = 0.0;
+    for (long i = 0; i < x.size(); ++i) {
+        const double d = x(i) - 0.1 * static_cast<double>(i + 1);
+        s += d * d;
+    }
+    return 1.0 + s;
+}
+
+/* 1 + sum_i (x_i - 0.1 (i+1))^4: flat near its minimum, so a gradient
+ * search converges slowly and a relative function tolerance ends it. */
+double quartic(const Vec& x)
+{
+    double s = 0.0;
+    for (long i = 0; i < x.size(); ++i) {
+        const double d = x(i) - 0.1 * static_cast<double>(i + 1);
+        s += d * d * d * d;
+    }
+    return 1.0 + s;
+}
+
+}  // namespace
+
+/* ======================================================================
+ * TADAH:ANNEAL
+ * ==================================================================== */
+
+/* Pins: a MAXTIME that passes during a rung ends the search with the stop
+ * line "ANNEAL stopped: MAXTIME exceeded" and the status
+ * "TADAH:ANNEAL: MAXTIME exceeded", after fewer evaluations than MAXEVAL.
+ * Before the fix: the stop line, and no status (the trailer said
+ * COMPLETED). */
+TEST_CASE("End status: TADAH:ANNEAL records a MAXTIME stop",
+          "[HPO][stop_status][anneal]")
+{
+    auto sp = make_spec("TADAH", "ANNEAL", {-1.0}, {1.0}, {0.5});
+    sp.seed = 3;
+    sp.stop.maxeval = 1000;
+    sp.stop.maxtime = 0.05;
+    sp.param["T_INIT"] = 1.0;          // no T0 probes
+    sp.param["CHAIN_LENGTH"] = 100.0;  // MAXTIME passes inside the first rung
+
+    LoggedRun lr;
+    StubHost host{bowl, std::chrono::milliseconds(20)};
+    tadah::hpo::run_anneal_impl<Vec>(sp, host);
+    CHECK(host.n() < 1000u);
+    CHECK(lr.read().find("ANNEAL stopped: MAXTIME exceeded") !=
+          std::string::npos);
+    CHECK(lr.status() == "TADAH:ANNEAL: MAXTIME exceeded");
+}
+
+/* The rung loop of serial ANNEAL tested MAXTIME after each rung and again
+ * in its loop condition. A deadline that passed between the two left the
+ * loop with no stop reason: "ANNEAL stopped: loop completed normally" and
+ * no status. The scripted clock passes the deadline right after the
+ * post-rung check of the first rung (the seed and one rung of
+ * CHAIN_LENGTH 3 evaluated, then one more clock reading).
+ * Pins: the search ends after those 4 evaluations, on MAXTIME: the stop
+ * line "ANNEAL stopped: MAXTIME exceeded" and the status
+ * "TADAH:ANNEAL: MAXTIME exceeded"; no "loop completed normally".
+ * Before the fix: the same 4 evaluations, "ANNEAL stopped: loop completed
+ * normally" and no status. */
+TEST_CASE("End status: TADAH:ANNEAL records a MAXTIME that passes between "
+          "two of its checks", "[HPO][stop_status][anneal]")
+{
+    constexpr std::size_t kChain = 3;
+    auto sp = make_spec("TADAH", "ANNEAL", {-1.0}, {1.0}, {0.5});
+    sp.seed = 3;
+    sp.stop.maxeval = 1000;
+    sp.stop.maxtime = 10.0;
+    sp.param["T_INIT"] = 1.0;
+    sp.param["CHAIN_LENGTH"] = static_cast<double>(kChain);
+
+    LoggedRun lr;
+    StubHost host{bowl};
+    std::size_t readings_after_rung = 0;
+    const tadah::hpo::AnnealElapsedSeconds clock = [&]() -> double {
+        if (host.n() < 1 + kChain) return 0.0;   // the seed and rung 1
+        return readings_after_rung++ == 0 ? 0.0 : 1e9;
+    };
+    tadah::hpo::run_anneal_impl<Vec>(sp, host, clock);
+    CHECK(host.n() == 1 + kChain);
+    const std::string journal = lr.read();
+    CHECK(journal.find("ANNEAL stopped: MAXTIME exceeded") !=
+          std::string::npos);
+    CHECK(journal.find("loop completed normally") == std::string::npos);
+    CHECK(lr.status() == "TADAH:ANNEAL: MAXTIME exceeded");
+}
+
+/* ======================================================================
+ * TADAH:ANNEAL_PT and TADAH:ANNEAL_PA
+ * ==================================================================== */
+
+/* Pins: a MAXTIME that passes during an epoch ends ANNEAL_PT with the stop
+ * line "ANNEAL_PT stopped: MAXTIME exceeded" and the status
+ * "TADAH:ANNEAL_PT: MAXTIME exceeded".
+ * Before the fix: the stop line, and no status. */
+TEST_CASE("End status: TADAH:ANNEAL_PT records a MAXTIME stop",
+          "[HPO][stop_status][anneal_pt]")
+{
+    auto sp = make_spec("TADAH", "ANNEAL_PT", {-1.0}, {1.0}, {0.5});
+    sp.param_raw["STEP_MODE"] = "FIXED";
+    sp.seed = 5;
+    sp.num_threads = 1;
+    sp.stop.maxeval = 100000;
+    sp.stop.maxtime = 0.1;
+    sp.param["REPLICAS"] = 2.0;
+    sp.param["T_HOT"] = 1.0;
+
+    LoggedRun lr;
+    StubHost host{bowl, std::chrono::milliseconds(5)};
+    tadah::hpo::run_anneal_pt_impl<Vec>(sp, host);
+    CHECK(host.n() < 100000u);
+    CHECK(lr.read().find("ANNEAL_PT stopped: MAXTIME exceeded") !=
+          std::string::npos);
+    CHECK(lr.status() == "TADAH:ANNEAL_PT: MAXTIME exceeded");
+}
+
+/* Pins: a loss at or below STOPVAL among the T0 calibration probes ends
+ * ANNEAL_PT with the stop line "ANNEAL_PT stopped: STOPVAL reached during
+ * T0 probes" and the status "TADAH:ANNEAL_PT: STOPVAL reached". The seed
+ * (loss 1.25) is above STOPVAL 1.2, the bowl's minimum 1 below it.
+ * Before the fix: the stop line, and no status. */
+TEST_CASE("End status: TADAH:ANNEAL_PT records a STOPVAL reached during the "
+          "T0 probes", "[HPO][stop_status][anneal_pt]")
+{
+    auto sp = make_spec("TADAH", "ANNEAL_PT", {-1.0}, {1.0}, {0.6});
+    sp.param_raw["STEP_MODE"] = "FIXED";
+    sp.seed = 5;
+    sp.num_threads = 1;
+    sp.stop.maxeval = 5000;
+    sp.stop.stopval = 1.2;
+    sp.param["REPLICAS"] = 2.0;
+
+    LoggedRun lr;
+    StubHost host{bowl};
+    tadah::hpo::run_anneal_pt_impl<Vec>(sp, host);
+    CHECK(lr.read().find("ANNEAL_PT stopped: STOPVAL reached during T0 "
+                         "probes") != std::string::npos);
+    CHECK(lr.status() == "TADAH:ANNEAL_PT: STOPVAL reached");
+}
+
+/* Pins: a population that reaches STOPVAL ends ANNEAL_PA with the stop
+ * line "ANNEAL_PA stopped: STOPVAL reached" and the status
+ * "TADAH:ANNEAL_PA: STOPVAL reached".
+ * Before the fix: the stop line, and no status. */
+TEST_CASE("End status: TADAH:ANNEAL_PA records a STOPVAL stop",
+          "[HPO][stop_status][anneal_pa]")
+{
+    auto sp = make_spec("TADAH", "ANNEAL_PA", {-1.0}, {1.0}, {0.9});
+    sp.seed = 7;
+    sp.num_threads = 1;
+    sp.pop = 16;
+    sp.stop.maxeval = 100000;
+    sp.stop.stopval = 1.0 + 1e-4;
+    sp.param["T_HOT"] = 0.5;
+    sp.param["CHAIN_LENGTH"] = 2.0;
+
+    LoggedRun lr;
+    StubHost host{bowl};
+    tadah::hpo::run_anneal_pa_impl<Vec>(sp, host);
+    CHECK(host.n() < 100000u);
+    CHECK(lr.read().find("ANNEAL_PA stopped: STOPVAL reached") !=
+          std::string::npos);
+    CHECK(lr.status() == "TADAH:ANNEAL_PA: STOPVAL reached");
+}
+
+/* Pins: a population best that stalls ends ANNEAL_PA on the Corana
+ * eps-NEPS plateau rule, with the stop line "ANNEAL_PA stopped: FTOL
+ * plateau" and the status "TADAH:ANNEAL_PA: FTOL plateau" (a constant
+ * objective: every temperature step is flat).
+ * Before the fix: the stop line, and no status. */
+TEST_CASE("End status: TADAH:ANNEAL_PA records an FTOL plateau",
+          "[HPO][stop_status][anneal_pa]")
+{
+    auto sp = make_spec("TADAH", "ANNEAL_PA", {-1.0}, {1.0}, {0.0});
+    sp.seed = 9;
+    sp.num_threads = 1;
+    sp.pop = 16;
+    sp.stop.maxeval = 100000;
+    sp.stop.ftol_abs = 1e-6;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["T_MIN"] = 1e-12;
+    sp.param["CHAIN_LENGTH"] = 1.0;
+
+    LoggedRun lr;
+    StubHost host{[](const Vec&) { return 1.0; }};
+    tadah::hpo::run_anneal_pa_impl<Vec>(sp, host);
+    CHECK(host.n() < 100000u);
+    CHECK(lr.read().find("ANNEAL_PA stopped: FTOL plateau") !=
+          std::string::npos);
+    CHECK(lr.status() == "TADAH:ANNEAL_PA: FTOL plateau");
+}
+
+/* ======================================================================
+ * DLIB:GFS
+ * ==================================================================== */
+
+/* Pins: a DLIB:GFS search that spends its MAXEVAL evaluates exactly
+ * MAXEVAL points and ends with the stop line "DLIB:GFS stopped: MAXEVAL
+ * reached after 6 evaluation(s)" and the status "DLIB:GFS: MAXEVAL
+ * reached".
+ * Before the fix: the stop line, and no status (STOPVAL and MAXTIME had
+ * theirs). */
+TEST_CASE("End status: DLIB:GFS records a spent MAXEVAL",
+          "[HPO][stop_status][gfs]")
+{
+    auto sp = make_spec("DLIB", "GFS", {-1.0, -1.0}, {1.0, 1.0}, {0.5, -0.3});
+    sp.stop.maxeval = 6;
+    sp.num_threads = 1;
+
+    LoggedRun lr;
+    StubHost host{bowl};
+    tadah::hpo::run_dlib_global_impl(sp, host);
+    CHECK(host.n() == 6u);
+    CHECK(lr.read().find("DLIB:GFS stopped: MAXEVAL reached after 6 "
+                         "evaluation(s)") != std::string::npos);
+    CHECK(lr.status() == "DLIB:GFS: MAXEVAL reached");
+}
+
+/* ======================================================================
+ * CERES (GradientProblemSolver). Ceres reports its own ending
+ * (CONVERGENCE, NO_CONVERGENCE, FAILURE) and a message; MAXEVAL is HPO's:
+ * an evaluation refused for the budget is a failed one to Ceres, which
+ * then ends with FAILURE. The status is Ceres' own reason when Ceres
+ * converged or ran out of iterations, MAXEVAL when the budget made it fail,
+ * and "STOPPED -- CERES:<ALGO>: FAILURE (<message>)" for any other failure.
+ * The cases pin the three CONVERGENCE message prefixes of the Ceres
+ * version HPO builds ("Function tolerance reached", "Parameter tolerance
+ * reached", "Gradient tolerance reached") and "Maximum number of
+ * iterations reached.": a Ceres upgrade that rewords them fails here.
+ * Every case used to end with no status (COMPLETED): a spent MAXEVAL and a
+ * genuine line-search failure as much as convergence.
+ * ==================================================================== */
+
+#ifdef TADAH_USE_CERES
+namespace {
+
+struct CeresCase {
+    std::string algo;
+    ceres::LineSearchDirectionType dir;
+    ceres::LineSearchType ls;
+};
+
+CeresCase ceres_case(const std::string& algo)
+{
+    if (algo == "LBFGS")  return {algo, ceres::LBFGS, ceres::WOLFE};
+    if (algo == "WOLFE")  return {algo, ceres::BFGS, ceres::WOLFE};
+    if (algo == "NLCG")   return {algo, ceres::NONLINEAR_CONJUGATE_GRADIENT,
+                                  ceres::WOLFE};
+    return {"STEEPEST_DESCENT", ceres::STEEPEST_DESCENT, ceres::ARMIJO};
+}
+
+/* Runs CERES:<algo> on `host` and returns the journal. */
+template<class Host>
+std::string run_ceres(const OptimizerSpec& sp, Host& host, LoggedRun& lr)
+{
+    const CeresCase c = ceres_case(sp.algo);
+    tadah::hpo::detail::run_ceres_gradient_problem<Vec, NoRunner>(
+        sp, host, c.dir, c.ls, c.algo);
+    return lr.read();
+}
+
+}  // namespace
+
+/* Pins: MAXEVAL 7 under STEEPEST_DESCENT on the 2-dimensional bowl (each
+ * evaluation with its gradient costs the loss and a 4-point central
+ * stencil): the second evaluation's gradient is refused for the budget,
+ * Ceres ends with FAILURE, and the status is "CERES:STEEPEST_DESCENT:
+ * MAXEVAL reached", with the stop line "CERES:STEEPEST_DESCENT stopped:
+ * MAXEVAL reached after 7 evaluation(s)"; the host made exactly 7 calls.
+ * Before the fix: no status (the trailer said COMPLETED). */
+TEST_CASE("End status: CERES records a spent MAXEVAL as MAXEVAL reached",
+          "[HPO][stop_status][ceres]")
+{
+    auto sp = make_spec("CERES", "STEEPEST_DESCENT", {-1.0, -1.0}, {1.0, 1.0},
+                        {0.5, -0.3});
+    sp.stop.maxeval = 7;
+    LoggedRun lr;
+    StubHost host{bowl};
+    const std::string journal = run_ceres(sp, host, lr);
+    CHECK(host.n() == 7u);
+    CHECK(journal.find("CERES:STEEPEST_DESCENT stopped: MAXEVAL reached "
+                       "after 7 evaluation(s)") != std::string::npos);
+    CHECK(lr.status() == "CERES:STEEPEST_DESCENT: MAXEVAL reached");
+}
+
+/* Pins: MAXEVAL 1 under LBFGS: the loss at the start is the only
+ * evaluation, its gradient is refused for the budget ("Initial cost and
+ * jacobian evaluation failed."), and the status is "CERES:LBFGS: MAXEVAL
+ * reached".
+ * Before the fix: no status. */
+TEST_CASE("End status: CERES records MAXEVAL spent at its first gradient",
+          "[HPO][stop_status][ceres]")
+{
+    auto sp = make_spec("CERES", "LBFGS", {-1.0, -1.0}, {1.0, 1.0},
+                        {0.5, -0.3});
+    sp.stop.maxeval = 1;
+    LoggedRun lr;
+    StubHost host{bowl};
+    const std::string journal = run_ceres(sp, host, lr);
+    CHECK(host.n() == 1u);
+    CHECK(journal.find("Initial cost and jacobian evaluation failed.") !=
+          std::string::npos);
+    CHECK(lr.status() == "CERES:LBFGS: MAXEVAL reached");
+}
+
+/* Pins: PARAM tol_gradinf 1e3 (Ceres' gradient_tolerance, a max-norm)
+ * holds at the start: Ceres converges with "Gradient tolerance reached"
+ * after the loss and its 4-point stencil, and the status is "CERES:LBFGS:
+ * tol_gradinf reached"; the stop line gives the value, "PARAM tol_gradinf
+ * = 1000".
+ * Before the fix: no status. */
+TEST_CASE("End status: CERES records its gradient tolerance as tol_gradinf "
+          "reached", "[HPO][stop_status][ceres]")
+{
+    auto sp = make_spec("CERES", "LBFGS", {-1.0, -1.0}, {1.0, 1.0},
+                        {0.5, -0.3});
+    sp.stop.maxeval = 200;
+    sp.param["tol_gradinf"] = 1e3;
+    LoggedRun lr;
+    StubHost host{bowl};
+    const std::string journal = run_ceres(sp, host, lr);
+    CHECK(host.n() == 5u);
+    CHECK(journal.find("CERES:LBFGS stopped: tol_gradinf reached after 5 "
+                       "evaluation(s): PARAM tol_gradinf = 1000; Ceres: "
+                       "Gradient tolerance reached.") != std::string::npos);
+    CHECK(lr.status() == "CERES:LBFGS: tol_gradinf reached");
+}
+
+/* Pins: FTOL_REL 1e-2 (Ceres' function_tolerance) on the quartic, whose
+ * loss falls slowly near its minimum: Ceres converges with "Function
+ * tolerance reached", the status is "CERES:LBFGS: FTOL_REL reached" and
+ * the stop line gives "FTOL_REL = 0.01".
+ * Before the fix: no status. */
+TEST_CASE("End status: CERES records its function tolerance as FTOL_REL "
+          "reached", "[HPO][stop_status][ceres]")
+{
+    auto sp = make_spec("CERES", "LBFGS", {-1.0, -1.0}, {1.0, 1.0},
+                        {0.5, -0.3});
+    sp.stop.maxeval = 500;
+    sp.stop.ftol_rel = 1e-2;
+    LoggedRun lr;
+    StubHost host{quartic};
+    const std::string journal = run_ceres(sp, host, lr);
+    CHECK(host.n() < 500u);
+    CHECK(journal.find("CERES:LBFGS stopped: FTOL_REL reached after ") !=
+          std::string::npos);
+    CHECK(journal.find(": FTOL_REL = 0.01; Ceres: Function tolerance "
+                       "reached.") != std::string::npos);
+    CHECK(lr.status() == "CERES:LBFGS: FTOL_REL reached");
+}
+
+/* Pins: on the bowl with FTOL_REL and PARAM tol_gradinf too small to
+ * fire, Ceres' parameter tolerance (XTOL_REL, by default 1e-8) ends the
+ * search: "Parameter tolerance reached", the status "CERES:LBFGS:
+ * XTOL_REL reached", and the stop line says the value is the default,
+ * "XTOL_REL = 1e-08 (default)".
+ * Before the fix: no status. */
+TEST_CASE("End status: CERES records its parameter tolerance as XTOL_REL "
+          "reached", "[HPO][stop_status][ceres]")
+{
+    auto sp = make_spec("CERES", "LBFGS", {-1.0, -1.0}, {1.0, 1.0},
+                        {0.5, -0.3});
+    sp.stop.maxeval = 2000;
+    sp.stop.ftol_rel = 1e-300;
+    sp.param["tol_gradinf"] = 1e-300;
+    LoggedRun lr;
+    StubHost host{bowl};
+    const std::string journal = run_ceres(sp, host, lr);
+    CHECK(host.n() < 2000u);
+    CHECK(journal.find(": XTOL_REL = 1e-08 (default); Ceres: Parameter "
+                       "tolerance reached.") != std::string::npos);
+    CHECK(lr.status() == "CERES:LBFGS: XTOL_REL reached");
+}
+
+/* Pins: PARAM max_iter 1 (Ceres' max_num_iterations): Ceres ends with
+ * NO_CONVERGENCE "Maximum number of iterations reached.", and the status
+ * is "CERES:STEEPEST_DESCENT: max_iter reached", the stop line "PARAM
+ * max_iter = 1".
+ * Before the fix: no status. */
+TEST_CASE("End status: CERES records its iteration cap as max_iter reached",
+          "[HPO][stop_status][ceres]")
+{
+    auto sp = make_spec("CERES", "STEEPEST_DESCENT", {-1.0, -1.0}, {1.0, 1.0},
+                        {0.5, -0.3});
+    sp.stop.maxeval = 200;
+    sp.param["max_iter"] = 1.0;
+    LoggedRun lr;
+    StubHost host{bowl};
+    const std::string journal = run_ceres(sp, host, lr);
+    CHECK(host.n() < 200u);
+    CHECK(journal.find(": PARAM max_iter = 1; Ceres: Maximum number of "
+                       "iterations reached.") != std::string::npos);
+    CHECK(lr.status() == "CERES:STEEPEST_DESCENT: max_iter reached");
+}
+
+/* A genuine FAILURE: on the steep bowl 1 + 100 (x - 0.1)^2 from 0.5, the
+ * Armijo line search of STEEPEST_DESCENT may try one step size only
+ * (PARAM max_ls_iter 1), and its first one, 1/|g| = 0.0125, overshoots to
+ * -0.5, where the loss is higher: no valid step, "Numerical failure in line
+ * search", with most of MAXEVAL 200 left.
+ * Pins: the search ends after a handful of evaluations with the status
+ * "STOPPED -- CERES:STEEPEST_DESCENT: FAILURE (Numerical failure in line
+ * search, ...)" -- Ceres' message verbatim, the class of NLopt's
+ * "STOPPED -- nlopt roundoff-limited" -- and the journal's WARNING.
+ * Before the fix: the WARNING, and no status. */
+TEST_CASE("End status: CERES records a line-search failure as STOPPED with "
+          "Ceres' message", "[HPO][stop_status][ceres]")
+{
+    auto sp = make_spec("CERES", "STEEPEST_DESCENT", {-1.0}, {1.0}, {0.5});
+    sp.stop.maxeval = 200;
+    sp.param["max_ls_iter"] = 1.0;
+    LoggedRun lr;
+    StubHost host{[](const Vec& x) {
+        const double d = x(0) - 0.1;
+        return 1.0 + 100.0 * d * d;
+    }};
+    const std::string journal = run_ceres(sp, host, lr);
+    CHECK(host.n() < 20u);
+    CHECK_THAT(lr.status(),
+               Catch::StartsWith("STOPPED -- CERES:STEEPEST_DESCENT: FAILURE "
+                                 "(Numerical failure in line search") &&
+               Catch::EndsWith(")"));
+    CHECK(journal.find("CERES:STEEPEST_DESCENT -- non-convergent: Numerical "
+                       "failure in line search") != std::string::npos);
+}
+#endif  // TADAH_USE_CERES
