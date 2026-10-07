@@ -19,6 +19,7 @@
 #include <cctype>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace tadah::hpo { bool try_parse_double(const std::string& s, double& value); }
 
@@ -217,6 +218,84 @@ bool try_parse_double(const std::string& s, double& value)
 static bool is_option_token(const std::string& s)
 {
     return !s.empty() && s[0] == '-' && !is_number_shaped(s);
+}
+
+/* HPO's "--" options on a PC_LAMMPS or PC_FAILPROBE line, and which line
+ * takes each. parse_tokens() reads all but --gate and --s0, which
+ * HPOTargets reads and removes from a PC_FAILPROBE line before LammpsSim
+ * parses it; HPOTargets refuses --varloss, --hotvar and --failvar on a
+ * PC_FAILPROBE line once parse_tokens() has read them (hpo_targets.cpp: the
+ * probe grades failures and must not shape the objective). Every other
+ * option goes to LAMMPS. */
+struct LineOption {
+    const char* name;
+    bool on_lammps;     // a PC_LAMMPS line takes it
+    bool on_failprobe;  // a PC_FAILPROBE line takes it
+};
+
+static const std::vector<LineOption>& line_options()
+{
+    static const std::vector<LineOption> k = {
+        {"--script", true, true},     {"--varloss", true, false},
+        {"--invar", true, true},      {"--outvar", true, true},
+        {"--failscore", true, true},  {"--maxtime", true, true},
+        {"--hotvar", true, false},    {"--failvar", true, false},
+        {"--gate", false, true},      {"--s0", false, true}};
+    return k;
+}
+
+static std::size_t edit_distance(const std::string& a, const std::string& b)
+{
+    std::vector<std::size_t> prev(b.size() + 1), cur(b.size() + 1);
+    for (std::size_t j = 0; j <= b.size(); ++j) prev[j] = j;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        cur[0] = i + 1;
+        for (std::size_t j = 0; j < b.size(); ++j)
+            cur[j + 1] = std::min({prev[j + 1] + 1, cur[j] + 1,
+                                   prev[j] + (a[i] == b[j] ? 0 : 1)});
+        prev.swap(cur);
+    }
+    return prev[b.size()];
+}
+
+/* The refusal of `token`, an option that starts with "--" and is none of
+ * the line's own: LAMMPS has no such option (every command-line option of
+ * src/lammps.cpp, lines 193-490 at the pinned commit 50ce71e2e0, starts
+ * with a single '-', and any other argument is "Invalid command-line
+ * argument"), so it would fail every evaluation. Lists the options the line
+ * takes (line_options()), names the closest of them within two edits (a
+ * typo such as --hotvars), and a PC_FAILPROBE option on a PC_LAMMPS line
+ * as one. */
+static std::string unknown_option_error(const std::string& token,
+                                        bool failprobe)
+{
+    std::vector<std::string> known;
+    std::string note;
+    for (const LineOption& o : line_options()) {
+        if (failprobe ? o.on_failprobe : o.on_lammps)
+            known.push_back(o.name);
+        else if (!failprobe && token == o.name)
+            note = " (a PC_FAILPROBE option)";
+    }
+    if (note.empty()) {
+        std::size_t best = 3;
+        for (const auto& k : known) {
+            const std::size_t d = edit_distance(token, k);
+            if (d < best) {
+                best = d;
+                note = " (did you mean '" + k + "'?)";
+            }
+        }
+    }
+    std::string list;
+    for (std::size_t i = 0; i < known.size(); ++i) {
+        if (i) list += (i + 1 == known.size()) ? " and " : ", ";
+        list += known[i];
+    }
+    return std::string(failprobe ? "PC_FAILPROBE" : "PC_LAMMPS") +
+           ": unknown option '" + token + "'" + note +
+           ": HPO's options are " + list +
+           "; LAMMPS command-line options start with a single '-'";
 }
 
 LammpsSim::LammpsSim() {}
@@ -505,6 +584,13 @@ void LammpsSim::parse_tokens() {
           "--ncpu was removed in 1.6.0 (legacy MPI build); parallelism over "
           "PC_LAMMPS scripts is THREADS / PC_ISOLATION. Delete --ncpu from "
           "this line.");
+    }
+    else if (tokens[i].rfind("--", 0) == 0) {
+      /* None of HPO's options (line_options(): each that parse_tokens()
+       * reads has its branch above), and not a LAMMPS option either:
+       * LAMMPS has none that starts with "--" (unknown_option_error). It
+       * used to go to LAMMPS, and every evaluation failed on it. */
+      throw std::runtime_error(unknown_option_error(tokens[i], is_failprobe));
     }
     else if (is_option_token(tokens[i])) {
       /* A LAMMPS command-line option: it and the values that follow it go

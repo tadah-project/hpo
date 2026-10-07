@@ -860,7 +860,7 @@ TEST_CASE("CERES caps registry exposes the four GradientProblemSolver algos",
         const auto& caps = tadah::hpo::optimizer_caps(library, algo);
         CHECK(caps.is_gradient_based);
         CHECK_FALSE(caps.is_global);
-        CHECK_FALSE(caps.is_population);
+        CHECK_FALSE(caps.reads_population);
         CHECK_FALSE(caps.accepts_inner);
         CHECK(caps.supports_maxeval);
     }

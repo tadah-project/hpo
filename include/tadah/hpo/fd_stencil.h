@@ -58,7 +58,9 @@
  * loss becomes 0.71 sigma/h (central) and sqrt(26)/2 sigma/h = 2.55
  * sigma/h (one-sided). The forward difference is first order (h f''/2,
  * 1.41 sigma/h). Cost: the same number of evaluations as the interior
- * stencil (NUMERICAL evaluates the centre anyway).
+ * stencil: the loss at u, which a one-sided stencil uses, is the one the
+ * caller has just evaluated (GradientProvider::gradient_at), else
+ * evaluated once per gradient.
  *
  * A centre outside the box -- a gradient search that ignores the bounds
  * (OptimizerCaps::ignores_bounds: the CERES drivers) gets one, and so does

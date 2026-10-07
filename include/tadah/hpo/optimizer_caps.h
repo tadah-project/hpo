@@ -31,7 +31,8 @@ struct OptimizerSpec;
  *                       util/rescale.c); rhobeg = |dx_0|, rhoend =
  *                       XTOL_REL*rhobeg
  *   MinCollapsed     -- the vector collapses to min_i |dx_i|
- *                       (LN_NEWUOA, LN_NEWUOA_BOUND, LN_PRAXIS)
+ *                       (LN_NEWUOA, LN_PRAXIS; LN_NEWUOA_BOUND too, which
+ *                       is refused: backend_refusal())
  *   TrustHalfWidth   -- per-dim initial trust-region half-width
  *                       (LD_MMA, LD_CCSAQ)
  *   ForwardedToInner -- copied onto the local sub-optimiser; an OUTER
@@ -63,19 +64,44 @@ struct OptimizerCaps {
 
     /* Algorithmic topology -------------------------------------------- */
     bool is_global          = false;  // GLOBAL search (vs. LOCAL refinement)
-    bool is_population      = false;  // accepts POPULATION
     bool is_gradient_based  = false;  // uses derivatives (NLopt LD_*, DLIB:BFGS)
     bool accepts_inner      = false;  // INNER/ENDINNER sub-optimiser block
     bool accepts_multi_seed = false;  // a single run can consume >1 starting point
 
+    /* The attributes a run reads besides its stops. reject_unread_attributes()
+     * (backend_rules.cpp: TADAH:RANDOM, TADAH:GRID, DLIB:GFS, NLopt) refuses
+     * one the backend never reads; the annealers, ASA, DLIB:BFGS and CERES
+     * refuse them in their own validators, and their flags say the same.
+     *   reads_population     POPULATION: TADAH:ANNEAL_PA's walkers, and
+     *                        NLopt's stochastic population (POP() in nlopt
+     *                        2.10's optimize.c): GN_CRS2_LM, GN_ISRES,
+     *                        GN_ESCH, the six MLSL forms, GD_STOGO_RAND
+     *   reads_vector_storage VECTOR_ARR: the Luksan algorithms of NLopt
+     *                        (optimize.c): LD_LBFGS, LD_VAR1/2, LD_TNEWTON*
+     *   reads_seed           SEED: TADAH:RANDOM, the ANNEAL family, ASA and
+     *                        NLopt (every NLopt algorithm: which of them draw
+     *                        random numbers is not recorded)
+     *   reads_ftol_abs_as_setting  FTOL_ABS as a setting, not a stop (no
+     *                        supports_ftol_abs): DLIB:GFS's solver epsilon
+     *   warns_unread_seed    SEED is not read, but configurations that set it
+     *                        predate the check, so run_dlib_global() warns
+     *                        instead of refusing it (DLIB:GFS) */
+    bool reads_population          = false;
+    bool reads_vector_storage      = false;
+    bool reads_seed                = false;
+    bool reads_ftol_abs_as_setting = false;
+    bool warns_unread_seed         = false;
+
     /* Stop criteria: which fields of StopCriteria end the backend's run
      * when they are met. require_stop() (backend_rules.h) counts these as
      * the stops of a backend that needs one, a tolerance only above 0 (0
-     * or below switches it off); each backend's own validator decides what
-     * it rejects. A key the backend reads for another purpose is not a
-     * stop: DLIB:GFS reads FTOL_ABS as dlib's solver epsilon (the precision
-     * of its local model fits), so its supports_ftol_abs is false. NLopt:
-     * the global algorithms and LD_MMA/LD_CCSAQ/LD_SLSQP list the
+     * or below switches it off), and reject_unread_attributes()
+     * (backend_rules.cpp) refuses a tolerance none of them marks, as the
+     * annealers', ASA's, DLIB:BFGS's and CERES' own validators do. A key the
+     * backend reads for another purpose is not a stop: DLIB:GFS reads
+     * FTOL_ABS as dlib's solver epsilon (the precision of its local model
+     * fits), so its supports_ftol_abs is false (reads_ftol_abs_as_setting).
+     * NLopt: the global algorithms and LD_MMA/LD_CCSAQ/LD_SLSQP list the
      * tolerances their stop tests read (nlopt 2.10 sources, checked by the
      * phase 4c probes); the other NLopt algorithms keep NLopt's generic
      * set. */
@@ -103,6 +129,15 @@ struct OptimizerCaps {
     bool        needs_stop = false;
     const char* stop_note  = "";
 
+    /* The backend ignores NLopt's forced stop (NLopt's StoGO, GD_STOGO and
+     * GD_STOGO_RAND: it tests only NLopt's evaluation count and clock), by
+     * which HPO ends a search -- on a signal, an error, the RESTART
+     * stagnation stop, a spent budget or a withheld loss at STOPVAL: the
+     * objective then refuses every call, and only NLopt's own MAXEVAL ends
+     * the run promptly (MAXTIME only once the rest of it has passed).
+     * require_stop() counts only MAXEVAL as its stop. */
+    bool        ignores_forced_stop = false;
+
     /* How the tolerances end the run when one of them is costly, the last
      * clause of require_stop()'s message and a line of the ALGO help (""
      * for none): DIRECT tests XTOL on every rectangle it divides, the
@@ -110,9 +145,20 @@ struct OptimizerCaps {
      * divided that finely. */
     const char* tolerance_note = "";
 
+    /* Why a tolerance the run does not test has no effect, the reason
+     * clause of reject_unread_attributes()'s refusal ("uniform random
+     * search has no convergence test to apply it to"): a tolerance no
+     * supports_* flag marks, and every tolerance of MLSL and AUGLAG with an
+     * INNER block, which NLopt hands only to the default local optimiser it
+     * creates without one (default_inner). "" for a backend that tests
+     * every tolerance it accepts. */
+    const char* untested_tolerance_note = "";
+
     /* NLopt's MLSL and AUGLAG run a local optimiser inside their run
      * (accepts_inner); with no INNER block NLopt creates this one, handing
-     * it the block's tolerances (nullptr: NLopt requires an INNER block).
+     * it the block's tolerances (nullptr: NLopt has none, so the block needs
+     * an INNER block -- AUGLAG, AUGLAG_EQ, G_MLSL, G_MLSL_LDS --, which
+     * require_inner_backend(), strategy_rules.h, enforces at startup).
      * inner_run_spec() (phase_specs.h) derives the spec that local search
      * runs with. */
     const char* default_inner = nullptr;
@@ -124,8 +170,31 @@ struct OptimizerCaps {
     const char* bounds_note    = "";
 };
 
-/* Lookup capabilities for (lib, algo). Throws std::runtime_error if
- * the (lib, algo) pair is not registered. The result refers to the static
+/* Backends HPO refuses although their library offers them: a defect of
+ * the library version HPO builds makes them unsafe to run (the refusal
+ * table in optimizer_caps.cpp, each entry with its repro). A refused
+ * backend is not registered, so filter_optimizer_caps() and every list of
+ * alternatives leave it out, and find_optimizer_caps() returns nullptr.
+ *
+ * backend_refusal(): why (lib, algo) is refused -- the reason, ending with
+ * the backends to use instead -- or nullptr when it is not refused.
+ *
+ * reject_refused_backend(): throws std::runtime_error
+ * "LIB:ALGO is refused: <reason>" for a refused (lib, algo), prefixed with
+ * "<where>: " when `where` is not empty (the phase: "the EXPLORE block");
+ * a no-op otherwise. optimizer_caps() and the driver rules
+ * (require_driver(), require_inner_driver(), require_inner_backend(),
+ * strategy_rules.h) throw this text, so it is the same everywhere:
+ * "the STRATEGY-level optimiser: NLOPT:LN_NEWUOA_BOUND is refused: NLopt
+ * 2.10 plans each LN_NEWUOA_BOUND step with a nested LD_MMA run ...". */
+const char* backend_refusal(std::string_view lib, std::string_view algo);
+void reject_refused_backend(std::string_view lib, std::string_view algo,
+                            const std::string& where = "");
+
+/* Lookup capabilities for (lib, algo). Throws std::runtime_error if the
+ * (lib, algo) pair is refused (reject_refused_backend()'s text) or not
+ * registered ("unknown optimizer LIB:ALGO (not registered in
+ * optimizer_caps)"). The result refers to the static
  * registry, never to the arguments, and stays valid for the whole run. The
  * names are views: with `const std::string&` parameters every call with a
  * literal bound a temporary std::string, and GCC 13's -Wdangling-reference
@@ -135,6 +204,15 @@ const OptimizerCaps& optimizer_caps(std::string_view lib,
 
 /* Convenience: look up by spec.lib / spec.algo. */
 const OptimizerCaps& optimizer_caps(const OptimizerSpec& sp);
+
+/* The same lookup for a rule that does not own the "unknown optimizer"
+ * error: nullptr when (lib, algo) is not registered (a refused pair is
+ * not). require_inner_backend()
+ * (strategy_rules.h) runs before validate_phase_backends(), which reports an
+ * unregistered LIB:ALGO with the phase and, for the deferred CERES
+ * algorithms, their own message. */
+const OptimizerCaps* find_optimizer_caps(std::string_view lib,
+                                         std::string_view algo);
 
 /* Return all registered backends matching a predicate. Used to compose
  * "compatible alternatives" diagnostics from the live registry instead

@@ -32,9 +32,9 @@
     }
   },
   "evaluations": {
-    "value": 19,
+    "value": 16,
     "tol": 0,
-    "note": "19 since the HPO data hold the free energy and the Cauchy stress (2026-10-01; 18 before). BFGS reaches the upper bound RCUT2B = 6 at eval 9, re-evaluates it at eval 10, which comes out at the rounding level below eval 9 (the ~1e-13 relative re-evaluation noise of the warm-started lattice relaxation) and is the best (1.015561e-01), takes the one-sided gradient (evals 11-12) and re-evaluates the bound at eval 13, where the stagnation window (AFTER_STAGNATION 3) fires; each of the two RESTART rounds then stops after 3 evaluations without a new best: 13 + 3 + 3 = 19 (3 repeated runs identical)."
+    "note": "16 (2026-10-07; 19 before each finite-difference gradient took the loss at its point as its centre instead of evaluating the point again, 18 before the HPO data held the free energy and the Cauchy stress). BFGS reaches the upper bound RCUT2B = 6 at eval 7, the best (1.015561e-01), takes the one-sided gradient (evals 8-9) and re-evaluates the bound at eval 10, where the stagnation window (AFTER_STAGNATION 3) fires; each of the two RESTART rounds then stops after 3 evaluations without a new best: 10 + 3 + 3 = 16 (3 repeated runs identical)."
   },
   "best_ermse_meV_per_atom": 4.79,
   "status_accepted": [
@@ -42,7 +42,7 @@
   ],
   "status_note": "Was COMPLETED: when RESTART used all its restarts and the last launch stagnated again, the journal fell back to the generic status. RestartPolicy now records why the run stopped; the window in the status is AFTER_STAGNATION.",
   "nan_clampings_max": 0,
-  "walltime_hint": "0.4s",
+  "walltime_hint": "0.3s",
   "fast": true,
   "tolerance_rationale": "RESTART RANDOM seeds each restart from std::random_device, so the restart evaluations differ from run to run. Only values that do not depend on them are pinned: the best comes from the deterministic first launch, and each restart stops after exactly AFTER_STAGNATION evaluations because no start in the box beats the incumbent (see evaluations.note)."
 }

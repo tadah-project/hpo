@@ -58,14 +58,15 @@ void validate_ream_density(const core::Context &train_ctx) {
  * model): a construction error here -- a DIMER potential with element-
  * named TYPE2B pairs, a descriptor that refuses its grids -- would fail
  * every evaluation (the run then ends "no evaluation produced a usable
- * loss"). Returns the model's weight count (derive_weight_count).
+ * loss"). Returns the model's weight count (derive_weight_count; SBASIS for
+ * a non-linear M_KRR kernel, which has no basis before training).
  * models::DensityFormError keeps its type and message. */
 std::size_t probe_model(const core::Context &train_ctx) {
   try {
     core::Context c = train_ctx;
     tadah::mlip::memory::MLIPWorkspaceManager ws;
     tadah::mlip::Trainer probe(c, ws);
-    return probe.fb->get_phi_cols(probe.context);
+    return tadah::mlip::model_weight_count(*probe.fb, probe.context);
   } catch (const models::DensityFormError &) {
     throw;
   } catch (const std::exception &e) {
@@ -96,6 +97,26 @@ std::vector<std::string> unbounded_optimisers(const OptimizerSpec &root) {
   return out;
 }
 
+/* Why `s`, which asks for no gradient (obtains_gradients), takes none, as
+ * a clause that follows "NLOPT:GD_MLSL_LDS takes no gradient": "" for a
+ * backend without a local search of its own; for NLopt's MLSL and AUGLAG,
+ * whose local search alone would take one, which search that is:
+ * ": NLopt's MLSL and AUGLAG take a gradient only for their local search,
+ * and the INNER block's NLOPT:LN_BOBYQA takes none". */
+std::string no_gradient_reason(const OptimizerSpec &s) {
+  if (!optimizer_caps(s).accepts_inner) return "";
+  /* validate_run_policy (require_inner_backend) has refused an MLSL or
+   * AUGLAG that runs no local search. */
+  const std::optional<OptimizerSpec> local = inner_run_spec(s);
+  if (!local) return "";
+  return std::string(": NLopt's MLSL and AUGLAG take a gradient only for "
+                     "their local search, and ") +
+         (s.inner ? "the INNER block's " + local->lib + ":" + local->algo
+                  : "NLopt's default local optimiser, " + local->lib + ":" +
+                        local->algo + ",") +
+         " takes none";
+}
+
 /* Why the finite-difference PARAMs of `phase`, which takes no
  * finite-difference gradients with its own settings (takes_fd_gradients),
  * never take effect. */
@@ -111,7 +132,7 @@ std::string fd_params_unused_why(const PhaseSpec &phase) {
            (s.grad_strategy_resolved ? " (the resolution of an unset "
                                        "GRAD_STRATEGY with PC_OBSERVABLE)"
                                      : "");
-  return s.lib + ":" + s.algo + " takes no gradient";
+  return s.lib + ":" + s.algo + " takes no gradient" + no_gradient_reason(s);
 }
 
 /* Why the NOISE block's AUTO has no effect on `phase`, the STRATEGY-level
@@ -123,7 +144,7 @@ std::string noise_auto_unused_why(const PhaseSpec &phase) {
   if (s.lib == "ASA")
     return s.lib + ":" + s.algo + " measures its slopes with probes of its "
            "own (PARAM Delta_X), not with fd_step";
-  return s.lib + ":" + s.algo + " measures no slopes";
+  return s.lib + ":" + s.algo + " measures no slopes" + no_gradient_reason(s);
 }
 
 }  // namespace
@@ -132,7 +153,7 @@ std::size_t derive_weight_count(const core::Context &train_ctx) {
   core::Context ctx_copy = train_ctx;
   tadah::mlip::memory::MLIPWorkspaceManager ws;
   tadah::mlip::Trainer probe(ctx_copy, ws);
-  return probe.fb->get_phi_cols(probe.context);
+  return tadah::mlip::model_weight_count(*probe.fb, probe.context);
 }
 
 RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx) {
@@ -326,7 +347,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * point is ever evaluated outside the box, and the step is not shrunk.
    * A phase that takes none refuses those PARAMs, which would never take
    * effect: an INNER block (it takes the gradient of the phase it runs
-   * in), GRAD_STRATEGY ANALYTICAL, a derivative-free optimiser; the
+   * in), GRAD_STRATEGY ANALYTICAL, a derivative-free optimiser -- which
+   * refuses a GRAD_STRATEGY too; the
    * STRATEGY-level phase refuses the NOISE block's AUTO likewise, which
    * derives fd_step for that phase's finite differences (HPOTargets) and
    * has no effect without them (owner decision D7). ASA's
@@ -358,6 +380,15 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
       if (!e.empty()) throw std::runtime_error(who + ": " + e);
       continue;
     }
+    /* GRAD_STRATEGY on a phase whose optimiser never asks for a gradient
+     * (obtains_gradients: for MLSL and AUGLAG, their local search) never
+     * takes effect either. The value is the user's: PC_OBSERVABLE resolves
+     * an unset one only where gradients are obtained, and an INNER block
+     * has none (the parser refuses it). */
+    if (s.grad_strategy && !phase.inner && !obtains_gradients(s))
+      throw std::runtime_error(who + ": GRAD_STRATEGY never takes effect: " +
+                               s.lib + ":" + s.algo + " takes no gradient" +
+                               no_gradient_reason(s) + "; remove it.");
     /* Only the STRATEGY-level phase carries the NOISE block (spec.noise:
      * EXPLORE and INNER blocks have none). */
     if (!phase.inner && s.noise.autodetect)

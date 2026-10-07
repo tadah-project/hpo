@@ -2,8 +2,10 @@
 
 #include <tadah/hpo/optimizer_caps.h>
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace tadah::hpo {
 
@@ -28,11 +30,55 @@ std::string backend_name(const OptimizerSpec& s)
     return s.lib + ":" + s.algo;
 }
 
+/* The phases as validate_run_policy() names them: the EXPLORE block, and
+ * the optimiser of `s` itself -- under PRESTAGE the refinement.
+ * require_driver()'s refusal, validate_run_policy() and
+ * reject_refused_backends() take them from here, so all three name a phase
+ * alike. */
+constexpr const char* kExploreBlock = "the EXPLORE block";
+
+std::string run_phase_name(const OptimizerSpec& s)
+{
+    return s.strategy_type == StrategyType::PRESTAGE
+               ? "the PRESTAGE refinement"
+               : "the STRATEGY-level optimiser";
+}
+
 /* The backends runs_from_each_start() accepts, sorted (format_caps_list),
  * from the live registry rather than a hard-coded list. */
 std::string multi_start_alternatives()
 {
     return format_caps_list(filter_optimizer_caps(&runs_from_each_start));
+}
+
+/* The backends that run a local search without an INNER block
+ * (OptimizerCaps::default_inner), every one, sorted. */
+std::string with_default_inner()
+{
+    const auto caps = filter_optimizer_caps([](const OptimizerCaps& c) {
+        return c.accepts_inner && c.default_inner != nullptr;
+    });
+    return format_caps_list(caps, caps.size());
+}
+
+/* NLopt's default local optimisers, "LD_MMA or LN_COBYLA", from the
+ * registry. */
+std::string default_inner_algorithms()
+{
+    std::vector<std::string> algos;
+    for (const auto* c : filter_optimizer_caps([](const OptimizerCaps& k) {
+             return k.default_inner != nullptr;
+         }))
+        if (std::find(algos.begin(), algos.end(), c->default_inner) ==
+            algos.end())
+            algos.push_back(c->default_inner);
+    std::sort(algos.begin(), algos.end());
+    std::string out;
+    for (std::size_t i = 0; i < algos.size(); ++i) {
+        if (i) out += (i + 1 == algos.size()) ? " or " : ", ";
+        out += algos[i];
+    }
+    return out;
 }
 
 struct StrategyTypeKey {
@@ -75,7 +121,13 @@ const char* strategy_type_name(StrategyType type)
 void require_driver(const OptimizerSpec& s, DriverPhase phase)
 {
     const std::string missing = missing_driver(s);
-    if (missing.empty()) return;
+    if (missing.empty()) {
+        reject_refused_backend(s.lib, s.algo,
+                               phase == DriverPhase::Explore
+                                   ? std::string(kExploreBlock)
+                                   : run_phase_name(s));
+        return;
+    }
     if (phase == DriverPhase::Explore)
         throw std::runtime_error(
             "the EXPLORE block names no optimiser: " + missing +
@@ -103,7 +155,11 @@ void require_driver(const OptimizerSpec& s, DriverPhase phase)
 void require_inner_driver(const OptimizerSpec& s, const std::string& enclosing)
 {
     const std::string missing = missing_driver(s);
-    if (missing.empty()) return;
+    if (missing.empty()) {
+        reject_refused_backend(s.lib, s.algo,
+                               "the INNER block inside " + enclosing);
+        return;
+    }
     throw std::runtime_error(
         "the INNER block inside " + enclosing + " names no optimiser: " +
         missing + "; set LIB and ALGO inside the INNER block (the local "
@@ -113,9 +169,27 @@ void require_inner_driver(const OptimizerSpec& s, const std::string& enclosing)
 void require_inner_backend(const OptimizerSpec& parent,
                            const std::string& phase)
 {
+    const std::string name = backend_name(parent);
+    /* NLopt refuses MLSL or AUGLAG without a local optimiser when it has no
+     * default one ("local optimizer must be specified for AUGLAG",
+     * optimize.c). An unregistered LIB:ALGO is validate_backend()'s to
+     * report (find_optimizer_caps). */
+    const OptimizerCaps* caps = find_optimizer_caps(parent.lib, parent.algo);
+    if (caps && caps->accepts_inner && !caps->default_inner && !parent.inner)
+        throw std::runtime_error(
+            name + " needs an INNER block" +
+            (phase.empty() ? "" : " (" + phase + ")") +
+            ": NLopt has no default local optimiser for it; add INNER ... "
+            "ENDINNER with LIB NLOPT and a local ALGO such as LN_BOBYQA, or "
+            "use one of " + with_default_inner() + ", which run " +
+            default_inner_algorithms() + " without one");
     if (!parent.inner) return;
     const OptimizerSpec& inner = *parent.inner;
-    const std::string name = backend_name(parent);
+    /* A refused INNER optimiser, with the INNER block's phase: NLopt would
+     * run it inside the enclosing run (build_nlopt). */
+    reject_refused_backend(inner.lib, inner.algo,
+                           "the INNER block of " +
+                               (phase.empty() ? name : phase));
     if (!optimizer_caps(parent).accepts_inner) {
         const std::string where =
             phase.empty() ? "" : " (the INNER block of " + phase + ")";
@@ -133,6 +207,16 @@ void require_inner_backend(const OptimizerSpec& parent,
             " names " + backend_name(inner) + ", but " + name + " runs its "
             "INNER search with NLopt: set LIB NLOPT and an NLopt ALGO (such "
             "as LN_BOBYQA) inside the INNER block");
+    /* An INNER search that itself needs an INNER block: the grammar has no
+     * INNER inside INNER, and NLopt refused it inside the enclosing run
+     * with only "nlopt invalid argument". */
+    const OptimizerCaps* inner_caps = find_optimizer_caps(inner.lib, inner.algo);
+    if (inner_caps && inner_caps->accepts_inner && !inner_caps->default_inner)
+        throw std::runtime_error(
+            "the INNER block of " + (phase.empty() ? name : phase) +
+            " names " + backend_name(inner) + ", which needs an INNER block "
+            "of its own; INNER blocks do not nest: pick a local algorithm "
+            "such as LN_BOBYQA");
 }
 
 bool runs_from_each_start(const OptimizerCaps& caps)
@@ -199,10 +283,29 @@ void validate_run_policy(const OptimizerSpec& spec)
             require_driver(spec, DriverPhase::Run);
             break;
     }
-    const bool prestage = spec.strategy_type == StrategyType::PRESTAGE;
-    require_inner_backend(spec, prestage ? "the PRESTAGE refinement"
-                                         : "the STRATEGY-level optimiser");
-    if (prestage) require_inner_backend(*spec.prestage, "the EXPLORE block");
+    require_inner_backend(spec, run_phase_name(spec));
+    if (spec.strategy_type == StrategyType::PRESTAGE)
+        require_inner_backend(*spec.prestage, kExploreBlock);
+}
+
+void reject_refused_backends(const OptimizerSpec& spec)
+{
+    /* validate_run_policy()'s order: the exploration, the STRATEGY-level
+     * optimiser, its INNER block, the exploration's INNER block. */
+    const OptimizerSpec* explore =
+        spec.strategy_type == StrategyType::PRESTAGE ? spec.prestage.get()
+                                                     : nullptr;
+    const std::string run = run_phase_name(spec);
+    if (explore)
+        reject_refused_backend(explore->lib, explore->algo, kExploreBlock);
+    reject_refused_backend(spec.lib, spec.algo, run);
+    if (spec.inner)
+        reject_refused_backend(spec.inner->lib, spec.inner->algo,
+                               "the INNER block of " + run);
+    if (explore && explore->inner)
+        reject_refused_backend(explore->inner->lib, explore->inner->algo,
+                               std::string("the INNER block of ") +
+                                   kExploreBlock);
 }
 
 bool is_strategy_type_key(const std::string& key)

@@ -907,10 +907,14 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
      * stencil probed -5e-7 (u = -1e-6 of the width 0.5), which was
      * projected and recorded at 0, and its derivative was half the
      * one-sided slope; the stencil is now one-sided into the box
-     * (fd_stencil.h, owner decision 2026-09-29, C4): the centre, then
-     * 5e-7 and 1e-6, and nothing is projected. The journal names the
+     * (fd_stencil.h, owner decision 2026-09-29, C4): the loss at the seed,
+     * then 5e-7 and 1e-6, and nothing is projected. The journal names the
      * one-sided difference and DIAGNOSTICS counts it (D4, design 2026-09-29),
-     * and no warning names a finite-difference kernel. */
+     * and no warning names a finite-difference kernel.
+     * Pins: the seed 0, then its stencil 5e-7 and 1e-6: the gradient takes
+     * the loss dlib has just evaluated at the seed as its centre.
+     * Before the fix: the seed twice (0, 0, 5e-7, 1e-6): the gradient
+     * evaluated its point a second time. */
     Journal j;
     Host::reset_globals_for_test();
     ForceRebuildGuard rebuild;
@@ -930,13 +934,12 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
     CHECK(HPOLog::instance().form_projections() == 0);
     const auto loss_rows = table_rows("loss.tadah");
     const auto par_rows  = table_rows("params.tadah");
-    REQUIRE(loss_rows.size() >= 4);
+    REQUIRE(loss_rows.size() >= 3);
     REQUIRE(par_rows.size() == loss_rows.size());
     /* the value at the seed, then the gradient's stencil there */
     CHECK(par_rows[0].back() == 0.0);
-    CHECK(par_rows[1].back() == 0.0);
-    CHECK(par_rows[2].back() == Approx(5e-7).epsilon(1e-12));
-    CHECK(par_rows[3].back() == Approx(1e-6).epsilon(1e-12));
+    CHECK(par_rows[1].back() == Approx(5e-7).epsilon(1e-12));
+    CHECK(par_rows[2].back() == Approx(1e-6).epsilon(1e-12));
     for (std::size_t i = 0; i < loss_rows.size(); ++i) {
       CAPTURE(i);
       CHECK(loss_rows[i].back() < fs_score);   // never the failure sentinel
@@ -964,7 +967,10 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
     /* Ceres' rule, the default under NONE: its central stencil at 0 probed
      * -2^-26, which was projected onto 0 and took half the slope (the
      * Ceres library could not be bounded); Tadah evaluates the rule now,
-     * one-sided into the box: 2^-26 and 2^-25 (owner decision D2(a)). */
+     * one-sided into the box: 2^-26 and 2^-25 (owner decision D2(a)).
+     * Pins: the seed 0, then its stencil 2^-26 and 2^-25 (the gradient
+     * takes the loss at the seed as its centre).
+     * Before the fix: the seed twice (0, 0, 2^-26, 2^-25). */
     Journal j;
     Host::reset_globals_for_test();
     ForceRebuildGuard rebuild;
@@ -986,10 +992,10 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
     }
     CHECK(HPOLog::instance().form_projections() == 0);
     const auto par_rows = table_rows("params.tadah");
-    REQUIRE(par_rows.size() >= 4);
-    CHECK(par_rows[1].back() == 0.0);
-    CHECK(par_rows[2].back() == Approx(0x1p-26).epsilon(1e-6));
-    CHECK(par_rows[3].back() == Approx(0x1p-25).epsilon(1e-6));
+    REQUIRE(par_rows.size() >= 3);
+    CHECK(par_rows[0].back() == 0.0);
+    CHECK(par_rows[1].back() == Approx(0x1p-26).epsilon(1e-6));
+    CHECK(par_rows[2].back() == Approx(0x1p-25).epsilon(1e-6));
     for (const auto& row : par_rows) CHECK(row.back() >= 0.0);
     const std::string txt = j.finish();
     CHECK(txt.find("Positive-form projection") == std::string::npos);

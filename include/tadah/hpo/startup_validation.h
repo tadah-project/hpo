@@ -13,7 +13,9 @@ namespace hpo {
 
 /** Derive the total model weight count K from the training configuration
  *  alone (no data): build the Trainer on a copy of the context and query
- *  the basis-function column count. A configuration whose model does not
+ *  the basis-function column count, or SBASIS for a non-linear M_KRR
+ *  kernel, whose basis vectors training draws from the data
+ *  (mlip::model_weight_count). A configuration whose model does not
  *  build throws (the construction error; models::DensityFormError for an
  *  invalid DM_REAM density): every evaluation would fail on it. */
 std::size_t derive_weight_count(const core::Context &train_ctx);

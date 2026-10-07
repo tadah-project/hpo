@@ -10,7 +10,8 @@
 //
 // PC_LAMMPS --ncpu (the per-sim rank count of the legacy MPI build, removed
 // in 1.6.0) is rejected at parse time with the removal hint and the line
-// number, rather than being ignored or passed to LAMMPS.
+// number, rather than being ignored or passed to LAMMPS. So is any other
+// option that starts with "--" and is not one of HPO's: LAMMPS has none.
 
 #include "catch2/catch.hpp"
 
@@ -202,6 +203,86 @@ TEST_CASE("HPOTargets: PC_LAMMPS --ncpu is rejected with the removal hint",
                 "--ncpu was removed in 1.6.0 (legacy MPI build)"));
             CHECK_THAT(msg, Catch::Contains("THREADS / PC_ISOLATION"));
             CHECK_THAT(msg, Catch::Contains("Line: " + c.line));
+        }
+    }
+}
+
+/* Pins: an option that starts with "--" and is not one of HPO's (a typo
+ * such as --hotvars, or PC_FAILPROBE's --gate on a PC_LAMMPS line) is an
+ * error at its line naming HPO's options, with the closest one when it is
+ * a near miss; on a PC_FAILPROBE line the list and the closest one are the
+ * options a probe line takes: --gate and --s0, and not --varloss, --hotvar
+ * or --failvar, which it refuses. LAMMPS has no "--" option
+ * (src/lammps.cpp at the pinned commit).
+ * Before the fix: the constructor accepted the --hotvars, --gate and --foo
+ * lines and passed the token and its values to LAMMPS as command-line
+ * arguments; every evaluation then failed ("ERROR: Invalid command-line
+ * argument: --hotvars") and the run spent its whole MAXEVAL before ending
+ * with no usable loss. The --varlos line, which then had no --varloss, was
+ * refused with "Error on line 10: LammpsSim: --varloss variable is not
+ * defined.".
+ * Before the review fix: the PC_FAILPROBE list also named --varloss,
+ * --hotvar and --failvar, and --hotvars there was answered "did you mean
+ * '--hotvar'?", which the probe line refuses ("PC_FAILPROBE must not
+ * declare --hotvar/--failvar"). */
+TEST_CASE("HPOTargets: an unknown -- option on a PC_LAMMPS or PC_FAILPROBE "
+          "line is rejected at its line", "[hpo_targets][parse][lammps_sim]")
+{
+    tadah::core::PeriodicTable::initialize();
+    auto ctx = make_context_for_targets();
+    const auto script = write_script(2);
+    const std::string ok_line = "PC_LAMMPS --script " + script.string()
+                              + " --varloss " + var_name(1) + " 1.0 1.0";
+    const std::string hpo_options =
+        "--script, --varloss, --invar, --outvar, --failscore, --maxtime, "
+        "--hotvar and --failvar";
+    const std::string probe_options =
+        "--script, --invar, --outvar, --failscore, --maxtime, --gate and "
+        "--s0";
+    const std::string lammps_note =
+        "; LAMMPS command-line options start with a single '-'";
+
+    struct Case { std::string name, line, message; };
+    const std::vector<Case> cases = {
+        {"--hotvars on PC_LAMMPS",
+         "PC_LAMMPS --script " + script.string() + " --varloss "
+             + var_name(2) + " 1.0 1.0 --hotvars a0 1 2",
+         "PC_LAMMPS: unknown option '--hotvars' (did you mean '--hotvar'?): "
+         "HPO's options are " + hpo_options + lammps_note},
+        {"--varlos on PC_LAMMPS",
+         "PC_LAMMPS --script " + script.string() + " --varlos "
+             + var_name(2) + " 1 1",
+         "PC_LAMMPS: unknown option '--varlos' (did you mean '--varloss'?): "
+         "HPO's options are " + hpo_options + lammps_note},
+        {"--gate on PC_LAMMPS",
+         "PC_LAMMPS --script " + script.string() + " --varloss "
+             + var_name(2) + " 1.0 1.0 --gate 0.5",
+         "PC_LAMMPS: unknown option '--gate' (a PC_FAILPROBE option): HPO's "
+         "options are " + hpo_options + lammps_note},
+        {"--foo on PC_FAILPROBE",
+         "PC_FAILPROBE --script " + script.string() + " --outvar "
+             + var_name(2) + " --foo",
+         "PC_FAILPROBE: unknown option '--foo': HPO's options are " +
+             probe_options + lammps_note},
+        {"--hotvars on PC_FAILPROBE",
+         "PC_FAILPROBE --script " + script.string() + " --outvar "
+             + var_name(2) + " --s0 0.5 --hotvars h 1 2",
+         "PC_FAILPROBE: unknown option '--hotvars': HPO's options are " +
+             probe_options + lammps_note},
+    };
+    for (const auto& c : cases) {
+        INFO(c.name);
+        const std::string head = config_head() + ok_line + "\n";
+        const long bad_line = std::count(head.begin(), head.end(), '\n') + 1;
+        const auto cfg_path = write_file("cfg_unknown_option",
+                                         head + c.line + "\n");
+        try {
+            tadah::hpo::HPOTargets trg(ctx, cfg_path.string());
+            FAIL_CHECK("the unknown option was accepted");
+        } catch (const std::runtime_error& e) {
+            CHECK(std::string(e.what()) ==
+                  "Error on line " + std::to_string(bad_line) + ": " +
+                      c.message + "\nLine: " + c.line);
         }
     }
 }

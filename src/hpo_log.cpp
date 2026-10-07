@@ -584,6 +584,22 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         std::lock_guard<std::mutex> lg(mtx_);
         f_ << "  Inner stop criteria:\n";
         write_stop_criteria(sp.inner->stop, "    ");
+        /* NLopt hands each local search an evaluation limit in its own
+         * count, objective calls, and the objective cannot tell the local
+         * searches apart: the INNER MAXEVAL keeps that count (owner
+         * decision, 2026-10-07), while run_nlopt counts the enclosing
+         * block's MAXEVAL in evaluations. The two differ for a gradient
+         * search. */
+        bool inner_gradient = false;
+        try {
+            inner_gradient = optimizer_caps(*sp.inner).is_gradient_based;
+        } catch (const std::exception&) {}
+        if (sp.inner->stop.maxeval && inner_gradient)
+            f_ << "    (MAXEVAL here counts the NLopt calls of each local "
+                  "search, not its evaluations: a call evaluates the loss "
+                  "and its gradient; the MAXEVAL of the enclosing block "
+                  "counts every evaluation of the run, each loss, each "
+                  "finite-difference point and each analytical gradient)\n";
         if (stop_is_empty(sp.inner->stop)) {
             const bool is_mlsl = (sp.lib == "NLOPT" &&
                 (sp.algo == "G_MLSL" || sp.algo == "G_MLSL_LDS"));

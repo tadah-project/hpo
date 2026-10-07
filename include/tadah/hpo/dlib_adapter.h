@@ -284,8 +284,10 @@ template<class HostT>
     /* find_min_global (MaxLIPO+TR) is a deterministic algorithm; a
      * SEED on this spec is never consulted. DLIB:BFGS rejects SEED
      * outright, but GFS configs with SEED already exist in the wild,
-     * so warn instead of throwing. (INIT-block SEED is unaffected --
-     * it feeds the INIT chain, whose points are consumed below.) */
+     * so warn instead of throwing (OptimizerCaps::warns_unread_seed, which
+     * keeps validate_dlib_gfs_spec from refusing it). (INIT-block SEED is
+     * unaffected -- it feeds the INIT chain, whose points are consumed
+     * below.) */
     if (sp.seed) {
       const std::string msg =
           "DLIB:GFS (find_min_global, MaxLIPO+TR) is deterministic; "
@@ -532,9 +534,9 @@ template<class Vec,class Runner>
      * after the loss there, and after each line search at the point the
      * search ended on -- the last point it evaluated (backtracking_line_search
      * evaluates the loss alone and returns the step it evaluated last) --
-     * and HYBRID then takes that loss as the loss at the point
-     * (gradient_at) when the point is the same doubles and nothing was
-     * evaluated since. */
+     * and NUMERICAL and HYBRID then take that loss as the loss at the
+     * point (gradient_at), without evaluating the point again, when it is
+     * the same doubles and nothing was evaluated since. */
     struct LastEval {
         matrix<double,0,1> x;
         double             y = 0.0;

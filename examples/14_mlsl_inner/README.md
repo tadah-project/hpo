@@ -12,5 +12,13 @@ What this shows:
 - `POPULATION` caps the parallel-population size in algorithms that
   use one.
 
-The `INNER` block is mandatory for any AUGLAG- or MLSL-family algo;
-the parser fails the config without it.
+`G_MLSL_LDS` has no default local optimiser, so the `INNER` block is
+required here: without it startup refuses the config, before any data is
+loaded (`NLOPT:G_MLSL_LDS needs an INNER block (the STRATEGY-level
+optimiser): NLopt has no default local optimiser for it; ...`). The same
+holds for `G_MLSL`, `AUGLAG` and `AUGLAG_EQ`. The other MLSL and AUGLAG
+forms run without one: `GN_MLSL`, `GN_MLSL_LDS`, `LN_AUGLAG` and
+`LN_AUGLAG_EQ` use NLopt's `LN_COBYLA`, and `GD_MLSL`, `GD_MLSL_LDS`,
+`LD_AUGLAG` and `LD_AUGLAG_EQ` use `LD_MMA`. An `INNER` block replaces
+that default, and the local search alone decides whether the run takes a
+gradient.

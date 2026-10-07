@@ -76,9 +76,9 @@ inline void detail::run_inner_dispatch(const OptimizerSpec& spec,
    * autodiff -- both belong to a later phase. */
   reject_deferred_ceres_nlls(spec);
 
-  /* Caps lookup throws if (lib, algo) is not registered, giving a
-   * single, uniform "unknown optimizer" error instead of a fall-through
-   * at the end of the dispatch chain. */
+  /* Caps lookup throws if (lib, algo) is refused (the refusal table,
+   * optimizer_caps.h) or not registered, giving a single, uniform error
+   * instead of a fall-through at the end of the dispatch chain. */
   (void)optimizer_caps(spec);
 
   /* Registry-driven STEP policy, re-checked here for specs assembled at

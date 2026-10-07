@@ -122,6 +122,10 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
             "an NLopt global algorithm");
     if (sp.pop)
         throw std::runtime_error("CERES:" + algo + " does not support POPULATION");
+    /* GradientProblemSolver draws no random numbers; DLIB:BFGS refuses SEED
+     * likewise. */
+    if (sp.seed)
+        throw std::runtime_error("CERES:" + algo + " does not support SEED");
     if (sp.num_threads)
         throw std::runtime_error("CERES:" + algo + " does not support THREADS "
             "(host evaluation is single-threaded inside one optimizer step)");
@@ -239,8 +243,9 @@ public:
             *cost = y;
 
             if (gradient) {
-                /* y is the loss of exactly x, just evaluated: HYBRID takes
-                 * it as the loss at the point (gradient_at). */
+                /* y is the loss of exactly x, just evaluated: NUMERICAL
+                 * and HYBRID take it as the loss at the point
+                 * (gradient_at) and do not evaluate x again. */
                 Vec g;
                 if (!gp_->gradient_at(x, y, g)) {
                     const GradientFailure k = gp_->failure->kind;

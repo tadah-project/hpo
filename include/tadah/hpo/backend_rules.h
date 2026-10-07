@@ -50,7 +50,11 @@ RestartStop restart_stop_armed()
  * MAXEVAL, MAXTIME and STOPVAL, a tolerance above 0 its stop tests read (the
  * caps' supports_* flags; NLopt switches a tolerance of 0 or below off, and
  * ANNEAL_PT's best-stall rule arms only above 0), and the RESTART
- * stagnation stop (`restart`). Throws std::runtime_error naming the
+ * stagnation stop (`restart`) -- only MAXEVAL for a backend that ignores
+ * NLopt's forced stop (OptimizerCaps::ignores_forced_stop: GD_STOGO,
+ * GD_STOGO_RAND), which only NLopt's own count ends promptly once HPO has
+ * to stop it (its clock, only after the rest of MAXTIME). Throws
+ * std::runtime_error naming the
  * backend, why, and the stops it honours when `spec` sets none of them,
  * e.g. "NLOPT:GN_ESCH needs a stop: ...; set MAXEVAL, MAXTIME or STOPVAL
  * (it honours no tolerance)", followed by the caps' tolerance_note, if any.
@@ -71,27 +75,59 @@ bool sets_own_stop(const OptimizerSpec& spec);
  * stop; a no-op when `parent` runs none. */
 void require_inner_run_stop(const OptimizerSpec& parent, RestartStop restart);
 
-/* TADAH:RANDOM: no PARAM, and require_stop() (MAXEVAL, MAXTIME or
+/* What a spec validate_backend() checks configures: a phase's own
+ * optimiser, or the search an INNER block runs (strategy_phase_specs():
+ * PhaseSpec::inner), whose STOPVAL is the enclosing block's. It changes only
+ * where a refusal of an untested tolerance says to set a stop. */
+enum class SpecRole { Phase, Inner };
+
+/* Each validator below refuses an attribute its backend never reads, with
+ * the same rule (reject_unread_attributes, backend_rules.cpp, from the
+ * caps: optimizer_caps.h):
+ *   - a tolerance its run does not test: no supports_* flag marks it (but
+ *     DLIB:GFS's FTOL_ABS, its solver epsilon), or it is set on NLopt's
+ *     MLSL or AUGLAG with an INNER block, which NLopt hands only to the
+ *     default local optimiser it creates without one. "TADAH:RANDOM does
+ *     not support FTOL_REL: uniform random search has no convergence test
+ *     to apply it to; stop it with MAXEVAL, MAXTIME or STOPVAL". The
+ *     refusal on an MLSL or AUGLAG says to set it in the INNER block when
+ *     that block's search tests it, and otherwise names the stops that
+ *     search honours ("...; the INNER block's NLOPT:GN_ESCH does not test
+ *     it either: stop that search with MAXEVAL or MAXTIME in the INNER
+ *     block, or MAXEVAL, MAXTIME or STOPVAL in the NLOPT:AUGLAG block, which
+ *     NLopt hands on to it");
+ *   - POPULATION, VECTOR_ARR or SEED it does not read (reads_population,
+ *     reads_vector_storage, reads_seed): "NLOPT:LN_BOBYQA does not use
+ *     POPULATION; remove it (it is read by ...)". DLIB:GFS's SEED is
+ *     reported with a warning when it runs (warns_unread_seed). */
+
+/* TADAH:RANDOM: no PARAM, no attribute it never reads (the tolerances,
+ * POPULATION, VECTOR_ARR), and require_stop() (MAXEVAL, MAXTIME or
  * STOPVAL). */
 void validate_random_spec(const OptimizerSpec& spec, RestartStop restart);
 
-/* DLIB:GFS: no PARAM; FTOL_REL, XTOL_REL and XTOL_ABS are rejected
- * (find_min_global has no convergence test to apply them to; FTOL_ABS is
- * its solver epsilon); require_stop() (MAXEVAL, MAXTIME or STOPVAL). */
+/* DLIB:GFS: no PARAM; FTOL_REL, XTOL_REL, XTOL_ABS, POPULATION and
+ * VECTOR_ARR are rejected (find_min_global has no convergence test to apply
+ * the tolerances to, and no population or vector storage; FTOL_ABS is its
+ * solver epsilon); require_stop() (MAXEVAL, MAXTIME or STOPVAL). */
 void validate_dlib_gfs_spec(const OptimizerSpec& spec, RestartStop restart);
 
 /* TADAH:GRID: STEP is rejected (it is not the grid resolution), PARAM
- * GRID_POINTS is an integer >= 2 (default 20) and the only PARAM. Returns
- * the number of grid points per dimension. */
+ * GRID_POINTS is an integer >= 2 (default 20) and the only PARAM, and the
+ * tolerances, POPULATION, VECTOR_ARR and SEED are rejected (the grid draws
+ * no random numbers). Returns the number of grid points per dimension. */
 unsigned validate_grid_spec(const OptimizerSpec& spec);
 
 /* NLopt: MAXEVAL fits the int NLopt counts evaluations in, for the spec and
- * its INNER block, and the INNER block has no seed (NLopt draws the INNER
- * search from the enclosing run's random stream); require_stop() and
- * require_inner_run_stop(). Throws std::invalid_argument for the first two,
- * std::runtime_error for the stops; make_nlopt() applies it before it
- * builds the nlopt::opt. */
-void validate_nlopt_spec(const OptimizerSpec& spec, RestartStop restart);
+ * its INNER block; the INNER block has no seed (NLopt draws the INNER
+ * search from the enclosing run's random stream), no GRAD_STRATEGY and no
+ * STOPVAL (mlsl.c and auglag.c replace it with the enclosing run's); no
+ * attribute the algorithm never reads (`role`: SpecRole); require_stop()
+ * and require_inner_run_stop(). Throws std::invalid_argument for the INNER
+ * spec and MAXEVAL, std::runtime_error for the rest; make_nlopt() applies it
+ * before it builds the nlopt::opt. */
+void validate_nlopt_spec(const OptimizerSpec& spec, RestartStop restart,
+                         SpecRole role = SpecRole::Phase);
 
 /* ASA: at least one OPTIM dimension, and the ASA options
  * (parse_asa_options: PARAM keys, their ranges and cross-checks, and the
@@ -99,22 +135,32 @@ void validate_nlopt_spec(const OptimizerSpec& spec, RestartStop restart);
 void validate_asa_spec(const OptimizerSpec& spec);
 
 /* Every check the backend of `spec` (its LIB:ALGO) makes before it runs:
- * the deferred CERES least-squares algorithms and an unknown LIB:ALGO are
+ * the deferred CERES least-squares algorithms, a refused LIB:ALGO
+ * (reject_refused_backend(), optimizer_caps.h) and an unknown one are
  * rejected, then the backend's own validator runs (the annealers'
  * Knobs::parse and ANNEAL_PT's replica count, ASA, DLIB:BFGS, DLIB:GFS,
- * the CERES drivers, NLopt, TADAH:RANDOM and TADAH:GRID), then
+ * the CERES drivers, NLopt with `role`, TADAH:RANDOM and TADAH:GRID), then
  * require_stop() (`restart`: whether the RESTART stagnation stop bounds
  * the run). A spec that names no optimiser ("NOT SET") is left to
  * require_driver(). Throws with the backend's own message, e.g.
  * "DLIB:BFGS does not support MAXTIME". */
-void validate_backend(const OptimizerSpec& spec, RestartStop restart);
+void validate_backend(const OptimizerSpec& spec, RestartStop restart,
+                      SpecRole role = SpecRole::Phase);
 
 /* validate_backend() on the spec of every phase the STRATEGY of `root`
  * runs (strategy_phase_specs(): the STRATEGY-level optimiser, each
  * MULTISTART start, the PRESTAGE exploration and refinement, and every
- * INNER block), with the RESTART of `root` (restart_stop_of()), each
+ * INNER block, as SpecRole::Inner), with the RESTART of `root`
+ * (restart_stop_of()), each
  * message prefixed with the phase:
- * "the PRESTAGE refinement: DLIB:BFGS does not support MAXTIME".
+ * "the PRESTAGE refinement: DLIB:BFGS does not support MAXTIME". A refused
+ * backend (reject_refused_backend(), optimizer_caps.h) is reported first,
+ * for its own phase, with the text validate_run_policy() throws for it
+ * (reject_refused_backends(), strategy_rules.h), in every STRATEGY shape --
+ * a MULTISTART from INIT points and a PRESTAGE refinement of TOPK > 1
+ * included, whose phases cannot be derived without the caps of their
+ * backend: "the INNER block of the STRATEGY-level optimiser:
+ * NLOPT:LN_NEWUOA_BOUND is refused: ...", "the EXPLORE block: ...".
  * validate_hpo_setup() calls it after validate_run_policy(). */
 void validate_phase_backends(const OptimizerSpec& root);
 

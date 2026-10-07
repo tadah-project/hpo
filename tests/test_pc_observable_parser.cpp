@@ -652,8 +652,8 @@ TEST_CASE("HPOTargets resolves an unset GRAD_STRATEGY to ANALYTICAL in the "
         CHECK(parse(plain("NLOPT", "LD_MMA", "    FTOL_REL 1e-6\n") +
                     observable).outer == analytical);
         CHECK(parse(plain("CERES", "LBFGS") + observable).outer == analytical);
-        /* GD_MLSL is gradient-based itself; LD_AUGLAG's default local
-         * search is LD_MMA. */
+        /* GD_MLSL_LDS's and LD_AUGLAG's default local search is LD_MMA
+         * (their own points are evaluated without a gradient). */
         CHECK(parse(plain("NLOPT", "GD_MLSL_LDS") + observable).outer ==
               analytical);
         CHECK(parse(plain("NLOPT", "LD_AUGLAG") + observable).outer ==
@@ -749,6 +749,18 @@ TEST_CASE("HPOTargets resolves an unset GRAD_STRATEGY to ANALYTICAL in the "
         CHECK(auglag.inner == unset);
         CHECK(parse(mlsl("", "AUGLAG", "LN_BOBYQA", "") + observable).outer ==
               unset);
+        /* Pins: the same whatever the D of the enclosing algorithm, which
+         * only picks NLopt's default local optimiser (LD_MMA): an INNER
+         * block replaces it, and MLSL and AUGLAG evaluate their own points
+         * without a gradient.
+         * Before the review fix: both resolved to ANALYTICAL
+         * (obtains_gradients() answered from their own caps), so startup
+         * checked that the analytical gradient can be formed for a run
+         * that takes no gradient. */
+        CHECK(parse(mlsl("", "GD_MLSL_LDS", "LN_SBPLX", "") + observable)
+                  .outer == unset);
+        CHECK(parse(mlsl("", "LD_AUGLAG", "LN_BOBYQA", "") + observable)
+                  .outer == unset);
     }
     SECTION("EXPLORE resolves like the STRATEGY-level block, its INNER "
             "like an INNER block") {
@@ -843,6 +855,18 @@ TEST_CASE("The journal records a GRAD_STRATEGY resolved for PC_OBSERVABLE",
                Catch::Matchers::Contains("ANALYTICAL (resolved for PC_OBSERVABLE)"));
     CHECK(line_with(inner_unset, "Inner GRAD_STRATEGY").empty());
     CHECK(inner_unset.find("not used") == std::string::npos);
+
+    /* Pins: GD_MLSL_LDS with a derivative-free INNER search obtains no
+     * gradient, so the journal has no GRAD_STRATEGY line for it.
+     * Before the review fix: "GRAD_STRATEGY : ANALYTICAL (resolved for
+     * PC_OBSERVABLE)". */
+    const std::string free_inner = journal_of(
+        "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
+        "    ALGO GD_MLSL_LDS\n    MAXEVAL 1\n    INNER\n      LIB NLOPT\n"
+        "      ALGO LN_SBPLX\n    ENDINNER\n  ENDSTRATEGY\nENDOPTIMIZER\n" +
+        observable);
+    INFO(free_inner);
+    CHECK(line_with(free_inner, "GRAD_STRATEGY").empty());
 
     /* PRESTAGE: the EXPLORE block's line; its INNER block has none. */
     const auto prestage = [](const std::string& explore) {

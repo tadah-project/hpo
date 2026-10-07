@@ -33,20 +33,39 @@ enum class DriverPhase {
 
 /* LIB and ALGO name the optimiser of a phase; OptimizerSpec leaves both
  * "NOT SET" until the configuration sets them. Throws std::runtime_error
- * when either is missing, naming the block where they belong. */
+ * when either is missing, naming the block where they belong, and when
+ * they name a backend the caps registry refuses (reject_refused_backend(),
+ * optimizer_caps.h), naming the phase as validate_run_policy() does: "the
+ * STRATEGY-level optimiser: NLOPT:LN_NEWUOA_BOUND is refused: ...", "the
+ * PRESTAGE refinement: ..." (a REFINE block's optimiser), "the EXPLORE
+ * block: ...". HPOTargets::read() applies it where the block closes, so the
+ * error names that line. */
 void require_driver(const OptimizerSpec& phase_spec, DriverPhase phase);
 
 /* The same rule for an INNER block, the local optimiser NLopt's MLSL and
  * AUGLAG run: `enclosing` names the block it sits in (STRATEGY, EXPLORE or
- * REFINE). HPOTargets::read() applies it when the INNER block closes. */
+ * REFINE): "the INNER block inside STRATEGY: NLOPT:LN_NEWUOA_BOUND is
+ * refused: ...". HPOTargets::read() applies it when the INNER block
+ * closes. */
 void require_inner_driver(const OptimizerSpec& inner_spec,
                           const std::string& enclosing);
 
 /* An INNER block is the local search that NLopt's MLSL and AUGLAG run
  * inside their own run (build_nlopt hands the INNER ALGO to nlopt::opt).
- * When `parent` has one, throws std::runtime_error unless
- *   - the parent runs one (OptimizerCaps::accepts_inner), and
- *   - the INNER optimiser is an NLopt algorithm (LIB NLOPT).
+ * Throws std::runtime_error when
+ *   - `parent` is an MLSL or AUGLAG without a default local optimiser
+ *     (OptimizerCaps::default_inner: AUGLAG, AUGLAG_EQ, G_MLSL, G_MLSL_LDS)
+ *     and has no INNER block: "NLOPT:AUGLAG needs an INNER block (the
+ *     STRATEGY-level optimiser): NLopt has no default local optimiser for
+ *     it; ..." -- NLopt refused it only once the run had started;
+ * and, when `parent` has one, unless
+ *   - the INNER optimiser is not refused (reject_refused_backend(),
+ *     optimizer_caps.h: "the INNER block of the STRATEGY-level optimiser:
+ *     NLOPT:LN_NEWUOA_BOUND is refused: ..."),
+ *   - the parent runs one (OptimizerCaps::accepts_inner),
+ *   - the INNER optimiser is an NLopt algorithm (LIB NLOPT), and
+ *   - it does not need an INNER block of its own (INNER blocks do not
+ *     nest).
  * `phase` names the optimiser whose INNER block it is ("the EXPLORE
  * block"); run_inner() passes "" for a spec built at run time. */
 void require_inner_backend(const OptimizerSpec& parent,
@@ -82,6 +101,18 @@ void require_prestage_refinement(const OptimizerSpec& spec);
  * require_inner_backend() for the INNER block of the STRATEGY-level
  * optimiser and, under PRESTAGE, of the EXPLORE block. */
 void validate_run_policy(const OptimizerSpec& spec);
+
+/* The refusals of validate_run_policy() alone, with its text: throws
+ * reject_refused_backend()'s error (optimizer_caps.h) for the first refused
+ * backend of the EXPLORE block (under PRESTAGE), the STRATEGY-level
+ * optimiser, its INNER block and the EXPLORE block's INNER block, named as
+ * validate_run_policy() names them ("the EXPLORE block", "the PRESTAGE
+ * refinement", "the INNER block of the STRATEGY-level optimiser", ...). It
+ * looks up no caps, so validate_phase_backends() (backend_rules.h) runs it
+ * before strategy_phase_specs() (phase_specs.h), which needs the caps of
+ * the STRATEGY-level backend to plan a MULTISTART from INIT points or a
+ * PRESTAGE refinement of TOPK > 1. */
+void reject_refused_backends(const OptimizerSpec& spec);
 
 /* STRATEGY keys that belong to one TYPE: N_STARTS, PARALLEL and
  * BUDGET_PER_START to MULTISTART, TOPK to PRESTAGE. Under another TYPE

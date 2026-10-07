@@ -28,6 +28,64 @@ struct CapsKeyHash {
 
 using Registry = std::unordered_map<CapsKey, OptimizerCaps, CapsKeyHash>;
 
+/* Backends HPO refuses although their library offers them
+ * (backend_refusal(), optimizer_caps.h). Each entry is a defect measured in
+ * the library version HPO builds: before an upgrade of that library lifts
+ * an entry, the entry's repro is run again.
+ *
+ * NLOPT:LN_NEWUOA_BOUND -- NLopt v2.10.0 (HPO/CMakeLists.txt fetches
+ * GIT_TAG v2.10.0; offline builds use deps/nlopt). NLopt's bound-
+ * constrained NEWUOA, its own variant and not Powell's code, solves each
+ * trust-region and BIGLAG subproblem with a nested LD_MMA run (newuoa.c:
+ * up to 1000 evaluations, each MMA iteration a dual solve of up to 100000,
+ * optimize.c) whose stop struct has no MAXTIME and no forced-stop flag;
+ * newuob_ tests those only just before an objective call (newuoa.c L310).
+ * Once the model gradient holds inf or NaN, MMA's acceptance tests
+ * (mma.c: `dd.gval >= fcur`, `fcur > dd.gval`) are false for ever and each
+ * subproblem runs to its caps, about 1e8 model evaluations and 10-60 s
+ * without an objective call. A non-finite value reaches the model
+ *   (1) from any HUGE_VAL objective value: NLopt's C++ wrapper (nlopt.hpp)
+ *       and HPO's (nlopt_adapter.h) return HUGE_VAL after force_stop when
+ *       the objective throws, NLopt's convention for a forced stop. The
+ *       first 2n+1 evaluations of a run are NEWUOA's starting points: after
+ *       each of the first 2n newuob_ goes straight to the next point and
+ *       L310, so a stop there returns at once; after the (2n+1)-th it
+ *       builds its model and plans its first step. From the (2n+1)-th
+ *       evaluation on, every signal, RESTART stagnation stop and run-ending
+ *       error therefore costs one such subproblem, on any loss (a failed
+ *       evaluation scored FAILSCORE is finite and is no such value);
+ *   (2) without an XTOL floor (rhoend = 0) on a flat loss -- a box where
+ *       every evaluation fails, scored FAILSCORE, is one -- where the trust
+ *       radius shrinks without limit and NEWUOA's ZMAT overflows;
+ *   (3) near convergence, where MMA's steps are ~1e-8 of the trust radius
+ *       (its rho is dimensionful, mma.c MMA_RHOMIN) and BMAT overflows,
+ *       with XTOL_REL 1e-12 as well.
+ * LN_BOBYQA and LN_NEWUOA, which use no MMA, return at once after the same
+ * forced stop. HPO's HUGE_VAL stays: it is NLopt's own convention. The
+ * analysis and the repro (cases A, B and F) are in
+ * docs/issues/nlopt_newuoa_bound_stall.md. */
+struct Refusal {
+    const char* lib;
+    const char* algo;
+    const char* reason;
+};
+constexpr Refusal kRefused[] = {
+    {"NLOPT", "LN_NEWUOA_BOUND",
+     "NLopt 2.10 plans each LN_NEWUOA_BOUND step with a nested LD_MMA run "
+     "that has no time limit and sees no stop request, and once a "
+     "non-finite value reaches its model each step takes about 10-60 s "
+     "without evaluating the loss: after every stop HPO makes through the "
+     "objective (a signal, a RESTART stagnation stop, an error that ends "
+     "the run) from a run's (2n+1)-th evaluation on, the last of NEWUOA's "
+     "starting points for n OPTIM dimensions, as the objective then "
+     "returns HUGE_VAL, NLopt's convention for a forced stop, and when the "
+     "loss barely changes over the trust region; Ctrl-C, SIGTERM, MAXTIME "
+     "and RESTART wait that long. Use NLOPT:LN_BOBYQA, Powell's "
+     "bound-constrained successor of NEWUOA (its STEP rescales each "
+     "dimension instead of setting one radius), or NLOPT:LN_NEWUOA where "
+     "the search may leave the OPTIM box"},
+};
+
 void add(Registry& r, OptimizerCaps c)
 {
     CapsKey k{c.lib, c.algo};
@@ -43,6 +101,7 @@ Registry build_registry()
         OptimizerCaps c;
         c.lib = "TADAH";  c.algo = "RANDOM";
         c.is_global       = true;
+        c.reads_seed      = true;
         /* run_random draws until MAXEVAL is spent, MAXTIME has passed or a
          * loss reaches STOPVAL: nothing else ends it. */
         c.supports_maxeval = true;
@@ -51,6 +110,8 @@ Registry build_registry()
         c.needs_stop = true;
         c.stop_note  = "uniform random search has no convergence test and "
                        "runs until it is interrupted";
+        c.untested_tolerance_note =
+            "uniform random search has no convergence test to apply it to";
         c.step_use  = StepUse::Rejected;
         c.step_note = "uniform sampling in the OPTIM box has no initial step; remove STEP";
         add(r, c);
@@ -65,6 +126,9 @@ Registry build_registry()
         c.supports_maxeval = true;
         c.supports_maxtime = true;
         c.supports_stopval = true;
+        /* It draws no random numbers: SEED is refused. */
+        c.untested_tolerance_note =
+            "the grid search has no convergence test to apply it to";
         c.step_use  = StepUse::GridCount;
         c.step_note = "STEP is not the grid resolution; use PARAM GRID_POINTS <n> "
                       "(integer >= 2, default 20 points per dimension)";
@@ -74,6 +138,7 @@ Registry build_registry()
         OptimizerCaps c;
         c.lib = "TADAH";  c.algo = "ANNEAL";
         c.is_global       = true;
+        c.reads_seed      = true;
         c.supports_maxeval = true;
         c.supports_maxtime = true;
         c.supports_stopval = true;
@@ -90,7 +155,8 @@ Registry build_registry()
         OptimizerCaps c;
         c.lib = "TADAH";  c.algo = "ANNEAL_PT";
         c.is_global       = true;
-        c.is_population   = true;   /* replica ladder */
+        c.reads_seed      = true;   /* its replica ladder is PARAM REPLICAS;
+                                       POPULATION is refused */
         c.supports_maxeval = true;
         c.supports_maxtime = true;
         c.supports_stopval = true;
@@ -112,7 +178,8 @@ Registry build_registry()
         OptimizerCaps c;
         c.lib = "TADAH";  c.algo = "ANNEAL_PA";
         c.is_global       = true;
-        c.is_population   = true;
+        c.reads_population = true;  /* the walkers */
+        c.reads_seed       = true;
         c.supports_maxeval = true;
         c.supports_maxtime = true;
         c.supports_stopval = true;
@@ -130,6 +197,7 @@ Registry build_registry()
         OptimizerCaps c;
         c.lib = "ASA";  c.algo = "ASA";
         c.is_global       = true;
+        c.reads_seed      = true;
         c.supports_maxeval = true;
         c.supports_maxtime = true;
         c.supports_stopval = true;
@@ -157,6 +225,13 @@ Registry build_registry()
         c.stop_note  = "dlib's global search has no convergence test (FTOL_ABS "
                        "sets its solver's precision, which stops nothing) and "
                        "runs until it is interrupted";
+        c.reads_ftol_abs_as_setting = true;
+        c.untested_tolerance_note =
+            "dlib's global search has no convergence test to apply it to";
+        /* find_min_global (MaxLIPO+TR) is deterministic and does not read
+         * SEED; configurations that set it predate the check, so
+         * run_dlib_global() warns instead of refusing it. */
+        c.warns_unread_seed = true;
         c.step_use  = StepUse::Rejected;
         c.step_note = "MaxLIPO+TR sizes its own trust region from the samples; remove STEP";
         add(r, c);
@@ -220,10 +295,13 @@ Registry build_registry()
      *     DIRECT (cdirect.c: an FTOL test at each improvement, an XTOL test
      *     on every rectangle it divides, the largest included), CRS2 and
      *     ISRES (an FTOL and an XTOL test at each improvement), ESCH and
-     *     AGS (no tolerance test; AGS's own eps is 0), StoGO (none: the
-     *     tolerances reach its local searches), MLSL (none: the tolerances
-     *     reach its local searches only), and LD_MMA, LD_CCSAQ and LD_SLSQP,
-     *     whose only convergence test is the tolerances.
+     *     AGS (no tolerance test; AGS's own eps is 0), StoGO (none: its
+     *     local searches run StoGO's own BFGS, and the NLopt-local path that
+     *     would read the tolerances is compiled out, stogo/local.cc `#if
+     *     0`), MLSL (none: the tolerances reach only the local searches of
+     *     NLopt's default local optimiser, optimize.c, never an INNER
+     *     block), and LD_MMA, LD_CCSAQ and LD_SLSQP, whose only convergence
+     *     test is the tolerances.
      *   - The original DIRECT (GN_ORIG_DIRECT, _L) stops itself after
      *     about 100000 evaluations (DIRect.c's cap, checked once per
      *     iteration: the probes ended after 100011 to 100071), and the
@@ -232,11 +310,21 @@ Registry build_registry()
      *     that shrinks to roundoff): they keep NLopt's generic set.
      *   - AUGLAG (HPO sets no constraint) runs its local search once and
      *     ends when that ends: an INNER block, or NLopt's default local
-     *     optimiser (LN_COBYLA for LN_AUGLAG, LD_MMA for LD_AUGLAG). MLSL
-     *     has the same defaults; G_MLSL and AUGLAG need an INNER block. */
+     *     optimiser (LN_COBYLA for LN_AUGLAG, LD_MMA for LD_AUGLAG), which
+     *     takes the block's tolerances; with an INNER block auglag.c tests
+     *     them only to name the ending (ICM is 0 after the first search).
+     *     MLSL has the same defaults; G_MLSL, G_MLSL_LDS, AUGLAG and
+     *     AUGLAG_EQ have none and need an INNER block.
+     * Which attributes a run reads (optimize.c): the stochastic population
+     * (POP()) CRS2, ISRES, ESCH, the MLSL forms and GD_STOGO_RAND; the
+     * vector storage the Luksan algorithms LD_LBFGS, LD_VAR1/2 and
+     * LD_TNEWTON*; the random seed (nlopt::srand) is set for every one. */
     for (int i = 0; i < NLOPT_NUM_ALGORITHMS; ++i) {
         const char* name = nlopt_algorithm_to_string(static_cast<nlopt_algorithm>(i));
         if (!name || !name[0]) continue;
+        /* A refused algorithm is not registered: no list offers it, and
+         * the lookup throws its refusal (kRefused). */
+        if (backend_refusal("NLOPT", name)) continue;
         OptimizerCaps c;
         c.lib = "NLOPT";  c.algo = name;
         c.supports_maxeval  = true;
@@ -254,9 +342,11 @@ Registry build_registry()
             s.find("AUGLAG") != std::string::npos)        c.accepts_inner = true;
 
         const auto starts = [&](const char* p) { return s.rfind(p, 0) == 0; };
+        const bool mlsl = s.find("MLSL") != std::string::npos;
+        const bool auglag = s.find("AUGLAG") != std::string::npos;
         const bool no_tolerance_test =
             starts("GN_ESCH") || starts("GN_AGS") || starts("GD_STOGO") ||
-            s.find("MLSL") != std::string::npos;
+            mlsl;
         if (starts("GN_DIRECT") || starts("GN_CRS2") || starts("GN_ISRES") ||
             no_tolerance_test) {
             c.needs_stop = true;
@@ -266,6 +356,24 @@ Registry build_registry()
                   "it is interrupted"
                 : "NLopt's global search has no convergence test of its own "
                   "and runs until it is interrupted";
+            /* NLopt's StoGO (algs/stogo) tests NLopt's evaluation count and
+             * clock (nlopt_stop_evalstime), never its forced stop: once HPO
+             * stops a StoGO search, StoGO calls on and the objective refuses
+             * each call (a few microseconds) until NLopt's MAXEVAL ends it.
+             * Without MAXEVAL it never ended (a host exception or a signal,
+             * with STOPVAL as its only stop), or, with MAXTIME, only once the
+             * rest of MAXTIME had passed, at 100% CPU. */
+            if (starts("GD_STOGO")) {
+                c.ignores_forced_stop = true;
+                c.stop_note =
+                    "NLopt's StoGO has no convergence test of its own and "
+                    "ignores NLopt's forced stop, by which HPO ends a search "
+                    "(on a signal, an error, the RESTART stagnation stop, or "
+                    "a loss at or below STOPVAL that NLopt was not given): it "
+                    "then calls on, each call refused, and only NLopt's own "
+                    "evaluation count ends it promptly (MAXTIME only once the "
+                    "rest of its time has passed)";
+            }
         } else if (s == "LD_MMA" || s == "LD_CCSAQ" || s == "LD_SLSQP") {
             c.needs_stop = true;
             c.stop_note  = "without a tolerance it has no convergence test "
@@ -290,17 +398,34 @@ Registry build_registry()
              * no other tolerance. */
             c.supports_ftol_rel = c.supports_ftol_abs = false;
             c.supports_xtol_abs = false;
+            c.untested_tolerance_note =
+                "the original DIRECT tests only XTOL_REL, its volume "
+                "tolerance";
         }
+        if (mlsl)
+            c.untested_tolerance_note =
+                "MLSL's multistart loop tests no tolerance, and NLopt passes "
+                "the block's tolerances to no INNER search";
+        else if (auglag)
+            c.untested_tolerance_note =
+                "AUGLAG ends when its INNER search ends (HPO sets no "
+                "constraint) and tests the block's tolerances only to name "
+                "that ending, and NLopt passes them to no INNER search";
+        else if (no_tolerance_test)
+            c.untested_tolerance_note =
+                "NLopt's global search tests no tolerance";
         if (s == "GN_MLSL" || s == "GN_MLSL_LDS" || s == "LN_AUGLAG" ||
             s == "LN_AUGLAG_EQ")
             c.default_inner = "LN_COBYLA";
         else if (s == "GD_MLSL" || s == "GD_MLSL_LDS" || s == "LD_AUGLAG" ||
                  s == "LD_AUGLAG_EQ")
             c.default_inner = "LD_MMA";
-        if (s.find("CRS")    != std::string::npos ||
-            s.find("ESCH")   != std::string::npos ||
-            s.find("ISRES")  != std::string::npos ||
-            s.find("MLSL")   != std::string::npos)        c.is_population = true;
+        c.reads_population = starts("GN_CRS2") || starts("GN_ISRES") ||
+                             starts("GN_ESCH") || mlsl ||
+                             s == "GD_STOGO_RAND";
+        c.reads_vector_storage = s == "LD_LBFGS" || starts("LD_VAR") ||
+                                 starts("LD_TNEWTON");
+        c.reads_seed = true;
 
         /* Initial-step consumption, verified against nlopt 2.10
          * src/api/optimize.c (see StepUse doc in optimizer_caps.h). */
@@ -335,7 +460,7 @@ Registry build_registry()
                                "(optimize.c passes lb = ub = NULL), so its evaluations can "
                                "leave the box, and such a point can become the best; the "
                                "first is reported with a WARNING and DIAGNOSTICS counts them "
-                               "all. LN_NEWUOA_BOUND and LN_BOBYQA keep to the box";
+                               "all. LN_BOBYQA keeps to the box";
         }
 
         add(r, c);
@@ -382,16 +507,42 @@ bool step_use_consumes(StepUse u)
     }
 }
 
-const OptimizerCaps& optimizer_caps(std::string_view lib,
-                                    std::string_view algo)
+const char* backend_refusal(std::string_view lib, std::string_view algo)
+{
+    for (const Refusal& r : kRefused)
+        if (lib == r.lib && algo == r.algo) return r.reason;
+    return nullptr;
+}
+
+void reject_refused_backend(std::string_view lib, std::string_view algo,
+                            const std::string& where)
+{
+    const char* reason = backend_refusal(lib, algo);
+    if (!reason) return;
+    throw std::runtime_error((where.empty() ? "" : where + ": ") +
+                             std::string(lib) + ":" + std::string(algo) +
+                             " is refused: " + reason);
+}
+
+const OptimizerCaps* find_optimizer_caps(std::string_view lib,
+                                         std::string_view algo)
 {
     const auto& reg = registry();
     auto it = reg.find({std::string(lib), std::string(algo)});
-    if (it == reg.end())
+    return it == reg.end() ? nullptr : &it->second;
+}
+
+const OptimizerCaps& optimizer_caps(std::string_view lib,
+                                    std::string_view algo)
+{
+    const OptimizerCaps* caps = find_optimizer_caps(lib, algo);
+    if (!caps) {
+        reject_refused_backend(lib, algo);
         throw std::runtime_error("unknown optimizer " + std::string(lib) +
                                  ":" + std::string(algo) +
                                  " (not registered in optimizer_caps)");
-    return it->second;
+    }
+    return *caps;
 }
 
 const OptimizerCaps& optimizer_caps(const OptimizerSpec& sp)

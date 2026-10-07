@@ -183,6 +183,74 @@ TEST_CASE("startup validation: K-dependent rules on a real model context",
   }
 }
 
+/* Pins: for M_KRR with a non-linear kernel (Kern_RBF, SBASIS 4) the
+ * weight count K that startup checks FIXINDEX/FIXWEIGHT against is SBASIS
+ * (derive_weight_count == 4), the number of basis vectors training draws,
+ * one weight each: FIXINDEX 5 is refused ("this model has 4 weights"),
+ * FIXINDEX 4 passes; without a training DBFILE the configuration is
+ * refused even with every weight pinned (the basis is drawn from the
+ * training data: "draws its SBASIS basis vectors from the training
+ * data"); SBASIS 1 is refused at startup, naming SBASIS.
+ * Before the fix: K was the kernel's design-matrix width before training,
+ * 0 (no basis yet), so derive_weight_count returned 0 and only the
+ * pairing of FIXINDEX and FIXWEIGHT was checked: FIXINDEX 5 passed
+ * startup (and failed every evaluation), as did the configuration without
+ * a DBFILE and the one with SBASIS 1. */
+TEST_CASE("startup validation: FIXINDEX of a non-linear M_KRR kernel is "
+          "checked against SBASIS",
+          "[startup_validation][nonlinear]") {
+  PeriodicTable::initialize();
+  ScopedTempFile tf(target_with("PC_ERMSE 0 1\n"));
+  auto krr_ctx = [] {
+    Context c = make_model_ctx();
+    c.remove("MODEL");
+    c.add("MODEL", "M_KRR");
+    c.add("MODEL", "Kern_RBF");
+    c.add("MODEL", 1);
+    c.add("MPARAMS", 1.0);
+    c.add("SBASIS", 4);
+    return c;
+  };
+  SECTION("the weight count is SBASIS") {
+    CHECK(derive_weight_count(krr_ctx()) == 4);
+  }
+  SECTION("an index past SBASIS is refused") {
+    Context ctx = krr_ctx();
+    ctx.add("DBFILE", "dummy.db");
+    ctx.add("FIXINDEX", "5");
+    ctx.add("FIXWEIGHT", 0.5);
+    HPOTargets trg(ctx, tf.path.string());
+    CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                      Catch::Contains("this model has 4 weights"));
+  }
+  SECTION("an index within SBASIS passes") {
+    Context ctx = krr_ctx();
+    ctx.add("DBFILE", "dummy.db");
+    ctx.add("FIXINDEX", "4");
+    ctx.add("FIXWEIGHT", 0.5);
+    HPOTargets trg(ctx, tf.path.string());
+    CHECK_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
+  }
+  SECTION("no training DBFILE is refused, every weight pinned") {
+    Context ctx = krr_ctx();
+    pin_all_weights(ctx, 4);
+    HPOTargets trg(ctx, tf.path.string());
+    CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, false, true),
+                      Catch::Contains("draws its SBASIS basis vectors from "
+                                      "the training data"));
+  }
+  SECTION("SBASIS 1 is refused") {
+    Context ctx = krr_ctx();
+    ctx.remove("SBASIS");
+    ctx.add("SBASIS", 1);
+    ctx.add("DBFILE", "dummy.db");
+    HPOTargets trg(ctx, tf.path.string());
+    CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                      Catch::Contains("does not build a model") &&
+                          Catch::Contains("SBASIS 1"));
+  }
+}
+
 TEST_CASE("startup validation: a -c configuration that does not build a "
           "model is refused", "[startup_validation][model_probe]") {
   /* A construction error of the model (a DIMER potential with element-

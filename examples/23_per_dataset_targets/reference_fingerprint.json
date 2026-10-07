@@ -32,7 +32,7 @@
     }
   },
   "evaluations": {
-    "value": 16,
+    "value": 12,
     "tol": 0
   },
   "best_ermse_meV_per_atom": 3.26,
