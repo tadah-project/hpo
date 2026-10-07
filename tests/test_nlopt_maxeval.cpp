@@ -11,6 +11,12 @@
  * (LD_LBFGS: "STOPPED -- nlopt failure (algorithm converged ...)").
  * GN_CRS2_LM, GN_ORIG_DIRECT(_L) and AUGLAG passed NLopt's own MAXEVAL too.
  *
+ * A gradient takes the loss its caller has just evaluated at the point as
+ * its centre (GradientProvider::gradient_at, gradient_provider.h): the
+ * NLopt objective, Ceres' FirstOrderFunction and DLIB:BFGS evaluate the
+ * loss and then ask for the gradient there, and NUMERICAL evaluated the
+ * point once more.
+ *
  * The stub hosts record every REAL point asked for. */
 
 #include "catch2/catch.hpp"
@@ -20,10 +26,16 @@
 #include <tadah/hpo/nlopt_adapter.h>
 #include <tadah/hpo/optimizer_spec.h>
 
+#ifdef TADAH_USE_CERES
+#include <tadah/hpo/ceres_adapter.h>
+#endif
+
 #include <dlib/matrix.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -31,6 +43,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -85,6 +98,15 @@ struct Valley {
             g(1) = std::numeric_limits<double>::quiet_NaN();
         nfd.clear();
         return true;
+    }
+    /* Points asked for twice in a row, bit for bit. */
+    std::size_t repeats() const {
+        std::size_t n = 0;
+        for (std::size_t k = 1; k < asked.size(); ++k)
+            if (std::memcmp(&asked[k](0), &asked[k - 1](0), sizeof(double)) == 0 &&
+                std::memcmp(&asked[k](1), &asked[k - 1](1), sizeof(double)) == 0)
+                ++n;
+        return n;
     }
 };
 
@@ -492,4 +514,132 @@ TEST_CASE("NLopt MAXEVAL: the journal says what an INNER MAXEVAL counts",
                   (inner == "LD_LBFGS"));
         }
     }
+}
+
+/* Pins: on the valley at MAXEVAL 60 (NUMERICAL, CENTRAL), NLopt's LD_LBFGS,
+ * LD_MMA and LD_TNEWTON and CERES:LBFGS (WOLFE) ask the host for 60 points
+ * and never for one point twice in a row: each gradient's first evaluation
+ * is a stencil point, not the point whose loss its caller has just
+ * evaluated.
+ * Before the fix: each gradient evaluated its point once more first:
+ * each of the four searches asked for 10 points twice in a row (10
+ * gradients of 6 evaluations: the loss, the point again, 4 stencil
+ * points). */
+TEST_CASE("Finite differences: NLopt and Ceres evaluate no point twice in a "
+          "row", "[HPO][grad_provider][fd_gradient][maxeval]")
+{
+    for (const std::string algo : {"LD_LBFGS", "LD_MMA", "LD_TNEWTON"}) {
+        DYNAMIC_SECTION("NLOPT:" << algo) {
+            Journal j;
+            Valley host;
+            REQUIRE_NOTHROW(tadah::hpo::run_nlopt_impl<Vec, NoRunner>(
+                nlopt_spec(algo, 60), host));
+            CHECK(host.asked.size() == 60u);
+            CHECK(host.repeats() == 0u);
+        }
+    }
+#ifdef TADAH_USE_CERES
+    SECTION("CERES:LBFGS") {
+        Journal j;
+        auto sp = nlopt_spec("LBFGS", 60);
+        sp.lib = "CERES";
+        sp.seed.reset();
+        Valley host;
+        REQUIRE_NOTHROW(
+            tadah::hpo::detail::run_ceres_gradient_problem<Vec, NoRunner>(
+                sp, host, ceres::LBFGS, ceres::WOLFE, "LBFGS"));
+        CHECK(host.asked.size() == 60u);
+        CHECK(host.repeats() == 0u);
+    }
+#endif
+}
+
+/* Pins: GradientProvider (NUMERICAL, fd_step 1e-2) on f = u0 + 2 u1 in
+ * [0, 1]^2: gradient_at(x, f(x), g) evaluates 4 points for CENTRAL at
+ * (0.5, 0.5) and for the one-sided differences at (0, 1), both on a bound,
+ * 2 for FORWARD at (0.5, 0.5) and at (0.5, 1) (backward in u1), none of
+ * them x, all counted, and the exact gradient (1, 2); gradient(x, g)
+ * evaluates x first, one more.
+ * Before the fix: gradient_at evaluated x first as well: 5, 5, 3 and 3
+ * points. */
+TEST_CASE("Finite differences: a gradient takes the loss its caller has just "
+          "evaluated as its centre", "[HPO][grad_provider][fd_gradient]")
+{
+    auto sp = nlopt_spec("LD_LBFGS", 1);
+    sp.stop.maxeval.reset();
+    sp.low = {0.0, 0.0};
+    sp.high = {1.0, 1.0};
+    sp.param["fd_step"] = 1e-2;
+    struct Line {
+        std::vector<Vec> asked;
+        double operator()(const Vec& x) {
+            asked.push_back(x);
+            return x(0) + 2.0 * x(1);
+        }
+    };
+    const auto f = [](double a, double b) { return a + 2.0 * b; };
+    for (const auto& [u0, u1, method, evals] :
+         std::vector<std::tuple<double, double, int, std::size_t>>{
+             {0.5, 0.5, 0, 4u},    // central
+             {0.0, 1.0, 0, 4u},    // one-sided at both bounds
+             {0.5, 0.5, 1, 2u},    // forward
+             {0.5, 1.0, 1, 2u}}) { // backward at the upper bound
+        DYNAMIC_SECTION("(" << u0 << ", " << u1 << ") "
+                            << (method ? "FORWARD" : "CENTRAL")) {
+            auto s = sp;
+            s.param["diff_method"] = method;
+            Vec x(2);
+            x(0) = u0;
+            x(1) = u1;
+            Vec g;
+            Line host;
+            std::atomic<unsigned long> counter{0};
+            auto gp = tadah::hpo::make_gradient_provider<Vec, NoRunner>(
+                s, host, &counter, 0);
+            REQUIRE(gp.gradient_at(x, f(u0, u1), g));
+            CHECK(counter.load() == evals);
+            CHECK(host.asked.size() == evals);
+            for (const Vec& p : host.asked)
+                CHECK_FALSE((p(0) == u0 && p(1) == u1));
+            CHECK(g(0) == Approx(1.0).epsilon(1e-9));
+            CHECK(g(1) == Approx(2.0).epsilon(1e-9));
+            /* without the caller's loss: x first */
+            Line host2;
+            std::atomic<unsigned long> counter2{0};
+            auto gp2 = tadah::hpo::make_gradient_provider<Vec, NoRunner>(
+                s, host2, &counter2, 0);
+            REQUIRE(gp2.gradient(x, g));
+            CHECK(counter2.load() == evals + 1);
+            REQUIRE_FALSE(host2.asked.empty());
+            CHECK((host2.asked[0](0) == u0 && host2.asked[0](1) == u1));
+            CHECK(g(0) == Approx(1.0).epsilon(1e-9));
+            CHECK(g(1) == Approx(2.0).epsilon(1e-9));
+        }
+    }
+}
+
+/* Pins: gradient_at(x, +inf, g) (NUMERICAL) fails with a Stencil failure
+ * naming the loss at x, and evaluates nothing: the caller's loss is the one
+ * checked.
+ * Before the fix: it evaluated x again (24.2 on the valley) and its 4
+ * stencil points and returned a gradient. */
+TEST_CASE("Finite differences: a caller's loss that is not finite fails the "
+          "gradient without an evaluation", "[HPO][grad_provider][fd_gradient]")
+{
+    auto sp = nlopt_spec("LD_LBFGS", 1);
+    sp.stop.maxeval.reset();
+    Valley host;
+    std::atomic<unsigned long> counter{0};
+    auto gp = tadah::hpo::make_gradient_provider<Vec, NoRunner>(
+        sp, host, &counter, 0);
+    Vec x(2);
+    x(0) = 0.5;
+    x(1) = 0.5;
+    Vec g;
+    CHECK_FALSE(
+        gp.gradient_at(x, std::numeric_limits<double>::infinity(), g));
+    CHECK(gp.failure->kind == tadah::hpo::GradientFailure::Stencil);
+    CHECK(gp.failure->detail.find("is inf") != std::string::npos);
+    CHECK(counter.load() == 0u);
+    CHECK(host.asked.empty());
 }
