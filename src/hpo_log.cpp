@@ -1089,10 +1089,24 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
     }
 
     kv("Aggregate",   "mean over active components");
-    kv("Fail score",  fmt_double(trg.FAIL_SCORE)
-                      + "  (the loss of a failed evaluation: a NaN/Inf loss, "
-                        "an exception, a skip cap, a failed script or a gate "
-                        "reject; the ceiling of every loss)");
+    /* What scores FAIL_SCORE. Under FAILSCORE_GRADING a skip cap, a failed
+     * PC_LAMMPS simulation and a gate reject score a graded loss in
+     * [0.999, 1) x FAIL_SCORE instead (graded_eval_loss), and only a
+     * NaN/Inf loss and an exception keep the constant. */
+    if (trg.FAILSCORE_GRADING) {
+        kv("Fail score",   fmt_double(trg.FAIL_SCORE)
+                           + "  (the loss of an evaluation with a NaN/Inf loss "
+                             "or an exception; the ceiling of every loss)");
+        kv("Fail grading", "ON -- a skip cap, a failed PC_LAMMPS simulation or "
+                           "a gate reject scores a graded loss in [0.999, 1) x "
+                           "Fail score");
+    } else {
+        kv("Fail score",   fmt_double(trg.FAIL_SCORE)
+                           + "  (the loss of a failed evaluation: a NaN/Inf "
+                             "loss, an exception, a skip cap, a failed "
+                             "PC_LAMMPS simulation or a gate reject; the "
+                             "ceiling of every loss)");
+    }
     kv("Output every",  std::to_string(trg.outputEvery) + " eval(s)");
     kv("Output digits", std::to_string(trg.outputDigits));
 }
