@@ -259,6 +259,55 @@ if(TADAH_HPO_MPI)
     set_tests_properties(hpo_anneal_mpi_matrix PROPERTIES
         LABELS "anneal;mpi"
         TIMEOUT 180)
+
+    # A signal that one rank receives ends every rank as a signal stop
+    # (mpi/test_signal_mpi.cpp): one entry per scenario, each run at 1, 2
+    # and 4 ranks (mpi/run_signal_mpi.cmake.in); CORE's stop flag is never
+    # lowered, so a scenario is a process of its own.
+    add_executable(test_hpo_signal_mpi mpi/test_signal_mpi.cpp)
+    target_link_libraries(test_hpo_signal_mpi PRIVATE
+        tadah.core tadah.mlip tadah.hpo MPI::MPI_CXX)
+    configure_file(
+        mpi/run_signal_mpi.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/run_signal_mpi.cmake
+        @ONLY)
+    foreach(_scenario pt_seed pt_t0 pt_pass2 pt_jitter pt_init pt_rung
+                      pa_seed pa_t0 pa_init pa_sweep)
+        add_test(NAME hpo_mpi_signal_${_scenario}
+            COMMAND ${CMAKE_COMMAND}
+                -DTEST_EXE=$<TARGET_FILE:test_hpo_signal_mpi>
+                -DSCENARIO=${_scenario}
+                -P ${CMAKE_CURRENT_BINARY_DIR}/run_signal_mpi.cmake)
+        set_tests_properties(hpo_mpi_signal_${_scenario} PROPERTIES
+            LABELS "mpi;shutdown"
+            TIMEOUT 400)
+    endforeach()
+
+    # Multi-rank `tadah hpo` end to end (mpi/hpo_mpi_e2e.py): the RESTART
+    # and gradient-search refusals, the LAMMPS fast kernels, the density
+    # gates and the density report on 1 and 2 ranks. The cases run the
+    # built `tadah` (Skipped, 77, in a build without it). Every argument is
+    # one --key=value token: MLIP's add_test() drops an empty argument.
+    # The launcher's flags as one shell-quoted string each (no ';').
+    string(REPLACE ";" " " _mpi_preflags "${MPIEXEC_PREFLAGS}")
+    string(REPLACE ";" " " _mpi_postflags "${MPIEXEC_POSTFLAGS}")
+    foreach(_case restart_refusal gradient_refusal eamfast rhogates)
+        add_test(NAME hpo_mpi_e2e_${_case}
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/mpi/hpo_mpi_e2e.py
+                --case=${_case}
+                --mpiexec=${MPIEXEC_EXECUTABLE}
+                --numproc-flag=${MPIEXEC_NUMPROC_FLAG}
+                "--preflags=${_mpi_preflags}"
+                "--postflags=${_mpi_postflags}"
+                "--tadah=$<$<TARGET_EXISTS:tadah>:$<TARGET_FILE:tadah>>"
+                --examples=${CMAKE_CURRENT_SOURCE_DIR}/../examples
+                --workdir=${CMAKE_CURRENT_BINARY_DIR}/hpo_mpi_e2e)
+        set_tests_properties(hpo_mpi_e2e_${_case} PROPERTIES
+            LABELS "mpi;e2e"
+            TIMEOUT 600
+            SKIP_RETURN_CODE 77)
+    endforeach()
 endif()
 
 # Integration matrix — opt-in via `ctest -L slow`. Requires a bundle

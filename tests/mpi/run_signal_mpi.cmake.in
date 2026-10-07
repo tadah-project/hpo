@@ -1,0 +1,42 @@
+# Runs one scenario of test_hpo_signal_mpi (test_signal_mpi.cpp) at 1, 2
+# and 4 ranks; every run must exit 0 and report its scenario and world size.
+set(_mpiexec "@MPIEXEC_EXECUTABLE@")
+set(_numproc_flag "@MPIEXEC_NUMPROC_FLAG@")
+set(_preflags @MPIEXEC_PREFLAGS@)
+set(_postflags @MPIEXEC_POSTFLAGS@)
+set(_max_procs "@MPIEXEC_MAX_NUMPROCS@")
+if(_max_procs STREQUAL "" OR _max_procs LESS 4)
+  message(FATAL_ERROR "the MPI signal tests require at least 4 process slots")
+endif()
+if(NOT DEFINED TEST_EXE OR TEST_EXE STREQUAL "")
+  message(FATAL_ERROR "TEST_EXE was not supplied")
+endif()
+if(NOT DEFINED SCENARIO OR SCENARIO STREQUAL "")
+  message(FATAL_ERROR "SCENARIO was not supplied")
+endif()
+
+foreach(_n 1 2 4)
+  execute_process(
+    COMMAND "${_mpiexec}" "${_numproc_flag}" "${_n}" ${_preflags}
+            "${TEST_EXE}" ${_postflags} "${SCENARIO}"
+    RESULT_VARIABLE _rc
+    OUTPUT_VARIABLE _out
+    ERROR_VARIABLE _err
+    TIMEOUT 120)
+  if(NOT _rc EQUAL 0)
+    message(FATAL_ERROR
+      "${SCENARIO}: the ${_n}-rank run failed (${_rc})\n"
+      "stdout:\n${_out}\nstderr:\n${_err}")
+  endif()
+  # The world size it reports: a launcher that does not belong to the MPI
+  # the test links starts independent one-rank jobs instead
+  # (run_anneal_mpi_matrix.cmake).
+  if(NOT _out MATCHES "HPO_MPI_SIGNAL ${SCENARIO} WORLD ${_n} OK")
+    message(FATAL_ERROR
+      "${SCENARIO}: the ${_n}-rank run did not report"
+      " 'HPO_MPI_SIGNAL ${SCENARIO} WORLD ${_n} OK' (the launcher"
+      " ${_mpiexec} may not match the MPI the test links against)\n"
+      "stdout:\n${_out}\nstderr:\n${_err}")
+  endif()
+endforeach()
+message(STATUS "${SCENARIO}: every rank ended SHUTDOWN at 1, 2 and 4 ranks")
