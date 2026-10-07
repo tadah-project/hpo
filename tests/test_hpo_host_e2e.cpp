@@ -560,14 +560,19 @@ TEST_CASE("The new-best breakdown names indexed PC_ERMSE and PC_FRMSE terms "
           "per dataset", "[pc_dataset][host]") {
     /* Pins: the journal's new-best "top:" line lists an indexed PC_ERMSE
      * or PC_FRMSE term per dataset, ERMSE[i] and FRMSE[i] (1-based, the
-     * index of PC_ERMSE (i) and of the L(ERMSE)[i] column), each shown as
-     * its share of the average of the dataset losses -- ERMSE[1] is
-     * L(ERMSE)[1] / 2 datasets / 2 terms -- and no "_global" label; the
-     * global form keeps ERMSE_global and FRMSE_global.
+     * index of PC_ERMSE (i) and of the L(ERMSE)[i] column), and no
+     * "_global" label; the global form keeps ERMSE_global and
+     * FRMSE_global. Each part is shown, as every part of the line is, as
+     * its contribution to the run's loss, the mean over the loss terms:
+     * ERMSE[1] is L(ERMSE)[1] / 2 datasets / 2 terms (PC_ERMSE and
+     * PC_FRMSE), its share of the average of the dataset losses only when
+     * the indexed metric is the one loss term, and the printed parts (all
+     * four are listed: the line keeps the five largest) add up to the loss.
      * Before the fix: the indexed line read "ERMSE_global=... FRMSE_global=..."
      * (the average of the dataset losses under the global label), so the
      * first SECTION fails; the second SECTION passes as well (a pin of the
-     * global labels). */
+     * global labels), and so does the sum of the parts in both (a pin of
+     * the display scaling the docs describe). */
     DatasetHostGuard guard;
     ScratchDir sd;
     const auto train = sd.dir / "train.db", first = sd.dir / "first.db", second = sd.dir / "second.db";
@@ -627,6 +632,15 @@ TEST_CASE("The new-best breakdown names indexed PC_ERMSE and PC_FRMSE terms "
         CHECK(top.find("ERMSE[1]=") == std::string::npos);
         CHECK(top.find("FRMSE[1]=") == std::string::npos);
     }
+    /* The printed parts (%.2e) add up to the run's loss. */
+    const std::regex part(R"(([A-Za-z_]+(\[[0-9]+\])?)=([0-9.eE+-]+)\()");
+    double parts = 0.0;
+    std::size_t n_parts = 0;
+    for (auto it = std::sregex_iterator(top.begin(), top.end(), part);
+         it != std::sregex_iterator(); ++it, ++n_parts)
+        parts += std::stod((*it)[3]);
+    CHECK(n_parts == (indexed ? 4u : 2u));
+    CHECK(parts == Approx(total).epsilon(0.01));
 }
 
 TEST_CASE("PC dataset host rejects incomplete coverage and empty validation files", "[pc_dataset][host]") {
