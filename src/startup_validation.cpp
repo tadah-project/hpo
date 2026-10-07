@@ -183,9 +183,13 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx) {
         out.source = "FIXWEIGHT";
       }
     }
-    if (w.size() == 0 && pc.has_stored("WEIGHTS") && pc.size("WEIGHTS") == K) {
+    /* The -c potential's WEIGHTS: train_ctx's (the Trainer, which builds
+     * a model to be fitted, reads none). */
+    if (w.size() == 0 && train_ctx.has_stored("WEIGHTS") &&
+        train_ctx.size("WEIGHTS") == K) {
       w = core::t_type(K);
-      for (std::size_t i = 0; i < K; ++i) w(i) = pc.get<double>("WEIGHTS", i);
+      for (std::size_t i = 0; i < K; ++i)
+        w(i) = train_ctx.get<double>("WEIGHTS", i);
       out.source = "WEIGHTS";
     }
     if (w.size() == 0) {

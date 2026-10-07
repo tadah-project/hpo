@@ -1179,9 +1179,11 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
 
         /* BIAS true: the energy-weighted compositions must determine the
          * intercepts of the model's function. They do not change between
-         * evaluations, so refuse such data at startup, not in every fit
-         * (a kernel's intercept basis vectors are drawn in each fit, which
-         * checks them). The function is built as an evaluation builds it. */
+         * evaluations, so refuse such data at startup, not in every fit (a
+         * non-linear kernel's intercepts are those of the intercept vectors
+         * every basis draw starts with; M_KRR implementation 2 is not
+         * checked). The function is built as an evaluation builds it (the
+         * Trainer reads no WEIGHTS or BASIS of a -c potential). */
         if (core::n_intercept_columns(master_ctx_) > 0) {
             core::Context c = master_ctx_;
             mlip::memory::MLIPWorkspaceManager ws;
