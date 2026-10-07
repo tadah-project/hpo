@@ -201,6 +201,17 @@ public:
     bool analytical_gradient(const ParamVec& x, ParamVec& g,
                              std::vector<int>& needs_fd) const;
 
+    /** Why this thread's trainer slot holds no fit of the point the thread
+     *  evaluated last, so that the analytical gradient cannot be formed
+     *  there -- "the candidate was rejected before training (<the gate's
+     *  reject note>): it has no fit to differentiate", "its training did
+     *  not complete ...", or no model of this host's evaluation at all --
+     *  or "" when the slot holds that fit. analytical_gradient() hands
+     *  every parameter to finite differences at such a point; under
+     *  GRAD_STRATEGY ANALYTICAL the GradientProvider reads this, and the
+     *  point has no usable gradient (gradient_provider.h). */
+    std::string analytical_gradient_gap() const;
+
     /** One-shot log on the first analytical_gradient call: prints
      *  GRAD_STRATEGY, total theta count, analytical count, and
      *  FD-fallback count. Idempotent across calls (atomic_flag gate).
@@ -292,7 +303,10 @@ public:
 
     /* ---------- top-K tracking (used by StagedPolicy) ------------------ */
     /** Enable a buffer that records the top-K (lowest loss) (loss, params)
-     *  pairs across operator() calls. Capacity = k; older worse-loss
+     *  pairs across operator() calls, of the evaluations with a usable loss
+     *  (loss_is_feasible: a failed evaluation is never a candidate, so the
+     *  buffer holds fewer than k pairs while fewer usable ones exist).
+     *  Capacity = k; older worse-loss
      *  entries are evicted, near-clones are deduped (see topk.h -- a
      *  clone agrees in loss AND normalised parameter distance). `widths` are the
      *  real-space OPTIM box widths used to normalise the parameter test;
@@ -581,6 +595,11 @@ private:
      * cleared after every successful train; while set, gradients fall
      * back to all-FD instead of reading a stale cache. */
     static thread_local bool tls_trainer_theta_stale_;
+    /* Why the trainer slot holds no fit of this thread's latest evaluation
+     * while tls_trainer_theta_stale_ is set: the reject note of a candidate
+     * the bump-support or a density gate rejected before training, or that
+     * its training did not complete (analytical_gradient_gap). */
+    static thread_local std::string tls_untrained_why_;
 
     /* per-thread trainer slot -------------------------------------------
      * The Trainer of this thread's latest evaluation: every evaluation

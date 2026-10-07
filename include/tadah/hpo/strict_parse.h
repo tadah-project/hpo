@@ -18,6 +18,7 @@
  * nan, and skipped leading whitespace.
  */
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -25,6 +26,19 @@
 #include <string>
 
 namespace tadah::hpo {
+
+/* The form of every error HPOTargets::read() reports about a line of the
+ * hpotarget file:
+ *     Error on line <line>: <what>
+ *     Line: <text>
+ * The startup refusals of a phase's settings name the line its block
+ * closes at in the same form (with_block_line, phase_specs.h). */
+inline std::string config_line_error(std::size_t line, const std::string& what,
+                                     const std::string& text)
+{
+    return "Error on line " + std::to_string(line) + ": " + what +
+           "\nLine: " + text;
+}
 
 /* A non-negative integer: decimal digits only (no sign, fraction, exponent,
  * whitespace or trailing characters), within [min, max]. Otherwise throws

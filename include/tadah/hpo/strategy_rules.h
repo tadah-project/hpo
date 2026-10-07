@@ -99,7 +99,11 @@ void require_prestage_refinement(const OptimizerSpec& spec);
  * require_multistart_backend() for MULTISTART, require_prestage_explore()
  * and require_prestage_refinement() for PRESTAGE; then
  * require_inner_backend() for the INNER block of the STRATEGY-level
- * optimiser and, under PRESTAGE, of the EXPLORE block. */
+ * optimiser and, under PRESTAGE, of the EXPLORE block. A refusal of a
+ * parsed spec names the line of the block it is about
+ * (OptimizerSpec::block_line, with_block_line): "Error on line N: ...
+ * \nLine: ENDOPTIMIZER" (or the INNER block's ENDINNER, the EXPLORE
+ * block's ENDEXPLORE). */
 void validate_run_policy(const OptimizerSpec& spec);
 
 /* The refusals of validate_run_policy() alone, with its text: throws

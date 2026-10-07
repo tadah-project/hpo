@@ -1,6 +1,7 @@
 #include <tadah/hpo/phase_specs.h>
 
 #include <tadah/hpo/optimizer_caps.h>
+#include <tadah/hpo/strict_parse.h>
 
 #include <algorithm>
 #include <type_traits>
@@ -56,6 +57,12 @@ OptimizerSpec prestage_refinement_spec(
     return refine;
 }
 
+std::string with_block_line(const OptimizerSpec& spec, const std::string& what)
+{
+    if (spec.block_line == 0) return what;
+    return config_line_error(spec.block_line, what, spec.block_line_text);
+}
+
 std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent)
 {
     const OptimizerCaps& caps = optimizer_caps(parent);
@@ -65,9 +72,12 @@ std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent)
         run = *parent.inner;
     } else if (caps.default_inner) {
         /* NLopt creates the default local optimiser with the block's
-         * tolerances (optimize.c) and no evaluation limit of its own. */
+         * tolerances (optimize.c) and no evaluation limit of its own; the
+         * block configures it, and its refusals name the block's line. */
         run.lib  = "NLOPT";
         run.algo = caps.default_inner;
+        run.block_line = parent.block_line;
+        run.block_line_text = parent.block_line_text;
         run.stop.ftol_rel = parent.stop.ftol_rel;
         run.stop.ftol_abs = parent.stop.ftol_abs;
         run.stop.xtol_rel = parent.stop.xtol_rel;

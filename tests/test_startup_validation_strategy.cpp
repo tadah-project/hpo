@@ -57,9 +57,11 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -156,12 +158,119 @@ std::string policy_error(const OptimizerSpec& sp)
     return "";
 }
 
+bool starts_with(const std::string& s, const std::string& head)
+{
+    return s.compare(0, head.size(), head) == 0;
+}
+
+/* Whether `message` is the refusal of one phase's settings: it starts with
+ * the phase's name (strategy_phase_specs: "the STRATEGY-level optimiser",
+ * "each MULTISTART start", "the MULTISTART run", "the PRESTAGE
+ * exploration (EXPLORE block)", "the PRESTAGE refinement", "the INNER
+ * block of <phase>"; validate_run_policy: "the EXPLORE block"). */
+bool names_phase(const std::string& message)
+{
+    for (const char* name : {"the STRATEGY-level optimiser",
+                             "each MULTISTART start", "the MULTISTART run",
+                             "the PRESTAGE exploration (EXPLORE block)",
+                             "the EXPLORE block", "the PRESTAGE refinement",
+                             "the INNER block of "})
+        if (starts_with(message, name)) return true;
+    return false;
+}
+
+/* The line of `config` that closes the block of the phase `message`
+ * names, and its text, as the refusal of that phase's settings names it
+ * (OptimizerSpec::block_line): the INNER block's ENDINNER for "the INNER
+ * block of ..." (inside the EXPLORE block for the exploration's; without
+ * an INNER block, NLopt's default local search, its phase's line),
+ * ENDEXPLORE for the exploration, ENDOPTIMIZER otherwise; {0, ""} when the
+ * configuration has no such line. */
+std::pair<std::size_t, std::string> phase_line(const std::string& config,
+                                               const std::string& message)
+{
+    std::vector<std::string> lines;
+    {
+        std::istringstream in(config);
+        for (std::string l; std::getline(in, l);) lines.push_back(l);
+    }
+    const auto keyword = [&](std::size_t i) {
+        const auto p = lines[i].find_first_not_of(' ');
+        return p == std::string::npos ? std::string() : lines[i].substr(p);
+    };
+    std::size_t explore_begin = lines.size(), explore_end = lines.size();
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        if (keyword(i) == "EXPLORE" && explore_begin == lines.size())
+            explore_begin = i;
+        if (keyword(i) == "ENDEXPLORE" && explore_end == lines.size())
+            explore_end = i;
+    }
+    const auto find = [&](const std::string& key, bool in_explore)
+        -> std::pair<std::size_t, std::string> {
+        for (std::size_t i = 0; i < lines.size(); ++i) {
+            const bool inside = i > explore_begin && i < explore_end;
+            if (keyword(i) == key && inside == in_explore)
+                return {i + 1, lines[i]};
+        }
+        return {0, ""};
+    };
+    const std::string inner_of = "the INNER block of ";
+    const bool inner = starts_with(message, inner_of);
+    const std::string parent = inner ? message.substr(inner_of.size())
+                                     : message;
+    const bool explore =
+        starts_with(parent, "the PRESTAGE exploration (EXPLORE block)") ||
+        starts_with(parent, "the EXPLORE block");
+    if (inner) {
+        const auto at = find("ENDINNER", explore);
+        if (at.first > 0) return at;
+    }
+    if (explore) return find("ENDEXPLORE", false);
+    return find("ENDOPTIMIZER", false);
+}
+
 /* The parser must accept `config`; returns what validate_hpo_setup() and
- * the policy say about it ("" when they accept it). */
+ * the policy say about it ("" when they accept it). A refusal of the
+ * OPTIMIZER block's settings names the line of the block it is about, in
+ * the parser's form "Error on line N: <what>\nLine: <text>"
+ * (with_block_line, phase_specs.h): `startup_raw` is the refusal as
+ * validate_hpo_setup() threw it, `startup` the message without that line,
+ * and judge() checks the line of every refusal that names a phase against
+ * the configuration (phase_line), so the cases that compare `startup`
+ * check it too; a refusal of the STRATEGY TYPE ("STRATEGY TYPE MULTISTART
+ * cannot run ...") names no phase, and its line is checked by "startup
+ * validation: a phase's settings refused at startup name the line that
+ * closes its block". */
 struct Verdict {
     std::string startup;
     std::string policy;
+    std::string startup_raw;
 };
+
+/* `raw`, what validate_hpo_setup() threw for `config`, without the line it
+ * names; when its message names a phase, checks that the line is the one
+ * that closes the phase's block in `config` (phase_line), or that it names
+ * none when `config` has no such line. */
+std::string checked_refusal(const std::string& config, const std::string& raw)
+{
+    std::string message = raw;
+    std::smatch m;
+    const bool at_line = std::regex_match(
+        raw, m, std::regex(R"(Error on line (\d+): ([\s\S]*)\nLine: ([^\n]*))"));
+    if (at_line) message = m[2];
+    if (names_phase(message)) {
+        const auto expected = phase_line(config, message);
+        INFO("startup refusal: " << raw);
+        if (expected.first == 0) {
+            CHECK_FALSE(at_line);
+        } else {
+            REQUIRE(at_line);
+            CHECK(std::stoul(m[1]) == expected.first);
+            CHECK(m[3] == expected.second);
+        }
+    }
+    return message;
+}
 
 Verdict judge(const std::string& config)
 {
@@ -174,7 +283,9 @@ Verdict judge(const std::string& config)
     INFO("config:\n" << config);
     REQUIRE(parse_error == "");
     Verdict v;
-    v.startup = error_of([&] { validate_hpo_setup(ctx, *trg, true, true); });
+    v.startup_raw =
+        error_of([&] { validate_hpo_setup(ctx, *trg, true, true); });
+    v.startup = checked_refusal(config, v.startup_raw);
     v.policy  = policy_error(trg->spec);
     return v;
 }
@@ -1374,6 +1485,143 @@ TEST_CASE("startup validation: each phase's backend checks run at startup",
           "random search has no convergence test and runs until it is "
           "interrupted; set MAXEVAL, MAXTIME or STOPVAL (it honours no "
           "tolerance)");
+}
+
+namespace {
+
+/* The first line of `config` whose text, without its indentation, is
+ * `keyword` (1-based), and that line as written: the line a phase's
+ * startup refusal names (ENDOPTIMIZER, ENDEXPLORE, ENDINNER). */
+std::pair<std::size_t, std::string> line_of(const std::string& config,
+                                            const std::string& keyword)
+{
+    std::istringstream in(config);
+    std::string text;
+    for (std::size_t n = 1; std::getline(in, text); ++n) {
+        const auto p = text.find_first_not_of(' ');
+        if (p != std::string::npos && text.substr(p) == keyword)
+            return {n, text};
+    }
+    return {0, ""};
+}
+
+}  // namespace
+
+/* The caps registry's refusal of a backend comes from the parser where its
+ * block closes, "Error on line N: <phase>: ...\nLine: ENDOPTIMIZER"; the
+ * refusals of a phase's settings at startup -- each backend's own checks
+ * (validate_phase_backends: the CERES validators, DLIB:BFGS, TADAH:ANNEAL,
+ * NLopt's, a backend that needs a stop), the per-phase checks of
+ * validate_hpo_setup (GRAD_STRATEGY on a phase that takes no gradient, the
+ * finite differences) and the STRATEGY TYPE and INNER rules
+ * (validate_run_policy) -- named the phase and no line.
+ * Pins: each names the line read() checks the phase's optimiser at, in the
+ * parser's form ("Error on line N: <phase>: <message>" and "\nLine:
+ * <text>"): ENDOPTIMIZER for the STRATEGY-level optimiser, a MULTISTART
+ * start and the PRESTAGE refinement (a REFINE block's included),
+ * ENDEXPLORE for the exploration, ENDINNER for an INNER block, the short
+ * form's ENDOPTIMIZER; a STRATEGY TYPE rule the ENDOPTIMIZER line, a block
+ * that needs an INNER block its own closing line; a spec built outside the
+ * parser has no line, and its refusal is the phase's message alone.
+ * Before the fix: "<phase>: <message>" with no line for every case. */
+TEST_CASE("startup validation: a phase's settings refused at startup name the "
+          "line that closes its block",
+          "[startup_validation][strategy][backend]")
+{
+    struct Case {
+        std::string what, config, closing, message;
+    };
+    const std::string top = "the STRATEGY-level optimiser: ";
+    const std::vector<Case> cases = {
+        {"CERES:LBFGS FTOL_REL -1",
+         strategy_config("    TYPE PLAIN\n    LIB CERES\n    ALGO LBFGS\n"
+                         "    MAXEVAL 20\n    FTOL_REL -1\n"),
+         "ENDOPTIMIZER",
+         top + "CERES:LBFGS requires FTOL_REL >= 0 (Ceres' "
+               "function_tolerance), got -1"},
+        {"an EXPLORE block's CERES:WOLFE PARAM max_iter 1.5",
+         strategy_config("    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+                         "    MAXEVAL 20\n    EXPLORE\n      LIB CERES\n"
+                         "      ALGO WOLFE\n      MAXEVAL 12\n"
+                         "      PARAM max_iter 1.5\n    ENDEXPLORE\n"),
+         "ENDEXPLORE",
+         "the PRESTAGE exploration (EXPLORE block): CERES:WOLFE requires "
+         "PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' "
+         "max_num_iterations), got 1.5"},
+        {"a REFINE block's DLIB:BFGS MAXTIME",
+         strategy_config("    TYPE PRESTAGE\n" + kExploreGfs +
+                         "    REFINE\n      LIB DLIB\n      ALGO BFGS\n"
+                         "      MAXTIME 60\n    ENDREFINE\n"),
+         "ENDOPTIMIZER",
+         "the PRESTAGE refinement: DLIB:BFGS does not support MAXTIME"},
+        {"each MULTISTART start: DLIB:BFGS SEED",
+         strategy_config(multistart_body("DLIB", "BFGS", "2", "    SEED 3\n")),
+         "ENDOPTIMIZER",
+         "each MULTISTART start: DLIB:BFGS does not support SEED"},
+        {"TADAH:ANNEAL with an unknown PARAM",
+         strategy_config("    TYPE PLAIN\n    LIB TADAH\n    ALGO ANNEAL\n"
+                         "    MAXEVAL 20\n    PARAM NOT_A_KEY 1\n"),
+         "ENDOPTIMIZER",
+         top + "TADAH:ANNEAL: unknown PARAM 'NOT_A_KEY'"},
+        {"TADAH:RANDOM without a stop",
+         strategy_config("    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"),
+         "ENDOPTIMIZER", top + "TADAH:RANDOM needs a stop"},
+        {"an INNER block's LN_BOBYQA POPULATION",
+         strategy_config("    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_MLSL_LDS\n"
+                         "    MAXEVAL 20\n    INNER\n      LIB NLOPT\n"
+                         "      ALGO LN_BOBYQA\n      POPULATION 10\n"
+                         "    ENDINNER\n"),
+         "ENDINNER",
+         "the INNER block of the STRATEGY-level optimiser: NLOPT:LN_BOBYQA "
+         "does not use POPULATION"},
+        {"GRAD_STRATEGY on a derivative-free search",
+         strategy_config("    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                         "    MAXEVAL 20\n    GRAD_STRATEGY NUMERICAL\n"),
+         "ENDOPTIMIZER",
+         "the STRATEGY-level optimiser NLOPT:LN_SBPLX: GRAD_STRATEGY never "
+         "takes effect: NLOPT:LN_SBPLX takes no gradient"},
+        {"the short form inside OPTIMIZER",
+         kRoot + "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 20\nMAXTIME 60\n"
+                 "ENDOPTIMIZER\n",
+         "ENDOPTIMIZER", top + "DLIB:BFGS does not support MAXTIME"},
+        {"STRATEGY TYPE MULTISTART with a global optimiser",
+         strategy_config(multistart_body("NLOPT", "GN_DIRECT", "2")),
+         "ENDOPTIMIZER",
+         "STRATEGY TYPE MULTISTART cannot run NLOPT:GN_DIRECT"},
+        {"an INNER block that names DLIB:BFGS",
+         strategy_config("    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n"
+                         "    MAXEVAL 60\n    INNER\n      LIB DLIB\n"
+                         "      ALGO BFGS\n    ENDINNER\n"),
+         "ENDINNER",
+         "the INNER block of the STRATEGY-level optimiser names DLIB:BFGS"},
+        {"an EXPLORE block's AUGLAG without an INNER block",
+         strategy_config("    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+                         "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
+                         "      ALGO AUGLAG\n      MAXEVAL 12\n"
+                         "    ENDEXPLORE\n"),
+         "ENDEXPLORE", "NLOPT:AUGLAG needs an INNER block"}};
+    for (const auto& c : cases) {
+        INFO(c.what << ", config:\n" << c.config);
+        const auto at = line_of(c.config, c.closing);
+        REQUIRE(at.first > 0);
+        CHECK_THAT(judge(c.config).startup_raw,
+                   Catch::StartsWith("Error on line " +
+                                     std::to_string(at.first) + ": " +
+                                     c.message) &&
+                   Catch::EndsWith("\nLine: " + at.second));
+    }
+
+    /* A spec built outside the parser: no line. */
+    OptimizerSpec hand;
+    hand.lib = "DLIB";
+    hand.algo = "BFGS";
+    hand.low = {0.0};
+    hand.high = {1.0};
+    hand.analyse_logscale();
+    hand.stop.maxeval = 20;
+    hand.stop.maxtime = 60.0;
+    CHECK(error_of([&] { tadah::hpo::validate_phase_backends(hand); }) ==
+          top + "DLIB:BFGS does not support MAXTIME");
 }
 
 TEST_CASE("startup validation: the backend checks reject no valid "
@@ -2865,7 +3113,9 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
         });
         INFO("config:\n" << config);
         REQUIRE(parse == "");
-        r.startup = error_of([&] { validate_hpo_setup(ctx, *r.trg, true, true); });
+        r.startup = checked_refusal(
+            config,
+            error_of([&] { validate_hpo_setup(ctx, *r.trg, true, true); }));
         log.finish("test-end");
         log.reset_for_test();
         std::ifstream is(jp);

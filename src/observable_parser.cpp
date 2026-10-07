@@ -147,7 +147,7 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
         } else if (t == "--fmax-converged") {
             /* eq_ok threshold (matches Ecoh_fast.in's
              * `ternary($(fmax) < 0.1, 1, 0)`). If post-relax fmax
-             * exceeds this, return `--unconverged-penalty` as Ecoh. */
+             * exceeds this, return the --unconverged value as Ecoh. */
             cfg.eq_fmax_threshold =
                 parse_double(need_value(i, t), "--fmax-converged");
         } else if (t == "--unconverged") {

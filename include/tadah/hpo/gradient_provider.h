@@ -151,6 +151,20 @@
  * evaluation) has nothing to classify: ANALYTICAL gives the analytical
  * gradient there.
  *
+ * A point the host has no fit of -- a candidate the bump-support or a
+ * density gate rejected before training (a graded band-D failure under
+ * FAILSCORE_GRADING ON), a training that did not complete -- has no
+ * analytical gradient: the host's analytical pass hands every parameter to
+ * finite differences there, which HYBRID takes. ANALYTICAL asks the host
+ * why (HPO_Host::analytical_gradient_gap(), when HostT has it) whenever the
+ * pass leaves a parameter to finite differences: a reason makes the point
+ * one without a usable gradient (NotFinite, "the analytical gradient could
+ * not be formed at this point"), which NLopt and Ceres reject and
+ * DLIB:BFGS stops at, as any such point. Without one it is a parameter or
+ * a loss term without an analytical derivative, the configuration's: an
+ * error naming the parameters (GRAD_STRATEGY HYBRID fills them). That
+ * error used to end the run FAILED at every rejected candidate.
+ *
  * Journal (HPOLog): a component a bound turned (one-sided into the box,
  * backward, or towards the box from a point outside it) is counted per
  * dimension, and the first of each dimension gets an INFO line; a gradient
@@ -424,6 +438,19 @@ struct StencilReport {
             "the analytical gradient " + what, ""};
   }
 
+  /** The host has no fit of x to differentiate (`why`, its
+   *  analytical_gradient_gap()): ANALYTICAL has no gradient there. */
+  void untrained(const Vec& x, const std::string& why) const {
+    std::ostringstream os;
+    os << "at ";
+    for (long i = 0; i < x.size(); ++i) os << (i ? ", " : "") << at(x, i);
+    os << ": " << why
+       << "; GRAD_STRATEGY HYBRID takes finite differences there";
+    *out = {GradientFailure::NotFinite,
+            "the analytical gradient could not be formed at this point",
+            os.str()};
+  }
+
   /** Component i of the gradient at x has the stencil `st`, which a bound
    *  turned (FdStencil::turned): counted per dimension (DIAGNOSTICS), and
    *  the first of each dimension journalled. Never throws. */
@@ -616,6 +643,14 @@ struct has_analytical_gradient<HostT, Vec, std::void_t<decltype(
     std::declval<HostT&>().analytical_gradient(
         std::declval<const Vec&>(), std::declval<Vec&>(),
         std::declval<std::vector<int>&>()))>> : std::true_type {};
+/* Whether HostT says why it holds no fit of the point it evaluated last
+ * (HPO_Host::analytical_gradient_gap). */
+template<class HostT, class = void>
+struct has_analytical_gradient_gap : std::false_type {};
+template<class HostT>
+struct has_analytical_gradient_gap<HostT, std::void_t<decltype(
+    std::declval<const HostT&>().analytical_gradient_gap())>>
+    : std::true_type {};
 }  // namespace detail
 
 /* The host's analytical_gradient member as an AnalyticalGradFn when sp asks
@@ -716,8 +751,13 @@ make_gradient_provider(const OptimizerSpec&     sp,
             "function before constructing the GradientProvider.");
       };
     } else {
+      /* Why the host has no fit of the point (the file comment); a host
+       * without the member never says. */
+      std::function<std::string()> no_fit_why;
+      if constexpr (detail::has_analytical_gradient_gap<HostT>::value)
+        no_fit_why = [&host]() { return host.analytical_gradient_gap(); };
       gp.gradient = [analytical_grad_fn, eval_counter, maxeval,
-                     pull_to_internal, failure, report]
+                     pull_to_internal, failure, report, no_fit_why]
                     (const Vec& x, Vec& g)->bool {
         *failure = {};
         if (maxeval > 0 && eval_counter->load() >= maxeval) {
@@ -732,9 +772,18 @@ make_gradient_provider(const OptimizerSpec&     sp,
         }
         pull_to_internal(x, g, needs_fd);
         if (!needs_fd.empty()) {
-          /* The host does not say which cause applies; name them all. The
-           * settings-level ones (analytical_gate.h) were refused at
-           * startup, so what is left is per parameter or per point. */
+          /* The host has no fit of x (a candidate rejected before
+           * training): a point without a usable gradient, not an error. */
+          if (no_fit_why) {
+            const std::string why = no_fit_why();
+            if (!why.empty()) {
+              report.untrained(x, why);
+              return false;
+            }
+          }
+          /* Otherwise the host does not say which cause applies; name them
+           * all. The settings-level ones (analytical_gate.h) were refused
+           * at startup, so what is left is per parameter or per point. */
           std::ostringstream oss;
           oss << "GRAD_STRATEGY=ANALYTICAL: no analytical gradient for "
               << needs_fd.size() << " parameter"
@@ -744,10 +793,10 @@ make_gradient_provider(const OptimizerSpec&     sp,
             if (i) oss << ", ";
             oss << needs_fd[i];
           }
-          oss << "]): a parameter without an analytical derivative, a "
-                 "candidate whose fit cannot be differentiated (rejected "
-                 "before training, or an ill-conditioned fit), or a loss "
-                 "term without an analytical derivative at this point. Use "
+          oss << "]): a parameter without an analytical derivative, a fit "
+                 "that cannot be differentiated (an ill-conditioned fit), "
+                 "or a loss term without an analytical derivative at this "
+                 "point. Use "
                  "GRAD_STRATEGY=HYBRID to fill these with finite "
                  "differences.";
           throw std::runtime_error(oss.str());

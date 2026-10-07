@@ -6299,3 +6299,345 @@ TEST_CASE("Snap onto the box: NLopt LN_COBYLA under OPTIM_SCALE NONE rounds a "
     CHECK(std::stoul(m[1]) >= 1u);
     check_run_files();
 }
+
+/* ======================================================================
+ * PRESTAGE refines only usable losses. The top-K buffer took every
+ * evaluation's loss, a failed one included (FAILSCORE, a graded failure),
+ * and kept it while fewer than TOPK distinct usable losses existed, so a
+ * refinement seed could start at a failed point, and an exploration whose
+ * every evaluation failed was refined from failed points only. The
+ * candidates are the usable losses now: fewer than TOPK are refined as
+ * they are and the journal says so; with none the refinement runs from
+ * the OPTIMIZER-level INIT points, as it did for an exploration without a
+ * candidate (every evaluation a gate reject, say), and the journal says
+ * why.
+ * ==================================================================== */
+
+namespace {
+
+/* A PRESTAGE of a TADAH:GRID exploration (`grid_points` per OPTIM
+ * dimension, no MAXEVAL: the whole grid) refined by NLOPT:LN_SBPLX. */
+std::string prestage_grid_block(const std::string& topk,
+                                const std::string& grid_points)
+{
+    return plain_block(
+        "    TYPE PRESTAGE\n    TOPK " + topk + "\n"
+        "    EXPLORE\n      LIB TADAH\n      ALGO GRID\n"
+        "      PARAM GRID_POINTS " + grid_points + "\n    ENDEXPLORE\n"
+        "    REFINE\n      LIB NLOPT\n      ALGO LN_SBPLX\n"
+        "      MAXEVAL 12\n    ENDREFINE\n");
+}
+
+/* The journal line that lists the PRESTAGE candidates' losses. */
+std::string prestage_losses_line(const std::string& journal)
+{
+    std::smatch m;
+    if (std::regex_search(journal, m,
+                          std::regex(R"(PRESTAGE: top-\d+ losses:[^\n]*)")))
+        return m[0];
+    return {};
+}
+
+}  // namespace
+
+TEST_CASE("PRESTAGE: the refinement starts only from usable losses, fewer "
+          "than TOPK when fewer exist", "[HPO][termination][prestage]")
+{
+    /* The straddle fixture (CGRID2B[2] in [1.0, 2.0] fails below about
+     * 1.47) from 1.9: the GRID exploration evaluates 1.9, then 1.0, 1.25,
+     * 1.5, 1.75 and 2.0; 1.0 and 1.25 fail (the default FAILSCORE).
+     * Pins: the candidates are the four usable losses -- "PRESTAGE: top-4
+     * losses:" without a failed one --, the journal says that there are
+     * fewer than TOPK 6 and why ("PRESTAGE: 4 usable candidate(s) for TOPK
+     * 6 (the exploration made 6 evaluation(s), 2 without a usable loss);
+     * refining 4"), the refinement runs four starts ("REFINEMENT: refining
+     * top-4 seed(s)", "MULTISTART start 4/4", no fifth), status 0.
+     * Before the fix: "PRESTAGE: top-6 losses: 95.2545 96.0496 99.2483
+     * 99.9981 1.79769e+308 ...", "refining top-6 seed(s)": two of the six
+     * refinement starts began at the failed points 1.0 and 1.25. */
+    TaRun run(prestage_grid_block("6", "5"), straddle_root());
+    int status = -1;
+    REQUIRE_NOTHROW(status = straddle_run(run, "1.9", "PRESTAGE"));
+    CHECK(status == 0);
+    const auto x = evaluated_cgrid2();
+    REQUIRE(x.size() >= 6u);
+    const std::vector<double> grid = {1.9, 1.0, 1.25, 1.5, 1.75, 2.0};
+    for (std::size_t i = 0; i < grid.size(); ++i) {
+        INFO("exploration evaluation " << i + 1);
+        CHECK(x[i] == Approx(grid[i]));
+    }
+    const std::string journal = read_file("hpo_run.log");
+    const std::string losses = prestage_losses_line(journal);
+    INFO(losses);
+    CHECK_THAT(losses, Catch::StartsWith("PRESTAGE: top-4 losses: "));
+    CHECK(losses.find("e+308") == std::string::npos);
+    CHECK(count_of(journal,
+                   "PRESTAGE: 4 usable candidate(s) for TOPK 6 (the "
+                   "exploration made 6 evaluation(s), 2 without a usable "
+                   "loss); refining 4") == 1u);
+    CHECK(count_of(journal, "REFINEMENT: refining top-4 seed(s)") == 1u);
+    CHECK(count_of(journal, "MULTISTART start 4/4 done") == 1u);
+    CHECK(journal.find("MULTISTART start 5/") == std::string::npos);
+    check_run_files();
+}
+
+TEST_CASE("PRESTAGE: an exploration without a usable loss leaves the "
+          "refinement to the OPTIMIZER-level INIT points",
+          "[HPO][termination][prestage][no_usable_loss]")
+{
+    /* Every evaluation fails (a skip cap below every loss); the GRID
+     * exploration evaluates the INIT point and the 2^3 nodes.
+     * Pins: the journal says that the exploration's 9 evaluations produced
+     * no usable loss and where the refinement starts instead ("PRESTAGE: no
+     * evaluation of the exploration produced a usable loss (9
+     * evaluation(s)); refining from the OPTIMIZER-level INIT point(s)
+     * instead", a WARNING), there is no candidate line ("PRESTAGE: top-")
+     * and no "REFINEMENT: refining"; the refinement's first evaluation (eval
+     * 10) is the INIT point (eval 1's parameters) and it spends its MAXEVAL
+     * 12 (21 rows); the run ends without a usable loss (status 1, "STOPPED
+     * -- no evaluation produced a usable loss").
+     * Before the fix: "PRESTAGE: no evaluation of the exploration produced
+     * a usable loss (9 evaluation(s)); nothing to refine", the run ended
+     * after the exploration's 9 rows. (Before the top-K took usable losses
+     * only, the three failed points were the candidates: "PRESTAGE: top-3
+     * losses: 1.79769e+308 1.79769e+308 1.79769e+308", "REFINEMENT:
+     * refining top-3 seed(s)", 21 rows.) */
+    TaRun run(prestage_grid_block("3", "2"), kAllFailRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                        "an all-failed PRESTAGE"));
+    CHECK(status == 1);
+    check_no_usable_loss(21, kDefaultFailScoreRow, kNoUsableLossStatus);
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(count_of(journal,
+                   "WARNING   PRESTAGE: no evaluation of the exploration "
+                   "produced a usable loss (9 evaluation(s)); refining from "
+                   "the OPTIMIZER-level INIT point(s) instead") == 1u);
+    CHECK(journal.find("nothing to refine") == std::string::npos);
+    CHECK(journal.find("REFINEMENT: refining") == std::string::npos);
+    CHECK(prestage_losses_line(journal).empty());
+    const auto params = data_rows("params.tadah");
+    REQUIRE(params.size() == 21u);
+    /* The columns after ITERATION and SLOT: the parameters. */
+    CHECK(std::vector<std::string>(params[9].begin() + 2, params[9].end()) ==
+          std::vector<std::string>(params[0].begin() + 2, params[0].end()));
+}
+
+TEST_CASE("PRESTAGE under RESTART: an exploration that stagnates without a "
+          "usable loss hands over to a refinement from the INIT points",
+          "[HPO][termination][prestage][restart][no_usable_loss]")
+{
+    /* Every evaluation fails, so no evaluation is a new best and each
+     * phase stagnates after 3 evaluations.
+     * Pins: as without RESTART, a stagnated exploration hands over to the
+     * refinement, here without a candidate: each round's exploration says
+     * so ("PRESTAGE: no evaluation of the exploration produced a usable
+     * loss (3 evaluation(s)); refining from the OPTIMIZER-level INIT
+     * point(s) instead", twice) and is not refined ("REFINEMENT: refining"
+     * never); the refinement from the INIT point stagnates and reports it
+     * ("REFINEMENT: 1 of 1 seed(s) stopped on stagnation; reporting
+     * stagnation to RESTART", twice), RESTART restarts once and its budget
+     * then ends the run, which has no usable loss (status 1, "STOPPED -- no
+     * evaluation produced a usable loss"), after 12 evaluations.
+     * Before the fix: each exploration said "...; nothing to refine;
+     * reporting stagnation to RESTART" and nothing was refined: 6
+     * evaluations. (Before the top-K took usable losses only, each
+     * exploration's failed points were refined, "REFINEMENT: refining top-2
+     * seed(s)": 18 evaluations.) */
+    TaRun run(plain_block(
+                  "    TYPE PRESTAGE\n    TOPK 2\n"
+                  "    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 20\n"
+                  "    EXPLORE\n      LIB TADAH\n      ALGO RANDOM\n"
+                  "      MAXEVAL 50\n      SEED 3\n    ENDEXPLORE\n"
+                  "    RESTART\n      AFTER_STAGNATION 3\n      MAX 1\n"
+                  "      METHOD RANDOM 1\n      SEED 7\n    ENDRESTART\n"),
+              kAllFailRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                        "an all-failed PRESTAGE under "
+                                        "RESTART"));
+    CHECK(status == 1);
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(journal.find("REFINEMENT: refining") == std::string::npos);
+    CHECK(journal.find("nothing to refine") == std::string::npos);
+    CHECK(count_of(journal,
+                   "PRESTAGE: no evaluation of the exploration produced a "
+                   "usable loss (3 evaluation(s)); refining from the "
+                   "OPTIMIZER-level INIT point(s) instead") == 2u);
+    CHECK(count_of(journal,
+                   "REFINEMENT: 1 of 1 seed(s) stopped on stagnation; "
+                   "reporting stagnation to RESTART") == 2u);
+    CHECK_THAT(journal, Catch::Contains("RESTART 1/1"));
+    CHECK_THAT(journal, Catch::Contains("RESTART: stagnation reached, max "
+                                        "restarts (1) used; stopping"));
+    check_no_usable_loss(12, kDefaultFailScoreRow, kNoUsableLossStatus);
+}
+
+/* ======================================================================
+ * GRAD_STRATEGY ANALYTICAL at a candidate the bump-support gate rejects
+ * before training. Under FAILSCORE_GRADING ON such a candidate scores a
+ * graded failure, and the analytical pass ran there: HPO_Host's trainer
+ * slot holds no fit of the point, so it handed every parameter to finite
+ * differences, which ANALYTICAL took for a parameter without an analytical
+ * derivative -- an error that ended the run FAILED. The point has no
+ * usable gradient instead (gradient_provider.h), which NLopt and Ceres
+ * reject as any such point.
+ * ==================================================================== */
+
+namespace {
+
+/* A D2_Blip channel (w = 2) under a hard Cut_Dummy cutoff at RCUT2B 5: a
+ * bump whose support c + 2/eta passes 5 is rejected before training
+ * (BUMPGATE CANDIDATE, the default), graded band D. The search starts at
+ * CGRID2B[1] = 3.5, SGRID2B[1] = 2.0 (support 4.5); the loss falls
+ * towards SGRID2B[1] = 1, where every CGRID2B[1] above 3 is rejected.
+ * Energies -1 (train and validation), LAMBDA 1. */
+void make_bump_gate_run(TaRun& run)
+{
+    write_ta_db(run.sd.dir / "train.db", 0.0, -1.0);
+    write_ta_db(run.sd.dir / "val.db", 0.07, -1.0);
+    run.ctx.storage_update("TYPE2B", {"D2_Blip", "2", "2", "Ta", "Ta"});
+    run.ctx.storage_update("CGRID2B", {"3.5", "3.0"});
+    run.ctx.storage_update("SGRID2B", {"2.0", "1.0"});
+    run.ctx.storage_update("RCTYPE2B", {"Cut_Dummy"});
+    run.ctx.storage_update("LAMBDA", {"1"});
+}
+
+const std::string kBumpGateRoot =
+    "LOSS L2\n"
+    "PC_EMAE 0 1\n"
+    "FAILSCORE 1e9\n"
+    "FAILSCORE_GRADING ON\n"
+    "QFLUSH 1000\n"
+    "DIGITS 15\n"
+    "OPTIM CGRID2B (1) 3.0 4.8\n"
+    "OPTIM SGRID2B (1) 1.0 3.0\n";
+
+}  // namespace
+
+TEST_CASE("GRAD_STRATEGY ANALYTICAL: a candidate the bump gate rejects "
+          "before training has no usable gradient, and the run goes on",
+          "[HPO][termination][analytical][bumpgate]")
+{
+    /* Pins, for every NLopt LD_* search and the CERES line searches that
+     * reach the rejected region from the start (MAXEVAL 20): the run
+     * evaluates a rejected candidate (a graded loss in [0.999e9, 1e9)),
+     * does not throw, steps back from it and evaluates further points (the
+     * first rejected candidate is not the last evaluation), and ends with
+     * status 0, a usable best and its search's MAXEVAL status
+     * ("MAXEVAL_REACHED -- maximum evaluations exhausted", "CERES:<ALGO>:
+     * MAXEVAL reached"); the journal never says "no analytical gradient
+     * for".
+     * Before the fix: hpo_run threw "GRAD_STRATEGY=ANALYTICAL: no
+     * analytical gradient for 2 parameters at this point (indices: [0, 1])
+     * ..." at the first rejected candidate, after 5-9 evaluations, and the
+     * run ended "FAILED -- GRAD_STRATEGY=ANALYTICAL: ...". DLIB:BFGS and
+     * CERES:STEEPEST_DESCENT ask no gradient at a rejected candidate of
+     * this search, so they are not among the cases. */
+    std::vector<GradientBackend> backends = {
+        {"NLOPT", "LD_LBFGS"}, {"NLOPT", "LD_MMA"}, {"NLOPT", "LD_SLSQP"},
+        {"NLOPT", "LD_CCSAQ"}, {"NLOPT", "LD_TNEWTON"},
+        {"NLOPT", "LD_TNEWTON_PRECOND_RESTART"}, {"NLOPT", "LD_VAR2"}};
+#ifdef TADAH_USE_CERES
+    for (const char* a : {"LBFGS", "WOLFE", "NLCG"})
+        backends.push_back({"CERES", a});
+#endif
+    for (const auto& b : backends) {
+        const std::string name = b.lib + ":" + b.algo;
+        DYNAMIC_SECTION(name) {
+            TaRun run(plain_block("    TYPE PLAIN\n    LIB " + b.lib +
+                                  "\n    ALGO " + b.algo +
+                                  "\n    MAXEVAL 20\n"
+                                  "    GRAD_STRATEGY ANALYTICAL\n"),
+                      kBumpGateRoot);
+            make_bump_gate_run(run);
+            int status = -1;
+            REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                                name));
+            CHECK(status == 0);
+            const auto rows = data_rows("loss.tadah");
+            std::size_t first_rejected = rows.size();
+            for (std::size_t i = 0; i < rows.size(); ++i) {
+                const double l = loss_value(rows[i].back());
+                if (l >= 0.999e9 && l < 1e9) {
+                    first_rejected = i;
+                    break;
+                }
+            }
+            REQUIRE(first_rejected < rows.size());
+            CHECK(first_rejected + 1 < rows.size());
+            const std::string journal = read_file("hpo_run.log");
+            CHECK(journal.find("no analytical gradient for") ==
+                  std::string::npos);
+            CHECK(journal_status(journal) ==
+                  (b.lib == "NLOPT"
+                       ? std::string("MAXEVAL_REACHED -- maximum evaluations "
+                                     "exhausted")
+                       : name + ": MAXEVAL reached"));
+            check_run_files();
+        }
+    }
+}
+
+TEST_CASE("PRESTAGE: an exploration whose every candidate the bump gate "
+          "rejects is refined from the OPTIMIZER-level INIT point",
+          "[HPO][termination][prestage][bumpgate]")
+{
+    /* The bump-gate fixture above: the exploration (its own INIT RANDOM 2,
+     * TADAH:RANDOM MAXEVAL 2, SEED 2) evaluates points whose bump support
+     * passes RCUT2B 5, rejected before training; the OPTIMIZER-level INIT
+     * point (3.5, 2.0; support 4.5) is usable.
+     * Pins: both exploration evaluations are gate rejects (a graded loss in
+     * [0.999e9, 1e9), "eval 1: bump-support gate reject" and "eval 2: ..."
+     * in the journal); the journal says that they produced no
+     * usable loss and where the refinement starts instead ("PRESTAGE: no
+     * evaluation of the exploration produced a usable loss (2
+     * evaluation(s)); refining from the OPTIMIZER-level INIT point(s)
+     * instead", a WARNING); the refinement's first evaluation (eval 3) is
+     * the INIT point, it spends its MAXEVAL 20 (22 rows) and finds usable
+     * losses: status 0, "MAXEVAL_REACHED -- maximum evaluations exhausted",
+     * a usable best.
+     * Before the fix: "PRESTAGE: no evaluation of the exploration produced
+     * a usable loss (2 evaluation(s)); nothing to refine", and the run
+     * ended after the exploration's 2 rows without a usable loss (status 1,
+     * "STOPPED -- no evaluation produced a usable loss"). (Before the top-K
+     * took usable losses only, gate rejects were never candidates either,
+     * and the refinement ran from the INIT point after "PRESTAGE: produced
+     * no candidates -- running outer optimiser as-is".) */
+    TaRun run(plain_block(
+                  "    TYPE PRESTAGE\n    TOPK 2\n"
+                  "    EXPLORE\n      INIT\n        METHOD RANDOM 2\n"
+                  "        SEED 2\n      ENDINIT\n"
+                  "      LIB TADAH\n      ALGO RANDOM\n      MAXEVAL 2\n"
+                  "      SEED 2\n    ENDEXPLORE\n"
+                  "    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 20\n"),
+              kBumpGateRoot);
+    make_bump_gate_run(run);
+    int status = -1;
+    REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                        "a gate-rejected PRESTAGE"));
+    CHECK(status == 0);
+    const auto rows = data_rows("loss.tadah");
+    REQUIRE(rows.size() == 22u);
+    for (std::size_t i = 0; i < 2; ++i) {
+        INFO("exploration evaluation " << i + 1);
+        const double l = loss_value(rows[i].back());
+        CHECK((l >= 0.999e9 && l < 1e9));
+    }
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(count_of(journal, "eval 1: bump-support gate reject") == 1u);
+    CHECK(count_of(journal, "eval 2: bump-support gate reject") == 1u);
+    CHECK(count_of(journal,
+                   "WARNING   PRESTAGE: no evaluation of the exploration "
+                   "produced a usable loss (2 evaluation(s)); refining from "
+                   "the OPTIMIZER-level INIT point(s) instead") == 1u);
+    CHECK(journal.find("nothing to refine") == std::string::npos);
+    CHECK(journal.find("REFINEMENT: refining") == std::string::npos);
+    const auto params = data_rows("params.tadah");
+    REQUIRE(params.size() == 22u);
+    CHECK(std::stod(params[2].at(2)) == Approx(3.5));
+    CHECK(std::stod(params[2].at(3)) == Approx(2.0));
+    CHECK(journal_status(journal) ==
+          "MAXEVAL_REACHED -- maximum evaluations exhausted");
+    check_run_files();
+}

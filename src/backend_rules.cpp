@@ -482,7 +482,10 @@ void validate_phase_backends(const OptimizerSpec& root)
             validate_backend(phase.spec, restart,
                              phase.inner ? SpecRole::Inner : SpecRole::Phase);
         } catch (const std::exception& e) {
-            throw std::runtime_error(phase.name + ": " + e.what());
+            /* At the line the phase's block closes at, as the parser's
+             * refusal of a backend (with_block_line). */
+            throw std::runtime_error(
+                with_block_line(phase.spec, phase.name + ": " + e.what()));
         }
     }
 }

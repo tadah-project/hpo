@@ -7,8 +7,11 @@
 #include <tadah/mlip/structure_transformations.h>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 
 namespace tadah {
 namespace hpo {
@@ -141,6 +144,11 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
         res.needs_adjoint = false;
         res.box_dofs = 0;
         res.hotvar_updated_value = a0_current_;  /* unchanged */
+        std::ostringstream why;
+        why << "the relaxed lattice parameter a0 = " << new_a0
+            << " is outside its --hotvar window [" << cfg_.a0_min << ", "
+            << cfg_.a0_max << "]";
+        res.failure = why.str();
         return res;
     }
 
@@ -149,10 +157,9 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
      * fires exactly when (atom fmax, strain force normalised) both
      * fall below LAMMPS's 0.1 eV/Ang eq_ok threshold, so we can use
      * `!rr.converged` as the canonical unconverged signal. Returns
-     * the soft penalty value (Ecoh=100.0 by default, matches the
-     * `Ecoh = ternary(v_eq_ok, v_Ecoh_raw, 100.0)` fallback). Set
-     * --unconverged-penalty nan to disable the soft path and reject
-     * hard via NaN->FAIL_SCORE. */
+     * the --unconverged value (--unconverged const 100 by default,
+     * matches the `Ecoh = ternary(v_eq_ok, v_Ecoh_raw, 100.0)` fallback,
+     * or --unconverged force-scaled's target + slope x fmax). */
     const bool relax_unconverged =
         !rr.converged ||
         rr.maxeval_reached ||
@@ -182,6 +189,40 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
         res.box_dofs = 0;
         res.hotvar_updated_value = new_a0;  /* still update warmstart */
         a0_current_ = new_a0;
+        /* A value that is not finite: the term fails, and says why, naming
+         * the strategy that gave it. The parser reads only finite numbers,
+         * so a parsed --unconverged const value is finite; a force-scaled
+         * one is not when fmax is not, or slope x fmax overflows. */
+        if (!std::isfinite(res.value)) {
+            std::ostringstream why;
+            why << "the relaxation did not converge (";
+            const char* sep = "";
+            const auto cause = [&](bool on, const char* what) {
+                if (on) { why << sep << what; sep = ", "; }
+            };
+            cause(rr.maxeval_reached, "maxeval reached");
+            cause(rr.wall_time_exceeded, "wall time exceeded");
+            cause(rr.scale_out_of_range, "cell scale out of range");
+            cause(rr.early_rejected, "a0 left its --hotvar window");
+            cause(rr.final_fmax_atoms > cfg_.eq_fmax_threshold,
+                  "atom forces above the equilibrium threshold");
+            if (*sep == '\0') why << "not converged";
+            why << ") and its --unconverged ";
+            switch (cfg_.unconverged_strategy) {
+                using Strat = Config::UnconvergedStrategy;
+                case Strat::Const:
+                    why << "const value " << res.value;
+                    break;
+                case Strat::ForceScaled:
+                    why << "force-scaled value, target + slope x fmax = "
+                        << cfg_.target << " + " << cfg_.unconverged_value
+                        << " x " << rr.final_fmax_atoms << " = " << res.value
+                        << ",";
+                    break;
+            }
+            why << " is not finite";
+            res.failure = why.str();
+        }
         return res;
     }
 

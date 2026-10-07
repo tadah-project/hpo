@@ -235,7 +235,8 @@ struct OptimizerSpec {
           noise(o.noise),
           multistart(o.multistart),
           stage_topk(o.stage_topk),
-          restart(o.restart) {}
+          restart(o.restart),
+          block_line(o.block_line), block_line_text(o.block_line_text) {}
     OptimizerSpec& operator=(const OptimizerSpec& o) {
         if (this != &o) {
             OptimizerSpec tmp(o);
@@ -362,6 +363,19 @@ struct OptimizerSpec {
     MultiStartSpec   multistart;            // STRATEGY { TYPE MULTISTART }
     std::size_t      stage_topk = 1;        // STRATEGY { TYPE PRESTAGE TOPK ... }
     RestartSpec      restart;                // STRATEGY { RESTART/ENDRESTART }
+
+    /* -------- where the configuration completes this optimiser -------
+     * The line of the hpotarget file at which HPOTargets::read() checks
+     * the block that configures this optimiser, and its text: ENDOPTIMIZER
+     * for the STRATEGY-level spec (whose copies are the MULTISTART starts
+     * and the PRESTAGE refinement, a REFINE block's keys included),
+     * ENDEXPLORE for the PRESTAGE exploration, ENDINNER for an INNER block
+     * (inner_run_spec gives NLopt's default local optimiser the line of
+     * the block it runs in). 0 for a spec built outside the parser. The
+     * startup refusals of a phase's settings name it (with_block_line,
+     * phase_specs.h), as the parser's refusals of the block do. */
+    std::size_t      block_line = 0;
+    std::string      block_line_text;
 
     /* Bind the search space: low/high become the INTERNAL bounds, is_int,
      * log_scaled and parameter_labels are derived from it. Called by

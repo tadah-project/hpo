@@ -715,8 +715,7 @@ void HPOTargets::read(const std::string& fn)
     /* Every parse error names the line it is about. */
     auto at_line = [](std::size_t n, const std::string& what,
                       const std::string& text) {
-        return "Error on line " + core::to_string(n) + ": " + what +
-               "\nLine: " + text;
+        return config_line_error(n, what, text);
     };
     /* An error about an earlier line than the one being read: a STRATEGY
      * key found at the end of its block to have no effect. */
@@ -782,7 +781,10 @@ void HPOTargets::read(const std::string& fn)
             if (key=="OPTIMIZER")    { block=OUTER; refresh_active_opt(); continue; }
             if (key=="ENDOPTIMIZER") {
                 /* The STRATEGY-level optimiser is complete here: a short-form
-                 * LIB/ALGO may follow the STRATEGY block. */
+                 * LIB/ALGO may follow the STRATEGY block. Its startup
+                 * refusals name this line too (OptimizerSpec::block_line). */
+                spec.block_line = nline;
+                spec.block_line_text = line;
                 require_driver(spec, DriverPhase::Run);
                 block=ROOT;  active_opt=nullptr;  continue;
             }
@@ -879,6 +881,8 @@ void HPOTargets::read(const std::string& fn)
             if (key=="ENDEXPLORE") {
                 if (block != EXPLORE_BLK)
                     throw std::runtime_error("ENDEXPLORE without matching EXPLORE");
+                spec.prestage->block_line = nline;
+                spec.prestage->block_line_text = line;
                 require_driver(*spec.prestage, DriverPhase::Explore);
                 block = STRATEGY_BLK;
                 refresh_active_opt();
@@ -926,6 +930,8 @@ void HPOTargets::read(const std::string& fn)
                     throw std::runtime_error("ENDINNER without matching INNER");
                 /* The INNER optimiser is complete here, like an EXPLORE
                  * block's at ENDEXPLORE. */
+                active_opt->block_line = nline;
+                active_opt->block_line_text = line;
                 require_inner_driver(*active_opt, inner_enclosing());
                 block = prev_inner;
                 inner_parent = nullptr;
