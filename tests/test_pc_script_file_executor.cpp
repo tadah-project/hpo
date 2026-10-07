@@ -679,6 +679,93 @@ TEST_CASE("an --outvar or --varloss whose read-back raises a LAMMPS error "
     }
 }
 
+/* Pins: a variable read back after another one's read-back error carries
+ * the LAMMPS error of its own evaluation, not "has a circular dependency":
+ *   - outvars E, Pend, Pdiff with Pdiff = v_Pend-1.0: the task is OK, E is
+ *     read (0), Pend and Pdiff are "" and outvar_errors names, for each of
+ *     them, Pend's error (Pdiff evaluates Pend);
+ *   - a --failvar vdep = (v_Pend>1e9) read after the outvar Pend: the task
+ *     fails, error_msg "reading --failvar vdep after the script: " and
+ *     Pend's error, the early failvar viol still read;
+ *   - Pend declared as an --outvar and as a --hotvar: the task fails,
+ *     error_msg "reading --hotvar Pend after the script: " and its error.
+ * Each for `press` under a thermo_style without it and for `1.0/(pe-pe)`.
+ * Before the fix: the first error left Pend marked as being evaluated
+ * (LAMMPS Variable::eval_in_progress), so every later read that reached it
+ * raised "Variable Pend: has a circular dependency" and the journal named
+ * a dependency the script does not have instead of the real cause. The
+ * message checks fail (and outvar_errors for Pend was right, Pdiff's
+ * wrong). */
+TEST_CASE("a variable read back after a read-back error carries its own "
+          "LAMMPS error", "[script_file][pc_task][readback]") {
+    auto pot_ctx = kr_pot_ctx();
+    tadah::hpo::PcSlotState<LammpsRunner> st;
+    const std::vector<std::string> invar =
+        {"lmp", "-log", "none", "-screen", "none"};
+    using tadah::hpo::PcTaskStatus;
+    using Catch::Contains;
+
+    for (const ReadbackError& err : {kPressError, kDivideError}) {
+        INFO("Pend = " << err.formula);
+        std::vector<std::string> lines = readback_lines(err.formula);
+        lines.push_back("variable Pdiff equal v_Pend-1.0");
+        lines.push_back("variable vdep equal (v_Pend>1e9)");
+        {
+            INFO("a dependent --outvar");
+            const auto res = tadah::hpo::execute_script_task<LammpsRunner>(
+                "rb", lines, invar, {"E", "Pend", "Pdiff"}, {}, {"viol"},
+                pot_ctx, 1, {}, st);
+            INFO("error_msg: " << res.error_msg);
+            REQUIRE(res.status == PcTaskStatus::OK);
+            REQUIRE(res.outvar_values.size() == 3);
+            CHECK(std::stod(res.outvar_values[0]) == 0.0);
+            CHECK(res.outvar_values[1].empty());
+            CHECK(res.outvar_values[2].empty());
+            REQUIRE(res.outvar_errors.size() == 3);
+            CHECK(res.outvar_errors[0].empty());
+            for (std::size_t j : {1, 2}) {
+                INFO("outvar_errors[" << j << "]");
+                CHECK_THAT(res.outvar_errors[j],
+                           Contains(err.lammps_text) &&
+                               !Contains("circular dependency"));
+            }
+            CHECK(res.failvar_values == std::vector<std::string>{"0.25"});
+            CHECK(st.lmp_cache.count(slot_cache_key("rb", invar)) == 0);
+        }
+        {
+            INFO("a dependent --failvar");
+            const auto res = tadah::hpo::execute_script_task<LammpsRunner>(
+                "rb", lines, invar, {"E", "Pend"}, {}, {"viol", "vdep"},
+                pot_ctx, 1, {}, st);
+            INFO("error_msg: " << res.error_msg);
+            REQUIRE(res.status == PcTaskStatus::RUN_FAIL);
+            CHECK_THAT(res.error_msg,
+                       Catch::StartsWith("reading --failvar vdep after the "
+                                         "script: ") &&
+                           Contains(err.lammps_text) &&
+                           !Contains("circular dependency"));
+            CHECK(res.failvar_values == std::vector<std::string>{"0.25", ""});
+            CHECK(st.lmp_cache.count(slot_cache_key("rb", invar)) == 0);
+        }
+        {
+            INFO("one name as an --outvar and a --hotvar");
+            const auto res = tadah::hpo::execute_script_task<LammpsRunner>(
+                "rb", lines, invar, {"E", "Pend"}, {"Pend"}, {"viol"},
+                pot_ctx, 1, {}, st);
+            INFO("error_msg: " << res.error_msg);
+            REQUIRE(res.status == PcTaskStatus::RUN_FAIL);
+            CHECK_THAT(res.error_msg,
+                       Catch::StartsWith("reading --hotvar Pend after the "
+                                         "script: ") &&
+                           Contains(err.lammps_text) &&
+                           !Contains("circular dependency"));
+            CHECK(res.hotvar_values.empty());
+            CHECK(st.lmp_cache.count(slot_cache_key("rb", invar)) == 0);
+        }
+        st.lmp_cache.clear();
+    }
+}
+
 /* Pins: a LAMMPS error inside the script (an unknown command) fails the
  * task with the LAMMPS message in error_msg -- "ERROR: Unknown command:
  * bogus_command 1 2", which the parent journals -- after the early failvar

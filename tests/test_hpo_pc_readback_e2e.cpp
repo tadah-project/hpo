@@ -12,8 +12,9 @@
 //     fallback where socketpair is blocked. QFLUSH 1 writes each
 //     evaluation's rows at once. An unreadable --varloss or --hotvar fails
 //     the evaluation and an unreadable diagnostic --outvar is NaN, each
-//     with a journal line naming the variable and the LAMMPS message; and
-//     every row of loss.tadah, outvar.tadah and stats.tadah has its
+//     with a journal line naming the variable and the LAMMPS message (a
+//     variable that reads an unreadable one carries that one's message);
+//     and every row of loss.tadah, outvar.tadah and stats.tadah has its
 //     header's columns, the cells an evaluation did not compute written as
 //     NaN (`nan` in loss/stats.tadah, `NaN` in outvar.tadah). Hidden
 //     because, before the fix, these cases ended their process with
@@ -21,7 +22,9 @@
 //     one process.
 //   - [.tadah_cli_pc_readback] (CTest entry hpo_tadah_cli_pc_readback): the
 //     built tadah under PC_ISOLATION THREAD and PROCESS ends the same way,
-//     with the same rows. It needs TADAH_BINARY (the entry sets it in a
+//     with the same rows and, under FAILSCORE_GRADING, the same graded
+//     losses (a --varloss failure graded by its failvar, an unreadable
+//     PC_FAILPROBE S). It needs TADAH_BINARY (the entry sets it in a
 //     build with the tadah target) and is Skipped without it; its PROCESS
 //     half needs socketpair, like the pc pool tests.
 
@@ -41,12 +44,15 @@
 #include <sys/wait.h>
 
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -518,6 +524,128 @@ TEST_CASE("an unreadable --hotvar fails the evaluation and the cold scripts "
     Host::reset_globals_for_test();
 }
 
+/* Pins: a variable that reads an unreadable one is journalled with the
+ * LAMMPS error of that one, as reading it raised it, never with "has a
+ * circular dependency":
+ *   - `--outvar Pend --varloss Pdiff 0 1` with Pdiff = v_Pend-1.0 (Pend
+ *     read first): the evaluation fails, "PC_LAMMPS task failed
+ *     (readback.in, occurrence n): reading --varloss Pdiff after the
+ *     script: " and Pend's LAMMPS message, Pend and Pdiff failscored in
+ *     outvar.tadah, and no "PC_LAMMPS --outvar is NaN" line (Pend is not a
+ *     NaN: its task failed);
+ *   - the derived diagnostic `--varloss E 0 1 --outvar P --outvar Pgpa`
+ *     with Pgpa = v_P/10000: the evaluation keeps its loss, P and Pgpa are
+ *     NaN, and every journalled line carries P's LAMMPS message: "PC_LAMMPS
+ *     --outvar is NaN (readback.in, occurrence n): reading --outvar P after
+ *     the script: " for occurrence 1 and "... reading --outvar Pgpa after
+ *     the script: " for occurrences 2 and 4 (Pgpa is read second in each
+ *     evaluation).
+ * Each for `press` under a thermo_style without it and for `1.0/(pe-pe)`.
+ * Before the fix: the first read's error left Pend (P) marked as being
+ * evaluated in LAMMPS, so the read of Pdiff (Pgpa) raised "Variable Pend:
+ * has a circular dependency", which the journal reported instead of the
+ * real cause; the message checks fail. */
+TEST_CASE("a variable that reads an unreadable one is journalled with its "
+          "LAMMPS error", "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    for (const ReadbackError& err : {kPressError, kDivideError}) {
+        INFO("formula " << err.formula);
+        {
+            INFO("--outvar Pend --varloss Pdiff");
+            Host::reset_globals_for_test();
+            ForceRebuildGuard rebuild;
+            ScratchDir sd("tadah_pc_readback_dep_");
+            std::ofstream(sd.dir / "readback.in")
+                << ta_script("3.301", std::string("variable Pend equal ") +
+                                          err.formula + "\n"
+                                          "variable Pdiff equal v_Pend-1.0\n");
+            Journal j;
+            const auto losses = evaluate(
+                sd.dir,
+                "PC_ERMSE 0 1\nPC_LAMMPS --script " +
+                    (sd.dir / "readback.in").string() +
+                    " --outvar Pend --varloss Pdiff 0 1\n",
+                {0.5, 0.6});
+            const std::string journal = j.finish();
+            INFO(journal);
+            for (const double l : losses) CHECK(l == 1e16);
+            const Table outv = read_table("outvar.tadah");
+            CHECK(outv.header == std::vector<std::string>{
+                      "#ITERATION", "IT-TIME/ms", "SLOT", "ERMSE", "Pend",
+                      "Pdiff"});
+            REQUIRE(outv.rows.size() == 2);
+            check_header_shaped(outv, "outvar.tadah");
+            for (const auto& row : outv.rows)
+                if (row.size() == 6) {
+                    CHECK(row[4] == "1.000000e+16");
+                    CHECK(row[5] == "1.000000e+16");
+                }
+            for (const char* n : {"occurrence 1)", "occurrence 2)"}) {
+                const std::string l = line_with(
+                    journal, std::string("readback.in, ") + n +
+                                 ": reading --varloss Pdiff after the "
+                                 "script: ");
+                INFO(n);
+                CHECK_THAT(l, Catch::Contains("PC_LAMMPS task failed (") &&
+                                  Catch::Contains(err.lammps_text));
+            }
+            CHECK(journal.find("circular dependency") == std::string::npos);
+            CHECK(journal.find("PC_LAMMPS --outvar is NaN") ==
+                  std::string::npos);
+            Host::reset_globals_for_test();
+        }
+        {
+            INFO("--outvar P --outvar Pgpa");
+            Host::reset_globals_for_test();
+            ForceRebuildGuard rebuild;
+            ScratchDir sd("tadah_pc_readback_derived_");
+            std::ofstream(sd.dir / "readback.in")
+                << ta_script("3.301", std::string("variable E equal pe\n"
+                                                  "variable P equal ") +
+                                          err.formula + "\n"
+                                          "variable Pgpa equal v_P/10000\n");
+            Journal j;
+            const auto losses = evaluate(
+                sd.dir,
+                "PC_ERMSE 0 1\nPC_LAMMPS --script " +
+                    (sd.dir / "readback.in").string() +
+                    " --varloss E 0 1 --outvar P --outvar Pgpa\n",
+                {0.5, 0.6});
+            const std::string journal = j.finish();
+            INFO(journal);
+            for (const double l : losses)
+                CHECK(tadah::hpo::loss_is_feasible(l, 1e16));
+            const Table outv = read_table("outvar.tadah");
+            REQUIRE(outv.header.size() == 7);
+            CHECK(outv.header[5] == "P");
+            CHECK(outv.header[6] == "Pgpa");
+            REQUIRE(outv.rows.size() == 2);
+            check_header_shaped(outv, "outvar.tadah");
+            for (const auto& row : outv.rows)
+                if (row.size() == 7) {
+                    CHECK(row[5] == "NaN");
+                    CHECK(row[6] == "NaN");
+                }
+            CHECK_THAT(line_with(journal, "readback.in, occurrence 1): "
+                                          "reading --outvar P after the "
+                                          "script: "),
+                       Catch::Contains("PC_LAMMPS --outvar is NaN (") &&
+                           Catch::Contains(err.lammps_text));
+            for (const char* n : {"occurrence 2)", "occurrence 4)"}) {
+                const std::string l = line_with(
+                    journal, std::string("readback.in, ") + n +
+                                 ": reading --outvar Pgpa after the script: ");
+                INFO(n);
+                CHECK_THAT(l, Catch::Contains("PC_LAMMPS --outvar is NaN (") &&
+                                  Catch::Contains(err.lammps_text));
+            }
+            CHECK(journal.find("circular dependency") == std::string::npos);
+            CHECK(journal.find("PC_LAMMPS task failed") == std::string::npos);
+            Host::reset_globals_for_test();
+        }
+    }
+}
+
 /* Pins: a row of an evaluation that did not compute every column has its
  * header's columns, each cell it did not compute written as NaN -- `nan` in
  * loss.tadah and stats.tadah (the spelling those files use for a dataset
@@ -720,10 +848,13 @@ TEST_CASE("rows of a candidate rejected before training have the header's "
 namespace {
 
 /* `tadah hpo` in its own directory @p dir under PC_ISOLATION @p mode, with
- * the hpotarget @p target (PC_ISOLATION appended) and the script
- * readback.in = @p script; returns the wait status. */
-int run_tadah_hpo(const char* bin, const fs::path& dir, const std::string& mode,
-                  const std::string& target, const std::string& script) {
+ * the hpotarget @p target (PC_ISOLATION appended), the script readback.in
+ * = @p script and each of @p more_scripts (name, text); returns the wait
+ * status. */
+int run_tadah_hpo(
+        const char* bin, const fs::path& dir, const std::string& mode,
+        const std::string& target, const std::string& script,
+        const std::vector<std::pair<std::string, std::string>>& more_scripts) {
     fs::create_directories(dir);
     write_minimal_ta_dbfile(dir / "train.db", 0.0);
     write_minimal_ta_dbfile(dir / "val.db", 0.07, -0.04);
@@ -732,6 +863,7 @@ int run_tadah_hpo(const char* bin, const fs::path& dir, const std::string& mode,
     std::ofstream(dir / "config") << "DBFILE " << (dir / "train.db").string()
                                   << "\n" << kTaModelKeys;
     std::ofstream(dir / "readback.in") << script;
+    for (const auto& s : more_scripts) std::ofstream(dir / s.first) << s.second;
     std::ofstream(dir / "config.hpo") << target << "PC_ISOLATION " << mode
                                       << "\n";
     const std::string cmd =
@@ -757,31 +889,70 @@ std::vector<std::vector<std::string>> lines_without(const fs::path& p,
     return out;
 }
 
+/* @p v as loss.tadah and outvar.tadah print it (the default DIGITS). */
+std::string sci6(double v) {
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%.6e", v);
+    return buf;
+}
+
+/* The column of @p t headed @p name (header.size() when none is). */
+std::size_t column(const Table& t, const std::string& name) {
+    std::size_t c = 0;
+    while (c < t.header.size() && t.header[c] != name) ++c;
+    return c;
+}
+
 }  // namespace
 
 /* Pins, through the built tadah: a LAMMPS error while a PC_LAMMPS variable
  * is read back, and one inside the script, end each evaluation the same way
- * under PC_ISOLATION THREAD and PROCESS (RANDOM, MAXEVAL 3): tadah exits
- * normally -- 0 when the evaluations keep a loss, 1 when none does ("no
- * evaluation produced a usable loss") -- with the same journal line in both
- * modes and the same rows: loss.tadah, params.tadah, stats.tadah and their
- * best_* twins byte for byte, outvar.tadah and best_outvar.tadah without
- * their IT-TIME/ms column (wall time).
+ * under PC_ISOLATION THREAD and PROCESS (RANDOM, MAXEVAL 3; each run's
+ * journal names the mode it ran in): tadah exits normally -- 0 when the
+ * evaluations keep a loss, 1 when none does ("no evaluation produced a
+ * usable loss") -- with the same journal line in both modes and the same
+ * rows: loss.tadah, params.tadah, stats.tadah and their best_* twins byte
+ * for byte, outvar.tadah and best_outvar.tadah without their IT-TIME/ms
+ * column (wall time).
  *   - a diagnostic --outvar Pend reading `press`: exit 0, "PC_LAMMPS
  *     --outvar is NaN (", "reading --outvar Pend after the script: ERROR:
  *     Thermo keyword press ...", Pend NaN in outvar.tadah;
  *   - --varloss E reading `press`: exit 1, "PC_LAMMPS task failed (",
  *     "reading --varloss E after the script: ERROR: Thermo keyword press";
  *   - `bogus_command 1 2` in the script: exit 1, "PC_LAMMPS task failed
- *     (readback.in, occurrence 1): ERROR: Unknown command: bogus_command 1 2".
+ *     (readback.in, occurrence 1): ERROR: Unknown command: bogus_command 1 2";
+ *   - FAILSCORE_GRADING ON, the PC_FAILPROBE S reading `press`: the probe
+ *     fails as a failed run does, so the evaluation is aborted (S and the
+ *     PC_LAMMPS line's E failscored) and graded band D with S unavailable
+ *     (the band top, TOTAL_LOSS/N 1.000000e+16): exit 1, "PC_LAMMPS task
+ *     failed (probe.in, occurrence 1): reading PC_FAILPROBE --outvar S after
+ *     the script: ERROR: Thermo keyword press", and no "--outvar is NaN"
+ *     line (S is not a diagnostic);
+ *   - FAILSCORE_GRADING ON, --varloss E reading `press` with --failvar viol
+ *     1.0 (viol = 0.25): the failvar grades the failure, band B by
+ *     sigma(0.25), TOTAL_LOSS/N 9.993000e+15, exit 1;
+ *   - the same with viol = 1.0/(pe-pe): "PC_LAMMPS task failed
+ *     (readback.in, occurrence 1): reading --failvar viol after the
+ *     script: ERROR: ... Divide by 0", band B by the failed fraction (one of
+ *     one script), TOTAL_LOSS/N 9.993750e+15, exit 1.
  * Before the fix: under THREAD tadah died of SIGSEGV in the read-back
  * sections (the shell's exit status 139); under PROCESS it exited 1 in the
  * --outvar section (the whole script failed, E included) and journalled
  * "pc-worker task failed (...): ERROR: Thermo keyword press ..." without
- * naming the variable; and neither mode journalled the unknown command. */
+ * naming the variable, failed the graded --varloss without its failvar
+ * (TOTAL_LOSS/N 9.993750e+15, the failed fraction); and neither mode
+ * journalled the unknown command. Before the PC_FAILPROBE fix the probe's S
+ * was taken for a diagnostic: "PC_LAMMPS --outvar is NaN (probe.in, ...)",
+ * no "task failed" line, S NaN and E computed (the evaluation not
+ * aborted). Before the harness fix a TADAH_PC_ISOLATION in the test's
+ * environment overrode the config's PC_ISOLATION, so with
+ * TADAH_PC_ISOLATION=THREAD the PROCESS runs ran THREAD (the journal check
+ * of the mode fails). */
 TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
           "way under PC_ISOLATION THREAD and PROCESS",
           "[pc_readback][tadah_cli][.tadah_cli_pc_readback]") {
+    using tadah::hpo::FailBand;
+    using tadah::hpo::graded_failscore;
     const char* bin = std::getenv("TADAH_BINARY");
     if (!bin || !*bin)
         TADAH_SKIP("TADAH_BINARY is not set: it names the built tadah "
@@ -803,6 +974,12 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
         std::string lammps_line;
         int exit_status;
         std::vector<std::string> journal_has;
+        std::vector<std::string> journal_lacks;
+        /* Every row's TOTAL_LOSS/N ("" unchecked). */
+        std::string total_loss;
+        /* outvar.tadah: every row's cell of each column. */
+        std::vector<std::pair<std::string, std::string>> outvar_cells;
+        std::vector<std::pair<std::string, std::string>> more_scripts;
     };
     Case c;
     std::string name;
@@ -813,7 +990,11 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
              "PC_LAMMPS --script readback.in --varloss E 0 1 --outvar Pend\n",
              0,
              {"PC_LAMMPS --outvar is NaN (readback.in, occurrence 1): "
-              "reading --outvar Pend after the script: " + press_text}};
+              "reading --outvar Pend after the script: " + press_text},
+             {"PC_LAMMPS task failed"},
+             "",
+             {{"Pend", "NaN"}},
+             {}};
     }
     SECTION("a --varloss variable that cannot be read") {
         name = "varloss";
@@ -821,7 +1002,11 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
              "PC_LAMMPS --script readback.in --varloss E 0 1\n", 1,
              {"PC_LAMMPS task failed (readback.in, occurrence 1): "
               "reading --varloss E after the script: " + press_text,
-              "no evaluation produced a usable loss"}};
+              "no evaluation produced a usable loss"},
+             {},
+             "1.000000e+16",
+             {{"E", "1.000000e+16"}},
+             {}};
     }
     SECTION("a LAMMPS error inside the script") {
         name = "script";
@@ -829,29 +1014,99 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
              "PC_LAMMPS --script readback.in --varloss E 0 1\n", 1,
              {"PC_LAMMPS task failed (readback.in, occurrence 1): "
               "ERROR: Unknown command: bogus_command 1 2",
-              "no evaluation produced a usable loss"}};
+              "no evaluation produced a usable loss"},
+             {},
+             "1.000000e+16",
+             {{"E", "1.000000e+16"}},
+             {}};
+    }
+    SECTION("a PC_FAILPROBE S that cannot be read") {
+        name = "failprobe";
+        c = {ta_script("3.301", "variable E equal pe\n"),
+             "FAILSCORE_GRADING ON\n"
+             "PC_FAILPROBE --script probe.in --outvar S --s0 0.5\n"
+             "PC_LAMMPS --script readback.in --varloss E 0 1\n",
+             1,
+             {"PC_LAMMPS task failed (probe.in, occurrence 1): reading "
+              "PC_FAILPROBE --outvar S after the script: " + press_text,
+              "no evaluation produced a usable loss"},
+             {"--outvar is NaN"},
+             sci6(graded_failscore(1e16, FailBand::D,
+                                   std::numeric_limits<double>::infinity(),
+                                   0.5)),
+             {{"S", "1.000000e+16"}, {"E", "1.000000e+16"}},
+             {{"probe.in", ta_script("3.301", "variable S equal press\n")}}};
+    }
+    SECTION("a graded --varloss failure with a readable --failvar") {
+        name = "graded_failvar";
+        c = {ta_script("3.301", "variable viol equal 0.25\n"
+                                "variable E equal press\n"),
+             "FAILSCORE_GRADING ON\n"
+             "PC_LAMMPS --script readback.in --varloss E 0 1 "
+             "--failvar viol 1.0\n",
+             1,
+             {"PC_LAMMPS task failed (readback.in, occurrence 1): "
+              "reading --varloss E after the script: " + press_text},
+             {},
+             sci6(graded_failscore(1e16, FailBand::B, 0.25, 1.0)),
+             {{"E", "1.000000e+16"}},
+             {}};
+    }
+    SECTION("a graded --varloss failure whose --failvar cannot be read") {
+        name = "graded_failvar_unreadable";
+        c = {ta_script("3.301", "variable viol equal 1.0/(pe-pe)\n"
+                                "variable E equal press\n"),
+             "FAILSCORE_GRADING ON\n"
+             "PC_LAMMPS --script readback.in --varloss E 0 1 "
+             "--failvar viol 1.0\n",
+             1,
+             {"PC_LAMMPS task failed (readback.in, occurrence 1): "
+              "reading --failvar viol after the script: ",
+              "Divide by 0 in variable formula"},
+             {},
+             sci6(graded_failscore(1e16, FailBand::B, 1.0, 1.0)),
+             {{"E", "1.000000e+16"}},
+             {}};
     }
     std::vector<fs::path> dirs;
     for (const std::string mode : {"THREAD", "PROCESS"}) {
         INFO(name << ", PC_ISOLATION " << mode);
         const fs::path dir = sd.dir / (name + "_" + mode);
         const int rc = run_tadah_hpo(bin, dir, mode, head + c.lammps_line,
-                                     c.script);
+                                     c.script, c.more_scripts);
         INFO(read_text(dir / "tadah.stderr"));
         const std::string journal = read_text(dir / "hpo_run.log");
         INFO(journal);
         REQUIRE(WIFEXITED(rc));
         CHECK(WEXITSTATUS(rc) == c.exit_status);
+        CHECK_THAT(journal,
+                   Catch::Contains("PC_ISOLATION: " + mode +
+                                   (mode == "THREAD"
+                                        ? " (deprecated fallback)"
+                                        : " -- pc_lammps tasks execute in")));
         for (const auto& needle : c.journal_has)
             CHECK_THAT(journal, Catch::Contains(needle));
+        for (const auto& needle : c.journal_lacks)
+            CHECK_THAT(journal, !Catch::Contains(needle));
         const Table outv = read_table(dir / "outvar.tadah");
         CHECK(outv.rows.size() == 3);
         check_header_shaped(outv, "outvar.tadah");
-        if (c.exit_status == 0) {
-            REQUIRE(outv.header.size() == 6);
-            CHECK(outv.header[5] == "Pend");
+        for (const auto& cell : c.outvar_cells) {
+            INFO("outvar.tadah column " << cell.first);
+            const std::size_t col = column(outv, cell.first);
+            REQUIRE(col < outv.header.size());
             for (const auto& row : outv.rows)
-                if (row.size() == 6) CHECK(row[5] == "NaN");
+                if (row.size() == outv.header.size())
+                    CHECK(row[col] == cell.second);
+        }
+        if (!c.total_loss.empty()) {
+            const Table loss = read_table(dir / "loss.tadah");
+            REQUIRE_FALSE(loss.header.empty());
+            CHECK(loss.header.back() == "TOTAL_LOSS/N");
+            CHECK(loss.rows.size() == 3);
+            check_header_shaped(loss, "loss.tadah");
+            for (const auto& row : loss.rows)
+                if (!row.empty()) CHECK(row.back() == c.total_loss);
         }
         dirs.push_back(dir);
     }
