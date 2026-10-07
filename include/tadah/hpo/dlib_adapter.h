@@ -28,27 +28,30 @@ namespace tadah::hpo {
 
 namespace detail {
 
-/* DLIB's stop strategies count BFGS *iterations*, not function evals.
- * At dim=D with central differences a single iteration consumes
- * 2*D + line_search + step ~= 2*D + 2..5 evals, so passing the user's
- * MAXEVAL straight into objective_delta_stop_strategy(min_delta, max_iter)
- * silently lets BFGS overshoot the user's budget by O(D)x. We therefore
- * cap evaluations from outside DLIB by counting calls to the objective
- * lambda and throwing this on overflow. The catch site treats it as a
- * graceful termination. */
+/** DLIB's stop strategies count BFGS *iterations*, not function evals.
+ *  At dim=D with central differences a single iteration consumes
+ *  2*D + line_search + step ~= 2*D + 2..5 evals, so passing the user's
+ *  MAXEVAL straight into objective_delta_stop_strategy(min_delta, max_iter)
+ *  silently lets BFGS overshoot the user's budget by O(D)x. We therefore
+ *  cap evaluations from outside DLIB by counting calls to the objective
+ *  lambda and throwing this on overflow. The catch site treats it as a
+ *  graceful termination. */
 struct MaxEvalReached : public std::exception {
+  /** A fixed message naming the eval-counted MAXEVAL. */
   const char* what() const noexcept override {
     return "DLIB:BFGS reached MAXEVAL function evaluations (eval-counted, not iter-counted)";
   }
 };
 
-/* The point BFGS asked for the gradient of has no usable gradient
- * (GradientProvider::failure says why: a failed evaluation, or a gradient
- * that is not finite): dlib cannot reject a point, so the search ends
- * there, with its own status (report_gradient_stop). */
+/** The point BFGS asked for the gradient of has no usable gradient
+ *  (GradientProvider::failure says why: a failed evaluation, or a gradient
+ *  that is not finite): dlib cannot reject a point, so the search ends
+ *  there, with its own status (report_gradient_stop). */
 struct GradientNotFinite : public std::exception {
-  GradientFailureInfo info;
+  GradientFailureInfo info;  ///< why the gradient is not usable
+  /** Carries the provider's failure `i`. */
   explicit GradientNotFinite(GradientFailureInfo i) : info(std::move(i)) {}
+  /** "DLIB:BFGS: no usable gradient"; `info` has the cause. */
   const char* what() const noexcept override {
     return "DLIB:BFGS: no usable gradient";
   }
@@ -136,7 +139,7 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
         "DLIB:BFGS accepts either FTOL_ABS or PARAM tol_gradinf, but not both");
 }
 
-/* The value DLIB:GFS is given for an evaluation's loss (run_dlib_global).
+/** The value DLIB:GFS is given for an evaluation's loss (run_dlib_global).
  *
  * find_min_global maximises the negated loss, and the trust-region step of
  * its search (dlib::qopt_impl::pick_next_sample_using_trust_region) takes as
@@ -193,21 +196,24 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
  * Thread-safe: find_min_global evaluates on a pool. */
 class GfsLossForDlib {
 public:
+  /** The largest magnitude dlib is given (see above). */
   static constexpr double kCeiling = 1e100;
 
+  /** For a search whose FAILSCORE is `failscore` (none: only a loss that
+   *  is not finite is a failure). */
   explicit GfsLossForDlib(std::optional<double> failscore)
       : failscore_(failscore)
   {}
 
-  /* Is `loss` a failed evaluation's, one dlib is given a stand-in for? */
+  /** Is `loss` a failed evaluation's, one dlib is given a stand-in for? */
   bool failed(double loss) const
   {
     return failscore_ ? !loss_is_feasible(loss, *failscore_)
                       : !std::isfinite(loss);
   }
 
-  /* The value dlib is given for an evaluation that reported `loss`; a
-   * usable loss also joins the worst and best usable losses so far. */
+  /** The value dlib is given for an evaluation that reported `loss`; a
+   *  usable loss also joins the worst and best usable losses so far. */
   double operator()(double loss)
   {
     std::lock_guard<std::mutex> lk(m_);
@@ -224,8 +230,8 @@ public:
     return v;
   }
 
-  /* The value dlib is given for an evaluation that did not run (queued
-   * after a stop): an ungraded failure's. */
+  /** The value dlib is given for an evaluation that did not run (queued
+   *  after a stop): an ungraded failure's. */
   double not_evaluated() const
   {
     std::lock_guard<std::mutex> lk(m_);
