@@ -2627,6 +2627,10 @@ void HPO_Host<P,R>::obs_loss(Result& r) const
     double v = std::numeric_limits<double>::quiet_NaN();
     double l = trg_.FAIL_SCORE;
     bool failed = true;
+    /* Why the term failed, for the journal. */
+    std::string why = !have_trainer
+        ? "no model of this evaluation was trained"
+        : "no observable was configured for this line";
 
     if (have_trainer && trg_.observables[k]) {
       auto& obs = *trg_.observables[k];
@@ -2639,16 +2643,47 @@ void HPO_Host<P,R>::obs_loss(Result& r) const
         if (std::isfinite(v)) {
           l = obs.lossfn().loss(v, obs.target(), obs.weight());
           failed = !std::isfinite(l);
-          if (failed) l = trg_.FAIL_SCORE;
+          if (failed) {
+            std::ostringstream os;
+            os << "its loss is not finite (value " << v << ", --loss "
+               << LossFunction::to_string(obs.lossfn().type()) << ")";
+            why = os.str();
+            l = trg_.FAIL_SCORE;
+          }
+        } else if (!res.failure.empty()) {
+          why = res.failure;
+        } else {
+          std::ostringstream os;
+          os << "its value is not finite (" << v << ")";
+          why = os.str();
         }
-      } catch (const std::exception&) {
+      } catch (const std::exception& e) {
         /* Relaxer divergence / NaN / model mismatch: a failed term. */
         v = std::numeric_limits<double>::quiet_NaN();
         l = trg_.FAIL_SCORE;
+        why = std::string("its evaluation threw: ") + e.what();
       }
     }
 
-    if (failed) ++n_failed;
+    if (failed) {
+      ++n_failed;
+      /* Journalled as a failed PC_LAMMPS task is (run_lammps): the
+       * observable, the evaluation and why, rate-limited on powers of two
+       * per run -- a potential that breaks an observable breaks it at
+       * every evaluation, and the first few say all. */
+      const std::size_t n =
+          HPOLog::instance().count_in_run("PC_OBSERVABLE term failed");
+      if ((n & (n - 1)) == 0) {
+        const std::string term =
+            trg_.observables[k]
+                ? observable_journal_label(*trg_.observables[k], k + 1)
+                : "PC_OBSERVABLE[" + std::to_string(k + 1) + "]";
+        HPOLog::instance().warning(
+            "PC_OBSERVABLE term failed (" + term + ", eval " +
+            std::to_string(r.iter) + ", occurrence " + std::to_string(n) +
+            "): " + why);
+      }
+    }
     r.v_obs_value[k] = v;
     r.v_obs_loss[k]  = l;
     r.loss_sum      += l;

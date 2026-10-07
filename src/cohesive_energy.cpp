@@ -7,8 +7,11 @@
 #include <tadah/mlip/structure_transformations.h>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 
 namespace tadah {
 namespace hpo {
@@ -141,6 +144,11 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
         res.needs_adjoint = false;
         res.box_dofs = 0;
         res.hotvar_updated_value = a0_current_;  /* unchanged */
+        std::ostringstream why;
+        why << "the relaxed lattice parameter a0 = " << new_a0
+            << " is outside its --hotvar window [" << cfg_.a0_min << ", "
+            << cfg_.a0_max << "]";
+        res.failure = why.str();
         return res;
     }
 
@@ -182,6 +190,25 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
         res.box_dofs = 0;
         res.hotvar_updated_value = new_a0;  /* still update warmstart */
         a0_current_ = new_a0;
+        /* A penalty that is not a number (--unconverged-penalty nan): the
+         * term fails, and says why. */
+        if (!std::isfinite(res.value)) {
+            std::ostringstream why;
+            why << "the relaxation did not converge (";
+            const char* sep = "";
+            const auto cause = [&](bool on, const char* what) {
+                if (on) { why << sep << what; sep = ", "; }
+            };
+            cause(rr.maxeval_reached, "maxeval reached");
+            cause(rr.wall_time_exceeded, "wall time exceeded");
+            cause(rr.scale_out_of_range, "cell scale out of range");
+            cause(rr.early_rejected, "a0 left its --hotvar window");
+            cause(rr.final_fmax_atoms > cfg_.eq_fmax_threshold,
+                  "atom forces above the equilibrium threshold");
+            if (*sep == '\0') why << "not converged";
+            why << ") and its --unconverged-penalty value is " << res.value;
+            res.failure = why.str();
+        }
         return res;
     }
 

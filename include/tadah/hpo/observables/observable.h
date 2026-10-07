@@ -82,6 +82,11 @@ struct ObservableEvalResult {
      *  relaxation): it depends on neither the weights nor theta, and its
      *  gradient is zero. */
     bool value_is_constant = false;
+
+    /** Why the value is not a number, when it is not (a relaxed state the
+     *  observable rejects, a NaN penalty); empty otherwise. The host
+     *  journals it with the failed term (HPO_Host::obs_loss). */
+    std::string failure;
 };
 
 /** \brief Abstract base for typed PC_OBSERVABLE entries.
