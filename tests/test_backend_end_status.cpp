@@ -455,10 +455,11 @@ TEST_CASE("End status: CERES records its gradient tolerance as tol_gradinf "
     CHECK(lr.status() == "CERES:LBFGS: tol_gradinf reached");
 }
 
-/* Pins: FTOL_REL 1e-2 (Ceres' function_tolerance) on the quartic, whose
- * loss falls slowly near its minimum: Ceres converges with "Function
- * tolerance reached", the status is "CERES:LBFGS: FTOL_REL reached" and
- * the stop line gives "FTOL_REL = 0.01".
+/* Pins: Ceres' function_tolerance (FTOL_REL, by default 1e-6) on the
+ * quartic, whose loss falls slowly near its minimum: Ceres converges with
+ * "Function tolerance reached", the status is "CERES:LBFGS: FTOL_REL
+ * reached", and the stop line says the value is the default, "FTOL_REL =
+ * 1e-06 (default)".
  * Before the fix: no status. */
 TEST_CASE("End status: CERES records its function tolerance as FTOL_REL "
           "reached", "[HPO][stop_status][ceres]")
@@ -466,23 +467,22 @@ TEST_CASE("End status: CERES records its function tolerance as FTOL_REL "
     auto sp = make_spec("CERES", "LBFGS", {-1.0, -1.0}, {1.0, 1.0},
                         {0.5, -0.3});
     sp.stop.maxeval = 500;
-    sp.stop.ftol_rel = 1e-2;
     LoggedRun lr;
     StubHost host{quartic};
     const std::string journal = run_ceres(sp, host, lr);
     CHECK(host.n() < 500u);
     CHECK(journal.find("CERES:LBFGS stopped: FTOL_REL reached after ") !=
           std::string::npos);
-    CHECK(journal.find(": FTOL_REL = 0.01; Ceres: Function tolerance "
-                       "reached.") != std::string::npos);
+    CHECK(journal.find(": FTOL_REL = 1e-06 (default); Ceres: Function "
+                       "tolerance reached.") != std::string::npos);
     CHECK(lr.status() == "CERES:LBFGS: FTOL_REL reached");
 }
 
-/* Pins: on the bowl with FTOL_REL and PARAM tol_gradinf too small to
- * fire, Ceres' parameter tolerance (XTOL_REL, by default 1e-8) ends the
- * search: "Parameter tolerance reached", the status "CERES:LBFGS:
- * XTOL_REL reached", and the stop line says the value is the default,
- * "XTOL_REL = 1e-08 (default)".
+/* Pins: XTOL_REL 1e-2 (Ceres' parameter_tolerance) on the quartic, with
+ * FTOL_REL and PARAM tol_gradinf too small to fire: Ceres converges with
+ * "Parameter tolerance reached", the status is "CERES:LBFGS: XTOL_REL
+ * reached" and the stop line gives "XTOL_REL = 0.01". (On the bowl LBFGS
+ * lands on the minimum, where the gradient test fires first.)
  * Before the fix: no status. */
 TEST_CASE("End status: CERES records its parameter tolerance as XTOL_REL "
           "reached", "[HPO][stop_status][ceres]")
@@ -490,21 +490,24 @@ TEST_CASE("End status: CERES records its parameter tolerance as XTOL_REL "
     auto sp = make_spec("CERES", "LBFGS", {-1.0, -1.0}, {1.0, 1.0},
                         {0.5, -0.3});
     sp.stop.maxeval = 2000;
+    sp.stop.xtol_rel = 1e-2;
     sp.stop.ftol_rel = 1e-300;
     sp.param["tol_gradinf"] = 1e-300;
     LoggedRun lr;
-    StubHost host{bowl};
+    StubHost host{quartic};
     const std::string journal = run_ceres(sp, host, lr);
     CHECK(host.n() < 2000u);
-    CHECK(journal.find(": XTOL_REL = 1e-08 (default); Ceres: Parameter "
-                       "tolerance reached.") != std::string::npos);
+    CHECK(journal.find(": XTOL_REL = 0.01; Ceres: Parameter tolerance "
+                       "reached.") != std::string::npos);
     CHECK(lr.status() == "CERES:LBFGS: XTOL_REL reached");
 }
 
-/* Pins: PARAM max_iter 1 (Ceres' max_num_iterations): Ceres ends with
- * NO_CONVERGENCE "Maximum number of iterations reached.", and the status
- * is "CERES:STEEPEST_DESCENT: max_iter reached", the stop line "PARAM
- * max_iter = 1".
+/* Pins: PARAM max_iter 1 (Ceres' max_num_iterations) on the quartic,
+ * which no tolerance ends in one step: Ceres ends with NO_CONVERGENCE
+ * "Maximum number of iterations reached.", and the status is
+ * "CERES:STEEPEST_DESCENT: max_iter reached", the stop line "PARAM
+ * max_iter = 1". (On the bowl the first step lands on the minimum, where
+ * the gradient test fires first.)
  * Before the fix: no status. */
 TEST_CASE("End status: CERES records its iteration cap as max_iter reached",
           "[HPO][stop_status][ceres]")
@@ -514,7 +517,7 @@ TEST_CASE("End status: CERES records its iteration cap as max_iter reached",
     sp.stop.maxeval = 200;
     sp.param["max_iter"] = 1.0;
     LoggedRun lr;
-    StubHost host{bowl};
+    StubHost host{quartic};
     const std::string journal = run_ceres(sp, host, lr);
     CHECK(host.n() < 200u);
     CHECK(journal.find(": PARAM max_iter = 1; Ceres: Maximum number of "
