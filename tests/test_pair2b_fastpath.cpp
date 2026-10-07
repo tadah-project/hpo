@@ -11,8 +11,8 @@
 //   - adjoint capture under the fast path (pure-2B falls back to the
 //     generic kernel, no error, snapshot filled).
 //
-// Certified tables (the docs quickstart D2_LJ potential, and D2_LJ +
-// DM_REAM for compute_2b_mb_half_eamfast vs compute_2b_mb_half):
+// Certified tables (the Ta D2_LJ potential of the Tadah! 1.6.0 quickstart,
+// and D2_LJ + DM_REAM for compute_2b_mb_half_eamfast vs compute_2b_mb_half):
 //   - energy, per-atom force and virial parity on a rattled bcc Ta cell
 //     that holds pairs in the top table segment just below the Cut_Dummy
 //     cutoff, to margins derived from the tables' certificates,
@@ -145,9 +145,11 @@ double getd(LammpsRunner& runner, const LammpsRunner::LMPPtr& lmp,
     return std::stod(runner.get_variable(lmp, name));
 }
 
-/* The docs quickstart potential (Tadah.MLIP/docs/source/quickstart/pot.tadah):
- * D2_LJ Ta, Cut_Dummy, RCUT2B 6.5, M_KRR Kern_Linear, INITMB false. */
-const char* TA_LJ_QUICKSTART_BODY =
+/* The Ta D2_LJ potential that Tadah! 1.6.0 shipped as the docs quickstart
+ * potential (Tadah.MLIP/docs/source/quickstart/pot.tadah of that release;
+ * Tadah.LAMMPS/tests/tests_data/pots/ta_lj_cutdummy.tadah): D2_LJ Ta,
+ * Cut_Dummy, RCUT2B 6.5, M_KRR Kern_Linear, INITMB false. */
+const char* TA_LJ_BODY =
     "ATOM     Ta\n"
     "BIAS     false\n"
     "DIMER     false     0     false\n"
@@ -167,7 +169,7 @@ const char* TA_LJ_QUICKSTART_BODY =
     "WATOM     73\n"
     "WEIGHTS     14.204213349318765225     2604.396965191186154698\n";
 
-/* D2_LJ (the quickstart pair term, WATOM 73 folded into the LJ weights) +
+/* D2_LJ (the pair term of TA_LJ_BODY, WATOM 73 folded into the LJ weights) +
  * DM_REAM Blip density and embedding (grids of MODELS/tests/test_dm_ream.cpp):
  * the EAM-form linear model that takes compute_2b_mb_half_eamfast. Same
  * potential as Tadah.LAMMPS/tests/tests_data/pots/ta_lj_ream.tadah. */
@@ -711,7 +713,7 @@ TEST_CASE("pair2b fast path: adjoint capture falls back to the generic kernel",
     std::remove(pot_path.c_str());
 }
 
-TEST_CASE("pair2b fast path: the quickstart LJ potential matches the generic "
+TEST_CASE("pair2b fast path: the Ta D2_LJ potential matches the generic "
           "kernel, the top table segment included, and logs its certificate",
           "[pair_tadah][pair2b][eamfast][certificate]") {
     tadah::core::PeriodicTable::initialize();
@@ -719,10 +721,10 @@ TEST_CASE("pair2b fast path: the quickstart LJ potential matches the generic "
     const std::string log_path = unique_path("pair2b_lj_fast", ".log");
     const RemoveOnExit log_guard{log_path};
 
-    const Static fast = run_static(runner, TA_LJ_QUICKSTART_BODY, true,
+    const Static fast = run_static(runner, TA_LJ_BODY, true,
                                    rattled_bcc_ta(3.3, false), log_path,
                                    "pair2b_lj");
-    const Static gen = run_static(runner, TA_LJ_QUICKSTART_BODY, false,
+    const Static gen = run_static(runner, TA_LJ_BODY, false,
                                   rattled_bcc_ta(3.3, false), "none",
                                   "pair2b_lj");
     REQUIRE(fast.fast);
@@ -753,13 +755,13 @@ TEST_CASE("pair2b fast path: a pair far below the certified table range "
     const std::string log_path = unique_path("pair2b_lj_close", ".log");
     const RemoveOnExit log_guard{log_path};
 
-    /* One extra atom CLOSE_PAIR_R from atom 1 of the quickstart lattice:
+    /* One extra atom CLOSE_PAIR_R from atom 1 of the 3.5 A lattice:
      * that pair term is ~1e17, and the table is off there. The fast kernel
      * evaluates it analytically, so it matches to rounding. */
-    const Static fast = run_static(runner, TA_LJ_QUICKSTART_BODY, true,
+    const Static fast = run_static(runner, TA_LJ_BODY, true,
                                    rattled_bcc_ta(3.5, true), log_path,
                                    "pair2b_lj_close");
-    const Static gen = run_static(runner, TA_LJ_QUICKSTART_BODY, false,
+    const Static gen = run_static(runner, TA_LJ_BODY, false,
                                   rattled_bcc_ta(3.5, true), "none",
                                   "pair2b_lj_close");
     REQUIRE(fast.fast);
@@ -794,7 +796,7 @@ TEST_CASE("EAM fast path: compute_2b_mb_half_eamfast matches the generic "
 
     /* The embedding must be live, or the density half of the kernel is not
      * exercised: the EAM energy differs from the pair-only sum. */
-    const Static lj_only = run_static(runner, TA_LJ_QUICKSTART_BODY, false,
+    const Static lj_only = run_static(runner, TA_LJ_BODY, false,
                                       rattled_bcc_ta(3.3, false), "none",
                                       "eam_ream_lj");
     REQUIRE(std::fabs(gen.e - lj_only.e) > 1.0);
