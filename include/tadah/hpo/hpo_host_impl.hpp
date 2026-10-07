@@ -28,6 +28,7 @@
 #include <tadah/models/descriptors/dm/rhoform.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
 #include <tadah/mlip/analytics/dphi_dtheta_walk.h>
+#include <tadah/mlip/intercepts.h>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -1144,6 +1145,11 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
          * pot.tadah header generation and stamping LSCALE/ESHIFT into
          * each best_pot.tadah. */
         report_ = mlip::apply_load_transforms(train_stdb_, master_ctx_);
+
+        /* BIAS true: the energy-weighted compositions must determine the
+         * per-species intercepts. They do not change between evaluations,
+         * so refuse such data at startup, not in every fit. */
+        mlip::require_intercepts_determined(train_stdb_, master_ctx_);
     }
 
     /* Apply LSCALE/ESHIFT to validation, and also forward EFILTER/FFILTER if
