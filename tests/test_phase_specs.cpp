@@ -368,6 +368,20 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
         c.set(s);
         CHECK_THAT(error_of(s), Catch::StartsWith(c.message));
     }
+
+    /* Pins: a tolerance on G_MLSL without an INNER block -- a spec built
+     * outside the parser, which require_inner_backend() refuses at startup
+     * and in run_inner() -- names the INNER block it needs, with no INNER
+     * search to look at.
+     * Before the review fix: "...; set it in the INNER block, whose local
+     * search tests it", of a block the spec does not have. */
+    auto g_mlsl = with("NLOPT", "G_MLSL");
+    g_mlsl.stop.ftol_rel = 1e-6;
+    CHECK(error_of(g_mlsl) ==
+          "NLOPT:G_MLSL does not support FTOL_REL: MLSL's multistart loop "
+          "tests no tolerance, and NLopt passes the block's tolerances to no "
+          "INNER search; NLOPT:G_MLSL needs an INNER block, and only that "
+          "block's search can test it");
 }
 
 TEST_CASE("backend rules: a backend with no convergence test and no finite "
