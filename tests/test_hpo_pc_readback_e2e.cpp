@@ -18,9 +18,10 @@
 //     header's columns, the cells an evaluation did not compute written as
 //     NaN (`nan` in loss/stats.tadah, `NaN` in outvar.tadah). A hot value
 //     LAMMPS refuses to inject before a script fails that script, with a
-//     journal line too, and so does a --varloss, --hotvar or --failvar with
-//     no (finite, for a failvar) number for its value after the script (a
-//     diagnostic is NaN with a journal line); a script that cannot be
+//     journal line too, and so does a --varloss, --hotvar or --failvar or
+//     the PC_FAILPROBE S with no (finite, for a failvar) number for its
+//     value after the script, text after a number included (a diagnostic
+//     is NaN with a journal line); a script that cannot be
 //     rendered fails with a journal line. Hidden
 //     because, before the fix, these cases ended their process with
 //     SIGSEGV, and because the HPO_Host statics are shared by the cases of
@@ -833,6 +834,181 @@ TEST_CASE("a diagnostic --outvar with no number for its value is NaN with a "
     Host::reset_globals_for_test();
 }
 
+/* Pins: the S of the PC_FAILPROBE line (its first --outvar) with no number
+ * for its value after the probe's script -- deleted at run time, or
+ * redefined as the string 'abc' -- is a failed probe, as one that cannot be
+ * read is, under FAILSCORE_GRADING OFF and ON alike: the journal line
+ * "PC_LAMMPS task failed (probe.in, occurrence 1): reading PC_FAILPROBE
+ * --outvar S after the script: no value (the variable is not defined, or
+ * has no single value)" (or "...: its value 'abc' is not a number"), no
+ * "--outvar is NaN" line (S is not a diagnostic), the evaluation aborted
+ * (S and the PC_LAMMPS line's E failscored in outvar.tadah) and its loss
+ * FAILSCORE (OFF) or band D's top with S unavailable (ON, --s0 0.5).
+ * Before the fix: S "" or 'abc' was taken for a number nobody checked: the
+ * probe's task counted as completed, E kept its value and nothing was
+ * journalled; under OFF the evaluation was feasible, under ON band D was
+ * recorded for the NaN S (the same loss) without aborting the
+ * evaluation. */
+TEST_CASE("a PC_FAILPROBE S with no number for its value fails the probe",
+          "[pc_readback_e2e][.]") {
+    using tadah::hpo::FailBand;
+    using tadah::hpo::graded_failscore;
+    tadah::core::PeriodicTable::initialize();
+    for (const bool graded : {false, true})
+    for (const bool as_string : {false, true}) {
+        INFO((graded ? "FAILSCORE_GRADING ON" : "FAILSCORE_GRADING OFF")
+             << ", S " << (as_string ? "redefined as a string" : "deleted"));
+        Host::reset_globals_for_test();
+        ForceRebuildGuard rebuild;
+        ScratchDir sd("tadah_pc_novalue_probe_");
+        std::ofstream(sd.dir / "probe.in")
+            << ta_script("3.301", "variable S equal 0.1\n" +
+                                      spoil("S", as_string));
+        std::ofstream(sd.dir / "readback.in")
+            << ta_script("3.301", "variable E equal pe\n");
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir,
+            std::string(graded ? "FAILSCORE_GRADING ON\n" : "") +
+                "PC_ERMSE 0 1\nPC_FAILPROBE --script " +
+                (sd.dir / "probe.in").string() +
+                " --outvar S --s0 0.5\nPC_LAMMPS --script " +
+                (sd.dir / "readback.in").string() + " --varloss E 0 1\n",
+            {0.5});
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] ==
+              (graded ? graded_failscore(
+                            1e16, FailBand::D,
+                            std::numeric_limits<double>::infinity(), 0.5)
+                      : 1e16));
+        const Table outv = read_table("outvar.tadah");
+        CHECK(outv.header == std::vector<std::string>{
+                  "#ITERATION", "IT-TIME/ms", "SLOT", "ERMSE", "S", "E"});
+        REQUIRE(outv.rows.size() == 1);
+        REQUIRE(outv.rows[0].size() == 6);
+        CHECK(outv.rows[0][4] == "1.000000e+16");
+        CHECK(outv.rows[0][5] == "1.000000e+16");
+        CHECK_THAT(line_with(journal, "probe.in, occurrence 1): reading "
+                                      "PC_FAILPROBE --outvar S after the "
+                                      "script: "),
+                   Catch::Contains("PC_LAMMPS task failed (") &&
+                       Catch::Contains(spoiled_reason(as_string)));
+        CHECK(journal.find("--outvar is NaN") == std::string::npos);
+        Host::reset_globals_for_test();
+    }
+}
+
+namespace {
+
+/* The tail that redefines the variable @p name as the string @p text, under
+ * the condition of spoil(). */
+std::string respell(const std::string& name, const std::string& text) {
+    return "if \"$(step) == 0\" then \"variable " + name + " delete\" "
+           "\"variable " + name + " string " + text + "\"\n";
+}
+
+}  // namespace
+
+/* Pins: a --hotvar or --failvar value is a number only when the whole value
+ * is one -- the parse of every value read back --, so one with text after
+ * its number fails the evaluation as text does:
+ *   - a hot script whose hot_a0 is redefined as the string '3.25abc':
+ *     FAILSCORE, E and E2 failscored, "PC_LAMMPS task failed (hot.in,
+ *     occurrence 1): reading --hotvar hot_a0 after the script: its value
+ *     '3.25abc' is not a number", and the cold script not run (no line
+ *     about it);
+ *   - a --failvar viol redefined as the string '0.5abc', under
+ *     FAILSCORE_GRADING OFF and ON: "... reading --failvar viol after the
+ *     script: its value '0.5abc' is not a number", E failscored, the loss
+ *     FAILSCORE (OFF) or, graded by the failed fraction of the one script
+ *     since the failvar cannot grade, band B's value for 1 (ON).
+ * Before the fix: hot and fail values were parsed by their leading number
+ * (core::to_double): hot_a0 = 3.25, in its window, warm-started the next
+ * evaluation and ran the cold script (a feasible loss, E2 computed); under
+ * OFF viol was not looked at (a feasible loss, E kept); under ON viol = 0.5
+ * graded band B by 0.5, not by the failed fraction; nothing was
+ * journalled. */
+TEST_CASE("a --hotvar or --failvar with text after its number fails the "
+          "evaluation", "[pc_readback_e2e][.]") {
+    using tadah::hpo::FailBand;
+    using tadah::hpo::graded_failscore;
+    tadah::core::PeriodicTable::initialize();
+    {
+        INFO("--hotvar hot_a0 '3.25abc'");
+        Host::reset_globals_for_test();
+        ForceRebuildGuard rebuild;
+        ScratchDir sd("tadah_pc_trailing_hot_");
+        std::ofstream(sd.dir / "hot.in")
+            << ta_script("${hot_a0}", "variable E equal pe\n"
+                                      "variable hot_a0 equal 3.25\n" +
+                                          respell("hot_a0", "3.25abc"));
+        std::ofstream(sd.dir / "cold.in")
+            << ta_script("${hot_a0}", "variable E2 equal pe\n");
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir,
+            "PC_ERMSE 0 1\n"
+            "PC_LAMMPS --script " + (sd.dir / "hot.in").string() +
+                " --varloss E 0 1 --hotvar hot_a0 2.5 4.5 3.301\n"
+            "PC_LAMMPS --script " + (sd.dir / "cold.in").string() +
+                " --varloss E2 0 1\n",
+            {0.5});
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] == 1e16);
+        const Table outv = read_table("outvar.tadah");
+        REQUIRE(outv.rows.size() == 1);
+        REQUIRE(outv.rows[0].size() == 6);
+        CHECK(outv.rows[0][4] == "1.000000e+16");
+        CHECK(outv.rows[0][5] == "1.000000e+16");
+        CHECK_THAT(line_with(journal, "hot.in, occurrence 1): reading "
+                                      "--hotvar hot_a0 after the script: "),
+                   Catch::Contains("PC_LAMMPS task failed (") &&
+                       Catch::Contains("its value '3.25abc' is not a "
+                                       "number"));
+        CHECK(journal.find("cold.in, occurrence") == std::string::npos);
+        Host::reset_globals_for_test();
+    }
+    for (const bool graded : {false, true}) {
+        INFO("--failvar viol '0.5abc', "
+             << (graded ? "FAILSCORE_GRADING ON" : "FAILSCORE_GRADING OFF"));
+        Host::reset_globals_for_test();
+        ForceRebuildGuard rebuild;
+        ScratchDir sd("tadah_pc_trailing_fail_");
+        std::ofstream(sd.dir / "readback.in")
+            << ta_script("3.301", "variable E equal pe\n"
+                                  "variable viol equal 0.0\n" +
+                                      respell("viol", "0.5abc"));
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir,
+            std::string(graded ? "FAILSCORE_GRADING ON\n" : "") +
+                "PC_ERMSE 0 1\nPC_LAMMPS --script " +
+                (sd.dir / "readback.in").string() +
+                " --varloss E 0 1 --failvar viol 1.0\n",
+            {0.5});
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] == (graded ? graded_failscore(1e16, FailBand::B,
+                                                       1.0, 1.0)
+                                   : 1e16));
+        const Table outv = read_table("outvar.tadah");
+        REQUIRE(outv.rows.size() == 1);
+        REQUIRE(outv.rows[0].size() == 5);
+        CHECK(outv.rows[0][4] == "1.000000e+16");
+        CHECK_THAT(line_with(journal, "readback.in, occurrence 1): reading "
+                                      "--failvar viol after the script: "),
+                   Catch::Contains("PC_LAMMPS task failed (") &&
+                       Catch::Contains("its value '0.5abc' is not a "
+                                       "number"));
+        Host::reset_globals_for_test();
+    }
+}
+
 namespace {
 
 /* TMPDIR for the life of the object, restored (or unset) after. */
@@ -1325,6 +1501,12 @@ std::size_t column(const Table& t, const std::string& name) {
  *     (readback.in, occurrence 1): reading --varloss F after the script: no
  *     value (the variable is not defined, or has no single value)", E and F
  *     failscored, TOTAL_LOSS/N 1.000000e+16;
+ *   - FAILSCORE_GRADING OFF, a PC_FAILPROBE S deleted at run time: the
+ *     startup warning says that S neither grades nor gates an evaluation
+ *     and that a probe that fails fails its evaluation; exit 1, "PC_LAMMPS
+ *     task failed (probe.in, occurrence 1): reading PC_FAILPROBE --outvar S
+ *     after the script: no value (...)", S and E failscored, TOTAL_LOSS/N
+ *     1.000000e+16;
  *   - a script that cannot be rendered (TMPDIR names a regular file in
  *     tadah's environment, and a PC_ISOLATION worker inherits it): exit 1,
  *     "PC_LAMMPS task failed (readback.in, occurrence 1): rendering the
@@ -1347,7 +1529,10 @@ std::size_t column(const Table& t, const std::string& name) {
  * with the others (TOTAL_LOSS/N 3.333333e+15, a feasible loss): exit 0, E
  * kept, F NaN, no journal line. Before the CREATE_FAIL fix the unrendered
  * script failed every evaluation with nothing in the journal in both
- * modes. */
+ * modes. Before the no-value fix a PC_FAILPROBE S with no value was not
+ * checked: exit 0, feasible losses, S NaN, E kept, no line; and the startup
+ * warning said "the probe runs as a plain diagnostic sim; no grading, no
+ * gate." (a probe whose script failed aborted its evaluation then too). */
 TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
           "way under PC_ISOLATION THREAD and PROCESS",
           "[pc_readback][tadah_cli][.tadah_cli_pc_readback]") {
@@ -1501,6 +1686,26 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
              "1.000000e+16",
              {{"E", "1.000000e+16"}, {"F", "1.000000e+16"}},
              {}};
+    }
+    SECTION("a PC_FAILPROBE S with no value under FAILSCORE_GRADING OFF") {
+        name = "failprobe_novalue_off";
+        c = {ta_script("3.301", "variable E equal pe\n"),
+             "PC_FAILPROBE --script probe.in --outvar S\n"
+             "PC_LAMMPS --script readback.in --varloss E 0 1\n",
+             1,
+             {"PC_FAILPROBE is defined but FAILSCORE_GRADING is OFF -- its S "
+              "neither grades nor gates an evaluation; a probe that fails "
+              "(its script fails, or its S cannot be read or has no number) "
+              "fails its evaluation, as any PC_LAMMPS simulation does.",
+              "PC_LAMMPS task failed (probe.in, occurrence 1): reading "
+              "PC_FAILPROBE --outvar S after the script: " +
+                  spoiled_reason(false),
+              "no evaluation produced a usable loss"},
+             {"plain diagnostic sim", "--outvar is NaN"},
+             "1.000000e+16",
+             {{"S", "1.000000e+16"}, {"E", "1.000000e+16"}},
+             {{"probe.in", ta_script("3.301", "variable S equal 0.1\n" +
+                                                  spoil("S", false))}}};
     }
     SECTION("a script that cannot be rendered") {
         name = "unrendered";
