@@ -329,9 +329,10 @@ struct OptimizerSpec {
     ScalePolicy           scale;            // OPTIM_SCALE + LOG_HP as parsed
     std::vector<std::vector<double>> optim_init;
     /* Provenance of each optim_init point, as resolved at startup by
-     * HPOTargets (the INIT chains of OUTER, PRESTAGE and PRESTAGE.INNER; a
-     * phase that shares the OUTER's points, share_init_with_nested_phases,
-     * shares their origins) and by a RESTART refresh. MULTISTART and the
+     * HPOTargets (the INIT chains of OUTER and PRESTAGE; a PRESTAGE that
+     * shares the OUTER's points, share_init_with_nested_phases, shares
+     * their origins) and by a RESTART refresh. An INNER spec has neither:
+     * its search's starting points are MLSL's or AUGLAG's. MULTISTART and the
      * PRESTAGE refinement, which run from single points or exploration
      * candidates, do not maintain it: a consumer uses it only when its
      * size equals optim_init's. Empty for hand-built specs. */
@@ -379,23 +380,20 @@ struct OptimizerSpec {
         parameter_labels = space ? space->labels() : std::vector<std::string>{};
     }
 
-    /* The nested phases without an INIT chain of their own -- the
-     * PRESTAGE exploration and its INNER -- start from this spec's INIT
-     * points (optim_init). HPOTargets applies this once the OUTER chain is
-     * resolved, and RestartPolicy again after drawing the fresh points of a
-     * restart, so a restarted PRESTAGE explores from them. A phase with
-     * its own INIT chain keeps its own points. */
+    /* A PRESTAGE exploration without an INIT chain of its own starts from
+     * this spec's INIT points (optim_init). HPOTargets applies this once
+     * the OUTER chain is resolved, and RestartPolicy again after drawing
+     * the fresh points of a restart, so a restarted PRESTAGE explores from
+     * them. An exploration with its own INIT chain keeps its own points.
+     * The exploration's INNER gets none: NLopt's MLSL and AUGLAG start the
+     * INNER searches from points of their own (an INNER block takes no
+     * INIT block, and make_nlopt refuses an INNER spec with a chain). */
     void share_init_with_nested_phases()
     {
         if (!prestage) return;
         if (prestage->init_strategy_spec.chain.empty()) {
             prestage->optim_init = optim_init;
             prestage->optim_init_origin = optim_init_origin;
-        }
-        if (prestage->inner &&
-            prestage->inner->init_strategy_spec.chain.empty()) {
-            prestage->inner->optim_init = optim_init;
-            prestage->inner->optim_init_origin = optim_init_origin;
         }
     }
 

@@ -808,10 +808,6 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
             else
                 write_init_strategy(ps.init_strategy_spec,
                                     "PRESTAGE.EXPLORE init strategy:", "    ");
-            if (ps.inner) {
-                write_init_strategy(ps.inner->init_strategy_spec,
-                                    "PRESTAGE.EXPLORE.INNER init strategy:", "      ");
-            }
         }
         if (rs.active()) {
             f_ << "    RESTART AFTER_STAGNATION: " << rs.after_stagnation

@@ -378,6 +378,14 @@ void validate_nlopt_spec(const OptimizerSpec& sp, RestartStop restart,
             "NLopt INNER spec with a seed: NLopt draws the INNER search from "
             "the enclosing run's random stream; set SEED on the enclosing "
             "block");
+    /* The parser rejects INIT inside INNER, and nothing resolves an INNER
+     * chain: a spec built outside it must not carry one either. */
+    if (sp.inner && (!sp.inner->init_strategy_spec.chain.empty() ||
+                     sp.inner->init_strategy_spec.k_total))
+        throw std::invalid_argument(
+            "NLopt INNER spec with an INIT chain: MLSL and AUGLAG choose the "
+            "INNER search's starting points; an INIT block belongs to the "
+            "enclosing block");
     /* The parser rejects GRAD_STRATEGY inside INNER; a spec built outside
      * it must not carry one either, since it would not be used. */
     if (sp.inner && sp.inner->grad_strategy)

@@ -471,10 +471,7 @@ std::vector<GateSeed> collect_gate_seeds(const HPOTargets &trg) {
   };
   const OptimizerSpec &sp = trg.spec;
   scan(&sp);
-  if (sp.prestage) {
-    scan(sp.prestage.get());
-    scan(sp.prestage->inner.get());
-  }
+  if (sp.prestage) scan(sp.prestage.get());
   const RestartSpec &rs = sp.restart;
   if (rs.seed_origins.size() == rs.seed_points.size())
     for (std::size_t i = 0; i < rs.seed_points.size(); ++i)

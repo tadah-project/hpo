@@ -326,14 +326,15 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
 
   /* ---------- resolve INIT_STRATEGY chain into optim_init -----------
    *
-   * Apply to OUTER, PRESTAGE, and PRESTAGE->LOCAL (LOCAL inside OUTER
-   * is the NLopt MLSL local sub-algo and inherits the outer's
-   * starting point -- it does not need its own chain). Each spec's
-   * INIT block (STRATEGY / SEED / K_TOTAL / WARM_ON_MISMATCH lines)
-   * is honoured independently of every other spec.
+   * Apply to OUTER and to the PRESTAGE exploration when its EXPLORE block
+   * has an INIT block. An INNER block takes no INIT block (read() refuses
+   * one): NLopt's MLSL and AUGLAG choose the starting points of the INNER
+   * search, so an INNER spec has no chain to resolve. Each spec's INIT
+   * block (METHOD / SEED / K_TOTAL / WARM_ON_MISMATCH lines) is honoured
+   * independently of every other spec.
    *
-   * Diagnostics tag the location ("OUTER" / "PRESTAGE" / "PRESTAGE.LOCAL")
-   * so the user can see which block fired which strategy. */
+   * Diagnostics tag the location ("OUTER" / "PRESTAGE") so the user can
+   * see which block fired which strategy. */
   auto resolve_init = [&](OptimizerSpec& s, const char* where) {
     auto strategy = build_init_strategy(s.init_strategy_spec);
     /* A SEED with no seed-consuming METHOD in the chain is a silent
@@ -447,12 +448,9 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
      * it inherits the OUTER's optim_init (legacy behaviour: a CONFIG
      * point flows in). If PRESTAGE has its own chain, that chain wins
      * and the OUTER's optim_init is *not* prepended -- PRESTAGE owns its
-     * starting points. The same holds for PRESTAGE's nested INNER. */
+     * starting points. */
     if (!spec.prestage->init_strategy_spec.chain.empty())
       resolve_init(*spec.prestage, "PRESTAGE");
-    if (spec.prestage->inner &&
-        !spec.prestage->inner->init_strategy_spec.chain.empty())
-      resolve_init(*spec.prestage->inner, "PRESTAGE.INNER");
     spec.share_init_with_nested_phases();
   }
 
