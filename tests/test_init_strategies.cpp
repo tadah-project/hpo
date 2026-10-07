@@ -1507,6 +1507,47 @@ ENDOPTIMIZER
     }
 }
 
+TEST_CASE("The journal says when there is no starting point and counts "
+          "points without a recorded origin", "[HPO][hpo_log][run_policy]")
+{
+    /* Pins: a spec without starting points (an INIT chain that produced
+     * none, e.g. WARM_ON_MISMATCH skip) reads "Starting point: none", the
+     * optimiser starting from its own default; points without recorded
+     * origins (a spec built outside HPOTargets) are only counted.
+     * Before the fix: "Starting point: random (uniform within bounds)",
+     * which not every optimiser does (the ANNEAL family starts at the box
+     * centre), and "user-supplied (2 seeds)". */
+    StrategyTempFile cfg(R"(OPTIMIZER
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 50
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    tadah::hpo::OptimizerSpec sp(trg.spec);
+    sp.optim_init_origin.clear();
+    SECTION("no starting point") {
+        sp.optim_init.clear();
+        const std::string journal = optimizer_section(sp);
+        INFO(journal);
+        CHECK(journal.find("Starting point: none (the INIT chain produced no "
+                           "point; the optimiser starts from its own "
+                           "default)") != std::string::npos);
+        CHECK(journal.find("uniform within bounds") == std::string::npos);
+    }
+    SECTION("points without a recorded origin") {
+        sp.optim_init.assign(2, std::vector<double>{});
+        const std::string journal = optimizer_section(sp);
+        INFO(journal);
+        CHECK(journal.find("Starting point: 2 points from the INIT chain\n") !=
+              std::string::npos);
+    }
+}
+
 TEST_CASE("HPOLog::set_status feeds finish() when status is empty",
           "[HPO][hpo_log][set_status]")
 {
