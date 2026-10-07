@@ -1,6 +1,7 @@
 #include <tadah/hpo/strategy_rules.h>
 
 #include <tadah/hpo/optimizer_caps.h>
+#include <tadah/hpo/phase_specs.h>
 
 #include <algorithm>
 #include <stdexcept>
@@ -271,21 +272,39 @@ void require_prestage_refinement(const OptimizerSpec& spec)
 
 void validate_run_policy(const OptimizerSpec& spec)
 {
-    switch (spec.strategy_type) {
-        case StrategyType::MULTISTART:
-            require_multistart_backend(spec);
-            break;
-        case StrategyType::PRESTAGE:
-            require_prestage_explore(spec);
-            require_prestage_refinement(spec);
-            break;
-        case StrategyType::PLAIN:
-            require_driver(spec, DriverPhase::Run);
-            break;
+    /* Each refusal names the line of the block it is about, as the
+     * parser's refusals do (with_block_line, phase_specs.h): the
+     * STRATEGY-level optimiser's, an INNER block's -- the enclosing
+     * block's when it has none. A spec built outside the parser has no
+     * line. */
+    const auto at = [](const OptimizerSpec& block, const auto& check) {
+        try {
+            check();
+        } catch (const std::exception& e) {
+            throw std::runtime_error(with_block_line(block, e.what()));
+        }
+    };
+    at(spec, [&] {
+        switch (spec.strategy_type) {
+            case StrategyType::MULTISTART:
+                require_multistart_backend(spec);
+                break;
+            case StrategyType::PRESTAGE:
+                require_prestage_explore(spec);
+                require_prestage_refinement(spec);
+                break;
+            case StrategyType::PLAIN:
+                require_driver(spec, DriverPhase::Run);
+                break;
+        }
+    });
+    at(spec.inner ? *spec.inner : spec,
+       [&] { require_inner_backend(spec, run_phase_name(spec)); });
+    if (spec.strategy_type == StrategyType::PRESTAGE) {
+        const OptimizerSpec& explore = *spec.prestage;
+        at(explore.inner ? *explore.inner : explore,
+           [&] { require_inner_backend(explore, kExploreBlock); });
     }
-    require_inner_backend(spec, run_phase_name(spec));
-    if (spec.strategy_type == StrategyType::PRESTAGE)
-        require_inner_backend(*spec.prestage, kExploreBlock);
 }
 
 void reject_refused_backends(const OptimizerSpec& spec)

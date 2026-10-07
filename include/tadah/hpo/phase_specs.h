@@ -93,6 +93,12 @@ bool obtains_gradients(const OptimizerSpec& spec);
  * reads its MAXEVAL and MAXTIME, which AUGLAG does not report. */
 std::optional<OptimizerSpec> single_local_search(const OptimizerSpec& spec);
 
+/* `what`, a refusal of the settings of the phase that runs `spec`, at the
+ * line its block closes at (OptimizerSpec::block_line), in the parser's
+ * form "Error on line N: <what>\nLine: <text>" (config_line_error,
+ * strict_parse.h); `what` alone for a spec built outside the parser. */
+std::string with_block_line(const OptimizerSpec& spec, const std::string& what);
+
 /* One phase of a run: its name, for messages, and the spec it runs.
  * `inner` marks the search an INNER block runs: it takes the gradient of
  * the phase it runs in (obtains_gradients), which that phase's

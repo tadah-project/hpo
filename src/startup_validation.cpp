@@ -376,9 +376,11 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * finite-difference probes must fit its boxes too (asa_probe_box_error).
    * Refused here, before any data is loaded, rather than by the first
    * gradient. */
-  for (const PhaseSpec &phase : strategy_phase_specs(trg.spec)) {
+  /* Each refusal names the line the phase's block closes at, as the
+   * parser's refusal of a backend does (with_block_line). */
+  const auto check_phase = [&](const PhaseSpec &phase) {
     const OptimizerSpec &s = phase.spec;
-    if (s.lib == "NOT SET") continue;
+    if (s.lib == "NOT SET") return;
     const std::string who = phase.name + " " + s.lib + ":" + s.algo;
     if (takes_fd_gradients(phase)) {
       std::string e;
@@ -399,7 +401,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         e = ex.what();
       }
       if (!e.empty()) throw std::runtime_error(who + ": " + e);
-      continue;
+      return;
     }
     /* GRAD_STRATEGY on a phase whose optimiser never asks for a gradient
      * (obtains_gradients: for MLSL and AUGLAG, their local search) never
@@ -432,6 +434,13 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     if (s.lib == "ASA") {
       const std::string e = asa_probe_box_error(s);
       if (!e.empty()) throw std::runtime_error(who + ": " + e);
+    }
+  };
+  for (const PhaseSpec &phase : strategy_phase_specs(trg.spec)) {
+    try {
+      check_phase(phase);
+    } catch (const std::exception &e) {
+      throw std::runtime_error(with_block_line(phase.spec, e.what()));
     }
   }
 
