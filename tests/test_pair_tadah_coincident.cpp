@@ -53,8 +53,8 @@ using tadah::core::Context;
 using tadah::core::PeriodicTable;
 using LMPPtr = LammpsRunner::LMPPtr;
 
-/* The docs quickstart potential (as TA_LJ_QUICKSTART_BODY in
- * test_pair2b_fastpath.cpp): D2_LJ Ta, Cut_Dummy, RCUT2B 6.5, M_KRR
+/* The Ta D2_LJ potential of the Tadah! 1.6.0 docs quickstart (as TA_LJ_BODY
+ * in test_pair2b_fastpath.cpp): D2_LJ Ta, Cut_Dummy, RCUT2B 6.5, M_KRR
  * Kern_Linear, INITMB false. Linear and two-body only: compute_2b, or
  * compute_2b_fast with EAMFAST true. */
 const char* const kLjBody =
