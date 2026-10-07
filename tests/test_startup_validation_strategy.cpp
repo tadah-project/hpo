@@ -964,20 +964,20 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
           "that closes its block, in every phase",
           "[startup_validation][strategy][backend][refused]")
 {
-    /* Pins: the parser refuses NLOPT:LN_NEWUOA_BOUND at the line that
-     * closes the block naming it, the 1.6.0 rule for a block's optimiser:
-     * ENDOPTIMIZER for the STRATEGY-level optimiser (PLAIN, the short form,
-     * MULTISTART, the PRESTAGE refinement, a REFINE block included, which
-     * configures that optimiser and has no check at ENDREFINE), ENDEXPLORE
-     * for the PRESTAGE exploration, ENDINNER for an INNER block (under
-     * G_MLSL_LDS and LN_AUGLAG, inside STRATEGY, EXPLORE and REFINE), and
-     * the end of the file for an OPTIMIZER block never closed -- naming the
-     * phase, as the other messages of these blocks do, with the caps
-     * registry's reason and replacement. A spec built outside the parser
-     * gets the refusal from validate_backend() (no phase),
-     * validate_run_policy() and the MULTISTART policy (the STRATEGY-level
-     * optimiser), validate_phase_backends() and require_inner_backend()
-     * (its INNER block).
+    /* Pins: the parser refuses NLOPT:LN_NEWUOA_BOUND at the lines where the
+     * 1.6.0 rule checks a block's optimiser: ENDOPTIMIZER for the
+     * STRATEGY-level optimiser, whether the STRATEGY block, a REFINE block
+     * or the OPTIMIZER block itself names it (PLAIN, the short form,
+     * MULTISTART, the PRESTAGE refinement; ENDSTRATEGY and ENDREFINE check
+     * no optimiser), ENDEXPLORE for the PRESTAGE exploration, ENDINNER for
+     * an INNER block (under G_MLSL_LDS and LN_AUGLAG, inside STRATEGY,
+     * EXPLORE and REFINE), and the end of the file for an OPTIMIZER block
+     * never closed -- naming the phase, as the other messages of these
+     * blocks do, with the caps registry's reason and replacement. A spec
+     * built outside the parser gets the refusal from validate_backend() (no
+     * phase), validate_run_policy() and the MULTISTART policy (the
+     * STRATEGY-level optimiser), validate_phase_backends() and
+     * require_inner_backend() (its INNER block).
      * Before the fix: parse_error() was "" for every configuration (the run
      * started and NLopt ran the algorithm), and every validator accepted
      * the specs (""). */
