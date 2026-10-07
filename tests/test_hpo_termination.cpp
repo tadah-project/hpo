@@ -5270,6 +5270,101 @@ TEST_CASE("No usable gradient: under FAILSCORE_GRADING a start inside the "
     }
 }
 
+TEST_CASE("No usable gradient: under GRAD_STRATEGY ANALYTICAL or HYBRID a "
+          "start inside the failure region stops at its first gradient",
+          "[HPO][termination][fd_gradient][analytical]")
+{
+    /* OALGO 4: the analytical gradient covers CGRID2B[2], so HYBRID
+     * differences nothing ("analytical=1 | FD-fallback=0"), as under
+     * PC_OBSERVABLE, whose default is ANALYTICAL. At a skip-capped point
+     * the analytical gradient is that of the loss before the cap, small but
+     * not 0, while the optimiser sees FAILSCORE.
+     * Pins: from 1.25 DLIB:BFGS, NLopt LD_LBFGS and CERES:LBFGS under
+     * ANALYTICAL, and DLIB:BFGS and LD_LBFGS under HYBRID, make one
+     * evaluation, the start: its failed loss fails the gradient before the
+     * analytical pass, the journal says "<backend> stopped: no usable
+     * gradient: a failed evaluation at the point (the loss at CGRID2B[2] =
+     * 1.25 is 1.797693135e+308)", and the run ends without a usable loss
+     * (status 1). A MULTISTART DLIB:BFGS start drawn inside the region
+     * (SEED 3: 1.206248063) makes one evaluation and, as the last start,
+     * its stop is the trailer, "STOPPED -- no usable gradient: a failed
+     * evaluation at the point"; status 0.
+     * Before the fix: the gradient was the analytical one under both
+     * strategies. DLIB:BFGS made 2 evaluations of FAILSCORE (1.25 and
+     * 1.250035746: its line search accepted a step along that small
+     * gradient, the loss still FAILSCORE) and ended as converged without a
+     * word; LD_LBFGS made 12, its step halved each time, and ended "nlopt
+     * failure -- algorithm converged"; CERES:LBFGS made 5 and ended
+     * CONVERGENCE at a cost of 1.79769e+308; the MULTISTART start made 2
+     * (1.206248063 and 1.206256877) without a word, and the trailer read
+     * COMPLETED. */
+    const std::string kPointCause =
+        "no usable gradient: a failed evaluation at the point";
+    const auto block = [](const std::string& lib, const std::string& algo,
+                          const std::string& strategy) {
+        return plain_block("    TYPE PLAIN\n    LIB " + lib + "\n    ALGO " +
+                           algo + "\n    MAXEVAL 60\n    GRAD_STRATEGY " +
+                           strategy + "\n" +
+                           (strategy == "HYBRID" ? "    PARAM fd_step 0.2\n"
+                                                 : ""));
+    };
+    struct Case { std::string lib, algo, strategy; };
+    std::vector<Case> cases = {{"DLIB", "BFGS", "ANALYTICAL"},
+                               {"NLOPT", "LD_LBFGS", "ANALYTICAL"},
+                               {"DLIB", "BFGS", "HYBRID"},
+                               {"NLOPT", "LD_LBFGS", "HYBRID"}};
+#ifdef TADAH_USE_CERES
+    cases.push_back({"CERES", "LBFGS", "ANALYTICAL"});
+#endif
+    for (const auto& c : cases) {
+        const std::string name = c.lib + ":" + c.algo;
+        DYNAMIC_SECTION(name << ", " << c.strategy) {
+            TaRun run(block(c.lib, c.algo, c.strategy), straddle_root());
+            int status = -1;
+            REQUIRE_NOTHROW(status = straddle_run(run, "1.25", name));
+            CHECK(status == 1);
+            const auto x = evaluated_cgrid2();
+            REQUIRE(x.size() == 1u);
+            CHECK(x[0] == Approx(1.25));
+            const std::string journal = read_file("hpo_run.log");
+            CHECK(count_of(journal, name + " stopped: " + kPointCause +
+                                        " (the loss at CGRID2B[2] = 1.25 is "
+                                        "1.797693135e+308)") == 1u);
+            check_no_usable_loss(1u, kDefaultFailScoreRow, kNoUsableLossStatus);
+        }
+    }
+    for (const std::string strategy : {"ANALYTICAL", "HYBRID"}) {
+        DYNAMIC_SECTION("MULTISTART, SEED 3, " << strategy) {
+            TaRun run(
+                "OPTIMIZER\n  INIT\n    METHOD CONFIG\n    METHOD RANDOM 1\n"
+                "    SEED 3\n  ENDINIT\n"
+                "  STRATEGY\n    TYPE MULTISTART\n    LIB DLIB\n    ALGO BFGS\n"
+                "    N_STARTS 2\n    BUDGET_PER_START 30\n"
+                "    GRAD_STRATEGY " + strategy + "\n" +
+                    (strategy == "HYBRID" ? "    PARAM fd_step 0.2\n" : "") +
+                    "  ENDSTRATEGY\nENDOPTIMIZER\n",
+                straddle_root());
+            int status = -1;
+            REQUIRE_NOTHROW(status = straddle_run(run, "1.9", "MULTISTART"));
+            CHECK(status == 0);
+            const auto x = evaluated_cgrid2();
+            REQUIRE(x.size() >= 2u);
+            CHECK(x[0] == Approx(1.9));
+            CHECK(x.back() == Approx(1.206248063).epsilon(1e-9));
+            CHECK(x[x.size() - 2] != Approx(x.back()));
+            const std::string journal = read_file("hpo_run.log");
+            CHECK(count_of(journal, "MULTISTART start 2/2 done: 1 eval(s)") ==
+                  1u);
+            CHECK(count_of(journal, "DLIB:BFGS stopped: " + kPointCause +
+                                        " (the loss at CGRID2B[2] = "
+                                        "1.206248063 is 1.797693135e+308)") ==
+                  1u);
+            CHECK(journal_status(journal) == "STOPPED -- " + kPointCause);
+            check_run_files();
+        }
+    }
+}
+
 /* ======================================================================
  * Finite differences and the OPTIM box, end to end (fd_stencil.h; owner
  * decisions D1-D6, 2026-09-29). The straddle objective with the ERMSE
