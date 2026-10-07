@@ -401,6 +401,7 @@ PcTaskResult PcWorkerPool::execute(int slot, std::uint32_t script_idx,
     res.status = static_cast<PcTaskStatus>(r.u32());
     res.error_msg = r.str();
     res.outvar_values = r.vstr();
+    res.outvar_errors = r.vstr();    /* protocol v3 */
     res.hotvar_values = r.vstr();
     res.failvar_values = r.vstr();   /* protocol v2 */
     res.create_ms = r.f64();

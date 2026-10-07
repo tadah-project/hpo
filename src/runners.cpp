@@ -81,26 +81,34 @@ struct StagedExternGuard {
   StagedExternGuard& operator=(const StagedExternGuard&) = delete;
 };
 
+/* SCRIPT_ERROR, with @p msg in @p error when the caller asked for it. */
+bool script_error(ScriptRunStatus* why, std::string* error,
+                  const std::string& msg) {
+  if (error) *error = msg;
+  return set_why(why, ScriptRunStatus::SCRIPT_ERROR);
+}
+
 /* Run the rendered script through LAMMPS's own reader. Native semantics
  * for jump/label/next/if-then-"jump" -- the one()-per-line executor could
  * not loop backwards (jump's rewind() is a no-op on stdin and the sticky
  * label search then swallowed the rest of the script AND poisoned the
  * cached instance's next eval: the run26 SIGSEGV storm). */
 bool execute_file(const LammpsRunner::LMPPtr& lmp_ptr, const ScriptFile& sf,
-                  ScriptRunStatus* why) {
+                  ScriptRunStatus* why, std::string* error) {
   try {
     lmp_ptr->input->file(sf.path().c_str());
   } catch (const std::exception& e) {
     /* The injected section-boundary guard (see prep_script_lines) aborts
      * with the sentinel as an "unknown command"; anything else is a
-     * genuine script failure. Either way the exception skipped
+     * genuine script failure, whose LAMMPS message goes to @p error (the
+     * sentinel is no message). Either way the exception skipped
      * Input::file()'s internal cleanup, so the instance is poisoned --
      * cache-holding callers must discard it (ScriptRunStatus contract). */
     const bool timeout =
         std::string(e.what()).find(tadah::hpo::PC_TIMEOUT_ABORT_SENTINEL) !=
         std::string::npos;
-    return set_why(why, timeout ? ScriptRunStatus::TIMEOUT_ABORT
-                                : ScriptRunStatus::SCRIPT_ERROR);
+    if (timeout) return set_why(why, ScriptRunStatus::TIMEOUT_ABORT);
+    return script_error(why, error, e.what());
   }
   /* A fired `timer timeout` in the FINAL section stops run/minimize
    * cleanly (no exception) and no clear follows to reset it: incomplete
@@ -116,10 +124,11 @@ bool execute_file(const LammpsRunner::LMPPtr& lmp_ptr, const ScriptFile& sf,
 bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
     const tadah::hpo::ScriptFile& script_file,
     const tadah::core::Context& pot_ctx,
-    tadah::hpo::ScriptRunStatus* why) const {
-  if (!lmp_ptr || !script_file.valid()) {
-    return set_why(why, ScriptRunStatus::SCRIPT_ERROR);
-  }
+    tadah::hpo::ScriptRunStatus* why,
+    std::string* error) const {
+  if (!lmp_ptr) return script_error(why, error, "no LAMMPS instance");
+  if (!script_file.valid())
+    return script_error(why, error, "the script was not rendered");
   try {
     /* Build the potential once per run, and ONLY for scripts that adopt
      * it: EXTERN-less scripts legitimately run with an empty Context (the
@@ -127,22 +136,26 @@ bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
     StagedExternGuard staged(script_file.has_extern()
         ? std::make_shared<tadah::LammpsTadah>(pot_ctx)
         : std::shared_ptr<tadah::LammpsTadah>());
-    return execute_file(lmp_ptr, script_file, why);
-  } catch (const std::exception&) {
-    // LammpsTadah construction failed
-    return set_why(why, ScriptRunStatus::SCRIPT_ERROR);
+    return execute_file(lmp_ptr, script_file, why, error);
+  } catch (const std::exception& e) {
+    // LammpsTadah construction failed (execute_file throws nothing)
+    return script_error(why, error,
+                        std::string("potential construction failed: ") +
+                            e.what());
   }
 }
 
 bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
     const tadah::hpo::ScriptFile& script_file,
     const std::shared_ptr<tadah::LammpsTadah>& pot,
-    tadah::hpo::ScriptRunStatus* why) const {
-  if (!lmp_ptr || !pot || !script_file.valid()) {
-    return set_why(why, ScriptRunStatus::SCRIPT_ERROR);
-  }
+    tadah::hpo::ScriptRunStatus* why,
+    std::string* error) const {
+  if (!lmp_ptr) return script_error(why, error, "no LAMMPS instance");
+  if (!pot) return script_error(why, error, "no potential");
+  if (!script_file.valid())
+    return script_error(why, error, "the script was not rendered");
   StagedExternGuard staged(pot);
-  return execute_file(lmp_ptr, script_file, why);
+  return execute_file(lmp_ptr, script_file, why, error);
 }
 
 bool LammpsRunner::run_script(const LMPPtr& lmp_ptr,
@@ -206,6 +219,16 @@ LammpsRunner::get_variable(const LammpsRunner::LMPPtr& lmp_ptr,
   // treats as a failed eval and clamps to FAIL_SCORE).
   const int ivar = var->find(varname.c_str());
   if (ivar < 0) return std::string();
+
+  // A read is a top-level evaluation: no LAMMPS evaluation is in progress
+  // when it starts. A LAMMPS error raised during an earlier one -- an
+  // earlier read, or a command of the script -- left the variables of that
+  // evaluation marked as being evaluated (Variable::eval_in_progress, reset
+  // only by `clear` or a redefinition), and a read that reached one of them
+  // would raise "Variable ...: has a circular dependency" instead of that
+  // variable's own error. Clear the marks first, as `clear` does; a real
+  // circular dependency is still found while this read evaluates.
+  var->clear_in_progress();
 
   // Numeric (equal-style: EQUAL, TIMER, INTERNAL, numeric PYTHON): read the
   // DOUBLE and render it losslessly. retrieve() would format it with

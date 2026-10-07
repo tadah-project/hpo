@@ -8,6 +8,10 @@
 // (equal-style) variables with compute_equal() and renders the double
 // losslessly; every other style is text and comes back verbatim.
 //
+// A LAMMPS error raised while a variable is evaluated leaves the variables
+// of that evaluation marked as being evaluated; a later read reports the
+// variable's own error again, not a false circular dependency.
+//
 // In-process LAMMPS instance, no potential needed (pure variable commands).
 
 #include "catch2/catch.hpp"
@@ -20,6 +24,7 @@
 
 #include <cfloat>
 #include <cstring>
+#include <exception>
 #include <string>
 #include <vector>
 
@@ -110,4 +115,93 @@ TEST_CASE("get_variable returns text-style variables verbatim and undefined "
   CHECK(runner.get_variable(lmp, "f") == "0.333");
 
   CHECK(runner.get_variable(lmp, "no_such_variable").empty());
+}
+
+namespace {
+
+/* The message of the exception get_variable raises for @p name ("" when it
+ * reads the variable). */
+std::string read_error(const LammpsRunner& runner,
+                       const LammpsRunner::LMPPtr& lmp,
+                       const std::string& name) {
+  try {
+    (void)runner.get_variable(lmp, name);
+  } catch (const std::exception& e) {
+    return e.what();
+  }
+  return {};
+}
+
+}  // namespace
+
+/* Pins: after a LAMMPS error raised while a variable was being evaluated --
+ * by an earlier get_variable, or by a command of the script -- a read that
+ * evaluates that variable again raises its own error again ("Divide by 0 in
+ * variable formula"), not "has a circular dependency": the variable itself
+ * (bad), a variable that references it (uses = v_bad+1.0) and one that
+ * references that one (uses2 = 2*v_uses), read one after the other and
+ * the first again; a variable that does not reference it reads as usual
+ * (ok = 2.5).
+ * Before the fix: the error left the variables of the interrupted evaluation
+ * marked as being evaluated (LAMMPS Variable::eval_in_progress, which only
+ * `clear` and a redefinition reset), so every later read that reached one
+ * of them raised "Variable bad: has a circular dependency" (or "Variable
+ * uses: ...") instead, and the real cause was lost. The message checks
+ * fail. */
+TEST_CASE("get_variable after a LAMMPS error raises the variable's own error "
+          "and not a circular dependency", "[HPO][lammps][readback]")
+{
+  auto lmp = make_instance();
+  REQUIRE(lmp);
+  LammpsRunner runner;
+  lmp->input->one("variable zero equal 0.0");
+  lmp->input->one("variable bad equal 1.0/v_zero");
+  lmp->input->one("variable uses equal v_bad+1.0");
+  lmp->input->one("variable uses2 equal 2*v_uses");
+  lmp->input->one("variable ok equal 2.5");
+  const char* divide = "Divide by 0 in variable formula";
+
+  SECTION("an earlier get_variable") {
+    CHECK_THAT(read_error(runner, lmp, "uses"), Catch::Contains(divide));
+  }
+  SECTION("a command of the script") {
+    std::string msg;
+    try {
+      lmp->input->one("print \"${uses2}\"");
+    } catch (const std::exception& e) {
+      msg = e.what();
+    }
+    REQUIRE_THAT(msg, Catch::Contains(divide));
+  }
+  for (const char* name : {"bad", "uses", "uses2", "bad"}) {
+    INFO("reading " << name);
+    const std::string msg = read_error(runner, lmp, name);
+    CHECK_THAT(msg, Catch::Contains(divide) &&
+                        !Catch::Contains("circular dependency"));
+  }
+  CHECK(runner.get_variable(lmp, "ok") == "2.5");
+}
+
+/* Pins: a real circular dependency is still reported, by the read that
+ * meets it: a = v_b+1 with b = v_a+1 raises "has a circular dependency"
+ * each time it is read, and so does b; a variable outside the cycle reads
+ * as usual (ok = 2.5).
+ * Before the fix: passes as well (a pin that clearing the marks a LAMMPS
+ * error left before each read keeps LAMMPS's own check of the formula:
+ * the marks are set again while the read evaluates). */
+TEST_CASE("get_variable still raises a real circular dependency",
+          "[HPO][lammps][readback]")
+{
+  auto lmp = make_instance();
+  REQUIRE(lmp);
+  LammpsRunner runner;
+  lmp->input->one("variable a equal v_b+1");
+  lmp->input->one("variable b equal v_a+1");
+  lmp->input->one("variable ok equal 2.5");
+  for (const char* name : {"a", "b", "a"}) {
+    INFO("reading " << name);
+    CHECK_THAT(read_error(runner, lmp, name),
+               Catch::Contains("has a circular dependency"));
+  }
+  CHECK(runner.get_variable(lmp, "ok") == "2.5");
 }

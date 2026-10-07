@@ -440,10 +440,23 @@ bool HPO_Host<P,R>::stats_have_columns() const
 }
 
 /* ----------  line printers (append) ---------------------------------- */
-/* ======= line writers ================================================ */
+/* ======= line writers ================================================ *
+ * Every row has the columns of its file's header (init_loss, init_outvar,
+ * init_stats): the printers walk the header's specification -- each enabled
+ * metric's @p n_val per-dataset columns and average, each PC_LAMMPS line's
+ * variables, each PC_OBSERVABLE line -- not the Result, and write a cell the
+ * evaluation did not compute as NaN. An evaluation stopped before LAMMPS
+ * (--skip-above/--skip-rel, a loss already at FAILSCORE), rejected by a
+ * feasibility gate before training, or ended by an exception has no
+ * metrics, variables or observables to show for those columns; its rows
+ * used to hold only the cells it had, so TOTAL_LOSS/N landed under another
+ * column. The spelling is each file's own: loss.tadah and stats.tadah write
+ * the double NaN (`nan`), as for a dataset that is not measured;
+ * outvar.tadah writes `NaN`, as for a value that cannot be read. A metric is
+ * computed when its per-dataset vector is filled. */
 template<class P,class R>
 void HPO_Host<P,R>::print_loss_line(std::ostream& f, size_t it,const Result& e,
-                                    const HPOTargets& trg,
+                                    const HPOTargets& trg, std::size_t n_val,
                                     std::size_t cw,int prec)
 {
     f << std::left << std::setw(iter_cw_) << it;
@@ -453,10 +466,12 @@ void HPO_Host<P,R>::print_loss_line(std::ostream& f, size_t it,const Result& e,
     f << std::right << std::setw(slot_cw_) << logidx::uis(e.chain_id);
     f << std::scientific << std::setprecision(prec);
 
+    const double not_computed = std::numeric_limits<double>::quiet_NaN();
     auto write_loss_metric = [&](bool used, const std::vector<double>& per_ds, double avg) {
       if (!used) return;
-      for (double v : per_ds) f << std::setw(cw) << v;
-      f << std::setw(cw) << avg;
+      for (std::size_t k = 0; k < n_val; ++k)
+        f << std::setw(cw) << (k < per_ds.size() ? per_ds[k] : not_computed);
+      f << std::setw(cw) << (per_ds.empty() ? not_computed : avg);
     };
 
     write_loss_metric(trg.use_emae,   e.v_emaeLoss,   e.emaeLoss);
@@ -465,18 +480,19 @@ void HPO_Host<P,R>::print_loss_line(std::ostream& f, size_t it,const Result& e,
     write_loss_metric(trg.use_ersq,   e.v_ersqLoss,   e.ersqLoss);
     write_loss_metric(trg.use_frmse,  e.v_frmseLoss,  e.frmseLoss);
     write_loss_metric(trg.use_srmse,  e.v_srmseLoss,  e.srmseLoss);
-      
-    for (size_t i = 0; i < e.v_outvar.size(); ++i) {
-      auto &indices = trg.LS[i].i_varloss;
-      for (const auto &j : indices) {
-        f << std::setw(cw) << e.v_loss[i][j];
+
+    /* PC_LAMMPS --varloss columns, L(<name>) in init_loss's order. */
+    for (std::size_t i = 0; i < trg.LS.size(); ++i) {
+      for (const auto j : trg.LS[i].i_varloss) {
+        const bool have = i < e.v_loss.size() && j < e.v_loss[i].size();
+        f << std::setw(cw) << (have ? e.v_loss[i][j] : not_computed);
       }
     }
 
-    /* PC_OBSERVABLE per-observable loss columns. e.v_obs_loss is empty
-     * when trg.observables is empty (header is also empty then). */
-    for (std::size_t k = 0; k < e.v_obs_loss.size(); ++k)
-      f << std::setw(cw) << e.v_obs_loss[k];
+    /* PC_OBSERVABLE per-observable loss columns. */
+    for (std::size_t k = 0; k < trg.observables.size(); ++k)
+      f << std::setw(cw)
+        << (k < e.v_obs_loss.size() ? e.v_obs_loss[k] : not_computed);
 
     f << std::setw(cw) << e.loss << std::endl;
 }
@@ -493,32 +509,44 @@ void HPO_Host<P,R>::print_outvar_line(std::ostream& f,size_t it,const Result& e,
      * durable-best comparison key. */
     f << std::right << std::setw(slot_cw_) << logidx::uis(e.chain_id);
 
-    if(trg.use_emae)   f<<std::right<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.emae;
-    if(trg.use_ermse)  f<<std::right<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.ermse;
-    if(trg.use_errmse) f<<std::right<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.errmse;
-    if(trg.use_ersq)   f<<std::right<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.ersq;
-    if(trg.use_frmse)  f<<std::right<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.frmse;
-    if(trg.use_srmse)  f<<std::right<<std::setw(cw)<< std::scientific<< std::setprecision(prec) <<e.srmse;
+    auto number = [&](double v) {
+      f << std::right << std::setw(cw) << std::scientific
+        << std::setprecision(prec) << v;
+    };
+    auto not_computed = [&] { f << std::right << std::setw(cw) << "NaN"; };
+    /* The metric's average, when the evaluation computed it. */
+    auto metric = [&](bool used, const std::vector<double>& per_ds, double avg) {
+      if (!used) return;
+      if (per_ds.empty()) not_computed();
+      else                number(avg);
+    };
+    metric(trg.use_emae,   e.v_emae,   e.emae);
+    metric(trg.use_ermse,  e.v_ermse,  e.ermse);
+    metric(trg.use_errmse, e.v_errmse, e.errmse);
+    metric(trg.use_ersq,   e.v_ersq,   e.ersq);
+    metric(trg.use_frmse,  e.v_frmse,  e.frmse);
+    metric(trg.use_srmse,  e.v_srmse,  e.srmse);
 
-    for (size_t i = 0; i < e.v_outvar.size(); ++i) {
-      for (size_t j = 0; j < e.v_outvar[i].size(); ++j) {
+    /* PC_LAMMPS variables (--varloss and --outvar), in init_outvar's
+     * order; one that was not read or cannot be parsed is NaN. */
+    for (std::size_t i = 0; i < trg.LS.size(); ++i) {
+      for (std::size_t j = 0; j < trg.LS[i].n_outvar.size(); ++j) {
         double v;
-        if (try_parse_double(e.v_outvar[i][j], v)) {
-          f<<std::right << std::setw(cw) << std::scientific
-            << std::setprecision(prec) << v;
-        } else {
-          f<<std::right << std::setw(cw) << "NaN";
-        }
+        if (i < e.v_outvar.size() && j < e.v_outvar[i].size() &&
+            try_parse_double(e.v_outvar[i][j], v))
+          number(v);
+        else
+          not_computed();
       }
     }
     /* PC_OBSERVABLE per-observable values. NaN is printed for failed
-     * evaluations (relax divergence / model NaN). */
-    for (std::size_t k = 0; k < e.v_obs_value.size(); ++k) {
-      if (std::isfinite(e.v_obs_value[k]))
-        f << std::right << std::setw(cw) << std::scientific
-          << std::setprecision(prec) << e.v_obs_value[k];
+     * evaluations (relax divergence / model NaN) and for evaluations that
+     * did not reach the observables. */
+    for (std::size_t k = 0; k < trg.observables.size(); ++k) {
+      if (k < e.v_obs_value.size() && std::isfinite(e.v_obs_value[k]))
+        number(e.v_obs_value[k]);
       else
-        f << std::right << std::setw(cw) << "NaN";
+        not_computed();
     }
     f<<std::endl;
 }
@@ -545,7 +573,7 @@ void HPO_Host<P,R>::print_params_line(std::ostream& f,size_t it,const Result& e,
 
 template<class P,class R>
 void HPO_Host<P,R>::print_stats_line(std::ostream& f, size_t it, const Result& e,
-                                     const HPOTargets& trg,
+                                     const HPOTargets& trg, std::size_t n_val,
                                      std::size_t cw, int prec)
 {
   /* D18: with no metric enabled this row would be a bare iteration number
@@ -563,9 +591,12 @@ void HPO_Host<P,R>::print_stats_line(std::ostream& f, size_t it, const Result& e
     f << std::right << std::setw(slot_cw_) << logidx::uis(e.chain_id);
   f << std::scientific << std::setprecision(prec);
 
+  /* Header-shaped, as print_loss_line. */
+  const double not_computed = std::numeric_limits<double>::quiet_NaN();
   auto write_metric = [&](const std::vector<double>& per_ds, double avg) {
-    for (double v : per_ds) f << std::setw(cw) << v;
-    f << std::setw(cw) << avg;
+    for (std::size_t k = 0; k < n_val; ++k)
+      f << std::setw(cw) << (k < per_ds.size() ? per_ds[k] : not_computed);
+    f << std::setw(cw) << (per_ds.empty() ? not_computed : avg);
   };
 
   if (trg.use_emae)   write_metric(e.v_emae,   e.emae);
@@ -1751,19 +1782,77 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
      * skip hot-var range validation and let the cold phase run against a
      * stale warm-start value, turning a detectable protocol fault into a
      * wrong-but-finite loss. record_infra() is the same band-C grading the
-     * CREATE_FAIL path uses: infrastructure, not physics. */
+     * CREATE_FAIL path uses: infrastructure, not physics. The outvars'
+     * read-back errors are optional (empty when every outvar was read), and
+     * one per outvar when present. */
     if (!fail &&
         (tres.outvar_values.size() < lsim.n_outvar.size() ||
-         tres.hotvar_values.size() < lsim.hotvars.size())) {
+         tres.hotvar_values.size() < lsim.hotvars.size() ||
+         (!tres.outvar_errors.empty() &&
+          tres.outvar_errors.size() < lsim.n_outvar.size()))) {
       fail = true;
       if (fg_on) fail_state.record_infra();
       HPOLog::instance().warning(
           "pc-worker returned a short result for " + lsim.script + ": "
           + std::to_string(tres.outvar_values.size()) + "/"
           + std::to_string(lsim.n_outvar.size()) + " outvars, "
+          + std::to_string(tres.outvar_errors.size()) + "/"
+          + std::to_string(lsim.n_outvar.size()) + " outvar errors, "
           + std::to_string(tres.hotvar_values.size()) + "/"
           + std::to_string(lsim.hotvars.size())
           + " hotvars -- treating the task as failed (protocol desync)");
+    }
+
+    /* Outvars that could not be read back. Reading a variable evaluates its
+     * formula after the script, and a LAMMPS error there (a thermo keyword
+     * the script's thermo_style does not compute, a divide by zero for this
+     * candidate) is reported per variable; the worker does not know which
+     * names feed the loss, so the policy is set here, alike in both
+     * PC_ISOLATION modes:
+     *   - a variable the line is for fails the task exactly as a failed run
+     *     does: its variables take --failscore, the evaluation is aborted
+     *     (a hot script's cold scripts do not run), the failvars grade band
+     *     B, and the D17 line below names the variable. That is a --varloss
+     *     variable of a PC_LAMMPS line, and the S of the PC_FAILPROBE line
+     *     (its first --outvar; the line has no --varloss), which grades
+     *     every failure of the evaluation: an S that cannot be read is a
+     *     failed probe, as when its script fails, never a diagnostic;
+     *   - a diagnostic (declared only with --outvar) is "" -- NaN in
+     *     outvar.tadah -- and the evaluation keeps its loss; its own line
+     *     says so, rate-limited like D17.
+     * The role in the message names the probe's line ("PC_FAILPROBE
+     * --outvar S"); the heads of the lines are the same for every line. */
+    PcTaskStatus status = tres.status;
+    std::string error_msg = tres.error_msg;
+    if (!fail && !tres.outvar_errors.empty()) {
+      auto in_loss = [&](std::size_t j) {
+        if (lsim.is_failprobe) return j == 0;
+        return std::find(lsim.i_varloss.begin(), lsim.i_varloss.end(), j) !=
+               lsim.i_varloss.end();
+      };
+      const std::string loss_role =
+          lsim.is_failprobe ? "PC_FAILPROBE --outvar " : "--varloss ";
+      const std::string outvar_role =
+          lsim.is_failprobe ? "PC_FAILPROBE --outvar " : "--outvar ";
+      for (std::size_t j = 0; j < lsim.n_outvar.size() && !fail; ++j) {
+        if (tres.outvar_errors[j].empty() || !in_loss(j)) continue;
+        fail = true;
+        status = PcTaskStatus::RUN_FAIL;
+        error_msg = "reading " + loss_role + lsim.n_outvar[j] +
+                    " after the script: " + tres.outvar_errors[j];
+      }
+      for (std::size_t j = 0; j < lsim.n_outvar.size() && !fail; ++j) {
+        if (tres.outvar_errors[j].empty()) continue;
+        /* counted per run (HPOLog::count_in_run) */
+        const std::size_t n =
+            HPOLog::instance().count_in_run("PC_LAMMPS --outvar is NaN");
+        if ((n & (n - 1)) == 0)
+          HPOLog::instance().warning(
+              "PC_LAMMPS --outvar is NaN (" + lsim.script + ", occurrence "
+              + std::to_string(n) + "): reading " + outvar_role
+              + lsim.n_outvar[j] + " after the script: "
+              + tres.outvar_errors[j]);
+      }
     }
 
     /* Graded-FAILSCORE Tier 2: a declared failvar > 0 means the sim
@@ -1790,8 +1879,8 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     }
 
     /* Graded-FAILSCORE Tier 1: classify hard task failures. */
-    if (fg_on && tres.status != PcTaskStatus::OK) {
-      switch (tres.status) {
+    if (fg_on && status != PcTaskStatus::OK) {
+      switch (status) {
         case PcTaskStatus::POT_BUILD_FAIL:
           fail_state.record(FailBand::D);           /* graded by S at assembly */
           break;
@@ -1823,29 +1912,32 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       }
     }
 
-    /* D17: say WHY the task failed.
+    /* D17: say WHY the task failed, in both PC_ISOLATION modes.
      *
-     * error_msg is filled on every worker-side failure path, marshalled
-     * across the socket, and was then read by nobody -- so a POT_BUILD_FAIL
-     * or an in-worker exception produced a graded loss with its cause
-     * discarded at the process boundary, leaving only a number. Only the
-     * statuses whose text originates in the WORKER are surfaced here:
+     * error_msg carries the cause from execute_script_task -- the LAMMPS
+     * message of an error inside the script or of a variable read back
+     * after it, the potential's construction error, the exception that
+     * ended the task -- or, for a --varloss read-back, from the block
+     * above. It used to be read by nobody, and an error inside the script
+     * had no message at all, so such failures left only a number. Only
+     * the statuses whose text originates with the task are surfaced here:
      * KILLED carries the parent's own reason, which kill_reap_locked has
-     * already journaled, and repeating it would double every death.
+     * already journaled, and repeating it would double every death; a
+     * timeout has no message.
      *
      * Rate-limited on powers of two: a systematically broken potential
      * fails identically on every script of every eval, and the first few
      * occurrences carry all the information. Counted per run
      * (HPOLog::count_in_run). */
-    if ((tres.status == PcTaskStatus::POT_BUILD_FAIL ||
-         tres.status == PcTaskStatus::RUN_FAIL) &&
-        !tres.error_msg.empty()) {
+    if ((status == PcTaskStatus::POT_BUILD_FAIL ||
+         status == PcTaskStatus::RUN_FAIL) &&
+        !error_msg.empty()) {
       const std::size_t n =
-          HPOLog::instance().count_in_run("pc-worker task failed");
+          HPOLog::instance().count_in_run("PC_LAMMPS task failed");
       if ((n & (n - 1)) == 0)
         HPOLog::instance().warning(
-            "pc-worker task failed (" + lsim.script + ", occurrence "
-            + std::to_string(n) + "): " + tres.error_msg);
+            "PC_LAMMPS task failed (" + lsim.script + ", occurrence "
+            + std::to_string(n) + "): " + error_msg);
     }
 
     for (std::size_t j = 0; j < lsim.n_outvar.size(); ++j) {
@@ -2706,7 +2798,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         const int save_fail_band = r.fail.band;
         submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
                       train_stdb_, val_stdb_, param_labels_, report_,
-                      cw_, prec_);
+                      n_val_datasets_, cw_, prec_);
         auto& log = HPOLog::instance();
         /* A gate reject is a failure (graded band D, or FAILSCORE). */
         log.record_eval(save_iter, save_wall_ms, EvalLoss::Failed);
@@ -3188,7 +3280,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
 
     {
     stage_watchdog::Scope<decltype(_stage_log)> _sg_submit(save_iter, "submit_result", _stage_log);
-    submit_result(std::move(r), trg_, master_ctx_, val_ctx_, train_stdb_, val_stdb_, param_labels_, report_, cw_, prec_);
+    submit_result(std::move(r), trg_, master_ctx_, val_ctx_, train_stdb_, val_stdb_, param_labels_, report_, n_val_datasets_, cw_, prec_);
     }
     t_submit_end = std::chrono::high_resolution_clock::now();
 
@@ -3282,7 +3374,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         try {
             submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
                           train_stdb_, val_stdb_, param_labels_, report_,
-                          cw_, prec_);
+                          n_val_datasets_, cw_, prec_);
         } catch (...) { /* swallow -- main shutdown path takes over */ }
         throw;
     } catch (const StagnationStop&) {
@@ -3320,7 +3412,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         try {
             submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
                           train_stdb_, val_stdb_, param_labels_, report_,
-                          cw_, prec_);
+                          n_val_datasets_, cw_, prec_);
         } catch (...) {}
         throw;
     } catch (const durable_best::Error& e) {
@@ -3343,7 +3435,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         try {
             submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
                           train_stdb_, val_stdb_, param_labels_, report_,
-                          cw_, prec_);
+                          n_val_datasets_, cw_, prec_);
         } catch (...) {
             /* Preserve the primary durability exception. The writer's
              * time-based gap recovery remains the last resort if enqueueing
@@ -3370,7 +3462,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         try {
             submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
                           train_stdb_, val_stdb_, param_labels_, report_,
-                          cw_, prec_);
+                          n_val_datasets_, cw_, prec_);
         } catch (...) {
             /* If the synthetic submit also throws (extremely
              * unlikely), the writer fix from Bug 4 will at worst drop
@@ -3395,7 +3487,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         try {
             submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
                           train_stdb_, val_stdb_, param_labels_, report_,
-                          cw_, prec_);
+                          n_val_datasets_, cw_, prec_);
         } catch (...) {}
         return trg_.FAIL_SCORE;
     }
@@ -3410,7 +3502,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                                   const mlip::StructureDB& /*val_stdb*/,
                                   const std::vector<std::string>& /*param_labels*/,
                                   const mlip::LoadTransformReport& /*report*/,
-                                  std::size_t cw, int prec)
+                                  std::size_t n_val, std::size_t cw, int prec)
 {
     /* 1. enqueue ------------------------------------------------------- */
     g_q_.enqueue(std::move(res));
@@ -3504,19 +3596,19 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
 
         /* ---- print standard logs ------------------------------------ */
         if(next_flush_ % trg.outputEvery == 0){
-            print_loss_line  (loss_f , e.iter, e, trg, cw, prec);
+            print_loss_line  (loss_f , e.iter, e, trg, n_val, cw, prec);
             print_outvar_line(outv_f , e.iter, e, trg, cw, prec);
             print_params_line(par_f  , e.iter, e,      cw, prec);
-            print_stats_line (stats_f, e.iter, e, trg, cw, prec);
+            print_stats_line (stats_f, e.iter, e, trg, n_val, cw, prec);
         }
 
         /* ---- new best logs ------------------------------------------ */
         if(e.is_best) {
           if(e.best_iter % trg.bestOutputEvery == 0) {
-            print_loss_line  (best_f      , e.best_iter, e, trg, cw, prec);
+            print_loss_line  (best_f      , e.best_iter, e, trg, n_val, cw, prec);
             print_outvar_line(best_outv_f , e.best_iter, e, trg, cw, prec);
             print_params_line(best_par_f  , e.best_iter, e,      cw, prec);
-            print_stats_line (best_stats_f, e.best_iter, e, trg, cw, prec);
+            print_stats_line (best_stats_f, e.best_iter, e, trg, n_val, cw, prec);
           }
 
           /* archive best_pot_N.tadah ---------------------------------- */
@@ -3658,17 +3750,17 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                         try {
                             const auto& e = io_buf_[next_flush_];
                             if (next_flush_ % trg.outputEvery == 0) {
-                                print_loss_line  (loss_f , e.iter, e, trg, cw, prec);
+                                print_loss_line  (loss_f , e.iter, e, trg, n_val, cw, prec);
                                 print_outvar_line(outv_f , e.iter, e, trg, cw, prec);
                                 print_params_line(par_f  , e.iter, e,      cw, prec);
-                                print_stats_line (stats_f, e.iter, e, trg, cw, prec);
+                                print_stats_line (stats_f, e.iter, e, trg, n_val, cw, prec);
                             }
                             if (e.is_best) {
                                 if (e.best_iter % trg.bestOutputEvery == 0) {
-                                    print_loss_line  (best_f      , e.best_iter, e, trg, cw, prec);
+                                    print_loss_line  (best_f      , e.best_iter, e, trg, n_val, cw, prec);
                                     print_outvar_line(best_outv_f , e.best_iter, e, trg, cw, prec);
                                     print_params_line(best_par_f  , e.best_iter, e,      cw, prec);
-                                    print_stats_line (best_stats_f, e.best_iter, e, trg, cw, prec);
+                                    print_stats_line (best_stats_f, e.best_iter, e, trg, n_val, cw, prec);
                                 }
                                 if (e.best_iter % trg.dumpBestPotEvery == 0) {
                                     std::ostringstream bpa;
@@ -4193,16 +4285,16 @@ void HPO_Host<P,R>::flush_remaining(bool retry_io) const
 
     auto write_row = [&](const Result& e) {
         if(e.iter % trg_.outputEvery == 0){
-            print_loss_line  (loss_f , e.iter, e, trg_, cw_, prec_);
+            print_loss_line  (loss_f , e.iter, e, trg_, n_val_datasets_, cw_, prec_);
             print_outvar_line(outv_f , e.iter, e, trg_, cw_, prec_);
             print_params_line(par_f  , e.iter, e,       cw_, prec_);
-            print_stats_line (stats_f, e.iter, e, trg_, cw_, prec_);
+            print_stats_line (stats_f, e.iter, e, trg_, n_val_datasets_, cw_, prec_);
         }
         if(e.is_best && e.best_iter % trg_.bestOutputEvery == 0) {
-            print_loss_line  (best_f      , e.best_iter, e, trg_, cw_, prec_);
+            print_loss_line  (best_f      , e.best_iter, e, trg_, n_val_datasets_, cw_, prec_);
             print_outvar_line(best_outv_f , e.best_iter, e, trg_, cw_, prec_);
             print_params_line(best_par_f  , e.best_iter, e,       cw_, prec_);
-            print_stats_line (best_stats_f, e.best_iter, e, trg_, cw_, prec_);
+            print_stats_line (best_stats_f, e.best_iter, e, trg_, n_val_datasets_, cw_, prec_);
         }
 
         if(e.is_best) {

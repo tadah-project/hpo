@@ -154,11 +154,14 @@ int pc_worker_main(int /*argc*/, char** /*argv*/) {
         throw std::runtime_error("no potential for this iter (desync)");
 
       const PcScriptSpec& sc = specs[script_idx];
+      /* Never throws: its own guard fails the task, as in THREAD mode. */
       res = execute_script_task<LammpsRunner>(
           sc.script, sc.script_lines, sc.invar_final, sc.outvar_names,
           sc.hotvar_names, sc.failvar_names, pot_ctx, iter, inject,
           slot_state);
     } catch (const std::exception& e) {
+      /* A malformed TASK (bad pot_kind, script_idx out of range, no
+       * potential for this iter): reported in-band, the worker lives on. */
       res = PcTaskResult{};
       res.status = PcTaskStatus::RUN_FAIL;
       res.error_msg = e.what();
@@ -171,6 +174,7 @@ int pc_worker_main(int /*argc*/, char** /*argv*/) {
       w.u32(static_cast<std::uint32_t>(res.status));
       w.str(res.error_msg);
       w.vstr(res.outvar_values);
+      w.vstr(res.outvar_errors);    /* protocol v3 */
       w.vstr(res.hotvar_values);
       w.vstr(res.failvar_values);   /* protocol v2 */
       w.f64(res.create_ms);
