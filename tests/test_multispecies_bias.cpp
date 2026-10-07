@@ -508,8 +508,11 @@ TEST_CASE("pair_style tadah compute_dimers and the MLIP prediction agree for "
 // Pins: pair_coeff refuses an ATOM Nb Ta BIAS true potential with 1 + 3
 // WEIGHTS (one intercept column shared by the two species, as tadah trained
 // it before 1.6.0) for its 2 + 3 descriptor entries, naming WEIGHTS,
-// DSIZE, BIAS and ATOM, and saying to retrain.
-// Before the fix: pair_coeff accepted it (setup error empty).
+// DSIZE, BIAS and ATOM ("has 4 WEIGHTS", "5 components (DSIZE)"), and saying
+// to retrain.
+// Before the fix: pair_coeff accepted it (setup error empty). Before the
+// one-guard rewording (review): the message said "WEIGHTS has 4 values" and
+// "DSIZE 5".
 TEST_CASE("pair_coeff refuses a two-species BIAS potential with one shared "
           "intercept column",
           "[multispecies_bias][lammps_oracle]") {
@@ -522,8 +525,8 @@ TEST_CASE("pair_coeff refuses a two-species BIAS potential with one shared "
   const std::string err = execute(lmp, cell_script(tanb_cell(5, 31)), pot);
   INFO(err);
   CHECK(err.find("pair_coeff") != std::string::npos);
-  CHECK(err.find("WEIGHTS has 4 values") != std::string::npos);
-  CHECK(err.find("DSIZE 5") != std::string::npos);
+  CHECK(err.find("has 4 WEIGHTS") != std::string::npos);
+  CHECK(err.find("5 components (DSIZE)") != std::string::npos);
   CHECK(err.find("one intercept column shared by all species") !=
         std::string::npos);
   CHECK(err.find("retrain") != std::string::npos);
