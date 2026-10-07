@@ -350,9 +350,11 @@ TEST_CASE("compact fitter: a Ceres solve with options Ceres refuses throws",
   /* Pins: refine(), refine_edges() and joint_refine() throw
    * std::invalid_argument naming the solve and Ceres' reason when Ceres
    * refuses the solver options (here a negative gradient or function
-   * tolerance), and leave the fit as it was; the same solves with
-   * tolerance 0 run. RefitParser refuses a negative tolerance, so only a
-   * caller that sets CompactConfig itself reaches this.
+   * tolerance), and refine() leaves the centres and widths of a SIGNED fit
+   * as they were (the next test pins that every solve leaves the whole fit
+   * as it was); the same solves with tolerance 0 run. RefitParser refuses
+   * a negative tolerance, so only a caller that sets CompactConfig itself
+   * reaches this.
    * Before the fix: Ceres returned FAILURE without iterating, the solve
    * recorded it as its stop term (FAILURE(0it, Invalid configuration...))
    * and returned without an error: no exception is thrown. */
@@ -428,6 +430,88 @@ TEST_CASE("compact fitter: a Ceres solve with options Ceres refuses throws",
           }) == "joint_refine" + refuses + "function_tolerance = -1. "
                 "Violated constraint: Solver::Options::function_tolerance "
                 ">= 0.0)");
+  }
+}
+
+TEST_CASE("compact fitter: a solve whose options Ceres refuses leaves the "
+          "fit as it was", "[refit][compact]")
+{
+  /* Pins: refine(), refine_edges() and joint_refine() refuse the solver
+   * options before they change the fit: after the std::invalid_argument
+   * every amplitude, centre and width, and the fit's EMBF0 reference and
+   * RHOFORM, are as the caller passed them, where the solve would first
+   * have moved the start to a feasible one (under RHOFORM NONNEG a
+   * negative amplitude lifted to 0; in refine_edges() and joint_refine() a
+   * bump width below the ladder's floor 0.03 eta0 lifted to it) and
+   * stamped the fitter's RHOFORM on the fit.
+   * Before the fix: the options were checked after those edits, so after
+   * the refusal the amplitude -0.3 is 0, the width 1e-4 is the floor and
+   * the SIGNED fit says NONNEG. */
+  std::vector<double> xs, ys;
+  sample(make_truth(), 1.0, 5.5, 200, xs, ys);
+  const auto same = [](const BlipFit &a, const BlipFit &b) {
+    return a.c == b.c && a.mu == b.mu && a.eta == b.eta &&
+           a.zero_ref == b.zero_ref && a.form == b.form;
+  };
+  /* A SIGNED start with a negative amplitude and a width below the floor. */
+  BlipFit start = perturbed_truth();
+  start.c = {0.8, -0.3, 0.5, 0.2};
+  start.eta[2] = 1e-4;
+  const auto nonneg = [](CompactConfig cfg) {
+    cfg.rho_form = tadah::models::RhoForm::NonNeg;
+    return cfg;
+  };
+  SECTION("refine()") {
+    CompactConfig cfg = nonneg({});
+    cfg.ceres_gtol = -1.0;
+    CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
+    BlipFit f = start;
+    CHECK_THROWS_AS(fit.refine(f), std::invalid_argument);
+    CHECK(f.c[1] == -0.3);
+    CHECK(f.form == tadah::models::RhoForm::Signed);
+    CHECK(same(f, start));
+  }
+  SECTION("refine_edges()") {
+    CompactConfig cfg = nonneg({});
+    cfg.ceres_ftol = -1.0;
+    cfg.hard_rcut = 5.5;
+    CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
+    BlipFit f = start;
+    CHECK_THROWS_AS(fit.refine_edges(f), std::invalid_argument);
+    CHECK(f.c[1] == -0.3);
+    CHECK(f.eta[2] == 1e-4);
+    CHECK(same(f, start));
+  }
+  SECTION("joint_refine()") {
+    BlipFit phi = start, rho, F;
+    phi.c = make_truth().c;
+    rho.mu = {2.0, 3.2, 4.4};
+    rho.eta = {0.9, 0.8, 0.9};
+    rho.c = {0.6, -0.35, 0.15};
+    rho.form = tadah::models::RhoForm::NonNeg;
+    F.mu = {1.0, 4.0, 7.0};
+    F.eta = {0.45, 0.4, 0.45};
+    F.c = {-2.0, -0.8, 0.5};
+    const std::vector<std::vector<double>> dists = {{2.5, 2.5, 2.9, 3.6},
+                                                    {2.2, 2.2, 2.6, 3.2}};
+    const std::vector<double> e0 = {0.1, 0.2}, ew(dists.size(), 1.0);
+    JointCurveData dphi, drho, dF;
+    sample(make_truth(), 1.0, 5.5, 100, dphi.xs, dphi.ys);
+    sample(rho, 1.0, 5.5, 100, drho.xs, drho.ys);
+    sample(F, 0.0, 9.0, 100, dF.xs, dF.ys);
+    for (const char *algo : {"CERES_LM", "CERES_DOGLEG"}) {
+      INFO(algo);
+      BlipFit p = phi, r = rho, Fc = F;
+      CHECK_THROWS_AS(joint_refine(p, r, Fc, dphi, drho, dF, dists, e0, ew,
+                                   1.0, 10, 0.0, algo, nullptr, 0.0, 0.0,
+                                   nullptr, -1.0),
+                      std::invalid_argument);
+      CHECK(r.c[1] == -0.35);
+      CHECK(p.eta[2] == 1e-4);
+      CHECK(same(p, phi));
+      CHECK(same(r, rho));
+      CHECK(same(Fc, F));
+    }
   }
 }
 
