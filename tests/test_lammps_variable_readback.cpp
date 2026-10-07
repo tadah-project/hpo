@@ -181,3 +181,27 @@ TEST_CASE("get_variable after a LAMMPS error raises the variable's own error "
   }
   CHECK(runner.get_variable(lmp, "ok") == "2.5");
 }
+
+/* Pins: a real circular dependency is still reported, by the read that
+ * meets it: a = v_b+1 with b = v_a+1 raises "has a circular dependency"
+ * each time it is read, and so does b; a variable outside the cycle reads
+ * as usual (ok = 2.5).
+ * Before the fix: passes as well (a pin that clearing the marks a LAMMPS
+ * error left before each read keeps LAMMPS's own check of the formula:
+ * the marks are set again while the read evaluates). */
+TEST_CASE("get_variable still raises a real circular dependency",
+          "[HPO][lammps][readback]")
+{
+  auto lmp = make_instance();
+  REQUIRE(lmp);
+  LammpsRunner runner;
+  lmp->input->one("variable a equal v_b+1");
+  lmp->input->one("variable b equal v_a+1");
+  lmp->input->one("variable ok equal 2.5");
+  for (const char* name : {"a", "b", "a"}) {
+    INFO("reading " << name);
+    CHECK_THAT(read_error(runner, lmp, name),
+               Catch::Contains("has a circular dependency"));
+  }
+  CHECK(runner.get_variable(lmp, "ok") == "2.5");
+}
