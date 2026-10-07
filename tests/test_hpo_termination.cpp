@@ -37,6 +37,7 @@
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/hpo_mpi.h>         // hpo_rank_suffix
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/nlopt_adapter.h>
 #include <tadah/hpo/optimizer_block.h>
@@ -610,8 +611,10 @@ struct HostFixture {
 };
 
 /* A PC_LAMMPS script in the run's directory: a bcc Ta cell run once with
- * the candidate potential, its energy per atom the variable `var`. */
-void write_pe_script(const fs::path& path, const std::string& var)
+ * the candidate potential, the variable `var` its energy per atom (or the
+ * equal-style `formula` given). */
+void write_pe_script(const fs::path& path, const std::string& var,
+                     const std::string& formula = "pe/atoms")
 {
     std::ofstream(path)
         << "clear\nunits metal\nboundary p p p\natom_style atomic\n"
@@ -619,7 +622,29 @@ void write_pe_script(const fs::path& path, const std::string& var)
            "create_box 1 box\ncreate_atoms 1 region box\nmass 1 180.95\n"
            "pair_style tadah\npair_coeff * * EXTERN Ta\n"
            "thermo_style custom step pe\nrun 0 post no\n"
-           "variable " << var << " equal pe/atoms\n";
+           "variable " << var << " equal " << formula << "\n";
+}
+
+/* The values of column `name` of a history file (outvar.tadah, ...), one
+ * per data row, by the header line's column names. */
+std::vector<double> column_of(const fs::path& path, const std::string& name)
+{
+    std::ifstream in(path);
+    std::string header;
+    REQUIRE(std::getline(in, header));
+    std::istringstream hs(header);
+    std::vector<std::string> names;
+    for (std::string t; hs >> t;) names.push_back(t);
+    const auto it = std::find(names.begin(), names.end(), name);
+    INFO("header of " << path << ": " << header);
+    REQUIRE(it != names.end());
+    const auto col = static_cast<std::size_t>(it - names.begin());
+    std::vector<double> out;
+    for (const auto& row : data_rows(path)) {
+        REQUIRE(row.size() == names.size());
+        out.push_back(std::stod(row[col]));
+    }
+    return out;
 }
 
 /* TADAH_PC_ISOLATION unset while this lives (it overrides the
@@ -910,6 +935,61 @@ TEST_CASE("Two runs in one process: a smaller THREADS under PC_ISOLATION "
     for (const auto& row : loss) {
         INFO("loss.tadah row " << row.at(0));
         CHECK(loss_value(row.back()) < kFailScore);
+    }
+}
+
+/* Pins: under PC_ISOLATION THREAD each run's LAMMPS instances end with the
+ * run, and a later run in the process runs its own script: two runs
+ * (THREADS 1, TADAH:RANDOM MAXEVAL 2 SEED 1, one line "PC_LAMMPS --script
+ * pe.in --varloss E 0 1 -log lmp.log"), the second with pe.in rewritten from
+ * "variable E equal pe/atoms" to "variable E equal pe/atoms+1". Each run
+ * returns 0 with 2 outvar.tadah rows and the same candidates (params.tadah
+ * without ITERATION); its LAMMPS log of executor worker 0 (lmp.log.t0) has
+ * LAMMPS's "Total wall time" line, which LAMMPS writes when the instance is
+ * destroyed, once the run has returned; and every E of the second run is
+ * the first run's E of the same row plus 1.
+ * Before the fix: the executor was a function-local static whose workers
+ * lived until process exit, and with them their thread-local LAMMPS
+ * instance and the script it rendered once (PcSlotState, keyed by the
+ * script's name and the line's LAMMPS options): after the first run its
+ * log had no "Total wall time" line, and the second run ran the first
+ * run's pe.in on that instance: its E were the first run's (about 1e-8),
+ * not those plus 1. */
+TEST_CASE("Two runs in one process: under PC_ISOLATION THREAD a run's LAMMPS "
+          "instances end with the run, and the next run runs its own script",
+          "[HPO][termination][two_runs][pc_isolation]")
+{
+    PcIsolationEnvUnset no_env;
+    const std::string optimizer = plain_block(
+        "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n    MAXEVAL 2\n"
+        "    SEED 1\n    THREADS 1\n");
+    const std::string root = kRootLines +
+        "PC_LAMMPS --script pe.in --varloss E 0 1 -log lmp.log\n"
+        "PC_ISOLATION THREAD\n";
+    const std::string lmp_log =
+        "lmp.log" + tadah::hpo::hpo_rank_suffix() + ".t0";
+    std::vector<std::vector<double>> energies;
+    std::vector<std::vector<std::vector<std::string>>> candidates;
+    for (const char* formula : {"pe/atoms", "pe/atoms+1"}) {
+        CAPTURE(formula);
+        TaRun run(optimizer, root, /*new_process=*/energies.empty());
+        write_pe_script(run.sd.dir / "pe.in", "E", formula);
+        int status = -1;
+        CHECK_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const std::string log = read_file(lmp_log);
+        INFO(lmp_log << ":\n" << log);
+        CHECK(log.find("Total wall time") != std::string::npos);
+        energies.push_back(column_of("outvar.tadah", "E"));
+        REQUIRE(energies.back().size() == 2u);
+        auto params = data_rows("params.tadah");
+        for (auto& row : params) row.erase(row.begin());
+        candidates.push_back(params);
+    }
+    REQUIRE(candidates[1] == candidates[0]);
+    for (std::size_t k = 0; k < 2; ++k) {
+        CAPTURE(k, energies[0][k], energies[1][k]);
+        CHECK(energies[1][k] == Approx(energies[0][k] + 1.0).epsilon(1e-12));
     }
 }
 
