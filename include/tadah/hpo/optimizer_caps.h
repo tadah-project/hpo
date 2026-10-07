@@ -103,6 +103,14 @@ struct OptimizerCaps {
     bool        needs_stop = false;
     const char* stop_note  = "";
 
+    /* The backend ignores NLopt's forced stop (NLopt's StoGO, GD_STOGO and
+     * GD_STOGO_RAND: it tests only NLopt's evaluation count and clock), by
+     * which HPO ends a search -- on a signal, an error, the RESTART
+     * stagnation stop, a spent budget or a withheld loss at STOPVAL: the
+     * objective then refuses every call, and only NLopt's own MAXEVAL or
+     * MAXTIME ends the run. require_stop() counts only those as its stop. */
+    bool        ignores_forced_stop = false;
+
     /* How the tolerances end the run when one of them is costly, the last
      * clause of require_stop()'s message and a line of the ALGO help (""
      * for none): DIRECT tests XTOL on every rectangle it divides, the

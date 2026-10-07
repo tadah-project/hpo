@@ -266,6 +266,21 @@ Registry build_registry()
                   "it is interrupted"
                 : "NLopt's global search has no convergence test of its own "
                   "and runs until it is interrupted";
+            /* NLopt's StoGO (algs/stogo) tests NLopt's evaluation count and
+             * clock (nlopt_stop_evalstime), never its forced stop: once HPO stops
+             * a StoGO search, the objective refuses its calls until NLopt's
+             * MAXEVAL or MAXTIME ends it, and without them it never ended
+             * (a host exception or a signal, with STOPVAL as its only
+             * stop). */
+            if (starts("GD_STOGO")) {
+                c.ignores_forced_stop = true;
+                c.stop_note =
+                    "NLopt's StoGO has no convergence test of its own and "
+                    "ignores NLopt's forced stop, by which HPO ends a search "
+                    "(on a signal, an error, the RESTART stagnation stop, or "
+                    "a loss at or below STOPVAL that NLopt was not given), so "
+                    "only NLopt's own evaluation count or clock ends it";
+            }
         } else if (s == "LD_MMA" || s == "LD_CCSAQ" || s == "LD_SLSQP") {
             c.needs_stop = true;
             c.stop_note  = "without a tolerance it has no convergence test "

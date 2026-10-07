@@ -85,13 +85,17 @@ std::string tolerance_note(const OptimizerCaps& caps)
     return std::string("; ") + caps.tolerance_note;
 }
 
-/* MAXEVAL, MAXTIME and STOPVAL, as `caps` honours them. */
+/* MAXEVAL, MAXTIME and STOPVAL, as `caps` honours them as a stop: not
+ * STOPVAL for a backend that ignores the forced stop (OptimizerCaps::
+ * ignores_forced_stop), which only MAXEVAL and MAXTIME end once HPO stops
+ * it. */
 std::vector<std::string> budget_keys(const OptimizerCaps& caps, bool stopval)
 {
     std::vector<std::string> k;
     if (caps.supports_maxeval) k.push_back("MAXEVAL");
     if (caps.supports_maxtime) k.push_back("MAXTIME");
-    if (stopval && caps.supports_stopval) k.push_back("STOPVAL");
+    if (stopval && caps.supports_stopval && !caps.ignores_forced_stop)
+        k.push_back("STOPVAL");
     return k;
 }
 
@@ -100,12 +104,19 @@ std::vector<std::string> budget_keys(const OptimizerCaps& caps, bool stopval)
  * tolerance of 0 or below off (its stop tests compare a change with it),
  * and ANNEAL_PT's best-stall rule arms only above 0, so FTOL_REL 0 -- a
  * common way to write "no tolerance" -- ends nothing. MAXEVAL and MAXTIME
- * are positive by their grammar, and any STOPVAL is a target. */
+ * are positive by their grammar, and any STOPVAL is a target. A backend
+ * that ignores the forced stop (OptimizerCaps::ignores_forced_stop) needs
+ * MAXEVAL or MAXTIME: HPO ends a search by that stop (a signal, an error,
+ * the RESTART stagnation stop, a withheld loss at STOPVAL), and the
+ * objective's refusals end it only through NLopt's own count or clock. */
 bool has_stop(const OptimizerSpec& spec, const OptimizerCaps& caps,
               RestartStop restart)
 {
-    if (restart == RestartStop::On) return true;
     const StopCriteria& st = spec.stop;
+    if (caps.ignores_forced_stop)
+        return (st.maxeval && caps.supports_maxeval) ||
+               (st.maxtime && caps.supports_maxtime);
+    if (restart == RestartStop::On) return true;
     const auto positive = [](const std::optional<double>& v) {
         return v && *v > 0.0;
     };
@@ -171,9 +182,11 @@ void require_inner_run_stop(const OptimizerSpec& parent, RestartStop restart)
     const std::string outer = backend_name(parent);
     const std::string inner = backend_name(*run);
     const OptimizerCaps& outer_caps = optimizer_caps(parent);
+    /* The enclosing block's stops that end the local search: not STOPVAL
+     * for one that ignores the forced stop. */
     const std::string handed_on =
-        or_list(budget_keys(outer_caps, true)) + " in the " + outer +
-        " block, which NLopt hands on to it";
+        or_list(budget_keys(outer_caps, !caps.ignores_forced_stop)) +
+        " in the " + outer + " block, which NLopt hands on to it";
     if (parent.inner)
         throw std::runtime_error(
             "the INNER search of " + outer + " (" + inner + ") needs a stop: " +
