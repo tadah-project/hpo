@@ -56,10 +56,13 @@
  * takes it as the loss at the point; NUMERICAL evaluates its centre itself
  * all the same (its evaluations are those of the old kernels).
  *
- * MAXEVAL is enforced at this layer by counting host calls in the shared
- * eval_counter. Optimizers receive `gradient(x,g) -> false` (and likewise
- * `cost(x) -> +inf`) once the counter overflows or the host returns a
- * non-finite value, so they can terminate cleanly without exceptions
+ * MAXEVAL counts every evaluation of a run in the shared eval_counter: the
+ * provider counts its own (cost(), each finite-difference point, one per
+ * analytical gradient), and the adapters that evaluate the loss themselves
+ * (DLIB:BFGS, the NLopt objective) count theirs in the same counter.
+ * Optimizers receive `gradient(x,g) -> false` (and likewise
+ * `cost(x) -> +inf`) once the counter reaches MAXEVAL or the host returns
+ * a non-finite value, so they can terminate cleanly without exceptions
  * propagating across Ceres' Solve() frames (Ceres is not exception-safe).
  *
  * Why a gradient() call returned false is recorded in

@@ -17,7 +17,9 @@
 #include <cmath>
 #include <cstdint>
 #include <exception>
+#include <iomanip>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -173,12 +175,19 @@ struct RejectionRecord {
  * `reevaluations` of the point its local search returned
  * (auglag_reevaluations), and neither the MAXEVAL nor the MAXTIME of
  * `local`, the local search the run is (single_local_search), had been
- * reached by then. NLopt reports those of a local LD_* search itself, but
- * AUGLAG reports the ending of its local search as FTOL_REACHED (auglag.c
- * without constraints); that search's evaluations are the calls up to the
- * rejection. A call after the rejection -- a line-search point without a
- * gradient (LD_SLSQP), a sample of a global search -- means the search
- * went on past it. */
+ * reached by then. NLopt reports the MAXTIME of a local LD_* search itself,
+ * but AUGLAG reports the ending of its local search as FTOL_REACHED
+ * (auglag.c without constraints); that search's NLopt calls are the calls
+ * up to the rejection. A call after the rejection -- a line-search point
+ * without a gradient (LD_SLSQP), a sample of a global search -- means the
+ * search went on past it.
+ *
+ * `local`'s MAXEVAL is in NLopt calls, the count NLopt hands a local search
+ * (nlopt_optimize_limited). Only an INNER block's MAXEVAL can be reached
+ * here: the enclosing block's, which inner_run_spec takes when it is the
+ * tighter, counts every evaluation in run_nlopt (a call makes one or more),
+ * so its budget is spent, and has ended the search (MAXEVAL_REACHED), by
+ * the time the calls could reach it. */
 inline bool ended_on_rejection(const RejectionRecord& r,
                                unsigned long reevaluations,
                                const std::optional<OptimizerSpec>& local)
@@ -189,6 +198,18 @@ inline bool ended_on_rejection(const RejectionRecord& r,
     if (local->stop.maxeval && r.calls_at_rejection >= *local->stop.maxeval)
         return false;
     return !(local->stop.maxtime && r.rejected_after >= *local->stop.maxtime);
+}
+
+/* Whether `f`, a loss the objective evaluated but did not give NLopt, meets
+ * the STOPVAL of `sp`: a usable loss (loss_is_feasible: not a failure under
+ * the run's FAILSCORE) at or below it -- the rule of every HPO backend
+ * (anneal::stopval_reached, DLIB). */
+inline bool withheld_reaches_stopval(double f, const OptimizerSpec& sp)
+{
+    return sp.stop.stopval &&
+           loss_is_feasible(f, sp.failscore.value_or(
+                                   std::numeric_limits<double>::infinity())) &&
+           f <= *sp.stop.stopval;
 }
 
 }  // namespace detail
@@ -299,10 +320,27 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
      * unregistered indices. Derivative-free algos (LN_*, GN_*) leave
      * grad empty on each call -- the wrapper skips the gradient path.
      *
-     * MAXEVAL is enforced by NLopt itself (set_maxeval inside
-     * make_nlopt). The eval_counter here is used only by the
-     * GradientProvider's internal masked-FD bookkeeping; it is
-     * separate from NLopt's nfev counter. */
+     * MAXEVAL counts every evaluation of the run against one budget,
+     * `evals_used`, as DLIB:BFGS and the CERES drivers count: the
+     * objective's loss, and its gradient's evaluations, which the provider
+     * counts in the same counter (each finite-difference point; one for
+     * each analytical gradient of ANALYTICAL and HYBRID). NLopt counts its
+     * objective calls, and a call with a gradient makes several
+     * evaluations: its own count let a gradient search run on after the
+     * budget, with every gradient refused (GradientFailure::Budget) and +inf
+     * for points that had been evaluated (LD_MMA: 120 evaluations for
+     * MAXEVAL 60), and GN_CRS2_LM, GN_ORIG_DIRECT(_L) and AUGLAG test it
+     * only after an evaluation or an iteration more. The objective evaluates
+     * nothing once
+     * the budget is spent (UData::budget_spent), and that ends the search
+     * MAXEVAL_REACHED after exactly MAXEVAL evaluations. NLopt keeps its own
+     * MAXEVAL (make_nlopt): its count never passes the evaluations, so it
+     * ends no search before the budget, and it is what ends GD_STOGO, which
+     * ignores a forced stop and whose later calls the objective refuses
+     * without evaluating. An INNER block's MAXEVAL still bounds each local
+     * search of MLSL or AUGLAG in NLopt's count, its objective calls: the
+     * objective cannot tell where one local search ends and the next
+     * begins (the journal's "Inner stop criteria" say so). */
     std::atomic<unsigned long> evals_used{0};
     const unsigned long maxeval =
         sp.stop.maxeval.has_value()
@@ -347,8 +385,26 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
      * `rejection` records the last gradient request that was rejected. A
      * search that ends right after such a rejection ended because of it
      * (detail::ended_on_rejection), unless a stop criterion ended it:
-     * MAXEVAL, MAXTIME or STOPVAL, which NLopt reports, or the MAXEVAL or
-     * MAXTIME of AUGLAG's local search, which AUGLAG does not. */
+     * MAXEVAL (the budget below), MAXTIME or STOPVAL, or the MAXEVAL or
+     * MAXTIME of AUGLAG's local search, which AUGLAG does not report.
+     *
+     * `budget_spent`: MAXEVAL is spent (see evals_used). The objective
+     * refuses a call once it is, without evaluating, and a gradient the
+     * budget cut short (GradientFailure::Budget), and stops the search.
+     *
+     * `withheld`: a loss at or below STOPVAL that the objective evaluated
+     * but did not give NLopt, because the gradient of its point failed (the
+     * budget, or a gradient that is not finite). NLopt tests STOPVAL on the
+     * losses it is given, so the search ends there, STOPVAL_REACHED, as it
+     * would have; the objective stops it.
+     *
+     * `error`, `gradient_stop`, `budget_spent` and `withheld` exclude each
+     * other: the first one set makes the objective refuse every later call
+     * without evaluating. */
+    struct Withheld {
+        double              loss;
+        GradientFailureInfo why;   /* the gradient's failure */
+    };
     struct UData {
         const OptimizerSpec*               sp;
         HostT*                             host;
@@ -361,6 +417,10 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
         GradientFailureInfo                rejected;
         detail::RejectionRecord            rejection;
         std::chrono::steady_clock::time_point started;
+        std::atomic<unsigned long>*        evals = nullptr;   /* evals_used */
+        unsigned long                      maxeval = 0;       /* 0: none */
+        bool                               budget_spent = false;
+        std::optional<Withheld>            withheld;
     };
     const std::optional<OptimizerSpec> local = single_local_search(sp);
     const unsigned long reevaluations = detail::auglag_reevaluations(sp);
@@ -368,21 +428,30 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                 /*local_gradient_search=*/local &&
                     optimizer_caps(*local).is_gradient_based,
                 /*had_finite_gradient=*/false, /*gradient_stop=*/false,
-                /*rejected=*/{}, /*rejection=*/{}, /*started=*/{}};
+                /*rejected=*/{}, /*rejection=*/{}, /*started=*/{},
+                /*evals=*/&evals_used, /*maxeval=*/maxeval,
+                /*budget_spent=*/false, /*withheld=*/std::nullopt};
 
     /* objective adapter (handles log-scale automatically). For
      * gradient-based algorithms NLopt passes a writable `grad` vector
      * of size dim; for derivative-free algorithms `grad` is empty. We
-     * always compute f via host(); when grad is non-empty we ALSO
-     * compute the gradient via gp.gradient(). gp.gradient handles the
-     * Numerical / Analytical / Hybrid dispatch internally. */
+     * compute f via host() unless the search is stopping; when grad is
+     * non-empty we ALSO compute the gradient via gp.gradient_at(), which
+     * handles the Numerical / Analytical / Hybrid dispatch internally. */
     auto wrapper = [](const std::vector<double>& x,
                       std::vector<double>& grad, void* userdata)->double
     {
         auto* u = static_cast<UData*>(userdata);
         /* Stopping: an algorithm may still probe a point before it sees
-         * the forced stop; never evaluate again. */
-        if (u->error || u->gradient_stop) {
+         * the forced stop (GD_STOGO never sees it); never evaluate again. */
+        if (u->error || u->gradient_stop || u->budget_spent || u->withheld) {
+            u->opt->force_stop();
+            if (!grad.empty()) std::fill(grad.begin(), grad.end(), 0.0);
+            return HUGE_VAL;
+        }
+        /* MAXEVAL spent (see evals_used): no evaluation; the search ends. */
+        if (u->maxeval > 0 && u->evals->load() >= u->maxeval) {
+            u->budget_spent = true;
             u->opt->force_stop();
             if (!grad.empty()) std::fill(grad.begin(), grad.end(), 0.0);
             return HUGE_VAL;
@@ -393,9 +462,12 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
             for(size_t i=0;i<x.size();++i) v(static_cast<long>(i))=x[i];
 
             ++u->rejection.calls;
-            /* Compute f first so the trainer cache is populated at this x;
+            /* The loss counts against MAXEVAL, in the counter the
+             * GradientProvider counts the gradient's evaluations in.
+             * Compute f first so the trainer cache is populated at this x;
              * host.analytical_gradient (Phase 2A.4 wiring) consumes the
              * cached fit state. */
+            u->evals->fetch_add(1);
             const double f = (*u->host)( u->sp->out(v) );
 
             if (!grad.empty()) {
@@ -405,15 +477,23 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                 /* f is the loss of exactly v, just evaluated: HYBRID takes
                  * it as the loss at the point (gradient_at). */
                 if (!u->gp->gradient_at(v, f, g)) {
-                    /* No gradient here: the MAXEVAL budget of the
-                     * provider (Budget), or a gradient that is not finite
-                     * (see UData). Signal a bad step to NLopt: zero the
-                     * gradient and return +inf so the optimizer rejects
-                     * this point and backs off -- or, at the starting
-                     * point of a local gradient search, stop it. */
+                    /* No gradient here: MAXEVAL spent within it (Budget),
+                     * or a gradient that is not finite (see UData). NLopt
+                     * is not given f: the objective returns +inf and a
+                     * zero gradient. A usable f at or below STOPVAL ends
+                     * the search (`withheld`); so does the budget. A
+                     * gradient that is not finite is a rejected point: the
+                     * optimizer backs off -- or, at the starting point of a
+                     * local gradient search, is stopped. */
                     const GradientFailureInfo& fi = *u->gp->failure;
-                    if (fi.kind == GradientFailure::Stencil ||
-                        fi.kind == GradientFailure::NotFinite) {
+                    if (detail::withheld_reaches_stopval(f, *u->sp)) {
+                        u->withheld = Withheld{f, fi};
+                        u->opt->force_stop();
+                    } else if (fi.kind == GradientFailure::Budget) {
+                        u->budget_spent = true;
+                        u->opt->force_stop();
+                    } else if (fi.kind == GradientFailure::Stencil ||
+                               fi.kind == GradientFailure::NotFinite) {
                         u->rejected = fi;
                         u->rejection.last_rejected = true;
                         u->rejection.calls_at_rejection = u->rejection.calls;
@@ -519,11 +599,23 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
     }
 
     const std::string backend = sp.lib + ":" + sp.algo;
-    /* The search ended because of a gradient that is not finite: HPO
-     * stopped it at its starting point, or it ended right after it
-     * rejected such a point without a stop criterion met (`ended`: how
-     * NLopt ended). */
-    const auto ended_on_gradient = [&](const std::string& ended) {
+    /* The journal and stdout line of every MAXEVAL ending, the budget's
+     * (the objective stopped the search) and NLopt's own count's (a
+     * derivative-free search, whose calls are its evaluations). */
+    const auto maxeval_ending = [&]() {
+        std::ostringstream nfo;
+        nfo << "NLopt finished: " << nlopt_result_str(nlopt::MAXEVAL_REACHED)
+            << " after " << evals_used.load();
+        if (maxeval > 0) nfo << " of MAXEVAL " << maxeval;
+        nfo << " evaluation(s)";
+        std::cout << "[HPO] " << nfo.str() << "\n";
+        HPOLog::instance().info(nfo.str());
+    };
+    /* The objective stopped the search (see UData; their order does not
+     * matter, they exclude each other): HPO's stop at a starting point
+     * without a finite gradient, a loss at or below STOPVAL that NLopt was
+     * not given, or the spent budget -- however NLopt ended after it. */
+    const auto ended_by_objective = [&]() {
         if (udata.gradient_stop) {
             report_gradient_stop(backend, udata.rejected,
                                  "a local gradient search has no step to "
@@ -531,6 +623,37 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                                  "finite gradient");
             return true;
         }
+        if (udata.withheld) {
+            const std::string st = nlopt_result_str(nlopt::STOPVAL_REACHED);
+            const GradientFailureInfo& why = udata.withheld->why;
+            std::ostringstream nfo;
+            nfo << std::setprecision(10) << "NLopt finished: " << st
+                << " after " << evals_used.load()
+                << " evaluation(s): the loss " << udata.withheld->loss
+                << " is at or below STOPVAL " << *sp.stop.stopval
+                << ", and NLopt was not given it: its gradient ";
+            if (why.kind == GradientFailure::Budget)
+                nfo << "could not be completed within MAXEVAL";
+            else
+                nfo << "is not finite: " << why.cause
+                    << (why.detail.empty() ? "" : " (" + why.detail + ")");
+            std::cout << "[HPO] " << nfo.str() << "\n";
+            HPOLog::instance().info(nfo.str());
+            HPOLog::instance().set_status(st);
+            return true;
+        }
+        if (udata.budget_spent) {
+            maxeval_ending();
+            HPOLog::instance().set_status(
+                nlopt_result_str(nlopt::MAXEVAL_REACHED));
+            return true;
+        }
+        return false;
+    };
+    /* The search ended right after it rejected a point whose gradient is
+     * not finite, without a stop criterion met (`ended`: how NLopt
+     * ended). */
+    const auto ended_on_rejection = [&](const std::string& ended) {
         if (detail::ended_on_rejection(udata.rejection, reevaluations,
                                        local)) {
             report_gradient_stop(backend, udata.rejected,
@@ -548,9 +671,11 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
         udata.started = std::chrono::steady_clock::now();
         nlopt::result res = opt.optimize(start, fmin);
         /* A forced stop normally makes optimize() throw (below); an
-         * algorithm that returns a regular code after it must not hide
-         * the objective's exception either. */
+         * algorithm that returns a regular code after it -- GD_STOGO, which
+         * ignores it -- must not hide the objective's exception, nor the
+         * objective's stop. */
         if (udata.error) std::rethrow_exception(udata.error);
+        if (ended_by_objective()) return;
         result_code  = static_cast<int>(res);
         status_str   = nlopt_result_str(result_code);
         /* A stop criterion ends the search whatever the last point was
@@ -561,7 +686,7 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
         const bool criterion = res == nlopt::MAXEVAL_REACHED ||
                                res == nlopt::MAXTIME_REACHED ||
                                res == nlopt::STOPVAL_REACHED;
-        if (!criterion && ended_on_gradient(status_str)) return;
+        if (!criterion && ended_on_rejection(status_str)) return;
 
         /* NLopt sets an internal stop_msg only on failure paths inside
          * an algorithm. A handful of algorithms catch that internal
@@ -583,10 +708,9 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
          * Surface that diagnostic so the failure is not silent. */
         const char* nlopt_msg = opt.get_errmsg();
         if (nlopt_msg && nlopt_msg[0] != '\0') {
-            const int nfev = opt.get_numevals();
             std::ostringstream oss;
             oss << sp.algo << ": NLopt internal diagnostic was set after "
-                << nfev << " eval(s) -- '" << nlopt_msg
+                << evals_used.load() << " evaluation(s) -- '" << nlopt_msg
                 << "'. Algorithm reported " << status_str
                 << " but the underlying issue was masked. For "
                    "LN_SBPLX/LN_NELDERMEAD this typically means the "
@@ -598,6 +722,8 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
             std::cerr << "[HPO] " << oss.str() << "\n";
             HPOLog::instance().warning(oss.str());
             status_str = "STOPPED -- masked " + status_str + ": " + nlopt_msg;
+        } else if (res == nlopt::MAXEVAL_REACHED) {
+            maxeval_ending();
         } else {
             std::ostringstream nfo;
             nfo << "NLopt finished: " << status_str << "  fmin=" << fmin;
@@ -629,11 +755,14 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
             classify_nlopt_exception(std::current_exception(),
                                      opt.get_errmsg()) ==
             NloptOutcome::Graceful;
-        /* HPO's own stop at a starting point without a finite gradient
-         * (a forced stop), or an algorithm that terminated itself right
-         * after it rejected such a point. */
-        if ((udata.gradient_stop || graceful) && ended_on_gradient(what))
-            return;
+        /* The objective's own stop (a forced stop, or an algorithm that
+         * terminated itself after it), then an algorithm that terminated
+         * itself right after it rejected a point whose gradient is not
+         * finite. */
+        const bool forced =
+            dynamic_cast<const nlopt::forced_stop*>(&e) != nullptr;
+        if ((forced || graceful) && ended_by_objective()) return;
+        if (graceful && ended_on_rejection(what)) return;
         if (graceful) {
             status_str = "STOPPED -- " + what +
                 " (algorithm converged; consider adding ftol_rel / xtol_rel"
