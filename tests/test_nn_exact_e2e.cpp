@@ -662,9 +662,16 @@ ParamVec trained_point(double cgrid5, double rcut2b, double sgrid5) {
 }
 
 /* The journal line analytical_gradient writes when the gradient helper
- * threw and every parameter was handed to finite differences
- * (hpo_host_impl.hpp). */
+ * could not form the gradient (it threw) and every parameter was handed to
+ * finite differences (hpo_host_impl.hpp): "Analytical gradient could not
+ * be formed at this point (occurrence k): <why>; ...". It read
+ * "analytical_gradient: helper threw '<why>' -- routing every theta to
+ * FD"; the cases check that no such line is written, so both texts are
+ * looked for. Before the fix: the checks pass as well (a pin: neither line
+ * is written). */
 constexpr const char* kHelperThrewToFd = "routing every theta to FD";
+constexpr const char* kGradientNotFormed =
+    "Analytical gradient could not be formed at this point";
 
 }  // namespace
 
@@ -824,6 +831,7 @@ TEST_CASE("nn e2e: a trained candidate beyond the neighbour lists gives the "
         CAPTURE(line_with(diag_a, "Neighbour lists rebuilt"));
         CHECK(rebuilt_count(diag_a) >= 1);
         CHECK(a.journal.find(kHelperThrewToFd) == std::string::npos);
+        CHECK(a.journal.find(kGradientNotFormed) == std::string::npos);
     }
     {
         INFO(b.journal);
@@ -831,6 +839,7 @@ TEST_CASE("nn e2e: a trained candidate beyond the neighbour lists gives the "
         REQUIRE_FALSE(diag_b.empty());
         CHECK(diag_b.find("Neighbour lists rebuilt") == std::string::npos);
         CHECK(b.journal.find(kHelperThrewToFd) == std::string::npos);
+        CHECK(b.journal.find(kGradientNotFormed) == std::string::npos);
     }
 }
 
