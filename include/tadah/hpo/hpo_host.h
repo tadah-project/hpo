@@ -220,8 +220,11 @@ public:
 
     /** Establish this run's output generation before the first evaluation.
      * HPO runs are not resumable: every run removes stale best-potential
-     * incumbents and starts its comparator from scratch. MPI ranks
-     * coordinate before any evaluation can publish. */
+     * incumbents and starts its comparator from scratch, and its PC_LAMMPS
+     * --hotvar values from their declared initial values or WARM's seeds
+     * (warmstart::reset_for_fresh_run). The evaluation counter continues
+     * (reset_best_state_for_fresh_run). MPI ranks coordinate before any
+     * evaluation can publish. */
     void prepare_best_publication() const;
 
     std::size_t train_size() const;   // number of training structures

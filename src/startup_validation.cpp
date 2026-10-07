@@ -29,6 +29,7 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -59,6 +60,10 @@ struct ModelProbe {
   std::size_t weights = 0;                  // derive_weight_count
   std::string function;                     // the basis function or kernel
   std::vector<models::MParamSlot> mparams;  // the MPARAMS it reads
+  /* For RCUT2B and RCUTMB, per value of the key: what fixes it
+   * (D_Base::cutoff_fixed_by of the two-body or many-body descriptor), ""
+   * for a free value. */
+  std::map<std::string, std::vector<std::string>> cutoff_fixed;
 };
 
 /* The model of the -c configuration builds, as every evaluation builds
@@ -68,7 +73,8 @@ struct ModelProbe {
  * every evaluation (the run then ends "no evaluation produced a usable
  * loss"). Returns the model's weight count (derive_weight_count; SBASIS for
  * a non-linear M_KRR kernel, which has no basis before training), its
- * function and the MPARAMS the function reads (Function_Base::mparams()).
+ * function, the MPARAMS the function reads (Function_Base::mparams()) and
+ * what fixes each RCUT2B/RCUTMB value (D_Base::cutoff_fixed_by).
  * models::DensityFormError keeps its type and message. */
 ModelProbe probe_model(const core::Context &train_ctx) {
   try {
@@ -79,6 +85,14 @@ ModelProbe probe_model(const core::Context &train_ctx) {
     out.weights = tadah::mlip::model_weight_count(*probe.fb, probe.context);
     out.function = probe.fb->get_label();
     out.mparams = probe.fb->mparams();
+    const std::pair<const char *, const models::D_Base *> cutoffs[] = {
+        {"RCUT2B", probe.DCS.d2b}, {"RCUTMB", probe.DCS.dmb}};
+    for (const auto &[key, d] : cutoffs) {
+      if (!d || !train_ctx.contains(key)) continue;
+      auto &why = out.cutoff_fixed[key];
+      for (std::size_t i = 0; i < train_ctx.size(key); ++i)
+        why.push_back(d->cutoff_fixed_by(i));
+    }
     return out;
   } catch (const models::DensityFormError &) {
     throw;
@@ -516,6 +530,30 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
             core::format_roundtrip(o.highbound[t]) + "] of " +
             model.function + "'s " + slot.name + " must be positive (" +
             slot.name + " > 0).");
+    }
+  }
+
+  /* --- OPTIM on a cutoff a descriptor takes from a file ---------------
+   * D2_EAM and DM_EAM (also inside a D2_mJoin/DM_mJoin) evaluate the
+   * tables of their setfl file and refuse a cutoff other than the file's
+   * (D_Base::cutoff_fixed_by): every candidate but the -c value would fail
+   * its evaluation. */
+  for (const char *key : {"RCUT2B", "RCUTMB"}) {
+    const auto it = trg.optimap.find(key);
+    const auto fixed = model.cutoff_fixed.find(key);
+    if (it == trg.optimap.end() || fixed == model.cutoff_fixed.end())
+      continue;
+    const auto &o = it->second;
+    for (std::size_t t = 0; t < o.opt.size() && t < fixed->second.size();
+         ++t) {
+      if (!o.opt[t] || fixed->second[t].empty()) continue;
+      const std::string idx = std::string(key) + " (" +
+                              core::to_string(t + 1) + ")";
+      throw std::runtime_error(
+          "OPTIM " + idx + " is not a valid search target: " +
+          fixed->second[t] + " and refuses another value, so every "
+          "candidate but the -c value would fail; leave " + idx +
+          " out of OPTIM.");
     }
   }
 

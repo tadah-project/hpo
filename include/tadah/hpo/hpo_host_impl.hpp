@@ -1015,7 +1015,9 @@ void HPO_Host<P,R>::prepare_best_publication() const {
     }
 
     reset_best_state_for_fresh_run();
-    warmstart::reset_best_snapshot_for_fresh_run();
+    /* The run's --hotvar values start from their declared initial value or
+     * WARM's seed, not from an earlier run's converged ones. */
+    warmstart::reset_for_fresh_run();
 }
 
 template<class P, class R>
