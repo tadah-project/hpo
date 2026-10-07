@@ -697,16 +697,37 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         f_.flush();
     }
 
-    // ---- initial point
-    if (!sp.optim_init.empty()) {
+    // ---- initial points: what the INIT chain produced, counted by origin
+    //      (CONFIG, WARM <file>, RANDOM, LHS, SOBOL) in the order they
+    //      first appear; a spec built outside HPOTargets may carry no
+    //      origins (optim_init_origin), and then only the count prints.
+    {
         std::lock_guard<std::mutex> lg(mtx_);
-        f_ << "  Starting point: user-supplied"
-           << " (" << sp.optim_init.size() << " seed"
-           << (sp.optim_init.size()==1 ? "" : "s") << ")\n";
-        f_.flush();
-    } else {
-        std::lock_guard<std::mutex> lg(mtx_);
-        f_ << "  Starting point: random (uniform within bounds)\n";
+        const std::size_t n = sp.optim_init.size();
+        if (n == 0) {
+            f_ << "  Starting point: none (the INIT chain produced no point; "
+                  "the optimiser starts from its own default)\n";
+        } else {
+            f_ << "  Starting point: " << n << (n == 1 ? " point" : " points")
+               << " from the INIT chain";
+            if (sp.optim_init_origin.size() == n) {
+                std::vector<std::pair<std::string, std::size_t>> by_origin;
+                for (const auto& o : sp.optim_init_origin) {
+                    const std::string name = o.name();
+                    auto it = std::find_if(
+                        by_origin.begin(), by_origin.end(),
+                        [&name](const auto& e) { return e.first == name; });
+                    if (it == by_origin.end()) by_origin.emplace_back(name, 1);
+                    else ++it->second;
+                }
+                f_ << " (";
+                for (std::size_t i = 0; i < by_origin.size(); ++i)
+                    f_ << (i ? ", " : "") << by_origin[i].second << " "
+                       << by_origin[i].first;
+                f_ << ")";
+            }
+            f_ << "\n";
+        }
         f_.flush();
     }
 
@@ -779,8 +800,14 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
             if (obtains_gradients(ps))
                 f_ << "    EXPLORE GRAD_STRATEGY: " << grad_strategy_text(ps)
                    << "\n";
-            write_init_strategy(ps.init_strategy_spec,
-                                "PRESTAGE.EXPLORE init strategy:", "    ");
+            /* An EXPLORE without a METHOD chain of its own starts from the
+             * OUTER's INIT points (share_init_with_nested_phases). */
+            if (ps.init_strategy_spec.chain.empty())
+                f_ << "    PRESTAGE.EXPLORE init strategy:\n"
+                      "      (the OUTER INIT points, shared)\n";
+            else
+                write_init_strategy(ps.init_strategy_spec,
+                                    "PRESTAGE.EXPLORE init strategy:", "    ");
             if (ps.inner) {
                 write_init_strategy(ps.inner->init_strategy_spec,
                                     "PRESTAGE.EXPLORE.INNER init strategy:", "      ");
