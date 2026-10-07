@@ -9,6 +9,8 @@
 
 #include <tadah/hpo/refit/refit_parser.h>
 
+#include <array>
+#include <cmath>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -542,11 +544,14 @@ TEST_CASE_METHOD(PTFixture,
    * the default (the engine has the compact fitter), and the ends of the
    * compact keys' ranges (REFIT_COMPACT_SEED 0, 3000000000 and 4294967295,
    * REFIT_COMPACT_JITTERS 0 and 2147483646, REFIT_COMPACT_NMAX 536870911,
-   * REFIT_CURVE_DERIV_WEIGHT 0, REFIT_CURVE_RELAX 1). (MLIP's
+   * REFIT_CURVE_DERIV_WEIGHT 0, REFIT_CURVE_RELAX 1, these two under
+   * REFIT_OBJECTIVE curve, since energy refuses them). (MLIP's
    * RefitEngine, which has no compact fitter, refuses REFIT_MODE compact
    * once these numbers pass.)
    * Before the fix: passes as well (a pin: MLIP's test checked these ends
-   * through its own engine, in a dense configuration). */
+   * through its own engine, in a dense configuration). Until the curve
+   * knobs were refused under REFIT_OBJECTIVE energy the two were checked
+   * under energy, the configuration's default objective. */
   ScopedTempDir tmp;
   for (const bool defaulted : {false, true}) {
     Context c = compact_context("SIGNED");
@@ -567,10 +572,162 @@ TEST_CASE_METHOD(PTFixture,
            {"REFIT_CURVE_RELAX", "1"}}) {
     INFO(key << " " << tok);
     Context c = compact_context("SIGNED");
+    if (key.rfind("REFIT_CURVE_", 0) == 0)
+      c.add("REFIT_OBJECTIVE", std::string("curve"));
     c.remove(key);
     c.add(key, tok);
     tadah::mlip::Task task("refit", c);
     CHECK_NOTHROW(tadah::hpo::engines::HPORefitEngine().validate(task));
+  }
+}
+
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: REFIT_CURVE_RELAX and "
+                 "REFIT_CURVE_DERIV_WEIGHT are refused under REFIT_OBJECTIVE "
+                 "energy, REFIT_CURVE_RELAX under REFIT_CURVE_WEIGHTING false",
+                 "[compact][refit][mode_keys]") {
+  /* Pins: through the HPO refit engine, REFIT_CURVE_RELAX and
+   * REFIT_CURVE_DERIV_WEIGHT under REFIT_OBJECTIVE energy, written or the
+   * default, are refused in validate() and in run() before any ladder runs
+   * ("tadah refit: REFIT_CURVE_RELAX has no effect under REFIT_OBJECTIVE
+   * energy (the default): only REFIT_OBJECTIVE curve reads it; remove
+   * REFIT_CURVE_RELAX, or set REFIT_OBJECTIVE curve"), and nothing is
+   * written; under curve with REFIT_CURVE_WEIGHTING false REFIT_CURVE_RELAX
+   * is refused ("tadah refit: REFIT_CURVE_RELAX has no effect under
+   * REFIT_CURVE_WEIGHTING false: only REFIT_CURVE_WEIGHTING true (the
+   * default) reads it; remove REFIT_CURVE_RELAX, or set
+   * REFIT_CURVE_WEIGHTING true"); under curve with the weighting on, the
+   * default, REFIT_CURVE_RELAX 0.1 is the weighting's floor (refit_opt.log:
+   * "curve weighting: ON (pressure-relaxed) ... relax_floor=0.100").
+   * Before the fix: under energy the two were accepted with no effect and
+   * the fit ran to the end (no exception, pot.tadah written), and so did
+   * REFIT_CURVE_RELAX under REFIT_CURVE_WEIGHTING false; the curve run
+   * passes as well (a pin). */
+  const auto under_energy = [](const std::string &key, bool defaulted) {
+    return "tadah refit: " + key + " has no effect under REFIT_OBJECTIVE "
+           "energy" + std::string(defaulted ? " (the default)" : "") +
+           ": only REFIT_OBJECTIVE curve reads it; remove " + key +
+           ", or set REFIT_OBJECTIVE curve";
+  };
+  for (const auto &[key, value] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"REFIT_CURVE_RELAX", "0.1"}, {"REFIT_CURVE_DERIV_WEIGHT", "0.1"}}) {
+    for (const bool defaulted : {true, false}) {
+      INFO(key << " " << value
+               << (defaulted ? "" : " (REFIT_OBJECTIVE energy)"));
+      ScopedTempDir tmp;
+      write_synth_eam("synth.eam.alloy");
+      Context c = compact_context("SIGNED");
+      c.add(key, value);
+      if (!defaulted) c.add("REFIT_OBJECTIVE", std::string("energy"));
+      tadah::mlip::Task task("refit", c);
+      CHECK_THROWS_WITH(tadah::hpo::engines::HPORefitEngine().validate(task),
+                        under_energy(key, defaulted));
+      const auto [what, logged] = run_compact(c);
+      CHECK(what == under_energy(key, defaulted));
+      CHECK(log_lines("---- phi ladder ----").empty());
+      CHECK_FALSE(fs::exists("pot.tadah"));
+    }
+  }
+  {
+    ScopedTempDir tmp;
+    write_synth_eam("synth.eam.alloy");
+    Context c = compact_context("SIGNED");
+    c.add("REFIT_OBJECTIVE", std::string("curve"));
+    c.add("REFIT_CURVE_WEIGHTING", std::string("false"));
+    c.add("REFIT_CURVE_RELAX", std::string("0.1"));
+    const auto [what, logged] = run_compact(c);
+    CHECK(what == "tadah refit: REFIT_CURVE_RELAX has no effect under "
+                  "REFIT_CURVE_WEIGHTING false: only REFIT_CURVE_WEIGHTING "
+                  "true (the default) reads it; remove REFIT_CURVE_RELAX, or "
+                  "set REFIT_CURVE_WEIGHTING true");
+    CHECK(log_lines("---- phi ladder ----").empty());
+    CHECK_FALSE(fs::exists("pot.tadah"));
+  }
+  ScopedTempDir tmp;
+  write_synth_eam("synth.eam.alloy");
+  Context c = compact_context("SIGNED");
+  c.add("REFIT_OBJECTIVE", std::string("curve"));
+  c.add("REFIT_CURVE_RELAX", std::string("0.1"));
+  const auto [what, logged] = run_compact(c);
+  INFO(logged);
+  CHECK(what == "");
+  const auto on = log_lines("curve weighting: ON (pressure-relaxed)");
+  REQUIRE(on.size() == 1);
+  CHECK(on[0].find("relax_floor=0.100") != std::string::npos);
+}
+
+namespace {
+// The row of `function` in refit_range_report.dat: full_lo, full_hi,
+// fit_window_lo, fit_window_hi.
+std::array<double, 4> report_row(const std::string &function) {
+  std::istringstream in(slurp("refit_range_report.dat"));
+  for (std::string line; std::getline(in, line);) {
+    std::istringstream ls(line);
+    std::string name;
+    if (!(ls >> name) || name != function) continue;
+    std::array<double, 4> row{};
+    ls >> row[0] >> row[1] >> row[2] >> row[3];
+    return row;
+  }
+  FAIL("refit_range_report.dat has no " << function << " row");
+  return {};
+}
+
+// The number of rows of refit_curve_<fn>.dat whose in_window flag is not
+// that of x in [lo, hi] (rows within 1e-9 of an edge are not judged).
+int wrong_window_flags(const std::string &f, double lo, double hi) {
+  std::istringstream in(slurp(f));
+  int rows = 0, wrong = 0;
+  for (std::string line; std::getline(in, line);) {
+    if (line.empty() || line[0] == '#') continue;
+    std::istringstream ls(line);
+    std::vector<double> cols;
+    for (double v; ls >> v;) cols.push_back(v);
+    if (cols.size() != 9) return -1;
+    ++rows;
+    const double x = cols[0];
+    if (std::fabs(x - lo) < 1e-9 || std::fabs(x - hi) < 1e-9) continue;
+    if ((cols[8] != 0.0) != (x >= lo && x <= hi)) ++wrong;
+  }
+  return rows > 100 ? wrong : -1;
+}
+}  // namespace
+
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: refit_range_report.dat and the curve "
+                 "files give the window the compact fit used",
+                 "[compact][refit]") {
+  /* Pins: after a compact fit the phi and rho rows of
+   * refit_range_report.dat have fit_window_lo = the lower edge of the
+   * compact fit's radial window, max(0.8 r_reach, REFIT_R_LO_FRAC rcut,
+   * dr), as refit_opt.log's "windows: r in [<lo>, <rcut>]" prints it (to
+   * 4 decimals; the synthetic fcc table: 0.8 x 0.75 x 3.6/sqrt 2 = 1.527 A),
+   * equal to the row's full_lo (the fit's r_lo), and fit_window_hi = rcut;
+   * refit_curve_phi.dat and refit_curve_rho.dat flag in_window exactly the
+   * x in [fit_window_lo, rcut].
+   * Before the fix: fit_window_lo was 0.9 r_reach (1.718 A), neither the
+   * compact fit's window nor the dense fit's, and the curve files flagged
+   * in_window from it (x in [1.527, 1.718) flagged 0). */
+  ScopedTempDir tmp;
+  write_synth_eam("synth.eam.alloy");
+  const auto [what, logged] = run_compact(compact_context("SIGNED"));
+  INFO(logged);
+  REQUIRE(what == "");
+  const auto windows = log_lines("windows: r in [");
+  REQUIRE(windows.size() == 1);
+  const double window_lo =
+      std::stod(windows[0].substr(windows[0].find('[') + 1));
+  CHECK(window_lo == Approx(0.8 * 0.75 * 3.6 / std::sqrt(2.0)).margin(1e-4));
+  INFO(slurp("refit_range_report.dat"));
+  for (const char *fn : {"phi", "rho"}) {
+    INFO(fn);
+    const auto row = report_row(fn);
+    CHECK(row[2] == Approx(window_lo).margin(1e-4));
+    CHECK(row[2] == Approx(row[0]));
+    CHECK(row[3] == Approx(5.0));
+    CHECK(wrong_window_flags(std::string("refit_curve_") + fn + ".dat",
+                             window_lo, 5.0) == 0);
   }
 }
 

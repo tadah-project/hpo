@@ -326,12 +326,12 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   const bool curve_weighting = c.has_stored("REFIT_CURVE_WEIGHTING")
                                    ? c.get<bool>("REFIT_CURVE_WEIGHTING")
                                    : true;
-  const double curve_relax = nums.curve_relax;  // in (0, 1], in every mode
-  // (curve-only knobs REFIT_CURVE_WEIGHTING/RELAX/DERIV_WEIGHT are consumed
-  // only when curve_obj is true. Under energy REFIT_CURVE_WEIGHTING is
-  // refused, by the mode rule (check_refit_mode_keys, refit_keys.h);
-  // RELAX and DERIV_WEIGHT have no effect, but their numbers are
-  // range-checked in every mode, read_refit_numbers.)
+  const double curve_relax = nums.curve_relax;  // in (0, 1]
+  // (the curve knobs REFIT_CURVE_WEIGHTING/RELAX/DERIV_WEIGHT are consumed
+  // only when curve_obj is true, and RELAX only with the weighting on: the
+  // mode rule (check_refit_mode_keys, refit_keys.h) refuses each under
+  // energy, and RELAX under REFIT_CURVE_WEIGHTING false, before the table
+  // is read; read_refit_numbers checks their values whatever the mode.)
   // Per-stage optimiser algorithm + budget + tolerances: defaults live in
   // CompactConfig; the optional inline OPTIMIZER block overrides them.
   // ---- stage pipeline (INIT -> EXPLORE -> REFINE -> FUSE) ----
