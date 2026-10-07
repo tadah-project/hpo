@@ -142,13 +142,30 @@ std::string ceres_reason(const ceres::Solver::Summary &s) {
 // function or gradient tolerance), returns FAILURE without iterating: taken
 // for a stop term, the stage silently did nothing. RefitParser refuses such
 // settings (every tolerance >= 0), so they come only from a caller that set
-// CompactConfig itself: an error, raised before the solve.
+// CompactConfig itself: an error, raised before the solve changes the fit.
 void require_valid_options(const ceres::Solver::Options &opt,
                            const std::string &where) {
   std::string why;
   if (!opt.IsValid(&why))
     throw std::invalid_argument(where + ": Ceres refuses the solver options (" +
                                 why + ")");
+}
+
+// The options of the fitter's Ceres solves: LM, or DOGLEG for CERES_DOGLEG,
+// with the stage's iteration cap and function and gradient tolerances. Each
+// solve builds and checks them (require_valid_options) before it changes
+// the fit it was given.
+ceres::Solver::Options ceres_options(const std::string &algo, int max_iter,
+                                     double ftol, double gtol) {
+  ceres::Solver::Options opt;
+  opt.linear_solver_type = ceres::DENSE_QR;
+  if (algo == "CERES_DOGLEG") opt.trust_region_strategy_type = ceres::DOGLEG;
+  opt.max_num_iterations = max_iter;
+  opt.function_tolerance = ftol;
+  opt.gradient_tolerance = gtol;
+  opt.parameter_tolerance = 1e-16;
+  opt.logging_type = ceres::SILENT;
+  return opt;
 }
 }  // namespace
 
@@ -1183,6 +1200,18 @@ BlipFit CompactBlipFitter::seed_global(BlipFit f) const {
 }
 
 double CompactBlipFitter::refine(BlipFit &f) const {
+  // The solver options first: Ceres' refusal leaves the fit as it was.
+  ceres::Solver::Options opt = ceres_options(
+      cfg_.refine_algo, cfg_.ceres_max_iter, cfg_.ceres_ftol, cfg_.ceres_gtol);
+  opt.check_gradients = cfg_.check_gradients;  // FD audit of the analytic J
+  // Compact-support bases have numerically-zero Jacobian entries at support
+  // edges; Ceres' check has only a RELATIVE knob, so FD noise on those ~0
+  // entries (incl. B''' kinks crossed by the probe — the blip is C2, only
+  // B''' jumps at its knots) reads as large relative error there.
+  // Measured: 4/1920 components, worst 1.2e-3, all near-zero entries; real
+  // Jacobian bugs show O(1) errors across whole blocks.
+  opt.gradient_check_relative_precision = 5e-3;
+  require_valid_options(opt, "compact_fitter refine");
   const int n = f.n();
   f.zero_ref = cfg_.zero_ref;  // the channel's EMBF0 reference (cf. solve_coeffs)
   f.form = cfg_.rho_form;      // and its RHOFORM
@@ -1246,24 +1275,6 @@ double CompactBlipFitter::refine(BlipFit &f) const {
         prob.SetManifold(eta.data(), new ceres::SubsetManifold(n, pin));
     }
   }
-  ceres::Solver::Options opt;
-  opt.linear_solver_type = ceres::DENSE_QR;
-  if (cfg_.refine_algo == "CERES_DOGLEG")
-    opt.trust_region_strategy_type = ceres::DOGLEG;
-  opt.max_num_iterations = cfg_.ceres_max_iter;
-  opt.function_tolerance = cfg_.ceres_ftol;
-  opt.gradient_tolerance = cfg_.ceres_gtol;
-  opt.parameter_tolerance = 1e-16;
-  opt.logging_type = ceres::SILENT;
-  opt.check_gradients = cfg_.check_gradients;  // FD audit of the analytic J
-  // Compact-support bases have numerically-zero Jacobian entries at support
-  // edges; Ceres' check has only a RELATIVE knob, so FD noise on those ~0
-  // entries (incl. B''' kinks crossed by the probe — the blip is C2, only
-  // B''' jumps at its knots) reads as large relative error there.
-  // Measured: 4/1920 components, worst 1.2e-3, all near-zero entries; real
-  // Jacobian bugs show O(1) errors across whole blocks.
-  opt.gradient_check_relative_precision = 5e-3;
-  require_valid_options(opt, "compact_fitter refine");
   ceres::Solver::Summary sum;
   ceres::Solve(opt, &prob, &sum);
   if (cfg_.check_gradients && sum.termination_type == ceres::FAILURE)
@@ -2086,6 +2097,10 @@ double CompactBlipFitter::refine_edges(BlipFit &f) const {
   if (one_sided(f.kind) || !(cfg_.hard_rcut > 0.0))
     throw std::logic_error("compact_fitter refine_edges: a bump family under "
                            "a hard cutoff only");
+  // The solver options first: Ceres' refusal leaves the fit as it was.
+  const ceres::Solver::Options opt = ceres_options(
+      cfg_.refine_algo, cfg_.ceres_max_iter, cfg_.ceres_ftol, cfg_.ceres_gtol);
+  require_valid_options(opt, "compact_fitter refine_edges");
   const int n = f.n();
   f.zero_ref = cfg_.zero_ref;
   f.form = cfg_.rho_form;
@@ -2129,16 +2144,6 @@ double CompactBlipFitter::refine_edges(BlipFit &f) const {
       prob.SetManifold(eta.data(), new ceres::SubsetManifold(n, pin));
     }
   }
-  ceres::Solver::Options opt;
-  opt.linear_solver_type = ceres::DENSE_QR;
-  if (cfg_.refine_algo == "CERES_DOGLEG")
-    opt.trust_region_strategy_type = ceres::DOGLEG;
-  opt.max_num_iterations = cfg_.ceres_max_iter;
-  opt.function_tolerance = cfg_.ceres_ftol;
-  opt.gradient_tolerance = cfg_.ceres_gtol;
-  opt.parameter_tolerance = 1e-16;
-  opt.logging_type = ceres::SILENT;
-  require_valid_options(opt, "compact_fitter refine_edges");
   ceres::Solver::Summary sum;
   ceres::Solve(opt, &prob, &sum);
   for (int k = 0; k < n; ++k)  // back to centres (a pinned bump keeps its)
@@ -2195,6 +2200,11 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
                              "rho only, not to phi/F");
   if (rho.form == RhoForm::Monotone && one_sided(rho.kind))
     no_step_kind(rho.kind);
+  // The solver options before any start is moved: Ceres' refusal leaves the
+  // fits as they were.
+  const ceres::Solver::Options opt =
+      ceres_options(algo, max_iter, ftol, gtol);
+  if (algo != "NONE") require_valid_options(opt, "joint_refine");
   if (term_out) *term_out = "NONE(skipped)";
 
   // Feasible starting values for the bounds below: the density amplitudes
@@ -2374,16 +2384,6 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
   hold_pins(F);
 
   if (algo != "NONE") {
-    ceres::Solver::Options opt;
-    opt.linear_solver_type = ceres::DENSE_QR;
-    if (algo == "CERES_DOGLEG")
-      opt.trust_region_strategy_type = ceres::DOGLEG;
-    opt.max_num_iterations = max_iter;
-    opt.function_tolerance = ftol;
-    opt.gradient_tolerance = gtol;
-    opt.parameter_tolerance = 1e-16;
-    opt.logging_type = ceres::SILENT;
-    require_valid_options(opt, "joint_refine");
     ceres::Solver::Summary sum;
     ceres::Solve(opt, &prob, &sum);
     // the iterations max_num_iterations bounds: sum.iterations holds the
