@@ -301,6 +301,49 @@ TEST_CASE("compact fitter: dlib's L-BFGS stops on FTOL_ABS, and FTOL_REL "
   }
 }
 
+TEST_CASE("compact fitter: a ladder count out of its range is refused",
+          "[refit][compact][strict_numbers]")
+{
+  /* Pins: the fitter refuses (std::invalid_argument naming the field) an
+   * opt_every or insert_topk below 1 and a jitters outside 0 to
+   * 2147483646, whose jitters + 1 candidates per rung must fit an int; the
+   * ends of the ranges are accepted.
+   * Before the fix: opt_every and insert_topk below 1 silently became 1
+   * (std::max), and a jitters of 2147483647 made the candidate loop
+   * (j <= jitters, an int) overflow: no exception is thrown. */
+  std::vector<double> xs, ys;
+  sample(make_truth(), 1.0, 5.5, 50, xs, ys);
+  const auto build = [&](CompactConfig cfg) -> std::string {
+    try {
+      CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg, BasisKind::Knot5L);
+    } catch (const std::invalid_argument &e) {
+      return e.what();
+    }
+    return "";
+  };
+  CompactConfig c;
+  c.opt_every = 0;
+  CHECK(build(c) == "compact_fitter: opt_every must be from 1 to 2147483647, "
+                    "got 0");
+  c = CompactConfig{};
+  c.insert_topk = 0;
+  CHECK(build(c) == "compact_fitter: insert_topk must be from 1 to "
+                    "2147483647, got 0");
+  c = CompactConfig{};
+  c.jitters = -1;
+  CHECK(build(c) == "compact_fitter: jitters must be from 0 to 2147483646, "
+                    "got -1");
+  c = CompactConfig{};
+  c.jitters = std::numeric_limits<int>::max();
+  CHECK(build(c) == "compact_fitter: jitters must be from 0 to 2147483646, "
+                    "got 2147483647");
+  c = CompactConfig{};
+  c.jitters = std::numeric_limits<int>::max() - 1;
+  c.opt_every = std::numeric_limits<int>::max();
+  c.insert_topk = 1;
+  CHECK(build(c) == "");
+}
+
 TEST_CASE("compact fitter: a Ceres solve with options Ceres refuses throws",
           "[refit][compact]")
 {

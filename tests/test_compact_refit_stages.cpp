@@ -225,4 +225,56 @@ TEST_CASE_METHOD(PTFixture,
   }
 }
 
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: the configuration numbers are read "
+                 "strictly, before any fitting",
+                 "[compact][refit][strict_numbers]") {
+  /* Pins: the compact refit reads its numbers with the strict reader of
+   * MLIP (read_refit_numbers): REFIT_COMPACT_NMAX '+3' is refused naming
+   * the token, before any ladder runs; REFIT_COMPACT_SEED 3000000000, an
+   * unsigned seed, runs; a REFIT_COMPACT_NMAX whose curve sample grid
+   * (4 x NMAX points per function) does not fit an int is refused naming
+   * the grid, before any ladder runs.
+   * Before the fix: std::stoi read '+3' as 3 and the refit ran; SEED was
+   * read as an int and 3000000000 failed converting; 4 * NMAX overflowed
+   * an int (undefined behaviour) and the refit ran with an 800-point grid. */
+  SECTION("REFIT_COMPACT_NMAX +3") {
+    ScopedTempDir tmp;
+    write_synth_eam("synth.eam.alloy");
+    Context c = compact_context("SIGNED");
+    c.remove("REFIT_COMPACT_NMAX");
+    c.add("REFIT_COMPACT_NMAX", std::string("+3"));
+    const auto [what, logged] = run_compact(c);
+    CHECK(what == "tadah refit: REFIT_COMPACT_NMAX must be an integer from 1 "
+                  "to 2147483647, got '+3'");
+    CHECK(log_lines("---- phi ladder ----").empty());
+    CHECK_FALSE(fs::exists("pot.tadah"));
+  }
+  SECTION("REFIT_COMPACT_SEED 3000000000") {
+    ScopedTempDir tmp;
+    write_synth_eam("synth.eam.alloy");
+    Context c = compact_context("SIGNED");
+    c.add("REFIT_COMPACT_SEED", std::string("3000000000"));
+    const auto [what, logged] = run_compact(c);
+    INFO(logged);
+    CHECK(what == "");
+    CHECK(fs::exists("pot.tadah"));
+  }
+  SECTION("REFIT_COMPACT_NMAX 536870912: a sample grid above INT_MAX") {
+    ScopedTempDir tmp;
+    write_synth_eam("synth.eam.alloy");
+    Context c = compact_context("SIGNED");
+    c.remove("REFIT_COMPACT_NMAX");
+    c.add("REFIT_COMPACT_NMAX", std::string("536870912"));
+    const auto [what, logged] = run_compact(c);
+    CHECK(what == "tadah refit: REFIT_COMPACT_NMAX 536870912 needs a curve "
+                  "sample grid of 4 x 536870912 = 2147483648 points per "
+                  "function (REFIT_COMPACT_SAMPLES is raised to at least 4 x "
+                  "REFIT_COMPACT_NMAX), above 2147483647; lower "
+                  "REFIT_COMPACT_NMAX");
+    CHECK(log_lines("---- phi ladder ----").empty());
+    CHECK_FALSE(fs::exists("pot.tadah"));
+  }
+}
+
 #endif  // TADAH_USE_CERES
