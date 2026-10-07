@@ -44,6 +44,7 @@
 #include <tadah/tadah.lammps/lammps_tadah.h>
 
 #include <dlib/matrix.h>
+#include <atom.h>
 #include <force.h>
 #include <input.h>
 #include <pair_tadah.h>
@@ -377,7 +378,10 @@ TEST_CASE("pair_style tadah and the MLIP prediction agree for a two-species "
 // form (8 entries, 36 weights) is the one-species control.
 // Before the fix: the MLIP descriptor had 1 + 7 entries, so the MLIP
 // prediction used the first 36 of the 45 weights on another layout: the
-// energies differed; the one-species control passes.
+// energies differed (MLIP -623.66 eV, LAMMPS -62.51 eV); the one-species
+// control died with SIGSEGV in compute_2b_mb_full, whose intercept loop
+// read atom->type past nlocal + nghost (exit 139; the same with the MLIP
+// fix alone, before pair_tadah's loop bound).
 TEST_CASE("pair_style tadah compute_2b_mb_full and the MLIP prediction agree "
           "for a two-species BIAS BF_Polynomial2 potential",
           "[multispecies_bias][lammps_oracle]") {
@@ -406,6 +410,90 @@ TEST_CASE("pair_style tadah compute_2b_mb_full and the MLIP prediction agree "
   }
   SECTION("ATOM Ta (control)") {
     compare_with_lammps(poly2(false), tanb_cell(0, 778), false, true, false);
+  }
+}
+
+namespace {
+
+/* ATOM Nb Ta, BIAS true, D2_BP + DM_EAD (2 + 7 descriptor entries) with
+ * written weights: M_BLR BF_Linear (9 weights; compute_2b_mb_half) or
+ * M_BLR BF_Polynomial2 (45 weights; compute_2b_mb_full). */
+Context written_potential(bool poly2) {
+  std::vector<std::string> l = nbta_lines(true);
+  const std::size_t d = 9;
+  std::string w = "WEIGHTS";
+  if (poly2) {
+    for (auto &x : l)
+      if (x == "MODEL M_BLR BF_Linear") x = "MODEL M_BLR BF_Polynomial2";
+    std::size_t b = 0;
+    for (std::size_t i = 0; i < d; ++i)
+      for (std::size_t ii = i; ii < d; ++ii, ++b)
+        w += " " + num(i == ii && i < 2 ? -7.5 - 0.6 * double(i)
+                                         : 0.02 * std::sin(1.0 + 0.9 * double(b)));
+  } else {
+    for (std::size_t i = 0; i < d; ++i)
+      w += " " + num(i < 2 ? -7.5 - 0.6 * double(i) : 0.03 * std::cos(double(i)));
+  }
+  l.push_back(w);
+  return parse(l);
+}
+
+}  // namespace
+
+// Pins: pair_style tadah sets the intercept (bias) components of
+// LammpsTadah::aeds for the atoms LAMMPS has, local and ghost, and for no
+// other column of the array (it has atom->nmax columns): after a first
+// `run 0` on a 6-Nb/10-Ta cell, every atom->type slot past nlocal + nghost
+// is set to 1 (Ta, a valid type, as stale memory may hold), and after a
+// second `run 0` (the same atoms and ghosts) every entry of aeds in the
+// columns past nlocal + nghost is 0, for compute_2b_mb_half (BF_Linear,
+// linear with a many-body descriptor) and compute_2b_mb_full
+// (BF_Polynomial2); the array has more columns than atoms, so the check
+// covers some.
+// Before the fix (pair_tadah's loops run to aeds.cols() again, in a scratch
+// build): in the compute_2b_mb_half section every column past the atoms
+// held a 1 in the Ta intercept row (nonzero_past_atoms 16043: 16384
+// columns, 341 atoms), whatever that memory had held; the
+// compute_2b_mb_full section, the second LAMMPS instance of the process,
+// died with SIGSEGV in its first `run 0`, before the types were set (the
+// old loop read unset types there: a crash or a stray write, depending on
+// the memory).
+TEST_CASE("pair_style tadah sets the intercept components only for the "
+          "atoms LAMMPS has, whatever atom->type holds past them",
+          "[multispecies_bias][lammps_oracle][bias_loops]") {
+  PeriodicTable::initialize();
+  for (int poly2 = 0; poly2 < 2; ++poly2) {
+    DYNAMIC_SECTION((poly2 ? "compute_2b_mb_full (BF_Polynomial2)"
+                           : "compute_2b_mb_half (BF_Linear)")) {
+      const Context pot = written_potential(poly2);
+      const Structure st = tanb_cell(6, 9191);
+      LMPPtr lmp = make_instance();
+      REQUIRE(lmp != nullptr);
+      const std::string err = execute(lmp, cell_script(st), pot);
+      INFO("LAMMPS setup: " << err);
+      REQUIRE(err.empty());
+      require_kernel(lmp, !poly2, true, false);
+      lmp->input->one("run 0 post no");
+      LAMMPS_NS::Atom *atom = lmp->atom;
+      const int nall = atom->nlocal + atom->nghost;
+      REQUIRE(atom->nlocal == static_cast<int>(st.natoms()));
+      for (int n = nall; n < atom->nmax; ++n) atom->type[n] = 1;
+      lmp->input->one("run 0 post no");
+      REQUIRE(atom->nlocal + atom->nghost == nall);
+      auto *pt = dynamic_cast<LAMMPS_NS::PairTadah *>(lmp->force->pair);
+      REQUIRE(pt != nullptr);
+      const tadah::LammpsTadah *lt = pt->lammps_tadah();
+      REQUIRE(lt != nullptr);
+      const std::size_t cols = lt->aeds.cols();
+      INFO("aeds columns " << cols << ", atoms (nlocal + nghost) " << nall
+                           << ", atom->nmax " << atom->nmax);
+      REQUIRE(cols > static_cast<std::size_t>(nall));
+      std::size_t nonzero_past_atoms = 0;
+      for (std::size_t n = static_cast<std::size_t>(nall); n < cols; ++n)
+        for (std::size_t k = 0; k < lt->aeds.rows(); ++k)
+          if (lt->aeds(k, n) != 0.0) ++nonzero_past_atoms;
+      CHECK(nonzero_past_atoms == 0);
+    }
   }
 }
 
