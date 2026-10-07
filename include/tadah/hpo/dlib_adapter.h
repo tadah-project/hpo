@@ -445,13 +445,17 @@ template<class HostT>
       }
     }
 
-    /* dlib's run time: what MAXTIME leaves after the seeds (FOREVER
-     * without MAXTIME). */
+    /* dlib's run time: what MAXTIME leaves after the seeds, and at most
+     * dlib's own FOREVER (200 years; also without MAXTIME). dlib counts it
+     * in nanoseconds, which hold about 292 years: a longer MAXTIME, which
+     * the parser accepts, does not convert (it came out negative and
+     * ended dlib at once). */
     std::chrono::nanoseconds runtime = FOREVER;
     if (sp.stop.maxtime) {
       const double left = std::max(0.0, *sp.stop.maxtime - elapsed());
-      runtime = std::chrono::duration_cast<std::chrono::nanoseconds>(
-          std::chrono::duration<double>(left));
+      if (left < std::chrono::duration<double>(FOREVER).count())
+        runtime = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::duration<double>(left));
     }
     if (maxeval > 0 && !stopval_hit.load() && !time_up())
       find_min_global(tp, pool_feval,
