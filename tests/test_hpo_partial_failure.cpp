@@ -62,6 +62,7 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -418,6 +419,44 @@ TEST_CASE("a failed PC_OBSERVABLE term is a graded band-B failure under "
               std::string::npos);
         Host::reset_globals_for_test();
     }
+}
+
+/* Pins: a failed PC_OBSERVABLE term is journalled with its observable,
+ * the evaluation and why it failed, as a failed PC_LAMMPS task is: a
+ * WARNING "PC_OBSERVABLE term failed (cohesive_energy[1], eval <n>,
+ * occurrence <k>): the relaxed lattice parameter a0 = <a> is outside its
+ * --hotvar window [3, 3.35]" at the first, second and fourth failure of
+ * the run (rate-limited on powers of two): evals 2, 3 and 5 of RCUT2B 4.5
+ * (computed: no line), 5.2, 5.3, 5.4 and 5.5; the third failure (eval 4)
+ * has no line; a0 is above 3.35.
+ * Before the fix: no journal line named a failed term or its reason; the
+ * evaluation's FAILSCORE (loss.tadah) and NaN value (outvar.tadah) were
+ * all it left. */
+TEST_CASE("a failed PC_OBSERVABLE term is journalled with its observable and "
+          "why it failed", "[HPO][partial_failure][host]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ScratchDir sd;
+    Journal j;
+    const auto losses = evaluate(sd.dir, "PC_ERMSE 0 1\n" + kFailingObservable,
+                                 {4.5, 5.2, 5.3, 5.4, 5.5});
+    const std::string journal = j.finish();
+    INFO(journal);
+    REQUIRE(losses.size() == 5);
+    for (std::size_t i = 1; i < losses.size(); ++i) CHECK(losses[i] == kMax);
+    const std::regex line(
+        R"(WARNING +PC_OBSERVABLE term failed \(cohesive_energy\[1\], eval )"
+        R"((\d+), occurrence (\d+)\): the relaxed lattice parameter a0 = )"
+        R"(([0-9.]+) is outside its --hotvar window \[3, 3\.35\])");
+    std::vector<std::pair<int, int>> seen;
+    for (auto it = std::sregex_iterator(journal.begin(), journal.end(), line);
+         it != std::sregex_iterator(); ++it) {
+        seen.emplace_back(std::stoi((*it)[1]), std::stoi((*it)[2]));
+        CHECK(std::stod((*it)[3]) > 3.35);
+    }
+    CHECK(seen == std::vector<std::pair<int, int>>{{2, 1}, {3, 2}, {5, 4}});
+    CHECK(count_of(journal, "PC_OBSERVABLE term failed") == 3u);
+    Host::reset_globals_for_test();
 }
 
 /* ======================================================================
