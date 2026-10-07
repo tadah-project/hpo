@@ -2,8 +2,9 @@
 //
 // The notices of the keys a potential carries that have no effect, through
 // the real pair_style tadah (LammpsRunner): a deprecated key (SIGMA, the
-// weight covariance of Tadah! 1.0.0 to 1.6.0; MBLOCK, a key of the removed
-// MPI training build) and EMBF0 on a potential without a DM_REAM block.
+// weight covariance of Tadah! 1.0.0 to 1.5.0 and the 1.6.0 development
+// builds; MBLOCK, a key of the removed MPI training build) and EMBF0 on a
+// potential without a DM_REAM block.
 // pair_coeff writes each as a LAMMPS WARNING (error->warning on rank 0:
 // the screen and log.lammps, once per run), not to standard error, where
 // LAMMPS' log never saw it and every MPI rank wrote it once. And a
