@@ -107,7 +107,8 @@ struct InitStrategySpec {
     std::vector<Entry> chain;                  // STRATEGY lines (in order, inside INIT block)
     std::optional<std::size_t> k_total;        // K_TOTAL cap (default = sum of strategy default_k)
     std::optional<std::uint64_t> seed;         // SEED for stochastic strategies
-    std::string warm_on_mismatch = "warn";     // warn | error | skip (used by WarmInitStrategy)
+    std::string warm_on_mismatch = "warn";     // warn | error | skip: the WARM entries of
+                                               // this block's chain (build_init_strategy)
 };
 
 /* InitOrigin -- where one resolved INIT start point came from
@@ -159,7 +160,8 @@ struct RestartSpec {
     std::size_t after_stagnation = 0;              // 0 disables
     std::size_t max              = 0;              // cap on restart count
     InitStrategySpec init_strategy;                // INIT chain to refresh on restart;
-                                                   // its SEED draws round r with SEED + r
+                                                   // its SEED draws round r with SEED + r,
+                                                   // its WARM_ON_MISMATCH governs its WARM
     /* The chain's seeds -- its CONFIG and WARM points, the user's starting
      * points as opposed to sampled ones -- resolved once at startup
      * (HPOTargets) when the block is active: a WARM file is read, and its

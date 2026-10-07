@@ -92,6 +92,9 @@ std::vector<double> config_point_from_targets(const HPOTargets& trg);
  *     listed `STRATEGY CONFIG` explicitly. There is no implicit CONFIG.
  *   - If the chain is empty (no INIT block, or one with no STRATEGY
  *     lines) a single CONFIG point is used as a safe default.
+ *   - Every WARM entry takes ispec.warm_on_mismatch, the policy of the
+ *     block the chain belongs to (an INIT block, a RESTART block), whatever
+ *     spec the InitContext of a later generate() carries.
  */
 std::unique_ptr<InitStrategy> build_init_strategy(const struct InitStrategySpec& ispec);
 

@@ -583,8 +583,11 @@ private:
  * the restart. MAXEVAL applies per launch, so a run can use up to
  * (max_restarts + 1) x MAXEVAL evaluations.
  *
- * The refresh strategy, its SEED and the host's HPOTargets are captured
- * at build_run_policy() time. With a SEED in the RESTART block, restart r
+ * The refresh strategy (built from the RESTART block, whose
+ * WARM_ON_MISMATCH governs its WARM seeds), its SEED and the host's
+ * HPOTargets are captured at build_run_policy() time. A round whose chain
+ * produces no point starts from the previous round's points, with a
+ * WARNING. With a SEED in the RESTART block, restart r
  * draws its points with SEED + r (modulo 2^64), so the restart points of a
  * run are reproducible; without one each restart draws from
  * std::random_device. Round 0 does not use the RESTART chain: it starts
@@ -700,6 +703,17 @@ public:
             /* A PRESTAGE exploration that starts from the OUTER INIT
              * points restarts from the fresh ones too. */
             cur.share_init_with_nested_phases();
+          } else {
+            /* A chain can come back empty (its only WARM seed dropped
+             * under WARM_ON_MISMATCH skip, RANDOM 0): the round then
+             * starts where the previous one did. */
+            const std::string msg =
+                "RESTART " + std::to_string(restarts) + "/" +
+                std::to_string(max_restarts_) + ": the METHOD chain (" +
+                refresh_->name() + ") produced no starting point; the round "
+                "starts from the previous round's starting points";
+            std::cerr << "[HPO] WARNING: " << msg << "\n";
+            HPOLog::instance().warning(msg);
           }
         }
         /* Seeded phases draw new random numbers this round. */

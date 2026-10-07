@@ -472,11 +472,12 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
 
   /* The RESTART chain's seeds (CONFIG, WARM), resolved once here as a
    * round draws them (RestartPolicy: the outer spec, the run context, the
-   * block's K_TOTAL), so a WARM file that is missing or unreadable, or
-   * whose RHOFORM the run refuses, is a startup error and not the first
-   * stagnation's, the EMBF0 note comes at startup, and the density gates
-   * check these points as seeds (collect_gate_seeds). The sampled points
-   * of the draw are dropped: each round draws its own. */
+   * block's K_TOTAL and WARM_ON_MISMATCH), so a WARM file that is missing
+   * or unreadable, or whose RHOFORM the run refuses, or a WARM seed the
+   * block's `WARM_ON_MISMATCH error` refuses, is a startup error and not
+   * the first stagnation's, the EMBF0 note comes at startup, and the
+   * density gates check these points as seeds (collect_gate_seeds). The
+   * sampled points of the draw are dropped: each round draws its own. */
   if (spec.restart.active()) {
     const InitStrategySpec& rs = spec.restart.init_strategy;
     auto refresh = build_init_strategy(rs);
