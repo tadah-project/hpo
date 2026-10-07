@@ -850,7 +850,10 @@ namespace {
 /* `tadah hpo` in its own directory @p dir under PC_ISOLATION @p mode, with
  * the hpotarget @p target (PC_ISOLATION appended), the script readback.in
  * = @p script and each of @p more_scripts (name, text); returns the wait
- * status. */
+ * status. tadah runs without TADAH_PC_ISOLATION, which would override the
+ * hpotarget's PC_ISOLATION (src/hpo.cpp) -- a developer where socketpair
+ * is blocked is told to set it to THREAD -- so @p mode is the mode it runs
+ * in, as each case checks in its journal. */
 int run_tadah_hpo(
         const char* bin, const fs::path& dir, const std::string& mode,
         const std::string& target, const std::string& script,
@@ -867,7 +870,8 @@ int run_tadah_hpo(
     std::ofstream(dir / "config.hpo") << target << "PC_ISOLATION " << mode
                                       << "\n";
     const std::string cmd =
-        "cd '" + dir.string() + "' && TADAH_HPO_FORCE_REBUILD=1 '" + bin +
+        "cd '" + dir.string() + "' && env -u TADAH_PC_ISOLATION "
+        "TADAH_HPO_FORCE_REBUILD=1 '" + bin +
         "' hpo -c config --hpotarget config.hpo --validation config.val"
         " > tadah.stdout 2> tadah.stderr";
     return std::system(cmd.c_str());
