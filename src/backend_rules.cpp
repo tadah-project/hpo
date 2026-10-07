@@ -85,17 +85,18 @@ std::string tolerance_note(const OptimizerCaps& caps)
     return std::string("; ") + caps.tolerance_note;
 }
 
-/* MAXEVAL, MAXTIME and STOPVAL, as `caps` honours them as a stop: not
- * STOPVAL for a backend that ignores the forced stop (OptimizerCaps::
- * ignores_forced_stop), which only MAXEVAL and MAXTIME end once HPO stops
- * it. */
-std::vector<std::string> budget_keys(const OptimizerCaps& caps, bool stopval)
+/* MAXEVAL, MAXTIME and STOPVAL, as `caps` (the block they are set in)
+ * honours them, that are a stop for a run of `run`: only MAXEVAL when `run`
+ * ignores the forced stop (OptimizerCaps::ignores_forced_stop), which only
+ * NLopt's own MAXEVAL ends promptly once HPO stops it. */
+std::vector<std::string> budget_keys(const OptimizerCaps& caps, bool stopval,
+                                     const OptimizerCaps& run)
 {
     std::vector<std::string> k;
     if (caps.supports_maxeval) k.push_back("MAXEVAL");
+    if (run.ignores_forced_stop) return k;
     if (caps.supports_maxtime) k.push_back("MAXTIME");
-    if (stopval && caps.supports_stopval && !caps.ignores_forced_stop)
-        k.push_back("STOPVAL");
+    if (stopval && caps.supports_stopval) k.push_back("STOPVAL");
     return k;
 }
 
@@ -106,16 +107,16 @@ std::vector<std::string> budget_keys(const OptimizerCaps& caps, bool stopval)
  * common way to write "no tolerance" -- ends nothing. MAXEVAL and MAXTIME
  * are positive by their grammar, and any STOPVAL is a target. A backend
  * that ignores the forced stop (OptimizerCaps::ignores_forced_stop) needs
- * MAXEVAL or MAXTIME: HPO ends a search by that stop (a signal, an error,
- * the RESTART stagnation stop, a withheld loss at STOPVAL), and the
- * objective's refusals end it only through NLopt's own count or clock. */
+ * MAXEVAL: HPO ends a search by that stop (a signal, an error, the RESTART
+ * stagnation stop, a withheld loss at STOPVAL), and such a backend calls on,
+ * each call refused (a few microseconds), until NLopt's own count ends it;
+ * its clock would end it only once the rest of MAXTIME had passed. */
 bool has_stop(const OptimizerSpec& spec, const OptimizerCaps& caps,
               RestartStop restart)
 {
     const StopCriteria& st = spec.stop;
     if (caps.ignores_forced_stop)
-        return (st.maxeval && caps.supports_maxeval) ||
-               (st.maxtime && caps.supports_maxtime);
+        return st.maxeval && caps.supports_maxeval;
     if (restart == RestartStop::On) return true;
     const auto positive = [](const std::optional<double>& v) {
         return v && *v > 0.0;
@@ -169,7 +170,7 @@ void require_stop(const OptimizerSpec& spec, RestartStop restart)
     if (!caps.needs_stop || has_stop(spec, caps, restart)) return;
     throw std::runtime_error(
         backend_name(spec) + " needs a stop: " + caps.stop_note + "; set " +
-        stop_list(budget_keys(caps, true), caps, true) +
+        stop_list(budget_keys(caps, true, caps), caps, true) +
         tolerance_note(caps));
 }
 
@@ -182,23 +183,23 @@ void require_inner_run_stop(const OptimizerSpec& parent, RestartStop restart)
     const std::string outer = backend_name(parent);
     const std::string inner = backend_name(*run);
     const OptimizerCaps& outer_caps = optimizer_caps(parent);
-    /* The enclosing block's stops that end the local search: not STOPVAL
+    /* The enclosing block's stops that end the local search: only MAXEVAL
      * for one that ignores the forced stop. */
     const std::string handed_on =
-        or_list(budget_keys(outer_caps, !caps.ignores_forced_stop)) +
-        " in the " + outer + " block, which NLopt hands on to it";
+        or_list(budget_keys(outer_caps, true, caps)) + " in the " + outer +
+        " block, which NLopt hands on to it";
     if (parent.inner)
         throw std::runtime_error(
             "the INNER search of " + outer + " (" + inner + ") needs a stop: " +
             caps.stop_note + "; set " +
-            stop_list(budget_keys(caps, false), caps, false) +
+            stop_list(budget_keys(caps, false, caps), caps, false) +
             " in the INNER block, or " + handed_on + tolerance_note(caps));
     /* NLopt's default local optimiser: it takes the block's tolerances
      * too. */
     throw std::runtime_error(
         "the local search of " + outer + " (NLopt's default " + inner +
         ", as the block has no INNER block) needs a stop: " + caps.stop_note +
-        "; set " + stop_list(budget_keys(caps, true), caps, false) +
+        "; set " + stop_list(budget_keys(caps, true, caps), caps, false) +
         " in the " + outer + " block, which NLopt hands on to it" +
         tolerance_note(caps));
 }

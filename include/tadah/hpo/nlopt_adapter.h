@@ -331,16 +331,18 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
      * for points that had been evaluated (LD_MMA: 120 evaluations for
      * MAXEVAL 60), and GN_CRS2_LM, GN_ORIG_DIRECT(_L) and AUGLAG test it
      * only after an evaluation or an iteration more. The objective evaluates
-     * nothing once
-     * the budget is spent (UData::budget_spent), and that ends the search
-     * MAXEVAL_REACHED after exactly MAXEVAL evaluations. NLopt keeps its own
-     * MAXEVAL (make_nlopt): its count never passes the evaluations, so it
-     * ends no search before the budget, and it is what ends GD_STOGO, which
-     * ignores a forced stop and whose later calls the objective refuses
-     * without evaluating. An INNER block's MAXEVAL still bounds each local
-     * search of MLSL or AUGLAG in NLopt's count, its objective calls: the
-     * objective cannot tell where one local search ends and the next
-     * begins (the journal's "Inner stop criteria" say so). */
+     * nothing once the budget is spent (UData::budget_spent), and that ends
+     * the search MAXEVAL_REACHED after exactly MAXEVAL evaluations. NLopt
+     * keeps its own MAXEVAL (make_nlopt): its count never passes the
+     * evaluations, so it ends no search before the budget, and it is what
+     * ends GD_STOGO, which ignores a forced stop and whose later calls the
+     * objective refuses without evaluating, a few microseconds each;
+     * GD_STOGO therefore needs MAXEVAL (require_stop, backend_rules.h), as
+     * MAXTIME would end those calls only after the rest of its time. An
+     * INNER block's MAXEVAL still bounds each local search of MLSL or AUGLAG
+     * in NLopt's count, its objective calls: the objective cannot tell where
+     * one local search ends and the next begins (the journal's "Inner stop
+     * criteria" say so). */
     std::atomic<unsigned long> evals_used{0};
     const unsigned long maxeval =
         sp.stop.maxeval.has_value()
