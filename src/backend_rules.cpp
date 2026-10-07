@@ -140,6 +140,125 @@ void reject_unknown_params(const OptimizerSpec& spec,
         if (!known(kv.first)) refuse(kv.first);
 }
 
+/* Whether a run of `spec` tests a tolerance its caps mark with `supports`.
+ * NLopt's MLSL and AUGLAG (accepts_inner) hand the block's tolerances only
+ * to the default local optimiser NLopt creates without an INNER block
+ * (optimize.c), which tests them; with an INNER block they reach no search
+ * (mlsl.c tests none, auglag.c only names the ending its INNER search
+ * decides). */
+bool tolerance_tested(bool supports, const OptimizerSpec& spec,
+                      const OptimizerCaps& caps)
+{
+    if (!caps.accepts_inner) return supports;
+    if (spec.inner) return false;
+    return supports || caps.default_inner != nullptr;
+}
+
+/* The backends whose caps mark `reads`, as a refusal lists them: all of
+ * them, sorted. */
+std::string readers(CapsPredicate reads)
+{
+    const auto caps = filter_optimizer_caps(reads);
+    return format_caps_list(caps, caps.size());
+}
+
+/* A tolerance key: its value in StopCriteria and the caps flag that says a
+ * run tests it. */
+struct ToleranceKey {
+    const char* key;
+    std::optional<double> StopCriteria::*value;
+    bool OptimizerCaps::*supports;
+};
+
+constexpr ToleranceKey kToleranceKeys[] = {
+    {"FTOL_REL", &StopCriteria::ftol_rel, &OptimizerCaps::supports_ftol_rel},
+    {"FTOL_ABS", &StopCriteria::ftol_abs, &OptimizerCaps::supports_ftol_abs},
+    {"XTOL_REL", &StopCriteria::xtol_rel, &OptimizerCaps::supports_xtol_rel},
+    {"XTOL_ABS", &StopCriteria::xtol_abs, &OptimizerCaps::supports_xtol_abs}};
+
+/* Whether a run of `spec` reads the tolerance `t`: one it tests
+ * (tolerance_tested), or DLIB:GFS's FTOL_ABS, its solver epsilon. */
+bool reads_tolerance(const ToleranceKey& t, const OptimizerSpec& spec,
+                     const OptimizerCaps& caps)
+{
+    const bool supports =
+        caps.*t.supports ||
+        (t.value == &StopCriteria::ftol_abs && caps.reads_ftol_abs_as_setting);
+    return tolerance_tested(supports, spec, caps);
+}
+
+/* Where to set the tolerance `t` that an MLSL or AUGLAG `spec` refuses:
+ * in the INNER block, when its search tests it; otherwise the stops that
+ * search honours, as require_inner_run_stop() names them (an INNER GN_ESCH
+ * tests no tolerance either). Without an INNER block only G_MLSL and
+ * G_MLSL_LDS refuse one (tolerance_tested: they have no default local
+ * optimiser), a spec require_inner_backend() refuses: the block it needs. */
+std::string inner_tolerance_advice(const ToleranceKey& t,
+                                   const OptimizerSpec& spec,
+                                   const OptimizerCaps& caps)
+{
+    if (!spec.inner)
+        return "; " + backend_name(spec) + " needs an INNER block, and only "
+               "that block's search can test it";
+    const OptimizerSpec& inner = *spec.inner;
+    const OptimizerCaps& inner_caps = optimizer_caps(inner);
+    if (reads_tolerance(t, inner, inner_caps))
+        return "; set it in the INNER block, whose local search tests it";
+    return "; the INNER block's " + backend_name(inner) +
+           " does not test it either: stop that search with " +
+           stop_list(budget_keys(inner_caps, false), inner_caps, false) +
+           " in the INNER block, or " + or_list(budget_keys(caps, true)) +
+           " in the " + backend_name(spec) +
+           " block, which NLopt hands on to it";
+}
+
+/* Refuses an attribute the run of `spec` never reads (backend_rules.h):
+ * a tolerance it does not test, then POPULATION, VECTOR_ARR and SEED,
+ * each from the caps. */
+void reject_unread_attributes(const OptimizerSpec& spec,
+                              const OptimizerCaps& caps, SpecRole role)
+{
+    for (const ToleranceKey& t : kToleranceKeys) {
+        if (!(spec.stop.*t.value) || reads_tolerance(t, spec, caps)) continue;
+        const std::string key = t.key;
+        std::string msg = backend_name(spec) + " does not support " + key;
+        if (caps.accepts_inner && spec.inner) msg += " with an INNER block";
+        if (caps.untested_tolerance_note[0])
+            msg += std::string(": ") + caps.untested_tolerance_note;
+        /* An MLSL or AUGLAG: whether its INNER search would test it. */
+        if (caps.accepts_inner)
+            msg += inner_tolerance_advice(t, spec, caps);
+        else if (role == SpecRole::Inner)
+            msg += "; stop it with " +
+                   stop_list(budget_keys(caps, false), caps, false) +
+                   " in the INNER block" +
+                   (caps.supports_stopval
+                        ? ", or STOPVAL in the enclosing block" : "");
+        else
+            msg += "; stop it with " +
+                   stop_list(budget_keys(caps, true), caps, false);
+        throw std::runtime_error(msg);
+    }
+    if (spec.pop && !caps.reads_population)
+        throw std::runtime_error(
+            backend_name(spec) + " does not use POPULATION; remove it (it is "
+            "read by " +
+            readers([](const OptimizerCaps& c) { return c.reads_population; }) +
+            ")");
+    if (spec.vector_storage && !caps.reads_vector_storage)
+        throw std::runtime_error(
+            backend_name(spec) + " does not use VECTOR_ARR; remove it (it is "
+            "read by " +
+            readers([](const OptimizerCaps& c) {
+                return c.reads_vector_storage;
+            }) +
+            ")");
+    if (spec.seed && !caps.reads_seed && !caps.warns_unread_seed)
+        throw std::runtime_error(backend_name(spec) +
+                                 " does not use SEED: it draws no random "
+                                 "numbers; remove it");
+}
+
 }  // namespace
 
 RestartStop restart_stop_of(const OptimizerSpec& root)
@@ -193,22 +312,14 @@ void require_inner_run_stop(const OptimizerSpec& parent, RestartStop restart)
 void validate_random_spec(const OptimizerSpec& spec, RestartStop restart)
 {
     reject_unknown_params(spec, {});
+    reject_unread_attributes(spec, optimizer_caps(spec), SpecRole::Phase);
     require_stop(spec, restart);
 }
 
 void validate_dlib_gfs_spec(const OptimizerSpec& spec, RestartStop restart)
 {
     reject_unknown_params(spec, {});
-    const StopCriteria& st = spec.stop;
-    for (const auto& [set, key] :
-         {std::pair<bool, const char*>{st.ftol_rel.has_value(), "FTOL_REL"},
-          {st.xtol_rel.has_value(), "XTOL_REL"},
-          {st.xtol_abs.has_value(), "XTOL_ABS"}})
-        if (set)
-            throw std::runtime_error(
-                backend_name(spec) + " does not support " + key +
-                ": dlib's global search has no convergence test to apply it "
-                "to; stop it with MAXEVAL, MAXTIME or STOPVAL");
+    reject_unread_attributes(spec, optimizer_caps(spec), SpecRole::Phase);
     require_stop(spec, restart);
 }
 
@@ -238,10 +349,12 @@ unsigned validate_grid_spec(const OptimizerSpec& sp)
         throw std::runtime_error(
             "TADAH:GRID PARAM GRID_POINTS must be an integer >= 2 (got '" +
             it->second + "')");
+    reject_unread_attributes(sp, optimizer_caps(sp), SpecRole::Phase);
     return steps;
 }
 
-void validate_nlopt_spec(const OptimizerSpec& sp, RestartStop restart)
+void validate_nlopt_spec(const OptimizerSpec& sp, RestartStop restart,
+                         SpecRole role)
 {
     if (sp.inner && (sp.inner->seed || sp.inner->init_strategy_spec.seed))
         throw std::invalid_argument(
@@ -255,8 +368,16 @@ void validate_nlopt_spec(const OptimizerSpec& sp, RestartStop restart)
             "NLopt INNER spec with a GRAD_STRATEGY: the enclosing block's "
             "GRAD_STRATEGY applies to its local search; set GRAD_STRATEGY on "
             "the enclosing block");
+    /* The parser rejects STOPVAL inside INNER: mlsl.c and auglag.c set the
+     * local search's stopval to the enclosing run's (inner_run_spec()). */
+    if (sp.inner && sp.inner->stop.stopval)
+        throw std::invalid_argument(
+            "NLopt INNER spec with a STOPVAL: NLopt's MLSL and AUGLAG replace "
+            "the INNER search's STOPVAL with the enclosing block's; set "
+            "STOPVAL on the enclosing block");
     require_nlopt_maxeval(sp);
     if (sp.inner) require_nlopt_maxeval(*sp.inner);
+    reject_unread_attributes(sp, optimizer_caps(sp), role);
     require_stop(sp, restart);
     require_inner_run_stop(sp, restart);
 }
@@ -270,7 +391,8 @@ void validate_asa_spec(const OptimizerSpec& sp)
     (void)parse_asa_options(sp, dim);
 }
 
-void validate_backend(const OptimizerSpec& spec, RestartStop restart)
+void validate_backend(const OptimizerSpec& spec, RestartStop restart,
+                      SpecRole role)
 {
     if (spec.lib == "NOT SET" || spec.algo == "NOT SET") return;
     /* The same order as run_inner(): the deferred CERES least-squares
@@ -299,7 +421,7 @@ void validate_backend(const OptimizerSpec& spec, RestartStop restart)
         if (algo == "GFS")       validate_dlib_gfs_spec(spec, restart);
         else if (algo == "BFGS") detail::validate_dlib_bfgs_spec(spec);
     } else if (lib == "NLOPT") {
-        validate_nlopt_spec(spec, restart);
+        validate_nlopt_spec(spec, restart, role);
     } else if (lib == "ASA") {
         validate_asa_spec(spec);
     } else if (lib == "CERES") {
@@ -325,7 +447,8 @@ void validate_phase_backends(const OptimizerSpec& root)
     const RestartStop restart = restart_stop_of(root);
     for (const PhaseSpec& phase : strategy_phase_specs(root)) {
         try {
-            validate_backend(phase.spec, restart);
+            validate_backend(phase.spec, restart,
+                             phase.inner ? SpecRole::Inner : SpecRole::Phase);
         } catch (const std::exception& e) {
             throw std::runtime_error(phase.name + ": " + e.what());
         }

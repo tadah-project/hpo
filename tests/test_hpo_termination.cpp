@@ -2295,6 +2295,13 @@ std::string inner_grad_strategy_error(const std::string& enclosing)
            "set GRAD_STRATEGY on the enclosing " + enclosing + " block";
 }
 
+std::string inner_stopval_error(const std::string& enclosing)
+{
+    return "STOPVAL is not accepted inside an INNER block: NLopt's MLSL and "
+           "AUGLAG replace the INNER search's STOPVAL with the enclosing "
+           "block's; set STOPVAL on the enclosing " + enclosing + " block";
+}
+
 }  // namespace
 
 TEST_CASE("NLopt: SEED inside an INNER block is rejected at startup, naming "
@@ -2369,15 +2376,61 @@ TEST_CASE("NLopt: GRAD_STRATEGY inside an INNER block is rejected at "
     }
 }
 
+/* NLopt's MLSL and AUGLAG set their local search's stopval to the enclosing
+ * run's (mlsl.c, auglag.c; HPO sets AUGLAG no constraint), so an INNER
+ * block's STOPVAL never takes effect: inner_run_spec() models the
+ * replacement. Pins: STOPVAL in an INNER block is a startup error at its
+ * line, naming the enclosing block, in each block that can hold an INNER
+ * block; moved to the enclosing block it is the NLopt run's.
+ * Before the fix: the INNER STOPVAL parsed (startup_error ""), the journal
+ * printed it ("Inner stop criteria: stopval 1.0"), and a STOPVAL above
+ * every loss did not stop the run. */
+TEST_CASE("NLopt: STOPVAL inside an INNER block is rejected at startup, "
+          "naming its line", "[HPO][stop][nlopt][hpo_targets]")
+{
+    for (const auto& c : inner_contexts()) {
+        INFO("INNER inside " << c.enclosing);
+        const std::string inner_stopval = c.indent + "  STOPVAL 1";
+
+        /* Whether or not the enclosing block has a STOPVAL of its own. */
+        for (const std::string outer : {"", "STOPVAL 0.5"}) {
+            const std::string cfg = c.config(
+                outer.empty() ? "" : c.indent + outer + "\n",
+                inner_stopval + "\n");
+            INFO(cfg);
+            const std::string msg = startup_error(cfg);
+            CHECK(msg == "Error on line " +
+                             std::to_string(line_number(cfg, inner_stopval)) +
+                             ": " + inner_stopval_error(c.enclosing) +
+                             "\nLine: " + inner_stopval);
+        }
+
+        /* Moved to the enclosing block, the STOPVAL is the NLopt run's. */
+        TaRun run(c.config(c.indent + "STOPVAL 1\n", ""));
+        const tadah::hpo::HPOTargets trg(run.ctx, run.hpo.string());
+        const auto& block = c.block(trg.spec);
+        CHECK(block.stop.stopval == std::optional<double>(1.0));
+        REQUIRE(block.inner);
+        CHECK_FALSE(block.inner->stop.stopval);
+    }
+}
+
+/* Pins: the unknown-key error inside INNER lists the optimiser attributes
+ * an INNER block takes: every one but SEED, GRAD_STRATEGY and STOPVAL,
+ * which belong to the enclosing block.
+ * Before the fix: the list named STOPVAL, which an INNER block accepted
+ * (the test case was "... lists every optimiser attribute but SEED and
+ * GRAD_STRATEGY"). */
 TEST_CASE("NLopt: the unknown-key error of an INNER block lists every "
-          "optimiser attribute but SEED and GRAD_STRATEGY",
+          "optimiser attribute but SEED, GRAD_STRATEGY and STOPVAL",
           "[HPO][seed][nlopt][hpo_targets]")
 {
     std::string keys;
     for (const auto& k : tadah::hpo::opt_attr_keys())
-        if (k != "SEED" && k != "GRAD_STRATEGY")
+        if (k != "SEED" && k != "GRAD_STRATEGY" && k != "STOPVAL")
             keys += (keys.empty() ? "" : "/") + k;
     REQUIRE(keys.find("GRAD_STRATEGY") == std::string::npos);
+    REQUIRE(keys.find("STOPVAL") == std::string::npos);
     REQUIRE(keys.find("MAXEVAL") != std::string::npos);
     for (const auto& c : inner_contexts()) {
         INFO("INNER inside " << c.enclosing);

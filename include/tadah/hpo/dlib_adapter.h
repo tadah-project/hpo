@@ -284,8 +284,10 @@ template<class HostT>
     /* find_min_global (MaxLIPO+TR) is a deterministic algorithm; a
      * SEED on this spec is never consulted. DLIB:BFGS rejects SEED
      * outright, but GFS configs with SEED already exist in the wild,
-     * so warn instead of throwing. (INIT-block SEED is unaffected --
-     * it feeds the INIT chain, whose points are consumed below.) */
+     * so warn instead of throwing (OptimizerCaps::warns_unread_seed, which
+     * keeps validate_dlib_gfs_spec from refusing it). (INIT-block SEED is
+     * unaffected -- it feeds the INIT chain, whose points are consumed
+     * below.) */
     if (sp.seed) {
       const std::string msg =
           "DLIB:GFS (find_min_global, MaxLIPO+TR) is deterministic; "

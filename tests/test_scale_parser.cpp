@@ -362,13 +362,17 @@ TEST_CASE("INNER unknown-key message lists the shared attribute vocabulary",
 ENDOPTIMIZER
 )");
   auto ctx = watom_ctx();
-  /* The shared table (opt_attr_keys) less the two attributes that belong
-   * to the enclosing block, SEED and GRAD_STRATEGY. */
+  /* Pins: the shared table (opt_attr_keys) less the three attributes that
+   * belong to the enclosing block, SEED, GRAD_STRATEGY and STOPVAL (NLopt
+   * replaces an INNER search's STOPVAL with the enclosing run's).
+   * Before the fix: the list had STOPVAL ("/MAXTIME/STOPVAL/FTOL_REL/"),
+   * which an INNER block accepted and NLopt ignored. */
   REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, in.path.string()),
                       Catch::Contains("inside INNER block") &&
-                      Catch::Contains("/MAXTIME/STOPVAL/") &&
+                      Catch::Contains("/MAXEVAL/MAXTIME/FTOL_REL/") &&
                       Catch::Contains("/XTOL_REL/XTOL_ABS/") &&
                       !Catch::Contains("GRAD_STRATEGY") &&
+                      !Catch::Contains("STOPVAL") &&
                       !Catch::Contains("SEED"));
 }
 

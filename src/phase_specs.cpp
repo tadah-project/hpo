@@ -88,9 +88,14 @@ std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent)
 
 bool obtains_gradients(const OptimizerSpec& spec)
 {
-    if (optimizer_caps(spec).is_gradient_based) return true;
+    /* MLSL and AUGLAG evaluate their own points without a gradient (mlsl.c,
+     * auglag.c: grad NULL) and pass the objective the gradient their local
+     * search asks for: the D or N of their name only picks NLopt's default
+     * local optimiser, which an INNER block replaces. */
+    if (!optimizer_caps(spec).accepts_inner)
+        return optimizer_caps(spec).is_gradient_based;
     const std::optional<OptimizerSpec> local = inner_run_spec(spec);
-    return local && optimizer_caps(*local).is_gradient_based;
+    return local && obtains_gradients(*local);
 }
 
 std::optional<OptimizerSpec> single_local_search(const OptimizerSpec& spec)

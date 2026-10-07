@@ -328,6 +328,60 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
         c.set(s);
         CHECK_THAT(error_of(s), Catch::Contains(c.message));
     }
+
+    /* Pins: validate_backend() -- the check each driver applies when it
+     * starts, for a spec built outside the parser -- refuses a key the
+     * backend never reads: POPULATION on TADAH:RANDOM, SEED on TADAH:GRID
+     * and CERES, VECTOR_ARR on DLIB:GFS, a tolerance NLopt's GN_ESCH never
+     * tests, and an INNER spec's STOPVAL, which NLopt replaces with the
+     * enclosing run's.
+     * Before the fix: error_of() was "" for each (the driver ran with the
+     * key and ignored it). */
+    for (const auto& c : std::vector<Case>{
+             {"TADAH", "RANDOM", [](OptimizerSpec& s) { s.pop = 8; },
+              "TADAH:RANDOM does not use POPULATION; remove it (it is read "
+              "by NLOPT:GD_MLSL, "},
+             {"TADAH", "GRID", [](OptimizerSpec& s) { s.seed = 3; },
+              "TADAH:GRID does not use SEED: it draws no random numbers; "
+              "remove it"},
+             {"DLIB", "GFS", [](OptimizerSpec& s) { s.vector_storage = 5; },
+              "DLIB:GFS does not use VECTOR_ARR; remove it (it is read by "
+              "NLOPT:LD_LBFGS, "},
+             {"NLOPT", "GN_ESCH",
+              [](OptimizerSpec& s) { s.stop.ftol_rel = 1e-6; },
+              "NLOPT:GN_ESCH does not support FTOL_REL: NLopt's global search "
+              "tests no tolerance; stop it with MAXEVAL, MAXTIME or STOPVAL"},
+             {"NLOPT", "AUGLAG",
+              [](OptimizerSpec& s) {
+                  s.inner = std::make_unique<OptimizerSpec>();
+                  s.inner->lib = "NLOPT";
+                  s.inner->algo = "LN_BOBYQA";
+                  s.inner->stop.stopval = 0.1;
+              },
+              "NLopt INNER spec with a STOPVAL: NLopt's MLSL and AUGLAG "
+              "replace the INNER search's STOPVAL with the enclosing "
+              "block's; set STOPVAL on the enclosing block"},
+             {"CERES", "LBFGS", [](OptimizerSpec& s) { s.seed = 3; },
+              "CERES:LBFGS does not support SEED"}}) {
+        INFO(c.lib << ":" << c.algo << " -> " << c.message);
+        auto s = with(c.lib, c.algo);
+        c.set(s);
+        CHECK_THAT(error_of(s), Catch::StartsWith(c.message));
+    }
+
+    /* Pins: a tolerance on G_MLSL without an INNER block -- a spec built
+     * outside the parser, which require_inner_backend() refuses at startup
+     * and in run_inner() -- names the INNER block it needs, with no INNER
+     * search to look at.
+     * Before the review fix: "...; set it in the INNER block, whose local
+     * search tests it", of a block the spec does not have. */
+    auto g_mlsl = with("NLOPT", "G_MLSL");
+    g_mlsl.stop.ftol_rel = 1e-6;
+    CHECK(error_of(g_mlsl) ==
+          "NLOPT:G_MLSL does not support FTOL_REL: MLSL's multistart loop "
+          "tests no tolerance, and NLopt passes the block's tolerances to no "
+          "INNER search; NLOPT:G_MLSL needs an INNER block, and only that "
+          "block's search can test it");
 }
 
 TEST_CASE("backend rules: a backend with no convergence test and no finite "
@@ -403,9 +457,22 @@ TEST_CASE("backend rules: a backend with no convergence test and no finite "
           "TADAH:RANDOM needs a stop: uniform random search has no "
           "convergence test and runs until it is interrupted; set MAXEVAL, "
           "MAXTIME or STOPVAL (it honours no tolerance)");
-    /* A tolerance a backend does not test is no stop. */
+    /* Pins: a tolerance a backend does not test is no stop, and it is
+     * refused for itself, before the missing stop, naming the stops the
+     * backend honours.
+     * Before the fix: it was accepted and counted as no stop, so the spec
+     * was refused as "TADAH:RANDOM needs a stop: ...", and with MAXEVAL it
+     * ran, ignoring it. */
     random.stop.ftol_rel = 1e-6;
-    CHECK_THAT(error_of(random), Catch::StartsWith("TADAH:RANDOM needs a stop"));
+    CHECK(error_of(random) ==
+          "TADAH:RANDOM does not support FTOL_REL: uniform random search has "
+          "no convergence test to apply it to; stop it with MAXEVAL, MAXTIME "
+          "or STOPVAL");
+    random.stop.maxeval = 5;
+    CHECK(error_of(random) ==
+          "TADAH:RANDOM does not support FTOL_REL: uniform random search has "
+          "no convergence test to apply it to; stop it with MAXEVAL, MAXTIME "
+          "or STOPVAL");
     auto pt = local_spec(1);
     pt.lib = "TADAH";
     pt.algo = "ANNEAL_PT";
@@ -628,6 +695,76 @@ TEST_CASE("phase specs: the single local search a run is",
     auglag.inner = std::make_unique<OptimizerSpec>(nlopt("GN_ESCH"));
     CHECK_FALSE(single_local_search(auglag));
     CHECK_FALSE(single_local_search(nlopt("AUGLAG")));
+}
+
+/* Pins: obtains_gradients() is true exactly when a run asks the host for a
+ * gradient. A backend without a local search of its own answers from its
+ * caps (LD_*, GD_STOGO, DLIB:BFGS, CERES); NLopt's MLSL and AUGLAG evaluate
+ * their own points without one (mlsl.c, auglag.c: grad NULL) and hand the
+ * objective only the gradient their local search asks for, so their local
+ * search decides (inner_run_spec): an INNER block, which replaces the
+ * default the D or N of their name picks (LD_MMA or LN_COBYLA), or that
+ * default. An INNER MLSL or AUGLAG of a default local search of its own is
+ * decided by that one in turn.
+ * Before the fix: true for GD_MLSL, GD_MLSL_LDS, LD_AUGLAG and LD_AUGLAG_EQ
+ * with a derivative-free INNER block (their caps are is_gradient_based),
+ * and for GD_MLSL_LDS with an INNER LN_AUGLAG; the other cases pass as
+ * well (a pin of the rule the fix keeps). */
+TEST_CASE("phase specs: a run obtains gradients when its search takes them",
+          "[HPO][phase_specs][gradients]")
+{
+    using tadah::hpo::obtains_gradients;
+    const auto spec = [](const std::string& lib, const std::string& algo) {
+        OptimizerSpec s;
+        s.lib = lib;
+        s.algo = algo;
+        return s;
+    };
+    const auto nlopt = [&](const std::string& algo) {
+        return spec("NLOPT", algo);
+    };
+    const auto with_inner = [&](const std::string& algo,
+                                const std::string& inner) {
+        OptimizerSpec s = nlopt(algo);
+        s.inner = std::make_unique<OptimizerSpec>(nlopt(inner));
+        return s;
+    };
+    /* A backend without a local search of its own. */
+    CHECK(obtains_gradients(nlopt("LD_LBFGS")));
+    CHECK(obtains_gradients(nlopt("GD_STOGO")));
+    CHECK(obtains_gradients(spec("DLIB", "BFGS")));
+    CHECK(obtains_gradients(spec("CERES", "LBFGS")));
+    CHECK_FALSE(obtains_gradients(nlopt("LN_SBPLX")));
+    CHECK_FALSE(obtains_gradients(nlopt("GN_CRS2_LM")));
+    CHECK_FALSE(obtains_gradients(spec("TADAH", "RANDOM")));
+    CHECK_FALSE(obtains_gradients(spec("DLIB", "GFS")));
+    /* MLSL and AUGLAG without an INNER block: NLopt's default local
+     * optimiser; AUGLAG has none (refused at startup). */
+    for (const std::string algo :
+         {"GD_MLSL", "GD_MLSL_LDS", "LD_AUGLAG", "LD_AUGLAG_EQ"}) {
+        INFO(algo);
+        CHECK(obtains_gradients(nlopt(algo)));
+    }
+    for (const std::string algo :
+         {"GN_MLSL", "GN_MLSL_LDS", "LN_AUGLAG", "LN_AUGLAG_EQ", "AUGLAG",
+          "G_MLSL_LDS"}) {
+        INFO(algo);
+        CHECK_FALSE(obtains_gradients(nlopt(algo)));
+    }
+    /* With an INNER block, that search alone, whatever the D or N of the
+     * enclosing algorithm. */
+    for (const std::string algo :
+         {"GD_MLSL", "GD_MLSL_LDS", "LD_AUGLAG", "LD_AUGLAG_EQ", "GN_MLSL_LDS",
+          "G_MLSL_LDS", "AUGLAG", "LN_AUGLAG"}) {
+        INFO(algo);
+        CHECK_FALSE(obtains_gradients(with_inner(algo, "LN_BOBYQA")));
+        CHECK(obtains_gradients(with_inner(algo, "LD_LBFGS")));
+    }
+    /* An INNER MLSL or AUGLAG with a default local search: that one. */
+    CHECK(obtains_gradients(with_inner("AUGLAG", "LD_AUGLAG")));
+    CHECK_FALSE(obtains_gradients(with_inner("GD_MLSL_LDS", "LN_AUGLAG")));
+    CHECK_FALSE(obtains_gradients(with_inner("LD_AUGLAG", "GN_MLSL_LDS")));
+    CHECK(obtains_gradients(with_inner("GN_MLSL_LDS", "GD_MLSL")));
 }
 
 TEST_CASE("backend rules: the ALGO help lists the stops that end a run",

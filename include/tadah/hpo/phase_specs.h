@@ -61,16 +61,22 @@ OptimizerSpec prestage_refinement_spec(
  * the tighter of its own and those of `parent` (NLopt hands each local run
  * what is left of the enclosing budget, nlopt_optimize_limited), and its
  * STOPVAL that of `parent`, if any (mlsl.c and auglag.c replace the local
- * optimiser's own). nullopt when `parent` runs no local search: an
- * algorithm without one, or one that needs an INNER block and has none
- * (NLopt refuses the run). */
+ * optimiser's own; the parser refuses an INNER STOPVAL). nullopt when
+ * `parent` runs no local search: an algorithm without one, or one that
+ * needs an INNER block and has none (refused at startup:
+ * require_inner_backend(), strategy_rules.h). */
 std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent);
 
 /* True when a run of `spec` asks the host for gradients: a gradient-based
- * backend (OptimizerCaps::is_gradient_based), or an MLSL/AUGLAG whose local
- * search (inner_run_spec) is one -- NLopt hands that local optimiser the
- * gradient the objective of `spec` computes, so the GRAD_STRATEGY of
- * `spec` decides how it is obtained. */
+ * backend without a local search of its own (OptimizerCaps::
+ * is_gradient_based), or an MLSL/AUGLAG (OptimizerCaps::accepts_inner)
+ * whose local search (inner_run_spec) obtains them -- NLopt hands that local
+ * optimiser the gradient the objective of `spec` computes, so the
+ * GRAD_STRATEGY of `spec` decides how it is obtained. The local search
+ * alone decides for MLSL and AUGLAG, which evaluate their own points
+ * without a gradient: GD_MLSL_LDS or LD_AUGLAG with an INNER LN_BOBYQA
+ * obtains none (the D only picks NLopt's default local optimiser, LD_MMA,
+ * which the INNER block replaces). */
 bool obtains_gradients(const OptimizerSpec& spec);
 
 /* The local search a run of `spec` is, when the run is one local search
@@ -82,9 +88,9 @@ bool obtains_gradients(const OptimizerSpec& spec);
  * point, and ends when it ends. nullopt for a global backend -- MLSL runs a
  * local search from each of many points, GD_STOGO and the other global
  * searches sample the box -- and for an AUGLAG without a local search
- * (NLopt refuses the run). run_nlopt() stops a gradient-based one at a
- * starting point without a finite gradient, and reads its MAXEVAL and
- * MAXTIME, which AUGLAG does not report. */
+ * (refused at startup: require_inner_backend()). run_nlopt() stops a
+ * gradient-based one at a starting point without a finite gradient, and
+ * reads its MAXEVAL and MAXTIME, which AUGLAG does not report. */
 std::optional<OptimizerSpec> single_local_search(const OptimizerSpec& spec);
 
 /* One phase of a run: its name, for messages, and the spec it runs.
