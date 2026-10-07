@@ -147,13 +147,20 @@ TEST_CASE("startup validation: K-dependent rules on a real model context",
   ScopedTempFile tf(target_with("PC_ERMSE 0 1\n"));
 
   SECTION("out-of-bounds FIXINDEX throws") {
+    /* core::parse_fixindex's message, the one every site gives (before
+     * the fix: "FIXINDEX entry 99 is out of range: this model has 2
+     * weights (valid range 1..2).", which this section checked for "out
+     * of range"). */
     Context ctx = make_model_ctx();
+    const std::size_t K = derive_weight_count(ctx);
     ctx.add("DBFILE", "dummy.db");
     ctx.add("FIXINDEX", "99");
     ctx.add("FIXWEIGHT", 0.5);
     HPOTargets trg(ctx, tf.path.string());
     REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
-                        Catch::Contains("out of range"));
+                        "FIXINDEX: index 99 is outside 1-" +
+                            std::to_string(K) + " (the model has " +
+                            std::to_string(K) + " weights)");
   }
   SECTION("no training DBFILE with partial coverage throws") {
     Context ctx = make_model_ctx();
@@ -183,10 +190,100 @@ TEST_CASE("startup validation: K-dependent rules on a real model context",
   }
 }
 
+/* Pins: validate_hpo_setup reads FIXINDEX with core::parse_fixindex, as
+ * the trainers do, on the D2_BP model (2 weights) with a training DBFILE:
+ *  - FIXINDEX given as separate values, '1 2' (FIXWEIGHT 0.5 0.6), passes,
+ *    as '1,2' does;
+ *  - '1,1,2' is refused: with 2 FIXWEIGHT values as 3 indices for 2
+ *    values, with 3 as weight 1 named twice;
+ *  - '2-1' is refused as a descending range.
+ * Before the fix: the lenient core::parse_indices dropped '1 2' and
+ * expanded '2-1' to nothing ("FIXINDEX names 0 weights but FIXWEIGHT
+ * provides 2 values"), and deduplicated '1,1,2' to weights 1, 2: with 2
+ * values the setup passed (the run then trained with it), with 3 it was
+ * "FIXINDEX names 2 weights but FIXWEIGHT provides 3 values". */
+TEST_CASE("startup validation: FIXINDEX is read strictly, separate values as "
+          "one list",
+          "[startup_validation][fixindex]") {
+  PeriodicTable::initialize();
+  ScopedTempFile tf(target_with("PC_ERMSE 0 1\n"));
+  auto ctx_with = [](const std::string& fixindex,
+                     const std::vector<double>& fixweight) {
+    Context c = make_model_ctx();
+    c.add("DBFILE", "dummy.db");
+    c.add("FIXINDEX", fixindex);
+    for (double v : fixweight) c.add("FIXWEIGHT", v);
+    return c;
+  };
+  REQUIRE(derive_weight_count(make_model_ctx()) == 2);
+  SECTION("separate values pass, as the comma list does") {
+    for (const char* fi : {"1,2", "1 2"}) {
+      INFO("FIXINDEX " << fi);
+      Context ctx = ctx_with(fi, {0.5, 0.6});
+      HPOTargets trg(ctx, tf.path.string());
+      CHECK_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
+    }
+  }
+  SECTION("a weight named twice is refused") {
+    Context two = ctx_with("1,1,2", {0.5, 0.6});
+    HPOTargets trg2(two, tf.path.string());
+    CHECK_THROWS_WITH(validate_hpo_setup(two, trg2, true, true),
+                      Catch::Contains("FIXINDEX 1,1,2 has 3 indices but "
+                                      "FIXWEIGHT has 2 values"));
+    Context three = ctx_with("1,1,2", {0.5, 0.6, 0.7});
+    HPOTargets trg3(three, tf.path.string());
+    CHECK_THROWS_WITH(validate_hpo_setup(three, trg3, true, true),
+                      Catch::Contains("FIXINDEX 1,1,2 names weight 1 twice"));
+  }
+  SECTION("a descending range is refused") {
+    Context ctx = ctx_with("2-1", {0.5, 0.6});
+    HPOTargets trg(ctx, tf.path.string());
+    CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                      Catch::Contains("FIXINDEX: index '2-1' is a descending "
+                                      "range"));
+  }
+}
+
+/* Pins: a -c configuration whose model has no weights (INIT2B true with a
+ * D2_Dummy two-body descriptor, BIAS false: descriptor size 0) is refused
+ * at startup as a model that does not build ("The descriptor size is 0"),
+ * before any FIXINDEX rule, with or without FIXINDEX/FIXWEIGHT: the weight
+ * count K the FIXINDEX rules use is never 0.
+ * Before the fix: passes as well (a pin: probe_model refuses the model
+ * first; validate_hpo_setup's branch for K = 0, which checked FIXINDEX
+ * without the weight count, was unreachable and is removed). */
+TEST_CASE("startup validation: a model without weights is refused before the "
+          "FIXINDEX rules",
+          "[startup_validation][fixindex][model_probe]") {
+  PeriodicTable::initialize();
+  ScopedTempFile tf(target_with("PC_ERMSE 0 1\n"));
+  auto no_weights = [] {
+    Context c = make_model_ctx();
+    c.remove("TYPE2B");
+    c.add("TYPE2B", "D2_Dummy H H");
+    c.add("DBFILE", "dummy.db");
+    return c;
+  };
+  CHECK_THROWS_WITH(derive_weight_count(no_weights()),
+                    Catch::Contains("The descriptor size is 0"));
+  for (const bool pinned : {false, true}) {
+    INFO("FIXINDEX/FIXWEIGHT: " << pinned);
+    Context ctx = no_weights();
+    if (pinned) {
+      ctx.add("FIXINDEX", "1 2");
+      ctx.add("FIXWEIGHT", "0.5 0.6");
+    }
+    HPOTargets trg(ctx, tf.path.string());
+    CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                      Catch::Contains("does not build a model") &&
+                          Catch::Contains("The descriptor size is 0"));
+  }
+}
+
 /* Pins: for M_KRR with a non-linear kernel (Kern_RBF, SBASIS 4) the
  * weight count K that startup checks FIXINDEX/FIXWEIGHT against is SBASIS
  * (derive_weight_count == 4), the number of basis vectors training draws,
- * one weight each: FIXINDEX 5 is refused ("this model has 4 weights"),
+ * one weight each: FIXINDEX 5 is refused ("the model has 4 weights"),
  * FIXINDEX 4 passes; without a training DBFILE the configuration is
  * refused even with every weight pinned (the basis is drawn from the
  * training data: "draws its SBASIS basis vectors from the training
@@ -195,7 +292,9 @@ TEST_CASE("startup validation: K-dependent rules on a real model context",
  * 0 (no basis yet), so derive_weight_count returned 0 and only the
  * pairing of FIXINDEX and FIXWEIGHT was checked: FIXINDEX 5 passed
  * startup (and failed every evaluation), as did the configuration without
- * a DBFILE and the one with SBASIS 1. */
+ * a DBFILE and the one with SBASIS 1. Before fix/fixindex-strict the
+ * refusal said "this model has 4 weights" (MLIP's own bound message; the
+ * bound is now core::parse_fixindex's, "the model has 4 weights"). */
 TEST_CASE("startup validation: FIXINDEX of a non-linear M_KRR kernel is "
           "checked against SBASIS",
           "[startup_validation][nonlinear]") {
@@ -221,7 +320,7 @@ TEST_CASE("startup validation: FIXINDEX of a non-linear M_KRR kernel is "
     ctx.add("FIXWEIGHT", 0.5);
     HPOTargets trg(ctx, tf.path.string());
     CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
-                      Catch::Contains("this model has 4 weights"));
+                      Catch::Contains("the model has 4 weights"));
   }
   SECTION("an index within SBASIS passes") {
     Context ctx = krr_ctx();
@@ -995,6 +1094,30 @@ TEST_CASE("startup validation: OPTIM EMBF0 is rejected",
     REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
     CHECK_FALSE(ctx.has_stored("EMBF0"));
   }
+}
+
+/* Pins: derive_raw_embedding_f0 takes FIXINDEX given as separate values
+ * ('1 2 3 4 5 6', one value each) that pin every weight of the DM_REAM
+ * model as the comma list: the value is provisioned from FIXWEIGHT
+ * (source "FIXWEIGHT", sum w g(0)).
+ * Before the fix: the lenient core::parse_indices dropped the joined
+ * values, so FIXINDEX named no weight, the pins were not seen as covering
+ * the 6 weights, and the value was determined per evaluation
+ * (Kind::PerEvaluation, no source). */
+TEST_CASE("derive_raw_embedding_f0: FIXINDEX given as separate values pins "
+          "every weight",
+          "[startup_validation][embf0][fixindex]") {
+  PeriodicTable::initialize();
+  using Kind = RawEmbeddingF0::Kind;
+  Context ctx = make_ream_model_ctx();
+  REQUIRE(derive_weight_count(ctx) == kReamWeights.size());
+  ctx.add("FIXINDEX", "1 2 3 4 5 6");
+  REQUIRE(ctx.size("FIXINDEX") == 6);
+  for (double w : kReamWeights) ctx.add("FIXWEIGHT", w);
+  const RawEmbeddingF0 r = derive_raw_embedding_f0(ctx);
+  CHECK(r.kind == Kind::Value);
+  CHECK(r.source == "FIXWEIGHT");
+  CHECK(r.value == Approx(expected_raw_f0()).epsilon(1e-13).margin(1e-15));
 }
 
 TEST_CASE("derive_raw_embedding_f0: raw F(0) of the -c potential",

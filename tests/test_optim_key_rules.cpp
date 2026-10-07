@@ -132,6 +132,62 @@ TEST_CASE("OPTIM fixweight maps its indices through FIXINDEX",
   CHECK(it->second.opt[2]);
 }
 
+/* Pins: OPTIM FIXWEIGHT (14) with FIXINDEX given as separate values,
+ * 'FIXINDEX 13 14' (the values '13' and '14', as `FIXINDEX 13 14` in a
+ * configuration gives them) and FIXWEIGHT 14.0 2500, selects FIXWEIGHT
+ * slot 2 (weight 14), labelled FIXWEIGHT[14] with user index 14 in the
+ * search space, as 'FIXINDEX 13,14' does; 'FIXINDEX 14-13' is refused as a
+ * descending range, and 'FIXINDEX 13,13,14' (two FIXWEIGHT values) as 3
+ * indices for 2 values, when the OPTIM line is read.
+ * Before the fix: HPOTargets read FIXINDEX with the lenient
+ * core::parse_indices, which dropped '13 14' (the values joined into one
+ * malformed segment) and expanded '14-13' to nothing, so both were refused
+ * with the self-contradicting "OPTIM FIXWEIGHT (14): weight 14 is not
+ * pinned by FIXINDEX (13 14)" ("(14-13)"); '13,13,14' was deduplicated to
+ * 13, 14 and accepted ('13, 14' was read, its joined text a comma list). */
+TEST_CASE("OPTIM FIXWEIGHT maps through FIXINDEX given as separate values",
+          "[HPO][optim][fixweight][fixindex]") {
+  auto ctx_with = [](const std::string& fixindex, std::size_t n_values) {
+    Context c;
+    c.add("FIXINDEX", fixindex);
+    const double v[3] = {14.0, 2500.0, 7.0};
+    for (std::size_t k = 0; k < n_values; ++k) c.add("FIXWEIGHT", v[k]);
+    return c;
+  };
+  const std::string line =
+      "OPTIM FIXWEIGHT (14) 0.5 5000\n" + std::string(kKeyRulesOptimizer);
+  for (const char* fi : {"13,14", "13 14", "13, 14"}) DYNAMIC_SECTION(
+      "FIXINDEX " << fi) {
+    Context ctx = ctx_with(fi, 2);
+    KeyRulesTempFile tf(line);
+    HPOTargets trg(ctx, tf.path.string());
+    const auto it = trg.optimap.find("FIXWEIGHT");
+    REQUIRE(it != trg.optimap.end());
+    REQUIRE(it->second.opt.size() == 2);
+    CHECK_FALSE(it->second.opt[0]);
+    CHECK(it->second.opt[1]);
+    REQUIRE(trg.spec.parameter_labels.size() == 1);
+    CHECK(trg.spec.parameter_labels[0] == "FIXWEIGHT[14]");
+    REQUIRE(trg.spec.space);
+    CHECK(trg.spec.space->at(0).user_index == 14);
+  }
+  SECTION("FIXINDEX 14-13") {
+    Context ctx = ctx_with("14-13", 2);
+    KeyRulesTempFile tf(line);
+    CHECK_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
+                      Catch::Contains("FIXINDEX: index '14-13' is a "
+                                      "descending range") &&
+                          !Catch::Contains("not pinned"));
+  }
+  SECTION("FIXINDEX 13,13,14") {
+    Context ctx = ctx_with("13,13,14", 2);
+    KeyRulesTempFile tf(line);
+    CHECK_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
+                      Catch::Contains("FIXINDEX 13,13,14 has 3 indices but "
+                                      "FIXWEIGHT has 2 values"));
+  }
+}
+
 TEST_CASE("lower-case OPTIM cgrid/sgrid keys arm the bump-support gate",
           "[HPO][optim][optim_key_case][bumpgate]") {
   tadah::core::PeriodicTable::initialize();
