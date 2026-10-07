@@ -325,6 +325,101 @@ TEST_CASE("fixweight all-fixed with DBFILE: DM-skip fast path",
     Host::reset_globals_for_test();
 }
 
+/* Pins: M_KRR Kern_RBF (MPARAMS 1.0, SBASIS 3) on the D2_BP[5,5] context
+ * with a training DBFILE, FIXINDEX 1-3 pinning every weight and OPTIM
+ * FIXWEIGHT (1): two evaluations (the second through the cached trainer)
+ * each return a loss below FAIL_SCORE, train the model (is_trained) and
+ * give the weights the pins (weight 1 the optimiser's value, 2 and 3 the
+ * FIXWEIGHT values, exactly); the potential the trainer writes carries
+ * SBASIS 3 and 3 x 5 BASIS values (basis vector 0 is e0), so the weights
+ * come with the basis vectors training drew from the data. The fast path
+ * is not taken for such a model: its weights belong to basis vectors drawn
+ * from the training data, which provision_fixed_weights cannot make.
+ * Before the fix (the fast-path condition without
+ * `!basis_drawn_from_training_data`, seen in a scratch build): every
+ * evaluation went to provision_fixed_weights, which refuses such a model:
+ * the first returned FAIL_SCORE, and its trainer was not trained and had
+ * no weights (the REQUIRE on their number stops the case there). */
+TEST_CASE("fixweight all-fixed with a non-linear M_KRR kernel: every "
+          "evaluation trains the model",
+          "[fixweight_e2e][.]")
+{
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ForceRebuildGuard _rebuild;
+    ScratchDir sd;
+
+    const fs::path train_db = sd.dir / "train.db";
+    const fs::path val_db   = sd.dir / "val.db";
+    const fs::path val_cfg  = sd.dir / "config.val";
+    const fs::path hpo_cfg  = sd.dir / "config.hpo";
+    write_minimal_ta_dbfile(train_db, 0.0);
+    write_minimal_ta_dbfile(val_db,   0.07);
+    { std::ofstream os(val_cfg); os << "DBFILE " << val_db.string() << "\n"; }
+
+    tadah::core::Context ctx = make_ta_base_context(hpo_cfg);
+    ctx.remove("MODEL");
+    ctx.add("MODEL", "M_KRR");
+    ctx.add("MODEL", "Kern_RBF");
+    ctx.add("MODEL", 1);
+    ctx.add("MPARAMS", 1.0);
+    ctx.add("SBASIS", 3);
+    ctx.remove("OALGO");
+    ctx.add("OALGO", 1);
+    const std::size_t K = tadah::hpo::derive_weight_count(ctx);
+    REQUIRE(K == 3);
+
+    ctx.add("DBFILE", train_db.string());
+    ctx.add("VALIDATION", val_cfg.string());
+    ctx.add("FIXINDEX", "1-3");
+    ctx.add("FIXWEIGHT", 0.02);
+    ctx.add("FIXWEIGHT", -0.75);
+    ctx.add("FIXWEIGHT", 0.5);
+
+    {
+        std::ofstream os(hpo_cfg);
+        os << kOptimizerBlock
+           << "LOSS L2\nPC_EMAE 0 1\n"
+           << "OPTIM FIXWEIGHT (1) -1.0 1.0\n";
+    }
+
+    tadah::hpo::HPOTargets trg(ctx, hpo_cfg.string());
+    REQUIRE_NOTHROW(tadah::hpo::validate_hpo_setup(ctx, trg, true, true));
+    Host host(ctx, trg, val_cfg.string());
+
+    bool first_eval = true;
+    for (double v : {0.02, 0.35}) {
+        INFO("FIXWEIGHT 1 = " << v);
+        if (!first_eval) ::unsetenv("TADAH_HPO_FORCE_REBUILD");
+        first_eval = false;
+        ParamVec p(1);
+        p(0) = v;
+        double loss = 0.0;
+        REQUIRE_NOTHROW(loss = host(p));
+        CHECK(loss < trg.FAIL_SCORE);
+
+        const auto* tr = Host::tls_trainer_for_test();
+        REQUIRE(tr != nullptr);
+        CHECK(tr->model->is_trained());
+        const auto& w = tr->model->get_weights();
+        REQUIRE(w.size() == K);
+        CHECK(w[0] == v);
+        CHECK(w[1] == -0.75);
+        CHECK(w[2] == 0.5);
+
+        auto pot = const_cast<tadah::mlip::Trainer*>(tr)->get_param_file();
+        REQUIRE(pot.contains("SBASIS"));
+        CHECK(pot.get<std::size_t>("SBASIS") == 3);
+        REQUIRE(pot.contains("BASIS"));
+        REQUIRE(pot.size("BASIS") == 3 * 5);
+        CHECK(pot.get<double>("BASIS", 0) == 1.0);
+        for (std::size_t d = 1; d < 5; ++d)
+            CHECK(pot.get<double>("BASIS", d) == 0.0);
+    }
+
+    Host::reset_globals_for_test();
+}
+
 /* Case 3a: no training DBFILE, no --validation; loss from PC_OBSERVABLE. */
 TEST_CASE("case 3: no DBFILE, observable-only loss",
           "[fixweight_e2e][.]")

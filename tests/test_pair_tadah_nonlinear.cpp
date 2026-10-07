@@ -12,6 +12,9 @@
 // through the context, the BASIS reading and the kernel derivatives in
 // the pair style. Kern_RBF is also checked with NORM true (the pair style
 // normalises the descriptors with NMEAN/NSTDEV before the kernel).
+// The same comparison runs with BIAS true, each model in two LAMMPS
+// instances of one process, with a linear many-body model added
+// (compute_2b_mb_half sets the bias component as compute_2b_mb_full does).
 //
 // Before the fix: training threw ("ColumnLayout: total_cols=3 disagrees
 // with design-matrix width=5"; 6 for BF_Polynomial2), so there was no
@@ -36,8 +39,10 @@
 #include <pair.h>
 #include <pair_tadah.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <exception>
 #include <iomanip>
 #include <memory>
@@ -66,6 +71,7 @@ struct ModelSpec {
     std::vector<std::string> mparams;
     bool kernel;
     bool norm;
+    bool mb = false;  // DM_EAD many-body descriptor (INITMB true)
 };
 
 /* The models and MPARAMS of MLIP's test_nonlinear_model_training.cpp. */
@@ -83,14 +89,26 @@ const std::vector<ModelSpec> kModels = {
     {"M_BLR BF_Polynomial2", {"M_BLR", "BF_Polynomial2"}, {}, false, false},
 };
 
+/* The models of the BIAS true case: those above, which pair_style tadah
+ * evaluates in compute_2b_mb_full, and a linear many-body model, M_BLR
+ * BF_Linear on D2_Blip and DM_EAD, which it evaluates in
+ * compute_2b_mb_half. */
+std::vector<ModelSpec> bias_models() {
+    std::vector<ModelSpec> v = kModels;
+    v.push_back({"M_BLR BF_Linear, DM_EAD", {"M_BLR", "BF_Linear"}, {}, false,
+                 false, true});
+    return v;
+}
+
 /* D2_Blip with 3 functions on Ta, Cut_Cos 5 A, WATOM 1, FORCE and STRESS
- * true, LAMBDA 0, OALGO 1, SBASIS 5 for a kernel. */
-Context make_context(const ModelSpec& m) {
+ * true, LAMBDA 0, OALGO 1, SBASIS 5 for a kernel, BIAS @p bias; with m.mb
+ * also DM_EAD (Lmax 1, 2 functions, Cut_Cos 5 A). */
+Context make_context(const ModelSpec& m, bool bias = false) {
     Context c;
     c.add("ATOM", "Ta");
     c.add("WATOM", 1);
     c.add("INIT2B", "true");
-    c.add("INITMB", "false");
+    c.add("INITMB", m.mb ? "true" : "false");
     c.add("TYPE2B", "D2_Blip");
     c.add("TYPE2B", 3);
     c.add("TYPE2B", 3);
@@ -98,9 +116,20 @@ Context make_context(const ModelSpec& m) {
     c.add("TYPE2B", "Ta");
     c.add("CGRID2B", "2.8 3.5 4.2");
     c.add("SGRID2B", "2.0 2.0 2.0");
-    c.add("TYPEMB", "DM_Dummy");
-    c.add("TYPEMB", "Ta");
-    c.add("TYPEMB", "Ta");
+    if (m.mb) {
+        c.add("TYPEMB", "DM_EAD");
+        c.add("TYPEMB", 1);
+        c.add("TYPEMB", 2);
+        c.add("TYPEMB", 2);
+        c.add("TYPEMB", "Ta");
+        c.add("TYPEMB", "Ta");
+        c.add("CGRIDMB", "2.5 3.5");
+        c.add("SGRIDMB", "1.2 0.9");
+    } else {
+        c.add("TYPEMB", "DM_Dummy");
+        c.add("TYPEMB", "Ta");
+        c.add("TYPEMB", "Ta");
+    }
     c.add("RCTYPE2B", "Cut_Cos");
     c.add("RCTYPEMB", "Cut_Cos");
     c.add("RCUT2B", kRcut);
@@ -113,7 +142,7 @@ Context make_context(const ModelSpec& m) {
     c.add("EWEIGHT", 1.0);
     c.add("FWEIGHT", 1.0);
     c.add("SWEIGHT", 1.0);
-    c.add("BIAS", "false");
+    c.add("BIAS", bias ? "true" : "false");
     c.add("NORM", m.norm ? "true" : "false");
     c.add("VERBOSE", 0);
     for (const auto& t : m.model) c.add("MODEL", t);
@@ -237,9 +266,13 @@ struct StagedPotential {
 struct LammpsResult {
     std::string error;
     bool linear = true;
+    bool initmb = false;
     double e = 0;
     std::vector<double> f;            // 3 per atom, by tag
     std::array<double, 6> virial{};   // xx yy zz xy xz yz
+    std::size_t nall = 0;             // nlocal + nghost
+    std::size_t aeds_cols = 0;        // columns of LammpsTadah::aeds
+    std::size_t nonzero_past_atoms = 0;  // aeds entries != 0 in columns >= nall
 };
 
 LammpsResult run0(const Structure& st, const Context& pot) {
@@ -260,10 +293,17 @@ LammpsResult run0(const Structure& st, const Context& pot) {
     }
     auto* pt = dynamic_cast<LAMMPS_NS::PairTadah*>(lmp->force->pair);
     REQUIRE(pt != nullptr);
-    out.linear = pt->lammps_tadah()->linear;
+    const tadah::LammpsTadah* lt = pt->lammps_tadah();
+    out.linear = lt->linear;
+    out.initmb = lt->initmb;
     out.e = lmp->force->pair->eng_vdwl;
     const int nlocal = lmp->atom->nlocal;
     REQUIRE(static_cast<std::size_t>(nlocal) == st.natoms());
+    out.nall = static_cast<std::size_t>(nlocal + lmp->atom->nghost);
+    out.aeds_cols = lt->aeds.cols();
+    for (std::size_t n = out.nall; n < lt->aeds.cols(); ++n)
+        for (std::size_t k = 0; k < lt->aeds.rows(); ++k)
+            if (lt->aeds(k, n) != 0.0) ++out.nonzero_past_atoms;
     out.f.assign(3 * st.natoms(), 0.0);
     for (int i = 0; i < nlocal; ++i) {
         const auto t = static_cast<std::size_t>(lmp->atom->tag[i] - 1);
@@ -271,6 +311,33 @@ LammpsResult run0(const Structure& st, const Context& pot) {
     }
     for (int k = 0; k < 6; ++k) out.virial[k] = lmp->force->pair->virial[k];
     return out;
+}
+
+/* `run 0` (l) against the model's prediction (p) for the cell st: energy
+ * to 1e-10 relative, forces to 1e-8 eV/A, -virial/V against the predicted
+ * Cauchy stress to 1e-9 eV/A^3, and max |F| > fmin eV/A (the forces are
+ * not all small next to their tolerance). */
+void check_against_prediction(const LammpsResult& l, const Structure& p,
+                              const Structure& st, double fmin) {
+    INFO("energy: LAMMPS " << num(l.e) << ", model " << num(p.energy));
+    CHECK(l.e == Approx(p.energy).epsilon(1e-10));
+    double fmax = 0;
+    for (std::size_t a = 0; a < st.natoms(); ++a)
+        for (int k = 0; k < 3; ++k) {
+            INFO("atom " << a << " axis " << k);
+            CHECK(l.f[3 * a + k] == Approx(p.atoms[a].force[k]).margin(1e-8));
+            fmax = std::max(fmax, std::fabs(p.atoms[a].force[k]));
+        }
+    CHECK(fmax > fmin);
+    const double V = st.get_volume();
+    const int xx[6] = {0, 1, 2, 0, 0, 1};
+    const int yy[6] = {0, 1, 2, 1, 2, 2};
+    for (int k = 0; k < 6; ++k) {
+        INFO("stress " << xx[k] << yy[k] << ": LAMMPS -virial/V "
+                       << -l.virial[k] / V << ", model "
+                       << p.stress(xx[k], yy[k]));
+        CHECK(-l.virial[k] / V == Approx(p.stress(xx[k], yy[k])).margin(1e-9));
+    }
 }
 
 }  // namespace
@@ -305,26 +372,61 @@ TEST_CASE("pair_style tadah evaluates a trained non-linear model as the "
             INFO("LAMMPS: " << l.error);
             REQUIRE(l.error.empty());
             CHECK_FALSE(l.linear);
-            INFO("energy: LAMMPS " << num(l.e) << ", model " << num(p.energy));
-            CHECK(l.e == Approx(p.energy).epsilon(1e-10));
-            double fmax = 0;
-            for (std::size_t a = 0; a < st.natoms(); ++a)
-                for (int k = 0; k < 3; ++k) {
-                    INFO("atom " << a << " axis " << k);
-                    CHECK(l.f[3 * a + k] ==
-                          Approx(p.atoms[a].force[k]).margin(1e-8));
-                    fmax = std::max(fmax, std::fabs(p.atoms[a].force[k]));
-                }
-            CHECK(fmax > 0.5);
-            const double V = st.get_volume();
-            const int xx[6] = {0, 1, 2, 0, 0, 1};
-            const int yy[6] = {0, 1, 2, 1, 2, 2};
-            for (int k = 0; k < 6; ++k) {
-                INFO("stress " << xx[k] << yy[k] << ": LAMMPS -virial/V "
-                               << -l.virial[k] / V << ", model "
-                               << p.stress(xx[k], yy[k]));
-                CHECK(-l.virial[k] / V ==
-                      Approx(p.stress(xx[k], yy[k])).margin(1e-9));
+            check_against_prediction(l, p, st, 0.5);
+        }
+    }
+}
+
+/* Pins: with BIAS true (ATOM Ta: descriptor component 0 is 1 for every
+ * atom), for each trained non-linear model (as above, compute_2b_mb_full:
+ * LammpsTadah::linear false) and a linear many-body model, M_BLR BF_Linear
+ * on D2_Blip and DM_EAD (compute_2b_mb_half: linear and initmb true),
+ * `run 0` on the held-out cell gives the model's predicted energy, forces
+ * and stress (the tolerances above, but max |F| > 0.02 eV/A: with the
+ * bias component most fits have smaller forces, max |F| down to 0.045
+ * eV/A when the test was written) in each of two LAMMPS instances
+ * created one after the other; the sections run one after another in one
+ * process, so every instance but the first of the case follows another;
+ * and after each run every entry of LammpsTadah::aeds in the columns past
+ * the atoms LAMMPS has (nlocal + nghost; aeds has atom->nmax columns) is
+ * 0: the bias component is set for those atoms only.
+ * Before the fix: the bias loops of compute_2b_mb_full and
+ * compute_2b_mb_half ran over every column of aeds, reading atom->type
+ * past the atoms: in the first instance (M_KRR Kern_RBF) the 16095
+ * columns past the 289 atoms each held a 1 (nonzero_past_atoms 16095),
+ * and the second `run 0` died with SIGSEGV in compute_2b_mb_full
+ * (atom->type is not set past the atoms), which ends the run; the BF_Linear
+ * section run alone (-c) failed the same way in compute_2b_mb_half. */
+TEST_CASE("pair_style tadah with BIAS true evaluates a trained model as the "
+          "model predicts in every LAMMPS instance of a process",
+          "[pair_tadah][nonlinear][bias]") {
+    PeriodicTable::initialize();
+    for (const ModelSpec& m : bias_models()) {
+        DYNAMIC_SECTION(m.name) {
+            MLIPWorkspaceManager ws;
+            Context c = make_context(m, true);
+            Trainer tr(c, ws);
+            StructureDB db = training_db();
+            REQUIRE_NOTHROW(tr.train(db));
+            const Context pot = tr.model->get_param_file();
+
+            Structure st = held_out_cell();
+            NNFinder().calc(st, kRcut);
+            Context pc = tr.context;
+            const Structure p = tr.model->predict(pc, st, tr.dc);
+
+            for (int instance = 1; instance <= 2; ++instance) {
+                INFO("LAMMPS instance " << instance << " of the section");
+                const LammpsResult l = run0(st, pot);
+                INFO("LAMMPS: " << l.error);
+                REQUIRE(l.error.empty());
+                CHECK(l.linear == (m.model[1] == "BF_Linear"));
+                CHECK(l.initmb == m.mb);
+                check_against_prediction(l, p, st, 0.02);
+                INFO("aeds columns " << l.aeds_cols << ", atoms (nlocal + "
+                     "nghost) " << l.nall);
+                REQUIRE(l.aeds_cols > l.nall);
+                CHECK(l.nonzero_past_atoms == 0);
             }
         }
     }
