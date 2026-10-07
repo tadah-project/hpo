@@ -1962,6 +1962,92 @@ TEST_CASE("Termination: a RESTART SEED draws restart round r's points with "
     CHECK(b.rounds == a.rounds);
 }
 
+namespace {
+
+/* Whether no two of `pts` are the same point. */
+bool all_distinct(const std::vector<Point>& pts)
+{
+    return std::set<Point>(pts.begin(), pts.end()).size() == pts.size();
+}
+
+}  // namespace
+
+/* TADAH:RANDOM draws a stream of its own for its SEED (seed_stream.h), not
+ * the numbers of the starting-point method RANDOM for the same seed: both
+ * seeded std::mt19937_64 with the integer and drew uniform numbers in the
+ * box, so with an INIT block's SEED equal to the optimiser's the search
+ * evaluated its start point (the method's first point) again as its first
+ * draw -- the reviewer's EXPLORE INIT RANDOM 2 SEED 2 with TADAH:RANDOM
+ * SEED 2 evaluated (4.626487, 2.700472) twice.
+ * Pins: with INIT { METHOD RANDOM 1, SEED 2 } and TADAH:RANDOM SEED 2
+ * (MAXEVAL 4) the four evaluated points are distinct, and so are the three
+ * of a PRESTAGE exploration with EXPLORE INIT { METHOD RANDOM 2, SEED 2 }
+ * and TADAH:RANDOM SEED 2 (MAXEVAL 3).
+ * Before the fix: evaluations 1 and 2 were the same point in both. */
+TEST_CASE("Termination: TADAH:RANDOM does not draw the points of a RANDOM "
+          "method with the same seed", "[HPO][termination][seed]")
+{
+    const std::string init_random =
+        "INIT\n    METHOD RANDOM 1\n    SEED 2\n  ENDINIT\n";
+    SECTION("the OPTIMIZER block's INIT block") {
+        TaRun run("OPTIMIZER\n  " + init_random +
+                  "  STRATEGY\n    TYPE PLAIN\n    LIB TADAH\n"
+                  "    ALGO RANDOM\n    MAXEVAL 4\n    SEED 2\n"
+                  "  ENDSTRATEGY\nENDOPTIMIZER\n");
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const auto pts = evaluated_points();
+        REQUIRE(pts.size() == 4u);
+        INFO(::Catch::Detail::stringify(pts));
+        CHECK(all_distinct(pts));
+    }
+    SECTION("the EXPLORE block's INIT block") {
+        TaRun run(plain_block(
+            "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+            "    MAXEVAL 4\n"
+            "    EXPLORE\n"
+            "      INIT\n        METHOD RANDOM 2\n        SEED 2\n"
+            "      ENDINIT\n"
+            "      LIB TADAH\n      ALGO RANDOM\n      MAXEVAL 3\n"
+            "      SEED 2\n"
+            "    ENDEXPLORE\n"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const auto pts = evaluated_points();
+        REQUIRE(pts.size() >= 3u);
+        const auto explored = evals_between(pts, 1, 3);
+        INFO(::Catch::Detail::stringify(explored));
+        CHECK(all_distinct(explored));
+    }
+}
+
+/* A RESTART round draws its fresh point with RESTART SEED + r and runs a
+ * seeded TADAH:RANDOM with SEED + r (under PLAIN): with the same SEED in
+ * both blocks the two seeds are equal every round, and the search's first
+ * draw of the round was the round's start point again (the documented
+ * "evaluated twice").
+ * Pins: with SEED 5 in the RESTART block and on TADAH:RANDOM, no round
+ * (MAX 2, each ended by a stagnation stop) evaluates a point twice.
+ * Before the fix: the first two evaluations of rounds 1 and 2 were the
+ * same point. */
+TEST_CASE("Termination: a RESTART round's fresh RANDOM point is not the "
+          "seeded TADAH:RANDOM's first draw of the round",
+          "[HPO][termination][restart][seed]")
+{
+    const auto a = run_restart_rounds("      SEED 5\n");
+    CHECK(a.journal.find("RESTART 1/2 -- fresh init from RANDOM; "
+                         "RESTART SEED 6, SEED 6\n") != std::string::npos);
+    REQUIRE(a.rounds.size() == 3u);
+    for (std::size_t r = 0; r < a.rounds.size(); ++r) {
+        INFO("round " << r << ": "
+             << ::Catch::Detail::stringify(a.rounds[r]));
+        REQUIRE(a.rounds[r].size() >= 2u);
+        CHECK(all_distinct(a.rounds[r]));
+    }
+}
+
 TEST_CASE("Termination: METHOD SOBOL K starts the INIT round and each "
           "restart round at the first point of block SEED",
           "[HPO][termination][restart][seed][sobol]")
