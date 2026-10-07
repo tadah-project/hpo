@@ -191,4 +191,101 @@ TEST_CASE_METHOD(PTFixture,
   }
 }
 
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: RHOFORM x REFIT_BASIS, the knot "
+                 "families and the defaulted Knot5",
+                 "[compact][refit][rhoform]") {
+  /* Pins: under REFIT_MODE compact, written or the default, through the
+   * HPO engine (which has the compact fitter):
+   *  - RHOFORM MONOTONE with the defaulted basis is refused before any
+   *    fitting, naming it as the compact default ("RHOFORM MONOTONE is not
+   *    defined for REFIT_BASIS Knot5 (the REFIT_MODE compact default, a
+   *    one-sided knot family): use a bump basis (Blip, Blip5) or RHOFORM
+   *    NONNEG"), and with a chosen Knot3 as "REFIT_BASIS Knot3 (the
+   *    one-sided knot family)"; nothing is written;
+   *  - RHOFORM NONNEG with a chosen Knot5 logs the convex-lock HINT ("HINT:
+   *    RHOFORM NONNEG with REFIT_BASIS Knot5: a knot density with every
+   *    amplitude >= 0 is non-increasing and convex"), not the compact
+   *    default's WARNING, and the compact fit writes a NONNEG potential;
+   *  - RHOFORM NONNEG with the defaulted Knot5 logs the WARNING naming
+   *    REFIT_BASIS Blip5 ("tadah refit: RHOFORM NONNEG with the REFIT_MODE
+   *    compact default basis Knot5: ... Set REFIT_BASIS Blip5 (a
+   *    non-negative bump density without the convex lock), or use RHOFORM
+   *    SIGNED."), not the HINT, and the compact fit writes a NONNEG
+   *    potential.
+   * Before the fix: passes as well (a pin: these cases ran in MLIP's
+   * RefitEngine tests, which has no compact fitter, through the fallback
+   * to the dense fit that REFIT_MODE compact's refusal replaced there). */
+  SECTION("MONOTONE: the knot families are refused, a defaulted one as the "
+          "compact default") {
+    for (const bool defaulted : {false, true}) {
+      INFO((defaulted ? "default mode" : "REFIT_MODE compact"));
+      ScopedTempDir tmp;
+      write_synth_eam("synth.eam.alloy");
+      Context c = compact_context("MONOTONE");
+      c.remove("REFIT_BASIS");
+      if (defaulted) c.remove("REFIT_MODE");
+      const auto [what, logged] = run_compact(c);
+      CHECK(what.find("RHOFORM MONOTONE is not defined for REFIT_BASIS Knot5 "
+                      "(the REFIT_MODE compact default, a one-sided knot "
+                      "family): use a bump basis (Blip, Blip5) or RHOFORM "
+                      "NONNEG") != std::string::npos);
+      CHECK_FALSE(fs::exists("pot.tadah"));
+      CHECK_FALSE(fs::exists("refit_opt.log"));
+    }
+    ScopedTempDir tmp;
+    write_synth_eam("synth.eam.alloy");
+    Context c = compact_context("MONOTONE");
+    c.remove("REFIT_BASIS");
+    c.add("REFIT_BASIS", std::string("Knot3"));
+    const auto [what, logged] = run_compact(c);
+    CHECK(what.find("REFIT_BASIS Knot3 (the one-sided knot family)") !=
+          std::string::npos);
+    CHECK_FALSE(fs::exists("pot.tadah"));
+  }
+  SECTION("NONNEG with a chosen Knot5: the convex-lock HINT") {
+    ScopedTempDir tmp;
+    write_synth_eam("synth.eam.alloy");
+    Context c = compact_context("NONNEG");
+    c.remove("REFIT_BASIS");
+    c.add("REFIT_BASIS", std::string("Knot5"));
+    const auto [what, logged] = run_compact(c);
+    INFO(logged);
+    REQUIRE(what.empty());
+    CHECK(logged.find("WARNING: HINT: RHOFORM NONNEG with REFIT_BASIS Knot5: "
+                      "a knot density with every amplitude >= 0 is "
+                      "non-increasing and convex") != std::string::npos);
+    CHECK(logged.find("compact default") == std::string::npos);
+    CHECK(slurp("refit_opt.log").find("compact mode") != std::string::npos);
+    CHECK(tadah::models::stored_rhoform(
+              tadah::core::CoreUserConfigParser().parse("pot.tadah")) ==
+          RhoForm::NonNeg);
+  }
+  SECTION("NONNEG with the defaulted Knot5: the WARNING naming Blip5") {
+    for (const bool defaulted : {false, true}) {
+      INFO((defaulted ? "default mode" : "REFIT_MODE compact"));
+      ScopedTempDir tmp;
+      write_synth_eam("synth.eam.alloy");
+      Context c = compact_context("NONNEG");
+      c.remove("REFIT_BASIS");
+      if (defaulted) c.remove("REFIT_MODE");
+      const auto [what, logged] = run_compact(c);
+      INFO(logged);
+      REQUIRE(what.empty());
+      CHECK(logged.find("WARNING: tadah refit: RHOFORM NONNEG with the "
+                        "REFIT_MODE compact default basis Knot5: a knot "
+                        "density with every amplitude >= 0 is non-increasing "
+                        "and convex") != std::string::npos);
+      CHECK(logged.find("Set REFIT_BASIS Blip5 (a non-negative bump density "
+                        "without the convex lock), or use RHOFORM SIGNED.") !=
+            std::string::npos);
+      CHECK(logged.find("HINT: RHOFORM NONNEG") == std::string::npos);
+      CHECK(slurp("refit_opt.log").find("basis=Knot5") != std::string::npos);
+      CHECK(tadah::models::stored_rhoform(
+                tadah::core::CoreUserConfigParser().parse("pot.tadah")) ==
+            RhoForm::NonNeg);
+    }
+  }
+}
+
 #endif  // TADAH_USE_CERES
