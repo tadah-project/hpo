@@ -10,7 +10,9 @@
 //   * IterHealthMonitor in full mode emits every offending iter.
 //   * Off mode is a no-op.
 //   * Every weight is checked for NaN/Inf, whatever the layout; a layout
-//     that does not describe the weights is reported as such.
+//     that does not describe the weights is reported as such; a block that
+//     holds a NaN weight is not reported as a block of zero or sparse
+//     weights.
 //   * Records from concurrent evaluations are all counted.
 
 #include "catch2/catch.hpp"
@@ -248,6 +250,118 @@ TEST_CASE("iter_health: a layout whose blocks do not partition the weights "
                      "the per-block checks are skipped.") != std::string::npos);
   CHECK(mon.warning_count(0, "max_abs") == 0);
   CHECK(mon.warning_count(1, "max_abs") == 0);
+}
+
+/* Pins: a block whose weights are all NaN (the DM block, D2 finite) is
+ * reported as NaN/Inf weights and not as a block of zero weights: record()
+ * in full mode prints "iter_health: eval 4 -- weights contain NaN/Inf
+ * entries (training likely diverged)." and no block warning (no "max_abs",
+ * no "nz_fraction" in the text; every block count 0).
+ * Before the fix: a NaN weight counted as an exact zero (|NaN| > max and
+ * |NaN| > 1e-15 are false), so block 1's max_abs was 0 and record() also
+ * printed "iter_health: eval 4 block[1/DM] max_abs -- all weights in this
+ * block are exactly zero -- the descriptor block contributed nothing to
+ * the fit." (warning_count(1, "max_abs") 1). */
+TEST_CASE("iter_health: a block of NaN weights is reported as NaN/Inf "
+          "weights, not as a block of zero weights", "[iter_health]") {
+  auto layout = make_two_block_layout();
+  t_type w(10);
+  for (std::size_t i = 0; i < 4; ++i) w[i] = 1.0;
+  for (std::size_t i = 4; i < 10; ++i)
+    w[i] = std::numeric_limits<double>::quiet_NaN();
+  auto rec = compute_iter_health(4, w, layout);
+  REQUIRE(rec.weights_have_nan_inf);
+
+  IterHealthMonitor mon(HealthLogMode::Full);
+  std::string printed;
+  {
+    LoggerCapture cap;
+    mon.record(rec, layout);
+    printed = cap.text();
+  }
+  INFO(printed);
+  CHECK(printed.find("iter_health: eval 4 -- weights contain NaN/Inf "
+                     "entries (training likely diverged).") !=
+        std::string::npos);
+  CHECK(printed.find("max_abs") == std::string::npos);
+  CHECK(printed.find("nz_fraction") == std::string::npos);
+  for (std::size_t b : {0u, 1u}) {
+    CAPTURE(b);
+    CHECK(mon.warning_count(b, "max_abs") == 0);
+    CHECK(mon.warning_count(b, "nz_fraction") == 0);
+  }
+}
+
+/* Pins: a block of 30 weights of which 29 are NaN and one is 0.5 is not
+ * reported as a sparse block: record() in full mode prints the NaN/Inf
+ * line ("iter_health: eval 9 -- weights contain NaN/Inf entries ...") and
+ * no block warning (no "nz_fraction", no "max_abs"; both counts 0).
+ * Before the fix: the 29 NaN weights counted as exact zeros, so the
+ * block's nz_fraction was 1/30 and record() also printed "iter_health:
+ * eval 9 block[0/D2_BP] nz_fraction -- fewer than 5% of weights in this
+ * block exceed 1e-15." (warning_count(0, "nz_fraction") 1). */
+TEST_CASE("iter_health: a block of mostly NaN weights is not reported as a "
+          "sparse block", "[iter_health]") {
+  ColumnLayout layout;
+  ColumnBlock a; a.descriptor_label = "D2_BP"; a.col_offset = 0;
+  a.col_count = 30;
+  layout.blocks.push_back(a);
+  t_type w(30);
+  for (std::size_t i = 0; i < 30; ++i)
+    w[i] = std::numeric_limits<double>::quiet_NaN();
+  w[0] = 0.5;
+  auto rec = compute_iter_health(9, w, layout);
+  REQUIRE(rec.weights_have_nan_inf);
+
+  IterHealthMonitor mon(HealthLogMode::Full);
+  std::string printed;
+  {
+    LoggerCapture cap;
+    mon.record(rec, layout);
+    printed = cap.text();
+  }
+  INFO(printed);
+  CHECK(printed.find("iter_health: eval 9 -- weights contain NaN/Inf "
+                     "entries") != std::string::npos);
+  CHECK(printed.find("nz_fraction") == std::string::npos);
+  CHECK(printed.find("max_abs") == std::string::npos);
+  CHECK(mon.warning_count(0, "nz_fraction") == 0);
+  CHECK(mon.warning_count(0, "max_abs") == 0);
+}
+
+/* Pins: in summary mode (window 100), a block of NaN weights does not hide
+ * a block of zero weights that follows: eval 0 with every DM weight NaN,
+ * then eval 1 with every DM weight 0 (D2 finite in both); the text has
+ * "iter_health: eval 1 block[1/DM] max_abs -- all weights in this block are
+ * exactly zero" and no "eval 0 block[1/DM]", and block 1's max_abs count is
+ * 1.
+ * Before the fix: eval 0's NaN weights counted as zeros, so the warning was
+ * printed for eval 0 ("iter_health: eval 0 block[1/DM] max_abs -- ...") and
+ * its cooldown suppressed the true one of eval 1 (the count 1 was eval
+ * 0's). */
+TEST_CASE("iter_health: a block of NaN weights does not start the cooldown "
+          "of a block of zero weights", "[iter_health]") {
+  auto layout = make_two_block_layout();
+  t_type w(10);
+  for (std::size_t i = 0; i < 4; ++i) w[i] = 1.0;
+
+  IterHealthMonitor mon(HealthLogMode::Summary, /*window=*/100);
+  std::string printed;
+  {
+    LoggerCapture cap;
+    for (std::size_t i = 4; i < 10; ++i)
+      w[i] = std::numeric_limits<double>::quiet_NaN();
+    mon.record(compute_iter_health(0, w, layout), layout);
+    for (std::size_t i = 4; i < 10; ++i) w[i] = 0.0;
+    mon.record(compute_iter_health(1, w, layout), layout);
+    printed = cap.text();
+  }
+  INFO(printed);
+  CHECK(printed.find("iter_health: eval 1 block[1/DM] max_abs -- all "
+                     "weights in this block are exactly zero") !=
+        std::string::npos);
+  CHECK(printed.find("eval 0 block[1/DM]") == std::string::npos);
+  CHECK(mon.warning_count(1, "max_abs") == 1);
 }
 
 /* Pins: one monitor recorded from 8 threads at once, as HPO_Host's

@@ -568,6 +568,53 @@ TEST_CASE("health monitor: a fit with weights that are not finite is "
                        "diverged).") != std::string::npos);
 }
 
+/* Pins: a fit whose D2_BP block is all NaN is reported as NaN/Inf weights
+ * and not as a block of zero weights: the bias pinned at 1e308 (FIXINDEX 1,
+ * BIAS true, OPTIM LAMBDA) overflows the residual target the five D2_BP
+ * weights are fitted to, and every one of them prints as nan/inf; HEALTH_LOG
+ * full prints "iter_health: eval <n> -- weights contain NaN/Inf entries
+ * (training likely diverged)." for that evaluation and no block warning
+ * (no "max_abs", no "nz_fraction" in the text; every block count 0).
+ * Before the fix: the NaN weights counted as exact zeros, so the evaluation
+ * also printed "iter_health: eval <n> block[1/D2_BP] max_abs -- all weights
+ * in this block are exactly zero -- the descriptor block contributed
+ * nothing to the fit." (warning_count(1, "max_abs") 1), as `tadah hpo` did
+ * with the default HEALTH_LOG summary. */
+TEST_CASE("health monitor: a fitted block of NaN weights is reported as "
+          "NaN/Inf weights, not as a block of zero weights",
+          "[fixweight_e2e][.]")
+{
+    FullHealthMonitor fm;
+    HealthHost h("1", {1e308}, "OPTIM LAMBDA (1) 1e-4 1e-2");
+    std::string printed;
+    {
+        LoggerCapture cap;
+        h.eval({1e-3});
+        printed = cap.text();
+    }
+    INFO(printed);
+    const auto* tr = Host::tls_trainer_for_test();
+    REQUIRE(tr != nullptr);
+    const auto& w = tr->model->get_weights();
+    REQUIRE(w.size() == 6u);
+    CHECK(w[0] == 1e308);
+    for (std::size_t k = 1; k < 6; ++k) {
+        CAPTURE(k, w[k]);
+        REQUIRE(prints_not_finite(w[k]));
+    }
+    const std::string eval_no = std::to_string(Host::g_iter_value());
+    CHECK(printed.find("iter_health: eval " + eval_no +
+                       " -- weights contain NaN/Inf entries (training likely "
+                       "diverged).") != std::string::npos);
+    CHECK(printed.find("max_abs") == std::string::npos);
+    CHECK(printed.find("nz_fraction") == std::string::npos);
+    for (std::size_t b : {0u, 1u}) {
+        CAPTURE(b);
+        CHECK(fm.mon.warning_count(b, "max_abs") == 0u);
+        CHECK(fm.mon.warning_count(b, "nz_fraction") == 0u);
+    }
+}
+
 /* Pins: M_KRR Kern_RBF (MPARAMS 1.0, SBASIS 3) on the D2_BP[5,5] context
  * with a training DBFILE, FIXINDEX 1-3 pinning every weight and OPTIM
  * FIXWEIGHT (1): two evaluations of one host each return a loss below
