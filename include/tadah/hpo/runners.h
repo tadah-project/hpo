@@ -100,12 +100,18 @@ class LammpsRunner {
    * @param pot_ctx Potential Context (used only for EXTERN scripts).
    * @param why Optional detailed outcome; see ScriptRunStatus for the
    *            instance-poisoning contract on TIMEOUT_ABORT/SCRIPT_ERROR.
+   * @param error Optional: on SCRIPT_ERROR, why -- the LAMMPS message of
+   *            an error inside the script ("ERROR: Unknown command: ..."),
+   *            the potential's construction error, or the missing input.
+   *            Left alone otherwise: a timeout has no message (the
+   *            section guard's sentinel is not one).
    * @return True if execution succeeded; false otherwise.
    */
   bool run_script(const LMPPtr& lmp_ptr,
                   const tadah::hpo::ScriptFile& script_file,
                   const tadah::core::Context& pot_ctx,
-                  tadah::hpo::ScriptRunStatus* why = nullptr) const;
+                  tadah::hpo::ScriptRunStatus* why = nullptr,
+                  std::string* error = nullptr) const;
 
   /**
    * @brief Executes a rendered script using a pre-built shared potential.
@@ -114,12 +120,13 @@ class LammpsRunner {
    * tadah::LammpsTadah per candidate potential (per thread) and stages it
    * directly -- no reconstruction, no Context copies. The object carries
    * per-sim scratch, so it must only be shared across sims that run
-   * sequentially.
+   * sequentially. @p why and @p error as for the Context overload.
    */
   bool run_script(const LMPPtr& lmp_ptr,
                   const tadah::hpo::ScriptFile& script_file,
                   const std::shared_ptr<tadah::LammpsTadah>& pot,
-                  tadah::hpo::ScriptRunStatus* why = nullptr) const;
+                  tadah::hpo::ScriptRunStatus* why = nullptr,
+                  std::string* error = nullptr) const;
 
   /**
    * @brief Convenience wrapper: renders script_lines to a temp ScriptFile
@@ -145,10 +152,26 @@ class LammpsRunner {
    * (core::format_roundtrip) -- not LAMMPS' own "%.15g" string. Every
    * other style is returned verbatim; an undefined variable gives "".
    *
+   * Each read starts by clearing the in-progress marks of LAMMPS's
+   * variables (Variable::clear_in_progress, as `clear` does): it is a
+   * top-level evaluation, so a mark it finds was left by a LAMMPS error in
+   * an earlier evaluation -- an earlier read, or a command of the script --
+   * and would turn the read of any variable that reaches the interrupted
+   * one into a false "has a circular dependency". A variable that depends
+   * on one that cannot be read therefore raises that one's error again.
+   *
    * @param lmp_ptr Unique pointer to a LAMMPS instance.
    * @param varname Name of the variable to retrieve.
    * @return String representation of the requested variable.
    * @throws std::runtime_error if lmp_ptr is null.
+   * @throws LAMMPS_NS::LAMMPSException (or LAMMPSAbortException) when
+   *         evaluating the formula raises a LAMMPS error: a thermo keyword
+   *         the thermo_style does not compute, a divide by zero, a compute
+   *         that is not current. The error can leave the instance with
+   *         state that only `clear` or a redefinition resets (the marks of
+   *         the interrupted evaluation, which the next script would meet
+   *         before any `clear`; a compute interrupted mid-evaluation), so a
+   *         caller that caches instances discards it (pc_task_exec.h).
    */
   std::string get_variable(const LMPPtr& lmp_ptr,
                            const std::string& varname) const;

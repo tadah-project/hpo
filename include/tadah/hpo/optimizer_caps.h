@@ -31,7 +31,8 @@ struct OptimizerSpec;
  *                       util/rescale.c); rhobeg = |dx_0|, rhoend =
  *                       XTOL_REL*rhobeg
  *   MinCollapsed     -- the vector collapses to min_i |dx_i|
- *                       (LN_NEWUOA, LN_NEWUOA_BOUND, LN_PRAXIS)
+ *                       (LN_NEWUOA, LN_PRAXIS; LN_NEWUOA_BOUND too, which
+ *                       is refused: backend_refusal())
  *   TrustHalfWidth   -- per-dim initial trust-region half-width
  *                       (LD_MMA, LD_CCSAQ)
  *   ForwardedToInner -- copied onto the local sub-optimiser; an OUTER
@@ -128,6 +129,15 @@ struct OptimizerCaps {
     bool        needs_stop = false;
     const char* stop_note  = "";
 
+    /* The backend ignores NLopt's forced stop (NLopt's StoGO, GD_STOGO and
+     * GD_STOGO_RAND: it tests only NLopt's evaluation count and clock), by
+     * which HPO ends a search -- on a signal, an error, the RESTART
+     * stagnation stop, a spent budget or a withheld loss at STOPVAL: the
+     * objective then refuses every call, and only NLopt's own MAXEVAL ends
+     * the run promptly (MAXTIME only once the rest of it has passed).
+     * require_stop() counts only MAXEVAL as its stop. */
+    bool        ignores_forced_stop = false;
+
     /* How the tolerances end the run when one of them is costly, the last
      * clause of require_stop()'s message and a line of the ALGO help (""
      * for none): DIRECT tests XTOL on every rectangle it divides, the
@@ -160,8 +170,31 @@ struct OptimizerCaps {
     const char* bounds_note    = "";
 };
 
-/* Lookup capabilities for (lib, algo). Throws std::runtime_error if
- * the (lib, algo) pair is not registered. The result refers to the static
+/* Backends HPO refuses although their library offers them: a defect of
+ * the library version HPO builds makes them unsafe to run (the refusal
+ * table in optimizer_caps.cpp, each entry with its repro). A refused
+ * backend is not registered, so filter_optimizer_caps() and every list of
+ * alternatives leave it out, and find_optimizer_caps() returns nullptr.
+ *
+ * backend_refusal(): why (lib, algo) is refused -- the reason, ending with
+ * the backends to use instead -- or nullptr when it is not refused.
+ *
+ * reject_refused_backend(): throws std::runtime_error
+ * "LIB:ALGO is refused: <reason>" for a refused (lib, algo), prefixed with
+ * "<where>: " when `where` is not empty (the phase: "the EXPLORE block");
+ * a no-op otherwise. optimizer_caps() and the driver rules
+ * (require_driver(), require_inner_driver(), require_inner_backend(),
+ * strategy_rules.h) throw this text, so it is the same everywhere:
+ * "the STRATEGY-level optimiser: NLOPT:LN_NEWUOA_BOUND is refused: NLopt
+ * 2.10 plans each LN_NEWUOA_BOUND step with a nested LD_MMA run ...". */
+const char* backend_refusal(std::string_view lib, std::string_view algo);
+void reject_refused_backend(std::string_view lib, std::string_view algo,
+                            const std::string& where = "");
+
+/* Lookup capabilities for (lib, algo). Throws std::runtime_error if the
+ * (lib, algo) pair is refused (reject_refused_backend()'s text) or not
+ * registered ("unknown optimizer LIB:ALGO (not registered in
+ * optimizer_caps)"). The result refers to the static
  * registry, never to the arguments, and stays valid for the whole run. The
  * names are views: with `const std::string&` parameters every call with a
  * literal bound a temporary std::string, and GCC 13's -Wdangling-reference
@@ -173,7 +206,8 @@ const OptimizerCaps& optimizer_caps(std::string_view lib,
 const OptimizerCaps& optimizer_caps(const OptimizerSpec& sp);
 
 /* The same lookup for a rule that does not own the "unknown optimizer"
- * error: nullptr when (lib, algo) is not registered. require_inner_backend()
+ * error: nullptr when (lib, algo) is not registered (a refused pair is
+ * not). require_inner_backend()
  * (strategy_rules.h) runs before validate_phase_backends(), which reports an
  * unregistered LIB:ALGO with the phase and, for the deferred CERES
  * algorithms, their own message. */

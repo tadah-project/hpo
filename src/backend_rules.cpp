@@ -6,6 +6,7 @@
 #include <tadah/hpo/dlib_adapter.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/phase_specs.h>
+#include <tadah/hpo/strategy_rules.h>
 
 #include <algorithm>
 #include <cmath>
@@ -85,11 +86,16 @@ std::string tolerance_note(const OptimizerCaps& caps)
     return std::string("; ") + caps.tolerance_note;
 }
 
-/* MAXEVAL, MAXTIME and STOPVAL, as `caps` honours them. */
-std::vector<std::string> budget_keys(const OptimizerCaps& caps, bool stopval)
+/* MAXEVAL, MAXTIME and STOPVAL, as `caps` (the block they are set in)
+ * honours them, that are a stop for a run of `run`: only MAXEVAL when `run`
+ * ignores the forced stop (OptimizerCaps::ignores_forced_stop), which only
+ * NLopt's own MAXEVAL ends promptly once HPO stops it. */
+std::vector<std::string> budget_keys(const OptimizerCaps& caps, bool stopval,
+                                     const OptimizerCaps& run)
 {
     std::vector<std::string> k;
     if (caps.supports_maxeval) k.push_back("MAXEVAL");
+    if (run.ignores_forced_stop) return k;
     if (caps.supports_maxtime) k.push_back("MAXTIME");
     if (stopval && caps.supports_stopval) k.push_back("STOPVAL");
     return k;
@@ -100,12 +106,19 @@ std::vector<std::string> budget_keys(const OptimizerCaps& caps, bool stopval)
  * tolerance of 0 or below off (its stop tests compare a change with it),
  * and ANNEAL_PT's best-stall rule arms only above 0, so FTOL_REL 0 -- a
  * common way to write "no tolerance" -- ends nothing. MAXEVAL and MAXTIME
- * are positive by their grammar, and any STOPVAL is a target. */
+ * are positive by their grammar, and any STOPVAL is a target. A backend
+ * that ignores the forced stop (OptimizerCaps::ignores_forced_stop) needs
+ * MAXEVAL: HPO ends a search by that stop (a signal, an error, the RESTART
+ * stagnation stop, a withheld loss at STOPVAL), and such a backend calls on,
+ * each call refused (a few microseconds), until NLopt's own count ends it;
+ * its clock would end it only once the rest of MAXTIME had passed. */
 bool has_stop(const OptimizerSpec& spec, const OptimizerCaps& caps,
               RestartStop restart)
 {
-    if (restart == RestartStop::On) return true;
     const StopCriteria& st = spec.stop;
+    if (caps.ignores_forced_stop)
+        return st.maxeval && caps.supports_maxeval;
+    if (restart == RestartStop::On) return true;
     const auto positive = [](const std::optional<double>& v) {
         return v && *v > 0.0;
     };
@@ -206,8 +219,10 @@ std::string inner_tolerance_advice(const ToleranceKey& t,
         return "; set it in the INNER block, whose local search tests it";
     return "; the INNER block's " + backend_name(inner) +
            " does not test it either: stop that search with " +
-           stop_list(budget_keys(inner_caps, false), inner_caps, false) +
-           " in the INNER block, or " + or_list(budget_keys(caps, true)) +
+           stop_list(budget_keys(inner_caps, false, inner_caps), inner_caps,
+                     false) +
+           " in the INNER block, or " +
+           or_list(budget_keys(caps, true, inner_caps)) +
            " in the " + backend_name(spec) +
            " block, which NLopt hands on to it";
 }
@@ -230,13 +245,13 @@ void reject_unread_attributes(const OptimizerSpec& spec,
             msg += inner_tolerance_advice(t, spec, caps);
         else if (role == SpecRole::Inner)
             msg += "; stop it with " +
-                   stop_list(budget_keys(caps, false), caps, false) +
+                   stop_list(budget_keys(caps, false, caps), caps, false) +
                    " in the INNER block" +
-                   (caps.supports_stopval
+                   (caps.supports_stopval && !caps.ignores_forced_stop
                         ? ", or STOPVAL in the enclosing block" : "");
         else
             msg += "; stop it with " +
-                   stop_list(budget_keys(caps, true), caps, false);
+                   stop_list(budget_keys(caps, true, caps), caps, false);
         throw std::runtime_error(msg);
     }
     if (spec.pop && !caps.reads_population)
@@ -277,7 +292,7 @@ void require_stop(const OptimizerSpec& spec, RestartStop restart)
     if (!caps.needs_stop || has_stop(spec, caps, restart)) return;
     throw std::runtime_error(
         backend_name(spec) + " needs a stop: " + caps.stop_note + "; set " +
-        stop_list(budget_keys(caps, true), caps, true) +
+        stop_list(budget_keys(caps, true, caps), caps, true) +
         tolerance_note(caps));
 }
 
@@ -290,21 +305,23 @@ void require_inner_run_stop(const OptimizerSpec& parent, RestartStop restart)
     const std::string outer = backend_name(parent);
     const std::string inner = backend_name(*run);
     const OptimizerCaps& outer_caps = optimizer_caps(parent);
+    /* The enclosing block's stops that end the local search: only MAXEVAL
+     * for one that ignores the forced stop. */
     const std::string handed_on =
-        or_list(budget_keys(outer_caps, true)) + " in the " + outer +
+        or_list(budget_keys(outer_caps, true, caps)) + " in the " + outer +
         " block, which NLopt hands on to it";
     if (parent.inner)
         throw std::runtime_error(
             "the INNER search of " + outer + " (" + inner + ") needs a stop: " +
             caps.stop_note + "; set " +
-            stop_list(budget_keys(caps, false), caps, false) +
+            stop_list(budget_keys(caps, false, caps), caps, false) +
             " in the INNER block, or " + handed_on + tolerance_note(caps));
     /* NLopt's default local optimiser: it takes the block's tolerances
      * too. */
     throw std::runtime_error(
         "the local search of " + outer + " (NLopt's default " + inner +
         ", as the block has no INNER block) needs a stop: " + caps.stop_note +
-        "; set " + stop_list(budget_keys(caps, true), caps, false) +
+        "; set " + stop_list(budget_keys(caps, true, caps), caps, false) +
         " in the " + outer + " block, which NLopt hands on to it" +
         tolerance_note(caps));
 }
@@ -445,6 +462,13 @@ void validate_phase_backends(const OptimizerSpec& root)
 {
     /* RESTART wraps every phase (RestartPolicy, run_policy.h). */
     const RestartStop restart = restart_stop_of(root);
+    /* A refused backend first, for its own phase, with validate_run_policy()'s
+     * text: strategy_phase_specs() looks up the caps of the STRATEGY-level
+     * backend to plan a MULTISTART from INIT points and a PRESTAGE
+     * refinement of TOPK > 1, and the checks of an MLSL or AUGLAG phase
+     * those of its INNER block; either lookup would report the refusal with
+     * no phase, or for the enclosing one. */
+    reject_refused_backends(root);
     for (const PhaseSpec& phase : strategy_phase_specs(root)) {
         try {
             validate_backend(phase.spec, restart,

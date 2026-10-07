@@ -123,13 +123,18 @@ endforeach()
 #                  structures stored with force/stress weight 0; and
 #                  test_metric_unit_labels.cpp: the --skip-above message
 #                  gives ErRMSE and SRMSE in their units
+#   pc_readback_e2e test_hpo_pc_readback_e2e.cpp: a LAMMPS error while a
+#                  PC_LAMMPS variable is read back fails the evaluation
+#                  (--varloss, --hotvar) or is NaN (a diagnostic --outvar)
+#                  under PC_ISOLATION THREAD, and every row has its
+#                  header's columns
 #   trainer_e2e    test_hpo_fresh_trainer_e2e.cpp: every evaluation trains
 #                  a model built from its own candidate (row weights,
 #                  MPARAMS, SIGMA, a second host on a thread, an M_KRR -c
 #                  potential, gradients of another host's model)
 set(_hpo_e2e_groups fixweight_e2e durable_e2e embf0_e2e rcut_e2e
                     rhoform_e2e rhogate_e2e rhobargate_e2e bumpgate_e2e
-                    nn_e2e valmetric_e2e trainer_e2e)
+                    nn_e2e valmetric_e2e pc_readback_e2e trainer_e2e)
 foreach(_group IN LISTS _hpo_e2e_groups)
     add_test(NAME hpo_${_group}
         COMMAND test_hpo "[${_group}]" --warn NoTests)
@@ -139,15 +144,17 @@ foreach(_group IN LISTS _hpo_e2e_groups)
 endforeach()
 
 # End-to-end cases that run the built `tadah` executable, named by the
-# TADAH_BINARY environment variable (test_hpo_fixweight_e2e.cpp, tag
-# [tadah_cli]). Each is a hidden tag with an entry of its own, so that the
+# TADAH_BINARY environment variable (test_hpo_fixweight_e2e.cpp and
+# test_hpo_pc_readback_e2e.cpp, tag [tadah_cli]). Each is a hidden tag
+# with an entry of its own, so that the
 # TADAH-SKIP marker applies to exactly one case: without TADAH_BINARY a
 # case calls TADAH_SKIP and CTest reports it as Skipped, not Passed. In a
 # build that has the `tadah` executable target (Tadah.MLIP, which adds this
 # directory) the entry sets TADAH_BINARY to it, so the case runs; in one
 # without it (a standalone HPO build) TADAH_BINARY comes from the
 # environment of ctest, if at all.
-set(_hpo_tadah_cli_cases seed_anchor_warm seed_anchor_nlopt durable_exit)
+set(_hpo_tadah_cli_cases seed_anchor_warm seed_anchor_nlopt durable_exit
+                         pc_readback)
 foreach(_case IN LISTS _hpo_tadah_cli_cases)
     add_test(NAME hpo_tadah_cli_${_case}
         COMMAND test_hpo "[.tadah_cli_${_case}]" --warn NoTests)

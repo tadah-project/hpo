@@ -28,6 +28,64 @@ struct CapsKeyHash {
 
 using Registry = std::unordered_map<CapsKey, OptimizerCaps, CapsKeyHash>;
 
+/* Backends HPO refuses although their library offers them
+ * (backend_refusal(), optimizer_caps.h). Each entry is a defect measured in
+ * the library version HPO builds: before an upgrade of that library lifts
+ * an entry, the entry's repro is run again.
+ *
+ * NLOPT:LN_NEWUOA_BOUND -- NLopt v2.10.0 (HPO/CMakeLists.txt fetches
+ * GIT_TAG v2.10.0; offline builds use deps/nlopt). NLopt's bound-
+ * constrained NEWUOA, its own variant and not Powell's code, solves each
+ * trust-region and BIGLAG subproblem with a nested LD_MMA run (newuoa.c:
+ * up to 1000 evaluations, each MMA iteration a dual solve of up to 100000,
+ * optimize.c) whose stop struct has no MAXTIME and no forced-stop flag;
+ * newuob_ tests those only just before an objective call (newuoa.c L310).
+ * Once the model gradient holds inf or NaN, MMA's acceptance tests
+ * (mma.c: `dd.gval >= fcur`, `fcur > dd.gval`) are false for ever and each
+ * subproblem runs to its caps, about 1e8 model evaluations and 10-60 s
+ * without an objective call. A non-finite value reaches the model
+ *   (1) from any HUGE_VAL objective value: NLopt's C++ wrapper (nlopt.hpp)
+ *       and HPO's (nlopt_adapter.h) return HUGE_VAL after force_stop when
+ *       the objective throws, NLopt's convention for a forced stop. The
+ *       first 2n+1 evaluations of a run are NEWUOA's starting points: after
+ *       each of the first 2n newuob_ goes straight to the next point and
+ *       L310, so a stop there returns at once; after the (2n+1)-th it
+ *       builds its model and plans its first step. From the (2n+1)-th
+ *       evaluation on, every signal, RESTART stagnation stop and run-ending
+ *       error therefore costs one such subproblem, on any loss (a failed
+ *       evaluation scored FAILSCORE is finite and is no such value);
+ *   (2) without an XTOL floor (rhoend = 0) on a flat loss -- a box where
+ *       every evaluation fails, scored FAILSCORE, is one -- where the trust
+ *       radius shrinks without limit and NEWUOA's ZMAT overflows;
+ *   (3) near convergence, where MMA's steps are ~1e-8 of the trust radius
+ *       (its rho is dimensionful, mma.c MMA_RHOMIN) and BMAT overflows,
+ *       with XTOL_REL 1e-12 as well.
+ * LN_BOBYQA and LN_NEWUOA, which use no MMA, return at once after the same
+ * forced stop. HPO's HUGE_VAL stays: it is NLopt's own convention. The
+ * analysis and the repro (cases A, B and F) are in
+ * docs/issues/nlopt_newuoa_bound_stall.md. */
+struct Refusal {
+    const char* lib;
+    const char* algo;
+    const char* reason;
+};
+constexpr Refusal kRefused[] = {
+    {"NLOPT", "LN_NEWUOA_BOUND",
+     "NLopt 2.10 plans each LN_NEWUOA_BOUND step with a nested LD_MMA run "
+     "that has no time limit and sees no stop request, and once a "
+     "non-finite value reaches its model each step takes about 10-60 s "
+     "without evaluating the loss: after every stop HPO makes through the "
+     "objective (a signal, a RESTART stagnation stop, an error that ends "
+     "the run) from a run's (2n+1)-th evaluation on, the last of NEWUOA's "
+     "starting points for n OPTIM dimensions, as the objective then "
+     "returns HUGE_VAL, NLopt's convention for a forced stop, and when the "
+     "loss barely changes over the trust region; Ctrl-C, SIGTERM, MAXTIME "
+     "and RESTART wait that long. Use NLOPT:LN_BOBYQA, Powell's "
+     "bound-constrained successor of NEWUOA (its STEP rescales each "
+     "dimension instead of setting one radius), or NLOPT:LN_NEWUOA where "
+     "the search may leave the OPTIM box"},
+};
+
 void add(Registry& r, OptimizerCaps c)
 {
     CapsKey k{c.lib, c.algo};
@@ -264,6 +322,9 @@ Registry build_registry()
     for (int i = 0; i < NLOPT_NUM_ALGORITHMS; ++i) {
         const char* name = nlopt_algorithm_to_string(static_cast<nlopt_algorithm>(i));
         if (!name || !name[0]) continue;
+        /* A refused algorithm is not registered: no list offers it, and
+         * the lookup throws its refusal (kRefused). */
+        if (backend_refusal("NLOPT", name)) continue;
         OptimizerCaps c;
         c.lib = "NLOPT";  c.algo = name;
         c.supports_maxeval  = true;
@@ -295,6 +356,24 @@ Registry build_registry()
                   "it is interrupted"
                 : "NLopt's global search has no convergence test of its own "
                   "and runs until it is interrupted";
+            /* NLopt's StoGO (algs/stogo) tests NLopt's evaluation count and
+             * clock (nlopt_stop_evalstime), never its forced stop: once HPO
+             * stops a StoGO search, StoGO calls on and the objective refuses
+             * each call (a few microseconds) until NLopt's MAXEVAL ends it.
+             * Without MAXEVAL it never ended (a host exception or a signal,
+             * with STOPVAL as its only stop), or, with MAXTIME, only once the
+             * rest of MAXTIME had passed, at 100% CPU. */
+            if (starts("GD_STOGO")) {
+                c.ignores_forced_stop = true;
+                c.stop_note =
+                    "NLopt's StoGO has no convergence test of its own and "
+                    "ignores NLopt's forced stop, by which HPO ends a search "
+                    "(on a signal, an error, the RESTART stagnation stop, or "
+                    "a loss at or below STOPVAL that NLopt was not given): it "
+                    "then calls on, each call refused, and only NLopt's own "
+                    "evaluation count ends it promptly (MAXTIME only once the "
+                    "rest of its time has passed)";
+            }
         } else if (s == "LD_MMA" || s == "LD_CCSAQ" || s == "LD_SLSQP") {
             c.needs_stop = true;
             c.stop_note  = "without a tolerance it has no convergence test "
@@ -381,7 +460,7 @@ Registry build_registry()
                                "(optimize.c passes lb = ub = NULL), so its evaluations can "
                                "leave the box, and such a point can become the best; the "
                                "first is reported with a WARNING and DIAGNOSTICS counts them "
-                               "all. LN_NEWUOA_BOUND and LN_BOBYQA keep to the box";
+                               "all. LN_BOBYQA keeps to the box";
         }
 
         add(r, c);
@@ -428,6 +507,23 @@ bool step_use_consumes(StepUse u)
     }
 }
 
+const char* backend_refusal(std::string_view lib, std::string_view algo)
+{
+    for (const Refusal& r : kRefused)
+        if (lib == r.lib && algo == r.algo) return r.reason;
+    return nullptr;
+}
+
+void reject_refused_backend(std::string_view lib, std::string_view algo,
+                            const std::string& where)
+{
+    const char* reason = backend_refusal(lib, algo);
+    if (!reason) return;
+    throw std::runtime_error((where.empty() ? "" : where + ": ") +
+                             std::string(lib) + ":" + std::string(algo) +
+                             " is refused: " + reason);
+}
+
 const OptimizerCaps* find_optimizer_caps(std::string_view lib,
                                          std::string_view algo)
 {
@@ -440,10 +536,12 @@ const OptimizerCaps& optimizer_caps(std::string_view lib,
                                     std::string_view algo)
 {
     const OptimizerCaps* caps = find_optimizer_caps(lib, algo);
-    if (!caps)
+    if (!caps) {
+        reject_refused_backend(lib, algo);
         throw std::runtime_error("unknown optimizer " + std::string(lib) +
                                  ":" + std::string(algo) +
                                  " (not registered in optimizer_caps)");
+    }
     return *caps;
 }
 

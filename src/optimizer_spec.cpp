@@ -105,10 +105,14 @@ static void print_stops(std::ostream& os, const std::string& lib,
     if (c->tolerance_note[0])
         os << "     " << c->tolerance_note << ".\n";
     /* require_stop() (backend_rules.h): a tolerance counts above 0, and an
-     * active RESTART's stagnation stop counts too. */
+     * active RESTART's stagnation stop counts too -- but for a backend that
+     * ignores NLopt's forced stop, only MAXEVAL. */
     const bool tolerances = c->supports_ftol_rel || c->supports_ftol_abs ||
                             c->supports_xtol_rel || c->supports_xtol_abs;
-    if (c->needs_stop)
+    if (c->needs_stop && c->ignores_forced_stop)
+        os << "     MAXEVAL is required (MAXTIME, STOPVAL and an active "
+              "RESTART are not enough): " << c->stop_note << ".\n";
+    else if (c->needs_stop)
         os << "     One of them is required"
            << (tolerances ? " (a tolerance above 0)" : "")
            << ", or an active RESTART: " << c->stop_note << ".\n";
@@ -211,6 +215,12 @@ static void print_dlib_caps(std::ostream& os, const std::string& algo)
 
 static void print_nlopt_caps(std::ostream& os,const std::string& algo)
 {
+    /* An algorithm the caps registry refuses (optimizer_caps.h): why, and
+     * what to use instead; it has no stops or STEP to describe. */
+    if (const char* reason = backend_refusal("NLOPT", algo)) {
+        os<<"   * REFUSED: "<<reason<<"\n";
+        return;
+    }
   nlopt_algorithm a = nlopt_algorithm_from_string(algo.c_str());
     if (a==NLOPT_NUM_ALGORITHMS) { os<<"   * (unknown)\n"; return; }
 
