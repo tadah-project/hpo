@@ -46,11 +46,14 @@ using Registry = std::unordered_map<CapsKey, OptimizerCaps, CapsKeyHash>;
  * without an objective call. A non-finite value reaches the model
  *   (1) from any HUGE_VAL objective value: NLopt's C++ wrapper (nlopt.hpp)
  *       and HPO's (nlopt_adapter.h) return HUGE_VAL after force_stop when
- *       the objective throws, NLopt's convention for a forced stop, so
- *       every signal, RESTART stagnation stop and run-ending error after
- *       the first 2n+1 evaluations costs one such subproblem, on any loss
- *       (a failed evaluation scored FAILSCORE is finite and is no such
- *       value);
+ *       the objective throws, NLopt's convention for a forced stop. The
+ *       first 2n+1 evaluations of a run are NEWUOA's starting points: after
+ *       each of the first 2n newuob_ goes straight to the next point and
+ *       L310, so a stop there returns at once; after the (2n+1)-th it
+ *       builds its model and plans its first step. From the (2n+1)-th
+ *       evaluation on, every signal, RESTART stagnation stop and run-ending
+ *       error therefore costs one such subproblem, on any loss (a failed
+ *       evaluation scored FAILSCORE is finite and is no such value);
  *   (2) without an XTOL floor (rhoend = 0) on a flat loss -- a box where
  *       every evaluation fails, scored FAILSCORE, is one -- where the trust
  *       radius shrinks without limit and NEWUOA's ZMAT overflows;
@@ -73,10 +76,11 @@ constexpr Refusal kRefused[] = {
      "non-finite value reaches its model each step takes about 10-60 s "
      "without evaluating the loss: after every stop HPO makes through the "
      "objective (a signal, a RESTART stagnation stop, an error that ends "
-     "the run), whose HUGE_VAL return is NLopt's convention for a forced "
-     "stop, and when the loss barely changes over the trust region; "
-     "Ctrl-C, SIGTERM, MAXTIME and RESTART wait that long. Use "
-     "NLOPT:LN_BOBYQA, Powell's "
+     "the run) from a run's (2n+1)-th evaluation on, the last of NEWUOA's "
+     "starting points for n OPTIM dimensions, as the objective then "
+     "returns HUGE_VAL, NLopt's convention for a forced stop, and when the "
+     "loss barely changes over the trust region; Ctrl-C, SIGTERM, MAXTIME "
+     "and RESTART wait that long. Use NLOPT:LN_BOBYQA, Powell's "
      "bound-constrained successor of NEWUOA (its STEP rescales each "
      "dimension instead of setting one radius), or NLOPT:LN_NEWUOA where "
      "the search may leave the OPTIM box"},

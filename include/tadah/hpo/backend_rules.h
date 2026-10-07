@@ -151,8 +151,12 @@ void validate_backend(const OptimizerSpec& spec, RestartStop restart,
  * message prefixed with the phase:
  * "the PRESTAGE refinement: DLIB:BFGS does not support MAXTIME". A refused
  * backend (reject_refused_backend(), optimizer_caps.h) is reported first,
- * for its own phase: "the INNER block of the STRATEGY-level optimiser:
- * NLOPT:LN_NEWUOA_BOUND is refused: ...".
+ * for its own phase, with the text validate_run_policy() throws for it
+ * (reject_refused_backends(), strategy_rules.h), in every STRATEGY shape --
+ * a MULTISTART from INIT points and a PRESTAGE refinement of TOPK > 1
+ * included, whose phases cannot be derived without the caps of their
+ * backend: "the INNER block of the STRATEGY-level optimiser:
+ * NLOPT:LN_NEWUOA_BOUND is refused: ...", "the EXPLORE block: ...".
  * validate_hpo_setup() calls it after validate_run_policy(). */
 void validate_phase_backends(const OptimizerSpec& root);
 

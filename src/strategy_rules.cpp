@@ -30,6 +30,20 @@ std::string backend_name(const OptimizerSpec& s)
     return s.lib + ":" + s.algo;
 }
 
+/* The phases as validate_run_policy() names them: the EXPLORE block, and
+ * the optimiser of `s` itself -- under PRESTAGE the refinement.
+ * require_driver()'s refusal, validate_run_policy() and
+ * reject_refused_backends() take them from here, so all three name a phase
+ * alike. */
+constexpr const char* kExploreBlock = "the EXPLORE block";
+
+std::string run_phase_name(const OptimizerSpec& s)
+{
+    return s.strategy_type == StrategyType::PRESTAGE
+               ? "the PRESTAGE refinement"
+               : "the STRATEGY-level optimiser";
+}
+
 /* The backends runs_from_each_start() accepts, sorted (format_caps_list),
  * from the live registry rather than a hard-coded list. */
 std::string multi_start_alternatives()
@@ -108,13 +122,10 @@ void require_driver(const OptimizerSpec& s, DriverPhase phase)
 {
     const std::string missing = missing_driver(s);
     if (missing.empty()) {
-        /* The phases as validate_run_policy() names them. */
-        reject_refused_backend(
-            s.lib, s.algo,
-            phase == DriverPhase::Explore ? "the EXPLORE block"
-            : s.strategy_type == StrategyType::PRESTAGE
-                ? "the PRESTAGE refinement"
-                : "the STRATEGY-level optimiser");
+        reject_refused_backend(s.lib, s.algo,
+                               phase == DriverPhase::Explore
+                                   ? std::string(kExploreBlock)
+                                   : run_phase_name(s));
         return;
     }
     if (phase == DriverPhase::Explore)
@@ -272,10 +283,29 @@ void validate_run_policy(const OptimizerSpec& spec)
             require_driver(spec, DriverPhase::Run);
             break;
     }
-    const bool prestage = spec.strategy_type == StrategyType::PRESTAGE;
-    require_inner_backend(spec, prestage ? "the PRESTAGE refinement"
-                                         : "the STRATEGY-level optimiser");
-    if (prestage) require_inner_backend(*spec.prestage, "the EXPLORE block");
+    require_inner_backend(spec, run_phase_name(spec));
+    if (spec.strategy_type == StrategyType::PRESTAGE)
+        require_inner_backend(*spec.prestage, kExploreBlock);
+}
+
+void reject_refused_backends(const OptimizerSpec& spec)
+{
+    /* validate_run_policy()'s order: the exploration, the STRATEGY-level
+     * optimiser, its INNER block, the exploration's INNER block. */
+    const OptimizerSpec* explore =
+        spec.strategy_type == StrategyType::PRESTAGE ? spec.prestage.get()
+                                                     : nullptr;
+    const std::string run = run_phase_name(spec);
+    if (explore)
+        reject_refused_backend(explore->lib, explore->algo, kExploreBlock);
+    reject_refused_backend(spec.lib, spec.algo, run);
+    if (spec.inner)
+        reject_refused_backend(spec.inner->lib, spec.inner->algo,
+                               "the INNER block of " + run);
+    if (explore && explore->inner)
+        reject_refused_backend(explore->inner->lib, explore->inner->algo,
+                               std::string("the INNER block of ") +
+                                   kExploreBlock);
 }
 
 bool is_strategy_type_key(const std::string& key)

@@ -1188,6 +1188,77 @@ TEST_CASE("startup validation: validate_phase_backends refuses a backend for "
     }
 }
 
+TEST_CASE("strategy rules: reject_refused_backends refuses the first refused "
+          "block in validate_run_policy's order and looks up no caps",
+          "[startup_validation][strategy][backend][refused]")
+{
+    /* Pins: reject_refused_backends() throws the refusal of the first
+     * refused backend in validate_run_policy()'s order -- the EXPLORE block
+     * (under PRESTAGE), the STRATEGY-level optimiser, its INNER block, the
+     * EXPLORE block's INNER block -- named as validate_run_policy() names
+     * it; it accepts a spec whose backends are not refused, also an unknown
+     * or unset LIB:ALGO (it looks up no caps, so validate_phase_backends()
+     * runs it before strategy_phase_specs()), and an EXPLORE block left on
+     * a spec whose TYPE is not PRESTAGE (no phase runs it).
+     * Added with the fix, which introduces it. */
+    const std::string refused = "NLOPT:LN_NEWUOA_BOUND is refused: ";
+    const auto nlopt = [](const std::string& algo) {
+        OptimizerSpec s;
+        s.lib = "NLOPT";
+        s.algo = algo;
+        return s;
+    };
+    const auto with_inner = [&](OptimizerSpec s, const std::string& algo) {
+        s.inner = std::make_unique<OptimizerSpec>(nlopt(algo));
+        return s;
+    };
+    const auto with_explore = [](OptimizerSpec s, StrategyType type,
+                                 OptimizerSpec explore) {
+        s.strategy_type = type;
+        s.prestage = std::make_unique<OptimizerSpec>(std::move(explore));
+        return s;
+    };
+    const auto error = [](const OptimizerSpec& s) {
+        return error_of([&] { tadah::hpo::reject_refused_backends(s); });
+    };
+    const std::string bad = "LN_NEWUOA_BOUND";
+    const std::string top = "the STRATEGY-level optimiser: ";
+    const std::string refinement = "the PRESTAGE refinement: ";
+
+    CHECK_THAT(error(nlopt(bad)), Catch::StartsWith(top + refused));
+    OptimizerSpec ms = nlopt(bad);
+    ms.strategy_type = StrategyType::MULTISTART;
+    CHECK_THAT(error(ms), Catch::StartsWith(top + refused));
+    CHECK_THAT(error(with_explore(nlopt(bad), StrategyType::PRESTAGE,
+                                  nlopt("GN_DIRECT"))),
+               Catch::StartsWith(refinement + refused));
+    CHECK_THAT(error(with_explore(with_inner(nlopt(bad), bad),
+                                  StrategyType::PRESTAGE, nlopt(bad))),
+               Catch::StartsWith("the EXPLORE block: " + refused));
+    CHECK_THAT(error(with_inner(nlopt(bad), bad)),
+               Catch::StartsWith(top + refused));
+    CHECK_THAT(error(with_inner(nlopt("LN_AUGLAG"), bad)),
+               Catch::StartsWith("the INNER block of " + top + refused));
+    CHECK_THAT(error(with_explore(with_inner(nlopt("LN_AUGLAG"), bad),
+                                  StrategyType::PRESTAGE,
+                                  with_inner(nlopt("G_MLSL_LDS"), bad))),
+               Catch::StartsWith("the INNER block of " + refinement +
+                                 refused));
+    CHECK_THAT(error(with_explore(nlopt("LN_BOBYQA"), StrategyType::PRESTAGE,
+                                  with_inner(nlopt("G_MLSL_LDS"), bad))),
+               Catch::StartsWith("the INNER block of the EXPLORE block: " +
+                                 refused));
+
+    CHECK(error(with_explore(with_inner(nlopt("LN_AUGLAG"), "LN_BOBYQA"),
+                             StrategyType::PRESTAGE,
+                             with_inner(nlopt("G_MLSL_LDS"), "LN_COBYLA"))) ==
+          "");
+    CHECK(error(with_inner(nlopt("NOT_AN_ALGO"), "NOT_AN_ALGO")) == "");
+    CHECK(error(OptimizerSpec{}) == "");
+    CHECK(error(with_explore(nlopt("LN_BOBYQA"), StrategyType::PLAIN,
+                             nlopt(bad))) == "");
+}
+
 TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused by hpo_run "
           "before it loads any data",
           "[startup_validation][strategy][e2e][refused]")

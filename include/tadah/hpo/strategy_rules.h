@@ -102,6 +102,18 @@ void require_prestage_refinement(const OptimizerSpec& spec);
  * optimiser and, under PRESTAGE, of the EXPLORE block. */
 void validate_run_policy(const OptimizerSpec& spec);
 
+/* The refusals of validate_run_policy() alone, with its text: throws
+ * reject_refused_backend()'s error (optimizer_caps.h) for the first refused
+ * backend of the EXPLORE block (under PRESTAGE), the STRATEGY-level
+ * optimiser, its INNER block and the EXPLORE block's INNER block, named as
+ * validate_run_policy() names them ("the EXPLORE block", "the PRESTAGE
+ * refinement", "the INNER block of the STRATEGY-level optimiser", ...). It
+ * looks up no caps, so validate_phase_backends() (backend_rules.h) runs it
+ * before strategy_phase_specs() (phase_specs.h), which needs the caps of
+ * the STRATEGY-level backend to plan a MULTISTART from INIT points or a
+ * PRESTAGE refinement of TOPK > 1. */
+void reject_refused_backends(const OptimizerSpec& spec);
+
 /* STRATEGY keys that belong to one TYPE: N_STARTS, PARALLEL and
  * BUDGET_PER_START to MULTISTART, TOPK to PRESTAGE. Under another TYPE
  * such a key has no effect, so require_strategy_key() throws, naming the
