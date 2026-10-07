@@ -171,4 +171,58 @@ TEST_CASE_METHOD(PTFixture,
   }
 }
 
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: the optimiser line gives the keys "
+                 "each stage's ALGO reads",
+                 "[compact][refit]") {
+  /* Pins: refit_opt.log's optimiser: line gives, for each stage, the
+   * settings of the algorithm that runs it and only those: the MLSL seed
+   * its budget and its local LN_SBPLX searches' (the INNER block's
+   * MAXEVAL, FTOL_REL, XTOL_REL), an NLopt INNER search maxeval ftol_rel
+   * xtol_rel, dlib's LBFGS (INNER, REFINE) maxeval ftol_abs, NLopt's
+   * LD_LBFGS REFINE maxeval ftol_rel, Ceres maxiter ftol_rel gtol, and
+   * ALGO NONE nothing.
+   * Before the fix: every stage printed every setting of its block
+   * (REFINE's gtol with LD_LBFGS, which never reads it, the MLSL seed
+   * without its local searches), and FUSE ALGO NONE its unused ones; the
+   * second run is refused (FTOL_ABS is not accepted). */
+  SECTION("MLSL, an NLopt INNER search, LD_LBFGS and DOGLEG") {
+    ScopedTempDir tmp;
+    write_synth_eam("synth.eam.alloy");
+    const auto [what, logged] = run_compact(compact_context(
+        "SIGNED", "OPTIMIZER LIB NLOPT ALGO LD_LBFGS MAXEVAL 50 ENDOPTIMIZER"));
+    INFO(logged);
+    REQUIRE(what.empty());
+    const auto line = log_lines("optimiser: ");
+    REQUIRE(line.size() == 1u);
+    CHECK(line[0] ==
+          "optimiser: EXPLORE.seed{algo=MLSL maxeval=4000 local=LN_SBPLX{"
+          "maxeval=1000 ftol_rel=1e-13 xtol_rel=1e-11}}  EXPLORE.inner{"
+          "algo=SBPLX maxeval=1000 ftol_rel=1e-13 xtol_rel=1e-11}  REFINE{"
+          "algo=NLOPT_LBFGS maxeval=50 ftol_rel=1e-15}  FUSE{"
+          "algo=CERES_DOGLEG maxiter=200 ftol_rel=1e-15 gtol=1e-14}");
+  }
+  SECTION("CRS2, dlib's LBFGS in INNER and REFINE, FUSE NONE") {
+    ScopedTempDir tmp;
+    write_synth_eam("synth.eam.alloy");
+    Context c = compact_context(
+        "SIGNED",
+        "OPTIMIZER LIB DLIB ALGO LBFGS MAXEVAL 50 FTOL_ABS 1e-9 ENDOPTIMIZER",
+        "OPTIMIZER ALGO NONE ENDOPTIMIZER");
+    c.remove("EXPLORE");
+    add_block(c, "EXPLORE",
+              "OPTIMIZER LIB NLOPT ALGO GN_CRS2_LM MAXEVAL 400 INNER LIB DLIB "
+              "ALGO LBFGS MAXEVAL 100 FTOL_ABS 1e-10 ENDINNER ENDOPTIMIZER");
+    const auto [what, logged] = run_compact(c);
+    INFO(logged);
+    REQUIRE(what.empty());
+    const auto line = log_lines("optimiser: ");
+    REQUIRE(line.size() == 1u);
+    CHECK(line[0] ==
+          "optimiser: EXPLORE.seed{algo=CRS2 maxeval=400}  EXPLORE.inner{"
+          "algo=DLIB_LBFGS maxeval=100 ftol_abs=1e-10}  REFINE{"
+          "algo=DLIB_LBFGS maxeval=50 ftol_abs=1e-09}  FUSE{algo=NONE}");
+  }
+}
+
 #endif  // TADAH_USE_CERES

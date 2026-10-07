@@ -189,7 +189,7 @@ TEST_CASE("compact fitter: each stage's MAXEVAL sets the budget of the "
       parsed({{"EXPLORE", "OPTIMIZER LIB DLIB ALGO GLOBAL MAXEVAL 40 INNER "
                           "LIB DLIB ALGO LBFGS MAXEVAL 9 ENDINNER "
                           "ENDOPTIMIZER"},
-              {"REFINE", "OPTIMIZER LIB DLIB ALGO LBFGS MAXITER 7 "
+              {"REFINE", "OPTIMIZER LIB DLIB ALGO LBFGS MAXEVAL 7 "
                          "ENDOPTIMIZER"},
               {"FUSE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 11 "
                        "ENDOPTIMIZER"}}),
@@ -219,15 +219,82 @@ TEST_CASE("compact fitter: each stage's MAXEVAL sets the budget of the "
   CHECK(dflt.lbfgs_refine_maxeval == 50000);
   CHECK(dflt.ceres_max_iter == 1000);
 
-  /* ENABLED false switches a stage off whatever its optimiser. */
+  /* ENABLED false switches a stage off. With an OPTIMIZER block it is an
+   * error, and so is MAXITER with an L-BFGS REFINE: this test gave REFINE
+   * ENABLED false with an LM block here and MAXITER 7 above (now MAXEVAL
+   * 7). Before the fix: passes as well (a pin of what stays). */
   CompactConfig off;
   apply_stage_optimizers(
-      parsed({{"REFINE", "ENABLED false OPTIMIZER LIB CERES ALGO LM "
-                         "ENDOPTIMIZER"},
-              {"FUSE", "ENABLED false"}}),
-      off);
+      parsed({{"REFINE", "ENABLED false"}, {"FUSE", "ENABLED false"}}), off);
   CHECK(off.refine_algo == "NONE");
   CHECK(off.joint_algo == "NONE");
+}
+
+namespace {
+/* The stage blocks `blocks`, parsed as tadah refit parses them. */
+RefitConfig parse_blocks(
+    const std::vector<std::pair<std::string, std::string>> &blocks) {
+  tadah::core::Context c;
+  for (const auto &[key, body] : blocks) {
+    std::istringstream iss(body);
+    for (std::string t; iss >> t;) c.add(key, t);
+  }
+  return RefitParser::parse(c);
+}
+}  // namespace
+
+TEST_CASE("compact fitter: dlib's L-BFGS stops on FTOL_ABS, and FTOL_REL "
+          "sets only NLopt's searches", "[refit][compact][budget]")
+{
+  /* Pins: dlib's L-BFGS (EXPLORE INNER LBFGS, REFINE LBFGS) stops when an
+   * iteration changes the objective by less than FTOL_ABS (an absolute
+   * change, dlib's objective_delta_stop_strategy): FTOL_ABS 1e10 ends it
+   * at its first test (FTOL_REACHED), not at MAXEVAL. Under GN_MLSL_LDS an
+   * INNER LBFGS block's FTOL_REL sets MLSL's local LN_SBPLX only: with
+   * FTOL_REL 1e10 the rung's LBFGS search still runs to its MAXEVAL 9.
+   * Before the fix: FTOL_ABS was refused in every refit block (the parse
+   * throws), and dlib's L-BFGS stopped on FTOL_REL taken as its absolute
+   * change, so FTOL_REL 1e10 ended the INNER search at its first test
+   * (explore=DLIB_LBFGS:FTOL_REACHED). */
+  SECTION("EXPLORE INNER LBFGS FTOL_ABS") {
+    CompactConfig cfg;
+    cfg.n_max = cfg.n_min + 1;
+    apply_stage_optimizers(
+        parse_blocks({{"EXPLORE", "OPTIMIZER ALGO UNIFORM INNER LIB DLIB ALGO "
+                                  "LBFGS MAXEVAL 200 FTOL_ABS 1e10 ENDINNER "
+                                  "ENDOPTIMIZER"},
+                      {"REFINE", "OPTIMIZER ALGO NONE ENDOPTIMIZER"}}),
+        cfg);
+    const LadderRun r = run_ladder(cfg);
+    CHECK(logged(r, "explore=DLIB_LBFGS:FTOL_REACHED("));
+    CHECK_FALSE(logged(r, "explore=DLIB_LBFGS:MAXEVAL_REACHED("));
+  }
+  SECTION("REFINE LBFGS FTOL_ABS") {
+    CompactConfig cfg;
+    cfg.n_max = cfg.n_min + 1;
+    apply_stage_optimizers(
+        parse_blocks({{"EXPLORE", "OPTIMIZER ALGO UNIFORM INNER ALGO NONE "
+                                  "ENDINNER ENDOPTIMIZER"},
+                      {"REFINE", "OPTIMIZER LIB DLIB ALGO LBFGS MAXEVAL 200 "
+                                 "FTOL_ABS 1e10 ENDOPTIMIZER"}}),
+        cfg);
+    const LadderRun r = run_ladder(cfg);
+    CHECK(logged(r, "refine=DLIB_LBFGS:FTOL_REACHED("));
+    CHECK_FALSE(logged(r, "refine=DLIB_LBFGS:MAXEVAL_REACHED("));
+  }
+  SECTION("an INNER LBFGS block's FTOL_REL under GN_MLSL_LDS") {
+    CompactConfig cfg;
+    cfg.n_max = cfg.n_min + 1;
+    apply_stage_optimizers(
+        parse_blocks({{"EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                  "MAXEVAL 40 INNER LIB DLIB ALGO LBFGS "
+                                  "MAXEVAL 9 FTOL_REL 1e10 ENDINNER "
+                                  "ENDOPTIMIZER"},
+                      {"REFINE", "OPTIMIZER ALGO NONE ENDOPTIMIZER"}}),
+        cfg);
+    const LadderRun r = run_ladder(cfg);
+    CHECK(logged(r, "explore=DLIB_LBFGS:MAXEVAL_REACHED(9ev)"));
+  }
 }
 
 TEST_CASE("compact fitter: a Ceres solve with options Ceres refuses throws",

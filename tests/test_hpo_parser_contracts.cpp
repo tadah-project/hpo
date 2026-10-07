@@ -52,6 +52,7 @@
 #include <dlib/matrix.h>
 
 #include <algorithm>
+#include <tuple>
 #include <array>
 #include <cctype>
 #include <chrono>
@@ -2371,9 +2372,11 @@ namespace {
 
 /* The keys each `tadah refit` stage reads, as its messages list them. */
 const std::string kExploreReads = "LIB, ALGO, MAXEVAL, INNER";
+/* FTOL_ABS: dlib's LBFGS stops on it (an INNER block's and REFINE's). */
 const std::string kExploreInnerReads =
-    "LIB, ALGO, MAXEVAL, FTOL_REL, XTOL_REL";
-const std::string kRefineReads = "LIB, ALGO, MAXEVAL/MAXITER, FTOL_REL, GTOL";
+    "LIB, ALGO, MAXEVAL, FTOL_REL, FTOL_ABS, XTOL_REL";
+const std::string kRefineReads =
+    "LIB, ALGO, MAXEVAL/MAXITER, FTOL_REL, FTOL_ABS, GTOL";
 const std::string kFuseReads =
     "LIB, ALGO, MAXEVAL/MAXITER, FTOL_REL, GTOL";
 
@@ -2412,7 +2415,7 @@ TEST_CASE("tadah refit: a stage OPTIMIZER block rejects the keys the stage "
          "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS MAXEVAL 100 INNER LIB NLOPT "
          "ALGO LN_SBPLX ",
          " ENDINNER ENDOPTIMIZER", "EXPLORE INNER", kExploreInnerReads,
-         with({"FTOL_ABS 1e-6", "GTOL 1e-8", "MAXITER 50"})},
+         with({"GTOL 1e-8", "MAXITER 50"})},
         {"REFINE", "OPTIMIZER LIB CERES ALGO LM ", " ENDOPTIMIZER", "REFINE",
          kRefineReads,
          with({"XTOL_REL 1e-6", "INNER LIB NLOPT ALGO LN_SBPLX ENDINNER"})},
@@ -2941,4 +2944,216 @@ TEST_CASE("tadah refit: a key that has no effect with ALGO NONE or UNIFORM "
                              "curve") == skipped);
     CHECK(refit_stages_error({refine_none, {"FUSE", "ENABLED false"}},
                              "curve") == skipped);
+}
+
+TEST_CASE("tadah refit: a key the block's ALGO does not read is rejected",
+          "[HPO][refit]")
+{
+    /* Pins: a stage block's stop criterion that its ALGO does not read is
+     * an error naming the key as written, the ALGO and the keys it reads:
+     * GTOL (Ceres' gradient tolerance) with REFINE LD_LBFGS or LBFGS,
+     * XTOL_REL with an EXPLORE INNER dlib LBFGS, FTOL_ABS with an NLopt
+     * search; MAXITER (Ceres iterations) with an L-BFGS REFINE names
+     * MAXEVAL; FTOL_REL with dlib's LBFGS names FTOL_ABS, the absolute
+     * change of the objective dlib tests, which that ALGO reads; FTOL_ABS
+     * with a Ceres ALGO keeps its pointer to FTOL_REL. The one exemption:
+     * under the EXPLORE optimiser GN_MLSL_LDS the INNER block's MAXEVAL,
+     * FTOL_REL and XTOL_REL also set MLSL's local LN_SBPLX searches, so
+     * they are accepted whatever the INNER ALGO.
+     * Before the fix: the keys were checked per stage, not per ALGO, so
+     * GTOL with LD_LBFGS/LBFGS, XTOL_REL with an INNER LBFGS, MAXITER with
+     * LD_LBFGS/LBFGS (read as MAXEVAL) and FTOL_REL with LBFGS (dlib's
+     * absolute stop) were accepted (""), FTOL_ABS was refused everywhere
+     * ("... is not supported — Ceres' ..." in REFINE, "... is not used by
+     * a tadah refit stage ..." in an INNER block), with an NLopt REFINE
+     * too. */
+    const std::string crs2 =
+        "OPTIMIZER LIB NLOPT ALGO GN_CRS2_LM MAXEVAL 100 INNER ";
+    const std::string mlsl =
+        "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS MAXEVAL 100 INNER ";
+    struct Case { std::string key, body, message; };
+    for (const auto& c : std::vector<Case>{
+             {"REFINE", "OPTIMIZER LIB NLOPT ALGO LD_LBFGS GTOL 1e-3 "
+                        "ENDOPTIMIZER",
+              "REFINE: GTOL has no effect with ALGO LD_LBFGS (it reads "
+              "MAXEVAL, FTOL_REL); remove GTOL"},
+             {"REFINE", "OPTIMIZER LIB DLIB ALGO LBFGS GTOL 1e-3 "
+                        "ENDOPTIMIZER",
+              "REFINE: GTOL has no effect with ALGO LBFGS (it reads MAXEVAL, "
+              "FTOL_ABS); remove GTOL"},
+             {"EXPLORE", crs2 + "LIB DLIB ALGO LBFGS MAXEVAL 40 XTOL_REL "
+                                "1e-3 ENDINNER ENDOPTIMIZER",
+              "EXPLORE INNER: XTOL_REL has no effect with ALGO LBFGS (it "
+              "reads MAXEVAL, FTOL_ABS); remove XTOL_REL"},
+             {"REFINE", "OPTIMIZER LIB NLOPT ALGO LD_LBFGS MAXITER 20 "
+                        "ENDOPTIMIZER",
+              "REFINE: MAXITER counts Ceres iterations; ALGO LD_LBFGS "
+              "counts objective evaluations: write MAXEVAL"},
+             {"REFINE", "OPTIMIZER LIB DLIB ALGO lbfgs MAXITER 20 "
+                        "ENDOPTIMIZER",
+              "REFINE: MAXITER counts Ceres iterations; ALGO LBFGS counts "
+              "objective evaluations: write MAXEVAL"},
+             {"REFINE", "OPTIMIZER LIB DLIB ALGO LBFGS FTOL_REL 1e-9 "
+                        "ENDOPTIMIZER",
+              "REFINE: FTOL_REL has no effect with ALGO LBFGS: dlib's L-BFGS "
+              "stops on an absolute change of the objective; write "
+              "FTOL_ABS"},
+             {"EXPLORE", crs2 + "LIB DLIB ALGO LBFGS FTOL_REL 1e-9 ENDINNER "
+                                "ENDOPTIMIZER",
+              "EXPLORE INNER: FTOL_REL has no effect with ALGO LBFGS: dlib's "
+              "L-BFGS stops on an absolute change of the objective; write "
+              "FTOL_ABS"},
+             {"REFINE", "OPTIMIZER LIB NLOPT ALGO LD_LBFGS FTOL_ABS 1e-9 "
+                        "ENDOPTIMIZER",
+              "REFINE: FTOL_ABS has no effect with ALGO LD_LBFGS (it reads "
+              "MAXEVAL, FTOL_REL); remove FTOL_ABS"},
+             {"EXPLORE", crs2 + "LIB NLOPT ALGO LN_SBPLX FTOL_ABS 1e-9 "
+                                "ENDINNER ENDOPTIMIZER",
+              "EXPLORE INNER: FTOL_ABS has no effect with ALGO LN_SBPLX (it "
+              "reads MAXEVAL, FTOL_REL, XTOL_REL); remove FTOL_ABS"},
+             {"EXPLORE", mlsl + "LIB DLIB ALGO LBFGS GTOL 1e-9 ENDINNER "
+                                "ENDOPTIMIZER",
+              "EXPLORE INNER: GTOL is not used by a tadah refit stage (it "
+              "reads LIB, ALGO, MAXEVAL, FTOL_REL, FTOL_ABS, XTOL_REL)"},
+             /* A Ceres ALGO keeps the pointer to FTOL_REL. */
+             {"REFINE", "OPTIMIZER LIB CERES ALGO LM FTOL_ABS 1e-12 "
+                        "ENDOPTIMIZER",
+              "REFINE: FTOL_ABS is not supported — Ceres' function_tolerance "
+              "is RELATIVE and has no absolute form. Use FTOL_REL."}}) {
+        INFO(c.key << ": " << c.body);
+        CHECK(refit_error(c.key, c.body) == c.message);
+    }
+    /* What the ALGO reads is accepted; under GN_MLSL_LDS the INNER block
+     * also takes the keys of MLSL's local LN_SBPLX, whatever its ALGO. */
+    for (const auto& [key, body] : std::vector<std::pair<std::string,
+                                                         std::string>>{
+             {"REFINE", "OPTIMIZER LIB DLIB ALGO LBFGS MAXEVAL 20 FTOL_ABS "
+                        "1e-9 ENDOPTIMIZER"},
+             {"REFINE", "OPTIMIZER LIB NLOPT ALGO LD_LBFGS MAXEVAL 20 "
+                        "FTOL_REL 1e-9 ENDOPTIMIZER"},
+             {"EXPLORE", crs2 + "LIB DLIB ALGO LBFGS MAXEVAL 40 FTOL_ABS 1e-9 "
+                                "ENDINNER ENDOPTIMIZER"},
+             {"EXPLORE", mlsl + "LIB DLIB ALGO LBFGS MAXEVAL 40 XTOL_REL 1e-3 "
+                                "ENDINNER ENDOPTIMIZER"},
+             {"EXPLORE", mlsl + "LIB DLIB ALGO LBFGS MAXEVAL 40 FTOL_REL 1e-7 "
+                                "XTOL_REL 1e-3 FTOL_ABS 1e-9 ENDINNER "
+                                "ENDOPTIMIZER"}}) {
+        INFO(key << ": " << body);
+        CHECK(refit_error(key, body) == "");
+    }
+
+    SECTION("every stage, ALGO and stop criterion: accepted iff the ALGO "
+            "reads it") {
+        /* The read set of each (stage, ALGO), beyond LIB and ALGO. */
+        const std::vector<std::string> ceres = {"MAXEVAL", "MAXITER",
+                                                "FTOL_REL", "GTOL"};
+        const std::vector<std::string> nlopt_local = {"MAXEVAL", "FTOL_REL",
+                                                      "XTOL_REL"};
+        const std::vector<std::string> dlib_lbfgs = {"MAXEVAL", "FTOL_ABS"};
+        const std::vector<std::string> none = {};
+        struct Cell {
+            std::string key;        // the stage block
+            std::string head, tail; // around the key under test
+            std::vector<std::string> reads;
+        };
+        const auto lib_algo = [](const std::string& lib,
+                                 const std::string& algo) {
+            return (lib.empty() ? std::string() : "LIB " + lib + " ") +
+                   "ALGO " + algo + " ";
+        };
+        std::vector<Cell> cells;
+        for (const auto& [lib, algo] :
+             std::vector<std::pair<std::string, std::string>>{
+                 {"NLOPT", "GN_MLSL_LDS"}, {"NLOPT", "GN_DIRECT_L"},
+                 {"NLOPT", "GN_CRS2_LM"}, {"DLIB", "GLOBAL"}})
+            cells.push_back({"EXPLORE", "OPTIMIZER " + lib_algo(lib, algo),
+                             " ENDOPTIMIZER", {"MAXEVAL"}});
+        cells.push_back({"EXPLORE", "OPTIMIZER ALGO UNIFORM ", " ENDOPTIMIZER",
+                         none});
+        const std::vector<std::tuple<std::string, std::string,
+                                     std::vector<std::string>>>
+            inner = {{"NLOPT", "LN_SBPLX", nlopt_local},
+                     {"NLOPT", "LN_NELDERMEAD", nlopt_local},
+                     {"NLOPT", "LN_BOBYQA", nlopt_local},
+                     {"NLOPT", "LN_PRAXIS", nlopt_local},
+                     {"NLOPT", "LD_LBFGS", nlopt_local},
+                     {"DLIB", "LBFGS", dlib_lbfgs},
+                     {"", "NONE", none}};
+        for (const auto& [lib, algo, reads] : inner) {
+            cells.push_back({"EXPLORE", crs2 + lib_algo(lib, algo),
+                             " ENDINNER ENDOPTIMIZER", reads});
+            std::vector<std::string> joined = reads;
+            for (const auto& k : nlopt_local)
+                if (std::find(joined.begin(), joined.end(), k) == joined.end())
+                    joined.push_back(k);
+            cells.push_back({"EXPLORE", mlsl + lib_algo(lib, algo),
+                             " ENDINNER ENDOPTIMIZER", joined});
+        }
+        for (const auto& [lib, algo, reads] :
+             std::vector<std::tuple<std::string, std::string,
+                                    std::vector<std::string>>>{
+                 {"CERES", "LM", ceres},
+                 {"CERES", "DOGLEG", ceres},
+                 {"NLOPT", "LD_LBFGS", {"MAXEVAL", "FTOL_REL"}},
+                 {"DLIB", "LBFGS", dlib_lbfgs},
+                 {"", "NONE", none}})
+            cells.push_back({"REFINE", "OPTIMIZER " + lib_algo(lib, algo),
+                             " ENDOPTIMIZER", reads});
+        for (const auto& [lib, algo, reads] :
+             std::vector<std::tuple<std::string, std::string,
+                                    std::vector<std::string>>>{
+                 {"CERES", "LM", ceres},
+                 {"CERES", "DOGLEG", ceres},
+                 {"", "NONE", none}})
+            cells.push_back({"FUSE", "OPTIMIZER " + lib_algo(lib, algo),
+                             " ENDOPTIMIZER", reads});
+        for (const auto& cell : cells) {
+            for (const std::string kv :
+                 {"MAXEVAL 10", "MAXITER 10", "FTOL_REL 1e-9", "FTOL_ABS 1e-9",
+                  "XTOL_REL 1e-9", "GTOL 1e-9"}) {
+                const std::string k = kv.substr(0, kv.find(' '));
+                const bool reads = std::find(cell.reads.begin(),
+                                             cell.reads.end(),
+                                             k) != cell.reads.end();
+                const std::string body = cell.head + kv + cell.tail;
+                INFO(cell.key << ": " << body << (reads ? " (read)" : ""));
+                const std::string err = refit_error(cell.key, body);
+                if (reads)
+                    CHECK(err == "");
+                else
+                    CHECK(err != "");
+            }
+        }
+    }
+}
+
+TEST_CASE("tadah refit: ENABLED false with an OPTIMIZER block is rejected",
+          "[HPO][refit]")
+{
+    /* Pins: REFINE or FUSE with ENABLED false and an OPTIMIZER block, in
+     * either order and whatever its ALGO (NONE included), is an error
+     * naming the stage and the two ways to write it; a bare ENABLED false
+     * and ENABLED true with an OPTIMIZER block are accepted.
+     * Before the fix: the block was accepted and ignored (the stage was
+     * skipped with only a WARNING that the configured optimiser is
+     * ignored), so every rejecting case returns "". */
+    const std::string tail =
+        " skips the stage, so its OPTIMIZER block has no effect; remove the "
+        "OPTIMIZER block, or write ALGO NONE in it instead of ENABLED false";
+    for (const std::string stage : {"REFINE", "FUSE"}) {
+        for (const std::string body :
+             {"ENABLED false OPTIMIZER LIB CERES ALGO LM ENDOPTIMIZER",
+              "OPTIMIZER LIB CERES ALGO DOGLEG MAXEVAL 7 ENDOPTIMIZER "
+              "ENABLED false",
+              "ENABLED off OPTIMIZER ALGO NONE ENDOPTIMIZER"}) {
+            INFO(stage << ": " << body);
+            CHECK(refit_stages_error({{stage, body}}) ==
+                  stage + ": ENABLED false" + tail);
+            CHECK(refit_stages_error({{stage, body}}, "curve") ==
+                  stage + ": ENABLED false" + tail);
+        }
+        CHECK(refit_stages_error({{stage, "ENABLED false"}}) == "");
+        CHECK(refit_stages_error({{stage, "ENABLED true OPTIMIZER LIB CERES "
+                                          "ALGO LM ENDOPTIMIZER"}}) == "");
+    }
 }
