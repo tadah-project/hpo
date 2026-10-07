@@ -982,6 +982,114 @@ TEST_CASE("CERES NLCG validator rejects bad nlcg_type",
                       Catch::Contains("nlcg_type"));
 }
 
+/* Ceres refuses a negative function_tolerance (FTOL_REL) or
+ * parameter_tolerance (XTOL_REL), max_num_iterations (PARAM max_iter)
+ * below 0 and max_num_line_search_step_size_iterations (PARAM max_ls_iter)
+ * below 1 before it evaluates anything, and the integer PARAMs (max_iter,
+ * max_ls_iter, max_lbfgs_rank, nlcg_type) are Ceres ints.
+ * Pins: each validator refuses FTOL_REL -1 and XTOL_REL -0.001 ("requires
+ * FTOL_REL >= 0", "requires XTOL_REL >= 0"), PARAM max_iter -1, 1.5 and
+ * 3e9 ("requires PARAM max_iter to be an integer from 0 to 2147483647"),
+ * PARAM max_ls_iter 0 and 2.5 ("... from 1 to 2147483647"), naming the
+ * value; CERES:LBFGS refuses max_lbfgs_rank 2.5 and 3e9, CERES:NLCG
+ * nlcg_type 1.5; the edges are accepted: FTOL_REL 0, XTOL_REL 0, max_iter 0
+ * and 2147483647, max_ls_iter 1, max_lbfgs_rank 1, nlcg_type 2.
+ * Before the fix: all accepted -- Ceres then refused the negative values
+ * at run time ("Invalid configuration", which ended the search as a
+ * FAILURE), and a fraction was cut to an int (2.5 ran as 2) or a value past
+ * an int converted to an undefined one. */
+TEST_CASE("CERES validators refuse the tolerances and integer PARAMs Ceres "
+          "cannot take", "[HPO][optim][ceres][validate]")
+{
+    const auto validate = [](const tadah::hpo::OptimizerSpec& sp) {
+        if (sp.algo == "LBFGS")
+            tadah::hpo::detail::validate_ceres_lbfgs_spec(sp);
+        else if (sp.algo == "WOLFE")
+            tadah::hpo::detail::validate_ceres_wolfe_spec(sp);
+        else if (sp.algo == "NLCG")
+            tadah::hpo::detail::validate_ceres_nlcg_spec(sp);
+        else
+            tadah::hpo::detail::validate_ceres_steepest_spec(sp);
+    };
+    for (const std::string algo :
+         {"LBFGS", "WOLFE", "NLCG", "STEEPEST_DESCENT"}) {
+        INFO("CERES:" << algo);
+        const std::string who = "CERES:" + algo + " requires ";
+        {
+            auto sp = make_minimal_ceres_spec(algo);
+            sp.stop.ftol_rel = -1.0;
+            CHECK_THROWS_WITH(validate(sp),
+                              Catch::StartsWith(who + "FTOL_REL >= 0") &&
+                              Catch::EndsWith(", got -1"));
+        }
+        {
+            auto sp = make_minimal_ceres_spec(algo);
+            sp.stop.xtol_rel = -1e-3;
+            CHECK_THROWS_WITH(validate(sp),
+                              Catch::StartsWith(who + "XTOL_REL >= 0") &&
+                              Catch::EndsWith(", got -0.001"));
+        }
+        for (const auto& bad : {std::make_pair(-1.0, "-1"),
+                                std::make_pair(1.5, "1.5"),
+                                std::make_pair(3e9, "3e+09")}) {
+            auto sp = make_minimal_ceres_spec(algo);
+            sp.param["max_iter"] = bad.first;
+            CHECK_THROWS_WITH(validate(sp),
+                              Catch::StartsWith(
+                                  who + "PARAM max_iter to be an integer "
+                                        "from 0 to 2147483647") &&
+                              Catch::EndsWith(std::string(", got ") +
+                                              bad.second));
+        }
+        for (const auto& bad : {std::make_pair(0.0, "0"),
+                                std::make_pair(2.5, "2.5")}) {
+            auto sp = make_minimal_ceres_spec(algo);
+            sp.param["max_ls_iter"] = bad.first;
+            CHECK_THROWS_WITH(validate(sp),
+                              Catch::StartsWith(
+                                  who + "PARAM max_ls_iter to be an integer "
+                                        "from 1 to 2147483647") &&
+                              Catch::EndsWith(std::string(", got ") +
+                                              bad.second));
+        }
+        auto edges = make_minimal_ceres_spec(algo);
+        edges.stop.ftol_rel = 0.0;
+        edges.stop.xtol_rel = 0.0;
+        edges.param["max_iter"] = 0.0;
+        edges.param["max_ls_iter"] = 1.0;
+        CHECK_NOTHROW(validate(edges));
+        edges.param["max_iter"] = 2147483647.0;
+        CHECK_NOTHROW(validate(edges));
+    }
+    for (const auto& bad : {std::make_pair(2.5, "2.5"),
+                            std::make_pair(3e9, "3e+09")}) {
+        auto sp = make_minimal_ceres_spec("LBFGS");
+        sp.param["max_lbfgs_rank"] = bad.first;
+        CHECK_THROWS_WITH(
+            tadah::hpo::detail::validate_ceres_lbfgs_spec(sp),
+            Catch::StartsWith("CERES:LBFGS requires PARAM max_lbfgs_rank to "
+                              "be an integer from 1 to 2147483647") &&
+            Catch::EndsWith(std::string(", got ") + bad.second));
+    }
+    {
+        auto sp = make_minimal_ceres_spec("LBFGS");
+        sp.param["max_lbfgs_rank"] = 1.0;
+        CHECK_NOTHROW(tadah::hpo::detail::validate_ceres_lbfgs_spec(sp));
+    }
+    {
+        auto sp = make_minimal_ceres_spec("NLCG");
+        sp.param["nlcg_type"] = 1.5;
+        CHECK_THROWS_WITH(tadah::hpo::detail::validate_ceres_nlcg_spec(sp),
+                          Catch::StartsWith("CERES:NLCG PARAM nlcg_type must "
+                                            "be 0 (FLETCHER_REEVES), 1 "
+                                            "(POLAK_RIBIERE), or 2 "
+                                            "(HESTENES_STIEFEL)") &&
+                          Catch::EndsWith(", got 1.5"));
+        sp.param["nlcg_type"] = 2.0;
+        CHECK_NOTHROW(tadah::hpo::detail::validate_ceres_nlcg_spec(sp));
+    }
+}
+
 /* =========================================================================
  * GradientProvider tests — exercise the unified gradient seam against a
  * stub host. These cover Ceres-NumericDiff parity vs. analytic, MAXEVAL

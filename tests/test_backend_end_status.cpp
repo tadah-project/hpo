@@ -346,6 +346,30 @@ TEST_CASE("End status: DLIB:GFS records a spent MAXEVAL",
     CHECK(lr.status() == "DLIB:GFS: MAXEVAL reached");
 }
 
+/* dlib takes its run time as a count of nanoseconds, which holds about
+ * 292 years (9.2e9 s); MAXTIME takes any positive number of seconds.
+ * Pins: with MAXTIME 1e10 s and MAXEVAL 6 the search is not cut short:
+ * dlib runs for at most its own FOREVER (200 years), the search makes its
+ * 6 evaluations and records "DLIB:GFS: MAXEVAL reached".
+ * Before the fix: the run time MAXTIME left overflowed its conversion to
+ * nanoseconds (out of range: undefined, a negative count on x86-64), so
+ * dlib's deadline had passed when it started: the search ended after its
+ * seed, 1 of 6 evaluations, with "DLIB:GFS: MAXTIME exceeded". */
+TEST_CASE("End status: DLIB:GFS with a MAXTIME longer than dlib's run time "
+          "can hold spends its MAXEVAL", "[HPO][stop_status][gfs]")
+{
+    auto sp = make_spec("DLIB", "GFS", {-1.0, -1.0}, {1.0, 1.0}, {0.5, -0.3});
+    sp.stop.maxeval = 6;
+    sp.stop.maxtime = 1e10;
+    sp.num_threads = 1;
+
+    LoggedRun lr;
+    StubHost host{bowl};
+    tadah::hpo::run_dlib_global_impl(sp, host);
+    CHECK(host.n() == 6u);
+    CHECK(lr.status() == "DLIB:GFS: MAXEVAL reached");
+}
+
 /* ======================================================================
  * CERES (GradientProblemSolver). Ceres reports its own ending
  * (CONVERGENCE, NO_CONVERGENCE, FAILURE) and a message; MAXEVAL is HPO's:
@@ -569,6 +593,40 @@ TEST_CASE("End status: CERES records a line-search failure as STOPPED with "
     CHECK(journal.find("CERES:STEEPEST_DESCENT -- non-convergent: Numerical "
                        "failure in line search, failed to find a valid step "
                        "size") != std::string::npos);
+}
+
+/* Ceres checks its options before it evaluates anything and, when it
+ * refuses them, ends the solve with FAILURE "Invalid configuration. ...".
+ * The validators refuse every setting of HPO's that Ceres would
+ * (test_hpo.cpp), so options Ceres refuses are HPO's error. The driver is
+ * called here without its validator (PARAM max_ls_iter 0).
+ * Pins: the driver throws std::logic_error "internal error: CERES:LBFGS:
+ * Ceres refuses the options built from a validated spec: Invalid
+ * configuration. ..." before any evaluation, and records no status.
+ * Before the fix: Ceres' FAILURE was the search's ending, "STOPPED --
+ * CERES:LBFGS: FAILURE (Invalid configuration)", as if the search had
+ * stopped. */
+TEST_CASE("End status: CERES options that Ceres refuses are an internal "
+          "error, not an ending", "[HPO][stop_status][ceres]")
+{
+    auto sp = make_spec("CERES", "LBFGS", {-1.0, -1.0}, {1.0, 1.0},
+                        {0.5, -0.3});
+    sp.stop.maxeval = 50;
+    sp.param["max_ls_iter"] = 0.0;
+    LoggedRun lr;
+    StubHost host{bowl};
+    CHECK_THROWS_MATCHES(
+        run_ceres(sp, host, lr), std::logic_error,
+        Catch::Matchers::Predicate<std::logic_error>(
+            [](const std::logic_error& e) {
+                const std::string w = e.what();
+                return w.rfind("internal error: CERES:LBFGS: Ceres refuses "
+                               "the options built from a validated spec: "
+                               "Invalid configuration.", 0) == 0;
+            },
+            "an internal error naming Ceres' refusal"));
+    CHECK(host.n() == 0u);
+    CHECK(lr.status().empty());
 }
 #endif  // TADAH_USE_CERES
 
