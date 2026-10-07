@@ -4,9 +4,9 @@
 // search dimensions are embedding centres/widths (CEMBFUNC, SEMBFUNC) of
 // bumps that cover rho = 0, every weight pinned (FIXINDEX all, no training
 // DBFILE). The embedding reference g_m(0) must be recomputed for EVERY
-// candidate from the values actually evaluated -- on the fresh-trainer path
-// and on the cached-trainer update_context + reinit path (checked at
-// rho > 0 against a DM_REAM built from the candidate's potential) -- so that:
+// candidate from the values actually evaluated (checked at rho > 0 against
+// a DM_REAM built from the candidate's potential; every evaluation builds
+// its trainer from its candidate) -- so that:
 //   - EMBF0 ZERO (default): the isolated atom predicts exactly 0.0;
 //   - EMBF0 FREE: it predicts the raw F(0) of the candidate;
 //   - the per-evaluation potential carries the EMBF0 line and the candidate's
@@ -62,17 +62,6 @@ struct ScratchDir {
     std::error_code ec;
     fs::current_path(original_cwd);
     fs::remove_all(dir, ec);
-  }
-};
-
-struct ForceRebuildGuard {
-  bool restore;
-  ForceRebuildGuard() {
-    restore = std::getenv("TADAH_HPO_FORCE_REBUILD") == nullptr;
-    if (restore) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1);
-  }
-  ~ForceRebuildGuard() {
-    if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD");
   }
 };
 
@@ -157,7 +146,6 @@ double isolated_atom_energy(const tadah::mlip::Trainer *tr) {
 void run_embf0_case(const char *embf0) {
   tadah::core::PeriodicTable::initialize();
   Host::reset_globals_for_test();
-  ForceRebuildGuard rebuild;
   ScratchDir sd;
 
   const fs::path val_db = sd.dir / "val.db";
@@ -181,10 +169,7 @@ void run_embf0_case(const char *embf0) {
   // Search-space order is by key name, then token: CEMBFUNC 1,2; SEMBFUNC 1,2.
   const std::vector<std::vector<double>> points = {
       {-0.2, 0.3, 2.0, 2.0}, {0.25, -0.4, 1.7, 2.3}, {-0.45, 0.55, 2.4, 1.6}};
-  bool first = true;
   for (const auto &pt : points) {
-    if (!first) ::unsetenv("TADAH_HPO_FORCE_REBUILD");  // cached trainer path
-    first = false;
     ParamVec p(4);
     for (int i = 0; i < 4; ++i) p(i) = pt[i];
     double loss = 0.0;
@@ -218,7 +203,7 @@ void run_embf0_case(const char *embf0) {
     double F = 0.0, Fp = 0.0;
     lt.S.dmb->eam_embed(w, 0.0, F, Fp);
     // rho > 0 (rho == 0 short-circuits, so it cannot reveal a stale g0):
-    // the trainer's DM_REAM -- fresh or updated by reinit -- must hold g0 of
+    // the trainer's DM_REAM must hold g0 of
     // THIS candidate: bitwise the DM_REAM built from the candidate's own
     // potential, and (ZERO) its FREE twin minus the raw F(0).
     const bool zero = !embf0 || std::string(embf0) == "ZERO";

@@ -119,6 +119,21 @@ public:
      * index. */
     static std::string optim_discrete_index_error(const std::string& key,
                                                   std::size_t index);
+    /* OPTIM on an internal key (the blueprint's INTERNAL_KEYS: DSIZE,
+     * RCUT*MAX, ESTDEV, ...) is refused: tadah computes those values and no
+     * configuration sets them (an evaluation could not write a candidate
+     * into one). Returns the error message, "" for another key. */
+    static std::string optim_internal_key_error(const std::string& key);
+    /* OPTIM on a value that the key's formats (blueprint value_type, every
+     * alternative) take only as an integer -- SBASIS, the first value of
+     * OALGO -- is refused: a searched value is continuous, and an integer
+     * read of a candidate such as 14.47 is refused (or was truncated).
+     * @p config holds the key's tokens (Opti::config), @p pos the token of
+     * OPTIM index @p index. Returns the error message, "" for a value the
+     * key also takes as a fraction. */
+    static std::string optim_integer_index_error(
+        const std::string& key, const std::vector<std::string>& config,
+        std::size_t pos, std::size_t index);
     /* The OPTIM keys that arm the density gates (RHOGATE, RHOBARGATE):
      * AMPGRIDMB, CGRIDMB, SGRIDMB, RCUTMB, the dimensions that change
      * rho_raw or the window. A gate without an OPTIM dimension on one of

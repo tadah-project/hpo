@@ -89,20 +89,6 @@ struct ScratchDir {
   }
 };
 
-/* A trainer built for this host: the thread-local trainer cache may still
- * hold another test's model, which update_context would only re-point at
- * this host's OPTIM keys (the embf0_e2e / fixweight_e2e pattern). */
-struct ForceRebuildGuard {
-  bool restore;
-  ForceRebuildGuard() {
-    restore = std::getenv("TADAH_HPO_FORCE_REBUILD") == nullptr;
-    if (restore) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1);
-  }
-  ~ForceRebuildGuard() {
-    if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD");
-  }
-};
-
 constexpr const char* kOptimizer =
     "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\nENDOPTIMIZER\n";
 

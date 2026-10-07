@@ -190,14 +190,6 @@ const std::string kRootLines =
  * OPTIMIZER ... ENDOPTIMIZER block and `root` the rest of config.hpo (by
  * default the objective and search space every case shares). */
 struct TaRun {
-    /* Rebuild the per-thread trainer on every evaluation, as the host
-     * end-to-end tests do: a trainer cached on this thread by another test
-     * in the same process must not stand in for this configuration. */
-    struct ForceRebuild {
-        bool restore = std::getenv("TADAH_HPO_FORCE_REBUILD") == nullptr;
-        ForceRebuild()  { if (restore) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1); }
-        ~ForceRebuild() { if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD"); }
-    } force_rebuild;
     ScratchDir sd;
     tadah::core::Context ctx;
     fs::path hpo, val;

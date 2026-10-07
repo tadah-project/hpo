@@ -56,15 +56,6 @@ struct ScratchDir {
     }
 };
 
-struct ForceRebuildGuard {
-    bool restore;
-    ForceRebuildGuard() {
-        restore = std::getenv("TADAH_HPO_FORCE_REBUILD") == nullptr;
-        if (restore) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1);
-    }
-    ~ForceRebuildGuard() { if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD"); }
-};
-
 /* Same minimal 4-atom BCC Ta fixture as test_hpo_host_e2e.cpp. */
 void write_minimal_ta_dbfile(const fs::path& path, double offset_x) {
     std::ofstream os(path);
@@ -366,7 +357,6 @@ TEST_CASE("rcut e2e: OPTIM'd knot beyond the stated RCUT evaluates exactly",
           "[rcut_e2e][.]")
 {
     tadah::core::PeriodicTable::initialize();
-    ForceRebuildGuard _rebuild;
     ScratchDir sd;
 
     const fs::path train_db = sd.dir / "train.db";

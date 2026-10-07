@@ -14,6 +14,7 @@
  */
 
 #include <atomic>
+#include <cstdint>
 #include <chrono>
 #include <iomanip>
 #include <limits>
@@ -55,6 +56,16 @@
 #include <tadah/hpo/hpo_log.h>
 
 namespace tadah::hpo {
+
+namespace detail {
+/* The next HPO_Host generation of the process: 1, 2, ... (thread-safe; one
+ * counter for every HPO_Host instantiation). It stamps the per-thread
+ * trainer slot, so a host never reads a trainer another host built. */
+inline std::uint64_t next_host_generation() {
+    static std::atomic<std::uint64_t> last{0};
+    return last.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+}  // namespace detail
 
 /* =========================================================================
  *  EvalResult - everything produced by *one* evaluation
@@ -176,7 +187,9 @@ public:
      *  GRAD_STRATEGY, total theta count, analytical count, and
      *  FD-fallback count. Idempotent across calls (atomic_flag gate).
      *  Surfaces hints for the three different "all-FD" routes:
-     *    - cache_miss:  trainer cache empty on first call (transient)
+     *    - cache_miss:  no trainer of this host's evaluation at x in
+     *                   the thread's slot (before its first evaluation,
+     *                   after a rejected candidate; transient)
      *    - ift_failed:  analytical helper returned false (IFT Cholesky
      *                   non-PD); rare numerical edge case
      *    - default:     orchestrator gate (STRESS/NORM/OALGO/LAMBDA/
@@ -207,8 +220,11 @@ public:
 
     /** Establish this run's output generation before the first evaluation.
      * HPO runs are not resumable: every run removes stale best-potential
-     * incumbents and starts its comparator from scratch. MPI ranks
-     * coordinate before any evaluation can publish. */
+     * incumbents and starts its comparator from scratch, and its PC_LAMMPS
+     * --hotvar values from their declared initial values or WARM's seeds
+     * (warmstart::reset_for_fresh_run). The evaluation counter continues
+     * (reset_best_state_for_fresh_run). MPI ranks coordinate before any
+     * evaluation can publish. */
     void prepare_best_publication() const;
 
     std::size_t train_size() const;   // number of training structures
@@ -531,20 +547,36 @@ private:
 
     /* The bump-gate reject path returns BEFORE training, breaking the
      * "operator()(x) ran immediately before us at the same x" contract
-     * analytical_gradient() reads the trainer cache under. Set on reject,
+     * analytical_gradient() reads the trainer slot under. Set on reject,
      * cleared after every successful train; while set, gradients fall
      * back to all-FD instead of reading a stale cache. */
     static thread_local bool tls_trainer_theta_stale_;
 
-    /* per-thread trainer cache ------------------------------------------ */
+    /* per-thread trainer slot -------------------------------------------
+     * The Trainer of this thread's latest evaluation: every evaluation
+     * builds a Trainer from its own candidate context (master_ctx_ plus the
+     * candidate) and trains it, replacing the slot's. The slot is kept for
+     * what reads the evaluation afterwards on the same thread
+     * (analytical_gradient, obs_loss, tls_trainer_for_test). `host` is the
+     * generation_ of the HPO_Host whose evaluation built it: a slot of
+     * another host (an earlier run on this thread, e.g. the first TASK hpo
+     * of a task file) is never read as this host's. */
     struct TrainerDeleter {
         void operator()(mlip::Trainer* p) const noexcept { if (p) p->~Trainer(); }
     };
     struct TrainerCache {
         alignas(mlip::Trainer) unsigned char             buf[sizeof(mlip::Trainer)];
         std::unique_ptr<mlip::Trainer, TrainerDeleter>   trainer;
+        std::uint64_t                                    host = 0;
     };
     static thread_local TrainerCache tls_trainer_cache_;
+    /* A number no other HPO_Host of the process has (from 1, increasing):
+     * it stamps the trainer slot of this host's evaluations. */
+    const std::uint64_t generation_ = detail::next_host_generation();
+    /* True when this thread's trainer slot holds a trainer of this host. */
+    bool slot_is_mine() const {
+        return tls_trainer_cache_.trainer && tls_trainer_cache_.host == generation_;
+    }
     /* See last_validation_switches_for_test(). */
     static thread_local std::optional<detail::FitSwitches>
         tls_last_validation_switches_;
@@ -560,7 +592,7 @@ private:
     };
     /* The rebuilt lists of this thread's latest evaluation, or nullptr when
      * the one-time lists covered it (or it reads no dataset):
-     * analytical_gradient differentiates the evaluation the trainer cache
+     * analytical_gradient differentiates the evaluation the trainer slot
      * holds, on the same lists. Cleared, with tls_trainer_theta_stale_ set,
      * before an evaluation touches the trainer, so a failed evaluation
      * leaves no state for the gradient to use. */
@@ -572,9 +604,10 @@ private:
                                                       std::size_t iter) const;
 
 public:
-    /** Test hook: expose this thread's cached trainer so e2e tests can
-     *  inspect the trained/provisioned model after an operator() call.
-     *  nullptr before the first evaluation on this thread. */
+    /** Test hook: expose the Trainer of this thread's latest evaluation (of
+     *  any host) so e2e tests can inspect the trained/provisioned model
+     *  after an operator() call. nullptr before the first evaluation on
+     *  this thread. */
     static const mlip::Trainer* tls_trainer_for_test() {
         return tls_trainer_cache_.trainer.get();
     }

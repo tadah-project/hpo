@@ -14,6 +14,8 @@
 #include <cstdlib>
 #include <tadah/models/descriptors/d_base.h>
 #include <tadah/models/descriptors/d_mjoin.h>
+#include <tadah/core/blueprint_parser.h>
+#include <tadah/core/blueprint_validator.h>
 #include <tadah/core/registry.h>
 #include <tadah/core/number_format.h>
 #include <tadah/hpo/loss_function.h>
@@ -1690,6 +1692,42 @@ std::string HPOTargets::optim_discrete_index_error(const std::string& key,
   return "";
 }
 
+std::string HPOTargets::optim_internal_key_error(const std::string& key) {
+  const std::string k = core::to_upper(key);
+  if (core::BlueprintParser::getInternalKeysMapRef().count(k) == 0) return "";
+  return "OPTIM " + k + " is not a valid search target: " + k +
+         " is an internal key, a value tadah computes itself (no "
+         "configuration sets it, so no evaluation can take a candidate "
+         "value of it).";
+}
+
+std::string HPOTargets::optim_integer_index_error(
+    const std::string& key, const std::vector<std::string>& config,
+    std::size_t pos, std::size_t index) {
+  const std::string k = core::to_upper(key);
+  const auto& keys = core::BlueprintParser::getKeysMapRef();
+  const auto it = keys.find(k);
+  if (it == keys.end() || it->second.value_type.empty() || pos >= config.size())
+    return "";
+  /* The key's tokens as they are match one of its formats, but not with
+   * the value at pos replaced by a fraction: no format takes a fraction
+   * there. */
+  const std::vector<std::string>& formats = it->second.value_type;
+  std::vector<std::string> fraction = config;
+  fraction[pos] = "0.5";
+  if (!core::BlueprintValidator::validateOnce(formats, core::join(config)) ||
+      core::BlueprintValidator::validateOnce(formats, core::join(fraction)))
+    return "";
+  std::string takes;
+  for (const std::string& f : formats)
+    takes += (takes.empty() ? "" : " or ") + f;
+  return "OPTIM " + k + " (" + core::to_string(index) +
+         ") is not a valid search target: value " + core::to_string(index) +
+         " of " + k + " is an integer (" + k + " takes " + takes +
+         "), a discrete value rather than a continuous parameter; set it in "
+         "the -c potential/configuration.";
+}
+
 const std::vector<std::string>& HPOTargets::density_gate_keys() {
   static const std::vector<std::string> keys = {"AMPGRIDMB", "CGRIDMB",
                                                 "SGRIDMB", "RCUTMB"};
@@ -1886,6 +1924,10 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
   /* Structure keys, also before context.size(k): RHOFORM has no blueprint
    * default, so size() would log an ERROR and throw a generic message. */
   if (const std::string e = optim_structure_key_error(k); !e.empty())
+    throw std::runtime_error(e);
+  /* Internal keys, before context.size(k), which would materialise the
+   * blueprint default into the run context. */
+  if (const std::string e = optim_internal_key_error(k); !e.empty())
     throw std::runtime_error(e);
 
   Opti& omap = optimap[k];
@@ -2101,6 +2143,13 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
 
   for (std::size_t j = 0; j < user_indices.size(); ++j) {
     const size_t ui = user_indices[j];
+    {
+      const size_t i = ui_offset(omap.config, ui);
+      if (const std::string e =
+              optim_integer_index_error(k, omap.config, i, typed_indices[j]);
+          !e.empty())
+        throw std::runtime_error(e);
+    }
     try {
       size_t i = ui_offset(omap.config, ui);
       if (i>=s) throw std::runtime_error("Out of bound index: " + core::to_string(ui));

@@ -63,7 +63,6 @@ using tadah::hpo::validate_hpo_setup;
 using tadah::models::DensityFormError;
 using ParamVec = dlib::matrix<double, 0, 1>;
 using Host     = tadah::hpo::HPO_Host<ParamVec, ::LammpsRunner>;
-using rhoform_test::ForceRebuildGuard;
 using rhoform_test::Journal;
 using rhoform_test::kOptimizer;
 using rhoform_test::make_ream_ctx;
@@ -790,7 +789,6 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
       CAPTURE(form);
       Journal j;
       Host::reset_globals_for_test();
-      ForceRebuildGuard rebuild;
       const fs::path hpo_cfg = target(one_eval);
       Context ctx = make_ream_ctx(form, "0.5 0.3 0.0");
       ctx.add("HPOTARGET", hpo_cfg.string());
@@ -878,7 +876,6 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
   SECTION("SIGNED: no projection, the negative amplitude is evaluated") {
     Journal j;
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     const fs::path hpo_cfg = sd.dir / "config_signed.hpo";
     {
       std::ofstream os(hpo_cfg);
@@ -917,7 +914,6 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
      * evaluated its point a second time. */
     Journal j;
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     const fs::path hpo_cfg = target(
         "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 8\nENDOPTIMIZER\n");
     Context ctx = make_ream_ctx("NONNEG", "0.5 0.3 0.0");
@@ -973,7 +969,6 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
      * Before the fix: the seed twice (0, 0, 2^-26, 2^-25). */
     Journal j;
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     const fs::path p = sd.dir / "config_none.hpo";
     {
       std::ofstream os(p);
@@ -1064,7 +1059,6 @@ TEST_CASE("HPO_Host: a point proposed within rounding outside its box is "
   SECTION("OPTIM_SCALE AUTO: a linear box [0, 0.5]") {
     Journal j;
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     const fs::path hpo_cfg = config("auto.hpo", "OPTIM AMPGRIDMB (3) 0 0.5\n");
     Context ctx = make_ream_ctx("NONNEG", "0.5 0.3 0.0");
     ctx.add("HPOTARGET", hpo_cfg.string());
@@ -1120,7 +1114,6 @@ TEST_CASE("HPO_Host: a point proposed within rounding outside its box is "
      * tolerance in the optimiser's coordinates. */
     Journal j;
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     const fs::path hpo_cfg = config(
         "none.hpo", "OPTIM_SCALE NONE\nOPTIM AMPGRIDMB (3) 0.01 0.5 LOG\n");
     Context ctx = make_ream_ctx("NONNEG", "0.5 0.3 0.1");

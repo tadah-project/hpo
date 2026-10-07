@@ -8,7 +8,7 @@
 // derived quantities:
 //  * per evaluation (update_context hook) the keys are re-derived from the
 //    CURRENT grid values, so OPTIM'd knot positions move the cutoff with
-//    them (Trainer::reinit then applies it via fcut->set_rcut(RCUT*MAX));
+//    them (the evaluation's Trainer is built from that context);
 //  * the ONE-TIME neighbour build must be sized for the largest cutoff any
 //    evaluation can reach — i.e. also the OPTIM upper bounds of the knot
 //    grids, which the legacy RCUT-only scan missed (an OPTIM'd knot pushed

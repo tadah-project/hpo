@@ -9,6 +9,7 @@
 #include <tadah/hpo/strategy_rules.h>
 
 #include <tadah/core/logger.h>
+#include <tadah/core/number_format.h>
 #include <tadah/core/utils.h>
 #include <tadah/hpo/bump_support_gate.h>
 #include <tadah/hpo/hpo_log.h>
@@ -28,6 +29,7 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -52,20 +54,46 @@ void validate_ream_density(const core::Context &train_ctx) {
   if (label && *label == "DM_REAM") models::ReamDensity::validate_context(c);
 }
 
+/* What probe_model() learns from building the model of the -c
+ * configuration. */
+struct ModelProbe {
+  std::size_t weights = 0;                  // derive_weight_count
+  std::string function;                     // the basis function or kernel
+  std::vector<models::MParamSlot> mparams;  // the MPARAMS it reads
+  /* For RCUT2B and RCUTMB, per value of the key: what fixes it
+   * (D_Base::cutoff_fixed_by of the two-body or many-body descriptor), ""
+   * for a free value. */
+  std::map<std::string, std::vector<std::string>> cutoff_fixed;
+};
+
 /* The model of the -c configuration builds, as every evaluation builds
  * it (the Trainer: the descriptors, the basis function or kernel and the
  * model): a construction error here -- a DIMER potential with element-
  * named TYPE2B pairs, a descriptor that refuses its grids -- would fail
  * every evaluation (the run then ends "no evaluation produced a usable
  * loss"). Returns the model's weight count (derive_weight_count; SBASIS for
- * a non-linear M_KRR kernel, which has no basis before training).
+ * a non-linear M_KRR kernel, which has no basis before training), its
+ * function, the MPARAMS the function reads (Function_Base::mparams()) and
+ * what fixes each RCUT2B/RCUTMB value (D_Base::cutoff_fixed_by).
  * models::DensityFormError keeps its type and message. */
-std::size_t probe_model(const core::Context &train_ctx) {
+ModelProbe probe_model(const core::Context &train_ctx) {
   try {
     core::Context c = train_ctx;
     tadah::mlip::memory::MLIPWorkspaceManager ws;
     tadah::mlip::Trainer probe(c, ws);
-    return tadah::mlip::model_weight_count(*probe.fb, probe.context);
+    ModelProbe out;
+    out.weights = tadah::mlip::model_weight_count(*probe.fb, probe.context);
+    out.function = probe.fb->get_label();
+    out.mparams = probe.fb->mparams();
+    const std::pair<const char *, const models::D_Base *> cutoffs[] = {
+        {"RCUT2B", probe.DCS.d2b}, {"RCUTMB", probe.DCS.dmb}};
+    for (const auto &[key, d] : cutoffs) {
+      if (!d || !train_ctx.contains(key)) continue;
+      auto &why = out.cutoff_fixed[key];
+      for (std::size_t i = 0; i < train_ctx.size(key); ++i)
+        why.push_back(d->cutoff_fixed_by(i));
+    }
+    return out;
   } catch (const models::DensityFormError &) {
     throw;
   } catch (const std::exception &e) {
@@ -459,7 +487,75 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
   /* --- the model of the -c configuration -------------------------------
    * It must build (probe_model): a construction error fails every
    * evaluation. Its weight count K serves the FIXINDEX rules below. */
-  const std::size_t K = probe_model(train_ctx);
+  const ModelProbe model = probe_model(train_ctx);
+  const std::size_t K = model.weights;
+
+  /* --- OPTIM MPARAMS: a value the function reads, continuous ----------
+   * The function reads its MPARAMS when it is built (mparams()): an index
+   * past those it reads would change nothing, an integer value (the
+   * Kern_Polynomial degree) is discrete, and a value that must be positive
+   * (the Kern_RBF width) needs a positive box. MPARAMS holds numbers only,
+   * so OPTIM index i is token i-1. */
+  if (const auto it = trg.optimap.find("MPARAMS"); it != trg.optimap.end()) {
+    const auto &o = it->second;
+    const std::size_t n = model.mparams.size();
+    std::string names;
+    for (const auto &slot : model.mparams)
+      names += (names.empty() ? "" : " ") + slot.name;
+    for (std::size_t t = 0; t < o.opt.size(); ++t) {
+      if (!o.opt[t]) continue;
+      const std::string idx = core::to_string(t + 1);
+      const std::string head =
+          "OPTIM MPARAMS (" + idx + ") is not a valid search target: ";
+      if (n == 0)
+        throw std::runtime_error(
+            head + model.function + " reads no MPARAMS, so every "
+            "evaluation would train the same model.");
+      if (t >= n)
+        throw std::runtime_error(
+            head + model.function + " reads " + core::to_string(n) +
+            " MPARAMS value" + (n == 1 ? "" : "s") + " (" + names +
+            "), so MPARAMS (" + idx + ") changes nothing.");
+      const models::MParamSlot &slot = model.mparams[t];
+      if (slot.integer)
+        throw std::runtime_error(
+            head + "MPARAMS (" + idx + ") of " + model.function +
+            " is its " + slot.name + ", an integer, a discrete value rather "
+            "than a continuous parameter; set it in the -c "
+            "potential/configuration.");
+      if (slot.positive && !(o.lowbound[t] > 0.0))
+        throw std::runtime_error(
+            "OPTIM MPARAMS (" + idx + "): the box [" +
+            core::format_roundtrip(o.lowbound[t]) + ", " +
+            core::format_roundtrip(o.highbound[t]) + "] of " +
+            model.function + "'s " + slot.name + " must be positive (" +
+            slot.name + " > 0).");
+    }
+  }
+
+  /* --- OPTIM on a cutoff a descriptor takes from a file ---------------
+   * D2_EAM and DM_EAM (also inside a D2_mJoin/DM_mJoin) evaluate the
+   * tables of their setfl file and refuse a cutoff other than the file's
+   * (D_Base::cutoff_fixed_by): every candidate but the -c value would fail
+   * its evaluation. */
+  for (const char *key : {"RCUT2B", "RCUTMB"}) {
+    const auto it = trg.optimap.find(key);
+    const auto fixed = model.cutoff_fixed.find(key);
+    if (it == trg.optimap.end() || fixed == model.cutoff_fixed.end())
+      continue;
+    const auto &o = it->second;
+    for (std::size_t t = 0; t < o.opt.size() && t < fixed->second.size();
+         ++t) {
+      if (!o.opt[t] || fixed->second[t].empty()) continue;
+      const std::string idx = std::string(key) + " (" +
+                              core::to_string(t + 1) + ")";
+      throw std::runtime_error(
+          "OPTIM " + idx + " is not a valid search target: " +
+          fixed->second[t] + " and refuses another value, so every "
+          "candidate but the -c value would fail; leave " + idx +
+          " out of OPTIM.");
+    }
+  }
 
   /* --- FIXINDEX/FIXWEIGHT pairing + weight-source classification ------ */
   if (has_fw || has_fi || !has_train_db) {

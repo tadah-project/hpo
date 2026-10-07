@@ -256,6 +256,21 @@ inline void clear() {
     best_hot_key().reset();
 }
 
+/* Start a new run: forget every chain's value an earlier run in this process
+ * converged to (chain_cache) and the best snapshot, keep WARM's static
+ * fallback. A chain's first evaluation then reads warm_prime_map (WARM) or
+ * nothing (its --hotvar initial value), as in a run of its own process: the
+ * cache is keyed by (chain, script, name), so a second run of a task file
+ * with the same script read the first run's last relaxed value instead.
+ * HPO_Host::prepare_best_publication() calls it at the start of every run;
+ * WARM primes warm_prime_map before. */
+inline void reset_for_fresh_run() {
+    std::lock_guard<std::mutex> lg(mtx());
+    chain_cache().clear();
+    best_hot_map().clear();
+    best_hot_key().reset();
+}
+
 /* Start a new output generation without discarding WARM's static fallback.
  * HPOTargets parses/loads WARM before the run binds its best-potential
  * publication; the fresh run must forget the prior best snapshot/key while

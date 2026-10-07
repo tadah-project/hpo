@@ -4,16 +4,15 @@
 // Best-potential persistence failures and the run's exit status
 // ([durable_e2e]).
 //
-// Hidden `[.]` like the other HPO_Host e2e cases: operator() populates the
-// thread-local trainer cache, and interleaving with other host tests in one
-// binary can leave stale descriptor state behind. Run explicitly with:
+// Hidden `[.]` like the other HPO_Host e2e cases: operator() fills the
+// thread-local trainer slot and the HPO_Host / HPOLog statics, which the
+// cases of a group share. Run explicitly with:
 //   ./test_hpo "[fixweight_e2e]"
 // The cases that run the built `tadah` executable ([tadah_cli]) read it
 // from TADAH_BINARY and call TADAH_SKIP without it; each has a hidden tag
 // and a CTest entry of its own ([.tadah_cli_<case>], tests/CMakeLists.txt),
 // which sets TADAH_BINARY in a build with the `tadah` target and reports
 // the case as Skipped in one without it.
-// Every test here sets TADAH_HPO_FORCE_REBUILD for hygiene.
 
 #include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 
@@ -79,15 +78,6 @@ struct ScratchDir {
         fs::current_path(original_cwd);
         fs::remove_all(dir, ec);
     }
-};
-
-struct ForceRebuildGuard {
-    bool restore;
-    ForceRebuildGuard() {
-        restore = std::getenv("TADAH_HPO_FORCE_REBUILD") == nullptr;
-        if (restore) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1);
-    }
-    ~ForceRebuildGuard() { if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD"); }
 };
 
 /* Same minimal 4-atom BCC Ta fixture as test_hpo_host_e2e.cpp. */
@@ -164,7 +154,6 @@ TEST_CASE("fixweight mixed mode: LS + pinned + OPTIM'd weights",
 {
     tadah::core::PeriodicTable::initialize();
     Host::reset_globals_for_test();
-    ForceRebuildGuard _rebuild;
     ScratchDir sd;
 
     const fs::path train_db = sd.dir / "train.db";
@@ -198,17 +187,10 @@ TEST_CASE("fixweight mixed mode: LS + pinned + OPTIM'd weights",
     Host host(ctx, trg, val_cfg.string());
 
     std::vector<double> free_w_first;   // weights 1..K-2 at v=0.02
-    bool first_eval = true;
+    /* Two evaluations of one host. Regression: the reduced LS re-solve
+     * shrinks the model weight vector (K -> K-2), which used to trip a heap
+     * overflow in aed_type::resize on the second (then a reused trainer). */
     for (double v : {0.02, 0.35}) {
-        if (!first_eval) {
-            /* Route the second evaluation through the CACHED trainer
-             * (update_context + reinit + re-train) — the production
-             * path. Regression: the reduced LS re-solve shrinks the
-             * model weight vector (K -> K-2), which used to trip a
-             * heap overflow in aed_type::resize. */
-            ::unsetenv("TADAH_HPO_FORCE_REBUILD");
-        }
-        first_eval = false;
         ParamVec p(1);
         p(0) = v;
         double loss = 0.0;
@@ -272,7 +254,6 @@ TEST_CASE("fixweight all-fixed with DBFILE: DM-skip fast path",
 {
     tadah::core::PeriodicTable::initialize();
     Host::reset_globals_for_test();
-    ForceRebuildGuard _rebuild;
     ScratchDir sd;
 
     const fs::path train_db = sd.dir / "train.db";
@@ -327,8 +308,8 @@ TEST_CASE("fixweight all-fixed with DBFILE: DM-skip fast path",
 
 /* Pins: M_KRR Kern_RBF (MPARAMS 1.0, SBASIS 3) on the D2_BP[5,5] context
  * with a training DBFILE, FIXINDEX 1-3 pinning every weight and OPTIM
- * FIXWEIGHT (1): two evaluations (the second through the cached trainer)
- * each return a loss below FAIL_SCORE, train the model (is_trained) and
+ * FIXWEIGHT (1): two evaluations of one host each return a loss below
+ * FAIL_SCORE, train the model (is_trained) and
  * give the weights the pins (weight 1 the optimiser's value, 2 and 3 the
  * FIXWEIGHT values, exactly); the potential the trainer writes carries
  * SBASIS 3 and 3 x 5 BASIS values (basis vector 0 is e0), so the weights
@@ -346,7 +327,6 @@ TEST_CASE("fixweight all-fixed with a non-linear M_KRR kernel: every "
 {
     tadah::core::PeriodicTable::initialize();
     Host::reset_globals_for_test();
-    ForceRebuildGuard _rebuild;
     ScratchDir sd;
 
     const fs::path train_db = sd.dir / "train.db";
@@ -387,11 +367,8 @@ TEST_CASE("fixweight all-fixed with a non-linear M_KRR kernel: every "
     REQUIRE_NOTHROW(tadah::hpo::validate_hpo_setup(ctx, trg, true, true));
     Host host(ctx, trg, val_cfg.string());
 
-    bool first_eval = true;
     for (double v : {0.02, 0.35}) {
         INFO("FIXWEIGHT 1 = " << v);
-        if (!first_eval) ::unsetenv("TADAH_HPO_FORCE_REBUILD");
-        first_eval = false;
         ParamVec p(1);
         p(0) = v;
         double loss = 0.0;
@@ -426,7 +403,6 @@ TEST_CASE("case 3: no DBFILE, observable-only loss",
 {
     tadah::core::PeriodicTable::initialize();
     Host::reset_globals_for_test();
-    ForceRebuildGuard _rebuild;
     ScratchDir sd;
 
     const fs::path hpo_cfg = sd.dir / "config.hpo";
@@ -484,7 +460,6 @@ TEST_CASE("case 3: no DBFILE, validation-metric loss",
 {
     tadah::core::PeriodicTable::initialize();
     Host::reset_globals_for_test();
-    ForceRebuildGuard _rebuild;
     ScratchDir sd;
 
     const fs::path val_db  = sd.dir / "val.db";
@@ -596,7 +571,6 @@ TEST_CASE("best_pot.tadah numbers follow NUMERIC and never carry it",
 
     auto run_one = [&](int numeric /* 0 = absent */) {
         Host::reset_globals_for_test();
-        ForceRebuildGuard _rebuild;
         ScratchDir sd;
 
         const fs::path val_db  = sd.dir / "val.db";
@@ -762,7 +736,6 @@ AnchorRun run_anchor_case(const std::string& optim_lines,
 {
     tadah::core::PeriodicTable::initialize();
     Host::reset_globals_for_test();
-    ForceRebuildGuard _rebuild;
     ScratchDir sd;
 
     const fs::path val_db  = sd.dir / "val.db";
@@ -911,7 +884,7 @@ TEST_CASE("seed anchor: tadah hpo WARM + MAXEVAL 1 reproduces the seed file",
         os << ctx;
     }
     const std::string cmd =
-        "cd '" + sd.dir.string() + "' && TADAH_HPO_FORCE_REBUILD=1 '" + bin +
+        "cd '" + sd.dir.string() + "' && '" + bin +
         "' hpo -c config --hpotarget config.hpo --validation config.val"
         " > tadah.stdout 2> tadah.stderr";
     const int rc = std::system(cmd.c_str());
@@ -994,7 +967,7 @@ TEST_CASE("seed anchor: tadah hpo NLopt BOBYQA/COBYLA/PRAXIS evaluate the WARM "
                 os << ctx;
             }
             const std::string cmd =
-                "cd '" + sd.dir.string() + "' && TADAH_HPO_FORCE_REBUILD=1 '" + bin +
+                "cd '" + sd.dir.string() + "' && '" + bin +
                 "' hpo -c config --hpotarget config.hpo --validation config.val"
                 " > tadah.stdout 2> tadah.stderr";
             const int rc = std::system(cmd.c_str());
@@ -1060,7 +1033,6 @@ TEST_CASE("PC_LAMMPS readback: failvar violations and hot-value range checks",
         DYNAMIC_SECTION(c.name) {
             tadah::core::PeriodicTable::initialize();
             Host::reset_globals_for_test();
-            ForceRebuildGuard _rebuild;
             ScratchDir sd;
             const fs::path val_db  = sd.dir / "val.db";
             const fs::path val_cfg = sd.dir / "config.val";
@@ -1269,8 +1241,7 @@ TEST_CASE("durable best: a persistent failure fails the run",
      * budget is spent. */
     const ChildRun r = run_self("[.durable_e2e_child]", sd.dir,
                                 {kFaultPersistent, kShortBackoff,
-                                 "TADAH_TEST_DURABLE_E2E_EXPECT=throw",
-                                 "TADAH_HPO_FORCE_REBUILD=1"});
+                                 "TADAH_TEST_DURABLE_E2E_EXPECT=throw"});
     INFO(r.output);
     REQUIRE(WIFEXITED(r.status));
     REQUIRE(WEXITSTATUS(r.status) == 0);
@@ -1308,8 +1279,7 @@ TEST_CASE("durable best: a failed fresh-run reset fails the run",
     const ChildRun r = run_self(
         "[.durable_e2e_child]", sd.dir,
         {"TADAH_HPO_TEST_IO_FAULT=durable.lock_open,EBUSY,count=always",
-         kShortBackoff, "TADAH_TEST_DURABLE_E2E_EXPECT=throw",
-         "TADAH_HPO_FORCE_REBUILD=1"});
+         kShortBackoff, "TADAH_TEST_DURABLE_E2E_EXPECT=throw"});
     INFO(r.output);
     REQUIRE(WIFEXITED(r.status));
     REQUIRE(WEXITSTATUS(r.status) == 0);
@@ -1341,8 +1311,7 @@ TEST_CASE("durable best: a transient failure is retried and reported",
     const ChildRun r = run_self(
         "[.durable_e2e_child]", sd.dir,
         {"TADAH_HPO_TEST_IO_FAULT=durable.lock_open,EBUSY,skip=1,count=3",
-         kShortBackoff, "TADAH_TEST_DURABLE_E2E_EXPECT=ok",
-         "TADAH_HPO_FORCE_REBUILD=1"});
+         kShortBackoff, "TADAH_TEST_DURABLE_E2E_EXPECT=ok"});
     INFO(r.output);
     REQUIRE(WIFEXITED(r.status));
     REQUIRE(WEXITSTATUS(r.status) == 0);
@@ -1391,7 +1360,7 @@ TEST_CASE("durable best: tadah hpo exits non-zero on a persistence failure",
     }
     const std::string cmd =
         "cd '" + sd.dir.string() + "' && " + kFaultPersistent + " " +
-        kShortBackoff + " TADAH_HPO_FORCE_REBUILD=1 '" + bin +
+        kShortBackoff + " '" + bin +
         "' hpo -c config --hpotarget config.hpo --validation config.val"
         " > tadah.stdout 2> tadah.stderr";
     const int rc = std::system(cmd.c_str());
@@ -1416,8 +1385,7 @@ TEST_CASE("durable best: SIGTERM ends the persistence backoff within the grace",
     write_durable_fixture(sd.dir);
     const pid_t pid = spawn_self("[.durable_e2e_child]", sd.dir,
                                  {kFaultPersistent,
-                                  "TADAH_TEST_DURABLE_E2E_EXPECT=throw",
-                                  "TADAH_HPO_FORCE_REBUILD=1"});
+                                  "TADAH_TEST_DURABLE_E2E_EXPECT=throw"});
     /* Wait until the child is backing off (its first retry WARNING). */
     const auto journal_path = sd.dir / "hpo_run.log";
     bool backing_off = false;
@@ -1465,7 +1433,7 @@ TEST_CASE("per-eval logs: one retry budget per drain, shared by every file",
         "[.durable_e2e_child]", sd.dir,
         {"TADAH_HPO_TEST_IO_FAULT=writer.append,EIO,always",
          "TADAH_HPO_TEST_IO_BACKOFF_MS=10,200,1000,0",
-         "TADAH_TEST_DURABLE_E2E_EXPECT=ok", "TADAH_HPO_FORCE_REBUILD=1"});
+         "TADAH_TEST_DURABLE_E2E_EXPECT=ok"});
     INFO(r.output);
     REQUIRE(WIFEXITED(r.status));
     REQUIRE(WEXITSTATUS(r.status) == 0);
@@ -1515,7 +1483,7 @@ TEST_CASE("per-eval logs: a re-attempted permanent error is not 'not retried'",
         "[.durable_e2e_child]", sd.dir,
         {"TADAH_HPO_TEST_IO_FAULT=writer.append,ENOSPC,always,latency=150",
          "TADAH_HPO_TEST_IO_BACKOFF_MS=10,200,1000,0",
-         "TADAH_TEST_DURABLE_E2E_EXPECT=ok", "TADAH_HPO_FORCE_REBUILD=1"});
+         "TADAH_TEST_DURABLE_E2E_EXPECT=ok"});
     INFO(r.output);
     REQUIRE(WIFEXITED(r.status));
     REQUIRE(WEXITSTATUS(r.status) == 0);
@@ -1582,8 +1550,7 @@ std::size_t evals_consumed(const std::string& line)
 ChildRun run_policy_child(const fs::path& dir, const char* expect)
 {
     return run_self("[.durable_e2e_child]", dir,
-                    {std::string("TADAH_TEST_DURABLE_E2E_EXPECT=") + expect,
-                     "TADAH_HPO_FORCE_REBUILD=1"});
+                    {std::string("TADAH_TEST_DURABLE_E2E_EXPECT=") + expect});
 }
 
 }  // namespace
@@ -1606,7 +1573,7 @@ TEST_CASE("durable best: a blip right after SIGINT still saves the best",
         {"TADAH_HPO_TEST_IO_FAULT=durable.rename,EBUSY,count=1,latency=300;"
          "writer.append,EIO,count=1",
          "TADAH_HPO_TEST_STOP_DURABLE_BEST_BEFORE_RENAME=1",
-         "TADAH_TEST_DURABLE_E2E_EXPECT=sigint", "TADAH_HPO_FORCE_REBUILD=1"});
+         "TADAH_TEST_DURABLE_E2E_EXPECT=sigint"});
     int status = 0, stops = 0;
     for (;;) {
         REQUIRE(::waitpid(pid, &status, WUNTRACED) == pid);
@@ -1800,8 +1767,7 @@ TEST_CASE("hpo_run starts with the stagnation window disarmed",
     write_durable_fixture(sd.dir);   // PLAIN NLOPT:LN_SBPLX, MAXEVAL 5
     const ChildRun r = run_self("[.durable_e2e_child]", sd.dir,
                                 {"TADAH_TEST_DURABLE_E2E_EXPECT=ok",
-                                 "TADAH_TEST_DURABLE_E2E_STALE_STATE=1",
-                                 "TADAH_HPO_FORCE_REBUILD=1"});
+                                 "TADAH_TEST_DURABLE_E2E_STALE_STATE=1"});
     INFO(r.output);
     REQUIRE(WIFEXITED(r.status));
     REQUIRE(WEXITSTATUS(r.status) == 0);
@@ -1848,8 +1814,7 @@ TEST_CASE("RESULT names a best that could not be persisted",
             write_durable_fixture(sd.dir);
             const ChildRun r = run_self("[.durable_e2e_child]", sd.dir,
                                         {c.fault, kShortBackoff,
-                                         "TADAH_TEST_DURABLE_E2E_EXPECT=throw",
-                                         "TADAH_HPO_FORCE_REBUILD=1"});
+                                         "TADAH_TEST_DURABLE_E2E_EXPECT=throw"});
             INFO(r.output);
             REQUIRE(WIFEXITED(r.status));
             REQUIRE(WEXITSTATUS(r.status) == 0);
@@ -1884,8 +1849,7 @@ TEST_CASE("RESULT distinguishes the last saved best from the unsaved one",
     const ChildRun r = run_self("[.durable_e2e_child]", sd.dir,
                                 {"TADAH_HPO_TEST_IO_FAULT=durable.dir_fsync,EIO,"
                                  "skip=1,always",
-                                 kShortBackoff, "TADAH_TEST_DURABLE_E2E_EXPECT=any",
-                                 "TADAH_HPO_FORCE_REBUILD=1"});
+                                 kShortBackoff, "TADAH_TEST_DURABLE_E2E_EXPECT=any"});
     INFO(r.output);
     REQUIRE(WIFEXITED(r.status));
     REQUIRE(WEXITSTATUS(r.status) == 0);
@@ -1933,8 +1897,7 @@ TEST_CASE("durable best: later candidates get a single attempt after a fatal fai
     const ChildRun r = run_self("[.durable_e2e_child]", sd.dir,
                                 {"TADAH_HPO_TEST_IO_FAULT=durable.lock_open,EBUSY,"
                                  "skip=3,count=always",
-                                 "TADAH_TEST_DURABLE_E2E_EXPECT=throw",
-                                 "TADAH_HPO_FORCE_REBUILD=1"});
+                                 "TADAH_TEST_DURABLE_E2E_EXPECT=throw"});
     const double seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - t0).count();
     INFO(r.output);
@@ -2153,7 +2116,7 @@ TEST_CASE("durable best: storage that recovers after a fatal failure saves a "
     ScratchDir sd;
     write_durable_fixture(sd.dir);
     const ChildRun r = run_self("[.durable_latch_child]", sd.dir,
-                                {kShortBackoff, "TADAH_HPO_FORCE_REBUILD=1"});
+                                {kShortBackoff});
     INFO(r.output);
     REQUIRE(WIFEXITED(r.status));
     CHECK(WEXITSTATUS(r.status) == 0);
@@ -2180,8 +2143,7 @@ TEST_CASE("durable best: hpo_run ends FAILED after storage recovers",
                                 {"TADAH_HPO_TEST_IO_FAULT=durable.lock_open,EBUSY,"
                                  "skip=3,count=5",
                                  "TADAH_HPO_TEST_IO_BACKOFF_MS=20,40,150,0",
-                                 "TADAH_TEST_DURABLE_E2E_EXPECT=throw",
-                                 "TADAH_HPO_FORCE_REBUILD=1"});
+                                 "TADAH_TEST_DURABLE_E2E_EXPECT=throw"});
     INFO(r.output);
     REQUIRE(WIFEXITED(r.status));
     REQUIRE(WEXITSTATUS(r.status) == 0);
