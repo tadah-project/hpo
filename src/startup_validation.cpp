@@ -57,14 +57,15 @@ void validate_ream_density(const core::Context &train_ctx) {
  * model): a construction error here -- a DIMER potential with element-
  * named TYPE2B pairs, a descriptor that refuses its grids -- would fail
  * every evaluation (the run then ends "no evaluation produced a usable
- * loss"). Returns the model's weight count (derive_weight_count).
+ * loss"). Returns the model's weight count (derive_weight_count; SBASIS for
+ * a non-linear M_KRR kernel, which has no basis before training).
  * models::DensityFormError keeps its type and message. */
 std::size_t probe_model(const core::Context &train_ctx) {
   try {
     core::Context c = train_ctx;
     tadah::mlip::memory::MLIPWorkspaceManager ws;
     tadah::mlip::Trainer probe(c, ws);
-    return probe.fb->get_phi_cols(probe.context);
+    return tadah::mlip::model_weight_count(*probe.fb, probe.context);
   } catch (const models::DensityFormError &) {
     throw;
   } catch (const std::exception &e) {
@@ -131,7 +132,7 @@ std::size_t derive_weight_count(const core::Context &train_ctx) {
   core::Context ctx_copy = train_ctx;
   tadah::mlip::memory::MLIPWorkspaceManager ws;
   tadah::mlip::Trainer probe(ctx_copy, ws);
-  return probe.fb->get_phi_cols(probe.context);
+  return tadah::mlip::model_weight_count(*probe.fb, probe.context);
 }
 
 RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx) {
