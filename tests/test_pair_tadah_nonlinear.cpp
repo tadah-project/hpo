@@ -25,6 +25,7 @@
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/runners.h>
+#include <tadah/hpo/hpo_mpi.h>  // hpo_lammps_comm()
 #include <tadah/mlip/atom.h>
 #include <tadah/mlip/memory/mlip_workspace_manager.h>
 #include <tadah/mlip/nn_finder.h>
@@ -278,7 +279,8 @@ struct LammpsResult {
 LammpsResult run0(const Structure& st, const Context& pot) {
     LammpsResult out;
     auto lmp = LammpsRunner().create_instance(
-        0, {"lmp", "-log", "none", "-screen", "none"});
+        tadah::hpo::hpo_lammps_comm(),
+        {"lmp", "-log", "none", "-screen", "none"});
     REQUIRE(lmp != nullptr);
     StagedPotential staged(pot);
     std::vector<std::string> lines = cell_script(st);

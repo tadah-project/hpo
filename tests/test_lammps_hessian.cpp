@@ -38,6 +38,7 @@
 #include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/lammps_hessian.h>
+#include <tadah/hpo/hpo_mpi.h>  // hpo_lammps_comm()
 #include <tadah/hpo/runners.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
 
@@ -105,7 +106,8 @@ struct LammpsFixture {
             tadah::core::CoreUserConfigParser().parse(pot_path);
 
         lmp = runner.create_instance(
-            0, {"lmp", "-log", "none", "-screen", "none"});
+            tadah::hpo::hpo_lammps_comm(),
+            {"lmp", "-log", "none", "-screen", "none"});
         if (!lmp)
             throw std::runtime_error(
                 "LammpsFixture: cannot create a LAMMPS instance");

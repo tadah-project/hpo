@@ -14,6 +14,7 @@
  *
  * Design: INVESTIGATIONS/PC_ISOLATION_process_pool.md sections 3-5, 7. */
 
+#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
 #include <tadah/core/context.h>
@@ -36,6 +37,20 @@
 #include <unistd.h>
 
 using namespace tadah::hpo;
+
+/* The MPI build (TADAH_HPO_MPI) has no worker-process pool: hpo_run()
+ * refuses an explicit PC_ISOLATION PROCESS and runs THREAD by default, and
+ * the worker entry refuses to start (pc_worker_main exits 2: a fork+exec'd
+ * child of an MPI parent must not touch MPI). There the cases that spawn
+ * workers are Skipped; "pc pool: in the MPI build the worker refuses to
+ * start" pins the refusal they would otherwise fail on. */
+#ifdef TADAH_HPO_MPI
+#define SKIP_IN_MPI_BUILD()                                                  \
+  TADAH_SKIP("PC_ISOLATION PROCESS is serial-build only: in the MPI build "  \
+             "(TADAH_HPO_MPI) the pc_lammps worker refuses to start")
+#else
+#define SKIP_IN_MPI_BUILD() (void)0
+#endif
 
 namespace {
 
@@ -108,6 +123,7 @@ TEST_CASE("pc pool: a width below 1 is rejected", "[pc_pool]") {
 
 TEST_CASE("pc pool: spawn, handshake, task round-trip, shutdown",
           "[pc_pool]") {
+  SKIP_IN_MPI_BUILD();
   PcWorkerPool pool(2, specs_for(2, minimal_spec()), 0.0);
   const auto pot = invalid_pot_map();
 
@@ -135,6 +151,7 @@ TEST_CASE("pc pool: spawn, handshake, task round-trip, shutdown",
 
 TEST_CASE("pc pool: CREATE_FAIL is reported and retried per task",
           "[pc_pool]") {
+  SKIP_IN_MPI_BUILD();
   /* Unwritable log path => LAMMPS instance construction fails in the worker.
    * Contract: CREATE_FAIL round-trips, no instance is cached, and the next
    * task retries (and fails identically) rather than crashing the worker. */
@@ -152,6 +169,7 @@ TEST_CASE("pc pool: CREATE_FAIL is reported and retried per task",
 
 TEST_CASE("pc pool: worker-side task error is reported in-band",
           "[pc_pool]") {
+  SKIP_IN_MPI_BUILD();
   PcWorkerPool pool(1, specs_for(1, minimal_spec()), 0.0);
   const auto pot = invalid_pot_map();
 
@@ -173,6 +191,7 @@ TEST_CASE("pc pool: worker-side task error is reported in-band",
 
 TEST_CASE("pc pool: killing the worker process is contained and respawned",
           "[pc_pool][kill]") {
+  SKIP_IN_MPI_BUILD();
   /* Death containment via the REAL signal path: SIGKILL the child between
    * tasks. */
   PcWorkerPool pool(1, specs_for(1, minimal_spec()), 0.0);
@@ -201,6 +220,7 @@ TEST_CASE("pc pool: killing the worker process is contained and respawned",
 
 TEST_CASE("pc pool: a killed worker leaves no script file behind",
           "[pc_pool][kill][tempfile]") {
+  SKIP_IN_MPI_BUILD();
   /* A worker renders each script of its table once, to a file in the
    * temporary directory, and runs it through LAMMPS's Input::file(). A
    * worker killed at its hard deadline (SIGKILL), crashing inside LAMMPS,
@@ -231,6 +251,7 @@ TEST_CASE("pc pool: a killed worker leaves no script file behind",
 
 TEST_CASE("pc pool: a worker survives the stop signals sent to its process "
           "group", "[pc_pool][signals]") {
+  SKIP_IN_MPI_BUILD();
   /* Ctrl+C, `kill -<sig> -<pgid>` and SLURM (`scancel`, `--signal=USR2@N`)
    * deliver SIGINT, SIGTERM and SIGUSR2 to every process of the group or
    * job step, the workers included. The parent stops the run itself, after
@@ -284,6 +305,7 @@ TEST_CASE("pc pool: workers ignore exactly the stop signals the parent "
 
 TEST_CASE("pc pool: repeated deaths throttle a channel, they do not retire it",
           "[pc_pool][kill][backoff]") {
+  SKIP_IN_MPI_BUILD();
   /* D1. spawn_locked used to THROW once a channel reached
    * PC_MAX_CONSEC_DEATHS. Because execute() only respawns when fd < 0 --
    * exactly the state a dead channel is left in -- and consec_deaths is
@@ -324,3 +346,32 @@ TEST_CASE("pc pool: repeated deaths throttle a channel, they do not retire it",
   CHECK(healthy.execute(0, 0, 0, pot, {}, /*script_timeout_s=*/std::nullopt).status ==
         PcTaskStatus::POT_BUILD_FAIL);
 }
+
+#ifdef TADAH_HPO_MPI
+/* Pins: in the MPI build `test_hpo --tadah-pc-worker` (the worker entry
+ * the pool re-execs, routed by test_main.cpp as tadah's main() routes it)
+ * exits with status 2 and says "tadah --tadah-pc-worker: not supported in
+ * the MPI build (TADAH_HPO_MPI)" on stderr, without touching MPI: the
+ * reason the spawning cases above are Skipped in this build.
+ * Before the fix: passes as well (a pin; the case is new with the MPI
+ * build's suite). */
+TEST_CASE("pc pool: in the MPI build the worker refuses to start",
+          "[pc_pool]") {
+  char exe[4096] = {0};
+  const ssize_t n = ::readlink("/proc/self/exe", exe, sizeof exe - 1);
+  REQUIRE(n > 0);
+  const std::string cmd =
+      std::string("'") + exe + "' --tadah-pc-worker 2>&1";
+  FILE* p = ::popen(cmd.c_str(), "r");
+  REQUIRE(p != nullptr);
+  std::string out;
+  char buf[256];
+  while (::fgets(buf, sizeof buf, p)) out += buf;
+  const int status = ::pclose(p);
+  INFO(out);
+  REQUIRE(WIFEXITED(status));
+  CHECK(WEXITSTATUS(status) == 2);
+  CHECK(out == "tadah --tadah-pc-worker: not supported in the MPI build "
+               "(TADAH_HPO_MPI)\n");
+}
+#endif

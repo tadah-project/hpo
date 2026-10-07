@@ -156,7 +156,16 @@ endforeach()
 # build that has the `tadah` executable target (Tadah.MLIP, which adds this
 # directory) the entry sets TADAH_BINARY to it, so the case runs; in one
 # without it (a standalone HPO build) TADAH_BINARY comes from the
-# environment of ctest, if at all.
+# environment of ctest, if at all. In an MPI build (TADAH_HPO_MPI)
+# TADAH_MPIEXEC is the launcher of one rank ("<MPIEXEC_EXECUTABLE> -n 1"),
+# through which a case that changes the environment Open MPI starts in
+# (TMPDIR) runs `tadah` (test_hpo_pc_readback_e2e.cpp).
+set(_hpo_tadah_cli_env
+    "$<$<TARGET_EXISTS:tadah>:TADAH_BINARY=$<TARGET_FILE:tadah>>")
+if(TADAH_HPO_MPI)
+    list(APPEND _hpo_tadah_cli_env
+        "TADAH_MPIEXEC=${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1")
+endif()
 set(_hpo_tadah_cli_cases seed_anchor_warm seed_anchor_nlopt durable_exit
                          pc_readback pc_lammps_local_search)
 foreach(_case IN LISTS _hpo_tadah_cli_cases)
@@ -166,8 +175,7 @@ foreach(_case IN LISTS _hpo_tadah_cli_cases)
         LABELS "hpo;e2e"
         TIMEOUT 600
         SKIP_REGULAR_EXPRESSION "${TADAH_TEST_SKIP_REGULAR_EXPRESSION}"
-        ENVIRONMENT
-            "$<$<TARGET_EXISTS:tadah>:TADAH_BINARY=$<TARGET_FILE:tadah>>")
+        ENVIRONMENT "${_hpo_tadah_cli_env}")
 endforeach()
 
 # Registry drift gate: the checked-in anneal_keys_gen.h must match what the
