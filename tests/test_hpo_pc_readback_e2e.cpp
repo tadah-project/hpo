@@ -18,7 +18,8 @@
 //     header's columns, the cells an evaluation did not compute written as
 //     NaN (`nan` in loss/stats.tadah, `NaN` in outvar.tadah). A hot value
 //     LAMMPS refuses to inject before a script fails that script, with a
-//     journal line too, and so does a --varloss, --hotvar or --failvar or
+//     journal line too (a cold script is injected the hot values it reads,
+//     and is not run when one was not produced), and so does a --varloss, --hotvar or --failvar or
 //     the PC_FAILPROBE S with no (finite, for a failvar) number for its
 //     value after the script, text after a number included (a diagnostic
 //     is NaN with a journal line); a script that cannot be
@@ -600,6 +601,125 @@ TEST_CASE("a hot value LAMMPS refuses to inject fails the evaluation",
                                        "hot_a0 with a different style"));
     }
     CHECK(journal.find("eval-thread caught throw") == std::string::npos);
+    Host::reset_globals_for_test();
+}
+
+/* Pins: a cold script is injected the hot values it reads (`${name}` or
+ * `v_name` in its text), each as `variable <name> equal <value>`, and no
+ * other: with two hot scripts (hot_a0 = 3.25 from hot.in, hot_b = 1.0 from
+ * hotb.in), colda.in, which reads only ${hot_a0} and has `--invar hot_b 7`
+ * on its line (hot_b index style in its instance), runs: E2a = 3.25; and
+ * coldab.in, which reads both, gets both: E2b = 4.25. Two evaluations,
+ * feasible losses, no "PC_LAMMPS task failed" line.
+ * Before the fix: every hot value went to every cold script that read any,
+ * so colda.in got `variable hot_b equal 1` as well, which LAMMPS refused:
+ * "PC_LAMMPS task failed (colda.in, occurrence 1): injecting `variable
+ * hot_b equal 1` before the script: ERROR: Cannot redefine variable hot_b
+ * with a different style", every evaluation FAILSCORE. */
+TEST_CASE("a cold script is injected the hot values it reads",
+          "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ForceRebuildGuard rebuild;
+    ScratchDir sd("tadah_pc_inject_reads_");
+    std::ofstream(sd.dir / "hot.in")
+        << ta_script("${hot_a0}", "variable E equal pe\n"
+                                  "variable hot_a0 equal 3.25\n");
+    std::ofstream(sd.dir / "hotb.in")
+        << ta_script("3.301", "variable Eb equal pe\n"
+                              "variable hot_b equal 1.0\n");
+    std::ofstream(sd.dir / "colda.in")
+        << "clear\nunits metal\nvariable E2a equal ${hot_a0}\n";
+    std::ofstream(sd.dir / "coldab.in")
+        << "clear\nunits metal\nvariable E2b equal v_hot_a0+${hot_b}\n";
+    Journal j;
+    const auto losses = evaluate(
+        sd.dir,
+        "PC_ERMSE 0 1\n"
+        "PC_LAMMPS --script " + (sd.dir / "hot.in").string() +
+            " --varloss E 0 1 --hotvar hot_a0 2.5 4.5 3.301\n"
+        "PC_LAMMPS --script " + (sd.dir / "hotb.in").string() +
+            " --varloss Eb 0 1 --hotvar hot_b 0.5 1.5 1.0\n"
+        "PC_LAMMPS --script " + (sd.dir / "colda.in").string() +
+            " --varloss E2a 0 1 --invar hot_b 7\n"
+        "PC_LAMMPS --script " + (sd.dir / "coldab.in").string() +
+            " --varloss E2b 0 1\n",
+        {0.5, 0.6});
+    const std::string journal = j.finish();
+    INFO(journal);
+    REQUIRE(losses.size() == 2);
+    for (const double l : losses)
+        CHECK(tadah::hpo::loss_is_feasible(l, 1e16));
+    const Table outv = read_table("outvar.tadah");
+    REQUIRE(outv.rows.size() == 2);
+    check_header_shaped(outv, "outvar.tadah");
+    const std::size_t ca = column(outv, "E2a"), cab = column(outv, "E2b");
+    REQUIRE(ca < outv.header.size());
+    REQUIRE(cab < outv.header.size());
+    for (const auto& row : outv.rows)
+        if (row.size() == outv.header.size()) {
+            CHECK(row[ca] == "3.250000e+00");
+            CHECK(row[cab] == "4.250000e+00");
+        }
+    CHECK(journal.find("PC_LAMMPS task failed") == std::string::npos);
+    Host::reset_globals_for_test();
+}
+
+/* Pins: a cold script whose hot value was not produced -- its hot script
+ * could not start: the hot line's `-log <dir>/hot.log` names, as the
+ * worker's hot.log.t<slot>, a directory, so LAMMPS cannot create the hot
+ * script's instance -- is not run: the evaluation scores FAILSCORE, E and
+ * E2 are failscored, the journal has "PC_LAMMPS task failed (hot.in,
+ * occurrence n): creating the LAMMPS instance: " for the occurrences 1 and
+ * 2 and no line about cold.in.
+ * Before the fix: the cold script ran without the value (here, in a fresh
+ * instance, it failed on the undefined ${hot_a0}: "PC_LAMMPS task failed
+ * (cold.in, occurrence 2): ERROR on proc 0: Substitution for illegal
+ * variable hot_a0", and occurrence 4; in an instance an earlier evaluation
+ * had injected, it would have run on that evaluation's value), so the hot
+ * script's second failure was the run's occurrence 3, not journalled. */
+TEST_CASE("a cold script whose hot value was not produced is not run",
+          "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ForceRebuildGuard rebuild;
+    ScratchDir sd("tadah_pc_inject_missing_");
+    std::ofstream(sd.dir / "hot.in")
+        << ta_script("${hot_a0}", "variable E equal pe\n"
+                                  "variable hot_a0 equal 3.25\n");
+    std::ofstream(sd.dir / "cold.in")
+        << "clear\nunits metal\nvariable E2 equal ${hot_a0}\n";
+    /* The startup check opens hot.log itself; the workers append
+     * .t<slot>. */
+    for (int t = 0; t < 256; ++t)
+        fs::create_directories(sd.dir / ("hot.log.t" + std::to_string(t)));
+    Journal j;
+    const auto losses = evaluate(
+        sd.dir,
+        "PC_ERMSE 0 1\n"
+        "PC_LAMMPS --script " + (sd.dir / "hot.in").string() +
+            " --varloss E 0 1 --hotvar hot_a0 2.5 4.5 3.301 -log " +
+            (sd.dir / "hot.log").string() + "\n"
+        "PC_LAMMPS --script " + (sd.dir / "cold.in").string() +
+            " --varloss E2 0 1\n",
+        {0.5, 0.6});
+    const std::string journal = j.finish();
+    INFO(journal);
+    for (const double l : losses) CHECK(l == 1e16);
+    const Table outv = read_table("outvar.tadah");
+    REQUIRE(outv.rows.size() == 2);
+    for (const auto& row : outv.rows) {
+        REQUIRE(row.size() == 6);
+        CHECK(row[4] == "1.000000e+16");
+        CHECK(row[5] == "1.000000e+16");
+    }
+    for (const char* n : {"occurrence 1)", "occurrence 2)"}) {
+        INFO(n);
+        CHECK(line_with(journal, std::string("hot.in, ") + n +
+                                     ": creating the LAMMPS instance: ")
+                  .find("PC_LAMMPS task failed (") != std::string::npos);
+    }
+    CHECK(journal.find("cold.in, occurrence") == std::string::npos);
     Host::reset_globals_for_test();
 }
 
