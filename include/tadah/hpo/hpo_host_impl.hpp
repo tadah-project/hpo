@@ -1806,25 +1806,36 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
      * candidate) is reported per variable; the worker does not know which
      * names feed the loss, so the policy is set here, alike in both
      * PC_ISOLATION modes:
-     *   - a variable in the loss (--varloss) fails the task exactly as a
-     *     failed run does: its variables take --failscore, the evaluation
-     *     is aborted (a hot script's cold scripts do not run), the failvars
-     *     grade band B, and the D17 line below names the variable;
+     *   - a variable the line is for fails the task exactly as a failed run
+     *     does: its variables take --failscore, the evaluation is aborted
+     *     (a hot script's cold scripts do not run), the failvars grade band
+     *     B, and the D17 line below names the variable. That is a --varloss
+     *     variable of a PC_LAMMPS line, and the S of the PC_FAILPROBE line
+     *     (its first --outvar; the line has no --varloss), which grades
+     *     every failure of the evaluation: an S that cannot be read is a
+     *     failed probe, as when its script fails, never a diagnostic;
      *   - a diagnostic (declared only with --outvar) is "" -- NaN in
      *     outvar.tadah -- and the evaluation keeps its loss; its own line
-     *     says so, rate-limited like D17. */
+     *     says so, rate-limited like D17.
+     * The role in the message names the probe's line ("PC_FAILPROBE
+     * --outvar S"); the heads of the lines are the same for every line. */
     PcTaskStatus status = tres.status;
     std::string error_msg = tres.error_msg;
     if (!fail && !tres.outvar_errors.empty()) {
       auto in_loss = [&](std::size_t j) {
+        if (lsim.is_failprobe) return j == 0;
         return std::find(lsim.i_varloss.begin(), lsim.i_varloss.end(), j) !=
                lsim.i_varloss.end();
       };
+      const std::string loss_role =
+          lsim.is_failprobe ? "PC_FAILPROBE --outvar " : "--varloss ";
+      const std::string outvar_role =
+          lsim.is_failprobe ? "PC_FAILPROBE --outvar " : "--outvar ";
       for (std::size_t j = 0; j < lsim.n_outvar.size() && !fail; ++j) {
         if (tres.outvar_errors[j].empty() || !in_loss(j)) continue;
         fail = true;
         status = PcTaskStatus::RUN_FAIL;
-        error_msg = "reading --varloss " + lsim.n_outvar[j] +
+        error_msg = "reading " + loss_role + lsim.n_outvar[j] +
                     " after the script: " + tres.outvar_errors[j];
       }
       for (std::size_t j = 0; j < lsim.n_outvar.size() && !fail; ++j) {
@@ -1835,8 +1846,9 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
         if ((n & (n - 1)) == 0)
           HPOLog::instance().warning(
               "PC_LAMMPS --outvar is NaN (" + lsim.script + ", occurrence "
-              + std::to_string(n) + "): reading --outvar " + lsim.n_outvar[j]
-              + " after the script: " + tres.outvar_errors[j]);
+              + std::to_string(n) + "): reading " + outvar_role
+              + lsim.n_outvar[j] + " after the script: "
+              + tres.outvar_errors[j]);
       }
     }
 

@@ -56,7 +56,8 @@
  *     its LAMMPS message in outvar_errors; which of them feed the loss is
  *     the parent's knowledge, so failing the task for one is the parent's
  *     call (apply_task_result in hpo_host_impl.hpp: a --varloss variable
- *     fails the task, a diagnostic --outvar is NaN);
+ *     and the PC_FAILPROBE's S fail the task, a diagnostic --outvar is
+ *     NaN);
  *   - a --hotvar or --failvar fails the task here: RUN_FAIL, error_msg
  *     "reading --hotvar <name> after the script: <LAMMPS message>" for the
  *     first one, no outvar or hot value handed on (the failvars stay, for
