@@ -254,8 +254,9 @@ TEST_CASE("compact fitter: dlib's L-BFGS stops on FTOL_ABS, and FTOL_REL "
    * iteration changes the objective by less than FTOL_ABS (an absolute
    * change, dlib's objective_delta_stop_strategy): FTOL_ABS 1e10 ends it
    * at its first test (FTOL_REACHED), not at MAXEVAL. Under GN_MLSL_LDS an
-   * INNER LBFGS block's FTOL_REL sets MLSL's local LN_SBPLX only: with
-   * FTOL_REL 1e10 the rung's LBFGS search still runs to its MAXEVAL 9.
+   * INNER LBFGS block's FTOL_REL does not stop dlib's L-BFGS: with FTOL_REL
+   * 1e10 the rung's LBFGS search still runs to its MAXEVAL 9. (That it
+   * sets MLSL's local LN_SBPLX searches is the next test's.)
    * Before the fix: FTOL_ABS was refused in every refit block (the parse
    * throws), and dlib's L-BFGS stopped on FTOL_REL taken as its absolute
    * change, so FTOL_REL 1e10 ended the INNER search at its first test
@@ -298,6 +299,38 @@ TEST_CASE("compact fitter: dlib's L-BFGS stops on FTOL_ABS, and FTOL_REL "
         cfg);
     const LadderRun r = run_ladder(cfg);
     CHECK(logged(r, "explore=DLIB_LBFGS:MAXEVAL_REACHED(9ev)"));
+  }
+}
+
+TEST_CASE("compact fitter: under GN_MLSL_LDS an INNER block's MAXEVAL, "
+          "FTOL_REL and XTOL_REL set MLSL's local LN_SBPLX searches",
+          "[refit][compact][budget]")
+{
+  /* Pins: with the EXPLORE optimiser GN_MLSL_LDS, apply_stage_optimizers
+   * gives an INNER block's MAXEVAL, FTOL_REL and XTOL_REL to the settings
+   * MLSL's local LN_SBPLX searches run with (sbplx_maxeval, sbplx_ftol,
+   * sbplx_xtol), whatever the INNER ALGO: dlib's LBFGS, whose own stop
+   * (FTOL_ABS) keeps its default, NONE, or an NLopt search. RefitParser
+   * accepts these keys in such an INNER block on that ground.
+   * Before the fix: passes as well (a pin of the wiring the parser's MLSL
+   * exemption rests on: removing either assignment from
+   * apply_stage_optimizers broke no test). */
+  for (const std::string inner :
+       {"LIB DLIB ALGO LBFGS", "ALGO NONE", "LIB NLOPT ALGO LN_SBPLX"}) {
+    INFO(inner);
+    CompactConfig cfg;
+    apply_stage_optimizers(
+        parse_blocks({{"EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                  "MAXEVAL 40 INNER " + inner +
+                                      " MAXEVAL 9 FTOL_REL 1e-7 XTOL_REL "
+                                      "1e-6 ENDINNER ENDOPTIMIZER"}}),
+        cfg);
+    CHECK(cfg.seed_algo == "MLSL");
+    CHECK(cfg.mlsl_maxeval == 40);
+    CHECK(cfg.sbplx_maxeval == 9);
+    CHECK(cfg.sbplx_ftol == 1e-7);
+    CHECK(cfg.sbplx_xtol == 1e-6);
+    CHECK(cfg.dlib_inner_ftol_abs == CompactConfig{}.dlib_inner_ftol_abs);
   }
 }
 

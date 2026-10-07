@@ -202,6 +202,31 @@ TEST_CASE_METHOD(PTFixture,
           "algo=NLOPT_LBFGS maxeval=50 ftol_rel=1e-15}  FUSE{"
           "algo=CERES_DOGLEG maxiter=200 ftol_rel=1e-15 gtol=1e-14}");
   }
+  SECTION("MLSL with an INNER dlib LBFGS: the seed's local searches take "
+          "the INNER FTOL_REL and XTOL_REL") {
+    /* Before the fix: passes as well (a pin: under GN_MLSL_LDS an INNER
+     * dlib LBFGS block's FTOL_REL and XTOL_REL set MLSL's local LN_SBPLX
+     * searches, and dlib's LBFGS keeps its FTOL_ABS default). */
+    ScopedTempDir tmp;
+    write_synth_eam("synth.eam.alloy");
+    Context c = compact_context(
+        "SIGNED", "OPTIMIZER LIB NLOPT ALGO LD_LBFGS MAXEVAL 50 ENDOPTIMIZER");
+    c.remove("EXPLORE");
+    add_block(c, "EXPLORE",
+              "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS MAXEVAL 4000 INNER LIB "
+              "DLIB ALGO LBFGS MAXEVAL 1000 FTOL_REL 1e-7 XTOL_REL 1e-6 "
+              "ENDINNER ENDOPTIMIZER");
+    const auto [what, logged] = run_compact(c);
+    INFO(logged);
+    REQUIRE(what.empty());
+    const auto line = log_lines("optimiser: ");
+    REQUIRE(line.size() == 1u);
+    CHECK(line[0].rfind(
+              "optimiser: EXPLORE.seed{algo=MLSL maxeval=4000 local=LN_SBPLX{"
+              "maxeval=1000 ftol_rel=1e-07 xtol_rel=1e-06}}  EXPLORE.inner{"
+              "algo=DLIB_LBFGS maxeval=1000 ftol_abs=1e-13}  REFINE{",
+              0) == 0);
+  }
   SECTION("CRS2, dlib's LBFGS in INNER and REFINE, FUSE NONE") {
     ScopedTempDir tmp;
     write_synth_eam("synth.eam.alloy");
