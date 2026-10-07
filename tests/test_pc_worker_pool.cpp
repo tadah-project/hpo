@@ -353,6 +353,45 @@ TEST_CASE("pc pool: the journal names the pid of a worker that died",
   CHECK_THAT(line, Catch::Contains("; wait: signal 9 ("));
 }
 
+TEST_CASE("pc pool: a worker that dies inside its task is journalled with "
+          "the end of its channel", "[pc_pool][kill][hpolog]") {
+  /* A worker that dies while it runs a script (the kernel's out-of-memory
+   * killer, a crash inside LAMMPS) has read its whole TASK frame, and the
+   * parent, waiting for RESULT, finds the channel closed. test_main.cpp's
+   * stand-in worker (TADAH_TEST_PC_WORKER_DIE_IN_TASK in its environment)
+   * reads the first TASK and kills itself with SIGKILL.
+   *
+   * Pins: that task comes back KILLED, and the journal line is exactly
+   * "pc-worker 1 (pid <its pid>) killed/died: RESULT recv failed: pcwire:
+   * peer closed (EOF); wait: signal 9 (Killed); consecutive deaths: 1", the
+   * line Nested Fitting Configuration (PC_ISOLATION) shows.
+   *
+   * Before the fix: passes as well (a pin of the line the docs show; they
+   * showed "RESULT recv failed: pcwire: recv failed: Connection reset by
+   * peer", the reason the journal gives for a worker killed between tasks
+   * that the next TASK reaches, as in "the journal names the pid of a
+   * worker that died" above). */
+  Journal journal;
+  ScopedEnv die("TADAH_TEST_PC_WORKER_DIE_IN_TASK", "1");
+  PcWorkerPool pool(1, specs_for(1, minimal_spec()), 0.0);
+  const pid_t child = pool.worker_pid(0);
+  REQUIRE(child > 0);
+  CHECK(pool.execute(0, 0, 1, invalid_pot_map(), {},
+                     /*script_timeout_s=*/std::nullopt).status ==
+        PcTaskStatus::KILLED);
+  pool.shutdown();
+
+  const std::string text = journal.text();
+  INFO(text);
+  const std::string head =
+      "pc-worker 1 (pid " + std::to_string(child) + ") killed/died: ";
+  const auto at = text.find(head);
+  REQUIRE(at != std::string::npos);
+  CHECK(text.substr(at, text.find('\n', at) - at) ==
+        head + "RESULT recv failed: pcwire: peer closed (EOF); wait: "
+               "signal 9 (Killed); consecutive deaths: 1");
+}
+
 TEST_CASE("pc pool: a HELLO_ACK that names another pid fails the handshake",
           "[pc_pool]") {
   /* The worker reports its pid in HELLO_ACK; the pool forked it and knows

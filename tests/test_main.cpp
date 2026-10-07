@@ -72,12 +72,44 @@ int wrong_ack_pid_worker(const char* pid_file) {
   return 0;
 }
 
+/* A stand-in PC_ISOLATION worker, run instead of pc_worker_main when the
+ * pool spawns a worker with TADAH_TEST_PC_WORKER_DIE_IN_TASK in its
+ * environment (test_pc_worker_pool.cpp): it answers HELLO as a worker does,
+ * reads the first TASK frame whole, as pc_worker_main does before it runs
+ * the script, and then kills itself with SIGKILL, as the kernel's
+ * out-of-memory killer or a crash inside LAMMPS ends a worker in the middle
+ * of its script. */
+int die_in_task_worker() {
+  namespace pcwire = tadah::hpo::pcwire;
+  constexpr int kFd = 3;   /* the spawn recipe's channel */
+  try {
+    pcwire::FrameType t;
+    std::string payload;
+    if (!pcwire::recv_frame(kFd, t, payload, -1)
+        || t != pcwire::FrameType::HELLO)
+      return 3;
+    pcwire::Writer ack;
+    ack.u32(tadah::hpo::PcWorkerPool::PROTOCOL_VERSION);
+    ack.u32(static_cast<std::uint32_t>(::getpid()));
+    pcwire::send_frame(kFd, pcwire::FrameType::HELLO_ACK, ack.buf);
+    if (!pcwire::recv_frame(kFd, t, payload, -1)
+        || t != pcwire::FrameType::TASK)
+      return 3;
+  } catch (const std::exception&) {
+    return 3;
+  }
+  std::raise(SIGKILL);
+  return 5;   /* not reached */
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   if (argc >= 2 && std::strcmp(argv[1], "--tadah-pc-worker") == 0) {
     if (const char* pid_file = std::getenv("TADAH_TEST_PC_WORKER_WRONG_ACK_PID"))
       return wrong_ack_pid_worker(pid_file);
+    if (std::getenv("TADAH_TEST_PC_WORKER_DIE_IN_TASK"))
+      return die_in_task_worker();
     return tadah::hpo::pc_worker_main(argc, argv);
   }
   if (argc >= 2 && std::strcmp(argv[1], "--tadah-signal-handler-probe") == 0)
