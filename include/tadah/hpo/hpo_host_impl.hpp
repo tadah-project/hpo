@@ -1264,13 +1264,16 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
      * (validate_hpo_setup rejects NORM+FIXINDEX; re-checked here since
      * tests construct HPO_Host directly). A model that does not build, or
      * pins that do not classify, would fail every evaluation: the error
-     * (validate_hpo_setup's, which runs first in hpo_run) propagates. */
+     * (validate_hpo_setup's, which runs first in hpo_run) propagates.
+     * A non-linear M_KRR kernel always trains: its basis vectors, which its
+     * weights belong to, are drawn from the training data. */
     if (has_train_data_ && master_ctx_.contains("FIXINDEX")
         && !(master_ctx_.contains("NORM") && master_ctx_.get<bool>("NORM"))) {
         const std::size_t K = derive_weight_count(master_ctx_);
         all_weights_fixed_ =
             K > 0 && mlip::classify_weight_source(master_ctx_, K)
-                         == mlip::WeightSource::AllFixedData;
+                         == mlip::WeightSource::AllFixedData
+                  && !mlip::basis_drawn_from_training_data(master_ctx_);
         if (all_weights_fixed_) {
             core::Logger::instance().log(
                 tadah::core::LogLevel::INFO,

@@ -799,9 +799,9 @@ using ObservableGradProvider =
  *  validation_switches(trg), so they carry fd_ij whenever use_frmse is
  *  set. On any restriction violation the helper routes
  *  everything to needs_fd and returns true. Non-linear kernels
- *  (Kern_RBF / Kern_Polynomial / Kern_Sigmoid) use EKM projection in
- *  M_KRR_Train, so the analytical chain requires dEKM/dtheta --
- *  deferred to Phase 2C.
+ *  (Kern_RBF / Kern_Polynomial / Kern_Sigmoid / ...) need a kernel-arm
+ *  chain, which follows the basis vectors drawn from theta-dependent
+ *  descriptors -- deferred to Phase 2C.
  *
  *  `sims_grad_provider` (Phase 3.7B): default-null. When `trg.LS` is
  *  non-empty AND a provider is supplied, the helper drives
@@ -901,12 +901,13 @@ compute_analytical_gradient_from_trainer(
      *   - MODEL[1] BF_Linear or Kern_Linear. Phase 2A restricted Phi
      *     assembly to BF_Linear (Phi[s, c] = sum_atoms aed_a[c]); Phase 2B
      *     (B-HPO) extends to Kern_Linear: DM_Kern_Linear::calc_phi_energy_row
-     *     reduces to the same sum-of-AEDs Phi, and EKM projection is skipped
-     *     for Kern_Linear in M_KRR_Train::train1. Non-linear kernels
-     *     (Kern_RBF / Kern_Polynomial / Kern_Sigmoid) need a kernel-arm
-     *     walker and dEKM/dtheta -- deferred to Phase 2C (the kernel-arm
-     *     walker, assemble_dphi_train_energy_rows_d2_kern in MLIP, is
-     *     exercised by Layer-1.5 parity tests but not consumed here). */
+     *     reduces to the same sum-of-AEDs Phi. Non-linear kernels
+     *     (Kern_RBF / Kern_Polynomial / Kern_Sigmoid / ...) need a
+     *     kernel-arm walker that also follows the basis vectors (drawn
+     *     from theta-dependent descriptors) -- deferred to Phase 2C (the
+     *     kernel-arm walker, assemble_dphi_train_energy_rows_d2_kern in
+     *     MLIP, is exercised by Layer-1.5 parity tests but not consumed
+     *     here). */
     if (!analytical_gradient_blocker(ctx, trg, train_stdb.size() > 0).empty())
         return fall_back_all_fd();
 
