@@ -130,9 +130,10 @@
  * evaluate x for a central stencil, and a failed central stencil point
  * then fails the gradient at once under FAILSCORE_GRADING OFF, and under
  * ON makes it evaluate x (counted, HPOLog::record_hybrid_centre) to tell a
- * graded failure at x from a usable loss. A loss that mixes failed and
- * usable terms (a mean with FAILSCORE terms that stays below 0.999 FS) is a
- * usable loss to this rule: the host reports no per-evaluation failure.
+ * graded failure at x from a usable loss. An evaluation with a failed term
+ * (a PC_LAMMPS simulation, a PC_OBSERVABLE term) is a failed evaluation:
+ * HPO_Host scores it FAILSCORE, or a graded failure, never the mean of its
+ * terms (which stayed below 0.999 FS and read as usable here).
  *
  * ANALYTICAL, and HYBRID before its analytical pass, classify the caller's
  * loss at x (gradient_at) the same way: a failure (CentreLoss::Failed)

@@ -1588,7 +1588,14 @@ compute_analytical_gradient_from_trainer(
             /* Phase A masking applies symmetrically to PC_OBSERVABLE:
              * a per-observable `failed=true` (relaxer divergence,
              * non-finite value, NN-finder fault) -> skip-and-zero
-             * contribution rather than poisoning the whole gradient. */
+             * contribution rather than poisoning the whole gradient.
+             * The chain is then that of the other terms only: the host
+             * scores such an evaluation FAIL_SCORE (under
+             * FAILSCORE_GRADING a graded failure), not the mean of its
+             * terms, as it does one with a failed script, and the
+             * gradient provider fails the gradient at that loss before
+             * this pass whenever the caller gives the loss
+             * (gradient_provider.h). */
             std::vector<int> needs_fd_obs;
             const bool obs_ok = compute_observables_grad_dWchain(
                 obs_inputs, dWdtheta, n_cols,
