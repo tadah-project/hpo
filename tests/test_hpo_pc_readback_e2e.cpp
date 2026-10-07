@@ -32,6 +32,10 @@
 //     PC_FAILPROBE S). It needs TADAH_BINARY (the entry sets it in a
 //     build with the tadah target) and is Skipped without it; its PROCESS
 //     half needs socketpair, like the pc pool tests.
+//   - [.tadah_cli_pc_lammps_local_search] (CTest entry
+//     hpo_tadah_cli_pc_lammps_local_search, the same harness): a PC_LAMMPS
+//     run with an NLopt MLSL or AUGLAG whose INNER search is derivative-free
+//     starts and ends normally.
 
 #include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 
@@ -40,6 +44,7 @@
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/runners.h>
 
@@ -1564,4 +1569,63 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
         INFO(name << ": " << f << " without IT-TIME/ms");
         CHECK(lines_without(dirs[0] / f, 1) == lines_without(dirs[1] / f, 1));
     }
+}
+
+/* Pins, through the built tadah: a PC_LAMMPS run with an NLopt AUGLAG or
+ * MLSL whose INNER search is derivative-free -- LD_AUGLAG with LN_COBYLA,
+ * GD_MLSL_LDS with LN_SBPLX (MAXEVAL 6, PC_ISOLATION THREAD) -- starts and
+ * ends normally (exit 0): its rows hold between 1 and 6 evaluations, every
+ * one a feasible loss, best_loss.tadah has the best, and the journal names
+ * no GRAD_STRATEGY (it does for a block that obtains gradients). MLSL and
+ * AUGLAG evaluate their own points without a gradient; the local search
+ * decides, and these take none.
+ * Before the fix: refused at startup (exit 1, "--hpotarget defines
+ * PC_LAMMPS but OPTIMIZER's optimiser NLOPT:LD_AUGLAG is
+ * gradient-based"). */
+TEST_CASE("tadah hpo: PC_LAMMPS with an MLSL or AUGLAG whose local search "
+          "takes no gradient runs",
+          "[pc_lammps_grad][tadah_cli][.tadah_cli_pc_lammps_local_search]") {
+    const char* bin = std::getenv("TADAH_BINARY");
+    if (!bin || !*bin)
+        TADAH_SKIP("TADAH_BINARY is not set: it names the built tadah "
+                   "executable");
+    REQUIRE(fs::exists(bin));
+    tadah::core::PeriodicTable::initialize();
+    ScratchDir sd("tadah_cli_pc_local_search_");
+    std::string algo, inner;
+    SECTION("LD_AUGLAG with an INNER LN_COBYLA") {
+        algo = "LD_AUGLAG";
+        inner = "LN_COBYLA";
+    }
+    SECTION("GD_MLSL_LDS with an INNER LN_SBPLX") {
+        algo = "GD_MLSL_LDS";
+        inner = "LN_SBPLX";
+    }
+    INFO(algo << " with an INNER " << inner);
+    const fs::path dir = sd.dir / algo;
+    const std::string target =
+        "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n    ALGO " +
+        algo + "\n    MAXEVAL 6\n    INNER\n      LIB NLOPT\n      ALGO " +
+        inner + "\n    ENDINNER\n  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n"
+        "FAILSCORE 1e16\nPC_ERMSE 0 1\nOPTIM CGRID2B (1) 0.0 4.0\n"
+        "PC_LAMMPS --script readback.in --varloss E 0 1\n";
+    const int rc = run_tadah_hpo(bin, dir, "THREAD", target,
+                                 ta_script("3.301", "variable E equal pe\n"),
+                                 {});
+    INFO(read_text(dir / "tadah.stderr"));
+    const std::string journal = read_text(dir / "hpo_run.log");
+    INFO(journal);
+    REQUIRE(WIFEXITED(rc));
+    CHECK(WEXITSTATUS(rc) == 0);
+    CHECK_THAT(journal, !Catch::Contains("GRAD_STRATEGY"));
+    const Table loss = read_table(dir / "loss.tadah");
+    CHECK(loss.rows.size() >= 1);
+    CHECK(loss.rows.size() <= 6);
+    for (const auto& row : loss.rows) {
+        REQUIRE_FALSE(row.empty());
+        double v = 0.0;
+        REQUIRE(tadah::hpo::try_parse_double(row.back(), v));
+        CHECK(tadah::hpo::loss_is_feasible(v, 1e16));
+    }
+    CHECK(read_table(dir / "best_loss.tadah").rows.size() >= 1);
 }
