@@ -16,7 +16,8 @@ using LMP = LammpsRunner::LMP;
 
 LammpsRunner::LMPPtr
 LammpsRunner::create_instance(MPI_Comm sub_comm,
-                              std::vector<std::string> tokens) const {
+                              std::vector<std::string> tokens,
+                              std::string* error) const {
  
   // unique_ptr initialized to nullptr
   LMPPtr lmp_ptr;
@@ -27,8 +28,11 @@ LammpsRunner::create_instance(MPI_Comm sub_comm,
       new LMP(tokens, sub_comm)
       //new LMP(argc, argv.data(), sub_comm)
     );
-  } catch (const std::exception&) {
-    // On exception, leave lmp_ptr null
+  } catch (const std::exception& e) {
+    // On exception, leave lmp_ptr null; the LAMMPS message to the caller
+    // that asked for it (an option LAMMPS refuses: "ERROR: Invalid
+    // command-line argument: -sff (...)").
+    if (error) *error = e.what();
   }
 
   return lmp_ptr;

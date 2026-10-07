@@ -55,6 +55,11 @@ class LammpsRunner {
    *
    * @param sub_comm MPI communicator for this instance.
    * @param lmp_tokens Commandline arguments for LAMMPS.
+   * @param error Optional: when construction throws, the exception's
+   *              message -- LAMMPS' own for an option it refuses ("ERROR:
+   *              Invalid command-line argument: -sff (...)", "ERROR: Using
+   *              suffix omp without OPENMP package installed (...)").
+   *              Left alone on success.
    * @return Unique pointer to a valid LAMMPS instance on success; nullptr on failure.
    *
    * @code
@@ -67,7 +72,8 @@ class LammpsRunner {
    * @endcode
    */
   LMPPtr create_instance(MPI_Comm sub_comm,
-                         std::vector<std::string> lmp_tokens) const;
+                         std::vector<std::string> lmp_tokens,
+                         std::string* error = nullptr) const;
 
   /**
    * @brief Executes a LAMMPS input script on the given instance.

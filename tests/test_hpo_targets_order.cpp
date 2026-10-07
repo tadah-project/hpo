@@ -12,6 +12,8 @@
 // in 1.6.0) is rejected at parse time with the removal hint and the line
 // number, rather than being ignored or passed to LAMMPS. So is any other
 // option that starts with "--" and is not one of HPO's: LAMMPS has none.
+// A single-dash option LAMMPS refuses is an error at its line too, with
+// LAMMPS' message.
 
 #include "catch2/catch.hpp"
 
@@ -283,6 +285,52 @@ TEST_CASE("HPOTargets: an unknown -- option on a PC_LAMMPS or PC_FAILPROBE "
             CHECK(std::string(e.what()) ==
                   "Error on line " + std::to_string(bad_line) + ": " +
                       c.message + "\nLine: " + c.line);
+        }
+    }
+}
+
+/* Pins: a single-dash option LAMMPS refuses on a PC_LAMMPS or PC_FAILPROBE
+ * line (the typo -sff) is an error at its line: "Error on line N:
+ * PC_LAMMPS: LAMMPS cannot start with this line's command-line options: "
+ * (PC_FAILPROBE on a probe line), LAMMPS' own message ("ERROR: Invalid
+ * command-line argument: -sff (...)"), then "Line: " and the line.
+ * Before the fix: the constructor accepted both lines, and every
+ * evaluation then failed to create its LAMMPS instance (FAIL_CHECK
+ * fires). */
+TEST_CASE("HPOTargets: a command-line option LAMMPS refuses is rejected at "
+          "its line", "[hpo_targets][parse][lammps_sim]")
+{
+    tadah::core::PeriodicTable::initialize();
+    auto ctx = make_context_for_targets();
+    const auto script = write_script(2);
+    const std::string ok_line = "PC_LAMMPS --script " + script.string()
+                              + " --varloss " + var_name(1) + " 1.0 1.0";
+    struct Case { std::string kind, line; };
+    const std::vector<Case> cases = {
+        {"PC_LAMMPS",
+         "PC_LAMMPS --script " + script.string() + " --varloss "
+             + var_name(2) + " 1.0 1.0 -sff omp"},
+        {"PC_FAILPROBE",
+         "PC_FAILPROBE --script " + script.string() + " --outvar "
+             + var_name(2) + " -sff omp"},
+    };
+    for (const auto& c : cases) {
+        INFO(c.kind);
+        const std::string head = config_head() + ok_line + "\n";
+        const long bad_line = std::count(head.begin(), head.end(), '\n') + 1;
+        const auto cfg_path = write_file("cfg_lammps_option",
+                                         head + c.line + "\n");
+        try {
+            tadah::hpo::HPOTargets trg(ctx, cfg_path.string());
+            FAIL_CHECK("the option LAMMPS refuses was accepted");
+        } catch (const std::runtime_error& e) {
+            CHECK_THAT(std::string(e.what()),
+                       Catch::StartsWith(
+                           "Error on line " + std::to_string(bad_line) +
+                           ": " + c.kind + ": LAMMPS cannot start with this "
+                           "line's command-line options: ERROR: Invalid "
+                           "command-line argument: -sff (") &&
+                       Catch::EndsWith(")\nLine: " + c.line));
         }
     }
 }

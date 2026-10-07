@@ -16,7 +16,16 @@
 //     variable that reads an unreadable one carries that one's message);
 //     and every row of loss.tadah, outvar.tadah and stats.tadah has its
 //     header's columns, the cells an evaluation did not compute written as
-//     NaN (`nan` in loss/stats.tadah, `NaN` in outvar.tadah). Hidden
+//     NaN (`nan` in loss/stats.tadah, `NaN` in outvar.tadah). A hot value
+//     LAMMPS refuses to inject before a script fails that script, with a
+//     journal line too (a cold script is injected the hot values it reads,
+//     and is not run when one was not produced), and so does a --varloss, --hotvar or --failvar or
+//     the PC_FAILPROBE S with no (finite, for a failvar) number for its
+//     value after the script, text after a number included (a diagnostic
+//     is NaN with a journal line); a script that cannot be
+//     rendered fails with a journal line; and a failed simulation scores
+//     its evaluation FAILSCORE whatever loss its variables are measured
+//     with (L1, TUKEY). Hidden
 //     because, before the fix, these cases ended their process with
 //     SIGSEGV, and because the HPO_Host statics are shared by the cases of
 //     one process.
@@ -32,6 +41,10 @@
 //     PC_FAILPROBE S). It needs TADAH_BINARY (the entry sets it in a
 //     build with the tadah target) and is Skipped without it; its PROCESS
 //     half needs socketpair, like the pc pool tests.
+//   - [.tadah_cli_pc_lammps_local_search] (CTest entry
+//     hpo_tadah_cli_pc_lammps_local_search, the same harness): a PC_LAMMPS
+//     run with an NLopt MLSL or AUGLAG whose INNER search is derivative-free
+//     starts and ends normally.
 
 #include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 
@@ -40,6 +53,7 @@
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/runners.h>
 #include <tadah/hpo/warmstart_cache.h>
@@ -59,6 +73,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -151,6 +166,13 @@ Table read_table(const fs::path& p) {
         t.rows.push_back(tokens(line));
     }
     return t;
+}
+
+/* The column of @p t headed @p name (header.size() when none is). */
+std::size_t column(const Table& t, const std::string& name) {
+    std::size_t c = 0;
+    while (c < t.header.size() && t.header[c] != name) ++c;
+    return c;
 }
 
 /* Every row of @p t has its header's token count. */
@@ -517,6 +539,744 @@ TEST_CASE("an unreadable --hotvar fails the evaluation and the cold scripts "
     Host::reset_globals_for_test();
 }
 
+/* Pins: a hot value LAMMPS refuses to inject into a cold script fails that
+ * script and with it the evaluation: the cold line's `--invar hot_a0 3.3`
+ * makes hot_a0 an index-style variable when its instance is created, so
+ * the injected `variable hot_a0 equal 3.25` (the hot script's value) is
+ * refused. Each evaluation returns FAILSCORE, the hot script's E is
+ * computed, the cold script's E2 failscored, and the journal says, for the
+ * occurrences 1 and 2, "PC_LAMMPS task failed (cold.in, occurrence n):
+ * injecting `variable hot_a0 equal 3.25` before the script: ERROR: Cannot
+ * redefine variable hot_a0 with a different style".
+ * Before the fix: the injection's error was swallowed and the cold script
+ * ran on its own value: E2 = 3.3 in every row, a feasible loss, no journal
+ * line. */
+TEST_CASE("a hot value LAMMPS refuses to inject fails the evaluation",
+          "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ScratchDir sd("tadah_pc_inject_");
+    std::ofstream(sd.dir / "hot.in")
+        << ta_script("${hot_a0}", "variable E equal pe\n"
+                                  "variable hot_a0 equal 3.25\n");
+    std::ofstream(sd.dir / "cold.in")
+        << "clear\nunits metal\nvariable E2 equal ${hot_a0}\n";
+    Journal j;
+    const auto losses = evaluate(
+        sd.dir,
+        "PC_ERMSE 0 1\n"
+        "PC_LAMMPS --script " + (sd.dir / "hot.in").string() +
+            " --varloss E 0 1 --hotvar hot_a0 2.5 4.5 3.301\n"
+        "PC_LAMMPS --script " + (sd.dir / "cold.in").string() +
+            " --varloss E2 0 1 --invar hot_a0 3.3\n",
+        {0.5, 0.6});
+    const std::string journal = j.finish();
+    INFO(journal);
+    for (const double l : losses) CHECK(l == 1e16);
+    const Table outv = read_table("outvar.tadah");
+    CHECK(outv.header == std::vector<std::string>{
+              "#ITERATION", "IT-TIME/ms", "SLOT", "ERMSE", "E", "E2"});
+    REQUIRE(outv.rows.size() == 2);
+    check_header_shaped(outv, "outvar.tadah");
+    for (const auto& row : outv.rows)
+        if (row.size() == 6) {
+            CHECK(row[4] != "1.000000e+16");
+            CHECK(row[5] == "1.000000e+16");
+        }
+    for (const char* n : {"occurrence 1)", "occurrence 2)"}) {
+        INFO(n);
+        CHECK_THAT(line_with(journal, std::string("cold.in, ") + n +
+                                          ": injecting `variable hot_a0 "
+                                          "equal 3.25` before the script: "),
+                   Catch::Contains("PC_LAMMPS task failed (") &&
+                       Catch::Contains("ERROR: Cannot redefine variable "
+                                       "hot_a0 with a different style"));
+    }
+    CHECK(journal.find("eval-thread caught throw") == std::string::npos);
+    Host::reset_globals_for_test();
+}
+
+/* Pins: a cold script is injected the hot values it reads (`${name}` or
+ * `v_name` in its text), each as `variable <name> equal <value>`, and no
+ * other: with two hot scripts (hot_a0 = 3.25 from hot.in, hot_b = 1.0 from
+ * hotb.in), colda.in, which reads only ${hot_a0} and has `--invar hot_b 7`
+ * on its line (hot_b index style in its instance), runs: E2a = 3.25; and
+ * coldab.in, which reads both, gets both: E2b = 4.25. Two evaluations,
+ * feasible losses, no "PC_LAMMPS task failed" line.
+ * Before the fix: every hot value went to every cold script that read any,
+ * so colda.in got `variable hot_b equal 1` as well, which LAMMPS refused:
+ * "PC_LAMMPS task failed (colda.in, occurrence 1): injecting `variable
+ * hot_b equal 1` before the script: ERROR: Cannot redefine variable hot_b
+ * with a different style", every evaluation FAILSCORE. */
+TEST_CASE("a cold script is injected the hot values it reads",
+          "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ScratchDir sd("tadah_pc_inject_reads_");
+    std::ofstream(sd.dir / "hot.in")
+        << ta_script("${hot_a0}", "variable E equal pe\n"
+                                  "variable hot_a0 equal 3.25\n");
+    std::ofstream(sd.dir / "hotb.in")
+        << ta_script("3.301", "variable Eb equal pe\n"
+                              "variable hot_b equal 1.0\n");
+    std::ofstream(sd.dir / "colda.in")
+        << "clear\nunits metal\nvariable E2a equal ${hot_a0}\n";
+    std::ofstream(sd.dir / "coldab.in")
+        << "clear\nunits metal\nvariable E2b equal v_hot_a0+${hot_b}\n";
+    Journal j;
+    const auto losses = evaluate(
+        sd.dir,
+        "PC_ERMSE 0 1\n"
+        "PC_LAMMPS --script " + (sd.dir / "hot.in").string() +
+            " --varloss E 0 1 --hotvar hot_a0 2.5 4.5 3.301\n"
+        "PC_LAMMPS --script " + (sd.dir / "hotb.in").string() +
+            " --varloss Eb 0 1 --hotvar hot_b 0.5 1.5 1.0\n"
+        "PC_LAMMPS --script " + (sd.dir / "colda.in").string() +
+            " --varloss E2a 0 1 --invar hot_b 7\n"
+        "PC_LAMMPS --script " + (sd.dir / "coldab.in").string() +
+            " --varloss E2b 0 1\n",
+        {0.5, 0.6});
+    const std::string journal = j.finish();
+    INFO(journal);
+    REQUIRE(losses.size() == 2);
+    for (const double l : losses)
+        CHECK(tadah::hpo::loss_is_feasible(l, 1e16));
+    const Table outv = read_table("outvar.tadah");
+    REQUIRE(outv.rows.size() == 2);
+    check_header_shaped(outv, "outvar.tadah");
+    const std::size_t ca = column(outv, "E2a"), cab = column(outv, "E2b");
+    REQUIRE(ca < outv.header.size());
+    REQUIRE(cab < outv.header.size());
+    for (const auto& row : outv.rows)
+        if (row.size() == outv.header.size()) {
+            CHECK(row[ca] == "3.250000e+00");
+            CHECK(row[cab] == "4.250000e+00");
+        }
+    CHECK(journal.find("PC_LAMMPS task failed") == std::string::npos);
+    Host::reset_globals_for_test();
+}
+
+/* Pins: a cold script whose hot value was not produced -- its hot script
+ * could not start: the hot line's `-log <dir>/hot.log` names, as the
+ * worker's hot.log.t<slot>, a directory, so LAMMPS cannot create the hot
+ * script's instance -- is not run: the evaluation scores FAILSCORE, E and
+ * E2 are failscored, the journal has "PC_LAMMPS task failed (hot.in,
+ * occurrence n): creating the LAMMPS instance: " for the occurrences 1 and
+ * 2 and no line about cold.in.
+ * Before the fix: the cold script ran without the value (here, in a fresh
+ * instance, it failed on the undefined ${hot_a0}: "PC_LAMMPS task failed
+ * (cold.in, occurrence 2): ERROR on proc 0: Substitution for illegal
+ * variable hot_a0", and occurrence 4; in an instance an earlier evaluation
+ * had injected, it would have run on that evaluation's value), so the hot
+ * script's second failure was the run's occurrence 3, not journalled. */
+TEST_CASE("a cold script whose hot value was not produced is not run",
+          "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ScratchDir sd("tadah_pc_inject_missing_");
+    std::ofstream(sd.dir / "hot.in")
+        << ta_script("${hot_a0}", "variable E equal pe\n"
+                                  "variable hot_a0 equal 3.25\n");
+    std::ofstream(sd.dir / "cold.in")
+        << "clear\nunits metal\nvariable E2 equal ${hot_a0}\n";
+    /* The startup check opens hot.log itself; the workers append
+     * .t<slot>. */
+    for (int t = 0; t < 256; ++t)
+        fs::create_directories(sd.dir / ("hot.log.t" + std::to_string(t)));
+    Journal j;
+    const auto losses = evaluate(
+        sd.dir,
+        "PC_ERMSE 0 1\n"
+        "PC_LAMMPS --script " + (sd.dir / "hot.in").string() +
+            " --varloss E 0 1 --hotvar hot_a0 2.5 4.5 3.301 -log " +
+            (sd.dir / "hot.log").string() + "\n"
+        "PC_LAMMPS --script " + (sd.dir / "cold.in").string() +
+            " --varloss E2 0 1\n",
+        {0.5, 0.6});
+    const std::string journal = j.finish();
+    INFO(journal);
+    for (const double l : losses) CHECK(l == 1e16);
+    const Table outv = read_table("outvar.tadah");
+    REQUIRE(outv.rows.size() == 2);
+    for (const auto& row : outv.rows) {
+        REQUIRE(row.size() == 6);
+        CHECK(row[4] == "1.000000e+16");
+        CHECK(row[5] == "1.000000e+16");
+    }
+    for (const char* n : {"occurrence 1)", "occurrence 2)"}) {
+        INFO(n);
+        CHECK(line_with(journal, std::string("hot.in, ") + n +
+                                     ": creating the LAMMPS instance: ")
+                  .find("PC_LAMMPS task failed (") != std::string::npos);
+    }
+    CHECK(journal.find("cold.in, occurrence") == std::string::npos);
+    Host::reset_globals_for_test();
+}
+
+namespace {
+
+/* The tail that leaves the variable @p name without a number after the
+ * script: deleted (@p as_string false) or redefined as the string 'abc',
+ * under a condition the startup check of the script cannot evaluate
+ * (`$(step)` needs the run), so that it takes the variable as defined. */
+std::string spoil(const std::string& name, bool as_string) {
+    return "if \"$(step) == 0\" then \"variable " + name + " delete\"" +
+           (as_string ? " \"variable " + name + " string abc\"" : "") + "\n";
+}
+
+/* What the journal says of such a variable after "after the script: ". */
+std::string spoiled_reason(bool as_string) {
+    return as_string ? "its value 'abc' is not a number"
+                     : "no value (the variable is not defined, or has no "
+                       "single value)";
+}
+
+}  // namespace
+
+/* Pins: a --varloss variable with no number for its value after the script
+ * -- deleted at run time, or redefined as the string 'abc' -- fails the
+ * evaluation as one that cannot be read does: FAILSCORE, E and F failscored
+ * in outvar.tadah, and the journal line "PC_LAMMPS task failed
+ * (readback.in, occurrence n): reading --varloss F after the script: no
+ * value (the variable is not defined, or has no single value)" (or "...:
+ * its value 'abc' is not a number"). The deleted F reads the same in the
+ * second evaluation (occurrence 2); the string F stays in the cached LAMMPS
+ * instance (`clear` keeps variables), so the second run of the script fails
+ * at its `variable F equal pe+1` ("ERROR: Cannot redefine variable F with
+ * a different style", journalled as a script error).
+ * Before the fix: F's FAIL_SCORE term was averaged with the evaluation's
+ * other terms, L(ERMSE) and L(E): TOTAL_LOSS/N 3.333333e+15, below 0.999 *
+ * FAILSCORE, so the evaluation counted as feasible; E was kept, F NaN, and
+ * nothing was journalled. */
+TEST_CASE("a --varloss variable with no number for its value fails the "
+          "evaluation", "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    for (const bool as_string : {false, true}) {
+        INFO("F " << (as_string ? "redefined as a string" : "deleted"));
+        Host::reset_globals_for_test();
+        ScratchDir sd("tadah_pc_novalue_");
+        std::ofstream(sd.dir / "readback.in")
+            << ta_script("3.301", "variable E equal pe\n"
+                                  "variable F equal pe+1\n" +
+                                      spoil("F", as_string));
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir,
+            "PC_ERMSE 0 1\nPC_LAMMPS --script " +
+                (sd.dir / "readback.in").string() +
+                " --varloss E 0 1 --varloss F 0 1\n",
+            {0.5, 0.6});
+        const std::string journal = j.finish();
+        INFO(journal);
+        for (const double l : losses) CHECK(l == 1e16);
+        const Table outv = read_table("outvar.tadah");
+        CHECK(outv.header == std::vector<std::string>{
+                  "#ITERATION", "IT-TIME/ms", "SLOT", "ERMSE", "E", "F"});
+        REQUIRE(outv.rows.size() == 2);
+        check_header_shaped(outv, "outvar.tadah");
+        for (const auto& row : outv.rows)
+            if (row.size() == 6) {
+                CHECK(row[4] == "1.000000e+16");
+                CHECK(row[5] == "1.000000e+16");
+            }
+        CHECK(line_with(journal, "readback.in, occurrence 1): reading "
+                                 "--varloss F after the script: " +
+                                     spoiled_reason(as_string))
+                  .find("PC_LAMMPS task failed (") != std::string::npos);
+        /* The deleted F is defined afresh by the next run of the script;
+         * the string F stays in the cached instance (`clear` keeps
+         * variables), whose next run fails at `variable F equal pe+1`. */
+        CHECK(line_with(journal,
+                        as_string
+                            ? "readback.in, occurrence 2): ERROR: Cannot "
+                              "redefine variable F with a different style"
+                            : "readback.in, occurrence 2): reading --varloss "
+                              "F after the script: " +
+                                  spoiled_reason(false))
+                  .find("PC_LAMMPS task failed (") != std::string::npos);
+        CHECK(journal.find("[!] No evaluation produced a usable loss.") !=
+              std::string::npos);
+        Host::reset_globals_for_test();
+    }
+}
+
+/* Pins: a --hotvar with no number for its value after the hot script (its
+ * hot_a0 redefined as the string 'abc') fails the hot script and with it
+ * the evaluation: FAILSCORE, E and E2 failscored, the journal line
+ * "PC_LAMMPS task failed (hot.in, occurrence 1): reading --hotvar hot_a0
+ * after the script: its value 'abc' is not a number", and the cold script,
+ * which needs the hot value, not run (no line about it).
+ * Before the fix: the value was skipped -- no range check, no warm start,
+ * no hot value for the cold script, which ran without it (here it failed on
+ * the undefined ${hot_a0}, journalled as its own script error; a cold
+ * script that had seen the value before would have run on the previous
+ * evaluation's) -- and the journal had no line naming hot_a0. */
+TEST_CASE("a --hotvar with no number for its value fails the evaluation",
+          "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ScratchDir sd("tadah_pc_novalue_hot_");
+    std::ofstream(sd.dir / "hot.in")
+        << ta_script("${hot_a0}", "variable E equal pe\n"
+                                  "variable hot_a0 equal 3.25\n" +
+                                      spoil("hot_a0", true));
+    std::ofstream(sd.dir / "cold.in")
+        << ta_script("${hot_a0}", "variable E2 equal pe\n");
+    Journal j;
+    const auto losses = evaluate(
+        sd.dir,
+        "PC_ERMSE 0 1\n"
+        "PC_LAMMPS --script " + (sd.dir / "hot.in").string() +
+            " --varloss E 0 1 --hotvar hot_a0 2.5 4.5 3.301\n"
+        "PC_LAMMPS --script " + (sd.dir / "cold.in").string() +
+            " --varloss E2 0 1\n",
+        {0.5});
+    const std::string journal = j.finish();
+    INFO(journal);
+    REQUIRE(losses.size() == 1);
+    CHECK(losses[0] == 1e16);
+    const Table outv = read_table("outvar.tadah");
+    REQUIRE(outv.rows.size() == 1);
+    REQUIRE(outv.rows[0].size() == 6);
+    CHECK(outv.rows[0][4] == "1.000000e+16");
+    CHECK(outv.rows[0][5] == "1.000000e+16");
+    CHECK_THAT(line_with(journal, "hot.in, occurrence 1): reading --hotvar "
+                                  "hot_a0 after the script: "),
+               Catch::Contains("PC_LAMMPS task failed (") &&
+                   Catch::Contains(spoiled_reason(true)));
+    CHECK(journal.find("cold.in, occurrence") == std::string::npos);
+    Host::reset_globals_for_test();
+}
+
+/* Pins: a --failvar with no finite number for its value after the script
+ * -- deleted at run time, or exp(1000), which LAMMPS evaluates to inf --
+ * fails the evaluation, under FAILSCORE_GRADING OFF and ON alike: the
+ * journal line "PC_LAMMPS task failed (readback.in, occurrence 1): reading
+ * --failvar viol after the script: no value (the variable is not defined,
+ * or has no single value)" (or "...: its value 'inf' is not a finite
+ * number"), E failscored, and the loss FAILSCORE (OFF) or, graded by the
+ * failed fraction of the one script since the failvar cannot grade, band
+ * B's value for 1 (ON).
+ * Before the fix: under OFF the failvar was not looked at, under ON its
+ * empty or non-finite value counted as no violation: the evaluation was
+ * feasible, E kept, and nothing was journalled. */
+TEST_CASE("a --failvar with no finite number for its value fails the "
+          "evaluation", "[pc_readback_e2e][.]") {
+    using tadah::hpo::FailBand;
+    using tadah::hpo::graded_failscore;
+    tadah::core::PeriodicTable::initialize();
+    struct Case { std::string tail, reason; };
+    for (const bool graded : {false, true})
+    for (const Case& c : {Case{"variable viol equal 0.0\n" +
+                                   spoil("viol", false),
+                               spoiled_reason(false)},
+                          Case{"variable viol equal exp(1000)\n",
+                               "its value 'inf' is not a finite number"}}) {
+        INFO((graded ? "FAILSCORE_GRADING ON" : "FAILSCORE_GRADING OFF")
+             << ", " << c.reason);
+        Host::reset_globals_for_test();
+        ScratchDir sd("tadah_pc_novalue_fail_");
+        std::ofstream(sd.dir / "readback.in")
+            << ta_script("3.301", "variable E equal pe\n" + c.tail);
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir,
+            std::string(graded ? "FAILSCORE_GRADING ON\n" : "") +
+                "PC_ERMSE 0 1\nPC_LAMMPS --script " +
+                (sd.dir / "readback.in").string() +
+                " --varloss E 0 1 --failvar viol 1.0\n",
+            {0.5});
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] == (graded ? graded_failscore(1e16, FailBand::B,
+                                                       1.0, 1.0)
+                                   : 1e16));
+        const Table outv = read_table("outvar.tadah");
+        REQUIRE(outv.rows.size() == 1);
+        REQUIRE(outv.rows[0].size() == 5);
+        CHECK(outv.rows[0][4] == "1.000000e+16");
+        CHECK_THAT(line_with(journal, "readback.in, occurrence 1): reading "
+                                      "--failvar viol after the script: "),
+                   Catch::Contains("PC_LAMMPS task failed (") &&
+                       Catch::Contains(c.reason));
+        Host::reset_globals_for_test();
+    }
+}
+
+/* Pins: a diagnostic (--outvar only) with no number for its value after
+ * the script (deleted at run time) is NaN in outvar.tadah and the
+ * evaluation keeps its loss, as for one that cannot be read, and the
+ * journal says so for the occurrences 1 and 2: "PC_LAMMPS --outvar is NaN
+ * (readback.in, occurrence n): reading --outvar P after the script: no
+ * value (the variable is not defined, or has no single value)".
+ * Before the fix: NaN with nothing in the journal (the line checks
+ * fail). */
+TEST_CASE("a diagnostic --outvar with no number for its value is NaN with a "
+          "journal line", "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ScratchDir sd("tadah_pc_novalue_diag_");
+    std::ofstream(sd.dir / "readback.in")
+        << ta_script("3.301", "variable E equal pe\nvariable P equal pe\n" +
+                                  spoil("P", false));
+    Journal j;
+    const auto losses = evaluate(
+        sd.dir,
+        "PC_ERMSE 0 1\nPC_LAMMPS --script " +
+            (sd.dir / "readback.in").string() +
+            " --varloss E 0 1 --outvar P\n",
+        {0.5, 0.6});
+    const std::string journal = j.finish();
+    INFO(journal);
+    for (const double l : losses)
+        CHECK(tadah::hpo::loss_is_feasible(l, 1e16));
+    const Table outv = read_table("outvar.tadah");
+    REQUIRE(outv.rows.size() == 2);
+    for (const auto& row : outv.rows) {
+        REQUIRE(row.size() == 6);
+        CHECK(row[4] != "1.000000e+16");
+        CHECK(row[5] == "NaN");
+    }
+    for (const char* n : {"occurrence 1)", "occurrence 2)"}) {
+        INFO(n);
+        CHECK(line_with(journal, std::string("readback.in, ") + n +
+                                     ": reading --outvar P after the "
+                                     "script: " + spoiled_reason(false))
+                  .find("PC_LAMMPS --outvar is NaN (") != std::string::npos);
+    }
+    CHECK(journal.find("PC_LAMMPS task failed") == std::string::npos);
+    Host::reset_globals_for_test();
+}
+
+/* Pins: the S of the PC_FAILPROBE line (its first --outvar) with no number
+ * for its value after the probe's script -- deleted at run time, or
+ * redefined as the string 'abc' -- is a failed probe, as one that cannot be
+ * read is, under FAILSCORE_GRADING OFF and ON alike: the journal line
+ * "PC_LAMMPS task failed (probe.in, occurrence 1): reading PC_FAILPROBE
+ * --outvar S after the script: no value (the variable is not defined, or
+ * has no single value)" (or "...: its value 'abc' is not a number"), no
+ * "--outvar is NaN" line (S is not a diagnostic), the evaluation aborted
+ * (S and the PC_LAMMPS line's E failscored in outvar.tadah) and its loss
+ * FAILSCORE (OFF) or band D's top with S unavailable (ON, --s0 0.5).
+ * Before the fix: S "" or 'abc' was taken for a number nobody checked: the
+ * probe's task counted as completed, E kept its value and nothing was
+ * journalled; under OFF the evaluation was feasible, under ON band D was
+ * recorded for the NaN S (the same loss) without aborting the
+ * evaluation. */
+TEST_CASE("a PC_FAILPROBE S with no number for its value fails the probe",
+          "[pc_readback_e2e][.]") {
+    using tadah::hpo::FailBand;
+    using tadah::hpo::graded_failscore;
+    tadah::core::PeriodicTable::initialize();
+    for (const bool graded : {false, true})
+    for (const bool as_string : {false, true}) {
+        INFO((graded ? "FAILSCORE_GRADING ON" : "FAILSCORE_GRADING OFF")
+             << ", S " << (as_string ? "redefined as a string" : "deleted"));
+        Host::reset_globals_for_test();
+        ScratchDir sd("tadah_pc_novalue_probe_");
+        std::ofstream(sd.dir / "probe.in")
+            << ta_script("3.301", "variable S equal 0.1\n" +
+                                      spoil("S", as_string));
+        std::ofstream(sd.dir / "readback.in")
+            << ta_script("3.301", "variable E equal pe\n");
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir,
+            std::string(graded ? "FAILSCORE_GRADING ON\n" : "") +
+                "PC_ERMSE 0 1\nPC_FAILPROBE --script " +
+                (sd.dir / "probe.in").string() +
+                " --outvar S --s0 0.5\nPC_LAMMPS --script " +
+                (sd.dir / "readback.in").string() + " --varloss E 0 1\n",
+            {0.5});
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] ==
+              (graded ? graded_failscore(
+                            1e16, FailBand::D,
+                            std::numeric_limits<double>::infinity(), 0.5)
+                      : 1e16));
+        const Table outv = read_table("outvar.tadah");
+        CHECK(outv.header == std::vector<std::string>{
+                  "#ITERATION", "IT-TIME/ms", "SLOT", "ERMSE", "S", "E"});
+        REQUIRE(outv.rows.size() == 1);
+        REQUIRE(outv.rows[0].size() == 6);
+        CHECK(outv.rows[0][4] == "1.000000e+16");
+        CHECK(outv.rows[0][5] == "1.000000e+16");
+        CHECK_THAT(line_with(journal, "probe.in, occurrence 1): reading "
+                                      "PC_FAILPROBE --outvar S after the "
+                                      "script: "),
+                   Catch::Contains("PC_LAMMPS task failed (") &&
+                       Catch::Contains(spoiled_reason(as_string)));
+        CHECK(journal.find("--outvar is NaN") == std::string::npos);
+        Host::reset_globals_for_test();
+    }
+}
+
+namespace {
+
+/* The tail that redefines the variable @p name as the string @p text, under
+ * the condition of spoil(). */
+std::string respell(const std::string& name, const std::string& text) {
+    return "if \"$(step) == 0\" then \"variable " + name + " delete\" "
+           "\"variable " + name + " string " + text + "\"\n";
+}
+
+}  // namespace
+
+/* Pins: a --hotvar or --failvar value is a number only when the whole value
+ * is one -- the parse of every value read back --, so one with text after
+ * its number fails the evaluation as text does:
+ *   - a hot script whose hot_a0 is redefined as the string '3.25abc':
+ *     FAILSCORE, E and E2 failscored, "PC_LAMMPS task failed (hot.in,
+ *     occurrence 1): reading --hotvar hot_a0 after the script: its value
+ *     '3.25abc' is not a number", and the cold script not run (no line
+ *     about it);
+ *   - a --failvar viol redefined as the string '0.5abc', under
+ *     FAILSCORE_GRADING OFF and ON: "... reading --failvar viol after the
+ *     script: its value '0.5abc' is not a number", E failscored, the loss
+ *     FAILSCORE (OFF) or, graded by the failed fraction of the one script
+ *     since the failvar cannot grade, band B's value for 1 (ON).
+ * Before the fix: hot and fail values were parsed by their leading number
+ * (core::to_double): hot_a0 = 3.25, in its window, warm-started the next
+ * evaluation and ran the cold script (a feasible loss, E2 computed); under
+ * OFF viol was not looked at (a feasible loss, E kept); under ON viol = 0.5
+ * graded band B by 0.5, not by the failed fraction; nothing was
+ * journalled. */
+TEST_CASE("a --hotvar or --failvar with text after its number fails the "
+          "evaluation", "[pc_readback_e2e][.]") {
+    using tadah::hpo::FailBand;
+    using tadah::hpo::graded_failscore;
+    tadah::core::PeriodicTable::initialize();
+    {
+        INFO("--hotvar hot_a0 '3.25abc'");
+        Host::reset_globals_for_test();
+        ScratchDir sd("tadah_pc_trailing_hot_");
+        std::ofstream(sd.dir / "hot.in")
+            << ta_script("${hot_a0}", "variable E equal pe\n"
+                                      "variable hot_a0 equal 3.25\n" +
+                                          respell("hot_a0", "3.25abc"));
+        std::ofstream(sd.dir / "cold.in")
+            << ta_script("${hot_a0}", "variable E2 equal pe\n");
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir,
+            "PC_ERMSE 0 1\n"
+            "PC_LAMMPS --script " + (sd.dir / "hot.in").string() +
+                " --varloss E 0 1 --hotvar hot_a0 2.5 4.5 3.301\n"
+            "PC_LAMMPS --script " + (sd.dir / "cold.in").string() +
+                " --varloss E2 0 1\n",
+            {0.5});
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] == 1e16);
+        const Table outv = read_table("outvar.tadah");
+        REQUIRE(outv.rows.size() == 1);
+        REQUIRE(outv.rows[0].size() == 6);
+        CHECK(outv.rows[0][4] == "1.000000e+16");
+        CHECK(outv.rows[0][5] == "1.000000e+16");
+        CHECK_THAT(line_with(journal, "hot.in, occurrence 1): reading "
+                                      "--hotvar hot_a0 after the script: "),
+                   Catch::Contains("PC_LAMMPS task failed (") &&
+                       Catch::Contains("its value '3.25abc' is not a "
+                                       "number"));
+        CHECK(journal.find("cold.in, occurrence") == std::string::npos);
+        Host::reset_globals_for_test();
+    }
+    for (const bool graded : {false, true}) {
+        INFO("--failvar viol '0.5abc', "
+             << (graded ? "FAILSCORE_GRADING ON" : "FAILSCORE_GRADING OFF"));
+        Host::reset_globals_for_test();
+        ScratchDir sd("tadah_pc_trailing_fail_");
+        std::ofstream(sd.dir / "readback.in")
+            << ta_script("3.301", "variable E equal pe\n"
+                                  "variable viol equal 0.0\n" +
+                                      respell("viol", "0.5abc"));
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir,
+            std::string(graded ? "FAILSCORE_GRADING ON\n" : "") +
+                "PC_ERMSE 0 1\nPC_LAMMPS --script " +
+                (sd.dir / "readback.in").string() +
+                " --varloss E 0 1 --failvar viol 1.0\n",
+            {0.5});
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] == (graded ? graded_failscore(1e16, FailBand::B,
+                                                       1.0, 1.0)
+                                   : 1e16));
+        const Table outv = read_table("outvar.tadah");
+        REQUIRE(outv.rows.size() == 1);
+        REQUIRE(outv.rows[0].size() == 5);
+        CHECK(outv.rows[0][4] == "1.000000e+16");
+        CHECK_THAT(line_with(journal, "readback.in, occurrence 1): reading "
+                                      "--failvar viol after the script: "),
+                   Catch::Contains("PC_LAMMPS task failed (") &&
+                       Catch::Contains("its value '0.5abc' is not a "
+                                       "number"));
+        Host::reset_globals_for_test();
+    }
+}
+
+namespace {
+
+/* TMPDIR for the life of the object, restored (or unset) after. */
+struct ScopedTmpdir {
+    std::optional<std::string> old;
+    explicit ScopedTmpdir(const std::string& value) {
+        if (const char* v = std::getenv("TMPDIR")) old = std::string(v);
+        ::setenv("TMPDIR", value.c_str(), 1);
+    }
+    ~ScopedTmpdir() {
+        if (old) ::setenv("TMPDIR", old->c_str(), 1);
+        else     ::unsetenv("TMPDIR");
+    }
+};
+
+}  // namespace
+
+/* Pins: a PC_LAMMPS script that cannot be rendered to its temporary file
+ * (TMPDIR names a regular file during the evaluations) fails its task as
+ * an infrastructure failure -- the evaluation's loss FAILSCORE, E
+ * failscored -- and the journal says why, for the occurrences 1 and 2:
+ * "PC_LAMMPS task failed (readback.in, occurrence n): rendering the script
+ * to a temporary file: " and the reason.
+ * Before the fix: the task carried the reason, but the parent's
+ * CREATE_FAIL path returned before the journal line, so every evaluation
+ * failed with nothing in the journal (the line checks fail). */
+TEST_CASE("a PC_LAMMPS script that cannot be rendered is journalled",
+          "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ScratchDir sd("tadah_pc_unrendered_");
+    /* A text no live rendering has: identical renderings are shared. */
+    std::ofstream(sd.dir / "readback.in")
+        << ta_script("3.301", "variable E equal pe\nvariable unrendered_" +
+                                  std::to_string(::getpid()) + " equal 1\n");
+    std::ofstream(sd.dir / "notadir") << "a file, not a directory\n";
+    Journal j;
+    std::vector<double> losses;
+    {
+        ScopedTmpdir tmpdir((sd.dir / "notadir").string());
+        losses = evaluate(sd.dir,
+                          "PC_ERMSE 0 1\nPC_LAMMPS --script " +
+                              (sd.dir / "readback.in").string() +
+                              " --varloss E 0 1\n",
+                          {0.5, 0.6});
+    }
+    const std::string journal = j.finish();
+    INFO(journal);
+    for (const double l : losses) CHECK(l == 1e16);
+    const Table outv = read_table("outvar.tadah");
+    REQUIRE(outv.rows.size() == 2);
+    for (const auto& row : outv.rows) {
+        REQUIRE(row.size() == 5);
+        CHECK(row[4] == "1.000000e+16");
+    }
+    for (const char* n : {"occurrence 1)", "occurrence 2)"}) {
+        INFO(n);
+        CHECK(line_with(journal, std::string("readback.in, ") + n +
+                                     ": rendering the script to a temporary "
+                                     "file: ")
+                  .find("PC_LAMMPS task failed (") != std::string::npos);
+    }
+    Host::reset_globals_for_test();
+}
+
+/* Pins: under FAILSCORE_GRADING OFF an evaluation with a failed PC_LAMMPS
+ * simulation scores FAILSCORE whatever the loss its variables are measured
+ * with: under L1 and TUKEY (--varloss overrides; L(ERMSE) stays L2), for
+ *   - a --varloss F deleted at run time (no value after the script),
+ *   - a LAMMPS error inside the script (`bogus_command 1 2`),
+ *   - a script that cannot be rendered (TMPDIR names a regular file: an
+ *     infrastructure failure, which does not abort the evaluation),
+ *   - a hot value outside its window (hot_a0 = 5.0 outside [2.5, 4.5]),
+ * every evaluation returns 1e16 and the journal says "[!] No evaluation
+ * produced a usable loss."; the failed variables are --failscore (1e16) in
+ * outvar.tadah, and under L1 their loss.tadah term is L1(1e16) =
+ * 1.000000e+16 (the --failscore value goes through the line's loss, as
+ * before). Under L2 the same cases scored 1e16 before the fix as well: the
+ * squared --failscore value is past FAILSCORE (the cases above with
+ * `LOSS L2`).
+ * Before the fix: the evaluation's loss was the mean of its terms, the
+ * failed line's loss of its --failscore value with L(ERMSE) (and L(E)): under
+ * L1 6666666666666700 (F deleted) or 5000000000000050, under TUKEY, which is
+ * bounded (a term of about 1 each), 33.99996 (F deleted) or 50.49994 --
+ * below 0.999 * FAILSCORE, so each failed evaluation counted as feasible
+ * ("[ok] Every evaluation produced a usable loss.") and could become the
+ * best. */
+TEST_CASE("a failed PC_LAMMPS simulation fails the evaluation whatever its "
+          "variables' loss", "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    struct Case {
+        std::string what, script, options;
+        bool unrendered;
+    };
+    const std::vector<Case> cases{
+        {"a --varloss F deleted at run time",
+         ta_script("3.301", "variable E equal pe\nvariable F equal pe+1\n" +
+                                spoil("F", false)),
+         " --varloss E 0 1 LOSS --varloss F 0 1 LOSS", false},
+        {"a LAMMPS error inside the script",
+         ta_script("3.301", "variable E equal pe\nbogus_command 1 2\n"),
+         " --varloss E 0 1 LOSS", false},
+        {"a script that cannot be rendered",
+         ta_script("3.301", "variable E equal pe\nvariable unrendered_" +
+                                std::to_string(::getpid()) + " equal 2\n"),
+         " --varloss E 0 1 LOSS", true},
+        {"a hot value outside its window",
+         ta_script("3.301", "variable E equal pe\n"
+                            "variable hot_a0 equal 5.0\n"),
+         " --varloss E 0 1 LOSS --hotvar hot_a0 2.5 4.5 3.301", false}};
+    for (const std::string loss : {"L1", "TUKEY"})
+    for (const Case& c : cases) {
+        INFO("--varloss ... " << loss << ": " << c.what);
+        Host::reset_globals_for_test();
+        ScratchDir sd("tadah_pc_failed_loss_");
+        std::ofstream(sd.dir / "readback.in") << c.script;
+        std::ofstream(sd.dir / "notadir") << "a file, not a directory\n";
+        std::string options = c.options;
+        for (std::size_t p; (p = options.find("LOSS")) != std::string::npos;)
+            options.replace(p, 4, loss);
+        Journal j;
+        std::vector<double> losses;
+        {
+            std::optional<ScopedTmpdir> tmpdir;
+            if (c.unrendered) tmpdir.emplace((sd.dir / "notadir").string());
+            losses = evaluate(sd.dir,
+                              "PC_ERMSE 0 1\nPC_LAMMPS --script " +
+                                  (sd.dir / "readback.in").string() +
+                                  options + "\n",
+                              {0.5});
+        }
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] == 1e16);
+        CHECK(journal.find("[!] No evaluation produced a usable loss.") !=
+              std::string::npos);
+        const Table outv = read_table("outvar.tadah");
+        REQUIRE(outv.rows.size() == 1);
+        check_header_shaped(outv, "outvar.tadah");
+        for (std::size_t col = 4; col < outv.rows[0].size(); ++col) {
+            INFO("outvar.tadah column " << outv.header.at(col));
+            CHECK(outv.rows[0][col] == "1.000000e+16");
+        }
+        if (loss == "L1") {
+            const Table l = read_table("loss.tadah");
+            const std::size_t col = column(l, "L(E)");
+            REQUIRE(col < l.header.size());
+            REQUIRE(l.rows.size() == 1);
+            REQUIRE(l.rows[0].size() == l.header.size());
+            CHECK(l.rows[0][col] == "1.000000e+16");
+        }
+        Host::reset_globals_for_test();
+    }
+}
+
 /* Pins: a variable that reads an unreadable one is journalled with the
  * LAMMPS error of that one, as reading it raised it, never with "has a
  * circular dependency":
@@ -838,15 +1598,16 @@ namespace {
 
 /* `tadah hpo` in its own directory @p dir under PC_ISOLATION @p mode, with
  * the hpotarget @p target (PC_ISOLATION appended), the script readback.in
- * = @p script and each of @p more_scripts (name, text); returns the wait
- * status. tadah runs without TADAH_PC_ISOLATION, which would override the
+ * = @p script and each of @p more_scripts (name, text), and the environment
+ * assignments @p env ("TMPDIR=notadir"); returns the wait status. tadah runs without TADAH_PC_ISOLATION, which would override the
  * hpotarget's PC_ISOLATION (src/hpo.cpp) -- a developer where socketpair
  * is blocked is told to set it to THREAD -- so @p mode is the mode it runs
  * in, as each case checks in its journal. */
 int run_tadah_hpo(
         const char* bin, const fs::path& dir, const std::string& mode,
         const std::string& target, const std::string& script,
-        const std::vector<std::pair<std::string, std::string>>& more_scripts) {
+        const std::vector<std::pair<std::string, std::string>>& more_scripts,
+        const std::string& env = "") {
     fs::create_directories(dir);
     write_minimal_ta_dbfile(dir / "train.db", 0.0);
     write_minimal_ta_dbfile(dir / "val.db", 0.07, -0.04);
@@ -859,7 +1620,8 @@ int run_tadah_hpo(
     std::ofstream(dir / "config.hpo") << target << "PC_ISOLATION " << mode
                                       << "\n";
     const std::string cmd =
-        "cd '" + dir.string() + "' && env -u TADAH_PC_ISOLATION '" + bin +
+        "cd '" + dir.string() + "' && env -u TADAH_PC_ISOLATION " + env +
+        " '" + bin +
         "' hpo -c config --hpotarget config.hpo --validation config.val"
         " > tadah.stdout 2> tadah.stderr";
     return std::system(cmd.c_str());
@@ -888,17 +1650,11 @@ std::string sci6(double v) {
     return buf;
 }
 
-/* The column of @p t headed @p name (header.size() when none is). */
-std::size_t column(const Table& t, const std::string& name) {
-    std::size_t c = 0;
-    while (c < t.header.size() && t.header[c] != name) ++c;
-    return c;
-}
-
 }  // namespace
 
 /* Pins, through the built tadah: a LAMMPS error while a PC_LAMMPS variable
- * is read back, and one inside the script, end each evaluation the same way
+ * is read back, one inside the script, and one injecting a hot value before
+ * it, end each evaluation the same way
  * under PC_ISOLATION THREAD and PROCESS (RANDOM, MAXEVAL 3; each run's
  * journal names the mode it ran in): tadah exits normally -- 0 when the
  * evaluations keep a loss, 1 when none does ("no evaluation produced a
@@ -926,7 +1682,30 @@ std::size_t column(const Table& t, const std::string& name) {
  *   - the same with viol = 1.0/(pe-pe): "PC_LAMMPS task failed
  *     (readback.in, occurrence 1): reading --failvar viol after the
  *     script: ERROR: ... Divide by 0", band B by the failed fraction (one of
- *     one script), TOTAL_LOSS/N 9.993750e+15, exit 1.
+ *     one script), TOTAL_LOSS/N 9.993750e+15, exit 1;
+ *   - a hot value LAMMPS refuses to inject into the cold script (its line's
+ *     --invar hot_a0 3.3 makes the name index style): exit 1, "PC_LAMMPS
+ *     task failed (cold.in, occurrence 1): injecting `variable hot_a0 equal
+ *     3.25` before the script: ERROR: Cannot redefine variable hot_a0 with a
+ *     different style", E2 failscored;
+ *   - a --varloss F deleted at run time: exit 1, "PC_LAMMPS task failed
+ *     (readback.in, occurrence 1): reading --varloss F after the script: no
+ *     value (the variable is not defined, or has no single value)", E and F
+ *     failscored, TOTAL_LOSS/N 1.000000e+16;
+ *   - the same LAMMPS error inside the script with the line's --varloss E
+ *     measured by L1: a failed evaluation all the same, exit 1,
+ *     TOTAL_LOSS/N 1.000000e+16, no "[ok] Every evaluation produced a
+ *     usable loss";
+ *   - FAILSCORE_GRADING OFF, a PC_FAILPROBE S deleted at run time: the
+ *     startup warning says that S neither grades nor gates an evaluation
+ *     and that a probe that fails fails its evaluation; exit 1, "PC_LAMMPS
+ *     task failed (probe.in, occurrence 1): reading PC_FAILPROBE --outvar S
+ *     after the script: no value (...)", S and E failscored, TOTAL_LOSS/N
+ *     1.000000e+16;
+ *   - a script that cannot be rendered (TMPDIR names a regular file in
+ *     tadah's environment, and a PC_ISOLATION worker inherits it): exit 1,
+ *     "PC_LAMMPS task failed (readback.in, occurrence 1): rendering the
+ *     script to a temporary file: ", E failscored.
  * Before the fix: under THREAD tadah died of SIGSEGV in the read-back
  * sections (the shell's exit status 139); under PROCESS it exited 1 in the
  * --outvar section (the whole script failed, E included) and journalled
@@ -939,7 +1718,19 @@ std::size_t column(const Table& t, const std::string& name) {
  * aborted). Before the harness fix a TADAH_PC_ISOLATION in the test's
  * environment overrode the config's PC_ISOLATION, so with
  * TADAH_PC_ISOLATION=THREAD the PROCESS runs ran THREAD (the journal check
- * of the mode fails). */
+ * of the mode fails). Before the injection fix the refused injection was
+ * dropped in both modes: exit 0, E2 = 3.3 (the --invar value) in every row,
+ * no journal line. Before the no-value fix F's FAIL_SCORE term was averaged
+ * with the others (TOTAL_LOSS/N 3.333333e+15, a feasible loss): exit 0, E
+ * kept, F NaN, no journal line. Before the CREATE_FAIL fix the unrendered
+ * script failed every evaluation with nothing in the journal in both
+ * modes. Before the no-value fix a PC_FAILPROBE S with no value was not
+ * checked: exit 0, feasible losses, S NaN, E kept, no line; and the startup
+ * warning said "the probe runs as a plain diagnostic sim; no grading, no
+ * gate." (a probe whose script failed aborted its evaluation then too).
+ * Before the failed-evaluation fix the L1 section's evaluations scored the
+ * mean of L2(ERMSE) and L1(1e16): TOTAL_LOSS/N 5.000000e+15, a feasible
+ * loss, exit 0. */
 TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
           "way under PC_ISOLATION THREAD and PROCESS",
           "[pc_readback][tadah_cli][.tadah_cli_pc_readback]") {
@@ -972,6 +1763,8 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
         /* outvar.tadah: every row's cell of each column. */
         std::vector<std::pair<std::string, std::string>> outvar_cells;
         std::vector<std::pair<std::string, std::string>> more_scripts;
+        /* Environment assignments for tadah ("" none). */
+        std::string env = "";
     };
     Case c;
     std::string name;
@@ -1060,12 +1853,90 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
              {{"E", "1.000000e+16"}},
              {}};
     }
+    SECTION("a hot value LAMMPS refuses to inject") {
+        name = "inject";
+        c = {ta_script("${hot_a0}", "variable E equal pe\n"
+                                    "variable hot_a0 equal 3.25\n"),
+             "PC_LAMMPS --script readback.in --varloss E 0 1 "
+             "--hotvar hot_a0 2.5 4.5 3.301\n"
+             "PC_LAMMPS --script cold.in --varloss E2 0 1 "
+             "--invar hot_a0 3.3\n",
+             1,
+             {"PC_LAMMPS task failed (cold.in, occurrence 1): injecting "
+              "`variable hot_a0 equal 3.25` before the script: ERROR: Cannot "
+              "redefine variable hot_a0 with a different style",
+              "no evaluation produced a usable loss"},
+             {},
+             "1.000000e+16",
+             {{"E2", "1.000000e+16"}},
+             {{"cold.in", "clear\nunits metal\nvariable E2 equal ${hot_a0}\n"}}};
+    }
+    SECTION("a --varloss variable with no value") {
+        name = "novalue";
+        c = {ta_script("3.301", "variable E equal pe\nvariable F equal pe+1\n" +
+                                    spoil("F", false)),
+             "PC_LAMMPS --script readback.in --varloss E 0 1 --varloss F 0 1\n",
+             1,
+             {"PC_LAMMPS task failed (readback.in, occurrence 1): reading "
+              "--varloss F after the script: " + spoiled_reason(false),
+              "no evaluation produced a usable loss"},
+             {},
+             "1.000000e+16",
+             {{"E", "1.000000e+16"}, {"F", "1.000000e+16"}},
+             {}};
+    }
+    SECTION("a LAMMPS error inside the script under --varloss ... L1") {
+        name = "script_l1";
+        c = {"clear\nunits metal\nbogus_command 1 2\nvariable E equal 1.0\n",
+             "PC_LAMMPS --script readback.in --varloss E 0 1 L1\n", 1,
+             {"PC_LAMMPS task failed (readback.in, occurrence 1): "
+              "ERROR: Unknown command: bogus_command 1 2",
+              "no evaluation produced a usable loss"},
+             {"[ok] Every evaluation produced a usable loss"},
+             "1.000000e+16",
+             {{"E", "1.000000e+16"}},
+             {}};
+    }
+    SECTION("a PC_FAILPROBE S with no value under FAILSCORE_GRADING OFF") {
+        name = "failprobe_novalue_off";
+        c = {ta_script("3.301", "variable E equal pe\n"),
+             "PC_FAILPROBE --script probe.in --outvar S\n"
+             "PC_LAMMPS --script readback.in --varloss E 0 1\n",
+             1,
+             {"PC_FAILPROBE is defined but FAILSCORE_GRADING is OFF -- its S "
+              "neither grades nor gates an evaluation; a probe that fails "
+              "(its script fails, or its S cannot be read or has no number) "
+              "fails its evaluation, as any PC_LAMMPS simulation does.",
+              "PC_LAMMPS task failed (probe.in, occurrence 1): reading "
+              "PC_FAILPROBE --outvar S after the script: " +
+                  spoiled_reason(false),
+              "no evaluation produced a usable loss"},
+             {"plain diagnostic sim", "--outvar is NaN"},
+             "1.000000e+16",
+             {{"S", "1.000000e+16"}, {"E", "1.000000e+16"}},
+             {{"probe.in", ta_script("3.301", "variable S equal 0.1\n" +
+                                                  spoil("S", false))}}};
+    }
+    SECTION("a script that cannot be rendered") {
+        name = "unrendered";
+        c = {ta_script("3.301", "variable E equal pe\n"),
+             "PC_LAMMPS --script readback.in --varloss E 0 1\n",
+             1,
+             {"PC_LAMMPS task failed (readback.in, occurrence 1): rendering "
+              "the script to a temporary file: ",
+              "no evaluation produced a usable loss"},
+             {},
+             "1.000000e+16",
+             {{"E", "1.000000e+16"}},
+             {{"notadir", "a file, not a directory\n"}},
+             "TMPDIR=notadir"};
+    }
     std::vector<fs::path> dirs;
     for (const std::string mode : {"THREAD", "PROCESS"}) {
         INFO(name << ", PC_ISOLATION " << mode);
         const fs::path dir = sd.dir / (name + "_" + mode);
         const int rc = run_tadah_hpo(bin, dir, mode, head + c.lammps_line,
-                                     c.script, c.more_scripts);
+                                     c.script, c.more_scripts, c.env);
         INFO(read_text(dir / "tadah.stderr"));
         const std::string journal = read_text(dir / "hpo_run.log");
         INFO(journal);
@@ -1162,4 +2033,63 @@ TEST_CASE("a second run in one process starts each --hotvar from its "
     CHECK(bits(second[0]) == bits(first[0]));
     tadah::hpo::warmstart::clear();
     Host::reset_globals_for_test();
+}
+
+/* Pins, through the built tadah: a PC_LAMMPS run with an NLopt AUGLAG or
+ * MLSL whose INNER search is derivative-free -- LD_AUGLAG with LN_COBYLA,
+ * GD_MLSL_LDS with LN_SBPLX (MAXEVAL 6, PC_ISOLATION THREAD) -- starts and
+ * ends normally (exit 0): its rows hold between 1 and 6 evaluations, every
+ * one a feasible loss, best_loss.tadah has the best, and the journal names
+ * no GRAD_STRATEGY (it does for a block that obtains gradients). MLSL and
+ * AUGLAG evaluate their own points without a gradient; the local search
+ * decides, and these take none.
+ * Before the fix: refused at startup (exit 1, "--hpotarget defines
+ * PC_LAMMPS but OPTIMIZER's optimiser NLOPT:LD_AUGLAG is
+ * gradient-based"). */
+TEST_CASE("tadah hpo: PC_LAMMPS with an MLSL or AUGLAG whose local search "
+          "takes no gradient runs",
+          "[pc_lammps_grad][tadah_cli][.tadah_cli_pc_lammps_local_search]") {
+    const char* bin = std::getenv("TADAH_BINARY");
+    if (!bin || !*bin)
+        TADAH_SKIP("TADAH_BINARY is not set: it names the built tadah "
+                   "executable");
+    REQUIRE(fs::exists(bin));
+    tadah::core::PeriodicTable::initialize();
+    ScratchDir sd("tadah_cli_pc_local_search_");
+    std::string algo, inner;
+    SECTION("LD_AUGLAG with an INNER LN_COBYLA") {
+        algo = "LD_AUGLAG";
+        inner = "LN_COBYLA";
+    }
+    SECTION("GD_MLSL_LDS with an INNER LN_SBPLX") {
+        algo = "GD_MLSL_LDS";
+        inner = "LN_SBPLX";
+    }
+    INFO(algo << " with an INNER " << inner);
+    const fs::path dir = sd.dir / algo;
+    const std::string target =
+        "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n    ALGO " +
+        algo + "\n    MAXEVAL 6\n    INNER\n      LIB NLOPT\n      ALGO " +
+        inner + "\n    ENDINNER\n  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n"
+        "FAILSCORE 1e16\nPC_ERMSE 0 1\nOPTIM CGRID2B (1) 0.0 4.0\n"
+        "PC_LAMMPS --script readback.in --varloss E 0 1\n";
+    const int rc = run_tadah_hpo(bin, dir, "THREAD", target,
+                                 ta_script("3.301", "variable E equal pe\n"),
+                                 {});
+    INFO(read_text(dir / "tadah.stderr"));
+    const std::string journal = read_text(dir / "hpo_run.log");
+    INFO(journal);
+    REQUIRE(WIFEXITED(rc));
+    CHECK(WEXITSTATUS(rc) == 0);
+    CHECK_THAT(journal, !Catch::Contains("GRAD_STRATEGY"));
+    const Table loss = read_table(dir / "loss.tadah");
+    CHECK(loss.rows.size() >= 1);
+    CHECK(loss.rows.size() <= 6);
+    for (const auto& row : loss.rows) {
+        REQUIRE_FALSE(row.empty());
+        double v = 0.0;
+        REQUIRE(tadah::hpo::try_parse_double(row.back(), v));
+        CHECK(tadah::hpo::loss_is_feasible(v, 1e16));
+    }
+    CHECK(read_table(dir / "best_loss.tadah").rows.size() >= 1);
 }

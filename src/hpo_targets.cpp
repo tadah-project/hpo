@@ -1572,6 +1572,17 @@ void HPOTargets::read(const std::string& fn)
      * difference dtheta inside dlib::find_min and never asks the host
      * for a full gradient vector.
      *
+     * A block is refused when it asks the host for gradients
+     * (obtains_gradients), not for the D of its name: NLopt's MLSL and
+     * AUGLAG evaluate their own points without a gradient, and their local
+     * search decides (mlsl.c, auglag.c). With an INNER block that block
+     * decides, and is checked as a block of its own (its message names
+     * its optimiser); without one, NLopt's default local optimiser
+     * decides -- LD_MMA for GD_MLSL, GD_MLSL_LDS, LD_AUGLAG and
+     * LD_AUGLAG_EQ -- and the message names it. GD_MLSL* and LD_AUGLAG*
+     * with a derivative-free INNER block used to be refused for their D
+     * although they take no gradient.
+     *
      * Also reject any explicit GRAD_STRATEGY={NUMERICAL,HYBRID,
      * ANALYTICAL} when PC_LAMMPS is present -- these tags only make
      * sense in the PC_OBSERVABLE world post-2026-05-13. */
@@ -1590,17 +1601,31 @@ void HPOTargets::read(const std::string& fn)
             const bool dlib_bfgs_exception =
                 (sp.lib == "DLIB" && sp.algo == "BFGS");
             if (dlib_bfgs_exception) return;
-            const auto& caps = optimizer_caps(sp);
-            if (caps.is_gradient_based) {
+            if (!obtains_gradients(sp)) return;
+            const std::string requires_free =
+                " PC_LAMMPS requires a gradient-free optimiser (NLOPT "
+                "GN_*/LN_*, TADAH RANDOM/GRID/ANNEAL). The only "
+                "gradient-based exception is DLIB:BFGS (uses "
+                "per-theta-per-iter dtheta, not a full gradient).";
+            if (optimizer_caps(sp).accepts_inner) {
+                /* An MLSL or AUGLAG that takes a gradient for its local
+                 * search: an INNER block's is refused at that block. */
+                if (sp.inner) return;
+                /* obtains_gradients: there is a default local search. */
+                const OptimizerSpec local = inner_run_spec(sp).value();
                 throw std::runtime_error(
                     std::string("--hpotarget defines PC_LAMMPS but ") + tag
                     + " optimiser " + sp.lib + ":" + sp.algo +
-                    " is gradient-based. PC_LAMMPS requires a "
-                    "gradient-free optimiser (NLOPT GN_*/LN_*, "
-                    "TADAH RANDOM/GRID/ANNEAL). The only gradient-based "
-                    "exception is DLIB:BFGS (uses per-theta-per-iter "
-                    "dtheta, not a full gradient).");
+                    " takes a gradient: NLopt's MLSL and AUGLAG take one for "
+                    "their local search, and NLopt's default local "
+                    "optimiser, " + local.lib + ":" + local.algo +
+                    ", is gradient-based; an INNER block with a "
+                    "derivative-free one takes none." + requires_free);
             }
+            throw std::runtime_error(
+                std::string("--hpotarget defines PC_LAMMPS but ") + tag
+                + " optimiser " + sp.lib + ":" + sp.algo +
+                " is gradient-based." + requires_free);
         };
     if (!LS.empty())
         for (const auto& b : optimiser_blocks)

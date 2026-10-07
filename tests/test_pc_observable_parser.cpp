@@ -474,6 +474,100 @@ TEST_CASE("HPOTargets rejects PC_OBSERVABLE and PC_LAMMPS side by side",
     std::filesystem::remove(script_path);
 }
 
+/* Pins: with PC_LAMMPS, an NLopt MLSL or AUGLAG is judged by its local
+ * search, as obtains_gradients judges it: MLSL and AUGLAG evaluate their
+ * own points without a gradient, and the D of GD_MLSL, GD_MLSL_LDS,
+ * LD_AUGLAG and LD_AUGLAG_EQ only picks NLopt's default local optimiser,
+ * LD_MMA, which an INNER block replaces.
+ *   - accepted: each of the four with a derivative-free INNER block
+ *     (LN_BOBYQA, LN_SBPLX, LN_COBYLA), at the STRATEGY level and as the
+ *     PRESTAGE exploration;
+ *   - refused, with a message that names the local search: GD_MLSL and
+ *     LD_AUGLAG without an INNER block ("--hpotarget defines PC_LAMMPS but
+ *     OPTIMIZER's optimiser NLOPT:GD_MLSL takes a gradient: NLopt's MLSL
+ *     and AUGLAG take one for their local search, and NLopt's default
+ *     local optimiser, NLOPT:LD_MMA, is gradient-based; an INNER block with
+ *     a derivative-free one takes none. PC_LAMMPS requires a gradient-free
+ *     optimiser ...");
+ *   - refused as before: GN_MLSL_LDS with an INNER LD_LBFGS, at the INNER
+ *     block ("... INNER's optimiser NLOPT:LD_LBFGS is gradient-based.").
+ * Before the fix: the four with a derivative-free INNER block were refused
+ * ("OPTIMIZER's optimiser NLOPT:GD_MLSL is gradient-based"), and the two
+ * without one with that message, which does not say why. */
+TEST_CASE("HPOTargets judges an MLSL or AUGLAG under PC_LAMMPS by its local "
+          "search", "[hpo][pc_observable_parser][hpotargets][pc_lammps_grad_drop]")
+{
+    tadah::core::PeriodicTable::initialize();
+    auto script_path = std::filesystem::current_path() /
+                       "test_pc_lammps_local_search_stub.in";
+    {
+        std::ofstream f(script_path);
+        f << "# stub script\nprint \"hi\"\nvariable xyz equal 0.0\n";
+    }
+    auto ctx = make_context_for_targets();
+    const std::string pc_lammps =
+        "PC_LAMMPS --script " + script_path.string() +
+        " --varloss xyz 1.0 100 --outvar xyz\n";
+    auto error = [&](const std::string& body) {
+        auto cfg = write_temp_config(body);
+        std::string what;
+        try {
+            tadah::hpo::HPOTargets trg(ctx, cfg.string());
+        } catch (const std::exception& e) {
+            what = e.what();
+        }
+        std::filesystem::remove(cfg);
+        return what;
+    };
+    auto plain = [&](const std::string& algo, const std::string& inner) {
+        std::string b = "OPTIMIZER\n  STRATEGY\n    LIB NLOPT\n    ALGO " +
+                        algo + "\n    MAXEVAL 1\n";
+        if (!inner.empty())
+            b += "    INNER\n      LIB NLOPT\n      ALGO " + inner +
+                 "\n    ENDINNER\n";
+        return b + "  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n" + pc_lammps;
+    };
+
+    struct Accepted { std::string algo, inner; };
+    for (const auto& c : std::vector<Accepted>{{"GD_MLSL", "LN_BOBYQA"},
+                                               {"GD_MLSL_LDS", "LN_SBPLX"},
+                                               {"LD_AUGLAG", "LN_BOBYQA"},
+                                               {"LD_AUGLAG_EQ", "LN_COBYLA"}}) {
+        INFO(c.algo << " with an INNER " << c.inner);
+        CHECK(error(plain(c.algo, c.inner)) == "");
+    }
+    {
+        INFO("EXPLORE GD_MLSL_LDS with an INNER LN_SBPLX");
+        CHECK(error("OPTIMIZER\n  STRATEGY\n    TYPE PRESTAGE\n"
+                    "    LIB NLOPT\n    ALGO LN_BOBYQA\n    MAXEVAL 1\n"
+                    "    EXPLORE\n      LIB NLOPT\n      ALGO GD_MLSL_LDS\n"
+                    "      MAXEVAL 1\n      INNER\n        LIB NLOPT\n"
+                    "        ALGO LN_SBPLX\n      ENDINNER\n    ENDEXPLORE\n"
+                    "  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n" + pc_lammps) == "");
+    }
+    for (const std::string algo : {"GD_MLSL", "LD_AUGLAG"}) {
+        INFO(algo << " without an INNER block");
+        CHECK_THAT(error(plain(algo, "")),
+                   Catch::StartsWith(
+                       "--hpotarget defines PC_LAMMPS but OPTIMIZER's "
+                       "optimiser NLOPT:" + algo + " takes a gradient: "
+                       "NLopt's MLSL and AUGLAG take one for their local "
+                       "search, and NLopt's default local optimiser, "
+                       "NLOPT:LD_MMA, is gradient-based; an INNER block "
+                       "with a derivative-free one takes none. PC_LAMMPS "
+                       "requires a gradient-free optimiser"));
+    }
+    {
+        INFO("GN_MLSL_LDS with an INNER LD_LBFGS");
+        CHECK_THAT(error(plain("GN_MLSL_LDS", "LD_LBFGS")),
+                   Catch::StartsWith(
+                       "--hpotarget defines PC_LAMMPS but INNER's optimiser "
+                       "NLOPT:LD_LBFGS is gradient-based. PC_LAMMPS requires "
+                       "a gradient-free optimiser"));
+    }
+    std::filesystem::remove(script_path);
+}
+
 TEST_CASE("HPOTargets applies the PC_LAMMPS and PC_OBSERVABLE gradient rules "
           "to the EXPLORE block and its INNER block",
           "[hpo][pc_observable_parser][hpotargets][pc_lammps_grad_drop]")

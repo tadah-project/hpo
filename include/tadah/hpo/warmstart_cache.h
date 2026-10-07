@@ -10,14 +10,15 @@
  *
  * The user opts in by adding `--hotvar <name> <min> <max> [<initial>]`
  * to a PC_LAMMPS line. The framework then:
- *   - injects `variable <name> string <cached-or-initial>` before the
+ *   - injects `variable <name> equal <cached-or-initial>` before the
  *     hot script runs (so it can use ${<name>} as the seed);
  *   - reads <name> back after the script runs;
  *   - validates <name> against [min, max] (an out-of-range value is
  *     treated as an unphysical-potential signal -- the eval is failscored
  *     and cold scripts are skipped, via a run-local abort flag);
  *   - caches the in-range value here for the next eval AND propagates
- *     it as `${<name>}` to every cold script in the *same* eval.
+ *     it as `${<name>}` to the cold scripts that read it in the *same*
+ *     eval.
  *
  * WHY PER-CHAIN (the determinism fix, 2026-07-15)
  * -----------------------------------------------

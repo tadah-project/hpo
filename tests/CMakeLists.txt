@@ -158,7 +158,7 @@ endforeach()
 # without it (a standalone HPO build) TADAH_BINARY comes from the
 # environment of ctest, if at all.
 set(_hpo_tadah_cli_cases seed_anchor_warm seed_anchor_nlopt durable_exit
-                         pc_readback)
+                         pc_readback pc_lammps_local_search)
 foreach(_case IN LISTS _hpo_tadah_cli_cases)
     add_test(NAME hpo_tadah_cli_${_case}
         COMMAND test_hpo "[.tadah_cli_${_case}]" --warn NoTests)
