@@ -1,4 +1,5 @@
 #include <tadah/hpo/engines/hpo_refit_engine.h>
+#include <tadah/mlip/engines/refit_keys.h>
 #include <tadah/mlip/engines/refit_log.h>
 
 #include <tadah/core/logger.h>
@@ -19,6 +20,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -52,15 +54,9 @@ using tadah::models::rhoform_name;
 namespace lat = tadah::models::eam_lattice;
 using namespace tadah::hpo::refit;
 
-double cget(const Context &c, const std::string &k, double def) {
-  return c.contains(k) && c.size(k) > 0 ? c.get<double>(k) : def;
-}
-int iget(const Context &c, const std::string &k, int def) {
-  return c.contains(k) && c.size(k) > 0 ? c.get<int>(k) : def;
-}
-bool bget(const Context &c, const std::string &k, bool def) {
-  return c.contains(k) && c.size(k) > 0 ? c.get<bool>(k) : def;
-}
+// The configuration's numbers come from MLIP's strict reader
+// (tadah::mlip::engines::read_refit_numbers, refit_keys.h), as the dense
+// path's do.
 
 // The legacy inline OPTIMIZER-block parser (GLOBAL/EXPLORE/POLISH/JOINT
 // subblocks) was replaced by the stage pipeline parser RefitParser (see
@@ -163,6 +159,24 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                                  tadah::models::EAMRefitConfig &cfg,
                                  std::unique_ptr<tadah::models::EAMRefit> &refit,
                                  SelfTest &st) {
+  // ---- the configuration numbers, strictly and with their ranges ----
+  const tadah::mlip::engines::RefitNumbers nums =
+      tadah::mlip::engines::read_refit_numbers(c);
+  // The curve sample grid has at least 4 x NMAX points per function (below);
+  // computed in 64 bits, it must fit an int (4 * NMAX overflowed above
+  // NMAX 536870911).
+  const int nmax_all = std::max({nums.nmax[0], nums.nmax[1], nums.nmax[2]});
+  const long long grid_min = std::max<long long>(50, 4LL * nmax_all);
+  if (grid_min > std::numeric_limits<int>::max())
+    throw std::runtime_error(
+        "tadah refit: REFIT_COMPACT_NMAX " + std::to_string(nmax_all) +
+        " needs a curve sample grid of 4 x " + std::to_string(nmax_all) +
+        " = " + std::to_string(grid_min) +
+        " points per function (REFIT_COMPACT_SAMPLES is raised to at least 4 "
+        "x REFIT_COMPACT_NMAX), above " +
+        std::to_string(std::numeric_limits<int>::max()) +
+        "; lower REFIT_COMPACT_NMAX");
+
   // ---- reachability first: compact mode NEEDS the energy metric ----
   // The lattice/a0 are already guaranteed recognised by the crystal gate in
   // RefitEngine::run(); a non-positive reachable window would still be unusable
@@ -236,39 +250,17 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                                 : BasisKind::Blip;
 
   // ---- ladder configuration (config-file keys) ----
-  const double tol_amb = cget(c, "REFIT_TOL_AMBIENT", 0.1) * 1e-3;   // eV
-  const double tol_cmp = cget(c, "REFIT_TOL_COMPRESSED", 1.0) * 1e-3;
-  const double share = cget(c, "REFIT_COMPACT_SHARE", 0.5);
+  const double tol_amb = nums.tol_ambient * 1e-3;     // eV
+  const double tol_cmp = nums.tol_compressed * 1e-3;
+  const double share = nums.share;
   CompactConfig lcfg;
   // REFIT_COMPACT_NMAX: per-function basis ceiling, indexed [phi, rho, F]. One
   // value applies to all three; three values set them per-function.
-  int nmax_fn[3] = {40, 40, 40};
-  {
-    std::vector<std::string> t;
-    if (c.contains("REFIT_COMPACT_NMAX") && c.size("REFIT_COMPACT_NMAX") > 0) {
-      t.resize(c.size("REFIT_COMPACT_NMAX"));
-      c.get("REFIT_COMPACT_NMAX", t);
-    }
-    auto toi = [](const std::string &s) {
-      try { size_t p = 0; int v = std::stoi(s, &p);
-            if (p != s.size()) throw 0; return v; }
-      catch (...) { throw std::runtime_error(
-          "tadah refit: REFIT_COMPACT_NMAX expects integer(s); got '" + s + "'"); }
-    };
-    if (t.size() == 1) { nmax_fn[0] = nmax_fn[1] = nmax_fn[2] = toi(t[0]); }
-    else if (t.size() == 3) { nmax_fn[0] = toi(t[0]); nmax_fn[1] = toi(t[1]); nmax_fn[2] = toi(t[2]); }
-    else if (!t.empty())
-      throw std::runtime_error(
-          "tadah refit: REFIT_COMPACT_NMAX takes 1 value (all functions) or 3 "
-          "(phi rho F); got " + std::to_string(t.size()));
-    for (int v : nmax_fn)
-      if (v < 1) throw std::runtime_error(
-          "tadah refit: REFIT_COMPACT_NMAX values must be >= 1");
-  }
+  const int nmax_fn[3] = {nums.nmax[0], nums.nmax[1], nums.nmax[2]};
   // lcfg.n_max = the max across functions — used for the sample-grid clamp and
   // as the CompactConfig default; per-function ceilings are passed to run_ladder.
-  lcfg.n_max = std::max({nmax_fn[0], nmax_fn[1], nmax_fn[2]});
-  lcfg.seed = static_cast<unsigned>(iget(c, "REFIT_COMPACT_SEED", 12345));
+  lcfg.n_max = nmax_all;
+  lcfg.seed = nums.seed;  // unsigned, 0 to 4294967295
   // knot-family ladder schedule (blip defaults = legacy, regression-gated).
   // Matrix-measured (Fe+Ta LAMMPS batteries, 4 schedules): per-rung
   // optimisation + energy-aware top-3 insertion + stall 12 ("D") is the most
@@ -276,14 +268,14 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   // insertion-only deep-growth schedule (REFIT_COMPACT_OPT_EVERY 999) is
   // spectacular when no ladder stalls (Ta: Cij <= 0.09 GPa, forces 7e-5)
   // but stalled Fe's F ladder — documented alternative, not the default.
-  lcfg.opt_every = iget(c, "REFIT_COMPACT_OPT_EVERY", 1);
-  lcfg.stall_rungs = iget(c, "REFIT_COMPACT_STALL", knotfam ? 12 : 6);
-  lcfg.insert_topk = iget(c, "REFIT_COMPACT_INSERT_TOPK", knotfam ? 3 : 1);
+  lcfg.opt_every = nums.opt_every;
+  lcfg.stall_rungs = nums.stall.value_or(knotfam ? 12 : 6);
+  lcfg.insert_topk = nums.insert_topk.value_or(knotfam ? 3 : 1);
   // Randomised warm restarts per rung (each one runs the full EXPLORE->REFINE
   // candidate, then the coalescence guard): jitters+1 candidates per rung, the
   // metric-best kept. REFIT_COMPACT_JITTERS 0 = warm start only (cheaper, less
   // exploration). This is WHY the guard's repair fired several times per rung.
-  lcfg.jitters = iget(c, "REFIT_COMPACT_JITTERS", 2);
+  lcfg.jitters = nums.jitters;
   lcfg.knot_degree = knot3 ? 3 : 5;
   lcfg.knot_mix = knotmix;
   // REFIT_OBJECTIVE: what the whole chain optimises toward. energy (default) =
@@ -316,7 +308,7 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   // value) = crystal-faithful (LAMMPS energy depends on the curve VALUES);
   // nonzero trades crystal energy for derivative SHAPE (measured: sharp
   // degradation even at 0.01).
-  lcfg.curve_deriv_weight = cget(c, "REFIT_CURVE_DERIV_WEIGHT", 0.0);
+  lcfg.curve_deriv_weight = nums.curve_deriv_weight;
   // Pressure-relaxed curve weighting (curve mode, ON by default). Tight fit
   // where the crystal actually probes (ambient: r in [r_amb,rcut], rho in
   // [0,rho_amb]); smooth relaxation toward the compressed/high-pressure extreme
@@ -324,16 +316,13 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   // contained from the lattice + EAM tables (no E-V scan dependency); the
   // weights flow via JointCurveData.wts into BOTH the VARPRO solve and the
   // curve selection metrics. REFIT_CURVE_WEIGHTING off => uniform (legacy).
-  const bool curve_weighting = bget(c, "REFIT_CURVE_WEIGHTING", true);
-  const double curve_relax = cget(c, "REFIT_CURVE_RELAX", 0.05);
-  if (curve_obj && (curve_relax <= 0.0 || curve_relax > 1.0))
-    throw std::runtime_error(
-        "tadah refit: REFIT_CURVE_RELAX must be in (0, 1]; got " +
-        core::to_string(curve_relax, 6));
-  // (curve-only knobs REFIT_CURVE_WEIGHTING/RELAX/DERIV_WEIGHT are read above but
-  // only consumed when curve_obj is true; in energy mode they are ignored. No
-  // contradiction error here: the blueprint injects their defaults on query, so
-  // an energy run could not distinguish a user-set knob from the default.)
+  const bool curve_weighting = c.has_stored("REFIT_CURVE_WEIGHTING")
+                                   ? c.get<bool>("REFIT_CURVE_WEIGHTING")
+                                   : true;
+  const double curve_relax = nums.curve_relax;  // in (0, 1], in every mode
+  // (curve-only knobs REFIT_CURVE_WEIGHTING/RELAX/DERIV_WEIGHT are consumed
+  // only when curve_obj is true; in energy mode they have no effect, but
+  // their numbers are range-checked in every mode, read_refit_numbers.)
   // Per-stage optimiser algorithm + budget + tolerances: defaults live in
   // CompactConfig; the optional inline OPTIMIZER block overrides them.
   // ---- stage pipeline (INIT -> EXPLORE -> REFINE -> FUSE) ----
@@ -573,8 +562,8 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   // a finer RMSE estimate + finer curve fit but slower (each VARPRO solve is
   // O(N*n)); fewer = faster, coarser. Distinct from the energy E-V scan and
   // the OUTPUT_GRID_SCALE setfl grid. Clamped to comfortably exceed the basis.
-  int N = iget(c, "REFIT_COMPACT_SAMPLES", 800);
-  const int N_min = std::max(50, 4 * lcfg.n_max);
+  int N = nums.samples;
+  const int N_min = static_cast<int>(grid_min);  // fits an int (checked above)
   if (N < N_min) {
     Logger::instance().log(
         LogLevel::WARNING,

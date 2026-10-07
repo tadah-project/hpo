@@ -486,6 +486,21 @@ CompactBlipFitter::CompactBlipFitter(std::vector<double> xs,
   if (cfg_.rho_form != RhoForm::Signed && cfg_.zero_ref)
     throw std::logic_error("compact_fitter: a density form (rho) and the "
                            "EMBF0 zero reference (F) cannot share a fit");
+  // The ladder counts (REFIT_COMPACT_OPT_EVERY, INSERT_TOPK, JITTERS, read
+  // with these ranges by read_refit_numbers): opt_every and insert_topk below
+  // 1 used to become 1 silently, and jitters + 1 candidates per rung must
+  // fit the int that counts them.
+  const auto count = [](const char *field, int v, int lo, int hi) {
+    if (v < lo || v > hi)
+      throw std::invalid_argument(std::string("compact_fitter: ") + field +
+                                  " must be from " + std::to_string(lo) +
+                                  " to " + std::to_string(hi) + ", got " +
+                                  std::to_string(v));
+  };
+  constexpr int kIntMax = std::numeric_limits<int>::max();
+  count("opt_every", cfg_.opt_every, 1, kIntMax);
+  count("insert_topk", cfg_.insert_topk, 1, kIntMax);
+  count("jitters", cfg_.jitters, 0, kIntMax - 1);
   eta0_ = (cfg_.n_min > 1) ? (cfg_.n_min - 1) / span_ : 1.0 / span_;
 
   // Target 1st/2nd derivatives for the curve objective + the d1/d2 diagnostics.
@@ -1649,7 +1664,7 @@ BlipFit CompactBlipFitter::fit(const Metric &metric,
   // linear solve. The curve-residual peak is not always where the energy
   // metric hurts — measured: phi/F ladders stalled on curve-peak insertion.
   auto insert_best = [&](const BlipFit &from) {
-    const int k = (one_sided(kind_)) ? std::max(1, cfg_.insert_topk) : 1;
+    const int k = (one_sided(kind_)) ? cfg_.insert_topk : 1;
     const std::vector<double> peaks = residual_peaks(from, k);
     BlipFit out;
     for (double xw : peaks) {
@@ -1691,8 +1706,7 @@ BlipFit CompactBlipFitter::fit(const Metric &metric,
                         // ENVELOPE keeps the metric-best across all rungs
   int stall = 0;
   int rung_idx = 0;
-  const int opt_every =
-      one_sided(kind_) ? std::max(1, cfg_.opt_every) : 1;  // blip: legacy
+  const int opt_every = one_sided(kind_) ? cfg_.opt_every : 1;  // blip: legacy
   while (warm.n() < cfg_.n_max && best.metric > target &&
          stall < cfg_.stall_rungs) {
     const auto t0 = clock::now();

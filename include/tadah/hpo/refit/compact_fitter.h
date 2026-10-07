@@ -139,7 +139,8 @@ struct LadderRow {
 struct CompactConfig {
   int n_min = 2;
   int n_max = 40;              ///< per-function blip ceiling
-  int jitters = 2;             ///< randomised warm restarts per rung
+  int jitters = 2;             ///< randomised warm restarts per rung, 0 to
+                               ///< INT_MAX - 1 (the fitter refuses another)
   // Budgets (tadah refit MAXEVAL/MAXITER, apply_stage_optimizers). Each
   // counts OBJECTIVE EVALUATIONS, as NLopt does, except Ceres', which counts
   // its iterations by definition (max_num_iterations).
@@ -235,9 +236,11 @@ struct CompactConfig {
   // basins whose repair leaves the ENERGY metric flat — 6 such rungs fired
   // the stall counter at n~9-14 and under-resolved curves broke Fe C11 /
   // Ta C44 in the LAMMPS gate.
-  int opt_every = 1;    ///< 1 = optimise every rung (legacy / blip behaviour)
+  int opt_every = 1;    ///< 1 = optimise every rung (legacy / blip behaviour);
+                        ///< >= 1 (the fitter refuses less)
   int insert_topk = 1;  ///< try the top-k separated residual peaks, keep the
-                        ///< METRIC-best insertion (curve peak != energy peak)
+                        ///< METRIC-best insertion (curve peak != energy peak);
+                        ///< >= 1 (the fitter refuses less)
   bool merge_guard = true;  ///< coalescence guard (one-sided knot families):
                             ///< the soft anti-coalescence penalty during EXPLORE
                             ///< AND the post-REFINE merge_close_knots repair.
