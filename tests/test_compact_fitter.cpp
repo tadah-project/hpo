@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <random>
@@ -224,6 +225,93 @@ TEST_CASE("compact fitter: each stage's MAXEVAL sets the budget of the "
       off);
   CHECK(off.refine_algo == "NONE");
   CHECK(off.joint_algo == "NONE");
+}
+
+TEST_CASE("compact fitter: a Ceres solve with options Ceres refuses throws",
+          "[refit][compact]")
+{
+  /* Pins: refine(), refine_edges() and joint_refine() throw
+   * std::invalid_argument naming the solve and Ceres' reason when Ceres
+   * refuses the solver options (here a negative gradient or function
+   * tolerance), and leave the fit as it was; the same solves with
+   * tolerance 0 run. RefitParser refuses a negative tolerance, so only a
+   * caller that sets CompactConfig itself reaches this.
+   * Before the fix: Ceres returned FAILURE without iterating, the solve
+   * recorded it as its stop term (FAILURE(0it, Invalid configuration...))
+   * and returned without an error: no exception is thrown. */
+  std::vector<double> xs, ys;
+  sample(make_truth(), 1.0, 5.5, 200, xs, ys);
+  /* The message of the std::invalid_argument `run` throws ("" if none). */
+  const auto refusal = [](const std::function<void()> &run) -> std::string {
+    try {
+      run();
+    } catch (const std::invalid_argument &e) {
+      return e.what();
+    }
+    return "";
+  };
+  const std::string refuses = ": Ceres refuses the solver options (Invalid "
+                              "configuration. Solver::Options::";
+  {
+    CompactConfig cfg;
+    cfg.ceres_gtol = -1.0;
+    CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
+    BlipFit f = perturbed_truth();
+    fit.solve_coeffs(f);
+    const BlipFit start = f;
+    CHECK(refusal([&] { fit.refine(f); }) ==
+          "compact_fitter refine" + refuses + "gradient_tolerance = -1. "
+          "Violated constraint: Solver::Options::gradient_tolerance >= 0.0)");
+    CHECK(f.mu == start.mu);
+    CHECK(f.eta == start.eta);
+  }
+  {
+    CompactConfig cfg;
+    cfg.ceres_ftol = -1.0;
+    cfg.hard_rcut = 5.5;
+    CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
+    BlipFit f = perturbed_truth();
+    fit.solve_coeffs(f);
+    CHECK(refusal([&] { fit.refine_edges(f); }) ==
+          "compact_fitter refine_edges" + refuses + "function_tolerance = "
+          "-1. Violated constraint: Solver::Options::function_tolerance >= "
+          "0.0)");
+  }
+  {
+    CompactConfig cfg;
+    cfg.ceres_ftol = 0.0;
+    cfg.ceres_gtol = 0.0;
+    CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
+    BlipFit f = perturbed_truth();
+    fit.solve_coeffs(f);
+    const double before = f.curve_rmse;
+    CHECK(fit.refine(f) < before);
+  }
+  /* joint_refine, FUSE's solve in energy mode. */
+  BlipFit phi = make_truth(), rho, F;
+  rho.mu = {2.0, 3.2, 4.4};
+  rho.eta = {0.9, 0.8, 0.9};
+  rho.c = {0.6, 0.35, 0.15};
+  F.mu = {1.0, 4.0, 7.0};
+  F.eta = {0.45, 0.4, 0.45};
+  F.c = {-2.0, -0.8, 0.5};
+  const std::vector<std::vector<double>> dists = {{2.5, 2.5, 2.9, 3.6},
+                                                  {2.2, 2.2, 2.6, 3.2}};
+  const std::vector<double> e0 = {0.1, 0.2}, ew(dists.size(), 1.0);
+  JointCurveData dphi, drho, dF;
+  sample(phi, 1.0, 5.5, 100, dphi.xs, dphi.ys);
+  sample(rho, 1.0, 5.5, 100, drho.xs, drho.ys);
+  sample(F, 0.0, 9.0, 100, dF.xs, dF.ys);
+  for (const char *algo : {"CERES_LM", "CERES_DOGLEG"}) {
+    INFO(algo);
+    BlipFit p = phi, r = rho, Fc = F;
+    CHECK(refusal([&] {
+            joint_refine(p, r, Fc, dphi, drho, dF, dists, e0, ew, 1.0, 10,
+                         -1.0, algo);
+          }) == "joint_refine" + refuses + "function_tolerance = -1. "
+                "Violated constraint: Solver::Options::function_tolerance "
+                ">= 0.0)");
+  }
 }
 
 #include <ceres/ceres.h>

@@ -1829,6 +1829,62 @@ TEST_CASE("tadah refit: OPTIMIZER block numbers are strict",
                                 "ENDOPTIMIZER") == "");
 }
 
+TEST_CASE("tadah refit: a negative tolerance is rejected in every stage block",
+          "[HPO][refit][strict_numbers]")
+{
+    /* Pins: FTOL_REL, XTOL_REL and GTOL are finite numbers >= 0 in every
+     * refit block that reads them (REFINE, FUSE, EXPLORE INNER), whatever
+     * the ALGO: a negative one is an error at the key naming the block,
+     * the key and the token as written ("REFINE: GTOL must be a number >=
+     * 0, got '-1'"); 0 is accepted (it switches the test off) and so is a
+     * positive value; a malformed token keeps its "must be a finite
+     * number" message. Ceres refuses a negative tolerance in its option
+     * check and returns FAILURE without iterating, so REFINE and FUSE did
+     * nothing (refine=FAILURE(0it, Invalid configuration)); NLopt switches
+     * one below 0 off, and dlib requires one >= 0.
+     * Before the fix: every negative case parses ("" instead of the
+     * message). */
+    struct Case { std::string key, body, message; };
+    for (const auto& c : std::vector<Case>{
+             {"REFINE", "OPTIMIZER LIB CERES ALGO LM GTOL -1 ENDOPTIMIZER",
+              "REFINE: GTOL must be a number >= 0, got '-1'"},
+             {"REFINE", "OPTIMIZER LIB CERES ALGO DOGLEG FTOL_REL -1e-3 "
+                        "ENDOPTIMIZER",
+              "REFINE: FTOL_REL must be a number >= 0, got '-1e-3'"},
+             {"REFINE", "OPTIMIZER LIB NLOPT ALGO LD_LBFGS FTOL_REL -1 "
+                        "ENDOPTIMIZER",
+              "REFINE: FTOL_REL must be a number >= 0, got '-1'"},
+             {"REFINE", "OPTIMIZER LIB DLIB ALGO LBFGS FTOL_REL -.5 "
+                        "ENDOPTIMIZER",
+              "REFINE: FTOL_REL must be a number >= 0, got '-.5'"},
+             {"FUSE", "OPTIMIZER LIB CERES ALGO LM FTOL_REL -1 ENDOPTIMIZER",
+              "FUSE: FTOL_REL must be a number >= 0, got '-1'"},
+             {"EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS MAXEVAL 100 "
+                         "INNER LIB NLOPT ALGO LN_SBPLX XTOL_REL -1e-6 "
+                         "ENDINNER ENDOPTIMIZER",
+              "EXPLORE INNER: XTOL_REL must be a number >= 0, got '-1e-6'"},
+             {"EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS MAXEVAL 100 "
+                         "INNER LIB NLOPT ALGO LN_SBPLX FTOL_REL -2 "
+                         "ENDINNER ENDOPTIMIZER",
+              "EXPLORE INNER: FTOL_REL must be a number >= 0, got '-2'"}}) {
+        INFO(c.key << ": " << c.body);
+        CHECK(refit_error(c.key, c.body) == c.message);
+    }
+    /* 0 and positive tolerances are accepted. */
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM FTOL_REL 0 "
+                                "GTOL 0 ENDOPTIMIZER") == "");
+    CHECK(refit_error("FUSE", "OPTIMIZER LIB CERES ALGO DOGLEG FTOL_REL 0 "
+                              "ENDOPTIMIZER") == "");
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                 "MAXEVAL 100 INNER LIB NLOPT ALGO LN_SBPLX "
+                                 "FTOL_REL 0 XTOL_REL 1e-6 ENDINNER "
+                                 "ENDOPTIMIZER") == "");
+    /* A malformed tolerance keeps the number-grammar message. */
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM GTOL -1x "
+                                "ENDOPTIMIZER") ==
+          "REFINE: GTOL must be a finite number, got '-1x'");
+}
+
 TEST_CASE("tadah refit: EXPLORE MAX_ADD is an integer >= 0",
           "[HPO][refit][strict_numbers]")
 {
