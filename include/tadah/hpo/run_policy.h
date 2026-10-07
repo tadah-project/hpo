@@ -436,11 +436,12 @@ private:
  * The candidates are the exploration's usable losses (HPO_Host's top-K
  * takes no failed evaluation): with fewer than TOPK the refinement runs
  * from those, and the journal says how many the exploration made and how
- * many failed; with none -- every evaluation failed -- nothing is refined,
- * and the PRESTAGE ends (a run without a usable loss then ends as one), or,
- * when the exploration ended on a stagnation stop, reports it to RESTART.
- * An exploration that made no evaluation at all leaves the refinement to
- * run from the outer spec's own points, with a WARNING.
+ * many failed. Without a candidate -- every evaluation failed, or none was
+ * made -- the refinement runs from the outer spec's own points (the
+ * OPTIMIZER-level INIT points, or a RESTART round's fresh ones), with a
+ * WARNING that says why: the exploration's failed points are no seeds,
+ * and the refinement may still find a usable loss from those points (a
+ * search under FAILSCORE_GRADING ON walks out of a failure region).
  *
  * Under RESTART a stagnating exploration hands its top-K over to the
  * refinement early (the exploration catch below) instead of restarting;
@@ -499,7 +500,6 @@ public:
      * many failed when fewer than TOPK, or none, are left. */
     const std::size_t evals_before    = HPOLog::instance().n_eval();
     const std::size_t unusable_before = HPOLog::instance().n_unusable();
-    bool explore_stagnated = false;
     try {
       run_inner<Vec,Runner>(*spec.prestage, host);
     } catch (const typename HPO_Host<Vec,Runner>::StagnationStop&) {
@@ -508,7 +508,6 @@ public:
        * best could not be saved meanwhile (it may have lost to this stop
        * in a parallel explorer): then the run fails now. */
       detail::rethrow_if_best_unsaved();
-      explore_stagnated = true;
     }
     const std::size_t explore_evals =
         HPOLog::instance().n_eval() - evals_before;
@@ -529,27 +528,27 @@ public:
         std::max<std::size_t>(topk.size(), 1), 1, std::nullopt,
         detail::StartBatch::Refinement);
 
-    /* No usable loss among the exploration's evaluations: there is no
-     * point to refine (a refinement used to start from the failed ones).
-     * After a stagnation stop (RESTART) the stop goes on to RestartPolicy,
-     * which runs both phases again from fresh points; otherwise the
-     * PRESTAGE ends here with the exploration's status, and a run without
-     * a usable loss ends as one (drive_run: "STOPPED -- no evaluation
-     * produced a usable loss"). */
-    if (topk.empty() && explore_evals > 0) {
-      std::ostringstream oss;
-      oss << "PRESTAGE: no evaluation of the exploration produced a usable "
-             "loss (" << explore_evals << " evaluation(s)); nothing to refine";
-      if (explore_stagnated) oss << "; reporting stagnation to RESTART";
-      std::cout << "[HPO] " << oss.str() << "\n";
-      HPOLog::instance().info(oss.str());
-      detail::report_stagnation(explore_stagnated ? 1 : 0);
-      return;
-    }
+    /* No candidate: the refinement runs from the outer spec's own points,
+     * as a run of it without the PRESTAGE would (after a stagnation stop
+     * too: a stagnated exploration hands over to the refinement, here
+     * without a candidate). The journal says why: every evaluation of the
+     * exploration failed (a failed loss is no seed; the refinement used to
+     * start from such points while the top-K took them), or it made none. */
     if (topk.empty()) {
-      HPOLog::instance().warning(
-          "PRESTAGE: produced no candidates -- running outer optimiser as-is");
-      refiner.run_one_windowed(spec, host);
+      if (explore_evals > 0) {
+        std::ostringstream oss;
+        oss << "PRESTAGE: no evaluation of the exploration produced a usable "
+               "loss (" << explore_evals << " evaluation(s)); refining from "
+               "the OPTIMIZER-level INIT point(s) instead";
+        std::cout << "[HPO] " << oss.str() << "\n";
+        HPOLog::instance().warning(oss.str());
+      } else {
+        HPOLog::instance().warning(
+            "PRESTAGE: produced no candidates -- running outer optimiser "
+            "as-is");
+      }
+      refiner.run_one_windowed(prestage_refinement_spec(spec, spec.optim_init),
+                               host);
       return;
     }
     /* Fewer candidates than TOPK: the exploration made fewer distinct
