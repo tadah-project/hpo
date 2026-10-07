@@ -3200,11 +3200,39 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         try {
             struct Comp { std::string label; double value; };
             std::vector<Comp> comps;
+            /* PC_ERMSE / PC_FRMSE: the global form is one term, the loss
+             * of the average metric; the indexed form is the average of
+             * the dataset losses, so it is listed per dataset, NAME[i]
+             * (1-based, as PC_ERMSE (i) and the L(ERMSE)[i] column), each
+             * its share of that average: the parts add up to the metric's
+             * loss. A dataset the metric does not measure has a nan loss
+             * and no part. */
+            const auto add_dataset_metric = [&comps](
+                bool used, const ValidationMetricTargets& targets,
+                const char* name, double loss,
+                const std::vector<double>& per_dataset) {
+                if (!used) return;
+                if (!targets.indexed()) {
+                    if (loss > 0)
+                        comps.push_back({std::string(name) + "_global", loss});
+                    return;
+                }
+                const double n = static_cast<double>(per_dataset.size());
+                for (std::size_t i = 0; i < per_dataset.size(); ++i) {
+                    const double part = per_dataset[i] / n;
+                    if (!metric_value_is_finite(part) || !(part > 0)) continue;
+                    comps.push_back({std::string(name) + "[" +
+                                         std::to_string(i + 1) + "]",
+                                     part});
+                }
+            };
             if (trg_.use_emae   && r.emaeLoss   > 0) comps.push_back({std::string("EMAE_global"),   r.emaeLoss});
-            if (trg_.use_ermse  && r.ermseLoss  > 0) comps.push_back({std::string("ERMSE_global"),  r.ermseLoss});
+            add_dataset_metric(trg_.use_ermse, trg_.ermse_targets, "ERMSE",
+                               r.ermseLoss, r.v_ermseLoss);
             if (trg_.use_errmse && r.errmseLoss > 0) comps.push_back({std::string("ErRMSE_global"), r.errmseLoss});
             if (trg_.use_ersq   && r.ersqLoss   > 0) comps.push_back({std::string("ErSQ_global"),   r.ersqLoss});
-            if (trg_.use_frmse  && r.frmseLoss  > 0) comps.push_back({std::string("FRMSE_global"),  r.frmseLoss});
+            add_dataset_metric(trg_.use_frmse, trg_.frmse_targets, "FRMSE",
+                               r.frmseLoss, r.v_frmseLoss);
             if (trg_.use_srmse  && r.srmseLoss  > 0) comps.push_back({std::string("SRMSE_global"),  r.srmseLoss});
             for (std::size_t i = 0; i < trg_.LS.size() && i < r.v_loss.size(); ++i) {
                 const auto& lsim = trg_.LS[i];
