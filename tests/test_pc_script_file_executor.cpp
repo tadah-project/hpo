@@ -29,6 +29,8 @@
 //     raised while HPO evaluates a --varloss/--outvar/--hotvar/--failvar
 //     formula stays inside the task, and a LAMMPS error inside the script
 //     carries its message;
+//   - hot values injected before the script ([inject]): an injection
+//     LAMMPS refuses fails the task with its message;
 //   - the task's guard: an exception that is not a LAMMPS error fails the
 //     task, in both PC_ISOLATION modes alike.
 
@@ -901,6 +903,99 @@ variable late equal 1.0
     CHECK(res.error_msg.empty());
     CHECK(res.failvar_values == std::vector<std::string>{"0.25", ""});
     CHECK(st.lmp_cache.count(slot_cache_key("timed_out", invar)) == 0);
+}
+
+/* Pins: a hot value HPO injects before the script (format_hot_inject,
+ * `variable hot_a0 equal 3.25`) that LAMMPS refuses fails the task: status
+ * RUN_FAIL, error_msg "injecting `variable hot_a0 equal 3.25` before the
+ * script: " and the LAMMPS message ("ERROR: Cannot redefine variable hot_a0
+ * with a different style"), the script not run, nothing read back (no
+ * outvar, hot or fail value: the instance's variables are an earlier
+ * evaluation's), and the slot's instance discarded:
+ *   - the name defined by `-var hot_a0 3.3` on the line (index style, at
+ *     the instance's creation);
+ *   - a cached instance whose script, in the evaluation before, redefined
+ *     the name as a string: that evaluation is OK (E2 = 3.25), the next one
+ *     fails the injection without reading the failvar viol its predecessor
+ *     left (0.5), and the one after runs on a fresh instance (E2 = 3.5).
+ * Before the fix: every injection error was swallowed and the script ran
+ * on the value it had: status OK with E2 = 3.3 (the -var value), and on
+ * the cached instance E2 = 3.3 (the script's own string) instead of the
+ * injected 3.5. The status checks fail. */
+TEST_CASE("a hot value LAMMPS refuses to inject fails the task with the "
+          "message", "[script_file][pc_task][inject]") {
+    auto pot_ctx = kr_pot_ctx();
+    using tadah::hpo::PcTaskStatus;
+    const std::vector<std::string> base =
+        {"lmp", "-log", "none", "-screen", "none"};
+    const std::string inject_325 = tadah::hpo::format_hot_inject("hot_a0", 3.25);
+    const std::string inject_35 = tadah::hpo::format_hot_inject("hot_a0", 3.5);
+    REQUIRE(inject_325 == "variable hot_a0 equal 3.25");
+    REQUIRE(inject_35 == "variable hot_a0 equal 3.5");
+    const std::string refused =
+        "ERROR: Cannot redefine variable hot_a0 with a different style";
+
+    SECTION("the name defined by -var on the line") {
+        tadah::hpo::PcSlotState<LammpsRunner> st;
+        std::vector<std::string> invar = base;
+        invar.insert(invar.end(), {"-var", "hot_a0", "3.3"});
+        const auto res = tadah::hpo::execute_script_task<LammpsRunner>(
+            "cold", {"clear", "units metal", "variable viol equal 0.5",
+                     "variable E2 equal ${hot_a0}"},
+            invar, {"E2"}, {}, {"viol"}, pot_ctx, 1, {inject_325}, st);
+        INFO("error_msg: " << res.error_msg);
+        INFO("outvar values: " << res.outvar_values.size()
+             << (res.outvar_values.empty() ? std::string()
+                                           : ", E2 = " + res.outvar_values[0]));
+        REQUIRE(res.status == PcTaskStatus::RUN_FAIL);
+        CHECK_THAT(res.error_msg,
+                   Catch::StartsWith("injecting `variable hot_a0 equal 3.25` "
+                                     "before the script: " + refused));
+        CHECK(res.outvar_values.empty());
+        CHECK(res.hotvar_values.empty());
+        CHECK(res.failvar_values.empty());
+        CHECK(st.lmp_cache.count(slot_cache_key("cold", invar)) == 0);
+    }
+    SECTION("a cached instance whose script redefined the name") {
+        tadah::hpo::PcSlotState<LammpsRunner> st;
+        const std::vector<std::string> lines = {
+            "clear", "units metal", "variable viol equal 0.5",
+            "variable E2 equal ${hot_a0}", "variable hot_a0 delete",
+            "variable hot_a0 string 3.3"};
+        auto first = tadah::hpo::execute_script_task<LammpsRunner>(
+            "cold", lines, base, {"E2"}, {}, {"viol"}, pot_ctx, 1,
+            {inject_325}, st);
+        INFO("first error_msg: " << first.error_msg);
+        REQUIRE(first.status == PcTaskStatus::OK);
+        REQUIRE(first.outvar_values.size() == 1);
+        CHECK(first.outvar_values[0] == "3.25");
+        CHECK(st.lmp_cache.count(slot_cache_key("cold", base)) == 1);
+
+        auto second = tadah::hpo::execute_script_task<LammpsRunner>(
+            "cold", lines, base, {"E2"}, {}, {"viol"}, pot_ctx, 2,
+            {inject_35}, st);
+        INFO("second error_msg: " << second.error_msg);
+        INFO("second outvar values: " << second.outvar_values.size()
+             << (second.outvar_values.empty()
+                     ? std::string()
+                     : ", E2 = " + second.outvar_values[0]));
+        REQUIRE(second.status == PcTaskStatus::RUN_FAIL);
+        CHECK_THAT(second.error_msg,
+                   Catch::StartsWith("injecting `variable hot_a0 equal 3.5` "
+                                     "before the script: " + refused));
+        CHECK(second.outvar_values.empty());
+        CHECK(second.failvar_values.empty());
+        CHECK(st.lmp_cache.count(slot_cache_key("cold", base)) == 0);
+
+        auto third = tadah::hpo::execute_script_task<LammpsRunner>(
+            "cold", lines, base, {"E2"}, {}, {"viol"}, pot_ctx, 3,
+            {inject_35}, st);
+        INFO("third error_msg: " << third.error_msg);
+        REQUIRE(third.status == PcTaskStatus::OK);
+        REQUIRE(third.outvar_values.size() == 1);
+        CHECK(third.outvar_values[0] == "3.5");
+        CHECK(third.failvar_values == std::vector<std::string>{"0.5"});
+    }
 }
 
 namespace {

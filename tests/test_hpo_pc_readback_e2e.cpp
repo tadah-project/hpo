@@ -16,7 +16,9 @@
 //     variable that reads an unreadable one carries that one's message);
 //     and every row of loss.tadah, outvar.tadah and stats.tadah has its
 //     header's columns, the cells an evaluation did not compute written as
-//     NaN (`nan` in loss/stats.tadah, `NaN` in outvar.tadah). Hidden
+//     NaN (`nan` in loss/stats.tadah, `NaN` in outvar.tadah). A hot value
+//     LAMMPS refuses to inject before a script fails that script, with a
+//     journal line too. Hidden
 //     because, before the fix, these cases ended their process with
 //     SIGSEGV, and because the HPO_Host statics are shared by the cases of
 //     one process.
@@ -524,6 +526,64 @@ TEST_CASE("an unreadable --hotvar fails the evaluation and the cold scripts "
     Host::reset_globals_for_test();
 }
 
+/* Pins: a hot value LAMMPS refuses to inject into a cold script fails that
+ * script and with it the evaluation: the cold line's `--invar hot_a0 3.3`
+ * makes hot_a0 an index-style variable when its instance is created, so
+ * the injected `variable hot_a0 equal 3.25` (the hot script's value) is
+ * refused. Each evaluation returns FAILSCORE, the hot script's E is
+ * computed, the cold script's E2 failscored, and the journal says, for the
+ * occurrences 1 and 2, "PC_LAMMPS task failed (cold.in, occurrence n):
+ * injecting `variable hot_a0 equal 3.25` before the script: ERROR: Cannot
+ * redefine variable hot_a0 with a different style".
+ * Before the fix: the injection's error was swallowed and the cold script
+ * ran on its own value: E2 = 3.3 in every row, a feasible loss, no journal
+ * line. */
+TEST_CASE("a hot value LAMMPS refuses to inject fails the evaluation",
+          "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ForceRebuildGuard rebuild;
+    ScratchDir sd("tadah_pc_inject_");
+    std::ofstream(sd.dir / "hot.in")
+        << ta_script("${hot_a0}", "variable E equal pe\n"
+                                  "variable hot_a0 equal 3.25\n");
+    std::ofstream(sd.dir / "cold.in")
+        << "clear\nunits metal\nvariable E2 equal ${hot_a0}\n";
+    Journal j;
+    const auto losses = evaluate(
+        sd.dir,
+        "PC_ERMSE 0 1\n"
+        "PC_LAMMPS --script " + (sd.dir / "hot.in").string() +
+            " --varloss E 0 1 --hotvar hot_a0 2.5 4.5 3.301\n"
+        "PC_LAMMPS --script " + (sd.dir / "cold.in").string() +
+            " --varloss E2 0 1 --invar hot_a0 3.3\n",
+        {0.5, 0.6});
+    const std::string journal = j.finish();
+    INFO(journal);
+    for (const double l : losses) CHECK(l == 1e16);
+    const Table outv = read_table("outvar.tadah");
+    CHECK(outv.header == std::vector<std::string>{
+              "#ITERATION", "IT-TIME/ms", "SLOT", "ERMSE", "E", "E2"});
+    REQUIRE(outv.rows.size() == 2);
+    check_header_shaped(outv, "outvar.tadah");
+    for (const auto& row : outv.rows)
+        if (row.size() == 6) {
+            CHECK(row[4] != "1.000000e+16");
+            CHECK(row[5] == "1.000000e+16");
+        }
+    for (const char* n : {"occurrence 1)", "occurrence 2)"}) {
+        INFO(n);
+        CHECK_THAT(line_with(journal, std::string("cold.in, ") + n +
+                                          ": injecting `variable hot_a0 "
+                                          "equal 3.25` before the script: "),
+                   Catch::Contains("PC_LAMMPS task failed (") &&
+                       Catch::Contains("ERROR: Cannot redefine variable "
+                                       "hot_a0 with a different style"));
+    }
+    CHECK(journal.find("eval-thread caught throw") == std::string::npos);
+    Host::reset_globals_for_test();
+}
+
 /* Pins: a variable that reads an unreadable one is journalled with the
  * LAMMPS error of that one, as reading it raised it, never with "has a
  * circular dependency":
@@ -910,7 +970,8 @@ std::size_t column(const Table& t, const std::string& name) {
 }  // namespace
 
 /* Pins, through the built tadah: a LAMMPS error while a PC_LAMMPS variable
- * is read back, and one inside the script, end each evaluation the same way
+ * is read back, one inside the script, and one injecting a hot value before
+ * it, end each evaluation the same way
  * under PC_ISOLATION THREAD and PROCESS (RANDOM, MAXEVAL 3; each run's
  * journal names the mode it ran in): tadah exits normally -- 0 when the
  * evaluations keep a loss, 1 when none does ("no evaluation produced a
@@ -938,7 +999,12 @@ std::size_t column(const Table& t, const std::string& name) {
  *   - the same with viol = 1.0/(pe-pe): "PC_LAMMPS task failed
  *     (readback.in, occurrence 1): reading --failvar viol after the
  *     script: ERROR: ... Divide by 0", band B by the failed fraction (one of
- *     one script), TOTAL_LOSS/N 9.993750e+15, exit 1.
+ *     one script), TOTAL_LOSS/N 9.993750e+15, exit 1;
+ *   - a hot value LAMMPS refuses to inject into the cold script (its line's
+ *     --invar hot_a0 3.3 makes the name index style): exit 1, "PC_LAMMPS
+ *     task failed (cold.in, occurrence 1): injecting `variable hot_a0 equal
+ *     3.25` before the script: ERROR: Cannot redefine variable hot_a0 with a
+ *     different style", E2 failscored.
  * Before the fix: under THREAD tadah died of SIGSEGV in the read-back
  * sections (the shell's exit status 139); under PROCESS it exited 1 in the
  * --outvar section (the whole script failed, E included) and journalled
@@ -951,7 +1017,9 @@ std::size_t column(const Table& t, const std::string& name) {
  * aborted). Before the harness fix a TADAH_PC_ISOLATION in the test's
  * environment overrode the config's PC_ISOLATION, so with
  * TADAH_PC_ISOLATION=THREAD the PROCESS runs ran THREAD (the journal check
- * of the mode fails). */
+ * of the mode fails). Before the injection fix the refused injection was
+ * dropped in both modes: exit 0, E2 = 3.3 (the --invar value) in every row,
+ * no journal line. */
 TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
           "way under PC_ISOLATION THREAD and PROCESS",
           "[pc_readback][tadah_cli][.tadah_cli_pc_readback]") {
@@ -1071,6 +1139,24 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
              sci6(graded_failscore(1e16, FailBand::B, 1.0, 1.0)),
              {{"E", "1.000000e+16"}},
              {}};
+    }
+    SECTION("a hot value LAMMPS refuses to inject") {
+        name = "inject";
+        c = {ta_script("${hot_a0}", "variable E equal pe\n"
+                                    "variable hot_a0 equal 3.25\n"),
+             "PC_LAMMPS --script readback.in --varloss E 0 1 "
+             "--hotvar hot_a0 2.5 4.5 3.301\n"
+             "PC_LAMMPS --script cold.in --varloss E2 0 1 "
+             "--invar hot_a0 3.3\n",
+             1,
+             {"PC_LAMMPS task failed (cold.in, occurrence 1): injecting "
+              "`variable hot_a0 equal 3.25` before the script: ERROR: Cannot "
+              "redefine variable hot_a0 with a different style",
+              "no evaluation produced a usable loss"},
+             {},
+             "1.000000e+16",
+             {{"E2", "1.000000e+16"}},
+             {{"cold.in", "clear\nunits metal\nvariable E2 equal ${hot_a0}\n"}}};
     }
     std::vector<fs::path> dirs;
     for (const std::string mode : {"THREAD", "PROCESS"}) {
