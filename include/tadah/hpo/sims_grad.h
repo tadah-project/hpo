@@ -26,6 +26,14 @@ namespace tadah::hpo {
  *   apply   dO_k/dW = dg_k/dW + lambda_k^T . dF/dW          (this header)
  *   fold    dL/dW  += (dL_k/dO_k) . dO_k/dW           (loss gradient)
  *   chain   g_out[i] += Sigma_c dL/dW[c] . dWdtheta[i, c] (Phase 2 dWdtheta)
+ *   direct  g_out[i] += Sigma_k (dL_k/dO_k) . (dg_k/dtheta_i
+ *                       + lambda_k^T . dF/dtheta_i)       (at fixed x*, W)
+ *
+ * The last line is theta's own effect at fixed weights: a theta that is a
+ * descriptor parameter changes the energy and the forces of the same W. By
+ * the implicit function theorem dO_k/dtheta is the sum of the chain through
+ * W and that direct term; the provider gives its partial derivatives
+ * (SimsGradScriptInput::dg_dtheta, dF_dtheta).
  *
  * Sign conventions:
  * - `AdjointSnapshot::dF_dW[(3*atom+axis) * n_desc + c]` is dF/dW
@@ -133,6 +141,25 @@ struct SimsGradScriptInput {
     /* Optional v_<name> resolver scoped to this script. */
     VariableResolver          resolver;
 
+    /* The direct theta term: what each theta row r of dWdtheta (n_theta
+     * rows, the theta_row_to_g_idx of compute_sims_grad_dWchain) does at
+     * fixed x* and W.
+     *   dg_dtheta  -- k_count x n_theta, row-major: dg_k/dtheta_r (an
+     *                 energy observable: the derivative of its energy; a
+     *                 box observable such as lx: 0);
+     *   dF_dtheta  -- n_theta x (3*ctx.nlocal + ctx.box_dofs), row-major:
+     *                 the derivative of the generalised force, the atom
+     *                 forces then the box rows in dvirial_dW's sign
+     *                 (-d^2E/d eps_alpha dtheta_r), lambda's layout.
+     * `direct_theta` says that the provider filled them. A script with
+     * observables without it has an unknown direct term, and the chain
+     * sends every theta to finite differences
+     * (compute_sims_grad_dWchain); one whose theta enter only through W
+     * gives zeros. A script without observables needs none. */
+    bool                      direct_theta = false;
+    std::vector<double>       dg_dtheta;
+    std::vector<double>       dF_dtheta;
+
     /* Phase A masking: when the provider can't produce a valid input
      * for this script (LAMMPS run_script divergence, populate failure
      * on the random-init pot, ...), it sets `failed=true` and leaves the
@@ -148,6 +175,18 @@ struct SimsGradScriptInput {
 bool compute_sims_grad_for_script(const SimsGradScriptInput& input,
                                   Eigen::VectorXd&           dL_dW_out);
 
+/* The same, and also the direct theta term of the loss,
+ *   dL_dtheta_direct_out[r] = Sigma_k (dL_k/dO_k) . (dg_k/dtheta_r
+ *                             + lambda_k^T . dF/dtheta_r),
+ * for the `n_theta` theta rows of the input's dg_dtheta and dF_dtheta,
+ * with the lambda_k of dL_dW_out (input.direct_theta must be set when the
+ * script has observables; a size that does not match throws). Returns
+ * false where the two-argument form does, leaving both outputs. */
+bool compute_sims_grad_for_script(const SimsGradScriptInput& input,
+                                  std::size_t                n_theta,
+                                  Eigen::VectorXd&           dL_dW_out,
+                                  std::vector<double>&       dL_dtheta_direct_out);
+
 /* ---------------------------------------------------------------- *
  *  Top-level: loop over scripts and chain into `g_out` via dWdtheta.
  *
@@ -156,11 +195,17 @@ bool compute_sims_grad_for_script(const SimsGradScriptInput& input,
  *  is FAIL_SCORE, a constant, so dFAIL_SCORE/dtheta = 0 and the missing
  *  chain contribution is exact in the continuous region.
  *
+ *  Each script adds its chain through W and its direct theta term
+ *  (SimsGradScriptInput::dg_dtheta, dF_dtheta) to the g_out slot of each
+ *  theta row (theta_row_to_g_idx; -1: none).
+ *
  *  Returns true iff every NON-FAILED script was handled analytically.
  *  Returns false (and pushes all caller-supplied theta indices into
  *  `needs_fd`) only on STRUCTURAL failures: unsupported loss kind
- *  (MAPE/RMSLE), or observable-registry parser failure on the script's
- *  varloss expressions. The orchestrator then falls back to all-FD.
+ *  (MAPE/RMSLE), observable-registry parser failure on the script's
+ *  varloss expressions, or a script with observables whose input does not
+ *  carry the direct theta term (direct_theta false: the term is unknown).
+ *  The orchestrator then falls back to all-FD.
  * ---------------------------------------------------------------- */
 bool compute_sims_grad_dWchain(
     const std::vector<SimsGradScriptInput>& scripts,

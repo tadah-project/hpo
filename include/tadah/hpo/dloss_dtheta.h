@@ -1528,7 +1528,10 @@ compute_analytical_gradient_from_trainer(
              * mathematically correct in the FAIL_SCORE=constant region
              * (dFAIL_SCORE/dtheta = 0) and prevents a single Tier-3 script
              * crash from poisoning Tier-1 (PC_OBSERVABLE) analytical
-             * gradients via the all-FD gate. */
+             * gradients via the all-FD gate. A script with observables
+             * adds its direct theta term (what theta does at fixed W, as
+             * the observable chain below does); one whose input does not
+             * carry it fails the chain, and every theta takes FD. */
             std::vector<int> needs_fd_sims;
             const bool sims_ok = compute_sims_grad_dWchain(
                 sims_inputs, dWdtheta, n_cols,
