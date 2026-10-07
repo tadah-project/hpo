@@ -433,6 +433,15 @@ private:
  *   1. PRESTAGE (broad search):    spec.prestage          (e.g. DLIB:GFS)
  *   2. REFINEMENT (local sweep):   spec     (the outer)   (e.g. DLIB:BFGS)
  *
+ * The candidates are the exploration's usable losses (HPO_Host's top-K
+ * takes no failed evaluation): with fewer than TOPK the refinement runs
+ * from those, and the journal says how many the exploration made and how
+ * many failed; with none -- every evaluation failed -- nothing is refined,
+ * and the PRESTAGE ends (a run without a usable loss then ends as one), or,
+ * when the exploration ended on a stagnation stop, reports it to RESTART.
+ * An exploration that made no evaluation at all leaves the refinement to
+ * run from the outer spec's own points, with a WARNING.
+ *
  * Under RESTART a stagnating exploration hands its top-K over to the
  * refinement early (the exploration catch below) instead of restarting;
  * each refinement seed then gets its own stagnation window. When a
@@ -484,6 +493,13 @@ public:
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
+    /* The exploration's evaluations and failed ones (the journal's census,
+     * HPOLog::record_eval): the candidates are its usable losses only
+     * (HPO_Host's top-K takes no failed one), and the journal says how
+     * many failed when fewer than TOPK, or none, are left. */
+    const std::size_t evals_before    = HPOLog::instance().n_eval();
+    const std::size_t unusable_before = HPOLog::instance().n_unusable();
+    bool explore_stagnated = false;
     try {
       run_inner<Vec,Runner>(*spec.prestage, host);
     } catch (const typename HPO_Host<Vec,Runner>::StagnationStop&) {
@@ -492,7 +508,12 @@ public:
        * best could not be saved meanwhile (it may have lost to this stop
        * in a parallel explorer): then the run fails now. */
       detail::rethrow_if_best_unsaved();
+      explore_stagnated = true;
     }
+    const std::size_t explore_evals =
+        HPOLog::instance().n_eval() - evals_before;
+    const std::size_t explore_failed =
+        HPOLog::instance().n_unusable() - unusable_before;
     /* Step 2: snapshot top-K, disable tracking. Stage boundary: the
      * refinement starts a stagnation window of its own (every path; each
      * seed also gets its own). Without this it inherited the exploration's
@@ -508,11 +529,39 @@ public:
         std::max<std::size_t>(topk.size(), 1), 1, std::nullopt,
         detail::StartBatch::Refinement);
 
+    /* No usable loss among the exploration's evaluations: there is no
+     * point to refine (a refinement used to start from the failed ones).
+     * After a stagnation stop (RESTART) the stop goes on to RestartPolicy,
+     * which runs both phases again from fresh points; otherwise the
+     * PRESTAGE ends here with the exploration's status, and a run without
+     * a usable loss ends as one (drive_run: "STOPPED -- no evaluation
+     * produced a usable loss"). */
+    if (topk.empty() && explore_evals > 0) {
+      std::ostringstream oss;
+      oss << "PRESTAGE: no evaluation of the exploration produced a usable "
+             "loss (" << explore_evals << " evaluation(s)); nothing to refine";
+      if (explore_stagnated) oss << "; reporting stagnation to RESTART";
+      std::cout << "[HPO] " << oss.str() << "\n";
+      HPOLog::instance().info(oss.str());
+      detail::report_stagnation(explore_stagnated ? 1 : 0);
+      return;
+    }
     if (topk.empty()) {
       HPOLog::instance().warning(
           "PRESTAGE: produced no candidates -- running outer optimiser as-is");
       refiner.run_one_windowed(spec, host);
       return;
+    }
+    /* Fewer candidates than TOPK: the exploration made fewer distinct
+     * points with a usable loss; the refinement runs from those. */
+    if (topk.size() < top_k_) {
+      std::ostringstream oss;
+      oss << "PRESTAGE: " << topk.size() << " usable candidate(s) for TOPK "
+          << top_k_ << " (the exploration made " << explore_evals
+          << " evaluation(s), " << explore_failed
+          << " without a usable loss); refining " << topk.size();
+      std::cout << "[HPO] " << oss.str() << "\n";
+      HPOLog::instance().info(oss.str());
     }
 
     /* Surface the snapshot so the user can sanity-check the PRESTAGE

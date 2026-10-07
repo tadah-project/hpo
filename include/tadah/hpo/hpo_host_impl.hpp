@@ -3310,8 +3310,13 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     }
 
     /* Top-K tracking -- cheap fast-path when disabled (capacity == 0).
-     * Near-clone dedup (loss + normalised parameter distance) lives in topk.h. */
-    if (topk_capacity_ > 0) {
+     * Near-clone dedup (loss + normalised parameter distance) lives in topk.h.
+     * Only a usable loss is a candidate (the band predicate of best
+     * publication above): topk_consider keeps any entry while the buffer
+     * has room, so a failed loss -- FAILSCORE, a graded failure -- stayed
+     * among the PRESTAGE candidates while fewer than TOPK usable ones
+     * existed, and the refinement started from it (StagedPolicy). */
+    if (topk_capacity_ > 0 && loss_is_feasible(r.loss, trg_.FAIL_SCORE)) {
       std::lock_guard<std::mutex> lk(topk_mtx_);
       if (topk_capacity_ > 0) {  /* re-check inside lock */
         topk_consider(topk_buf_, topk_capacity_, r.loss, r.params,

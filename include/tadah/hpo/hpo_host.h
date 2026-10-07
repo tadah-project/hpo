@@ -292,7 +292,10 @@ public:
 
     /* ---------- top-K tracking (used by StagedPolicy) ------------------ */
     /** Enable a buffer that records the top-K (lowest loss) (loss, params)
-     *  pairs across operator() calls. Capacity = k; older worse-loss
+     *  pairs across operator() calls, of the evaluations with a usable loss
+     *  (loss_is_feasible: a failed evaluation is never a candidate, so the
+     *  buffer holds fewer than k pairs while fewer usable ones exist).
+     *  Capacity = k; older worse-loss
      *  entries are evicted, near-clones are deduped (see topk.h -- a
      *  clone agrees in loss AND normalised parameter distance). `widths` are the
      *  real-space OPTIM box widths used to normalise the parameter test;
