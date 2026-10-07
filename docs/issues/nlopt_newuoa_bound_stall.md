@@ -1,8 +1,10 @@
 # NLopt LN_NEWUOA_BOUND stalls for 10-60 s per step once its model is not finite (refused)
 
-**Status:** refused since 1.6.0. `tadah hpo` stops at the line that closes the block naming
-`NLOPT:LN_NEWUOA_BOUND` (`STRATEGY`, `MULTISTART`, the `PRESTAGE` exploration and refinement, an `INNER`
-block) and names `NLOPT:LN_BOBYQA`, or `NLOPT:LN_NEWUOA` where the search may leave the box. The refusal is
+**Status:** refused since 1.6.0. `tadah hpo` stops before it loads any data, naming the phase and
+`NLOPT:LN_BOBYQA`, or `NLOPT:LN_NEWUOA` where the search may leave the box: at `ENDOPTIMIZER` for the
+`STRATEGY`-level optimiser (`PLAIN`, `MULTISTART` or the `PRESTAGE` refinement, whether the `STRATEGY` block,
+a `REFINE` block or the `OPTIMIZER` block itself names it), at `ENDEXPLORE` for the `PRESTAGE` exploration
+and at `ENDINNER` for an `INNER` block. The refusal is
 the entry of the refusal table in `src/optimizer_caps.cpp` (`backend_refusal()`, `optimizer_caps.h`). It is
 tied to **NLopt v2.10.0** (`CMakeLists.txt` fetches `GIT_TAG v2.10.0`; offline builds use `deps/nlopt`):
 before an NLopt upgrade lifts it, run the repro below on the new version.
@@ -18,14 +20,18 @@ Ctrl-C, SIGTERM, `MAXTIME` and `RESTART` wait that long, and a run that hits it 
 
 A non-finite value reaches the model in three ways:
 
-1. **Any non-finite objective value -- every stop HPO makes through the objective.** When the objective
-   throws, NLopt's own C++ wrapper (`nlopt.hpp`, `myfunc`) and HPO's (`nlopt_adapter.h`) call
-   `force_stop()` and return `HUGE_VAL`: that is NLopt's convention for a forced stop, and HPO keeps it.
-   HPO's objective throws for a signal (SIGINT, SIGTERM, SIGUSR2: `core::ShutdownRequested`), for the
-   `RESTART` stagnation stop (`StagnationStop`) and for an error that ends the run (e.g. the best potential
-   cannot be saved). NEWUOA folds the `HUGE_VAL` into its model before it looks at the stop flag, so every
-   such stop after the first 2n+1 evaluations costs one stalled subproblem, on any loss, smooth or not, with
-   or without `XTOL`. A failed evaluation scored `FAILSCORE` is finite and does not do this.
+1. **Any non-finite objective value -- every stop HPO makes through the objective from a run's (2n+1)-th
+   evaluation on.** When the objective throws, NLopt's own C++ wrapper (`nlopt.hpp`, `myfunc`) and HPO's
+   (`nlopt_adapter.h`) call `force_stop()` and return `HUGE_VAL`: that is NLopt's convention for a forced
+   stop, and HPO keeps it. HPO's objective throws for a signal (SIGINT, SIGTERM, SIGUSR2:
+   `core::ShutdownRequested`), for the `RESTART` stagnation stop (`StagnationStop`) and for an error that
+   ends the run (e.g. the best potential cannot be saved). The first 2n+1 evaluations of a run (n
+   dimensions) are NEWUOA's starting points: after each of the first 2n it goes straight to the next point,
+   where it tests the stop flag, so a stop there returns at once. After the (2n+1)-th it folds the values,
+   the `HUGE_VAL` included, into its model and plans its first step before it tests the flag again, and so
+   after every later evaluation: every such stop from the (2n+1)-th evaluation on costs one stalled
+   subproblem, on any loss, smooth or not, with or without `XTOL`. A failed evaluation scored `FAILSCORE` is
+   finite and does not do this.
 2. **A flat loss without an `XTOL` floor.** With no `XTOL_REL`/`XTOL_ABS` NEWUOA's final trust radius
    `rhoend` is 0, so on a loss that does not change over the trust region (a flat direction, or a box where
    every evaluation fails and scores `FAILSCORE`) the radius shrinks by 10x per step without limit until
@@ -49,7 +55,9 @@ and `LN_PRAXIS` also return at once after the same forced stop (case F below).
   evaluations (`api/optimize.c:817`, `dual_maxeval`).
 - The nested runs have their own stop structures: no `MAXTIME`, no shared forced-stop flag. `newuob_` tests
   the forced stop, `MAXEVAL` and `MAXTIME` only at `L310` (`newuoa.c:2119-2124`), immediately before an
-  objective call.
+  objective call. Its starting points (`L50`-`L70`, `:1731-1832`) go from each evaluation straight to the
+  next `L310` (`:1777`) while `nf < npt` (`:1829`), npt = 2n+1; after the npt-th the first step is planned
+  (`L100`, `trsapp_`, `:1856`).
 - The model update: `diff = f - fopt - vquad` (`newuoa.c:2163`), then `gq[i] += diff*bmat[...]` (`:2313`).
   An `f` of `HUGE_VAL`, or an inf in `BMAT`, makes the model gradient `GQ` inf or NaN. `newuob_` never tests
   the model for finiteness (only `s`, `hcol` and the `tau`/`alpha` products, `:677`, `:972-973`, `:1148`).
@@ -78,6 +86,9 @@ NLopt level, the repro below, built against this build's `libnlopt.a` (NLopt 2.1
 | B: 4-D sphere, `XTOL_REL 1e-12` | stall after 348 calls | f = 0 after 47 calls | f = 0 after 48 calls |
 | F: forced stop at call 30, `HUGE_VAL` returned, n = 2 | 10.84 s from the stop to the return | 0.00 s | 0.00 s |
 | F with the finite loss returned instead (`FINITE=1`) | 0.00 s | | |
+| F, n = 2 (2n+1 = 5), stop at call 1, 2, 3 or 4 (`STOPAT`) | 0.00 s | | |
+| F, n = 2, stop at call 5 or 6 | 19.13 s, 9.48 s | 0.00 s at call 5 | 0.00 s at call 5 |
+| F, n = 3 (2n+1 = 7, `N=3`), stop at call 6 or 7 | 0.00 s, 21.43 s | | |
 
 `LN_COBYLA`, `LN_SBPLX`, `LN_NELDERMEAD` and `LN_PRAXIS` in case F: 0.00 s each.
 
@@ -143,12 +154,14 @@ g++ -O2 -std=c++17 -pthread -I deps/nlopt/src/api newuoa_bound_stall.cpp \
     build_tadah/_deps/nlopt-build/libnlopt.a -o newuoa_bound_stall
 for c in A B F; do ./newuoa_bound_stall $c; echo "exit $?"; done   # LN_NEWUOA_BOUND
 for c in A B F; do ./newuoa_bound_stall $c LN_BOBYQA; done          # the replacement
+for k in 4 5; do STOPAT=$k ./newuoa_bound_stall F; done              # n = 2: from call 2n+1 = 5
 ```
 
 With NLopt 2.10.0 cases A and B print `STALL: no objective call for > 5 s after 300 calls` (348 for B) and
-case F prints about 10 s from the forced stop to the return; each exits 3. The refusal can be lifted only
-when all three exit 0 for `LN_NEWUOA_BOUND` on the new version (then also re-check the survey's other
-objectives), and the entry in `kRefused` (`src/optimizer_caps.cpp`) and its tests
+case F prints about 10 s from the forced stop to the return; each exits 3. `STOPAT=4` returns at once and
+`STOPAT=5` takes 10-25 s: a stop stalls from the (2n+1)-th call on. The refusal can be lifted only when A, B
+and F exit 0 for `LN_NEWUOA_BOUND` on the new version, F with `STOPAT=5` too (then also re-check the
+survey's other objectives), and the entry in `kRefused` (`src/optimizer_caps.cpp`) and its tests
 (`tests/test_optimizer_caps_step.cpp`, `tests/test_startup_validation_strategy.cpp`) are removed together.
 
 `newuoa_bound_stall.cpp`:
@@ -167,7 +180,9 @@ objectives), and the entry in `kRefused` (`src/optimizer_caps.cpp`) and its test
 //      objective calls nlopt_force_stop and returns HUGE_VAL, as NLopt's own
 //      C++ wrapper (nlopt.hpp) and HPO's (nlopt_adapter.h) do when the
 //      objective throws; prints the seconds from the stop to the return.
-//      FINITE=1 in the environment returns the finite loss instead.
+//      In the environment: FINITE=1 returns the finite loss instead,
+//      STOPAT=k stops at call k, N=n searches n dimensions (NEWUOA's
+//      first 2n+1 calls are its starting points).
 //
 // Usage: newuoa_bound_stall A|B|F [ALGO]   (ALGO default LN_NEWUOA_BOUND)
 #include <nlopt.h>
@@ -182,6 +197,7 @@ objectives), and the entry in `kRefused` (`src/optimizer_caps.cpp`) and its test
 static std::atomic<long> calls{0};
 static std::atomic<double> last{0};
 static nlopt_opt O;
+static long stop_at = 30;
 static double t_stop = 0;
 static double now() {
     return std::chrono::duration<double>(
@@ -197,8 +213,8 @@ static double sphere(unsigned n, const double* x, double*, void*) {
 }
 static double forced(unsigned n, const double* x, double*, void*) {
     double f = 0; for (unsigned i = 0; i < n; ++i) f += (1 + i) * (x[i] - 0.3) * (x[i] - 0.3);
-    if (++calls < 30) return f;
-    if (calls == 30) t_stop = now();
+    if (++calls < stop_at) return f;
+    if (calls == stop_at) t_stop = now();
     nlopt_force_stop(O);
     return std::getenv("FINITE") ? f : HUGE_VAL;
 }
@@ -206,7 +222,9 @@ static double forced(unsigned n, const double* x, double*, void*) {
 int main(int argc, char** argv) {
     const char mode = argc > 1 ? argv[1][0] : 'A';
     const char* algo = argc > 2 ? argv[2] : "LN_NEWUOA_BOUND";
-    const unsigned n = mode == 'B' ? 4 : 2;
+    if (const char* k = std::getenv("STOPAT")) stop_at = std::atol(k);
+    const unsigned n = mode == 'B' ? 4
+                     : mode == 'F' && std::getenv("N") ? std::atoi(std::getenv("N")) : 2;
     O = nlopt_create(nlopt_algorithm_from_string(algo), n);
     std::vector<double> lb(n, 0.0), ub(n, 1.0), x(n, mode == 'A' ? 0.0 : 0.1), dx(n, 0.25);
     nlopt_set_lower_bounds(O, lb.data());
