@@ -43,10 +43,11 @@ int signal_handler_probe() {
 
 /* A stand-in PC_ISOLATION worker, run instead of pc_worker_main when the
  * pool spawns a worker with TADAH_TEST_PC_WORKER_WRONG_ACK_PID in its
- * environment (test_pc_worker_pool.cpp sets it around one pool): it answers
+ * environment (test_pc_worker_pool.cpp sets it around one pool): it writes
+ * its pid, the one the pool forked, to the file the variable names, answers
  * HELLO with a HELLO_ACK that names its pid + 1, then reads frames until
  * the pool closes the channel or kills it. */
-int wrong_ack_pid_worker() {
+int wrong_ack_pid_worker(const char* pid_file) {
   namespace pcwire = tadah::hpo::pcwire;
   constexpr int kFd = 3;   /* the spawn recipe's channel */
   try {
@@ -55,6 +56,11 @@ int wrong_ack_pid_worker() {
     if (!pcwire::recv_frame(kFd, t, payload, -1)
         || t != pcwire::FrameType::HELLO)
       return 3;
+    std::FILE* f = std::fopen(pid_file, "w");
+    if (!f) return 4;
+    const bool written =
+        std::fprintf(f, "%ld\n", static_cast<long>(::getpid())) > 0;
+    if (std::fclose(f) != 0 || !written) return 4;
     pcwire::Writer ack;
     ack.u32(tadah::hpo::PcWorkerPool::PROTOCOL_VERSION);
     ack.u32(static_cast<std::uint32_t>(::getpid()) + 1u);
@@ -70,8 +76,8 @@ int wrong_ack_pid_worker() {
 
 int main(int argc, char** argv) {
   if (argc >= 2 && std::strcmp(argv[1], "--tadah-pc-worker") == 0) {
-    if (std::getenv("TADAH_TEST_PC_WORKER_WRONG_ACK_PID"))
-      return wrong_ack_pid_worker();
+    if (const char* pid_file = std::getenv("TADAH_TEST_PC_WORKER_WRONG_ACK_PID"))
+      return wrong_ack_pid_worker(pid_file);
     return tadah::hpo::pc_worker_main(argc, argv);
   }
   if (argc >= 2 && std::strcmp(argv[1], "--tadah-signal-handler-probe") == 0)

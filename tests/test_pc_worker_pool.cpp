@@ -357,20 +357,47 @@ TEST_CASE("pc pool: a HELLO_ACK that names another pid fails the handshake",
           "[pc_pool]") {
   /* The worker reports its pid in HELLO_ACK; the pool forked it and knows
    * the pid. test_main.cpp's stand-in worker (TADAH_TEST_PC_WORKER_WRONG_ACK_PID
-   * in its environment) answers HELLO with its pid + 1.
+   * in its environment) writes its own pid <p>, the one the pool forked, to
+   * the file the variable names, and answers HELLO with <p + 1>.
    *
-   * Pins: the pool's constructor (its eager spawn) throws
+   * Pins: the pool's constructor (its eager spawn) throws std::runtime_error
    * "pc-worker 1: handshake failed: HELLO_ACK names pid <p + 1>, but the
-   * worker was forked as pid <p>".
+   * worker was forked as pid <p>", exactly, with <p> from that file.
    *
    * Before the fix: the pid in HELLO_ACK was read and discarded, so the
    * pool was built and nothing was thrown. (This file does not compile
-   * before the fix: the cases above call worker_pid.) */
-  ScopedEnv lie("TADAH_TEST_PC_WORKER_WRONG_ACK_PID", "1");
-  CHECK_THROWS_WITH(PcWorkerPool(1, specs_for(1, minimal_spec()), 0.0),
-                    Catch::Matches("pc-worker 1: handshake failed: HELLO_ACK "
-                                   "names pid ([0-9]+), but the worker was "
-                                   "forked as pid [0-9]+"));
+   * before the fix: the cases above call worker_pid.) The case first
+   * matched the message against "... names pid [0-9]+, but the worker was
+   * forked as pid [0-9]+", which a message naming the forked pid twice
+   * passed as well. */
+  const std::filesystem::path pid_file =
+      std::filesystem::temp_directory_path() /
+      ("tadah_pc_pool_ack_pid_" + std::to_string(::getpid()) + "_" +
+       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::string what;
+  bool threw = false;
+  {
+    ScopedEnv lie("TADAH_TEST_PC_WORKER_WRONG_ACK_PID", pid_file.c_str());
+    try {
+      PcWorkerPool pool(1, specs_for(1, minimal_spec()), 0.0);
+    } catch (const std::runtime_error& e) {
+      threw = true;
+      what = e.what();
+    }
+  }
+  long forked = -1;
+  {
+    std::ifstream f(pid_file);
+    f >> forked;
+  }
+  std::error_code ec;
+  std::filesystem::remove(pid_file, ec);
+  REQUIRE(threw);
+  REQUIRE(forked > 0);
+  CHECK(what == "pc-worker 1: handshake failed: HELLO_ACK names pid "
+                    + std::to_string(forked + 1)
+                    + ", but the worker was forked as pid "
+                    + std::to_string(forked));
 }
 
 TEST_CASE("pc pool: a killed worker leaves no script file behind",
