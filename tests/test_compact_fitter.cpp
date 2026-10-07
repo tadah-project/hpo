@@ -201,7 +201,10 @@ TEST_CASE("compact fitter: each stage's MAXEVAL sets the budget of the "
   CHECK(cfg.sbplx_maxeval == 9);
   CHECK(cfg.refine_algo == "DLIB_LBFGS");
   CHECK(cfg.lbfgs_refine_maxeval == 7);
-  CHECK(cfg.ceres_max_iter == 7);  // what the curve-mode FUSE refine reads
+  /* An L-BFGS REFINE's MAXEVAL counts evaluations, not Ceres iterations:
+   * Ceres' cap keeps its default. (It was set to 7 too, the iteration cap
+   * the curve-mode FUSE refine ran with.) */
+  CHECK(cfg.ceres_max_iter == 1000);
   CHECK(cfg.joint_algo == "CERES_LM");
   CHECK(cfg.joint_max_iter == 11);
 

@@ -2374,7 +2374,8 @@ const std::string kExploreReads = "LIB, ALGO, MAXEVAL, INNER";
 const std::string kExploreInnerReads =
     "LIB, ALGO, MAXEVAL, FTOL_REL, XTOL_REL";
 const std::string kRefineReads = "LIB, ALGO, MAXEVAL/MAXITER, FTOL_REL, GTOL";
-const std::string kFuseReads = "LIB, ALGO, MAXEVAL/MAXITER, FTOL_REL";
+const std::string kFuseReads =
+    "LIB, ALGO, MAXEVAL/MAXITER, FTOL_REL, GTOL";
 
 }  // namespace
 
@@ -2384,7 +2385,8 @@ TEST_CASE("tadah refit: a stage OPTIMIZER block rejects the keys the stage "
     /* Every optimiser attribute of `tadah hpo` was parsed in a refit
      * OPTIMIZER block, but each stage reads only a few (refit.rst): THREADS,
      * MAXTIME, STOPVAL, POPULATION, STEP, ... were accepted and did
-     * nothing, and FUSE accepted GTOL, which it does not read. */
+     * nothing. FUSE reads GTOL (its Ceres gradient tolerance; it was
+     * refused here, while the curve FUSE refine ran with REFINE's). */
     struct Stage {
         std::string key;      // the stage block
         std::string head;     // up to the key under test
@@ -2416,8 +2418,7 @@ TEST_CASE("tadah refit: a stage OPTIMIZER block rejects the keys the stage "
          with({"XTOL_REL 1e-6", "INNER LIB NLOPT ALGO LN_SBPLX ENDINNER"})},
         {"FUSE", "OPTIMIZER LIB CERES ALGO DOGLEG ", " ENDOPTIMIZER", "FUSE",
          kFuseReads,
-         with({"XTOL_REL 1e-6", "GTOL 1e-8",
-               "INNER LIB NLOPT ALGO LN_SBPLX ENDINNER"})}};
+         with({"XTOL_REL 1e-6", "INNER LIB NLOPT ALGO LN_SBPLX ENDINNER"})}};
     for (const auto& s : stages) {
         for (const auto& kv : s.unused) {
             const std::string key = kv.substr(0, kv.find(' '));
@@ -2438,6 +2439,8 @@ TEST_CASE("tadah refit: a stage OPTIMIZER block rejects the keys the stage "
                                 "ENDOPTIMIZER") == "");
     CHECK(refit_error("FUSE", "OPTIMIZER LIB CERES ALGO DOGLEG MAXITER 2000 "
                               "FTOL_REL 1e-14 ENDOPTIMIZER") == "");
+    CHECK(refit_error("FUSE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 2000 "
+                              "FTOL_REL 1e-14 GTOL 1e-12 ENDOPTIMIZER") == "");
 
     /* SEED and FTOL_ABS keep the messages that say what to use instead. */
     CHECK_THAT(refit_error("FUSE", "OPTIMIZER LIB CERES ALGO DOGLEG SEED 7 "
@@ -2878,7 +2881,10 @@ TEST_CASE("tadah refit: a key that has no effect with ALGO NONE or UNIFORM "
               "skipped); remove MAXITER"},
              {"FUSE", "OPTIMIZER ALGO NONE FTOL_REL 1e-12 ENDOPTIMIZER",
               "FUSE: FTOL_REL has no effect with ALGO NONE (the stage is "
-              "skipped); remove FTOL_REL"}}) {
+              "skipped); remove FTOL_REL"},
+             {"FUSE", "OPTIMIZER ALGO NONE GTOL 1e-12 ENDOPTIMIZER",
+              "FUSE: GTOL has no effect with ALGO NONE (the stage is "
+              "skipped); remove GTOL"}}) {
         INFO(c.key << ": " << c.body);
         CHECK(refit_error(c.key, c.body) == c.message);
     }
@@ -2913,20 +2919,21 @@ TEST_CASE("tadah refit: a key that has no effect with ALGO NONE or UNIFORM "
                                  "FTOL_REL 1e-7 XTOL_REL 1e-6 ENDINNER "
                                  "ENDOPTIMIZER") == "");
 
-    /* Under REFIT_OBJECTIVE curve the FUSE curve refine runs with REFINE's
-     * MAXEVAL/MAXITER, FTOL_REL and GTOL, so REFINE NONE's have an effect
-     * while FUSE runs (its default optimiser, or one it names); not when
-     * FUSE is skipped too. */
+    /* The FUSE curve refine of REFIT_OBJECTIVE curve runs with FUSE's own
+     * MAXEVAL/MAXITER, FTOL_REL and GTOL, so REFINE NONE's stop criteria
+     * have no effect in either mode, whether FUSE runs or not. (It ran
+     * with REFINE's, so they were accepted under REFIT_OBJECTIVE curve
+     * while FUSE ran: the first two cases returned "".) */
     const std::pair<std::string, std::string> refine_none{
         "REFINE", "OPTIMIZER ALGO NONE MAXITER 100 FTOL_REL 1e-12 GTOL 1e-12 "
                   "ENDOPTIMIZER"};
-    CHECK(refit_stages_error({refine_none}, "curve") == "");
-    CHECK(refit_stages_error({refine_none, {"FUSE", "OPTIMIZER LIB CERES ALGO "
-                                                    "LM ENDOPTIMIZER"}},
-                             "CURVE") == "");
     const std::string skipped =
         "REFINE: MAXITER has no effect with ALGO NONE (the stage is skipped); "
         "remove MAXITER";
+    CHECK(refit_stages_error({refine_none}, "curve") == skipped);
+    CHECK(refit_stages_error({refine_none, {"FUSE", "OPTIMIZER LIB CERES ALGO "
+                                                    "LM ENDOPTIMIZER"}},
+                             "CURVE") == skipped);
     CHECK(refit_stages_error({refine_none}) == skipped);
     CHECK(refit_stages_error({refine_none}, "energy") == skipped);
     CHECK(refit_stages_error({refine_none, {"FUSE", "OPTIMIZER ALGO NONE "
