@@ -871,3 +871,55 @@ TEST_CASE("an exception inside a PC_LAMMPS task fails that task with its "
     CHECK(res.outvar_values.empty());
     CHECK(st.lmp_cache.empty());
 }
+
+/* Pins: a SCRIPT_ERROR of LammpsRunner::run_script (the Context overload,
+ * which builds the potential itself for an EXTERN script) hands its reason
+ * to the error out-parameter: "potential construction failed: " and the
+ * construction error for a Context no potential can be built from, and
+ * the LAMMPS message for an error inside the script. A run that succeeds
+ * leaves the parameter alone.
+ * Added with the fix (an exception to tests-first): the out-parameter does
+ * not exist before it, so this does not compile there. Before the fix
+ * both catches dropped e.what(). */
+TEST_CASE("run_script hands the reason of a script error to its error "
+          "out-parameter", "[script_file][readback]") {
+    tadah::core::PeriodicTable::initialize();
+    LammpsRunner runner;
+
+    SECTION("an EXTERN script whose potential cannot be built") {
+        auto lmp = make_instance();
+        REQUIRE(lmp != nullptr);
+        const ScriptFile sf(kr_loop_extern_lines());
+        REQUIRE(sf.has_extern());
+        ScriptRunStatus why = ScriptRunStatus::OK;
+        std::string error;
+        CHECK_FALSE(runner.run_script(lmp, sf, tadah::core::Context{}, &why,
+                                      &error));
+        CHECK(why == ScriptRunStatus::SCRIPT_ERROR);
+        CHECK_THAT(error, Catch::StartsWith("potential construction failed: "));
+        CHECK(error.size() > std::string("potential construction failed: ").size());
+    }
+    SECTION("an unknown command") {
+        auto lmp = make_instance();
+        REQUIRE(lmp != nullptr);
+        const ScriptFile sf(std::vector<std::string>{
+            "clear", "units lj", "bogus_command 1 2"});
+        ScriptRunStatus why = ScriptRunStatus::OK;
+        std::string error;
+        CHECK_FALSE(runner.run_script(lmp, sf, tadah::core::Context{}, &why,
+                                      &error));
+        CHECK(why == ScriptRunStatus::SCRIPT_ERROR);
+        CHECK_THAT(error,
+                   Catch::StartsWith("ERROR: Unknown command: bogus_command 1 2"));
+    }
+    SECTION("a script that runs") {
+        auto lmp = make_instance();
+        REQUIRE(lmp != nullptr);
+        const ScriptFile sf(backward_loop_lines());
+        ScriptRunStatus why = ScriptRunStatus::SCRIPT_ERROR;
+        std::string error = "untouched";
+        CHECK(runner.run_script(lmp, sf, tadah::core::Context{}, &why, &error));
+        CHECK(why == ScriptRunStatus::OK);
+        CHECK(error == "untouched");
+    }
+}

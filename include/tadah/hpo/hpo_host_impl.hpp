@@ -1748,19 +1748,65 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
      * skip hot-var range validation and let the cold phase run against a
      * stale warm-start value, turning a detectable protocol fault into a
      * wrong-but-finite loss. record_infra() is the same band-C grading the
-     * CREATE_FAIL path uses: infrastructure, not physics. */
+     * CREATE_FAIL path uses: infrastructure, not physics. The outvars'
+     * read-back errors are optional (empty when every outvar was read), and
+     * one per outvar when present. */
     if (!fail &&
         (tres.outvar_values.size() < lsim.n_outvar.size() ||
-         tres.hotvar_values.size() < lsim.hotvars.size())) {
+         tres.hotvar_values.size() < lsim.hotvars.size() ||
+         (!tres.outvar_errors.empty() &&
+          tres.outvar_errors.size() < lsim.n_outvar.size()))) {
       fail = true;
       if (fg_on) fail_state.record_infra();
       HPOLog::instance().warning(
           "pc-worker returned a short result for " + lsim.script + ": "
           + std::to_string(tres.outvar_values.size()) + "/"
           + std::to_string(lsim.n_outvar.size()) + " outvars, "
+          + std::to_string(tres.outvar_errors.size()) + "/"
+          + std::to_string(lsim.n_outvar.size()) + " outvar errors, "
           + std::to_string(tres.hotvar_values.size()) + "/"
           + std::to_string(lsim.hotvars.size())
           + " hotvars -- treating the task as failed (protocol desync)");
+    }
+
+    /* Outvars that could not be read back. Reading a variable evaluates its
+     * formula after the script, and a LAMMPS error there (a thermo keyword
+     * the script's thermo_style does not compute, a divide by zero for this
+     * candidate) is reported per variable; the worker does not know which
+     * names feed the loss, so the policy is set here, alike in both
+     * PC_ISOLATION modes:
+     *   - a variable in the loss (--varloss) fails the task exactly as a
+     *     failed run does: its variables take --failscore, the evaluation
+     *     is aborted (a hot script's cold scripts do not run), the failvars
+     *     grade band B, and the D17 line below names the variable;
+     *   - a diagnostic (declared only with --outvar) is "" -- NaN in
+     *     outvar.tadah -- and the evaluation keeps its loss; its own line
+     *     says so, rate-limited like D17. */
+    PcTaskStatus status = tres.status;
+    std::string error_msg = tres.error_msg;
+    if (!fail && !tres.outvar_errors.empty()) {
+      auto in_loss = [&](std::size_t j) {
+        return std::find(lsim.i_varloss.begin(), lsim.i_varloss.end(), j) !=
+               lsim.i_varloss.end();
+      };
+      for (std::size_t j = 0; j < lsim.n_outvar.size() && !fail; ++j) {
+        if (tres.outvar_errors[j].empty() || !in_loss(j)) continue;
+        fail = true;
+        status = PcTaskStatus::RUN_FAIL;
+        error_msg = "reading --varloss " + lsim.n_outvar[j] +
+                    " after the script: " + tres.outvar_errors[j];
+      }
+      for (std::size_t j = 0; j < lsim.n_outvar.size() && !fail; ++j) {
+        if (tres.outvar_errors[j].empty()) continue;
+        /* counted per run (HPOLog::count_in_run) */
+        const std::size_t n =
+            HPOLog::instance().count_in_run("PC_LAMMPS --outvar is NaN");
+        if ((n & (n - 1)) == 0)
+          HPOLog::instance().warning(
+              "PC_LAMMPS --outvar is NaN (" + lsim.script + ", occurrence "
+              + std::to_string(n) + "): reading --outvar " + lsim.n_outvar[j]
+              + " after the script: " + tres.outvar_errors[j]);
+      }
     }
 
     /* Graded-FAILSCORE Tier 2: a declared failvar > 0 means the sim
@@ -1787,8 +1833,8 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     }
 
     /* Graded-FAILSCORE Tier 1: classify hard task failures. */
-    if (fg_on && tres.status != PcTaskStatus::OK) {
-      switch (tres.status) {
+    if (fg_on && status != PcTaskStatus::OK) {
+      switch (status) {
         case PcTaskStatus::POT_BUILD_FAIL:
           fail_state.record(FailBand::D);           /* graded by S at assembly */
           break;
@@ -1820,29 +1866,32 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       }
     }
 
-    /* D17: say WHY the task failed.
+    /* D17: say WHY the task failed, in both PC_ISOLATION modes.
      *
-     * error_msg is filled on every worker-side failure path, marshalled
-     * across the socket, and was then read by nobody -- so a POT_BUILD_FAIL
-     * or an in-worker exception produced a graded loss with its cause
-     * discarded at the process boundary, leaving only a number. Only the
-     * statuses whose text originates in the WORKER are surfaced here:
+     * error_msg carries the cause from execute_script_task -- the LAMMPS
+     * message of an error inside the script or of a variable read back
+     * after it, the potential's construction error, the exception that
+     * ended the task -- or, for a --varloss read-back, from the block
+     * above. It used to be read by nobody, and an error inside the script
+     * had no message at all, so such failures left only a number. Only
+     * the statuses whose text originates with the task are surfaced here:
      * KILLED carries the parent's own reason, which kill_reap_locked has
-     * already journaled, and repeating it would double every death.
+     * already journaled, and repeating it would double every death; a
+     * timeout has no message.
      *
      * Rate-limited on powers of two: a systematically broken potential
      * fails identically on every script of every eval, and the first few
      * occurrences carry all the information. Counted per run
      * (HPOLog::count_in_run). */
-    if ((tres.status == PcTaskStatus::POT_BUILD_FAIL ||
-         tres.status == PcTaskStatus::RUN_FAIL) &&
-        !tres.error_msg.empty()) {
+    if ((status == PcTaskStatus::POT_BUILD_FAIL ||
+         status == PcTaskStatus::RUN_FAIL) &&
+        !error_msg.empty()) {
       const std::size_t n =
-          HPOLog::instance().count_in_run("pc-worker task failed");
+          HPOLog::instance().count_in_run("PC_LAMMPS task failed");
       if ((n & (n - 1)) == 0)
         HPOLog::instance().warning(
-            "pc-worker task failed (" + lsim.script + ", occurrence "
-            + std::to_string(n) + "): " + tres.error_msg);
+            "PC_LAMMPS task failed (" + lsim.script + ", occurrence "
+            + std::to_string(n) + "): " + error_msg);
     }
 
     for (std::size_t j = 0; j < lsim.n_outvar.size(); ++j) {
