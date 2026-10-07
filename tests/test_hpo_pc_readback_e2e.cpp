@@ -20,7 +20,8 @@
 //     LAMMPS refuses to inject before a script fails that script, with a
 //     journal line too, and so does a --varloss, --hotvar or --failvar with
 //     no (finite, for a failvar) number for its value after the script (a
-//     diagnostic is NaN with a journal line). Hidden
+//     diagnostic is NaN with a journal line); a script that cannot be
+//     rendered fails with a journal line. Hidden
 //     because, before the fix, these cases ended their process with
 //     SIGSEGV, and because the HPO_Host statics are shared by the cases of
 //     one process.
@@ -53,6 +54,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -826,6 +828,72 @@ TEST_CASE("a diagnostic --outvar with no number for its value is NaN with a "
     Host::reset_globals_for_test();
 }
 
+namespace {
+
+/* TMPDIR for the life of the object, restored (or unset) after. */
+struct ScopedTmpdir {
+    std::optional<std::string> old;
+    explicit ScopedTmpdir(const std::string& value) {
+        if (const char* v = std::getenv("TMPDIR")) old = std::string(v);
+        ::setenv("TMPDIR", value.c_str(), 1);
+    }
+    ~ScopedTmpdir() {
+        if (old) ::setenv("TMPDIR", old->c_str(), 1);
+        else     ::unsetenv("TMPDIR");
+    }
+};
+
+}  // namespace
+
+/* Pins: a PC_LAMMPS script that cannot be rendered to its temporary file
+ * (TMPDIR names a regular file during the evaluations) fails its task as
+ * an infrastructure failure -- the evaluation's loss FAILSCORE, E
+ * failscored -- and the journal says why, for the occurrences 1 and 2:
+ * "PC_LAMMPS task failed (readback.in, occurrence n): rendering the script
+ * to a temporary file: " and the reason.
+ * Before the fix: the task carried the reason, but the parent's
+ * CREATE_FAIL path returned before the journal line, so every evaluation
+ * failed with nothing in the journal (the line checks fail). */
+TEST_CASE("a PC_LAMMPS script that cannot be rendered is journalled",
+          "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ForceRebuildGuard rebuild;
+    ScratchDir sd("tadah_pc_unrendered_");
+    /* A text no live rendering has: identical renderings are shared. */
+    std::ofstream(sd.dir / "readback.in")
+        << ta_script("3.301", "variable E equal pe\nvariable unrendered_" +
+                                  std::to_string(::getpid()) + " equal 1\n");
+    std::ofstream(sd.dir / "notadir") << "a file, not a directory\n";
+    Journal j;
+    std::vector<double> losses;
+    {
+        ScopedTmpdir tmpdir((sd.dir / "notadir").string());
+        losses = evaluate(sd.dir,
+                          "PC_ERMSE 0 1\nPC_LAMMPS --script " +
+                              (sd.dir / "readback.in").string() +
+                              " --varloss E 0 1\n",
+                          {0.5, 0.6});
+    }
+    const std::string journal = j.finish();
+    INFO(journal);
+    for (const double l : losses) CHECK(l == 1e16);
+    const Table outv = read_table("outvar.tadah");
+    REQUIRE(outv.rows.size() == 2);
+    for (const auto& row : outv.rows) {
+        REQUIRE(row.size() == 5);
+        CHECK(row[4] == "1.000000e+16");
+    }
+    for (const char* n : {"occurrence 1)", "occurrence 2)"}) {
+        INFO(n);
+        CHECK(line_with(journal, std::string("readback.in, ") + n +
+                                     ": rendering the script to a temporary "
+                                     "file: ")
+                  .find("PC_LAMMPS task failed (") != std::string::npos);
+    }
+    Host::reset_globals_for_test();
+}
+
 /* Pins: a variable that reads an unreadable one is journalled with the
  * LAMMPS error of that one, as reading it raised it, never with "has a
  * circular dependency":
@@ -1151,15 +1219,16 @@ namespace {
 
 /* `tadah hpo` in its own directory @p dir under PC_ISOLATION @p mode, with
  * the hpotarget @p target (PC_ISOLATION appended), the script readback.in
- * = @p script and each of @p more_scripts (name, text); returns the wait
- * status. tadah runs without TADAH_PC_ISOLATION, which would override the
+ * = @p script and each of @p more_scripts (name, text), and the environment
+ * assignments @p env ("TMPDIR=notadir"); returns the wait status. tadah runs without TADAH_PC_ISOLATION, which would override the
  * hpotarget's PC_ISOLATION (src/hpo.cpp) -- a developer where socketpair
  * is blocked is told to set it to THREAD -- so @p mode is the mode it runs
  * in, as each case checks in its journal. */
 int run_tadah_hpo(
         const char* bin, const fs::path& dir, const std::string& mode,
         const std::string& target, const std::string& script,
-        const std::vector<std::pair<std::string, std::string>>& more_scripts) {
+        const std::vector<std::pair<std::string, std::string>>& more_scripts,
+        const std::string& env = "") {
     fs::create_directories(dir);
     write_minimal_ta_dbfile(dir / "train.db", 0.0);
     write_minimal_ta_dbfile(dir / "val.db", 0.07, -0.04);
@@ -1173,7 +1242,7 @@ int run_tadah_hpo(
                                       << "\n";
     const std::string cmd =
         "cd '" + dir.string() + "' && env -u TADAH_PC_ISOLATION "
-        "TADAH_HPO_FORCE_REBUILD=1 '" + bin +
+        "TADAH_HPO_FORCE_REBUILD=1 " + env + " '" + bin +
         "' hpo -c config --hpotarget config.hpo --validation config.val"
         " > tadah.stdout 2> tadah.stderr";
     return std::system(cmd.c_str());
@@ -1250,7 +1319,11 @@ std::size_t column(const Table& t, const std::string& name) {
  *   - a --varloss F deleted at run time: exit 1, "PC_LAMMPS task failed
  *     (readback.in, occurrence 1): reading --varloss F after the script: no
  *     value (the variable is not defined, or has no single value)", E and F
- *     failscored, TOTAL_LOSS/N 1.000000e+16.
+ *     failscored, TOTAL_LOSS/N 1.000000e+16;
+ *   - a script that cannot be rendered (TMPDIR names a regular file in
+ *     tadah's environment, and a PC_ISOLATION worker inherits it): exit 1,
+ *     "PC_LAMMPS task failed (readback.in, occurrence 1): rendering the
+ *     script to a temporary file: ", E failscored.
  * Before the fix: under THREAD tadah died of SIGSEGV in the read-back
  * sections (the shell's exit status 139); under PROCESS it exited 1 in the
  * --outvar section (the whole script failed, E included) and journalled
@@ -1267,7 +1340,9 @@ std::size_t column(const Table& t, const std::string& name) {
  * dropped in both modes: exit 0, E2 = 3.3 (the --invar value) in every row,
  * no journal line. Before the no-value fix F's FAIL_SCORE term was averaged
  * with the others (TOTAL_LOSS/N 3.333333e+15, a feasible loss): exit 0, E
- * kept, F NaN, no journal line. */
+ * kept, F NaN, no journal line. Before the CREATE_FAIL fix the unrendered
+ * script failed every evaluation with nothing in the journal in both
+ * modes. */
 TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
           "way under PC_ISOLATION THREAD and PROCESS",
           "[pc_readback][tadah_cli][.tadah_cli_pc_readback]") {
@@ -1300,6 +1375,8 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
         /* outvar.tadah: every row's cell of each column. */
         std::vector<std::pair<std::string, std::string>> outvar_cells;
         std::vector<std::pair<std::string, std::string>> more_scripts;
+        /* Environment assignments for tadah ("" none). */
+        std::string env = "";
     };
     Case c;
     std::string name;
@@ -1420,12 +1497,26 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
              {{"E", "1.000000e+16"}, {"F", "1.000000e+16"}},
              {}};
     }
+    SECTION("a script that cannot be rendered") {
+        name = "unrendered";
+        c = {ta_script("3.301", "variable E equal pe\n"),
+             "PC_LAMMPS --script readback.in --varloss E 0 1\n",
+             1,
+             {"PC_LAMMPS task failed (readback.in, occurrence 1): rendering "
+              "the script to a temporary file: ",
+              "no evaluation produced a usable loss"},
+             {},
+             "1.000000e+16",
+             {{"E", "1.000000e+16"}},
+             {{"notadir", "a file, not a directory\n"}},
+             "TMPDIR=notadir"};
+    }
     std::vector<fs::path> dirs;
     for (const std::string mode : {"THREAD", "PROCESS"}) {
         INFO(name << ", PC_ISOLATION " << mode);
         const fs::path dir = sd.dir / (name + "_" + mode);
         const int rc = run_tadah_hpo(bin, dir, mode, head + c.lammps_line,
-                                     c.script, c.more_scripts);
+                                     c.script, c.more_scripts, c.env);
         INFO(read_text(dir / "tadah.stderr"));
         const std::string journal = read_text(dir / "hpo_run.log");
         INFO(journal);
