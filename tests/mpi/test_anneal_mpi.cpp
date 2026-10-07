@@ -551,6 +551,7 @@ int main(int argc, char** argv)
       struct Outcome {
         int status = -1;
         bool rethrown = false;
+        std::string what;   // the rethrown std::exception's message
       };
       const auto drive = [](bool usable, bool flush_fails,
                             const std::function<void()>& body) {
@@ -564,6 +565,9 @@ int main(int argc, char** argv)
         try {
           o.status = tadah::hpo::drive_run(body, host,
                                            tadah::hpo::HPOLog::instance());
+        } catch (const std::exception& e) {
+          o.rethrown = true;
+          o.what = e.what();
         } catch (...) {
           o.rethrown = true;
         }
@@ -574,7 +578,9 @@ int main(int argc, char** argv)
       };
       /* A body that ends normally records why, as every optimiser does
        * (run_end.h): a normal end without a status is an internal error
-       * (drive_run's std::logic_error, FAILED). */
+       * (drive_run's std::logic_error, FAILED), the last drive below.
+       * Before the fix: the drives before that one pass as well (a pin;
+       * their bodies then recorded no status, which drive_run accepted). */
       const std::function<void()> ends_normally = [] {
         tadah::hpo::HPOLog::instance().set_status("TEST: done");
       };
@@ -615,6 +621,25 @@ int main(int argc, char** argv)
       require_all(last ? o.rethrown : completed(o),
                   "drive_run: an error on the last rank after the drivers' "
                   "last collective did not end that rank with its error and "
+                  "the others as before", rank);
+
+      /* Pins: a normal end that records no status on the last rank only
+       * ends that rank with drive_run's internal error, rethrown
+       * (std::logic_error; it is thrown before the collective and its
+       * handler reaches the collective), and every other rank completes:
+       * none waits in the collective. On one rank the only rank is the
+       * last.
+       * Before the fix: the last rank completed as well (no error; the
+       * trailer said COMPLETED). */
+      o = drive(rank == 0, false, [last, ends_normally] {
+        if (!last) ends_normally();
+      });
+      require_all(last ? (o.rethrown &&
+                          o.what == "internal error: the optimiser ended "
+                                    "without recording why it ended")
+                       : completed(o),
+                  "drive_run: a normal end without a status on the last "
+                  "rank did not end that rank with the internal error and "
                   "the others as before", rank);
     }
 

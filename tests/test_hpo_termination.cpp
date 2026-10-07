@@ -4533,6 +4533,17 @@ struct AgreementProbeHost {
 
 }  // namespace
 
+/* Pins: every ending of drive_run asks the host once whether it produced a
+ * usable loss -- the run's one cross-rank collective -- before anything
+ * else it asks, and flushes the results at least once; an error ending
+ * rethrows. A normal end without a recorded status, drive_run's internal
+ * error (std::logic_error, thrown before the collective on the normal
+ * path), reaches the collective through the error handler like any other
+ * error and is rethrown, also when its final flush fails.
+ * Before the fix: the endings with a status, the stops and the errors pass
+ * as well (a pin; the normal ends' bodies then recorded none, which
+ * drive_run accepted); a normal end without a status ended normally, not
+ * rethrown (fails). */
 TEST_CASE("No usable loss: every ending of drive_run reaches the cross-rank "
           "agreement once and before the final flush",
           "[HPO][termination][no_usable_loss][run_driver]")
@@ -4548,14 +4559,18 @@ TEST_CASE("No usable loss: every ending of drive_run reaches the cross-rank "
         bool flush_fails;
         bool rethrows;
     };
-    /* A normal end records its status, as every optimiser does (the body
-     * of a normal end without one is an internal error, below). */
+    /* A normal end records its status, as every optimiser does; the body
+     * of a normal end without one is an internal error. */
     const auto normal_end = [] {
         tadah::hpo::HPOLog::instance().set_status("TEST: done");
     };
+    const auto no_status = [] {};
     const Ending endings[] = {
         {"a normal end", normal_end, false, false},
         {"a normal end whose final flush fails", normal_end, true, true},
+        {"a normal end without a status", no_status, false, true},
+        {"a normal end without a status whose final flush fails", no_status,
+         true, true},
         {"a stagnation stop",
          [] { throw AgreementProbeHost::StagnationStop{}; }, false, false},
         {"a shutdown", [] { throw tadah::core::ShutdownRequested{}; }, false,
