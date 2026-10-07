@@ -403,6 +403,9 @@ TEST_CASE("ANNEAL_PA: T0 probe exhaustion reports MAXEVAL exactly",
     CHECK(stub.sorted_calls().size() == 3);
     CHECK(lr.read().find("ANNEAL_PA stopped: MAXEVAL exhausted")
           != std::string::npos);
+    /* Pins: the run's status "TADAH:ANNEAL_PA: MAXEVAL reached". Before the
+     * fix: no status (the trailer said COMPLETED). */
+    CHECK(HPOLog::instance().status() == "TADAH:ANNEAL_PA: MAXEVAL reached");
 }
 
 TEST_CASE("ANNEAL_PA: reaches T_MIN and reports the schedule",
@@ -430,6 +433,9 @@ TEST_CASE("ANNEAL_PA: reaches T_MIN and reports the schedule",
     CHECK(log.find("ANNEAL_PA step=1/") != std::string::npos);
     CHECK(log.find("ESS=") != std::string::npos);
     CHECK(log.find("ANNEAL_PA stopped: T <= T_MIN") != std::string::npos);
+    /* Pins: the run's status "TADAH:ANNEAL_PA: T_MIN reached". Before the
+     * fix: no status. */
+    CHECK(HPOLog::instance().status() == "TADAH:ANNEAL_PA: T_MIN reached");
 }
 
 TEST_CASE("ANNEAL_PA: T_HOT equal to T_MIN runs one hot sweep only",
@@ -454,6 +460,9 @@ TEST_CASE("ANNEAL_PA: T_HOT equal to T_MIN runs one hot sweep only",
     CHECK(stub.sorted_calls().size() == 32);
     CHECK(lr.read().find("ANNEAL_PA stopped: T <= T_MIN") !=
           std::string::npos);
+    /* Pins: a one-temperature run ends "TADAH:ANNEAL_PA: T_MIN reached".
+     * Before the fix: no status. */
+    CHECK(HPOLog::instance().status() == "TADAH:ANNEAL_PA: T_MIN reached");
 }
 
 TEST_CASE("ANNEAL_PA: subnormal temperatures make geometric progress",

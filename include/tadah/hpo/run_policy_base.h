@@ -95,9 +95,10 @@ inline void detail::run_inner_dispatch(const OptimizerSpec& spec,
 
   /* This run starts without a termination status: the journal trailer
    * of a run that ends on its own is the reason the optimiser run that
-   * ended it recorded (HPOLog::set_status), or COMPLETED -- never a status
-   * left behind by an earlier PRESTAGE phase, MULTISTART start or RESTART
-   * round. */
+   * ended it recorded (HPOLog::set_status; every driver records one,
+   * run_end.h, and drive_run() fails a normal end without one) -- never a
+   * status left behind by an earlier PRESTAGE phase, MULTISTART start or
+   * RESTART round. */
   HPOLog::instance().clear_status();
 
   if (spec.lib == "TADAH") {
@@ -144,10 +145,10 @@ public:
   virtual void run(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host) = 0;
 
   /** Reserved for adapters that want to finalise the journal themselves.
-   *  Currently always false: both NLopt and DLIB adapters merely record
-   *  their per-run termination reason via HPOLog::set_status(); the
-   *  outer hpo_run() always calls HPOLog::finish() once after the whole
-   *  policy (BasePolicy / MultiStart / StageGlobal / Restart ...) ends. */
+   *  Currently always false: every optimiser adapter merely records its
+   *  per-run termination reason via HPOLog::set_status(); the outer
+   *  hpo_run() always calls HPOLog::finish() once after the whole policy
+   *  (BasePolicy / MultiStart / StageGlobal / Restart ...) ends. */
   static bool driver_finishes_log(const OptimizerSpec& /*spec*/) {
     return false;
   }

@@ -50,6 +50,7 @@
  */
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/warmstart_cache.h>   // current_chain() bridge
+#include <tadah/hpo/run_end.h>
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/anneal_core.h>
 #include <tadah/hpo/anneal_parallel.h>
@@ -1026,26 +1027,52 @@ template<typename Vec, typename HostT>
       HPOLog::instance().info(oss.str());
     }
 
+    /* The stop line, and the run's status (run_end.h) on every rank: the
+     * stop decisions are collective, so every rank's journal gets the
+     * same one. */
     {
       const char* reason = nullptr;
+      EndReason end = EndReason::MaxEval;
       switch (stop_reason) {
-        case StopReason::MaxEval:        reason = "MAXEVAL exhausted"; break;
-        case StopReason::MaxTime:        reason = "MAXTIME exceeded"; break;
-        case StopReason::StopVal:        reason = "STOPVAL reached"; break;
-        case StopReason::StopValOnProbe: reason = "STOPVAL reached during T0 probes"; break;
-        case StopReason::ExternalOnProbe: reason = "external stop requested during T0 probes"; break;
-        case StopReason::MaxTimeOnProbe: reason = "MAXTIME exceeded during T0 probes"; break;
-        case StopReason::TMin:           reason = "T <= T_MIN"; break;
-        case StopReason::Plateau:        reason = "FTOL plateau (Corana eps-NEPS rule, population best)"; break;
-        case StopReason::NoDims:         reason = "no optimisable dimensions"; break;
-        case StopReason::NoBudget:       reason = "MAXEVAL exhausted before SA proposal"; break;
-        case StopReason::Done:           reason = "loop completed normally"; break;
+        case StopReason::MaxEval:
+          reason = "MAXEVAL exhausted"; end = EndReason::MaxEval; break;
+        case StopReason::MaxTime:
+          reason = "MAXTIME exceeded"; end = EndReason::MaxTime; break;
+        case StopReason::StopVal:
+          reason = "STOPVAL reached"; end = EndReason::StopVal; break;
+        case StopReason::StopValOnProbe:
+          reason = "STOPVAL reached during T0 probes";
+          end = EndReason::StopVal; break;
+        case StopReason::ExternalOnProbe:
+          /* ctx.stop is raised only by a STOPVAL (anneal_core.h), and rank
+           * 0 calibrates before the population is initialised:
+           * unreachable today; were it reached, another chain's STOPVAL
+           * ended the search. */
+          reason = "external stop requested during T0 probes";
+          end = EndReason::StopVal; break;
+        case StopReason::MaxTimeOnProbe:
+          reason = "MAXTIME exceeded during T0 probes";
+          end = EndReason::MaxTime; break;
+        case StopReason::TMin:
+          reason = "T <= T_MIN"; end = EndReason::TMin; break;
+        case StopReason::Plateau:
+          reason = "FTOL plateau (Corana eps-NEPS rule, population best)";
+          end = EndReason::FtolPlateau; break;
+        case StopReason::NoDims:
+          reason = "no optimisable dimensions"; end = EndReason::NoDims; break;
+        case StopReason::NoBudget:
+          reason = "MAXEVAL exhausted before SA proposal";
+          end = EndReason::MaxEval; break;
+        case StopReason::Done:
+          throw std::logic_error(
+              "internal error: TADAH:ANNEAL_PA ended without a stop reason");
       }
       std::ostringstream oss;
       oss << "ANNEAL_PA stopped: " << reason
           << " after " << spent_report << " host eval(s)"
           << " (" << step_count << " temperature step(s))";
       HPOLog::instance().info(oss.str());
+      record_end("TADAH:ANNEAL_PA", end);
     }
   }
 

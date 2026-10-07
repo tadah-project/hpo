@@ -1142,6 +1142,9 @@ TEST_CASE("ANNEAL_PT: T0 probe exhaustion reports MAXEVAL exactly",
     CHECK(stub.sorted_calls().size() == 3);
     CHECK(lr.read().find("ANNEAL_PT stopped: MAXEVAL exhausted")
           != std::string::npos);
+    /* Pins: the run's status "TADAH:ANNEAL_PT: MAXEVAL reached". Before the
+     * fix: no status (the trailer said COMPLETED). */
+    CHECK(HPOLog::instance().status() == "TADAH:ANNEAL_PT: MAXEVAL reached");
 }
 
 TEST_CASE("ANNEAL_PT: extreme finite temperature endpoints build a finite ladder",
@@ -1659,6 +1662,9 @@ TEST_CASE("ANNEAL_PT: STOPVAL terminates the ladder",
     CHECK(stub.sorted_calls().size() < 5000);
     CHECK(lr.read().find("ANNEAL_PT stopped: STOPVAL reached")
           != std::string::npos);
+    /* Pins: the run's status "TADAH:ANNEAL_PT: STOPVAL reached". Before the
+     * fix: no status. */
+    CHECK(HPOLog::instance().status() == "TADAH:ANNEAL_PT: STOPVAL reached");
 }
 
 TEST_CASE("ANNEAL_PT: cooling-schedule keys are rejected -- the ladder is static",
@@ -1953,6 +1959,10 @@ TEST_CASE("ANNEAL_PT: a cooperative shutdown still reports the whole run",
     const std::string log = lr.read();
     CHECK(log.find("ANNEAL_PT stopped: external stop requested "
                    "(SIGINT/SIGTERM/SIGUSR2)") != std::string::npos);
+    /* A signal stop records no status of its own: the run driver writes
+     * the SHUTDOWN trailer. Before the fix: passes as well (a pin of the
+     * signal path, which the per-reason statuses leave alone). */
+    CHECK(HPOLog::instance().status().empty());
     CHECK(log.find("ANNEAL_PT distinct walkers per slot over the whole run "
                    "(2 = fully mixed):") != std::string::npos);
     CHECK(log.find("ANNEAL_PT ladder flow: traversals cold->hot=")
@@ -2489,6 +2499,9 @@ TEST_CASE("ANNEAL_PT: FTOL best-stall stops a stalled global best",
     CHECK(log.find("ANNEAL_PT stopped: FTOL best-stall (global best improved "
                    "by <= tol over NEPS diagnostics windows)")
           != std::string::npos);
+    /* Pins: the best-stall is the run's status "TADAH:ANNEAL_PT: FTOL
+     * plateau". Before the fix: no status. */
+    CHECK(HPOLog::instance().status() == "TADAH:ANNEAL_PT: FTOL plateau");
 }
 
 TEST_CASE("ANNEAL_PT: best-stall does not fire while the best keeps improving",

@@ -63,7 +63,15 @@ using Registry = std::unordered_map<CapsKey, OptimizerCaps, CapsKeyHash>;
  * LN_BOBYQA and LN_NEWUOA, which use no MMA, return at once after the same
  * forced stop. HPO's HUGE_VAL stays: it is NLopt's own convention. The
  * analysis and the repro (cases A, B and F) are in
- * docs/issues/nlopt_newuoa_bound_stall.md. */
+ * docs/issues/nlopt_newuoa_bound_stall.md.
+ *
+ * NLOPT:NLOPT_LD_LBFGS_NOCEDAL -- NLopt v2.10.0 names it (nlopt.h,
+ * nlopt_algorithm_to_string: the name the registry below registers each
+ * NLopt algorithm under) but does not implement it: nlopt_optimize()'s
+ * algorithm switch has no case for it and returns NLOPT_INVALID_ARGS
+ * (optimize.c), so every run of it ended "FAILED -- nlopt invalid
+ * argument" once its setup was done. The repro is the unit test that
+ * calls nlopt_optimize() with it (test_optimizer_caps_step.cpp). */
 struct Refusal {
     const char* lib;
     const char* algo;
@@ -84,6 +92,10 @@ constexpr Refusal kRefused[] = {
      "bound-constrained successor of NEWUOA (its STEP rescales each "
      "dimension instead of setting one radius), or NLOPT:LN_NEWUOA where "
      "the search may leave the OPTIM box"},
+    {"NLOPT", "NLOPT_LD_LBFGS_NOCEDAL",
+     "NLopt 2.10 does not implement it (NLopt names it, but its optimiser "
+     "rejects it as an invalid argument, so every run of it failed once "
+     "its setup was done). Use NLOPT:LD_LBFGS, NLopt's L-BFGS"},
 };
 
 void add(Registry& r, OptimizerCaps c)

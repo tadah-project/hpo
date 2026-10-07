@@ -230,7 +230,10 @@ TEST_CASE("MULTISTART: a failed start's status does not become the result",
         CHECK(status.find("FAILED") == std::string::npos);
         CHECK(status.find("1 of 3 MULTISTART starts failed") != std::string::npos);
     }
-    SECTION("the first start fails, the others record no status") {
+    /* Every start that ends records its status, as every optimiser does
+     * (run_end.h). Before the fix: passes as well (a pin; the stubs
+     * recorded none, and the note went onto a made-up COMPLETED). */
+    SECTION("the first start fails, the others record their own status") {
         Journal j;
         HPOLog::instance().set_status("");
         const auto rep = run_starts(3, [] {}, [](std::size_t i) {
@@ -238,10 +241,31 @@ TEST_CASE("MULTISTART: a failed start's status does not become the result",
                 HPOLog::instance().set_status("FAILED -- first");
                 throw std::runtime_error("first");
             }
+            HPOLog::instance().set_status("STUB: done");
         });
         CHECK(rep.n_failed == 1);
         CHECK(HPOLog::instance().status() ==
-              "COMPLETED (1 of 3 MULTISTART starts failed; see the WARNINGs)");
+              "STUB: done (1 of 3 MULTISTART starts failed; see the WARNINGs)");
+    }
+    /* A start that stagnates records no status (its RESTART window ran
+     * out; the batch reports the stagnation to RESTART, whose status
+     * carries the note). After a failed start, the status stays empty.
+     * Pins: n_stagnated 2, and no status.
+     * Before the fix: "COMPLETED (1 of 3 MULTISTART starts failed; see the
+     * WARNINGs)", a status no start recorded. */
+    SECTION("the first start fails, the others stagnate") {
+        Journal j;
+        HPOLog::instance().set_status("");
+        const auto rep = run_starts(3, [] {}, [](std::size_t i) {
+            if (i == 0) {
+                HPOLog::instance().set_status("FAILED -- first");
+                throw std::runtime_error("first");
+            }
+            throw StagnationStop{};
+        });
+        CHECK(rep.n_failed == 1);
+        CHECK(rep.n_stagnated == 2);
+        CHECK(HPOLog::instance().status().empty());
     }
 }
 

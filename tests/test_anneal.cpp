@@ -452,6 +452,10 @@ TEST_CASE("ANNEAL: per-rung summary line is emitted to the journal",
     CHECK(log.find("ANNEAL stopped:") != std::string::npos);
 }
 
+/* Pins: each stop's line, and the status it records (HPOLog::status(), the
+ * run's trailer): "TADAH:ANNEAL: MAXEVAL reached", "TADAH:ANNEAL: STOPVAL
+ * reached", "TADAH:ANNEAL: T_MIN reached".
+ * Before the fix: the lines, and no status (the trailer said COMPLETED). */
 TEST_CASE("ANNEAL: stop-reason line names the condition that fired",
           "[HPO][anneal][log]")
 {
@@ -471,6 +475,7 @@ TEST_CASE("ANNEAL: stop-reason line names the condition that fired",
         run_anneal_impl<Vec>(sp, stub);
         CHECK(lr.read().find("ANNEAL stopped: MAXEVAL exhausted")
               != std::string::npos);
+        CHECK(HPOLog::instance().status() == "TADAH:ANNEAL: MAXEVAL reached");
     }
 
     SECTION("STOPVAL")
@@ -487,6 +492,7 @@ TEST_CASE("ANNEAL: stop-reason line names the condition that fired",
         run_anneal_impl<Vec>(sp, stub);
         CHECK(lr.read().find("ANNEAL stopped: STOPVAL reached")
               != std::string::npos);
+        CHECK(HPOLog::instance().status() == "TADAH:ANNEAL: STOPVAL reached");
     }
 
     SECTION("T_MIN")
@@ -505,6 +511,7 @@ TEST_CASE("ANNEAL: stop-reason line names the condition that fired",
         run_anneal_impl<Vec>(sp, stub);
         CHECK(lr.read().find("ANNEAL stopped: T < T_MIN")
               != std::string::npos);
+        CHECK(HPOLog::instance().status() == "TADAH:ANNEAL: T_MIN reached");
     }
 }
 
@@ -736,6 +743,8 @@ TEST_CASE("ANNEAL: FTOL_ABS plateau stops after exactly NEPS flat rungs",
     CHECK(log.find("ANNEAL stopped: FTOL plateau") != std::string::npos);
     /* 4 rungs x L=5 + 1 seed eval = 21 host calls, far below MAXEVAL. */
     CHECK(stub.calls.size() == 21);
+    /* Pins: the plateau is the run's status. Before the fix: no status. */
+    CHECK(HPOLog::instance().status() == "TADAH:ANNEAL: FTOL plateau");
 }
 
 TEST_CASE("ANNEAL: FTOL_REL alone also arms the plateau stop",
@@ -984,6 +993,9 @@ TEST_CASE("ANNEAL: T0 probe exhaustion reports MAXEVAL and never overshoots",
     CHECK(stub.calls.size() == 3);
     CHECK(lr.read().find("ANNEAL stopped: MAXEVAL exhausted")
           != std::string::npos);
+    /* Pins: a MAXEVAL spent among the T0 probes is the run's status
+     * "TADAH:ANNEAL: MAXEVAL reached". Before the fix: no status. */
+    CHECK(HPOLog::instance().status() == "TADAH:ANNEAL: MAXEVAL reached");
 }
 
 TEST_CASE("ANNEAL: explicit T_MIN is checked against auto-calibrated T0",
@@ -1057,6 +1069,10 @@ TEST_CASE("ANNEAL: zero-dimensional non-finite loss does not invent STOPVAL",
     CHECK(log.find("ANNEAL stopped: no optimisable dimensions") !=
           std::string::npos);
     CHECK(log.find("STOPVAL reached") == std::string::npos);
+    /* Pins: the status "TADAH:ANNEAL: no optimisable dimensions". Before
+     * the fix: no status. */
+    CHECK(HPOLog::instance().status() ==
+          "TADAH:ANNEAL: no optimisable dimensions");
 }
 
 TEST_CASE("ANNEAL: zero-dimensional finite loss still honours STOPVAL",
@@ -1075,6 +1091,9 @@ TEST_CASE("ANNEAL: zero-dimensional finite loss still honours STOPVAL",
     CHECK(stub.calls.size() == 1);
     CHECK(lr.read().find("ANNEAL stopped: STOPVAL reached") !=
           std::string::npos);
+    /* Pins: the status "TADAH:ANNEAL: STOPVAL reached". Before the fix: no
+     * status. */
+    CHECK(HPOLog::instance().status() == "TADAH:ANNEAL: STOPVAL reached");
 }
 
 TEST_CASE("ANNEAL[CORANA]: incomplete NS block does not shrink unvisited steps",
@@ -1272,6 +1291,9 @@ TEST_CASE("ANNEAL: REANNEAL warm-restarts the schedule on T_MIN",
     CHECK(log.find("re-anneal #1") != std::string::npos);
     CHECK(log.find("ANNEAL stopped: T < T_MIN") != std::string::npos);
     CHECK(log.find("re-anneal(s)") != std::string::npos);
+    /* Pins: the last schedule's T_MIN is the run's status. Before the fix:
+     * no status. */
+    CHECK(HPOLog::instance().status() == "TADAH:ANNEAL: T_MIN reached");
 }
 
 TEST_CASE("ANNEAL: REANNEAL 0 disables the warm restart",

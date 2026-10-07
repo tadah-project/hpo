@@ -249,6 +249,12 @@ struct GradientProvider {
   /** Return host(sp.out(x)). +inf on bad eval or MAXEVAL overflow. */
   std::function<double(const Vec& x)>            cost;
 
+  /** Whether MAXEVAL is spent: cost() returns +inf and gradient() fails
+   *  (GradientFailure::Budget) without evaluating from now on. Lets a
+   *  caller tell a refusal for the budget from a failed evaluation (the
+   *  Ceres adapter's MAXEVAL ending). Always false without MAXEVAL. */
+  std::function<bool()>                          exhausted;
+
   /** Fill g with d(host(sp.out(x)))/dx. Return false on bad eval or
    *  MAXEVAL overflow; `failure` then says which. */
   std::function<bool(const Vec& x, Vec& g)>      gradient;
@@ -662,6 +668,10 @@ make_gradient_provider(const OptimizerSpec&     sp,
       }
       g(i) *= jac;
     }
+  };
+
+  gp.exhausted = [eval_counter, maxeval]() {
+    return maxeval > 0 && eval_counter->load() >= maxeval;
   };
 
   // ---- Cost: direct host call, shared counter, return +inf on failure.

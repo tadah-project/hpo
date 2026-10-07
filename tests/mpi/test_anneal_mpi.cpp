@@ -229,6 +229,19 @@ void require_all(bool condition, const std::string& message, int rank)
   }
 }
 
+/* Every rank records why the run ended itself (HPOLog::set_status, after
+ * the collective stop decision): each rank writes its own journal
+ * (hpo_run.log.r<rank>) and its own trailer, so each has the status, and
+ * the same one. Before 1.6.0's per-reason statuses the annealers recorded
+ * none (the trailer said COMPLETED). */
+void require_status_on_every_rank(const std::string& expected,
+                                  const std::string& what, int rank)
+{
+  require_all(tadah::hpo::HPOLog::instance().status() == expected,
+              what + ": a rank did not record the status '" + expected + "'",
+              rank);
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
@@ -439,6 +452,8 @@ int main(int argc, char** argv)
     RecordingHost pt{rank, world};
     const Signature pt_sig = run_pt(113, pt);
     require_all(pt_sig.count == 113, "PT did not consume exact MAXEVAL", rank);
+    require_status_on_every_rank("TADAH:ANNEAL_PT: MAXEVAL reached", "PT",
+                                 rank);
     /* Snapshot the Corana census this run just wrote, before the next run
      * overwrites it. base_spec() sets CORANA ON and REPLICAS 8, so the file
      * must exist with a header plus 8 slots x 2 dimensions = 17 lines --
@@ -461,6 +476,8 @@ int main(int argc, char** argv)
     RecordingHost pa{rank, world};
     const Signature pa_sig = run_pa(137, pa);
     require_all(pa_sig.count == 137, "PA did not consume exact MAXEVAL", rank);
+    require_status_on_every_rank("TADAH:ANNEAL_PA: MAXEVAL reached", "PA",
+                                 rank);
 
     RecordingHost pt_zero{rank, world};
     require_all(run_pt(0, pt_zero).count == 0,
@@ -489,11 +506,15 @@ int main(int argc, char** argv)
       require_all(pt_stop_sig.count > 1 && pt_stop_sig.count <= 8,
                   "PT remote STOPVAL was not propagated after initialization",
                   rank);
+      require_status_on_every_rank("TADAH:ANNEAL_PT: STOPVAL reached",
+                                   "PT remote STOPVAL", rank);
       RecordingHost pa_stop{rank, world, true, false};
       const Signature pa_stop_sig = run_pa(137, pa_stop, false, true);
       require_all(pa_stop_sig.count > 1 && pa_stop_sig.count <= 16,
                   "PA remote STOPVAL was not propagated after initialization",
                   rank);
+      require_status_on_every_rank("TADAH:ANNEAL_PA: STOPVAL reached",
+                                   "PA remote STOPVAL", rank);
 
       auto check_remote_failure = [&](bool pt_mode) {
         RecordingHost failing{rank, world, false, true};
@@ -530,16 +551,23 @@ int main(int argc, char** argv)
       struct Outcome {
         int status = -1;
         bool rethrown = false;
+        std::string what;   // the rethrown std::exception's message
       };
       const auto drive = [](bool usable, bool flush_fails,
                             const std::function<void()>& body) {
         DriverHost host;
         host.usable = usable;
         host.flush_fails = flush_fails;
+        /* Each run starts without a status, as each optimiser run does
+         * (run_inner): no drive inherits the previous one's. */
+        tadah::hpo::HPOLog::instance().clear_status();
         Outcome o;
         try {
           o.status = tadah::hpo::drive_run(body, host,
                                            tadah::hpo::HPOLog::instance());
+        } catch (const std::exception& e) {
+          o.rethrown = true;
+          o.what = e.what();
         } catch (...) {
           o.rethrown = true;
         }
@@ -548,26 +576,34 @@ int main(int argc, char** argv)
       const auto completed = [](const Outcome& o) {
         return !o.rethrown && o.status == 0;
       };
-      const std::function<void()> nothing = [] {};
+      /* A body that ends normally records why, as every optimiser does
+       * (run_end.h): a normal end without a status is an internal error
+       * (drive_run's std::logic_error, FAILED), the last drive below.
+       * Before the fix: the drives before that one pass as well (a pin;
+       * their bodies then recorded no status, which drive_run accepted). */
+      const std::function<void()> ends_normally = [] {
+        tadah::hpo::HPOLog::instance().set_status("TEST: done");
+      };
 
-      Outcome o = drive(last, false, nothing);
+      Outcome o = drive(last, false, ends_normally);
       require_all(completed(o),
                   "drive_run: a usable loss on one rank did not end the run "
                   "as a completed one on every rank", rank);
 
-      o = drive(false, false, nothing);
+      o = drive(false, false, ends_normally);
       require_all(!o.rethrown && o.status == EXIT_FAILURE,
                   "drive_run: a run without a usable loss on any rank did "
                   "not end with status 1 on every rank", rank);
 
-      o = drive(rank == 0, last, nothing);
+      o = drive(rank == 0, last, ends_normally);
       require_all(last ? o.rethrown : completed(o),
                   "drive_run: a failed final flush on the last rank did not "
                   "end that rank with its error and the others as before",
                   rank);
 
-      o = drive(rank == 0, false, [last] {
+      o = drive(rank == 0, false, [last, ends_normally] {
         if (last) throw tadah::core::ShutdownRequested{};
+        ends_normally();
       });
       require_all(last ? (!o.rethrown &&
                           o.status == tadah::hpo::shutdown_exit_status(
@@ -578,12 +614,32 @@ int main(int argc, char** argv)
                   "last collective did not end that rank with its status and "
                   "the others as before", rank);
 
-      o = drive(rank == 0, false, [last] {
+      o = drive(rank == 0, false, [last, ends_normally] {
         if (last) throw std::runtime_error("injected error");
+        ends_normally();
       });
       require_all(last ? o.rethrown : completed(o),
                   "drive_run: an error on the last rank after the drivers' "
                   "last collective did not end that rank with its error and "
+                  "the others as before", rank);
+
+      /* Pins: a normal end that records no status on the last rank only
+       * ends that rank with drive_run's internal error, rethrown
+       * (std::logic_error; it is thrown before the collective and its
+       * handler reaches the collective), and every other rank completes:
+       * none waits in the collective. On one rank the only rank is the
+       * last.
+       * Before the fix: the last rank completed as well (no error; the
+       * trailer said COMPLETED). */
+      o = drive(rank == 0, false, [last, ends_normally] {
+        if (!last) ends_normally();
+      });
+      require_all(last ? (o.rethrown &&
+                          o.what == "internal error: the optimiser ended "
+                                    "without recording why it ended")
+                       : completed(o),
+                  "drive_run: a normal end without a status on the last "
+                  "rank did not end that rank with the internal error and "
                   "the others as before", rank);
     }
 
