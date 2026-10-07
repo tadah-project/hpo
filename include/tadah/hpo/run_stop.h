@@ -81,6 +81,14 @@ public:
         return static_cast<bool>(error_);
     }
 
+    /* The kept exception (null if none), left in the stash: what a stop
+     * line names (run_stop_rank() tells which stop it is). */
+    std::exception_ptr peek() const
+    {
+        std::lock_guard<std::mutex> lk(m_);
+        return error_;
+    }
+
     /* Hand over the kept exception (null if none) and empty the stash. */
     std::exception_ptr take()
     {

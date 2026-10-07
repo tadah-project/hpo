@@ -13,6 +13,7 @@
  * IMMEDIATE_EXIT; the driver rethrows after asa() returns
  * (log-then-unwind, the PT precedent). */
 
+#include <tadah/core/signal_handler.h>
 #include <tadah/hpo/algorithms_asa.h>
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/asa_options.h>
@@ -155,7 +156,16 @@ double eval_core(AsaRunCtx& c, const double* x, int* valid_out)
     try {
         const std::vector<double> xv(x, x + c.dim);
         loss = (*c.eval)(xv);
+    } catch (const core::ShutdownRequested&) {
+        /* HPO_Host raises a shutdown request before it evaluates: no
+         * evaluation to count. */
+        c.stash(std::current_exception());
+        return sentinel;
     } catch (...) {
+        /* Any other exception leaves the host after the evaluation: the
+         * RESTART stagnation stop, or a failure to save best_pot.tadah,
+         * once loss.tadah has the evaluation's row. It counts. */
+        c.n_evals.fetch_add(1, std::memory_order_relaxed);
         c.stash(std::current_exception());
         return sentinel;
     }
@@ -466,6 +476,36 @@ struct RngGuard {
     ~RngGuard() { g_asa_rng = nullptr; }
 };
 
+/* What the exception that ends the run is (the one the stash kept,
+ * run_stop.h): a signal's shutdown request, the RESTART stagnation stop, or
+ * an evaluation's error, with its message. */
+std::string exception_reason(const ExceptionStash& errors)
+{
+    const std::exception_ptr e = errors.peek();
+    switch (run_stop_rank(e)) {
+        case 0:
+            return "RESTART stagnation stop (no new best within "
+                   "AFTER_STAGNATION evaluations)";
+        case 1: {
+            std::string s = "shutdown requested";
+            if (core::SignalHandler::signal_seen() != 0)
+                s += " (" + core::SignalHandler::reason() + ")";
+            return s;
+        }
+        default: break;
+    }
+    std::string s = "an evaluation raised an exception";
+    if (!e) return s;   /* stash() keeps every exception it is given */
+    try {
+        std::rethrow_exception(e);
+    } catch (const std::exception& ex) {
+        s += std::string(" (") + ex.what() + ")";
+    } catch (...) {
+        /* not a std::exception: no message */
+    }
+    return s;
+}
+
 std::string stop_reason_string(const AsaRunCtx& c, int exit_status)
 {
     switch (c.why.load(std::memory_order_relaxed)) {
@@ -473,7 +513,7 @@ std::string stop_reason_string(const AsaRunCtx& c, int exit_status)
         case AsaRunCtx::Time:    return "MAXTIME exceeded";
         case AsaRunCtx::StopVal: return "STOPVAL reached";
         case AsaRunCtx::Exception:
-            return "exception raised during evaluation";
+            return exception_reason(c.errors);
         default: break;
     }
     switch (exit_status) {
