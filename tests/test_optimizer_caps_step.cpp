@@ -130,6 +130,21 @@ TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA_BOUND is refused, naming the "
                       Catch::Contains("HUGE_VAL") &&
                       Catch::Contains("Use NLOPT:LN_BOBYQA") &&
                       Catch::Contains("or NLOPT:LN_NEWUOA where"));
+    /* Pins: the reason says from which evaluation a stop stalls the run:
+     * from its (2n+1)-th on, the last of the 2n+1 starting points NEWUOA
+     * evaluates before its first step -- a stop on one of the first 2n
+     * returns at once (docs/issues/nlopt_newuoa_bound_stall.md, case F with
+     * STOPAT).
+     * Before the review fix: "after every stop HPO makes through the
+     * objective (...)", with no such bound. */
+    CHECK_THROWS_WITH(optimizer_caps("NLOPT", "LN_NEWUOA_BOUND"),
+                      Catch::Contains("after every stop HPO makes through "
+                                      "the objective (a signal, a RESTART "
+                                      "stagnation stop, an error that ends "
+                                      "the run) from a run's (2n+1)-th "
+                                      "evaluation on, the last of NEWUOA's "
+                                      "starting points for n OPTIM "
+                                      "dimensions,"));
     CHECK(filter_optimizer_caps([](const OptimizerCaps& c) {
               return c.lib == "NLOPT" && c.algo == "LN_NEWUOA_BOUND";
           }).empty());

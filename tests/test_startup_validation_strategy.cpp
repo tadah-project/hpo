@@ -1093,6 +1093,101 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
                                  refused));
 }
 
+TEST_CASE("startup validation: validate_phase_backends refuses a backend for "
+          "its own phase in every STRATEGY shape",
+          "[startup_validation][strategy][backend][refused]")
+{
+    /* Pins: validate_phase_backends() reports a refused backend first, for
+     * its own phase, with the text validate_run_policy() throws for it, in
+     * every shape of the STRATEGY (specs built outside the parser, which
+     * refuses them earlier): the STRATEGY-level optimiser under PLAIN and
+     * under MULTISTART, without INIT points and with two (the starts are
+     * planned from them); the PRESTAGE refinement with TOPK 1 and TOPK 3 (a
+     * MULTISTART over three candidates); the EXPLORE block; the INNER block
+     * of an LN_AUGLAG STRATEGY-level optimiser under MULTISTART with INIT
+     * points and under PRESTAGE with TOPK 3, and of a G_MLSL_LDS
+     * exploration.
+     * Before the fix: strategy_phase_specs() looked up the caps of the
+     * refused backend to plan the MULTISTART starts from the INIT points and
+     * the TOPK 3 refinement, and the lookup threw the refusal with no phase
+     * ("NLOPT:LN_NEWUOA_BOUND is refused: ..."); the other shapes named the
+     * phase as strategy_phase_specs() does, not as validate_run_policy():
+     * "the MULTISTART run" without INIT points, "the PRESTAGE exploration
+     * (EXPLORE block)", "the INNER block of each MULTISTART start", "the
+     * INNER block of the PRESTAGE exploration (EXPLORE block)". PLAIN, the
+     * TOPK 1 refinement and the INNER block of the TOPK 3 refinement were
+     * named as now. */
+    const std::string refused = "NLOPT:LN_NEWUOA_BOUND is refused: ";
+    const auto nlopt = [](const std::string& algo) {
+        OptimizerSpec s;
+        s.lib = "NLOPT";
+        s.algo = algo;
+        s.low = {0.0, 0.0};
+        s.high = {1.0, 1.0};
+        s.analyse_logscale();
+        s.stop.maxeval = 20;
+        return s;
+    };
+    const auto with_inner = [&](OptimizerSpec s) {
+        s.inner = std::make_unique<OptimizerSpec>(nlopt("LN_NEWUOA_BOUND"));
+        return s;
+    };
+    const auto multistart = [](OptimizerSpec s, bool init) {
+        s.strategy_type = StrategyType::MULTISTART;
+        s.multistart.n_starts = 2;
+        if (init) s.optim_init = {{0.2, 0.2}, {0.4, 0.4}};
+        return s;
+    };
+    const auto prestage = [&](OptimizerSpec s, std::size_t topk,
+                              OptimizerSpec explore) {
+        s.strategy_type = StrategyType::PRESTAGE;
+        s.stage_topk = topk;
+        s.prestage = std::make_unique<OptimizerSpec>(std::move(explore));
+        return s;
+    };
+    struct Shape {
+        std::string what;
+        OptimizerSpec root;
+        std::string phase;   // what both validators name
+    };
+    const std::string top = "the STRATEGY-level optimiser";
+    const std::string refinement = "the PRESTAGE refinement";
+    std::vector<Shape> shapes;
+    shapes.push_back({"PLAIN", nlopt("LN_NEWUOA_BOUND"), top});
+    shapes.push_back({"MULTISTART without INIT points",
+                      multistart(nlopt("LN_NEWUOA_BOUND"), false), top});
+    shapes.push_back({"MULTISTART from two INIT points",
+                      multistart(nlopt("LN_NEWUOA_BOUND"), true), top});
+    shapes.push_back({"the PRESTAGE refinement, TOPK 1",
+                      prestage(nlopt("LN_NEWUOA_BOUND"), 1, nlopt("GN_DIRECT")),
+                      refinement});
+    shapes.push_back({"the PRESTAGE refinement, TOPK 3",
+                      prestage(nlopt("LN_NEWUOA_BOUND"), 3, nlopt("GN_DIRECT")),
+                      refinement});
+    shapes.push_back({"the EXPLORE block",
+                      prestage(nlopt("LN_BOBYQA"), 1, nlopt("LN_NEWUOA_BOUND")),
+                      "the EXPLORE block"});
+    shapes.push_back({"the INNER block under MULTISTART from INIT points",
+                      multistart(with_inner(nlopt("LN_AUGLAG")), true),
+                      "the INNER block of " + top});
+    shapes.push_back({"the INNER block of the TOPK 3 refinement",
+                      prestage(with_inner(nlopt("LN_AUGLAG")), 3,
+                               nlopt("GN_DIRECT")),
+                      "the INNER block of " + refinement});
+    shapes.push_back({"the INNER block of the exploration",
+                      prestage(nlopt("LN_BOBYQA"), 1,
+                               with_inner(nlopt("G_MLSL_LDS"))),
+                      "the INNER block of the EXPLORE block"});
+    for (const Shape& c : shapes) {
+        INFO(c.what);
+        const std::string policy =
+            error_of([&] { tadah::hpo::validate_run_policy(c.root); });
+        CHECK_THAT(policy, Catch::StartsWith(c.phase + ": " + refused));
+        CHECK(error_of([&] { tadah::hpo::validate_phase_backends(c.root); }) ==
+              policy);
+    }
+}
+
 TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused by hpo_run "
           "before it loads any data",
           "[startup_validation][strategy][e2e][refused]")
