@@ -18,6 +18,11 @@
 //                        weights); when not, the per-block aggregates are
 //                        skipped and record() says so.
 //   per ColumnBlock (when the layout matches):
+//   - block_has_nan_inf: the block holds a NaN or infinite weight; it then
+//                        has no aggregates below (they are 0) and record()
+//                        makes no block check of it (the NaN/Inf warning
+//                        describes it): a NaN compares false, so it would
+//                        count as an exact zero.
 //   - block_max_abs    : max(|w|) within the block.
 //   - block_median_abs : median(|w|) within the block.
 //   - block_nz_fraction: fraction of |w| > 1e-15.
@@ -59,6 +64,10 @@ struct IterHealthRecord {
   std::vector<double>      block_max_abs{};
   std::vector<double>      block_median_abs{};
   std::vector<double>      block_nz_fraction{};
+  /** Block b holds a NaN or infinite weight: its aggregates are not
+   *  computed (0) and record() makes no zero-block or sparse-block check
+   *  of it; the NaN/Inf warning describes it. */
+  std::vector<bool>        block_has_nan_inf{};
   /** A weight is NaN or infinite (any weight, inside a block or not). */
   bool                     weights_have_nan_inf{false};
   /** The layout's blocks partition the weights: contiguous from column 0,
@@ -74,7 +83,9 @@ struct IterHealthRecord {
  *  Every weight is checked for NaN/Inf. The per-block aggregates are
  *  computed only when the layout's blocks partition the weights
  *  (layout_matches); a layout that does not describe the weights leaves
- *  them empty -- it is not taken for non-finite weights.
+ *  them empty -- it is not taken for non-finite weights. A block that
+ *  holds a NaN or infinite weight is flagged (block_has_nan_inf) and gets
+ *  no aggregates -- it is not taken for a block of zero weights.
  *
  *  Median-abs uses partial sort (`std::nth_element`) -- O(N) per block.
  *  Non-zero floor is the IEEE denormal floor 1e-15 -- explicitly the

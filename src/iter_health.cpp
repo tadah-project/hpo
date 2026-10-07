@@ -76,6 +76,7 @@ IterHealthRecord compute_iter_health(
   rec.block_max_abs   .assign(nblocks, 0.0);
   rec.block_median_abs.assign(nblocks, 0.0);
   rec.block_nz_fraction.assign(nblocks, 0.0);
+  rec.block_has_nan_inf.assign(nblocks, false);
 
   // Reusable scratch -- declared outside the loop to avoid reallocation.
   std::vector<double> scratch;
@@ -85,6 +86,17 @@ IterHealthRecord compute_iter_health(
     const std::size_t lo = blk.col_offset;
     const std::size_t hi = lo + blk.col_count;
     if (blk.col_count == 0) continue;
+
+    // A block that holds a NaN or infinite weight gets no aggregates: the
+    // comparisons below are false for NaN, which would count it as an
+    // exact zero (a block of NaN weights read as a block of zeros).
+    bool finite = true;
+    for (std::size_t c = lo; c < hi && finite; ++c)
+      finite = std::isfinite(weights[c]);
+    if (!finite) {
+      rec.block_has_nan_inf[b] = true;
+      continue;
+    }
 
     scratch.clear();
     scratch.reserve(blk.col_count);
@@ -174,9 +186,13 @@ void IterHealthMonitor::record(
 
   // Per-block exact-zero blocks. block_max_abs == 0 means the regressor
   // pruned the entire block -- the signature of a descriptor block that
-  // collapsed (e.g. a fixed CGRIDMB outside the data's support).
+  // collapsed (e.g. a fixed CGRIDMB outside the data's support). A block
+  // that holds a NaN or infinite weight has no aggregates and is not
+  // checked: the NaN/Inf warning above is the one that describes it.
   for (std::size_t b = 0; b < rec.block_max_abs.size(); ++b) {
     if (b >= layout.blocks.size()) break;
+    if (b < rec.block_has_nan_inf.size() && rec.block_has_nan_inf[b])
+      continue;
     if (rec.block_max_abs[b] == 0.0) {
       maybe_warn(b, "max_abs",
                  "all weights in this block are exactly zero -- the "
