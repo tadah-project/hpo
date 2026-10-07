@@ -3,6 +3,7 @@
 #include <tadah/hpo/optimizer_block.h>
 #include <tadah/hpo/strict_parse.h>
 #include <tadah/core/context.h>
+#include <tadah/mlip/engines/refit_keys.h>
 
 #include <algorithm>
 #include <cctype>
@@ -601,17 +602,8 @@ void reject_disabled_with_optimizer(const char *stage, bool enabled,
 }  // namespace
 
 bool refit_curve_objective(const tadah::core::Context &c) {
-  std::string obj =
-      (c.contains("REFIT_OBJECTIVE") && c.size("REFIT_OBJECTIVE") > 0)
-          ? c.get<std::string>("REFIT_OBJECTIVE")
-          : std::string("energy");
-  for (auto &ch : obj)
-    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-  if (obj == "curve") return true;
-  if (obj == "energy") return false;
-  throw std::runtime_error(
-      "tadah refit: REFIT_OBJECTIVE must be 'energy' (default) or 'curve'; "
-      "got '" + obj + "'");
+  // MLIP's reader, which the mode rule uses too (refit_keys.h)
+  return tadah::mlip::engines::read_refit_curve_objective(c);
 }
 
 std::string refit_explore_outer_algo(const OptimizerSpec &s) {
@@ -652,16 +644,12 @@ std::string refit_fuse_algo(const OptimizerSpec &s) {
 RefitConfig RefitParser::parse(const tadah::core::Context &c) {
   // Old grammar: a top-level OPTIMIZER block (GLOBAL/EXPLORE/POLISH/JOINT
   // subblocks) is captured by CORE under the OPTIMIZER key. The pipeline is
-  // now four top-level stage blocks, so flag it with migration guidance.
-  if (c.contains("OPTIMIZER") && c.size("OPTIMIZER") > 0) {
+  // now four top-level stage blocks, so flag it with migration guidance: the
+  // text of MLIP's mode rule, which refuses the block in either REFIT_MODE
+  // before the table is read (check_refit_mode_keys).
+  if (c.has_stored("OPTIMIZER"))
     throw std::runtime_error(
-        "tadah refit: a top-level OPTIMIZER block is no longer supported. The "
-        "stage pipeline is now INIT -> EXPLORE -> REFINE -> FUSE, each its own "
-        "block, with the OPTIMIZER block NESTED inside EXPLORE/REFINE/FUSE. "
-        "Migration: GLOBAL folded into EXPLORE rung 0 (set its global ALGO in "
-        "EXPLORE's OPTIMIZER, with an INNER local); POLISH -> REFINE; "
-        "JOINT -> FUSE. See HPO_REFIT_2B_EAM/REDESIGN/configs for examples.");
-  }
+        tadah::mlip::engines::top_level_optimizer_refusal());
 
   RefitConfig cfg;
   SeenKeys explore_keys, refine_keys, fuse_keys;

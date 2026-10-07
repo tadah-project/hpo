@@ -1890,6 +1890,55 @@ TEST_CASE("tadah refit: a negative tolerance is rejected in every stage block",
           "REFINE: GTOL must be a finite number, got '-1x'");
 }
 
+TEST_CASE("tadah refit: a negative FTOL_ABS is rejected where dlib's LBFGS "
+          "reads it", "[HPO][refit][strict_numbers]")
+{
+    /* Pins: FTOL_ABS, the absolute stop of dlib's LBFGS (EXPLORE INNER and
+     * REFINE), is a finite number >= 0 like the other tolerances: a
+     * negative one is an error at the key naming the block and the token as
+     * written ("REFINE: FTOL_ABS must be a number >= 0, got '-1e-9'"); 0 and
+     * a positive value are accepted. dlib requires a stop >= 0.
+     * Before the fix: passes as well (a pin: RefitParser's tolerance reader
+     * refused a negative FTOL_ABS with the other tolerances, but no test
+     * covered it). */
+    struct Case { std::string key, body, message; };
+    for (const auto& c : std::vector<Case>{
+             {"REFINE", "OPTIMIZER LIB DLIB ALGO LBFGS FTOL_ABS -1e-9 "
+                        "ENDOPTIMIZER",
+              "REFINE: FTOL_ABS must be a number >= 0, got '-1e-9'"},
+             {"EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_CRS2_LM MAXEVAL 100 "
+                         "INNER LIB DLIB ALGO LBFGS FTOL_ABS -1 ENDINNER "
+                         "ENDOPTIMIZER",
+              "EXPLORE INNER: FTOL_ABS must be a number >= 0, got '-1'"}}) {
+        INFO(c.key << ": " << c.body);
+        CHECK(refit_error(c.key, c.body) == c.message);
+    }
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB DLIB ALGO LBFGS FTOL_ABS 0 "
+                                "ENDOPTIMIZER") == "");
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_CRS2_LM "
+                                 "MAXEVAL 100 INNER LIB DLIB ALGO LBFGS "
+                                 "FTOL_ABS 1e-12 ENDINNER ENDOPTIMIZER") == "");
+}
+
+TEST_CASE("tadah refit: a top-level OPTIMIZER block is refused with its "
+          "migration text, which names the Refitting page",
+          "[HPO][refit]")
+{
+    /* Pins: RefitParser::parse refuses a top-level OPTIMIZER block (the
+     * grammar before the stage blocks) with the migration text, which ends
+     * by naming the Stage blocks section of the Refitting page.
+     * Before the fix: the text ended "See HPO_REFIT_2B_EAM/REDESIGN/configs
+     * for examples.", a directory that is not shipped. */
+    CHECK(refit_error("OPTIMIZER", "GLOBAL ALGO MLSL ENDGLOBAL") ==
+          "tadah refit: a top-level OPTIMIZER block is no longer supported. "
+          "The stage pipeline is now INIT -> EXPLORE -> REFINE -> FUSE, each "
+          "its own block, with the OPTIMIZER block NESTED inside "
+          "EXPLORE/REFINE/FUSE. Migration: GLOBAL folded into EXPLORE rung 0 "
+          "(set its global ALGO in EXPLORE's OPTIMIZER, with an INNER local); "
+          "POLISH -> REFINE; JOINT -> FUSE. The Refitting page of the "
+          "documentation has examples (Stage blocks).");
+}
+
 TEST_CASE("tadah refit: EXPLORE MAX_ADD is an integer >= 0",
           "[HPO][refit][strict_numbers]")
 {

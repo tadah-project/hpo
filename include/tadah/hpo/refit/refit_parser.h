@@ -25,8 +25,9 @@ namespace refit {
 class RefitParser {
 public:
   /** Parse the INIT/EXPLORE/REFINE/FUSE Context keys into a RefitConfig.
-   *  Throws std::runtime_error on the old grammar (a top-level OPTIMIZER block)
-   *  and on invalid tokens. Missing blocks => default-constructed stages. A
+   *  Throws std::runtime_error on the old grammar (a top-level OPTIMIZER
+   *  block: MLIP's top_level_optimizer_refusal(), the text RefitEngine's
+   *  mode rule refuses it with in either REFIT_MODE) and on invalid tokens. Missing blocks => default-constructed stages. A
    *  stage's OPTIMIZER block (and EXPLORE's INNER block) accepts only the keys
    *  that stage reads -- any other optimiser attribute is an error naming the
    *  keys it does read -- and must set ALGO. A stop criterion (MAXEVAL,
@@ -45,8 +46,11 @@ public:
 };
 
 /** REFIT_OBJECTIVE, in any case: true for 'curve', false for 'energy' (the
- *  default without the key). Throws std::runtime_error for anything else.
- *  The engine sets CompactConfig::objective from it. */
+ *  default without the key; no blueprint default is inserted). Throws
+ *  std::runtime_error for anything else. MLIP's
+ *  read_refit_curve_objective (refit_keys.h), which the mode rule reads it
+ *  with in either REFIT_MODE. The engine sets CompactConfig::objective from
+ *  it. */
 bool refit_curve_objective(const tadah::core::Context &c);
 
 /** Map a parsed OPTIMIZER spec to the compact fitter's flat algorithm string

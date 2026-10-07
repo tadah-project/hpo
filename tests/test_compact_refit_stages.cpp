@@ -7,6 +7,8 @@
 
 #include "compact_refit_harness.h"
 
+#include <tadah/hpo/refit/refit_parser.h>
+
 #include <sstream>
 #include <string>
 #include <vector>
@@ -299,6 +301,276 @@ TEST_CASE_METHOD(PTFixture,
                   "REFIT_COMPACT_NMAX");
     CHECK(log_lines("---- phi ladder ----").empty());
     CHECK_FALSE(fs::exists("pot.tadah"));
+  }
+}
+
+namespace {
+// The mode rule's refusal of `key` under REFIT_MODE compact (MLIP's
+// check_refit_mode_keys); `defaulted`: no REFIT_MODE key.
+std::string dense_key_refused(const std::string &key, bool defaulted) {
+  return "tadah refit: " + key + " has no effect under REFIT_MODE compact" +
+         (defaulted ? " (the default)" : "") +
+         ": only REFIT_MODE dense reads it; remove " + key +
+         ", or set REFIT_MODE dense";
+}
+}  // namespace
+
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: a key that only REFIT_MODE dense reads "
+                 "is refused before any fitting",
+                 "[compact][refit][mode_keys]") {
+  /* Pins: the HPO refit engine (the one tadah runs) refuses, in validate()
+   * and in run() before any ladder runs, a key of the dense fit under
+   * REFIT_MODE compact, written or the default: REFIT_LEVEL, N2B,
+   * NRHO_BASIS, NF_BASIS, REFIT_MAX_ESCALATIONS, REFIT_PLACEMENT and
+   * REFIT_CONSTRAIN_F0 ("tadah refit: N2B has no effect under REFIT_MODE
+   * compact: only REFIT_MODE dense reads it; remove N2B, or set REFIT_MODE
+   * dense"), and writes nothing.
+   * Before the fix: the compact fit never read them and ran to the end
+   * (no exception, pot.tadah written; with N2B 50, REFIT_LEVEL accurate
+   * and REFIT_MAX_ESCALATIONS 9 the potential was byte-identical to the
+   * one without them). */
+  for (const auto &[key, value] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"REFIT_LEVEL", "accurate"},
+           {"N2B", "50"},
+           {"NRHO_BASIS", "40"},
+           {"NF_BASIS", "30"},
+           {"REFIT_MAX_ESCALATIONS", "9"},
+           {"REFIT_PLACEMENT", "uniform"},
+           {"REFIT_CONSTRAIN_F0", "false"}}) {
+    for (const bool defaulted : {false, true}) {
+      INFO(key << " " << value << (defaulted ? " (default mode)" : ""));
+      ScopedTempDir tmp;
+      write_synth_eam("synth.eam.alloy");
+      Context c = compact_context("SIGNED");
+      if (defaulted) c.remove("REFIT_MODE");
+      c.add(key, value);
+      tadah::mlip::Task task("refit", c);
+      CHECK_THROWS_WITH(tadah::hpo::engines::HPORefitEngine().validate(task),
+                        dense_key_refused(key, defaulted));
+      const auto [what, logged] = run_compact(c);
+      CHECK(what == dense_key_refused(key, defaulted));
+      CHECK(log_lines("---- phi ladder ----").empty());
+      CHECK_FALSE(fs::exists("pot.tadah"));
+    }
+  }
+}
+
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: a top-level OPTIMIZER block is refused "
+                 "with RefitParser's migration text before the table is read",
+                 "[compact][refit][mode_keys]") {
+  /* Pins: the HPO refit engine refuses a top-level OPTIMIZER block (the
+   * grammar before the stage blocks) under REFIT_MODE compact, written or
+   * the default, in validate() and in run() before it reads the EAM file
+   * (absent here), with the text RefitParser::parse gives the same
+   * configuration ("tadah refit: a top-level OPTIMIZER block is no longer
+   * supported. ..."), and writes nothing.
+   * Before the fix: validate() accepted the block (the mode rule took it
+   * for a key of compact mode) and run() failed reading the absent EAM
+   * file ("EAMSetflIO: setfl file does not exist: absent.eam.alloy"):
+   * only RefitParser::parse refused the block, after the table was read. */
+  for (const bool defaulted : {false, true}) {
+    INFO((defaulted ? "REFIT_MODE compact (the default)"
+                    : "REFIT_MODE compact"));
+    ScopedTempDir tmp;
+    Context c = compact_context("SIGNED");
+    c.remove("EAM");
+    c.add("EAM", std::string("absent.eam.alloy"));
+    if (defaulted) c.remove("REFIT_MODE");
+    add_block(c, "OPTIMIZER", "GLOBAL ALGO MLSL ENDGLOBAL");
+    std::string parser_text;
+    try {
+      (void)tadah::hpo::refit::RefitParser::parse(c);
+    } catch (const std::exception &e) {
+      parser_text = e.what();
+    }
+    REQUIRE(parser_text.rfind("tadah refit: a top-level OPTIMIZER block is "
+                              "no longer supported.",
+                              0) == 0);
+    tadah::mlip::Task task("refit", c);
+    CHECK_THROWS_WITH(tadah::hpo::engines::HPORefitEngine().validate(task),
+                      parser_text);
+    const auto [what, logged] = run_compact(c);
+    CHECK(what == parser_text);
+    CHECK_FALSE(fs::exists("refit_opt.log"));
+    CHECK_FALSE(fs::exists("pot.tadah"));
+  }
+}
+
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: REFIT_CURVE_WEIGHTING is refused under "
+                 "REFIT_OBJECTIVE energy and read under curve",
+                 "[compact][refit][mode_keys]") {
+  /* Pins: under REFIT_OBJECTIVE energy, written or the default,
+   * REFIT_CURVE_WEIGHTING (true or false) is refused before any fitting
+   * ("tadah refit: REFIT_CURVE_WEIGHTING has no effect under
+   * REFIT_OBJECTIVE energy (the default): only REFIT_OBJECTIVE curve reads
+   * it; remove REFIT_CURVE_WEIGHTING, or set REFIT_OBJECTIVE curve"); under
+   * curve, REFIT_CURVE_WEIGHTING false runs with uniform weights
+   * (refit_opt.log: "curve weighting: OFF (uniform)").
+   * Before the fix: under energy the key was ignored and the fit ran to the
+   * end (no exception), although the help said it was rejected there; the
+   * curve case passes as well (a pin). */
+  const std::string head = "tadah refit: REFIT_CURVE_WEIGHTING has no effect "
+                           "under REFIT_OBJECTIVE energy";
+  const std::string tail = ": only REFIT_OBJECTIVE curve reads it; remove "
+                           "REFIT_CURVE_WEIGHTING, or set REFIT_OBJECTIVE "
+                           "curve";
+  for (const char *value : {"false", "true"}) {
+    for (const bool explicit_energy : {false, true}) {
+      INFO("REFIT_CURVE_WEIGHTING " << value
+                                    << (explicit_energy ? " (REFIT_OBJECTIVE "
+                                                          "energy)"
+                                                        : ""));
+      ScopedTempDir tmp;
+      write_synth_eam("synth.eam.alloy");
+      Context c = compact_context("SIGNED");
+      c.add("REFIT_CURVE_WEIGHTING", std::string(value));
+      if (explicit_energy) c.add("REFIT_OBJECTIVE", std::string("energy"));
+      const auto [what, logged] = run_compact(c);
+      CHECK(what == head + (explicit_energy ? "" : " (the default)") + tail);
+      CHECK(log_lines("---- phi ladder ----").empty());
+      CHECK_FALSE(fs::exists("pot.tadah"));
+    }
+  }
+  ScopedTempDir tmp;
+  write_synth_eam("synth.eam.alloy");
+  Context c = compact_context("SIGNED");
+  c.add("REFIT_OBJECTIVE", std::string("curve"));
+  c.add("REFIT_CURVE_WEIGHTING", std::string("false"));
+  const auto [what, logged] = run_compact(c);
+  INFO(logged);
+  CHECK(what == "");
+  CHECK(log_lines("curve weighting: OFF (uniform)").size() == 1);
+}
+
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: above tolerance, the log names the "
+                 "compact fit's keys, not the dense fit's",
+                 "[compact][refit][mode_keys]") {
+  /* Pins: a compact fit whose crystal self-test stays above the tolerances
+   * (REFIT_TOL_AMBIENT and REFIT_TOL_COMPRESSED 1e-6 meV/atom) ends with
+   * the WARNING "still above tolerance — raise REFIT_COMPACT_NMAX or
+   * EXPLORE MAX_ADD (a larger basis), or relax REFIT_TOL_* if this regime
+   * is irrelevant for your use.", and its window report is "tadah
+   * refit: fit windows (reachability-driven):" with "(control:
+   * REFIT_REACH_SMIN, REFIT_REACH_MARGIN)"; the log names none of the dense
+   * fit's keys or its uniform tail basis (REFIT_MAX_ESCALATIONS,
+   * N2B/NRHO_BASIS/NF_BASIS, REFIT_PLACEMENT, "small uniform basis").
+   * Before the fix: the WARNING was the dense fit's ("still above
+   * tolerance after escalation — raise REFIT_MAX_ESCALATIONS, pin a larger
+   * N2B/NRHO_BASIS/NF_BASIS, ...") and the window report said "windowed
+   * basis placement", "the unreachable tail keeps a small uniform basis"
+   * and "(control: REFIT_PLACEMENT window|uniform, ...)", although the
+   * compact fit reads none of those keys. */
+  ScopedTempDir tmp;
+  write_synth_eam("synth.eam.alloy");
+  Context c = compact_context("SIGNED");
+  c.add("REFIT_TOL_AMBIENT", std::string("1e-6"));
+  c.add("REFIT_TOL_COMPRESSED", std::string("1e-6"));
+  const auto [what, logged] = run_compact(c);
+  INFO(logged);
+  REQUIRE(what == "");
+  CHECK(logged.find("still above tolerance — raise REFIT_COMPACT_NMAX or "
+                    "EXPLORE MAX_ADD (a larger basis), or relax REFIT_TOL_* "
+                    "if this regime is irrelevant for your use.") !=
+        std::string::npos);
+  CHECK(logged.find("tadah refit: fit windows (reachability-driven):") !=
+        std::string::npos);
+  CHECK(logged.find("(control: REFIT_REACH_SMIN, REFIT_REACH_MARGIN)") !=
+        std::string::npos);
+  for (const char *dense : {"REFIT_MAX_ESCALATIONS", "N2B/NRHO_BASIS/NF_BASIS",
+                            "REFIT_PLACEMENT", "small uniform basis",
+                            "after escalation"}) {
+    INFO(dense);
+    CHECK(logged.find(dense) == std::string::npos);
+  }
+}
+
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: refit_range_report.dat's F row "
+                 "describes the compact fit, not the dense fit's tail basis",
+                 "[compact][refit][mode_keys]") {
+  /* Pins: after a compact fit the F row of refit_range_report.dat has the
+   * window of the log's "embedding fit window rho <= X", [0, rho_reach],
+   * and the note "above fit_window_hi the setfl carries the ORIGINAL table
+   * (offset-matched); control: REFIT_REACH_SMIN, REFIT_REACH_MARGIN" (the
+   * compact fit joins refit.eam to the table there, EAMRefit::set_rho_join),
+   * and the report names no "small uniform basis".
+   * Before the fix: the F note was the dense fit's, "tail keeps a small
+   * uniform basis; control: REFIT_REACH_MARGIN", a basis the compact fit
+   * does not have. */
+  ScopedTempDir tmp;
+  write_synth_eam("synth.eam.alloy");
+  const auto [what, logged] = run_compact(compact_context("SIGNED"));
+  INFO(logged);
+  REQUIRE(what == "");
+  // the log's window, printed to 4 decimals
+  const std::string mark = "embedding fit window rho <= ";
+  const auto at = logged.find(mark);
+  REQUIRE(at != std::string::npos);
+  const double rho_reach = std::stod(logged.substr(at + mark.size()));
+  const std::string report = slurp("refit_range_report.dat");
+  INFO(report);
+  std::istringstream in(report);
+  std::string F_row;
+  for (std::string line; std::getline(in, line);)
+    if (line.rfind("F ", 0) == 0) F_row = line;
+  REQUIRE_FALSE(F_row.empty());
+  std::istringstream ls(F_row.substr(1));
+  double full_lo = -1, full_hi = -1, win_lo = -1, win_hi = -1;
+  ls >> full_lo >> full_hi >> win_lo >> win_hi;
+  CHECK(full_lo == 0.0);
+  CHECK(win_lo == 0.0);
+  CHECK(win_hi == Approx(rho_reach).margin(1e-4));
+  CHECK(win_hi < full_hi);
+  const auto hash = F_row.find("# ");
+  REQUIRE(hash != std::string::npos);
+  CHECK(F_row.substr(hash + 2) ==
+        "above fit_window_hi the setfl carries the ORIGINAL table "
+        "(offset-matched); control: REFIT_REACH_SMIN, REFIT_REACH_MARGIN");
+  CHECK(report.find("small uniform basis") == std::string::npos);
+}
+
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: the HPO engine has the compact fitter "
+                 "and accepts the ends of the compact numbers' ranges",
+                 "[compact][refit][mode_keys][strict_numbers]") {
+  /* Pins: HPORefitEngine::validate() accepts REFIT_MODE compact, written or
+   * the default (the engine has the compact fitter), and the ends of the
+   * compact keys' ranges (REFIT_COMPACT_SEED 0, 3000000000 and 4294967295,
+   * REFIT_COMPACT_JITTERS 0 and 2147483646, REFIT_COMPACT_NMAX 536870911,
+   * REFIT_CURVE_DERIV_WEIGHT 0, REFIT_CURVE_RELAX 1). (MLIP's
+   * RefitEngine, which has no compact fitter, refuses REFIT_MODE compact
+   * once these numbers pass.)
+   * Before the fix: passes as well (a pin: MLIP's test checked these ends
+   * through its own engine, in a dense configuration). */
+  ScopedTempDir tmp;
+  for (const bool defaulted : {false, true}) {
+    Context c = compact_context("SIGNED");
+    if (defaulted) c.remove("REFIT_MODE");
+    tadah::mlip::Task task("refit", c);
+    INFO((defaulted ? "default mode" : "REFIT_MODE compact"));
+    CHECK_NOTHROW(tadah::hpo::engines::HPORefitEngine().validate(task));
+  }
+  for (const auto &[key, tok] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"REFIT_COMPACT_SEED", "0"},
+           {"REFIT_COMPACT_SEED", "3000000000"},
+           {"REFIT_COMPACT_SEED", "4294967295"},
+           {"REFIT_COMPACT_JITTERS", "0"},
+           {"REFIT_COMPACT_JITTERS", "2147483646"},
+           {"REFIT_COMPACT_NMAX", "536870911"},
+           {"REFIT_CURVE_DERIV_WEIGHT", "0"},
+           {"REFIT_CURVE_RELAX", "1"}}) {
+    INFO(key << " " << tok);
+    Context c = compact_context("SIGNED");
+    c.remove(key);
+    c.add(key, tok);
+    tadah::mlip::Task task("refit", c);
+    CHECK_NOTHROW(tadah::hpo::engines::HPORefitEngine().validate(task));
   }
 }
 

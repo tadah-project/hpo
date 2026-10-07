@@ -27,9 +27,10 @@ Seed provenance (`ta2_refit_seed.tadah`): `tadah refit` with
     EAM          MODELS/tests/tests_data/eam.alloy   (Ta2, Ravelo 2013)
     RHOFORM      SIGNED
     REFIT_MODE   compact
-    REFIT_LEVEL  coarse
 
-(default `EMBF0 ZERO`). Add `EMBF0 FREE` to the seed to see the raw
+(default `EMBF0 ZERO`; the seed was written with `REFIT_LEVEL coarse` too,
+which the compact fit never read and which `tadah refit` now refuses under
+`REFIT_MODE compact`). Add `EMBF0 FREE` to the seed to see the raw
 embedding instead: Eiso is then the candidate's raw F(0).
 
 Run:

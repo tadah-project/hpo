@@ -34,7 +34,10 @@
  *  sum_k c_k S(eta_k (x - mu_k)) with every c_k >= 0 (bump families only).
  *
  *  Built only when the HPO library is configured with Ceres
- *  (TADAH_USE_CERES); the engine falls back to dense mode otherwise.
+ *  (TADAH_USE_CERES). Without it HPORefitEngine has no compact fitter
+ *  (has_compact_fitter() is false), and `tadah refit` refuses REFIT_MODE
+ *  compact, written or the default, before it reads the table: set
+ *  REFIT_MODE dense.
  */
 
 #include <tadah/hpo/refit/refit_config.h>

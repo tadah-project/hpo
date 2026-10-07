@@ -30,12 +30,18 @@ namespace engines {
 
 #ifndef TADAH_USE_CERES
 
+// No Ceres in this build: no compact fitter, so RefitEngine refuses
+// REFIT_MODE compact before it would call compact_fit().
+bool HPORefitEngine::has_compact_fitter() const { return false; }
+
 bool HPORefitEngine::compact_fit(const tadah::core::Context &,
                                  const tadah::models::EAMSetflIO &,
                                  tadah::models::EAMRefitConfig &,
                                  std::unique_ptr<tadah::models::EAMRefit> &,
                                  SelfTest &) {
-  return false;  // no Ceres in this build -> dense fallback (base warns)
+  throw std::logic_error(
+      "tadah refit[compact]: compact_fit called in a build without Ceres "
+      "(internal error: REFIT_MODE compact is refused before the fit)");
 }
 
 #else  // TADAH_USE_CERES
@@ -153,6 +159,8 @@ BlipFit build_init_seed(const RefitConfig &rc, InitBasis::Channel ch,
 }
 }  // namespace
 
+bool HPORefitEngine::has_compact_fitter() const { return true; }
+
 bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                                  const tadah::models::EAMSetflIO &eam,
                                  tadah::models::EAMRefitConfig &cfg,
@@ -167,14 +175,25 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
 
   // ---- reachability first: compact mode NEEDS the energy metric ----
   // The lattice/a0 are already guaranteed recognised by the crystal gate in
-  // RefitEngine::run(); a non-positive reachable window would still be unusable
-  // for rung selection, so fall back to dense in that (defensive) case.
+  // RefitEngine::run(), and REFIT_REACH_SMIN is at least 0.1
+  // (read_refit_numbers), so r_reach = REFIT_REACH_SMIN x the nearest-
+  // neighbour distance is positive; a non-positive reachable window would
+  // still be unusable for rung selection, so this (defensive) case falls
+  // back to the dense fit, saying why and what that fit reads.
   EAMRefit probe(eam, cfg);
   probe.analyze_reachability();
   if (probe.r_reach() <= 0.0) {
     Logger::instance().log(LogLevel::WARNING,
-        "tadah refit[compact]: reachable pair-distance window could not be "
-        "computed (r_reach<=0) — falling back to dense fitting.");
+        "tadah refit[compact]: the reachable pair-distance window could not "
+        "be computed (r_reach = " + core::to_string(probe.r_reach(), 4) +
+        " A, from REFIT_REACH_SMIN " + core::to_string(cfg.reach_smin, 4) +
+        " and the " + eam.lattice() + " lattice of a0 = " +
+        core::to_string(eam.lattice_param(), 4) + " A), and the compact fit "
+        "selects its rungs on it: falling back to the dense fit, which reads "
+        "none of the compact keys (REFIT_COMPACT_*, REFIT_OBJECTIVE, "
+        "REFIT_CURVE_*, the stage blocks) and takes its own keys' defaults "
+        "(REFIT_LEVEL balanced, REFIT_MAX_ESCALATIONS 4), which REFIT_MODE "
+        "compact refuses: set REFIT_MODE dense to configure that fit.");
     return false;
   }
   const double rcut = eam.rcut();
@@ -309,13 +328,16 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                                    : true;
   const double curve_relax = nums.curve_relax;  // in (0, 1], in every mode
   // (curve-only knobs REFIT_CURVE_WEIGHTING/RELAX/DERIV_WEIGHT are consumed
-  // only when curve_obj is true; in energy mode they have no effect, but
-  // their numbers are range-checked in every mode, read_refit_numbers.)
+  // only when curve_obj is true. Under energy REFIT_CURVE_WEIGHTING is
+  // refused, by the mode rule (check_refit_mode_keys, refit_keys.h);
+  // RELAX and DERIV_WEIGHT have no effect, but their numbers are
+  // range-checked in every mode, read_refit_numbers.)
   // Per-stage optimiser algorithm + budget + tolerances: defaults live in
   // CompactConfig; the optional inline OPTIMIZER block overrides them.
   // ---- stage pipeline (INIT -> EXPLORE -> REFINE -> FUSE) ----
-  // RefitParser reads the INIT/EXPLORE/REFINE/FUSE Context keys (throws on the
-  // old top-level OPTIMIZER grammar); apply_stage_optimizers flattens the
+  // RefitParser reads the INIT/EXPLORE/REFINE/FUSE Context keys (it throws on
+  // the old top-level OPTIMIZER grammar, which RefitEngine's mode rule has
+  // refused before the table was read); apply_stage_optimizers flattens the
   // EXPLORE/REFINE/FUSE optimisers onto the CompactConfig scalar fields.
   const RefitConfig rcfg = RefitParser::parse(c);
   apply_stage_optimizers(rcfg, lcfg);

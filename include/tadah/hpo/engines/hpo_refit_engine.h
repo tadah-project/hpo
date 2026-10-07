@@ -14,11 +14,13 @@ namespace engines {
  *  ladder (NLopt SBPLX/MLSL structure search + analytic-Jacobian Ceres LM
  *  polish) with energy-metric rung selection, followed by a joint refinement
  *  of all three functions against the crystal E-V residuals. Requires the
- *  Ceres-enabled HPO build; otherwise compact_fit() reports failure and the
- *  base falls back to dense fitting.
+ *  Ceres-enabled HPO build: without Ceres has_compact_fitter() is false and
+ *  the base refuses REFIT_MODE compact before the EAM file is read (it fell
+ *  back to dense fitting).
  */
 class HPORefitEngine : public tadah::mlip::engines::RefitEngine {
 protected:
+  bool has_compact_fitter() const override;
   bool compact_fit(const tadah::core::Context &c,
                    const tadah::models::EAMSetflIO &eam,
                    tadah::models::EAMRefitConfig &cfg,
