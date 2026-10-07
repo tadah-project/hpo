@@ -2154,7 +2154,15 @@ TEST_CASE("RESULT names a best that could not be persisted",
 
 /* A later best whose directory fsync fails: RESULT used to name
  * best_pot.tadah with the older best's loss while the file held the newer,
- * unsynced candidate. */
+ * unsynced candidate. NLOPT:LN_SBPLX draws no random numbers and the loss is
+ * a fixed function of FIXWEIGHT[1], so the search is the same every time:
+ * it evaluates 0.01 (eval 1, loss 2.9689e-01, published), 0.51 (2.9864e-01)
+ * and -0.49 (eval 3, 2.9514e-01), the second new best, whose directory
+ * fsync fails, and the run ends FAILED.
+ * Pins: the FAILED status (required), the unsaved best eval 3 and the last
+ * saved best eval 1, besides RESULT's lines.
+ * Before the fix: passes as well (a pin: the case returned with a WARN
+ * when the run did not end FAILED, which this search never does). */
 TEST_CASE("RESULT distinguishes the last saved best from the unsaved one",
           "[durable_e2e][failure_handling][.]")
 {
@@ -2171,12 +2179,7 @@ TEST_CASE("RESULT distinguishes the last saved best from the unsaved one",
     REQUIRE(contains(r.output, "All tests passed"));
     const std::string journal = read_text(sd.dir / "hpo_run.log");
     INFO(journal);
-    const std::string status = line_with(journal, "Optimiser status");
-    if (!contains(status, "FAILED")) {
-        /* MAXEVAL 5 produced a single new best: nothing to check. */
-        WARN("no second new best within MAXEVAL 5");
-        return;
-    }
+    REQUIRE(contains(line_with(journal, "Optimiser status"), "FAILED"));
     const std::string best = line_with(journal, "Best total loss");
     const std::string last = line_with(journal, "Last saved best");
     const std::string saved = line_with(journal, "Best potential saved");
@@ -2187,7 +2190,8 @@ TEST_CASE("RESULT distinguishes the last saved best from the unsaved one",
         return std::stoul(l.substr(p + 6));
     };
     const std::size_t unsaved = eval_of(best), kept = eval_of(last);
-    CHECK(kept < unsaved);
+    CHECK(unsaved == 3u);
+    CHECK(kept == 1u);
     CHECK(contains(saved, "may hold eval " + std::to_string(unsaved) +
                           " (write not synced) or eval " + std::to_string(kept)));
 }
@@ -2444,9 +2448,19 @@ TEST_CASE("durable best: storage that recovers after a fatal failure saves a "
  * which the first failing publication's 150 ms budget spends; later
  * candidates then get their single attempt against working storage. hpo_run
  * must still throw (the process would exit non-zero), with the first
- * failure as the FAILED status, and best_pot.tadah must hold the last
- * candidate saved after it. Which RESULT form appears depends on the
- * completion order of the 4 threads, so both are accepted. */
+ * failure as the FAILED status. Whether a candidate is saved after the
+ * failure depends on which of the 4 threads' candidates are new bests and
+ * finish behind the failing publication (6 runs: the failure at eval 3 or
+ * 7, and 1 or 2 candidates saved after it), so both outcomes are checked:
+ * with one, best_pot.tadah holds the last candidate saved after the
+ * failure, and RESULT names it in one of its two forms (the completion
+ * order decides which); without one, best_pot.tadah holds the last best
+ * saved before it, which RESULT names as the last saved best, the best
+ * being the unsaved candidate.
+ * Pins: as described; no outcome returns unchecked.
+ * Before the fix: passes as well (a pin: the case returned with a WARN when
+ * no candidate was saved after the failure, checking neither outcome's
+ * RESULT nor best_pot.tadah). */
 TEST_CASE("durable best: hpo_run ends FAILED after storage recovers",
           "[durable_e2e][failure_handling][.]")
 {
@@ -2495,16 +2509,27 @@ TEST_CASE("durable best: hpo_run ends FAILED after storage recovers",
           "FAILED -- best-potential persistence: " + first_error);
     CHECK_FALSE(contains(journal, "converged"));
     CHECK(data_rows(sd.dir / "loss.tadah") == total_evaluations(journal));
-    if (last_saved == 0) {
-        WARN("no new best was saved after the persistence failure");
-        return;
+    const std::string pot = read_text(sd.dir / "best_pot.tadah");
+    if (last_saved > 0) {
+        /* A candidate was saved after the failure. */
+        CHECK(fatal_line < first_saved_line);
+        const std::string S = std::to_string(last_saved);
+        CHECK(contains(pot, "# HPO_SOURCE_EVAL " + S + "\n"));
+        CHECK((contains(line_with(journal, "Unsaved candidate"),
+                        "superseded by eval " + S) ||
+               contains(line_with(journal, "Last saved best"), "(eval " + S)));
+        CHECK(contains(line_with(journal, "Best potential saved"),
+                       ": best_pot.tadah (eval " + S + ")"));
+    } else {
+        /* None was: the last best saved before the failure stays. */
+        const std::string last = line_with(journal, "Last saved best");
+        const auto p = last.find("(eval ");
+        REQUIRE(p != std::string::npos);
+        const std::string K = std::to_string(std::stoul(last.substr(p + 6)));
+        CHECK(contains(pot, "# HPO_SOURCE_EVAL " + K + "\n"));
+        CHECK(contains(line_with(journal, "Best total loss"), "-- NOT saved"));
+        CHECK(contains(line_with(journal, "Best potential saved"),
+                       ": best_pot.tadah (eval " + K + ")"));
+        CHECK_FALSE(contains(journal, saved_tag));
     }
-    CHECK(fatal_line < first_saved_line);
-    const std::string S = std::to_string(last_saved);
-    CHECK(contains(read_text(sd.dir / "best_pot.tadah"),
-                   "# HPO_SOURCE_EVAL " + S + "\n"));
-    CHECK((contains(line_with(journal, "Unsaved candidate"), "superseded by eval " + S) ||
-           contains(line_with(journal, "Last saved best"), "(eval " + S)));
-    CHECK(contains(line_with(journal, "Best potential saved"),
-                   ": best_pot.tadah (eval " + S + ")"));
 }
