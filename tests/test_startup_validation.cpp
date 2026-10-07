@@ -131,9 +131,13 @@ TEST_CASE("startup validation: FIXINDEX/FIXWEIGHT pairing",
                         Catch::Contains("requires FIXWEIGHT"));
   }
   SECTION("size mismatch throws") {
+    /* FIXINDEX 1,2 for one FIXWEIGHT value on the 2-weight model. (The
+     * section had '1,2,3', which also names weight 3 of the 2 weights:
+     * core::parse_fixindex checks the bounds as it reads each entry, so
+     * that is now refused as "index 3 is outside 1-2" first.) */
     Context ctx = make_model_ctx();
     ctx.add("DBFILE", "dummy.db");
-    ctx.add("FIXINDEX", "1,2,3");
+    ctx.add("FIXINDEX", "1,2");
     ctx.add("FIXWEIGHT", 0.5);
     HPOTargets trg(ctx, tf.path.string());
     REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
