@@ -30,8 +30,8 @@
 //
 //   - "[HPO][partial_failure][host]": HPO_Host evaluations, in-process;
 //   - "[HPO][partial_failure][run]": hpo_run(), a gradient search that
-//     starts where the observable fails, a TADAH:RANDOM run inside that
-//     region, and STOPVAL.
+//     starts where the observable fails (under FAILSCORE_GRADING OFF and
+//     ON), a TADAH:RANDOM run inside that region, and STOPVAL.
 
 #include "catch2/catch.hpp"
 
@@ -50,11 +50,13 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <regex>
 #include <sstream>
@@ -538,6 +540,76 @@ TEST_CASE("a gradient search that starts where a PC_OBSERVABLE term fails "
                                   "RCUT2B = 5.2 is " + b.loss_text + ")") ==
                   1u);
             check_no_usable_loss(1, b.row);
+        }
+    }
+}
+
+/* Pins: under FAILSCORE_GRADING ON (FAILSCORE 1e16) a gradient search --
+ * DLIB:BFGS, LD_LBFGS, CERES:LBFGS when built; GRAD_STRATEGY HYBRID, every
+ * parameter differenced, PARAM fd_step 0.05 -- that starts at RCUT2B =
+ * 5.2, where the observable fails, stops at its first gradient: the start
+ * and its stencil points 5.125 and 5.275 (the step is 0.05 of the box
+ * width 1.5) are graded band-B failures with the same loss,
+ * graded_failscore(1e16, B, 1, 1) = 9.99375e+15 (the failed fraction of
+ * the one observable is 1 at each), so every difference is 0, and their
+ * params.tadah rows are those three points; the journal says "<backend>
+ * stopped: no usable gradient: a failed evaluation in the
+ * finite-difference stencil (the loss at RCUT2B = 5.2 is 9.99375e+15, and
+ * every difference at it is 0: a flat failure region)"; loss.tadah has
+ * those 3 rows, each the graded loss, the census counts 3 graded failures
+ * and 3 unusable losses, and the run ends without a usable loss (status 1,
+ * no best_pot.tadah).
+ * Before the fix: a failed observable recorded no band, so the loss there
+ * was the mean of L(ERMSE) and FAILSCORE, 5.0000000004e+15, usable, as
+ * under FAILSCORE_GRADING OFF, and every search followed the gradient of
+ * L(ERMSE) out of the region, with status 0, a best_pot.tadah, no
+ * flat-failure-region line and "Graded failures : 0": DLIB:BFGS made 9
+ * evaluations and ended "DLIB:BFGS: FTOL_ABS reached" with the best
+ * 7.7476e+04 at evaluation 4 (RCUT2B = 4.0, the bound), LD_LBFGS 6
+ * ("SUCCESS -- generic success", fmin 77475.6), and CERES:LBFGS, which
+ * ignores the box, 36 ("CERES:LBFGS: XTOL_REL reached", best 8.9619e+01
+ * outside the box). */
+TEST_CASE("a graded gradient search that starts where a PC_OBSERVABLE term "
+          "fails stops at its first gradient", "[HPO][partial_failure][run]") {
+    const double graded = graded_failscore(1e16, FailBand::B, 1.0, 1.0);
+    std::ostringstream row;
+    row << std::scientific << std::setprecision(15) << graded;
+    struct Backend { std::string lib, algo; };
+    std::vector<Backend> backends = {{"DLIB", "BFGS"},
+                                     {"NLOPT", "LD_LBFGS"}};
+#ifdef TADAH_USE_CERES
+    backends.push_back({"CERES", "LBFGS"});
+#endif
+    for (const Backend& b : backends) {
+        const std::string name = b.lib + ":" + b.algo;
+        DYNAMIC_SECTION(name) {
+            PartialRun run(plain_block("    LIB " + b.lib + "\n    ALGO " +
+                                       b.algo + "\n    MAXEVAL 60\n"
+                                       "    GRAD_STRATEGY HYBRID\n"
+                                       "    PARAM fd_step 0.05\n"),
+                           partial_root("FAILSCORE 1e16\n"
+                                        "FAILSCORE_GRADING ON\n"));
+            int status = -1;
+            REQUIRE_NOTHROW(status = run.run(name + " graded"));
+            CHECK(status == 1);
+            const std::string journal = read_file("hpo_run.log");
+            INFO(journal);
+            CHECK(count_of(journal,
+                           name + " stopped: no usable gradient: a failed "
+                                  "evaluation in the finite-difference "
+                                  "stencil (the loss at RCUT2B = 5.2 is "
+                                  "9.99375e+15, and every difference at it "
+                                  "is 0: a flat failure region)") == 1u);
+            CHECK(census(journal, "Graded failures") == 3);
+            check_no_usable_loss(3, row.str());
+            const Table params = read_table("params.tadah");
+            REQUIRE(params.rows.size() == 3);
+            std::vector<double> xs;
+            for (const auto& r : params.rows) xs.push_back(std::stod(r.back()));
+            std::sort(xs.begin(), xs.end());
+            CHECK(xs[0] == Approx(5.125).epsilon(1e-12));
+            CHECK(xs[1] == Approx(5.2).epsilon(1e-12));
+            CHECK(xs[2] == Approx(5.275).epsilon(1e-12));
         }
     }
 }
