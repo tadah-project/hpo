@@ -45,8 +45,11 @@ public:
 };
 
 /** REFIT_OBJECTIVE, in any case: true for 'curve', false for 'energy' (the
- *  default without the key). Throws std::runtime_error for anything else.
- *  The engine sets CompactConfig::objective from it. */
+ *  default without the key; no blueprint default is inserted). Throws
+ *  std::runtime_error for anything else. MLIP's
+ *  read_refit_curve_objective (refit_keys.h), which the mode rule reads it
+ *  with in either REFIT_MODE. The engine sets CompactConfig::objective from
+ *  it. */
 bool refit_curve_objective(const tadah::core::Context &c);
 
 /** Map a parsed OPTIMIZER spec to the compact fitter's flat algorithm string

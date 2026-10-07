@@ -3,6 +3,7 @@
 #include <tadah/hpo/optimizer_block.h>
 #include <tadah/hpo/strict_parse.h>
 #include <tadah/core/context.h>
+#include <tadah/mlip/engines/refit_keys.h>
 
 #include <algorithm>
 #include <cctype>
@@ -601,17 +602,8 @@ void reject_disabled_with_optimizer(const char *stage, bool enabled,
 }  // namespace
 
 bool refit_curve_objective(const tadah::core::Context &c) {
-  std::string obj =
-      (c.contains("REFIT_OBJECTIVE") && c.size("REFIT_OBJECTIVE") > 0)
-          ? c.get<std::string>("REFIT_OBJECTIVE")
-          : std::string("energy");
-  for (auto &ch : obj)
-    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-  if (obj == "curve") return true;
-  if (obj == "energy") return false;
-  throw std::runtime_error(
-      "tadah refit: REFIT_OBJECTIVE must be 'energy' (default) or 'curve'; "
-      "got '" + obj + "'");
+  // MLIP's reader, which the mode rule uses too (refit_keys.h)
+  return tadah::mlip::engines::read_refit_curve_objective(c);
 }
 
 std::string refit_explore_outer_algo(const OptimizerSpec &s) {
@@ -660,7 +652,8 @@ RefitConfig RefitParser::parse(const tadah::core::Context &c) {
         "block, with the OPTIMIZER block NESTED inside EXPLORE/REFINE/FUSE. "
         "Migration: GLOBAL folded into EXPLORE rung 0 (set its global ALGO in "
         "EXPLORE's OPTIMIZER, with an INNER local); POLISH -> REFINE; "
-        "JOINT -> FUSE. See HPO_REFIT_2B_EAM/REDESIGN/configs for examples.");
+        "JOINT -> FUSE. The Refitting page of the documentation has "
+        "examples (Stage blocks).");
   }
 
   RefitConfig cfg;
