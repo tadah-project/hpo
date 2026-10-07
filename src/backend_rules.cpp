@@ -6,6 +6,7 @@
 #include <tadah/hpo/dlib_adapter.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/phase_specs.h>
+#include <tadah/hpo/strategy_rules.h>
 
 #include <algorithm>
 #include <cmath>
@@ -461,6 +462,13 @@ void validate_phase_backends(const OptimizerSpec& root)
 {
     /* RESTART wraps every phase (RestartPolicy, run_policy.h). */
     const RestartStop restart = restart_stop_of(root);
+    /* A refused backend first, for its own phase, with validate_run_policy()'s
+     * text: strategy_phase_specs() looks up the caps of the STRATEGY-level
+     * backend to plan a MULTISTART from INIT points and a PRESTAGE
+     * refinement of TOPK > 1, and the checks of an MLSL or AUGLAG phase
+     * those of its INNER block; either lookup would report the refusal with
+     * no phase, or for the enclosing one. */
+    reject_refused_backends(root);
     for (const PhaseSpec& phase : strategy_phase_specs(root)) {
         try {
             validate_backend(phase.spec, restart,

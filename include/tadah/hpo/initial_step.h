@@ -21,13 +21,16 @@
  *     upper bound but not of the lower one, dx is NEGATIVE so the first
  *     vertex points inward instead of being clamped/flipped by nldrmd
  *     (NLopt accepts a signed initial step);
- *   - PerDimRescale / MinCollapsed (BOBYQA, COBYLA, NEWUOA_BOUND): a
- *     dimension whose slack to the nearest bound is below |dx| gets
- *     dx = 0.75 * slack -- NLopt's own default near-bound rule -- so
- *     BOBYQA neither relocates the warm start (bobyqa.c: an interior
- *     start within rhobeg of a bound is moved to bound +/- rhobeg) nor
- *     rejects the box (width >= 2*rhobeg); a start exactly ON a bound is
- *     left alone (BOBYQA keeps it there);
+ *   - BOBYQA alone (PerDimRescale): a dimension whose slack to the
+ *     nearest bound is below |dx| gets dx = 0.75 * slack -- NLopt's own
+ *     default near-bound rule -- so BOBYQA neither relocates the warm
+ *     start (bobyqa.c: an interior start within rhobeg of a bound is moved
+ *     to bound +/- rhobeg) nor rejects the box (width >= 2*rhobeg); a
+ *     start exactly ON a bound is left alone (BOBYQA keeps it there).
+ *     COBYLA treats the bounds as constraints, and the MinCollapsed
+ *     algorithms (NEWUOA, PRAXIS) take one radius, min_i |dx_i|, that a
+ *     shrink of one dimension would cut for every dimension; neither
+ *     relocates the start, so their steps are not shrunk;
  *   - never zero (NLopt rejects a zero step).
  *
  * STEP unset: NLopt's x-dependent heuristic stays in force
@@ -166,8 +169,8 @@ inline StepPlan make_step_plan(const OptimizerSpec&        sp,
     /* BOBYQA is the one algorithm that relocates an interior start lying
      * within rhobeg of a bound and refuses a box narrower than 2*rhobeg
      * (bobyqa.c ~3219-3257); COBYLA treats bounds as constraints,
-     * NEWUOA(_BOUND)/PRAXIS collapse the vector to min|dx| (so shrinking
-     * one dim would shrink every dim's radius) and never relocate. */
+     * NEWUOA/PRAXIS collapse the vector to min|dx| (so shrinking one dim
+     * would shrink every dim's radius) and never relocate. */
     const bool bobyqa = caps.step_use == StepUse::PerDimRescale &&
                         sp.algo.find("BOBYQA") != std::string::npos;
     for (std::size_t i = 0; i < n; ++i) {

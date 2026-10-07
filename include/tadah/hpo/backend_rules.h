@@ -135,7 +135,8 @@ void validate_nlopt_spec(const OptimizerSpec& spec, RestartStop restart,
 void validate_asa_spec(const OptimizerSpec& spec);
 
 /* Every check the backend of `spec` (its LIB:ALGO) makes before it runs:
- * the deferred CERES least-squares algorithms and an unknown LIB:ALGO are
+ * the deferred CERES least-squares algorithms, a refused LIB:ALGO
+ * (reject_refused_backend(), optimizer_caps.h) and an unknown one are
  * rejected, then the backend's own validator runs (the annealers'
  * Knobs::parse and ANNEAL_PT's replica count, ASA, DLIB:BFGS, DLIB:GFS,
  * the CERES drivers, NLopt with `role`, TADAH:RANDOM and TADAH:GRID), then
@@ -152,7 +153,14 @@ void validate_backend(const OptimizerSpec& spec, RestartStop restart,
  * INNER block, as SpecRole::Inner), with the RESTART of `root`
  * (restart_stop_of()), each
  * message prefixed with the phase:
- * "the PRESTAGE refinement: DLIB:BFGS does not support MAXTIME".
+ * "the PRESTAGE refinement: DLIB:BFGS does not support MAXTIME". A refused
+ * backend (reject_refused_backend(), optimizer_caps.h) is reported first,
+ * for its own phase, with the text validate_run_policy() throws for it
+ * (reject_refused_backends(), strategy_rules.h), in every STRATEGY shape --
+ * a MULTISTART from INIT points and a PRESTAGE refinement of TOPK > 1
+ * included, whose phases cannot be derived without the caps of their
+ * backend: "the INNER block of the STRATEGY-level optimiser:
+ * NLOPT:LN_NEWUOA_BOUND is refused: ...", "the EXPLORE block: ...".
  * validate_hpo_setup() calls it after validate_run_policy(). */
 void validate_phase_backends(const OptimizerSpec& root);
 

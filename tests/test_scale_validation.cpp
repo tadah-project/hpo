@@ -125,8 +125,11 @@ TEST_CASE("scale_validation: STEP override alone is rejected on non-consumers",
 TEST_CASE("scale_validation: STEP accepted on NLopt consumers",
           "[HPO][scale][step]")
 {
+    /* One algorithm of each consumption mode; LN_PRAXIS stands for the
+     * MinCollapsed ones in place of LN_NEWUOA_BOUND, which is refused.
+     * Before the fix: passes as well (a pin; LN_NEWUOA_BOUND passed too). */
     for (const char* algo : {"LN_SBPLX", "LN_NELDERMEAD", "LN_BOBYQA",
-                             "LN_COBYLA", "LN_NEWUOA_BOUND", "LD_MMA"}) {
+                             "LN_COBYLA", "LN_PRAXIS", "LD_MMA"}) {
         INFO(algo);
         auto sp = make_spec("NLOPT", algo);
         sp.step = 0.1;
@@ -173,7 +176,10 @@ TEST_CASE("scale_validation: bounds-ignoring backends warn at startup",
      * time (three times in a plain run). The text says what an evaluation
      * outside the box does -- it is evaluated there and can become the
      * best, warned about and counted -- and which optimisers keep to the
-     * box (review item 4). */
+     * box (review item 4). LN_NEWUOA's names LN_BOBYQA alone: it named
+     * LN_NEWUOA_BOUND too, which HPO now refuses (optimizer_caps.cpp).
+     * Before the fix: the LN_NEWUOA text ended "LN_NEWUOA_BOUND and
+     * LN_BOBYQA keep to the box", so its count was 0. */
     JournalCapture j;
     auto sp = make_spec("NLOPT", "LN_NEWUOA");
     for (const char* where : {"OUTER", "OUTER", "run"})
@@ -183,7 +189,7 @@ TEST_CASE("scale_validation: bounds-ignoring backends warn at startup",
         "LN_NEWUOA without bounds (optimize.c passes lb = ub = NULL), so its "
         "evaluations can leave the box, and such a point can become the "
         "best; the first is reported with a WARNING and DIAGNOSTICS counts "
-        "them all. LN_NEWUOA_BOUND and LN_BOBYQA keep to the box";
+        "them all. LN_BOBYQA keeps to the box";
     CHECK(count_of(j.text(), newuoa) == 1u);
     CHECK(count_of(j.text(), "ignores the OPTIM box") == 1u);
 

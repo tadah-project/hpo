@@ -36,6 +36,7 @@
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
+#include <tadah/hpo/backend_rules.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
@@ -51,6 +52,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -797,6 +799,29 @@ void write_ta_db(const fs::path& path, double offset_x, double energy)
        << "Ta " << (1.6505 + offset_x) << " 1.6505 4.9515  0.0 0.0 0.0\n\n";
 }
 
+/* How the journal writes the event `msg` with `tag`, without the
+ * timestamp of its first line (HPOLog::event_locked): a multi-line message
+ * -- a parse error, "Error on line N: ...\nLine: ..." -- is a block whose
+ * first line carries a star and whose continuation lines repeat the tag. */
+std::string journal_event(const std::string& tag, const std::string& msg)
+{
+    std::string padded = tag;
+    if (padded.size() < 8) padded.resize(8, ' ');
+    const bool multi = msg.find('\n') != std::string::npos;
+    std::string out;
+    std::size_t start = 0;
+    for (bool first = true;; first = false) {
+        const std::size_t nl = msg.find('\n', start);
+        if (!first) out += "\n" + std::string(12, ' ');
+        out += padded + "  " + (multi ? (first ? "* " : "  ") : "") +
+               msg.substr(start, nl == std::string::npos ? std::string::npos
+                                                         : nl - start);
+        if (nl == std::string::npos) break;
+        start = nl + 1;
+    }
+    return out;
+}
+
 /* hpo_run() on the no-LAMMPS D2_BP Ta setup with the given OPTIMIZER
  * block; returns what it throws. */
 std::string run_hpo(const std::string& optimizer)
@@ -874,7 +899,8 @@ std::string run_hpo(const std::string& optimizer)
     CHECK_FALSE(tadah::hpo::pc_worker_pool_enabled());
     INFO("journal:\n" << journal.str());
     REQUIRE_FALSE(err.empty());
-    CHECK_THAT(journal.str(), Catch::Contains("ERROR     startup: " + err));
+    CHECK_THAT(journal.str(),
+               Catch::Contains(journal_event("ERROR", "startup: " + err)));
     return err;
 }
 
@@ -919,6 +945,348 @@ TEST_CASE("startup validation: hpo_run rejects a strategy before it loads "
         CHECK_THAT(err, Catch::Contains("STRATEGY TYPE MULTISTART cannot run "
                                         "NLOPT:GN_DIRECT:"));
     }
+}
+
+/* ======================================================================
+ * NLOPT:LN_NEWUOA_BOUND is refused (the refusal table of the caps
+ * registry, optimizer_caps.cpp). NLopt 2.10 plans every step of it with a
+ * nested LD_MMA run that has no time limit and sees no stop request; once a
+ * non-finite value reaches its model -- HUGE_VAL, NLopt's convention for a
+ * forced stop, which HPO's objective returns after every stop it makes
+ * (a signal, a RESTART stagnation stop, an error that ends the run), or a
+ * model that overflows on a flat loss -- each step takes 10-60 s without
+ * evaluating the loss, so Ctrl-C, SIGTERM, MAXTIME and RESTART wait that
+ * long (docs/issues/nlopt_newuoa_bound_stall.md has the repro). The stall
+ * itself is not a CTest: it is third-party code and takes that long.
+ * ==================================================================== */
+
+TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
+          "that closes its block, in every phase",
+          "[startup_validation][strategy][backend][refused]")
+{
+    /* Pins: the parser refuses NLOPT:LN_NEWUOA_BOUND at the lines where the
+     * 1.6.0 rule checks a block's optimiser: ENDOPTIMIZER for the
+     * STRATEGY-level optimiser, whether the STRATEGY block, a REFINE block
+     * or the OPTIMIZER block itself names it (PLAIN, the short form,
+     * MULTISTART, the PRESTAGE refinement; ENDSTRATEGY and ENDREFINE check
+     * no optimiser), ENDEXPLORE for the PRESTAGE exploration, ENDINNER for
+     * an INNER block (under G_MLSL_LDS and LN_AUGLAG, inside STRATEGY,
+     * EXPLORE and REFINE), and the end of the file for an OPTIMIZER block
+     * never closed -- naming the phase, as the other messages of these
+     * blocks do, with the caps registry's reason and replacement. A spec
+     * built outside the parser gets the refusal from validate_backend() (no
+     * phase), validate_run_policy() and the MULTISTART policy (the
+     * STRATEGY-level optimiser), validate_phase_backends() and
+     * require_inner_backend() (its INNER block).
+     * Before the fix: parse_error() was "" for every configuration (the run
+     * started and NLopt ran the algorithm), and every validator accepted
+     * the specs (""). */
+    const std::string refused = "NLOPT:LN_NEWUOA_BOUND is refused: ";
+    const std::string inner =
+        "    INNER\n      LIB NLOPT\n      ALGO LN_NEWUOA_BOUND\n"
+        "      MAXEVAL 20\n    ENDINNER\n";
+    struct Case {
+        std::string what;
+        std::string config;
+        std::size_t line;      // the line that closes the refused block
+        std::string closing;   // its text
+        std::string phase;     // what the message names
+    };
+    const std::string top = "the STRATEGY-level optimiser";
+    for (const auto& c : std::vector<Case>{
+             {"PLAIN",
+              strategy_config("    TYPE PLAIN\n    LIB NLOPT\n"
+                              "    ALGO LN_NEWUOA_BOUND\n    MAXEVAL 400\n"),
+              10, "ENDOPTIMIZER", top},
+             {"the short form inside OPTIMIZER",
+              kRoot + "OPTIMIZER\nLIB NLOPT\nALGO LN_NEWUOA_BOUND\n"
+                      "MAXEVAL 400\nENDOPTIMIZER\n",
+              7, "ENDOPTIMIZER", top},
+             {"MULTISTART",
+              strategy_config(multistart_body("NLOPT", "LN_NEWUOA_BOUND", "2")),
+              11, "ENDOPTIMIZER", top},
+             {"the PRESTAGE refinement at STRATEGY level",
+              strategy_config("    TYPE PRESTAGE\n    LIB NLOPT\n"
+                              "    ALGO LN_NEWUOA_BOUND\n    MAXEVAL 20\n" +
+                              kExploreGfs),
+              15, "ENDOPTIMIZER", "the PRESTAGE refinement"},
+             {"a REFINE block, at ENDOPTIMIZER (not ENDREFINE)",
+              strategy_config("    TYPE PRESTAGE\n" + kExploreGfs +
+                              "    REFINE\n      LIB NLOPT\n"
+                              "      ALGO LN_NEWUOA_BOUND\n"
+                              "      MAXEVAL 20\n    ENDREFINE\n"),
+              17, "ENDOPTIMIZER", "the PRESTAGE refinement"},
+             {"an EXPLORE block",
+              strategy_config("    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+                              "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
+                              "      ALGO LN_NEWUOA_BOUND\n      MAXEVAL 12\n"
+                              "    ENDEXPLORE\n"),
+              13, "    ENDEXPLORE", "the EXPLORE block"},
+             {"an INNER block under G_MLSL_LDS",
+              strategy_config("    TYPE PLAIN\n    LIB NLOPT\n"
+                              "    ALGO G_MLSL_LDS\n    MAXEVAL 60\n" + inner),
+              13, "    ENDINNER", "the INNER block inside STRATEGY"},
+             {"an INNER block under LN_AUGLAG",
+              strategy_config("    TYPE PLAIN\n    LIB NLOPT\n"
+                              "    ALGO LN_AUGLAG\n    MAXEVAL 60\n" + inner),
+              13, "    ENDINNER", "the INNER block inside STRATEGY"},
+             {"an INNER block inside EXPLORE",
+              strategy_config("    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+                              "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
+                              "      ALGO G_MLSL_LDS\n      MAXEVAL 60\n" +
+                              inner + "    ENDEXPLORE\n"),
+              17, "    ENDINNER", "the INNER block inside EXPLORE"},
+             {"an INNER block inside REFINE",
+              strategy_config("    TYPE PRESTAGE\n" + kExploreGfs +
+                              "    REFINE\n      LIB NLOPT\n"
+                              "      ALGO G_MLSL_LDS\n      MAXEVAL 60\n" +
+                              inner + "    ENDREFINE\n"),
+              19, "    ENDINNER", "the INNER block inside REFINE"}}) {
+        INFO(c.what << ", config:\n" << c.config);
+        CHECK_THAT(parse_error(c.config),
+                   Catch::StartsWith("Error on line " + std::to_string(c.line) +
+                                     ": " + c.phase + ": " + refused) &&
+                   Catch::Contains("Use NLOPT:LN_BOBYQA") &&
+                   Catch::EndsWith("\nLine: " + c.closing));
+    }
+    /* An OPTIMIZER block the file never closes: at the end of the file,
+     * with no line, as its missing LIB or ALGO. */
+    CHECK_THAT(parse_error(kRoot + "OPTIMIZER\n  LIB NLOPT\n"
+                                   "  ALGO LN_NEWUOA_BOUND\n  MAXEVAL 5\n"),
+               Catch::StartsWith(top + ": " + refused));
+
+    /* A spec built outside the parser. */
+    const auto bound = [](const std::string& algo, std::uint64_t maxeval) {
+        OptimizerSpec s;
+        s.lib = "NLOPT";
+        s.algo = algo;
+        s.low = {0.0, 0.0};
+        s.high = {1.0, 1.0};
+        s.analyse_logscale();
+        s.stop.maxeval = maxeval;
+        return s;
+    };
+    OptimizerSpec sp = bound("LN_NEWUOA_BOUND", 5);
+    CHECK_THAT(error_of([&] {
+                   tadah::hpo::validate_backend(sp,
+                                                tadah::hpo::RestartStop::Off);
+               }),
+               Catch::StartsWith(refused) &&
+               Catch::Contains("Use NLOPT:LN_BOBYQA"));
+    CHECK_THAT(error_of([&] { tadah::hpo::validate_run_policy(sp); }),
+               Catch::StartsWith(top + ": " + refused));
+    sp.strategy_type = StrategyType::MULTISTART;
+    sp.multistart.n_starts = 2;
+    CHECK_THAT(policy_error(sp), Catch::StartsWith(top + ": " + refused));
+
+    OptimizerSpec root = bound("G_MLSL_LDS", 60);
+    root.inner = std::make_unique<OptimizerSpec>(bound("LN_NEWUOA_BOUND", 20));
+    const std::string of_top = "the INNER block of " + top + ": " + refused;
+    CHECK_THAT(error_of([&] { tadah::hpo::validate_phase_backends(root); }),
+               Catch::StartsWith(of_top));
+    CHECK_THAT(error_of([&] { tadah::hpo::validate_run_policy(root); }),
+               Catch::StartsWith(of_top));
+    /* run_inner()'s safety net for a spec built at run time names no
+     * phase. */
+    CHECK_THAT(error_of([&] { tadah::hpo::require_inner_backend(root, ""); }),
+               Catch::StartsWith("the INNER block of NLOPT:G_MLSL_LDS: " +
+                                 refused));
+}
+
+TEST_CASE("startup validation: validate_phase_backends refuses a backend for "
+          "its own phase in every STRATEGY shape",
+          "[startup_validation][strategy][backend][refused]")
+{
+    /* Pins: validate_phase_backends() reports a refused backend first, for
+     * its own phase, with the text validate_run_policy() throws for it, in
+     * every shape of the STRATEGY (specs built outside the parser, which
+     * refuses them earlier): the STRATEGY-level optimiser under PLAIN and
+     * under MULTISTART, without INIT points and with two (the starts are
+     * planned from them); the PRESTAGE refinement with TOPK 1 and TOPK 3 (a
+     * MULTISTART over three candidates); the EXPLORE block; the INNER block
+     * of an LN_AUGLAG STRATEGY-level optimiser under MULTISTART with INIT
+     * points and under PRESTAGE with TOPK 3, and of a G_MLSL_LDS
+     * exploration.
+     * Before the fix: strategy_phase_specs() looked up the caps of the
+     * refused backend to plan the MULTISTART starts from the INIT points and
+     * the TOPK 3 refinement, and the lookup threw the refusal with no phase
+     * ("NLOPT:LN_NEWUOA_BOUND is refused: ..."); the other shapes named the
+     * phase as strategy_phase_specs() does, not as validate_run_policy():
+     * "the MULTISTART run" without INIT points, "the PRESTAGE exploration
+     * (EXPLORE block)", "the INNER block of each MULTISTART start", "the
+     * INNER block of the PRESTAGE exploration (EXPLORE block)". PLAIN, the
+     * TOPK 1 refinement and the INNER block of the TOPK 3 refinement were
+     * named as now. */
+    const std::string refused = "NLOPT:LN_NEWUOA_BOUND is refused: ";
+    const auto nlopt = [](const std::string& algo) {
+        OptimizerSpec s;
+        s.lib = "NLOPT";
+        s.algo = algo;
+        s.low = {0.0, 0.0};
+        s.high = {1.0, 1.0};
+        s.analyse_logscale();
+        s.stop.maxeval = 20;
+        return s;
+    };
+    const auto with_inner = [&](OptimizerSpec s) {
+        s.inner = std::make_unique<OptimizerSpec>(nlopt("LN_NEWUOA_BOUND"));
+        return s;
+    };
+    const auto multistart = [](OptimizerSpec s, bool init) {
+        s.strategy_type = StrategyType::MULTISTART;
+        s.multistart.n_starts = 2;
+        if (init) s.optim_init = {{0.2, 0.2}, {0.4, 0.4}};
+        return s;
+    };
+    const auto prestage = [&](OptimizerSpec s, std::size_t topk,
+                              OptimizerSpec explore) {
+        s.strategy_type = StrategyType::PRESTAGE;
+        s.stage_topk = topk;
+        s.prestage = std::make_unique<OptimizerSpec>(std::move(explore));
+        return s;
+    };
+    struct Shape {
+        std::string what;
+        OptimizerSpec root;
+        std::string phase;   // what both validators name
+    };
+    const std::string top = "the STRATEGY-level optimiser";
+    const std::string refinement = "the PRESTAGE refinement";
+    std::vector<Shape> shapes;
+    shapes.push_back({"PLAIN", nlopt("LN_NEWUOA_BOUND"), top});
+    shapes.push_back({"MULTISTART without INIT points",
+                      multistart(nlopt("LN_NEWUOA_BOUND"), false), top});
+    shapes.push_back({"MULTISTART from two INIT points",
+                      multistart(nlopt("LN_NEWUOA_BOUND"), true), top});
+    shapes.push_back({"the PRESTAGE refinement, TOPK 1",
+                      prestage(nlopt("LN_NEWUOA_BOUND"), 1, nlopt("GN_DIRECT")),
+                      refinement});
+    shapes.push_back({"the PRESTAGE refinement, TOPK 3",
+                      prestage(nlopt("LN_NEWUOA_BOUND"), 3, nlopt("GN_DIRECT")),
+                      refinement});
+    shapes.push_back({"the EXPLORE block",
+                      prestage(nlopt("LN_BOBYQA"), 1, nlopt("LN_NEWUOA_BOUND")),
+                      "the EXPLORE block"});
+    shapes.push_back({"the INNER block under MULTISTART from INIT points",
+                      multistart(with_inner(nlopt("LN_AUGLAG")), true),
+                      "the INNER block of " + top});
+    shapes.push_back({"the INNER block of the TOPK 3 refinement",
+                      prestage(with_inner(nlopt("LN_AUGLAG")), 3,
+                               nlopt("GN_DIRECT")),
+                      "the INNER block of " + refinement});
+    shapes.push_back({"the INNER block of the exploration",
+                      prestage(nlopt("LN_BOBYQA"), 1,
+                               with_inner(nlopt("G_MLSL_LDS"))),
+                      "the INNER block of the EXPLORE block"});
+    for (const Shape& c : shapes) {
+        INFO(c.what);
+        const std::string policy =
+            error_of([&] { tadah::hpo::validate_run_policy(c.root); });
+        CHECK_THAT(policy, Catch::StartsWith(c.phase + ": " + refused));
+        CHECK(error_of([&] { tadah::hpo::validate_phase_backends(c.root); }) ==
+              policy);
+    }
+}
+
+TEST_CASE("strategy rules: reject_refused_backends refuses the first refused "
+          "block in validate_run_policy's order and looks up no caps",
+          "[startup_validation][strategy][backend][refused]")
+{
+    /* Pins: reject_refused_backends() throws the refusal of the first
+     * refused backend in validate_run_policy()'s order -- the EXPLORE block
+     * (under PRESTAGE), the STRATEGY-level optimiser, its INNER block, the
+     * EXPLORE block's INNER block -- named as validate_run_policy() names
+     * it; it accepts a spec whose backends are not refused, also an unknown
+     * or unset LIB:ALGO (it looks up no caps, so validate_phase_backends()
+     * runs it before strategy_phase_specs()), and an EXPLORE block left on
+     * a spec whose TYPE is not PRESTAGE (no phase runs it).
+     * Added with the fix, which introduces it. */
+    const std::string refused = "NLOPT:LN_NEWUOA_BOUND is refused: ";
+    const auto nlopt = [](const std::string& algo) {
+        OptimizerSpec s;
+        s.lib = "NLOPT";
+        s.algo = algo;
+        return s;
+    };
+    const auto with_inner = [&](OptimizerSpec s, const std::string& algo) {
+        s.inner = std::make_unique<OptimizerSpec>(nlopt(algo));
+        return s;
+    };
+    const auto with_explore = [](OptimizerSpec s, StrategyType type,
+                                 OptimizerSpec explore) {
+        s.strategy_type = type;
+        s.prestage = std::make_unique<OptimizerSpec>(std::move(explore));
+        return s;
+    };
+    const auto error = [](const OptimizerSpec& s) {
+        return error_of([&] { tadah::hpo::reject_refused_backends(s); });
+    };
+    const std::string bad = "LN_NEWUOA_BOUND";
+    const std::string top = "the STRATEGY-level optimiser: ";
+    const std::string refinement = "the PRESTAGE refinement: ";
+
+    CHECK_THAT(error(nlopt(bad)), Catch::StartsWith(top + refused));
+    OptimizerSpec ms = nlopt(bad);
+    ms.strategy_type = StrategyType::MULTISTART;
+    CHECK_THAT(error(ms), Catch::StartsWith(top + refused));
+    CHECK_THAT(error(with_explore(nlopt(bad), StrategyType::PRESTAGE,
+                                  nlopt("GN_DIRECT"))),
+               Catch::StartsWith(refinement + refused));
+    CHECK_THAT(error(with_explore(with_inner(nlopt(bad), bad),
+                                  StrategyType::PRESTAGE, nlopt(bad))),
+               Catch::StartsWith("the EXPLORE block: " + refused));
+    CHECK_THAT(error(with_inner(nlopt(bad), bad)),
+               Catch::StartsWith(top + refused));
+    CHECK_THAT(error(with_inner(nlopt("LN_AUGLAG"), bad)),
+               Catch::StartsWith("the INNER block of " + top + refused));
+    CHECK_THAT(error(with_explore(with_inner(nlopt("LN_AUGLAG"), bad),
+                                  StrategyType::PRESTAGE,
+                                  with_inner(nlopt("G_MLSL_LDS"), bad))),
+               Catch::StartsWith("the INNER block of " + refinement +
+                                 refused));
+    CHECK_THAT(error(with_explore(nlopt("LN_BOBYQA"), StrategyType::PRESTAGE,
+                                  with_inner(nlopt("G_MLSL_LDS"), bad))),
+               Catch::StartsWith("the INNER block of the EXPLORE block: " +
+                                 refused));
+
+    CHECK(error(with_explore(with_inner(nlopt("LN_AUGLAG"), "LN_BOBYQA"),
+                             StrategyType::PRESTAGE,
+                             with_inner(nlopt("G_MLSL_LDS"), "LN_COBYLA"))) ==
+          "");
+    CHECK(error(with_inner(nlopt("NOT_AN_ALGO"), "NOT_AN_ALGO")) == "");
+    CHECK(error(OptimizerSpec{}) == "");
+    CHECK(error(with_explore(nlopt("LN_BOBYQA"), StrategyType::PLAIN,
+                             nlopt(bad))) == "");
+}
+
+TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused by hpo_run "
+          "before it loads any data",
+          "[startup_validation][strategy][e2e][refused]")
+{
+    struct ForceRebuild {
+        bool restore = std::getenv("TADAH_HPO_FORCE_REBUILD") == nullptr;
+        ForceRebuild() { if (restore) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1); }
+        ~ForceRebuild() { if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD"); }
+    } force_rebuild;
+
+    /* Pins: hpo_run() stops at the ENDOPTIMIZER line (line 8 of this
+     * config.hpo), before any data is loaded or any evaluation runs, and
+     * journals the refusal, a two-line block with the line's text (run_hpo
+     * checks both).
+     * Before the fix: the run started and NLopt made 5 evaluations (the
+     * harness has three OPTIM dimensions, so NEWUOA's 2n+1 = 7 starting
+     * interpolation points exceed MAXEVAL 5 and no trust-region step ran)
+     * and ended MAXEVAL_REACHED: hpo_run threw nothing, and run_hpo's checks
+     * failed (5 evaluations, the FILES, POTENTIAL SETUP and PC_ISOLATION
+     * lines in the journal, loss.tadah written, no error). */
+    const auto err = run_hpo(
+        "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
+        "    ALGO LN_NEWUOA_BOUND\n    MAXEVAL 5\n  ENDSTRATEGY\n"
+        "ENDOPTIMIZER\n");
+    CHECK_THAT(err, Catch::StartsWith("Error on line 8: the STRATEGY-level "
+                                      "optimiser: NLOPT:LN_NEWUOA_BOUND is "
+                                      "refused: ") &&
+                    Catch::Contains("Use NLOPT:LN_BOBYQA"));
 }
 
 /* ======================================================================

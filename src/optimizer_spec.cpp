@@ -215,6 +215,12 @@ static void print_dlib_caps(std::ostream& os, const std::string& algo)
 
 static void print_nlopt_caps(std::ostream& os,const std::string& algo)
 {
+    /* An algorithm the caps registry refuses (optimizer_caps.h): why, and
+     * what to use instead; it has no stops or STEP to describe. */
+    if (const char* reason = backend_refusal("NLOPT", algo)) {
+        os<<"   * REFUSED: "<<reason<<"\n";
+        return;
+    }
   nlopt_algorithm a = nlopt_algorithm_from_string(algo.c_str());
     if (a==NLOPT_NUM_ALGORITHMS) { os<<"   * (unknown)\n"; return; }
 

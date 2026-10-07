@@ -4,7 +4,12 @@
  * derive their behaviour from it, so these facts are pinned here. */
 #include "catch2/catch.hpp"
 #include <tadah/hpo/optimizer_caps.h>
+#include <tadah/hpo/optimizer_spec.h>
 
+#include <nlopt.h>
+
+#include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -20,7 +25,8 @@ TEST_CASE("OptimizerCaps: StepUse classification per backend",
         {"NLOPT", "LN_BOBYQA",       StepUse::PerDimRescale},
         {"NLOPT", "LN_COBYLA",       StepUse::PerDimRescale},
         {"NLOPT", "LN_NEWUOA",       StepUse::MinCollapsed},
-        {"NLOPT", "LN_NEWUOA_BOUND", StepUse::MinCollapsed},
+        /* LN_NEWUOA_BOUND (MinCollapsed too) is refused: see the test
+         * case below. */
         {"NLOPT", "LN_PRAXIS",       StepUse::MinCollapsed},
         {"NLOPT", "LD_MMA",          StepUse::TrustHalfWidth},
         {"NLOPT", "LD_CCSAQ",        StepUse::TrustHalfWidth},
@@ -89,10 +95,120 @@ TEST_CASE("OptimizerCaps: bounds-ignoring backends are flagged",
           "[HPO][caps][bounds]")
 {
     CHECK(optimizer_caps("NLOPT", "LN_NEWUOA").ignores_bounds);
-    CHECK_FALSE(optimizer_caps("NLOPT", "LN_NEWUOA_BOUND").ignores_bounds);
+    /* LN_NEWUOA_BOUND, which kept to the box, is refused: see the test
+     * case below. */
     CHECK_FALSE(optimizer_caps("NLOPT", "LN_BOBYQA").ignores_bounds);
     CHECK(optimizer_caps("CERES", "LBFGS").ignores_bounds);
     CHECK(optimizer_caps("CERES", "NLCG").ignores_bounds);
     CHECK_FALSE(optimizer_caps("DLIB", "BFGS").ignores_bounds);
     CHECK_FALSE(optimizer_caps("TADAH", "ANNEAL").ignores_bounds);
+}
+
+TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA_BOUND is refused, naming the "
+          "replacement", "[HPO][caps][refused]")
+{
+    /* NLopt 2.10 plans every LN_NEWUOA_BOUND step with a nested LD_MMA run
+     * that has no time limit and sees no stop request; once a non-finite
+     * value reaches its model -- HUGE_VAL, NLopt's convention for a forced
+     * stop, which HPO's objective returns after every stop it makes, or a
+     * model that overflows on a flat loss -- each step takes 10-60 s
+     * without evaluating the loss (docs/issues/nlopt_newuoa_bound_stall.md).
+     *
+     * Pins: the caps lookup refuses it with the reason and the
+     * replacements, LN_BOBYQA and LN_NEWUOA (not refused, as LN_BOBYQA is
+     * not); no registry list offers it (filter_optimizer_caps, and through
+     * it every "alternatives" list); an unregistered name keeps its own
+     * message; the ALGO help says it is refused instead of describing its
+     * STEP and its stops.
+     * Before the fix: optimizer_caps() returned its caps (MinCollapsed,
+     * keeps to the box), the filter found it, and the help printed its
+     * stops and its STEP line. */
+    CHECK_THROWS_WITH(optimizer_caps("NLOPT", "LN_NEWUOA_BOUND"),
+                      Catch::StartsWith("NLOPT:LN_NEWUOA_BOUND is refused: ") &&
+                      Catch::Contains("nested LD_MMA run") &&
+                      Catch::Contains("non-finite value") &&
+                      Catch::Contains("HUGE_VAL") &&
+                      Catch::Contains("Use NLOPT:LN_BOBYQA") &&
+                      Catch::Contains("or NLOPT:LN_NEWUOA where"));
+    /* Pins: the reason says from which evaluation a stop stalls the run:
+     * from its (2n+1)-th on, the last of the 2n+1 starting points NEWUOA
+     * evaluates before its first step -- a stop on one of the first 2n
+     * returns at once (docs/issues/nlopt_newuoa_bound_stall.md, case F with
+     * STOPAT).
+     * Before the review fix: "after every stop HPO makes through the
+     * objective (...)", with no such bound. */
+    CHECK_THROWS_WITH(optimizer_caps("NLOPT", "LN_NEWUOA_BOUND"),
+                      Catch::Contains("after every stop HPO makes through "
+                                      "the objective (a signal, a RESTART "
+                                      "stagnation stop, an error that ends "
+                                      "the run) from a run's (2n+1)-th "
+                                      "evaluation on, the last of NEWUOA's "
+                                      "starting points for n OPTIM "
+                                      "dimensions,"));
+    CHECK(filter_optimizer_caps([](const OptimizerCaps& c) {
+              return c.lib == "NLOPT" && c.algo == "LN_NEWUOA_BOUND";
+          }).empty());
+    CHECK_NOTHROW(optimizer_caps("NLOPT", "LN_NEWUOA"));
+    CHECK_NOTHROW(optimizer_caps("NLOPT", "LN_BOBYQA"));
+    CHECK_THROWS_WITH(optimizer_caps("NLOPT", "NOT_AN_ALGO"),
+                      "unknown optimizer NLOPT:NOT_AN_ALGO (not registered "
+                      "in optimizer_caps)");
+
+    std::ostringstream out;
+    std::streambuf* const old = std::cout.rdbuf(out.rdbuf());
+    OptimizerSpec::print_caps("NLOPT", "LN_NEWUOA_BOUND");
+    std::cout.rdbuf(old);
+    INFO("help:\n" << out.str());
+    CHECK_THAT(out.str(),
+               Catch::StartsWith("Options for NLOPT:LN_NEWUOA_BOUND\n"
+                                 "   * REFUSED: ") &&
+               Catch::Contains("Use NLOPT:LN_BOBYQA") &&
+               !Catch::Contains("STEP <double>") &&
+               !Catch::Contains("Stops that end a run"));
+}
+
+TEST_CASE("OptimizerCaps: backend_refusal names the refused backends, and "
+          "every NLopt algorithm is registered or refused",
+          "[HPO][caps][refused]")
+{
+    /* Pins: backend_refusal() returns the reason for (NLOPT,
+     * LN_NEWUOA_BOUND) only -- the library is part of the key -- and
+     * reject_refused_backend() throws "LIB:ALGO is refused: <reason>",
+     * with "<where>: " in front when given, the text optimizer_caps()
+     * throws; every algorithm NLopt names is either registered or refused,
+     * never both and never neither.
+     * Added with the fix, which introduces both functions (the tests
+     * commit could not call them). */
+    const char* reason = backend_refusal("NLOPT", "LN_NEWUOA_BOUND");
+    REQUIRE(reason != nullptr);
+    const std::string refused =
+        std::string("NLOPT:LN_NEWUOA_BOUND is refused: ") + reason;
+    CHECK(backend_refusal("NLOPT", "LN_BOBYQA") == nullptr);
+    CHECK(backend_refusal("NLOPT", "LN_NEWUOA") == nullptr);
+    CHECK(backend_refusal("NLOPT", "NOT_AN_ALGO") == nullptr);
+    CHECK(backend_refusal("TADAH", "LN_NEWUOA_BOUND") == nullptr);
+    CHECK_THROWS_WITH(optimizer_caps("NLOPT", "LN_NEWUOA_BOUND"), refused);
+    CHECK_THROWS_WITH(reject_refused_backend("NLOPT", "LN_NEWUOA_BOUND"),
+                      refused);
+    CHECK_THROWS_WITH(reject_refused_backend("NLOPT", "LN_NEWUOA_BOUND",
+                                             "the EXPLORE block"),
+                      "the EXPLORE block: " + refused);
+    CHECK_NOTHROW(reject_refused_backend("NLOPT", "LN_BOBYQA", "anywhere"));
+    CHECK(find_optimizer_caps("NLOPT", "LN_NEWUOA_BOUND") == nullptr);
+
+    std::size_t registered = 0;
+    for (int i = 0; i < NLOPT_NUM_ALGORITHMS; ++i) {
+        const char* name =
+            nlopt_algorithm_to_string(static_cast<nlopt_algorithm>(i));
+        if (!name || !name[0]) continue;
+        INFO(name);
+        const bool is_registered = find_optimizer_caps("NLOPT", name) != nullptr;
+        const bool is_refused = backend_refusal("NLOPT", name) != nullptr;
+        CHECK(is_registered != is_refused);
+        if (is_registered) ++registered;
+    }
+    CHECK(registered ==
+          filter_optimizer_caps([](const OptimizerCaps& c) {
+              return c.lib == "NLOPT";
+          }).size());
 }
