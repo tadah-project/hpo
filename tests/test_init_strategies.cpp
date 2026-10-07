@@ -46,6 +46,49 @@ struct StrategyTempFile {
     }
 };
 
+/* The journal's OPTIMISER section (and the SEARCH SPACE section that
+ * follows it) for `sp`, as HPOLog::write_optimizer_section writes it. */
+std::string optimizer_section(const tadah::hpo::OptimizerSpec& sp)
+{
+    auto& log = tadah::hpo::HPOLog::instance();
+    const auto path = std::filesystem::temp_directory_path() /
+        ("hpo_optsec_" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+         ".log");
+    log.open(path.string(), "test", "/tmp", 1);
+    log.write_optimizer_section(sp, {});
+    log.finish("TEST");
+    std::ifstream in(path);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    return ss.str();
+}
+
+/* The lines of `text` from the one that holds `header` to the next line
+ * at its indentation or less ("" if no line holds it): the block the
+ * journal prints under that header. */
+std::string journal_block(const std::string& text, const std::string& header)
+{
+    std::istringstream in(text);
+    std::string line, out;
+    std::size_t indent = std::string::npos;
+    while (std::getline(in, line)) {
+        const std::size_t ind = line.find_first_not_of(' ');
+        if (indent == std::string::npos) {
+            if (line.find(header) != std::string::npos) {
+                indent = ind;
+                out = line + "\n";
+            }
+            continue;
+        }
+        if (ind == std::string::npos || ind <= indent) break;
+        out += line + "\n";
+    }
+    return out;
+}
+
 /* Build a synthetic OptimizerSpec with explicit bounds (no optimap, so
  * generators see the bounds we set without depending on a full
  * descriptor configuration). */
@@ -1320,12 +1363,72 @@ ENDOPTIMIZER
     const std::string body = ss.str();
     CHECK(body.find("Init strategy:") != std::string::npos);
     CHECK(body.find("SOBOL 4") != std::string::npos);
+    /* The INIT block's K_TOTAL under its name (it read "INIT_K", the
+     * retired key the parser refuses). */
+    CHECK(journal_block(body, "Init strategy:").find("K_TOTAL           : 4") !=
+          std::string::npos);
+    CHECK(body.find("INIT_K") == std::string::npos);
     CHECK(body.find("Run policy:") != std::string::npos);
     CHECK(body.find("MULTISTART") != std::string::npos);
     CHECK(body.find("BUDGET_PER_START") != std::string::npos);
     CHECK(body.find("NOISE.AUTO") != std::string::npos);
 
     std::error_code ec; std::filesystem::remove(tmp_log, ec);
+}
+
+TEST_CASE("The journal's run policy lists the RESTART block's METHOD chain, "
+          "K_TOTAL, SEED and WARM_ON_MISMATCH",
+          "[HPO][hpo_log][run_policy]")
+{
+    /* Pins: under "RESTART init strategy:" the run policy prints the
+     * RESTART block as the INIT block is printed: its METHOD chain, or
+     * "(default -- CONFIG only)" without one (a restart then starts from
+     * the CONFIG point), its K_TOTAL, SEED and WARM_ON_MISMATCH; and an
+     * INIT block's K_TOTAL and SEED appear under those names.
+     * Before the fix: the RESTART block printed only its METHOD chain, and
+     * no "RESTART init strategy:" line at all without one, so SEED 77,
+     * K_TOTAL 2 and WARM_ON_MISMATCH error appeared nowhere; the INIT
+     * block's SEED read "INIT_SEED : 9" (the retired key name). */
+    std::string method;
+    SECTION("with a METHOD chain") { method = "    METHOD LHS 3\n"; }
+    SECTION("without a METHOD line") {}
+    StrategyTempFile cfg(R"(OPTIMIZER
+INIT
+  METHOD RANDOM 1
+  SEED 9
+ENDINIT
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 50
+  RESTART
+    AFTER_STAGNATION 3
+    MAX 1
+)" + method + R"(    K_TOTAL 2
+    SEED 77
+    WARM_ON_MISMATCH error
+  ENDRESTART
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    const std::string journal = optimizer_section(trg.spec);
+    INFO(journal);
+    const std::string restart = journal_block(journal, "RESTART init strategy:");
+    REQUIRE_FALSE(restart.empty());
+    if (method.empty())
+        CHECK(restart.find("(default -- CONFIG only)") != std::string::npos);
+    else
+        CHECK(restart.find("[1] LHS 3") != std::string::npos);
+    CHECK(restart.find("K_TOTAL           : 2") != std::string::npos);
+    CHECK(restart.find("SEED              : 77") != std::string::npos);
+    CHECK(restart.find("WARM_ON_MISMATCH  : error") != std::string::npos);
+    const std::string init = journal_block(journal, "Init strategy:");
+    CHECK(init.find("SEED              : 9") != std::string::npos);
+    CHECK(journal.find("INIT_SEED") == std::string::npos);
+    CHECK(journal.find("INIT_K") == std::string::npos);
 }
 
 TEST_CASE("HPOLog::set_status feeds finish() when status is empty",
