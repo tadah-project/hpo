@@ -1028,6 +1028,8 @@ HPO_Host<P,R>::tls_ws_{};
 
 template<class P, class R>
 thread_local bool HPO_Host<P,R>::tls_trainer_theta_stale_ = false;
+template<class P,class R>
+thread_local std::string HPO_Host<P,R>::tls_untrained_why_;
 
 template<class P, class R>
 thread_local typename HPO_Host<P,R>::TrainerCache
@@ -2940,6 +2942,8 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         /* The trainer slot still holds the previous feasible theta; the
          * next analytical_gradient() must not read it as "current x". */
         tls_trainer_theta_stale_ = true;
+        tls_untrained_why_ = "the candidate was rejected before training (" +
+                             what + "): it has no fit to differentiate";
         /* Stagnation check (parity with post_lammps_finalize): an
          * all-infeasible run must still trip StagnationStop -- its catch
          * submits r with the real graded loss. */
@@ -3017,6 +3021,8 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * differences instead of differentiating that state (on lists that may
      * not cover p's cutoff). */
     tls_trainer_theta_stale_ = true;
+    tls_untrained_why_ = "its training did not complete: there is no fit "
+                         "to differentiate";
     tls_rebuilt_lists_.reset();
     {
         /* Every evaluation trains a Trainer built from its own candidate
@@ -3056,6 +3062,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     mlip::Trainer& host = *tls_trainer_cache_.trainer;
     /* Training succeeded: the trainer slot reflects theta = p again. */
     tls_trainer_theta_stale_ = false;
+    tls_untrained_why_.clear();
     t_train_end = std::chrono::high_resolution_clock::now();
     stage_watchdog::leave(r.iter, "train", _stage_log);
 
@@ -4030,6 +4037,16 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
  * HPOTargets and returns the gradient. Keeping the plumbing as a free
  * function makes it testable without HPO_Host's full data scaffolding
  * (DBFILE / config.hpo / val.tadah). */
+template<class P, class R>
+std::string HPO_Host<P,R>::analytical_gradient_gap() const
+{
+    if (!slot_is_mine())
+        return "this thread holds no trained model of this run's evaluation "
+               "at this point";
+    if (tls_trainer_theta_stale_) return tls_untrained_why_;
+    return {};
+}
+
 template<class P, class R>
 bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                                         std::vector<int>& needs_fd) const
