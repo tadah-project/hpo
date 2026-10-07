@@ -13,12 +13,12 @@
 // Lattice-constant (λ≠0) parity is Phase 3.7's job and depends on the
 // Hessian sametag fix logged as 3.6 follow-up.
 //
-// Hidden by default (`[.][!benchmark]` like the rest of the LAMMPS-
-// driven cases) so CI's default sweep doesn't pay the LAMMPS startup
-// cost. Run manually with:
-//   ./test_hpo "[phase3_pilot]" --benchmark-samples 1
+// Hidden (`[.][!benchmark]` like the rest of the LAMMPS-driven cases), so
+// not discovered: the eight cases run in the CTest entry hpo_phase3_pilot
+// (label bench), `test_hpo "[phase3_pilot],[phase3_orchestrator]"`, on the
+// potential of bench_pot.h (the shipped tests/data/bench_ta.tadah unless
+// TADAH_BENCH_POT names another).
 
-#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
 #include "bench_pot.h"
@@ -218,9 +218,7 @@ TEST_CASE("phase3_pilot — chain rule on cohesive E per atom matches "
           "the closed-form (Σ aeds) / N for L2 loss",
           "[phase3_pilot][phase3][.][!benchmark]")
 {
-    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
-    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
-    const std::string& pot_path = pot.path;
+    const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
 
     tadah::core::Context pot_ctx;
@@ -322,9 +320,7 @@ TEST_CASE("phase3_pilot — pair_tadah dvirial_dW matches FD of Σ aed under "
           "iso strain to 1e-5 relative",
           "[phase3_pilot][phase3][.][!benchmark]")
 {
-    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
-    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
-    const std::string& pot_path = pot.path;
+    const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
     tadah::core::Context pot_ctx;
     REQUIRE_NOTHROW(pot_ctx = tadah::core::CoreUserConfigParser().parse(pot_path));
@@ -485,9 +481,7 @@ TEST_CASE("phase3_pilot — pair_tadah Voigt-6 dvirial_dW matches FD of "
           "Σ aed under each Voigt strain to 1e-4 relative (Phase 3.7D)",
           "[phase3_pilot][phase3][.][!benchmark]")
 {
-    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
-    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
-    const std::string& pot_path = pot.path;
+    const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
     tadah::core::Context pot_ctx;
     REQUIRE_NOTHROW(pot_ctx = tadah::core::CoreUserConfigParser().parse(pot_path));
@@ -681,9 +675,7 @@ TEST_CASE("phase3_pilot — adjoint snapshot is captured at the post-"
           "central-diff sweep",
           "[phase3_pilot][phase3][.][!benchmark]")
 {
-    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
-    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
-    const std::string& pot_path = pot.path;
+    const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
     tadah::core::Context pot_ctx;
     REQUIRE_NOTHROW(pot_ctx = tadah::core::CoreUserConfigParser().parse(pot_path));
@@ -739,9 +731,7 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW matches FD over W[c] "
           "to 1e-4 relative (Phase 3.7C)",
           "[phase3_pilot][phase3][.][!benchmark]")
 {
-    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
-    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
-    const std::string& pot_path = pot.path;
+    const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
     tadah::core::Context pot_ctx_base;
     REQUIRE_NOTHROW(pot_ctx_base =
@@ -838,10 +828,9 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW matches FD over W[c] "
 
     /* ------- FD reference: one selected W component ------- */
 
-    /* Pick a W component with non-trivial magnitude. The pot.tadah's
-     * WEIGHTS[0] is the bias/intercept (~1500 for Ta); WEIGHTS[2] is a
-     * 2-body radial coefficient with O(700) magnitude — a robust
-     * choice for FD precision. */
+    /* Pick a W component with non-trivial magnitude: WEIGHTS[2], the
+     * third D2_Blip coefficient of the shipped potential (-10.48; the
+     * potential these cases were written against had O(700) there). */
     const int c_fd = 2;
     const double w_c0 = w_base[c_fd];
     /* h_w sweep: scan a couple of step sizes and take the one with
@@ -851,12 +840,15 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW matches FD over W[c] "
      * We want |Δlx|/h_w ~ stable and |Δlx| > 1e-5 · lx_0 to stay above
      * the minimize floor.
      *
-     * Pre-sweep results on a 16-atom BCC Ta with this pot:
+     * Pre-sweep results on a 16-atom BCC Ta with the potential these
+     * cases were written against:
      *   1e-3·|W| → 57% rel (deep into cubic)
      *   1e-4·|W| → ~5% rel (still cubic-dominated)
      *   1e-5·|W| → ~1e-3 rel (linear regime, minor noise)
      *   1e-6·|W| → noise floor too high
-     * → 1e-5·|W| is the sweet spot. */
+     * → 1e-5·|W| is the sweet spot. With the shipped potential the
+     * relative error is 6.3e-5 at 1e-2·|W| and 6.0e-6 to 6.5e-6 from
+     * 1e-3·|W| to 1e-7·|W| (measured 2026-10-07). */
     const double h_w = 1.0e-5 * std::abs(w_c0);
     REQUIRE(h_w > 0.0);
 
@@ -875,8 +867,9 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW matches FD over W[c] "
     const double dlx_dW_anal_c = dlx_dW_anal(c_fd);
 
     /* Tolerance: 1e-4 relative. Observed at the chosen h_w: ~3e-5
-     * relative. The step-size sweep documented above bounds the
-     * cubic-noise term at <1e-4 for this h. */
+     * relative with the potential the case was written against, 6.0e-6
+     * with the shipped one. The step-size sweep documented above bounds
+     * the cubic-noise term at <1e-4 for this h. */
     const double diff   = std::abs(dlx_dW_anal_c - dlx_dW_fd_c);
     const double denom  = std::max(1.0e-6, std::abs(dlx_dW_fd_c));
     const double relerr = diff / denom;
@@ -917,9 +910,7 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW via Voigt-6 chain "
           "matches FD over W[c] to 1e-4 relative (Phase 3.7E)",
           "[phase3_pilot][phase3][.][!benchmark]")
 {
-    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
-    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
-    const std::string& pot_path = pot.path;
+    const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
     tadah::core::Context pot_ctx_base;
     REQUIRE_NOTHROW(pot_ctx_base =
@@ -1057,7 +1048,9 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW via Voigt-6 chain "
      * crystal: each is `±virial(±h_strain)` with h_strain=1e-5). The
      * 6-component λ solve and the 6-row dvirial_dW contraction add
      * further noise channels. Observed at h_w = 1e-5·|W| on this
-     * config: ~1.3e-4 relative.
+     * config: ~1.3e-4 relative with the potential the case was written
+     * against; 3.3e-6 with the shipped one (2.7e-6 to 3.3e-6 from
+     * 1e-3·|W| to 1e-7·|W|, 5.4e-5 at 1e-2·|W|).
      *
      * 5e-4 leaves comfortable headroom against natural variation
      * across descriptor types / cells / step-sizes while staying tight
@@ -1089,9 +1082,7 @@ TEST_CASE("phase3_orchestrator — SimsGradProvider lambda body matches "
           "the closed-form on the pilot script (helpers + populate + chain)",
           "[phase3_orchestrator][phase3][.][!benchmark]")
 {
-    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
-    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
-    const std::string& pot_path = pot.path;
+    const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
 
     tadah::core::Context pot_ctx;
@@ -1205,9 +1196,7 @@ TEST_CASE("phase3_orchestrator — hot-var script analytical path: "
           "the closed-form (Phase 3.7B-warmstart)",
           "[phase3_orchestrator][phase3][.][!benchmark]")
 {
-    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
-    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
-    const std::string& pot_path = pot.path;
+    const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
     tadah::core::Context pot_ctx;
     REQUIRE_NOTHROW(pot_ctx = tadah::core::CoreUserConfigParser().parse(pot_path));

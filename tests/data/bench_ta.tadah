@@ -1,0 +1,58 @@
+# The Ta potential of HPO's LAMMPS-driven test cases (bench_pot.h):
+# test_lammps_hessian.cpp, test_hpo_phase3_pilot.cpp, bench_pair_tadah.cpp
+# (CTest hpo_lammps_hessian, hpo_phase3_pilot, hpo_bench_pair_tadah;
+# ctest -L bench). TADAH_BENCH_POT names another one.
+#
+# Provenance: the lines below are Tadah.MLIP's Quick Start potential,
+# docs/source/quickstart/pot.tadah at Tadah.MLIP commit c91e8ef (2026-10-07),
+# byte for byte (sha256 of those lines: 463e8ec88408c009b845d51e6f3d88bb
+# cc123b60cddd64a3ec3e73092cbbe6cf). `tadah train -c config.train` wrote it
+# in that directory: D2_Blip (4 functions, RCUT2B 5.3) + DM_mBlipEnv (5
+# embedding functions, RCUTMB 5.0), Cut_Cos, M_KRR Kern_Linear, 9 weights,
+# fitted to the energies and stresses of the Quick Start's db.train (500
+# bcc Ta MD snapshots). Tadah.MLIP's tadah_quickstart_reproduces_pot checks that
+# training reproduces it there; this copy is kept as it is.
+#
+# Why this one: the cases need a linear model (pair_style tadah's adjoint
+# capture), no EAM fast path, at least 3 weights (the lattice cases perturb
+# WEIGHTS[2] = -10.48) and a physical bcc Ta: in the 4-atom cell of
+# test_lammps_hessian.cpp it relaxes to a = 3.2944 A with C11 = 212 GPa and
+# C12 = 91 GPa (the box block of the Hessian, V = 71.51 A^3). The HPO
+# examples' model (examples/common/config.tadah, energies only) has
+# C12 = -103 GPa there.
+ATOM              Ta
+BIAS              false
+CEMBFUNC          0.5   0.75   1   1.25   1.5
+CGRID2B           1   2.43333333333333357   3.8666666666666667   5.29999999999999982
+CGRIDMB           2.87999999999999989
+DIMER             false   0   false
+ESHIFT_ATOM       false
+ESHIFT_DBATOM     false
+EWEIGHT           1
+FORCE             false
+FWEIGHT           1
+INIT2B            true
+INITMB            true
+LAMBDA            9.99999999999999955e-08
+LSCALE            1
+MODEL             M_KRR   Kern_Linear   1
+NORM              false
+OALGO             1
+RCTYPE2B          Cut_Cos
+RCTYPEMB          Cut_Cos
+RCUT2B            5.29999999999999982
+RCUTENV           0.599999999999999978
+RCUTMB            5
+SEMBFUNC          2   2   2   2   2
+SGRID2B           0.100000000000000033   0.21544346900318842   0.464158883361277919   0.999999999999999889
+SGRIDMB           8
+STRESS            true
+SWEIGHT           1
+TYPE2B            D2_Blip   4   4   Ta   Ta
+TYPEMB            DM_mBlipEnv   0   1   1   5   5   Ta   Ta
+UNCERTAINTY       false
+WATOM             0.308999999999999997
+WDBFILE_AUTO      0
+WEIGHTS           133.357774127816555   -123.755171524655708   -10.4804763244958963   -18.0240635733812411   -6.3685917658913116   4.13446130558423164   -8.25236089850869803   3.95181987589451467   -6.04877887227442557
+ZERO_COM_FORCE    false
+
