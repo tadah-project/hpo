@@ -490,6 +490,51 @@ TEST_CASE_METHOD(PTFixture,
 }
 
 TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: refit_range_report.dat's F row "
+                 "describes the compact fit, not the dense fit's tail basis",
+                 "[compact][refit][mode_keys]") {
+  /* Pins: after a compact fit the F row of refit_range_report.dat has the
+   * window of the log's "embedding fit window rho <= X", [0, rho_reach],
+   * and the note "above fit_window_hi the setfl carries the ORIGINAL table
+   * (offset-matched); control: REFIT_REACH_SMIN, REFIT_REACH_MARGIN" (the
+   * compact fit joins refit.eam to the table there, EAMRefit::set_rho_join),
+   * and the report names no "small uniform basis".
+   * Before the fix: the F note was the dense fit's, "tail keeps a small
+   * uniform basis; control: REFIT_REACH_MARGIN", a basis the compact fit
+   * does not have. */
+  ScopedTempDir tmp;
+  write_synth_eam("synth.eam.alloy");
+  const auto [what, logged] = run_compact(compact_context("SIGNED"));
+  INFO(logged);
+  REQUIRE(what == "");
+  // the log's window, printed to 4 decimals
+  const std::string mark = "embedding fit window rho <= ";
+  const auto at = logged.find(mark);
+  REQUIRE(at != std::string::npos);
+  const double rho_reach = std::stod(logged.substr(at + mark.size()));
+  const std::string report = slurp("refit_range_report.dat");
+  INFO(report);
+  std::istringstream in(report);
+  std::string F_row;
+  for (std::string line; std::getline(in, line);)
+    if (line.rfind("F ", 0) == 0) F_row = line;
+  REQUIRE_FALSE(F_row.empty());
+  std::istringstream ls(F_row.substr(1));
+  double full_lo = -1, full_hi = -1, win_lo = -1, win_hi = -1;
+  ls >> full_lo >> full_hi >> win_lo >> win_hi;
+  CHECK(full_lo == 0.0);
+  CHECK(win_lo == 0.0);
+  CHECK(win_hi == Approx(rho_reach).margin(1e-4));
+  CHECK(win_hi < full_hi);
+  const auto hash = F_row.find("# ");
+  REQUIRE(hash != std::string::npos);
+  CHECK(F_row.substr(hash + 2) ==
+        "above fit_window_hi the setfl carries the ORIGINAL table "
+        "(offset-matched); control: REFIT_REACH_SMIN, REFIT_REACH_MARGIN");
+  CHECK(report.find("small uniform basis") == std::string::npos);
+}
+
+TEST_CASE_METHOD(PTFixture,
                  "tadah refit compact: the HPO engine has the compact fitter "
                  "and accepts the ends of the compact numbers' ranges",
                  "[compact][refit][mode_keys][strict_numbers]") {
