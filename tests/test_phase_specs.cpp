@@ -328,6 +328,46 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
         c.set(s);
         CHECK_THAT(error_of(s), Catch::Contains(c.message));
     }
+
+    /* Pins: validate_backend() -- the check each driver applies when it
+     * starts, for a spec built outside the parser -- refuses a key the
+     * backend never reads: POPULATION on TADAH:RANDOM, SEED on TADAH:GRID
+     * and CERES, VECTOR_ARR on DLIB:GFS, a tolerance NLopt's GN_ESCH never
+     * tests, and an INNER spec's STOPVAL, which NLopt replaces with the
+     * enclosing run's.
+     * Before the fix: error_of() was "" for each (the driver ran with the
+     * key and ignored it). */
+    for (const auto& c : std::vector<Case>{
+             {"TADAH", "RANDOM", [](OptimizerSpec& s) { s.pop = 8; },
+              "TADAH:RANDOM does not use POPULATION; remove it (it is read "
+              "by NLOPT:GD_MLSL, "},
+             {"TADAH", "GRID", [](OptimizerSpec& s) { s.seed = 3; },
+              "TADAH:GRID does not use SEED: it draws no random numbers; "
+              "remove it"},
+             {"DLIB", "GFS", [](OptimizerSpec& s) { s.vector_storage = 5; },
+              "DLIB:GFS does not use VECTOR_ARR; remove it (it is read by "
+              "NLOPT:LD_LBFGS, "},
+             {"NLOPT", "GN_ESCH",
+              [](OptimizerSpec& s) { s.stop.ftol_rel = 1e-6; },
+              "NLOPT:GN_ESCH does not support FTOL_REL: NLopt's global search "
+              "tests no tolerance; stop it with MAXEVAL, MAXTIME or STOPVAL"},
+             {"NLOPT", "AUGLAG",
+              [](OptimizerSpec& s) {
+                  s.inner = std::make_unique<OptimizerSpec>();
+                  s.inner->lib = "NLOPT";
+                  s.inner->algo = "LN_BOBYQA";
+                  s.inner->stop.stopval = 0.1;
+              },
+              "NLopt INNER spec with a STOPVAL: NLopt's MLSL and AUGLAG "
+              "replace the INNER search's STOPVAL with the enclosing "
+              "block's; set STOPVAL on the enclosing block"},
+             {"CERES", "LBFGS", [](OptimizerSpec& s) { s.seed = 3; },
+              "CERES:LBFGS does not support SEED"}}) {
+        INFO(c.lib << ":" << c.algo << " -> " << c.message);
+        auto s = with(c.lib, c.algo);
+        c.set(s);
+        CHECK_THAT(error_of(s), Catch::StartsWith(c.message));
+    }
 }
 
 TEST_CASE("backend rules: a backend with no convergence test and no finite "
@@ -403,9 +443,22 @@ TEST_CASE("backend rules: a backend with no convergence test and no finite "
           "TADAH:RANDOM needs a stop: uniform random search has no "
           "convergence test and runs until it is interrupted; set MAXEVAL, "
           "MAXTIME or STOPVAL (it honours no tolerance)");
-    /* A tolerance a backend does not test is no stop. */
+    /* Pins: a tolerance a backend does not test is no stop, and it is
+     * refused for itself, before the missing stop, naming the stops the
+     * backend honours.
+     * Before the fix: it was accepted and counted as no stop, so the spec
+     * was refused as "TADAH:RANDOM needs a stop: ...", and with MAXEVAL it
+     * ran, ignoring it. */
     random.stop.ftol_rel = 1e-6;
-    CHECK_THAT(error_of(random), Catch::StartsWith("TADAH:RANDOM needs a stop"));
+    CHECK(error_of(random) ==
+          "TADAH:RANDOM does not support FTOL_REL: uniform random search has "
+          "no convergence test to apply it to; stop it with MAXEVAL, MAXTIME "
+          "or STOPVAL");
+    random.stop.maxeval = 5;
+    CHECK(error_of(random) ==
+          "TADAH:RANDOM does not support FTOL_REL: uniform random search has "
+          "no convergence test to apply it to; stop it with MAXEVAL, MAXTIME "
+          "or STOPVAL");
     auto pt = local_spec(1);
     pt.lib = "TADAH";
     pt.algo = "ANNEAL_PT";

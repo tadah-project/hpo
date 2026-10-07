@@ -1167,6 +1167,19 @@ const std::string kNoTolerance =
 const std::string kDirectXtol =
     "; DIRECT's XTOL_REL and XTOL_ABS end it only once every rectangle is "
     "that small, after roughly (1/XTOL_REL)^n evaluations in n dimensions";
+/* The backends that read POPULATION and VECTOR_ARR, as the refusal of a
+ * backend that does not lists them (sorted): ANNEAL_PA's walkers, and
+ * NLopt's stochastic population (POP() in nlopt 2.10's optimize.c: CRS2,
+ * ISRES, ESCH, the six MLSL forms, GD_STOGO_RAND) and the Luksan
+ * algorithms' vector storage (LD_LBFGS, LD_VAR1/2, LD_TNEWTON*). */
+const std::string kPopulationReaders =
+    "NLOPT:GD_MLSL, NLOPT:GD_MLSL_LDS, NLOPT:GD_STOGO_RAND, NLOPT:GN_CRS2_LM, "
+    "NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, "
+    "NLOPT:G_MLSL, NLOPT:G_MLSL_LDS, TADAH:ANNEAL_PA";
+const std::string kVectorStorageReaders =
+    "NLOPT:LD_LBFGS, NLOPT:LD_TNEWTON, NLOPT:LD_TNEWTON_PRECOND, "
+    "NLOPT:LD_TNEWTON_PRECOND_RESTART, NLOPT:LD_TNEWTON_RESTART, "
+    "NLOPT:LD_VAR1, NLOPT:LD_VAR2";
 
 }  // namespace
 
@@ -1234,20 +1247,19 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
         cases.push_back({"NLOPT:" + algo + " without a stop", nlopt(algo, ""),
                          top + "NLOPT:" + algo + " needs a stop: ",
                          kNoTolerance});
-    /* A tolerance the algorithm does not test is no stop. */
-    cases.push_back({"NLOPT:GN_ESCH with FTOL_REL",
-                     nlopt("GN_ESCH", "    FTOL_REL 1e-6\n"),
-                     top + "NLOPT:GN_ESCH needs a stop: ", kNoTolerance});
-    /* MLSL hands its tolerances to its local searches only. */
+    /* MLSL hands its tolerances to its local searches only: without an
+     * INNER block to NLopt's default local optimiser. */
     for (const std::string algo :
          {"GN_MLSL", "GN_MLSL_LDS", "GD_MLSL", "GD_MLSL_LDS"})
         cases.push_back({"NLOPT:" + algo + " with XTOL_REL",
                          nlopt(algo, "    XTOL_REL 1e-4\n"),
                          top + "NLOPT:" + algo + " needs a stop: ",
                          kNoTolerance});
+    /* The INNER block's MAXEVAL ends each local search, not the MLSL
+     * loop. */
     for (const std::string algo : {"G_MLSL", "G_MLSL_LDS"})
         cases.push_back({"NLOPT:" + algo + " with an INNER block",
-                         nlopt(algo, "    FTOL_REL 1e-6\n    INNER\n"
+                         nlopt(algo, "    INNER\n"
                                      "      LIB NLOPT\n      ALGO LN_BOBYQA\n"
                                      "      MAXEVAL 5\n    ENDINNER\n"),
                          top + "NLOPT:" + algo + " needs a stop: ",
@@ -1257,10 +1269,6 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
                      top + "TADAH:ANNEAL_PT needs a stop: ",
                      "; set MAXEVAL, MAXTIME, STOPVAL or a positive tolerance "
                      "it honours (FTOL_REL, FTOL_ABS)"});
-    cases.push_back({"TADAH:RANDOM with a tolerance only",
-                     plain + "    LIB TADAH\n    ALGO RANDOM\n"
-                             "    FTOL_REL 1e-6\n",
-                     top + "TADAH:RANDOM needs a stop: ", kNoTolerance});
     /* DLIB:GFS reads FTOL_ABS as its solver's precision, which stops
      * nothing. */
     cases.push_back({"DLIB:GFS with FTOL_ABS only",
@@ -1300,13 +1308,6 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
                      top + "the INNER search of NLOPT:AUGLAG "
                            "(NLOPT:GN_DIRECT_L) needs a stop: ",
                      auglag_direct});
-    cases.push_back({"NLOPT:AUGLAG with an INNER STOPVAL (NLopt replaces it)",
-                     nlopt("AUGLAG", "    INNER\n      LIB NLOPT\n"
-                                     "      ALGO GN_DIRECT_L\n"
-                                     "      STOPVAL 0.1\n    ENDINNER\n"),
-                     top + "the INNER search of NLOPT:AUGLAG "
-                           "(NLOPT:GN_DIRECT_L) needs a stop: ",
-                     auglag_direct});
     cases.push_back({"NLOPT:AUGLAG with an INNER XTOL_REL of 0",
                      nlopt("AUGLAG", "    INNER\n      LIB NLOPT\n"
                                      "      ALGO GN_DIRECT_L\n"
@@ -1314,10 +1315,13 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
                      top + "the INNER search of NLOPT:AUGLAG "
                            "(NLOPT:GN_DIRECT_L) needs a stop: ",
                      auglag_direct});
-    cases.push_back({"NLOPT:AUGLAG with an INNER NLOPT:GN_ESCH and a tolerance",
-                     nlopt("AUGLAG", "    FTOL_REL 1e-6\n    INNER\n"
-                                     "      LIB NLOPT\n      ALGO GN_ESCH\n"
-                                     "      FTOL_REL 1e-6\n    ENDINNER\n"),
+    /* An INNER search that tests no tolerance takes MAXEVAL or MAXTIME
+     * only. Pins: this message without the tolerances the case below
+     * wrote. Before the fix: passes as well (a pin of the INNER search's
+     * stop, which the tolerances no longer reach). */
+    cases.push_back({"NLOPT:AUGLAG with an INNER NLOPT:GN_ESCH, no stop",
+                     nlopt("AUGLAG", "    INNER\n      LIB NLOPT\n"
+                                     "      ALGO GN_ESCH\n    ENDINNER\n"),
                      top + "the INNER search of NLOPT:AUGLAG (NLOPT:GN_ESCH) "
                            "needs a stop: ",
                      "; set MAXEVAL or MAXTIME in the INNER block, or MAXEVAL, "
@@ -1343,6 +1347,68 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
         CHECK_THAT(v.startup,
                    Catch::StartsWith(c.starts) && Catch::EndsWith(c.ends));
     }
+
+    /* Pins: a tolerance the backend never tests is refused for itself, with
+     * the stops it honours, and an INNER block's STOPVAL at its line (the
+     * test case "NLopt rejects a tolerance, POPULATION or VECTOR_ARR its
+     * algorithm never reads" below has every backend).
+     * Before the fix: each was accepted, so it counted as no stop: the
+     * first four were refused as "NLOPT:GN_ESCH needs a stop: ...",
+     * "NLOPT:G_MLSL needs a stop: ...", "TADAH:RANDOM needs a stop: ..."
+     * and "the INNER search of NLOPT:AUGLAG (NLOPT:GN_ESCH) needs a stop:
+     * ...", and the INNER STOPVAL parsed, replaced by the enclosing
+     * block's, and the run was refused as "the INNER search of NLOPT:AUGLAG
+     * (NLOPT:GN_DIRECT_L) needs a stop: ...". */
+    struct Exact { std::string what, body, message; };
+    const std::string mlsl_inner =
+        " does not support FTOL_REL with an INNER block: MLSL's multistart "
+        "loop tests no tolerance, and NLopt passes the block's tolerances to "
+        "no INNER search; set it in the INNER block, whose local search "
+        "tests it";
+    for (const auto& c : std::vector<Exact>{
+             {"NLOPT:GN_ESCH with FTOL_REL",
+              nlopt("GN_ESCH", "    FTOL_REL 1e-6\n"),
+              top + "NLOPT:GN_ESCH does not support FTOL_REL: NLopt's global "
+                    "search tests no tolerance; stop it with MAXEVAL, MAXTIME "
+                    "or STOPVAL"},
+             {"NLOPT:G_MLSL with an INNER block and FTOL_REL",
+              nlopt("G_MLSL", "    FTOL_REL 1e-6\n    INNER\n"
+                              "      LIB NLOPT\n      ALGO LN_BOBYQA\n"
+                              "      MAXEVAL 5\n    ENDINNER\n"),
+              top + "NLOPT:G_MLSL" + mlsl_inner},
+             {"NLOPT:G_MLSL_LDS with an INNER block and FTOL_REL",
+              nlopt("G_MLSL_LDS", "    FTOL_REL 1e-6\n    INNER\n"
+                                  "      LIB NLOPT\n      ALGO LN_BOBYQA\n"
+                                  "      MAXEVAL 5\n    ENDINNER\n"),
+              top + "NLOPT:G_MLSL_LDS" + mlsl_inner},
+             {"TADAH:RANDOM with a tolerance only",
+              plain + "    LIB TADAH\n    ALGO RANDOM\n    FTOL_REL 1e-6\n",
+              top + "TADAH:RANDOM does not support FTOL_REL: uniform random "
+                    "search has no convergence test to apply it to; stop it "
+                    "with MAXEVAL, MAXTIME or STOPVAL"},
+             {"NLOPT:AUGLAG with an INNER NLOPT:GN_ESCH and a tolerance",
+              nlopt("AUGLAG", "    FTOL_REL 1e-6\n    INNER\n"
+                              "      LIB NLOPT\n      ALGO GN_ESCH\n"
+                              "      FTOL_REL 1e-6\n    ENDINNER\n"),
+              top + "NLOPT:AUGLAG does not support FTOL_REL with an INNER "
+                    "block: AUGLAG ends when its INNER search ends (HPO sets "
+                    "no constraint) and tests the block's tolerances only to "
+                    "name that ending, and NLopt passes them to no INNER "
+                    "search; set it in the INNER block, whose local search "
+                    "tests it"}}) {
+        INFO(c.what << "\n" << c.body);
+        CHECK(judge(strategy_config(c.body)).startup == c.message);
+    }
+    const std::string inner_stopval =
+        nlopt("AUGLAG", "    INNER\n      LIB NLOPT\n      ALGO GN_DIRECT_L\n"
+                        "      STOPVAL 0.1\n    ENDINNER\n");
+    /* Lines 1-4 are kRoot, OPTIMIZER and STRATEGY; the INNER block's
+     * STOPVAL is line 11. */
+    CHECK(parse_error(strategy_config(inner_stopval)) ==
+          "Error on line 11: STOPVAL is not accepted inside an INNER block: "
+          "NLopt's MLSL and AUGLAG replace the INNER search's STOPVAL with the "
+          "enclosing block's; set STOPVAL on the enclosing STRATEGY block\n"
+          "Line:       STOPVAL 0.1");
 
     /* The whole message of one NLopt global search. */
     CHECK(judge(strategy_config(nlopt("GN_DIRECT", ""))).startup ==
@@ -1393,14 +1459,329 @@ TEST_CASE("startup validation: TADAH:RANDOM/GRID and DLIB:GFS reject what "
         INFO(c.what << "\n" << c.body);
         CHECK(judge(strategy_config(c.body)).startup == c.message);
     }
-    /* The stops they honour. */
+    /* Pins: RANDOM and GRID refuse every tolerance, POPULATION and
+     * VECTOR_ARR, GRID also SEED, and GFS POPULATION and VECTOR_ARR -- keys
+     * neither run_random, run_grid nor find_min_global reads -- with the
+     * stops they honour or the backends that read the key.
+     * Before the fix: each was accepted (startup ""), the journal listed it
+     * as if it applied (`ftol_rel : 1.0e-03` among RANDOM's stop criteria,
+     * `Random seed : 7` for GRID, `Population size : 10` for GFS), and it
+     * did nothing. */
+    const std::string random_why =
+        ": uniform random search has no convergence test to apply it to; "
+        "stop it with MAXEVAL, MAXTIME or STOPVAL";
+    const std::string grid_why =
+        ": the grid search has no convergence test to apply it to; stop it "
+        "with MAXEVAL, MAXTIME or STOPVAL";
+    const std::string population =
+        " does not use POPULATION; remove it (it is read by " +
+        kPopulationReaders + ")";
+    const std::string vector_storage =
+        " does not use VECTOR_ARR; remove it (it is read by " +
+        kVectorStorageReaders + ")";
+    std::vector<Case> unread;
+    for (const std::string key :
+         {"FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"}) {
+        unread.push_back({"RANDOM " + key, random + "    " + key + " 1e-3\n",
+                          top + "TADAH:RANDOM does not support " + key +
+                              random_why});
+        unread.push_back({"GRID " + key, grid + "    " + key + " 1e-3\n",
+                          top + "TADAH:GRID does not support " + key +
+                              grid_why});
+    }
+    for (const auto& b : std::vector<std::pair<std::string, std::string>>{
+             {"TADAH:RANDOM", random}, {"TADAH:GRID", grid},
+             {"DLIB:GFS", gfs}}) {
+        unread.push_back({b.first + " POPULATION",
+                          b.second + "    POPULATION 10\n",
+                          top + b.first + population});
+        unread.push_back({b.first + " VECTOR_ARR",
+                          b.second + "    VECTOR_ARR 5\n",
+                          top + b.first + vector_storage});
+    }
+    unread.push_back({"GRID SEED", grid + "    SEED 7\n",
+                      top + "TADAH:GRID does not use SEED: it draws no random "
+                            "numbers; remove it"});
+    for (const auto& c : unread) {
+        INFO(c.what << "\n" << c.body);
+        CHECK(judge(strategy_config(c.body)).startup == c.message);
+    }
+    /* The stops they honour, RANDOM's SEED, and DLIB:GFS's SEED, which
+     * find_min_global does not read either: it is reported with a warning
+     * when the run starts (existing configurations set it), not refused. */
     for (const std::string& body : std::vector<std::string>{
              random + "    MAXTIME 60\n    STOPVAL 0.1\n",
              grid + "    MAXTIME 60\n    STOPVAL 0.1\n",
-             gfs + "    MAXTIME 60\n    STOPVAL 0.1\n    FTOL_ABS 1e-3\n"}) {
+             gfs + "    MAXTIME 60\n    STOPVAL 0.1\n    FTOL_ABS 1e-3\n",
+             random + "    SEED 7\n", gfs + "    SEED 7\n"}) {
         INFO(body);
         CHECK(judge(strategy_config(body)).startup == "");
     }
+}
+
+/* ======================================================================
+ * NLopt applies every attribute to nlopt::opt (build_nlopt), and an
+ * algorithm ignores those it does not read. A tolerance its search never
+ * tests (nlopt 2.10: esch.c and ags.cc test none, StoGO's NLopt-local path
+ * is compiled out, direct_optimize() takes only XTOL_REL, mlsl.c tests
+ * none and auglag.c tests them only to name an ending its local search
+ * decides, and NLopt hands the block's tolerances only to the local
+ * optimiser it creates without an INNER block), and POPULATION or
+ * VECTOR_ARR on an algorithm without one (optimize.c's POP() and
+ * vector_storage) are refused at startup, naming the phase.
+ * ==================================================================== */
+
+TEST_CASE("startup validation: NLopt rejects a tolerance, POPULATION or "
+          "VECTOR_ARR its algorithm never reads",
+          "[startup_validation][strategy][stop]")
+{
+    /* Pins: the exact message for each algorithm class and key, at the
+     * STRATEGY level and in an INNER block; the keys an algorithm reads
+     * stay accepted.
+     * Before the fix: every rejected configuration was accepted (startup
+     * ""), and the key did nothing (the probes ran each pair with and
+     * without loose tolerances: byte-identical losses; an AUGLAG tolerance
+     * relabelled a MAXEVAL ending XTOL_REACHED). */
+    struct Case { std::string what, body, message; };
+    const std::string top = "the STRATEGY-level optimiser: ";
+    const auto nlopt = [](const std::string& algo, const std::string& extra) {
+        return "    TYPE PLAIN\n    LIB NLOPT\n    ALGO " + algo +
+               "\n    MAXEVAL 20\n" + extra;
+    };
+    const std::string inner_bobyqa =
+        "    INNER\n      LIB NLOPT\n      ALGO LN_BOBYQA\n"
+        "      MAXEVAL 5\n    ENDINNER\n";
+    const std::vector<std::string> tolerances = {"FTOL_REL", "FTOL_ABS",
+                                                 "XTOL_REL", "XTOL_ABS"};
+    std::vector<Case> cases;
+    for (const std::string algo :
+         {"GN_ESCH", "GN_AGS", "GD_STOGO", "GD_STOGO_RAND"})
+        for (const auto& key : tolerances)
+            cases.push_back({algo + " " + key,
+                             nlopt(algo, "    " + key + " 1e-4\n"),
+                             top + "NLOPT:" + algo + " does not support " +
+                                 key + ": NLopt's global search tests no "
+                                 "tolerance; stop it with MAXEVAL, MAXTIME or "
+                                 "STOPVAL"});
+    for (const std::string algo : {"GN_ORIG_DIRECT", "GN_ORIG_DIRECT_L"})
+        for (const std::string key : {"FTOL_REL", "FTOL_ABS", "XTOL_ABS"})
+            cases.push_back({algo + " " + key,
+                             nlopt(algo, "    " + key + " 1e-4\n"),
+                             top + "NLOPT:" + algo + " does not support " +
+                                 key + ": the original DIRECT tests only "
+                                 "XTOL_REL, its volume tolerance; stop it with "
+                                 "MAXEVAL, MAXTIME, STOPVAL or a positive "
+                                 "tolerance it honours (XTOL_REL)"});
+    for (const std::string algo : {"GN_MLSL_LDS", "G_MLSL_LDS"})
+        for (const auto& key : tolerances)
+            cases.push_back({algo + " " + key + " with an INNER block",
+                             nlopt(algo, "    " + key + " 1e-4\n" +
+                                             inner_bobyqa),
+                             top + "NLOPT:" + algo + " does not support " +
+                                 key + " with an INNER block: MLSL's "
+                                 "multistart loop tests no tolerance, and "
+                                 "NLopt passes the block's tolerances to no "
+                                 "INNER search; set it in the INNER block, "
+                                 "whose local search tests it"});
+    for (const std::string algo : {"AUGLAG", "LN_AUGLAG"})
+        for (const auto& key : tolerances)
+            cases.push_back({algo + " " + key + " with an INNER block",
+                             nlopt(algo, "    " + key + " 1e-4\n" +
+                                             inner_bobyqa),
+                             top + "NLOPT:" + algo + " does not support " +
+                                 key + " with an INNER block: AUGLAG ends "
+                                 "when its INNER search ends (HPO sets no "
+                                 "constraint) and tests the block's "
+                                 "tolerances only to name that ending, and "
+                                 "NLopt passes them to no INNER search; set "
+                                 "it in the INNER block, whose local search "
+                                 "tests it"});
+    /* An INNER block's own tolerance, named with the phase; the INNER
+     * search's STOPVAL is the enclosing block's. */
+    cases.push_back({"INNER GN_ESCH FTOL_REL under AUGLAG",
+                     nlopt("AUGLAG", "    INNER\n      LIB NLOPT\n"
+                                     "      ALGO GN_ESCH\n"
+                                     "      FTOL_REL 1e-6\n    ENDINNER\n"),
+                     "the INNER block of the STRATEGY-level optimiser: "
+                     "NLOPT:GN_ESCH does not support FTOL_REL: NLopt's global "
+                     "search tests no tolerance; stop it with MAXEVAL or "
+                     "MAXTIME in the INNER block, or STOPVAL in the enclosing "
+                     "block"});
+    const std::string population =
+        " does not use POPULATION; remove it (it is read by " +
+        kPopulationReaders + ")";
+    const std::string vector_storage =
+        " does not use VECTOR_ARR; remove it (it is read by " +
+        kVectorStorageReaders + ")";
+    cases.push_back({"LN_BOBYQA POPULATION",
+                     nlopt("LN_BOBYQA", "    POPULATION 10\n"),
+                     top + "NLOPT:LN_BOBYQA" + population});
+    cases.push_back({"LD_LBFGS POPULATION",
+                     nlopt("LD_LBFGS", "    POPULATION 10\n"),
+                     top + "NLOPT:LD_LBFGS" + population});
+    cases.push_back({"AUGLAG POPULATION",
+                     nlopt("AUGLAG", "    POPULATION 10\n" + inner_bobyqa),
+                     top + "NLOPT:AUGLAG" + population});
+    cases.push_back({"LN_BOBYQA VECTOR_ARR",
+                     nlopt("LN_BOBYQA", "    VECTOR_ARR 5\n"),
+                     top + "NLOPT:LN_BOBYQA" + vector_storage});
+    cases.push_back({"LD_MMA VECTOR_ARR",
+                     nlopt("LD_MMA", "    VECTOR_ARR 5\n"),
+                     top + "NLOPT:LD_MMA" + vector_storage});
+    cases.push_back({"INNER LN_BOBYQA POPULATION under GN_MLSL_LDS",
+                     nlopt("GN_MLSL_LDS", "    INNER\n      LIB NLOPT\n"
+                                          "      ALGO LN_BOBYQA\n"
+                                          "      POPULATION 10\n"
+                                          "    ENDINNER\n"),
+                     "the INNER block of the STRATEGY-level optimiser: "
+                     "NLOPT:LN_BOBYQA" + population});
+    cases.push_back({"each MULTISTART start: LN_SBPLX VECTOR_ARR",
+                     "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                     "    MAXEVAL 20\n    N_STARTS 2\n    VECTOR_ARR 5\n",
+                     "each MULTISTART start: NLOPT:LN_SBPLX" + vector_storage});
+    for (const auto& c : cases) {
+        INFO(c.what << "\n" << c.body);
+        CHECK(judge(strategy_config(c.body)).startup == c.message);
+    }
+
+    /* What an algorithm reads stays accepted: the tolerances of DIRECT,
+     * CRS2, ISRES and LD_MMA, of MLSL and AUGLAG without an INNER block
+     * (NLopt hands them to its default local optimiser: with GN_MLSL_LDS,
+     * XTOL_REL 1e-4 and 0.5 gave different trajectories), the original
+     * DIRECT's XTOL_REL, POPULATION on a population-based search (example
+     * 14's G_MLSL_LDS), VECTOR_ARR on L-BFGS, and SEED on any NLopt
+     * algorithm (which ones draw random numbers is not checked). */
+    std::vector<std::string> accepted = {
+        nlopt("GN_DIRECT_L", "    XTOL_ABS 1e-4\n"),
+        nlopt("GN_MLSL_LDS", "    XTOL_REL 1e-4\n"),
+        nlopt("GD_MLSL", "    FTOL_REL 1e-6\n    FTOL_ABS 1e-6\n"),
+        nlopt("LN_AUGLAG", "    FTOL_REL 1e-6\n"),
+        nlopt("LD_AUGLAG", "    XTOL_ABS 1e-4\n"),
+        nlopt("GN_ORIG_DIRECT", "    XTOL_REL 1e-4\n"),
+        nlopt("GN_CRS2_LM", "    POPULATION 10\n"),
+        nlopt("GD_STOGO_RAND", "    POPULATION 10\n"),
+        nlopt("GN_ISRES", "    POPULATION 10\n"),
+        nlopt("LD_LBFGS", "    VECTOR_ARR 5\n"),
+        nlopt("LD_TNEWTON_PRECOND", "    VECTOR_ARR 5\n"),
+        nlopt("LN_BOBYQA", "    SEED 3\n"),
+        "    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n    MAXEVAL 120\n"
+        "    POPULATION 5\n    INNER\n      LIB NLOPT\n      ALGO LN_BOBYQA\n"
+        "    ENDINNER\n",
+        nlopt("AUGLAG", "    INNER\n      LIB NLOPT\n      ALGO GN_CRS2_LM\n"
+                        "      POPULATION 10\n      FTOL_REL 1e-6\n"
+                        "    ENDINNER\n")};
+    for (const std::string algo : {"GN_CRS2_LM", "GN_ISRES", "LD_MMA"})
+        for (const auto& key : tolerances)
+            accepted.push_back(nlopt(algo, "    " + key + " 1e-4\n"));
+    for (const auto& body : accepted) {
+        INFO(body);
+        CHECK(judge(strategy_config(body)).startup == "");
+    }
+}
+
+/* ======================================================================
+ * NLopt's AUGLAG, AUGLAG_EQ, G_MLSL and G_MLSL_LDS have no default local
+ * optimiser (OptimizerCaps::default_inner): NLopt refuses them without a
+ * local optimiser ("local optimizer must be specified for AUGLAG",
+ * optimize.c), and an INNER block runs no INNER block of its own.
+ * ==================================================================== */
+
+TEST_CASE("startup validation: NLopt's AUGLAG, AUGLAG_EQ, G_MLSL and "
+          "G_MLSL_LDS need an INNER block",
+          "[startup_validation][strategy][inner]")
+{
+    /* Pins: each of the four without an INNER block, in every phase, and
+     * one of them named in an INNER block, is refused at startup with the
+     * phase and the alternatives; the algorithms with a default local
+     * optimiser run without one; run_inner()'s safety net refuses a spec
+     * built at run time.
+     * Before the fix: startup "" for every refused case; NLopt refused the
+     * run once it had started (exit 1 with "HPOEngine error: local
+     * optimizer must be specified for AUGLAG", after the data were loaded,
+     * and under PRESTAGE after the whole exploration), and an INNER
+     * G_MLSL_LDS or AUGLAG failed after some evaluations with only "nlopt
+     * invalid argument"; require_inner_backend() returned at once without
+     * an INNER block. */
+    const std::string alternatives =
+        "; add INNER ... ENDINNER with LIB NLOPT and a local ALGO such as "
+        "LN_BOBYQA, or use one of NLOPT:GD_MLSL, NLOPT:GD_MLSL_LDS, "
+        "NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:LD_AUGLAG, "
+        "NLOPT:LD_AUGLAG_EQ, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, which run "
+        "LD_MMA or LN_COBYLA without one";
+    const auto needs = [&](const std::string& algo, const std::string& phase) {
+        return "NLOPT:" + algo + " needs an INNER block (" + phase +
+               "): NLopt has no default local optimiser for it" + alternatives;
+    };
+    struct Case { std::string what, body, message; };
+    std::vector<Case> cases;
+    for (const std::string algo : {"AUGLAG", "AUGLAG_EQ", "G_MLSL", "G_MLSL_LDS"})
+        cases.push_back({"PLAIN " + algo,
+                         "    TYPE PLAIN\n    LIB NLOPT\n    ALGO " + algo +
+                             "\n    MAXEVAL 20\n",
+                         needs(algo, "the STRATEGY-level optimiser")});
+    cases.push_back({"MULTISTART AUGLAG",
+                     "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO AUGLAG\n"
+                     "    MAXEVAL 20\n    N_STARTS 2\n",
+                     needs("AUGLAG", "the STRATEGY-level optimiser")});
+    cases.push_back({"PRESTAGE refinement AUGLAG",
+                     "    TYPE PRESTAGE\n    EXPLORE\n      LIB NLOPT\n"
+                     "      ALGO GN_CRS2_LM\n      MAXEVAL 20\n    ENDEXPLORE\n"
+                     "    REFINE\n      LIB NLOPT\n      ALGO AUGLAG\n"
+                     "      MAXEVAL 10\n    ENDREFINE\n",
+                     needs("AUGLAG", "the PRESTAGE refinement")});
+    cases.push_back({"EXPLORE G_MLSL",
+                     "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                     "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
+                     "      ALGO G_MLSL\n      MAXEVAL 20\n    ENDEXPLORE\n",
+                     needs("G_MLSL", "the EXPLORE block")});
+    for (const std::string algo : {"G_MLSL_LDS", "AUGLAG"})
+        cases.push_back({"INNER " + algo + " under GN_MLSL_LDS",
+                         "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_MLSL_LDS\n"
+                         "    MAXEVAL 20\n    INNER\n      LIB NLOPT\n"
+                         "      ALGO " + algo + "\n    ENDINNER\n",
+                         "the INNER block of the STRATEGY-level optimiser "
+                         "names NLOPT:" + algo + ", which needs an INNER "
+                         "block of its own; INNER blocks do not nest: pick a "
+                         "local algorithm such as LN_BOBYQA"});
+    for (const auto& c : cases) {
+        INFO(c.what << "\n" << c.body);
+        const auto v = judge(strategy_config(c.body));
+        CHECK(v.startup == c.message);
+    }
+
+    /* With a default local optimiser (LN_COBYLA or LD_MMA) they run
+     * without an INNER block, and an INNER LN_AUGLAG runs its own. */
+    for (const std::string& body : std::vector<std::string>{
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_AUGLAG\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_AUGLAG\n"
+             "    FTOL_REL 1e-8\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_MLSL_LDS\n"
+             "    MAXEVAL 20\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_MLSL_LDS\n"
+             "    MAXEVAL 20\n    INNER\n      LIB NLOPT\n"
+             "      ALGO LN_AUGLAG\n    ENDINNER\n"}) {
+        INFO(body);
+        CHECK(judge(strategy_config(body)).startup == "");
+    }
+
+    /* run_inner() applies the rule again to every spec it runs, with no
+     * phase to name. */
+    OptimizerSpec sp;
+    sp.lib = "NLOPT";
+    sp.algo = "AUGLAG";
+    sp.stop.maxeval = 20;
+    CHECK(error_of([&] { tadah::hpo::require_inner_backend(sp, ""); }) ==
+          "NLOPT:AUGLAG needs an INNER block: NLopt has no default local "
+          "optimiser for it" + alternatives);
+    sp.inner = std::make_unique<OptimizerSpec>();
+    sp.inner->lib = "NLOPT";
+    sp.inner->algo = "G_MLSL";
+    CHECK(error_of([&] { tadah::hpo::require_inner_backend(sp, ""); }) ==
+          "the INNER block of NLOPT:AUGLAG names NLOPT:G_MLSL, which needs an "
+          "INNER block of its own; INNER blocks do not nest: pick a local "
+          "algorithm such as LN_BOBYQA");
+    sp.inner->algo = "LN_BOBYQA";
+    CHECK(error_of([&] { tadah::hpo::require_inner_backend(sp, ""); }) == "");
 }
 
 /* ======================================================================
@@ -1460,6 +1841,23 @@ TEST_CASE("startup validation: hpo_run rejects a backend setting of a "
             "    MAXEVAL 10\n    N_STARTS 2\n    SEED 5\n  ENDSTRATEGY\n"
             "ENDOPTIMIZER\n");
         CHECK_THAT(err, Catch::Contains("DLIB:BFGS does not support SEED"));
+    }
+    SECTION("the PRESTAGE refinement's NLOPT:AUGLAG without an INNER block, "
+            "before the exploration") {
+        /* Pins: hpo_run() stops at startup, before any data is loaded or
+         * any evaluation runs (run_hpo checks both).
+         * Before the fix: the exploration's 20 evaluations ran (loss.tadah
+         * had 20 rows), then NLopt refused the refinement: "local
+         * optimizer must be specified for AUGLAG". */
+        const auto err = run_hpo(
+            "OPTIMIZER\n  STRATEGY\n    TYPE PRESTAGE\n"
+            "    EXPLORE\n      LIB NLOPT\n      ALGO GN_CRS2_LM\n"
+            "      MAXEVAL 20\n      SEED 1\n    ENDEXPLORE\n"
+            "    REFINE\n      LIB NLOPT\n      ALGO AUGLAG\n"
+            "      MAXEVAL 10\n    ENDREFINE\n  ENDSTRATEGY\nENDOPTIMIZER\n");
+        CHECK_THAT(err, Catch::Contains("NLOPT:AUGLAG needs an INNER block "
+                                        "(the PRESTAGE refinement): NLopt has "
+                                        "no default local optimiser for it"));
     }
 }
 
@@ -1754,6 +2152,61 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
                                    "or x -+ Delta |x| and x -+ 2 Delta |x| next "
                                    "to a bound (Curvature_0 0)") &&
                        Catch::Contains("Delta_X up to 0.5 fits it"));
+    }
+}
+
+TEST_CASE("startup validation: GRAD_STRATEGY on a phase that takes no "
+          "gradient is refused", "[startup_validation][strategy][fd_stencil]")
+{
+    /* Pins: GRAD_STRATEGY written on a phase whose optimiser never asks for
+     * a gradient (obtains_gradients(): a derivative-free NLopt algorithm,
+     * TADAH:RANDOM, TADAH:GRID, DLIB:GFS) is refused at startup, naming the
+     * phase, like the finite-difference PARAMs there; a phase that obtains
+     * gradients -- its own, or its local search's -- keeps it.
+     * Before the fix: each was accepted (startup ""), the run ignored it
+     * and the journal did not mention it. */
+    struct Case { std::string body, who; };
+    for (const auto& c : std::vector<Case>{
+             {"    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+              "    MAXEVAL 20\n    GRAD_STRATEGY NUMERICAL\n",
+              "the STRATEGY-level optimiser NLOPT:LN_SBPLX"},
+             {"    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_BOBYQA\n"
+              "    MAXEVAL 20\n    GRAD_STRATEGY HYBRID\n",
+              "the STRATEGY-level optimiser NLOPT:LN_BOBYQA"},
+             {"    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+              "    MAXEVAL 5\n    GRAD_STRATEGY NUMERICAL\n",
+              "the STRATEGY-level optimiser TADAH:RANDOM"},
+             {"    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n"
+              "    GRAD_STRATEGY NUMERICAL\n",
+              "the STRATEGY-level optimiser TADAH:GRID"},
+             {"    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n"
+              "    MAXEVAL 5\n    GRAD_STRATEGY ANALYTICAL\n",
+              "the STRATEGY-level optimiser DLIB:GFS"},
+             {"    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+              "    MAXEVAL 20\n    EXPLORE\n      LIB TADAH\n"
+              "      ALGO RANDOM\n      MAXEVAL 3\n"
+              "      GRAD_STRATEGY NUMERICAL\n    ENDEXPLORE\n",
+              "the PRESTAGE exploration (EXPLORE block) TADAH:RANDOM"}}) {
+        INFO(c.body);
+        const std::string backend = c.who.substr(c.who.rfind(' ') + 1);
+        CHECK(judge(strategy_config(c.body)).startup ==
+              c.who + ": GRAD_STRATEGY never takes effect: " + backend +
+                  " takes no gradient; remove it.");
+    }
+    /* A phase that obtains gradients keeps it: MLSL with a gradient-based
+     * INNER search (its GRAD_STRATEGY obtains the gradient that search
+     * uses), LD_AUGLAG with NLopt's default LD_MMA, DLIB:BFGS. */
+    for (const std::string& body : std::vector<std::string>{
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_MLSL_LDS\n"
+             "    MAXEVAL 20\n    GRAD_STRATEGY HYBRID\n    INNER\n"
+             "      LIB NLOPT\n      ALGO LD_LBFGS\n      MAXEVAL 5\n"
+             "    ENDINNER\n",
+             "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_AUGLAG\n"
+             "    MAXEVAL 20\n    GRAD_STRATEGY NUMERICAL\n",
+             "    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 20\n"
+             "    GRAD_STRATEGY HYBRID\n"}) {
+        INFO(body);
+        CHECK(judge(strategy_config(body)).startup == "");
     }
 }
 
