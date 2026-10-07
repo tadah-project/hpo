@@ -42,7 +42,7 @@
   },
   "best_ermse_meV_per_atom": 8.43,
   "status_accepted": [
-    "COMPLETED"
+    "DLIB:GFS: MAXEVAL reached"
   ],
   "nan_clampings_max": 0,
   "walltime_hint": "1.4s",

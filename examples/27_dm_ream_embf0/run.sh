@@ -8,6 +8,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 TADAH=${TADAH:-tadah}
 T=${OMP_NUM_THREADS:-1}
+source "$HERE/../common/journal_status.sh"   # journal_status
 
 if ! command -v "$TADAH" >/dev/null 2>&1 && [[ ! -x "$TADAH" ]]; then
   echo "[run.sh] tadah binary not found at '$TADAH'; set TADAH=/path/to/tadah" >&2
@@ -46,6 +47,6 @@ PY
 if [[ -f hpo_run.log ]]; then
   best=$(awk '/Best total loss/ { for (i=1;i<=NF;i++) if ($i ~ /^[0-9.eE+-]+$/) { print $i; break } }' hpo_run.log | head -1)
   evals=$(awk '/Total evaluations/ { print $4 }' hpo_run.log | head -1)
-  status=$(awk -F': *' '/Optimiser status/ { print $2 }' hpo_run.log | head -1)
+  status=$(journal_status hpo_run.log)
   printf '  done: best=%s  evals=%s  status=%s\n' "${best:-?}" "${evals:-?}" "${status:-?}"
 fi

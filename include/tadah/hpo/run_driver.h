@@ -11,10 +11,14 @@
  *   normal end              flush; trailer = the status recorded by the
  *                           optimiser run that ended the run
  *                           (HPOLog::set_status; each run starts without
- *                           one: a stop criterion, "STOPPED -- gradient
- *                           not finite: ..." from a gradient-based search,
- *                           RESTART's "STOPPED -- stagnation: ...", ...)
- *                           or COMPLETED; returns 0
+ *                           one: why it ended, "<LIB>:<ALGO>: MAXEVAL
+ *                           reached" (run_end.h), NLopt's MAXEVAL_REACHED,
+ *                           "STOPPED -- gradient not finite: ..." from a
+ *                           gradient-based search, RESTART's "STOPPED --
+ *                           stagnation: ...", ...); returns 0. A normal
+ *                           end without a recorded status is an internal
+ *                           error (a driver that did not say why it
+ *                           ended): std::logic_error, reported as below
  *   core::ShutdownRequested flush; "SHUTDOWN (<signal>)"; returns
  *                           shutdown_exit_status(<signal>) = 128 + signal
  *   StagnationStop          flush; "STOPPED -- stagnation ..."; returns 0.
@@ -40,8 +44,8 @@
  * or stage that ended on stagnation -- the policy that swallowed it calls
  * detail::rethrow_if_best_unsaved(), and so does drive_run() after a normal
  * end, a signal stop or a stagnation stop. A run whose best could not be
- * saved therefore always ends FAILED, never COMPLETED, SHUTDOWN or with a
- * restart, and its cause is the first recorded failure
+ * saved therefore always ends FAILED, never with an optimiser's status,
+ * SHUTDOWN or a restart, and its cause is the first recorded failure
  * (detail::durable_failure_cause).
  *
  * An ordinary end (a normal end or a StagnationStop) after which no
@@ -51,7 +55,9 @@
  * a usable loss; no best_pot.tadah was written") and the trailer "STOPPED
  * -- no evaluation produced a usable loss", and returns EXIT_FAILURE (1).
  * A signal or an error decides the ending first, whether or not a usable
- * loss was produced.
+ * loss was produced. So does a normal end without a recorded status (an
+ * internal error, FAILED); a best potential that could not be saved
+ * outranks it (the test comes right after detail::rethrow_if_best_unsaved).
  *
  * Whether any rank produced a usable loss is one collective
  * (detail::run_has_usable_loss), and every ending reaches it exactly once,
@@ -72,6 +78,7 @@
 #include <exception>
 #include <functional>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 
 namespace tadah::hpo {
@@ -92,6 +99,10 @@ inline const std::string kNoUsableLossStatus =
     "STOPPED -- no evaluation produced a usable loss";
 inline const std::string kNoUsableLossError =
     "no evaluation produced a usable loss; no best_pot.tadah was written";
+
+/* The error of a normal end without a recorded status (see above). */
+inline const std::string kNoEndStatusError =
+    "internal error: the optimiser ended without recording why it ended";
 
 namespace detail {
 
@@ -198,6 +209,10 @@ int drive_run(const std::function<void()>& body, const Host& host,
         /* A new best that could not be saved fails the run even when the
          * durable_best::Error was swallowed on its way up. */
         detail::rethrow_if_best_unsaved();
+        /* Every optimiser records why it ended (run_end.h): a normal end
+         * without a status is a driver that did not, an internal error.
+         * The std::exception handler below reaches the collective. */
+        if (log.status().empty()) throw std::logic_error(kNoEndStatusError);
         agree_on_usable_loss();
         /* Inside the try: a failing drain on the normal path is an error
          * end, reported like any other. */
@@ -259,11 +274,11 @@ int drive_run(const std::function<void()>& body, const Host& host,
     if (!usable_anywhere)
         return detail::end_without_usable_loss(log);
 
-    /* Empty status: HPOLog::finish() uses the status recorded by the
-     * optimiser run that ended the run (e.g. NLopt's MAXEVAL_REACHED; under
+    /* The status recorded by the optimiser run that ended the run (e.g.
+     * NLopt's MAXEVAL_REACHED, "DLIB:BFGS: FTOL_ABS reached"; under
      * MULTISTART the last good start's, under PRESTAGE the refinement's),
-     * the RESTART one when its MAX restarts were used up, or COMPLETED. */
-    log.finish();
+     * or the RESTART one when its MAX restarts were used up. */
+    log.finish(log.status());
     return 0;
 }
 

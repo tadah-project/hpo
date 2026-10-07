@@ -3,7 +3,11 @@
 #
 #   journal_status <hpo_run.log>
 #
-# prints the journal's "Optimiser status" (the RESULT section's trailer).
+# prints the journal's "Optimiser status" (the RESULT section's trailer),
+# the whole value: a status has colons of its own ("TADAH:RANDOM: MAXEVAL
+# reached", "ASA: MAXEVAL reached", "STOPPED -- stagnation: ..."). A script
+# that must tell success from failure tests tadah's exit status, not this
+# text.
 journal_status() {
-  awk -F': *' '/Optimiser status/ { print $2 }' "$1" | head -1
+  sed -n 's/^[[:space:]]*Optimiser status[[:space:]]*: //p' "$1" | head -1
 }

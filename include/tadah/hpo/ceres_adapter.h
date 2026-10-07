@@ -26,7 +26,9 @@
  *     iterations != host evaluations);
  *   - bad host evals (non-finite loss, MAXEVAL overflow) are reported via
  *     FirstOrderFunction::Evaluate -> false, which Ceres turns into a
- *     termination type, rather than as exceptions. A gradient that is not
+ *     termination type, rather than as exceptions. An evaluation refused
+ *     because MAXEVAL is spent ends the solve with FAILURE, which the
+ *     adapter reports as MAXEVAL (below). A gradient that is not
  *     finite (GradientProvider::failure: Stencil or NotFinite) is such a
  *     failed evaluation: Ceres' line search steps back from it. When the
  *     solve then ends with FAILURE right after it -- at the starting point,
@@ -39,13 +41,21 @@
  *     is captured in Evaluate, the solve is aborted (HostExceptionAbort),
  *     and the original is rethrown with its own type after Solve returns;
  *     test_hpo_termination.cpp's [.shutdown_ceres] case runs that path
- *     under a real SIGINT.
+ *     under a real SIGINT;
+ *   - the run's status says why the solve ended (run_end.h,
+ *     run_ceres_gradient_problem): Ceres' own reason when it converged
+ *     ("Function tolerance reached" FTOL_REL, "Parameter tolerance
+ *     reached" XTOL_REL, "Gradient tolerance reached" tol_gradinf) or ran
+ *     out of iterations (PARAM max_iter); MAXEVAL when an evaluation
+ *     refused for the budget made it fail; "STOPPED -- CERES:<ALGO>:
+ *     FAILURE (<Ceres' message>)" for any other failure.
  */
 
 #include <tadah/hpo/gradient_provider.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/run_end.h>
 
 #include <algorithm>
 #include <atomic>
@@ -153,7 +163,7 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
      *   diff_method       -- 0 CENTRAL (default), 1 FORWARD (2, RIDDERS,
      *                        is refused)
      *   (fd_kernel        -- the step rule, a word: param_raw)
-     *   tol_gradinf       -- gradient_tolerance (infinity norm)
+     *   tol_gradinf       -- gradient_tolerance (max-norm of the gradient)
      *   max_lbfgs_rank    -- LBFGS only
      *   nlcg_type         -- NLCG only: 0 FR, 1 PR, 2 HS
      *   max_iter          -- max_num_iterations cap (defaults to MAXEVAL or INT_MAX)
@@ -220,7 +230,12 @@ inline void validate_ceres_steepest_spec(const OptimizerSpec& sp) {
  * the first one wins -- and reported to Ceres as a failed evaluation. Once
  * captured, every later call fails at once without touching the host,
  * HostExceptionAbort ends the solve, and run_ceres_gradient_problem
- * rethrows the original after Solve returns. */
+ * rethrows the original after Solve returns.
+ *
+ * An evaluation refused because MAXEVAL is spent -- the loss
+ * (GradientProvider::exhausted, before cost() is asked) or the gradient
+ * (GradientFailure::Budget) -- is a failed one too, and budget_refused()
+ * says so from then on: the budget is spent for the rest of the solve. */
 template<class Vec, class Runner>
 class HPO_FirstOrderFunction : public ceres::FirstOrderFunction {
 public:
@@ -238,6 +253,10 @@ public:
             x.set_size(dim_);
             for (int i = 0; i < dim_; ++i) x(i) = parameters[i];
 
+            if (gp_->exhausted()) {
+                budget_refused_ = true;
+                return false;
+            }
             const double y = gp_->cost(x);
             if (!std::isfinite(y)) return false;
             *cost = y;
@@ -253,6 +272,8 @@ public:
                         k == GradientFailure::NotFinite) {
                         last_rejected_ = true;
                         rejected_ = *gp_->failure;
+                    } else if (k == GradientFailure::Budget) {
+                        budget_refused_ = true;
                     }
                     return false;
                 }
@@ -271,11 +292,14 @@ public:
      * finite, and why. */
     bool last_rejected() const { return last_rejected_; }
     const GradientFailureInfo& rejected() const { return rejected_; }
+    /* Whether an Evaluate() was refused because MAXEVAL is spent. */
+    bool budget_refused() const { return budget_refused_; }
 
 private:
     GradientProvider<Vec,Runner>* gp_;
     int dim_;
     mutable bool                  last_rejected_ = false;
+    mutable bool                  budget_refused_ = false;
     mutable GradientFailureInfo   rejected_;
     std::exception_ptr* host_exc_;
 };
@@ -428,15 +452,105 @@ inline void run_ceres_gradient_problem(
         HPOLog::instance().warning(oss2.str());
     }
 
-    /* A FAILURE right after an evaluation whose gradient was not finite:
-     * that gradient ended the search. */
-    if (summary.termination_type == ceres::FAILURE && fof->last_rejected())
-        report_gradient_stop(
-            "CERES:" + algo_label, fof->rejected(),
-            "Ceres ended right after it (" +
-                std::string(ceres::TerminationTypeToString(
-                    summary.termination_type)) +
-                ": " + summary.message + ")");
+    /* Why the solve ended, as the run's status (run_end.h); see the file
+     * comment. */
+    const std::string backend = "CERES:" + algo_label;
+    const std::string spent = std::to_string(evals_used.load()) +
+                              " evaluation(s)";
+    const auto starts_with = [&](const char* prefix) {
+        return summary.message.rfind(prefix, 0) == 0;
+    };
+    /* "FTOL_REL = 1e-06 (default)": the setting a Ceres test applied. */
+    const auto setting = [](const std::string& key, double value,
+                            bool user_set) {
+        std::ostringstream o;
+        o << key << " = " << value << (user_set ? "" : " (default)");
+        return o.str();
+    };
+    /* A converged or capped solve: the reason, its setting, Ceres'
+     * message. */
+    const auto report_reason = [&](EndReason r, const std::string& set) {
+        report_end(backend, r, spent + ": " + set + "; Ceres: " +
+                                   summary.message);
+    };
+    /* An ending the vocabulary has no reason for: Ceres' own termination
+     * type and message, verbatim, in the stop line and in `status`. */
+    const auto report_native = [&](const char* type,
+                                   const std::string& status) {
+        const std::string msg = backend + " stopped: " + type + " after " +
+                                spent + "; Ceres: " + summary.message;
+        std::cout << "[HPO] " << msg << "\n";
+        HPOLog::instance().info(msg);
+        HPOLog::instance().set_status(status);
+    };
+    switch (summary.termination_type) {
+        case ceres::CONVERGENCE:
+            if (starts_with("Function tolerance reached"))
+                report_reason(EndReason::FtolRel,
+                              setting("FTOL_REL", opts.function_tolerance,
+                                      sp.stop.ftol_rel.has_value()));
+            else if (starts_with("Parameter tolerance reached"))
+                report_reason(EndReason::XtolRel,
+                              setting("XTOL_REL", opts.parameter_tolerance,
+                                      sp.stop.xtol_rel.has_value()));
+            else if (starts_with("Gradient tolerance reached"))
+                report_reason(EndReason::GradTol,
+                              setting("PARAM tol_gradinf",
+                                      opts.gradient_tolerance,
+                                      ceres_param(sp, "tol_gradinf")
+                                          .has_value()));
+            else
+                report_native("CONVERGENCE", backend + ": CONVERGENCE (" +
+                                                 summary.message + ")");
+            return;
+        case ceres::NO_CONVERGENCE:
+            if (summary.message == "Maximum number of iterations reached.")
+                report_reason(EndReason::MaxIter,
+                              setting("PARAM max_iter",
+                                      opts.max_num_iterations,
+                                      ceres_param(sp, "max_iter")
+                                          .has_value()));
+            else
+                report_native("NO_CONVERGENCE", backend + ": NO_CONVERGENCE (" +
+                                                    summary.message + ")");
+            return;
+        case ceres::FAILURE:
+            /* A FAILURE right after an evaluation whose gradient was not
+             * finite: that gradient ended the search. */
+            if (fof->last_rejected()) {
+                report_gradient_stop(
+                    backend, fof->rejected(),
+                    "Ceres ended right after it (" +
+                        std::string(ceres::TerminationTypeToString(
+                            summary.termination_type)) +
+                        ": " + summary.message + ")");
+                return;
+            }
+            /* The budget refused an evaluation: Ceres cannot go on
+             * without one. */
+            if (fof->budget_refused()) {
+                report_end(backend, EndReason::MaxEval,
+                           spent + ": MAXEVAL = " + std::to_string(maxeval) +
+                               "; Ceres: " + summary.message);
+                return;
+            }
+            /* A failure of Ceres' own (a line search that finds no valid
+             * step, a loss that is not finite): the search stopped, the
+             * best stands -- the class of NLopt's "STOPPED -- nlopt
+             * roundoff-limited". */
+            report_native("FAILURE", "STOPPED -- " + backend + ": FAILURE (" +
+                                         summary.message + ")");
+            return;
+        case ceres::USER_SUCCESS:
+        case ceres::USER_FAILURE:
+            /* The only callback, HostExceptionAbort, aborts once a host
+             * exception was captured, which is rethrown above. */
+            break;
+    }
+    throw std::logic_error(
+        "internal error: " + backend + " ended with " +
+        ceres::TerminationTypeToString(summary.termination_type) +
+        " without a host exception (" + summary.message + ")");
 }
 
 #else  // !TADAH_USE_CERES

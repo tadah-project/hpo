@@ -133,7 +133,12 @@ struct StartsReport {
  *     the status gets "(N of M MULTISTART starts failed[ across L
  *     launches]; see the WARNINGs)" -- counted over the run, so a later
  *     clean batch neither drops nor misstates it, and a note carried in
- *     from an earlier batch is replaced, not stacked.
+ *     from an earlier batch is replaced, not stacked. The note goes onto
+ *     a recorded status only: a batch whose last good start stagnated has
+ *     none (its RESTART window ran out; the batch reports the stagnation,
+ *     and RESTART's own status carries the note), and a start that ended
+ *     without one is the run driver's internal error, not a COMPLETED
+ *     invented here.
  * Stagnation is reported by the caller (report_stagnation). Generic over
  * the two callables so it runs without an HPO_Host in the unit tests. */
 template<class ResetFn, class RunOne>
@@ -193,10 +198,8 @@ StartsReport run_starts(std::size_t k, ResetFn&& reset_window, RunOne&& run_one)
   log.record_start_batch(k, rep.n_failed);
   if (k > 0 && rep.n_failed == k) std::rethrow_exception(first_failure);
   const HPOLog::StartTally tally = log.start_tally();
-  if (tally.failed > 0) {
-    if (ok_status.empty()) ok_status = "COMPLETED";
+  if (tally.failed > 0 && !ok_status.empty())
     log.set_status(ok_status + failed_starts_suffix(tally));
-  }
   return rep;
 }
 

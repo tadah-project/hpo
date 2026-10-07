@@ -9,6 +9,7 @@
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/pc_fail_grading.h>
+#include <tadah/hpo/run_end.h>
 #include <tadah/hpo/run_stop.h>
 
 #include <algorithm>
@@ -463,23 +464,24 @@ template<class HostT>
           );
     stopped.rethrow_if_any();
 
-    /* Which stop ended the search: the journal line, and the run's status
-     * for a STOPVAL or MAXTIME stop (a spent MAXEVAL ends it COMPLETED). */
+    /* Which stop ended the search: the journal line and the run's status
+     * (run_end.h). find_min_global returns once its call budget (MAXEVAL)
+     * is spent, its run time (what MAXTIME left) is up or its stop
+     * condition holds; the seed loop above stops on the same three. A
+     * search that spends its MAXEVAL ends on that, even when MAXTIME has
+     * passed by then (no evaluation was left to start). With calls left and
+     * no STOPVAL, the run time ended it, which only MAXTIME sets. */
     const std::size_t n_evals = evaluations.load();
     const bool budget_spent = sp.stop.maxeval && n_evals >= *sp.stop.maxeval;
-    const std::string done = std::to_string(n_evals) + " evaluation(s)";
-    std::string msg;
-    if (stopval_hit.load()) {
-      msg = "DLIB:GFS stopped: STOPVAL reached after " + done;
-      HPOLog::instance().set_status("DLIB:GFS: STOPVAL reached");
-    } else if (!budget_spent && time_up()) {
-      msg = "DLIB:GFS stopped: MAXTIME exceeded after " + done;
-      HPOLog::instance().set_status("DLIB:GFS: MAXTIME exceeded");
-    } else {
-      msg = "DLIB:GFS stopped: MAXEVAL reached after " + done;
-    }
-    std::cout << "[HPO] " << msg << "\n";
-    HPOLog::instance().info(msg);
+    EndReason end = EndReason::MaxEval;
+    if (stopval_hit.load())    end = EndReason::StopVal;
+    else if (budget_spent)     end = EndReason::MaxEval;
+    else if (sp.stop.maxtime)  end = EndReason::MaxTime;
+    else
+      throw std::logic_error(
+          "internal error: DLIB:GFS ended with calls left, no STOPVAL "
+          "reached and no MAXTIME set");
+    report_end("DLIB:GFS", end, std::to_string(n_evals) + " evaluation(s)");
   }
 
 template<class Vec,class Runner>
@@ -595,11 +597,21 @@ template<class Vec,class Runner>
         return g;
     };
 
-    auto run_with_eval_cap = [&](auto&& search, auto&& stop) {
+    /* How the search ends (run_end.h): MAXEVAL (MaxEvalReached, from the
+     * loss or the gradient), a gradient that is not finite, or -- when
+     * find_min_box_constrained returns, which it does only once its stop
+     * strategy says so -- that strategy's test: `converged` (FTOL_ABS or
+     * tol_gradinf) with the stop line's `test` text. */
+    auto run_with_eval_cap = [&](auto&& search, auto&& stop,
+                                 EndReason converged,
+                                 const std::string& test) {
       try {
         find_min_box_constrained(std::forward<decltype(search)>(search),
                                  std::forward<decltype(stop)>(stop),
                                  feval, grad, x, lo, hi);
+        report_end("DLIB:BFGS", converged,
+                   std::to_string(evals_used.load()) + " evaluation(s): " +
+                       test);
       } catch (const detail::MaxEvalReached&) {
         /* MAXEVAL is enforced externally because DLIB's stop strategies
          * count iterations (not evals). Hitting it is a normal termination
@@ -615,25 +627,37 @@ template<class Vec,class Runner>
             std::cout << "[HPO] " << preamble << "\n";
             HPOLog::instance().info(preamble);
         }
+        /* The MAXEVAL stop line (the only one: no "stopped:" line), and
+         * the run's status. */
         std::ostringstream oss;
         oss << "DLIB:BFGS -- MAXEVAL=" << maxeval
             << " reached; preserving best-so-far";
         std::cout << "[HPO] " << oss.str() << "\n";
         HPOLog::instance().info(oss.str());
+        record_end("DLIB:BFGS", EndReason::MaxEval);
       } catch (const detail::GradientNotFinite& e) {
         report_gradient_stop("DLIB:BFGS", e.info);
       }
     };
 
     if (const auto tol_gradinf = detail::dlib_param(sp, "tol_gradinf")) {
+      std::ostringstream test;
+      test << "the L2 norm of the gradient fell below PARAM tol_gradinf = "
+           << *tol_gradinf;
       run_with_eval_cap(bfgs_search_strategy(),
-                        gradient_norm_stop_strategy(*tol_gradinf));
+                        gradient_norm_stop_strategy(*tol_gradinf),
+                        EndReason::GradTol, test.str());
       return;
     }
 
     const double ftol_abs = sp.stop.ftol_abs.value_or(1.0e-7);
+    std::ostringstream test;
+    test << "the loss changed by less than FTOL_ABS = " << ftol_abs
+         << (sp.stop.ftol_abs ? "" : " (default)")
+         << " from one iteration to the next";
     run_with_eval_cap(bfgs_search_strategy(),
-                      objective_delta_stop_strategy(ftol_abs));
+                      objective_delta_stop_strategy(ftol_abs),
+                      EndReason::FtolAbs, test.str());
   }
 
 }   // namespace tadah::hpo

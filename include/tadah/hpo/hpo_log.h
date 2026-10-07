@@ -548,11 +548,12 @@ public:
      * Final summary sections (called once after optimisation)
      * ------------------------------------------------------------------ */
 
-    /** Record an interim status string (e.g. NLopt's per-run termination
-     *  reason). Repeated calls overwrite -- the last status before finish()
-     *  wins; open() and clear_status() clear it. Used by per-start drivers
-     *  in MULTISTART so they don't have to call finish() themselves and
-     *  prematurely close the journal.
+    /** Record an interim status string: why an optimiser run ended (every
+     *  driver records one: "<LIB>:<ALGO>: <reason>", run_end.h; NLopt's
+     *  result string; ASA's). Repeated calls overwrite -- the last status
+     *  before finish() wins; open() and clear_status() clear it. Used by
+     *  per-start drivers in MULTISTART so they don't have to call finish()
+     *  themselves and prematurely close the journal.
      */
     void set_status(const std::string& status_str);
     /** The status last recorded by set_status() ("" if none). */
@@ -568,7 +569,10 @@ public:
      *  Best metrics are taken from what was recorded by log_new_best() calls.
      *  Idempotent: subsequent calls are no-ops (file is already closed).
      *  @param status_str  Human-readable stop reason. If empty, falls back to
-     *                     whatever was most recently recorded via set_status().
+     *                     whatever was most recently recorded via set_status(),
+     *                     and without that to "(no status recorded)" (it used
+     *                     to invent COMPLETED); drive_run() never finishes a
+     *                     normal end without a status (run_driver.h).
      */
     void finish(const std::string& status_str = "");
 
@@ -794,7 +798,8 @@ private:
     double      best_frmse_     = 0; bool has_frmse_  = false;
     double      best_srmse_     = 0; bool has_srmse_  = false;
 
-    /* last interim status set via set_status(); used as fallback in finish() */
+    /* last interim status set via set_status(); used as fallback in finish()
+     * ("(no status recorded)" without one) */
     std::string last_status_;
     /* new best(s) that could not be persisted (record_unsaved_best) */
     std::optional<UnsavedBest> unsaved_best_;

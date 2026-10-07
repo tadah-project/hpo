@@ -42,7 +42,6 @@
   },
   "best_ermse_meV_per_atom": 7.64,
   "status_accepted": [
-    "COMPLETED",
     "MAXEVAL_REACHED -- maximum evaluations exhausted"
   ],
   "nan_clampings_max": 0,

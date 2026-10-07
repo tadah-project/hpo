@@ -17,6 +17,7 @@ EXAMPLE_DIR=${EXAMPLE_DIR:-$(pwd)}
 COMMON_DIR=$(cd "$(dirname "$0")" && pwd)
 TADAH=${TADAH:-tadah}  # override with TADAH=/path/to/tadah if not on PATH
 T=${OMP_NUM_THREADS:-1}
+source "$COMMON_DIR/journal_status.sh"   # journal_status
 
 if ! command -v "$TADAH" >/dev/null 2>&1 && [[ ! -x "$TADAH" ]]; then
   echo "[run.sh] tadah binary not found at '$TADAH'; set TADAH=/path/to/tadah" >&2
@@ -55,7 +56,7 @@ OMP_NUM_THREADS=$T \
 if [[ -f hpo_run.log ]]; then
   best=$(awk '/Best total loss/ { for (i=1;i<=NF;i++) if ($i ~ /^[0-9.eE+-]+$/) { print $i; break } }' hpo_run.log | head -1)
   evals=$(awk '/Total evaluations/ { print $4 }' hpo_run.log | head -1)
-  status=$(awk -F': *' '/Optimiser status/ { print $2 }' hpo_run.log | head -1)
+  status=$(journal_status hpo_run.log)
   printf '  done: best=%s  evals=%s  status=%s\n' "${best:-?}" "${evals:-?}" "${status:-?}"
 else
   echo "  done: no hpo_run.log (check run.stdout)"

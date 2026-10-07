@@ -2018,10 +2018,12 @@ void HPOLog::finish(const std::string& status_str)
 
     /* If caller passed an explicit status, use it (overrides any set_status).
      * If empty, fall back to whatever the inner driver recorded most recently
-     * via set_status(). If neither, use a generic placeholder. */
+     * via set_status(). If neither, say so: no status is invented (the run
+     * driver never gets here without one, run_driver.h). */
     std::string effective_status = !status_str.empty()
         ? status_str
-        : (last_status_.empty() ? std::string("COMPLETED") : last_status_);
+        : (last_status_.empty() ? std::string("(no status recorded)")
+                                : last_status_);
     /* Rebind the local arg name so the rest of the body keeps working. */
     const std::string& status_str_local = effective_status;
 
