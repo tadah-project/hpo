@@ -335,8 +335,9 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   // Per-stage optimiser algorithm + budget + tolerances: defaults live in
   // CompactConfig; the optional inline OPTIMIZER block overrides them.
   // ---- stage pipeline (INIT -> EXPLORE -> REFINE -> FUSE) ----
-  // RefitParser reads the INIT/EXPLORE/REFINE/FUSE Context keys (throws on the
-  // old top-level OPTIMIZER grammar); apply_stage_optimizers flattens the
+  // RefitParser reads the INIT/EXPLORE/REFINE/FUSE Context keys (it throws on
+  // the old top-level OPTIMIZER grammar, which RefitEngine's mode rule has
+  // refused before the table was read); apply_stage_optimizers flattens the
   // EXPLORE/REFINE/FUSE optimisers onto the CompactConfig scalar fields.
   const RefitConfig rcfg = RefitParser::parse(c);
   apply_stage_optimizers(rcfg, lcfg);

@@ -644,17 +644,12 @@ std::string refit_fuse_algo(const OptimizerSpec &s) {
 RefitConfig RefitParser::parse(const tadah::core::Context &c) {
   // Old grammar: a top-level OPTIMIZER block (GLOBAL/EXPLORE/POLISH/JOINT
   // subblocks) is captured by CORE under the OPTIMIZER key. The pipeline is
-  // now four top-level stage blocks, so flag it with migration guidance.
-  if (c.contains("OPTIMIZER") && c.size("OPTIMIZER") > 0) {
+  // now four top-level stage blocks, so flag it with migration guidance: the
+  // text of MLIP's mode rule, which refuses the block in either REFIT_MODE
+  // before the table is read (check_refit_mode_keys).
+  if (c.has_stored("OPTIMIZER"))
     throw std::runtime_error(
-        "tadah refit: a top-level OPTIMIZER block is no longer supported. The "
-        "stage pipeline is now INIT -> EXPLORE -> REFINE -> FUSE, each its own "
-        "block, with the OPTIMIZER block NESTED inside EXPLORE/REFINE/FUSE. "
-        "Migration: GLOBAL folded into EXPLORE rung 0 (set its global ALGO in "
-        "EXPLORE's OPTIMIZER, with an INNER local); POLISH -> REFINE; "
-        "JOINT -> FUSE. The Refitting page of the documentation has "
-        "examples (Stage blocks).");
-  }
+        tadah::mlip::engines::top_level_optimizer_refusal());
 
   RefitConfig cfg;
   SeenKeys explore_keys, refine_keys, fuse_keys;

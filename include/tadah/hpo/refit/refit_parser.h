@@ -25,8 +25,9 @@ namespace refit {
 class RefitParser {
 public:
   /** Parse the INIT/EXPLORE/REFINE/FUSE Context keys into a RefitConfig.
-   *  Throws std::runtime_error on the old grammar (a top-level OPTIMIZER block)
-   *  and on invalid tokens. Missing blocks => default-constructed stages. A
+   *  Throws std::runtime_error on the old grammar (a top-level OPTIMIZER
+   *  block: MLIP's top_level_optimizer_refusal(), the text RefitEngine's
+   *  mode rule refuses it with in either REFIT_MODE) and on invalid tokens. Missing blocks => default-constructed stages. A
    *  stage's OPTIMIZER block (and EXPLORE's INNER block) accepts only the keys
    *  that stage reads -- any other optimiser attribute is an error naming the
    *  keys it does read -- and must set ALGO. A stop criterion (MAXEVAL,
