@@ -5,10 +5,18 @@
 #include "catch2/catch.hpp"
 
 #include <tadah/core/signal_handler.h>
+#include <tadah/hpo/pc_worker_pool.h>
+#include <tadah/hpo/pc_worker_wire.h>
 
 #include <csignal>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <exception>
+#include <string>
+
+#include <unistd.h>
 
 namespace tadah { namespace hpo { int pc_worker_main(int argc, char** argv); } }
 
@@ -33,11 +41,39 @@ int signal_handler_probe() {
   return 0;
 }
 
+/* A stand-in PC_ISOLATION worker, run instead of pc_worker_main when the
+ * pool spawns a worker with TADAH_TEST_PC_WORKER_WRONG_ACK_PID in its
+ * environment (test_pc_worker_pool.cpp sets it around one pool): it answers
+ * HELLO with a HELLO_ACK that names its pid + 1, then reads frames until
+ * the pool closes the channel or kills it. */
+int wrong_ack_pid_worker() {
+  namespace pcwire = tadah::hpo::pcwire;
+  constexpr int kFd = 3;   /* the spawn recipe's channel */
+  try {
+    pcwire::FrameType t;
+    std::string payload;
+    if (!pcwire::recv_frame(kFd, t, payload, -1)
+        || t != pcwire::FrameType::HELLO)
+      return 3;
+    pcwire::Writer ack;
+    ack.u32(tadah::hpo::PcWorkerPool::PROTOCOL_VERSION);
+    ack.u32(static_cast<std::uint32_t>(::getpid()) + 1u);
+    pcwire::send_frame(kFd, pcwire::FrameType::HELLO_ACK, ack.buf);
+    while (pcwire::recv_frame(kFd, t, payload, -1)) {}
+  } catch (const std::exception&) {
+    /* EOF: the pool closed the channel */
+  }
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc >= 2 && std::strcmp(argv[1], "--tadah-pc-worker") == 0)
+  if (argc >= 2 && std::strcmp(argv[1], "--tadah-pc-worker") == 0) {
+    if (std::getenv("TADAH_TEST_PC_WORKER_WRONG_ACK_PID"))
+      return wrong_ack_pid_worker();
     return tadah::hpo::pc_worker_main(argc, argv);
+  }
   if (argc >= 2 && std::strcmp(argv[1], "--tadah-signal-handler-probe") == 0)
     return signal_handler_probe();
   return Catch::Session().run(argc, argv);
