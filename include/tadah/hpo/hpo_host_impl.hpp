@@ -3204,9 +3204,10 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
              * of the average metric; the indexed form is the average of
              * the dataset losses, so it is listed per dataset, NAME[i]
              * (1-based, as PC_ERMSE (i) and the L(ERMSE)[i] column), each
-             * its share of that average: the parts add up to the metric's
-             * loss. A dataset the metric does not measure has a nan loss
-             * and no part. */
+             * its share of that average: these parts add up to the
+             * metric's loss, and the line shows them, as every part, over
+             * the number of loss terms (n_active below). A dataset the
+             * metric does not measure has a nan loss and no part. */
             const auto add_dataset_metric = [&comps](
                 bool used, const ValidationMetricTargets& targets,
                 const char* name, double loss,
