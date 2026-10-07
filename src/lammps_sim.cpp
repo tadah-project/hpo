@@ -503,8 +503,10 @@ void LammpsSim::parse_tokens() {
       if (i + 1 < tokens.size()) {
         /* PC_LAMMPS: the value substituted for this line's variables when
          * its simulation fails; it goes through the loss against the
-         * target like a measured value, so any finite number (a variable
-         * may be negative). PC_FAILPROBE: a failure score -- the probe's S
+         * target into their terms like a measured value (the evaluation
+         * scores FAIL_SCORE all the same: HPO_Host::sims_loss), so any
+         * finite number (a variable may be negative). PC_FAILPROBE: a
+         * failure score -- the probe's S
          * reads it when the probe fails, and an S at or above it is taken
          * for a failed probe (HPO_Host::run_lammps) -- so a positive finite
          * number, like FAILSCORE: S is nonnegative, and with 0 or below

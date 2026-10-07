@@ -1632,11 +1632,13 @@ void HPO_Host<P,R>::fill_validation(Result& r,
  *
  *   WAVE 2    Run the hot-DEPENDENT cold scripts. If wave 1 aborted, ALL cold
  *             outputs (independent ones included) are clamped to failscore.
- *             Otherwise every value collected in wave 1 is injected as
+ *             Otherwise each value collected in wave 1 is injected as
  *             `variable <name> equal <value>` (format_hot_inject) before
- *             each dependent cold script, so it reads `${<name>}` to get the
- *             freshly computed hot value from THIS eval. An injection LAMMPS
- *             refuses fails that script (execute_script_task).
+ *             each dependent cold script that reads it (hot_refs), so it
+ *             reads `${<name>}` to get the freshly computed hot value from
+ *             THIS eval; a script whose value wave 1 did not produce is not
+ *             run. An injection LAMMPS refuses fails that script
+ *             (execute_script_task).
  *
  * No --hotvar lines means wave 1 is all scripts (all classified independent)
  * and wave 2 is empty -- identical to the pre-hotvar single parallel wave. */
