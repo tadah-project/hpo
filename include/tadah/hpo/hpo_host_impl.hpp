@@ -1338,7 +1338,7 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     /* EMBF0 journal (hpo_run arms HPOLog): stored values only, no default
      * inserted into master_ctx_. */
     /* (NORM does not matter: a linear model's trained weights are
-     * converted back to raw-descriptor weights, convert_to_nweights.) */
+     * converted back to raw-descriptor weights, mlip::to_raw_descriptors.) */
     embf0_diag_ = models::context_has_ream(master_ctx_)
                && models::model_is_linear(master_ctx_);
 
@@ -3065,8 +3065,9 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
          * basis function or kernel, the model and its design matrix read
          * when they are built (EWEIGHT/FWEIGHT/SWEIGHT, MPARAMS, ...) is
          * this candidate's, and nothing an earlier fit wrote into a context
-         * (SIGMA, ALPHA/BETA) or an earlier host configured is carried
-         * over. Building one costs far less than the fit (a few
+         * (ALPHA/BETA of LAMBDA -1; the weight covariance is the model's,
+         * WCOV and WNOISE in its potential) or an earlier host configured
+         * is carried over. Building one costs far less than the fit (a few
          * hundredths of a millisecond for analytic descriptors; a setfl
          * file is parsed once per contents, models::shared_setfl). */
         auto& cache = tls_trainer_cache_;

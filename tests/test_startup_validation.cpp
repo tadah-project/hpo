@@ -1214,7 +1214,7 @@ TEST_CASE("derive_raw_embedding_f0: raw F(0) of the -c potential",
     CHECK_THAT(r.reason, Catch::Contains("not linear"));
   }
   SECTION("NORM true: a linear model's stored WEIGHTS are raw-descriptor "
-          "weights (convert_to_nweights), so the value is reported") {
+          "weights (to_raw_descriptors), so the value is reported") {
     Context ctx = make_ream_model_ctx();
     ctx.remove("NORM");
     ctx.add("NORM", "true");
