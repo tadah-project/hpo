@@ -1336,7 +1336,7 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     /* EMBF0 journal (hpo_run arms HPOLog): stored values only, no default
      * inserted into master_ctx_. */
     /* (NORM does not matter: a linear model's trained weights are
-     * converted back to raw-descriptor weights, convert_to_nweights.) */
+     * converted back to raw-descriptor weights, mlip::to_raw_descriptors.) */
     embf0_diag_ = models::context_has_ream(master_ctx_)
                && models::model_is_linear(master_ctx_);
 
