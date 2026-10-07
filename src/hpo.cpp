@@ -633,9 +633,10 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
                      "false, no ESHIFT). If reference energies are absolute "
                      "(e.g. DFT totals), set ESHIFT_ATOM, ESHIFT_DBATOM or "
                      "ESHIFT (compatible with EAMFAST). BIAS true also adds "
-                     "a per-atom constant, but its intercept column precedes "
-                     "the descriptor weights (FIXINDEX/FIXWEIGHT indices "
-                     "shift) and it disables EAMFAST.");
+                     "a per-atom constant, but its intercept columns, one "
+                     "per ATOM species, precede the descriptor weights "
+                     "(FIXINDEX/FIXWEIGHT indices shift) and it disables "
+                     "EAMFAST.");
     }
     log.write_loss_section(trg);
 

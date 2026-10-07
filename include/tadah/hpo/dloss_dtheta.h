@@ -932,6 +932,16 @@ compute_analytical_gradient_from_trainer(
      *   - ridge block starts at m_data. */
     const bool        use_force = ctx.template get<bool>("FORCE");
     const std::size_t n_cols    = host.DCS.descriptor_size();
+    /* The descriptors read below (host.dc, DSIZE entries per atom) must
+     * have the DC_Selector width n_cols the design matrix is built with
+     * (one intercept column per ATOM species with BIAS true; the Trainer
+     * constructor requires it, mlip::require_descriptor_layout). */
+    if (n_cols != ctx.template get<std::size_t>("DSIZE"))
+        throw std::logic_error(
+            "compute_analytical_gradient_from_trainer: the DC_Selector "
+            "descriptor has " + std::to_string(n_cols) + " entries, the "
+            "trainer's DSIZE is " +
+            std::to_string(ctx.template get<std::size_t>("DSIZE")));
     const double      eweightglob = ctx.template get<double>("EWEIGHT");
     const double      fweightglob = ctx.template get<double>("FWEIGHT");
 

@@ -8,6 +8,7 @@
 #include <tadah/hpo/scale_validation.h>
 #include <tadah/hpo/strategy_rules.h>
 
+#include <tadah/core/intercept_layout.h>
 #include <tadah/core/logger.h>
 #include <tadah/core/number_format.h>
 #include <tadah/core/utils.h>
@@ -15,6 +16,7 @@
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/rho_gates.h>
+#include <tadah/mlip/intercepts.h>
 #include <tadah/mlip/trainer.h>
 #include <tadah/mlip/weight_provisioning.h>
 #include <tadah/mlip/memory/mlip_workspace_manager.h>
@@ -209,9 +211,13 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx) {
         out.source = "FIXWEIGHT";
       }
     }
-    if (w.size() == 0 && pc.has_stored("WEIGHTS") && pc.size("WEIGHTS") == K) {
+    /* The -c potential's WEIGHTS: train_ctx's (the Trainer, which builds
+     * a model to be fitted, reads none). */
+    if (w.size() == 0 && train_ctx.has_stored("WEIGHTS") &&
+        train_ctx.size("WEIGHTS") == K) {
       w = core::t_type(K);
-      for (std::size_t i = 0; i < K; ++i) w(i) = pc.get<double>("WEIGHTS", i);
+      for (std::size_t i = 0; i < K; ++i)
+        w(i) = train_ctx.get<double>("WEIGHTS", i);
       out.source = "WEIGHTS";
     }
     if (w.size() == 0) {
@@ -238,6 +244,12 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx) {
 
 void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
                         bool has_train_db, bool has_validation) {
+  /* --- NORM/BIAS rules, as tadah train applies them --------------------
+   * NORM true with a linear model needs BIAS true (the NORM weight
+   * conversion moves the mean correction into the intercept columns);
+   * BIAS true needs ATOM. Refused here, not by every evaluation. */
+  tadah::mlip::check_bias_constraints(train_ctx);
+
   /* --- OPTIM key sanity (parse-time rules, re-checked cheaply) -------- */
   if (trg.optimap.count("WEIGHTS")) {
     throw std::runtime_error(
@@ -554,6 +566,25 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
           fixed->second[t] + " and refuses another value, so every "
           "candidate but the -c value would fail; leave " + idx +
           " out of OPTIM.");
+    }
+  }
+
+  /* --- FIXINDEX with BIAS true and two or more species ------------------
+   * Which weights are the intercepts is the model function's (for a
+   * linear model weights 1..N, and the descriptor weights start at index
+   * N + 1; they started at 2 before 1.6.0, when BIAS true had one intercept
+   * shared by all species): built as an evaluation builds it, after
+   * probe_model() above checked that it builds. */
+  if (train_ctx.has_stored("FIXINDEX") &&
+      core::n_intercept_columns(train_ctx) >= 2) {
+    core::Context c = train_ctx;
+    tadah::mlip::memory::MLIPWorkspaceManager ws;
+    tadah::mlip::Trainer probe(c, ws);
+    const std::string w =
+        tadah::mlip::fixindex_intercept_warning(probe.context, *probe.fb);
+    if (!w.empty()) {
+      std::cerr << "[HPO] WARNING: " << w << "\n";
+      HPOLog::instance().warning(w);
     }
   }
 

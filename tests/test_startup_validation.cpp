@@ -418,10 +418,18 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs the settings "
                  Catch::Contains("LAMBDA"));
     }
   }
+  /* NORM true with BF_Linear needs BIAS true (a startup rule of its own,
+   * mlip::check_bias_constraints, as in tadah train), so the setup has BIAS
+   * true: the refusal is the analytical gradient's. Pins (passes before and
+   * after that rule): the reason is "NORM is true". Before the rule the
+   * setup had BIAS false. */
   SECTION("NORM true") {
     Context ctx = good_ctx();
     set(ctx, "NORM", "true");
-    CHECK_THAT(rejected(ctx, target(analytical, ermse)), Catch::Contains("NORM"));
+    set(ctx, "BIAS", "true");
+    CHECK_THAT(rejected(ctx, target(analytical, ermse)),
+               Catch::Contains("GRAD_STRATEGY ANALYTICAL") &&
+               Catch::Contains("NORM is true"));
   }
   SECTION("STRESS true") {
     Context ctx = good_ctx();
@@ -483,10 +491,13 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs the settings "
     CHECK_THAT(rejected(ctx, target(analytical, ermse), false),
                Catch::Contains("training DBFILE"));
   }
+  /* BIAS true for NORM true, as above. Pins (passes before and after the
+   * BIAS rule); before it the setup had BIAS false. */
   SECTION("HYBRID is not affected") {
     Context ctx = good_ctx();
     set(ctx, "OALGO", "1");
     set(ctx, "NORM", "true");
+    set(ctx, "BIAS", "true");
     CHECK(rejected(ctx, target("GRAD_STRATEGY HYBRID\n", ermse)) == "");
   }
   SECTION("an unset GRAD_STRATEGY resolved to ANALYTICAL for PC_OBSERVABLE") {
