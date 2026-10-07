@@ -351,7 +351,9 @@ TEST_CASE("End status: DLIB:GFS records a spent MAXEVAL",
  * an evaluation refused for the budget is a failed one to Ceres, which
  * then ends with FAILURE. The status is Ceres' own reason when Ceres
  * converged or ran out of iterations, MAXEVAL when the budget made it fail,
- * and "STOPPED -- CERES:<ALGO>: FAILURE (<message>)" for any other failure.
+ * and "STOPPED -- CERES:<ALGO>: FAILURE (<head>)" for any other failure,
+ * the head of Ceres' message without its numbers (the stop line gives the
+ * whole message).
  * The cases pin the three CONVERGENCE message prefixes of the Ceres
  * version HPO builds ("Function tolerance reached", "Parameter tolerance
  * reached", "Gradient tolerance reached") and "Maximum number of
@@ -529,12 +531,19 @@ TEST_CASE("End status: CERES records its iteration cap as max_iter reached",
  * Armijo line search of STEEPEST_DESCENT may try one step size only
  * (PARAM max_ls_iter 1), and its first one, 1/|g| = 0.0125, overshoots to
  * -0.5, where the loss is higher: no valid step, "Numerical failure in line
- * search", with most of MAXEVAL 200 left.
+ * search, failed to find a valid step size, (did not run out of
+ * iterations) using initial_step_size: 1.25000e-02, initial_cost: ...",
+ * with most of MAXEVAL 200 left.
  * Pins: the search ends after a handful of evaluations with the status
  * "STOPPED -- CERES:STEEPEST_DESCENT: FAILURE (Numerical failure in line
- * search, ...)" -- Ceres' message verbatim, the class of NLopt's
- * "STOPPED -- nlopt roundoff-limited" -- and the journal's WARNING.
- * Before the fix: the WARNING, and no status. */
+ * search)" -- the head of Ceres' message, a fixed text without its numbers,
+ * the class of NLopt's "STOPPED -- nlopt roundoff-limited" -- while the
+ * stop line "CERES:STEEPEST_DESCENT stopped: FAILURE after N
+ * evaluation(s); Ceres: <message>" and the WARNING give the whole message.
+ * Before the fix: the status quoted the whole message, the step size, cost
+ * and gradient of the run included ("... FAILURE (Numerical failure in
+ * line search, failed to find a valid step size, ... initial_gradient:
+ * -6.40000e+03.)"); before 1.6.0's statuses, no status. */
 TEST_CASE("End status: CERES records a line-search failure as STOPPED with "
           "Ceres' message", "[HPO][stop_status][ceres]")
 {
@@ -548,12 +557,17 @@ TEST_CASE("End status: CERES records a line-search failure as STOPPED with "
     }};
     const std::string journal = run_ceres(sp, host, lr);
     CHECK(host.n() < 20u);
-    CHECK_THAT(lr.status(),
-               Catch::StartsWith("STOPPED -- CERES:STEEPEST_DESCENT: FAILURE "
-                                 "(Numerical failure in line search") &&
-               Catch::EndsWith(")"));
+    CHECK(lr.status() == "STOPPED -- CERES:STEEPEST_DESCENT: FAILURE "
+                         "(Numerical failure in line search)");
+    CHECK(journal.find("CERES:STEEPEST_DESCENT stopped: FAILURE after ") !=
+          std::string::npos);
+    CHECK(journal.find(" evaluation(s); Ceres: Numerical failure in line "
+                       "search, failed to find a valid step size, (did not "
+                       "run out of iterations) using initial_step_size: ") !=
+          std::string::npos);
     CHECK(journal.find("CERES:STEEPEST_DESCENT -- non-convergent: Numerical "
-                       "failure in line search") != std::string::npos);
+                       "failure in line search, failed to find a valid step "
+                       "size") != std::string::npos);
 }
 #endif  // TADAH_USE_CERES
 
