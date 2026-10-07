@@ -24,7 +24,8 @@
  *                              it could not differentiate via a
  *                              `needs_fd` out-list. Throws if any index
  *                              is left -- use HYBRID for graceful
- *                              fallback.
+ *                              fallback. A failed loss the caller gives
+ *                              (gradient_at) fails it (below).
  *   GradStrategy::Hybrid     -- analytical for registered theta + the
  *                              finite differences of NUMERICAL (the same
  *                              stencil and PARAMs; the in-house rule by
@@ -64,7 +65,8 @@
  * centre, a one-sided one uses the loss the optimiser was given. NUMERICAL
  * used to evaluate the point once more (the old kernels' evaluations): one
  * evaluation per gradient, counted against MAXEVAL. ANALYTICAL needs no
- * loss.
+ * loss for its gradient, and reads the caller's to tell a failed
+ * evaluation (below), as HYBRID does before its analytical pass.
  *
  * MAXEVAL counts every evaluation of a run in the shared eval_counter: the
  * provider counts its own (cost(), each finite-difference point, one per
@@ -77,8 +79,9 @@
  *
  * Why a gradient() call returned false is recorded in
  * GradientProvider::failure (GradientFailure): the MAXEVAL budget
- * (Budget), a finite-difference gradient with a failed evaluation
- * (Stencil), or a gradient not finite for another reason (NotFinite: an
+ * (Budget), a failed evaluation the gradient reads -- in the
+ * finite-difference stencil, or the loss at the point (Stencil) -- or a
+ * gradient not finite for another reason (NotFinite: an
  * overflow of the quotient, an analytical gradient). The adapters turn
  * Stencil and NotFinite into a rejected point or the search's own ending,
  * "STOPPED -- no usable gradient: <cause>" (gradient_stop_status), where
@@ -111,7 +114,10 @@
  *                               provides. Every stencil point is evaluated
  *                               and the differences are taken as they are
  *                               (graded differences, or the jump to a
- *                               usable neighbour); a stencil loss that is
+ *                               usable neighbour, as steep as the jump out
+ *                               of the failure band: a documented limit, a
+ *                               search can then sit on a bound or stop at
+ *                               once); a stencil loss that is
  *                               not finite still fails the gradient, and so
  *                               does a gradient whose every differenced
  *                               component is 0: a flat failure region (a
@@ -127,6 +133,22 @@
  * graded failure at x from a usable loss. A loss that mixes failed and
  * usable terms (a mean with FAILSCORE terms that stays below 0.999 FS) is a
  * usable loss to this rule: the host reports no per-evaluation failure.
+ *
+ * ANALYTICAL, and HYBRID before its analytical pass, classify the caller's
+ * loss at x (gradient_at) the same way: a failure (CentreLoss::Failed)
+ * fails the gradient at once, "a failed evaluation at the point"
+ * (kGradientFailedPointCause), and nothing is evaluated or counted. The
+ * analytical gradient at a failed point is that of the loss before the
+ * failure (a skip cap's uncapped loss, a loss without the term that
+ * failed), not of the FAILSCORE the optimiser sees: small but not 0, it
+ * let a search that started inside the failure region converge on
+ * FAILSCORE (DLIB:BFGS, Ceres CONVERGENCE, NLopt "algorithm converged"),
+ * under HYBRID with nothing differenced (the default under PC_OBSERVABLE)
+ * as under ANALYTICAL. A graded failure under FAILSCORE_GRADING ON keeps
+ * the analytical gradient, which does not see the grading. gradient(x, g)
+ * without the loss (DLIB:BFGS for a point that is not its last
+ * evaluation) has nothing to classify: ANALYTICAL gives the analytical
+ * gradient there.
  *
  * Journal (HPOLog): a component a bound turned (one-sided into the box,
  * backward, or towards the box from a point outside it) is counted per
@@ -169,9 +191,11 @@ namespace tadah::hpo {
 enum class GradientFailure {
   None,      /* the last call returned a usable gradient */
   Budget,    /* MAXEVAL was spent before the gradient was complete */
-  Stencil,   /* a finite-difference gradient with a failed evaluation (the
-                loss at the point, or at a stencil point; see the file
-                comment), or a flat failure region at a graded failure */
+  Stencil,   /* a failed evaluation the gradient reads (see the file
+                comment): the loss at the point -- the caller's under every
+                strategy, or the one the finite differences evaluate -- or
+                a finite-difference stencil point; or a flat failure region
+                at a graded failure */
   NotFinite  /* a gradient that is not finite for another reason */
 };
 
@@ -184,9 +208,15 @@ struct GradientFailureInfo {
   std::string     detail;
 };
 
-/* The cause of a Stencil failure. */
+/* The cause of a Stencil failure of the finite differences (NUMERICAL,
+ * HYBRID's differenced components). */
 inline const std::string kGradientStencilCause =
     "a failed evaluation in the finite-difference stencil";
+
+/* The cause of a Stencil failure of ANALYTICAL and HYBRID at a failed loss
+ * the caller gives (gradient_at), before their analytical pass. */
+inline const std::string kGradientFailedPointCause =
+    "a failed evaluation at the point";
 
 /* The run's status when a point without a usable gradient (Stencil or
  * NotFinite) ended the search (HPOLog::set_status; the journal trailer of
@@ -226,7 +256,8 @@ struct GradientProvider {
   /** gradient(x, g) at a point whose loss the caller has just evaluated
    *  itself: fx = host(sp.out(x)) of exactly this x, the last evaluation
    *  made (see the file comment). NUMERICAL and HYBRID take it as the loss
-   *  at x and do not evaluate x; ANALYTICAL is gradient(x, g). */
+   *  at x and do not evaluate x; every strategy fails at a failed fx
+   *  (ANALYTICAL is gradient(x, g) otherwise). */
   std::function<bool(const Vec& x, double fx, Vec& g)> gradient_at;
 
   /** Why the last gradient() call returned false (kind None after a call
@@ -324,6 +355,13 @@ struct StencilReport {
    * evaluated. */
   void centre(const Vec& x, double y) const {
     *out = {GradientFailure::Stencil, kGradientStencilCause, loss_at(x, y)};
+  }
+
+  /* The caller's loss at x failed (CentreLoss::Failed) under ANALYTICAL or
+   * HYBRID: no analytical pass is run and nothing is evaluated. */
+  void failed_point(const Vec& x, double y) const {
+    *out = {GradientFailure::Stencil, kGradientFailedPointCause,
+            loss_at(x, y)};
   }
 
   /* The loss at x is a graded failure and every differenced component of
@@ -694,7 +732,24 @@ make_gradient_provider(const OptimizerSpec&     sp,
       };
     }
     const auto grad = gp.gradient;
-    gp.gradient_at = [grad](const Vec& x, double, Vec& g) {
+    if (!analytical_grad_fn) {
+      gp.gradient_at = [grad](const Vec& x, double, Vec& g) {
+        return grad(x, g);
+      };
+      return gp;
+    }
+    /* The caller's loss at x (the file comment): a failed one fails the
+     * gradient before the analytical pass -- the analytical gradient there
+     * is that of the loss before the failure (a skip cap's uncapped loss),
+     * not of the FAILSCORE the optimiser sees, and a search took it for a
+     * slope and converged on FAILSCORE. A graded failure under
+     * FAILSCORE_GRADING ON keeps the analytical gradient. */
+    gp.gradient_at = [grad, failure, report](const Vec& x, double fx, Vec& g) {
+      *failure = {};
+      if (report.classify(fx) == detail::CentreLoss::Failed) {
+        report.failed_point(x, fx);
+        return false;
+      }
       return grad(x, g);
     };
     return gp;
@@ -737,6 +792,15 @@ make_gradient_provider(const OptimizerSpec&     sp,
        * not). */
       setup->require(sp);
       box.require(x.size());
+      /* The caller's loss at x, before the analytical pass: a failed one
+       * fails the gradient whatever is differenced (as under ANALYTICAL:
+       * the analytical gradient there is not that of the loss the
+       * optimiser sees, and with nothing differenced a search converged on
+       * FAILSCORE). A graded failure under FAILSCORE_GRADING ON goes on. */
+      if (fx && report.classify(*fx) == detail::CentreLoss::Failed) {
+        report.failed_point(x, *fx);
+        return false;
+      }
       const auto over = [&]() {
         if (maxeval > 0 && eval_counter->load() >= maxeval) {
           report.budget();
@@ -769,11 +833,11 @@ make_gradient_provider(const OptimizerSpec&     sp,
         return true;
       };
       /* The analytical pass does not evaluate the loss: the finite
-       * differences take the caller's loss at x (gradient_at), else a
-       * one-sided or forward stencil evaluates it, once per gradient. The
-       * loss at x is classified as NUMERICAL's (the file comment): a
-       * failure the gradient cannot difference ends it before any stencil
-       * point. */
+       * differences take the caller's loss at x (gradient_at; a failed one
+       * ended the gradient above), else a one-sided or forward stencil
+       * evaluates it, once per gradient. The loss at x is classified as
+       * NUMERICAL's (the file comment): a failure the gradient cannot
+       * difference ends it before any stencil point. */
       std::optional<detail::CentreLoss> cls;
       double y0 = 0.0;
       const auto centre = [&](double& y) {
