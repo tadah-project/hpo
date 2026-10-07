@@ -4326,12 +4326,13 @@ TEST_CASE("No usable loss: evaluations that throw count as unusable losses",
     CHECK_THAT(journal, Catch::Contains("NaN/Inf clampings       : 0  (0.0%)"));
     CHECK_THAT(journal, !Catch::Contains("non-finite loss"));
     /* The LOSS FUNCTION section says what scores FAILSCORE (it said
-     * "returned when an evaluation produces NaN/Inf"). */
+     * "returned when an evaluation produces NaN/Inf", then "... a failed
+     * script ..."; FAILSCORE_GRADING OFF here). */
     CHECK_THAT(journal, Catch::Contains(
                             "1.0000e+09  (the loss of a failed evaluation: a "
                             "NaN/Inf loss, an exception, a skip cap, a failed "
-                            "script or a gate reject; the ceiling of every "
-                            "loss)"));
+                            "PC_LAMMPS simulation or a gate reject; the "
+                            "ceiling of every loss)"));
 }
 
 TEST_CASE("DLIB:GFS: a run whose every evaluation fails with the default "
