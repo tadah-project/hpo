@@ -6329,3 +6329,109 @@ TEST_CASE("PRESTAGE under RESTART: an exploration that stagnates without a "
                                         "restarts (1) used; stopping"));
     check_no_usable_loss(6, kDefaultFailScoreRow, kNoUsableLossStatus);
 }
+
+/* ======================================================================
+ * GRAD_STRATEGY ANALYTICAL at a candidate the bump-support gate rejects
+ * before training. Under FAILSCORE_GRADING ON such a candidate scores a
+ * graded failure, and the analytical pass ran there: HPO_Host's trainer
+ * slot holds no fit of the point, so it handed every parameter to finite
+ * differences, which ANALYTICAL took for a parameter without an analytical
+ * derivative -- an error that ended the run FAILED. The point has no
+ * usable gradient instead (gradient_provider.h), which NLopt and Ceres
+ * reject as any such point.
+ * ==================================================================== */
+
+namespace {
+
+/* A D2_Blip channel (w = 2) under a hard Cut_Dummy cutoff at RCUT2B 5: a
+ * bump whose support c + 2/eta passes 5 is rejected before training
+ * (BUMPGATE CANDIDATE, the default), graded band D. The search starts at
+ * CGRID2B[1] = 3.5, SGRID2B[1] = 2.0 (support 4.5); the loss falls
+ * towards SGRID2B[1] = 1, where every CGRID2B[1] above 3 is rejected.
+ * Energies -1 (train and validation), LAMBDA 1. */
+void make_bump_gate_run(TaRun& run)
+{
+    write_ta_db(run.sd.dir / "train.db", 0.0, -1.0);
+    write_ta_db(run.sd.dir / "val.db", 0.07, -1.0);
+    run.ctx.storage_update("TYPE2B", {"D2_Blip", "2", "2", "Ta", "Ta"});
+    run.ctx.storage_update("CGRID2B", {"3.5", "3.0"});
+    run.ctx.storage_update("SGRID2B", {"2.0", "1.0"});
+    run.ctx.storage_update("RCTYPE2B", {"Cut_Dummy"});
+    run.ctx.storage_update("LAMBDA", {"1"});
+}
+
+const std::string kBumpGateRoot =
+    "LOSS L2\n"
+    "PC_EMAE 0 1\n"
+    "FAILSCORE 1e9\n"
+    "FAILSCORE_GRADING ON\n"
+    "QFLUSH 1000\n"
+    "DIGITS 15\n"
+    "OPTIM CGRID2B (1) 3.0 4.8\n"
+    "OPTIM SGRID2B (1) 1.0 3.0\n";
+
+}  // namespace
+
+TEST_CASE("GRAD_STRATEGY ANALYTICAL: a candidate the bump gate rejects "
+          "before training has no usable gradient, and the run goes on",
+          "[HPO][termination][analytical][bumpgate]")
+{
+    /* Pins, for every NLopt LD_* search and the CERES line searches that
+     * reach the rejected region from the start (MAXEVAL 20): the run
+     * evaluates a rejected candidate (a graded loss in [0.999e9, 1e9)),
+     * does not throw, steps back from it and evaluates further points (the
+     * first rejected candidate is not the last evaluation), and ends with
+     * status 0, a usable best and its search's MAXEVAL status
+     * ("MAXEVAL_REACHED -- maximum evaluations exhausted", "CERES:<ALGO>:
+     * MAXEVAL reached"); the journal never says "no analytical gradient
+     * for".
+     * Before the fix: hpo_run threw "GRAD_STRATEGY=ANALYTICAL: no
+     * analytical gradient for 2 parameters at this point (indices: [0, 1])
+     * ..." at the first rejected candidate, after 5-9 evaluations, and the
+     * run ended "FAILED -- GRAD_STRATEGY=ANALYTICAL: ...". DLIB:BFGS and
+     * CERES:STEEPEST_DESCENT ask no gradient at a rejected candidate of
+     * this search, so they are not among the cases. */
+    std::vector<GradientBackend> backends = {
+        {"NLOPT", "LD_LBFGS"}, {"NLOPT", "LD_MMA"}, {"NLOPT", "LD_SLSQP"},
+        {"NLOPT", "LD_CCSAQ"}, {"NLOPT", "LD_TNEWTON"},
+        {"NLOPT", "LD_TNEWTON_PRECOND_RESTART"}, {"NLOPT", "LD_VAR2"}};
+#ifdef TADAH_USE_CERES
+    for (const char* a : {"LBFGS", "WOLFE", "NLCG"})
+        backends.push_back({"CERES", a});
+#endif
+    for (const auto& b : backends) {
+        const std::string name = b.lib + ":" + b.algo;
+        DYNAMIC_SECTION(name) {
+            TaRun run(plain_block("    TYPE PLAIN\n    LIB " + b.lib +
+                                  "\n    ALGO " + b.algo +
+                                  "\n    MAXEVAL 20\n"
+                                  "    GRAD_STRATEGY ANALYTICAL\n"),
+                      kBumpGateRoot);
+            make_bump_gate_run(run);
+            int status = -1;
+            REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                                name));
+            CHECK(status == 0);
+            const auto rows = data_rows("loss.tadah");
+            std::size_t first_rejected = rows.size();
+            for (std::size_t i = 0; i < rows.size(); ++i) {
+                const double l = loss_value(rows[i].back());
+                if (l >= 0.999e9 && l < 1e9) {
+                    first_rejected = i;
+                    break;
+                }
+            }
+            REQUIRE(first_rejected < rows.size());
+            CHECK(first_rejected + 1 < rows.size());
+            const std::string journal = read_file("hpo_run.log");
+            CHECK(journal.find("no analytical gradient for") ==
+                  std::string::npos);
+            CHECK(journal_status(journal) ==
+                  (b.lib == "NLOPT"
+                       ? std::string("MAXEVAL_REACHED -- maximum evaluations "
+                                     "exhausted")
+                       : name + ": MAXEVAL reached"));
+            check_run_files();
+        }
+    }
+}

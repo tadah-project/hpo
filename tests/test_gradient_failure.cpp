@@ -699,6 +699,90 @@ TEST_CASE("GradientProvider: ANALYTICAL fails at a failed loss the caller "
     }
 }
 
+/* A host whose candidate below x = 0 is rejected before training (the
+ * bump-support or a density gate of HPO_Host, a graded band-D failure
+ * under FAILSCORE 1e9): the thread's trainer slot holds no fit of such a
+ * point, and analytical_gradient_gap() says why, as HPO_Host's does ("" at
+ * a point it trained). */
+struct RejectedBelowZero {
+    std::string why =
+        "the candidate was rejected before training (bump-support gate "
+        "reject (c + w/eta past the cutoff, violation=0.5, graded band D)): "
+        "it has no fit to differentiate";
+    mutable bool last_rejected = false;
+    double operator()(const Vec& x) const {
+        last_rejected = x(0) < 0.0;
+        return last_rejected ? graded_below_zero(x(0)) : x(0) + x(1);
+    }
+    std::string analytical_gradient_gap() const {
+        return last_rejected ? why : std::string();
+    }
+};
+
+TEST_CASE("GradientProvider: ANALYTICAL at a candidate rejected before "
+          "training is a point without a usable gradient, not an error",
+          "[HPO][grad_provider][gradient_failure][analytical]")
+{
+    /* Under FAILSCORE_GRADING ON a candidate the bump gate rejects is a
+     * graded failure, so gradient_at runs the analytical pass there, and
+     * HPO_Host's analytical gradient hands every parameter to finite
+     * differences: its trainer slot holds no fit of the point. ANALYTICAL
+     * took that for a parameter without an analytical derivative and threw,
+     * which ended the run FAILED (NLopt LD_*, CERES:LBFGS/WOLFE/NLCG,
+     * test_hpo_termination.cpp).
+     * Pins: at the rejected point (-0.5, 0.5), with the host's analytical
+     * pass routing both parameters to finite differences, gradient_at
+     * returns false, a NotFinite failure (the kind of a point without a
+     * usable gradient that is not a failed stencil evaluation, which NLopt
+     * and Ceres reject and DLIB:BFGS stops at): the cause "the analytical
+     * gradient could not be formed at this point", the detail naming the
+     * point, the host's reason and HYBRID; nothing is evaluated. Where the
+     * host gives no reason -- a parameter without an analytical derivative
+     * at a point it trained -- ANALYTICAL still throws, naming the
+     * parameters (a pin: as before the fix).
+     * Before the fix: gradient_at threw "GRAD_STRATEGY=ANALYTICAL: no
+     * analytical gradient for 2 parameters at this point (indices: [0,
+     * 1]) ..." at the rejected point. */
+    auto sp = inhouse_spec();
+    sp.grad_strategy = tadah::hpo::GradStrategy::Analytical;
+    sp.failscore = 1e9;
+    sp.failscore_grading = true;
+    std::atomic<unsigned long> counter{0};
+    const auto all_fd = [](const Vec&, Vec& g2, std::vector<int>& nfd) {
+        g2.set_size(2);
+        g2(0) = 0.0;
+        g2(1) = 0.0;
+        nfd = {0, 1};
+        return true;
+    };
+    RejectedBelowZero host;
+    auto gp = tadah::hpo::make_gradient_provider<Vec, void>(
+        sp, host, &counter, 0, all_fd);
+    Vec g;
+    const Vec rejected = point(-0.5, 0.5);
+    const double fx = host(rejected);
+    REQUIRE(fx >= 0.999e9);
+    REQUIRE(fx < 1e9);
+    CHECK_FALSE(gp.gradient_at(rejected, fx, g));
+    CHECK(gp.failure->kind == GradientFailure::NotFinite);
+    CHECK(gp.failure->cause ==
+          "the analytical gradient could not be formed at this point");
+    CHECK(gp.failure->detail ==
+          "at CGRID2B[2] = -0.5, SGRID2B[2] = 0.5: " + host.why +
+          "; GRAD_STRATEGY HYBRID takes finite differences there");
+    CHECK(tadah::hpo::gradient_stop_status(*gp.failure) ==
+          "STOPPED -- no usable gradient: the analytical gradient could not "
+          "be formed at this point");
+
+    const Vec trained = point(1.0, 0.5);
+    const double fy = host(trained);
+    CHECK_THROWS_WITH(gp.gradient_at(trained, fy, g),
+                      Catch::StartsWith("GRAD_STRATEGY=ANALYTICAL: no "
+                                        "analytical gradient for 2 "
+                                        "parameters at this point (indices: "
+                                        "[0, 1])"));
+}
+
 TEST_CASE("GradientProvider: a non-finite stencil or centre loss is a "
           "Stencil failure", "[HPO][grad_provider][gradient_failure]")
 {
