@@ -11,11 +11,16 @@
  * with a fixed reason text from this table, so a script or a fingerprint
  * can match it; the numbers (the evaluations made, a tolerance and whether
  * it is the default) are in the journal's stop line, never in the status.
- * NLopt keeps its own result strings ("MAXEVAL_REACHED -- maximum
- * evaluations exhausted", nlopt_result_str) and ASA "ASA: <reason>"; a
- * gradient that is not finite ends a search with its own status
- * (gradient_stop_status, gradient_provider.h), and RESTART with
- * "STOPPED -- stagnation: ...".
+ * A Ceres ending this table has no reason for is named by Ceres'
+ * termination type and the head of its message, a fixed text as well
+ * (ceres_message_head, ceres_adapter.h): "CERES:<ALGO>: CONVERGENCE
+ * (<head>)", "CERES:<ALGO>: NO_CONVERGENCE (<head>)" and, for a failure
+ * that stopped the search with the best standing, "STOPPED --
+ * CERES:<ALGO>: FAILURE (<head>)". NLopt keeps its own result strings
+ * ("MAXEVAL_REACHED -- maximum evaluations exhausted", nlopt_result_str)
+ * and ASA "ASA: <reason>"; a gradient that is not finite ends a search
+ * with its own status (gradient_stop_status, gradient_provider.h), and
+ * RESTART with "STOPPED -- stagnation: ...".
  *
  *   EndReason     status text                 the stop
  *   MaxEval       MAXEVAL reached             MAXEVAL spent

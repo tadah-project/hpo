@@ -48,7 +48,10 @@
  *     reached" XTOL_REL, "Gradient tolerance reached" tol_gradinf) or ran
  *     out of iterations (PARAM max_iter); MAXEVAL when an evaluation
  *     refused for the budget made it fail; "STOPPED -- CERES:<ALGO>:
- *     FAILURE (<Ceres' message>)" for any other failure.
+ *     FAILURE (<head>)" for any other failure, where <head> is the head of
+ *     Ceres' message, a fixed text without the numbers Ceres puts after it
+ *     (ceres_message_head): "FAILURE (Numerical failure in line search)".
+ *     The stop line and the WARNING give the whole message.
  */
 
 #include <tadah/hpo/gradient_provider.h>
@@ -100,6 +103,26 @@ inline void reject_deferred_ceres_nlls(const OptimizerSpec& spec) {
 }
 
 namespace detail {
+
+/* The head of a Ceres termination message: its text before the first
+ * ". ", ", " or ": ", or before its closing "." -- the words that name the
+ * ending, without the numbers Ceres puts after them ("Numerical failure in
+ * line search" of "Numerical failure in line search, failed to find a
+ * valid step size, ... using initial_step_size: 1.25000e-02, initial_cost:
+ * ..."). A text without such a stop is its own head. A status that names
+ * an ending of Ceres' own quotes the head, so it is the same for every run
+ * that ends that way (run_ceres_gradient_problem); the stop line gives the
+ * whole message. */
+inline std::string ceres_message_head(const std::string& message)
+{
+    for (std::size_t i = 0; i < message.size(); ++i) {
+        const char c = message[i];
+        if ((c == '.' || c == ',' || c == ':') &&
+            (i + 1 == message.size() || message[i + 1] == ' '))
+            return message.substr(0, i);
+    }
+    return message;
+}
 
 /* Common checks shared by all Ceres GradientProblemSolver validators. */
 inline void validate_ceres_common_(const OptimizerSpec& sp,
@@ -474,14 +497,17 @@ inline void run_ceres_gradient_problem(
                                    summary.message);
     };
     /* An ending the vocabulary has no reason for: Ceres' own termination
-     * type and message, verbatim, in the stop line and in `status`. */
-    const auto report_native = [&](const char* type,
-                                   const std::string& status) {
+     * type, with its whole message in the stop line and the head of the
+     * message (ceres_message_head) in the status, "STOPPED -- " before it
+     * when the search stopped (a FAILURE). */
+    const auto report_native = [&](const char* type, bool stopped) {
         const std::string msg = backend + " stopped: " + type + " after " +
                                 spent + "; Ceres: " + summary.message;
         std::cout << "[HPO] " << msg << "\n";
         HPOLog::instance().info(msg);
-        HPOLog::instance().set_status(status);
+        HPOLog::instance().set_status(
+            std::string(stopped ? "STOPPED -- " : "") + backend + ": " +
+            type + " (" + ceres_message_head(summary.message) + ")");
     };
     switch (summary.termination_type) {
         case ceres::CONVERGENCE:
@@ -500,8 +526,7 @@ inline void run_ceres_gradient_problem(
                                       ceres_param(sp, "tol_gradinf")
                                           .has_value()));
             else
-                report_native("CONVERGENCE", backend + ": CONVERGENCE (" +
-                                                 summary.message + ")");
+                report_native("CONVERGENCE", false);
             return;
         case ceres::NO_CONVERGENCE:
             if (summary.message == "Maximum number of iterations reached.")
@@ -511,8 +536,7 @@ inline void run_ceres_gradient_problem(
                                       ceres_param(sp, "max_iter")
                                           .has_value()));
             else
-                report_native("NO_CONVERGENCE", backend + ": NO_CONVERGENCE (" +
-                                                    summary.message + ")");
+                report_native("NO_CONVERGENCE", false);
             return;
         case ceres::FAILURE:
             /* A FAILURE right after an evaluation whose gradient was not
@@ -538,8 +562,7 @@ inline void run_ceres_gradient_problem(
              * step, a loss that is not finite): the search stopped, the
              * best stands -- the class of NLopt's "STOPPED -- nlopt
              * roundoff-limited". */
-            report_native("FAILURE", "STOPPED -- " + backend + ": FAILURE (" +
-                                         summary.message + ")");
+            report_native("FAILURE", true);
             return;
         case ceres::USER_SUCCESS:
         case ceres::USER_FAILURE:
