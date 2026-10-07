@@ -20,7 +20,6 @@
 #include <cstdio>
 #include <fstream>
 #include <iomanip>
-#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -160,22 +159,11 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                                  std::unique_ptr<tadah::models::EAMRefit> &refit,
                                  SelfTest &st) {
   // ---- the configuration numbers, strictly and with their ranges ----
+  // (read_refit_numbers also refuses a NMAX whose curve sample grid of
+  // 4 x NMAX points per function, below, does not fit an int)
   const tadah::mlip::engines::RefitNumbers nums =
       tadah::mlip::engines::read_refit_numbers(c);
-  // The curve sample grid has at least 4 x NMAX points per function (below);
-  // computed in 64 bits, it must fit an int (4 * NMAX overflowed above
-  // NMAX 536870911).
   const int nmax_all = std::max({nums.nmax[0], nums.nmax[1], nums.nmax[2]});
-  const long long grid_min = std::max<long long>(50, 4LL * nmax_all);
-  if (grid_min > std::numeric_limits<int>::max())
-    throw std::runtime_error(
-        "tadah refit: REFIT_COMPACT_NMAX " + std::to_string(nmax_all) +
-        " needs a curve sample grid of 4 x " + std::to_string(nmax_all) +
-        " = " + std::to_string(grid_min) +
-        " points per function (REFIT_COMPACT_SAMPLES is raised to at least 4 "
-        "x REFIT_COMPACT_NMAX), above " +
-        std::to_string(std::numeric_limits<int>::max()) +
-        "; lower REFIT_COMPACT_NMAX");
 
   // ---- reachability first: compact mode NEEDS the energy metric ----
   // The lattice/a0 are already guaranteed recognised by the crystal gate in
@@ -563,7 +551,10 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   // O(N*n)); fewer = faster, coarser. Distinct from the energy E-V scan and
   // the OUTPUT_GRID_SCALE setfl grid. Clamped to comfortably exceed the basis.
   int N = nums.samples;
-  const int N_min = static_cast<int>(grid_min);  // fits an int (checked above)
+  // at least 50 and 4 x NMAX, an int (read_refit_numbers refuses a larger
+  // NMAX)
+  const int N_min =
+      static_cast<int>(std::max<long long>(50, 4LL * nmax_all));
   if (N < N_min) {
     Logger::instance().log(
         LogLevel::WARNING,
