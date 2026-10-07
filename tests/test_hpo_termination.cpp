@@ -6179,3 +6179,153 @@ TEST_CASE("Snap onto the box: NLopt LN_COBYLA under OPTIM_SCALE NONE rounds a "
     CHECK(std::stoul(m[1]) >= 1u);
     check_run_files();
 }
+
+/* ======================================================================
+ * PRESTAGE refines only usable losses. The top-K buffer took every
+ * evaluation's loss, a failed one included (FAILSCORE, a graded failure),
+ * and kept it while fewer than TOPK distinct usable losses existed, so a
+ * refinement seed could start at a failed point, and an exploration whose
+ * every evaluation failed was refined from failed points only. The
+ * candidates are the usable losses now: fewer than TOPK are refined as
+ * they are and the journal says so; none ends the PRESTAGE without a
+ * refinement, and a run without a usable loss ends as one.
+ * ==================================================================== */
+
+namespace {
+
+/* A PRESTAGE of a TADAH:GRID exploration (`grid_points` per OPTIM
+ * dimension, no MAXEVAL: the whole grid) refined by NLOPT:LN_SBPLX. */
+std::string prestage_grid_block(const std::string& topk,
+                                const std::string& grid_points)
+{
+    return plain_block(
+        "    TYPE PRESTAGE\n    TOPK " + topk + "\n"
+        "    EXPLORE\n      LIB TADAH\n      ALGO GRID\n"
+        "      PARAM GRID_POINTS " + grid_points + "\n    ENDEXPLORE\n"
+        "    REFINE\n      LIB NLOPT\n      ALGO LN_SBPLX\n"
+        "      MAXEVAL 12\n    ENDREFINE\n");
+}
+
+/* The journal line that lists the PRESTAGE candidates' losses. */
+std::string prestage_losses_line(const std::string& journal)
+{
+    std::smatch m;
+    if (std::regex_search(journal, m,
+                          std::regex(R"(PRESTAGE: top-\d+ losses:[^\n]*)")))
+        return m[0];
+    return {};
+}
+
+}  // namespace
+
+TEST_CASE("PRESTAGE: the refinement starts only from usable losses, fewer "
+          "than TOPK when fewer exist", "[HPO][termination][prestage]")
+{
+    /* The straddle fixture (CGRID2B[2] in [1.0, 2.0] fails below about
+     * 1.47) from 1.9: the GRID exploration evaluates 1.9, then 1.0, 1.25,
+     * 1.5, 1.75 and 2.0; 1.0 and 1.25 fail (the default FAILSCORE).
+     * Pins: the candidates are the four usable losses -- "PRESTAGE: top-4
+     * losses:" without a failed one --, the journal says that there are
+     * fewer than TOPK 6 and why ("PRESTAGE: 4 usable candidate(s) for TOPK
+     * 6 (the exploration made 6 evaluation(s), 2 without a usable loss);
+     * refining 4"), the refinement runs four starts ("REFINEMENT: refining
+     * top-4 seed(s)", "MULTISTART start 4/4", no fifth), status 0.
+     * Before the fix: "PRESTAGE: top-6 losses: 95.2545 96.0496 99.2483
+     * 99.9981 1.79769e+308 ...", "refining top-6 seed(s)": two of the six
+     * refinement starts began at the failed points 1.0 and 1.25. */
+    TaRun run(prestage_grid_block("6", "5"), straddle_root());
+    int status = -1;
+    REQUIRE_NOTHROW(status = straddle_run(run, "1.9", "PRESTAGE"));
+    CHECK(status == 0);
+    const auto x = evaluated_cgrid2();
+    REQUIRE(x.size() >= 6u);
+    const std::vector<double> grid = {1.9, 1.0, 1.25, 1.5, 1.75, 2.0};
+    for (std::size_t i = 0; i < grid.size(); ++i) {
+        INFO("exploration evaluation " << i + 1);
+        CHECK(x[i] == Approx(grid[i]));
+    }
+    const std::string journal = read_file("hpo_run.log");
+    const std::string losses = prestage_losses_line(journal);
+    INFO(losses);
+    CHECK_THAT(losses, Catch::StartsWith("PRESTAGE: top-4 losses: "));
+    CHECK(losses.find("e+308") == std::string::npos);
+    CHECK(count_of(journal,
+                   "PRESTAGE: 4 usable candidate(s) for TOPK 6 (the "
+                   "exploration made 6 evaluation(s), 2 without a usable "
+                   "loss); refining 4") == 1u);
+    CHECK(count_of(journal, "REFINEMENT: refining top-4 seed(s)") == 1u);
+    CHECK(count_of(journal, "MULTISTART start 4/4 done") == 1u);
+    CHECK(journal.find("MULTISTART start 5/") == std::string::npos);
+    check_run_files();
+}
+
+TEST_CASE("PRESTAGE: an exploration without a usable loss is not refined, "
+          "and the run ends without one", "[HPO][termination][prestage]"
+          "[no_usable_loss]")
+{
+    /* Every evaluation fails (a skip cap below every loss); the GRID
+     * exploration evaluates the INIT point and the 2^3 nodes.
+     * Pins: the run makes those 9 evaluations and no other; the journal
+     * says the exploration produced no usable loss and that nothing is
+     * refined ("PRESTAGE: no evaluation of the exploration produced a
+     * usable loss (9 evaluation(s)); nothing to refine"), there is no
+     * REFINEMENT line, and the run ends without a usable loss (status 1,
+     * "STOPPED -- no evaluation produced a usable loss").
+     * Before the fix: "PRESTAGE: top-3 losses: 1.79769e+308 1.79769e+308
+     * 1.79769e+308", "REFINEMENT: refining top-3 seed(s)", and the
+     * refinement's 12 evaluations of the failed seeds' neighbourhoods
+     * (21 rows) before the same ending. */
+    TaRun run(prestage_grid_block("3", "2"), kAllFailRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                        "an all-failed PRESTAGE"));
+    CHECK(status == 1);
+    check_no_usable_loss(9, kDefaultFailScoreRow, kNoUsableLossStatus);
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(count_of(journal,
+                   "PRESTAGE: no evaluation of the exploration produced a "
+                   "usable loss (9 evaluation(s)); nothing to refine") == 1u);
+    CHECK(journal.find("REFINEMENT: refining") == std::string::npos);
+    CHECK(prestage_losses_line(journal).empty());
+}
+
+TEST_CASE("PRESTAGE under RESTART: an exploration that stagnates without a "
+          "usable loss restarts the PRESTAGE", "[HPO][termination][prestage]"
+          "[restart][no_usable_loss]")
+{
+    /* Every evaluation fails, so no evaluation is a new best and each
+     * TADAH:RANDOM exploration stagnates after 3 evaluations.
+     * Pins: neither exploration is refined; each says so and reports its
+     * stagnation to RESTART ("PRESTAGE: no evaluation of the exploration
+     * produced a usable loss (3 evaluation(s)); nothing to refine;
+     * reporting stagnation to RESTART", twice), RESTART restarts once and
+     * its budget then ends the run, which has no usable loss (status 1,
+     * "STOPPED -- no evaluation produced a usable loss"), after 6
+     * evaluations.
+     * Before the fix: each exploration's three failed points were refined
+     * ("REFINEMENT: refining top-2 seed(s)"), every refinement seed
+     * stagnating in its own window: 18 evaluations. */
+    TaRun run(plain_block(
+                  "    TYPE PRESTAGE\n    TOPK 2\n"
+                  "    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 20\n"
+                  "    EXPLORE\n      LIB TADAH\n      ALGO RANDOM\n"
+                  "      MAXEVAL 50\n      SEED 3\n    ENDEXPLORE\n"
+                  "    RESTART\n      AFTER_STAGNATION 3\n      MAX 1\n"
+                  "      METHOD RANDOM 1\n      SEED 7\n    ENDRESTART\n"),
+              kAllFailRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                        "an all-failed PRESTAGE under "
+                                        "RESTART"));
+    CHECK(status == 1);
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(journal.find("REFINEMENT: refining") == std::string::npos);
+    CHECK(count_of(journal,
+                   "PRESTAGE: no evaluation of the exploration produced a "
+                   "usable loss (3 evaluation(s)); nothing to refine; "
+                   "reporting stagnation to RESTART") == 2u);
+    CHECK_THAT(journal, Catch::Contains("RESTART 1/1"));
+    CHECK_THAT(journal, Catch::Contains("RESTART: stagnation reached, max "
+                                        "restarts (1) used; stopping"));
+    check_no_usable_loss(6, kDefaultFailScoreRow, kNoUsableLossStatus);
+}
