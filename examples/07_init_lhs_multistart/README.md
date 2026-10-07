@@ -7,8 +7,10 @@ What this shows:
   per stratum per dimension.
 - `STRATEGY { TYPE MULTISTART, N_STARTS, BUDGET_PER_START }` -- run
   the local optimiser `N_STARTS` times, each with its own
-  `BUDGET_PER_START` eval budget. Outer `MAXEVAL` is a hard cap on
-  the total.
+  `BUDGET_PER_START` eval budget. `BUDGET_PER_START` replaces the outer
+  `MAXEVAL` for each start, and the outer `MAXEVAL` does not cap the
+  total; without it the outer `MAXEVAL` is split over the starts (ceil
+  division).
 
 Use when the loss surface is multimodal and a single local run risks
 getting stuck. Cost: ~ `N_STARTS x BUDGET_PER_START`.
