@@ -209,8 +209,16 @@ public:
      * OFF (default for now) = byte-identical legacy behaviour. Requires a
      * FINITE FAILSCORE when ON (startup-validated). Design:
      * INVESTIGATIONS/SMOOTH_FAILSCORE_analysis.md. Env override:
-     * TADAH_FAILSCORE_GRADING. */
+     * TADAH_FAILSCORE_GRADING. Every optimiser spec carries a copy
+     * (OptimizerSpec::failscore_grading, which the finite differences
+     * read): change it with set_failscore_grading(). */
     bool FAILSCORE_GRADING = false;
+    /* Sets FAILSCORE_GRADING (the TADAH_FAILSCORE_GRADING override of
+     * hpo_run) and its copy in the outer spec, its INNER block, the
+     * PRESTAGE exploration and that one's INNER block; the specs copied
+     * from them later (MULTISTART starts, the PRESTAGE refinement, RESTART
+     * rounds) keep it. */
+    void set_failscore_grading(bool on);
 
     /* BUMPGATE CANDIDATE|STRICT: how the bump-support invariant
      * (c + w/eta <= RCUT on hard Cut_Dummy channels) is enforced over the

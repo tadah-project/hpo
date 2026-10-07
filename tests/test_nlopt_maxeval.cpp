@@ -326,9 +326,14 @@ TEST_CASE("NLopt MAXEVAL: an analytical gradient counts as one evaluation, "
  *     at or below it and gets a NaN analytical gradient: 4 losses and 4
  *     analytical gradients.
  * A failed loss is no STOPVAL success (anneal::stopval_reached): at
- * STOPVAL = the largest double, the start scoring FAILSCORE (and its
- * stencil point (-1.2 + 1.2e-6, 1)) still ends "STOPPED -- gradient not
- * finite"; that section is a pin, it passes before the fix as well.
+ * STOPVAL = the largest double, the start scoring FAILSCORE still ends
+ * "STOPPED -- no usable gradient", after one evaluation: its failed loss
+ * fails its gradient before the stencil is evaluated (since 2026-10-07; it
+ * evaluated the stencil, the failed (-1.2 + 1.2e-6, 1) and the usable
+ * (-1.2 - 1.2e-6, 1), and the difference overflowed: 3 evaluations, and
+ * the status said "gradient not finite"). The journal line of a withheld
+ * loss says "its point has no usable gradient: <cause>" (it said "its
+ * gradient is not finite: <cause>").
  * Before the fix: the budget: 2 evaluations (the start again, as the
  * gradient's centre), ending "SUCCESS -- generic success"; the failed
  * stencil evaluation: "STOPPED -- gradient not finite: ..." (HPO's stop at
@@ -375,10 +380,10 @@ TEST_CASE("NLopt STOPVAL: a loss at or below it that NLopt was not given "
         CHECK(status_of(journal) == kStopvalReached);
         CHECK(journal.find(stopval_line) != std::string::npos);
         CHECK(journal.find("the loss 24.2 is at or below STOPVAL 100, and "
-                           "NLopt was not given it: its gradient is not "
-                           "finite: a failed evaluation in the "
+                           "NLopt was not given it: its point has no usable "
+                           "gradient: a failed evaluation in the "
                            "finite-difference stencil") != std::string::npos);
-        CHECK(journal.find("stopped: gradient not finite") == std::string::npos);
+        CHECK(journal.find("stopped: no usable gradient") == std::string::npos);
     }
     SECTION("an analytical gradient not finite at a later point") {
         Journal j;
@@ -394,8 +399,8 @@ TEST_CASE("NLopt STOPVAL: a loss at or below it that NLopt was not given "
         CHECK(host.analytical == 4u);
         const std::string journal = j.text();
         CHECK(status_of(journal) == kStopvalReached);
-        CHECK(journal.find("NLopt was not given it: its gradient is not "
-                           "finite: the analytical gradient is not finite "
+        CHECK(journal.find("NLopt was not given it: its point has no usable "
+                           "gradient: the analytical gradient is not finite "
                            "at this point") != std::string::npos);
     }
     SECTION("a failed loss is no STOPVAL success") {
@@ -411,9 +416,10 @@ TEST_CASE("NLopt STOPVAL: a loss at or below it that NLopt was not given "
         sp.stop.stopval = std::numeric_limits<double>::max();
         FailRight host;
         REQUIRE_NOTHROW(tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host));
+        CHECK(host.asked.size() == 1u);
         const std::string journal = j.text();
         CHECK(status_of(journal) ==
-              "STOPPED -- gradient not finite: a failed evaluation in the "
+              "STOPPED -- no usable gradient: a failed evaluation in the "
               "finite-difference stencil");
         CHECK(journal.find(stopval_line) == std::string::npos);
     }

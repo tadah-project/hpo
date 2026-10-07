@@ -13,6 +13,8 @@
  * HYBRID); a point outside the box -- an optimiser that ignores the
  * bounds -- is differenced towards it; the journal counts what a bound
  * turned; HYBRID takes the caller's loss at the point when it has it.
+ * The last cases drive the NLopt and Ceres adapters at failed evaluations
+ * ("No usable gradient: ...").
  *
  * The stub hosts record every REAL point asked for. */
 
@@ -22,6 +24,7 @@
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/nlopt_adapter.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/search_space.h>
 
 #ifdef TADAH_USE_CERES
@@ -45,6 +48,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <string>
@@ -752,3 +756,388 @@ TEST_CASE("fd bounds: HYBRID takes the optimiser's own loss at the point for "
                                              "gradient's point"));
     }
 }
+
+/* ======================================================================
+ * A failed evaluation fails the gradient, whatever FAILSCORE is, and the
+ * backends' endings at such a point (gradient_provider.h): one dimension,
+ * X[1] in [1, 2] under OPTIM_SCALE AUTO, PARAM fd_step 0.2 (h = 0.2 of the
+ * width), MAXEVAL 60, the stub hosts below. The end-to-end cases are in
+ * test_hpo_termination.cpp ("No usable gradient: ..."); these drive the
+ * NLopt and Ceres adapters directly.
+ * ==================================================================== */
+
+namespace {
+
+const std::string kNoUsableStencil =
+    "no usable gradient: a failed evaluation in the finite-difference "
+    "stencil";
+
+/* A spec over X[1] in [1, 2] for `lib`:`algo` from `start`. */
+OptimizerSpec region_spec(const std::string& lib, const std::string& algo,
+                          double start, double failscore = kMax)
+{
+    auto sp = spec_on({dim("X[1]", 1.0, 2.0)}, true, 0.2);
+    sp.lib = lib;
+    sp.algo = algo;
+    sp.failscore = failscore;
+    sp.stop.maxeval = 60;
+    sp.optim_init = {{start}};
+    return sp;
+}
+
+/* f(x, k) of the REAL x at the k-th call (from 0); every point and loss
+ * recorded. */
+struct RegionHost {
+    std::function<double(double, std::size_t)> f;
+    std::vector<double> asked;
+    std::vector<double> losses;
+    double operator()(const Vec& x) {
+        const double y = f(x(0), asked.size());
+        asked.push_back(x(0));
+        losses.push_back(y);
+        return y;
+    }
+    /* Whether a usable loss (below 1e300, every failure here is above)
+     * was evaluated. */
+    bool reached_usable(double below) const {
+        for (double y : losses)
+            if (y < below) return true;
+        return false;
+    }
+};
+
+/* The straddle of test_hpo_termination.cpp as a stub: 95 + 10 (2 - x)^2
+ * from 1.47 up, the default FAILSCORE below. */
+double straddle(double x, std::size_t)
+{
+    return x < 1.47 ? kMax : 95.0 + 10.0 * (2.0 - x) * (2.0 - x);
+}
+
+/* An outage: 1 + 10 (x - 1.2)^2 until the call `from` (counted from 0),
+ * the default FAILSCORE at every call from it on, wherever the point. */
+std::function<double(double, std::size_t)> outage(std::size_t from)
+{
+    return [from](double x, std::size_t k) {
+        return k >= from ? kMax : 1.0 + 10.0 * (x - 1.2) * (x - 1.2);
+    };
+}
+
+/* Runs the NLopt or the Ceres adapter on `host`; returns the status. */
+std::string run_region(const OptimizerSpec& sp, RegionHost& host)
+{
+    if (sp.lib == "NLOPT") {
+        tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host);
+    } else {
+#ifdef TADAH_USE_CERES
+        const std::string& a = sp.algo;
+        tadah::hpo::detail::run_ceres_gradient_problem<Vec, NoRunner>(
+            sp, host,
+            a == "LBFGS" ? ceres::LBFGS
+            : a == "WOLFE" ? ceres::BFGS
+            : a == "STEEPEST_DESCENT" ? ceres::STEEPEST_DESCENT
+                                      : ceres::NONLINEAR_CONJUGATE_GRADIENT,
+            a == "STEEPEST_DESCENT" ? ceres::ARMIJO : ceres::WOLFE, a);
+#endif
+    }
+    return HPOLog::instance().status();
+}
+
+}  // namespace
+
+TEST_CASE("No usable gradient: every local NLopt LD_* search from a start "
+          "inside the failure region stops there",
+          "[HPO][grad_provider][fd_bounds][gradient_failure][nlopt]")
+{
+    /* The straddle stub from 1.25: the start and its stencil 1.45 and 1.05
+     * fail.
+     * Pins: one evaluation, the start, whose failed loss fails the
+     * gradient; the search is stopped at its starting point with the stop
+     * line "(the loss at X[1] = 1.25 is 1.797693135e+308); a local gradient
+     * search has no step to take from a starting point without a usable
+     * gradient" and the status "STOPPED -- no usable gradient: ...".
+     * Before the fix: the gradient at the start was the zero difference of
+     * two failures: LD_LBFGS, LD_TNEWTON and LD_VAR2 made 3 evaluations
+     * (the start and its stencil) and ended "SUCCESS -- generic success",
+     * LD_SLSQP 3 (roundoff-limited), LD_MMA and LD_CCSAQ 60 (the same three
+     * points until MAXEVAL_REACHED); no stop line. */
+    for (const char* algo : {"LD_LBFGS", "LD_MMA", "LD_CCSAQ", "LD_SLSQP",
+                             "LD_TNEWTON", "LD_VAR2"}) {
+        DYNAMIC_SECTION(algo) {
+            Journal j;
+            RegionHost host{straddle, {}, {}};
+            const std::string status =
+                run_region(region_spec("NLOPT", algo, 1.25), host);
+            CHECK(host.asked.size() == 1u);
+            CHECK(status == "STOPPED -- " + kNoUsableStencil);
+            CHECK(count_of(j.text(),
+                           std::string("NLOPT:") + algo + " stopped: " +
+                               kNoUsableStencil +
+                               " (the loss at X[1] = 1.25 is "
+                               "1.797693135e+308); a local gradient search "
+                               "has no step to take from a starting point "
+                               "without a usable gradient") == 1u);
+        }
+    }
+}
+
+TEST_CASE("No usable gradient: MLSL and the global GD_* searches from a start "
+          "inside the failure region go on to usable points",
+          "[HPO][grad_provider][fd_bounds][gradient_failure][nlopt]")
+{
+    /* A global search is not one local search: a rejected start leaves it
+     * the rest. The straddle stub from 1.25.
+     * Pins (passes before the fix as well: a pin that the rule does not stop
+     * the global searches): G_MLSL_LDS (POPULATION 3, INNER LD_LBFGS),
+     * GD_MLSL (its default local search) and GD_STOGO reach a usable loss,
+     * spend MAXEVAL 60 (MAXEVAL_REACHED) and write no stop line. */
+    struct Case { std::string algo; bool inner; };
+    for (const Case& c : {Case{"G_MLSL_LDS", true}, Case{"GD_MLSL", false},
+                          Case{"GD_STOGO", false}}) {
+        DYNAMIC_SECTION(c.algo) {
+            Journal j;
+            auto sp = region_spec("NLOPT", c.algo, 1.25);
+            if (c.inner) {
+                sp.pop = 3;
+                sp.inner = std::make_unique<OptimizerSpec>(
+                    region_spec("NLOPT", "LD_LBFGS", 1.25));
+                sp.inner->stop.maxeval.reset();
+            }
+            RegionHost host{straddle, {}, {}};
+            const std::string status = run_region(sp, host);
+            CHECK(host.reached_usable(1e300));
+            CHECK(host.asked.size() == 60u);
+            CHECK(status == "MAXEVAL_REACHED -- maximum evaluations exhausted");
+            CHECK(j.text().find("stopped: no usable gradient") ==
+                  std::string::npos);
+        }
+    }
+}
+
+TEST_CASE("No usable gradient: under FAILSCORE_GRADING a search from a graded "
+          "failure follows the graded slope to usable points",
+          "[HPO][grad_provider][fd_bounds][gradient_failure]"
+          "[failscore_grading]")
+{
+    /* FAILSCORE 1e9: below 1.47 the graded band-D loss of v = 10 (1.47 -
+     * x) (HPO_Host's grading of a skip cap or a gate by its excess), which
+     * falls towards the usable side; 1 + (x - 1.8)^2 from 1.47 up.
+     * Pins (the graded searches pass before the fix as well: a pin of the
+     * graded slope, which a rule that failed every failed evaluation would
+     * break): from 1.25 with FAILSCORE_GRADING ON, LD_LBFGS, LD_MMA and
+     * CERES LBFGS reach a usable loss below 2 and end without the stencil
+     * status or a stop line; with it OFF, LD_LBFGS stops at the start after
+     * one evaluation.
+     * Before the fix: the OFF section failed: the differences of the
+     * failures were a slope all the same, and LD_LBFGS made 18 evaluations
+     * and ended "SUCCESS -- generic success". */
+    const auto graded = [](double x, std::size_t) {
+        if (x < 1.47)
+            return tadah::hpo::graded_failscore(
+                1e9, tadah::hpo::FailBand::D, 10.0 * (1.47 - x), 1.0);
+        return 1.0 + (x - 1.8) * (x - 1.8);
+    };
+    std::vector<std::pair<std::string, std::string>> backends = {
+        {"NLOPT", "LD_LBFGS"}, {"NLOPT", "LD_MMA"}};
+#ifdef TADAH_USE_CERES
+    backends.push_back({"CERES", "LBFGS"});
+#endif
+    for (const auto& b : backends) {
+        DYNAMIC_SECTION(b.first << ":" << b.second) {
+            Journal j;
+            auto sp = region_spec(b.first, b.second, 1.25, 1e9);
+            sp.failscore_grading = true;
+            RegionHost host{graded, {}, {}};
+            const std::string status = run_region(sp, host);
+            CHECK(host.losses.front() >= 0.999e9);
+            CHECK(host.reached_usable(2.0));
+            CHECK(status != "STOPPED -- " + kNoUsableStencil);
+            CHECK(j.text().find("stopped: no usable gradient") ==
+                  std::string::npos);
+        }
+    }
+    SECTION("FAILSCORE_GRADING OFF") {
+        Journal j;
+        RegionHost host{graded, {}, {}};
+        const std::string status =
+            run_region(region_spec("NLOPT", "LD_LBFGS", 1.25, 1e9), host);
+        CHECK(host.asked.size() == 1u);
+        CHECK(status == "STOPPED -- " + kNoUsableStencil);
+    }
+}
+
+#ifdef TADAH_USE_CERES
+TEST_CASE("No usable gradient: a CERES search from a start inside the "
+          "failure region stops there",
+          "[HPO][grad_provider][fd_bounds][gradient_failure][ceres]")
+{
+    /* The straddle stub from 1.25.
+     * Pins: one evaluation; Ceres' first evaluation fails ("Initial cost
+     * and jacobian evaluation failed"), which the stop line reports, and
+     * the status is "STOPPED -- no usable gradient: ...".
+     * Before the fix: 3 evaluations (the start and its stencil, a zero
+     * difference of two failures), Ceres' CONVERGENCE at iteration 0, no
+     * status and no stop line. */
+    for (const char* algo : {"LBFGS", "WOLFE", "NLCG", "STEEPEST_DESCENT"}) {
+        DYNAMIC_SECTION(algo) {
+            Journal j;
+            RegionHost host{straddle, {}, {}};
+            const std::string status =
+                run_region(region_spec("CERES", algo, 1.25), host);
+            CHECK(host.asked.size() == 1u);
+            CHECK(status == "STOPPED -- " + kNoUsableStencil);
+            CHECK(count_of(j.text(),
+                           std::string("CERES:") + algo + " stopped: " +
+                               kNoUsableStencil +
+                               " (the loss at X[1] = 1.25 is "
+                               "1.797693135e+308); Ceres ended right after it "
+                               "(FAILURE: Initial cost and jacobian "
+                               "evaluation failed.)") == 1u);
+        }
+    }
+}
+#endif
+
+TEST_CASE("No usable gradient: an NLopt search that ends right after it "
+          "rejected a point says so, on an outage",
+          "[HPO][grad_provider][fd_bounds][gradient_failure][nlopt][auglag]")
+{
+    /* An outage: 1 + 10 (x - 1.2)^2 until the 16th call, the default
+     * FAILSCORE from the 17th on. From 1.6 LD_SLSQP converges on 1.2 and
+     * asks for it again and again; the outage fails it there, and each
+     * request is rejected (its loss failed, so has its gradient) until the
+     * search ends right after a rejection. These are the endings of the
+     * straddle cases that a zero gradient between two failures used to
+     * make (test_hpo_termination.cpp, "No usable gradient: the straddle
+     * searches that ended right after a rejection go on to MAXEVAL"): the
+     * search ends on the rejection with neither MAXEVAL, MAXTIME nor
+     * STOPVAL met, and a tolerance reached there is the rejection's ending.
+     * Pins: LD_SLSQP 23 evaluations, the last 7 failed, ending with the stop
+     * line "(the loss at X[1] = 1.2 is 1.797693135e+308); NLopt ended right
+     * after it (nlopt roundoff-limited)"; with XTOL_REL 1e-3 and FTOL_REL
+     * 1e-6 "(XTOL_REACHED -- parameter tolerance converged)"; as the INNER
+     * search of AUGLAG 24 evaluations (AUGLAG's evaluation of the point its
+     * search returned the 24th) and "(FTOL_REACHED -- function tolerance
+     * converged)"; an INNER MAXEVAL 15 (NLopt calls) ends the search on
+     * that criterion at its last rejection, FTOL_REACHED and no stop line,
+     * and an INNER MAXEVAL 16 is not reached: the rejection ends it, as
+     * without one; both 24 evaluations.
+     * Before the fix: the outage's failures came with a zero gradient (the
+     * point and its stencil all fail) and were not rejected: LD_SLSQP made
+     * 25 evaluations and ended roundoff-limited (with the tolerances
+     * XTOL_REACHED), AUGLAG 26 and FTOL_REACHED, with either INNER MAXEVAL
+     * as well; no stop line. */
+    const auto tolerances = [](OptimizerSpec& s) {
+        s.stop.xtol_rel = 1e-3;
+        s.stop.ftol_rel = 1e-6;
+    };
+    const auto auglag = [&](std::optional<long> inner_maxeval) {
+        auto sp = region_spec("NLOPT", "AUGLAG", 1.6);
+        sp.inner = std::make_unique<OptimizerSpec>(
+            region_spec("NLOPT", "LD_SLSQP", 1.6));
+        sp.inner->stop.maxeval.reset();
+        if (inner_maxeval) sp.inner->stop.maxeval = *inner_maxeval;
+        tolerances(*sp.inner);
+        return sp;
+    };
+    const std::string stop = "stopped: " + kNoUsableStencil +
+                             " (the loss at X[1] = 1.2 is 1.797693135e+308); "
+                             "NLopt ended right after it (";
+    struct Case {
+        std::string label;
+        std::function<OptimizerSpec()> spec;
+        std::size_t evals;
+        std::string ended;   /* "": no stop line */
+        std::string status;
+    };
+    const std::string fs = "STOPPED -- " + kNoUsableStencil;
+    const std::vector<Case> cases = {
+        {"LD_SLSQP", [] { return region_spec("NLOPT", "LD_SLSQP", 1.6); }, 23u,
+         "nlopt roundoff-limited", fs},
+        {"LD_SLSQP, XTOL_REL and FTOL_REL",
+         [&] {
+             auto sp = region_spec("NLOPT", "LD_SLSQP", 1.6);
+             tolerances(sp);
+             return sp;
+         },
+         23u, "XTOL_REACHED -- parameter tolerance converged", fs},
+        {"AUGLAG, INNER LD_SLSQP", [&] { return auglag(std::nullopt); }, 24u,
+         "FTOL_REACHED -- function tolerance converged", fs},
+        {"AUGLAG, INNER MAXEVAL 15", [&] { return auglag(15); }, 24u, "",
+         "FTOL_REACHED -- function tolerance converged"},
+        {"AUGLAG, INNER MAXEVAL 16", [&] { return auglag(16); }, 24u,
+         "FTOL_REACHED -- function tolerance converged", fs}};
+    for (const auto& c : cases) {
+        DYNAMIC_SECTION(c.label) {
+            Journal j;
+            const OptimizerSpec sp = c.spec();
+            RegionHost host{outage(16), {}, {}};
+            const std::string status = run_region(sp, host);
+            CHECK(host.asked.size() == c.evals);
+            CHECK(status == c.status);
+            const std::string t = j.text();
+            if (c.ended.empty()) {
+                CHECK(t.find("stopped: no usable gradient") == std::string::npos);
+            } else {
+                CHECK(count_of(t, "NLOPT:" + sp.algo + " " + stop + c.ended +
+                                      ")") == 1u);
+            }
+        }
+    }
+}
+
+#ifdef TADAH_USE_CERES
+TEST_CASE("No usable gradient: a Ceres search that ends with FAILURE right "
+          "after it rejected a point says so, on an outage",
+          "[HPO][grad_provider][fd_bounds][gradient_failure][ceres]")
+{
+    /* The outage of the NLopt case from the 7th call on. Ceres' line
+     * search steps back from a point without a usable gradient, and ends
+     * with FAILURE when it finds no valid step: from 1.6 LBFGS, WOLFE and
+     * NLCG reach 1.2 and end "Numerical failure in line search" there; from
+     * 1.95 they leave the box (Ceres' GradientProblemSolver has no bounds)
+     * and end "Cost and jacobian evaluation failed." These are the endings
+     * of the straddle cases that a zero gradient between two failures used
+     * to make (test_hpo_termination.cpp, "No usable gradient: the straddle
+     * searches that ended right after a rejection go on to MAXEVAL").
+     * Pins: from 1.6 7 evaluations, the stop line "(the loss at X[1] = 1.2
+     * is 1.797693135e+308); Ceres ended right after it (FAILURE: Numerical
+     * failure in line search"; from 1.95 27 evaluations and "Ceres ended
+     * right after it (FAILURE: Cost and jacobian evaluation failed.)"; the
+     * status "STOPPED -- no usable gradient: ..." in both.
+     * Before the fix: the outage's failures came with a zero gradient and
+     * Ceres went on, to MAXEVAL (60 evaluations), from either start, with
+     * no status and no stop line. */
+    for (const char* algo : {"LBFGS", "WOLFE", "NLCG"}) {
+        DYNAMIC_SECTION(algo << " from 1.6") {
+            Journal j;
+            RegionHost host{outage(6), {}, {}};
+            const std::string status =
+                run_region(region_spec("CERES", algo, 1.6), host);
+            CHECK(host.asked.size() == 7u);
+            CHECK(status == "STOPPED -- " + kNoUsableStencil);
+            CHECK(count_of(j.text(),
+                           std::string("CERES:") + algo + " stopped: " +
+                               kNoUsableStencil +
+                               " (the loss at X[1] = 1.2 is "
+                               "1.797693135e+308); Ceres ended right after it "
+                               "(FAILURE: Numerical failure in line "
+                               "search") == 1u);
+        }
+        DYNAMIC_SECTION(algo << " from 1.95") {
+            Journal j;
+            RegionHost host{outage(6), {}, {}};
+            const std::string status =
+                run_region(region_spec("CERES", algo, 1.95), host);
+            CHECK(host.asked.size() == 27u);
+            CHECK(status == "STOPPED -- " + kNoUsableStencil);
+            CHECK(count_of(j.text(),
+                           std::string("CERES:") + algo + " stopped: " +
+                               kNoUsableStencil +
+                               " (the loss at X[1] = ") == 1u);
+            CHECK(count_of(j.text(),
+                           "Ceres ended right after it (FAILURE: Cost and "
+                           "jacobian evaluation failed.)") == 1u);
+        }
+    }
+}
+#endif

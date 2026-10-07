@@ -41,14 +41,15 @@ struct MaxEvalReached : public std::exception {
   }
 };
 
-/* The gradient BFGS asked for is not finite (GradientProvider::failure
- * says why): dlib cannot reject a point, so the search ends there, with
- * its own status (report_gradient_stop). */
+/* The point BFGS asked for the gradient of has no usable gradient
+ * (GradientProvider::failure says why: a failed evaluation, or a gradient
+ * that is not finite): dlib cannot reject a point, so the search ends
+ * there, with its own status (report_gradient_stop). */
 struct GradientNotFinite : public std::exception {
   GradientFailureInfo info;
   explicit GradientNotFinite(GradientFailureInfo i) : info(std::move(i)) {}
   const char* what() const noexcept override {
-    return "DLIB:BFGS: gradient not finite";
+    return "DLIB:BFGS: no usable gradient";
   }
 };
 
@@ -570,8 +571,8 @@ template<class Vec,class Runner>
     }
     auto gp = make_gradient_provider<Vec, Runner>(
         sp, host, &evals_used, maxeval, agf);
-    /* A gradient that is not finite ends the search with its own status;
-     * dlib has no way to reject the point. Before 1.6.0 it was reported as
+    /* A point without a usable gradient ends the search with its own
+     * status; dlib has no way to reject the point. Before 1.6.0 it was reported as
      * "MAXEVAL=<n> reached". */
     const auto grad = [&gp, &last, &evals_used](const matrix<double,0,1>& x) {
         matrix<double,0,1> g;

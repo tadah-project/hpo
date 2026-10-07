@@ -264,6 +264,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
    * sentinel (e.g. the ANNEAL T0 calibration excludes FAILSCORE
    * probes from its statistics). */
   spec.failscore = FAIL_SCORE;
+  spec.failscore_grading = FAILSCORE_GRADING;
 
   /* ---------- NOISE_AUTO: heuristic for finite-difference fd_step ---
    *
@@ -1831,14 +1832,26 @@ void HPOTargets::bind_space_recursive() {
     sub->bind_space(space_);
     sub->scale     = spec.scale;
     sub->failscore = spec.failscore;
+    sub->failscore_grading = spec.failscore_grading;
     if (sub->inner) {
       sub->inner->bind_space(space_);
       sub->inner->scale     = spec.scale;
       sub->inner->failscore = spec.failscore;
+      sub->inner->failscore_grading = spec.failscore_grading;
     }
   };
   bind(spec.inner.get());
   bind(spec.prestage.get());
+}
+
+void HPOTargets::set_failscore_grading(bool on) {
+  FAILSCORE_GRADING = on;
+  spec.failscore_grading = on;
+  for (OptimizerSpec* sub : {spec.inner.get(), spec.prestage.get()}) {
+    if (!sub) continue;
+    sub->failscore_grading = on;
+    if (sub->inner) sub->inner->failscore_grading = on;
+  }
 }
 
 void HPOTargets::process_optim_config(std::istringstream& iss,

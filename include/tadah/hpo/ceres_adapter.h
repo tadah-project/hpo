@@ -26,9 +26,9 @@
  *     iterations != host evaluations);
  *   - bad host evals (non-finite loss, MAXEVAL overflow) are reported via
  *     FirstOrderFunction::Evaluate -> false, which Ceres turns into a
- *     termination type, rather than as exceptions. A gradient that is not
- *     finite (GradientProvider::failure: Stencil or NotFinite) is such a
- *     failed evaluation: Ceres' line search steps back from it. When the
+ *     termination type, rather than as exceptions. A point without a
+ *     usable gradient (GradientProvider::failure: Stencil or NotFinite) is
+ *     such a failed evaluation: Ceres' line search steps back from it. When the
  *     solve then ends with FAILURE right after it -- at the starting point,
  *     "Initial cost and jacobian evaluation failed", or a line search that
  *     finds no valid step -- the gradient ended the search, which reports
@@ -428,8 +428,8 @@ inline void run_ceres_gradient_problem(
         HPOLog::instance().warning(oss2.str());
     }
 
-    /* A FAILURE right after an evaluation whose gradient was not finite:
-     * that gradient ended the search. */
+    /* A FAILURE right after an evaluation without a usable gradient: that
+     * gradient ended the search. */
     if (summary.termination_type == ceres::FAILURE && fof->last_rejected())
         report_gradient_stop(
             "CERES:" + algo_label, fof->rejected(),
