@@ -23,7 +23,8 @@
  * MSG_NOSIGNAL. See pc_worker_pool.cpp for the wire codec.
  *
  *   HELLO      P->W  once per spawn: {u32 version, u32 slot, vec<ScriptSpec>}
- *   HELLO_ACK  W->P  {u32 version_echo, u32 pid}
+ *   HELLO_ACK  W->P  {u32 version_echo, u32 pid}   pid: the worker's own,
+ *                    which must be the pid the parent forked
  *   TASK       P->W  {u64 seq, u32 script_idx, u64 iter, u8 pot_kind,
  *                     [pot ops], vec<str> inject}
  *                    pot_kind: 0 = none (worker already has this iter's pot);
@@ -43,7 +44,8 @@
  *   SHUTDOWN   P->W  {}
  *
  * Failure semantics: any channel error (EOF, short/bad frame, seq mismatch,
- * deadline expiry) => SIGKILL + waitpid (decoded status journaled), the
+ * deadline expiry) => SIGKILL + waitpid (journaled with the worker's pid
+ * and the decoded wait status), the
  * in-flight task returns a synthetic KILLED PcTaskResult (parent formats
  * failscore -- graded band C, "did not complete"), and the channel respawns
  * lazily on next use. >= PC_MAX_CONSEC_DEATHS consecutive deaths on one
@@ -178,6 +180,18 @@ public:
   void kill_matching(std::uint64_t iter);
 
   int width() const { return width_; }
+
+  /* The pid of the worker process the pool holds for `slot`: the one it
+   * spawned (the constructor spawns one per slot) and has not reaped; -1
+   * when it holds none -- from a task that found the worker dead and reaped
+   * it until the next task on the slot spawns another, and after
+   * shutdown(). A worker killed from outside keeps its pid here until a
+   * task on its slot finds it dead. The journal names the same pid when a
+   * worker dies ("pc-worker <slot + 1> (pid <pid>) killed/died: ..."), so it
+   * can be matched with the kernel's OOM-killer line. Takes the slot's
+   * channel lock: it waits for a task in flight on the slot. Throws
+   * std::out_of_range for a slot outside 0 to width() - 1. */
+  pid_t worker_pid(int slot) const;
 
 private:
   struct Channel {
