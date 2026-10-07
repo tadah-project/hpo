@@ -524,7 +524,7 @@ private:
                               const mlip::StructureDB& val_stdb,
                               const std::vector<std::string>& param_labels,
                               const mlip::LoadTransformReport& report,
-                              std::size_t cw, int prec);
+                              std::size_t n_val, std::size_t cw, int prec);
 
     /* per thread MLIP workspace ----------------------------------------- */
     static thread_local tadah::mlip::memory::MLIPWorkspaceManager tls_ws_;
@@ -609,14 +609,19 @@ private:
      * beyond #ITERATION and its rows are suppressed. */
     bool stats_have_columns() const;
 
+    /* Rows with their header's columns (n_val: validation datasets, the
+     * per-dataset columns of each metric); a cell the evaluation did not
+     * compute is NaN (see the definitions). */
     static void print_loss_line  (std::ostream&, size_t it, const Result&,
-                                  const HPOTargets&, std::size_t cw, int prec);
+                                  const HPOTargets&, std::size_t n_val,
+                                  std::size_t cw, int prec);
     static void print_outvar_line(std::ostream&, size_t it, const Result&,
                                   const HPOTargets&, std::size_t cw, int prec);
     static void print_params_line(std::ostream&, size_t it, const Result&,
                                   std::size_t cw, int prec);
     static void print_stats_line (std::ostream&, size_t it, const Result&,
-                                  const HPOTargets&, std::size_t cw, int prec);
+                                  const HPOTargets&, std::size_t n_val,
+                                  std::size_t cw, int prec);
 
 };
 

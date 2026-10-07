@@ -43,6 +43,38 @@
  *   - create_ms brackets only the cache lookup/create; run_ms brackets
  *     inject + potential build + run_script (NOT the variable readback);
  *   - readback returns the raw get_variable strings ("" when undefined).
+ *
+ * Read-back errors. Reading a variable evaluates its formula in LAMMPS
+ * after the script, and that can raise a LAMMPS error: a thermo keyword the
+ * script's thermo_style does not compute (`variable P equal press` under
+ * `thermo_style custom step pe`), a divide by zero for one candidate, a
+ * compute that is not current. Each variable is read on its own and an
+ * error stays with it -- LammpsRunner::get_variable clears the in-progress
+ * marks an earlier error left, so a variable that reads an unreadable one
+ * raises that one's LAMMPS error, not a false circular dependency:
+ *   - an outvar (the names of --varloss and --outvar) is returned "" with
+ *     its LAMMPS message in outvar_errors; which of them feed the loss is
+ *     the parent's knowledge, so failing the task for one is the parent's
+ *     call (apply_task_result in hpo_host_impl.hpp: a --varloss variable
+ *     and the PC_FAILPROBE's S fail the task, a diagnostic --outvar is
+ *     NaN);
+ *   - a --hotvar or --failvar fails the task here: RUN_FAIL, error_msg
+ *     "reading --hotvar <name> after the script: <LAMMPS message>" for the
+ *     first one, no outvar or hot value handed on (the failvars stay, for
+ *     grading).
+ * Every variable is read either way (after a failed run only the
+ * failvars, for grading), and an instance that raised a read-back error is
+ * discarded, like one whose script raised one: the error leaves evaluation
+ * state that only `clear` or a redefinition resets (the variables of the
+ * interrupted evaluation stay marked in progress, which get_variable
+ * clears for its own reads but the next script would meet; a compute
+ * interrupted mid-evaluation), and a script need not start with `clear` or
+ * redefine them.
+ *
+ * Guard: execute_script_task never throws. An exception that escapes the
+ * steps above -- each LAMMPS call in them is handled, so this is defence
+ * in depth -- fails the task (RUN_FAIL with its message) and discards the
+ * slot's instance for the script, in both PC_ISOLATION modes alike.
  */
 
 #include <chrono>
@@ -63,8 +95,10 @@ namespace hpo {
 
 enum class PcTaskStatus : unsigned {
   OK = 0,
-  RUN_FAIL = 1,        /* run_script returned false (incl. fired timer timeout);
-                          the instance is ALIVE, so failvars are still read      */
+  RUN_FAIL = 1,        /* run_script returned false (incl. fired timer timeout),
+                          a --hotvar/--failvar could not be read, or an
+                          exception ended the task; the failvars are still
+                          read when the instance allows it                     */
   POT_BUILD_FAIL = 2,  /* LammpsTadah ctor threw (negative-cached per iter)      */
   CREATE_FAIL = 3,     /* LAMMPS instance construction failed (infrastructure)   */
   KILLED = 4,          /* parent-synthesized only (PROCESS mode): worker died or
@@ -74,14 +108,32 @@ enum class PcTaskStatus : unsigned {
 
 struct PcTaskResult {
   PcTaskStatus status = PcTaskStatus::OK;
-  std::string error_msg;                    /* POT_BUILD_FAIL: e.what()          */
-  std::vector<std::string> outvar_values;   /* OK only; one per outvar name      */
+  std::string error_msg;                    /* why the task failed, for the
+                                               journal: POT_BUILD_FAIL the
+                                               potential's construction error;
+                                               RUN_FAIL the LAMMPS message of
+                                               an error inside the script, of a
+                                               --hotvar/--failvar read-back
+                                               ("reading --hotvar <name> after
+                                               the script: ..."), or the
+                                               exception that ended the task.
+                                               Empty for a timeout, and for a
+                                               POT_BUILD_FAIL the slot already
+                                               reported this iteration.         */
+  std::vector<std::string> outvar_values;   /* OK only; one per outvar name; ""
+                                               when undefined or unreadable     */
+  std::vector<std::string> outvar_errors;   /* OK only; empty when every outvar
+                                               was read, else one per outvar
+                                               name: the LAMMPS message of its
+                                               read-back error, "" for one that
+                                               was read                         */
   std::vector<std::string> hotvar_values;   /* OK only; one per hotvar name; ""
-                                               when undefined/unreadable         */
-  std::vector<std::string> failvar_values;  /* OK only; one per failvar name; ""
-                                               when undefined/unreadable. A
-                                               parseable value > 0 classifies
-                                               the sim band B (parent-side).    */
+                                               when undefined                   */
+  std::vector<std::string> failvar_values;  /* OK and RUN_FAIL; one per failvar
+                                               name; "" when undefined or
+                                               unreadable. A parseable value
+                                               > 0 classifies the sim band B
+                                               (parent-side).                   */
   double create_ms = 0.0;
   double run_ms = 0.0;
 };
@@ -102,6 +154,23 @@ struct PcSlotState {
   long long pot_iter = -1;     /* iter the pot/pot_failed state belongs to */
   bool pot_failed = false;     /* negative cache: ctor threw for this iter */
 };
+
+/* The slot cache key of a script: its name, then '\x01' and each token of
+ * its final invar. */
+inline std::string pc_cache_key(const std::string& script_name,
+                                const std::vector<std::string>& invar_final) {
+  std::string key = script_name;
+  for (const auto& s : invar_final) { key += '\x01'; key += s; }
+  return key;
+}
+
+/* A message without its trailing whitespace (a LAMMPS message ends with a
+ * newline). */
+inline std::string pc_trim_message(std::string msg) {
+  const auto end = msg.find_last_not_of(" \t\r\n");
+  msg.erase(end == std::string::npos ? 0 : end + 1);
+  return msg;
+}
 
 /* The exact hot-value injection command the pre-extraction inject_hot_value
  * produced (`equal`-style so hot scripts may redefine same-style; %.17g so a
@@ -135,8 +204,27 @@ inline std::vector<std::string> make_worker_invar(
   return out;
 }
 
+namespace detail {
+
+/* Reads @p name into @p value; on a LAMMPS (or any) error, @p value is ""
+ * and @p error the message. True when the variable was read. */
 template <class R>
-PcTaskResult execute_script_task(
+bool pc_read_variable(const R& runner, const typename R::LMPPtr& lmp,
+                      const std::string& name, std::string& value,
+                      std::string& error) {
+  try {
+    value = runner.get_variable(lmp, name);
+    return true;
+  } catch (const std::exception& e) {
+    value.clear();
+    error = pc_trim_message(e.what());
+    return false;
+  }
+}
+
+/* execute_script_task without its guard. */
+template <class R>
+PcTaskResult execute_script_task_unguarded(
     const std::string& script_name,
     const std::vector<std::string>& script_lines,
     const std::vector<std::string>& invar_final,
@@ -150,8 +238,7 @@ PcTaskResult execute_script_task(
   PcTaskResult res;
 
   /* --- LAMMPS instance: per-slot cache keyed by (script + invar) -------- */
-  std::string cache_key = script_name;
-  for (const auto& s : invar_final) { cache_key += '\x01'; cache_key += s; }
+  const std::string cache_key = pc_cache_key(script_name, invar_final);
 
   R runner;
   auto t_create0 = std::chrono::high_resolution_clock::now();
@@ -205,8 +292,10 @@ PcTaskResult execute_script_task(
 
   const bool pot_ok = static_cast<bool>(st.pot) && !st.pot_failed;
   ScriptRunStatus run_status = ScriptRunStatus::OK;
+  std::string run_error;
   const bool run_ok = pot_ok &&
-      runner.run_script(lmp, cache_it->second.script, st.pot, &run_status);
+      runner.run_script(lmp, cache_it->second.script, st.pot, &run_status,
+                        &run_error);
   auto t_run1 = std::chrono::high_resolution_clock::now();
 
   res.create_ms =
@@ -221,37 +310,108 @@ PcTaskResult execute_script_task(
      * are still readable and carry the graded band-B violation measure.
      * POT_BUILD_FAIL never ran the script; nothing to read. */
     if (res.status == PcTaskStatus::RUN_FAIL) {
-      res.failvar_values.reserve(failvar_names.size());
-      for (const auto& n : failvar_names) {
-        try { res.failvar_values.emplace_back(runner.get_variable(lmp, n)); }
-        catch (...) { res.failvar_values.emplace_back(); }
+      /* The LAMMPS message of an error inside the script, for the journal
+       * (a timeout has none). */
+      if (run_status == ScriptRunStatus::SCRIPT_ERROR)
+        res.error_msg = pc_trim_message(run_error);
+      /* A failvar that cannot be read is "" (the task has failed
+       * already; its grading falls back to the failed fraction). */
+      bool read_error = false;
+      res.failvar_values.resize(failvar_names.size());
+      for (std::size_t j = 0; j < failvar_names.size(); ++j) {
+        std::string ignored;
+        if (!detail::pc_read_variable(runner, lmp, failvar_names[j],
+                                      res.failvar_values[j], ignored))
+          read_error = true;
       }
       /* Exception exits from Input::file() poison the instance (see the
        * header comment); discard AFTER the failvar readback (the Variable
        * store is still intact and band-B grading needs the values).
-       * TIMEOUT_CLEAN keeps the healthy instance, as before. */
+       * TIMEOUT_CLEAN keeps the healthy instance, as before, unless a
+       * failvar read raised an error. */
       if (run_status == ScriptRunStatus::TIMEOUT_ABORT ||
-          run_status == ScriptRunStatus::SCRIPT_ERROR) {
+          run_status == ScriptRunStatus::SCRIPT_ERROR || read_error) {
         st.lmp_cache.erase(cache_it);
       }
     }
     return res;
   }
 
-  /* --- Raw readback: strings only; ALL parsing/validation is caller-side */
-  res.outvar_values.reserve(outvar_names.size());
-  for (const auto& n : outvar_names)
-    res.outvar_values.emplace_back(runner.get_variable(lmp, n));
-  res.hotvar_values.reserve(hotvar_names.size());
-  for (const auto& n : hotvar_names) {
-    try { res.hotvar_values.emplace_back(runner.get_variable(lmp, n)); }
-    catch (...) { res.hotvar_values.emplace_back(); }
+  /* --- Raw readback: strings only; ALL parsing/validation is caller-side.
+   * Each variable on its own: a read-back error stays with its variable
+   * (see the header comment). */
+  bool read_error = false;
+  res.outvar_values.resize(outvar_names.size());
+  for (std::size_t j = 0; j < outvar_names.size(); ++j) {
+    std::string err;
+    if (detail::pc_read_variable(runner, lmp, outvar_names[j],
+                                 res.outvar_values[j], err))
+      continue;
+    res.outvar_errors.resize(outvar_names.size());
+    res.outvar_errors[j] = err;
+    read_error = true;
   }
-  res.failvar_values.reserve(failvar_names.size());
-  for (const auto& n : failvar_names) {
-    try { res.failvar_values.emplace_back(runner.get_variable(lmp, n)); }
-    catch (...) { res.failvar_values.emplace_back(); }
+  /* The first --hotvar/--failvar that cannot be read fails the task. */
+  std::string fatal;
+  auto read_all = [&](const char* role, const std::vector<std::string>& names,
+                      std::vector<std::string>& values) {
+    values.resize(names.size());
+    for (std::size_t j = 0; j < names.size(); ++j) {
+      std::string err;
+      if (detail::pc_read_variable(runner, lmp, names[j], values[j], err))
+        continue;
+      read_error = true;
+      if (fatal.empty())
+        fatal = std::string("reading ") + role + " " + names[j] +
+                " after the script: " + err;
+    }
+  };
+  read_all("--hotvar", hotvar_names, res.hotvar_values);
+  read_all("--failvar", failvar_names, res.failvar_values);
+  if (!fatal.empty()) {
+    res.status = PcTaskStatus::RUN_FAIL;
+    res.error_msg = fatal;
+    res.outvar_values.clear();
+    res.outvar_errors.clear();
+    res.hotvar_values.clear();
   }
+  if (read_error) st.lmp_cache.erase(cache_it);
+  return res;
+}
+
+}  // namespace detail
+
+/* One PC_LAMMPS task on slot state @p st: see the header comment. Never
+ * throws: an exception that escapes the task's own handling fails the task
+ * (RUN_FAIL, error_msg its message) and discards the slot's instance for
+ * the script, so THREAD's run_one and the PROCESS worker, which both call
+ * this, treat it alike. */
+template <class R>
+PcTaskResult execute_script_task(
+    const std::string& script_name,
+    const std::vector<std::string>& script_lines,
+    const std::vector<std::string>& invar_final,
+    const std::vector<std::string>& outvar_names,
+    const std::vector<std::string>& hotvar_names,
+    const std::vector<std::string>& failvar_names,
+    const tadah::core::Context& pot_ctx,
+    unsigned long long iter,
+    const std::vector<std::string>& inject_lines,
+    PcSlotState<R>& st) {
+  std::string what;
+  try {
+    return detail::execute_script_task_unguarded<R>(
+        script_name, script_lines, invar_final, outvar_names, hotvar_names,
+        failvar_names, pot_ctx, iter, inject_lines, st);
+  } catch (const std::exception& e) {
+    what = pc_trim_message(e.what());
+  } catch (...) {
+    what = "an exception of unknown type ended the task";
+  }
+  PcTaskResult res;
+  res.status = PcTaskStatus::RUN_FAIL;
+  res.error_msg = what;
+  st.lmp_cache.erase(pc_cache_key(script_name, invar_final));
   return res;
 }
 

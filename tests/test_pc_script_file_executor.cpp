@@ -24,7 +24,13 @@
 //     next one and the sim would misreport OK;
 //   - EXTERN staging across clear (two pair_coeff * * EXTERN sections);
 //   - PairTadah::coeff() hardening: EXTERN with nothing staged and an
-//     unloadable potential file are clean LAMMPS errors, not null-derefs.
+//     unloadable potential file are clean LAMMPS errors, not null-derefs;
+//   - variables read back after the script ([readback]): a LAMMPS error
+//     raised while HPO evaluates a --varloss/--outvar/--hotvar/--failvar
+//     formula stays inside the task, and a LAMMPS error inside the script
+//     carries its message;
+//   - the task's guard: an exception that is not a LAMMPS error fails the
+//     task, in both PC_ISOLATION modes alike.
 
 #include "catch2/catch.hpp"
 
@@ -47,6 +53,7 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <unistd.h>
 #include <utility>
@@ -501,4 +508,505 @@ TEST_CASE("coeff() hardening: unusable EXTERN/pot file errors cleanly",
         lmp->input->one(cmd);
     REQUIRE_THROWS(
         lmp->input->one("pair_coeff * * /nonexistent_dir/nope.tadah Kr"));
+}
+
+namespace {
+
+/* A fast script for the read-back cases: no potential to build (pair_style
+ * zero, so pe is 0), a thermo_style that computes pe but not press, an
+ * early violation measure, then E and Pend defined after the run. HPO
+ * evaluates each read-back variable's formula after the script; `press`
+ * there raises a LAMMPS error (Thermo::check_press_scalar, error->all) and
+ * `1.0/(pe-pe)` a divide by zero (Variable, error->one). */
+std::vector<std::string> readback_lines(const std::string& pend_formula) {
+    return {"clear", "units metal", "boundary p p p", "atom_style atomic",
+            "lattice bcc 4.1024", "region box block 0 2 0 2 0 2 units lattice",
+            "create_box 1 box", "create_atoms 1 region box", "mass 1 83.798",
+            "pair_style zero 5.0", "pair_coeff * *",
+            "thermo_style custom step pe", "variable viol equal 0.25",
+            "run 0 post no", "variable E equal pe",
+            "variable Pend equal " + pend_formula};
+}
+
+/* The slot cache key of a script (pc_task_exec.h: the script name, then
+ * '\x01' and each invar token). */
+std::string slot_cache_key(const std::string& script,
+                           const std::vector<std::string>& invar) {
+    std::string k = script;
+    for (const auto& s : invar) { k += '\x01'; k += s; }
+    return k;
+}
+
+/* The two LAMMPS errors a read-back can raise, with the text each one's
+ * message carries. */
+struct ReadbackError {
+    const char* formula;
+    const char* lammps_text;
+};
+const ReadbackError kPressError{"press", "Thermo keyword press in variable "
+                                         "requires thermo to use/init press"};
+const ReadbackError kDivideError{"1.0/(pe-pe)",
+                                 "Divide by 0 in variable formula"};
+
+}  // namespace
+
+/* Pins: a --hotvar or --failvar whose formula raises a LAMMPS error when HPO
+ * reads it after the script -- `press` under a thermo_style without it
+ * (error->all), `1.0/(pe-pe)` (a divide by zero, error->one) -- fails the
+ * task: status RUN_FAIL, error_msg "reading --hotvar Pend after the
+ * script: " (or --failvar) followed by the LAMMPS message, no outvar or hot
+ * value handed on, the failvars read (the failing one empty), and the
+ * slot's LAMMPS instance discarded, so that the next script on the slot --
+ * the same name with a readable Pend -- runs on a fresh instance and
+ * succeeds.
+ * Before the fix: the read caught the error and returned "" with status
+ * OK, and the parent skipped the empty value: a hot value that could not be
+ * read left the warm start alone and the cold scripts ran without it, and a
+ * failvar that could not be read counted as "no violation". The status
+ * check fails in every section. */
+TEST_CASE("a --hotvar or --failvar whose read-back raises a LAMMPS error "
+          "fails the task with the message",
+          "[script_file][pc_task][readback]") {
+    auto pot_ctx = kr_pot_ctx();
+    tadah::hpo::PcSlotState<LammpsRunner> st;
+    const std::vector<std::string> invar =
+        {"lmp", "-log", "none", "-screen", "none"};
+    using tadah::hpo::PcTaskStatus;
+
+    struct Case {
+        const char* role;
+        ReadbackError err;
+    };
+    for (const Case c : {Case{"--hotvar", kPressError},
+                         Case{"--hotvar", kDivideError},
+                         Case{"--failvar", kPressError},
+                         Case{"--failvar", kDivideError}}) {
+        const bool hot = std::string(c.role) == "--hotvar";
+        const std::vector<std::string> hotvars =
+            hot ? std::vector<std::string>{"Pend"} : std::vector<std::string>{};
+        const std::vector<std::string> failvars =
+            hot ? std::vector<std::string>{"viol"}
+                : std::vector<std::string>{"viol", "Pend"};
+        INFO(c.role << " Pend = " << c.err.formula);
+
+        auto res = tadah::hpo::execute_script_task<LammpsRunner>(
+            "rb", readback_lines(c.err.formula), invar, {"E"}, hotvars,
+            failvars, pot_ctx, 1, {}, st);
+        INFO("error_msg: " << res.error_msg);
+        REQUIRE(res.status == PcTaskStatus::RUN_FAIL);
+        CHECK_THAT(res.error_msg,
+                   Catch::StartsWith(std::string("reading ") + c.role +
+                                     " Pend after the script: ") &&
+                   Catch::Contains(c.err.lammps_text));
+        CHECK(res.outvar_values.empty());
+        CHECK(res.hotvar_values.empty());
+        REQUIRE(res.failvar_values.size() == failvars.size());
+        CHECK(res.failvar_values[0] == "0.25");
+        if (!hot) CHECK(res.failvar_values[1].empty());
+        CHECK(st.lmp_cache.count(slot_cache_key("rb", invar)) == 0);
+
+        /* The same script name, now readable: a fresh instance runs it. */
+        auto good = tadah::hpo::execute_script_task<LammpsRunner>(
+            "rb", readback_lines("pe+1.5"), invar, {"E"}, hotvars, failvars,
+            pot_ctx, 1, {}, st);
+        INFO("good error_msg: " << good.error_msg);
+        REQUIRE(good.status == PcTaskStatus::OK);
+        CHECK(good.error_msg.empty());
+        REQUIRE(good.outvar_values.size() == 1);
+        CHECK(std::stod(good.outvar_values[0]) == 0.0);
+        if (hot) {
+            REQUIRE(good.hotvar_values.size() == 1);
+            CHECK(std::stod(good.hotvar_values[0]) == 1.5);
+        } else {
+            REQUIRE(good.failvar_values.size() == 2);
+            CHECK(std::stod(good.failvar_values[1]) == 1.5);
+        }
+        st.lmp_cache.clear();
+    }
+}
+
+/* Pins: an --outvar/--varloss variable whose formula raises a LAMMPS error
+ * when HPO reads it after the script stays inside execute_script_task: the
+ * task reports OK with "" for that variable and the values of the others
+ * (E = 0), every failvar is read (viol = 0.25), and the slot's LAMMPS
+ * instance is discarded, so the next script on the slot -- the same name
+ * with a readable Pend -- runs on a fresh instance and succeeds. Whether
+ * the variable's read-back error fails the task is the parent's call (the
+ * worker does not know which names feed the loss): a --varloss variable
+ * fails it, a diagnostic --outvar is NaN with a journal line -- pinned end
+ * to end, message included, by [pc_readback_e2e] and
+ * [.tadah_cli_pc_readback].
+ * Before the fix: the LAMMPS exception (LAMMPSException for press,
+ * LAMMPSAbortException for the divide by zero) escaped execute_script_task
+ * from the unguarded read, the failvars were never read and the errored
+ * instance stayed cached. Under PC_ISOLATION THREAD it went on through
+ * run_lammps to the evaluation's catch, whose partial Result the row
+ * writer read out of bounds (SIGSEGV). Each section fails with the
+ * unexpected exception. */
+TEST_CASE("an --outvar or --varloss whose read-back raises a LAMMPS error "
+          "is returned empty and its instance discarded",
+          "[script_file][pc_task][readback]") {
+    auto pot_ctx = kr_pot_ctx();
+    tadah::hpo::PcSlotState<LammpsRunner> st;
+    const std::vector<std::string> invar =
+        {"lmp", "-log", "none", "-screen", "none"};
+    using tadah::hpo::PcTaskStatus;
+
+    for (const ReadbackError& err : {kPressError, kDivideError}) {
+        INFO("Pend = " << err.formula);
+        tadah::hpo::PcTaskResult res;
+        REQUIRE_NOTHROW(res = tadah::hpo::execute_script_task<LammpsRunner>(
+            "rb", readback_lines(err.formula), invar, {"E", "Pend"}, {},
+            {"viol"}, pot_ctx, 1, {}, st));
+        INFO("error_msg: " << res.error_msg);
+        CHECK(res.status == PcTaskStatus::OK);
+        CHECK(res.error_msg.empty());
+        REQUIRE(res.outvar_values.size() == 2);
+        CHECK(std::stod(res.outvar_values[0]) == 0.0);
+        CHECK(res.outvar_values[1].empty());
+        CHECK(res.failvar_values == std::vector<std::string>{"0.25"});
+        CHECK(st.lmp_cache.count(slot_cache_key("rb", invar)) == 0);
+
+        auto good = tadah::hpo::execute_script_task<LammpsRunner>(
+            "rb", readback_lines("pe+1.5"), invar, {"E", "Pend"}, {},
+            {"viol"}, pot_ctx, 1, {}, st);
+        INFO("good error_msg: " << good.error_msg);
+        REQUIRE(good.status == PcTaskStatus::OK);
+        REQUIRE(good.outvar_values.size() == 2);
+        CHECK(std::stod(good.outvar_values[1]) == 1.5);
+        CHECK(st.lmp_cache.count(slot_cache_key("rb", invar)) == 1);
+        st.lmp_cache.clear();
+    }
+}
+
+/* Pins: a variable read back after another one's read-back error carries
+ * the LAMMPS error of its own evaluation, not "has a circular dependency":
+ *   - outvars E, Pend, Pdiff with Pdiff = v_Pend-1.0: the task is OK, E is
+ *     read (0), Pend and Pdiff are "" and outvar_errors names, for each of
+ *     them, Pend's error (Pdiff evaluates Pend);
+ *   - a --failvar vdep = (v_Pend>1e9) read after the outvar Pend: the task
+ *     fails, error_msg "reading --failvar vdep after the script: " and
+ *     Pend's error, the early failvar viol still read;
+ *   - Pend declared as an --outvar and as a --hotvar: the task fails,
+ *     error_msg "reading --hotvar Pend after the script: " and its error.
+ * Each for `press` under a thermo_style without it and for `1.0/(pe-pe)`.
+ * Before the fix: the first error left Pend marked as being evaluated
+ * (LAMMPS Variable::eval_in_progress), so every later read that reached it
+ * raised "Variable Pend: has a circular dependency" and the journal named
+ * a dependency the script does not have instead of the real cause. The
+ * message checks fail (and outvar_errors for Pend was right, Pdiff's
+ * wrong). */
+TEST_CASE("a variable read back after a read-back error carries its own "
+          "LAMMPS error", "[script_file][pc_task][readback]") {
+    auto pot_ctx = kr_pot_ctx();
+    tadah::hpo::PcSlotState<LammpsRunner> st;
+    const std::vector<std::string> invar =
+        {"lmp", "-log", "none", "-screen", "none"};
+    using tadah::hpo::PcTaskStatus;
+    using Catch::Contains;
+
+    for (const ReadbackError& err : {kPressError, kDivideError}) {
+        INFO("Pend = " << err.formula);
+        std::vector<std::string> lines = readback_lines(err.formula);
+        lines.push_back("variable Pdiff equal v_Pend-1.0");
+        lines.push_back("variable vdep equal (v_Pend>1e9)");
+        {
+            INFO("a dependent --outvar");
+            const auto res = tadah::hpo::execute_script_task<LammpsRunner>(
+                "rb", lines, invar, {"E", "Pend", "Pdiff"}, {}, {"viol"},
+                pot_ctx, 1, {}, st);
+            INFO("error_msg: " << res.error_msg);
+            REQUIRE(res.status == PcTaskStatus::OK);
+            REQUIRE(res.outvar_values.size() == 3);
+            CHECK(std::stod(res.outvar_values[0]) == 0.0);
+            CHECK(res.outvar_values[1].empty());
+            CHECK(res.outvar_values[2].empty());
+            REQUIRE(res.outvar_errors.size() == 3);
+            CHECK(res.outvar_errors[0].empty());
+            for (std::size_t j : {1, 2}) {
+                INFO("outvar_errors[" << j << "]");
+                CHECK_THAT(res.outvar_errors[j],
+                           Contains(err.lammps_text) &&
+                               !Contains("circular dependency"));
+            }
+            CHECK(res.failvar_values == std::vector<std::string>{"0.25"});
+            CHECK(st.lmp_cache.count(slot_cache_key("rb", invar)) == 0);
+        }
+        {
+            INFO("a dependent --failvar");
+            const auto res = tadah::hpo::execute_script_task<LammpsRunner>(
+                "rb", lines, invar, {"E", "Pend"}, {}, {"viol", "vdep"},
+                pot_ctx, 1, {}, st);
+            INFO("error_msg: " << res.error_msg);
+            REQUIRE(res.status == PcTaskStatus::RUN_FAIL);
+            CHECK_THAT(res.error_msg,
+                       Catch::StartsWith("reading --failvar vdep after the "
+                                         "script: ") &&
+                           Contains(err.lammps_text) &&
+                           !Contains("circular dependency"));
+            CHECK(res.failvar_values == std::vector<std::string>{"0.25", ""});
+            CHECK(st.lmp_cache.count(slot_cache_key("rb", invar)) == 0);
+        }
+        {
+            INFO("one name as an --outvar and a --hotvar");
+            const auto res = tadah::hpo::execute_script_task<LammpsRunner>(
+                "rb", lines, invar, {"E", "Pend"}, {"Pend"}, {"viol"},
+                pot_ctx, 1, {}, st);
+            INFO("error_msg: " << res.error_msg);
+            REQUIRE(res.status == PcTaskStatus::RUN_FAIL);
+            CHECK_THAT(res.error_msg,
+                       Catch::StartsWith("reading --hotvar Pend after the "
+                                         "script: ") &&
+                           Contains(err.lammps_text) &&
+                           !Contains("circular dependency"));
+            CHECK(res.hotvar_values.empty());
+            CHECK(st.lmp_cache.count(slot_cache_key("rb", invar)) == 0);
+        }
+        st.lmp_cache.clear();
+    }
+}
+
+/* Pins: a LAMMPS error inside the script (an unknown command) fails the
+ * task with the LAMMPS message in error_msg -- "ERROR: Unknown command:
+ * bogus_command 1 2", which the parent journals -- after the early failvar
+ * is read, and the errored instance is discarded as before.
+ * Before the fix: execute_file dropped e.what(), so error_msg was empty and
+ * the journal had no line about the failure; the error_msg check fails. */
+TEST_CASE("a LAMMPS error inside a PC_LAMMPS script reaches the task's "
+          "error message", "[script_file][pc_task][readback]") {
+    auto pot_ctx = kr_pot_ctx();
+    tadah::hpo::PcSlotState<LammpsRunner> st;
+    const std::vector<std::string> invar =
+        {"lmp", "-log", "none", "-screen", "none"};
+    const std::vector<std::string> bad = {
+        "clear", "units lj", "variable viol equal 0.25", "bogus_command 1 2",
+        "variable x equal 1.0"};
+    auto res = tadah::hpo::execute_script_task<LammpsRunner>(
+        "bad", bad, invar, {"x"}, {}, {"viol"}, pot_ctx, 1, {}, st);
+    INFO("error_msg: " << res.error_msg);
+    REQUIRE(res.status == tadah::hpo::PcTaskStatus::RUN_FAIL);
+    CHECK_THAT(res.error_msg,
+               Catch::StartsWith("ERROR: Unknown command: bogus_command 1 2"));
+    CHECK(res.failvar_values == std::vector<std::string>{"0.25"});
+    CHECK(st.lmp_cache.count(slot_cache_key("bad", invar)) == 0);
+}
+
+/* Pins: a fired timeout fails the task without a message (the section
+ * guard's sentinel is not a LAMMPS message, and a timer that stops the last
+ * section raises nothing), and keeps its instance policy: discarded after
+ * the guard aborted Input::file() (TIMEOUT_ABORT), kept after a clean stop
+ * in the last section (TIMEOUT_CLEAN). The early failvar is read in both.
+ * Before the fix: passes as well (a pin that the in-script messages leave
+ * timeouts as they were). */
+TEST_CASE("a timed-out PC_LAMMPS script fails without a message and keeps "
+          "its instance policy", "[script_file][pc_task][timeout]") {
+    auto pot_ctx = kr_pot_ctx();
+    const std::string melt = R"(clear
+units lj
+atom_style atomic
+lattice fcc 0.8442
+region box block 0 8 0 8 0 8
+create_box 1 box
+create_atoms 1 box
+mass 1 1.0
+velocity all create 3.0 87287
+pair_style lj/cut 2.5
+pair_coeff 1 1 1.0 1.0 2.5
+neighbor 0.3 bin
+neigh_modify delay 0 every 20 check no
+fix 1 all nve
+variable viol equal 0.25
+run 500000000
+)";
+    struct Case { const char* name; std::string body; bool kept; };
+    for (const Case& c : {
+             Case{"two_sections", melt + "clear\nunits lj\nvariable late equal 1.0\n",
+                  false},
+             Case{"one_section", melt + "variable late equal 1.0\n", true}}) {
+        INFO(c.name);
+        /* Through LammpsSim, so the real preparation injects the timer
+         * lines and, between sections, the guard. */
+        const std::string spath = std::filesystem::temp_directory_path() /
+            ("tadah_sfe_rbto_" + std::to_string(::getpid()) + ".in");
+        { std::ofstream os(spath); os << c.body; }
+        std::string cmd = "--script " + spath + " --varloss late 0.0 1.0";
+        tadah::hpo::LammpsSim sim(cmd, "1", 1.0e6, tadah::LossFunction{});
+        std::remove(spath.c_str());
+
+        tadah::hpo::PcSlotState<LammpsRunner> st;
+        const std::vector<std::string> invar =
+            {"lmp", "-log", "none", "-screen", "none", "-var", "maxtime",
+             "1 every 1"};
+        const auto t0 = std::chrono::steady_clock::now();
+        auto res = tadah::hpo::execute_script_task<LammpsRunner>(
+            c.name, sim.script_lines, invar, {"late"}, {}, {"viol"}, pot_ctx,
+            1, {}, st);
+        const double secs = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - t0).count();
+        INFO("error_msg: " << res.error_msg);
+        CHECK(secs < 30.0);
+        REQUIRE(res.status == tadah::hpo::PcTaskStatus::RUN_FAIL);
+        CHECK(res.error_msg.empty());
+        CHECK(res.failvar_values == std::vector<std::string>{"0.25"});
+        CHECK(st.lmp_cache.count(slot_cache_key(c.name, invar)) ==
+              (c.kept ? 1u : 0u));
+    }
+}
+
+/* Pins: a --failvar that cannot be read after a run that failed (here a
+ * timer that stopped the last section, which keeps a healthy instance) is
+ * "", the others are read (viol = 0.25), the task fails as before without
+ * a message, and the instance that raised the read-back error is
+ * discarded, as after a read-back error on a run that succeeded.
+ * Before the fix: the read's error was swallowed and the instance kept
+ * (the cache check fails). */
+TEST_CASE("a --failvar that cannot be read after a failed run discards the "
+          "instance", "[script_file][pc_task][readback][timeout]") {
+    auto pot_ctx = kr_pot_ctx();
+    const std::string body = R"(clear
+units lj
+atom_style atomic
+lattice fcc 0.8442
+region box block 0 8 0 8 0 8
+create_box 1 box
+create_atoms 1 box
+mass 1 1.0
+velocity all create 3.0 87287
+pair_style lj/cut 2.5
+pair_coeff 1 1 1.0 1.0 2.5
+neighbor 0.3 bin
+neigh_modify delay 0 every 20 check no
+fix 1 all nve
+variable viol equal 0.25
+variable bad equal 1.0/(v_viol-v_viol)
+run 500000000
+variable late equal 1.0
+)";
+    const std::string spath = std::filesystem::temp_directory_path() /
+        ("tadah_sfe_rbfv_" + std::to_string(::getpid()) + ".in");
+    { std::ofstream os(spath); os << body; }
+    std::string cmd = "--script " + spath + " --varloss late 0.0 1.0";
+    tadah::hpo::LammpsSim sim(cmd, "1", 1.0e6, tadah::LossFunction{});
+    std::remove(spath.c_str());
+
+    tadah::hpo::PcSlotState<LammpsRunner> st;
+    const std::vector<std::string> invar =
+        {"lmp", "-log", "none", "-screen", "none", "-var", "maxtime",
+         "1 every 1"};
+    auto res = tadah::hpo::execute_script_task<LammpsRunner>(
+        "timed_out", sim.script_lines, invar, {"late"}, {}, {"viol", "bad"},
+        pot_ctx, 1, {}, st);
+    INFO("error_msg: " << res.error_msg);
+    REQUIRE(res.status == tadah::hpo::PcTaskStatus::RUN_FAIL);
+    CHECK(res.error_msg.empty());
+    CHECK(res.failvar_values == std::vector<std::string>{"0.25", ""});
+    CHECK(st.lmp_cache.count(slot_cache_key("timed_out", invar)) == 0);
+}
+
+namespace {
+
+/* A runner whose run_script throws an exception that is not a LAMMPS error
+ * (none of LammpsRunner's members does: they catch LAMMPS errors). It has
+ * the shape execute_script_task needs of a runner, and an instance whose
+ * input takes the injected lines. */
+struct ThrowingRunner {
+    struct Input { void one(const char*) {} };
+    struct Instance {
+        Input in;
+        Input* input = &in;
+    };
+    using LMPPtr = std::unique_ptr<Instance>;
+    template <class Comm>
+    LMPPtr create_instance(Comm, const std::vector<std::string>&) const {
+        return std::make_unique<Instance>();
+    }
+    bool run_script(const LMPPtr&, const ScriptFile&,
+                    const std::shared_ptr<tadah::LammpsTadah>&,
+                    ScriptRunStatus* = nullptr,
+                    std::string* = nullptr) const {
+        throw std::runtime_error("ThrowingRunner: not a LAMMPS error");
+    }
+    std::string get_variable(const LMPPtr&, const std::string&) const {
+        return "1";
+    }
+};
+
+}  // namespace
+
+/* Pins: an exception that escapes the task's own handling -- here one
+ * thrown by the runner, which no LammpsRunner member does -- fails that
+ * task: RUN_FAIL with the exception's message, and the slot's instance
+ * discarded. THREAD's run_one and the PROCESS worker both call
+ * execute_script_task, so such a throw fails one task the same way in both
+ * modes.
+ * Before the fix: the exception escaped execute_script_task. Under PROCESS
+ * the worker's own catch-all made it a RUN_FAIL, keeping the instance;
+ * under THREAD it ended the whole evaluation through its catch (counted as
+ * a NaN clamp). The test fails with the unexpected exception. */
+TEST_CASE("an exception inside a PC_LAMMPS task fails that task with its "
+          "message", "[pc_task][parity]") {
+    auto pot_ctx = kr_pot_ctx();
+    tadah::hpo::PcSlotState<ThrowingRunner> st;
+    const std::vector<std::string> invar =
+        {"lmp", "-log", "none", "-screen", "none"};
+    tadah::hpo::PcTaskResult res;
+    REQUIRE_NOTHROW(res = tadah::hpo::execute_script_task<ThrowingRunner>(
+        "throws", readback_lines("pe"), invar, {"E"}, {}, {}, pot_ctx, 1,
+        {"variable seed equal 1.0"}, st));
+    CHECK(res.status == tadah::hpo::PcTaskStatus::RUN_FAIL);
+    CHECK(res.error_msg == "ThrowingRunner: not a LAMMPS error");
+    CHECK(res.outvar_values.empty());
+    CHECK(st.lmp_cache.empty());
+}
+
+/* Pins: a SCRIPT_ERROR of LammpsRunner::run_script (the Context overload,
+ * which builds the potential itself for an EXTERN script) hands its reason
+ * to the error out-parameter: "potential construction failed: " and the
+ * construction error for a Context no potential can be built from, and
+ * the LAMMPS message for an error inside the script. A run that succeeds
+ * leaves the parameter alone.
+ * Added with the fix (an exception to tests-first): the out-parameter does
+ * not exist before it, so this does not compile there. Before the fix
+ * both catches dropped e.what(). */
+TEST_CASE("run_script hands the reason of a script error to its error "
+          "out-parameter", "[script_file][readback]") {
+    tadah::core::PeriodicTable::initialize();
+    LammpsRunner runner;
+
+    SECTION("an EXTERN script whose potential cannot be built") {
+        auto lmp = make_instance();
+        REQUIRE(lmp != nullptr);
+        const ScriptFile sf(kr_loop_extern_lines());
+        REQUIRE(sf.has_extern());
+        ScriptRunStatus why = ScriptRunStatus::OK;
+        std::string error;
+        CHECK_FALSE(runner.run_script(lmp, sf, tadah::core::Context{}, &why,
+                                      &error));
+        CHECK(why == ScriptRunStatus::SCRIPT_ERROR);
+        CHECK_THAT(error, Catch::StartsWith("potential construction failed: "));
+        CHECK(error.size() > std::string("potential construction failed: ").size());
+    }
+    SECTION("an unknown command") {
+        auto lmp = make_instance();
+        REQUIRE(lmp != nullptr);
+        const ScriptFile sf(std::vector<std::string>{
+            "clear", "units lj", "bogus_command 1 2"});
+        ScriptRunStatus why = ScriptRunStatus::OK;
+        std::string error;
+        CHECK_FALSE(runner.run_script(lmp, sf, tadah::core::Context{}, &why,
+                                      &error));
+        CHECK(why == ScriptRunStatus::SCRIPT_ERROR);
+        CHECK_THAT(error,
+                   Catch::StartsWith("ERROR: Unknown command: bogus_command 1 2"));
+    }
+    SECTION("a script that runs") {
+        auto lmp = make_instance();
+        REQUIRE(lmp != nullptr);
+        const ScriptFile sf(backward_loop_lines());
+        ScriptRunStatus why = ScriptRunStatus::SCRIPT_ERROR;
+        std::string error = "untouched";
+        CHECK(runner.run_script(lmp, sf, tadah::core::Context{}, &why, &error));
+        CHECK(why == ScriptRunStatus::OK);
+        CHECK(error == "untouched");
+    }
 }
