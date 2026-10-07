@@ -890,6 +890,40 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW matches FD over W[c] "
          << "  dlx/dW_anal = " << dlx_dW_anal_c
          << "  rel = " << relerr);
     CHECK(relerr < 1.0e-4);
+
+    /* The chain's box part: lambda with its atom entries set to 0, so that
+     * lambda . dF/dW of the atom block is left out, against central
+     * differences at h_w = 1e-6 |W|, where they have reached their
+     * plateau (1e-6 to 1e-7 |W| agree to 7e-9 relative with the shipped
+     * potential, to 4e-7 with the potential the case was written against).
+     * The atom entries are round-off (2.1e-6 here: the relaxed crystal's
+     * forces do not change under the homogeneous strain, and H's cross
+     * terms are 1.4e-9); the snapshot's dF/dW they multiply is not the
+     * derivative of the forces (pair_tadah's adjoint snapshot: over the 16
+     * atoms of this cell, displaced, it sums to about -1 per axis where the
+     * derivative of the forces sums to 0), and that product is the 1.2e-5
+     * of the full chain above.
+     * Pins: the box part within 1e-6 relative of the plateau (measured
+     * 4.8e-9 with the shipped potential, 3.6e-7 with the other).
+     * Before the fix: the box Hessian's iso entry was the energy's second
+     * difference, 5.7e-6 below its value with the shipped potential and
+     * 1.5e-4 with the other: the box part was as far off. */
+    Eigen::VectorXd lambda_box = lambda;
+    lambda_box.head(3 * in.ctx.nlocal).setZero();
+    Eigen::VectorXd dlx_dW_box;
+    tadah::hpo::apply_ift_chain_kernel(
+        dg_dW_lx, lambda_box, in.dF_dW, in.ctx.nlocal, in.ctx.n_desc,
+        dlx_dW_box, in.dvirial_dW, in.box_dofs);
+    const double h_plateau = 1.0e-6 * std::abs(w_c0);
+    const double dlx_dW_plateau =
+        (run_and_read_lx(perturbed_ctx(+h_plateau)) -
+         run_and_read_lx(perturbed_ctx(-h_plateau))) /
+        (2.0 * h_plateau);
+    const double rel_box =
+        std::abs(dlx_dW_box(c_fd) - dlx_dW_plateau) / std::abs(dlx_dW_plateau);
+    INFO("box part " << dlx_dW_box(c_fd) << "  FD at 1e-6 |W| "
+         << dlx_dW_plateau << "  rel " << rel_box);
+    CHECK(rel_box < 1.0e-6);
 }
 
 // ----------------------------------------------------------------------------
@@ -1066,6 +1100,35 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW via Voigt-6 chain "
      * (the missing box-box off-diagonals were a 1.2 = 120% relative
      * disagreement). */
     CHECK(relerr < 5.0e-4);
+
+    /* The chain's box part, as in the 3.7C case: lambda's atom entries
+     * set to 0, against central differences at h_w = 1e-6 |W|. The atom
+     * entries (1.4e-5 here) times the snapshot's dF/dW make the 2.4e-5 of
+     * the full chain above.
+     * Pins: the box part within 1e-6 relative of the plateau (measured
+     * 1.6e-9 with the shipped potential, 3.8e-7 with the potential the case
+     * was written against).
+     * Before the fix: the box Hessian's normal-strain diagonal was the
+     * energy's second difference (on the 4-atom cell of
+     * test_lammps_hessian.cpp 1.6e-5 off its value): the box part was
+     * 1.5e-5 off the plateau with the shipped potential, 3.0e-4 with the
+     * other. */
+    Eigen::VectorXd lambda_box = lambda;
+    lambda_box.head(3 * in.ctx.nlocal).setZero();
+    Eigen::VectorXd dlx_dW_box;
+    tadah::hpo::apply_ift_chain_kernel(
+        dg_dW_lx, lambda_box, in.dF_dW, in.ctx.nlocal, in.ctx.n_desc,
+        dlx_dW_box, in.dvirial_dW, in.box_dofs);
+    const double h_plateau = 1.0e-6 * std::abs(w_c0);
+    const double dlx_dW_plateau =
+        (run_and_read_lx(perturbed_ctx(+h_plateau)) -
+         run_and_read_lx(perturbed_ctx(-h_plateau))) /
+        (2.0 * h_plateau);
+    const double rel_box =
+        std::abs(dlx_dW_box(c_fd) - dlx_dW_plateau) / std::abs(dlx_dW_plateau);
+    INFO("box part " << dlx_dW_box(c_fd) << "  FD at 1e-6 |W| "
+         << dlx_dW_plateau << "  rel " << rel_box);
+    CHECK(rel_box < 1.0e-6);
 }
 
 // ----------------------------------------------------------------------------
