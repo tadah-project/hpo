@@ -1237,6 +1237,73 @@ TEST_CASE("Termination: a RESTART refresh applies the run's WARM density-form "
     }
 }
 
+TEST_CASE("Termination: a RESTART refresh draws its WARM seed under the "
+          "RESTART block's WARM_ON_MISMATCH", "[HPO][termination][restart][warm]")
+{
+    /* Pins: a RESTART round draws its WARM seed under the WARM_ON_MISMATCH
+     * of the RESTART block (build_init_strategy binds it to the chain's
+     * WARM entries), not under the INIT block of the spec it restarts,
+     * which has the default `warn` here. The seed's AMPGRIDMB[1] 1.5 lies
+     * above the box's 1. With `error` the first restart throws, naming the
+     * clamping, before a second run; with `skip` the seed is dropped, the
+     * chain produces no point, and the round starts from the previous
+     * round's points (the CONFIG point 0.5) with a WARNING that says so;
+     * with `warn` the round starts from the clamped seed, 1.
+     * Before the fix: the refresh took the restarted spec's INIT policy
+     * (`warn`) whatever the RESTART block said, so `error` and `skip`
+     * restarted from the clamped seed 1 (no throw), and an empty refresh
+     * restarted from the previous points without a word. The `warn`
+     * SECTION passes as well (a pin). */
+    HostFixture fx;   // RestartPolicy uses the host's statics only
+    tadah::core::Context ctx = rhoform_test::make_ream_ctx("SIGNED");
+    rhoform_test::TempFile target(std::string("OPTIM AMPGRIDMB (1) 0 1\n"
+                                              "PC_ERMSE 0 1\n") +
+                                  rhoform_test::kOptimizer);
+    tadah::hpo::HPOTargets trg(ctx, target.path.string());
+    REQUIRE(trg.spec.init_strategy_spec.warm_on_mismatch == "warn");
+    REQUIRE(trg.spec.optim_init.size() == 1u);
+    REQUIRE(trg.spec.optim_init[0].size() == 1u);
+    REQUIRE(trg.spec.optim_init[0][0] == 0.5);
+    rhoform_test::TempFile seed(rhoform_test::ream_seed("1.5 0.3 0.1"));
+
+    const auto restart_with = [&](const char* policy, RunRecord& rec) {
+        tadah::hpo::InitStrategySpec is;
+        is.chain.push_back({"WARM", {seed.path.string()}});
+        is.warm_on_mismatch = policy;
+        tadah::hpo::RestartPolicy<ParamVec, ::LammpsRunner> restart(
+            std::make_unique<RecordingPolicy>(rec), 5, 1,
+            tadah::hpo::build_init_strategy(is), &trg);
+        restart.run(trg.spec, fx.host);
+    };
+    RunRecord rec;
+    SECTION("WARM_ON_MISMATCH error: the restart fails on the clamped seed") {
+        REQUIRE_THROWS_WITH(restart_with("error", rec),
+                            Catch::Contains("clamped into OPTIM bounds"));
+        CHECK(rec.runs == 1u);
+    }
+    SECTION("WARM_ON_MISMATCH skip: the round keeps the previous points, "
+            "and the journal says so") {
+        REQUIRE_NOTHROW(restart_with("skip", rec));
+        CHECK(rec.runs == 2u);
+        REQUIRE(rec.init.size() == 1u);
+        REQUIRE(rec.init[0].size() == 1u);
+        CHECK(rec.init[0][0] == 0.5);
+        tadah::hpo::HPOLog::instance().finish("TEST");
+        CHECK_THAT(read_file(fx.run.sd.dir / "hpo_run.log"),
+                   Catch::Contains("RESTART 1/1: the METHOD chain (WARM) "
+                                   "produced no starting point; the round "
+                                   "starts from the previous round's "
+                                   "starting points"));
+    }
+    SECTION("WARM_ON_MISMATCH warn: the round starts from the clamped seed") {
+        REQUIRE_NOTHROW(restart_with("warn", rec));
+        CHECK(rec.runs == 2u);
+        REQUIRE(rec.init.size() == 1u);
+        REQUIRE(rec.init[0].size() == 1u);
+        CHECK(rec.init[0][0] == 1.0);
+    }
+}
+
 /* ======================================================================
  * RESTART round r (1..MAX) draws new random numbers: every phase with a
  * SEED runs with a seed derived from it -- the outer spec with SEED + r*S,

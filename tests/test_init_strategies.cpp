@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <random>
 #include <set>
 #include <sstream>
@@ -485,15 +486,16 @@ TEST_CASE("WarmInitStrategy: missing file throws regardless of policy",
 {
     /* WARM_ON_MISMATCH governs seed-CONTENT mismatches only; a missing
      * seed file is a broken launch and is always fatal (falling through
-     * would silently start the optimiser from the box centre). */
+     * would silently start the optimiser from the box centre). The policy
+     * is the one of the block whose chain holds the WARM entry. */
     using namespace tadah::hpo;
     for (const char* policy : {"warn", "skip"}) {
         auto sp = make_synthetic_spec({0.0}, {1.0});
-        sp.init_strategy_spec.warm_on_mismatch = policy;
         StubTargets st;
 
         InitStrategySpec ispec;
         ispec.chain.push_back({"WARM", {"/nonexistent_path/never_here.tadah"}});
+        ispec.warm_on_mismatch = policy;
 
         auto strat = build_init_strategy(ispec);
         InitContext ic{sp, *st.trg, 0};
@@ -507,11 +509,11 @@ TEST_CASE("WarmInitStrategy: missing file with policy=error throws",
 {
     using namespace tadah::hpo;
     auto sp = make_synthetic_spec({0.0}, {1.0});
-    sp.init_strategy_spec.warm_on_mismatch = "error";
     StubTargets st;
 
     InitStrategySpec ispec;
     ispec.chain.push_back({"WARM", {"/nonexistent_path/never_here.tadah"}});
+    ispec.warm_on_mismatch = "error";
 
     auto strat = build_init_strategy(ispec);
     InitContext ic{sp, *st.trg, 0};
@@ -632,6 +634,70 @@ TEST_CASE("WarmInitStrategy / CONFIG: a subnormal OPTIM value is a number "
         CHECK(pts[0][0] == 1.5);
         CHECK(pts[0][1] == 1e-310);
         CHECK(pts[0][2] == 2.5);    /* its own value, not the fallback 3.0 */
+    }
+}
+
+TEST_CASE("WARM_ON_MISMATCH applies to the WARM entries of its own block: "
+          "a RESTART block's to the RESTART chain, an INIT block's to the "
+          "INIT chain", "[HPO][init_strategy][warm][restart]")
+{
+    /* Pins: a RESTART block's WARM_ON_MISMATCH governs the WARM seed of
+     * the RESTART chain, which HPOTargets resolves at startup: with
+     * `error` a seed outside the OPTIM box is a startup error naming the
+     * clamping, with `skip` the seed is dropped (no RESTART seed point).
+     * The INIT block's policy does not reach the RESTART chain: under an
+     * INIT block with `WARM_ON_MISMATCH error`, a RESTART block without
+     * the key keeps the default `warn`, so its seed is clamped into the
+     * box and kept. An INIT block's WARM follows the INIT block's policy.
+     * Before the fix: every WARM entry took the OUTER INIT block's policy
+     * (ctx.spec.init_strategy_spec.warm_on_mismatch), whichever block held
+     * it, so the RESTART block's `error` and `skip` were ignored (the seed
+     * was clamped with a warning: no throw, one RESTART seed point) and the
+     * INIT block's `error` made the RESTART seed a startup error. The last
+     * SECTION passes as well (a pin). */
+    StrategyTempFile pot("CGRID2B 1.5 20 2.5\n");   // 20 lies above the box's 10
+    tadah::core::Context ctx;
+    ctx.add("CGRID2B", std::vector<double>{1.0, 2.0, 3.0});
+    const std::string warm = "METHOD WARM " + pot.path.string() + "\n";
+    const auto target = [](const std::string& init,
+                           const std::string& restart) {
+        return "OPTIM CGRID2B (1-3) 0 10\nOPTIMIZER\n" + init +
+               "STRATEGY\n  TYPE PLAIN\n  LIB DLIB\n  ALGO BFGS\n"
+               "  MAXEVAL 5\n  RESTART\n    AFTER_STAGNATION 2\n    MAX 1\n" +
+               restart + "  ENDRESTART\nENDSTRATEGY\nENDOPTIMIZER\n";
+    };
+    std::unique_ptr<tadah::hpo::HPOTargets> trg;
+    SECTION("RESTART WARM_ON_MISMATCH error: the clamped seed is a startup error") {
+        StrategyTempFile cfg(target("", "    " + warm +
+                                            "    WARM_ON_MISMATCH error\n"));
+        REQUIRE_THROWS_WITH(
+            trg = std::make_unique<tadah::hpo::HPOTargets>(ctx, cfg.path.string()),
+            Catch::Contains("clamped into OPTIM bounds"));
+    }
+    SECTION("RESTART WARM_ON_MISMATCH skip: the clamped seed is dropped") {
+        StrategyTempFile cfg(target("", "    " + warm +
+                                            "    WARM_ON_MISMATCH skip\n"));
+        REQUIRE_NOTHROW(trg = std::make_unique<tadah::hpo::HPOTargets>(
+                            ctx, cfg.path.string()));
+        CHECK(trg->spec.restart.seed_points.empty());
+    }
+    SECTION("an INIT block's WARM_ON_MISMATCH error does not reach the "
+            "RESTART chain") {
+        StrategyTempFile cfg(target(
+            "INIT\n  METHOD CONFIG\n  WARM_ON_MISMATCH error\nENDINIT\n",
+            "    " + warm));
+        REQUIRE_NOTHROW(trg = std::make_unique<tadah::hpo::HPOTargets>(
+                            ctx, cfg.path.string()));
+        REQUIRE(trg->spec.restart.seed_points.size() == 1u);
+        REQUIRE(trg->spec.restart.seed_points[0].size() == 3u);
+        CHECK(trg->spec.restart.seed_points[0][1] == 10.0);   // clamped (warn)
+    }
+    SECTION("an INIT block's WARM follows the INIT block's WARM_ON_MISMATCH") {
+        StrategyTempFile cfg(target(
+            "INIT\n  " + warm + "  WARM_ON_MISMATCH error\nENDINIT\n", ""));
+        REQUIRE_THROWS_WITH(
+            trg = std::make_unique<tadah::hpo::HPOTargets>(ctx, cfg.path.string()),
+            Catch::Contains("clamped into OPTIM bounds"));
     }
 }
 
