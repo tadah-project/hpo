@@ -506,6 +506,21 @@ std::string exception_reason(const ExceptionStash& errors)
     return s;
 }
 
+/* asa()'s exit code as the summary and the stop line give it. Once a stop
+ * of tadah's is pending (`tadah_stop`: MAXEVAL, MAXTIME, STOPVAL, a signal,
+ * an evaluation's exception), every callback returns an invalid state
+ * without evaluating; inside the reanneal tangents (cost_derivatives())
+ * ASA takes that for a failed derivative and returns
+ * INVALID_COST_FUNCTION_DERIV, the code of a failed evaluation there. That
+ * code is then the IMMEDIATE_EXIT tadah requested. */
+std::string asa_exit_text(int exit_status, bool tadah_stop)
+{
+    if (tadah_stop && exit_status == 9)
+        return "IMMEDIATE_EXIT requested during the reanneal tangents "
+               "(asa_out: INVALID_COST_FUNCTION_DERIV)";
+    return asa_exit_name(exit_status);
+}
+
 std::string stop_reason_string(const AsaRunCtx& c, int exit_status)
 {
     switch (c.why.load(std::memory_order_relaxed)) {
@@ -740,6 +755,8 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
     /* ---- summary + status ------------------------------------------ */
     const int exit_status = w.exit_status;
     std::string reason = stop_reason_string(ctx, exit_status);
+    const std::string exit_text =
+        asa_exit_text(exit_status, ctx.why.load() != AsaRunCtx::None);
     if (exit_status == 1 && exit_index >= 0) {
         /* +1: exit_index is the internal 0-based position; every dim
          * number the run prints is 1-based (hpo_search_space.tsv). */
@@ -760,7 +777,7 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
             << " accepted=" << ctx.seen_accepted
             << " host_evals=" << ctx.n_evals.load()
             << " best=" << final_cost
-            << " exit=" << asa_exit_name(exit_status)
+            << " exit=" << exit_text
             << "  (at-best: generated=" << w.opts.N_Generated
             << " accepted=" << w.opts.N_Accepted << ")";
         HPOLog::instance().info(oss.str());
@@ -776,8 +793,7 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
     {
         std::ostringstream oss;
         oss << "ASA stopped: " << reason << " after " << ctx.n_evals.load()
-            << " host eval(s) (asa exit: " << asa_exit_name(exit_status)
-            << ")";
+            << " host eval(s) (asa exit: " << exit_text << ")";
         std::cout << "[HPO] " << oss.str() << "\n";
         HPOLog::instance().info(oss.str());
     }
