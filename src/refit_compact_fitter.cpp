@@ -130,6 +130,19 @@ std::string ceres_reason(const ceres::Solver::Summary &s) {
   const std::size_t dot = m.find('.');  // fallback: first sentence of the message
   return dot == std::string::npos ? m : m.substr(0, dot);
 }
+
+// Ceres checks its options in Solve() and, for one it refuses (a negative
+// function or gradient tolerance), returns FAILURE without iterating: taken
+// for a stop term, the stage silently did nothing. RefitParser refuses such
+// settings (every tolerance >= 0), so they come only from a caller that set
+// CompactConfig itself: an error, raised before the solve.
+void require_valid_options(const ceres::Solver::Options &opt,
+                           const std::string &where) {
+  std::string why;
+  if (!opt.IsValid(&why))
+    throw std::invalid_argument(where + ": Ceres refuses the solver options (" +
+                                why + ")");
+}
 }  // namespace
 
 // ---- basis dispatch: value g(x_c) and r-derivative eta*g'(x_c) per family.
@@ -1228,6 +1241,7 @@ double CompactBlipFitter::refine(BlipFit &f) const {
   // Measured: 4/1920 components, worst 1.2e-3, all near-zero entries; real
   // Jacobian bugs show O(1) errors across whole blocks.
   opt.gradient_check_relative_precision = 5e-3;
+  require_valid_options(opt, "compact_fitter refine");
   ceres::Solver::Summary sum;
   ceres::Solve(opt, &prob, &sum);
   if (cfg_.check_gradients && sum.termination_type == ceres::FAILURE)
@@ -2103,6 +2117,7 @@ double CompactBlipFitter::refine_edges(BlipFit &f) const {
   opt.gradient_tolerance = cfg_.ceres_gtol;
   opt.parameter_tolerance = 1e-16;
   opt.logging_type = ceres::SILENT;
+  require_valid_options(opt, "compact_fitter refine_edges");
   ceres::Solver::Summary sum;
   ceres::Solve(opt, &prob, &sum);
   for (int k = 0; k < n; ++k)  // back to centres (a pinned bump keeps its)
@@ -2338,6 +2353,7 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
     opt.gradient_tolerance = 1e-14;
     opt.parameter_tolerance = 1e-16;
     opt.logging_type = ceres::SILENT;
+    require_valid_options(opt, "joint_refine");
     ceres::Solver::Summary sum;
     ceres::Solve(opt, &prob, &sum);
     // the iterations max_num_iterations bounds: sum.iterations holds the

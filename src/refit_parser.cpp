@@ -119,6 +119,32 @@ bool as_bool(const std::string &s, const std::string &what) {
   throw std::runtime_error(what + ": expected true|false, got '" + s + "'");
 }
 
+// The tolerances of every refit block, FTOL_REL, FTOL_ABS, XTOL_REL and GTOL:
+// a finite number (parse_finite, whose message a malformed token keeps) that
+// is >= 0, named as written: "GTOL must be a number >= 0, got '-1'". Ceres
+// refuses a negative tolerance in its option check and returns FAILURE
+// without iterating, so a REFINE or FUSE with one did nothing; NLopt switches
+// a tolerance below 0 off, and dlib requires one >= 0. 0 switches the test
+// off. read_optimizer_block() offers the key to the stage's hook before
+// dispatch_opt_attr(), which reads any finite number.
+double tolerance_value(const std::string &key, std::istringstream &iss) {
+  const std::string tok = next_value(iss, key);
+  const double v = parse_finite(tok, key);
+  if (v < 0.0)
+    throw std::runtime_error(key + " must be a number >= 0, got '" + tok + "'");
+  return v;
+}
+
+bool tolerance_attr(const std::string &key, std::istringstream &iss,
+                    OptimizerSpec &a) {
+  if (key == "FTOL_REL") a.stop.ftol_rel = tolerance_value(key, iss);
+  else if (key == "FTOL_ABS") a.stop.ftol_abs = tolerance_value(key, iss);
+  else if (key == "XTOL_REL") a.stop.xtol_rel = tolerance_value(key, iss);
+  else if (key == "GTOL") a.param["GTOL"] = tolerance_value(key, iss);
+  else return false;
+  return true;
+}
+
 // Pull a stage block's tokens out of the Context (empty if absent).
 std::vector<std::string> stage_tokens(const tadah::core::Context &c,
                                       const std::string &key) {
@@ -217,7 +243,7 @@ void parse_explore(const std::vector<std::string> &tok, RefitConfig &cfg,
       cfg.explore.enabled = as_bool(tok[i + 1], "EXPLORE ENABLED");
       i += 2;
     } else if (u == "OPTIMIZER") {
-      read_optimizer_block(tok, i, cfg.explore.opt, nullptr,
+      read_optimizer_block(tok, i, cfg.explore.opt, tolerance_attr,
                            stage_key_check(kExploreKeys, &seen),  // + INNER
                            kExploreKeys.stage);
       cfg.explore.has_opt = true;
@@ -231,18 +257,20 @@ void parse_explore(const std::vector<std::string> &tok, RefitConfig &cfg,
 // REFINE/FUSE OPTIMIZER blocks accept the Ceres-flavoured command-specific keys
 // GTOL (-> param["GTOL"], Ceres gradient_tolerance; REFINE only, FUSE does not
 // read it) and MAXITER (alias of MAXEVAL -> Ceres max_num_iterations). The
-// function tolerance key is FTOL_REL (handled by dispatch_opt_attr -> Ceres
-// function_tolerance): Ceres' function_tolerance is RELATIVE — it stops when
-// (new_cost - old_cost) < ftol * old_cost. Ceres has NO absolute function
-// tolerance, so FTOL_ABS (and the bare FTOL) are rejected with a pointer to
-// FTOL_REL: FTOL_ABS by the stage's key check (stage_key_check), before
-// dispatch_opt_attr would consume it, and the bare FTOL here.
+// function tolerance key is FTOL_REL (-> Ceres function_tolerance). GTOL and
+// FTOL_REL are tolerances, read by tolerance_attr. Ceres' function_tolerance
+// is RELATIVE — it stops when (new_cost - old_cost) < ftol * old_cost. Ceres
+// has NO absolute function tolerance, so FTOL_ABS (and the bare FTOL) are
+// rejected with a pointer to FTOL_REL: FTOL_ABS by the stage's key check
+// (stage_key_check), before it is read, and the bare FTOL here.
 bool ceres_extra(const std::string &key, std::istringstream &iss,
                  OptimizerSpec &a) {
-  if (key == "GTOL") {
-    a.param["GTOL"] = parse_finite(next_value(iss, key), key);
-    return true;
-  }
+  if (key == "FTOL" || key == "FTOL_ABS")
+    throw std::runtime_error(
+        "'" + key +
+        "' is not supported — Ceres' function_tolerance is RELATIVE and has no "
+        "absolute form. Use FTOL_REL.");
+  if (tolerance_attr(key, iss, a)) return true;  // GTOL among them
   if (key == "MAXITER") {
     // The alias of MAXEVAL, with its range: the int iteration cap Ceres
     // takes (apply_stage_optimizers), at least one iteration.
@@ -250,11 +278,6 @@ bool ceres_extra(const std::string &key, std::istringstream &iss,
                                 std::numeric_limits<int>::max());
     return true;
   }
-  if (key == "FTOL" || key == "FTOL_ABS")
-    throw std::runtime_error(
-        "'" + key +
-        "' is not supported — Ceres' function_tolerance is RELATIVE and has no "
-        "absolute form. Use FTOL_REL.");
   return false;
 }
 

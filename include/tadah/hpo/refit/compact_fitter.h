@@ -312,7 +312,9 @@ public:
    *  (LM, or DOGLEG when cfg.refine_algo == CERES_DOGLEG); returns final
    *  curve rmse (also refreshes f.curve_rmse). RHOFORM NonNeg/Monotone:
    *  every c_k is bounded below at 0 (a negative start is lifted to 0).
-   *  Exposed for tests. */
+   *  Throws std::invalid_argument, before solving, when Ceres refuses the
+   *  solver options (cfg.ceres_ftol or cfg.ceres_gtol < 0; RefitParser
+   *  refuses such a tolerance). Exposed for tests. */
   double refine(BlipFit &f) const;
 
   /** Polish with the backend selected by cfg.refine_algo (CERES_* | the
@@ -325,7 +327,9 @@ public:
    *  width at or above the ladder's floor 0.03 eta0 (a start outside is
    *  lifted onto the bound), so every free bump ends inside the cutoff and
    *  clamp_bump_support moves nothing. Pinned bumps are held. Throws
-   *  std::logic_error for a knot family or without a hard cutoff. */
+   *  std::logic_error for a knot family or without a hard cutoff, and
+   *  std::invalid_argument when Ceres refuses the solver options (as
+   *  refine()). */
   double refine_edges(BlipFit &f) const;
 
   /** The configuration the fitter was built with. */
@@ -507,6 +511,8 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
                     // and the caller's clamp_bump_support_params projection
                     // moves nothing (it still guards pinned bumps and algo
                     // NONE, where only the centres are bounded).
+                    // Throws std::invalid_argument, before solving, when
+                    // Ceres refuses the solver options (ftol < 0).
                     // iterations_out (optional): receives the Ceres
                     // iterations the solve used (after the initial point;
                     // at most max_iter, 0 under NONE), what the FUSE stage

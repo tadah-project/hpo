@@ -322,9 +322,12 @@ void read_block_until(const std::vector<std::string> &tok, std::size_t &pos,
                        where.empty() ? where : where + " INNER");
       continue;
     }
-    // Standard / command-specific attribute. dispatch_opt_attr() reads a fixed
-    // (small) number of value tokens from a stream built over the remaining
-    // tokens; we then recover how many it consumed by counting the leftover.
+    // Command-specific / standard attribute. The command's hook is offered
+    // the key first, so it can read a standard attribute by its own rule
+    // (the refit's tolerances are >= 0); dispatch_opt_attr() reads the rest.
+    // Each reads a fixed (small) number of value tokens from a stream built
+    // over the remaining tokens; we then recover how many it consumed by
+    // counting the leftover.
     std::string rest;
     for (std::size_t j = pos; j < tok.size(); ++j) rest += tok[j] + " ";
     std::istringstream iss(rest);
@@ -333,8 +336,8 @@ void read_block_until(const std::vector<std::string> &tok, std::size_t &pos,
     const std::string ukey = up(key);
     bool consumed = false;
     try {
-      consumed = dispatch_opt_attr(ukey, iss, spec) ||
-                 (extra && extra(ukey, iss, spec));
+      consumed = (extra && extra(ukey, iss, spec)) ||
+                 dispatch_opt_attr(ukey, iss, spec);
     } catch (const std::exception &e) {
       throw in_block(where, e.what());
     }
