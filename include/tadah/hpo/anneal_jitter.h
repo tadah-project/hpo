@@ -370,6 +370,7 @@ JitterPlan calibrate_jitter(const OptimizerSpec& sp,
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/probe_phase.h>
+#include <tadah/hpo/run_stop.h>   // agree_on_rank_stop
 
 #include <chrono>
 #include <fstream>
@@ -541,12 +542,31 @@ JitterPlan run_jitter_calibration(const OptimizerSpec& sp, const Knobs& kb,
   const std::vector<double> local_fallback(
       fallback.begin() + off_local, fallback.begin() + off_local + n_local);
 
-  auto local = calibrate_jitter(local_sp, local_x0, f0, opt, local_fallback,
-                                [&](std::size_t i, double v) {
-                                  const double f = probe_fn(off_local + i, v);
-                                  if (i + 1 > done_dims) done_dims = i + 1;
-                                  return f;
-                                });
+  /* A probe that throws on one rank -- a signal, an error -- must not take
+   * that rank past the gathers below while the others wait in them: the
+   * ranks agree first on how the probes ended (run_stop.h), and every rank
+   * ends as the most severe exception decides (a signal stop on every rank
+   * for a signal one rank received). */
+  JitterPlan local;
+  std::exception_ptr probe_error;
+  try {
+    local = calibrate_jitter(local_sp, local_x0, f0, opt, local_fallback,
+                             [&](std::size_t i, double v) {
+                               const double f = probe_fn(off_local + i, v);
+                               if (i + 1 > done_dims) done_dims = i + 1;
+                               return f;
+                             });
+  } catch (...) {
+    probe_error = std::current_exception();
+  }
+  if (world > 1)
+    agree_on_rank_stop(probe_error, [&tag] {
+      return "TADAH:" + tag +
+             ": the INIT_MODE JITTER AUTO calibration failed on another MPI "
+             "rank";
+    });
+  else if (probe_error)
+    std::rethrow_exception(probe_error);
   if (truncated)
     for (auto& d : local.dims) if (d.probes == 0) d.status |= JitterInterrupted;
 

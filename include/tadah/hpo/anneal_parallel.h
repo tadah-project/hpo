@@ -87,6 +87,11 @@ public:
    * thread. */
   void rethrow_if_error() { errors_.rethrow_if_any(); }
 
+  /* Hand over the exception the workers' stash kept (null if none) and
+   * clear it, for the ranks' agreement on how the epoch ended
+   * (agree_on_rank_stop, run_stop.h). Driver thread, after run_epoch. */
+  std::exception_ptr take_error() { return errors_.take(); }
+
 private:
   void worker_loop(std::size_t id)
   {

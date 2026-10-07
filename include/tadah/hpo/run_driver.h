@@ -20,7 +20,11 @@
  *                           error (a driver that did not say why it
  *                           ended): std::logic_error, reported as below
  *   core::ShutdownRequested flush; "SHUTDOWN (<signal>)"; returns
- *                           shutdown_exit_status(<signal>) = 128 + signal
+ *                           shutdown_exit_status(<signal>) = 128 + signal.
+ *                           A rank of a multi-rank run that did not receive
+ *                           the signal itself and stops on another rank's
+ *                           (PeerShutdown, run_stop.h): "SHUTDOWN (<signal>
+ *                           on MPI rank <r>)", 128 + that signal
  *   StagnationStop          flush; "STOPPED -- stagnation ..."; returns 0.
  *                           RestartPolicy is the only consumer of the
  *                           stagnation stop (the optimiser adapters let it
@@ -73,6 +77,7 @@
 #include <tadah/hpo/durable_best.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_mpi.h>
+#include <tadah/hpo/run_stop.h>          // PeerShutdown, signal_name
 
 #include <cstdlib>
 #include <exception>
@@ -217,7 +222,7 @@ int drive_run(const std::function<void()>& body, const Host& host,
         /* Inside the try: a failing drain on the normal path is an error
          * end, reported like any other. */
         host.flush_remaining(/*retry_io=*/true);
-    } catch (const core::ShutdownRequested&) {
+    } catch (const core::ShutdownRequested& stop) {
         agree_on_usable_loss();
         /* A new best that could not be saved outranks the shutdown: the
          * run did not keep its result. */
@@ -229,11 +234,21 @@ int drive_run(const std::function<void()>& body, const Host& host,
          * grace for all files together: a blip still keeps its rows, and a
          * dead mount cannot hold the exit past a scheduler's kill
          * timeout. */
-        const std::string why = core::SignalHandler::reason();
+        /* The rank's own signal when it received one; otherwise the one
+         * the ranks' agreement carried from the rank that did
+         * (PeerShutdown, run_stop.h). */
+        const auto* peer = dynamic_cast<const PeerShutdown*>(&stop);
+        const int own = core::SignalHandler::signal_seen();
+        const bool from_peer = own == 0 && peer != nullptr;
+        const int signo = from_peer ? peer->signo : own;
+        const std::string why = from_peer
+            ? signal_name(peer->signo) + " on MPI rank " +
+                  std::to_string(peer->origin_rank)
+            : core::SignalHandler::reason();
         log.warning("Shutdown requested: " + why);
         drain(/*retry_io=*/true);
         log.finish("SHUTDOWN (" + why + ")");
-        return shutdown_exit_status(core::SignalHandler::signal_seen());
+        return shutdown_exit_status(signo);
     } catch (const typename Host::StagnationStop&) {
         const bool usable = agree_on_usable_loss();
         if (const auto ub = log.unsaved_best()) {
