@@ -295,9 +295,15 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
         log.info("FAILSCORE_GRADING: ON -- failed evals graded in "
                  "[0.999*FS, FS), bands A-D (see docs); " + probe_note);
     } else if (trg.failprobe_idx >= 0) {
+        /* Under OFF the probe is still one of the evaluation's
+         * simulations: its failure -- the script's, or an S that cannot be
+         * read or has no number (apply_task_result) -- fails the
+         * evaluation like any other's. Only the use of S is off. */
         log.warning("PC_FAILPROBE is defined but FAILSCORE_GRADING is "
-                    "OFF -- the probe runs as a plain diagnostic sim; "
-                    "no grading, no gate.");
+                    "OFF -- its S neither grades nor gates an evaluation; "
+                    "a probe that fails (its script fails, or its S cannot "
+                    "be read or has no number) fails its evaluation, as "
+                    "any PC_LAMMPS simulation does.");
     }
 
     /* ---- BUMPGATE: bump-support enforcement mode --------------------
