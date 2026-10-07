@@ -530,26 +530,45 @@ bool has_key(const std::vector<std::string> &keys, const std::string &key) {
   return std::find(keys.begin(), keys.end(), key) != keys.end();
 }
 
+// Another optimiser that reads a block's keys besides the block's own ALGO:
+// under the EXPLORE optimiser MLSL, MLSL's local LN_SBPLX searches read the
+// INNER block's MAXEVAL, FTOL_REL and XTOL_REL. `outer` is the EXPLORE ALGO
+// as written; empty `reads`: none.
+struct AlsoReads {
+  std::string outer;
+  std::vector<std::string> reads;
+};
+
 // The first of `keys` (the block's, as written) other than LIB, ALGO and
-// INNER that is not in `reads` (what the block's ALGO reads, from the tables
-// above) is an error naming it and the ALGO. (LIB is the LIB rule's,
-// stage_algo(); EXPLORE's INNER block configures the per-rung local search
-// whatever the EXPLORE optimiser.) An ALGO that runs no optimiser (NONE,
-// UNIFORM: `reads` is empty) says what it does instead (`off`); MAXITER,
-// Ceres' iterations, with an ALGO that counts evaluations names MAXEVAL;
-// FTOL_REL with dlib's LBFGS, which tests an absolute change, names FTOL_ABS;
-// FTOL_ABS with a Ceres ALGO names FTOL_REL.
+// INNER that neither `reads` (what the block's ALGO reads, from the tables
+// above) nor `also` reads is an error naming it and the ALGO. (LIB is the
+// LIB rule's, stage_algo(); EXPLORE's INNER block configures the per-rung
+// local search whatever the EXPLORE optimiser.) An ALGO that runs no
+// optimiser (NONE, UNIFORM: `reads` is empty) says what it does instead
+// (`off`); MAXITER, Ceres' iterations, with an ALGO that counts evaluations
+// names MAXEVAL; FTOL_REL with dlib's LBFGS, which tests an absolute change,
+// names FTOL_ABS; FTOL_ABS with a Ceres ALGO names FTOL_REL. Where `also`
+// reads keys the ALGO does not, the message names them as MLSL's.
 void reject_keys_not_read(const std::string &block, const OptimizerSpec &s,
                           const std::vector<std::string> &keys,
                           const std::vector<std::string> &reads,
-                          const char *off) {
+                          const char *off, const AlsoReads &also = {}) {
   const std::string algo = up(s.algo);
+  bool also_adds = false;
+  for (const auto &k : also.reads)
+    if (!has_key(reads, k)) also_adds = true;
   for (const auto &key : keys) {
     if (key == "LIB" || key == "ALGO" || key == "INNER") continue;
-    if (has_key(reads, key)) continue;
+    if (has_key(reads, key) || has_key(also.reads, key)) continue;
+    const std::string mlsl =
+        also_adds ? "; under ALGO " + also.outer + " the block " +
+                        (reads.empty() ? "sets" : "also sets") +
+                        " MLSL's local LN_SBPLX searches, which read " +
+                        reads_list(also.reads)
+                  : std::string();
     if (reads.empty())
       throw std::runtime_error(block + ": " + key + " has no effect with ALGO " +
-                               algo + " (" + off + "); remove " + key);
+                               algo + " (" + off + mlsl + "); remove " + key);
     if (key == "MAXITER")
       throw std::runtime_error(block + ": MAXITER counts Ceres iterations; "
                                "ALGO " + algo + " counts objective "
@@ -563,7 +582,7 @@ void reject_keys_not_read(const std::string &block, const OptimizerSpec &s,
           block + ": FTOL_ABS is not supported — Ceres' function_tolerance is "
           "RELATIVE and has no absolute form. Use FTOL_REL.");
     throw std::runtime_error(block + ": " + key + " has no effect with ALGO " +
-                             algo + " (it reads " + reads_list(reads) +
+                             algo + " (it reads " + reads_list(reads) + mlsl +
                              "); remove " + key);
   }
 }
@@ -697,13 +716,13 @@ RefitConfig RefitParser::parse(const tadah::core::Context &c) {
     reject_keys_not_read("EXPLORE", cfg.explore.opt, explore_keys.outer,
                          reads_of(kExploreOuterReads, outer), kExploreOff);
     if (cfg.explore.opt.inner) {
-      std::vector<std::string> reads = reads_of(
-          kExploreInnerReads, refit_explore_inner_algo(*cfg.explore.opt.inner));
-      if (outer == "MLSL")
-        for (const auto &k : kMlslLocalReads)
-          if (!has_key(reads, k)) reads.push_back(k);
-      reject_keys_not_read("EXPLORE INNER", *cfg.explore.opt.inner,
-                           explore_keys.inner, reads, kInnerOff);
+      AlsoReads mlsl;
+      if (outer == "MLSL") mlsl = {up(cfg.explore.opt.algo), kMlslLocalReads};
+      reject_keys_not_read(
+          "EXPLORE INNER", *cfg.explore.opt.inner, explore_keys.inner,
+          reads_of(kExploreInnerReads,
+                   refit_explore_inner_algo(*cfg.explore.opt.inner)),
+          kInnerOff, mlsl);
     }
   }
   if (cfg.refine.has_opt)
