@@ -644,34 +644,51 @@ TEST_CASE("Finite differences: a caller's loss that is not finite fails the "
     CHECK(host.asked.empty());
 }
 
-/* Pins: GD_STOGO ignores NLopt's forced stop. At MAXEVAL 60 and STOPVAL 2,
- * its first gradient, at the centre of [-2, 2]^2 (loss 1), has a stencil
- * point that fails, (0, -1e-6): the loss 1 is withheld and ends the search
- * STOPVAL_REACHED with no evaluation after that stencil point, though
- * StoGO calls the objective on until NLopt's own MAXEVAL ends it: the
- * objective refuses those calls. That is why GD_STOGO needs MAXEVAL or
- * MAXTIME (backend_rules: without either it never ended once HPO stopped
- * it).
+namespace {
+
+/* The valley, with a failed loss just below x(1) = 0: the stencil point
+ * (0, -1e-6) of GD_STOGO's first gradient, at the centre of [-2, 2]^2
+ * (loss 1), fails. */
+struct CentreCliff : Valley {
+    double operator()(const Vec& x) {
+        asked.push_back(x);
+        return (x(1) < -1e-7 && x(1) > -1e-5)
+                   ? std::numeric_limits<double>::max()
+                   : valley(x);
+    }
+};
+
+double seconds_since(std::chrono::steady_clock::time_point t0)
+{
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
+        .count();
+}
+
+}  // namespace
+
+/* Pins: GD_STOGO ignores NLopt's forced stop. At MAXEVAL 60, MAXTIME 60
+ * and STOPVAL 2, its first gradient, at the centre of [-2, 2]^2 (loss 1),
+ * has a stencil point that fails, (0, -1e-6): the loss 1 is withheld and
+ * ends the search STOPVAL_REACHED with no evaluation after that stencil
+ * point, though StoGO calls the objective on until NLopt's own MAXEVAL ends
+ * it: the objective refuses those calls, and run_nlopt_impl returns in
+ * well under 10 s, far from MAXTIME. That is why GD_STOGO needs MAXEVAL
+ * (backend_rules; the next test case).
  * Before the fix: passes as well (a pin of the path the startup rule
  * relies on: NLopt's own MAXEVAL ends a StoGO search the objective
- * stopped). */
+ * stopped, at once). */
 TEST_CASE("NLopt STOPVAL: GD_STOGO, which ignores the forced stop, ends at a "
           "withheld loss through NLopt's own MAXEVAL",
           "[HPO][nlopt][maxeval][stopval]")
 {
-    struct Cliff : Valley {
-        double operator()(const Vec& x) {
-            asked.push_back(x);
-            return (x(1) < -1e-7 && x(1) > -1e-5)
-                       ? std::numeric_limits<double>::max()
-                       : valley(x);
-        }
-    };
     Journal j;
     auto sp = nlopt_spec("GD_STOGO", 60);
     sp.stop.stopval = 2.0;
-    Cliff host;
+    sp.stop.maxtime = 60.0;
+    CentreCliff host;
+    const auto t0 = std::chrono::steady_clock::now();
     REQUIRE_NOTHROW(tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host));
+    CHECK(seconds_since(t0) < 10.0);
     REQUIRE_FALSE(host.asked.empty());
     CHECK(host.asked.size() < 60u);
     CHECK(host.asked.back()(0) == 0.0);
@@ -682,4 +699,42 @@ TEST_CASE("NLopt STOPVAL: GD_STOGO, which ignores the forced stop, ends at a "
                        std::to_string(host.asked.size()) +
                        " evaluation(s): the loss 1 is at or below STOPVAL 2") !=
           std::string::npos);
+}
+
+/* Pins: GD_STOGO with MAXTIME 2 and STOPVAL 2 but no MAXEVAL is refused
+ * before it evaluates anything (run_nlopt_impl -> make_nlopt ->
+ * require_stop): "NLOPT:GD_STOGO needs a stop: ...; set MAXEVAL (it honours
+ * no tolerance)", within a second. Once HPO stops a StoGO search (here the
+ * withheld loss 1 at STOPVAL 2 of the case above; a signal, an error or the
+ * RESTART stagnation stop alike), StoGO calls on and the objective refuses
+ * each call: only NLopt's own MAXEVAL ends that promptly.
+ * Before the fix: the run was accepted, the search stopped after 5
+ * evaluations, and the objective refused StoGO's calls at 100% CPU for the
+ * rest of MAXTIME: run_nlopt_impl returned after about 2 s, STOPVAL_REACHED
+ * (and with MAXTIME 3600, after an hour). The code before the withheld
+ * STOPVAL rule gave StoGO +inf there, and StoGO went on evaluating until
+ * its own STOPVAL test, on later losses below 2 it was given, ended it
+ * after 54 evaluations. */
+TEST_CASE("NLopt STOPVAL: GD_STOGO without MAXEVAL is refused before it "
+          "evaluates, instead of waiting out MAXTIME once HPO stops it",
+          "[HPO][nlopt][maxeval][stopval]")
+{
+    for (const std::string algo : {"GD_STOGO", "GD_STOGO_RAND"}) {
+        DYNAMIC_SECTION(algo) {
+            Journal j;
+            auto sp = nlopt_spec(algo, 60);
+            sp.stop.maxeval.reset();
+            sp.stop.maxtime = 2.0;
+            sp.stop.stopval = 2.0;
+            CentreCliff host;
+            const auto t0 = std::chrono::steady_clock::now();
+            CHECK_THROWS_WITH(
+                (tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host)),
+                Catch::StartsWith("NLOPT:" + algo + " needs a stop: ") &&
+                    Catch::EndsWith("; set MAXEVAL (it honours no "
+                                    "tolerance)"));
+            CHECK(seconds_since(t0) < 1.0);
+            CHECK(host.asked.empty());
+        }
+    }
 }
