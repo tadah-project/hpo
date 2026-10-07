@@ -6,21 +6,18 @@
 // builds; MBLOCK, a key of the removed MPI training build) and EMBF0 on a
 // potential without a DM_REAM block.
 // pair_coeff writes each as a LAMMPS WARNING (error->warning on rank 0:
-// the screen and log.lammps, once per run), not to standard error, where
-// LAMMPS' log never saw it and every MPI rank wrote it once. And a
+// the screen and log.lammps), not to standard error, where LAMMPS' log
+// never saw it and every MPI rank wrote it once. It does so each time it
+// loads such a potential, so every LAMMPS instance's log.lammps has it,
+// also when the process loaded it before (core::IgnoredKeyNoticeCapture
+// receives a key once per capture, whatever the process reported). And a
 // potential with the covariance of an OALGO 3 fit (WCOV, WNOISE) loads.
-//
-// ctest runs every test case in a process of its own, where no key has
-// been reported yet; a case counts a notice only when
-// core::ignored_key_reported() says the key was not reported before it
-// (a run of the whole binary in one process).
 //
 // The potential is the D2_LJ pair potential of Tadah.LAMMPS'
 // tests_data/pots/ta_lj_cutcos.tadah.
 
 #include "catch2/catch.hpp"
 
-#include <tadah/core/key_notice.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/runners.h>
 
@@ -131,13 +128,14 @@ Run run_with_potential(const std::string &extra, const std::string &tag) {
  * nothing of it to standard error; the run succeeds.
  * Before the fix: the notices went to standard error only ("WARNING:
  * Deprecated key MBLOCK is ignored: ..."), once per process (on every MPI
- * rank), and log.lammps had none; and SIGMA was stored, with no notice. */
+ * rank), and log.lammps had none; and SIGMA was stored, with no notice.
+ * Before the review fix (once per capture): log.lammps had each notice
+ * only when the process had not reported the key before (the count was
+ * 1, or 0 after such a report). */
 TEST_CASE("pair_coeff writes a deprecated key's notice to log.lammps",
           "[pair_tadah][notices]") {
-  const std::size_t n_sigma =
-      tadah::core::ignored_key_reported("SIGMA") ? 0 : 1;
-  const std::size_t n_mblock =
-      tadah::core::ignored_key_reported("MBLOCK") ? 0 : 1;
+  const std::size_t n_sigma = 1;
+  const std::size_t n_mblock = 1;
   const Run r = run_with_potential("SIGMA     2     1 0 0 1\nMBLOCK     64\n",
                                    "deprecated");
   INFO("log.lammps:\n" << r.log << "\nstderr:\n" << r.err);
@@ -155,11 +153,13 @@ TEST_CASE("pair_coeff writes a deprecated key's notice to log.lammps",
  * EMBF0 (a key only DM_REAM reads) writes its notice to log.lammps once as
  * a LAMMPS WARNING ("WARNING: pair tadah: potential '<file>': Key EMBF0 is
  * ignored: ..."), and nothing of it to standard error.
- * Before the fix: the notice went to standard error only. */
+ * Before the fix: the notice went to standard error only. Before the
+ * review fix (once per capture): only when the process had not reported
+ * EMBF0 before. */
 TEST_CASE("pair_coeff writes the notice of a key without effect to "
           "log.lammps",
           "[pair_tadah][notices]") {
-  const std::size_t n = tadah::core::ignored_key_reported("EMBF0") ? 0 : 1;
+  const std::size_t n = 1;
   const Run r = run_with_potential("EMBF0     FREE\n", "embf0");
   INFO("log.lammps:\n" << r.log << "\nstderr:\n" << r.err);
   REQUIRE(r.ok);
@@ -167,6 +167,31 @@ TEST_CASE("pair_coeff writes the notice of a key without effect to "
                            "Key EMBF0 is ignored"})
             .size() == n);
   CHECK(lines_with(r.err, {"Key EMBF0 is ignored"}).empty());
+}
+
+/* Pins: two LAMMPS instances of one process, one after the other, each
+ * with its own log.lammps and pair_coeff of a potential with SIGMA: each
+ * log.lammps has the deprecation notice of SIGMA once, as a LAMMPS
+ * WARNING naming the potential, and nothing of it goes to standard error
+ * in either run (a driver such as the LAMMPS Python module, or tadah hpo's
+ * PC_LAMMPS evaluations, runs several instances in one process).
+ * Before the fix: the first run's log.lammps had it and the second's had
+ * none (report_ignored_key_once() gave SIGMA once per process, so the
+ * second load's capture received nothing). */
+TEST_CASE("pair_coeff writes the notice to the log.lammps of every LAMMPS "
+          "instance of a process",
+          "[pair_tadah][notices]") {
+  for (int run = 0; run < 2; ++run) {
+    INFO("run " << run + 1);
+    const Run r = run_with_potential("SIGMA     2     1 0 0 1\n",
+                                     "twice" + std::to_string(run));
+    INFO("log.lammps:\n" << r.log << "\nstderr:\n" << r.err);
+    REQUIRE(r.ok);
+    CHECK(lines_with(r.log, {"WARNING: pair tadah: potential '",
+                             "Deprecated key SIGMA is ignored"})
+              .size() == 1);
+    CHECK(lines_with(r.err, {"Deprecated key"}).empty());
+  }
 }
 
 /* Pins: pair_coeff loads a potential with the weight covariance of an
