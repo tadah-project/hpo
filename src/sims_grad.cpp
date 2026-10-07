@@ -1,6 +1,7 @@
 #include <tadah/hpo/sims_grad.h>
 
 #include <memory>
+#include <string>
 #include <stdexcept>
 #include <utility>
 
@@ -147,15 +148,22 @@ void apply_dWdtheta_chain(const Eigen::VectorXd&     dL_dW,
     }
 }
 
-bool compute_sims_grad_for_script(const SimsGradScriptInput& input,
-                                  Eigen::VectorXd&           dL_dW_out)
+namespace {
+
+/* compute_sims_grad_for_script's body. With `direct` (n_theta theta rows)
+ * it also accumulates the direct theta term of the loss into *direct. */
+bool script_gradient(const SimsGradScriptInput& input,
+                     std::size_t                n_theta,
+                     Eigen::VectorXd&           dL_dW_out,
+                     std::vector<double>*       direct)
 {
     const std::size_t k_count = input.expressions.size();
     if (k_count == 0) {
         /* No observables on this script. Trivially analytic -- dL_dW stays
          * at its incoming size; clear to zero of n_desc length for the
-         * caller's convenience. */
+         * caller's convenience. Nothing to differentiate: no direct term. */
         dL_dW_out = Eigen::VectorXd::Zero(input.ctx.n_desc);
+        if (direct) direct->assign(n_theta, 0.0);
         return true;
     }
     if (input.v_observed.size() != k_count ||
@@ -166,6 +174,27 @@ bool compute_sims_grad_for_script(const SimsGradScriptInput& input,
         throw std::runtime_error(
             "compute_sims_grad_for_script: per-observable array size mismatch");
     }
+    /* lambda's layout: the atom DOFs, then the box DOFs. */
+    const std::size_t n_gen =
+        static_cast<std::size_t>(3 * input.ctx.nlocal + input.ctx.box_dofs);
+    if (direct) {
+        if (!input.direct_theta)
+            throw std::runtime_error(
+                "compute_sims_grad_for_script: the script has observables but "
+                "its input carries no direct theta term (direct_theta)");
+        if (input.dg_dtheta.size() != k_count * n_theta)
+            throw std::runtime_error(
+                "compute_sims_grad_for_script: dg_dtheta has " +
+                std::to_string(input.dg_dtheta.size()) + " values, not " +
+                std::to_string(k_count) + " observables x " +
+                std::to_string(n_theta) + " theta");
+        if (input.dF_dtheta.size() != n_theta * n_gen)
+            throw std::runtime_error(
+                "compute_sims_grad_for_script: dF_dtheta has " +
+                std::to_string(input.dF_dtheta.size()) + " values, not " +
+                std::to_string(n_theta) + " theta x " + std::to_string(n_gen) +
+                " generalised coordinates (3 nlocal + box_dofs)");
+    }
 
     /* Defer the LDLT until at least one observable carries dg_dx != 0;
      * cohesive-energy-per-atom-only scripts (pilot) bypass it. */
@@ -173,6 +202,7 @@ bool compute_sims_grad_for_script(const SimsGradScriptInput& input,
     std::unique_ptr<DenseAdjointSolver> solver;
 
     Eigen::VectorXd staged = Eigen::VectorXd::Zero(input.ctx.n_desc);
+    std::vector<double> staged_direct(direct ? n_theta : 0, 0.0);
 
     for (std::size_t k = 0; k < k_count; ++k) {
         ObservableHandle h;
@@ -184,7 +214,7 @@ bool compute_sims_grad_for_script(const SimsGradScriptInput& input,
         h.dg_dW(input.ctx, dg_dW);
 
         Eigen::VectorXd lambda =
-            Eigen::VectorXd::Zero(3 * input.ctx.nlocal + input.ctx.box_dofs);
+            Eigen::VectorXd::Zero(static_cast<Eigen::Index>(n_gen));
         if (!h.dg_dx_is_zero) {
             Eigen::VectorXd dg_dx;
             h.dg_dx(input.ctx, dg_dx);
@@ -204,23 +234,57 @@ bool compute_sims_grad_for_script(const SimsGradScriptInput& input,
             }
         }
 
+        if (direct && static_cast<std::size_t>(lambda.size()) != n_gen)
+            throw std::runtime_error(
+                "compute_sims_grad_for_script: H has " +
+                std::to_string(lambda.size()) + " rows, not " +
+                std::to_string(n_gen) +
+                " generalised coordinates (3 nlocal + box_dofs)");
+
         Eigen::VectorXd dO_dW;
         apply_ift_chain_kernel(dg_dW, lambda, input.dF_dW,
                                input.ctx.nlocal, input.ctx.n_desc, dO_dW,
                                input.dvirial_dW, input.box_dofs);
 
-        if (!apply_loss_fold(input.loss_fns[k],
-                             input.v_observed[k],
-                             input.t_targets[k],
-                             input.w_weights[k],
-                             dO_dW, staged))
+        double dL_dO = 0.0;
+        if (!loss_grad_wrt_observed(input.loss_fns[k], input.v_observed[k],
+                                    input.t_targets[k], input.w_weights[k],
+                                    dL_dO))
         {
             return false;
+        }
+        staged += dL_dO * dO_dW;
+
+        /* The direct term: dg_k/dtheta_r + lambda_k . dF/dtheta_r, at
+         * fixed x* and W. */
+        for (std::size_t r = 0; r < staged_direct.size(); ++r) {
+            const double* dF = input.dF_dtheta.data() + r * n_gen;
+            double dO = input.dg_dtheta[k * n_theta + r];
+            for (std::size_t i = 0; i < n_gen; ++i)
+                dO += lambda(static_cast<Eigen::Index>(i)) * dF[i];
+            staged_direct[r] += dL_dO * dO;
         }
     }
 
     dL_dW_out = std::move(staged);
+    if (direct) *direct = std::move(staged_direct);
     return true;
+}
+
+}  // namespace
+
+bool compute_sims_grad_for_script(const SimsGradScriptInput& input,
+                                  Eigen::VectorXd&           dL_dW_out)
+{
+    return script_gradient(input, 0, dL_dW_out, nullptr);
+}
+
+bool compute_sims_grad_for_script(const SimsGradScriptInput& input,
+                                  std::size_t                n_theta,
+                                  Eigen::VectorXd&           dL_dW_out,
+                                  std::vector<double>&       dL_dtheta_direct_out)
+{
+    return script_gradient(input, n_theta, dL_dW_out, &dL_dtheta_direct_out);
 }
 
 bool compute_sims_grad_dWchain(
@@ -235,6 +299,7 @@ bool compute_sims_grad_dWchain(
     /* Stage contributions to a local buffer so a mid-loop failure
      * doesn't leave a half-applied g_out behind. */
     std::vector<double> stage(g_out_inout.size(), 0.0);
+    const std::size_t n_theta = theta_row_to_g_idx.size();
 
     for (const auto& script : scripts) {
         /* Phase A masking: skip provider-marked failed scripts. Their
@@ -245,16 +310,33 @@ bool compute_sims_grad_dWchain(
          * chain still contribute analytically. */
         if (script.failed) continue;
 
+        /* A script with observables whose input does not say what theta
+         * does at fixed W: its direct theta term is unknown, and the
+         * chain through W alone would be the gradient without it. Like a
+         * structural failure below. */
+        const bool direct_unknown =
+            !script.expressions.empty() && !script.direct_theta;
         Eigen::VectorXd dL_dW;
-        if (!compute_sims_grad_for_script(script, dL_dW)) {
+        std::vector<double> direct;
+        if (direct_unknown ||
+            !compute_sims_grad_for_script(script, n_theta, dL_dW, direct)) {
             /* Hard failure (unsupported loss kind, observable registry
-             * miss). Still all-or-nothing -- these are structural and
-             * the optimiser needs FD anyway. */
+             * miss, no direct term). Still all-or-nothing -- these are
+             * structural and the optimiser needs FD anyway. */
             for (int idx : all_theta_indices) needs_fd_out.push_back(idx);
             return false;
         }
         apply_dWdtheta_chain(dL_dW, dWdtheta, n_cols,
                              theta_row_to_g_idx, stage);
+        for (std::size_t r = 0; r < n_theta; ++r) {
+            const int g_idx = theta_row_to_g_idx[r];
+            if (g_idx < 0) continue;          /* skip unmapped rows */
+            if (g_idx >= static_cast<int>(stage.size()))
+                throw std::runtime_error(
+                    "compute_sims_grad_dWchain: theta_row_to_g_idx maps "
+                    "outside g_out");
+            stage[static_cast<std::size_t>(g_idx)] += direct[r];
+        }
     }
 
     /* Commit. */

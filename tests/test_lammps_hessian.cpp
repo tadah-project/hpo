@@ -6,31 +6,22 @@
 // zero modes, positive interior spectrum) and a self-consistency check
 // (eigenvector probe matches its eigenvalue under independent FD).
 //
-// Pot resolution follows the same convention as bench_pair_tadah
-// (bench_pot.h):
-//   1. TADAH_BENCH_POT env var.
-//   2. TADAH_BENCH_DEFAULT_POT compile-time macro, when the file exists.
-// Missing pot ⇒ the test case reports itself as skipped (TADAH_SKIP). A pot
-// that is named but cannot be read, parsed or run is a failure.
+// The potential (bench_pot.h): TADAH_BENCH_POT when set, else the one
+// shipped with the tests, tests/data/bench_ta.tadah (the Quick Start Ta
+// potential; its header gives its provenance). One that cannot be read,
+// parsed or run is a failure; there is no skip.
 //
-// Tag scheme: every LAMMPS-using case carries `[.][!benchmark]` (hidden
-// by default), mirroring bench_pair_tadah. Reason: the test_hpo binary
-// has a pre-existing lifecycle crash when constructing LAMMPS+pair_tadah
-// then destructing — surfaces here, in bench_pair_tadah, and in any
-// other in-process LAMMPS test in this binary. The crash is not in the
-// assembler itself; it is reproduced by `pair_style tadah + pair_coeff
-// * * EXTERN Ta + (no run)` followed by LAMMPS dtor. Phase 3.6's pilot
-// integration test is the right place to land a working LAMMPS-driven
-// parity check once the lifecycle issue is resolved (most likely by
-// moving LAMMPS-driven tests to a dedicated binary that does MPI_Init /
-// MPI_Finalize itself, or by adding a per-test fixture that hard-skips
-// destructor calls after the first instance).
+// Tags: every LAMMPS-using case carries `[.][!benchmark]` (hidden, so not
+// discovered) and runs in the CTest entry hpo_lammps_hessian (label bench),
+// `test_hpo "[lammps_hessian][.]"`, one process for the eight cases. They
+// were hidden because of a crash when LAMMPS with pair_style tadah was
+// destroyed; that crash is gone (the eight cases, and the eight of
+// test_hpo_phase3_pilot.cpp, create and destroy their LAMMPS instances in one
+// process). The two LAMMPS-free cases at the end are discovered as usual.
 //
-// To run the hidden cases manually:
-//   build_tadah/_deps/tadah.hpo-build/tests/test_hpo \
-//       "[lammps_hessian]" --benchmark-samples 1
+// To run the hidden cases by hand:
+//   build_tadah/_deps/tadah.hpo-build/tests/test_hpo "[lammps_hessian][.]"
 
-#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
 #include "bench_pot.h"
@@ -44,11 +35,14 @@
 
 #include <atom.h>
 #include <comm.h>
+#include <domain.h>
 #include <force.h>
+#include <input.h>
 #include <neighbor.h>
 #include <pair.h>
 #include <pair_tadah.h>
 
+#include <cstdio>
 #include <cstring>
 
 #include <Eigen/Eigenvalues>
@@ -57,6 +51,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -91,10 +86,10 @@ std::vector<std::string> bcc_ta_4atom_script() {
     };
 }
 
-/* LAMMPS with pair_style tadah on the relaxed 4-atom bcc Ta cell. The
- * potential was found (bench_pot.h), so a potential that does not parse, a
- * LAMMPS instance that cannot be created or a script that fails is a
- * failure: the constructor throws, and Catch reports the exception. */
+/* LAMMPS with pair_style tadah on the relaxed 4-atom bcc Ta cell. A
+ * potential that does not parse, a LAMMPS instance that cannot be created
+ * or a script that fails is a failure: the constructor throws, and Catch
+ * reports the exception. */
 struct LammpsFixture {
     LammpsRunner            runner;
     LammpsRunner::LMPPtr    lmp;
@@ -128,9 +123,7 @@ TEST_CASE("LammpsHessianAssembler — atom-only block is symmetric and "
           "has 3 near-zero acoustic modes (4-atom BCC Ta)",
           "[lammps_hessian][phase3][.][!benchmark]")
 {
-    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
-    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
-    LammpsFixture fx(pot.path);
+    LammpsFixture fx(hpo_test::bench_pot_path());
 
     const int nlocal = fx.lmp->atom->nlocal;
     REQUIRE(nlocal == 4);
@@ -174,9 +167,7 @@ TEST_CASE("LammpsHessianAssembler — Hessian-vector probe matches force "
           "central diff along a non-trivial direction",
           "[lammps_hessian][phase3][.][!benchmark]")
 {
-    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
-    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
-    LammpsFixture fx(pot.path);
+    LammpsFixture fx(hpo_test::bench_pot_path());
     const int nlocal = fx.lmp->atom->nlocal;
     REQUIRE(nlocal == 4);
 
@@ -280,9 +271,7 @@ TEST_CASE("LammpsHessianAssembler — iso box DOF is positive and "
           "consistent with energy curvature",
           "[lammps_hessian][phase3][.][!benchmark]")
 {
-    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
-    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
-    LammpsFixture fx(pot.path);
+    LammpsFixture fx(hpo_test::bench_pot_path());
     const int nlocal = fx.lmp->atom->nlocal;
     REQUIRE(nlocal == 4);
 
@@ -304,19 +293,120 @@ TEST_CASE("LammpsHessianAssembler — iso box DOF is positive and "
     CHECK(asym < 1e-9);
 }
 
+namespace {
+
+/* dE/d(eps) along a homogeneous strain of the fixture's relaxed cell, from
+ * LAMMPS' own pressure: `change_box all <axes> scale (1 + s) remap`, run 0,
+ * and the pair virial W of the strained state read back through `pxx` /
+ * `pyy` / `pzz` (no velocities, so no kinetic part: W_aa = p_aa V /
+ * nktv2p). Positions x = F x0 with F = I + s e, so dE/de = -tr(e F^-1 W)
+ * = -sum over the strained axes a of W_aa / (1 + s). `axes` are the
+ * strained axes (0 x, 1 y, 2 z); `read` the components of e to read, the
+ * strained axes unless given. The box is restored after each state. */
+double strain_derivative_from_pressure(LammpsRunner& runner,
+                                       const LammpsRunner::LMPPtr& lmp,
+                                       const std::vector<int>& axes,
+                                       const std::vector<int>& read,
+                                       double s)
+{
+    static const char* name[3] = {"x", "y", "z"};
+    std::string scale, unscale;
+    for (int a : axes) {
+        char buf[96];
+        std::snprintf(buf, sizeof buf, " %s scale %.17g", name[a], 1.0 + s);
+        scale += buf;
+        std::snprintf(buf, sizeof buf, " %s scale %.17g", name[a],
+                      1.0 / (1.0 + s));
+        unscale += buf;
+    }
+    lmp->input->one(("change_box all" + scale + " remap").c_str());
+    lmp->input->one("run 0");
+    const double vol = std::stod(runner.get_variable(lmp, "hpo_vol"));
+    double g = 0.0;
+    for (int a : read) {
+        const double p =
+            std::stod(runner.get_variable(lmp, std::string("hpo_p") + name[a]));
+        const bool strained =
+            std::find(axes.begin(), axes.end(), a) != axes.end();
+        g -= p * vol / lmp->force->nktv2p / (strained ? 1.0 + s : 1.0);
+    }
+    lmp->input->one(("change_box all" + unscale + " remap").c_str());
+    return g;
+}
+
+}  // namespace
+
+TEST_CASE("LammpsHessianAssembler — the box block is the strain derivative "
+          "of the virial, within 1e-7 relative of LAMMPS' pressure",
+          "[lammps_hessian][phase3][.][!benchmark]")
+{
+    /* The box block of H (iso, and the Voigt-6 normal strains) against
+     * the central difference, at the assembler's h_strain 1e-5, of dE/de
+     * from LAMMPS' pressure (strain_derivative_from_pressure above: an
+     * independent route, change_box and compute pressure, to the same
+     * second derivative). A second derivative of the energy over h^2 =
+     * 1e-10 multiplies the energy's round-off by 1e10; the virial is a
+     * first derivative, so its difference over 2h does not.
+     * Pins: H(iso, iso) (box_dofs 1), H(xx, xx) and H(xx, yy) (box_dofs 6)
+     * each within 1e-7 relative of the reference (measured with the shipped
+     * potential: 2.1e-11, 4.9e-11 and 2.5e-12).
+     * Before the fix: the diagonal was the energy's second difference
+     * (E+ - 2 E0 + E-) / h^2: H(iso, iso) 528.561870 against 528.560497
+     * (2.6e-6 relative), H(xx, xx) 94.694101 against 94.692578 (1.6e-5);
+     * H(xx, yy), taken from the virial already, agreed to 2.5e-12. */
+    LammpsFixture fx(hpo_test::bench_pot_path());
+    const int nlocal = fx.lmp->atom->nlocal;
+    REQUIRE(nlocal == 4);
+    const int box0 = 3 * nlocal;
+
+    tadah::hpo::LammpsHessianAssembler asm_;
+    asm_.set_tikhonov(0.0);
+    const Eigen::MatrixXd H1 = asm_.assemble(fx.lmp.get(), /*box_dofs=*/1);
+    const Eigen::MatrixXd H6 = asm_.assemble(fx.lmp.get(), /*box_dofs=*/6);
+
+    fx.lmp->input->one("variable hpo_px equal pxx");
+    fx.lmp->input->one("variable hpo_py equal pyy");
+    fx.lmp->input->one("variable hpo_pz equal pzz");
+    fx.lmp->input->one("variable hpo_vol equal vol");
+    const double h = 1.0e-5;
+    const auto second = [&](const std::vector<int>& axes,
+                            const std::vector<int>& read) {
+        return (strain_derivative_from_pressure(fx.runner, fx.lmp, axes, read,
+                                                +h) -
+                strain_derivative_from_pressure(fx.runner, fx.lmp, axes, read,
+                                                -h)) /
+               (2.0 * h);
+    };
+    const double iso_ref = second({0, 1, 2}, {0, 1, 2});
+    const double xx_ref  = second({0}, {0});
+    const double xy_ref  = second({1}, {0});   /* d/de_yy of dE/de_xx */
+
+    const auto rel = [](double a, double b) {
+        return std::abs(a - b) / std::abs(b);
+    };
+    INFO(std::setprecision(12) << "H(iso,iso) = " << H1(box0, box0)
+         << " ref " << iso_ref << "  H(xx,xx) = " << H6(box0, box0)
+         << " ref " << xx_ref << "  H(xx,yy) = " << H6(box0, box0 + 1)
+         << " ref " << xy_ref);
+    CHECK(rel(H1(box0, box0), iso_ref) < 1e-7);
+    CHECK(rel(H6(box0, box0), xx_ref) < 1e-7);
+    CHECK(rel(H6(box0, box0 + 1), xy_ref) < 1e-7);
+}
+
 // Phase 3.7E regression: box-box off-diagonal block must be populated
 // for box_dofs=6 (was missing pre-3.7E — the assembler only computed
 // diagonal H[α,α] entries via the energy stencil and left H[α,β] = 0
 // for α ≠ β). On a cubic crystal in equilibrium the (xx,yy)/(xx,zz)/
 // (yy,zz) off-diagonals are V·C12 (Poisson coupling) and must be
-// positive (C12 > 0 for Ta). Symmetric across the box-box block.
+// positive (C12 > 0 for Ta: 40.75 eV, C12 = 91 GPa, with the shipped
+// potential; a potential with unphysical elasticity, such as the HPO
+// examples' energies-only model, C12 = -103 GPa, fails it). Symmetric
+// across the box-box block.
 TEST_CASE("LammpsHessianAssembler — box-box off-diagonals are populated "
           "for box_dofs=6 on a cubic crystal (Phase 3.7E)",
           "[lammps_hessian][phase3][.][!benchmark]")
 {
-    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
-    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
-    LammpsFixture fx(pot.path);
+    LammpsFixture fx(hpo_test::bench_pot_path());
     const int nlocal = fx.lmp->atom->nlocal;
     REQUIRE(nlocal == 4);
 
@@ -328,10 +418,39 @@ TEST_CASE("LammpsHessianAssembler — box-box off-diagonals are populated "
     REQUIRE(H.cols() == 3 * nlocal + 6);
 
     const int box0 = 3 * nlocal;
-    /* Diagonal stiffness — same convention as the iso test: positive
-     * after relaxation, dominant magnitudes. */
-    for (int alpha = 0; alpha < 6; ++alpha) {
+    /* Normal-strain diagonal (xx, yy, zz): V.C11, positive after
+     * relaxation (94.69 eV with the shipped potential). */
+    for (int alpha = 0; alpha < 3; ++alpha) {
+        INFO("alpha = " << alpha);
         CHECK(H(box0 + alpha, box0 + alpha) > 0.0);
+    }
+
+    /* Shear diagonal (yz, xz, xy). This cell is an orthogonal box, and
+     * LAMMPS ignores the tilt factors of an orthogonal box: the assembler's
+     * shear strains (apply_strain sets xy, xz, yz) move nothing, and their
+     * rows of the box block are 0 (the strained boxes are the saved one and
+     * the virial does not change). This is the recorded box-convention
+     * issue of the analytic-gradient path (RELEASE-1.6.0-FOLLOWUPS.md, "HPO
+     * LAMMPS analytic-gradient box conventions": the shears are no-ops on
+     * an orthogonal box), recorded and not fixed by the owner's decision of
+     * 2026-09-30, as that path is unreachable with PC_LAMMPS. Fixing it
+     * changes this check.
+     * Pins: the box is orthogonal, and |H(shear, shear)| < 1e-2. Measured
+     * with the shipped potential: exactly 0 (9.95e-4 while the diagonal was
+     * the energy's second difference: about 1e-13 eV of energy round-off
+     * over h_strain^2 = 1e-10; with the HPO examples' model exactly 0
+     * either way). The same cell made triclinic (change_box all triclinic)
+     * gives 9.154 eV (9.155 eV from the energy), V.C44/4 for C44 = 82 GPa
+     * (the assembler applies half the shear): the bound is three orders
+     * below a shear that is applied.
+     * Before the fix (the case had no CTest entry then): it checked
+     * H(alpha, alpha) > 0 for all six, which passed or failed on the sign of
+     * the round-off: it passed with the shipped potential and failed
+     * (0.0 > 0.0) with the examples' model. */
+    REQUIRE(fx.lmp->domain->triclinic == 0);
+    for (int alpha = 3; alpha < 6; ++alpha) {
+        INFO("alpha = " << alpha);
+        CHECK(std::abs(H(box0 + alpha, box0 + alpha)) < 1e-2);
     }
 
     /* Box-box off-diagonal block must be populated (the regression
@@ -369,7 +488,10 @@ TEST_CASE("LammpsHessianAssembler — box-box off-diagonals are populated "
 
     /* Diag-shear and shear-shear cross-terms should be ~0 for cubic
      * crystals at zero stress (selection rules from cubic symmetry).
-     * Bound by FD step-size noise, h_strain² · |∂³E/∂ε³| ~ 1e-3 abs. */
+     * Bound by FD step-size noise, h_strain² · |∂³E/∂ε³| ~ 1e-3 abs. On
+     * this orthogonal box they are zero for the reason above as well
+     * (exactly 0 with the shipped potential; below 1e-9 on the cell made
+     * triclinic). */
     for (int alpha = 0; alpha < 3; ++alpha) {
         for (int beta = 3; beta < 6; ++beta) {
             CHECK(std::abs(H(box0 + alpha, box0 + beta)) < 1.0);
@@ -387,9 +509,7 @@ TEST_CASE("LammpsHessianAssembler — Tikhonov shifts diagonal by exactly "
           "the configured magnitude",
           "[lammps_hessian][phase3][.][!benchmark]")
 {
-    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
-    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
-    LammpsFixture fx(pot.path);
+    LammpsFixture fx(hpo_test::bench_pot_path());
     const int nlocal = fx.lmp->atom->nlocal;
     REQUIRE(nlocal == 4);
 
@@ -415,9 +535,7 @@ TEST_CASE("LammpsHessianAssembler — refreshes capture_adjoint_state "
           "snapshot at x* after the central-diff sweep destroys it",
           "[lammps_hessian][phase3][.][!benchmark]")
 {
-    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
-    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
-    LammpsFixture fx(pot.path);
+    LammpsFixture fx(hpo_test::bench_pot_path());
     auto* lt = fx.pair->lammps_tadah();
     REQUIRE(lt != nullptr);
 
@@ -443,9 +561,8 @@ TEST_CASE("LammpsHessianAssembler — refreshes capture_adjoint_state "
 }
 
 /* LAMMPS-free smoke: ensures the assembler symbol links and its setters
- * round-trip without exercising the LAMMPS+pair_tadah lifecycle that
- * the hidden cases above can't currently survive in this test binary.
- * Picked up in the default test run. */
+ * round-trip without a LAMMPS instance. Picked up in the default test run
+ * (discovered, not hidden). */
 TEST_CASE("LammpsHessianAssembler — header + class symbol present "
           "without LAMMPS instance",
           "[lammps_hessian][phase3]")
@@ -495,9 +612,7 @@ TEST_CASE("LammpsHessianAssembler — vflag=1 overhead microbench "
           "(Phase 3.7E follow-up)",
           "[lammps_hessian_perf][lammps_hessian][phase3][.][!benchmark]")
 {
-    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
-    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
-    LammpsFixture fx(pot.path);
+    LammpsFixture fx(hpo_test::bench_pot_path());
 
     LAMMPS_NS::Pair* pair = fx.lmp->force->pair;
     LAMMPS_NS::Atom* atom = fx.lmp->atom;

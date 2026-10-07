@@ -1,19 +1,18 @@
 #pragma once
-/* The Ta potential of the hidden LAMMPS-driven cases ([.][!benchmark]:
- * bench_pair_tadah.cpp, test_hpo_phase3_pilot.cpp, test_lammps_hessian.cpp).
+/* The Ta potential of the LAMMPS-driven cases (bench_pair_tadah.cpp,
+ * test_hpo_phase3_pilot.cpp, test_lammps_hessian.cpp; CTest
+ * hpo_bench_pair_tadah, hpo_phase3_pilot, hpo_lammps_hessian, label bench):
  *
- *  1. TADAH_BENCH_POT, when set. The user asks for these cases to run, so
- *     a file that cannot be read is an error.
- *  2. Otherwise TADAH_BENCH_DEFAULT_POT (HPO/tests/CMakeLists.txt:
- *     $TADAH_PATH/HPO_test/pot.tadah at configure time), when it exists.
- *     If it exists but cannot be read, that is an error too.
- *  3. Otherwise there is no potential: path is empty, absent_reason says
- *     why, and the case calls TADAH_SKIP(absent_reason) (tadah_test_skip.hpp)
- *     so that it is reported as skipped, not passed.
+ *  1. TADAH_BENCH_POT, when set: the user names a potential to run them
+ *     with, so a file that cannot be read is an error.
+ *  2. Otherwise the potential shipped with the tests,
+ *     TADAH_BENCH_DEFAULT_POT (tests/data/bench_ta.tadah, whose header
+ *     gives its provenance). It is part of the source tree: a missing or
+ *     unreadable one is an error too.
  *
  * An error is a std::runtime_error, which Catch reports as a failure of
- * the test case. A potential that is found must also load and run: the
- * cases check that with REQUIRE, never by skipping. */
+ * the test case: there is no skip. The potential must also load and run:
+ * the cases check that with REQUIRE. */
 
 #include <cstdlib>
 #include <filesystem>
@@ -21,14 +20,13 @@
 #include <stdexcept>
 #include <string>
 
+#ifndef TADAH_BENCH_DEFAULT_POT
+#error "TADAH_BENCH_DEFAULT_POT (HPO/tests/CMakeLists.txt) names the shipped potential"
+#endif
+
 namespace hpo_test {
 
-struct BenchPot {
-    std::string path;           // empty: no potential; the case skips
-    std::string absent_reason;  // why, when path is empty
-};
-
-inline BenchPot find_bench_pot()
+inline std::string bench_pot_path()
 {
     const auto readable = [](const std::string& p) {
         std::ifstream in(p);
@@ -39,21 +37,13 @@ inline BenchPot find_bench_pot()
         if (!readable(env))
             throw std::runtime_error(std::string("TADAH_BENCH_POT=") + env +
                                      " cannot be read");
-        return {env, ""};
+        return env;
     }
-#ifdef TADAH_BENCH_DEFAULT_POT
-    const std::string def = TADAH_BENCH_DEFAULT_POT;
-    if (!std::filesystem::exists(def))
-        return {"", "no potential: TADAH_BENCH_POT is unset and the default "
-                    "potential " + def + " does not exist"};
-    if (!readable(def))
-        throw std::runtime_error("the default benchmark potential " + def +
+    const std::string shipped = TADAH_BENCH_DEFAULT_POT;
+    if (!readable(shipped))
+        throw std::runtime_error("the shipped benchmark potential " + shipped +
                                  " cannot be read");
-    return {def, ""};
-#else
-    return {"", "no potential: TADAH_BENCH_POT is unset, and TADAH_PATH was "
-                "unset when the tests were configured (no default potential)"};
-#endif
+    return shipped;
 }
 
 }  // namespace hpo_test

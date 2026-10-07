@@ -12,17 +12,14 @@ target_link_libraries(test_hpo PRIVATE
 # tadah.hpo's link interface.
 target_link_libraries(test_hpo PRIVATE tadah_asa_pristine)
 
-# Phase 2A.5 microbench gate. Enable Catch2's BENCHMARK macros and point at
-# a real, fitted Ta potential checked into the worktree so the bench runs
-# out-of-the-box. Override the pot at run time with the TADAH_BENCH_POT env
-# var; override the cell with TADAH_BENCH_CELL_DATA (LAMMPS read_data file).
+# The LAMMPS-driven cases (bench_pot.h) run on the Ta potential shipped
+# with the tests, data/bench_ta.tadah (its header gives its provenance);
+# TADAH_BENCH_POT names another at run time, and TADAH_BENCH_CELL_DATA (a
+# LAMMPS read_data file) the cell of the pair_tadah microbench. Catch2's
+# BENCHMARK macros are enabled for the microbenches.
 target_compile_definitions(test_hpo PRIVATE CATCH_CONFIG_ENABLE_BENCHMARKING)
-if(DEFINED ENV{TADAH_PATH})
-    set(_tadah_bench_default_pot
-        "$ENV{TADAH_PATH}/HPO_test/pot.tadah")
-    target_compile_definitions(test_hpo PRIVATE
-        "TADAH_BENCH_DEFAULT_POT=\"${_tadah_bench_default_pot}\"")
-endif()
+target_compile_definitions(test_hpo PRIVATE
+    "TADAH_BENCH_DEFAULT_POT=\"${CMAKE_CURRENT_SOURCE_DIR}/data/bench_ta.tadah\"")
 
 # Worked examples (HPO/examples). test_examples_parse.cpp gives every
 # examples/*/config.hpo a test case of its own: the list is generated here,
@@ -147,6 +144,44 @@ foreach(_group IN LISTS _hpo_e2e_groups)
         LABELS "hpo;e2e"
         TIMEOUT 600)
 endforeach()
+
+# LAMMPS-driven cases: hidden tags (`[.][!benchmark]`), each group one
+# entry -- a process -- of its own; the first three on the shipped
+# potential (data/bench_ta.tadah, bench_pot.h). `ctest -L bench` runs them;
+# they take a few seconds each and run in the full suite.
+#   hpo_lammps_hessian    test_lammps_hessian.cpp: the 4-atom bcc Ta
+#                         Hessian (symmetry, acoustic modes, an H.v probe,
+#                         the iso and Voigt-6 box blocks, Tikhonov, the
+#                         adjoint snapshot) and the vflag=1 microbench; the
+#                         two LAMMPS-free cases of the file are discovered
+#   hpo_phase3_pilot      test_hpo_phase3_pilot.cpp: the PC_LAMMPS adjoint
+#                         chain on real relaxations (closed-form cohesive
+#                         energy, dvirial_dW against finite differences,
+#                         dlx/dW against re-relaxed finite differences, the
+#                         SimsGradProvider body with and without a hot
+#                         variable)
+#   hpo_bench_pair_tadah  bench_pair_tadah.cpp: pair_tadah::compute on 256
+#                         atoms (Catch2 BENCHMARK)
+#   hpo_host_e2e          test_hpo_host_e2e.cpp: HPO_Host's analytical
+#                         gradient with no PC_LAMMPS line, with a
+#                         PC_OBSERVABLE and with a PC_LAMMPS script run in
+#                         process (its own 4-atom training structure; no
+#                         potential file)
+# With the bump-gate case of bumpgate_e2e above, every hidden [!benchmark]
+# case has an entry.
+add_test(NAME hpo_lammps_hessian
+    COMMAND test_hpo "[lammps_hessian][.]" --warn NoTests)
+add_test(NAME hpo_phase3_pilot
+    COMMAND test_hpo "[phase3_pilot],[phase3_orchestrator]" --warn NoTests)
+add_test(NAME hpo_bench_pair_tadah
+    COMMAND test_hpo "[bench][pair_tadah]" --warn NoTests)
+add_test(NAME hpo_host_e2e
+    COMMAND test_hpo "[hpo_host_e2e]" --warn NoTests)
+set_tests_properties(hpo_lammps_hessian hpo_phase3_pilot hpo_bench_pair_tadah
+                     hpo_host_e2e
+    PROPERTIES
+        LABELS "hpo;bench"
+        TIMEOUT 300)
 
 # End-to-end cases that run the built `tadah` executable, named by the
 # TADAH_BINARY environment variable (test_hpo_fixweight_e2e.cpp and
