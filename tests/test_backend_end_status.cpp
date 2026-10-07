@@ -215,6 +215,66 @@ TEST_CASE("End status: TADAH:ANNEAL records a MAXTIME that passes between "
     CHECK(lr.status() == "TADAH:ANNEAL: MAXTIME exceeded");
 }
 
+/* With REANNEAL (the default) a schedule that cools below T_MIN with
+ * budget left re-anneals from the best point. A MAXTIME that passed after
+ * the schedule's last post-rung check, before the re-anneal test, ended the
+ * search without a re-anneal and left its stop "T < T_MIN". The schedule:
+ * T_INIT 1, RT 0.2, T_MIN 0.03, CHAIN_LENGTH 3 -- rungs at T = 1, 0.2 and
+ * 0.04, then 0.008 < T_MIN -- and the first re-anneal would start at
+ * T_INIT * REANNEAL_SCALE = 0.25, above T_MIN / RT = 0.15. The scripted
+ * clock passes the deadline right after the post-rung check of the third
+ * rung (the seed and three rungs evaluated, then one more clock reading).
+ * Pins: the search ends after those 10 evaluations without a re-anneal,
+ * on MAXTIME: the stop line "ANNEAL stopped: MAXTIME exceeded" and the
+ * status "TADAH:ANNEAL: MAXTIME exceeded". Without the deadline the same
+ * search re-anneals ("ANNEAL re-anneal #1: T_start=2.500e-01") and
+ * MAXEVAL 13 ends it (a pin: as before the fix).
+ * Before the fix: the same 10 evaluations, "ANNEAL stopped: T < T_MIN"
+ * and the status "TADAH:ANNEAL: T_MIN reached". */
+TEST_CASE("End status: TADAH:ANNEAL records the MAXTIME that prevented a "
+          "re-anneal, not T_MIN", "[HPO][stop_status][anneal]")
+{
+    constexpr std::size_t kChain = 3;
+    auto sp = make_spec("TADAH", "ANNEAL", {-1.0}, {1.0}, {0.5});
+    sp.seed = 3;
+    sp.stop.maxeval = 13;
+    sp.stop.maxtime = 10.0;
+    sp.param["T_INIT"] = 1.0;
+    sp.param["T_MIN"] = 0.03;
+    sp.param["RT"] = 0.2;
+    sp.param["CHAIN_LENGTH"] = static_cast<double>(kChain);
+
+    SECTION("the deadline passes before the re-anneal") {
+        LoggedRun lr;
+        StubHost host{bowl};
+        std::size_t readings_after_schedule = 0;
+        const tadah::hpo::AnnealElapsedSeconds clock = [&]() -> double {
+            if (host.n() < 1 + 3 * kChain) return 0.0;  // seed, three rungs
+            return readings_after_schedule++ == 0 ? 0.0 : 1e9;
+        };
+        tadah::hpo::run_anneal_impl<Vec>(sp, host, clock);
+        CHECK(host.n() == 1 + 3 * kChain);
+        const std::string journal = lr.read();
+        CHECK(journal.find("ANNEAL re-anneal #") == std::string::npos);
+        CHECK(journal.find("ANNEAL stopped: MAXTIME exceeded after 10 host "
+                           "eval(s) (3 rung(s) completed)") !=
+              std::string::npos);
+        CHECK(journal.find("T < T_MIN") == std::string::npos);
+        CHECK(lr.status() == "TADAH:ANNEAL: MAXTIME exceeded");
+    }
+    SECTION("without the deadline it re-anneals") {
+        LoggedRun lr;
+        StubHost host{bowl};
+        const tadah::hpo::AnnealElapsedSeconds clock = [] { return 0.0; };
+        tadah::hpo::run_anneal_impl<Vec>(sp, host, clock);
+        CHECK(host.n() == 13u);
+        const std::string journal = lr.read();
+        CHECK(journal.find("ANNEAL re-anneal #1: T_start=2.500e-01") !=
+              std::string::npos);
+        CHECK(lr.status() == "TADAH:ANNEAL: MAXEVAL reached");
+    }
+}
+
 /* ======================================================================
  * TADAH:ANNEAL_PT and TADAH:ANNEAL_PA
  * ==================================================================== */
