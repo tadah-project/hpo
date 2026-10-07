@@ -58,15 +58,18 @@ void apply_stage_optimizers(const RefitConfig &rc, CompactConfig &cfg) {
   // ceres_ftol / joint_ftol feed Ceres' function_tolerance, which is RELATIVE
   // ((new_cost - old_cost) < ftol * old_cost) — Ceres has no absolute function
   // tolerance, so FTOL_REL is the only accepted key (FTOL / FTOL_ABS are
-  // rejected by RefitParser). REFINE's MAXEVAL/MAXITER is the L-BFGS
-  // algorithms' evaluations and Ceres' iterations; the curve-mode FUSE
-  // refine runs with the Ceres one.
+  // rejected by RefitParser). REFINE's MAXEVAL/MAXITER is the budget of the
+  // algorithm that runs: the L-BFGS algorithms' evaluations, or Ceres'
+  // iterations. FUSE's settings are the joint solve's and, under
+  // REFIT_OBJECTIVE curve, each function's FUSE refine's (fuse_curve_config).
   if (rc.refine.has_opt) {
     const OptimizerSpec &o = rc.refine.opt;
     cfg.refine_algo = refit_refine_algo(o);
     if (o.stop.maxeval) {
-      cfg.ceres_max_iter = static_cast<int>(*o.stop.maxeval);
-      cfg.lbfgs_refine_maxeval = static_cast<int>(*o.stop.maxeval);
+      if (cfg.refine_algo == "NLOPT_LBFGS" || cfg.refine_algo == "DLIB_LBFGS")
+        cfg.lbfgs_refine_maxeval = static_cast<int>(*o.stop.maxeval);
+      else
+        cfg.ceres_max_iter = static_cast<int>(*o.stop.maxeval);
     }
     if (o.stop.ftol_rel) cfg.ceres_ftol = *o.stop.ftol_rel;
     auto it = o.param.find("GTOL");
@@ -77,6 +80,8 @@ void apply_stage_optimizers(const RefitConfig &rc, CompactConfig &cfg) {
     cfg.joint_algo = refit_fuse_algo(o);
     if (o.stop.maxeval) cfg.joint_max_iter = static_cast<int>(*o.stop.maxeval);
     if (o.stop.ftol_rel) cfg.joint_ftol = *o.stop.ftol_rel;
+    auto it = o.param.find("GTOL");
+    if (it != o.param.end()) cfg.joint_gtol = it->second;
   }
   // ENABLED false is a master kill-switch: it wins over any configured
   // optimiser (the engine says so in its log).
@@ -2128,6 +2133,15 @@ double CompactBlipFitter::refine_edges(BlipFit &f) const {
   return solve_coeffs(f);
 }
 
+CompactConfig fuse_curve_config(const CompactConfig &cfg) {
+  CompactConfig f = cfg;
+  f.refine_algo = cfg.joint_algo;      // FUSE's optimiser
+  f.ceres_max_iter = cfg.joint_max_iter;  // per function
+  f.ceres_ftol = cfg.joint_ftol;
+  f.ceres_gtol = cfg.joint_gtol;
+  return f;
+}
+
 int fuse_curve_refine(const CompactBlipFitter &ff, BlipFit &fit) {
   const CompactConfig &cfg = ff.config();
   const bool ceres =
@@ -2147,7 +2161,7 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
                     const std::vector<double> &e_weight, double curve_weight,
                     int max_iter, double ftol, const std::string &algo,
                     std::string *term_out, double phi_hard_rcut,
-                    double rho_hard_rcut, int *iterations_out) {
+                    double rho_hard_rcut, int *iterations_out, double gtol) {
   if (iterations_out) *iterations_out = 0;
   if (algo != "NONE" && algo != "CERES_LM" && algo != "CERES_DOGLEG")
     throw std::runtime_error("joint_refine: unknown algo '" + algo +
@@ -2350,7 +2364,7 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
       opt.trust_region_strategy_type = ceres::DOGLEG;
     opt.max_num_iterations = max_iter;
     opt.function_tolerance = ftol;
-    opt.gradient_tolerance = 1e-14;
+    opt.gradient_tolerance = gtol;
     opt.parameter_tolerance = 1e-16;
     opt.logging_type = ceres::SILENT;
     require_valid_options(opt, "joint_refine");

@@ -33,17 +33,14 @@ public:
    *  UNIFORM, EXPLORE's) runs no optimiser, so a key there that no stage
    *  reads (MAXEVAL, MAXITER, FTOL_REL, XTOL_REL, GTOL) is an error too:
    *  "REFINE: MAXITER has no effect with ALGO NONE (the stage is skipped);
-   *  remove MAXITER". Two stay accepted because another stage reads them:
-   *  EXPLORE INNER's under the EXPLORE optimiser GN_MLSL_LDS (its local
-   *  searches), and REFINE's under REFIT_OBJECTIVE curve while FUSE runs
-   *  (the FUSE curve refine). */
+   *  remove MAXITER". EXPLORE INNER's stay accepted under the EXPLORE
+   *  optimiser GN_MLSL_LDS, whose local searches read them. */
   static RefitConfig parse(const tadah::core::Context &c);
 };
 
 /** REFIT_OBJECTIVE, in any case: true for 'curve', false for 'energy' (the
  *  default without the key). Throws std::runtime_error for anything else.
- *  The engine sets CompactConfig::objective from it, and RefitParser::parse()
- *  reads it for the REFINE keys that FUSE reads in curve mode. */
+ *  The engine sets CompactConfig::objective from it. */
 bool refit_curve_objective(const tadah::core::Context &c);
 
 /** Map a parsed OPTIMIZER spec to the compact fitter's flat algorithm string

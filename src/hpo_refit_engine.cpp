@@ -459,12 +459,14 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
       "}  REFINE{algo=" + lcfg.refine_algo + refine_budget + " ftol_rel=" +
       g(lcfg.ceres_ftol) + " gtol=" + g(lcfg.ceres_gtol) + "}  FUSE{algo=" +
       joint_algo + " maxiter=" + std::to_string(lcfg.joint_max_iter) +
-      " ftol_rel=" + g(lcfg.joint_ftol) + "}");
+      " ftol_rel=" + g(lcfg.joint_ftol) + " gtol=" + g(lcfg.joint_gtol) +
+      "}");
   rlog.line("  (maxeval = objective evaluations [each call to the loss, or "
             "to its gradient], not optimiser iterations, for every optimiser "
             "(NLopt, dlib); for EXPLORE.seed=MLSL it is the TOTAL budget "
             "across all its local searches, EXPLORE.inner the budget of each; "
-            "maxiter = Ceres solver iterations)");
+            "maxiter = Ceres solver iterations; FUSE's bounds the whole "
+            "stage in energy mode, each function's refine in curve mode)");
   rlog.line("schedule: opt_every=" + std::to_string(lcfg.opt_every) +
             " stall=" + std::to_string(lcfg.stall_rungs) + " insert_topk=" +
             std::to_string(lcfg.insert_topk) + " jitters=" +
@@ -871,18 +873,21 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
     // (or ENABLED false) skips it. On the radial bump channels it optimises
     // the outer support edges bounded at rcut, as the energy-mode FUSE does
     // (fuse_curve_refine): the bump-support projection after it then moves
-    // nothing and cannot undo the fit.
+    // nothing and cannot undo the fit. Each function's refine runs with
+    // FUSE's own MAXEVAL (its own budget of Ceres iterations), FTOL_REL and
+    // GTOL (fuse_curve_config); it ran with REFINE's.
     joint_term = "curve (no E-V coupling)";
     if (joint_algo == "NONE") {
       rlog.line("---- FUSE (curve: skipped, ALGO NONE / disabled) ----");
     } else {
       rlog.line(std::string("---- FUSE (curve: per-function ") + joint_algo +
-                " refine, weighted, no E-V) ----");
+                " refine, maxiter " + std::to_string(lcfg.joint_max_iter) +
+                " each, weighted, no E-V) ----");
       auto fuse_one = [&](BlipFit &fit, const JointCurveData &d, double lo,
                           double hi, BasisKind kind, const char *nm,
                           double hard_rcut, bool zero_ref, RhoForm form) {
-        CompactConfig ffcfg = lcfg;
-        ffcfg.refine_algo = joint_algo;  // FUSE honours its configured optimiser
+        // FUSE's optimiser and Ceres settings in REFINE's places
+        CompactConfig ffcfg = fuse_curve_config(lcfg);
         ffcfg.hard_rcut = hard_rcut;     // bump-support gate (radial bumps)
         ffcfg.zero_ref = zero_ref;       // EMBF0 ZERO basis (F only)
         ffcfg.rho_form = form;           // RHOFORM (rho only)
@@ -895,7 +900,9 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                     std::to_string(moved) + " bump(s) back inside rcut.");
         const double after = ff.combined_curve_score(fit);
         rlog.line(std::string("FUSE[") + nm + "] curve score " +
-                  core::to_string(before, 4) + " -> " + core::to_string(after, 4));
+                  core::to_string(before, 4) + " -> " +
+                  core::to_string(after, 4) + " (" + ff.last_refine_term() +
+                  ")");
       };
       fuse_one(fphi, dphi, rwin_lo, rcut, k_rad, "phi", knotfam ? 0.0 : rcut,
                /*zero_ref=*/false, RhoForm::Signed);
@@ -924,7 +931,7 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
           joint_refine(fphi, frho, fF, dphi, drho, dF, dists, e_orig, e_w,
                        /*curve_weight=*/1.0, max_iter, lcfg.joint_ftol,
                        joint_algo, &joint_term, knotfam ? 0.0 : rcut,
-                       knotfam ? 0.0 : rcut, &used);
+                       knotfam ? 0.0 : rcut, &used, lcfg.joint_gtol);
       return used;
     };
     fuse_budget.spend(run_joint(fuse_budget.remaining()));

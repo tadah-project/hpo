@@ -99,7 +99,7 @@ const StageKeys kExploreKeys{"EXPLORE",
 const StageKeys kRefineKeys{
     "REFINE", {"LIB", "ALGO", "MAXEVAL", "MAXITER", "FTOL_REL", "GTOL"}, {}};
 const StageKeys kFuseKeys{
-    "FUSE", {"LIB", "ALGO", "MAXEVAL", "MAXITER", "FTOL_REL"}, {}};
+    "FUSE", {"LIB", "ALGO", "MAXEVAL", "MAXITER", "FTOL_REL", "GTOL"}, {}};
 
 // ALGO is what a stage's OPTIMIZER block, and its INNER block, is read for:
 // it must be set (NONE / UNIFORM are written out). An INNER block without
@@ -255,8 +255,8 @@ void parse_explore(const std::vector<std::string> &tok, RefitConfig &cfg,
 }
 
 // REFINE/FUSE OPTIMIZER blocks accept the Ceres-flavoured command-specific keys
-// GTOL (-> param["GTOL"], Ceres gradient_tolerance; REFINE only, FUSE does not
-// read it) and MAXITER (alias of MAXEVAL -> Ceres max_num_iterations). The
+// GTOL (-> param["GTOL"], Ceres gradient_tolerance) and MAXITER (alias of
+// MAXEVAL -> Ceres max_num_iterations). The
 // function tolerance key is FTOL_REL (-> Ceres function_tolerance). GTOL and
 // FTOL_REL are tolerances, read by tolerance_attr. Ceres' function_tolerance
 // is RELATIVE — it stops when (new_cost - old_cost) < ftol * old_cost. Ceres
@@ -578,11 +578,10 @@ RefitConfig RefitParser::parse(const tadah::core::Context &c) {
 
   // A block with ALGO NONE or UNIFORM runs no optimiser: its stop criteria
   // have no effect, and are rejected -- unless another stage reads them:
-  //  - EXPLORE INNER's MAXEVAL, FTOL_REL and XTOL_REL also set the local
-  //    searches (LN_SBPLX) of the EXPLORE optimiser GN_MLSL_LDS;
-  //  - under REFIT_OBJECTIVE curve the FUSE curve refine runs with REFINE's
-  //    MAXEVAL/MAXITER, FTOL_REL and GTOL (the engine's fuse_one), while
-  //    FUSE runs at all.
+  // EXPLORE INNER's MAXEVAL, FTOL_REL and XTOL_REL also set the local
+  // searches (LN_SBPLX) of the EXPLORE optimiser GN_MLSL_LDS. (The FUSE
+  // curve refine of REFIT_OBJECTIVE curve runs with FUSE's own settings,
+  // fuse_curve_config; it ran with REFINE's, which were accepted there.)
   if (cfg.explore.has_opt) {
     const std::string outer = refit_explore_outer_algo(cfg.explore.opt);
     if (outer == "UNIFORM")
@@ -593,11 +592,7 @@ RefitConfig RefitParser::parse(const tadah::core::Context &c) {
       reject_no_effect_keys("EXPLORE INNER", *cfg.explore.opt.inner,
                             explore_keys.inner, kInnerOff);
   }
-  const bool fuse_runs =
-      cfg.fuse.enabled &&
-      (!cfg.fuse.has_opt || refit_fuse_algo(cfg.fuse.opt) != "NONE");
-  if (cfg.refine.has_opt && refit_refine_algo(cfg.refine.opt) == "NONE" &&
-      !(refit_curve_objective(c) && fuse_runs))
+  if (cfg.refine.has_opt && refit_refine_algo(cfg.refine.opt) == "NONE")
     reject_no_effect_keys("REFINE", cfg.refine.opt, refine_keys.outer,
                           kStageOff);
   if (cfg.fuse.has_opt && refit_fuse_algo(cfg.fuse.opt) == "NONE")
