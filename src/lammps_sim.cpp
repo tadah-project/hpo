@@ -918,9 +918,26 @@ LammpsSim::index_defined_variables() const
 
     LammpsRunner runner;
     /* Serial builds: comm 0 (LAMMPS STUBS). TADAH_HPO_MPI builds: a
-     * literal 0 would be a NULL MPI_Comm -- use MPI_COMM_SELF. */
-    auto lmp = runner.create_instance(hpo_lammps_comm(), invar);
-    if (!lmp || !lmp->input || !lmp->input->variable) return defs;
+     * literal 0 would be a NULL MPI_Comm -- use MPI_COMM_SELF.
+     * The instance is created with the line's own command-line arguments,
+     * so it is where LAMMPS judges the single-dash options the line passes
+     * on (parse_tokens): one LAMMPS refuses -- a typo such as -sff, an
+     * option this build cannot honour such as -sf omp without the OPENMP
+     * package -- is an error at the line, with LAMMPS' message, rather
+     * than every evaluation failing to create its instance. HPO keeps no
+     * list of LAMMPS's options: they change with the LAMMPS it is built
+     * with. */
+    std::string create_error;
+    auto lmp = runner.create_instance(hpo_lammps_comm(), invar, &create_error);
+    if (!lmp) {
+        create_error = trim_ascii(create_error);
+        throw std::runtime_error(
+            std::string(is_failprobe ? "PC_FAILPROBE" : "PC_LAMMPS") +
+            ": LAMMPS cannot start with this line's command-line options: " +
+            (create_error.empty() ? std::string("no reason given")
+                                  : create_error));
+    }
+    if (!lmp->input || !lmp->input->variable) return defs;
 
     std::unordered_map<std::string, std::size_t> labels;
     for (std::size_t li = 0; li < script_lines.size(); ++li) {
