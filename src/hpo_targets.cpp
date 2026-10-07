@@ -326,14 +326,15 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
 
   /* ---------- resolve INIT_STRATEGY chain into optim_init -----------
    *
-   * Apply to OUTER, PRESTAGE, and PRESTAGE->LOCAL (LOCAL inside OUTER
-   * is the NLopt MLSL local sub-algo and inherits the outer's
-   * starting point -- it does not need its own chain). Each spec's
-   * INIT block (STRATEGY / SEED / K_TOTAL / WARM_ON_MISMATCH lines)
-   * is honoured independently of every other spec.
+   * Apply to OUTER and to the PRESTAGE exploration when its EXPLORE block
+   * has an INIT block. An INNER block takes no INIT block (read() refuses
+   * one): NLopt's MLSL and AUGLAG choose the starting points of the INNER
+   * search, so an INNER spec has no chain to resolve. Each spec's INIT
+   * block (METHOD / SEED / K_TOTAL / WARM_ON_MISMATCH lines) is honoured
+   * independently of every other spec.
    *
-   * Diagnostics tag the location ("OUTER" / "PRESTAGE" / "PRESTAGE.LOCAL")
-   * so the user can see which block fired which strategy. */
+   * Diagnostics tag the location ("OUTER" / "PRESTAGE") so the user can
+   * see which block fired which strategy. */
   auto resolve_init = [&](OptimizerSpec& s, const char* where) {
     auto strategy = build_init_strategy(s.init_strategy_spec);
     /* A SEED with no seed-consuming METHOD in the chain is a silent
@@ -447,12 +448,9 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
      * it inherits the OUTER's optim_init (legacy behaviour: a CONFIG
      * point flows in). If PRESTAGE has its own chain, that chain wins
      * and the OUTER's optim_init is *not* prepended -- PRESTAGE owns its
-     * starting points. The same holds for PRESTAGE's nested INNER. */
+     * starting points. */
     if (!spec.prestage->init_strategy_spec.chain.empty())
       resolve_init(*spec.prestage, "PRESTAGE");
-    if (spec.prestage->inner &&
-        !spec.prestage->inner->init_strategy_spec.chain.empty())
-      resolve_init(*spec.prestage->inner, "PRESTAGE.INNER");
     spec.share_init_with_nested_phases();
   }
 
@@ -474,11 +472,12 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
 
   /* The RESTART chain's seeds (CONFIG, WARM), resolved once here as a
    * round draws them (RestartPolicy: the outer spec, the run context, the
-   * block's K_TOTAL), so a WARM file that is missing or unreadable, or
-   * whose RHOFORM the run refuses, is a startup error and not the first
-   * stagnation's, the EMBF0 note comes at startup, and the density gates
-   * check these points as seeds (collect_gate_seeds). The sampled points
-   * of the draw are dropped: each round draws its own. */
+   * block's K_TOTAL and WARM_ON_MISMATCH), so a WARM file that is missing
+   * or unreadable, or whose RHOFORM the run refuses, or a WARM seed the
+   * block's `WARM_ON_MISMATCH error` refuses, is a startup error and not
+   * the first stagnation's, the EMBF0 note comes at startup, and the
+   * density gates check these points as seeds (collect_gate_seeds). The
+   * sampled points of the draw are dropped: each round draws its own. */
   if (spec.restart.active()) {
     const InitStrategySpec& rs = spec.restart.init_strategy;
     auto refresh = build_init_strategy(rs);

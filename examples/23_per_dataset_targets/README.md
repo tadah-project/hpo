@@ -16,7 +16,11 @@ What this shows:
 - One column per dataset: `L(ERMSE)[1]`, `L(ERMSE)[2]` in `loss.tadah`
   and `ERMSE[1]`, `ERMSE[2]` in `stats.tadah`. With indexed targets
   `L(ERMSE)[avg]` is the average of the dataset losses (the journal's
-  loss section says `indexed (average of dataset losses)`).
+  loss section says `indexed (average of dataset losses)`, and its
+  new-best `top:` lines list each dataset's share of that average,
+  `ERMSE[2]=1.78e-03(56.3%)  ERMSE[1]=1.38e-03(43.7%)`, since it is the
+  run's one loss term: with more terms each part is shown, like every
+  part of the line, divided by their number, its contribution to `loss=`).
 - `--skip-above 5` on dataset 2 only: a per-dataset bad-potential
   filter. A candidate whose equation-of-state error exceeds 5 meV/atom
   scores `FAILSCORE` and skips the rest of its evaluation; the journal

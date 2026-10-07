@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <random>
 #include <set>
 #include <sstream>
@@ -45,6 +46,49 @@ struct StrategyTempFile {
         std::filesystem::remove(path, ec);
     }
 };
+
+/* The journal's OPTIMISER section (and the SEARCH SPACE section that
+ * follows it) for `sp`, as HPOLog::write_optimizer_section writes it. */
+std::string optimizer_section(const tadah::hpo::OptimizerSpec& sp)
+{
+    auto& log = tadah::hpo::HPOLog::instance();
+    const auto path = std::filesystem::temp_directory_path() /
+        ("hpo_optsec_" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+         ".log");
+    log.open(path.string(), "test", "/tmp", 1);
+    log.write_optimizer_section(sp, {});
+    log.finish("TEST");
+    std::ifstream in(path);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    return ss.str();
+}
+
+/* The lines of `text` from the one that holds `header` to the next line
+ * at its indentation or less ("" if no line holds it): the block the
+ * journal prints under that header. */
+std::string journal_block(const std::string& text, const std::string& header)
+{
+    std::istringstream in(text);
+    std::string line, out;
+    std::size_t indent = std::string::npos;
+    while (std::getline(in, line)) {
+        const std::size_t ind = line.find_first_not_of(' ');
+        if (indent == std::string::npos) {
+            if (line.find(header) != std::string::npos) {
+                indent = ind;
+                out = line + "\n";
+            }
+            continue;
+        }
+        if (ind == std::string::npos || ind <= indent) break;
+        out += line + "\n";
+    }
+    return out;
+}
 
 /* Build a synthetic OptimizerSpec with explicit bounds (no optimap, so
  * generators see the bounds we set without depending on a full
@@ -442,15 +486,16 @@ TEST_CASE("WarmInitStrategy: missing file throws regardless of policy",
 {
     /* WARM_ON_MISMATCH governs seed-CONTENT mismatches only; a missing
      * seed file is a broken launch and is always fatal (falling through
-     * would silently start the optimiser from the box centre). */
+     * would silently start the optimiser from the box centre). The policy
+     * is the one of the block whose chain holds the WARM entry. */
     using namespace tadah::hpo;
     for (const char* policy : {"warn", "skip"}) {
         auto sp = make_synthetic_spec({0.0}, {1.0});
-        sp.init_strategy_spec.warm_on_mismatch = policy;
         StubTargets st;
 
         InitStrategySpec ispec;
         ispec.chain.push_back({"WARM", {"/nonexistent_path/never_here.tadah"}});
+        ispec.warm_on_mismatch = policy;
 
         auto strat = build_init_strategy(ispec);
         InitContext ic{sp, *st.trg, 0};
@@ -464,11 +509,11 @@ TEST_CASE("WarmInitStrategy: missing file with policy=error throws",
 {
     using namespace tadah::hpo;
     auto sp = make_synthetic_spec({0.0}, {1.0});
-    sp.init_strategy_spec.warm_on_mismatch = "error";
     StubTargets st;
 
     InitStrategySpec ispec;
     ispec.chain.push_back({"WARM", {"/nonexistent_path/never_here.tadah"}});
+    ispec.warm_on_mismatch = "error";
 
     auto strat = build_init_strategy(ispec);
     InitContext ic{sp, *st.trg, 0};
@@ -589,6 +634,70 @@ TEST_CASE("WarmInitStrategy / CONFIG: a subnormal OPTIM value is a number "
         CHECK(pts[0][0] == 1.5);
         CHECK(pts[0][1] == 1e-310);
         CHECK(pts[0][2] == 2.5);    /* its own value, not the fallback 3.0 */
+    }
+}
+
+TEST_CASE("WARM_ON_MISMATCH applies to the WARM entries of its own block: "
+          "a RESTART block's to the RESTART chain, an INIT block's to the "
+          "INIT chain", "[HPO][init_strategy][warm][restart]")
+{
+    /* Pins: a RESTART block's WARM_ON_MISMATCH governs the WARM seed of
+     * the RESTART chain, which HPOTargets resolves at startup: with
+     * `error` a seed outside the OPTIM box is a startup error naming the
+     * clamping, with `skip` the seed is dropped (no RESTART seed point).
+     * The INIT block's policy does not reach the RESTART chain: under an
+     * INIT block with `WARM_ON_MISMATCH error`, a RESTART block without
+     * the key keeps the default `warn`, so its seed is clamped into the
+     * box and kept. An INIT block's WARM follows the INIT block's policy.
+     * Before the fix: every WARM entry took the OUTER INIT block's policy
+     * (ctx.spec.init_strategy_spec.warm_on_mismatch), whichever block held
+     * it, so the RESTART block's `error` and `skip` were ignored (the seed
+     * was clamped with a warning: no throw, one RESTART seed point) and the
+     * INIT block's `error` made the RESTART seed a startup error. The last
+     * SECTION passes as well (a pin). */
+    StrategyTempFile pot("CGRID2B 1.5 20 2.5\n");   // 20 lies above the box's 10
+    tadah::core::Context ctx;
+    ctx.add("CGRID2B", std::vector<double>{1.0, 2.0, 3.0});
+    const std::string warm = "METHOD WARM " + pot.path.string() + "\n";
+    const auto target = [](const std::string& init,
+                           const std::string& restart) {
+        return "OPTIM CGRID2B (1-3) 0 10\nOPTIMIZER\n" + init +
+               "STRATEGY\n  TYPE PLAIN\n  LIB DLIB\n  ALGO BFGS\n"
+               "  MAXEVAL 5\n  RESTART\n    AFTER_STAGNATION 2\n    MAX 1\n" +
+               restart + "  ENDRESTART\nENDSTRATEGY\nENDOPTIMIZER\n";
+    };
+    std::unique_ptr<tadah::hpo::HPOTargets> trg;
+    SECTION("RESTART WARM_ON_MISMATCH error: the clamped seed is a startup error") {
+        StrategyTempFile cfg(target("", "    " + warm +
+                                            "    WARM_ON_MISMATCH error\n"));
+        REQUIRE_THROWS_WITH(
+            trg = std::make_unique<tadah::hpo::HPOTargets>(ctx, cfg.path.string()),
+            Catch::Contains("clamped into OPTIM bounds"));
+    }
+    SECTION("RESTART WARM_ON_MISMATCH skip: the clamped seed is dropped") {
+        StrategyTempFile cfg(target("", "    " + warm +
+                                            "    WARM_ON_MISMATCH skip\n"));
+        REQUIRE_NOTHROW(trg = std::make_unique<tadah::hpo::HPOTargets>(
+                            ctx, cfg.path.string()));
+        CHECK(trg->spec.restart.seed_points.empty());
+    }
+    SECTION("an INIT block's WARM_ON_MISMATCH error does not reach the "
+            "RESTART chain") {
+        StrategyTempFile cfg(target(
+            "INIT\n  METHOD CONFIG\n  WARM_ON_MISMATCH error\nENDINIT\n",
+            "    " + warm));
+        REQUIRE_NOTHROW(trg = std::make_unique<tadah::hpo::HPOTargets>(
+                            ctx, cfg.path.string()));
+        REQUIRE(trg->spec.restart.seed_points.size() == 1u);
+        REQUIRE(trg->spec.restart.seed_points[0].size() == 3u);
+        CHECK(trg->spec.restart.seed_points[0][1] == 10.0);   // clamped (warn)
+    }
+    SECTION("an INIT block's WARM follows the INIT block's WARM_ON_MISMATCH") {
+        StrategyTempFile cfg(target(
+            "INIT\n  " + warm + "  WARM_ON_MISMATCH error\nENDINIT\n", ""));
+        REQUIRE_THROWS_WITH(
+            trg = std::make_unique<tadah::hpo::HPOTargets>(ctx, cfg.path.string()),
+            Catch::Contains("clamped into OPTIM bounds"));
     }
 }
 
@@ -911,6 +1020,21 @@ ENDOPTIMIZER
     CHECK(trg.spec.prestage->inner->algo == "LN_BOBYQA");
     /* outer spec has no INNER of its own */
     CHECK_FALSE(trg.spec.inner);
+    /* Pins: an INNER block takes no INIT block (the grammar refuses one;
+     * MLSL picks the INNER search's starting points), so its spec holds no
+     * starting points and the journal prints no INIT strategy for it,
+     * while the exploration shares the OUTER's CONFIG point.
+     * Before the fix: the INNER spec held a copy of the OUTER's CONFIG
+     * point and its origin (share_init_with_nested_phases), which nothing
+     * used, and the run policy printed "PRESTAGE.EXPLORE.INNER init
+     * strategy: (default -- CONFIG only)". */
+    CHECK(trg.spec.prestage->optim_init.size() == 1);
+    CHECK(trg.spec.prestage->inner->optim_init.empty());
+    CHECK(trg.spec.prestage->inner->optim_init_origin.empty());
+    const std::string journal = optimizer_section(trg.spec);
+    INFO(journal);
+    CHECK(journal.find("PRESTAGE.EXPLORE init strategy:") != std::string::npos);
+    CHECK(journal.find("PRESTAGE.EXPLORE.INNER") == std::string::npos);
 }
 
 TEST_CASE("PRESTAGE EXPLORE block parses INIT block and bounds independently",
@@ -1320,12 +1444,174 @@ ENDOPTIMIZER
     const std::string body = ss.str();
     CHECK(body.find("Init strategy:") != std::string::npos);
     CHECK(body.find("SOBOL 4") != std::string::npos);
+    /* The INIT block's K_TOTAL under its name (it read "INIT_K", the
+     * retired key the parser refuses). */
+    CHECK(journal_block(body, "Init strategy:").find("K_TOTAL           : 4") !=
+          std::string::npos);
+    CHECK(body.find("INIT_K") == std::string::npos);
     CHECK(body.find("Run policy:") != std::string::npos);
     CHECK(body.find("MULTISTART") != std::string::npos);
     CHECK(body.find("BUDGET_PER_START") != std::string::npos);
     CHECK(body.find("NOISE.AUTO") != std::string::npos);
 
     std::error_code ec; std::filesystem::remove(tmp_log, ec);
+}
+
+TEST_CASE("The journal's run policy lists the RESTART block's METHOD chain, "
+          "K_TOTAL, SEED and WARM_ON_MISMATCH",
+          "[HPO][hpo_log][run_policy]")
+{
+    /* Pins: under "RESTART init strategy:" the run policy prints the
+     * RESTART block as the INIT block is printed: its METHOD chain, or
+     * "(default -- CONFIG only)" without one (a restart then starts from
+     * the CONFIG point), its K_TOTAL, SEED and WARM_ON_MISMATCH; and an
+     * INIT block's K_TOTAL and SEED appear under those names.
+     * Before the fix: the RESTART block printed only its METHOD chain, and
+     * no "RESTART init strategy:" line at all without one, so SEED 77,
+     * K_TOTAL 2 and WARM_ON_MISMATCH error appeared nowhere; the INIT
+     * block's SEED read "INIT_SEED : 9" (the retired key name). */
+    std::string method;
+    SECTION("with a METHOD chain") { method = "    METHOD LHS 3\n"; }
+    SECTION("without a METHOD line") {}
+    StrategyTempFile cfg(R"(OPTIMIZER
+INIT
+  METHOD RANDOM 1
+  SEED 9
+ENDINIT
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 50
+  RESTART
+    AFTER_STAGNATION 3
+    MAX 1
+)" + method + R"(    K_TOTAL 2
+    SEED 77
+    WARM_ON_MISMATCH error
+  ENDRESTART
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    const std::string journal = optimizer_section(trg.spec);
+    INFO(journal);
+    const std::string restart = journal_block(journal, "RESTART init strategy:");
+    REQUIRE_FALSE(restart.empty());
+    if (method.empty())
+        CHECK(restart.find("(default -- CONFIG only)") != std::string::npos);
+    else
+        CHECK(restart.find("[1] LHS 3") != std::string::npos);
+    CHECK(restart.find("K_TOTAL           : 2") != std::string::npos);
+    CHECK(restart.find("SEED              : 77") != std::string::npos);
+    CHECK(restart.find("WARM_ON_MISMATCH  : error") != std::string::npos);
+    const std::string init = journal_block(journal, "Init strategy:");
+    CHECK(init.find("SEED              : 9") != std::string::npos);
+    CHECK(journal.find("INIT_SEED") == std::string::npos);
+    CHECK(journal.find("INIT_K") == std::string::npos);
+}
+
+TEST_CASE("The journal says where the starting points come from and that "
+          "an EXPLORE without INIT shares the OUTER's",
+          "[HPO][hpo_log][run_policy][prestage]")
+{
+    /* Pins: "Starting point:" counts the points of the INIT chain by
+     * origin, and an EXPLORE block without an INIT block of its own is
+     * shown starting from the OUTER INIT points
+     * (share_init_with_nested_phases), while one with its own chain shows
+     * that chain.
+     * Before the fix: "Starting point: user-supplied (3 seeds)" for three
+     * LHS points, and "PRESTAGE.EXPLORE init strategy: (default -- CONFIG
+     * only)" for an exploration that starts from them. The second
+     * SECTION's check of the EXPLORE's own chain passes as well (a pin). */
+    std::string explore_init;
+    bool own = false;
+    SECTION("an EXPLORE without INIT") {}
+    SECTION("an EXPLORE with its own INIT") {
+        own = true;
+        explore_init = "    INIT\n      METHOD SOBOL 4\n      SEED 3\n    ENDINIT\n";
+    }
+    StrategyTempFile cfg(R"(OPTIMIZER
+INIT
+  METHOD LHS 3
+  SEED 9
+ENDINIT
+STRATEGY
+  TYPE PRESTAGE
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 80
+  TOPK 2
+  EXPLORE
+    LIB TADAH
+    ALGO RANDOM
+    MAXEVAL 10
+    SEED 5
+)" + explore_init + R"(  ENDEXPLORE
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    REQUIRE(trg.spec.optim_init.size() == 3);
+    const std::string journal = optimizer_section(trg.spec);
+    INFO(journal);
+    CHECK(journal.find("Starting point: 3 points from the INIT chain (3 LHS)") !=
+          std::string::npos);
+    CHECK(journal.find("user-supplied") == std::string::npos);
+    const std::string explore =
+        journal_block(journal, "PRESTAGE.EXPLORE init strategy:");
+    REQUIRE_FALSE(explore.empty());
+    if (own) {
+        CHECK(explore.find("[1] SOBOL 4") != std::string::npos);
+        CHECK(explore.find("OUTER") == std::string::npos);
+    } else {
+        CHECK(explore.find("(the OUTER INIT points, shared)") !=
+              std::string::npos);
+        CHECK(explore.find("(default -- CONFIG only)") == std::string::npos);
+    }
+}
+
+TEST_CASE("The journal says when there is no starting point and counts "
+          "points without a recorded origin", "[HPO][hpo_log][run_policy]")
+{
+    /* Pins: a spec without starting points (an INIT chain that produced
+     * none, e.g. WARM_ON_MISMATCH skip) reads "Starting point: none", the
+     * optimiser starting from its own default; points without recorded
+     * origins (a spec built outside HPOTargets) are only counted.
+     * Before the fix: "Starting point: random (uniform within bounds)",
+     * which not every optimiser does (the ANNEAL family starts at the box
+     * centre), and "user-supplied (2 seeds)". */
+    StrategyTempFile cfg(R"(OPTIMIZER
+STRATEGY
+  TYPE PLAIN
+  LIB DLIB
+  ALGO BFGS
+  MAXEVAL 50
+ENDSTRATEGY
+ENDOPTIMIZER
+)");
+    tadah::core::Context ctx;
+    tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+    tadah::hpo::OptimizerSpec sp(trg.spec);
+    sp.optim_init_origin.clear();
+    SECTION("no starting point") {
+        sp.optim_init.clear();
+        const std::string journal = optimizer_section(sp);
+        INFO(journal);
+        CHECK(journal.find("Starting point: none (the INIT chain produced no "
+                           "point; the optimiser starts from its own "
+                           "default)") != std::string::npos);
+        CHECK(journal.find("uniform within bounds") == std::string::npos);
+    }
+    SECTION("points without a recorded origin") {
+        sp.optim_init.assign(2, std::vector<double>{});
+        const std::string journal = optimizer_section(sp);
+        INFO(journal);
+        CHECK(journal.find("Starting point: 2 points from the INIT chain\n") !=
+              std::string::npos);
+    }
 }
 
 TEST_CASE("HPOLog::set_status feeds finish() when status is empty",

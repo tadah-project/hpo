@@ -42,6 +42,7 @@
     "DLIB:BFGS: FTOL_ABS reached"
   ],
   "nan_clampings_max": 0,
+  "threw_max": 0,
   "walltime_hint": "0.4s",
   "fast": true,
   "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances. The WARM start is on the clamped bound RCUT2B = 6.0, and whether DLIB:BFGS's line search accepts a re-evaluation there depends on rounding-level noise, as in example 01 (evaluations.note), so evals_tol 30 accepts both of its endings: MAXEVAL = 30, \"DLIB:BFGS: MAXEVAL reached\" (the reference machine, 2026-10-07), and the objective-delta test after the second gradient, \"DLIB:BFGS: FTOL_ABS reached\" (a scratch build with other compiler flags, 6 evaluations; FTOL_ABS is 1e-7 by default). Both ended COMPLETED until every HPO driver recorded why it ended, 2026-10-07."

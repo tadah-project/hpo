@@ -19,6 +19,8 @@
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/warmstart_cache.h>  /* current_chain(): the block slot */
 
+#include "anneal_test_support.h"  /* JournalCapture */
+
 #include <dlib/matrix.h>
 
 // ASA's headers include <omp.h> inside their extern "C" blocks (ASA_PARALLEL
@@ -41,11 +43,13 @@ extern "C" {
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <mutex>
 #include <optional>
 #include <random>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -199,6 +203,16 @@ std::vector<std::size_t> block_sizes(const OptimizerSpec& sp, std::size_t dim,
         }
     }
     return sizes;
+}
+
+/* The first journal line that contains `head` ("ASA stopped: ",
+ * "ASA summary: "), or "" if none does. */
+std::string journal_line(const std::string& journal, const std::string& head)
+{
+    std::istringstream in(journal);
+    for (std::string line; std::getline(in, line);)
+        if (line.find(head) != std::string::npos) return line;
+    return "";
 }
 
 /* ASA's closing console line for a run that a stop ended after n host
@@ -680,6 +694,12 @@ TEST_CASE("ASA host failure during reanneal tangents aborts gracefully "
     set_seed_point(sp, {1.0});
     sp.stop.maxeval = 500;
     sp.failscore = 1e6;
+    /* A periodic test, and so the reanneal tangents, every 10
+     * acceptances. With the default 100 this run never computed the
+     * tangents: it ended at P_TEMP_TOO_SMALL after 469 evaluations, and
+     * the check below on the evaluation count passed without the case
+     * this test is about. */
+    sp.param = {{"Acceptance_Frequency_Modulus", 10.0}};
 
     std::atomic<int> n{0};
     Recorder rec;
@@ -691,8 +711,73 @@ TEST_CASE("ASA host failure during reanneal tangents aborts gracefully "
      * eventually lands inside cost_derivatives(): upstream exits with
      * INVALID_COST_FUNCTION_DERIV. The driver must report it (not
      * throw, not hang). */
+    anneal_test::JournalCapture jc;
     REQUIRE_NOTHROW(run_asa_erased(sp, 1, fn));
     CHECK(rec.calls.size() < 500);
+    /* Pins: with no stop of tadah's pending, the stop line names the host
+     * failure during the tangents and ASA's own exit code.
+     * Before the fix: passes as well (a pin of the text that a stop of
+     * tadah's inside the tangents must not take); without
+     * Acceptance_Frequency_Modulus 10 it fails (P_TEMP_TOO_SMALL). */
+    const std::string stop = journal_line(jc.read(), "ASA stopped: ");
+    INFO(stop);
+    CHECK(stop.find("ASA stopped: a host failure occurred while ASA was "
+                    "computing reanneal tangents "
+                    "(INVALID_COST_FUNCTION_DERIV)") != std::string::npos);
+    CHECK(stop.find("(asa exit: INVALID_COST_FUNCTION_DERIV)") !=
+          std::string::npos);
+}
+
+TEST_CASE("ASA: a stop that falls in the reanneal tangents is not reported "
+          "as INVALID_COST_FUNCTION_DERIV", "[HPO][asa]")
+{
+    /* Pins: once a stop of tadah's is pending (here MAXEVAL), ASA's
+     * callbacks return invalid states without evaluating; inside the
+     * reanneal tangents (cost_derivatives(), Reanneal_Parameters 1 by
+     * default) ASA takes that for a failed derivative and asa() returns
+     * INVALID_COST_FUNCTION_DERIV. The summary and the stop line then say
+     * "IMMEDIATE_EXIT requested during the reanneal tangents (asa_out:
+     * INVALID_COST_FUNCTION_DERIV)" after the stop's own reason. Periodic
+     * tests every 3 acceptances make the tangents frequent, so some
+     * MAXEVAL in 8..40 falls inside them (REQUIRE below).
+     * Before the fix: those runs read "ASA stopped: MAXEVAL reached after N
+     * host eval(s) (asa exit: INVALID_COST_FUNCTION_DERIV)" and the summary
+     * "exit=INVALID_COST_FUNCTION_DERIV", the code of a failed evaluation
+     * during the tangents. */
+    std::size_t in_tangents = 0;
+    for (std::uint64_t maxeval = 8; maxeval <= 40; ++maxeval) {
+        auto sp = make_asa_spec({-2.0}, {2.0});
+        set_seed_point(sp, {1.0});
+        sp.stop.maxeval = maxeval;
+        sp.param = {{"Acceptance_Frequency_Modulus", 3.0},
+                    {"Curvature_0", 1.0}};
+        Recorder rec;
+        rec.f = [](const std::vector<double>& x) { return x[0] * x[0]; };
+        const AsaHostFn fn = rec.fn();
+        anneal_test::JournalCapture jc;
+        REQUIRE_NOTHROW(run_asa_erased(sp, 1, fn));
+        const std::string journal = jc.read();
+        const std::string stop = journal_line(journal, "ASA stopped: ");
+        const std::string summary = journal_line(journal, "ASA summary: ");
+        INFO("MAXEVAL " << maxeval << "\n" << stop << "\n" << summary);
+        REQUIRE_FALSE(stop.empty());
+        CHECK(stop.find("ASA stopped: MAXEVAL reached after " +
+                        std::to_string(maxeval) + " host eval(s)") !=
+              std::string::npos);
+        for (const std::string* line : {&stop, &summary}) {
+            const bool deriv =
+                line->find("INVALID_COST_FUNCTION_DERIV") != std::string::npos;
+            const bool tangents =
+                line->find("IMMEDIATE_EXIT requested during the reanneal "
+                           "tangents (asa_out: INVALID_COST_FUNCTION_DERIV)") !=
+                std::string::npos;
+            CHECK(deriv == tangents);
+        }
+        if (stop.find("during the reanneal tangents") != std::string::npos)
+            ++in_tangents;
+    }
+    /* The scan exercises the case. */
+    REQUIRE(in_tangents > 0);
 }
 
 TEST_CASE("ASA exceptions are marshalled out and the mutex is released",
@@ -717,6 +802,56 @@ TEST_CASE("ASA exceptions are marshalled out and the mutex is released",
     sp.stop.maxeval = 50;
     REQUIRE_NOTHROW(run_asa_erased(sp, 1, fn));
     CHECK(rec.calls.size() == 50);
+}
+
+TEST_CASE("ASA names a shutdown request or a RESTART stagnation stop, not "
+          "an exception", "[HPO][asa]")
+{
+    /* Pins: the stop line names the exception that ends the run by what it
+     * is -- a shutdown request (with the signal, when one was seen), the
+     * RESTART stagnation stop, or an evaluation's error with its message
+     * -- and counts every evaluation the host completed: the one that
+     * raised the stagnation stop (or an error) completed and is in
+     * loss.tadah, while a shutdown request comes before an evaluation
+     * starts. The exception still propagates.
+     * Before the fix: every section read "ASA stopped: exception raised
+     * during evaluation after 19 host eval(s)". */
+    auto sp = make_asa_spec({-2.0}, {2.0});
+    set_seed_point(sp, {1.0});
+    sp.stop.maxeval = 1000;
+    std::atomic<int> n{0};
+    std::function<void()> raise;
+    const AsaHostFn host = [&](const std::vector<double>& x) -> double {
+        if (++n == 20) raise();
+        return x[0] * x[0];
+    };
+    anneal_test::JournalCapture jc;
+    std::string expected;
+    SECTION("a shutdown request") {
+        raise = [] { throw tadah::core::ShutdownRequested{}; };
+        CHECK_THROWS_AS(run_asa_erased(sp, 1, host),
+                        tadah::core::ShutdownRequested);
+        expected = "ASA stopped: shutdown requested after 19 host eval(s)";
+    }
+    SECTION("the RESTART stagnation stop") {
+        raise = [] { throw tadah::hpo::StagnationStop{}; };
+        CHECK_THROWS_AS(run_asa_erased(sp, 1, host),
+                        tadah::hpo::StagnationStop);
+        expected = "ASA stopped: RESTART stagnation stop (no new best within "
+                   "AFTER_STAGNATION evaluations) after 20 host eval(s)";
+    }
+    SECTION("an error") {
+        raise = [] { throw std::runtime_error("boom"); };
+        CHECK_THROWS_WITH(run_asa_erased(sp, 1, host), "boom");
+        expected = "ASA stopped: an evaluation raised an exception (boom) "
+                   "after 20 host eval(s)";
+    }
+    CHECK(n.load() == 20);
+    const std::string stop = journal_line(jc.read(), "ASA stopped: ");
+    INFO(stop);
+    CHECK(stop.find(expected) != std::string::npos);
+    CHECK(stop.find("exception raised during evaluation") ==
+          std::string::npos);
 }
 
 TEST_CASE("ASA writes its upstream journal (asa_out*)", "[HPO][asa]")

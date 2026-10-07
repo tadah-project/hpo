@@ -52,8 +52,10 @@ namespace tadah::hpo {
 enum class EvalLoss {
     Usable,      /* a usable (feasible) loss */
     Failed,      /* FAILSCORE or a graded failure: finite, not usable */
-    NanClamped   /* NaN/Inf, or an evaluation that threw: recorded as
-                    FAILSCORE and counted as a NaN/Inf clamping */
+    NanClamped,  /* a NaN/Inf loss: recorded as FAILSCORE and counted as a
+                    NaN/Inf clamping */
+    Threw        /* the evaluation raised an exception: recorded as
+                    FAILSCORE and counted as an evaluation that threw */
 };
 
 /* The pre-training feasibility gates of HPO_Host::operator(), in the order
@@ -218,9 +220,10 @@ public:
     /** Record timing and the kind of loss of one completed evaluation.
      *  @param eval_num   Global evaluation counter (1-based)
      *  @param wall_ms    Wall time for this evaluation in milliseconds
-     *  @param loss       Usable, failed, or NaN/Inf clamped. Every kind but
-     *                    Usable counts as an unusable loss in DIAGNOSTICS;
-     *                    NanClamped also as a NaN/Inf clamping.
+     *  @param loss       Usable, failed, NaN/Inf clamped or threw. Every
+     *                    kind but Usable counts as an unusable loss in
+     *                    DIAGNOSTICS; NanClamped also as a NaN/Inf
+     *                    clamping, Threw also as an evaluation that threw.
      */
     void record_eval(std::size_t eval_num, double wall_ms, EvalLoss loss);
 
@@ -581,6 +584,8 @@ public:
      * ------------------------------------------------------------------ */
     std::size_t n_eval()  const { return n_eval_.load(std::memory_order_relaxed); }
     std::size_t n_nan()   const { return n_nan_ .load(std::memory_order_relaxed); }
+    /** Evaluations that raised an exception (EvalLoss::Threw). */
+    std::size_t n_threw() const { return n_threw_.load(std::memory_order_relaxed); }
     /** Evaluations whose loss was not usable (EvalLoss other than Usable). */
     std::size_t n_unusable() const { return n_unusable_.load(std::memory_order_relaxed); }
     /** Current best total loss (max double if no BEST yet). */
@@ -640,10 +645,11 @@ private:
     std::atomic<std::size_t> n_eval_     {0};
     std::atomic<std::size_t> n_nan_      {0};
     std::atomic<std::size_t> n_nan_logged_{0};  // how many NaN events written
+    std::atomic<std::size_t> n_threw_    {0};  // evaluations that threw
     /* Evaluations without a usable loss, whatever the reason: NaN/Inf
-     * clampings, FAILSCORE (a skip cap, a failed script, an evaluation that
-     * threw) and graded failures. The DIAGNOSTICS verdict reads this count,
-     * not the partial ones above and below. */
+     * clampings, evaluations that threw, FAILSCORE (a skip cap, a failed
+     * script) and graded failures. The DIAGNOSTICS verdict reads this
+     * count, not the partial ones above and below. */
     std::atomic<std::size_t> n_unusable_ {0};
     /* Graded-FAILSCORE band tallies, index 1..4 = A..D (0 unused). Cheap
      * relaxed counters; surfaced in the milestone SUMMARY and the RESULT

@@ -96,7 +96,14 @@ TEST_CASE("HPOLog diagnostics judge every unusable loss, not only NaN/Inf "
 {
     /* The verdict used to read the graded-failure count alone, so a run
      * whose losses were all NaN/Inf clamped or FAILSCORE said "[ok] Every
-     * evaluation produced a usable loss". */
+     * evaluation produced a usable loss".
+     * Pins also: an evaluation that threw (EvalLoss::Threw) counts as an
+     * unusable loss and under "Evaluations that threw", with a [!] line,
+     * and not as a NaN/Inf clamping.
+     * Before the fix: does not compile (EvalLoss has no Threw; HPOLog no
+     * n_threw()); the host recorded a throw as EvalLoss::NanClamped (the
+     * runtime proof is "No usable loss: evaluations that throw count as
+     * unusable losses", test_hpo_termination.cpp). */
     using tadah::hpo::EvalLoss;
     auto& log = tadah::hpo::HPOLog::instance();
     struct Case {
@@ -118,6 +125,13 @@ TEST_CASE("HPOLog diagnostics judge every unusable loss, not only NaN/Inf "
         {"a minority failed",
          {EvalLoss::Usable, EvalLoss::Usable, EvalLoss::Failed},
          "1  (33.3%)", nullptr},
+        /* An evaluation that threw is unusable, and is not a NaN/Inf
+         * clamping (the counts below). */
+        {"all threw", {EvalLoss::Threw, EvalLoss::Threw},
+         "2  (100.0%)", "[!] No evaluation produced a usable loss."},
+        {"a usable loss, a NaN/Inf clamping and a throw",
+         {EvalLoss::Usable, EvalLoss::NanClamped, EvalLoss::Threw},
+         "2  (66.7%)", "[!] The majority of evaluations failed."},
     };
     for (const auto& c : cases) {
         DYNAMIC_SECTION(c.what) {
@@ -126,14 +140,28 @@ TEST_CASE("HPOLog diagnostics judge every unusable loss, not only NaN/Inf "
             log.open(path.string(), "test", "test_cwd", 0);
             std::size_t n = 0;
             for (const auto e : c.evals) log.record_eval(++n, 1.0, e);
+            const auto count = [&c](EvalLoss k) {
+                return static_cast<std::size_t>(
+                    std::count(c.evals.begin(), c.evals.end(), k));
+            };
             CHECK(log.n_unusable() ==
                   static_cast<std::size_t>(std::count_if(
                       c.evals.begin(), c.evals.end(),
                       [](EvalLoss e) { return e != EvalLoss::Usable; })));
+            CHECK(log.n_nan() == count(EvalLoss::NanClamped));
+            CHECK(log.n_threw() == count(EvalLoss::Threw));
             log.finish("TEST_DONE");
             const std::string text = read_log(path);
             CHECK(text.find("Unusable losses         : " +
                             std::string(c.count)) != std::string::npos);
+            CHECK(text.find("NaN/Inf clampings       : " +
+                            std::to_string(count(EvalLoss::NanClamped)) +
+                            "  (") != std::string::npos);
+            CHECK(text.find("Evaluations that threw  : " +
+                            std::to_string(count(EvalLoss::Threw)) +
+                            "  (") != std::string::npos);
+            CHECK((text.find("raised an exception and scored FAIL_SCORE") !=
+                   std::string::npos) == (count(EvalLoss::Threw) > 0));
             for (const char* line :
                  {"[ok] Every evaluation produced a usable loss.",
                   "[!] No evaluation produced a usable loss.",
@@ -208,6 +236,48 @@ TEST_CASE("HPOLog diagnostics of a multi-rank run judge this rank's "
     CHECK(text.find("MPI rank") == std::string::npos);
     std::error_code ec;
     std::filesystem::remove(path, ec);
+}
+
+TEST_CASE("HPOLog's milestone SUMMARY counts the evaluations that threw "
+          "apart from the NaN rate", "[hpolog][diagnostics]")
+{
+    /* Pins: the SUMMARY line at evaluation 100 gives the NaN rate of the
+     * NaN/Inf clampings alone (2 of 100: 2.0%) and the evaluations that
+     * threw as "threw=3"; a window without a throw prints no threw=.
+     * Before the fix: does not compile (EvalLoss has no Threw); the host
+     * recorded a throw as a NaN/Inf clamping, so the SUMMARY's NaN rate
+     * included it. */
+    using tadah::hpo::EvalLoss;
+    auto& log = tadah::hpo::HPOLog::instance();
+    for (const std::size_t threw : {std::size_t{3}, std::size_t{0}}) {
+        DYNAMIC_SECTION(threw << " evaluation(s) threw") {
+            const auto path = scratch_log_path();
+            log.reset_for_test();
+            log.open(path.string(), "test", "test_cwd", 0);
+            for (std::size_t n = 1; n <= 100; ++n) {
+                EvalLoss e = EvalLoss::Usable;
+                if (n == 10 || n == 20) e = EvalLoss::NanClamped;
+                else if (n > 20 && n <= 20 + threw) e = EvalLoss::Threw;
+                log.record_eval(n, 1.0, e);
+            }
+            log.finish("TEST_DONE");
+            const std::string text = read_log(path);
+            std::istringstream in(text);
+            std::string summary;
+            for (std::string line; std::getline(in, line);)
+                if (line.find("SUMMARY  ---    100 evals done") !=
+                    std::string::npos) { summary = line; break; }
+            INFO(text);
+            REQUIRE_FALSE(summary.empty());
+            CHECK(summary.find("NaN rate=2.0%") != std::string::npos);
+            CHECK((summary.find("threw=") != std::string::npos) ==
+                  (threw > 0));
+            if (threw > 0)
+                CHECK(summary.find("threw=3") != std::string::npos);
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+        }
+    }
 }
 
 TEST_CASE("HPOLog::log_new_best rejects non-improving losses", "[hpolog][bug2]")

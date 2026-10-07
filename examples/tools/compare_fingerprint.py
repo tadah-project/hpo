@@ -4,6 +4,11 @@
 Reads the same files generate_fingerprint.py reads, then for each tracked
 quantity checks |actual - reference| <= max(abs_tol, rel_tol * |reference|).
 
+The failure counters of hpo_run.log's DIAGNOSTICS ("NaN/Inf clampings",
+"Evaluations that threw") must not exceed the fingerprint's
+nan_clampings_max and threw_max (0 when absent); a journal without either
+line fails, since its guard cannot be applied.
+
 An optional "journal" list names lines hpo_run.log must contain, for what
 the losses and hyperparameters cannot show (e.g. example 25's graded
 failures): each entry is {"what": <text>, "regex": <Python regex, matched
@@ -45,6 +50,12 @@ def parse_tabular_last_row(path: Path):
     return header, last
 
 
+# The DIAGNOSTICS failure counters: (parse_log key, hpo_run.log label,
+# the fingerprint field that holds the most a run may have).
+COUNTERS = (("nan_clampings", "NaN/Inf clampings", "nan_clampings_max"),
+            ("threw", "Evaluations that threw", "threw_max"))
+
+
 def parse_log(path: Path):
     txt = path.read_text()
     out = {}
@@ -52,8 +63,9 @@ def parse_log(path: Path):
     out["total_evaluations"] = int(m.group(1)) if m else None
     m = re.search(r"Optimiser status\s*:\s*(.+)", txt)
     out["optimiser_status"] = m.group(1).strip() if m else None
-    m = re.search(r"NaN/Inf clampings\s*:\s*([0-9]+)", txt)
-    out["nan_clampings"] = int(m.group(1)) if m else None
+    for key, label, _most in COUNTERS:
+        m = re.search(re.escape(label) + r"\s*:\s*([0-9]+)", txt)
+        out[key] = int(m.group(1)) if m else None
     return out
 
 
@@ -171,12 +183,16 @@ def compare(example_dir: Path):
             f"not in accepted list ({len(status_accepted)} variants)"
         )
 
-    # NaN clampings
-    nan_max = fp.get("nan_clampings_max", 0)
-    if log.get("nan_clampings") is not None and log["nan_clampings"] > nan_max:
-        failures.append(
-            f"nan_clampings: actual={log['nan_clampings']} > max={nan_max}"
-        )
+    # failure counters: NaN/Inf clampings, evaluations that threw. A
+    # missing line fails: a renamed or dropped counter used to leave its
+    # guard out silently.
+    for key, label, most_field in COUNTERS:
+        most = fp.get(most_field, 0)
+        if log[key] is None:
+            failures.append(f"{key}: no hpo_run.log line '{label} : N' "
+                            f"(DIAGNOSTICS), so max={most} cannot be checked")
+        elif log[key] > most:
+            failures.append(f"{key}: actual={log[key]} > max={most}")
 
     # journal lines
     journal_failures, notes = check_journal(fp, log_path.read_text())

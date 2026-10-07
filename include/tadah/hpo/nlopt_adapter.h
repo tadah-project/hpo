@@ -161,13 +161,13 @@ inline unsigned long auglag_reevaluations(const OptimizerSpec& sp)
     return local ? 1 + auglag_reevaluations(*local) : 0;
 }
 
-/* run_nlopt()'s record of the last gradient request it rejected (a point
- * without a usable gradient; see its UData). */
+/** run_nlopt()'s record of the last gradient request it rejected (a point
+ *  without a usable gradient; see its UData). */
 struct RejectionRecord {
-    bool          last_rejected = false;   // the last gradient request was rejected
-    unsigned long calls = 0;               // objective calls so far
-    unsigned long calls_at_rejection = 0;  // `calls` at the last rejection
-    double        rejected_after = 0.0;    // seconds into optimize() at it
+    bool          last_rejected = false;   ///< the last gradient request was rejected
+    unsigned long calls = 0;               ///< objective calls so far
+    unsigned long calls_at_rejection = 0;  ///< `calls` at the last rejection
+    double        rejected_after = 0.0;    ///< seconds into optimize() at it
 };
 
 /* Whether a search that has ended ended because of the rejection `r`

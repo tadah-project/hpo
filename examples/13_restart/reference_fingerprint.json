@@ -42,6 +42,7 @@
   ],
   "status_note": "Was COMPLETED: when RESTART used all its restarts and the last launch stagnated again, the journal fell back to the generic status. RestartPolicy now records why the run stopped; the window in the status is AFTER_STAGNATION.",
   "nan_clampings_max": 0,
+  "threw_max": 0,
   "walltime_hint": "0.3s",
   "fast": true,
   "tolerance_rationale": "RESTART RANDOM seeds each restart from std::random_device, so the restart evaluations differ from run to run. Only values that do not depend on them are pinned: the best comes from the deterministic first launch, and each restart stops after exactly AFTER_STAGNATION evaluations because no start in the box beats the incumbent (see evaluations.note)."

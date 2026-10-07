@@ -12,6 +12,7 @@
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
+#include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/phase_specs.h>
@@ -19,6 +20,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -407,5 +409,86 @@ TEST_CASE("PC_FAILPROBE: rejections", "[failgrade][parse][failprobe]")
             + " --outvar S --s0 inf\n");
         REQUIRE_THROWS_AS(tadah::hpo::HPOTargets(ctx, cfg.string()),
                           std::runtime_error);
+    }
+}
+
+namespace {
+
+/* The LOSS FUNCTION section of the journal HPOLog writes for `trg`. */
+std::string loss_section(const tadah::hpo::HPOTargets& trg) {
+    auto& log = tadah::hpo::HPOLog::instance();
+    if (log.is_open()) log.finish("closed");
+    const auto path = temp_path("journal.log");
+    log.open(path.string(), "test", "/tmp", 1);
+    log.write_loss_section(trg);
+    log.finish("TEST");
+    std::ifstream in(path);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    const std::string journal = ss.str();
+    const auto at = journal.find("-- LOSS FUNCTION");
+    REQUIRE(at != std::string::npos);
+    return journal.substr(at, journal.find("\n-- ", at + 1) - at);
+}
+
+/* The section's line that holds `label` ("" when none does). */
+std::string line_of(const std::string& text, const std::string& label) {
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line))
+        if (line.find(label) != std::string::npos) return line;
+    return "";
+}
+
+}  // namespace
+
+TEST_CASE("The journal's Fail score line names what scores FAILSCORE, "
+          "under FAILSCORE_GRADING OFF and ON", "[failgrade][hpo_log]")
+{
+    /* Pins: under FAILSCORE_GRADING OFF the LOSS FUNCTION section's Fail
+     * score line names the failures that score FAILSCORE: a NaN/Inf loss,
+     * an exception, a skip cap, a failed PC_LAMMPS simulation and a gate
+     * reject. Under ON it names only the NaN/Inf loss and the exception,
+     * and a "Fail grading" line says that a skip cap, a failed PC_LAMMPS
+     * simulation and a gate reject score a graded loss in [0.999, 1) x
+     * FAILSCORE (graded_eval_loss), as their rows in loss.tadah show.
+     * Before the fix: one line whatever FAILSCORE_GRADING, "(the loss of a
+     * failed evaluation: a NaN/Inf loss, an exception, a skip cap, a failed
+     * script or a gate reject; the ceiling of every loss)", which under ON
+     * named three failures that do not score it, and no "Fail grading"
+     * line. */
+    tadah::core::PeriodicTable::initialize();
+    auto ctx = make_context_for_targets();
+    SECTION("FAILSCORE_GRADING OFF") {
+        auto cfg = write_file("cfg", config_head() + "PC_ERMSE 0 1\n");
+        tadah::hpo::HPOTargets trg(ctx, cfg.string());
+        REQUIRE_FALSE(trg.FAILSCORE_GRADING);
+        const std::string loss = loss_section(trg);
+        INFO(loss);
+        CHECK_THAT(line_of(loss, "Fail score"),
+                   Catch::EndsWith("1.0000e+06  (the loss of a failed "
+                                   "evaluation: a NaN/Inf loss, an exception, "
+                                   "a skip cap, a failed PC_LAMMPS simulation "
+                                   "or a gate reject; the ceiling of every "
+                                   "loss)"));
+        CHECK(line_of(loss, "Fail grading").empty());
+    }
+    SECTION("FAILSCORE_GRADING ON") {
+        auto cfg = write_file("cfg", config_head() + "PC_ERMSE 0 1\n"
+                                                     "FAILSCORE_GRADING ON\n");
+        tadah::hpo::HPOTargets trg(ctx, cfg.string());
+        REQUIRE(trg.FAILSCORE_GRADING);
+        const std::string loss = loss_section(trg);
+        INFO(loss);
+        CHECK_THAT(line_of(loss, "Fail score"),
+                   Catch::EndsWith("1.0000e+06  (the loss of an evaluation "
+                                   "with a NaN/Inf loss or an exception; the "
+                                   "ceiling of every loss)"));
+        CHECK_THAT(line_of(loss, "Fail grading"),
+                   Catch::EndsWith(": ON -- a skip cap, a failed PC_LAMMPS "
+                                   "simulation or a gate reject scores a "
+                                   "graded loss in [0.999, 1) x Fail score"));
     }
 }

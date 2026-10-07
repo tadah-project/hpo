@@ -200,13 +200,13 @@ enum class GradientFailure {
   NotFinite  /* a gradient that is not finite for another reason */
 };
 
-/* The failure of the last gradient() call: `cause` is the fixed reason
- * the status and the journal give, `detail` what failed, for the journal
- * (the point, the stencil point and its loss). */
+/** The failure of the last gradient() call: `cause` is the fixed reason
+ *  the status and the journal give, `detail` what failed, for the journal
+ *  (the point, the stencil point and its loss). */
 struct GradientFailureInfo {
-  GradientFailure kind = GradientFailure::None;
-  std::string     cause;
-  std::string     detail;
+  GradientFailure kind = GradientFailure::None;  ///< which failure (None after a usable gradient)
+  std::string     cause;   ///< the fixed reason the status and the journal give
+  std::string     detail;  ///< what failed: the point, the stencil point and its loss
 };
 
 /* The cause of a Stencil failure of the finite differences (NUMERICAL,
@@ -245,6 +245,11 @@ inline void report_gradient_stop(const std::string& backend,
   HPOLog::instance().set_status(gradient_stop_status(f));
 }
 
+/** The loss and its gradient over the optimiser-internal coordinates x of
+ *  a spec, as every gradient-based backend consumes them (see the file
+ *  comment): cost() evaluates host(sp.out(x)), gradient() and
+ *  gradient_at() obtain d loss/dx by the spec's GRAD_STRATEGY within its
+ *  MAXEVAL, and `failure` says why the last gradient was not usable. */
 template<class Vec, class Runner>
 struct GradientProvider {
   /** Return host(sp.out(x)). +inf on bad eval or MAXEVAL overflow. */
@@ -300,55 +305,61 @@ enum class CentreLoss {
   Failed    /* any other failed evaluation: the gradient fails at once */
 };
 
-/* Fills GradientFailureInfo for the finite-difference paths: what a
- * stencil evaluation or quotient says about the gradient at x; and
- * journals the components a bound turned. */
+/** Fills GradientFailureInfo for the finite-difference paths: what a
+ *  stencil evaluation or quotient says about the gradient at x; and
+ *  journals the components a bound turned. */
 template<class Vec>
 struct StencilReport {
-  const OptimizerSpec*  sp;
-  GradientFailureInfo*  out;
+  const OptimizerSpec*  sp;   ///< the spec of the gradient (FAILSCORE, labels, box)
+  GradientFailureInfo*  out;  ///< where each report writes the failure
 
-  /* Whether `y` is a failed evaluation: not a usable loss (not finite, or
-   * at least 0.999 FAILSCORE; without a FAILSCORE, not finite). */
+  /** Whether `y` is a failed evaluation: not a usable loss (not finite, or
+   *  at least 0.999 FAILSCORE; without a FAILSCORE, not finite). */
   bool failed(double y) const {
     const double fs = sp->failscore.value_or(
         std::numeric_limits<double>::infinity());
     return !loss_is_feasible(y, fs);
   }
-  /* Whether `y` is a graded failure the gradient differences: a failed
-   * evaluation below FAILSCORE under FAILSCORE_GRADING ON. FAILSCORE
-   * itself (an ungraded failure: grading OFF, an infrastructure failure, a
-   * loss the host clamped) is not. */
+  /** Whether `y` is a graded failure the gradient differences: a failed
+   *  evaluation below FAILSCORE under FAILSCORE_GRADING ON. FAILSCORE
+   *  itself (an ungraded failure: grading OFF, an infrastructure failure, a
+   *  loss the host clamped) is not. */
   bool graded(double y) const {
     return sp->failscore_grading && sp->failscore && failed(y) &&
            std::isfinite(y) && y < *sp->failscore;
   }
+  /** What the loss `y` at the point says about its differences:
+   *  usable, a graded failure or another failure. */
   CentreLoss classify(double y) const {
     if (!failed(y)) return CentreLoss::Usable;
     return graded(y) ? CentreLoss::Graded : CentreLoss::Failed;
   }
+  /** The name of dimension i: its parameter label ("CGRID2B[2]"), else
+   *  logidx::dim_label(i). */
   std::string label(long i) const {
     const auto k = static_cast<std::size_t>(i);
     return (k < sp->parameter_labels.size() && !sp->parameter_labels[k].empty())
                ? sp->parameter_labels[k] : logidx::dim_label(k);
   }
-  /* "CGRID2B[2] = 1.4": dimension i of the internal point u, in real
-   * units. */
+  /** "CGRID2B[2] = 1.4": dimension i of the internal point u, in real
+   *  units. */
   std::string at(const Vec& u, long i) const {
     const Vec r = sp->out(u);
     std::ostringstream os;
     os << label(i) << " = " << std::setprecision(10) << r(i);
     return os.str();
   }
+  /** `v` with 10 significant digits. */
   static std::string num(double v) {
     std::ostringstream os;
     os << std::setprecision(10) << v;
     return os.str();
   }
 
+  /** MAXEVAL was spent before the gradient was complete. */
   void budget() const { *out = {GradientFailure::Budget, "MAXEVAL spent", ""}; }
 
-  /* "the loss at CGRID2B[2] = 1.25, SGRID2B[2] = 0.5 is <y>" */
+  /** "the loss at CGRID2B[2] = 1.25, SGRID2B[2] = 0.5 is <y>" */
   std::string loss_at(const Vec& x, double y) const {
     std::ostringstream os;
     os << "the loss at ";
@@ -358,32 +369,32 @@ struct StencilReport {
     return os.str();
   }
 
-  /* The loss at x itself failed (CentreLoss::Failed): no stencil point is
-   * evaluated. */
+  /** The loss at x itself failed (CentreLoss::Failed): no stencil point
+   *  is evaluated. */
   void centre(const Vec& x, double y) const {
     *out = {GradientFailure::Stencil, kGradientStencilCause, loss_at(x, y)};
   }
 
-  /* The caller's loss at x failed (CentreLoss::Failed) under ANALYTICAL or
-   * HYBRID: no analytical pass is run and nothing is evaluated. */
+  /** The caller's loss at x failed (CentreLoss::Failed) under ANALYTICAL
+   *  or HYBRID: no analytical pass is run and nothing is evaluated. */
   void failed_point(const Vec& x, double y) const {
     *out = {GradientFailure::Stencil, kGradientFailedPointCause,
             loss_at(x, y)};
   }
 
-  /* The loss at x is a graded failure and every differenced component of
-   * its gradient is 0: no direction out of the failure region. */
+  /** The loss at x is a graded failure and every differenced component of
+   *  its gradient is 0: no direction out of the failure region. */
   void flat(const Vec& x, double y) const {
     *out = {GradientFailure::Stencil, kGradientStencilCause,
             loss_at(x, y) + ", and every difference at it is 0: a flat "
                             "failure region"};
   }
 
-  /* The derivative along dimension i, from the stencil evaluations `pts`
-   * (point, loss), overflowed (NotFinite). The points of a one-sided or
-   * forward stencil include x itself. A failed evaluation at a usable point
-   * never gets here (fd_component ends the gradient at it: point); at a
-   * graded failure the losses are taken as they are. */
+  /** The derivative along dimension i, from the stencil evaluations `pts`
+   *  (point, loss), overflowed (NotFinite). The points of a one-sided or
+   *  forward stencil include x itself. A failed evaluation at a usable
+   *  point never gets here (fd_component ends the gradient at it: point);
+   *  at a graded failure the losses are taken as they are. */
   void stencil(const Vec& x, long i,
                const std::vector<std::pair<Vec, double>>& pts) const {
     std::ostringstream os;
@@ -397,8 +408,8 @@ struct StencilReport {
             "the finite-difference quotient overflowed", os.str()};
   }
 
-  /* A stencil evaluation (xs, ys) of dimension i failed and ends the
-   * gradient; the stencil points after it are not evaluated. */
+  /** A stencil evaluation (xs, ys) of dimension i failed and ends the
+   *  gradient; the stencil points after it are not evaluated. */
   void point(const Vec& x, long i, const Vec& xs, double ys) const {
     std::ostringstream os;
     os << "at " << at(x, i) << ", the stencil point " << at(xs, i)
@@ -406,14 +417,16 @@ struct StencilReport {
     *out = {GradientFailure::Stencil, kGradientStencilCause, os.str()};
   }
 
+  /** The analytical gradient failed (NotFinite); `what` says how ("could
+   *  not be formed at this point", "is not finite at this point"). */
   void analytical(const std::string& what) const {
     *out = {GradientFailure::NotFinite,
             "the analytical gradient " + what, ""};
   }
 
-  /* Component i of the gradient at x has the stencil `st`, which a bound
-   * turned (FdStencil::turned): counted per dimension (DIAGNOSTICS), and
-   * the first of each dimension journalled. Never throws. */
+  /** Component i of the gradient at x has the stencil `st`, which a bound
+   *  turned (FdStencil::turned): counted per dimension (DIAGNOSTICS), and
+   *  the first of each dimension journalled. Never throws. */
   void turned(const Vec& x, long i, const FdStencil& st) const {
     try {
       if (HPOLog::instance().record_one_sided(label(i)) != 1) return;
@@ -449,23 +462,24 @@ struct StencilReport {
   }
 };
 
-/* The finite-difference settings of a provider (fd_settings_of), and the
- * check of its OPTIM boxes (fd_box_error), made at the first gradient()
- * call: the provider of a derivative-free NLopt run is built but never
- * asked, and an invalid setting is refused at startup
- * (validate_hpo_setup) anyway. */
+/** The finite-difference settings of a provider (fd_settings_of), and the
+ *  check of its OPTIM boxes (fd_box_error), made at the first gradient()
+ *  call: the provider of a derivative-free NLopt run is built but never
+ *  asked, and an invalid setting is refused at startup
+ *  (validate_hpo_setup) anyway. */
 struct FdSetup {
-  FdSettings     s;
-  std::string    settings_error;
-  std::once_flag box_once;
-  std::string    box_error;
+  FdSettings     s;               ///< the settings (fd_settings_of)
+  std::string    settings_error;  ///< why the settings are invalid ("" if valid)
+  std::once_flag box_once;        ///< the box check runs once
+  std::string    box_error;       ///< why a box point has no stencil ("" if none)
 
+  /** Reads the settings of `sp`; an invalid one is kept for require(). */
   explicit FdSetup(const OptimizerSpec& sp) {
     try { s = fd_settings_of(sp); }
     catch (const std::exception& e) { settings_error = e.what(); }
   }
-  /* Throws std::runtime_error for an invalid setting, or a box in which
-   * some point has no stencil -- before any evaluation. */
+  /** Throws std::runtime_error for an invalid setting, or a box in which
+   *  some point has no stencil -- before any evaluation. */
   void require(const OptimizerSpec& sp) {
     if (!settings_error.empty()) throw std::runtime_error(settings_error);
     std::call_once(box_once, [&] { box_error = fd_box_error(sp, s); });
@@ -473,24 +487,28 @@ struct FdSetup {
   }
 };
 
-/* The OPTIM box of the finite differences: the internal bounds of `sp`
- * (OptimizerSpec::low/high), which a point must match in size. */
+/** The OPTIM box of the finite differences: the internal bounds of `sp`
+ *  (OptimizerSpec::low/high), which a point must match in size. */
 struct FdBox {
-  std::vector<double> lo, hi;
+  std::vector<double> lo;  ///< the internal lower bounds
+  std::vector<double> hi;  ///< the internal upper bounds
 
+  /** Throws std::logic_error when `sp`'s bounds differ in size. */
   explicit FdBox(const OptimizerSpec& sp) : lo(sp.low), hi(sp.high) {
     if (lo.size() != hi.size())
       throw std::logic_error("GradientProvider: the spec's low and high "
                              "bounds differ in size");
   }
+  /** Throws std::logic_error unless a point of `n` dimensions fits the
+   *  box. */
   void require(long n) const {
     if (static_cast<std::size_t>(n) != lo.size())
       throw std::logic_error("GradientProvider: a point of " +
                              std::to_string(n) + " dimensions in a box of " +
                              std::to_string(lo.size()));
   }
-  /* Whether no coordinate of x lies outside the box (a NaN coordinate is
-   * not outside: its evaluation fails as such). */
+  /** Whether no coordinate of x lies outside the box (a NaN coordinate is
+   *  not outside: its evaluation fails as such). */
   template<class Vec>
   bool contains(const Vec& x) const {
     for (long i = 0; i < x.size(); ++i) {

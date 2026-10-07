@@ -50,7 +50,8 @@ class FingerprintOverrides(unittest.TestCase):
                           {"journal": []},
                           {"description": ""},
                           {"status_accepted": ["COMPLETED", "MAXEVAL_REACHED"]},
-                          {"journal": [{"regex": "^x", "why": "y"}]}):
+                          {"journal": [{"regex": "^x", "why": "y"}]},
+                          {"threw_max": 2}):
             with self.subTest(overrides=overrides):
                 prev = {"description": "hand-written", "status_note": "kept",
                         "journal": [{"regex": "^old", "why": "old"}]}
@@ -77,6 +78,18 @@ class FingerprintOverrides(unittest.TestCase):
         # Regenerating with the entry's journal removed drops it.
         again = self.regenerate({}, prev=fp)
         self.assertNotIn("journal", again)
+
+    def test_threw_max_comes_from_the_overrides(self):
+        # Pins: a fingerprint records threw_max, the evaluations that threw
+        # compare_fingerprint.py allows, from the overrides entry (0 by
+        # default, as nan_clampings_max), and the check reports a
+        # fingerprint whose threw_max differs from its entry. Before the
+        # fix: no fingerprint had a threw_max (KeyError), and nothing
+        # compared one.
+        self.assertEqual(self.regenerate({})["threw_max"], 0)
+        self.assertEqual(self.regenerate({"threw_max": 3})["threw_max"], 3)
+        problems = gf.override_mismatches(self.regenerate({}), {"threw_max": 1})
+        self.assertTrue(any("threw_max" in p for p in problems), problems)
 
     def test_hand_written_fields_are_kept(self):
         prev = {"description": "hand-written", "status_note": "kept"}

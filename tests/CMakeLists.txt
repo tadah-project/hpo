@@ -223,6 +223,14 @@ add_test(NAME hpo_example_fingerprint_tool
 set_tests_properties(hpo_example_fingerprint_tool PROPERTIES
     LABELS "examples"
     TIMEOUT 30)
+# The comparator's failure-count guards (NaN/Inf clampings, evaluations
+# that threw) on a synthetic run (examples/tools/test_compare_fingerprint.py).
+add_test(NAME hpo_example_fingerprint_compare
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../examples/tools/test_compare_fingerprint.py)
+set_tests_properties(hpo_example_fingerprint_compare PROPERTIES
+    LABELS "examples"
+    TIMEOUT 30)
 # The status the example scripts print (examples/common/journal_status.sh,
 # sourced by common/run.sh, run_all.sh and the run.sh of 16, 17 and 27):
 # the whole "Optimiser status" value, colons included

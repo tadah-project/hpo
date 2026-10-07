@@ -32,20 +32,21 @@
 
 namespace tadah::hpo {
 
-/* Thrown by HPO_Host::operator() once no new best was found within the
- * RESTART stagnation window (HPO_Host<>::StagnationStop names this type).
- * RestartPolicy catches it and restarts the inner policy; every optimiser
- * adapter and MultiStartPolicy let it through. */
+/** Thrown by HPO_Host::operator() once no new best was found within the
+ *  RESTART stagnation window (HPO_Host<>::StagnationStop names this type).
+ *  RestartPolicy catches it and restarts the inner policy; every optimiser
+ *  adapter and MultiStartPolicy let it through. */
 struct StagnationStop : public std::exception {
+    /** "HPO stagnation threshold reached". */
     const char* what() const noexcept override
     {
         return "HPO stagnation threshold reached";
     }
 };
 
-/* How much an exception weighs when several end a run at once (see
- * above): 0 StagnationStop, 1 core::ShutdownRequested, 2 any other
- * exception (an error); -1 for no exception. */
+/** How much an exception weighs when several end a run at once (see
+ *  above): 0 StagnationStop, 1 core::ShutdownRequested, 2 any other
+ *  exception (an error); -1 for no exception. */
 inline int run_stop_rank(const std::exception_ptr& e) noexcept
 {
     if (!e) return -1;
@@ -60,11 +61,11 @@ inline int run_stop_rank(const std::exception_ptr& e) noexcept
     }
 }
 
-/* Keeps the exception that decides how the run ends out of those the
- * concurrent evaluations of one optimiser raise (see above). Thread-safe. */
+/** Keeps the exception that decides how the run ends out of those the
+ *  concurrent evaluations of one optimiser raise (see above). Thread-safe. */
 class ExceptionStash {
 public:
-    /* Keep `e` if it outranks the exception kept so far. */
+    /** Keep `e` if it outranks the exception kept so far. */
     void offer(std::exception_ptr e)
     {
         const int rank = run_stop_rank(e);
@@ -75,13 +76,22 @@ public:
         }
     }
 
+    /** Whether an exception is kept. */
     bool has() const
     {
         std::lock_guard<std::mutex> lk(m_);
         return static_cast<bool>(error_);
     }
 
-    /* Hand over the kept exception (null if none) and empty the stash. */
+    /** The kept exception (null if none), left in the stash: what a stop
+     *  line names (run_stop_rank() tells which stop it is). */
+    std::exception_ptr peek() const
+    {
+        std::lock_guard<std::mutex> lk(m_);
+        return error_;
+    }
+
+    /** Hand over the kept exception (null if none) and empty the stash. */
     std::exception_ptr take()
     {
         std::lock_guard<std::mutex> lk(m_);
@@ -91,7 +101,7 @@ public:
         return e;
     }
 
-    /* Rethrow the kept exception, if any, and empty the stash. */
+    /** Rethrow the kept exception, if any, and empty the stash. */
     void rethrow_if_any()
     {
         if (std::exception_ptr e = take()) std::rethrow_exception(e);

@@ -210,8 +210,7 @@ std::string describe_rhobar_reject(const RhoBarGateResult &r,
                                    const RhoBarGateSpec &spec);
 
 /** \brief One user seed of the gate checks: a CONFIG or WARM point of a
- *  resolved INIT chain (OUTER, PRESTAGE, PRESTAGE.INNER), or the -c
- *  potential. */
+ *  resolved INIT chain (OUTER, PRESTAGE), or the -c potential. */
 struct GateSeed {
   std::vector<double>      point;     ///< real space, the optimap order
   std::vector<std::string> origins;   ///< InitOrigin::name() of each INIT entry

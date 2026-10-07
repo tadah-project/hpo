@@ -227,14 +227,19 @@ private:
 };
 
 /* ---------------- WARM (read previous pot.tadah) ----------------- */
+/* `policy` is the WARM_ON_MISMATCH of the block whose chain holds this
+ * entry (an INIT or a RESTART block; build_init_strategy passes it), not
+ * the INIT block of the spec in the InitContext: a RESTART chain is drawn
+ * with the OUTER spec, whose INIT block is not the RESTART block. */
 class WarmInitStrategy : public InitStrategy {
 public:
-    explicit WarmInitStrategy(std::string filename) : file_(std::move(filename)) {}
+    WarmInitStrategy(std::string filename, std::string policy)
+        : file_(std::move(filename)), policy_(std::move(policy)) {}
 
     std::vector<std::vector<double>>
     generate(const InitContext& ctx, std::size_t /*k*/) const override
     {
-        const std::string& policy = ctx.spec.init_strategy_spec.warm_on_mismatch;
+        const std::string& policy = policy_;
 
         std::ifstream in(file_);
         if (!in) {
@@ -538,6 +543,7 @@ private:
         HPOLog::instance().warning(msg);
     }
     std::string file_;
+    std::string policy_;   // warn | error | skip: WARM_ON_MISMATCH of the block
 };
 
 /* ---------------- Chain (concatenation with de-dup) -------------- */
@@ -605,8 +611,10 @@ private:
 };
 
 /* ---------------- Factory ---------------------------------------- */
+/* `warm_policy`: the WARM_ON_MISMATCH of the block that holds the entry,
+ * for a WARM entry. */
 std::unique_ptr<InitStrategy>
-make_one(const InitStrategySpec::Entry& e)
+make_one(const InitStrategySpec::Entry& e, const std::string& warm_policy)
 {
     /* K: a whole integer (strict_parse.h), >= 0 for RANDOM and >= 1 for
      * LHS and SOBOL, which draw at least one point (their constructors
@@ -639,7 +647,7 @@ make_one(const InitStrategySpec::Entry& e)
     if (e.method == "WARM") {
         if (e.args.size() != 1)
             throw std::runtime_error("INIT METHOD WARM expects exactly one arg: <pot_file>");
-        return std::make_unique<WarmInitStrategy>(e.args[0]);
+        return std::make_unique<WarmInitStrategy>(e.args[0], warm_policy);
     }
     /* NOISE_AUTO is rejected up-front in the parser so the user gets
      * an immediate, clear error rather than discovering at resolve
@@ -652,7 +660,9 @@ make_one(const InitStrategySpec::Entry& e)
 
 void validate_init_entry(const InitStrategySpec::Entry& e)
 {
-    (void)make_one(e);
+    /* The check builds the entry and draws no point, so the WARM policy
+     * plays no part in it: the block's default stands in. */
+    (void)make_one(e, InitStrategySpec{}.warm_on_mismatch);
 }
 
 std::unique_ptr<InitStrategy>
@@ -664,7 +674,8 @@ build_init_strategy(const InitStrategySpec& ispec)
      * only when the user listed `STRATEGY CONFIG` explicitly; there is
      * no implicit CONFIG prepend. */
     std::vector<std::unique_ptr<InitStrategy>> kids;
-    for (const auto& e : ispec.chain) kids.push_back(make_one(e));
+    for (const auto& e : ispec.chain)
+        kids.push_back(make_one(e, ispec.warm_on_mismatch));
 
     /* An empty chain (no INIT block, or one with no STRATEGY lines)
      * falls back to a single CONFIG point -- the in-config OPTIM values

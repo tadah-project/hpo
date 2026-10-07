@@ -1493,6 +1493,73 @@ TEST_CASE("Termination: a RESTART refresh applies the run's WARM density-form "
     }
 }
 
+TEST_CASE("Termination: a RESTART refresh draws its WARM seed under the "
+          "RESTART block's WARM_ON_MISMATCH", "[HPO][termination][restart][warm]")
+{
+    /* Pins: a RESTART round draws its WARM seed under the WARM_ON_MISMATCH
+     * of the RESTART block (build_init_strategy binds it to the chain's
+     * WARM entries), not under the INIT block of the spec it restarts,
+     * which has the default `warn` here. The seed's AMPGRIDMB[1] 1.5 lies
+     * above the box's 1. With `error` the first restart throws, naming the
+     * clamping, before a second run; with `skip` the seed is dropped, the
+     * chain produces no point, and the round starts from the previous
+     * round's points (the CONFIG point 0.5) with a WARNING that says so;
+     * with `warn` the round starts from the clamped seed, 1.
+     * Before the fix: the refresh took the restarted spec's INIT policy
+     * (`warn`) whatever the RESTART block said, so `error` and `skip`
+     * restarted from the clamped seed 1 (no throw), and an empty refresh
+     * restarted from the previous points without a word. The `warn`
+     * SECTION passes as well (a pin). */
+    HostFixture fx;   // RestartPolicy uses the host's statics only
+    tadah::core::Context ctx = rhoform_test::make_ream_ctx("SIGNED");
+    rhoform_test::TempFile target(std::string("OPTIM AMPGRIDMB (1) 0 1\n"
+                                              "PC_ERMSE 0 1\n") +
+                                  rhoform_test::kOptimizer);
+    tadah::hpo::HPOTargets trg(ctx, target.path.string());
+    REQUIRE(trg.spec.init_strategy_spec.warm_on_mismatch == "warn");
+    REQUIRE(trg.spec.optim_init.size() == 1u);
+    REQUIRE(trg.spec.optim_init[0].size() == 1u);
+    REQUIRE(trg.spec.optim_init[0][0] == 0.5);
+    rhoform_test::TempFile seed(rhoform_test::ream_seed("1.5 0.3 0.1"));
+
+    const auto restart_with = [&](const char* policy, RunRecord& rec) {
+        tadah::hpo::InitStrategySpec is;
+        is.chain.push_back({"WARM", {seed.path.string()}});
+        is.warm_on_mismatch = policy;
+        tadah::hpo::RestartPolicy<ParamVec, ::LammpsRunner> restart(
+            std::make_unique<RecordingPolicy>(rec), 5, 1,
+            tadah::hpo::build_init_strategy(is), &trg);
+        restart.run(trg.spec, fx.host);
+    };
+    RunRecord rec;
+    SECTION("WARM_ON_MISMATCH error: the restart fails on the clamped seed") {
+        REQUIRE_THROWS_WITH(restart_with("error", rec),
+                            Catch::Contains("clamped into OPTIM bounds"));
+        CHECK(rec.runs == 1u);
+    }
+    SECTION("WARM_ON_MISMATCH skip: the round keeps the previous points, "
+            "and the journal says so") {
+        REQUIRE_NOTHROW(restart_with("skip", rec));
+        CHECK(rec.runs == 2u);
+        REQUIRE(rec.init.size() == 1u);
+        REQUIRE(rec.init[0].size() == 1u);
+        CHECK(rec.init[0][0] == 0.5);
+        tadah::hpo::HPOLog::instance().finish("TEST");
+        CHECK_THAT(read_file(fx.run.sd.dir / "hpo_run.log"),
+                   Catch::Contains("RESTART 1/1: the METHOD chain (WARM) "
+                                   "produced no starting point; the round "
+                                   "starts from the previous round's "
+                                   "starting points"));
+    }
+    SECTION("WARM_ON_MISMATCH warn: the round starts from the clamped seed") {
+        REQUIRE_NOTHROW(restart_with("warn", rec));
+        CHECK(rec.runs == 2u);
+        REQUIRE(rec.init.size() == 1u);
+        REQUIRE(rec.init[0].size() == 1u);
+        CHECK(rec.init[0][0] == 1.0);
+    }
+}
+
 /* ======================================================================
  * RESTART round r (1..MAX) draws new random numbers: every phase with a
  * SEED runs with a seed derived from it -- the outer spec with SEED + r*S,
@@ -2762,6 +2829,26 @@ TEST_CASE("NLopt: make_nlopt seeds a run with an INNER once, from the block "
             tadah::hpo::make_nlopt(sp, 2, tadah::hpo::RestartStop::Off),
             refused);
     }
+    /* Pins: an INNER spec with an INIT chain or an INIT K_TOTAL (from
+     * outside the parser, which refuses INIT inside INNER) is refused:
+     * MLSL and AUGLAG choose the INNER search's starting points, and
+     * nothing resolves an INNER chain.
+     * Before the fix: nothing threw; the chain was ignored. */
+    const auto chain_refused = Catch::StartsWith(
+        "NLopt INNER spec with an INIT chain: MLSL and AUGLAG choose the "
+        "INNER search's starting points");
+    SECTION("an INNER INIT chain") {
+        sp.inner->init_strategy_spec.chain = {{"RANDOM", {"1"}}};
+        CHECK_THROWS_WITH(
+            tadah::hpo::make_nlopt(sp, 2, tadah::hpo::RestartStop::Off),
+            chain_refused);
+    }
+    SECTION("an INNER INIT K_TOTAL") {
+        sp.inner->init_strategy_spec.k_total = 2;
+        CHECK_THROWS_WITH(
+            tadah::hpo::make_nlopt(sp, 2, tadah::hpo::RestartStop::Off),
+            chain_refused);
+    }
 }
 
 TEST_CASE("NLopt: make_nlopt refuses an INNER spec with a GRAD_STRATEGY",
@@ -3171,11 +3258,24 @@ TEST_CASE("Termination: SIGINT stops ANNEAL_PA with four threads",
         "    SEED 7\n"), SIGINT, "SIGINT", 130, 4);
 }
 
+/* Pins: ASA's stop line names the signal stop as a shutdown request with
+ * its signal. Before the fix: "ASA stopped: exception raised during
+ * evaluation after N host eval(s)". */
+void check_asa_names_the_signal()
+{
+    CHECK_THAT(read_file("hpo_run.log"),
+               Catch::Contains("ASA stopped: shutdown requested (SIGINT) "
+                               "after "));
+    CHECK_THAT(read_file("hpo_run.log"),
+               !Catch::Contains("exception raised during evaluation"));
+}
+
 TEST_CASE("Termination: SIGINT stops ASA", "[.shutdown_asa]")
 {
     signal_case(plain_block(
         "    TYPE PLAIN\n    LIB ASA\n    ALGO ASA\n"
-        "    MAXEVAL 100000\n    SEED 7\n"), SIGINT, "SIGINT", 130);
+        "    MAXEVAL 100000\n    SEED 7\n"), SIGINT, "SIGINT", 130, 1,
+        check_asa_names_the_signal);
 }
 
 TEST_CASE("Termination: SIGINT stops ASA block-parallel with four threads",
@@ -3185,7 +3285,7 @@ TEST_CASE("Termination: SIGINT stops ASA block-parallel with four threads",
         "    TYPE PLAIN\n    LIB ASA\n    ALGO ASA\n"
         "    MAXEVAL 100000000\n    THREADS 4\n    SEED 7\n"
         "    PARAM Gener_Block 4\n    PARAM Gener_Block_Max 4\n"),
-        SIGINT, "SIGINT", 130, 4);
+        SIGINT, "SIGINT", 130, 4, check_asa_names_the_signal);
 }
 
 TEST_CASE("Termination: SIGTERM stops ASA after the periodic test that "
@@ -4451,10 +4551,18 @@ TEST_CASE("No usable loss: evaluations that throw count as unusable losses",
 {
     /* OALGO 3 cannot exclude the bias from the regularisation: with BIAS
      * true and LAMBDA != 0 every training throws, and the host records
-     * each evaluation as FAILSCORE (and counts it as a NaN/Inf clamping).
-     * The journal used to follow "100.0% of evaluations produced a
-     * non-finite loss" with "[ok] Every evaluation produced a usable
-     * loss". */
+     * each evaluation as FAILSCORE. The journal used to follow "100.0% of
+     * evaluations produced a non-finite loss" with "[ok] Every evaluation
+     * produced a usable loss".
+     * Pins also: DIAGNOSTICS counts the six evaluations under
+     * "Evaluations that threw" and none as a NaN/Inf clamping (no loss
+     * was non-finite), and the LOSS FUNCTION section's Fail score line
+     * names every failure that scores it.
+     * Before the fix: the journal read "NaN/Inf clampings : 6 (100.0%)"
+     * and "100.0% of evaluations produced a non-finite loss that was
+     * clamped", had no "Evaluations that threw" line, and its Fail score
+     * line read "(returned when an evaluation produces NaN/Inf)"; this
+     * case asserted the non-finite wording (it pinned the defect). */
     TaRun run(plain_block("    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
                           "    MAXEVAL 6\n    SEED 3\n"));
     run.ctx.storage_update("OALGO", {"3"});
@@ -4467,8 +4575,20 @@ TEST_CASE("No usable loss: evaluations that throw count as unusable losses",
     check_no_usable_loss(6, "1.000000000000000e+09", kNoUsableLossStatus);
     const std::string journal = read_file("hpo_run.log");
     CHECK_THAT(journal, Catch::Contains("eval-thread caught throw"));
-    CHECK_THAT(journal, Catch::Contains("100.0% of evaluations produced a "
-                                        "non-finite loss"));
+    CHECK_THAT(journal,
+               Catch::Contains("Evaluations that threw  : 6  (100.0%)"));
+    CHECK_THAT(journal, Catch::Contains("[!] 6 evaluation(s) raised an "
+                                        "exception and scored FAIL_SCORE"));
+    CHECK_THAT(journal, Catch::Contains("NaN/Inf clampings       : 0  (0.0%)"));
+    CHECK_THAT(journal, !Catch::Contains("non-finite loss"));
+    /* The LOSS FUNCTION section says what scores FAILSCORE (it said
+     * "returned when an evaluation produces NaN/Inf", then "... a failed
+     * script ..."; FAILSCORE_GRADING OFF here). */
+    CHECK_THAT(journal, Catch::Contains(
+                            "1.0000e+09  (the loss of a failed evaluation: a "
+                            "NaN/Inf loss, an exception, a skip cap, a failed "
+                            "PC_LAMMPS simulation or a gate reject; the "
+                            "ceiling of every loss)"));
 }
 
 TEST_CASE("DLIB:GFS: a run whose every evaluation fails with the default "
