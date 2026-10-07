@@ -165,6 +165,52 @@ FitSwitchSources fit_switch_sources(const core::Context& ctx,
 
 int hpo_run_journaled(core::Context& ctx, HPOLog& log,
                       const FitSwitchSources& fit_sources);
+
+/* The worker pools of one run: the script executor -- THREADS workers that
+ * run the PC_LAMMPS fan-out and, through MLIP's parallel backend, the
+ * train/predict kernels -- and, under PC_ISOLATION PROCESS, the worker
+ * processes (pc_worker_pool_init, which the run calls once it knows the
+ * mode). Built when the run sizes them; on every way out of hpo_run() -- a
+ * return, a signal stop, an error, also one at startup once they are built
+ * -- the destructor removes MLIP's backend (a later task of the process
+ * runs its kernels on OpenMP again), stops the worker processes and joins
+ * the executor's workers, so the next run in the process builds its own.
+ * A run that threw used to leave its worker processes up (the next run's
+ * pc_worker_pool_init refused: "pool already initialized"), and every run
+ * ran on the executor of the first run's THREADS. */
+class RunPools {
+public:
+    explicit RunPools(int width)
+    {
+        init_script_executor(width);
+        try {
+            /* Stage 2.3: route the MLIP train/predict kernels (design-matrix
+             * build, descriptor calc, predict) onto the SAME pool. This drops
+             * the nested per-replica OpenMP teams those kernels used to spawn
+             * and lets one replica's train/predict overlap another's fan-out.
+             * The kernels write disjoint output slots, so results are
+             * unchanged (verified by the determinism gate). Installed for the
+             * run, before any optimiser eval. */
+            tadah::mlip::set_parallel_backend(
+                [](std::size_t n,
+                   const std::function<void(std::size_t)>& body) {
+                    script_executor().run_batch(
+                        n, [&](std::size_t i, int /*worker_id*/) { body(i); });
+                });
+        } catch (...) {
+            shutdown_script_executor();
+            throw;
+        }
+    }
+    ~RunPools()
+    {
+        tadah::mlip::set_parallel_backend({});
+        pc_worker_pool_shutdown();   /* no-op unless PROCESS built one */
+        shutdown_script_executor();
+    }
+    RunPools(const RunPools&) = delete;
+    RunPools& operator=(const RunPools&) = delete;
+};
 }  // namespace
 
 int hpo_run(core::Context& ctx)
@@ -353,25 +399,17 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
      * number of *concurrent* replicas at min(THREADS, REPLICAS) -- the ReplicaPool
      * in algorithms_p{t,a}.h -- which is enough to keep the THREADS-wide pool fed
      * since one replica's eval alone submits many more tasks than THREADS.) */
+    /* THREADS is an integer from 1 to INT_MAX (checked at its line). The
+     * run's pools live until hpo_run() returns or throws (RunPools). */
+    RunPools pools(static_cast<int>(trg.spec.num_threads.value_or(1)));
     {
-        /* THREADS is an integer from 1 to INT_MAX (checked at its line). */
-        const int exec_width =
-            static_cast<int>(trg.spec.num_threads.value_or(1));
-        init_script_executor(exec_width);
+        /* The width of the pool that runs: the journal reports it, and the
+         * PROCESS pool below has one worker process per executor worker
+         * (a task runs on the channel of its executor worker's id). */
+        const int exec_width = script_executor().width();
         /* Give the journal the true pool width -- the honest denominator
          * for the periodic pc_lammps pool-utilisation figure. */
         log.set_fanout_width(exec_width);
-        /* Stage 2.3: route the MLIP train/predict kernels (design-matrix build,
-         * descriptor calc, predict) onto the SAME pool. This drops the nested
-         * per-replica OpenMP teams those kernels used to spawn and lets one
-         * replica's train/predict overlap another's fan-out. The kernels write
-         * disjoint output slots, so results are unchanged (verified by the
-         * determinism gate). Installed once here, before any optimiser eval. */
-        tadah::mlip::set_parallel_backend(
-            [](std::size_t n, const std::function<void(std::size_t)>& body) {
-                script_executor().run_batch(
-                    n, [&](std::size_t i, int /*worker_id*/) { body(i); });
-            });
 #ifdef TADAH_ENABLE_OPENMP
         const int omp_w = std::max(1, omp_get_max_threads());
 #else
@@ -727,12 +765,9 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
         },
         host, log);
 
-    /* PC_ISOLATION: deterministic worker-pool teardown on the clean paths,
-     * including a signal stop (SHUTDOWN frames + reap). On the throwing path
-     * above, the singleton's static destructor performs the same shutdown at
-     * process exit. No-op in THREAD mode (pool never constructed). */
-    pc_worker_pool_shutdown();
-
+    /* The run's pools stop when `pools` goes, here or on any exception
+     * above (RunPools): the PROCESS worker processes get their SHUTDOWN
+     * frames and are reaped, the executor's workers joined. */
     return status;
 }
 

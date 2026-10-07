@@ -21,7 +21,8 @@
  * ---------------------------------------------------------------------
  *   - PERSISTENT workers: HPO_Host's heavy caches (LAMMPS instances, LammpsTadah)
  *     are `static thread_local`, so a fixed worker set warms them ONCE per run
- *     rather than once per OMP team.
+ *     rather than once per OMP team. Each run has its own executor (see the
+ *     per-rank executor below): the caches die with its workers.
  *   - CONCURRENT batches: several replica drivers call run_batch() at once. Tasks
  *     from all batches share one MPMC queue (moodycamel), so the C workers pull
  *     the next ready script regardless of which replica it belongs to (dynamic
@@ -43,6 +44,7 @@
 #include <cstddef>
 #include <exception>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -193,31 +195,68 @@ private:
   moodycamel::BlockingConcurrentQueue<Task> q_;
 };
 
-/* -- per-rank singleton --------------------------------------------------
- * The pool width (the per-rank core budget) is known only at startup, so
- * hpo_run() calls init_script_executor(C) once before the optimiser runs; every
- * later script_executor() returns that instance. Kept as a leak-free function
- * static so teardown order never races a late fan-out. */
+/* -- per-rank executor ---------------------------------------------------
+ * Each run has an executor of its own width (THREADS, the per-rank core
+ * budget): hpo_run() builds it with init_script_executor(THREADS) before the
+ * optimiser runs and stops it with shutdown_script_executor() however the run
+ * ends (RunPools, hpo.cpp), so the next run of the process -- a task file's
+ * second TASK hpo, an embedding's next hpo_run() -- runs on its own THREADS.
+ * Stopping joins the workers, and their thread-local state (the THREAD-mode
+ * LAMMPS instances and potentials of PcSlotState, pc_task_exec.h) is
+ * destroyed with them, each on its own thread, as it was at process exit.
+ * Outside a run (an HPO_Host used directly) script_executor() builds a
+ * one-worker executor, THREADS' default, at its first use.
+ *
+ * init_script_executor and shutdown_script_executor replace the executor:
+ * no batch may be running then (between runs). The executor lives in a
+ * function-local static slot, so one left at process exit is joined there. */
 namespace detail {
-inline std::atomic<int>& script_executor_width() {
-  static std::atomic<int> w{1};
-  return w;
+struct ScriptExecutorSlot {
+  std::mutex                      m;
+  std::unique_ptr<ScriptExecutor> ex;
+};
+inline ScriptExecutorSlot& script_executor_slot() {
+  static ScriptExecutorSlot slot;
+  return slot;
 }
 }  // namespace detail
 
-/* `width` is THREADS, at least one worker (the parser rejects THREADS 0). */
+/* Builds the executor of a run: `width` workers (THREADS, at least one; the
+ * parser rejects THREADS 0), in place of the one there is (a one-worker one
+ * built outside a run, or an earlier run's that was not stopped). */
 inline void init_script_executor(int width) {
   if (width < 1)
     throw std::invalid_argument(
         "the script executor needs at least one worker (THREADS >= 1), got " +
         std::to_string(width));
-  detail::script_executor_width().store(width, std::memory_order_relaxed);
+  auto& slot = detail::script_executor_slot();
+  std::unique_ptr<ScriptExecutor> old;
+  {
+    std::lock_guard<std::mutex> lk(slot.m);
+    old = std::move(slot.ex);
+    slot.ex = std::make_unique<ScriptExecutor>(width);
+  }
+  /* `old` joins its workers here, outside the lock. */
 }
 
+/* Stops the executor (joins its workers); the next script_executor() outside
+ * a run builds a one-worker one. */
+inline void shutdown_script_executor() {
+  auto& slot = detail::script_executor_slot();
+  std::unique_ptr<ScriptExecutor> old;
+  {
+    std::lock_guard<std::mutex> lk(slot.m);
+    old = std::move(slot.ex);
+  }
+}
+
+/* The executor of the run (see above). The reference is valid until the next
+ * init_script_executor or shutdown_script_executor. */
 inline ScriptExecutor& script_executor() {
-  static ScriptExecutor inst(
-      detail::script_executor_width().load(std::memory_order_relaxed));
-  return inst;
+  auto& slot = detail::script_executor_slot();
+  std::lock_guard<std::mutex> lk(slot.m);
+  if (!slot.ex) slot.ex = std::make_unique<ScriptExecutor>(1);
+  return *slot.ex;
 }
 
 }  // namespace tadah::hpo

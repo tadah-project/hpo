@@ -37,15 +37,18 @@
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/hpo_mpi.h>         // hpo_rank_suffix
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/nlopt_adapter.h>
 #include <tadah/hpo/optimizer_block.h>
+#include <tadah/hpo/pc_worker_pool.h>
 #include <tadah/hpo/phase_specs.h>
 #include <tadah/hpo/result_drain.h>
 #include <tadah/hpo/run_driver.h>
 #include <tadah/hpo/run_policy.h>
 #include <tadah/hpo/run_stop.h>
 #include <tadah/hpo/runners.h>
+#include <tadah/mlip/parallel.h>
 
 #include "anneal_test_support.h"
 #include "finish_within.h"
@@ -607,6 +610,70 @@ struct HostFixture {
     tadah::hpo::HPOLog& log() const { return tadah::hpo::HPOLog::instance(); }
 };
 
+/* A PC_LAMMPS script in the run's directory: a bcc Ta cell run once with
+ * the candidate potential, the variable `var` its energy per atom (or the
+ * equal-style `formula` given). */
+void write_pe_script(const fs::path& path, const std::string& var,
+                     const std::string& formula = "pe/atoms")
+{
+    std::ofstream(path)
+        << "clear\nunits metal\nboundary p p p\natom_style atomic\n"
+           "lattice bcc 3.30\nregion box block 0 2 0 2 0 2 units lattice\n"
+           "create_box 1 box\ncreate_atoms 1 region box\nmass 1 180.95\n"
+           "pair_style tadah\npair_coeff * * EXTERN Ta\n"
+           "thermo_style custom step pe\nrun 0 post no\n"
+           "variable " << var << " equal " << formula << "\n";
+}
+
+/* The values of column `name` of a history file (outvar.tadah, ...), one
+ * per data row, by the header line's column names. */
+std::vector<double> column_of(const fs::path& path, const std::string& name)
+{
+    std::ifstream in(path);
+    std::string header;
+    REQUIRE(std::getline(in, header));
+    std::istringstream hs(header);
+    std::vector<std::string> names;
+    for (std::string t; hs >> t;) names.push_back(t);
+    const auto it = std::find(names.begin(), names.end(), name);
+    INFO("header of " << path << ": " << header);
+    REQUIRE(it != names.end());
+    const auto col = static_cast<std::size_t>(it - names.begin());
+    std::vector<double> out;
+    for (const auto& row : data_rows(path)) {
+        REQUIRE(row.size() == names.size());
+        out.push_back(std::stod(row[col]));
+    }
+    return out;
+}
+
+/* TADAH_PC_ISOLATION unset while this lives (it overrides the
+ * configuration's PC_ISOLATION), as the case found it afterwards. */
+struct PcIsolationEnvUnset {
+    std::optional<std::string> saved;
+    PcIsolationEnvUnset()
+    {
+        if (const char* e = std::getenv("TADAH_PC_ISOLATION")) saved = e;
+        ::unsetenv("TADAH_PC_ISOLATION");
+    }
+    ~PcIsolationEnvUnset()
+    {
+        if (saved) ::setenv("TADAH_PC_ISOLATION", saved->c_str(), 1);
+        else       ::unsetenv("TADAH_PC_ISOLATION");
+    }
+};
+
+/* The journal lines that contain `what`. */
+std::vector<std::string> lines_with(const std::string& text,
+                                    const std::string& what)
+{
+    std::vector<std::string> out;
+    std::istringstream in(text);
+    for (std::string l; std::getline(in, l);)
+        if (l.find(what) != std::string::npos) out.push_back(l);
+    return out;
+}
+
 }  // namespace
 
 /* ======================================================================
@@ -734,6 +801,195 @@ TEST_CASE("Two runs in one process: each journal carries its own "
                       std::string::npos);
             }
         }
+    }
+}
+
+/* Pins: a run that fails after it started its PC_ISOLATION PROCESS worker
+ * processes stops them: the first run (one PC_LAMMPS line, PC_ISOLATION
+ * PROCESS, THREADS 1) starts its worker ("PC_ISOLATION: PROCESS --
+ * pc_lammps tasks execute in 1 persistent worker processes" in its
+ * journal) and then fails building its host (its validation DBFILE does
+ * not exist: hpo_run throws, the journal has "ERROR" and "startup: "); no
+ * worker pool is up after it, and MLIP has no parallel backend installed.
+ * The second run in the process, the same configuration with an existing
+ * validation file, starts its own worker, returns 0 with a best_pot.tadah,
+ * and leaves no pool up either.
+ * Before the fix: the pool was shut down only after a run that returned,
+ * so it was still up after the failed run (pc_worker_pool_enabled()), and
+ * the second run threw 'pc_worker_pool_init: pool already initialized'. */
+TEST_CASE("Two runs in one process: a run that fails after starting its "
+          "PC_ISOLATION PROCESS workers stops them, and the next run starts "
+          "its own", "[HPO][termination][two_runs][pc_isolation]")
+{
+    PcIsolationEnvUnset no_env;
+    const std::string optimizer = plain_block(
+        "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n    MAXEVAL 2\n"
+        "    SEED 1\n    THREADS 1\n");
+    const std::string root = kRootLines +
+        "PC_LAMMPS --script pe.in --varloss E 0 1\nPC_ISOLATION PROCESS\n";
+    const std::string started =
+        "PC_ISOLATION: PROCESS -- pc_lammps tasks execute in 1 persistent "
+        "worker processes";
+    {
+        TaRun run(optimizer, root);
+        write_pe_script(run.sd.dir / "pe.in", "E");
+        std::ofstream(run.val)
+            << "DBFILE " << (run.sd.dir / "missing.db").string() << "\n";
+        CHECK_THROWS(tadah::hpo::hpo_run(run.ctx));
+        const std::string journal = read_file("hpo_run.log");
+        INFO("first journal:\n" << journal);
+        REQUIRE(lines_with(journal, started).size() == 1u);
+        CHECK(lines_with(journal, "startup: ").size() == 1u);
+        CHECK_FALSE(tadah::hpo::pc_worker_pool_enabled());
+        CHECK_FALSE(tadah::mlip::has_parallel_backend());
+    }
+    {
+        TaRun run(optimizer, root, /*new_process=*/false);
+        write_pe_script(run.sd.dir / "pe.in", "E");
+        int status = -1;
+        CHECK_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        const std::string journal = read_file("hpo_run.log");
+        INFO("second journal:\n" << journal);
+        CHECK(status == 0);
+        CHECK(lines_with(journal, started).size() == 1u);
+        CHECK(fs::exists("best_pot.tadah"));
+        CHECK_FALSE(tadah::hpo::pc_worker_pool_enabled());
+        CHECK_FALSE(tadah::mlip::has_parallel_backend());
+    }
+}
+
+/* Pins: every run gets a worker pool of its own THREADS and stops it when
+ * it ends: two runs in one process, THREADS 2 then 3, each journal says
+ * "ScriptExecutor: <its THREADS> workers = THREADS" once, and after each
+ * run MLIP has no parallel backend installed (a later task of the process,
+ * tadah train after TASK hpo, runs its kernels on OpenMP again).
+ * Before the fix: the backend stayed installed after the run (the journal
+ * lines were right: they printed the THREADS asked for, while the pool kept
+ * the first run's 2 workers -- test_script_executor.cpp's
+ * "init_script_executor gives the executor the width it asks for"). */
+TEST_CASE("Two runs in one process: each run's worker pool has the run's "
+          "THREADS, and the run stops it", "[HPO][termination][two_runs]")
+{
+    for (int threads : {2, 3}) {
+        CAPTURE(threads);
+        TaRun run(plain_block(
+                      "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+                      "    MAXEVAL 4\n    SEED 1\n    THREADS " +
+                      std::to_string(threads) + "\n"),
+                  kRootLines, /*new_process=*/threads == 2);
+        REQUIRE(tadah::hpo::hpo_run(run.ctx) == 0);
+        const std::string journal = read_file("hpo_run.log");
+        INFO("journal:\n" << journal);
+        CHECK(lines_with(journal, "ScriptExecutor: " +
+                                      std::to_string(threads) +
+                                      " workers = THREADS").size() == 1u);
+        CHECK_FALSE(tadah::mlip::has_parallel_backend());
+    }
+}
+
+/* Pins: a second run with a smaller THREADS under PC_ISOLATION PROCESS runs
+ * its PC_LAMMPS tasks on its own pool: the first run (THREADS 3, no
+ * PC_LAMMPS) and then a run with THREADS 1 and three PC_LAMMPS lines (one
+ * worker process) return 0, the second run's journal has no "bad slot"
+ * and no failed task, and every one of its loss.tadah rows is feasible
+ * (below FAILSCORE 1e9).
+ * Before the fix: the second run's tasks ran on the first run's 3 executor
+ * workers, and a task handed to worker 1 or 2 asked the one-worker pool
+ * for a channel it does not have ('PcWorkerPool::execute: bad slot'),
+ * failing its evaluation ("eval-thread caught throw, submitting
+ * FAIL_SCORE"). Which worker takes a task is not fixed; in each of 8 runs
+ * every evaluation failed so, and the run ended "STOPPED -- no evaluation
+ * produced a usable loss" with status 1. */
+TEST_CASE("Two runs in one process: a smaller THREADS under PC_ISOLATION "
+          "PROCESS runs on the run's own pool",
+          "[HPO][termination][two_runs][pc_isolation]")
+{
+    PcIsolationEnvUnset no_env;
+    {
+        TaRun run(plain_block(
+            "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n    MAXEVAL 3\n"
+            "    SEED 1\n    THREADS 3\n"));
+        REQUIRE(tadah::hpo::hpo_run(run.ctx) == 0);
+    }
+    TaRun run(plain_block(
+                  "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+                  "    MAXEVAL 4\n    SEED 1\n    THREADS 1\n"),
+              kRootLines +
+                  "PC_LAMMPS --script pe1.in --varloss E1 0 1\n"
+                  "PC_LAMMPS --script pe2.in --varloss E2 0 1\n"
+                  "PC_LAMMPS --script pe3.in --varloss E3 0 1\n"
+                  "PC_ISOLATION PROCESS\n",
+              /*new_process=*/false);
+    write_pe_script(run.sd.dir / "pe1.in", "E1");
+    write_pe_script(run.sd.dir / "pe2.in", "E2");
+    write_pe_script(run.sd.dir / "pe3.in", "E3");
+    int status = -1;
+    CHECK_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    const std::string journal = read_file("hpo_run.log");
+    INFO("journal:\n" << journal);
+    CHECK(status == 0);
+    CHECK(lines_with(journal, "bad slot").empty());
+    CHECK(lines_with(journal, "task failed").empty());
+    const auto loss = data_rows("loss.tadah");
+    CHECK(loss.size() == 4u);
+    for (const auto& row : loss) {
+        INFO("loss.tadah row " << row.at(0));
+        CHECK(loss_value(row.back()) < kFailScore);
+    }
+}
+
+/* Pins: under PC_ISOLATION THREAD each run's LAMMPS instances end with the
+ * run, and a later run in the process runs its own script: two runs
+ * (THREADS 1, TADAH:RANDOM MAXEVAL 2 SEED 1, one line "PC_LAMMPS --script
+ * pe.in --varloss E 0 1 -log lmp.log"), the second with pe.in rewritten from
+ * "variable E equal pe/atoms" to "variable E equal pe/atoms+1". Each run
+ * returns 0 with 2 outvar.tadah rows and the same candidates (params.tadah
+ * without ITERATION); its LAMMPS log of executor worker 0 (lmp.log.t0) has
+ * LAMMPS's "Total wall time" line, which LAMMPS writes when the instance is
+ * destroyed, once the run has returned; and every E of the second run is
+ * the first run's E of the same row plus 1.
+ * Before the fix: the executor was a function-local static whose workers
+ * lived until process exit, and with them their thread-local LAMMPS
+ * instance and the script it rendered once (PcSlotState, keyed by the
+ * script's name and the line's LAMMPS options): after the first run its
+ * log had no "Total wall time" line, and the second run ran the first
+ * run's pe.in on that instance: its E were the first run's (about 1e-8),
+ * not those plus 1. */
+TEST_CASE("Two runs in one process: under PC_ISOLATION THREAD a run's LAMMPS "
+          "instances end with the run, and the next run runs its own script",
+          "[HPO][termination][two_runs][pc_isolation]")
+{
+    PcIsolationEnvUnset no_env;
+    const std::string optimizer = plain_block(
+        "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n    MAXEVAL 2\n"
+        "    SEED 1\n    THREADS 1\n");
+    const std::string root = kRootLines +
+        "PC_LAMMPS --script pe.in --varloss E 0 1 -log lmp.log\n"
+        "PC_ISOLATION THREAD\n";
+    const std::string lmp_log =
+        "lmp.log" + tadah::hpo::hpo_rank_suffix() + ".t0";
+    std::vector<std::vector<double>> energies;
+    std::vector<std::vector<std::vector<std::string>>> candidates;
+    for (const char* formula : {"pe/atoms", "pe/atoms+1"}) {
+        CAPTURE(formula);
+        TaRun run(optimizer, root, /*new_process=*/energies.empty());
+        write_pe_script(run.sd.dir / "pe.in", "E", formula);
+        int status = -1;
+        CHECK_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const std::string log = read_file(lmp_log);
+        INFO(lmp_log << ":\n" << log);
+        CHECK(log.find("Total wall time") != std::string::npos);
+        energies.push_back(column_of("outvar.tadah", "E"));
+        REQUIRE(energies.back().size() == 2u);
+        auto params = data_rows("params.tadah");
+        for (auto& row : params) row.erase(row.begin());
+        candidates.push_back(params);
+    }
+    REQUIRE(candidates[1] == candidates[0]);
+    for (std::size_t k = 0; k < 2; ++k) {
+        CAPTURE(k, energies[0][k], energies[1][k]);
+        CHECK(energies[1][k] == Approx(energies[0][k] + 1.0).epsilon(1e-12));
     }
 }
 

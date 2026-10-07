@@ -2,6 +2,7 @@
 
 #include <tadah/hpo/script_executor.h>
 
+#include <algorithm>
 #include <atomic>
 #include <mutex>
 #include <numeric>
@@ -120,18 +121,52 @@ TEST_CASE("ScriptExecutor reused across many batches keeps workers warm",
 TEST_CASE("ScriptExecutor needs at least one worker", "[script_executor]") {
   /* THREADS sizes the pool; the parser rejects THREADS 0. A width below
    * one used to become one worker without a word, here and in
-   * init_script_executor. */
+   * init_script_executor. A refused width leaves the process' executor as
+   * it was; its width is read from the executor itself (this read the
+   * width init_script_executor had stored).
+   * Before the fix: passes as well (a pin: the refused width was not
+   * stored). */
   for (int width : {0, -1, -8}) {
     INFO("width " << width);
     CHECK_THROWS_WITH(ScriptExecutor(width),
                       "ScriptExecutor needs at least one worker, got " +
                           std::to_string(width));
-    const int before = tadah::hpo::detail::script_executor_width().load();
+    const int before = tadah::hpo::script_executor().width();
     CHECK_THROWS_WITH(tadah::hpo::init_script_executor(width),
                       "the script executor needs at least one worker "
                       "(THREADS >= 1), got " + std::to_string(width));
-    CHECK(tadah::hpo::detail::script_executor_width().load() == before);
+    CHECK(tadah::hpo::script_executor().width() == before);
   }
   ScriptExecutor one(1);
   CHECK(one.width() == 1);
+}
+
+/* Pins: the process' executor has the width the latest
+ * init_script_executor asked for, as every hpo_run asks for its THREADS:
+ * 2 workers after init_script_executor(2), then 3 after
+ * init_script_executor(3), 1 after init_script_executor(1); each runs a
+ * batch of 50 tasks once each, and the worker ids it hands out are below
+ * its width.
+ * Before the fix: the executor was a function-local static built at its
+ * first use with the width stored then; a later init_script_executor only
+ * stored a width nobody read, so the second "run" got 2 workers, not 3 (a
+ * second TASK hpo ran on the first one's THREADS while its journal reported
+ * its own). */
+TEST_CASE("init_script_executor gives the executor the width it asks for, "
+          "also after an earlier one", "[script_executor]") {
+  for (int width : {2, 3, 1}) {
+    INFO("init_script_executor(" << width << ")");
+    tadah::hpo::init_script_executor(width);
+    auto& ex = tadah::hpo::script_executor();
+    CHECK(ex.width() == width);
+    std::vector<int> ran(50, 0);
+    std::atomic<int> max_wid{-1};
+    ex.run_batch(ran.size(), [&](std::size_t i, int wid) {
+      ran[i] += 1;
+      int seen = max_wid.load();
+      while (wid > seen && !max_wid.compare_exchange_weak(seen, wid)) {}
+    });
+    CHECK(std::all_of(ran.begin(), ran.end(), [](int r) { return r == 1; }));
+    CHECK(max_wid.load() < width);
+  }
 }
