@@ -97,6 +97,14 @@ struct EvalResult
      * of the constant FAILSCORE. See pc_fail_grading.h. */
     PcFailInfo fail;
 
+    /* A PC_LAMMPS simulation of this eval failed: run_lammps sets it on both
+     * of its exits when the eval was aborted (a failed task, a hot value
+     * outside its window, the probe gate) or a task could not start
+     * (CREATE_FAIL, which does not abort). sims_loss then scores the eval
+     * FAIL_SCORE (the graded loss under FAILSCORE_GRADING), whatever the
+     * mean of its terms. */
+    bool sims_failed = false;
+
     /* PC_OBSERVABLE (Tier 1/2) results, one entry per
      * trg_.observables[k]. v_obs_value[k] is the computed observable
      * (e.g. cohesive energy in eV/atom); v_obs_loss[k] is the loss

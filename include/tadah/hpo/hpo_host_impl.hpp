@@ -1701,6 +1701,9 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
    * this run_lammps call => per-eval, so a concurrent eval's abort can neither
    * leak into nor race this one: the fan-out order cannot change the result. */
   std::atomic<bool> eval_aborted{false};
+  /* A task that could not start (CREATE_FAIL): it does not abort the eval,
+   * but the eval has a failed simulation all the same (r.sims_failed). */
+  std::atomic<bool> create_failed{false};
   /* Separate run-local latch so the rate-limited "rejecting" warning fires at
    * most once per eval, decoupled from eval_aborted (a crashed script raises
    * eval_aborted without being a hot-var rejection). Replaces the global
@@ -1781,9 +1784,12 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
        * stays -1 = "did not run"); the create is retried on the next task.
        * Grading: INFRASTRUCTURE failure -- deliberately ungraded (constant
        * top of band C); grading it would chase cluster noise, not theta.
+       * Ungraded or not, the eval has a failed simulation: it scores
+       * FAIL_SCORE under OFF (r.sims_failed, sims_loss).
        * Its message (an instance LAMMPS could not create, a script that
        * could not be rendered) is journalled as for the other failures. */
       journal_task_failure(tres.error_msg);
+      create_failed.store(true, std::memory_order_relaxed);
       if (fg_on) fail_state.record_infra();
       for (const auto& n : lsim.n_outvar) {
         (void)n;
@@ -2311,8 +2317,11 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
    * reject (band A) or a failed wave script (bands B/C/D) raises
    * eval_aborted, so a merge only at the normal exit would drop every
    * graded band. band stays 0 on feasible evals and always when
-   * FAILSCORE_GRADING is OFF. */
+   * FAILSCORE_GRADING is OFF. r.sims_failed is set in both modes: under
+   * OFF it is what makes the eval a failure (sims_loss). */
   auto persist_fail_info = [&]() {
+    r.sims_failed = eval_aborted.load(std::memory_order_relaxed) ||
+                    create_failed.load(std::memory_order_relaxed);
     if (!fg_on) return;
     const PcFailInfo snap = fail_state.snapshot();
     if (snap.band > r.fail.band ||
@@ -2479,6 +2488,16 @@ void HPO_Host<P,R>::sims_loss(Result& r) const
     if (!std::isfinite(r.loss)) r.was_nan_clamped = true;
     r.loss = trg_.FAIL_SCORE;
   }
+
+  /* A failed simulation fails its eval, whatever the mean of the terms
+   * above: FAIL_SCORE (under FAILSCORE_GRADING the graded loss below, as
+   * every such failure records a band). A failed line's terms are its
+   * loss of its --failscore value -- they stay in v_loss, for loss.tadah
+   * -- and the mean with the eval's other terms fell below 0.999 *
+   * FAIL_SCORE, a feasible loss that could become the best, whenever that
+   * loss did not carry the value past FAIL_SCORE: under L1 or TUKEY, or
+   * with a small --failscore. */
+  if (r.sims_failed) r.loss = trg_.FAIL_SCORE;
 
   /* Graded-FAILSCORE assembly: a classified failure replaces the constant
    * (or the launder-prone partial mean) with the banded, monotone L_fail in
