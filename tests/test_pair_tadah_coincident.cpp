@@ -32,6 +32,7 @@
 #include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/runners.h>
+#include <tadah/hpo/hpo_mpi.h>  // hpo_lammps_comm()
 #include <tadah/tadah.lammps/lammps_tadah.h>
 
 #include <atom.h>
@@ -183,7 +184,8 @@ std::vector<std::string> setup_script(double dx) {
 
 LMPPtr make_instance() {
     return LammpsRunner().create_instance(
-        0, {"lmp", "-log", "none", "-screen", "none"});
+        tadah::hpo::hpo_lammps_comm(),
+        {"lmp", "-log", "none", "-screen", "none"});
 }
 
 /* Stages @p pot for `pair_coeff * * EXTERN` (PairTadah::stage_extern, as

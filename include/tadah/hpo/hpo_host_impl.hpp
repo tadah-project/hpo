@@ -4189,7 +4189,16 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
      * the relaxation under the seeded value gives an unphysical
      * observable, `populate_sims_grad_input_from_lammps` returns false
      * via the FAIL_SCORE-clamp path and the orchestrator falls all
-     * theta back to FD per the all-or-nothing contract. */
+     * theta back to FD per the all-or-nothing contract.
+     *
+     * The inputs carry no direct theta term (SimsGradScriptInput::
+     * direct_theta: what theta does at fixed W, through the descriptors
+     * of the energy and the forces): the adjoint snapshot holds no
+     * derivatives with respect to theta. compute_sims_grad_dWchain
+     * therefore sends every theta to FD for a script with observables;
+     * the chain through W alone missed that term. This path runs only
+     * once PC_LAMMPS takes a GRAD_STRATEGY, which startup refuses
+     * (hpo_targets.cpp); the snapshot's theta derivatives come first. */
     std::vector<typename R::LMPPtr> lmp_holders;
     SimsGradProvider sims_grad_provider = nullptr;
 

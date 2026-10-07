@@ -18,6 +18,7 @@
 
 #include <tadah/core/number_format.h>
 #include <tadah/hpo/runners.h>
+#include <tadah/hpo/hpo_mpi.h>  // hpo_lammps_comm()
 
 #include <input.h>
 #include <variable.h>
@@ -33,7 +34,8 @@ namespace {
 LammpsRunner::LMPPtr make_instance() {
   LammpsRunner runner;
   return runner.create_instance(
-      0, std::vector<std::string>{"lmp", "-log", "none", "-screen", "none"});
+      tadah::hpo::hpo_lammps_comm(),
+      std::vector<std::string>{"lmp", "-log", "none", "-screen", "none"});
 }
 
 bool same_bits(double a, double b) {

@@ -9,18 +9,22 @@
 // lambda's body inline on a real LAMMPS instance. Neither exercised
 // HPO_Host's own construction of the lambda.
 //
-// Two cases:
+// Three cases (tag [hpo_host_e2e]):
 //  1. No-LAMMPS path: trg_.LS empty ⇒ sims_grad_provider stays nullptr,
 //     analytical_gradient goes through the descriptor-side path only.
 //     Verifies HPO_Host constructs and operator() populates the trainer
 //     cache that analytical_gradient consumes.
-//  2. PC_LAMMPS path: trg_.LS has one cohesive-E script ⇒ provider is
+//  2. PC_OBSERVABLE path: one cohesive_energy observable ⇒ the
+//     ObservableGradProvider is wired.
+//  3. PC_LAMMPS path: trg_.LS has one cohesive-E script ⇒ provider is
 //     wired; calling analytical_gradient runs the full LAMMPS lifecycle
-//     and folds dO/dW into the analytical gradient.
+//     in-process. Its inputs carry no direct θ term, so the chain sends
+//     every θ to finite differences (pinned below).
 //
-// Both cases are hidden (`[.][!benchmark]`) because they require a real
-// pot fixture and LAMMPS in-process — the same skip-on-no-pot pattern
-// used by `[lammps_hessian]` / `[phase3_pilot]`.
+// The three are hidden (`[.][!benchmark]`), so not discovered: they run in
+// the CTest entry hpo_host_e2e (label bench), `test_hpo "[hpo_host_e2e]"`,
+// one process. They train on the minimal 4-atom Ta structure written
+// below and read no potential file; they need no skip.
 
 #include "catch2/catch.hpp"
 
@@ -259,8 +263,8 @@ TEST_CASE("HPO_Host::analytical_gradient end-to-end on a Trainer with no "
  *
  * Declared BEFORE the PC_LAMMPS case so the LAMMPS in-process global
  * state (left after the PC_LAMMPS test's LMP destructor runs) does
- * not contaminate the PC_OBSERVABLE relaxer. Tests in this file are
- * hidden `[.][!benchmark]` and won't run together by default.
+ * not contaminate the PC_OBSERVABLE relaxer: the three hidden cases run
+ * in one process, in declaration order (CTest hpo_host_e2e).
  *
  * The minimal 4-atom Ta DB and BF_Linear/D2_BP[2,2] pot used in the
  * fixture produces a low-expressivity potential; the relaxer inside
@@ -350,19 +354,15 @@ TEST_CASE("HPO_Host::analytical_gradient end-to-end with one PC_OBSERVABLE "
  * test_hpo_phase3_pilot.cpp). This case verifies that:
  *   - HPO_Host constructs with a non-empty trg_.LS
  *   - operator()'s LAMMPS-eval path executes (PC_LAMMPS scripts run)
- *   - analytical_gradient builds the SimsGradProvider lambda
- *     (verified indirectly: the call returns true, doesn't crash, and
- *     g remains finite)
+ *   - analytical_gradient builds the SimsGradProvider lambda, and the
+ *     chain sends every theta to FD, as the provider's inputs carry no
+ *     direct theta term (below)
  *
- * The fixture's trainer's pot may not produce a numerically reasonable
- * relaxation for arbitrary scripts — the trainer is fit on a single 4-
- * atom Ta cell with D2_BP[2,2]+BF_Linear, which is a low-expressivity
- * potential. If the per-script populate_sims_grad_input_from_lammps
- * returns false (FAIL_SCORE-clamped observable from a bad relax), the
- * all-or-nothing contract routes all theta to FD and analytical_gradient
- * still returns true. The test is structured to accept either outcome:
- * analytical path engaged, or graceful FD fall-back. The wiring is what
- * matters.
+ * The fixture's trainer's pot is fit on a single 4-atom Ta cell with
+ * D2_BP[2,2]+BF_Linear, a low-expressivity potential; the script runs
+ * with it (the provider's script does not fail here: with the chain
+ * through W alone, before the direct theta term, the analytical path
+ * was taken).
  */
 TEST_CASE("HPO_Host::analytical_gradient end-to-end with one PC_LAMMPS "
           "cohesive-E script (Phase 3 follow-up)",
@@ -447,17 +447,26 @@ TEST_CASE("HPO_Host::analytical_gradient end-to-end with one PC_LAMMPS "
     REQUIRE_NOTHROW(f0 = host(p));
     CHECK(std::isfinite(f0));
 
-    /* The real production wiring: analytical_gradient should construct
-     * a SimsGradProvider (because trg_.LS is non-empty) and either fold
-     * sims_grad into g (analytical path) or route to FD (all-or-nothing
-     * fall-back). Either is valid. The test asserts the call returns
-     * cleanly. */
+    /* The real production wiring: analytical_gradient constructs a
+     * SimsGradProvider (trg_.LS is non-empty), which runs the script and
+     * fills the chain's input. That input carries no direct θ term
+     * (SimsGradScriptInput::direct_theta: the adjoint snapshot holds no
+     * derivative with respect to θ), and CGRID2B (1) changes the
+     * descriptors, so compute_sims_grad_dWchain sends every θ to finite
+     * differences and the orchestrator falls back to FD for all of them.
+     * Pins: the call returns true, g is finite, and needs_fd lists every
+     * θ: flat index 0, the one OPTIM dimension.
+     * Before the fix (src/sims_grad.cpp of v1-dev, the chain through W
+     * alone): needs_fd was empty, and the case run alone printed the
+     * diagnostic "analytical=1 | FD-fallback=0": the chain was taken
+     * without the direct θ term. */
     ParamVec g(1);
     std::vector<int> needs_fd;
     bool ok = false;
     REQUIRE_NOTHROW(ok = host.analytical_gradient(p, g, needs_fd));
     REQUIRE(ok);
     CHECK(std::isfinite(g(0)));
+    CHECK(needs_fd == std::vector<int>{0});
 
     Host::reset_globals_for_test();
 }

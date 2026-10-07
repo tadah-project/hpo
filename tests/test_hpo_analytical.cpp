@@ -48,6 +48,7 @@
 #include <cmath>
 #include <cstdint>
 #include <random>
+#include <optional>
 #include <vector>
 
 #if defined(TADAH_ENABLE_OPENMP)
@@ -2607,6 +2608,17 @@ OPTIM CGRID2B (1) 0.0 4.0
  *      contribution). The exact sign/magnitude depends on the live
  *      trainer's dW/dθ and the synthetic descriptor inputs; we assert
  *      the difference is non-zero and finite.
+ *
+ *  The θ here is CGRID2B (1), a descriptor parameter: the observable's
+ *  energy depends on it at fixed W, the direct θ term, which the provider
+ *  gives (SimsGradScriptInput::dg_dtheta, dF_dtheta).
+ *  Pins: with a direct term dg/dθ = 0.25 the gradient is that with 0 plus
+ *  2·w·(v−t)·0.25 = 0.05 (loss_count 1: PC_EMAE, and the stand-in
+ *  LammpsSim has no --varloss); a script whose input has no direct term
+ *  sends every θ to finite differences (g 0, needs_fd every θ).
+ *  Before the fix: the input had no direct term, and the cohesive script
+ *  without one was chained through W alone with needs_fd empty (the case
+ *  asserted that); the case does not compile (the fields do not exist).
  * ------------------------------------------------------------------------ */
 TEST_CASE("compute_analytical_gradient_from_trainer wires the "
           "SimsGradProvider into compute_sims_grad_dWchain (Phase 3.7B)",
@@ -2681,7 +2693,9 @@ OPTIM CGRID2B (1) 0.0 4.0
 
     Eigen::MatrixXd H = Eigen::MatrixXd::Identity(3 * nlocal, 3 * nlocal) * 10.0;
 
-    auto make_input = [&](bool with_observable) {
+    /* direct: the direct θ term dg/dθ of the observable, or none. */
+    auto make_input = [&](bool with_observable,
+                          std::optional<double> direct = 0.0) {
         tadah::hpo::SimsGradScriptInput in;
         in.ctx.nlocal   = nlocal;
         in.ctx.natoms   = natoms;
@@ -2698,6 +2712,13 @@ OPTIM CGRID2B (1) 0.0 4.0
             in.w_weights   = {1.0};
             in.loss_fns    = {tadah::LossFunction(
                                 tadah::LossFunction::Type::L2)};
+        }
+        if (direct) {
+            /* One θ row; the force term is 0 (λ = 0 for the cohesive
+             * energy). */
+            in.direct_theta = true;
+            in.dg_dtheta.assign(in.expressions.size(), *direct);
+            in.dF_dtheta.assign(static_cast<std::size_t>(3 * nlocal), 0.0);
         }
         return in;
     };
@@ -2737,11 +2758,12 @@ OPTIM CGRID2B (1) 0.0 4.0
      * g_anal — the result differs from Case 2 by a measurable amount.
      * Magnitude depends on the live dW/dθ; just assert non-zero diff. */
     int provider_calls_obs = 0;
+    std::optional<double> direct_term = 0.0;
     auto provider_obs =
         [&](std::vector<tadah::hpo::SimsGradScriptInput>& out) {
             ++provider_calls_obs;
             out.clear();
-            out.push_back(make_input(/*with_observable=*/true));
+            out.push_back(make_input(/*with_observable=*/true, direct_term));
             return true;
         };
     std::vector<double> g_obs;
@@ -2758,6 +2780,29 @@ OPTIM CGRID2B (1) 0.0 4.0
      * differs-from-no-observable check is the load-bearing wiring
      * assertion. */
     CHECK(std::abs(g_obs[0] - g_empty[0]) > 1e-12);
+
+    /* Case 3, with a direct θ term: it adds dL/dO · dg/dθ / loss_count. */
+    direct_term = 0.25;
+    std::vector<double> g_direct;
+    std::vector<int>    nfd_direct;
+    REQUIRE(tadah::hpo::compute_analytical_gradient_from_trainer(
+        host, train_stdb, val_stdb, trg, prefs, g_direct, nfd_direct,
+        provider_obs));
+    CHECK(nfd_direct.empty());
+    REQUIRE(g_direct.size() == prefs.size());
+    CHECK(g_direct[0] - g_obs[0] == Approx(2.0 * 1.0 * (0.6 - 0.5) * 0.25));
+
+    /* Case 3, without a direct θ term: unknown, so finite differences for
+     * every θ. */
+    direct_term.reset();
+    std::vector<double> g_unknown;
+    std::vector<int>    nfd_unknown;
+    REQUIRE(tadah::hpo::compute_analytical_gradient_from_trainer(
+        host, train_stdb, val_stdb, trg, prefs, g_unknown, nfd_unknown,
+        provider_obs));
+    REQUIRE(nfd_unknown.size() == prefs.size());
+    CHECK(nfd_unknown[0] == static_cast<int>(prefs[0].flat_idx));
+    CHECK(g_unknown[0] == 0.0);
 
     /* Case 4: provider reports failure ⇒ all-or-nothing fall back to
      * FD (matches Phase 3.5's all-or-nothing contract). */

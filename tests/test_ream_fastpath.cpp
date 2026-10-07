@@ -28,6 +28,7 @@
 #include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/runners.h>
+#include <tadah/hpo/hpo_mpi.h>  // hpo_lammps_comm()
 #include <tadah/tadah.lammps/lammps_tadah.h>
 
 #include <force.h>
@@ -172,7 +173,8 @@ Run run_case(LammpsRunner& runner, bool eamfast, const char* embf0) {
         tadah::core::CoreUserConfigParser().parse(pot_path));
 
     auto lmp = runner.create_instance(
-        0, {"lmp", "-log", "none", "-screen", "none"});
+        tadah::hpo::hpo_lammps_comm(),
+        {"lmp", "-log", "none", "-screen", "none"});
     REQUIRE(lmp != nullptr);
 
     REQUIRE(runner.run_script(lmp, isolated_atom(), pot_ctx));
@@ -274,7 +276,8 @@ std::string log_of_file_load(LammpsRunner& runner, const std::string& pot_path,
     }
     {
         auto lmp = runner.create_instance(
-            0, {"lmp", "-log", log, "-screen", "none"});
+            tadah::hpo::hpo_lammps_comm(),
+            {"lmp", "-log", log, "-screen", "none"});
         REQUIRE(lmp != nullptr);
         REQUIRE(runner.run_script(lmp, script) == expect_ok);
     }   // LAMMPS destroyed: log.lammps flushed and closed
@@ -398,7 +401,8 @@ TEST_CASE("pair_coeff warns when a DM_REAM potential has no EMBF0 line",
             + "_extern.log";
         {
             auto lmp = runner.create_instance(
-                0, {"lmp", "-log", log, "-screen", "none"});
+                tadah::hpo::hpo_lammps_comm(),
+                {"lmp", "-log", log, "-screen", "none"});
             REQUIRE(lmp != nullptr);
             REQUIRE(runner.run_script(lmp, isolated_atom(), pot_ctx));
             REQUIRE(runner.run_script(lmp, isolated_atom(), pot_ctx));
@@ -444,7 +448,8 @@ TEST_CASE("pair_coeff states RHOFORM, and a potential without it fails with "
         const RemoveOnExit rm_log{log};
         {
             auto lmp = runner.create_instance(
-                0, {"lmp", "-log", log, "-screen", "none"});
+                tadah::hpo::hpo_lammps_comm(),
+                {"lmp", "-log", log, "-screen", "none"});
             REQUIRE(lmp != nullptr);
             REQUIRE(runner.run_script(lmp, isolated_atom(), pot_ctx));
             REQUIRE(runner.run_script(lmp, isolated_atom(), pot_ctx));
@@ -482,7 +487,8 @@ TEST_CASE("pair_coeff states RHOFORM, and a potential without it fails with "
         std::string what;
         {
             auto lmp = runner.create_instance(
-                0, {"lmp", "-log", "none", "-screen", "none"});
+                tadah::hpo::hpo_lammps_comm(),
+                {"lmp", "-log", "none", "-screen", "none"});
             REQUIRE(lmp != nullptr);
             try {
                 lmp->input->file(script.c_str());
@@ -507,7 +513,8 @@ TEST_CASE("pair_coeff states RHOFORM, and a potential without it fails with "
         std::string what;
         {
             auto lmp = runner.create_instance(
-                0, {"lmp", "-log", "none", "-screen", "none"});
+                tadah::hpo::hpo_lammps_comm(),
+                {"lmp", "-log", "none", "-screen", "none"});
             REQUIRE(lmp != nullptr);
             for (const auto& line : isolated_atom()) {
                 if (line == "pair_coeff * * EXTERN Ta") break;
@@ -605,7 +612,8 @@ FormRun run_form(LammpsRunner& runner, const char* form, bool eamfast) {
             tadah::core::CoreUserConfigParser().parse(path));
     }
     auto lmp = runner.create_instance(
-        0, {"lmp", "-log", "none", "-screen", "none"});
+        tadah::hpo::hpo_lammps_comm(),
+        {"lmp", "-log", "none", "-screen", "none"});
     REQUIRE(lmp != nullptr);
     REQUIRE(runner.run_script(lmp, rattled_bcc_expanded(), pot_ctx));
     auto* pt = dynamic_cast<LAMMPS_NS::PairTadah*>(lmp->force->pair);
@@ -687,7 +695,8 @@ TEST_CASE("pair_coeff: an element the potential does not have is a LAMMPS "
     std::string what;
     {
         auto lmp = runner.create_instance(
-            0, {"lmp", "-log", log, "-screen", "none"});
+            tadah::hpo::hpo_lammps_comm(),
+            {"lmp", "-log", log, "-screen", "none"});
         REQUIRE(lmp != nullptr);
         try {
             lmp->input->file(script.c_str());
@@ -716,7 +725,8 @@ TEST_CASE("PairTadah::load(Context) keeps a failure's reason for pair_coeff "
         tadah::core::CoreUserConfigParser().parse(pot_path));
     LAMMPS_NS::PairTadah::clear_staged_extern();
     auto lmp = runner.create_instance(
-        0, {"lmp", "-log", "none", "-screen", "none"});
+        tadah::hpo::hpo_lammps_comm(),
+        {"lmp", "-log", "none", "-screen", "none"});
     REQUIRE(lmp != nullptr);
     for (const auto& line : isolated_atom()) {
         if (line == "pair_coeff * * EXTERN Ta") break;

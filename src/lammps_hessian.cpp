@@ -11,6 +11,7 @@
 #include <tadah/tadah.lammps/lammps_tadah.h>
 #include <pair_tadah.h>
 
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -180,6 +181,76 @@ inline void copy_local_forces(LAMMPS_NS::Atom* atom,
     }
 }
 
+/* 3x3 matrices of the box block (row-major). */
+using Mat3 = std::array<std::array<double, 3>, 3>;
+
+/* The edge matrix of a LAMMPS box from its h (xprd, yprd, zprd, yz, xz,
+ * xy): columns a = (xprd, 0, 0), b = (xy, yprd, 0), c = (xz, yz, zprd), so
+ * that x = B lamda + boxlo (Domain::lamda2x). For an orthogonal box LAMMPS
+ * leaves h[3..5] at 0 whatever xy, xz, yz hold. */
+inline Mat3 box_edges(const double* h)
+{
+    return {{ {{ h[0], h[5], h[4] }},
+              {{ 0.0,  h[1], h[3] }},
+              {{ 0.0,  0.0,  h[2] }} }};
+}
+
+inline Mat3 mat3_mul(const Mat3& a, const Mat3& b)
+{
+    Mat3 c{};
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            for (int k = 0; k < 3; ++k)
+                c[i][j] += a[i][k] * b[k][j];
+    return c;
+}
+
+inline Mat3 mat3_inverse(const Mat3& F)
+{
+    const double det =
+        F[0][0] * (F[1][1] * F[2][2] - F[1][2] * F[2][1])
+      - F[0][1] * (F[1][0] * F[2][2] - F[1][2] * F[2][0])
+      + F[0][2] * (F[1][0] * F[2][1] - F[1][1] * F[2][0]);
+    Mat3 inv{};
+    inv[0][0] =  (F[1][1] * F[2][2] - F[1][2] * F[2][1]) / det;
+    inv[0][1] = -(F[0][1] * F[2][2] - F[0][2] * F[2][1]) / det;
+    inv[0][2] =  (F[0][1] * F[1][2] - F[0][2] * F[1][1]) / det;
+    inv[1][0] = -(F[1][0] * F[2][2] - F[1][2] * F[2][0]) / det;
+    inv[1][1] =  (F[0][0] * F[2][2] - F[0][2] * F[2][0]) / det;
+    inv[1][2] = -(F[0][0] * F[1][2] - F[0][2] * F[1][0]) / det;
+    inv[2][0] =  (F[1][0] * F[2][1] - F[1][1] * F[2][0]) / det;
+    inv[2][1] = -(F[0][0] * F[2][1] - F[0][1] * F[2][0]) / det;
+    inv[2][2] =  (F[0][0] * F[1][1] - F[0][1] * F[1][0]) / det;
+    return inv;
+}
+
+/* dE/ds_alpha at a homogeneously strained state of the box, from the pair
+ * virial of that state. The atoms sit at x = F x0 (F = B B0^-1, B the
+ * strained box's edges and B0 the saved box's; the assembler holds the
+ * atoms, ghosts included, in lamda coordinates across the box edit), and
+ * mode alpha moves them along d_alpha x0 (d_alpha = dF/ds_alpha), so
+ *   dE/ds_alpha = sum_i dE/dx_i . (d_alpha x0_i) = -tr(d_alpha F^-1 W)
+ * with W_ca = sum_i x_ic f_ia, the virial LAMMPS accumulates (pair->virial,
+ * order xx, yy, zz, xy, xz, yz; symmetric). At F = I and d = eps_xx this is
+ * -virial[0]; for the iso mode (d = I) -(virial[0] + virial[1] +
+ * virial[2]). */
+inline double strain_derivative(const Mat3& d_alpha, const Mat3& F,
+                                const double* virial)
+{
+    const double W[3][3] = {
+        { virial[0], virial[3], virial[4] },
+        { virial[3], virial[1], virial[5] },
+        { virial[4], virial[5], virial[2] }
+    };
+    const Mat3 Finv = mat3_inverse(F);
+    double tr = 0.0;
+    for (int a = 0; a < 3; ++a)
+        for (int b = 0; b < 3; ++b)
+            for (int c = 0; c < 3; ++c)
+                tr += d_alpha[a][b] * Finv[b][c] * W[c][a];
+    return -tr;
+}
+
 }  // anonymous namespace
 
 Eigen::MatrixXd
@@ -292,45 +363,48 @@ LammpsHessianAssembler::assemble(LAMMPS_NS::LAMMPS* lmp,
      *
      * For each box DOF alpha the strain mode displaces atoms affinely (held
      * in lamda coords across the box edit). H[i*3+k, n_atom_dof + alpha] is
-     * read from the per-atom forces at strain +/-h_strain; the diagonal
-     * H[n_atom_dof + alpha, n_atom_dof + alpha] is read from total pair energy
-     * via E(+h_s) - 2.E(0) + E(-h_s).
+     * read from the per-atom forces at strain +/-h_strain.
      *
-     * Phase 3.7E: off-diagonal box-box terms H[alpha, beta] for alpha!=beta read from
-     * the LAMMPS pair virial (d^2E/deps_alphadeps_beta = -dvirial[alpha]/deps_beta). Mass
-     * conserved: vflag flipped to 1 so virial gets populated; the
-     * existing 12 LAMMPS computes are reused (no extra strain
-     * perturbations).
+     * The box-box block H[alpha, beta] = d^2E/ds_alpha ds_beta, along the
+     * deformations the modes apply (the paths of the cross terms), is the
+     * central difference over s_beta of dE/ds_alpha, which
+     * strain_derivative() reads from the LAMMPS pair virial of each strained
+     * state (-tr(d_alpha F^-1 W), F and d_alpha from the strained boxes as
+     * LAMMPS holds them): the diagonal and the off-diagonal (Phase 3.7E)
+     * alike, from the 2 * box_dofs strained computes the cross terms need
+     * (vflag=1, no extra strain perturbations). The virial is a first
+     * derivative, so its difference over 2 h_strain carries the virial's
+     * round-off over h_strain. The diagonal used to be the energy's second
+     * difference (E(+h) - 2 E(0) + E(-h)) / h^2 along the same path, which
+     * multiplies the energy's round-off by 1/h^2 = 1e10: about 1e-11 eV of
+     * energy noise moved the iso entry of a 16-atom Ta cell by 1e-4
+     * relative (3393.8 eV against 3394.35 eV). The off-diagonal used
+     * -dvirial[alpha]/deps_beta in the Voigt convention, the same for two
+     * normal modes, and without the F^-1 term and the applied shear
+     * otherwise.
      *
      * LAMMPS pair->virial layout is {xx, yy, zz, xy, xz, yz}, but our
-     * Voigt convention here is {xx, yy, zz, yz, xz, xy} so the off-
-     * diagonal slots need a permutation when reading. */
+     * Voigt convention here is {xx, yy, zz, yz, xz, xy}; strain_derivative()
+     * reads the tensor whole. */
     if (box_dofs > 0) {
         /* Single-atom guard: a single atom has no internal Hessian rows
          * to mix with strain; the cross/diagonal terms are still valid. */
         const auto n_strain = static_cast<int>(box_dofs);
 
-        /* Need E(0). Recompute at saved state with energy flag. */
-        compute_clear_and_eval(lmp, pair, /*eflag=*/1, /*vflag=*/0);
-        const double E0 = lmp->force->pair->eng_vdwl + lmp->force->pair->eng_coul;
-
         std::vector<double> F_pe(static_cast<std::size_t>(3 * nlocal), 0.0);
         std::vector<double> F_me(static_cast<std::size_t>(3 * nlocal), 0.0);
 
-        /* Saved virials at +eps_beta / -eps_beta for each beta, indexed by Voigt alpha
-         * (post-permutation). Used after the alpha loop to assemble the
-         * off-diagonal box-box block. Flat row-major: [beta . 6 + v]. */
+        /* Saved virials at +eps_beta / -eps_beta for each beta, in LAMMPS'
+         * order (xx, yy, zz, xy, xz, yz). Used after the alpha loop to
+         * assemble the box-box block. Flat row-major: [beta . 6 + v]. */
         std::vector<double> virial_p(
             static_cast<std::size_t>(n_strain) * 6u, 0.0);
         std::vector<double> virial_m(
             static_cast<std::size_t>(n_strain) * 6u, 0.0);
-
-        /* LAMMPS virial Voigt order -> our Voigt order:
-         *   our[0..2] = LAMMPS[0..2]   (xx, yy, zz)
-         *   our[3]    = LAMMPS[5]      (yz)
-         *   our[4]    = LAMMPS[4]      (xz)
-         *   our[5]    = LAMMPS[3]      (xy) */
-        constexpr int virial_perm[6] = { 0, 1, 2, 5, 4, 3 };
+        /* The edges of each strained box as LAMMPS holds them (an
+         * orthogonal box ignores apply_strain's tilts). */
+        std::vector<Mat3> box_p(static_cast<std::size_t>(n_strain));
+        std::vector<Mat3> box_m(static_cast<std::size_t>(n_strain));
 
         for (int alpha = 0; alpha < n_strain; ++alpha) {
             const StrainBasis eps = (box_dofs == 1)
@@ -348,8 +422,8 @@ LammpsHessianAssembler::assemble(LAMMPS_NS::LAMMPS* lmp,
             dom->x2lamda(n_all);
             apply_strain(dom, box_save, eps, +h_strain);
             dom->lamda2x(n_all);
+            box_p[static_cast<std::size_t>(alpha)] = box_edges(dom->h);
             compute_clear_and_eval(lmp, pair, 1, 1);
-            const double E_p = lmp->force->pair->eng_vdwl + lmp->force->pair->eng_coul;
             copy_local_forces(atom, F_pe);
             for (int v = 0; v < 6; ++v) {
                 virial_p[static_cast<std::size_t>(alpha) * 6u
@@ -372,8 +446,8 @@ LammpsHessianAssembler::assemble(LAMMPS_NS::LAMMPS* lmp,
             dom->x2lamda(n_all);
             apply_strain(dom, box_save, eps, -h_strain);
             dom->lamda2x(n_all);
+            box_m[static_cast<std::size_t>(alpha)] = box_edges(dom->h);
             compute_clear_and_eval(lmp, pair, 1, 1);
-            const double E_m = lmp->force->pair->eng_vdwl + lmp->force->pair->eng_coul;
             copy_local_forces(atom, F_me);
             for (int v = 0; v < 6; ++v) {
                 virial_m[static_cast<std::size_t>(alpha) * 6u
@@ -400,42 +474,40 @@ LammpsHessianAssembler::assemble(LAMMPS_NS::LAMMPS* lmp,
                     H(col_alpha, 3*i + k) = d;
                 }
             }
-
-            /* Diagonal H[alpha, alpha] = d^2E/deps_alpha^2 via 3-point energy stencil. */
-            H(col_alpha, col_alpha) =
-                (E_p - 2.0 * E0 + E_m) / (h_strain * h_strain);
         }
 
-        /* Box-box off-diagonal block (Phase 3.7E). For alpha!=beta:
-         *
-         *   H[alpha, beta] = d^2E/deps_alphadeps_beta = -dvirial[alpha]/deps_beta
-         *
-         * LAMMPS' pair->virial[alpha] = -V.sigma_alpha (compressive-positive
-         * convention: virial[alpha] > 0 under compression). Thus
-         * dE/deps_alpha = V.sigma_alpha = -virial[alpha], and the second derivative is
-         *   H[alpha, beta] = -(virial_perm(alpha)(+eps_beta) - virial_perm(alpha)(-eps_beta)) / (2h).
-         *
-         * Both H[alpha, beta] and H[beta, alpha] computed independently from
-         * different perturbation directions; the trailing symmetrise
-         * pass (H = 1/2(H + H^T)) averages them, picking up off-diagonal
-         * stress-stress symmetry to FP. Skip iso (n_strain == 1: no
-         * box-box off-diagonals to populate). */
-        if (n_strain > 1) {
-            const double inv2hs = 1.0 / (2.0 * h_strain);
+        /* Box-box block: H[alpha, beta] is the central difference over
+         * s_beta of dE/ds_alpha (strain_derivative), the diagonal and the
+         * off-diagonal alike, along the deformation each mode applies: F =
+         * B B0^-1 of the strained box, and d_alpha = (B_alpha(+h) -
+         * B_alpha(-h)) / 2h . B0^-1 (eps_alpha for the iso and normal
+         * modes; for a shear, what apply_strain's upper triangle and LAMMPS
+         * make of it). Both halves come from different perturbation
+         * directions; the trailing symmetrise pass (H = 1/2(H + H^T))
+         * averages them. */
+        const double inv2hs = 1.0 / (2.0 * h_strain);
+        const Mat3 B0_inv = mat3_inverse(box_edges(box_save.h));
+        std::vector<Mat3> d(static_cast<std::size_t>(n_strain));
+        std::vector<Mat3> F_p(static_cast<std::size_t>(n_strain));
+        std::vector<Mat3> F_m(static_cast<std::size_t>(n_strain));
+        for (std::size_t m = 0; m < static_cast<std::size_t>(n_strain); ++m) {
+            F_p[m] = mat3_mul(box_p[m], B0_inv);
+            F_m[m] = mat3_mul(box_m[m], B0_inv);
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j)
+                    d[m][i][j] = (F_p[m][i][j] - F_m[m][i][j]) * inv2hs;
+        }
+        for (int beta = 0; beta < n_strain; ++beta) {
+            const auto b = static_cast<std::size_t>(beta);
+            const double* vp = &virial_p[b * 6u];
+            const double* vm = &virial_m[b * 6u];
             for (int alpha = 0; alpha < n_strain; ++alpha) {
-                const int va = virial_perm[alpha];
-                for (int beta = 0; beta < n_strain; ++beta) {
-                    if (alpha == beta) continue;
-                    const double dv =
-                        virial_p[static_cast<std::size_t>(beta) * 6u
-                               + static_cast<std::size_t>(va)]
-                      - virial_m[static_cast<std::size_t>(beta) * 6u
-                               + static_cast<std::size_t>(va)];
-                    H(n_atom_dof + alpha, n_atom_dof + beta) = -dv * inv2hs;
-                }
+                const auto a = static_cast<std::size_t>(alpha);
+                H(n_atom_dof + alpha, n_atom_dof + beta) =
+                    (strain_derivative(d[a], F_p[b], vp) -
+                     strain_derivative(d[a], F_m[b], vm)) * inv2hs;
             }
         }
-        (void)E0;  // referenced only inside the loop; silence -Wunused.
     }
 
     /* Final state restoration. compute_clear_and_eval after every step

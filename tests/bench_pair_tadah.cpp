@@ -3,10 +3,11 @@
 // Phase 2A.5 microbench gate. Drives pair_tadah::compute on a 256-atom
 // bcc Ta cell and lets a CI step gate PRs on median throughput.
 //
-// The test is tagged [.][!benchmark] so it is hidden by default. To run
-// the bench, opt in via Catch2's --benchmark-samples flag and the tag:
+// The test is tagged [.][!benchmark], so it is hidden (not discovered);
+// the CTest entry hpo_bench_pair_tadah (label bench) runs it with Catch2's
+// default benchmark settings, which takes a few seconds. To run it by hand:
 //
-//   ./build_ceres_check/_deps/tadah.hpo-build/tests/test_hpo \
+//   build_tadah/_deps/tadah.hpo-build/tests/test_hpo \
 //       "[bench][pair_tadah]" --benchmark-samples 50
 //
 // Catch2 v2.13 (this build) ships console/compact/junit/xml reporters
@@ -14,22 +15,18 @@
 // default console reporter prints the bench summary inline; parse from
 // stdout for CI gating, or use --reporter xml --out bench.xml.
 //
-// Pot resolution (bench_pot.h, in order):
-//   1. TADAH_BENCH_POT env var (run-time override).
-//   2. TADAH_BENCH_DEFAULT_POT compile-time macro (set in HPO/tests/
-//      CMakeLists.txt, points at $TADAH_PATH/HPO_test/pot.tadah), when the
-//      file exists.
-// Without either the test case reports itself as skipped (TADAH_SKIP). A
-// pot that is named but cannot be read, parsed or run is a failure.
+// The potential (bench_pot.h): TADAH_BENCH_POT when set (a run-time
+// override), else the one shipped with the tests, tests/data/bench_ta.tadah
+// (the Quick Start Ta potential: RCUT2B 5.3 Å, RCUTMB 5.0 Å). One that
+// cannot be read, parsed or run is a failure; there is no skip.
 //
 // Cell resolution (in order):
 //   1. TADAH_BENCH_CELL_DATA env var: path to a LAMMPS read_data file.
 //   2. Inline default: 4×4×8 bcc lattice at a₀ = 3.301 Å (256 atoms,
 //      box 13.2 × 13.2 × 26.4 Å). Every dimension exceeds 2·rcut for the
-//      default pot (RCUTMB = 6.0 Å), so neighbour lists are
+//      shipped potential (5.3 Å), so neighbour lists are
 //      non-degenerate and the timing reflects realistic pair counts.
 
-#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
 #include "bench_pot.h"
@@ -37,6 +34,7 @@
 #include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/runners.h>
+#include <tadah/hpo/hpo_mpi.h>  // hpo_lammps_comm()
 
 #include <force.h>
 #include <pair.h>
@@ -54,7 +52,7 @@ std::string env_or(const char* name) {
 }
 
 // 256-atom bcc Ta cell at a₀ ≈ 3.301 Å. 4×4×8 supercell — every box
-// dimension exceeds 2·rcut for the default 6-Å pot so the neighbour
+// dimension exceeds 2·rcut for the shipped 5.3-Å pot so the neighbour
 // list isn't degenerate. `run 0` builds the neighbour list and runs an
 // initial compute so subsequent pair->compute calls in the BENCHMARK
 // body time only the hot path.
@@ -98,9 +96,7 @@ std::vector<std::string> data_file_script(const std::string& cell_path) {
 TEST_CASE("pair_tadah microbench gate (256-atom bcc Ta)",
           "[bench][pair_tadah][.][!benchmark]")
 {
-    const hpo_test::BenchPot pot = hpo_test::find_bench_pot();
-    if (pot.path.empty()) TADAH_SKIP(pot.absent_reason);
-    const std::string& pot_path = pot.path;
+    const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
 
     tadah::core::Context pot_ctx;
@@ -109,7 +105,8 @@ TEST_CASE("pair_tadah microbench gate (256-atom bcc Ta)",
 
     LammpsRunner runner;
     auto lmp = runner.create_instance(
-        0, {"lmp", "-log", "none", "-screen", "none"});
+        tadah::hpo::hpo_lammps_comm(),
+        {"lmp", "-log", "none", "-screen", "none"});
     REQUIRE(lmp != nullptr);
 
     const std::string cell_data = env_or("TADAH_BENCH_CELL_DATA");

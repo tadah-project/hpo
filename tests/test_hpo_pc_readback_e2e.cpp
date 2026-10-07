@@ -1619,9 +1619,19 @@ int run_tadah_hpo(
     for (const auto& s : more_scripts) std::ofstream(dir / s.first) << s.second;
     std::ofstream(dir / "config.hpo") << target << "PC_ISOLATION " << mode
                                       << "\n";
+    /* An MPI build's tadah runs under the launcher of one rank
+     * (TADAH_MPIEXEC, set by its CTest entry): started without it, Open
+     * MPI makes its session directory under TMPDIR, and with the
+     * unrendered section's TMPDIR -- a regular file -- Open MPI 5 says so
+     * yet MPI_Init_thread returns MPI_SUCCESS, and tadah crashes at its
+     * first communicator (SIGSEGV, exit status 139) before reading its
+     * configuration. Under the launcher the session directory is the
+     * launcher's, and TMPDIR is tadah's alone, as in the serial build. */
+    const char* launcher = std::getenv("TADAH_MPIEXEC");
     const std::string cmd =
-        "cd '" + dir.string() + "' && env -u TADAH_PC_ISOLATION " + env +
-        " '" + bin +
+        "cd '" + dir.string() + "' && " +
+        (launcher && *launcher ? std::string(launcher) + " " : std::string()) +
+        "env -u TADAH_PC_ISOLATION " + env + " '" + bin +
         "' hpo -c config --hpotarget config.hpo --validation config.val"
         " > tadah.stdout 2> tadah.stderr";
     return std::system(cmd.c_str());
@@ -1931,8 +1941,36 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
              {{"notadir", "a file, not a directory\n"}},
              "TMPDIR=notadir"};
     }
+    /* The MPI build (TADAH_HPO_MPI) has PC_ISOLATION THREAD only: there
+     * the THREAD run is checked alone, its journal names the mode
+     * ("PC_ISOLATION: THREAD (requested; the only mode of the MPI build)"),
+     * and a PROCESS request is the startup error, exit 1; tadah runs under
+     * the launcher of one rank (run_tadah_hpo). Before the fix the MPI
+     * build's THREAD journal had no PC_ISOLATION line (the "deprecated
+     * fallback" warning is the serial build's), this case ran PROCESS there
+     * too, which the MPI build refuses, and, started without the launcher,
+     * tadah crashed in the unrendered section (exit status 139). */
+#ifdef TADAH_HPO_MPI
+    const std::vector<std::string> modes{"THREAD"};
+    const std::string thread_line =
+        "PC_ISOLATION: THREAD (requested; the only mode of the MPI build)";
+    {
+        INFO(name << ", PC_ISOLATION PROCESS in the MPI build");
+        const fs::path dir = sd.dir / (name + "_PROCESS");
+        const int rc = run_tadah_hpo(bin, dir, "PROCESS", head + c.lammps_line,
+                                     c.script, c.more_scripts, c.env);
+        REQUIRE(WIFEXITED(rc));
+        CHECK(WEXITSTATUS(rc) == 1);
+        CHECK_THAT(read_text(dir / "tadah.stderr"),
+                   Catch::Contains("PC_ISOLATION PROCESS is not supported in "
+                                   "the MPI build (TADAH_HPO_MPI)"));
+    }
+#else
+    const std::vector<std::string> modes{"THREAD", "PROCESS"};
+    const std::string thread_line = "PC_ISOLATION: THREAD (deprecated fallback)";
+#endif
     std::vector<fs::path> dirs;
-    for (const std::string mode : {"THREAD", "PROCESS"}) {
+    for (const std::string& mode : modes) {
         INFO(name << ", PC_ISOLATION " << mode);
         const fs::path dir = sd.dir / (name + "_" + mode);
         const int rc = run_tadah_hpo(bin, dir, mode, head + c.lammps_line,
@@ -1943,10 +1981,10 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
         REQUIRE(WIFEXITED(rc));
         CHECK(WEXITSTATUS(rc) == c.exit_status);
         CHECK_THAT(journal,
-                   Catch::Contains("PC_ISOLATION: " + mode +
-                                   (mode == "THREAD"
-                                        ? " (deprecated fallback)"
-                                        : " -- pc_lammps tasks execute in")));
+                   Catch::Contains(mode == "THREAD"
+                                       ? thread_line
+                                       : "PC_ISOLATION: PROCESS -- pc_lammps "
+                                         "tasks execute in"));
         for (const auto& needle : c.journal_has)
             CHECK_THAT(journal, Catch::Contains(needle));
         for (const auto& needle : c.journal_lacks)
@@ -1978,12 +2016,15 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
                           "best_stats.tadah"}) {
         INFO(name << ": " << f);
         CHECK_FALSE(read_text(dirs[0] / f).empty());
-        CHECK(read_text(dirs[0] / f) == read_text(dirs[1] / f));
+        if (dirs.size() > 1)
+            CHECK(read_text(dirs[0] / f) == read_text(dirs[1] / f));
     }
-    for (const char* f : {"outvar.tadah", "best_outvar.tadah"}) {
-        INFO(name << ": " << f << " without IT-TIME/ms");
-        CHECK(lines_without(dirs[0] / f, 1) == lines_without(dirs[1] / f, 1));
-    }
+    if (dirs.size() > 1)
+        for (const char* f : {"outvar.tadah", "best_outvar.tadah"}) {
+            INFO(name << ": " << f << " without IT-TIME/ms");
+            CHECK(lines_without(dirs[0] / f, 1) ==
+                  lines_without(dirs[1] / f, 1));
+        }
 }
 
 /* Pins: two runs in one process, as two TASK hpo blocks of a task file

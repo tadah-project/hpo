@@ -39,6 +39,7 @@
 #include <tadah/core/periodic_table.h>
 #include <tadah/core/registry.h>
 #include <tadah/hpo/runners.h>
+#include <tadah/hpo/hpo_mpi.h>  // hpo_lammps_comm()
 #include <tadah/mlip/atom.h>
 #include <tadah/mlip/descriptors_calc.h>
 #include <tadah/mlip/design_matrix/functions/dm_function_base.h>
@@ -266,7 +267,8 @@ TEST_CASE("pair_style tadah and the MLIP prediction agree on thin triclinic "
             /* LAMMPS */
             LammpsRunner runner;
             auto lmp = runner.create_instance(
-                0, {"lmp", "-log", "none", "-screen", "none"});
+                tadah::hpo::hpo_lammps_comm(),
+                {"lmp", "-log", "none", "-screen", "none"});
             REQUIRE(lmp != nullptr);
             REQUIRE(runner.run_script(lmp, lammps_script(st),
                                       parse_potential(false)));
@@ -357,7 +359,8 @@ TEST_CASE("pair_style tadah: the LAMMPS virial pressure tensor is minus the "
      * step 0, so the variables read it as current after the run. */
     LammpsRunner runner;
     auto lmp = runner.create_instance(
-        0, {"lmp", "-log", "none", "-screen", "none"});
+        tadah::hpo::hpo_lammps_comm(),
+        {"lmp", "-log", "none", "-screen", "none"});
     REQUIRE(lmp != nullptr);
     std::vector<std::string> extra = {
         "compute pv all pressure NULL virial",

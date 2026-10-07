@@ -12,17 +12,14 @@ target_link_libraries(test_hpo PRIVATE
 # tadah.hpo's link interface.
 target_link_libraries(test_hpo PRIVATE tadah_asa_pristine)
 
-# Phase 2A.5 microbench gate. Enable Catch2's BENCHMARK macros and point at
-# a real, fitted Ta potential checked into the worktree so the bench runs
-# out-of-the-box. Override the pot at run time with the TADAH_BENCH_POT env
-# var; override the cell with TADAH_BENCH_CELL_DATA (LAMMPS read_data file).
+# The LAMMPS-driven cases (bench_pot.h) run on the Ta potential shipped
+# with the tests, data/bench_ta.tadah (its header gives its provenance);
+# TADAH_BENCH_POT names another at run time, and TADAH_BENCH_CELL_DATA (a
+# LAMMPS read_data file) the cell of the pair_tadah microbench. Catch2's
+# BENCHMARK macros are enabled for the microbenches.
 target_compile_definitions(test_hpo PRIVATE CATCH_CONFIG_ENABLE_BENCHMARKING)
-if(DEFINED ENV{TADAH_PATH})
-    set(_tadah_bench_default_pot
-        "$ENV{TADAH_PATH}/HPO_test/pot.tadah")
-    target_compile_definitions(test_hpo PRIVATE
-        "TADAH_BENCH_DEFAULT_POT=\"${_tadah_bench_default_pot}\"")
-endif()
+target_compile_definitions(test_hpo PRIVATE
+    "TADAH_BENCH_DEFAULT_POT=\"${CMAKE_CURRENT_SOURCE_DIR}/data/bench_ta.tadah\"")
 
 # Worked examples (HPO/examples). test_examples_parse.cpp gives every
 # examples/*/config.hpo a test case of its own: the list is generated here,
@@ -148,6 +145,44 @@ foreach(_group IN LISTS _hpo_e2e_groups)
         TIMEOUT 600)
 endforeach()
 
+# LAMMPS-driven cases: hidden tags (`[.][!benchmark]`), each group one
+# entry -- a process -- of its own; the first three on the shipped
+# potential (data/bench_ta.tadah, bench_pot.h). `ctest -L bench` runs them;
+# they take a few seconds each and run in the full suite.
+#   hpo_lammps_hessian    test_lammps_hessian.cpp: the 4-atom bcc Ta
+#                         Hessian (symmetry, acoustic modes, an H.v probe,
+#                         the iso and Voigt-6 box blocks, Tikhonov, the
+#                         adjoint snapshot) and the vflag=1 microbench; the
+#                         two LAMMPS-free cases of the file are discovered
+#   hpo_phase3_pilot      test_hpo_phase3_pilot.cpp: the PC_LAMMPS adjoint
+#                         chain on real relaxations (closed-form cohesive
+#                         energy, dvirial_dW against finite differences,
+#                         dlx/dW against re-relaxed finite differences, the
+#                         SimsGradProvider body with and without a hot
+#                         variable)
+#   hpo_bench_pair_tadah  bench_pair_tadah.cpp: pair_tadah::compute on 256
+#                         atoms (Catch2 BENCHMARK)
+#   hpo_host_e2e          test_hpo_host_e2e.cpp: HPO_Host's analytical
+#                         gradient with no PC_LAMMPS line, with a
+#                         PC_OBSERVABLE and with a PC_LAMMPS script run in
+#                         process (its own 4-atom training structure; no
+#                         potential file)
+# With the bump-gate case of bumpgate_e2e above, every hidden [!benchmark]
+# case has an entry.
+add_test(NAME hpo_lammps_hessian
+    COMMAND test_hpo "[lammps_hessian][.]" --warn NoTests)
+add_test(NAME hpo_phase3_pilot
+    COMMAND test_hpo "[phase3_pilot],[phase3_orchestrator]" --warn NoTests)
+add_test(NAME hpo_bench_pair_tadah
+    COMMAND test_hpo "[bench][pair_tadah]" --warn NoTests)
+add_test(NAME hpo_host_e2e
+    COMMAND test_hpo "[hpo_host_e2e]" --warn NoTests)
+set_tests_properties(hpo_lammps_hessian hpo_phase3_pilot hpo_bench_pair_tadah
+                     hpo_host_e2e
+    PROPERTIES
+        LABELS "hpo;bench"
+        TIMEOUT 300)
+
 # End-to-end cases that run the built `tadah` executable, named by the
 # TADAH_BINARY environment variable (test_hpo_fixweight_e2e.cpp and
 # test_hpo_pc_readback_e2e.cpp, tag [tadah_cli]). Each is a hidden tag
@@ -157,7 +192,16 @@ endforeach()
 # build that has the `tadah` executable target (Tadah.MLIP, which adds this
 # directory) the entry sets TADAH_BINARY to it, so the case runs; in one
 # without it (a standalone HPO build) TADAH_BINARY comes from the
-# environment of ctest, if at all.
+# environment of ctest, if at all. In an MPI build (TADAH_HPO_MPI)
+# TADAH_MPIEXEC is the launcher of one rank ("<MPIEXEC_EXECUTABLE> -n 1"),
+# through which a case that changes the environment Open MPI starts in
+# (TMPDIR) runs `tadah` (test_hpo_pc_readback_e2e.cpp).
+set(_hpo_tadah_cli_env
+    "$<$<TARGET_EXISTS:tadah>:TADAH_BINARY=$<TARGET_FILE:tadah>>")
+if(TADAH_HPO_MPI)
+    list(APPEND _hpo_tadah_cli_env
+        "TADAH_MPIEXEC=${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1")
+endif()
 set(_hpo_tadah_cli_cases seed_anchor_warm seed_anchor_nlopt durable_exit
                          pc_readback pc_lammps_local_search)
 foreach(_case IN LISTS _hpo_tadah_cli_cases)
@@ -167,8 +211,7 @@ foreach(_case IN LISTS _hpo_tadah_cli_cases)
         LABELS "hpo;e2e"
         TIMEOUT 600
         SKIP_REGULAR_EXPRESSION "${TADAH_TEST_SKIP_REGULAR_EXPRESSION}"
-        ENVIRONMENT
-            "$<$<TARGET_EXISTS:tadah>:TADAH_BINARY=$<TARGET_FILE:tadah>>")
+        ENVIRONMENT "${_hpo_tadah_cli_env}")
 endforeach()
 
 # Registry drift gate: the checked-in anneal_keys_gen.h must match what the
@@ -276,6 +319,55 @@ if(TADAH_HPO_MPI)
     set_tests_properties(hpo_anneal_mpi_matrix PROPERTIES
         LABELS "anneal;mpi"
         TIMEOUT 180)
+
+    # A signal that one rank receives ends every rank as a signal stop
+    # (mpi/test_signal_mpi.cpp): one entry per scenario, each run at 1, 2
+    # and 4 ranks (mpi/run_signal_mpi.cmake.in); CORE's stop flag is never
+    # lowered, so a scenario is a process of its own.
+    add_executable(test_hpo_signal_mpi mpi/test_signal_mpi.cpp)
+    target_link_libraries(test_hpo_signal_mpi PRIVATE
+        tadah.core tadah.mlip tadah.hpo MPI::MPI_CXX)
+    configure_file(
+        mpi/run_signal_mpi.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/run_signal_mpi.cmake
+        @ONLY)
+    foreach(_scenario pt_seed pt_t0 pt_pass2 pt_jitter pt_init pt_rung
+                      pa_seed pa_t0 pa_init pa_sweep)
+        add_test(NAME hpo_mpi_signal_${_scenario}
+            COMMAND ${CMAKE_COMMAND}
+                -DTEST_EXE=$<TARGET_FILE:test_hpo_signal_mpi>
+                -DSCENARIO=${_scenario}
+                -P ${CMAKE_CURRENT_BINARY_DIR}/run_signal_mpi.cmake)
+        set_tests_properties(hpo_mpi_signal_${_scenario} PROPERTIES
+            LABELS "mpi;shutdown"
+            TIMEOUT 400)
+    endforeach()
+
+    # Multi-rank `tadah hpo` end to end (mpi/hpo_mpi_e2e.py): the RESTART
+    # and gradient-search refusals, the LAMMPS fast kernels, the density
+    # gates and the density report on 1 and 2 ranks. The cases run the
+    # built `tadah` (Skipped, 77, in a build without it). Every argument is
+    # one --key=value token: MLIP's add_test() drops an empty argument.
+    # The launcher's flags as one shell-quoted string each (no ';').
+    string(REPLACE ";" " " _mpi_preflags "${MPIEXEC_PREFLAGS}")
+    string(REPLACE ";" " " _mpi_postflags "${MPIEXEC_POSTFLAGS}")
+    foreach(_case restart_refusal gradient_refusal eamfast rhogates)
+        add_test(NAME hpo_mpi_e2e_${_case}
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/mpi/hpo_mpi_e2e.py
+                --case=${_case}
+                --mpiexec=${MPIEXEC_EXECUTABLE}
+                --numproc-flag=${MPIEXEC_NUMPROC_FLAG}
+                "--preflags=${_mpi_preflags}"
+                "--postflags=${_mpi_postflags}"
+                "--tadah=$<$<TARGET_EXISTS:tadah>:$<TARGET_FILE:tadah>>"
+                --examples=${CMAKE_CURRENT_SOURCE_DIR}/../examples
+                --workdir=${CMAKE_CURRENT_BINARY_DIR}/hpo_mpi_e2e)
+        set_tests_properties(hpo_mpi_e2e_${_case} PROPERTIES
+            LABELS "mpi;e2e"
+            TIMEOUT 600
+            SKIP_RETURN_CODE 77)
+    endforeach()
 endif()
 
 # Integration matrix — opt-in via `ctest -L slow`. Requires a bundle

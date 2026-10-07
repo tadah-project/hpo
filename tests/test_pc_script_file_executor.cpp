@@ -42,6 +42,7 @@
 #include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/lammps_sim.h>
+#include <tadah/hpo/hpo_mpi.h>  // hpo_lammps_comm()
 #include <tadah/hpo/pc_task_exec.h>
 #include <tadah/hpo/runners.h>
 #include <tadah/hpo/script_file.h>
@@ -110,7 +111,7 @@ LammpsRunner::LMPPtr make_instance(
     std::vector<std::string> invar =
         {"lmp", "-log", "none", "-screen", "none"};
     invar.insert(invar.end(), extra.begin(), extra.end());
-    return runner.create_instance(0, invar);
+    return runner.create_instance(tadah::hpo::hpo_lammps_comm(), invar);
 }
 
 double getd(const LammpsRunner::LMPPtr& lmp, const char* name) {
