@@ -7,6 +7,8 @@
 // starts with a single '-' (src/lammps.cpp at the pinned commit), so an
 // option that starts with "--" and is not one of HPO's is a typo: it is an
 // error naming HPO's options, not an argument every LAMMPS run rejects.
+// LAMMPS judges the single-dash ones when the line is read: one it refuses
+// is an error with LAMMPS' message.
 
 #include "catch2/catch.hpp"
 
@@ -129,17 +131,52 @@ TEST_CASE("PC_LAMMPS: an unknown -- option is an error naming HPO's options",
  * HPO adds (-log is the user's here, so HPO adds none). LAMMPS judges its
  * own options: HPO keeps no copy of LAMMPS's option table.
  * Before the fix: passes as well (a pin of the arguments the new "--"
- * check must leave alone). */
+ * check must leave alone). The options were "-sf omp -var x 1 2 -log
+ * none" until LAMMPS judged them when the line is read (the next case): a
+ * LAMMPS built without the OPENMP package, as this test's may be, cannot
+ * start with -sf omp, so they are now options every build starts with. */
 TEST_CASE("PC_LAMMPS: single-dash options and their values go to LAMMPS",
           "[HPO][lammps_sim][parse]")
 {
     TempScript s;
     std::string cmd = "--script " + s.path +
-                      " --varloss E 1 1 -sf omp -var x 1 2 -log none";
+                      " --varloss E 1 1 -echo none -var x 1 2 -log none";
     tadah::hpo::LammpsSim sim(cmd, "1", 1.0e6, tadah::LossFunction{});
     REQUIRE_FALSE(sim.invar.empty());
     const std::vector<std::string> expected = {
-        sim.invar.front(), "-sf", "omp", "-var", "x", "1", "2", "-log", "none",
-        "-screen", "none", "-var", "maxtime", "1 every 1"};
+        sim.invar.front(), "-echo", "none", "-var", "x", "1", "2", "-log",
+        "none", "-screen", "none", "-var", "maxtime", "1 every 1"};
     CHECK(sim.invar == expected);
+}
+
+/* Pins: a single-dash option LAMMPS refuses is an error when the line is
+ * read, with LAMMPS' own message after "PC_LAMMPS: LAMMPS cannot start
+ * with this line's command-line options: " (on a probe line
+ * "PC_FAILPROBE: ..."), here the typo -sff ("ERROR: Invalid command-line
+ * argument: -sff (...)"). LAMMPS judges them: HPO keeps no list of
+ * its options, and the instance it judges them with is the one the startup
+ * check of the script's variables creates.
+ * Before the fix: that instance's failure was dropped (the check fell back
+ * to reading the script as text), the line was accepted, and every
+ * evaluation then failed to create its LAMMPS instance; sim_error() is ""
+ * in every case. */
+TEST_CASE("PC_LAMMPS: a command-line option LAMMPS refuses is an error when "
+          "the line is read", "[HPO][lammps_sim][parse]")
+{
+    TempScript s;
+    const std::string head = "--script " + s.path + " ";
+    const std::string cannot_start =
+        ": LAMMPS cannot start with this line's command-line options: ";
+    struct Case { std::string cmd; bool failprobe; std::string message; };
+    for (const auto& c : std::vector<Case>{
+             {head + "--varloss E 1 1 -sff omp", false,
+              "PC_LAMMPS" + cannot_start +
+                  "ERROR: Invalid command-line argument: -sff ("},
+             {head + "--outvar S -sff omp", true,
+              "PC_FAILPROBE" + cannot_start +
+                  "ERROR: Invalid command-line argument: -sff ("}}) {
+        INFO(c.cmd);
+        CHECK_THAT(sim_error(c.cmd, c.failprobe),
+                   Catch::StartsWith(c.message));
+    }
 }

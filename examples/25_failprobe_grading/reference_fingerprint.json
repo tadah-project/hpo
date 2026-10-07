@@ -42,7 +42,7 @@
   },
   "best_ermse_meV_per_atom": 19.27,
   "status_accepted": [
-    "COMPLETED"
+    "TADAH:RANDOM: MAXEVAL reached"
   ],
   "nan_clampings_max": 0,
   "walltime_hint": "2.4s",

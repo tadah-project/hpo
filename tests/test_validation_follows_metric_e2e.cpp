@@ -163,19 +163,6 @@ struct ScratchDir {
     }
 };
 
-/* A trainer built for this host: the thread-local trainer cache may still
- * hold another host's model. */
-struct ForceRebuildGuard {
-    bool restore;
-    ForceRebuildGuard() {
-        restore = std::getenv("TADAH_HPO_FORCE_REBUILD") == nullptr;
-        if (restore) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1);
-    }
-    ~ForceRebuildGuard() {
-        if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD");
-    }
-};
-
 /* hpo_run.log of a host evaluated outside hpo_run(), in a temporary file,
  * read back after finish(). */
 struct JournalFile {
@@ -757,7 +744,6 @@ EvalOutcome evaluate_once(Context ctx, const fs::path& hpo_cfg,
                           bool has_train_db, std::size_t n_train,
                           std::size_t n_val) {
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     HPOTargets trg(ctx, hpo_cfg.string());
     REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, has_train_db, true));
     EvalOutcome out;
@@ -804,7 +790,6 @@ RunStart start_pinned_run(const fs::path& val_cfg, const fs::path& hpo_cfg) {
     Host::reset_globals_for_test();
     RunStart out;
     {
-        ForceRebuildGuard rebuild;
         Context ctx = pinned_context(val_cfg, hpo_cfg);
         try {
             out.status = tadah::hpo::hpo_run(ctx);
@@ -1626,7 +1611,6 @@ TEST_CASE("valmetric e2e: the analytical gradient covers PC_FRMSE with "
                            << kTrainedOptim;
 
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     Context ctx = trained_context(kBLR, FitSwitches{false, false}, train_db,
                                   val_cfg, hpo_cfg);
     JournalFile j;
@@ -1741,7 +1725,6 @@ TEST_CASE("valmetric e2e: the analytical gradient of PC_FRMSE averages the "
                            << kTrainedOptim;
 
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     Context ctx = trained_context(kBLR, FitSwitches{false, false}, train_db,
                                   val_cfg, hpo_cfg);
     JournalFile j;
@@ -1873,7 +1856,6 @@ TEST_CASE("valmetric e2e: the journal states what training fits and what "
     Host::reset_globals_for_test();
     std::string journal;
     {
-        ForceRebuildGuard rebuild;
         ScratchDir sd;
         const fs::path hpo_cfg = sd.dir / "config.hpo";
         Context ctx;

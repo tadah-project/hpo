@@ -14,6 +14,8 @@
 #include <cstdlib>
 #include <tadah/models/descriptors/d_base.h>
 #include <tadah/models/descriptors/d_mjoin.h>
+#include <tadah/core/blueprint_parser.h>
+#include <tadah/core/blueprint_validator.h>
 #include <tadah/core/registry.h>
 #include <tadah/core/number_format.h>
 #include <tadah/hpo/loss_function.h>
@@ -264,6 +266,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
    * sentinel (e.g. the ANNEAL T0 calibration excludes FAILSCORE
    * probes from its statistics). */
   spec.failscore = FAIL_SCORE;
+  spec.failscore_grading = FAILSCORE_GRADING;
 
   /* ---------- NOISE_AUTO: heuristic for finite-difference fd_step ---
    *
@@ -1569,6 +1572,17 @@ void HPOTargets::read(const std::string& fn)
      * difference dtheta inside dlib::find_min and never asks the host
      * for a full gradient vector.
      *
+     * A block is refused when it asks the host for gradients
+     * (obtains_gradients), not for the D of its name: NLopt's MLSL and
+     * AUGLAG evaluate their own points without a gradient, and their local
+     * search decides (mlsl.c, auglag.c). With an INNER block that block
+     * decides, and is checked as a block of its own (its message names
+     * its optimiser); without one, NLopt's default local optimiser
+     * decides -- LD_MMA for GD_MLSL, GD_MLSL_LDS, LD_AUGLAG and
+     * LD_AUGLAG_EQ -- and the message names it. GD_MLSL* and LD_AUGLAG*
+     * with a derivative-free INNER block used to be refused for their D
+     * although they take no gradient.
+     *
      * Also reject any explicit GRAD_STRATEGY={NUMERICAL,HYBRID,
      * ANALYTICAL} when PC_LAMMPS is present -- these tags only make
      * sense in the PC_OBSERVABLE world post-2026-05-13. */
@@ -1587,17 +1601,31 @@ void HPOTargets::read(const std::string& fn)
             const bool dlib_bfgs_exception =
                 (sp.lib == "DLIB" && sp.algo == "BFGS");
             if (dlib_bfgs_exception) return;
-            const auto& caps = optimizer_caps(sp);
-            if (caps.is_gradient_based) {
+            if (!obtains_gradients(sp)) return;
+            const std::string requires_free =
+                " PC_LAMMPS requires a gradient-free optimiser (NLOPT "
+                "GN_*/LN_*, TADAH RANDOM/GRID/ANNEAL). The only "
+                "gradient-based exception is DLIB:BFGS (uses "
+                "per-theta-per-iter dtheta, not a full gradient).";
+            if (optimizer_caps(sp).accepts_inner) {
+                /* An MLSL or AUGLAG that takes a gradient for its local
+                 * search: an INNER block's is refused at that block. */
+                if (sp.inner) return;
+                /* obtains_gradients: there is a default local search. */
+                const OptimizerSpec local = inner_run_spec(sp).value();
                 throw std::runtime_error(
                     std::string("--hpotarget defines PC_LAMMPS but ") + tag
                     + " optimiser " + sp.lib + ":" + sp.algo +
-                    " is gradient-based. PC_LAMMPS requires a "
-                    "gradient-free optimiser (NLOPT GN_*/LN_*, "
-                    "TADAH RANDOM/GRID/ANNEAL). The only gradient-based "
-                    "exception is DLIB:BFGS (uses per-theta-per-iter "
-                    "dtheta, not a full gradient).");
+                    " takes a gradient: NLopt's MLSL and AUGLAG take one for "
+                    "their local search, and NLopt's default local "
+                    "optimiser, " + local.lib + ":" + local.algo +
+                    ", is gradient-based; an INNER block with a "
+                    "derivative-free one takes none." + requires_free);
             }
+            throw std::runtime_error(
+                std::string("--hpotarget defines PC_LAMMPS but ") + tag
+                + " optimiser " + sp.lib + ":" + sp.algo +
+                " is gradient-based." + requires_free);
         };
     if (!LS.empty())
         for (const auto& b : optimiser_blocks)
@@ -1687,6 +1715,42 @@ std::string HPOTargets::optim_discrete_index_error(const std::string& key,
            "the rcond M of options 1 and 3, is continuous: OPTIM OALGO (2) "
            "<low> <high>.";
   return "";
+}
+
+std::string HPOTargets::optim_internal_key_error(const std::string& key) {
+  const std::string k = core::to_upper(key);
+  if (core::BlueprintParser::getInternalKeysMapRef().count(k) == 0) return "";
+  return "OPTIM " + k + " is not a valid search target: " + k +
+         " is an internal key, a value tadah computes itself (no "
+         "configuration sets it, so no evaluation can take a candidate "
+         "value of it).";
+}
+
+std::string HPOTargets::optim_integer_index_error(
+    const std::string& key, const std::vector<std::string>& config,
+    std::size_t pos, std::size_t index) {
+  const std::string k = core::to_upper(key);
+  const auto& keys = core::BlueprintParser::getKeysMapRef();
+  const auto it = keys.find(k);
+  if (it == keys.end() || it->second.value_type.empty() || pos >= config.size())
+    return "";
+  /* The key's tokens as they are match one of its formats, but not with
+   * the value at pos replaced by a fraction: no format takes a fraction
+   * there. */
+  const std::vector<std::string>& formats = it->second.value_type;
+  std::vector<std::string> fraction = config;
+  fraction[pos] = "0.5";
+  if (!core::BlueprintValidator::validateOnce(formats, core::join(config)) ||
+      core::BlueprintValidator::validateOnce(formats, core::join(fraction)))
+    return "";
+  std::string takes;
+  for (const std::string& f : formats)
+    takes += (takes.empty() ? "" : " or ") + f;
+  return "OPTIM " + k + " (" + core::to_string(index) +
+         ") is not a valid search target: value " + core::to_string(index) +
+         " of " + k + " is an integer (" + k + " takes " + takes +
+         "), a discrete value rather than a continuous parameter; set it in "
+         "the -c potential/configuration.";
 }
 
 const std::vector<std::string>& HPOTargets::density_gate_keys() {
@@ -1831,14 +1895,26 @@ void HPOTargets::bind_space_recursive() {
     sub->bind_space(space_);
     sub->scale     = spec.scale;
     sub->failscore = spec.failscore;
+    sub->failscore_grading = spec.failscore_grading;
     if (sub->inner) {
       sub->inner->bind_space(space_);
       sub->inner->scale     = spec.scale;
       sub->inner->failscore = spec.failscore;
+      sub->inner->failscore_grading = spec.failscore_grading;
     }
   };
   bind(spec.inner.get());
   bind(spec.prestage.get());
+}
+
+void HPOTargets::set_failscore_grading(bool on) {
+  FAILSCORE_GRADING = on;
+  spec.failscore_grading = on;
+  for (OptimizerSpec* sub : {spec.inner.get(), spec.prestage.get()}) {
+    if (!sub) continue;
+    sub->failscore_grading = on;
+    if (sub->inner) sub->inner->failscore_grading = on;
+  }
 }
 
 void HPOTargets::process_optim_config(std::istringstream& iss,
@@ -1873,6 +1949,10 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
   /* Structure keys, also before context.size(k): RHOFORM has no blueprint
    * default, so size() would log an ERROR and throw a generic message. */
   if (const std::string e = optim_structure_key_error(k); !e.empty())
+    throw std::runtime_error(e);
+  /* Internal keys, before context.size(k), which would materialise the
+   * blueprint default into the run context. */
+  if (const std::string e = optim_internal_key_error(k); !e.empty())
     throw std::runtime_error(e);
 
   Opti& omap = optimap[k];
@@ -2088,6 +2168,13 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
 
   for (std::size_t j = 0; j < user_indices.size(); ++j) {
     const size_t ui = user_indices[j];
+    {
+      const size_t i = ui_offset(omap.config, ui);
+      if (const std::string e =
+              optim_integer_index_error(k, omap.config, i, typed_indices[j]);
+          !e.empty())
+        throw std::runtime_error(e);
+    }
     try {
       size_t i = ui_offset(omap.config, ui);
       if (i>=s) throw std::runtime_error("Out of bound index: " + core::to_string(ui));

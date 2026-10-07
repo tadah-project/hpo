@@ -172,7 +172,8 @@ TEST_CASE("OptimizerCaps: backend_refusal names the refused backends, and "
           "[HPO][caps][refused]")
 {
     /* Pins: backend_refusal() returns the reason for (NLOPT,
-     * LN_NEWUOA_BOUND) only -- the library is part of the key -- and
+     * LN_NEWUOA_BOUND) -- and the other refused backends, below -- but for
+     * no registered one -- the library is part of the key -- and
      * reject_refused_backend() throws "LIB:ALGO is refused: <reason>",
      * with "<where>: " in front when given, the text optimizer_caps()
      * throws; every algorithm NLopt names is either registered or refused,
@@ -211,4 +212,56 @@ TEST_CASE("OptimizerCaps: backend_refusal names the refused backends, and "
           filter_optimizer_caps([](const OptimizerCaps& c) {
               return c.lib == "NLOPT";
           }).size());
+}
+
+/* NLopt 2.10 names NLOPT_LD_LBFGS_NOCEDAL (nlopt_algorithm_to_string, the
+ * name the caps registry registers each NLopt algorithm under) but does not
+ * implement it: nlopt_optimize() returns NLOPT_INVALID_ARGS for it (its
+ * algorithm switch has no case for it, optimize.c), so every HPO run of it
+ * ended "FAILED -- nlopt invalid argument" after its setup. The
+ * registry-wide end-status test (test_hpo_termination.cpp) runs every
+ * registered backend and found it.
+ * Pins: NLopt refuses it -- so the refusal follows NLopt, and an NLopt that
+ * implements it fails here --; HPO refuses it like LN_NEWUOA_BOUND:
+ * backend_refusal() says NLopt does not implement it and names
+ * NLOPT:LD_LBFGS, the caps lookup throws "NLOPT:NLOPT_LD_LBFGS_NOCEDAL is
+ * refused: <reason>", no caps list offers it, and the ALGO help says
+ * REFUSED.
+ * Before the fix: registered, with no refusal; the lookup succeeded. */
+TEST_CASE("OptimizerCaps: NLOPT_LD_LBFGS_NOCEDAL, which NLopt does not "
+          "implement, is refused", "[HPO][caps][refused]")
+{
+    nlopt_opt opt = nlopt_create(NLOPT_LD_LBFGS_NOCEDAL, 1);
+    REQUIRE(opt != nullptr);
+    const auto square = [](unsigned, const double* x, double* g, void*) {
+        if (g) g[0] = 2.0 * x[0];
+        return x[0] * x[0];
+    };
+    nlopt_set_min_objective(opt, square, nullptr);
+    nlopt_set_maxeval(opt, 10);
+    double x = 0.5, f = 0.0;
+    CHECK(nlopt_optimize(opt, &x, &f) == NLOPT_INVALID_ARGS);
+    nlopt_destroy(opt);
+
+    const char* reason = backend_refusal("NLOPT", "NLOPT_LD_LBFGS_NOCEDAL");
+    REQUIRE(reason != nullptr);
+    CHECK_THAT(std::string(reason),
+               Catch::Contains("NLopt 2.10 does not implement it") &&
+               Catch::Contains("Use NLOPT:LD_LBFGS"));
+    CHECK_THROWS_WITH(optimizer_caps("NLOPT", "NLOPT_LD_LBFGS_NOCEDAL"),
+                      std::string("NLOPT:NLOPT_LD_LBFGS_NOCEDAL is refused: ") +
+                          reason);
+    CHECK(find_optimizer_caps("NLOPT", "NLOPT_LD_LBFGS_NOCEDAL") == nullptr);
+    CHECK(filter_optimizer_caps([](const OptimizerCaps& c) {
+              return c.algo == "NLOPT_LD_LBFGS_NOCEDAL";
+          }).empty());
+
+    std::ostringstream out;
+    std::streambuf* const old = std::cout.rdbuf(out.rdbuf());
+    OptimizerSpec::print_caps("NLOPT", "NLOPT_LD_LBFGS_NOCEDAL");
+    std::cout.rdbuf(old);
+    CHECK_THAT(out.str(),
+               Catch::StartsWith("Options for NLOPT:NLOPT_LD_LBFGS_NOCEDAL\n"
+                                 "   * REFUSED: ") &&
+               Catch::Contains("Use NLOPT:LD_LBFGS"));
 }

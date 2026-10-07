@@ -89,7 +89,7 @@ bool obtains_gradients(const OptimizerSpec& spec);
  * local search from each of many points, GD_STOGO and the other global
  * searches sample the box -- and for an AUGLAG without a local search
  * (refused at startup: require_inner_backend()). run_nlopt() stops a
- * gradient-based one at a starting point without a finite gradient, and
+ * gradient-based one at a starting point without a usable gradient, and
  * reads its MAXEVAL and MAXTIME, which AUGLAG does not report. */
 std::optional<OptimizerSpec> single_local_search(const OptimizerSpec& spec);
 

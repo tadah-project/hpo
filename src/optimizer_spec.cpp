@@ -204,11 +204,13 @@ static void print_dlib_caps(std::ostream& os, const std::string& algo)
     else if(algo=="BFGS")
         os<<"   * MAXEVAL      (objective evaluations, the finite-difference\n"
             "                   ones included)\n"
-            "   * FTOL_ABS     (objective-delta stop, default 1e-7)\n"
+            "   * FTOL_ABS     (objective-delta stop, default 1e-7: the loss\n"
+            "                   changed by less from one iteration to the next)\n"
             "   * PARAM fd_step <double>      (finite-difference step, default 1e-6)\n"
             "   * PARAM fd_kernel inhouse|ceres (the step rule)\n"
             "   * PARAM diff_method 0|1       (CENTRAL, default, or FORWARD)\n"
-            "   * PARAM tol_gradinf <double>  (gradient-inf-norm stop; alternative to FTOL_ABS)\n";
+            "   * PARAM tol_gradinf <double>  (stop once the L2 norm of the gradient\n"
+            "                   falls below it; alternative to FTOL_ABS)\n";
     else
         os<<"   * (unknown DLIB algo; registered: GFS, BFGS)\n";
 }

@@ -2,11 +2,13 @@
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/anneal_core.h>
 #include <tadah/hpo/backend_rules.h>
+#include <tadah/hpo/run_end.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <optional>
@@ -27,11 +29,12 @@ namespace tadah::hpo {
  * at or below STOPVAL (a feasible loss: FAILSCORE never reaches it,
  * anneal::stopval_reached). RANDOM runs until one of them (or the RESTART
  * stagnation stop) ends it (require_stop), GRID at the latest after its
- * whole grid. The journal says which stop ended the search, and a MAXTIME
- * or STOPVAL stop is the run's status (HPOLog::set_status); a search that
- * spends its MAXEVAL or its grid ends COMPLETED, even when MAXTIME has
- * passed by then (no evaluation was left to start), as DLIB:GFS reports
- * it. */
+ * whole grid. The journal says which stop ended the search, and it is the
+ * run's status (run_end.h, HPOLog::set_status): "TADAH:RANDOM: STOPVAL
+ * reached", "TADAH:GRID: MAXTIME exceeded", "TADAH:RANDOM: MAXEVAL
+ * reached", "TADAH:GRID: all grid points evaluated". A search that spends
+ * its MAXEVAL or its grid ends on that, even when MAXTIME has passed by
+ * then (no evaluation was left to start), as DLIB:GFS reports it. */
 namespace sampling_detail {
 
 enum class Stop { None, StopVal, MaxTime };
@@ -61,21 +64,10 @@ private:
     std::chrono::steady_clock::time_point t0_;
 };
 
-inline const char* stop_reason(Stop s)
+/* The run_end.h reason of a stop the StopWatch reported. */
+inline EndReason end_reason(Stop s)
 {
-    return s == Stop::StopVal ? "STOPVAL reached" : "MAXTIME exceeded";
-}
-
-/* The journal line of a search that `stop` ended after `detail`
- * ("7 evaluation(s)"), and the run's status. */
-inline void report_stop(const std::string& backend, Stop stop,
-                        const std::string& detail)
-{
-    const std::string msg =
-        backend + " stopped: " + stop_reason(stop) + " after " + detail;
-    std::cout << "[HPO] " << msg << "\n";
-    HPOLog::instance().info(msg);
-    HPOLog::instance().set_status(backend + ": " + stop_reason(stop));
+    return s == Stop::StopVal ? EndReason::StopVal : EndReason::MaxTime;
 }
 
 }  // namespace sampling_detail
@@ -129,15 +121,12 @@ template<typename Vec, typename Runner>
       stop = watch.after(loss, more());
     }
 
-    const std::string detail = std::to_string(done) + " evaluation(s)";
-    if (stop != Stop::None) {
-      sampling_detail::report_stop("TADAH:RANDOM", stop, detail);
-    } else {
-      const std::string msg =
-          "TADAH:RANDOM stopped: MAXEVAL reached after " + detail;
-      std::cout << "[HPO] " << msg << "\n";
-      HPOLog::instance().info(msg);
-    }
+    /* The loop ends on a stop or once more() is false: MAXEVAL spent
+     * (without MAXEVAL more() is always true). */
+    report_end("TADAH:RANDOM",
+               stop != Stop::None ? sampling_detail::end_reason(stop)
+                                  : EndReason::MaxEval,
+               std::to_string(done) + " evaluation(s)");
   }
 
 /* ----- GRID  (naive Cartesian product) --------------------------- *
@@ -241,15 +230,17 @@ template<typename Vec, typename Runner>
     else               points << total;
     points << " grid points";
     if (stop != Stop::None) {
-      sampling_detail::report_stop("TADAH:GRID", stop, points.str());
+      report_end("TADAH:GRID", sampling_detail::end_reason(stop),
+                 points.str());
+    } else if (done < total) {
+      /* The sweep ended before the grid did: MAXEVAL cut it short. */
+      report_end("TADAH:GRID", EndReason::MaxEval, points.str());
     } else {
-      const std::string msg =
-          done < total ? "TADAH:GRID stopped: MAXEVAL reached after " +
-                             points.str()
-                       : "TADAH:GRID finished: all " + std::to_string(total) +
-                             " grid points evaluated";
+      const std::string msg = "TADAH:GRID finished: all " +
+                              std::to_string(total) + " grid points evaluated";
       std::cout << "[HPO] " << msg << "\n";
       HPOLog::instance().info(msg);
+      record_end("TADAH:GRID", EndReason::GridDone);
     }
   }
 
@@ -293,9 +284,18 @@ template<typename Vec, typename Runner>
  * (`double operator()(const Vec&) const`) so unit tests can drive the
  * SA loop with a stub instead of a full HPO_Host. The public
  * `run_anneal<Vec, Runner>(...)` wrapper below delegates here.
+ *
+ * `elapsed_seconds` is the clock MAXTIME is measured with: the seconds
+ * since the search began. Empty (the default, and what run_anneal()
+ * passes) reads std::chrono::steady_clock from the start of this call; a
+ * unit test passes a scripted clock to place the MAXTIME deadline between
+ * two of the driver's checks.
  */
+using AnnealElapsedSeconds = std::function<double()>;
+
 template<typename Vec, typename HostT>
-  void run_anneal_impl(const OptimizerSpec& sp, HostT& host)
+  void run_anneal_impl(const OptimizerSpec& sp, HostT& host,
+                       const AnnealElapsedSeconds& elapsed_seconds = {})
   {
     using anneal::Knobs;
     using anneal::AlgoKind;
@@ -324,6 +324,7 @@ template<typename Vec, typename HostT>
     const double max_time = sp.stop.maxtime.value_or(0.0);
     const std::function<bool()> time_exceeded = [&]() {
       if (max_time <= 0.0) return false;
+      if (elapsed_seconds) return elapsed_seconds() >= max_time;
       using Sec = std::chrono::duration<double>;
       return std::chrono::duration_cast<Sec>(
                std::chrono::steady_clock::now() - t0_wall).count() >= max_time;
@@ -338,9 +339,12 @@ template<typename Vec, typename HostT>
 
     /* Stop reason -- set at every exit path; emitted as a single
      * `ANNEAL stopped: ...` line at the end so the user can see why
-     * the loop finished without grepping per-eval timestamps. */
+     * the loop finished without grepping per-eval timestamps, and
+     * recorded as the run's status (run_end.h). Done is the state before
+     * a schedule runs: every exit of run_schedule assigns a reason, so a
+     * search that ends on Done is an internal error. */
     enum class StopReason {
-      Done,            /* loop completed normally (rare) */
+      Done,            /* no stop reason assigned yet */
       MaxEval,
       MaxTime,
       StopVal,
@@ -569,6 +573,14 @@ template<typename Vec, typename HostT>
             sp.stop.maxeval
                 ? static_cast<std::uint64_t>(*sp.stop.maxeval) : 0);
     }
+    /* Every exit of the rung loop assigns its reason: the loop has no
+     * condition of its own. It used to test MAXEVAL, MAXTIME and T_MIN
+     * again in a `while` condition, so a MAXTIME that passed after the
+     * post-rung test left the loop with no reason ("loop completed
+     * normally"); the last test of each iteration is now that MAXTIME, the
+     * one stop that can change between the post-rung tests and the next
+     * rung (only the rung evaluates, and the cooling is tested where it
+     * happens). */
     auto run_schedule = [&](double T_begin) {
       double T = T_begin;
       if (budget.left() == 0) {
@@ -590,7 +602,7 @@ template<typename Vec, typename HostT>
       const std::size_t schedule_total = anneal::saturating_add(
           rung_count, anneal::planned_rungs(T_begin, t_min, kb.rt,
                                             budget.left(), rung_cost));
-      while (T >= t_min && budget.left() > 0 && !time_exceeded()) {
+      for (;;) {
         const auto rs = anneal::run_rung(chain, T, sp, kbr, host, ctx);
         if (kbr.observer) {
           std::vector<double> xv(dim);
@@ -649,24 +661,27 @@ template<typename Vec, typename HostT>
         T_final         = T;
         ++rung_count;
 
-        if (rs.stop != RungStop::Completed) {
-          switch (rs.stop) {
-            case RungStop::Budget:  stop_reason = StopReason::MaxEval; break;
-            case RungStop::Time:    stop_reason = StopReason::MaxTime; break;
-            case RungStop::StopVal: stop_reason = StopReason::StopVal; break;
-            default: break;
-          }
-          break;
+        switch (rs.stop) {
+          case RungStop::Completed: break;
+          case RungStop::Budget:  stop_reason = StopReason::MaxEval; return;
+          case RungStop::Time:    stop_reason = StopReason::MaxTime; return;
+          case RungStop::StopVal: stop_reason = StopReason::StopVal; return;
+          case RungStop::External:
+            /* ctx.stop is raised only by a STOPVAL of another chain
+             * (anneal_core.h), and serial ANNEAL runs one. */
+            throw std::logic_error(
+                "internal error: TADAH:ANNEAL's single chain was stopped "
+                "by another chain");
         }
 
-        if (budget.left() == 0) { stop_reason = StopReason::MaxEval; break; }
-        if (time_exceeded()) { stop_reason = StopReason::MaxTime; break; }
+        if (budget.left() == 0) { stop_reason = StopReason::MaxEval; return; }
+        if (time_exceeded()) { stop_reason = StopReason::MaxTime; return; }
         if (plateau.update(chain.f, chain.best_f)) {
-          stop_reason = StopReason::Plateau; break;
+          stop_reason = StopReason::Plateau; return;
         }
 
         T = anneal::cool_temperature(T, kb.rt);
-        if (T < t_min) { stop_reason = StopReason::TMin; break; }
+        if (T < t_min) { stop_reason = StopReason::TMin; return; }
 
         /* Corana reset-to-best after each cool. Cheap (no host
          * eval consumed); just snaps the chain back to the best-so-far
@@ -676,6 +691,10 @@ template<typename Vec, typename HostT>
           chain.x = chain.best_x;
           chain.f = chain.best_f;
         }
+
+        /* The next rung's stop: MAXTIME may have passed since the
+         * post-rung test (MAXEVAL and T are unchanged since theirs). */
+        if (time_exceeded()) { stop_reason = StopReason::MaxTime; return; }
       }
     };
 
@@ -748,21 +767,44 @@ template<typename Vec, typename HostT>
       }
     }
 
-    /* --- explicit stop reason (single line, every exit path) --- */
+    /* --- explicit stop reason (single line, every exit path), and the
+     * run's status (run_end.h) --- */
     {
       const char* reason = nullptr;
+      EndReason end = EndReason::MaxEval;
       switch (stop_reason) {
-        case StopReason::MaxEval:        reason = "MAXEVAL exhausted"; break;
-        case StopReason::MaxTime:        reason = "MAXTIME exceeded"; break;
-        case StopReason::StopVal:        reason = "STOPVAL reached"; break;
-        case StopReason::StopValOnProbe: reason = "STOPVAL reached during T0 probes"; break;
-        case StopReason::ExternalOnProbe: reason = "external stop during T0 probes"; break;
-        case StopReason::MaxTimeOnProbe: reason = "MAXTIME exceeded during T0 probes"; break;
-        case StopReason::TMin:           reason = "T < T_MIN"; break;
-        case StopReason::Plateau:        reason = "FTOL plateau (Corana eps-NEPS rule)"; break;
-        case StopReason::NoDims:         reason = "no optimisable dimensions"; break;
-        case StopReason::NoBudget:       reason = "MAXEVAL exhausted before SA proposal"; break;
-        case StopReason::Done:           reason = "loop completed normally"; break;
+        case StopReason::MaxEval:
+          reason = "MAXEVAL exhausted"; end = EndReason::MaxEval; break;
+        case StopReason::MaxTime:
+          reason = "MAXTIME exceeded"; end = EndReason::MaxTime; break;
+        case StopReason::StopVal:
+          reason = "STOPVAL reached"; end = EndReason::StopVal; break;
+        case StopReason::StopValOnProbe:
+          reason = "STOPVAL reached during T0 probes";
+          end = EndReason::StopVal; break;
+        case StopReason::ExternalOnProbe:
+          /* ctx.stop is raised only by a STOPVAL (anneal_core.h), and the
+           * calibration returns on its own STOPVAL first: unreachable with
+           * one chain; were it reached, another chain's STOPVAL ended the
+           * search. */
+          reason = "external stop during T0 probes";
+          end = EndReason::StopVal; break;
+        case StopReason::MaxTimeOnProbe:
+          reason = "MAXTIME exceeded during T0 probes";
+          end = EndReason::MaxTime; break;
+        case StopReason::TMin:
+          reason = "T < T_MIN"; end = EndReason::TMin; break;
+        case StopReason::Plateau:
+          reason = "FTOL plateau (Corana eps-NEPS rule)";
+          end = EndReason::FtolPlateau; break;
+        case StopReason::NoDims:
+          reason = "no optimisable dimensions"; end = EndReason::NoDims; break;
+        case StopReason::NoBudget:
+          reason = "MAXEVAL exhausted before SA proposal";
+          end = EndReason::MaxEval; break;
+        case StopReason::Done:
+          throw std::logic_error(
+              "internal error: TADAH:ANNEAL ended without a stop reason");
       }
       std::ostringstream oss;
       oss << "ANNEAL stopped: " << reason
@@ -771,6 +813,7 @@ template<typename Vec, typename HostT>
       if (reanneal_count > 0) oss << ", " << reanneal_count << " re-anneal(s)";
       oss << ")";
       HPOLog::instance().info(oss.str());
+      record_end("TADAH:ANNEAL", end);
     }
   }
 

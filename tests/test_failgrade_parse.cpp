@@ -13,6 +13,8 @@
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/phase_specs.h>
 
 #include <cmath>
 #include <filesystem>
@@ -187,6 +189,102 @@ TEST_CASE("FAILSCORE_GRADING: ON/OFF/garbage", "[failgrade][parse]")
                               + "FAILSCORE_GRADING yes\n" + sim);
         REQUIRE_THROWS_AS(tadah::hpo::HPOTargets(ctx, cfg.string()),
                           std::runtime_error);
+    }
+}
+
+TEST_CASE("FAILSCORE_GRADING: every optimiser spec carries it, through the "
+          "override and every spec copy", "[failgrade][parse][grad_provider]")
+{
+    /* The finite differences read FAILSCORE_GRADING from the optimiser
+     * spec (OptimizerSpec::failscore_grading, gradient_provider.h): at a
+     * graded failure they take the graded differences, where a failed loss
+     * at the point fails the gradient without grading.
+     * Pins: the spec of a PRESTAGE run, its INNER block, the EXPLORE spec
+     * and that one's INNER block carry FAILSCORE_GRADING as the file sets
+     * it (ON, OFF, the default OFF); set_failscore_grading (the
+     * TADAH_FAILSCORE_GRADING override of hpo_run) sets FAILSCORE_GRADING
+     * and every one of them; the hand-written copy constructor and copy
+     * assignment keep it (the MULTISTART starts, the PRESTAGE refinement
+     * and each RESTART round, RestartPolicy::run, are copies), and so do
+     * multistart_start_spec and prestage_refinement_spec.
+     * Before the fix: the specs had no such flag (the gradient read none);
+     * built with the field declared but neither set nor copied, every
+     * spec reads false. */
+    tadah::core::PeriodicTable::initialize();
+    tadah::core::Context ctx;
+    const auto config = [](const std::string& grading) {
+        return std::string(
+                   "OPTIMIZER\n"
+                   "STRATEGY\n"
+                   "  TYPE PRESTAGE\n"
+                   "  LIB NLOPT\n"
+                   "  ALGO AUGLAG\n"
+                   "  MAXEVAL 50\n"
+                   "  TOPK 2\n"
+                   "  INNER\n"
+                   "    LIB NLOPT\n"
+                   "    ALGO LD_LBFGS\n"
+                   "  ENDINNER\n"
+                   "  EXPLORE\n"
+                   "    LIB NLOPT\n"
+                   "    ALGO G_MLSL_LDS\n"
+                   "    MAXEVAL 80\n"
+                   "    INNER\n"
+                   "      LIB NLOPT\n"
+                   "      ALGO LD_LBFGS\n"
+                   "    ENDINNER\n"
+                   "  ENDEXPLORE\n"
+                   "ENDSTRATEGY\n"
+                   "ENDOPTIMIZER\n"
+                   "LOSS L2\n"
+                   "FAILSCORE 1e6\n") +
+               grading;
+    };
+    /* Every spec the run starts from carries `on`. */
+    const auto all = [](const tadah::hpo::OptimizerSpec& sp, bool on) {
+        REQUIRE(sp.inner);
+        REQUIRE(sp.prestage);
+        REQUIRE(sp.prestage->inner);
+        CHECK(sp.failscore_grading == on);
+        CHECK(sp.inner->failscore_grading == on);
+        CHECK(sp.prestage->failscore_grading == on);
+        CHECK(sp.prestage->inner->failscore_grading == on);
+    };
+    SECTION("FAILSCORE_GRADING ON") {
+        auto cfg = write_file("cfg", config("FAILSCORE_GRADING ON\n"));
+        tadah::hpo::HPOTargets trg(ctx, cfg.string());
+        CHECK(trg.FAILSCORE_GRADING);
+        all(trg.spec, true);
+
+        const tadah::hpo::OptimizerSpec copy(trg.spec);
+        all(copy, true);
+        tadah::hpo::OptimizerSpec assigned;
+        assigned = trg.spec;
+        all(assigned, true);
+
+        tadah::hpo::MultiStartPlan plan;
+        plan.starts = 1;
+        CHECK(tadah::hpo::multistart_start_spec(trg.spec, plan, 0)
+                  .failscore_grading);
+        CHECK(tadah::hpo::prestage_refinement_spec(trg.spec, {{0.5}})
+                  .failscore_grading);
+
+        trg.set_failscore_grading(false);
+        CHECK_FALSE(trg.FAILSCORE_GRADING);
+        all(trg.spec, false);
+    }
+    SECTION("FAILSCORE_GRADING OFF, and the default") {
+        for (const std::string line : {"FAILSCORE_GRADING OFF\n", ""}) {
+            CAPTURE(line);
+            auto cfg = write_file("cfg", config(line));
+            tadah::hpo::HPOTargets trg(ctx, cfg.string());
+            CHECK_FALSE(trg.FAILSCORE_GRADING);
+            all(trg.spec, false);
+            trg.set_failscore_grading(true);
+            CHECK(trg.FAILSCORE_GRADING);
+            all(trg.spec, true);
+            all(tadah::hpo::OptimizerSpec(trg.spec), true);
+        }
     }
 }
 

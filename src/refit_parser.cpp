@@ -27,10 +27,12 @@ std::string up(std::string s) {
 // parse_uint), which names a malformed one.
 bool looks_number(const std::string &s) { return is_number_shaped(s); }
 
-// The keys a stage's OPTIMIZER block (or its INNER block) reads. A stage reads
-// only some of the optimiser attributes of `tadah hpo`; any other one it would
-// silently ignore is an error naming the keys it does read (the rule of the
-// `tadah hpo` STRATEGY keys that would have no effect).
+// The keys some ALGO of a stage reads, in its OPTIMIZER block (or its INNER
+// block). A stage reads only some of the optimiser attributes of `tadah hpo`;
+// any other one it would silently ignore is an error naming the keys it does
+// read (the rule of the `tadah hpo` STRATEGY keys that would have no effect).
+// This is the first gate, as each key is read; once the block's ALGO is known
+// a key that ALGO does not read is an error too (reject_keys_not_read).
 struct StageKeys {
   const char *stage;                  // EXPLORE, REFINE, FUSE
   std::vector<std::string> outer;     // the OPTIMIZER block's keys
@@ -62,7 +64,7 @@ bool known_optimizer_key(const std::string &key) {
 
 // The keys a stage's OPTIMIZER block and its INNER block set, in order and
 // in the spelling used (MAXITER, not MAXEVAL): a key that has no effect with
-// the block's ALGO is named as written (reject_no_effect_keys).
+// the block's ALGO is named as written (reject_keys_not_read).
 struct SeenKeys {
   std::vector<std::string> outer, inner;
 };
@@ -77,7 +79,8 @@ KeyCheckFn stage_key_check(const StageKeys &sk, SeenKeys *seen) {
       return;
     }
     if (!known_optimizer_key(key)) return;
-    // SEED and FTOL_ABS say what to use instead.
+    // SEED and FTOL_ABS (in FUSE, where no ALGO reads it) say what to use
+    // instead.
     if (key == "SEED")
       throw std::runtime_error(
           "SEED is not accepted in a tadah refit OPTIMIZER block: the "
@@ -93,13 +96,17 @@ KeyCheckFn stage_key_check(const StageKeys &sk, SeenKeys *seen) {
   };
 }
 
-const StageKeys kExploreKeys{"EXPLORE",
-                             {"LIB", "ALGO", "MAXEVAL", "INNER"},
-                             {"LIB", "ALGO", "MAXEVAL", "FTOL_REL", "XTOL_REL"}};
-const StageKeys kRefineKeys{
-    "REFINE", {"LIB", "ALGO", "MAXEVAL", "MAXITER", "FTOL_REL", "GTOL"}, {}};
+// FTOL_ABS: dlib's LBFGS (EXPLORE INNER, REFINE) stops on it.
+const StageKeys kExploreKeys{
+    "EXPLORE",
+    {"LIB", "ALGO", "MAXEVAL", "INNER"},
+    {"LIB", "ALGO", "MAXEVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL"}};
+const StageKeys kRefineKeys{"REFINE",
+                            {"LIB", "ALGO", "MAXEVAL", "MAXITER", "FTOL_REL",
+                             "FTOL_ABS", "GTOL"},
+                            {}};
 const StageKeys kFuseKeys{
-    "FUSE", {"LIB", "ALGO", "MAXEVAL", "MAXITER", "FTOL_REL"}, {}};
+    "FUSE", {"LIB", "ALGO", "MAXEVAL", "MAXITER", "FTOL_REL", "GTOL"}, {}};
 
 // ALGO is what a stage's OPTIMIZER block, and its INNER block, is read for:
 // it must be set (NONE / UNIFORM are written out). An INNER block without
@@ -117,6 +124,32 @@ bool as_bool(const std::string &s, const std::string &what) {
   if (u == "TRUE" || u == "ON" || u == "1" || u == "YES") return true;
   if (u == "FALSE" || u == "OFF" || u == "0" || u == "NO") return false;
   throw std::runtime_error(what + ": expected true|false, got '" + s + "'");
+}
+
+// The tolerances of every refit block, FTOL_REL, FTOL_ABS, XTOL_REL and GTOL:
+// a finite number (parse_finite, whose message a malformed token keeps) that
+// is >= 0, named as written: "GTOL must be a number >= 0, got '-1'". Ceres
+// refuses a negative tolerance in its option check and returns FAILURE
+// without iterating, so a REFINE or FUSE with one did nothing; NLopt switches
+// a tolerance below 0 off, and dlib requires one >= 0. 0 switches the test
+// off. read_optimizer_block() offers the key to the stage's hook before
+// dispatch_opt_attr(), which reads any finite number.
+double tolerance_value(const std::string &key, std::istringstream &iss) {
+  const std::string tok = next_value(iss, key);
+  const double v = parse_finite(tok, key);
+  if (v < 0.0)
+    throw std::runtime_error(key + " must be a number >= 0, got '" + tok + "'");
+  return v;
+}
+
+bool tolerance_attr(const std::string &key, std::istringstream &iss,
+                    OptimizerSpec &a) {
+  if (key == "FTOL_REL") a.stop.ftol_rel = tolerance_value(key, iss);
+  else if (key == "FTOL_ABS") a.stop.ftol_abs = tolerance_value(key, iss);
+  else if (key == "XTOL_REL") a.stop.xtol_rel = tolerance_value(key, iss);
+  else if (key == "GTOL") a.param["GTOL"] = tolerance_value(key, iss);
+  else return false;
+  return true;
 }
 
 // Pull a stage block's tokens out of the Context (empty if absent).
@@ -217,7 +250,7 @@ void parse_explore(const std::vector<std::string> &tok, RefitConfig &cfg,
       cfg.explore.enabled = as_bool(tok[i + 1], "EXPLORE ENABLED");
       i += 2;
     } else if (u == "OPTIMIZER") {
-      read_optimizer_block(tok, i, cfg.explore.opt, nullptr,
+      read_optimizer_block(tok, i, cfg.explore.opt, tolerance_attr,
                            stage_key_check(kExploreKeys, &seen),  // + INNER
                            kExploreKeys.stage);
       cfg.explore.has_opt = true;
@@ -229,20 +262,23 @@ void parse_explore(const std::vector<std::string> &tok, RefitConfig &cfg,
 }
 
 // REFINE/FUSE OPTIMIZER blocks accept the Ceres-flavoured command-specific keys
-// GTOL (-> param["GTOL"], Ceres gradient_tolerance; REFINE only, FUSE does not
-// read it) and MAXITER (alias of MAXEVAL -> Ceres max_num_iterations). The
-// function tolerance key is FTOL_REL (handled by dispatch_opt_attr -> Ceres
-// function_tolerance): Ceres' function_tolerance is RELATIVE — it stops when
+// GTOL (-> param["GTOL"], Ceres gradient_tolerance) and MAXITER (alias of
+// MAXEVAL -> Ceres max_num_iterations). The function tolerance key is
+// FTOL_REL (-> Ceres function_tolerance). GTOL, FTOL_REL and FTOL_ABS (dlib's
+// LBFGS in REFINE) are tolerances, read by tolerance_attr. Ceres' function_tolerance is RELATIVE — it stops when
 // (new_cost - old_cost) < ftol * old_cost. Ceres has NO absolute function
-// tolerance, so FTOL_ABS (and the bare FTOL) are rejected with a pointer to
-// FTOL_REL: FTOL_ABS by the stage's key check (stage_key_check), before
-// dispatch_opt_attr would consume it, and the bare FTOL here.
+// tolerance, so FTOL_ABS with a Ceres ALGO is rejected with a pointer to
+// FTOL_REL (in FUSE by the stage's key check, stage_key_check, before it is
+// read; in REFINE once the ALGO is known, reject_keys_not_read), and so is
+// the bare FTOL here.
 bool ceres_extra(const std::string &key, std::istringstream &iss,
                  OptimizerSpec &a) {
-  if (key == "GTOL") {
-    a.param["GTOL"] = parse_finite(next_value(iss, key), key);
-    return true;
-  }
+  if (key == "FTOL")
+    throw std::runtime_error(
+        "'" + key +
+        "' is not supported — Ceres' function_tolerance is RELATIVE and has no "
+        "absolute form. Use FTOL_REL.");
+  if (tolerance_attr(key, iss, a)) return true;  // GTOL among them
   if (key == "MAXITER") {
     // The alias of MAXEVAL, with its range: the int iteration cap Ceres
     // takes (apply_stage_optimizers), at least one iteration.
@@ -250,11 +286,6 @@ bool ceres_extra(const std::string &key, std::istringstream &iss,
                                 std::numeric_limits<int>::max());
     return true;
   }
-  if (key == "FTOL" || key == "FTOL_ABS")
-    throw std::runtime_error(
-        "'" + key +
-        "' is not supported — Ceres' function_tolerance is RELATIVE and has no "
-        "absolute form. Use FTOL_REL.");
   return false;
 }
 
@@ -318,13 +349,28 @@ const std::vector<AlgoSpelling> kExploreOuterAlgos = {
     {"DLIB_GLOBAL", "DLIB_GLOBAL", "DLIB", kAlias},
     {"MLSL", "MLSL", "NLOPT", kAlias},
     {"GN_MLSL_LDS", "MLSL", "NLOPT", kListed},
-    {"GN_MLSL", "MLSL", "NLOPT", kAlias},
     {"DIRECT", "DIRECT", "NLOPT", kAlias},
     {"GN_DIRECT_L", "DIRECT", "NLOPT", kListed},
-    {"GN_DIRECT", "DIRECT", "NLOPT", kAlias},
     {"CRS2", "CRS2", "NLOPT", kAlias},
-    {"GN_CRS2_LM", "CRS2", "NLOPT", kListed},
-    {"GN_CRS2", "CRS2", "NLOPT", kAlias}};
+    {"GN_CRS2_LM", "CRS2", "NLOPT", kListed}};
+
+// NLopt spellings the EXPLORE optimiser refuses, with the algorithm the refit
+// runs in their place. They were aliases of it: GN_MLSL ran GN_MLSL_LDS,
+// GN_DIRECT GN_DIRECT_L and GN_CRS2 GN_CRS2_LM. GN_MLSL and GN_DIRECT are
+// other NLopt algorithms, which `tadah hpo` runs as named, and GN_CRS2 is
+// none. The refit's own short names (MLSL, DIRECT, CRS2) stay.
+struct RefusedSpelling {
+  const char *spelling;  // uppercase
+  const char *what;      // what the spelling is
+  const char *short_name;
+  const char *runs;      // the refit's algorithm of that name
+};
+const std::vector<RefusedSpelling> kExploreRefusedAlgos = {
+    {"GN_MLSL", "NLopt's MLSL with pseudo-random starts", "MLSL",
+     "GN_MLSL_LDS"},
+    {"GN_DIRECT", "NLopt's DIRECT without the local bias of DIRECT_L",
+     "DIRECT", "GN_DIRECT_L"},
+    {"GN_CRS2", "not an NLopt algorithm", "CRS2", "GN_CRS2_LM"}};
 const std::vector<AlgoSpelling> kExploreInnerAlgos = {
     {"NONE", "NONE", kNoOptimiser, kListed},
     {"LBFGS", "DLIB_LBFGS", "DLIB", kListed},
@@ -423,19 +469,133 @@ constexpr const char *kExploreOff = "no global search runs";
 constexpr const char *kInnerOff = "no local search runs";
 constexpr const char *kStageOff = "the stage is skipped";
 
-// A block with ALGO NONE or UNIFORM runs no optimiser, so a stop criterion
-// it sets has no effect: the first of `keys` (the block's, as written) other
-// than LIB, ALGO and INNER is an error naming it. (LIB is the LIB rule's,
-// stage_algo(); EXPLORE's INNER block configures the per-rung local search
-// whatever the EXPLORE optimiser.)
-void reject_no_effect_keys(const std::string &block, const OptimizerSpec &s,
-                           const std::vector<std::string> &keys,
-                           const char *off) {
+// The stop criteria each ALGO of a block reads (beyond LIB and ALGO), by
+// the compact fitter's name of the ALGO; a block's key outside its ALGO's
+// set would have no effect and is an error (reject_keys_not_read). What
+// CompactBlipFitter does with each:
+//  - EXPLORE seed: MLSL, DIRECT, CRS2 and DLIB_GLOBAL their MAXEVAL; UNIFORM
+//    runs no search;
+//  - EXPLORE INNER: the NLopt searches MAXEVAL, FTOL_REL and XTOL_REL;
+//    dlib's LBFGS MAXEVAL and FTOL_ABS (objective_delta_stop_strategy, an
+//    absolute change of the objective); NONE runs no search. Under the
+//    EXPLORE optimiser MLSL the block's MAXEVAL, FTOL_REL and XTOL_REL also
+//    set MLSL's local LN_SBPLX searches (kMlslLocalReads), whatever its ALGO;
+//  - REFINE: Ceres' LM and DOGLEG MAXEVAL (alias MAXITER: iterations),
+//    FTOL_REL and GTOL; NLopt's LD_LBFGS MAXEVAL and FTOL_REL; dlib's LBFGS
+//    MAXEVAL and FTOL_ABS; NONE skips the stage;
+//  - FUSE: Ceres' LM and DOGLEG MAXEVAL/MAXITER, FTOL_REL and GTOL.
+struct AlgoReads {
+  const char *canonical;
+  std::vector<std::string> reads;
+};
+const std::vector<std::string> kCeresReads = {"MAXEVAL", "MAXITER", "FTOL_REL",
+                                              "GTOL"};
+const std::vector<std::string> kNloptLocalReads = {"MAXEVAL", "FTOL_REL",
+                                                   "XTOL_REL"};
+const std::vector<std::string> kDlibLbfgsReads = {"MAXEVAL", "FTOL_ABS"};
+const std::vector<std::string> kMlslLocalReads = kNloptLocalReads;
+const std::vector<AlgoReads> kExploreOuterReads = {
+    {"UNIFORM", {}},
+    {"MLSL", {"MAXEVAL"}},
+    {"DIRECT", {"MAXEVAL"}},
+    {"CRS2", {"MAXEVAL"}},
+    {"DLIB_GLOBAL", {"MAXEVAL"}}};
+const std::vector<AlgoReads> kExploreInnerReads = {
+    {"NONE", {}},
+    {"SBPLX", kNloptLocalReads},
+    {"NELDERMEAD", kNloptLocalReads},
+    {"BOBYQA", kNloptLocalReads},
+    {"PRAXIS", kNloptLocalReads},
+    {"NLOPT_LBFGS", kNloptLocalReads},
+    {"DLIB_LBFGS", kDlibLbfgsReads}};
+const std::vector<AlgoReads> kRefineReads = {
+    {"NONE", {}},
+    {"CERES_LM", kCeresReads},
+    {"CERES_DOGLEG", kCeresReads},
+    {"NLOPT_LBFGS", {"MAXEVAL", "FTOL_REL"}},
+    {"DLIB_LBFGS", kDlibLbfgsReads}};
+const std::vector<AlgoReads> kFuseReads = {{"NONE", {}},
+                                           {"CERES_LM", kCeresReads},
+                                           {"CERES_DOGLEG", kCeresReads}};
+
+std::vector<std::string> reads_of(const std::vector<AlgoReads> &table,
+                                  const std::string &canonical) {
+  for (const auto &a : table)
+    if (canonical == a.canonical) return a.reads;
+  throw std::logic_error("tadah refit: no read set for ALGO " + canonical +
+                         " (internal error)");
+}
+
+bool has_key(const std::vector<std::string> &keys, const std::string &key) {
+  return std::find(keys.begin(), keys.end(), key) != keys.end();
+}
+
+// Another optimiser that reads a block's keys besides the block's own ALGO:
+// under the EXPLORE optimiser MLSL, MLSL's local LN_SBPLX searches read the
+// INNER block's MAXEVAL, FTOL_REL and XTOL_REL. `outer` is the EXPLORE ALGO
+// as written; empty `reads`: none.
+struct AlsoReads {
+  std::string outer;
+  std::vector<std::string> reads;
+};
+
+// The first of `keys` (the block's, as written) other than LIB, ALGO and
+// INNER that neither `reads` (what the block's ALGO reads, from the tables
+// above) nor `also` reads is an error naming it and the ALGO. (LIB is the
+// LIB rule's, stage_algo(); EXPLORE's INNER block configures the per-rung
+// local search whatever the EXPLORE optimiser.) An ALGO that runs no
+// optimiser (NONE, UNIFORM: `reads` is empty) says what it does instead
+// (`off`); MAXITER, Ceres' iterations, with an ALGO that counts evaluations
+// names MAXEVAL; FTOL_REL with dlib's LBFGS, which tests an absolute change,
+// names FTOL_ABS; FTOL_ABS with a Ceres ALGO names FTOL_REL. Where `also`
+// reads keys the ALGO does not, the message names them as MLSL's.
+void reject_keys_not_read(const std::string &block, const OptimizerSpec &s,
+                          const std::vector<std::string> &keys,
+                          const std::vector<std::string> &reads,
+                          const char *off, const AlsoReads &also = {}) {
+  const std::string algo = up(s.algo);
+  bool also_adds = false;
+  for (const auto &k : also.reads)
+    if (!has_key(reads, k)) also_adds = true;
   for (const auto &key : keys) {
     if (key == "LIB" || key == "ALGO" || key == "INNER") continue;
+    if (has_key(reads, key) || has_key(also.reads, key)) continue;
+    const std::string mlsl =
+        also_adds ? "; under ALGO " + also.outer + " the block " +
+                        (reads.empty() ? "sets" : "also sets") +
+                        " MLSL's local LN_SBPLX searches, which read " +
+                        reads_list(also.reads)
+                  : std::string();
+    if (reads.empty())
+      throw std::runtime_error(block + ": " + key + " has no effect with ALGO " +
+                               algo + " (" + off + mlsl + "); remove " + key);
+    if (key == "MAXITER")
+      throw std::runtime_error(block + ": MAXITER counts Ceres iterations; "
+                               "ALGO " + algo + " counts objective "
+                               "evaluations: write MAXEVAL");
+    if (key == "FTOL_REL" && has_key(reads, "FTOL_ABS"))
+      throw std::runtime_error(block + ": FTOL_REL has no effect with ALGO " +
+                               algo + ": dlib's L-BFGS stops on an absolute "
+                               "change of the objective; write FTOL_ABS");
+    if (key == "FTOL_ABS" && has_key(reads, "GTOL"))
+      throw std::runtime_error(
+          block + ": FTOL_ABS is not supported — Ceres' function_tolerance is "
+          "RELATIVE and has no absolute form. Use FTOL_REL.");
     throw std::runtime_error(block + ": " + key + " has no effect with ALGO " +
-                             up(s.algo) + " (" + off + "); remove " + key);
+                             algo + " (it reads " + reads_list(reads) + mlsl +
+                             "); remove " + key);
   }
+}
+
+// REFINE or FUSE with ENABLED false skips the stage, so an OPTIMIZER block
+// beside it would have no effect.
+void reject_disabled_with_optimizer(const char *stage, bool enabled,
+                                    bool has_opt) {
+  if (!enabled && has_opt)
+    throw std::runtime_error(
+        std::string(stage) + ": ENABLED false skips the stage, so its "
+        "OPTIMIZER block has no effect; remove the OPTIMIZER block, or write "
+        "ALGO NONE in it instead of ENABLED false");
 }
 
 }  // namespace
@@ -455,6 +615,14 @@ bool refit_curve_objective(const tadah::core::Context &c) {
 }
 
 std::string refit_explore_outer_algo(const OptimizerSpec &s) {
+  // A refused spelling first, before the LIB rule, whatever the LIB.
+  const std::string algo = up(s.algo == "NOT SET" ? "" : s.algo);
+  for (const auto &r : kExploreRefusedAlgos)
+    if (algo == r.spelling)
+      throw std::runtime_error(std::string("EXPLORE: ALGO ") + s.algo +
+                               " is not run by tadah refit (" + r.what +
+                               "); its " + r.short_name + " is " + r.runs +
+                               ": set ALGO " + r.runs);
   return stage_algo(s, kExploreOuterAlgos, "EXPLORE", "EXPLORE outer",
                     kExploreOff,
                     "NLOPT GN_MLSL_LDS|GN_DIRECT_L|GN_CRS2_LM, DLIB GLOBAL, or "
@@ -505,9 +673,15 @@ RefitConfig RefitParser::parse(const tadah::core::Context &c) {
   parse_ceres_stage(stage_tokens(c, "FUSE"), cfg.fuse.opt, cfg.fuse.has_opt,
                     cfg.fuse.enabled, kFuseKeys, fuse_keys);
 
+  // ENABLED false skips REFINE or FUSE: an OPTIMIZER block beside it would
+  // have no effect (it used to be ignored with a WARNING).
+  reject_disabled_with_optimizer("REFINE", cfg.refine.enabled,
+                                 cfg.refine.has_opt);
+  reject_disabled_with_optimizer("FUSE", cfg.fuse.enabled, cfg.fuse.has_opt);
+
   // Every OPTIMIZER block, and an INNER block, names its ALGO. The keys a
-  // stage does not use (SEED, FTOL_ABS on the Ceres stages, THREADS, ...)
-  // were rejected as they were read (stage_key_check).
+  // stage does not use (SEED, FTOL_ABS in FUSE, THREADS, ...) were rejected
+  // as they were read (stage_key_check).
   if (cfg.explore.has_opt) {
     require_algo(cfg.explore.opt, "EXPLORE", "OPTIMIZER",
                  "UNIFORM for no global search");
@@ -530,37 +704,37 @@ RefitConfig RefitParser::parse(const tadah::core::Context &c) {
   if (cfg.refine.has_opt) (void)refit_refine_algo(cfg.refine.opt);
   if (cfg.fuse.has_opt) (void)refit_fuse_algo(cfg.fuse.opt);
 
-  // A block with ALGO NONE or UNIFORM runs no optimiser: its stop criteria
-  // have no effect, and are rejected -- unless another stage reads them:
-  //  - EXPLORE INNER's MAXEVAL, FTOL_REL and XTOL_REL also set the local
-  //    searches (LN_SBPLX) of the EXPLORE optimiser GN_MLSL_LDS;
-  //  - under REFIT_OBJECTIVE curve the FUSE curve refine runs with REFINE's
-  //    MAXEVAL/MAXITER, FTOL_REL and GTOL (the engine's fuse_one), while
-  //    FUSE runs at all.
+  // A stop criterion the block's ALGO does not read has no effect and is
+  // rejected (reject_keys_not_read; with ALGO NONE or UNIFORM every one).
+  // The one key set another stage reads: under the EXPLORE optimiser MLSL,
+  // EXPLORE INNER's MAXEVAL, FTOL_REL and XTOL_REL also set MLSL's local
+  // LN_SBPLX searches, whatever the INNER ALGO. (The FUSE curve refine of
+  // REFIT_OBJECTIVE curve runs with FUSE's own settings, fuse_curve_config;
+  // it ran with REFINE's, which were accepted there.)
   if (cfg.explore.has_opt) {
     const std::string outer = refit_explore_outer_algo(cfg.explore.opt);
-    if (outer == "UNIFORM")
-      reject_no_effect_keys("EXPLORE", cfg.explore.opt, explore_keys.outer,
-                            kExploreOff);
-    if (cfg.explore.opt.inner && outer != "MLSL" &&
-        refit_explore_inner_algo(*cfg.explore.opt.inner) == "NONE")
-      reject_no_effect_keys("EXPLORE INNER", *cfg.explore.opt.inner,
-                            explore_keys.inner, kInnerOff);
+    reject_keys_not_read("EXPLORE", cfg.explore.opt, explore_keys.outer,
+                         reads_of(kExploreOuterReads, outer), kExploreOff);
+    if (cfg.explore.opt.inner) {
+      AlsoReads mlsl;
+      if (outer == "MLSL") mlsl = {up(cfg.explore.opt.algo), kMlslLocalReads};
+      reject_keys_not_read(
+          "EXPLORE INNER", *cfg.explore.opt.inner, explore_keys.inner,
+          reads_of(kExploreInnerReads,
+                   refit_explore_inner_algo(*cfg.explore.opt.inner)),
+          kInnerOff, mlsl);
+    }
   }
-  const bool fuse_runs =
-      cfg.fuse.enabled &&
-      (!cfg.fuse.has_opt || refit_fuse_algo(cfg.fuse.opt) != "NONE");
-  if (cfg.refine.has_opt && refit_refine_algo(cfg.refine.opt) == "NONE" &&
-      !(refit_curve_objective(c) && fuse_runs))
-    reject_no_effect_keys("REFINE", cfg.refine.opt, refine_keys.outer,
-                          kStageOff);
-  if (cfg.fuse.has_opt && refit_fuse_algo(cfg.fuse.opt) == "NONE")
-    reject_no_effect_keys("FUSE", cfg.fuse.opt, fuse_keys.outer, kStageOff);
+  if (cfg.refine.has_opt)
+    reject_keys_not_read("REFINE", cfg.refine.opt, refine_keys.outer,
+                         reads_of(kRefineReads, refit_refine_algo(cfg.refine.opt)),
+                         kStageOff);
+  if (cfg.fuse.has_opt)
+    reject_keys_not_read("FUSE", cfg.fuse.opt, fuse_keys.outer,
+                         reads_of(kFuseReads, refit_fuse_algo(cfg.fuse.opt)),
+                         kStageOff);
 
   // EXPLORE cannot be disabled (it builds the ladder) — still a hard error.
-  // REFINE/FUSE: ENABLED false is a master kill-switch that WINS over a
-  // configured optimiser (the engine sets that stage's algo to NONE and logs
-  // that the configured optimiser is ignored) — it is NOT a contradiction.
   if (!cfg.explore.enabled)
     throw std::runtime_error(
         "EXPLORE: ENABLED false is not allowed — EXPLORE builds the basis "

@@ -10,14 +10,15 @@
  *
  * The user opts in by adding `--hotvar <name> <min> <max> [<initial>]`
  * to a PC_LAMMPS line. The framework then:
- *   - injects `variable <name> string <cached-or-initial>` before the
+ *   - injects `variable <name> equal <cached-or-initial>` before the
  *     hot script runs (so it can use ${<name>} as the seed);
  *   - reads <name> back after the script runs;
  *   - validates <name> against [min, max] (an out-of-range value is
  *     treated as an unphysical-potential signal -- the eval is failscored
  *     and cold scripts are skipped, via a run-local abort flag);
  *   - caches the in-range value here for the next eval AND propagates
- *     it as `${<name>}` to every cold script in the *same* eval.
+ *     it as `${<name>}` to the cold scripts that read it in the *same*
+ *     eval.
  *
  * WHY PER-CHAIN (the determinism fix, 2026-07-15)
  * -----------------------------------------------
@@ -252,6 +253,21 @@ inline void clear() {
     std::lock_guard<std::mutex> lg(mtx());
     chain_cache().clear();
     warm_prime_map().clear();
+    best_hot_map().clear();
+    best_hot_key().reset();
+}
+
+/* Start a new run: forget every chain's value an earlier run in this process
+ * converged to (chain_cache) and the best snapshot, keep WARM's static
+ * fallback. A chain's first evaluation then reads warm_prime_map (WARM) or
+ * nothing (its --hotvar initial value), as in a run of its own process: the
+ * cache is keyed by (chain, script, name), so a second run of a task file
+ * with the same script read the first run's last relaxed value instead.
+ * HPO_Host::prepare_best_publication() calls it at the start of every run;
+ * WARM primes warm_prime_map before. */
+inline void reset_for_fresh_run() {
+    std::lock_guard<std::mutex> lg(mtx());
+    chain_cache().clear();
     best_hot_map().clear();
     best_hot_key().reset();
 }

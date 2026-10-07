@@ -4,6 +4,7 @@
 # best/eval-count is parsed from there.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+source "$HERE/common/journal_status.sh"   # journal_status
 
 failed=0
 for dir in "$HERE"/[0-9]*; do
@@ -34,7 +35,7 @@ for dir in "$HERE"/[0-9]*; do
   if [[ -f "$log" ]]; then
     best=$(awk '/Best total loss/ { for (i=1;i<=NF;i++) if ($i ~ /^[0-9.eE+-]+$/) { print $i; break } }' "$log" | head -1)
     evals=$(awk '/Total evaluations/ { print $4 }' "$log" | head -1)
-    status=$(awk -F': *' '/Optimiser status/ { print $2 }' "$log" | head -1)
+    status=$(journal_status "$log")
     printf '%-32s | %12s | %6s | %s\n' "$name" "${best:-?}" "${evals:-?}" "${status:-?}"
   else
     printf '%-32s | %12s | %6s | %s\n' "$name" "?" "?" "no log"

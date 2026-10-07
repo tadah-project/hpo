@@ -228,6 +228,7 @@ struct OptimizerSpec {
           optim_init(o.optim_init),
           optim_init_origin(o.optim_init_origin),
           failscore(o.failscore),
+          failscore_grading(o.failscore_grading),
           init_strategy_spec(o.init_strategy_spec),
           noise(o.noise),
           multistart(o.multistart),
@@ -341,6 +342,14 @@ struct OptimizerSpec {
      * ANNEAL family excludes FAILSCORE losses from its T0 statistics).
      * Unset only in bare specs built outside HPOTargets (unit tests). */
     std::optional<double> failscore;
+
+    /* FAILSCORE_GRADING of the enclosing HPOTargets, after the
+     * TADAH_FAILSCORE_GRADING override (HPOTargets::set_failscore_grading):
+     * the finite differences take the differences at a graded failure as
+     * they are, a direction out of the failure region, where without
+     * grading a failed loss at the point fails the gradient
+     * (gradient_provider.h). false in bare specs built outside HPOTargets. */
+    bool failscore_grading = false;
 
     /* -------- top-level OPTIMIZER blocks (parsed children) -------- */
     InitStrategySpec init_strategy_spec;    // INIT/ENDINIT block

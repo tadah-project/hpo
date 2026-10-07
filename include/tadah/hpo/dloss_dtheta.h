@@ -789,7 +789,8 @@ using ObservableGradProvider =
  *  free function so it is testable without constructing a full
  *  HPO_Host (which requires real DBFILE inputs and a config.hpo).
  *  HPO_Host::analytical_gradient is a thin wrapper that builds prefs,
- *  retrieves the per-thread trainer cache, and forwards.
+ *  retrieves the per-thread trainer slot (the Trainer of the host's
+ *  latest evaluation on this thread), and forwards.
  *
  *  Restrictions for the analytical path: STRESS=false, NORM=false,
  *  OALGO=4, LAMBDA != -1, MODEL[1] in {BF_Linear, Kern_Linear},

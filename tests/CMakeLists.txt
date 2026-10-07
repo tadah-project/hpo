@@ -128,9 +128,17 @@ endforeach()
 #                  (--varloss, --hotvar) or is NaN (a diagnostic --outvar)
 #                  under PC_ISOLATION THREAD, and every row has its
 #                  header's columns
+#   trainer_e2e    test_hpo_fresh_trainer_e2e.cpp: every evaluation trains
+#                  a model built from its own candidate (row weights,
+#                  MPARAMS, SIGMA, a second host on a thread, an M_KRR -c
+#                  potential, gradients of another host's model)
+#   hotvar_e2e     test_hpo_pc_readback_e2e.cpp: a second run in one process
+#                  starts each PC_LAMMPS --hotvar from its declared initial
+#                  value
 set(_hpo_e2e_groups fixweight_e2e durable_e2e embf0_e2e rcut_e2e
                     rhoform_e2e rhogate_e2e rhobargate_e2e bumpgate_e2e
-                    nn_e2e valmetric_e2e pc_readback_e2e)
+                    nn_e2e valmetric_e2e pc_readback_e2e trainer_e2e
+                    hotvar_e2e)
 foreach(_group IN LISTS _hpo_e2e_groups)
     add_test(NAME hpo_${_group}
         COMMAND test_hpo "[${_group}]" --warn NoTests)
@@ -150,7 +158,7 @@ endforeach()
 # without it (a standalone HPO build) TADAH_BINARY comes from the
 # environment of ctest, if at all.
 set(_hpo_tadah_cli_cases seed_anchor_warm seed_anchor_nlopt durable_exit
-                         pc_readback)
+                         pc_readback pc_lammps_local_search)
 foreach(_case IN LISTS _hpo_tadah_cli_cases)
     add_test(NAME hpo_tadah_cli_${_case}
         COMMAND test_hpo "[.tadah_cli_${_case}]" --warn NoTests)
@@ -196,6 +204,16 @@ add_test(NAME hpo_example_fingerprint_tool
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/../examples/tools/test_generate_fingerprint.py)
 set_tests_properties(hpo_example_fingerprint_tool PROPERTIES
+    LABELS "examples"
+    TIMEOUT 30)
+# The status the example scripts print (examples/common/journal_status.sh,
+# sourced by common/run.sh, run_all.sh and the run.sh of 16, 17 and 27):
+# the whole "Optimiser status" value, colons included
+# (examples/tools/test_journal_status.py; it needs bash).
+add_test(NAME hpo_example_journal_status
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../examples/tools/test_journal_status.py)
+set_tests_properties(hpo_example_journal_status PROPERTIES
     LABELS "examples"
     TIMEOUT 30)
 

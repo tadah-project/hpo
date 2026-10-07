@@ -190,14 +190,6 @@ const std::string kRootLines =
  * OPTIMIZER ... ENDOPTIMIZER block and `root` the rest of config.hpo (by
  * default the objective and search space every case shares). */
 struct TaRun {
-    /* Rebuild the per-thread trainer on every evaluation, as the host
-     * end-to-end tests do: a trainer cached on this thread by another test
-     * in the same process must not stand in for this configuration. */
-    struct ForceRebuild {
-        bool restore = std::getenv("TADAH_HPO_FORCE_REBUILD") == nullptr;
-        ForceRebuild()  { if (restore) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1); }
-        ~ForceRebuild() { if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD"); }
-    } force_rebuild;
     ScratchDir sd;
     tadah::core::Context ctx;
     fs::path hpo, val;
@@ -699,6 +691,9 @@ TEST_CASE("Termination: DLIB BFGS MAXEVAL ends with best_pot.tadah = the "
     CHECK(data_rows("loss.tadah").size() <= 9u);
     const std::string journal = read_file("hpo_run.log");
     CHECK(journal.find("DLIB:BFGS -- MAXEVAL=9 reached") != std::string::npos);
+    /* Pins: the spent MAXEVAL is the run's status. Before the fix: the
+     * trailer said COMPLETED. */
+    CHECK(journal_status(journal) == "DLIB:BFGS: MAXEVAL reached");
 }
 
 TEST_CASE("Two runs in one process: each journal carries its own "
@@ -767,8 +762,11 @@ TEST_CASE("Termination: ANNEAL MAXEVAL ends with best_pot.tadah = the best "
     CHECK(status == 0);
     check_run_files();
     CHECK(data_rows("loss.tadah").size() == 30u);
-    CHECK(read_file("hpo_run.log").find("ANNEAL stopped: MAXEVAL")
-          != std::string::npos);
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(journal.find("ANNEAL stopped: MAXEVAL") != std::string::npos);
+    /* Pins: the spent MAXEVAL is the run's status. Before the fix: the
+     * trailer said COMPLETED. */
+    CHECK(journal_status(journal) == "TADAH:ANNEAL: MAXEVAL reached");
 }
 
 TEST_CASE("Termination: NLopt STOPVAL ends with best_pot.tadah = the best "
@@ -792,8 +790,11 @@ TEST_CASE("Termination: under PRESTAGE the trailer is the refinement's, "
           "not the exploration's", "[HPO][termination][stop_criteria]")
 {
     /* The NLopt exploration records MAXEVAL_REACHED; the DLIB refinement,
-     * which ends the run, records no reason of its own. The trailer used to
-     * repeat the exploration's status. */
+     * which ends the run, spends its MAXEVAL 20. The trailer used to
+     * repeat the exploration's status.
+     * Pins: the trailer is the refinement's own status, "DLIB:BFGS:
+     * MAXEVAL reached".
+     * Before the fix: COMPLETED (DLIB:BFGS recorded no status). */
     TaRun run(
         "OPTIMIZER\n"
         "  STRATEGY\n"
@@ -808,7 +809,7 @@ TEST_CASE("Termination: under PRESTAGE the trailer is the refinement's, "
     CHECK(status == 0);
     const std::string journal = read_file("hpo_run.log");
     CHECK(journal.find("REFINEMENT: refining top-1") != std::string::npos);
-    CHECK(journal_status(journal) == "COMPLETED");
+    CHECK(journal_status(journal) == "DLIB:BFGS: MAXEVAL reached");
     check_run_files();
 }
 
@@ -2668,7 +2669,10 @@ TEST_CASE("Termination: a new journal does not inherit the previous run's "
     log.finish();
     CHECK(journal_status(read_file(sd.dir / "first.log")) ==
           "MAXEVAL_REACHED -- maximum evaluations exhausted");
-    CHECK(journal_status(read_file(sd.dir / "second.log")) == "COMPLETED");
+    /* Pins: a journal finished with no status says so. Before the fix:
+     * HPOLog::finish() wrote COMPLETED, a status nothing recorded. */
+    CHECK(journal_status(read_file(sd.dir / "second.log")) ==
+          "(no status recorded)");
     log.reset_for_test();
 }
 
@@ -2694,7 +2698,8 @@ TEST_CASE("Termination: a new journal is written even when the previous "
     CHECK(journal_status(first) == "(no RESULT section)");
     CHECK(next.find("Run Journal") != std::string::npos);
     CHECK(next.find("the next run") != std::string::npos);
-    CHECK(journal_status(next) == "COMPLETED");
+    /* Before the fix: COMPLETED, which nothing recorded. */
+    CHECK(journal_status(next) == "(no status recorded)");
     log.reset_for_test();
 }
 
@@ -3019,15 +3024,23 @@ void check_driver_files(const std::string& expected_status)
 
 }  // namespace
 
+/* A body that ends normally records its status, as every optimiser does
+ * (run_end.h); one that records none is an internal error (below).
+ * Pins: the trailer is the status the body recorded, and the run returns 0.
+ * Before the fix: passes as well (a pin; a body without a status ended
+ * COMPLETED, which this case used to pin). */
 TEST_CASE("Termination: drive_run completes a normal end with the "
           "optimiser's status", "[HPO][termination][run_driver]")
 {
     HostFixture fx;
     int status = -1;
     REQUIRE_NOTHROW(status = tadah::hpo::drive_run(
-        [&] { fx.evaluate(kDriverEvals); }, fx.host, fx.log()));
+        [&] {
+            fx.evaluate(kDriverEvals);
+            fx.log().set_status("TEST: done");
+        }, fx.host, fx.log()));
     CHECK(status == 0);
-    check_driver_files("COMPLETED");
+    check_driver_files("TEST: done");
 }
 
 TEST_CASE("Termination: drive_run ends a shutdown with the SHUTDOWN trailer "
@@ -3376,12 +3389,14 @@ TEST_CASE("Termination: TADAH:GRID stops after MAXEVAL points in grid order",
         CHECK_THAT(journal,
                    Catch::Contains("GRID: MAXEVAL 5 < 28 grid points") &&
                    Catch::Contains("evaluating the first 5 in grid order"));
-        /* A spent MAXEVAL ends the run COMPLETED, and the journal says
-         * which stop ended the sweep. */
+        /* The journal says which stop ended the sweep, and it is the
+         * run's status.
+         * Pins: "TADAH:GRID: MAXEVAL reached" (here and below). Before the
+         * fix: COMPLETED for a spent MAXEVAL or the whole grid. */
         CHECK_THAT(journal, Catch::Contains("TADAH:GRID stopped: MAXEVAL "
                                             "reached after 5 of 28 grid "
                                             "points"));
-        CHECK(journal_status(journal) == "COMPLETED");
+        CHECK(journal_status(journal) == "TADAH:GRID: MAXEVAL reached");
     }
     SECTION("MAXEVAL 1: the INIT point only") {
         TaRun run(plain_block(grid + "    MAXEVAL 1\n"));
@@ -3394,7 +3409,7 @@ TEST_CASE("Termination: TADAH:GRID stops after MAXEVAL points in grid order",
         CHECK_THAT(journal, Catch::Contains("TADAH:GRID stopped: MAXEVAL "
                                             "reached after 1 of 28 grid "
                                             "points"));
-        CHECK(journal_status(journal) == "COMPLETED");
+        CHECK(journal_status(journal) == "TADAH:GRID: MAXEVAL reached");
     }
     SECTION("MAXEVAL at or above the grid size: the whole grid, no note") {
         for (const std::string maxeval : {"28", "1000"}) {
@@ -3408,7 +3423,10 @@ TEST_CASE("Termination: TADAH:GRID stops after MAXEVAL points in grid order",
             CHECK(journal.find("GRID: MAXEVAL") == std::string::npos);
             CHECK_THAT(journal, Catch::Contains("TADAH:GRID finished: all 28 "
                                                 "grid points evaluated"));
-            CHECK(journal_status(journal) == "COMPLETED");
+            /* Pins: the whole grid is the status "TADAH:GRID: all grid
+             * points evaluated". */
+            CHECK(journal_status(journal) ==
+                  "TADAH:GRID: all grid points evaluated");
         }
     }
 }
@@ -3569,12 +3587,13 @@ TEST_CASE("Termination: TADAH:RANDOM stops at the first loss at or below "
         "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n    SEED 11\n";
     const Reference ref = reference_run(plain_block(random + "    MAXEVAL 30\n"));
     REQUIRE(ref.points.size() == 30u);
-    /* The reference run spends its MAXEVAL: it ends COMPLETED, and the
-     * journal says so. */
+    /* The reference run spends its MAXEVAL, and the journal and the
+     * status say so.
+     * Pins: "TADAH:RANDOM: MAXEVAL reached". Before the fix: COMPLETED. */
     CHECK_THAT(ref.journal, Catch::Contains("TADAH:RANDOM stopped: MAXEVAL "
                                             "reached after 30 "
                                             "evaluation(s)"));
-    CHECK(journal_status(ref.journal) == "COMPLETED");
+    CHECK(journal_status(ref.journal) == "TADAH:RANDOM: MAXEVAL reached");
     const FirstImprovement stop = first_improvement(ref.losses);
     INFO("STOPVAL " << stop.stopval << ", first reached at evaluation "
          << stop.eval);
@@ -3676,7 +3695,8 @@ TEST_CASE("Termination: DLIB:GFS stops at the first loss at or below STOPVAL",
     CHECK_THAT(ref.journal, Catch::Contains("DLIB:GFS stopped: MAXEVAL "
                                             "reached after 30 "
                                             "evaluation(s)"));
-    CHECK(journal_status(ref.journal) == "COMPLETED");
+    /* Pins: "DLIB:GFS: MAXEVAL reached". Before the fix: COMPLETED. */
+    CHECK(journal_status(ref.journal) == "DLIB:GFS: MAXEVAL reached");
     const FirstImprovement stop = first_improvement(ref.losses);
     INFO("STOPVAL " << stop.stopval << ", first reached at evaluation "
          << stop.eval);
@@ -3741,8 +3761,9 @@ TEST_CASE("Termination: the journal says how a run without stop criteria "
 
 /* ======================================================================
  * MAXTIME is a stop only while another evaluation would start: a run whose
- * last evaluation spends MAXEVAL (or the grid) ends on MAXEVAL, COMPLETED,
- * however long that evaluation took -- as DLIB:GFS reports it.
+ * last evaluation spends MAXEVAL (or the grid) ends on MAXEVAL, with the
+ * status "<backend>: MAXEVAL reached" (it was COMPLETED), however long that
+ * evaluation took -- as DLIB:GFS reports it.
  * ==================================================================== */
 
 TEST_CASE("Termination: TADAH:RANDOM and TADAH:GRID report MAXEVAL when "
@@ -3775,7 +3796,9 @@ TEST_CASE("Termination: TADAH:RANDOM and TADAH:GRID report MAXEVAL when "
             const std::string journal = read_file("hpo_run.log");
             CHECK_THAT(journal, Catch::Contains(c.maxeval_line) &&
                                 !Catch::Contains("MAXTIME exceeded"));
-            CHECK(journal_status(journal) == "COMPLETED");
+            /* Pins: "<backend>: MAXEVAL reached". Before the fix:
+             * COMPLETED. */
+            CHECK(journal_status(journal) == c.what + ": MAXEVAL reached");
         }
         /* With evaluations left, the same MAXTIME ends the run after the
          * first one. */
@@ -3857,6 +3880,199 @@ TEST_CASE("Termination: the RESTART stagnation stop ends a search that has "
             }
         }
     }
+}
+
+/* ======================================================================
+ * Every driver records why it ended (HPOLog::set_status, run_end.h): the
+ * trailer is "<LIB>:<ALGO>: <reason>" (NLopt and ASA keep their own
+ * strings) and the journal's stop line gives the numbers. DLIB:BFGS
+ * recorded a status only when a gradient was not finite: a spent MAXEVAL
+ * and its convergence tests ended the run COMPLETED.
+ * ==================================================================== */
+
+/* DLIB:BFGS ends on MAXEVAL or on its stop strategy, which is
+ * objective_delta_stop_strategy(FTOL_ABS, 1e-7 by default): the loss
+ * changed by less than FTOL_ABS from one iteration to the next; with
+ * PARAM tol_gradinf, gradient_norm_stop_strategy: the L2 norm of the
+ * gradient (dlib's length(g)) fell below it.
+ * Pins (NUMERICAL central differences, three dimensions):
+ *   MAXEVAL 3 -- 3 evaluations, "DLIB:BFGS -- MAXEVAL=3 reached" (the
+ *     MAXEVAL stop line, unchanged) and the status "DLIB:BFGS: MAXEVAL
+ *     reached";
+ *   MAXEVAL 200 -- 51 evaluations, the stop line "DLIB:BFGS stopped:
+ *     FTOL_ABS reached after 51 evaluation(s): the loss changed by less
+ *     than FTOL_ABS = 1e-07 (default) from one iteration to the next", no
+ *     MAXEVAL line, the status "DLIB:BFGS: FTOL_ABS reached";
+ *   FTOL_ABS 1e-3 -- 14 evaluations, "FTOL_ABS = 0.001" without
+ *     "(default)";
+ *   PARAM tol_gradinf 1e6 -- 1 + 2 x 3 = 7 evaluations (the loss at the
+ *     start and its gradient's stencil, which takes that loss as its
+ *     centre), the stop line "DLIB:BFGS stopped: tol_gradinf reached after
+ *     7 evaluation(s): the L2 norm of the gradient fell below PARAM
+ *     tol_gradinf = 1e+06" and the status "DLIB:BFGS: tol_gradinf
+ *     reached".
+ * Before the fix: the same evaluations, no stop line for a convergence
+ * test, and the trailer COMPLETED in every case. */
+TEST_CASE("Termination: DLIB:BFGS records why it ended",
+          "[HPO][termination][stop_criteria][stop_status]")
+{
+    const std::string bfgs = "    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n";
+    struct Case {
+        std::string what, lines;
+        std::size_t evals;
+        std::string status, stop_line;
+    };
+    for (const auto& c : std::vector<Case>{
+             {"MAXEVAL 3", "    MAXEVAL 3\n", 3u,
+              "DLIB:BFGS: MAXEVAL reached",
+              "DLIB:BFGS -- MAXEVAL=3 reached; preserving best-so-far"},
+             {"the default FTOL_ABS", "    MAXEVAL 200\n", 51u,
+              "DLIB:BFGS: FTOL_ABS reached",
+              "DLIB:BFGS stopped: FTOL_ABS reached after 51 evaluation(s): "
+              "the loss changed by less than FTOL_ABS = 1e-07 (default) "
+              "from one iteration to the next"},
+             {"FTOL_ABS 1e-3", "    MAXEVAL 200\n    FTOL_ABS 1e-3\n", 14u,
+              "DLIB:BFGS: FTOL_ABS reached",
+              "DLIB:BFGS stopped: FTOL_ABS reached after 14 evaluation(s): "
+              "the loss changed by less than FTOL_ABS = 0.001 from one "
+              "iteration to the next"},
+             {"PARAM tol_gradinf 1e6",
+              "    MAXEVAL 200\n    PARAM tol_gradinf 1e6\n", 7u,
+              "DLIB:BFGS: tol_gradinf reached",
+              "DLIB:BFGS stopped: tol_gradinf reached after 7 "
+              "evaluation(s): the L2 norm of the gradient fell below PARAM "
+              "tol_gradinf = 1e+06"}}) {
+        DYNAMIC_SECTION(c.what) {
+            TaRun run(plain_block(bfgs + c.lines));
+            int status = -1;
+            REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+            CHECK(status == 0);
+            check_run_files();
+            CHECK(data_rows("loss.tadah").size() == c.evals);
+            const std::string journal = read_file("hpo_run.log");
+            CHECK(count_of(journal, c.stop_line) == 1u);
+            if (c.evals != 3u)
+                CHECK(journal.find("MAXEVAL=200 reached") ==
+                      std::string::npos);
+            CHECK(journal_status(journal) == c.status);
+        }
+    }
+}
+
+/* Every registered backend (the optimizer_caps registry; CERES when it is
+ * built; NLOPT:LN_NEWUOA_BOUND is refused and not registered) records why
+ * its run ended under every STRATEGY TYPE and under RESTART: a run that
+ * ends normally has a status of its own, never one nothing recorded. A
+ * driver that forgot it would now fail the run (drive_run's internal
+ * error), so this sweep is the guard that no backend and strategy does.
+ * Each run spends a small MAXEVAL on the three-dimensional fixture:
+ *   PLAIN       the backend alone;
+ *   MULTISTART  two starts from two INIT points (the backends that run
+ *               from each start, runs_from_each_start(); a global one is
+ *               refused at startup);
+ *   PRESTAGE    a TADAH:RANDOM exploration, then the backend as the
+ *               refinement of TOPK 2 candidates (TOPK 1 for a global
+ *               backend);
+ *   RESTART     PLAIN under an active RESTART (AFTER_STAGNATION 4, MAX 1):
+ *               the backend's status, or RESTART's own once its restart is
+ *               used.
+ * Pins: exit status 0 and a status that is neither empty, nor COMPLETED,
+ * nor "(no status recorded)".
+ * Before the fix: TADAH:RANDOM, TADAH:GRID, the ANNEAL family, DLIB:GFS,
+ * DLIB:BFGS and CERES:* ended COMPLETED (NLopt and ASA had their own
+ * statuses). */
+namespace {
+
+/* The OPTIMIZER block of `c` under `strategy` ("PLAIN", "MULTISTART",
+ * "PRESTAGE", "RESTART"). */
+std::string registry_block(const tadah::hpo::OptimizerCaps& c,
+                           const std::string& strategy)
+{
+    std::string backend = "    LIB " + c.lib + "\n    ALGO " + c.algo +
+                          "\n    MAXEVAL 12\n";
+    if (c.reads_seed) backend += "    SEED 3\n";
+    if (c.lib == "TADAH" && c.algo == "GRID")
+        backend += "    PARAM GRID_POINTS 2\n";
+    if (c.lib == "DLIB" && c.algo == "GFS") backend += "    THREADS 1\n";
+    /* MLSL and AUGLAG without a default local optimiser need an INNER
+     * block (require_inner_backend). */
+    if (c.accepts_inner && c.default_inner == nullptr)
+        backend += "    INNER\n      LIB NLOPT\n      ALGO LN_SBPLX\n"
+                   "    ENDINNER\n";
+    std::string body;
+    std::string init;
+    if (strategy == "PLAIN") {
+        body = "    TYPE PLAIN\n" + backend;
+    } else if (strategy == "MULTISTART") {
+        init = "  INIT\n    METHOD RANDOM 2\n    SEED 4\n  ENDINIT\n";
+        body = "    TYPE MULTISTART\n    N_STARTS 2\n" + backend;
+    } else if (strategy == "PRESTAGE") {
+        body = "    TYPE PRESTAGE\n    TOPK " +
+               std::string(tadah::hpo::runs_from_each_start(c) ? "2" : "1") +
+               "\n    EXPLORE\n      LIB TADAH\n      ALGO RANDOM\n"
+               "      MAXEVAL 4\n      SEED 2\n    ENDEXPLORE\n" + backend;
+    } else {
+        body = "    TYPE PLAIN\n" + backend +
+               "    RESTART\n      AFTER_STAGNATION 4\n      MAX 1\n"
+               "      METHOD RANDOM 1\n      SEED 5\n    ENDRESTART\n";
+    }
+    return "OPTIMIZER\n" + init + "  STRATEGY\n" + body +
+           "  ENDSTRATEGY\nENDOPTIMIZER\n";
+}
+
+void check_every_backend_records_its_end(const std::string& strategy)
+{
+    const auto all = tadah::hpo::filter_optimizer_caps(
+        [](const tadah::hpo::OptimizerCaps&) { return true; });
+    REQUIRE(all.size() > 40u);
+    for (const tadah::hpo::OptimizerCaps* c : all) {
+#ifndef TADAH_USE_CERES
+        if (c->lib == "CERES") continue;   // registered, not built
+#endif
+        if (strategy == "MULTISTART" && !tadah::hpo::runs_from_each_start(*c))
+            continue;                      // refused at startup
+        DYNAMIC_SECTION(c->lib << ":" << c->algo) {
+            TaRun run(registry_block(*c, strategy));
+            int status = -1;
+            REQUIRE_NOTHROW(status = run_within(
+                                run, std::chrono::seconds(120),
+                                c->lib + ":" + c->algo + " " + strategy));
+            CHECK(status == 0);
+            const std::string trailer = journal_status(read_file("hpo_run.log"));
+            INFO("trailer: " << trailer);
+            CHECK_FALSE(trailer.empty());
+            CHECK(trailer != "COMPLETED");
+            CHECK(trailer != "(no status recorded)");
+            CHECK(trailer != "(no RESULT section)");
+        }
+    }
+}
+
+}  // namespace
+
+TEST_CASE("End status: every registered backend records why it ended under "
+          "STRATEGY TYPE PLAIN", "[HPO][termination][stop_status][registry]")
+{
+    check_every_backend_records_its_end("PLAIN");
+}
+
+TEST_CASE("End status: every registered backend records why it ended under "
+          "STRATEGY TYPE MULTISTART",
+          "[HPO][termination][stop_status][registry]")
+{
+    check_every_backend_records_its_end("MULTISTART");
+}
+
+TEST_CASE("End status: every registered backend records why it ended as the "
+          "PRESTAGE refinement", "[HPO][termination][stop_status][registry]")
+{
+    check_every_backend_records_its_end("PRESTAGE");
+}
+
+TEST_CASE("End status: every registered backend records why it ended under "
+          "RESTART", "[HPO][termination][stop_status][registry]")
+{
+    check_every_backend_records_its_end("RESTART");
 }
 
 /* ======================================================================
@@ -4069,7 +4285,8 @@ TEST_CASE("DLIB:GFS: a run without failed evaluations hands dlib its losses "
     const std::string journal = read_file("hpo_run.log");
     REQUIRE(unusable_losses(journal) == 0);
     CHECK(count_of(journal, kGfsStandInNote) == 0u);
-    CHECK(journal_status(journal) == "COMPLETED");
+    /* Pins: "DLIB:GFS: MAXEVAL reached". Before the fix: COMPLETED. */
+    CHECK(journal_status(journal) == "DLIB:GFS: MAXEVAL reached");
     check_run_files();
 }
 
@@ -4110,7 +4327,8 @@ TEST_CASE("DLIB:GFS: a run whose first evaluations all fail goes on to "
     const std::string journal = read_file("hpo_run.log");
     CHECK_THAT(journal, Catch::Contains("DLIB:GFS seeding with 3 starting "
                                         "points"));
-    CHECK(journal_status(journal) == "COMPLETED");
+    /* Pins: "DLIB:GFS: MAXEVAL reached". Before the fix: COMPLETED. */
+    CHECK(journal_status(journal) == "DLIB:GFS: MAXEVAL reached");
 
     /* Every row is a usable loss (an ERMSE of at most 9.99999, so a loss of
      * at most 99.9998) or the FAILSCORE the evaluation returned: whatever
@@ -4138,6 +4356,9 @@ TEST_CASE("DLIB:GFS: a run whose first evaluations all fail goes on to "
     check_run_files();
 }
 
+/* The body records its status, as every optimiser does; without a usable
+ * loss the run still ends as a failed one. Before the fix: passes as well
+ * (a pin; the body recorded no status). */
 TEST_CASE("No usable loss: drive_run ends a normal end without a usable "
           "loss with status 1", "[HPO][termination][no_usable_loss]"
           "[run_driver]")
@@ -4145,7 +4366,10 @@ TEST_CASE("No usable loss: drive_run ends a normal end without a usable "
     HostFixture fx(kAllFailRoot);
     int status = -1;
     REQUIRE_NOTHROW(status = tadah::hpo::drive_run(
-        [&] { fx.evaluate(kDriverEvals); }, fx.host, fx.log()));
+        [&] {
+            fx.evaluate(kDriverEvals);
+            fx.log().set_status("TEST: done");
+        }, fx.host, fx.log()));
     CHECK(status == 1);
     check_no_usable_loss(kDriverEvals, kDefaultFailScoreRow,
                          kNoUsableLossStatus);
@@ -4214,7 +4438,10 @@ TEST_CASE("No usable loss: one usable loss among failures ends the run as "
         "OPTIM SGRID2B (2) 4.0 6.0\n");
     int status = -1;
     REQUIRE_NOTHROW(status = tadah::hpo::drive_run(
-        [&] { fx.evaluate(kDriverEvals); }, fx.host, fx.log()));
+        [&] {
+            fx.evaluate(kDriverEvals);
+            fx.log().set_status("TEST: done");
+        }, fx.host, fx.log()));
     CHECK(status == 0);
     const auto loss = data_rows("loss.tadah");
     REQUIRE(loss.size() == kDriverEvals);
@@ -4225,12 +4452,53 @@ TEST_CASE("No usable loss: one usable loss among failures ends the run as "
     REQUIRE(failed > 0);
     REQUIRE(failed < kDriverEvals);
     const std::string journal = read_file("hpo_run.log");
-    CHECK(journal_status(journal) == "COMPLETED");
+    /* The body's status (it used to record none: COMPLETED). Before the
+     * fix: passes as well (a pin). */
+    CHECK(journal_status(journal) == "TEST: done");
     CHECK(journal.find(kNoUsableLossError) == std::string::npos);
     CHECK(unusable_losses(journal) == static_cast<long>(failed));
     CHECK(journal.find("[ok] Every evaluation produced a usable loss") ==
           std::string::npos);
     check_run_files();
+}
+
+/* Every optimiser records why its search ended (HPOLog::set_status,
+ * run_end.h). A normal end without a recorded status is an internal error:
+ * a driver that forgot to say why it ended. It used to end the run with
+ * status 0 and the trailer COMPLETED, a status nothing recorded.
+ * Pins: drive_run throws std::logic_error "internal error: the optimiser
+ * ended without recording why it ended", the trailer starts "FAILED -- "
+ * and names it, and the queued results are still flushed (every row, the
+ * incumbent in best_pot.tadah). The internal error outranks a run without
+ * a usable loss: that run ends FAILED too, not "STOPPED -- no evaluation
+ * produced a usable loss".
+ * Before the fix: status 0 (1 without a usable loss) and the trailer
+ * COMPLETED (the no-usable-loss trailer without one). */
+TEST_CASE("Termination: drive_run refuses a normal end that recorded no "
+          "status", "[HPO][termination][run_driver][stop_status]")
+{
+    const std::string kWhat =
+        "internal error: the optimiser ended without recording why it ended";
+    SECTION("with a usable loss") {
+        HostFixture fx;
+        CHECK_THROWS_MATCHES(
+            tadah::hpo::drive_run([&] { fx.evaluate(kDriverEvals); },
+                                  fx.host, fx.log()),
+            std::logic_error, Catch::Matchers::Message(kWhat));
+        CHECK_THAT(journal_status(read_file("hpo_run.log")),
+                   Catch::StartsWith("FAILED -- " + kWhat));
+        CHECK(data_rows("loss.tadah").size() == kDriverEvals);
+        check_run_files();
+    }
+    SECTION("without a usable loss") {
+        HostFixture fx(kAllFailRoot);
+        CHECK_THROWS_MATCHES(
+            tadah::hpo::drive_run([&] { fx.evaluate(kDriverEvals); },
+                                  fx.host, fx.log()),
+            std::logic_error, Catch::Matchers::Message(kWhat));
+        check_no_usable_loss(kDriverEvals, kDefaultFailScoreRow,
+                             "FAILED -- " + kWhat);
+    }
 }
 
 namespace {
@@ -4257,6 +4525,18 @@ struct AgreementProbeHost {
 
 }  // namespace
 
+/* Pins: every ending of drive_run asks the host once whether it produced a
+ * usable loss -- the run's one cross-rank collective -- before anything
+ * else it asks, and flushes the results at least once; an error ending
+ * rethrows. A normal end without a recorded status, drive_run's internal
+ * error (std::logic_error, thrown before the collective on the normal
+ * path), reaches the collective through the error handler like any other
+ * error and is rethrown, also when its final flush fails.
+ * Before the fix: the endings with a status, the stops and the errors pass
+ * as well (a pin; the normal ends' bodies then recorded none, which
+ * drive_run accepted), and so does the end without a status whose flush
+ * fails (rethrown for the flush's error); a normal end without a status
+ * ended normally, not rethrown (fails). */
 TEST_CASE("No usable loss: every ending of drive_run reaches the cross-rank "
           "agreement once and before the final flush",
           "[HPO][termination][no_usable_loss][run_driver]")
@@ -4272,9 +4552,18 @@ TEST_CASE("No usable loss: every ending of drive_run reaches the cross-rank "
         bool flush_fails;
         bool rethrows;
     };
+    /* A normal end records its status, as every optimiser does; the body
+     * of a normal end without one is an internal error. */
+    const auto normal_end = [] {
+        tadah::hpo::HPOLog::instance().set_status("TEST: done");
+    };
+    const auto no_status = [] {};
     const Ending endings[] = {
-        {"a normal end", [] {}, false, false},
-        {"a normal end whose final flush fails", [] {}, true, true},
+        {"a normal end", normal_end, false, false},
+        {"a normal end whose final flush fails", normal_end, true, true},
+        {"a normal end without a status", no_status, false, true},
+        {"a normal end without a status whose final flush fails", no_status,
+         true, true},
         {"a stagnation stop",
          [] { throw AgreementProbeHost::StagnationStop{}; }, false, false},
         {"a shutdown", [] { throw tadah::core::ShutdownRequested{}; }, false,
@@ -4358,12 +4647,21 @@ TEST_CASE("No usable loss: SIGINT ends a run without a usable loss with 130",
  * with status 0. The gradient takes the loss at 1.6 its caller has just
  * evaluated as its centre (gradient_at): three evaluations, 1.6, 1.8 and
  * 1.4; it evaluated 1.6 a second time until 2026-10-07.
+ *
+ * A failed evaluation fails the gradient whatever FAILSCORE is (2026-10-07,
+ * "No usable gradient: ..."): at a usable point the first failed stencil
+ * evaluation, at a failed point the loss there (FAILSCORE_GRADING OFF), so
+ * a start inside the failure region (below 1.47) is no longer differenced
+ * into an exact 0 between two failures, a "converged" start, nor a failed
+ * stencil point under a finite FAILSCORE into a steep, finite slope. The
+ * status says "no usable gradient" (it said "gradient not finite", which
+ * that slope was not).
  * ==================================================================== */
 
 namespace {
 
 const std::string kStencilCause =
-    "gradient not finite: a failed evaluation in the finite-difference "
+    "no usable gradient: a failed evaluation in the finite-difference "
     "stencil";
 const std::string kStencilStatus = "STOPPED -- " + kStencilCause;
 
@@ -4527,9 +4825,7 @@ namespace {
 struct TrialCase {
     GradientBackend b;
     std::size_t     evals;   /* the evaluations of the search */
-    std::string     ending;  /* what the journal adds after the stop line,
-                                or the trailer of a search that goes on */
-    std::string     start = "1.8";   /* CGRID2B[2] at the start */
+    std::string     ending;  /* the trailer of the search, which goes on */
 };
 
 /* Whether a failed evaluation of loss.tadah is followed by a usable one:
@@ -4555,7 +4851,9 @@ TEST_CASE("Gradient not finite: NLopt and Ceres reject a later point whose "
      * search goes on. That is unchanged. Each search spends MAXEVAL and
      * ends on it: LD_MMA (its trust region shrinks; only at a start point
      * without a finite gradient did it stall) and LD_LBFGS with
-     * MAXEVAL_REACHED, CERES STEEPEST_DESCENT with COMPLETED.
+     * MAXEVAL_REACHED, CERES STEEPEST_DESCENT with "CERES:STEEPEST_DESCENT:
+     * MAXEVAL reached" (its evaluation refused for the budget made the
+     * line search fail; the trailer said COMPLETED until 2026-10-07).
      *
      * Pins: 60 evaluations for MAXEVAL 60 in each, with the endings above;
      * every NLopt evaluation, the loss and each finite-difference point,
@@ -4566,14 +4864,19 @@ TEST_CASE("Gradient not finite: NLopt and Ceres reject a later point whose "
      * NLopt its objective calls; once the provider's budget was spent, each
      * gradient request failed (GradientFailure::Budget) and the objective
      * still evaluated the point and returned +inf, until NLopt's own count
-     * reached MAXEVAL (LD_MMA) or the search failed (LD_LBFGS). */
+     * reached MAXEVAL (LD_MMA) or the search failed (LD_LBFGS).
+     * The stop line it checks is absent names "no usable gradient" (it
+     * named "gradient not finite" until 2026-10-07); with that, the case
+     * passes before the failure-region fix as well (a pin: the counts and
+     * endings of these searches are the same with it). */
     std::vector<TrialCase> cases = {
         {{"NLOPT", "LD_MMA"}, 60u,
          "MAXEVAL_REACHED -- maximum evaluations exhausted"},
         {{"NLOPT", "LD_LBFGS"}, 60u,
          "MAXEVAL_REACHED -- maximum evaluations exhausted"}};
 #ifdef TADAH_USE_CERES
-    cases.push_back({{"CERES", "STEEPEST_DESCENT"}, 60u, "COMPLETED"});
+    cases.push_back({{"CERES", "STEEPEST_DESCENT"}, 60u,
+                     "CERES:STEEPEST_DESCENT: MAXEVAL reached"});
 #endif
     for (const auto& c : cases) {
         const std::string name = c.b.lib + ":" + c.b.algo;
@@ -4586,75 +4889,11 @@ TEST_CASE("Gradient not finite: NLopt and Ceres reject a later point whose "
             CHECK(loss.size() == c.evals);
             CHECK(went_on_past_a_failure(loss));
             const std::string journal = read_file("hpo_run.log");
-            CHECK(journal.find(name + " stopped: gradient not finite") ==
+            CHECK(journal.find(name + " stopped: no usable gradient") ==
                   std::string::npos);
             CHECK(journal_status(journal) != kStencilStatus);
             if (!c.ending.empty())
                 CHECK(journal_status(journal) == c.ending);
-            check_run_files();
-        }
-    }
-}
-
-TEST_CASE("Gradient not finite: a search that ends right after it rejected "
-          "such a point says so", "[HPO][termination][fd_gradient]")
-{
-    /* LD_SLSQP from 1.72 rejects 1.6554, whose stencil reaches 1.4554,
-     * and ends "roundoff-limited"; the CERES drivers reject 1.429 (1.229
-     * fails) and end "Numerical failure in line search" (the trailer was
-     * COMPLETED). With no stop criterion met, the rejection ended the
-     * search. The evaluations are the same as before, but for the
-     * one-sided stencil of the point 1.074 near the lower bound (1.274 and
-     * 1.474; the central one evaluated 0.874, outside the box: fd_stencil.h,
-     * owner decision 2026-09-29, C4), whose gradient is 0 either way (every
-     * point of it fails).
-     *
-     * Pins: LD_SLSQP makes 10 evaluations, each CERES driver 9: each
-     * gradient takes the loss its caller has just evaluated at its point as
-     * its centre.
-     * Before the fix: 13 and 12 (each gradient evaluated its point a second
-     * time: three gradients).
-     *
-     * LD_SLSQP ran from 1.8 until C4: it rejected 1.6676 and ended. From
-     * 1.8 it now rejects 1.143, whose one-sided stencil (1.343 fails, 1.543
-     * does not) overflows where the central one took a zero difference of
-     * two failures at 1.343 and 0.943, outside the box, and it goes on to
-     * MAXEVAL. */
-    std::vector<TrialCase> cases = {
-        {{"NLOPT", "LD_SLSQP"}, 10u, " (at CGRID2B[2] = 1.65540558", "1.72"}};
-#ifdef TADAH_USE_CERES
-    for (const char* a : {"LBFGS", "WOLFE", "NLCG"})
-        cases.push_back({{"CERES", a}, 9u, " (at CGRID2B[2] = 1.429"});
-#endif
-    for (const auto& c : cases) {
-        const std::string name = c.b.lib + ":" + c.b.algo;
-        DYNAMIC_SECTION(name) {
-            TaRun run(straddle_block(c.b.lib, c.b.algo), straddle_root("10.5"));
-            int status = -1;
-            REQUIRE_NOTHROW(status = straddle_run(run, c.start, name));
-            CHECK(status == 0);
-            const auto loss = data_rows("loss.tadah");
-            CHECK(loss.size() == c.evals);
-            REQUIRE_FALSE(loss.empty());
-            CHECK(loss.back().back() == kDefaultFailScoreRow);
-            /* every evaluation in the box [1, 2], the stencils near its
-             * lower bound included */
-            for (double xi : evaluated_cgrid2()) {
-                CAPTURE(xi);
-                CHECK((xi >= 1.0 && xi <= 2.0));
-            }
-
-            const std::string journal = read_file("hpo_run.log");
-            CHECK(journal_status(journal) == kStencilStatus);
-            const std::string stop = name + " stopped: " + kStencilCause;
-            CHECK(count_of(journal, stop + c.ending) == 1u);
-            const auto at = journal.find(stop);
-            REQUIRE(at != std::string::npos);
-            const std::string after = c.b.lib == "NLOPT"
-                ? "; NLopt ended right after it (nlopt roundoff-limited)"
-                : "; Ceres ended right after it (FAILURE: Numerical failure "
-                  "in line search";
-            CHECK(journal.find(after, at) != std::string::npos);
             check_run_files();
         }
     }
@@ -4722,7 +4961,7 @@ TEST_CASE("Gradient not finite: AUGLAG's local search stops at a starting "
                            " (at CGRID2B[2] = 1.6, the stencil point "
                            "CGRID2B[2] = 1.4 failed: loss 1.797693135e+308); "
                            "a local gradient search has no step to take from "
-                           "a starting point without a finite gradient") == 1u);
+                           "a starting point without a usable gradient") == 1u);
             CHECK(journal.find("FTOL_REACHED") == std::string::npos);
             CHECK(journal.find("MAXEVAL_REACHED") == std::string::npos);
             check_run_files();
@@ -4730,73 +4969,78 @@ TEST_CASE("Gradient not finite: AUGLAG's local search stops at a starting "
     }
 }
 
-TEST_CASE("Gradient not finite: a search that ends with a tolerance, or "
-          "AUGLAG's ending, right after it rejected such a point says so",
-          "[HPO][termination][fd_gradient][auglag]")
+TEST_CASE("No usable gradient: the straddle searches that ended right after "
+          "a rejection go on to MAXEVAL", "[HPO][termination][fd_gradient]"
+          "[auglag]")
 {
-    /* From 1.72 with the ERMSE target 10.5, LD_SLSQP rejects 1.6554, whose
-     * stencil reaches 1.4554 (its fourth objective call; the calls without
-     * a gradient are its line-search points), as in "a search that ends
-     * right after it rejected such a point says so". With XTOL_REL set
-     * NLopt returns XTOL_REACHED there instead of throwing roundoff-
-     * limited: a tolerance is no stop criterion of that rule, the search
-     * ended on the steps it took back from the rejected point.
-     *
-     * The same search as AUGLAG's local search ends there too, and AUGLAG
-     * then evaluates the point it returned (1.6554) once more, without a
-     * gradient, and returns FTOL_REACHED. That call cleared the rejection,
-     * and the run reported FTOL_REACHED, a converged search.
-     *
-     * The cases ran from 1.8 (rejecting 1.6676) until the one-sided
-     * stencil near the bounds (owner decision 2026-09-29, C4) changed that
-     * search: see "a search that ends right after it rejected such a point
-     * says so".
-     *
-     * Pins: LD_SLSQP makes 10 evaluations, the last the failed stencil
-     * point 1.4554055798; AUGLAG 11, its re-evaluation of 1.6554055798
-     * after it. Each gradient takes the loss its caller has just evaluated
-     * at its point as its centre.
-     * Before the fix: 13 and 14, the failed point the 13th (each of the
-     * three gradients evaluated its point a second time). */
+    /* With the ERMSE target 10.5 these searches ended right after they
+     * rejected a point whose stencil reached into the failure region: LD_SLSQP
+     * from 1.72 rejected 1.6554 (its stencil point 1.4554 failed) and ended
+     * "roundoff-limited", with XTOL_REL and FTOL_REL XTOL_REACHED, and as the
+     * INNER search of AUGLAG FTOL_REACHED; the CERES drivers from 1.8 rejected
+     * 1.429 (1.229 failed) and ended "Numerical failure in line search"
+     * (the cases "a search that ends right after it rejected such a point
+     * says so" and "a search that ends with a tolerance, or AUGLAG's ending,
+     * right after it rejected such a point says so"). Each had been handed
+     * the loss FAILSCORE with a zero gradient at a point inside the failure
+     * region, 1.074 or 1.0586, whose stencil failed as well: the difference
+     * of two failures. That point is rejected now, and the searches go on.
+     * The endings right after a rejection are covered on an outage stub in
+     * test_fd_bounds.cpp ("No usable gradient: an NLopt search that ends
+     * right after it rejected a point says so, on an outage", and the Ceres
+     * case).
+     * Pins: 60 evaluations for MAXEVAL 60, every one in the box [1, 2], a
+     * usable one after a failed one, no stop line; the NLopt searches end
+     * MAXEVAL_REACHED (the CERES drivers' own ending is not pinned here).
+     * Before the fix: LD_SLSQP 10 evaluations, the last the failed stencil
+     * point 1.4554, ending with the stop line "... (at CGRID2B[2] =
+     * 1.65540558, the stencil point CGRID2B[2] = 1.45540558 failed: ...);
+     * NLopt ended right after it (nlopt roundoff-limited)" (XTOL_REACHED
+     * with the tolerances), AUGLAG 11 ("(FTOL_REACHED -- function tolerance
+     * converged)"), the CERES drivers 9 ("... (at CGRID2B[2] = 1.429...;
+     * Ceres ended right after it (FAILURE: Numerical failure in line
+     * search ..."), and the trailer "STOPPED -- gradient not finite: a
+     * failed evaluation in the finite-difference stencil". */
     const std::string tolerances = "    XTOL_REL 1e-3\n    FTOL_REL 1e-6\n";
     struct Case {
-        std::string algo, extra, label, ended;
-        std::size_t evals;
+        std::string lib, algo, extra, label, start;
+        bool nlopt;
     };
-    const std::vector<Case> cases = {
-        {"LD_SLSQP", tolerances, "LD_SLSQP",
-         "XTOL_REACHED -- parameter tolerance converged", 10u},
-        {"AUGLAG",
+    std::vector<Case> cases = {
+        {"NLOPT", "LD_SLSQP", "", "LD_SLSQP", "1.72", true},
+        {"NLOPT", "LD_SLSQP", tolerances, "LD_SLSQP, XTOL_REL and FTOL_REL",
+         "1.72", true},
+        {"NLOPT", "AUGLAG",
          inner_block("LD_SLSQP", "      XTOL_REL 1e-3\n      FTOL_REL 1e-6\n"),
-         "AUGLAG, INNER LD_SLSQP",
-         "FTOL_REACHED -- function tolerance converged", 11u}};
+         "AUGLAG, INNER LD_SLSQP", "1.72", true}};
+#ifdef TADAH_USE_CERES
+    for (const char* a : {"LBFGS", "WOLFE", "NLCG"})
+        cases.push_back({"CERES", a, "", std::string("CERES:") + a, "1.8",
+                         false});
+#endif
     for (const auto& c : cases) {
-        const std::string name = "NLOPT:" + c.algo;
+        const std::string name = c.lib + ":" + c.algo;
         DYNAMIC_SECTION(c.label) {
-            TaRun run(straddle_block("NLOPT", c.algo, c.extra),
+            TaRun run(straddle_block(c.lib, c.algo, c.extra),
                       straddle_root("10.5"));
             int status = -1;
-            REQUIRE_NOTHROW(status = straddle_run(run, "1.72", name));
+            REQUIRE_NOTHROW(status = straddle_run(run, c.start, name));
             CHECK(status == 0);
-            const auto x = evaluated_cgrid2();
             const auto loss = data_rows("loss.tadah");
-            REQUIRE(x.size() == c.evals);
-            REQUIRE(loss.size() == c.evals);
-            CHECK(x[9] == Approx(1.4554055798).epsilon(1e-9));
-            CHECK(loss[9].back() == kDefaultFailScoreRow);
-            if (c.evals == 11u) {
-                CHECK(x[10] == Approx(1.6554055798).epsilon(1e-9));
-                CHECK(loss[10].back() != kDefaultFailScoreRow);
+            CHECK(loss.size() == 60u);
+            CHECK(went_on_past_a_failure(loss));
+            for (double xi : evaluated_cgrid2()) {
+                CAPTURE(xi);
+                CHECK((xi >= 1.0 && xi <= 2.0));
             }
-
             const std::string journal = read_file("hpo_run.log");
-            CHECK(journal_status(journal) == kStencilStatus);
-            CHECK(count_of(journal,
-                           name + " stopped: " + kStencilCause +
-                           " (at CGRID2B[2] = 1.65540558, the stencil point "
-                           "CGRID2B[2] = 1.45540558 failed: loss "
-                           "1.797693135e+308); NLopt ended right after it (" +
-                           c.ended + ")") == 1u);
+            CHECK(journal.find("stopped: no usable gradient") ==
+                  std::string::npos);
+            CHECK(journal.find("ended right after it") == std::string::npos);
+            CHECK(journal_status(journal) != kStencilStatus);
+            if (c.nlopt)
+                CHECK(journal_status(journal) ==
+                      "MAXEVAL_REACHED -- maximum evaluations exhausted");
             check_run_files();
         }
     }
@@ -4806,46 +5050,48 @@ TEST_CASE("Gradient not finite: AUGLAG's local search that spends its own "
           "MAXEVAL at such a point ends on that criterion",
           "[HPO][termination][fd_gradient][auglag]")
 {
-    /* The search of the case above, with an INNER MAXEVAL: the rejection
-     * is its fourth objective call. With MAXEVAL 4 it ends there on its
-     * MAXEVAL, which AUGLAG reports as FTOL_REACHED, like any ending of its
-     * local search: the run keeps AUGLAG's own status. With MAXEVAL 5 the
-     * rejection ended it, as without one. (The case ran from 1.8, with
-     * the rejection its seventh call, until owner decision C4; see the
-     * case above.) An INNER MAXEVAL counts the local search's NLopt calls,
-     * not its evaluations (owner decision, 2026-10-07; the journal's "Inner
-     * stop criteria" say so): its 4 calls are 10 evaluations here, and
-     * AUGLAG's evaluation of the point the search returned the 11th; the
-     * MAXEVAL 60 of the AUGLAG block counts all 11.
-     * Pins: 11 evaluations with either INNER MAXEVAL, and the endings above.
-     * Before the fix: 14 (each of the three gradients evaluated its point a
-     * second time). */
+    /* AUGLAG with the INNER search LD_SLSQP of the case above, from 1.72
+     * with the ERMSE target 10.5, and an INNER MAXEVAL 4: its fourth
+     * objective call is the rejection of 1.6393 (its stencil point 1.4393
+     * fails), and the search ends there on its MAXEVAL, which AUGLAG reports
+     * as FTOL_REACHED, like any ending of its local search: the run keeps
+     * AUGLAG's own status. An INNER MAXEVAL counts the local search's NLopt
+     * calls, not its evaluations (owner decision, 2026-10-07; the journal's
+     * "Inner stop criteria" say so): its 4 calls are 8 evaluations here (the
+     * rejected points 1.074 and 1.397 cost one each), AUGLAG's evaluation of
+     * the point the search returned, 1.72, the 9th.
+     * With INNER MAXEVAL 5 the rejection used to end the search, as without
+     * one; the search goes on past it now (the case above), and the split
+     * between an INNER MAXEVAL that a rejection reaches and one it does not
+     * is covered on an outage stub (test_fd_bounds.cpp, "No usable
+     * gradient: an NLopt search that ends right after it rejected a point
+     * says so, on an outage").
+     * Pins: 9 evaluations, the 8th the failed stencil point 1.4393 and the
+     * 9th 1.72; FTOL_REACHED, no stop line.
+     * Before the fix: 11 evaluations, the rejection of 1.6554 the fourth
+     * call (1.074 had been handed FAILSCORE with a zero gradient), and with
+     * INNER MAXEVAL 5 the stop line and the trailer "STOPPED -- gradient not
+     * finite: ...". */
     const std::string tolerances = "      XTOL_REL 1e-3\n      FTOL_REL 1e-6\n";
-    for (const std::string maxeval : {"4", "5"}) {
-        DYNAMIC_SECTION("INNER MAXEVAL " << maxeval) {
-            TaRun run(straddle_block(
-                          "NLOPT", "AUGLAG",
-                          inner_block("LD_SLSQP", "      MAXEVAL " + maxeval +
-                                                      "\n" + tolerances)),
-                      straddle_root("10.5"));
-            int status = -1;
-            REQUIRE_NOTHROW(status = straddle_run(run, "1.72", "NLOPT:AUGLAG"));
-            CHECK(status == 0);
-            CHECK(data_rows("loss.tadah").size() == 11u);
-            const std::string journal = read_file("hpo_run.log");
-            if (maxeval == "4") {
-                CHECK(journal_status(journal) ==
-                      "FTOL_REACHED -- function tolerance converged");
-                CHECK(journal.find("stopped: gradient not finite") ==
-                      std::string::npos);
-            } else {
-                CHECK(journal_status(journal) == kStencilStatus);
-                CHECK(count_of(journal, "NLOPT:AUGLAG stopped: " +
-                                            kStencilCause) == 1u);
-            }
-            check_run_files();
-        }
-    }
+    TaRun run(straddle_block("NLOPT", "AUGLAG",
+                             inner_block("LD_SLSQP",
+                                         "      MAXEVAL 4\n" + tolerances)),
+              straddle_root("10.5"));
+    int status = -1;
+    REQUIRE_NOTHROW(status = straddle_run(run, "1.72", "NLOPT:AUGLAG"));
+    CHECK(status == 0);
+    const auto x = evaluated_cgrid2();
+    const auto loss = data_rows("loss.tadah");
+    REQUIRE(x.size() == 9u);
+    REQUIRE(loss.size() == 9u);
+    CHECK(x[7] == Approx(1.439256975).epsilon(1e-9));
+    CHECK(loss[7].back() == kDefaultFailScoreRow);
+    CHECK(x[8] == Approx(1.72));
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(journal_status(journal) ==
+          "FTOL_REACHED -- function tolerance converged");
+    CHECK(journal.find("stopped: no usable gradient") == std::string::npos);
+    check_run_files();
 }
 
 TEST_CASE("Gradient not finite: ended_on_rejection counts the calls after "
@@ -4929,7 +5175,11 @@ TEST_CASE("Gradient not finite: MLSL and the global GD_* searches go on past "
      * the case "NLopt and Ceres reject a later point ..."); before the
      * centre fix their gradients evaluated the rejected point twice, 1.5
      * and 1.6 (`first` {1.5, 1.5, 1.7, 1.3} and {..., 1.6, 1.6, 1.8,
-     * 1.4}). */
+     * 1.4}).
+     * The stop line it checks is absent names "no usable gradient" (it
+     * named "gradient not finite" until 2026-10-07); with that, the case
+     * passes before the failure-region fix as well (a pin: the rule does not
+     * stop the global searches). */
     struct Case {
         std::string algo, extra, target;
         std::vector<double> first;   /* evaluations up to the rejection */
@@ -4955,7 +5205,7 @@ TEST_CASE("Gradient not finite: MLSL and the global GD_* searches go on past "
             CHECK(went_on_past_a_failure(loss));
             CHECK(x.size() == 60u);
             const std::string journal = read_file("hpo_run.log");
-            CHECK(journal.find("stopped: gradient not finite") ==
+            CHECK(journal.find("stopped: no usable gradient") ==
                   std::string::npos);
             CHECK(journal_status(journal) ==
                   "MAXEVAL_REACHED -- maximum evaluations exhausted");
@@ -4970,9 +5220,12 @@ TEST_CASE("Gradient not finite: under MULTISTART the other starts run, and "
 {
     /* DLIB:BFGS from the CONFIG point 1.6 stops at its first gradient;
      * from the RANDOM point, 1.9546 after CONFIG with SEED 6 and 1.9036
-     * before it with SEED 2, it runs to its own end (COMPLETED). Each start
-     * records its status; the last start's is the trailer, and the run has
-     * a usable loss (status 0) either way.
+     * before it with SEED 2, it runs to its own end: the loss changes by
+     * less than FTOL_ABS (1e-7 by default) between iterations, "DLIB:BFGS:
+     * FTOL_ABS reached" (it recorded no status, and the trailer said
+     * COMPLETED, until 2026-10-07). Each start records its status; the last
+     * start's is the trailer, and the run has a usable loss (status 0)
+     * either way.
      * Pins: the stopped start makes three evaluations, 1.6 and its
      * gradient's stencil 1.8 and 1.4, which takes the loss at 1.6 as its
      * centre: the RANDOM start begins at the fourth (x[3]), and the CONFIG
@@ -5002,7 +5255,7 @@ TEST_CASE("Gradient not finite: under MULTISTART the other starts run, and "
         const std::string journal = read_file("hpo_run.log");
         CHECK(count_of(journal, stop_line) == 1u);
         CHECK(count_of(journal, "MULTISTART start 2/2 done") == 1u);
-        CHECK(journal_status(journal) == "COMPLETED");
+        CHECK(journal_status(journal) == "DLIB:BFGS: FTOL_ABS reached");
         check_run_files();
     }
     SECTION("the first start runs to its end, the last one stops") {
@@ -5017,7 +5270,7 @@ TEST_CASE("Gradient not finite: under MULTISTART the other starts run, and "
         CHECK(x[x.size() - 3] == Approx(1.6));
         const std::string journal = read_file("hpo_run.log");
         CHECK(count_of(journal, stop_line) == 1u);
-        CHECK(count_of(journal, "stopped: gradient not finite") == 1u);
+        CHECK(count_of(journal, "stopped: no usable gradient") == 1u);
         CHECK(journal_status(journal) == kStencilStatus);
         check_run_files();
     }
@@ -5078,6 +5331,332 @@ TEST_CASE("Gradient not finite: the ending keeps the run driver's order",
             }, fx.host, fx.log()), "optimiser broke");
         CHECK(journal_status(read_file("hpo_run.log")) ==
               "FAILED -- optimiser broke");
+    }
+}
+
+namespace {
+
+/* straddle_root() with FAILSCORE `failscore` and the root lines `extra`. */
+std::string straddle_root_fs(const std::string& failscore,
+                             const std::string& extra = "")
+{
+    return "FAILSCORE " + failscore + "\n" + extra + straddle_root();
+}
+
+/* Sets an environment variable for the scope (restores it after). */
+struct ScopedEnv {
+    std::string name;
+    std::optional<std::string> old;
+    ScopedEnv(const std::string& n, const std::string& v) : name(n)
+    {
+        if (const char* e = std::getenv(n.c_str())) old = e;
+        ::setenv(n.c_str(), v.c_str(), 1);
+    }
+    ~ScopedEnv()
+    {
+        if (old) ::setenv(name.c_str(), old->c_str(), 1);
+        else ::unsetenv(name.c_str());
+    }
+};
+
+}  // namespace
+
+TEST_CASE("No usable gradient: a start inside the failure region ends every "
+          "finite-difference backend at its first gradient",
+          "[HPO][termination][fd_gradient]")
+{
+    /* From 1.25 the stencil is 1.45 and 1.05: the start and both stencil
+     * points fail (below 1.47), and the difference of two failures,
+     * (FS - FS) / 2h, was an exact 0, a gradient every backend accepted.
+     * Pins: one evaluation, the start; its failed loss fails the gradient
+     * before the stencil is evaluated, and the journal names it: "<backend>
+     * stopped: no usable gradient: a failed evaluation in the
+     * finite-difference stencil (the loss at CGRID2B[2] = 1.25 is
+     * 1.797693135e+308)". No evaluation is usable: the run ends as one
+     * without a usable loss (status 1).
+     * Before the fix: DLIB:BFGS made 6 evaluations (1.25, 1.45, 1.05 twice)
+     * and ended as converged, NLopt LD_LBFGS, LD_TNEWTON* and LD_VAR2 3
+     * ("SUCCESS -- generic success fmin=1.79769e+308"), LD_SLSQP 3
+     * (roundoff-limited), LD_MMA and LD_CCSAQ asked for the same three
+     * points until MAXEVAL (60), the CERES drivers 3 (CONVERGENCE at
+     * iteration 0); no stop line. */
+    for (const auto& b : fd_gradient_backends()) {
+        const std::string name = b.lib + ":" + b.algo;
+        DYNAMIC_SECTION(name) {
+            TaRun run(straddle_block(b.lib, b.algo), straddle_root());
+            int status = -1;
+            REQUIRE_NOTHROW(status = straddle_run(run, "1.25", name));
+            CHECK(status == 1);
+            const auto x = evaluated_cgrid2();
+            REQUIRE(x.size() == 1u);
+            CHECK(x[0] == Approx(1.25));
+            const std::string journal = read_file("hpo_run.log");
+            CHECK(count_of(journal, name + " stopped: " + kStencilCause +
+                                        " (the loss at CGRID2B[2] = 1.25 is "
+                                        "1.797693135e+308)") == 1u);
+            check_no_usable_loss(1u, kDefaultFailScoreRow, kNoUsableLossStatus);
+        }
+    }
+}
+
+TEST_CASE("No usable gradient: a MULTISTART start inside the failure region "
+          "stops at its first gradient", "[HPO][termination][fd_gradient]"
+          "[multistart]")
+{
+    /* DLIB:BFGS from the CONFIG point 1.9 runs to its end; the RANDOM
+     * start drawn with SEED 3, 1.206248063 (a central stencil, 1.406 and
+     * 1.006), or with SEED 17, 1.050065097 (one-sided, 1.250 and 1.450),
+     * lies in the failure region.
+     * Pins: the second start makes one evaluation, its start point, and
+     * stops with the stop line naming its loss; as the last start, its
+     * status is the trailer (the MULTISTART rule of "under MULTISTART the
+     * other starts run, and the trailer is the last start's"); the first
+     * start's usable losses give status 0.
+     * Before the fix: the second start made 6 evaluations (the start and
+     * its stencil, twice) of FAILSCORE and ended as converged, without a
+     * word, and the trailer read COMPLETED. */
+    const auto multistart = [](const std::string& seed) {
+        return "OPTIMIZER\n  INIT\n    METHOD CONFIG\n    METHOD RANDOM 1\n"
+               "    SEED " + seed + "\n  ENDINIT\n"
+               "  STRATEGY\n    TYPE MULTISTART\n    LIB DLIB\n    ALGO BFGS\n"
+               "    N_STARTS 2\n    BUDGET_PER_START 30\n"
+               "    PARAM fd_step 0.2\n  ENDSTRATEGY\nENDOPTIMIZER\n";
+    };
+    for (const auto& c : std::vector<std::pair<std::string, std::string>>{
+             {"3", "1.206248063"}, {"17", "1.050065097"}}) {
+        DYNAMIC_SECTION("SEED " << c.first) {
+            TaRun run(multistart(c.first), straddle_root());
+            int status = -1;
+            REQUIRE_NOTHROW(status = straddle_run(run, "1.9", "MULTISTART"));
+            CHECK(status == 0);
+            const auto x = evaluated_cgrid2();
+            REQUIRE(x.size() >= 2u);
+            CHECK(x[0] == Approx(1.9));
+            CHECK(x.back() == Approx(std::stod(c.second)).epsilon(1e-9));
+            CHECK(x[x.size() - 2] != Approx(x.back()));
+            const std::string journal = read_file("hpo_run.log");
+            CHECK(count_of(journal, "MULTISTART start 2/2 done: 1 eval(s)") ==
+                  1u);
+            CHECK(count_of(journal, "DLIB:BFGS stopped: " + kStencilCause +
+                                        " (the loss at CGRID2B[2] = " +
+                                        c.second + " is 1.797693135e+308)") ==
+                  1u);
+            CHECK(journal_status(journal) == kStencilStatus);
+            check_run_files();
+        }
+    }
+}
+
+TEST_CASE("No usable gradient: a failed stencil evaluation ends every "
+          "finite-difference backend under a finite FAILSCORE too",
+          "[HPO][termination][fd_gradient]")
+{
+    /* FAILSCORE 1e9: from 1.6 the stencil point 1.4 fails, and the
+     * difference (98.29 - 1e9) / 0.4 was finite, a slope as steep as the
+     * jump to FAILSCORE, which the backends followed.
+     * Pins: every backend stops at that gradient, as under the default
+     * FAILSCORE: three evaluations, 1.6, 1.8 and 1.4; the stop line names
+     * the stencil point and its loss 1e9; status 0 (1.6 and 1.8 are
+     * usable) and the trailer "STOPPED -- no usable gradient: ...".
+     * Before the fix: DLIB:BFGS made 60 evaluations, 28 of them of the
+     * bound 2 in a row (the 4th to the 31st), and ended COMPLETED; LD_LBFGS
+     * 6, LD_TNEWTON 9, LD_TNEWTON_PRECOND_RESTART and LD_VAR2 6 ("SUCCESS
+     * -- generic success"); LD_SLSQP 3 ("bug: more than iter SQP
+     * iterations"); LD_MMA and LD_CCSAQ 60 (MAXEVAL_REACHED); CERES LBFGS,
+     * WOLFE and NLCG 54, leaving the box (2.6), and STEEPEST_DESCENT 42
+     * (COMPLETED). */
+    for (const auto& b : fd_gradient_backends()) {
+        const std::string name = b.lib + ":" + b.algo;
+        DYNAMIC_SECTION(name) {
+            TaRun run(straddle_block(b.lib, b.algo), straddle_root_fs("1e9"));
+            int status = -1;
+            REQUIRE_NOTHROW(status = straddle_run(run, "1.6", name));
+            CHECK(status == 0);
+            const auto x = evaluated_cgrid2();
+            REQUIRE(x.size() == 3u);
+            CHECK(x[0] == Approx(1.6));
+            CHECK(x[1] == Approx(1.8));
+            CHECK(x[2] == Approx(1.4));
+            const std::string journal = read_file("hpo_run.log");
+            CHECK(journal_status(journal) == kStencilStatus);
+            CHECK(count_of(journal, name + " stopped: " + kStencilCause +
+                                        " (at CGRID2B[2] = 1.6, the stencil "
+                                        "point CGRID2B[2] = 1.4 failed: loss "
+                                        "1000000000)") == 1u);
+            check_run_files();
+        }
+    }
+}
+
+TEST_CASE("No usable gradient: under FAILSCORE_GRADING a start inside the "
+          "failure region follows the graded slope out",
+          "[HPO][termination][fd_gradient][failscore_grading]")
+{
+    /* FAILSCORE 1e9: the skip cap's failures are graded band-D losses
+     * (FAILSCORE_GRADING ON), graded by the cap's excess: 9.9975000125e8
+     * at 1.25, 9.9975000067e8 at 1.45, 9.9975000125e8 at 1.05, a slope
+     * towards the usable side. A graded failure is no usable loss, and its
+     * differences are its way out of the failure region.
+     * Pins (the graded searches pass before the fix as well: pins of the
+     * graded slope, which a rule that failed every failed evaluation would
+     * break): from 1.25, DLIB:BFGS reaches the bound 2 (95.2545212249) at
+     * its 4th evaluation and ends after 9, NLopt LD_LBFGS after 6, CERES
+     * LBFGS reaches a usable loss; the first loss is graded and no stop
+     * line or stencil trailer follows. TADAH_FAILSCORE_GRADING=ON without
+     * the key does the same (the override reaches the gradient; DLIB:BFGS
+     * here). Without grading the start's loss 1e9 fails its gradient: one
+     * evaluation, no usable loss, status 1.
+     * Before the fix: without grading DLIB:BFGS made 6 evaluations of 1e9
+     * (1.25, 1.45, 1.05 twice), a zero gradient, and ended as converged. */
+    const std::string graded = "FAILSCORE_GRADING ON\n";
+    struct Case {
+        std::string lib, algo, label, root;
+        bool env;
+        std::size_t evals;   /* 0: not pinned */
+    };
+    std::vector<Case> cases = {
+        {"DLIB", "BFGS", "DLIB:BFGS", graded, false, 9u},
+        {"NLOPT", "LD_LBFGS", "NLOPT:LD_LBFGS", graded, false, 6u},
+        {"DLIB", "BFGS", "DLIB:BFGS, TADAH_FAILSCORE_GRADING=ON", "", true, 9u}};
+#ifdef TADAH_USE_CERES
+    cases.push_back({"CERES", "LBFGS", "CERES:LBFGS", graded, false, 0u});
+#endif
+    for (const auto& c : cases) {
+        DYNAMIC_SECTION(c.label) {
+            std::optional<ScopedEnv> env;
+            if (c.env) env.emplace("TADAH_FAILSCORE_GRADING", "ON");
+            TaRun run(straddle_block(c.lib, c.algo),
+                      straddle_root_fs("1e9", c.root));
+            int status = -1;
+            REQUIRE_NOTHROW(status = straddle_run(run, "1.25", c.label));
+            CHECK(status == 0);
+            const auto loss = data_rows("loss.tadah");
+            REQUIRE(loss.size() >= 2u);
+            if (c.evals) CHECK(loss.size() == c.evals);
+            const double first = loss_value(loss[0].back());
+            CHECK(first >= 0.999e9);
+            CHECK(first < 1e9);
+            bool usable = false;
+            for (const auto& row : loss)
+                if (loss_value(row.back()) < 0.999e9) usable = true;
+            CHECK(usable);
+            if (c.lib == "DLIB") {
+                REQUIRE(loss.size() >= 4u);
+                CHECK(loss_value(loss[3].back()) ==
+                      Approx(95.2545212249).epsilon(1e-10));
+            }
+            const std::string journal = read_file("hpo_run.log");
+            CHECK(journal.find("stopped: no usable gradient") ==
+                  std::string::npos);
+            CHECK(journal_status(journal) != kStencilStatus);
+            check_run_files();
+        }
+    }
+    SECTION("FAILSCORE_GRADING OFF") {
+        TaRun run(straddle_block("DLIB", "BFGS"), straddle_root_fs("1e9"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = straddle_run(run, "1.25", "DLIB:BFGS"));
+        CHECK(status == 1);
+        const std::string journal = read_file("hpo_run.log");
+        CHECK(count_of(journal, "DLIB:BFGS stopped: " + kStencilCause +
+                                    " (the loss at CGRID2B[2] = 1.25 is "
+                                    "1000000000)") == 1u);
+        check_no_usable_loss(1u, "1.000000000000000e+09", kNoUsableLossStatus);
+    }
+}
+
+TEST_CASE("No usable gradient: under GRAD_STRATEGY ANALYTICAL or HYBRID a "
+          "start inside the failure region stops at its first gradient",
+          "[HPO][termination][fd_gradient][analytical]")
+{
+    /* OALGO 4: the analytical gradient covers CGRID2B[2], so HYBRID
+     * differences nothing ("analytical=1 | FD-fallback=0"), as under
+     * PC_OBSERVABLE, whose default is ANALYTICAL. At a skip-capped point
+     * the analytical gradient is that of the loss before the cap, small but
+     * not 0, while the optimiser sees FAILSCORE.
+     * Pins: from 1.25 DLIB:BFGS, NLopt LD_LBFGS and CERES:LBFGS under
+     * ANALYTICAL, and DLIB:BFGS and LD_LBFGS under HYBRID, make one
+     * evaluation, the start: its failed loss fails the gradient before the
+     * analytical pass, the journal says "<backend> stopped: no usable
+     * gradient: a failed evaluation at the point (the loss at CGRID2B[2] =
+     * 1.25 is 1.797693135e+308)", and the run ends without a usable loss
+     * (status 1). A MULTISTART DLIB:BFGS start drawn inside the region
+     * (SEED 3: 1.206248063) makes one evaluation and, as the last start,
+     * its stop is the trailer, "STOPPED -- no usable gradient: a failed
+     * evaluation at the point"; status 0.
+     * Before the fix: the gradient was the analytical one under both
+     * strategies. DLIB:BFGS made 2 evaluations of FAILSCORE (1.25 and
+     * 1.250035746: its line search accepted a step along that small
+     * gradient, the loss still FAILSCORE) and ended as converged without a
+     * word; LD_LBFGS made 12, its step halved each time, and ended "nlopt
+     * failure -- algorithm converged"; CERES:LBFGS made 5 and ended
+     * CONVERGENCE at a cost of 1.79769e+308; the MULTISTART start made 2
+     * (1.206248063 and 1.206256877) without a word, and the trailer read
+     * COMPLETED. */
+    const std::string kPointCause =
+        "no usable gradient: a failed evaluation at the point";
+    const auto block = [](const std::string& lib, const std::string& algo,
+                          const std::string& strategy) {
+        return plain_block("    TYPE PLAIN\n    LIB " + lib + "\n    ALGO " +
+                           algo + "\n    MAXEVAL 60\n    GRAD_STRATEGY " +
+                           strategy + "\n" +
+                           (strategy == "HYBRID" ? "    PARAM fd_step 0.2\n"
+                                                 : ""));
+    };
+    struct Case { std::string lib, algo, strategy; };
+    std::vector<Case> cases = {{"DLIB", "BFGS", "ANALYTICAL"},
+                               {"NLOPT", "LD_LBFGS", "ANALYTICAL"},
+                               {"DLIB", "BFGS", "HYBRID"},
+                               {"NLOPT", "LD_LBFGS", "HYBRID"}};
+#ifdef TADAH_USE_CERES
+    cases.push_back({"CERES", "LBFGS", "ANALYTICAL"});
+#endif
+    for (const auto& c : cases) {
+        const std::string name = c.lib + ":" + c.algo;
+        DYNAMIC_SECTION(name << ", " << c.strategy) {
+            TaRun run(block(c.lib, c.algo, c.strategy), straddle_root());
+            int status = -1;
+            REQUIRE_NOTHROW(status = straddle_run(run, "1.25", name));
+            CHECK(status == 1);
+            const auto x = evaluated_cgrid2();
+            REQUIRE(x.size() == 1u);
+            CHECK(x[0] == Approx(1.25));
+            const std::string journal = read_file("hpo_run.log");
+            CHECK(count_of(journal, name + " stopped: " + kPointCause +
+                                        " (the loss at CGRID2B[2] = 1.25 is "
+                                        "1.797693135e+308)") == 1u);
+            check_no_usable_loss(1u, kDefaultFailScoreRow, kNoUsableLossStatus);
+        }
+    }
+    for (const std::string strategy : {"ANALYTICAL", "HYBRID"}) {
+        DYNAMIC_SECTION("MULTISTART, SEED 3, " << strategy) {
+            TaRun run(
+                "OPTIMIZER\n  INIT\n    METHOD CONFIG\n    METHOD RANDOM 1\n"
+                "    SEED 3\n  ENDINIT\n"
+                "  STRATEGY\n    TYPE MULTISTART\n    LIB DLIB\n    ALGO BFGS\n"
+                "    N_STARTS 2\n    BUDGET_PER_START 30\n"
+                "    GRAD_STRATEGY " + strategy + "\n" +
+                    (strategy == "HYBRID" ? "    PARAM fd_step 0.2\n" : "") +
+                    "  ENDSTRATEGY\nENDOPTIMIZER\n",
+                straddle_root());
+            int status = -1;
+            REQUIRE_NOTHROW(status = straddle_run(run, "1.9", "MULTISTART"));
+            CHECK(status == 0);
+            const auto x = evaluated_cgrid2();
+            REQUIRE(x.size() >= 2u);
+            CHECK(x[0] == Approx(1.9));
+            CHECK(x.back() == Approx(1.206248063).epsilon(1e-9));
+            CHECK(x[x.size() - 2] != Approx(x.back()));
+            const std::string journal = read_file("hpo_run.log");
+            CHECK(count_of(journal, "MULTISTART start 2/2 done: 1 eval(s)") ==
+                  1u);
+            CHECK(count_of(journal, "DLIB:BFGS stopped: " + kPointCause +
+                                        " (the loss at CGRID2B[2] = "
+                                        "1.206248063 is 1.797693135e+308)") ==
+                  1u);
+            CHECK(journal_status(journal) == "STOPPED -- " + kPointCause);
+            check_run_files();
+        }
     }
 }
 
@@ -5265,9 +5844,13 @@ TEST_CASE("Finite differences: LD_SLSQP from 1.8 spends exactly MAXEVAL",
      * [1, 2], a usable one after a failed one, MAXEVAL_REACHED.
      *
      * Pins: exactly 60 evaluations (params.tadah rows) for MAXEVAL 60, the
-     * last at CGRID2B[2] = 1.798850979 (to 1e-9: it pins the path; each
-     * gradient takes the loss its caller has just evaluated as its centre)
+     * last at CGRID2B[2] = 1.8678643276 (to 1e-9: it pins the path; each
+     * gradient takes the loss its caller has just evaluated as its centre,
+     * and a point whose loss failed, 1.0586 and 1.4293 here, is rejected)
      * and not asked for twice in a row at the end.
+     * Before the failure-region fix (2026-10-07) the last was at
+     * 1.798850979: 1.0586 and its one-sided stencil 1.2586 and 1.4586 all
+     * failed, and SLSQP was handed FAILSCORE there with a zero gradient.
      * Before the centre fix (each gradient evaluated its point a second
      * time) the last was at 1.8540926799.
      * Before the budget fix: 120 evaluations. The gradient provider
@@ -5291,7 +5874,7 @@ TEST_CASE("Finite differences: LD_SLSQP from 1.8 spends exactly MAXEVAL",
                                   it->back() == rows.back().back(); ++it)
         ++repeats;
     CHECK(repeats == 1u);
-    CHECK(std::stod(rows.back().back()) == Approx(1.798850979).epsilon(1e-9));
+    CHECK(std::stod(rows.back().back()) == Approx(1.8678643276).epsilon(1e-9));
     for (double xi : evaluated_cgrid2()) {
         CAPTURE(xi);
         CHECK((xi >= 1.0 && xi <= 2.0));

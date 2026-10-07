@@ -1385,8 +1385,15 @@ TEST_CASE("HPOLog::finish explicit arg overrides set_status",
     std::error_code ec; std::filesystem::remove(tmp_log, ec);
 }
 
-TEST_CASE("HPOLog::finish defaults to COMPLETED when no status was set",
-          "[HPO][hpo_log][set_status]")
+/* A journal finished with no status at all says so; it does not invent
+ * one. The run driver never gets here (a normal end without a status is an
+ * internal error there, test_hpo_termination.cpp); a direct caller of
+ * HPOLog can.
+ * Pins: the trailer "Optimiser status : (no status recorded)", and no
+ * COMPLETED.
+ * Before the fix: HPOLog::finish wrote COMPLETED. */
+TEST_CASE("HPOLog::finish writes '(no status recorded)' when no status was "
+          "set", "[HPO][hpo_log][set_status]")
 {
     using namespace tadah::hpo;
     auto& log = HPOLog::instance();
@@ -1397,13 +1404,15 @@ TEST_CASE("HPOLog::finish defaults to COMPLETED when no status was set",
          ".log");
 
     log.open(tmp_log.string(), "test", "/tmp", 1);
-    log.finish();   /* no set_status, no explicit status → default */
+    log.finish();   /* no set_status, no explicit status */
 
     std::ifstream lf(tmp_log);
     REQUIRE(lf.good());
     std::stringstream ss; ss << lf.rdbuf();
     const std::string body = ss.str();
-    CHECK(body.find("COMPLETED") != std::string::npos);
+    CHECK(body.find("Optimiser status        : (no status recorded)\n") !=
+          std::string::npos);
+    CHECK(body.find("COMPLETED") == std::string::npos);
 
     std::error_code ec; std::filesystem::remove(tmp_log, ec);
 }

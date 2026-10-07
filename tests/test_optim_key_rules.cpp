@@ -19,8 +19,10 @@
 #include <tadah/hpo/startup_validation.h>
 
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -267,5 +269,269 @@ TEST_CASE("OPTIM on DIMER, FIXINDEX, MODEL and the OALGO algorithm is refused "
     REQUIRE(trg.spec.parameter_labels.size() == 2);
     CHECK(trg.spec.parameter_labels[0] == "OALGO[2]");
     CHECK(trg.spec.parameter_labels[1] == "WATOM");
+  }
+}
+
+namespace {
+
+/* A D2_BP Ta model (2 Gaussians, Cut_Cos 4.5 A, no many-body term) with
+ * the MODEL tokens @p model, MPARAMS @p mparams and SBASIS 3 for a kernel
+ * that draws a basis; a training DBFILE the startup checks never open. */
+Context mparams_ctx(const std::string& model, const std::string& mparams) {
+  Context c;
+  c.add("ATOM", "Ta");
+  c.add("WATOM", 1.0);
+  c.add("INIT2B", "true");
+  c.add("TYPE2B", "D2_BP 2 2 Ta Ta");
+  c.add("CGRID2B", "2.6 3.3");
+  c.add("SGRID2B", "1.0 1.0");
+  c.add("RCUT2B", 4.5);
+  c.add("RCTYPE2B", "Cut_Cos");
+  c.add("INITMB", "false");
+  c.add("VERBOSE", 0);
+  c.add("MODEL", model);
+  c.add("MPARAMS", mparams);
+  if (model.rfind("M_KRR", 0) == 0 && model != "M_KRR Kern_Linear")
+    c.add("SBASIS", 3);
+  c.add("DBFILE", "dummy.db");
+  return c;
+}
+
+/* The message validate_hpo_setup throws for @p ctx and the hpotarget
+ * line @p line, "" when it accepts them. */
+std::string startup_error(Context ctx, const std::string& line) {
+  KeyRulesTempFile tf(line + "\nPC_ERMSE 0 1\n" + kKeyRulesOptimizer);
+  try {
+    HPOTargets trg(ctx, tf.path.string());
+    tadah::hpo::validate_hpo_setup(ctx, trg, true, true);
+  } catch (const std::exception& e) {
+    return e.what();
+  }
+  return "";
+}
+
+bool has(const std::string& text, const std::string& needle) {
+  return text.find(needle) != std::string::npos;
+}
+
+}  // namespace
+
+/* Pins: OPTIM MPARAMS is refused at startup on a function that reads no
+ * MPARAMS (BF_Linear, BF_Polynomial2, Kern_Linear, Kern_Quadratic,
+ * Kern_LQ), naming OPTIM MPARAMS (1), the function and that it reads none.
+ * Before the fix: accepted; every evaluation trained the same model, so
+ * the search changed nothing. */
+TEST_CASE("OPTIM MPARAMS is refused on a function that reads none",
+          "[HPO][optim][optim_mparams]") {
+  tadah::core::PeriodicTable::initialize();
+  for (const char* model : {"M_BLR BF_Linear", "M_BLR BF_Polynomial2",
+                            "M_KRR Kern_Linear", "M_KRR Kern_Quadratic",
+                            "M_KRR Kern_LQ"}) {
+    INFO(model);
+    const std::string msg =
+        startup_error(mparams_ctx(model, "1.0"), "OPTIM MPARAMS (1) 0.5 2.0");
+    INFO("message: " << msg);
+    CHECK(has(msg, "OPTIM MPARAMS (1) is not a valid search target"));
+    CHECK(has(msg, std::string(model).substr(6)));
+    CHECK(has(msg, "reads no MPARAMS"));
+  }
+}
+
+/* Pins: OPTIM MPARAMS of Kern_Polynomial (d gamma c): (1), the degree d,
+ * is refused at startup as an integer, naming the degree; (2) gamma and
+ * (3) c are accepted.
+ * Before the fix: (1) was accepted, and every candidate degree was read as
+ * its integer prefix (3.84 trained the degree 3). */
+TEST_CASE("OPTIM MPARAMS of the Kern_Polynomial degree is refused",
+          "[HPO][optim][optim_mparams]") {
+  tadah::core::PeriodicTable::initialize();
+  const Context c = mparams_ctx("M_KRR Kern_Polynomial", "2 0.5 1.0");
+  const std::string msg = startup_error(c, "OPTIM MPARAMS (1) 1 4");
+  INFO("message: " << msg);
+  CHECK(has(msg, "OPTIM MPARAMS (1) is not a valid search target"));
+  CHECK(has(msg, "Kern_Polynomial"));
+  CHECK(has(msg, "d, an integer"));
+  CHECK(startup_error(c, "OPTIM MPARAMS (2) 0.1 1.0").empty());
+  CHECK(startup_error(c, "OPTIM MPARAMS (3) 0.0 2.0").empty());
+}
+
+/* Pins: Kern_RBF reads one MPARAMS value, sigma: OPTIM MPARAMS (2) is
+ * refused at startup naming the one value it reads; OPTIM MPARAMS (1) with
+ * a box that is not positive (-1 2, 0 2) is refused naming sigma and the
+ * bound; (1) with 0.3 3.0 is accepted.
+ * Before the fix: all accepted; (2) changed nothing, and a box through 0
+ * evaluated sigma 0 (gamma = inf) and negative widths. */
+TEST_CASE("OPTIM MPARAMS of Kern_RBF: one positive value",
+          "[HPO][optim][optim_mparams]") {
+  tadah::core::PeriodicTable::initialize();
+  const Context c = mparams_ctx("M_KRR Kern_RBF", "1.0 2.0");
+  const std::string beyond = startup_error(c, "OPTIM MPARAMS (2) 0.5 3.0");
+  INFO("(2): " << beyond);
+  CHECK(has(beyond, "OPTIM MPARAMS (2) is not a valid search target"));
+  CHECK(has(beyond, "Kern_RBF reads 1 MPARAMS value"));
+  for (const char* box : {"-1 2", "0 2"}) {
+    const std::string msg =
+        startup_error(c, std::string("OPTIM MPARAMS (1) ") + box);
+    INFO("box " << box << ": " << msg);
+    CHECK(has(msg, "OPTIM MPARAMS (1)"));
+    CHECK(has(msg, "sigma"));
+    CHECK(has(msg, "must be positive"));
+  }
+  CHECK(startup_error(c, "OPTIM MPARAMS (1) 0.3 3.0").empty());
+}
+
+/* Pins: OPTIM on an integer value of a key (every format of the key types
+ * it INT or UINT: SBASIS) is refused at its line, naming the key, its
+ * index and that it is an integer; OPTIM on an internal key (ESTDEV, which
+ * tadah computes) is refused at its line naming it; OPTIM OALGO (1) keeps
+ * its own message (the training algorithm).
+ * Before the fix: OPTIM SBASIS was accepted (14.47 trained SBASIS 14) and
+ * OPTIM ESTDEV too (every evaluation then failed: "Attempt to add internal
+ * key"). */
+TEST_CASE("OPTIM on an integer key or an internal key is refused at its line",
+          "[HPO][optim][optim_structure_keys]") {
+  const std::string first = "OPTIM WATOM (1) 0.5 2.0\n";
+  Context ctx;
+  ctx.add("WATOM", 1.0);
+  ctx.add("SBASIS", 10);
+  ctx.add("OALGO", "1 1e-8");
+  {
+    KeyRulesTempFile tf(first + "OPTIM SBASIS (1) 5 20\n" + kKeyRulesOptimizer);
+    CHECK_THROWS_WITH(
+        HPOTargets(ctx, tf.path.string()),
+        Catch::Contains("Error on line 2") &&
+        Catch::Contains("OPTIM SBASIS (1) is not a valid search target") &&
+        Catch::Contains("integer"));
+  }
+  {
+    KeyRulesTempFile tf(first + "OPTIM ESTDEV (1) 0 1\n" + kKeyRulesOptimizer);
+    CHECK_THROWS_WITH(
+        HPOTargets(ctx, tf.path.string()),
+        Catch::Contains("Error on line 2") &&
+        Catch::Contains("OPTIM ESTDEV is not a valid search target") &&
+        Catch::Contains("internal"));
+  }
+  {
+    KeyRulesTempFile tf(first + "OPTIM OALGO (1) 1 4\n" + kKeyRulesOptimizer);
+    CHECK_THROWS_WITH(
+        HPOTargets(ctx, tf.path.string()),
+        Catch::Contains("OPTIM OALGO (1) is not a valid search target") &&
+        Catch::Contains("training algorithm"));
+  }
+}
+
+namespace {
+
+/* A single-element (Ta) setfl file with cutoff 5 (100-point tables:
+ * F(rho) = -sqrt(rho), rho(r) = (1 - r/5)^2, r phi(r) = r (1 - r/5)^3),
+ * removed when the object goes. */
+struct TaSetfl {
+  fs::path path;
+  TaSetfl()
+  : path(fs::temp_directory_path() /
+         ("tadah_optim_key_rules_" +
+          std::to_string(std::chrono::steady_clock::now()
+                             .time_since_epoch().count()) + ".eam.alloy")) {
+    const int n = 100;
+    const double rcut = 5.0, dr = rcut / (n - 1), drho = 50.0 / (n - 1);
+    std::ofstream os(path);
+    REQUIRE(os.good());
+    os << "# synthetic Ta setfl\n# 2\n# 3\n1 Ta\n"
+       << n << " " << drho << " " << n << " " << dr << " " << rcut << "\n"
+       << "73 180.95 3.304 bcc\n" << std::setprecision(12);
+    for (int i = 0; i < n; ++i) os << -std::sqrt(i * drho) << "\n";
+    for (int i = 0; i < n; ++i) {
+      const double x = 1.0 - i * dr / rcut;
+      os << x * x << "\n";
+    }
+    for (int i = 0; i < n; ++i) {
+      const double x = 1.0 - i * dr / rcut;
+      os << i * dr * x * x * x << "\n";
+    }
+  }
+  ~TaSetfl() {
+    std::error_code ec;
+    fs::remove(path, ec);
+  }
+};
+
+/* A Ta model with the two-body term @p type2b (TYPE2B tokens), its
+ * cutoffs @p rcut2b, @p rctype2b, and no many-body term, or (@p type2b
+ * empty) the many-body term @p typemb with RCUTMB 5; SETFL @p setfl. */
+Context eam_ctx(const std::string& setfl, const std::string& type2b,
+                const std::string& rcut2b, const std::string& rctype2b,
+                const std::string& typemb = "") {
+  Context c;
+  c.add("ATOM", "Ta");
+  c.add("WATOM", 1.0);
+  c.add("VERBOSE", 0);
+  c.add("SETFL", setfl);
+  if (!type2b.empty()) {
+    c.add("INIT2B", "true");
+    c.add("TYPE2B", type2b);
+    c.add("RCUT2B", rcut2b);
+    c.add("RCTYPE2B", rctype2b);
+    c.add("INITMB", "false");
+  } else {
+    c.add("INIT2B", "false");
+    c.add("INITMB", "true");
+    c.add("TYPEMB", typemb);
+    c.add("RCUTMB", 5.0);
+    c.add("RCTYPEMB", "Cut_Cos");
+  }
+  c.add("MODEL", "M_BLR BF_Linear");
+  c.add("DBFILE", "dummy.db");
+  return c;
+}
+
+}  // namespace
+
+/* Pins: OPTIM on a cutoff value that a descriptor takes from its setfl
+ * file (D_Base::cutoff_fixed_by) is refused at startup, naming the OPTIM
+ * key and index and the file's cutoff:
+ *   - OPTIM RCUT2B (1) with TYPE2B D2_EAM: "OPTIM RCUT2B (1) is not a
+ *     valid search target: D2_EAM takes the cutoff 5 of its setfl file
+ *     '<path>' (SETFL) and refuses another value";
+ *   - OPTIM RCUTMB (1) with TYPEMB DM_EAM: the same, naming DM_EAM;
+ *   - TYPE2B D2_mJoin D2_BP ... D2_EAM ... (RCUT2B 4.5 5): OPTIM RCUT2B (2),
+ *     D2_EAM's, is refused, and OPTIM RCUT2B (1), D2_BP's, is accepted.
+ * Before the fix: all accepted; every candidate but the seed then failed in
+ * the D2_EAM/DM_EAM constructor ("RCUT2B ... differs from the cutoff ...
+ * of the setfl file"), FAILSCORE, and the run ended with exit status 0. */
+TEST_CASE("OPTIM on a cutoff the setfl file fixes is refused at startup",
+          "[HPO][optim][startup][eam]") {
+  tadah::core::PeriodicTable::initialize();
+  TaSetfl setfl;
+  const std::string file = setfl.path.string();
+  const std::string fixed2b =
+      "D2_EAM takes the cutoff 5 of its setfl file '" + file +
+      "' (SETFL) and refuses another value";
+  {
+    const std::string msg =
+        startup_error(eam_ctx(file, "D2_EAM 0 Ta Ta", "5.0", "Cut_Cos"),
+                      "OPTIM RCUT2B (1) 4.5 5.5");
+    INFO(msg);
+    CHECK(has(msg, "OPTIM RCUT2B (1) is not a valid search target: " +
+                       fixed2b));
+  }
+  {
+    const std::string msg = startup_error(
+        eam_ctx(file, "", "", "", "DM_EAM 0 Ta Ta"),
+        "OPTIM RCUTMB (1) 4.5 5.5");
+    INFO(msg);
+    CHECK(has(msg, "OPTIM RCUTMB (1) is not a valid search target: "
+                   "DM_EAM takes the cutoff 5 of its setfl file '" + file +
+                   "' (SETFL) and refuses another value"));
+  }
+  {
+    Context c = eam_ctx(file, "D2_mJoin D2_BP 2 2 Ta Ta D2_EAM 0 Ta Ta",
+                        "4.5 5.0", "Cut_Cos Cut_Cos");
+    c.add("CGRID2B", "2.6 3.3");
+    c.add("SGRID2B", "1.0 1.0");
+    const std::string msg = startup_error(c, "OPTIM RCUT2B (2) 4.5 5.5");
+    INFO(msg);
+    CHECK(has(msg, "OPTIM RCUT2B (2) is not a valid search target: " +
+                       fixed2b));
+    CHECK(startup_error(c, "OPTIM RCUT2B (1) 4.0 5.0").empty());
   }
 }
