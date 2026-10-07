@@ -44,9 +44,17 @@ void require_inner_driver(const OptimizerSpec& inner_spec,
 
 /* An INNER block is the local search that NLopt's MLSL and AUGLAG run
  * inside their own run (build_nlopt hands the INNER ALGO to nlopt::opt).
- * When `parent` has one, throws std::runtime_error unless
- *   - the parent runs one (OptimizerCaps::accepts_inner), and
- *   - the INNER optimiser is an NLopt algorithm (LIB NLOPT).
+ * Throws std::runtime_error when
+ *   - `parent` is an MLSL or AUGLAG without a default local optimiser
+ *     (OptimizerCaps::default_inner: AUGLAG, AUGLAG_EQ, G_MLSL, G_MLSL_LDS)
+ *     and has no INNER block: "NLOPT:AUGLAG needs an INNER block (the
+ *     STRATEGY-level optimiser): NLopt has no default local optimiser for
+ *     it; ..." -- NLopt refused it only once the run had started;
+ * and, when `parent` has one, unless
+ *   - the parent runs one (OptimizerCaps::accepts_inner),
+ *   - the INNER optimiser is an NLopt algorithm (LIB NLOPT), and
+ *   - it does not need an INNER block of its own (INNER blocks do not
+ *     nest).
  * `phase` names the optimiser whose INNER block it is ("the EXPLORE
  * block"); run_inner() passes "" for a spec built at run time. */
 void require_inner_backend(const OptimizerSpec& parent,

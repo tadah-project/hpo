@@ -556,7 +556,7 @@ static bool dispatch_init_attr(const std::string& key,
 
 /* An INNER block configures the local search that NLopt's MLSL and AUGLAG
  * run inside the enclosing block's NLopt run. It takes every optimiser
- * attribute but two, which belong to the enclosing block:
+ * attribute but three, which belong to the enclosing block:
  *   - SEED: NLopt has one random stream per run, which make_nlopt seeds
  *     from the enclosing block (its SEED, else its INIT block's SEED), and
  *     the INNER search draws from that stream. An INNER SEED could only
@@ -565,6 +565,9 @@ static bool dispatch_init_attr(const std::string& key,
  *     of their own objective, which the enclosing block's GRAD_STRATEGY
  *     obtains (nlopt_adapter.h). An INNER GRAD_STRATEGY would never be
  *     used.
+ *   - STOPVAL: mlsl.c and auglag.c set the local search's stopval to the
+ *     enclosing run's (HPO sets AUGLAG no constraint), so an INNER STOPVAL
+ *     never takes effect (inner_run_spec(), phase_specs.h).
  * Returns why `key` is not accepted inside INNER, or nullptr when it is. */
 static const char* inner_rejects_attr(const std::string& key)
 {
@@ -574,6 +577,9 @@ static const char* inner_rejects_attr(const std::string& key)
     if (key == "GRAD_STRATEGY")
         return "the enclosing block's GRAD_STRATEGY applies to its local "
                "search";
+    if (key == "STOPVAL")
+        return "NLopt's MLSL and AUGLAG replace the INNER search's STOPVAL "
+               "with the enclosing block's";
     return nullptr;
 }
 
@@ -952,10 +958,10 @@ void HPOTargets::read(const std::string& fn)
 
             /* ============== block-specific dispatch =============== */
 
-            /* SEED and GRAD_STRATEGY inside INNER: the INNER search draws
-             * from the random stream of the enclosing block's run and
-             * takes the gradient its GRAD_STRATEGY obtains
-             * (inner_rejects_attr). */
+            /* SEED, GRAD_STRATEGY and STOPVAL inside INNER: the INNER
+             * search draws from the random stream of the enclosing block's
+             * run, takes the gradient its GRAD_STRATEGY obtains and stops at
+             * its STOPVAL (inner_rejects_attr). */
             if (block == INNER_BLK && !inner_takes_attr(key)) {
                 throw std::runtime_error(
                     key + " is not accepted inside an INNER block: " +

@@ -307,7 +307,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * point is ever evaluated outside the box, and the step is not shrunk.
    * A phase that takes none refuses those PARAMs, which would never take
    * effect: an INNER block (it takes the gradient of the phase it runs
-   * in), GRAD_STRATEGY ANALYTICAL, a derivative-free optimiser; the
+   * in), GRAD_STRATEGY ANALYTICAL, a derivative-free optimiser -- which
+   * refuses a GRAD_STRATEGY too; the
    * STRATEGY-level phase refuses the NOISE block's AUTO likewise, which
    * derives fd_step for that phase's finite differences (HPOTargets) and
    * has no effect without them (owner decision D7). ASA's
@@ -339,6 +340,14 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
       if (!e.empty()) throw std::runtime_error(who + ": " + e);
       continue;
     }
+    /* GRAD_STRATEGY on a phase whose optimiser never asks for a gradient
+     * (obtains_gradients) never takes effect either. The value is the
+     * user's: PC_OBSERVABLE resolves an unset one only where gradients are
+     * obtained, and an INNER block has none (the parser refuses it). */
+    if (s.grad_strategy && !phase.inner && !obtains_gradients(s))
+      throw std::runtime_error(who + ": GRAD_STRATEGY never takes effect: " +
+                               s.lib + ":" + s.algo +
+                               " takes no gradient; remove it.");
     /* Only the STRATEGY-level phase carries the NOISE block (spec.noise:
      * EXPLORE and INNER blocks have none). */
     if (!phase.inner && s.noise.autodetect)

@@ -491,7 +491,7 @@ TEST_CASE("ASA caps registry entry", "[HPO][asa][caps]")
 {
     const auto& c = tadah::hpo::optimizer_caps("ASA", "ASA");
     CHECK(c.is_global);
-    CHECK_FALSE(c.is_population);
+    CHECK_FALSE(c.reads_population);
     CHECK_FALSE(c.is_gradient_based);
     CHECK_FALSE(c.accepts_inner);
     CHECK_FALSE(c.accepts_multi_seed);

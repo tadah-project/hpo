@@ -63,19 +63,44 @@ struct OptimizerCaps {
 
     /* Algorithmic topology -------------------------------------------- */
     bool is_global          = false;  // GLOBAL search (vs. LOCAL refinement)
-    bool is_population      = false;  // accepts POPULATION
     bool is_gradient_based  = false;  // uses derivatives (NLopt LD_*, DLIB:BFGS)
     bool accepts_inner      = false;  // INNER/ENDINNER sub-optimiser block
     bool accepts_multi_seed = false;  // a single run can consume >1 starting point
 
+    /* The attributes a run reads besides its stops. reject_unread_attributes()
+     * (backend_rules.cpp: TADAH:RANDOM, TADAH:GRID, DLIB:GFS, NLopt) refuses
+     * one the backend never reads; the annealers, ASA, DLIB:BFGS and CERES
+     * refuse them in their own validators, and their flags say the same.
+     *   reads_population     POPULATION: TADAH:ANNEAL_PA's walkers, and
+     *                        NLopt's stochastic population (POP() in nlopt
+     *                        2.10's optimize.c): GN_CRS2_LM, GN_ISRES,
+     *                        GN_ESCH, the six MLSL forms, GD_STOGO_RAND
+     *   reads_vector_storage VECTOR_ARR: the Luksan algorithms of NLopt
+     *                        (optimize.c): LD_LBFGS, LD_VAR1/2, LD_TNEWTON*
+     *   reads_seed           SEED: TADAH:RANDOM, the ANNEAL family, ASA and
+     *                        NLopt (every NLopt algorithm: which of them draw
+     *                        random numbers is not recorded)
+     *   reads_ftol_abs_as_setting  FTOL_ABS as a setting, not a stop (no
+     *                        supports_ftol_abs): DLIB:GFS's solver epsilon
+     *   warns_unread_seed    SEED is not read, but configurations that set it
+     *                        predate the check, so run_dlib_global() warns
+     *                        instead of refusing it (DLIB:GFS) */
+    bool reads_population          = false;
+    bool reads_vector_storage      = false;
+    bool reads_seed                = false;
+    bool reads_ftol_abs_as_setting = false;
+    bool warns_unread_seed         = false;
+
     /* Stop criteria: which fields of StopCriteria end the backend's run
      * when they are met. require_stop() (backend_rules.h) counts these as
      * the stops of a backend that needs one, a tolerance only above 0 (0
-     * or below switches it off); each backend's own validator decides what
-     * it rejects. A key the backend reads for another purpose is not a
-     * stop: DLIB:GFS reads FTOL_ABS as dlib's solver epsilon (the precision
-     * of its local model fits), so its supports_ftol_abs is false. NLopt:
-     * the global algorithms and LD_MMA/LD_CCSAQ/LD_SLSQP list the
+     * or below switches it off), and reject_unread_attributes()
+     * (backend_rules.cpp) refuses a tolerance none of them marks, as the
+     * annealers', ASA's, DLIB:BFGS's and CERES' own validators do. A key the
+     * backend reads for another purpose is not a stop: DLIB:GFS reads
+     * FTOL_ABS as dlib's solver epsilon (the precision of its local model
+     * fits), so its supports_ftol_abs is false (reads_ftol_abs_as_setting).
+     * NLopt: the global algorithms and LD_MMA/LD_CCSAQ/LD_SLSQP list the
      * tolerances their stop tests read (nlopt 2.10 sources, checked by the
      * phase 4c probes); the other NLopt algorithms keep NLopt's generic
      * set. */
@@ -110,9 +135,20 @@ struct OptimizerCaps {
      * divided that finely. */
     const char* tolerance_note = "";
 
+    /* Why a tolerance the run does not test has no effect, the reason
+     * clause of reject_unread_attributes()'s refusal ("uniform random
+     * search has no convergence test to apply it to"): a tolerance no
+     * supports_* flag marks, and every tolerance of MLSL and AUGLAG with an
+     * INNER block, which NLopt hands only to the default local optimiser it
+     * creates without one (default_inner). "" for a backend that tests
+     * every tolerance it accepts. */
+    const char* untested_tolerance_note = "";
+
     /* NLopt's MLSL and AUGLAG run a local optimiser inside their run
      * (accepts_inner); with no INNER block NLopt creates this one, handing
-     * it the block's tolerances (nullptr: NLopt requires an INNER block).
+     * it the block's tolerances (nullptr: NLopt has none, so the block needs
+     * an INNER block -- AUGLAG, AUGLAG_EQ, G_MLSL, G_MLSL_LDS --, which
+     * require_inner_backend(), strategy_rules.h, enforces at startup).
      * inner_run_spec() (phase_specs.h) derives the spec that local search
      * runs with. */
     const char* default_inner = nullptr;
@@ -135,6 +171,14 @@ const OptimizerCaps& optimizer_caps(std::string_view lib,
 
 /* Convenience: look up by spec.lib / spec.algo. */
 const OptimizerCaps& optimizer_caps(const OptimizerSpec& sp);
+
+/* The same lookup for a rule that does not own the "unknown optimizer"
+ * error: nullptr when (lib, algo) is not registered. require_inner_backend()
+ * (strategy_rules.h) runs before validate_phase_backends(), which reports an
+ * unregistered LIB:ALGO with the phase and, for the deferred CERES
+ * algorithms, their own message. */
+const OptimizerCaps* find_optimizer_caps(std::string_view lib,
+                                         std::string_view algo);
 
 /* Return all registered backends matching a predicate. Used to compose
  * "compatible alternatives" diagnostics from the live registry instead
