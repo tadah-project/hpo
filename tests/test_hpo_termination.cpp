@@ -6187,8 +6187,10 @@ TEST_CASE("Snap onto the box: NLopt LN_COBYLA under OPTIM_SCALE NONE rounds a "
  * refinement seed could start at a failed point, and an exploration whose
  * every evaluation failed was refined from failed points only. The
  * candidates are the usable losses now: fewer than TOPK are refined as
- * they are and the journal says so; none ends the PRESTAGE without a
- * refinement, and a run without a usable loss ends as one.
+ * they are and the journal says so; with none the refinement runs from
+ * the OPTIMIZER-level INIT points, as it did for an exploration without a
+ * candidate (every evaluation a gate reject, say), and the journal says
+ * why.
  * ==================================================================== */
 
 namespace {
@@ -6259,52 +6261,69 @@ TEST_CASE("PRESTAGE: the refinement starts only from usable losses, fewer "
     check_run_files();
 }
 
-TEST_CASE("PRESTAGE: an exploration without a usable loss is not refined, "
-          "and the run ends without one", "[HPO][termination][prestage]"
-          "[no_usable_loss]")
+TEST_CASE("PRESTAGE: an exploration without a usable loss leaves the "
+          "refinement to the OPTIMIZER-level INIT points",
+          "[HPO][termination][prestage][no_usable_loss]")
 {
     /* Every evaluation fails (a skip cap below every loss); the GRID
      * exploration evaluates the INIT point and the 2^3 nodes.
-     * Pins: the run makes those 9 evaluations and no other; the journal
-     * says the exploration produced no usable loss and that nothing is
-     * refined ("PRESTAGE: no evaluation of the exploration produced a
-     * usable loss (9 evaluation(s)); nothing to refine"), there is no
-     * REFINEMENT line, and the run ends without a usable loss (status 1,
-     * "STOPPED -- no evaluation produced a usable loss").
-     * Before the fix: "PRESTAGE: top-3 losses: 1.79769e+308 1.79769e+308
-     * 1.79769e+308", "REFINEMENT: refining top-3 seed(s)", and the
-     * refinement's 12 evaluations of the failed seeds' neighbourhoods
-     * (21 rows) before the same ending. */
+     * Pins: the journal says that the exploration's 9 evaluations produced
+     * no usable loss and where the refinement starts instead ("PRESTAGE: no
+     * evaluation of the exploration produced a usable loss (9
+     * evaluation(s)); refining from the OPTIMIZER-level INIT point(s)
+     * instead", a WARNING), there is no candidate line ("PRESTAGE: top-")
+     * and no "REFINEMENT: refining"; the refinement's first evaluation (eval
+     * 10) is the INIT point (eval 1's parameters) and it spends its MAXEVAL
+     * 12 (21 rows); the run ends without a usable loss (status 1, "STOPPED
+     * -- no evaluation produced a usable loss").
+     * Before the fix: "PRESTAGE: no evaluation of the exploration produced
+     * a usable loss (9 evaluation(s)); nothing to refine", the run ended
+     * after the exploration's 9 rows. (Before the top-K took usable losses
+     * only, the three failed points were the candidates: "PRESTAGE: top-3
+     * losses: 1.79769e+308 1.79769e+308 1.79769e+308", "REFINEMENT:
+     * refining top-3 seed(s)", 21 rows.) */
     TaRun run(prestage_grid_block("3", "2"), kAllFailRoot);
     int status = -1;
     REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
                                         "an all-failed PRESTAGE"));
     CHECK(status == 1);
-    check_no_usable_loss(9, kDefaultFailScoreRow, kNoUsableLossStatus);
+    check_no_usable_loss(21, kDefaultFailScoreRow, kNoUsableLossStatus);
     const std::string journal = read_file("hpo_run.log");
     CHECK(count_of(journal,
-                   "PRESTAGE: no evaluation of the exploration produced a "
-                   "usable loss (9 evaluation(s)); nothing to refine") == 1u);
+                   "WARNING   PRESTAGE: no evaluation of the exploration "
+                   "produced a usable loss (9 evaluation(s)); refining from "
+                   "the OPTIMIZER-level INIT point(s) instead") == 1u);
+    CHECK(journal.find("nothing to refine") == std::string::npos);
     CHECK(journal.find("REFINEMENT: refining") == std::string::npos);
     CHECK(prestage_losses_line(journal).empty());
+    const auto params = data_rows("params.tadah");
+    REQUIRE(params.size() == 21u);
+    /* The columns after ITERATION and SLOT: the parameters. */
+    CHECK(std::vector<std::string>(params[9].begin() + 2, params[9].end()) ==
+          std::vector<std::string>(params[0].begin() + 2, params[0].end()));
 }
 
 TEST_CASE("PRESTAGE under RESTART: an exploration that stagnates without a "
-          "usable loss restarts the PRESTAGE", "[HPO][termination][prestage]"
-          "[restart][no_usable_loss]")
+          "usable loss hands over to a refinement from the INIT points",
+          "[HPO][termination][prestage][restart][no_usable_loss]")
 {
     /* Every evaluation fails, so no evaluation is a new best and each
-     * TADAH:RANDOM exploration stagnates after 3 evaluations.
-     * Pins: neither exploration is refined; each says so and reports its
-     * stagnation to RESTART ("PRESTAGE: no evaluation of the exploration
-     * produced a usable loss (3 evaluation(s)); nothing to refine;
-     * reporting stagnation to RESTART", twice), RESTART restarts once and
-     * its budget then ends the run, which has no usable loss (status 1,
-     * "STOPPED -- no evaluation produced a usable loss"), after 6
-     * evaluations.
-     * Before the fix: each exploration's three failed points were refined
-     * ("REFINEMENT: refining top-2 seed(s)"), every refinement seed
-     * stagnating in its own window: 18 evaluations. */
+     * phase stagnates after 3 evaluations.
+     * Pins: as without RESTART, a stagnated exploration hands over to the
+     * refinement, here without a candidate: each round's exploration says
+     * so ("PRESTAGE: no evaluation of the exploration produced a usable
+     * loss (3 evaluation(s)); refining from the OPTIMIZER-level INIT
+     * point(s) instead", twice) and is not refined ("REFINEMENT: refining"
+     * never); the refinement from the INIT point stagnates and reports it
+     * ("REFINEMENT: 1 of 1 seed(s) stopped on stagnation; reporting
+     * stagnation to RESTART", twice), RESTART restarts once and its budget
+     * then ends the run, which has no usable loss (status 1, "STOPPED -- no
+     * evaluation produced a usable loss"), after 12 evaluations.
+     * Before the fix: each exploration said "...; nothing to refine;
+     * reporting stagnation to RESTART" and nothing was refined: 6
+     * evaluations. (Before the top-K took usable losses only, each
+     * exploration's failed points were refined, "REFINEMENT: refining top-2
+     * seed(s)": 18 evaluations.) */
     TaRun run(plain_block(
                   "    TYPE PRESTAGE\n    TOPK 2\n"
                   "    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 20\n"
@@ -6320,14 +6339,18 @@ TEST_CASE("PRESTAGE under RESTART: an exploration that stagnates without a "
     CHECK(status == 1);
     const std::string journal = read_file("hpo_run.log");
     CHECK(journal.find("REFINEMENT: refining") == std::string::npos);
+    CHECK(journal.find("nothing to refine") == std::string::npos);
     CHECK(count_of(journal,
                    "PRESTAGE: no evaluation of the exploration produced a "
-                   "usable loss (3 evaluation(s)); nothing to refine; "
+                   "usable loss (3 evaluation(s)); refining from the "
+                   "OPTIMIZER-level INIT point(s) instead") == 2u);
+    CHECK(count_of(journal,
+                   "REFINEMENT: 1 of 1 seed(s) stopped on stagnation; "
                    "reporting stagnation to RESTART") == 2u);
     CHECK_THAT(journal, Catch::Contains("RESTART 1/1"));
     CHECK_THAT(journal, Catch::Contains("RESTART: stagnation reached, max "
                                         "restarts (1) used; stopping"));
-    check_no_usable_loss(6, kDefaultFailScoreRow, kNoUsableLossStatus);
+    check_no_usable_loss(12, kDefaultFailScoreRow, kNoUsableLossStatus);
 }
 
 /* ======================================================================
@@ -6434,4 +6457,67 @@ TEST_CASE("GRAD_STRATEGY ANALYTICAL: a candidate the bump gate rejects "
             check_run_files();
         }
     }
+}
+
+TEST_CASE("PRESTAGE: an exploration whose every candidate the bump gate "
+          "rejects is refined from the OPTIMIZER-level INIT point",
+          "[HPO][termination][prestage][bumpgate]")
+{
+    /* The bump-gate fixture above: the exploration (its own INIT RANDOM 2,
+     * TADAH:RANDOM MAXEVAL 2, SEED 2) evaluates points whose bump support
+     * passes RCUT2B 5, rejected before training; the OPTIMIZER-level INIT
+     * point (3.5, 2.0; support 4.5) is usable.
+     * Pins: both exploration evaluations are gate rejects (a graded loss in
+     * [0.999e9, 1e9), "eval 1: bump-support gate reject" and "eval 2: ..."
+     * in the journal); the journal says that they produced no
+     * usable loss and where the refinement starts instead ("PRESTAGE: no
+     * evaluation of the exploration produced a usable loss (2
+     * evaluation(s)); refining from the OPTIMIZER-level INIT point(s)
+     * instead", a WARNING); the refinement's first evaluation (eval 3) is
+     * the INIT point, it spends its MAXEVAL 20 (22 rows) and finds usable
+     * losses: status 0, "MAXEVAL_REACHED -- maximum evaluations exhausted",
+     * a usable best.
+     * Before the fix: "PRESTAGE: no evaluation of the exploration produced
+     * a usable loss (2 evaluation(s)); nothing to refine", and the run
+     * ended after the exploration's 2 rows without a usable loss (status 1,
+     * "STOPPED -- no evaluation produced a usable loss"). (Before the top-K
+     * took usable losses only, gate rejects were never candidates either,
+     * and the refinement ran from the INIT point after "PRESTAGE: produced
+     * no candidates -- running outer optimiser as-is".) */
+    TaRun run(plain_block(
+                  "    TYPE PRESTAGE\n    TOPK 2\n"
+                  "    EXPLORE\n      INIT\n        METHOD RANDOM 2\n"
+                  "        SEED 2\n      ENDINIT\n"
+                  "      LIB TADAH\n      ALGO RANDOM\n      MAXEVAL 2\n"
+                  "      SEED 2\n    ENDEXPLORE\n"
+                  "    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 20\n"),
+              kBumpGateRoot);
+    make_bump_gate_run(run);
+    int status = -1;
+    REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                        "a gate-rejected PRESTAGE"));
+    CHECK(status == 0);
+    const auto rows = data_rows("loss.tadah");
+    REQUIRE(rows.size() == 22u);
+    for (std::size_t i = 0; i < 2; ++i) {
+        INFO("exploration evaluation " << i + 1);
+        const double l = loss_value(rows[i].back());
+        CHECK((l >= 0.999e9 && l < 1e9));
+    }
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(count_of(journal, "eval 1: bump-support gate reject") == 1u);
+    CHECK(count_of(journal, "eval 2: bump-support gate reject") == 1u);
+    CHECK(count_of(journal,
+                   "WARNING   PRESTAGE: no evaluation of the exploration "
+                   "produced a usable loss (2 evaluation(s)); refining from "
+                   "the OPTIMIZER-level INIT point(s) instead") == 1u);
+    CHECK(journal.find("nothing to refine") == std::string::npos);
+    CHECK(journal.find("REFINEMENT: refining") == std::string::npos);
+    const auto params = data_rows("params.tadah");
+    REQUIRE(params.size() == 22u);
+    CHECK(std::stod(params[2].at(2)) == Approx(3.5));
+    CHECK(std::stod(params[2].at(3)) == Approx(2.0));
+    CHECK(journal_status(journal) ==
+          "MAXEVAL_REACHED -- maximum evaluations exhausted");
+    check_run_files();
 }
