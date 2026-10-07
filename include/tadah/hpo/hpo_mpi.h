@@ -70,10 +70,13 @@ inline std::vector<int> hpo_mpi_checked_displacements(
   return displacements;
 }
 
-/* The ordinary Catch2 binary is also linked against the MPI-enabled HPO
- * library, but deliberately does not call MPI_Init.  Keep the shim a true
- * no-op until MPI is live so those unit tests exercise the single-process
- * path instead of making illegal pre-init MPI calls. */
+/* A process linked against the MPI-enabled HPO library need not
+ * initialise MPI (a program embedding tadah.hpo).  Keep the shim a true
+ * no-op until MPI is live, so such a process takes the single-process path
+ * instead of making illegal pre-init MPI calls.  tadah's main() and the
+ * test runners (test_hpo, test_tadah) do initialise it, a one-rank job
+ * outside mpiexec: the LAMMPS instances of this build run on
+ * MPI_COMM_SELF (hpo_lammps_comm()), which needs MPI. */
 inline bool hpo_mpi_active()
 {
   int init = 0, final = 0;

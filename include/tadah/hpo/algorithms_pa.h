@@ -403,16 +403,17 @@ template<typename Vec, typename HostT>
       }
     }
     if (world > 1) {
+      /* A throw on rank 0 ends every rank the way it decides (run_stop.h):
+       * rank 0 rethrows it, the others throw the error below or, for a
+       * signal stop, PeerShutdown. */
+      agree_on_rank_stop(calib_threw ? calib_error : nullptr, [] {
+        return std::string(
+            "TADAH:ANNEAL_PA: rank 0 aborted during seed/T0 calibration");
+      });
       int code = 0;
       if (rank == 0)
-        code = calib_threw ? -1
-                           : (proceed ? 0 : 1 + static_cast<int>(stop_reason));
+        code = proceed ? 0 : 1 + static_cast<int>(stop_reason);
       hpo_bcast(code, 0);
-      if (code == -1) {
-        if (rank == 0) std::rethrow_exception(calib_error);
-        throw std::runtime_error(
-            "TADAH:ANNEAL_PA: rank 0 aborted during seed/T0 calibration");
-      }
       std::vector<double> pkt(dim + 2, 0.0);
       if (rank == 0) {
         pkt[0] = T_hot; pkt[1] = f0;
@@ -449,16 +450,14 @@ template<typename Vec, typename HostT>
     std::vector<anneal::ChainState<Vec>> walkers(n_local);
     anneal::ReplicaPool pool(std::min(threads, n_local ? n_local : 1),
                              stop_flag);
+    /* After every epoch, on every rank: how the epoch ended, agreed over
+     * the ranks (run_stop.h; as ANNEAL_PT). */
     auto rethrow_pool_error = [&](const char* phase) {
-      const bool local_error = pool.has_error();
-      const int any_error = world > 1
-          ? hpo_allreduce_max(local_error ? 1 : 0)
-          : (local_error ? 1 : 0);
-      if (!any_error) return;
-      if (local_error) pool.rethrow_if_error();
-      throw std::runtime_error(
-          std::string("TADAH:ANNEAL_PA: worker failed on another MPI rank during ") +
-          phase);
+      agree_on_rank_stop(pool.take_error(), [phase] {
+        return std::string(
+                   "TADAH:ANNEAL_PA: worker failed on another MPI rank "
+                   "during ") + phase;
+      });
     };
 
     /* Per-rank element counts for the population-wide gathers.  Multi-rank

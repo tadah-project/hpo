@@ -521,6 +521,13 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
                         "globals (the free(): invalid pointer race class); "
                         "PROCESS is the supported mode. THREAD will be "
                         "removed after one production cycle.");
+#else
+            /* MPI build: THREAD is its only mode. The default says so in
+             * the PROCESS branch above; a request names the mode too, so
+             * the journal records it whichever way it was chosen. */
+            if (pc_mode_explicit)
+                log.info("PC_ISOLATION: THREAD (requested; the only mode of "
+                         "the MPI build)");
 #endif
         }
 

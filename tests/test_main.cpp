@@ -18,6 +18,10 @@
 
 #include <unistd.h>
 
+#ifdef TADAH_HPO_MPI
+#include <mpi.h>
+#endif
+
 namespace tadah { namespace hpo { int pc_worker_main(int argc, char** argv); } }
 
 namespace {
@@ -114,5 +118,33 @@ int main(int argc, char** argv) {
   }
   if (argc >= 2 && std::strcmp(argv[1], "--tadah-signal-handler-probe") == 0)
     return signal_handler_probe();
+#ifdef TADAH_HPO_MPI
+  /* The MPI build creates every LAMMPS instance on MPI_COMM_SELF
+   * (hpo_lammps_comm()), which needs an initialised MPI: tadah's main()
+   * initialises it, and so does this runner, as tadah does -- a one-rank
+   * job (hpo_size() 1, the single-process paths) with
+   * MPI_THREAD_MULTIPLE, and the topology framework touched once before
+   * any thread creates a LAMMPS instance. Without it every case that
+   * creates one aborts ("MPI_Comm_rank() function was called before
+   * MPI_INIT"). The two branches above never touch MPI. */
+  int provided = 0;
+  MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
+  if (provided < MPI_THREAD_MULTIPLE) {
+    std::fprintf(stderr, "test_hpo: the MPI library provides thread level "
+                         "%d < MPI_THREAD_MULTIPLE\n", provided);
+    MPI_Finalize();
+    return 1;
+  }
+  {
+    int dims[1] = {1}, periods[1] = {0};
+    MPI_Comm cart = MPI_COMM_NULL;
+    MPI_Cart_create(MPI_COMM_SELF, 1, dims, periods, 0, &cart);
+    if (cart != MPI_COMM_NULL) MPI_Comm_free(&cart);
+  }
+  const int status = Catch::Session().run(argc, argv);
+  MPI_Finalize();
+  return status;
+#else
   return Catch::Session().run(argc, argv);
+#endif
 }

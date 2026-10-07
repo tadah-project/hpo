@@ -930,7 +930,23 @@ LammpsSim::index_defined_variables() const
      * list of LAMMPS's options: they change with the LAMMPS it is built
      * with. */
     std::string create_error;
-    auto lmp = runner.create_instance(hpo_lammps_comm(), invar, &create_error);
+    /* A file the line names for -log or -screen is written by this
+     * instance on every rank: in a multi-rank run each rank's carries its
+     * ".r<rank>" suffix (hpo_rank_suffix(); none on one rank), as every
+     * rank-local output does, so the ranks never write one file. The
+     * evaluation instances add their slot to it (make_worker_invar). */
+    std::vector<std::string> startup_invar = invar;
+    if (const std::string suffix = hpo_rank_suffix(); !suffix.empty()) {
+        for (const char* flag : {"-log", "-screen"})
+            for (std::size_t k = 0; k + 1 < startup_invar.size(); ++k)
+                if (startup_invar[k] == flag &&
+                    startup_invar[k + 1] != "none") {
+                    startup_invar[k + 1] += suffix;
+                    break;
+                }
+    }
+    auto lmp = runner.create_instance(hpo_lammps_comm(), startup_invar,
+                                      &create_error);
     if (!lmp) {
         create_error = trim_ascii(create_error);
         throw std::runtime_error(

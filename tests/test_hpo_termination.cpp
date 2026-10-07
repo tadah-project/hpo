@@ -720,6 +720,7 @@ TEST_CASE("Journal: without PC_LAMMPS lines the PC_ISOLATION line says "
         return found;
     };
 
+#ifndef TADAH_HPO_MPI
     SECTION("PROCESS by default") {
         TaRun run(optimizer);
         REQUIRE(tadah::hpo::hpo_run(run.ctx) == 0);
@@ -744,6 +745,34 @@ TEST_CASE("Journal: without PC_LAMMPS lines the PC_ISOLATION line says "
             "PC_ISOLATION: PROCESS requested but no PC_LAMMPS sims are "
             "configured -- nothing to isolate"));
     }
+#else
+    /* The MPI build has no PROCESS pool (pc_worker_main refuses to start
+     * in it): its default is THREAD, said so in the journal, and a PROCESS
+     * request -- the configuration's or TADAH_PC_ISOLATION's -- is a
+     * startup error. Before this case knew the MPI build it asserted the
+     * serial build's lines there, and failed. */
+    const std::string refusal =
+        "PC_ISOLATION PROCESS is not supported in the MPI build "
+        "(TADAH_HPO_MPI): the worker processes cannot initialize MPI. Use "
+        "the serial build, or PC_ISOLATION THREAD.";
+    SECTION("THREAD by default in the MPI build") {
+        TaRun run(optimizer);
+        REQUIRE(tadah::hpo::hpo_run(run.ctx) == 0);
+        CHECK_THAT(isolation_line(read_file("hpo_run.log")), Catch::EndsWith(
+            "PC_ISOLATION: THREAD (MPI build -- the PROCESS worker pool is "
+            "serial-build only)"));
+    }
+    SECTION("PROCESS written in the configuration is refused in the MPI "
+            "build") {
+        TaRun run(optimizer + "PC_ISOLATION PROCESS\n");
+        CHECK_THROWS_WITH(tadah::hpo::hpo_run(run.ctx), refusal);
+    }
+    SECTION("PROCESS set by TADAH_PC_ISOLATION is refused in the MPI build") {
+        ::setenv("TADAH_PC_ISOLATION", "PROCESS", 1);
+        TaRun run(optimizer);
+        CHECK_THROWS_WITH(tadah::hpo::hpo_run(run.ctx), refusal);
+    }
+#endif
 }
 
 TEST_CASE("Termination: DLIB BFGS MAXEVAL ends with best_pot.tadah = the "
