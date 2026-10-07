@@ -11,9 +11,13 @@
  *                              rule, evaluated by Tadah), CENTRAL or
  *                              FORWARD (PARAM diff_method), never outside
  *                              the OPTIM box: one-sided into it within a
- *                              step of a bound. The centre is evaluated
- *                              first, then each dimension's stencil: 1 + 2n
- *                              evaluations (CENTRAL), 1 + n (FORWARD).
+ *                              step of a bound. The loss at the point is
+ *                              the caller's (gradient_at, below), then each
+ *                              dimension's stencil: 2n evaluations
+ *                              (CENTRAL, and one-sided within a step of a
+ *                              bound), n (FORWARD); gradient(x, g)
+ *                              evaluates the loss at the point first, one
+ *                              more.
  *   GradStrategy::Analytical -- strict closed-form. The caller provides
  *                              an `analytical_grad_fn` callback that
  *                              fills g[] and reports the theta indices
@@ -52,14 +56,22 @@
  * same point can differ): the Ceres and NLopt adapters, whose objective
  * evaluates the loss and then asks for the gradient of the same point, and
  * DLIB:BFGS when the last evaluation of its line search is the point whose
- * gradient dlib asks for (bitwise, and nothing evaluated since). HYBRID
- * takes it as the loss at the point; NUMERICAL evaluates its centre itself
- * all the same (its evaluations are those of the old kernels).
+ * gradient dlib asks for (bitwise, and nothing evaluated since). NUMERICAL
+ * and HYBRID take it as the loss at the point -- the centre of a one-sided
+ * or forward stencil, and the loss whose finiteness a gradient needs -- and
+ * do not evaluate the point again: a central stencil does not use its
+ * centre, a one-sided one uses the loss the optimiser was given. NUMERICAL
+ * used to evaluate the point once more (the old kernels' evaluations): one
+ * evaluation per gradient, counted against MAXEVAL. ANALYTICAL needs no
+ * loss.
  *
- * MAXEVAL is enforced at this layer by counting host calls in the shared
- * eval_counter. Optimizers receive `gradient(x,g) -> false` (and likewise
- * `cost(x) -> +inf`) once the counter overflows or the host returns a
- * non-finite value, so they can terminate cleanly without exceptions
+ * MAXEVAL counts every evaluation of a run in the shared eval_counter: the
+ * provider counts its own (cost(), each finite-difference point, one per
+ * analytical gradient), and the adapters that evaluate the loss themselves
+ * (DLIB:BFGS, the NLopt objective) count theirs in the same counter.
+ * Optimizers receive `gradient(x,g) -> false` (and likewise
+ * `cost(x) -> +inf`) once the counter reaches MAXEVAL or the host returns
+ * a non-finite value, so they can terminate cleanly without exceptions
  * propagating across Ceres' Solve() frames (Ceres is not exception-safe).
  *
  * Why a gradient() call returned false is recorded in
@@ -173,8 +185,8 @@ struct GradientProvider {
 
   /** gradient(x, g) at a point whose loss the caller has just evaluated
    *  itself: fx = host(sp.out(x)) of exactly this x, the last evaluation
-   *  made (see the file comment). HYBRID takes it as the loss at x;
-   *  NUMERICAL and ANALYTICAL are gradient(x, g). */
+   *  made (see the file comment). NUMERICAL and HYBRID take it as the loss
+   *  at x and do not evaluate x; ANALYTICAL is gradient(x, g). */
   std::function<bool(const Vec& x, double fx, Vec& g)> gradient_at;
 
   /** Why the last gradient() call returned false (kind None after a call
@@ -741,12 +753,15 @@ make_gradient_provider(const OptimizerSpec&     sp,
   // max(2^-26, fd_step * |u|), the default under OPTIM_SCALE NONE so that
   // runs keep their pre-1.5 finite differences (unsuitable in the unit
   // box, where the step collapses to 1.5e-8 next to u = 0, every lower
-  // bound). The centre first, then each dimension's stencil, central or
-  // forward, one-sided into the box within a step of a bound: both old
-  // kernels' points and arithmetic in the interior (fd_stencil.h).
-  gp.gradient = [&host, &sp, eval_counter, maxeval, failure, report, setup,
-                 box]
-                (const Vec& x, Vec& g)->bool {
+  // bound). The loss at x -- the caller's, else evaluated first -- then
+  // each dimension's stencil, central or forward, one-sided into the box
+  // within a step of a bound: both old kernels' points and arithmetic in
+  // the interior (fd_stencil.h).
+  /* `fx`: the caller's loss at x (gradient_at), the one the optimiser was
+   * given, or nullptr (gradient): evaluated here first. */
+  const auto numerical = [&host, &sp, eval_counter, maxeval, failure, report,
+                          setup, box]
+                         (const Vec& x, const double* fx, Vec& g)->bool {
     *failure = {};
     /* An invalid setting or a box narrower than the stencil
      * (validate_hpo_setup refuses both): before any evaluation. */
@@ -762,12 +777,14 @@ make_gradient_provider(const OptimizerSpec&     sp,
       y = host(sp.out(p));
       return true;
     };
-    /* Centre evaluation first: a non-finite loss AT x means the gradient
-     * is meaningless (the bad-evaluation contract of both old kernels,
-     * Ceres' evaluating the residual at x first). A one-sided or forward
-     * stencil uses it. */
+    /* The loss AT x, before any stencil point: the caller's, else
+     * evaluated here. Not finite, the gradient is meaningless (the
+     * bad-evaluation contract of both old kernels, Ceres' evaluating the
+     * residual at x first), and no stencil point is evaluated. A one-sided
+     * or forward stencil uses it; a central one does not. */
     double y0 = 0.0;
-    if (!eval(x, y0)) return false;
+    if (fx) y0 = *fx;
+    else if (!eval(x, y0)) return false;
     if (!std::isfinite(y0)) {
       report.centre(x, y0);
       return false;
@@ -787,11 +804,11 @@ make_gradient_provider(const OptimizerSpec&     sp,
     }
     return true;
   };
-  /* NUMERICAL evaluates its centre itself: its evaluations are those of
-   * the old kernels. */
-  const auto grad = gp.gradient;
-  gp.gradient_at = [grad](const Vec& x, double, Vec& g) {
-    return grad(x, g);
+  gp.gradient = [numerical](const Vec& x, Vec& g) {
+    return numerical(x, nullptr, g);
+  };
+  gp.gradient_at = [numerical](const Vec& x, double fx, Vec& g) {
+    return numerical(x, &fx, g);
   };
   return gp;
 }

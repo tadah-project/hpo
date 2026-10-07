@@ -534,9 +534,9 @@ template<class Vec,class Runner>
      * after the loss there, and after each line search at the point the
      * search ended on -- the last point it evaluated (backtracking_line_search
      * evaluates the loss alone and returns the step it evaluated last) --
-     * and HYBRID then takes that loss as the loss at the point
-     * (gradient_at) when the point is the same doubles and nothing was
-     * evaluated since. */
+     * and NUMERICAL and HYBRID then take that loss as the loss at the
+     * point (gradient_at), without evaluating the point again, when it is
+     * the same doubles and nothing was evaluated since. */
     struct LastEval {
         matrix<double,0,1> x;
         double             y = 0.0;

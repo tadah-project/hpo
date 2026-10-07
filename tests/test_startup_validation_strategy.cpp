@@ -1162,6 +1162,17 @@ const std::string kAnyTolerance =
     "(FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS)";
 const std::string kNoTolerance =
     "; set MAXEVAL, MAXTIME or STOPVAL (it honours no tolerance)";
+/* GD_STOGO ignores NLopt's forced stop: once HPO has to end it, only
+ * NLopt's own MAXEVAL ends it promptly (MAXTIME after the rest of its
+ * time). */
+const std::string kStogoNote =
+    "NLopt's StoGO has no convergence test of its own and ignores NLopt's "
+    "forced stop, by which HPO ends a search (on a signal, an error, the "
+    "RESTART stagnation stop, or a loss at or below STOPVAL that NLopt was "
+    "not given): it then calls on, each call refused, and only NLopt's own "
+    "evaluation count ends it promptly (MAXTIME only once the rest of its "
+    "time has passed)";
+const std::string kStogoStops = "; set MAXEVAL (it honours no tolerance)";
 /* DIRECT tests XTOL on every rectangle it divides, the largest included:
  * an XTOL ends it, but only once the whole box is divided that finely. */
 const std::string kDirectXtol =
@@ -1242,11 +1253,73 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
                                                   "    ENDRESTART\n"),
                          top + "NLOPT:GN_DIRECT_L needs a stop: ",
                          kAnyTolerance + kDirectXtol});
-    for (const std::string algo :
-         {"GN_ESCH", "GN_AGS", "GD_STOGO", "GD_STOGO_RAND"})
+    for (const std::string algo : {"GN_ESCH", "GN_AGS"})
         cases.push_back({"NLOPT:" + algo + " without a stop", nlopt(algo, ""),
                          top + "NLOPT:" + algo + " needs a stop: ",
                          kNoTolerance});
+    /* Pins: GD_STOGO and GD_STOGO_RAND ignore NLopt's forced stop, by
+     * which HPO ends a search; once HPO has to end one (a signal, an error,
+     * the RESTART stagnation stop, a loss at or below STOPVAL that NLopt was
+     * not given), the objective refuses every call and only NLopt's own
+     * MAXEVAL ends it promptly. Neither STOPVAL, MAXTIME (the run waits out
+     * the rest of it) nor an active RESTART is enough, and the message names
+     * MAXEVAL only, as does the INNER search's under AUGLAG.
+     * Before the fix: MAXTIME alone was accepted as its stop, in its own
+     * block and in either block of AUGLAG and its INNER search, and the
+     * messages read "; set MAXEVAL or MAXTIME (it honours no tolerance)" and
+     * "; set MAXEVAL or MAXTIME in the INNER block, or MAXEVAL or MAXTIME in
+     * the NLOPT:AUGLAG block, ..."; such a run, once HPO stopped it, waited
+     * out the rest of MAXTIME at 100% CPU. */
+    const std::string stogo_inner =
+        "; set MAXEVAL in the INNER block, or MAXEVAL in the NLOPT:AUGLAG "
+        "block, which NLopt hands on to it";
+    for (const std::string algo : {"GD_STOGO", "GD_STOGO_RAND"}) {
+        cases.push_back({"NLOPT:" + algo + " without a stop", nlopt(algo, ""),
+                         top + "NLOPT:" + algo + " needs a stop: ",
+                         kStogoStops});
+        cases.push_back({"NLOPT:" + algo + " with STOPVAL only",
+                         nlopt(algo, "    STOPVAL 0.1\n"),
+                         top + "NLOPT:" + algo + " needs a stop: ",
+                         kStogoStops});
+        cases.push_back({"NLOPT:" + algo + " with MAXTIME only",
+                         nlopt(algo, "    MAXTIME 60\n"),
+                         top + "NLOPT:" + algo + " needs a stop: ",
+                         kStogoStops});
+        cases.push_back({"NLOPT:" + algo + " with MAXTIME and STOPVAL",
+                         nlopt(algo, "    MAXTIME 60\n    STOPVAL 0.1\n"),
+                         top + "NLOPT:" + algo + " needs a stop: ",
+                         kStogoStops});
+        cases.push_back({"NLOPT:" + algo + " under an active RESTART",
+                         nlopt(algo, kRestart),
+                         top + "NLOPT:" + algo + " needs a stop: ",
+                         kStogoStops});
+        cases.push_back({"NLOPT:" + algo + " with MAXTIME under an active "
+                         "RESTART",
+                         nlopt(algo, "    MAXTIME 60\n" + kRestart),
+                         top + "NLOPT:" + algo + " needs a stop: ",
+                         kStogoStops});
+    }
+    cases.push_back({"NLOPT:AUGLAG with an INNER NLOPT:GD_STOGO and STOPVAL",
+                     nlopt("AUGLAG", "    STOPVAL 0.1\n    INNER\n"
+                                     "      LIB NLOPT\n      ALGO GD_STOGO\n"
+                                     "    ENDINNER\n"),
+                     top + "the INNER search of NLOPT:AUGLAG (NLOPT:GD_STOGO) "
+                           "needs a stop: ",
+                     stogo_inner});
+    cases.push_back({"NLOPT:AUGLAG with MAXTIME and an INNER NLOPT:GD_STOGO",
+                     nlopt("AUGLAG", "    MAXTIME 60\n    INNER\n"
+                                     "      LIB NLOPT\n      ALGO GD_STOGO\n"
+                                     "    ENDINNER\n"),
+                     top + "the INNER search of NLOPT:AUGLAG (NLOPT:GD_STOGO) "
+                           "needs a stop: ",
+                     stogo_inner});
+    cases.push_back({"NLOPT:AUGLAG with an INNER NLOPT:GD_STOGO with MAXTIME",
+                     nlopt("AUGLAG", "    INNER\n"
+                                     "      LIB NLOPT\n      ALGO GD_STOGO\n"
+                                     "      MAXTIME 60\n    ENDINNER\n"),
+                     top + "the INNER search of NLOPT:AUGLAG (NLOPT:GD_STOGO) "
+                           "needs a stop: ",
+                     stogo_inner});
     /* MLSL hands its tolerances to its local searches only: without an
      * INNER block to NLopt's default local optimiser. */
     for (const std::string algo :
@@ -1411,6 +1484,11 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
                     "it either: stop that search with MAXEVAL or MAXTIME in "
                     "the INNER block, or MAXEVAL, MAXTIME or STOPVAL in the "
                     "NLOPT:AUGLAG block, which NLopt hands on to it"},
+             /* GD_STOGO ignores NLopt's forced stop: only MAXEVAL ends it,
+              * in either block (backend rules: GD_STOGO needs MAXEVAL).
+              * Before the merge with that rule: "...; stop that search with
+              * MAXEVAL or MAXTIME in the INNER block, or MAXEVAL, MAXTIME or
+              * STOPVAL in the NLOPT:GN_MLSL_LDS block, ...". */
              {"NLOPT:GN_MLSL_LDS with XTOL_ABS and an INNER NLOPT:GD_STOGO",
               nlopt("GN_MLSL_LDS", "    MAXEVAL 20\n    XTOL_ABS 1e-4\n"
                                    "    INNER\n      LIB NLOPT\n"
@@ -1420,9 +1498,9 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
                     "INNER block: MLSL's multistart loop tests no tolerance, "
                     "and NLopt passes the block's tolerances to no INNER "
                     "search; the INNER block's NLOPT:GD_STOGO does not test "
-                    "it either: stop that search with MAXEVAL or MAXTIME in "
-                    "the INNER block, or MAXEVAL, MAXTIME or STOPVAL in the "
-                    "NLOPT:GN_MLSL_LDS block, which NLopt hands on to it"},
+                    "it either: stop that search with MAXEVAL in the INNER "
+                    "block, or MAXEVAL in the NLOPT:GN_MLSL_LDS block, which "
+                    "NLopt hands on to it"},
              /* The original DIRECT tests XTOL_REL only: FTOL_REL is not
               * sent into its INNER block, XTOL_REL is (the second case
               * passes before the review fix as well: a pin of the advice
@@ -1471,6 +1549,26 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
           top + "NLOPT:GN_DIRECT needs a stop: NLopt's global search has no "
                 "convergence test of its own and runs until it is "
                 "interrupted" + kAnyTolerance + kDirectXtol);
+    /* GD_STOGO's, and the stop that ends it: MAXEVAL, in its own block or
+     * (an INNER search) in the enclosing one, with MAXTIME or not. */
+    CHECK(judge(strategy_config(nlopt("GD_STOGO", "    STOPVAL 0.1\n")))
+              .startup ==
+          top + "NLOPT:GD_STOGO needs a stop: " + kStogoNote + kStogoStops);
+    CHECK(judge(strategy_config(nlopt("GD_STOGO", "    MAXTIME 60\n")))
+              .startup ==
+          top + "NLOPT:GD_STOGO needs a stop: " + kStogoNote + kStogoStops);
+    for (const std::string& stop :
+         {std::string("    MAXEVAL 30\n"),
+          std::string("    MAXEVAL 30\n    MAXTIME 60\n"),
+          std::string("    MAXEVAL 30\n") + kRestart}) {
+        INFO(stop);
+        CHECK(judge(strategy_config(nlopt("GD_STOGO", stop))).startup == "");
+        CHECK(judge(strategy_config(nlopt("AUGLAG", stop +
+                                          "    INNER\n      LIB NLOPT\n"
+                                          "      ALGO GD_STOGO\n"
+                                          "    ENDINNER\n")))
+                  .startup == "");
+    }
 }
 
 /* ======================================================================
@@ -1610,8 +1708,7 @@ TEST_CASE("startup validation: NLopt rejects a tolerance, POPULATION or "
     const std::vector<std::string> tolerances = {"FTOL_REL", "FTOL_ABS",
                                                  "XTOL_REL", "XTOL_ABS"};
     std::vector<Case> cases;
-    for (const std::string algo :
-         {"GN_ESCH", "GN_AGS", "GD_STOGO", "GD_STOGO_RAND"})
+    for (const std::string algo : {"GN_ESCH", "GN_AGS"})
         for (const auto& key : tolerances)
             cases.push_back({algo + " " + key,
                              nlopt(algo, "    " + key + " 1e-4\n"),
@@ -1619,6 +1716,17 @@ TEST_CASE("startup validation: NLopt rejects a tolerance, POPULATION or "
                                  key + ": NLopt's global search tests no "
                                  "tolerance; stop it with MAXEVAL, MAXTIME or "
                                  "STOPVAL"});
+    /* GD_STOGO and GD_STOGO_RAND ignore NLopt's forced stop, so the stop
+     * the message names is MAXEVAL only (backend rules: GD_STOGO needs
+     * MAXEVAL). Before the merge with that rule: "...; stop it with
+     * MAXEVAL, MAXTIME or STOPVAL", as for GN_ESCH. */
+    for (const std::string algo : {"GD_STOGO", "GD_STOGO_RAND"})
+        for (const auto& key : tolerances)
+            cases.push_back({algo + " " + key,
+                             nlopt(algo, "    " + key + " 1e-4\n"),
+                             top + "NLOPT:" + algo + " does not support " +
+                                 key + ": NLopt's global search tests no "
+                                 "tolerance; stop it with MAXEVAL"});
     for (const std::string algo : {"GN_ORIG_DIRECT", "GN_ORIG_DIRECT_L"})
         for (const std::string key : {"FTOL_REL", "FTOL_ABS", "XTOL_ABS"})
             cases.push_back({algo + " " + key,
@@ -1663,6 +1771,19 @@ TEST_CASE("startup validation: NLopt rejects a tolerance, POPULATION or "
                      "search tests no tolerance; stop it with MAXEVAL or "
                      "MAXTIME in the INNER block, or STOPVAL in the enclosing "
                      "block"});
+    /* Pins: an INNER GD_STOGO's own tolerance names MAXEVAL in the INNER
+     * block only: STOPVAL and MAXTIME are no stop of a search that ignores
+     * NLopt's forced stop. Before the merge with the GD_STOGO rule: "...;
+     * stop it with MAXEVAL or MAXTIME in the INNER block, or STOPVAL in
+     * the enclosing block". */
+    cases.push_back({"INNER GD_STOGO FTOL_REL under AUGLAG",
+                     nlopt("AUGLAG", "    INNER\n      LIB NLOPT\n"
+                                     "      ALGO GD_STOGO\n"
+                                     "      FTOL_REL 1e-6\n    ENDINNER\n"),
+                     "the INNER block of the STRATEGY-level optimiser: "
+                     "NLOPT:GD_STOGO does not support FTOL_REL: NLopt's global "
+                     "search tests no tolerance; stop it with MAXEVAL in the "
+                     "INNER block"});
     const std::string population =
         " does not use POPULATION; remove it (it is read by " +
         kPopulationReaders + ")";

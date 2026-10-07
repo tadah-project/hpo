@@ -11,5 +11,8 @@ What this shows:
   population-based global) for EXPLORE, `DLIB:BFGS` for REFINE.
 
 `MAXEVAL` inside `EXPLORE` is the EXPLORE-stage budget; the outer
-`MAXEVAL` is the per-refine budget (total cost is bounded by
-`EXPLORE_MAXEVAL + TOPK * outer_MAXEVAL`).
+`MAXEVAL` is the refinement's, split over the `TOPK` candidates (ceil
+division), so the total is at most
+`EXPLORE_MAXEVAL + TOPK * ceil(outer_MAXEVAL / TOPK)`: here 60 + 3 x 10
+= 90 (the journal says `MULTISTART per-start MAXEVAL = 10 (split from
+outer MAXEVAL)`).

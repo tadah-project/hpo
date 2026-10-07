@@ -32,15 +32,16 @@
     }
   },
   "evaluations": {
-    "value": 8,
-    "tol": 30
+    "value": 30,
+    "tol": 30,
+    "note": "30 on the reference machine (2026-10-07, 3 repeated runs identical; 8 before each finite-difference gradient took the loss at its point as its centre, when BFGS ended after its second gradient). The WARM start is on the upper bound RCUT2B = 6.0 (eval 1, the best), BFGS takes the one-sided gradient there (evals 2-3), and from eval 4 its line search re-evaluates the clamped bound until MAXEVAL = 30, as in example 05 (a scratch build of the same code with other compiler flags ended after the second gradient, at 6). Whether it accepts a re-evaluation of the bound depends on rounding-level noise (see example 01), so the count is not pinned (evals_tol 30); best loss, components and RCUT2B do not depend on it."
   },
   "best_ermse_meV_per_atom": 4.79,
   "status_accepted": [
     "COMPLETED"
   ],
   "nan_clampings_max": 0,
-  "walltime_hint": "0.2s",
+  "walltime_hint": "0.4s",
   "fast": true,
   "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
 }

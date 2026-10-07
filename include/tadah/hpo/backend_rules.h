@@ -50,7 +50,11 @@ RestartStop restart_stop_armed()
  * MAXEVAL, MAXTIME and STOPVAL, a tolerance above 0 its stop tests read (the
  * caps' supports_* flags; NLopt switches a tolerance of 0 or below off, and
  * ANNEAL_PT's best-stall rule arms only above 0), and the RESTART
- * stagnation stop (`restart`). Throws std::runtime_error naming the
+ * stagnation stop (`restart`) -- only MAXEVAL for a backend that ignores
+ * NLopt's forced stop (OptimizerCaps::ignores_forced_stop: GD_STOGO,
+ * GD_STOGO_RAND), which only NLopt's own count ends promptly once HPO has
+ * to stop it (its clock, only after the rest of MAXTIME). Throws
+ * std::runtime_error naming the
  * backend, why, and the stops it honours when `spec` sets none of them,
  * e.g. "NLOPT:GN_ESCH needs a stop: ...; set MAXEVAL, MAXTIME or STOPVAL
  * (it honours no tolerance)", followed by the caps' tolerance_note, if any.
