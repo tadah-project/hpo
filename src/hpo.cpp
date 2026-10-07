@@ -268,13 +268,15 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
     /* ---- FAILSCORE_GRADING: graded ("smooth") failure losses --------
      * ON: every failed eval returns a banded, monotone value inside
      * [0.999*FAILSCORE, FAILSCORE) instead of the constant plateau.
-     * Env override TADAH_FAILSCORE_GRADING=ON|OFF (harness A/B).
+     * Env override TADAH_FAILSCORE_GRADING=ON|OFF (harness A/B), set
+     * through set_failscore_grading so that every optimiser spec, whose
+     * finite differences read it, follows it.
      * Design: INVESTIGATIONS/SMOOTH_FAILSCORE_analysis.md */
     if (const char* e = std::getenv("TADAH_FAILSCORE_GRADING")) {
         if (*e) {
             const std::string v(e);
-            if (v == "ON")       trg.FAILSCORE_GRADING = true;
-            else if (v == "OFF") trg.FAILSCORE_GRADING = false;
+            if (v == "ON")       trg.set_failscore_grading(true);
+            else if (v == "OFF") trg.set_failscore_grading(false);
             else throw std::runtime_error(
                     "TADAH_FAILSCORE_GRADING must be ON or OFF");
         }

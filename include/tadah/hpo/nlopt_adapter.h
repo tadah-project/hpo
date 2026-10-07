@@ -161,8 +161,8 @@ inline unsigned long auglag_reevaluations(const OptimizerSpec& sp)
     return local ? 1 + auglag_reevaluations(*local) : 0;
 }
 
-/* run_nlopt()'s record of the last gradient request it rejected (a
- * gradient that is not finite; see its UData). */
+/* run_nlopt()'s record of the last gradient request it rejected (a point
+ * without a usable gradient; see its UData). */
 struct RejectionRecord {
     bool          last_rejected = false;   // the last gradient request was rejected
     unsigned long calls = 0;               // objective calls so far
@@ -369,11 +369,12 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
      * with its own type once optimize() has returned -- the pattern of the
      * ASA driver (algorithms_asa.cpp). NLopt calls the objective from one
      * thread at a time, so no lock is needed. */
-    /* A gradient that is not finite (GradientProvider::failure: Stencil
-     * or NotFinite) is a rejected point: the objective returns +inf and a
-     * zero gradient, and NLopt steps back, as its line searches and trust
-     * regions do for a failed evaluation. A local gradient search needs a
-     * finite gradient at its starting point, though: until it has had one,
+    /* A point without a usable gradient (GradientProvider::failure:
+     * Stencil or NotFinite) is a rejected point: the objective returns
+     * +inf and a zero gradient, and NLopt steps back, as its line
+     * searches and trust regions do for a failed evaluation. A local
+     * gradient search needs a usable gradient at its starting point,
+     * though: until it has had one,
      * there is no point to step back to. LD_LBFGS, LD_TNEWTON*, LD_VAR*
      * and LD_SLSQP stopped at once and reported success or
      * "roundoff-limited"; LD_MMA and LD_CCSAQ asked for the same point again
@@ -396,7 +397,7 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
      *
      * `withheld`: a loss at or below STOPVAL that the objective evaluated
      * but did not give NLopt, because the gradient of its point failed (the
-     * budget, or a gradient that is not finite). NLopt tests STOPVAL on the
+     * budget, or no usable gradient). NLopt tests STOPVAL on the
      * losses it is given, so the search ends there, STOPVAL_REACHED, as it
      * would have; the objective stops it.
      *
@@ -481,11 +482,11 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                  * (gradient_at) and do not evaluate v again. */
                 if (!u->gp->gradient_at(v, f, g)) {
                     /* No gradient here: MAXEVAL spent within it (Budget),
-                     * or a gradient that is not finite (see UData). NLopt
+                     * or no usable gradient (see UData). NLopt
                      * is not given f: the objective returns +inf and a
                      * zero gradient. A usable f at or below STOPVAL ends
                      * the search (`withheld`); so does the budget. A
-                     * gradient that is not finite is a rejected point: the
+                     * point without a usable gradient is rejected: the
                      * optimizer backs off -- or, at the starting point of a
                      * local gradient search, is stopped. */
                     const GradientFailureInfo& fi = *u->gp->failure;
@@ -616,14 +617,14 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
     };
     /* The objective stopped the search (see UData; their order does not
      * matter, they exclude each other): HPO's stop at a starting point
-     * without a finite gradient, a loss at or below STOPVAL that NLopt was
+     * without a usable gradient, a loss at or below STOPVAL that NLopt was
      * not given, or the spent budget -- however NLopt ended after it. */
     const auto ended_by_objective = [&]() {
         if (udata.gradient_stop) {
             report_gradient_stop(backend, udata.rejected,
                                  "a local gradient search has no step to "
                                  "take from a starting point without a "
-                                 "finite gradient");
+                                 "usable gradient");
             return true;
         }
         if (udata.withheld) {
@@ -634,11 +635,11 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                 << " after " << evals_used.load()
                 << " evaluation(s): the loss " << udata.withheld->loss
                 << " is at or below STOPVAL " << *sp.stop.stopval
-                << ", and NLopt was not given it: its gradient ";
+                << ", and NLopt was not given it: ";
             if (why.kind == GradientFailure::Budget)
-                nfo << "could not be completed within MAXEVAL";
+                nfo << "its gradient could not be completed within MAXEVAL";
             else
-                nfo << "is not finite: " << why.cause
+                nfo << "its point has no usable gradient: " << why.cause
                     << (why.detail.empty() ? "" : " (" + why.detail + ")");
             std::cout << "[HPO] " << nfo.str() << "\n";
             HPOLog::instance().info(nfo.str());
@@ -653,8 +654,8 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
         }
         return false;
     };
-    /* The search ended right after it rejected a point whose gradient is
-     * not finite, without a stop criterion met (`ended`: how NLopt
+    /* The search ended right after it rejected a point without a usable
+     * gradient, without a stop criterion met (`ended`: how NLopt
      * ended). */
     const auto ended_on_rejection = [&](const std::string& ended) {
         if (detail::ended_on_rejection(udata.rejection, reevaluations,
