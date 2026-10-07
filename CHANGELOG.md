@@ -6,9 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `PcWorkerPool::worker_pid(slot)`: the pid of the worker process the pool holds for a slot, -1 when it holds none (after a reaped death until the next task respawns it, after `shutdown()`); `std::out_of_range` for a slot outside the pool. It waits for a task in flight on the slot.
 - Tests: `tadah.hpo_headers` (`ctest -L headers`, cmake-tools' `tadah_add_header_check`) compiles every header of `include/` on its own and twice in a row, with what a user of `tadah.hpo` gets and the module's `TADAH_USE_DLIB`.
 
+### Changed
+- The journal warning for a `PC_ISOLATION PROCESS` worker that died names its pid: `pc-worker 2 (pid 41237) killed/died: ...` (it was `pc-worker 2 killed/died: ...`), so it can be matched with the kernel's out-of-memory line.
+- The pool checks the pid a worker reports in `HELLO_ACK` against the pid it forked; another pid fails the handshake (`HELLO_ACK names pid ..., but the worker was forked as pid ...`). It was read and discarded.
+
 ### Fixed
+- The pc-pool test `killing the worker process is contained and respawned` takes the worker's pid from `worker_pid` and has no skip path. It found the pid with `ps --ppid | awk`, and where that found none (no procps `ps` or no `awk`, as in a minimal container) it warned and passed after the first round trip, while the two cases that need the same pid failed there; the `ps`/`awk` helper is gone.
 - `hpo_host_impl.hpp` includes `hpo_host.h`, whose `HPO_Host` templates it defines: included before `hpo_host.h` it did not compile (`expected initializer before '<'`). Including `hpo_host.h`, as the code does, was not affected.
 
 ## [1.6.0] — 2026-09-25
