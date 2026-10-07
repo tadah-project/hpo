@@ -2506,6 +2506,26 @@ TEST_CASE("NLopt: make_nlopt seeds a run with an INNER once, from the block "
             tadah::hpo::make_nlopt(sp, 2, tadah::hpo::RestartStop::Off),
             refused);
     }
+    /* Pins: an INNER spec with an INIT chain or an INIT K_TOTAL (from
+     * outside the parser, which refuses INIT inside INNER) is refused:
+     * MLSL and AUGLAG choose the INNER search's starting points, and
+     * nothing resolves an INNER chain.
+     * Before the fix: nothing threw; the chain was ignored. */
+    const auto chain_refused = Catch::StartsWith(
+        "NLopt INNER spec with an INIT chain: MLSL and AUGLAG choose the "
+        "INNER search's starting points");
+    SECTION("an INNER INIT chain") {
+        sp.inner->init_strategy_spec.chain = {{"RANDOM", {"1"}}};
+        CHECK_THROWS_WITH(
+            tadah::hpo::make_nlopt(sp, 2, tadah::hpo::RestartStop::Off),
+            chain_refused);
+    }
+    SECTION("an INNER INIT K_TOTAL") {
+        sp.inner->init_strategy_spec.k_total = 2;
+        CHECK_THROWS_WITH(
+            tadah::hpo::make_nlopt(sp, 2, tadah::hpo::RestartStop::Off),
+            chain_refused);
+    }
 }
 
 TEST_CASE("NLopt: make_nlopt refuses an INNER spec with a GRAD_STRATEGY",

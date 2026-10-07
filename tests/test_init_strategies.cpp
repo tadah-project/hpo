@@ -954,6 +954,21 @@ ENDOPTIMIZER
     CHECK(trg.spec.prestage->inner->algo == "LN_BOBYQA");
     /* outer spec has no INNER of its own */
     CHECK_FALSE(trg.spec.inner);
+    /* Pins: an INNER block takes no INIT block (the grammar refuses one;
+     * MLSL picks the INNER search's starting points), so its spec holds no
+     * starting points and the journal prints no INIT strategy for it,
+     * while the exploration shares the OUTER's CONFIG point.
+     * Before the fix: the INNER spec held a copy of the OUTER's CONFIG
+     * point and its origin (share_init_with_nested_phases), which nothing
+     * used, and the run policy printed "PRESTAGE.EXPLORE.INNER init
+     * strategy: (default -- CONFIG only)". */
+    CHECK(trg.spec.prestage->optim_init.size() == 1);
+    CHECK(trg.spec.prestage->inner->optim_init.empty());
+    CHECK(trg.spec.prestage->inner->optim_init_origin.empty());
+    const std::string journal = optimizer_section(trg.spec);
+    INFO(journal);
+    CHECK(journal.find("PRESTAGE.EXPLORE init strategy:") != std::string::npos);
+    CHECK(journal.find("PRESTAGE.EXPLORE.INNER") == std::string::npos);
 }
 
 TEST_CASE("PRESTAGE EXPLORE block parses INIT block and bounds independently",
