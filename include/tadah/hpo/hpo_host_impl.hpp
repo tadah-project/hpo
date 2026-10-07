@@ -1,4 +1,5 @@
 #pragma once
+#include <tadah/hpo/hpo_host.h>
 #include <tadah/core/core_user_config_parser.h>
 #include <tadah/hpo/probe_phase.h>
 #include <tadah/hpo/column_titles.h>
