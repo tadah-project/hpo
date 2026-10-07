@@ -227,8 +227,11 @@ TEST_CASE("NLopt adapter: a MAXEVAL above the int NLopt counts in is refused, "
 TEST_CASE("StepPlan: review fixes -- BOBYQA-only near-bound rule, 0.5 cap, coverage at validation",
           "[HPO][step_plan][review]")
 {
-    SECTION("MinCollapsed (NEWUOA_BOUND) keeps every dim's step near a bound") {
-        auto sp = spec("LN_NEWUOA_BOUND", false);
+    /* LN_PRAXIS is the bounded MinCollapsed algorithm here; this section
+     * used LN_NEWUOA_BOUND, which is refused. Before the fix: passes as
+     * well (a pin of the BOBYQA-only shrink). */
+    SECTION("MinCollapsed (PRAXIS) keeps every dim's step near a bound") {
+        auto sp = spec("LN_PRAXIS", false);
         sp.step = 0.25;
         sp.optim_init = {{1.0, 0.0079}};
         const auto start = sp.in(sp.optim_init.front());

@@ -224,8 +224,10 @@ TEST_CASE("seed anchors: every adapter's first evaluation is the seed bitwise",
             if (!same_bits(x[i], kSeed[i])) ++differ;
         CHECK(differ == kSeed.size());
     }
+    /* LN_NEWUOA_BOUND, which was in this list, is refused (the NLopt
+     * adapter's caps lookup throws). Before the fix: passes as well. */
     for (const char* algo : {"LN_SBPLX", "LN_NELDERMEAD", "LN_BOBYQA", "LN_COBYLA",
-                             "LN_NEWUOA_BOUND", "LN_PRAXIS"}) {
+                             "LN_PRAXIS"}) {
         DYNAMIC_SECTION("NLOPT:" << algo) {
             check_first_eval_is_seed(seed_spec("NLOPT", algo),
                 [](const OptimizerSpec& s, RecordingHost& h) {
