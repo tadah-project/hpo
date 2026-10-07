@@ -155,14 +155,20 @@ void IterHealthMonitor::record(
         " -- weights contain NaN/Inf entries (training likely diverged).");
   }
   if (!rec.layout_matches) {
-    if (take("*:layout"))
+    if (take("*:layout")) {
+      const std::string what =
+          rec.layout_cols != rec.n_weights
+              ? "the model has " + std::to_string(rec.n_weights) +
+                    " weights but its column layout has " +
+                    std::to_string(rec.layout_cols) + " columns"
+              : "the column layout of the model's " +
+                    std::to_string(rec.n_weights) +
+                    " weights is not contiguous from column 0";
       tadah::core::Logger::instance().log(
           tadah::core::LogLevel::WARNING,
-          "iter_health: eval " + std::to_string(rec.iter) +
-          " -- the model has " + std::to_string(rec.n_weights) +
-          " weights but its column layout has " +
-          std::to_string(rec.layout_cols) +
-          " columns: the per-block checks are skipped.");
+          "iter_health: eval " + std::to_string(rec.iter) + " -- " + what +
+          ": the per-block checks are skipped.");
+    }
     return;
   }
 

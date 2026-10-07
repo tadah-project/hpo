@@ -13,9 +13,10 @@
 //
 // Aggregates:
 //   - weights_have_nan_inf: any non-finite weight, whatever the layout.
-//   - layout_matches   : the layout's columns are the weights (as many);
-//                        when not, the per-block aggregates are skipped
-//                        and record() says so.
+//   - layout_matches   : the layout's blocks partition the weights
+//                        (contiguous from column 0, as many columns as
+//                        weights); when not, the per-block aggregates are
+//                        skipped and record() says so.
 //   per ColumnBlock (when the layout matches):
 //   - block_max_abs    : max(|w|) within the block.
 //   - block_median_abs : median(|w|) within the block.
@@ -60,7 +61,8 @@ struct IterHealthRecord {
   std::vector<double>      block_nz_fraction{};
   /** A weight is NaN or infinite (any weight, inside a block or not). */
   bool                     weights_have_nan_inf{false};
-  /** The layout's columns are the weights: as many as there are weights. */
+  /** The layout's blocks partition the weights: contiguous from column 0,
+   *  as many columns as there are weights (ColumnLayout::validate). */
   bool                     layout_matches{true};
   std::size_t              n_weights{0};    ///< weights.size()
   std::size_t              layout_cols{0};  ///< layout.total_cols()
@@ -70,7 +72,7 @@ struct IterHealthRecord {
  *  Pure function: no logging, no state. Tests can call this directly.
  *
  *  Every weight is checked for NaN/Inf. The per-block aggregates are
- *  computed only when the layout has as many columns as there are weights
+ *  computed only when the layout's blocks partition the weights
  *  (layout_matches); a layout that does not describe the weights leaves
  *  them empty -- it is not taken for non-finite weights.
  *
