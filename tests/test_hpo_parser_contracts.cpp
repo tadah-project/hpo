@@ -2959,7 +2959,12 @@ TEST_CASE("tadah refit: a key the block's ALGO does not read is rejected",
      * with a Ceres ALGO keeps its pointer to FTOL_REL. The one exemption:
      * under the EXPLORE optimiser GN_MLSL_LDS the INNER block's MAXEVAL,
      * FTOL_REL and XTOL_REL also set MLSL's local LN_SBPLX searches, so
-     * they are accepted whatever the INNER ALGO.
+     * they are accepted whatever the INNER ALGO, and a key neither reads
+     * (FTOL_ABS with INNER ALGO NONE) is an error naming the MLSL searches
+     * as what reads the others.
+     * Before the fix of the MLSL message: FTOL_ABS with INNER ALGO NONE
+     * under GN_MLSL_LDS said "has no effect with ALGO NONE (it reads
+     * MAXEVAL, FTOL_REL, XTOL_REL)", MLSL's keys given as NONE's.
      * Before the fix: the keys were checked per stage, not per ALGO, so
      * GTOL with LD_LBFGS/LBFGS, XTOL_REL with an INNER LBFGS, MAXITER with
      * LD_LBFGS/LBFGS (read as MAXEVAL) and FTOL_REL with LBFGS (dlib's
@@ -3015,6 +3020,31 @@ TEST_CASE("tadah refit: a key the block's ALGO does not read is rejected",
                                 "ENDOPTIMIZER",
               "EXPLORE INNER: GTOL is not used by a tadah refit stage (it "
               "reads LIB, ALGO, MAXEVAL, FTOL_REL, FTOL_ABS, XTOL_REL)"},
+             /* INNER ALGO NONE runs no search; under GN_MLSL_LDS (or its
+              * short name MLSL) the block sets MLSL's local LN_SBPLX
+              * searches, which the message names as theirs, not NONE's. */
+             {"EXPLORE", crs2 + "ALGO NONE FTOL_ABS 1e-9 ENDINNER "
+                                "ENDOPTIMIZER",
+              "EXPLORE INNER: FTOL_ABS has no effect with ALGO NONE (no "
+              "local search runs); remove FTOL_ABS"},
+             {"EXPLORE", mlsl + "ALGO NONE FTOL_ABS 1e-9 ENDINNER "
+                                "ENDOPTIMIZER",
+              "EXPLORE INNER: FTOL_ABS has no effect with ALGO NONE (no "
+              "local search runs; under ALGO GN_MLSL_LDS the block sets "
+              "MLSL's local LN_SBPLX searches, which read MAXEVAL, "
+              "FTOL_REL, XTOL_REL); remove FTOL_ABS"},
+             {"EXPLORE", "OPTIMIZER LIB NLOPT ALGO mlsl MAXEVAL 100 INNER "
+                         "ALGO none FTOL_ABS 1e-9 ENDINNER ENDOPTIMIZER",
+              "EXPLORE INNER: FTOL_ABS has no effect with ALGO NONE (no "
+              "local search runs; under ALGO MLSL the block sets MLSL's "
+              "local LN_SBPLX searches, which read MAXEVAL, FTOL_REL, "
+              "XTOL_REL); remove FTOL_ABS"},
+             /* An NLopt INNER search reads what LN_SBPLX reads: the message
+              * gives its own keys. */
+             {"EXPLORE", mlsl + "LIB NLOPT ALGO LN_SBPLX FTOL_ABS 1e-9 "
+                                "ENDINNER ENDOPTIMIZER",
+              "EXPLORE INNER: FTOL_ABS has no effect with ALGO LN_SBPLX (it "
+              "reads MAXEVAL, FTOL_REL, XTOL_REL); remove FTOL_ABS"},
              /* A Ceres ALGO keeps the pointer to FTOL_REL. */
              {"REFINE", "OPTIMIZER LIB CERES ALGO LM FTOL_ABS 1e-12 "
                         "ENDOPTIMIZER",
