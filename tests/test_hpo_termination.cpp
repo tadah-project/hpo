@@ -4195,10 +4195,18 @@ TEST_CASE("No usable loss: evaluations that throw count as unusable losses",
 {
     /* OALGO 3 cannot exclude the bias from the regularisation: with BIAS
      * true and LAMBDA != 0 every training throws, and the host records
-     * each evaluation as FAILSCORE (and counts it as a NaN/Inf clamping).
-     * The journal used to follow "100.0% of evaluations produced a
-     * non-finite loss" with "[ok] Every evaluation produced a usable
-     * loss". */
+     * each evaluation as FAILSCORE. The journal used to follow "100.0% of
+     * evaluations produced a non-finite loss" with "[ok] Every evaluation
+     * produced a usable loss".
+     * Pins also: DIAGNOSTICS counts the six evaluations under
+     * "Evaluations that threw" and none as a NaN/Inf clamping (no loss
+     * was non-finite), and the LOSS FUNCTION section's Fail score line
+     * names every failure that scores it.
+     * Before the fix: the journal read "NaN/Inf clampings : 6 (100.0%)"
+     * and "100.0% of evaluations produced a non-finite loss that was
+     * clamped", had no "Evaluations that threw" line, and its Fail score
+     * line read "(returned when an evaluation produces NaN/Inf)"; this
+     * case asserted the non-finite wording (it pinned the defect). */
     TaRun run(plain_block("    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
                           "    MAXEVAL 6\n    SEED 3\n"));
     run.ctx.storage_update("OALGO", {"3"});
@@ -4211,8 +4219,19 @@ TEST_CASE("No usable loss: evaluations that throw count as unusable losses",
     check_no_usable_loss(6, "1.000000000000000e+09", kNoUsableLossStatus);
     const std::string journal = read_file("hpo_run.log");
     CHECK_THAT(journal, Catch::Contains("eval-thread caught throw"));
-    CHECK_THAT(journal, Catch::Contains("100.0% of evaluations produced a "
-                                        "non-finite loss"));
+    CHECK_THAT(journal,
+               Catch::Contains("Evaluations that threw  : 6  (100.0%)"));
+    CHECK_THAT(journal, Catch::Contains("[!] 6 evaluation(s) raised an "
+                                        "exception and scored FAIL_SCORE"));
+    CHECK_THAT(journal, Catch::Contains("NaN/Inf clampings       : 0  (0.0%)"));
+    CHECK_THAT(journal, !Catch::Contains("non-finite loss"));
+    /* The LOSS FUNCTION section says what scores FAILSCORE (it said
+     * "returned when an evaluation produces NaN/Inf"). */
+    CHECK_THAT(journal, Catch::Contains(
+                            "1.0000e+09  (the loss of a failed evaluation: a "
+                            "NaN/Inf loss, an exception, a skip cap, a failed "
+                            "script or a gate reject; the ceiling of every "
+                            "loss)"));
 }
 
 TEST_CASE("DLIB:GFS: a run whose every evaluation fails with the default "
