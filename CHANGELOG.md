@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Tests: `tadah.hpo_headers` (`ctest -L headers`, cmake-tools' `tadah_add_header_check`) compiles every header of `include/` on its own and twice in a row, with what a user of `tadah.hpo` gets and the module's `TADAH_USE_DLIB`.
 
 ### Changed
+- **The tests need Python 3.11 or later** (`cmake/hpo_test_python.cmake`, `find_package(Python3 3.11 ...)`): the registry drift gate `hpo_anneal_registry_sync` runs `blueprint/gen_anneal_keys.py`, which reads the registry with `tomllib`. An older interpreter is refused at the configure step (`Could NOT find Python3: Found unsuitable version ..., but required is at least "3.11"`), and an older one first on `PATH` is passed over for a newer one; before, any Python 3 was accepted and the gate failed at test time (`No module named 'tomllib'`). Tests: `hpo_test_python_minimum_old` and `_current` (label `cmake`).
 - The journal warning for a `PC_ISOLATION PROCESS` worker that died names its pid: `pc-worker 2 (pid 41237) killed/died: ...` (it was `pc-worker 2 killed/died: ...`), so it can be matched with the kernel's out-of-memory line.
 - The pool checks the pid a worker reports in `HELLO_ACK` against the pid it forked; another pid fails the handshake (`HELLO_ACK names pid ..., but the worker was forked as pid ...`). It was read and discarded.
 
