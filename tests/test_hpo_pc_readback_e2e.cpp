@@ -22,7 +22,9 @@
 //     the PC_FAILPROBE S with no (finite, for a failvar) number for its
 //     value after the script, text after a number included (a diagnostic
 //     is NaN with a journal line); a script that cannot be
-//     rendered fails with a journal line. Hidden
+//     rendered fails with a journal line; and a failed simulation scores
+//     its evaluation FAILSCORE whatever loss its variables are measured
+//     with (L1, TUKEY). Hidden
 //     because, before the fix, these cases ended their process with
 //     SIGSEGV, and because the HPO_Host statics are shared by the cases of
 //     one process.
@@ -166,6 +168,13 @@ Table read_table(const fs::path& p) {
         t.rows.push_back(tokens(line));
     }
     return t;
+}
+
+/* The column of @p t headed @p name (header.size() when none is). */
+std::size_t column(const Table& t, const std::string& name) {
+    std::size_t c = 0;
+    while (c < t.header.size() && t.header[c] != name) ++c;
+    return c;
 }
 
 /* Every row of @p t has its header's token count. */
@@ -1075,6 +1084,98 @@ TEST_CASE("a PC_LAMMPS script that cannot be rendered is journalled",
     Host::reset_globals_for_test();
 }
 
+/* Pins: under FAILSCORE_GRADING OFF an evaluation with a failed PC_LAMMPS
+ * simulation scores FAILSCORE whatever the loss its variables are measured
+ * with: under L1 and TUKEY (--varloss overrides; L(ERMSE) stays L2), for
+ *   - a --varloss F deleted at run time (no value after the script),
+ *   - a LAMMPS error inside the script (`bogus_command 1 2`),
+ *   - a script that cannot be rendered (TMPDIR names a regular file: an
+ *     infrastructure failure, which does not abort the evaluation),
+ *   - a hot value outside its window (hot_a0 = 5.0 outside [2.5, 4.5]),
+ * every evaluation returns 1e16 and the journal says "[!] No evaluation
+ * produced a usable loss."; the failed variables are --failscore (1e16) in
+ * outvar.tadah, and under L1 their loss.tadah term is L1(1e16) =
+ * 1.000000e+16 (the --failscore value goes through the line's loss, as
+ * before). Under L2 the same cases scored 1e16 before the fix as well: the
+ * squared --failscore value is past FAILSCORE (the cases above with
+ * `LOSS L2`).
+ * Before the fix: the evaluation's loss was the mean of its terms, the
+ * failed line's loss of its --failscore value with L(ERMSE) (and L(E)): under
+ * L1 6666666666666700 (F deleted) or 5000000000000050, under TUKEY, which is
+ * bounded (a term of about 1 each), 33.99996 (F deleted) or 50.49994 --
+ * below 0.999 * FAILSCORE, so each failed evaluation counted as feasible
+ * ("[ok] Every evaluation produced a usable loss.") and could become the
+ * best. */
+TEST_CASE("a failed PC_LAMMPS simulation fails the evaluation whatever its "
+          "variables' loss", "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    struct Case {
+        std::string what, script, options;
+        bool unrendered;
+    };
+    const std::vector<Case> cases{
+        {"a --varloss F deleted at run time",
+         ta_script("3.301", "variable E equal pe\nvariable F equal pe+1\n" +
+                                spoil("F", false)),
+         " --varloss E 0 1 LOSS --varloss F 0 1 LOSS", false},
+        {"a LAMMPS error inside the script",
+         ta_script("3.301", "variable E equal pe\nbogus_command 1 2\n"),
+         " --varloss E 0 1 LOSS", false},
+        {"a script that cannot be rendered",
+         ta_script("3.301", "variable E equal pe\nvariable unrendered_" +
+                                std::to_string(::getpid()) + " equal 2\n"),
+         " --varloss E 0 1 LOSS", true},
+        {"a hot value outside its window",
+         ta_script("3.301", "variable E equal pe\n"
+                            "variable hot_a0 equal 5.0\n"),
+         " --varloss E 0 1 LOSS --hotvar hot_a0 2.5 4.5 3.301", false}};
+    for (const std::string loss : {"L1", "TUKEY"})
+    for (const Case& c : cases) {
+        INFO("--varloss ... " << loss << ": " << c.what);
+        Host::reset_globals_for_test();
+        ForceRebuildGuard rebuild;
+        ScratchDir sd("tadah_pc_failed_loss_");
+        std::ofstream(sd.dir / "readback.in") << c.script;
+        std::ofstream(sd.dir / "notadir") << "a file, not a directory\n";
+        std::string options = c.options;
+        for (std::size_t p; (p = options.find("LOSS")) != std::string::npos;)
+            options.replace(p, 4, loss);
+        Journal j;
+        std::vector<double> losses;
+        {
+            std::optional<ScopedTmpdir> tmpdir;
+            if (c.unrendered) tmpdir.emplace((sd.dir / "notadir").string());
+            losses = evaluate(sd.dir,
+                              "PC_ERMSE 0 1\nPC_LAMMPS --script " +
+                                  (sd.dir / "readback.in").string() +
+                                  options + "\n",
+                              {0.5});
+        }
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] == 1e16);
+        CHECK(journal.find("[!] No evaluation produced a usable loss.") !=
+              std::string::npos);
+        const Table outv = read_table("outvar.tadah");
+        REQUIRE(outv.rows.size() == 1);
+        check_header_shaped(outv, "outvar.tadah");
+        for (std::size_t col = 4; col < outv.rows[0].size(); ++col) {
+            INFO("outvar.tadah column " << outv.header.at(col));
+            CHECK(outv.rows[0][col] == "1.000000e+16");
+        }
+        if (loss == "L1") {
+            const Table l = read_table("loss.tadah");
+            const std::size_t col = column(l, "L(E)");
+            REQUIRE(col < l.header.size());
+            REQUIRE(l.rows.size() == 1);
+            REQUIRE(l.rows[0].size() == l.header.size());
+            CHECK(l.rows[0][col] == "1.000000e+16");
+        }
+        Host::reset_globals_for_test();
+    }
+}
+
 /* Pins: a variable that reads an unreadable one is journalled with the
  * LAMMPS error of that one, as reading it raised it, never with "has a
  * circular dependency":
@@ -1452,13 +1553,6 @@ std::string sci6(double v) {
     return buf;
 }
 
-/* The column of @p t headed @p name (header.size() when none is). */
-std::size_t column(const Table& t, const std::string& name) {
-    std::size_t c = 0;
-    while (c < t.header.size() && t.header[c] != name) ++c;
-    return c;
-}
-
 }  // namespace
 
 /* Pins, through the built tadah: a LAMMPS error while a PC_LAMMPS variable
@@ -1501,6 +1595,10 @@ std::size_t column(const Table& t, const std::string& name) {
  *     (readback.in, occurrence 1): reading --varloss F after the script: no
  *     value (the variable is not defined, or has no single value)", E and F
  *     failscored, TOTAL_LOSS/N 1.000000e+16;
+ *   - the same LAMMPS error inside the script with the line's --varloss E
+ *     measured by L1: a failed evaluation all the same, exit 1,
+ *     TOTAL_LOSS/N 1.000000e+16, no "[ok] Every evaluation produced a
+ *     usable loss";
  *   - FAILSCORE_GRADING OFF, a PC_FAILPROBE S deleted at run time: the
  *     startup warning says that S neither grades nor gates an evaluation
  *     and that a probe that fails fails its evaluation; exit 1, "PC_LAMMPS
@@ -1532,7 +1630,10 @@ std::size_t column(const Table& t, const std::string& name) {
  * modes. Before the no-value fix a PC_FAILPROBE S with no value was not
  * checked: exit 0, feasible losses, S NaN, E kept, no line; and the startup
  * warning said "the probe runs as a plain diagnostic sim; no grading, no
- * gate." (a probe whose script failed aborted its evaluation then too). */
+ * gate." (a probe whose script failed aborted its evaluation then too).
+ * Before the failed-evaluation fix the L1 section's evaluations scored the
+ * mean of L2(ERMSE) and L1(1e16): TOTAL_LOSS/N 5.000000e+15, a feasible
+ * loss, exit 0. */
 TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
           "way under PC_ISOLATION THREAD and PROCESS",
           "[pc_readback][tadah_cli][.tadah_cli_pc_readback]") {
@@ -1685,6 +1786,18 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
              {},
              "1.000000e+16",
              {{"E", "1.000000e+16"}, {"F", "1.000000e+16"}},
+             {}};
+    }
+    SECTION("a LAMMPS error inside the script under --varloss ... L1") {
+        name = "script_l1";
+        c = {"clear\nunits metal\nbogus_command 1 2\nvariable E equal 1.0\n",
+             "PC_LAMMPS --script readback.in --varloss E 0 1 L1\n", 1,
+             {"PC_LAMMPS task failed (readback.in, occurrence 1): "
+              "ERROR: Unknown command: bogus_command 1 2",
+              "no evaluation produced a usable loss"},
+             {"[ok] Every evaluation produced a usable loss"},
+             "1.000000e+16",
+             {{"E", "1.000000e+16"}},
              {}};
     }
     SECTION("a PC_FAILPROBE S with no value under FAILSCORE_GRADING OFF") {
