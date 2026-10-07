@@ -173,9 +173,25 @@ endforeach()
 # Registry drift gate: the checked-in anneal_keys_gen.h must match what the
 # generator produces from blueprint/anneal_keys.toml. Regenerate with
 #   python3 HPO/blueprint/gen_anneal_keys.py --header
-# Python 3 is required to build the tests (as in the umbrella build, whose
-# tests need it too): without it the gate would silently not exist.
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
+# The interpreter of these scripts: cmake/hpo_test_python.cmake.
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/hpo_test_python.cmake)
+# hpo_test_python_minimum_{old,current}: an interpreter that reports Python
+# 3.10 is refused at the configure step, the build's own is found
+# (python_minimum/check_python_minimum.cmake). Before the fix: the 'old'
+# case fails, a 3.10 interpreter was accepted (and the registry gate failed
+# at test time, 'No module named tomllib'); 'current' passes as well (a pin).
+foreach(_case old current)
+    add_test(NAME hpo_test_python_minimum_${_case}
+        COMMAND ${CMAKE_COMMAND}
+            -DCASE=${_case}
+            -DPYTHON=${Python3_EXECUTABLE}
+            -DMODULE=${CMAKE_CURRENT_SOURCE_DIR}/../cmake/hpo_test_python.cmake
+            -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/python_minimum/${_case}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/python_minimum/check_python_minimum.cmake)
+    set_tests_properties(hpo_test_python_minimum_${_case} PROPERTIES
+        LABELS cmake
+        TIMEOUT 120)
+endforeach()
 add_test(NAME hpo_anneal_registry_sync
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/../blueprint/gen_anneal_keys.py
@@ -263,3 +279,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/run_matrix_ctest.sh")
         LABELS "slow"
         SKIP_RETURN_CODE 77)
 endif()
+
+# tadah.hpo_headers (ctest -L headers): every header of include/
+# compiles on its own and twice in a row (cmake-tools'
+# tadah_add_header_check). Before the fix: fails on hpo_host_impl.hpp,
+# which does not include hpo_host.h ('expected initializer before <').
+tadah_add_header_check(tadah.hpo)

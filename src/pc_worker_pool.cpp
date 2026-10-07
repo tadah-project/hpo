@@ -230,9 +230,15 @@ void PcWorkerPool::spawn_locked(Channel& ch, int slot) {
       throw std::runtime_error("expected HELLO_ACK");
     pcwire::Reader r(payload);
     const auto ver = r.u32();
-    (void)r.u32();   /* worker pid (informational) */
+    const auto acked_pid = r.u32();
     if (ver != PROTOCOL_VERSION)
       throw std::runtime_error("protocol version mismatch");
+    /* The worker runs in the process the parent forked (exec keeps the
+     * pid): another pid means the peer is not that worker. */
+    if (static_cast<pid_t>(acked_pid) != pid)
+      throw std::runtime_error(
+          "HELLO_ACK names pid " + std::to_string(acked_pid)
+          + ", but the worker was forked as pid " + std::to_string(pid));
   } catch (const std::exception& e) {
     kill_reap_locked(ch, slot, e.what());
     throw std::runtime_error(
@@ -243,6 +249,7 @@ void PcWorkerPool::spawn_locked(Channel& ch, int slot) {
 }
 
 void PcWorkerPool::kill_reap_locked(Channel& ch, int slot, const char* why) {
+  const pid_t dead_pid = ch.pid;
   int st = 0;
   std::string status = "(not reaped)";
   if (ch.pid > 0) {
@@ -265,7 +272,8 @@ void PcWorkerPool::kill_reap_locked(Channel& ch, int slot, const char* why) {
    * aborts inside workers. */
   HPOLog::instance().warning(
       std::string("pc-worker ") + logidx::uis(static_cast<std::size_t>(slot))
-      + " killed/died: " + why + "; wait: " + status
+      + " (pid " + std::to_string(dead_pid) + ") killed/died: " + why
+      + "; wait: " + status
       + (deliberate
              ? "; deliberate (FAILPROBE gate) -- not counted as a slot fault"
              : "; consecutive deaths: " + std::to_string(ch.consec_deaths)));
@@ -412,6 +420,17 @@ PcTaskResult PcWorkerPool::execute(int slot, std::uint32_t script_idx,
     kill_reap_locked(ch, slot, (std::string("RESULT decode failed: ") + e.what()).c_str());
     return synthetic_fail(e.what());
   }
+}
+
+pid_t PcWorkerPool::worker_pid(int slot) const {
+  if (slot < 0 || slot >= width_)
+    throw std::out_of_range(
+        "PcWorkerPool::worker_pid: slot " + std::to_string(slot)
+        + " is outside 0-" + std::to_string(width_ - 1) + " (the pool has "
+        + std::to_string(width_) + (width_ == 1 ? " slot)" : " slots)"));
+  Channel& ch = *channels_[slot];
+  std::lock_guard<std::mutex> lk(ch.mtx);
+  return ch.pid;
 }
 
 void PcWorkerPool::kill_matching(std::uint64_t iter) {
