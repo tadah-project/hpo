@@ -7,6 +7,8 @@
 
 #include "compact_refit_harness.h"
 
+#include <tadah/hpo/refit/refit_parser.h>
+
 #include <sstream>
 #include <string>
 #include <vector>
@@ -352,6 +354,48 @@ TEST_CASE_METHOD(PTFixture,
       CHECK(log_lines("---- phi ladder ----").empty());
       CHECK_FALSE(fs::exists("pot.tadah"));
     }
+  }
+}
+
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: a top-level OPTIMIZER block is refused "
+                 "with RefitParser's migration text before the table is read",
+                 "[compact][refit][mode_keys]") {
+  /* Pins: the HPO refit engine refuses a top-level OPTIMIZER block (the
+   * grammar before the stage blocks) under REFIT_MODE compact, written or
+   * the default, in validate() and in run() before it reads the EAM file
+   * (absent here), with the text RefitParser::parse gives the same
+   * configuration ("tadah refit: a top-level OPTIMIZER block is no longer
+   * supported. ..."), and writes nothing.
+   * Before the fix: validate() accepted the block (the mode rule took it
+   * for a key of compact mode) and run() failed reading the absent EAM
+   * file ("EAMSetflIO: setfl file does not exist: absent.eam.alloy"):
+   * only RefitParser::parse refused the block, after the table was read. */
+  for (const bool defaulted : {false, true}) {
+    INFO((defaulted ? "REFIT_MODE compact (the default)"
+                    : "REFIT_MODE compact"));
+    ScopedTempDir tmp;
+    Context c = compact_context("SIGNED");
+    c.remove("EAM");
+    c.add("EAM", std::string("absent.eam.alloy"));
+    if (defaulted) c.remove("REFIT_MODE");
+    add_block(c, "OPTIMIZER", "GLOBAL ALGO MLSL ENDGLOBAL");
+    std::string parser_text;
+    try {
+      (void)tadah::hpo::refit::RefitParser::parse(c);
+    } catch (const std::exception &e) {
+      parser_text = e.what();
+    }
+    REQUIRE(parser_text.rfind("tadah refit: a top-level OPTIMIZER block is "
+                              "no longer supported.",
+                              0) == 0);
+    tadah::mlip::Task task("refit", c);
+    CHECK_THROWS_WITH(tadah::hpo::engines::HPORefitEngine().validate(task),
+                      parser_text);
+    const auto [what, logged] = run_compact(c);
+    CHECK(what == parser_text);
+    CHECK_FALSE(fs::exists("refit_opt.log"));
+    CHECK_FALSE(fs::exists("pot.tadah"));
   }
 }
 
