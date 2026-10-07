@@ -711,7 +711,8 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
     }
 
     // ---- INIT chain (printed in the exact order the user wrote it).
-    // Helper used by both OUTER (here) and PRESTAGE (below in run-policy).
+    // Helper used by OUTER (here), PRESTAGE and RESTART (below in
+    // run-policy); the keys print as the user writes them in the block.
     auto write_init_strategy = [&](const InitStrategySpec& isp,
                                    const char* header,
                                    const char* indent) {
@@ -729,9 +730,9 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
                    << pretty_entry(isp.chain[i]) << "\n";
         }
         if (isp.k_total)
-            f_ << indent << "  INIT_K            : " << *isp.k_total << "\n";
+            f_ << indent << "  K_TOTAL           : " << *isp.k_total << "\n";
         if (isp.seed)
-            f_ << indent << "  INIT_SEED         : " << *isp.seed << "\n";
+            f_ << indent << "  SEED              : " << *isp.seed << "\n";
         f_ << indent << "  WARM_ON_MISMATCH  : " << isp.warm_on_mismatch << "\n";
     };
     {
@@ -788,15 +789,11 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         if (rs.active()) {
             f_ << "    RESTART AFTER_STAGNATION: " << rs.after_stagnation
                << "\n    RESTART MAX             : " << rs.max << "\n";
-            if (!rs.init_strategy.chain.empty()) {
-                f_ << "    RESTART init strategy:\n";
-                for (std::size_t i = 0; i < rs.init_strategy.chain.size(); ++i) {
-                    const auto& e = rs.init_strategy.chain[i];
-                    std::string s = e.method;
-                    for (const auto& a : e.args) s += " " + a;
-                    f_ << "      [" << (i+1) << "] " << s << "\n";
-                }
-            }
+            /* The points each restart draws: the block's METHOD chain (the
+             * CONFIG point without one, build_run_policy), K_TOTAL, SEED
+             * (round r draws with SEED + r) and WARM_ON_MISMATCH. */
+            write_init_strategy(rs.init_strategy, "RESTART init strategy:",
+                                "    ");
         }
         if (ns.autodetect) f_ << "    NOISE.AUTO        : true\n";
         if (ns.calibration_n >= 2)
