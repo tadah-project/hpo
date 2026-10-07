@@ -2915,11 +2915,24 @@ TEST_CASE("Termination: SIGINT stops ANNEAL_PA with four threads",
         "    SEED 7\n"), SIGINT, "SIGINT", 130, 4);
 }
 
+/* Pins: ASA's stop line names the signal stop as a shutdown request with
+ * its signal. Before the fix: "ASA stopped: exception raised during
+ * evaluation after N host eval(s)". */
+void check_asa_names_the_signal()
+{
+    CHECK_THAT(read_file("hpo_run.log"),
+               Catch::Contains("ASA stopped: shutdown requested (SIGINT) "
+                               "after "));
+    CHECK_THAT(read_file("hpo_run.log"),
+               !Catch::Contains("exception raised during evaluation"));
+}
+
 TEST_CASE("Termination: SIGINT stops ASA", "[.shutdown_asa]")
 {
     signal_case(plain_block(
         "    TYPE PLAIN\n    LIB ASA\n    ALGO ASA\n"
-        "    MAXEVAL 100000\n    SEED 7\n"), SIGINT, "SIGINT", 130);
+        "    MAXEVAL 100000\n    SEED 7\n"), SIGINT, "SIGINT", 130, 1,
+        check_asa_names_the_signal);
 }
 
 TEST_CASE("Termination: SIGINT stops ASA block-parallel with four threads",
@@ -2929,7 +2942,7 @@ TEST_CASE("Termination: SIGINT stops ASA block-parallel with four threads",
         "    TYPE PLAIN\n    LIB ASA\n    ALGO ASA\n"
         "    MAXEVAL 100000000\n    THREADS 4\n    SEED 7\n"
         "    PARAM Gener_Block 4\n    PARAM Gener_Block_Max 4\n"),
-        SIGINT, "SIGINT", 130, 4);
+        SIGINT, "SIGINT", 130, 4, check_asa_names_the_signal);
 }
 
 TEST_CASE("Termination: SIGTERM stops ASA after the periodic test that "
