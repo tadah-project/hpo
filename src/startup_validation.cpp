@@ -18,6 +18,7 @@
 #include <tadah/hpo/rho_gates.h>
 #include <tadah/mlip/intercepts.h>
 #include <tadah/mlip/trainer.h>
+#include <tadah/mlip/training_datasets.h>
 #include <tadah/mlip/weight_provisioning.h>
 #include <tadah/mlip/memory/mlip_workspace_manager.h>
 #include <tadah/models/dc_selector.h>
@@ -241,6 +242,11 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx) {
 
 void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
                         bool has_train_db, bool has_validation) {
+  /* --- the training datasets, as tadah train reads them ----------------
+   * A DBFILE listing one file twice would have every evaluation fit its
+   * structures twice. */
+  if (has_train_db) tadah::mlip::require_distinct_training_datasets(train_ctx);
+
   /* --- NORM/BIAS rules, as tadah train applies them --------------------
    * NORM true with a linear model needs BIAS true (the NORM weight
    * conversion moves the mean correction into the intercept columns);

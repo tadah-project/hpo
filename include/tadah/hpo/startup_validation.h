@@ -108,6 +108,8 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
  *     (asa_probe_box_error);
  *   - FIXINDEX/FIXWEIGHT pairing: lone key, size mismatch, out-of-bounds
  *     index (via mlip::classify_weight_source);
+ *   - a training DBFILE lists each dataset once
+ *     (mlip::require_distinct_training_datasets);
  *   - no training DBFILE: FIXINDEX must cover every model weight;
  *   - at least one loss source must be declared (validation metrics,
  *     PC_OBSERVABLE, or PC_LAMMPS);
