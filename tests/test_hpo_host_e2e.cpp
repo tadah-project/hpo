@@ -272,20 +272,6 @@ TEST_CASE("HPO_Host::analytical_gradient end-to-end with one PC_OBSERVABLE "
     tadah::core::PeriodicTable::initialize();
     Host::reset_globals_for_test();
 
-    /* Force a clean Trainer rebuild on this test's first operator()
-     * call. The thread-local trainer cache from a prior test in this
-     * binary may have been built with FORCE=false and a different
-     * descriptor stack; reinit() doesn't fully reflow descriptor-side
-     * state for that flag change, and reusing the cached trainer with
-     * stale descriptor state segfaults on the first dc.calc inside
-     * obs_loss. */
-    const bool had_force_rebuild = std::getenv("TADAH_HPO_FORCE_REBUILD") != nullptr;
-    if (!had_force_rebuild) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1);
-    struct ForceRebuildGuard {
-        bool restore;
-        ~ForceRebuildGuard() { if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD"); }
-    } _guard{!had_force_rebuild};
-
     ScratchDir sd;
     const fs::path train_db = sd.dir / "train.db";
     const fs::path val_db   = sd.dir / "val.db";
@@ -476,15 +462,8 @@ TEST_CASE("HPO_Host::analytical_gradient end-to-end with one PC_LAMMPS "
 
 namespace {
 struct DatasetHostGuard {
-    bool restore = std::getenv("TADAH_HPO_FORCE_REBUILD") == nullptr;
-    DatasetHostGuard() {
-        if (restore) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1);
-        Host::reset_best_state_for_fresh_run();
-    }
-    ~DatasetHostGuard() {
-        Host::reset_best_state_for_fresh_run();
-        if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD");
-    }
+    DatasetHostGuard() { Host::reset_best_state_for_fresh_run(); }
+    ~DatasetHostGuard() { Host::reset_best_state_for_fresh_run(); }
 };
 std::string read_dataset_file(const fs::path& path) {
     std::ifstream in(path);

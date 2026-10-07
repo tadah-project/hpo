@@ -282,19 +282,6 @@ struct ScratchDir {
     }
 };
 
-/* A trainer built for this host: the thread-local trainer cache may still
- * hold another host's model. */
-struct ForceRebuildGuard {
-    bool restore;
-    ForceRebuildGuard() {
-        restore = std::getenv("TADAH_HPO_FORCE_REBUILD") == nullptr;
-        if (restore) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1);
-    }
-    ~ForceRebuildGuard() {
-        if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD");
-    }
-};
-
 /* A 2x2x2 conventional bcc Ta cell (16 atoms, edge 2a >= 6.5 A, above the
  * 4.5 A cutoff), rattled deterministically, in the DBFILE text format
  * Structure::read reads: label, weights, energy, cell, stress, atoms, blank
@@ -401,7 +388,6 @@ std::string skip_above_journal(const std::string& metric_line) {
         << "OPTIM FIXWEIGHT (1) -1.0 1.0\n";
 
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     Context ctx = pinned_context(val_cfg, hpo_cfg);
     JournalFile j;
     HPOTargets trg(ctx, hpo_cfg.string());

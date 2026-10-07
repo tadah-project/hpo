@@ -9,6 +9,7 @@
 #include <tadah/hpo/strategy_rules.h>
 
 #include <tadah/core/logger.h>
+#include <tadah/core/number_format.h>
 #include <tadah/core/utils.h>
 #include <tadah/hpo/bump_support_gate.h>
 #include <tadah/hpo/hpo_log.h>
@@ -52,20 +53,33 @@ void validate_ream_density(const core::Context &train_ctx) {
   if (label && *label == "DM_REAM") models::ReamDensity::validate_context(c);
 }
 
+/* What probe_model() learns from building the model of the -c
+ * configuration. */
+struct ModelProbe {
+  std::size_t weights = 0;                  // derive_weight_count
+  std::string function;                     // the basis function or kernel
+  std::vector<models::MParamSlot> mparams;  // the MPARAMS it reads
+};
+
 /* The model of the -c configuration builds, as every evaluation builds
  * it (the Trainer: the descriptors, the basis function or kernel and the
  * model): a construction error here -- a DIMER potential with element-
  * named TYPE2B pairs, a descriptor that refuses its grids -- would fail
  * every evaluation (the run then ends "no evaluation produced a usable
  * loss"). Returns the model's weight count (derive_weight_count; SBASIS for
- * a non-linear M_KRR kernel, which has no basis before training).
+ * a non-linear M_KRR kernel, which has no basis before training), its
+ * function and the MPARAMS the function reads (Function_Base::mparams()).
  * models::DensityFormError keeps its type and message. */
-std::size_t probe_model(const core::Context &train_ctx) {
+ModelProbe probe_model(const core::Context &train_ctx) {
   try {
     core::Context c = train_ctx;
     tadah::mlip::memory::MLIPWorkspaceManager ws;
     tadah::mlip::Trainer probe(c, ws);
-    return tadah::mlip::model_weight_count(*probe.fb, probe.context);
+    ModelProbe out;
+    out.weights = tadah::mlip::model_weight_count(*probe.fb, probe.context);
+    out.function = probe.fb->get_label();
+    out.mparams = probe.fb->mparams();
+    return out;
   } catch (const models::DensityFormError &) {
     throw;
   } catch (const std::exception &e) {
@@ -459,7 +473,51 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
   /* --- the model of the -c configuration -------------------------------
    * It must build (probe_model): a construction error fails every
    * evaluation. Its weight count K serves the FIXINDEX rules below. */
-  const std::size_t K = probe_model(train_ctx);
+  const ModelProbe model = probe_model(train_ctx);
+  const std::size_t K = model.weights;
+
+  /* --- OPTIM MPARAMS: a value the function reads, continuous ----------
+   * The function reads its MPARAMS when it is built (mparams()): an index
+   * past those it reads would change nothing, an integer value (the
+   * Kern_Polynomial degree) is discrete, and a value that must be positive
+   * (the Kern_RBF width) needs a positive box. MPARAMS holds numbers only,
+   * so OPTIM index i is token i-1. */
+  if (const auto it = trg.optimap.find("MPARAMS"); it != trg.optimap.end()) {
+    const auto &o = it->second;
+    const std::size_t n = model.mparams.size();
+    std::string names;
+    for (const auto &slot : model.mparams)
+      names += (names.empty() ? "" : " ") + slot.name;
+    for (std::size_t t = 0; t < o.opt.size(); ++t) {
+      if (!o.opt[t]) continue;
+      const std::string idx = core::to_string(t + 1);
+      const std::string head =
+          "OPTIM MPARAMS (" + idx + ") is not a valid search target: ";
+      if (n == 0)
+        throw std::runtime_error(
+            head + model.function + " reads no MPARAMS, so every "
+            "evaluation would train the same model.");
+      if (t >= n)
+        throw std::runtime_error(
+            head + model.function + " reads " + core::to_string(n) +
+            " MPARAMS value" + (n == 1 ? "" : "s") + " (" + names +
+            "), so MPARAMS (" + idx + ") changes nothing.");
+      const models::MParamSlot &slot = model.mparams[t];
+      if (slot.integer)
+        throw std::runtime_error(
+            head + "MPARAMS (" + idx + ") of " + model.function +
+            " is its " + slot.name + ", an integer, a discrete value rather "
+            "than a continuous parameter; set it in the -c "
+            "potential/configuration.");
+      if (slot.positive && !(o.lowbound[t] > 0.0))
+        throw std::runtime_error(
+            "OPTIM MPARAMS (" + idx + "): the box [" +
+            core::format_roundtrip(o.lowbound[t]) + ", " +
+            core::format_roundtrip(o.highbound[t]) + "] of " +
+            model.function + "'s " + slot.name + " must be positive (" +
+            slot.name + " > 0).");
+    }
+  }
 
   /* --- FIXINDEX/FIXWEIGHT pairing + weight-source classification ------ */
   if (has_fw || has_fi || !has_train_db) {

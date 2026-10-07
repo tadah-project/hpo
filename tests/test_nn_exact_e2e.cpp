@@ -128,19 +128,6 @@ struct ScratchDir {
     }
 };
 
-/* A trainer built for this host: the thread-local trainer cache may still
- * hold another host's model. */
-struct ForceRebuildGuard {
-    bool restore;
-    ForceRebuildGuard() {
-        restore = std::getenv("TADAH_HPO_FORCE_REBUILD") == nullptr;
-        if (restore) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1);
-    }
-    ~ForceRebuildGuard() {
-        if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD");
-    }
-};
-
 /* hpo_run.log in a temporary file, read back after finish(). */
 struct Journal {
     fs::path path;
@@ -500,7 +487,6 @@ double validation_loss(const fs::path& dir, const std::string& tag,
     }
 
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     Context ctx = make_context(pot.rcut2b, pot.cgrid, pot.sgrid, hpo_cfg,
                                val_cfg, pot.rcutmb);
     std::optional<Journal> j;
@@ -644,7 +630,6 @@ std::string with_trained_host(const fs::path& dir, const std::string& tag,
     }
 
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     Context ctx = potential_context(kTrainedPot.rcut2b, kTrainedPot.cgrid,
                                     kTrainedPot.sgrid, kTrainedPot.rcutmb);
     ctx.add("LAMBDA",     1e-3);
@@ -943,7 +928,6 @@ TEST_CASE("nn e2e: a run that reads no dataset counts no neighbour-list "
     }
 
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     Context ctx = potential_context(kTrainedPot.rcut2b, kTrainedPot.cgrid,
                                     kTrainedPot.sgrid, kTrainedPot.rcutmb);
     pin_weights(ctx);

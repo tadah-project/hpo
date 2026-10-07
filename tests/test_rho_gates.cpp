@@ -64,7 +64,6 @@ using tadah::hpo::HPOTargets;
 using tadah::hpo::validate_hpo_setup;
 using ParamVec = dlib::matrix<double, 0, 1>;
 using Host     = tadah::hpo::HPO_Host<ParamVec, ::LammpsRunner>;
-using rhoform_test::ForceRebuildGuard;
 using rhoform_test::Journal;
 using rhoform_test::kOptimizer;
 using rhoform_test::make_ream_ctx;
@@ -1038,7 +1037,6 @@ TEST_CASE("HPO_Host RHOGATE: graded reject before training, silent pass",
   SECTION("reject, tolerance, v and the journal") {
     Journal j;
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     const fs::path cfg = e.target("gate.hpo", rho_optim + "RHOGATE 1e-5\n");
     Context ctx = make_ream_ctx("SIGNED");
     ctx.add("HPOTARGET", cfg.string());
@@ -1075,43 +1073,36 @@ TEST_CASE("HPO_Host RHOGATE: graded reject before training, silent pass",
     Host::reset_globals_for_test();
   }
   SECTION("a pass is bitwise the run without the gate; ctx and pot unchanged") {
-    for (bool rebuild : {false, true}) {
-      CAPTURE(rebuild);
-      std::unique_ptr<ForceRebuildGuard> guard;
-      if (rebuild) guard = std::make_unique<ForceRebuildGuard>();
-      double loss[2];
-      std::string pot[2];
-      for (int gated = 0; gated < 2; ++gated) {
-        /* the first host builds its trainer; without rebuild the second
-         * trains on the cached one */
-        std::optional<ForceRebuildGuard> first;
-        if (gated == 0) first.emplace();
-        Journal j;
-        Host::reset_globals_for_test();
-        /* one file name: HPOTARGET is part of the potential */
-        const fs::path cfg = e.target("pass.hpo",
-                                      rho_optim + (gated ? "RHOGATE 1e-5\n" : ""));
-        Context ctx = make_ream_ctx("SIGNED");
-        ctx.add("HPOTARGET", cfg.string());
-        HPOTargets trg(ctx, cfg.string());
-        Host host(ctx, trg, e.val_cfg.string());
-        ParamVec p(1);
-        p(0) = 0.1;
-        loss[gated] = host(p);
-        pot[gated] = trainer_pot();
-        host.flush_remaining();
-        if (gated) CHECK(HPOLog::instance().gate_rejects(GateKind::RhoSign) == 0);
-        Host::reset_globals_for_test();
-      }
-      CHECK(tadah::hpo::loss_is_feasible(loss[0], 1e9));
-      CHECK(bits(loss[0]) == bits(loss[1]));
-      CHECK(pot_keys(pot[0]) == pot_keys(pot[1]));
-      CHECK(pot[0] == pot[1]);
+    /* Two hosts on one thread, without and with the gate: each evaluation
+     * builds its own trainer (the second used to train on the first's
+     * reused trainer unless a rebuild was forced; both orders were run). */
+    double loss[2];
+    std::string pot[2];
+    for (int gated = 0; gated < 2; ++gated) {
+      Journal j;
+      Host::reset_globals_for_test();
+      /* one file name: HPOTARGET is part of the potential */
+      const fs::path cfg = e.target("pass.hpo",
+                                    rho_optim + (gated ? "RHOGATE 1e-5\n" : ""));
+      Context ctx = make_ream_ctx("SIGNED");
+      ctx.add("HPOTARGET", cfg.string());
+      HPOTargets trg(ctx, cfg.string());
+      Host host(ctx, trg, e.val_cfg.string());
+      ParamVec p(1);
+      p(0) = 0.1;
+      loss[gated] = host(p);
+      pot[gated] = trainer_pot();
+      host.flush_remaining();
+      if (gated) CHECK(HPOLog::instance().gate_rejects(GateKind::RhoSign) == 0);
+      Host::reset_globals_for_test();
     }
+    CHECK(tadah::hpo::loss_is_feasible(loss[0], 1e9));
+    CHECK(bits(loss[0]) == bits(loss[1]));
+    CHECK(pot_keys(pot[0]) == pot_keys(pot[1]));
+    CHECK(pot[0] == pot[1]);
   }
   SECTION("FAILSCORE_GRADING OFF: the flat FAILSCORE") {
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     const fs::path cfg = e.target("off.hpo", "OPTIM AMPGRIDMB (3) -0.5 0.5\nRHOGATE 1e-5\n");
     Context ctx = make_ream_ctx("SIGNED");
     ctx.add("HPOTARGET", cfg.string());
@@ -1139,7 +1130,6 @@ TEST_CASE("HPO_Host RHOGATE: graded reject before training, silent pass",
       CAPTURE(gated);
       Journal j;
       Host::reset_globals_for_test();
-      ForceRebuildGuard rebuild;
       const fs::path cfg = e.target("both.hpo", boxes + (gated ? "RHOGATE 1e-5\n" : ""));
       Context ctx = make_ream_ctx("SIGNED");
       ctx.add("HPOTARGET", cfg.string());
@@ -1185,7 +1175,6 @@ TEST_CASE("HPO_Host RHOGATE: graded reject before training, silent pass",
   SECTION("the RESULT density line of the best") {
     Journal j;
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     const fs::path cfg = e.target("result.hpo", rho_optim + "RHOGATE 1e-5\n");
     Context ctx = make_ream_ctx("SIGNED");
     ctx.add("HPOTARGET", cfg.string());
@@ -1217,7 +1206,6 @@ TEST_CASE("HPO_Host RHOBARGATE: graded reject before training",
     for (int gated = 1; gated >= 0; --gated) {
       Journal j;
       Host::reset_globals_for_test();
-      ForceRebuildGuard rebuild;
       const fs::path cfg = e.target("rb.hpo", optim + (gated ? "RHOBARGATE bcc 3.304 "
                                                                "0.98 1.10\n" : ""));
       Context ctx = make_ream_ctx("SIGNED");
@@ -1263,7 +1251,6 @@ TEST_CASE("HPO_Host RHOBARGATE: graded reject before training",
     for (const char* form : {"NONNEG", "MONOTONE"}) {
       CAPTURE(form);
       Host::reset_globals_for_test();
-      ForceRebuildGuard rebuild;
       const fs::path cfg = e.target("form.hpo", optim + "RHOBARGATE bcc 3.304 0.98 1.10\n");
       Context ctx = make_ream_ctx(form);
       ctx.add("HPOTARGET", cfg.string());
@@ -1281,7 +1268,6 @@ TEST_CASE("HPO_Host RHOBARGATE: graded reject before training",
   SECTION("both density gates fail: counted under rhogate only") {
     Journal j;
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     const fs::path cfg = e.target("both.hpo", "FAILSCORE_GRADING ON\n"
                                               "OPTIM AMPGRIDMB (2,3) -2 2\n"
                                               "RHOGATE 1e-5\n"

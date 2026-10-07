@@ -2368,7 +2368,9 @@ void HPO_Host<P,R>::obs_loss(Result& r) const
 
   auto& cache = tls_trainer_cache_;
 
-  const bool have_trainer = cache.trainer && cache.trainer->model;
+  /* The slot holds this evaluation's trainer (operator() trains it before
+   * calling here); a slot of another host is never evaluated. */
+  const bool have_trainer = slot_is_mine() && cache.trainer->model;
 
   /* Flip FORCE=true for the duration of all observable evaluations.
    * dc.calc reads FORCE from the trainer's context (which dc holds
@@ -2681,7 +2683,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
                 "eval " + std::to_string(r.iter) + ": " + what +
                 "; total rejects=" + std::to_string(k));
         }
-        /* The trainer cache still holds the previous feasible theta; the
+        /* The trainer slot still holds the previous feasible theta; the
          * next analytical_gradient() must not read it as "current x". */
         tls_trainer_theta_stale_ = true;
         /* Stagnation check (parity with post_lammps_finalize): an
@@ -2755,37 +2757,28 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     t_train_start = std::chrono::high_resolution_clock::now();
     /* train ------------------------------------------------------------ */
     stage_watchdog::enter(r.iter, "train");
-    /* From here until training succeeds the trainer cache and this thread's
-     * rebuilt lists do not describe a trained theta = p: reinit writes p
-     * into the cached trainer before its lists are known to be buildable.
-     * If anything below throws, the next analytical_gradient() must fall
-     * back to finite differences instead of differentiating that state
-     * (on lists that may not cover p's cutoff). */
+    /* From here until training succeeds the trainer slot and this thread's
+     * rebuilt lists do not describe a trained theta = p. If anything below
+     * throws, the next analytical_gradient() must fall back to finite
+     * differences instead of differentiating that state (on lists that may
+     * not cover p's cutoff). */
     tls_trainer_theta_stale_ = true;
     tls_rebuilt_lists_.reset();
     {
+        /* Every evaluation trains a Trainer built from its own candidate
+         * context ctx (master_ctx_ plus p): whatever the descriptors, the
+         * basis function or kernel, the model and its design matrix read
+         * when they are built (EWEIGHT/FWEIGHT/SWEIGHT, MPARAMS, ...) is
+         * this candidate's, and nothing an earlier fit wrote into a context
+         * (SIGMA, ALPHA/BETA) or an earlier host configured is carried
+         * over. Building one costs far less than the fit (a few
+         * hundredths of a millisecond for analytic descriptors; a setfl
+         * file is parsed once per contents, models::shared_setfl). */
         auto& cache = tls_trainer_cache_;
-        const bool force_rebuild = std::getenv("TADAH_HPO_FORCE_REBUILD") != nullptr;
-        if (!cache.trainer || force_rebuild) {
-            if (cache.trainer) cache.trainer.reset();
-            cache.trainer.reset(new (cache.buf) mlip::Trainer(ctx, tls_ws_));
-        } else {
-            bool needs_rebuild = false;
-            try {
-                update_context(cache.trainer->context, p);
-                needs_rebuild = cache.trainer->reinit();
-            } catch (const std::exception& e) {
-                // reinit threw -- log and fall back to a clean rebuild
-                HPOLog::instance().warning(
-                    std::string("reinit() threw (eval ") + std::to_string(r.iter)
-                    + "): " + e.what() + " -- rebuilding Trainer");
-                needs_rebuild = true;
-            }
-            if (needs_rebuild) {
-                cache.trainer.reset();
-                cache.trainer.reset(new (cache.buf) mlip::Trainer(ctx, tls_ws_));
-            }
-        }
+        cache.trainer.reset();
+        cache.host = 0;
+        cache.trainer.reset(new (cache.buf) mlip::Trainer(ctx, tls_ws_));
+        cache.host = generation_;
         /* Neighbour lists: the one-time lists hold every pair up to
          * nn_list_cutoff_ (the OPTIM box tops). A candidate whose model
          * reads pairs further out -- a point outside the box -- is
@@ -2801,14 +2794,13 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         } else {
             /* No training DBFILE, or FIXINDEX pins every weight: the LS
              * solve is absent/vacuous, so scatter the FIXWEIGHT values
-             * directly (update_context above already wrote the
-             * optimiser's live values into the trainer context) and
-             * skip the design-matrix build. */
+             * directly (the trainer context ctx holds the optimiser's
+             * live values) and skip the design-matrix build. */
             cache.trainer->provision_fixed_weights();
         }
     }
     mlip::Trainer& host = *tls_trainer_cache_.trainer;
-    /* Training succeeded: the trainer cache reflects theta = p again. */
+    /* Training succeeded: the trainer slot reflects theta = p again. */
     tls_trainer_theta_stale_ = false;
     t_train_end = std::chrono::high_resolution_clock::now();
     stage_watchdog::leave(r.iter, "train", _stage_log);
@@ -3740,10 +3732,11 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
 
 /* ---------- analytical gradient callback (Phase 2A.4) ---------------- *
  *
- * Wires the IFT chain rule end-to-end against the live trainer cache.
+ * Wires the IFT chain rule end-to-end against the live trainer slot.
  * The optimizer's cost-then-gradient call sequence guarantees that
  * operator()(x) ran immediately before us at the same x, leaving:
- *   - tls_trainer_cache_.trainer with `dm.getPhi()`/`dm.getT()` reflecting
+ *   - tls_trainer_cache_.trainer (this host's: slot_is_mine()) with
+ *     `dm.getPhi()`/`dm.getT()` reflecting
  *     the augmented training matrix at theta = x (data rows scaled by
  *     sqrt(eweight*eweightglob); augmentation block zero -- train works
  *     on a copy and writes sqrt(lambda)*I_no_bias into that copy).
@@ -3807,12 +3800,14 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
     }
 
     auto& cache = tls_trainer_cache_;
-    /* tls_trainer_theta_stale_: the bump-gate reject path returned before
-     * training, so the cache holds the PREVIOUS feasible theta, not x --
+    /* A slot of another host (slot_is_mine(): an earlier run on this
+     * thread) is not this host's evaluation at x: finite differences.
+     * tls_trainer_theta_stale_: the bump-gate reject path returned before
+     * training, so the slot holds the PREVIOUS feasible theta, not x --
      * fall back to FD, which re-evaluates operator() and passes through
      * the gate (non-smooth across the constraint boundary, same class as
      * the existing skip caps). */
-    if (!cache.trainer || tls_trainer_theta_stale_) {
+    if (!slot_is_mine() || tls_trainer_theta_stale_) {
         fall_back_all_fd();
         emit_grad_diagnostic(prefs, needs_fd, /*cache_miss=*/true);
         return true;
@@ -3850,7 +3845,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
      * to SimsGradProvider but much simpler: the observable's
      * evaluate() is pure Tadah (no LAMMPS instance, no adjoint
      * snapshot for `needs_adjoint=false` observables like
-     * cohesive_energy). Captures the thread-local trainer cache to
+     * cohesive_energy). Captures the thread-local trainer slot to
      * route model + dc + context references through.
      *
      * Hot-var warmstart: lives inside Observable state (a0_current_
@@ -3864,7 +3859,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
             (std::vector<ObservableGradInput>& inputs) -> bool {
                 inputs.clear();
                 inputs.resize(trg_.observables.size());
-                if (!cache.trainer || !cache.trainer->model)
+                if (!slot_is_mine() || !cache.trainer->model)
                     return false;
                 /* FORCE=true required by NativeRelaxer's atom-force
                  * path inside each observable's evaluate. See
@@ -3923,6 +3918,10 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                 inputs.resize(trg_.LS.size());
                 lmp_holders.clear();
                 lmp_holders.reserve(trg_.LS.size());
+                /* This host's trainer of x (checked above, before the
+                 * provider was built; kept here for any later caller). */
+                if (!slot_is_mine() || !cache.trainer->model)
+                    return false;
 
                 /* Build a name-keyed snapshot of hot-var seeds from
                  * the warmstart cache. Mirrors operator()'s phase A
@@ -4039,7 +4038,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
     }
 
     try {
-        /* The lists of the evaluation the trainer cache holds: rebuilt
+        /* The lists of the evaluation the trainer slot holds: rebuilt
          * ones when its cutoff exceeded the one-time lists. */
         const auto& lists = tls_rebuilt_lists_;
         helper_ok = compute_analytical_gradient_from_trainer(
@@ -4108,9 +4107,10 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
  * needs_fd), surface that as a separate line so the user can find the
  * specific restriction (FORCE/STRESS/NORM/OALGO/LAMBDA/MODEL[1]/
  * use_srmse/LAMMPS -- see compute_analytical_gradient_from_trainer's
- * gate stack). When the trainer cache is empty (first eval of the
- * BLR-warmup window), log that explicitly so a transient all-FD line
- * isn't mistaken for a gate failure. */
+ * gate stack). When the thread's trainer slot holds no trainer of this
+ * host's evaluation at x (before its first evaluation, after a rejected
+ * candidate), log that explicitly so a transient all-FD line isn't
+ * mistaken for a gate failure. */
 template<class P, class R>
 void HPO_Host<P,R>::emit_grad_diagnostic(
     const std::vector<ParamRef>& prefs,
@@ -4136,8 +4136,9 @@ void HPO_Host<P,R>::emit_grad_diagnostic(
         << " | analytical="  << n_anal
         << " | FD-fallback=" << n_fd;
     if (cache_miss) {
-        oss << "  [trainer cache empty on first call -- usually the BLR-"
-               "warmup eval; subsequent calls populate the cache and "
+        oss << "  [no trained model of this run's evaluation at this point "
+               "on this thread yet (before its first evaluation, or after "
+               "a rejected candidate); calls that follow an evaluation "
                "engage the analytical path]";
     } else if (ift_failed) {
         oss << "  [IFT-side Cholesky non-PD even though the trainer "
