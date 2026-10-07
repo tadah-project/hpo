@@ -263,10 +263,9 @@ void parse_explore(const std::vector<std::string> &tok, RefitConfig &cfg,
 
 // REFINE/FUSE OPTIMIZER blocks accept the Ceres-flavoured command-specific keys
 // GTOL (-> param["GTOL"], Ceres gradient_tolerance) and MAXITER (alias of
-// MAXEVAL -> Ceres max_num_iterations). The
-// function tolerance key is FTOL_REL (-> Ceres function_tolerance). GTOL,
-// FTOL_REL and FTOL_ABS (dlib's LBFGS in REFINE) are tolerances, read by
-// tolerance_attr. Ceres' function_tolerance is RELATIVE — it stops when
+// MAXEVAL -> Ceres max_num_iterations). The function tolerance key is
+// FTOL_REL (-> Ceres function_tolerance). GTOL, FTOL_REL and FTOL_ABS (dlib's
+// LBFGS in REFINE) are tolerances, read by tolerance_attr. Ceres' function_tolerance is RELATIVE — it stops when
 // (new_cost - old_cost) < ftol * old_cost. Ceres has NO absolute function
 // tolerance, so FTOL_ABS with a Ceres ALGO is rejected with a pointer to
 // FTOL_REL (in FUSE by the stage's key check, stage_key_check, before it is
