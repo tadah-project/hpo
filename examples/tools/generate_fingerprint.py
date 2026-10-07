@@ -10,6 +10,10 @@ The optional "journal" checks (lines hpo_run.log must contain; see
 compare_fingerprint.py) come from the example's entry in
 tolerance_overrides.json, so a regeneration keeps them.
 
+The most NaN/Inf clampings and evaluations that threw the comparator
+accepts (nan_clampings_max, threw_max) come from the entry too, 0 by
+default.
+
 Tolerance policy (overridable per example via tolerance_overrides.json):
   best_loss:    abs 1e-6,  rel 1e-3
   components:   abs 1e-6,  rel 5e-3
@@ -188,6 +192,7 @@ def build_fingerprint(example_dir: Path, overrides: dict) -> dict:
         "status_accepted": (overrides.get("status_accepted")
                             or [log["optimiser_status"]]),
         "nan_clampings_max": overrides.get("nan_clampings_max", 0),
+        "threw_max": overrides.get("threw_max", 0),
         "walltime_hint": log.get("total_walltime_str"),
         "fast": overrides.get("fast", True),
         "tolerance_rationale": overrides.get(
@@ -260,6 +265,7 @@ def override_mismatches(fp: dict, overrides: dict) -> list:
         out.append(f"journal: fingerprint {fp['journal']!r}, overrides none")
     cmp("nan_clampings_max", fp.get("nan_clampings_max"),
         overrides.get("nan_clampings_max", 0))
+    cmp("threw_max", fp.get("threw_max"), overrides.get("threw_max", 0))
     cmp("fast", fp.get("fast"), overrides.get("fast", True))
     cmp("tolerance_rationale", fp.get("tolerance_rationale"),
         overrides.get("tolerance_rationale", DEFAULT_RATIONALE))

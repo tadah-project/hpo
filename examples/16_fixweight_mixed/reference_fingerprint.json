@@ -40,6 +40,7 @@
     "MAXEVAL_REACHED -- maximum evaluations exhausted"
   ],
   "nan_clampings_max": 0,
+  "threw_max": 0,
   "walltime_hint": "0.6s",
   "fast": true,
   "tolerance_rationale": "Weight 14 multiplies a descriptor that is zero on this dataset, so the loss does not depend on it: every evaluation ties up to ~2e-13 relative, the rounding-level noise of the warm-started lattice relaxation (exact Ecoh.in read-back), and that noise decides which evaluation is the best (any weight LN_BOBYQA probes: -22.99, eval 6, on the reference machine with the free energy and the Cauchy stress in the HPO data, 2026-10-01; +25 before) and when LN_BOBYQA stops: runs to MAXEVAL = 30 on the reference machine with exact neighbour lists (2026-09-30; 3 repeated runs identical; roundoff-limited after 15 evaluations after the sheared cells of common/data/elastic.tadahdb were corrected, 30 before that). That count and status are pinned; another machine's rounding can move them, and the fingerprint must then be regenerated there with that reason. The loss and components are pinned at the default tolerances; FIXWEIGHT[14] is checked only for presence: abs_tol 100 (the box width) accepts any value in its box [-50, 50]."

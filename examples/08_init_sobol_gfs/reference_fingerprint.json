@@ -45,6 +45,7 @@
     "DLIB:GFS: MAXEVAL reached"
   ],
   "nan_clampings_max": 0,
+  "threw_max": 0,
   "walltime_hint": "1.4s",
   "fast": true,
   "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."

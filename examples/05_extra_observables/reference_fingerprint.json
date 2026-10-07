@@ -42,6 +42,7 @@
     "DLIB:BFGS: FTOL_ABS reached"
   ],
   "nan_clampings_max": 0,
+  "threw_max": 0,
   "walltime_hint": "0.6s",
   "fast": true,
   "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances. The evaluation count is not deterministic across machines: the optimum is on the clamped bound RCUT2B = 6.0 (eval 7), and whether DLIB:BFGS's line search accepts a re-evaluation there depends on the sign of a ~1e-13 relative, rounding-level drift of the warm-started lattice relaxation. The run goes on to MAXEVAL = 30 on the reference machine (2026-10-07, 3 repeated runs identical) or stops after 12 (as example 01 does with the same search; 16 before each finite-difference gradient took the loss at its point as its centre instead of evaluating the point again), and a 1-ulp change of the hot_a0 start or of one training energy flips it. evals_tol 18 accepts 12..30 (MAXEVAL is 30): it was 14 (16..30) and was raised only to keep the shorter path, now 12 evaluations, accepted. Both endings are accepted: MAXEVAL, \"DLIB:BFGS: MAXEVAL reached\", and the shorter path's objective-delta test, \"DLIB:BFGS: FTOL_ABS reached\" (FTOL_ABS is 1e-7 by default; both ended COMPLETED until every HPO driver recorded why it ended, 2026-10-07)."
