@@ -4542,8 +4542,9 @@ struct AgreementProbeHost {
  * error and is rethrown, also when its final flush fails.
  * Before the fix: the endings with a status, the stops and the errors pass
  * as well (a pin; the normal ends' bodies then recorded none, which
- * drive_run accepted); a normal end without a status ended normally, not
- * rethrown (fails). */
+ * drive_run accepted), and so does the end without a status whose flush
+ * fails (rethrown for the flush's error); a normal end without a status
+ * ended normally, not rethrown (fails). */
 TEST_CASE("No usable loss: every ending of drive_run reaches the cross-rank "
           "agreement once and before the final flush",
           "[HPO][termination][no_usable_loss][run_driver]")
