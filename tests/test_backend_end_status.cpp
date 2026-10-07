@@ -42,6 +42,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iostream>
 #include <limits>
 #include <mutex>
 #include <sstream>
@@ -552,3 +553,29 @@ TEST_CASE("End status: CERES records a line-search failure as STOPPED with "
                        "failure in line search") != std::string::npos);
 }
 #endif  // TADAH_USE_CERES
+
+/* ======================================================================
+ * The ALGO help of DLIB:BFGS
+ * ==================================================================== */
+
+/* Pins: the ALGO help says what each DLIB:BFGS stop tests: FTOL_ABS the
+ * change of the loss from one iteration to the next, PARAM tol_gradinf the
+ * L2 norm of the gradient (dlib's gradient_norm_stop_strategy tests
+ * length(g)).
+ * Before the fix: "gradient-inf-norm stop", which is not what dlib tests. */
+TEST_CASE("End status: the DLIB:BFGS help says what its stops test",
+          "[HPO][stop_status][caps]")
+{
+    std::ostringstream captured;
+    auto* old = std::cout.rdbuf(captured.rdbuf());
+    OptimizerSpec::print_caps("DLIB", "BFGS");
+    std::cout.rdbuf(old);
+    const std::string s = captured.str();
+    CHECK(s.find("   * FTOL_ABS     (objective-delta stop, default 1e-7: the "
+                 "loss\n                   changed by less from one iteration "
+                 "to the next)\n") != std::string::npos);
+    CHECK(s.find("   * PARAM tol_gradinf <double>  (stop once the L2 norm of "
+                 "the gradient\n                   falls below it; alternative "
+                 "to FTOL_ABS)\n") != std::string::npos);
+    CHECK(s.find("inf-norm") == std::string::npos);
+}
