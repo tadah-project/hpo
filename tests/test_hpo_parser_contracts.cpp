@@ -2520,17 +2520,16 @@ TEST_CASE("tadah refit: a stage block that runs an optimiser names the "
     using tadah::hpo::refit::refit_refine_algo;
 
     /* Every ALGO spelling of a stage, the library it belongs to and the
-     * optimiser it selects. */
+     * optimiser it selects. (GN_MLSL, GN_DIRECT and GN_CRS2, which ran
+     * GN_MLSL_LDS, GN_DIRECT_L and GN_CRS2_LM, are refused: see "ALGO
+     * GN_MLSL, GN_DIRECT and GN_CRS2 are refused".) */
     struct Algo { std::string stage, algo, lib, canonical; };
     const std::vector<Algo> algos = {
         {"EXPLORE", "GN_MLSL_LDS", "NLOPT", "MLSL"},
-        {"EXPLORE", "GN_MLSL", "NLOPT", "MLSL"},
         {"EXPLORE", "MLSL", "NLOPT", "MLSL"},
         {"EXPLORE", "GN_DIRECT_L", "NLOPT", "DIRECT"},
-        {"EXPLORE", "GN_DIRECT", "NLOPT", "DIRECT"},
         {"EXPLORE", "DIRECT", "NLOPT", "DIRECT"},
         {"EXPLORE", "GN_CRS2_LM", "NLOPT", "CRS2"},
-        {"EXPLORE", "GN_CRS2", "NLOPT", "CRS2"},
         {"EXPLORE", "CRS2", "NLOPT", "CRS2"},
         {"EXPLORE", "GLOBAL", "DLIB", "DLIB_GLOBAL"},
         {"EXPLORE", "DLIB_GLOBAL", "DLIB", "DLIB_GLOBAL"},
@@ -2714,6 +2713,57 @@ TEST_CASE("tadah refit: a stage block that runs an optimiser names the "
                                       "ENDOPTIMIZER"),
                Catch::StartsWith("EXPLORE outer: unsupported optimiser LIB "
                                  "'NLOPT' ALGO 'LN_SBPLX'"));
+}
+
+TEST_CASE("tadah refit: ALGO GN_MLSL, GN_DIRECT and GN_CRS2 are refused, "
+          "naming the algorithm the refit runs", "[HPO][refit]")
+{
+    /* Pins: an EXPLORE OPTIMIZER block with ALGO GN_MLSL, GN_DIRECT or
+     * GN_CRS2 is an error that says the refit does not run it, what it is,
+     * and the algorithm the refit runs for it, whatever the LIB (NLOPT,
+     * another, none) and the case of the ALGO (named as written). The
+     * refit's MLSL, DIRECT and CRS2 are GN_MLSL_LDS, GN_DIRECT_L and
+     * GN_CRS2_LM, still accepted with their short names; GN_MLSL (pseudo-
+     * random starts) and GN_DIRECT (no local bias) are other NLopt
+     * algorithms, which tadah hpo runs as named, and GN_CRS2 is no NLopt
+     * algorithm at all.
+     * Before the fix: each spelling was an alias of the refit's algorithm
+     * (refit_error returns "" with LIB NLOPT, and the LIB message without
+     * or with another LIB), so GN_MLSL ran GN_MLSL_LDS, GN_DIRECT
+     * GN_DIRECT_L and GN_CRS2 GN_CRS2_LM. */
+    struct Spelling { std::string algo, what, runs, short_name; };
+    const std::vector<Spelling> refused = {
+        {"GN_MLSL", "NLopt's MLSL with pseudo-random starts", "GN_MLSL_LDS",
+         "MLSL"},
+        {"GN_DIRECT", "NLopt's DIRECT without the local bias of DIRECT_L",
+         "GN_DIRECT_L", "DIRECT"},
+        {"GN_CRS2", "not an NLopt algorithm", "GN_CRS2_LM", "CRS2"}};
+    for (const auto& r : refused) {
+        std::string lower = r.algo;
+        for (char& ch : lower) ch = static_cast<char>(std::tolower(ch));
+        for (const std::string& algo : {r.algo, lower}) {
+            for (const std::string lib : {"LIB NLOPT ", "", "LIB DLIB "}) {
+                INFO(lib << "ALGO " << algo);
+                CHECK(refit_error("EXPLORE", "OPTIMIZER " + lib + "ALGO " +
+                                                 algo +
+                                                 " MAXEVAL 100 ENDOPTIMIZER") ==
+                      "EXPLORE: ALGO " + algo + " is not run by tadah refit (" +
+                          r.what + "); its " + r.short_name + " is " + r.runs +
+                          ": set ALGO " + r.runs);
+            }
+        }
+        /* The algorithm the refit runs, and its short name, stay. */
+        for (const std::string& ok : {r.runs, r.short_name}) {
+            INFO("ALGO " << ok);
+            CHECK(tadah::hpo::refit::refit_explore_outer_algo(
+                      tadah::hpo::refit::RefitParser::parse(
+                          refit_context("EXPLORE", "OPTIMIZER LIB NLOPT ALGO " +
+                                                       ok +
+                                                       " MAXEVAL 100 "
+                                                       "ENDOPTIMIZER"))
+                          .explore.opt) == r.short_name);
+        }
+    }
 }
 
 TEST_CASE("Strict numbers: the PARAM INIT_MODE JITTER numbers are checked at "
