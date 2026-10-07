@@ -251,6 +251,38 @@ TEST_CASE("startup validation: FIXINDEX is read strictly, separate values as "
   }
 }
 
+/* Pins: validate_hpo_setup refuses FIXINDEX/FIXWEIGHT with M_KRR
+ * implementation 2 (MODEL M_KRR Kern_Linear 2 on the D2_BP model, a
+ * training DBFILE, FIXINDEX 1 / FIXWEIGHT 0.5), whose solve cannot pin
+ * weights: "MODEL M_KRR Kern_Linear 2 cannot pin weights", at startup;
+ * the same configuration with implementation 1 passes.
+ * Before the fix: the setup passed (classify_weight_source took it for
+ * implementation 1), and every evaluation trained with the pin ignored. */
+TEST_CASE("startup validation: M_KRR implementation 2 with FIXINDEX is "
+          "refused",
+          "[startup_validation][fixindex][krr]") {
+  PeriodicTable::initialize();
+  ScopedTempFile tf(target_with("PC_ERMSE 0 1\n"));
+  for (const char* impl : {"1", "2"}) DYNAMIC_SECTION("implementation " << impl) {
+    Context ctx = make_model_ctx();
+    ctx.remove("MODEL");
+    ctx.add("MODEL", "M_KRR");
+    ctx.add("MODEL", "Kern_Linear");
+    ctx.add("MODEL", impl);
+    ctx.add("SBASIS", 2);
+    ctx.add("DBFILE", "dummy.db");
+    ctx.add("FIXINDEX", "1");
+    ctx.add("FIXWEIGHT", 0.5);
+    HPOTargets trg(ctx, tf.path.string());
+    if (std::string(impl) == "1")
+      CHECK_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
+    else
+      CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                        Catch::StartsWith("MODEL M_KRR Kern_Linear 2 cannot "
+                                          "pin weights"));
+  }
+}
+
 /* Pins: a -c configuration whose model has no weights (INIT2B true with a
  * D2_Dummy two-body descriptor, BIAS false: descriptor size 0) is refused
  * at startup as a model that does not build ("The descriptor size is 0"),
