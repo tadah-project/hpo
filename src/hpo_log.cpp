@@ -2111,7 +2111,7 @@ void HPOLog::finish(const std::string& status_str)
         f_ << "\n";
         if (ft > 0) {
             f_ << "    A=" << fa << " (hot-var out of range)"
-               << "  B=" << fb << " (script failed)"
+               << "  B=" << fb << " (script or observable failed)"
                << "  C=" << fc << " (did not complete)"
                << "  D=" << fd << " (pot build / gated)\n";
             static const char* const gate_line[kGateKinds] = {

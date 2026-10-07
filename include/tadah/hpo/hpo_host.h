@@ -116,6 +116,16 @@ struct EvalResult
      * mean of its terms. */
     bool sims_failed = false;
 
+    /* A loss term of this eval could not be computed: a PC_OBSERVABLE
+     * term (obs_loss: no trained model, an observable that threw, a value
+     * or a loss that is not finite) or a --varloss term without a value
+     * (sims_loss). Its term is FAIL_SCORE in v_obs_loss / v_loss, and the
+     * eval scores FAIL_SCORE (under FAILSCORE_GRADING, which classifies
+     * it, the graded loss) whatever the mean of its terms, as for
+     * sims_failed: that mean, one FAIL_SCORE term among usable ones, was a
+     * usable-looking loss below 0.999 * FAIL_SCORE. */
+    bool terms_failed = false;
+
     /* PC_OBSERVABLE (Tier 1/2) results, one entry per
      * trg_.observables[k]. v_obs_value[k] is the computed observable
      * (e.g. cohesive energy in eV/atom); v_obs_loss[k] is the loss
@@ -427,6 +437,16 @@ private:
     std::string bound_hints(const ParamVec& p) const;
     void fit_loss(Result&) const;
     void sims_loss(Result&) const;
+    /* The eval's loss from its terms so far; fit_loss, obs_loss and
+     * sims_loss each end with it, so one that averages again after
+     * another cannot turn the other's failure into a usable loss: the mean
+     * of r.loss_sum over r.loss_count, a non-finite mean (a NaN clamp,
+     * r.was_nan_clamped) or one above FAIL_SCORE clipped to FAIL_SCORE; an
+     * eval with a failed simulation (r.sims_failed) or a failed term
+     * (r.terms_failed) scores FAIL_SCORE whatever that mean; under
+     * FAILSCORE_GRADING a classified failure (r.fail.band != 0) scores
+     * the graded loss. */
+    void assemble_loss(Result&) const;
     /** Render and synchronously publish this completed candidate to the
      * canonical cross-rank best file and this rank's local best file. On
      * failure it trips durable_latch_, records the candidate as unsaved,
@@ -453,10 +473,12 @@ private:
     /* PC_OBSERVABLE (D4c) loss aggregation: evaluates every entry of
      * trg_.observables at the current trained model, populates
      * r.v_obs_value / r.v_obs_loss, and folds the per-observable loss
-     * into r.loss_sum / r.loss_count. Recomputes r.loss = mean.
-     * Mirrors sims_loss's FAIL_SCORE / NaN clamp behaviour so a
-     * diverging relax doesn't crash the eval. No-op when
-     * trg_.observables is empty. */
+     * into r.loss_sum / r.loss_count. A term that cannot be computed (a
+     * diverging relax, a value or loss that is not finite) is FAIL_SCORE
+     * and fails the eval (r.terms_failed; under FAILSCORE_GRADING band B,
+     * measured by the failed fraction of the observables), so it does not
+     * crash the eval nor average into a usable loss. Ends with
+     * assemble_loss. No-op when trg_.observables is empty. */
     void obs_loss(Result&) const;
 
     /* ---------- global mutable state ----------------------------------- */

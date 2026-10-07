@@ -2349,7 +2349,11 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
    * eval_aborted, so a merge only at the normal exit would drop every
    * graded band. band stays 0 on feasible evals and always when
    * FAILSCORE_GRADING is OFF. r.sims_failed is set in both modes: under
-   * OFF it is what makes the eval a failure (sims_loss). */
+   * OFF it is what makes the eval a failure (sims_loss). r.fail holds no
+   * band when run_lammps starts -- the feasibility gates and the skip caps
+   * that record one skip the simulations, and PC_OBSERVABLE, which records
+   * band B for a failed term, is refused with PC_LAMMPS (HPOTargets) -- so
+   * the snapshot taking r.fail's place drops nothing. */
   auto persist_fail_info = [&]() {
     r.sims_failed = eval_aborted.load(std::memory_order_relaxed) ||
                     create_failed.load(std::memory_order_relaxed);
@@ -2477,10 +2481,42 @@ void HPO_Host<P,R>::fit_loss(Result& r) const
   if (trg_.use_srmse)  add_global(r.srmseLoss,  r.srmse,  trg_.srmse,  trg_.w_srmse,  r.v_srmseLoss,  r.v_srmse,
                                   val_measured_srmse_);
 
+  /* No validation term is a failure substitute: a metric that is not
+   * finite makes the mean non-finite, a NaN clamp of the whole eval. */
+  assemble_loss(r);
+}
+
+template<class P, class R>
+void HPO_Host<P,R>::assemble_loss(Result& r) const
+{
   r.loss = r.loss_count ? r.loss_sum / static_cast<double>(r.loss_count) : 0.0;
   if (!std::isfinite(r.loss) || r.loss > trg_.FAIL_SCORE) {
     if (!std::isfinite(r.loss)) r.was_nan_clamped = true;
     r.loss = trg_.FAIL_SCORE;
+  }
+
+  /* A failed simulation or a failed term fails its eval, whatever the mean
+   * above: FAIL_SCORE (under FAILSCORE_GRADING the graded loss below, as
+   * every such failure records a band). A failed term is FAIL_SCORE, and a
+   * failed PC_LAMMPS line's terms are its loss of its --failscore value --
+   * they stay in v_loss / v_obs_loss, for loss.tadah -- and the mean with
+   * the eval's other terms fell below 0.999 * FAIL_SCORE, a feasible loss
+   * that could become the best: with one failed term out of n about
+   * FAIL_SCORE / n (under the default FAIL_SCORE, the largest double, the
+   * usable terms vanish in it, so a finite difference across a region where
+   * a term fails was 0), and for a simulation whenever its line's loss did
+   * not carry the value past FAIL_SCORE (under L1 or TUKEY, or with a small
+   * --failscore). */
+  if (r.sims_failed || r.terms_failed) r.loss = trg_.FAIL_SCORE;
+
+  /* Graded-FAILSCORE assembly: a classified failure replaces the constant
+   * (or the launder-prone partial mean) with the banded, monotone L_fail in
+   * [0.999*FS, FS) -- every existing failure filter still sees "failure"
+   * (>= 0.999*FS), any feasible loss still wins, and moves toward
+   * feasibility are strictly downhill. Feasible evals (band 0) and
+   * FAILSCORE_GRADING OFF are byte-identical to the legacy path above. */
+  if (trg_.FAILSCORE_GRADING && r.fail.band != 0) {
+    r.loss = graded_eval_loss(r.fail, trg_.FAIL_SCORE, trg_.failprobe_s0);
   }
 }
 template<class P, class R>
@@ -2505,11 +2541,15 @@ void HPO_Host<P,R>::sims_loss(Result& r) const
       // result was never applied): a failed component contributing
       // FAIL_SCORE rather than a read past the end of v_outvar[i], or a
       // std::stod("") exception that NLopt's C++ wrapper would turn into
-      // NLOPT_INVALID_ARGS for the WHOLE optimisation.
+      // NLOPT_INVALID_ARGS for the WHOLE optimisation. Such a term fails
+      // its eval (r.terms_failed), as a failed PC_OBSERVABLE term does: it
+      // used to average with the other terms under FAILSCORE_GRADING OFF.
+      // No run reaches the branch today, so no test does.
       if (j < r.v_outvar[i].size() && try_parse_double(r.v_outvar[i][j], v)) {
         l = lsim.lossFn[k].loss(v, lsim.t_varloss[k], w);
       } else {
         l = trg_.FAIL_SCORE;
+        r.terms_failed = true;
         /* Graded-FAILSCORE: an unparseable/empty component is a completed-
          * but-failed sim output -> band B, graded by the failed fraction. */
         if (trg_.FAILSCORE_GRADING) {
@@ -2524,31 +2564,9 @@ void HPO_Host<P,R>::sims_loss(Result& r) const
     }
   }
 
-  r.loss = r.loss_count ? r.loss_sum / static_cast<double>(r.loss_count) : 0.0;
-  if (!std::isfinite(r.loss) || r.loss > trg_.FAIL_SCORE) {
-    if (!std::isfinite(r.loss)) r.was_nan_clamped = true;
-    r.loss = trg_.FAIL_SCORE;
-  }
-
-  /* A failed simulation fails its eval, whatever the mean of the terms
-   * above: FAIL_SCORE (under FAILSCORE_GRADING the graded loss below, as
-   * every such failure records a band). A failed line's terms are its
-   * loss of its --failscore value -- they stay in v_loss, for loss.tadah
-   * -- and the mean with the eval's other terms fell below 0.999 *
-   * FAIL_SCORE, a feasible loss that could become the best, whenever that
-   * loss did not carry the value past FAIL_SCORE: under L1 or TUKEY, or
-   * with a small --failscore. */
-  if (r.sims_failed) r.loss = trg_.FAIL_SCORE;
-
-  /* Graded-FAILSCORE assembly: a classified failure replaces the constant
-   * (or the launder-prone partial mean) with the banded, monotone L_fail in
-   * [0.999*FS, FS) -- every existing failure filter still sees "failure"
-   * (>= 0.999*FS), any feasible loss still wins, and moves toward
-   * feasibility are strictly downhill. Feasible evals (band 0) and
-   * FAILSCORE_GRADING OFF are byte-identical to the legacy path above. */
-  if (trg_.FAILSCORE_GRADING && r.fail.band != 0) {
-    r.loss = graded_eval_loss(r.fail, trg_.FAIL_SCORE, trg_.failprobe_s0);
-  }
+  /* A failed simulation (r.sims_failed) fails the eval whatever the mean
+   * of its terms (assemble_loss). */
+  assemble_loss(r);
 }
 
 namespace detail {
@@ -2602,9 +2620,11 @@ void HPO_Host<P,R>::obs_loss(Result& r) const
     force_guard.reset(new detail::ObsForceFlagGuard(cache.trainer->context));
   }
 
+  std::size_t n_failed = 0;
   for (std::size_t k = 0; k < trg_.observables.size(); ++k) {
     double v = std::numeric_limits<double>::quiet_NaN();
     double l = trg_.FAIL_SCORE;
+    bool failed = true;
 
     if (have_trainer && trg_.observables[k]) {
       auto& obs = *trg_.observables[k];
@@ -2616,28 +2636,41 @@ void HPO_Host<P,R>::obs_loss(Result& r) const
         v = res.value;
         if (std::isfinite(v)) {
           l = obs.lossfn().loss(v, obs.target(), obs.weight());
-          if (!std::isfinite(l)) l = trg_.FAIL_SCORE;
+          failed = !std::isfinite(l);
+          if (failed) l = trg_.FAIL_SCORE;
         }
       } catch (const std::exception&) {
-        /* Relaxer divergence / NaN / model mismatch -- record as a
-         * failed component contributing FAIL_SCORE so the optimiser
-         * walks away from this theta. */
+        /* Relaxer divergence / NaN / model mismatch: a failed term. */
         v = std::numeric_limits<double>::quiet_NaN();
         l = trg_.FAIL_SCORE;
       }
     }
 
+    if (failed) ++n_failed;
     r.v_obs_value[k] = v;
     r.v_obs_loss[k]  = l;
     r.loss_sum      += l;
     ++r.loss_count;
   }
 
-  r.loss = r.loss_count ? r.loss_sum / static_cast<double>(r.loss_count) : 0.0;
-  if (!std::isfinite(r.loss) || r.loss > trg_.FAIL_SCORE) {
-    if (!std::isfinite(r.loss)) r.was_nan_clamped = true;
-    r.loss = trg_.FAIL_SCORE;
+  /* A failed term -- its value NaN in outvar.tadah, its term FAIL_SCORE in
+   * loss.tadah -- fails the eval (assemble_loss): the mean of FAIL_SCORE
+   * and the usable terms was a usable-looking loss. Under FAILSCORE_GRADING
+   * it is band B (pc_fail_grading.h: completed but failed, observable
+   * failures included), measured by the failed fraction of the
+   * observables, as run_lammps measures a script that failed without a
+   * failvar by 1 / LS.size(): an observable reports no violation of its
+   * own (cohesive_energy gives NaN for a relaxed a0 outside its window,
+   * not the distance). Worst band wins. */
+  if (n_failed > 0) {
+    r.terms_failed = true;
+    if (trg_.FAILSCORE_GRADING) {
+      r.fail.band = std::max(r.fail.band, static_cast<int>(FailBand::B));
+      r.fail.vB += static_cast<double>(n_failed) /
+                   static_cast<double>(trg_.observables.size());
+    }
   }
+  assemble_loss(r);
 }
 
 /* ---------- synchronous crash-safe best potential ------------------- */
@@ -3158,8 +3191,10 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * unlike the original D4c assumption ("observables are cheap"),
      * cohesive_energy with maxeval=5000 and --max-wall-time can still
      * be ~1 s per bad-pot iter, worth gating. If an observable
-     * diverges its loss component is clamped to FAIL_SCORE per
-     * obs_loss's contract; r.loss recomputes inside obs_loss. */
+     * diverges its loss component is FAIL_SCORE and the eval fails
+     * (obs_loss: FAIL_SCORE, under FAILSCORE_GRADING band B); r.loss
+     * recomputes inside obs_loss. PC_LAMMPS and PC_OBSERVABLE are
+     * mutually exclusive (HPOTargets), so no simulation follows. */
     if (!skip_bad_pot) {
       obs_loss(r);
     }
@@ -4102,11 +4137,15 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                     } catch (const std::exception&) {
                         /* Phase A masking: relaxer divergence, NaN
                          * energy, model mismatch. Mark this observable
-                         * as failed and continue. The loss obs_loss()
-                         * returns FAIL_SCORE for the same observable,
-                         * so dFAIL_SCORE/dtheta = 0 and the missing chain
-                         * contribution is exact in the continuous
-                         * region. */
+                         * as failed and continue: the chain leaves it
+                         * out. obs_loss() fails the same evaluation
+                         * (FAIL_SCORE, under FAILSCORE_GRADING band B),
+                         * and the gradient provider fails the gradient
+                         * at that loss before this pass whenever the
+                         * caller gives it (gradient_at); what is left is
+                         * the gradient of the other terms, at a graded
+                         * failure (it does not see the grading) or for a
+                         * caller without the loss. */
                         inputs[k].failed = true;
                         continue;
                     }
