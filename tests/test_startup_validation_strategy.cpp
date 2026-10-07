@@ -1162,6 +1162,15 @@ const std::string kAnyTolerance =
     "(FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS)";
 const std::string kNoTolerance =
     "; set MAXEVAL, MAXTIME or STOPVAL (it honours no tolerance)";
+/* GD_STOGO ignores NLopt's forced stop: only MAXEVAL and MAXTIME end it
+ * once HPO has to. */
+const std::string kStogoNote =
+    "NLopt's StoGO has no convergence test of its own and ignores NLopt's "
+    "forced stop, by which HPO ends a search (on a signal, an error, the "
+    "RESTART stagnation stop, or a loss at or below STOPVAL that NLopt was "
+    "not given), so only NLopt's own evaluation count or clock ends it";
+const std::string kStogoStops = "; set MAXEVAL or MAXTIME (it honours no "
+                                "tolerance)";
 /* DIRECT tests XTOL on every rectangle it divides, the largest included:
  * an XTOL ends it, but only once the whole box is divided that finely. */
 const std::string kDirectXtol =
@@ -1229,11 +1238,43 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
                                                   "    ENDRESTART\n"),
                          top + "NLOPT:GN_DIRECT_L needs a stop: ",
                          kAnyTolerance + kDirectXtol});
-    for (const std::string algo :
-         {"GN_ESCH", "GN_AGS", "GD_STOGO", "GD_STOGO_RAND"})
+    for (const std::string algo : {"GN_ESCH", "GN_AGS"})
         cases.push_back({"NLOPT:" + algo + " without a stop", nlopt(algo, ""),
                          top + "NLOPT:" + algo + " needs a stop: ",
                          kNoTolerance});
+    /* Pins: GD_STOGO and GD_STOGO_RAND ignore NLopt's forced stop, by
+     * which HPO ends a search; once HPO has to end one (a signal, an error,
+     * the RESTART stagnation stop, a loss at or below STOPVAL that NLopt was
+     * not given), the objective refuses every call and only NLopt's own
+     * MAXEVAL or MAXTIME ends it. Without either it never ended: neither
+     * STOPVAL nor an active RESTART is a stop for it, and the message names
+     * MAXEVAL and MAXTIME only, as does the INNER search's under AUGLAG.
+     * Before the fix: STOPVAL or an active RESTART was accepted as its stop,
+     * and the message read "; set MAXEVAL, MAXTIME or STOPVAL (it honours no
+     * tolerance)"; such a run did not end once a host exception or a signal
+     * stopped it (the refused calls went on). */
+    for (const std::string algo : {"GD_STOGO", "GD_STOGO_RAND"}) {
+        cases.push_back({"NLOPT:" + algo + " without a stop", nlopt(algo, ""),
+                         top + "NLOPT:" + algo + " needs a stop: ",
+                         kStogoStops});
+        cases.push_back({"NLOPT:" + algo + " with STOPVAL only",
+                         nlopt(algo, "    STOPVAL 0.1\n"),
+                         top + "NLOPT:" + algo + " needs a stop: ",
+                         kStogoStops});
+        cases.push_back({"NLOPT:" + algo + " under an active RESTART",
+                         nlopt(algo, kRestart),
+                         top + "NLOPT:" + algo + " needs a stop: ",
+                         kStogoStops});
+    }
+    cases.push_back({"NLOPT:AUGLAG with an INNER NLOPT:GD_STOGO and STOPVAL",
+                     nlopt("AUGLAG", "    STOPVAL 0.1\n    INNER\n"
+                                     "      LIB NLOPT\n      ALGO GD_STOGO\n"
+                                     "    ENDINNER\n"),
+                     top + "the INNER search of NLOPT:AUGLAG (NLOPT:GD_STOGO) "
+                           "needs a stop: ",
+                     "; set MAXEVAL or MAXTIME in the INNER block, or MAXEVAL "
+                     "or MAXTIME in the NLOPT:AUGLAG block, which NLopt hands "
+                     "on to it"});
     /* A tolerance the algorithm does not test is no stop. */
     cases.push_back({"NLOPT:GN_ESCH with FTOL_REL",
                      nlopt("GN_ESCH", "    FTOL_REL 1e-6\n"),
@@ -1349,6 +1390,22 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
           top + "NLOPT:GN_DIRECT needs a stop: NLopt's global search has no "
                 "convergence test of its own and runs until it is "
                 "interrupted" + kAnyTolerance + kDirectXtol);
+    /* GD_STOGO's, and the stops that end it: MAXEVAL or MAXTIME, in its own
+     * block or (an INNER search) in the enclosing one. */
+    CHECK(judge(strategy_config(nlopt("GD_STOGO", "    STOPVAL 0.1\n")))
+              .startup ==
+          top + "NLOPT:GD_STOGO needs a stop: " + kStogoNote + kStogoStops);
+    for (const std::string& stop :
+         {std::string("    MAXEVAL 30\n"), std::string("    MAXTIME 60\n"),
+          std::string("    MAXEVAL 30\n") + kRestart}) {
+        INFO(stop);
+        CHECK(judge(strategy_config(nlopt("GD_STOGO", stop))).startup == "");
+        CHECK(judge(strategy_config(nlopt("AUGLAG", stop +
+                                          "    INNER\n      LIB NLOPT\n"
+                                          "      ALGO GD_STOGO\n"
+                                          "    ENDINNER\n")))
+                  .startup == "");
+    }
 }
 
 /* ======================================================================

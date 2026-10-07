@@ -643,3 +643,43 @@ TEST_CASE("Finite differences: a caller's loss that is not finite fails the "
     CHECK(counter.load() == 0u);
     CHECK(host.asked.empty());
 }
+
+/* Pins: GD_STOGO ignores NLopt's forced stop. At MAXEVAL 60 and STOPVAL 2,
+ * its first gradient, at the centre of [-2, 2]^2 (loss 1), has a stencil
+ * point that fails, (0, -1e-6): the loss 1 is withheld and ends the search
+ * STOPVAL_REACHED with no evaluation after that stencil point, though
+ * StoGO calls the objective on until NLopt's own MAXEVAL ends it: the
+ * objective refuses those calls. That is why GD_STOGO needs MAXEVAL or
+ * MAXTIME (backend_rules: without either it never ended once HPO stopped
+ * it).
+ * Before the fix: passes as well (a pin of the path the startup rule
+ * relies on: NLopt's own MAXEVAL ends a StoGO search the objective
+ * stopped). */
+TEST_CASE("NLopt STOPVAL: GD_STOGO, which ignores the forced stop, ends at a "
+          "withheld loss through NLopt's own MAXEVAL",
+          "[HPO][nlopt][maxeval][stopval]")
+{
+    struct Cliff : Valley {
+        double operator()(const Vec& x) {
+            asked.push_back(x);
+            return (x(1) < -1e-7 && x(1) > -1e-5)
+                       ? std::numeric_limits<double>::max()
+                       : valley(x);
+        }
+    };
+    Journal j;
+    auto sp = nlopt_spec("GD_STOGO", 60);
+    sp.stop.stopval = 2.0;
+    Cliff host;
+    REQUIRE_NOTHROW(tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host));
+    REQUIRE_FALSE(host.asked.empty());
+    CHECK(host.asked.size() < 60u);
+    CHECK(host.asked.back()(0) == 0.0);
+    CHECK(host.asked.back()(1) == -1e-6);
+    const std::string journal = j.text();
+    CHECK(status_of(journal) == kStopvalReached);
+    CHECK(journal.find("NLopt finished: " + kStopvalReached + " after " +
+                       std::to_string(host.asked.size()) +
+                       " evaluation(s): the loss 1 is at or below STOPVAL 2") !=
+          std::string::npos);
+}

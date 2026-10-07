@@ -488,6 +488,47 @@ TEST_CASE("backend rules: a backend with no convergence test and no finite "
     CHECK(error_of(anneal) == "");
 }
 
+/* Pins: GD_STOGO and GD_STOGO_RAND need MAXEVAL or MAXTIME: require_stop
+ * refuses STOPVAL alone and an active RESTART, naming "MAXEVAL or MAXTIME
+ * (it honours no tolerance)", and sets_own_stop() is false with STOPVAL
+ * alone; MAXEVAL or MAXTIME alone is enough, under a RESTART too. StoGO
+ * ignores NLopt's forced stop, by which HPO ends a search (a signal, an
+ * error, the RESTART stagnation stop, a loss at or below STOPVAL that NLopt
+ * was not given): only NLopt's own count or clock ends it then.
+ * Before the fix: STOPVAL or an active RESTART was its stop (the message
+ * listed "MAXEVAL, MAXTIME or STOPVAL"), and such a run did not end once
+ * HPO stopped it. */
+TEST_CASE("backend rules: GD_STOGO needs MAXEVAL or MAXTIME, the stops "
+          "that end it when HPO stops it", "[HPO][backend_rules][budget]")
+{
+    using tadah::hpo::RestartStop;
+    for (const std::string algo : {"GD_STOGO", "GD_STOGO_RAND"}) {
+        INFO(algo);
+        auto s = local_spec(1);
+        s.lib = "NLOPT";
+        s.algo = algo;
+        const std::string ends = "; set MAXEVAL or MAXTIME (it honours no "
+                                 "tolerance)";
+        CHECK_THAT(error_of(s),
+                   Catch::StartsWith("NLOPT:" + algo + " needs a stop: ") &&
+                   Catch::EndsWith(ends));
+        auto t = s;
+        t.stop.stopval = 0.1;
+        CHECK_THAT(error_of(t), Catch::EndsWith(ends));
+        CHECK_FALSE(tadah::hpo::sets_own_stop(t));
+        CHECK_THROWS(tadah::hpo::require_stop(s, RestartStop::On));
+        for (const auto& set : std::vector<void (*)(OptimizerSpec&)>{
+                 [](OptimizerSpec& u) { u.stop.maxeval = 3; },
+                 [](OptimizerSpec& u) { u.stop.maxtime = 60; }}) {
+            auto u = t;
+            set(u);
+            CHECK(error_of(u) == "");
+            CHECK(tadah::hpo::sets_own_stop(u));
+            CHECK_NOTHROW(tadah::hpo::require_stop(u, RestartStop::On));
+        }
+    }
+}
+
 TEST_CASE("phase specs: the local search NLopt's MLSL and AUGLAG run",
           "[HPO][phase_specs][budget]")
 {
@@ -678,5 +719,13 @@ TEST_CASE("backend rules: the ALGO help lists the stops that end a run",
                Catch::Contains("Stops that end a run: MAXEVAL, MAXTIME, "
                                "STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, "
                                "XTOL_ABS\n") &&
+               !Catch::Contains("One of them is required"));
+    /* Pins: GD_STOGO's help requires MAXEVAL or MAXTIME and says why.
+     * Before the fix: "One of them is required, or an active RESTART". */
+    CHECK_THAT(help("NLOPT", "GD_STOGO"),
+               Catch::Contains("Stops that end a run: MAXEVAL, MAXTIME, "
+                               "STOPVAL\n") &&
+               Catch::Contains("MAXEVAL or MAXTIME is required (STOPVAL "
+                               "and an active RESTART do not end it): ") &&
                !Catch::Contains("One of them is required"));
 }
