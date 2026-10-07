@@ -115,7 +115,9 @@ enum class PcTaskStatus : unsigned {
                           read when the script ran and the instance allows
                           it                                                   */
   POT_BUILD_FAIL = 2,  /* LammpsTadah ctor threw (negative-cached per iter)      */
-  CREATE_FAIL = 3,     /* LAMMPS instance construction failed (infrastructure)   */
+  CREATE_FAIL = 3,     /* LAMMPS instance construction, or the script's
+                          rendering to its temporary file, failed
+                          (infrastructure); error_msg says which and why      */
   KILLED = 4,          /* parent-synthesized only (PROCESS mode): worker died or
                           was SIGKILLed (deadline/gate) -- nothing was readable.
                           Never sent by a worker.                                */
@@ -124,7 +126,11 @@ enum class PcTaskStatus : unsigned {
 struct PcTaskResult {
   PcTaskStatus status = PcTaskStatus::OK;
   std::string error_msg;                    /* why the task failed, for the
-                                               journal: POT_BUILD_FAIL the
+                                               journal: CREATE_FAIL "creating
+                                               the LAMMPS instance: <LAMMPS
+                                               message>" or "rendering the
+                                               script to a temporary file:
+                                               <reason>"; POT_BUILD_FAIL the
                                                potential's construction error;
                                                RUN_FAIL the LAMMPS message of
                                                an error inside the script, of a
@@ -265,9 +271,15 @@ PcTaskResult execute_script_task_unguarded(
   if (cache_it == st.lmp_cache.end()) {
     /* Serial builds: comm 0 (LAMMPS STUBS). TADAH_HPO_MPI builds:
      * MPI_COMM_SELF -- every rank runs its own single-rank LAMMPS. */
-    auto fresh = runner.create_instance(hpo_lammps_comm(), invar_final);
+    std::string create_error;
+    auto fresh = runner.create_instance(hpo_lammps_comm(), invar_final,
+                                        &create_error);
     if (!fresh) {
       res.status = PcTaskStatus::CREATE_FAIL;
+      res.error_msg = "creating the LAMMPS instance: " +
+                      (create_error.empty()
+                           ? std::string("no reason given")
+                           : pc_trim_message(create_error));
       return res;   /* no cache entry -> retried on the next task */
     }
     ScriptFile rendered;
@@ -277,7 +289,8 @@ PcTaskResult execute_script_task_unguarded(
       /* Temp-file write failed (infrastructure, like a failed create).
        * Same classification in THREAD and PROCESS modes by construction. */
       res.status = PcTaskStatus::CREATE_FAIL;
-      res.error_msg = e.what();
+      res.error_msg = std::string("rendering the script to a temporary "
+                                  "file: ") + pc_trim_message(e.what());
       return res;   /* no cache entry -> retried on the next task */
     }
     cache_it = st.lmp_cache.emplace(

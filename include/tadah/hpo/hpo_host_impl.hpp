@@ -1745,13 +1745,45 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
                                const PcTaskResult& tres) -> bool {
     const auto& lsim = LS[i];
 
+    /* D17: say WHY the task failed, in both PC_ISOLATION modes.
+     *
+     * The message comes from execute_script_task -- the LAMMPS message of
+     * an error inside the script, of a hot value it refused to inject or
+     * of a variable read back after it, LAMMPS' message for an instance it
+     * could not create, the reason a script could not be rendered, the
+     * potential's construction error, the exception that ended the task --
+     * or, for a variable read back that cannot be read or has no number,
+     * from the checks below. It used to be read by nobody, an error inside
+     * the script had no message at all, and a CREATE_FAIL's never reached
+     * the journal, so such failures left only a number. Only the statuses
+     * whose text originates with the task are surfaced: KILLED carries the
+     * parent's own reason, which kill_reap_locked has already journaled,
+     * and repeating it would double every death; a timeout has no message.
+     *
+     * Rate-limited on powers of two: a systematically broken potential
+     * fails identically on every script of every eval, and the first few
+     * occurrences carry all the information. Counted per run
+     * (HPOLog::count_in_run). */
+    auto journal_task_failure = [&](const std::string& msg) {
+      if (msg.empty()) return;
+      const std::size_t n =
+          HPOLog::instance().count_in_run("PC_LAMMPS task failed");
+      if ((n & (n - 1)) == 0)
+        HPOLog::instance().warning(
+            "PC_LAMMPS task failed (" + lsim.script + ", occurrence "
+            + std::to_string(n) + "): " + msg);
+    };
+
     if (tres.status == PcTaskStatus::CREATE_FAIL) {
       /* Pre-extraction semantics preserved exactly: an instance-create
        * failure failscores THIS script only -- it does NOT raise
        * eval_aborted and records no busy/EWMA/CSV entry (per_script_busy[i]
        * stays -1 = "did not run"); the create is retried on the next task.
        * Grading: INFRASTRUCTURE failure -- deliberately ungraded (constant
-       * top of band C); grading it would chase cluster noise, not theta. */
+       * top of band C); grading it would chase cluster noise, not theta.
+       * Its message (an instance LAMMPS could not create, a script that
+       * could not be rendered) is journalled as for the other failures. */
+      journal_task_failure(tres.error_msg);
       if (fg_on) fail_state.record_infra();
       for (const auto& n : lsim.n_outvar) {
         (void)n;
@@ -1976,34 +2008,10 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       }
     }
 
-    /* D17: say WHY the task failed, in both PC_ISOLATION modes.
-     *
-     * error_msg carries the cause from execute_script_task -- the LAMMPS
-     * message of an error inside the script, of a hot value it refused to
-     * inject or of a variable read back after it, the potential's
-     * construction error, the exception that ended the task -- or, for a
-     * variable read back that cannot be read or has no number, from the
-     * block above. It used to be read by nobody, and an error inside the
-     * script had no message at all, so such failures left only a number. Only
-     * the statuses whose text originates with the task are surfaced here:
-     * KILLED carries the parent's own reason, which kill_reap_locked has
-     * already journaled, and repeating it would double every death; a
-     * timeout has no message.
-     *
-     * Rate-limited on powers of two: a systematically broken potential
-     * fails identically on every script of every eval, and the first few
-     * occurrences carry all the information. Counted per run
-     * (HPOLog::count_in_run). */
-    if ((status == PcTaskStatus::POT_BUILD_FAIL ||
-         status == PcTaskStatus::RUN_FAIL) &&
-        !error_msg.empty()) {
-      const std::size_t n =
-          HPOLog::instance().count_in_run("PC_LAMMPS task failed");
-      if ((n & (n - 1)) == 0)
-        HPOLog::instance().warning(
-            "PC_LAMMPS task failed (" + lsim.script + ", occurrence "
-            + std::to_string(n) + "): " + error_msg);
-    }
+    /* D17 (journal_task_failure above). */
+    if (status == PcTaskStatus::POT_BUILD_FAIL ||
+        status == PcTaskStatus::RUN_FAIL)
+      journal_task_failure(error_msg);
 
     for (std::size_t j = 0; j < lsim.n_outvar.size(); ++j) {
       if (fail) r.v_outvar[i].emplace_back(failscore_token(lsim.failscore));
