@@ -146,9 +146,9 @@ foreach(_group IN LISTS _hpo_e2e_groups)
 endforeach()
 
 # LAMMPS-driven cases: hidden tags (`[.][!benchmark]`), each group one
-# entry -- a process -- of its own, on the shipped potential
-# (data/bench_ta.tadah, bench_pot.h). `ctest -L bench` runs them; they take
-# a few seconds each and run in the full suite.
+# entry -- a process -- of its own; the first three on the shipped
+# potential (data/bench_ta.tadah, bench_pot.h). `ctest -L bench` runs them;
+# they take a few seconds each and run in the full suite.
 #   hpo_lammps_hessian    test_lammps_hessian.cpp: the 4-atom bcc Ta
 #                         Hessian (symmetry, acoustic modes, an H.v probe,
 #                         the iso and Voigt-6 box blocks, Tikhonov, the
@@ -162,13 +162,23 @@ endforeach()
 #                         variable)
 #   hpo_bench_pair_tadah  bench_pair_tadah.cpp: pair_tadah::compute on 256
 #                         atoms (Catch2 BENCHMARK)
+#   hpo_host_e2e          test_hpo_host_e2e.cpp: HPO_Host's analytical
+#                         gradient with no PC_LAMMPS line, with a
+#                         PC_OBSERVABLE and with a PC_LAMMPS script run in
+#                         process (its own 4-atom training structure; no
+#                         potential file)
+# With the bump-gate case of bumpgate_e2e above, every hidden [!benchmark]
+# case has an entry.
 add_test(NAME hpo_lammps_hessian
     COMMAND test_hpo "[lammps_hessian][.]" --warn NoTests)
 add_test(NAME hpo_phase3_pilot
     COMMAND test_hpo "[phase3_pilot],[phase3_orchestrator]" --warn NoTests)
 add_test(NAME hpo_bench_pair_tadah
     COMMAND test_hpo "[bench][pair_tadah]" --warn NoTests)
+add_test(NAME hpo_host_e2e
+    COMMAND test_hpo "[hpo_host_e2e]" --warn NoTests)
 set_tests_properties(hpo_lammps_hessian hpo_phase3_pilot hpo_bench_pair_tadah
+                     hpo_host_e2e
     PROPERTIES
         LABELS "hpo;bench"
         TIMEOUT 300)

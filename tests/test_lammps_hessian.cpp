@@ -36,10 +36,12 @@
 #include <comm.h>
 #include <domain.h>
 #include <force.h>
+#include <input.h>
 #include <neighbor.h>
 #include <pair.h>
 #include <pair_tadah.h>
 
+#include <cstdio>
 #include <cstring>
 
 #include <Eigen/Eigenvalues>
@@ -48,6 +50,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -286,6 +289,105 @@ TEST_CASE("LammpsHessianAssembler — iso box DOF is positive and "
     // symmetrise pass; assert the larger symmetry check too.
     const double asym = (H - H.transpose()).cwiseAbs().maxCoeff();
     CHECK(asym < 1e-9);
+}
+
+namespace {
+
+/* dE/d(eps) along a homogeneous strain of the fixture's relaxed cell, from
+ * LAMMPS' own pressure: `change_box all <axes> scale (1 + s) remap`, run 0,
+ * and the pair virial W of the strained state read back through `pxx` /
+ * `pyy` / `pzz` (no velocities, so no kinetic part: W_aa = p_aa V /
+ * nktv2p). Positions x = F x0 with F = I + s e, so dE/de = -tr(e F^-1 W)
+ * = -sum over the strained axes a of W_aa / (1 + s). `axes` are the
+ * strained axes (0 x, 1 y, 2 z); `read` the components of e to read, the
+ * strained axes unless given. The box is restored after each state. */
+double strain_derivative_from_pressure(LammpsRunner& runner,
+                                       const LammpsRunner::LMPPtr& lmp,
+                                       const std::vector<int>& axes,
+                                       const std::vector<int>& read,
+                                       double s)
+{
+    static const char* name[3] = {"x", "y", "z"};
+    std::string scale, unscale;
+    for (int a : axes) {
+        char buf[96];
+        std::snprintf(buf, sizeof buf, " %s scale %.17g", name[a], 1.0 + s);
+        scale += buf;
+        std::snprintf(buf, sizeof buf, " %s scale %.17g", name[a],
+                      1.0 / (1.0 + s));
+        unscale += buf;
+    }
+    lmp->input->one(("change_box all" + scale + " remap").c_str());
+    lmp->input->one("run 0");
+    const double vol = std::stod(runner.get_variable(lmp, "hpo_vol"));
+    double g = 0.0;
+    for (int a : read) {
+        const double p =
+            std::stod(runner.get_variable(lmp, std::string("hpo_p") + name[a]));
+        const bool strained =
+            std::find(axes.begin(), axes.end(), a) != axes.end();
+        g -= p * vol / lmp->force->nktv2p / (strained ? 1.0 + s : 1.0);
+    }
+    lmp->input->one(("change_box all" + unscale + " remap").c_str());
+    return g;
+}
+
+}  // namespace
+
+TEST_CASE("LammpsHessianAssembler — the box block is the strain derivative "
+          "of the virial, within 1e-7 relative of LAMMPS' pressure",
+          "[lammps_hessian][phase3][.][!benchmark]")
+{
+    /* The box block of H (iso, and the Voigt-6 normal strains) against
+     * the central difference, at the assembler's h_strain 1e-5, of dE/de
+     * from LAMMPS' pressure (strain_derivative_from_pressure above: an
+     * independent route, change_box and compute pressure, to the same
+     * second derivative). A second derivative of the energy over h^2 =
+     * 1e-10 multiplies the energy's round-off by 1e10; the virial is a
+     * first derivative, so its difference over 2h does not.
+     * Pins: H(iso, iso) (box_dofs 1), H(xx, xx) and H(xx, yy) (box_dofs 6)
+     * each within 1e-7 relative of the reference.
+     * Before the fix: the diagonal was the energy's second difference
+     * (E+ - 2 E0 + E-) / h^2: H(iso, iso) 528.561870 against 528.560497
+     * (2.6e-6 relative), H(xx, xx) 94.694101 against 94.692578 (1.6e-5);
+     * H(xx, yy), taken from the virial already, agreed to 2.5e-12. */
+    LammpsFixture fx(hpo_test::bench_pot_path());
+    const int nlocal = fx.lmp->atom->nlocal;
+    REQUIRE(nlocal == 4);
+    const int box0 = 3 * nlocal;
+
+    tadah::hpo::LammpsHessianAssembler asm_;
+    asm_.set_tikhonov(0.0);
+    const Eigen::MatrixXd H1 = asm_.assemble(fx.lmp.get(), /*box_dofs=*/1);
+    const Eigen::MatrixXd H6 = asm_.assemble(fx.lmp.get(), /*box_dofs=*/6);
+
+    fx.lmp->input->one("variable hpo_px equal pxx");
+    fx.lmp->input->one("variable hpo_py equal pyy");
+    fx.lmp->input->one("variable hpo_pz equal pzz");
+    fx.lmp->input->one("variable hpo_vol equal vol");
+    const double h = 1.0e-5;
+    const auto second = [&](const std::vector<int>& axes,
+                            const std::vector<int>& read) {
+        return (strain_derivative_from_pressure(fx.runner, fx.lmp, axes, read,
+                                                +h) -
+                strain_derivative_from_pressure(fx.runner, fx.lmp, axes, read,
+                                                -h)) /
+               (2.0 * h);
+    };
+    const double iso_ref = second({0, 1, 2}, {0, 1, 2});
+    const double xx_ref  = second({0}, {0});
+    const double xy_ref  = second({1}, {0});   /* d/de_yy of dE/de_xx */
+
+    const auto rel = [](double a, double b) {
+        return std::abs(a - b) / std::abs(b);
+    };
+    INFO(std::setprecision(12) << "H(iso,iso) = " << H1(box0, box0)
+         << " ref " << iso_ref << "  H(xx,xx) = " << H6(box0, box0)
+         << " ref " << xx_ref << "  H(xx,yy) = " << H6(box0, box0 + 1)
+         << " ref " << xy_ref);
+    CHECK(rel(H1(box0, box0), iso_ref) < 1e-7);
+    CHECK(rel(H6(box0, box0), xx_ref) < 1e-7);
+    CHECK(rel(H6(box0, box0 + 1), xy_ref) < 1e-7);
 }
 
 // Phase 3.7E regression: box-box off-diagonal block must be populated

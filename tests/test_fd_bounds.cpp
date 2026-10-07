@@ -981,7 +981,9 @@ TEST_CASE("No usable gradient: MLSL moves on from a rejected local start "
      * Before the fix: passes as well (a pin: probed 2026-10-07, every LD_*
      * local search moves on from a rejected start, under G_MLSL_LDS,
      * GD_MLSL_LDS, G_MLSL and GD_MLSL alike, so no code changed; the
-     * follow-up had probed only GD_MLSL_LDS's default LD_MMA). */
+     * follow-up had probed only GD_MLSL_LDS's default LD_MMA). The 60
+     * evaluations end before a local search reaches the edge of the
+     * failure region; how MLSL ends there is the next case's. */
     struct MlslCase { std::string inner; std::size_t requests, reevaluations; };
     std::vector<MlslCase> mlsl;
     for (const auto& a : kLocalGradientAlgorithms) {
@@ -1052,6 +1054,101 @@ TEST_CASE("No usable gradient: MLSL moves on from a rejected local start "
                                    "gradient search has no step to take from a "
                                    "starting point without a usable gradient") ==
                       1u);
+            }
+        }
+    }
+}
+
+TEST_CASE("No usable gradient: MLSL ends when an LD_LBFGS, LD_TNEWTON* or "
+          "LD_VAR* local search fails at the edge of the failure region, and "
+          "goes on with the other LD_* local searches",
+          "[HPO][grad_provider][fd_bounds][gradient_failure][nlopt][mlsl]")
+{
+    /* The wall stub from 1.9, MAXEVAL 400: G_MLSL_LDS (POPULATION 3) with
+     * an INNER block of each LD_* algorithm, and GD_MLSL_LDS with the same
+     * INNER blocks (the same runs). MLSL's local searches converge on the
+     * edge of the region where the gradient is usable, X[1] = 1.73 (the
+     * wall plus h): below it the stencil point x - h fails, so each request
+     * there is rejected (+inf and a zero gradient). The line search of
+     * LD_LBFGS, LD_TNEWTON* and LD_VAR1/LD_VAR2 (NLopt's Luksan codes)
+     * halves its step towards the edge, finds no usable point and returns
+     * NLOPT_FAILURE; NLopt's MLSL ends its whole search when a local search
+     * returns an error (mlsl.c: `if (lret < 0) { ret = lret; goto done; }`).
+     * HPO cannot end one local search alone: a forced stop is an error to
+     * MLSL as well. LD_MMA, LD_CCSAQ, LD_SLSQP and the LD_AUGLAG local
+     * searches end theirs without an error, and MLSL goes on to MAXEVAL.
+     * Pins: LD_LBFGS 141 evaluations, LD_TNEWTON and LD_TNEWTON_PRECOND
+     * 185, LD_TNEWTON_RESTART and LD_TNEWTON_PRECOND_RESTART 179, LD_VAR1
+     * and LD_VAR2 170; the last 8 requests are the line search's, each
+     * (x, x + h, x - h) with x below 1.73 and rising towards it and x - h
+     * failed, the last at 1.729564343; the status "STOPPED -- no usable
+     * gradient: ..." and the stop line once, "(at X[1] = 1.729564343, the
+     * stencil point X[1] = 1.529564343 failed: loss 1.797693135e+308);
+     * NLopt ended right after it (nlopt failure)". LD_MMA, LD_CCSAQ,
+     * LD_SLSQP, LD_AUGLAG and LD_AUGLAG_EQ: 400 evaluations,
+     * MAXEVAL_REACHED, no stop line. In a probe (walls at 1.517, 1.4123 and
+     * 1.2345, and a quadratic loss) the first group ended early in the same
+     * way and the second reached MAXEVAL; with the wall at 1.61 every one
+     * reached it.
+     * Before the fix: passes as well (a pin of how NLopt's MLSL ends next to
+     * a failure region, probed 2026-10-07 after review; no code changed:
+     * whether HPO should keep MLSL going there is an owner decision). */
+    struct Ending { std::size_t evals; bool early; };
+    const auto ending = [](const std::string& a) {
+        if (a == "LD_LBFGS") return Ending{141u, true};
+        if (a == "LD_TNEWTON" || a == "LD_TNEWTON_PRECOND")
+            return Ending{185u, true};
+        if (a == "LD_TNEWTON_RESTART" || a == "LD_TNEWTON_PRECOND_RESTART")
+            return Ending{179u, true};
+        if (a == "LD_VAR1" || a == "LD_VAR2") return Ending{170u, true};
+        return Ending{400u, false};
+    };
+    for (const std::string outer : {"G_MLSL_LDS", "GD_MLSL_LDS"}) {
+        for (const auto& inner : kLocalGradientAlgorithms) {
+            DYNAMIC_SECTION(outer << ", INNER " << inner) {
+                Journal j;
+                auto sp = region_spec("NLOPT", outer, 1.9);
+                sp.stop.maxeval = 400;
+                sp.pop = 3;
+                sp.inner = std::make_unique<OptimizerSpec>(
+                    region_spec("NLOPT", inner, 1.9));
+                sp.inner->stop.maxeval.reset();
+                RegionHost host{wall, {}, {}};
+                const std::string status = run_region(sp, host);
+                const std::string t = j.text();
+                const auto& x = host.asked;
+                const Ending e = ending(inner);
+                CHECK(x.size() == e.evals);
+                if (!e.early) {
+                    CHECK(status ==
+                          "MAXEVAL_REACHED -- maximum evaluations exhausted");
+                    CHECK(t.find("stopped: no usable gradient") ==
+                          std::string::npos);
+                } else {
+                    CHECK(status == "STOPPED -- " + kNoUsableStencil);
+                    CHECK(count_of(t, "NLOPT:" + outer + " stopped: " +
+                                          kNoUsableStencil +
+                                          " (at X[1] = 1.729564343, the "
+                                          "stencil point X[1] = 1.529564343 "
+                                          "failed: loss 1.797693135e+308); "
+                                          "NLopt ended right after it (nlopt "
+                                          "failure)") == 1u);
+                    REQUIRE(x.size() >= 24u);
+                    const std::size_t first = x.size() - 24u;
+                    for (std::size_t k = 0; k < 8u; ++k) {
+                        const std::size_t i = first + 3u * k;
+                        INFO("request " << k << " at X[1] = " << x[i]);
+                        CHECK(x[i] < 1.73);
+                        if (k > 0) CHECK(x[i] > x[i - 3u]);
+                        CHECK(x[i + 1u] == Approx(x[i] + 0.2).margin(1e-12));
+                        CHECK(x[i + 2u] == Approx(x[i] - 0.2).margin(1e-12));
+                        CHECK(host.losses[i] < 1e300);
+                        CHECK(host.losses[i + 1u] < 1e300);
+                        CHECK(host.losses[i + 2u] == kMax);
+                    }
+                    CHECK(x[x.size() - 3u] ==
+                          Approx(1.729564343).margin(1e-9));
+                }
             }
         }
     }
