@@ -132,9 +132,13 @@ endforeach()
 #                  a model built from its own candidate (row weights,
 #                  MPARAMS, SIGMA, a second host on a thread, an M_KRR -c
 #                  potential, gradients of another host's model)
+#   hotvar_e2e     test_hpo_pc_readback_e2e.cpp: a second run in one process
+#                  starts each PC_LAMMPS --hotvar from its declared initial
+#                  value
 set(_hpo_e2e_groups fixweight_e2e durable_e2e embf0_e2e rcut_e2e
                     rhoform_e2e rhogate_e2e rhobargate_e2e bumpgate_e2e
-                    nn_e2e valmetric_e2e pc_readback_e2e trainer_e2e)
+                    nn_e2e valmetric_e2e pc_readback_e2e trainer_e2e
+                    hotvar_e2e)
 foreach(_group IN LISTS _hpo_e2e_groups)
     add_test(NAME hpo_${_group}
         COMMAND test_hpo "[${_group}]" --warn NoTests)

@@ -20,6 +20,11 @@
 //     because, before the fix, these cases ended their process with
 //     SIGSEGV, and because the HPO_Host statics are shared by the cases of
 //     one process.
+//   - [hotvar_e2e] (hidden; CTest entry hpo_hotvar_e2e, label e2e): two
+//     runs in one process, as two TASK hpo blocks of a task file, each an
+//     HPO_Host started with prepare_best_publication(): the second run
+//     starts each --hotvar from its declared initial value, not from the
+//     value the first run's last evaluation handed on.
 //   - [.tadah_cli_pc_readback] (CTest entry hpo_tadah_cli_pc_readback): the
 //     built tadah under PC_ISOLATION THREAD and PROCESS ends the same way,
 //     with the same rows and, under FAILSCORE_GRADING, the same graded
@@ -37,6 +42,7 @@
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/runners.h>
+#include <tadah/hpo/warmstart_cache.h>
 
 #include <dlib/matrix.h>
 
@@ -44,10 +50,14 @@
 #include <sys/wait.h>
 
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -1103,4 +1113,53 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
         INFO(name << ": " << f << " without IT-TIME/ms");
         CHECK(lines_without(dirs[0] / f, 1) == lines_without(dirs[1] / f, 1));
     }
+}
+
+/* Pins: two runs in one process, as two TASK hpo blocks of a task file
+ * (each an HPO_Host started with prepare_best_publication(), no reset in
+ * between), with one PC_LAMMPS script whose --hotvar hot_a0 (2.5 4.5 3.30)
+ * is the lattice constant of a bcc Ta cell, whose --varloss A is that
+ * lattice constant, and which hands the next evaluation hot_a0 + 0.05: the
+ * first run evaluates CGRID2B[1] = 2.8 twice, at lattices 3.30 and 3.35, and
+ * the two losses differ by more than 1e-3 relative; the second run's
+ * evaluation of 2.8 starts from the declared 3.30 again and its loss is the
+ * first run's first loss, bit for bit.
+ * Before the fix: the second run started from the value the first run's
+ * last evaluation handed on, lattice 3.40, so its loss was another (the
+ * bit comparison fails); with a relaxing script, the second run of a task
+ * file did not reproduce the same run made alone. */
+TEST_CASE("a second run in one process starts each --hotvar from its "
+          "declared initial value", "[hotvar_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    tadah::hpo::warmstart::clear();   // as a new process starts
+    ScratchDir sd("tadah_hotvar_runs_");
+    std::ofstream(sd.dir / "hot.in")
+        << ta_script("${hot_a0}",
+                     "variable A_i internal ${hot_a0}\n"
+                     "variable A equal v_A_i\n"
+                     "variable a_next internal $(v_hot_a0+0.05)\n"
+                     "variable hot_a0 equal v_a_next\n");
+    const std::string target =
+        "PC_ERMSE 0 1\n"
+        "PC_LAMMPS --script " + (sd.dir / "hot.in").string() +
+        " --varloss A 0 1 --hotvar hot_a0 2.5 4.5 3.30\n";
+    auto bits = [](double v) {
+        std::uint64_t u;
+        std::memcpy(&u, &v, sizeof u);
+        return u;
+    };
+    Journal j;
+    const auto first = evaluate(sd.dir, target, {2.8, 2.8});
+    const auto second = evaluate(sd.dir, target, {2.8});
+    const std::string journal = j.finish();
+    INFO(journal);
+    REQUIRE(first.size() == 2);
+    REQUIRE(second.size() == 1);
+    INFO(std::setprecision(17) << "first run " << first[0] << " "
+                               << first[1] << ", second run " << second[0]);
+    CHECK(std::fabs(first[1] - first[0]) > 1e-3 * std::fabs(first[0]));
+    CHECK(bits(second[0]) == bits(first[0]));
+    tadah::hpo::warmstart::clear();
+    Host::reset_globals_for_test();
 }

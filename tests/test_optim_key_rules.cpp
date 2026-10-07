@@ -19,8 +19,10 @@
 #include <tadah/hpo/startup_validation.h>
 
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -415,5 +417,121 @@ TEST_CASE("OPTIM on an integer key or an internal key is refused at its line",
         HPOTargets(ctx, tf.path.string()),
         Catch::Contains("OPTIM OALGO (1) is not a valid search target") &&
         Catch::Contains("training algorithm"));
+  }
+}
+
+namespace {
+
+/* A single-element (Ta) setfl file with cutoff 5 (100-point tables:
+ * F(rho) = -sqrt(rho), rho(r) = (1 - r/5)^2, r phi(r) = r (1 - r/5)^3),
+ * removed when the object goes. */
+struct TaSetfl {
+  fs::path path;
+  TaSetfl()
+  : path(fs::temp_directory_path() /
+         ("tadah_optim_key_rules_" +
+          std::to_string(std::chrono::steady_clock::now()
+                             .time_since_epoch().count()) + ".eam.alloy")) {
+    const int n = 100;
+    const double rcut = 5.0, dr = rcut / (n - 1), drho = 50.0 / (n - 1);
+    std::ofstream os(path);
+    REQUIRE(os.good());
+    os << "# synthetic Ta setfl\n# 2\n# 3\n1 Ta\n"
+       << n << " " << drho << " " << n << " " << dr << " " << rcut << "\n"
+       << "73 180.95 3.304 bcc\n" << std::setprecision(12);
+    for (int i = 0; i < n; ++i) os << -std::sqrt(i * drho) << "\n";
+    for (int i = 0; i < n; ++i) {
+      const double x = 1.0 - i * dr / rcut;
+      os << x * x << "\n";
+    }
+    for (int i = 0; i < n; ++i) {
+      const double x = 1.0 - i * dr / rcut;
+      os << i * dr * x * x * x << "\n";
+    }
+  }
+  ~TaSetfl() {
+    std::error_code ec;
+    fs::remove(path, ec);
+  }
+};
+
+/* A Ta model with the two-body term @p type2b (TYPE2B tokens), its
+ * cutoffs @p rcut2b, @p rctype2b, and no many-body term, or (@p type2b
+ * empty) the many-body term @p typemb with RCUTMB 5; SETFL @p setfl. */
+Context eam_ctx(const std::string& setfl, const std::string& type2b,
+                const std::string& rcut2b, const std::string& rctype2b,
+                const std::string& typemb = "") {
+  Context c;
+  c.add("ATOM", "Ta");
+  c.add("WATOM", 1.0);
+  c.add("VERBOSE", 0);
+  c.add("SETFL", setfl);
+  if (!type2b.empty()) {
+    c.add("INIT2B", "true");
+    c.add("TYPE2B", type2b);
+    c.add("RCUT2B", rcut2b);
+    c.add("RCTYPE2B", rctype2b);
+    c.add("INITMB", "false");
+  } else {
+    c.add("INIT2B", "false");
+    c.add("INITMB", "true");
+    c.add("TYPEMB", typemb);
+    c.add("RCUTMB", 5.0);
+    c.add("RCTYPEMB", "Cut_Cos");
+  }
+  c.add("MODEL", "M_BLR BF_Linear");
+  c.add("DBFILE", "dummy.db");
+  return c;
+}
+
+}  // namespace
+
+/* Pins: OPTIM on a cutoff value that a descriptor takes from its setfl
+ * file (D_Base::cutoff_fixed_by) is refused at startup, naming the OPTIM
+ * key and index and the file's cutoff:
+ *   - OPTIM RCUT2B (1) with TYPE2B D2_EAM: "OPTIM RCUT2B (1) is not a
+ *     valid search target: D2_EAM takes the cutoff 5 of its setfl file
+ *     '<path>' (SETFL) and refuses another value";
+ *   - OPTIM RCUTMB (1) with TYPEMB DM_EAM: the same, naming DM_EAM;
+ *   - TYPE2B D2_mJoin D2_BP ... D2_EAM ... (RCUT2B 4.5 5): OPTIM RCUT2B (2),
+ *     D2_EAM's, is refused, and OPTIM RCUT2B (1), D2_BP's, is accepted.
+ * Before the fix: all accepted; every candidate but the seed then failed in
+ * the D2_EAM/DM_EAM constructor ("RCUT2B ... differs from the cutoff ...
+ * of the setfl file"), FAILSCORE, and the run ended with exit status 0. */
+TEST_CASE("OPTIM on a cutoff the setfl file fixes is refused at startup",
+          "[HPO][optim][startup][eam]") {
+  tadah::core::PeriodicTable::initialize();
+  TaSetfl setfl;
+  const std::string file = setfl.path.string();
+  const std::string fixed2b =
+      "D2_EAM takes the cutoff 5 of its setfl file '" + file +
+      "' (SETFL) and refuses another value";
+  {
+    const std::string msg =
+        startup_error(eam_ctx(file, "D2_EAM 0 Ta Ta", "5.0", "Cut_Cos"),
+                      "OPTIM RCUT2B (1) 4.5 5.5");
+    INFO(msg);
+    CHECK(has(msg, "OPTIM RCUT2B (1) is not a valid search target: " +
+                       fixed2b));
+  }
+  {
+    const std::string msg = startup_error(
+        eam_ctx(file, "", "", "", "DM_EAM 0 Ta Ta"),
+        "OPTIM RCUTMB (1) 4.5 5.5");
+    INFO(msg);
+    CHECK(has(msg, "OPTIM RCUTMB (1) is not a valid search target: "
+                   "DM_EAM takes the cutoff 5 of its setfl file '" + file +
+                   "' (SETFL) and refuses another value"));
+  }
+  {
+    Context c = eam_ctx(file, "D2_mJoin D2_BP 2 2 Ta Ta D2_EAM 0 Ta Ta",
+                        "4.5 5.0", "Cut_Cos Cut_Cos");
+    c.add("CGRID2B", "2.6 3.3");
+    c.add("SGRID2B", "1.0 1.0");
+    const std::string msg = startup_error(c, "OPTIM RCUT2B (2) 4.5 5.5");
+    INFO(msg);
+    CHECK(has(msg, "OPTIM RCUT2B (2) is not a valid search target: " +
+                       fixed2b));
+    CHECK(startup_error(c, "OPTIM RCUT2B (1) 4.0 5.0").empty());
   }
 }

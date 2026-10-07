@@ -31,6 +31,7 @@
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/runners.h>
+#include <tadah/hpo/warmstart_cache.h>
 
 #include <dlib/matrix.h>
 
@@ -847,6 +848,48 @@ TEST_CASE("A second run in the same process restarts the best comparator "
     REQUIRE(best_row.size() == 3);   // improvement ordinal, slot, CGRID2B[1]
     CHECK(best_row[0] == 1.0);
     CHECK(best_row[2] == Approx(worse(0)));
+}
+
+/* Pins: prepare_best_publication(), which starts every run, forgets the
+ * per-chain --hotvar values an earlier run in the process converged to and
+ * keeps the WARM seeds: after a first run left chain 0's hot_a0 = 3.31 and
+ * chain 3's b = 7.0 (warmstart::set, as each evaluation stores its
+ * converged value) and the second run's WARM init primed b = 6.5
+ * (warmstart::prime), chain 0 has no hot_a0 (its script starts from the
+ * --hotvar initial value), chain 3's b is WARM's 6.5, and the best-HOT
+ * snapshot is empty.
+ * Before the fix: chain 0 read 3.31 and chain 3 read 7.0, the first run's
+ * values (the run boundary reset only the best-HOT snapshot), so the
+ * second run of a task file with two TASK hpo blocks started its
+ * relaxations where the first run's last evaluation ended. */
+TEST_CASE("A second run in the same process starts its --hotvar values from "
+          "their declared start or the WARM seed",
+          "[HPO][host][warmstart]")
+{
+    namespace ws = tadah::hpo::warmstart;
+    DatasetHostGuard guard;
+    ScratchDir sd;
+    const auto train = sd.dir / "train.db", valdb = sd.dir / "val.db";
+    const auto val = sd.dir / "config.val", hpo = sd.dir / "config.hpo";
+    write_minimal_ta_dbfile(train, 0);
+    write_minimal_ta_dbfile(valdb, 0.07, -0.04);
+    std::ofstream(val) << "DBFILE " << valdb.string() << "\n";
+    std::ofstream(hpo) << dataset_host_head << "PC_ERMSE 10 1\n";
+    auto ctx = make_ta_master_context(train, hpo, val);
+    tadah::hpo::HPOTargets trg(ctx, hpo.string());
+    Host host(ctx, trg, val.string());
+
+    ws::clear();
+    ws::set(0, "hot.in", "hot_a0", 3.31);
+    ws::set(3, "hot.in", "b", 7.0);
+    ws::prime("hot.in", "b", 6.5);
+    host.prepare_best_publication();
+    CHECK_FALSE(ws::get(0, "hot.in", "hot_a0").has_value());
+    const auto b = ws::get(3, "hot.in", "b");
+    REQUIRE(b.has_value());
+    CHECK(*b == 6.5);
+    CHECK_FALSE(ws::best_get("hot.in", "b").has_value());
+    ws::clear();
 }
 
 /* ---------------------------------------------------------------------
