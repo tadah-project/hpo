@@ -42,6 +42,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -553,6 +554,79 @@ TEST_CASE("PC dataset host loss and reports match resolved targets", "[pc_datase
     const auto journal = read_dataset_file(sd.dir / "journal.log");
     CHECK(journal.find("target=10 weight=2") != std::string::npos);
     CHECK(journal.find("target=10000") == std::string::npos);
+}
+
+TEST_CASE("The new-best breakdown names indexed PC_ERMSE and PC_FRMSE terms "
+          "per dataset", "[pc_dataset][host]") {
+    /* Pins: the journal's new-best "top:" line lists an indexed PC_ERMSE
+     * or PC_FRMSE term per dataset, ERMSE[i] and FRMSE[i] (1-based, the
+     * index of PC_ERMSE (i) and of the L(ERMSE)[i] column), each shown as
+     * its share of the average of the dataset losses -- ERMSE[1] is
+     * L(ERMSE)[1] / 2 datasets / 2 terms -- and no "_global" label; the
+     * global form keeps ERMSE_global and FRMSE_global.
+     * Before the fix: the indexed line read "ERMSE_global=... FRMSE_global=..."
+     * (the average of the dataset losses under the global label), so the
+     * first SECTION fails; the second SECTION passes as well (a pin of the
+     * global labels). */
+    DatasetHostGuard guard;
+    ScratchDir sd;
+    const auto train = sd.dir / "train.db", first = sd.dir / "first.db", second = sd.dir / "second.db";
+    const auto val = sd.dir / "config.val", hpo = sd.dir / "config.hpo";
+    write_minimal_ta_dbfile(train, 0);
+    write_minimal_ta_dbfile(first, 0.07, -0.04);
+    write_minimal_ta_dbfile(second, 0.13, -0.16);
+    std::ofstream(val) << "DBFILE " << first.string() << "\nDBFILE " << second.string() << "\n";
+    bool indexed = false;
+    std::string lines;
+    SECTION("indexed energy and forces") {
+        indexed = true;
+        lines = "PC_ERMSE (2) 20 3\nPC_ERMSE (1) 10 2\n"
+                "PC_FRMSE (1) 0.1 2\nPC_FRMSE (2) 0.2 0.5\n";
+    }
+    SECTION("global energy and forces") {
+        lines = "PC_ERMSE 10 2\nPC_FRMSE 0.1 2\n";
+    }
+    std::ofstream(hpo) << dataset_host_head << lines;
+    auto ctx = make_ta_master_context(train, hpo, val);
+    ctx.remove("FORCE"); ctx.add("FORCE", "true");
+    tadah::hpo::HPOTargets trg(ctx, hpo.string());
+    Host host(ctx, trg, val.string());
+    auto& log = tadah::hpo::HPOLog::instance();
+    log.open((sd.dir / "journal.log").string(), "test", sd.dir.string(), 1);
+    log.write_loss_section(trg);
+    host.prepare_best_publication();
+    ParamVec p(1); p(0) = 0.5;
+    const double total = host(p);
+    host.flush_remaining();
+    log.finish("TEST");
+    REQUIRE(total > 0.0);
+    const auto losses = last_dataset_row("loss.tadah");
+    REQUIRE(losses.size() == 9); // iteration, slot, L(E)[1,2,avg], L(F)[1,2,avg], total
+
+    const auto journal = read_dataset_file(sd.dir / "journal.log");
+    std::istringstream in(journal);
+    std::string top;
+    for (std::string line; std::getline(in, line);)
+        if (line.find("top: ") != std::string::npos) { top = line; break; }
+    INFO(journal);
+    REQUIRE_FALSE(top.empty());
+    if (indexed) {
+        for (const char* label : {"ERMSE[1]=", "ERMSE[2]=", "FRMSE[1]=", "FRMSE[2]="}) {
+            INFO(label);
+            CHECK(top.find(label) != std::string::npos);
+        }
+        CHECK(top.find("_global") == std::string::npos);
+        /* The printed value of ERMSE[1] (%.2e) is its share of the mean
+         * loss: L(ERMSE)[1] / 2 datasets / 2 terms. */
+        std::smatch m;
+        REQUIRE(std::regex_search(top, m, std::regex(R"(ERMSE\[1\]=([0-9.eE+-]+)\()")));
+        CHECK(std::stod(m[1]) == Approx(losses[2] / 2 / 2).epsilon(0.01));
+    } else {
+        CHECK(top.find("ERMSE_global=") != std::string::npos);
+        CHECK(top.find("FRMSE_global=") != std::string::npos);
+        CHECK(top.find("ERMSE[1]=") == std::string::npos);
+        CHECK(top.find("FRMSE[1]=") == std::string::npos);
+    }
 }
 
 TEST_CASE("PC dataset host rejects incomplete coverage and empty validation files", "[pc_dataset][host]") {
