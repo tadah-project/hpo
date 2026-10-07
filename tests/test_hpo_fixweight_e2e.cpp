@@ -54,6 +54,7 @@
 #include <string>
 #include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <fcntl.h>
@@ -2442,35 +2443,43 @@ TEST_CASE("durable best: storage that recovers after a fatal failure saves a "
     CHECK(contains(r.output, "All tests passed"));
 }
 
-/* The same through hpo_run itself: a parallel optimiser whose storage
- * recovers after the first fatal failure. The lock is busy for 5 opens
- * (skip=3: the fresh-run reset and the first two publications take it),
- * which the first failing publication's 150 ms budget spends; later
- * candidates then get their single attempt against working storage. hpo_run
- * must still throw (the process would exit non-zero), with the first
- * failure as the FAILED status. Whether a candidate is saved after the
- * failure depends on which of the 4 threads' candidates are new bests and
- * finish behind the failing publication (6 runs: the failure at eval 3 or
- * 7, and 1 or 2 candidates saved after it), so both outcomes are checked:
- * with one, best_pot.tadah holds the last candidate saved after the
- * failure, and RESULT names it in one of its two forms (the completion
- * order decides which); without one, best_pot.tadah holds the last best
- * saved before it, which RESULT names as the last saved best, the best
- * being the unsaved candidate.
- * Pins: as described; no outcome returns unchecked.
- * Before the fix: passes as well (a pin: the case returned with a WARN when
- * no candidate was saved after the failure, checking neither outcome's
- * RESULT nor best_pot.tadah). */
-TEST_CASE("durable best: hpo_run ends FAILED after storage recovers",
-          "[durable_e2e][failure_handling][.]")
+namespace {
+
+/* The evals of the journal's new-best lines ("BEST     * eval=   N ...",
+ * written for a best once it is saved: HPOLog::log_new_best runs after the
+ * publication succeeded), with the index of each line in `lines`. */
+std::vector<std::pair<std::size_t, std::size_t>>
+saved_best_lines(const std::vector<std::string>& lines)
+{
+    std::vector<std::pair<std::size_t, std::size_t>> out;
+    const std::string tag = "BEST     * eval=";
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        const auto p = lines[i].find(tag);
+        if (p == std::string::npos) continue;
+        out.emplace_back(i, std::stoul(lines[i].substr(p + tag.size())));
+    }
+    return out;
+}
+
+/* Runs DLIB:GFS THREADS 4 through hpo_run in a child process whose
+ * best-potential lock fails as `fault` says (skip=3: the fresh-run reset
+ * and the first two publications take it) and checks the ending: hpo_run
+ * throws, with the first failure as the FAILED status, and what
+ * best_pot.tadah and RESULT name is the last best the journal says was
+ * saved (its last new-best line). With a candidate saved after the
+ * failure that is the last such candidate, and RESULT names it in one of
+ * its two forms (the completion order decides which); without one, the
+ * last best saved before the failure, which RESULT names as the last
+ * saved best, the best being the unsaved candidate. `recovered` is set to
+ * whether a candidate was saved after the failure. */
+void check_storage_failure_ending(const std::string& fault, bool& recovered)
 {
     ScratchDir sd;
     write_policy_fixture(sd.dir,
         "OPTIMIZER\nLIB DLIB\nALGO GFS\nMAXEVAL 400\nTHREADS 4\nSEED 1234\n"
         "ENDOPTIMIZER\n");
     const ChildRun r = run_self("[.durable_e2e_child]", sd.dir,
-                                {"TADAH_HPO_TEST_IO_FAULT=durable.lock_open,EBUSY,"
-                                 "skip=3,count=5",
+                                {"TADAH_HPO_TEST_IO_FAULT=" + fault,
                                  "TADAH_HPO_TEST_IO_BACKOFF_MS=20,40,150,0",
                                  "TADAH_TEST_DURABLE_E2E_EXPECT=throw"});
     INFO(r.output);
@@ -2509,27 +2518,78 @@ TEST_CASE("durable best: hpo_run ends FAILED after storage recovers",
           "FAILED -- best-potential persistence: " + first_error);
     CHECK_FALSE(contains(journal, "converged"));
     CHECK(data_rows(sd.dir / "loss.tadah") == total_evaluations(journal));
+
+    /* The last saved best, by the journal's own record of the saves. */
+    const auto bests = saved_best_lines(lines);
+    REQUIRE_FALSE(bests.empty());
+    const std::string K = std::to_string(bests.back().second);
     const std::string pot = read_text(sd.dir / "best_pot.tadah");
-    if (last_saved > 0) {
-        /* A candidate was saved after the failure. */
+    CHECK(contains(pot, "# HPO_SOURCE_EVAL " + K + "\n"));
+    CHECK(contains(line_with(journal, "Best potential saved"),
+                   ": best_pot.tadah (eval " + K + ")"));
+    recovered = last_saved > 0;
+    if (recovered) {
+        /* A candidate was saved after the failure: the last of them. */
         CHECK(fatal_line < first_saved_line);
-        const std::string S = std::to_string(last_saved);
-        CHECK(contains(pot, "# HPO_SOURCE_EVAL " + S + "\n"));
+        CHECK(bests.back().first > fatal_line);
+        CHECK(K == std::to_string(last_saved));
         CHECK((contains(line_with(journal, "Unsaved candidate"),
-                        "superseded by eval " + S) ||
-               contains(line_with(journal, "Last saved best"), "(eval " + S)));
-        CHECK(contains(line_with(journal, "Best potential saved"),
-                       ": best_pot.tadah (eval " + S + ")"));
+                        "superseded by eval " + K) ||
+               contains(line_with(journal, "Last saved best"), "(eval " + K + ")")));
     } else {
-        /* None was: the last best saved before the failure stays. */
-        const std::string last = line_with(journal, "Last saved best");
-        const auto p = last.find("(eval ");
-        REQUIRE(p != std::string::npos);
-        const std::string K = std::to_string(std::stoul(last.substr(p + 6)));
-        CHECK(contains(pot, "# HPO_SOURCE_EVAL " + K + "\n"));
+        /* None was: every save came before the failure, the last of them
+         * stays, and the best is the unsaved candidate. */
+        CHECK(bests.back().first < fatal_line);
+        CHECK(contains(line_with(journal, "Last saved best"), "(eval " + K + ")"));
         CHECK(contains(line_with(journal, "Best total loss"), "-- NOT saved"));
-        CHECK(contains(line_with(journal, "Best potential saved"),
-                       ": best_pot.tadah (eval " + K + ")"));
-        CHECK_FALSE(contains(journal, saved_tag));
     }
+}
+
+}  // namespace
+
+/* The same through hpo_run itself: a parallel optimiser whose storage
+ * recovers after the first fatal failure. The lock is busy for 5 opens,
+ * which the first failing publication's 150 ms budget spends; later
+ * candidates then get their single attempt against working storage. hpo_run
+ * must still throw (the process would exit non-zero), with the first
+ * failure as the FAILED status. Whether a candidate is saved after the
+ * failure depends on which of the 4 threads' candidates are new bests and
+ * finish behind the failing publication (6 runs: the failure at eval 3 or
+ * 7, and 1 or 2 candidates saved after it), so both outcomes are checked
+ * (check_storage_failure_ending); the next case takes the other outcome
+ * every time.
+ * Pins: as check_storage_failure_ending says; best_pot.tadah's
+ * HPO_SOURCE_EVAL, "Best potential saved" and the outcome's RESULT line
+ * name the eval of the journal's last new-best line (after the failure
+ * with a candidate saved after it, before it without); no outcome returns
+ * unchecked.
+ * Before the fix: passes as well (a pin: the case returned with a WARN when
+ * no candidate was saved after the failure, checking neither outcome's
+ * RESULT nor best_pot.tadah; the first version of the fix took the expected
+ * eval from RESULT itself in that outcome). */
+TEST_CASE("durable best: hpo_run ends FAILED after storage recovers",
+          "[durable_e2e][failure_handling][.]")
+{
+    bool recovered = false;
+    check_storage_failure_ending("durable.lock_open,EBUSY,skip=3,count=5",
+                                 recovered);
+}
+
+/* As above with storage that does not recover (count=always): every
+ * candidate after the first fatal failure gets its single attempt and
+ * fails, so none is saved after it.
+ * Pins: the outcome without a candidate saved after the failure, every
+ * time; best_pot.tadah's HPO_SOURCE_EVAL, "Best potential saved" and "Last
+ * saved best" name the eval of the journal's last new-best line, which is
+ * before the failure, and "Best total loss" says it was NOT saved.
+ * Before the fix: passes as well (a pin: this outcome was checked only by
+ * the case above, when its threads happened to take it). */
+TEST_CASE("durable best: hpo_run ends FAILED when storage does not recover, "
+          "keeping the last best saved before the failure",
+          "[durable_e2e][failure_handling][.]")
+{
+    bool recovered = true;
+    check_storage_failure_ending("durable.lock_open,EBUSY,skip=3,count=always",
+                                 recovered);
+    CHECK_FALSE(recovered);
 }
