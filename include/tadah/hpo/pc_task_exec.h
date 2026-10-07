@@ -44,6 +44,19 @@
  *     inject + potential build + run_script (NOT the variable readback);
  *   - readback returns the raw get_variable strings ("" when undefined).
  *
+ * Injection errors. The inject lines (the hot values, format_hot_inject)
+ * run on the instance before the script. LAMMPS refuses one when the name
+ * is already defined with another style -- `-var hot_a0 3.3` (or --invar)
+ * on the line makes it an index-style variable when the instance is
+ * created; a script that deleted the name and redefined it as a string in
+ * an earlier evaluation of a cached instance -- or is not a LAMMPS name.
+ * The first refused line fails the task: RUN_FAIL, error_msg "injecting
+ * `variable hot_a0 equal 3.25` before the script: <LAMMPS message>", the
+ * script not run and nothing read back (the instance's variables, failvars
+ * included, are an earlier evaluation's), and the instance discarded, as
+ * after any LAMMPS error. It was dropped, and the script ran on its own or
+ * an earlier evaluation's value.
+ *
  * Read-back errors. Reading a variable evaluates its formula in LAMMPS
  * after the script, and that can raise a LAMMPS error: a thermo keyword the
  * script's thermo_style does not compute (`variable P equal press` under
@@ -96,9 +109,11 @@ namespace hpo {
 enum class PcTaskStatus : unsigned {
   OK = 0,
   RUN_FAIL = 1,        /* run_script returned false (incl. fired timer timeout),
-                          a --hotvar/--failvar could not be read, or an
+                          a hot value could not be injected, a
+                          --hotvar/--failvar could not be read, or an
                           exception ended the task; the failvars are still
-                          read when the instance allows it                     */
+                          read when the script ran and the instance allows
+                          it                                                   */
   POT_BUILD_FAIL = 2,  /* LammpsTadah ctor threw (negative-cached per iter)      */
   CREATE_FAIL = 3,     /* LAMMPS instance construction failed (infrastructure)   */
   KILLED = 4,          /* parent-synthesized only (PROCESS mode): worker died or
@@ -113,10 +128,13 @@ struct PcTaskResult {
                                                potential's construction error;
                                                RUN_FAIL the LAMMPS message of
                                                an error inside the script, of a
-                                               --hotvar/--failvar read-back
-                                               ("reading --hotvar <name> after
-                                               the script: ..."), or the
-                                               exception that ended the task.
+                                               refused injection ("injecting
+                                               `<command>` before the script:
+                                               ..."), of a --hotvar/--failvar
+                                               read-back ("reading --hotvar
+                                               <name> after the script: ..."),
+                                               or the exception that ended the
+                                               task.
                                                Empty for a timeout, and for a
                                                POT_BUILD_FAIL the slot already
                                                reported this iteration.         */
@@ -129,9 +147,10 @@ struct PcTaskResult {
                                                was read                         */
   std::vector<std::string> hotvar_values;   /* OK only; one per hotvar name; ""
                                                when undefined                   */
-  std::vector<std::string> failvar_values;  /* OK and RUN_FAIL; one per failvar
-                                               name; "" when undefined or
-                                               unreadable. A parseable value
+  std::vector<std::string> failvar_values;  /* OK and RUN_FAIL (empty when the
+                                               script did not run); one per
+                                               failvar name; "" when undefined
+                                               or unreadable. A parseable value
                                                > 0 classifies the sim band B
                                                (parent-side).                   */
   double create_ms = 0.0;
@@ -269,9 +288,25 @@ PcTaskResult execute_script_task_unguarded(
   auto& lmp = cache_it->second.lmp;
   auto t_create1 = std::chrono::high_resolution_clock::now();
 
-  /* --- Injections (pre-formatted command lines; failures swallowed) ----- */
+  /* --- Injections (pre-formatted command lines, the hot values) ---------
+   * One LAMMPS refuses fails the task (see the header comment): the script
+   * does not run, and nothing is read back, since the instance's variables
+   * are an earlier evaluation's. */
   for (const auto& cmd : inject_lines) {
-    try { lmp->input->one(cmd.c_str()); } catch (...) { /* keep going */ }
+    try {
+      lmp->input->one(cmd.c_str());
+    } catch (const std::exception& e) {
+      res.status = PcTaskStatus::RUN_FAIL;
+      res.error_msg = "injecting `" + cmd + "` before the script: " +
+                      pc_trim_message(e.what());
+      res.create_ms = std::chrono::duration<double, std::milli>(
+                          t_create1 - t_create0).count();
+      res.run_ms = std::chrono::duration<double, std::milli>(
+                       std::chrono::high_resolution_clock::now() - t_create1)
+                       .count();
+      st.lmp_cache.erase(cache_it);
+      return res;
+    }
   }
 
   /* --- Trial potential: one LammpsTadah per (slot, iter) (O1a) ---------- */

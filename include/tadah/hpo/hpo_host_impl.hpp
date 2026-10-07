@@ -1633,9 +1633,10 @@ void HPO_Host<P,R>::fill_validation(Result& r,
  *   WAVE 2    Run the hot-DEPENDENT cold scripts. If wave 1 aborted, ALL cold
  *             outputs (independent ones included) are clamped to failscore.
  *             Otherwise every value collected in wave 1 is injected as
- *             `variable <name> string <value>` before each dependent cold
- *             script, so it reads `${<name>}` to get the freshly computed hot
- *             value from THIS eval.
+ *             `variable <name> equal <value>` (format_hot_inject) before
+ *             each dependent cold script, so it reads `${<name>}` to get the
+ *             freshly computed hot value from THIS eval. An injection LAMMPS
+ *             refuses fails that script (execute_script_task).
  *
  * No --hotvar lines means wave 1 is all scripts (all classified independent)
  * and wave 2 is empty -- identical to the pre-hotvar single parallel wave. */
@@ -1915,10 +1916,10 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     /* D17: say WHY the task failed, in both PC_ISOLATION modes.
      *
      * error_msg carries the cause from execute_script_task -- the LAMMPS
-     * message of an error inside the script or of a variable read back
-     * after it, the potential's construction error, the exception that
-     * ended the task -- or, for a --varloss read-back, from the block
-     * above. It used to be read by nobody, and an error inside the script
+     * message of an error inside the script, of a hot value it refused to
+     * inject or of a variable read back after it, the potential's
+     * construction error, the exception that ended the task -- or, for a
+     * --varloss read-back, from the block above. It used to be read by nobody, and an error inside the script
      * had no message at all, so such failures left only a number. Only
      * the statuses whose text originates with the task are surfaced here:
      * KILLED carries the parent's own reason, which kill_reap_locked has
