@@ -20,8 +20,10 @@
 
 #include <Eigen/Dense>
 
+#include <algorithm>
 #include <cmath>
 #include <string>
+#include <utility>
 #include <vector>
 
 using tadah::LossFunction;
@@ -74,6 +76,17 @@ struct Synth {
         return c;
     }
 };
+
+/* The direct theta term of a script whose n_theta theta enter only through
+ * the weights: zero (dg/dtheta and dF/dtheta at fixed W). */
+void theta_only_through_w(SimsGradScriptInput& in, std::size_t n_theta)
+{
+    in.direct_theta = true;
+    in.dg_dtheta.assign(in.expressions.size() * n_theta, 0.0);
+    in.dF_dtheta.assign(
+        n_theta * static_cast<std::size_t>(3 * in.ctx.nlocal + in.ctx.box_dofs),
+        0.0);
+}
 
 }  // namespace
 
@@ -303,6 +316,9 @@ TEST_CASE("sims_grad — compute_sims_grad_dWchain end-to-end on pilot-shaped "
     in.t_targets   = {0.5};
     in.w_weights   = {1.0};
     in.loss_fns    = {LossFunction(LossFunction::Type::L2)};
+    /* These θ enter only through W ("matches FD over W"): no direct term.
+     * (The chain routes every θ to FD for a script that does not say so.) */
+    theta_only_through_w(in, 2);
 
     /* 2 θ rows that map to two distinct g_out slots. n_cols = n_desc. */
     std::vector<double> dWdtheta(2 * s.n_desc, 0.0);
@@ -357,6 +373,8 @@ TEST_CASE("sims_grad — compute_sims_grad_dWchain routes ALL θ to needs_fd "
     in.t_targets   = {0.0};
     in.w_weights   = {1.0};
     in.loss_fns    = {LossFunction(LossFunction::Type::L2)};
+    /* A direct term given, so that the expression is what fails. */
+    theta_only_through_w(in, 1);
 
     std::vector<double> dWdtheta(s.n_desc, 0.5);
     std::vector<int>    theta_row_to_g_idx = {0};
@@ -398,6 +416,7 @@ TEST_CASE("sims_grad — compute_sims_grad_dWchain skips failed=true entries "
     good.t_targets   = {0.5};
     good.w_weights   = {1.0};
     good.loss_fns    = {LossFunction(LossFunction::Type::L2)};
+    theta_only_through_w(good, 2);   /* θ only through W */
 
     /* Failed script: would be rejected outright by the chain helper
      * (`v_unknown/...`) but `failed=true` masks the whole entry, so
@@ -917,6 +936,337 @@ TEST_CASE("sims_grad — compute_sims_grad_for_script propagates dvirial_dW",
     CHECK(dL_dW(0) == Approx(4.0 * 1.5));
     CHECK(dL_dW(1) == Approx(4.0 * -2.0));
     CHECK(dL_dW(2) == Approx(4.0 * 0.5));
+}
+
+// ---------------------------------------------------------------------------
+// The direct theta term of the PC_LAMMPS chain
+// ---------------------------------------------------------------------------
+//
+// A theta that is a descriptor parameter changes the energy and the forces
+// at the same weights. The chain's dO_k/dtheta_r is
+//   (dg_k/dW + lambda_k . dF/dW) . dW/dtheta_r
+//     + dg_k/dtheta_r + lambda_k . dF/dtheta_r      (H lambda_k = dg_k/dx),
+// the last two at fixed x* and W: the direct term, which the provider gives
+// as SimsGradScriptInput::dg_dtheta and dF_dtheta. The stub below is a
+// relaxed state where everything is analytic, so the chain can be checked
+// against central differences of the loss over theta, re-relaxing the stub.
+
+namespace {
+
+/* Two atoms and an iso box DOF: generalised coordinates q in R^7 (six atom
+ * coordinates, then the strain of the box: lx = lx0 (1 + q_6)). Three
+ * descriptors
+ *   D_c(q; theta) = d_c(theta) + a_c(theta) . q + q . B_c q / 2,
+ * d_c and a_c linear in two theta, B_c fixed and positive definite, and the
+ * weights W(theta) quadratic. The energy E = sum_c W_c D_c relaxes to
+ *   q*(theta) = -H^-1 sum_c W_c a_c(theta),   H = sum_c W_c B_c,
+ * which is 0 at theta0 (a_2 balances a_0 and a_1 there), the state the chain
+ * input describes. The generalised force is F = -dE/dq: its atom rows are
+ * dF_dW's, its box row dvirial_dW's sign. */
+struct DirectThetaStub {
+    static constexpr int nlocal = 2;
+    static constexpr int natoms = 2;
+    static constexpr int n_desc = 3;
+    static constexpr int n_theta = 2;
+    static constexpr int n = 3 * nlocal + 1;
+    const double lx0 = 3.3;
+    Eigen::Vector2d theta0{0.4, -0.7};
+
+    Eigen::VectorXd W0{n_desc}, d0{n_desc};
+    Eigen::MatrixXd W1{n_desc, n_theta};   /* dW/dtheta at theta0 */
+    Eigen::MatrixXd W2{n_desc, n_theta};   /* d2W/dtheta_r^2 */
+    Eigen::MatrixXd Ed{n_desc, n_theta};   /* dd_c/dtheta_r */
+    std::vector<Eigen::VectorXd> a0;       /* a_c(theta0) */
+    std::vector<std::vector<Eigen::VectorXd>> U;   /* da_c/dtheta_r */
+    std::vector<Eigen::MatrixXd> B;
+
+    DirectThetaStub()
+    {
+        W0 << 1.3, -0.6, 0.9;
+        d0 << -2.1, 0.8, 1.7;
+        W1 << 0.25, -0.40, 0.10, 0.35, -0.20, 0.15;
+        W2 << 0.05, -0.03, 0.02, 0.04, -0.01, 0.06;
+        Ed << 0.7, -0.2, -0.5, 0.9, 0.3, 0.4;
+        a0.assign(n_desc, Eigen::VectorXd::Zero(n));
+        U.assign(n_desc, std::vector<Eigen::VectorXd>(n_theta,
+                                                      Eigen::VectorXd::Zero(n)));
+        B.assign(n_desc, Eigen::MatrixXd::Zero(n, n));
+        for (int i = 0; i < n; ++i) {
+            a0[0](i) = 0.30 + 0.05 * i;
+            a0[1](i) = -0.20 + 0.07 * i * i - 0.1 * (i % 3);
+            for (int c = 0; c < n_desc; ++c)
+                for (int r = 0; r < n_theta; ++r)
+                    U[c][r](i) = 0.1 * (c + 1) * (r == 0 ? 1.0 : -0.6) +
+                                 0.03 * i * (r + 1) - 0.02 * c * i;
+        }
+        a0[2] = -(W0(0) * a0[0] + W0(1) * a0[1]) / W0(2);
+        for (int c = 0; c < n_desc; ++c) {
+            B[c] = Eigen::MatrixXd::Identity(n, n) * (2.0 + 0.5 * c);
+            for (int i = 0; i + 1 < n; ++i)
+                B[c](i, i + 1) = B[c](i + 1, i) = 0.1 * (c + 1);
+        }
+        /* W0(1) < 0, yet H = sum_c W_c B_c is positive definite (its
+         * diagonal 3.8, its off-diagonal 0.28 at theta0). */
+    }
+
+    Eigen::VectorXd W(const Eigen::Vector2d& th) const
+    {
+        const Eigen::Vector2d dt = th - theta0;
+        return W0 + W1 * dt + 0.5 * (W2 * dt.cwiseProduct(dt));
+    }
+    Eigen::VectorXd a(int c, const Eigen::Vector2d& th) const
+    {
+        const Eigen::Vector2d dt = th - theta0;
+        return a0[c] + U[c][0] * dt(0) + U[c][1] * dt(1);
+    }
+    double d(int c, const Eigen::Vector2d& th) const
+    {
+        return d0(c) + Ed.row(c).dot(th - theta0);
+    }
+
+    /* The relaxed state at theta: q* and the energy there. */
+    std::pair<Eigen::VectorXd, double> relax(const Eigen::Vector2d& th) const
+    {
+        const Eigen::VectorXd w = W(th);
+        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(n, n);
+        Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n);
+        for (int c = 0; c < n_desc; ++c) {
+            H += w(c) * B[c];
+            rhs -= w(c) * a(c, th);
+        }
+        const Eigen::VectorXd q = H.ldlt().solve(rhs);
+        double E = 0.0;
+        for (int c = 0; c < n_desc; ++c)
+            E += w(c) * (d(c, th) + a(c, th).dot(q) + 0.5 * q.dot(B[c] * q));
+        return {q, E};
+    }
+    double cohesive(const Eigen::Vector2d& th) const
+    {
+        return relax(th).second / natoms;
+    }
+    double lx(const Eigen::Vector2d& th) const
+    {
+        return lx0 * (1.0 + relax(th).first(n - 1));
+    }
+
+    /* The snapshot at theta0, as pair_tadah and the Hessian assembler would
+     * give it, held for the input's pointers. */
+    tadah::core::aeds_type2 aeds{n_desc, nlocal};
+    std::vector<double> dF_dW, dvirial_dW;
+    Eigen::MatrixXd H0;
+    void snapshot()
+    {
+        for (int c = 0; c < n_desc; ++c)
+            for (int at = 0; at < nlocal; ++at)
+                aeds(c, at) = d0(c) / nlocal;   /* sum: D_c(q* = 0) */
+        dF_dW.assign(static_cast<std::size_t>(3 * nlocal * n_desc), 0.0);
+        dvirial_dW.assign(n_desc, 0.0);
+        H0 = Eigen::MatrixXd::Zero(n, n);
+        for (int c = 0; c < n_desc; ++c) {
+            for (int i = 0; i < 3 * nlocal; ++i)
+                dF_dW[static_cast<std::size_t>(i * n_desc + c)] = -a0[c](i);
+            dvirial_dW[c] = -a0[c](n - 1);
+            H0 += W0(c) * B[c];
+        }
+    }
+
+    struct Term { std::string expr; double target, weight; };
+    double value(const Term& t, const Eigen::Vector2d& th) const
+    {
+        return t.expr == "lx" ? lx(th) : cohesive(th);
+    }
+
+    /* The chain input at theta0 for `terms` (L2 losses), with the direct
+     * term when `direct`. */
+    SimsGradScriptInput input(const std::vector<Term>& terms, bool direct)
+    {
+        snapshot();
+        SimsGradScriptInput in;
+        in.ctx.nlocal = nlocal;
+        in.ctx.natoms = natoms;
+        in.ctx.n_desc = n_desc;
+        in.ctx.box_dofs = 1;
+        in.ctx.aeds = &aeds;
+        in.ctx.lx = in.ctx.ly = in.ctx.lz = lx0;
+        in.H = H0;
+        in.dF_dW = dF_dW.data();
+        in.dvirial_dW = dvirial_dW.data();
+        in.box_dofs = 1;
+        for (const auto& t : terms) {
+            in.expressions.push_back(t.expr);
+            in.v_observed.push_back(value(t, theta0));
+            in.t_targets.push_back(t.target);
+            in.w_weights.push_back(t.weight);
+            in.loss_fns.push_back(LossFunction(LossFunction::Type::L2));
+        }
+        if (direct) {
+            in.direct_theta = true;
+            in.dg_dtheta.assign(terms.size() * n_theta, 0.0);
+            for (std::size_t k = 0; k < terms.size(); ++k)
+                for (int r = 0; r < n_theta; ++r)
+                    in.dg_dtheta[k * n_theta + r] =
+                        terms[k].expr == "lx" ? 0.0
+                                              : W0.dot(Ed.col(r)) / natoms;
+            in.dF_dtheta.assign(static_cast<std::size_t>(n_theta * n), 0.0);
+            for (int r = 0; r < n_theta; ++r)
+                for (int c = 0; c < n_desc; ++c)
+                    for (int i = 0; i < n; ++i)
+                        in.dF_dtheta[static_cast<std::size_t>(r * n + i)] -=
+                            W0(c) * U[c][r](i);
+        }
+        return in;
+    }
+    /* dW/dtheta, row-major n_theta x n_desc. */
+    std::vector<double> dWdtheta() const
+    {
+        std::vector<double> m(n_theta * n_desc);
+        for (int r = 0; r < n_theta; ++r)
+            for (int c = 0; c < n_desc; ++c)
+                m[r * n_desc + c] = W1(c, r);
+        return m;
+    }
+    /* dL/dtheta_r by central differences of the loss, re-relaxing. */
+    double fd(const std::vector<Term>& terms, int r, double h) const
+    {
+        const auto loss = [&](const Eigen::Vector2d& th) {
+            double L = 0.0;
+            for (const auto& t : terms)
+                L += LossFunction(LossFunction::Type::L2)
+                         .loss(value(t, th), t.target, t.weight);
+            return L;
+        };
+        Eigen::Vector2d p = theta0, m = theta0;
+        p(r) += h;
+        m(r) -= h;
+        return (loss(p) - loss(m)) / (2.0 * h);
+    }
+};
+
+}  // namespace
+
+TEST_CASE("sims_grad — compute_sims_grad_dWchain adds the direct theta term "
+          "and matches central differences of the loss where theta enters the "
+          "energy and the forces at fixed weights",
+          "[sims_grad][phase3][direct_theta]")
+{
+    /* Pins: for the cohesive energy alone (lambda = 0: its direct term is
+     * dE/dtheta / N at fixed W), the lattice constant alone (lambda != 0:
+     * lambda . dF/dtheta) and both in one script, g_out of each theta row --
+     * mapped to the swapped slots {1, 0} -- equals the central difference
+     * of the loss (h = 1e-5; the chain is exact at theta0, the difference
+     * has an O(h^2) error: measured below 1e-9 relative, the tolerance is
+     * 1e-7), and the direct term is a sizeable part of it (the chain
+     * through W alone is off by more than 10 %).
+     * Before the fix: SimsGradScriptInput has no direct term (dg_dtheta,
+     * dF_dtheta, direct_theta): the case does not compile; the chain gave
+     * the W path only, which misses the central differences by the
+     * direct term (tmp/before_fix_hc3_chain_fd.txt). */
+    using Term = DirectThetaStub::Term;
+    const std::vector<std::pair<std::string, std::vector<Term>>> sets = {
+        {"cohesive energy", {{"c_eatoms/atoms", -1.5, 1.0}}},
+        {"lattice constant", {{"lx", 3.2, 2.0}}},
+        {"both", {{"c_eatoms/atoms", -1.5, 1.0}, {"lx", 3.2, 2.0}}}};
+    for (const auto& set : sets) {
+        DYNAMIC_SECTION(set.first) {
+            DirectThetaStub stub;
+            const std::vector<double> dWdtheta = stub.dWdtheta();
+            const std::vector<int> theta_row_to_g_idx = {1, 0};
+
+            std::vector<double> g(2, 0.0);
+            std::vector<int>    needs_fd;
+            REQUIRE(compute_sims_grad_dWchain(
+                {stub.input(set.second, /*direct=*/true)}, dWdtheta,
+                DirectThetaStub::n_desc, theta_row_to_g_idx, {0, 1}, g,
+                needs_fd));
+            CHECK(needs_fd.empty());
+
+            /* The W path alone: the direct term given as zero. */
+            SimsGradScriptInput w_only = stub.input(set.second, true);
+            std::fill(w_only.dg_dtheta.begin(), w_only.dg_dtheta.end(), 0.0);
+            std::fill(w_only.dF_dtheta.begin(), w_only.dF_dtheta.end(), 0.0);
+            std::vector<double> g_w(2, 0.0);
+            REQUIRE(compute_sims_grad_dWchain({w_only}, dWdtheta,
+                                              DirectThetaStub::n_desc,
+                                              theta_row_to_g_idx, {0, 1}, g_w,
+                                              needs_fd));
+
+            for (int r = 0; r < DirectThetaStub::n_theta; ++r) {
+                const double fd = stub.fd(set.second, r, 1e-5);
+                const double chain = g[theta_row_to_g_idx[r]];
+                const double w_path = g_w[theta_row_to_g_idx[r]];
+                INFO("theta row " << r << ": chain " << chain << ", FD " << fd
+                     << ", W path " << w_path);
+                CHECK(std::abs(chain - fd) <= 1e-7 * std::abs(fd));
+                CHECK(std::abs(w_path - fd) > 0.1 * std::abs(fd));
+            }
+        }
+    }
+}
+
+TEST_CASE("sims_grad — compute_sims_grad_dWchain routes every theta to "
+          "finite differences for a script without the direct theta term",
+          "[sims_grad][phase3][direct_theta]")
+{
+    /* The provider must say what theta does at fixed W (direct_theta); a
+     * script with observables that does not is a structural failure, like
+     * an unknown expression: every theta to needs_fd, false, g_out
+     * untouched. A script without observables has nothing to
+     * differentiate and needs none.
+     * Pins: false, needs_fd == {0, 1, 2}, g_out {5, -3} unchanged; with the
+     * observables cleared, true and g_out unchanged.
+     * Before the fix: true, needs_fd empty, and g_out took the W path alone
+     * (the chain had no direct term to ask for). */
+    DirectThetaStub stub;
+    SimsGradScriptInput in =
+        stub.input({{"c_eatoms/atoms", -1.5, 1.0}, {"lx", 3.2, 2.0}},
+                   /*direct=*/false);
+    std::vector<double> g = {5.0, -3.0};
+    std::vector<int>    needs_fd;
+    CHECK_FALSE(compute_sims_grad_dWchain({in}, stub.dWdtheta(),
+                                          DirectThetaStub::n_desc, {0, 1},
+                                          {0, 1, 2}, g, needs_fd));
+    CHECK(needs_fd == std::vector<int>{0, 1, 2});
+    CHECK(g == std::vector<double>{5.0, -3.0});
+
+    in.expressions.clear();
+    in.v_observed.clear();
+    in.t_targets.clear();
+    in.w_weights.clear();
+    in.loss_fns.clear();
+    needs_fd.clear();
+    CHECK(compute_sims_grad_dWchain({in}, stub.dWdtheta(),
+                                    DirectThetaStub::n_desc, {0, 1}, {0, 1, 2},
+                                    g, needs_fd));
+    CHECK(needs_fd.empty());
+    CHECK(g == std::vector<double>{5.0, -3.0});
+}
+
+TEST_CASE("sims_grad — compute_sims_grad_dWchain rejects a direct theta term "
+          "that does not match the observables, the theta rows or the "
+          "generalised coordinates",
+          "[sims_grad][phase3][direct_theta]")
+{
+    /* Pins: a dg_dtheta of other than k x n_theta values or a dF_dtheta of
+     * other than n_theta x (3 nlocal + box_dofs) throws, naming the field.
+     * Before the fix: the fields do not exist (the case does not
+     * compile). */
+    DirectThetaStub stub;
+    const std::vector<DirectThetaStub::Term> terms = {
+        {"c_eatoms/atoms", -1.5, 1.0}, {"lx", 3.2, 2.0}};
+    std::vector<double> g(2, 0.0);
+    std::vector<int>    needs_fd;
+    SimsGradScriptInput in = stub.input(terms, true);
+    in.dg_dtheta.pop_back();
+    CHECK_THROWS_WITH(compute_sims_grad_dWchain({in}, stub.dWdtheta(),
+                                                DirectThetaStub::n_desc, {0, 1},
+                                                {0, 1}, g, needs_fd),
+                      Catch::Contains("dg_dtheta"));
+    in = stub.input(terms, true);
+    in.dF_dtheta.push_back(0.0);
+    CHECK_THROWS_WITH(compute_sims_grad_dWchain({in}, stub.dWdtheta(),
+                                                DirectThetaStub::n_desc, {0, 1},
+                                                {0, 1}, g, needs_fd),
+                      Catch::Contains("dF_dtheta"));
 }
 
 // ---------------------------------------------------------------------------

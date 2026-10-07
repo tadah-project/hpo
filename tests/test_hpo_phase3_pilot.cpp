@@ -269,6 +269,14 @@ TEST_CASE("phase3_pilot — chain rule on cohesive E per atom matches "
     std::vector<int> all_theta_indices(n_desc);
     for (int r = 0; r < n_desc; ++r) all_theta_indices[r] = r;
 
+    /* θ = W (identity dW/dθ): θ has no effect at fixed W, so the direct θ
+     * term is zero, which the input states. */
+    in.direct_theta = true;
+    in.dg_dtheta.assign(in.expressions.size() * n_desc, 0.0);
+    in.dF_dtheta.assign(static_cast<std::size_t>(n_desc) *
+                            (3 * in.ctx.nlocal + in.ctx.box_dofs),
+                        0.0);
+
     std::vector<double> g_out(n_desc, 0.0);
     std::vector<int>    needs_fd;
     REQUIRE(tadah::hpo::compute_sims_grad_dWchain(
@@ -1144,6 +1152,14 @@ TEST_CASE("phase3_orchestrator — SimsGradProvider lambda body matches "
     std::vector<int> all_theta_indices(n_desc);
     for (int r = 0; r < n_desc; ++r) all_theta_indices[r] = r;
 
+    /* θ = W (identity dW/dθ): θ has no effect at fixed W, so the direct θ
+     * term is zero, which the input states. */
+    in.direct_theta = true;
+    in.dg_dtheta.assign(in.expressions.size() * n_desc, 0.0);
+    in.dF_dtheta.assign(static_cast<std::size_t>(n_desc) *
+                            (3 * in.ctx.nlocal + in.ctx.box_dofs),
+                        0.0);
+
     std::vector<double> g_out(n_desc, 0.0);
     std::vector<int>    needs_fd;
     REQUIRE(tadah::hpo::compute_sims_grad_dWchain(
@@ -1302,6 +1318,14 @@ TEST_CASE("phase3_orchestrator — hot-var script analytical path: "
     for (int r = 0; r < n_desc; ++r) theta_row_to_g_idx[r] = r;
     std::vector<int> all_theta_indices(n_desc);
     for (int r = 0; r < n_desc; ++r) all_theta_indices[r] = r;
+
+    /* θ = W (identity dW/dθ): θ has no effect at fixed W, so the direct θ
+     * term is zero, which the input states. */
+    in.direct_theta = true;
+    in.dg_dtheta.assign(in.expressions.size() * n_desc, 0.0);
+    in.dF_dtheta.assign(static_cast<std::size_t>(n_desc) *
+                            (3 * in.ctx.nlocal + in.ctx.box_dofs),
+                        0.0);
 
     std::vector<double> g_out(n_desc, 0.0);
     std::vector<int>    needs_fd;
