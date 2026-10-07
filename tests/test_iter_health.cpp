@@ -215,6 +215,41 @@ TEST_CASE("iter_health: a layout that does not describe the weights is "
   CHECK(mon.warning_count(1, "max_abs") == 0);
 }
 
+/* Pins: a layout of as many columns as weights whose blocks do not
+ * partition them (block 1 starts at column 5, after a column no block
+ * owns) is reported for what it is: weights_have_nan_inf false, and
+ * record() in full mode prints "iter_health: eval 3 -- the column layout
+ * of the model's 10 weights is not contiguous from column 0: the per-block
+ * checks are skipped." and no block warning.
+ * Before the fix: the message gave both counts, "the model has 10 weights
+ * but its column layout has 10 columns", which says no mismatch. */
+TEST_CASE("iter_health: a layout whose blocks do not partition the weights "
+          "is reported as such", "[iter_health]") {
+  ColumnLayout layout;
+  ColumnBlock a; a.descriptor_label = "D2"; a.col_offset = 0; a.col_count = 4;
+  ColumnBlock b; b.descriptor_label = "DM"; b.col_offset = 5; b.col_count = 6;
+  layout.blocks.push_back(a);
+  layout.blocks.push_back(b);
+  t_type w(10);
+  for (std::size_t i = 0; i < 10; ++i) w[i] = 0.0;
+  auto rec = compute_iter_health(3, w, layout);
+  CHECK_FALSE(rec.weights_have_nan_inf);
+
+  IterHealthMonitor mon(HealthLogMode::Full);
+  std::string printed;
+  {
+    LoggerCapture cap;
+    mon.record(rec, layout);
+    printed = cap.text();
+  }
+  INFO(printed);
+  CHECK(printed.find("iter_health: eval 3 -- the column layout of the "
+                     "model's 10 weights is not contiguous from column 0: "
+                     "the per-block checks are skipped.") != std::string::npos);
+  CHECK(mon.warning_count(0, "max_abs") == 0);
+  CHECK(mon.warning_count(1, "max_abs") == 0);
+}
+
 /* Pins: one monitor recorded from 8 threads at once, as HPO_Host's
  * concurrent evaluations (ANNEAL_PT/PA replicas, DLIB:GFS batches) record
  * into the process' monitor, 400 records each of a dead DM block in full
