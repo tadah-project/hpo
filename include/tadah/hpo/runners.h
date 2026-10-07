@@ -152,6 +152,14 @@ class LammpsRunner {
    * (core::format_roundtrip) -- not LAMMPS' own "%.15g" string. Every
    * other style is returned verbatim; an undefined variable gives "".
    *
+   * Each read starts by clearing the in-progress marks of LAMMPS's
+   * variables (Variable::clear_in_progress, as `clear` does): it is a
+   * top-level evaluation, so a mark it finds was left by a LAMMPS error in
+   * an earlier evaluation -- an earlier read, or a command of the script --
+   * and would turn the read of any variable that reaches the interrupted
+   * one into a false "has a circular dependency". A variable that depends
+   * on one that cannot be read therefore raises that one's error again.
+   *
    * @param lmp_ptr Unique pointer to a LAMMPS instance.
    * @param varname Name of the variable to retrieve.
    * @return String representation of the requested variable.
@@ -159,9 +167,11 @@ class LammpsRunner {
    * @throws LAMMPS_NS::LAMMPSException (or LAMMPSAbortException) when
    *         evaluating the formula raises a LAMMPS error: a thermo keyword
    *         the thermo_style does not compute, a divide by zero, a compute
-   *         that is not current. The instance keeps evaluation state that
-   *         only `clear` or a redefinition resets, so a caller that caches
-   *         instances discards it (pc_task_exec.h).
+   *         that is not current. The error can leave the instance with
+   *         state that only `clear` or a redefinition resets (the marks of
+   *         the interrupted evaluation, which the next script would meet
+   *         before any `clear`; a compute interrupted mid-evaluation), so a
+   *         caller that caches instances discards it (pc_task_exec.h).
    */
   std::string get_variable(const LMPPtr& lmp_ptr,
                            const std::string& varname) const;

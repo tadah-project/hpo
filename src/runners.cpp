@@ -220,6 +220,16 @@ LammpsRunner::get_variable(const LammpsRunner::LMPPtr& lmp_ptr,
   const int ivar = var->find(varname.c_str());
   if (ivar < 0) return std::string();
 
+  // A read is a top-level evaluation: no LAMMPS evaluation is in progress
+  // when it starts. A LAMMPS error raised during an earlier one -- an
+  // earlier read, or a command of the script -- left the variables of that
+  // evaluation marked as being evaluated (Variable::eval_in_progress, reset
+  // only by `clear` or a redefinition), and a read that reached one of them
+  // would raise "Variable ...: has a circular dependency" instead of that
+  // variable's own error. Clear the marks first, as `clear` does; a real
+  // circular dependency is still found while this read evaluates.
+  var->clear_in_progress();
+
   // Numeric (equal-style: EQUAL, TIMER, INTERNAL, numeric PYTHON): read the
   // DOUBLE and render it losslessly. retrieve() would format it with
   // "%.15g", losing up to ~2 digits of every observable, hot value and

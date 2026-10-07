@@ -49,21 +49,26 @@
  * script's thermo_style does not compute (`variable P equal press` under
  * `thermo_style custom step pe`), a divide by zero for one candidate, a
  * compute that is not current. Each variable is read on its own and an
- * error stays with it:
+ * error stays with it -- LammpsRunner::get_variable clears the in-progress
+ * marks an earlier error left, so a variable that reads an unreadable one
+ * raises that one's LAMMPS error, not a false circular dependency:
  *   - an outvar (the names of --varloss and --outvar) is returned "" with
  *     its LAMMPS message in outvar_errors; which of them feed the loss is
  *     the parent's knowledge, so failing the task for one is the parent's
  *     call (apply_task_result in hpo_host_impl.hpp: a --varloss variable
  *     fails the task, a diagnostic --outvar is NaN);
  *   - a --hotvar or --failvar fails the task here: RUN_FAIL, error_msg
- *     "reading --hotvar <name> after the script: <LAMMPS message>", no
- *     outvar or hot value handed on (the failvars stay, for grading).
+ *     "reading --hotvar <name> after the script: <LAMMPS message>" for the
+ *     first one, no outvar or hot value handed on (the failvars stay, for
+ *     grading).
  * Every variable is read either way (after a failed run only the
  * failvars, for grading), and an instance that raised a read-back error is
  * discarded, like one whose script raised one: the error leaves evaluation
  * state that only `clear` or a redefinition resets (the variables of the
- * interrupted evaluation stay marked in progress), and a script need not
- * start with `clear` or redefine them.
+ * interrupted evaluation stay marked in progress, which get_variable
+ * clears for its own reads but the next script would meet; a compute
+ * interrupted mid-evaluation), and a script need not start with `clear` or
+ * redefine them.
  *
  * Guard: execute_script_task never throws. An exception that escapes the
  * steps above -- each LAMMPS call in them is handled, so this is defence
