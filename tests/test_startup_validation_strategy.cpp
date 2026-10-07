@@ -1257,12 +1257,6 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused by hpo_run "
           "before it loads any data",
           "[startup_validation][strategy][e2e][refused]")
 {
-    struct ForceRebuild {
-        bool restore = std::getenv("TADAH_HPO_FORCE_REBUILD") == nullptr;
-        ForceRebuild() { if (restore) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1); }
-        ~ForceRebuild() { if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD"); }
-    } force_rebuild;
-
     /* Pins: hpo_run() stops at the ENDOPTIMIZER line (line 8 of this
      * config.hpo), before any data is loaded or any evaluation runs, and
      * journals the refusal, a two-line block with the line's text (run_hpo

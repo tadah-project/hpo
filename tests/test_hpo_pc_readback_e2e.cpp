@@ -87,19 +87,6 @@ struct ScratchDir {
     }
 };
 
-/* A trainer built for this host, not one another case left in the
- * thread-local cache. */
-struct ForceRebuildGuard {
-    bool restore;
-    ForceRebuildGuard() {
-        restore = std::getenv("TADAH_HPO_FORCE_REBUILD") == nullptr;
-        if (restore) ::setenv("TADAH_HPO_FORCE_REBUILD", "1", 1);
-    }
-    ~ForceRebuildGuard() {
-        if (restore) ::unsetenv("TADAH_HPO_FORCE_REBUILD");
-    }
-};
-
 /* hpo_run.log in a temporary file, read back after finish(). */
 struct Journal {
     fs::path path;
@@ -331,7 +318,6 @@ TEST_CASE("an unreadable --varloss variable fails the evaluation, not the run",
     for (const ReadbackError& err : {kPressError, kDivideError}) {
         INFO("E = " << err.formula);
         Host::reset_globals_for_test();
-        ForceRebuildGuard rebuild;
         ScratchDir sd("tadah_pc_readback_");
         std::ofstream(sd.dir / "readback.in")
             << ta_script("3.301", std::string("variable E equal ") +
@@ -405,7 +391,6 @@ TEST_CASE("an unreadable diagnostic --outvar is NaN and the evaluation keeps "
     Table want_outv;
     {
         Host::reset_globals_for_test();
-        ForceRebuildGuard rebuild;
         ScratchDir sd("tadah_pc_readback_ref_");
         std::ofstream(sd.dir / "readback.in")
             << ta_script("3.301", "variable E equal pe\n"
@@ -423,7 +408,6 @@ TEST_CASE("an unreadable diagnostic --outvar is NaN and the evaluation keeps "
     for (const ReadbackError& err : {kPressError, kDivideError}) {
         INFO("Pend = " << err.formula);
         Host::reset_globals_for_test();
-        ForceRebuildGuard rebuild;
         ScratchDir sd("tadah_pc_readback_");
         std::ofstream(sd.dir / "readback.in")
             << ta_script("3.301", std::string("variable E equal pe\n"
@@ -489,7 +473,6 @@ TEST_CASE("an unreadable --hotvar fails the evaluation and the cold scripts "
           "do not run", "[pc_readback_e2e][.]") {
     tadah::core::PeriodicTable::initialize();
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     ScratchDir sd("tadah_pc_readback_hot_");
     std::ofstream(sd.dir / "hot.in")
         << ta_script("${hot_a0}", "variable E equal pe\n"
@@ -553,7 +536,6 @@ TEST_CASE("a variable that reads an unreadable one is journalled with its "
         {
             INFO("--outvar Pend --varloss Pdiff");
             Host::reset_globals_for_test();
-            ForceRebuildGuard rebuild;
             ScratchDir sd("tadah_pc_readback_dep_");
             std::ofstream(sd.dir / "readback.in")
                 << ta_script("3.301", std::string("variable Pend equal ") +
@@ -597,7 +579,6 @@ TEST_CASE("a variable that reads an unreadable one is journalled with its "
         {
             INFO("--outvar P --outvar Pgpa");
             Host::reset_globals_for_test();
-            ForceRebuildGuard rebuild;
             ScratchDir sd("tadah_pc_readback_derived_");
             std::ofstream(sd.dir / "readback.in")
                 << ta_script("3.301", std::string("variable E equal pe\n"
@@ -662,7 +643,6 @@ TEST_CASE("rows of an evaluation stopped before its simulations have the "
           "header's columns", "[pc_readback_e2e][.]") {
     tadah::core::PeriodicTable::initialize();
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     ScratchDir sd("tadah_pc_readback_rows_");
 
     SECTION("--skip-above before PC_LAMMPS") {
@@ -752,7 +732,6 @@ TEST_CASE("rows of a candidate rejected before training have the header's "
     using tadah::hpo::loss_is_feasible;
     tadah::core::PeriodicTable::initialize();
     Host::reset_globals_for_test();
-    ForceRebuildGuard rebuild;
     ScratchDir sd("tadah_pc_readback_gate_");
 
     const fs::path train = sd.dir / "train.db", hpo = sd.dir / "config.hpo",
@@ -870,8 +849,7 @@ int run_tadah_hpo(
     std::ofstream(dir / "config.hpo") << target << "PC_ISOLATION " << mode
                                       << "\n";
     const std::string cmd =
-        "cd '" + dir.string() + "' && env -u TADAH_PC_ISOLATION "
-        "TADAH_HPO_FORCE_REBUILD=1 '" + bin +
+        "cd '" + dir.string() + "' && env -u TADAH_PC_ISOLATION '" + bin +
         "' hpo -c config --hpotarget config.hpo --validation config.val"
         " > tadah.stdout 2> tadah.stderr";
     return std::system(cmd.c_str());
