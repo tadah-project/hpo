@@ -202,14 +202,11 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx) {
     const core::Context &pc = probe.context;
     const std::size_t K = probe.fb->get_phi_cols(pc);
     core::t_type w;
-    if (pc.has_stored("FIXINDEX") && pc.has_stored("FIXWEIGHT")) {
-      std::vector<std::string> fi(pc.size("FIXINDEX"));
-      pc.get("FIXINDEX", fi);
-      if (core::parse_indices(fi).size() == K) {
-        probe.provision_fixed_weights();
-        w = probe.model->get_weights();
-        out.source = "FIXWEIGHT";
-      }
+    if (pc.has_stored("FIXINDEX") && pc.has_stored("FIXWEIGHT") &&
+        core::parse_fixindex(pc, K).size() == K) {
+      probe.provision_fixed_weights();
+      w = probe.model->get_weights();
+      out.source = "FIXWEIGHT";
     }
     /* The -c potential's WEIGHTS: train_ctx's (the Trainer, which builds
      * a model to be fitted, reads none). */
@@ -588,44 +585,15 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     }
   }
 
-  /* --- FIXINDEX/FIXWEIGHT pairing + weight-source classification ------ */
-  if (has_fw || has_fi || !has_train_db) {
-    if (K > 0) {
-      /* classify_weight_source enforces: lone FIXINDEX/FIXWEIGHT, size
-       * mismatch, out-of-bounds indices, no-DB-without-pins and
-       * no-DB-with-partial-coverage — with actionable messages. */
-      (void)tadah::mlip::classify_weight_source(train_ctx, K);
-    } else {
-      /* A model without weights (K = 0): enforce what does not need K. */
-      if (has_fw != has_fi) {
-        throw std::runtime_error(
-            "FIXINDEX requires FIXWEIGHT (and vice versa). Provide both "
-            "keys with matching lengths; the i-th FIXWEIGHT value pins the "
-            "weight named by the i-th FIXINDEX entry. There is no "
-            "auto-seeding from WEIGHTS.");
-      }
-      if (has_fw && has_fi) {
-        std::vector<std::string> fi_str(train_ctx.size("FIXINDEX"));
-        train_ctx.get("FIXINDEX", fi_str);
-        const std::size_t n_idx = core::parse_indices(fi_str).size();
-        const std::size_t n_val = train_ctx.size("FIXWEIGHT");
-        if (n_idx != n_val) {
-          throw std::runtime_error(
-              "FIXINDEX names " + core::to_string(n_idx) +
-              " weights but FIXWEIGHT provides " + core::to_string(n_val) +
-              " values; they must pair 1:1 (the i-th value pins the i-th "
-              "index).");
-        }
-      }
-      if (!has_train_db && !has_fi) {
-        throw std::runtime_error(
-            "No training DBFILE and no FIXINDEX/FIXWEIGHT: the model "
-            "weights cannot be determined. Provide a DBFILE for "
-            "least-squares training, or pin every weight with "
-            "FIXINDEX/FIXWEIGHT.");
-      }
-    }
-  }
+  /* --- FIXINDEX/FIXWEIGHT pairing + weight-source classification ------
+   * classify_weight_source enforces what core::parse_fixindex refuses (a
+   * lone FIXINDEX/FIXWEIGHT, a malformed or descending entry, an index
+   * outside 1..K, a count other than FIXWEIGHT's, a weight named twice),
+   * no-DB-without-pins and no-DB-with-partial-coverage, with actionable
+   * messages. K >= 1: probe_model() above refuses a model without weights
+   * ("The descriptor size is 0"). */
+  if (has_fw || has_fi || !has_train_db)
+    (void)tadah::mlip::classify_weight_source(train_ctx, K);
 
   /* --- GRAD_STRATEGY ANALYTICAL needs the analytical gradient ----------
    * ANALYTICAL -- written out, or resolved from an unset GRAD_STRATEGY for
