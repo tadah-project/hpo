@@ -2900,8 +2900,15 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     stage_watchdog::leave(r.iter, "train", _stage_log);
 
     /* -- Per-iter health monitor (Phase 6) ---------------------------
-     * Cheap O(P) scan of the trained weights, partitioned by the
-     * design-matrix ColumnLayout. Off by default (singleton starts in
+     * Cheap O(P) scan of the weights the model now holds (fitted, or
+     * provisioned from FIXWEIGHT), partitioned by the column layout of
+     * the model's design matrix: the function's layout (phi_layout) of
+     * the descriptor layout, which DesignMatrix::build gives the matrix
+     * M_BLR and M_KRR fit (bias, D2 and DM blocks for a linear function;
+     * one block over all columns for a non-linear one, a kernel's over
+     * its basis vectors). It used to read Trainer::dm, which nothing
+     * builds -- the models fit their own design matrix -- so no
+     * evaluation was recorded. Off by default (singleton starts in
      * HealthLogMode::Off; hpo_run() flips it to summary unless
      * HEALTH_LOG=off). The aggregation cost is negligible against the
      * train+predict path that brackets it. */
@@ -2909,11 +2916,10 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         auto& mon = global_iter_health_monitor();
         if (mon.mode() != HealthLogMode::Off) {
             const auto& w = host.model->get_weights();
-            const auto& layout = host.dm.layout();
-            if (!layout.blocks.empty()) {
-                auto rec = compute_iter_health(r.iter, w, layout);
-                mon.record(rec, layout);
-            }
+            const mlip::ColumnLayout layout =
+                host.fb->phi_layout(host.dc.layout(host.context),
+                                    host.context);
+            mon.record(compute_iter_health(r.iter, w, layout), layout);
         }
     }
 

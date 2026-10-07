@@ -54,7 +54,23 @@ IterHealthRecord compute_iter_health(
     const tadah::mlip::ColumnLayout&       layout) {
   IterHealthRecord rec;
   rec.iter = iter;
+  rec.n_weights = weights.size();
+  rec.layout_cols = layout.total_cols();
+
+  // Every weight, inside a block or not, whatever the layout.
   rec.weights_have_nan_inf = false;
+  for (std::size_t c = 0; c < weights.size(); ++c)
+    if (!std::isfinite(weights[c])) {
+      rec.weights_have_nan_inf = true;
+      break;
+    }
+
+  // The blocks partition the weights only when the layout has as many
+  // columns as there are weights (validate(): contiguous from 0). A layout
+  // that does not describe them is reported (record()), not read: a block
+  // past the end of the weights used to be taken for NaN/Inf weights.
+  rec.layout_matches = layout.validate(weights.size()).empty();
+  if (!rec.layout_matches) return rec;
 
   const std::size_t nblocks = layout.blocks.size();
   rec.block_max_abs   .assign(nblocks, 0.0);
@@ -68,13 +84,6 @@ IterHealthRecord compute_iter_health(
     const auto& blk = layout.blocks[b];
     const std::size_t lo = blk.col_offset;
     const std::size_t hi = lo + blk.col_count;
-    if (hi > weights.size()) {
-      // Layout claims more columns than weights has -- record a NaN
-      // sentinel and continue. The pre-flight audit handles the
-      // structural check; here we just don't crash.
-      rec.weights_have_nan_inf = true;
-      continue;
-    }
     if (blk.col_count == 0) continue;
 
     scratch.clear();
@@ -83,7 +92,6 @@ IterHealthRecord compute_iter_health(
     std::size_t nz = 0;
     for (std::size_t c = lo; c < hi; ++c) {
       const double w = weights[c];
-      if (!std::isfinite(w)) rec.weights_have_nan_inf = true;
       const double aw = std::fabs(w);
       scratch.push_back(aw);
       if (aw > mx) mx = aw;
@@ -106,21 +114,30 @@ IterHealthRecord compute_iter_health(
 void IterHealthMonitor::record(
     const IterHealthRecord&         rec,
     const tadah::mlip::ColumnLayout& layout) {
-  if (mode_ == HealthLogMode::Off) return;
+  const HealthLogMode mode = this->mode();
+  if (mode == HealthLogMode::Off) return;
+
+  // Evaluations record concurrently: the maps, and the order of the
+  // warnings a key's cooldown decides, are under one lock.
+  std::lock_guard<std::mutex> lk(mtx_);
+
+  // Whether the cooldown of `key` lets this record warn; counts it if so.
+  auto take = [&](const std::string& key) {
+    auto& count = warning_counts_[key];
+    auto& last  = last_warned_iter_[key];
+    if (mode == HealthLogMode::Summary && count > 0 &&
+        rec.iter < last + window_) {
+      return false;
+    }
+    ++count;
+    last = rec.iter;
+    return true;
+  };
 
   auto maybe_warn = [&](std::size_t block_idx,
                         const std::string& kind,
                         const std::string& text) {
-    const std::string key =
-        std::to_string(block_idx) + ":" + kind;
-    auto& count = warning_counts_[key];
-    auto& last  = last_warned_iter_[key];
-    if (mode_ == HealthLogMode::Summary && count > 0 &&
-        rec.iter < last + window_) {
-      return;
-    }
-    ++count;
-    last = rec.iter;
+    if (!take(std::to_string(block_idx) + ":" + kind)) return;
     tadah::core::Logger::instance().log(
         tadah::core::LogLevel::WARNING,
         "iter_health: eval " + std::to_string(rec.iter) +
@@ -129,20 +146,24 @@ void IterHealthMonitor::record(
         kind + " -- " + text);
   };
 
-  // NaN/Inf is the only globally-emitted warning (no per-block index).
-  if (rec.weights_have_nan_inf) {
-    const std::string key = "*:nan_inf";
-    auto& count = warning_counts_[key];
-    auto& last  = last_warned_iter_[key];
-    if (!(mode_ == HealthLogMode::Summary && count > 0 &&
-          rec.iter < last + window_)) {
-      ++count;
-      last = rec.iter;
+  // NaN/Inf and a layout that does not describe the weights are the
+  // globally-emitted warnings (no per-block index).
+  if (rec.weights_have_nan_inf && take("*:nan_inf")) {
+    tadah::core::Logger::instance().log(
+        tadah::core::LogLevel::WARNING,
+        "iter_health: eval " + std::to_string(rec.iter) +
+        " -- weights contain NaN/Inf entries (training likely diverged).");
+  }
+  if (!rec.layout_matches) {
+    if (take("*:layout"))
       tadah::core::Logger::instance().log(
           tadah::core::LogLevel::WARNING,
           "iter_health: eval " + std::to_string(rec.iter) +
-          " -- weights contain NaN/Inf entries (training likely diverged).");
-    }
+          " -- the model has " + std::to_string(rec.n_weights) +
+          " weights but its column layout has " +
+          std::to_string(rec.layout_cols) +
+          " columns: the per-block checks are skipped.");
+    return;
   }
 
   // Per-block exact-zero blocks. block_max_abs == 0 means the regressor
@@ -168,12 +189,14 @@ std::size_t IterHealthMonitor::warning_count(
     std::size_t block_idx, const std::string& kind) const {
   const std::string key =
       std::to_string(block_idx) + ":" + kind;
+  std::lock_guard<std::mutex> lk(mtx_);
   auto it = warning_counts_.find(key);
   if (it == warning_counts_.end()) return 0;
   return it->second;
 }
 
 void IterHealthMonitor::clear_state() {
+  std::lock_guard<std::mutex> lk(mtx_);
   warning_counts_.clear();
   last_warned_iter_.clear();
 }
