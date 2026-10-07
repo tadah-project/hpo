@@ -1764,31 +1764,32 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
 
     /* D5: never index a wire-supplied vector on trust.
      *
-     * The outvar and hot-var loops below are bounded by the HOST's spec
-     * (lsim.n_outvar.size(), lsim.hotvars.size()) but read from vectors the
-     * WORKER produced. Under PC_ISOLATION PROCESS -- the default -- those
-     * arrive decoded from a socket with no arity check on either side, so a
-     * short vector is an out-of-bounds operator[]: plain undefined
-     * behaviour, and specifically NOT caught by the try/catch around the
-     * hot-var block, which only guards the number parse. The arities match by
-     * construction today (both sides build from the same spec table), so
-     * this can only fire on frame corruption or a version-skewed worker
-     * binary -- exactly the cases where UB is least acceptable and, because
-     * error_msg was discarded at the socket boundary, least visible.
+     * The outvar, hot-var and fail-var loops below are bounded by the
+     * HOST's spec (lsim.n_outvar.size(), lsim.hotvars.size(),
+     * lsim.failvars.size()) but read from vectors the WORKER produced. Under
+     * PC_ISOLATION PROCESS -- the default -- those arrive decoded from a
+     * socket with no arity check on either side, so a short vector is an
+     * out-of-bounds operator[]: plain undefined behaviour. The arities match
+     * by construction today (both sides build from the same spec table, and
+     * execute_script_task sizes every vector of an OK task), so this can
+     * only fire on frame corruption or a version-skewed worker binary --
+     * exactly the cases where UB is least acceptable and, because error_msg
+     * was discarded at the socket boundary, least visible.
      *
-     * One check covers both loops: marking the task failed sends the outvar
-     * loop down its failscore branch and skips the hot-var block entirely
-     * (it is already inside `if (!fail)`). Deliberately NOT done by
-     * shortening the loops to the received length -- that would silently
-     * skip hot-var range validation and let the cold phase run against a
-     * stale warm-start value, turning a detectable protocol fault into a
-     * wrong-but-finite loss. record_infra() is the same band-C grading the
-     * CREATE_FAIL path uses: infrastructure, not physics. The outvars'
-     * read-back errors are optional (empty when every outvar was read), and
-     * one per outvar when present. */
+     * One check covers every loop: marking the task failed sends the outvar
+     * loop down its failscore branch and skips the value checks and the
+     * hot-var block entirely (they run only `if (!fail)`). Deliberately NOT
+     * done by shortening the loops to the received length -- that would
+     * silently skip hot-var range validation and let the cold phase run
+     * against a stale warm-start value, turning a detectable protocol fault
+     * into a wrong-but-finite loss. record_infra() is the same band-C
+     * grading the CREATE_FAIL path uses: infrastructure, not physics. The
+     * outvars' read-back errors are optional (empty when every outvar was
+     * read), and one per outvar when present. */
     if (!fail &&
         (tres.outvar_values.size() < lsim.n_outvar.size() ||
          tres.hotvar_values.size() < lsim.hotvars.size() ||
+         tres.failvar_values.size() < lsim.failvars.size() ||
          (!tres.outvar_errors.empty() &&
           tres.outvar_errors.size() < lsim.n_outvar.size()))) {
       fail = true;
@@ -1800,32 +1801,59 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
           + std::to_string(tres.outvar_errors.size()) + "/"
           + std::to_string(lsim.n_outvar.size()) + " outvar errors, "
           + std::to_string(tres.hotvar_values.size()) + "/"
-          + std::to_string(lsim.hotvars.size())
-          + " hotvars -- treating the task as failed (protocol desync)");
+          + std::to_string(lsim.hotvars.size()) + " hotvars, "
+          + std::to_string(tres.failvar_values.size()) + "/"
+          + std::to_string(lsim.failvars.size())
+          + " failvars -- treating the task as failed (protocol desync)");
     }
 
-    /* Outvars that could not be read back. Reading a variable evaluates its
-     * formula after the script, and a LAMMPS error there (a thermo keyword
-     * the script's thermo_style does not compute, a divide by zero for this
-     * candidate) is reported per variable; the worker does not know which
-     * names feed the loss, so the policy is set here, alike in both
-     * PC_ISOLATION modes:
-     *   - a variable the line is for fails the task exactly as a failed run
-     *     does: its variables take --failscore, the evaluation is aborted
-     *     (a hot script's cold scripts do not run), the failvars grade band
-     *     B, and the D17 line below names the variable. That is a --varloss
-     *     variable of a PC_LAMMPS line, and the S of the PC_FAILPROBE line
-     *     (its first --outvar; the line has no --varloss), which grades
-     *     every failure of the evaluation: an S that cannot be read is a
-     *     failed probe, as when its script fails, never a diagnostic;
-     *   - a diagnostic (declared only with --outvar) is "" -- NaN in
-     *     outvar.tadah -- and the evaluation keeps its loss; its own line
+    /* The variables a task read back, judged alike in both PC_ISOLATION
+     * modes (the worker does not know which names feed the loss, and
+     * leaves every parse to this side).
+     *
+     * Read-back errors. Reading a variable evaluates its formula after the
+     * script, and a LAMMPS error there (a thermo keyword the script's
+     * thermo_style does not compute, a divide by zero for this candidate)
+     * is reported per variable in outvar_errors; a --hotvar or --failvar
+     * one has failed the task already (execute_script_task).
+     *
+     * Values with no number. A variable can also be read and have no
+     * number for its value: "" when it is not defined after the script (a
+     * script that deletes it, or defines it in a branch it did not take)
+     * or has no single value, or text that is not a number (one redefined
+     * as a string). try_parse_double -- the parse sims_loss uses -- decides,
+     * over the whole value. A --failvar must also be finite: a measure that
+     * is inf or nan can neither vouch for the simulation nor grade it.
+     *
+     * The policy:
+     *   - a variable the line is for, that cannot be read or has no number,
+     *     fails the task exactly as a failed run does: its variables take
+     *     --failscore, the evaluation is aborted (a hot script's cold
+     *     scripts do not run), the failvars grade band B, and the D17 line
+     *     below names the variable and why. That is a --varloss variable of
+     *     a PC_LAMMPS line, the S of the PC_FAILPROBE line (its first
+     *     --outvar; the line has no --varloss), which grades every failure
+     *     of the evaluation -- an S that cannot be read is a failed probe,
+     *     as when its script fails, never a diagnostic --, a --hotvar, and
+     *     a --failvar (whatever FAILSCORE_GRADING: as its read-back error
+     *     does). Such a value used to be skipped: a --varloss one added
+     *     FAIL_SCORE to the mean of the evaluation's terms (sims_loss), which
+     *     with other terms fell below 0.999 * FAILSCORE and counted as
+     *     feasible; a hot value got no range check or warm start, and the
+     *     cold scripts ran without it (in a cached instance, on an earlier
+     *     evaluation's); a failvar vouched;
+     *   - a diagnostic (declared only with --outvar) is "" or text -- NaN
+     *     in outvar.tadah -- and the evaluation keeps its loss; its own line
      *     says so, rate-limited like D17.
+     * The first variable at fault names the failure, in the order of
+     * outvar_errors, the line's variables, the hot and the fail variables.
      * The role in the message names the probe's line ("PC_FAILPROBE
      * --outvar S"); the heads of the lines are the same for every line. */
     PcTaskStatus status = tres.status;
     std::string error_msg = tres.error_msg;
-    if (!fail && !tres.outvar_errors.empty()) {
+    std::vector<double> hot_value(lsim.hotvars.size(), 0.0);
+    std::vector<double> fail_value(lsim.failvars.size(), 0.0);
+    if (!fail) {
       auto in_loss = [&](std::size_t j) {
         if (lsim.is_failprobe) return j == 0;
         return std::find(lsim.i_varloss.begin(), lsim.i_varloss.end(), j) !=
@@ -1835,15 +1863,55 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
           lsim.is_failprobe ? "PC_FAILPROBE --outvar " : "--varloss ";
       const std::string outvar_role =
           lsim.is_failprobe ? "PC_FAILPROBE --outvar " : "--outvar ";
-      for (std::size_t j = 0; j < lsim.n_outvar.size() && !fail; ++j) {
-        if (tres.outvar_errors[j].empty() || !in_loss(j)) continue;
+      auto read_error = [&](std::size_t j) -> const std::string& {
+        static const std::string none;
+        return tres.outvar_errors.empty() ? none : tres.outvar_errors[j];
+      };
+      /* Why @p s gives no (finite, when @p finite) number, "" when it gives
+       * one, which goes to @p v. */
+      auto no_number = [](const std::string& s, double& v,
+                          bool finite) -> std::string {
+        if (s.empty())
+          return "no value (the variable is not defined, or has no single "
+                 "value)";
+        if (!try_parse_double(s, v))
+          return "its value '" + s + "' is not a number";
+        if (finite && !std::isfinite(v))
+          return "its value '" + s + "' is not a finite number";
+        return {};
+      };
+      auto fail_task = [&](const std::string& role, const std::string& name,
+                           const std::string& why) {
         fail = true;
         status = PcTaskStatus::RUN_FAIL;
-        error_msg = "reading " + loss_role + lsim.n_outvar[j] +
-                    " after the script: " + tres.outvar_errors[j];
+        error_msg = "reading " + role + name + " after the script: " + why;
+      };
+      for (std::size_t j = 0; j < lsim.n_outvar.size() && !fail; ++j)
+        if (in_loss(j) && !read_error(j).empty())
+          fail_task(loss_role, lsim.n_outvar[j], read_error(j));
+      for (std::size_t j = 0; j < lsim.n_outvar.size() && !fail; ++j) {
+        if (!in_loss(j)) continue;
+        double v = 0.0;
+        const std::string why = no_number(tres.outvar_values[j], v, false);
+        if (!why.empty()) fail_task(loss_role, lsim.n_outvar[j], why);
+      }
+      for (std::size_t j = 0; j < lsim.hotvars.size() && !fail; ++j) {
+        const std::string why =
+            no_number(tres.hotvar_values[j], hot_value[j], false);
+        if (!why.empty()) fail_task("--hotvar ", lsim.hotvars[j].name, why);
+      }
+      for (std::size_t j = 0; j < lsim.failvars.size() && !fail; ++j) {
+        const std::string why =
+            no_number(tres.failvar_values[j], fail_value[j], true);
+        if (!why.empty()) fail_task("--failvar ", lsim.failvars[j].name, why);
       }
       for (std::size_t j = 0; j < lsim.n_outvar.size() && !fail; ++j) {
-        if (tres.outvar_errors[j].empty()) continue;
+        if (in_loss(j)) continue;
+        double v = 0.0;
+        const std::string why = read_error(j).empty()
+            ? no_number(tres.outvar_values[j], v, false)
+            : read_error(j);
+        if (why.empty()) continue;
         /* counted per run (HPOLog::count_in_run) */
         const std::size_t n =
             HPOLog::instance().count_in_run("PC_LAMMPS --outvar is NaN");
@@ -1851,8 +1919,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
           HPOLog::instance().warning(
               "PC_LAMMPS --outvar is NaN (" + lsim.script + ", occurrence "
               + std::to_string(n) + "): reading " + outvar_role
-              + lsim.n_outvar[j] + " after the script: "
-              + tres.outvar_errors[j]);
+              + lsim.n_outvar[j] + " after the script: " + why);
       }
     }
 
@@ -1860,19 +1927,15 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
      * completed but vouches AGAINST itself -- classify band B, grade by
      * scale*value, and treat the sim as failed (outvars excluded from the
      * fit via the failscore fill below; a failed HOT sim also skips the
-     * warmstart caching and aborts the cold phase, same as a rejection). */
+     * warmstart caching and aborts the cold phase, same as a rejection).
+     * Each value is a finite number here (a task with one that is not has
+     * failed above). LAMMPS' compute_equal flushes |v| < DBL_MIN to 0, so
+     * no subnormal reaches the parse today; the parse is not where one
+     * would be lost. */
     if (fg_on && !fail && !lsim.failvars.empty()) {
-      for (std::size_t j = 0; j < lsim.failvars.size() &&
-                              j < tres.failvar_values.size(); ++j) {
-        const std::string& s = tres.failvar_values[j];
-        if (s.empty()) continue;
-        double v = 0.0;
-        /* core::to_double (std::stod, but an underflowing literal is a
-         * value), like every reader of numbers here. LAMMPS' compute_equal
-         * flushes |v| < DBL_MIN to 0, so no subnormal reaches this parse
-         * today; the parse is not where one would be lost. */
-        try { v = tadah::core::to_double(s); } catch (...) { continue; }
-        if (std::isfinite(v) && v > 0.0) {
+      for (std::size_t j = 0; j < lsim.failvars.size(); ++j) {
+        const double v = fail_value[j];
+        if (v > 0.0) {
           fail_state.record(FailBand::B, lsim.failvars[j].scale * v);
           fail = true;
         }
@@ -1891,14 +1954,14 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
         case PcTaskStatus::RUN_FAIL: {
           /* Instance alive: failvars (defined EARLY by contract) may still
            * carry the violation measure -> band B graded; else band B by
-           * failed fraction. */
+           * failed fraction. A failvar that was not read (""), is not a
+           * number (the parse of the value checks above) or is not finite
+           * grades nothing. */
           bool graded = false;
           for (std::size_t j = 0; j < lsim.failvars.size() &&
                                   j < tres.failvar_values.size(); ++j) {
-            const std::string& s = tres.failvar_values[j];
-            if (s.empty()) continue;
             double v = 0.0;
-            try { v = tadah::core::to_double(s); } catch (...) { continue; }
+            if (!try_parse_double(tres.failvar_values[j], v)) continue;
             if (std::isfinite(v) && v > 0.0) {
               fail_state.record(FailBand::B, lsim.failvars[j].scale * v);
               graded = true;
@@ -1919,8 +1982,9 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
      * message of an error inside the script, of a hot value it refused to
      * inject or of a variable read back after it, the potential's
      * construction error, the exception that ended the task -- or, for a
-     * --varloss read-back, from the block above. It used to be read by nobody, and an error inside the script
-     * had no message at all, so such failures left only a number. Only
+     * variable read back that cannot be read or has no number, from the
+     * block above. It used to be read by nobody, and an error inside the
+     * script had no message at all, so such failures left only a number. Only
      * the statuses whose text originates with the task are surfaced here:
      * KILLED carries the parent's own reason, which kill_reap_locked has
      * already journaled, and repeating it would double every death; a
@@ -1951,62 +2015,57 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
     }
 
     /* Hot-var validation + cache update. Only meaningful for hot
-     * scripts (cold scripts have empty hotvars). */
+     * scripts (cold scripts have empty hotvars). Each value is a number
+     * here (a task with one that is not has failed above). */
     if (!fail) {
       for (std::size_t j = 0; j < lsim.hotvars.size(); ++j) {
         const auto& hv = lsim.hotvars[j];
-        try {
-          const std::string& s = tres.hotvar_values[j];
-          if (s.empty()) continue;
-          double v = 0.0;
-          try { v = tadah::core::to_double(s); }
-          catch (...) { continue; }
-          if (!std::isfinite(v) || v < hv.min || v > hv.max) {
-            /* Out of range -- clamp this script's outputs and raise the
-             * run-local abort so phase B is skipped.
-             * Grading Tier 1 (band A): the normalized distance to the box is
-             * the violation measure, so a proposal that moves the hot value
-             * TOWARD [min,max] scores strictly better than one that moves it
-             * away -- instead of both landing on the same constant. */
-            if (fg_on) {
-              double dist;
-              if (!std::isfinite(v)) {
-                dist = std::numeric_limits<double>::infinity();
-              } else {
-                const double w = hv.max - hv.min;
-                dist = (v < hv.min ? (hv.min - v) : (v - hv.max)) / w;
-              }
-              fail_state.record(FailBand::A, dist);
+        const double v = hot_value[j];
+        if (!std::isfinite(v) || v < hv.min || v > hv.max) {
+          /* Out of range -- clamp this script's outputs and raise the
+           * run-local abort so phase B is skipped.
+           * Grading Tier 1 (band A): the normalized distance to the box is
+           * the violation measure, so a proposal that moves the hot value
+           * TOWARD [min,max] scores strictly better than one that moves it
+           * away -- instead of both landing on the same constant. */
+          if (fg_on) {
+            double dist;
+            if (!std::isfinite(v)) {
+              dist = std::numeric_limits<double>::infinity();
+            } else {
+              const double w = hv.max - hv.min;
+              dist = (v < hv.min ? (hv.min - v) : (v - hv.max)) / w;
             }
-            for (auto& vs : r.v_outvar[i]) vs = failscore_token(lsim.failscore);
-            eval_aborted.store(true, std::memory_order_relaxed);
-            /* Log at most once per eval (run-local latch), rate-limited
-             * across evals by the global reject_count. */
-            const bool first_in_eval =
-                !reject_logged.exchange(true, std::memory_order_relaxed);
-            if (first_in_eval) {
-              const auto rejs = warmstart::reject_count().fetch_add(
-                  1, std::memory_order_relaxed) + 1;
-              if (rejs <= 5 || (rejs & (rejs - 1)) == 0) {
-                HPOLog::instance().warning(
-                    std::string("eval ") + std::to_string(r.iter)
-                    + " script " + lsim.script
-                    + ": rejecting (" + hotvar_reject_what(hv, v)
-                    + ", total rejects=" + std::to_string(rejs) + ")");
-              }
+            fail_state.record(FailBand::A, dist);
+          }
+          for (auto& vs : r.v_outvar[i]) vs = failscore_token(lsim.failscore);
+          eval_aborted.store(true, std::memory_order_relaxed);
+          /* Log at most once per eval (run-local latch), rate-limited
+           * across evals by the global reject_count. */
+          const bool first_in_eval =
+              !reject_logged.exchange(true, std::memory_order_relaxed);
+          if (first_in_eval) {
+            const auto rejs = warmstart::reject_count().fetch_add(
+                1, std::memory_order_relaxed) + 1;
+            if (rejs <= 5 || (rejs & (rejs - 1)) == 0) {
+              HPOLog::instance().warning(
+                  std::string("eval ") + std::to_string(r.iter)
+                  + " script " + lsim.script
+                  + ": rejecting (" + hotvar_reject_what(hv, v)
+                  + ", total rejects=" + std::to_string(rejs) + ")");
             }
-            break; /* one out-of-range hot var is enough */
           }
-          /* In-range -- cache for THIS CHAIN for next eval, record for phase B,
-           * and stash for possible promotion into the seed map if this eval
-           * turns out to be the new global best. */
-          warmstart::set(r.chain_id, lsim.script, hv.name, v);
-          {
-            std::lock_guard<std::mutex> lg(hot_mtx);
-            hot_values_for_iter[hv.name] = v;
-            r.hot_produced.emplace_back(lsim.script, hv.name, v);
-          }
-        } catch (...) { /* variable not defined or unparseable -- ignore */ }
+          break; /* one out-of-range hot var is enough */
+        }
+        /* In-range -- cache for THIS CHAIN for next eval, record for phase B,
+         * and stash for possible promotion into the seed map if this eval
+         * turns out to be the new global best. */
+        warmstart::set(r.chain_id, lsim.script, hv.name, v);
+        {
+          std::lock_guard<std::mutex> lg(hot_mtx);
+          hot_values_for_iter[hv.name] = v;
+          r.hot_produced.emplace_back(lsim.script, hv.name, v);
+        }
       }
     }
 
@@ -2379,15 +2438,16 @@ void HPO_Host<P,R>::sims_loss(Result& r) const
       double v;
       double w = lsim.w_varloss[k];
       double l;
-      // LAMMPS variable retrievals can be empty when the script bailed
-      // before computing them (NaN potential, undefined variable, ...).
-      // std::stod("") throws std::invalid_argument; if that escapes the
-      // user objective, NLopt's C++ wrapper translates it to
-      // NLOPT_INVALID_ARGS and aborts the WHOLE optimisation. Treat
-      // unparseable as a failed component contributing FAIL_SCORE.
-      // A short vector (a task whose result was never applied) is the
-      // same failure class -- guard it here rather than reading past
-      // the end of v_outvar[i].
+      // A --varloss value is a number here: apply_task_result fails a
+      // task whose value is empty or not a number, and a failed task's
+      // values are its --failscore. (Before it did, such a value reached
+      // this branch, whose FAIL_SCORE term was averaged with the other
+      // terms of the evaluation and could fall below 0.999 * FAILSCORE.)
+      // The branch stays for a vector shorter than the line (a task whose
+      // result was never applied): a failed component contributing
+      // FAIL_SCORE rather than a read past the end of v_outvar[i], or a
+      // std::stod("") exception that NLopt's C++ wrapper would turn into
+      // NLOPT_INVALID_ARGS for the WHOLE optimisation.
       if (j < r.v_outvar[i].size() && try_parse_double(r.v_outvar[i][j], v)) {
         l = lsim.lossFn[k].loss(v, lsim.t_varloss[k], w);
       } else {
