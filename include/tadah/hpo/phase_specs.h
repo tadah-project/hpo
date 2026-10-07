@@ -68,10 +68,15 @@ OptimizerSpec prestage_refinement_spec(
 std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent);
 
 /* True when a run of `spec` asks the host for gradients: a gradient-based
- * backend (OptimizerCaps::is_gradient_based), or an MLSL/AUGLAG whose local
- * search (inner_run_spec) is one -- NLopt hands that local optimiser the
- * gradient the objective of `spec` computes, so the GRAD_STRATEGY of
- * `spec` decides how it is obtained. */
+ * backend without a local search of its own (OptimizerCaps::
+ * is_gradient_based), or an MLSL/AUGLAG (OptimizerCaps::accepts_inner)
+ * whose local search (inner_run_spec) obtains them -- NLopt hands that local
+ * optimiser the gradient the objective of `spec` computes, so the
+ * GRAD_STRATEGY of `spec` decides how it is obtained. The local search
+ * alone decides for MLSL and AUGLAG, which evaluate their own points
+ * without a gradient: GD_MLSL_LDS or LD_AUGLAG with an INNER LN_BOBYQA
+ * obtains none (the D only picks NLopt's default local optimiser, LD_MMA,
+ * which the INNER block replaces). */
 bool obtains_gradients(const OptimizerSpec& spec);
 
 /* The local search a run of `spec` is, when the run is one local search

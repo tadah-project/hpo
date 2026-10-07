@@ -14,7 +14,6 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -163,29 +162,72 @@ std::string readers(CapsPredicate reads)
     return format_caps_list(caps, caps.size());
 }
 
+/* A tolerance key: its value in StopCriteria and the caps flag that says a
+ * run tests it. */
+struct ToleranceKey {
+    const char* key;
+    std::optional<double> StopCriteria::*value;
+    bool OptimizerCaps::*supports;
+};
+
+constexpr ToleranceKey kToleranceKeys[] = {
+    {"FTOL_REL", &StopCriteria::ftol_rel, &OptimizerCaps::supports_ftol_rel},
+    {"FTOL_ABS", &StopCriteria::ftol_abs, &OptimizerCaps::supports_ftol_abs},
+    {"XTOL_REL", &StopCriteria::xtol_rel, &OptimizerCaps::supports_xtol_rel},
+    {"XTOL_ABS", &StopCriteria::xtol_abs, &OptimizerCaps::supports_xtol_abs}};
+
+/* Whether a run of `spec` reads the tolerance `t`: one it tests
+ * (tolerance_tested), or DLIB:GFS's FTOL_ABS, its solver epsilon. */
+bool reads_tolerance(const ToleranceKey& t, const OptimizerSpec& spec,
+                     const OptimizerCaps& caps)
+{
+    const bool supports =
+        caps.*t.supports ||
+        (t.value == &StopCriteria::ftol_abs && caps.reads_ftol_abs_as_setting);
+    return tolerance_tested(supports, spec, caps);
+}
+
+/* Where to set the tolerance `t` that an MLSL or AUGLAG `spec` refuses:
+ * in the INNER block, when its search tests it; otherwise the stops that
+ * search honours, as require_inner_run_stop() names them (an INNER GN_ESCH
+ * tests no tolerance either). Without an INNER block only G_MLSL and
+ * G_MLSL_LDS refuse one (tolerance_tested: they have no default local
+ * optimiser), a spec require_inner_backend() refuses: the block it needs. */
+std::string inner_tolerance_advice(const ToleranceKey& t,
+                                   const OptimizerSpec& spec,
+                                   const OptimizerCaps& caps)
+{
+    if (!spec.inner)
+        return "; " + backend_name(spec) + " needs an INNER block, and only "
+               "that block's search can test it";
+    const OptimizerSpec& inner = *spec.inner;
+    const OptimizerCaps& inner_caps = optimizer_caps(inner);
+    if (reads_tolerance(t, inner, inner_caps))
+        return "; set it in the INNER block, whose local search tests it";
+    return "; the INNER block's " + backend_name(inner) +
+           " does not test it either: stop that search with " +
+           stop_list(budget_keys(inner_caps, false), inner_caps, false) +
+           " in the INNER block, or " + or_list(budget_keys(caps, true)) +
+           " in the " + backend_name(spec) +
+           " block, which NLopt hands on to it";
+}
+
 /* Refuses an attribute the run of `spec` never reads (backend_rules.h):
  * a tolerance it does not test, then POPULATION, VECTOR_ARR and SEED,
  * each from the caps. */
 void reject_unread_attributes(const OptimizerSpec& spec,
                               const OptimizerCaps& caps, SpecRole role)
 {
-    const StopCriteria& st = spec.stop;
-    for (const auto& [set, supports, key] :
-         {std::tuple<bool, bool, const char*>{st.ftol_rel.has_value(),
-                                              caps.supports_ftol_rel,
-                                              "FTOL_REL"},
-          {st.ftol_abs.has_value(),
-           caps.supports_ftol_abs || caps.reads_ftol_abs_as_setting,
-           "FTOL_ABS"},
-          {st.xtol_rel.has_value(), caps.supports_xtol_rel, "XTOL_REL"},
-          {st.xtol_abs.has_value(), caps.supports_xtol_abs, "XTOL_ABS"}}) {
-        if (!set || tolerance_tested(supports, spec, caps)) continue;
+    for (const ToleranceKey& t : kToleranceKeys) {
+        if (!(spec.stop.*t.value) || reads_tolerance(t, spec, caps)) continue;
+        const std::string key = t.key;
         std::string msg = backend_name(spec) + " does not support " + key;
         if (caps.accepts_inner && spec.inner) msg += " with an INNER block";
         if (caps.untested_tolerance_note[0])
             msg += std::string(": ") + caps.untested_tolerance_note;
+        /* An MLSL or AUGLAG: whether its INNER search would test it. */
         if (caps.accepts_inner)
-            msg += "; set it in the INNER block, whose local search tests it";
+            msg += inner_tolerance_advice(t, spec, caps);
         else if (role == SpecRole::Inner)
             msg += "; stop it with " +
                    stop_list(budget_keys(caps, false), caps, false) +

@@ -1541,7 +1541,8 @@ void HPOTargets::read(const std::string& fn)
     /* ...and an unset GRAD_STRATEGY, which means NUMERICAL, resolves to
      * ANALYTICAL in each block that runs an optimiser and obtains gradients
      * (obtains_gradients: a gradient-based backend, or an MLSL/AUGLAG whose
-     * local search is one) -- the STRATEGY-level block and EXPLORE.
+     * local search obtains them, whatever the D or N of its name) -- the
+     * STRATEGY-level block and EXPLORE.
      * grad_strategy_resolved puts it in the journal. An INNER block runs
      * no optimiser of its own: MLSL and AUGLAG hand their local search the
      * gradient of their own objective, which the enclosing block's

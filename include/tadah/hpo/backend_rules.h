@@ -85,7 +85,13 @@ enum class SpecRole { Phase, Inner };
  *     MLSL or AUGLAG with an INNER block, which NLopt hands only to the
  *     default local optimiser it creates without one. "TADAH:RANDOM does
  *     not support FTOL_REL: uniform random search has no convergence test
- *     to apply it to; stop it with MAXEVAL, MAXTIME or STOPVAL";
+ *     to apply it to; stop it with MAXEVAL, MAXTIME or STOPVAL". The
+ *     refusal on an MLSL or AUGLAG says to set it in the INNER block when
+ *     that block's search tests it, and otherwise names the stops that
+ *     search honours ("...; the INNER block's NLOPT:GN_ESCH does not test
+ *     it either: stop that search with MAXEVAL or MAXTIME in the INNER
+ *     block, or MAXEVAL, MAXTIME or STOPVAL in the NLOPT:AUGLAG block, which
+ *     NLopt hands on to it");
  *   - POPULATION, VECTOR_ARR or SEED it does not read (reads_population,
  *     reads_vector_storage, reads_seed): "NLOPT:LN_BOBYQA does not use
  *     POPULATION; remove it (it is read by ...)". DLIB:GFS's SEED is
