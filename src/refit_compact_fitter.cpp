@@ -53,22 +53,27 @@ void apply_stage_optimizers(const RefitConfig &rc, CompactConfig &cfg) {
       if (in.stop.maxeval) cfg.sbplx_maxeval = static_cast<int>(*in.stop.maxeval);
       if (in.stop.ftol_rel) cfg.sbplx_ftol = *in.stop.ftol_rel;
       if (in.stop.xtol_rel) cfg.sbplx_xtol = *in.stop.xtol_rel;
+      if (in.stop.ftol_abs) cfg.dlib_inner_ftol_abs = *in.stop.ftol_abs;
     }
   }
   // ceres_ftol / joint_ftol feed Ceres' function_tolerance, which is RELATIVE
   // ((new_cost - old_cost) < ftol * old_cost) — Ceres has no absolute function
   // tolerance, so FTOL_REL is the only accepted key (FTOL / FTOL_ABS are
-  // rejected by RefitParser). REFINE's MAXEVAL/MAXITER is the L-BFGS
-  // algorithms' evaluations and Ceres' iterations; the curve-mode FUSE
-  // refine runs with the Ceres one.
+  // rejected by RefitParser). REFINE's MAXEVAL/MAXITER is the budget of the
+  // algorithm that runs: the L-BFGS algorithms' evaluations, or Ceres'
+  // iterations. FUSE's settings are the joint solve's and, under
+  // REFIT_OBJECTIVE curve, each function's FUSE refine's (fuse_curve_config).
   if (rc.refine.has_opt) {
     const OptimizerSpec &o = rc.refine.opt;
     cfg.refine_algo = refit_refine_algo(o);
     if (o.stop.maxeval) {
-      cfg.ceres_max_iter = static_cast<int>(*o.stop.maxeval);
-      cfg.lbfgs_refine_maxeval = static_cast<int>(*o.stop.maxeval);
+      if (cfg.refine_algo == "NLOPT_LBFGS" || cfg.refine_algo == "DLIB_LBFGS")
+        cfg.lbfgs_refine_maxeval = static_cast<int>(*o.stop.maxeval);
+      else
+        cfg.ceres_max_iter = static_cast<int>(*o.stop.maxeval);
     }
     if (o.stop.ftol_rel) cfg.ceres_ftol = *o.stop.ftol_rel;
+    if (o.stop.ftol_abs) cfg.dlib_refine_ftol_abs = *o.stop.ftol_abs;
     auto it = o.param.find("GTOL");
     if (it != o.param.end()) cfg.ceres_gtol = it->second;
   }
@@ -77,9 +82,11 @@ void apply_stage_optimizers(const RefitConfig &rc, CompactConfig &cfg) {
     cfg.joint_algo = refit_fuse_algo(o);
     if (o.stop.maxeval) cfg.joint_max_iter = static_cast<int>(*o.stop.maxeval);
     if (o.stop.ftol_rel) cfg.joint_ftol = *o.stop.ftol_rel;
+    auto it = o.param.find("GTOL");
+    if (it != o.param.end()) cfg.joint_gtol = it->second;
   }
-  // ENABLED false is a master kill-switch: it wins over any configured
-  // optimiser (the engine says so in its log).
+  // ENABLED false switches the stage off (RefitParser refuses it beside an
+  // OPTIMIZER block).
   if (!rc.refine.enabled) cfg.refine_algo = "NONE";
   if (!rc.fuse.enabled) cfg.joint_algo = "NONE";
 }
@@ -129,6 +136,36 @@ std::string ceres_reason(const ceres::Solver::Summary &s) {
   if (m.empty())                           return "?";
   const std::size_t dot = m.find('.');  // fallback: first sentence of the message
   return dot == std::string::npos ? m : m.substr(0, dot);
+}
+
+// Ceres checks its options in Solve() and, for one it refuses (a negative
+// function or gradient tolerance), returns FAILURE without iterating: taken
+// for a stop term, the stage silently did nothing. RefitParser refuses such
+// settings (every tolerance >= 0), so they come only from a caller that set
+// CompactConfig itself: an error, raised before the solve changes the fit.
+void require_valid_options(const ceres::Solver::Options &opt,
+                           const std::string &where) {
+  std::string why;
+  if (!opt.IsValid(&why))
+    throw std::invalid_argument(where + ": Ceres refuses the solver options (" +
+                                why + ")");
+}
+
+// The options of the fitter's Ceres solves: LM, or DOGLEG for CERES_DOGLEG,
+// with the stage's iteration cap and function and gradient tolerances. Each
+// solve builds and checks them (require_valid_options) before it changes
+// the fit it was given.
+ceres::Solver::Options ceres_options(const std::string &algo, int max_iter,
+                                     double ftol, double gtol) {
+  ceres::Solver::Options opt;
+  opt.linear_solver_type = ceres::DENSE_QR;
+  if (algo == "CERES_DOGLEG") opt.trust_region_strategy_type = ceres::DOGLEG;
+  opt.max_num_iterations = max_iter;
+  opt.function_tolerance = ftol;
+  opt.gradient_tolerance = gtol;
+  opt.parameter_tolerance = 1e-16;
+  opt.logging_type = ceres::SILENT;
+  return opt;
 }
 }  // namespace
 
@@ -466,6 +503,21 @@ CompactBlipFitter::CompactBlipFitter(std::vector<double> xs,
   if (cfg_.rho_form != RhoForm::Signed && cfg_.zero_ref)
     throw std::logic_error("compact_fitter: a density form (rho) and the "
                            "EMBF0 zero reference (F) cannot share a fit");
+  // The ladder counts (REFIT_COMPACT_OPT_EVERY, INSERT_TOPK, JITTERS, read
+  // with these ranges by read_refit_numbers): opt_every and insert_topk below
+  // 1 used to become 1 silently, and jitters + 1 candidates per rung must
+  // fit the int that counts them.
+  const auto count = [](const char *field, int v, int lo, int hi) {
+    if (v < lo || v > hi)
+      throw std::invalid_argument(std::string("compact_fitter: ") + field +
+                                  " must be from " + std::to_string(lo) +
+                                  " to " + std::to_string(hi) + ", got " +
+                                  std::to_string(v));
+  };
+  constexpr int kIntMax = std::numeric_limits<int>::max();
+  count("opt_every", cfg_.opt_every, 1, kIntMax);
+  count("insert_topk", cfg_.insert_topk, 1, kIntMax);
+  count("jitters", cfg_.jitters, 0, kIntMax - 1);
   eta0_ = (cfg_.n_min > 1) ? (cfg_.n_min - 1) / span_ : 1.0 / span_;
 
   // Target 1st/2nd derivatives for the curve objective + the d1/d2 diagnostics.
@@ -945,8 +997,8 @@ double CompactBlipFitter::sbplx_explore(BlipFit &f, int maxeval) const {
   else if (a == "NLOPT_LBFGS") { algo = nlopt::LD_LBFGS; use_grad = true; }
   else if (a == "DLIB_LBFGS") {
     // dlib box-constrained LBFGS on the VARPRO reduced objective, MAXEVAL
-    // objective evaluations
-    last_explore_term_ = dlib_lbfgs(f, maxeval, cfg_.sbplx_ftol, 20);
+    // objective evaluations, ending at FTOL_ABS (an absolute change)
+    last_explore_term_ = dlib_lbfgs(f, maxeval, cfg_.dlib_inner_ftol_abs, 20);
     return solve_coeffs(f);
   } else if (a == "NONE") {
     last_explore_term_ = "NONE(linear-solve)";
@@ -1009,8 +1061,8 @@ double CompactBlipFitter::refine_dispatch(BlipFit &f) const {
     // cfg_.lbfgs_refine_maxeval objective evaluations: NLopt counts them,
     // and dlib_lbfgs() counts them in its objective wrapper.
     if (a == "DLIB_LBFGS") {
-      last_refine_term_ =
-          dlib_lbfgs(f, cfg_.lbfgs_refine_maxeval, cfg_.ceres_ftol, 30);
+      last_refine_term_ = dlib_lbfgs(f, cfg_.lbfgs_refine_maxeval,
+                                     cfg_.dlib_refine_ftol_abs, 30);
       return solve_coeffs(f);
     }
     ThetaBox b = theta_box(f, lo_, hi_, span_, cfg_.hard_rcut);
@@ -1148,6 +1200,18 @@ BlipFit CompactBlipFitter::seed_global(BlipFit f) const {
 }
 
 double CompactBlipFitter::refine(BlipFit &f) const {
+  // The solver options first: Ceres' refusal leaves the fit as it was.
+  ceres::Solver::Options opt = ceres_options(
+      cfg_.refine_algo, cfg_.ceres_max_iter, cfg_.ceres_ftol, cfg_.ceres_gtol);
+  opt.check_gradients = cfg_.check_gradients;  // FD audit of the analytic J
+  // Compact-support bases have numerically-zero Jacobian entries at support
+  // edges; Ceres' check has only a RELATIVE knob, so FD noise on those ~0
+  // entries (incl. B''' kinks crossed by the probe — the blip is C2, only
+  // B''' jumps at its knots) reads as large relative error there.
+  // Measured: 4/1920 components, worst 1.2e-3, all near-zero entries; real
+  // Jacobian bugs show O(1) errors across whole blocks.
+  opt.gradient_check_relative_precision = 5e-3;
+  require_valid_options(opt, "compact_fitter refine");
   const int n = f.n();
   f.zero_ref = cfg_.zero_ref;  // the channel's EMBF0 reference (cf. solve_coeffs)
   f.form = cfg_.rho_form;      // and its RHOFORM
@@ -1211,23 +1275,6 @@ double CompactBlipFitter::refine(BlipFit &f) const {
         prob.SetManifold(eta.data(), new ceres::SubsetManifold(n, pin));
     }
   }
-  ceres::Solver::Options opt;
-  opt.linear_solver_type = ceres::DENSE_QR;
-  if (cfg_.refine_algo == "CERES_DOGLEG")
-    opt.trust_region_strategy_type = ceres::DOGLEG;
-  opt.max_num_iterations = cfg_.ceres_max_iter;
-  opt.function_tolerance = cfg_.ceres_ftol;
-  opt.gradient_tolerance = cfg_.ceres_gtol;
-  opt.parameter_tolerance = 1e-16;
-  opt.logging_type = ceres::SILENT;
-  opt.check_gradients = cfg_.check_gradients;  // FD audit of the analytic J
-  // Compact-support bases have numerically-zero Jacobian entries at support
-  // edges; Ceres' check has only a RELATIVE knob, so FD noise on those ~0
-  // entries (incl. B''' kinks crossed by the probe — the blip is C2, only
-  // B''' jumps at its knots) reads as large relative error there.
-  // Measured: 4/1920 components, worst 1.2e-3, all near-zero entries; real
-  // Jacobian bugs show O(1) errors across whole blocks.
-  opt.gradient_check_relative_precision = 5e-3;
   ceres::Solver::Summary sum;
   ceres::Solve(opt, &prob, &sum);
   if (cfg_.check_gradients && sum.termination_type == ceres::FAILURE)
@@ -1628,7 +1675,7 @@ BlipFit CompactBlipFitter::fit(const Metric &metric,
   // linear solve. The curve-residual peak is not always where the energy
   // metric hurts — measured: phi/F ladders stalled on curve-peak insertion.
   auto insert_best = [&](const BlipFit &from) {
-    const int k = (one_sided(kind_)) ? std::max(1, cfg_.insert_topk) : 1;
+    const int k = (one_sided(kind_)) ? cfg_.insert_topk : 1;
     const std::vector<double> peaks = residual_peaks(from, k);
     BlipFit out;
     for (double xw : peaks) {
@@ -1670,8 +1717,7 @@ BlipFit CompactBlipFitter::fit(const Metric &metric,
                         // ENVELOPE keeps the metric-best across all rungs
   int stall = 0;
   int rung_idx = 0;
-  const int opt_every =
-      one_sided(kind_) ? std::max(1, cfg_.opt_every) : 1;  // blip: legacy
+  const int opt_every = one_sided(kind_) ? cfg_.opt_every : 1;  // blip: legacy
   while (warm.n() < cfg_.n_max && best.metric > target &&
          stall < cfg_.stall_rungs) {
     const auto t0 = clock::now();
@@ -2051,6 +2097,10 @@ double CompactBlipFitter::refine_edges(BlipFit &f) const {
   if (one_sided(f.kind) || !(cfg_.hard_rcut > 0.0))
     throw std::logic_error("compact_fitter refine_edges: a bump family under "
                            "a hard cutoff only");
+  // The solver options first: Ceres' refusal leaves the fit as it was.
+  const ceres::Solver::Options opt = ceres_options(
+      cfg_.refine_algo, cfg_.ceres_max_iter, cfg_.ceres_ftol, cfg_.ceres_gtol);
+  require_valid_options(opt, "compact_fitter refine_edges");
   const int n = f.n();
   f.zero_ref = cfg_.zero_ref;
   f.form = cfg_.rho_form;
@@ -2094,15 +2144,6 @@ double CompactBlipFitter::refine_edges(BlipFit &f) const {
       prob.SetManifold(eta.data(), new ceres::SubsetManifold(n, pin));
     }
   }
-  ceres::Solver::Options opt;
-  opt.linear_solver_type = ceres::DENSE_QR;
-  if (cfg_.refine_algo == "CERES_DOGLEG")
-    opt.trust_region_strategy_type = ceres::DOGLEG;
-  opt.max_num_iterations = cfg_.ceres_max_iter;
-  opt.function_tolerance = cfg_.ceres_ftol;
-  opt.gradient_tolerance = cfg_.ceres_gtol;
-  opt.parameter_tolerance = 1e-16;
-  opt.logging_type = ceres::SILENT;
   ceres::Solver::Summary sum;
   ceres::Solve(opt, &prob, &sum);
   for (int k = 0; k < n; ++k)  // back to centres (a pinned bump keeps its)
@@ -2111,6 +2152,15 @@ double CompactBlipFitter::refine_edges(BlipFit &f) const {
                       std::to_string(sum.iterations.size()) + "it, " +
                       ceres_reason(sum) + ", edges)";
   return solve_coeffs(f);
+}
+
+CompactConfig fuse_curve_config(const CompactConfig &cfg) {
+  CompactConfig f = cfg;
+  f.refine_algo = cfg.joint_algo;      // FUSE's optimiser
+  f.ceres_max_iter = cfg.joint_max_iter;  // per function
+  f.ceres_ftol = cfg.joint_ftol;
+  f.ceres_gtol = cfg.joint_gtol;
+  return f;
 }
 
 int fuse_curve_refine(const CompactBlipFitter &ff, BlipFit &fit) {
@@ -2132,7 +2182,7 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
                     const std::vector<double> &e_weight, double curve_weight,
                     int max_iter, double ftol, const std::string &algo,
                     std::string *term_out, double phi_hard_rcut,
-                    double rho_hard_rcut, int *iterations_out) {
+                    double rho_hard_rcut, int *iterations_out, double gtol) {
   if (iterations_out) *iterations_out = 0;
   if (algo != "NONE" && algo != "CERES_LM" && algo != "CERES_DOGLEG")
     throw std::runtime_error("joint_refine: unknown algo '" + algo +
@@ -2150,6 +2200,11 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
                              "rho only, not to phi/F");
   if (rho.form == RhoForm::Monotone && one_sided(rho.kind))
     no_step_kind(rho.kind);
+  // The solver options before any start is moved: Ceres' refusal leaves the
+  // fits as they were.
+  const ceres::Solver::Options opt =
+      ceres_options(algo, max_iter, ftol, gtol);
+  if (algo != "NONE") require_valid_options(opt, "joint_refine");
   if (term_out) *term_out = "NONE(skipped)";
 
   // Feasible starting values for the bounds below: the density amplitudes
@@ -2329,15 +2384,6 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
   hold_pins(F);
 
   if (algo != "NONE") {
-    ceres::Solver::Options opt;
-    opt.linear_solver_type = ceres::DENSE_QR;
-    if (algo == "CERES_DOGLEG")
-      opt.trust_region_strategy_type = ceres::DOGLEG;
-    opt.max_num_iterations = max_iter;
-    opt.function_tolerance = ftol;
-    opt.gradient_tolerance = 1e-14;
-    opt.parameter_tolerance = 1e-16;
-    opt.logging_type = ceres::SILENT;
     ceres::Solver::Summary sum;
     ceres::Solve(opt, &prob, &sum);
     // the iterations max_num_iterations bounds: sum.iterations holds the

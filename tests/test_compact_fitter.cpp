@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <random>
@@ -106,7 +107,10 @@ TEST_CASE("compact fitter: REFINE MAXEVAL counts the L-BFGS objective "
       CompactConfig cfg;
       cfg.refine_algo = algo;
       cfg.lbfgs_refine_maxeval = maxeval;
-      cfg.ceres_ftol = 0.0;  // no convergence test: the budget ends it
+      // no convergence test (NLopt's FTOL_REL, dlib's FTOL_ABS): the budget
+      // ends it
+      cfg.ceres_ftol = 0.0;
+      cfg.dlib_refine_ftol_abs = 0.0;
       CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
       BlipFit f = perturbed_truth();
       fit.solve_coeffs(f);
@@ -162,6 +166,7 @@ TEST_CASE("compact fitter: EXPLORE INNER MAXEVAL counts the local search's "
     cfg.sbplx_maxeval = 9;
     cfg.sbplx_ftol = 0.0;
     cfg.sbplx_xtol = 0.0;
+    cfg.dlib_inner_ftol_abs = 0.0;  // dlib's LBFGS stops on FTOL_ABS
     cfg.refine_algo = "NONE";
     const LadderRun r = run_ladder(cfg);
     CHECK(r.evaluations == 9);
@@ -188,7 +193,7 @@ TEST_CASE("compact fitter: each stage's MAXEVAL sets the budget of the "
       parsed({{"EXPLORE", "OPTIMIZER LIB DLIB ALGO GLOBAL MAXEVAL 40 INNER "
                           "LIB DLIB ALGO LBFGS MAXEVAL 9 ENDINNER "
                           "ENDOPTIMIZER"},
-              {"REFINE", "OPTIMIZER LIB DLIB ALGO LBFGS MAXITER 7 "
+              {"REFINE", "OPTIMIZER LIB DLIB ALGO LBFGS MAXEVAL 7 "
                          "ENDOPTIMIZER"},
               {"FUSE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 11 "
                        "ENDOPTIMIZER"}}),
@@ -200,7 +205,10 @@ TEST_CASE("compact fitter: each stage's MAXEVAL sets the budget of the "
   CHECK(cfg.sbplx_maxeval == 9);
   CHECK(cfg.refine_algo == "DLIB_LBFGS");
   CHECK(cfg.lbfgs_refine_maxeval == 7);
-  CHECK(cfg.ceres_max_iter == 7);  // what the curve-mode FUSE refine reads
+  /* An L-BFGS REFINE's MAXEVAL counts evaluations, not Ceres iterations:
+   * Ceres' cap keeps its default. (It was set to 7 too, the iteration cap
+   * the curve-mode FUSE refine ran with.) */
+  CHECK(cfg.ceres_max_iter == 1000);
   CHECK(cfg.joint_algo == "CERES_LM");
   CHECK(cfg.joint_max_iter == 11);
 
@@ -215,15 +223,329 @@ TEST_CASE("compact fitter: each stage's MAXEVAL sets the budget of the "
   CHECK(dflt.lbfgs_refine_maxeval == 50000);
   CHECK(dflt.ceres_max_iter == 1000);
 
-  /* ENABLED false switches a stage off whatever its optimiser. */
+  /* ENABLED false switches a stage off. With an OPTIMIZER block it is an
+   * error, and so is MAXITER with an L-BFGS REFINE: this test gave REFINE
+   * ENABLED false with an LM block here and MAXITER 7 above (now MAXEVAL
+   * 7). Before the fix: passes as well (a pin of what stays). */
   CompactConfig off;
   apply_stage_optimizers(
-      parsed({{"REFINE", "ENABLED false OPTIMIZER LIB CERES ALGO LM "
-                         "ENDOPTIMIZER"},
-              {"FUSE", "ENABLED false"}}),
-      off);
+      parsed({{"REFINE", "ENABLED false"}, {"FUSE", "ENABLED false"}}), off);
   CHECK(off.refine_algo == "NONE");
   CHECK(off.joint_algo == "NONE");
+}
+
+namespace {
+/* The stage blocks `blocks`, parsed as tadah refit parses them. */
+RefitConfig parse_blocks(
+    const std::vector<std::pair<std::string, std::string>> &blocks) {
+  tadah::core::Context c;
+  for (const auto &[key, body] : blocks) {
+    std::istringstream iss(body);
+    for (std::string t; iss >> t;) c.add(key, t);
+  }
+  return RefitParser::parse(c);
+}
+}  // namespace
+
+TEST_CASE("compact fitter: dlib's L-BFGS stops on FTOL_ABS, and FTOL_REL "
+          "sets only NLopt's searches", "[refit][compact][budget]")
+{
+  /* Pins: dlib's L-BFGS (EXPLORE INNER LBFGS, REFINE LBFGS) stops when an
+   * iteration changes the objective by less than FTOL_ABS (an absolute
+   * change, dlib's objective_delta_stop_strategy): FTOL_ABS 1e10 ends it
+   * at its first test (FTOL_REACHED), not at MAXEVAL. Under GN_MLSL_LDS an
+   * INNER LBFGS block's FTOL_REL does not stop dlib's L-BFGS: with FTOL_REL
+   * 1e10 the rung's LBFGS search still runs to its MAXEVAL 9. (That it
+   * sets MLSL's local LN_SBPLX searches is the next test's.)
+   * Before the fix: FTOL_ABS was refused in every refit block (the parse
+   * throws), and dlib's L-BFGS stopped on FTOL_REL taken as its absolute
+   * change, so FTOL_REL 1e10 ended the INNER search at its first test
+   * (explore=DLIB_LBFGS:FTOL_REACHED). */
+  SECTION("EXPLORE INNER LBFGS FTOL_ABS") {
+    CompactConfig cfg;
+    cfg.n_max = cfg.n_min + 1;
+    apply_stage_optimizers(
+        parse_blocks({{"EXPLORE", "OPTIMIZER ALGO UNIFORM INNER LIB DLIB ALGO "
+                                  "LBFGS MAXEVAL 200 FTOL_ABS 1e10 ENDINNER "
+                                  "ENDOPTIMIZER"},
+                      {"REFINE", "OPTIMIZER ALGO NONE ENDOPTIMIZER"}}),
+        cfg);
+    const LadderRun r = run_ladder(cfg);
+    CHECK(logged(r, "explore=DLIB_LBFGS:FTOL_REACHED("));
+    CHECK_FALSE(logged(r, "explore=DLIB_LBFGS:MAXEVAL_REACHED("));
+  }
+  SECTION("REFINE LBFGS FTOL_ABS") {
+    CompactConfig cfg;
+    cfg.n_max = cfg.n_min + 1;
+    apply_stage_optimizers(
+        parse_blocks({{"EXPLORE", "OPTIMIZER ALGO UNIFORM INNER ALGO NONE "
+                                  "ENDINNER ENDOPTIMIZER"},
+                      {"REFINE", "OPTIMIZER LIB DLIB ALGO LBFGS MAXEVAL 200 "
+                                 "FTOL_ABS 1e10 ENDOPTIMIZER"}}),
+        cfg);
+    const LadderRun r = run_ladder(cfg);
+    CHECK(logged(r, "refine=DLIB_LBFGS:FTOL_REACHED("));
+    CHECK_FALSE(logged(r, "refine=DLIB_LBFGS:MAXEVAL_REACHED("));
+  }
+  SECTION("an INNER LBFGS block's FTOL_REL under GN_MLSL_LDS") {
+    CompactConfig cfg;
+    cfg.n_max = cfg.n_min + 1;
+    apply_stage_optimizers(
+        parse_blocks({{"EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                  "MAXEVAL 40 INNER LIB DLIB ALGO LBFGS "
+                                  "MAXEVAL 9 FTOL_REL 1e10 ENDINNER "
+                                  "ENDOPTIMIZER"},
+                      {"REFINE", "OPTIMIZER ALGO NONE ENDOPTIMIZER"}}),
+        cfg);
+    const LadderRun r = run_ladder(cfg);
+    CHECK(logged(r, "explore=DLIB_LBFGS:MAXEVAL_REACHED(9ev)"));
+  }
+}
+
+TEST_CASE("compact fitter: under GN_MLSL_LDS an INNER block's MAXEVAL, "
+          "FTOL_REL and XTOL_REL set MLSL's local LN_SBPLX searches",
+          "[refit][compact][budget]")
+{
+  /* Pins: with the EXPLORE optimiser GN_MLSL_LDS, apply_stage_optimizers
+   * gives an INNER block's MAXEVAL, FTOL_REL and XTOL_REL to the settings
+   * MLSL's local LN_SBPLX searches run with (sbplx_maxeval, sbplx_ftol,
+   * sbplx_xtol), whatever the INNER ALGO: dlib's LBFGS, whose own stop
+   * (FTOL_ABS) keeps its default, NONE, or an NLopt search. RefitParser
+   * accepts these keys in such an INNER block on that ground.
+   * Before the fix: passes as well (a pin of the wiring the parser's MLSL
+   * exemption rests on: removing either assignment from
+   * apply_stage_optimizers broke no test). */
+  for (const std::string inner :
+       {"LIB DLIB ALGO LBFGS", "ALGO NONE", "LIB NLOPT ALGO LN_SBPLX"}) {
+    INFO(inner);
+    CompactConfig cfg;
+    apply_stage_optimizers(
+        parse_blocks({{"EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                  "MAXEVAL 40 INNER " + inner +
+                                      " MAXEVAL 9 FTOL_REL 1e-7 XTOL_REL "
+                                      "1e-6 ENDINNER ENDOPTIMIZER"}}),
+        cfg);
+    CHECK(cfg.seed_algo == "MLSL");
+    CHECK(cfg.mlsl_maxeval == 40);
+    CHECK(cfg.sbplx_maxeval == 9);
+    CHECK(cfg.sbplx_ftol == 1e-7);
+    CHECK(cfg.sbplx_xtol == 1e-6);
+    CHECK(cfg.dlib_inner_ftol_abs == CompactConfig{}.dlib_inner_ftol_abs);
+  }
+}
+
+TEST_CASE("compact fitter: a ladder count out of its range is refused",
+          "[refit][compact][strict_numbers]")
+{
+  /* Pins: the fitter refuses (std::invalid_argument naming the field) an
+   * opt_every or insert_topk below 1 and a jitters outside 0 to
+   * 2147483646, whose jitters + 1 candidates per rung must fit an int; the
+   * ends of the ranges are accepted.
+   * Before the fix: opt_every and insert_topk below 1 silently became 1
+   * (std::max), and a jitters of 2147483647 made the candidate loop
+   * (j <= jitters, an int) overflow: no exception is thrown. */
+  std::vector<double> xs, ys;
+  sample(make_truth(), 1.0, 5.5, 50, xs, ys);
+  const auto build = [&](CompactConfig cfg) -> std::string {
+    try {
+      CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg, BasisKind::Knot5L);
+    } catch (const std::invalid_argument &e) {
+      return e.what();
+    }
+    return "";
+  };
+  CompactConfig c;
+  c.opt_every = 0;
+  CHECK(build(c) == "compact_fitter: opt_every must be from 1 to 2147483647, "
+                    "got 0");
+  c = CompactConfig{};
+  c.insert_topk = 0;
+  CHECK(build(c) == "compact_fitter: insert_topk must be from 1 to "
+                    "2147483647, got 0");
+  c = CompactConfig{};
+  c.jitters = -1;
+  CHECK(build(c) == "compact_fitter: jitters must be from 0 to 2147483646, "
+                    "got -1");
+  c = CompactConfig{};
+  c.jitters = std::numeric_limits<int>::max();
+  CHECK(build(c) == "compact_fitter: jitters must be from 0 to 2147483646, "
+                    "got 2147483647");
+  c = CompactConfig{};
+  c.jitters = std::numeric_limits<int>::max() - 1;
+  c.opt_every = std::numeric_limits<int>::max();
+  c.insert_topk = 1;
+  CHECK(build(c) == "");
+}
+
+TEST_CASE("compact fitter: a Ceres solve with options Ceres refuses throws",
+          "[refit][compact]")
+{
+  /* Pins: refine(), refine_edges() and joint_refine() throw
+   * std::invalid_argument naming the solve and Ceres' reason when Ceres
+   * refuses the solver options (here a negative gradient or function
+   * tolerance), and refine() leaves the centres and widths of a SIGNED fit
+   * as they were (the next test pins that every solve leaves the whole fit
+   * as it was); the same solves with tolerance 0 run. RefitParser refuses
+   * a negative tolerance, so only a caller that sets CompactConfig itself
+   * reaches this.
+   * Before the fix: Ceres returned FAILURE without iterating, the solve
+   * recorded it as its stop term (FAILURE(0it, Invalid configuration...))
+   * and returned without an error: no exception is thrown. */
+  std::vector<double> xs, ys;
+  sample(make_truth(), 1.0, 5.5, 200, xs, ys);
+  /* The message of the std::invalid_argument `run` throws ("" if none). */
+  const auto refusal = [](const std::function<void()> &run) -> std::string {
+    try {
+      run();
+    } catch (const std::invalid_argument &e) {
+      return e.what();
+    }
+    return "";
+  };
+  const std::string refuses = ": Ceres refuses the solver options (Invalid "
+                              "configuration. Solver::Options::";
+  {
+    CompactConfig cfg;
+    cfg.ceres_gtol = -1.0;
+    CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
+    BlipFit f = perturbed_truth();
+    fit.solve_coeffs(f);
+    const BlipFit start = f;
+    CHECK(refusal([&] { fit.refine(f); }) ==
+          "compact_fitter refine" + refuses + "gradient_tolerance = -1. "
+          "Violated constraint: Solver::Options::gradient_tolerance >= 0.0)");
+    CHECK(f.mu == start.mu);
+    CHECK(f.eta == start.eta);
+  }
+  {
+    CompactConfig cfg;
+    cfg.ceres_ftol = -1.0;
+    cfg.hard_rcut = 5.5;
+    CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
+    BlipFit f = perturbed_truth();
+    fit.solve_coeffs(f);
+    CHECK(refusal([&] { fit.refine_edges(f); }) ==
+          "compact_fitter refine_edges" + refuses + "function_tolerance = "
+          "-1. Violated constraint: Solver::Options::function_tolerance >= "
+          "0.0)");
+  }
+  {
+    CompactConfig cfg;
+    cfg.ceres_ftol = 0.0;
+    cfg.ceres_gtol = 0.0;
+    CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
+    BlipFit f = perturbed_truth();
+    fit.solve_coeffs(f);
+    const double before = f.curve_rmse;
+    CHECK(fit.refine(f) < before);
+  }
+  /* joint_refine, FUSE's solve in energy mode. */
+  BlipFit phi = make_truth(), rho, F;
+  rho.mu = {2.0, 3.2, 4.4};
+  rho.eta = {0.9, 0.8, 0.9};
+  rho.c = {0.6, 0.35, 0.15};
+  F.mu = {1.0, 4.0, 7.0};
+  F.eta = {0.45, 0.4, 0.45};
+  F.c = {-2.0, -0.8, 0.5};
+  const std::vector<std::vector<double>> dists = {{2.5, 2.5, 2.9, 3.6},
+                                                  {2.2, 2.2, 2.6, 3.2}};
+  const std::vector<double> e0 = {0.1, 0.2}, ew(dists.size(), 1.0);
+  JointCurveData dphi, drho, dF;
+  sample(phi, 1.0, 5.5, 100, dphi.xs, dphi.ys);
+  sample(rho, 1.0, 5.5, 100, drho.xs, drho.ys);
+  sample(F, 0.0, 9.0, 100, dF.xs, dF.ys);
+  for (const char *algo : {"CERES_LM", "CERES_DOGLEG"}) {
+    INFO(algo);
+    BlipFit p = phi, r = rho, Fc = F;
+    CHECK(refusal([&] {
+            joint_refine(p, r, Fc, dphi, drho, dF, dists, e0, ew, 1.0, 10,
+                         -1.0, algo);
+          }) == "joint_refine" + refuses + "function_tolerance = -1. "
+                "Violated constraint: Solver::Options::function_tolerance "
+                ">= 0.0)");
+  }
+}
+
+TEST_CASE("compact fitter: a solve whose options Ceres refuses leaves the "
+          "fit as it was", "[refit][compact]")
+{
+  /* Pins: refine(), refine_edges() and joint_refine() refuse the solver
+   * options before they change the fit: after the std::invalid_argument
+   * every amplitude, centre and width, and the fit's EMBF0 reference and
+   * RHOFORM, are as the caller passed them, where the solve would first
+   * have moved the start to a feasible one (under RHOFORM NONNEG a
+   * negative amplitude lifted to 0; in refine_edges() and joint_refine() a
+   * bump width below the ladder's floor 0.03 eta0 lifted to it) and
+   * stamped the fitter's RHOFORM on the fit.
+   * Before the fix: the options were checked after those edits, so after
+   * the refusal the amplitude -0.3 is 0, the width 1e-4 is the floor and
+   * the SIGNED fit says NONNEG. */
+  std::vector<double> xs, ys;
+  sample(make_truth(), 1.0, 5.5, 200, xs, ys);
+  const auto same = [](const BlipFit &a, const BlipFit &b) {
+    return a.c == b.c && a.mu == b.mu && a.eta == b.eta &&
+           a.zero_ref == b.zero_ref && a.form == b.form;
+  };
+  /* A SIGNED start with a negative amplitude and a width below the floor. */
+  BlipFit start = perturbed_truth();
+  start.c = {0.8, -0.3, 0.5, 0.2};
+  start.eta[2] = 1e-4;
+  const auto nonneg = [](CompactConfig cfg) {
+    cfg.rho_form = tadah::models::RhoForm::NonNeg;
+    return cfg;
+  };
+  SECTION("refine()") {
+    CompactConfig cfg = nonneg({});
+    cfg.ceres_gtol = -1.0;
+    CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
+    BlipFit f = start;
+    CHECK_THROWS_AS(fit.refine(f), std::invalid_argument);
+    CHECK(f.c[1] == -0.3);
+    CHECK(f.form == tadah::models::RhoForm::Signed);
+    CHECK(same(f, start));
+  }
+  SECTION("refine_edges()") {
+    CompactConfig cfg = nonneg({});
+    cfg.ceres_ftol = -1.0;
+    cfg.hard_rcut = 5.5;
+    CompactBlipFitter fit(xs, ys, {}, 1.0, 5.5, cfg);
+    BlipFit f = start;
+    CHECK_THROWS_AS(fit.refine_edges(f), std::invalid_argument);
+    CHECK(f.c[1] == -0.3);
+    CHECK(f.eta[2] == 1e-4);
+    CHECK(same(f, start));
+  }
+  SECTION("joint_refine()") {
+    BlipFit phi = start, rho, F;
+    phi.c = make_truth().c;
+    rho.mu = {2.0, 3.2, 4.4};
+    rho.eta = {0.9, 0.8, 0.9};
+    rho.c = {0.6, -0.35, 0.15};
+    rho.form = tadah::models::RhoForm::NonNeg;
+    F.mu = {1.0, 4.0, 7.0};
+    F.eta = {0.45, 0.4, 0.45};
+    F.c = {-2.0, -0.8, 0.5};
+    const std::vector<std::vector<double>> dists = {{2.5, 2.5, 2.9, 3.6},
+                                                    {2.2, 2.2, 2.6, 3.2}};
+    const std::vector<double> e0 = {0.1, 0.2}, ew(dists.size(), 1.0);
+    JointCurveData dphi, drho, dF;
+    sample(make_truth(), 1.0, 5.5, 100, dphi.xs, dphi.ys);
+    sample(rho, 1.0, 5.5, 100, drho.xs, drho.ys);
+    sample(F, 0.0, 9.0, 100, dF.xs, dF.ys);
+    for (const char *algo : {"CERES_LM", "CERES_DOGLEG"}) {
+      INFO(algo);
+      BlipFit p = phi, r = rho, Fc = F;
+      CHECK_THROWS_AS(joint_refine(p, r, Fc, dphi, drho, dF, dists, e0, ew,
+                                   1.0, 10, 0.0, algo, nullptr, 0.0, 0.0,
+                                   nullptr, -1.0),
+                      std::invalid_argument);
+      CHECK(r.c[1] == -0.35);
+      CHECK(p.eta[2] == 1e-4);
+      CHECK(same(p, phi));
+      CHECK(same(r, rho));
+      CHECK(same(Fc, F));
+    }
+  }
 }
 
 #include <ceres/ceres.h>
