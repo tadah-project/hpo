@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <optional>
 #include <random>
 #include <fstream>
 #include <sstream>
@@ -1768,11 +1769,8 @@ SearchSpace HPOTargets::build_search_space() const {
      * pins (FIXINDEX; process_optim_config maps it to the slot). Never the
      * 0-based token position, which is an implementation detail. */
     std::vector<std::size_t> fixidx;
-    if (kv.first == "FIXWEIGHT" && context.contains("FIXINDEX")) {
-      std::vector<std::string> fi(context.size("FIXINDEX"));
-      context.get("FIXINDEX", fi);
-      fixidx = core::parse_indices(fi);
-    }
+    if (kv.first == "FIXWEIGHT" && context.contains("FIXINDEX"))
+      fixidx = core::parse_fixindex(context, std::nullopt);
     std::size_t numeric_ordinal = 0;
     for (std::size_t i = 0; i < o.opt.size(); ++i) {
       const bool numeric = i < o.config.size() && core::is_number(o.config[i]);
@@ -2122,9 +2120,12 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
         "OPTIM FIXWEIGHT requires FIXINDEX in the training configuration "
         "(FIXINDEX names which model weights the FIXWEIGHT values pin).");
     }
+    /* core::parse_fixindex, as the trainers read FIXINDEX; the weight
+     * count is not known here (startup validation checks the bounds). */
     std::vector<std::string> fi_str(context.size("FIXINDEX"));
     context.get("FIXINDEX", fi_str);
-    const std::vector<size_t> fixidx = core::parse_indices(fi_str);
+    const std::vector<size_t> fixidx =
+        core::parse_fixindex(context, std::nullopt);
     for (auto& ui : user_indices) {
       auto it = std::find(fixidx.begin(), fixidx.end(), ui);
       if (it == fixidx.end()) {
