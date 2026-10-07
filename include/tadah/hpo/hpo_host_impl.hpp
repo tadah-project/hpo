@@ -1028,6 +1028,8 @@ HPO_Host<P,R>::tls_ws_{};
 
 template<class P, class R>
 thread_local bool HPO_Host<P,R>::tls_trainer_theta_stale_ = false;
+template<class P,class R>
+thread_local std::string HPO_Host<P,R>::tls_untrained_why_;
 
 template<class P, class R>
 thread_local typename HPO_Host<P,R>::TrainerCache
@@ -1336,7 +1338,7 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     /* EMBF0 journal (hpo_run arms HPOLog): stored values only, no default
      * inserted into master_ctx_. */
     /* (NORM does not matter: a linear model's trained weights are
-     * converted back to raw-descriptor weights, convert_to_nweights.) */
+     * converted back to raw-descriptor weights, mlip::to_raw_descriptors.) */
     embf0_diag_ = models::context_has_ream(master_ctx_)
                && models::model_is_linear(master_ctx_);
 
@@ -2625,6 +2627,10 @@ void HPO_Host<P,R>::obs_loss(Result& r) const
     double v = std::numeric_limits<double>::quiet_NaN();
     double l = trg_.FAIL_SCORE;
     bool failed = true;
+    /* Why the term failed, for the journal. */
+    std::string why = !have_trainer
+        ? "no model of this evaluation was trained"
+        : "no observable was configured for this line";
 
     if (have_trainer && trg_.observables[k]) {
       auto& obs = *trg_.observables[k];
@@ -2637,16 +2643,47 @@ void HPO_Host<P,R>::obs_loss(Result& r) const
         if (std::isfinite(v)) {
           l = obs.lossfn().loss(v, obs.target(), obs.weight());
           failed = !std::isfinite(l);
-          if (failed) l = trg_.FAIL_SCORE;
+          if (failed) {
+            std::ostringstream os;
+            os << "its loss is not finite (value " << v << ", --loss "
+               << LossFunction::to_string(obs.lossfn().type()) << ")";
+            why = os.str();
+            l = trg_.FAIL_SCORE;
+          }
+        } else if (!res.failure.empty()) {
+          why = res.failure;
+        } else {
+          std::ostringstream os;
+          os << "its value is not finite (" << v << ")";
+          why = os.str();
         }
-      } catch (const std::exception&) {
+      } catch (const std::exception& e) {
         /* Relaxer divergence / NaN / model mismatch: a failed term. */
         v = std::numeric_limits<double>::quiet_NaN();
         l = trg_.FAIL_SCORE;
+        why = std::string("its evaluation threw: ") + e.what();
       }
     }
 
-    if (failed) ++n_failed;
+    if (failed) {
+      ++n_failed;
+      /* Journalled as a failed PC_LAMMPS task is (run_lammps): the
+       * observable, the evaluation and why, rate-limited on powers of two
+       * per run -- a potential that breaks an observable breaks it at
+       * every evaluation, and the first few say all. */
+      const std::size_t n =
+          HPOLog::instance().count_in_run("PC_OBSERVABLE term failed");
+      if ((n & (n - 1)) == 0) {
+        const std::string term =
+            trg_.observables[k]
+                ? observable_journal_label(*trg_.observables[k], k + 1)
+                : "PC_OBSERVABLE[" + std::to_string(k + 1) + "]";
+        HPOLog::instance().warning(
+            "PC_OBSERVABLE term failed (" + term + ", eval " +
+            std::to_string(r.iter) + ", occurrence " + std::to_string(n) +
+            "): " + why);
+      }
+    }
     r.v_obs_value[k] = v;
     r.v_obs_loss[k]  = l;
     r.loss_sum      += l;
@@ -2940,6 +2977,8 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         /* The trainer slot still holds the previous feasible theta; the
          * next analytical_gradient() must not read it as "current x". */
         tls_trainer_theta_stale_ = true;
+        tls_untrained_why_ = "the candidate was rejected before training (" +
+                             what + "): it has no fit to differentiate";
         /* Stagnation check (parity with post_lammps_finalize): an
          * all-infeasible run must still trip StagnationStop -- its catch
          * submits r with the real graded loss. */
@@ -3017,6 +3056,8 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * differences instead of differentiating that state (on lists that may
      * not cover p's cutoff). */
     tls_trainer_theta_stale_ = true;
+    tls_untrained_why_ = "its training did not complete: there is no fit "
+                         "to differentiate";
     tls_rebuilt_lists_.reset();
     {
         /* Every evaluation trains a Trainer built from its own candidate
@@ -3024,8 +3065,9 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
          * basis function or kernel, the model and its design matrix read
          * when they are built (EWEIGHT/FWEIGHT/SWEIGHT, MPARAMS, ...) is
          * this candidate's, and nothing an earlier fit wrote into a context
-         * (SIGMA, ALPHA/BETA) or an earlier host configured is carried
-         * over. Building one costs far less than the fit (a few
+         * (ALPHA/BETA of LAMBDA -1; the weight covariance is the model's,
+         * WCOV and WNOISE in its potential) or an earlier host configured
+         * is carried over. Building one costs far less than the fit (a few
          * hundredths of a millisecond for analytic descriptors; a setfl
          * file is parsed once per contents, models::shared_setfl). */
         auto& cache = tls_trainer_cache_;
@@ -3056,6 +3098,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     mlip::Trainer& host = *tls_trainer_cache_.trainer;
     /* Training succeeded: the trainer slot reflects theta = p again. */
     tls_trainer_theta_stale_ = false;
+    tls_untrained_why_.clear();
     t_train_end = std::chrono::high_resolution_clock::now();
     stage_watchdog::leave(r.iter, "train", _stage_log);
 
@@ -3310,8 +3353,13 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     }
 
     /* Top-K tracking -- cheap fast-path when disabled (capacity == 0).
-     * Near-clone dedup (loss + normalised parameter distance) lives in topk.h. */
-    if (topk_capacity_ > 0) {
+     * Near-clone dedup (loss + normalised parameter distance) lives in topk.h.
+     * Only a usable loss is a candidate (the band predicate of best
+     * publication above): topk_consider keeps any entry while the buffer
+     * has room, so a failed loss -- FAILSCORE, a graded failure -- stayed
+     * among the PRESTAGE candidates while fewer than TOPK usable ones
+     * existed, and the refinement started from it (StagedPolicy). */
+    if (topk_capacity_ > 0 && loss_is_feasible(r.loss, trg_.FAIL_SCORE)) {
       std::lock_guard<std::mutex> lk(topk_mtx_);
       if (topk_capacity_ > 0) {  /* re-check inside lock */
         topk_consider(topk_buf_, topk_capacity_, r.loss, r.params,
@@ -4057,6 +4105,16 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
  * HPOTargets and returns the gradient. Keeping the plumbing as a free
  * function makes it testable without HPO_Host's full data scaffolding
  * (DBFILE / config.hpo / val.tadah). */
+template<class P, class R>
+std::string HPO_Host<P,R>::analytical_gradient_gap() const
+{
+    if (!slot_is_mine())
+        return "this thread holds no trained model of this run's evaluation "
+               "at this point";
+    if (tls_trainer_theta_stale_) return tls_untrained_why_;
+    return {};
+}
+
 template<class P, class R>
 bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                                         std::vector<int>& needs_fd) const

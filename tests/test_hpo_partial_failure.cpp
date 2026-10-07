@@ -41,6 +41,8 @@
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/observables/cohesive_energy.h>
+#include <tadah/hpo/observables/observable.h>
 #include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/runners.h>
 
@@ -56,12 +58,16 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <limits>
+#include <memory>
 #include <regex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -284,9 +290,13 @@ const std::string kOptimRcut = "OPTIM RCUT2B (1) 4.0 5.5\n";
 
 /* One HPO_Host in the cwd with the hpotarget @p target (the objective
  * lines; QFLUSH 1 and DIGITS 15 are added); evaluates each candidate
- * RCUT2B in @p xs, flushes the rows and returns the losses. */
-std::vector<double> evaluate(const fs::path& dir, const std::string& target,
-                             const std::vector<double>& xs) {
+ * RCUT2B in @p xs, flushes the rows and returns the losses. @p adjust, if
+ * given, changes the parsed targets before the host is built (it replaces
+ * an observable with one no PC_OBSERVABLE line gives). */
+std::vector<double> evaluate(
+    const fs::path& dir, const std::string& target,
+    const std::vector<double>& xs,
+    const std::function<void(HPOTargets&)>& adjust = {}) {
     write_data(dir);
     const fs::path hpo = dir / "config.hpo";
     std::ofstream(hpo) << "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\n"
@@ -296,6 +306,7 @@ std::vector<double> evaluate(const fs::path& dir, const std::string& target,
     Context ctx = pinned_context(dir / "train.db", hpo, dir / "config.val",
                                  4.5);
     HPOTargets trg(ctx, hpo.string());
+    if (adjust) adjust(trg);
     std::vector<double> losses;
     Host host(ctx, trg, (dir / "config.val").string());
     host.prepare_best_publication();
@@ -418,6 +429,211 @@ TEST_CASE("a failed PC_OBSERVABLE term is a graded band-B failure under "
               std::string::npos);
         Host::reset_globals_for_test();
     }
+}
+
+/* Pins: a failed PC_OBSERVABLE term is journalled with its observable,
+ * the evaluation and why it failed, as a failed PC_LAMMPS task is: a
+ * WARNING "PC_OBSERVABLE term failed (cohesive_energy[1], eval <n>,
+ * occurrence <k>): the relaxed lattice parameter a0 = <a> is outside its
+ * --hotvar window [3, 3.35]" at the first, second and fourth failure of
+ * the run (rate-limited on powers of two): evals 2, 3 and 5 of RCUT2B 4.5
+ * (computed: no line), 5.2, 5.3, 5.4 and 5.5; the third failure (eval 4)
+ * has no line; a0 is above 3.35.
+ * Before the fix: no journal line named a failed term or its reason; the
+ * evaluation's FAILSCORE (loss.tadah) and NaN value (outvar.tadah) were
+ * all it left. */
+TEST_CASE("a failed PC_OBSERVABLE term is journalled with its observable and "
+          "why it failed", "[HPO][partial_failure][host]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ScratchDir sd;
+    Journal j;
+    const auto losses = evaluate(sd.dir, "PC_ERMSE 0 1\n" + kFailingObservable,
+                                 {4.5, 5.2, 5.3, 5.4, 5.5});
+    const std::string journal = j.finish();
+    INFO(journal);
+    REQUIRE(losses.size() == 5);
+    for (std::size_t i = 1; i < losses.size(); ++i) CHECK(losses[i] == kMax);
+    const std::regex line(
+        R"(WARNING +PC_OBSERVABLE term failed \(cohesive_energy\[1\], eval )"
+        R"((\d+), occurrence (\d+)\): the relaxed lattice parameter a0 = )"
+        R"(([0-9.]+) is outside its --hotvar window \[3, 3\.35\])");
+    std::vector<std::pair<int, int>> seen;
+    for (auto it = std::sregex_iterator(journal.begin(), journal.end(), line);
+         it != std::sregex_iterator(); ++it) {
+        seen.emplace_back(std::stoi((*it)[1]), std::stoi((*it)[2]));
+        CHECK(std::stod((*it)[3]) > 3.35);
+    }
+    CHECK(seen == std::vector<std::pair<int, int>>{{2, 1}, {3, 2}, {5, 4}});
+    CHECK(count_of(journal, "PC_OBSERVABLE term failed") == 3u);
+    Host::reset_globals_for_test();
+}
+
+/* An observable that fails as told: its evaluation throws, or it reports a
+ * value that is not a number (without a reason of its own), or one whose
+ * L2 loss overflows (1e300 against the target 0). */
+class FailingStub final : public tadah::hpo::Observable {
+public:
+    enum class Mode { Throws, NotANumber, LossOverflows };
+    explicit FailingStub(Mode m) : mode_(m) {}
+    std::string kind() const override { return "stub"; }
+    std::string column_tag() const override { return "Stub"; }
+    std::string analytical_gradient_gap() const override { return {}; }
+    tadah::hpo::ObservableEvalResult evaluate(
+        tadah::mlip::M_Tadah_Base&, tadah::mlip::DC_Base&,
+        const tadah::core::Context&) override {
+        tadah::hpo::ObservableEvalResult res;
+        switch (mode_) {
+            case Mode::Throws:
+                throw std::runtime_error("stub: the relaxation diverged");
+            case Mode::NotANumber:
+                res.value = std::numeric_limits<double>::quiet_NaN();
+                break;
+            case Mode::LossOverflows:
+                res.value = 1e300;
+                break;
+        }
+        return res;
+    }
+    double target() const override { return 0.0; }
+    double weight() const override { return 1.0; }
+    const tadah::LossFunction& lossfn() const override { return lossfn_; }
+
+private:
+    Mode mode_;
+    tadah::LossFunction lossfn_{tadah::LossFunction::Type::L2};
+};
+
+/* The journal's "PC_OBSERVABLE term failed (...): <why>" reasons, one per
+ * line, in journal order. */
+std::vector<std::string> observable_failure_reasons(const std::string& journal,
+                                                    const std::string& term) {
+    std::vector<std::string> out;
+    const std::string head = "PC_OBSERVABLE term failed (" + term + ", eval ";
+    for (auto p = journal.find(head); p != std::string::npos;
+         p = journal.find(head, p + head.size())) {
+        const auto colon = journal.find("): ", p);
+        const auto eol = journal.find('\n', p);
+        if (colon == std::string::npos || colon > eol) continue;
+        out.push_back(journal.substr(colon + 3, eol - colon - 3));
+    }
+    return out;
+}
+
+/* Pins: the journal line of a failed PC_OBSERVABLE term gives each of the
+ * host's own reasons (HPO_Host::obs_loss): an evaluation that threw ("its
+ * evaluation threw: stub: the relaxation diverged"), a value that is not a
+ * number without a reason of the observable's ("its value is not finite
+ * (nan)"), and a value whose loss is not finite ("its loss is not finite
+ * (value 1e+300, --loss L2)"); each at eval 1, occurrence 1, and the
+ * evaluation's loss is FAILSCORE.
+ * Before the fix: passes as well (a pin of the reasons of the fix that
+ * journals a failed term, which the test of that fix did not cover; before
+ * that fix no journal line named a failed term). */
+TEST_CASE("a failed PC_OBSERVABLE term's journal line says why: an evaluation "
+          "that threw, a value or a loss that is not finite",
+          "[HPO][partial_failure][host]") {
+    tadah::core::PeriodicTable::initialize();
+    struct Case {
+        FailingStub::Mode mode;
+        const char* why;
+    };
+    for (const Case& c :
+         {Case{FailingStub::Mode::Throws,
+               "its evaluation threw: stub: the relaxation diverged"},
+          Case{FailingStub::Mode::NotANumber, "its value is not finite (nan)"},
+          Case{FailingStub::Mode::LossOverflows,
+               "its loss is not finite (value 1e+300, --loss L2)"}}) {
+        INFO(c.why);
+        Host::reset_globals_for_test();
+        ScratchDir sd;
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir, "PC_ERMSE 0 1\n" + kUsableObservable, {4.5},
+            [&](HPOTargets& trg) {
+                REQUIRE(trg.observables.size() == 1);
+                trg.observables[0] = std::make_unique<FailingStub>(c.mode);
+            });
+        const std::string journal = j.finish();
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] == kMax);
+        CHECK(observable_failure_reasons(journal, "stub[1]") ==
+              std::vector<std::string>{c.why});
+        CHECK(count_of(journal, "PC_OBSERVABLE term failed (stub[1], eval 1, "
+                                "occurrence 1): ") == 1u);
+    }
+    Host::reset_globals_for_test();
+}
+
+/* A cohesive_energy relaxation that does not converge (--maxeval 1, from a
+ * compressed cell, a0 = 2.2 in the window [2, 5]) reports its --unconverged
+ * value: the constant, or target + slope x fmax. When
+ * that value is not finite the term fails, and the reason names the
+ * strategy and its numbers. No PC_OBSERVABLE line gives such a value (the
+ * parser reads only finite numbers, and the relaxed bcc cell's atom forces
+ * vanish, so a finite slope does not overflow): a force-scaled value is not
+ * finite when fmax is not, or slope x fmax overflows. The observable is
+ * built here with a slope of +inf, and a constant of NaN.
+ * Pins: the reason is "the relaxation did not converge (maxeval reached)
+ * and its --unconverged force-scaled value, target + slope x fmax = 8.1 +
+ * inf x <fmax> = <v>, is not finite", and "... and its --unconverged const
+ * value nan is not finite"; no reason names --unconverged-penalty, a flag
+ * the parser refuses.
+ * Before the fix: both ended "... and its --unconverged-penalty value is
+ * <v>". */
+TEST_CASE("an unconverged cohesive_energy relaxation whose --unconverged value "
+          "is not finite names its strategy", "[HPO][partial_failure][host]") {
+    tadah::core::PeriodicTable::initialize();
+    using Cfg = tadah::hpo::CohesiveEnergyObservable::Config;
+    struct Case {
+        Cfg::UnconvergedStrategy strategy;
+        double value;
+        std::regex why;
+    };
+    const std::vector<Case> cases = {
+        {Cfg::UnconvergedStrategy::ForceScaled,
+         std::numeric_limits<double>::infinity(),
+         std::regex(R"(the relaxation did not converge \(maxeval reached\) )"
+                    R"(and its --unconverged force-scaled value, target \+ )"
+                    R"(slope x fmax = 8\.1 \+ inf x [-+.0-9e]+ = -?(nan|inf), )"
+                    R"(is not finite)")},
+        {Cfg::UnconvergedStrategy::Const,
+         std::numeric_limits<double>::quiet_NaN(),
+         std::regex(R"(the relaxation did not converge \(maxeval reached\) )"
+                    R"(and its --unconverged const value nan is not finite)")}};
+    for (const Case& c : cases) {
+        Host::reset_globals_for_test();
+        ScratchDir sd;
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir, "PC_ERMSE 0 1\n" + kUsableObservable, {4.5},
+            [&](HPOTargets& trg) {
+                Cfg cfg;
+                cfg.species = "Ta";
+                cfg.nx = cfg.ny = cfg.nz = 2;
+                cfg.target = 8.1;
+                cfg.weight = 1.0;
+                cfg.a0_min = 2.0;
+                cfg.a0_max = 5.0;
+                cfg.a0_initial = 2.2;  // compressed: not converged at once
+                cfg.relax_maxeval = 1;
+                cfg.unconverged_strategy = c.strategy;
+                cfg.unconverged_value = c.value;
+                REQUIRE(trg.observables.size() == 1);
+                trg.observables[0] =
+                    std::make_unique<tadah::hpo::CohesiveEnergyObservable>(cfg);
+            });
+        const std::string journal = j.finish();
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] == kMax);
+        const auto reasons =
+            observable_failure_reasons(journal, "cohesive_energy[1]");
+        REQUIRE(reasons.size() == 1);
+        INFO(reasons[0]);
+        CHECK(std::regex_match(reasons[0], c.why));
+        CHECK(journal.find("--unconverged-penalty") == std::string::npos);
+    }
+    Host::reset_globals_for_test();
 }
 
 /* ======================================================================

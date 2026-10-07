@@ -710,11 +710,19 @@ template<typename Vec, typename HostT>
         run_schedule(T_start);
         if (stop_reason != StopReason::TMin) break;
         if (!kb.reanneal) break;
-        if (budget.left() == 0 || time_exceeded()) break;
+        /* No re-anneal left (its start temperature could not complete ~2
+         * rungs above T_MIN): the schedule's end is the search's, T_MIN,
+         * whatever the time. */
         const double next_T =
             T0 * std::pow(kb.reanneal_scale,
                           static_cast<double>(reanneal_count + 1));
         if (next_T < t_min / kb.rt) break;
+        /* A stop that prevents the re-anneal due is the one that ends the
+         * search: it used to stay "T < T_MIN". run_schedule returns TMin
+         * only with budget left (it tests MAXEVAL before it cools), so in
+         * practice the MAXTIME that passed since its last test. */
+        if (budget.left() == 0) { stop_reason = StopReason::MaxEval; break; }
+        if (time_exceeded()) { stop_reason = StopReason::MaxTime; break; }
         ++reanneal_count;
         chain.x = chain.best_x;
         chain.f = chain.best_f;
