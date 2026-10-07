@@ -8,6 +8,7 @@
 #include <tadah/hpo/scale_validation.h>
 #include <tadah/hpo/strategy_rules.h>
 
+#include <tadah/core/intercept_layout.h>
 #include <tadah/core/logger.h>
 #include <tadah/core/utils.h>
 #include <tadah/hpo/bump_support_gate.h>
@@ -216,18 +217,6 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * conversion moves the mean correction into the intercept columns);
    * BIAS true needs ATOM. Refused here, not by every evaluation. */
   tadah::mlip::check_bias_constraints(train_ctx);
-
-  /* --- FIXINDEX with BIAS true and two or more species ------------------
-   * Weights 1..N are the per-species intercepts: the descriptor weights
-   * start at index N + 1 (they started at 2 before 1.6.0, when BIAS true
-   * had one intercept shared by all species). */
-  {
-    const std::string w = tadah::mlip::fixindex_intercept_warning(train_ctx);
-    if (!w.empty()) {
-      std::cerr << "[HPO] WARNING: " << w << "\n";
-      HPOLog::instance().warning(w);
-    }
-  }
 
   /* --- OPTIM key sanity (parse-time rules, re-checked cheaply) -------- */
   if (trg.optimap.count("WEIGHTS")) {
@@ -479,6 +468,25 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * It must build (probe_model): a construction error fails every
    * evaluation. Its weight count K serves the FIXINDEX rules below. */
   const std::size_t K = probe_model(train_ctx);
+
+  /* --- FIXINDEX with BIAS true and two or more species ------------------
+   * Which weights are the intercepts is the model function's (for a
+   * linear model weights 1..N, and the descriptor weights start at index
+   * N + 1; they started at 2 before 1.6.0, when BIAS true had one intercept
+   * shared by all species): built as an evaluation builds it, after
+   * probe_model() above checked that it builds. */
+  if (train_ctx.has_stored("FIXINDEX") &&
+      core::n_intercept_columns(train_ctx) >= 2) {
+    core::Context c = train_ctx;
+    tadah::mlip::memory::MLIPWorkspaceManager ws;
+    tadah::mlip::Trainer probe(c, ws);
+    const std::string w =
+        tadah::mlip::fixindex_intercept_warning(probe.context, *probe.fb);
+    if (!w.empty()) {
+      std::cerr << "[HPO] WARNING: " << w << "\n";
+      HPOLog::instance().warning(w);
+    }
+  }
 
   /* --- FIXINDEX/FIXWEIGHT pairing + weight-source classification ------ */
   if (has_fw || has_fi || !has_train_db) {
