@@ -156,6 +156,7 @@ void HPOLog::reset_for_test()
     n_eval_.store(0, std::memory_order_relaxed);
     n_nan_ .store(0, std::memory_order_relaxed);
     n_nan_logged_.store(0, std::memory_order_relaxed);
+    n_threw_.store(0, std::memory_order_relaxed);
     n_unusable_.store(0, std::memory_order_relaxed);
     for (auto& b : n_fail_band_) b.store(0, std::memory_order_relaxed);
     for (auto& g : n_gate_) g.store(0, std::memory_order_relaxed);
@@ -1069,7 +1070,9 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
 
     kv("Aggregate",   "mean over active components");
     kv("Fail score",  fmt_double(trg.FAIL_SCORE)
-                      + "  (returned when an evaluation produces NaN/Inf)");
+                      + "  (the loss of a failed evaluation: a NaN/Inf loss, "
+                        "an exception, a skip cap, a failed script or a gate "
+                        "reject; the ceiling of every loss)");
     kv("Output every",  std::to_string(trg.outputEvery) + " eval(s)");
     kv("Output digits", std::to_string(trg.outputDigits));
 }
@@ -1407,6 +1410,7 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, EvalLoss loss)
 {
     n_eval_.fetch_add(1, std::memory_order_relaxed);
     if (loss == EvalLoss::NanClamped) n_nan_.fetch_add(1, std::memory_order_relaxed);
+    if (loss == EvalLoss::Threw) n_threw_.fetch_add(1, std::memory_order_relaxed);
     if (loss != EvalLoss::Usable) n_unusable_.fetch_add(1, std::memory_order_relaxed);
 
     {
@@ -1469,6 +1473,10 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, EvalLoss loss)
                 << best_origin_str() << ")"
                 << "   NaN rate=" << std::fixed << std::setprecision(1)
                 << nan_pct << "%";
+            /* Evaluations that raised an exception (FAILSCORE, not a NaN):
+             * printed only when one did, as failed= below. */
+            if (const std::size_t nt = n_threw_.load(std::memory_order_relaxed))
+                msg << "   threw=" << nt;
             /* Graded-failure census. NaN rate above counts only non-finite
              * losses; a killed worker or a failed script yields a large but
              * FINITE failscore, so it is invisible there. Printed only when
@@ -2092,6 +2100,25 @@ void HPOLog::finish(const std::string& status_str)
               "    WARNING entries before changing bounds, the model, or FAIL_SCORE.\n";
     }
 
+    /* Evaluations that raised an exception (a training that failed, say).
+     * Disjoint from the NaN counter above: no loss was computed, and the
+     * evaluation scored FAIL_SCORE. The host journals each one as a
+     * WARNING with the exception's message. */
+    {
+        const std::size_t nt = n_threw_.load(std::memory_order_relaxed);
+        f_ << "  " << std::left << std::setw(KW) << "Evaluations that threw"
+           << ": " << nt;
+        if (total > 0)
+            f_ << "  (" << std::fixed << std::setprecision(1)
+               << 100.0 * static_cast<double>(nt) / static_cast<double>(total)
+               << "%)";
+        f_ << "\n";
+        if (nt > 0)
+            f_ << "  [!] " << nt << " evaluation(s) raised an exception and "
+                  "scored FAIL_SCORE; each has a WARNING\n"
+                  "    \"eval <n>: eval-thread caught ...\" with its message.\n";
+    }
+
     /* Graded failures. Disjoint from the NaN counter above: a killed worker
      * or a failed script produces a large but FINITE failscore, so it never
      * reaches was_nan_clamped. Without this line a run can fail almost every
@@ -2132,8 +2159,8 @@ void HPOLog::finish(const std::string& status_str)
     }
 
     /* Unusable losses: every evaluation whose loss cannot become the
-     * incumbent -- NaN/Inf clamped, FAILSCORE (a skip cap, a failed script,
-     * an evaluation that threw) or a graded failure. The two counts above
+     * incumbent -- NaN/Inf clamped, an evaluation that threw, FAILSCORE (a
+     * skip cap, a failed script) or a graded failure. The counts above
      * see only part of them, so the verdict reads this one: the journal
      * used to follow "100.0% of evaluations produced a non-finite loss"
      * with "[ok] Every evaluation produced a usable loss", which it printed

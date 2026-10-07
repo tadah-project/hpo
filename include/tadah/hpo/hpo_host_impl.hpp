@@ -2745,9 +2745,9 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * Recovery: catch any std::exception (or unknown throw), submit a
      * synthetic FAIL_SCORE Result for this iter so the writer queue
      * stays contiguous, and return FAIL_SCORE to the optimiser. The
-     * synthetic Result is flagged with was_nan_clamped = true so
-     * downstream consumers can identify it as recovery output rather
-     * than a genuine high-loss point.
+     * census records it as an evaluation that threw (EvalLoss::Threw),
+     * which the journal's DIAGNOSTICS count apart from the NaN/Inf
+     * clampings: no loss was computed, let alone a non-finite one.
      *
      * Excluded from the catch:
      *  - core::ShutdownRequested -- must propagate to hpo_run() so the
@@ -3387,10 +3387,14 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
          * leak from the writer queue. Without this, the writer's
          * next_flush_ would be permanently stuck at our iter (the
          * gap-skip recovery would eventually advance it after 60 s,
-         * but by then per-eval logs are lost). */
+         * but by then per-eval logs are lost).
+         *
+         * An interrupted evaluation has no loss: the census counts it as
+         * a failed one (D3), not as a NaN/Inf clamping. (Unreachable
+         * today: operator() raises the stop before the try, before it
+         * evaluates anything.) */
         r.loss = trg_.FAIL_SCORE;
-        r.was_nan_clamped = true;
-        _census.loss = EvalLoss::NanClamped;  /* D3: it still counts, as a NaN */
+        _census.loss = EvalLoss::Failed;
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
         try {
@@ -3468,10 +3472,10 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         /* Any other throw between ++g_iter_ and submit_result must
          * not leak the iter slot. Build a synthetic FAIL_SCORE Result
          * carrying r.iter and submit it so the writer's next_flush_
-         * cursor can advance past this iter. */
+         * cursor can advance past this iter. The census counts it as an
+         * evaluation that threw (D3), not as a NaN/Inf clamping. */
         r.loss = trg_.FAIL_SCORE;
-        r.was_nan_clamped = true;
-        _census.loss = EvalLoss::NanClamped;  /* D3: it still counts, as a NaN */
+        _census.loss = EvalLoss::Threw;
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
         try {
@@ -3496,8 +3500,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     } catch (...) {
         /* Same path for non-std::exception throws. */
         r.loss = trg_.FAIL_SCORE;
-        r.was_nan_clamped = true;
-        _census.loss = EvalLoss::NanClamped;  /* D3: it still counts, as a NaN */
+        _census.loss = EvalLoss::Threw;
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
         try {
