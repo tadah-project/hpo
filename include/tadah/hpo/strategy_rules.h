@@ -33,12 +33,20 @@ enum class DriverPhase {
 
 /* LIB and ALGO name the optimiser of a phase; OptimizerSpec leaves both
  * "NOT SET" until the configuration sets them. Throws std::runtime_error
- * when either is missing, naming the block where they belong. */
+ * when either is missing, naming the block where they belong, and when
+ * they name a backend the caps registry refuses (reject_refused_backend(),
+ * optimizer_caps.h), naming the phase as validate_run_policy() does: "the
+ * STRATEGY-level optimiser: NLOPT:LN_NEWUOA_BOUND is refused: ...", "the
+ * PRESTAGE refinement: ..." (a REFINE block's optimiser), "the EXPLORE
+ * block: ...". HPOTargets::read() applies it where the block closes, so the
+ * error names that line. */
 void require_driver(const OptimizerSpec& phase_spec, DriverPhase phase);
 
 /* The same rule for an INNER block, the local optimiser NLopt's MLSL and
  * AUGLAG run: `enclosing` names the block it sits in (STRATEGY, EXPLORE or
- * REFINE). HPOTargets::read() applies it when the INNER block closes. */
+ * REFINE): "the INNER block inside STRATEGY: NLOPT:LN_NEWUOA_BOUND is
+ * refused: ...". HPOTargets::read() applies it when the INNER block
+ * closes. */
 void require_inner_driver(const OptimizerSpec& inner_spec,
                           const std::string& enclosing);
 
@@ -51,6 +59,9 @@ void require_inner_driver(const OptimizerSpec& inner_spec,
  *     STRATEGY-level optimiser): NLopt has no default local optimiser for
  *     it; ..." -- NLopt refused it only once the run had started;
  * and, when `parent` has one, unless
+ *   - the INNER optimiser is not refused (reject_refused_backend(),
+ *     optimizer_caps.h: "the INNER block of the STRATEGY-level optimiser:
+ *     NLOPT:LN_NEWUOA_BOUND is refused: ..."),
  *   - the parent runs one (OptimizerCaps::accepts_inner),
  *   - the INNER optimiser is an NLopt algorithm (LIB NLOPT), and
  *   - it does not need an INNER block of its own (INNER blocks do not

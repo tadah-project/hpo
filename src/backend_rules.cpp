@@ -445,7 +445,13 @@ void validate_phase_backends(const OptimizerSpec& root)
 {
     /* RESTART wraps every phase (RestartPolicy, run_policy.h). */
     const RestartStop restart = restart_stop_of(root);
-    for (const PhaseSpec& phase : strategy_phase_specs(root)) {
+    const std::vector<PhaseSpec> phases = strategy_phase_specs(root);
+    /* A refused backend first, named with its own phase: the checks of an
+     * MLSL or AUGLAG phase look up the caps of its INNER block, which would
+     * report a refused INNER optimiser for the enclosing phase. */
+    for (const PhaseSpec& phase : phases)
+        reject_refused_backend(phase.spec.lib, phase.spec.algo, phase.name);
+    for (const PhaseSpec& phase : phases) {
         try {
             validate_backend(phase.spec, restart,
                              phase.inner ? SpecRole::Inner : SpecRole::Phase);

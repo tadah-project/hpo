@@ -107,7 +107,16 @@ const char* strategy_type_name(StrategyType type)
 void require_driver(const OptimizerSpec& s, DriverPhase phase)
 {
     const std::string missing = missing_driver(s);
-    if (missing.empty()) return;
+    if (missing.empty()) {
+        /* The phases as validate_run_policy() names them. */
+        reject_refused_backend(
+            s.lib, s.algo,
+            phase == DriverPhase::Explore ? "the EXPLORE block"
+            : s.strategy_type == StrategyType::PRESTAGE
+                ? "the PRESTAGE refinement"
+                : "the STRATEGY-level optimiser");
+        return;
+    }
     if (phase == DriverPhase::Explore)
         throw std::runtime_error(
             "the EXPLORE block names no optimiser: " + missing +
@@ -135,7 +144,11 @@ void require_driver(const OptimizerSpec& s, DriverPhase phase)
 void require_inner_driver(const OptimizerSpec& s, const std::string& enclosing)
 {
     const std::string missing = missing_driver(s);
-    if (missing.empty()) return;
+    if (missing.empty()) {
+        reject_refused_backend(s.lib, s.algo,
+                               "the INNER block inside " + enclosing);
+        return;
+    }
     throw std::runtime_error(
         "the INNER block inside " + enclosing + " names no optimiser: " +
         missing + "; set LIB and ALGO inside the INNER block (the local "
@@ -161,6 +174,11 @@ void require_inner_backend(const OptimizerSpec& parent,
             default_inner_algorithms() + " without one");
     if (!parent.inner) return;
     const OptimizerSpec& inner = *parent.inner;
+    /* A refused INNER optimiser, with the INNER block's phase: NLopt would
+     * run it inside the enclosing run (build_nlopt). */
+    reject_refused_backend(inner.lib, inner.algo,
+                           "the INNER block of " +
+                               (phase.empty() ? name : phase));
     if (!optimizer_caps(parent).accepts_inner) {
         const std::string where =
             phase.empty() ? "" : " (the INNER block of " + phase + ")";

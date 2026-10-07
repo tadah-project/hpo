@@ -6,6 +6,8 @@
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_spec.h>
 
+#include <nlopt.h>
+
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -148,4 +150,50 @@ TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA_BOUND is refused, naming the "
                Catch::Contains("Use NLOPT:LN_BOBYQA") &&
                !Catch::Contains("STEP <double>") &&
                !Catch::Contains("Stops that end a run"));
+}
+
+TEST_CASE("OptimizerCaps: backend_refusal names the refused backends, and "
+          "every NLopt algorithm is registered or refused",
+          "[HPO][caps][refused]")
+{
+    /* Pins: backend_refusal() returns the reason for (NLOPT,
+     * LN_NEWUOA_BOUND) only -- the library is part of the key -- and
+     * reject_refused_backend() throws "LIB:ALGO is refused: <reason>",
+     * with "<where>: " in front when given, the text optimizer_caps()
+     * throws; every algorithm NLopt names is either registered or refused,
+     * never both and never neither.
+     * Added with the fix, which introduces both functions (the tests
+     * commit could not call them). */
+    const char* reason = backend_refusal("NLOPT", "LN_NEWUOA_BOUND");
+    REQUIRE(reason != nullptr);
+    const std::string refused =
+        std::string("NLOPT:LN_NEWUOA_BOUND is refused: ") + reason;
+    CHECK(backend_refusal("NLOPT", "LN_BOBYQA") == nullptr);
+    CHECK(backend_refusal("NLOPT", "LN_NEWUOA") == nullptr);
+    CHECK(backend_refusal("NLOPT", "NOT_AN_ALGO") == nullptr);
+    CHECK(backend_refusal("TADAH", "LN_NEWUOA_BOUND") == nullptr);
+    CHECK_THROWS_WITH(optimizer_caps("NLOPT", "LN_NEWUOA_BOUND"), refused);
+    CHECK_THROWS_WITH(reject_refused_backend("NLOPT", "LN_NEWUOA_BOUND"),
+                      refused);
+    CHECK_THROWS_WITH(reject_refused_backend("NLOPT", "LN_NEWUOA_BOUND",
+                                             "the EXPLORE block"),
+                      "the EXPLORE block: " + refused);
+    CHECK_NOTHROW(reject_refused_backend("NLOPT", "LN_BOBYQA", "anywhere"));
+    CHECK(find_optimizer_caps("NLOPT", "LN_NEWUOA_BOUND") == nullptr);
+
+    std::size_t registered = 0;
+    for (int i = 0; i < NLOPT_NUM_ALGORITHMS; ++i) {
+        const char* name =
+            nlopt_algorithm_to_string(static_cast<nlopt_algorithm>(i));
+        if (!name || !name[0]) continue;
+        INFO(name);
+        const bool is_registered = find_optimizer_caps("NLOPT", name) != nullptr;
+        const bool is_refused = backend_refusal("NLOPT", name) != nullptr;
+        CHECK(is_registered != is_refused);
+        if (is_registered) ++registered;
+    }
+    CHECK(registered ==
+          filter_optimizer_caps([](const OptimizerCaps& c) {
+              return c.lib == "NLOPT";
+          }).size());
 }
