@@ -341,13 +341,28 @@ const std::vector<AlgoSpelling> kExploreOuterAlgos = {
     {"DLIB_GLOBAL", "DLIB_GLOBAL", "DLIB", kAlias},
     {"MLSL", "MLSL", "NLOPT", kAlias},
     {"GN_MLSL_LDS", "MLSL", "NLOPT", kListed},
-    {"GN_MLSL", "MLSL", "NLOPT", kAlias},
     {"DIRECT", "DIRECT", "NLOPT", kAlias},
     {"GN_DIRECT_L", "DIRECT", "NLOPT", kListed},
-    {"GN_DIRECT", "DIRECT", "NLOPT", kAlias},
     {"CRS2", "CRS2", "NLOPT", kAlias},
-    {"GN_CRS2_LM", "CRS2", "NLOPT", kListed},
-    {"GN_CRS2", "CRS2", "NLOPT", kAlias}};
+    {"GN_CRS2_LM", "CRS2", "NLOPT", kListed}};
+
+// NLopt spellings the EXPLORE optimiser refuses, with the algorithm the refit
+// runs in their place. They were aliases of it: GN_MLSL ran GN_MLSL_LDS,
+// GN_DIRECT GN_DIRECT_L and GN_CRS2 GN_CRS2_LM. GN_MLSL and GN_DIRECT are
+// other NLopt algorithms, which `tadah hpo` runs as named, and GN_CRS2 is
+// none. The refit's own short names (MLSL, DIRECT, CRS2) stay.
+struct RefusedSpelling {
+  const char *spelling;  // uppercase
+  const char *what;      // what the spelling is
+  const char *short_name;
+  const char *runs;      // the refit's algorithm of that name
+};
+const std::vector<RefusedSpelling> kExploreRefusedAlgos = {
+    {"GN_MLSL", "NLopt's MLSL with pseudo-random starts", "MLSL",
+     "GN_MLSL_LDS"},
+    {"GN_DIRECT", "NLopt's DIRECT without the local bias of DIRECT_L",
+     "DIRECT", "GN_DIRECT_L"},
+    {"GN_CRS2", "not an NLopt algorithm", "CRS2", "GN_CRS2_LM"}};
 const std::vector<AlgoSpelling> kExploreInnerAlgos = {
     {"NONE", "NONE", kNoOptimiser, kListed},
     {"LBFGS", "DLIB_LBFGS", "DLIB", kListed},
@@ -478,6 +493,14 @@ bool refit_curve_objective(const tadah::core::Context &c) {
 }
 
 std::string refit_explore_outer_algo(const OptimizerSpec &s) {
+  // A refused spelling first, before the LIB rule, whatever the LIB.
+  const std::string algo = up(s.algo == "NOT SET" ? "" : s.algo);
+  for (const auto &r : kExploreRefusedAlgos)
+    if (algo == r.spelling)
+      throw std::runtime_error(std::string("EXPLORE: ALGO ") + s.algo +
+                               " is not run by tadah refit (" + r.what +
+                               "); its " + r.short_name + " is " + r.runs +
+                               ": set ALGO " + r.runs);
   return stage_algo(s, kExploreOuterAlgos, "EXPLORE", "EXPLORE outer",
                     kExploreOff,
                     "NLOPT GN_MLSL_LDS|GN_DIRECT_L|GN_CRS2_LM, DLIB GLOBAL, or "
