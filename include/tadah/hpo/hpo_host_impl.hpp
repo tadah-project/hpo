@@ -2177,28 +2177,38 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
    * wave 2 with the (unused) injection. Classification is conservative: any
    * textual reference marks the script dependent, so a mis-classification can
    * only demote an independent script to wave 2 (a missed speed-up), never
-   * feed a cold script a stale value. */
+   * feed a cold script a stale value.
+   *
+   * The same test picks the hot values a dependent script is injected with
+   * in wave 2 (hot_refs[i], declaration order): those it reads, and no other.
+   * A value it does not read is dead for it by the argument above, and its
+   * injection is not harmless: LAMMPS refuses `variable <name> equal ...`
+   * when the script's instance has the name as another style (`--invar
+   * <name>` on its line), and a refused injection fails the script. */
   std::vector<std::size_t> cold_indep_idx, cold_dep_idx;
   cold_indep_idx.reserve(cold_idx.size());
   cold_dep_idx.reserve(cold_idx.size());
+  std::vector<std::vector<std::string>> hot_refs(LS.size());
   {
-    std::vector<std::string> ref_brace, ref_v;   /* ${name} and v_name per hot var */
+    std::vector<std::string> hot_names;   /* declaration order, each once */
     for (auto hi : hot_idx)
-      for (const auto& hv : LS[hi].hotvars) {
-        ref_brace.push_back("${" + hv.name + "}");
-        ref_v.push_back("v_" + hv.name);
-      }
-    auto references_hot = [&](std::size_t i) -> bool {
+      for (const auto& hv : LS[hi].hotvars)
+        if (std::find(hot_names.begin(), hot_names.end(), hv.name) ==
+            hot_names.end())
+          hot_names.push_back(hv.name);
+    auto references = [&](std::size_t i, const std::string& name) -> bool {
+      const std::string brace = "${" + name + "}", v = "v_" + name;
       for (const auto& line : LS[i].script_lines)
-        for (std::size_t p = 0; p < ref_brace.size(); ++p)
-          if (line.find(ref_brace[p]) != std::string::npos ||
-              line.find(ref_v[p])     != std::string::npos)
-            return true;
+        if (line.find(brace) != std::string::npos ||
+            line.find(v)     != std::string::npos)
+          return true;
       return false;
     };
     for (auto i : cold_idx) {
-      if (ref_brace.empty() || !references_hot(i)) cold_indep_idx.push_back(i);
-      else                                          cold_dep_idx.push_back(i);
+      for (const auto& name : hot_names)
+        if (references(i, name)) hot_refs[i].push_back(name);
+      if (hot_refs[i].empty()) cold_indep_idx.push_back(i);
+      else                     cold_dep_idx.push_back(i);
     }
   }
 
@@ -2357,25 +2367,35 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
   }
 
   /* --- WAVE 2: hot-DEPENDENT cold scripts -------------------------- */
-  /* Inject every fresh hot value from wave 1; cold scripts read them as
-   * `${<name>}`. The command list is identical for every wave-2 task, so it
-   * is built once here (same commands the old per-task injector emitted). */
-  std::vector<std::string> wave2_inject;
-  wave2_inject.reserve(hot_snapshot.size());
-  for (const auto& kv : hot_snapshot)
-    wave2_inject.push_back(format_hot_inject(kv.first, kv.second));
+  /* Inject the fresh hot values from wave 1 that each script reads
+   * (hot_refs[i]); cold scripts read them as `${<name>}` or `v_<name>`.
+   * Built here, before the batch, from the read-only snapshot. A value the
+   * script reads that wave 1 did not produce -- its hot script could not
+   * start (CREATE_FAIL, which does not abort the eval) -- leaves the script
+   * nothing to run on but an undefined name or, in a cached instance, an
+   * earlier eval's value: it is not run, and its variables take
+   * --failscore (the hot script's failure is journalled; the eval has a
+   * failed simulation, r.sims_failed). */
+  std::vector<std::vector<std::string>> wave2_inject(LS.size());
+  std::vector<bool> wave2_missing(LS.size(), false);
+  for (auto i : cold_dep_idx)
+    for (const auto& name : hot_refs[i]) {
+      const auto it = hot_snapshot.find(name);
+      if (it == hot_snapshot.end()) wave2_missing[i] = true;
+      else wave2_inject[i].push_back(format_hot_inject(name, it->second));
+    }
 
   lpt_sort(cold_dep_idx);   /* longest-first + dynamic (see wave 1) */
   script_executor().run_batch(cold_dep_idx.size(), [&](std::size_t k, int wid) {
     const std::size_t i = cold_dep_idx[k];
-    if (eval_aborted.load(std::memory_order_relaxed)) {
+    if (eval_aborted.load(std::memory_order_relaxed) || wave2_missing[i]) {
       for (const auto& n : LS[i].n_outvar) {
         (void)n;
         r.v_outvar[i].emplace_back(failscore_token(LS[i].failscore));
       }
       return;
     }
-    run_one(i, wid, wave2_inject);
+    run_one(i, wid, wave2_inject[i]);
   });
 
   /* Stage 1a: aggregate per-script busy time into the eval's fan-out
