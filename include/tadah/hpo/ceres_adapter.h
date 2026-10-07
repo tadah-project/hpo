@@ -239,8 +239,9 @@ public:
             *cost = y;
 
             if (gradient) {
-                /* y is the loss of exactly x, just evaluated: HYBRID takes
-                 * it as the loss at the point (gradient_at). */
+                /* y is the loss of exactly x, just evaluated: NUMERICAL
+                 * and HYBRID take it as the loss at the point
+                 * (gradient_at) and do not evaluate x again. */
                 Vec g;
                 if (!gp_->gradient_at(x, y, g)) {
                     const GradientFailure k = gp_->failure->kind;

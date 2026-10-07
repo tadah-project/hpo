@@ -474,8 +474,9 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                 u->rejection.last_rejected = false;
                 Vec g;
                 g.set_size(static_cast<long>(x.size()));
-                /* f is the loss of exactly v, just evaluated: HYBRID takes
-                 * it as the loss at the point (gradient_at). */
+                /* f is the loss of exactly v, just evaluated: NUMERICAL
+                 * and HYBRID take it as the loss at the point
+                 * (gradient_at) and do not evaluate v again. */
                 if (!u->gp->gradient_at(v, f, g)) {
                     /* No gradient here: MAXEVAL spent within it (Budget),
                      * or a gradient that is not finite (see UData). NLopt
