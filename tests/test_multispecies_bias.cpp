@@ -226,7 +226,7 @@ struct MlipPotential {
 
 LMPPtr make_instance() {
   return LammpsRunner().create_instance(
-      0, {"lmp", "-log", "none", "-screen", "none"});
+      {"lmp", "-log", "none", "-screen", "none"});
 }
 
 /* Stages @p pot for `pair_coeff * * EXTERN` while it lives. */

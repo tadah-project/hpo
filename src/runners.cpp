@@ -9,25 +9,22 @@
 #include <pair_tadah.h>
 
 #include <tadah/core/number_format.h>
+#include <tadah/hpo/hpo_mpi.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
 
 using LMPPtr = LammpsRunner::LMPPtr;
 using LMP = LammpsRunner::LMP;
 
 LammpsRunner::LMPPtr
-LammpsRunner::create_instance(MPI_Comm sub_comm,
-                              std::vector<std::string> tokens,
+LammpsRunner::create_instance(std::vector<std::string> tokens,
                               std::string* error) const {
- 
   // unique_ptr initialized to nullptr
   LMPPtr lmp_ptr;
 
   try {
-    // Construct LAMMPS; transfer ownership into unique_ptr
-    lmp_ptr.reset(
-      new LMP(tokens, sub_comm)
-      //new LMP(argc, argv.data(), sub_comm)
-    );
+    // Construct LAMMPS on the build's communicator (STUBS 0 serial,
+    // MPI_COMM_SELF under TADAH_HPO_MPI); transfer ownership.
+    lmp_ptr.reset(new LMP(tokens, tadah::hpo::hpo_lammps_comm()));
   } catch (const std::exception& e) {
     // On exception, leave lmp_ptr null; the LAMMPS message to the caller
     // that asked for it (an option LAMMPS refuses: "ERROR: Invalid

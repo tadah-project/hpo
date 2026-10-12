@@ -14,7 +14,7 @@
  *
  * Design: INVESTIGATIONS/PC_ISOLATION_process_pool.md sections 3-5, 7. */
 
-#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
+#include "pc_process_workers.h"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
 #include <tadah/core/context.h>
@@ -47,16 +47,12 @@ using namespace tadah::hpo;
 /* The MPI build (TADAH_HPO_MPI) has no worker-process pool: hpo_run()
  * refuses an explicit PC_ISOLATION PROCESS and runs THREAD by default, and
  * the worker entry refuses to start (pc_worker_main exits 2: a fork+exec'd
- * child of an MPI parent must not touch MPI). There the cases that spawn
- * workers are Skipped; "pc pool: in the MPI build the worker refuses to
- * start" pins the refusal they would otherwise fail on. */
-#ifdef TADAH_HPO_MPI
-#define SKIP_IN_MPI_BUILD()                                                  \
-  TADAH_SKIP("PC_ISOLATION PROCESS is serial-build only: in the MPI build "  \
-             "(TADAH_HPO_MPI) the pc_lammps worker refuses to start")
-#else
-#define SKIP_IN_MPI_BUILD() (void)0
-#endif
+ * child of an MPI parent must not touch MPI). There every case that builds
+ * a pool is Skipped (SKIP_WITHOUT_PC_PROCESS_WORKERS(), pc_process_workers.h)
+ * -- also those whose workers are test_main.cpp's stand-ins, which do not
+ * run pc_worker_main: the pool is code the MPI build never runs, the same
+ * in both builds. "pc pool: in the MPI build the worker refuses to start"
+ * pins the refusal the spawning cases would otherwise fail on. */
 
 namespace {
 
@@ -173,7 +169,7 @@ TEST_CASE("pc pool: a width below 1 is rejected", "[pc_pool]") {
 
 TEST_CASE("pc pool: spawn, handshake, task round-trip, shutdown",
           "[pc_pool]") {
-  SKIP_IN_MPI_BUILD();
+  SKIP_WITHOUT_PC_PROCESS_WORKERS();
   PcWorkerPool pool(2, specs_for(2, minimal_spec()), 0.0);
   const auto pot = invalid_pot_map();
 
@@ -201,7 +197,7 @@ TEST_CASE("pc pool: spawn, handshake, task round-trip, shutdown",
 
 TEST_CASE("pc pool: CREATE_FAIL is reported and retried per task",
           "[pc_pool]") {
-  SKIP_IN_MPI_BUILD();
+  SKIP_WITHOUT_PC_PROCESS_WORKERS();
   /* Unwritable log path => LAMMPS instance construction fails in the worker.
    * Contract: CREATE_FAIL round-trips, no instance is cached, and the next
    * task retries (and fails identically) rather than crashing the worker. */
@@ -219,7 +215,7 @@ TEST_CASE("pc pool: CREATE_FAIL is reported and retried per task",
 
 TEST_CASE("pc pool: worker-side task error is reported in-band",
           "[pc_pool]") {
-  SKIP_IN_MPI_BUILD();
+  SKIP_WITHOUT_PC_PROCESS_WORKERS();
   PcWorkerPool pool(1, specs_for(1, minimal_spec()), 0.0);
   const auto pot = invalid_pot_map();
 
@@ -241,7 +237,7 @@ TEST_CASE("pc pool: worker-side task error is reported in-band",
 
 TEST_CASE("pc pool: killing the worker process is contained and respawned",
           "[pc_pool][kill]") {
-  SKIP_IN_MPI_BUILD();
+  SKIP_WITHOUT_PC_PROCESS_WORKERS();
   /* Death containment via the REAL signal path: SIGKILL the child between
    * tasks.
    *
@@ -283,6 +279,7 @@ TEST_CASE("pc pool: killing the worker process is contained and respawned",
 
 TEST_CASE("pc pool: worker_pid names the live worker of a slot and changes "
           "on respawn", "[pc_pool][kill]") {
+  SKIP_WITHOUT_PC_PROCESS_WORKERS();
   /* Pins: PcWorkerPool::worker_pid(slot) is the pid of the worker process
    * the pool holds for that slot: one per slot from the constructor's eager
    * spawn, each a live direct child of this process running as
@@ -293,7 +290,10 @@ TEST_CASE("pc pool: worker_pid names the live worker of a slot and changes "
    * std::out_of_range naming the slot and the width.
    *
    * Before the fix: does not compile (PcWorkerPool::worker_pid is absent;
-   * the pid was not exposed at all). */
+   * the pid was not exposed at all).
+   * Skipped in the MPI build. Before it skipped there it failed there: the
+   * pool's eager spawn threw "pc-worker 1: handshake failed: pcwire: recv
+   * failed: Connection reset by peer" (the worker refused to start). */
   PcWorkerPool pool(2, specs_for(2, minimal_spec()), 0.0);
   const auto pot = invalid_pot_map();
 
@@ -340,6 +340,7 @@ TEST_CASE("pc pool: worker_pid names the live worker of a slot and changes "
 
 TEST_CASE("pc pool: the journal names the pid of a worker that died",
           "[pc_pool][kill][hpolog]") {
+  SKIP_WITHOUT_PC_PROCESS_WORKERS();
   /* A worker killed from outside (the OOM killer, a crash inside LAMMPS) is
    * journalled with its pid, which is what the kernel log names.
    *
@@ -349,7 +350,9 @@ TEST_CASE("pc pool: the journal names the pid of a worker that died",
    *
    * Before the fix: does not compile (PcWorkerPool::worker_pid is absent);
    * the warning read "pc-worker 1 killed/died: ...; wait: signal 9
-   * (Killed); ...", without the pid. */
+   * (Killed); ...", without the pid.
+   * Skipped in the MPI build. Before it skipped there it failed there, as
+   * the case above did ("handshake failed: ... Connection reset by peer"). */
   Journal journal;
   PcWorkerPool pool(1, specs_for(1, minimal_spec()), 0.0);
   const auto pot = invalid_pot_map();
@@ -374,6 +377,7 @@ TEST_CASE("pc pool: the journal names the pid of a worker that died",
 
 TEST_CASE("pc pool: a worker that dies inside its task is journalled with "
           "the end of its channel", "[pc_pool][kill][hpolog]") {
+  SKIP_WITHOUT_PC_PROCESS_WORKERS();
   /* A worker that dies while it runs a script (the kernel's out-of-memory
    * killer, a crash inside LAMMPS) has read its whole TASK frame, and the
    * parent, waiting for RESULT, finds the channel closed. test_main.cpp's
@@ -389,7 +393,10 @@ TEST_CASE("pc pool: a worker that dies inside its task is journalled with "
    * showed "RESULT recv failed: pcwire: recv failed: Connection reset by
    * peer", the reason the journal gives for a worker killed between tasks
    * that the next TASK reaches, as in "the journal names the pid of a
-   * worker that died" above). */
+   * worker that died" above).
+   * Skipped in the MPI build, where it passed: its stand-in worker does not
+   * run pc_worker_main, but the pool it builds is code that build never
+   * runs (the same in both builds). */
   Journal journal;
   ScopedEnv die("TADAH_TEST_PC_WORKER_DIE_IN_TASK", "1");
   PcWorkerPool pool(1, specs_for(1, minimal_spec()), 0.0);
@@ -413,6 +420,7 @@ TEST_CASE("pc pool: a worker that dies inside its task is journalled with "
 
 TEST_CASE("pc pool: a HELLO_ACK that names another pid fails the handshake",
           "[pc_pool]") {
+  SKIP_WITHOUT_PC_PROCESS_WORKERS();
   /* The worker reports its pid in HELLO_ACK; the pool forked it and knows
    * the pid. test_main.cpp's stand-in worker (TADAH_TEST_PC_WORKER_WRONG_ACK_PID
    * in its environment) writes its own pid <p>, the one the pool forked, to
@@ -427,7 +435,10 @@ TEST_CASE("pc pool: a HELLO_ACK that names another pid fails the handshake",
    * before the fix: the cases above call worker_pid.) The case first
    * matched the message against "... names pid [0-9]+, but the worker was
    * forked as pid [0-9]+", which a message naming the forked pid twice
-   * passed as well. */
+   * passed as well.
+   * Skipped in the MPI build, where it passed: its stand-in worker does not
+   * run pc_worker_main, but the pool it builds is code that build never
+   * runs (the same in both builds). */
   const std::filesystem::path pid_file =
       std::filesystem::temp_directory_path() /
       ("tadah_pc_pool_ack_pid_" + std::to_string(::getpid()) + "_" +
@@ -460,7 +471,7 @@ TEST_CASE("pc pool: a HELLO_ACK that names another pid fails the handshake",
 
 TEST_CASE("pc pool: a killed worker leaves no script file behind",
           "[pc_pool][kill][tempfile]") {
-  SKIP_IN_MPI_BUILD();
+  SKIP_WITHOUT_PC_PROCESS_WORKERS();
   /* A worker renders each script of its table once, to a file in the
    * temporary directory, and runs it through LAMMPS's Input::file(). A
    * worker killed at its hard deadline (SIGKILL), crashing inside LAMMPS,
@@ -491,7 +502,7 @@ TEST_CASE("pc pool: a killed worker leaves no script file behind",
 
 TEST_CASE("pc pool: a worker survives the stop signals sent to its process "
           "group", "[pc_pool][signals]") {
-  SKIP_IN_MPI_BUILD();
+  SKIP_WITHOUT_PC_PROCESS_WORKERS();
   /* Ctrl+C, `kill -<sig> -<pgid>` and SLURM (`scancel`, `--signal=USR2@N`)
    * deliver SIGINT, SIGTERM and SIGUSR2 to every process of the group or
    * job step, the workers included. The parent stops the run itself, after
@@ -546,7 +557,7 @@ TEST_CASE("pc pool: workers ignore exactly the stop signals the parent "
 
 TEST_CASE("pc pool: repeated deaths throttle a channel, they do not retire it",
           "[pc_pool][kill][backoff]") {
-  SKIP_IN_MPI_BUILD();
+  SKIP_WITHOUT_PC_PROCESS_WORKERS();
   /* D1. spawn_locked used to THROW once a channel reached
    * PC_MAX_CONSEC_DEATHS. Because execute() only respawns when fd < 0 --
    * exactly the state a dead channel is left in -- and consec_deaths is

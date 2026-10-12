@@ -24,6 +24,7 @@
  * raised by a real signal and is never lowered, so every such case needs a
  * fresh process. */
 
+#include "pc_process_workers.h"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
 #include <tadah/core/checkpoint.h>      // core::ShutdownRequested
@@ -2089,11 +2090,16 @@ TEST_CASE("Two runs in one process: a run without WARM does not start its "
  * and leaves no pool up either.
  * Before the fix: the pool was shut down only after a run that returned,
  * so it was still up after the failed run (pc_worker_pool_enabled()), and
- * the second run threw 'pc_worker_pool_init: pool already initialized'. */
+ * the second run threw 'pc_worker_pool_init: pool already initialized'.
+ * Skipped in the MPI build (TADAH_HPO_MPI), which has no PROCESS workers
+ * (pc_process_workers.h). Before it skipped there it failed there: hpo_run
+ * refuses PC_ISOLATION PROCESS at startup in that build, so the first
+ * journal had no "PC_ISOLATION: PROCESS -- ..." line. */
 TEST_CASE("Two runs in one process: a run that fails after starting its "
           "PC_ISOLATION PROCESS workers stops them, and the next run starts "
           "its own", "[HPO][termination][two_runs][pc_isolation]")
 {
+    SKIP_WITHOUT_PC_PROCESS_WORKERS();
     PcIsolationEnvUnset no_env;
     const std::string optimizer = plain_block(
         "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n    MAXEVAL 2\n"
@@ -2172,11 +2178,16 @@ TEST_CASE("Two runs in one process: each run's worker pool has the run's "
  * failing its evaluation ("eval-thread caught throw, submitting
  * FAIL_SCORE"). Which worker takes a task is not fixed; in each of 8 runs
  * every evaluation failed so, and the run ended "STOPPED -- no evaluation
- * produced a usable loss" with status 1. */
+ * produced a usable loss" with status 1.
+ * Skipped in the MPI build (TADAH_HPO_MPI), which has no PROCESS workers
+ * (pc_process_workers.h). Before it skipped there it failed there: the
+ * second hpo_run threw "PC_ISOLATION PROCESS is not supported in the MPI
+ * build (TADAH_HPO_MPI): ...". */
 TEST_CASE("Two runs in one process: a smaller THREADS under PC_ISOLATION "
           "PROCESS runs on the run's own pool",
           "[HPO][termination][two_runs][pc_isolation]")
 {
+    SKIP_WITHOUT_PC_PROCESS_WORKERS();
     PcIsolationEnvUnset no_env;
     {
         TaRun run(plain_block(

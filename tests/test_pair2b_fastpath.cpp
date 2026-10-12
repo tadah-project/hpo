@@ -31,7 +31,6 @@
 #include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/runners.h>
-#include <tadah/hpo/hpo_mpi.h>  // hpo_lammps_comm()
 #include <tadah/tadah.lammps/eam_collapse.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
 
@@ -511,7 +510,6 @@ Static run_static(LammpsRunner& runner, const char* body, bool eamfast,
     Static out;
     {
         auto lmp = runner.create_instance(
-            tadah::hpo::hpo_lammps_comm(),
             {"lmp", "-log", log_path, "-screen", "none"});
         REQUIRE(lmp != nullptr);
         REQUIRE(runner.run_script(lmp, script, pot_ctx));
@@ -650,7 +648,6 @@ TEST_CASE("pair2b fast path: static + box/relax parity vs generic kernel",
             tadah::core::CoreUserConfigParser().parse(pot_path));
 
         auto lmp = runner.create_instance(
-            tadah::hpo::hpo_lammps_comm(),
             {"lmp", "-log", "none", "-screen", "none"});
         REQUIRE(lmp != nullptr);
 
@@ -695,7 +692,6 @@ TEST_CASE("pair2b fast path: adjoint capture falls back to the generic kernel",
         tadah::core::CoreUserConfigParser().parse(pot_path));
 
     auto lmp = runner.create_instance(
-        tadah::hpo::hpo_lammps_comm(),
         {"lmp", "-log", "none", "-screen", "none"});
     REQUIRE(lmp != nullptr);
     REQUIRE(runner.run_script(lmp, rattled_bcc_kr(0.05), pot_ctx));
