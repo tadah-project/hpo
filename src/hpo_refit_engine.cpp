@@ -415,8 +415,16 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
              " is what keeps an aggressive least-squares optimiser (Ceres) from"
              " over-fitting the unprobed high-magnitude curve regions and"
              " wrecking the crystal. NOTE: Ceres REFINE cost grows steeply with"
-             " the basis count n — cap its MAXEVAL / use REFIT_COMPACT_OPT_EVERY"
-             " (or the gentle SBPLX-only arm) at high NMAX.");
+             " the basis count n — " +
+             std::string(knotfam
+                             // the knot families read the refine stride
+                             ? "cap its MAXEVAL / use REFIT_COMPACT_OPT_EVERY"
+                               " (or the gentle SBPLX-only arm) at high NMAX."
+                             // a Blip family refuses REFIT_COMPACT_OPT_EVERY
+                             // (check_refit_mode_keys), which this note named
+                             // for every basis
+                             : "cap REFINE's MAXEVAL, lower REFIT_COMPACT_NMAX"
+                               " (or use the gentle SBPLX-only arm)."));
   rlog.line("input element=" + eam.lattice() + " a0=" +
             core::to_string(a0, 4) + " rcut=" + core::to_string(rcut, 4));
   rlog.line("basis=" + cfg.basis +
