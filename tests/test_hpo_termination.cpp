@@ -1751,6 +1751,146 @@ TEST_CASE("Run record: the startup budget warning of a search that starts "
     }
 }
 
+/* Pins: on the real host (hpo_run, the Ta fixture in 2-D, PC_ERMSE alone),
+ * the startup WARNING follows two starts the warning took for evaluated
+ * ones or not:
+ *   - NLopt's StoGO does not start at the point it is given: its first
+ *     trial is the centre of its box (stogo/global.cc), here (0.5, 5.5)
+ *     with SGRID2B (2) in [4, 7]. A PRESTAGE refinement NLOPT:GD_STOGO
+ *     (TOPK 1) after an LN_SBPLX exploration of 4 evaluations from the
+ *     configuration's point (0.5, 5) evaluates that centre (row 5, at no
+ *     earlier row's point) and its 4-point stencil (rows 6-9) before any
+ *     step, not the candidate: at MAXEVAL 5 the WARNING "the PRESTAGE
+ *     refinement NLOPT:GD_STOGO: MAXEVAL 5 takes no step: its gradient
+ *     search, which does not start at the point it is given, evaluates the
+ *     loss at a point of its own (1 evaluation) ..., which needs MAXEVAL 6
+ *     or more", once, and 9 rows; at MAXEVAL 6 none, and row 10 is a step,
+ *     near none of rows 1-9;
+ *   - under NOISE CALIBRATION 2 the first MULTISTART start (LD_LBFGS, INIT
+ *     LHS 2, SEED 3, N_STARTS 2) begins at the seed point the calibration
+ *     evaluated (rows 1-2) and takes its loss from the run's record: at
+ *     BUDGET_PER_START 5 it evaluates the stencil (rows 3-6) and steps (row
+ *     7, "MULTISTART start 1/2 done: 5 eval(s) consumed"), and the second
+ *     start evaluates its point and stencil (rows 8-12) and takes no step:
+ *     one WARNING, "each MULTISTART start after the first NLOPT:LD_LBFGS:
+ *     BUDGET_PER_START 5 takes no step: its gradient search evaluates the
+ *     loss at a starting point (1 evaluation) ..., which needs
+ *     BUDGET_PER_START 6 or more", and none for the first start.
+ * Before the fix: the StoGO refinement at MAXEVAL 5 was not warned (the
+ * warning took the loss at its start from the run's record, needing 5;
+ * lanes/D/tmp/review/xl2-search stogo2: no warning, the box centre and its
+ * stencil, no step), and the MULTISTART WARNING was "each MULTISTART start
+ * NLOPT:LD_LBFGS: BUDGET_PER_START 5 ...", which claimed the first start,
+ * which steps (xl2-search msn): the StoGO MAXEVAL 5 and the MULTISTART
+ * checks fail; the StoGO MAXEVAL 6 leg passes as well (a pin). */
+TEST_CASE("Run record: the startup budget warning of NLopt's StoGO and of "
+          "the MULTISTART starts under NOISE CALIBRATION follows the run",
+          "[HPO][termination][repeat_points][gradient_budget][stogo]")
+{
+    const std::string kNoStep = "takes no step";
+    /* SGRID2B (2) in [4, 7]: the box centre (0.5, 5.5) is not the
+     * configuration's point (0.5, 5), the exploration's start. */
+    const std::string root =
+        "LOSS L2\nFAILSCORE 1e9\nQFLUSH 1000\nDIGITS 15\nPC_ERMSE 0 1\n"
+        "OPTIM CGRID2B (1) 0.1 0.9\nOPTIM SGRID2B (2) 4.0 7.0\n";
+    const auto stogo = [&](unsigned maxeval) {
+        return plain_block("    TYPE PRESTAGE\n    LIB NLOPT\n"
+                           "    ALGO GD_STOGO\n    MAXEVAL " +
+                           std::to_string(maxeval) +
+                           "\n    TOPK 1\n    EXPLORE\n      LIB NLOPT\n"
+                           "      ALGO LN_SBPLX\n      MAXEVAL 4\n"
+                           "    ENDEXPLORE\n");
+    };
+    /* The refinement's first row is the box centre, at no earlier row's
+     * point, and the next 4 rows its stencil. */
+    const auto centre_first = [](const std::vector<std::vector<double>>& pts) {
+        REQUIRE(pts.size() >= 9u);
+        CHECK(std::fabs(pts[4][0] - 0.5) < 1e-12);
+        CHECK(std::fabs(pts[4][1] - 5.5) < 1e-12);
+        for (std::size_t j = 0; j < 4; ++j)
+            CHECK_FALSE(near_point(pts[j], pts[4]));
+        CHECK(stencil_centre(pts, 5, 5, 8) == std::optional<std::size_t>(4));
+    };
+    SECTION("the PRESTAGE refinement NLOPT:GD_STOGO, MAXEVAL 5: warned, no "
+            "step") {
+        TaRun run(stogo(5), root);
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        check_run_files();
+        const std::string journal = read_file("hpo_run.log");
+        INFO("journal:\n" << journal);
+        CHECK(count_of(journal,
+                       "the PRESTAGE refinement NLOPT:GD_STOGO: MAXEVAL 5 "
+                       "takes no step: its gradient search, which does not "
+                       "start at the point it is given, evaluates the loss at "
+                       "a point of its own (1 evaluation) and the gradient "
+                       "there (4 evaluations: central differences in 2 "
+                       "dimensions, GRAD_STRATEGY NUMERICAL) before it "
+                       "evaluates a point it steps to, which needs MAXEVAL 6 "
+                       "or more") == 1u);
+        CHECK(count_of(journal, kNoStep) == 1u);
+        const auto pts = params_points();
+        CHECK(pts.size() == 9u);
+        centre_first(pts);
+    }
+    SECTION("the PRESTAGE refinement NLOPT:GD_STOGO, MAXEVAL 6: not warned, "
+            "a step") {
+        TaRun run(stogo(6), root);
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        check_run_files();
+        const std::string journal = read_file("hpo_run.log");
+        INFO("journal:\n" << journal);
+        CHECK(count_of(journal, kNoStep) == 0u);
+        const auto pts = params_points();
+        REQUIRE(pts.size() == 10u);
+        centre_first(pts);
+        bool far = true;
+        for (std::size_t j = 0; j < 9; ++j)
+            far = far && !near_point(pts[j], pts[9]);
+        CHECK(far);
+    }
+    SECTION("NOISE CALIBRATION 2, MULTISTART NLOPT:LD_LBFGS, "
+            "BUDGET_PER_START 5: the later start warned") {
+        TaRun run("OPTIMIZER\n  NOISE\n    CALIBRATION 2\n  ENDNOISE\n"
+                  "  INIT\n    METHOD LHS 2\n    SEED 3\n  ENDINIT\n"
+                  "  STRATEGY\n    TYPE MULTISTART\n    LIB NLOPT\n"
+                  "    ALGO LD_LBFGS\n    N_STARTS 2\n"
+                  "    BUDGET_PER_START 5\n  ENDSTRATEGY\nENDOPTIMIZER\n",
+                  budget_root(""));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        check_run_files();
+        const std::string journal = read_file("hpo_run.log");
+        INFO("journal:\n" << journal);
+        CHECK(count_of(journal,
+                       "each MULTISTART start after the first NLOPT:LD_LBFGS: "
+                       "BUDGET_PER_START 5 takes no step: its gradient search "
+                       "evaluates the loss at a starting point (1 evaluation) "
+                       "and the gradient there (4 evaluations: central "
+                       "differences in 2 dimensions, GRAD_STRATEGY NUMERICAL) "
+                       "before it evaluates a point it steps to, which needs "
+                       "BUDGET_PER_START 6 or more") == 1u);
+        CHECK(count_of(journal, kNoStep) == 1u);
+        CHECK(journal.find("MULTISTART start 1/2 done: 5 eval(s) consumed") !=
+              std::string::npos);
+        const auto pts = params_points();
+        REQUIRE(pts.size() == 12u);
+        /* start 1: the calibrated seed (rows 1-2), its stencil, a step */
+        CHECK(pts[0] == pts[1]);
+        CHECK(stencil_centre(pts, 1, 2, 5) == std::optional<std::size_t>(0));
+        bool far = true;
+        for (std::size_t j = 0; j < 6; ++j)
+            far = far && !near_point(pts[j], pts[6]);
+        CHECK(far);
+        /* start 2: its point and its stencil, no step */
+        CHECK(stencil_centre(pts, 8, 8, 11) == std::optional<std::size_t>(7));
+    }
+}
+
 /* Pins: where every repeat is evaluated again (a --skip-rel filter compares
  * with the best so far), the run's record still knows the earlier search's
  * evaluation, and the journal names it as such: a PRESTAGE refinement
