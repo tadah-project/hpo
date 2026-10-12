@@ -73,6 +73,12 @@ void ValidationMetricTargets::resolve(const std::vector<std::string>& files) {
     files_ = files;
 }
 
+bool ValidationMetricTargets::has_relative_cap() const {
+    if (global_ && global_->caps.rel_above) return true;
+    for (const auto& kv : indexed_)
+        if (kv.second.caps.rel_above) return true;
+    return false;
+}
 const ValidationMetricAssignment& ValidationMetricTargets::global() const {
     if (!global_) throw std::logic_error(key_ + ": no global assignment");
     return *global_;

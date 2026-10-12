@@ -1638,6 +1638,35 @@ void HPOTargets::read(const std::string& fn)
             reject_pc_lammps_grad(*b.sp, b.tag);
 }
 
+std::string HPOTargets::repeat_reuse_blocker() const {
+  if (!LS.empty()) {
+    std::string why =
+        "PC_LAMMPS: its scripts run on LAMMPS instances kept from one "
+        "evaluation to the next, which keep what a script set there (LAMMPS "
+        "keeps variables across clear)";
+    for (const auto& sim : LS)
+      if (!sim.hotvars.empty()) {
+        why += ", and each --hotvar starts from the value of the best "
+               "evaluation so far";
+        break;
+      }
+    return why;
+  }
+  for (const auto& obs : observables) {
+    const std::string carried = obs->carried_state();
+    if (!carried.empty()) return "PC_OBSERVABLE " + obs->kind() + ": " + carried;
+  }
+  const std::string rel = " --skip-rel: the filter compares with the best "
+                          "value so far, which a later evaluation can lower";
+  if (ermse_targets.has_relative_cap()) return "PC_ERMSE" + rel;
+  if (frmse_targets.has_relative_cap()) return "PC_FRMSE" + rel;
+  if (use_emae && skip_emae.rel_above) return "PC_EMAE" + rel;
+  if (use_errmse && skip_errmse.rel_above) return "PC_ErRMSE" + rel;
+  if (use_ersq && skip_ersq.rel_above) return "PC_ERSQ" + rel;
+  if (use_srmse && skip_srmse.rel_above) return "PC_SRMSE" + rel;
+  return "";
+}
+
 double HPOTargets::parse_pc_worker_timeout(const std::string& token,
                                            const std::string& origin) {
   double v = 0.0;

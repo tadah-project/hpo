@@ -256,6 +256,13 @@ public:
      * evaluation can publish. */
     void prepare_best_publication() const;
 
+    /** Why two evaluations of one point can give different losses in
+     *  this run (HPOTargets::repeat_reuse_blocker), or "" when every
+     *  evaluation is a function of its point: the NLopt and DLIB:BFGS
+     *  adapters then answer a point a search asks for again from its
+     *  earlier evaluation (repeat_points.h). */
+    std::string repeat_reuse_blocker() const { return trg_.repeat_reuse_blocker(); }
+
     std::size_t train_size() const;   // number of training structures
     std::size_t val_size()   const;   // number of validation structures
 

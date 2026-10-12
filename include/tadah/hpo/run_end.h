@@ -43,6 +43,16 @@
  *   GridDone      all grid points evaluated   TADAH:GRID's whole grid
  *   NoDims        no optimisable dimensions   an annealer with no OPTIM
  *                                             dimension to move
+ *   NoStep        no step within the OPTIM    DLIB:BFGS: neither its step
+ *                 box                         nor the steepest-descent one
+ *                                             BFGS falls back to moves the
+ *                                             point: each coordinate is at
+ *                                             a bound its gradient points
+ *                                             out of, or its step is below
+ *                                             its rounding (a stop test that
+ *                                             an unchanged point does not
+ *                                             meet: PARAM tol_gradinf, or
+ *                                             FTOL_ABS 0)
  */
 
 #include <tadah/hpo/hpo_log.h>
@@ -54,7 +64,7 @@ namespace tadah::hpo {
 
 enum class EndReason {
     MaxEval, MaxTime, StopVal, FtolAbs, FtolRel, XtolRel, GradTol, MaxIter,
-    TMin, FtolPlateau, GridDone, NoDims
+    TMin, FtolPlateau, GridDone, NoDims, NoStep
 };
 
 /* The fixed text of `r` (the table above). */
@@ -73,6 +83,7 @@ inline const char* end_reason_text(EndReason r)
         case EndReason::FtolPlateau: return "FTOL plateau";
         case EndReason::GridDone:    return "all grid points evaluated";
         case EndReason::NoDims:      return "no optimisable dimensions";
+        case EndReason::NoStep:      return "no step within the OPTIM box";
     }
     return "";   // unreachable: every enumerator is listed
 }

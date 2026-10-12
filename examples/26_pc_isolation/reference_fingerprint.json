@@ -32,20 +32,19 @@
     }
   },
   "evaluations": {
-    "value": 12,
-    "tol": 18,
-    "note": "As example 01 (the same search in worker processes): 12 on the reference machine (2026-10-07; 16 before each finite-difference gradient took the loss at its point as its centre instead of evaluating the point again, 30 before the HPO data held the free energy and the Cauchy stress, 16 before the neighbour lists were exact). BFGS reaches the upper bound RCUT2B = 6.0 at eval 7 (1.015561e-01, the best), takes the one-sided gradient there (evals 8-9), re-evaluates the bound (10), takes the gradient again (11-12) and ends on its objective-delta test (status \"DLIB:BFGS: FTOL_ABS reached\"; COMPLETED until 2026-10-07). Example 05, the same search with the parametric cohesive-energy script, runs to MAXEVAL = 30 instead. Whether BFGS's line search accepts a re-evaluation of the clamped bound depends on the sign of the ~1e-13 relative re-evaluation noise of the warm-started lattice relaxation, so the count is not pinned (evals_tol 18: 0..30, see tolerance_rationale); best loss, components and RCUT2B do not depend on it."
+    "value": 9,
+    "tol": 0,
+    "note": "As example 01 (the same search in worker processes): 9 on the reference machine (2026-10-12). BFGS reaches the upper bound RCUT2B = 6.0 at eval 7 (1.015561e-01, the best), takes the one-sided gradient there (evals 8-9), and its next step cannot move the point: the line search is not run, and the objective-delta test ends the search (\"DLIB:BFGS: FTOL_ABS reached\"). Until 2026-10-12 the line search re-evaluated the bound (10) and BFGS took the gradient again (11-12), 12 in all, or ran to MAXEVAL = 30 depending on the sign of the ~1e-13 relative re-evaluation noise of the warm-started lattice relaxation (16 before each finite-difference gradient took the loss at its point as its centre)."
   },
   "best_ermse_meV_per_atom": 4.79,
   "status_accepted": [
-    "DLIB:BFGS: FTOL_ABS reached",
-    "DLIB:BFGS: MAXEVAL reached"
+    "DLIB:BFGS: FTOL_ABS reached"
   ],
   "nan_clampings_max": 0,
   "threw_max": 0,
   "walltime_hint": "0.3s",
   "fast": true,
-  "tolerance_rationale": "Example 01's search in worker processes, with 01's tolerances: best loss, components and RCUT2B at the defaults, and the evaluation count within evals_tol 18 (0..30 around 12; 14 around 16 before each finite-difference gradient took the loss at its point as its centre), for the reason given in 01's tolerance_rationale (the count at the clamped bound RCUT2B = 6.0 depends on rounding-level noise), and 01's two statuses, \"DLIB:BFGS: FTOL_ABS reached\" and \"DLIB:BFGS: MAXEVAL reached\".",
+  "tolerance_rationale": "Example 01's search in worker processes, with 01's tolerances: best loss, components and RCUT2B at the defaults, the evaluation count exactly (9) and 01's status, \"DLIB:BFGS: FTOL_ABS reached\", for the reason given in 01's tolerance_rationale. Until 2026-10-12 the count at the clamped bound RCUT2B = 6.0 depended on rounding-level noise, and evals_tol 18 (0..30 around 12) and the status \"DLIB:BFGS: MAXEVAL reached\" were accepted too.",
   "journal": [
     {
       "what": "PC_LAMMPS runs in worker processes",

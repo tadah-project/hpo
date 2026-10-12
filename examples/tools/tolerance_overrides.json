@@ -3,12 +3,8 @@
 
   "01_minimal": {
     "description": "DLIB:BFGS, 1-dim, implicit CONFIG seed.",
-    "status_accepted": [
-      "DLIB:BFGS: FTOL_ABS reached",
-      "DLIB:BFGS: MAXEVAL reached"
-    ],
-    "evals_tol": 18,
-    "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances. The evaluation count is not deterministic across machines: the optimum is on the clamped bound RCUT2B = 6.0 (eval 7), and whether DLIB:BFGS's line search accepts a re-evaluation there depends on the sign of a ~1e-13 relative, rounding-level drift of the warm-started lattice relaxation. The run ends after 12 evaluations on the reference machine (2026-10-07, 3 repeated runs identical; 16 before each finite-difference gradient took the loss at its point as its centre instead of evaluating the point again); it ran to MAXEVAL = 30 with the energies without entropy, as example 05 does. evals_tol 18 accepts 0..30: it was 14 (2..30 around 16) and was raised only to keep MAXEVAL = 30 accepted around 12. Both endings are accepted: DLIB:BFGS's objective-delta test, \"DLIB:BFGS: FTOL_ABS reached\" (FTOL_ABS is 1e-7 by default), and MAXEVAL, \"DLIB:BFGS: MAXEVAL reached\" (both ended COMPLETED until every HPO driver recorded why it ended, 2026-10-07)."
+    "status_accepted": ["DLIB:BFGS: FTOL_ABS reached"],
+    "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances, and the evaluation count exactly: the optimum is on the upper bound RCUT2B = 6.0 (eval 7), BFGS takes the one-sided gradient there (evals 8-9), and its next step, held to the box, cannot move the point, so its line search is not run and the objective-delta test ends the search, \"DLIB:BFGS: FTOL_ABS reached\" (FTOL_ABS is 1e-7 by default), after 9 evaluations. Until 2026-10-12 the line search evaluated the bound again, and whether it accepted that re-evaluation depended on the sign of a ~1e-13 relative, rounding-level drift of the warm-started lattice relaxation: 12 evaluations on the reference machine (16 before each finite-difference gradient took the loss at its point as its centre) or MAXEVAL = 30, so evals_tol 18 (0..30) and both statuses, FTOL_ABS and \"DLIB:BFGS: MAXEVAL reached\", were accepted."
   },
   "02_random_search": {
     "description": "TADAH:RANDOM, seeded uniform sampler.",
@@ -24,12 +20,8 @@
   },
   "05_extra_observables": {
     "description": "PC_LAMMPS --invar / --outvar via parametric Ecoh_param.in.",
-    "status_accepted": [
-      "DLIB:BFGS: MAXEVAL reached",
-      "DLIB:BFGS: FTOL_ABS reached"
-    ],
-    "evals_tol": 18,
-    "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances. The evaluation count is not deterministic across machines: the optimum is on the clamped bound RCUT2B = 6.0 (eval 7), and whether DLIB:BFGS's line search accepts a re-evaluation there depends on the sign of a ~1e-13 relative, rounding-level drift of the warm-started lattice relaxation. The run goes on to MAXEVAL = 30 on the reference machine (2026-10-07, 3 repeated runs identical) or stops after 12 (as example 01 does with the same search; 16 before each finite-difference gradient took the loss at its point as its centre instead of evaluating the point again), and a 1-ulp change of the hot_a0 start or of one training energy flips it. evals_tol 18 accepts 12..30 (MAXEVAL is 30): it was 14 (16..30) and was raised only to keep the shorter path, now 12 evaluations, accepted. Both endings are accepted: MAXEVAL, \"DLIB:BFGS: MAXEVAL reached\", and the shorter path's objective-delta test, \"DLIB:BFGS: FTOL_ABS reached\" (FTOL_ABS is 1e-7 by default; both ended COMPLETED until every HPO driver recorded why it ended, 2026-10-07)."
+    "status_accepted": ["DLIB:BFGS: FTOL_ABS reached"],
+    "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances, and the evaluation count exactly: as in example 01, the optimum is on the upper bound RCUT2B = 6.0 (eval 7), BFGS takes the one-sided gradient there (evals 8-9), and its next step cannot move the point, so its line search is not run and the objective-delta test ends the search, \"DLIB:BFGS: FTOL_ABS reached\", after 9 evaluations. Until 2026-10-12 the line search evaluated the bound again and, its decrease test failing on the ~1e-13 relative drift of the warm-started lattice relaxation, went on to MAXEVAL = 30 on the reference machine, \"DLIB:BFGS: MAXEVAL reached\", or stopped after 12, as example 01 did; a 1-ulp change of the hot_a0 start or of one training energy flipped it, so evals_tol 18 (12..30) and both statuses were accepted."
   },
   "06_init_random": {
     "description": "INIT { STRATEGY RANDOM, SEED, INCLUDE_CONFIG false }.",
@@ -45,12 +37,8 @@
   },
   "09_init_warm": {
     "description": "INIT { STRATEGY WARM } from a bootstrapped seed_pot.tadah.",
-    "status_accepted": [
-      "DLIB:BFGS: MAXEVAL reached",
-      "DLIB:BFGS: FTOL_ABS reached"
-    ],
-    "evals_tol": 30,
-    "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances. The WARM start is on the clamped bound RCUT2B = 6.0, and whether DLIB:BFGS's line search accepts a re-evaluation there depends on rounding-level noise, as in example 01 (evaluations.note), so evals_tol 30 accepts both of its endings: MAXEVAL = 30, \"DLIB:BFGS: MAXEVAL reached\" (the reference machine, 2026-10-07), and the objective-delta test after the second gradient, \"DLIB:BFGS: FTOL_ABS reached\" (a scratch build with other compiler flags, 6 evaluations; FTOL_ABS is 1e-7 by default). Both ended COMPLETED until every HPO driver recorded why it ended, 2026-10-07."
+    "status_accepted": ["DLIB:BFGS: FTOL_ABS reached"],
+    "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances, and the evaluation count exactly: the WARM start is on the upper bound RCUT2B = 6.0 (eval 1), BFGS takes the one-sided gradient there (evals 2-3), and its first step cannot move the point, so its line search is not run and the objective-delta test ends the search, \"DLIB:BFGS: FTOL_ABS reached\" (FTOL_ABS is 1e-7 by default), after 3 evaluations. Until 2026-10-12 the line search evaluated the bound again: on the reference machine its decrease test failed on rounding-level noise of the warm-started relaxation and it re-evaluated the bound until MAXEVAL = 30, \"DLIB:BFGS: MAXEVAL reached\" (28 of the 30 evaluations at RCUT2B = 6.0); a scratch build with other compiler flags accepted the re-evaluation and ended after the second gradient, at 6. evals_tol 30 and both statuses were accepted."
   },
   "10_init_chain": {
     "description": "INIT chain (WARM + LHS) seeding DLIB:GFS.",
@@ -66,8 +54,8 @@
   },
   "13_restart": {
     "description": "DLIB:BFGS + RESTART decorator (stagnation-driven).",
-    "status_accepted": ["STOPPED -- stagnation: no new best in 3 evals after 2 restart(s)"],
-    "tolerance_rationale": "RESTART RANDOM seeds each restart from std::random_device, so the restart evaluations differ from run to run. Only values that do not depend on them are pinned: the best comes from the deterministic first launch, and each restart stops after exactly AFTER_STAGNATION evaluations because no start in the box beats the incumbent (see evaluations.note)."
+    "status_accepted": ["DLIB:BFGS: FTOL_ABS reached"],
+    "tolerance_rationale": "The run is deterministic, and every value is pinned at the default tolerances: DLIB:BFGS reaches the upper bound RCUT2B = 6 at eval 7, the best (1.015561e-01), takes the one-sided gradient there (evals 8-9), and its next step cannot move the point, so the objective-delta test ends the search after 9 evaluations, \"DLIB:BFGS: FTOL_ABS reached\", before AFTER_STAGNATION 3 evaluations have passed without a new best: RESTART relaunches a search that stagnates, not one that ends, and no restart fires. Until 2026-10-12 BFGS's line search evaluated the bound again at eval 10, where the stagnation window fired; each of the two RESTART rounds (RESTART RANDOM, drawn from std::random_device) then stopped after 3 evaluations without a new best, 16 in all, \"STOPPED -- stagnation: no new best in 3 evals after 2 restart(s)\", and only the values that did not depend on the restarts were pinned."
   },
   "14_mlsl_inner": {
     "description": "NLOPT:G_MLSL_LDS + INNER NLOPT:LN_BOBYQA.",
@@ -105,12 +93,8 @@
   },
   "26_pc_isolation": {
     "description": "Example 01 with PC_ISOLATION PROCESS and PC_WORKER_TIMEOUT: 01's results in either isolation mode.",
-    "status_accepted": [
-      "DLIB:BFGS: FTOL_ABS reached",
-      "DLIB:BFGS: MAXEVAL reached"
-    ],
-    "evals_tol": 18,
-    "tolerance_rationale": "Example 01's search in worker processes, with 01's tolerances: best loss, components and RCUT2B at the defaults, and the evaluation count within evals_tol 18 (0..30 around 12; 14 around 16 before each finite-difference gradient took the loss at its point as its centre), for the reason given in 01's tolerance_rationale (the count at the clamped bound RCUT2B = 6.0 depends on rounding-level noise), and 01's two statuses, \"DLIB:BFGS: FTOL_ABS reached\" and \"DLIB:BFGS: MAXEVAL reached\".",
+    "status_accepted": ["DLIB:BFGS: FTOL_ABS reached"],
+    "tolerance_rationale": "Example 01's search in worker processes, with 01's tolerances: best loss, components and RCUT2B at the defaults, the evaluation count exactly (9) and 01's status, \"DLIB:BFGS: FTOL_ABS reached\", for the reason given in 01's tolerance_rationale. Until 2026-10-12 the count at the clamped bound RCUT2B = 6.0 depended on rounding-level noise, and evals_tol 18 (0..30 around 12) and the status \"DLIB:BFGS: MAXEVAL reached\" were accepted too.",
     "journal": [
       {"what": "PC_LAMMPS runs in worker processes",
        "regex": "PC_ISOLATION: PROCESS -- pc_lammps tasks execute in \\d+ persistent worker processes",

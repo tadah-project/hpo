@@ -347,6 +347,18 @@ public:
      * TADAH_HPO_BAD_POT_ERMSE_REL. Defaults are nullopt = no skip. */
     using SkipCaps = MetricSkipCaps;
     SkipCaps skip_emae, skip_errmse, skip_ersq, skip_srmse;
+
+    /** Why two evaluations of one point can give different losses in this
+     *  run, or "" when every evaluation is a function of its point -- the
+     *  training (a fresh fit of the candidate) and the validation metrics
+     *  are -- so that a search may answer a point it asks for again with
+     *  the loss it gave (repeat_points.h). The first that applies of:
+     *  a PC_LAMMPS line (its scripts run on LAMMPS instances kept from one
+     *  evaluation to the next, and a --hotvar starts from the best
+     *  evaluation's value), a PC_OBSERVABLE whose observable carries state
+     *  (Observable::carried_state), a --skip-rel filter (it compares with
+     *  the best value so far). */
+    std::string repeat_reuse_blocker() const;
 };
 } // namespace hpo
 } // namespace tadah

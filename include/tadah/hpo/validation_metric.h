@@ -62,6 +62,9 @@ public:
      *  datasets. Empty (the default): every dataset. */
     void set_measured(std::vector<bool> measured);
     const std::vector<bool>& measured() const { return measured_; }
+    /** Whether a --skip-rel cap is set, on the global target or on any
+     *  dataset's (resolved or not). */
+    bool has_relative_cap() const;
 
 private:
     std::string key_;
