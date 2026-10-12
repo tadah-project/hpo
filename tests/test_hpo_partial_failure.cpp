@@ -636,6 +636,49 @@ TEST_CASE("an unconverged cohesive_energy relaxation whose --unconverged value "
     Host::reset_globals_for_test();
 }
 
+/* Pins: two failed PC_OBSERVABLE terms at the default FAILSCORE (the
+ * largest double; RCUT2B = 5.2, both windows [3.0, 3.35]) fail their
+ * evaluation as a failure, not as a NaN/Inf clamping: the loss is FAILSCORE,
+ * the census counts it under "Unusable losses" and not under "NaN/Inf
+ * clampings", and there is no "evaluation produced NaN/Inf" WARNING; under
+ * FAILSCORE_GRADING ON with FAILSCORE 1e308, whose double overflows as well,
+ * the graded band-B loss, counted under "Graded failures" only.
+ * Before the fix: FAILSCORE + FAILSCORE overflowed the mean and
+ * assemble_loss set was_nan_clamped before the failed terms made the
+ * evaluation FAILSCORE: "evaluation produced NaN/Inf -- loss clamped to
+ * FAIL_SCORE" and "NaN/Inf clampings : 1", under ON in both counters (one
+ * failed term, whose mean does not overflow, was an ordinary failure). */
+TEST_CASE("two failed PC_OBSERVABLE terms at the default FAILSCORE are a "
+          "failed evaluation, not a NaN/Inf clamping",
+          "[HPO][partial_failure][host]") {
+    tadah::core::PeriodicTable::initialize();
+    for (const bool graded : {false, true}) {
+        INFO((graded ? "FAILSCORE_GRADING ON, FAILSCORE 1e308"
+                     : "FAILSCORE_GRADING OFF, the default FAILSCORE"));
+        Host::reset_globals_for_test();
+        ScratchDir sd;
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir,
+            std::string(graded ? "FAILSCORE 1e308\nFAILSCORE_GRADING ON\n"
+                               : "") +
+                "PC_ERMSE 0 1\n" + kFailingObservable + kFailingObservable,
+            {5.2});
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] == (graded ? graded_failscore(1e308, FailBand::B,
+                                                       1.0, 1.0)
+                                   : kMax));
+        CHECK(count_of(journal, "PC_OBSERVABLE term failed (") == 2u);
+        CHECK(journal.find("evaluation produced NaN/Inf") == std::string::npos);
+        CHECK(census(journal, "NaN/Inf clampings") == 0);
+        CHECK(census(journal, "Unusable losses") == 1);
+        CHECK(census(journal, "Graded failures") == (graded ? 1 : 0));
+    }
+    Host::reset_globals_for_test();
+}
+
 /* ======================================================================
  * hpo_run(): the searches.
  * ==================================================================== */

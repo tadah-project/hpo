@@ -290,7 +290,8 @@ const std::string kHpoHead =
  * flushes the rows and returns the losses. */
 std::vector<double> evaluate(const fs::path& dir, const std::string& target_tail,
                              const std::vector<double>& xs,
-                             std::size_t n_val_datasets = 1) {
+                             std::size_t n_val_datasets = 1,
+                             const std::string& head = kHpoHead) {
     const fs::path train = dir / "train.db", hpo = dir / "config.hpo",
                    val = dir / "config.val";
     write_minimal_ta_dbfile(train, 0.0);
@@ -302,7 +303,7 @@ std::vector<double> evaluate(const fs::path& dir, const std::string& target_tail
             os << "DBFILE " << db.string() << "\n";
         }
     }
-    std::ofstream(hpo) << kHpoHead << target_tail;
+    std::ofstream(hpo) << head << target_tail;
     Context ctx = make_ta_master_context(train, hpo, val);
     HPOTargets trg(ctx, hpo.string());
     std::vector<double> losses;
@@ -395,6 +396,63 @@ TEST_CASE("an unreadable --varloss variable fails the evaluation, not the run",
               std::string::npos);
         CHECK(journal.find("[!] No evaluation produced a usable loss.") !=
               std::string::npos);
+        Host::reset_globals_for_test();
+    }
+}
+
+/* Pins: a failed PC_LAMMPS task (an unreadable --varloss, E = press) at the
+ * default FAILSCORE, the largest double, under LOSS L2 fails its evaluation
+ * as a failure, not as a NaN/Inf clamping: FAILSCORE (OFF), each evaluation
+ * counted under "Unusable losses" and none under "NaN/Inf clampings", no
+ * "evaluation produced NaN/Inf" WARNING; under FAILSCORE_GRADING ON
+ * (FAILSCORE 1e200, whose square overflows as well) the graded band-B loss,
+ * counted under "Graded failures" only.
+ * Before the fix: the L2 of the --failscore value, DBL_MAX^2 = inf, made
+ * the mean non-finite and assemble_loss set was_nan_clamped before the
+ * failed task made the evaluation FAILSCORE; the census counted it as a
+ * NaN/Inf clamping ("NaN/Inf clampings : 2 (100.0%)", "[!] 100.0% of
+ * evaluations produced a non-finite loss that was clamped.") with an
+ * "evaluation produced NaN/Inf -- loss clamped to FAIL_SCORE" WARNING and
+ * bound hints for each, and under ON in both counters, the NaN one and
+ * "Graded failures : 2", which DIAGNOSTICS calls disjoint. (The pins above
+ * run under FAILSCORE 1e16, whose square is finite.) */
+TEST_CASE("a failed PC_LAMMPS task at the default FAILSCORE is a failed "
+          "evaluation, not a NaN/Inf clamping", "[pc_readback_e2e][.]") {
+    using tadah::hpo::FailBand;
+    using tadah::hpo::graded_failscore;
+    tadah::core::PeriodicTable::initialize();
+    for (const bool graded : {false, true}) {
+        INFO((graded ? "FAILSCORE_GRADING ON, FAILSCORE 1e200"
+                     : "FAILSCORE_GRADING OFF, the default FAILSCORE"));
+        Host::reset_globals_for_test();
+        ScratchDir sd("tadah_pc_default_fs_");
+        std::ofstream(sd.dir / "readback.in")
+            << ta_script("3.301", "variable E equal press\n");
+        Journal j;
+        const std::string head =
+            std::string("OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\n"
+                        "ENDOPTIMIZER\nLOSS L2\nQFLUSH 1\n") +
+            (graded ? "FAILSCORE 1e200\nFAILSCORE_GRADING ON\n" : "") +
+            "OPTIM CGRID2B (1) 0.0 4.0\n";
+        const auto losses = evaluate(
+            sd.dir,
+            "PC_ERMSE 0 1\nPC_LAMMPS --script " +
+                (sd.dir / "readback.in").string() + " --varloss E 0 1\n",
+            {0.5, 0.6}, 1, head);
+        const std::string journal = j.finish();
+        INFO(journal);
+        const double expected =
+            graded ? graded_failscore(1e200, FailBand::B, 1.0, 1.0)
+                   : std::numeric_limits<double>::max();
+        for (const double l : losses) CHECK(l == expected);
+        CHECK(journal.find("PC_LAMMPS task failed (") != std::string::npos);
+        CHECK(journal.find("evaluation produced NaN/Inf") == std::string::npos);
+        CHECK(journal.find("[ok] No NaN/Inf clampings were recorded.") !=
+              std::string::npos);
+        CHECK_THAT(journal, Catch::Contains("Unusable losses         : 2"));
+        CHECK_THAT(journal,
+                   Catch::Contains(std::string("Graded failures         : ") +
+                                   (graded ? "2" : "0")));
         Host::reset_globals_for_test();
     }
 }
