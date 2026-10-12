@@ -61,7 +61,8 @@
  * point, and an earlier search's evaluation as such) and its count of
  * reuses at 10, 100, 1000, ... (a search that only asks again makes no row:
  * LD_MMA held at u = 0 spins until NLopt's own MAXEVAL or the RESTART
- * window ends it); a run journals once why a repeat was evaluated again;
+ * window ends it); a run journals once why a repeat was evaluated again
+ * (naming an earlier search's evaluation as such);
  * DIAGNOSTICS counts both (HPOLog::record_repeat_reused,
  * record_repeat_evaluated).
  */
@@ -237,8 +238,9 @@ enum class RepeatUse {
     Evaluate  ///< the point is evaluated again
 };
 
-/** How a call that asks `with_gradient` at a point the search has recorded
- *  -- a usable loss, and a gradient formed there when `has_gradient` -- is
+/** How a call that asks `with_gradient` at a point the run has recorded
+ *  -- a usable loss, and a gradient the search formed there when
+ *  `has_gradient` -- is
  *  answered, when the run allows a reuse (`reuse`, RepeatPolicy::reuse:
  *  every evaluation of the run is a function of its point) or not, under
  *  GRAD_STRATEGY `strategy`: from the record when the run allows it and
@@ -378,7 +380,7 @@ public:
         if (reused_ >= 10 && is_power_of_ten(reused_))
             HPOLog::instance().info(
                 backend_ + ": " + std::to_string(reused_) +
-                " calls of this search have asked again for points the run "
+                " calls of this search have asked for points the run had "
                 "evaluated (the latest the point of " + eval_of(e) +
                 "), answered without an evaluation");
         if (!noted_reuse_) {
@@ -416,7 +418,8 @@ public:
     }
 
     /** Counts and journals a call at `x`, whose entry is `e`, that is
-     *  evaluated again (`use` Evaluate), and why. */
+     *  evaluated again (`use` Evaluate), and why; the run's first such call
+     *  is journalled, naming an earlier search's evaluation as such. */
     void note_evaluated_again(const Vec& x, const Entry& e, bool with_gradient)
     {
         const std::string why =
@@ -428,12 +431,17 @@ public:
                       " differentiates the last evaluation: the point is "
                       "evaluated before its gradient";
         HPOLog::instance().record_repeat_evaluated(why);
-        if (HPOLog::instance().first_in_run("repeat points evaluated again"))
+        if (HPOLog::instance().first_in_run("repeat points evaluated again")) {
+            const bool earlier = earlier_search(e);
             HPOLog::instance().info(
-                backend_ + " asked again for the point of " + eval_of(e) +
-                " (" + describe_point(sp_, x) + ")" +
+                backend_ + " asked " + (earlier ? "" : "again ") +
+                "for the point of " + eval_of(e) + " (" +
+                describe_point(sp_, x) + ")" +
                 (with_gradient ? " and its gradient" : "") +
+                (earlier ? ", which an earlier search of the run evaluated"
+                         : "") +
                 "; it is evaluated again: " + why);
+        }
     }
 
     /** Records an evaluation of `x` (its loss `loss`, its run number

@@ -190,14 +190,23 @@ struct GradientCost {
 GradientCost gradient_cost(const OptimizerSpec& spec);
 
 /* The startup WARNINGs of the phases of `root` whose budget cannot pay for
- * one step of their gradient search, in a run that answers a point a
- * search asks for again from the search's record when `reuse` (the run's
- * permission, RepeatPolicy::reuse: HPOTargets::repeat_reuse_blocker() is
- * "", which HPO_Host::repeat_reuse_blocker() forwards) and evaluates it
- * again otherwise (repeat_points.h). A search evaluates the loss at its
- * starting point (1 evaluation) and the gradient there (gradient_cost())
- * before any point it steps to, so a MAXEVAL below gradient_cost() + 2
- * ends it where it started (MAXEVAL_REACHED). Over strategy_phase_specs():
+ * one step of their gradient search, in a run that answers a point the run
+ * has evaluated from the run's record when `reuse` (the run's permission,
+ * RepeatPolicy::reuse: HPOTargets::repeat_reuse_blocker() is "", which
+ * HPO_Host::repeat_reuse_blocker() forwards) and evaluates it again
+ * otherwise (repeat_points.h). A search evaluates the loss at its starting
+ * point (1 evaluation) and the gradient there (gradient_cost()) before any
+ * point it steps to, so a MAXEVAL below gradient_cost() + 2 ends it where it
+ * started (MAXEVAL_REACHED). A start the run has evaluated -- a PRESTAGE
+ * refinement's, an exploration candidate; the seed point of the run's
+ * first search under NOISE_CALIBRATION -- is counted as the run spends it
+ * on NLopt and DLIB:BFGS, which answer from the record: under `reuse` and
+ * NUMERICAL its loss is the recorded one, "the PRESTAGE refinement
+ * NLOPT:LD_LBFGS: MAXEVAL 4 takes no step: its gradient search takes the
+ * loss at its starting point from the run's record (no evaluation) and
+ * evaluates the gradient there (4 evaluations: ...) ..., which needs
+ * MAXEVAL 5 or more"; otherwise "... evaluates the loss at its starting
+ * point again (1 evaluation) ...". Over strategy_phase_specs():
  * every phase whose optimiser obtains gradients (obtains_gradients(): an
  * MLSL or AUGLAG through its local search) and has a MAXEVAL -- the
  * STRATEGY-level optimiser, each MULTISTART start (BUDGET_PER_START or its
@@ -209,7 +218,7 @@ GradientCost gradient_cost(const OptimizerSpec& spec);
  * a point it steps to, which needs MAXEVAL 6 or more". An MLSL first
  * evaluates its starting point and its first N samples without a gradient
  * (N its POPULATION, NLopt's default 4), and its first local search starts
- * at one of them, a point the search has evaluated: the loss there is
+ * at one of them, a point the run has evaluated: the loss there is
  * counted as the run spends it (repeat_use, the rule of RepeatPoints::use):
  * none under `reuse` and GRAD_STRATEGY NUMERICAL, whose finite differences
  * take the recorded loss as their centre, so it needs N more: "the
@@ -217,7 +226,7 @@ GradientCost gradient_cost(const OptimizerSpec& spec);
  * local search: MLSL evaluates its starting point and its first 4 samples
  * without a gradient (5 evaluations; POPULATION 4, NLopt's default), then
  * its first local search, from one of them, takes the loss there from the
- * search's record (no evaluation) and evaluates the gradient there (4
+ * run's record (no evaluation) and evaluates the gradient there (4
  * evaluations: ...) before it evaluates a point it steps to, which needs
  * MAXEVAL 10 or more"; one evaluation otherwise (without `reuse`, or under
  * ANALYTICAL or HYBRID), N + 1 more: "... then its first local search,

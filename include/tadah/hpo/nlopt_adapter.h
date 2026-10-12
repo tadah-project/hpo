@@ -675,8 +675,8 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
         nfo << " evaluation(s)";
         if (repeats.from_record() > 0)
             nfo << "; NLopt counts its calls, and " << repeats.from_record()
-                << " of them asked again for a point and were answered "
-                   "without an evaluation";
+                << " of them asked for points the run had evaluated and "
+                   "were answered without an evaluation";
         std::cout << "[HPO] " << nfo.str() << "\n";
         HPOLog::instance().info(nfo.str());
     };

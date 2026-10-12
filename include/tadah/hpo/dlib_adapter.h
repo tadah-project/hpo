@@ -815,7 +815,22 @@ BfgsBoxResult bfgs_box_search(Search search, Stop stop, const F& f,
  *  only the stencil is evaluated; under ANALYTICAL and HYBRID the point is
  *  evaluated first: they differentiate the host's last evaluation
  *  (HPO_Host::analytical_gradient does not check its point), and the
- *  provider's gradient(x) formed such a gradient without evaluating x. */
+ *  provider's gradient(x) formed such a gradient without evaluating x.
+ *
+ *  A loss answered from the record stands for an evaluation saved -- one
+ *  reuse in the RESTART window and in DIAGNOSTICS (RepeatPoints::note_reuse)
+ *  -- except when the gradient asked next at its point evaluates the point
+ *  (ANALYTICAL, HYBRID: RepeatUse::Evaluate), which answers the loss call
+ *  too: the two calls are one evaluation, as dlib's start and the end of
+ *  each line search ask for them, and a PRESTAGE refinement's start, an
+ *  exploration candidate, is evaluated once and counted once. So a loss
+ *  call whose gradient would be evaluated is counted at the next call
+ *  (pending_): not at all when that call is the gradient there, made
+ *  within MAXEVAL; as a reuse otherwise -- another call, a gradient that
+ *  MAXEVAL refuses, or the end of the search (settle(), which
+ *  run_dlib_bfgs_impl calls when the loop returns; bfgs_box_search asks
+ *  for a call after each such loss: the line search's next trial, or the
+ *  gradient of the point it ended on). */
 template <class Vec, class Runner, class HostT>
 class BfgsObjective {
 public:
@@ -836,9 +851,16 @@ public:
    *  MAXEVAL is spent). */
   double loss(const Vec& x)
   {
+    settle();
     if (const auto e = repeats_.find(x)) {
       if (repeats_.use(*e, false) == RepeatUse::Record) {
-        repeats_.note_reuse(x, *e, RepeatUse::Record, false);
+        /* A gradient asked at x next would evaluate x (ANALYTICAL,
+         * HYBRID): this call is counted when the next one shows whether
+         * it saved an evaluation (see the class comment). */
+        if (repeats_.use(*e, true) == RepeatUse::Evaluate)
+          pending_ = Pending{x, *e};
+        else
+          repeats_.note_reuse(x, *e, RepeatUse::Record, false);
         /* The loss just asked for, as an evaluation's: a gradient asked
          * at x next takes it (gradient). */
         last_.x = x;
@@ -848,6 +870,7 @@ public:
         last_.reused = true;
         return e->loss;
       }
+      if (spent()) throw MaxEvalReached{};
       repeats_.note_evaluated_again(x, *e, false);
     }
     return evaluate(x);
@@ -859,16 +882,23 @@ public:
   Vec gradient(const Vec& x)
   {
     const auto e = repeats_.find(x);
-    if (e && e->has_gradient && repeats_.use(*e, true) == RepeatUse::Record) {
-      repeats_.note_reuse(x, *e, RepeatUse::Record, true);
-      return e->gradient;
-    }
     /* The loss at x was the last one asked for, nothing evaluated since:
      * evaluated, or answered from the record. dlib asks for the gradient
      * of the point its line search ended on, its last loss. */
     const bool just_asked = last_.valid &&
                             last_.count == evals_.load() &&
                             same_point(last_.x, x);
+    /* The pending loss at x is answered by the evaluation of x that this
+     * gradient makes, when MAXEVAL allows it (class comment). */
+    if (pending_ && just_asked && same_point(pending_->x, x) && e &&
+        repeats_.use(*e, true) == RepeatUse::Evaluate && !spent())
+      pending_.reset();
+    else
+      settle();
+    if (e && e->has_gradient && repeats_.use(*e, true) == RepeatUse::Record) {
+      repeats_.note_reuse(x, *e, RepeatUse::Record, true);
+      return e->gradient;
+    }
     const bool just_evaluated = just_asked && !last_.reused;
     double y = last_.y;
     if (just_asked && last_.reused && e &&
@@ -877,16 +907,17 @@ public:
        * evaluation's: the call that answered it was counted (in the RESTART
        * window too), and this one evaluates only the stencil, as after an
        * evaluation of x. */
-      if (maxeval_ > 0 && evals_.load() >= maxeval_) throw MaxEvalReached{};
+      if (spent()) throw MaxEvalReached{};
     } else if (!just_evaluated) {
       const RepeatUse how = e ? repeats_.use(*e, true) : RepeatUse::Evaluate;
       if (how == RepeatUse::Centre) {
         /* NUMERICAL takes the loss at x from the caller and evaluates the
          * stencil alone: the recorded loss is that loss. */
-        if (maxeval_ > 0 && evals_.load() >= maxeval_) throw MaxEvalReached{};
+        if (spent()) throw MaxEvalReached{};
         repeats_.note_reuse(x, *e, how, true);
         y = e->loss;
       } else {
+        if (spent()) throw MaxEvalReached{};
         if (e) repeats_.note_evaluated_again(x, *e, true);
         y = evaluate(x);
       }
@@ -913,6 +944,18 @@ public:
    *  one per analytical gradient. */
   unsigned long evaluations() const { return evals_.load(); }
 
+  /** Counts a loss answered from the record that no call has followed
+   *  since (the class comment): a reuse, in the RESTART window (which may
+   *  throw StagnationStop) and in DIAGNOSTICS. Called when the search
+   *  ends; nothing when no such loss is pending. */
+  void settle()
+  {
+    if (!pending_) return;
+    const Pending p = std::move(*pending_);
+    pending_.reset();
+    repeats_.note_reuse(p.x, p.e, RepeatUse::Record, false);
+  }
+
   /** The run's number of the recorded evaluation of `x`, if it has one. */
   std::optional<std::size_t> recorded_eval(const Vec& x) const
   {
@@ -921,9 +964,12 @@ public:
   }
 
 private:
+  /* MAXEVAL is spent: an evaluation would throw MaxEvalReached. */
+  bool spent() const { return maxeval_ > 0 && evals_.load() >= maxeval_; }
+
   double evaluate(const Vec& x)
   {
-    if (maxeval_ > 0 && evals_.load() >= maxeval_) throw MaxEvalReached{};
+    if (spent()) throw MaxEvalReached{};
     evals_.fetch_add(1);
     const double y = host_(sp_.out(x));
     last_.x = x;
@@ -945,6 +991,13 @@ private:
     bool          reused = false;
   };
 
+  /* A loss answered from the record whose count waits for the next call:
+   * its point and its entry. */
+  struct Pending {
+    Vec                               x;
+    typename RepeatPoints<Vec>::Entry e;
+  };
+
   const OptimizerSpec&         sp_;
   HostT&                       host_;
   const unsigned long          maxeval_;
@@ -952,6 +1005,7 @@ private:
   GradientProvider<Vec,Runner> gp_;
   RepeatPoints<Vec>            repeats_;
   LastEval                     last_;
+  std::optional<Pending>       pending_;
 };
 
 /* "A at its upper bound 1, B at its upper bound 1, each with a gradient that
@@ -1128,6 +1182,9 @@ template<class Vec,class Runner,class HostT>
             std::forward<decltype(stop)>(stop), feval, grad, x, lo, hi,
             f_value, on_not_run,
             [&objective] { return objective.evaluations(); });
+        /* A loss answered from the record that no call followed is counted
+         * now (it can end the run's window: StagnationStop). */
+        objective.settle();
         if (r.end == detail::BfgsBoxEnd::Revisit)
           report_end("DLIB:BFGS", EndReason::Revisit,
                      std::to_string(objective.evaluations()) +
