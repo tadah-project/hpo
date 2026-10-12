@@ -222,8 +222,10 @@ GradientCost gradient_cost(const OptimizerSpec& spec);
  * MAXEVAL 10 or more"; one evaluation otherwise (without `reuse`, or under
  * ANALYTICAL or HYBRID), N + 1 more: "... then its first local search,
  * from one of them, evaluates the loss there again (1 evaluation) and the
- * gradient there (...) ..., which needs MAXEVAL 11 or more". AUGLAG goes
- * straight into its local search. And an INNER block whose local search
+ * gradient there (...) ..., which needs MAXEVAL 11 or more" under NUMERICAL
+ * without `reuse`, "... (1 evaluation: one analytical gradient,
+ * GRAD_STRATEGY ANALYTICAL) ..., which needs MAXEVAL 8 or more" under
+ * ANALYTICAL. AUGLAG goes straight into its local search. And an INNER block whose local search
  * obtains gradients and whose own MAXEVAL, in NLopt's calls (each the loss
  * and the gradient at a point), is 1; an MLSL's local searches start at
  * points it evaluated, so a call costs the gradient alone where the run
