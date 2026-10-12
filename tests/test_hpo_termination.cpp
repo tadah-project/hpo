@@ -906,12 +906,14 @@ std::string diagnostics_count(const std::string& journal,
  * NLopt's own MAXEVAL, which counts its 60 calls, ends the search ("NLopt
  * finished: MAXEVAL_REACHED -- maximum evaluations exhausted after 18 of
  * MAXEVAL 60 evaluation(s); NLopt counts its calls, and 54 of them asked
- * again for a point ..."); the journal counts the reuses at 10 ("NLOPT:
- * LD_MMA: 10 calls of this search have asked again for points the run
- * evaluated") and DIAGNOSTICS has "Repeated points reused : 54".
+ * for points the run had evaluated ..."); the journal counts the reuses at
+ * 10 ("NLOPT:LD_MMA: 10 calls of this search have asked for points the run
+ * had evaluated") and DIAGNOSTICS has "Repeated points reused : 54".
  * Before the fix: 60 rows, 42 of them repeats of the bound and its
  * stencil (20 calls), MAXEVAL_REACHED; until the run kept one record
- * (2026-10-12) the count line said "points it evaluated". */
+ * (2026-10-12) the count line said "points it evaluated"; until a call
+ * answered from an earlier search's evaluation was named as such (the
+ * review of fix/repeat-followups) both lines said "asked again for". */
 TEST_CASE("Repeated points: an NLopt run of fit metrics evaluates no point "
           "twice", "[HPO][termination][repeat_points]")
 {
@@ -929,13 +931,13 @@ TEST_CASE("Repeated points: an NLopt run of fit metrics evaluates no point "
           "MAXEVAL_REACHED -- maximum evaluations exhausted");
     CHECK(journal.find("NLopt finished: MAXEVAL_REACHED -- maximum evaluations "
                        "exhausted after 18 of MAXEVAL 60 evaluation(s); NLopt "
-                       "counts its calls, and 54 of them asked again for a "
-                       "point") != std::string::npos);
+                       "counts its calls, and 54 of them asked for points "
+                       "the run had evaluated") != std::string::npos);
     CHECK(journal.find("NLOPT:LD_MMA asked again for the point of eval 16 "
                        "(SGRID2B[2] = 4) and its gradient") !=
           std::string::npos);
     CHECK(journal.find("NLOPT:LD_MMA: 10 calls of this search have asked "
-                       "again for points the run evaluated") !=
+                       "for points the run had evaluated") !=
           std::string::npos);
     CHECK(journal.find("NLOPT:LD_MMA: 100 calls") == std::string::npos);
     CHECK(diagnostics_count(journal, "Repeated points reused") == "54");
@@ -1180,7 +1182,7 @@ std::string mlsl_budget_warning(unsigned maxeval, bool recorded)
            "point and its first 4 samples without a gradient (5 evaluations; "
            "POPULATION 4, NLopt's default), then its first local search, "
            "from one of them, " +
-           (recorded ? std::string("takes the loss there from the search's "
+           (recorded ? std::string("takes the loss there from the run's "
                                    "record (no evaluation) and evaluates the "
                                    "gradient there")
                      : std::string("evaluates the loss there again (1 "
@@ -1227,6 +1229,64 @@ TEST_CASE("Run record: a PRESTAGE refinement does not evaluate its start "
           std::string::npos);
     CHECK(journal.find("DLIB:BFGS stopped: FTOL_ABS reached after 2 "
                        "evaluation(s)") != std::string::npos);
+}
+
+/* Pins: under GRAD_STRATEGY ANALYTICAL a PRESTAGE refinement's start is
+ * evaluated (its analytical gradient is that of the host's last
+ * evaluation), and that evaluation answers the loss call at the start as
+ * well: the run of the case above with a DLIB:BFGS ANALYTICAL refinement
+ * and RESTART { AFTER_STAGNATION 2, MAX 1, METHOD CONFIG }. The
+ * refinement's start, the exploration's eval 4 at SGRID2B (2) = 4, is
+ * evaluated once more (one params row repeats another), counted once in
+ * the window, and the refinement takes its gradient and ends on its own
+ * stop test ("DLIB:BFGS stopped: FTOL_ABS reached after 2 evaluation(s)"):
+ * no StagnationStop in the refinement and no restart; the journal names the
+ * start as an earlier search's evaluation evaluated again ("DLIB:BFGS asked
+ * for the point of eval 4 (SGRID2B[2] = 4) and its gradient, which an
+ * earlier search of the run evaluated; it is evaluated again: ...
+ * GRAD_STRATEGY ANALYTICAL ..."), with no reuse line for it.
+ * Before the fix: the loss call at the start was counted as a reuse
+ * ("DLIB:BFGS asked for the point of eval 4 ..., which an earlier search
+ * of the run evaluated: the loss of eval 4 is reused, without an
+ * evaluation") and its evaluation (eval 7, after the window had ended the
+ * exploration at eval 6) once more, so the window of 2 ended the
+ * refinement at that evaluation ("StagnationStop fired at eval 7"), before
+ * it took its gradient, and RESTART ran a round ("RESTART 1/1 -- fresh
+ * init from CONFIG"), whose refinement stagnated too. */
+TEST_CASE("Run record: a PRESTAGE refinement under ANALYTICAL evaluates its "
+          "start once and counts it once in the RESTART window",
+          "[HPO][termination][repeat_points][prestage][analytical]")
+{
+    TaRun run(plain_block("    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+                          "    GRAD_STRATEGY ANALYTICAL\n"
+                          "    MAXEVAL 30\n    TOPK 1\n"
+                          "    EXPLORE\n      LIB NLOPT\n      ALGO LN_SBPLX\n"
+                          "      MAXEVAL 8\n    ENDEXPLORE\n"
+                          "    RESTART\n      AFTER_STAGNATION 2\n"
+                          "      MAX 1\n      METHOD CONFIG\n"
+                          "    ENDRESTART\n"),
+              kLowerBoundRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = repeat_run_within(
+                        run, "PRESTAGE refinement under ANALYTICAL"));
+    CHECK(status == 0);
+    check_run_files();
+    const std::string journal = read_file("hpo_run.log");
+    INFO("journal:\n" << journal);
+    CHECK(repeated_rows() == 1u);
+    CHECK(rows_at(4.0) == 2u);
+    CHECK(journal.find("DLIB:BFGS asked for the point of eval 4 (SGRID2B[2] "
+                       "= 4) and its gradient, which an earlier search of the "
+                       "run evaluated; it is evaluated again: a gradient was "
+                       "asked for where this search formed none, and "
+                       "GRAD_STRATEGY ANALYTICAL differentiates the last "
+                       "evaluation") != std::string::npos);
+    CHECK(journal.find("DLIB:BFGS asked for the point of eval 4 (SGRID2B[2] "
+                       "= 4), which an earlier search of the run evaluated: "
+                       "the loss of eval 4 is reused") == std::string::npos);
+    CHECK(journal.find("DLIB:BFGS stopped: FTOL_ABS reached after 2 "
+                       "evaluation(s)") != std::string::npos);
+    CHECK(journal.find("RESTART 1/1") == std::string::npos);
 }
 
 /* Pins: MULTISTART starts reach points an earlier start evaluated: two
@@ -1586,6 +1646,150 @@ TEST_CASE("Gradient budget: an MLSL's startup warning under GRAD_STRATEGY "
             CHECK(far);
         }
     }
+}
+
+/* Pins: on the real host (hpo_run, the Ta fixture in 2-D, PC_ERMSE alone),
+ * the startup WARNING of a gradient search whose start is a point the run
+ * has evaluated is given exactly when the run takes no step: the run's
+ * record answers the start's loss, the centre of the finite differences
+ * (NUMERICAL), so the start costs its 4-point stencil alone:
+ *   - a PRESTAGE refinement (after a GN_DIRECT exploration of 10
+ *     evaluations, TOPK 1), NLOPT:LD_LBFGS or DLIB:BFGS at MAXEVAL 5: no
+ *     WARNING; rows 11-14 are the stencil of an exploration point (the
+ *     candidate, not evaluated again) and row 15 is a step, near none of
+ *     rows 1-14;
+ *   - NLOPT:LD_LBFGS at MAXEVAL 4: the WARNING "the PRESTAGE refinement
+ *     NLOPT:LD_LBFGS: MAXEVAL 4 takes no step: its gradient search takes the
+ *     loss at its starting point from the run's record (no evaluation) ...,
+ *     which needs MAXEVAL 5 or more", and 14 rows, the last 4 the stencil;
+ *   - a PLAIN NLOPT:LD_LBFGS with NOISE CALIBRATION 2 at MAXEVAL 5, whose
+ *     start is the seed point the calibration evaluated twice (rows 1-2):
+ *     no WARNING, rows 3-6 the stencil of the seed and row 7 a step.
+ * Before the fix: the warning counted each start as evaluated again (the
+ * run's record is new to this branch; v1-dev's was each search's), so the
+ * MAXEVAL 5 runs, which step, were warned that they take "no step ...,
+ * which needs MAXEVAL 6 or more", and the MAXEVAL 4 text was "evaluates the
+ * loss at a starting point (1 evaluation) ... needs MAXEVAL 6". */
+TEST_CASE("Run record: the startup budget warning of a search that starts "
+          "at a point the run evaluated follows the run",
+          "[HPO][termination][repeat_points][gradient_budget]")
+{
+    const std::string kNoStep = "takes no step";
+    const auto prestage = [](const std::string& lib, const std::string& algo,
+                             unsigned maxeval) {
+        return plain_block("    TYPE PRESTAGE\n    LIB " + lib + "\n    ALGO " +
+                           algo + "\n    MAXEVAL " + std::to_string(maxeval) +
+                           "\n    TOPK 1\n    EXPLORE\n      LIB NLOPT\n"
+                           "      ALGO GN_DIRECT\n      MAXEVAL 10\n"
+                           "    ENDEXPLORE\n");
+    };
+    /* Whether row `step` (0-based) is near none of the rows before it, and
+     * rows `from` to `step - 1` are the stencil of one of the first `from`
+     * rows. */
+    const auto stencil_then_step = [](std::size_t from, std::size_t step) {
+        const auto pts = params_points();
+        REQUIRE(pts.size() == step + 1);
+        CHECK(stencil_centre(pts, from, from, step - 1).has_value());
+        bool far = true;
+        for (std::size_t j = 0; j < step; ++j)
+            far = far && !near_point(pts[j], pts[step]);
+        CHECK(far);
+    };
+    for (const auto& [lib, algo] :
+         std::vector<std::pair<std::string, std::string>>{
+             {"NLOPT", "LD_LBFGS"}, {"DLIB", "BFGS"}}) {
+        DYNAMIC_SECTION("the PRESTAGE refinement " << lib << ":" << algo
+                                                   << ", MAXEVAL 5") {
+            TaRun run(prestage(lib, algo, 5), budget_root(""));
+            int status = -1;
+            REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+            CHECK(status == 0);
+            check_run_files();
+            const std::string journal = read_file("hpo_run.log");
+            INFO("journal:\n" << journal);
+            CHECK(count_of(journal, kNoStep) == 0u);
+            CHECK(repeated_rows() == 0u);
+            stencil_then_step(10, 14);
+        }
+    }
+    SECTION("the PRESTAGE refinement NLOPT:LD_LBFGS, MAXEVAL 4") {
+        TaRun run(prestage("NLOPT", "LD_LBFGS", 4), budget_root(""));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        check_run_files();
+        const std::string journal = read_file("hpo_run.log");
+        INFO("journal:\n" << journal);
+        CHECK(count_of(journal,
+                       "the PRESTAGE refinement NLOPT:LD_LBFGS: MAXEVAL 4 "
+                       "takes no step: its gradient search takes the loss at "
+                       "its starting point from the run's record (no "
+                       "evaluation) and evaluates the gradient there (4 "
+                       "evaluations: central differences in 2 dimensions, "
+                       "GRAD_STRATEGY NUMERICAL) before it evaluates a point "
+                       "it steps to, which needs MAXEVAL 5 or more") == 1u);
+        CHECK(count_of(journal, kNoStep) == 1u);
+        const auto pts = params_points();
+        REQUIRE(pts.size() == 14u);
+        CHECK(stencil_centre(pts, 10, 10, 13).has_value());
+    }
+    SECTION("NOISE CALIBRATION 2, PLAIN NLOPT:LD_LBFGS, MAXEVAL 5") {
+        TaRun run("OPTIMIZER\n  NOISE\n    CALIBRATION 2\n  ENDNOISE\n"
+                  "  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
+                  "    ALGO LD_LBFGS\n    MAXEVAL 5\n  ENDSTRATEGY\n"
+                  "ENDOPTIMIZER\n",
+                  budget_root(""));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        check_run_files();
+        const std::string journal = read_file("hpo_run.log");
+        INFO("journal:\n" << journal);
+        CHECK(count_of(journal, kNoStep) == 0u);
+        CHECK(repeated_rows() == 1u);
+        stencil_then_step(1, 6);
+    }
+}
+
+/* Pins: where every repeat is evaluated again (a --skip-rel filter compares
+ * with the best so far), the run's record still knows the earlier search's
+ * evaluation, and the journal names it as such: a PRESTAGE refinement
+ * (DLIB:BFGS, TOPK 1) after an LN_SBPLX exploration (MAXEVAL 8) on the run
+ * whose loss falls towards SGRID2B (2) = 4 evaluates its start, the
+ * exploration's eval 4, again ("DLIB:BFGS asked for the point of eval 4
+ * (SGRID2B[2] = 4), which an earlier search of the run evaluated; it is
+ * evaluated again: PC_ERMSE --skip-rel: ..."), one params row repeating
+ * another, DIAGNOSTICS "Repeats evaluated again : 1".
+ * Before the fix: the line said "DLIB:BFGS asked again for the point of
+ * eval 4 (SGRID2B[2] = 4); it is evaluated again: ...", though DLIB:BFGS
+ * had not asked for it before. */
+TEST_CASE("Run record: under a reuse blocker an earlier search's point is "
+          "named as such when it is evaluated again",
+          "[HPO][termination][repeat_points][prestage]")
+{
+    std::string root = kLowerBoundRoot;
+    const std::string loss = "PC_ERMSE 0 1\n";
+    REQUIRE(root.find(loss) != std::string::npos);
+    root.replace(root.find(loss), loss.size(), "PC_ERMSE 0 1 --skip-rel 5\n");
+    TaRun run(plain_block("    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+                          "    MAXEVAL 30\n    TOPK 1\n"
+                          "    EXPLORE\n      LIB NLOPT\n      ALGO LN_SBPLX\n"
+                          "      MAXEVAL 8\n    ENDEXPLORE\n"),
+              root);
+    int status = -1;
+    REQUIRE_NOTHROW(status = repeat_run_within(run, "blocked PRESTAGE"));
+    CHECK(status == 0);
+    check_run_files();
+    const std::string journal = read_file("hpo_run.log");
+    INFO("journal:\n" << journal);
+    CHECK(journal.find("DLIB:BFGS asked for the point of eval 4 (SGRID2B[2] "
+                       "= 4), which an earlier search of the run evaluated; "
+                       "it is evaluated again: PC_ERMSE --skip-rel: the "
+                       "filter compares with the best") != std::string::npos);
+    CHECK(journal.find("asked again for the point of eval 4") ==
+          std::string::npos);
+    CHECK(repeated_rows() == 1u);
+    CHECK(diagnostics_count(journal, "Repeats evaluated again") == "1");
 }
 
 TEST_CASE("Two runs in one process: each journal carries its own "
