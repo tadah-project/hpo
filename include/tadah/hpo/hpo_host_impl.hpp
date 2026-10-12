@@ -3146,9 +3146,10 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * the run's settings, VERBOSE among them (a model built from a context
      * without VERBOSE takes the blueprint default 1, and a kernel then
      * prints its line for every evaluation). A potential records the
-     * model's settings and its fit, not the run's inputs: every file the
-     * host writes from it (best_pot.tadah, the durable best, the BDUMP and
-     * DUMP archives) leaves them out (PotHeaderWriter::write_potential_body;
+     * model's settings and its fit, not the settings of the run that
+     * mlip::remove_run_inputs lists: every file the host writes from it
+     * (best_pot.tadah, the durable best, the BDUMP and DUMP archives)
+     * leaves them out (PotHeaderWriter::write_potential_body;
      * get_param_file() leaves out DBFILE). */
     if (has_validation_) {
         /* The one-time lists (or this candidate's rebuilt ones) cover the
