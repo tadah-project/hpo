@@ -18,6 +18,7 @@
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/asa_options.h>
 #include <tadah/hpo/asa_testing.h>
+#include <tadah/hpo/seed_stream.h>
 #include <tadah/hpo/fd_stencil.h>
 #include <tadah/hpo/anneal_parallel.h>
 #include <tadah/hpo/hpo_log.h>
@@ -730,7 +731,10 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
     long   exit_index = -1;   /* P_TEMP_TOO_SMALL dimension, if any */
     {
         std::lock_guard<std::mutex> lk(g_asa_mutex);
-        std::mt19937_64 rng(seed);
+        /* A stream of its own for the seed (seed_stream.h): it was
+         * std::mt19937_64(seed) read through uniform(0, 1), the numbers of
+         * the starting-point method RANDOM for the same seed. */
+        std::mt19937_64 rng = seed_stream(seed, seed_streams::kAsa);
         RngGuard rng_guard(&rng);
         std::optional<anneal::ReplicaPool> pool;
         if (parallel_blocks) {

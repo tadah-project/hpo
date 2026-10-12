@@ -3,6 +3,7 @@
 #include <tadah/hpo/anneal_core.h>
 #include <tadah/hpo/backend_rules.h>
 #include <tadah/hpo/run_end.h>
+#include <tadah/hpo/seed_stream.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -91,7 +92,12 @@ template<typename Vec, typename Runner>
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
-    std::mt19937_64 rng(seed);
+    /* A stream of its own for the seed (seed_stream.h): it drew
+     * std::mt19937_64(seed) through uniform numbers in the box, the numbers
+     * of the starting-point method RANDOM for the same seed, so with an INIT
+     * block's SEED (or a RESTART round's) equal to its own its first draw
+     * was its start point again. */
+    std::mt19937_64 rng = seed_stream(seed, seed_streams::kRandomSearch);
     const auto& lo = sp.low, &hi = sp.high;
 
     const std::optional<uint64_t> budget = sp.stop.maxeval;
