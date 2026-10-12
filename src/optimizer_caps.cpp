@@ -77,7 +77,9 @@ using Registry = std::unordered_map<CapsKey, OptimizerCaps, CapsKeyHash>;
  * LN_BOBYQA and LN_NEWUOA, which use no MMA, return at once after the same
  * forced stop. HPO's HUGE_VAL stays: it is NLopt's own convention. The
  * analysis and the repro (cases A, B and F) are in
- * docs/issues/nlopt_newuoa_bound_stall.md.
+ * docs/issues/nlopt_newuoa_bound_stall.md. The NLopt version the NLOPT
+ * entries were measured on is kNloptTestedVersion (nlopt_tested_version.h):
+ * a build against another fails test_nlopt_version.cpp.
  *
  * NLOPT:NLOPT_LD_LBFGS_NOCEDAL -- NLopt v2.10.0 names it (nlopt.h,
  * nlopt_algorithm_to_string: the name the registry below registers each

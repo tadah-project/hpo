@@ -15,6 +15,7 @@
 #include <tadah/core/context.h>
 #include <tadah/core/logger.h>
 #include <tadah/core/periodic_table.h>
+#include <tadah/models/functions/kernels/kern_base.h>   // KernelSettingsLineScope
 
 #include <csignal>
 #include <cstdio>
@@ -75,6 +76,12 @@ int pc_worker_main(int /*argc*/, char** /*argv*/) {
    * (TadahCLI ctor) and the log level. */
   tadah::core::Logger::instance().setLogLevel(tadah::core::LogLevel::WARNING);
   tadah::core::PeriodicTable::initialize();
+
+  /* The potentials this worker builds are the run's models: the run has
+   * printed their kernel's settings line (hpo_run()), so no kernel built
+   * here prints it, whatever the potential's VERBOSE. */
+  const tadah::models::KernelSettingsLineScope kernel_settings_line(
+      tadah::models::KernelSettingsLineScope::Lines::None);
 
   std::vector<PcScriptSpec> specs;
   std::uint32_t slot = 0;
