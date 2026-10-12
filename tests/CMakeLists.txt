@@ -236,6 +236,58 @@ foreach(_case old current)
         LABELS cmake
         TIMEOUT 120)
 endforeach()
+# hpo_configure_without_ceres: HPO configured without Ceres
+# (TADAH_ENABLE_CERES OFF) gives tadah.hpo Eigen all the same, which its
+# public headers adjoint_solver.h, lammps_hessian.h, observable_registry.h
+# and sims_grad.h include in every build
+# (configure_without_ceres/check_configure_without_ceres.cmake). HPO is
+# configured once more, without Ceres and without tests, from the source
+# directories of this build's dependencies (the initial cache written here;
+# FETCHCONTENT_FULLY_DISCONNECTED, nothing is downloaded), and the check
+# reads its codemodel (CMake's file API): no ceres target, no
+# TADAH_USE_CERES, and an include directory of tadah.hpo that has
+# Eigen/Dense. Before the fix: Eigen was fetched only with Ceres and linked
+# only when its target existed, so the check fails ("no include directory
+# of tadah.hpo has Eigen/Dense ..."), and a build with TADAH_ENABLE_CERES OFF
+# stopped compiling tadah.hpo ("adjoint_solver.h:4:10: fatal error:
+# Eigen/Dense: No such file or directory").
+include(FetchContent)
+set(_hpo_no_ceres_dir ${CMAKE_CURRENT_BINARY_DIR}/configure_without_ceres)
+set(_hpo_no_ceres_cache
+    "# Written by HPO/tests/CMakeLists.txt for hpo_configure_without_ceres.\n")
+foreach(_dep tadah_cmake Tadah.CORE Tadah.MODELS Tadah.MLIP Tadah.MD
+             tadah.lammps gemmi json dlib Eigen3 nlopt)
+    FetchContent_GetProperties(${_dep} SOURCE_DIR _dep_src)
+    if(_dep_src)
+        string(TOUPPER "${_dep}" _dep_up)
+        string(APPEND _hpo_no_ceres_cache
+            "set(FETCHCONTENT_SOURCE_DIR_${_dep_up} [==[${_dep_src}]==] CACHE PATH \"\")\n")
+    endif()
+endforeach()
+foreach(_var CMAKE_MAKE_PROGRAM CMAKE_C_COMPILER CMAKE_CXX_COMPILER
+             CMAKE_BUILD_TYPE BUILD_SHARED_LIBS TADAH_LAMMPS_DIR
+             TADAH_LAMMPS_LIB TADAH_LAMMPS_LIBS TADAH_GIT_BRANCH)
+    if(DEFINED ${_var})
+        string(APPEND _hpo_no_ceres_cache
+            "set(${_var} [==[${${_var}}]==] CACHE STRING \"\")\n")
+    endif()
+endforeach()
+string(APPEND _hpo_no_ceres_cache
+    "set(FETCHCONTENT_FULLY_DISCONNECTED ON CACHE BOOL \"\")\n"
+    "set(TADAH_ENABLE_CERES OFF CACHE BOOL \"\")\n"
+    "set(BUILD_TESTING OFF CACHE BOOL \"\")\n")
+file(WRITE ${_hpo_no_ceres_dir}/preset.cmake "${_hpo_no_ceres_cache}")
+cmake_path(SET _hpo_source_dir NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/..")
+add_test(NAME hpo_configure_without_ceres
+    COMMAND ${CMAKE_COMMAND}
+        -DHPO_DIR=${_hpo_source_dir}
+        -DPRESET=${_hpo_no_ceres_dir}/preset.cmake
+        "-DGENERATOR=${CMAKE_GENERATOR}"
+        -DWORK_DIR=${_hpo_no_ceres_dir}/work
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/configure_without_ceres/check_configure_without_ceres.cmake)
+set_tests_properties(hpo_configure_without_ceres PROPERTIES
+    LABELS cmake
+    TIMEOUT 300)
 add_test(NAME hpo_anneal_registry_sync
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/../blueprint/gen_anneal_keys.py

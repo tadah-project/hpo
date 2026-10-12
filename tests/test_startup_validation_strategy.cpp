@@ -33,6 +33,7 @@
 // sorted order, so the text is the same on every run.
 
 #include "catch2/catch.hpp"
+#include "ceres_build.h"
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -1405,6 +1406,9 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused by hpo_run "
  * MULTISTART start (with its BUDGET_PER_START or its share of MAXEVAL),
  * the PRESTAGE exploration and refinement, and every INNER block -- and a
  * backend that cannot stop without MAXEVAL is named when it has none.
+ * In a build without Ceres a CERES row is refused as not built, for its
+ * phase (ceres_build.h): a pin of that refusal. Before this test change
+ * such a build failed the row, expecting the Ceres validator's message.
  * ==================================================================== */
 
 TEST_CASE("startup validation: each phase's backend checks run at startup",
@@ -1431,8 +1435,10 @@ TEST_CASE("startup validation: each phase's backend checks run at startup",
               "    MAXEVAL 20\n    EXPLORE\n      LIB CERES\n"
               "      ALGO LBFGS\n      MAXEVAL 12\n      STOPVAL 0.1\n"
               "    ENDEXPLORE\n",
-              "the PRESTAGE exploration (EXPLORE block): CERES:LBFGS does not "
-              "support STOPVAL"},
+              hpo_test::ceres_expect(
+                  "the PRESTAGE exploration (EXPLORE block): CERES:LBFGS "
+                  "does not support STOPVAL",
+                  "the PRESTAGE exploration (EXPLORE block): ")},
              {"TADAH:ANNEAL with an unknown PARAM",
               "    TYPE PLAIN\n    LIB TADAH\n    ALGO ANNEAL\n"
               "    MAXEVAL 20\n    PARAM NOT_A_KEY 1\n",
@@ -1526,7 +1532,10 @@ std::pair<std::size_t, std::string> line_of(const std::string& config,
  * ENDEXPLORE for the exploration, ENDINNER for an INNER block, the short
  * form's ENDOPTIMIZER; a STRATEGY TYPE rule the ENDOPTIMIZER line, a block
  * that needs an INNER block its own closing line; a spec built outside the
- * parser has no line, and its refusal is the phase's message alone.
+ * parser has no line, and its refusal is the phase's message alone. In a
+ * build without Ceres the two CERES rows are refused as not built, at the
+ * same lines (ceres_build.h; a pin of that refusal: before this test
+ * change such a build failed them, expecting the Ceres validators').
  * Before the fix: "<phase>: <message>" with no line for every case. */
 TEST_CASE("startup validation: a phase's settings refused at startup name the "
           "line that closes its block",
@@ -1541,17 +1550,18 @@ TEST_CASE("startup validation: a phase's settings refused at startup name the "
          strategy_config("    TYPE PLAIN\n    LIB CERES\n    ALGO LBFGS\n"
                          "    MAXEVAL 20\n    FTOL_REL -1\n"),
          "ENDOPTIMIZER",
-         top + "CERES:LBFGS requires FTOL_REL >= 0 (Ceres' "
-               "function_tolerance), got -1"},
+         top + hpo_test::ceres_expect("CERES:LBFGS requires FTOL_REL >= 0 "
+                                      "(Ceres' function_tolerance), got -1")},
         {"an EXPLORE block's CERES:WOLFE PARAM max_iter 1.5",
          strategy_config("    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
                          "    MAXEVAL 20\n    EXPLORE\n      LIB CERES\n"
                          "      ALGO WOLFE\n      MAXEVAL 12\n"
                          "      PARAM max_iter 1.5\n    ENDEXPLORE\n"),
          "ENDEXPLORE",
-         "the PRESTAGE exploration (EXPLORE block): CERES:WOLFE requires "
-         "PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' "
-         "max_num_iterations), got 1.5"},
+         "the PRESTAGE exploration (EXPLORE block): " +
+             hpo_test::ceres_expect(
+                 "CERES:WOLFE requires PARAM max_iter to be an integer from "
+                 "0 to 2147483647 (Ceres' max_num_iterations), got 1.5")},
         {"a REFINE block's DLIB:BFGS MAXTIME",
          strategy_config("    TYPE PRESTAGE\n" + kExploreGfs +
                          "    REFINE\n      LIB DLIB\n      ALGO BFGS\n"
@@ -1844,7 +1854,6 @@ TEST_CASE("startup validation: the backend checks reject no valid "
              "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_CRS2_LM\n"
              "    MAXTIME 60\n",
              "    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n",
-             "    TYPE PLAIN\n    LIB CERES\n    ALGO LBFGS\n",
              "    TYPE PLAIN\n    LIB ASA\n    ALGO ASA\n",
              "    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n"
              "    PARAM GRID_POINTS 4\n",
@@ -1958,6 +1967,13 @@ TEST_CASE("startup validation: the backend checks reject no valid "
         const auto v = judge(strategy_config(body));
         CHECK(v.startup == "");
     }
+    /* CERES:LBFGS ends on its own as well. A build without Ceres refuses
+     * every LIB CERES as not built (ceres_build.h): a pin of that refusal,
+     * for the phase. Before this test change: such a build failed the case
+     * here, expecting no refusal. */
+    CHECK(judge(strategy_config("    TYPE PLAIN\n    LIB CERES\n"
+                                "    ALGO LBFGS\n")).startup ==
+          hpo_test::ceres_expect("", "the STRATEGY-level optimiser: "));
 }
 
 /* ======================================================================
@@ -3053,19 +3069,27 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
         /* a number for fd_kernel: the same message on every backend. DLIB:BFGS
          * said it "does not support PARAM fd_kernel" while listing it as
          * supported, and the CERES drivers left it out of their list (review
-         * 2, finding 2). */
+         * 2, finding 2). A build without Ceres refuses CERES:LBFGS as not
+         * built first (ceres_build.h; a pin of that refusal; before this
+         * test change such a build failed here, expecting the fd_kernel
+         * message). */
         for (const std::string& backend :
              {std::string("DLIB:BFGS"), std::string("CERES:LBFGS"),
               std::string("NLOPT:LD_LBFGS")}) {
             const std::string lib = backend.substr(0, backend.find(':'));
             const std::string algo = backend.substr(backend.find(':') + 1);
+            const std::string message =
+                "the STRATEGY-level optimiser " + backend + ": PARAM "
+                "fd_kernel must be inhouse or ceres (got 1)";
             INFO(backend);
             CHECK(judge(strategy_config("    TYPE PLAIN\n    LIB " + lib +
                                         "\n    ALGO " + algo +
                                         "\n    MAXEVAL 20\n"
                                         "    PARAM fd_kernel 1\n")).startup ==
-                  "the STRATEGY-level optimiser " + backend + ": PARAM "
-                  "fd_kernel must be inhouse or ceres (got 1)");
+                  (lib == "CERES"
+                       ? hpo_test::ceres_expect(message,
+                                                "the STRATEGY-level optimiser: ")
+                       : message));
         }
     }
     SECTION("settings that never take effect are refused") {
