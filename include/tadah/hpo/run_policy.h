@@ -443,10 +443,10 @@ private:
  * loss from those points (a search under FAILSCORE_GRADING ON walks out of
  * a failure region). An exploration that made no evaluation is an error
  * (std::logic_error): every exploration a parsed configuration sets
- * evaluates at least one point (MAXEVAL >= 1, a TADAH driver's INIT point,
- * the first point of NLopt, DLIB:GFS and ASA; a stop is raised inside a
- * counted evaluation), so its driver returned without evaluating, or a
- * spec built outside the parser asked for no evaluation; it ran the
+ * evaluates at least one point (MAXEVAL >= 1; every driver makes its first
+ * evaluation, also when MAXTIME has passed before it; a stop is raised
+ * inside a counted evaluation), so its driver returned without evaluating,
+ * or a spec built outside the parser asked for no evaluation; it ran the
  * refinement from the INIT points with a WARNING, which hid that.
  *
  * Under RESTART a stagnating exploration hands its top-K over to the

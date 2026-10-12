@@ -181,7 +181,10 @@ double eval_core(AsaRunCtx& c, const double* x, int* valid_out)
     return loss;
 }
 
-/* Serial-path evaluation: per-eval budget/time/stop gating. */
+/* Serial-path evaluation: per-eval budget/time/stop gating. MAXTIME keeps
+ * an evaluation from starting once the search has made one: a search makes
+ * its first evaluation whatever MAXTIME, as the other drivers do (it made
+ * none when MAXTIME had passed before it, and the run had no result). */
 double eval_one(AsaRunCtx& c, const double* x, int* valid_out)
 {
     *valid_out = FALSE;
@@ -191,7 +194,8 @@ double eval_one(AsaRunCtx& c, const double* x, int* valid_out)
         c.set_why(AsaRunCtx::Budget);
         return sentinel;
     }
-    if (c.time_exceeded && c.time_exceeded()) {
+    if (c.n_evals.load(std::memory_order_relaxed) > 0 && c.time_exceeded &&
+        c.time_exceeded()) {
         c.set_why(AsaRunCtx::Time);
         return sentinel;
     }
