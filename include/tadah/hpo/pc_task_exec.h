@@ -72,9 +72,11 @@
  *     and the PC_FAILPROBE's S fail the task, a diagnostic --outvar is
  *     NaN);
  *   - a --hotvar or --failvar fails the task here: RUN_FAIL, error_msg
- *     "reading --hotvar <name> after the script: <LAMMPS message>" for the
- *     first one, no outvar or hot value handed on (the failvars stay, for
- *     grading).
+ *     "reading --hotvar <name> after the script: <LAMMPS message>" for
+ *     each one that cannot be read, joined with "; " in the order they are
+ *     read (the hot variables, then the fail variables), so the first
+ *     names the failure; no outvar or hot value handed on (the failvars
+ *     stay, for grading). Only the first was named before.
  * Every variable is read either way (after a failed run only the
  * failvars, for grading), and an instance that raised a read-back error is
  * discarded, like one whose script raised one: the error leaves evaluation
@@ -399,7 +401,8 @@ PcTaskResult execute_script_task_unguarded(
     res.outvar_errors[j] = err;
     read_error = true;
   }
-  /* The first --hotvar/--failvar that cannot be read fails the task. */
+  /* A --hotvar/--failvar that cannot be read fails the task; the message
+   * names each one, the first first. */
   std::string fatal;
   auto read_all = [&](const char* role, const std::vector<std::string>& names,
                       std::vector<std::string>& values) {
@@ -409,9 +412,8 @@ PcTaskResult execute_script_task_unguarded(
       if (detail::pc_read_variable(runner, lmp, names[j], values[j], err))
         continue;
       read_error = true;
-      if (fatal.empty())
-        fatal = std::string("reading ") + role + " " + names[j] +
-                " after the script: " + err;
+      fatal += std::string(fatal.empty() ? "" : "; ") + "reading " + role +
+               " " + names[j] + " after the script: " + err;
     }
   };
   read_all("--hotvar", hotvar_names, res.hotvar_values);

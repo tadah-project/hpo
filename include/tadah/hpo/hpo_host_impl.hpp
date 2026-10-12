@@ -1919,8 +1919,10 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
      *   - a diagnostic (declared only with --outvar) is "" or text -- NaN
      *     in outvar.tadah -- and the evaluation keeps its loss; its own line
      *     says so, rate-limited like D17.
-     * The first variable at fault names the failure, in the order of
-     * outvar_errors, the line's variables, the hot and the fail variables.
+     * Every variable at fault is named, in the order of outvar_errors, the
+     * line's variables, the hot and the fail variables, joined with "; ",
+     * so the first names the failure (only the first was named before: a
+     * script with several bad variables was put right one run at a time).
      * The role in the message names the probe's line ("PC_FAILPROBE
      * --outvar S"); the heads of the lines are the same for every line. */
     PcTaskStatus status = tres.status;
@@ -1954,30 +1956,37 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
           return "its value '" + s + "' is not a finite number";
         return {};
       };
+      bool at_fault = false;
       auto fail_task = [&](const std::string& role, const std::string& name,
                            const std::string& why) {
-        fail = true;
-        status = PcTaskStatus::RUN_FAIL;
-        error_msg = "reading " + role + name + " after the script: " + why;
+        if (!at_fault) error_msg.clear();
+        error_msg += std::string(at_fault ? "; " : "") + "reading " + role +
+                     name + " after the script: " + why;
+        at_fault = true;
       };
-      for (std::size_t j = 0; j < lsim.n_outvar.size() && !fail; ++j)
+      for (std::size_t j = 0; j < lsim.n_outvar.size(); ++j)
         if (in_loss(j) && !read_error(j).empty())
           fail_task(loss_role, lsim.n_outvar[j], read_error(j));
-      for (std::size_t j = 0; j < lsim.n_outvar.size() && !fail; ++j) {
-        if (!in_loss(j)) continue;
+      for (std::size_t j = 0; j < lsim.n_outvar.size(); ++j) {
+        /* a value that could not be read is named once, above */
+        if (!in_loss(j) || !read_error(j).empty()) continue;
         double v = 0.0;
         const std::string why = no_number(tres.outvar_values[j], v, false);
         if (!why.empty()) fail_task(loss_role, lsim.n_outvar[j], why);
       }
-      for (std::size_t j = 0; j < lsim.hotvars.size() && !fail; ++j) {
+      for (std::size_t j = 0; j < lsim.hotvars.size(); ++j) {
         const std::string why =
             no_number(tres.hotvar_values[j], hot_value[j], false);
         if (!why.empty()) fail_task("--hotvar ", lsim.hotvars[j].name, why);
       }
-      for (std::size_t j = 0; j < lsim.failvars.size() && !fail; ++j) {
+      for (std::size_t j = 0; j < lsim.failvars.size(); ++j) {
         const std::string why =
             no_number(tres.failvar_values[j], fail_value[j], true);
         if (!why.empty()) fail_task("--failvar ", lsim.failvars[j].name, why);
+      }
+      if (at_fault) {
+        fail = true;
+        status = PcTaskStatus::RUN_FAIL;
       }
       for (std::size_t j = 0; j < lsim.n_outvar.size() && !fail; ++j) {
         if (in_loss(j)) continue;
