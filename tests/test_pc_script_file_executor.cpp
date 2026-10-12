@@ -773,6 +773,59 @@ TEST_CASE("a variable read back after a read-back error carries its own "
     }
 }
 
+/* Pins: every --hotvar and --failvar of a task whose read-back raises a
+ * LAMMPS error is named in the task's error_msg, in the order they are
+ * read -- the hot variables, then the fail variables --, the first first,
+ * so it still names the failure: "reading --hotvar Pend after the script:
+ * <press error>; reading --hotvar Q after the script: <divide by 0>;
+ * reading --failvar R after the script: <press error>" for hot Pend =
+ * press, Q = 1.0/(pe-pe) and fail viol (readable, 0.25, not named) and R =
+ * press*2; the task fails, its hot values are not handed on and the
+ * failvars are read (R empty).
+ * Before the fix: the first error alone, "reading --hotvar Pend after the
+ * script: ..."; Q's and R's were dropped, so the journal named one variable
+ * of three and a script with several bad variables was fixed one run at a
+ * time (the Contains checks of Q and R fail). */
+TEST_CASE("every --hotvar and --failvar whose read-back raises a LAMMPS error "
+          "is named in the task's error, the first first",
+          "[script_file][pc_task][readback]") {
+    auto pot_ctx = kr_pot_ctx();
+    tadah::hpo::PcSlotState<LammpsRunner> st;
+    const std::vector<std::string> invar =
+        {"lmp", "-log", "none", "-screen", "none"};
+    std::vector<std::string> lines = readback_lines(kPressError.formula);
+    lines.push_back("variable Q equal 1.0/(pe-pe)");
+    lines.push_back("variable R equal press*2");
+    const auto res = tadah::hpo::execute_script_task<LammpsRunner>(
+        "rb", lines, invar, {"E"}, {"Pend", "Q"}, {"viol", "R"}, pot_ctx, 1,
+        {}, st);
+    const std::string& m = res.error_msg;
+    INFO("error_msg: " << m);
+    REQUIRE(res.status == tadah::hpo::PcTaskStatus::RUN_FAIL);
+    CHECK_THAT(m, Catch::StartsWith("reading --hotvar Pend after the "
+                                    "script: ") &&
+                  Catch::Contains(kPressError.lammps_text) &&
+                  Catch::Contains("; reading --hotvar Q after the script: ") &&
+                  Catch::Contains(kDivideError.lammps_text) &&
+                  Catch::Contains("; reading --failvar R after the script: ") &&
+                  !Catch::Contains("viol") &&
+                  !Catch::Contains("circular dependency"));
+    const auto q = m.find("--hotvar Q");
+    const auto r = m.find("--failvar R");
+    CHECK(q != std::string::npos);
+    CHECK(r != std::string::npos);
+    CHECK(q < r);
+    /* each named once */
+    const auto pend = m.find("--hotvar Pend");
+    CHECK(m.find("--hotvar Pend", pend + 1) == std::string::npos);
+    CHECK(m.find("--hotvar Q", q + 1) == std::string::npos);
+    CHECK(m.find("--failvar R", r + 1) == std::string::npos);
+    CHECK(res.hotvar_values.empty());
+    CHECK(res.outvar_values.empty());
+    CHECK(res.failvar_values == std::vector<std::string>{"0.25", ""});
+    CHECK(st.lmp_cache.count(slot_cache_key("rb", invar)) == 0);
+}
+
 /* Pins: a LAMMPS error inside the script (an unknown command) fails the
  * task with the LAMMPS message in error_msg -- "ERROR: Unknown command:
  * bogus_command 1 2", which the parent journals -- after the early failvar

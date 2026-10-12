@@ -1183,6 +1183,67 @@ TEST_CASE("a --hotvar or --failvar with text after its number fails the "
     }
 }
 
+/* Pins: the journal line of a task with several hot and fail values
+ * without a number names every one, in the order the host judges them --
+ * the hot values, then the fail values --, the first first, so it still
+ * names the failure: a hot script whose hot_a0 is '3.25abc', hot_b 'xyz'
+ * and --failvar viol '0.5abc' fails the evaluation (FAILSCORE, E and E2
+ * failscored, the cold script not run) with "PC_LAMMPS task failed
+ * (<dir>/hot.in, occurrence 1): reading --hotvar hot_a0 after the script:
+ * its value '3.25abc' is not a number; reading --hotvar hot_b after the
+ * script: its value 'xyz' is not a number; reading --failvar viol after
+ * the script: its value '0.5abc' is not a number".
+ * Before the fix: the line ended after hot_a0's clause (the judgement
+ * stopped at the first variable at fault), so hot_b's and viol's clauses
+ * are not found. */
+TEST_CASE("every hot and fail value without a number is journalled, the "
+          "first first", "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ScratchDir sd("tadah_pc_every_bad_var_");
+    std::ofstream(sd.dir / "hot.in")
+        << ta_script("${hot_a0}", "variable E equal pe\n"
+                                  "variable hot_a0 equal 3.25\n"
+                                  "variable hot_b equal 1.5\n"
+                                  "variable viol equal 0.0\n" +
+                                      respell("hot_a0", "3.25abc") +
+                                      respell("hot_b", "xyz") +
+                                      respell("viol", "0.5abc"));
+    std::ofstream(sd.dir / "cold.in")
+        << ta_script("${hot_a0}", "variable E2 equal pe\n");
+    Journal j;
+    const auto losses = evaluate(
+        sd.dir,
+        "PC_ERMSE 0 1\n"
+        "PC_LAMMPS --script " + (sd.dir / "hot.in").string() +
+            " --varloss E 0 1 --hotvar hot_a0 2.5 4.5 3.301"
+            " --hotvar hot_b 0 10 1.5 --failvar viol 1.0\n"
+        "PC_LAMMPS --script " + (sd.dir / "cold.in").string() +
+            " --varloss E2 0 1\n",
+        {0.5});
+    const std::string journal = j.finish();
+    INFO(journal);
+    REQUIRE(losses.size() == 1);
+    CHECK(losses[0] == 1e16);
+    const Table outv = read_table("outvar.tadah");
+    REQUIRE(outv.rows.size() == 1);
+    REQUIRE(outv.rows[0].size() == 6);
+    CHECK(outv.rows[0][4] == "1.000000e+16");
+    CHECK(outv.rows[0][5] == "1.000000e+16");
+    const std::string line = line_with(journal, "hot.in, occurrence 1): ");
+    CHECK_THAT(line,
+               Catch::Contains("PC_LAMMPS task failed (") &&
+               Catch::Contains("hot.in, occurrence 1): "
+                               "reading --hotvar hot_a0 after the script: its "
+                               "value '3.25abc' is not a number; reading "
+                               "--hotvar hot_b after the script: its value "
+                               "'xyz' is not a number; reading --failvar viol "
+                               "after the script: its value '0.5abc' is not a "
+                               "number"));
+    CHECK(journal.find("cold.in, occurrence") == std::string::npos);
+    Host::reset_globals_for_test();
+}
+
 namespace {
 
 /* TMPDIR for the life of the object, restored (or unset) after. */
