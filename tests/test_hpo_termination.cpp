@@ -792,6 +792,138 @@ TEST_CASE("Termination: DLIB BFGS MAXEVAL ends with best_pot.tadah = the "
     CHECK(journal_status(journal) == "DLIB:BFGS: MAXEVAL reached");
 }
 
+namespace {
+
+/* The root lines of a run with one dimension, SGRID2B (2) in [4, 6], whose
+ * loss falls towards the lower bound 4: a gradient search ends on it. The
+ * loss is PC_ERMSE alone, so every evaluation is a function of its point
+ * (HPOTargets::repeat_reuse_blocker() is ""). */
+const std::string kLowerBoundRoot =
+    "LOSS L2\n"
+    "FAILSCORE 1e9\n"
+    "QFLUSH 1000\n"
+    "DIGITS 15\n"
+    "PC_ERMSE 0 1\n"
+    "OPTIM SGRID2B (2) 4.0 6.0\n";
+
+/* The rows of params.tadah whose parameters repeat an earlier row's. */
+std::size_t repeated_rows()
+{
+    std::set<std::vector<std::string>> seen;
+    std::size_t n = 0;
+    for (const auto& row : data_rows("params.tadah")) {
+        const std::vector<std::string> params(row.begin() + 2, row.end());
+        if (!seen.insert(params).second) ++n;
+    }
+    return n;
+}
+
+/* The number on the DIAGNOSTICS line `label` ("" when there is none). */
+std::string diagnostics_count(const std::string& journal,
+                              const std::string& label)
+{
+    std::smatch m;
+    if (std::regex_search(journal, m,
+                          std::regex(label + R"(\s*: ([0-9]+))")))
+        return m[1];
+    return "";
+}
+
+}  // namespace
+
+/* Pins: LD_MMA (MAXEVAL 60, XTOL_REL 1e-8) on the run whose loss falls
+ * towards SGRID2B (2) = 4 evaluates no point twice: held at the bound (u =
+ * 0, where NLopt's XTOL_REL test is vacuous) MMA asks for it and its
+ * gradient again and again, and each repeat gets the loss and gradient of
+ * the bound's evaluation, eval 16: 18 rows, none repeating another, and
+ * NLopt's own MAXEVAL, which counts its 60 calls, ends the search ("NLopt
+ * finished: MAXEVAL_REACHED -- maximum evaluations exhausted after 18 of
+ * MAXEVAL 60 evaluation(s); NLopt counts its calls, and 54 of them asked
+ * again for a point ..."); the journal counts the reuses at 10 ("NLOPT:
+ * LD_MMA: 10 calls of this search have asked again for points it
+ * evaluated") and DIAGNOSTICS has "Repeated points reused : 54".
+ * Before the fix: 60 rows, 42 of them repeats of the bound and its
+ * stencil (20 calls), MAXEVAL_REACHED. */
+TEST_CASE("Repeated points: an NLopt run of fit metrics evaluates no point "
+          "twice", "[HPO][termination][repeat_points]")
+{
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_MMA\n"
+                          "    MAXEVAL 60\n    XTOL_REL 1e-8\n"),
+              kLowerBoundRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    check_run_files();
+    CHECK(repeated_rows() == 0u);
+    CHECK(data_rows("params.tadah").size() == 18u);
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(journal_status(journal) ==
+          "MAXEVAL_REACHED -- maximum evaluations exhausted");
+    CHECK(journal.find("NLopt finished: MAXEVAL_REACHED -- maximum evaluations "
+                       "exhausted after 18 of MAXEVAL 60 evaluation(s); NLopt "
+                       "counts its calls, and 54 of them asked again for a "
+                       "point") != std::string::npos);
+    CHECK(journal.find("NLOPT:LD_MMA asked again for the point of eval 16 "
+                       "(SGRID2B[2] = 4) and its gradient") !=
+          std::string::npos);
+    CHECK(journal.find("NLOPT:LD_MMA: 10 calls of this search have asked "
+                       "again for points it evaluated") != std::string::npos);
+    CHECK(journal.find("NLOPT:LD_MMA: 100 calls") == std::string::npos);
+    CHECK(diagnostics_count(journal, "Repeated points reused") == "54");
+}
+
+/* Pins: DLIB:BFGS (MAXEVAL 60) on the same run reaches SGRID2B (2) = 4,
+ * takes its one-sided gradient there, and its next step, held to the box,
+ * cannot move the point: the line search is not run, the loss has not
+ * changed, and the run ends "DLIB:BFGS: FTOL_ABS reached" after 15
+ * evaluations, no row repeating another; DIAGNOSTICS has "Line searches not
+ * run : 1".
+ * Before the fix: 18 rows, the last 3 the bound and its stencil again (the
+ * line search evaluated the bound, and BFGS took its gradient again), then
+ * FTOL_ABS. */
+TEST_CASE("Repeated points: a DLIB:BFGS run that reaches a bound evaluates "
+          "it once", "[HPO][termination][repeat_points]")
+{
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n"
+                          "    MAXEVAL 60\n"),
+              kLowerBoundRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    check_run_files();
+    CHECK(repeated_rows() == 0u);
+    CHECK(data_rows("params.tadah").size() == 15u);
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(journal_status(journal) == "DLIB:BFGS: FTOL_ABS reached");
+    CHECK(diagnostics_count(journal, "Line searches not run") == "1");
+}
+
+/* Pins: under PARAM tol_gradinf, whose test reads the whole gradient,
+ * DLIB:BFGS (MAXEVAL 60) held at SGRID2B (2) = 4 ends "DLIB:BFGS: no step
+ * within the OPTIM box", the stop line naming the bound ("SGRID2B[2] at
+ * its lower bound 4, with a gradient that points out of the box"), after
+ * 15 evaluations, no row repeating another.
+ * Before the fix: the bound and its gradient were evaluated until MAXEVAL,
+ * 60 rows, "DLIB:BFGS: MAXEVAL reached"; without MAXEVAL the run never
+ * ended. */
+TEST_CASE("Repeated points: a DLIB:BFGS run that no step can move ends",
+          "[HPO][termination][repeat_points]")
+{
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n"
+                          "    MAXEVAL 60\n    PARAM tol_gradinf 1e-12\n"),
+              kLowerBoundRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    check_run_files();
+    CHECK(repeated_rows() == 0u);
+    CHECK(data_rows("params.tadah").size() == 15u);
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(journal_status(journal) == "DLIB:BFGS: no step within the OPTIM box");
+    CHECK(journal.find("SGRID2B[2] at its lower bound 4, with a gradient that "
+                       "points out of the box") != std::string::npos);
+}
+
 TEST_CASE("Two runs in one process: each journal carries its own "
           "once-per-run notes", "[HPO][termination][two_runs]")
 {
@@ -1031,7 +1163,12 @@ TEST_CASE("Termination: NLopt MAXEVAL ends with best_pot.tadah = the best "
     REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
     CHECK(status == 0);
     check_run_files();
-    CHECK(data_rows("loss.tadah").size() == 12u);
+    /* LN_SBPLX asks for the point of eval 6 again twice among its 12
+     * calls, and each repeat is answered with eval 6's loss (every
+     * evaluation of this run is a function of its point): 10 evaluations,
+     * and NLopt's own MAXEVAL, which counts its calls, ends the search.
+     * Until 2026-10-12 both repeats were evaluated again: 12 rows. */
+    CHECK(data_rows("loss.tadah").size() == 10u);
     CHECK(journal_status(read_file("hpo_run.log")) ==
           "MAXEVAL_REACHED -- maximum evaluations exhausted");
 }
@@ -1075,10 +1212,13 @@ TEST_CASE("Termination: under PRESTAGE the trailer is the refinement's, "
           "not the exploration's", "[HPO][termination][stop_criteria]")
 {
     /* The NLopt exploration records MAXEVAL_REACHED; the DLIB refinement,
-     * which ends the run, spends its MAXEVAL 20. The trailer used to
-     * repeat the exploration's status.
+     * which ends the run, converges on the bound SGRID2B[2] = 4, where its
+     * next step cannot move the point. The trailer used to repeat the
+     * exploration's status.
      * Pins: the trailer is the refinement's own status, "DLIB:BFGS:
-     * MAXEVAL reached".
+     * FTOL_ABS reached" ("DLIB:BFGS: MAXEVAL reached" until 2026-10-12: its
+     * line search evaluated the bound again and BFGS took its gradient
+     * there again, until its MAXEVAL 20 was spent).
      * Before the fix: COMPLETED (DLIB:BFGS recorded no status). */
     TaRun run(
         "OPTIMIZER\n"
@@ -1094,7 +1234,7 @@ TEST_CASE("Termination: under PRESTAGE the trailer is the refinement's, "
     CHECK(status == 0);
     const std::string journal = read_file("hpo_run.log");
     CHECK(journal.find("REFINEMENT: refining top-1") != std::string::npos);
-    CHECK(journal_status(journal) == "DLIB:BFGS: MAXEVAL reached");
+    CHECK(journal_status(journal) == "DLIB:BFGS: FTOL_ABS reached");
     check_run_files();
 }
 
@@ -4284,10 +4424,13 @@ TEST_CASE("Termination: the RESTART stagnation stop ends a search that has "
  *   MAXEVAL 3 -- 3 evaluations, "DLIB:BFGS -- MAXEVAL=3 reached" (the
  *     MAXEVAL stop line, unchanged) and the status "DLIB:BFGS: MAXEVAL
  *     reached";
- *   MAXEVAL 200 -- 51 evaluations, the stop line "DLIB:BFGS stopped:
- *     FTOL_ABS reached after 51 evaluation(s): the loss changed by less
+ *   MAXEVAL 200 -- 44 evaluations, the stop line "DLIB:BFGS stopped:
+ *     FTOL_ABS reached after 44 evaluation(s): the loss changed by less
  *     than FTOL_ABS = 1e-07 (default) from one iteration to the next", no
- *     MAXEVAL line, the status "DLIB:BFGS: FTOL_ABS reached";
+ *     MAXEVAL line, the status "DLIB:BFGS: FTOL_ABS reached" (51 until
+ *     2026-10-12: at the bound SGRID2B[2] = 4, where its step cannot move
+ *     the point, its line search evaluated the point again and BFGS took
+ *     its gradient there again, 7 evaluations);
  *   FTOL_ABS 1e-3 -- 14 evaluations, "FTOL_ABS = 0.001" without
  *     "(default)";
  *   PARAM tol_gradinf 1e6 -- 1 + 2 x 3 = 7 evaluations (the loss at the
@@ -4311,9 +4454,9 @@ TEST_CASE("Termination: DLIB:BFGS records why it ended",
              {"MAXEVAL 3", "    MAXEVAL 3\n", 3u,
               "DLIB:BFGS: MAXEVAL reached",
               "DLIB:BFGS -- MAXEVAL=3 reached; preserving best-so-far"},
-             {"the default FTOL_ABS", "    MAXEVAL 200\n", 51u,
+             {"the default FTOL_ABS", "    MAXEVAL 200\n", 44u,
               "DLIB:BFGS: FTOL_ABS reached",
-              "DLIB:BFGS stopped: FTOL_ABS reached after 51 evaluation(s): "
+              "DLIB:BFGS stopped: FTOL_ABS reached after 44 evaluation(s): "
               "the loss changed by less than FTOL_ABS = 1e-07 (default) "
               "from one iteration to the next"},
              {"FTOL_ABS 1e-3", "    MAXEVAL 200\n    FTOL_ABS 1e-3\n", 14u,
@@ -5463,16 +5606,20 @@ TEST_CASE("Gradient not finite: AUGLAG's local search that spends its own "
      * AUGLAG's own status. An INNER MAXEVAL counts the local search's NLopt
      * calls, not its evaluations (owner decision, 2026-10-07; the journal's
      * "Inner stop criteria" say so): its 4 calls are 8 evaluations here (the
-     * rejected points 1.074 and 1.397 cost one each), AUGLAG's evaluation of
-     * the point the search returned, 1.72, the 9th.
+     * rejected points 1.074 and 1.397 cost one each). AUGLAG's evaluation of
+     * the point the search returned, 1.72, the start, is answered with the
+     * start's loss (every evaluation of this run is a function of its
+     * point); until 2026-10-12 it was evaluated again, the 9th.
      * With INNER MAXEVAL 5 the rejection used to end the search, as without
      * one; the search goes on past it now (the case above), and the split
      * between an INNER MAXEVAL that a rejection reaches and one it does not
      * is covered on an outage stub (test_fd_bounds.cpp, "No usable
      * gradient: an NLopt search that ends right after it rejected a point
      * says so, on an outage").
-     * Pins: 9 evaluations, the 8th the failed stencil point 1.4393 and the
-     * 9th 1.72; FTOL_REACHED, no stop line.
+     * Pins: 8 evaluations, the 8th the failed stencil point 1.4393, and
+     * the journal line "NLOPT:AUGLAG asked again for the point of eval 1
+     * (CGRID2B[2] = 1.72): the loss of eval 1 is reused"; FTOL_REACHED, no
+     * stop line.
      * Before the fix: 11 evaluations, the rejection of 1.6554 the fourth
      * call (1.074 had been handed FAILSCORE with a zero gradient), and with
      * INNER MAXEVAL 5 the stop line and the trailer "STOPPED -- gradient not
@@ -5487,12 +5634,14 @@ TEST_CASE("Gradient not finite: AUGLAG's local search that spends its own "
     CHECK(status == 0);
     const auto x = evaluated_cgrid2();
     const auto loss = data_rows("loss.tadah");
-    REQUIRE(x.size() == 9u);
-    REQUIRE(loss.size() == 9u);
+    REQUIRE(x.size() == 8u);
+    REQUIRE(loss.size() == 8u);
     CHECK(x[7] == Approx(1.439256975).epsilon(1e-9));
     CHECK(loss[7].back() == kDefaultFailScoreRow);
-    CHECK(x[8] == Approx(1.72));
     const std::string journal = read_file("hpo_run.log");
+    CHECK(journal.find("NLOPT:AUGLAG asked again for the point of eval 1 "
+                       "(CGRID2B[2] = 1.72): the loss of eval 1 is reused") !=
+          std::string::npos);
     CHECK(journal_status(journal) ==
           "FTOL_REACHED -- function tolerance converged");
     CHECK(journal.find("stopped: no usable gradient") == std::string::npos);
@@ -5905,7 +6054,9 @@ TEST_CASE("No usable gradient: under FAILSCORE_GRADING a start inside the "
      * Pins (the graded searches pass before the fix as well: pins of the
      * graded slope, which a rule that failed every failed evaluation would
      * break): from 1.25, DLIB:BFGS reaches the bound 2 (95.2545212249) at
-     * its 4th evaluation and ends after 9, NLopt LD_LBFGS after 6, CERES
+     * its 4th evaluation and ends after 6 (after 9 until 2026-10-12, when
+     * its line search from the bound evaluated it again and BFGS took its
+     * gradient there again), NLopt LD_LBFGS after 6, CERES
      * LBFGS reaches a usable loss; the first loss is graded and no stop
      * line or stencil trailer follows. TADAH_FAILSCORE_GRADING=ON without
      * the key does the same (the override reaches the gradient; DLIB:BFGS
@@ -5920,9 +6071,9 @@ TEST_CASE("No usable gradient: under FAILSCORE_GRADING a start inside the "
         std::size_t evals;   /* 0: not pinned */
     };
     std::vector<Case> cases = {
-        {"DLIB", "BFGS", "DLIB:BFGS", graded, false, 9u},
+        {"DLIB", "BFGS", "DLIB:BFGS", graded, false, 6u},
         {"NLOPT", "LD_LBFGS", "NLOPT:LD_LBFGS", graded, false, 6u},
-        {"DLIB", "BFGS", "DLIB:BFGS, TADAH_FAILSCORE_GRADING=ON", "", true, 9u}};
+        {"DLIB", "BFGS", "DLIB:BFGS, TADAH_FAILSCORE_GRADING=ON", "", true, 6u}};
 #ifdef TADAH_USE_CERES
     cases.push_back({"CERES", "LBFGS", "CERES:LBFGS", graded, false, 0u});
 #endif
@@ -6249,10 +6400,15 @@ TEST_CASE("Finite differences: LD_SLSQP from 1.8 spends exactly MAXEVAL",
      * [1, 2], a usable one after a failed one, MAXEVAL_REACHED.
      *
      * Pins: exactly 60 evaluations (params.tadah rows) for MAXEVAL 60, the
-     * last at CGRID2B[2] = 1.8678643276 (to 1e-9: it pins the path; each
+     * last at CGRID2B[2] = 1.8659506446 (to 1e-9: it pins the path; each
      * gradient takes the loss its caller has just evaluated as its centre,
-     * and a point whose loss failed, 1.0586 and 1.4293 here, is rejected)
-     * and not asked for twice in a row at the end.
+     * a point whose loss failed, 1.0586 and 1.4293 here, is rejected, and
+     * the 5 calls that ask again for a point evaluated with its gradient,
+     * 1.7073 the first, are answered from it without an evaluation) and not
+     * asked for twice in a row at the end.
+     * Before the repeat-points fix (2026-10-12) the last was at
+     * 1.8678643276: the 5 repeats were evaluated again, MAXEVAL counting
+     * them.
      * Before the failure-region fix (2026-10-07) the last was at
      * 1.798850979: 1.0586 and its one-sided stencil 1.2586 and 1.4586 all
      * failed, and SLSQP was handed FAILSCORE there with a zero gradient.
@@ -6279,7 +6435,7 @@ TEST_CASE("Finite differences: LD_SLSQP from 1.8 spends exactly MAXEVAL",
                                   it->back() == rows.back().back(); ++it)
         ++repeats;
     CHECK(repeats == 1u);
-    CHECK(std::stod(rows.back().back()) == Approx(1.8678643276).epsilon(1e-9));
+    CHECK(std::stod(rows.back().back()) == Approx(1.8659506446).epsilon(1e-9));
     for (double xi : evaluated_cgrid2()) {
         CAPTURE(xi);
         CHECK((xi >= 1.0 && xi <= 2.0));
@@ -6300,7 +6456,9 @@ TEST_CASE("Snap onto the box: NLopt LN_COBYLA under OPTIM_SCALE NONE rounds a "
      * bound; OPTIM_SCALE NONE hands it the real box). It was evaluated
      * there -- 29 of the 60 evaluations -- and warned about as a point
      * outside the box; it is evaluated on the bound now and counted as
-     * snapped (owner decision D10). */
+     * snapped (owner decision D10). COBYLA asks for one of its points again
+     * among its 60 calls, answered without an evaluation: 59 evaluations
+     * (60 until 2026-10-12). */
     const std::string root =
         "OPTIM_SCALE NONE\nLOSS L2\nQFLUSH 1000\nDIGITS 15\n"
         "PC_ERMSE 0 1 --skip-above 9.99995\n"
@@ -6314,7 +6472,7 @@ TEST_CASE("Snap onto the box: NLopt LN_COBYLA under OPTIM_SCALE NONE rounds a "
                                         "NLOPT:LN_COBYLA"));
     CHECK(status == 0);
     const auto x = evaluated_cgrid2();
-    CHECK(x.size() == 60u);
+    CHECK(x.size() == 59u);
     for (double xi : x) {
         CAPTURE(xi);
         CHECK((xi >= 1.5 && xi <= 1.7));
@@ -6623,9 +6781,11 @@ TEST_CASE("PRESTAGE: an exploration whose every candidate the bump gate "
      * evaluation of the exploration produced a usable loss (2
      * evaluation(s)); refining from the OPTIMIZER-level INIT point(s)
      * instead", a WARNING); the refinement's first evaluation (eval 3) is
-     * the INIT point, it spends its MAXEVAL 20 (22 rows) and finds usable
-     * losses: status 0, "MAXEVAL_REACHED -- maximum evaluations exhausted",
-     * a usable best.
+     * the INIT point, it spends its MAXEVAL 20 of NLopt's calls and finds
+     * usable losses: 18 rows (4 of its calls ask again for a point of its
+     * own search with a usable loss, answered without an evaluation; 22
+     * rows until 2026-10-12), status 0, "MAXEVAL_REACHED -- maximum
+     * evaluations exhausted", a usable best.
      * Before the fix: "PRESTAGE: no evaluation of the exploration produced
      * a usable loss (2 evaluation(s)); nothing to refine", and the run
      * ended after the exploration's 2 rows without a usable loss (status 1,
@@ -6647,7 +6807,7 @@ TEST_CASE("PRESTAGE: an exploration whose every candidate the bump gate "
                                         "a gate-rejected PRESTAGE"));
     CHECK(status == 0);
     const auto rows = data_rows("loss.tadah");
-    REQUIRE(rows.size() == 22u);
+    REQUIRE(rows.size() == 18u);
     for (std::size_t i = 0; i < 2; ++i) {
         INFO("exploration evaluation " << i + 1);
         const double l = loss_value(rows[i].back());
@@ -6663,7 +6823,7 @@ TEST_CASE("PRESTAGE: an exploration whose every candidate the bump gate "
     CHECK(journal.find("nothing to refine") == std::string::npos);
     CHECK(journal.find("REFINEMENT: refining") == std::string::npos);
     const auto params = data_rows("params.tadah");
-    REQUIRE(params.size() == 22u);
+    REQUIRE(params.size() == 18u);
     CHECK(std::stod(params[2].at(2)) == Approx(3.5));
     CHECK(std::stod(params[2].at(3)) == Approx(2.0));
     CHECK(journal_status(journal) ==
