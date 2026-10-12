@@ -833,6 +833,250 @@ TEST_CASE("Two runs in one process: each journal carries its own "
     }
 }
 
+namespace {
+
+/* The value of the journal line `label : value` (its first occurrence),
+ * "" without the line. */
+std::string journal_value(const std::string& journal, const std::string& label)
+{
+    std::smatch m;
+    if (std::regex_search(journal, m,
+                          std::regex("\n  " + label + R"(\s*: ([^\n]*))")))
+        return m[1];
+    return "";
+}
+
+/* The N of "(eval N" in the value of the journal line `label`, -1 without
+ * it. */
+long journal_eval(const std::string& journal, const std::string& label)
+{
+    std::smatch m;
+    const std::string v = journal_value(journal, label);
+    if (std::regex_search(v, m, std::regex(R"(\(eval (\d+))")))
+        return std::stol(m[1]);
+    return -1;
+}
+
+/* A PC_LAMMPS script whose --hotvar a0 it leaves as it was given, read back
+ * as --outvar A, and whose E is the energy per atom. */
+void write_hot_script(const fs::path& path, const std::string& a0_line = "")
+{
+    std::ofstream(path)
+        << "clear\nunits metal\nboundary p p p\natom_style atomic\n"
+           "lattice bcc 3.30\nregion box block 0 2 0 2 0 2 units lattice\n"
+           "create_box 1 box\ncreate_atoms 1 region box\nmass 1 180.95\n"
+           "pair_style tadah\npair_coeff * * EXTERN Ta\n"
+           "thermo_style custom step pe\nrun 0 post no\n"
+           "variable E equal pe/atoms\n" << a0_line
+        << "variable A equal v_a0\n";
+}
+
+}  // namespace
+
+/* Pins: the journal of a second run in one process (TADAH:RANDOM, SEED 3)
+ * counts, times and reports that run alone, as the same run made in a
+ * process of its own does, though its evaluations are numbered on from the
+ * first run's (3 evaluations, then the second run's 4, ...):
+ *   - a second run whose every evaluation fails (MAXEVAL 4, a PC_ERMSE skip
+ *     cap of 1e-30): "Total evaluations : 4", "Unusable losses : 4", "[!]
+ *     No evaluation produced a usable loss.", "Best total loss : (none --
+ *     no evaluation produced a usable loss)", no "Best ERMSE", its fastest
+ *     (and slowest, when printed) evaluation among its own (evals 4 to 7),
+ *     as when it is run alone (evals 1 to 4);
+ *   - a second run with a worse best than the first (PC_ERMSE weight 2,
+ *     MAXEVAL 2): "Total evaluations : 2", its own BEST lines, and "Best
+ *     total loss" its best loss at its evaluation (4 or 5), the
+ *     HPO_BEST_LOSS of its best_pot.tadah, as when run alone.
+ * Before the fix: HPOLog::open reset only the status, the start tally, the
+ * EMBF0, density and occupancy reports, the notes and the FD counters, so
+ * the second journal counted both runs ("Total evaluations : 7",
+ * "Unusable losses : 4 (57.1%)", "[!] The majority of evaluations
+ * failed"), timed the first run's evaluations, and reported the first
+ * run's best ("Best total loss : ... (eval 2)", "Best ERMSE"); with a worse
+ * second run it had no BEST line, as no loss was below the first run's
+ * best. */
+TEST_CASE("Two runs in one process: the second journal counts, times and "
+          "reports its own run", "[HPO][termination][two_runs]")
+{
+    const auto random = [](int maxeval) {
+        return plain_block("    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+                           "    MAXEVAL " + std::to_string(maxeval) +
+                           "\n    SEED 3\n");
+    };
+    const auto root_with = [](const std::string& ermse_line) {
+        std::string root = kRootLines;
+        const std::string from = "PC_ERMSE 0 1\n";
+        root.replace(root.find(from), from.size(), ermse_line);
+        return root;
+    };
+    struct Second {
+        std::string name, root;
+        int maxeval;
+        int status;
+    };
+    for (const Second& second :
+         {Second{"no usable loss", root_with("PC_ERMSE 0 1 --skip-above 1e-30\n"),
+                 4, 1},
+          Second{"a worse best", root_with("PC_ERMSE 0 2\n"), 2, 0}}) {
+        DYNAMIC_SECTION("a second run with " << second.name) {
+            std::string alone;
+            {
+                TaRun run(random(second.maxeval), second.root);
+                REQUIRE(tadah::hpo::hpo_run(run.ctx) == second.status);
+                alone = read_file("hpo_run.log");
+            }
+            {
+                TaRun first(random(3));
+                REQUIRE(tadah::hpo::hpo_run(first.ctx) == 0);
+            }
+            TaRun run(random(second.maxeval), second.root,
+                      /*new_process=*/false);
+            REQUIRE(tadah::hpo::hpo_run(run.ctx) == second.status);
+            const std::string journal = read_file("hpo_run.log");
+            INFO("second journal:\n" << journal);
+            INFO("the same run alone:\n" << alone);
+            const long evals = second.maxeval;
+            CHECK(journal_value(journal, "Total evaluations") ==
+                  std::to_string(evals));
+            CHECK(journal_value(journal, "Total evaluations") ==
+                  journal_value(alone, "Total evaluations"));
+            CHECK(journal_value(journal, "Unusable losses") ==
+                  journal_value(alone, "Unusable losses"));
+            CHECK(journal_value(journal, "NaN/Inf clampings") ==
+                  journal_value(alone, "NaN/Inf clampings"));
+            /* (The slowest is printed only when it is slower than the
+             * fastest.) */
+            REQUIRE_FALSE(journal_value(journal, "Fastest eval").empty());
+            for (const char* label : {"Fastest eval", "Slowest eval"}) {
+                if (journal_value(journal, label).empty()) continue;
+                INFO(label);
+                const long e = journal_eval(journal, label);
+                CHECK(e >= 4);
+                CHECK(e <= 3 + evals);
+            }
+            CHECK(journal_value(journal, "Optimiser status") ==
+                  journal_value(alone, "Optimiser status"));
+            if (second.status == 1) {
+                CHECK_THAT(journal, Catch::Contains("[!] No evaluation "
+                                                    "produced a usable loss."));
+                CHECK(journal_value(journal, "Best total loss") ==
+                      "(none -- no evaluation produced a usable loss)");
+                CHECK(journal_value(journal, "Best ERMSE").empty());
+                CHECK_FALSE(fs::exists("best_pot.tadah"));
+            } else {
+                CHECK_FALSE(lines_with(journal, "BEST     * eval=").empty());
+                const long best_eval = journal_eval(journal, "Best total loss");
+                CHECK(best_eval == journal_eval(alone, "Best total loss") + 3);
+                const std::string best = journal_value(journal,
+                                                       "Best total loss");
+                CHECK(best.substr(0, best.find(' ')) ==
+                      journal_value(alone, "Best total loss")
+                          .substr(0, best.find(' ')));
+                CHECK(journal_value(journal, "Best ERMSE") ==
+                      journal_value(alone, "Best ERMSE"));
+                REQUIRE(fs::exists("best_pot.tadah"));
+                std::smatch m;
+                const std::string pot = read_file("best_pot.tadah");
+                REQUIRE(std::regex_search(pot, m, std::regex(
+                            R"(HPO_SOURCE_EVAL\s+(\d+))")));
+                CHECK(std::stol(m[1]) == best_eval);
+            }
+        }
+    }
+}
+
+/* Pins: the rate limit of the hot-variable "rejecting" WARNING counts the
+ * run's own rejects: a first run whose 5 evaluations each reject the
+ * --hotvar a0 (the script sets it to 5, outside [0, 1]), then a second run
+ * in the process (MAXEVAL 1) whose evaluation rejects it too: the second
+ * journal has its "rejecting (... total rejects=1)" WARNING.
+ * Before the fix: the counter (warmstart::reject_count) was the process's,
+ * at 6 for the second run's reject, which the <= 5-or-a-power-of-2 limit
+ * dropped: the second journal had no rejecting WARNING. */
+TEST_CASE("Two runs in one process: the second run's hot-variable rejects "
+          "are counted from 1", "[HPO][termination][two_runs]")
+{
+    PcIsolationEnvUnset no_env;
+    const auto random = [](int maxeval) {
+        return plain_block("    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+                           "    MAXEVAL " + std::to_string(maxeval) +
+                           "\n    SEED 3\n");
+    };
+    const std::string root = kRootLines +
+        "PC_LAMMPS --script hot.in --varloss E 0 1 --outvar A "
+        "--hotvar a0 0 1 0.5\nPC_ISOLATION THREAD\n";
+    {
+        TaRun first(random(5), root);
+        write_hot_script(first.sd.dir / "hot.in", "variable a0 equal 5.0\n");
+        REQUIRE(tadah::hpo::hpo_run(first.ctx) == 1);
+        const std::string journal = read_file("hpo_run.log");
+        INFO("first journal:\n" << journal);
+        CHECK(lines_with(journal, ": rejecting (").size() == 5u);
+    }
+    TaRun run(random(1), root, /*new_process=*/false);
+    write_hot_script(run.sd.dir / "hot.in", "variable a0 equal 5.0\n");
+    REQUIRE(tadah::hpo::hpo_run(run.ctx) == 1);
+    const std::string journal = read_file("hpo_run.log");
+    INFO("second journal:\n" << journal);
+    const auto rejects = lines_with(journal, ": rejecting (");
+    REQUIRE(rejects.size() == 1u);
+    CHECK_THAT(rejects[0], Catch::Contains("total rejects=1)"));
+}
+
+/* Pins: a run's --hotvar values start from their declared initial value
+ * or from its own WARM seed, never from another run's WARM seed: three
+ * runs in one process with a PC_LAMMPS script that never sets its --hotvar
+ * a0 (0 100 5.0) and reads it back as --outvar A -- a run that writes a
+ * best_pot.tadah, a run that WARM-starts from that potential with "# HOT
+ * <script> a0 42.0" prepended (its A is 42), then a run without WARM: its
+ * A is 5, the declared initial value, as in a process of its own.
+ * Before the fix: the third run's A was 42 -- warmstart::reset_for_fresh_run
+ * kept warm_prime_map, which a chain's first evaluation falls back to, so
+ * the second run's WARM seed seeded the third run. */
+TEST_CASE("Two runs in one process: a run without WARM does not start its "
+          "--hotvar from an earlier run's WARM seed",
+          "[HPO][termination][two_runs][warm]")
+{
+    PcIsolationEnvUnset no_env;
+    const std::string strategy =
+        "  STRATEGY\n    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+        "    MAXEVAL 1\n    SEED 3\n  ENDSTRATEGY\nENDOPTIMIZER\n";
+    const auto root = [](const fs::path& script) {
+        return kRootLines + "PC_LAMMPS --script " + script.string() +
+               " --varloss E 0 1 --outvar A --hotvar a0 0 100 5.0\n"
+               "PC_ISOLATION THREAD\n";
+    };
+    ScratchDir shared;
+    const fs::path script = shared.dir / "hot.in";
+    write_hot_script(script);
+    const fs::path warm = shared.dir / "warm.tadah";
+    {
+        TaRun seed("OPTIMIZER\n" + strategy, root(script));
+        REQUIRE(tadah::hpo::hpo_run(seed.ctx) == 0);
+        REQUIRE(fs::exists("best_pot.tadah"));
+        /* The potential's own HOT line (a0 = 5) replaced by the seed's. */
+        std::ofstream out(warm);
+        out << "# HOT " << script.string() << " a0 42.0\n";
+        std::istringstream pot(read_file("best_pot.tadah"));
+        for (std::string line; std::getline(pot, line);)
+            if (line.rfind("# HOT ", 0) != 0) out << line << "\n";
+    }
+    {
+        TaRun warmed("OPTIMIZER\n  INIT\n    METHOD WARM " + warm.string() +
+                         "\n  ENDINIT\n" + strategy,
+                     root(script), /*new_process=*/false);
+        REQUIRE(tadah::hpo::hpo_run(warmed.ctx) == 0);
+        const auto a = column_of("outvar.tadah", "A");
+        REQUIRE_FALSE(a.empty());
+        CHECK(a.front() == 42.0);
+    }
+    TaRun plain("OPTIMIZER\n" + strategy, root(script), /*new_process=*/false);
+    REQUIRE(tadah::hpo::hpo_run(plain.ctx) == 0);
+    const auto a = column_of("outvar.tadah", "A");
+    REQUIRE(a.size() == 1u);
+    CHECK(a.front() == 5.0);
+}
+
 /* Pins: a run that fails after it started its PC_ISOLATION PROCESS worker
  * processes stops them: the first run (one PC_LAMMPS line, PC_ISOLATION
  * PROCESS, THREADS 1) starts its worker ("PC_ISOLATION: PROCESS --
