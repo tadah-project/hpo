@@ -537,22 +537,28 @@ TEST_CASE("health monitor: every evaluation's weights are checked by the "
 }
 
 /* Pins: a fit whose weights are not finite is reported: the intercept
- * pinned at 1e308 (FIXINDEX 1; its column counts each structure's atoms, so
- * its share of the target overflows whatever the descriptors are) makes the
- * residual target the four fitted weights solve for infinite, the fitted
- * weights print as nan/inf, and HEALTH_LOG full prints "iter_health: eval
- * <n> -- weights contain NaN/Inf entries (training likely diverged)." for
- * that evaluation, on standard output at WARNING.
+ * pinned at 2e307 (FIXINDEX 1; its column counts the structure's 4 atoms)
+ * leaves the residual target the four fitted weights solve for finite
+ * (about -8e307) but so large that the weights of the OALGO 4 solve
+ * overflow (the intercept 1e306 gives finite weights, the last about
+ * -6e307, which grow with it; 5e306 and 4.4e307 overflow as 2e307 does):
+ * the fitted weights print as nan/inf, and HEALTH_LOG full prints
+ * "iter_health: eval <n> -- weights contain NaN/Inf entries (training
+ * likely diverged)." for that evaluation, on standard output at WARNING.
  * Before the fix: nothing was printed (no evaluation was recorded).
  * Until fix/multispecies-bias merged, the case pinned the first D2_BP weight
  * at 1e308 (FIXINDEX 2) instead; the merged FIXINDEX ridge keeps that
  * residual finite (the fitted weights came out near -1e304), so the case
- * pins the intercept, which overflows by construction. */
+ * pinned the intercept at 1e308, whose share of the target overflows. Until
+ * fix/input-robustness merged, it did: that residual target is -inf, which
+ * LinearRegressor::train now refuses before the fit (the evaluation throws,
+ * the case after the next), so the intercept is pinned where the target
+ * stays finite and the fit overflows. */
 TEST_CASE("health monitor: a fit with weights that are not finite is "
           "reported", "[fixweight_e2e][.]")
 {
     FullHealthMonitor fm;
-    HealthHost h("1,2", {1e308, 0.0}, "OPTIM FIXWEIGHT (2) -1.0 1.0");
+    HealthHost h("1,2", {2e307, 0.0}, "OPTIM FIXWEIGHT (2) -1.0 1.0");
     std::string printed;
     {
         LoggerCapture cap;
@@ -564,7 +570,7 @@ TEST_CASE("health monitor: a fit with weights that are not finite is "
     REQUIRE(tr != nullptr);
     const auto& w = tr->model->get_weights();
     REQUIRE(w.size() == 6u);
-    CHECK(w[0] == 1e308);
+    CHECK(w[0] == 2e307);
     CHECK(w[1] == 0.25);
     bool fitted_not_finite = false;
     for (std::size_t k = 2; k < 6; ++k) fitted_not_finite |= prints_not_finite(w[k]);
@@ -576,9 +582,13 @@ TEST_CASE("health monitor: a fit with weights that are not finite is "
 }
 
 /* Pins: a fit whose D2_BP block is all NaN is reported as NaN/Inf weights
- * and not as a block of zero weights: the bias pinned at 1e308 (FIXINDEX 1,
- * BIAS true, OPTIM LAMBDA) overflows the residual target the five D2_BP
- * weights are fitted to, and every one of them prints as nan/inf; HEALTH_LOG
+ * and not as a block of zero weights: the bias pinned at 2e307 (FIXINDEX 1,
+ * BIAS true, OPTIM LAMBDA) leaves the residual target the five D2_BP
+ * weights are fitted to finite but so large that the OALGO 4 solve
+ * overflows (as in the previous case; until fix/input-robustness merged the
+ * bias was pinned at 1e308, whose residual target is -inf, which
+ * LinearRegressor::train now refuses before the fit: the next case), and
+ * every one of them prints as nan/inf; HEALTH_LOG
  * full prints "iter_health: eval <n> -- weights contain NaN/Inf entries
  * (training likely diverged)." for that evaluation and no block warning
  * (no "max_abs", no "nz_fraction" in the text; every block count 0).
@@ -592,7 +602,7 @@ TEST_CASE("health monitor: a fitted block of NaN weights is reported as "
           "[fixweight_e2e][.]")
 {
     FullHealthMonitor fm;
-    HealthHost h("1", {1e308}, "OPTIM LAMBDA (1) 1e-4 1e-2");
+    HealthHost h("1", {2e307}, "OPTIM LAMBDA (1) 1e-4 1e-2");
     std::string printed;
     {
         LoggerCapture cap;
@@ -604,7 +614,7 @@ TEST_CASE("health monitor: a fitted block of NaN weights is reported as "
     REQUIRE(tr != nullptr);
     const auto& w = tr->model->get_weights();
     REQUIRE(w.size() == 6u);
-    CHECK(w[0] == 1e308);
+    CHECK(w[0] == 2e307);
     for (std::size_t k = 1; k < 6; ++k) {
         CAPTURE(k, w[k]);
         REQUIRE(prints_not_finite(w[k]));
@@ -620,6 +630,85 @@ TEST_CASE("health monitor: a fitted block of NaN weights is reported as "
         CHECK(fm.mon.warning_count(b, "max_abs") == 0u);
         CHECK(fm.mon.warning_count(b, "nz_fraction") == 0u);
     }
+}
+
+/* Pins: a candidate whose residual target is not finite is an evaluation
+ * that threw, refused before the fit: the intercept pinned at 1e308
+ * (FIXINDEX 1; its column counts the structure's 4 atoms, so its share of
+ * the energy overflows whatever the descriptors are) makes the target the
+ * four free weights are fitted to -inf, which LinearRegressor::train
+ * (Tadah.MODELS) refuses before LAPACK runs. The evaluation scores
+ * FAIL_SCORE, its trainer is not trained, the health monitor records no
+ * weights for it (no "iter_health" line, every block count 0), and
+ * hpo_run.log has "eval <n>: eval-thread caught throw, submitting FAIL_SCORE
+ * to keep writer queue contiguous (type=...): LinearRegressor::train: the
+ * target vector, less the part of the FIXINDEX weights, holds a value that
+ * is not finite (nan or inf) at row 1 (of 1 data row, then 6 ridge rows);
+ * no weights were fitted"; it counts one evaluation that threw and no
+ * NaN/Inf clamping.
+ * Before the fix (fix/input-robustness merged into v1-dev, with the target
+ * check of LinearRegressor::train removed in a scratch build, as on
+ * v1-dev): the target was fitted and the four weights were nan/inf (the
+ * two cases before this one pinned that with 1e308 until then): the
+ * trainer was trained, the health monitor printed "iter_health: eval <n>
+ * -- weights contain NaN/Inf entries (training likely diverged).", and the
+ * evaluation did not throw: its loss was not finite and was clamped to
+ * FAIL_SCORE (no WARNING with the message; 0 evaluations that threw, 1
+ * NaN/Inf clamping). */
+TEST_CASE("health monitor: a candidate whose residual target is not finite "
+          "fails before the fit and records no weights",
+          "[fixweight_e2e][.]")
+{
+    using tadah::hpo::HPOLog;
+    FullHealthMonitor fm;
+    HealthHost h("1,2", {1e308, 0.0}, "OPTIM FIXWEIGHT (2) -1.0 1.0");
+    HPOLog& log = HPOLog::instance();
+    log.reset_for_test();
+    const fs::path journal = h.sd.dir / "hpo_run.log";
+    log.open(journal.string(), "test", h.sd.dir.string(), 0);
+    REQUIRE(log.is_open());
+    std::string printed;
+    double loss = 0.0;
+    {
+        LoggerCapture cap;
+        loss = h.eval({0.25});
+        printed = cap.text();
+    }
+    INFO(printed);
+    h.host->flush_remaining();
+    const std::size_t threw = log.n_threw();
+    const std::size_t clamped = log.n_nan();
+    log.finish("TEST");
+    log.reset_for_test();
+    std::string text;
+    {
+        std::ifstream in(journal);
+        std::ostringstream os;
+        os << in.rdbuf();
+        text = os.str();
+    }
+    INFO(text);
+    CHECK(loss == h.trg->FAIL_SCORE);
+    const auto* tr = Host::tls_trainer_for_test();
+    REQUIRE(tr != nullptr);
+    CHECK_FALSE(tr->model->is_trained());
+    CHECK(printed.find("iter_health") == std::string::npos);
+    for (std::size_t b : {0u, 1u}) {
+        CAPTURE(b);
+        CHECK(fm.mon.warning_count(b, "max_abs") == 0u);
+        CHECK(fm.mon.warning_count(b, "nz_fraction") == 0u);
+    }
+    const std::string eval_no = std::to_string(Host::g_iter_value());
+    CHECK(text.find("eval " + eval_no + ": eval-thread caught throw, "
+                    "submitting FAIL_SCORE to keep writer queue contiguous") !=
+          std::string::npos);
+    CHECK(text.find("): LinearRegressor::train: the target vector, less the "
+                    "part of the FIXINDEX weights, holds a value that is not "
+                    "finite (nan or inf) at row 1 (of 1 data row, then 6 "
+                    "ridge rows); no weights were fitted") !=
+          std::string::npos);
+    CHECK(threw == 1u);
+    CHECK(clamped == 0u);
 }
 
 /* Pins: M_KRR Kern_RBF (MPARAMS 1.0, SBASIS 3) on the D2_BP[5,5] context
