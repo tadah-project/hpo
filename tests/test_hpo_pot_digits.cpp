@@ -1,8 +1,12 @@
 // Potential-file precision of tadah hpo.
 //
 // HPOTargets resolves NUMERIC once, WITHOUT default insertion, into
-// pot_digits (significant digits of every number in best_pot.tadah and the
-// BDUMP/DUMP archives). Absent -> 18, an exact round trip. An explicit
+// pot_digits: the significant digits of the non-integer numbers that
+// best_pot.tadah and the BDUMP/DUMP archives record (Context::write_potential),
+// except the numbers of the keys the blueprint marks exact_in_potential, the
+// cutoffs and radial grids (RCUT2B, RCUTMB, CGRID2B, CGRIDMB, SGRID2B,
+// SGRIDMB), which are written exactly whatever pot_digits is, since a load
+// checks them exactly. Absent -> 18, an exact round trip. An explicit
 // NUMERIC below 17 -- notably the 'NUMERIC 12' line every tadah 1.5.0 hpo
 // best_pot.tadah carries, which reaches the next run when such a pot is
 // used as its configuration -- is honoured but warned about in
@@ -94,6 +98,14 @@ TEST_CASE("HPOTargets: NUMERIC absent -> 18 significant digits, nothing "
   CHECK(body.find("limits every non-integer number") == std::string::npos);
 }
 
+/* Pins: NUMERIC 12 gives pot_digits 12, and hpo_run.log has a WARNING that
+ * NUMERIC 12 limits every non-integer number of the potential's key/value
+ * lines, that integers are written exactly and so are the numbers of
+ * CGRID2B, CGRIDMB, RCUT2B, RCUTMB, SGRID2B and SGRIDMB, and that a 1.5.0
+ * best_pot.tadah carries the line to delete.
+ * Before the fix: the WARNING said only that integers are written exactly
+ * ('(integers are written exactly): values do not round-trip ...'), naming
+ * no key; the other checks pass as well (a pin). */
 TEST_CASE("HPOTargets: the legacy 'NUMERIC 12' is honoured with a WARNING "
           "naming the fix", "[HPO][numeric][lossless]")
 {
@@ -109,6 +121,9 @@ TEST_CASE("HPOTargets: the legacy 'NUMERIC 12' is honoured with a WARNING "
   CHECK(body.find("NUMERIC 12 limits every non-integer number of the "
                   "potential's key/value lines") != std::string::npos);
   CHECK(body.find("integers are written exactly") != std::string::npos);
+  CHECK(body.find("and so are the numbers of CGRID2B, CGRIDMB, RCUT2B, "
+                  "RCUTMB, SGRID2B and SGRIDMB, which a load checks "
+                  "exactly") != std::string::npos);
   CHECK(body.find("best_pot.tadah") != std::string::npos);
   CHECK(body.find("tadah 1.5.0 hpo") != std::string::npos);
   CHECK(body.find("delete that line") != std::string::npos);
