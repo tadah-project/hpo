@@ -2049,6 +2049,81 @@ TEST_CASE("Termination: a RESTART round's fresh RANDOM point is not the "
     }
 }
 
+namespace {
+
+/* How many evaluations of `pts` repeat a point evaluated before. */
+std::size_t repeated_points(const std::vector<Point>& pts)
+{
+    std::set<Point> seen;
+    std::size_t n = 0;
+    for (const auto& p : pts)
+        if (!seen.insert(p).second) ++n;
+    return n;
+}
+
+}  // namespace
+
+/* A PRESTAGE refinement draws random numbers of its own (seed_stream.h):
+ * its TADAH:RANDOM drew the exploration's numbers for an equal SEED, and
+ * the seeds RESTART derives for a round -- the refinement SEED + r*S, the
+ * exploration EXPLORE SEED + r -- met for SEEDs that differ, so a round's
+ * refinement drew an earlier exploration's points again. A refinement
+ * evaluates its start point, a candidate the exploration evaluated, again
+ * (TADAH:RANDOM evaluates its INIT point first); no other evaluation of
+ * these runs repeats a point.
+ * Pins: (a) STRATEGY and EXPLORE TADAH:RANDOM with SEED 7 and MAXEVAL 5:
+ * of the 10 evaluations only the 6th (the refinement's start point)
+ * repeats an earlier point; (b) SEED 7, EXPLORE SEED 8, MAXEVAL 6 each,
+ * RESTART { AFTER_STAGNATION 3, MAX 1, METHOD RANDOM 1, SEED 100 }: the
+ * journal reads "RESTART 1/1 -- fresh init from RANDOM; RESTART SEED 101,
+ * SEED 8, EXPLORE SEED 9" (round 1's refinement runs with round 0's
+ * EXPLORE SEED), and the evaluations that repeat a point are as many as the
+ * refinements ("REFINEMENT: refining" lines), their start points.
+ * Before the fix: (a) evaluations 7-10 were evaluations 2-5 (5 repeats);
+ * (b) round 1's refinement drew round 0's exploration points again (more
+ * repeats than refinements). */
+TEST_CASE("Termination: a PRESTAGE refinement does not draw its "
+          "exploration's random numbers", "[HPO][termination][prestage][seed]")
+{
+    SECTION("equal SEEDs") {
+        TaRun run(plain_block(
+            "    TYPE PRESTAGE\n    LIB TADAH\n    ALGO RANDOM\n"
+            "    MAXEVAL 5\n    SEED 7\n"
+            "    EXPLORE\n      LIB TADAH\n      ALGO RANDOM\n"
+            "      MAXEVAL 5\n      SEED 7\n    ENDEXPLORE\n"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const auto pts = evaluated_points();
+        REQUIRE(pts.size() == 10u);
+        INFO(::Catch::Detail::stringify(pts));
+        CHECK(repeated_points(pts) == 1u);
+        CHECK(repeated_points(evals_between(pts, 1, 6)) == 1u);
+    }
+    SECTION("the seeds RESTART derives for a round") {
+        TaRun run(plain_block(
+            "    TYPE PRESTAGE\n    LIB TADAH\n    ALGO RANDOM\n"
+            "    MAXEVAL 6\n    SEED 7\n"
+            "    RESTART\n      AFTER_STAGNATION 3\n      MAX 1\n"
+            "      METHOD RANDOM 1\n      SEED 100\n    ENDRESTART\n"
+            "    EXPLORE\n      LIB TADAH\n      ALGO RANDOM\n"
+            "      MAXEVAL 6\n      SEED 8\n    ENDEXPLORE\n"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const std::string journal = read_file("hpo_run.log");
+        REQUIRE(journal.find("RESTART 1/1 -- fresh init from RANDOM; "
+                             "RESTART SEED 101, SEED 8, EXPLORE SEED 9\n") !=
+                std::string::npos);
+        const std::size_t refinements =
+            count_of(journal, "REFINEMENT: refining");
+        REQUIRE(refinements == 2u);
+        const auto pts = evaluated_points();
+        INFO(::Catch::Detail::stringify(pts));
+        CHECK(repeated_points(pts) == refinements);
+    }
+}
+
 TEST_CASE("Termination: METHOD SOBOL K starts the INIT round and each "
           "restart round at the first point of block SEED",
           "[HPO][termination][restart][seed][sobol]")
