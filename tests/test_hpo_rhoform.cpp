@@ -853,14 +853,16 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
                                           "there: an\n    optimiser that "
                                           "ignores the bounds; see the first "
                                           "such WARNING)\n") &&
+                          /* the CERES drivers alone ignore the bounds:
+                           * the text named "(CERES:*, NLopt LN_NEWUOA)"
+                           * until LN_NEWUOA was refused */
                           Catch::Contains("is evaluated there: finite "
                                           "differences keep to the box, and a "
                                           "point proposed within rounding of a "
                                           "bound is evaluated on it, so an "
                                           "optimiser that ignores the bounds "
-                                          "(CERES:*, NLopt LN_NEWUOA), or a "
-                                          "start it handed on, stepped outside "
-                                          "it;"));
+                                          "(CERES:*), or a start it handed "
+                                          "on, stepped outside it;"));
       CHECK(count_of_text(txt, "lies outside its OPTIM box") == 1u);
       /* the best sits on the form's zero lower bound: a hard bound, no
        * widen-that-side advisory */

@@ -319,10 +319,16 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
              {"NLOPT", "LN_SBPLX",
               [](OptimizerSpec& s) { s.stop.maxeval = 4294967299u; },
               "NLopt spec with MAXEVAL 4294967299"},
+             /* Refused by the caps registry, and unknown: "CERES:
+              * LEVENBERG_MARQUARDT is deferred" and "unknown optimizer
+              * NLOPT:NOT_AN_ALGO (not registered in optimizer_caps)" until
+              * the least-squares solvers joined the refusal table and the
+              * lookup said what is wrong. */
              {"CERES", "LEVENBERG_MARQUARDT", [](OptimizerSpec&) {},
-              "CERES:LEVENBERG_MARQUARDT is deferred"},
+              "CERES:LEVENBERG_MARQUARDT is refused: "},
              {"NLOPT", "NOT_AN_ALGO", [](OptimizerSpec&) {},
-              "unknown optimizer NLOPT:NOT_AN_ALGO"}}) {
+              "unknown optimiser NLOPT:NOT_AN_ALGO: LIB NLOPT has no ALGO "
+              "NOT_AN_ALGO"}}) {
         INFO(c.lib << ":" << c.algo << " -> " << c.message);
         auto s = with(c.lib, c.algo);
         c.set(s);

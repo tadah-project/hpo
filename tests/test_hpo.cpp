@@ -866,34 +866,44 @@ TEST_CASE("CERES caps registry exposes the four GradientProblemSolver algos",
     }
 }
 
-TEST_CASE("CERES NLLS family is deferred and rejected at dispatch",
+TEST_CASE("CERES NLLS family is refused by the caps registry",
           "[HPO][optim][ceres][deferred]")
 {
-    /* Caps registry deliberately does NOT carry these names — confirm. */
+    /* Pins: Ceres' least-squares solvers are refused through the caps
+     * registry's refusal table (optimizer_caps.cpp): the lookup throws
+     * "CERES:<ALGO> is refused: <reason>", naming the four Ceres solvers
+     * HPO runs, so every check that looks the backend up -- the parser's at
+     * the block's closing line, validate_hpo_setup, run_inner -- reports
+     * the same text; reject_refused_backend() throws it with the phase in
+     * front; the four registered solvers and another library's
+     * LEVENBERG_MARQUARDT (a typo, unknown) are not refused.
+     * Before the fix: the lookup threw "unknown optimizer CERES:<ALGO> (not
+     * registered in optimizer_caps)", and only a helper of its own,
+     * reject_deferred_ceres_nlls(), which run_inner() and validate_backend()
+     * called after the HPOTargets constructor's lookup had already thrown
+     * that text, said "CERES:<ALGO> is deferred to a later phase ... Use
+     * CERES:LBFGS, ..."; reject_refused_backend() did not throw. */
     for (const std::string algo : {"LEVENBERG_MARQUARDT", "DOGLEG", "SUBSPACE_DOGLEG"}) {
+        INFO(algo);
         CHECK_THROWS_WITH(tadah::hpo::optimizer_caps("CERES", algo),
-                          Catch::Contains("not registered"));
+                          Catch::StartsWith("CERES:" + algo + " is refused: ") &&
+                          Catch::Contains("Use CERES:LBFGS, CERES:WOLFE, "
+                                          "CERES:NLCG or CERES:STEEPEST_DESCENT"));
+        CHECK_THROWS_WITH(tadah::hpo::reject_refused_backend("CERES", algo,
+                                                             "the EXPLORE block"),
+                          Catch::StartsWith("the EXPLORE block: CERES:" + algo +
+                                            " is refused: "));
     }
-    /* The early-reject helper used by run_inner emits the tailored
-     * "use CERES:LBFGS" message. */
-    for (const std::string algo : {"LEVENBERG_MARQUARDT", "DOGLEG", "SUBSPACE_DOGLEG"}) {
-        auto sp = make_minimal_ceres_spec(algo);
-        CHECK_THROWS_WITH(tadah::hpo::reject_deferred_ceres_nlls(sp),
-                          Catch::Contains("deferred") &&
-                          Catch::Contains("CERES:LBFGS"));
-    }
-    /* Non-deferred algos pass the helper untouched. */
+    /* The registered solvers are not refused. */
     for (const std::string algo : {"LBFGS", "WOLFE", "NLCG", "STEEPEST_DESCENT"}) {
-        auto sp = make_minimal_ceres_spec(algo);
-        CHECK_NOTHROW(tadah::hpo::reject_deferred_ceres_nlls(sp));
+        INFO(algo);
+        CHECK_NOTHROW(tadah::hpo::reject_refused_backend("CERES", algo));
+        CHECK_NOTHROW(tadah::hpo::optimizer_caps("CERES", algo));
     }
-    /* Non-CERES libs are unaffected. */
-    {
-        tadah::hpo::OptimizerSpec sp;
-        sp.lib  = "DLIB";
-        sp.algo = "LEVENBERG_MARQUARDT";  // hypothetical typo
-        CHECK_NOTHROW(tadah::hpo::reject_deferred_ceres_nlls(sp));
-    }
+    /* Another library's name is not refused: it is unknown. */
+    CHECK_NOTHROW(tadah::hpo::reject_refused_backend("DLIB", "LEVENBERG_MARQUARDT"));
+    CHECK_THROWS_WITH(tadah::hpo::optimizer_caps("DLIB", "LEVENBERG_MARQUARDT"),
+                      Catch::StartsWith("unknown optimiser DLIB:LEVENBERG_MARQUARDT: "));
 }
 
 TEST_CASE("CERES validators accept minimal bounded specs",
