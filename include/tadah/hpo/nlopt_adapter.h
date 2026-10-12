@@ -417,9 +417,11 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
         double              loss;
         GradientFailureInfo why;   /* the gradient's failure */
     };
-    /* `repeats`: the search's record of its usable evaluations
-     * (repeat_points.h). A call at a recorded point that asks for nothing
-     * the record lacks is answered from it, before the budget is tested:
+    /* `repeats`: the run's record of its usable evaluations, with the
+     * gradients this search formed (repeat_points.h). A call at a recorded
+     * point -- one this search, or an earlier search of the run, evaluated
+     * -- that asks for nothing the record lacks is answered from it,
+     * before the budget is tested:
      * it is no evaluation, so HPO's MAXEVAL does not count it, and a spent
      * budget does not refuse it -- NLopt still counts it among its calls
      * (its MAXEVAL), and the RESTART window counts it as one evaluation
@@ -451,9 +453,10 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
     const std::optional<OptimizerSpec> local = single_local_search(sp);
     const unsigned long reevaluations = detail::auglag_reevaluations(sp);
     RepeatPoints<Vec> repeats(
-        sp.lib + ":" + sp.algo, sp, repeat_policy(host),
+        sp.lib + ":" + sp.algo, sp, repeat_policy<Vec>(host),
         "a reuse is no evaluation: HPO's MAXEVAL does not count it, but "
-        "NLopt counts it among the calls its own MAXEVAL bounds");
+        "NLopt counts it among the calls its own MAXEVAL bounds",
+        latest_evaluation(host));
     UData udata{&sp, &host, &gp, &opt, nullptr,
                 /*local_gradient_search=*/local &&
                     optimizer_caps(*local).is_gradient_based,
@@ -485,8 +488,8 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
             v.set_size(static_cast<long>(x.size()));
             for(size_t i=0;i<x.size();++i) v(static_cast<long>(i))=x[i];
 
-            /* A point this search has evaluated (see UData::repeats). */
-            const auto* e = u->repeats->find(v);
+            /* A point the run has evaluated (see UData::repeats). */
+            const auto e = u->repeats->find(v);
             const RepeatUse how =
                 e ? u->repeats->use(*e, !grad.empty()) : RepeatUse::Evaluate;
             if (how == RepeatUse::Record) {

@@ -14,6 +14,7 @@
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/strict_parse.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/seed_stream.h>
 #include <tadah/hpo/warmstart_cache.h>
 #include <tadah/core/context.h>
 #include <tadah/core/utils.h>
@@ -69,6 +70,19 @@ unit_to_real(const OptimizerSpec& sp,
     return sp.out(t);   // INTERNAL -> REAL through the search space
 }
 
+/* The generator of a random starting-point method (RANDOM, LHS): an INIT
+ * block's chain draws std::mt19937_64(seed), as it always did; a RESTART
+ * round's draws a stream of its own (InitStream::Restart,
+ * seed_streams::kRestartPoints), so a round never draws an INIT block's
+ * points, whatever the two SEEDs: an INIT block's SEED s and a round whose
+ * RESTART SEED + r was s drew the same points. */
+std::mt19937_64 method_generator(const InitContext& ctx)
+{
+    if (ctx.stream == InitStream::Restart)
+        return seed_stream(ctx.seed, seed_streams::kRestartPoints);
+    return std::mt19937_64(ctx.seed);
+}
+
 /* ---------------- CONFIG ----------------------------------------- */
 class ConfigInitStrategy : public InitStrategy {
 public:
@@ -92,7 +106,7 @@ public:
         const std::size_t k = k_override > 0 ? k_override : k_;
         const std::size_t dim = ctx.spec.low.size();
 
-        std::mt19937_64 rng(ctx.seed);
+        std::mt19937_64 rng = method_generator(ctx);
         std::uniform_real_distribution<double> uniform(0.0, 1.0);
 
         std::vector<std::vector<double>> out;
@@ -105,6 +119,7 @@ public:
         return out;
     }
     std::string name() const override { return "RANDOM"; }
+    bool draws_from_seed() const override { return true; }
     InitOrigin origin() const override { return {InitOrigin::Kind::Random, {}}; }
     std::size_t default_k() const override { return k_; }
 private:
@@ -124,7 +139,7 @@ public:
         const std::size_t k = k_override > 0 ? k_override : k_;
         const std::size_t dim = ctx.spec.low.size();
 
-        std::mt19937_64 rng(ctx.seed);
+        std::mt19937_64 rng = method_generator(ctx);
         std::uniform_real_distribution<double> jitter(0.0, 1.0);
 
         /* For each dim independently: random permutation of [0..k-1] +
@@ -148,6 +163,7 @@ public:
         return out;
     }
     std::string name() const override { return "LHS"; }
+    bool draws_from_seed() const override { return true; }
     InitOrigin origin() const override { return {InitOrigin::Kind::Lhs, {}}; }
     std::size_t default_k() const override { return k_; }
 private:
@@ -220,6 +236,7 @@ public:
         return out;
     }
     std::string name() const override { return "SOBOL"; }
+    bool draws_from_seed() const override { return true; }
     InitOrigin origin() const override { return {InitOrigin::Kind::Sobol, {}}; }
     std::size_t default_k() const override { return k_; }
 private:
@@ -568,7 +585,8 @@ public:
         origins.clear();
         std::uint64_t base_seed = ctx.seed;
         for (const auto& s : children_) {
-            InitContext sub{ctx.spec, ctx.targets, base_seed, ctx.run_context};
+            InitContext sub{ctx.spec, ctx.targets, base_seed, ctx.run_context,
+                            ctx.stream};
             std::vector<InitOrigin> sub_origins;
             auto pts = s->generate_tagged(sub, s->default_k(), sub_origins);
             for (std::size_t i = 0; i < pts.size(); ++i) {
@@ -583,6 +601,11 @@ public:
         return out;
     }
     std::string name() const override { return "CHAIN"; }
+    bool draws_from_seed() const override {
+        for (const auto& c : children_)
+            if (c->draws_from_seed()) return true;
+        return false;
+    }
     std::size_t default_k() const override {
         std::size_t s = 0;
         for (const auto& c : children_) s += c->default_k();
@@ -644,6 +667,7 @@ public:
     InitOrigin origin() const override { return entry_->origin(); }
     std::string name() const override { return entry_->name(); }
     std::size_t default_k() const override { return entry_->default_k(); }
+    bool draws_from_seed() const override { return entry_->draws_from_seed(); }
 
 private:
     std::unique_ptr<InitStrategy> entry_;

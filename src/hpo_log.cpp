@@ -2356,12 +2356,12 @@ void HPOLog::finish(const std::string& status_str)
         const std::size_t ls = n_ls_not_run_.load(std::memory_order_relaxed);
         if (rr > 0)
             f_ << "  " << std::left << std::setw(KW) << "Repeated points reused"
-               << ": " << rr << " (points a search asked for again, answered "
-                  "with the loss -- and\n    gradient -- of their evaluation, "
-                  "not evaluated again: HPO's MAXEVAL does not\n    count them, "
-                  "NLopt's own MAXEVAL counts them among its calls, and the "
-                  "RESTART\n    window counts each as one evaluation without "
-                  "a new best)\n";
+               << ": " << rr << " (points the run had evaluated that a "
+                  "search asked for, answered with the\n    loss -- and "
+                  "gradient -- of their evaluation, not evaluated again: HPO's "
+                  "MAXEVAL\n    does not count them, NLopt's own MAXEVAL counts "
+                  "them among its calls, and the\n    RESTART window counts "
+                  "each as one evaluation without a new best)\n";
         if (ra > 0)
             f_ << "  " << std::left << std::setw(KW) << "Repeats evaluated again"
                << ": " << ra << " (" << repeat_again_why_ << ")\n";

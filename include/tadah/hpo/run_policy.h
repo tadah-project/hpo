@@ -441,7 +441,12 @@ private:
  * round's fresh ones), with a WARNING that says why: the exploration's
  * failed points are no seeds, and the refinement may still find a usable
  * loss from those points (a search under FAILSCORE_GRADING ON walks out of
- * a failure region). An exploration that made no evaluation is an error
+ * a failure region). The candidates include the points of calls the
+ * exploration answered from the run's record of an earlier evaluation (a
+ * RESTART round's exploration asking for points of an earlier round:
+ * HPO_Host::count_reused_repeat), as the evaluations they stand for would
+ * be. An exploration that asked for no point -- no evaluation, and no call
+ * answered from the record -- is an error
  * (std::logic_error): every exploration a parsed configuration sets
  * evaluates at least one point (MAXEVAL >= 1; every driver makes its first
  * evaluation, also when MAXTIME has passed before it; a stop is raised
@@ -506,6 +511,7 @@ public:
      * many failed when fewer than TOPK, or none, are left. */
     const std::size_t evals_before    = HPOLog::instance().n_eval();
     const std::size_t unusable_before = HPOLog::instance().n_unusable();
+    const std::size_t reused_before   = HPOLog::instance().repeats_reused();
     try {
       run_inner<Vec,Runner>(*spec.prestage, host);
     } catch (const typename HPO_Host<Vec,Runner>::StagnationStop&) {
@@ -519,6 +525,11 @@ public:
         HPOLog::instance().n_eval() - evals_before;
     const std::size_t explore_failed =
         HPOLog::instance().n_unusable() - unusable_before;
+    /* Its calls answered from the run's record of an earlier evaluation
+     * (repeat_points.h): a RESTART round's exploration can ask for points
+     * of an earlier round. Each is a candidate (count_reused_repeat). */
+    const std::size_t explore_reused =
+        HPOLog::instance().repeats_reused() - reused_before;
     /* Step 2: snapshot top-K, disable tracking. Stage boundary: the
      * refinement starts a stagnation window of its own (every path; each
      * seed also gets its own). Without this it inherited the exploration's
@@ -534,11 +545,12 @@ public:
         std::max<std::size_t>(topk.size(), 1), 1, std::nullopt,
         detail::StartBatch::Refinement);
 
-    /* An exploration without an evaluation: no candidate and nothing that
-     * failed. No configuration the parser accepts gets here (the class
-     * comment), so its driver returned without evaluating; the refinement
-     * from the INIT points hid that behind a WARNING. */
-    if (explore_evals == 0) {
+    /* An exploration that asked for no point: no candidate and nothing
+     * that failed. No configuration the parser accepts gets here (the class
+     * comment), so its driver returned without asking; the refinement from
+     * the INIT points hid that behind a WARNING. A point answered from the
+     * run's record was asked for, and is a candidate. */
+    if (explore_evals == 0 && explore_reused == 0) {
       std::ostringstream oss;
       oss << "PRESTAGE: the exploration (EXPLORE block) "
           << spec.prestage->lib << ":" << spec.prestage->algo
@@ -572,7 +584,11 @@ public:
       oss << "PRESTAGE: " << topk.size() << " usable candidate(s) for TOPK "
           << top_k_ << " (the exploration made " << explore_evals
           << " evaluation(s), " << explore_failed
-          << " without a usable loss); refining " << topk.size();
+          << " without a usable loss";
+      if (explore_reused > 0)
+        oss << ", and answered " << explore_reused
+            << " call(s) from the run's record of earlier evaluations";
+      oss << "); refining " << topk.size();
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
@@ -649,11 +665,16 @@ private:
  * WARM_ON_MISMATCH governs its WARM seeds), its SEED and the host's
  * HPOTargets are captured at build_run_policy() time. A round whose chain
  * produces no point starts from the previous round's points, with a
- * WARNING. With a SEED in the RESTART block, restart r
- * draws its points with SEED + r (modulo 2^64), so the restart points of a
- * run are reproducible; without one each restart draws from
- * std::random_device. Round 0 does not use the RESTART chain: it starts
- * from the INIT points.
+ * WARNING. Restart r draws its points with S + r (modulo 2^64): S the
+ * RESTART block's SEED, so the restart points of a run are reproducible,
+ * or, without one, a seed drawn from std::random_device once per run, at
+ * its first restart, which the journal names with the SEED that draws the
+ * same points again ("RESTART: the RESTART block has no SEED, ..."; before,
+ * each round drew std::random_device() + r and the journal named none).
+ * The RANDOM and LHS methods of the RESTART chain draw a stream of their
+ * own (InitStream::Restart, seed_stream.h), not an INIT block's for the
+ * same seed. Round 0 does not use the RESTART chain: it starts from the
+ * INIT points.
  *
  * A restart needs StagnationStop to propagate out of the inner policy.
  * Every optimiser adapter lets it through (NLopt, Ceres, DLIB:GFS and ASA
@@ -674,8 +695,8 @@ private:
  * random numbers instead of replaying round 0's; round 0 keeps every SEED.
  * An INNER block has no SEED: its search draws from the enclosing run's
  * random stream. The journal's "RESTART r/MAX" line lists the round's
- * seeds: the restart points' ("RESTART SEED"), when the RESTART block has
- * a SEED, then the derived optimiser seeds.
+ * seeds: the restart points' ("RESTART SEED", drawn or the block's), then
+ * the derived optimiser seeds.
  *
  * When the MAX restarts are used up, the next stagnation ends the run
  * normally, with the trailer "STOPPED -- stagnation: no new best in W
@@ -741,20 +762,22 @@ public:
         ++restarts;
 
         /* Refresh init points. Honour the RESTART block's K_TOTAL when
-         * set; otherwise fall back to each strategy's default_k. The
-         * RESTART block's SEED draws round r's points with SEED + r;
-         * without one they come from std::random_device. */
+         * set; otherwise fall back to each strategy's default_k. Round r
+         * draws its points with S + r: S the RESTART block's SEED, or,
+         * without one, a seed std::random_device draws once per run (the
+         * journal names it, so the run's restart points can be drawn
+         * again), and its RANDOM/LHS methods a stream of their own
+         * (InitStream::Restart). */
         std::optional<std::uint64_t> point_seed;
         if (refresh_ && trg_) {
+          /* A chain of CONFIG/WARM only takes no seed: none is drawn. */
           std::uint64_t seed = 0;
-          if (refresh_seed_) {
-            seed = *refresh_seed_ + static_cast<std::uint64_t>(restarts);
+          if (refresh_seed_ || refresh_->draws_from_seed()) {
+            seed = restart_base_seed() + static_cast<std::uint64_t>(restarts);
             point_seed = seed;
-          } else {
-            std::random_device rd;
-            seed = static_cast<std::uint64_t>(rd()) + restarts;
           }
-          InitContext ic{cur, *trg_, seed, &trg_->run_context()};
+          InitContext ic{cur, *trg_, seed, &trg_->run_context(),
+                         InitStream::Restart};
           const std::size_t k_use = (refresh_k_ > 0) ? refresh_k_
                                                      : refresh_->default_k();
           std::vector<InitOrigin> origins;
@@ -796,10 +819,32 @@ public:
   }
 
 private:
+  /* S of the restart points' seeds S + r: the RESTART block's SEED, or the
+   * run's draw from std::random_device (64 bits, two draws), made at the
+   * first restart and journalled with the SEED that draws the same points
+   * again. */
+  std::uint64_t restart_base_seed()
+  {
+    if (refresh_seed_) return *refresh_seed_;
+    if (!drawn_seed_) {
+      std::random_device rd;
+      const std::uint64_t hi = rd(), lo = rd();
+      drawn_seed_ = (hi << 32) ^ lo;
+      const std::string msg =
+          "RESTART: the RESTART block has no SEED, so its restart points "
+          "are drawn from std::random_device: restart r draws with " +
+          std::to_string(*drawn_seed_) + " + r (SEED " +
+          std::to_string(*drawn_seed_) +
+          " in the RESTART block draws the same points again)";
+      std::cout << "[HPO] " << msg << "\n";
+      HPOLog::instance().info(msg);
+    }
+    return *drawn_seed_;
+  }
+
   /* "RESTART SEED 43, SEED 6, EXPLORE SEED 1718": the seed the round's
-   * points were drawn with, when the RESTART block has a SEED, then the
-   * seeds of the phases that have one (an INNER block has none); empty
-   * when there is none. */
+   * points were drawn with, then the seeds of the phases that have one (an
+   * INNER block has none). */
   static std::string describe_seeds(
       const std::optional<std::uint64_t>& point_seed, const OptimizerSpec& s)
   {
@@ -823,6 +868,7 @@ private:
   const HPOTargets* trg_;
   std::size_t refresh_k_ = 0;   // 0 => use refresh_->default_k()
   std::optional<std::uint64_t> refresh_seed_;   // RESTART SEED; none => random_device
+  std::optional<std::uint64_t> drawn_seed_;     // the run's random_device draw
 };
 
 /* ----------------------------------------------------------------------
