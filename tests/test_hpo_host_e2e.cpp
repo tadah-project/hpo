@@ -46,6 +46,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
@@ -684,6 +685,146 @@ TEST_CASE("PC dataset host rejects incomplete coverage and empty validation file
     auto ctx = make_ta_master_context(train, hpo, val);
     tadah::hpo::HPOTargets trg(ctx, hpo.string());
     CHECK_THROWS_WITH(Host(ctx, trg, val.string()), Catch::Matchers::Contains(message));
+}
+
+/* Pins: a --validation file whose DBFILE lists one dataset twice -- the
+ * same path on two lines, or the path and another spelling of it
+ * ("<dir>/./first.db") after a second dataset -- makes the HPO_Host
+ * constructor throw a message that names the validation file, says
+ * "DBFILE lists one dataset twice", names both entries ("entry 1 (<path>)
+ * and entry 2 (<path>)"; "entry 1 (...) and entry 3 (<dir>/./first.db)")
+ * and points to the indexed PC_ERMSE (i) / PC_FRMSE (i) lines; the
+ * validation files of two datasets the other host cases construct pass.
+ * Before the fix: the constructor did not throw, and every validation
+ * metric took the duplicated dataset twice into its average over the
+ * datasets. */
+TEST_CASE("The host refuses a validation DBFILE that lists one dataset twice",
+          "[pc_dataset][host][validation_file]") {
+    DatasetHostGuard guard;
+    ScratchDir sd;
+    const auto train = sd.dir / "train.db", first = sd.dir / "first.db",
+               second = sd.dir / "second.db";
+    const auto val = sd.dir / "config.val", hpo = sd.dir / "config.hpo";
+    write_minimal_ta_dbfile(train, 0);
+    write_minimal_ta_dbfile(first, 0.07);
+    write_minimal_ta_dbfile(second, 0.13);
+    const std::string respelt = (sd.dir / "." / "first.db").string();
+    std::string lines, named;
+    SECTION("the same path on two lines") {
+        lines = "DBFILE " + first.string() + "\nDBFILE " + first.string() + "\n";
+        named = "entry 1 (" + first.string() + ") and entry 2 (" +
+                first.string() + ")";
+    }
+    SECTION("another spelling of the path after a second dataset") {
+        lines = "DBFILE " + first.string() + "\nDBFILE " + second.string() +
+                "\nDBFILE " + respelt + "\n";
+        named = "entry 1 (" + first.string() + ") and entry 3 (" + respelt +
+                ")";
+    }
+    std::ofstream(val) << lines;
+    std::ofstream(hpo) << dataset_host_head << "PC_ERMSE 0 1\n";
+    auto ctx = make_ta_master_context(train, hpo, val);
+    tadah::hpo::HPOTargets trg(ctx, hpo.string());
+    CHECK_THROWS_WITH(Host(ctx, trg, val.string()),
+                      Catch::Matchers::Contains(val.string()) &&
+                          Catch::Matchers::Contains(
+                              "DBFILE lists one dataset twice") &&
+                          Catch::Matchers::Contains(named) &&
+                          Catch::Matchers::Contains("PC_ERMSE (i)"));
+}
+
+/* Pins: the potentials one evaluation writes -- best_pot.tadah, the BDUMP
+ * archive (best_pots/) and the DUMP archive (pots/), one file each --
+ * record no input of the run: no HPOTARGET and no VALIDATION line (the -c
+ * context has both, as `tadah hpo --hpotarget ... --validation ...` puts
+ * them there), no VERBOSE (0 in the context, as -v gives it), and no AUDIT
+ * or HEALTH_LOG ("off" in the context), for MODEL M_BLR BF_Linear and
+ * M_KRR Kern_Linear; each keeps the model's settings and fit (its MODEL,
+ * LAMBDA, the D2_BP TYPE2B line and two WEIGHTS) and has no DBFILE.
+ * Before the fix: each of the three files had the lines "HPOTARGET
+ * <config.hpo>", "VALIDATION <config.val>" and "VERBOSE 0"; AUDIT,
+ * HEALTH_LOG and DBFILE were not written (a pin of those). */
+TEST_CASE("The potentials of an evaluation record no input of the run",
+          "[pc_dataset][host][potential_content]") {
+    DatasetHostGuard guard;
+    ScratchDir sd;
+    const auto train = sd.dir / "train.db", vdb = sd.dir / "val.db";
+    const auto val = sd.dir / "config.val", hpo = sd.dir / "config.hpo";
+    write_minimal_ta_dbfile(train, 0);
+    write_minimal_ta_dbfile(vdb, 0.07, -0.04);
+    std::ofstream(val) << "DBFILE " << vdb.string() << "\n";
+    std::vector<std::string> model;
+    SECTION("M_BLR BF_Linear") { model = {"M_BLR", "BF_Linear"}; }
+    SECTION("M_KRR Kern_Linear") { model = {"M_KRR", "Kern_Linear", "1"}; }
+    CAPTURE(model);
+    std::ofstream(hpo) << dataset_host_head << "PC_ERMSE 0 1\n"
+                       << "DUMP 1 " << (sd.dir / "pots").string() << "\n"
+                       << "BDUMP 1 " << (sd.dir / "best_pots").string()
+                       << "\n";
+    auto ctx = make_ta_master_context(train, hpo, val);
+    ctx.remove("MODEL");
+    for (const std::string& m : model) ctx.add("MODEL", m);
+    ctx.add("AUDIT", "off");
+    ctx.add("HEALTH_LOG", "off");
+    REQUIRE(ctx.has_stored("HPOTARGET"));
+    REQUIRE(ctx.has_stored("VALIDATION"));
+    REQUIRE(ctx.has_stored("VERBOSE"));
+    tadah::hpo::HPOTargets trg(ctx, hpo.string());
+    {
+        Host host(ctx, trg, val.string());
+        auto& log = tadah::hpo::HPOLog::instance();
+        log.open((sd.dir / "journal.log").string(), "test",
+                 sd.dir.string(), 1);
+        log.write_loss_section(trg);
+        host.prepare_best_publication();
+        ParamVec p(1); p(0) = 0.5;
+        const double total = host(p);
+        host.flush_remaining();
+        log.finish("TEST");
+        REQUIRE(std::isfinite(total));
+    }
+    std::vector<fs::path> files = {sd.dir / "best_pot.tadah"};
+    for (const char* dir : {"best_pots", "pots"}) {
+        std::vector<fs::path> in_dir;
+        for (const auto& e : fs::directory_iterator(sd.dir / dir))
+            in_dir.push_back(e.path());
+        INFO("directory " << dir);
+        REQUIRE(in_dir.size() == 1u);
+        files.push_back(in_dir.front());
+    }
+    for (const fs::path& f : files) {
+        const std::string text = read_dataset_file(f);
+        INFO(f.string() << ":\n" << text);
+        REQUIRE_FALSE(text.empty());
+        /* The tokens of each key line (not the parser's reading: it refuses
+         * the DM_Dummy TYPEMB line of this context). */
+        std::map<std::string, std::vector<std::string>> lines;
+        {
+            std::istringstream in(text);
+            for (std::string l; std::getline(in, l);) {
+                std::istringstream ls(l);
+                std::string key;
+                if (!(ls >> key) || key[0] == '#') continue;
+                std::vector<std::string> tok;
+                for (std::string t; ls >> t;) tok.push_back(t);
+                lines[key] = tok;
+            }
+        }
+        for (const char* key : {"HPOTARGET", "VALIDATION", "VERBOSE", "AUDIT",
+                                "HEALTH_LOG", "DBFILE"}) {
+            INFO("key " << key);
+            CHECK(lines.count(key) == 0u);
+        }
+        CHECK(text.find(hpo.string()) == std::string::npos);
+        CHECK(text.find(val.string()) == std::string::npos);
+        REQUIRE(lines.count("MODEL") == 1u);
+        CHECK(lines.at("MODEL") == model);
+        CHECK(lines.count("LAMBDA") == 1u);
+        REQUIRE(lines.count("TYPE2B") == 1u);
+        CHECK(lines.at("TYPE2B").front() == "D2_BP");
+        REQUIRE(lines.count("WEIGHTS") == 1u);
+        CHECK(lines.at("WEIGHTS").size() == 2u);
+    }
 }
 
 /* FORCE and STRESS decide only what training fits (the -c configuration,

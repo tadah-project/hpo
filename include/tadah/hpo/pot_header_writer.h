@@ -75,6 +75,21 @@ public:
         std::size_t                  cw,
         int                         prec);
 
+    /* ------------------------------------------------------------------ *
+     *  The potential below the header (every file above)
+     * ------------------------------------------------------------------ */
+    /** Writes the potential @p pot, the context of an evaluation, after its
+     * header: pot.write_potential(os, sig_digits) of a copy without the
+     * settings of the run that mlip::remove_run_inputs removes (VERBOSE,
+     * NUMERIC, OUTFILE, AUDIT, AUDIT_SAMPLE, HEALTH_LOG, HPOTARGET,
+     * VALIDATION); every other key is written. The context itself keeps
+     * them, so the PC_LAMMPS potential built from it is built at the run's
+     * VERBOSE. best_pot.tadah, the durable best and the BDUMP and DUMP
+     * archives are written through it. */
+    static void write_potential_body(std::ostream&         os,
+                                     const core::Context&  pot,
+                                     int                   sig_digits);
+
 private:
     static constexpr int W  = 78;   // target line width (inside "# ")
     static constexpr int KW = 24;   // key column width

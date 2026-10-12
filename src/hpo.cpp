@@ -381,9 +381,9 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
 
     /* --validation is optional: PC_OBSERVABLE / PC_LAMMPS can carry the
      * loss on their own; validate_hpo_setup below rejects setups where
-     * validation-set metrics are requested without a validation file. */
-    std::string val = ctx.contains("VALIDATION")
-        ? ctx.get<std::string>("VALIDATION") : "";
+     * validation-set metrics are requested without a validation file.
+     * One file: a second value is refused, not dropped. */
+    const std::string val = validation_config_file(ctx);
 
     /* Fail fast on inconsistent weight-pinning / loss-source / strategy
      * setups: before the worker pool is sized, any PC_ISOLATION PROCESS

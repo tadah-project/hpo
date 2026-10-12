@@ -1164,6 +1164,9 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                        "STRESS in the training configuration (or -S) decides "
                        "whether training fits stresses"}});
         val_ctx = core::Context(val_parser.parse(val_cfg));
+        /* Each entry is a dataset: one listed twice would count twice in
+         * every validation metric. Refused before any of them is read. */
+        require_distinct_validation_datasets(val_ctx, val_cfg);
         val_ctx_ = val_ctx;
         std::vector<std::string> files;
         if (val_ctx.contains("DBFILE")) files = val_ctx("DBFILE");
@@ -2748,7 +2751,7 @@ void HPO_Host<P,R>::persist_durable_best(const Result& r, bool& journalled) cons
         PotHeaderWriter::write_candidate_hot(payload, r);
         /* NUMERIC significant digits (default 18: exact); never writes
          * NUMERIC itself. The header lines above keep their own formats. */
-        r.pot_ctx.write_potential(payload, trg_.pot_digits);
+        PotHeaderWriter::write_potential_body(payload, r.pot_ctx, trg_.pot_digits);
         if (!payload.good())
             throw durable_best::Error("failed to render best-potential payload");
 
@@ -3162,15 +3165,17 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * derived from this eval round-trips through `tadah predict`. The trainer
      * itself doesn't know about load-time transforms, so the host injects them. */
     mlip::stamp_into_param_file(pot, report_);
-    /* Strip runtime-only audit knobs before the pot context is handed to
-     * LAMMPS (or written to disk). The LAMMPS-side PairTadah parser does
-     * not know about AUDIT / HEALTH_LOG and refuses pair_coeff with an
-     * "Invalid key" error; the partial init then segfaults inside
-     * calc_rho. Removing them here is the single choke-point -- every
-     * downstream consumer (best_pot.tadah, per-eval pots, LAMMPS scripts)
-     * uses the same `pot` Context. */
-    pot.remove("AUDIT");
-    pot.remove("HEALTH_LOG");
+    /* `pot` is the model of this evaluation inside the run: validation
+     * predicts with it and the PC_LAMMPS potential (THREAD, and the
+     * PROCESS workers through pc_pot_map) is built from it, so it keeps
+     * the run's settings, VERBOSE among them (a model built from a context
+     * without VERBOSE takes the blueprint default 1, and a kernel then
+     * prints its line for every evaluation). A potential records the
+     * model's settings and its fit, not the settings of the run that
+     * mlip::remove_run_inputs lists: every file the host writes from it
+     * (best_pot.tadah, the durable best, the BDUMP and DUMP archives)
+     * leaves them out (PotHeaderWriter::write_potential_body;
+     * get_param_file() leaves out DBFILE). */
     if (has_validation_) {
         /* The one-time lists (or this candidate's rebuilt ones) cover the
          * model cutoff; the descriptors filter pairs by their own cutoffs. */
@@ -3887,7 +3892,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
 
             PotHeaderWriter::write_candidate_hot(bpa, e);
 
-            e.pot_ctx.write_potential(bpa, trg.pot_digits);
+            PotHeaderWriter::write_potential_body(bpa, e.pot_ctx, trg.pot_digits);
             write_archive(wf, std::string(trg.dumpBestPotDir)
                 +"/best_pot_" + std::to_string(e.best_iter) + ".tadah"
                 + trg.potArchiveSuffix, bpa.str());
@@ -3902,7 +3907,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
 
             PotHeaderWriter::write_candidate_hot(pa, e);
 
-            e.pot_ctx.write_potential(pa, trg.pot_digits);
+            PotHeaderWriter::write_potential_body(pa, e.pot_ctx, trg.pot_digits);
             write_archive(wf, std::string(trg.dumpPotDir)
                 +"/pot_"+std::to_string(e.iter)+".tadah"
                 + trg.potArchiveSuffix, pa.str());
@@ -4033,7 +4038,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                                     std::ostringstream bpa;
                                     PotHeaderWriter::write_best_archive_header(bpa, e, trg, cw, prec);
                                     PotHeaderWriter::write_candidate_hot(bpa, e);
-                                    e.pot_ctx.write_potential(bpa, trg.pot_digits);
+                                    PotHeaderWriter::write_potential_body(bpa, e.pot_ctx, trg.pot_digits);
                                     write_archive(wf, std::string(trg.dumpBestPotDir)
                                         +"/best_pot_" + std::to_string(e.best_iter) + ".tadah"
                                         + trg.potArchiveSuffix, bpa.str());
@@ -4043,7 +4048,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                                 std::ostringstream pa;
                                 PotHeaderWriter::write_archive_header(pa, e, cw, prec);
                                 PotHeaderWriter::write_candidate_hot(pa, e);
-                                e.pot_ctx.write_potential(pa, trg.pot_digits);
+                                PotHeaderWriter::write_potential_body(pa, e.pot_ctx, trg.pot_digits);
                                 write_archive(wf, std::string(trg.dumpPotDir)
                                     +"/pot_"+std::to_string(e.iter)+".tadah"
                                     + trg.potArchiveSuffix, pa.str());
@@ -4356,8 +4361,9 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                      * eval pipeline at hpo_host_impl.hpp:1323-1336). */
                     core::Context pot = cache.trainer->model->get_param_file();
                     mlip::stamp_into_param_file(pot, report_);
-                    pot.remove("AUDIT");
-                    pot.remove("HEALTH_LOG");
+                    /* Built at the run's settings (VERBOSE), as the
+                     * evaluation's PC_LAMMPS potential is; never
+                     * written. */
 
                     R runner;
                     auto lmp = runner.create_instance(hpo_lammps_comm(),
@@ -4605,7 +4611,7 @@ void HPO_Host<P,R>::flush_remaining(bool retry_io) const
 
                 PotHeaderWriter::write_candidate_hot(bpa, e);
 
-                e.pot_ctx.write_potential(bpa, trg_.pot_digits);
+                PotHeaderWriter::write_potential_body(bpa, e.pot_ctx, trg_.pot_digits);
                 write_archive(wf, std::string(trg_.dumpBestPotDir)
                     + "/best_pot_" + std::to_string(e.best_iter) + ".tadah"
                     + trg_.potArchiveSuffix, bpa.str());
@@ -4619,7 +4625,7 @@ void HPO_Host<P,R>::flush_remaining(bool retry_io) const
 
             PotHeaderWriter::write_candidate_hot(pa, e);
 
-            e.pot_ctx.write_potential(pa, trg_.pot_digits);
+            PotHeaderWriter::write_potential_body(pa, e.pot_ctx, trg_.pot_digits);
             write_archive(wf, std::string(trg_.dumpPotDir)
                 + "/pot_" + std::to_string(e.iter) + ".tadah"
                 + trg_.potArchiveSuffix, pa.str());

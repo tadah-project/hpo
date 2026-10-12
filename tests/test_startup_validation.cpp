@@ -480,6 +480,50 @@ TEST_CASE("startup validation: a -c configuration that does not build a "
   }
 }
 
+/* Pins: the startup refusal of a -c configuration whose model does not
+ * build ends the model's reason with one full stop before "Every
+ * evaluation would fail": a reason that ends in '.' (M_KRR Kern_RBF with
+ * SBASIS 1: "... Set SBASIS to 2 or more.") is followed by " Every
+ * evaluation would fail" with no ".." anywhere in the message; a reason
+ * that ends in ')' (DIMER with element-named TYPE2B pairs: "... does not
+ * apply to every element pair)") gets its '.': "element pair). Every
+ * evaluation would fail", no "..".
+ * Before the fix: the SBASIS refusal read "Set SBASIS to 2 or more.. Every
+ * evaluation would fail" (". " was appended to every reason); the DIMER
+ * one passed as well (a pin). */
+TEST_CASE("startup validation: a model refusal ends its reason with one "
+          "full stop", "[startup_validation][model_probe]") {
+  PeriodicTable::initialize();
+  ScopedTempFile tf(target_with("PC_ERMSE 0 1\n"));
+  SECTION("a reason that ends in a full stop") {
+    Context ctx = make_model_ctx();
+    ctx.remove("MODEL");
+    ctx.add("MODEL", "M_KRR");
+    ctx.add("MODEL", "Kern_RBF");
+    ctx.add("MODEL", 1);
+    ctx.add("MPARAMS", 1.0);
+    ctx.add("SBASIS", 1);
+    ctx.add("DBFILE", "dummy.db");
+    HPOTargets trg(ctx, tf.path.string());
+    CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                      Catch::Contains("does not build a model") &&
+                          Catch::Contains("Set SBASIS to 2 or more. Every "
+                                          "evaluation would fail") &&
+                          !Catch::Contains(".."));
+  }
+  SECTION("a reason that ends in a parenthesis") {
+    Context ctx = make_model_ctx();
+    ctx.remove("DIMER");
+    ctx.add("DIMER", "true 1.104 true");
+    ctx.add("DBFILE", "dummy.db");
+    HPOTargets trg(ctx, tf.path.string());
+    CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                      Catch::Contains("does not apply to every element "
+                                      "pair). Every evaluation would fail") &&
+                          !Catch::Contains(".."));
+  }
+}
+
 TEST_CASE("startup validation: loss-source rules", "[startup_validation]") {
   SECTION("no loss source at all throws") {
     ScopedTempFile tf(target_with(""));
@@ -679,6 +723,36 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs the settings "
     pin_all_weights(ctx, K);
     CHECK_THAT(rejected(ctx, target(analytical, ermse), false),
                Catch::Contains("training DBFILE"));
+  }
+  /* Pins: a setup without a training DBFILE whose FIXINDEX and FIXWEIGHT
+   * pin every weight -- the only one startup takes without a DBFILE
+   * (classify_weight_source refuses the others, ending with the potential
+   * advice) -- is refused under ANALYTICAL for "there is no training
+   * DBFILE", advising GRAD_STRATEGY HYBRID, and its message has no
+   * potential advice ("A potential records no DBFILE"): with the DBFILE
+   * line that advice would add, the same setup is refused for "FIXINDEX
+   * pins model weights", so a DBFILE line does not make the analytical
+   * gradient formable there; under HYBRID it passes.
+   * Before the fix: passes as well (a pin of why this no-DBFILE refusal,
+   * unlike the others of tadah hpo, does not end with the advice). */
+  SECTION("no training DBFILE with every weight pinned: HYBRID, not a "
+          "DBFILE line") {
+    Context pinned = good_ctx();
+    pinned.remove("DBFILE");
+    const std::size_t K = derive_weight_count(pinned);
+    REQUIRE(K > 0);
+    pin_all_weights(pinned, K);
+    const std::string what =
+        rejected(pinned, target(analytical, ermse), false);
+    CHECK_THAT(what, Catch::Contains("there is no training DBFILE") &&
+                     Catch::Contains("GRAD_STRATEGY HYBRID"));
+    CHECK_THAT(what, !Catch::Contains("A potential records no DBFILE"));
+    Context with_db = pinned;
+    with_db.add("DBFILE", "dummy.db");
+    CHECK_THAT(rejected(with_db, target(analytical, ermse)),
+               Catch::Contains("FIXINDEX pins model weights"));
+    CHECK(rejected(pinned, target("GRAD_STRATEGY HYBRID\n", ermse), false) ==
+          "");
   }
   /* BIAS true for NORM true, as above. Pins (passes before and after the
    * BIAS rule); before it the setup had BIAS false. */

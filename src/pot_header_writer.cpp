@@ -4,6 +4,7 @@
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/core/periodic_table.h>
+#include <tadah/mlip/training_datasets.h>
 
 #include <algorithm>
 #include <chrono>
@@ -15,6 +16,19 @@
 #include <set>
 
 namespace tadah::hpo {
+
+/* =====================================================================
+ *  The potential below the header
+ * ===================================================================== */
+
+void PotHeaderWriter::write_potential_body(std::ostream& os,
+                                           const core::Context& pot,
+                                           int sig_digits)
+{
+    core::Context written = pot;
+    mlip::remove_run_inputs(written);
+    written.write_potential(os, sig_digits);
+}
 
 /* =====================================================================
  *  Formatting primitives
