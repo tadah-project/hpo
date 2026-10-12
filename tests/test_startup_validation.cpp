@@ -724,6 +724,36 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs the settings "
     CHECK_THAT(rejected(ctx, target(analytical, ermse), false),
                Catch::Contains("training DBFILE"));
   }
+  /* Pins: a setup without a training DBFILE whose FIXINDEX and FIXWEIGHT
+   * pin every weight -- the only one startup takes without a DBFILE
+   * (classify_weight_source refuses the others, ending with the potential
+   * advice) -- is refused under ANALYTICAL for "there is no training
+   * DBFILE", advising GRAD_STRATEGY HYBRID, and its message has no
+   * potential advice ("A potential records no DBFILE"): with the DBFILE
+   * line that advice would add, the same setup is refused for "FIXINDEX
+   * pins model weights", so a DBFILE line does not make the analytical
+   * gradient formable there; under HYBRID it passes.
+   * Before the fix: passes as well (a pin of why this no-DBFILE refusal,
+   * unlike the others of tadah hpo, does not end with the advice). */
+  SECTION("no training DBFILE with every weight pinned: HYBRID, not a "
+          "DBFILE line") {
+    Context pinned = good_ctx();
+    pinned.remove("DBFILE");
+    const std::size_t K = derive_weight_count(pinned);
+    REQUIRE(K > 0);
+    pin_all_weights(pinned, K);
+    const std::string what =
+        rejected(pinned, target(analytical, ermse), false);
+    CHECK_THAT(what, Catch::Contains("there is no training DBFILE") &&
+                     Catch::Contains("GRAD_STRATEGY HYBRID"));
+    CHECK_THAT(what, !Catch::Contains("A potential records no DBFILE"));
+    Context with_db = pinned;
+    with_db.add("DBFILE", "dummy.db");
+    CHECK_THAT(rejected(with_db, target(analytical, ermse)),
+               Catch::Contains("FIXINDEX pins model weights"));
+    CHECK(rejected(pinned, target("GRAD_STRATEGY HYBRID\n", ermse), false) ==
+          "");
+  }
   /* BIAS true for NORM true, as above. Pins (passes before and after the
    * BIAS rule); before it the setup had BIAS false. */
   SECTION("HYBRID is not affected") {
