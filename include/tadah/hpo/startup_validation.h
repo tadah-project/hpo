@@ -17,7 +17,10 @@ namespace hpo {
  *  kernel, whose basis vectors training draws from the data
  *  (mlip::model_weight_count). A configuration whose model does not
  *  build throws (the construction error; models::DensityFormError for an
- *  invalid DM_REAM density): every evaluation would fail on it. */
+ *  invalid DM_REAM density), and so does one whose fit draws basis
+ *  vectors (mlip::fit_draws_basis: a non-linear M_KRR kernel, or M_KRR
+ *  implementation 2 with any kernel) without an SBASIS it takes
+ *  (mlip::checked_sbasis): every evaluation would fail on it. */
 std::size_t derive_weight_count(const core::Context &train_ctx);
 
 /** Raw DM_REAM embedding value at zero density, F_raw(0) = sum_m w_m g_m(0),
