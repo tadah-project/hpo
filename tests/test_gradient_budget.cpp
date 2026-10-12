@@ -17,6 +17,7 @@
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/startup_validation.h>
 
 #include <chrono>
@@ -1176,4 +1177,37 @@ TEST_CASE("startup validation: the gradient budget warning names the first "
                                     "BUDGET_PER_START 6 or more")) == 1u);
         CHECK(count_of(journal, kNoStep) == 1u);
     }
+}
+
+/* Pins: OptimizerCaps::starts_at_x0 records which backends ask first for the
+ * point they are given (nlopt 2.10 sources): not NLopt's StoGO (stogo.cc
+ * never reads x0), DIRECT in each form (cdirect.c starts at the centre of
+ * the box; DIRect.c, GN_ORIG_DIRECT*) or AGS (ags.cc), which return x as
+ * their result only; the local NLopt algorithms, MLSL (mlsl.c evaluates x0
+ * first), AUGLAG, CRS2, ISRES and ESCH (x0 is the first member of their
+ * population) and DLIB:BFGS do. The gradient budget warning reads it
+ * (start_is_recorded, backend_rules.cpp).
+ * Before the fix: does not compile (the flag is new with the StoGO budget
+ * fix; this pin of its values comes with it). */
+TEST_CASE("optimizer caps: starts_at_x0 marks the backends whose first call "
+          "is at the point they are given",
+          "[optimizer_caps][gradient_budget][stogo]")
+{
+    using tadah::hpo::optimizer_caps;
+    for (const char* algo :
+         {"GD_STOGO", "GD_STOGO_RAND", "GN_DIRECT", "GN_DIRECT_L",
+          "GN_DIRECT_L_RAND", "GN_DIRECT_NOSCAL", "GN_DIRECT_L_NOSCAL",
+          "GN_DIRECT_L_RAND_NOSCAL", "GN_ORIG_DIRECT", "GN_ORIG_DIRECT_L",
+          "GN_AGS"}) {
+        INFO(algo);
+        CHECK_FALSE(optimizer_caps("NLOPT", algo).starts_at_x0);
+    }
+    for (const char* algo :
+         {"LD_LBFGS", "LD_MMA", "LD_SLSQP", "LN_SBPLX", "LN_BOBYQA",
+          "GD_MLSL", "G_MLSL_LDS", "AUGLAG", "LD_AUGLAG", "GN_CRS2_LM",
+          "GN_ISRES", "GN_ESCH"}) {
+        INFO(algo);
+        CHECK(optimizer_caps("NLOPT", algo).starts_at_x0);
+    }
+    CHECK(optimizer_caps("DLIB", "BFGS").starts_at_x0);
 }

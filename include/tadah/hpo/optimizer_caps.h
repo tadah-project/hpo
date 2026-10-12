@@ -138,6 +138,24 @@ struct OptimizerCaps {
      * require_stop() counts only MAXEVAL as its stop. */
     bool        ignores_forced_stop = false;
 
+    /* The backend's first call is at the point HPO hands it (x0: the
+     * phase's first INIT point, a MULTISTART start, a PRESTAGE candidate).
+     * False for the NLopt algorithms that take no starting point and
+     * return x as their result only (nlopt 2.10 sources): StoGO, GD_STOGO
+     * and GD_STOGO_RAND (stogo.cc never reads x0; its first trial is the
+     * centre of its box, global.cc FillRegular, or with GD_STOGO_RAND's
+     * POPULATION 2n + 1 or more a random point), DIRECT (cdirect.c: the
+     * centre of the box; DIRect.c for GN_ORIG_DIRECT*) and AGS (ags.cc).
+     * Every other NLopt algorithm evaluates x0 first -- the local ones,
+     * MLSL (mlsl.c), CRS2, ISRES and ESCH (x0 is the first member of their
+     * population). Classified for NLopt and DLIB:BFGS, the backends that
+     * answer a call from the run's record (repeat_points.h): the startup
+     * gradient-budget warning (gradient_budget_warnings, backend_rules.h)
+     * takes the start of a search on one of them for a point the run has
+     * evaluated only when its first call is there. The other backends
+     * evaluate every point they ask for and keep the default. */
+    bool        starts_at_x0 = true;
+
     /* How the tolerances end the run when one of them is costly, the last
      * clause of require_stop()'s message and a line of the ALGO help (""
      * for none): DIRECT tests XTOL on every rectangle it divides, the

@@ -570,6 +570,35 @@ std::string start_clause(bool from_record, const std::string& evaluated_where,
  * set them (mlsl.c: d.N = 4 for Nsamples 0; optimize.c passes POP(0)). */
 constexpr unsigned kMlslDefaultSamples = 4;
 
+/* Whether the first call of a search of `spec` is at the point it is given
+ * (OptimizerCaps::starts_at_x0): not for NLopt's StoGO, which samples its
+ * own box from its centre, nor for DIRECT or AGS. AUGLAG, with no
+ * constraint, goes straight into its local search from its starting point
+ * (auglag.c), so its first call is that search's (single_local_search's
+ * rule). MLSL evaluates its starting point first (mlsl.c); where its local
+ * searches start is local_starts_at_given(). */
+bool first_call_at_start(const OptimizerSpec& spec)
+{
+    const OptimizerCaps& caps = optimizer_caps(spec);
+    if (!caps.starts_at_x0) return false;
+    if (caps.accepts_inner && !caps.is_global) {
+        const std::optional<OptimizerSpec> local = inner_run_spec(spec);
+        return !local || first_call_at_start(*local);
+    }
+    return true;
+}
+
+/* Whether the local search an MLSL or AUGLAG runs (inner_run_spec) starts at
+ * the point it is handed -- for MLSL one of its own evaluated points
+ * (nlopt_optimize_limited from a point of its sample tree), for AUGLAG the
+ * phase's start --, as every local NLopt algorithm does; an INNER GD_STOGO
+ * starts at the centre of its box instead. */
+bool local_starts_at_given(const OptimizerSpec& spec)
+{
+    const std::optional<OptimizerSpec> local = inner_run_spec(spec);
+    return !local || first_call_at_start(*local);
+}
+
 /* The evaluations without a gradient a search makes before its first local
  * search asks for a gradient, and the text that says so (empty for none).
  * MLSL, a global search that runs a local one (mlsl.c), evaluates its
@@ -577,13 +606,15 @@ constexpr unsigned kMlslDefaultSamples = 4;
  * POPULATION, else kMlslDefaultSamples); its first local search then starts
  * at one of these points (nlopt_optimize_limited from a point of its
  * sample tree), a point the search has evaluated, and asks for the loss
- * and the gradient there (start_clause). Its own starting point is the
- * phase's: when that is a point the run has evaluated (`start_recorded`,
- * start_is_recorded), the call there, which asks for no gradient, is
- * answered from the record under `reuse` (RepeatUse::Record). AUGLAG,
- * with no constraint, goes straight into its local search (auglag.c), and
- * a local gradient search takes the gradient at its start: neither spends
- * anything first. */
+ * and the gradient there (start_clause) -- unless that local search does
+ * not start at the point it is handed (local_starts_at_given: an INNER
+ * GD_STOGO), when it asks for a point of its own. Its own starting point is
+ * the phase's: when that is a point the run has evaluated
+ * (`start_recorded`, start_is_recorded), the call there, which asks for no
+ * gradient, is answered from the record under `reuse` (RepeatUse::Record).
+ * AUGLAG, with no constraint, goes straight into its local search
+ * (auglag.c), and a local gradient search takes the gradient at its start:
+ * neither spends anything first. */
 struct BeforeLocalSearch {
     std::uint64_t evaluations = 0;
     std::string   text;
@@ -612,7 +643,10 @@ BeforeLocalSearch before_local_search(const OptimizerSpec& spec, bool reuse,
                  : "MLSL evaluates its starting point and its first " +
                        std::to_string(n) + " samples without a gradient (" +
                        evaluations(b.evaluations) + population;
-    b.text += ", then its first local search, from one of them, ";
+    b.text += local_starts_at_given(spec)
+                  ? ", then its first local search, from one of them, "
+                  : ", then its first local search, which does not start at "
+                    "the point MLSL gives it, ";
     return b;
 }
 
@@ -625,31 +659,37 @@ bool same_point_bits(const std::vector<double>& a, const std::vector<double>& b)
             std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0);
 }
 
-/* Whether the search of phase `s` (strategy_phase_specs of `root`) starts
- * at a point the run has evaluated with a usable loss, on a backend that
- * answers a call from the run's record (repeat_points.h: NLopt's objective
- * and DLIB:BFGS; CERES, DLIB:GFS and the TADAH drivers evaluate every point
- * they ask for):
+/* Whether the search of phase `s` (strategy_phase_specs of `root`) asks
+ * first for a point the run has evaluated with a usable loss, on a backend
+ * that answers a call from the run's record (repeat_points.h: NLopt's
+ * objective and DLIB:BFGS; CERES, DLIB:GFS and the TADAH drivers evaluate
+ * every point they ask for) and whose first call is at the point it is
+ * given (first_call_at_start: not NLopt's StoGO, which samples its own box
+ * from its centre, nor an AUGLAG whose INNER search is StoGO):
  *   - a PRESTAGE refinement starts at an exploration candidate, a usable
  *     evaluation of the run (the refinement takes usable candidates only);
  *   - under NOISE_CALIBRATION (should_run_noise_calibration) the run's
- *     first search -- PLAIN, a MULTISTART that is a single run, a PRESTAGE
- *     exploration -- starts at the seed point the calibration evaluated
- *     (run_noise_calibration: the spec's first INIT point) when its own
- *     first INIT point is that one; a seed anchor (search_space.h) makes
- *     the search ask for it bit for bit.
+ *     first search -- PLAIN, the first MULTISTART start (for a MULTISTART
+ *     that is a single run, that run), a PRESTAGE exploration -- starts at
+ *     the seed point the calibration evaluated (run_noise_calibration: the
+ *     spec's first INIT point) when its own first INIT point is that one;
+ *     a seed anchor (search_space.h) makes the search ask for it bit for
+ *     bit. A MULTISTART's later starts begin at INIT points the run has not
+ *     evaluated: gradient_budget_warnings names the first start apart.
  * The warning, before any evaluation, cannot know a start whose evaluation
- * was not usable (it is evaluated again), and takes neither the refinement
- * from INIT points that a PRESTAGE whose exploration has no usable
- * candidate falls back on, nor the later starts of a MULTISTART, which
- * begin elsewhere (the warning of "each MULTISTART start" holds for them).
- * A RESTART round's start changes no phase's budget: its warning is round
- * 0's. */
+ * was not usable (it is evaluated again), nor the refinement from INIT
+ * points that a PRESTAGE whose exploration has no usable candidate falls
+ * back on, nor whether the point of its own a search that does not start
+ * at its given point asks for first (StoGO's box centre) is one the run has
+ * evaluated (it is, for example, when the configuration's point that a
+ * NOISE CALIBRATION or an exploration evaluated lies at that centre, bit
+ * for bit): it counts that point as evaluated. A RESTART round's start
+ * changes no phase's budget: its warning is round 0's. */
 bool start_is_recorded(const OptimizerSpec& root, const OptimizerSpec& s)
 {
     const bool consults_record =
         s.lib == "NLOPT" || (s.lib == "DLIB" && s.algo == "BFGS");
-    if (!consults_record) return false;
+    if (!consults_record || !first_call_at_start(s)) return false;
     if (root.strategy_type == StrategyType::PRESTAGE &&
         s.stream_phase == StreamPhase::Refinement)
         return true;
@@ -659,12 +699,8 @@ bool start_is_recorded(const OptimizerSpec& root, const OptimizerSpec& s)
     bool first_search = false;
     switch (root.strategy_type) {
         case StrategyType::PLAIN:
-            first_search = true;
-            break;
         case StrategyType::MULTISTART:
-            first_search = plan_multistart(root, root.multistart.n_starts,
-                                           root.multistart.budget_per_start)
-                               .single_run;
+            first_search = true;
             break;
         case StrategyType::PRESTAGE:
             first_search = s.stream_phase == StreamPhase::Search;
@@ -672,6 +708,147 @@ bool start_is_recorded(const OptimizerSpec& root, const OptimizerSpec& s)
     }
     return first_search &&
            same_point_bits(s.optim_init.front(), root.optim_init.front());
+}
+
+/* What the start of the gradient search of phase `s` costs before it
+ * evaluates a point it steps to: an MLSL's evaluations before its first
+ * local search (before_local_search), the loss at that search's start (none
+ * from the record, loss_from_record), its gradient, and one point stepped
+ * to. `start_recorded` as start_is_recorded() says, or false for the later
+ * starts of a MULTISTART. */
+struct StartCost {
+    BeforeLocalSearch first;
+    bool              mlsl = false;
+    bool              local_at_given = true;  // the local search starts
+                                              // at the point it is given
+    bool              start_from_record = false;
+    GradientCost      cost;
+    std::uint64_t     need = 0;
+};
+StartCost start_cost(const OptimizerSpec& s, bool reuse, bool start_recorded)
+{
+    StartCost c;
+    c.cost = gradient_cost(s);
+    c.first = before_local_search(s, reuse, start_recorded);
+    c.mlsl = !c.first.text.empty();
+    /* The point the first gradient is taken at: for an MLSL one of the
+     * points it evaluated, if its local search starts there; otherwise the
+     * phase's start, if the search's first call is there (start_recorded
+     * is false otherwise, start_is_recorded). */
+    c.local_at_given = c.mlsl ? local_starts_at_given(s)
+                              : first_call_at_start(s);
+    c.start_from_record = loss_from_record(
+        s, reuse, c.mlsl ? c.local_at_given : start_recorded);
+    c.need = c.first.evaluations + (c.start_from_record ? 0 : 1) +
+             c.cost.evaluations + 1;
+    return c;
+}
+
+/* The warnings of phase `s` named `name` ("the STRATEGY-level optimiser",
+ * "each MULTISTART start", ...) whose gradient search starts as
+ * `start_recorded` says (start_cost), appended to `out`. */
+void phase_budget_warnings(const OptimizerSpec& root, const std::string& name,
+                           const OptimizerSpec& s, bool reuse,
+                           bool start_recorded, std::vector<std::string>& out)
+{
+    const StartCost c = start_cost(s, reuse, start_recorded);
+    const GradientCost& cost = c.cost;
+    const std::string who = name + " " + backend_name(s);
+    const std::string own_start =
+        ", which does not start at the point it is given, ";
+    std::string tail;
+    if (c.mlsl)
+        tail = " takes no step of a local search: " + c.first.text +
+               start_clause(c.start_from_record,
+                            c.local_at_given ? "there again"
+                                             : "at a point of its own",
+                            "there", cost);
+    else if (!c.local_at_given)
+        tail = " takes no step: its gradient search" + own_start +
+               start_clause(false, "at a point of its own", "", cost);
+    else
+        tail = " takes no step: its gradient search " +
+               start_clause(c.start_from_record,
+                            start_recorded ? "at its starting point again"
+                                           : "at a starting point",
+                            "at its starting point", cost);
+    tail += " before it evaluates a point it steps to, which needs ";
+    const std::string more =
+        cost.at_least ? ", and more for each parameter it differences" : "";
+    if (s.stop.maxeval && *s.stop.maxeval < c.need) {
+        const std::string have = std::to_string(*s.stop.maxeval);
+        const std::string needs = std::to_string(c.need);
+        /* The budget as the configuration writes it (plan_multistart):
+         * each MULTISTART start's BUDGET_PER_START or share of MAXEVAL,
+         * the PRESTAGE refinement's share of MAXEVAL over its TOPK
+         * candidates, otherwise the block's MAXEVAL (the exploration's
+         * is its EXPLORE block's). */
+        const bool starts =
+            root.strategy_type == StrategyType::MULTISTART &&
+            !plan_multistart(root, root.multistart.n_starts,
+                             root.multistart.budget_per_start)
+                 .single_run;
+        const bool candidates =
+            root.strategy_type == StrategyType::PRESTAGE &&
+            s.stream_phase == StreamPhase::Refinement;
+        const bool split = (starts || candidates) &&
+                           root.stop.maxeval.has_value() &&
+                           s.stop.maxeval != root.stop.maxeval;
+        std::string budget = "MAXEVAL " + have;
+        std::string remedy = "MAXEVAL " + needs + " or more";
+        if (starts && root.multistart.budget_per_start) {
+            budget = "BUDGET_PER_START " + have;
+            remedy = "BUDGET_PER_START " + needs + " or more";
+        } else if (split) {
+            const std::size_t k =
+                starts ? plan_multistart(root, root.multistart.n_starts,
+                                         root.multistart.budget_per_start)
+                             .starts
+                       : std::max<std::size_t>(1, root.stage_topk);
+            budget = "MAXEVAL " + std::to_string(*root.stop.maxeval) +
+                     " over " + std::to_string(k) +
+                     (starts ? " starts" : " TOPK candidates") + ", " +
+                     have + " each,";
+            remedy = needs + " evaluations or more per " +
+                     (starts ? "start" : "candidate");
+        }
+        out.push_back(who + ": " + budget + tail + remedy + more);
+    }
+    /* An INNER block's local search: NLopt hands it its own MAXEVAL in
+     * NLopt calls (nlopt_optimize_limited), each the loss and the
+     * gradient at a point, so one call is its starting point -- for an
+     * MLSL a point it evaluated, every local search's (mlsl.c starts
+     * them at points of its sample tree), whose loss the record can
+     * answer; for AUGLAG the phase's start; for an INNER GD_STOGO a point
+     * of its own (local_starts_at_given), which the record does not
+     * answer. NLopt counts a call answered from the record too, so the
+     * budget is the same. */
+    if (!s.inner || !s.inner->stop.maxeval || *s.inner->stop.maxeval >= 2)
+        return;
+    const std::optional<OptimizerSpec> local = inner_run_spec(s);
+    if (!local || !obtains_gradients(*local)) return;
+    const std::string call =
+        !local_starts_at_given(s)
+            ? "(1 + " + cost.text + "), so each local search" + own_start +
+                  "evaluates a point of its own"
+        : c.start_from_record
+            ? "(" + cost.text + "; " +
+                  (c.mlsl ? std::string("MLSL's local searches start at "
+                                        "points it evaluated")
+                          : std::string("its local search starts at a "
+                                        "point the run has evaluated")) +
+                  ", whose loss is taken from the run's record), so "
+                  "each local search evaluates the gradient at its "
+                  "starting point"
+            : "(1 + " + cost.text + "), so each local search evaluates "
+              "its starting point";
+    out.push_back("the INNER block of " + name + " " +
+                  backend_name(*s.inner) + ": MAXEVAL " +
+                  std::to_string(*s.inner->stop.maxeval) +
+                  " takes no step: NLopt counts an INNER block's MAXEVAL "
+                  "in its calls, each the loss and the gradient at a "
+                  "point " + call + " and ends there, which needs "
+                  "MAXEVAL 2 or more");
 }
 
 }  // namespace
@@ -721,111 +898,32 @@ std::vector<std::string> gradient_budget_warnings(const OptimizerSpec& root,
          * evaluations (repeat_points.h, HPO_Host::recorded), which NLopt
          * and DLIB:BFGS answer a call from, so a PRESTAGE refinement's
          * start, an exploration candidate, is one, and so is the start of
-         * the run's first search under NOISE_CALIBRATION. The counts and
-         * the texts below follow it (before_local_search,
-         * loss_from_record). */
+         * the run's first search under NOISE_CALIBRATION, when the search
+         * asks for its starting point first (not NLopt's StoGO). The
+         * counts and the texts follow it (start_cost). */
         const bool start_recorded = start_is_recorded(root, s);
-        const GradientCost cost = gradient_cost(s);
-        const BeforeLocalSearch first =
-            before_local_search(s, reuse, start_recorded);
-        const bool mlsl = !first.text.empty();
-        /* The loss at the first local search's start: an MLSL's is one of
-         * the points it evaluated; a local search's is the phase's. */
-        const bool start_from_record =
-            loss_from_record(s, reuse, mlsl || start_recorded);
-        const std::string who = phase.name + " " + backend_name(s);
-        const std::string tail =
-            mlsl ? " takes no step of a local search: " + first.text +
-                       start_clause(start_from_record, "there again", "there",
-                                    cost) +
-                       " before it evaluates a point it steps to, which "
-                       "needs "
-                 : " takes no step: its gradient search " +
-                       start_clause(start_from_record,
-                                    start_recorded
-                                        ? "at its starting point again"
-                                        : "at a starting point",
-                                    "at its starting point", cost) +
-                       " before it evaluates a point it steps to, which "
-                       "needs ";
-        const std::string more =
-            cost.at_least ? ", and more for each parameter it differences"
-                          : "";
-        /* an MLSL's evaluations before its first local search, the loss at
-         * that search's start (none from the record), its gradient, one
-         * point stepped to */
-        const std::uint64_t need = first.evaluations +
-                                   (start_from_record ? 0 : 1) +
-                                   cost.evaluations + 1;
-        if (s.stop.maxeval && *s.stop.maxeval < need) {
-            const std::string have = std::to_string(*s.stop.maxeval);
-            const std::string needs = std::to_string(need);
-            /* The budget as the configuration writes it (plan_multistart):
-             * each MULTISTART start's BUDGET_PER_START or share of MAXEVAL,
-             * the PRESTAGE refinement's share of MAXEVAL over its TOPK
-             * candidates, otherwise the block's MAXEVAL (the exploration's
-             * is its EXPLORE block's). */
-            const bool starts =
-                root.strategy_type == StrategyType::MULTISTART &&
-                !plan_multistart(root, root.multistart.n_starts,
-                                 root.multistart.budget_per_start)
-                     .single_run;
-            const bool candidates =
-                root.strategy_type == StrategyType::PRESTAGE &&
-                s.stream_phase == StreamPhase::Refinement;
-            const bool split = (starts || candidates) &&
-                               root.stop.maxeval.has_value() &&
-                               s.stop.maxeval != root.stop.maxeval;
-            std::string budget = "MAXEVAL " + have;
-            std::string remedy = "MAXEVAL " + needs + " or more";
-            if (starts && root.multistart.budget_per_start) {
-                budget = "BUDGET_PER_START " + have;
-                remedy = "BUDGET_PER_START " + needs + " or more";
-            } else if (split) {
-                const std::size_t k =
-                    starts ? plan_multistart(root, root.multistart.n_starts,
-                                             root.multistart.budget_per_start)
-                                 .starts
-                           : std::max<std::size_t>(1, root.stage_topk);
-                budget = "MAXEVAL " + std::to_string(*root.stop.maxeval) +
-                         " over " + std::to_string(k) +
-                         (starts ? " starts" : " TOPK candidates") + ", " +
-                         have + " each,";
-                remedy = needs + " evaluations or more per " +
-                         (starts ? "start" : "candidate");
-            }
-            out.push_back(who + ": " + budget + tail + remedy + more);
+        /* Under NOISE_CALIBRATION the first of several MULTISTART starts
+         * begins at the calibration's seed point and the later ones at
+         * INIT points the run has not evaluated: where the two cost
+         * different budgets, each is named apart. */
+        bool several_starts = false;
+        if (root.strategy_type == StrategyType::MULTISTART) {
+            const MultiStartPlan plan =
+                plan_multistart(root, root.multistart.n_starts,
+                                root.multistart.budget_per_start);
+            several_starts = !plan.single_run && plan.starts > 1;
         }
-        /* An INNER block's local search: NLopt hands it its own MAXEVAL in
-         * NLopt calls (nlopt_optimize_limited), each the loss and the
-         * gradient at a point, so one call is its starting point -- for an
-         * MLSL a point it evaluated, every local search's (mlsl.c starts
-         * them at points of its sample tree), whose loss the record can
-         * answer; for AUGLAG the phase's start. NLopt counts a call
-         * answered from the record too, so the budget is the same. */
-        if (!s.inner || !s.inner->stop.maxeval || *s.inner->stop.maxeval >= 2)
+        if (start_recorded && several_starts &&
+            start_cost(s, reuse, true).need !=
+                start_cost(s, reuse, false).need) {
+            phase_budget_warnings(root, "the first MULTISTART start", s,
+                                  reuse, true, out);
+            phase_budget_warnings(root, "each MULTISTART start after the first",
+                                  s, reuse, false, out);
             continue;
-        const std::optional<OptimizerSpec> local = inner_run_spec(s);
-        if (!local || !obtains_gradients(*local)) continue;
-        const std::string call =
-            start_from_record
-                ? "(" + cost.text + "; " +
-                      (mlsl ? std::string("MLSL's local searches start at "
-                                          "points it evaluated")
-                            : std::string("its local search starts at a "
-                                          "point the run has evaluated")) +
-                      ", whose loss is taken from the run's record), so "
-                      "each local search evaluates the gradient at its "
-                      "starting point"
-                : "(1 + " + cost.text + "), so each local search evaluates "
-                  "its starting point";
-        out.push_back("the INNER block of " + phase.name + " " +
-                      backend_name(*s.inner) + ": MAXEVAL " +
-                      std::to_string(*s.inner->stop.maxeval) +
-                      " takes no step: NLopt counts an INNER block's MAXEVAL "
-                      "in its calls, each the loss and the gradient at a "
-                      "point " + call + " and ends there, which needs "
-                      "MAXEVAL 2 or more");
+        }
+        phase_budget_warnings(root, phase.name, s, reuse,
+                              start_recorded && !several_starts, out);
     }
     return out;
 }
