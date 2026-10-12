@@ -1,5 +1,7 @@
 #pragma once
 #include <dlib/global_optimization.h>
+#include <tadah/core/checkpoint.h>       // core::ShutdownRequested
+#include <tadah/core/signal_handler.h>
 #include <tadah/hpo/log_index.h>
 #include <dlib/optimization.h>
 #include <tadah/hpo/anneal_core.h>
@@ -17,6 +19,8 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -519,7 +523,52 @@ struct BfgsBoxResult {
   BfgsBoxEnd               end = BfgsBoxEnd::Stop;  ///< how the search ended
   dlib::matrix<double,0,1> gradient;                ///< the gradient at the final point
   std::size_t              line_searches_not_run = 0;  ///< iterations that could not move
+  /** NoStep: the farthest first step of a line search from the final
+   *  point (stalled_reach), a multiple of the steepest-descent step. */
+  double                   reach = 0.0;
+  /** NoStep: the line search from `reach` ran and came back to the point
+   *  (bfgs_box_search (d)); false when no step up to `reach` moves it. */
+  bool                     came_back = false;
 };
+
+/** The farthest first step a line search of dlib's loop takes from a point
+ *  where the last iteration did not move (bfgs_box_search (c)): x, its loss
+ *  f0 and gradient g and BFGS's identity H stand, and so do the step s and
+ *  d0 = dot(g, s) <= 0, so a later iteration differs only in its first
+ *  step, a0 now. The loss at every trial that cannot move the point is f0,
+ *  and dlib's line search accepts its first trial t there exactly when its
+ *  Armijo test, f0 <= f0 + t rho d0, holds in floating point -- when the
+ *  decrease it asks for is below the rounding of f0, for every t up to
+ *  some T. Only an accepted first step grows, tenfold and to at most 1;
+ *  any other shrinks. So no later first step exceeds
+ *  max(|a0|, min(10 T, 1)). T is found by bisection over the doubles in
+ *  [0, 0.1] with dlib's own line search on the constant f0 (two of its
+ *  iterations: the first trial is accepted, or it shrinks); with T >= 0.1
+ *  (d0 = 0 among them) the bound is max(|a0|, 1). */
+inline double stalled_reach(double f0, double d0, double a0, double rho)
+{
+  const auto accepted = [&](double t) {
+    const double alpha = dlib::backtracking_line_search(
+        [f0](double) { return f0; }, f0, d0, t, rho, 2);
+    return std::abs(alpha) == t;
+  };
+  const double a = std::abs(a0);
+  const double tenth = 0.1;
+  if (accepted(tenth)) return std::max(a, 1.0);
+  /* The largest accepted t below 0.1: positive doubles are ordered as their
+   * bit patterns, and accepted() is monotone in t (0 is accepted). */
+  std::uint64_t lo = 0, hi = 0;
+  std::memcpy(&hi, &tenth, sizeof hi);
+  while (hi - lo > 1) {
+    const std::uint64_t mid = lo + (hi - lo) / 2;
+    double t = 0.0;
+    std::memcpy(&t, &mid, sizeof t);
+    (accepted(t) ? lo : hi) = mid;
+  }
+  double T = 0.0;
+  std::memcpy(&T, &lo, sizeof T);
+  return std::max(a, std::min(T * 10, 1.0));
+}
 
 /** dlib's find_min_box_constrained (dlib/optimization/optimization.h, the
  *  projected-BFGS loop of Schmidt et al.), step for step and with dlib's own
@@ -527,7 +576,7 @@ struct BfgsBoxResult {
  *  gap_step_assign_bounded_variables, backtracking_line_search,
  *  make_line_search_function, clamp_function and clamp -- so it asks for the
  *  same losses and gradients at the same points, bit for bit, wherever every
- *  iteration moves the point. Three changes, for an iteration that cannot:
+ *  iteration moves the point. Four changes, for an iteration that cannot:
  *
  *  (a) The first trial of the line search, clamp(x + a0 s) with a0 its
  *      first step (dlib's sign rule), is x itself bit for bit: every trial is
@@ -542,16 +591,30 @@ struct BfgsBoxResult {
  *  (b) A line search that ended on its own start (its step shrank until the
  *      trial was x) leaves the point where it was, and its gradient is not
  *      formed again.
- *  (c) After an iteration that did not move, dlib's BFGS update has no step
- *      (dot(delta, gamma) = 0) and resets H to the identity: the step is the
- *      projected steepest descent. When that step cannot move the point at
- *      the largest step a later line search takes (max(1, |a0|): dlib caps a
- *      growing step at 1), no later iteration can -- the same x, g, H and s
- *      -- and the search ends: BfgsBoxEnd::NoStep. dlib went on until
- *      MAXEVAL, or without end when the stop test does not end a search at
- *      an unchanged point (PARAM tol_gradinf, whose gradient norm at a bound
+ *  (c) After an iteration that did not move -- the point is stalled -- dlib's
+ *      BFGS update has no step (dot(delta, gamma) = 0) and resets H to the
+ *      identity: the step is the projected steepest descent, the same at
+ *      every later iteration from the point. When the first trial of a
+ *      stalled iteration cannot move the point, no later first step exceeds
+ *      the reach R (stalled_reach), and when the step R cannot move the
+ *      point either, no later iteration can, and the search ends:
+ *      BfgsBoxEnd::NoStep. dlib went on re-evaluating the point (its loss
+ *      unchanged, so its step length cycled below R) until MAXEVAL, or
+ *      without end when the stop test does not end a search at an
+ *      unchanged point (PARAM tol_gradinf, whose gradient norm at a bound
  *      optimum is not small; FTOL_ABS 0). Under FTOL_ABS > 0 the stop test
- *      ends such a search first: the loss did not change.
+ *      ends a stalled search first: the loss did not change.
+ *  (d) When the step R does move the point, the stalled iteration runs its
+ *      line search from R, the farthest first step dlib could reach from
+ *      the point, and every trial of which is evaluated as dlib's are: dlib
+ *      got there, if at all, only through iterations that each evaluated the
+ *      point again. When that line search comes back to the point, the next
+ *      stalled iteration would run it again from the same point, step and R
+ *      -- the same trials -- and the search ends NoStep instead
+ *      (`came_back`).
+ *  So no two iterations in a row ask for no loss, and a stalled point runs
+ *  at most two line searches (one from a first step that moves it, one from
+ *  R) before the search moves or ends.
  *
  *  dlib's checks for a non-finite loss or gradient are kept (dlib::error). */
 template <class Search, class Stop, class F, class G, class OnNotRun>
@@ -576,6 +639,7 @@ BfgsBoxResult bfgs_box_search(Search search, Stop stop, const F& f,
   const double gap_eps = 1e-8;   // dlib's
   double last_alpha = 1;
   bool stalled = false;          // the last iteration did not move the point
+  bool from_reach = false;       // this stall's line search from R ran (d)
   while (stop.should_continue_search(x, f_value, g)) {
     s = search.get_next_direction(
         x, f_value,
@@ -589,16 +653,8 @@ BfgsBoxResult bfgs_box_search(Search search, Stop stop, const F& f,
     double alpha;
     bool moved;
     const T first = dlib::clamp(x + a0 * s, x_lower, x_upper);
-    if (same_point(first, x)) {
-      if (stalled) {
-        const double reach = std::max(1.0, std::abs(a0));
-        const T farthest =
-            dlib::clamp(x + (a0 < 0 ? -reach : reach) * s, x_lower, x_upper);
-        if (same_point(farthest, x)) {
-          r.end = BfgsBoxEnd::NoStep;
-          return r;
-        }
-      }
+    if (same_point(first, x) && !stalled) {
+      /* (a) */
       const double f0 = f_value;
       alpha = dlib::backtracking_line_search(
           [f0](double) { return f0; }, f_value, d0, last_alpha,
@@ -607,6 +663,22 @@ BfgsBoxResult bfgs_box_search(Search search, Stop stop, const F& f,
       on_not_run(x);
       moved = false;
     } else {
+      if (same_point(first, x)) {
+        /* (c), (d): stalled, and the first trial cannot move. */
+        const double reach =
+            stalled_reach(f_value, d0, a0, search.get_wolfe_rho());
+        const double start = a0 < 0 ? -reach : reach;
+        const T farthest = dlib::clamp(x + start * s, x_lower, x_upper);
+        const bool cannot = same_point(farthest, x);
+        if (cannot || from_reach) {
+          r.end = BfgsBoxEnd::NoStep;
+          r.reach = reach;
+          r.came_back = !cannot;
+          return r;
+        }
+        from_reach = true;
+        last_alpha = start;
+      }
       alpha = dlib::backtracking_line_search(
           dlib::make_line_search_function(
               dlib::clamp_function(f, x_lower, x_upper), x, s, f_value),
@@ -623,7 +695,10 @@ BfgsBoxResult bfgs_box_search(Search search, Stop stop, const F& f,
     else
       last_alpha = alpha;
 
-    if (moved) g = der(x);
+    if (moved) {
+      g = der(x);
+      from_reach = false;
+    }
     stalled = !moved;
 
     if (!dlib::is_finite(f_value))
@@ -645,12 +720,13 @@ BfgsBoxResult bfgs_box_search(Search search, Stop stop, const F& f,
  *  loss alone and returns the step it evaluated last) -- and NUMERICAL and
  *  HYBRID then take that loss as the loss at the point (gradient_at),
  *  without evaluating the point again, when it is the same doubles and
- *  nothing was evaluated since. A gradient of any other point evaluates the
- *  point first: ANALYTICAL and HYBRID differentiate the host's last
- *  evaluation (HPO_Host::analytical_gradient does not check its point), and
- *  the provider's gradient(x) formed such a gradient without evaluating x.
- *  dlib asked for no such gradient; a loss answered from the record can be
- *  followed by one. */
+ *  nothing was evaluated since. dlib asked for no gradient of another
+ *  point; a loss answered from the record can be followed by one. Under
+ *  NUMERICAL its recorded loss is the loss at the point (gradient_at), and
+ *  only the stencil is evaluated; under ANALYTICAL and HYBRID the point is
+ *  evaluated first: they differentiate the host's last evaluation
+ *  (HPO_Host::analytical_gradient does not check its point), and the
+ *  provider's gradient(x) formed such a gradient without evaluating x. */
 template <class Vec, class Runner, class HostT>
 class BfgsObjective {
 public:
@@ -660,7 +736,8 @@ public:
         gp_(make_gradient_provider<Vec, Runner>(
             sp, host, &evals_, maxeval,
             host_analytical_grad_fn<Vec>(sp, host))),
-        repeats_("DLIB:BFGS", sp, repeat_policy(host))
+        repeats_("DLIB:BFGS", sp, repeat_policy(host),
+                 "a reuse is no evaluation, and MAXEVAL counts evaluations")
   {}
   BfgsObjective(const BfgsObjective&) = delete;
   BfgsObjective& operator=(const BfgsObjective&) = delete;
@@ -669,25 +746,42 @@ public:
    *  MAXEVAL is spent). */
   double loss(const Vec& x)
   {
-    if (const auto* e = repeats_.find(x))
-      if (repeats_.answer(x, *e, false)) return e->loss;
+    if (const auto* e = repeats_.find(x)) {
+      if (repeats_.use(*e, false) == RepeatUse::Record) {
+        repeats_.note_reuse(x, *e, RepeatUse::Record, false);
+        return e->loss;
+      }
+      repeats_.note_evaluated_again(x, *e, false);
+    }
     return evaluate(x);
   }
 
   /** The gradient at `x`: the record's, or formed by the provider after the
-   *  loss at `x` (MaxEvalReached, GradientNotFinite). */
+   *  loss at `x` -- the last evaluation, the record's under NUMERICAL, or
+   *  an evaluation of `x` (MaxEvalReached, GradientNotFinite). */
   Vec gradient(const Vec& x)
   {
     const auto* e = repeats_.find(x);
-    if (e && e->has_gradient && repeats_.answer(x, *e, true))
+    if (e && e->has_gradient && repeats_.use(*e, true) == RepeatUse::Record) {
+      repeats_.note_reuse(x, *e, RepeatUse::Record, true);
       return e->gradient;
+    }
     const bool just_evaluated = last_.valid &&
                                 last_.count == evals_.load() &&
                                 same_point(last_.x, x);
     double y = last_.y;
     if (!just_evaluated) {
-      if (e && !e->has_gradient) repeats_.answer(x, *e, true);
-      y = evaluate(x);
+      const RepeatUse how = e ? repeats_.use(*e, true) : RepeatUse::Evaluate;
+      if (how == RepeatUse::Centre) {
+        /* NUMERICAL takes the loss at x from the caller and evaluates the
+         * stencil alone: the recorded loss is that loss. */
+        if (maxeval_ > 0 && evals_.load() >= maxeval_) throw MaxEvalReached{};
+        repeats_.note_reuse(x, *e, how, true);
+        y = e->loss;
+      } else {
+        if (e) repeats_.note_evaluated_again(x, *e, true);
+        y = evaluate(x);
+      }
     }
     Vec g;
     if (!gp_.gradient_at(x, y, g)) {
@@ -793,6 +887,22 @@ std::string no_step_detail(const OptimizerSpec& sp, const Vec& x, const Vec& g,
   return out;
 }
 
+/* "from A = 0.5, B = 0.25 the line search from the farthest step BFGS
+ * takes there (0.125 of the steepest-descent step) came back to the point":
+ * a NoStep of bfgs_box_search (d), at the internal point `x`. */
+template <class Vec>
+std::string came_back_detail(const OptimizerSpec& sp, const Vec& x,
+                             double reach)
+{
+  std::ostringstream r;
+  r.precision(10);
+  r << reach;
+  return "from " + describe_point(sp, x) +
+         " the line search from the farthest step BFGS takes there (" +
+         r.str() + " of the steepest-descent step) found no lower loss and "
+         "came back to the point";
+}
+
 }  // namespace detail
 
 /* DLIB:BFGS on any host with `double operator()(const Vec&)` (real-space
@@ -845,9 +955,12 @@ template<class Vec,class Runner,class HostT>
       return objective.gradient(xin);
     };
     /* An iteration whose step cannot move the point (bfgs_box_search (a)):
-     * counted, the first journalled. */
+     * counted, the first journalled. It asks for no evaluation, so it
+     * checks the stop flag as an evaluation does. */
     bool not_run_noted = false;
     const auto on_not_run = [&](const matrix<double,0,1>& xp) {
+      if (core::SignalHandler::stop_requested())
+        throw core::ShutdownRequested{};
       HPOLog::instance().record_line_search_not_run();
       if (not_run_noted) return;
       not_run_noted = true;
@@ -876,7 +989,10 @@ template<class Vec,class Runner,class HostT>
           report_end("DLIB:BFGS", EndReason::NoStep,
                      std::to_string(objective.evaluations()) +
                          " evaluation(s): " +
-                         detail::no_step_detail(sp, x, r.gradient, lo, hi));
+                         (r.came_back
+                              ? detail::came_back_detail(sp, x, r.reach)
+                              : detail::no_step_detail(sp, x, r.gradient, lo,
+                                                       hi)));
         else
           report_end("DLIB:BFGS", converged,
                      std::to_string(objective.evaluations()) +

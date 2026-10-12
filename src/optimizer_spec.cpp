@@ -212,7 +212,9 @@ static void print_dlib_caps(std::ostream& os, const std::string& algo)
             "   * PARAM tol_gradinf <double>  (stop once the L2 norm of the gradient\n"
             "                   falls below it; alternative to FTOL_ABS)\n"
             "   * a point that no step can move (each coordinate at a bound its\n"
-            "                   gradient points out of) ends the search, 'no step\n"
+            "                   gradient points out of, or a step below its\n"
+            "                   rounding), or whose line search from the farthest\n"
+            "                   step comes back to it, ends the search, 'no step\n"
             "                   within the OPTIM box', unless FTOL_ABS ends it\n"
             "                   first: its loss does not change\n";
     else

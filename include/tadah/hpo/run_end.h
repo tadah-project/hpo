@@ -46,13 +46,16 @@
  *   NoStep        no step within the OPTIM    DLIB:BFGS: neither its step
  *                 box                         nor the steepest-descent one
  *                                             BFGS falls back to moves the
- *                                             point: each coordinate is at
- *                                             a bound its gradient points
- *                                             out of, or its step is below
- *                                             its rounding (a stop test that
- *                                             an unchanged point does not
- *                                             meet: PARAM tol_gradinf, or
- *                                             FTOL_ABS 0)
+ *                                             point, as far as it takes it:
+ *                                             each coordinate is at a bound
+ *                                             its gradient points out of, or
+ *                                             its step is below its
+ *                                             rounding; or the line search
+ *                                             from that farthest step came
+ *                                             back to the point (a stop test
+ *                                             that an unchanged point does
+ *                                             not meet: PARAM tol_gradinf,
+ *                                             or FTOL_ABS 0)
  */
 
 #include <tadah/hpo/hpo_log.h>

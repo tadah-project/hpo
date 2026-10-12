@@ -415,11 +415,16 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
     /* `repeats`: the search's record of its usable evaluations
      * (repeat_points.h). A call at a recorded point that asks for nothing
      * the record lacks is answered from it, before the budget is tested:
-     * it is no evaluation, so MAXEVAL does not count it, and a spent budget
-     * does not refuse it -- NLopt still counts it among its calls (its
-     * MAXEVAL). LD_MMA and LD_CCSAQ re-solve their subproblem with a larger
+     * it is no evaluation, so HPO's MAXEVAL does not count it, and a spent
+     * budget does not refuse it -- NLopt still counts it among its calls
+     * (its MAXEVAL), and the RESTART window counts it as one evaluation
+     * without a new best. A gradient call at a recorded point without a
+     * gradient, under NUMERICAL, takes the recorded loss as the loss at
+     * the point (gradient_at) and evaluates the stencil alone, within the
+     * budget. LD_MMA and LD_CCSAQ re-solve their subproblem with a larger
      * rho and land on the same clamped corner again; LN_SBPLX and
-     * LN_NELDERMEAD reflect onto a bound point again. */
+     * LN_NELDERMEAD reflect onto a bound point again; MLSL's local search
+     * asks for the gradient of a sample it evaluated without one. */
     struct UData {
         const OptimizerSpec*               sp;
         HostT*                             host;
@@ -440,7 +445,10 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
     };
     const std::optional<OptimizerSpec> local = single_local_search(sp);
     const unsigned long reevaluations = detail::auglag_reevaluations(sp);
-    RepeatPoints<Vec> repeats(sp.lib + ":" + sp.algo, sp, repeat_policy(host));
+    RepeatPoints<Vec> repeats(
+        sp.lib + ":" + sp.algo, sp, repeat_policy(host),
+        "a reuse is no evaluation: HPO's MAXEVAL does not count it, but "
+        "NLopt counts it among the calls its own MAXEVAL bounds");
     UData udata{&sp, &host, &gp, &opt, nullptr,
                 /*local_gradient_search=*/local &&
                     optimizer_caps(*local).is_gradient_based,
@@ -473,16 +481,18 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
             for(size_t i=0;i<x.size();++i) v(static_cast<long>(i))=x[i];
 
             /* A point this search has evaluated (see UData::repeats). */
-            if (const auto* e = u->repeats->find(v)) {
-                if (u->repeats->answer(v, *e, !grad.empty())) {
-                    ++u->rejection.calls;
-                    if (!grad.empty()) {
-                        u->rejection.last_rejected = false;
-                        for (size_t i = 0; i < x.size(); ++i)
-                            grad[i] = e->gradient(static_cast<long>(i));
-                    }
-                    return e->loss;
+            const auto* e = u->repeats->find(v);
+            const RepeatUse how =
+                e ? u->repeats->use(*e, !grad.empty()) : RepeatUse::Evaluate;
+            if (how == RepeatUse::Record) {
+                u->repeats->note_reuse(v, *e, how, !grad.empty());
+                ++u->rejection.calls;
+                if (!grad.empty()) {
+                    u->rejection.last_rejected = false;
+                    for (size_t i = 0; i < x.size(); ++i)
+                        grad[i] = e->gradient(static_cast<long>(i));
                 }
+                return e->loss;
             }
             /* MAXEVAL spent (see evals_used): no evaluation; the search
              * ends. */
@@ -494,22 +504,33 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
             }
 
             ++u->rejection.calls;
-            /* The loss counts against MAXEVAL, in the counter the
-             * GradientProvider counts the gradient's evaluations in.
-             * Compute f first so the trainer cache is populated at this x;
-             * host.analytical_gradient (Phase 2A.4 wiring) consumes the
-             * cached fit state. */
-            u->evals->fetch_add(1);
-            const double f = (*u->host)( u->sp->out(v) );
-            u->repeats->record_loss(v, f, latest_evaluation(*u->host));
+            double f = 0.0;
+            if (how == RepeatUse::Centre) {
+                /* The recorded loss is the loss at v that NUMERICAL's
+                 * finite differences take; only the stencil is
+                 * evaluated. */
+                u->repeats->note_reuse(v, *e, how, true);
+                f = e->loss;
+            } else {
+                if (e) u->repeats->note_evaluated_again(v, *e, !grad.empty());
+                /* The loss counts against MAXEVAL, in the counter the
+                 * GradientProvider counts the gradient's evaluations in.
+                 * Compute f first so the trainer cache is populated at
+                 * this x; host.analytical_gradient (Phase 2A.4 wiring)
+                 * consumes the cached fit state. */
+                u->evals->fetch_add(1);
+                f = (*u->host)( u->sp->out(v) );
+                u->repeats->record_loss(v, f, latest_evaluation(*u->host));
+            }
 
             if (!grad.empty()) {
                 u->rejection.last_rejected = false;
                 Vec g;
                 g.set_size(static_cast<long>(x.size()));
-                /* f is the loss of exactly v, just evaluated: NUMERICAL
-                 * and HYBRID take it as the loss at the point
-                 * (gradient_at) and do not evaluate v again. */
+                /* f is the loss of exactly v, just evaluated (or, under
+                 * NUMERICAL, recorded): NUMERICAL and HYBRID take it as the
+                 * loss at the point (gradient_at) and do not evaluate v
+                 * again. */
                 if (!u->gp->gradient_at(v, f, g)) {
                     /* No gradient here: MAXEVAL spent within it (Budget),
                      * or no usable gradient (see UData). NLopt
@@ -644,8 +665,8 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
             << " after " << evals_used.load();
         if (maxeval > 0) nfo << " of MAXEVAL " << maxeval;
         nfo << " evaluation(s)";
-        if (repeats.reused() > 0)
-            nfo << "; NLopt counts its calls, and " << repeats.reused()
+        if (repeats.from_record() > 0)
+            nfo << "; NLopt counts its calls, and " << repeats.from_record()
                 << " of them asked again for a point and were answered "
                    "without an evaluation";
         std::cout << "[HPO] " << nfo.str() << "\n";

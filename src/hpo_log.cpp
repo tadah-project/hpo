@@ -2328,8 +2328,11 @@ void HPOLog::finish(const std::string& status_str)
         if (rr > 0)
             f_ << "  " << std::left << std::setw(KW) << "Repeated points reused"
                << ": " << rr << " (points a search asked for again, answered "
-                  "with the loss --\n    and gradient -- of their evaluation: "
-                  "not evaluated again, not counted in\n    MAXEVAL)\n";
+                  "with the loss -- and\n    gradient -- of their evaluation, "
+                  "not evaluated again: HPO's MAXEVAL does not\n    count them, "
+                  "NLopt's own MAXEVAL counts them among its calls, and the "
+                  "RESTART\n    window counts each as one evaluation without "
+                  "a new best)\n";
         if (ra > 0)
             f_ << "  " << std::left << std::setw(KW) << "Repeats evaluated again"
                << ": " << ra << " (" << repeat_again_why_ << ")\n";

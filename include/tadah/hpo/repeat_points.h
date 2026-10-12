@@ -17,30 +17,40 @@
  * formed there if one was, and the run's number of that evaluation. A call
  * at a recorded point -- the same optimiser-internal doubles, bit for bit,
  * detail::same_point's rule: -0 and +0 differ, a NaN matches nothing; a
- * point 1e-13 away is another point -- that asks for nothing the record
- * lacks (its loss; and its gradient, when the call asks for one) is
- * answered from the record when the host says that every evaluation of the
- * run is a function of its point (RepeatPolicy::reuse): no evaluation, no
- * row in the per-eval files, not counted in MAXEVAL (which counts
- * evaluations) nor in the RESTART stagnation window. Otherwise the point is
- * evaluated again, as before 2026-10-12 every point was:
+ * point 1e-13 away is another point -- is answered from the record when the
+ * host says that every evaluation of the run is a function of its point
+ * (RepeatPolicy::reuse) and the record holds what the call asks for
+ * (RepeatUse):
+ *   - Record: its loss, and its gradient when the call asks for one and one
+ *     was formed there: no evaluation, no row in the per-eval files;
+ *   - Centre: a gradient the record lacks, under GRAD_STRATEGY NUMERICAL:
+ *     the recorded loss is the loss at the point that the finite
+ *     differences take (gradient_at), and only their stencil is evaluated.
+ * HPO's MAXEVAL counts evaluations, so it does not count the recorded
+ * loss; NLopt counts every call against its own MAXEVAL, a reused one too
+ * (the budget note the adapter gives). The RESTART stagnation window counts
+ * each reused call as one evaluation without a new best
+ * (HPO_Host::count_reused_repeat, through RepeatPolicy::in_window): a
+ * search that only asks for points it has makes no evaluation, and its
+ * window must still end or relaunch it. Otherwise the point is evaluated
+ * again, as before 2026-10-12 every point was:
  *   - the host names why two evaluations of one point can differ
  *     (HPO_Host::repeat_reuse_blocker(): a PC_LAMMPS line, a PC_OBSERVABLE
  *     that keeps state, a --skip-rel filter);
  *   - the earlier evaluation failed (a failure can be transient);
- *   - the call asks for a gradient that was not formed there:
- *     HPO_Host::analytical_gradient differentiates the thread's last
- *     evaluation without checking its point, so a gradient follows an
- *     evaluation of its point.
+ *   - the call asks for a gradient that was not formed there under
+ *     GRAD_STRATEGY ANALYTICAL or HYBRID: HPO_Host::analytical_gradient
+ *     differentiates the thread's last evaluation without checking its
+ *     point, so such a gradient follows an evaluation of its point.
  * A host type without repeat_reuse_blocker() (the adapters' test stubs) is
  * not tracked: nothing is recorded or journalled, and every point is
  * evaluated, as before.
  * Each search journals its first reuse (INFO, naming the evaluation and the
  * point) and its count of reuses at 10, 100, 1000, ... (a search that only
  * asks again makes no row: LD_MMA held at u = 0 spins until NLopt's own
- * MAXEVAL); a run journals once why a repeat was evaluated again;
- * DIAGNOSTICS counts both (HPOLog::record_repeat_reused,
- * record_repeat_evaluated).
+ * MAXEVAL or the RESTART window ends it); a run journals once why a repeat
+ * was evaluated again; DIAGNOSTICS counts both
+ * (HPOLog::record_repeat_reused, record_repeat_evaluated).
  */
 
 #include <tadah/core/checkpoint.h>       // core::ShutdownRequested
@@ -53,6 +63,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <map>
 #include <optional>
@@ -74,6 +85,13 @@ struct has_repeat_reuse_blocker<
     : std::true_type {};
 
 template <class H, class = void>
+struct has_reuse_window : std::false_type {};
+template <class H>
+struct has_reuse_window<
+    H, std::void_t<decltype(std::declval<const H&>().count_reused_repeat(
+           std::optional<std::size_t>{}))>> : std::true_type {};
+
+template <class H, class = void>
 struct has_eval_counter : std::false_type {};
 template <class H>
 struct has_eval_counter<
@@ -88,11 +106,16 @@ struct RepeatPolicy {
     bool        tracked = false; ///< the host says whether its evaluations can differ
     bool        reuse = false;   ///< every evaluation is a function of its point
     std::string blocker;         ///< why not, as the host says
+    /** Counts a reused call in the RESTART stagnation window (the run's
+     *  number of the evaluation it reuses); may throw StagnationStop.
+     *  Empty for a host without a window (a test stub). */
+    std::function<void(std::optional<std::size_t>)> in_window;
 };
 
 /** The policy of a search on `host`: its repeat_reuse_blocker() -- ""
- *  allows a reuse, a reason has every repeat evaluated and counted. A host
- *  without the method (a test stub) is not tracked: every point is
+ *  allows a reuse, a reason has every repeat evaluated and counted -- and
+ *  its count_reused_repeat(), when it has one. A host without
+ *  repeat_reuse_blocker() (a test stub) is not tracked: every point is
  *  evaluated, and nothing is recorded or journalled, as before. */
 template <class HostT>
 RepeatPolicy repeat_policy(const HostT& host)
@@ -103,9 +126,21 @@ RepeatPolicy repeat_policy(const HostT& host)
         p.blocker = host.repeat_reuse_blocker();
         p.reuse = p.blocker.empty();
     }
+    if constexpr (detail::has_reuse_window<HostT>::value)
+        p.in_window = [&host](std::optional<std::size_t> of_eval) {
+            host.count_reused_repeat(of_eval);
+        };
     (void)host;
     return p;
 }
+
+/** How a call at a recorded point is answered (RepeatPoints::use). */
+enum class RepeatUse {
+    Record,   ///< from the record: its loss, and its gradient when asked
+    Centre,   ///< its recorded loss is the centre of the gradient's finite
+              ///< differences (GRAD_STRATEGY NUMERICAL), which are evaluated
+    Evaluate  ///< the point is evaluated again
+};
 
 /** The run's number of the host's latest evaluation (HPO_Host's counter,
  *  the ITERATION column of the per-eval files), for a host that keeps one.
@@ -214,10 +249,15 @@ public:
 
     /** The handling of the search of `backend` ("NLOPT:LD_MMA") over the
      *  spec `sp` (kept by reference; it labels the journal's points and
-     *  gives the FAILSCORE), under `policy` (repeat_policy). */
+     *  gives the FAILSCORE and the GRAD_STRATEGY), under `policy`
+     *  (repeat_policy). `budget_note` says how the backend's MAXEVAL takes
+     *  a reuse, for the journal's first-reuse line ("a reuse is no
+     *  evaluation, and MAXEVAL counts evaluations"). */
     RepeatPoints(std::string backend, const OptimizerSpec& sp,
-                 RepeatPolicy policy)
-        : backend_(std::move(backend)), sp_(sp), policy_(std::move(policy))
+                 RepeatPolicy policy, std::string budget_note)
+        : backend_(std::move(backend)), sp_(sp), policy_(std::move(policy)),
+          budget_note_(std::move(budget_note)),
+          strategy_(sp.grad_strategy.value_or(GradStrategy::Numerical))
     {}
 
     /** The entry of `x`; always nullptr when the host is not tracked. */
@@ -226,49 +266,76 @@ public:
         return policy_.tracked ? record_.find(x) : nullptr;
     }
 
-    /** Whether a call at `x` that asks `with_gradient` is answered from
-     *  `e`, the entry of `x`: the journal and the counts say what happened.
-     *  A reuse checks the stop flag as the host does (a signal stops a
-     *  search that only repeats). */
-    bool answer(const Vec& x, const Entry& e, bool with_gradient)
+    /** How a call at `x`, whose entry is `e`, that asks `with_gradient` is
+     *  answered: from the record when every evaluation is a function of
+     *  its point and the record has what the call asks for; its loss as the
+     *  centre of the finite differences when only the gradient is missing
+     *  and GRAD_STRATEGY is NUMERICAL (which takes the loss at the point
+     *  from the caller and evaluates the stencil alone); else evaluated. */
+    RepeatUse use(const Entry& e, bool with_gradient) const
     {
-        const bool lacks_gradient = with_gradient && !e.has_gradient;
-        if (policy_.reuse && !lacks_gradient) {
-            if (core::SignalHandler::stop_requested())
-                throw core::ShutdownRequested{};
-            ++reused_;
-            HPOLog::instance().record_repeat_reused();
-            /* A search that only asks again for points it has (LD_MMA held
-             * at u = 0, where NLopt's XTOL_REL test is vacuous) makes no
-             * row and no evaluation: say how many at 10, 100, 1000, ... so
-             * that it does not look hung. */
-            if (reused_ >= 10 && is_power_of_ten(reused_))
-                HPOLog::instance().info(
-                    backend_ + ": " + std::to_string(reused_) +
-                    " calls of this search have asked again for points it "
-                    "evaluated (the latest the point of " + eval_of(e) +
-                    "), answered without an evaluation");
-            if (!noted_reuse_) {
-                noted_reuse_ = true;
-                HPOLog::instance().info(
-                    backend_ + " asked again for the point of " + eval_of(e) +
-                    " (" + describe_point(sp_, x) + ")" +
-                    (with_gradient ? " and its gradient: the loss and gradient of " +
-                                         eval_of(e) + " are reused"
-                                   : ": the loss of " + eval_of(e) +
-                                         " is reused") +
-                    ", without an evaluation (a reuse is no evaluation, and "
-                    "MAXEVAL counts evaluations; DIAGNOSTICS counts "
-                    "reuses)");
-            }
-            return true;
+        if (!policy_.reuse) return RepeatUse::Evaluate;
+        if (!with_gradient || e.has_gradient) return RepeatUse::Record;
+        return strategy_ == GradStrategy::Numerical ? RepeatUse::Centre
+                                                    : RepeatUse::Evaluate;
+    }
+
+    /** Counts and journals a call at `x` answered from `e` (`how` Record or
+     *  Centre). It checks the stop flag as the host does (a signal stops a
+     *  search that only repeats), and counts the call in the RESTART
+     *  window (RepeatPolicy::in_window), which may throw StagnationStop. */
+    void note_reuse(const Vec& x, const Entry& e, RepeatUse how,
+                    bool with_gradient)
+    {
+        if (core::SignalHandler::stop_requested())
+            throw core::ShutdownRequested{};
+        ++reused_;
+        if (how == RepeatUse::Record) ++from_record_;
+        HPOLog::instance().record_repeat_reused();
+        /* A search that only asks again for points it has (LD_MMA held
+         * at u = 0, where NLopt's XTOL_REL test is vacuous) makes no
+         * row and no evaluation: say how many at 10, 100, 1000, ... so
+         * that it does not look hung. */
+        if (reused_ >= 10 && is_power_of_ten(reused_))
+            HPOLog::instance().info(
+                backend_ + ": " + std::to_string(reused_) +
+                " calls of this search have asked again for points it "
+                "evaluated (the latest the point of " + eval_of(e) +
+                "), answered without an evaluation");
+        if (!noted_reuse_) {
+            noted_reuse_ = true;
+            std::string what;
+            if (how == RepeatUse::Centre)
+                what = " and its gradient: the loss of " + eval_of(e) +
+                       " is reused, without an evaluation, as the loss at "
+                       "the point that the gradient's finite differences "
+                       "take, and their stencil is evaluated";
+            else if (with_gradient)
+                what = " and its gradient: the loss and gradient of " +
+                       eval_of(e) + " are reused, without an evaluation";
+            else
+                what = ": the loss of " + eval_of(e) +
+                       " is reused, without an evaluation";
+            HPOLog::instance().info(
+                backend_ + " asked again for the point of " + eval_of(e) +
+                " (" + describe_point(sp_, x) + ")" + what + " (" +
+                budget_note_ + "; DIAGNOSTICS counts reuses)");
         }
+        if (policy_.in_window) policy_.in_window(e.eval);
+    }
+
+    /** Counts and journals a call at `x`, whose entry is `e`, that is
+     *  evaluated again (`use` Evaluate), and why. */
+    void note_evaluated_again(const Vec& x, const Entry& e, bool with_gradient)
+    {
         const std::string why =
             !policy_.reuse
                 ? policy_.blocker
                 : std::string("a gradient was asked for where the earlier "
-                              "evaluation formed none: the point is evaluated "
-                              "before its gradient");
+                              "evaluation formed none, and GRAD_STRATEGY ") +
+                      grad_strategy_name(strategy_) +
+                      " differentiates the last evaluation: the point is "
+                      "evaluated before its gradient";
         HPOLog::instance().record_repeat_evaluated(why);
         if (HPOLog::instance().first_in_run("repeat points evaluated again"))
             HPOLog::instance().info(
@@ -276,7 +343,6 @@ public:
                 " (" + describe_point(sp_, x) + ")" +
                 (with_gradient ? " and its gradient" : "") +
                 "; it is evaluated again: " + why);
-        return false;
     }
 
     /** Records an evaluation of `x` (its loss `loss`, its run number
@@ -293,8 +359,12 @@ public:
         if (policy_.tracked) record_.record_gradient(x, g);
     }
 
-    /** The calls of this search answered from the record. */
+    /** The calls of this search answered from the record (RepeatUse
+     *  Record or Centre). */
     std::size_t reused() const { return reused_; }
+
+    /** Those answered without an evaluation (RepeatUse Record). */
+    std::size_t from_record() const { return from_record_; }
 
 private:
     double failscore() const
@@ -315,8 +385,11 @@ private:
     std::string        backend_;
     const OptimizerSpec& sp_;
     RepeatPolicy       policy_;
+    std::string        budget_note_;
+    GradStrategy       strategy_;
     RepeatRecord<Vec>  record_;
     std::size_t        reused_ = 0;
+    std::size_t        from_record_ = 0;
     bool               noted_reuse_ = false;
 };
 
