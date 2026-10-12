@@ -9,12 +9,16 @@
  * DLIB:BFGS spent the rest of MAXEVAL on one such point -- or, under PARAM
  * tol_gradinf, ran without end.
  *
- * Within one search, a point whose earlier evaluation gave a usable loss is
- * answered with that loss (and its gradient, when one was formed) when the
- * host says every evaluation is a function of its point
- * (repeat_reuse_blocker() is ""), and evaluated again otherwise. DLIB:BFGS
- * does not run a line search that cannot move the point, whatever the host,
- * and ends a search that no step can move ("no step within the OPTIM box").
+ * A point whose earlier evaluation gave a usable loss is answered with that
+ * loss (and its gradient, when the search formed one there) when the host
+ * says every evaluation is a function of its point (repeat_reuse_blocker()
+ * is ""), and evaluated again otherwise. HPO_Host keeps one record for the
+ * run (test_hpo_termination.cpp, test_repeat_record.cpp); the stub hosts
+ * here have none, so each search keeps its own. DLIB:BFGS does not run a
+ * line search that cannot move the point, whatever the host, ends a search
+ * that no step can move ("no step within the OPTIM box"), and ends one that
+ * an iteration without an evaluation took back to a point where it stood
+ * ("back at an earlier point").
  *
  * The stub hosts record every REAL point asked for; g_iter_value() numbers
  * the evaluations as HPO_Host's counter does. */
@@ -674,13 +678,16 @@ TEST_CASE("Repeated points: DLIB:BFGS reuses a line-search trial the box "
  * after 38 evaluations ("NLopt counts its calls, and 22 of them asked
  * again"); DLIB:BFGS (the steep bowl, whose line-search trials the box puts
  * on the corner): "a reuse is no evaluation, and MAXEVAL counts
- * evaluations". DIAGNOSTICS says both: "HPO's MAXEVAL does not count them,
- * NLopt's own MAXEVAL counts them among its calls, and the RESTART window
- * counts each as one evaluation without a new best".
+ * evaluations". DIAGNOSTICS says both: "points the run had evaluated that a
+ * search asked for, ... HPO's MAXEVAL does not count them, NLopt's own
+ * MAXEVAL counts them among its calls, and the RESTART window counts each
+ * as one evaluation without a new best".
  * Before the fix: both INFO lines said "(a reuse is no evaluation, and
  * MAXEVAL counts evaluations; ...)" and DIAGNOSTICS "not evaluated again,
  * not counted in MAXEVAL", while NLopt's own MAXEVAL counted the 22 reuses
- * and ended the search 22 evaluations early. */
+ * and ended the search 22 evaluations early; until the run kept one record
+ * (2026-10-12) DIAGNOSTICS said "points a search asked for again", the
+ * record being the search's. */
 TEST_CASE("Repeated points: the journal says how MAXEVAL takes a reuse",
           "[HPO][repeat_points][nlopt][dlib_bfgs][maxeval]")
 {
@@ -696,11 +703,11 @@ TEST_CASE("Repeated points: the journal says how MAXEVAL takes a reuse",
     CHECK(j_nlopt.find("NLopt counts its calls, and 22 of them asked again") !=
           std::string::npos);
     const std::string diag =
-        "points a search asked for again, answered with the loss -- and\n"
-        "    gradient -- of their evaluation, not evaluated again: HPO's "
-        "MAXEVAL does not\n    count them, NLopt's own MAXEVAL counts them "
-        "among its calls, and the RESTART\n    window counts each as one "
-        "evaluation without a new best)";
+        "points the run had evaluated that a search asked for, answered "
+        "with the\n    loss -- and gradient -- of their evaluation, not "
+        "evaluated again: HPO's MAXEVAL\n    does not count them, NLopt's own "
+        "MAXEVAL counts them among its calls, and the\n    RESTART window "
+        "counts each as one evaluation without a new best)";
     CHECK(j_nlopt.find(diag) != std::string::npos);
     CHECK(j_nlopt.find("not counted in\n    MAXEVAL") == std::string::npos);
 
@@ -1182,6 +1189,238 @@ TEST_CASE("Repeated points: DLIB:BFGS runs the line search from its farthest "
         CHECK(status_of(journal) == "DLIB:BFGS: no step within the OPTIM box");
         CHECK(journal.find(with_count(26)) != std::string::npos);
     }
+}
+
+namespace {
+
+/* 23207.610197404942 + 0.0034262213715514594 |u - 0.89349363830995211| on
+ * [0, 1]: a V whose kink term, near the kink, is below the rounding of the
+ * offset -- a plateau of the loss's rounding, where BFGS's steps all pass
+ * their decrease test (the decrease asked for is lost in the rounding) and
+ * the loss comes back equal at different points. Found by a fuzz of
+ * DLIB:BFGS over random losses on [0, 1]^n (14 of 3000 searches never
+ * ended, every call answered from the record). */
+struct PlateauV {
+    std::vector<Vec> asked;
+    double operator()(const Vec& x) {
+        asked.push_back(x);
+        return 23207.610197404942 +
+               0.0034262213715514594 * std::fabs(x(0) - 0.89349363830995211);
+    }
+    std::string repeat_reuse_blocker() const { return ""; }
+    std::size_t g_iter_value() const { return asked.size(); }
+};
+
+/* 66.758239935890771 + 53.903606516122373 (A + 0.26236689683470005)^2
+ * + 33.466698031961712 (B - 0.23311259478514823)^2 on [0, 1]^2: a smooth
+ * bowl whose minimum over the box has A held at its lower bound 0 (A's
+ * gradient there is 28, so PARAM tol_gradinf never holds) and B inside,
+ * where the B term near its minimum is below the rounding of the rest. The
+ * fuzz's other search that never ended. */
+struct BoundBowl {
+    std::vector<Vec> asked;
+    double operator()(const Vec& x) {
+        asked.push_back(x);
+        const double a = x(0) - (-0.26236689683470005);
+        const double b = x(1) - 0.23311259478514823;
+        double q = 0.0;
+        q += 53.903606516122373 * a * a;
+        q += 33.466698031961712 * b * b;
+        return 66.758239935890771 + q;
+    }
+    std::string repeat_reuse_blocker() const { return ""; }
+    std::size_t g_iter_value() const { return asked.size(); }
+};
+
+/* The journal's "DLIB:BFGS stopped:" line (its text after the stamp). */
+std::string bfgs_stop_line(const std::string& journal)
+{
+    std::smatch m;
+    if (std::regex_search(journal, m,
+                          std::regex(R"((DLIB:BFGS stopped: [^\n]*))")))
+        return m[1];
+    return "(no stop line)";
+}
+
+}  // namespace
+
+/* Pins: run_dlib_bfgs_impl on the plateau (PlateauV, from u =
+ * 0.96678801528256708, fd_step 1e-6 inhouse, FTOL_ABS 0, MAXEVAL 400, a
+ * reusing host) ends after 111 evaluations, none of a point asked for
+ * before, "DLIB:BFGS: back at an earlier point", with the stop line
+ * "DLIB:BFGS stopped: back at an earlier point after 111 evaluation(s): the
+ * iteration from A = 0.89349363928454106 (the point of eval 109) made no
+ * evaluation: it asked only for points the run had evaluated, and took the
+ * search back to A = 0.89349363928412684 (the point of eval 98), where it
+ * had stood with the same loss and gradient": an iteration that moves the
+ * point without an evaluation ends the search at the next stop test; the
+ * best, eval 95, is the one the search would find.
+ * Before the fix: the search went on from there, made 12 evaluations more
+ * (123; none lower than eval 95), then went round points it had evaluated
+ * (the loss 23207.610197404945 at each), every call answered from the
+ * record, without end: MAXEVAL, which counts evaluations, never fired, and
+ * a minute ended the case. */
+TEST_CASE("Repeated points: DLIB:BFGS on a plateau of the loss's rounding "
+          "ends back at an earlier point, under FTOL_ABS 0",
+          "[HPO][repeat_points][dlib_bfgs][revisit]")
+{
+    PlateauV host;
+    auto sp = bfgs_spec({0.0}, {1.0}, {0.96678801528256708});
+    sp.stop.maxeval = 400;
+    sp.stop.ftol_abs = 0.0;
+    const std::string journal =
+        run_bfgs_within(sp, host, "DLIB:BFGS on the rounding plateau");
+    CHECK(host.asked.size() == 111u);
+    CHECK(repeats_in(host.asked) == 0u);
+    CHECK(status_of(journal) == "DLIB:BFGS: back at an earlier point");
+    CHECK(bfgs_stop_line(journal) ==
+          "DLIB:BFGS stopped: back at an earlier point after 111 "
+          "evaluation(s): the iteration from A = 0.89349363928454106 (the "
+          "point of eval 109) made no evaluation: it asked only for points "
+          "the run had evaluated, and took the search back to A = "
+          "0.89349363928412684 (the point of eval 98), where it had stood "
+          "with the same loss and gradient");
+}
+
+/* Pins: run_dlib_bfgs_impl on BoundBowl from (0.40137104310117261, 0)
+ * under PARAM tol_gradinf 1e-12 (MAXEVAL 400, a reusing host): A reaches
+ * its lower bound and stays (its gradient, 28, points out of the box, so
+ * the gradient norm never falls below tol_gradinf), B goes to its minimum,
+ * and the search ends after 96 evaluations, none repeated, "DLIB:BFGS: back
+ * at an earlier point", the stop line naming the point it came back to
+ * ("... took the search back to A = 0, B = 0.233112594... (the point of
+ * eval 47) ...").
+ * Before the fix: after the same 96 evaluations BFGS went round points of
+ * B's plateau without an evaluation and never returned (a minute ended the
+ * case; 17 million calls in 4 s answered from the record). */
+TEST_CASE("Repeated points: DLIB:BFGS held at a bound under PARAM "
+          "tol_gradinf ends back at an earlier point",
+          "[HPO][repeat_points][dlib_bfgs][revisit]")
+{
+    BoundBowl host;
+    auto sp = bfgs_spec({0.0, 0.0}, {1.0, 1.0}, {0.40137104310117261, 0.0});
+    sp.stop.maxeval = 400;
+    sp.param["tol_gradinf"] = 1e-12;
+    const std::string journal = run_bfgs_within(
+        sp, host, "DLIB:BFGS held at a bound under tol_gradinf");
+    CHECK(host.asked.size() == 96u);
+    CHECK(repeats_in(host.asked) == 0u);
+    CHECK(status_of(journal) == "DLIB:BFGS: back at an earlier point");
+    const std::string line = bfgs_stop_line(journal);
+    CHECK_THAT(line,
+               Catch::StartsWith("DLIB:BFGS stopped: back at an earlier "
+                                 "point after 96 evaluation(s): the "
+                                 "iteration from A = 0, B = "));
+    CHECK_THAT(line, Catch::Contains(", and took the search back to A = 0, "
+                                     "B = 0.233112594") &&
+                         Catch::EndsWith("(the point of eval 47), where it "
+                                         "had stood with the same loss and "
+                                         "gradient"));
+}
+
+namespace {
+
+/* 1 + (a + 0.3)^2 + (b + 0.1)^2 on [0, 1]^2: the minimum lies beyond the
+ * lower corner (0, 0), where LD_MMA ends up, both coordinates at u = 0. */
+struct LowerCornerBowl {
+    std::vector<Vec> asked;
+    double operator()(const Vec& x) {
+        asked.push_back(x);
+        const double a = x(0) + 0.3, b = x(1) + 0.1;
+        return 1.0 + a * a + b * b;
+    }
+    std::string repeat_reuse_blocker() const { return ""; }
+    std::size_t g_iter_value() const { return asked.size(); }
+};
+
+}  // namespace
+
+/* Pins: an NLopt search whose calls are answered from the record is
+ * bounded by NLopt's own MAXEVAL, which counts its calls: LD_MMA (MAXEVAL
+ * 60, XTOL_REL 1e-8) on the bowl whose minimum lies beyond the lower corner
+ * reaches the corner (0, 0), where XTOL_REL's test, relative to |x| = 0,
+ * never holds, and asks for the corner and its gradient again and again;
+ * every such call is answered from the record, and the search ends after 60
+ * calls, MAXEVAL_REACHED ("NLopt finished: MAXEVAL_REACHED -- maximum
+ * evaluations exhausted after 20 of MAXEVAL 60 evaluation(s); NLopt counts
+ * its calls, and 56 of them asked again ..."): 4 calls evaluated (each the
+ * loss and a 4-point stencil) and 56 answered, none of the 20 evaluations
+ * repeating another.
+ * Before the fix: passes as well (a pin: NLopt's count of calls bounds a
+ * search that only asks again; DLIB:BFGS had no such count). */
+TEST_CASE("Repeated points: NLopt's own MAXEVAL ends a search whose calls "
+          "are answered from the record",
+          "[HPO][repeat_points][nlopt][maxeval][revisit]")
+{
+    LowerCornerBowl host;
+    const std::string journal = run_nlopt(nlopt_spec("LD_MMA", 60), host);
+    CHECK(status_of(journal) ==
+          "MAXEVAL_REACHED -- maximum evaluations exhausted");
+    CHECK(repeats_in(host.asked) == 0u);
+    std::smatch m;
+    REQUIRE(std::regex_search(
+        journal, m,
+        std::regex(R"(after (\d+) of MAXEVAL 60 evaluation\(s\); NLopt counts )"
+                   R"(its calls, and (\d+) of them asked again)")));
+    CHECK(std::stoul(m[1]) == host.asked.size());
+    CHECK(host.asked.size() == 20u);
+    CHECK(std::stoul(m[2]) == 56u);
+}
+
+/* Pins: a gradient that takes a recorded loss as the centre of its finite
+ * differences (RepeatUse::Centre) evaluates the stencil, so it is counted
+ * in MAXEVAL and refused once MAXEVAL is spent: BfgsObjective under
+ * NUMERICAL with MAXEVAL 2 and a reusing host, the losses of P and Q (2
+ * evaluations), then P's gradient: MaxEvalReached, and the host is asked for
+ * nothing more.
+ * Before the fix: passes as well (a pin: a Centre call is an evaluation,
+ * so no stretch of calls without one includes it). */
+TEST_CASE("Repeated points: a gradient centred on a recorded loss counts in "
+          "MAXEVAL", "[HPO][repeat_points][dlib_bfgs][maxeval][revisit]")
+{
+    auto sp = bfgs_spec({0.0, 0.0}, {1.0, 1.0}, {0.5, 0.5});
+    LastEvaluationGradient host;
+    Journal j;
+    tadah::hpo::detail::BfgsObjective<Vec, NoRunner, LastEvaluationGradient>
+        objective(sp, host, 2);
+    const Vec P = point(0.5, 0.5), Q = point(0.25, 0.75);
+    CHECK(objective.loss(P) == 0.5);
+    CHECK(objective.loss(Q) == 0.625);
+    CHECK_THROWS_AS(objective.gradient(P),
+                    tadah::hpo::detail::MaxEvalReached);
+    CHECK(host.asked.size() == 2u);
+    CHECK(objective.evaluations() == 2u);
+}
+
+/* Pins: dlib asks for the gradient of the point its line search ended on
+ * right after its loss; when that loss was answered from the record, the
+ * gradient takes it as an evaluation's (NUMERICAL: the centre of the finite
+ * differences) and is no second reuse. BfgsObjective under NUMERICAL with a
+ * reusing host: the losses of P and Q, P's loss again (answered from the
+ * record), then P's gradient: the host is asked for P, Q and P's 4-point
+ * stencil, and DIAGNOSTICS counts one reuse ("Repeated points reused : 1"),
+ * as the evaluation of P that the call stands for is one.
+ * Before the fix: the gradient call was counted as a second reuse
+ * ("Repeated points reused : 2"), and in the RESTART window as a second
+ * evaluation without a new best. */
+TEST_CASE("Repeated points: a gradient right after a reused loss is no "
+          "second reuse", "[HPO][repeat_points][dlib_bfgs]")
+{
+    auto sp = bfgs_spec({0.0, 0.0}, {1.0, 1.0}, {0.5, 0.5});
+    LastEvaluationGradient host;
+    Journal j;
+    tadah::hpo::detail::BfgsObjective<Vec, NoRunner, LastEvaluationGradient>
+        objective(sp, host, 0);
+    const Vec P = point(0.5, 0.5), Q = point(0.25, 0.75);
+    CHECK(objective.loss(P) == 0.5);
+    CHECK(objective.loss(Q) == 0.625);
+    CHECK(objective.loss(P) == 0.5);
+    const Vec g = objective.gradient(P);
+    CHECK(host.asked.size() == 6u);
+    CHECK(repeats_in(host.asked) == 0u);
+    CHECK(std::abs(g(0) - 1.0) < 1e-6);
+    CHECK(std::abs(g(1) - 1.0) < 1e-6);
+    CHECK(diagnostics_count(j.text(), "Repeated points reused") == "1");
 }
 
 /* Pins: an iteration of DLIB:BFGS whose line search is not run asks for no

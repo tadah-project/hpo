@@ -297,6 +297,72 @@ stagnation_stops(const std::string& journal)
     return stops;
 }
 
+/* A stagnation stop: the latest evaluation when it fired, and the calls of
+ * its window answered from the run's record (repeat_points.h), which the
+ * window counts as evaluations without a new best. */
+struct StagnationWindow {
+    std::size_t eval = 0;
+    std::size_t reused = 0;
+};
+
+/* Every stagnation stop of the journal, in order: one at an evaluation
+ * ("StagnationStop fired at eval N; ... (threshold=W evals without
+ * improvement[, K of them call(s) answered from the run's record])") or at
+ * a call answered from the record ("StagnationStop fired at a repeat of
+ * eval M answered from the run's record, after eval N; ... K of them
+ * ..."). */
+std::vector<StagnationWindow> stagnation_windows(const std::string& journal)
+{
+    std::vector<StagnationWindow> out;
+    const std::regex re(
+        R"(StagnationStop fired at (?:eval (\d+)|a repeat of [^\n]*? )"
+        R"(answered from the run's record, after eval (\d+));[^\n]*?)"
+        R"(evals without improvement(?:, (\d+) of them call\(s\) answered )"
+        R"(from the run's record)?\))");
+    for (auto it = std::sregex_iterator(journal.begin(), journal.end(), re);
+         it != std::sregex_iterator(); ++it) {
+        const auto& m = *it;
+        StagnationWindow w;
+        w.eval = std::stoull(m[1].matched ? m[1].str() : m[2].str());
+        w.reused = m[3].matched ? std::stoull(m[3].str()) : 0;
+        out.push_back(w);
+    }
+    return out;
+}
+
+/* The seed S a RESTART block without SEED drew from std::random_device,
+ * as the journal names it ("RESTART: the RESTART block has no SEED, so its
+ * restart points are drawn from std::random_device: restart r draws with S
+ * + r ..."); none without the line. */
+std::optional<std::uint64_t> drawn_restart_seed(const std::string& journal)
+{
+    std::smatch m;
+    if (std::regex_search(
+            journal, m,
+            std::regex(R"(RESTART: the RESTART block has no SEED, so its )"
+                       R"(restart points are drawn from std::random_device: )"
+                       R"(restart r draws with (\d+) \+ r \(SEED (\d+) in )"
+                       R"(the RESTART block draws the same points again\))")) &&
+        m[1] == m[2])
+        return std::stoull(m[1]);
+    return std::nullopt;
+}
+
+/* The journal line of restart `r` of `max` of a RESTART block without
+ * SEED: "RESTART r/max -- fresh init from <method>; RESTART SEED <S + r>"
+ * and the optimisers' seeds `seeds` ("SEED 6"; "" for none), S the drawn
+ * seed (drawn_restart_seed); "(no drawn RESTART seed)" without one. */
+std::string drawn_round_line(const std::string& journal, std::size_t r,
+                             std::size_t max, const std::string& method,
+                             const std::string& seeds)
+{
+    const auto s = drawn_restart_seed(journal);
+    if (!s) return "(no drawn RESTART seed)";
+    return "RESTART " + std::to_string(r) + "/" + std::to_string(max) +
+           " -- fresh init from " + method + "; RESTART SEED " +
+           std::to_string(*s + r) + (seeds.empty() ? "" : ", " + seeds) + "\n";
+}
+
 /* A loss.tadah value. The default FAILSCORE, the largest double, prints as
  * 1.797693134862316e+308 with DIGITS 15, which rounds above it: std::stod
  * throws on it, and this reads it as +inf, which is no feasible loss
@@ -841,10 +907,11 @@ std::string diagnostics_count(const std::string& journal,
  * finished: MAXEVAL_REACHED -- maximum evaluations exhausted after 18 of
  * MAXEVAL 60 evaluation(s); NLopt counts its calls, and 54 of them asked
  * again for a point ..."); the journal counts the reuses at 10 ("NLOPT:
- * LD_MMA: 10 calls of this search have asked again for points it
+ * LD_MMA: 10 calls of this search have asked again for points the run
  * evaluated") and DIAGNOSTICS has "Repeated points reused : 54".
  * Before the fix: 60 rows, 42 of them repeats of the bound and its
- * stencil (20 calls), MAXEVAL_REACHED. */
+ * stencil (20 calls), MAXEVAL_REACHED; until the run kept one record
+ * (2026-10-12) the count line said "points it evaluated". */
 TEST_CASE("Repeated points: an NLopt run of fit metrics evaluates no point "
           "twice", "[HPO][termination][repeat_points]")
 {
@@ -868,7 +935,8 @@ TEST_CASE("Repeated points: an NLopt run of fit metrics evaluates no point "
                        "(SGRID2B[2] = 4) and its gradient") !=
           std::string::npos);
     CHECK(journal.find("NLOPT:LD_MMA: 10 calls of this search have asked "
-                       "again for points it evaluated") != std::string::npos);
+                       "again for points the run evaluated") !=
+          std::string::npos);
     CHECK(journal.find("NLOPT:LD_MMA: 100 calls") == std::string::npos);
     CHECK(diagnostics_count(journal, "Repeated points reused") == "54");
 }
@@ -951,15 +1019,18 @@ int repeat_run_within(TaRun& run, const std::string& what)
  * each call that asks for the bound again is answered from the record, and
  * the window counts it as one evaluation without a new best, so the window
  * ends the search after 3 reused calls and eval 18 ("StagnationStop fired
- * at a repeat of eval 16 answered from the search's record, after eval
- * 18"), RESTART relaunches it once from a RANDOM point ("RESTART 1/1 --
+ * at a repeat of eval 16 answered from the run's record, after eval 18;
+ * ... 3 of them call(s) answered from the run's record"), RESTART
+ * relaunches it once from a RANDOM point ("RESTART 1/1 --
  * fresh init from RANDOM"), and the run ends "STOPPED -- stagnation: no new
  * best in 5 evals after 1 restart(s)" after 23 evaluations.
  * Before the fix: the reused calls never reached the window, nothing else
  * stops LD_MMA, and the search spun without an evaluation ("100000000
  * calls of this search have asked again ..."): the run did not return
  * within two minutes (v1-dev, which evaluated every repeat: 26 rows, the
- * same status). */
+ * same status); until the run kept one record (2026-10-12) the line said
+ * "answered from the search's record" and "each repeat answered from the
+ * record counted as one". */
 TEST_CASE("Repeated points: the RESTART window counts a reused repeat",
           "[HPO][termination][repeat_points][restart]")
 {
@@ -977,8 +1048,10 @@ TEST_CASE("Repeated points: the RESTART window counts a reused repeat",
     CHECK(journal.find("RESTART 1/1 -- fresh init from RANDOM") !=
           std::string::npos);
     CHECK(journal.find("StagnationStop fired at a repeat of eval 16 answered "
-                       "from the search's record, after eval 18") !=
+                       "from the run's record, after eval 18") !=
           std::string::npos);
+    CHECK(journal.find("5 evals without improvement, 3 of them call(s) "
+                       "answered from the run's record)") != std::string::npos);
     CHECK(diagnostics_count(journal, "Repeated points reused") == "3");
     CHECK(data_rows("loss.tadah").size() == 23u);
 }
@@ -1010,6 +1083,237 @@ TEST_CASE("Repeated points: the RESTART window ends a search that only "
           std::string::npos);
     CHECK(journal_status(journal) == restarts_used_status(5, 1));
     CHECK(data_rows("loss.tadah").size() == 23u);
+}
+
+/* ======================================================================
+ * One record for the run: a point an earlier search of the run evaluated
+ * is answered from its evaluation (HPO_Host::recorded), whichever phase
+ * asks -- a PRESTAGE refinement, a MULTISTART start, a RESTART round.
+ * ==================================================================== */
+
+namespace {
+
+/* The params.tadah rows whose single parameter is `value`. */
+std::size_t rows_at(double value)
+{
+    std::size_t n = 0;
+    for (const auto& row : data_rows("params.tadah"))
+        if (row.size() == 3 && std::stod(row[2]) == value) ++n;
+    return n;
+}
+
+}  // namespace
+
+/* Pins: a PRESTAGE refinement starts from the exploration's best point,
+ * which the exploration evaluated: on the run whose loss falls towards
+ * SGRID2B (2) = 4, an LN_SBPLX exploration (MAXEVAL 8) finds the bound at
+ * eval 4 and hands it to a DLIB:BFGS refinement (TOPK 1, MAXEVAL 30),
+ * whose first call, the loss of its start, is answered from the run's
+ * record ("DLIB:BFGS asked for the point of eval 4 (SGRID2B[2] = 4), which
+ * an earlier search of the run evaluated: the loss of eval 4 is reused,
+ * without an evaluation"); the refinement evaluates its gradient's stencil
+ * alone ("DLIB:BFGS stopped: FTOL_ABS reached after 2 evaluation(s)"): 10
+ * rows, none repeating another.
+ * Before the fix: the refinement evaluated its start again, its record
+ * being its own: 11 rows, the 9th repeating the 4th, "after 3
+ * evaluation(s)". */
+TEST_CASE("Run record: a PRESTAGE refinement does not evaluate its start "
+          "point again", "[HPO][termination][repeat_points][prestage]")
+{
+    TaRun run(plain_block("    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+                          "    MAXEVAL 30\n    TOPK 1\n"
+                          "    EXPLORE\n      LIB NLOPT\n      ALGO LN_SBPLX\n"
+                          "      MAXEVAL 8\n    ENDEXPLORE\n"),
+              kLowerBoundRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = repeat_run_within(run, "PRESTAGE refinement"));
+    CHECK(status == 0);
+    check_run_files();
+    const std::string journal = read_file("hpo_run.log");
+    INFO("journal:\n" << journal);
+    CHECK(repeated_rows() == 0u);
+    CHECK(data_rows("params.tadah").size() == 10u);
+    CHECK(journal.find("DLIB:BFGS asked for the point of eval 4 (SGRID2B[2] "
+                       "= 4), which an earlier search of the run evaluated: "
+                       "the loss of eval 4 is reused, without an evaluation") !=
+          std::string::npos);
+    CHECK(journal.find("DLIB:BFGS stopped: FTOL_ABS reached after 2 "
+                       "evaluation(s)") != std::string::npos);
+}
+
+/* Pins: MULTISTART starts reach points an earlier start evaluated: two
+ * DLIB:BFGS starts (INIT LHS 2, SEED 3; BUDGET_PER_START 30, FTOL_ABS
+ * 1e-12) on the run whose loss falls towards SGRID2B (2) = 4 both end at
+ * the bound. Start 1 evaluates it (eval 7) and its one-sided stencil;
+ * start 2's line-search trial clamped onto 4 is answered from the run's
+ * record ("DLIB:BFGS asked for the point of eval 7 (SGRID2B[2] = 4), which
+ * an earlier search of the run evaluated"), so the bound is evaluated once
+ * (one params row at 4). Start 2 evaluates its own gradient's stencil
+ * there (the gradients are each search's: 2 rows repeat start 1's
+ * stencil). BUDGET_PER_START charges each start its own evaluations: 9 and
+ * 14 "eval(s) consumed", the run's 23 rows.
+ * Before the fix: each start evaluated the bound (two rows at 4, 3 rows
+ * repeating another, 24 rows). */
+TEST_CASE("Run record: a MULTISTART start does not evaluate a point an "
+          "earlier start evaluated",
+          "[HPO][termination][repeat_points][multistart]")
+{
+    TaRun run("OPTIMIZER\n"
+              "  INIT\n    METHOD LHS 2\n    SEED 3\n  ENDINIT\n"
+              "  STRATEGY\n"
+              "    TYPE MULTISTART\n    LIB DLIB\n    ALGO BFGS\n"
+              "    N_STARTS 2\n    BUDGET_PER_START 30\n"
+              "    FTOL_ABS 1e-12\n"
+              "  ENDSTRATEGY\n"
+              "ENDOPTIMIZER\n",
+              kLowerBoundRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = repeat_run_within(run, "MULTISTART starts"));
+    CHECK(status == 0);
+    check_run_files();
+    const std::string journal = read_file("hpo_run.log");
+    INFO("journal:\n" << journal);
+    CHECK(rows_at(4.0) == 1u);
+    CHECK(repeated_rows() == 2u);
+    CHECK(data_rows("loss.tadah").size() == 23u);
+    CHECK(journal.find("DLIB:BFGS asked for the point of eval 7 (SGRID2B[2] = "
+                       "4), which an earlier search of the run evaluated") !=
+          std::string::npos);
+    CHECK(journal.find("MULTISTART start 1/2 done: 9 eval(s) consumed") !=
+          std::string::npos);
+    CHECK(journal.find("MULTISTART start 2/2 done: 14 eval(s) consumed") !=
+          std::string::npos);
+}
+
+/* Pins: a RESTART round that starts where round 0 started takes round 0's
+ * path, every point of which the run has: LN_SBPLX on the run whose loss
+ * falls towards SGRID2B (2) = 4, with RESTART { AFTER_STAGNATION 5, MAX 1,
+ * METHOD CONFIG } as its only stop, stagnates at eval 9 and restarts from
+ * the configuration's point; round 1's calls are answered from the record
+ * ("NLOPT:LN_SBPLX asked for the point of eval 1 (SGRID2B[2] = 5), which an
+ * earlier search of the run evaluated"), so the window ends it after 5
+ * calls without an evaluation ("StagnationStop fired at a repeat of eval 5
+ * answered from the run's record, after eval 9; ... (threshold=5 evals
+ * without improvement, 5 of them call(s) answered from the run's
+ * record)"), and the run ends "STOPPED -- stagnation: no new best in 5
+ * evals after 1 restart(s)" with round 0's 9 evaluations, none repeated,
+ * DIAGNOSTICS "Repeated points reused : 5".
+ * Before the fix: round 1 evaluated round 0's first 5 points again: 14
+ * rows, 5 of them repeating earlier ones. */
+TEST_CASE("Run record: a RESTART round does not evaluate an earlier round's "
+          "points again", "[HPO][termination][repeat_points][restart]")
+{
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                          "    RESTART\n      AFTER_STAGNATION 5\n"
+                          "      MAX 1\n      METHOD CONFIG\n"
+                          "    ENDRESTART\n"),
+              kLowerBoundRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = repeat_run_within(run, "RESTART from CONFIG"));
+    CHECK(status == 0);
+    check_run_files();
+    const std::string journal = read_file("hpo_run.log");
+    INFO("journal:\n" << journal);
+    CHECK(journal_status(journal) == restarts_used_status(5, 1));
+    CHECK(journal.find("RESTART 1/1 -- fresh init from CONFIG") !=
+          std::string::npos);
+    CHECK(repeated_rows() == 0u);
+    CHECK(data_rows("loss.tadah").size() == 9u);
+    CHECK(journal.find("NLOPT:LN_SBPLX asked for the point of eval 1 "
+                       "(SGRID2B[2] = 5), which an earlier search of the run "
+                       "evaluated") != std::string::npos);
+    CHECK(journal.find("StagnationStop fired at a repeat of eval 5 answered "
+                       "from the run's record, after eval 9; ") !=
+          std::string::npos);
+    CHECK(journal.find("(threshold=5 evals without improvement, 5 of them "
+                       "call(s) answered from the run's record)") !=
+          std::string::npos);
+    CHECK(diagnostics_count(journal, "Repeated points reused") == "5");
+}
+
+/* Pins: a PRESTAGE under RESTART { AFTER_STAGNATION 3, MAX 1, METHOD
+ * CONFIG } whose round-1 exploration (LN_SBPLX, MAXEVAL 6, from the
+ * configuration's point) takes round 0's path: its first three calls are
+ * answered from the record, and the window ends it there ("StagnationStop
+ * fired at a repeat of eval 3 answered from the run's record, after eval
+ * 8"); the points those calls stand for are its candidates, so the DLIB:BFGS
+ * refinement (TOPK 1) refines one of them, SGRID2B (2) = 4.5 ("DLIB:BFGS
+ * asked for the point of eval 3 (SGRID2B[2] = 4.5), which an earlier search
+ * of the run evaluated"); both rounds refine ("REFINEMENT: refining top-1"
+ * twice), the run ends "STOPPED -- stagnation: no new best in 3 evals after
+ * 1 restart(s)" after 10 evaluations, none repeated, and no exploration is
+ * an error for asking for no point.
+ * Before the fix: round 1's exploration evaluated round 0's points again:
+ * 15 rows, 5 of them repeating earlier ones. (With the run's record but
+ * without its reused calls as candidates, that exploration would make no
+ * evaluation and leave the refinement no candidate.) */
+TEST_CASE("Run record: a PRESTAGE exploration answered from the record "
+          "still hands its candidates on",
+          "[HPO][termination][repeat_points][prestage][restart]")
+{
+    TaRun run(plain_block("    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+                          "    MAXEVAL 40\n    TOPK 1\n"
+                          "    EXPLORE\n      LIB NLOPT\n      ALGO LN_SBPLX\n"
+                          "      MAXEVAL 6\n    ENDEXPLORE\n"
+                          "    RESTART\n      AFTER_STAGNATION 3\n"
+                          "      MAX 1\n      METHOD CONFIG\n"
+                          "    ENDRESTART\n"),
+              kLowerBoundRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = repeat_run_within(run, "PRESTAGE under RESTART"));
+    CHECK(status == 0);
+    check_run_files();
+    const std::string journal = read_file("hpo_run.log");
+    INFO("journal:\n" << journal);
+    CHECK(journal.find("RESTART 1/1 -- fresh init from CONFIG") !=
+          std::string::npos);
+    CHECK(journal.find("StagnationStop fired at a repeat of eval 3 answered "
+                       "from the run's record, after eval 8") !=
+          std::string::npos);
+    CHECK(journal.find("DLIB:BFGS asked for the point of eval 3 (SGRID2B[2] = "
+                       "4.5), which an earlier search of the run evaluated") !=
+          std::string::npos);
+    CHECK(count_of(journal, "REFINEMENT: refining top-1") == 2u);
+    CHECK(journal.find("asked for no point") == std::string::npos);
+    CHECK(repeated_rows() == 0u);
+    CHECK(data_rows("loss.tadah").size() == 10u);
+    CHECK(journal_status(journal) == restarts_used_status(3, 1));
+}
+
+/* Pins: the same run with TOPK 5: round 1's exploration answers its three
+ * calls from the record and has 3 candidates, which the journal counts
+ * ("PRESTAGE: 3 usable candidate(s) for TOPK 5 (the exploration made 0
+ * evaluation(s), 0 without a usable loss, and answered 3 call(s) from the
+ * run's record of earlier evaluations); refining 3"), and the refinement
+ * refines those 3.
+ * Before the fix: round 1's exploration evaluated its three points again
+ * ("... (the exploration made 3 evaluation(s), 0 without a usable loss);
+ * refining 3"). */
+TEST_CASE("Run record: a PRESTAGE exploration's calls answered from the "
+          "record are counted among its candidates",
+          "[HPO][termination][repeat_points][prestage][restart]")
+{
+    TaRun run(plain_block("    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+                          "    MAXEVAL 40\n    TOPK 5\n"
+                          "    EXPLORE\n      LIB NLOPT\n      ALGO LN_SBPLX\n"
+                          "      MAXEVAL 6\n    ENDEXPLORE\n"
+                          "    RESTART\n      AFTER_STAGNATION 3\n"
+                          "      MAX 1\n      METHOD CONFIG\n"
+                          "    ENDRESTART\n"),
+              kLowerBoundRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = repeat_run_within(run, "PRESTAGE TOPK 5"));
+    CHECK(status == 0);
+    check_run_files();
+    const std::string journal = read_file("hpo_run.log");
+    INFO("journal:\n" << journal);
+    CHECK(journal.find("PRESTAGE: 3 usable candidate(s) for TOPK 5 (the "
+                       "exploration made 0 evaluation(s), 0 without a usable "
+                       "loss, and answered 3 call(s) from the run's record of "
+                       "earlier evaluations); refining 3") !=
+          std::string::npos);
+    CHECK(count_of(journal, "REFINEMENT: refining top-3") == 1u);
+    CHECK(journal_status(journal) == restarts_used_status(3, 1));
 }
 
 TEST_CASE("Two runs in one process: each journal carries its own "
@@ -1690,14 +1994,26 @@ TEST_CASE("Termination: under PRESTAGE, RESTART re-runs exploration and "
 
     /* One stagnation stop per phase, seed and round -- exploration, seed 1,
      * seed 2, exploration, seed 1, seed 2 -- each a full window after the
-     * previous. */
-    const auto stops = stagnation_stops(journal);
+     * previous: 4 calls without a new best, evaluations or calls answered
+     * from the run's record (a refinement seed's start, a point the
+     * exploration evaluated, is one: the four seeds' starts among them).
+     * Until the run kept one record (2026-10-12) each window was 4
+     * evaluations: every seed evaluated its start again. */
+    const auto stops = stagnation_windows(journal);
     REQUIRE(stops.size() == 6u);
+    std::size_t reused = 0;
     for (std::size_t i = 1; i < stops.size(); ++i) {
-        INFO("stagnation stop " << i << " at eval " << stops[i].first
-             << ", previous at " << stops[i - 1].first);
-        CHECK(stops[i].first >= stops[i - 1].first + 4);
+        INFO("stagnation stop " << i << " at eval " << stops[i].eval << " ("
+             << stops[i].reused << " call(s) answered from the record), "
+             << "previous at " << stops[i - 1].eval);
+        CHECK(stops[i].eval - stops[i - 1].eval + stops[i].reused >= 4);
+        reused += stops[i].reused;
     }
+    CHECK(reused >= 1u);
+    /* Each of the four refinement seeds starts at a point the exploration
+     * evaluated, answered from the run's record. */
+    CHECK(count_of(journal, "which an earlier search of the run evaluated") ==
+          4u);
     CHECK(count_of(journal, "REFINEMENT: refining top-2") == 2u);
     check_run_files();
 }
@@ -2333,11 +2649,15 @@ TEST_CASE("Termination: a restarted seeded optimiser draws new points",
              it != std::sregex_iterator(); ++it)
             seeds.push_back((*it)[1]);
         CHECK(seeds == std::vector<std::string>{"5", "6", "7"});
-        /* The RESTART line names the derived seed. */
-        CHECK(journal.find("RESTART 1/2 -- fresh init from RANDOM; SEED 6\n")
-              != std::string::npos);
-        CHECK(journal.find("RESTART 2/2 -- fresh init from RANDOM; SEED 7\n")
-              != std::string::npos);
+        /* The RESTART line names the seed the round's point was drawn with
+         * (the RESTART block has none: S + r, S drawn from
+         * std::random_device) and the derived seed; until 2026-10-12 it
+         * named only the derived seed ("RESTART 1/2 -- fresh init from
+         * RANDOM; SEED 6"). */
+        CHECK(journal.find(drawn_round_line(journal, 1, 2, "RANDOM",
+                                            "SEED 6")) != std::string::npos);
+        CHECK(journal.find(drawn_round_line(journal, 2, 2, "RANDOM",
+                                            "SEED 7")) != std::string::npos);
 
         const auto stops = stagnation_stops(journal);
         REQUIRE(stops.size() == 3u);
@@ -2418,13 +2738,23 @@ RestartRounds run_restart_rounds(const std::string& restart_seed)
 
 }  // namespace
 
+/* The RESTART block's SEED used to be ignored: every restart drew its
+ * point from std::random_device, so no run with RESTART could be repeated.
+ * Round r now draws it with SEED + r, next to the optimiser seeds RESTART
+ * derives for the round (SEED 5 + r here), from a stream of its own.
+ * Pins: with RESTART SEED 42 (METHOD RANDOM 1, MAX 2) the journal names
+ * RESTART SEED 43 and 44 for rounds 1 and 2; round 0 is the run SEED 5
+ * makes without RESTART; round r starts at the point a run with RESTART
+ * SEED 41 starts its round r + 1 from (both drawn with 42 + r), which is
+ * not the point an INIT block's METHOD RANDOM 1 draws with SEED 42 + r, and
+ * then draws the points of the derived SEED 5 + r; the whole run repeats.
+ * Before the fix: round r started at the INIT block's point for SEED 42 +
+ * r (the RANDOM method drew std::mt19937_64(SEED + r) in both blocks, so a
+ * round whose RESTART SEED + r was an INIT block's SEED started where that
+ * block's round 0 did). */
 TEST_CASE("Termination: a RESTART SEED draws restart round r's points with "
           "SEED + r", "[HPO][termination][restart][seed]")
 {
-    /* The RESTART block's SEED used to be ignored: every restart drew its
-     * point from std::random_device, so no run with RESTART could be
-     * repeated. Round r now draws it with SEED + r, next to the optimiser
-     * seeds RESTART derives for the round (SEED 5 + r here). */
     const std::string seed_line = "      SEED 42\n";
     const auto a = run_restart_rounds(seed_line);
     CHECK(a.journal.find("RESTART 1/2 -- fresh init from RANDOM; "
@@ -2436,11 +2766,15 @@ TEST_CASE("Termination: a RESTART SEED draws restart round r's points with "
     CHECK(a.rounds[0] ==
           reference_points(random_search_block(a.rounds[0].size(), 5, "")));
 
+    /* A run whose round r + 1 draws with 41 + (r + 1) = 42 + r. */
+    const auto shifted = run_restart_rounds("      SEED 41\n");
     for (std::uint64_t r = 1; r < a.rounds.size(); ++r) {
         INFO("round " << r << ": " << a.rounds[r].size() << " evaluation(s)");
-        /* The round starts at the point an INIT block's METHOD RANDOM 1
-         * draws with SEED 42 + r ... */
-        const auto start = reference_points(
+        if (r + 1 < shifted.rounds.size())
+            CHECK(a.rounds[r].front() == shifted.rounds[r + 1].front());
+        /* ... not the point an INIT block's METHOD RANDOM 1 draws with
+         * SEED 42 + r ... */
+        const auto init_point = reference_points(
             "OPTIMIZER\n"
             "  INIT\n    METHOD RANDOM 1\n"
             "    SEED " + std::to_string(42 + r) + "\n  ENDINIT\n"
@@ -2449,8 +2783,8 @@ TEST_CASE("Termination: a RESTART SEED draws restart round r's points with "
             "    MAXEVAL 1\n    SEED 5\n"
             "  ENDSTRATEGY\n"
             "ENDOPTIMIZER\n");
-        REQUIRE(start.size() == 1u);
-        CHECK(a.rounds[r].front() == start.front());
+        REQUIRE(init_point.size() == 1u);
+        CHECK(a.rounds[r].front() != init_point.front());
         /* ... and then draws the points of the derived SEED 5 + r. */
         const auto ref = reference_points(
             random_search_block(a.rounds[r].size(), 5 + r, ""));
@@ -2690,23 +3024,49 @@ TEST_CASE("Termination: METHOD SOBOL K starts the INIT round and each "
     CHECK(rounds[2].front() == sobol_point(3 * 44));   // restart 2
 }
 
+/* Without a SEED in the RESTART block the restart points come from
+ * std::random_device: one draw per run, S, at the first restart; round r
+ * draws with S + r, as a block with SEED S does, and the journal names S.
+ * Pins: two runs without a RESTART SEED (METHOD RANDOM 1, MAX 2) each
+ * journal "RESTART: the RESTART block has no SEED, so its restart points
+ * are drawn from std::random_device: restart r draws with S + r (SEED S in
+ * the RESTART block draws the same points again)" and the round lines
+ * "RESTART 1/2 -- fresh init from RANDOM; RESTART SEED <S + 1>, SEED 6"
+ * and "... 2/2 ...; RESTART SEED <S + 2>, SEED 7"; their S differ, and so do
+ * their restart points; round 0 and the drawn points still follow SEED 5 +
+ * r; a run with SEED S in its RESTART block starts its rounds at the same
+ * points.
+ * Before the fix: no such line; each round drew std::random_device() + r
+ * and the round lines named only the optimiser seeds ("RESTART 1/2 --
+ * fresh init from RANDOM; SEED 6"), so a run's restart points could not be
+ * drawn again. */
 TEST_CASE("Termination: without a RESTART SEED the restart points come from "
-          "std::random_device", "[HPO][termination][restart][seed]")
+          "std::random_device, and the journal names the seed",
+          "[HPO][termination][restart][seed]")
 {
-    /* The documented default: without a SEED in the RESTART block each
-     * restart draws its point from std::random_device, and the journal's
-     * RESTART line lists only the optimiser seeds. Round 0 and the drawn
-     * points still follow SEED 5 + r. */
     const auto a = run_restart_rounds("");
     const auto b = run_restart_rounds("");
     for (const auto* run : {&a, &b}) {
-        CHECK(run->journal.find("RESTART 1/2 -- fresh init from RANDOM; "
-                                "SEED 6\n") != std::string::npos);
-        CHECK(run->journal.find("RESTART SEED") == std::string::npos);
+        INFO("journal:\n" << run->journal);
+        REQUIRE(drawn_restart_seed(run->journal));
+        CHECK(run->journal.find(drawn_round_line(run->journal, 1, 2, "RANDOM",
+                                                 "SEED 6")) !=
+              std::string::npos);
+        CHECK(run->journal.find(drawn_round_line(run->journal, 2, 2, "RANDOM",
+                                                 "SEED 7")) !=
+              std::string::npos);
     }
+    REQUIRE(drawn_restart_seed(a.journal));
+    CHECK(drawn_restart_seed(a.journal) != drawn_restart_seed(b.journal));
     CHECK(a.rounds[0] == b.rounds[0]);
     CHECK(a.rounds[1].front() != b.rounds[1].front());
     CHECK(a.rounds[2].front() != b.rounds[2].front());
+
+    /* The SEED the journal names draws the same restart points. */
+    const auto again = run_restart_rounds(
+        "      SEED " + std::to_string(*drawn_restart_seed(a.journal)) + "\n");
+    CHECK(again.rounds[1].front() == a.rounds[1].front());
+    CHECK(again.rounds[2].front() == a.rounds[2].front());
 }
 
 TEST_CASE("RESTART: a SEED no METHOD of the chain draws from is reported at "
@@ -2775,8 +3135,11 @@ TEST_CASE("Termination: a restarted seeded exploration draws a new "
         CHECK(status == 0);
         const std::string journal = read_file("hpo_run.log");
         REQUIRE(journal.find("RESTART 1/1") != std::string::npos);
-        CHECK(journal.find("RESTART 1/1 -- fresh init from RANDOM; "
-                           "EXPLORE SEED 1718\n") != std::string::npos);
+        /* Until 2026-10-12 without "RESTART SEED <S + 1>, " (S drawn from
+         * std::random_device, now named). */
+        CHECK(journal.find(drawn_round_line(journal, 1, 1, "RANDOM",
+                                            "EXPLORE SEED 1718")) !=
+              std::string::npos);
         CHECK(count_of(journal, "REFINEMENT: refining top-1") == 2u);
 
         /* One stagnation stop per round, in its refinement: round 1's
@@ -2827,10 +3190,12 @@ TEST_CASE("Termination: the MULTISTART starts of a restarted run never "
     const std::string journal = read_file("hpo_run.log");
     REQUIRE(journal_status(journal) ==
             restarts_used_status(3, 2));
-    CHECK(journal.find("RESTART 1/2 -- fresh init from RANDOM; SEED 13\n")
-          != std::string::npos);
-    CHECK(journal.find("RESTART 2/2 -- fresh init from RANDOM; SEED 16\n")
-          != std::string::npos);
+    /* Until 2026-10-12 without "RESTART SEED <S + r>, " (S drawn from
+     * std::random_device, now named). */
+    CHECK(journal.find(drawn_round_line(journal, 1, 2, "RANDOM", "SEED 13")) !=
+          std::string::npos);
+    CHECK(journal.find(drawn_round_line(journal, 2, 2, "RANDOM", "SEED 16")) !=
+          std::string::npos);
 
     check_start_seeds(journal, 10, 3, 3);
     check_run_files();
@@ -2988,10 +3353,12 @@ TEST_CASE("Termination: a restarted NLopt run with an INIT SEED draws from "
         const std::string journal = read_file("hpo_run.log");
         REQUIRE(journal_status(journal) ==
                 restarts_used_status(6, 2));
-        CHECK(journal.find("RESTART 1/2 -- fresh init from RANDOM; "
-                           "SEED 1718\n") != std::string::npos);
-        CHECK(journal.find("RESTART 2/2 -- fresh init from RANDOM; "
-                           "SEED 1719\n") != std::string::npos);
+        /* Until 2026-10-12 without "RESTART SEED <S + r>, " (S drawn from
+         * std::random_device, now named). */
+        CHECK(journal.find(drawn_round_line(journal, 1, 2, "RANDOM",
+                                            "SEED 1718")) != std::string::npos);
+        CHECK(journal.find(drawn_round_line(journal, 2, 2, "RANDOM",
+                                            "SEED 1719")) != std::string::npos);
 
         const auto stops = stagnation_stops(journal);
         REQUIRE(stops.size() == 3u);
