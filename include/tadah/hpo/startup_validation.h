@@ -17,7 +17,10 @@ namespace hpo {
  *  kernel, whose basis vectors training draws from the data
  *  (mlip::model_weight_count). A configuration whose model does not
  *  build throws (the construction error; models::DensityFormError for an
- *  invalid DM_REAM density): every evaluation would fail on it. */
+ *  invalid DM_REAM density), and so does one whose fit draws basis
+ *  vectors (mlip::fit_draws_basis: a non-linear M_KRR kernel, or M_KRR
+ *  implementation 2 with any kernel) without an SBASIS it takes
+ *  (mlip::checked_sbasis): every evaluation would fail on it. */
 std::size_t derive_weight_count(const core::Context &train_ctx);
 
 /** Raw DM_REAM embedding value at zero density, F_raw(0) = sum_m w_m g_m(0),
@@ -108,6 +111,8 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
  *     (asa_probe_box_error);
  *   - FIXINDEX/FIXWEIGHT pairing: lone key, size mismatch, out-of-bounds
  *     index (via mlip::classify_weight_source);
+ *   - a training DBFILE lists each dataset once
+ *     (mlip::require_distinct_training_datasets);
  *   - no training DBFILE: FIXINDEX must cover every model weight;
  *   - at least one loss source must be declared (validation metrics,
  *     PC_OBSERVABLE, or PC_LAMMPS);
