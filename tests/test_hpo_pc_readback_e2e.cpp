@@ -45,6 +45,10 @@
 //     hpo_tadah_cli_pc_lammps_local_search, the same harness): a PC_LAMMPS
 //     run with an NLopt MLSL or AUGLAG whose INNER search is derivative-free
 //     starts and ends normally.
+//   - [.tadah_cli_pc_lammps_verbose] (CTest entry
+//     hpo_tadah_cli_pc_lammps_verbose, the same harness): the potential a
+//     PC_LAMMPS script runs follows the run's VERBOSE (-v 0: a kernel
+//     model prints no line when it is built for the script).
 
 #include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 
@@ -1598,8 +1602,10 @@ namespace {
 
 /* `tadah hpo` in its own directory @p dir under PC_ISOLATION @p mode, with
  * the hpotarget @p target (PC_ISOLATION appended), the script readback.in
- * = @p script and each of @p more_scripts (name, text), and the environment
- * assignments @p env ("TMPDIR=notadir"); returns the wait status. tadah runs without TADAH_PC_ISOLATION, which would override the
+ * = @p script and each of @p more_scripts (name, text), the environment
+ * assignments @p env ("TMPDIR=notadir"), the -c configuration's model keys
+ * @p model_keys (after its DBFILE line) and the further command-line
+ * arguments @p cli_args ("-v 0"); returns the wait status. tadah runs without TADAH_PC_ISOLATION, which would override the
  * hpotarget's PC_ISOLATION (src/hpo.cpp) -- a developer where socketpair
  * is blocked is told to set it to THREAD -- so @p mode is the mode it runs
  * in, as each case checks in its journal. */
@@ -1607,14 +1613,16 @@ int run_tadah_hpo(
         const char* bin, const fs::path& dir, const std::string& mode,
         const std::string& target, const std::string& script,
         const std::vector<std::pair<std::string, std::string>>& more_scripts,
-        const std::string& env = "") {
+        const std::string& env = "",
+        const std::string& model_keys = kTaModelKeys,
+        const std::string& cli_args = "") {
     fs::create_directories(dir);
     write_minimal_ta_dbfile(dir / "train.db", 0.0);
     write_minimal_ta_dbfile(dir / "val.db", 0.07, -0.04);
     std::ofstream(dir / "config.val") << "DBFILE " << (dir / "val.db").string()
                                       << "\n";
     std::ofstream(dir / "config") << "DBFILE " << (dir / "train.db").string()
-                                  << "\n" << kTaModelKeys;
+                                  << "\n" << model_keys;
     std::ofstream(dir / "readback.in") << script;
     for (const auto& s : more_scripts) std::ofstream(dir / s.first) << s.second;
     std::ofstream(dir / "config.hpo") << target << "PC_ISOLATION " << mode
@@ -1632,7 +1640,8 @@ int run_tadah_hpo(
         "cd '" + dir.string() + "' && " +
         (launcher && *launcher ? std::string(launcher) + " " : std::string()) +
         "env -u TADAH_PC_ISOLATION " + env + " '" + bin +
-        "' hpo -c config --hpotarget config.hpo --validation config.val"
+        "' hpo -c config --hpotarget config.hpo --validation config.val" +
+        (cli_args.empty() ? std::string() : " " + cli_args) +
         " > tadah.stdout 2> tadah.stderr";
     return std::system(cmd.c_str());
 }
@@ -2133,4 +2142,90 @@ TEST_CASE("tadah hpo: PC_LAMMPS with an MLSL or AUGLAG whose local search "
         CHECK(tadah::hpo::loss_is_feasible(v, 1e16));
     }
     CHECK(read_table(dir / "best_loss.tadah").rows.size() >= 1);
+}
+
+namespace {
+
+/* The lines of the file @p p that contain @p needle. */
+std::size_t count_lines_with(const fs::path& p, const std::string& needle) {
+    std::ifstream in(p);
+    std::size_t n = 0;
+    for (std::string line; std::getline(in, line);)
+        if (line.find(needle) != std::string::npos) ++n;
+    return n;
+}
+
+/* M_KRR Kern_RBF 1 on the minimal Ta data of kTaModelKeys (the four atoms
+ * of the training structure give its SBASIS 2 basis vectors), and no
+ * VERBOSE line: the run's verbosity is the command line's -v. */
+constexpr const char* kTaKernelModelKeys =
+    "ATOM Ta\nWATOM 1\nINIT2B true\nINITMB false\n"
+    "TYPE2B D2_BP 2 2 Ta Ta\nCGRID2B 0.5 1.4\nSGRID2B 3.0 5.0\n"
+    "RCTYPE2B Cut_Cos\nRCUT2B 5.0\nFORCE false\nSTRESS false\n"
+    "BIAS false\nNORM false\nMODEL M_KRR Kern_RBF 1\nMPARAMS 1.0\n"
+    "SBASIS 2\nLAMBDA 1e-3\nOALGO 1\n";
+
+}  // namespace
+
+/* Pins, through the built tadah: the potential a PC_LAMMPS script runs
+ * (pair_coeff * * EXTERN Ta) is built at the run's VERBOSE, as the trainer
+ * is. A Kern_RBF prints its line, "Kern_RBF | sigma: ... | gamma: ...",
+ * when it is built at VERBOSE 1 or more. M_KRR Kern_RBF 1, RANDOM MAXEVAL
+ * 3, a configuration without VERBOSE (kTaKernelModelKeys):
+ *   - -v 0 under PC_ISOLATION THREAD and PROCESS (THREAD alone in the MPI
+ *     build): exit 0, the journal names the mode, loss.tadah has the three
+ *     evaluations, and tadah's stdout has no "Kern_RBF |" line;
+ *   - -v 1 under THREAD: exit 0, and tadah's stdout has "Kern_RBF |"
+ *     lines (the line the -v 0 legs look for reaches tadah's stdout).
+ * Before the fix: under -v 0 tadah's stdout had one "Kern_RBF |" line per
+ * evaluation, 3, in both modes: the host took the run's inputs, VERBOSE
+ * among them, out of the context the PC_LAMMPS potential is built from,
+ * and a context without VERBOSE builds the kernel at the blueprint default
+ * 1. The -v 1 leg passes as well (a pin). */
+TEST_CASE("tadah hpo: the PC_LAMMPS potential is built at the run's VERBOSE",
+          "[pc_lammps_verbose][tadah_cli][.tadah_cli_pc_lammps_verbose]") {
+    const char* bin = std::getenv("TADAH_BINARY");
+    if (!bin || !*bin)
+        TADAH_SKIP("TADAH_BINARY is not set: it names the built tadah "
+                   "executable");
+    REQUIRE(fs::exists(bin));
+    tadah::core::PeriodicTable::initialize();
+    ScratchDir sd("tadah_cli_pc_verbose_");
+    const std::string target =
+        "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB TADAH\n"
+        "    ALGO RANDOM\n    MAXEVAL 3\n    SEED 1234\n  ENDSTRATEGY\n"
+        "ENDOPTIMIZER\nLOSS L2\nFAILSCORE 1e16\nPC_ERMSE 0 1\n"
+        "OPTIM CGRID2B (1) 0.0 4.0\n"
+        "PC_LAMMPS --script readback.in --varloss E 0 1\n";
+    const std::string script = ta_script("3.301", "variable E equal pe\n");
+#ifdef TADAH_HPO_MPI
+    const std::vector<std::string> modes{"THREAD"};
+#else
+    const std::vector<std::string> modes{"THREAD", "PROCESS"};
+#endif
+    for (const std::string& mode : modes) {
+        INFO("-v 0, PC_ISOLATION " << mode);
+        const fs::path dir = sd.dir / ("v0_" + mode);
+        const int rc = run_tadah_hpo(bin, dir, mode, target, script, {}, "",
+                                     kTaKernelModelKeys, "-v 0");
+        INFO(read_text(dir / "tadah.stderr"));
+        const std::string journal = read_text(dir / "hpo_run.log");
+        INFO(journal);
+        REQUIRE(WIFEXITED(rc));
+        CHECK(WEXITSTATUS(rc) == 0);
+        CHECK_THAT(journal, Catch::Contains("PC_ISOLATION: " + mode));
+        CHECK(read_table(dir / "loss.tadah").rows.size() == 3);
+        INFO(read_text(dir / "tadah.stdout"));
+        CHECK(count_lines_with(dir / "tadah.stdout", "Kern_RBF |") == 0);
+    }
+    {
+        INFO("-v 1, PC_ISOLATION THREAD");
+        const fs::path dir = sd.dir / "v1_THREAD";
+        const int rc = run_tadah_hpo(bin, dir, "THREAD", target, script, {},
+                                     "", kTaKernelModelKeys, "-v 1");
+        INFO(read_text(dir / "tadah.stderr"));
+        REQUIRE(WIFEXITED(rc));
+        CHECK(WEXITSTATUS(rc) == 0);
+        CHECK(count_lines_with(dir / "tadah.stdout", "Kern_RBF |") > 0);
+    }
 }
