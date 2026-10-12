@@ -43,7 +43,7 @@ optimiser status, the `NaN/Inf clampings` and `Evaluations that threw`
 counts of `hpo_run.log`, which must not exceed the fingerprint's
 `nan_clampings_max` and `threw_max`, 0 unless
 `tools/tolerance_overrides.json` allows more, and for 25 and 26 lines
-that `hpo_run.log` must contain: 25's six band-A graded failures, 26's
+that `hpo_run.log` must contain: 25's eight band-A graded failures, 26's
 worker processes and hard deadline). Use `--example=NN` to check a single example or
 `--check-only` to skip the re-run. With `TADAH_PC_ISOLATION=THREAD` set
 (for environments that block the worker socket) 26's journal checks are
