@@ -32,7 +32,14 @@ All hunks are fenced with `/* TADAH-PATCH begin */ ... /* TADAH-PATCH end */`
 (grep for `TADAH-PATCH`). The annealing algorithm itself is untouched.
 `asa.c`, like the other upstream files, keeps upstream's CRLF line endings:
 edit it without converting them, so that the diff of a patch shows only its
-hunks and `git blame` keeps crediting the rest to the vendoring.
+hunks and `git blame` keeps crediting the rest to the vendoring. HPO's
+`.gitattributes` unsets `text` for the six upstream files (`asa.c`, `asa.h`,
+`asa_usr_asa.h`, `ASA-LICENSE`, `ASA-NOTES`, `ASA-README.txt`), so git converts
+none of their line endings whatever `core.autocrlf` or a global attributes file
+asks for; an editor can still convert them. `hpo_vendored_asa_line_endings`
+fails when a line of one of them does not end in CRLF, and
+`hpo_vendored_asa_gitattributes` when git would store them otherwise
+(`tests/check_vendored_asa.py`).
 
 1. **Hook include + layout check** (top of file, after `#include "asa.h"`,
    under `#if ASA_PARALLEL`): includes `tadah_asa_hook.h` and

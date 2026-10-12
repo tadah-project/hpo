@@ -18,12 +18,15 @@
 
 namespace tadah::hpo {
 
+/** \brief An NLopt version, as nlopt::version() reports it. */
 struct NloptVersion {
-    int major;
-    int minor;
-    int bugfix;
+    int major;   ///< NLopt's major version
+    int minor;   ///< NLopt's minor version
+    int bugfix;  ///< NLopt's bugfix version
 };
 
+/** \brief The NLopt version HPO's NLopt refusals and pinned NLopt
+ *  behaviour were measured on (see the comment at the top of this file). */
 inline constexpr NloptVersion kNloptTestedVersion{2, 10, 0};
 
 }  // namespace tadah::hpo

@@ -7,7 +7,12 @@ a `REFINE` block or the `OPTIMIZER` block itself names it), at `ENDEXPLORE` for 
 and at `ENDINNER` for an `INNER` block. The refusal is
 the entry of the refusal table in `src/optimizer_caps.cpp` (`backend_refusal()`, `optimizer_caps.h`). It is
 tied to **NLopt v2.10.0** (`CMakeLists.txt` fetches `GIT_TAG v2.10.0`; offline builds use `deps/nlopt`):
-before an NLopt upgrade lifts it, run the repro below on the new version.
+before an NLopt upgrade lifts it, run the repro below on the new version. The version is recorded once, as
+`tadah::hpo::kNloptTestedVersion` (`include/tadah/hpo/nlopt_tested_version.h`), the version of every NLOPT
+entry of the refusal table and of the NLopt behaviour HPO pins: a build against another NLopt
+(`FETCHCONTENT_SOURCE_DIR_NLOPT`, a new `GIT_TAG`) fails the test case "the NLopt HPO is built against is the
+version its NLopt refusals were measured on" (`tests/test_nlopt_version.cpp`), which names this document.
+Change the constant only after the repros.
 
 ## What happened
 
