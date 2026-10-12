@@ -204,7 +204,7 @@ if(TADAH_HPO_MPI)
 endif()
 set(_hpo_tadah_cli_cases seed_anchor_warm seed_anchor_nlopt durable_exit
                          pc_readback pc_lammps_local_search pc_lammps_verbose
-                         kernel_line_once)
+                         kernel_line_once kernel_line_two_runs)
 foreach(_case IN LISTS _hpo_tadah_cli_cases)
     add_test(NAME hpo_tadah_cli_${_case}
         COMMAND test_hpo "[.tadah_cli_${_case}]" --warn NoTests)

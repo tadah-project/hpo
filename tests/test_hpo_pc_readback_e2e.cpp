@@ -51,8 +51,12 @@
 //     model prints no line when it is built for the script).
 //   - [.tadah_cli_kernel_line_once] (CTest entry
 //     hpo_tadah_cli_kernel_line_once, the same harness): at -v 1 a kernel's
-//     settings line is printed once per run (and once in each PROCESS
-//     worker), not once per model the run builds.
+//     settings line is printed once per run, not once per model the run
+//     builds, under PC_ISOLATION THREAD and PROCESS.
+//   - [.tadah_cli_kernel_line_two_runs] (CTest entry
+//     hpo_tadah_cli_kernel_line_two_runs, the built tadah on a task file):
+//     each of two TASK hpo blocks prints the settings line of its own -c
+//     model once.
 
 #include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 
@@ -2314,12 +2318,14 @@ long process_workers(const std::string& journal) {
  *     tadah's stdout has exactly one "Kern_RBF |" line, the -c model's
  *     settings;
  *   - PC_ISOLATION PROCESS (not in the MPI build, which has no workers):
- *     exit 0, four evaluations, and one line from tadah plus one from each
- *     worker process (the journal's "execute in N persistent worker
- *     processes"): a worker is a process of its own, which builds the
- *     potentials of its tasks.
- * Before the fix: 9 lines in both modes, one at startup and two per
- * evaluation (its model and its PC_LAMMPS potential). */
+ *     exit 0, four evaluations, the journal's "execute in N persistent
+ *     worker processes" with N >= 1, and again exactly one line: the worker
+ *     processes, which build the potentials of the scripts, print none.
+ * Before the fix: under PROCESS one line from tadah plus one from each
+ * worker process, 2 with one worker (a worker printed the line of the
+ * first potential it built); in the released code 9 lines in both modes,
+ * one at startup and two per evaluation (its model and its PC_LAMMPS
+ * potential). */
 TEST_CASE("tadah hpo: a kernel's settings line is printed once per run",
           "[kernel_line_once][tadah_cli][.tadah_cli_kernel_line_once]") {
     const char* bin = std::getenv("TADAH_BINARY");
@@ -2354,11 +2360,91 @@ TEST_CASE("tadah hpo: a kernel's settings line is printed once per run",
         CHECK(WEXITSTATUS(rc) == 0);
         CHECK(read_table(dir / "loss.tadah").rows.size() == 4);
         INFO(read_text(dir / "tadah.stdout"));
-        const long workers = mode == "PROCESS" ? process_workers(journal) : 0;
-        REQUIRE(workers >= 0);
-        CHECK(count_lines_with(dir / "tadah.stdout", "Kern_RBF |") ==
-              static_cast<std::size_t>(1 + workers));
-        CHECK(count_lines_with(dir / "tadah.stdout", line) ==
-              static_cast<std::size_t>(1 + workers));
+        if (mode == "PROCESS") CHECK(process_workers(journal) >= 1);
+        CHECK(count_lines_with(dir / "tadah.stdout", "Kern_RBF |") == 1);
+        CHECK(count_lines_with(dir / "tadah.stdout", line) == 1);
+    }
+}
+
+/* Pins, through the built tadah: two runs in one process, as two TASK hpo
+ * blocks of a task file run, each print the settings line of their own -c
+ * model once. The task file sets VERBOSE 1; run A trains M_KRR Kern_RBF 1
+ * from MPARAMS 1.0, run B from MPARAMS 2.0 (kTaKernelModelKeys otherwise),
+ * each RANDOM MAXEVAL 4 with a PC_LAMMPS script. Under PC_ISOLATION THREAD
+ * and PROCESS (THREAD alone in the MPI build): exit 0, and tadah's stdout
+ * has "Kern_RBF | sigma: 1 | gamma: 1" exactly once, "Kern_RBF | sigma: 2 |
+ * gamma: 0.25" exactly once, and no other "Kern_RBF |" line.
+ * Before the fix: the line was printed by the first kernel of its kind in
+ * each process and by no later one: under THREAD run B printed none
+ * (sigma: 2 zero times, one line in all, run A's); under PROCESS a worker
+ * process of each run printed the line of its first potential once more
+ * (sigma: 1 twice, sigma: 2 once, 3 lines). In the released code each
+ * model built printed it, 9 lines per run. */
+TEST_CASE("tadah hpo: each run of a task file prints its kernel's settings "
+          "line once",
+          "[kernel_line_once][tadah_cli][.tadah_cli_kernel_line_two_runs]") {
+    const char* bin = std::getenv("TADAH_BINARY");
+    if (!bin || !*bin)
+        TADAH_SKIP("TADAH_BINARY is not set: it names the built tadah "
+                   "executable");
+    REQUIRE(fs::exists(bin));
+    tadah::core::PeriodicTable::initialize();
+    ScratchDir sd("tadah_cli_kernel_line_runs_");
+    const std::string target =
+        "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB TADAH\n"
+        "    ALGO RANDOM\n    MAXEVAL 4\n    SEED 1234\n  ENDSTRATEGY\n"
+        "ENDOPTIMIZER\nLOSS L2\nFAILSCORE 1e16\nPC_ERMSE 0 1\n"
+        "OPTIM CGRID2B (1) 0.0 4.0\n"
+        "PC_LAMMPS --script readback.in --varloss E 0 1\n";
+    std::string keys_b = kTaKernelModelKeys;
+    const std::string mparams_a = "MPARAMS 1.0\n";
+    const auto at = keys_b.find(mparams_a);
+    REQUIRE(at != std::string::npos);
+    keys_b.replace(at, mparams_a.size(), "MPARAMS 2.0\n");
+#ifdef TADAH_HPO_MPI
+    const std::vector<std::string> modes{"THREAD"};
+#else
+    const std::vector<std::string> modes{"THREAD", "PROCESS"};
+#endif
+    for (const std::string& mode : modes) {
+        INFO("VERBOSE 1, two TASK hpo, PC_ISOLATION " << mode);
+        const fs::path dir = sd.dir / mode;
+        fs::create_directories(dir);
+        write_minimal_ta_dbfile(dir / "train.db", 0.0);
+        write_minimal_ta_dbfile(dir / "val.db", 0.07, -0.04);
+        std::ofstream(dir / "config.val") << "DBFILE val.db\n";
+        std::ofstream(dir / "config.a") << "DBFILE train.db\n"
+                                        << kTaKernelModelKeys;
+        std::ofstream(dir / "config.b") << "DBFILE train.db\n" << keys_b;
+        std::ofstream(dir / "readback.in")
+            << ta_script("3.301", "variable E equal pe\n");
+        std::ofstream(dir / "config.hpo") << target << "PC_ISOLATION " << mode
+                                          << "\n";
+        std::ofstream(dir / "runs.task")
+            << "VERBOSE 1\n"
+               "TASK hpo\n  CONFIG config.a\n  HPOTARGET config.hpo\n"
+               "  VALIDATION config.val\n"
+               "TASK hpo\n  CONFIG config.b\n  HPOTARGET config.hpo\n"
+               "  VALIDATION config.val\n";
+        /* As run_tadah_hpo runs it: under the MPI build's launcher, without
+         * TADAH_PC_ISOLATION. */
+        const char* launcher = std::getenv("TADAH_MPIEXEC");
+        const std::string cmd =
+            "cd '" + dir.string() + "' && " +
+            (launcher && *launcher ? std::string(launcher) + " "
+                                   : std::string()) +
+            "env -u TADAH_PC_ISOLATION '" + bin +
+            "' --task runs.task > tadah.stdout 2> tadah.stderr";
+        const int rc = std::system(cmd.c_str());
+        INFO(read_text(dir / "tadah.stderr"));
+        INFO(read_text(dir / "hpo_run.log"));
+        REQUIRE(WIFEXITED(rc));
+        CHECK(WEXITSTATUS(rc) == 0);
+        INFO(read_text(dir / "tadah.stdout"));
+        CHECK(count_lines_with(dir / "tadah.stdout",
+                               "Kern_RBF | sigma: 1 | gamma: 1") == 1);
+        CHECK(count_lines_with(dir / "tadah.stdout",
+                               "Kern_RBF | sigma: 2 | gamma: 0.25") == 1);
+        CHECK(count_lines_with(dir / "tadah.stdout", "Kern_RBF |") == 2);
     }
 }
