@@ -1012,6 +1012,177 @@ TEST_CASE("Repeated points: the RESTART window ends a search that only "
     CHECK(data_rows("loss.tadah").size() == 23u);
 }
 
+namespace {
+
+/* The root lines of a two-dimensional run, CGRID2B (1) in [0.1, 0.9] and
+ * SGRID2B (2) in [4, 6], whose loss is PC_ERMSE with `flags`. Without flags
+ * every evaluation is a function of its point
+ * (HPOTargets::repeat_reuse_blocker() is ""). */
+std::string budget_root(const std::string& flags)
+{
+    return "LOSS L2\nFAILSCORE 1e9\nQFLUSH 1000\nDIGITS 15\nPC_ERMSE 0 1" +
+           flags + "\nOPTIM CGRID2B (1) 0.1 0.9\nOPTIM SGRID2B (2) 4.0 6.0\n";
+}
+
+/* GD_MLSL with INNER LD_LBFGS (NLopt's 4 samples per round), SEED 7. */
+std::string mlsl_budget_block(unsigned maxeval)
+{
+    return plain_block("    TYPE PLAIN\n    LIB NLOPT\n    ALGO GD_MLSL\n"
+                       "    MAXEVAL " + std::to_string(maxeval) +
+                       "\n    SEED 7\n    INNER\n      LIB NLOPT\n"
+                       "      ALGO LD_LBFGS\n    ENDINNER\n");
+}
+
+/* The points of params.tadah by evaluation number (1-based, at index
+ * eval - 1): the columns after the evaluation number and the slot. */
+std::vector<std::vector<double>> params_points()
+{
+    const auto params = data_rows("params.tadah");
+    std::vector<std::vector<double>> points(params.size());
+    for (const auto& row : params) {
+        const std::size_t eval = std::stoull(row.at(0));
+        REQUIRE(eval >= 1);
+        REQUIRE(eval <= points.size());
+        for (std::size_t c = 2; c < row.size(); ++c)
+            points[eval - 1].push_back(std::stod(row[c]));
+    }
+    return points;
+}
+
+/* Whether `b` lies within a finite-difference stencil of `a` (their
+ * coordinates differ by 1e-4 at most; the stencil's step is about 1e-6 of
+ * an OPTIM width, a search's step is far larger), or is `a`. */
+bool near_point(const std::vector<double>& a, const std::vector<double>& b)
+{
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (std::fabs(a[i] - b[i]) > 1e-4) return false;
+    return true;
+}
+
+/* The first of the first `before` points near which every point from
+ * `from` to `to` (0-based, inclusive) lies: the start of the local search
+ * whose stencil those points are. */
+std::optional<std::size_t> stencil_centre(
+    const std::vector<std::vector<double>>& pts, std::size_t before,
+    std::size_t from, std::size_t to)
+{
+    for (std::size_t k = 0; k < before && k < pts.size(); ++k) {
+        bool all = to < pts.size();
+        for (std::size_t j = from; all && j <= to; ++j)
+            all = near_point(pts[k], pts[j]);
+        if (all) return k;
+    }
+    return std::nullopt;
+}
+
+/* The startup WARNING of the MLSL of mlsl_budget_block() at `maxeval`, the
+ * loss at its first local search's start taken from the search's record
+ * (`recorded`) or evaluated again. */
+std::string mlsl_budget_warning(unsigned maxeval, bool recorded)
+{
+    return "the STRATEGY-level optimiser NLOPT:GD_MLSL: MAXEVAL " +
+           std::to_string(maxeval) +
+           " takes no step of a local search: MLSL evaluates its starting "
+           "point and its first 4 samples without a gradient (5 evaluations; "
+           "POPULATION 4, NLopt's default), then its first local search, "
+           "from one of them, " +
+           (recorded ? std::string("takes the loss there from the search's "
+                                   "record (no evaluation) and evaluates the "
+                                   "gradient there")
+                     : std::string("evaluates the loss there again (1 "
+                                   "evaluation) and the gradient there")) +
+           " (4 evaluations: central differences in 2 dimensions, "
+           "GRAD_STRATEGY NUMERICAL) before it evaluates a point it steps to, "
+           "which needs MAXEVAL " + (recorded ? "10" : "11") + " or more";
+}
+
+}  // namespace
+
+/* Pins: on the real host (hpo_run, the Ta fixture in 2-D), the startup
+ * WARNING of an MLSL whose budget lets no local search step is given
+ * exactly when the run takes no step, with the run's own reuse of its
+ * local search's start (validate_hpo_setup passes
+ * HPOTargets::repeat_reuse_blocker() to gradient_budget_warnings; the
+ * NLopt objective asks HPO_Host::repeat_reuse_blocker(), which is the same):
+ *   - PC_ERMSE alone (every evaluation a function of its point), MAXEVAL 9:
+ *     the WARNING "... then its first local search, from one of them, takes
+ *     the loss there from the search's record (no evaluation) and evaluates
+ *     the gradient there (4 evaluations: ...) ... which needs MAXEVAL 10 or
+ *     more", once; 9 rows: the start, 4 samples, and the 4-point stencil of
+ *     one of those five (no row repeated, "Repeated points reused : 1"):
+ *     no step;
+ *   - the same at MAXEVAL 10: no WARNING; row 10 is a step, far from every
+ *     earlier point;
+ *   - with PC_ERMSE --skip-rel 1e6, which compares with the best value so
+ *     far, so every repeat is evaluated again, MAXEVAL 10: the WARNING "...
+ *     evaluates the loss there again (1 evaluation) and the gradient there
+ *     ... which needs MAXEVAL 11 or more", once; 10 rows, row 6 repeating
+ *     one of rows 1-5 and rows 7-10 its stencil: no step.
+ * Before the fix: the MAXEVAL 9 leg fails (its WARNING said "evaluates the
+ * loss there again (1 evaluation)" and "needs MAXEVAL 11 or more"), and
+ * the MAXEVAL 10 leg fails (that WARNING was given although row 10 is a
+ * step); the --skip-rel leg passes as well (a pin). */
+TEST_CASE("Gradient budget: an MLSL's startup warning follows the run's "
+          "reuse of its local search's start",
+          "[HPO][termination][repeat_points][gradient_budget]")
+{
+    const std::string kNoStep = "takes no step";
+    SECTION("reused, MAXEVAL 9: warned, no step") {
+        TaRun run(mlsl_budget_block(9), budget_root(""));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        check_run_files();
+        const std::string journal = read_file("hpo_run.log");
+        INFO("journal:\n" << journal);
+        CHECK(count_of(journal, mlsl_budget_warning(9, true)) == 1u);
+        CHECK(count_of(journal, kNoStep) == 1u);
+        const auto pts = params_points();
+        REQUIRE(pts.size() == 9u);
+        CHECK(repeated_rows() == 0u);
+        CHECK(diagnostics_count(journal, "Repeated points reused") == "1");
+        CHECK(stencil_centre(pts, 5, 5, 8).has_value());
+    }
+    SECTION("reused, MAXEVAL 10: not warned, a step") {
+        TaRun run(mlsl_budget_block(10), budget_root(""));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        check_run_files();
+        const std::string journal = read_file("hpo_run.log");
+        INFO("journal:\n" << journal);
+        CHECK(count_of(journal, kNoStep) == 0u);
+        const auto pts = params_points();
+        REQUIRE(pts.size() == 10u);
+        CHECK(repeated_rows() == 0u);
+        CHECK(stencil_centre(pts, 5, 5, 8).has_value());
+        bool far = true;
+        for (std::size_t j = 0; j < 9; ++j)
+            far = far && !near_point(pts[j], pts[9]);
+        CHECK(far);
+    }
+    SECTION("evaluated again (--skip-rel), MAXEVAL 10: warned, no step") {
+        TaRun run(mlsl_budget_block(10), budget_root(" --skip-rel 1e6"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        check_run_files();
+        const std::string journal = read_file("hpo_run.log");
+        INFO("journal:\n" << journal);
+        CHECK(count_of(journal, mlsl_budget_warning(10, false)) == 1u);
+        CHECK(count_of(journal, kNoStep) == 1u);
+        const auto pts = params_points();
+        REQUIRE(pts.size() == 10u);
+        CHECK(repeated_rows() == 1u);
+        const auto k = stencil_centre(pts, 5, 5, 9);
+        REQUIRE(k.has_value());
+        const auto rows = data_rows("params.tadah");
+        CHECK(std::vector<std::string>(rows[5].begin() + 2, rows[5].end()) ==
+              std::vector<std::string>(rows[*k].begin() + 2, rows[*k].end()));
+    }
+}
+
 TEST_CASE("Two runs in one process: each journal carries its own "
           "once-per-run notes", "[HPO][termination][two_runs]")
 {

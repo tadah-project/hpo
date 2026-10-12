@@ -26,6 +26,7 @@
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/nlopt_adapter.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/repeat_points.h>
 
 #ifdef TADAH_USE_CERES
 #include <tadah/hpo/ceres_adapter.h>
@@ -42,6 +43,7 @@
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -767,12 +769,76 @@ bool stepped(const std::vector<Vec>& asked, std::size_t before)
 
 }  // namespace
 
+namespace {
+
+/* A search of the budget cases below. */
+struct BudgetCase {
+    std::string label, algo, inner;
+    std::optional<GradStrategy> strategy;   // unset: NUMERICAL
+    unsigned pop;            // 0: NLopt's default
+    std::size_t before;      // the start, and an MLSL's samples
+    unsigned first_step;     // the evaluation of the first step
+};
+
+/* Valley hosts that say, as HPO_Host does (repeat_reuse_blocker(),
+ * repeat_points.h), whether every evaluation is a function of its point:
+ * a search on ReusingValley answers a point it asks for again from its
+ * record, one on BlockedValley evaluates it again. Valley has no such
+ * member: it is not tracked, and every point is evaluated. */
+struct ReusingValley : Valley {
+    std::string repeat_reuse_blocker() const { return ""; }
+};
+struct BlockedValley : Valley {
+    std::string repeat_reuse_blocker() const
+    {
+        return "a test host whose evaluations of one point can differ";
+    }
+};
+
+/* For every MAXEVAL m from 1 to c.first_step, on a HostT: the warning that
+ * gradient_budget_warnings gives with the run's reuse permission (what
+ * run_nlopt_impl gives its RepeatPoints: repeat_policy(host).reuse) is
+ * given at m if and only if the run at m asks for no point it stepped to,
+ * and the first step is the evaluation c.first_step. */
+template <class HostT>
+void check_budget_warning_follows_run(const BudgetCase& c)
+{
+    for (unsigned m = 1; m <= c.first_step; ++m) {
+        INFO(c.label << " MAXEVAL " << m);
+        auto sp = nlopt_spec(c.algo, m);
+        if (!c.inner.empty()) set_inner(sp, c.inner);
+        if (c.pop) sp.pop = c.pop;
+        if (c.strategy) {
+            sp.grad_strategy = *c.strategy;
+            if (*c.strategy == GradStrategy::Analytical) {
+                sp.param.clear();
+                sp.param_raw.clear();
+            }
+        }
+        Journal j;
+        HostT host;
+        const std::vector<std::string> warnings =
+            tadah::hpo::gradient_budget_warnings(
+                sp, tadah::hpo::repeat_policy(host).reuse);
+        INFO("warnings: " << (warnings.empty() ? "(none)" : warnings.front()));
+        REQUIRE_NOTHROW(tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host));
+        (void)j.text();
+        CHECK(host.asked.size() <= m);
+        const bool step = stepped(host.asked, c.before);
+        CHECK(step == (m == c.first_step));
+        CHECK(warnings.empty() == step);
+    }
+}
+
+}  // namespace
+
 /* Pins: the startup WARNING of a gradient search whose budget takes no step
  * (gradient_budget_warnings, backend_rules.h) is given exactly at the
  * budgets whose run takes no step: on the valley, for every MAXEVAL m from
- * 1 to the first budget that steps, the warning is given at m if and only
- * if the run at m (run_nlopt_impl, the host asked for m points) asks for no
- * point it stepped to (see stepped()):
+ * 1 to the first budget that steps, the warning -- given the run's reuse
+ * permission, which on this untracked host is false -- is given at m if
+ * and only if the run at m (run_nlopt_impl, the host asked for m points)
+ * asks for no point it stepped to (see stepped()):
  *   - LD_LBFGS (NUMERICAL, CENTRAL in 2-D): the start, its 4-point stencil,
  *     a first step at evaluation 6;
  *   - LD_LBFGS under ANALYTICAL: the start's loss and analytical gradient, a
@@ -784,54 +850,117 @@ bool stepped(const std::vector<Vec>& asked, std::size_t before)
  *     stencil, a first step at evaluation 11;
  *   - G_MLSL_LDS with POPULATION 3 and INNER LD_LBFGS: a first step at
  *     evaluation 10.
- * Before the fix: the warning took an MLSL for a search that takes the
- * gradient at its start (no warning from MAXEVAL 6 on), so the GD_MLSL
- * checks at MAXEVAL 6 to 10 and the G_MLSL_LDS ones at 6 to 9 fail; the
- * other searches pass as well (pins). */
+ * Before the fix: does not compile (gradient_budget_warnings takes the
+ * run's reuse permission since fix/budget-reuse); with the old call
+ * (gradient_budget_warnings(sp)) it passes, as it did when the MLSL rule
+ * was added (lanes/D/tmp/before_fix_budget_reuse.txt). */
 TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget that "
           "takes no step is given exactly when the run takes none",
           "[HPO][nlopt][maxeval][gradient_budget]")
 {
-    struct Case {
-        std::string label, algo, inner;
-        bool analytical;
-        unsigned pop;            // 0: NLopt's default
-        std::size_t before;      // the start, and an MLSL's samples
-        unsigned first_step;     // the evaluation of the first step
-    };
-    const std::vector<Case> cases = {
-        {"LD_LBFGS", "LD_LBFGS", "", false, 0, 1, 6},
-        {"LD_LBFGS, ANALYTICAL", "LD_LBFGS", "", true, 0, 1, 3},
-        {"AUGLAG, INNER LD_LBFGS", "AUGLAG", "LD_LBFGS", false, 0, 1, 6},
-        {"GD_MLSL, INNER LD_LBFGS", "GD_MLSL", "LD_LBFGS", false, 0, 5, 11},
+    const std::vector<BudgetCase> cases = {
+        {"LD_LBFGS", "LD_LBFGS", "", std::nullopt, 0, 1, 6},
+        {"LD_LBFGS, ANALYTICAL", "LD_LBFGS", "", GradStrategy::Analytical, 0,
+         1, 3},
+        {"AUGLAG, INNER LD_LBFGS", "AUGLAG", "LD_LBFGS", std::nullopt, 0, 1,
+         6},
+        {"GD_MLSL, INNER LD_LBFGS", "GD_MLSL", "LD_LBFGS", std::nullopt, 0, 5,
+         11},
         {"G_MLSL_LDS, POPULATION 3, INNER LD_LBFGS", "G_MLSL_LDS", "LD_LBFGS",
-         false, 3, 4, 10}};
-    for (const auto& c : cases) {
+         std::nullopt, 3, 4, 10}};
+    for (const auto& c : cases)
+        DYNAMIC_SECTION(c.label) { check_budget_warning_follows_run<Valley>(c); }
+}
+
+/* Pins: the same on hosts that say whether every evaluation is a function
+ * of its point, as HPO_Host does, with the run's own reuse permission:
+ *   - ReusingValley (repeat_reuse_blocker() ""): an MLSL's first local
+ *     search starts at a point MLSL evaluated without a gradient, and the
+ *     NLopt objective answers that call from the search's record; under
+ *     NUMERICAL the recorded loss is the centre of the finite differences
+ *     (RepeatUse::Centre) and only the stencil is evaluated: GD_MLSL with
+ *     INNER LD_LBFGS takes a first step at evaluation 10 (the start, 4
+ *     samples, the 4-point stencil), G_MLSL_LDS with POPULATION 3 at 9;
+ *     under ANALYTICAL and HYBRID the point is evaluated again before its
+ *     analytical gradient, at 8 (5 + the loss again + the gradient);
+ *     LD_LBFGS (6) and AUGLAG (6) start at a point the search has not
+ *     evaluated;
+ *   - BlockedValley (a reason): every repeat is evaluated again: GD_MLSL
+ *     at 11, G_MLSL_LDS POPULATION 3 at 10, under ANALYTICAL 8, LD_LBFGS
+ *     and AUGLAG 6.
+ * Before the fix: does not compile (gradient_budget_warnings takes the
+ * run's reuse permission since fix/budget-reuse). With the old call
+ * (gradient_budget_warnings(sp), which counted the local start's loss
+ * whatever the run) the ReusingValley GD_MLSL checks at MAXEVAL 10 and the
+ * G_MLSL_LDS ones at 9 fail -- a warning at the budget whose run steps
+ * (lanes/D/tmp/before_fix_budget_reuse.txt); the other cases pass as well
+ * (pins). */
+TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget follows "
+          "the run's reuse of a point it asks for again",
+          "[HPO][nlopt][maxeval][gradient_budget][repeat_points]")
+{
+    const std::vector<BudgetCase> reused = {
+        {"reused: LD_LBFGS", "LD_LBFGS", "", std::nullopt, 0, 1, 6},
+        {"reused: AUGLAG, INNER LD_LBFGS", "AUGLAG", "LD_LBFGS", std::nullopt,
+         0, 1, 6},
+        {"reused: GD_MLSL, INNER LD_LBFGS", "GD_MLSL", "LD_LBFGS",
+         std::nullopt, 0, 5, 10},
+        {"reused: G_MLSL_LDS, POPULATION 3, INNER LD_LBFGS", "G_MLSL_LDS",
+         "LD_LBFGS", std::nullopt, 3, 4, 9},
+        {"reused: GD_MLSL, INNER LD_LBFGS, ANALYTICAL", "GD_MLSL", "LD_LBFGS",
+         GradStrategy::Analytical, 0, 5, 8},
+        {"reused: GD_MLSL, INNER LD_LBFGS, HYBRID", "GD_MLSL", "LD_LBFGS",
+         GradStrategy::Hybrid, 0, 5, 8}};
+    for (const auto& c : reused)
         DYNAMIC_SECTION(c.label) {
-            for (unsigned m = 1; m <= c.first_step; ++m) {
-                INFO(c.label << " MAXEVAL " << m);
-                auto sp = nlopt_spec(c.algo, m);
-                if (!c.inner.empty()) set_inner(sp, c.inner);
-                if (c.pop) sp.pop = c.pop;
-                if (c.analytical) {
-                    sp.grad_strategy = GradStrategy::Analytical;
-                    sp.param.clear();
-                    sp.param_raw.clear();
-                }
-                const std::vector<std::string> warnings =
-                    tadah::hpo::gradient_budget_warnings(sp);
-                INFO("warnings: " << (warnings.empty() ? "(none)"
-                                                        : warnings.front()));
-                Journal j;
-                Valley host;
-                REQUIRE_NOTHROW(
-                    tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host));
-                (void)j.text();
-                CHECK(host.asked.size() <= m);
-                const bool step = stepped(host.asked, c.before);
-                CHECK(step == (m == c.first_step));
-                CHECK(warnings.empty() == step);
-            }
+            check_budget_warning_follows_run<ReusingValley>(c);
         }
+    const std::vector<BudgetCase> blocked = {
+        {"blocked: LD_LBFGS", "LD_LBFGS", "", std::nullopt, 0, 1, 6},
+        {"blocked: AUGLAG, INNER LD_LBFGS", "AUGLAG", "LD_LBFGS",
+         std::nullopt, 0, 1, 6},
+        {"blocked: GD_MLSL, INNER LD_LBFGS", "GD_MLSL", "LD_LBFGS",
+         std::nullopt, 0, 5, 11},
+        {"blocked: G_MLSL_LDS, POPULATION 3, INNER LD_LBFGS", "G_MLSL_LDS",
+         "LD_LBFGS", std::nullopt, 3, 4, 10},
+        {"blocked: GD_MLSL, INNER LD_LBFGS, ANALYTICAL", "GD_MLSL", "LD_LBFGS",
+         GradStrategy::Analytical, 0, 5, 8}};
+    for (const auto& c : blocked)
+        DYNAMIC_SECTION(c.label) {
+            check_budget_warning_follows_run<BlockedValley>(c);
+        }
+}
+
+/* Pins: repeat_use (repeat_points.h) is the one rule by which a call at a
+ * point the search has recorded is answered, which RepeatPoints::use and
+ * the startup budget rule (gradient_budget_warnings) both apply:
+ *   - when the run evaluates every repeat again (reuse false): Evaluate,
+ *     whatever the call asks for and the strategy;
+ *   - a call that asks for no gradient, or for one the record has: Record;
+ *   - a call that asks for a gradient the record lacks: Centre under
+ *     NUMERICAL (the recorded loss is the centre of the finite
+ *     differences), Evaluate under ANALYTICAL and HYBRID (an analytical
+ *     gradient differentiates the last evaluation).
+ * Before the fix: does not compile (repeat_use is new; RepeatPoints::use
+ * held the rule). */
+TEST_CASE("Repeated points: repeat_use says how a call at a recorded point "
+          "is answered", "[HPO][repeat_points][gradient_budget]")
+{
+    using tadah::hpo::RepeatUse;
+    using tadah::hpo::repeat_use;
+    for (const GradStrategy g : {GradStrategy::Numerical,
+                                 GradStrategy::Analytical,
+                                 GradStrategy::Hybrid}) {
+        INFO("strategy " << static_cast<int>(g));
+        for (const bool with_gradient : {false, true})
+            for (const bool has_gradient : {false, true})
+                CHECK(repeat_use(false, g, with_gradient, has_gradient) ==
+                      RepeatUse::Evaluate);
+        CHECK(repeat_use(true, g, false, false) == RepeatUse::Record);
+        CHECK(repeat_use(true, g, false, true) == RepeatUse::Record);
+        CHECK(repeat_use(true, g, true, true) == RepeatUse::Record);
+        CHECK(repeat_use(true, g, true, false) ==
+              (g == GradStrategy::Numerical ? RepeatUse::Centre
+                                            : RepeatUse::Evaluate));
     }
 }
