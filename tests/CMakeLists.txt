@@ -401,6 +401,32 @@ set_tests_properties(hpo_vendored_asa_gate_tool PROPERTIES
     SKIP_REGULAR_EXPRESSION "\nOK \\(skipped=[0-9]+"
     FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
 
+# The MPI build's suite (TADAH_HPO_MPI) is not the serial build's, and the
+# serial checks never run it: hpo_mpi_build_tests_lint reads every test
+# source here as the MPI build compiles it and fails a TEST_CASE that starts
+# PC_ISOLATION PROCESS workers there (which that build does not have)
+# without SKIP_WITHOUT_PC_PROCESS_WORKERS() as its first statement
+# (pc_process_workers.h), and a LAMMPS instance a test constructs other than
+# through LammpsRunner::create_instance, which runs it on the build's
+# communicator (check_mpi_build_tests.py). In every build.
+# Before the fix: fails, 13 cases -- the 11 pc pool cases that build a pool
+# (7 skipped through a macro of their file, 4 not at all) and the 2 'Two runs
+# in one process' cases under PC_ISOLATION PROCESS.
+add_test(NAME hpo_mpi_build_tests_lint
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/check_mpi_build_tests.py
+        ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(hpo_mpi_build_tests_lint PROPERTIES
+    TIMEOUT 60)
+# The check itself, on synthetic sources (tests/test_check_mpi_build_tests.py).
+# Before the fix: passes as well (the check's own unit test).
+add_test(NAME hpo_mpi_build_tests_lint_tool
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_check_mpi_build_tests.py)
+set_tests_properties(hpo_mpi_build_tests_lint_tool PROPERTIES
+    TIMEOUT 60
+    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
+
 if(TADAH_HPO_MPI)
     add_executable(test_hpo_anneal_mpi mpi/test_anneal_mpi.cpp)
     target_link_libraries(test_hpo_anneal_mpi PRIVATE
