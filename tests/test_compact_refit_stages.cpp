@@ -731,4 +731,73 @@ TEST_CASE_METHOD(PTFixture,
   }
 }
 
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: the knot-family keys are refused under "
+                 "the Blip families",
+                 "[compact][refit][mode_keys]") {
+  /* Pins: through the HPO refit engine, REFIT_COMPACT_MERGE,
+   * REFIT_COMPACT_OPT_EVERY and REFIT_COMPACT_INSERT_TOPK, which the
+   * compact fitter applies to the one-sided knot families only, are refused
+   * under REFIT_BASIS Blip5 in validate() and in run() before any ladder
+   * runs ("tadah refit: REFIT_COMPACT_MERGE has no effect under REFIT_BASIS
+   * Blip5: only the knot families (REFIT_BASIS Knot5, the compact default,
+   * Knot3 or KnotMix) read it; remove REFIT_COMPACT_MERGE, or set
+   * REFIT_BASIS Knot5"), and nothing is written; under REFIT_BASIS Knot5 and
+   * without REFIT_BASIS (the compact default, Knot5) validate() accepts
+   * each of them. A Blip5 fit without them logs the schedule it applies,
+   * "merge_guard=off" (refit_opt.log's schedule line), REFIT_COMPACT_MERGE
+   * auto under REFIT_OBJECTIVE energy notwithstanding.
+   * Before the fix: under Blip5 they were accepted with no effect and the
+   * fit ran to the end (no exception, pot.tadah written; the schedule line
+   * printed the values written, opt_every=3 or insert_topk=3, which the
+   * Blip fit does not apply), and the schedule line of a Blip5 fit said
+   * "merge_guard=on" (auto under energy), a guard the fit never applies to
+   * the Blip families; the knot cases pass as well (a pin). */
+  const auto refused = [](const std::string &key) {
+    return "tadah refit: " + key + " has no effect under REFIT_BASIS Blip5: "
+           "only the knot families (REFIT_BASIS Knot5, the compact default, "
+           "Knot3 or KnotMix) read it; remove " + key +
+           ", or set REFIT_BASIS Knot5";
+  };
+  for (const auto &[key, value] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"REFIT_COMPACT_MERGE", "true"},
+           {"REFIT_COMPACT_OPT_EVERY", "3"},
+           {"REFIT_COMPACT_INSERT_TOPK", "3"}}) {
+    INFO(key << " " << value);
+    {
+      ScopedTempDir tmp;
+      write_synth_eam("synth.eam.alloy");
+      Context c = compact_context("SIGNED");
+      c.add(key, value);
+      tadah::mlip::Task task("refit", c);
+      CHECK_THROWS_WITH(tadah::hpo::engines::HPORefitEngine().validate(task),
+                        refused(key));
+      const auto [what, logged] = run_compact(c);
+      CHECK(what == refused(key));
+      CHECK(log_lines("---- phi ladder ----").empty());
+      CHECK_FALSE(fs::exists("pot.tadah"));
+    }
+    for (const bool defaulted : {false, true}) {
+      INFO((defaulted ? "the default basis" : "REFIT_BASIS Knot5"));
+      Context c = compact_context("SIGNED");
+      c.remove("REFIT_BASIS");
+      if (!defaulted) c.add("REFIT_BASIS", std::string("Knot5"));
+      c.add(key, value);
+      tadah::mlip::Task task("refit", c);
+      CHECK_NOTHROW(tadah::hpo::engines::HPORefitEngine().validate(task));
+    }
+  }
+  ScopedTempDir tmp;
+  write_synth_eam("synth.eam.alloy");
+  const auto [what, logged] = run_compact(compact_context("SIGNED"));
+  INFO(logged);
+  REQUIRE(what == "");
+  const auto schedule = log_lines("schedule: opt_every=");
+  REQUIRE(schedule.size() == 1);
+  CHECK(schedule[0].find("opt_every=1 ") != std::string::npos);
+  CHECK(schedule[0].find("insert_topk=1 ") != std::string::npos);
+  CHECK(schedule[0].find("merge_guard=off") != std::string::npos);
+}
+
 #endif  // TADAH_USE_CERES

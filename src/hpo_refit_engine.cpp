@@ -295,7 +295,10 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   // + post-REFINE merge/re-insert of near-coincident knot pairs.
   // REFIT_COMPACT_MERGE 'auto' (default) = OFF in curve mode (it over-constrains
   // the weighted-curve ladder) and ON in energy mode (where it was validated);
-  // 'true'/'false' force it. No effect on the Blip families (no knots).
+  // 'true'/'false' force it. The Blip families have no knots: the fitter
+  // never applies the guard to them, so it is off for them (and the schedule
+  // line below says so); the mode rule refuses REFIT_COMPACT_MERGE written
+  // with a Blip family.
   {
     std::string m = (c.contains("REFIT_COMPACT_MERGE") &&
                      c.size("REFIT_COMPACT_MERGE") > 0)
@@ -303,13 +306,15 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
                         : std::string("auto");
     for (auto &ch : m)
       ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    if (m == "auto")       lcfg.merge_guard = !curve_obj;
-    else if (m == "true")  lcfg.merge_guard = true;
-    else if (m == "false") lcfg.merge_guard = false;
+    bool guard = false;
+    if (m == "auto")       guard = !curve_obj;
+    else if (m == "true")  guard = true;
+    else if (m == "false") guard = false;
     else
       throw std::runtime_error(
           "tadah refit: REFIT_COMPACT_MERGE must be 'true', 'false', or 'auto' "
           "(default: off in curve mode, on in energy mode); got '" + m + "'");
+    lcfg.merge_guard = knotfam && guard;
   }
   // Curve mode: weight of each derivative block vs value. Default 0 (pure
   // value) = crystal-faithful (LAMMPS energy depends on the curve VALUES);
