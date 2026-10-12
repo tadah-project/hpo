@@ -132,6 +132,23 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
 void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
                         bool has_train_db, bool has_validation);
 
+/** The --validation file of the run (VALIDATION): "" when there is none,
+ *  else its one value. tadah hpo reads one validation configuration file,
+ *  whose DBFILE lines list the validation datasets; a VALIDATION of two or
+ *  more values (`--validation a.val b.val`) throws std::runtime_error
+ *  naming them (hpo_run() read the first and dropped the others). */
+std::string validation_config_file(const core::Context &ctx);
+
+/** Refuses a validation configuration (@p val_ctx, parsed from the
+ *  --validation file @p val_cfg) whose DBFILE lists one dataset file
+ *  twice (mlip::repeated_dataset, the rule of the training DBFILE): every
+ *  validation metric averages over the validation datasets, so the file
+ *  would count twice. Throws std::runtime_error naming the file and both
+ *  entries; a no-op without DBFILE. The HPO_Host constructor calls it
+ *  before any validation dataset is read. */
+void require_distinct_validation_datasets(const core::Context &val_ctx,
+                                          const std::string &val_cfg);
+
 } // namespace hpo
 } // namespace tadah
 

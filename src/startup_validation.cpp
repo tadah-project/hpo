@@ -29,6 +29,7 @@
 #include <tadah/models/eam/pot_curve_edit.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <iomanip>
 #include <iostream>
@@ -55,6 +56,19 @@ void validate_ream_density(const core::Context &train_ctx) {
   core::Context c = train_ctx;   // validate_context may materialise defaults
   const auto label = c.stored_value("TYPEMB", 0);
   if (label && *label == "DM_REAM") models::ReamDensity::validate_context(c);
+}
+
+/* `reason` as the first sentence of a longer message: trailing white
+ * space removed and one full stop at its end ('.' added unless it ends in
+ * '.', '!' or '?'), so the next sentence follows after one space. */
+std::string as_sentence(std::string reason) {
+  while (!reason.empty() &&
+         std::isspace(static_cast<unsigned char>(reason.back())))
+    reason.pop_back();
+  if (reason.empty() || std::string(".!?").find(reason.back()) ==
+                            std::string::npos)
+    reason += '.';
+  return reason;
 }
 
 /* What probe_model() learns from building the model of the -c
@@ -103,8 +117,8 @@ ModelProbe probe_model(const core::Context &train_ctx) {
     throw;
   } catch (const std::exception &e) {
     throw std::runtime_error(
-        std::string("the -c configuration does not build a model: ") +
-        e.what() + ". Every evaluation would fail; fix the -c "
+        "the -c configuration does not build a model: " +
+        as_sentence(e.what()) + " Every evaluation would fail; fix the -c "
         "potential/configuration.");
   }
 }
@@ -918,6 +932,37 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * the physics gates above (knot RCUT, bump support, density) report
    * first. */
   run_scale_validation(trg.spec, /*check_start_points=*/true);
+}
+
+std::string validation_config_file(const core::Context &ctx) {
+  if (!ctx.has_stored("VALIDATION")) return "";
+  const std::size_t n = ctx.size("VALIDATION");
+  if (n == 1) return ctx.get<std::string>("VALIDATION");
+  std::string names;
+  for (std::size_t i = 0; i < n; ++i)
+    names += (i ? " " : "") + ctx.get<std::string>("VALIDATION", i);
+  throw std::runtime_error(
+      "--validation (VALIDATION) takes one validation configuration file, "
+      "whose DBFILE lines list the validation datasets; it has " +
+      std::to_string(n) + " values: " + names +
+      ". List every validation dataset as a DBFILE line of one file.");
+}
+
+void require_distinct_validation_datasets(const core::Context &val_ctx,
+                                          const std::string &val_cfg) {
+  if (!val_ctx.has_stored("DBFILE")) return;
+  const std::vector<std::string> &files = val_ctx("DBFILE");
+  const auto twice = tadah::mlip::repeated_dataset(files);
+  if (!twice) return;
+  const auto [i, j] = *twice;
+  throw std::runtime_error(
+      "the --validation file " + val_cfg + ": DBFILE lists one dataset "
+      "twice: entry " + std::to_string(i + 1) + " (" + files[i] +
+      ") and entry " + std::to_string(j + 1) + " (" + files[j] +
+      ") are one file, so it would count twice in the average over the "
+      "validation datasets of every validation metric. List each dataset "
+      "once; to weight the datasets, use indexed PC_ERMSE (i) and "
+      "PC_FRMSE (i) lines.");
 }
 
 } // namespace hpo

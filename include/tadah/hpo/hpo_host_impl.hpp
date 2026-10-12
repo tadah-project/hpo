@@ -30,6 +30,7 @@
 #include <tadah/tadah.lammps/lammps_tadah.h>
 #include <tadah/mlip/analytics/dphi_dtheta_walk.h>
 #include <tadah/mlip/intercepts.h>
+#include <tadah/mlip/training_datasets.h>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -1164,6 +1165,9 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                        "STRESS in the training configuration (or -S) decides "
                        "whether training fits stresses"}});
         val_ctx = core::Context(val_parser.parse(val_cfg));
+        /* Each entry is a dataset: one listed twice would count twice in
+         * every validation metric. Refused before any of them is read. */
+        require_distinct_validation_datasets(val_ctx, val_cfg);
         val_ctx_ = val_ctx;
         std::vector<std::string> files;
         if (val_ctx.contains("DBFILE")) files = val_ctx("DBFILE");
@@ -3137,15 +3141,14 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * derived from this eval round-trips through `tadah predict`. The trainer
      * itself doesn't know about load-time transforms, so the host injects them. */
     mlip::stamp_into_param_file(pot, report_);
-    /* Strip runtime-only audit knobs before the pot context is handed to
-     * LAMMPS (or written to disk). The LAMMPS-side PairTadah parser does
-     * not know about AUDIT / HEALTH_LOG and refuses pair_coeff with an
-     * "Invalid key" error; the partial init then segfaults inside
-     * calc_rho. Removing them here is the single choke-point -- every
-     * downstream consumer (best_pot.tadah, per-eval pots, LAMMPS scripts)
-     * uses the same `pot` Context. */
-    pot.remove("AUDIT");
-    pot.remove("HEALTH_LOG");
+    /* A potential records the model's settings and its fit, not the
+     * inputs of the run (mlip::remove_run_inputs: VERBOSE, NUMERIC,
+     * OUTFILE, AUDIT, AUDIT_SAMPLE, HEALTH_LOG, HPOTARGET, VALIDATION;
+     * get_param_file() leaves out DBFILE). Removing them here is the
+     * single choke-point -- every downstream consumer (best_pot.tadah, the
+     * BDUMP and DUMP archives, LAMMPS scripts) uses the same `pot`
+     * Context. */
+    mlip::remove_run_inputs(pot);
     if (has_validation_) {
         /* The one-time lists (or this candidate's rebuilt ones) cover the
          * model cutoff; the descriptors filter pairs by their own cutoffs. */
@@ -4331,8 +4334,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                      * eval pipeline at hpo_host_impl.hpp:1323-1336). */
                     core::Context pot = cache.trainer->model->get_param_file();
                     mlip::stamp_into_param_file(pot, report_);
-                    pot.remove("AUDIT");
-                    pot.remove("HEALTH_LOG");
+                    mlip::remove_run_inputs(pot);
 
                     R runner;
                     auto lmp = runner.create_instance(hpo_lammps_comm(),

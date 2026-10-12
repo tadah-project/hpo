@@ -11,6 +11,7 @@
 #include <tadah/mlip/preflight_audit.h>
 #include <tadah/mlip/structure_db.h>
 #include <tadah/mlip/trainer.h>
+#include <tadah/mlip/training_datasets.h>
 #include <tadah/mlip/engines/train_engine.h>
 
 #include <tadah/hpo/hpo.h>
@@ -44,7 +45,8 @@ int HPOEngine::run(mlip::Task &task) {
       if (!context.contains("ATOM")) {
         throw std::runtime_error(
             "No training DBFILE: the ATOM key is required in the training "
-            "configuration to declare the element set (e.g. 'ATOM Ta').");
+            "configuration to declare the element set (e.g. 'ATOM Ta'). " +
+            mlip::potential_has_no_datasets_advice());
       }
       for (const auto &sym : context("ATOM"))
         unique_elements.insert(core::PeriodicTable::find_by_symbol(sym));
