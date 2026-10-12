@@ -525,6 +525,42 @@ std::string dimensions(std::size_t n)
     return std::to_string(n) + (n == 1 ? " dimension" : " dimensions");
 }
 
+/* The points NLopt's MLSL samples in each round when POPULATION does not
+ * set them (mlsl.c: d.N = 4 for Nsamples 0; optimize.c passes POP(0)). */
+constexpr unsigned kMlslDefaultSamples = 4;
+
+/* The evaluations without a gradient a search makes before its first local
+ * search can take a gradient, and the text that says so (empty for none).
+ * MLSL, a global search that runs a local one (mlsl.c), evaluates its
+ * starting point and a first round of N samples with grad NULL (N its
+ * POPULATION, else kMlslDefaultSamples); its first local search then starts
+ * at one of these points, whose loss the objective evaluates again (the
+ * local search calls it with the gradient there), so that loss counts as
+ * well. AUGLAG, with no constraint, goes straight into its local search
+ * (auglag.c), and a local gradient search takes the gradient at its start:
+ * neither spends anything first. */
+struct BeforeLocalSearch {
+    std::uint64_t evaluations = 0;
+    std::string   text;
+};
+BeforeLocalSearch before_local_search(const OptimizerSpec& spec)
+{
+    BeforeLocalSearch b;
+    const OptimizerCaps& caps = optimizer_caps(spec);
+    if (!(caps.is_global && caps.accepts_inner)) return b;
+    const bool own = spec.pop && *spec.pop > 0;
+    const unsigned n = own ? *spec.pop : kMlslDefaultSamples;
+    b.evaluations = 1 + static_cast<std::uint64_t>(n) + 1;
+    b.text = "MLSL evaluates its starting point and its first " +
+             std::to_string(n) + " samples without a gradient (" +
+             evaluations(1 + static_cast<std::uint64_t>(n)) +
+             "; POPULATION " + std::to_string(n) +
+             (own ? "" : ", NLopt's default") +
+             "), then its first local search, from one of them, evaluates "
+             "the loss there again (1 evaluation)";
+    return b;
+}
+
 }  // namespace
 
 GradientCost gradient_cost(const OptimizerSpec& spec)
@@ -567,16 +603,27 @@ std::vector<std::string> gradient_budget_warnings(const OptimizerSpec& root)
         if (s.lib == "NOT SET" || s.algo == "NOT SET") continue;
         if (!obtains_gradients(s)) continue;
         const GradientCost cost = gradient_cost(s);
+        const BeforeLocalSearch first = before_local_search(s);
         const std::string who = phase.name + " " + backend_name(s);
         const std::string tail =
-            " takes no step: its gradient search evaluates the loss at a "
-            "starting point (1 evaluation) and the gradient there (" +
-            cost.text + ") before it evaluates a point it steps to, which "
-            "needs ";
+            first.text.empty()
+                ? " takes no step: its gradient search evaluates the loss at "
+                  "a starting point (1 evaluation) and the gradient there (" +
+                      cost.text + ") before it evaluates a point it steps "
+                      "to, which needs "
+                : " takes no step of a local search: " + first.text +
+                      " and the gradient there (" + cost.text +
+                      ") before it evaluates a point it steps to, which "
+                      "needs ";
         const std::string more =
             cost.at_least ? ", and more for each parameter it differences"
                           : "";
-        const std::uint64_t need = cost.evaluations + 2;
+        /* the start's loss (an MLSL's evaluations before its first local
+         * search, that search's start included), its gradient, one point
+         * stepped to */
+        const std::uint64_t need =
+            (first.text.empty() ? 1 : first.evaluations) + cost.evaluations +
+            1;
         if (s.stop.maxeval && *s.stop.maxeval < need) {
             const std::string have = std::to_string(*s.stop.maxeval);
             const std::string needs = std::to_string(need);

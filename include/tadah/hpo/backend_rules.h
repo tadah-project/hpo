@@ -202,7 +202,17 @@ GradientCost gradient_cost(const OptimizerSpec& spec);
  * takes no step: its gradient search evaluates the loss at a starting
  * point (1 evaluation) and the gradient there (4 evaluations: central
  * differences in 2 dimensions, GRAD_STRATEGY NUMERICAL) before it evaluates
- * a point it steps to, which needs MAXEVAL 6 or more"; and an INNER block
+ * a point it steps to, which needs MAXEVAL 6 or more". An MLSL first
+ * evaluates its starting point and its first N samples without a gradient
+ * (N its POPULATION, NLopt's default 4), and its first local search starts
+ * at one of them, whose loss it evaluates again, so it needs N + 1 more:
+ * "the STRATEGY-level optimiser NLOPT:GD_MLSL: MAXEVAL 10 takes no step of
+ * a local search: MLSL evaluates its starting point and its first 4
+ * samples without a gradient (5 evaluations; POPULATION 4, NLopt's
+ * default), then its first local search, from one of them, evaluates the
+ * loss there again (1 evaluation) and the gradient there (4 evaluations:
+ * ...) before it evaluates a point it steps to, which needs MAXEVAL 11 or
+ * more"; AUGLAG goes straight into its local search. And an INNER block
  * whose local search obtains gradients and whose own MAXEVAL, in NLopt's
  * calls (each the loss and the gradient at a point), is 1. Not a refusal: a
  * budget-limited probe of the start can be deliberate. validate_hpo_setup()
