@@ -96,11 +96,11 @@
     "status_accepted": ["MAXEVAL_REACHED -- maximum evaluations exhausted"]
   },
   "25_failprobe_grading": {
-    "description": "FAILSCORE_GRADING ON + PC_FAILPROBE over example 02's seeded search; a lattice window grades 6 failures (band A).",
+    "description": "FAILSCORE_GRADING ON + PC_FAILPROBE over example 02's seeded search; a lattice window grades 8 failures (band A).",
     "status_accepted": ["TADAH:RANDOM: MAXEVAL reached"],
     "journal": [
-      {"what": "six failures, all graded", "regex": "^\\s*Graded failures\\s*:\\s*6\\s"},
-      {"what": "all six in band A (hot-var out of range)", "regex": "^\\s*A=6 \\(hot-var out of range\\)"}
+      {"what": "eight failures, all graded", "regex": "^\\s*Graded failures\\s*:\\s*8\\s"},
+      {"what": "all eight in band A (hot-var out of range)", "regex": "^\\s*A=8 \\(hot-var out of range\\)"}
     ]
   },
   "26_pc_isolation": {

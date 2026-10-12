@@ -6,10 +6,10 @@
 # outside it fails. With FAILSCORE_GRADING ON such a failure is not the
 # constant FAILSCORE but a graded value in [0.999*FAILSCORE, FAILSCORE)
 # that falls as the lattice approaches the window (band A); feasible
-# candidates are unaffected. Six of the 60 candidates fail this way here:
-# hpo_run.log counts them ("Graded failures : 6", "A=6"); its per-eval
+# candidates are unaffected. Eight of the 60 candidates fail this way here:
+# hpo_run.log counts them ("Graded failures : 8", "A=8"); its per-eval
 # "rejecting (hot_a0=...)" warnings are rate-limited (the first five, then
-# every power of two), so the first five show.
+# every power of two), so the first five and the eighth show.
 #
 # PC_FAILPROBE runs ../common/lammps/failprobe.in (the probe from the
 # documentation) at the front of every evaluation: a minimiser-free
