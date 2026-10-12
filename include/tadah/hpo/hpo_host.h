@@ -457,9 +457,10 @@ private:
      * of r.loss_sum over r.loss_count, a non-finite mean (a NaN clamp,
      * r.was_nan_clamped) or one above FAIL_SCORE clipped to FAIL_SCORE; an
      * eval with a failed simulation (r.sims_failed) or a failed term
-     * (r.terms_failed) scores FAIL_SCORE whatever that mean; under
-     * FAILSCORE_GRADING a classified failure (r.fail.band != 0) scores
-     * the graded loss. */
+     * (r.terms_failed) scores FAIL_SCORE whatever that mean, and is no NaN
+     * clamp (r.was_nan_clamped cleared: the mean of its failure substitutes
+     * can overflow); under FAILSCORE_GRADING a classified failure
+     * (r.fail.band != 0) scores the graded loss. */
     void assemble_loss(Result&) const;
     /** Render and synchronously publish this completed candidate to the
      * canonical cross-rank best file and this rank's local best file. On

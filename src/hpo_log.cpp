@@ -2160,9 +2160,12 @@ void HPOLog::finish(const std::string& status_str)
     }
 
     /* Graded failures. Disjoint from the NaN counter above: a killed worker
-     * or a failed script produces a large but FINITE failscore, so it never
-     * reaches was_nan_clamped. Without this line a run can fail almost every
-     * evaluation and still report "No NaN/Inf clampings were recorded". */
+     * or a failed script produces a large but FINITE failscore, and an
+     * evaluation with a failed simulation or term is never a NaN clamp,
+     * even where the mean of its failure substitutes overflows
+     * (HPO_Host::assemble_loss). Without this line a run can fail almost
+     * every evaluation and still report "No NaN/Inf clampings were
+     * recorded". */
     {
         const std::size_t fa = n_fail_band_[1].load(std::memory_order_relaxed);
         const std::size_t fb = n_fail_band_[2].load(std::memory_order_relaxed);
