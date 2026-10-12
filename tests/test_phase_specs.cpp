@@ -13,6 +13,7 @@
 // and require_stop() names a backend that cannot end without a stop.
 
 #include "catch2/catch.hpp"
+#include "ceres_build.h"
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -270,6 +271,10 @@ TEST_CASE("phase specs: every phase of each STRATEGY TYPE",
     }
 }
 
+/* A build without Ceres refuses every CERES:LBFGS spec here as not built
+ * (ceres_build.h), the deferred CERES:LEVENBERG_MARQUARDT with its own
+ * message first: a pin of that refusal. Before this test change such a
+ * build failed the CERES rows, expecting the Ceres validator's result. */
 TEST_CASE("backend rules: validate_backend runs each backend's own checks",
           "[HPO][backend_rules]")
 {
@@ -287,7 +292,9 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
              {"DLIB", "GFS"}, {"DLIB", "BFGS"}, {"NLOPT", "LN_SBPLX"},
              {"CERES", "LBFGS"}}) {
         INFO(la.first << ":" << la.second);
-        CHECK(error_of(with(la.first, la.second)) == "");
+        CHECK(error_of(with(la.first, la.second)) ==
+              (la.first == "CERES" ? hpo_test::ceres_expect("")
+                                   : std::string()));
     }
     /* No optimiser named: require_driver() reports it. */
     CHECK(error_of(OptimizerSpec{}) == "");
@@ -298,7 +305,7 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
              {"DLIB", "BFGS", [](OptimizerSpec& s) { s.stop.maxtime = 60; },
               "DLIB:BFGS does not support MAXTIME"},
              {"CERES", "LBFGS", [](OptimizerSpec& s) { s.stop.stopval = 1; },
-              "CERES:LBFGS does not support STOPVAL"},
+              hpo_test::ceres_expect("CERES:LBFGS does not support STOPVAL")},
              {"TADAH", "ANNEAL",
               [](OptimizerSpec& s) { s.param["NOT_A_KEY"] = 1; },
               "TADAH:ANNEAL: unknown PARAM 'NOT_A_KEY'"},
@@ -368,7 +375,7 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
               "replace the INNER search's STOPVAL with the enclosing "
               "block's; set STOPVAL on the enclosing block"},
              {"CERES", "LBFGS", [](OptimizerSpec& s) { s.seed = 3; },
-              "CERES:LBFGS does not support SEED"}}) {
+              hpo_test::ceres_expect("CERES:LBFGS does not support SEED")}}) {
         INFO(c.lib << ":" << c.algo << " -> " << c.message);
         auto s = with(c.lib, c.algo);
         c.set(s);
@@ -550,7 +557,10 @@ TEST_CASE("backend rules: a backend with no convergence test and no finite "
         auto t = local_spec(1);
         t.lib = la.first;
         t.algo = la.second;
-        CHECK(error_of(t) == "");
+        /* without Ceres, CERES:LBFGS is refused as not built (ceres_build.h;
+         * a pin: before this test change such a build failed here) */
+        CHECK(error_of(t) == (la.first == "CERES" ? hpo_test::ceres_expect("")
+                                                  : std::string()));
     }
     auto anneal = local_spec(1);
     anneal.lib = "TADAH";

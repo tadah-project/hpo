@@ -237,6 +237,60 @@ foreach(_case old current)
         LABELS cmake
         TIMEOUT 120)
 endforeach()
+# hpo_configure_without_ceres: HPO configured without Ceres
+# (TADAH_ENABLE_CERES OFF) gives tadah.hpo Eigen all the same, which its
+# public headers adjoint_solver.h, lammps_hessian.h, observable_registry.h
+# and sims_grad.h include in every build
+# (configure_without_ceres/check_configure_without_ceres.cmake). HPO is
+# configured once more, without Ceres and without tests, from this build's
+# cache and the source directories of its dependencies (the initial cache
+# hpo_write_no_ceres_preset() writes here, configure_without_ceres/
+# no_ceres_preset.cmake; FETCHCONTENT_FULLY_DISCONNECTED, nothing is
+# downloaded; the environment is CTest's), and the check
+# reads its codemodel (CMake's file API): no ceres target, no
+# TADAH_USE_CERES, and an include directory of tadah.hpo that has
+# Eigen/Dense. Before the fix: Eigen was fetched only with Ceres and linked
+# only when its target existed, so the check fails ("no include directory
+# of tadah.hpo has Eigen/Dense ..."), and a build with TADAH_ENABLE_CERES OFF
+# stopped compiling tadah.hpo ("adjoint_solver.h:4:10: fatal error:
+# Eigen/Dense: No such file or directory").
+include(${CMAKE_CURRENT_SOURCE_DIR}/configure_without_ceres/no_ceres_preset.cmake)
+set(_hpo_no_ceres_dir ${CMAKE_CURRENT_BINARY_DIR}/configure_without_ceres)
+hpo_write_no_ceres_preset(${_hpo_no_ceres_dir}/preset.cmake)
+cmake_path(SET _hpo_source_dir NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/..")
+add_test(NAME hpo_configure_without_ceres
+    COMMAND ${CMAKE_COMMAND}
+        -DHPO_DIR=${_hpo_source_dir}
+        -DPRESET=${_hpo_no_ceres_dir}/preset.cmake
+        "-DGENERATOR=${CMAKE_GENERATOR}"
+        -DWORK_DIR=${_hpo_no_ceres_dir}/work
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/configure_without_ceres/check_configure_without_ceres.cmake)
+set_tests_properties(hpo_configure_without_ceres PROPERTIES
+    LABELS cmake
+    TIMEOUT 300)
+# hpo_configure_without_ceres_preset: a configure from the preset that
+# hpo_write_no_ceres_preset() writes sees what the configure that wrote it
+# saw (configure_without_ceres/check_no_ceres_preset.cmake, on a throw-away
+# pair of projects): a package found only through -DCMAKE_PREFIX_PATH, an
+# option of the build, a dependency given as FETCHCONTENT_SOURCE_DIR_<NAME>
+# and one populated under FETCHCONTENT_BASE_DIR that none names; a
+# FETCHCONTENT_BASE_DIR of its own; TADAH_ENABLE_CERES OFF, BUILD_TESTING
+# OFF and FETCHCONTENT_FULLY_DISCONNECTED ON whatever the build has. Before
+# the fix: the preset held a fixed list (11 dependency names, compilers,
+# build tool and type, LAMMPS paths, TADAH_GIT_BRANCH), so the configure
+# from it did not find the package ("Could not find a package configuration
+# file provided by \"TadahProbeDep\""), and hpo_configure_without_ceres
+# failed in a valid build that finds a dependency through such a hint.
+add_test(NAME hpo_configure_without_ceres_preset
+    COMMAND ${CMAKE_COMMAND}
+        -DMODULE=${CMAKE_CURRENT_SOURCE_DIR}/configure_without_ceres/no_ceres_preset.cmake
+        "-DGENERATOR=${CMAKE_GENERATOR}"
+        -DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
+        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/configure_without_ceres/preset_check
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/configure_without_ceres/check_no_ceres_preset.cmake)
+set_tests_properties(hpo_configure_without_ceres_preset PROPERTIES
+    LABELS cmake
+    TIMEOUT 120)
 add_test(NAME hpo_anneal_registry_sync
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/../blueprint/gen_anneal_keys.py
