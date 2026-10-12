@@ -342,6 +342,43 @@ TEST_CASE("OptimizerCaps: an unknown optimiser is named with what is wrong",
                                         "there is no LIB nlopt (LIB is ASA, "));
 }
 
+/* Pins: the ALGO help of the four CERES drivers (OptimizerSpec::print_caps,
+ * `tadah explain CERES:LBFGS`) names the solver, the stops that end a run
+ * (from the caps registry: MAXEVAL, FTOL_REL, XTOL_REL), the PARAM keys the
+ * driver reads -- tol_gradinf, max_iter, max_ls_iter, the finite
+ * differences' fd_step / fd_kernel / diff_method, max_lbfgs_rank for LBFGS
+ * alone and nlcg_type for NLCG alone --, that STEP is rejected, and that it
+ * ignores the OPTIM box.
+ * Before the fix: "Options for CERES:LBFGS\n   * (no info)\n" for each:
+ * print_caps had no CERES branch. */
+TEST_CASE("OptimizerCaps: the ALGO help describes the CERES drivers",
+          "[HPO][caps][help]")
+{
+    for (const char* algo : {"LBFGS", "WOLFE", "NLCG", "STEEPEST_DESCENT"}) {
+        INFO(algo);
+        const std::string help = caps_help("CERES", algo);
+        INFO(help);
+        const std::string a = algo;
+        CHECK_THAT(help,
+                   Catch::StartsWith("Options for CERES:" + a + "\n") &&
+                   Catch::Contains("Ceres' GradientProblemSolver") &&
+                   Catch::Contains("   * Stops that end a run: MAXEVAL, "
+                                   "FTOL_REL, XTOL_REL\n") &&
+                   Catch::Contains("PARAM tol_gradinf") &&
+                   Catch::Contains("PARAM max_iter") &&
+                   Catch::Contains("PARAM max_ls_iter") &&
+                   Catch::Contains("PARAM fd_step") &&
+                   Catch::Contains("STEP is rejected: Ceres chooses the "
+                                   "initial line-search step itself") &&
+                   Catch::Contains("WARNING: ignores the OPTIM box") &&
+                   !Catch::Contains("(no info)"));
+        CHECK((help.find("PARAM max_lbfgs_rank") != std::string::npos) ==
+              (a == "LBFGS"));
+        CHECK((help.find("PARAM nlcg_type") != std::string::npos) ==
+              (a == "NLCG"));
+    }
+}
+
 /* NLopt 2.10 names NLOPT_LD_LBFGS_NOCEDAL (nlopt_algorithm_to_string, the
  * name the caps registry registers each NLopt algorithm under) but does not
  * implement it: nlopt_optimize() returns NLOPT_INVALID_ARGS for it (its
