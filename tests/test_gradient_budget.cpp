@@ -275,6 +275,9 @@ TEST_CASE("startup validation: the gradient budget warning counts the "
  *     or more per start"); a MAXEVAL 12 over 2 starts gets none;
  *   - the PRESTAGE refinement ("the PRESTAGE refinement NLOPT:LD_LBFGS:
  *     MAXEVAL 4 takes no step"), and not the derivative-free exploration;
+ *     with TOPK 2 each candidate's share ("MAXEVAL 8 over 2 TOPK
+ *     candidates, 4 each, takes no step: ... which needs 6 evaluations or
+ *     more per candidate");
  *   - an INNER block, whose MAXEVAL NLopt counts in its own calls, each the
  *     loss and the gradient at a point: INNER LD_LBFGS MAXEVAL 1 under
  *     GD_MLSL ("the INNER block of the STRATEGY-level optimiser
@@ -318,6 +321,22 @@ TEST_CASE("startup validation: the gradient budget warning covers each "
         CHECK(count_of(journal, "the PRESTAGE refinement NLOPT:LD_LBFGS" +
                                     central2("MAXEVAL 4",
                                              "MAXEVAL 6 or more")) == 1u);
+        CHECK(count_of(journal, kNoStep) == 1u);
+    }
+
+    /* With TOPK 2 the refinement runs once from each candidate, each with
+     * its share of MAXEVAL (plan_multistart, ceil division). */
+    {
+        const std::string journal = startup_journal(strategy(
+            "    TYPE PRESTAGE\n    TOPK 2\n    LIB NLOPT\n    ALGO LD_LBFGS\n"
+            "    MAXEVAL 8\n    EXPLORE\n      LIB NLOPT\n"
+            "      ALGO GN_DIRECT\n      MAXEVAL 10\n    ENDEXPLORE\n"));
+        CHECK(count_of(journal,
+                       "the PRESTAGE refinement NLOPT:LD_LBFGS" +
+                           central2("MAXEVAL 8 over 2 TOPK candidates, 4 "
+                                    "each,",
+                                    "6 evaluations or more per "
+                                    "candidate")) == 1u);
         CHECK(count_of(journal, kNoStep) == 1u);
     }
 
