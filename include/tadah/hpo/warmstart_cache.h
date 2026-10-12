@@ -257,6 +257,17 @@ inline void clear() {
     best_hot_key().reset();
 }
 
+/* Start a run of hpo_run(), before its WARM init strategy primes the seed
+ * maps (hpo_run calls it before HPOTargets is built): forget everything an
+ * earlier run in this process left -- every chain's value, WARM's static
+ * fallback, the best snapshot. warm_prime_map is otherwise written only by
+ * WARM priming and read by a chain's first evaluation, so a run without
+ * WARM after one with a WARM seed of HOT lines started its --hotvar values
+ * from that earlier run's seed, not from their initial values. */
+inline void begin_run() {
+    clear();
+}
+
 /* Start a new run: forget every chain's value an earlier run in this process
  * converged to (chain_cache) and the best snapshot, keep WARM's static
  * fallback. A chain's first evaluation then reads warm_prime_map (WARM) or
@@ -264,7 +275,8 @@ inline void clear() {
  * cache is keyed by (chain, script, name), so a second run of a task file
  * with the same script read the first run's last relaxed value instead.
  * HPO_Host::prepare_best_publication() calls it at the start of every run;
- * WARM primes warm_prime_map before. */
+ * WARM primes warm_prime_map before (and begin_run() cleared it before
+ * that). */
 inline void reset_for_fresh_run() {
     std::lock_guard<std::mutex> lg(mtx());
     chain_cache().clear();
@@ -280,14 +292,6 @@ inline void reset_best_snapshot_for_fresh_run() {
     std::lock_guard<std::mutex> lg(mtx());
     best_hot_map().clear();
     best_hot_key().reset();
-}
-
-/* Counter used only for LOGGING the rate-limited "rejecting" warnings in
- * run_lammps (not for results -- the abort itself is a run-local flag now,
- * so it is independent of execution order). */
-inline std::atomic<std::size_t>& reject_count() {
-    static std::atomic<std::size_t> c{0};
-    return c;
 }
 
 /* Persisted cache format used inside best_pot.tadah:

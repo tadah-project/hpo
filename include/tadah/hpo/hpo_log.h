@@ -116,6 +116,12 @@ public:
      *  Default rank 0 of 1; hpo_run() sets it after open(). */
     void set_rank_scope(int rank, int world);
 
+    /** The evaluations an earlier run in this process made: this run's are
+     *  numbered on from them (HPO_Host's counter), and the journal's
+     *  milestones ("--- N evals done") count this run's alone. Default 0;
+     *  hpo_run() sets it once the host is built, before any evaluation. */
+    void set_eval_base(std::size_t evaluations_before);
+
     /* ------------------------------------------------------------------
      * Primitive writers (all thread-safe, append to file)
      * ------------------------------------------------------------------ */
@@ -259,7 +265,7 @@ public:
     /** The rate limit of the per-reject journal notes, one counter per
      *  gate: returns the running count of @p kind's rejects including this
      *  one; the host writes the note when it is <= 5 or a power of two
-     *  ("total rejects=N"). Reset by reset_for_test(). */
+     *  ("total rejects=N"). Reset by open() and reset_for_test(). */
     std::size_t next_gate_note(GateKind kind);
 
     /** DM_REAM density report (a model whose many-body term is a bare
@@ -612,7 +618,8 @@ public:
     /* Test-only: reset the singleton's running counters and best-so-far
      * to their freshly-constructed values (including the per-gate reject
      * and note counters, the timing statistics, the fan-out tallies, the
-     * bound-occupancy snapshot and the per-run notes).
+     * bound-occupancy snapshot and the per-run notes): the reset open()
+     * makes for every run (reset_run_locked), without a new file.
      * Used by regression tests so one Catch2 test case's state does not
      * leak into the next. Does not close the underlying file -- call after
      * open() if you also want a fresh log file on disk. */
@@ -623,6 +630,10 @@ public:
     static std::string format_duration(double seconds);
 
 private:
+    /* The run state every journal starts from (open(), reset_for_test());
+     * mtx_ held. */
+    void reset_run_locked();
+
     HPOLog() = default;
     HPOLog(const HPOLog&) = delete;
     HPOLog& operator=(const HPOLog&) = delete;
@@ -744,6 +755,7 @@ private:
      * parallel drivers: K concurrent workers inflate per-eval wall_ms
      * by ~K vs what the run actually delivers per unit time). */
     std::size_t next_milestone_ = 100;
+    std::atomic<std::size_t> eval_base_{0};   // set_eval_base()
     std::chrono::steady_clock::time_point last_milestone_tp_{};
     std::size_t last_milestone_evals_ = 0;
 

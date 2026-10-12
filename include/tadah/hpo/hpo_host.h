@@ -240,8 +240,9 @@ public:
      * monotonic evaluation counter/writer cursor. Used by fresh-run startup
      * and exposed for the embedded two-runs-in-one-process regression. */
     static void reset_best_state_for_fresh_run();
-    /* Test-only accessors of the best comparator and the process-wide
-     * evaluation counter (test_hpo_host_e2e pins the fresh-run reset). */
+    /* Accessors of the best comparator and the process-wide evaluation
+     * counter (test_hpo_host_e2e pins the fresh-run reset; hpo_run() hands
+     * the counter to the journal, HPOLog::set_eval_base). */
     static double      current_best()       { return g_best_.load(); }
     static std::size_t current_best_iter()  { return g_best_iter_.load(); }
     static std::size_t current_last_best()  { return iter_at_last_best_.load(); }
@@ -364,7 +365,9 @@ private:
     /* FIXINDEX covers every model weight (the refit coefficient-search
      * workload): the LS solve is vacuous, so the per-eval train stage
      * provisions the weights directly and skips the design-matrix
-     * build. Computed once in the ctor. */
+     * build -- except under OALGO 3, whose all-pinned fit computes the
+     * covariance and noise the potential records, and for a non-linear
+     * M_KRR kernel, whose basis the fit draws. Computed once in the ctor. */
     bool                         all_weights_fixed_ = false;
     /* EMBF0 journal: a DM_REAM model linear in the raw descriptor
      * (BF_Linear / Kern_Linear; NORM irrelevant), so sum_m w_m g_m(0) of the
@@ -457,9 +460,10 @@ private:
      * of r.loss_sum over r.loss_count, a non-finite mean (a NaN clamp,
      * r.was_nan_clamped) or one above FAIL_SCORE clipped to FAIL_SCORE; an
      * eval with a failed simulation (r.sims_failed) or a failed term
-     * (r.terms_failed) scores FAIL_SCORE whatever that mean; under
-     * FAILSCORE_GRADING a classified failure (r.fail.band != 0) scores
-     * the graded loss. */
+     * (r.terms_failed) scores FAIL_SCORE whatever that mean, and is no NaN
+     * clamp (r.was_nan_clamped cleared: the mean of its failure substitutes
+     * can overflow); under FAILSCORE_GRADING a classified failure
+     * (r.fail.band != 0) scores the graded loss. */
     void assemble_loss(Result&) const;
     /** Render and synchronously publish this completed candidate to the
      * canonical cross-rank best file and this rank's local best file. On

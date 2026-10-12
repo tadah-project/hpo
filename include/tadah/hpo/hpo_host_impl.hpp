@@ -1318,9 +1318,17 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
      * pins that do not classify, would fail every evaluation: the error
      * (validate_hpo_setup's, which runs first in hpo_run) propagates.
      * A non-linear M_KRR kernel always trains: its basis vectors, which its
-     * weights belong to, are drawn from the training data. */
+     * weights belong to, are drawn from the training data. So does OALGO 3,
+     * whose fit gives every weight a covariance -- zero rows and columns for
+     * the pinned ones -- and the noise of the pinned weights' residuals on
+     * the training data (M_Train::pinned_covariance), as tadah train writes
+     * them: provisioning computes neither, and its potential had no WCOV
+     * or WNOISE, so predict --error refused it as one fitted without
+     * training data. */
     if (has_train_data_ && master_ctx_.contains("FIXINDEX")
-        && !(master_ctx_.contains("NORM") && master_ctx_.get<bool>("NORM"))) {
+        && !(master_ctx_.contains("NORM") && master_ctx_.get<bool>("NORM"))
+        && !(master_ctx_.has_stored("OALGO")
+             && master_ctx_.get<int>("OALGO") == 3)) {
         const std::size_t K = derive_weight_count(master_ctx_);
         all_weights_fixed_ =
             K > 0 && mlip::classify_weight_source(master_ctx_, K)
@@ -2078,12 +2086,14 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
           for (auto& vs : r.v_outvar[i]) vs = failscore_token(lsim.failscore);
           eval_aborted.store(true, std::memory_order_relaxed);
           /* Log at most once per eval (run-local latch), rate-limited
-           * across evals by the global reject_count. */
+           * across the run's evals by its count of them (a count of the
+           * process went on from an earlier run, whose rejects silenced
+           * this run's first). */
           const bool first_in_eval =
               !reject_logged.exchange(true, std::memory_order_relaxed);
           if (first_in_eval) {
-            const auto rejs = warmstart::reject_count().fetch_add(
-                1, std::memory_order_relaxed) + 1;
+            const auto rejs =
+                HPOLog::instance().count_in_run("hot-variable reject");
             if (rejs <= 5 || (rejs & (rejs - 1)) == 0) {
               HPOLog::instance().warning(
                   std::string("eval ") + std::to_string(r.iter)
@@ -2491,16 +2501,10 @@ void HPO_Host<P,R>::fit_loss(Result& r) const
 template<class P, class R>
 void HPO_Host<P,R>::assemble_loss(Result& r) const
 {
-  r.loss = r.loss_count ? r.loss_sum / static_cast<double>(r.loss_count) : 0.0;
-  if (!std::isfinite(r.loss) || r.loss > trg_.FAIL_SCORE) {
-    if (!std::isfinite(r.loss)) r.was_nan_clamped = true;
-    r.loss = trg_.FAIL_SCORE;
-  }
-
   /* A failed simulation or a failed term fails its eval, whatever the mean
-   * above: FAIL_SCORE (under FAILSCORE_GRADING the graded loss below, as
-   * every such failure records a band). A failed term is FAIL_SCORE, and a
-   * failed PC_LAMMPS line's terms are its loss of its --failscore value --
+   * of its terms: FAIL_SCORE (under FAILSCORE_GRADING the graded loss below,
+   * as every such failure records a band). A failed term is FAIL_SCORE, and
+   * a failed PC_LAMMPS line's terms are its loss of its --failscore value --
    * they stay in v_loss / v_obs_loss, for loss.tadah -- and the mean with
    * the eval's other terms fell below 0.999 * FAIL_SCORE, a feasible loss
    * that could become the best: with one failed term out of n about
@@ -2508,8 +2512,26 @@ void HPO_Host<P,R>::assemble_loss(Result& r) const
    * usable terms vanish in it, so a finite difference across a region where
    * a term fails was 0), and for a simulation whenever its line's loss did
    * not carry the value past FAIL_SCORE (under L1 or TUKEY, or with a small
-   * --failscore). */
-  if (r.sims_failed || r.terms_failed) r.loss = trg_.FAIL_SCORE;
+   * --failscore).
+   * The recorded failure decides how the eval is classified, too: the mean
+   * of those failure substitutes overflows under the default FAIL_SCORE
+   * (two FAIL_SCORE terms; the L2 of a --failscore of the largest double)
+   * or one whose square or sum passes it, and that is not a non-finite
+   * loss. It set was_nan_clamped, so the census counted the eval as a
+   * NaN/Inf clamping (and under FAILSCORE_GRADING as a graded failure as
+   * well) and the journal warned "evaluation produced NaN/Inf", while the
+   * failed task or term is journalled with its own reason. */
+  if (r.sims_failed || r.terms_failed) {
+    r.was_nan_clamped = false;
+    r.loss = trg_.FAIL_SCORE;
+  } else {
+    r.loss = r.loss_count ? r.loss_sum / static_cast<double>(r.loss_count)
+                          : 0.0;
+    if (!std::isfinite(r.loss) || r.loss > trg_.FAIL_SCORE) {
+      if (!std::isfinite(r.loss)) r.was_nan_clamped = true;
+      r.loss = trg_.FAIL_SCORE;
+    }
+  }
 
   /* Graded-FAILSCORE assembly: a classified failure replaces the constant
    * (or the launder-prone partial mean) with the banded, monotone L_fail in
@@ -2917,8 +2939,11 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     } _census{r.iter, t0, EvalLoss::Failed, false};
 
     /* The census kind of a completed evaluation's loss: only a usable
-     * (feasible) loss can become the incumbent. */
+     * (feasible) loss can become the incumbent. An evaluation with a failed
+     * simulation or term is a failure (assemble_loss), never a NaN/Inf
+     * clamping. */
     const auto loss_kind = [this](const Result& res) {
+        if (res.sims_failed || res.terms_failed) return EvalLoss::Failed;
         if (res.was_nan_clamped) return EvalLoss::NanClamped;
         return loss_is_feasible(res.loss, trg_.FAIL_SCORE) ? EvalLoss::Usable
                                                            : EvalLoss::Failed;
@@ -4246,11 +4271,11 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                          * out. obs_loss() fails the same evaluation
                          * (FAIL_SCORE, under FAILSCORE_GRADING band B),
                          * and the gradient provider fails the gradient
-                         * at that loss before this pass whenever the
+                         * at that loss, or under HYBRID differences a
+                         * graded one, before this pass whenever the
                          * caller gives it (gradient_at); what is left is
-                         * the gradient of the other terms, at a graded
-                         * failure (it does not see the grading) or for a
-                         * caller without the loss. */
+                         * the gradient of the other terms for a caller
+                         * without the loss. */
                         inputs[k].failed = true;
                         continue;
                     }

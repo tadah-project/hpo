@@ -448,47 +448,69 @@ TEST_CASE("The journal's Fail score line names what scores FAILSCORE, "
           "under FAILSCORE_GRADING OFF and ON", "[failgrade][hpo_log]")
 {
     /* Pins: under FAILSCORE_GRADING OFF the LOSS FUNCTION section's Fail
-     * score line names the failures that score FAILSCORE: a NaN/Inf loss,
-     * an exception, a skip cap, a failed PC_LAMMPS simulation and a gate
-     * reject. Under ON it names only the NaN/Inf loss and the exception,
-     * and a "Fail grading" line says that a skip cap, a failed PC_LAMMPS
-     * simulation and a gate reject score a graded loss in [0.999, 1) x
-     * FAILSCORE (graded_eval_loss), as their rows in loss.tadah show.
+     * score line names the failures that score FAILSCORE in this run: a
+     * NaN/Inf loss, an exception, a skip cap, a failed term of the run --
+     * a failed PC_LAMMPS simulation when it has PC_LAMMPS lines, a failed
+     * PC_OBSERVABLE term when it has PC_OBSERVABLE lines (the two cannot
+     * be combined), neither otherwise -- and a gate reject. Under ON it
+     * names only the NaN/Inf loss and the exception, and a "Fail grading"
+     * line names the same failures as scoring a graded loss in [0.999, 1)
+     * x FAILSCORE (graded_eval_loss), as their rows in loss.tadah show.
      * Before the fix: one line whatever FAILSCORE_GRADING, "(the loss of a
      * failed evaluation: a NaN/Inf loss, an exception, a skip cap, a failed
      * script or a gate reject; the ceiling of every loss)", which under ON
      * named three failures that do not score it, and no "Fail grading"
-     * line. */
+     * line; then (until 2026-10-12) every run's lines named a failed
+     * PC_LAMMPS simulation and none a failed PC_OBSERVABLE term, which
+     * scores FAILSCORE, or band B under ON, since an evaluation with one
+     * fails: a PC_OBSERVABLE run's journal named a cause it cannot have
+     * and left out the one it had. */
     tadah::core::PeriodicTable::initialize();
     auto ctx = make_context_for_targets();
-    SECTION("FAILSCORE_GRADING OFF") {
-        auto cfg = write_file("cfg", config_head() + "PC_ERMSE 0 1\n");
-        tadah::hpo::HPOTargets trg(ctx, cfg.string());
-        REQUIRE_FALSE(trg.FAILSCORE_GRADING);
-        const std::string loss = loss_section(trg);
-        INFO(loss);
-        CHECK_THAT(line_of(loss, "Fail score"),
-                   Catch::EndsWith("1.0000e+06  (the loss of a failed "
-                                   "evaluation: a NaN/Inf loss, an exception, "
-                                   "a skip cap, a failed PC_LAMMPS simulation "
-                                   "or a gate reject; the ceiling of every "
-                                   "loss)"));
-        CHECK(line_of(loss, "Fail grading").empty());
-    }
-    SECTION("FAILSCORE_GRADING ON") {
-        auto cfg = write_file("cfg", config_head() + "PC_ERMSE 0 1\n"
-                                                     "FAILSCORE_GRADING ON\n");
-        tadah::hpo::HPOTargets trg(ctx, cfg.string());
-        REQUIRE(trg.FAILSCORE_GRADING);
-        const std::string loss = loss_section(trg);
-        INFO(loss);
-        CHECK_THAT(line_of(loss, "Fail score"),
-                   Catch::EndsWith("1.0000e+06  (the loss of an evaluation "
-                                   "with a NaN/Inf loss or an exception; the "
-                                   "ceiling of every loss)"));
-        CHECK_THAT(line_of(loss, "Fail grading"),
-                   Catch::EndsWith(": ON -- a skip cap, a failed PC_LAMMPS "
-                                   "simulation or a gate reject scores a "
-                                   "graded loss in [0.999, 1) x Fail score"));
+    const auto script = write_script();
+    struct Case {
+        std::string name, lines, causes;
+    };
+    const std::vector<Case> cases = {
+        {"PC_ERMSE alone", "PC_ERMSE 0 1\n", "a skip cap or a gate reject"},
+        {"PC_LAMMPS",
+         "PC_ERMSE 0 1\nPC_LAMMPS --script " + script.string() +
+             " --outvar A --varloss A 1.0 1.0\n",
+         "a skip cap, a failed PC_LAMMPS simulation or a gate reject"},
+        {"PC_OBSERVABLE",
+         "PC_ERMSE 0 1\nPC_OBSERVABLE cohesive_energy --species Ta "
+         "--target 8.1 --weight 1 --hotvar a0 3.0 3.35 3.3\n",
+         "a skip cap, a failed PC_OBSERVABLE term or a gate reject"}};
+    for (const Case& c : cases) {
+        DYNAMIC_SECTION(c.name << ", FAILSCORE_GRADING OFF") {
+            auto cfg = write_file("cfg", config_head() + c.lines);
+            tadah::hpo::HPOTargets trg(ctx, cfg.string());
+            REQUIRE_FALSE(trg.FAILSCORE_GRADING);
+            const std::string loss = loss_section(trg);
+            INFO(loss);
+            CHECK_THAT(line_of(loss, "Fail score"),
+                       Catch::EndsWith("1.0000e+06  (the loss of a failed "
+                                       "evaluation: a NaN/Inf loss, an "
+                                       "exception, " + c.causes + "; the "
+                                       "ceiling of every loss)"));
+            CHECK(line_of(loss, "Fail grading").empty());
+        }
+        DYNAMIC_SECTION(c.name << ", FAILSCORE_GRADING ON") {
+            auto cfg = write_file("cfg", config_head() + c.lines +
+                                             "FAILSCORE_GRADING ON\n");
+            tadah::hpo::HPOTargets trg(ctx, cfg.string());
+            REQUIRE(trg.FAILSCORE_GRADING);
+            const std::string loss = loss_section(trg);
+            INFO(loss);
+            CHECK_THAT(line_of(loss, "Fail score"),
+                       Catch::EndsWith("1.0000e+06  (the loss of an "
+                                       "evaluation with a NaN/Inf loss or an "
+                                       "exception; the ceiling of every "
+                                       "loss)"));
+            CHECK_THAT(line_of(loss, "Fail grading"),
+                       Catch::EndsWith(": ON -- " + c.causes +
+                                       " scores a graded loss in [0.999, 1) "
+                                       "x Fail score"));
+        }
     }
 }

@@ -144,12 +144,20 @@
  * failed), not of the FAILSCORE the optimiser sees: small but not 0, it
  * let a search that started inside the failure region converge on
  * FAILSCORE (DLIB:BFGS, Ceres CONVERGENCE, NLopt "algorithm converged"),
- * under HYBRID with nothing differenced (the default under PC_OBSERVABLE)
- * as under ANALYTICAL. A graded failure under FAILSCORE_GRADING ON keeps
- * the analytical gradient, which does not see the grading. gradient(x, g)
- * without the loss (DLIB:BFGS for a point that is not its last
- * evaluation) has nothing to classify: ANALYTICAL gives the analytical
- * gradient there.
+ * under ANALYTICAL (the default under PC_OBSERVABLE, hpo_targets.cpp) as
+ * under HYBRID with nothing differenced. Nor does it see the grading of a
+ * graded failure (CentreLoss::Graded) under FAILSCORE_GRADING ON, whose
+ * loss a band measure sets (pc_fail_grading.h), not the loss terms: there
+ * ANALYTICAL fails the gradient at once too (the same cause, "... a graded
+ * failure, whose grading the analytical gradient does not see"), and
+ * HYBRID runs no analytical pass and differences every parameter, which
+ * gives the graded slope or a flat failure region (above). Both used to
+ * keep the analytical gradient there: with every failed PC_OBSERVABLE term
+ * a band-B failure, a search that started where one failed converged on
+ * the graded loss (DLIB:BFGS FTOL_ABS, NLopt "algorithm converged").
+ * gradient(x, g) without the loss (DLIB:BFGS for a point that is not its
+ * last evaluation) has nothing to classify: ANALYTICAL, and HYBRID for
+ * what it does not difference, give the analytical gradient there.
  *
  * A point the host has no fit of -- a candidate the bump-support or a
  * density gate rejected before training (a graded band-D failure under
@@ -394,6 +402,20 @@ struct StencilReport {
   void failed_point(const Vec& x, double y) const {
     *out = {GradientFailure::Stencil, kGradientFailedPointCause,
             loss_at(x, y)};
+  }
+
+  /** The caller's loss at x is a graded failure (CentreLoss::Graded)
+   *  under ANALYTICAL: the analytical gradient there is that of the loss
+   *  without the failure (the usable terms, a skip cap's uncapped loss),
+   *  not of the graded loss the optimiser sees, which a band measure sets
+   *  (pc_fail_grading.h). No analytical pass is run and nothing is
+   *  evaluated. */
+  void graded_point(const Vec& x, double y) const {
+    *out = {GradientFailure::Stencil, kGradientFailedPointCause,
+            loss_at(x, y) + ": a graded failure, whose grading the "
+                            "analytical gradient does not see; "
+                            "GRAD_STRATEGY HYBRID takes finite differences "
+                            "there"};
   }
 
   /** The loss at x is a graded failure and every differenced component of
@@ -816,17 +838,23 @@ make_gradient_provider(const OptimizerSpec&     sp,
       };
       return gp;
     }
-    /* The caller's loss at x (the file comment): a failed one fails the
-     * gradient before the analytical pass -- the analytical gradient there
-     * is that of the loss before the failure (a skip cap's uncapped loss),
-     * not of the FAILSCORE the optimiser sees, and a search took it for a
-     * slope and converged on FAILSCORE. A graded failure under
-     * FAILSCORE_GRADING ON keeps the analytical gradient. */
+    /* The caller's loss at x (the file comment): a failed one, and a
+     * graded failure under FAILSCORE_GRADING ON, fail the gradient before
+     * the analytical pass -- the analytical gradient there is that of the
+     * loss before the failure (a skip cap's uncapped loss, the terms that
+     * did not fail), not of the FAILSCORE or the graded loss the optimiser
+     * sees, and a search took it for a slope and converged on it. */
     gp.gradient_at = [grad, failure, report](const Vec& x, double fx, Vec& g) {
       *failure = {};
-      if (report.classify(fx) == detail::CentreLoss::Failed) {
-        report.failed_point(x, fx);
-        return false;
+      switch (report.classify(fx)) {
+        case detail::CentreLoss::Failed:
+          report.failed_point(x, fx);
+          return false;
+        case detail::CentreLoss::Graded:
+          report.graded_point(x, fx);
+          return false;
+        case detail::CentreLoss::Usable:
+          break;
       }
       return grad(x, g);
     };
@@ -874,8 +902,17 @@ make_gradient_provider(const OptimizerSpec&     sp,
        * fails the gradient whatever is differenced (as under ANALYTICAL:
        * the analytical gradient there is not that of the loss the
        * optimiser sees, and with nothing differenced a search converged on
-       * FAILSCORE). A graded failure under FAILSCORE_GRADING ON goes on. */
-      if (fx && report.classify(*fx) == detail::CentreLoss::Failed) {
+       * FAILSCORE). At a graded failure under FAILSCORE_GRADING ON every
+       * parameter is differenced and no analytical pass is run: the
+       * analytical gradient there does not see the grading (a band
+       * measure, pc_fail_grading.h) -- it is the gradient of the terms
+       * that did not fail -- and a search that took it converged inside
+       * the failure region; the differences give the graded slope, or a
+       * flat failure region (below). */
+      const bool graded_at_x =
+          fx && report.classify(*fx) == detail::CentreLoss::Graded;
+      if (fx && !graded_at_x &&
+          report.classify(*fx) == detail::CentreLoss::Failed) {
         report.failed_point(x, *fx);
         return false;
       }
@@ -887,14 +924,22 @@ make_gradient_provider(const OptimizerSpec&     sp,
         return false;
       };
       if (over()) return false;
-      eval_counter->fetch_add(1);
 
       std::vector<int> needs_fd;
-      if (!analytical_grad_fn(x, g, needs_fd)) {
-        report.analytical("could not be formed at this point");
-        return false;
+      if (graded_at_x) {
+        g.set_size(x.size());
+        for (long i = 0; i < x.size(); ++i) {
+          g(i) = 0.0;
+          needs_fd.push_back(static_cast<int>(i));
+        }
+      } else {
+        eval_counter->fetch_add(1);
+        if (!analytical_grad_fn(x, g, needs_fd)) {
+          report.analytical("could not be formed at this point");
+          return false;
+        }
+        pull_to_internal(x, g, needs_fd);
       }
-      pull_to_internal(x, g, needs_fd);
       /* Every parameter in needs_fd -- all of them when the analytical
        * gradient cannot be formed here (a setup it does not cover, a
        * candidate the bump gate rejected before training, a PC_LAMMPS
