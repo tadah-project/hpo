@@ -1373,6 +1373,25 @@ std::size_t HPOLog::record_nn_rebuild()
     return n_nn_rebuild_.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
+std::size_t HPOLog::record_repeat_reused()
+{
+    return n_repeat_reused_.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
+std::size_t HPOLog::record_repeat_evaluated(const std::string& why)
+{
+    {
+        std::lock_guard<std::mutex> lg(mtx_);
+        if (repeat_again_why_.empty()) repeat_again_why_ = why;
+    }
+    return n_repeat_again_.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
+std::size_t HPOLog::record_line_search_not_run()
+{
+    return n_ls_not_run_.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
 std::size_t HPOLog::record_one_sided(const std::string& label)
 {
     std::lock_guard<std::mutex> lg(mtx_);
@@ -1398,6 +1417,10 @@ void HPOLog::reset_fd_counters_locked()
     n_hybrid_centre_.store(0, std::memory_order_relaxed);
     n_nn_rebuild_.store(0, std::memory_order_relaxed);
     one_sided_.clear();
+    n_repeat_reused_.store(0, std::memory_order_relaxed);
+    n_repeat_again_.store(0, std::memory_order_relaxed);
+    n_ls_not_run_.store(0, std::memory_order_relaxed);
+    repeat_again_why_.clear();
 }
 
 void HPOLog::record_io_retry_durable(std::size_t n)
@@ -2323,6 +2346,30 @@ void HPOLog::finish(const std::string& status_str)
                << ": " << hc << " (evaluations of a gradient's point for its\n"
                   "    one-sided or forward differences, where the optimiser's "
                   "own loss could not\n    be reused)\n";
+    }
+
+    /* Repeated points (repeat_points.h): each line only when its count is
+     * > 0. */
+    {
+        const std::size_t rr = n_repeat_reused_.load(std::memory_order_relaxed);
+        const std::size_t ra = n_repeat_again_.load(std::memory_order_relaxed);
+        const std::size_t ls = n_ls_not_run_.load(std::memory_order_relaxed);
+        if (rr > 0)
+            f_ << "  " << std::left << std::setw(KW) << "Repeated points reused"
+               << ": " << rr << " (points a search asked for again, answered "
+                  "with the loss -- and\n    gradient -- of their evaluation, "
+                  "not evaluated again: HPO's MAXEVAL does not\n    count them, "
+                  "NLopt's own MAXEVAL counts them among its calls, and the "
+                  "RESTART\n    window counts each as one evaluation without "
+                  "a new best)\n";
+        if (ra > 0)
+            f_ << "  " << std::left << std::setw(KW) << "Repeats evaluated again"
+               << ": " << ra << " (" << repeat_again_why_ << ")\n";
+        if (ls > 0)
+            f_ << "  " << std::left << std::setw(KW) << "Line searches not run"
+               << ": " << ls << " (DLIB:BFGS steps that the OPTIM box held at "
+                  "the point\n    they started from: the point, its loss and "
+                  "its gradient stood)\n";
     }
 
     /* Transient I/O. Printed only when something happened, so the

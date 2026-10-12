@@ -32,18 +32,18 @@
     }
   },
   "evaluations": {
-    "value": 16,
+    "value": 9,
     "tol": 0,
-    "note": "16 (2026-10-07; 19 before each finite-difference gradient took the loss at its point as its centre instead of evaluating the point again, 18 before the HPO data held the free energy and the Cauchy stress). BFGS reaches the upper bound RCUT2B = 6 at eval 7, the best (1.015561e-01), takes the one-sided gradient (evals 8-9) and re-evaluates the bound at eval 10, where the stagnation window (AFTER_STAGNATION 3) fires; each of the two RESTART rounds then stops after 3 evaluations without a new best: 10 + 3 + 3 = 16 (3 repeated runs identical)."
+    "note": "9 (2026-10-12, 3 repeated runs identical). BFGS reaches the upper bound RCUT2B = 6 at eval 7, the best (1.015561e-01), takes the one-sided gradient (evals 8-9), and its next step cannot move the point: the objective-delta test ends the search before 3 evaluations have passed without a new best, and RESTART, which relaunches a search that stagnates, does not fire. Until 2026-10-12 BFGS re-evaluated the bound at eval 10, where the stagnation window (AFTER_STAGNATION 3) fired, and each of the two RESTART rounds stopped after 3 evaluations without a new best: 10 + 3 + 3 = 16 (19 before each finite-difference gradient took the loss at its point as its centre, 18 before the HPO data held the free energy and the Cauchy stress)."
   },
   "best_ermse_meV_per_atom": 4.79,
   "status_accepted": [
-    "STOPPED -- stagnation: no new best in 3 evals after 2 restart(s)"
+    "DLIB:BFGS: FTOL_ABS reached"
   ],
-  "status_note": "Was COMPLETED: when RESTART used all its restarts and the last launch stagnated again, the journal fell back to the generic status. RestartPolicy now records why the run stopped; the window in the status is AFTER_STAGNATION.",
+  "status_note": "Was \"STOPPED -- stagnation: no new best in 3 evals after 2 restart(s)\" until 2026-10-12, when BFGS's re-evaluations of the bound fired the stagnation window (COMPLETED until RestartPolicy recorded why the run stopped); the search now ends on its own test and no restart fires.",
   "nan_clampings_max": 0,
   "threw_max": 0,
   "walltime_hint": "0.3s",
   "fast": true,
-  "tolerance_rationale": "RESTART RANDOM seeds each restart from std::random_device, so the restart evaluations differ from run to run. Only values that do not depend on them are pinned: the best comes from the deterministic first launch, and each restart stops after exactly AFTER_STAGNATION evaluations because no start in the box beats the incumbent (see evaluations.note)."
+  "tolerance_rationale": "The run is deterministic, and every value is pinned at the default tolerances: DLIB:BFGS reaches the upper bound RCUT2B = 6 at eval 7, the best (1.015561e-01), takes the one-sided gradient there (evals 8-9), and its next step cannot move the point, so the objective-delta test ends the search after 9 evaluations, \"DLIB:BFGS: FTOL_ABS reached\", before AFTER_STAGNATION 3 evaluations have passed without a new best: RESTART relaunches a search that stagnates, not one that ends, and no restart fires. Until 2026-10-12 BFGS's line search evaluated the bound again at eval 10, where the stagnation window fired; each of the two RESTART rounds (RESTART RANDOM, drawn from std::random_device) then stopped after 3 evaluations without a new best, 16 in all, \"STOPPED -- stagnation: no new best in 3 evals after 2 restart(s)\", and only the values that did not depend on the restarts were pinned."
 }

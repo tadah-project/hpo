@@ -296,6 +296,13 @@ public:
      * evaluation can publish. */
     void prepare_best_publication() const;
 
+    /** Why two evaluations of one point can give different losses in
+     *  this run (HPOTargets::repeat_reuse_blocker), or "" when every
+     *  evaluation is a function of its point: the NLopt and DLIB:BFGS
+     *  adapters then answer a point a search asks for again from its
+     *  earlier evaluation (repeat_points.h). */
+    std::string repeat_reuse_blocker() const { return trg_.repeat_reuse_blocker(); }
+
     std::size_t train_size() const;   // number of training structures
     std::size_t val_size()   const;   // number of validation structures
 
@@ -366,8 +373,18 @@ public:
     static std::size_t get_stagnation_threshold();
     /** Reset the stagnation counter without changing the threshold. */
     static void reset_stagnation();
-    /** Current stagnation count: g_iter_ - iter_at_last_best_. */
+    /** Current stagnation count: g_iter_ - iter_at_last_best_, plus the
+     *  reused repeats since (count_reused_repeat). */
     static std::size_t stagnation_count();
+    /** A call a search answered from its record of an earlier evaluation
+     *  (repeat_points.h; `of_eval` the run's number of that evaluation):
+     *  no evaluation and no new best. While a RESTART window is armed (and
+     *  no probe phase runs) it counts in the window as one evaluation
+     *  without a new best, and throws StagnationStop when the window is
+     *  spent, as the evaluation it stands for would have: a search that
+     *  only asks for points it has (LD_MMA held at a bound) makes no
+     *  evaluation, and nothing else would end it or relaunch it. */
+    static void count_reused_repeat(std::optional<std::size_t> of_eval);
 
     /** Exception thrown by operator() to signal a stagnation-driven
      *  abort. The RestartPolicy catches and re-enters with a fresh init;
@@ -583,6 +600,10 @@ private:
      * recorded; stagnation = g_iter_ - iter_at_last_best_. */
     static std::atomic_size_t   iter_at_last_best_;
     static std::atomic_size_t   stagnation_threshold_;
+    /* Reused repeats since the last new best (count_reused_repeat), which
+     * the window counts with the evaluations; reset with
+     * iter_at_last_best_. */
+    static std::atomic_size_t   reused_since_best_;
 
     /* Once-per-event gate for the StagnationStop diagnostic. With OMP /
      * concurrent eval threads, every thread that finishes its LAMMPS

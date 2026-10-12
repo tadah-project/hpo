@@ -32,8 +32,9 @@
     }
   },
   "evaluations": {
-    "value": 4,
-    "tol": 0
+    "value": 3,
+    "tol": 0,
+    "note": "3 rows (2026-10-12): the start 5.6, 5.663 and the upper bound RCUT2B = 6, each with its analytical gradient (one evaluation each in MAXEVAL: the stop line counts 6). At the bound BFGS's next step cannot move the point: the line search is not run, and the objective-delta test ends the search. Until 2026-10-12 the line search evaluated the bound again: 4 rows."
   },
   "best_ermse_meV_per_atom": 5.26,
   "status_accepted": [
@@ -41,7 +42,7 @@
   ],
   "nan_clampings_max": 0,
   "threw_max": 0,
-  "walltime_hint": "0.4s",
+  "walltime_hint": "0.2s",
   "fast": true,
   "tolerance_rationale": "Bundle is bit-deterministic when SEED is set; tolerances absorb cross-machine BLAS/LAPACK reorder and FP printf rounding while still flagging a material regression."
 }

@@ -132,6 +132,17 @@ public:
      *  uses finite differences. */
     virtual std::string analytical_gradient_gap() const = 0;
 
+    /** What evaluate() carries from one evaluation to the next, so that two
+     *  evaluations of the same model can give different values (a
+     *  relaxation started where the previous one ended), or "" when it
+     *  carries nothing. A search then evaluates a point it asks for again
+     *  instead of reusing the loss it gave (repeat_points.h). An observable
+     *  that does not say carries something. */
+    virtual std::string carried_state() const
+    {
+        return "it does not say that it keeps no state between evaluations";
+    }
+
     /** Evaluate observable value + W-derivative + (optional) adjoint
      *  rhs at the current model weights. */
     virtual ObservableEvalResult evaluate(

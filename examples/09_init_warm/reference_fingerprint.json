@@ -32,18 +32,17 @@
     }
   },
   "evaluations": {
-    "value": 30,
-    "tol": 30,
-    "note": "30 on the reference machine (2026-10-07, 3 repeated runs identical; 8 before each finite-difference gradient took the loss at its point as its centre, when BFGS ended after its second gradient). The WARM start is on the upper bound RCUT2B = 6.0 (eval 1, the best), BFGS takes the one-sided gradient there (evals 2-3), and from eval 4 its line search re-evaluates the clamped bound until MAXEVAL = 30, as in example 05 (a scratch build of the same code with other compiler flags ended after the second gradient, at 6). Whether it accepts a re-evaluation of the bound depends on rounding-level noise (see example 01), so the count is not pinned (evals_tol 30); best loss, components and RCUT2B do not depend on it."
+    "value": 3,
+    "tol": 0,
+    "note": "3 on the reference machine (2026-10-12, 3 repeated runs identical). The WARM start is on the upper bound RCUT2B = 6.0 (eval 1, the best), BFGS takes the one-sided gradient there (evals 2-3), and its first step cannot move the point: the line search is not run, and the objective-delta test ends the search (\"DLIB:BFGS: FTOL_ABS reached\"). Until 2026-10-12 the line search re-evaluated the clamped bound from eval 4 on until MAXEVAL = 30 (28 of the 30 evaluations at RCUT2B = 6.0; a scratch build with other compiler flags ended after the second gradient, at 6; 8 before each finite-difference gradient took the loss at its point as its centre)."
   },
   "best_ermse_meV_per_atom": 4.79,
   "status_accepted": [
-    "DLIB:BFGS: MAXEVAL reached",
     "DLIB:BFGS: FTOL_ABS reached"
   ],
   "nan_clampings_max": 0,
   "threw_max": 0,
-  "walltime_hint": "0.4s",
+  "walltime_hint": "0.2s",
   "fast": true,
-  "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances. The WARM start is on the clamped bound RCUT2B = 6.0, and whether DLIB:BFGS's line search accepts a re-evaluation there depends on rounding-level noise, as in example 01 (evaluations.note), so evals_tol 30 accepts both of its endings: MAXEVAL = 30, \"DLIB:BFGS: MAXEVAL reached\" (the reference machine, 2026-10-07), and the objective-delta test after the second gradient, \"DLIB:BFGS: FTOL_ABS reached\" (a scratch build with other compiler flags, 6 evaluations; FTOL_ABS is 1e-7 by default). Both ended COMPLETED until every HPO driver recorded why it ended, 2026-10-07."
+  "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances, and the evaluation count exactly: the WARM start is on the upper bound RCUT2B = 6.0 (eval 1), BFGS takes the one-sided gradient there (evals 2-3), and its first step cannot move the point, so its line search is not run and the objective-delta test ends the search, \"DLIB:BFGS: FTOL_ABS reached\" (FTOL_ABS is 1e-7 by default), after 3 evaluations. Until 2026-10-12 the line search evaluated the bound again: on the reference machine its decrease test failed on rounding-level noise of the warm-started relaxation and it re-evaluated the bound until MAXEVAL = 30, \"DLIB:BFGS: MAXEVAL reached\" (28 of the 30 evaluations at RCUT2B = 6.0); a scratch build with other compiler flags accepted the re-evaluation and ended after the second gradient, at 6. evals_tol 30 and both statuses were accepted."
 }

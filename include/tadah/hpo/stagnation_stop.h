@@ -46,7 +46,12 @@ private:
 
 /** The stagnation check of evaluation `iter`: throws StagnationStop when
  *  `threshold` (> 0) evaluations have passed since `last_best` (the eval
- *  number of the last new best).
+ *  number of the last new best), each of the `reused` calls since then
+ *  that a search answered from its record of an earlier evaluation
+ *  (repeat_points.h) counted as one: such a call is no new best, and a
+ *  search that only asks for points it has makes no evaluation. A reused
+ *  call checks with `iter` the latest evaluation (HPO_Host::
+ *  count_reused_repeat).
  *
  *  An evaluation that cannot become the new best skips the best mutex, so
  *  it can check while an earlier evaluation's new best is still being
@@ -63,12 +68,14 @@ private:
  *  waits. The caller must not hold `best_mtx`. */
 inline void throw_if_stagnated(std::size_t iter, std::size_t threshold,
                                const std::atomic<std::size_t>& last_best,
+                               const std::atomic<std::size_t>& reused,
                                std::mutex& best_mtx, BestPublications& pubs)
 {
   if (threshold == 0) return;
   auto fires = [&] {
     const std::size_t last = last_best.load(std::memory_order_relaxed);
-    return iter > last && iter - last >= threshold;
+    if (iter < last) return false;
+    return (iter - last) + reused.load(std::memory_order_relaxed) >= threshold;
   };
   if (!fires()) return;
   const std::size_t started = pubs.started.load();

@@ -327,6 +327,35 @@ public:
     std::size_t record_out_of_box_gradient();
     std::size_t record_one_sided(const std::string& label);
     std::size_t record_hybrid_centre();
+    /** Repeated points (repeat_points.h). Relaxed counters, no file I/O;
+     *  DIAGNOSTICS prints each only when it is > 0. Reset by open() and
+     *  reset_for_test(). Each returns the running count.
+     *   - record_repeat_reused: a point a search asked for again, answered
+     *     with the loss (and gradient) of its evaluation, not evaluated;
+     *   - record_repeat_evaluated: such a point evaluated again, and why
+     *     (`why`: the host's reason, or that its evaluation formed no
+     *     gradient the call asks for; DIAGNOSTICS gives the first);
+     *   - record_line_search_not_run: a DLIB:BFGS line search not run
+     *     because its step, held to the OPTIM box, could not move the
+     *     point. */
+    std::size_t record_repeat_reused();
+    /** Counts a repeat evaluated again; `why` (the first one kept) is
+     *  what DIAGNOSTICS gives. */
+    std::size_t record_repeat_evaluated(const std::string& why);
+    /** Counts a DLIB:BFGS line search not run. */
+    std::size_t record_line_search_not_run();
+    /** The repeats answered without an evaluation so far. */
+    std::size_t repeats_reused() const {
+        return n_repeat_reused_.load(std::memory_order_relaxed);
+    }
+    /** The repeats evaluated again so far. */
+    std::size_t repeats_evaluated() const {
+        return n_repeat_again_.load(std::memory_order_relaxed);
+    }
+    /** The DLIB:BFGS line searches not run so far. */
+    std::size_t line_searches_not_run() const {
+        return n_ls_not_run_.load(std::memory_order_relaxed);
+    }
     std::size_t out_of_box_evals() const {
         return n_oob_eval_.load(std::memory_order_relaxed);
     }
@@ -679,6 +708,12 @@ private:
     std::atomic<std::size_t> n_hybrid_centre_ {0};
     /* Evaluations with rebuilt neighbour lists (record_nn_rebuild). */
     std::atomic<std::size_t> n_nn_rebuild_    {0};
+    /* Repeated points (record_repeat_reused, ...); repeat_again_why_ is
+     * protected by mtx_. */
+    std::atomic<std::size_t> n_repeat_reused_ {0};
+    std::atomic<std::size_t> n_repeat_again_  {0};
+    std::atomic<std::size_t> n_ls_not_run_    {0};
+    std::string              repeat_again_why_;
     /* One-sided components per dimension, in the order first seen --
      * protected by mtx_. */
     std::vector<std::pair<std::string, std::size_t>> one_sided_;

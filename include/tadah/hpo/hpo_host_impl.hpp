@@ -892,6 +892,8 @@ template<class P,class R> std::atomic_size_t
   HPO_Host<P,R>::iter_at_last_best_{0};
 template<class P,class R> std::atomic_size_t
   HPO_Host<P,R>::stagnation_threshold_{0};
+template<class P,class R> std::atomic_size_t
+  HPO_Host<P,R>::reused_since_best_{0};
 
 /* Top-K accessors. Cheap when disabled. */
 template<class P,class R>
@@ -929,6 +931,7 @@ template<class P,class R>
 void HPO_Host<P,R>::reset_stagnation() {
   iter_at_last_best_.store(g_iter_.load(std::memory_order_relaxed),
                            std::memory_order_relaxed);
+  reused_since_best_.store(0, std::memory_order_relaxed);
   /* Re-arm the once-per-event diagnostic gate so the next stagnation
    * event in this run produces a fresh "begin" message. */
   stagnation_warned_.store(false, std::memory_order_relaxed);
@@ -937,7 +940,42 @@ template<class P,class R>
 std::size_t HPO_Host<P,R>::stagnation_count() {
   const std::size_t cur  = g_iter_.load(std::memory_order_relaxed);
   const std::size_t last = iter_at_last_best_.load(std::memory_order_relaxed);
-  return cur > last ? cur - last : 0;
+  return (cur > last ? cur - last : 0) +
+         reused_since_best_.load(std::memory_order_relaxed);
+}
+
+template<class P,class R>
+void HPO_Host<P,R>::count_reused_repeat(std::optional<std::size_t> of_eval) {
+  const std::size_t threshold =
+      stagnation_threshold_.load(std::memory_order_relaxed);
+  /* As an evaluation counts (operator()): only while a window is armed,
+   * and not during a probe phase. */
+  if (threshold == 0 || probe::active()) return;
+  reused_since_best_.fetch_add(1, std::memory_order_relaxed);
+  /* The search is serial (NLopt, DLIB:BFGS): its latest evaluation is the
+   * run's latest. */
+  const std::size_t latest = g_iter_.load(std::memory_order_relaxed);
+  try {
+    detail::throw_if_stagnated(latest, threshold, iter_at_last_best_,
+                               reused_since_best_, best_mtx_, best_pubs_);
+  } catch (const StagnationStop&) {
+    /* The once-per-event diagnostic, as operator() writes it. */
+    if (!stagnation_warned_.exchange(true, std::memory_order_relaxed)) {
+      try {
+        HPOLog::instance().info(
+            "StagnationStop fired at a repeat of " +
+            (of_eval ? "eval " + std::to_string(*of_eval)
+                     : std::string("an earlier evaluation")) +
+            " answered from the search's record, after eval " +
+            std::to_string(latest) +
+            "; short-circuiting optimiser (threshold=" +
+            std::to_string(threshold) +
+            " evals without improvement, each repeat answered from the "
+            "record counted as one)");
+      } catch (...) {}
+    }
+    throw;
+  }
 }
 
 template<class P,class R>
@@ -953,6 +991,7 @@ void HPO_Host<P,R>::reset_globals_for_test() {
         g_best_iter_.store(0, std::memory_order_relaxed);
         iter_at_last_best_.store(0, std::memory_order_relaxed);
         g_iter_.store(0, std::memory_order_relaxed);
+        reused_since_best_.store(0, std::memory_order_relaxed);
         g_best_key_.reset();
         durable_latch_.reset();
     }
@@ -983,6 +1022,7 @@ void HPO_Host<P,R>::reset_best_state_for_fresh_run() {
      * two HPO runs in one process, but start stagnation from this boundary. */
     iter_at_last_best_.store(g_iter_.load(std::memory_order_relaxed),
                              std::memory_order_relaxed);
+    reused_since_best_.store(0, std::memory_order_relaxed);
     g_best_key_.reset();
 }
 
@@ -3022,7 +3062,8 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
            * (detail::throw_if_stagnated). */
           if (threshold > 0 && !probe::active())
             detail::throw_if_stagnated(r.iter, threshold, iter_at_last_best_,
-                                       best_mtx_, best_pubs_);
+                                       reused_since_best_, best_mtx_,
+                                       best_pubs_);
         }
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - t0);
@@ -3377,6 +3418,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         g_best_key_ = key;
         g_best_iter_.store(r.best_iter, std::memory_order_relaxed);
         iter_at_last_best_.store(r.iter, std::memory_order_relaxed);
+        reused_since_best_.store(0, std::memory_order_relaxed);
         r.is_best = true;
         /* EMBF0 journal: `host` still holds this eval's weights (nothing
          * since the potential was built retrains this thread's trainer).
@@ -3413,7 +3455,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
       /* See the BUMPGATE path above: probe evals do not count. */
       if (threshold > 0 && !probe::active())
         detail::throw_if_stagnated(r.iter, threshold, iter_at_last_best_,
-                                   best_mtx_, best_pubs_);
+                                   reused_since_best_, best_mtx_, best_pubs_);
     }
     } /* end post_lammps_finalize watchdog */
 

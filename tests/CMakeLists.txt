@@ -70,8 +70,9 @@ set_tests_properties(hpo_corana1987_protocol PROPERTIES
     TIMEOUT 900
     SKIP_REGULAR_EXPRESSION "${TADAH_TEST_SKIP_REGULAR_EXPRESSION}")
 
-# Real-signal termination tests (test_hpo_termination.cpp): each case raises
-# SIGINT/SIGTERM/SIGUSR2 against a live hpo_run(). CORE's stop flag can only
+# Real-signal termination tests (test_hpo_termination.cpp; bfgs_not_run in
+# test_repeat_points.cpp): each case raises SIGINT/SIGTERM/SIGUSR2 against a
+# live hpo_run() or optimiser search. CORE's stop flag can only
 # be raised by a real signal and is never lowered, and the HPOLog / HPO_Host
 # statics persist, so every case is a hidden tag with an entry -- a process --
 # of its own. `ctest -L shutdown` runs them. NB: no ';' in add_test()
@@ -79,7 +80,7 @@ set_tests_properties(hpo_corana1987_protocol PROPERTIES
 set(_hpo_shutdown_cases
     dlib sigterm sigusr2 nlopt multistart prestage gfs anneal_pt anneal_pa
     anneal_pa_threads asa asa_block asa_periodic asa_sampling noise
-    no_usable_loss)
+    no_usable_loss bfgs_not_run)
 if(TADAH_ENABLE_CERES)
     list(APPEND _hpo_shutdown_cases ceres)
 endif()

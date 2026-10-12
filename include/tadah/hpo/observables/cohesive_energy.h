@@ -116,6 +116,13 @@ public:
     std::string kind() const override { return "cohesive_energy"; }
     std::string column_tag() const override { return "Ecoh"; }
     std::string analytical_gradient_gap() const override;
+    /** Every evaluation starts its relaxation from a0_current_, which the
+     *  previous one overwrote with the lattice constant it relaxed to. */
+    std::string carried_state() const override
+    {
+        return "its relaxation starts from the lattice constant the previous "
+               "evaluation relaxed to";
+    }
 
     ObservableEvalResult evaluate(
         tadah::mlip::M_Tadah_Base& model,
