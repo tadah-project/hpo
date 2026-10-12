@@ -12,6 +12,7 @@
 #include <cmath>
 #include <unordered_set>
 #include <tadah/hpo/search_space.h>
+#include <tadah/hpo/seed_stream.h>   // StreamPhase
 
 namespace tadah::hpo {
 
@@ -216,7 +217,8 @@ struct OptimizerSpec {
           inner(o.inner ? std::make_unique<OptimizerSpec>(*o.inner) : nullptr),
           prestage(o.prestage ? std::make_unique<OptimizerSpec>(*o.prestage) : nullptr),
           vector_storage(o.vector_storage), pop(o.pop),
-          num_threads(o.num_threads), seed(o.seed), step(o.step),
+          num_threads(o.num_threads), seed(o.seed),
+          stream_phase(o.stream_phase), step(o.step),
           step_overrides(o.step_overrides),
           grad_strategy(o.grad_strategy),
           grad_strategy_resolved(o.grad_strategy_resolved), stop(o.stop),
@@ -277,6 +279,11 @@ struct OptimizerSpec {
     /* 64-bit so SEED values at or above 2^32 are preserved exactly;
      * every consumer already widens to std::uint64_t. */
     std::optional<std::uint64_t> seed;
+    /* The phase this optimiser runs in, for its random streams
+     * (phase_stream_seed, seed_stream.h): Refinement in the specs
+     * prestage_refinement_spec builds (and their MULTISTART starts),
+     * Search otherwise. */
+    StreamPhase stream_phase = StreamPhase::Search;
     /* STEP: initial step of derivative-free NLopt algorithms. Consumed
      * only by backends whose OptimizerCaps::step_use is a consumer
      * (scale_validation.h rejects it everywhere else). */

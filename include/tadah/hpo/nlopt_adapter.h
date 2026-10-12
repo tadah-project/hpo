@@ -240,10 +240,15 @@ inline nlopt::opt make_nlopt(const OptimizerSpec& sp, unsigned dim,
 {
     validate_nlopt_spec(sp, restart);
     nlopt::opt o = detail::build_nlopt(sp, dim, plan);
+    /* The seed in the run's stream phase (phase_stream_seed): a PRESTAGE
+     * refinement seeds NLopt's generator with a key of its own (it drew the
+     * exploration's numbers for the same SEED). */
     if (sp.seed)
-        nlopt::srand(static_cast<unsigned long>(*sp.seed));
+        nlopt::srand(static_cast<unsigned long>(
+            phase_stream_seed(*sp.seed, sp.stream_phase)));
     else if (sp.init_strategy_spec.seed)
-        nlopt::srand(static_cast<unsigned long>(*sp.init_strategy_spec.seed));
+        nlopt::srand(static_cast<unsigned long>(
+            phase_stream_seed(*sp.init_strategy_spec.seed, sp.stream_phase)));
     return o;
 }
 

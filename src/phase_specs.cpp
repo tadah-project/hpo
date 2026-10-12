@@ -54,6 +54,9 @@ OptimizerSpec prestage_refinement_spec(
     OptimizerSpec refine = spec;
     refine.prestage.reset();          // the refinement does not explore again
     refine.optim_init = std::move(candidates);
+    /* Streams of its own: with the exploration's optimiser it drew the
+     * exploration's numbers for an equal seed (seed_stream.h). */
+    refine.stream_phase = StreamPhase::Refinement;
     return refine;
 }
 

@@ -96,8 +96,10 @@ template<typename Vec, typename Runner>
      * std::mt19937_64(seed) through uniform numbers in the box, the numbers
      * of the starting-point method RANDOM for the same seed, so with an INIT
      * block's SEED (or a RESTART round's) equal to its own its first draw
-     * was its start point again. */
-    std::mt19937_64 rng = seed_stream(seed, seed_streams::kRandomSearch);
+     * was its start point again. A PRESTAGE refinement's is its own too
+     * (phase_stream_seed): it drew its exploration's for the same seed. */
+    std::mt19937_64 rng = seed_stream(phase_stream_seed(seed, sp.stream_phase),
+                                      seed_streams::kRandomSearch);
     const auto& lo = sp.low, &hi = sp.high;
 
     const std::optional<uint64_t> budget = sp.stop.maxeval;
@@ -308,7 +310,10 @@ template<typename Vec, typename HostT>
     using anneal::RungStop;
 
     const std::size_t dim = sp.low.size();
-    const std::uint64_t seed = sp.seed.value_or(std::random_device{}());
+    /* The SEED the journal names, and the seed of every stream of the run
+     * (phase_stream_seed: itself but in a PRESTAGE refinement). */
+    const std::uint64_t seed_value = sp.seed.value_or(std::random_device{}());
+    const std::uint64_t seed = phase_stream_seed(seed_value, sp.stream_phase);
 
     const Knobs kb = Knobs::parse(sp, AlgoKind::Serial);
     anneal::announce_knobs(kb, AlgoKind::Serial);
@@ -385,7 +390,7 @@ template<typename Vec, typename HostT>
     {
       std::ostringstream oss;
       oss << "ANNEAL[" << (kb.corana ? "CORANA" : "CLASSIC") << "]: "
-          << "seed=" << seed
+          << "seed=" << seed_value
           << "  RT=" << kb.rt
           << "  BOUNDARY_MODE="
           << (kb.boundary_mode == anneal::BoundaryMode::Reflect
