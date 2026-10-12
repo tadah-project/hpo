@@ -4399,6 +4399,11 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
 
     std::string failure;
     try {
+        /* A failure testing::ScopedAnalyticalHelperFailure injects. */
+        if (const std::string* injected =
+                detail::g_analytical_helper_failure.load(
+                    std::memory_order_relaxed))
+            throw std::runtime_error(*injected);
         /* The lists of the evaluation the trainer slot holds: rebuilt
          * ones when its cutoff exceeded the one-time lists. */
         const auto& lists = tls_rebuilt_lists_;

@@ -22,6 +22,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
 #include <tuple>
 #include <vector>
@@ -65,7 +66,39 @@ inline std::uint64_t next_host_generation() {
     static std::atomic<std::uint64_t> last{0};
     return last.fetch_add(1, std::memory_order_relaxed) + 1;
 }
+
+/* What testing::ScopedAnalyticalHelperFailure makes the gradient helper
+ * throw (nullptr: nothing). */
+inline std::atomic<const std::string*> g_analytical_helper_failure{nullptr};
 }  // namespace detail
+
+namespace testing {
+/* Test seam: while an object lives, HPO_Host::analytical_gradient fails its
+ * gradient helper (compute_analytical_gradient_from_trainer) with
+ * std::runtime_error(what) at every pass that reaches it, on every thread,
+ * as the helper throws where it cannot form the gradient at a point whose
+ * fit trained -- which no portable fixture makes it do (the trainer's and
+ * the helper's factorisations of the normal equations differ at rounding
+ * level). Without one, a pass costs one relaxed atomic load. Install and
+ * remove it while no gradient is computed. */
+class ScopedAnalyticalHelperFailure {
+public:
+    explicit ScopedAnalyticalHelperFailure(std::string what)
+        : what_(std::move(what)),
+          previous_(detail::g_analytical_helper_failure.exchange(&what_)) {}
+    ~ScopedAnalyticalHelperFailure()
+    {
+        detail::g_analytical_helper_failure.store(previous_);
+    }
+    ScopedAnalyticalHelperFailure(const ScopedAnalyticalHelperFailure&) = delete;
+    ScopedAnalyticalHelperFailure&
+    operator=(const ScopedAnalyticalHelperFailure&) = delete;
+
+private:
+    std::string what_;
+    const std::string* previous_;
+};
+}  // namespace testing
 
 /* =========================================================================
  *  EvalResult - everything produced by *one* evaluation
