@@ -6555,14 +6555,21 @@ TEST_CASE("GRAD_STRATEGY ANALYTICAL: a candidate the bump gate rejects "
      * first rejected candidate is not the last evaluation), and ends with
      * status 0, a usable best and its search's MAXEVAL status
      * ("MAXEVAL_REACHED -- maximum evaluations exhausted", "CERES:<ALGO>:
-     * MAXEVAL reached"); the journal never says "no analytical gradient
-     * for".
+     * MAXEVAL reached"), or, for LD_LBFGS and LD_TNEWTON_PRECOND_RESTART,
+     * which NLopt ends after 15 evaluations right after a rejected
+     * candidate, the stop at it ("STOPPED -- no usable gradient: a failed
+     * evaluation at the point", the stop line naming the graded failure and
+     * "NLopt ended right after it (nlopt failure)"); the journal never
+     * says "no analytical gradient for".
      * Before the fix: hpo_run threw "GRAD_STRATEGY=ANALYTICAL: no
      * analytical gradient for 2 parameters at this point (indices: [0, 1])
      * ..." at the first rejected candidate, after 5-9 evaluations, and the
-     * run ended "FAILED -- GRAD_STRATEGY=ANALYTICAL: ...". DLIB:BFGS and
-     * CERES:STEEPEST_DESCENT ask no gradient at a rejected candidate of
-     * this search, so they are not among the cases. */
+     * run ended "FAILED -- GRAD_STRATEGY=ANALYTICAL: ...". Until 2026-10-12
+     * ANALYTICAL ran its analytical pass at a graded failure, one counted
+     * evaluation, so every rejected candidate counted twice and LD_LBFGS
+     * and LD_TNEWTON_PRECOND_RESTART reached MAXEVAL 20 first. DLIB:BFGS
+     * and CERES:STEEPEST_DESCENT ask no gradient at a rejected candidate
+     * of this search, so they are not among the cases. */
     std::vector<GradientBackend> backends = {
         {"NLOPT", "LD_LBFGS"}, {"NLOPT", "LD_MMA"}, {"NLOPT", "LD_SLSQP"},
         {"NLOPT", "LD_CCSAQ"}, {"NLOPT", "LD_TNEWTON"},
@@ -6598,11 +6605,29 @@ TEST_CASE("GRAD_STRATEGY ANALYTICAL: a candidate the bump gate rejects "
             const std::string journal = read_file("hpo_run.log");
             CHECK(journal.find("no analytical gradient for") ==
                   std::string::npos);
-            CHECK(journal_status(journal) ==
-                  (b.lib == "NLOPT"
-                       ? std::string("MAXEVAL_REACHED -- maximum evaluations "
-                                     "exhausted")
-                       : name + ": MAXEVAL reached"));
+            if (b.algo == "LD_LBFGS" || b.algo == "LD_TNEWTON_PRECOND_RESTART") {
+                CHECK(rows.size() == 15u);
+                CHECK(journal_status(journal) ==
+                      "STOPPED -- no usable gradient: a failed evaluation at "
+                      "the point");
+                CHECK_THAT(journal,
+                           Catch::Contains(name + " stopped: no usable "
+                                           "gradient: a failed evaluation at "
+                                           "the point (the loss at "));
+                CHECK_THAT(journal,
+                           Catch::Contains(": a graded failure, whose grading "
+                                           "the analytical gradient does not "
+                                           "see; GRAD_STRATEGY HYBRID takes "
+                                           "finite differences there); NLopt "
+                                           "ended right after it (nlopt "
+                                           "failure)"));
+            } else {
+                CHECK(journal_status(journal) ==
+                      (b.lib == "NLOPT"
+                           ? std::string("MAXEVAL_REACHED -- maximum "
+                                         "evaluations exhausted")
+                           : name + ": MAXEVAL reached"));
+            }
             check_run_files();
         }
     }

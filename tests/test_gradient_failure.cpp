@@ -459,20 +459,28 @@ TEST_CASE("GradientProvider: HYBRID's finite differences follow the same "
     }
     SECTION("nothing differenced: a failed loss at the point fails the "
             "gradient") {
-        /* With needs_fd empty (the analytical pass covers every parameter:
-         * the default under PC_OBSERVABLE) the analytical gradient at a
+        /* With needs_fd empty (the analytical pass covers every parameter,
+         * as under PC_OBSERVABLE on OALGO 4) the analytical gradient at a
          * failed point is that of the loss before the failure (a skip
-         * cap's uncapped loss), small but not 0, while the optimiser sees
-         * FAILSCORE.
+         * cap's uncapped loss, the terms that did not fail), small but not
+         * 0, while the optimiser sees FAILSCORE or the graded loss.
          * Pins: gradient_at at the failed loss fails before the analytical
          * pass (a Stencil failure, "a failed evaluation at the point",
-         * nothing evaluated or counted); at a usable loss, and at a graded
-         * failure under FAILSCORE_GRADING ON (FAILSCORE 1e9), it gives the
-         * analytical gradient, one counted evaluation each.
+         * nothing evaluated or counted); at a usable loss it gives the
+         * analytical gradient, one counted evaluation; at a graded failure
+         * under FAILSCORE_GRADING ON (FAILSCORE 1e9, the graded band-D loss
+         * below x = 0) it runs no analytical pass and differences every
+         * parameter: g(0) the graded slope, g(1) = 0 (the grading does not
+         * depend on y), four counted evaluations, all of them the host's.
          * Before the fix: it gave the analytical gradient (2, 1) at the
          * failed loss too (this section pinned that, as the scope of the
          * finite-difference rule), and a start inside the failure region
-         * converged on FAILSCORE (DLIB:BFGS, Ceres CONVERGENCE). */
+         * converged on FAILSCORE (DLIB:BFGS, Ceres CONVERGENCE); at the
+         * graded failure it gave the analytical gradient (2, 1), one
+         * counted evaluation and no host call (pinned here until
+         * 2026-10-12), and a search that started where a PC_OBSERVABLE term
+         * failed converged on the graded loss
+         * (test_hpo_partial_failure.cpp). */
         FailBelowZero host;
         auto analytical_only = [](const Vec&, Vec& g2, std::vector<int>&) {
             g2.set_size(2);
@@ -499,23 +507,34 @@ TEST_CASE("GradientProvider: HYBRID's finite differences follow the same "
 
         sp.failscore = 1e9;
         sp.failscore_grading = true;
+        Counted graded_host{[](const Vec& x) {
+            return x(0) < 0.0 ? graded_below_zero(x(0)) : x(0) + x(1);
+        }};
         auto gp2 = tadah::hpo::make_gradient_provider<Vec, void>(
-            sp, host, &counter, 0, analytical_only);
-        REQUIRE(gp2.gradient_at(point(-1.0, 0.5), 0.9995e9, g));
-        CHECK(g(0) == 2.0);
-        CHECK(counter.load() == 2u);
+            sp, graded_host, &counter, 0, analytical_only);
+        counter = 0;
+        REQUIRE(gp2.gradient_at(point(-1.0, 0.5), graded_below_zero(-1.0), g));
+        CHECK(g(0) == Approx((graded_below_zero(-0.8) -
+                              graded_below_zero(-1.2)) / 0.4)
+                          .epsilon(1e-12));
+        CHECK(g(1) == 0.0);
+        CHECK(counter.load() == 4u);
+        CHECK(graded_host.calls.load() == 4u);
         CHECK(host.calls.load() == 0u);
     }
     SECTION("FAILSCORE_GRADING ON: a graded failure at the point") {
         /* FAILSCORE 1e9, the graded band-D loss below x = 0.
-         * Pins: gradient_at with the graded loss at (-1, 0.5) gives the
-         * graded slope after two stencil evaluations (a pin: passes before
-         * the fix as well); gradient() without it evaluates the point once
-         * its first central stencil point has failed, to tell a graded
-         * failure there from a usable loss, and then takes the graded
-         * slope: four counted evaluations (the analytical pass, -0.8, the
-         * point, -1.2).
-         * Before the fix: gradient() never evaluated the point: three. */
+         * Pins: gradient_at with the graded loss at (-1, 0.5) runs no
+         * analytical pass and differences both parameters: the graded
+         * slope, g(1) = 0, after four stencil evaluations; gradient()
+         * without it evaluates the point once its first central stencil
+         * point has failed, to tell a graded failure there from a usable
+         * loss, and then takes the graded slope: four counted evaluations
+         * (the analytical pass, -0.8, the point, -1.2).
+         * Before the fix: gradient() never evaluated the point: three; and
+         * until 2026-10-12 gradient_at took the analytical g(1) = 1 at the
+         * graded failure (three counted evaluations: the analytical pass,
+         * -0.8, -1.2). */
         sp.failscore = 1e9;
         sp.failscore_grading = true;
         Counted host{[](const Vec& x) {
@@ -527,10 +546,13 @@ TEST_CASE("GradientProvider: HYBRID's finite differences follow the same "
             (graded_below_zero(-0.8) - graded_below_zero(-1.2)) / 0.4;
         REQUIRE(gp.gradient_at(point(-1.0, 0.5), graded_below_zero(-1.0), g));
         CHECK(g(0) == Approx(slope).epsilon(1e-12));
-        CHECK(counter.load() == 3u);
+        CHECK(g(1) == 0.0);
+        CHECK(counter.load() == 4u);
+        CHECK(host.calls.load() == 4u);
         counter = 0;
         REQUIRE(gp.gradient(point(-1.0, 0.5), g));
         CHECK(g(0) == Approx(slope).epsilon(1e-12));
+        CHECK(g(1) == 1.0);
         CHECK(counter.load() == 4u);
     }
     SECTION("FAILSCORE_GRADING ON: a usable point whose central stencil "
@@ -561,9 +583,11 @@ TEST_CASE("GradientProvider: HYBRID's finite differences follow the same "
          * Pins: at (-1, 0.5) the differenced component is 0, and HYBRID
          * fails the gradient as NUMERICAL does: a Stencil failure "... is
          * 999750000, and every difference at it is 0: a flat failure
-         * region", with the graded loss given (gradient_at: three counted
-         * evaluations, the analytical pass, -0.8 and -1.2) and without it
-         * (gradient(): four, the point evaluated once -0.8 has failed).
+         * region", with the graded loss given (gradient_at: four counted
+         * evaluations, no analytical pass and both parameters differenced;
+         * three, the analytical pass, -0.8 and -1.2, until 2026-10-12) and
+         * without it (gradient(): four, the point evaluated once -0.8 has
+         * failed).
          * Before the fix: g(0) = 0, a zero difference of two failures,
          * returned as the gradient in both, and a gradient search took the
          * point for converged. */
@@ -580,7 +604,7 @@ TEST_CASE("GradientProvider: HYBRID's finite differences follow the same "
         CHECK_FALSE(gp.gradient_at(point(-1.0, 0.5), 0.99975e9, g));
         CHECK(gp.failure->kind == GradientFailure::Stencil);
         CHECK(gp.failure->detail == flat);
-        CHECK(counter.load() == 3u);
+        CHECK(counter.load() == 4u);
         counter = 0;
         CHECK_FALSE(gp.gradient(point(-1.0, 0.5), g));
         CHECK(gp.failure->kind == GradientFailure::Stencil);
@@ -686,14 +710,23 @@ TEST_CASE("GradientProvider: ANALYTICAL fails at a failed loss the caller "
                 point(-1.0, 0.5), std::numeric_limits<double>::quiet_NaN(), g));
             CHECK(gp.failure->detail == at + "nan");
             CHECK(passes == 0u);
-            CHECK(gp.gradient_at(point(-1.0, 0.5), 0.9995e9, g) == grading);
-            if (grading) {
-                CHECK(g(0) == 2.0);
-                CHECK(passes == 1u);
-            } else {
-                CHECK(gp.failure->detail == at + "999500000");
-                CHECK(passes == 0u);
-            }
+            /* Pins: a loss in [0.999 FS, FS) fails the gradient before the
+             * analytical pass under either setting: under OFF a failure,
+             * under ON a graded failure, whose grading the analytical
+             * gradient does not see (the same cause, the detail saying so).
+             * Before the fix: under ON the analytical gradient (2, 1) was
+             * returned there, one pass. */
+            CHECK_FALSE(gp.gradient_at(point(-1.0, 0.5), 0.9995e9, g));
+            CHECK(gp.failure->kind == GradientFailure::Stencil);
+            CHECK(gp.failure->cause == "a failed evaluation at the point");
+            CHECK(gp.failure->detail ==
+                  at + "999500000" +
+                      (grading ? ": a graded failure, whose grading the "
+                                 "analytical gradient does not see; "
+                                 "GRAD_STRATEGY HYBRID takes finite "
+                                 "differences there"
+                               : ""));
+            CHECK(passes == 0u);
         }
         CHECK(host.calls.load() == 0u);
     }
@@ -724,31 +757,38 @@ TEST_CASE("GradientProvider: ANALYTICAL at a candidate rejected before "
           "[HPO][grad_provider][gradient_failure][analytical]")
 {
     /* Under FAILSCORE_GRADING ON a candidate the bump gate rejects is a
-     * graded failure, so gradient_at runs the analytical pass there, and
-     * HPO_Host's analytical gradient hands every parameter to finite
-     * differences: its trainer slot holds no fit of the point. ANALYTICAL
-     * took that for a parameter without an analytical derivative and threw,
-     * which ended the run FAILED (NLopt LD_*, CERES:LBFGS/WOLFE/NLCG,
-     * test_hpo_termination.cpp).
-     * Pins: at the rejected point (-0.5, 0.5), with the host's analytical
-     * pass routing both parameters to finite differences, gradient_at
-     * returns false, a NotFinite failure (the kind of a point without a
-     * usable gradient that is not a failed stencil evaluation, which NLopt
-     * and Ceres reject and DLIB:BFGS stops at): the cause "the analytical
-     * gradient could not be formed at this point", the detail naming the
-     * point, the host's reason and HYBRID; nothing is evaluated. Where the
-     * host gives no reason -- a parameter without an analytical derivative
-     * at a point it trained -- ANALYTICAL still throws, naming the
-     * parameters (a pin: as before the fix).
+     * graded failure, and HPO_Host's analytical gradient hands every
+     * parameter to finite differences there: its trainer slot holds no fit
+     * of the point. ANALYTICAL took that for a parameter without an
+     * analytical derivative and threw, which ended the run FAILED (NLopt
+     * LD_*, CERES:LBFGS/WOLFE/NLCG, test_hpo_termination.cpp).
+     * Pins: gradient_at at the rejected point (-0.5, 0.5) with its graded
+     * loss fails before the analytical pass, as at any graded failure (the
+     * analytical gradient does not see the grading): a Stencil failure "a
+     * failed evaluation at the point", the detail naming the loss and the
+     * graded failure, no analytical pass and nothing evaluated. gradient()
+     * without the loss runs the analytical pass, whose host routes both
+     * parameters to finite differences and says why: a NotFinite failure
+     * (the kind of a point without a usable gradient that is not a failed
+     * evaluation, which NLopt and Ceres reject and DLIB:BFGS stops at),
+     * the cause "the analytical gradient could not be formed at this
+     * point", the detail naming the point, the host's reason and HYBRID.
+     * Where the host gives no reason -- a parameter without an analytical
+     * derivative at a point it trained -- ANALYTICAL still throws, naming
+     * the parameters (a pin: as before the fix).
      * Before the fix: gradient_at threw "GRAD_STRATEGY=ANALYTICAL: no
      * analytical gradient for 2 parameters at this point (indices: [0,
-     * 1]) ..." at the rejected point. */
+     * 1]) ..." at the rejected point; until 2026-10-12 gradient_at ran the
+     * analytical pass there (one counted evaluation) and gave the host's
+     * reason. */
     auto sp = inhouse_spec();
     sp.grad_strategy = tadah::hpo::GradStrategy::Analytical;
     sp.failscore = 1e9;
     sp.failscore_grading = true;
     std::atomic<unsigned long> counter{0};
-    const auto all_fd = [](const Vec&, Vec& g2, std::vector<int>& nfd) {
+    unsigned passes = 0;
+    const auto all_fd = [&passes](const Vec&, Vec& g2, std::vector<int>& nfd) {
+        ++passes;
         g2.set_size(2);
         g2(0) = 0.0;
         g2(1) = 0.0;
@@ -764,6 +804,19 @@ TEST_CASE("GradientProvider: ANALYTICAL at a candidate rejected before "
     REQUIRE(fx >= 0.999e9);
     REQUIRE(fx < 1e9);
     CHECK_FALSE(gp.gradient_at(rejected, fx, g));
+    CHECK(gp.failure->kind == GradientFailure::Stencil);
+    CHECK(gp.failure->cause == "a failed evaluation at the point");
+    CHECK_THAT(gp.failure->detail,
+               Catch::StartsWith("the loss at CGRID2B[2] = -0.5, SGRID2B[2] "
+                                 "= 0.5 is 999") &&
+                   Catch::EndsWith(": a graded failure, whose grading the "
+                                   "analytical gradient does not see; "
+                                   "GRAD_STRATEGY HYBRID takes finite "
+                                   "differences there"));
+    CHECK(passes == 0u);
+    CHECK(counter.load() == 0u);
+
+    CHECK_FALSE(gp.gradient(rejected, g));
     CHECK(gp.failure->kind == GradientFailure::NotFinite);
     CHECK(gp.failure->cause ==
           "the analytical gradient could not be formed at this point");
@@ -773,6 +826,7 @@ TEST_CASE("GradientProvider: ANALYTICAL at a candidate rejected before "
     CHECK(tadah::hpo::gradient_stop_status(*gp.failure) ==
           "STOPPED -- no usable gradient: the analytical gradient could not "
           "be formed at this point");
+    CHECK(passes == 1u);
 
     const Vec trained = point(1.0, 0.5);
     const double fy = host(trained);
