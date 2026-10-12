@@ -39,7 +39,8 @@
  *                    ~43 KB text parse per (worker, eval).
  *   RESULT     W->P  {u64 seq, u32 script_idx, u32 status, str error_msg,
  *                     vec<str> outvar_values, vec<str> outvar_errors,
- *                     vec<str> hotvar_values, vec<str> failvar_values,
+ *                     vec<str> hotvar_values, vec<str> hotvar_errors,
+ *                     vec<str> failvar_values, vec<str> failvar_errors,
  *                     f64 create_ms, f64 run_ms}
  *   SHUTDOWN   P->W  {}
  *
@@ -127,8 +128,10 @@ struct PcScriptSpec {
 
 class PcWorkerPool {
 public:
-  /* v2: failvars; v3: the outvars' read-back errors (outvar_errors) */
-  static constexpr std::uint32_t PROTOCOL_VERSION = 3;
+  /* v2: failvars; v3: the outvars' read-back errors (outvar_errors); v4:
+   * the hot and fail variables' read-back errors (hotvar_errors,
+   * failvar_errors), which the parent judges */
+  static constexpr std::uint32_t PROTOCOL_VERSION = 4;
   /* Consecutive deaths on one channel with no successful round trip in
    * between. Reaching this throttles the next respawn; it never retires the
    * channel -- a dead slot in a shared-queue pool drains tasks faster than

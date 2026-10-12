@@ -176,22 +176,18 @@ TEST_CASE("scale_validation: bounds-ignoring backends warn at startup",
      * time (three times in a plain run). The text says what an evaluation
      * outside the box does -- it is evaluated there and can become the
      * best, warned about and counted -- and which optimisers keep to the
-     * box (review item 4). LN_NEWUOA's names LN_BOBYQA alone: it named
-     * LN_NEWUOA_BOUND too, which HPO now refuses (optimizer_caps.cpp).
-     * Before the fix: the LN_NEWUOA text ended "LN_NEWUOA_BOUND and
-     * LN_BOBYQA keep to the box", so its count was 0. */
+     * box (review item 4). The CERES drivers are the only backends that
+     * ignore the bounds: NLOPT:LN_NEWUOA, which did, is refused, so the
+     * check throws its refusal and warns nothing.
+     * Before the fix: LN_NEWUOA was accepted with the WARNING "NLOPT:
+     * LN_NEWUOA (OUTER): ignores the OPTIM box: NLopt calls LN_NEWUOA
+     * without bounds ... LN_BOBYQA keeps to the box" (once), so the
+     * REQUIRE_THROWS fails, and the journal had two such WARNINGs. */
     JournalCapture j;
     auto sp = make_spec("NLOPT", "LN_NEWUOA");
-    for (const char* where : {"OUTER", "OUTER", "run"})
-        REQUIRE_NOTHROW(validate_optimizer_scaling(sp, where));
-    const std::string newuoa =
-        "NLOPT:LN_NEWUOA (OUTER): ignores the OPTIM box: NLopt calls "
-        "LN_NEWUOA without bounds (optimize.c passes lb = ub = NULL), so its "
-        "evaluations can leave the box, and such a point can become the "
-        "best; the first is reported with a WARNING and DIAGNOSTICS counts "
-        "them all. LN_BOBYQA keeps to the box";
-    CHECK(count_of(j.text(), newuoa) == 1u);
-    CHECK(count_of(j.text(), "ignores the OPTIM box") == 1u);
+    REQUIRE_THROWS_WITH(validate_optimizer_scaling(sp, "OUTER"),
+                        Catch::StartsWith("NLOPT:LN_NEWUOA is refused: "));
+    CHECK(count_of(j.text(), "ignores the OPTIM box") == 0u);
 
     auto ce = make_spec("CERES", "LBFGS");
     for (const char* where : {"OUTER", "run"})
@@ -205,7 +201,7 @@ TEST_CASE("scale_validation: bounds-ignoring backends warn at startup",
         "(finite differences at such a point step towards the box). "
         "DLIB:BFGS and the NLopt LD_* algorithms keep to the box";
     CHECK(count_of(j.text(), ceres) == 1u);
-    CHECK(count_of(j.text(), "ignores the OPTIM box") == 2u);
+    CHECK(count_of(j.text(), "ignores the OPTIM box") == 1u);
 }
 
 TEST_CASE("scale_validation: start points must lie inside the OPTIM box",

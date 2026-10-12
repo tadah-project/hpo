@@ -84,24 +84,11 @@
 
 namespace tadah::hpo {
 
-/* Throws std::runtime_error with a tailored "use CERES:LBFGS" message
- * when spec asks for a deferred Ceres NLLS algorithm
- * (LEVENBERG_MARQUARDT / DOGLEG / SUBSPACE_DOGLEG). Called from
- * run_inner() before the caps lookup so users get this specific
- * diagnostic rather than a generic "unknown optimizer" error. No-op
- * for any non-deferred (lib, algo). */
-inline void reject_deferred_ceres_nlls(const OptimizerSpec& spec) {
-    if (spec.lib != "CERES") return;
-    if (spec.algo == "LEVENBERG_MARQUARDT" ||
-        spec.algo == "DOGLEG"             ||
-        spec.algo == "SUBSPACE_DOGLEG") {
-        throw std::runtime_error(
-            "CERES:" + spec.algo + " is deferred to a later phase "
-            "(requires residual-mode loss exposure and autodiff support). "
-            "Use CERES:LBFGS, CERES:WOLFE, CERES:NLCG, or "
-            "CERES:STEEPEST_DESCENT.");
-    }
-}
+/* Ceres' least-squares solvers (LEVENBERG_MARQUARDT, DOGLEG,
+ * SUBSPACE_DOGLEG) are refused by the caps registry (optimizer_caps.cpp:
+ * kRefused), so every lookup -- the parser's at the block's closing line,
+ * validate_hpo_setup, run_inner -- gives their reason and the four solvers
+ * below. */
 
 namespace detail {
 

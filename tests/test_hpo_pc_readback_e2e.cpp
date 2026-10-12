@@ -1183,6 +1183,219 @@ TEST_CASE("a --hotvar or --failvar with text after its number fails the "
     }
 }
 
+/* Pins: the journal line of a task with several hot and fail values
+ * without a number names every one, in the order the host judges them --
+ * the hot values, then the fail values --, the first first, so it still
+ * names the failure: a hot script whose hot_a0 is '3.25abc', hot_b 'xyz'
+ * and --failvar viol '0.5abc' fails the evaluation (FAILSCORE, E and E2
+ * failscored, the cold script not run) with "PC_LAMMPS task failed
+ * (<dir>/hot.in, occurrence 1): reading --hotvar hot_a0 after the script:
+ * its value '3.25abc' is not a number; reading --hotvar hot_b after the
+ * script: its value 'xyz' is not a number; reading --failvar viol after
+ * the script: its value '0.5abc' is not a number".
+ * Before the fix: the line ended after hot_a0's clause (the judgement
+ * stopped at the first variable at fault), so hot_b's and viol's clauses
+ * are not found. */
+TEST_CASE("every hot and fail value without a number is journalled, the "
+          "first first", "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ScratchDir sd("tadah_pc_every_bad_var_");
+    std::ofstream(sd.dir / "hot.in")
+        << ta_script("${hot_a0}", "variable E equal pe\n"
+                                  "variable hot_a0 equal 3.25\n"
+                                  "variable hot_b equal 1.5\n"
+                                  "variable viol equal 0.0\n" +
+                                      respell("hot_a0", "3.25abc") +
+                                      respell("hot_b", "xyz") +
+                                      respell("viol", "0.5abc"));
+    std::ofstream(sd.dir / "cold.in")
+        << ta_script("${hot_a0}", "variable E2 equal pe\n");
+    Journal j;
+    const auto losses = evaluate(
+        sd.dir,
+        "PC_ERMSE 0 1\n"
+        "PC_LAMMPS --script " + (sd.dir / "hot.in").string() +
+            " --varloss E 0 1 --hotvar hot_a0 2.5 4.5 3.301"
+            " --hotvar hot_b 0 10 1.5 --failvar viol 1.0\n"
+        "PC_LAMMPS --script " + (sd.dir / "cold.in").string() +
+            " --varloss E2 0 1\n",
+        {0.5});
+    const std::string journal = j.finish();
+    INFO(journal);
+    REQUIRE(losses.size() == 1);
+    CHECK(losses[0] == 1e16);
+    const Table outv = read_table("outvar.tadah");
+    REQUIRE(outv.rows.size() == 1);
+    REQUIRE(outv.rows[0].size() == 6);
+    CHECK(outv.rows[0][4] == "1.000000e+16");
+    CHECK(outv.rows[0][5] == "1.000000e+16");
+    const std::string line = line_with(journal, "hot.in, occurrence 1): ");
+    CHECK_THAT(line,
+               Catch::Contains("PC_LAMMPS task failed (") &&
+               Catch::Contains("hot.in, occurrence 1): "
+                               "reading --hotvar hot_a0 after the script: its "
+                               "value '3.25abc' is not a number; reading "
+                               "--hotvar hot_b after the script: its value "
+                               "'xyz' is not a number; reading --failvar viol "
+                               "after the script: its value '0.5abc' is not a "
+                               "number"));
+    CHECK(journal.find("cold.in, occurrence") == std::string::npos);
+    Host::reset_globals_for_test();
+}
+
+/* Pins: the journal line of a task names every variable at fault whichever
+ * side found it -- the LAMMPS error raised by reading one back (found as it
+ * is read) or a value without a number (found as it is judged) --, in one
+ * order: the line's variables (--varloss), then the --hotvar, then the
+ * --failvar variables, each group in its line's order, joined with "; ":
+ *   - --varloss E 'abc', --failvar F1 = 1.0/(pe-pe) (a divide by zero),
+ *     --failvar F2 'xyz' (tmp/review/readback_mix): "PC_LAMMPS task failed
+ *     (<dir>/rb.in, occurrence 1): reading --varloss E after the script:
+ *     its value 'abc' is not a number; reading --failvar F1 after the
+ *     script: <LAMMPS divide by 0>; reading --failvar F2 after the script:
+ *     its value 'xyz' is not a number";
+ *   - a hot script whose --varloss E and --hotvar hot_a0 read `press` and
+ *     whose --hotvar hot_b is 'xyz' (tmp/review/readback_mixed2): "reading
+ *     --varloss E after the script: <press error>; reading --hotvar hot_a0
+ *     after the script: <press error>; reading --hotvar hot_b after the
+ *     script: its value 'xyz' is not a number", the cold script not run;
+ *   - --varloss E 'abc' then --varloss G reading `press`: E's clause first,
+ *     then G's.
+ * Each evaluation fails (FAILSCORE, its variables failscored).
+ * Before the fix: a --hotvar or --failvar whose read raised a LAMMPS error
+ * failed the task in the worker, which handed on no other value, and the
+ * parent judged nothing else: the first two lines named F1 alone and
+ * hot_a0 alone (E, F2 and hot_b missing); and the loss variables' read
+ * errors came before their values without a number, so the third named G
+ * first. The clause and order checks fail. */
+TEST_CASE("every variable at fault in a task is journalled, the line's, then "
+          "the hot, then the fail ones, whichever side found it",
+          "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    /* The journal entry that contains @p needle: from its "PC_LAMMPS task
+     * failed (" to the next timestamped entry. A LAMMPS message carries a
+     * line of its own ("Last input line: ..."), which the journal prints as
+     * a continuation line of the entry. */
+    auto entry = [](const std::string& journal, const std::string& needle) {
+        const std::size_t at = journal.find(needle);
+        if (at == std::string::npos) return std::string();
+        const std::size_t head = journal.rfind("PC_LAMMPS task failed (", at);
+        const std::size_t from = head == std::string::npos ? at : head;
+        const std::size_t to = journal.find("\n  [", at);
+        return journal.substr(from, to == std::string::npos ? std::string::npos
+                                                           : to - from);
+    };
+    /* The clauses @p clauses, in this order, in the entry @p text. */
+    auto check_clauses = [](const std::string& text,
+                            const std::vector<std::string>& clauses) {
+        INFO(text);
+        CHECK_THAT(text, Catch::StartsWith("PC_LAMMPS task failed ("));
+        std::size_t at = 0;
+        for (const std::string& c : clauses) {
+            INFO(c);
+            const std::size_t p = text.find(c, at);
+            CHECK(p != std::string::npos);
+            if (p != std::string::npos) at = p + c.size();
+        }
+    };
+    SECTION("a --varloss without a number and a --failvar read error") {
+        Host::reset_globals_for_test();
+        ScratchDir sd("tadah_pc_mixed_fail_");
+        std::ofstream(sd.dir / "rb.in")
+            << ta_script("3.301", "variable E equal pe\n"
+                                  "variable F1 equal 1.0/(pe-pe)\n"
+                                  "variable F2 equal 0.0\n" +
+                                      respell("E", "abc") +
+                                      respell("F2", "xyz"));
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir,
+            "PC_ERMSE 0 1\n"
+            "PC_LAMMPS --script " + (sd.dir / "rb.in").string() +
+                " --varloss E 0 1 --failvar F1 1.0 --failvar F2 1.0\n",
+            {0.5});
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] == 1e16);
+        check_clauses(entry(journal, "rb.in, occurrence 1): "),
+                      {"rb.in, occurrence 1): reading --varloss E after the "
+                       "script: its value 'abc' is not a number; ",
+                       "reading --failvar F1 after the script: ",
+                       kDivideError.lammps_text,
+                       "; reading --failvar F2 after the script: its value "
+                       "'xyz' is not a number"});
+        Host::reset_globals_for_test();
+    }
+    SECTION("a --varloss and a --hotvar read error and a --hotvar without a "
+            "number") {
+        Host::reset_globals_for_test();
+        ScratchDir sd("tadah_pc_mixed_hot_");
+        std::ofstream(sd.dir / "hot.in")
+            << ta_script("${hot_a0}", "variable E equal press\n"
+                                      "variable hot_a0 equal press\n"
+                                      "variable hot_b equal 1.5\n" +
+                                          respell("hot_b", "xyz"));
+        std::ofstream(sd.dir / "cold.in")
+            << ta_script("${hot_a0}", "variable E2 equal pe\n");
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir,
+            "PC_ERMSE 0 1\n"
+            "PC_LAMMPS --script " + (sd.dir / "hot.in").string() +
+                " --varloss E 0 1 --hotvar hot_a0 2.5 4.5 3.301"
+                " --hotvar hot_b 0 10 1.5\n"
+            "PC_LAMMPS --script " + (sd.dir / "cold.in").string() +
+                " --varloss E2 0 1\n",
+            {0.5});
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] == 1e16);
+        const Table outv = read_table("outvar.tadah");
+        REQUIRE(outv.rows.size() == 1);
+        REQUIRE(outv.rows[0].size() == 6);
+        CHECK(outv.rows[0][4] == "1.000000e+16");
+        CHECK(outv.rows[0][5] == "1.000000e+16");
+        check_clauses(entry(journal, "hot.in, occurrence 1): "),
+                      {"hot.in, occurrence 1): reading --varloss E after the "
+                       "script: ",
+                       kPressError.lammps_text,
+                       "; reading --hotvar hot_a0 after the script: ",
+                       kPressError.lammps_text,
+                       "; reading --hotvar hot_b after the script: its value "
+                       "'xyz' is not a number"});
+        CHECK(journal.find("cold.in, occurrence") == std::string::npos);
+        Host::reset_globals_for_test();
+    }
+    SECTION("the line's variables in the line's order") {
+        Host::reset_globals_for_test();
+        ScratchDir sd("tadah_pc_mixed_loss_");
+        std::ofstream(sd.dir / "rb.in")
+            << ta_script("3.301", "variable E equal pe\n"
+                                  "variable G equal press\n" +
+                                      respell("E", "abc"));
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir,
+            "PC_ERMSE 0 1\n"
+            "PC_LAMMPS --script " + (sd.dir / "rb.in").string() +
+                " --varloss E 0 1 --varloss G 0 1\n",
+            {0.5});
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] == 1e16);
+        check_clauses(entry(journal, "rb.in, occurrence 1): "),
+                      {"rb.in, occurrence 1): reading --varloss E after the "
+                       "script: its value 'abc' is not a number; reading "
+                       "--varloss G after the script: ",
+                       kPressError.lammps_text});
+        Host::reset_globals_for_test();
+    }
+}
+
 namespace {
 
 /* TMPDIR for the life of the object, restored (or unset) after. */
@@ -1757,7 +1970,8 @@ std::string sci6(double v) {
  *     1.0 (viol = 0.25): the failvar grades the failure, band B by
  *     sigma(0.25), TOTAL_LOSS/N 9.993000e+15, exit 1;
  *   - the same with viol = 1.0/(pe-pe): "PC_LAMMPS task failed
- *     (readback.in, occurrence 1): reading --failvar viol after the
+ *     (readback.in, occurrence 1): reading --varloss E after the script:
+ *     ERROR: Thermo keyword press ...; reading --failvar viol after the
  *     script: ERROR: ... Divide by 0", band B by the failed fraction (one of
  *     one script), TOTAL_LOSS/N 9.993750e+15, exit 1;
  *   - a hot value LAMMPS refuses to inject into the cold script (its line's
@@ -1769,6 +1983,14 @@ std::string sci6(double v) {
  *     (readback.in, occurrence 1): reading --varloss F after the script: no
  *     value (the variable is not defined, or has no single value)", E and F
  *     failscored, TOTAL_LOSS/N 1.000000e+16;
+ *   - --varloss F 'abc', --hotvar hot_a0 reading `press` and --failvar viol
+ *     = 1.0/(pe-pe), with a cold script that reads hot_a0: exit 1, one
+ *     line naming the three in the line's order, "PC_LAMMPS task failed
+ *     (readback.in, occurrence 1): reading --varloss F after the script:
+ *     its value 'abc' is not a number; reading --hotvar hot_a0 after the
+ *     script: ERROR: Thermo keyword press ...; reading --failvar viol after
+ *     the script: ... Divide by 0 ...", E, F and E2 failscored, the cold
+ *     script not run, TOTAL_LOSS/N 1.000000e+16;
  *   - the same LAMMPS error inside the script with the line's --varloss E
  *     measured by L1: a failed evaluation all the same, exit 1,
  *     TOTAL_LOSS/N 1.000000e+16, no "[ok] Every evaluation produced a
@@ -1807,7 +2029,11 @@ std::string sci6(double v) {
  * gate." (a probe whose script failed aborted its evaluation then too).
  * Before the failed-evaluation fix the L1 section's evaluations scored the
  * mean of L2(ERMSE) and L1(1e16): TOTAL_LOSS/N 5.000000e+15, a feasible
- * loss, exit 0. */
+ * loss, exit 0. Before the every-variable fix the mixed section's line
+ * named hot_a0 and viol alone, in both modes, and the unreadable-failvar
+ * section's viol alone, "reading --failvar viol after the script: ..."
+ * (the worker failed the task on their read errors and handed on no other
+ * value): their first needles are not found. */
 TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
           "way under PC_ISOLATION THREAD and PROCESS",
           "[pc_readback][tadah_cli][.tadah_cli_pc_readback]") {
@@ -1923,7 +2149,8 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
              "--failvar viol 1.0\n",
              1,
              {"PC_LAMMPS task failed (readback.in, occurrence 1): "
-              "reading --failvar viol after the script: ",
+              "reading --varloss E after the script: " + press_text,
+              "; reading --failvar viol after the script: ",
               "Divide by 0 in variable formula"},
              {},
              sci6(graded_failscore(1e16, FailBand::B, 1.0, 1.0)),
@@ -1961,6 +2188,29 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
              "1.000000e+16",
              {{"E", "1.000000e+16"}, {"F", "1.000000e+16"}},
              {}};
+    }
+    SECTION("a --varloss, a --hotvar and a --failvar at fault together") {
+        name = "mixed";
+        c = {ta_script("3.301", "variable E equal pe\nvariable F equal pe+1\n"
+                                "variable hot_a0 equal press\n"
+                                "variable viol equal 1.0/(pe-pe)\n" +
+                                    respell("F", "abc")),
+             "PC_LAMMPS --script readback.in --varloss E 0 1 --varloss F 0 1 "
+             "--hotvar hot_a0 2.5 4.5 3.301 --failvar viol 1.0\n"
+             "PC_LAMMPS --script cold.in --varloss E2 0 1\n",
+             1,
+             {"PC_LAMMPS task failed (readback.in, occurrence 1): reading "
+              "--varloss F after the script: its value 'abc' is not a "
+              "number; reading --hotvar hot_a0 after the script: " +
+                  press_text,
+              "; reading --failvar viol after the script: ",
+              "Divide by 0 in variable formula",
+              "no evaluation produced a usable loss"},
+             {"cold.in, occurrence"},
+             "1.000000e+16",
+             {{"E", "1.000000e+16"}, {"F", "1.000000e+16"},
+              {"E2", "1.000000e+16"}},
+             {{"cold.in", "clear\nunits metal\nvariable E2 equal ${hot_a0}\n"}}};
     }
     SECTION("a LAMMPS error inside the script under --varloss ... L1") {
         name = "script_l1";

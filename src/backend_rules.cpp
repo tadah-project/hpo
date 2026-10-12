@@ -4,6 +4,7 @@
 #include <tadah/hpo/asa_options.h>
 #include <tadah/hpo/ceres_adapter.h>
 #include <tadah/hpo/dlib_adapter.h>
+#include <tadah/hpo/fd_stencil.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/phase_specs.h>
 #include <tadah/hpo/strategy_rules.h>
@@ -437,10 +438,8 @@ void validate_backend(const OptimizerSpec& spec, RestartStop restart,
                       SpecRole role)
 {
     if (spec.lib == "NOT SET" || spec.algo == "NOT SET") return;
-    /* The same order as run_inner(): the deferred CERES least-squares
-     * algorithms get their tailored message before the caps lookup
-     * rejects an unknown LIB:ALGO. */
-    reject_deferred_ceres_nlls(spec);
+    /* A refused backend (Ceres' least-squares solvers among them) and an
+     * unknown one: the caps lookup's error, as in run_inner(). */
     (void)optimizer_caps(spec);
 
     const std::string& lib  = spec.lib;
@@ -510,6 +509,177 @@ void validate_phase_backends(const OptimizerSpec& root)
                 with_block_line(phase.spec, phase.name + ": " + e.what()));
         }
     }
+}
+
+namespace {
+
+/* "1 evaluation", "4 evaluations". */
+std::string evaluations(std::uint64_t n)
+{
+    return std::to_string(n) + (n == 1 ? " evaluation" : " evaluations");
+}
+
+/* "2 dimensions", "1 dimension". */
+std::string dimensions(std::size_t n)
+{
+    return std::to_string(n) + (n == 1 ? " dimension" : " dimensions");
+}
+
+/* The points NLopt's MLSL samples in each round when POPULATION does not
+ * set them (mlsl.c: d.N = 4 for Nsamples 0; optimize.c passes POP(0)). */
+constexpr unsigned kMlslDefaultSamples = 4;
+
+/* The evaluations without a gradient a search makes before its first local
+ * search can take a gradient, and the text that says so (empty for none).
+ * MLSL, a global search that runs a local one (mlsl.c), evaluates its
+ * starting point and a first round of N samples with grad NULL (N its
+ * POPULATION, else kMlslDefaultSamples); its first local search then starts
+ * at one of these points, whose loss the objective evaluates again (the
+ * local search calls it with the gradient there), so that loss counts as
+ * well. AUGLAG, with no constraint, goes straight into its local search
+ * (auglag.c), and a local gradient search takes the gradient at its start:
+ * neither spends anything first. */
+struct BeforeLocalSearch {
+    std::uint64_t evaluations = 0;
+    std::string   text;
+};
+BeforeLocalSearch before_local_search(const OptimizerSpec& spec)
+{
+    BeforeLocalSearch b;
+    const OptimizerCaps& caps = optimizer_caps(spec);
+    if (!(caps.is_global && caps.accepts_inner)) return b;
+    const bool own = spec.pop && *spec.pop > 0;
+    const unsigned n = own ? *spec.pop : kMlslDefaultSamples;
+    b.evaluations = 1 + static_cast<std::uint64_t>(n) + 1;
+    b.text = "MLSL evaluates its starting point and its first " +
+             std::to_string(n) + " samples without a gradient (" +
+             evaluations(1 + static_cast<std::uint64_t>(n)) +
+             "; POPULATION " + std::to_string(n) +
+             (own ? "" : ", NLopt's default") +
+             "), then its first local search, from one of them, evaluates "
+             "the loss there again (1 evaluation)";
+    return b;
+}
+
+}  // namespace
+
+GradientCost gradient_cost(const OptimizerSpec& spec)
+{
+    GradientCost c;
+    switch (spec.grad_strategy.value_or(GradStrategy::Numerical)) {
+        case GradStrategy::Analytical:
+            c.evaluations = 1;
+            c.text = "1 evaluation: one analytical gradient, GRAD_STRATEGY "
+                     "ANALYTICAL";
+            return c;
+        case GradStrategy::Hybrid:
+            c.evaluations = 1;
+            c.at_least = true;
+            c.text = "at least 1 evaluation: the analytical gradient, and the "
+                     "finite differences of each parameter it does not cover, "
+                     "GRAD_STRATEGY HYBRID";
+            return c;
+        case GradStrategy::Numerical:
+            break;
+    }
+    const std::size_t n = spec.low.size();
+    const bool central = fd_settings_of(spec).scheme == FdScheme::Central;
+    c.evaluations = central ? 2 * static_cast<std::uint64_t>(n)
+                            : static_cast<std::uint64_t>(n);
+    c.text = evaluations(c.evaluations) + ": " +
+             (central ? "central" : "forward") + " differences in " +
+             dimensions(n) + ", GRAD_STRATEGY NUMERICAL";
+    return c;
+}
+
+std::vector<std::string> gradient_budget_warnings(const OptimizerSpec& root)
+{
+    std::vector<std::string> out;
+    for (const PhaseSpec& phase : strategy_phase_specs(root)) {
+        /* An INNER block's MAXEVAL counts NLopt calls: below, with the
+         * phase whose gradient its local search takes. */
+        if (phase.inner) continue;
+        const OptimizerSpec& s = phase.spec;
+        if (s.lib == "NOT SET" || s.algo == "NOT SET") continue;
+        if (!obtains_gradients(s)) continue;
+        const GradientCost cost = gradient_cost(s);
+        const BeforeLocalSearch first = before_local_search(s);
+        const std::string who = phase.name + " " + backend_name(s);
+        const std::string tail =
+            first.text.empty()
+                ? " takes no step: its gradient search evaluates the loss at "
+                  "a starting point (1 evaluation) and the gradient there (" +
+                      cost.text + ") before it evaluates a point it steps "
+                      "to, which needs "
+                : " takes no step of a local search: " + first.text +
+                      " and the gradient there (" + cost.text +
+                      ") before it evaluates a point it steps to, which "
+                      "needs ";
+        const std::string more =
+            cost.at_least ? ", and more for each parameter it differences"
+                          : "";
+        /* the start's loss (an MLSL's evaluations before its first local
+         * search, that search's start included), its gradient, one point
+         * stepped to */
+        const std::uint64_t need =
+            (first.text.empty() ? 1 : first.evaluations) + cost.evaluations +
+            1;
+        if (s.stop.maxeval && *s.stop.maxeval < need) {
+            const std::string have = std::to_string(*s.stop.maxeval);
+            const std::string needs = std::to_string(need);
+            /* The budget as the configuration writes it (plan_multistart):
+             * each MULTISTART start's BUDGET_PER_START or share of MAXEVAL,
+             * the PRESTAGE refinement's share of MAXEVAL over its TOPK
+             * candidates, otherwise the block's MAXEVAL (the exploration's
+             * is its EXPLORE block's). */
+            const bool starts =
+                root.strategy_type == StrategyType::MULTISTART &&
+                !plan_multistart(root, root.multistart.n_starts,
+                                 root.multistart.budget_per_start)
+                     .single_run;
+            const bool candidates =
+                root.strategy_type == StrategyType::PRESTAGE &&
+                s.stream_phase == StreamPhase::Refinement;
+            const bool split = (starts || candidates) &&
+                               root.stop.maxeval.has_value() &&
+                               s.stop.maxeval != root.stop.maxeval;
+            std::string budget = "MAXEVAL " + have;
+            std::string remedy = "MAXEVAL " + needs + " or more";
+            if (starts && root.multistart.budget_per_start) {
+                budget = "BUDGET_PER_START " + have;
+                remedy = "BUDGET_PER_START " + needs + " or more";
+            } else if (split) {
+                const std::size_t k =
+                    starts ? plan_multistart(root, root.multistart.n_starts,
+                                             root.multistart.budget_per_start)
+                                 .starts
+                           : std::max<std::size_t>(1, root.stage_topk);
+                budget = "MAXEVAL " + std::to_string(*root.stop.maxeval) +
+                         " over " + std::to_string(k) +
+                         (starts ? " starts" : " TOPK candidates") + ", " +
+                         have + " each,";
+                remedy = needs + " evaluations or more per " +
+                         (starts ? "start" : "candidate");
+            }
+            out.push_back(who + ": " + budget + tail + remedy + more);
+        }
+        /* An INNER block's local search: NLopt hands it its own MAXEVAL in
+         * NLopt calls (nlopt_optimize_limited), each the loss and the
+         * gradient at a point, so one call is its starting point. */
+        if (!s.inner || !s.inner->stop.maxeval || *s.inner->stop.maxeval >= 2)
+            continue;
+        const std::optional<OptimizerSpec> local = inner_run_spec(s);
+        if (!local || !obtains_gradients(*local)) continue;
+        out.push_back("the INNER block of " + phase.name + " " +
+                      backend_name(*s.inner) + ": MAXEVAL " +
+                      std::to_string(*s.inner->stop.maxeval) +
+                      " takes no step: NLopt counts an INNER block's MAXEVAL "
+                      "in its calls, each the loss and the gradient at a "
+                      "point (1 + " + cost.text + "), so each local search "
+                      "evaluates its starting point and ends there, which "
+                      "needs MAXEVAL 2 or more");
+    }
+    return out;
 }
 
 }  // namespace tadah::hpo

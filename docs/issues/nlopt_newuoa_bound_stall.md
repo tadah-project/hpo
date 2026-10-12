@@ -1,7 +1,8 @@
 # NLopt LN_NEWUOA_BOUND stalls for 10-60 s per step once its model is not finite (refused)
 
 **Status:** refused since 1.6.0. `tadah hpo` stops before it loads any data, naming the phase and
-`NLOPT:LN_BOBYQA`, or `NLOPT:LN_NEWUOA` where the search may leave the box: at `ENDOPTIMIZER` for the
+`NLOPT:LN_BOBYQA` (until 2026-10-12 also `NLOPT:LN_NEWUOA` where the search may leave the box; that one is
+refused now too, `nlopt_newuoa_ignores_bounds.md`): at `ENDOPTIMIZER` for the
 `STRATEGY`-level optimiser (`PLAIN`, `MULTISTART` or the `PRESTAGE` refinement, whether the `STRATEGY` block,
 a `REFINE` block or the `OPTIMIZER` block itself names it), at `ENDEXPLORE` for the `PRESTAGE` exploration
 and at `ENDINNER` for an `INNER` block. The refusal is
@@ -133,17 +134,19 @@ The trajectory changes, so an old study is not reproduced bit for bit: `STEP` be
 coordinate rescaling instead of one radius equal to the smallest step; BOBYQA moves a start closer to a
 bound than its initial step onto the bound or one step away from it (when `STEP` is set, HPO's step plan
 shrinks the step of such a dimension, `initial_step.h`); `STEP 0.5` is capped just below
-(`width >= 2*step`). `LN_NEWUOA` keeps one radius but ignores the box (`nlopt_newuoa_ignores_bounds.md`).
+(`width >= 2*step`). `LN_NEWUOA` keeps one radius but ignores the box, and is refused since 2026-10-12
+(`nlopt_newuoa_ignores_bounds.md`).
 
 ## Not changed here
 
-- `LN_NEWUOA` stays registered. It never stalled, but it ignores the box, needs n >= 2 (NLopt returns
-  `INVALID_ARGS` otherwise; HPO does not check it at startup), and in 10 of the 720 survey cases (a noisy
-  sphere, n = 2) it passed NaN coordinates to the objective and ended with a NaN minimum. See
-  `nlopt_newuoa_ignores_bounds.md`.
-- A cooperative stop has no escalation: a second Ctrl-C does nothing more (`CORE/src/signal_handler.cpp`
-  only sets a flag), so any long computation inside a third-party optimiser between objective calls can only
-  be ended with SIGKILL.
+- `LN_NEWUOA` stayed registered here. It never stalled, but it ignores the box, needs n >= 2 (NLopt returns
+  `INVALID_ARGS` otherwise; HPO did not check it at startup), and in 10 of the 720 survey cases (a noisy
+  sphere, n = 2) it passed NaN coordinates to the objective and ended with a NaN minimum. It is refused
+  since 2026-10-12: see `nlopt_newuoa_ignores_bounds.md`.
+- A cooperative stop had no escalation: a second Ctrl-C did nothing more (`CORE/src/signal_handler.cpp`
+  only set a flag), so any long computation inside a third-party optimiser between objective calls could
+  only be ended with SIGKILL. Since 2026-10-12 a second SIGINT, or a second SIGTERM, ends the process at
+  once (`CORE/src/signal_handler.cpp`, `SignalHandler`).
 
 ## Repro (re-run before an NLopt upgrade lifts the refusal)
 

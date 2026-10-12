@@ -533,7 +533,9 @@ TEST_CASE("startup validation: a phase without LIB or ALGO is rejected by "
         CHECK_THAT(m, Catch::Contains("STRATEGY TYPE MULTISTART names no "
                                       "optimiser to run from each start: LIB "
                                       "and ALGO are not set") &&
-                      !Catch::Contains("unknown optimizer"));
+                      /* the lookup's text, "unknown optimizer" until it
+                       * became "unknown optimiser ...: ..." */
+                      !Catch::Contains("unknown optimi"));
 
         OptimizerSpec ps;
         ps.strategy_type = StrategyType::PRESTAGE;
@@ -1202,6 +1204,149 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
                                  refused));
 }
 
+/* ======================================================================
+ * NLOPT:LN_NEWUOA and Ceres' least-squares solvers are refused, and an
+ * unknown optimiser is an error, at the line that closes their block.
+ * ==================================================================== */
+
+TEST_CASE("startup validation: NLOPT:LN_NEWUOA, the Ceres least-squares "
+          "solvers and an unknown optimiser are refused at the line that "
+          "closes their block",
+          "[startup_validation][strategy][backend][refused]")
+{
+    /* Pins: the parser refuses, at the line where it checks a block's
+     * optimiser (ENDOPTIMIZER, ENDEXPLORE, ENDINNER) and naming the phase as
+     * for LN_NEWUOA_BOUND (above):
+     *   - NLOPT:LN_NEWUOA, which NLopt runs without the OPTIM box, in 1-D
+     *     and in 2-D, written in the STRATEGY block or in the short form,
+     *     in an EXPLORE block and in an INNER block, naming NLOPT:LN_BOBYQA;
+     *   - CERES:LEVENBERG_MARQUARDT, DOGLEG and SUBSPACE_DOGLEG, Ceres'
+     *     least-squares solvers, naming the four Ceres solvers HPO runs (in
+     *     the STRATEGY block and in an EXPLORE block);
+     *   - a LIB:ALGO HPO does not know -- an ALGO its library does not have,
+     *     or a LIB that does not exist -- with what is wrong and `tadah
+     *     explain ALGO`, in the STRATEGY block, an EXPLORE and an INNER
+     *     block.
+     * A spec built outside the parser gets the refusal from
+     * validate_backend() too.
+     * Before the fix: parse_error() was "" for LN_NEWUOA (accepted with a
+     * startup WARNING; in 1-D the run then ended "FAILED -- dimension 1
+     * must be >= 2" after 0 evaluations), and for the others it was the
+     * HPOTargets constructor's lookup after the parse, with no line and no
+     * alternatives: "unknown optimizer CERES:LEVENBERG_MARQUARDT (not
+     * registered in optimizer_caps)", "unknown optimizer NLOPT:LD_FOO (not
+     * registered in optimizer_caps)"; validate_backend() accepted
+     * LN_NEWUOA and gave the Ceres solvers "CERES:LEVENBERG_MARQUARDT is
+     * deferred to a later phase ...". */
+    const std::string root2 =
+        "OPTIM WATOM (1) 0.1 5.0\nOPTIM CGRID2B (1) 0.5 1.5\nPC_ERMSE 0 1\n";
+    const auto plain = [](const std::string& lib, const std::string& algo) {
+        return "    TYPE PLAIN\n    LIB " + lib + "\n    ALGO " + algo +
+               "\n    MAXEVAL 25\n";
+    };
+    const auto explore = [](const std::string& lib, const std::string& algo) {
+        return "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+               "    MAXEVAL 20\n    EXPLORE\n      LIB " + lib +
+               "\n      ALGO " + algo + "\n      MAXEVAL 12\n    ENDEXPLORE\n";
+    };
+    const auto inner = [](const std::string& lib, const std::string& algo) {
+        return "    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n"
+               "    MAXEVAL 60\n    INNER\n      LIB " + lib +
+               "\n      ALGO " + algo + "\n      MAXEVAL 20\n    ENDINNER\n";
+    };
+    const std::string newuoa =
+        "NLOPT:LN_NEWUOA is refused: NLopt 2.10 runs LN_NEWUOA without the "
+        "OPTIM box";
+    const std::string bobyqa = "Use NLOPT:LN_BOBYQA";
+    const std::string ceres_use =
+        "Use CERES:LBFGS, CERES:WOLFE, CERES:NLCG or CERES:STEEPEST_DESCENT";
+    const std::string explain = "; `tadah explain ALGO` lists the optimisers";
+    const std::string top = "the STRATEGY-level optimiser";
+    struct Case {
+        std::string what;
+        std::string config;
+        std::size_t line;     // the line that closes the block
+        std::string closing;  // its text
+        std::string head;     // the message after "Error on line N: "
+        std::string also;     // a part of the reason
+    };
+    std::vector<Case> cases = {
+        {"LN_NEWUOA in 1-D", strategy_config(plain("NLOPT", "LN_NEWUOA")), 10,
+         "ENDOPTIMIZER", top + ": " + newuoa, bobyqa},
+        {"LN_NEWUOA in 2-D",
+         root2 + "OPTIMIZER\n  STRATEGY\n" + plain("NLOPT", "LN_NEWUOA") +
+             "  ENDSTRATEGY\nENDOPTIMIZER\n",
+         11, "ENDOPTIMIZER", top + ": " + newuoa, bobyqa},
+        {"LN_NEWUOA in the short form inside OPTIMIZER",
+         kRoot + "OPTIMIZER\nLIB NLOPT\nALGO LN_NEWUOA\nMAXEVAL 25\n"
+                 "ENDOPTIMIZER\n",
+         7, "ENDOPTIMIZER", top + ": " + newuoa, bobyqa},
+        {"LN_NEWUOA in an EXPLORE block",
+         strategy_config(explore("NLOPT", "LN_NEWUOA")), 13, "    ENDEXPLORE",
+         "the EXPLORE block: " + newuoa, bobyqa},
+        {"LN_NEWUOA in an INNER block",
+         strategy_config(inner("NLOPT", "LN_NEWUOA")), 13, "    ENDINNER",
+         "the INNER block inside STRATEGY: " + newuoa, bobyqa},
+        {"CERES:DOGLEG in an EXPLORE block",
+         strategy_config(explore("CERES", "DOGLEG")), 13, "    ENDEXPLORE",
+         "the EXPLORE block: CERES:DOGLEG is refused: ", ceres_use},
+        {"an ALGO NLOPT does not have",
+         strategy_config(plain("NLOPT", "LD_FOO")), 10, "ENDOPTIMIZER",
+         top + ": unknown optimiser NLOPT:LD_FOO: LIB NLOPT has no ALGO "
+               "LD_FOO" + explain, ""},
+        {"a LIB that does not exist",
+         strategy_config(plain("FOO", "BFGS")), 10, "ENDOPTIMIZER",
+         top + ": unknown optimiser FOO:BFGS: there is no LIB FOO (LIB is "
+               "ASA, CERES, DLIB, NLOPT or TADAH)" + explain, ""},
+        {"an unknown ALGO in an EXPLORE block",
+         strategy_config(explore("DLIB", "LBFGS")), 13, "    ENDEXPLORE",
+         "the EXPLORE block: unknown optimiser DLIB:LBFGS: LIB DLIB has no "
+         "ALGO LBFGS" + explain, ""},
+        {"an unknown ALGO in an INNER block",
+         strategy_config(inner("NLOPT", "LD_FOO")), 13, "    ENDINNER",
+         "the INNER block inside STRATEGY: unknown optimiser NLOPT:LD_FOO: "
+         "LIB NLOPT has no ALGO LD_FOO" + explain, ""}};
+    for (const char* algo :
+         {"LEVENBERG_MARQUARDT", "DOGLEG", "SUBSPACE_DOGLEG"})
+        cases.push_back({std::string("CERES:") + algo,
+                         strategy_config(plain("CERES", algo)), 10,
+                         "ENDOPTIMIZER",
+                         top + ": CERES:" + algo + " is refused: ", ceres_use});
+    for (const auto& c : cases) {
+        INFO(c.what << ", config:\n" << c.config);
+        const std::string msg = parse_error(c.config);
+        CHECK_THAT(msg,
+                   Catch::StartsWith("Error on line " + std::to_string(c.line) +
+                                     ": " + c.head) &&
+                   Catch::Contains(c.also) &&
+                   Catch::EndsWith("\nLine: " + c.closing));
+    }
+
+    /* A spec built outside the parser. */
+    const auto spec = [](const std::string& lib, const std::string& algo) {
+        OptimizerSpec s;
+        s.lib = lib;
+        s.algo = algo;
+        s.low = {0.0, 0.0};
+        s.high = {1.0, 1.0};
+        s.analyse_logscale();
+        s.stop.maxeval = 20;
+        return s;
+    };
+    const auto backend_error = [](const OptimizerSpec& s) {
+        return error_of([&] {
+            tadah::hpo::validate_backend(s, tadah::hpo::RestartStop::Off);
+        });
+    };
+    CHECK_THAT(backend_error(spec("NLOPT", "LN_NEWUOA")),
+               Catch::StartsWith(newuoa) && Catch::Contains(bobyqa));
+    CHECK_THAT(backend_error(spec("CERES", "LEVENBERG_MARQUARDT")),
+               Catch::StartsWith("CERES:LEVENBERG_MARQUARDT is refused: ") &&
+               Catch::Contains(ceres_use));
+    CHECK_THAT(backend_error(spec("NLOPT", "LD_FOO")),
+               Catch::StartsWith("unknown optimiser NLOPT:LD_FOO: "));
+}
+
 TEST_CASE("startup validation: validate_phase_backends refuses a backend for "
           "its own phase in every STRATEGY shape",
           "[startup_validation][strategy][backend][refused]")
@@ -1305,11 +1450,18 @@ TEST_CASE("strategy rules: reject_refused_backends refuses the first refused "
      * refused backend in validate_run_policy()'s order -- the EXPLORE block
      * (under PRESTAGE), the STRATEGY-level optimiser, its INNER block, the
      * EXPLORE block's INNER block -- named as validate_run_policy() names
-     * it; it accepts a spec whose backends are not refused, also an unknown
-     * or unset LIB:ALGO (it looks up no caps, so validate_phase_backends()
-     * runs it before strategy_phase_specs()), and an EXPLORE block left on
-     * a spec whose TYPE is not PRESTAGE (no phase runs it).
-     * Added with the fix, which introduces it. */
+     * it; an unknown LIB:ALGO is refused the same way, with its phase
+     * ("the STRATEGY-level optimiser: unknown optimiser NLOPT:NOT_AN_ALGO:
+     * ...", require_registered_backend()); it accepts a spec whose backends
+     * are known and not refused, an unset LIB:ALGO (require_driver()'s to
+     * report), and an EXPLORE block left on a spec whose TYPE is not
+     * PRESTAGE (no phase runs it). It looks up no caps (optimizer_caps(),
+     * which throws with no phase), so validate_phase_backends() runs it
+     * before strategy_phase_specs().
+     * Added with the fix, which introduces it. Until unknown backends were
+     * refused with their phase, it accepted NLOPT:NOT_AN_ALGO (""), and
+     * validate_phase_backends() reported one through strategy_phase_specs()
+     * with no phase, where that looks the backend up. */
     const std::string refused = "NLOPT:LN_NEWUOA_BOUND is refused: ";
     const auto nlopt = [](const std::string& algo) {
         OptimizerSpec s;
@@ -1362,7 +1514,13 @@ TEST_CASE("strategy rules: reject_refused_backends refuses the first refused "
                              StrategyType::PRESTAGE,
                              with_inner(nlopt("G_MLSL_LDS"), "LN_COBYLA"))) ==
           "");
-    CHECK(error(with_inner(nlopt("NOT_AN_ALGO"), "NOT_AN_ALGO")) == "");
+    const std::string unknown =
+        "unknown optimiser NLOPT:NOT_AN_ALGO: LIB NLOPT has no ALGO "
+        "NOT_AN_ALGO";
+    CHECK_THAT(error(with_inner(nlopt("NOT_AN_ALGO"), "NOT_AN_ALGO")),
+               Catch::StartsWith(top + unknown));
+    CHECK_THAT(error(with_inner(nlopt("LN_AUGLAG"), "NOT_AN_ALGO")),
+               Catch::StartsWith("the INNER block of " + top + unknown));
     CHECK(error(OptimizerSpec{}) == "");
     CHECK(error(with_explore(nlopt("LN_BOBYQA"), StrategyType::PLAIN,
                              nlopt(bad))) == "");
