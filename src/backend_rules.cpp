@@ -580,22 +580,28 @@ std::vector<std::string> gradient_budget_warnings(const OptimizerSpec& root)
         if (s.stop.maxeval && *s.stop.maxeval < need) {
             const std::string have = std::to_string(*s.stop.maxeval);
             const std::string needs = std::to_string(need);
-            /* The budget as the configuration writes it: BUDGET_PER_START,
-             * a share of MAXEVAL over MULTISTART starts or TOPK candidates
-             * (plan_multistart), or the block's MAXEVAL. */
-            const bool split = s.stop.maxeval != root.stop.maxeval &&
-                               root.stop.maxeval.has_value();
+            /* The budget as the configuration writes it (plan_multistart):
+             * each MULTISTART start's BUDGET_PER_START or share of MAXEVAL,
+             * the PRESTAGE refinement's share of MAXEVAL over its TOPK
+             * candidates, otherwise the block's MAXEVAL (the exploration's
+             * is its EXPLORE block's). */
+            const bool starts =
+                root.strategy_type == StrategyType::MULTISTART &&
+                !plan_multistart(root, root.multistart.n_starts,
+                                 root.multistart.budget_per_start)
+                     .single_run;
+            const bool candidates =
+                root.strategy_type == StrategyType::PRESTAGE &&
+                s.stream_phase == StreamPhase::Refinement;
+            const bool split = (starts || candidates) &&
+                               root.stop.maxeval.has_value() &&
+                               s.stop.maxeval != root.stop.maxeval;
             std::string budget = "MAXEVAL " + have;
             std::string remedy = "MAXEVAL " + needs + " or more";
-            if (phase.name == "each MULTISTART start" &&
-                root.multistart.budget_per_start) {
+            if (starts && root.multistart.budget_per_start) {
                 budget = "BUDGET_PER_START " + have;
                 remedy = "BUDGET_PER_START " + needs + " or more";
-            } else if (split && (phase.name == "each MULTISTART start" ||
-                                 phase.name == "the PRESTAGE refinement")) {
-                /* MULTISTART runs its starts from the INIT points, the
-                 * PRESTAGE refinement from the TOPK candidates. */
-                const bool starts = phase.name == "each MULTISTART start";
+            } else if (split) {
                 const std::size_t k =
                     starts ? plan_multistart(root, root.multistart.n_starts,
                                              root.multistart.budget_per_start)
