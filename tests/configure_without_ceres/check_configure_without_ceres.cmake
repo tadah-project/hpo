@@ -3,9 +3,11 @@
 # lammps_hessian.h, observable_registry.h and sims_grad.h include
 # <Eigen/Dense> in every build. The build that runs this check configures
 # HPO once more, in WORK_DIR, from its own sources and dependencies: PRESET
-# is the initial cache tests/CMakeLists.txt writes (the source directory of
-# each dependency this build made available, FETCHCONTENT_FULLY_DISCONNECTED,
-# so nothing is downloaded, TADAH_ENABLE_CERES OFF, no tests). It reads the
+# is the initial cache hpo_write_no_ceres_preset() writes in its configure
+# step (no_ceres_preset.cmake: its cache, but the entries that name a path
+# in its build tree, the source directory of each dependency,
+# FETCHCONTENT_FULLY_DISCONNECTED, so nothing is downloaded,
+# TADAH_ENABLE_CERES OFF, no tests). It reads the
 # configuration through CMake's file API (codemodel-v2) and checks that
 #   - the configure step succeeds;
 #   - it is the configuration without Ceres: no target named ceres, and no

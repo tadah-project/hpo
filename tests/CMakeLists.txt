@@ -241,9 +241,11 @@ endforeach()
 # public headers adjoint_solver.h, lammps_hessian.h, observable_registry.h
 # and sims_grad.h include in every build
 # (configure_without_ceres/check_configure_without_ceres.cmake). HPO is
-# configured once more, without Ceres and without tests, from the source
-# directories of this build's dependencies (the initial cache written here;
-# FETCHCONTENT_FULLY_DISCONNECTED, nothing is downloaded), and the check
+# configured once more, without Ceres and without tests, from this build's
+# cache and the source directories of its dependencies (the initial cache
+# hpo_write_no_ceres_preset() writes here, configure_without_ceres/
+# no_ceres_preset.cmake; FETCHCONTENT_FULLY_DISCONNECTED, nothing is
+# downloaded; the environment is CTest's), and the check
 # reads its codemodel (CMake's file API): no ceres target, no
 # TADAH_USE_CERES, and an include directory of tadah.hpo that has
 # Eigen/Dense. Before the fix: Eigen was fetched only with Ceres and linked
