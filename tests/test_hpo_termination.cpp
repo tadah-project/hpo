@@ -583,8 +583,9 @@ struct HostFixture {
     tadah::hpo::HPOTargets trg;
     Host host;
 
-    explicit HostFixture(const std::string& root = kRootLines)
-        : run(plain_block(kBfgsLong), root),
+    explicit HostFixture(const std::string& root = kRootLines,
+                         const std::string& optimizer = plain_block(kBfgsLong))
+        : run(optimizer, root),
           journal(run.sd.dir),
           trg(run.ctx, run.hpo.string()),
           host(run.ctx, trg, run.val.string())
@@ -6507,6 +6508,60 @@ TEST_CASE("PRESTAGE: an exploration without a usable loss leaves the "
     /* The columns after ITERATION and SLOT: the parameters. */
     CHECK(std::vector<std::string>(params[9].begin() + 2, params[9].end()) ==
           std::vector<std::string>(params[0].begin() + 2, params[0].end()));
+}
+
+/* An exploration that made no evaluation has no candidate, and no failed
+ * evaluation either: every exploration a parsed configuration sets
+ * evaluates at least one point (MAXEVAL >= 1, a TADAH driver's INIT point,
+ * NLopt's, DLIB:GFS's and ASA's first point; a stop is raised inside a
+ * counted evaluation), so it is a driver that returned without evaluating
+ * -- or a spec built outside the parser that asks for no evaluation --,
+ * which a refinement from the OPTIMIZER-level INIT points would hide.
+ * Pins: StagedPolicy over the parsed PRESTAGE spec whose exploration
+ * (TADAH:RANDOM) is given MAXEVAL 0 and no INIT point throws
+ * std::logic_error "PRESTAGE: the exploration (EXPLORE block) TADAH:RANDOM
+ * returned without evaluating a point ...", no evaluation is made (the
+ * journal's census is unchanged) and the journal has no "running outer
+ * optimiser as-is".
+ * Before the fix: a WARNING "PRESTAGE: produced no candidates -- running
+ * outer optimiser as-is" (journal only), and the refinement ran from the
+ * OPTIMIZER-level INIT point: 3 evaluations (its MAXEVAL), no error. */
+TEST_CASE("PRESTAGE: an exploration that made no evaluation is an error, not "
+          "a refinement from the INIT points",
+          "[HPO][termination][prestage][no_evaluation]")
+{
+    HostFixture fx(kRootLines,
+                   plain_block("    TYPE PRESTAGE\n    LIB TADAH\n"
+                               "    ALGO RANDOM\n    MAXEVAL 3\n    SEED 1\n"
+                               "    EXPLORE\n      LIB TADAH\n"
+                               "      ALGO RANDOM\n      MAXEVAL 3\n"
+                               "      SEED 2\n    ENDEXPLORE\n"));
+    tadah::hpo::OptimizerSpec spec = fx.trg.spec;
+    REQUIRE(spec.prestage);
+    REQUIRE_FALSE(spec.optim_init.empty());
+    spec.prestage->stop.maxeval = 0;
+    spec.prestage->optim_init.clear();
+    tadah::hpo::StagedPolicy<ParamVec, ::LammpsRunner> policy(1);
+    const std::size_t evals_before = tadah::hpo::HPOLog::instance().n_eval();
+    std::string what;
+    bool logic = false;
+    try {
+        policy.run(spec, fx.host);
+    } catch (const std::logic_error& e) {
+        logic = true;
+        what = e.what();
+    } catch (const std::exception& e) {
+        what = e.what();
+    }
+    CHECK(logic);
+    CHECK_THAT(what, Catch::StartsWith(
+                         "PRESTAGE: the exploration (EXPLORE block) "
+                         "TADAH:RANDOM returned without evaluating a point"));
+    CHECK(tadah::hpo::HPOLog::instance().n_eval() == evals_before);
+    tadah::hpo::HPOLog::instance().finish("test-end");
+    const std::string journal = read_file(fx.run.sd.dir / "hpo_run.log");
+    INFO(journal);
+    CHECK(journal.find("running outer optimiser as-is") == std::string::npos);
 }
 
 TEST_CASE("PRESTAGE under RESTART: an exploration that stagnates without a "
