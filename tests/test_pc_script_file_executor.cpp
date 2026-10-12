@@ -559,20 +559,27 @@ const ReadbackError kDivideError{"1.0/(pe-pe)",
 
 /* Pins: a --hotvar or --failvar whose formula raises a LAMMPS error when HPO
  * reads it after the script -- `press` under a thermo_style without it
- * (error->all), `1.0/(pe-pe)` (a divide by zero, error->one) -- fails the
- * task: status RUN_FAIL, error_msg "reading --hotvar Pend after the
- * script: " (or --failvar) followed by the LAMMPS message, no outvar or hot
- * value handed on, the failvars read (the failing one empty), and the
- * slot's LAMMPS instance discarded, so that the next script on the slot --
- * the same name with a readable Pend -- runs on a fresh instance and
- * succeeds.
- * Before the fix: the read caught the error and returned "" with status
- * OK, and the parent skipped the empty value: a hot value that could not be
- * read left the warm start alone and the cold scripts ran without it, and a
- * failvar that could not be read counted as "no violation". The status
- * check fails in every section. */
+ * (error->all), `1.0/(pe-pe)` (a divide by zero, error->one) -- is returned
+ * "" with its LAMMPS message in hotvar_errors (or failvar_errors: one per
+ * name, "" for one that was read), the task OK with no error_msg: whether a
+ * read-back error fails the task is the parent's call, which judges every
+ * variable of the task in one place (apply_task_result in hpo_host_impl.hpp:
+ * a --hotvar or --failvar that cannot be read fails it, journalled with its
+ * message -- pinned end to end by [pc_readback_e2e] and
+ * [.tadah_cli_pc_readback]). The other variables are handed on (E = 0, the
+ * early failvar viol = 0.25), and the slot's LAMMPS instance is discarded,
+ * so that the next script on the slot -- the same name with a readable
+ * Pend -- runs on a fresh instance and succeeds with no read-back error.
+ * Before the fix: PcTaskResult had no hotvar_errors or failvar_errors (the
+ * file does not compile), and the worker failed the task itself --
+ * RUN_FAIL, error_msg "reading --hotvar Pend after the script: <LAMMPS
+ * message>", no outvar or hot value handed on -- so the parent judged no
+ * other variable of the task (a --varloss without a number, a second bad hot
+ * value went unnamed): with the two members alone the status check fails. (Before the read-back fix the read
+ * caught the error and returned "" with status OK, and the parent skipped
+ * the empty value.) */
 TEST_CASE("a --hotvar or --failvar whose read-back raises a LAMMPS error "
-          "fails the task with the message",
+          "is returned with its message for the parent to judge",
           "[script_file][pc_task][readback]") {
     auto pot_ctx = kr_pot_ctx();
     tadah::hpo::PcSlotState<LammpsRunner> st;
@@ -600,16 +607,27 @@ TEST_CASE("a --hotvar or --failvar whose read-back raises a LAMMPS error "
             "rb", readback_lines(c.err.formula), invar, {"E"}, hotvars,
             failvars, pot_ctx, 1, {}, st);
         INFO("error_msg: " << res.error_msg);
-        REQUIRE(res.status == PcTaskStatus::RUN_FAIL);
-        CHECK_THAT(res.error_msg,
-                   Catch::StartsWith(std::string("reading ") + c.role +
-                                     " Pend after the script: ") &&
-                   Catch::Contains(c.err.lammps_text));
-        CHECK(res.outvar_values.empty());
-        CHECK(res.hotvar_values.empty());
+        REQUIRE(res.status == PcTaskStatus::OK);
+        CHECK(res.error_msg.empty());
+        REQUIRE(res.outvar_values.size() == 1);
+        CHECK(std::stod(res.outvar_values[0]) == 0.0);
+        CHECK(res.outvar_errors.empty());
         REQUIRE(res.failvar_values.size() == failvars.size());
         CHECK(res.failvar_values[0] == "0.25");
-        if (!hot) CHECK(res.failvar_values[1].empty());
+        if (hot) {
+            CHECK(res.hotvar_values == std::vector<std::string>{""});
+            REQUIRE(res.hotvar_errors.size() == 1);
+            CHECK_THAT(res.hotvar_errors[0],
+                       Catch::Contains(c.err.lammps_text));
+            CHECK(res.failvar_errors.empty());
+        } else {
+            CHECK(res.failvar_values[1].empty());
+            CHECK(res.hotvar_errors.empty());
+            REQUIRE(res.failvar_errors.size() == 2);
+            CHECK(res.failvar_errors[0].empty());
+            CHECK_THAT(res.failvar_errors[1],
+                       Catch::Contains(c.err.lammps_text));
+        }
         CHECK(st.lmp_cache.count(slot_cache_key("rb", invar)) == 0);
 
         /* The same script name, now readable: a fresh instance runs it. */
@@ -619,6 +637,8 @@ TEST_CASE("a --hotvar or --failvar whose read-back raises a LAMMPS error "
         INFO("good error_msg: " << good.error_msg);
         REQUIRE(good.status == PcTaskStatus::OK);
         CHECK(good.error_msg.empty());
+        CHECK(good.hotvar_errors.empty());
+        CHECK(good.failvar_errors.empty());
         REQUIRE(good.outvar_values.size() == 1);
         CHECK(std::stod(good.outvar_values[0]) == 0.0);
         if (hot) {
@@ -691,18 +711,21 @@ TEST_CASE("an --outvar or --varloss whose read-back raises a LAMMPS error "
  *   - outvars E, Pend, Pdiff with Pdiff = v_Pend-1.0: the task is OK, E is
  *     read (0), Pend and Pdiff are "" and outvar_errors names, for each of
  *     them, Pend's error (Pdiff evaluates Pend);
- *   - a --failvar vdep = (v_Pend>1e9) read after the outvar Pend: the task
- *     fails, error_msg "reading --failvar vdep after the script: " and
- *     Pend's error, the early failvar viol still read;
- *   - Pend declared as an --outvar and as a --hotvar: the task fails,
- *     error_msg "reading --hotvar Pend after the script: " and its error.
+ *   - a --failvar vdep = (v_Pend>1e9) read after the outvar Pend: vdep is
+ *     "" and failvar_errors names Pend's error for it, the early failvar
+ *     viol still read;
+ *   - Pend declared as an --outvar and as a --hotvar: the hot value is ""
+ *     and hotvar_errors names its error.
+ * The task is OK in each (the parent judges a read-back error).
  * Each for `press` under a thermo_style without it and for `1.0/(pe-pe)`.
- * Before the fix: the first error left Pend marked as being evaluated
- * (LAMMPS Variable::eval_in_progress), so every later read that reached it
- * raised "Variable Pend: has a circular dependency" and the journal named
- * a dependency the script does not have instead of the real cause. The
- * message checks fail (and outvar_errors for Pend was right, Pdiff's
- * wrong). */
+ * Before the fix: PcTaskResult had no hotvar_errors or failvar_errors (the
+ * file does not compile), and the worker failed the task on a --hotvar or
+ * --failvar read error (RUN_FAIL, error_msg "reading --failvar vdep after
+ * the script: <Pend's error>"): with the two members alone the status check
+ * of the dependent --failvar fails.
+ * (Before the circular-dependency fix the first error left Pend marked as
+ * being evaluated, LAMMPS Variable::eval_in_progress, so every later read
+ * that reached it raised "Variable Pend: has a circular dependency".) */
 TEST_CASE("a variable read back after a read-back error carries its own "
           "LAMMPS error", "[script_file][pc_task][readback]") {
     auto pot_ctx = kr_pot_ctx();
@@ -745,13 +768,14 @@ TEST_CASE("a variable read back after a read-back error carries its own "
                 "rb", lines, invar, {"E", "Pend"}, {}, {"viol", "vdep"},
                 pot_ctx, 1, {}, st);
             INFO("error_msg: " << res.error_msg);
-            REQUIRE(res.status == PcTaskStatus::RUN_FAIL);
-            CHECK_THAT(res.error_msg,
-                       Catch::StartsWith("reading --failvar vdep after the "
-                                         "script: ") &&
-                           Contains(err.lammps_text) &&
-                           !Contains("circular dependency"));
+            REQUIRE(res.status == PcTaskStatus::OK);
+            CHECK(res.error_msg.empty());
             CHECK(res.failvar_values == std::vector<std::string>{"0.25", ""});
+            REQUIRE(res.failvar_errors.size() == 2);
+            CHECK(res.failvar_errors[0].empty());
+            CHECK_THAT(res.failvar_errors[1],
+                       Contains(err.lammps_text) &&
+                           !Contains("circular dependency"));
             CHECK(st.lmp_cache.count(slot_cache_key("rb", invar)) == 0);
         }
         {
@@ -760,13 +784,13 @@ TEST_CASE("a variable read back after a read-back error carries its own "
                 "rb", lines, invar, {"E", "Pend"}, {"Pend"}, {"viol"},
                 pot_ctx, 1, {}, st);
             INFO("error_msg: " << res.error_msg);
-            REQUIRE(res.status == PcTaskStatus::RUN_FAIL);
-            CHECK_THAT(res.error_msg,
-                       Catch::StartsWith("reading --hotvar Pend after the "
-                                         "script: ") &&
-                           Contains(err.lammps_text) &&
+            REQUIRE(res.status == PcTaskStatus::OK);
+            CHECK(res.error_msg.empty());
+            CHECK(res.hotvar_values == std::vector<std::string>{""});
+            REQUIRE(res.hotvar_errors.size() == 1);
+            CHECK_THAT(res.hotvar_errors[0],
+                       Contains(err.lammps_text) &&
                            !Contains("circular dependency"));
-            CHECK(res.hotvar_values.empty());
             CHECK(st.lmp_cache.count(slot_cache_key("rb", invar)) == 0);
         }
         st.lmp_cache.clear();
@@ -774,20 +798,20 @@ TEST_CASE("a variable read back after a read-back error carries its own "
 }
 
 /* Pins: every --hotvar and --failvar of a task whose read-back raises a
- * LAMMPS error is named in the task's error_msg, in the order they are
- * read -- the hot variables, then the fail variables --, the first first,
- * so it still names the failure: "reading --hotvar Pend after the script:
- * <press error>; reading --hotvar Q after the script: <divide by 0>;
- * reading --failvar R after the script: <press error>" for hot Pend =
- * press, Q = 1.0/(pe-pe) and fail viol (readable, 0.25, not named) and R =
- * press*2; the task fails, its hot values are not handed on and the
- * failvars are read (R empty).
- * Before the fix: the first error alone, "reading --hotvar Pend after the
- * script: ..."; Q's and R's were dropped, so the journal named one variable
- * of three and a script with several bad variables was fixed one run at a
- * time (the Contains checks of Q and R fail). */
+ * LAMMPS error carries its own message, each in its place -- hot Pend =
+ * press and Q = 1.0/(pe-pe), fail viol (readable, 0.25) and R = press*2:
+ * hotvar_errors {<press error>, <divide by 0>}, failvar_errors {"", <press
+ * error>}, their values "" --, every other variable is handed on (E = 0),
+ * and the task is OK with no error_msg, so the parent names each variable
+ * at fault, with the loss and hot values it finds without a number, in one
+ * journal line (pinned by [pc_readback_e2e]).
+ * Before the fix: PcTaskResult had no hotvar_errors or failvar_errors (the
+ * file does not compile), and the worker failed the task (RUN_FAIL) with
+ * the three errors joined in its error_msg and handed on no outvar or hot
+ * value, so the parent could name no other variable: with the two members
+ * alone the status check fails. */
 TEST_CASE("every --hotvar and --failvar whose read-back raises a LAMMPS error "
-          "is named in the task's error, the first first",
+          "carries its own message",
           "[script_file][pc_task][readback]") {
     auto pot_ctx = kr_pot_ctx();
     tadah::hpo::PcSlotState<LammpsRunner> st;
@@ -799,30 +823,25 @@ TEST_CASE("every --hotvar and --failvar whose read-back raises a LAMMPS error "
     const auto res = tadah::hpo::execute_script_task<LammpsRunner>(
         "rb", lines, invar, {"E"}, {"Pend", "Q"}, {"viol", "R"}, pot_ctx, 1,
         {}, st);
-    const std::string& m = res.error_msg;
-    INFO("error_msg: " << m);
-    REQUIRE(res.status == tadah::hpo::PcTaskStatus::RUN_FAIL);
-    CHECK_THAT(m, Catch::StartsWith("reading --hotvar Pend after the "
-                                    "script: ") &&
-                  Catch::Contains(kPressError.lammps_text) &&
-                  Catch::Contains("; reading --hotvar Q after the script: ") &&
-                  Catch::Contains(kDivideError.lammps_text) &&
-                  Catch::Contains("; reading --failvar R after the script: ") &&
-                  !Catch::Contains("viol") &&
-                  !Catch::Contains("circular dependency"));
-    const auto q = m.find("--hotvar Q");
-    const auto r = m.find("--failvar R");
-    CHECK(q != std::string::npos);
-    CHECK(r != std::string::npos);
-    CHECK(q < r);
-    /* each named once */
-    const auto pend = m.find("--hotvar Pend");
-    CHECK(m.find("--hotvar Pend", pend + 1) == std::string::npos);
-    CHECK(m.find("--hotvar Q", q + 1) == std::string::npos);
-    CHECK(m.find("--failvar R", r + 1) == std::string::npos);
-    CHECK(res.hotvar_values.empty());
-    CHECK(res.outvar_values.empty());
+    INFO("error_msg: " << res.error_msg);
+    REQUIRE(res.status == tadah::hpo::PcTaskStatus::OK);
+    CHECK(res.error_msg.empty());
+    REQUIRE(res.outvar_values.size() == 1);
+    CHECK(std::stod(res.outvar_values[0]) == 0.0);
+    CHECK(res.hotvar_values == std::vector<std::string>{"", ""});
+    REQUIRE(res.hotvar_errors.size() == 2);
+    CHECK_THAT(res.hotvar_errors[0],
+               Catch::Contains(kPressError.lammps_text) &&
+                   !Catch::Contains("circular dependency"));
+    CHECK_THAT(res.hotvar_errors[1],
+               Catch::Contains(kDivideError.lammps_text) &&
+                   !Catch::Contains("circular dependency"));
     CHECK(res.failvar_values == std::vector<std::string>{"0.25", ""});
+    REQUIRE(res.failvar_errors.size() == 2);
+    CHECK(res.failvar_errors[0].empty());
+    CHECK_THAT(res.failvar_errors[1],
+               Catch::Contains(kPressError.lammps_text) &&
+                   !Catch::Contains("circular dependency"));
     CHECK(st.lmp_cache.count(slot_cache_key("rb", invar)) == 0);
 }
 
