@@ -50,8 +50,8 @@ struct InitContext {
      * EMBF0 and RHOFORM checks; every resolution in a run passes it (the
      * INIT chains, a RESTART refresh). nullptr skips the checks. */
     const core::Context* run_context = nullptr;
-    /* The block the chain belongs to (InitStream); RestartPolicy passes
-     * Restart. */
+    /** The block the chain belongs to (InitStream); RestartPolicy passes
+     *  Restart. */
     InitStream           stream = InitStream::Init;
 };
 

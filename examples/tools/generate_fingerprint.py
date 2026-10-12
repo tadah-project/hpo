@@ -20,9 +20,9 @@ Tolerance policy (overridable per example via tolerance_overrides.json):
   hyperparams:  abs 1e-3,  rel 1e-3
   evals:        exact (tol 0) by default
 
-Examples that set SEED repeat run to run on one machine. 13_restart does
-not: RESTART RANDOM reseeds from std::random_device, so it pins only
-values that do not depend on the restarts. The defaults absorb
+Examples that set SEED repeat run to run on one machine; a RESTART block
+needs a SEED of its own for that (13_restart has one; without it the
+restart points come from std::random_device). The defaults absorb
 cross-machine BLAS/LAPACK reorder and double-precision printf rounding
 while still detecting a material regression in the optimiser path -- but
 a few examples react to last-ulp changes of the LAMMPS read-back (05's
