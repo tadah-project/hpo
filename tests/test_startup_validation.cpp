@@ -801,6 +801,18 @@ Context analytical_ready_ctx() {
 }
 
 /* The message validate_hpo_setup stops with, or "" when it passes. */
+/* The 1-based number of the first line of `config` that reads `keyword`
+ * (leading blanks aside); 0 when none does. */
+std::size_t line_of(const std::string& config, const std::string& keyword) {
+  std::istringstream in(config);
+  std::string text;
+  for (std::size_t n = 1; std::getline(in, text); ++n) {
+    const auto p = text.find_first_not_of(' ');
+    if (p != std::string::npos && text.substr(p) == keyword) return n;
+  }
+  return 0;
+}
+
 std::string startup_error(Context& ctx, const std::string& body) {
   ScopedTempFile tf(body);
   HPOTargets trg(ctx, tf.path.string());
@@ -891,7 +903,13 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs loss terms "
  * INNER block. A setup the analytical gradient does not cover (OALGO 1,
  * the default) with HYBRID on the enclosing block and nothing in INNER
  * used to be refused on the INNER block, whose resolved ANALYTICAL was
- * never used. */
+ * never used.
+ * The refusal names the line that closes the block it refuses, as the
+ * parser's refusals do: "Error on line N: OPTIMIZER block: GRAD_STRATEGY
+ * ANALYTICAL ...\nLine: ENDOPTIMIZER" ("EXPLORE block: ..." at
+ * ENDEXPLORE). Before that fix the pins below read the message alone,
+ * "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL (resolved ...", which the
+ * refusal was (no line). */
 TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
           "whose gradient an INNER search uses",
           "[startup_validation][grad_strategy]") {
@@ -914,9 +932,14 @@ TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
   }
   SECTION("an unset enclosing block resolves to ANALYTICAL and is "
           "refused, naming it") {
-    const auto neither = startup_error(ctx, mlsl("", ""));
-    CHECK_THAT(neither, Catch::StartsWith("OPTIMIZER block: GRAD_STRATEGY "
-                                          "ANALYTICAL (resolved") &&
+    const std::string config = mlsl("", "");
+    const auto neither = startup_error(ctx, config);
+    CHECK_THAT(neither, Catch::StartsWith(
+                            "Error on line " +
+                            std::to_string(line_of(config, "ENDOPTIMIZER")) +
+                            ": OPTIMIZER block: GRAD_STRATEGY ANALYTICAL "
+                            "(resolved") &&
+                        Catch::EndsWith("\nLine: ENDOPTIMIZER") &&
                         Catch::Contains("OALGO 4") &&
                         !Catch::Contains("INNER"));
   }
@@ -944,15 +967,26 @@ TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
     const std::string explore_inner =
         "      INNER\n        LIB NLOPT\n        ALGO LD_LBFGS\n"
         "      ENDINNER\n";
-    CHECK_THAT(startup_error(ctx, prestage(explore_mlsl + explore_inner)),
-               Catch::StartsWith("EXPLORE block: GRAD_STRATEGY ANALYTICAL "
-                                 "(resolved"));
+    /* "Error on line N: " for the ENDEXPLORE line N of `config`. */
+    const auto at_endexplore = [](const std::string& config) {
+      return "Error on line " + std::to_string(line_of(config, "ENDEXPLORE")) +
+             ": ";
+    };
+    const std::string with_inner = prestage(explore_mlsl + explore_inner);
+    CHECK_THAT(startup_error(ctx, with_inner),
+               Catch::StartsWith(at_endexplore(with_inner) +
+                                 "EXPLORE block: GRAD_STRATEGY ANALYTICAL "
+                                 "(resolved") &&
+               Catch::EndsWith("\nLine:     ENDEXPLORE"));
     CHECK(startup_error(ctx, prestage(explore_mlsl +
                                       "      GRAD_STRATEGY HYBRID\n" +
                                       explore_inner)) == "");
-    CHECK_THAT(startup_error(ctx, prestage(
-                   "      LIB NLOPT\n      ALGO LD_LBFGS\n      MAXEVAL 5\n")),
-               Catch::StartsWith("EXPLORE block: GRAD_STRATEGY ANALYTICAL"));
+    const std::string lbfgs = prestage(
+        "      LIB NLOPT\n      ALGO LD_LBFGS\n      MAXEVAL 5\n");
+    CHECK_THAT(startup_error(ctx, lbfgs),
+               Catch::StartsWith(at_endexplore(lbfgs) +
+                                 "EXPLORE block: GRAD_STRATEGY ANALYTICAL") &&
+               Catch::EndsWith("\nLine:     ENDEXPLORE"));
   }
 }
 

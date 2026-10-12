@@ -3,6 +3,7 @@
 #include <tadah/hpo/anneal_core.h>
 #include <tadah/hpo/backend_rules.h>
 #include <tadah/hpo/run_end.h>
+#include <tadah/hpo/seed_stream.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -24,8 +25,9 @@ namespace tadah::hpo {
 /* ----- stops of the sampling searches ----------------------------- *
  *
  * TADAH:RANDOM and TADAH:GRID (and DLIB:GFS, dlib_adapter.h) end on
- * MAXEVAL, on MAXTIME -- no evaluation starts once MAXTIME seconds have
- * passed since the search began -- or at the first evaluation whose loss is
+ * MAXEVAL, on MAXTIME -- no evaluation but the search's first starts once
+ * MAXTIME seconds have passed since the search began -- or at the first
+ * evaluation whose loss is
  * at or below STOPVAL (a feasible loss: FAILSCORE never reaches it,
  * anneal::stopval_reached). RANDOM runs until one of them (or the RESTART
  * stagnation stop) ends it (require_stop), GRID at the latest after its
@@ -91,7 +93,14 @@ template<typename Vec, typename Runner>
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
-    std::mt19937_64 rng(seed);
+    /* A stream of its own for the seed (seed_stream.h): it drew
+     * std::mt19937_64(seed) through uniform numbers in the box, the numbers
+     * of the starting-point method RANDOM for the same seed, so with an INIT
+     * block's SEED (or a RESTART round's) equal to its own its first draw
+     * was its start point again. A PRESTAGE refinement's is its own too
+     * (phase_stream_seed): it drew its exploration's for the same seed. */
+    std::mt19937_64 rng = seed_stream(phase_stream_seed(seed, sp.stream_phase),
+                                      seed_streams::kRandomSearch);
     const auto& lo = sp.low, &hi = sp.high;
 
     const std::optional<uint64_t> budget = sp.stop.maxeval;
@@ -302,7 +311,10 @@ template<typename Vec, typename HostT>
     using anneal::RungStop;
 
     const std::size_t dim = sp.low.size();
-    const std::uint64_t seed = sp.seed.value_or(std::random_device{}());
+    /* The SEED the journal names, and the seed of every stream of the run
+     * (phase_stream_seed: itself but in a PRESTAGE refinement). */
+    const std::uint64_t seed_value = sp.seed.value_or(std::random_device{}());
+    const std::uint64_t seed = phase_stream_seed(seed_value, sp.stream_phase);
 
     const Knobs kb = Knobs::parse(sp, AlgoKind::Serial);
     anneal::announce_knobs(kb, AlgoKind::Serial);
@@ -379,7 +391,7 @@ template<typename Vec, typename HostT>
     {
       std::ostringstream oss;
       oss << "ANNEAL[" << (kb.corana ? "CORANA" : "CLASSIC") << "]: "
-          << "seed=" << seed
+          << "seed=" << seed_value
           << "  RT=" << kb.rt
           << "  BOUNDARY_MODE="
           << (kb.boundary_mode == anneal::BoundaryMode::Reflect

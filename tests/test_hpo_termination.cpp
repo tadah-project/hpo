@@ -583,8 +583,9 @@ struct HostFixture {
     tadah::hpo::HPOTargets trg;
     Host host;
 
-    explicit HostFixture(const std::string& root = kRootLines)
-        : run(plain_block(kBfgsLong), root),
+    explicit HostFixture(const std::string& root = kRootLines,
+                         const std::string& optimizer = plain_block(kBfgsLong))
+        : run(optimizer, root),
           journal(run.sd.dir),
           trg(run.ctx, run.hpo.string()),
           host(run.ctx, trg, run.val.string())
@@ -2233,6 +2234,167 @@ TEST_CASE("Termination: a RESTART SEED draws restart round r's points with "
     /* The whole run repeats. */
     const auto b = run_restart_rounds(seed_line);
     CHECK(b.rounds == a.rounds);
+}
+
+namespace {
+
+/* Whether no two of `pts` are the same point. */
+bool all_distinct(const std::vector<Point>& pts)
+{
+    return std::set<Point>(pts.begin(), pts.end()).size() == pts.size();
+}
+
+}  // namespace
+
+/* TADAH:RANDOM draws a stream of its own for its SEED (seed_stream.h), not
+ * the numbers of the starting-point method RANDOM for the same seed: both
+ * seeded std::mt19937_64 with the integer and drew uniform numbers in the
+ * box, so with an INIT block's SEED equal to the optimiser's the search
+ * evaluated its start point (the method's first point) again as its first
+ * draw -- the reviewer's EXPLORE INIT RANDOM 2 SEED 2 with TADAH:RANDOM
+ * SEED 2 evaluated (4.626487, 2.700472) twice.
+ * Pins: with INIT { METHOD RANDOM 1, SEED 2 } and TADAH:RANDOM SEED 2
+ * (MAXEVAL 4) the four evaluated points are distinct, and so are the three
+ * of a PRESTAGE exploration with EXPLORE INIT { METHOD RANDOM 2, SEED 2 }
+ * and TADAH:RANDOM SEED 2 (MAXEVAL 3).
+ * Before the fix: evaluations 1 and 2 were the same point in both. */
+TEST_CASE("Termination: TADAH:RANDOM does not draw the points of a RANDOM "
+          "method with the same seed", "[HPO][termination][seed]")
+{
+    const std::string init_random =
+        "INIT\n    METHOD RANDOM 1\n    SEED 2\n  ENDINIT\n";
+    SECTION("the OPTIMIZER block's INIT block") {
+        TaRun run("OPTIMIZER\n  " + init_random +
+                  "  STRATEGY\n    TYPE PLAIN\n    LIB TADAH\n"
+                  "    ALGO RANDOM\n    MAXEVAL 4\n    SEED 2\n"
+                  "  ENDSTRATEGY\nENDOPTIMIZER\n");
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const auto pts = evaluated_points();
+        REQUIRE(pts.size() == 4u);
+        INFO(::Catch::Detail::stringify(pts));
+        CHECK(all_distinct(pts));
+    }
+    SECTION("the EXPLORE block's INIT block") {
+        TaRun run(plain_block(
+            "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+            "    MAXEVAL 4\n"
+            "    EXPLORE\n"
+            "      INIT\n        METHOD RANDOM 2\n        SEED 2\n"
+            "      ENDINIT\n"
+            "      LIB TADAH\n      ALGO RANDOM\n      MAXEVAL 3\n"
+            "      SEED 2\n"
+            "    ENDEXPLORE\n"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const auto pts = evaluated_points();
+        REQUIRE(pts.size() >= 3u);
+        const auto explored = evals_between(pts, 1, 3);
+        INFO(::Catch::Detail::stringify(explored));
+        CHECK(all_distinct(explored));
+    }
+}
+
+/* A RESTART round draws its fresh point with RESTART SEED + r and runs a
+ * seeded TADAH:RANDOM with SEED + r (under PLAIN): with the same SEED in
+ * both blocks the two seeds are equal every round, and the search's first
+ * draw of the round was the round's start point again (the documented
+ * "evaluated twice").
+ * Pins: with SEED 5 in the RESTART block and on TADAH:RANDOM, no round
+ * (MAX 2, each ended by a stagnation stop) evaluates a point twice.
+ * Before the fix: the first two evaluations of rounds 1 and 2 were the
+ * same point. */
+TEST_CASE("Termination: a RESTART round's fresh RANDOM point is not the "
+          "seeded TADAH:RANDOM's first draw of the round",
+          "[HPO][termination][restart][seed]")
+{
+    const auto a = run_restart_rounds("      SEED 5\n");
+    CHECK(a.journal.find("RESTART 1/2 -- fresh init from RANDOM; "
+                         "RESTART SEED 6, SEED 6\n") != std::string::npos);
+    REQUIRE(a.rounds.size() == 3u);
+    for (std::size_t r = 0; r < a.rounds.size(); ++r) {
+        INFO("round " << r << ": "
+             << ::Catch::Detail::stringify(a.rounds[r]));
+        REQUIRE(a.rounds[r].size() >= 2u);
+        CHECK(all_distinct(a.rounds[r]));
+    }
+}
+
+namespace {
+
+/* How many evaluations of `pts` repeat a point evaluated before. */
+std::size_t repeated_points(const std::vector<Point>& pts)
+{
+    std::set<Point> seen;
+    std::size_t n = 0;
+    for (const auto& p : pts)
+        if (!seen.insert(p).second) ++n;
+    return n;
+}
+
+}  // namespace
+
+/* A PRESTAGE refinement draws random numbers of its own (seed_stream.h):
+ * its TADAH:RANDOM drew the exploration's numbers for an equal SEED, and
+ * the seeds RESTART derives for a round -- the refinement SEED + r*S, the
+ * exploration EXPLORE SEED + r -- met for SEEDs that differ, so a round's
+ * refinement drew an earlier exploration's points again. A refinement
+ * evaluates its start point, a candidate the exploration evaluated, again
+ * (TADAH:RANDOM evaluates its INIT point first); no other evaluation of
+ * these runs repeats a point.
+ * Pins: (a) STRATEGY and EXPLORE TADAH:RANDOM with SEED 7 and MAXEVAL 5:
+ * of the 10 evaluations only the 6th (the refinement's start point)
+ * repeats an earlier point; (b) SEED 7, EXPLORE SEED 8, MAXEVAL 6 each,
+ * RESTART { AFTER_STAGNATION 3, MAX 1, METHOD RANDOM 1, SEED 100 }: the
+ * journal reads "RESTART 1/1 -- fresh init from RANDOM; RESTART SEED 101,
+ * SEED 8, EXPLORE SEED 9" (round 1's refinement runs with round 0's
+ * EXPLORE SEED), and the evaluations that repeat a point are as many as the
+ * refinements ("REFINEMENT: refining" lines), their start points.
+ * Before the fix: (a) evaluations 7-10 were evaluations 2-5 (5 repeats);
+ * (b) round 1's refinement drew round 0's exploration points again (more
+ * repeats than refinements). */
+TEST_CASE("Termination: a PRESTAGE refinement does not draw its "
+          "exploration's random numbers", "[HPO][termination][prestage][seed]")
+{
+    SECTION("equal SEEDs") {
+        TaRun run(plain_block(
+            "    TYPE PRESTAGE\n    LIB TADAH\n    ALGO RANDOM\n"
+            "    MAXEVAL 5\n    SEED 7\n"
+            "    EXPLORE\n      LIB TADAH\n      ALGO RANDOM\n"
+            "      MAXEVAL 5\n      SEED 7\n    ENDEXPLORE\n"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const auto pts = evaluated_points();
+        REQUIRE(pts.size() == 10u);
+        INFO(::Catch::Detail::stringify(pts));
+        CHECK(repeated_points(pts) == 1u);
+        CHECK(repeated_points(evals_between(pts, 1, 6)) == 1u);
+    }
+    SECTION("the seeds RESTART derives for a round") {
+        TaRun run(plain_block(
+            "    TYPE PRESTAGE\n    LIB TADAH\n    ALGO RANDOM\n"
+            "    MAXEVAL 6\n    SEED 7\n"
+            "    RESTART\n      AFTER_STAGNATION 3\n      MAX 1\n"
+            "      METHOD RANDOM 1\n      SEED 100\n    ENDRESTART\n"
+            "    EXPLORE\n      LIB TADAH\n      ALGO RANDOM\n"
+            "      MAXEVAL 6\n      SEED 8\n    ENDEXPLORE\n"));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const std::string journal = read_file("hpo_run.log");
+        REQUIRE(journal.find("RESTART 1/1 -- fresh init from RANDOM; "
+                             "RESTART SEED 101, SEED 8, EXPLORE SEED 9\n") !=
+                std::string::npos);
+        const std::size_t refinements =
+            count_of(journal, "REFINEMENT: refining");
+        REQUIRE(refinements == 2u);
+        const auto pts = evaluated_points();
+        INFO(::Catch::Detail::stringify(pts));
+        CHECK(repeated_points(pts) == refinements);
+    }
 }
 
 TEST_CASE("Termination: METHOD SOBOL K starts the INIT round and each "
@@ -6695,6 +6857,142 @@ TEST_CASE("PRESTAGE: an exploration without a usable loss leaves the "
     /* The columns after ITERATION and SLOT: the parameters. */
     CHECK(std::vector<std::string>(params[9].begin() + 2, params[9].end()) ==
           std::vector<std::string>(params[0].begin() + 2, params[0].end()));
+}
+
+/* An exploration that made no evaluation has no candidate, and no failed
+ * evaluation either: every exploration a parsed configuration sets
+ * evaluates at least one point (MAXEVAL >= 1; every driver makes its first
+ * evaluation, also when MAXTIME has passed before it -- the next case; a
+ * stop is raised inside a counted evaluation), so it is a driver that
+ * returned without evaluating -- or a spec built outside the parser that
+ * asks for no evaluation --, which a refinement from the OPTIMIZER-level
+ * INIT points would hide.
+ * Pins: StagedPolicy over the parsed PRESTAGE spec whose exploration
+ * (TADAH:RANDOM) is given MAXEVAL 0 and no INIT point throws
+ * std::logic_error "PRESTAGE: the exploration (EXPLORE block) TADAH:RANDOM
+ * returned without evaluating a point ...", no evaluation is made (the
+ * journal's census is unchanged) and the journal has no "running outer
+ * optimiser as-is".
+ * Before the fix: a WARNING "PRESTAGE: produced no candidates -- running
+ * outer optimiser as-is" (journal only), and the refinement ran from the
+ * OPTIMIZER-level INIT point: 3 evaluations (its MAXEVAL), no error. */
+TEST_CASE("PRESTAGE: an exploration that made no evaluation is an error, not "
+          "a refinement from the INIT points",
+          "[HPO][termination][prestage][no_evaluation]")
+{
+    HostFixture fx(kRootLines,
+                   plain_block("    TYPE PRESTAGE\n    LIB TADAH\n"
+                               "    ALGO RANDOM\n    MAXEVAL 3\n    SEED 1\n"
+                               "    EXPLORE\n      LIB TADAH\n"
+                               "      ALGO RANDOM\n      MAXEVAL 3\n"
+                               "      SEED 2\n    ENDEXPLORE\n"));
+    tadah::hpo::OptimizerSpec spec = fx.trg.spec;
+    REQUIRE(spec.prestage);
+    REQUIRE_FALSE(spec.optim_init.empty());
+    spec.prestage->stop.maxeval = 0;
+    spec.prestage->optim_init.clear();
+    tadah::hpo::StagedPolicy<ParamVec, ::LammpsRunner> policy(1);
+    const std::size_t evals_before = tadah::hpo::HPOLog::instance().n_eval();
+    std::string what;
+    bool logic = false;
+    try {
+        policy.run(spec, fx.host);
+    } catch (const std::logic_error& e) {
+        logic = true;
+        what = e.what();
+    } catch (const std::exception& e) {
+        what = e.what();
+    }
+    CHECK(logic);
+    CHECK_THAT(what, Catch::StartsWith(
+                         "PRESTAGE: the exploration (EXPLORE block) "
+                         "TADAH:RANDOM returned without evaluating a point"));
+    CHECK(tadah::hpo::HPOLog::instance().n_eval() == evals_before);
+    tadah::hpo::HPOLog::instance().finish("test-end");
+    const std::string journal = read_file(fx.run.sd.dir / "hpo_run.log");
+    INFO(journal);
+    CHECK(journal.find("running outer optimiser as-is") == std::string::npos);
+}
+
+/* MAXTIME keeps an evaluation from starting once it has passed, except a
+ * search's first: every search makes at least one evaluation, as the TADAH
+ * drivers (they read MAXTIME after an evaluation), NLopt and DLIB:GFS's
+ * INIT points do. MAXTIME 1e-9 has passed before any search starts.
+ * Pins: with MAXTIME 1e-9, a PLAIN DLIB:GFS without an INIT point (INIT
+ * METHOD RANDOM 0) and a PLAIN ASA each make one evaluation and end with
+ * status 0 ("DLIB:GFS stopped: MAXTIME exceeded after 1 evaluation(s)",
+ * "ASA stopped: MAXTIME exceeded after 1 host eval(s)", the run's status
+ * their MAXTIME stop); a PRESTAGE (TADAH:RANDOM, MAXEVAL 2) whose
+ * exploration is one of them makes that one exploration evaluation and
+ * then the refinement's two, status 0, and the journal names no error.
+ * Before the fix: the search made no evaluation; the PLAIN run ended with
+ * status 1 ("STOPPED -- no evaluation produced a usable loss"), the
+ * PRESTAGE run with status 1 and FAILED ("PRESTAGE: the exploration
+ * (EXPLORE block) DLIB:GFS returned without evaluating a point ..."; ASA:ASA
+ * likewise). */
+TEST_CASE("MAXTIME: a search makes its first evaluation when MAXTIME has "
+          "passed before it", "[HPO][termination][stop_criteria][maxtime]")
+{
+    struct Case {
+        const char* name;
+        std::string search;     // the search's lines, without its TYPE
+        std::string init;       // its INIT block, if any
+        std::string stopped;    // its journal line
+        std::string status;     // the run's status under PLAIN
+    };
+    const std::vector<Case> cases = {
+        {"DLIB:GFS without an INIT point",
+         "LIB DLIB\nALGO GFS\nMAXTIME 1e-9\n",
+         "INIT\nMETHOD RANDOM 0\nSEED 4\nENDINIT\n",
+         "DLIB:GFS stopped: MAXTIME exceeded after 1 evaluation(s)",
+         "DLIB:GFS: MAXTIME exceeded"},
+        {"ASA", "LIB ASA\nALGO ASA\nMAXTIME 1e-9\nSEED 3\n", "",
+         "ASA stopped: MAXTIME exceeded after 1 host eval(s)",
+         "ASA: MAXTIME exceeded"},
+    };
+    /* `lines` indented by `indent` spaces, line by line. */
+    const auto indented = [](const std::string& lines, std::size_t indent) {
+        std::istringstream in(lines);
+        std::string out;
+        for (std::string l; std::getline(in, l);)
+            out += std::string(indent, ' ') + l + "\n";
+        return out;
+    };
+    for (const auto& c : cases) {
+        INFO(c.name);
+        SECTION(std::string("PLAIN ") + c.name) {
+            TaRun run("OPTIMIZER\n" + indented(c.init, 2) + "  STRATEGY\n" +
+                      "    TYPE PLAIN\n" + indented(c.search, 4) +
+                      "  ENDSTRATEGY\nENDOPTIMIZER\n");
+            int status = -1;
+            REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+            const std::string journal = read_file("hpo_run.log");
+            INFO(journal);
+            CHECK(status == 0);
+            CHECK(data_rows("loss.tadah").size() == 1u);
+            CHECK_THAT(journal, Catch::Contains(c.stopped));
+            CHECK(journal_status(journal) == c.status);
+        }
+        SECTION(std::string("the PRESTAGE exploration ") + c.name) {
+            TaRun run(plain_block(
+                "    TYPE PRESTAGE\n    LIB TADAH\n    ALGO RANDOM\n"
+                "    MAXEVAL 2\n    SEED 1\n    EXPLORE\n" +
+                indented(c.init + c.search, 6) + "    ENDEXPLORE\n"));
+            int status = -1;
+            REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+            const std::string journal = read_file("hpo_run.log");
+            INFO(journal);
+            CHECK(status == 0);
+            CHECK(data_rows("loss.tadah").size() == 3u);
+            CHECK_THAT(journal, Catch::Contains(c.stopped));
+            CHECK_THAT(journal, Catch::Contains(
+                                    "REFINEMENT: refining top-1 seed(s) via "
+                                    "TADAH:RANDOM"));
+            CHECK(journal.find("returned without evaluating") ==
+                  std::string::npos);
+            CHECK(journal_status(journal) == "TADAH:RANDOM: MAXEVAL reached");
+        }
+    }
 }
 
 TEST_CASE("PRESTAGE under RESTART: an exploration that stagnates without a "

@@ -9,7 +9,11 @@
 #include "catch2/catch.hpp"
 
 #include <tadah/core/checkpoint.h>
+#include <tadah/core/context.h>
 #include <tadah/hpo/algorithms_asa.h>
+#include <tadah/hpo/asa_testing.h>
+#include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/init_strategy.h>
 #include <tadah/hpo/asa_options.h>
 #include <tadah/hpo/durable_best.h>
 #include <tadah/hpo/fd_stencil.h>
@@ -43,6 +47,7 @@ extern "C" {
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <mutex>
@@ -1508,4 +1513,109 @@ TEST_CASE("ASA's exit curvature evaluates the points it tests (TADAH-PATCH 8)",
     CHECK(probed_low);
     CHECK(probed_high);
     CHECK(outside == 0u);
+}
+
+namespace {
+
+/* The numbers the starting-point method RANDOM draws for `seed`, in the
+ * order it draws them: the coordinates of its points in a one-dimensional
+ * unit box (low + u (high - low) = u). */
+std::vector<double> random_method_draws(std::uint64_t seed, std::size_t n)
+{
+    namespace fs = std::filesystem;
+    const fs::path cfg = fs::temp_directory_path() /
+        ("tadah_asa_stream_" + std::to_string(seed) + "_" +
+         std::to_string(std::chrono::steady_clock::now()
+                            .time_since_epoch().count()) + ".hpo");
+    { std::ofstream(cfg) << "OPTIMIZER\nLIB DLIB\nALGO BFGS\nENDOPTIMIZER\n"; }
+    tadah::core::Context ctx;
+    const tadah::hpo::HPOTargets trg(ctx, cfg.string());
+    std::error_code ec;
+    fs::remove(cfg, ec);
+
+    OptimizerSpec unit;
+    unit.low = {0.0};
+    unit.high = {1.0};
+    unit.is_int = {false};
+    unit.log_scaled = {false};
+    tadah::hpo::InitStrategySpec ispec;
+    ispec.chain.push_back({"RANDOM", {std::to_string(n)}});
+    const auto method = tadah::hpo::build_init_strategy(ispec);
+    const tadah::hpo::InitContext ic{unit, trg, seed};
+    std::vector<double> u;
+    for (const auto& p : method->generate(ic, n)) u.push_back(p.at(0));
+    REQUIRE(u.size() == n);
+    return u;
+}
+
+/* The plain-C callbacks of asa_testing::run_raw_featured: a recording
+ * quadratic bowl, and a generator that hands out `g_draws` in order. */
+std::vector<double> g_draws;
+std::size_t g_next_draw = 0;
+std::vector<std::vector<double>> g_raw_calls;
+
+double raw_bowl(const double* x, long dim, int* cost_flag)
+{
+    g_raw_calls.emplace_back(x, x + dim);
+    *cost_flag = 1;
+    return (x[0] - 0.3) * (x[0] - 0.3) + (x[1] + 0.2) * (x[1] + 0.2);
+}
+
+double raw_draw()
+{
+    /* Past the end the stream is not the method's any more: 2 is no
+     * uniform number in [0, 1), which the case reports. */
+    return g_next_draw < g_draws.size() ? g_draws[g_next_draw++] : 2.0;
+}
+
+}  // namespace
+
+/* Every RNG consumer of a seed draws a stream of its own
+ * (seed_stream.h): ASA's random numbers for SEED s are not those of the
+ * starting-point method RANDOM (an INIT or RESTART block's METHOD RANDOM)
+ * for the same seed, which TADAH:RANDOM and ASA both drew -- each seeded
+ * std::mt19937_64 with the integer and read it through uniform(0, 1) -- so
+ * equal seeds of two keys gave the same numbers (an INIT block's SEED and
+ * the optimiser's SEED, a RESTART round's seed and the optimiser's round
+ * seed).
+ * Pins: ASA under SEED 2026 from (1, -1) in [-2, 2]^2 (Limit_Generated 40,
+ * default options otherwise) evaluates other states than the bundled
+ * asa() given, with the same options, the RANDOM method's numbers for seed
+ * 2026 in order (asa_testing::run_raw_featured), within the first 10.
+ * Before the fix: the first 10 states (and every later one) were the same:
+ * ASA drew the RANDOM method's numbers. */
+TEST_CASE("ASA draws random numbers of its own and not the RANDOM method's for "
+          "the same seed", "[HPO][asa][seed]")
+{
+    constexpr std::uint64_t kSeed = 2026;
+    const std::vector<double> lo = {-2.0, -2.0}, hi = {2.0, 2.0},
+                              x0 = {1.0, -1.0};
+
+    auto sp = make_asa_spec(lo, hi);
+    set_seed_point(sp, x0);
+    sp.seed = kSeed;
+    sp.stop.maxeval = 1000;
+    sp.param = {{"Limit_Generated", 40.0}};
+    Recorder rec;
+    rec.f = [](const std::vector<double>& x) {
+        return quad_bowl(x, {0.3, -0.2});
+    };
+    run_asa_erased(sp, 2, rec.fn());
+
+    g_draws = random_method_draws(kSeed, 4000);
+    g_next_draw = 0;
+    g_raw_calls.clear();
+    tadah::hpo::asa_testing::run_raw_featured(&raw_bowl, &raw_draw, 2,
+                                              lo.data(), hi.data(),
+                                              x0.data(), 40);
+    /* The method's numbers lasted the reference run. */
+    REQUIRE(g_next_draw < g_draws.size());
+
+    REQUIRE(rec.calls.size() >= 10u);
+    REQUIRE(g_raw_calls.size() >= 10u);
+    const std::vector<std::vector<double>> asa(rec.calls.begin(),
+                                               rec.calls.begin() + 10);
+    const std::vector<std::vector<double>> method(g_raw_calls.begin(),
+                                                  g_raw_calls.begin() + 10);
+    CHECK(asa != method);
 }

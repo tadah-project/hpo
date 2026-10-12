@@ -44,7 +44,9 @@ bool should_run_noise_calibration(std::size_t noise_n);
 
 /* Whether a launch on `world_size` ranks can run `spec`: the reason it
  * cannot, or an empty string when it can. hpo_run() raises the reason as
- * its error before any evaluation.
+ * its error before any evaluation. For a parsed spec the reason names the
+ * line its OPTIMIZER block closes at, "Error on line N: multi-rank HPO
+ * ...\nLine: ENDOPTIMIZER" (with_block_line, phase_specs.h).
  *
  * The TADAH_HPO_MPI communicator is intentionally owned only by the plain
  * parallel-annealing drivers (STRATEGY TYPE PLAIN, TADAH:ANNEAL_PT/PA),

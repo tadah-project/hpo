@@ -151,8 +151,11 @@ void validate_backend(const OptimizerSpec& spec, RestartStop restart,
  * runs (strategy_phase_specs(): the STRATEGY-level optimiser, each
  * MULTISTART start, the PRESTAGE exploration and refinement, and every
  * INNER block, as SpecRole::Inner), with the RESTART of `root`
- * (restart_stop_of()), each
- * message prefixed with the phase:
+ * (restart_stop_of()), after the rule that NLOPT, DLIB and CERES need a
+ * search space of at least one dimension ("... NLOPT:GN_DIRECT cannot
+ * optimise a zero-dimensional search space (there is no OPTIM line; ...")),
+ * each message prefixed with the phase and named at the line its block
+ * closes at (with_block_line, phase_specs.h):
  * "the PRESTAGE refinement: DLIB:BFGS does not support MAXTIME". A refused
  * backend (reject_refused_backend(), optimizer_caps.h) is reported first,
  * for its own phase, with the text validate_run_policy() throws for it

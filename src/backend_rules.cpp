@@ -27,6 +27,23 @@ std::string backend_name(const OptimizerSpec& s)
     return s.lib + ":" + s.algo;
 }
 
+/* NLOPT, DLIB and CERES cannot search a space without a dimension: NLopt
+ * refuses the call ("NULL args to nlopt_optimize_"), dlib's GFS asserts
+ * ("The vectors can't be empty"), DLIB:BFGS and the CERES drivers check
+ * their bounds when they start. The TADAH optimisers evaluate the INIT
+ * point; ASA refuses it in its own validator (validate_asa_spec). */
+void require_search_dimensions(const OptimizerSpec& spec)
+{
+    if (!spec.low.empty()) return;
+    if (spec.lib != "NLOPT" && spec.lib != "DLIB" && spec.lib != "CERES")
+        return;
+    throw std::runtime_error(
+        backend_name(spec) + " cannot optimise a zero-dimensional search "
+        "space (there is no OPTIM line; the failure would only surface once "
+        "the optimiser starts). Add at least one OPTIM line, or use a "
+        "TADAH-native optimiser, which evaluates the INIT start point once.");
+}
+
 /* NLopt counts evaluations in an int (nlopt::opt::set_maxeval): a larger
  * MAXEVAL wrapped (4294967299 ran 3 evaluations, 2147483648 became a
  * negative budget, which NLopt reads as no limit). HPOTargets bounds
@@ -479,6 +496,11 @@ void validate_phase_backends(const OptimizerSpec& root)
     reject_refused_backends(root);
     for (const PhaseSpec& phase : strategy_phase_specs(root)) {
         try {
+            /* The search space first: without a dimension no other setting
+             * of NLOPT, DLIB or CERES matters (every phase, the EXPLORE
+             * block's included; it was checked for the STRATEGY-level LIB
+             * only, so an EXPLORE NLopt or DLIB:GFS failed in the run). */
+            require_search_dimensions(phase.spec);
             validate_backend(phase.spec, restart,
                              phase.inner ? SpecRole::Inner : SpecRole::Phase);
         } catch (const std::exception& e) {

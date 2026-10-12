@@ -2590,6 +2590,108 @@ OPTIM CGRID2B (1) 0.0 4.0
     }
 }
 
+namespace {
+
+/* An H2 dimer at separation r along x, in a 20 A box, with its neighbour
+ * lists at `rcut`. */
+Structure make_h2_dimer(double r, double rcut)
+{
+    Structure st;
+    st.cell.load(20.0, 0.0, 0.0,
+                 0.0, 20.0, 0.0,
+                 0.0, 0.0, 20.0);
+    st.add_atom(Atom(Element("H"), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0));
+    st.add_atom(Atom(Element("H"), r,   0.0, 0.0, 0.0, 0.0, 0.0));
+    NNFinder finder;
+    finder.calc(st, rcut);
+    return st;
+}
+
+}  // namespace
+
+/* The implicit-function solve of the analytical gradient factorises the
+ * normal equations of the fit, Phi^T Phi + LAMBDA I over the training rows
+ * (detail::cholesky_upper). Where they are not positive definite the
+ * gradient cannot be formed at the point: the helper says so (it throws,
+ * and HPO_Host::analytical_gradient_gap() passes the message on, so
+ * GRAD_STRATEGY ANALYTICAL fails the gradient there as a point without a
+ * usable gradient, and HYBRID takes finite differences for every
+ * parameter). The trainer's own fit factorises the same matrix through
+ * LAPACK, so in a run the two differ only at rounding level on a
+ * numerically singular matrix; here the helper is handed training rows
+ * that make it exactly singular: LAMBDA 0 and an H2 dimer whose atoms are
+ * further apart than the cutoff, so every descriptor column is 0 (the
+ * trainer itself was fitted on two dimers inside the cutoff).
+ * Pins: the call throws std::runtime_error naming the implicit-function
+ * solve, the normal equations that are not positive definite and LAMBDA =
+ * 0.
+ * Before the fix: it returned true with every parameter in needs_fd and a
+ * zero gradient -- what a setup the analytical gradient does not cover
+ * returns -- so nothing said why, and HPO_Host::analytical_gradient_gap()
+ * stayed empty: under ANALYTICAL the run ended FAILED with "no analytical
+ * gradient for 1 parameter". */
+TEST_CASE("compute_analytical_gradient_from_trainer: normal equations that "
+          "are not positive definite fail the gradient at the point",
+          "[HPO][analytical_gradient][live_trainer][ift_failure]")
+{
+    using tadah::mlip::memory::MLIPWorkspaceManager;
+    tadah::core::PeriodicTable::initialize();
+
+    const std::vector<double> cgrid = {0.5, 1.4};
+    const std::vector<double> sgrid = {3.0, 5.0};
+    const double rcut = 3.0;
+
+    Context c_main = make_minimal_trainer_context(cgrid, sgrid, rcut);
+    c_main.remove("LAMBDA");
+    c_main.add("LAMBDA", 0.0);
+
+    /* Two dimers inside the cutoff: two independent descriptor rows, so
+     * the LAMBDA 0 fit is well posed. */
+    StructureDB train;
+    train.dbidx = {0, 2};
+    train.structures.push_back(make_h2_dimer(1.0, rcut));
+    train.structures.push_back(make_h2_dimer(1.8, rcut));
+    train.structures[0].energy = 0.05;
+    train.structures[1].energy = 0.11;
+    StructureDB val = train;
+    val.structures[0].energy = 0.06;
+    val.structures[1].energy = 0.09;
+
+    MLIPWorkspaceManager ws;
+    Trainer host(c_main, ws);
+    REQUIRE_NOTHROW(host.train(train));
+
+    /* Training rows whose every descriptor is 0. */
+    StructureDB apart;
+    apart.dbidx = {0, 1};
+    apart.structures.push_back(make_h2_dimer(2.0 * rcut, rcut));
+    apart.structures[0].energy = 0.05;
+
+    ScopedTempFileLocal cfg(R"(OPTIMIZER
+LIB DLIB
+ALGO BFGS
+MAXEVAL 1
+ENDOPTIMIZER
+LOSS L2
+PC_EMAE 0 1
+OPTIM CGRID2B (1) 0.0 4.0
+)");
+    Context ctx_for_targets = make_minimal_trainer_context(cgrid, sgrid, rcut);
+    tadah::hpo::HPOTargets trg(ctx_for_targets, cfg.path.string());
+    auto prefs = tadah::hpo::make_param_ref_table(trg);
+    REQUIRE(prefs.size() == 1);
+
+    std::vector<double> g;
+    std::vector<int> needs_fd;
+    CHECK_THROWS_WITH(
+        tadah::hpo::compute_analytical_gradient_from_trainer(
+            host, apart, val, trg, prefs, g, needs_fd),
+        Catch::Contains("the implicit-function solve has no solution at "
+                        "this point") &&
+        Catch::Contains("are not positive definite") &&
+        Catch::Contains("LAMBDA = 0"));
+}
+
 /* ------------------------------------------------------------------------
  * Phase 3.7B — `compute_analytical_gradient_from_trainer` accepts a
  * SimsGradProvider callback and folds sims_loss into the analytical

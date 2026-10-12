@@ -22,6 +22,7 @@
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/pc_fail_grading.h>   /* kFailBandFloor, loss_is_feasible */
+#include <tadah/hpo/seed_stream.h>       /* seed_stream, seed_streams         */
 #include <tadah/hpo/anneal_keys_gen.h>   /* generated key/rule registry      */
 #include <tadah/hpo/strict_parse.h>     /* parse_number                     */
 
@@ -74,12 +75,14 @@ inline const char* algo_name(AlgoKind k)
  * pure function of (SEED, slot) for every STEP_MODE, and parallel
  * chains draw reproducibly regardless of thread scheduling. (Chain
  * INITIALIZATION -- JITTER/UNIFORM draws for slots >= 1 -- does consume
- * the chain stream and legitimately differs between INIT_MODEs.) */
-constexpr std::uint64_t SALT_CHAIN       = 0xC4A1C;  /* chain i proposals+coins */
-constexpr std::uint64_t SALT_PROBES      = 0x70B35;  /* T0 calibration probes   */
-constexpr std::uint64_t SALT_PT_SWAP     = 0x5757;   /* PT swap coins (epoch)   */
-constexpr std::uint64_t SALT_PA_RESAMPLE = 0x9E5A;   /* PA resampler (tstep)    */
-constexpr std::uint64_t SALT_WARMUP      = 0x57A21;  /* PT step warm-up + pilot */
+ * the chain stream and legitimately differs between INIT_MODEs.) The salts
+ * are registered with those of the other optimisers' streams in
+ * seed_stream.h, so no two consumers of a SEED share one. */
+constexpr std::uint64_t SALT_CHAIN       = seed_streams::kAnnealChain;
+constexpr std::uint64_t SALT_PROBES      = seed_streams::kAnnealProbes;
+constexpr std::uint64_t SALT_PT_SWAP     = seed_streams::kAnnealPtSwap;
+constexpr std::uint64_t SALT_PA_RESAMPLE = seed_streams::kAnnealPaResample;
+constexpr std::uint64_t SALT_WARMUP      = seed_streams::kAnnealWarmup;
 
 /* ---- adaptation targets (literature constants) ----------------------
  *
@@ -112,11 +115,7 @@ inline std::mt19937_64 make_stream(std::uint64_t seed,
                                    std::uint64_t salt,
                                    std::uint64_t idx = 0)
 {
-  std::seed_seq seq{
-      static_cast<std::uint32_t>(seed), static_cast<std::uint32_t>(seed >> 32),
-      static_cast<std::uint32_t>(salt), static_cast<std::uint32_t>(salt >> 32),
-      static_cast<std::uint32_t>(idx),  static_cast<std::uint32_t>(idx >> 32)};
-  return std::mt19937_64(seq);
+  return seed_stream(seed, salt, idx);
 }
 
 /* Mirror-reflect v into [lo, hi] exactly, however many box widths the

@@ -1189,7 +1189,10 @@ template<typename Vec, typename HostT>
 #ifdef TADAH_HPO_MPI
     if (hpo_mpi_active()) pt_detail::validate_mpi_payload_dimension(dim);
 #endif
-    const std::uint64_t seed = sp.seed.value_or(std::random_device{}());
+    /* The SEED the journal names, and the seed of every stream of the run
+     * (phase_stream_seed: itself but in a PRESTAGE refinement). */
+    const std::uint64_t seed_value = sp.seed.value_or(std::random_device{}());
+    const std::uint64_t seed = phase_stream_seed(seed_value, sp.stream_phase);
 
     const Knobs kb = Knobs::parse(sp, AlgoKind::PT);
     anneal::announce_knobs(kb, AlgoKind::PT);
@@ -1347,7 +1350,7 @@ template<typename Vec, typename HostT>
                  : (kb.step_mode == anneal_enums::STEP_MODE::FROZEN
                         ? "CLASSIC[FROZEN]"
                         : "CLASSIC[FIXED]"));
-      oss << "ANNEAL_PT[" << mode << "]: seed=" << seed
+      oss << "ANNEAL_PT[" << mode << "]: seed=" << seed_value
           << "  REPLICAS=" << K
           << "  THREADS=" << threads
           << "  SWAP_EVERY=" << kb.swap_every;

@@ -1083,10 +1083,14 @@ TEST_CASE("a run whose every evaluation has a failed PC_OBSERVABLE term has "
 
 /* Pins: STOPVAL is reached by a usable loss only. TADAH:RANDOM (SEED 3,
  * FAILSCORE 1e16, STOPVAL 6e15) evaluates its configuration point first,
- * RCUT2B = 5.2, where the observable fails: that loss is FAILSCORE, and
- * the run stops at the next evaluation, RCUT2B = 4.838148984, whose loss
- * (3.16e5) is usable: "TADAH:RANDOM stopped: STOPVAL reached after 2
- * evaluation(s)", status 0, best_pot.tadah that evaluation's.
+ * RCUT2B = 5.2, and then its first draw, RCUT2B = 5.2808121911, where the
+ * observable fails too: both losses are FAILSCORE, and the run stops at
+ * the next evaluation, RCUT2B = 4.1202553115, whose loss is usable:
+ * "TADAH:RANDOM stopped: STOPVAL reached after 3 evaluation(s)", status
+ * 0, best_pot.tadah that evaluation's. (TADAH:RANDOM draws a stream of
+ * its own for its SEED, seed_stream.h; on the stream of the starting-point
+ * method RANDOM, which it drew before, SEED 3's first draw was the usable
+ * RCUT2B = 4.838148984 and the run stopped after 2 evaluations.)
  * Before the fix: the first evaluation's loss, the mean 5.0000000004e+15,
  * was usable and below STOPVAL: the run stopped after 1 evaluation with
  * that loss as its best. */
@@ -1101,15 +1105,19 @@ TEST_CASE("STOPVAL is not reached by an evaluation with a failed "
     INFO(journal);
     CHECK(status == 0);
     CHECK_THAT(journal, Catch::Contains("TADAH:RANDOM stopped: STOPVAL "
-                                        "reached after 2 evaluation(s)"));
+                                        "reached after 3 evaluation(s)"));
     CHECK(journal_status(journal) == "TADAH:RANDOM: STOPVAL reached");
     const Table loss = read_table("loss.tadah");
-    REQUIRE(loss.rows.size() == 2);
+    REQUIRE(loss.rows.size() == 3);
     CHECK(loss.rows[0].back() == row_text(1e16));
+    CHECK(loss.rows[1].back() == row_text(1e16));
     const Table params = read_table("params.tadah");
-    REQUIRE(params.rows.size() == 2);
-    CHECK(std::stod(params.rows[1].back()) == Approx(4.838148984).epsilon(1e-9));
-    const double best = std::stod(loss.rows[1].back());
+    REQUIRE(params.rows.size() == 3);
+    CHECK(std::stod(params.rows[1].back()) ==
+          Approx(5.2808121911).epsilon(1e-9));
+    CHECK(std::stod(params.rows[2].back()) ==
+          Approx(4.1202553115).epsilon(1e-9));
+    const double best = std::stod(loss.rows[2].back());
     CHECK(best < 6e15);
     REQUIRE(fs::exists("best_pot.tadah"));
     const std::string pot = read_file("best_pot.tadah");

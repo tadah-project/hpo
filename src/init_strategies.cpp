@@ -610,6 +610,47 @@ private:
     std::vector<std::unique_ptr<InitStrategy>> children_;
 };
 
+/* ---------------- An entry with its METHOD line ------------------- */
+/* An entry the parser read: a refusal of its points, which a chain draws
+ * after the whole file has been read (a WARM file that is missing or
+ * unreadable, a WARM seed the run refuses, a WARM_ON_MISMATCH error, a
+ * SOBOL block beyond the sequence), names the METHOD line in the parser's
+ * form (config_line_error), as the parser's own refusals of the line do. */
+class LinedEntryStrategy : public InitStrategy {
+public:
+    LinedEntryStrategy(std::unique_ptr<InitStrategy> entry, std::size_t line,
+                       std::string text)
+        : entry_(std::move(entry)), line_(line), text_(std::move(text)) {}
+
+    std::vector<std::vector<double>>
+    generate(const InitContext& ctx, std::size_t k) const override
+    {
+        try {
+            return entry_->generate(ctx, k);
+        } catch (const std::runtime_error& e) {
+            throw std::runtime_error(config_line_error(line_, e.what(), text_));
+        }
+    }
+    std::vector<std::vector<double>>
+    generate_tagged(const InitContext& ctx, std::size_t k,
+                    std::vector<InitOrigin>& origins) const override
+    {
+        try {
+            return entry_->generate_tagged(ctx, k, origins);
+        } catch (const std::runtime_error& e) {
+            throw std::runtime_error(config_line_error(line_, e.what(), text_));
+        }
+    }
+    InitOrigin origin() const override { return entry_->origin(); }
+    std::string name() const override { return entry_->name(); }
+    std::size_t default_k() const override { return entry_->default_k(); }
+
+private:
+    std::unique_ptr<InitStrategy> entry_;
+    std::size_t line_;
+    std::string text_;
+};
+
 /* ---------------- Factory ---------------------------------------- */
 /* `warm_policy`: the WARM_ON_MISMATCH of the block that holds the entry,
  * for a WARM entry. */
@@ -674,8 +715,13 @@ build_init_strategy(const InitStrategySpec& ispec)
      * only when the user listed `STRATEGY CONFIG` explicitly; there is
      * no implicit CONFIG prepend. */
     std::vector<std::unique_ptr<InitStrategy>> kids;
-    for (const auto& e : ispec.chain)
-        kids.push_back(make_one(e, ispec.warm_on_mismatch));
+    for (const auto& e : ispec.chain) {
+        auto kid = make_one(e, ispec.warm_on_mismatch);
+        if (e.line != 0)
+            kid = std::make_unique<LinedEntryStrategy>(std::move(kid), e.line,
+                                                       e.line_text);
+        kids.push_back(std::move(kid));
+    }
 
     /* An empty chain (no INIT block, or one with no STRATEGY lines)
      * falls back to a single CONFIG point -- the in-config OPTIM values

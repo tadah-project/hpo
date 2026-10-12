@@ -12,6 +12,7 @@
 #include <cmath>
 #include <unordered_set>
 #include <tadah/hpo/search_space.h>
+#include <tadah/hpo/seed_stream.h>   // StreamPhase
 
 namespace tadah::hpo {
 
@@ -103,6 +104,11 @@ struct InitStrategySpec {
     struct Entry {
         std::string method;                    // CONFIG, RANDOM, LHS, SOBOL, WARM, NOISE_AUTO
         std::vector<std::string> args;         // method-specific tokens
+        /* The METHOD line of the hpotarget file and its text (0 and "" for
+         * an entry built outside the parser): a refusal of the entry when
+         * the chain is drawn names it (build_init_strategy). */
+        std::size_t line = 0;
+        std::string line_text;
     };
     std::vector<Entry> chain;                  // STRATEGY lines (in order, inside INIT block)
     std::optional<std::size_t> k_total;        // K_TOTAL cap (default = sum of strategy default_k)
@@ -216,7 +222,8 @@ struct OptimizerSpec {
           inner(o.inner ? std::make_unique<OptimizerSpec>(*o.inner) : nullptr),
           prestage(o.prestage ? std::make_unique<OptimizerSpec>(*o.prestage) : nullptr),
           vector_storage(o.vector_storage), pop(o.pop),
-          num_threads(o.num_threads), seed(o.seed), step(o.step),
+          num_threads(o.num_threads), seed(o.seed),
+          stream_phase(o.stream_phase), step(o.step),
           step_overrides(o.step_overrides),
           grad_strategy(o.grad_strategy),
           grad_strategy_resolved(o.grad_strategy_resolved), stop(o.stop),
@@ -277,6 +284,11 @@ struct OptimizerSpec {
     /* 64-bit so SEED values at or above 2^32 are preserved exactly;
      * every consumer already widens to std::uint64_t. */
     std::optional<std::uint64_t> seed;
+    /* The phase this optimiser runs in, for its random streams
+     * (phase_stream_seed, seed_stream.h): Refinement in the specs
+     * prestage_refinement_spec builds (and their MULTISTART starts),
+     * Search otherwise. */
+    StreamPhase stream_phase = StreamPhase::Search;
     /* STEP: initial step of derivative-free NLopt algorithms. Consumed
      * only by backends whose OptimizerCaps::step_use is a consumer
      * (scale_validation.h rejects it everywhere else). */

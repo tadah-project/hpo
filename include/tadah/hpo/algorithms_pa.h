@@ -127,7 +127,10 @@ template<typename Vec, typename HostT>
     using anneal::RungStop;
 
     const std::size_t dim = sp.low.size();
-    const std::uint64_t seed = sp.seed.value_or(std::random_device{}());
+    /* The SEED the journal names, and the seed of every stream of the run
+     * (phase_stream_seed: itself but in a PRESTAGE refinement). */
+    const std::uint64_t seed_value = sp.seed.value_or(std::random_device{}());
+    const std::uint64_t seed = phase_stream_seed(seed_value, sp.stream_phase);
 
     const Knobs kb = Knobs::parse(sp, AlgoKind::PA);
     anneal::announce_knobs(kb, AlgoKind::PA);
@@ -230,7 +233,7 @@ template<typename Vec, typename HostT>
     {
       std::ostringstream oss;
       oss << "ANNEAL_PA[" << (kb.corana ? "CORANA" : "CLASSIC") << "]: "
-          << "seed=" << seed
+          << "seed=" << seed_value
           << "  POPULATION=" << R
           << "  THREADS=" << threads
           << "  SWEEPS=" << kb.sweeps

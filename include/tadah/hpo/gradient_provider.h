@@ -161,17 +161,21 @@
  *
  * A point the host has no fit of -- a candidate the bump-support or a
  * density gate rejected before training (a graded band-D failure under
- * FAILSCORE_GRADING ON), a training that did not complete -- has no
- * analytical gradient: the host's analytical pass hands every parameter to
- * finite differences there, which HYBRID takes. ANALYTICAL asks the host
- * why (HPO_Host::analytical_gradient_gap(), when HostT has it) whenever the
- * pass leaves a parameter to finite differences: a reason makes the point
- * one without a usable gradient (NotFinite, "the analytical gradient could
- * not be formed at this point"), which NLopt and Ceres reject and
- * DLIB:BFGS stops at, as any such point. Without one it is a parameter or
- * a loss term without an analytical derivative, the configuration's: an
- * error naming the parameters (GRAD_STRATEGY HYBRID fills them). That
- * error used to end the run FAILED at every rejected candidate.
+ * FAILSCORE_GRADING ON), a training that did not complete -- and a point
+ * whose fit the host's analytical pass cannot differentiate (the normal
+ * equations of the fit not positive definite in its implicit-function
+ * solve) have no analytical gradient: the host's analytical pass hands
+ * every parameter to finite differences there, which HYBRID takes.
+ * ANALYTICAL asks the host why (HPO_Host::analytical_gradient_gap(), when
+ * HostT has it) whenever the pass leaves a parameter to finite
+ * differences: a reason makes the point one without a usable gradient
+ * (NotFinite, "the analytical gradient could not be formed at this
+ * point"), which NLopt and Ceres reject and DLIB:BFGS stops at, as any
+ * such point. Without one it is a parameter or a loss term without an
+ * analytical derivative, the configuration's: an error naming the
+ * parameters (GRAD_STRATEGY HYBRID fills them). That error used to end the
+ * run FAILED at every rejected candidate, and at a fit the analytical pass
+ * could not differentiate.
  *
  * Journal (HPOLog): a component a bound turned (one-sided into the box,
  * backward, or towards the box from a point outside it) is counted per
@@ -795,7 +799,8 @@ make_gradient_provider(const OptimizerSpec&     sp,
         pull_to_internal(x, g, needs_fd);
         if (!needs_fd.empty()) {
           /* The host has no fit of x (a candidate rejected before
-           * training): a point without a usable gradient, not an error. */
+           * training), or its pass could not differentiate the fit there:
+           * a point without a usable gradient, not an error. */
           if (no_fit_why) {
             const std::string why = no_fit_why();
             if (!why.empty()) {
@@ -815,9 +820,8 @@ make_gradient_provider(const OptimizerSpec&     sp,
             if (i) oss << ", ";
             oss << needs_fd[i];
           }
-          oss << "]): a parameter without an analytical derivative, a fit "
-                 "that cannot be differentiated (an ill-conditioned fit), "
-                 "or a loss term without an analytical derivative at this "
+          oss << "]): a parameter without an analytical derivative, or a "
+                 "loss term without an analytical derivative at this "
                  "point. Use "
                  "GRAD_STRATEGY=HYBRID to fill these with finite "
                  "differences.";

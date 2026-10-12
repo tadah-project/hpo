@@ -436,12 +436,18 @@ private:
  * The candidates are the exploration's usable losses (HPO_Host's top-K
  * takes no failed evaluation): with fewer than TOPK the refinement runs
  * from those, and the journal says how many the exploration made and how
- * many failed. Without a candidate -- every evaluation failed, or none was
- * made -- the refinement runs from the outer spec's own points (the
- * OPTIMIZER-level INIT points, or a RESTART round's fresh ones), with a
- * WARNING that says why: the exploration's failed points are no seeds,
- * and the refinement may still find a usable loss from those points (a
- * search under FAILSCORE_GRADING ON walks out of a failure region).
+ * many failed. When every evaluation failed the refinement runs from the
+ * outer spec's own points (the OPTIMIZER-level INIT points, or a RESTART
+ * round's fresh ones), with a WARNING that says why: the exploration's
+ * failed points are no seeds, and the refinement may still find a usable
+ * loss from those points (a search under FAILSCORE_GRADING ON walks out of
+ * a failure region). An exploration that made no evaluation is an error
+ * (std::logic_error): every exploration a parsed configuration sets
+ * evaluates at least one point (MAXEVAL >= 1; every driver makes its first
+ * evaluation, also when MAXTIME has passed before it; a stop is raised
+ * inside a counted evaluation), so its driver returned without evaluating,
+ * or a spec built outside the parser asked for no evaluation; it ran the
+ * refinement from the INIT points with a WARNING, which hid that.
  *
  * Under RESTART a stagnating exploration hands its top-K over to the
  * refinement early (the exploration catch below) instead of restarting;
@@ -528,25 +534,33 @@ public:
         std::max<std::size_t>(topk.size(), 1), 1, std::nullopt,
         detail::StartBatch::Refinement);
 
-    /* No candidate: the refinement runs from the outer spec's own points,
-     * as a run of it without the PRESTAGE would (after a stagnation stop
-     * too: a stagnated exploration hands over to the refinement, here
-     * without a candidate). The journal says why: every evaluation of the
-     * exploration failed (a failed loss is no seed; the refinement used to
-     * start from such points while the top-K took them), or it made none. */
+    /* An exploration without an evaluation: no candidate and nothing that
+     * failed. No configuration the parser accepts gets here (the class
+     * comment), so its driver returned without evaluating; the refinement
+     * from the INIT points hid that behind a WARNING. */
+    if (explore_evals == 0) {
+      std::ostringstream oss;
+      oss << "PRESTAGE: the exploration (EXPLORE block) "
+          << spec.prestage->lib << ":" << spec.prestage->algo
+          << " returned without evaluating a point, so it has no candidate "
+             "to refine (every exploration a configuration sets evaluates at "
+             "least one point: its driver, or a spec built outside the "
+             "parser, asked for none)";
+      throw std::logic_error(oss.str());
+    }
+    /* No candidate: every evaluation of the exploration failed (a failed
+     * loss is no seed; the refinement used to start from such points while
+     * the top-K took them). The refinement runs from the outer spec's own
+     * points, as a run of it without the PRESTAGE would (after a stagnation
+     * stop too: a stagnated exploration hands over to the refinement, here
+     * without a candidate), and the journal says why. */
     if (topk.empty()) {
-      if (explore_evals > 0) {
-        std::ostringstream oss;
-        oss << "PRESTAGE: no evaluation of the exploration produced a usable "
-               "loss (" << explore_evals << " evaluation(s)); refining from "
-               "the OPTIMIZER-level INIT point(s) instead";
-        std::cout << "[HPO] " << oss.str() << "\n";
-        HPOLog::instance().warning(oss.str());
-      } else {
-        HPOLog::instance().warning(
-            "PRESTAGE: produced no candidates -- running outer optimiser "
-            "as-is");
-      }
+      std::ostringstream oss;
+      oss << "PRESTAGE: no evaluation of the exploration produced a usable "
+             "loss (" << explore_evals << " evaluation(s)); refining from "
+             "the OPTIMIZER-level INIT point(s) instead";
+      std::cout << "[HPO] " << oss.str() << "\n";
+      HPOLog::instance().warning(oss.str());
       refiner.run_one_windowed(prestage_refinement_spec(spec, spec.optim_init),
                                host);
       return;

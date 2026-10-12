@@ -18,6 +18,7 @@
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/asa_options.h>
 #include <tadah/hpo/asa_testing.h>
+#include <tadah/hpo/seed_stream.h>
 #include <tadah/hpo/fd_stencil.h>
 #include <tadah/hpo/anneal_parallel.h>
 #include <tadah/hpo/hpo_log.h>
@@ -180,7 +181,10 @@ double eval_core(AsaRunCtx& c, const double* x, int* valid_out)
     return loss;
 }
 
-/* Serial-path evaluation: per-eval budget/time/stop gating. */
+/* Serial-path evaluation: per-eval budget/time/stop gating. MAXTIME keeps
+ * an evaluation from starting once the search has made one: a search makes
+ * its first evaluation whatever MAXTIME, as the other drivers do (it made
+ * none when MAXTIME had passed before it, and the run had no result). */
 double eval_one(AsaRunCtx& c, const double* x, int* valid_out)
 {
     *valid_out = FALSE;
@@ -190,7 +194,8 @@ double eval_one(AsaRunCtx& c, const double* x, int* valid_out)
         c.set_why(AsaRunCtx::Budget);
         return sentinel;
     }
-    if (c.time_exceeded && c.time_exceeded()) {
+    if (c.n_evals.load(std::memory_order_relaxed) > 0 && c.time_exceeded &&
+        c.time_exceeded()) {
         c.set_why(AsaRunCtx::Time);
         return sentinel;
     }
@@ -640,7 +645,10 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
         throw std::runtime_error("ASA:ASA: " + e);
     announce_asa_options(ao);
 
-    const std::uint64_t seed = sp.seed.value_or(std::random_device{}());
+    /* The SEED the journal names, and the seed of ASA's stream and of its
+     * rand_seed (phase_stream_seed: itself but in a PRESTAGE refinement). */
+    const std::uint64_t seed_value = sp.seed.value_or(std::random_device{}());
+    const std::uint64_t seed = phase_stream_seed(seed_value, sp.stream_phase);
     const int run_no =
         g_asa_run_counter.fetch_add(1, std::memory_order_relaxed);
     std::string out_name = std::string("asa_out") + hpo_rank_suffix();
@@ -679,7 +687,7 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
     /* ---- banner ----------------------------------------------------- */
     {
         std::ostringstream oss;
-        oss << "ASA[Ingber ASA-30.53]: seed=" << seed << " dim=" << dim
+        oss << "ASA[Ingber ASA-30.53]: seed=" << seed_value << " dim=" << dim
             << "  Limit_Acceptances=" << ao.limit_acceptances
             << "  Limit_Generated=" << ao.limit_generated
             << "  Temperature_Ratio_Scale=" << ao.temperature_ratio_scale
@@ -730,7 +738,12 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
     long   exit_index = -1;   /* P_TEMP_TOO_SMALL dimension, if any */
     {
         std::lock_guard<std::mutex> lk(g_asa_mutex);
-        std::mt19937_64 rng(seed);
+        /* A stream of its own for the seed (seed_stream.h): it was
+         * std::mt19937_64(seed) read through uniform(0, 1), the numbers of
+         * the starting-point method RANDOM for the same seed; in a PRESTAGE
+         * refinement `seed` is the refinement's key (it drew the
+         * exploration's numbers for the same SEED). */
+        std::mt19937_64 rng = seed_stream(seed, seed_streams::kAsa);
         RngGuard rng_guard(&rng);
         std::optional<anneal::ReplicaPool> pool;
         if (parallel_blocks) {

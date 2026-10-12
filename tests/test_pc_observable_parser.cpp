@@ -52,6 +52,21 @@ tadah::core::Context make_context_for_targets() {
  * every TEST_CASE as its own process (so a static counter restarts at 1 in
  * each) and `ctest -j` runs them concurrently -- a counter-only name made
  * parallel cases overwrite each other's configs (flaky no-throw failures). */
+/* "Error on line N: " for the first line N of `body` that reads `keyword`
+ * (leading blanks aside): the line HPOTargets names for a refusal of the
+ * block that line closes. */
+std::string error_at_block_end(const std::string& body,
+                               const std::string& keyword) {
+  std::istringstream in(body);
+  std::string text;
+  for (std::size_t n = 1; std::getline(in, text); ++n) {
+    const auto p = text.find_first_not_of(' ');
+    if (p != std::string::npos && text.substr(p) == keyword)
+      return "Error on line " + std::to_string(n) + ": ";
+  }
+  return "(no line reads " + keyword + ")";
+}
+
 std::filesystem::path write_temp_config(const std::string& body) {
     static int counter = 0;
     auto p = std::filesystem::temp_directory_path()
@@ -270,10 +285,14 @@ ENDOPTIMIZER
 LOSS L2
 PC_OBSERVABLE cohesive_energy --species Ta --target 8.100 --weight 1000 --hotvar a0 2.7 3.9 3.3036
 )");
+        /* At the line that closes the block (ENDOPTIMIZER, line 6). Before
+         * the fix: the message without a line. */
         CHECK_THROWS_WITH(
             tadah::hpo::HPOTargets(ctx, cfg.string()),
-            Catch::Matchers::Contains("PC_OBSERVABLE")
-            && Catch::Matchers::Contains("NUMERICAL"));
+            Catch::Matchers::StartsWith(
+                "Error on line 6: --hpotarget defines PC_OBSERVABLE but "
+                "OPTIMIZER's GRAD_STRATEGY=NUMERICAL is set.")
+            && Catch::Matchers::EndsWith("\nLine: ENDOPTIMIZER"));
         std::filesystem::remove(cfg);
     }
 
@@ -491,6 +510,9 @@ TEST_CASE("HPOTargets rejects PC_OBSERVABLE and PC_LAMMPS side by side",
  *     optimiser ...");
  *   - refused as before: GN_MLSL_LDS with an INNER LD_LBFGS, at the INNER
  *     block ("... INNER's optimiser NLOPT:LD_LBFGS is gradient-based.").
+ * Each refusal names the line that closes the block it refuses
+ * (ENDOPTIMIZER, ENDINNER), as the parser's refusals do; the pins read the
+ * message alone before that fix, which it was (no line).
  * Before the fix: the four with a derivative-free INNER block were refused
  * ("OPTIMIZER's optimiser NLOPT:GD_MLSL is gradient-based"), and the two
  * without one with that message, which does not say why. */
@@ -549,6 +571,7 @@ TEST_CASE("HPOTargets judges an MLSL or AUGLAG under PC_LAMMPS by its local "
         INFO(algo << " without an INNER block");
         CHECK_THAT(error(plain(algo, "")),
                    Catch::StartsWith(
+                       error_at_block_end(plain(algo, ""), "ENDOPTIMIZER") +
                        "--hpotarget defines PC_LAMMPS but OPTIMIZER's "
                        "optimiser NLOPT:" + algo + " takes a gradient: "
                        "NLopt's MLSL and AUGLAG take one for their local "
@@ -561,9 +584,12 @@ TEST_CASE("HPOTargets judges an MLSL or AUGLAG under PC_LAMMPS by its local "
         INFO("GN_MLSL_LDS with an INNER LD_LBFGS");
         CHECK_THAT(error(plain("GN_MLSL_LDS", "LD_LBFGS")),
                    Catch::StartsWith(
+                       error_at_block_end(plain("GN_MLSL_LDS", "LD_LBFGS"),
+                                          "ENDINNER") +
                        "--hpotarget defines PC_LAMMPS but INNER's optimiser "
                        "NLOPT:LD_LBFGS is gradient-based. PC_LAMMPS requires "
-                       "a gradient-free optimiser"));
+                       "a gradient-free optimiser") &&
+                   Catch::EndsWith("\nLine:     ENDINNER"));
     }
     std::filesystem::remove(script_path);
 }
@@ -578,7 +604,9 @@ TEST_CASE("HPOTargets applies the PC_LAMMPS and PC_OBSERVABLE gradient rules "
      * LD_LBFGS there ran with PC_LAMMPS, failed at once inside NLopt
      * ("nlopt failure") and the run reported success after a wasted
      * exploration; a GRAD_STRATEGY there failed only after the first
-     * evaluation. */
+     * evaluation. Each refusal names the line that closes the block it
+     * refuses (ENDEXPLORE, the EXPLORE block's ENDINNER); the pins read the
+     * message alone before that fix, which it was (no line). */
     tadah::core::PeriodicTable::initialize();
     auto script_path = std::filesystem::current_path() /
                        "test_pc_lammps_grad_explore_stub.in";
@@ -616,34 +644,38 @@ TEST_CASE("HPOTargets applies the PC_LAMMPS and PC_OBSERVABLE gradient rules "
         return what;
     };
 
-    struct Case { std::string explore, loss_line, message; };
+    struct Case { std::string explore, loss_line, message, closing; };
     for (const auto& c : std::vector<Case>{
              /* PC_LAMMPS: a gradient-based optimiser ... */
              {"      LIB NLOPT\n      ALGO LD_LBFGS\n      MAXEVAL 1\n",
               pc_lammps,
               "--hpotarget defines PC_LAMMPS but EXPLORE's optimiser "
               "NLOPT:LD_LBFGS is gradient-based. PC_LAMMPS requires a "
-              "gradient-free optimiser"},
+              "gradient-free optimiser", "ENDEXPLORE"},
              {mlsl_inner + "        ALGO LD_LBFGS\n      ENDINNER\n",
               pc_lammps,
               "--hpotarget defines PC_LAMMPS but EXPLORE INNER's optimiser "
               "NLOPT:LD_LBFGS is gradient-based. PC_LAMMPS requires a "
-              "gradient-free optimiser"},
+              "gradient-free optimiser", "ENDINNER"},
              /* ... and any GRAD_STRATEGY. */
              {"      LIB DLIB\n      ALGO BFGS\n      MAXEVAL 1\n"
               "      GRAD_STRATEGY ANALYTICAL\n",
               pc_lammps,
               "--hpotarget defines PC_LAMMPS but EXPLORE's GRAD_STRATEGY is "
-              "set."},
+              "set.", "ENDEXPLORE"},
              /* PC_OBSERVABLE: GRAD_STRATEGY NUMERICAL. */
              {"      LIB NLOPT\n      ALGO LD_LBFGS\n      MAXEVAL 1\n"
               "      GRAD_STRATEGY NUMERICAL\n",
               pc_observable,
               "--hpotarget defines PC_OBSERVABLE but EXPLORE's "
-              "GRAD_STRATEGY=NUMERICAL is set."}}) {
+              "GRAD_STRATEGY=NUMERICAL is set.", "ENDEXPLORE"}}) {
         const std::string body = prestage(bobyqa, c.explore) + c.loss_line;
         INFO(body);
-        CHECK_THAT(error(body), Catch::StartsWith(c.message));
+        CHECK_THAT(error(body),
+                   Catch::StartsWith(error_at_block_end(body, c.closing) +
+                                     c.message) &&
+                   Catch::Contains("\nLine: ") &&
+                   Catch::EndsWith(c.closing));
     }
 
     /* An INNER block takes no GRAD_STRATEGY: whatever the loss, the line
@@ -652,10 +684,10 @@ TEST_CASE("HPOTargets applies the PC_LAMMPS and PC_OBSERVABLE gradient rules "
     for (const auto& c : std::vector<Case>{
              {mlsl_inner + "        ALGO LN_SBPLX\n"
                            "        GRAD_STRATEGY HYBRID\n      ENDINNER\n",
-              pc_lammps, ""},
+              pc_lammps, "", ""},
              {mlsl_inner + "        ALGO LD_LBFGS\n"
                            "        GRAD_STRATEGY NUMERICAL\n      ENDINNER\n",
-              pc_observable, ""}}) {
+              pc_observable, "", ""}}) {
         const std::string body = prestage(bobyqa, c.explore) + c.loss_line;
         INFO(body);
         CHECK_THAT(error(body), Catch::StartsWith(

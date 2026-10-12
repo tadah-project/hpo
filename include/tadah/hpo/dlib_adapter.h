@@ -343,8 +343,9 @@ template<class HostT>
 
     /* STOPVAL: the first loss at or below it ends the search
      * (anneal::stopval_reached: a feasible loss). MAXTIME: no evaluation
-     * starts once it has passed since the search began. Evaluations
-     * already running on the pool when a stop comes finish. */
+     * but the search's first starts once it has passed since the search
+     * began. Evaluations already running on the pool when a stop comes
+     * finish. */
     std::atomic<bool> stopval_hit{false};
     std::atomic<std::size_t> evaluations{0};
     const auto elapsed = [&t0]() {
@@ -469,6 +470,22 @@ template<class HostT>
           lo, hi, sp.is_int,
           max_function_calls(maxeval),
           runtime,
+          solver_eps,
+          init,
+          stop_on_error_or_stopval
+          );
+    /* A search makes its first evaluation whatever MAXTIME, as the INIT
+     * points' loop above and the other drivers do: MAXTIME keeps the later
+     * ones from starting. Without an INIT point, a MAXTIME that had passed
+     * left find_min_global out, or dlib's own run-time check came before its
+     * first call, and the search made none (the run had no result, and a
+     * PRESTAGE exploration nothing to refine). One call with no run-time
+     * limit evaluates the point dlib starts every search with. */
+    if (evaluations.load() == 0 && !stopped.has())
+      find_min_global(tp, pool_feval,
+          lo, hi, sp.is_int,
+          max_function_calls(1),
+          FOREVER,
           solver_eps,
           init,
           stop_on_error_or_stopval

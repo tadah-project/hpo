@@ -65,6 +65,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -557,4 +558,98 @@ TEST_CASE("A host does not differentiate another host's model",
     REQUIRE(run.host.analytical_gradient(p, g, needs_fd));
     CHECK(needs_fd.empty());
     Host::reset_globals_for_test();
+}
+
+namespace {
+
+/* The occurrences of @p what in @p text. */
+std::size_t count_of(const std::string& text, const std::string& what) {
+    std::size_t n = 0;
+    for (auto p = text.find(what); p != std::string::npos;
+         p = text.find(what, p + what.size()))
+        ++n;
+    return n;
+}
+
+}  // namespace
+
+/* Where the gradient helper cannot form the analytical gradient at a point
+ * whose fit trained (normal equations that are not positive definite in
+ * its implicit-function solve, which no portable fixture produces, or an
+ * error in its computation; testing::ScopedAnalyticalHelperFailure makes
+ * it throw "injected"), HPO_Host::analytical_gradient makes the point one
+ * without an analytical gradient and says why, so GRAD_STRATEGY
+ * ANALYTICAL fails the gradient there instead of ending the run.
+ * Pins: after an evaluation at 3.95 (a setup the analytical gradient
+ * covers), each of four passes under the failure returns true with the one
+ * parameter in needs_fd and g = 0, and analytical_gradient_gap() is "its
+ * analytical gradient could not be formed: injected"; the next pass
+ * without it has the analytical gradient (needs_fd empty) and an empty
+ * gap; the journal has the WARNING "Analytical gradient could not be
+ * formed at this point (occurrence k): injected; ..." for k = 1, 2 and 4
+ * only.
+ * Before the fix: analytical_gradient_gap() stayed "" at such a point (so
+ * the GradientProvider took the all-FD list for parameters without a
+ * derivative, and ANALYTICAL ended the run "no analytical gradient for 1
+ * parameters"), and the journal had "analytical_gradient: helper threw
+ * 'injected' -- routing every theta to FD" at every pass, no "could not
+ * be formed" line. With only the fix's gap reverted (analytical_gradient_gap()
+ * returning "" for it, or the reason not recorded) the gap checks fail. */
+TEST_CASE("A gradient helper that fails at a trained point leaves it without "
+          "an analytical gradient, and the host says why",
+          "[trainer_e2e][.]") {
+    PeriodicTable::initialize();
+    ScratchDir sd;
+    DataFiles f(sd.dir);
+    f.write_target("PC_ERMSE 0 1\nOPTIM CGRID2B (3) 3.7 4.3\n");
+    Context ctx = master_context(kBLR, f, false, false);
+    const ParamVec p = point({3.95});
+    const std::string gap = "its analytical gradient could not be formed: "
+                            "injected";
+
+    auto& log = tadah::hpo::HPOLog::instance();
+    if (log.is_open()) log.finish("closed");
+    log.reset_for_test();
+    const fs::path journal_path = sd.dir / "hpo_run.log";
+    log.open(journal_path.string(), "test", sd.dir.string(), 0);
+    Host::reset_globals_for_test();
+    {
+        HostRun run(ctx, f);
+        REQUIRE(run.host(p) < kFailScore);
+        ParamVec g;
+        std::vector<int> needs_fd;
+        REQUIRE(run.host.analytical_gradient(p, g, needs_fd));
+        REQUIRE(needs_fd.empty());   // the setup has an analytical gradient
+        REQUIRE(run.host.analytical_gradient_gap().empty());
+        {
+            tadah::hpo::testing::ScopedAnalyticalHelperFailure fail("injected");
+            for (int k = 1; k <= 4; ++k) {
+                INFO("pass " << k);
+                needs_fd.clear();
+                REQUIRE(run.host.analytical_gradient(p, g, needs_fd));
+                CHECK(needs_fd.size() == 1u);
+                REQUIRE(g.size() == 1);
+                CHECK(g(0) == 0.0);
+                CHECK(run.host.analytical_gradient_gap() == gap);
+            }
+        }
+        needs_fd.clear();
+        REQUIRE(run.host.analytical_gradient(p, g, needs_fd));
+        CHECK(needs_fd.empty());
+        CHECK(run.host.analytical_gradient_gap().empty());
+    }
+    log.finish("TEST");
+    std::ifstream in(journal_path);
+    const std::string journal((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+    log.reset_for_test();
+    Host::reset_globals_for_test();
+    INFO(journal);
+    const std::string line =
+        "Analytical gradient could not be formed at this point";
+    CHECK(count_of(journal, line) == 3u);
+    for (const char* k : {"1", "2", "4"})
+        CHECK(journal.find(line + std::string(" (occurrence ") + k +
+                           "): injected;") != std::string::npos);
+    CHECK(journal.find(line + " (occurrence 3)") == std::string::npos);
 }

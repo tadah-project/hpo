@@ -48,7 +48,9 @@ OptimizerSpec multistart_start_spec(const OptimizerSpec& spec,
                                     const MultiStartPlan& plan, std::size_t i);
 
 /* The PRESTAGE refinement: the outer `spec` without its exploration,
- * starting from the exploration's `candidates`. StagedPolicy runs it once
+ * starting from the exploration's `candidates`, in the refinement's stream
+ * phase (StreamPhase::Refinement: random numbers of its own, not the
+ * exploration's for the same SEED; seed_stream.h). StagedPolicy runs it once
  * from a single candidate, and over several as a MULTISTART
  * (plan_multistart(refinement, candidates.size(), no BUDGET_PER_START)). */
 OptimizerSpec prestage_refinement_spec(
