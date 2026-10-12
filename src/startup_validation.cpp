@@ -453,6 +453,16 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     }
   }
 
+  /* --- a MAXEVAL that cannot pay for one step of a gradient search -----
+   * A WARNING, not a refusal (a probe of the start can be deliberate),
+   * for each phase with a budget of its own (gradient_budget_warnings,
+   * backend_rules.h); after the phase checks, which have accepted the
+   * finite-difference settings it reads. */
+  for (const std::string &w : gradient_budget_warnings(trg.spec)) {
+    std::cerr << "[HPO] WARNING: " << w << "\n";
+    HPOLog::instance().warning(w);
+  }
+
   /* --- RHOFORM NONNEG / MONOTONE: optimisers that can leave the box -----
    * The evaluated AMPGRIDMB coordinates are projected onto [0, inf)
    * (HPO_Host); say so when the optimiser of a phase can put them outside

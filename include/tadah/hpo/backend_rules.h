@@ -17,6 +17,10 @@
 
 #include <tadah/hpo/optimizer_spec.h>
 
+#include <cstdint>
+#include <string>
+#include <vector>
+
 namespace tadah::hpo {
 
 /* Whether the RESTART stagnation stop bounds a run. RestartPolicy
@@ -135,9 +139,9 @@ void validate_nlopt_spec(const OptimizerSpec& spec, RestartStop restart,
 void validate_asa_spec(const OptimizerSpec& spec);
 
 /* Every check the backend of `spec` (its LIB:ALGO) makes before it runs:
- * the deferred CERES least-squares algorithms, a refused LIB:ALGO
- * (reject_refused_backend(), optimizer_caps.h) and an unknown one are
- * rejected, then the backend's own validator runs (the annealers'
+ * a refused LIB:ALGO (Ceres' least-squares solvers among them) and an
+ * unknown one are rejected (require_registered_backend(),
+ * optimizer_caps.h), then the backend's own validator runs (the annealers'
  * Knobs::parse and ANNEAL_PT's replica count, ASA, DLIB:BFGS, DLIB:GFS,
  * the CERES drivers, NLopt with `role`, TADAH:RANDOM and TADAH:GRID), then
  * require_stop() (`restart`: whether the RESTART stagnation stop bounds
@@ -166,5 +170,44 @@ void validate_backend(const OptimizerSpec& spec, RestartStop restart,
  * NLOPT:LN_NEWUOA_BOUND is refused: ...", "the EXPLORE block: ...".
  * validate_hpo_setup() calls it after validate_run_policy(). */
 void validate_phase_backends(const OptimizerSpec& root);
+
+/* The evaluations one gradient of a search with the settings of `spec`
+ * costs, as GradientProvider counts them (gradient_provider.h) when the
+ * caller has the loss at the point: GRAD_STRATEGY NUMERICAL 2n for central
+ * differences in n OPTIM dimensions (one-sided ones within a step of a
+ * bound cost the same), n for forward ones (PARAM diff_method 1);
+ * ANALYTICAL 1, the analytical gradient; HYBRID at least 1 (`at_least`):
+ * the analytical gradient and the stencil of each parameter it does not
+ * cover, known only at a point. `text` says so for a message: "4
+ * evaluations: central differences in 2 dimensions, GRAD_STRATEGY
+ * NUMERICAL". The finite-difference settings must be valid (fd_settings_of,
+ * fd_stencil.h). */
+struct GradientCost {
+    std::uint64_t evaluations = 0;
+    bool          at_least = false;
+    std::string   text;
+};
+GradientCost gradient_cost(const OptimizerSpec& spec);
+
+/* The startup WARNINGs of the phases of `root` whose budget cannot pay for
+ * one step of their gradient search: a search evaluates the loss at its
+ * starting point (1 evaluation) and the gradient there (gradient_cost())
+ * before any point it steps to, so a MAXEVAL below gradient_cost() + 2
+ * ends it where it started (MAXEVAL_REACHED). Over strategy_phase_specs():
+ * every phase whose optimiser obtains gradients (obtains_gradients(): an
+ * MLSL or AUGLAG through its local search) and has a MAXEVAL -- the
+ * STRATEGY-level optimiser, each MULTISTART start (BUDGET_PER_START or its
+ * share of MAXEVAL), the PRESTAGE exploration and refinement (with TOPK >
+ * 1 its share) -- "the STRATEGY-level optimiser NLOPT:LD_LBFGS: MAXEVAL 4
+ * takes no step: its gradient search evaluates the loss at a starting
+ * point (1 evaluation) and the gradient there (4 evaluations: central
+ * differences in 2 dimensions, GRAD_STRATEGY NUMERICAL) before it evaluates
+ * a point it steps to, which needs MAXEVAL 6 or more"; and an INNER block
+ * whose local search obtains gradients and whose own MAXEVAL, in NLopt's
+ * calls (each the loss and the gradient at a point), is 1. Not a refusal: a
+ * budget-limited probe of the start can be deliberate. validate_hpo_setup()
+ * journals each one after the phase checks (the finite-difference settings
+ * are valid by then). */
+std::vector<std::string> gradient_budget_warnings(const OptimizerSpec& root);
 
 }  // namespace tadah::hpo
