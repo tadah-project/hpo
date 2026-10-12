@@ -1450,11 +1450,18 @@ TEST_CASE("strategy rules: reject_refused_backends refuses the first refused "
      * refused backend in validate_run_policy()'s order -- the EXPLORE block
      * (under PRESTAGE), the STRATEGY-level optimiser, its INNER block, the
      * EXPLORE block's INNER block -- named as validate_run_policy() names
-     * it; it accepts a spec whose backends are not refused, also an unknown
-     * or unset LIB:ALGO (it looks up no caps, so validate_phase_backends()
-     * runs it before strategy_phase_specs()), and an EXPLORE block left on
-     * a spec whose TYPE is not PRESTAGE (no phase runs it).
-     * Added with the fix, which introduces it. */
+     * it; an unknown LIB:ALGO is refused the same way, with its phase
+     * ("the STRATEGY-level optimiser: unknown optimiser NLOPT:NOT_AN_ALGO:
+     * ...", require_registered_backend()); it accepts a spec whose backends
+     * are known and not refused, an unset LIB:ALGO (require_driver()'s to
+     * report), and an EXPLORE block left on a spec whose TYPE is not
+     * PRESTAGE (no phase runs it). It looks up no caps (optimizer_caps(),
+     * which throws with no phase), so validate_phase_backends() runs it
+     * before strategy_phase_specs().
+     * Added with the fix, which introduces it. Until unknown backends were
+     * refused with their phase, it accepted NLOPT:NOT_AN_ALGO (""), and
+     * validate_phase_backends() reported one through strategy_phase_specs()
+     * with no phase, where that looks the backend up. */
     const std::string refused = "NLOPT:LN_NEWUOA_BOUND is refused: ";
     const auto nlopt = [](const std::string& algo) {
         OptimizerSpec s;
@@ -1507,7 +1514,13 @@ TEST_CASE("strategy rules: reject_refused_backends refuses the first refused "
                              StrategyType::PRESTAGE,
                              with_inner(nlopt("G_MLSL_LDS"), "LN_COBYLA"))) ==
           "");
-    CHECK(error(with_inner(nlopt("NOT_AN_ALGO"), "NOT_AN_ALGO")) == "");
+    const std::string unknown =
+        "unknown optimiser NLOPT:NOT_AN_ALGO: LIB NLOPT has no ALGO "
+        "NOT_AN_ALGO";
+    CHECK_THAT(error(with_inner(nlopt("NOT_AN_ALGO"), "NOT_AN_ALGO")),
+               Catch::StartsWith(top + unknown));
+    CHECK_THAT(error(with_inner(nlopt("LN_AUGLAG"), "NOT_AN_ALGO")),
+               Catch::StartsWith("the INNER block of " + top + unknown));
     CHECK(error(OptimizerSpec{}) == "");
     CHECK(error(with_explore(nlopt("LN_BOBYQA"), StrategyType::PLAIN,
                              nlopt(bad))) == "");
