@@ -265,6 +265,29 @@ add_test(NAME hpo_configure_without_ceres
 set_tests_properties(hpo_configure_without_ceres PROPERTIES
     LABELS cmake
     TIMEOUT 300)
+# hpo_configure_without_ceres_preset: a configure from the preset that
+# hpo_write_no_ceres_preset() writes sees what the configure that wrote it
+# saw (configure_without_ceres/check_no_ceres_preset.cmake, on a throw-away
+# pair of projects): a package found only through -DCMAKE_PREFIX_PATH, an
+# option of the build, a dependency given as FETCHCONTENT_SOURCE_DIR_<NAME>
+# and one populated under FETCHCONTENT_BASE_DIR that none names; a
+# FETCHCONTENT_BASE_DIR of its own; TADAH_ENABLE_CERES OFF, BUILD_TESTING
+# OFF and FETCHCONTENT_FULLY_DISCONNECTED ON whatever the build has. Before
+# the fix: the preset held a fixed list (11 dependency names, compilers,
+# build tool and type, LAMMPS paths, TADAH_GIT_BRANCH), so the configure
+# from it did not find the package ("Could not find a package configuration
+# file provided by \"TadahProbeDep\""), and hpo_configure_without_ceres
+# failed in a valid build that finds a dependency through such a hint.
+add_test(NAME hpo_configure_without_ceres_preset
+    COMMAND ${CMAKE_COMMAND}
+        -DMODULE=${CMAKE_CURRENT_SOURCE_DIR}/configure_without_ceres/no_ceres_preset.cmake
+        "-DGENERATOR=${CMAKE_GENERATOR}"
+        -DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
+        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/configure_without_ceres/preset_check
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/configure_without_ceres/check_no_ceres_preset.cmake)
+set_tests_properties(hpo_configure_without_ceres_preset PROPERTIES
+    LABELS cmake
+    TIMEOUT 120)
 add_test(NAME hpo_anneal_registry_sync
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/../blueprint/gen_anneal_keys.py
