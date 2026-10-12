@@ -437,10 +437,8 @@ void validate_backend(const OptimizerSpec& spec, RestartStop restart,
                       SpecRole role)
 {
     if (spec.lib == "NOT SET" || spec.algo == "NOT SET") return;
-    /* The same order as run_inner(): the deferred CERES least-squares
-     * algorithms get their tailored message before the caps lookup
-     * rejects an unknown LIB:ALGO. */
-    reject_deferred_ceres_nlls(spec);
+    /* A refused backend (Ceres' least-squares solvers among them) and an
+     * unknown one: the caps lookup's error, as in run_inner(). */
     (void)optimizer_caps(spec);
 
     const std::string& lib  = spec.lib;

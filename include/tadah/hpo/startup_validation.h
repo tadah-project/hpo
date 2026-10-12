@@ -68,8 +68,8 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
  *     STRATEGY-level optimiser, each MULTISTART start, the PRESTAGE
  *     exploration and refinement, every INNER block, the local search of
  *     an MLSL or AUGLAG included) and names each one whose optimiser
- *     ignores the bounds (OptimizerCaps::ignores_bounds: the CERES drivers,
- *     NLopt LN_NEWUOA) and so can evaluate outside the box. Such
+ *     ignores the bounds (OptimizerCaps::ignores_bounds: the CERES
+ *     drivers) and so can evaluate outside the box. Such
  *     amplitudes are projected onto [0, inf) by HPO_Host. Finite
  *     differences keep to the box (fd_stencil.h), so they are not named;
  *   - every width of a radial bump channel (SGRID2B of D2_Blip/D2_Blip5,

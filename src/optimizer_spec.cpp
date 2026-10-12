@@ -217,12 +217,6 @@ static void print_dlib_caps(std::ostream& os, const std::string& algo)
 
 static void print_nlopt_caps(std::ostream& os,const std::string& algo)
 {
-    /* An algorithm the caps registry refuses (optimizer_caps.h): why, and
-     * what to use instead; it has no stops or STEP to describe. */
-    if (const char* reason = backend_refusal("NLOPT", algo)) {
-        os<<"   * REFUSED: "<<reason<<"\n";
-        return;
-    }
   nlopt_algorithm a = nlopt_algorithm_from_string(algo.c_str());
     if (a==NLOPT_NUM_ALGORITHMS) { os<<"   * (unknown)\n"; return; }
 
@@ -276,6 +270,13 @@ void OptimizerSpec::print_caps(const std::string& lib,
                                const std::string& algo)
 {
     std::cout<<"Options for "<<lib<<":"<<algo<<"\n";
+    /* A backend the caps registry refuses (optimizer_caps.h), of any
+     * library: why, and what to use instead; it has no stops or STEP to
+     * describe. */
+    if (const char* reason = backend_refusal(lib, algo)) {
+        std::cout<<"   * REFUSED: "<<reason<<"\n";
+        return;
+    }
     if      (lib=="TADAH") print_tadah_caps(std::cout,algo);
     else if (lib=="DLIB")  print_dlib_caps (std::cout,algo);
     else if (lib=="NLOPT") print_nlopt_caps(std::cout,algo);

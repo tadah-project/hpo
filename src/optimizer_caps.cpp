@@ -29,9 +29,23 @@ struct CapsKeyHash {
 using Registry = std::unordered_map<CapsKey, OptimizerCaps, CapsKeyHash>;
 
 /* Backends HPO refuses although their library offers them
- * (backend_refusal(), optimizer_caps.h). Each entry is a defect measured in
- * the library version HPO builds: before an upgrade of that library lifts
- * an entry, the entry's repro is run again.
+ * (backend_refusal(), optimizer_caps.h): a defect measured in the library
+ * version HPO builds, or a backend that does not solve the problem HPO
+ * poses -- one scalar loss, minimised inside the OPTIM box. Before an
+ * upgrade of the library lifts an entry, the entry's repro is run again.
+ *
+ * NLOPT:LN_NEWUOA -- NLopt v2.10.0 calls Powell's NEWUOA without bounds
+ * (optimize.c: newuoa(..., lb = ub = NULL, ...)), so the search leaves the
+ * OPTIM box: a 2-D run of MAXEVAL 25 (RCUT2B [4, 6], CGRID2B [0.1, 2])
+ * made 20 of its evaluations outside the box, and the best one, RCUT2B 8.11,
+ * became best_pot.tadah; in 10 of 720 survey cases without XTOL it passed
+ * NaN coordinates to the objective. NEWUOA needs two dimensions or more,
+ * and NLopt refused one only once the run had started ("dimension 1 must
+ * be >= 2", 0 evaluations). The box is the configuration's contract, and
+ * LN_BOBYQA is Powell's bound-constrained successor of NEWUOA, so HPO
+ * refuses LN_NEWUOA as it refuses LN_NEWUOA_BOUND (owner decision taken
+ * under MK's mandate, 2026-10-12). The analysis:
+ * docs/issues/nlopt_newuoa_ignores_bounds.md.
  *
  * NLOPT:LN_NEWUOA_BOUND -- NLopt v2.10.0 (HPO/CMakeLists.txt fetches
  * GIT_TAG v2.10.0; offline builds use deps/nlopt). NLopt's bound-
@@ -71,12 +85,28 @@ using Registry = std::unordered_map<CapsKey, OptimizerCaps, CapsKeyHash>;
  * algorithm switch has no case for it and returns NLOPT_INVALID_ARGS
  * (optimize.c), so every run of it ended "FAILED -- nlopt invalid
  * argument" once its setup was done. The repro is the unit test that
- * calls nlopt_optimize() with it (test_optimizer_caps_step.cpp). */
+ * calls nlopt_optimize() with it (test_optimizer_caps_step.cpp).
+ *
+ * CERES:LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG -- Ceres' least-squares
+ * Solver minimises a sum of squared residuals, with their Jacobian; HPO
+ * gives an optimiser one scalar loss, over which these methods degenerate
+ * (a single residual, a rank-one model). Running them needs the loss as
+ * residuals and their derivatives, which HPO does not expose. They had a
+ * tailored refusal of their own (reject_deferred_ceres_nlls), which the
+ * caps lookup of HPOTargets' constructor pre-empted with "unknown
+ * optimizer"; as entries here every lookup gives their reason. */
 struct Refusal {
     const char* lib;
     const char* algo;
     const char* reason;
 };
+constexpr const char* kCeresLeastSquares =
+    "HPO does not run Ceres' least-squares Solver (LEVENBERG_MARQUARDT, "
+    "DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with "
+    "their derivatives, and HPO gives an optimiser one scalar loss, over "
+    "which these methods degenerate. Use CERES:LBFGS, CERES:WOLFE, "
+    "CERES:NLCG or CERES:STEEPEST_DESCENT, Ceres' line-search solvers of a "
+    "scalar loss";
 constexpr Refusal kRefused[] = {
     {"NLOPT", "LN_NEWUOA_BOUND",
      "NLopt 2.10 plans each LN_NEWUOA_BOUND step with a nested LD_MMA run "
@@ -90,12 +120,22 @@ constexpr Refusal kRefused[] = {
      "loss barely changes over the trust region; Ctrl-C, SIGTERM, MAXTIME "
      "and RESTART wait that long. Use NLOPT:LN_BOBYQA, Powell's "
      "bound-constrained successor of NEWUOA (its STEP rescales each "
-     "dimension instead of setting one radius), or NLOPT:LN_NEWUOA where "
-     "the search may leave the OPTIM box"},
+     "dimension instead of setting one radius)"},
+    {"NLOPT", "LN_NEWUOA",
+     "NLopt 2.10 runs LN_NEWUOA without the OPTIM box (optimize.c calls "
+     "NEWUOA with lb = ub = NULL), so its evaluations leave the box and the "
+     "best potential can lie outside the bounds the configuration sets (a "
+     "2-D run made 20 of its 25 evaluations outside the box, and its best was "
+     "one of them); it also needs two OPTIM dimensions or more. Use NLOPT:LN_BOBYQA, "
+     "Powell's bound-constrained successor of NEWUOA (its STEP rescales each "
+     "dimension instead of setting one radius)"},
     {"NLOPT", "NLOPT_LD_LBFGS_NOCEDAL",
      "NLopt 2.10 does not implement it (NLopt names it, but its optimiser "
      "rejects it as an invalid argument, so every run of it failed once "
      "its setup was done). Use NLOPT:LD_LBFGS, NLopt's L-BFGS"},
+    {"CERES", "LEVENBERG_MARQUARDT", kCeresLeastSquares},
+    {"CERES", "DOGLEG", kCeresLeastSquares},
+    {"CERES", "SUBSPACE_DOGLEG", kCeresLeastSquares},
 };
 
 void add(Registry& r, OptimizerCaps c)
@@ -262,12 +302,10 @@ Registry build_registry()
     /* CERES -- GradientProblemSolver family (LBFGS / WOLFE / NLCG /
      * STEEPEST_DESCENT). All four are local, gradient-based, accept
      * function/parameter tolerance (relative) and a gradient-norm
-     * tolerance via PARAM tol_gradinf. The Solver-family (LM, DOGLEG,
-     * SUBSPACE_DOGLEG) is intentionally NOT registered: those algorithms
-     * are degenerate over a scalar loss and require residual-mode loss
-     * exposure plus autodiff to be useful -- deferred to a later phase.
-     * The dispatch in run_policy_base.h short-circuits those names with
-     * a tailored message before this caps lookup runs. */
+     * tolerance via PARAM tol_gradinf. The Solver family (LEVENBERG_
+     * MARQUARDT, DOGLEG, SUBSPACE_DOGLEG) is refused (kRefused above):
+     * those algorithms are degenerate over a scalar loss and would need
+     * residual-mode loss exposure plus autodiff. */
     {
         const char* ceres_grad_algos[] = {
             "LBFGS", "WOLFE", "NLCG", "STEEPEST_DESCENT"
@@ -466,14 +504,8 @@ Registry build_registry()
             c.step_note = "this algorithm never reads an initial step (population, "
                           "branch-and-bound, or line-search method); remove STEP";
         }
-        if (s == "LN_NEWUOA") {
-            c.ignores_bounds = true;
-            c.bounds_note    = "ignores the OPTIM box: NLopt calls LN_NEWUOA without bounds "
-                               "(optimize.c passes lb = ub = NULL), so its evaluations can "
-                               "leave the box, and such a point can become the best; the "
-                               "first is reported with a WARNING and DIAGNOSTICS counts them "
-                               "all. LN_BOBYQA keeps to the box";
-        }
+        /* Every registered NLopt algorithm keeps to the box: LN_NEWUOA,
+         * which NLopt runs without it, is refused (kRefused). */
 
         add(r, c);
     }
@@ -544,16 +576,44 @@ const OptimizerCaps* find_optimizer_caps(std::string_view lib,
     return it == reg.end() ? nullptr : &it->second;
 }
 
+std::vector<std::string> optimizer_libraries()
+{
+    std::vector<std::string> libs;
+    for (const auto& kv : registry())
+        if (std::find(libs.begin(), libs.end(), kv.first.lib) == libs.end())
+            libs.push_back(kv.first.lib);
+    std::sort(libs.begin(), libs.end());
+    return libs;
+}
+
+void require_registered_backend(std::string_view lib, std::string_view algo,
+                                const std::string& where)
+{
+    reject_refused_backend(lib, algo, where);
+    if (find_optimizer_caps(lib, algo)) return;
+    const std::vector<std::string> libs = optimizer_libraries();
+    std::string why;
+    if (std::find(libs.begin(), libs.end(), std::string(lib)) != libs.end()) {
+        why = "LIB " + std::string(lib) + " has no ALGO " + std::string(algo);
+    } else {
+        why = "there is no LIB " + std::string(lib) + " (LIB is ";
+        for (std::size_t i = 0; i < libs.size(); ++i)
+            why += (i == 0 ? "" : i + 1 == libs.size() ? " or " : ", ") +
+                   libs[i];
+        why += ")";
+    }
+    throw std::runtime_error((where.empty() ? "" : where + ": ") +
+                             "unknown optimiser " + std::string(lib) + ":" +
+                             std::string(algo) + ": " + why +
+                             "; `tadah explain ALGO` lists the optimisers");
+}
+
 const OptimizerCaps& optimizer_caps(std::string_view lib,
                                     std::string_view algo)
 {
     const OptimizerCaps* caps = find_optimizer_caps(lib, algo);
-    if (!caps) {
-        reject_refused_backend(lib, algo);
-        throw std::runtime_error("unknown optimizer " + std::string(lib) +
-                                 ":" + std::string(algo) +
-                                 " (not registered in optimizer_caps)");
-    }
+    /* Throws for a refused or unknown (lib, algo): caps is set below. */
+    if (!caps) require_registered_backend(lib, algo);
     return *caps;
 }
 

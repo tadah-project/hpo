@@ -1511,8 +1511,8 @@ void HPO_Host<P,R>::note_out_of_box(const P& p, std::size_t iter) const
                        : std::string()) +
             " and is evaluated there: finite differences keep to the box, and "
             "a point proposed within rounding of a bound is evaluated on it, "
-            "so an optimiser that ignores the bounds (CERES:*, NLopt "
-            "LN_NEWUOA), or a start it handed on, stepped outside it; the "
+            "so an optimiser that ignores the bounds (CERES:*), or a start "
+            "it handed on, stepped outside it; the "
             "loss of such a point can become the best. DIAGNOSTICS counts "
             "every evaluation outside the box";
         std::cerr << "[HPO] WARNING: " << msg << "\n";

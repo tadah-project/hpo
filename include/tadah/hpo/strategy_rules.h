@@ -34,19 +34,20 @@ enum class DriverPhase {
 /* LIB and ALGO name the optimiser of a phase; OptimizerSpec leaves both
  * "NOT SET" until the configuration sets them. Throws std::runtime_error
  * when either is missing, naming the block where they belong, and when
- * they name a backend the caps registry refuses (reject_refused_backend(),
- * optimizer_caps.h), naming the phase as validate_run_policy() does: "the
- * STRATEGY-level optimiser: NLOPT:LN_NEWUOA_BOUND is refused: ...", "the
- * PRESTAGE refinement: ..." (a REFINE block's optimiser), "the EXPLORE
- * block: ...". HPOTargets::read() applies it where the block closes, so the
- * error names that line. */
+ * they name a backend the caps registry refuses or does not have
+ * (require_registered_backend(), optimizer_caps.h), naming the phase as
+ * validate_run_policy() does: "the STRATEGY-level optimiser:
+ * NLOPT:LN_NEWUOA_BOUND is refused: ...", "the PRESTAGE refinement:
+ * unknown optimiser NLOPT:LD_FOO: LIB NLOPT has no ALGO LD_FOO; ..." (a
+ * REFINE block's optimiser), "the EXPLORE block: ...". HPOTargets::read()
+ * applies it where the block closes, so the error names that line. */
 void require_driver(const OptimizerSpec& phase_spec, DriverPhase phase);
 
 /* The same rule for an INNER block, the local optimiser NLopt's MLSL and
  * AUGLAG run: `enclosing` names the block it sits in (STRATEGY, EXPLORE or
  * REFINE): "the INNER block inside STRATEGY: NLOPT:LN_NEWUOA_BOUND is
- * refused: ...". HPOTargets::read() applies it when the INNER block
- * closes. */
+ * refused: ...", "... unknown optimiser ...". HPOTargets::read() applies
+ * it when the INNER block closes. */
 void require_inner_driver(const OptimizerSpec& inner_spec,
                           const std::string& enclosing);
 
@@ -107,9 +108,10 @@ void require_prestage_refinement(const OptimizerSpec& spec);
 void validate_run_policy(const OptimizerSpec& spec);
 
 /* The refusals of validate_run_policy() alone, with its text: throws
- * reject_refused_backend()'s error (optimizer_caps.h) for the first refused
- * backend of the EXPLORE block (under PRESTAGE), the STRATEGY-level
- * optimiser, its INNER block and the EXPLORE block's INNER block, named as
+ * require_registered_backend()'s error (optimizer_caps.h) for the first
+ * refused or unknown backend of the EXPLORE block (under PRESTAGE), the
+ * STRATEGY-level optimiser, its INNER block and the EXPLORE block's INNER
+ * block (a block without LIB or ALGO is require_driver()'s), named as
  * validate_run_policy() names them ("the EXPLORE block", "the PRESTAGE
  * refinement", "the INNER block of the STRATEGY-level optimiser", ...). It
  * looks up no caps, so validate_phase_backends() (backend_rules.h) runs it

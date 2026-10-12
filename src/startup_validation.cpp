@@ -126,8 +126,8 @@ ModelProbe probe_model(const core::Context &train_ctx) {
 /* The phases of the run (strategy_phase_specs, phase_specs.h: the
  * STRATEGY-level optimiser, each MULTISTART start, the PRESTAGE exploration
  * and refinement, every INNER block) whose optimiser ignores the OPTIM
- * bounds (OptimizerCaps::ignores_bounds: the CERES drivers, NLopt
- * LN_NEWUOA) and can so evaluate outside the box. Finite differences keep
+ * bounds (OptimizerCaps::ignores_bounds: the CERES drivers) and can so
+ * evaluate outside the box. Finite differences keep
  * to the box (fd_stencil.h), whatever their step rule. "<phase>
  * <LIB:ALGO> (ignores the OPTIM bounds)" per entry. Called after
  * validate_phase_backends, so every phase names a known optimiser. */
