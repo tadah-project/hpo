@@ -323,19 +323,6 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         "(FIXINDEX names which model weights the FIXWEIGHT values pin).");
   }
 
-  /* --- search-space dimension ------------------------------------------ */
-  if (trg.spec.low.empty()) {
-    const std::string &lib = trg.spec.lib;
-    if (lib == "NLOPT" || lib == "DLIB" || lib == "CERES") {
-      throw std::runtime_error(
-          "No OPTIM line: the search space has zero dimensions, and LIB " +
-          lib + " cannot optimise a zero-dimensional space (the failure "
-          "would only surface once the optimiser starts). Add at least one "
-          "OPTIM line, or use a TADAH-native optimiser, which evaluates the "
-          "INIT start point once.");
-    }
-  }
-
   /* --- STRATEGY TYPE vs optimiser --------------------------------------
    * MULTISTART needs an optimiser that can run from each INIT point, and
    * so does the PRESTAGE refinement with a configured TOPK > 1; PRESTAGE
@@ -346,7 +333,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
   validate_run_policy(trg.spec);
 
   /* --- each phase's backend settings -----------------------------------
-   * The attribute and PARAM checks of each backend, and its need for a
+   * The search space NLOPT, DLIB and CERES need (one OPTIM line or more),
+   * the attribute and PARAM checks of each backend, and its need for a
    * MAXEVAL, on the spec each phase runs with (phase_specs.h: the
    * STRATEGY-level optimiser, each MULTISTART start with its budget, the
    * PRESTAGE exploration and refinement, every INNER block). They used to
@@ -634,7 +622,9 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         checked = true;
       }
       if (why.empty()) break;
-      throw std::runtime_error(
+      /* At the line the block closes at, as the parser's refusals of a
+       * block (with_block_line). */
+      throw std::runtime_error(with_block_line(*b.sp,
           std::string(b.name) + " block: GRAD_STRATEGY ANALYTICAL" +
           (b.sp->grad_strategy_resolved
                ? " (resolved for PC_OBSERVABLE: the block sets no "
@@ -643,7 +633,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
           " needs the analytical gradient of the loss, which this setup "
           "cannot form: " + why + ". Change that setting, or set "
           "GRAD_STRATEGY HYBRID to use finite differences where no "
-          "analytical gradient is available.");
+          "analytical gradient is available."));
     }
   }
 

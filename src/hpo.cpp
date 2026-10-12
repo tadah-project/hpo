@@ -5,6 +5,7 @@
 #include <tadah/hpo/run_driver.h>
 #include <tadah/mlip/key_provenance.h>
 #include <tadah/hpo/hpo.h>
+#include <tadah/hpo/phase_specs.h>   // with_block_line
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_mpi.h>     // hpo_rank(), hpo_size(), hpo_rank_suffix()
 #include <tadah/hpo/script_executor.h>
@@ -55,21 +56,26 @@ std::string hpo_mpi_dispatch_refusal(int world_size, const OptimizerSpec& spec)
 {
     if (world_size <= 1) return {};
     const std::string ranks = std::to_string(world_size) + " ranks";
+    /* At the line the OPTIMIZER block closes at, as the startup refusals
+     * of its settings (with_block_line); a spec built outside the parser
+     * has none. */
     if (!(spec.strategy_type == StrategyType::PLAIN &&
           spec.lib == "TADAH" &&
           (spec.algo == "ANNEAL_PT" || spec.algo == "ANNEAL_PA")))
-        return "multi-rank HPO supports only STRATEGY TYPE PLAIN with "
+        return with_block_line(spec,
+               "multi-rank HPO supports only STRATEGY TYPE PLAIN with "
                "LIB TADAH and ALGO ANNEAL_PT or ANNEAL_PA; got " +
-               spec.lib + ":" + spec.algo + " on " + ranks;
+               spec.lib + ":" + spec.algo + " on " + ranks);
     /* Each rank tracks stagnation over its own evaluations: the rank that
      * stagnated would restart and block in the driver's next collective
      * while its peers fail with "worker failed on another MPI rank". */
     if (spec.restart.active())
-        return "multi-rank HPO does not support RESTART (AFTER_STAGNATION " +
+        return with_block_line(spec,
+               "multi-rank HPO does not support RESTART (AFTER_STAGNATION " +
                std::to_string(spec.restart.after_stagnation) + ", MAX " +
                std::to_string(spec.restart.max) + " on " + ranks +
                "): stagnation is tracked per rank; run on one rank or "
-               "remove RESTART";
+               "remove RESTART");
     return {};
 }
 

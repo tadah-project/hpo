@@ -1,6 +1,7 @@
 #include <tadah/hpo/scale_validation.h>
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_caps.h>
+#include <tadah/hpo/phase_specs.h>        // with_block_line
 #include <tadah/hpo/initial_step.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/validation_metric.h>   // metric_value_is_finite
@@ -145,21 +146,29 @@ void validate_optimizer_scaling(const OptimizerSpec& sp,
         const OptimizerCaps& caps = optimizer_caps(sp);
         const std::string name = spec_name(sp, where);
 
-        const bool consumes = step_use_consumes(caps.step_use);
-        if ((sp.step || !sp.step_overrides.empty()) && !consumes) {
-            std::string msg = name + " does not use STEP";
-            if (caps.step_note && caps.step_note[0])
-                msg += std::string("; ") + caps.step_note;
-            throw std::runtime_error(msg);
-        }
-        if (sp.step) check_step_value(*sp.step, name);
-        for (const auto& ov : sp.step_overrides)
-            check_step_value(ov.frac, name + " STEP " + ov.key);
-        /* Override targets must exist (unknown key / index are errors) and
-         * overrides without a block-wide STEP must cover every dim. */
-        if (!sp.step_overrides.empty() && sp.space) {
-            resolve_step_overrides(sp);
-            require_step_coverage(sp);
+        /* A refusal of the block's STEP names the line the block closes at
+         * (OptimizerSpec::block_line), as the parser's refusals of a block
+         * do (with_block_line); a spec built outside the parser has none. */
+        try {
+            const bool consumes = step_use_consumes(caps.step_use);
+            if ((sp.step || !sp.step_overrides.empty()) && !consumes) {
+                std::string msg = name + " does not use STEP";
+                if (caps.step_note && caps.step_note[0])
+                    msg += std::string("; ") + caps.step_note;
+                throw std::runtime_error(msg);
+            }
+            if (sp.step) check_step_value(*sp.step, name);
+            for (const auto& ov : sp.step_overrides)
+                check_step_value(ov.frac, name + " STEP " + ov.key);
+            /* Override targets must exist (unknown key / index are errors)
+             * and overrides without a block-wide STEP must cover every
+             * dim. */
+            if (!sp.step_overrides.empty() && sp.space) {
+                resolve_step_overrides(sp);
+                require_step_coverage(sp);
+            }
+        } catch (const std::exception& e) {
+            throw std::runtime_error(with_block_line(sp, e.what()));
         }
 
         if (caps.step_use == StepUse::ForwardedToInner && sp.step && sp.inner &&

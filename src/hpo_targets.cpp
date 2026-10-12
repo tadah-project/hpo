@@ -1510,11 +1510,14 @@ void HPOTargets::read(const std::string& fn)
      * the analytical gradient is unavailable (a parameter without a
      * registered derivative, a model setting the analytical gradient does
      * not cover), which it fills with finite differences. */
+    /* The refusals below name the line the refused block closes at
+     * (OptimizerSpec::block_line: ENDOPTIMIZER, ENDEXPLORE, ENDINNER), as
+     * the startup refusals of a block's settings do (with_block_line). */
     auto reject_numerical_with_observable =
         [&](const OptimizerSpec& sp, const char* tag) {
             if (sp.grad_strategy
                 && *sp.grad_strategy == GradStrategy::Numerical) {
-                throw std::runtime_error(
+                throw std::runtime_error(with_block_line(sp,
                     std::string("--hpotarget defines PC_OBSERVABLE but ")
                     + tag + " GRAD_STRATEGY=NUMERICAL is set. PC_OBSERVABLE "
                     "is built for the analytical gradient: use GRAD_STRATEGY "
@@ -1523,7 +1526,7 @@ void HPOTargets::read(const std::string& fn)
                     "the analytical gradient, such as OALGO 4 with a fixed "
                     "LAMBDA >= 0, and startup names a missing one) or "
                     "GRAD_STRATEGY HYBRID, which uses finite differences "
-                    "where the analytical gradient is unavailable.");
+                    "where the analytical gradient is unavailable."));
             }
         };
     /* Every block that configures an optimiser: the STRATEGY-level one
@@ -1595,11 +1598,11 @@ void HPOTargets::read(const std::string& fn)
     auto reject_pc_lammps_grad =
         [&](const OptimizerSpec& sp, const char* tag) {
             if (sp.grad_strategy) {
-                throw std::runtime_error(
+                throw std::runtime_error(with_block_line(sp,
                     std::string("--hpotarget defines PC_LAMMPS but ") + tag
                     + " GRAD_STRATEGY is set. PC_LAMMPS no longer "
                     "supports analytical/numerical/hybrid gradients "
-                    "(2026-05-13). Drop the GRAD_STRATEGY line.");
+                    "(2026-05-13). Drop the GRAD_STRATEGY line."));
             }
             /* read() has required LIB and ALGO of every block by now, the
              * EXPLORE and INNER blocks included (require_driver,
@@ -1619,19 +1622,19 @@ void HPOTargets::read(const std::string& fn)
                 if (sp.inner) return;
                 /* obtains_gradients: there is a default local search. */
                 const OptimizerSpec local = inner_run_spec(sp).value();
-                throw std::runtime_error(
+                throw std::runtime_error(with_block_line(sp,
                     std::string("--hpotarget defines PC_LAMMPS but ") + tag
                     + " optimiser " + sp.lib + ":" + sp.algo +
                     " takes a gradient: NLopt's MLSL and AUGLAG take one for "
                     "their local search, and NLopt's default local "
                     "optimiser, " + local.lib + ":" + local.algo +
                     ", is gradient-based; an INNER block with a "
-                    "derivative-free one takes none." + requires_free);
+                    "derivative-free one takes none." + requires_free));
             }
-            throw std::runtime_error(
+            throw std::runtime_error(with_block_line(sp,
                 std::string("--hpotarget defines PC_LAMMPS but ") + tag
                 + " optimiser " + sp.lib + ":" + sp.algo +
-                " is gradient-based." + requires_free);
+                " is gradient-based." + requires_free));
         };
     if (!LS.empty())
         for (const auto& b : optimiser_blocks)
