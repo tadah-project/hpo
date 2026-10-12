@@ -4246,11 +4246,11 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                          * out. obs_loss() fails the same evaluation
                          * (FAIL_SCORE, under FAILSCORE_GRADING band B),
                          * and the gradient provider fails the gradient
-                         * at that loss before this pass whenever the
+                         * at that loss, or under HYBRID differences a
+                         * graded one, before this pass whenever the
                          * caller gives it (gradient_at); what is left is
-                         * the gradient of the other terms, at a graded
-                         * failure (it does not see the grading) or for a
-                         * caller without the loss. */
+                         * the gradient of the other terms for a caller
+                         * without the loss. */
                         inputs[k].failed = true;
                         continue;
                     }
