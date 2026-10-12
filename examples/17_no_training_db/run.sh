@@ -2,7 +2,8 @@
 # 17_no_training_db -- two-step driver:
 #   1. `tadah train` on the shared config -> pot.tadah (fitted WEIGHTS)
 #   2. rewrite pot.tadah into an HPO seed: pin every coefficient with
-#      FIXINDEX 1-K / FIXWEIGHT = WEIGHTS, drop the DBFILE lines
+#      FIXINDEX 1-K / FIXWEIGHT = WEIGHTS (a potential has no DBFILE line;
+#      one that an M_BLR potential written before 1.6.0 has is dropped)
 #   3. `tadah hpo` WITHOUT a training DBFILE and WITHOUT --validation --
 #      the loss is the LAMMPS cohesive energy declared in config.hpo.
 set -euo pipefail
@@ -41,7 +42,7 @@ out = []
 for ln in lines:
     key = ln.split(None, 1)[0] if ln.split() else ""
     if key == "DBFILE":
-        continue  # no training data in the HPO seed
+        continue  # no training data in the HPO seed (an older M_BLR pot.tadah has it)
     if key in ("FIXINDEX", "FIXWEIGHT"):
         continue  # regenerate below
     if key == "WEIGHTS":

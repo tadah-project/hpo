@@ -18,6 +18,7 @@
 #include <tadah/hpo/rho_gates.h>
 #include <tadah/mlip/intercepts.h>
 #include <tadah/mlip/trainer.h>
+#include <tadah/mlip/training_datasets.h>
 #include <tadah/mlip/weight_provisioning.h>
 #include <tadah/mlip/memory/mlip_workspace_manager.h>
 #include <tadah/models/dc_selector.h>
@@ -73,7 +74,9 @@ struct ModelProbe {
  * model): a construction error here -- a DIMER potential with element-
  * named TYPE2B pairs, a descriptor that refuses its grids -- would fail
  * every evaluation (the run then ends "no evaluation produced a usable
- * loss"). Returns the model's weight count (derive_weight_count; SBASIS for
+ * loss"), and so would a missing or too small SBASIS of a fit that draws
+ * basis vectors (M_KRR Kern_Linear 2 too; model_weight_count checks it).
+ * Returns the model's weight count (derive_weight_count; SBASIS for
  * a non-linear M_KRR kernel, which has no basis before training), its
  * function, the MPARAMS the function reads (Function_Base::mparams()) and
  * what fixes each RCUT2B/RCUTMB value (D_Base::cutoff_fixed_by).
@@ -241,6 +244,11 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx) {
 
 void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
                         bool has_train_db, bool has_validation) {
+  /* --- the training datasets, as tadah train reads them ----------------
+   * A DBFILE listing one file twice would have every evaluation fit its
+   * structures twice. */
+  if (has_train_db) tadah::mlip::require_distinct_training_datasets(train_ctx);
+
   /* --- NORM/BIAS rules, as tadah train applies them --------------------
    * NORM true with a linear model needs BIAS true (the NORM weight
    * conversion moves the mean correction into the intercept columns);

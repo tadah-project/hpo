@@ -1558,7 +1558,9 @@ TEST_CASE("valmetric e2e: MODEL M_KRR Kern_Linear validates the forces "
     CHECK(stored_text(e.pot, "STRESS") == fit_s);
     CHECK(stored_text(e.model_pot, "FORCE") == fit_f);
     CHECK(stored_text(e.model_pot, "STRESS") == fit_s);
-    /* ALPHA, BETA and DBFILE stay out of an M_KRR potential. */
+    /* DBFILE stays out of a potential, M_KRR's as M_BLR's; ALPHA and BETA,
+     * which this configuration does not set (LAMBDA is not -1), are not
+     * written either. */
     CHECK_FALSE(e.pot.has_stored("DBFILE"));
     CHECK_FALSE(e.model_pot.has_stored("DBFILE"));
     CHECK_FALSE(e.model_pot.has_stored("ALPHA"));

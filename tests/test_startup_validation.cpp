@@ -389,6 +389,57 @@ TEST_CASE("startup validation: FIXINDEX of a non-linear M_KRR kernel is "
   }
 }
 
+/* Pins: M_KRR Kern_Linear implementation 2 draws SBASIS basis vectors for
+ * its solve, so startup checks its SBASIS as a non-linear kernel's: with a
+ * training DBFILE, SBASIS 1 is refused naming "does not build a model",
+ * "M_KRR Kern_Linear 2", "SBASIS 1" and "at least 2 basis vectors", without
+ * the word "non-linear"; a configuration without SBASIS is refused naming
+ * "M_KRR Kern_Linear 2 needs SBASIS"; SBASIS 3 passes, and its weight count
+ * is DSIZE, 2 (derive_weight_count: the descriptor weights of the basis
+ * vectors, not SBASIS; a pin).
+ * Before the fix: SBASIS 1 and the configuration without SBASIS passed
+ * startup (the count, DSIZE, was returned before any SBASIS check), and
+ * every evaluation threw ("SBASIS 1: a non-linear M_KRR model needs at
+ * least 2 basis vectors"; "Key not found in the Context object: SBASIS"). */
+TEST_CASE("startup validation: SBASIS of M_KRR Kern_Linear 2 is checked",
+          "[startup_validation][krr2]") {
+  PeriodicTable::initialize();
+  ScopedTempFile tf(target_with("PC_ERMSE 0 1\n"));
+  auto krr2_ctx = [](int sbasis) {
+    Context c = make_model_ctx();
+    c.remove("MODEL");
+    c.add("MODEL", "M_KRR");
+    c.add("MODEL", "Kern_Linear");
+    c.add("MODEL", 2);
+    if (sbasis > 0) c.add("SBASIS", sbasis);
+    c.add("DBFILE", "dummy.db");
+    return c;
+  };
+  SECTION("SBASIS 1 is refused") {
+    Context ctx = krr2_ctx(1);
+    HPOTargets trg(ctx, tf.path.string());
+    CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                      Catch::Contains("does not build a model") &&
+                          Catch::Contains("M_KRR Kern_Linear 2") &&
+                          Catch::Contains("SBASIS 1") &&
+                          Catch::Contains("at least 2 basis vectors") &&
+                          !Catch::Contains("non-linear"));
+  }
+  SECTION("no SBASIS is refused") {
+    Context ctx = krr2_ctx(0);
+    HPOTargets trg(ctx, tf.path.string());
+    CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                      Catch::Contains("does not build a model") &&
+                          Catch::Contains("M_KRR Kern_Linear 2 needs SBASIS"));
+  }
+  SECTION("SBASIS 3 passes; the weight count is DSIZE") {
+    Context ctx = krr2_ctx(3);
+    HPOTargets trg(ctx, tf.path.string());
+    CHECK_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
+    CHECK(derive_weight_count(krr2_ctx(3)) == 2);
+  }
+}
+
 TEST_CASE("startup validation: a -c configuration that does not build a "
           "model is refused", "[startup_validation][model_probe]") {
   /* A construction error of the model (a DIMER potential with element-
