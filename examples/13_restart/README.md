@@ -18,13 +18,17 @@ What this shows:
 
 RESTART relaunches a search that stagnates -- one that goes on
 evaluating without a new best -- not one that ends. Here NLOPT:LN_SBPLX
-climbs to the upper bound `RCUT2B` = 6 and stays there: after 3
-evaluations without a new best the window fires, and RESTART relaunches
-it from a RANDOM point (`RCUT2B` = 4.541125, then 5.422967). Each round
-climbs to the bound again and stagnates; the third stagnation ends the
-run after 15 evaluations, `STOPPED -- stagnation: no new best in 3 evals
-after 2 restart(s)`, with the best at `RCUT2B` = 6. The run repeats bit
-for bit. (Until 2026-10-12 the example ran DLIB:BFGS without a SEED,
+climbs to the upper bound `RCUT2B` = 6 (eval 3) and stays there: after 3
+evaluations without a new best the window fires (eval 6), and RESTART
+relaunches it from a RANDOM point. The window counts evaluations without
+a new best of the run, not of the round: restart 1, from `RCUT2B` =
+4.541125, is still improving on its own path (5.041125, then 5.541125,
+each loss lower than the one before) when its third evaluation without a
+new best of the run ends it (eval 9), short of the bound; restart 2, from
+5.422967, reaches the bound at eval 12 and stagnates there. The third
+stagnation ends the run after 15 evaluations, `STOPPED -- stagnation: no
+new best in 3 evals after 2 restart(s)`, with the best at `RCUT2B` = 6.
+The run repeats bit for bit. (Until 2026-10-12 the example ran DLIB:BFGS without a SEED,
 so its restart points came from `std::random_device` and differed from
 run to run; with the repeat points of 2026-10-12 that search converged
 before the window passed, and no restart fired.) Useful for unattended
