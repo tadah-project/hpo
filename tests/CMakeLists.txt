@@ -203,7 +203,8 @@ if(TADAH_HPO_MPI)
         "TADAH_MPIEXEC=${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1")
 endif()
 set(_hpo_tadah_cli_cases seed_anchor_warm seed_anchor_nlopt durable_exit
-                         pc_readback pc_lammps_local_search pc_lammps_verbose)
+                         pc_readback pc_lammps_local_search pc_lammps_verbose
+                         kernel_line_once)
 foreach(_case IN LISTS _hpo_tadah_cli_cases)
     add_test(NAME hpo_tadah_cli_${_case}
         COMMAND test_hpo "[.tadah_cli_${_case}]" --warn NoTests)
@@ -303,6 +304,47 @@ add_test(NAME hpo_vendored_boost_gate_tool
         ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_check_vendored_boost.py)
 set_tests_properties(hpo_vendored_boost_gate_tool PROPERTIES
     TIMEOUT 60)
+
+# The vendored ASA's upstream files keep their bytes, CRLF line endings
+# included: the TADAH-PATCH hunks of asa.c are written in them
+# (external/asa/TADAH-PATCHES.md; check_vendored_asa.py).
+# hpo_vendored_asa_line_endings: every line of asa.c, asa.h, asa_usr_asa.h,
+# ASA-LICENSE, ASA-NOTES and ASA-README.txt ends in CRLF. Before the fix:
+# passes as well (a pin of the bytes; hpo_vendored_asa_gate_tool shows it
+# fails on an LF or mixed file).
+add_test(NAME hpo_vendored_asa_line_endings
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/check_vendored_asa.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set_tests_properties(hpo_vendored_asa_line_endings PROPERTIES
+    TIMEOUT 60)
+# hpo_vendored_asa_gitattributes: with HPO's .gitattributes, git stores those
+# files' bytes unchanged under core.autocrlf=input, core.autocrlf=true and a
+# global attributes file '* text eol=lf' (git add --renormalize, and git add
+# of an edit, in a scratch repository). Skipped when CMake finds no git; one
+# --git=<path> token: MLIP's add_test() drops an empty argument.
+# Before the fix: fails, every file under each setting ("attributes read:
+# none"): nothing kept git from converting the CRLF endings to LF, which would
+# have rewritten every line of asa.c.
+find_package(Git QUIET)
+add_test(NAME hpo_vendored_asa_gitattributes
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/check_vendored_asa.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/..
+        --git=${GIT_EXECUTABLE})
+set_tests_properties(hpo_vendored_asa_gitattributes PROPERTIES
+    TIMEOUT 120
+    SKIP_RETURN_CODE 77)
+# The gate itself, on fake trees (tests/test_check_vendored_asa.py); its git
+# cases are skipped without git (GIT), and the entry is then Skipped.
+# Before the fix: passes as well (the gate's own unit test).
+add_test(NAME hpo_vendored_asa_gate_tool
+    COMMAND ${CMAKE_COMMAND} -E env GIT=${GIT_EXECUTABLE}
+        ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_check_vendored_asa.py)
+set_tests_properties(hpo_vendored_asa_gate_tool PROPERTIES
+    TIMEOUT 120
+    SKIP_REGULAR_EXPRESSION "\nOK \\(skipped=[0-9]+"
+    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
 
 if(TADAH_HPO_MPI)
     add_executable(test_hpo_anneal_mpi mpi/test_anneal_mpi.cpp)

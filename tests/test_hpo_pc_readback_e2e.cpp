@@ -49,6 +49,10 @@
 //     hpo_tadah_cli_pc_lammps_verbose, the same harness): the potential a
 //     PC_LAMMPS script runs follows the run's VERBOSE (-v 0: a kernel
 //     model prints no line when it is built for the script).
+//   - [.tadah_cli_kernel_line_once] (CTest entry
+//     hpo_tadah_cli_kernel_line_once, the same harness): at -v 1 a kernel's
+//     settings line is printed once per run (and once in each PROCESS
+//     worker), not once per model the run builds.
 
 #include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 
@@ -2285,5 +2289,76 @@ TEST_CASE("tadah hpo: the PC_LAMMPS potential is built at the run's VERBOSE",
         REQUIRE(WIFEXITED(rc));
         CHECK(WEXITSTATUS(rc) == 0);
         CHECK(count_lines_with(dir / "tadah.stdout", "Kern_RBF |") > 0);
+    }
+}
+
+namespace {
+
+/* N of the journal line "PC_ISOLATION: PROCESS -- pc_lammps tasks execute
+ * in N persistent worker processes ...", or -1 when @p journal has none. */
+long process_workers(const std::string& journal) {
+    const std::string head = "pc_lammps tasks execute in ";
+    const auto p = journal.find(head);
+    if (p == std::string::npos) return -1;
+    return std::strtol(journal.c_str() + p + head.size(), nullptr, 10);
+}
+
+}  // namespace
+
+/* Pins, through the built tadah: at VERBOSE 1 a tadah hpo run prints the
+ * line a kernel prints when it is built, "Kern_RBF | sigma: 1 | gamma: 1",
+ * once, however many models it builds (the -c model at startup, one per
+ * evaluation, and the potential each PC_LAMMPS script runs). M_KRR Kern_RBF
+ * 1 (kTaKernelModelKeys), RANDOM MAXEVAL 4, a PC_LAMMPS script, -v 1:
+ *   - PC_ISOLATION THREAD: exit 0, four evaluations in loss.tadah, and
+ *     tadah's stdout has exactly one "Kern_RBF |" line, the -c model's
+ *     settings;
+ *   - PC_ISOLATION PROCESS (not in the MPI build, which has no workers):
+ *     exit 0, four evaluations, and one line from tadah plus one from each
+ *     worker process (the journal's "execute in N persistent worker
+ *     processes"): a worker is a process of its own, which builds the
+ *     potentials of its tasks.
+ * Before the fix: 9 lines in both modes, one at startup and two per
+ * evaluation (its model and its PC_LAMMPS potential). */
+TEST_CASE("tadah hpo: a kernel's settings line is printed once per run",
+          "[kernel_line_once][tadah_cli][.tadah_cli_kernel_line_once]") {
+    const char* bin = std::getenv("TADAH_BINARY");
+    if (!bin || !*bin)
+        TADAH_SKIP("TADAH_BINARY is not set: it names the built tadah "
+                   "executable");
+    REQUIRE(fs::exists(bin));
+    tadah::core::PeriodicTable::initialize();
+    ScratchDir sd("tadah_cli_kernel_line_");
+    const std::string target =
+        "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB TADAH\n"
+        "    ALGO RANDOM\n    MAXEVAL 4\n    SEED 1234\n  ENDSTRATEGY\n"
+        "ENDOPTIMIZER\nLOSS L2\nFAILSCORE 1e16\nPC_ERMSE 0 1\n"
+        "OPTIM CGRID2B (1) 0.0 4.0\n"
+        "PC_LAMMPS --script readback.in --varloss E 0 1\n";
+    const std::string script = ta_script("3.301", "variable E equal pe\n");
+    const std::string line = "Kern_RBF | sigma: 1 | gamma: 1";
+#ifdef TADAH_HPO_MPI
+    const std::vector<std::string> modes{"THREAD"};
+#else
+    const std::vector<std::string> modes{"THREAD", "PROCESS"};
+#endif
+    for (const std::string& mode : modes) {
+        INFO("-v 1, PC_ISOLATION " << mode);
+        const fs::path dir = sd.dir / ("v1_" + mode);
+        const int rc = run_tadah_hpo(bin, dir, mode, target, script, {}, "",
+                                     kTaKernelModelKeys, "-v 1");
+        INFO(read_text(dir / "tadah.stderr"));
+        const std::string journal = read_text(dir / "hpo_run.log");
+        INFO(journal);
+        REQUIRE(WIFEXITED(rc));
+        CHECK(WEXITSTATUS(rc) == 0);
+        CHECK(read_table(dir / "loss.tadah").rows.size() == 4);
+        INFO(read_text(dir / "tadah.stdout"));
+        const long workers = mode == "PROCESS" ? process_workers(journal) : 0;
+        REQUIRE(workers >= 0);
+        CHECK(count_lines_with(dir / "tadah.stdout", "Kern_RBF |") ==
+              static_cast<std::size_t>(1 + workers));
+        CHECK(count_lines_with(dir / "tadah.stdout", line) ==
+              static_cast<std::size_t>(1 + workers));
     }
 }
