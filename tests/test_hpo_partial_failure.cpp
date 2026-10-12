@@ -826,6 +826,15 @@ TEST_CASE("a graded gradient search that starts where a PC_OBSERVABLE term "
             CHECK(xs[0] == Approx(5.125).epsilon(1e-12));
             CHECK(xs[1] == Approx(5.2).epsilon(1e-12));
             CHECK(xs[2] == Approx(5.275).epsilon(1e-12));
+            /* Pins: the LOSS FUNCTION section's Fail grading line names the
+             * failed PC_OBSERVABLE term, whose band-B losses these are.
+             * Before the fix: "ON -- a skip cap, a failed PC_LAMMPS
+             * simulation or a gate reject scores a graded loss ...". */
+            CHECK_THAT(journal,
+                       Catch::Contains("ON -- a skip cap, a failed "
+                                       "PC_OBSERVABLE term or a gate reject "
+                                       "scores a graded loss in [0.999, 1) x "
+                                       "Fail score"));
         }
     }
 }
@@ -1011,9 +1020,22 @@ TEST_CASE("a run whose every evaluation has a failed PC_OBSERVABLE term has "
                    partial_root("FAILSCORE 1e16\n", "5.0"));
     int status = -1;
     REQUIRE_NOTHROW(status = run.run("TADAH:RANDOM in the failure region"));
-    INFO(read_file("hpo_run.log"));
+    const std::string journal = read_file("hpo_run.log");
+    INFO(journal);
     CHECK(status == 1);
     check_no_usable_loss(8, row_text(1e16));
+    /* Pins: the LOSS FUNCTION section names the failed PC_OBSERVABLE term
+     * among what scores FAILSCORE, and no PC_LAMMPS simulation, which this
+     * run cannot have.
+     * Before the fix: "(the loss of a failed evaluation: a NaN/Inf loss,
+     * an exception, a skip cap, a failed PC_LAMMPS simulation or a gate
+     * reject; ...)", while every loss was FAILSCORE through the observable. */
+    CHECK_THAT(journal, Catch::Contains("1.0000e+16  (the loss of a failed "
+                                        "evaluation: a NaN/Inf loss, an "
+                                        "exception, a skip cap, a failed "
+                                        "PC_OBSERVABLE term or a gate reject; "
+                                        "the ceiling of every loss)"));
+    CHECK(journal.find("PC_LAMMPS simulation") == std::string::npos);
 }
 
 /* Pins: STOPVAL is reached by a usable loss only. TADAH:RANDOM (SEED 3,
