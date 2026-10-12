@@ -104,6 +104,11 @@ struct InitStrategySpec {
     struct Entry {
         std::string method;                    // CONFIG, RANDOM, LHS, SOBOL, WARM, NOISE_AUTO
         std::vector<std::string> args;         // method-specific tokens
+        /* The METHOD line of the hpotarget file and its text (0 and "" for
+         * an entry built outside the parser): a refusal of the entry when
+         * the chain is drawn names it (build_init_strategy). */
+        std::size_t line = 0;
+        std::string line_text;
     };
     std::vector<Entry> chain;                  // STRATEGY lines (in order, inside INIT block)
     std::optional<std::size_t> k_total;        // K_TOTAL cap (default = sum of strategy default_k)

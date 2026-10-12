@@ -520,10 +520,14 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
  * which has no such collision. */
 static bool dispatch_init_attr(const std::string& key,
                                std::istringstream& iss,
-                               InitStrategySpec& a)
+                               InitStrategySpec& a,
+                               std::size_t nline, const std::string& line)
 {
     if (key=="METHOD" || key=="STRATEGY") {
         InitStrategySpec::Entry e;
+        /* The line names the entry's refusals when the chain is drawn. */
+        e.line = nline;
+        e.line_text = line;
         iss >> e.method;
         if (e.method.empty())
             throw std::runtime_error(key + " requires a method name");
@@ -839,7 +843,7 @@ void HPOTargets::read(const std::string& fn)
                  *   - At OUTER level, it opens the STRATEGY block.
                  * Discriminate by context. */
                 if (block == INIT_BLK || block == RESTART_BLK) {
-                    if (active_init && dispatch_init_attr(key, iss, *active_init))
+                    if (active_init && dispatch_init_attr(key, iss, *active_init, nline, line))
                         continue;
                     /* fall through to error */
                 }
@@ -1000,7 +1004,7 @@ void HPOTargets::read(const std::string& fn)
 
             /* INIT / RESTART block keys */
             if (block == INIT_BLK || block == RESTART_BLK) {
-                if (active_init && dispatch_init_attr(key, iss, *active_init))
+                if (active_init && dispatch_init_attr(key, iss, *active_init, nline, line))
                     continue;
                 if (block == RESTART_BLK) {
                     if (key=="AFTER_STAGNATION") {
