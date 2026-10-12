@@ -25,8 +25,9 @@ namespace tadah::hpo {
 /* ----- stops of the sampling searches ----------------------------- *
  *
  * TADAH:RANDOM and TADAH:GRID (and DLIB:GFS, dlib_adapter.h) end on
- * MAXEVAL, on MAXTIME -- no evaluation starts once MAXTIME seconds have
- * passed since the search began -- or at the first evaluation whose loss is
+ * MAXEVAL, on MAXTIME -- no evaluation but the search's first starts once
+ * MAXTIME seconds have passed since the search began -- or at the first
+ * evaluation whose loss is
  * at or below STOPVAL (a feasible loss: FAILSCORE never reaches it,
  * anneal::stopval_reached). RANDOM runs until one of them (or the RESTART
  * stagnation stop) ends it (require_stop), GRID at the latest after its
