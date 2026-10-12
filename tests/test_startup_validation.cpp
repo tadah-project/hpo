@@ -480,6 +480,50 @@ TEST_CASE("startup validation: a -c configuration that does not build a "
   }
 }
 
+/* Pins: the startup refusal of a -c configuration whose model does not
+ * build ends the model's reason with one full stop before "Every
+ * evaluation would fail": a reason that ends in '.' (M_KRR Kern_RBF with
+ * SBASIS 1: "... Set SBASIS to 2 or more.") is followed by " Every
+ * evaluation would fail" with no ".." anywhere in the message; a reason
+ * that ends in ')' (DIMER with element-named TYPE2B pairs: "... does not
+ * apply to every element pair)") gets its '.': "element pair). Every
+ * evaluation would fail", no "..".
+ * Before the fix: the SBASIS refusal read "Set SBASIS to 2 or more.. Every
+ * evaluation would fail" (". " was appended to every reason); the DIMER
+ * one passed as well (a pin). */
+TEST_CASE("startup validation: a model refusal ends its reason with one "
+          "full stop", "[startup_validation][model_probe]") {
+  PeriodicTable::initialize();
+  ScopedTempFile tf(target_with("PC_ERMSE 0 1\n"));
+  SECTION("a reason that ends in a full stop") {
+    Context ctx = make_model_ctx();
+    ctx.remove("MODEL");
+    ctx.add("MODEL", "M_KRR");
+    ctx.add("MODEL", "Kern_RBF");
+    ctx.add("MODEL", 1);
+    ctx.add("MPARAMS", 1.0);
+    ctx.add("SBASIS", 1);
+    ctx.add("DBFILE", "dummy.db");
+    HPOTargets trg(ctx, tf.path.string());
+    CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                      Catch::Contains("does not build a model") &&
+                          Catch::Contains("Set SBASIS to 2 or more. Every "
+                                          "evaluation would fail") &&
+                          !Catch::Contains(".."));
+  }
+  SECTION("a reason that ends in a parenthesis") {
+    Context ctx = make_model_ctx();
+    ctx.remove("DIMER");
+    ctx.add("DIMER", "true 1.104 true");
+    ctx.add("DBFILE", "dummy.db");
+    HPOTargets trg(ctx, tf.path.string());
+    CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
+                      Catch::Contains("does not apply to every element "
+                                      "pair). Every evaluation would fail") &&
+                          !Catch::Contains(".."));
+  }
+}
+
 TEST_CASE("startup validation: loss-source rules", "[startup_validation]") {
   SECTION("no loss source at all throws") {
     ScopedTempFile tf(target_with(""));
