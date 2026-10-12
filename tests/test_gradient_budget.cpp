@@ -363,3 +363,126 @@ TEST_CASE("startup validation: the gradient budget warning covers each "
     CHECK(count_of(startup_journal(mlsl("LD_LBFGS", "2")), kNoStep) == 0u);
     CHECK(count_of(startup_journal(mlsl("LN_BOBYQA", "1")), kNoStep) == 0u);
 }
+
+namespace {
+
+/* The tail of an MLSL warning in 2-D under NUMERICAL central differences:
+ * MLSL evaluates its start and `samples` points without a gradient, then
+ * its first local search evaluates the loss at its start again and the
+ * gradient there. */
+std::string mlsl_central2(const std::string& budget, unsigned samples,
+                          const std::string& population,
+                          const std::string& needs)
+{
+    return ": " + budget + " takes no step of a local search: MLSL evaluates "
+           "its starting point and its first " + std::to_string(samples) +
+           " samples without a gradient (" + std::to_string(1 + samples) +
+           " evaluations; " + population + "), then its first local search, "
+           "from one of them, evaluates the loss there again (1 evaluation) "
+           "and the gradient there (4 evaluations: central differences in 2 "
+           "dimensions, GRAD_STRATEGY NUMERICAL) before it evaluates a point "
+           "it steps to, which needs " + needs;
+}
+
+std::string mlsl_plain(const std::string& algo, const std::string& maxeval,
+                       const std::string& keys)
+{
+    return strategy("    TYPE PLAIN\n    LIB NLOPT\n    ALGO " + algo +
+                    "\n    MAXEVAL " + maxeval + "\n" + keys);
+}
+
+const std::string kInnerLbfgs =
+    "    INNER\n      LIB NLOPT\n      ALGO LD_LBFGS\n    ENDINNER\n";
+
+}  // namespace
+
+/* Pins: an MLSL whose local search takes gradients spends, before its first
+ * local search can step, its starting point and its first N samples, both
+ * without a gradient (mlsl.c: grad NULL; N is POPULATION, NLopt's default
+ * 4), then that search's start -- one of these points, whose loss it
+ * evaluates again -- and the gradient there: in 2-D under NUMERICAL central
+ * differences 1 + 4 + 1 + 4 evaluations, so MAXEVAL 10 or less lets no
+ * local search take a step (tmp/review/mlsl10: the start, 4 samples, the
+ * local start again and its 4-point stencil; vg_mlsl11: the 11th
+ * evaluation is the first step). The WARNING says so:
+ *   - GD_MLSL with INNER LD_LBFGS, MAXEVAL 5 and 10: "the STRATEGY-level
+ *     optimiser NLOPT:GD_MLSL: MAXEVAL 10 takes no step of a local search:
+ *     MLSL evaluates its starting point and its first 4 samples without a
+ *     gradient (5 evaluations; POPULATION 4, NLopt's default), then its
+ *     first local search, from one of them, evaluates the loss there again
+ *     (1 evaluation) and the gradient there (4 evaluations: central
+ *     differences in 2 dimensions, GRAD_STRATEGY NUMERICAL) before it
+ *     evaluates a point it steps to, which needs MAXEVAL 11 or more";
+ *     MAXEVAL 11 gets none;
+ *   - POPULATION 3: 4 evaluations before the local search, so MAXEVAL 9
+ *     warns ("POPULATION 3"), needing 10, and MAXEVAL 10 gets none;
+ *   - GD_MLSL without INNER runs NLopt's default local search, LD_MMA,
+ *     which takes gradients: MAXEVAL 10 warns alike;
+ *   - AUGLAG goes straight into its local search (HPO sets no constraint;
+ *     auglag.c): AUGLAG with INNER LD_LBFGS keeps the local rule, MAXEVAL 5
+ *     warns with "takes no step: its gradient search evaluates the loss at a
+ *     starting point" and MAXEVAL 6 gets none;
+ *   - GN_MLSL, whose default local search LN_COBYLA takes no gradient, gets
+ *     none at MAXEVAL 3.
+ * Before the fix: GD_MLSL MAXEVAL 5 was warned about with the local rule's
+ * text, a gradient at the starting point that MLSL never takes ("MAXEVAL 5
+ * takes no step: its gradient search evaluates the loss at a starting
+ * point (1 evaluation) and the gradient there ... which needs MAXEVAL 6 or
+ * more"), and MAXEVAL 6 to 10, which take no local step either, were not
+ * warned about: the MLSL checks fail; the AUGLAG and GN_MLSL ones pass as
+ * well (pins). */
+TEST_CASE("startup validation: the gradient budget warning of an MLSL counts "
+          "its samples and its local search's start",
+          "[startup_validation][gradient_budget]")
+{
+    for (const char* maxeval : {"5", "10"}) {
+        INFO("GD_MLSL MAXEVAL " << maxeval);
+        const std::string journal =
+            startup_journal(mlsl_plain("GD_MLSL", maxeval, kInnerLbfgs));
+        CHECK(count_of(journal,
+                       "the STRATEGY-level optimiser NLOPT:GD_MLSL" +
+                           mlsl_central2(std::string("MAXEVAL ") + maxeval, 4,
+                                         "POPULATION 4, NLopt's default",
+                                         "MAXEVAL 11 or more")) == 1u);
+        CHECK(count_of(journal, kNoStep) == 1u);
+    }
+    CHECK(count_of(startup_journal(mlsl_plain("GD_MLSL", "11", kInnerLbfgs)),
+                   kNoStep) == 0u);
+
+    {
+        const std::string journal = startup_journal(mlsl_plain(
+            "GD_MLSL", "9", "    POPULATION 3\n" + kInnerLbfgs));
+        CHECK(count_of(journal,
+                       "the STRATEGY-level optimiser NLOPT:GD_MLSL" +
+                           mlsl_central2("MAXEVAL 9", 3, "POPULATION 3",
+                                         "MAXEVAL 10 or more")) == 1u);
+        CHECK(count_of(journal, kNoStep) == 1u);
+        CHECK(count_of(startup_journal(mlsl_plain(
+                           "GD_MLSL", "10", "    POPULATION 3\n" + kInnerLbfgs)),
+                       kNoStep) == 0u);
+    }
+
+    {
+        const std::string journal =
+            startup_journal(mlsl_plain("GD_MLSL", "10", ""));
+        CHECK(count_of(journal,
+                       "the STRATEGY-level optimiser NLOPT:GD_MLSL" +
+                           mlsl_central2("MAXEVAL 10", 4,
+                                         "POPULATION 4, NLopt's default",
+                                         "MAXEVAL 11 or more")) == 1u);
+    }
+
+    {
+        const std::string journal =
+            startup_journal(mlsl_plain("AUGLAG", "5", kInnerLbfgs));
+        CHECK(count_of(journal, "the STRATEGY-level optimiser NLOPT:AUGLAG" +
+                                    central2("MAXEVAL 5",
+                                             "MAXEVAL 6 or more")) == 1u);
+        CHECK(count_of(journal, kNoStep) == 1u);
+        CHECK(count_of(startup_journal(mlsl_plain("AUGLAG", "6", kInnerLbfgs)),
+                       kNoStep) == 0u);
+    }
+
+    CHECK(count_of(startup_journal(mlsl_plain("GN_MLSL", "3", "")), kNoStep) ==
+          0u);
+}

@@ -21,6 +21,7 @@
 
 #include "catch2/catch.hpp"
 
+#include <tadah/hpo/backend_rules.h>
 #include <tadah/hpo/gradient_provider.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/nlopt_adapter.h>
@@ -34,6 +35,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <filesystem>
@@ -741,6 +743,95 @@ TEST_CASE("NLopt STOPVAL: GD_STOGO without MAXEVAL is refused before it "
                                     "tolerance)"));
             CHECK(seconds_since(t0) < 1.0);
             CHECK(host.asked.empty());
+        }
+    }
+}
+
+namespace {
+
+/* Whether a search asked for a point it stepped to: a point after the first
+ * `before` -- its start, and an MLSL's samples -- farther than 1e-3 in some
+ * coordinate from every point asked for before it. The finite-difference
+ * stencil of a point (fd_step 1e-6) and a point asked for again are not. */
+bool stepped(const std::vector<Vec>& asked, std::size_t before)
+{
+    for (std::size_t k = before; k < asked.size(); ++k) {
+        bool near = false;
+        for (std::size_t j = 0; j < k && !near; ++j)
+            near = std::abs(asked[k](0) - asked[j](0)) <= 1e-3 &&
+                   std::abs(asked[k](1) - asked[j](1)) <= 1e-3;
+        if (!near) return true;
+    }
+    return false;
+}
+
+}  // namespace
+
+/* Pins: the startup WARNING of a gradient search whose budget takes no step
+ * (gradient_budget_warnings, backend_rules.h) is given exactly at the
+ * budgets whose run takes no step: on the valley, for every MAXEVAL m from
+ * 1 to the first budget that steps, the warning is given at m if and only
+ * if the run at m (run_nlopt_impl, the host asked for m points) asks for no
+ * point it stepped to (see stepped()):
+ *   - LD_LBFGS (NUMERICAL, CENTRAL in 2-D): the start, its 4-point stencil,
+ *     a first step at evaluation 6;
+ *   - LD_LBFGS under ANALYTICAL: the start's loss and analytical gradient, a
+ *     first step at evaluation 3;
+ *   - AUGLAG with INNER LD_LBFGS: its local search from the start at once,
+ *     a first step at evaluation 6;
+ *   - GD_MLSL with INNER LD_LBFGS (SEED 7, NLopt's 4 samples per round):
+ *     the start and 4 samples, the local search's start again and its
+ *     stencil, a first step at evaluation 11;
+ *   - G_MLSL_LDS with POPULATION 3 and INNER LD_LBFGS: a first step at
+ *     evaluation 10.
+ * Before the fix: the warning took an MLSL for a search that takes the
+ * gradient at its start (no warning from MAXEVAL 6 on), so the GD_MLSL
+ * checks at MAXEVAL 6 to 10 and the G_MLSL_LDS ones at 6 to 9 fail; the
+ * other searches pass as well (pins). */
+TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget that "
+          "takes no step is given exactly when the run takes none",
+          "[HPO][nlopt][maxeval][gradient_budget]")
+{
+    struct Case {
+        std::string label, algo, inner;
+        bool analytical;
+        unsigned pop;            // 0: NLopt's default
+        std::size_t before;      // the start, and an MLSL's samples
+        unsigned first_step;     // the evaluation of the first step
+    };
+    const std::vector<Case> cases = {
+        {"LD_LBFGS", "LD_LBFGS", "", false, 0, 1, 6},
+        {"LD_LBFGS, ANALYTICAL", "LD_LBFGS", "", true, 0, 1, 3},
+        {"AUGLAG, INNER LD_LBFGS", "AUGLAG", "LD_LBFGS", false, 0, 1, 6},
+        {"GD_MLSL, INNER LD_LBFGS", "GD_MLSL", "LD_LBFGS", false, 0, 5, 11},
+        {"G_MLSL_LDS, POPULATION 3, INNER LD_LBFGS", "G_MLSL_LDS", "LD_LBFGS",
+         false, 3, 4, 10}};
+    for (const auto& c : cases) {
+        DYNAMIC_SECTION(c.label) {
+            for (unsigned m = 1; m <= c.first_step; ++m) {
+                INFO(c.label << " MAXEVAL " << m);
+                auto sp = nlopt_spec(c.algo, m);
+                if (!c.inner.empty()) set_inner(sp, c.inner);
+                if (c.pop) sp.pop = c.pop;
+                if (c.analytical) {
+                    sp.grad_strategy = GradStrategy::Analytical;
+                    sp.param.clear();
+                    sp.param_raw.clear();
+                }
+                const std::vector<std::string> warnings =
+                    tadah::hpo::gradient_budget_warnings(sp);
+                INFO("warnings: " << (warnings.empty() ? "(none)"
+                                                        : warnings.front()));
+                Journal j;
+                Valley host;
+                REQUIRE_NOTHROW(
+                    tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host));
+                (void)j.text();
+                CHECK(host.asked.size() <= m);
+                const bool step = stepped(host.asked, c.before);
+                CHECK(step == (m == c.first_step));
+                CHECK(warnings.empty() == step);
+            }
         }
     }
 }
