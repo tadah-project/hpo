@@ -1858,14 +1858,19 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
      * against a stale warm-start value, turning a detectable protocol fault
      * into a wrong-but-finite loss. record_infra() is the same band-C
      * grading the CREATE_FAIL path uses: infrastructure, not physics. The
-     * outvars' read-back errors are optional (empty when every outvar was
-     * read), and one per outvar when present. */
+     * read-back errors are optional (empty when every variable of their
+     * kind was read), and one per variable when present. */
+    const auto short_errors = [](const std::vector<std::string>& errors,
+                                 std::size_t n) {
+      return !errors.empty() && errors.size() < n;
+    };
     if (!fail &&
         (tres.outvar_values.size() < lsim.n_outvar.size() ||
          tres.hotvar_values.size() < lsim.hotvars.size() ||
          tres.failvar_values.size() < lsim.failvars.size() ||
-         (!tres.outvar_errors.empty() &&
-          tres.outvar_errors.size() < lsim.n_outvar.size()))) {
+         short_errors(tres.outvar_errors, lsim.n_outvar.size()) ||
+         short_errors(tres.hotvar_errors, lsim.hotvars.size()) ||
+         short_errors(tres.failvar_errors, lsim.failvars.size()))) {
       fail = true;
       if (fg_on) fail_state.record_infra();
       HPOLog::instance().warning(
@@ -1876,9 +1881,14 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
           + std::to_string(lsim.n_outvar.size()) + " outvar errors, "
           + std::to_string(tres.hotvar_values.size()) + "/"
           + std::to_string(lsim.hotvars.size()) + " hotvars, "
+          + std::to_string(tres.hotvar_errors.size()) + "/"
+          + std::to_string(lsim.hotvars.size()) + " hotvar errors, "
           + std::to_string(tres.failvar_values.size()) + "/"
+          + std::to_string(lsim.failvars.size()) + " failvars, "
+          + std::to_string(tres.failvar_errors.size()) + "/"
           + std::to_string(lsim.failvars.size())
-          + " failvars -- treating the task as failed (protocol desync)");
+          + " failvar errors -- treating the task as failed (protocol "
+            "desync)");
     }
 
     /* The variables a task read back, judged alike in both PC_ISOLATION
@@ -1888,8 +1898,9 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
      * Read-back errors. Reading a variable evaluates its formula after the
      * script, and a LAMMPS error there (a thermo keyword the script's
      * thermo_style does not compute, a divide by zero for this candidate)
-     * is reported per variable in outvar_errors; a --hotvar or --failvar
-     * one has failed the task already (execute_script_task).
+     * is reported per variable, in outvar_errors, hotvar_errors and
+     * failvar_errors (execute_script_task), and judged here with the
+     * values.
      *
      * Values with no number. A variable can also be read and have no
      * number for its value: "" when it is not defined after the script (a
@@ -1919,12 +1930,16 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
      *   - a diagnostic (declared only with --outvar) is "" or text -- NaN
      *     in outvar.tadah -- and the evaluation keeps its loss; its own line
      *     says so, rate-limited like D17.
-     * Every variable at fault is named, in the order of outvar_errors, the
-     * line's variables, the hot and the fail variables, joined with "; ",
-     * so the first names the failure (only the first was named before: a
-     * script with several bad variables was put right one run at a time).
-     * The role in the message names the probe's line ("PC_FAILPROBE
-     * --outvar S"); the heads of the lines are the same for every line. */
+     * Every variable at fault is named, with its read-back error or why
+     * its value has no number, in one order: the line's variables, then the
+     * hot, then the fail variables, each group in the line's order, joined
+     * with "; ", so the first names the failure. Only the first was named
+     * (a script with several bad variables was put right one run at a
+     * time); then, while a --hotvar or --failvar read error failed the task
+     * in the worker, only those; and the line's read errors came before its
+     * values without a number. The role in the message names the probe's
+     * line ("PC_FAILPROBE --outvar S"); the heads of the lines are the same
+     * for every line. */
     PcTaskStatus status = tres.status;
     std::string error_msg = tres.error_msg;
     std::vector<double> hot_value(lsim.hotvars.size(), 0.0);
@@ -1939,9 +1954,14 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
           lsim.is_failprobe ? "PC_FAILPROBE --outvar " : "--varloss ";
       const std::string outvar_role =
           lsim.is_failprobe ? "PC_FAILPROBE --outvar " : "--outvar ";
-      auto read_error = [&](std::size_t j) -> const std::string& {
+      /* The read-back error of variable j of a kind, "" when it was read. */
+      auto error_of = [](const std::vector<std::string>& errors,
+                         std::size_t j) -> const std::string& {
         static const std::string none;
-        return tres.outvar_errors.empty() ? none : tres.outvar_errors[j];
+        return errors.empty() ? none : errors[j];
+      };
+      auto read_error = [&](std::size_t j) -> const std::string& {
+        return error_of(tres.outvar_errors, j);
       };
       /* Why @p s gives no (finite, when @p finite) number, "" when it gives
        * one, which goes to @p v. */
@@ -1964,24 +1984,29 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
                      name + " after the script: " + why;
         at_fault = true;
       };
-      for (std::size_t j = 0; j < lsim.n_outvar.size(); ++j)
-        if (in_loss(j) && !read_error(j).empty())
-          fail_task(loss_role, lsim.n_outvar[j], read_error(j));
+      /* Its read-back error, or why its value has no number (each
+       * variable named once). */
+      auto judge = [&](const std::string& error, const std::string& value,
+                       double& v, bool finite) {
+        return error.empty() ? no_number(value, v, finite) : error;
+      };
       for (std::size_t j = 0; j < lsim.n_outvar.size(); ++j) {
-        /* a value that could not be read is named once, above */
-        if (!in_loss(j) || !read_error(j).empty()) continue;
+        if (!in_loss(j)) continue;
         double v = 0.0;
-        const std::string why = no_number(tres.outvar_values[j], v, false);
+        const std::string why =
+            judge(read_error(j), tres.outvar_values[j], v, false);
         if (!why.empty()) fail_task(loss_role, lsim.n_outvar[j], why);
       }
       for (std::size_t j = 0; j < lsim.hotvars.size(); ++j) {
         const std::string why =
-            no_number(tres.hotvar_values[j], hot_value[j], false);
+            judge(error_of(tres.hotvar_errors, j), tres.hotvar_values[j],
+                  hot_value[j], false);
         if (!why.empty()) fail_task("--hotvar ", lsim.hotvars[j].name, why);
       }
       for (std::size_t j = 0; j < lsim.failvars.size(); ++j) {
         const std::string why =
-            no_number(tres.failvar_values[j], fail_value[j], true);
+            judge(error_of(tres.failvar_errors, j), tres.failvar_values[j],
+                  fail_value[j], true);
         if (!why.empty()) fail_task("--failvar ", lsim.failvars[j].name, why);
       }
       if (at_fault) {

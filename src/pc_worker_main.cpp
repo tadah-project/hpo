@@ -176,7 +176,9 @@ int pc_worker_main(int /*argc*/, char** /*argv*/) {
       w.vstr(res.outvar_values);
       w.vstr(res.outvar_errors);    /* protocol v3 */
       w.vstr(res.hotvar_values);
+      w.vstr(res.hotvar_errors);    /* protocol v4 */
       w.vstr(res.failvar_values);   /* protocol v2 */
+      w.vstr(res.failvar_errors);   /* protocol v4 */
       w.f64(res.create_ms);
       w.f64(res.run_ms);
       pcwire::send_frame(kFd, FrameType::RESULT, w.buf);
