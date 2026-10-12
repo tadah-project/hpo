@@ -251,32 +251,9 @@ endforeach()
 # of tadah.hpo has Eigen/Dense ..."), and a build with TADAH_ENABLE_CERES OFF
 # stopped compiling tadah.hpo ("adjoint_solver.h:4:10: fatal error:
 # Eigen/Dense: No such file or directory").
-include(FetchContent)
+include(${CMAKE_CURRENT_SOURCE_DIR}/configure_without_ceres/no_ceres_preset.cmake)
 set(_hpo_no_ceres_dir ${CMAKE_CURRENT_BINARY_DIR}/configure_without_ceres)
-set(_hpo_no_ceres_cache
-    "# Written by HPO/tests/CMakeLists.txt for hpo_configure_without_ceres.\n")
-foreach(_dep tadah_cmake Tadah.CORE Tadah.MODELS Tadah.MLIP Tadah.MD
-             tadah.lammps gemmi json dlib Eigen3 nlopt)
-    FetchContent_GetProperties(${_dep} SOURCE_DIR _dep_src)
-    if(_dep_src)
-        string(TOUPPER "${_dep}" _dep_up)
-        string(APPEND _hpo_no_ceres_cache
-            "set(FETCHCONTENT_SOURCE_DIR_${_dep_up} [==[${_dep_src}]==] CACHE PATH \"\")\n")
-    endif()
-endforeach()
-foreach(_var CMAKE_MAKE_PROGRAM CMAKE_C_COMPILER CMAKE_CXX_COMPILER
-             CMAKE_BUILD_TYPE BUILD_SHARED_LIBS TADAH_LAMMPS_DIR
-             TADAH_LAMMPS_LIB TADAH_LAMMPS_LIBS TADAH_GIT_BRANCH)
-    if(DEFINED ${_var})
-        string(APPEND _hpo_no_ceres_cache
-            "set(${_var} [==[${${_var}}]==] CACHE STRING \"\")\n")
-    endif()
-endforeach()
-string(APPEND _hpo_no_ceres_cache
-    "set(FETCHCONTENT_FULLY_DISCONNECTED ON CACHE BOOL \"\")\n"
-    "set(TADAH_ENABLE_CERES OFF CACHE BOOL \"\")\n"
-    "set(BUILD_TESTING OFF CACHE BOOL \"\")\n")
-file(WRITE ${_hpo_no_ceres_dir}/preset.cmake "${_hpo_no_ceres_cache}")
+hpo_write_no_ceres_preset(${_hpo_no_ceres_dir}/preset.cmake)
 cmake_path(SET _hpo_source_dir NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_test(NAME hpo_configure_without_ceres
     COMMAND ${CMAKE_COMMAND}
