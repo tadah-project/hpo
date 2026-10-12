@@ -123,10 +123,10 @@ void require_driver(const OptimizerSpec& s, DriverPhase phase)
 {
     const std::string missing = missing_driver(s);
     if (missing.empty()) {
-        reject_refused_backend(s.lib, s.algo,
-                               phase == DriverPhase::Explore
-                                   ? std::string(kExploreBlock)
-                                   : run_phase_name(s));
+        require_registered_backend(s.lib, s.algo,
+                                   phase == DriverPhase::Explore
+                                       ? std::string(kExploreBlock)
+                                       : run_phase_name(s));
         return;
     }
     if (phase == DriverPhase::Explore)
@@ -157,8 +157,8 @@ void require_inner_driver(const OptimizerSpec& s, const std::string& enclosing)
 {
     const std::string missing = missing_driver(s);
     if (missing.empty()) {
-        reject_refused_backend(s.lib, s.algo,
-                               "the INNER block inside " + enclosing);
+        require_registered_backend(s.lib, s.algo,
+                                   "the INNER block inside " + enclosing);
         return;
     }
     throw std::runtime_error(
@@ -310,21 +310,22 @@ void validate_run_policy(const OptimizerSpec& spec)
 void reject_refused_backends(const OptimizerSpec& spec)
 {
     /* validate_run_policy()'s order: the exploration, the STRATEGY-level
-     * optimiser, its INNER block, the exploration's INNER block. */
+     * optimiser, its INNER block, the exploration's INNER block. A block
+     * without LIB or ALGO ("NOT SET") is require_driver()'s to report. */
+    const auto check = [](const OptimizerSpec& s, const std::string& where) {
+        if (!missing_driver(s).empty()) return;
+        require_registered_backend(s.lib, s.algo, where);
+    };
     const OptimizerSpec* explore =
         spec.strategy_type == StrategyType::PRESTAGE ? spec.prestage.get()
                                                      : nullptr;
     const std::string run = run_phase_name(spec);
-    if (explore)
-        reject_refused_backend(explore->lib, explore->algo, kExploreBlock);
-    reject_refused_backend(spec.lib, spec.algo, run);
-    if (spec.inner)
-        reject_refused_backend(spec.inner->lib, spec.inner->algo,
-                               "the INNER block of " + run);
+    if (explore) check(*explore, kExploreBlock);
+    check(spec, run);
+    if (spec.inner) check(*spec.inner, "the INNER block of " + run);
     if (explore && explore->inner)
-        reject_refused_backend(explore->inner->lib, explore->inner->algo,
-                               std::string("the INNER block of ") +
-                                   kExploreBlock);
+        check(*explore->inner,
+              std::string("the INNER block of ") + kExploreBlock);
 }
 
 bool is_strategy_type_key(const std::string& key)

@@ -204,7 +204,8 @@ if(TADAH_HPO_MPI)
         "TADAH_MPIEXEC=${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1")
 endif()
 set(_hpo_tadah_cli_cases seed_anchor_warm seed_anchor_nlopt durable_exit
-                         pc_readback pc_lammps_local_search pc_lammps_verbose)
+                         pc_readback pc_lammps_local_search pc_lammps_verbose
+                         kernel_line_once kernel_line_two_runs)
 foreach(_case IN LISTS _hpo_tadah_cli_cases)
     add_test(NAME hpo_tadah_cli_${_case}
         COMMAND test_hpo "[.tadah_cli_${_case}]" --warn NoTests)
@@ -237,6 +238,60 @@ foreach(_case old current)
         LABELS cmake
         TIMEOUT 120)
 endforeach()
+# hpo_configure_without_ceres: HPO configured without Ceres
+# (TADAH_ENABLE_CERES OFF) gives tadah.hpo Eigen all the same, which its
+# public headers adjoint_solver.h, lammps_hessian.h, observable_registry.h
+# and sims_grad.h include in every build
+# (configure_without_ceres/check_configure_without_ceres.cmake). HPO is
+# configured once more, without Ceres and without tests, from this build's
+# cache and the source directories of its dependencies (the initial cache
+# hpo_write_no_ceres_preset() writes here, configure_without_ceres/
+# no_ceres_preset.cmake; FETCHCONTENT_FULLY_DISCONNECTED, nothing is
+# downloaded; the environment is CTest's), and the check
+# reads its codemodel (CMake's file API): no ceres target, no
+# TADAH_USE_CERES, and an include directory of tadah.hpo that has
+# Eigen/Dense. Before the fix: Eigen was fetched only with Ceres and linked
+# only when its target existed, so the check fails ("no include directory
+# of tadah.hpo has Eigen/Dense ..."), and a build with TADAH_ENABLE_CERES OFF
+# stopped compiling tadah.hpo ("adjoint_solver.h:4:10: fatal error:
+# Eigen/Dense: No such file or directory").
+include(${CMAKE_CURRENT_SOURCE_DIR}/configure_without_ceres/no_ceres_preset.cmake)
+set(_hpo_no_ceres_dir ${CMAKE_CURRENT_BINARY_DIR}/configure_without_ceres)
+hpo_write_no_ceres_preset(${_hpo_no_ceres_dir}/preset.cmake)
+cmake_path(SET _hpo_source_dir NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/..")
+add_test(NAME hpo_configure_without_ceres
+    COMMAND ${CMAKE_COMMAND}
+        -DHPO_DIR=${_hpo_source_dir}
+        -DPRESET=${_hpo_no_ceres_dir}/preset.cmake
+        "-DGENERATOR=${CMAKE_GENERATOR}"
+        -DWORK_DIR=${_hpo_no_ceres_dir}/work
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/configure_without_ceres/check_configure_without_ceres.cmake)
+set_tests_properties(hpo_configure_without_ceres PROPERTIES
+    LABELS cmake
+    TIMEOUT 300)
+# hpo_configure_without_ceres_preset: a configure from the preset that
+# hpo_write_no_ceres_preset() writes sees what the configure that wrote it
+# saw (configure_without_ceres/check_no_ceres_preset.cmake, on a throw-away
+# pair of projects): a package found only through -DCMAKE_PREFIX_PATH, an
+# option of the build, a dependency given as FETCHCONTENT_SOURCE_DIR_<NAME>
+# and one populated under FETCHCONTENT_BASE_DIR that none names; a
+# FETCHCONTENT_BASE_DIR of its own; TADAH_ENABLE_CERES OFF, BUILD_TESTING
+# OFF and FETCHCONTENT_FULLY_DISCONNECTED ON whatever the build has. Before
+# the fix: the preset held a fixed list (11 dependency names, compilers,
+# build tool and type, LAMMPS paths, TADAH_GIT_BRANCH), so the configure
+# from it did not find the package ("Could not find a package configuration
+# file provided by \"TadahProbeDep\""), and hpo_configure_without_ceres
+# failed in a valid build that finds a dependency through such a hint.
+add_test(NAME hpo_configure_without_ceres_preset
+    COMMAND ${CMAKE_COMMAND}
+        -DMODULE=${CMAKE_CURRENT_SOURCE_DIR}/configure_without_ceres/no_ceres_preset.cmake
+        "-DGENERATOR=${CMAKE_GENERATOR}"
+        -DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
+        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/configure_without_ceres/preset_check
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/configure_without_ceres/check_no_ceres_preset.cmake)
+set_tests_properties(hpo_configure_without_ceres_preset PROPERTIES
+    LABELS cmake
+    TIMEOUT 120)
 add_test(NAME hpo_anneal_registry_sync
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/../blueprint/gen_anneal_keys.py
@@ -304,6 +359,47 @@ add_test(NAME hpo_vendored_boost_gate_tool
         ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_check_vendored_boost.py)
 set_tests_properties(hpo_vendored_boost_gate_tool PROPERTIES
     TIMEOUT 60)
+
+# The vendored ASA's upstream files keep their bytes, CRLF line endings
+# included: the TADAH-PATCH hunks of asa.c are written in them
+# (external/asa/TADAH-PATCHES.md; check_vendored_asa.py).
+# hpo_vendored_asa_line_endings: every line of asa.c, asa.h, asa_usr_asa.h,
+# ASA-LICENSE, ASA-NOTES and ASA-README.txt ends in CRLF. Before the fix:
+# passes as well (a pin of the bytes; hpo_vendored_asa_gate_tool shows it
+# fails on an LF or mixed file).
+add_test(NAME hpo_vendored_asa_line_endings
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/check_vendored_asa.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set_tests_properties(hpo_vendored_asa_line_endings PROPERTIES
+    TIMEOUT 60)
+# hpo_vendored_asa_gitattributes: with HPO's .gitattributes, git stores those
+# files' bytes unchanged under core.autocrlf=input, core.autocrlf=true and a
+# global attributes file '* text eol=lf' (git add --renormalize, and git add
+# of an edit, in a scratch repository). Skipped when CMake finds no git; one
+# --git=<path> token: MLIP's add_test() drops an empty argument.
+# Before the fix: fails, every file under each setting ("attributes read:
+# none"): nothing kept git from converting the CRLF endings to LF, which would
+# have rewritten every line of asa.c.
+find_package(Git QUIET)
+add_test(NAME hpo_vendored_asa_gitattributes
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/check_vendored_asa.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/..
+        --git=${GIT_EXECUTABLE})
+set_tests_properties(hpo_vendored_asa_gitattributes PROPERTIES
+    TIMEOUT 120
+    SKIP_RETURN_CODE 77)
+# The gate itself, on fake trees (tests/test_check_vendored_asa.py); its git
+# cases are skipped without git (GIT), and the entry is then Skipped.
+# Before the fix: passes as well (the gate's own unit test).
+add_test(NAME hpo_vendored_asa_gate_tool
+    COMMAND ${CMAKE_COMMAND} -E env GIT=${GIT_EXECUTABLE}
+        ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_check_vendored_asa.py)
+set_tests_properties(hpo_vendored_asa_gate_tool PROPERTIES
+    TIMEOUT 120
+    SKIP_REGULAR_EXPRESSION "\nOK \\(skipped=[0-9]+"
+    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
 
 if(TADAH_HPO_MPI)
     add_executable(test_hpo_anneal_mpi mpi/test_anneal_mpi.cpp)

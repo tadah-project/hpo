@@ -237,6 +237,27 @@ enum class RepeatUse {
     Evaluate  ///< the point is evaluated again
 };
 
+/** How a call that asks `with_gradient` at a point the search has recorded
+ *  -- a usable loss, and a gradient formed there when `has_gradient` -- is
+ *  answered, when the run allows a reuse (`reuse`, RepeatPolicy::reuse:
+ *  every evaluation of the run is a function of its point) or not, under
+ *  GRAD_STRATEGY `strategy`: from the record when the run allows it and
+ *  the record has what the call asks for; its loss as the centre of the
+ *  finite differences when only the gradient is missing and GRAD_STRATEGY
+ *  is NUMERICAL (which takes the loss at the point from the caller and
+ *  evaluates the stencil alone); else evaluated (ANALYTICAL and HYBRID
+ *  differentiate the last evaluation). The one rule of RepeatPoints::use
+ *  and of the startup budget warning (gradient_budget_warnings,
+ *  backend_rules.h), which counts the evaluations a run spends. */
+inline RepeatUse repeat_use(bool reuse, GradStrategy strategy,
+                            bool with_gradient, bool has_gradient)
+{
+    if (!reuse) return RepeatUse::Evaluate;
+    if (!with_gradient || has_gradient) return RepeatUse::Record;
+    return strategy == GradStrategy::Numerical ? RepeatUse::Centre
+                                               : RepeatUse::Evaluate;
+}
+
 /** The run's number of the host's latest evaluation (HPO_Host's counter,
  *  the ITERATION column of the per-eval files), for a host that keeps one.
  *  Read right after an evaluation of a serial search. */
@@ -330,13 +351,12 @@ public:
      *  its point and the record has what the call asks for; its loss as the
      *  centre of the finite differences when only the gradient is missing
      *  and GRAD_STRATEGY is NUMERICAL (which takes the loss at the point
-     *  from the caller and evaluates the stencil alone); else evaluated. */
+     *  from the caller and evaluates the stencil alone); else evaluated
+     *  (repeat_use). */
     RepeatUse use(const Entry& e, bool with_gradient) const
     {
-        if (!policy_.reuse) return RepeatUse::Evaluate;
-        if (!with_gradient || e.has_gradient) return RepeatUse::Record;
-        return strategy_ == GradStrategy::Numerical ? RepeatUse::Centre
-                                                    : RepeatUse::Evaluate;
+        return repeat_use(policy_.reuse, strategy_, with_gradient,
+                          e.has_gradient);
     }
 
     /** Counts and journals a call at `x` answered from `e` (`how` Record or

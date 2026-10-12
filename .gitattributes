@@ -1,0 +1,12 @@
+# The upstream files of the vendored ASA keep upstream's CRLF line endings,
+# in which the TADAH-PATCH hunks of asa.c are written
+# (external/asa/TADAH-PATCHES.md): git converts none of their line endings,
+# whatever core.autocrlf or a global attributes file asks for; diffs stay
+# textual. Checked by hpo_vendored_asa_line_endings and
+# hpo_vendored_asa_gitattributes (tests/check_vendored_asa.py).
+external/asa/asa.c          -text
+external/asa/asa.h          -text
+external/asa/asa_usr_asa.h  -text
+external/asa/ASA-LICENSE    -text
+external/asa/ASA-NOTES      -text
+external/asa/ASA-README.txt -text

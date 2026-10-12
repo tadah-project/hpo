@@ -49,6 +49,14 @@
 //     hpo_tadah_cli_pc_lammps_verbose, the same harness): the potential a
 //     PC_LAMMPS script runs follows the run's VERBOSE (-v 0: a kernel
 //     model prints no line when it is built for the script).
+//   - [.tadah_cli_kernel_line_once] (CTest entry
+//     hpo_tadah_cli_kernel_line_once, the same harness): at -v 1 a kernel's
+//     settings line is printed once per run, not once per model the run
+//     builds, under PC_ISOLATION THREAD and PROCESS.
+//   - [.tadah_cli_kernel_line_two_runs] (CTest entry
+//     hpo_tadah_cli_kernel_line_two_runs, the built tadah on a task file):
+//     each of two TASK hpo blocks prints the settings line of its own -c
+//     model once.
 
 #include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 
@@ -1183,6 +1191,219 @@ TEST_CASE("a --hotvar or --failvar with text after its number fails the "
     }
 }
 
+/* Pins: the journal line of a task with several hot and fail values
+ * without a number names every one, in the order the host judges them --
+ * the hot values, then the fail values --, the first first, so it still
+ * names the failure: a hot script whose hot_a0 is '3.25abc', hot_b 'xyz'
+ * and --failvar viol '0.5abc' fails the evaluation (FAILSCORE, E and E2
+ * failscored, the cold script not run) with "PC_LAMMPS task failed
+ * (<dir>/hot.in, occurrence 1): reading --hotvar hot_a0 after the script:
+ * its value '3.25abc' is not a number; reading --hotvar hot_b after the
+ * script: its value 'xyz' is not a number; reading --failvar viol after
+ * the script: its value '0.5abc' is not a number".
+ * Before the fix: the line ended after hot_a0's clause (the judgement
+ * stopped at the first variable at fault), so hot_b's and viol's clauses
+ * are not found. */
+TEST_CASE("every hot and fail value without a number is journalled, the "
+          "first first", "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ScratchDir sd("tadah_pc_every_bad_var_");
+    std::ofstream(sd.dir / "hot.in")
+        << ta_script("${hot_a0}", "variable E equal pe\n"
+                                  "variable hot_a0 equal 3.25\n"
+                                  "variable hot_b equal 1.5\n"
+                                  "variable viol equal 0.0\n" +
+                                      respell("hot_a0", "3.25abc") +
+                                      respell("hot_b", "xyz") +
+                                      respell("viol", "0.5abc"));
+    std::ofstream(sd.dir / "cold.in")
+        << ta_script("${hot_a0}", "variable E2 equal pe\n");
+    Journal j;
+    const auto losses = evaluate(
+        sd.dir,
+        "PC_ERMSE 0 1\n"
+        "PC_LAMMPS --script " + (sd.dir / "hot.in").string() +
+            " --varloss E 0 1 --hotvar hot_a0 2.5 4.5 3.301"
+            " --hotvar hot_b 0 10 1.5 --failvar viol 1.0\n"
+        "PC_LAMMPS --script " + (sd.dir / "cold.in").string() +
+            " --varloss E2 0 1\n",
+        {0.5});
+    const std::string journal = j.finish();
+    INFO(journal);
+    REQUIRE(losses.size() == 1);
+    CHECK(losses[0] == 1e16);
+    const Table outv = read_table("outvar.tadah");
+    REQUIRE(outv.rows.size() == 1);
+    REQUIRE(outv.rows[0].size() == 6);
+    CHECK(outv.rows[0][4] == "1.000000e+16");
+    CHECK(outv.rows[0][5] == "1.000000e+16");
+    const std::string line = line_with(journal, "hot.in, occurrence 1): ");
+    CHECK_THAT(line,
+               Catch::Contains("PC_LAMMPS task failed (") &&
+               Catch::Contains("hot.in, occurrence 1): "
+                               "reading --hotvar hot_a0 after the script: its "
+                               "value '3.25abc' is not a number; reading "
+                               "--hotvar hot_b after the script: its value "
+                               "'xyz' is not a number; reading --failvar viol "
+                               "after the script: its value '0.5abc' is not a "
+                               "number"));
+    CHECK(journal.find("cold.in, occurrence") == std::string::npos);
+    Host::reset_globals_for_test();
+}
+
+/* Pins: the journal line of a task names every variable at fault whichever
+ * side found it -- the LAMMPS error raised by reading one back (found as it
+ * is read) or a value without a number (found as it is judged) --, in one
+ * order: the line's variables (--varloss), then the --hotvar, then the
+ * --failvar variables, each group in its line's order, joined with "; ":
+ *   - --varloss E 'abc', --failvar F1 = 1.0/(pe-pe) (a divide by zero),
+ *     --failvar F2 'xyz' (tmp/review/readback_mix): "PC_LAMMPS task failed
+ *     (<dir>/rb.in, occurrence 1): reading --varloss E after the script:
+ *     its value 'abc' is not a number; reading --failvar F1 after the
+ *     script: <LAMMPS divide by 0>; reading --failvar F2 after the script:
+ *     its value 'xyz' is not a number";
+ *   - a hot script whose --varloss E and --hotvar hot_a0 read `press` and
+ *     whose --hotvar hot_b is 'xyz' (tmp/review/readback_mixed2): "reading
+ *     --varloss E after the script: <press error>; reading --hotvar hot_a0
+ *     after the script: <press error>; reading --hotvar hot_b after the
+ *     script: its value 'xyz' is not a number", the cold script not run;
+ *   - --varloss E 'abc' then --varloss G reading `press`: E's clause first,
+ *     then G's.
+ * Each evaluation fails (FAILSCORE, its variables failscored).
+ * Before the fix: a --hotvar or --failvar whose read raised a LAMMPS error
+ * failed the task in the worker, which handed on no other value, and the
+ * parent judged nothing else: the first two lines named F1 alone and
+ * hot_a0 alone (E, F2 and hot_b missing); and the loss variables' read
+ * errors came before their values without a number, so the third named G
+ * first. The clause and order checks fail. */
+TEST_CASE("every variable at fault in a task is journalled, the line's, then "
+          "the hot, then the fail ones, whichever side found it",
+          "[pc_readback_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    /* The journal entry that contains @p needle: from its "PC_LAMMPS task
+     * failed (" to the next timestamped entry. A LAMMPS message carries a
+     * line of its own ("Last input line: ..."), which the journal prints as
+     * a continuation line of the entry. */
+    auto entry = [](const std::string& journal, const std::string& needle) {
+        const std::size_t at = journal.find(needle);
+        if (at == std::string::npos) return std::string();
+        const std::size_t head = journal.rfind("PC_LAMMPS task failed (", at);
+        const std::size_t from = head == std::string::npos ? at : head;
+        const std::size_t to = journal.find("\n  [", at);
+        return journal.substr(from, to == std::string::npos ? std::string::npos
+                                                           : to - from);
+    };
+    /* The clauses @p clauses, in this order, in the entry @p text. */
+    auto check_clauses = [](const std::string& text,
+                            const std::vector<std::string>& clauses) {
+        INFO(text);
+        CHECK_THAT(text, Catch::StartsWith("PC_LAMMPS task failed ("));
+        std::size_t at = 0;
+        for (const std::string& c : clauses) {
+            INFO(c);
+            const std::size_t p = text.find(c, at);
+            CHECK(p != std::string::npos);
+            if (p != std::string::npos) at = p + c.size();
+        }
+    };
+    SECTION("a --varloss without a number and a --failvar read error") {
+        Host::reset_globals_for_test();
+        ScratchDir sd("tadah_pc_mixed_fail_");
+        std::ofstream(sd.dir / "rb.in")
+            << ta_script("3.301", "variable E equal pe\n"
+                                  "variable F1 equal 1.0/(pe-pe)\n"
+                                  "variable F2 equal 0.0\n" +
+                                      respell("E", "abc") +
+                                      respell("F2", "xyz"));
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir,
+            "PC_ERMSE 0 1\n"
+            "PC_LAMMPS --script " + (sd.dir / "rb.in").string() +
+                " --varloss E 0 1 --failvar F1 1.0 --failvar F2 1.0\n",
+            {0.5});
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] == 1e16);
+        check_clauses(entry(journal, "rb.in, occurrence 1): "),
+                      {"rb.in, occurrence 1): reading --varloss E after the "
+                       "script: its value 'abc' is not a number; ",
+                       "reading --failvar F1 after the script: ",
+                       kDivideError.lammps_text,
+                       "; reading --failvar F2 after the script: its value "
+                       "'xyz' is not a number"});
+        Host::reset_globals_for_test();
+    }
+    SECTION("a --varloss and a --hotvar read error and a --hotvar without a "
+            "number") {
+        Host::reset_globals_for_test();
+        ScratchDir sd("tadah_pc_mixed_hot_");
+        std::ofstream(sd.dir / "hot.in")
+            << ta_script("${hot_a0}", "variable E equal press\n"
+                                      "variable hot_a0 equal press\n"
+                                      "variable hot_b equal 1.5\n" +
+                                          respell("hot_b", "xyz"));
+        std::ofstream(sd.dir / "cold.in")
+            << ta_script("${hot_a0}", "variable E2 equal pe\n");
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir,
+            "PC_ERMSE 0 1\n"
+            "PC_LAMMPS --script " + (sd.dir / "hot.in").string() +
+                " --varloss E 0 1 --hotvar hot_a0 2.5 4.5 3.301"
+                " --hotvar hot_b 0 10 1.5\n"
+            "PC_LAMMPS --script " + (sd.dir / "cold.in").string() +
+                " --varloss E2 0 1\n",
+            {0.5});
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] == 1e16);
+        const Table outv = read_table("outvar.tadah");
+        REQUIRE(outv.rows.size() == 1);
+        REQUIRE(outv.rows[0].size() == 6);
+        CHECK(outv.rows[0][4] == "1.000000e+16");
+        CHECK(outv.rows[0][5] == "1.000000e+16");
+        check_clauses(entry(journal, "hot.in, occurrence 1): "),
+                      {"hot.in, occurrence 1): reading --varloss E after the "
+                       "script: ",
+                       kPressError.lammps_text,
+                       "; reading --hotvar hot_a0 after the script: ",
+                       kPressError.lammps_text,
+                       "; reading --hotvar hot_b after the script: its value "
+                       "'xyz' is not a number"});
+        CHECK(journal.find("cold.in, occurrence") == std::string::npos);
+        Host::reset_globals_for_test();
+    }
+    SECTION("the line's variables in the line's order") {
+        Host::reset_globals_for_test();
+        ScratchDir sd("tadah_pc_mixed_loss_");
+        std::ofstream(sd.dir / "rb.in")
+            << ta_script("3.301", "variable E equal pe\n"
+                                  "variable G equal press\n" +
+                                      respell("E", "abc"));
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir,
+            "PC_ERMSE 0 1\n"
+            "PC_LAMMPS --script " + (sd.dir / "rb.in").string() +
+                " --varloss E 0 1 --varloss G 0 1\n",
+            {0.5});
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 1);
+        CHECK(losses[0] == 1e16);
+        check_clauses(entry(journal, "rb.in, occurrence 1): "),
+                      {"rb.in, occurrence 1): reading --varloss E after the "
+                       "script: its value 'abc' is not a number; reading "
+                       "--varloss G after the script: ",
+                       kPressError.lammps_text});
+        Host::reset_globals_for_test();
+    }
+}
+
 namespace {
 
 /* TMPDIR for the life of the object, restored (or unset) after. */
@@ -1757,7 +1978,8 @@ std::string sci6(double v) {
  *     1.0 (viol = 0.25): the failvar grades the failure, band B by
  *     sigma(0.25), TOTAL_LOSS/N 9.993000e+15, exit 1;
  *   - the same with viol = 1.0/(pe-pe): "PC_LAMMPS task failed
- *     (readback.in, occurrence 1): reading --failvar viol after the
+ *     (readback.in, occurrence 1): reading --varloss E after the script:
+ *     ERROR: Thermo keyword press ...; reading --failvar viol after the
  *     script: ERROR: ... Divide by 0", band B by the failed fraction (one of
  *     one script), TOTAL_LOSS/N 9.993750e+15, exit 1;
  *   - a hot value LAMMPS refuses to inject into the cold script (its line's
@@ -1769,6 +1991,14 @@ std::string sci6(double v) {
  *     (readback.in, occurrence 1): reading --varloss F after the script: no
  *     value (the variable is not defined, or has no single value)", E and F
  *     failscored, TOTAL_LOSS/N 1.000000e+16;
+ *   - --varloss F 'abc', --hotvar hot_a0 reading `press` and --failvar viol
+ *     = 1.0/(pe-pe), with a cold script that reads hot_a0: exit 1, one
+ *     line naming the three in the line's order, "PC_LAMMPS task failed
+ *     (readback.in, occurrence 1): reading --varloss F after the script:
+ *     its value 'abc' is not a number; reading --hotvar hot_a0 after the
+ *     script: ERROR: Thermo keyword press ...; reading --failvar viol after
+ *     the script: ... Divide by 0 ...", E, F and E2 failscored, the cold
+ *     script not run, TOTAL_LOSS/N 1.000000e+16;
  *   - the same LAMMPS error inside the script with the line's --varloss E
  *     measured by L1: a failed evaluation all the same, exit 1,
  *     TOTAL_LOSS/N 1.000000e+16, no "[ok] Every evaluation produced a
@@ -1807,7 +2037,11 @@ std::string sci6(double v) {
  * gate." (a probe whose script failed aborted its evaluation then too).
  * Before the failed-evaluation fix the L1 section's evaluations scored the
  * mean of L2(ERMSE) and L1(1e16): TOTAL_LOSS/N 5.000000e+15, a feasible
- * loss, exit 0. */
+ * loss, exit 0. Before the every-variable fix the mixed section's line
+ * named hot_a0 and viol alone, in both modes, and the unreadable-failvar
+ * section's viol alone, "reading --failvar viol after the script: ..."
+ * (the worker failed the task on their read errors and handed on no other
+ * value): their first needles are not found. */
 TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
           "way under PC_ISOLATION THREAD and PROCESS",
           "[pc_readback][tadah_cli][.tadah_cli_pc_readback]") {
@@ -1923,7 +2157,8 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
              "--failvar viol 1.0\n",
              1,
              {"PC_LAMMPS task failed (readback.in, occurrence 1): "
-              "reading --failvar viol after the script: ",
+              "reading --varloss E after the script: " + press_text,
+              "; reading --failvar viol after the script: ",
               "Divide by 0 in variable formula"},
              {},
              sci6(graded_failscore(1e16, FailBand::B, 1.0, 1.0)),
@@ -1961,6 +2196,29 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
              "1.000000e+16",
              {{"E", "1.000000e+16"}, {"F", "1.000000e+16"}},
              {}};
+    }
+    SECTION("a --varloss, a --hotvar and a --failvar at fault together") {
+        name = "mixed";
+        c = {ta_script("3.301", "variable E equal pe\nvariable F equal pe+1\n"
+                                "variable hot_a0 equal press\n"
+                                "variable viol equal 1.0/(pe-pe)\n" +
+                                    respell("F", "abc")),
+             "PC_LAMMPS --script readback.in --varloss E 0 1 --varloss F 0 1 "
+             "--hotvar hot_a0 2.5 4.5 3.301 --failvar viol 1.0\n"
+             "PC_LAMMPS --script cold.in --varloss E2 0 1\n",
+             1,
+             {"PC_LAMMPS task failed (readback.in, occurrence 1): reading "
+              "--varloss F after the script: its value 'abc' is not a "
+              "number; reading --hotvar hot_a0 after the script: " +
+                  press_text,
+              "; reading --failvar viol after the script: ",
+              "Divide by 0 in variable formula",
+              "no evaluation produced a usable loss"},
+             {"cold.in, occurrence"},
+             "1.000000e+16",
+             {{"E", "1.000000e+16"}, {"F", "1.000000e+16"},
+              {"E2", "1.000000e+16"}},
+             {{"cold.in", "clear\nunits metal\nvariable E2 equal ${hot_a0}\n"}}};
     }
     SECTION("a LAMMPS error inside the script under --varloss ... L1") {
         name = "script_l1";
@@ -2285,5 +2543,158 @@ TEST_CASE("tadah hpo: the PC_LAMMPS potential is built at the run's VERBOSE",
         REQUIRE(WIFEXITED(rc));
         CHECK(WEXITSTATUS(rc) == 0);
         CHECK(count_lines_with(dir / "tadah.stdout", "Kern_RBF |") > 0);
+    }
+}
+
+namespace {
+
+/* N of the journal line "PC_ISOLATION: PROCESS -- pc_lammps tasks execute
+ * in N persistent worker processes ...", or -1 when @p journal has none. */
+long process_workers(const std::string& journal) {
+    const std::string head = "pc_lammps tasks execute in ";
+    const auto p = journal.find(head);
+    if (p == std::string::npos) return -1;
+    return std::strtol(journal.c_str() + p + head.size(), nullptr, 10);
+}
+
+}  // namespace
+
+/* Pins, through the built tadah: at VERBOSE 1 a tadah hpo run prints the
+ * line a kernel prints when it is built, "Kern_RBF | sigma: 1 | gamma: 1",
+ * once, however many models it builds (the -c model at startup, one per
+ * evaluation, and the potential each PC_LAMMPS script runs). M_KRR Kern_RBF
+ * 1 (kTaKernelModelKeys), RANDOM MAXEVAL 4, a PC_LAMMPS script, -v 1:
+ *   - PC_ISOLATION THREAD: exit 0, four evaluations in loss.tadah, and
+ *     tadah's stdout has exactly one "Kern_RBF |" line, the -c model's
+ *     settings;
+ *   - PC_ISOLATION PROCESS (not in the MPI build, which has no workers):
+ *     exit 0, four evaluations, the journal's "execute in N persistent
+ *     worker processes" with N >= 1, and again exactly one line: the worker
+ *     processes, which build the potentials of the scripts, print none.
+ * Before the fix: under PROCESS one line from tadah plus one from each
+ * worker process, 2 with one worker (a worker printed the line of the
+ * first potential it built); in the released code 9 lines in both modes,
+ * one at startup and two per evaluation (its model and its PC_LAMMPS
+ * potential). */
+TEST_CASE("tadah hpo: a kernel's settings line is printed once per run",
+          "[kernel_line_once][tadah_cli][.tadah_cli_kernel_line_once]") {
+    const char* bin = std::getenv("TADAH_BINARY");
+    if (!bin || !*bin)
+        TADAH_SKIP("TADAH_BINARY is not set: it names the built tadah "
+                   "executable");
+    REQUIRE(fs::exists(bin));
+    tadah::core::PeriodicTable::initialize();
+    ScratchDir sd("tadah_cli_kernel_line_");
+    const std::string target =
+        "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB TADAH\n"
+        "    ALGO RANDOM\n    MAXEVAL 4\n    SEED 1234\n  ENDSTRATEGY\n"
+        "ENDOPTIMIZER\nLOSS L2\nFAILSCORE 1e16\nPC_ERMSE 0 1\n"
+        "OPTIM CGRID2B (1) 0.0 4.0\n"
+        "PC_LAMMPS --script readback.in --varloss E 0 1\n";
+    const std::string script = ta_script("3.301", "variable E equal pe\n");
+    const std::string line = "Kern_RBF | sigma: 1 | gamma: 1";
+#ifdef TADAH_HPO_MPI
+    const std::vector<std::string> modes{"THREAD"};
+#else
+    const std::vector<std::string> modes{"THREAD", "PROCESS"};
+#endif
+    for (const std::string& mode : modes) {
+        INFO("-v 1, PC_ISOLATION " << mode);
+        const fs::path dir = sd.dir / ("v1_" + mode);
+        const int rc = run_tadah_hpo(bin, dir, mode, target, script, {}, "",
+                                     kTaKernelModelKeys, "-v 1");
+        INFO(read_text(dir / "tadah.stderr"));
+        const std::string journal = read_text(dir / "hpo_run.log");
+        INFO(journal);
+        REQUIRE(WIFEXITED(rc));
+        CHECK(WEXITSTATUS(rc) == 0);
+        CHECK(read_table(dir / "loss.tadah").rows.size() == 4);
+        INFO(read_text(dir / "tadah.stdout"));
+        if (mode == "PROCESS") CHECK(process_workers(journal) >= 1);
+        CHECK(count_lines_with(dir / "tadah.stdout", "Kern_RBF |") == 1);
+        CHECK(count_lines_with(dir / "tadah.stdout", line) == 1);
+    }
+}
+
+/* Pins, through the built tadah: two runs in one process, as two TASK hpo
+ * blocks of a task file run, each print the settings line of their own -c
+ * model once. The task file sets VERBOSE 1; run A trains M_KRR Kern_RBF 1
+ * from MPARAMS 1.0, run B from MPARAMS 2.0 (kTaKernelModelKeys otherwise),
+ * each RANDOM MAXEVAL 4 with a PC_LAMMPS script. Under PC_ISOLATION THREAD
+ * and PROCESS (THREAD alone in the MPI build): exit 0, and tadah's stdout
+ * has "Kern_RBF | sigma: 1 | gamma: 1" exactly once, "Kern_RBF | sigma: 2 |
+ * gamma: 0.25" exactly once, and no other "Kern_RBF |" line.
+ * Before the fix: the line was printed by the first kernel of its kind in
+ * each process and by no later one: under THREAD run B printed none
+ * (sigma: 2 zero times, one line in all, run A's); under PROCESS a worker
+ * process of each run printed the line of its first potential once more
+ * (sigma: 1 twice, sigma: 2 once, 3 lines). In the released code each
+ * model built printed it, 9 lines per run. */
+TEST_CASE("tadah hpo: each run of a task file prints its kernel's settings "
+          "line once",
+          "[kernel_line_once][tadah_cli][.tadah_cli_kernel_line_two_runs]") {
+    const char* bin = std::getenv("TADAH_BINARY");
+    if (!bin || !*bin)
+        TADAH_SKIP("TADAH_BINARY is not set: it names the built tadah "
+                   "executable");
+    REQUIRE(fs::exists(bin));
+    tadah::core::PeriodicTable::initialize();
+    ScratchDir sd("tadah_cli_kernel_line_runs_");
+    const std::string target =
+        "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB TADAH\n"
+        "    ALGO RANDOM\n    MAXEVAL 4\n    SEED 1234\n  ENDSTRATEGY\n"
+        "ENDOPTIMIZER\nLOSS L2\nFAILSCORE 1e16\nPC_ERMSE 0 1\n"
+        "OPTIM CGRID2B (1) 0.0 4.0\n"
+        "PC_LAMMPS --script readback.in --varloss E 0 1\n";
+    std::string keys_b = kTaKernelModelKeys;
+    const std::string mparams_a = "MPARAMS 1.0\n";
+    const auto at = keys_b.find(mparams_a);
+    REQUIRE(at != std::string::npos);
+    keys_b.replace(at, mparams_a.size(), "MPARAMS 2.0\n");
+#ifdef TADAH_HPO_MPI
+    const std::vector<std::string> modes{"THREAD"};
+#else
+    const std::vector<std::string> modes{"THREAD", "PROCESS"};
+#endif
+    for (const std::string& mode : modes) {
+        INFO("VERBOSE 1, two TASK hpo, PC_ISOLATION " << mode);
+        const fs::path dir = sd.dir / mode;
+        fs::create_directories(dir);
+        write_minimal_ta_dbfile(dir / "train.db", 0.0);
+        write_minimal_ta_dbfile(dir / "val.db", 0.07, -0.04);
+        std::ofstream(dir / "config.val") << "DBFILE val.db\n";
+        std::ofstream(dir / "config.a") << "DBFILE train.db\n"
+                                        << kTaKernelModelKeys;
+        std::ofstream(dir / "config.b") << "DBFILE train.db\n" << keys_b;
+        std::ofstream(dir / "readback.in")
+            << ta_script("3.301", "variable E equal pe\n");
+        std::ofstream(dir / "config.hpo") << target << "PC_ISOLATION " << mode
+                                          << "\n";
+        std::ofstream(dir / "runs.task")
+            << "VERBOSE 1\n"
+               "TASK hpo\n  CONFIG config.a\n  HPOTARGET config.hpo\n"
+               "  VALIDATION config.val\n"
+               "TASK hpo\n  CONFIG config.b\n  HPOTARGET config.hpo\n"
+               "  VALIDATION config.val\n";
+        /* As run_tadah_hpo runs it: under the MPI build's launcher, without
+         * TADAH_PC_ISOLATION. */
+        const char* launcher = std::getenv("TADAH_MPIEXEC");
+        const std::string cmd =
+            "cd '" + dir.string() + "' && " +
+            (launcher && *launcher ? std::string(launcher) + " "
+                                   : std::string()) +
+            "env -u TADAH_PC_ISOLATION '" + bin +
+            "' --task runs.task > tadah.stdout 2> tadah.stderr";
+        const int rc = std::system(cmd.c_str());
+        INFO(read_text(dir / "tadah.stderr"));
+        INFO(read_text(dir / "hpo_run.log"));
+        REQUIRE(WIFEXITED(rc));
+        CHECK(WEXITSTATUS(rc) == 0);
+        INFO(read_text(dir / "tadah.stdout"));
+        CHECK(count_lines_with(dir / "tadah.stdout",
+                               "Kern_RBF | sigma: 1 | gamma: 1") == 1);
+        CHECK(count_lines_with(dir / "tadah.stdout",
+                               "Kern_RBF | sigma: 2 | gamma: 0.25") == 1);
+        CHECK(count_lines_with(dir / "tadah.stdout", "Kern_RBF |") == 2);
     }
 }

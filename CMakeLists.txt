@@ -133,13 +133,14 @@ FetchContent_MakeAvailable(dlib)
 add_compile_definitions(TADAH_USE_DLIB)
 
 # ---------------------------------------------------------------------------
-# Ceres Solver — used by the CERES:LBFGS/WOLFE/NLCG/STEEPEST_DESCENT optimizer
-# family in HPO and by the unified GradientProvider (Ceres NumericDiff).
-# Block goes BEFORE nlopt so Ceres' fetched Eigen3 is in scope before nlopt's
-# own Eigen probe.
+# Eigen3 -- a dependency of tadah.hpo itself, with or without Ceres: the
+# public headers adjoint_solver.h, lammps_hessian.h, observable_registry.h
+# and sims_grad.h use its dense types (the PC_LAMMPS adjoint gradient, the
+# LAMMPS Hessian, the observables). OVERRIDE_FIND_PACKAGE: Ceres'
+# find_package(Eigen3) below finds this one.
 # ---------------------------------------------------------------------------
-if(NOT TADAH_BUILD_DOCS_ONLY AND TADAH_ENABLE_CERES)
-  message(STATUS "Fetching Eigen3 (Ceres dep)...")
+if(NOT TADAH_BUILD_DOCS_ONLY)
+  message(STATUS "Fetching Eigen3...")
   set(EIGEN_BUILD_DOC          OFF CACHE BOOL "" FORCE)
   set(EIGEN_BUILD_TESTING      OFF CACHE BOOL "" FORCE)
   set(EIGEN_BUILD_PKGCONFIG    OFF CACHE BOOL "" FORCE)
@@ -150,7 +151,15 @@ if(NOT TADAH_BUILD_DOCS_ONLY AND TADAH_ENABLE_CERES)
     OVERRIDE_FIND_PACKAGE
   )
   FetchContent_MakeAvailable(Eigen3)
+endif()
 
+# ---------------------------------------------------------------------------
+# Ceres Solver -- the CERES:LBFGS/WOLFE/NLCG/STEEPEST_DESCENT optimizer
+# family of tadah hpo and the compact fitter of tadah refit
+# (refit_compact_fitter.cpp). Without it (TADAH_ENABLE_CERES OFF) LIB CERES
+# is refused and tadah refit refuses REFIT_MODE compact.
+# ---------------------------------------------------------------------------
+if(NOT TADAH_BUILD_DOCS_ONLY AND TADAH_ENABLE_CERES)
   message(STATUS "Fetching Ceres Solver...")
   set(MINIGLOG                 ON  CACHE BOOL "" FORCE)
   set(GFLAGS                   OFF CACHE BOOL "" FORCE)
@@ -231,19 +240,20 @@ target_link_libraries(tadah.hpo PUBLIC tadah::compile_options )
 target_link_libraries(tadah.hpo PUBLIC nlopt)
 target_link_libraries(tadah.hpo PRIVATE tadah_asa)
 
-# Phase 3 LammpsHessianAssembler uses Eigen3 directly (already fetched
-# via the Ceres dependency block above). PUBLIC because the public
-# header lammps_hessian.h returns Eigen::MatrixXd.
-if(TARGET Eigen3::Eigen)
+# Eigen3 (fetched above, with or without Ceres). PUBLIC: the public headers
+# that use it (adjoint_solver.h, lammps_hessian.h, observable_registry.h,
+# sims_grad.h) are included by every consumer of tadah.hpo (test_hpo, the
+# tadah executable).
+if(NOT TADAH_BUILD_DOCS_ONLY)
     target_link_libraries(tadah.hpo PUBLIC Eigen3::Eigen)
 endif()
 
 if(TADAH_ENABLE_CERES)
-  # PUBLIC: gradient_provider.h is in tadah.hpo's public include, and
-  # downstream consumers (e.g. test_hpo, future drivers) need both the
-  # TADAH_USE_CERES define and the Ceres include directories to compile
-  # the templated factory's numerical branch.  When OFF, the header
-  # compiles to the autodiff-stub-only variant.
+  # PUBLIC: the public header ceres_adapter.h (included by
+  # run_policy_base.h) includes <ceres/ceres.h> under TADAH_USE_CERES, so
+  # every consumer (test_hpo, the tadah executable) needs both the define
+  # and the Ceres include directories. When OFF, the header has the
+  # Ceres-free part only, and LIB CERES is refused as not built.
   target_link_libraries     (tadah.hpo PUBLIC Ceres::ceres)
   target_compile_definitions(tadah.hpo PUBLIC TADAH_USE_CERES)
 

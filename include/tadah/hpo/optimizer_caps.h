@@ -31,8 +31,8 @@ struct OptimizerSpec;
  *                       util/rescale.c); rhobeg = |dx_0|, rhoend =
  *                       XTOL_REL*rhobeg
  *   MinCollapsed     -- the vector collapses to min_i |dx_i|
- *                       (LN_NEWUOA, LN_PRAXIS; LN_NEWUOA_BOUND too, which
- *                       is refused: backend_refusal())
+ *                       (LN_PRAXIS; LN_NEWUOA and LN_NEWUOA_BOUND too,
+ *                       which are refused: backend_refusal())
  *   TrustHalfWidth   -- per-dim initial trust-region half-width
  *                       (LD_MMA, LD_CCSAQ)
  *   ForwardedToInner -- copied onto the local sub-optimiser; an OUTER
@@ -163,18 +163,23 @@ struct OptimizerCaps {
      * runs with. */
     const char* default_inner = nullptr;
 
-    /* The backend evaluates outside the OPTIM box: LN_NEWUOA is called with
-     * lb=ub=NULL (nlopt optimize.c), CERES' GradientProblemSolver has no box
-     * constraints. Surfaced as a startup WARNING with bounds_note. */
+    /* The backend evaluates outside the OPTIM box: CERES'
+     * GradientProblemSolver has no box constraints (the four CERES drivers
+     * are the only such backends: NLopt's LN_NEWUOA, called with lb = ub =
+     * NULL, is refused). Surfaced as a startup WARNING with bounds_note. */
     bool        ignores_bounds = false;
     const char* bounds_note    = "";
 };
 
 /* Backends HPO refuses although their library offers them: a defect of
- * the library version HPO builds makes them unsafe to run (the refusal
- * table in optimizer_caps.cpp, each entry with its repro). A refused
- * backend is not registered, so filter_optimizer_caps() and every list of
- * alternatives leave it out, and find_optimizer_caps() returns nullptr.
+ * the library version HPO builds makes them unsafe to run, or they do not
+ * solve the problem HPO poses, one scalar loss inside the OPTIM box (the
+ * refusal table in optimizer_caps.cpp, each entry with its repro:
+ * NLOPT:LN_NEWUOA_BOUND, LN_NEWUOA, NLOPT_LD_LBFGS_NOCEDAL, and Ceres'
+ * least-squares solvers CERES:LEVENBERG_MARQUARDT, DOGLEG and
+ * SUBSPACE_DOGLEG). A refused backend is not registered, so
+ * filter_optimizer_caps() and every list of alternatives leave it out, and
+ * find_optimizer_caps() returns nullptr.
  *
  * backend_refusal(): why (lib, algo) is refused -- the reason, ending with
  * the backends to use instead -- or nullptr when it is not refused.
@@ -188,13 +193,31 @@ struct OptimizerCaps {
  * "the STRATEGY-level optimiser: NLOPT:LN_NEWUOA_BOUND is refused: NLopt
  * 2.10 plans each LN_NEWUOA_BOUND step with a nested LD_MMA run ...". */
 const char* backend_refusal(std::string_view lib, std::string_view algo);
+/* Every refused backend, "LIB:ALGO", sorted (the ALGO help's table). */
+std::vector<std::string> refused_backend_names();
 void reject_refused_backend(std::string_view lib, std::string_view algo,
                             const std::string& where = "");
 
-/* Lookup capabilities for (lib, algo). Throws std::runtime_error if the
- * (lib, algo) pair is refused (reject_refused_backend()'s text) or not
- * registered ("unknown optimizer LIB:ALGO (not registered in
- * optimizer_caps)"). The result refers to the static
+/* The libraries of the registered backends, sorted: ASA, CERES, DLIB,
+ * NLOPT, TADAH. */
+std::vector<std::string> optimizer_libraries();
+
+/* Throws std::runtime_error unless (lib, algo) is registered: the
+ * refusal of a refused one (reject_refused_backend()'s text), and for one
+ * neither registered nor refused "unknown optimiser LIB:ALGO: <why>;
+ * `tadah explain ALGO` lists the optimisers", <why> being "LIB NLOPT has
+ * no ALGO LD_FOO" for a library of optimizer_libraries() and "there is no
+ * LIB FOO (LIB is ASA, CERES, DLIB, NLOPT or TADAH)" otherwise (LIB and
+ * ALGO are read as written). Prefixed with "<where>: " when `where` is not
+ * empty. The parser's checks of a block's optimiser (require_driver(),
+ * require_inner_driver(), strategy_rules.h) throw it with the phase, at the
+ * line that closes the block; optimizer_caps() throws it with none. */
+void require_registered_backend(std::string_view lib, std::string_view algo,
+                                const std::string& where = "");
+
+/* Lookup capabilities for (lib, algo). Throws require_registered_backend()'s
+ * error, with no phase, if the (lib, algo) pair is refused or not
+ * registered. The result refers to the static
  * registry, never to the arguments, and stays valid for the whole run. The
  * names are views: with `const std::string&` parameters every call with a
  * literal bound a temporary std::string, and GCC 13's -Wdangling-reference
@@ -205,12 +228,11 @@ const OptimizerCaps& optimizer_caps(std::string_view lib,
 /* Convenience: look up by spec.lib / spec.algo. */
 const OptimizerCaps& optimizer_caps(const OptimizerSpec& sp);
 
-/* The same lookup for a rule that does not own the "unknown optimizer"
+/* The same lookup for a rule that does not own the "unknown optimiser"
  * error: nullptr when (lib, algo) is not registered (a refused pair is
- * not). require_inner_backend()
- * (strategy_rules.h) runs before validate_phase_backends(), which reports an
- * unregistered LIB:ALGO with the phase and, for the deferred CERES
- * algorithms, their own message. */
+ * not). require_inner_backend() (strategy_rules.h) runs before
+ * validate_phase_backends(), which reports a refused or unregistered
+ * LIB:ALGO with the phase (reject_refused_backends()). */
 const OptimizerCaps* find_optimizer_caps(std::string_view lib,
                                          std::string_view algo);
 

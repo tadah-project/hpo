@@ -9,7 +9,8 @@ HPO/examples/common and of example 27's DM_REAM seed, and checks one case:
                     Pins: on 2 ranks the launch fails on every rank before
                     any evaluation (exit status 1; "multi-rank HPO does not
                     support RESTART (AFTER_STAGNATION 4, MAX 1 on 2 ranks)"
-                    on stderr and on an "ERROR     startup:" line of
+                    on stderr and on an "ERROR     * startup: Error on
+                    line 20:" line of
                     hpo_run.log.r0 and hpo_run.log.r1; no loss.tadah.r*);
                     on 1 rank the same configuration runs (status 0,
                     loss.tadah written).
@@ -280,15 +281,17 @@ def check_completed(d, nranks):
               "'TADAH:ANNEAL_PT: MAXEVAL reached'")
 
 
-def check_refused(d, p, nranks, message):
+def check_refused(d, p, nranks, line, message):
     check(p.returncode == 1,
           f"{d.name}: exit status {p.returncode}, expected 1 (refused)")
     check(message in p.stderr, f"{d.name}: stderr lacks '{message}'")
+    # The startup refusal names the line its block closes at, as every
+    # startup refusal of a block's settings does (fix/hpo-correctness3).
+    expected = f"ERROR     * startup: Error on line {line}: {message}"
     for j in journals(d, nranks):
         check(j.exists(), f"{d.name}: {j.name} is missing")
-        check("ERROR     startup: " + message in j.read_text(),
-              f"{d.name}: {j.name} has no 'ERROR     startup: {message}' "
-              "line")
+        check(expected in j.read_text(),
+              f"{d.name}: {j.name} has no '{expected}' line")
     for s in suffixes(nranks):
         check(not (d / f"loss.tadah{s}").exists(),
               f"{d.name}: loss.tadah{s} exists: an evaluation ran")
@@ -299,7 +302,7 @@ def case_restart_refusal(r):
         "\nOPTIM CEMBFUNC (1) -2.19 -2.15\n" + TAIL
     args = ["-c", "../ta2_refit_seed.tadah"]
     d, p = r.run("restart", 2, config, args)
-    check_refused(d, p, 2,
+    check_refused(d, p, 2, 20,
                   "multi-rank HPO does not support RESTART (AFTER_STAGNATION "
                   "4, MAX 1 on 2 ranks): stagnation is tracked per rank; run "
                   "on one rank or remove RESTART")
@@ -314,7 +317,7 @@ def case_gradient_refusal(r):
     args = ["--validation", "../common/config.val",
             "-c", "../common/config.tadah"]
     d, p = r.run("bfgs", 2, config, args)
-    check_refused(d, p, 2,
+    check_refused(d, p, 2, 14,
                   "multi-rank HPO supports only STRATEGY TYPE PLAIN with LIB "
                   "TADAH and ALGO ANNEAL_PT or ANNEAL_PA; got DLIB:BFGS on 2 "
                   "ranks")

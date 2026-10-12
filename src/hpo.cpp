@@ -22,6 +22,7 @@
 #include <tadah/mlip/preflight_audit.h>
 #include <tadah/mlip/parallel.h>   // set_parallel_backend (Stage 2.3)
 #include <tadah/models/descriptors/dm/embf0.h>
+#include <tadah/models/functions/kernels/kern_base.h>   // KernelSettingsLineScope
 
 #include <algorithm>  // std::max
 #include <cstdlib>    // getenv()
@@ -227,6 +228,13 @@ int hpo_run(core::Context& ctx)
 
 int hpo_run(core::Context& ctx, const mlip::KeyProvenance* provenance)
 {
+    /* The run builds the model of every evaluation, and the potential each
+     * PC_LAMMPS script runs, from one configuration: at VERBOSE > 0 a
+     * kernel prints its settings line ("Kern_RBF | sigma: 1 | gamma: 1")
+     * at the first build of the run only, the -c model's at startup
+     * (validate_hpo_setup). A run that starts after this one has ended
+     * prints its own. */
+    models::KernelSettingsLineScope kernel_settings_line;
     const FitSwitchSources fit_sources = fit_switch_sources(ctx, provenance);
 
     /* -- Open run journal first -------------------------------------

@@ -67,18 +67,10 @@ template<class Vec, class Runner>
 inline void detail::run_inner_dispatch(const OptimizerSpec& spec,
                                        HPO_Host<Vec,Runner>& host)
 {
-  /* Early-reject deferred CERES NLLS-family algos before the caps
-   * lookup so users see the tailored "use CERES:LBFGS" message rather
-   * than a generic "unknown optimizer" error. These algos are
-   * intentionally not registered in optimizer_caps because they are
-   * degenerate over a scalar HPO loss; making them useful requires
-   * residual-mode loss exposure (objective semantics change) and
-   * autodiff -- both belong to a later phase. */
-  reject_deferred_ceres_nlls(spec);
-
   /* Caps lookup throws if (lib, algo) is refused (the refusal table,
-   * optimizer_caps.h) or not registered, giving a single, uniform error
-   * instead of a fall-through at the end of the dispatch chain. */
+   * optimizer_caps.h: Ceres' least-squares solvers among them) or not
+   * registered, giving a single, uniform error instead of a fall-through
+   * at the end of the dispatch chain. */
   (void)optimizer_caps(spec);
 
   /* Registry-driven STEP policy, re-checked here for specs assembled at

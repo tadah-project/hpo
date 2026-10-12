@@ -411,7 +411,9 @@ PcTaskResult PcWorkerPool::execute(int slot, std::uint32_t script_idx,
     res.outvar_values = r.vstr();
     res.outvar_errors = r.vstr();    /* protocol v3 */
     res.hotvar_values = r.vstr();
+    res.hotvar_errors = r.vstr();    /* protocol v4 */
     res.failvar_values = r.vstr();   /* protocol v2 */
+    res.failvar_errors = r.vstr();   /* protocol v4 */
     res.create_ms = r.f64();
     res.run_ms = r.f64();
     ch.consec_deaths = 0;   /* a full round-trip proves the worker healthy */

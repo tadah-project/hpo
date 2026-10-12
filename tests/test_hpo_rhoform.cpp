@@ -20,6 +20,7 @@
 //     AMPGRIDMB >= 0 (hidden host-level cases, run explicitly with
 //     ./test_hpo "[rhoform_e2e]").
 
+#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 #include "rhoform_test_support.h"
 
@@ -582,60 +583,104 @@ TEST_CASE("RHOFORM: validate_hpo_setup validates the -c density, probes "
   }
 }
 
-TEST_CASE("RHOFORM NONNEG/MONOTONE: one WARNING when an optimiser can leave "
-          "the box", "[hpo][rhoform][startup_validation]") {
-  PeriodicTable::initialize();
-  auto journal = [](const char* form, const std::string& optimizer,
-                    const char* optim = "OPTIM AMPGRIDMB (3) 0 0.5\n") {
-    Journal j;
-    Context ctx = make_ream_ctx(form);
-    ctx.add("DBFILE", "dummy.db");
-    TempFile tf(std::string(optim) + "PC_ERMSE 0 1\n" + optimizer);
-    HPOTargets trg(ctx, tf.path.string());
-    validate_hpo_setup(ctx, trg, true, true);
-    return j.finish();
-  };
-  const std::string needle = "can evaluate AMPGRIDMB amplitudes outside the "
-                             "non-negative OPTIM box";
-  /* The warning named the Ceres finite-difference kernel too (the first
-   * attempt at a bounded stencil): Ceres' step rule is now evaluated by
-   * Tadah and keeps to the box (owner decision D2(a), 2026-09-29), so only
-   * optimisers that ignore the bounds are named, and the sentence about
-   * the kernel is gone. */
-  const std::string kernel_words = "finite-difference step";
+namespace {
 
+/* hpo_run.log after validate_hpo_setup() on a DM_REAM configuration with
+ * RHOFORM `form`, the OPTIM lines `optim` and the OPTIMIZER block
+ * `optimizer`: the startup WARNING of the two test cases below. */
+std::string box_warning_journal(const char* form, const std::string& optimizer,
+                                const char* optim =
+                                    "OPTIM AMPGRIDMB (3) 0 0.5\n") {
+  Journal j;
+  Context ctx = make_ream_ctx(form);
+  ctx.add("DBFILE", "dummy.db");
+  TempFile tf(std::string(optim) + "PC_ERMSE 0 1\n" + optimizer);
+  HPOTargets trg(ctx, tf.path.string());
+  validate_hpo_setup(ctx, trg, true, true);
+  return j.finish();
+}
+
+const std::string kOutsideBox = "can evaluate AMPGRIDMB amplitudes outside "
+                                "the non-negative OPTIM box";
+/* The warning named the Ceres finite-difference kernel too (the first
+ * attempt at a bounded stencil): Ceres' step rule is now evaluated by
+ * Tadah and keeps to the box (owner decision D2(a), 2026-09-29), so only
+ * optimisers that ignore the bounds are named, and the sentence about the
+ * kernel is gone. */
+const std::string kKernelWords = "finite-difference step";
+
+}  // namespace
+
+/* Pins: the one WARNING names a phase whose optimiser ignores the OPTIM
+ * bounds, CERES:LBFGS, as the STRATEGY-level optimiser and as the PRESTAGE
+ * refinement (not the DLIB:GFS exploration, which keeps to the box), and
+ * there is none under RHOFORM SIGNED or without OPTIM AMPGRIDMB. A build
+ * without Ceres (TADAH_ENABLE_CERES OFF) has no CERES:LBFGS: the case is
+ * Skipped there, naming it. Before this test change: the case had the
+ * sections of the next one too, and such a build failed these sections
+ * ("Error on line 7: the STRATEGY-level optimiser: CERES support is not
+ * built; ..."). */
+TEST_CASE("RHOFORM NONNEG/MONOTONE: one WARNING when an optimiser can leave "
+          "the box", "[hpo][rhoform][startup_validation][ceres]") {
+#ifndef TADAH_USE_CERES
+  TADAH_SKIP("the optimiser of these cases, CERES:LBFGS, is not built "
+             "(TADAH_ENABLE_CERES OFF)");
+#endif
+  PeriodicTable::initialize();
   SECTION("an ignores_bounds optimiser") {
-    const std::string txt = journal(
+    const std::string txt = box_warning_journal(
         "NONNEG", "OPTIMIZER\nLIB CERES\nALGO LBFGS\nMAXEVAL 5\nENDOPTIMIZER\n");
     CHECK_THAT(txt, Catch::Contains("RHOFORM NONNEG: the STRATEGY-level "
                                     "optimiser CERES:LBFGS (ignores the OPTIM "
-                                    "bounds) " + needle) &&
+                                    "bounds) " + kOutsideBox) &&
                         Catch::Contains("projected onto AMPGRIDMB >= 0, "
                                         "evaluated and recorded there (the "
                                         "optimiser is given that loss for its "
                                         "own point); DIAGNOSTICS counts the "
                                         "projections and every evaluation "
                                         "outside the box."));
-    CHECK(txt.find(kernel_words) == std::string::npos);
+    CHECK(txt.find(kKernelWords) == std::string::npos);
   }
   SECTION("named by the phase that runs it (phase_specs)") {
-    const std::string txt = journal(
+    const std::string txt = box_warning_journal(
         "NONNEG", "OPTIMIZER\nSTRATEGY\nTYPE PRESTAGE\nLIB CERES\nALGO LBFGS\n"
                   "MAXEVAL 5\nTOPK 1\nEXPLORE\nLIB DLIB\nALGO GFS\nMAXEVAL 10\n"
                   "ENDEXPLORE\nENDSTRATEGY\nENDOPTIMIZER\n");
     CHECK_THAT(txt, Catch::Contains("RHOFORM NONNEG: the PRESTAGE refinement "
                                     "CERES:LBFGS (ignores the OPTIM bounds) " +
-                                    needle));
+                                    kOutsideBox));
     CHECK(txt.find("PRESTAGE exploration (EXPLORE block) DLIB:GFS") ==
           std::string::npos);   // GFS keeps to the box
   }
+  SECTION("none: SIGNED, or no OPTIM AMPGRIDMB") {
+    CHECK(box_warning_journal("SIGNED", "OPTIMIZER\nLIB CERES\nALGO LBFGS\n"
+                                        "MAXEVAL 5\nENDOPTIMIZER\n")
+              .find(kOutsideBox) == std::string::npos);
+    CHECK(box_warning_journal("NONNEG", "OPTIMIZER\nLIB CERES\nALGO LBFGS\n"
+                                        "MAXEVAL 5\nENDOPTIMIZER\n",
+                              "OPTIM CEMBFUNC (1) -0.5 0.1\n")
+              .find(kOutsideBox) == std::string::npos);
+  }
+}
+
+/* Pins: no phase is named when every phase keeps to the box: finite
+ * differences with either step rule (in-house, Ceres', which needs no Ceres
+ * build), HYBRID, an MLSL whose local search takes gradients, a bounded
+ * optimiser (DLIB:BFGS); an INNER block's PARAM fd_kernel is refused at
+ * startup. These run in every build. Before this test change: they were
+ * sections of the previous case (passing as well: a pin), which a build
+ * without Ceres failed in its CERES sections. */
+TEST_CASE("RHOFORM NONNEG/MONOTONE: no box WARNING when every phase keeps to "
+          "the box", "[hpo][rhoform][startup_validation]") {
+  PeriodicTable::initialize();
   SECTION("finite differences keep to the box with either step rule: not "
           "named") {
     /* One-sided within a step of a bound (fd_stencil.h): the in-house rule,
      * the default under OPTIM_SCALE AUTO; Ceres' rule, the default under
      * NONE and PARAM fd_kernel ceres (named until D2(a)); HYBRID; an MLSL
      * whose local search takes gradients. */
-    CHECK(journal("NONNEG", kOptimizer).find(needle) == std::string::npos);
+    CHECK(box_warning_journal("NONNEG", kOptimizer).find(kOutsideBox) ==
+          std::string::npos);
     for (const std::string& opt :
          {std::string("OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\n"
                       "PARAM fd_kernel ceres\nENDOPTIMIZER\n"),
@@ -647,19 +692,18 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: one WARNING when an optimiser can leave "
                       "INNER\nLIB NLOPT\nALGO LD_LBFGS\nMAXEVAL 10\nENDINNER\n"
                       "ENDSTRATEGY\nENDOPTIMIZER\n")}) {
       INFO(opt);
-      const std::string txt = journal("MONOTONE", opt);
-      CHECK(txt.find(needle) == std::string::npos);
-      CHECK(txt.find(kernel_words) == std::string::npos);
+      const std::string txt = box_warning_journal("MONOTONE", opt);
+      CHECK(txt.find(kOutsideBox) == std::string::npos);
+      CHECK(txt.find(kKernelWords) == std::string::npos);
     }
     for (const char* opt :
          {kOptimizer, "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\n"
                       "PARAM fd_kernel inhouse\nENDOPTIMIZER\n"}) {
       INFO(opt);
-      const std::string txt = journal("NONNEG", opt,
-                                      "OPTIM_SCALE NONE\nOPTIM AMPGRIDMB (3) 0 "
-                                      "0.5\n");
-      CHECK(txt.find(needle) == std::string::npos);
-      CHECK(txt.find(kernel_words) == std::string::npos);
+      const std::string txt = box_warning_journal(
+          "NONNEG", opt, "OPTIM_SCALE NONE\nOPTIM AMPGRIDMB (3) 0 0.5\n");
+      CHECK(txt.find(kOutsideBox) == std::string::npos);
+      CHECK(txt.find(kKernelWords) == std::string::npos);
     }
   }
   SECTION("an INNER block's PARAM fd_kernel never takes effect: refused") {
@@ -667,7 +711,7 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: one WARNING when an optimiser can leave "
      * which the MLSL block's settings take. The INNER block's own PARAM
      * fd_kernel ceres was named in this warning, and then accepted and
      * ignored; it is refused at startup now (owner decision D5(a)). */
-    CHECK_THROWS_WITH(journal(
+    CHECK_THROWS_WITH(box_warning_journal(
         "NONNEG", "OPTIMIZER\nSTRATEGY\nTYPE PLAIN\nLIB NLOPT\nALGO G_MLSL_LDS\n"
                   "MAXEVAL 50\nINNER\nLIB NLOPT\nALGO LD_LBFGS\nMAXEVAL 10\n"
                   "PARAM fd_kernel ceres\nENDINNER\nENDSTRATEGY\n"
@@ -675,13 +719,9 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: one WARNING when an optimiser can leave "
         Catch::Contains("the INNER block of the STRATEGY-level optimiser "
                         "NLOPT:LD_LBFGS: PARAM fd_kernel never takes effect"));
   }
-  SECTION("none: bounded optimiser, SIGNED, or no OPTIM AMPGRIDMB") {
-    CHECK(journal("NONNEG", kOptimizer).find(needle) == std::string::npos);
-    CHECK(journal("SIGNED", "OPTIMIZER\nLIB CERES\nALGO LBFGS\nMAXEVAL 5\n"
-                            "ENDOPTIMIZER\n").find(needle) == std::string::npos);
-    CHECK(journal("NONNEG", "OPTIMIZER\nLIB CERES\nALGO LBFGS\nMAXEVAL 5\n"
-                            "ENDOPTIMIZER\n",
-                  "OPTIM CEMBFUNC (1) -0.5 0.1\n").find(needle) == std::string::npos);
+  SECTION("none: a bounded optimiser") {
+    CHECK(box_warning_journal("NONNEG", kOptimizer).find(kOutsideBox) ==
+          std::string::npos);
   }
 }
 
@@ -853,14 +893,16 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
                                           "there: an\n    optimiser that "
                                           "ignores the bounds; see the first "
                                           "such WARNING)\n") &&
+                          /* the CERES drivers alone ignore the bounds:
+                           * the text named "(CERES:*, NLopt LN_NEWUOA)"
+                           * until LN_NEWUOA was refused */
                           Catch::Contains("is evaluated there: finite "
                                           "differences keep to the box, and a "
                                           "point proposed within rounding of a "
                                           "bound is evaluated on it, so an "
                                           "optimiser that ignores the bounds "
-                                          "(CERES:*, NLopt LN_NEWUOA), or a "
-                                          "start it handed on, stepped outside "
-                                          "it;"));
+                                          "(CERES:*), or a start it handed "
+                                          "on, stepped outside it;"));
       CHECK(count_of_text(txt, "lies outside its OPTIM box") == 1u);
       /* the best sits on the form's zero lower bound: a hard bound, no
        * widen-that-side advisory */
