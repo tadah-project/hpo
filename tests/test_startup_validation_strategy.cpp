@@ -167,14 +167,17 @@ bool starts_with(const std::string& s, const std::string& head)
  * the phase's name (strategy_phase_specs: "the STRATEGY-level optimiser",
  * "each MULTISTART start", "the MULTISTART run", "the PRESTAGE
  * exploration (EXPLORE block)", "the PRESTAGE refinement", "the INNER
- * block of <phase>"; validate_run_policy: "the EXPLORE block"). */
+ * block of <phase>"; validate_run_policy: "the EXPLORE block"; the check
+ * of the GRAD_STRATEGY ANALYTICAL setup: "OPTIMIZER block", "EXPLORE
+ * block"). */
 bool names_phase(const std::string& message)
 {
     for (const char* name : {"the STRATEGY-level optimiser",
                              "each MULTISTART start", "the MULTISTART run",
                              "the PRESTAGE exploration (EXPLORE block)",
                              "the EXPLORE block", "the PRESTAGE refinement",
-                             "the INNER block of "})
+                             "the INNER block of ", "OPTIMIZER block",
+                             "EXPLORE block"})
         if (starts_with(message, name)) return true;
     return false;
 }
@@ -220,7 +223,8 @@ std::pair<std::size_t, std::string> phase_line(const std::string& config,
                                      : message;
     const bool explore =
         starts_with(parent, "the PRESTAGE exploration (EXPLORE block)") ||
-        starts_with(parent, "the EXPLORE block");
+        starts_with(parent, "the EXPLORE block") ||
+        starts_with(parent, "EXPLORE block");
     if (inner) {
         const auto at = find("ENDINNER", explore);
         if (at.first > 0) return at;
@@ -1622,6 +1626,211 @@ TEST_CASE("startup validation: a phase's settings refused at startup name the "
     hand.stop.maxtime = 60.0;
     CHECK(error_of([&] { tadah::hpo::validate_phase_backends(hand); }) ==
           top + "DLIB:BFGS does not support MAXTIME");
+}
+
+/* The startup refusals of a phase's settings that still named no line:
+ * the check of the GRAD_STRATEGY ANALYTICAL setup (validate_hpo_setup:
+ * "OPTIMIZER block: ...", "EXPLORE block: ..."), the rule that NLOPT, DLIB
+ * and CERES cannot search a space without an OPTIM line, and the
+ * multi-rank dispatch refusal of a parsed spec (hpo_mpi_dispatch_refusal).
+ * Pins: each is "Error on line N: <what>\nLine: <text>", N the line that
+ * closes its block -- ENDOPTIMIZER for the STRATEGY-level block (each
+ * MULTISTART start, the PRESTAGE refinement), ENDEXPLORE for the EXPLORE
+ * block; the zero-dimension rule applies to every phase, the EXPLORE
+ * block's included, and names it with its backend ("the PRESTAGE
+ * exploration (EXPLORE block): NLOPT:GN_DIRECT cannot optimise a
+ * zero-dimensional search space ..."); TADAH:RANDOM without an OPTIM line
+ * passes startup (a pin: it evaluates its INIT point).
+ * Before the fix: the ANALYTICAL refusals ("OPTIMIZER block: GRAD_STRATEGY
+ * ANALYTICAL ...") and the multi-rank refusal named no line; the
+ * zero-dimension rule was checked for the STRATEGY-level LIB only, "No
+ * OPTIM line: the search space has zero dimensions, and LIB NLOPT cannot
+ * optimise a zero-dimensional space ..." without a line, so an EXPLORE
+ * NLOPT:GN_DIRECT or DLIB:GFS passed startup (the run failed in the
+ * optimiser: "NULL args to nlopt_optimize_", dlib's "The vectors can't be
+ * empty") and an EXPLORE DLIB:BFGS was refused as "... DLIB:BFGS requires
+ * non-empty, same-sized low/high bounds". */
+TEST_CASE("startup validation: the GRAD_STRATEGY ANALYTICAL check, the "
+          "zero-dimension rule and the multi-rank refusal name the line that "
+          "closes their block", "[startup_validation][strategy][block_line]")
+{
+    struct Case {
+        std::string what, config, closing, message;
+    };
+    const std::string analytical =
+        "GRAD_STRATEGY ANALYTICAL needs the analytical gradient of the loss, "
+        "which this setup cannot form: ";
+    const std::string zero_dim =
+        " cannot optimise a zero-dimensional search space (there is no "
+        "OPTIM line";
+    /* No OPTIM line: a zero-dimensional search space. */
+    const auto no_optim = [](const std::string& body) {
+        return "PC_ERMSE 0 1\nOPTIMIZER\n  STRATEGY\n" + body +
+               "  ENDSTRATEGY\nENDOPTIMIZER\n";
+    };
+    const auto explore = [](const std::string& lib, const std::string& algo) {
+        return "    TYPE PRESTAGE\n    LIB TADAH\n    ALGO RANDOM\n"
+               "    MAXEVAL 2\n    EXPLORE\n      LIB " + lib +
+               "\n      ALGO " + algo + "\n      MAXEVAL 3\n    ENDEXPLORE\n";
+    };
+    const std::vector<Case> cases = {
+        {"GRAD_STRATEGY ANALYTICAL on the STRATEGY-level DLIB:BFGS",
+         strategy_config("    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n"
+                         "    MAXEVAL 20\n    GRAD_STRATEGY ANALYTICAL\n"),
+         "ENDOPTIMIZER", "OPTIMIZER block: " + analytical},
+        {"GRAD_STRATEGY ANALYTICAL on the EXPLORE block's NLOPT:LD_LBFGS",
+         strategy_config("    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                         "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
+                         "      ALGO LD_LBFGS\n      MAXEVAL 12\n"
+                         "      GRAD_STRATEGY ANALYTICAL\n    ENDEXPLORE\n"),
+         "ENDEXPLORE", "EXPLORE block: " + analytical},
+        {"PLAIN NLOPT:LN_SBPLX without an OPTIM line",
+         no_optim("    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                  "    MAXEVAL 20\n"),
+         "ENDOPTIMIZER",
+         "the STRATEGY-level optimiser: NLOPT:LN_SBPLX" + zero_dim},
+        {"PLAIN DLIB:BFGS without an OPTIM line",
+         no_optim("    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n"
+                  "    MAXEVAL 20\n"),
+         "ENDOPTIMIZER", "the STRATEGY-level optimiser: DLIB:BFGS" + zero_dim},
+        {"each MULTISTART start's NLOPT:LN_SBPLX without an OPTIM line",
+         no_optim(multistart_body("NLOPT", "LN_SBPLX", "2")),
+         "ENDOPTIMIZER", "each MULTISTART start: NLOPT:LN_SBPLX" + zero_dim},
+        {"the PRESTAGE refinement's NLOPT:LN_SBPLX without an OPTIM line",
+         no_optim("    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                  "    MAXEVAL 20\n    EXPLORE\n      LIB TADAH\n"
+                  "      ALGO RANDOM\n      MAXEVAL 3\n    ENDEXPLORE\n"),
+         "ENDOPTIMIZER", "the PRESTAGE refinement: NLOPT:LN_SBPLX" + zero_dim},
+        {"an EXPLORE block's NLOPT:GN_DIRECT without an OPTIM line",
+         no_optim(explore("NLOPT", "GN_DIRECT")), "ENDEXPLORE",
+         "the PRESTAGE exploration (EXPLORE block): NLOPT:GN_DIRECT" + zero_dim},
+        {"an EXPLORE block's DLIB:GFS without an OPTIM line",
+         no_optim(explore("DLIB", "GFS")), "ENDEXPLORE",
+         "the PRESTAGE exploration (EXPLORE block): DLIB:GFS" + zero_dim},
+        {"an EXPLORE block's DLIB:BFGS without an OPTIM line",
+         no_optim(explore("DLIB", "BFGS")), "ENDEXPLORE",
+         "the PRESTAGE exploration (EXPLORE block): DLIB:BFGS" + zero_dim}};
+    /* A section each: judge() stops a case whose refusal names no line. */
+    for (const auto& c : cases) {
+        DYNAMIC_SECTION(c.what) {
+            INFO("config:\n" << c.config);
+            const auto at = line_of(c.config, c.closing);
+            REQUIRE(at.first > 0);
+            CHECK_THAT(judge(c.config).startup_raw,
+                       Catch::StartsWith("Error on line " +
+                                         std::to_string(at.first) + ": " +
+                                         c.message) &&
+                       Catch::EndsWith("\nLine: " + at.second));
+        }
+    }
+    /* A TADAH-native optimiser evaluates its INIT point. */
+    CHECK(judge(no_optim("    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+                         "    MAXEVAL 2\n")).startup_raw == "");
+
+    SECTION("the multi-rank dispatch refusal of a parsed spec") {
+        PeriodicTable::initialize();
+        for (const auto& c : std::vector<Case>{
+                 {"TADAH:RANDOM on 2 ranks",
+                  strategy_config("    TYPE PLAIN\n    LIB TADAH\n"
+                                  "    ALGO RANDOM\n    MAXEVAL 2\n"),
+                  "ENDOPTIMIZER",
+                  "multi-rank HPO supports only STRATEGY TYPE PLAIN with LIB "
+                  "TADAH and ALGO ANNEAL_PT or ANNEAL_PA; got TADAH:RANDOM "
+                  "on 2 ranks"},
+                 {"TADAH:ANNEAL_PT with RESTART on 2 ranks",
+                  strategy_config("    TYPE PLAIN\n    LIB TADAH\n"
+                                  "    ALGO ANNEAL_PT\n    MAXEVAL 20\n"
+                                  "    RESTART\n      AFTER_STAGNATION 10\n"
+                                  "      MAX 1\n    ENDRESTART\n"),
+                  "ENDOPTIMIZER",
+                  "multi-rank HPO does not support RESTART (AFTER_STAGNATION "
+                  "10, MAX 1 on 2 ranks)"}}) {
+            INFO(c.what << ", config:\n" << c.config);
+            ScopedTempFile tf(c.config);
+            Context ctx = make_minimal_ctx();
+            std::unique_ptr<HPOTargets> trg;
+            REQUIRE(error_of([&] {
+                trg = std::make_unique<HPOTargets>(ctx, tf.path.string());
+            }) == "");
+            const auto at = line_of(c.config, c.closing);
+            REQUIRE(at.first > 0);
+            CHECK_THAT(tadah::hpo::hpo_mpi_dispatch_refusal(2, trg->spec),
+                       Catch::StartsWith("Error on line " +
+                                         std::to_string(at.first) + ": " +
+                                         c.message) &&
+                       Catch::EndsWith("\nLine: " + at.second));
+            CHECK(tadah::hpo::hpo_mpi_dispatch_refusal(1, trg->spec).empty());
+        }
+    }
+}
+
+/* The STEP rules (scale_validation.h: run_scale_validation, applied by the
+ * parser at the end of the file and again at startup) refuse a phase's
+ * STEP setting: a backend that does not use STEP, a value outside (0,
+ * 0.5], overrides that cover only some dimensions.
+ * Pins: each refusal is "Error on line N: <what>\nLine: <text>", N the
+ * line that closes the block whose STEP it refuses: ENDOPTIMIZER for the
+ * STRATEGY-level block, ENDEXPLORE for the EXPLORE block, ENDINNER for an
+ * INNER block (the STRATEGY-level one's and the EXPLORE block's).
+ * Before the fix: the same text without a line ("DLIB:BFGS (OUTER) does
+ * not use STEP; ..."). */
+TEST_CASE("startup validation: the STEP rules name the line that closes the "
+          "block whose STEP they refuse",
+          "[startup_validation][strategy][block_line][step]")
+{
+    struct Case {
+        std::string what, config, closing, message;
+    };
+    const std::string two_dims =
+        "OPTIM WATOM (1) 0.1 5.0\nOPTIM RCUT2B (1) 4.0 6.0\nPC_ERMSE 0 1\n";
+    const std::vector<Case> cases = {
+        {"STEP on the STRATEGY-level DLIB:BFGS",
+         strategy_config("    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n"
+                         "    MAXEVAL 20\n    STEP 0.1\n"),
+         "ENDOPTIMIZER", "DLIB:BFGS (OUTER) does not use STEP"},
+        {"STEP 0.9 on the STRATEGY-level NLOPT:LN_SBPLX",
+         strategy_config("    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                         "    MAXEVAL 20\n    STEP 0.9\n"),
+         "ENDOPTIMIZER",
+         "NLOPT:LN_SBPLX (OUTER): STEP must be a fraction of the OPTIM width "
+         "in (0, 0.5] (got 0.9)"},
+        {"a STEP override that covers one of two dimensions",
+         two_dims + "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
+                    "    ALGO LN_SBPLX\n    MAXEVAL 20\n    STEP WATOM 0.1\n"
+                    "  ENDSTRATEGY\nENDOPTIMIZER\n",
+         "ENDOPTIMIZER",
+         "STEP overrides cover only some dimensions and no block-wide STEP "
+         "is set"},
+        {"STEP on the EXPLORE block's NLOPT:GN_CRS2_LM",
+         strategy_config("    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                         "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
+                         "      ALGO GN_CRS2_LM\n      MAXEVAL 12\n"
+                         "      STEP 0.1\n    ENDEXPLORE\n"),
+         "ENDEXPLORE", "NLOPT:GN_CRS2_LM (PRESTAGE) does not use STEP"},
+        {"STEP on the STRATEGY-level INNER block's NLOPT:LD_LBFGS",
+         strategy_config("    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n"
+                         "    MAXEVAL 60\n    INNER\n      LIB NLOPT\n"
+                         "      ALGO LD_LBFGS\n      STEP 0.1\n"
+                         "    ENDINNER\n"),
+         "ENDINNER", "NLOPT:LD_LBFGS (INNER) does not use STEP"},
+        {"STEP on the EXPLORE block's INNER block's NLOPT:LD_LBFGS",
+         strategy_config("    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                         "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
+                         "      ALGO G_MLSL_LDS\n      MAXEVAL 60\n"
+                         "      INNER\n        LIB NLOPT\n"
+                         "        ALGO LD_LBFGS\n        STEP 0.1\n"
+                         "      ENDINNER\n    ENDEXPLORE\n"),
+         "ENDINNER", "NLOPT:LD_LBFGS (PRESTAGE.INNER) does not use STEP"}};
+    for (const auto& c : cases) {
+        INFO(c.what << ", config:\n" << c.config);
+        const auto at = line_of(c.config, c.closing);
+        REQUIRE(at.first > 0);
+        CHECK_THAT(parse_error(c.config),
+                   Catch::StartsWith("Error on line " +
+                                     std::to_string(at.first) + ": " +
+                                     c.message) &&
+                   Catch::EndsWith("\nLine: " + at.second));
+    }
 }
 
 TEST_CASE("startup validation: the backend checks reject no valid "
