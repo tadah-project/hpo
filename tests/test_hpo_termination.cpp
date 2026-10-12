@@ -6512,11 +6512,12 @@ TEST_CASE("PRESTAGE: an exploration without a usable loss leaves the "
 
 /* An exploration that made no evaluation has no candidate, and no failed
  * evaluation either: every exploration a parsed configuration sets
- * evaluates at least one point (MAXEVAL >= 1, a TADAH driver's INIT point,
- * NLopt's, DLIB:GFS's and ASA's first point; a stop is raised inside a
- * counted evaluation), so it is a driver that returned without evaluating
- * -- or a spec built outside the parser that asks for no evaluation --,
- * which a refinement from the OPTIMIZER-level INIT points would hide.
+ * evaluates at least one point (MAXEVAL >= 1; every driver makes its first
+ * evaluation, also when MAXTIME has passed before it -- the next case; a
+ * stop is raised inside a counted evaluation), so it is a driver that
+ * returned without evaluating -- or a spec built outside the parser that
+ * asks for no evaluation --, which a refinement from the OPTIMIZER-level
+ * INIT points would hide.
  * Pins: StagedPolicy over the parsed PRESTAGE spec whose exploration
  * (TADAH:RANDOM) is given MAXEVAL 0 and no INIT point throws
  * std::logic_error "PRESTAGE: the exploration (EXPLORE block) TADAH:RANDOM
@@ -6562,6 +6563,87 @@ TEST_CASE("PRESTAGE: an exploration that made no evaluation is an error, not "
     const std::string journal = read_file(fx.run.sd.dir / "hpo_run.log");
     INFO(journal);
     CHECK(journal.find("running outer optimiser as-is") == std::string::npos);
+}
+
+/* MAXTIME keeps an evaluation from starting once it has passed, except a
+ * search's first: every search makes at least one evaluation, as the TADAH
+ * drivers (they read MAXTIME after an evaluation), NLopt and DLIB:GFS's
+ * INIT points do. MAXTIME 1e-9 has passed before any search starts.
+ * Pins: with MAXTIME 1e-9, a PLAIN DLIB:GFS without an INIT point (INIT
+ * METHOD RANDOM 0) and a PLAIN ASA each make one evaluation and end with
+ * status 0 ("DLIB:GFS stopped: MAXTIME exceeded after 1 evaluation(s)",
+ * "ASA stopped: MAXTIME exceeded after 1 host eval(s)", the run's status
+ * their MAXTIME stop); a PRESTAGE (TADAH:RANDOM, MAXEVAL 2) whose
+ * exploration is one of them makes that one exploration evaluation and
+ * then the refinement's two, status 0, and the journal names no error.
+ * Before the fix: the search made no evaluation; the PLAIN run ended with
+ * status 1 ("STOPPED -- no evaluation produced a usable loss"), the
+ * PRESTAGE run with status 1 and FAILED ("PRESTAGE: the exploration
+ * (EXPLORE block) DLIB:GFS returned without evaluating a point ..."; ASA:ASA
+ * likewise). */
+TEST_CASE("MAXTIME: a search makes its first evaluation when MAXTIME has "
+          "passed before it", "[HPO][termination][stop_criteria][maxtime]")
+{
+    struct Case {
+        const char* name;
+        std::string search;     // the search's lines, without its TYPE
+        std::string init;       // its INIT block, if any
+        std::string stopped;    // its journal line
+        std::string status;     // the run's status under PLAIN
+    };
+    const std::vector<Case> cases = {
+        {"DLIB:GFS without an INIT point",
+         "LIB DLIB\nALGO GFS\nMAXTIME 1e-9\n",
+         "INIT\nMETHOD RANDOM 0\nSEED 4\nENDINIT\n",
+         "DLIB:GFS stopped: MAXTIME exceeded after 1 evaluation(s)",
+         "DLIB:GFS: MAXTIME exceeded"},
+        {"ASA", "LIB ASA\nALGO ASA\nMAXTIME 1e-9\nSEED 3\n", "",
+         "ASA stopped: MAXTIME exceeded after 1 host eval(s)",
+         "ASA: MAXTIME exceeded"},
+    };
+    /* `lines` indented by `indent` spaces, line by line. */
+    const auto indented = [](const std::string& lines, std::size_t indent) {
+        std::istringstream in(lines);
+        std::string out;
+        for (std::string l; std::getline(in, l);)
+            out += std::string(indent, ' ') + l + "\n";
+        return out;
+    };
+    for (const auto& c : cases) {
+        INFO(c.name);
+        SECTION(std::string("PLAIN ") + c.name) {
+            TaRun run("OPTIMIZER\n" + indented(c.init, 2) + "  STRATEGY\n" +
+                      "    TYPE PLAIN\n" + indented(c.search, 4) +
+                      "  ENDSTRATEGY\nENDOPTIMIZER\n");
+            int status = -1;
+            REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+            const std::string journal = read_file("hpo_run.log");
+            INFO(journal);
+            CHECK(status == 0);
+            CHECK(data_rows("loss.tadah").size() == 1u);
+            CHECK_THAT(journal, Catch::Contains(c.stopped));
+            CHECK(journal_status(journal) == c.status);
+        }
+        SECTION(std::string("the PRESTAGE exploration ") + c.name) {
+            TaRun run(plain_block(
+                "    TYPE PRESTAGE\n    LIB TADAH\n    ALGO RANDOM\n"
+                "    MAXEVAL 2\n    SEED 1\n    EXPLORE\n" +
+                indented(c.init + c.search, 6) + "    ENDEXPLORE\n"));
+            int status = -1;
+            REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+            const std::string journal = read_file("hpo_run.log");
+            INFO(journal);
+            CHECK(status == 0);
+            CHECK(data_rows("loss.tadah").size() == 3u);
+            CHECK_THAT(journal, Catch::Contains(c.stopped));
+            CHECK_THAT(journal, Catch::Contains(
+                                    "REFINEMENT: refining top-1 seed(s) via "
+                                    "TADAH:RANDOM"));
+            CHECK(journal.find("returned without evaluating") ==
+                  std::string::npos);
+            CHECK(journal_status(journal) == "TADAH:RANDOM: MAXEVAL reached");
+        }
+    }
 }
 
 TEST_CASE("PRESTAGE under RESTART: an exploration that stagnates without a "
