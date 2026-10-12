@@ -33,6 +33,10 @@ build directory.
   [Ceres](http://ceres-solver.org/) — fetched automatically at pinned
   versions.
 - LAPACK / BLAS at link time (provided by the build environment).
+- Python 3.11 or later for the tests (`BUILD_TESTING`): the registry drift
+  gate `hpo_anneal_registry_sync` reads TOML with `tomllib`, and the
+  configure step refuses an older interpreter
+  (`cmake/hpo_test_python.cmake`).
 - A LAMMPS library built with [Tadah!LAMMPS](https://git.ecdf.ed.ac.uk/tadah/tadah.lammps)
   is needed at link time only when building HPO against the
   LAMMPS-driven targets (`PC_LAMMPS`). See the umbrella

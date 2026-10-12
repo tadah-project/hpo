@@ -9,8 +9,9 @@
 # canonical ASA-README defaults.
 #
 # ASA runs in the transformed (post-LOG_HP) parameter space like every
-# other optimiser; SEED seeds the proposal stream; the INIT seed (none
-# here -> OPTIM box centre) auto-sets User_Initial_Parameters.
+# other optimiser; SEED seeds the proposal stream; the first INIT point
+# (none here: the configuration's values, CONFIG) is ASA's starting point
+# and sets User_Initial_Parameters 1.
 
 OPTIMIZER
   STRATEGY
