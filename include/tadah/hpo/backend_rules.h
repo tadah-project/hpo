@@ -190,7 +190,11 @@ struct GradientCost {
 GradientCost gradient_cost(const OptimizerSpec& spec);
 
 /* The startup WARNINGs of the phases of `root` whose budget cannot pay for
- * one step of their gradient search: a search evaluates the loss at its
+ * one step of their gradient search, in a run that answers a point a
+ * search asks for again from the search's record when `reuse` (the run's
+ * permission, RepeatPolicy::reuse: HPOTargets::repeat_reuse_blocker() is
+ * "", which HPO_Host::repeat_reuse_blocker() forwards) and evaluates it
+ * again otherwise (repeat_points.h). A search evaluates the loss at its
  * starting point (1 evaluation) and the gradient there (gradient_cost())
  * before any point it steps to, so a MAXEVAL below gradient_cost() + 2
  * ends it where it started (MAXEVAL_REACHED). Over strategy_phase_specs():
@@ -205,19 +209,31 @@ GradientCost gradient_cost(const OptimizerSpec& spec);
  * a point it steps to, which needs MAXEVAL 6 or more". An MLSL first
  * evaluates its starting point and its first N samples without a gradient
  * (N its POPULATION, NLopt's default 4), and its first local search starts
- * at one of them, whose loss it evaluates again, so it needs N + 1 more:
- * "the STRATEGY-level optimiser NLOPT:GD_MLSL: MAXEVAL 10 takes no step of
- * a local search: MLSL evaluates its starting point and its first 4
- * samples without a gradient (5 evaluations; POPULATION 4, NLopt's
- * default), then its first local search, from one of them, evaluates the
- * loss there again (1 evaluation) and the gradient there (4 evaluations:
- * ...) before it evaluates a point it steps to, which needs MAXEVAL 11 or
- * more"; AUGLAG goes straight into its local search. And an INNER block
- * whose local search obtains gradients and whose own MAXEVAL, in NLopt's
- * calls (each the loss and the gradient at a point), is 1. Not a refusal: a
- * budget-limited probe of the start can be deliberate. validate_hpo_setup()
- * journals each one after the phase checks (the finite-difference settings
- * are valid by then). */
-std::vector<std::string> gradient_budget_warnings(const OptimizerSpec& root);
+ * at one of them, a point the search has evaluated: the loss there is
+ * counted as the run spends it (repeat_use, the rule of RepeatPoints::use):
+ * none under `reuse` and GRAD_STRATEGY NUMERICAL, whose finite differences
+ * take the recorded loss as their centre, so it needs N more: "the
+ * STRATEGY-level optimiser NLOPT:GD_MLSL: MAXEVAL 9 takes no step of a
+ * local search: MLSL evaluates its starting point and its first 4 samples
+ * without a gradient (5 evaluations; POPULATION 4, NLopt's default), then
+ * its first local search, from one of them, takes the loss there from the
+ * search's record (no evaluation) and evaluates the gradient there (4
+ * evaluations: ...) before it evaluates a point it steps to, which needs
+ * MAXEVAL 10 or more"; one evaluation otherwise (without `reuse`, or under
+ * ANALYTICAL or HYBRID), N + 1 more: "... then its first local search,
+ * from one of them, evaluates the loss there again (1 evaluation) and the
+ * gradient there (...) ..., which needs MAXEVAL 11 or more" under NUMERICAL
+ * without `reuse`, "... (1 evaluation: one analytical gradient,
+ * GRAD_STRATEGY ANALYTICAL) ..., which needs MAXEVAL 8 or more" under
+ * ANALYTICAL. AUGLAG goes straight into its local search. And an INNER block whose local search
+ * obtains gradients and whose own MAXEVAL, in NLopt's calls (each the loss
+ * and the gradient at a point), is 1; an MLSL's local searches start at
+ * points it evaluated, so a call costs the gradient alone where the run
+ * answers the loss from the record. Not a refusal: a budget-limited probe
+ * of the start can be deliberate. validate_hpo_setup() journals each one
+ * after the phase checks (the finite-difference settings are valid by
+ * then). */
+std::vector<std::string> gradient_budget_warnings(const OptimizerSpec& root,
+                                                  bool reuse);
 
 }  // namespace tadah::hpo
