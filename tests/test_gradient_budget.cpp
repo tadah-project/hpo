@@ -659,3 +659,74 @@ TEST_CASE("startup validation: the gradient budget warning of an MLSL counts "
                        kNoStep) == 0u);
     }
 }
+
+namespace {
+
+/* kRoot with a PC_OBSERVABLE: cohesive_energy, which starts its relaxation
+ * from the lattice constant the previous evaluation relaxed to
+ * (Observable::carried_state), so the run evaluates every point asked for
+ * again (HPOTargets::repeat_reuse_blocker). */
+const std::string kRootObservable =
+    kRoot +
+    "PC_OBSERVABLE cohesive_energy --species H --target 8.1 --weight 1.0 "
+    "--lattice bcc --hotvar a0 2.5 4.5 3.3\n";
+
+}  // namespace
+
+/* Pins: a run with a PC_OBSERVABLE obtains its gradients under
+ * GRAD_STRATEGY ANALYTICAL or HYBRID, never NUMERICAL, so the budget
+ * warning of its MLSL is ANALYTICAL's (or HYBRID's), not the NUMERICAL one:
+ *   - GD_MLSL with INNER LD_LBFGS and GRAD_STRATEGY NUMERICAL is refused
+ *     ("--hpotarget defines PC_OBSERVABLE but OPTIMIZER's
+ *     GRAD_STRATEGY=NUMERICAL is set", HPOTargets);
+ *   - with no GRAD_STRATEGY, which resolves to ANALYTICAL with a
+ *     PC_OBSERVABLE, MAXEVAL 7 warns "... then its first local search, from
+ *     one of them, evaluates the loss there again (1 evaluation) and the
+ *     gradient there (1 evaluation: one analytical gradient, GRAD_STRATEGY
+ *     ANALYTICAL) before it evaluates a point it steps to, which needs
+ *     MAXEVAL 8 or more" (5 + 1 + 1 + a step), and MAXEVAL 8 gets none.
+ * Before the fix: passes as well (a pin: the warning was right; the docs
+ * fixed with it -- the Tadah.MLIP CHANGELOG and the MAXEVAL row of the
+ * Configuration File -- gave a PC_OBSERVABLE that keeps state the NUMERICAL
+ * bound, MAXEVAL 10 or less in 2-D, and named it beside --skip-rel as what
+ * makes a NUMERICAL run evaluate the start again). */
+TEST_CASE("startup validation: the gradient budget warning of an MLSL in a "
+          "PC_OBSERVABLE run is ANALYTICAL's",
+          "[startup_validation][gradient_budget]")
+{
+    tadah::core::PeriodicTable::initialize();
+    {
+        const fs::path file = fs::temp_directory_path() /
+                              (unique_name("tadah_budget_") + ".hpo");
+        {
+            std::ofstream os(file);
+            REQUIRE(os.good());
+            os << mlsl_plain("GD_MLSL", "8",
+                             "    GRAD_STRATEGY NUMERICAL\n" + kInnerLbfgs,
+                             kRootObservable);
+        }
+        Context ctx = make_ctx();
+        CHECK_THROWS_WITH(HPOTargets(ctx, file.string()),
+                          Catch::Contains("--hpotarget defines PC_OBSERVABLE "
+                                          "but OPTIMIZER's "
+                                          "GRAD_STRATEGY=NUMERICAL is set"));
+        std::error_code ec;
+        fs::remove(file, ec);
+    }
+
+    const std::string journal = startup_journal(
+        mlsl_plain("GD_MLSL", "7", kInnerLbfgs, kRootObservable));
+    CHECK(count_of(journal,
+                   "the STRATEGY-level optimiser NLOPT:GD_MLSL" +
+                       mlsl_head("MAXEVAL 7", 4,
+                                 "POPULATION 4, NLopt's default") +
+                       "evaluates the loss there again (1 evaluation) and the "
+                       "gradient there (1 evaluation: one analytical "
+                       "gradient, GRAD_STRATEGY ANALYTICAL) before it "
+                       "evaluates a point it steps to, which needs MAXEVAL 8 "
+                       "or more") == 1u);
+    CHECK(count_of(journal, kNoStep) == 1u);
+    CHECK(count_of(startup_journal(mlsl_plain("GD_MLSL", "8", kInnerLbfgs,
+                                              kRootObservable)),
+                   kNoStep) == 0u);
+}

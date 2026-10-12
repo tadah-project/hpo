@@ -1024,12 +1024,13 @@ std::string budget_root(const std::string& flags)
            flags + "\nOPTIM CGRID2B (1) 0.1 0.9\nOPTIM SGRID2B (2) 4.0 6.0\n";
 }
 
-/* GD_MLSL with INNER LD_LBFGS (NLopt's 4 samples per round), SEED 7. */
-std::string mlsl_budget_block(unsigned maxeval)
+/* GD_MLSL with INNER LD_LBFGS (NLopt's 4 samples per round), SEED 7, and
+ * the block's `keys` (a GRAD_STRATEGY line). */
+std::string mlsl_budget_block(unsigned maxeval, const std::string& keys = "")
 {
     return plain_block("    TYPE PLAIN\n    LIB NLOPT\n    ALGO GD_MLSL\n"
                        "    MAXEVAL " + std::to_string(maxeval) +
-                       "\n    SEED 7\n    INNER\n      LIB NLOPT\n"
+                       "\n    SEED 7\n" + keys + "    INNER\n      LIB NLOPT\n"
                        "      ALGO LD_LBFGS\n    ENDINNER\n");
 }
 
@@ -1180,6 +1181,106 @@ TEST_CASE("Gradient budget: an MLSL's startup warning follows the run's "
         const auto rows = data_rows("params.tadah");
         CHECK(std::vector<std::string>(rows[5].begin() + 2, rows[5].end()) ==
               std::vector<std::string>(rows[*k].begin() + 2, rows[*k].end()));
+    }
+}
+
+/* Pins: on the real host (hpo_run, the Ta fixture in 2-D), an MLSL under
+ * GRAD_STRATEGY ANALYTICAL evaluates its first local search's start again
+ * whatever the run's reuse -- an analytical gradient differentiates the last
+ * evaluation, so it follows an evaluation of its point -- and the analytical
+ * gradient there costs 1 evaluation, so GD_MLSL with INNER LD_LBFGS needs
+ * MAXEVAL 8 for a local step (1 + 4 + 1 + 1 + 1): N + 3 or less, 7, lets
+ * none step, N its 4 samples (under NUMERICAL central differences 2n + N +
+ * 1 or less, 9, with the loss there from the record, the case above, and
+ * 2n + N + 2 or less, 10, with it evaluated again); the startup WARNING is
+ * given exactly when the run takes no step:
+ *   - ANALYTICAL, MAXEVAL 7: the WARNING "... then its first local search,
+ *     from one of them, evaluates the loss there again (1 evaluation) and
+ *     the gradient there (1 evaluation: one analytical gradient,
+ *     GRAD_STRATEGY ANALYTICAL) before it evaluates a point it steps to,
+ *     which needs MAXEVAL 8 or more", once; 6 rows: the start, 4 samples
+ *     and row 6 repeating one of rows 1-5 exactly ("Repeats evaluated
+ *     again : 1"): no step;
+ *   - ANALYTICAL, MAXEVAL 8: no WARNING; 7 rows, row 6 repeating one of rows
+ *     1-5 and row 7 a step, far from every earlier point;
+ *   - HYBRID, MAXEVAL 8: the analytical gradient covers both OPTIM
+ *     parameters here (OALGO 4; the journal's "Gradient-pipeline diagnostic
+ *     (first eval): GRAD_STRATEGY=HYBRID | total_theta=2 | analytical=2 |
+ *     FD-fallback=0"), so HYBRID differences none and takes a step at row 7,
+ *     with no WARNING: HYBRID needs ANALYTICAL's budget and more for each
+ *     parameter it differences.
+ * Before the fix: passes as well (a pin: the warning and the run agreed;
+ * the docs fixed with it -- the Tadah.MLIP CHANGELOG and the MAXEVAL row of
+ * the Configuration File -- gave ANALYTICAL and HYBRID the NUMERICAL bound,
+ * 2n + N + 2: MAXEVAL 10 or less lets no local search step). */
+TEST_CASE("Gradient budget: an MLSL's startup warning under GRAD_STRATEGY "
+          "ANALYTICAL counts its local search's start evaluated again and one "
+          "analytical gradient",
+          "[HPO][termination][repeat_points][gradient_budget]")
+{
+    const std::string kNoStep = "takes no step";
+    /* the row of rows 1-5 that row 6 repeats exactly, -1 for none */
+    const auto start_again = [] {
+        const auto rows = data_rows("params.tadah");
+        long k = -1;
+        for (std::size_t j = 0; j < 5 && rows.size() > 5; ++j)
+            if (std::vector<std::string>(rows[5].begin() + 2, rows[5].end()) ==
+                std::vector<std::string>(rows[j].begin() + 2, rows[j].end()))
+                k = static_cast<long>(j);
+        return k;
+    };
+    SECTION("ANALYTICAL, MAXEVAL 7: warned, no step") {
+        TaRun run(mlsl_budget_block(7, "    GRAD_STRATEGY ANALYTICAL\n"),
+                  budget_root(""));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        check_run_files();
+        const std::string journal = read_file("hpo_run.log");
+        INFO("journal:\n" << journal);
+        CHECK(count_of(journal,
+                       "the STRATEGY-level optimiser NLOPT:GD_MLSL: MAXEVAL 7 "
+                       "takes no step of a local search: MLSL evaluates its "
+                       "starting point and its first 4 samples without a "
+                       "gradient (5 evaluations; POPULATION 4, NLopt's "
+                       "default), then its first local search, from one of "
+                       "them, evaluates the loss there again (1 evaluation) "
+                       "and the gradient there (1 evaluation: one analytical "
+                       "gradient, GRAD_STRATEGY ANALYTICAL) before it "
+                       "evaluates a point it steps to, which needs MAXEVAL 8 "
+                       "or more") == 1u);
+        CHECK(count_of(journal, kNoStep) == 1u);
+        CHECK(params_points().size() == 6u);
+        CHECK(repeated_rows() == 1u);
+        CHECK(start_again() >= 0);
+        CHECK(diagnostics_count(journal, "Repeats evaluated again") == "1");
+    }
+    for (const char* strategy : {"ANALYTICAL", "HYBRID"}) {
+        DYNAMIC_SECTION(strategy << ", MAXEVAL 8: not warned, a step") {
+            TaRun run(mlsl_budget_block(8, std::string("    GRAD_STRATEGY ") +
+                                               strategy + "\n"),
+                      budget_root(""));
+            int status = -1;
+            REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+            CHECK(status == 0);
+            check_run_files();
+            const std::string journal = read_file("hpo_run.log");
+            INFO("journal:\n" << journal);
+            CHECK(count_of(journal, kNoStep) == 0u);
+            /* the analytical gradient covers both parameters: HYBRID
+             * differences none */
+            CHECK(count_of(journal, std::string("GRAD_STRATEGY=") + strategy +
+                                        " | total_theta=2 | analytical=2 | "
+                                        "FD-fallback=0") == 1u);
+            const auto pts = params_points();
+            REQUIRE(pts.size() == 7u);
+            CHECK(repeated_rows() == 1u);
+            CHECK(start_again() >= 0);
+            bool far = true;
+            for (std::size_t j = 0; j < 6; ++j)
+                far = far && !near_point(pts[j], pts[6]);
+            CHECK(far);
+        }
     }
 }
 
