@@ -458,7 +458,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * for each phase with a budget of its own (gradient_budget_warnings,
    * backend_rules.h); after the phase checks, which have accepted the
    * finite-difference settings it reads. With the run's permission to
-   * answer a point asked for again from the search's record: the host's
+   * answer a point the run has evaluated from the run's record: the host's
    * (HPO_Host::repeat_reuse_blocker() is this repeat_reuse_blocker()), so
    * the warning counts the evaluations the run spends. */
   for (const std::string &w : gradient_budget_warnings(

@@ -30,12 +30,21 @@
  * for an equal seed: a TADAH:RANDOM refinement evaluated the exploration's
  * draws again.
  *
+ * A RESTART round's starting-point methods draw streams of their own too
+ * (kRestartPoints, InitStream::Restart, init_strategy.h): its RANDOM and
+ * LHS methods seed seed_stream(SEED + r, kRestartPoints), not
+ * std::mt19937_64(SEED + r), so a round does not draw the points of an
+ * INIT block whatever the two SEEDs: an INIT block's SEED s and a round
+ * whose RESTART SEED + r is s drew the same points (INIT SEED 5, RESTART
+ * SEED 4: restart 1 started where round 0 had). SOBOL draws no random
+ * numbers: its seed selects a block of the sequence in both blocks.
+ *
  * Two consumers of the same kind in one phase given the same seed -- two
- * METHOD chains (an INIT block's SEED s and a RESTART round whose
- * RESTART SEED + r is s) -- draw the same numbers: a seed names a stream.
- * HPO's own derived seeds keep the runs of one SEED apart (MULTISTART
- * start i: SEED + i; RESTART round r: SEED + r*S, the RESTART block's
- * points RESTART SEED + r; OptimizerSpec::derive_restart_seeds).
+ * INIT chains of one phase, two optimisers of one kind -- draw the same
+ * numbers: a seed names a stream. HPO's own derived seeds keep the runs of
+ * one SEED apart (MULTISTART start i: SEED + i; RESTART round r: SEED +
+ * r*S, the RESTART block's points RESTART SEED + r;
+ * OptimizerSpec::derive_restart_seeds).
  */
 #include <cstddef>
 #include <cstdint>
@@ -52,13 +61,15 @@ constexpr std::uint64_t kAnnealWarmup    = 0x57A21;   /* PT step warm-up + pilot
 constexpr std::uint64_t kRandomSearch    = 0x4A4D5E;  /* TADAH:RANDOM's draws    */
 constexpr std::uint64_t kAsa             = 0xA5A5A;   /* ASA's generator         */
 constexpr std::uint64_t kRefinementPhase = 0x2EF1E;   /* a refinement's key      */
+constexpr std::uint64_t kRestartPoints   = 0x2E57A;   /* RESTART rounds' RANDOM/LHS */
 
 /* Whether the salts are pairwise distinct. */
 constexpr bool all_distinct()
 {
     constexpr std::uint64_t s[] = {kAnnealChain, kAnnealProbes, kAnnealPtSwap,
                                    kAnnealPaResample, kAnnealWarmup,
-                                   kRandomSearch, kAsa, kRefinementPhase};
+                                   kRandomSearch, kAsa, kRefinementPhase,
+                                   kRestartPoints};
     constexpr std::size_t n = sizeof(s) / sizeof(s[0]);
     for (std::size_t i = 0; i < n; ++i)
         for (std::size_t j = i + 1; j < n; ++j)

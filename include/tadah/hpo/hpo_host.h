@@ -40,6 +40,7 @@
 #include <tadah/hpo/bound_audit.h>
 #include <tadah/hpo/pot_header_writer.h>
 #include <tadah/hpo/rho_gates.h>
+#include <tadah/hpo/repeat_points.h>     // RunRecord, RecordedEval
 #include <tadah/hpo/run_stop.h>          // StagnationStop, ExceptionStash
 #include <tadah/hpo/stagnation_stop.h>    // BestPublications, throw_if_stagnated
 #include <tadah/mlip/analytics/analytics.h>
@@ -291,7 +292,8 @@ public:
      * HPO runs are not resumable: every run removes stale best-potential
      * incumbents and starts its comparator from scratch, and its PC_LAMMPS
      * --hotvar values from their declared initial values or WARM's seeds
-     * (warmstart::reset_for_fresh_run). The evaluation counter continues
+     * (warmstart::reset_for_fresh_run), and its record of evaluations
+     * (recorded()) starts empty. The evaluation counter continues
      * (reset_best_state_for_fresh_run). MPI ranks coordinate before any
      * evaluation can publish. */
     void prepare_best_publication() const;
@@ -302,6 +304,16 @@ public:
      *  adapters then answer a point a search asks for again from its
      *  earlier evaluation (repeat_points.h). */
     std::string repeat_reuse_blocker() const { return trg_.repeat_reuse_blocker(); }
+
+    /** The run's evaluation of the point an evaluation of the REAL point
+     *  @p asked would make -- @p asked after the snap onto the box and the
+     *  RHOFORM projection operator() applies -- when it gave a usable loss,
+     *  or none. operator() records every evaluation of the run with a
+     *  usable loss, whichever backend asked for it; the record starts empty
+     *  at every run (prepare_best_publication). NLopt and DLIB:BFGS answer a
+     *  repeat from it when repeat_reuse_blocker() is "", and count one
+     *  evaluated again otherwise (repeat_points.h). */
+    std::optional<RecordedEval<ParamVec>> recorded(const ParamVec& asked) const;
 
     std::size_t train_size() const;   // number of training structures
     std::size_t val_size()   const;   // number of validation structures
@@ -376,15 +388,20 @@ public:
     /** Current stagnation count: g_iter_ - iter_at_last_best_, plus the
      *  reused repeats since (count_reused_repeat). */
     static std::size_t stagnation_count();
-    /** A call a search answered from its record of an earlier evaluation
-     *  (repeat_points.h; `of_eval` the run's number of that evaluation):
-     *  no evaluation and no new best. While a RESTART window is armed (and
-     *  no probe phase runs) it counts in the window as one evaluation
-     *  without a new best, and throws StagnationStop when the window is
-     *  spent, as the evaluation it stands for would have: a search that
-     *  only asks for points it has (LD_MMA held at a bound) makes no
-     *  evaluation, and nothing else would end it or relaunch it. */
-    static void count_reused_repeat(std::optional<std::size_t> of_eval);
+    /** A call a search answered from the run's record of an earlier
+     *  evaluation @p e (repeat_points.h: its point, loss and run number):
+     *  no evaluation and no new best. It stands for the evaluation it
+     *  replaces twice: while a PRESTAGE exploration collects its top-K
+     *  (set_track_topk), the point is a candidate, as an evaluated one is
+     *  -- a RESTART round's exploration that asks for points of an earlier
+     *  round would otherwise have fewer candidates, none when every call is
+     *  answered -- and while a RESTART window is armed (and no probe phase
+     *  runs) the call counts in the window as one evaluation without a new
+     *  best, and throws StagnationStop when the window is spent, as the
+     *  evaluation would have: a search that only asks for points the run
+     *  has (LD_MMA held at a bound) makes no evaluation, and nothing else
+     *  would end it or relaunch it. */
+    static void count_reused_repeat(const RecordedEval<ParamVec>& e);
 
     /** Exception thrown by operator() to signal a stagnation-driven
      *  abort. The RestartPolicy catches and re-enters with a fresh init;
@@ -473,8 +490,19 @@ private:
     core::Context                val_ctx_;
     std::vector<std::string>     param_labels_;
 
+    /* The run's usable evaluations by the point evaluated (recorded();
+     * filled by operator(), cleared by prepare_best_publication). */
+    mutable RunRecord<ParamVec>  run_record_;
+
     /* ---------- helpers (pure) ----------------------------------------- */
     void update_context(core::Context&, const ParamVec&) const;
+    /** @p p with its AMPGRIDMB coordinates projected onto [0, inf), as
+     *  project_positive_form, without its count and journal line: @p p
+     *  itself when none is negative, else @p buf. */
+    const ParamVec& positive_form_of(const ParamVec& p, ParamVec& buf) const;
+    /** @p p snapped onto the box, as snap_onto_box, without its count:
+     *  @p p itself when nothing is snapped, else @p buf. */
+    const ParamVec& snapped_onto_box(const ParamVec& p, ParamVec& buf) const;
     /** @p p with its AMPGRIDMB coordinates projected onto [0, inf)
      *  (form_proj_idx_): @p p itself when none is negative, else @p buf
      *  holding the projection. Counts the projection in HPOLog and

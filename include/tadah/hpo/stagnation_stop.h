@@ -47,9 +47,9 @@ private:
 /** The stagnation check of evaluation `iter`: throws StagnationStop when
  *  `threshold` (> 0) evaluations have passed since `last_best` (the eval
  *  number of the last new best), each of the `reused` calls since then
- *  that a search answered from its record of an earlier evaluation
+ *  that a search answered from the run's record of an earlier evaluation
  *  (repeat_points.h) counted as one: such a call is no new best, and a
- *  search that only asks for points it has makes no evaluation. A reused
+ *  search that only asks for points the run has makes no evaluation. A reused
  *  call checks with `iter` the latest evaluation (HPO_Host::
  *  count_reused_repeat).
  *

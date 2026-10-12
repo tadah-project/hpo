@@ -56,6 +56,22 @@
  *                                             that an unchanged point does
  *                                             not meet: PARAM tol_gradinf,
  *                                             or FTOL_ABS 0)
+ *   Revisit       back at an earlier point    DLIB:BFGS: an iteration moved
+ *                                             the point without an
+ *                                             evaluation -- every point it
+ *                                             asked for answered from the
+ *                                             run's record -- and so came
+ *                                             back to a point where the
+ *                                             search had stood, its loss
+ *                                             and gradient unchanged: on a
+ *                                             plateau of the loss's
+ *                                             rounding, under a stop test
+ *                                             that does not end it there
+ *                                             (FTOL_ABS 0, PARAM
+ *                                             tol_gradinf), it goes round
+ *                                             points it has, and MAXEVAL,
+ *                                             which counts evaluations,
+ *                                             never ends it
  */
 
 #include <tadah/hpo/hpo_log.h>
@@ -67,7 +83,7 @@ namespace tadah::hpo {
 
 enum class EndReason {
     MaxEval, MaxTime, StopVal, FtolAbs, FtolRel, XtolRel, GradTol, MaxIter,
-    TMin, FtolPlateau, GridDone, NoDims, NoStep
+    TMin, FtolPlateau, GridDone, NoDims, NoStep, Revisit
 };
 
 /* The fixed text of `r` (the table above). */
@@ -87,6 +103,7 @@ inline const char* end_reason_text(EndReason r)
         case EndReason::GridDone:    return "all grid points evaluated";
         case EndReason::NoDims:      return "no optimisable dimensions";
         case EndReason::NoStep:      return "no step within the OPTIM box";
+        case EndReason::Revisit:     return "back at an earlier point";
     }
     return "";   // unreachable: every enumerator is listed
 }

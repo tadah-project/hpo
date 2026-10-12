@@ -482,7 +482,8 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
   if (spec.restart.active()) {
     const InitStrategySpec& rs = spec.restart.init_strategy;
     auto refresh = build_init_strategy(rs);
-    InitContext ictx{spec, *this, rs.seed.value_or(0), &context};
+    InitContext ictx{spec, *this, rs.seed.value_or(0), &context,
+                     InitStream::Restart};
     std::vector<InitOrigin> origins;
     const auto pts = refresh->generate_tagged(
         ictx, rs.k_total.value_or(refresh->default_k()), origins);

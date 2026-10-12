@@ -3,19 +3,22 @@
 # The host tracks how many evals have passed without a new best.
 # When that count reaches AFTER_STAGNATION, HPO short-circuits the
 # inner optimiser with a StagnationStop exception, the RESTART
-# decorator catches it, draws a fresh seed from its own INIT chain,
-# and re-enters the optimiser. After MAX restarts the run exits.
+# decorator catches it, draws a fresh starting point from its own
+# METHOD chain, and re-enters the optimiser. After MAX restarts the
+# next stagnation ends the run. SEED makes the restart points repeat
+# from run to run: restart r draws its point with SEED + r.
 
 OPTIMIZER
   STRATEGY
     TYPE PLAIN
-    LIB DLIB
-    ALGO BFGS
+    LIB NLOPT
+    ALGO LN_SBPLX
     MAXEVAL 60
     RESTART
       AFTER_STAGNATION 3
       MAX 2
-      STRATEGY RANDOM 1
+      METHOD RANDOM 1
+      SEED 13
     ENDRESTART
   ENDSTRATEGY
 ENDOPTIMIZER

@@ -945,7 +945,16 @@ std::size_t HPO_Host<P,R>::stagnation_count() {
 }
 
 template<class P,class R>
-void HPO_Host<P,R>::count_reused_repeat(std::optional<std::size_t> of_eval) {
+void HPO_Host<P,R>::count_reused_repeat(const RecordedEval<P>& e) {
+  const std::optional<std::size_t>& of_eval = e.eval;
+  /* A candidate of a PRESTAGE exploration, as the evaluation it stands for
+   * would be (operator()); the record holds usable losses only. A point
+   * the buffer has already is a near-clone there and is kept once. */
+  if (topk_capacity_ > 0) {
+    std::lock_guard<std::mutex> lk(topk_mtx_);
+    if (topk_capacity_ > 0)
+      topk_consider(topk_buf_, topk_capacity_, e.loss, e.point, topk_widths_);
+  }
   const std::size_t threshold =
       stagnation_threshold_.load(std::memory_order_relaxed);
   /* As an evaluation counts (operator()): only while a window is armed,
@@ -966,16 +975,28 @@ void HPO_Host<P,R>::count_reused_repeat(std::optional<std::size_t> of_eval) {
             "StagnationStop fired at a repeat of " +
             (of_eval ? "eval " + std::to_string(*of_eval)
                      : std::string("an earlier evaluation")) +
-            " answered from the search's record, after eval " +
+            " answered from the run's record, after eval " +
             std::to_string(latest) +
             "; short-circuiting optimiser (threshold=" +
-            std::to_string(threshold) +
-            " evals without improvement, each repeat answered from the "
-            "record counted as one)");
+            std::to_string(threshold) + " evals without improvement, " +
+            std::to_string(
+                reused_since_best_.load(std::memory_order_relaxed)) +
+            " of them call(s) answered from the run's record)");
       } catch (...) {}
     }
     throw;
   }
+}
+
+template<class P,class R>
+std::optional<RecordedEval<P>> HPO_Host<P,R>::recorded(const P& asked) const {
+  /* The point operator() would evaluate for `asked` (its snap onto the box,
+   * then the RHOFORM projection; pure, no counts). */
+  P snapped, projected;
+  const P& box = snapped_onto_box(asked, snapped);
+  const P& point = form_proj_idx_.empty() ? box
+                                          : positive_form_of(box, projected);
+  return run_record_.find(point);
 }
 
 template<class P,class R>
@@ -1035,6 +1056,8 @@ void HPO_Host<P,R>::prepare_best_publication() const {
         std::lock_guard<std::mutex> lock(best_mtx_);
         durable_latch_.reset();
     }
+    /* A new run answers no repeat from an earlier run's evaluations. */
+    run_record_.clear();
     try {
         if (hpo_rank() == 0)
             durable_best::reset_for_fresh_run(trg_.canonicalBestPotFile, dbopts_);
@@ -1463,6 +1486,21 @@ void HPO_Host<P,R>::update_context(core::Context& ctx,
 
 /* ----------  helper: positive-form projection ------------------------- */
 template<class P, class R>
+const P& HPO_Host<P,R>::positive_form_of(const P& p, P& buf) const
+{
+    bool any = false;
+    for (std::size_t k : form_proj_idx_)
+        any = any || p(static_cast<long>(k)) < 0.0;
+    if (!any) return p;   // in the box (NaN is left to DM_REAM)
+    buf = p;
+    for (std::size_t k : form_proj_idx_) {
+        const long i = static_cast<long>(k);
+        if (buf(i) < 0.0) buf(i) = 0.0;
+    }
+    return buf;
+}
+
+template<class P, class R>
 const P& HPO_Host<P,R>::project_positive_form(const P& p, P& buf,
                                               std::size_t iter) const
 {
@@ -1471,11 +1509,7 @@ const P& HPO_Host<P,R>::project_positive_form(const P& p, P& buf,
         if (p(static_cast<long>(k)) < 0.0 && n_neg++ == 0) first = k;
     if (n_neg == 0) return p;   // in the box (NaN is left to DM_REAM)
 
-    buf = p;
-    for (std::size_t k : form_proj_idx_) {
-        const long i = static_cast<long>(k);
-        if (buf(i) < 0.0) buf(i) = 0.0;
-    }
+    positive_form_of(p, buf);
     try {
         if (HPOLog::instance().record_form_projection() == 1) {
             char v[32];
@@ -1497,7 +1531,7 @@ const P& HPO_Host<P,R>::project_positive_form(const P& p, P& buf,
 
 /* ----------  helper: evaluations outside the OPTIM box ---------------- */
 template<class P, class R>
-const P& HPO_Host<P,R>::snap_onto_box(const P& p, P& buf) const
+const P& HPO_Host<P,R>::snapped_onto_box(const P& p, P& buf) const
 {
     const SearchSpacePtr space = trg_.space();
     if (!space) return p;
@@ -1514,7 +1548,14 @@ const P& HPO_Host<P,R>::snap_onto_box(const P& p, P& buf) const
         }
         buf(static_cast<long>(k)) = *b;
     }
-    if (!snapped) return p;
+    return snapped ? buf : p;
+}
+
+template<class P, class R>
+const P& HPO_Host<P,R>::snap_onto_box(const P& p, P& buf) const
+{
+    const P& out = snapped_onto_box(p, buf);
+    if (&out == &p) return p;
     try {
         HPOLog::instance().record_snap();
     } catch (...) { /* journalling must never fail an evaluation */ }
@@ -3462,6 +3503,12 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
       }
     }
 
+    /* The run's record of its usable evaluations (recorded(),
+     * repeat_points.h), by the point evaluated, before the stagnation check
+     * below can end this evaluation's search: the evaluation is complete. */
+    if (loss_kind(r) == EvalLoss::Usable)
+      run_record_.record(r.params, r.loss, r.iter);
+
     /* Top-K tracking -- cheap fast-path when disabled (capacity == 0).
      * Near-clone dedup (loss + normalised parameter distance) lives in topk.h.
      * Only a usable loss is a candidate (the band predicate of best
@@ -3753,13 +3800,24 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
          * next stage boundary. */
         if (!stagnation_warned_.exchange(true, std::memory_order_relaxed)) {
             try {
+                /* The window counts the calls answered from the run's
+                 * record since the last new best too (count_reused_repeat):
+                 * say how many, so that a window of fewer evaluations
+                 * than the threshold reads right. */
+                const std::size_t reused =
+                    reused_since_best_.load(std::memory_order_relaxed);
                 HPOLog::instance().info(
                     std::string("StagnationStop fired at eval ") +
                     std::to_string(r.iter) +
                     "; short-circuiting optimiser, real loss preserved "
                     "(threshold=" +
                     std::to_string(stagnation_threshold_.load(std::memory_order_relaxed)) +
-                    " evals without improvement)");
+                    " evals without improvement" +
+                    (reused > 0 ? ", " + std::to_string(reused) +
+                                      " of them call(s) answered from the "
+                                      "run's record"
+                                : std::string()) +
+                    ")");
             } catch (...) {}
         }
         try {

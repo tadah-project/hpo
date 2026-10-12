@@ -34,6 +34,14 @@ namespace tadah::hpo {
 
 class HPOTargets;        // forward-declared -- full type pulled in by .cpp
 
+/* Which block's chain draws the points (InitContext::stream): an INIT
+ * block (the run's, a PRESTAGE phase's) or a RESTART round. The random
+ * methods (RANDOM, LHS) of a RESTART round draw a stream of their own
+ * (seed_stream(seed, kRestartPoints)), so a round never draws an INIT
+ * block's points; an INIT block's draw std::mt19937_64(seed), as they
+ * always did. */
+enum class InitStream { Init, Restart };
+
 struct InitContext {
     const OptimizerSpec& spec;            // bounds, log_scaled (post-transform)
     const HPOTargets&    targets;         // optimap, ui_offset
@@ -42,6 +50,9 @@ struct InitContext {
      * EMBF0 and RHOFORM checks; every resolution in a run passes it (the
      * INIT chains, a RESTART refresh). nullptr skips the checks. */
     const core::Context* run_context = nullptr;
+    /** The block the chain belongs to (InitStream); RestartPolicy passes
+     *  Restart. */
+    InitStream           stream = InitStream::Init;
 };
 
 class InitStrategy {
@@ -76,6 +87,10 @@ public:
     /** Natural number of points this strategy produces when no explicit
      *  K is given. Used by build_init_strategy() to size INIT_K. */
     virtual std::size_t default_k() const { return 1; }
+
+    /** Whether its points depend on the context's seed: RANDOM, LHS and
+     *  SOBOL, and a chain holding one; CONFIG and WARM take none. */
+    virtual bool draws_from_seed() const { return false; }
 };
 
 /* The -c configuration's point: the config value of every OPTIM-flagged

@@ -797,7 +797,7 @@ struct BlockedValley : Valley {
 
 /* For every MAXEVAL m from 1 to c.first_step, on a HostT: the warning that
  * gradient_budget_warnings gives with the run's reuse permission (what
- * run_nlopt_impl gives its RepeatPoints: repeat_policy(host).reuse) is
+ * run_nlopt_impl gives its RepeatPoints: repeat_policy<Vec>(host).reuse) is
  * given at m if and only if the run at m asks for no point it stepped to,
  * and the first step is the evaluation c.first_step. */
 template <class HostT>
@@ -819,7 +819,7 @@ void check_budget_warning_follows_run(const BudgetCase& c)
         HostT host;
         const std::vector<std::string> warnings =
             tadah::hpo::gradient_budget_warnings(
-                sp, tadah::hpo::repeat_policy(host).reuse);
+                sp, tadah::hpo::repeat_policy<Vec>(host).reuse);
         INFO("warnings: " << (warnings.empty() ? "(none)" : warnings.front()));
         REQUIRE_NOTHROW(tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host));
         (void)j.text();

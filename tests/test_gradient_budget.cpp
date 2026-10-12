@@ -169,6 +169,20 @@ std::string central2(const std::string& budget, const std::string& needs)
            "which needs " + needs;
 }
 
+/* The same when the search's start is a point the run has evaluated (a
+ * PRESTAGE refinement's, an exploration candidate; the seed point that
+ * NOISE_CALIBRATION evaluated) and the run answers it from its record: the
+ * loss there is the recorded one, the centre of the finite differences,
+ * and only their stencil is evaluated. */
+std::string record_central2(const std::string& budget, const std::string& needs)
+{
+    return ": " + budget + " takes no step: its gradient search takes the "
+           "loss at its starting point from the run's record (no evaluation) "
+           "and evaluates the gradient there (4 evaluations: central "
+           "differences in 2 dimensions, GRAD_STRATEGY NUMERICAL) before it "
+           "evaluates a point it steps to, which needs " + needs;
+}
+
 }  // namespace
 
 /* Pins: a gradient search in 2-D with GRAD_STRATEGY NUMERICAL (central
@@ -283,22 +297,26 @@ TEST_CASE("startup validation: the gradient budget warning counts the "
  *     needs BUDGET_PER_START 6 or more") or its share of MAXEVAL ("MAXEVAL
  *     8 over 2 starts, 4 each, takes no step: ... which needs 6 evaluations
  *     or more per start"); a MAXEVAL 12 over 2 starts gets none;
- *   - the PRESTAGE refinement ("the PRESTAGE refinement NLOPT:LD_LBFGS:
- *     MAXEVAL 4 takes no step"), and not the derivative-free exploration;
- *     with TOPK 2 each candidate's share ("MAXEVAL 8 over 2 TOPK
- *     candidates, 4 each, takes no step: ... which needs 6 evaluations or
- *     more per candidate");
+ *   - the PRESTAGE refinement, whose start, an exploration candidate, the
+ *     run has evaluated and answers from its record ("the PRESTAGE
+ *     refinement NLOPT:LD_LBFGS: MAXEVAL 4 takes no step: its gradient
+ *     search takes the loss at its starting point from the run's record (no
+ *     evaluation) and evaluates the gradient there (4 evaluations: ...)
+ *     ..., which needs MAXEVAL 5 or more"; MAXEVAL 5 gets none), and not
+ *     the derivative-free exploration; with TOPK 2 each candidate's share
+ *     ("MAXEVAL 8 over 2 TOPK candidates, 4 each, takes no step: ... which
+ *     needs 5 evaluations or more per candidate"; MAXEVAL 10 gets none);
  *   - an INNER block, whose MAXEVAL NLopt counts in its own calls, each the
  *     loss and the gradient at a point: INNER LD_LBFGS MAXEVAL 1 under
  *     GD_MLSL, whose local searches start at points MLSL evaluated, whose
- *     loss the search's record answers (every evaluation of this run is a
+ *     loss the run's record answers (every evaluation of this run is a
  *     function of its point; NUMERICAL takes it as the centre of the
  *     finite differences, repeat_use, repeat_points.h): "the INNER block of
  *     the STRATEGY-level optimiser NLOPT:LD_LBFGS: MAXEVAL 1 takes no step:
  *     NLopt counts an INNER block's MAXEVAL in its calls, each the loss and
  *     the gradient at a point (4 evaluations: central differences in 2
  *     dimensions, GRAD_STRATEGY NUMERICAL; MLSL's local searches start at
- *     points it evaluated, whose loss is taken from the search's record),
+ *     points it evaluated, whose loss is taken from the run's record),
  *     so each local search evaluates the gradient at its starting point and
  *     ends there, which needs MAXEVAL 2 or more"; under a --skip-rel filter,
  *     where every repeat is evaluated again, "(1 + 4 evaluations: central
@@ -311,7 +329,14 @@ TEST_CASE("startup validation: the gradient budget warning counts the "
  * --skip-rel fails: its text was the --skip-rel one, "(1 + 4 evaluations:
  * ...), so each local search evaluates its starting point", which counted
  * a loss the record answers; every other check passes as well (pins; until
- * the warning was added none was given). */
+ * the warning was added none was given).
+ * Before the run kept one record (fix/repeat-followups): the PRESTAGE
+ * refinement was warned with the start evaluated again, "its gradient
+ * search evaluates the loss at a starting point (1 evaluation) ...,
+ * which needs MAXEVAL 6 or more" ("6 evaluations or more per candidate"),
+ * and MAXEVAL 5 (10 over 2 candidates) as well, although the run's
+ * refinement steps at its fifth evaluation; the texts said "from the
+ * search's record": those checks fail. */
 TEST_CASE("startup validation: the gradient budget warning covers each "
           "MULTISTART start, the PRESTAGE refinement and an INNER block",
           "[startup_validation][gradient_budget]")
@@ -342,10 +367,17 @@ TEST_CASE("startup validation: the gradient budget warning covers each "
             "    MAXEVAL 4\n    EXPLORE\n      LIB NLOPT\n"
             "      ALGO GN_DIRECT\n      MAXEVAL 10\n    ENDEXPLORE\n"));
         CHECK(count_of(journal, "the PRESTAGE refinement NLOPT:LD_LBFGS" +
-                                    central2("MAXEVAL 4",
-                                             "MAXEVAL 6 or more")) == 1u);
+                                    record_central2("MAXEVAL 4",
+                                                    "MAXEVAL 5 or more")) ==
+              1u);
         CHECK(count_of(journal, kNoStep) == 1u);
     }
+    CHECK(count_of(startup_journal(strategy(
+                       "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LD_LBFGS\n"
+                       "    MAXEVAL 5\n    EXPLORE\n      LIB NLOPT\n"
+                       "      ALGO GN_DIRECT\n      MAXEVAL 10\n"
+                       "    ENDEXPLORE\n")),
+                   kNoStep) == 0u);
 
     /* With TOPK 2 the refinement runs once from each candidate, each with
      * its share of MAXEVAL (plan_multistart, ceil division). */
@@ -356,12 +388,18 @@ TEST_CASE("startup validation: the gradient budget warning covers each "
             "      ALGO GN_DIRECT\n      MAXEVAL 10\n    ENDEXPLORE\n"));
         CHECK(count_of(journal,
                        "the PRESTAGE refinement NLOPT:LD_LBFGS" +
-                           central2("MAXEVAL 8 over 2 TOPK candidates, 4 "
-                                    "each,",
-                                    "6 evaluations or more per "
-                                    "candidate")) == 1u);
+                           record_central2("MAXEVAL 8 over 2 TOPK candidates, "
+                                           "4 each,",
+                                           "5 evaluations or more per "
+                                           "candidate")) == 1u);
         CHECK(count_of(journal, kNoStep) == 1u);
     }
+    CHECK(count_of(startup_journal(strategy(
+                       "    TYPE PRESTAGE\n    TOPK 2\n    LIB NLOPT\n"
+                       "    ALGO LD_LBFGS\n    MAXEVAL 10\n    EXPLORE\n"
+                       "      LIB NLOPT\n      ALGO GN_DIRECT\n"
+                       "      MAXEVAL 10\n    ENDEXPLORE\n")),
+                   kNoStep) == 0u);
 
     const auto mlsl = [](const std::string& inner_algo,
                          const std::string& inner_maxeval,
@@ -388,7 +426,7 @@ TEST_CASE("startup validation: the gradient budget warning covers each "
                        inner_head + "(4 evaluations: central differences in "
                        "2 dimensions, GRAD_STRATEGY NUMERICAL; MLSL's local "
                        "searches start at points it evaluated, whose loss is "
-                       "taken from the search's record), so each local "
+                       "taken from the run's record), so each local "
                        "search evaluates the gradient at its starting point "
                        "and ends there, which needs MAXEVAL 2 or more") ==
               1u);
@@ -446,7 +484,7 @@ std::string mlsl_record_central2(const std::string& budget, unsigned samples,
                                  const std::string& needs)
 {
     return mlsl_head(budget, samples, population) +
-           "takes the loss there from the search's record (no evaluation) "
+           "takes the loss there from the run's record (no evaluation) "
            "and evaluates the gradient there (4 evaluations: central "
            "differences in 2 dimensions, GRAD_STRATEGY NUMERICAL) before it "
            "evaluates a point it steps to, which needs " + needs;
@@ -483,7 +521,7 @@ const std::string kInnerLbfgs =
  *     MLSL evaluates its starting point and its first 4 samples without a
  *     gradient (5 evaluations; POPULATION 4, NLopt's default), then its
  *     first local search, from one of them, takes the loss there from the
- *     search's record (no evaluation) and evaluates the gradient there (4
+ *     run's record (no evaluation) and evaluates the gradient there (4
  *     evaluations: central differences in 2 dimensions, GRAD_STRATEGY
  *     NUMERICAL) before it evaluates a point it steps to, which needs
  *     MAXEVAL 10 or more"; MAXEVAL 10 gets none;
@@ -729,4 +767,168 @@ TEST_CASE("startup validation: the gradient budget warning of an MLSL in a "
     CHECK(count_of(startup_journal(mlsl_plain("GD_MLSL", "8", kInnerLbfgs,
                                               kRootObservable)),
                    kNoStep) == 0u);
+}
+
+namespace {
+
+/* A PRESTAGE run whose refinement is the STRATEGY-level `algo_lines` (LIB,
+ * ALGO and its other keys) with MAXEVAL `maxeval`, after a GN_DIRECT
+ * exploration of 10 evaluations. */
+std::string prestage(const std::string& algo_lines, const std::string& maxeval,
+                     const std::string& root = kRoot)
+{
+    return strategy("    TYPE PRESTAGE\n" + algo_lines + "    MAXEVAL " +
+                        maxeval +
+                        "\n    EXPLORE\n      LIB NLOPT\n      ALGO GN_DIRECT\n"
+                        "      MAXEVAL 10\n    ENDEXPLORE\n",
+                    root);
+}
+
+/* `strategy_body` under an OPTIMIZER block whose NOISE block sets
+ * CALIBRATION `n`. */
+std::string with_calibration(const std::string& n,
+                             const std::string& strategy_body)
+{
+    return kRoot + "OPTIMIZER\n  NOISE\n    CALIBRATION " + n +
+           "\n  ENDNOISE\n  STRATEGY\n" + strategy_body +
+           "  ENDSTRATEGY\nENDOPTIMIZER\n";
+}
+
+const std::string kLbfgs = "    LIB NLOPT\n    ALGO LD_LBFGS\n";
+
+}  // namespace
+
+/* Pins: the run keeps one record of its usable evaluations (repeat_points.h,
+ * HPO_Host::recorded), which NLopt and DLIB:BFGS answer a call from, so a
+ * search of theirs that starts at a point the run has evaluated takes the
+ * loss there as the run spends it (repeat_use): from the record under
+ * NUMERICAL (the centre of the finite differences), evaluated again under
+ * ANALYTICAL or HYBRID or without a reuse. Two starts are such points:
+ *   - a PRESTAGE refinement's, an exploration candidate (a usable
+ *     evaluation): in 2-D under NUMERICAL central differences 0 + 4 + 1
+ *     evaluations, "the PRESTAGE refinement DLIB:BFGS: MAXEVAL 4 takes no
+ *     step: its gradient search takes the loss at its starting point from
+ *     the run's record (no evaluation) and evaluates the gradient there (4
+ *     evaluations: ...) ..., which needs MAXEVAL 5 or more", and MAXEVAL 5
+ *     gets none; under ANALYTICAL the start is evaluated again, "the
+ *     PRESTAGE refinement DLIB:BFGS: MAXEVAL 2 takes no step: its gradient
+ *     search evaluates the loss at its starting point again (1 evaluation)
+ *     and the gradient there (1 evaluation: one analytical gradient,
+ *     GRAD_STRATEGY ANALYTICAL) ..., which needs MAXEVAL 3 or more", and so
+ *     under a --skip-rel filter (no reuse), NLOPT:LD_LBFGS MAXEVAL 5
+ *     needing 6; an MLSL refinement takes its starting point's loss from
+ *     the record too, "MLSL takes the loss at its starting point from the
+ *     run's record and evaluates its first 4 samples without a gradient (4
+ *     evaluations; ...), then its first local search, from one of them,
+ *     takes the loss there from the run's record (no evaluation) ...,
+ *     which needs MAXEVAL 9 or more" (MAXEVAL 8; 9 gets none); an AUGLAG
+ *     refinement's local search starts at the candidate, so its INNER
+ *     LD_LBFGS MAXEVAL 1 reads "(4 evaluations: ...; its local search
+ *     starts at a point the run has evaluated, whose loss is taken from the
+ *     run's record), so each local search evaluates the gradient at its
+ *     starting point and ends there";
+ *   - under NOISE CALIBRATION 3 the run's first search starts at the seed
+ *     point the calibration evaluated: the PLAIN NLOPT:LD_LBFGS reads "the
+ *     STRATEGY-level optimiser NLOPT:LD_LBFGS: MAXEVAL 4 takes no step: its
+ *     gradient search takes the loss at its starting point from the run's
+ *     record ..., which needs MAXEVAL 5 or more", and MAXEVAL 5 gets none;
+ *     CALIBRATION 0, which runs no calibration, keeps "evaluates the loss at
+ *     a starting point", needing 6 at MAXEVAL 5 (a pin); each of two
+ *     MULTISTART starts keeps it too (the second starts elsewhere): a pin,
+ *     BUDGET_PER_START 5 needing 6.
+ * The refinement from INIT points that a PRESTAGE whose exploration has no
+ * usable candidate falls back on starts at points the run need not have
+ * evaluated, which the warning, before any evaluation, cannot know.
+ * Before the fix: every such start was counted as evaluated ("evaluates the
+ * loss at a starting point (1 evaluation)"): the DLIB:BFGS refinement
+ * MAXEVAL 4 was warned about needing 6 and MAXEVAL 5, which steps at its
+ * fifth evaluation, was warned about too; the ANALYTICAL and --skip-rel
+ * texts said "at a starting point"; the MLSL refinement needed 10, the
+ * AUGLAG INNER text was "(1 + 4 evaluations: ...), so each local search
+ * evaluates its starting point", and the calibrated PLAIN run MAXEVAL 4 and
+ * 5 needed 6: those checks fail; the CALIBRATION 0 and MULTISTART checks
+ * pass as well. */
+TEST_CASE("startup validation: the gradient budget warning takes a start the "
+          "run has evaluated from the run's record",
+          "[startup_validation][gradient_budget][repeat_points]")
+{
+    const std::string dlib = "    LIB DLIB\n    ALGO BFGS\n";
+    CHECK(count_of(startup_journal(prestage(dlib, "4")),
+                   "the PRESTAGE refinement DLIB:BFGS" +
+                       record_central2("MAXEVAL 4", "MAXEVAL 5 or more")) ==
+          1u);
+    CHECK(count_of(startup_journal(prestage(dlib, "5")), kNoStep) == 0u);
+
+    const std::string analytical = dlib + "    GRAD_STRATEGY ANALYTICAL\n";
+    CHECK(count_of(startup_journal(prestage(analytical, "2")),
+                   "the PRESTAGE refinement DLIB:BFGS: MAXEVAL 2 takes no "
+                   "step: its gradient search evaluates the loss at its "
+                   "starting point again (1 evaluation) and the gradient "
+                   "there (1 evaluation: one analytical gradient, "
+                   "GRAD_STRATEGY ANALYTICAL) before it evaluates a point it "
+                   "steps to, which needs MAXEVAL 3 or more") == 1u);
+    CHECK(count_of(startup_journal(prestage(analytical, "3")), kNoStep) == 0u);
+
+    CHECK(count_of(startup_journal(prestage(kLbfgs, "5", kRootSkipRel)),
+                   "the PRESTAGE refinement NLOPT:LD_LBFGS: MAXEVAL 5 takes "
+                   "no step: its gradient search evaluates the loss at its "
+                   "starting point again (1 evaluation) and the gradient "
+                   "there (4 evaluations: central differences in 2 "
+                   "dimensions, GRAD_STRATEGY NUMERICAL) before it evaluates "
+                   "a point it steps to, which needs MAXEVAL 6 or more") ==
+          1u);
+
+    const std::string mlsl =
+        "    LIB NLOPT\n    ALGO GD_MLSL\n" + kInnerLbfgs;
+    CHECK(count_of(startup_journal(prestage(mlsl, "8")),
+                   "the PRESTAGE refinement NLOPT:GD_MLSL: MAXEVAL 8 takes no "
+                   "step of a local search: MLSL takes the loss at its "
+                   "starting point from the run's record and evaluates its "
+                   "first 4 samples without a gradient (4 evaluations; "
+                   "POPULATION 4, NLopt's default), then its first local "
+                   "search, from one of them, takes the loss there from the "
+                   "run's record (no evaluation) and evaluates the gradient "
+                   "there (4 evaluations: central differences in 2 "
+                   "dimensions, GRAD_STRATEGY NUMERICAL) before it evaluates "
+                   "a point it steps to, which needs MAXEVAL 9 or more") ==
+          1u);
+    CHECK(count_of(startup_journal(prestage(mlsl, "9")), kNoStep) == 0u);
+
+    const std::string auglag =
+        "    LIB NLOPT\n    ALGO AUGLAG\n    INNER\n      LIB NLOPT\n"
+        "      ALGO LD_LBFGS\n      MAXEVAL 1\n    ENDINNER\n";
+    CHECK(count_of(startup_journal(prestage(auglag, "100")),
+                   "the INNER block of the PRESTAGE refinement NLOPT:LD_LBFGS: "
+                   "MAXEVAL 1 takes no step: NLopt counts an INNER block's "
+                   "MAXEVAL in its calls, each the loss and the gradient at a "
+                   "point (4 evaluations: central differences in 2 "
+                   "dimensions, GRAD_STRATEGY NUMERICAL; its local search "
+                   "starts at a point the run has evaluated, whose loss is "
+                   "taken from the run's record), so each local search "
+                   "evaluates the gradient at its starting point and ends "
+                   "there, which needs MAXEVAL 2 or more") == 1u);
+
+    const std::string plain_lbfgs = "    TYPE PLAIN\n" + kLbfgs;
+    CHECK(count_of(startup_journal(with_calibration(
+                       "3", plain_lbfgs + "    MAXEVAL 4\n")),
+                   "the STRATEGY-level optimiser NLOPT:LD_LBFGS" +
+                       record_central2("MAXEVAL 4", "MAXEVAL 5 or more")) ==
+          1u);
+    CHECK(count_of(startup_journal(with_calibration(
+                       "3", plain_lbfgs + "    MAXEVAL 5\n")),
+                   kNoStep) == 0u);
+    CHECK(count_of(startup_journal(with_calibration(
+                       "0", plain_lbfgs + "    MAXEVAL 5\n")),
+                   "the STRATEGY-level optimiser NLOPT:LD_LBFGS" +
+                       central2("MAXEVAL 5", "MAXEVAL 6 or more")) == 1u);
+    CHECK(count_of(startup_journal(
+                       kRoot +
+                       "OPTIMIZER\n  NOISE\n    CALIBRATION 3\n  ENDNOISE\n"
+                       "  INIT\n    METHOD LHS 2\n    SEED 3\n  ENDINIT\n"
+                       "  STRATEGY\n    TYPE MULTISTART\n" + kLbfgs +
+                       "    N_STARTS 2\n    MAXEVAL 100\n"
+                       "    BUDGET_PER_START 5\n  ENDSTRATEGY\nENDOPTIMIZER\n"),
+                   "each MULTISTART start NLOPT:LD_LBFGS" +
+                       central2("BUDGET_PER_START 5",
+                                "BUDGET_PER_START 6 or more")) == 1u);
 }

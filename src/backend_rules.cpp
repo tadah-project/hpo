@@ -5,6 +5,7 @@
 #include <tadah/hpo/ceres_adapter.h>
 #include <tadah/hpo/dlib_adapter.h>
 #include <tadah/hpo/fd_stencil.h>
+#include <tadah/hpo/hpo.h>              // should_run_noise_calibration
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/phase_specs.h>
 #include <tadah/hpo/repeat_points.h>
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -527,14 +529,14 @@ std::string dimensions(std::size_t n)
 }
 
 /* Whether the loss at a point a gradient search asks for, with the
- * gradient there, costs no evaluation: the point is one its search has
- * evaluated (`recorded`), and the run answers the call from the search's
- * record (repeat_use, repeat_points.h, the rule of the NLopt and DLIB:BFGS
+ * gradient there, costs no evaluation: the point is one the run has
+ * evaluated (`recorded`), and the run answers the call from its record
+ * (repeat_use, repeat_points.h, the rule of the NLopt and DLIB:BFGS
  * objectives): under `reuse` and GRAD_STRATEGY NUMERICAL, whose finite
  * differences take the recorded loss as their centre (RepeatUse::Centre).
  * The record has no gradient there: a search forms its gradients itself,
  * and MLSL evaluates its samples without one. A point whose loss was not
- * usable is not recorded (RepeatPoints records usable losses only) and is
+ * usable is not recorded (the run records usable losses only) and is
  * evaluated again; MLSL takes its local starts in order of their loss
  * (mlsl.c), so its first is a failed point only when no usable one
  * qualifies, which the warning, before any evaluation, cannot know. */
@@ -549,7 +551,7 @@ bool loss_from_record(const OptimizerSpec& spec, bool reuse, bool recorded)
 /* What the start of a gradient search costs before its first step, said
  * in a warning: "evaluates the loss <evaluated_where> (1 evaluation) and
  * the gradient there (<cost>)", or, with the loss from the record
- * (loss_from_record), "takes the loss <recorded_where> from the search's
+ * (loss_from_record), "takes the loss <recorded_where> from the run's
  * record (no evaluation) and evaluates the gradient there (<cost>)". */
 std::string start_clause(bool from_record, const std::string& evaluated_where,
                          const std::string& recorded_where,
@@ -557,7 +559,7 @@ std::string start_clause(bool from_record, const std::string& evaluated_where,
 {
     return from_record
                ? "takes the loss " + recorded_where +
-                     " from the search's record (no evaluation) and "
+                     " from the run's record (no evaluation) and "
                      "evaluates the gradient there (" + cost.text + ")"
                : "evaluates the loss " + evaluated_where +
                      " (1 evaluation) and the gradient there (" + cost.text +
@@ -576,8 +578,8 @@ constexpr unsigned kMlslDefaultSamples = 4;
  * at one of these points (nlopt_optimize_limited from a point of its
  * sample tree), a point the search has evaluated, and asks for the loss
  * and the gradient there (start_clause). Its own starting point is the
- * phase's: when that is a point the search has evaluated
- * (`start_recorded`), the call there, which asks for no gradient, is
+ * phase's: when that is a point the run has evaluated (`start_recorded`,
+ * start_is_recorded), the call there, which asks for no gradient, is
  * answered from the record under `reuse` (RepeatUse::Record). AUGLAG,
  * with no constraint, goes straight into its local search (auglag.c), and
  * a local gradient search takes the gradient at its start: neither spends
@@ -604,7 +606,7 @@ BeforeLocalSearch before_local_search(const OptimizerSpec& spec, bool reuse,
                                    (own ? "" : ", NLopt's default") + ")";
     b.text = start_from_record
                  ? "MLSL takes the loss at its starting point from the "
-                   "search's record and evaluates its first " +
+                   "run's record and evaluates its first " +
                        std::to_string(n) + " samples without a gradient (" +
                        evaluations(b.evaluations) + population
                  : "MLSL evaluates its starting point and its first " +
@@ -612,6 +614,64 @@ BeforeLocalSearch before_local_search(const OptimizerSpec& spec, bool reuse,
                        evaluations(b.evaluations) + population;
     b.text += ", then its first local search, from one of them, ";
     return b;
+}
+
+/* Whether two points are the same doubles, bit for bit (the run's record's
+ * key, RunRecord::key). */
+bool same_point_bits(const std::vector<double>& a, const std::vector<double>& b)
+{
+    return a.size() == b.size() &&
+           (a.empty() ||
+            std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0);
+}
+
+/* Whether the search of phase `s` (strategy_phase_specs of `root`) starts
+ * at a point the run has evaluated with a usable loss, on a backend that
+ * answers a call from the run's record (repeat_points.h: NLopt's objective
+ * and DLIB:BFGS; CERES, DLIB:GFS and the TADAH drivers evaluate every point
+ * they ask for):
+ *   - a PRESTAGE refinement starts at an exploration candidate, a usable
+ *     evaluation of the run (the refinement takes usable candidates only);
+ *   - under NOISE_CALIBRATION (should_run_noise_calibration) the run's
+ *     first search -- PLAIN, a MULTISTART that is a single run, a PRESTAGE
+ *     exploration -- starts at the seed point the calibration evaluated
+ *     (run_noise_calibration: the spec's first INIT point) when its own
+ *     first INIT point is that one; a seed anchor (search_space.h) makes
+ *     the search ask for it bit for bit.
+ * The warning, before any evaluation, cannot know a start whose evaluation
+ * was not usable (it is evaluated again), and takes neither the refinement
+ * from INIT points that a PRESTAGE whose exploration has no usable
+ * candidate falls back on, nor the later starts of a MULTISTART, which
+ * begin elsewhere (the warning of "each MULTISTART start" holds for them).
+ * A RESTART round's start changes no phase's budget: its warning is round
+ * 0's. */
+bool start_is_recorded(const OptimizerSpec& root, const OptimizerSpec& s)
+{
+    const bool consults_record =
+        s.lib == "NLOPT" || (s.lib == "DLIB" && s.algo == "BFGS");
+    if (!consults_record) return false;
+    if (root.strategy_type == StrategyType::PRESTAGE &&
+        s.stream_phase == StreamPhase::Refinement)
+        return true;
+    if (!should_run_noise_calibration(root.noise.calibration_n) ||
+        root.optim_init.empty() || s.optim_init.empty())
+        return false;
+    bool first_search = false;
+    switch (root.strategy_type) {
+        case StrategyType::PLAIN:
+            first_search = true;
+            break;
+        case StrategyType::MULTISTART:
+            first_search = plan_multistart(root, root.multistart.n_starts,
+                                           root.multistart.budget_per_start)
+                               .single_run;
+            break;
+        case StrategyType::PRESTAGE:
+            first_search = s.stream_phase == StreamPhase::Search;
+            break;
+    }
+    return first_search &&
+           same_point_bits(s.optim_init.front(), root.optim_init.front());
 }
 
 }  // namespace
@@ -656,16 +716,15 @@ std::vector<std::string> gradient_budget_warnings(const OptimizerSpec& root,
         const OptimizerSpec& s = phase.spec;
         if (s.lib == "NOT SET" || s.algo == "NOT SET") continue;
         if (!obtains_gradients(s)) continue;
-        /* Whether the phase starts at a point its search has evaluated. A
-         * search's record is its own (repeat_points.h): every phase starts
-         * at a point its search has not evaluated -- a MULTISTART start, a
-         * RESTART round and a PRESTAGE refinement from an exploration
-         * candidate are each a new search, which evaluates its start
-         * again. With a record kept across the run's searches, the start
-         * of a refinement by a backend that consults it would be one, and
-         * this line is the one to change: the counts and the texts below
-         * follow it (before_local_search, loss_from_record). */
-        const bool start_recorded = false;
+        /* Whether the phase starts at a point the run has evaluated
+         * (start_is_recorded): the run keeps one record of its usable
+         * evaluations (repeat_points.h, HPO_Host::recorded), which NLopt
+         * and DLIB:BFGS answer a call from, so a PRESTAGE refinement's
+         * start, an exploration candidate, is one, and so is the start of
+         * the run's first search under NOISE_CALIBRATION. The counts and
+         * the texts below follow it (before_local_search,
+         * loss_from_record). */
+        const bool start_recorded = start_is_recorded(root, s);
         const GradientCost cost = gradient_cost(s);
         const BeforeLocalSearch first =
             before_local_search(s, reuse, start_recorded);
@@ -682,7 +741,10 @@ std::vector<std::string> gradient_budget_warnings(const OptimizerSpec& root,
                        " before it evaluates a point it steps to, which "
                        "needs "
                  : " takes no step: its gradient search " +
-                       start_clause(start_from_record, "at a starting point",
+                       start_clause(start_from_record,
+                                    start_recorded
+                                        ? "at its starting point again"
+                                        : "at a starting point",
                                     "at its starting point", cost) +
                        " before it evaluates a point it steps to, which "
                        "needs ";
@@ -751,8 +813,8 @@ std::vector<std::string> gradient_budget_warnings(const OptimizerSpec& root,
                       (mlsl ? std::string("MLSL's local searches start at "
                                           "points it evaluated")
                             : std::string("its local search starts at a "
-                                          "point the search has evaluated")) +
-                      ", whose loss is taken from the search's record), so "
+                                          "point the run has evaluated")) +
+                      ", whose loss is taken from the run's record), so "
                       "each local search evaluates the gradient at its "
                       "starting point"
                 : "(1 + " + cost.text + "), so each local search evaluates "
