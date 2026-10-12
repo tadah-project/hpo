@@ -558,6 +558,15 @@ const char* backend_refusal(std::string_view lib, std::string_view algo)
     return nullptr;
 }
 
+std::vector<std::string> refused_backend_names()
+{
+    std::vector<std::string> names;
+    for (const Refusal& r : kRefused)
+        names.push_back(std::string(r.lib) + ":" + r.algo);
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
 void reject_refused_backend(std::string_view lib, std::string_view algo,
                             const std::string& where)
 {

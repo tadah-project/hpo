@@ -1,9 +1,12 @@
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/optimizer_caps.h>
+#include <tadah/hpo/optimizer_help.h>
 #include <tadah/hpo/asa_options.h>
 #include <tadah/hpo/anneal_keys_gen.h>
 #include <algorithm>
+#include <cctype>
 #include <iomanip>
+#include <stdexcept>
 #include <sstream>
 #include <string_view>
 #include <vector>
@@ -238,6 +241,41 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
     } catch (const std::exception&) { /* unregistered: nothing to add */ }
 }
 
+static void print_ceres_caps(std::ostream& os, const std::string& algo)
+{
+    const OptimizerCaps* c = find_optimizer_caps("CERES", algo);
+    if (!c) { os << "   * (unknown CERES algo; registered: LBFGS, NLCG, "
+                    "STEEPEST_DESCENT, WOLFE)\n"; return; }
+    const char* what =
+        algo == "LBFGS" ? "limited-memory BFGS, Wolfe line search"
+        : algo == "WOLFE" ? "full BFGS, Wolfe line search"
+        : algo == "NLCG" ? "nonlinear conjugate gradient"
+                         : "steepest descent, Armijo line search";
+    os << "   * Ceres' GradientProblemSolver: " << what << "; local, "
+          "gradient-based (GRAD_STRATEGY NUMERICAL by default)\n";
+#ifndef TADAH_USE_CERES
+    os << "   * this build has no Ceres (TADAH_ENABLE_CERES OFF): a run is "
+          "refused\n";
+#endif
+    print_stops(os, "CERES", algo);
+    os << "   * PARAM tol_gradinf <double>  (gradient tolerance, the largest "
+          "component, default 1e-10)\n"
+          "   * PARAM max_iter <int>        (Ceres' max_num_iterations, 0 to "
+          "2147483647; MAXEVAL counts the evaluations)\n"
+          "   * PARAM max_ls_iter <int>     (line-search step-size "
+          "iterations, 1 to 2147483647)\n";
+    if (algo == "LBFGS")
+        os << "   * PARAM max_lbfgs_rank <int>  (limited-memory rank, "
+              "default 20)\n";
+    if (algo == "NLCG")
+        os << "   * PARAM nlcg_type 0|1|2   (FLETCHER_REEVES, default; "
+              "POLAK_RIBIERE; HESTENES_STIEFEL)\n";
+    os << "   * PARAM fd_step, fd_kernel, diff_method  (the finite "
+          "differences of the gradient)\n";
+    os << "   * STEP is rejected: " << c->step_note << "\n";
+    if (c->ignores_bounds) os << "   * WARNING: " << c->bounds_note << "\n";
+}
+
 static void print_asa_caps(std::ostream& os, const std::string& algo)
 {
     if (algo != "ASA") { os << "   * (the ASA library has one algorithm: ALGO ASA)\n"; return; }
@@ -266,20 +304,147 @@ std::optional<OptimizerSpec> tadah::hpo::anchor_seed_points(const OptimizerSpec&
     return out;
 }
 
-void OptimizerSpec::print_caps(const std::string& lib,
+void OptimizerSpec::print_caps(std::ostream& os, const std::string& lib,
                                const std::string& algo)
 {
-    std::cout<<"Options for "<<lib<<":"<<algo<<"\n";
+    os<<"Options for "<<lib<<":"<<algo<<"\n";
     /* A backend the caps registry refuses (optimizer_caps.h), of any
      * library: why, and what to use instead; it has no stops or STEP to
      * describe. */
     if (const char* reason = backend_refusal(lib, algo)) {
-        std::cout<<"   * REFUSED: "<<reason<<"\n";
+        os<<"   * REFUSED: "<<reason<<"\n";
         return;
     }
-    if      (lib=="TADAH") print_tadah_caps(std::cout,algo);
-    else if (lib=="DLIB")  print_dlib_caps (std::cout,algo);
-    else if (lib=="NLOPT") print_nlopt_caps(std::cout,algo);
-    else if (lib=="ASA")   print_asa_caps  (std::cout,algo);
-    else std::cout<<"   * (no info)\n";
+    if      (lib=="TADAH") print_tadah_caps(os,algo);
+    else if (lib=="DLIB")  print_dlib_caps (os,algo);
+    else if (lib=="NLOPT") print_nlopt_caps(os,algo);
+    else if (lib=="ASA")   print_asa_caps  (os,algo);
+    else if (lib=="CERES") print_ceres_caps(os,algo);
+    else os<<"   * (no info)\n";
+}
+
+void OptimizerSpec::print_caps(const std::string& lib,
+                               const std::string& algo)
+{
+    print_caps(std::cout, lib, algo);
+}
+
+namespace {
+
+std::string upper_ascii(std::string s)
+{
+    for (auto& ch : s)
+        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    return s;
+}
+
+/* What a backend is, for its row of the table. */
+std::string row_text(const OptimizerCaps& c)
+{
+    std::string t = c.is_global ? "global" : "local";
+    if (c.accepts_inner)
+        t += std::string(", runs a local search (") +
+             (c.default_inner ? std::string("NLopt's default ") +
+                                    c.default_inner + ", or an INNER block"
+                              : std::string("an INNER block")) +
+             ")";
+    else
+        t += c.is_gradient_based ? ", gradient-based" : ", derivative-free";
+    if (c.needs_stop) t += ", needs a stop";
+    if (c.ignores_bounds) t += ", ignores the OPTIM box";
+    return t;
+}
+
+}  // namespace
+
+void tadah::hpo::print_optimiser_table(std::ostream& out, const std::string& lib)
+{
+    const auto all = filter_optimizer_caps(
+        [](const OptimizerCaps&) { return true; });
+    std::size_t width = 0;
+    for (const auto* c : all) width = std::max(width, c->algo.size());
+    if (lib.empty())
+        out << "ALGO, with LIB its library, names the optimiser of a `tadah "
+               "hpo` target, in\nits OPTIMIZER block or the block's STRATEGY, "
+               "EXPLORE, REFINE or INNER block.\nThe optimisers of this "
+               "build:\n";
+    for (const std::string& l : optimizer_libraries()) {
+        if (!lib.empty() && l != lib) continue;
+        out << (lib.empty() ? "\n" : "") << "LIB " << l << "\n";
+        std::vector<const OptimizerCaps*> rows;
+        for (const auto* c : all)
+            if (c->lib == l) rows.push_back(c);
+        std::sort(rows.begin(), rows.end(),
+                  [](const OptimizerCaps* a, const OptimizerCaps* b) {
+                      return a->algo < b->algo;
+                  });
+        for (const auto* c : rows)
+            out << "  " << std::left << std::setw(static_cast<int>(width + 2))
+                << c->algo << row_text(*c) << "\n";
+#ifndef TADAH_USE_CERES
+        if (l == "CERES")
+            out << "  (this build has no Ceres, TADAH_ENABLE_CERES OFF: a run "
+                   "of them is refused)\n";
+#endif
+    }
+    if (!lib.empty()) return;
+    const std::vector<std::string> refused = refused_backend_names();
+    out << "\nRefused (`tadah explain <LIB>:<ALGO>` says why and what to use "
+           "instead):\n";
+    /* comma-separated, lines of at most 80 columns */
+    std::string line = " ";
+    for (std::size_t i = 0; i < refused.size(); ++i) {
+        const std::string item =
+            " " + refused[i] + (i + 1 < refused.size() ? "," : "");
+        if (line.size() > 1 && line.size() + item.size() > 80) {
+            out << line << "\n";
+            line = " ";
+        }
+        line += item;
+    }
+    out << line << "\n";
+    out << "\n`tadah explain <LIB>:<ALGO>`, or `tadah explain <ALGO>`, "
+           "prints the stops, PARAM keys and STEP use of one.\n";
+}
+
+bool tadah::hpo::explain_optimiser(const std::string& name, std::ostream& out)
+{
+    const std::string upper = upper_ascii(name);
+    if (upper == "ALGO" || upper == "LIB") {
+        print_optimiser_table(out);
+        return true;
+    }
+    const std::vector<std::string> libs = optimizer_libraries();
+    const auto colon = upper.find(':');
+    if (colon != std::string::npos) {
+        const std::string lib = upper.substr(0, colon);
+        const std::string algo = upper.substr(colon + 1);
+        if (!backend_refusal(lib, algo) && !find_optimizer_caps(lib, algo)) {
+            try {
+                require_registered_backend(lib, algo);
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("tadah explain: ") +
+                                         e.what());
+            }
+        }
+        OptimizerSpec::print_caps(out, lib, algo);
+        return true;
+    }
+    /* An ALGO alone: every backend of that name, registered or refused. */
+    std::vector<std::pair<std::string, std::string>> named;
+    for (const std::string& lib : libs)
+        if (find_optimizer_caps(lib, upper) || backend_refusal(lib, upper))
+            named.emplace_back(lib, upper);
+    if (!named.empty()) {
+        for (std::size_t i = 0; i < named.size(); ++i) {
+            if (i) out << "\n";
+            OptimizerSpec::print_caps(out, named[i].first, named[i].second);
+        }
+        return true;
+    }
+    if (std::find(libs.begin(), libs.end(), upper) != libs.end()) {
+        print_optimiser_table(out, upper);
+        return true;
+    }
+    return false;
 }

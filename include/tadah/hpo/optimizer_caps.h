@@ -193,6 +193,8 @@ struct OptimizerCaps {
  * "the STRATEGY-level optimiser: NLOPT:LN_NEWUOA_BOUND is refused: NLopt
  * 2.10 plans each LN_NEWUOA_BOUND step with a nested LD_MMA run ...". */
 const char* backend_refusal(std::string_view lib, std::string_view algo);
+/* Every refused backend, "LIB:ALGO", sorted (the ALGO help's table). */
+std::vector<std::string> refused_backend_names();
 void reject_refused_backend(std::string_view lib, std::string_view algo,
                             const std::string& where = "");
 

@@ -522,6 +522,13 @@ struct OptimizerSpec {
     }
 
     /* ------------- capability print-outs -------------------------- */
+    /* The ALGO help of LIB:ALGO, "Options for LIB:ALGO" and its lines: a
+     * refused backend's REFUSED reason; otherwise the backend's stops (the
+     * caps registry), PARAM keys and STEP use. `tadah explain <LIB>:<ALGO>`
+     * prints it (explain_optimiser, optimizer_help.h). The overload without
+     * a stream writes to std::cout. */
+    static void print_caps(std::ostream& os, const std::string& lib,
+                           const std::string& algo);
     static void print_caps(const std::string& lib,
                            const std::string& algo);
 };
