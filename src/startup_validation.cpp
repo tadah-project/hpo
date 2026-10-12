@@ -244,7 +244,9 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
   /* --- NORM/BIAS rules, as tadah train applies them --------------------
    * NORM true with a linear model needs BIAS true (the NORM weight
    * conversion moves the mean correction into the intercept columns);
-   * BIAS true needs ATOM. Refused here, not by every evaluation. */
+   * BIAS true needs ATOM; FIXINDEX/FIXWEIGHT is refused with NORM true
+   * (the conversion moves the pinned weights). Refused here, not by every
+   * evaluation. */
   tadah::mlip::check_bias_constraints(train_ctx);
 
   /* --- OPTIM key sanity (parse-time rules, re-checked cheaply) -------- */
@@ -491,15 +493,6 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     throw std::runtime_error(
         "PC_EMAE/PC_ERMSE/PC_ErRMSE/PC_ERSQ/PC_FRMSE/PC_SRMSE target "
         "validation-set errors but no --validation file was given.");
-  }
-
-  /* --- NORM is incompatible with fixed weights -------------------------- */
-  if ((has_fw || has_fi) && train_ctx.contains("NORM") &&
-      train_ctx.get<bool>("NORM")) {
-    throw std::runtime_error(
-        "FIXINDEX/FIXWEIGHT is not supported with NORM true: fixed values "
-        "would be interpreted in the normalized feature space. Set NORM "
-        "false.");
   }
 
   /* --- the model of the -c configuration -------------------------------
