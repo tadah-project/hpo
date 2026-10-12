@@ -800,4 +800,39 @@ TEST_CASE_METHOD(PTFixture,
   CHECK(schedule[0].find("merge_guard=off") != std::string::npos);
 }
 
+/* Pins: the curve-mode note of refit_opt.log's header gives the knob of the
+ * fit's family for a costly Ceres REFINE at high NMAX: under REFIT_BASIS
+ * Blip5 (a Blip family, which refuses REFIT_COMPACT_OPT_EVERY) it names
+ * REFINE's MAXEVAL and REFIT_COMPACT_NMAX and not REFIT_COMPACT_OPT_EVERY;
+ * under REFIT_BASIS Knot5 it keeps "use REFIT_COMPACT_OPT_EVERY".
+ * Before the fix: every curve fit's note said "cap its MAXEVAL / use
+ * REFIT_COMPACT_OPT_EVERY (or the gentle SBPLX-only arm) at high NMAX",
+ * under Blip and Blip5 too, where adding REFIT_COMPACT_OPT_EVERY is refused
+ * ("REFIT_COMPACT_OPT_EVERY has no effect under REFIT_BASIS Blip5"). */
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact, curve mode: refit_opt.log advises the "
+                 "keys the basis family reads",
+                 "[compact][refit][curve_advice]") {
+  for (const char *basis : {"Blip5", "Knot5"}) {
+    INFO("REFIT_BASIS " << basis);
+    ScopedTempDir tmp;
+    write_synth_eam("synth.eam.alloy");
+    Context c = compact_context("SIGNED");
+    c.remove("REFIT_BASIS");
+    c.add("REFIT_BASIS", std::string(basis));
+    c.add("REFIT_OBJECTIVE", std::string("curve"));
+    const auto [what, logged] = run_compact(c);
+    INFO(logged);
+    REQUIRE(what.empty());
+    const auto note = log_lines("# REFIT_OBJECTIVE=curve:");
+    REQUIRE(note.size() == 1u);
+    if (std::string(basis) == "Knot5") {
+      CHECK(note[0].find("use REFIT_COMPACT_OPT_EVERY") != std::string::npos);
+    } else {
+      CHECK(note[0].find("REFIT_COMPACT_OPT_EVERY") == std::string::npos);
+      CHECK(note[0].find("lower REFIT_COMPACT_NMAX") != std::string::npos);
+    }
+  }
+}
+
 #endif  // TADAH_USE_CERES
