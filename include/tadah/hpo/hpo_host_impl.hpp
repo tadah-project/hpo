@@ -1318,9 +1318,17 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
      * pins that do not classify, would fail every evaluation: the error
      * (validate_hpo_setup's, which runs first in hpo_run) propagates.
      * A non-linear M_KRR kernel always trains: its basis vectors, which its
-     * weights belong to, are drawn from the training data. */
+     * weights belong to, are drawn from the training data. So does OALGO 3,
+     * whose fit gives every weight a covariance -- zero rows and columns for
+     * the pinned ones -- and the noise of the pinned weights' residuals on
+     * the training data (M_Train::pinned_covariance), as tadah train writes
+     * them: provisioning computes neither, and its potential had no WCOV
+     * or WNOISE, so predict --error refused it as one fitted without
+     * training data. */
     if (has_train_data_ && master_ctx_.contains("FIXINDEX")
-        && !(master_ctx_.contains("NORM") && master_ctx_.get<bool>("NORM"))) {
+        && !(master_ctx_.contains("NORM") && master_ctx_.get<bool>("NORM"))
+        && !(master_ctx_.has_stored("OALGO")
+             && master_ctx_.get<int>("OALGO") == 3)) {
         const std::size_t K = derive_weight_count(master_ctx_);
         all_weights_fixed_ =
             K > 0 && mlip::classify_weight_source(master_ctx_, K)
