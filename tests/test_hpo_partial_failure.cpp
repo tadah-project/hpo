@@ -830,6 +830,172 @@ TEST_CASE("a graded gradient search that starts where a PC_OBSERVABLE term "
     }
 }
 
+namespace {
+
+/* The trained variant of the fixture: the same D2_BP model fitted (OALGO 4,
+ * LAMBDA 1e-6, no FIXINDEX), so the analytical gradient can be formed, to
+ * training and validation energies of -40 and -39 eV. Its relaxed lattice
+ * parameter is below 3.29 all over the OPTIM box (3.28682 at RCUT2B = 5.2),
+ * so the observable with the window [3.29, 3.31] fails at every point. */
+const std::string kTrainedFailingObservable =
+    "PC_OBSERVABLE cohesive_energy --species Ta --target 8.1 --weight 1 "
+    "--supercell 2 2 2 --hotvar a0 3.29 3.31 3.3\n";
+
+struct TrainedRun {
+    ScratchDir sd;
+    Context ctx;
+    TrainedRun(const std::string& optimizer, const std::string& root) {
+        tadah::core::PeriodicTable::initialize();
+        HPOLog::instance().reset_for_test();
+        Host::reset_globals_for_test();
+        write_ta_db(sd.dir / "train.db", 0.0, -40.0);
+        write_ta_db(sd.dir / "val.db", 0.07, -39.0);
+        std::ofstream(sd.dir / "config.val")
+            << "DBFILE " << (sd.dir / "val.db").string() << "\n";
+        const fs::path hpo = sd.dir / "config.hpo";
+        std::ofstream(hpo) << optimizer << root;
+        ctx = pinned_context(sd.dir / "train.db", hpo, sd.dir / "config.val",
+                             5.2);
+        ctx.remove("FIXINDEX");
+        ctx.remove("FIXWEIGHT");
+        ctx.remove("OALGO");
+        ctx.remove("LAMBDA");
+        ctx.add("OALGO", 4);
+        ctx.add("LAMBDA", 1e-6);
+    }
+    int run(const std::string& what) {
+        int status = -1;
+        hpo_test::finish_within(std::chrono::seconds(120), what, [&] {
+            status = tadah::hpo::hpo_run(ctx);
+        });
+        return status;
+    }
+};
+
+std::string trained_root() {
+    return "LOSS L2\nQFLUSH 1000\nDIGITS 15\nFAILSCORE 1e16\n"
+           "FAILSCORE_GRADING ON\nPC_ERMSE 0 1\n" +
+           kTrainedFailingObservable + kOptimRcut;
+}
+
+}  // namespace
+
+/* Pins: under FAILSCORE_GRADING ON (FAILSCORE 1e16) a gradient search on a
+ * trained model -- DLIB:BFGS, LD_LBFGS, CERES:LBFGS when built; no
+ * GRAD_STRATEGY, which resolves to ANALYTICAL for PC_OBSERVABLE -- that
+ * starts at RCUT2B = 5.2, where the observable fails (a graded band-B
+ * failure, graded_failscore(1e16, B, 1, 1) = 9.99375e+15), stops at its
+ * first gradient: the analytical gradient there is that of L(ERMSE) alone
+ * (the failed term is left out of the chain), not of the graded loss the
+ * optimiser sees, so the point has no usable gradient. The journal says
+ * "<backend> stopped: no usable gradient: a failed evaluation at the point
+ * (the loss at RCUT2B = 5.2 is 9.99375e+15: a graded failure, whose
+ * grading the analytical gradient does not see; GRAD_STRATEGY HYBRID takes
+ * finite differences there)"; loss.tadah has the one row, the run ends
+ * without a usable loss (status 1).
+ * Before the fix: the analytical gradient was kept at the graded failure,
+ * every line search found no decrease and the backends reported
+ * convergence inside the failure region: DLIB:BFGS "FTOL_ABS reached after
+ * 4 evaluation(s)" (2 loss.tadah rows), LD_LBFGS 12 evaluations ending
+ * "nlopt failure -- algorithm converged", CERES:LBFGS left the box (RCUT2B
+ * = -4.5) and ended FAILED ("no analytical gradient for 1 parameter"). */
+TEST_CASE("an analytical gradient search that starts at a graded "
+          "PC_OBSERVABLE failure stops at its first gradient",
+          "[HPO][partial_failure][run]") {
+    const double graded = graded_failscore(1e16, FailBand::B, 1.0, 1.0);
+    std::ostringstream row;
+    row << std::scientific << std::setprecision(15) << graded;
+    struct Backend { std::string lib, algo; };
+    std::vector<Backend> backends = {{"DLIB", "BFGS"},
+                                     {"NLOPT", "LD_LBFGS"}};
+#ifdef TADAH_USE_CERES
+    backends.push_back({"CERES", "LBFGS"});
+#endif
+    for (const Backend& b : backends) {
+        const std::string name = b.lib + ":" + b.algo;
+        DYNAMIC_SECTION(name) {
+            TrainedRun run(plain_block("    LIB " + b.lib + "\n    ALGO " +
+                                       b.algo + "\n    MAXEVAL 60\n"),
+                           trained_root());
+            int status = -1;
+            REQUIRE_NOTHROW(status = run.run(name + " analytical graded"));
+            CHECK(status == 1);
+            const std::string journal = read_file("hpo_run.log");
+            INFO(journal);
+            CHECK_THAT(journal,
+                       Catch::Contains("ANALYTICAL (resolved for "
+                                       "PC_OBSERVABLE)"));
+            CHECK(count_of(journal,
+                           name + " stopped: no usable gradient: a failed "
+                                  "evaluation at the point (the loss at "
+                                  "RCUT2B = 5.2 is 9.99375e+15: a graded "
+                                  "failure, whose grading the analytical "
+                                  "gradient does not see; GRAD_STRATEGY "
+                                  "HYBRID takes finite differences "
+                                  "there)") == 1u);
+            CHECK(census(journal, "Graded failures") == 1);
+            check_no_usable_loss(1, row.str());
+        }
+    }
+}
+
+/* Pins: the same start under GRAD_STRATEGY HYBRID (PARAM fd_step 0.05)
+ * differences every parameter at the graded failure, though the
+ * analytical gradient can be formed there: the start and its stencil
+ * points 5.125 and 5.275 are graded failures with the same loss, so every
+ * difference is 0 and the search stops at its first gradient with "...
+ * and every difference at it is 0: a flat failure region"; 3 loss.tadah
+ * rows, 3 graded failures, status 1.
+ * Before the fix: HYBRID took the analytical gradient for RCUT2B, which
+ * has one, and differenced nothing: DLIB:BFGS ended "FTOL_ABS reached
+ * after 4 evaluation(s)" with 2 rows, LD_LBFGS made 12 evaluations,
+ * CERES:LBFGS left the box and ended "tol_gradinf reached" with status
+ * 0. */
+TEST_CASE("a HYBRID gradient search that starts at a graded PC_OBSERVABLE "
+          "failure differences every parameter there",
+          "[HPO][partial_failure][run]") {
+    const double graded = graded_failscore(1e16, FailBand::B, 1.0, 1.0);
+    std::ostringstream row;
+    row << std::scientific << std::setprecision(15) << graded;
+    struct Backend { std::string lib, algo; };
+    std::vector<Backend> backends = {{"DLIB", "BFGS"},
+                                     {"NLOPT", "LD_LBFGS"}};
+#ifdef TADAH_USE_CERES
+    backends.push_back({"CERES", "LBFGS"});
+#endif
+    for (const Backend& b : backends) {
+        const std::string name = b.lib + ":" + b.algo;
+        DYNAMIC_SECTION(name) {
+            TrainedRun run(plain_block("    LIB " + b.lib + "\n    ALGO " +
+                                       b.algo + "\n    MAXEVAL 60\n"
+                                       "    GRAD_STRATEGY HYBRID\n"
+                                       "    PARAM fd_step 0.05\n"),
+                           trained_root());
+            int status = -1;
+            REQUIRE_NOTHROW(status = run.run(name + " hybrid graded"));
+            CHECK(status == 1);
+            const std::string journal = read_file("hpo_run.log");
+            INFO(journal);
+            CHECK(count_of(journal,
+                           name + " stopped: no usable gradient: a failed "
+                                  "evaluation in the finite-difference "
+                                  "stencil (the loss at RCUT2B = 5.2 is "
+                                  "9.99375e+15, and every difference at it "
+                                  "is 0: a flat failure region)") == 1u);
+            CHECK(census(journal, "Graded failures") == 3);
+            check_no_usable_loss(3, row.str());
+            const Table params = read_table("params.tadah");
+            REQUIRE(params.rows.size() == 3);
+            std::vector<double> xs;
+            for (const auto& r : params.rows) xs.push_back(std::stod(r.back()));
+            std::sort(xs.begin(), xs.end());
+            CHECK(xs[0] == Approx(5.125).epsilon(1e-12));
+            CHECK(xs[1] == Approx(5.2).epsilon(1e-12));
+            CHECK(xs[2] == Approx(5.275).epsilon(1e-12));
+        }
+    }
+}
+
 /* Pins: a TADAH:RANDOM run (SEED 3, MAXEVAL 8, FAILSCORE 1e16) whose every
  * evaluation lies where the observable fails (RCUT2B in [5.0, 5.5]) ends
  * without a usable loss: status 1, every loss.tadah row 1e+16, no
