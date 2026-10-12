@@ -924,6 +924,93 @@ TEST_CASE("Repeated points: a DLIB:BFGS run that no step can move ends",
                        "points out of the box") != std::string::npos);
 }
 
+namespace {
+
+/* The RESTART block of the cases below: a window of 5, one restart from a
+ * RANDOM point (seeded). */
+const std::string kRepeatRestart =
+    "    RESTART\n      AFTER_STAGNATION 5\n      MAX 1\n"
+    "      METHOD RANDOM 1\n      SEED 5\n    ENDRESTART\n";
+
+/* hpo_run() of `run`, which must return within two minutes (a search that
+ * only asks for points it has makes no evaluation and could spin). */
+int repeat_run_within(TaRun& run, const std::string& what)
+{
+    int status = -1;
+    hpo_test::finish_within(std::chrono::seconds(120), what, [&] {
+        status = tadah::hpo::hpo_run(run.ctx);
+    });
+    return status;
+}
+
+}  // namespace
+
+/* Pins: LD_MMA held at SGRID2B (2) = 4 (u = 0, where NLopt's XTOL_REL test
+ * is vacuous) with RESTART as its only stop (AFTER_STAGNATION 5, MAX 1):
+ * each call that asks for the bound again is answered from the record, and
+ * the window counts it as one evaluation without a new best, so the window
+ * ends the search after 3 reused calls and eval 18 ("StagnationStop fired
+ * at a repeat of eval 16 answered from the search's record, after eval
+ * 18"), RESTART relaunches it once from a RANDOM point ("RESTART 1/1 --
+ * fresh init from RANDOM"), and the run ends "STOPPED -- stagnation: no new
+ * best in 5 evals after 1 restart(s)" after 23 evaluations.
+ * Before the fix: the reused calls never reached the window, nothing else
+ * stops LD_MMA, and the search spun without an evaluation ("100000000
+ * calls of this search have asked again ..."): the run did not return
+ * within two minutes (v1-dev, which evaluated every repeat: 26 rows, the
+ * same status). */
+TEST_CASE("Repeated points: the RESTART window counts a reused repeat",
+          "[HPO][termination][repeat_points][restart]")
+{
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_MMA\n" +
+                          kRepeatRestart),
+              kLowerBoundRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = repeat_run_within(
+                        run, "LD_MMA at a bound under RESTART alone"));
+    CHECK(status == 0);
+    check_run_files();
+    const std::string journal = read_file("hpo_run.log");
+    INFO("journal:\n" << journal);
+    CHECK(journal_status(journal) == restarts_used_status(5, 1));
+    CHECK(journal.find("RESTART 1/1 -- fresh init from RANDOM") !=
+          std::string::npos);
+    CHECK(journal.find("StagnationStop fired at a repeat of eval 16 answered "
+                       "from the search's record, after eval 18") !=
+          std::string::npos);
+    CHECK(diagnostics_count(journal, "Repeated points reused") == "3");
+    CHECK(data_rows("loss.tadah").size() == 23u);
+}
+
+/* Pins: the same search with MAXEVAL 60: the window ends the search held at
+ * the bound before NLopt's count of calls does, RESTART relaunches it once
+ * ("RESTART 1/1 -- fresh init from RANDOM"), and the run ends "STOPPED --
+ * stagnation: no new best in 5 evals after 1 restart(s)" after 23
+ * evaluations, as without MAXEVAL.
+ * Before the fix: no restart: the reused calls never reached the window,
+ * and NLopt's count of 60 calls ended the search after 18 evaluations, 54
+ * of its calls reused, MAXEVAL_REACHED (v1-dev: 26 rows, a restart, the
+ * stagnation status). */
+TEST_CASE("Repeated points: the RESTART window ends a search that only "
+          "asks again before NLopt's MAXEVAL does",
+          "[HPO][termination][repeat_points][restart]")
+{
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_MMA\n"
+                          "    MAXEVAL 60\n" + kRepeatRestart),
+              kLowerBoundRoot);
+    int status = -1;
+    REQUIRE_NOTHROW(status = repeat_run_within(
+                        run, "LD_MMA at a bound under RESTART and MAXEVAL"));
+    CHECK(status == 0);
+    check_run_files();
+    const std::string journal = read_file("hpo_run.log");
+    INFO("journal:\n" << journal);
+    CHECK(journal.find("RESTART 1/1 -- fresh init from RANDOM") !=
+          std::string::npos);
+    CHECK(journal_status(journal) == restarts_used_status(5, 1));
+    CHECK(data_rows("loss.tadah").size() == 23u);
+}
+
 TEST_CASE("Two runs in one process: each journal carries its own "
           "once-per-run notes", "[HPO][termination][two_runs]")
 {
@@ -5729,6 +5816,11 @@ TEST_CASE("Gradient not finite: MLSL and the global GD_* searches go on past "
      * the case "NLopt and Ceres reject a later point ..."); before the
      * centre fix their gradients evaluated the rejected point twice, 1.5
      * and 1.6 (`first` {1.5, 1.5, 1.7, 1.3} and {..., 1.6, 1.6, 1.8,
+     * 1.4}). MLSL's local search asks for the gradient at its start, the
+     * sample 1.6, which it evaluated without one: the sample's recorded
+     * loss is the loss at the point that NUMERICAL's finite differences
+     * take (repeat_points.h), so 1.6 is not evaluated again; until the
+     * repeat-point review (2026-10-12) it was ({..., 1.4375, 1.6, 1.8,
      * 1.4}).
      * The stop line it checks is absent names "no usable gradient" (it
      * named "gradient not finite" until 2026-10-07); with that, the case
@@ -5741,7 +5833,7 @@ TEST_CASE("Gradient not finite: MLSL and the global GD_* searches go on past "
     const std::vector<Case> cases = {
         {"GD_STOGO", "", "0", {1.5, 1.7, 1.3}},
         {"G_MLSL_LDS", "    POPULATION 3\n" + inner_block("LD_LBFGS"), "10.5",
-         {1.6, 1.6875, 1.9375, 1.4375, 1.6, 1.8, 1.4}}};
+         {1.6, 1.6875, 1.9375, 1.4375, 1.8, 1.4}}};
     for (const auto& c : cases) {
         const std::string name = "NLOPT:" + c.algo;
         DYNAMIC_SECTION(name) {

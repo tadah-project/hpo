@@ -460,6 +460,7 @@ TEST_CASE("stagnation check waits for new-best decisions in progress",
     std::mutex best_mtx;
     BestPublications pubs;
     std::atomic<std::size_t> last{1};
+    const std::atomic<std::size_t> none{0};   // no reused repeats
     const std::size_t window = 4;
 
     /* A new-best decision as HPO_Host makes it: counted, then locked;
@@ -478,8 +479,8 @@ TEST_CASE("stagnation check waits for new-best decisions in progress",
     /* Not firing: no lock, no wait (the success path). */
     {
         std::unique_lock<std::mutex> held(best_mtx);
-        CHECK_NOTHROW(throw_if_stagnated(4, window, last, best_mtx, pubs));
-        CHECK_NOTHROW(throw_if_stagnated(6, 0, last, best_mtx, pubs));
+        CHECK_NOTHROW(throw_if_stagnated(4, window, last, none, best_mtx, pubs));
+        CHECK_NOTHROW(throw_if_stagnated(6, 0, last, none, best_mtx, pubs));
     }
 
     /* Eval 6 checks while eval 4's publication holds the lock: 6 - 1 >= 4,
@@ -503,7 +504,7 @@ TEST_CASE("stagnation check waits for new-best decisions in progress",
         });
         while (pubs.started.load() == 0) std::this_thread::yield();   // counted
         checking.store(true);
-        CHECK_NOTHROW(throw_if_stagnated(6, window, last, best_mtx, pubs));
+        CHECK_NOTHROW(throw_if_stagnated(6, window, last, none, best_mtx, pubs));
         CHECK(last.load() == 4);
         publisher.join();
         CHECK(pubs.done.load() == 1);
@@ -518,7 +519,7 @@ TEST_CASE("stagnation check waits for new-best decisions in progress",
         std::thread queued(decision, std::chrono::milliseconds(120),
                            std::chrono::milliseconds(0), 9);
         while (pubs.started.load() < 3) std::this_thread::yield();
-        CHECK_NOTHROW(throw_if_stagnated(12, window, last, best_mtx, pubs));
+        CHECK_NOTHROW(throw_if_stagnated(12, window, last, none, best_mtx, pubs));
         CHECK(last.load() == 9);
         holder.join();
         queued.join();
@@ -530,14 +531,53 @@ TEST_CASE("stagnation check waits for new-best decisions in progress",
         std::thread failing(decision, std::chrono::milliseconds(0),
                             std::chrono::milliseconds(50), 0);
         while (pubs.started.load() < 4) std::this_thread::yield();
-        CHECK_THROWS_AS(throw_if_stagnated(14, window, last, best_mtx, pubs),
+        CHECK_THROWS_AS(throw_if_stagnated(14, window, last, none, best_mtx, pubs),
                         StagnationStop);
         failing.join();
     }
-    CHECK_THROWS_AS(throw_if_stagnated(13, window, last, best_mtx, pubs),
+    CHECK_THROWS_AS(throw_if_stagnated(13, window, last, none, best_mtx, pubs),
                     StagnationStop);
-    CHECK_NOTHROW(throw_if_stagnated(12, window, last, best_mtx, pubs));
+    CHECK_NOTHROW(throw_if_stagnated(12, window, last, none, best_mtx, pubs));
     CHECK(pubs.done.load() == pubs.started.load());
+}
+
+/* Pins: the stagnation window counts the calls a search answered from its
+ * record of an earlier evaluation (repeat_points.h), each as one
+ * evaluation without a new best: with the last new best at eval 12 and
+ * AFTER_STAGNATION 4, eval 12 with 3 such calls since does not fire, with
+ * 4 it does; eval 13 fires with 3 (1 + 3), eval 14 with 2; with none, eval
+ * 15 does not fire and eval 16 does, as before; an evaluation older than
+ * the last new best (eval 11) never fires, whatever the count.
+ * Before the fix: does not compile (throw_if_stagnated took no count of
+ * reused calls: a search that only asked for points it had never reached
+ * the window). */
+TEST_CASE("stagnation check counts the repeats a search answered from its "
+          "record", "[HPO][restart][repeat_points]")
+{
+    using tadah::hpo::detail::BestPublications;
+    using tadah::hpo::detail::throw_if_stagnated;
+    std::mutex best_mtx;
+    BestPublications pubs;
+    const std::atomic<std::size_t> last{12};
+    std::atomic<std::size_t> reused{3};
+    const std::size_t window = 4;
+
+    CHECK_NOTHROW(throw_if_stagnated(12, window, last, reused, best_mtx, pubs));
+    CHECK_THROWS_AS(throw_if_stagnated(13, window, last, reused, best_mtx, pubs),
+                    StagnationStop);
+    reused = 4;
+    CHECK_THROWS_AS(throw_if_stagnated(12, window, last, reused, best_mtx, pubs),
+                    StagnationStop);
+    CHECK_NOTHROW(throw_if_stagnated(11, window, last, reused, best_mtx, pubs));
+    reused = 2;
+    CHECK_NOTHROW(throw_if_stagnated(13, window, last, reused, best_mtx, pubs));
+    CHECK_THROWS_AS(throw_if_stagnated(14, window, last, reused, best_mtx, pubs),
+                    StagnationStop);
+    reused = 0;
+    CHECK_NOTHROW(throw_if_stagnated(15, window, last, reused, best_mtx, pubs));
+    CHECK_THROWS_AS(throw_if_stagnated(16, window, last, reused, best_mtx, pubs),
+                    StagnationStop);
+    CHECK_NOTHROW(throw_if_stagnated(16, 0, last, reused, best_mtx, pubs));
 }
 
 /* (a) DLIB:GFS with THREADS > 1: two host exceptions in flight together made
