@@ -240,8 +240,9 @@ public:
      * monotonic evaluation counter/writer cursor. Used by fresh-run startup
      * and exposed for the embedded two-runs-in-one-process regression. */
     static void reset_best_state_for_fresh_run();
-    /* Test-only accessors of the best comparator and the process-wide
-     * evaluation counter (test_hpo_host_e2e pins the fresh-run reset). */
+    /* Accessors of the best comparator and the process-wide evaluation
+     * counter (test_hpo_host_e2e pins the fresh-run reset; hpo_run() hands
+     * the counter to the journal, HPOLog::set_eval_base). */
     static double      current_best()       { return g_best_.load(); }
     static std::size_t current_best_iter()  { return g_best_iter_.load(); }
     static std::size_t current_last_best()  { return iter_at_last_best_.load(); }

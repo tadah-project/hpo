@@ -2078,12 +2078,14 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
           for (auto& vs : r.v_outvar[i]) vs = failscore_token(lsim.failscore);
           eval_aborted.store(true, std::memory_order_relaxed);
           /* Log at most once per eval (run-local latch), rate-limited
-           * across evals by the global reject_count. */
+           * across the run's evals by its count of them (a count of the
+           * process went on from an earlier run, whose rejects silenced
+           * this run's first). */
           const bool first_in_eval =
               !reject_logged.exchange(true, std::memory_order_relaxed);
           if (first_in_eval) {
-            const auto rejs = warmstart::reject_count().fetch_add(
-                1, std::memory_order_relaxed) + 1;
+            const auto rejs =
+                HPOLog::instance().count_in_run("hot-variable reject");
             if (rejs <= 5 || (rejs & (rejs - 1)) == 0) {
               HPOLog::instance().warning(
                   std::string("eval ") + std::to_string(r.iter)

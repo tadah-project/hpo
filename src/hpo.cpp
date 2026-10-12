@@ -12,6 +12,7 @@
 #include <tadah/hpo/iter_health.h>
 #include <tadah/hpo/rho_gates.h>
 #include <tadah/hpo/startup_validation.h>
+#include <tadah/hpo/warmstart_cache.h>
 #include <tadah/core/checkpoint.h>   // core::ShutdownRequested
 #include <tadah/core/context.h>
 #include <tadah/core/blueprint_parser.h>
@@ -294,6 +295,11 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
      * which flushes the result files, writes the SHUTDOWN trailer and makes
      * hpo_run() return 128 + the signal number. */
     core::SignalHandler::install();
+
+    /* The hot-variable seeds of an earlier run in this process are not this
+     * run's: cleared before HPOTargets, whose WARM init strategy primes
+     * this run's own. */
+    warmstart::begin_run();
 
     HPOTargets trg(ctx, ctx.get<std::string>("HPOTARGET"));
 
@@ -617,6 +623,9 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
 
     /* Build HPO_Host (loads train + val structures, applies load transforms) */
     HPO_Host<V,R> host(ctx, trg, val);
+    /* This run's evaluations are numbered on from an earlier run's in the
+     * process; the journal's milestones count this run's. */
+    log.set_eval_base(HPO_Host<V,R>::g_iter_value());
     /* EMBF0 (DM_REAM only): the -c potential's raw F(0) for POTENTIAL SETUP,
      * and the RESULT line's start/best values. Reads stored values only. */
     const bool has_ream = models::context_has_ream(ctx);

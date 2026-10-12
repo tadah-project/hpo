@@ -153,6 +153,21 @@ std::string HPOLog::best_origin_str() const
 void HPOLog::reset_for_test()
 {
     std::lock_guard<std::mutex> lg(mtx_);
+    reset_run_locked();
+}
+
+/* Everything a journal reports of its run: the census, the gate and
+ * projection counts, the I/O retries, the best and its metrics, the
+ * cadence and pin tallies, the milestones, the timing and fan-out
+ * statistics, the EMBF0, density and occupancy reports and the per-run
+ * notes. open() calls it for every run, so the journal of a second run in
+ * one process (an embedding, a task file with two TASK hpo blocks) counts,
+ * times and reports that run only; it reset the status, the start tally,
+ * the reports, the notes and the FD counters alone, and the second
+ * journal's totals, timings and best were both runs'. The rank scope is
+ * set again by hpo_run() after open(). */
+void HPOLog::reset_run_locked()
+{
     n_eval_.store(0, std::memory_order_relaxed);
     n_nan_ .store(0, std::memory_order_relaxed);
     n_nan_logged_.store(0, std::memory_order_relaxed);
@@ -190,6 +205,7 @@ void HPOLog::reset_for_test()
     pin_unit_   = 0;
     next_milestone_       = 100;
     last_milestone_evals_ = 0;
+    eval_base_.store(0, std::memory_order_relaxed);
     scope_rank_  = 0;
     scope_world_ = 1;
     /* timing and fan-out statistics (PERFORMANCE, SUMMARY) */
@@ -231,6 +247,11 @@ std::size_t HPOLog::count_in_run(const std::string& key)
 {
     std::lock_guard<std::mutex> lg(mtx_);
     return ++run_notes_[key];
+}
+
+void HPOLog::set_eval_base(std::size_t evaluations_before)
+{
+    eval_base_.store(evaluations_before, std::memory_order_relaxed);
 }
 
 void HPOLog::set_rank_scope(int rank, int world)
@@ -279,16 +300,10 @@ void HPOLog::open(const std::string& path,
      * silently go nowhere. */
     if (f_.is_open()) f_.close();
     f_.clear();
-    start_tally_ = StartTally{};
-    reset_embf0_locked();
-    reset_density_locked();
-    /* The bound-occupancy snapshot and the per-run notes belong to the
-     * run: an earlier run's best must not become this journal's final
-     * table, nor its notes silence or number this run's. */
-    reset_occupancy_locked();
-    run_notes_.clear();
-    /* The finite-difference counters of DIAGNOSTICS are this run's. */
-    reset_fd_counters_locked();
+    /* Everything the journal reports is this run's (reset_run_locked):
+     * an earlier run's counts, timings and best must not become this
+     * journal's, nor its notes silence or number this run's. */
+    reset_run_locked();
 
     f_.open(path, std::ios::out | std::ios::trunc);
     if (!f_.is_open()) {
@@ -1449,6 +1464,11 @@ std::optional<HPOLog::UnsavedBest> HPOLog::unsaved_best() const
 void HPOLog::record_eval(std::size_t eval_num, double wall_ms, EvalLoss loss)
 {
     n_eval_.fetch_add(1, std::memory_order_relaxed);
+    /* The evaluation's number in this run: eval_num goes on from an
+     * earlier run in the process (set_eval_base), and the milestones are
+     * the run's own, as in a process of its own. */
+    const std::size_t base = eval_base_.load(std::memory_order_relaxed);
+    const std::size_t run_count = eval_num > base ? eval_num - base : 0;
     if (loss == EvalLoss::NanClamped) n_nan_.fetch_add(1, std::memory_order_relaxed);
     if (loss == EvalLoss::Threw) n_threw_.fetch_add(1, std::memory_order_relaxed);
     if (loss != EvalLoss::Usable) n_unusable_.fetch_add(1, std::memory_order_relaxed);
@@ -1466,9 +1486,9 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, EvalLoss loss)
     }
 
     // Periodic milestone summary
-    if (eval_num >= next_milestone_) {
+    if (run_count >= next_milestone_) {
         std::lock_guard<std::mutex> lg(mtx_);
-        if (eval_num >= next_milestone_) { // re-check under lock
+        if (run_count >= next_milestone_) { // re-check under lock
             std::size_t done    = n_eval_.load(std::memory_order_relaxed);
             std::size_t nan_cnt = n_nan_.load(std::memory_order_relaxed);
             double avg = (done > 0) ? sum_ms_ / done : 0.0;
@@ -1498,7 +1518,7 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, EvalLoss loss)
                     ? (eval_num - cur_best_eval_) : 0;
 
             std::ostringstream msg;
-            msg << "--- " << std::setw(6) << eval_num << " evals done";
+            msg << "--- " << std::setw(6) << run_count << " evals done";
             if (wall_ms_per_eval > 0.0) {
                 std::ostringstream rate;
                 rate << std::fixed << std::setprecision(1)
@@ -1529,8 +1549,8 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, EvalLoss loss)
                 const std::size_t fd = n_fail_band_[4].load(std::memory_order_relaxed);
                 const std::size_t ft = fa + fb + fc + fd;
                 if (ft > 0) {
-                    const double fpct = eval_num ? 100.0 * static_cast<double>(ft) /
-                                                       static_cast<double>(eval_num)
+                    const double fpct = run_count ? 100.0 * static_cast<double>(ft) /
+                                                        static_cast<double>(run_count)
                                                  : 0.0;
                     msg << "   failed=" << ft << " (" << std::fixed
                         << std::setprecision(1) << fpct << "%; A=" << fa
@@ -1709,7 +1729,7 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, EvalLoss loss)
              * penalty cliff sampling). Single line, only once per
              * milestone. */
             if (cur_best_eval_ > 0 && evals_since_best >= 100 &&
-                evals_since_best * 2 >= eval_num) {
+                evals_since_best * 2 >= run_count) {
                 f_ << "[" << now_hms() << "]  HINT     "
                    << "no new best for " << evals_since_best
                    << " evals (>50% of run). Possible causes: "
