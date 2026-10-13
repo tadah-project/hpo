@@ -50,9 +50,11 @@ using namespace tadah::hpo;
  * child of an MPI parent must not touch MPI). There every case that builds
  * a pool is Skipped (SKIP_WITHOUT_PC_PROCESS_WORKERS(), pc_process_workers.h)
  * -- also those whose workers are test_main.cpp's stand-ins, which do not
- * run pc_worker_main: the pool is code the MPI build never runs, the same
- * in both builds. "pc pool: in the MPI build the worker refuses to start"
- * pins the refusal the spawning cases would otherwise fail on. */
+ * run pc_worker_main, and the width check, whose pools throw before they
+ * spawn: the pool is code the MPI build never runs, the same in both
+ * builds. "pc pool: in the MPI build the worker refuses to start" pins the
+ * refusal the spawning cases would otherwise fail on; in the serial build
+ * the worker of a case that does not call the macro refuses as well. */
 
 namespace {
 
@@ -154,10 +156,13 @@ struct ScopedEnv {
 }  // namespace
 
 TEST_CASE("pc pool: a width below 1 is rejected", "[pc_pool]") {
+  SKIP_WITHOUT_PC_PROCESS_WORKERS();
   /* THREADS is at least 1 at its line; a pool built with a width below 1
    * used to be raised to one worker without a word (and then failed the
    * per-slot table check with an unrelated message). It throws, as
-   * ScriptExecutor does, before any worker is spawned. */
+   * ScriptExecutor does, before any worker is spawned.
+   * Skipped in the MPI build, where it passed: it builds pools, code that
+   * build never runs (the same in both builds). */
   for (const int width : {0, -1, -8}) {
     INFO("width " << width);
     CHECK_THROWS_AS(PcWorkerPool(width, {}, 0.0), std::invalid_argument);
