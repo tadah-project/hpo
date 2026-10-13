@@ -457,7 +457,7 @@ def check_text(text: str, where: str) -> tuple[list, int]:
 
     view = mpi_view(whole)
     cases = test_cases(view.code, view.literals)
-    found = []      # (offset, what, code) of every pool and request
+    found = []      # (offset, what) of every pool and request
     for code, literals in ((view.code, view.literals),
                            (view.macros.code, view.macros.literals)):
         exempt = _refusal_exempt(code, literals, _blocks(code))
