@@ -82,7 +82,7 @@ public:
      * header: pot.write_potential(os, sig_digits) of a copy without the
      * settings of the run that mlip::remove_run_inputs removes (VERBOSE,
      * NUMERIC, OUTFILE, AUDIT, AUDIT_SAMPLE, HEALTH_LOG, HPOTARGET,
-     * VALIDATION); every other key is written. The context itself keeps
+     * VALIDATION, UNCERTAINTY); every other key is written. The context itself keeps
      * them, so the PC_LAMMPS potential built from it is built at the run's
      * VERBOSE. best_pot.tadah, the durable best and the BDUMP and DUMP
      * archives are written through it. */
