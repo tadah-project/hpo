@@ -2,7 +2,7 @@
                              // /proc/self/exe, so when the pool runs inside
                              // THIS test binary the child is test_hpo itself
                              // and must take the worker branch before Catch2.
-#include "catch2/catch.hpp"
+#include "pc_process_workers.h"  // includes catch2/catch.hpp
 
 #include <tadah/core/signal_handler.h>
 #include <tadah/hpo/pc_worker_pool.h>
@@ -110,6 +110,24 @@ int die_in_task_worker() {
 
 int main(int argc, char** argv) {
   if (argc >= 2 && std::strcmp(argv[1], "--tadah-pc-worker") == 0) {
+#ifndef TADAH_HPO_MPI
+    /* Every PROCESS worker of test_hpo comes here, the stand-ins too. One
+     * that a test case starts without calling
+     * SKIP_WITHOUT_PC_PROCESS_WORKERS() first refuses to start, as every
+     * worker of the MPI build does (pc_worker_main exits 2 there), so the
+     * case fails in this build as it would in that one, whatever code built
+     * the pool (hpo_mpi_build_tests_lint reads the sources only;
+     * pc_process_workers.h). */
+    if (!hpo_test::pc_process_workers_allowed()) {
+      std::fputs("test_hpo --tadah-pc-worker: refused: the test case that "
+                 "started this PC_ISOLATION PROCESS worker did not call "
+                 "SKIP_WITHOUT_PC_PROCESS_WORKERS() first "
+                 "(tests/pc_process_workers.h); the MPI build (TADAH_HPO_MPI) "
+                 "has no such workers, and this worker refuses to start as "
+                 "its worker does\n", stderr);
+      return 2;
+    }
+#endif
     if (const char* pid_file = std::getenv("TADAH_TEST_PC_WORKER_WRONG_ACK_PID"))
       return wrong_ack_pid_worker(pid_file);
     if (std::getenv("TADAH_TEST_PC_WORKER_DIE_IN_TASK"))

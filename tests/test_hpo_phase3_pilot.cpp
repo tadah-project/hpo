@@ -27,7 +27,6 @@
 #include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/dloss_dtheta.h>
-#include <tadah/hpo/hpo_mpi.h>  // hpo_lammps_comm()
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/runners.h>
 #include <tadah/hpo/sims_grad.h>
@@ -226,7 +225,7 @@ TEST_CASE("phase3_pilot — chain rule on cohesive E per atom matches "
     REQUIRE_NOTHROW(pot_ctx = tadah::core::CoreUserConfigParser().parse(pot_path));
 
     LammpsRunner runner;
-    auto lmp = runner.create_instance(tadah::hpo::hpo_lammps_comm(),
+    auto lmp = runner.create_instance(
         {"lmp", "-log", "none", "-screen", "none"});
     REQUIRE(lmp != nullptr);
     REQUIRE(runner.run_script(lmp, simple_bcc_pilot_script(), pot_ctx));
@@ -336,7 +335,7 @@ TEST_CASE("phase3_pilot — pair_tadah dvirial_dW matches FD of Σ aed under "
     REQUIRE_NOTHROW(pot_ctx = tadah::core::CoreUserConfigParser().parse(pot_path));
 
     LammpsRunner runner;
-    auto lmp = runner.create_instance(tadah::hpo::hpo_lammps_comm(),
+    auto lmp = runner.create_instance(
         {"lmp", "-log", "none", "-screen", "none"});
     REQUIRE(lmp != nullptr);
     REQUIRE(runner.run_script(lmp, simple_bcc_pilot_script(), pot_ctx));
@@ -498,7 +497,7 @@ TEST_CASE("phase3_pilot — pair_tadah Voigt-6 dvirial_dW matches FD of "
     REQUIRE_NOTHROW(pot_ctx = tadah::core::CoreUserConfigParser().parse(pot_path));
 
     LammpsRunner runner;
-    auto lmp = runner.create_instance(tadah::hpo::hpo_lammps_comm(),
+    auto lmp = runner.create_instance(
         {"lmp", "-log", "none", "-screen", "none"});
     REQUIRE(lmp != nullptr);
     REQUIRE(runner.run_script(lmp, simple_bcc_pilot_script(), pot_ctx));
@@ -693,7 +692,7 @@ TEST_CASE("phase3_pilot — adjoint snapshot is captured at the post-"
     REQUIRE_NOTHROW(pot_ctx = tadah::core::CoreUserConfigParser().parse(pot_path));
 
     LammpsRunner runner;
-    auto lmp = runner.create_instance(tadah::hpo::hpo_lammps_comm(),
+    auto lmp = runner.create_instance(
         {"lmp", "-log", "none", "-screen", "none"});
     REQUIRE(lmp != nullptr);
     REQUIRE(runner.run_script(lmp, simple_bcc_pilot_script(), pot_ctx));
@@ -771,7 +770,6 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW matches FD over W[c] "
     auto run_and_read_lx = [&](const tadah::core::Context& ctx_in) {
         LammpsRunner runner;
         auto lmp = runner.create_instance(
-            tadah::hpo::hpo_lammps_comm(),
             {"lmp", "-log", "none", "-screen", "none"});
         REQUIRE(lmp != nullptr);
         REQUIRE(runner.run_script(lmp, bcc_lattice_constant_script(), ctx_in));
@@ -787,7 +785,6 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW matches FD over W[c] "
      * LAMMPS instance to outlive the SimsGradScriptInput. */
     LammpsRunner runner_base;
     auto lmp_base = runner_base.create_instance(
-        tadah::hpo::hpo_lammps_comm(),
         {"lmp", "-log", "none", "-screen", "none"});
     REQUIRE(lmp_base != nullptr);
     REQUIRE(runner_base.run_script(lmp_base, bcc_lattice_constant_script(),
@@ -991,7 +988,6 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW via Voigt-6 chain "
     auto run_and_read_lx = [&](const tadah::core::Context& ctx_in) {
         LammpsRunner runner;
         auto lmp = runner.create_instance(
-            tadah::hpo::hpo_lammps_comm(),
             {"lmp", "-log", "none", "-screen", "none"});
         REQUIRE(lmp != nullptr);
         REQUIRE(runner.run_script(lmp, bcc_lattice_constant_aniso_script(),
@@ -1005,7 +1001,6 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW via Voigt-6 chain "
 
     LammpsRunner runner_base;
     auto lmp_base = runner_base.create_instance(
-        tadah::hpo::hpo_lammps_comm(),
         {"lmp", "-log", "none", "-screen", "none"});
     REQUIRE(lmp_base != nullptr);
     REQUIRE(runner_base.run_script(lmp_base,
@@ -1180,7 +1175,7 @@ TEST_CASE("phase3_orchestrator — SimsGradProvider lambda body matches "
     lsim.script_lines = simple_bcc_pilot_script();
 
     LammpsRunner runner;
-    auto lmp = runner.create_instance(tadah::hpo::hpo_lammps_comm(),
+    auto lmp = runner.create_instance(
         {"lmp", "-log", "none", "-screen", "none"});
     REQUIRE(lmp != nullptr);
     REQUIRE(runner.run_script(lmp, lsim.script_lines, pot_ctx));
@@ -1347,7 +1342,7 @@ TEST_CASE("phase3_orchestrator — hot-var script analytical path: "
      * before run_script, then full populate + chain. Mirrors the
      * lambda's per-script body exactly. */
     LammpsRunner runner;
-    auto lmp = runner.create_instance(tadah::hpo::hpo_lammps_comm(),
+    auto lmp = runner.create_instance(
         {"lmp", "-log", "none", "-screen", "none"});
     REQUIRE(lmp != nullptr);
 

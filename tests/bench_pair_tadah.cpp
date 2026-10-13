@@ -34,7 +34,6 @@
 #include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/runners.h>
-#include <tadah/hpo/hpo_mpi.h>  // hpo_lammps_comm()
 
 #include <force.h>
 #include <pair.h>
@@ -105,7 +104,6 @@ TEST_CASE("pair_tadah microbench gate (256-atom bcc Ta)",
 
     LammpsRunner runner;
     auto lmp = runner.create_instance(
-        tadah::hpo::hpo_lammps_comm(),
         {"lmp", "-log", "none", "-screen", "none"});
     REQUIRE(lmp != nullptr);
 

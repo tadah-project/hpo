@@ -100,7 +100,9 @@ inline void hpo_barrier()
 }
 
 /* Communicator handed to every LAMMPS instance: each rank runs its own
- * single-rank LAMMPS objects (the serial-build equivalent of comm 0). */
+ * single-rank LAMMPS objects (the serial-build equivalent of comm 0).
+ * LammpsRunner::create_instance passes it; no caller chooses one (the
+ * serial build's 0 is a null communicator here). */
 inline MPI_Comm hpo_lammps_comm() { return MPI_COMM_SELF; }
 
 /* ".r<rank>" for every rank-local fixed-filename output when running

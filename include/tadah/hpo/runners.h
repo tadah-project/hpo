@@ -50,10 +50,15 @@ class LammpsRunner {
   /**
    * @brief Creates a new LAMMPS instance.
    *
-   * Builds a LAMMPS instance using provided MPI subcommunicator
-   * and commandline tokens.  If construction throws, returns nullptr.
+   * Builds a LAMMPS instance from the command-line tokens, on the
+   * communicator every LAMMPS instance of the build runs on,
+   * tadah::hpo::hpo_lammps_comm(): the LAMMPS STUBS' communicator 0 in the
+   * serial build, MPI_COMM_SELF in the MPI build (TADAH_HPO_MPI), where each
+   * rank runs single-rank instances and MPI must be initialised. The caller
+   * does not choose it: the serial build's 0 is a null communicator under a
+   * real MPI, on which LAMMPS aborts the process (MPI_ERR_COMM). If
+   * construction throws, returns nullptr.
    *
-   * @param sub_comm MPI communicator for this instance.
    * @param lmp_tokens Commandline arguments for LAMMPS.
    * @param error Optional: when construction throws, the exception's
    *              message -- LAMMPS' own for an option it refuses ("ERROR:
@@ -64,15 +69,14 @@ class LammpsRunner {
    *
    * @code
    * // Example usage:
-   * std::vector<const char*> args = {"lmp", "-in", "in.script"};
-   * auto inst = runner.create_instance(comm, args);
+   * std::string error;
+   * auto inst = runner.create_instance({"lmp", "-log", "none"}, &error);
    * if (!inst) {
-   *   // handle creation failure
+   *   // handle creation failure (error says why)
    * }
    * @endcode
    */
-  LMPPtr create_instance(MPI_Comm sub_comm,
-                         std::vector<std::string> lmp_tokens,
+  LMPPtr create_instance(std::vector<std::string> lmp_tokens,
                          std::string* error = nullptr) const;
 
   /**

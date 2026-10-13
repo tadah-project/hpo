@@ -104,7 +104,7 @@ Run run_with_potential(const std::string &extra, const std::string &tag) {
   std::streambuf *old = std::cerr.rdbuf(err.rdbuf());
   {
     LammpsRunner runner;
-    auto lmp = runner.create_instance(0, {"lmp", "-log", log, "-screen", "none"});
+    auto lmp = runner.create_instance({"lmp", "-log", log, "-screen", "none"});
     if (lmp) {
       r.ok = runner.run_script(lmp, script);
       if (r.ok) r.pe = std::stod(runner.get_variable(lmp, "e"));

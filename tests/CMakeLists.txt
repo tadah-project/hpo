@@ -401,6 +401,41 @@ set_tests_properties(hpo_vendored_asa_gate_tool PROPERTIES
     SKIP_REGULAR_EXPRESSION "\nOK \\(skipped=[0-9]+"
     FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
 
+# The MPI build's suite (TADAH_HPO_MPI) is not the serial build's, and the
+# serial checks never run it: hpo_mpi_build_tests_lint reads every test
+# source here (*.cpp, *.h, *.hpp, subdirectories included) as the MPI build
+# compiles it and fails a TEST_CASE that builds a PcWorkerPool or requests
+# PC_ISOLATION PROCESS there (which that build does not have, and refuses)
+# without SKIP_WITHOUT_PC_PROCESS_WORKERS() as its first statement
+# (pc_process_workers.h), such a pool or request outside every TEST_CASE
+# body, and, in every build's view, any use of the LAMMPS class other than
+# as a pointer, a reference or a smart-pointer holder: an instance comes
+# from LammpsRunner::create_instance, which runs it on the build's
+# communicator (check_mpi_build_tests.py; its docstring lists what it does
+# not see). In every build. The serial build's test_hpo backs the pool part
+# at run time (pc_process_workers.h).
+# Before the fix: fails, 15 cases -- the 12 pc pool cases that build a pool
+# (7 skipped through a macro of their file, 5 not at all; one of them the
+# width check, whose pools are temporaries), the 2 'Two runs in one process'
+# cases under PC_ISOLATION PROCESS, and the startup-strategy case whose
+# section asks for PC_ISOLATION PROCESS without a PC_LAMMPS line and said
+# nothing of the MPI build's refusal of it (it passed there: the strategy
+# is refused first, which it now checks in that build).
+add_test(NAME hpo_mpi_build_tests_lint
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/check_mpi_build_tests.py
+        ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(hpo_mpi_build_tests_lint PROPERTIES
+    TIMEOUT 60)
+# The check itself, on synthetic sources (tests/test_check_mpi_build_tests.py).
+# Before the fix: passes as well (the check's own unit test).
+add_test(NAME hpo_mpi_build_tests_lint_tool
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_check_mpi_build_tests.py)
+set_tests_properties(hpo_mpi_build_tests_lint_tool PROPERTIES
+    TIMEOUT 60
+    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
+
 if(TADAH_HPO_MPI)
     add_executable(test_hpo_anneal_mpi mpi/test_anneal_mpi.cpp)
     target_link_libraries(test_hpo_anneal_mpi PRIVATE

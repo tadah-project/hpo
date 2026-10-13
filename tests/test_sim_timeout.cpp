@@ -12,7 +12,6 @@
 
 #include <tadah/core/context.h>
 #include <tadah/hpo/lammps_sim.h>
-#include <tadah/hpo/hpo_mpi.h>  // hpo_lammps_comm()
 #include <tadah/hpo/runners.h>
 #include <tadah/hpo/hpo_targets.h>   // PC_SCRIPT_TIMEOUT / MAXTIME keyword parse
 
@@ -169,7 +168,6 @@ run 500000000
     /* Same -var registration the HPO host performs (sim.invar carries it,
      * here passed explicitly): ${maxtime} -> "1 every 1". */
     auto lmp = runner.create_instance(
-        tadah::hpo::hpo_lammps_comm(),
         {"lmp", "-log", "none", "-screen", "none",
             "-var", "maxtime", "1 every 1"});
     REQUIRE(lmp != nullptr);

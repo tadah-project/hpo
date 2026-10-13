@@ -4508,8 +4508,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                      * written. */
 
                     R runner;
-                    auto lmp = runner.create_instance(hpo_lammps_comm(),
-                                                      lsim.invar);
+                    auto lmp = runner.create_instance(lsim.invar);
                     if (!lmp) {
                         /* Phase A masking: one LAMMPS instance creation
                          * failure shouldn't poison the whole gradient.

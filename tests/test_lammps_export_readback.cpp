@@ -18,7 +18,6 @@
 #include <tadah/core/element.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/runners.h>
-#include <tadah/hpo/hpo_mpi.h>  // hpo_lammps_comm()
 #include <tadah/mlip/atom.h>
 #include <tadah/mlip/structure.h>
 #include <tadah/mlip/structure_db.h>
@@ -79,7 +78,6 @@ Readback read_back(const std::string &file, const std::string &boundary) {
   Readback rb;
   LammpsRunner runner;
   auto lmp = runner.create_instance(
-      tadah::hpo::hpo_lammps_comm(),
       {"lmp", "-log", "none", "-screen", "none", "-nocite"});
   REQUIRE(lmp != nullptr);
   try {

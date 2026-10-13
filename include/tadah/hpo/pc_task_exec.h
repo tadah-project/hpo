@@ -100,7 +100,6 @@
 
 #include <tadah/core/context.h>
 #include <tadah/core/logger.h>
-#include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/runners.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
 
@@ -277,11 +276,11 @@ PcTaskResult execute_script_task_unguarded(
   auto t_create0 = std::chrono::high_resolution_clock::now();
   auto cache_it = st.lmp_cache.find(cache_key);
   if (cache_it == st.lmp_cache.end()) {
-    /* Serial builds: comm 0 (LAMMPS STUBS). TADAH_HPO_MPI builds:
-     * MPI_COMM_SELF -- every rank runs its own single-rank LAMMPS. */
+    /* On the build's communicator (LammpsRunner::create_instance): STUBS
+     * 0 serial, MPI_COMM_SELF under TADAH_HPO_MPI -- every rank runs its
+     * own single-rank LAMMPS. */
     std::string create_error;
-    auto fresh = runner.create_instance(hpo_lammps_comm(), invar_final,
-                                        &create_error);
+    auto fresh = runner.create_instance(invar_final, &create_error);
     if (!fresh) {
       res.status = PcTaskStatus::CREATE_FAIL;
       res.error_msg = "creating the LAMMPS instance: " +

@@ -919,9 +919,7 @@ LammpsSim::index_defined_variables() const
     }
 
     LammpsRunner runner;
-    /* Serial builds: comm 0 (LAMMPS STUBS). TADAH_HPO_MPI builds: a
-     * literal 0 would be a NULL MPI_Comm -- use MPI_COMM_SELF.
-     * The instance is created with the line's own command-line arguments,
+    /* The instance is created with the line's own command-line arguments,
      * so it is where LAMMPS judges the single-dash options the line passes
      * on (parse_tokens): one LAMMPS refuses -- a typo such as -sff, an
      * option this build cannot honour such as -sf omp without the OPENMP
@@ -945,8 +943,7 @@ LammpsSim::index_defined_variables() const
                     break;
                 }
     }
-    auto lmp = runner.create_instance(hpo_lammps_comm(), startup_invar,
-                                      &create_error);
+    auto lmp = runner.create_instance(startup_invar, &create_error);
     if (!lmp) {
         create_error = trim_ascii(create_error);
         throw std::runtime_error(
