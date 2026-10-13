@@ -8092,23 +8092,35 @@ TEST_CASE("PRESTAGE: an exploration without a usable loss leaves the "
           std::vector<std::string>(params[0].begin() + 2, params[0].end()));
 }
 
-/* An exploration that made no evaluation has no candidate, and no failed
- * evaluation either: every exploration a parsed configuration sets
- * evaluates at least one point (MAXEVAL >= 1; every driver makes its first
- * evaluation, also when MAXTIME has passed before it -- the next case; a
- * stop is raised inside a counted evaluation), so it is a driver that
- * returned without evaluating -- or a spec built outside the parser that
- * asks for no evaluation --, which a refinement from the OPTIMIZER-level
- * INIT points would hide.
+/* An exploration that asked for no point -- no evaluation, and no call
+ * answered from the run's record -- has no candidate, and no failed
+ * evaluation either: every exploration a parsed configuration sets asks
+ * for at least one point (MAXEVAL >= 1, NLopt counting a call the record
+ * answers too; every driver makes its first call, also when MAXTIME has
+ * passed before it -- the next case; a stagnation stop is raised at an
+ * evaluation or at a call answered from the record), so it is a driver
+ * that returned without asking -- or a spec built outside the parser that
+ * asks for nothing --, which a refinement from the OPTIMIZER-level INIT
+ * points would hide. An exploration whose every call the record answers
+ * makes no evaluation and hands on its candidates ("Run record: a PRESTAGE
+ * exploration answered from the record ...", and the NOISE CALIBRATION
+ * case below).
  * Pins: StagedPolicy over the parsed PRESTAGE spec whose exploration
  * (TADAH:RANDOM) is given MAXEVAL 0 and no INIT point throws
  * std::logic_error "PRESTAGE: the exploration (EXPLORE block) TADAH:RANDOM
- * returned without evaluating a point ...", no evaluation is made (the
- * journal's census is unchanged) and the journal has no "running outer
- * optimiser as-is".
+ * returned without evaluating a point, so it has no candidate to refine
+ * (it asked for no point: no call was answered from the run's record
+ * either, and every exploration a configuration sets asks for at least
+ * one point; its driver, or a spec built outside the parser, asked for
+ * none)", no evaluation is made (the journal's census is unchanged) and
+ * the journal has no "running outer optimiser as-is".
  * Before the fix: a WARNING "PRESTAGE: produced no candidates -- running
  * outer optimiser as-is" (journal only), and the refinement ran from the
- * OPTIMIZER-level INIT point: 3 evaluations (its MAXEVAL), no error. */
+ * OPTIMIZER-level INIT point: 3 evaluations (its MAXEVAL), no error.
+ * Before the message was corrected (cross-lane review 2): its parenthesis
+ * read "every exploration a configuration sets evaluates at least one
+ * point: ...", which the run's record made false (an exploration can make
+ * no evaluation and go on): the Contains checks fail. */
 TEST_CASE("PRESTAGE: an exploration that made no evaluation is an error, not "
           "a refinement from the INIT points",
           "[HPO][termination][prestage][no_evaluation]")
@@ -8140,11 +8152,67 @@ TEST_CASE("PRESTAGE: an exploration that made no evaluation is an error, not "
     CHECK_THAT(what, Catch::StartsWith(
                          "PRESTAGE: the exploration (EXPLORE block) "
                          "TADAH:RANDOM returned without evaluating a point"));
+    CHECK_THAT(what, Catch::Contains(
+                         "so it has no candidate to refine (it asked for no "
+                         "point: no call was answered from the run's record "
+                         "either, and every exploration a configuration sets "
+                         "asks for at least one point; its driver, or a spec "
+                         "built outside the parser, asked for none)"));
+    CHECK_THAT(what, !Catch::Contains("evaluates at least one point"));
     CHECK(tadah::hpo::HPOLog::instance().n_eval() == evals_before);
     tadah::hpo::HPOLog::instance().finish("test-end");
     const std::string journal = read_file(fx.run.sd.dir / "hpo_run.log");
     INFO(journal);
     CHECK(journal.find("running outer optimiser as-is") == std::string::npos);
+}
+
+/* Pins: an exploration whose every call the run's record answers makes no
+ * evaluation and is no error: under NOISE CALIBRATION 2 the calibration
+ * evaluates the seed point, the configuration's (rows 1-2), and a PRESTAGE
+ * exploration NLOPT:LN_SBPLX with MAXEVAL 1 asks for that point alone,
+ * which the record answers ("NLopt finished: MAXEVAL_REACHED -- maximum
+ * evaluations exhausted after 0 of MAXEVAL 1 evaluation(s); NLopt counts
+ * its calls, and 1 of them asked for points the run had evaluated and were
+ * answered without an evaluation"); the seed is its candidate ("PRESTAGE:
+ * top-1 losses: ..."), the refinement LN_SBPLX (MAXEVAL 4, TOPK 1) runs
+ * from it (rows 3-5: NLopt charges its first call, the seed again, answered
+ * from the record), and the run ends with status 0, its trailer the
+ * refinement's MAXEVAL_REACHED, with no "returned without evaluating a
+ * point" (lanes/D/tmp/review/xl2-search/ps0 in 1-D).
+ * Before the fix: passes as well (a pin of the rule that the docs and the
+ * changelogs now state: they said that every exploration evaluates at
+ * least one point, so one that made none ends FAILED). */
+TEST_CASE("PRESTAGE: an exploration whose every call the run's record "
+          "answers makes no evaluation and hands on its candidate",
+          "[HPO][termination][prestage][no_evaluation][repeat_points]")
+{
+    TaRun run("OPTIMIZER\n  NOISE\n    CALIBRATION 2\n  ENDNOISE\n"
+              "  STRATEGY\n    TYPE PRESTAGE\n    LIB NLOPT\n"
+              "    ALGO LN_SBPLX\n    MAXEVAL 4\n    TOPK 1\n"
+              "    EXPLORE\n      LIB NLOPT\n      ALGO LN_SBPLX\n"
+              "      MAXEVAL 1\n    ENDEXPLORE\n  ENDSTRATEGY\n"
+              "ENDOPTIMIZER\n");
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    check_run_files();
+    const std::string journal = read_file("hpo_run.log");
+    INFO("journal:\n" << journal);
+    CHECK(journal.find("NLopt finished: MAXEVAL_REACHED -- maximum "
+                       "evaluations exhausted after 0 of MAXEVAL 1 "
+                       "evaluation(s); NLopt counts its calls, and 1 of them "
+                       "asked for points the run had evaluated and were "
+                       "answered without an evaluation") != std::string::npos);
+    CHECK(journal.find("PRESTAGE: top-1 losses:") != std::string::npos);
+    CHECK(journal.find("REFINEMENT: refining top-1") != std::string::npos);
+    CHECK(journal.find("returned without evaluating a point") ==
+          std::string::npos);
+    CHECK(journal_status(journal).rfind("MAXEVAL_REACHED", 0) == 0);
+    const auto params = data_rows("params.tadah");
+    REQUIRE(params.size() == 5u);
+    /* rows 1-2: the calibration's seed point, twice */
+    CHECK(std::vector<std::string>(params[0].begin() + 2, params[0].end()) ==
+          std::vector<std::string>(params[1].begin() + 2, params[1].end()));
 }
 
 /* MAXTIME keeps an evaluation from starting once it has passed, except a
