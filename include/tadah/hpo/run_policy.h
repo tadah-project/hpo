@@ -445,14 +445,19 @@ private:
  * exploration answered from the run's record of an earlier evaluation (a
  * RESTART round's exploration asking for points of an earlier round:
  * HPO_Host::count_reused_repeat), as the evaluations they stand for would
- * be. An exploration that asked for no point -- no evaluation, and no call
- * answered from the record -- is an error
- * (std::logic_error): every exploration a parsed configuration sets
- * evaluates at least one point (MAXEVAL >= 1; every driver makes its first
- * evaluation, also when MAXTIME has passed before it; a stop is raised
- * inside a counted evaluation), so its driver returned without evaluating,
- * or a spec built outside the parser asked for no evaluation; it ran the
- * refinement from the INIT points with a WARNING, which hid that.
+ * be: an exploration whose every call the record answers makes no
+ * evaluation and still hands on its candidates (a RESTART round retracing
+ * an earlier one; under NOISE CALIBRATION an exploration whose one call,
+ * MAXEVAL 1, is the seed point the calibration evaluated). An exploration
+ * that asked for no point -- no evaluation, and no call answered from the
+ * record -- is an error (std::logic_error): every exploration a parsed
+ * configuration sets asks for at least one point (MAXEVAL >= 1, NLopt
+ * counting a call the record answers too; every driver makes its first
+ * call, also when MAXTIME has passed before it; a stagnation stop is
+ * raised at an evaluation or at a call answered from the record), so its
+ * driver returned without asking, or a spec built outside the parser asked
+ * for nothing; it ran the refinement from the INIT points with a WARNING,
+ * which hid that.
  *
  * Under RESTART a stagnating exploration hands its top-K over to the
  * refinement early (the exploration catch below) instead of restarting;
@@ -549,15 +554,17 @@ public:
      * that failed. No configuration the parser accepts gets here (the class
      * comment), so its driver returned without asking; the refinement from
      * the INIT points hid that behind a WARNING. A point answered from the
-     * run's record was asked for, and is a candidate. */
+     * run's record was asked for, and is a candidate: an exploration that
+     * made no evaluation but asked for such points goes on. */
     if (explore_evals == 0 && explore_reused == 0) {
       std::ostringstream oss;
       oss << "PRESTAGE: the exploration (EXPLORE block) "
           << spec.prestage->lib << ":" << spec.prestage->algo
           << " returned without evaluating a point, so it has no candidate "
-             "to refine (every exploration a configuration sets evaluates at "
-             "least one point: its driver, or a spec built outside the "
-             "parser, asked for none)";
+             "to refine (it asked for no point: no call was answered from "
+             "the run's record either, and every exploration a "
+             "configuration sets asks for at least one point; its driver, "
+             "or a spec built outside the parser, asked for none)";
       throw std::logic_error(oss.str());
     }
     /* No candidate: every evaluation of the exploration failed (a failed
