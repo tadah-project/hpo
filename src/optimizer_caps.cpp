@@ -478,6 +478,10 @@ Registry build_registry()
         c.reads_vector_storage = s == "LD_LBFGS" || starts("LD_VAR") ||
                                  starts("LD_TNEWTON");
         c.reads_seed = true;
+        /* Where the first call is (OptimizerCaps::starts_at_x0): StoGO,
+         * DIRECT and AGS take x0 as their output only. */
+        c.starts_at_x0 = !(starts("GD_STOGO") || starts("GN_DIRECT") ||
+                           starts("GN_ORIG_DIRECT") || starts("GN_AGS"));
 
         /* Initial-step consumption, verified against nlopt 2.10
          * src/api/optimize.c (see StepUse doc in optimizer_caps.h). */

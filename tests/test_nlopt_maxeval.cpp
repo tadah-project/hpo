@@ -849,11 +849,19 @@ void check_budget_warning_follows_run(const BudgetCase& c)
  *     the start and 4 samples, the local search's start again and its
  *     stencil, a first step at evaluation 11;
  *   - G_MLSL_LDS with POPULATION 3 and INNER LD_LBFGS: a first step at
- *     evaluation 10.
+ *     evaluation 10;
+ *   - GD_STOGO and GD_STOGO_RAND, which do not start at the point they are
+ *     given: the centre of the box (0, 0), its stencil, a first step at
+ *     evaluation 6; AUGLAG with INNER GD_STOGO the same;
+ *   - GD_MLSL with INNER GD_STOGO: the start and 4 samples, then the local
+ *     search's own start, the centre (not one of MLSL's points), and its
+ *     stencil, a first step at evaluation 11.
  * Before the fix: does not compile (gradient_budget_warnings takes the
  * run's reuse permission since fix/budget-reuse); with the old call
  * (gradient_budget_warnings(sp)) it passes, as it did when the MLSL rule
- * was added (lanes/D/tmp/before_fix_budget_reuse.txt). */
+ * was added (lanes/D/tmp/before_fix_budget_reuse.txt). The StoGO cases
+ * (cross-lane review 2) pass before their fix as well: on this untracked
+ * host no start is recorded, and the warning counted 1 + 4 + 1. */
 TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget that "
           "takes no step is given exactly when the run takes none",
           "[HPO][nlopt][maxeval][gradient_budget]")
@@ -867,7 +875,13 @@ TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget that "
         {"GD_MLSL, INNER LD_LBFGS", "GD_MLSL", "LD_LBFGS", std::nullopt, 0, 5,
          11},
         {"G_MLSL_LDS, POPULATION 3, INNER LD_LBFGS", "G_MLSL_LDS", "LD_LBFGS",
-         std::nullopt, 3, 4, 10}};
+         std::nullopt, 3, 4, 10},
+        {"GD_STOGO", "GD_STOGO", "", std::nullopt, 0, 1, 6},
+        {"GD_STOGO_RAND", "GD_STOGO_RAND", "", std::nullopt, 0, 1, 6},
+        {"AUGLAG, INNER GD_STOGO", "AUGLAG", "GD_STOGO", std::nullopt, 0, 1,
+         6},
+        {"GD_MLSL, INNER GD_STOGO", "GD_MLSL", "GD_STOGO", std::nullopt, 0, 6,
+         11}};
     for (const auto& c : cases)
         DYNAMIC_SECTION(c.label) { check_budget_warning_follows_run<Valley>(c); }
 }
@@ -885,6 +899,11 @@ TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget that "
  *     analytical gradient, at 8 (5 + the loss again + the gradient);
  *     LD_LBFGS (6) and AUGLAG (6) start at a point the search has not
  *     evaluated;
+ *     a local search that does not start at the point it is given takes
+ *     no loss from the record: GD_MLSL with INNER GD_STOGO, whose local
+ *     search starts at the centre of the box, a point MLSL has not
+ *     evaluated, at 11 (the start, 4 samples, the centre and its 4-point
+ *     stencil), and GD_STOGO alone at 6;
  *   - BlockedValley (a reason): every repeat is evaluated again: GD_MLSL
  *     at 11, G_MLSL_LDS POPULATION 3 at 10, under ANALYTICAL 8, LD_LBFGS
  *     and AUGLAG 6.
@@ -894,7 +913,12 @@ TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget that "
  * whatever the run) the ReusingValley GD_MLSL checks at MAXEVAL 10 and the
  * G_MLSL_LDS ones at 9 fail -- a warning at the budget whose run steps
  * (lanes/D/tmp/before_fix_budget_reuse.txt); the other cases pass as well
- * (pins). */
+ * (pins).
+ * Before StoGO's own start was counted (cross-lane review 2): the GD_MLSL
+ * with INNER GD_STOGO case fails at MAXEVAL 10, which was not warned (the
+ * warning took the local search's start from the record, needing 10) and
+ * takes no step; GD_STOGO passes as well (no start of its own is recorded
+ * here). */
 TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget follows "
           "the run's reuse of a point it asks for again",
           "[HPO][nlopt][maxeval][gradient_budget][repeat_points]")
@@ -910,7 +934,10 @@ TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget follows "
         {"reused: GD_MLSL, INNER LD_LBFGS, ANALYTICAL", "GD_MLSL", "LD_LBFGS",
          GradStrategy::Analytical, 0, 5, 8},
         {"reused: GD_MLSL, INNER LD_LBFGS, HYBRID", "GD_MLSL", "LD_LBFGS",
-         GradStrategy::Hybrid, 0, 5, 8}};
+         GradStrategy::Hybrid, 0, 5, 8},
+        {"reused: GD_STOGO", "GD_STOGO", "", std::nullopt, 0, 1, 6},
+        {"reused: GD_MLSL, INNER GD_STOGO", "GD_MLSL", "GD_STOGO",
+         std::nullopt, 0, 6, 11}};
     for (const auto& c : reused)
         DYNAMIC_SECTION(c.label) {
             check_budget_warning_follows_run<ReusingValley>(c);

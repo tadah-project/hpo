@@ -3288,9 +3288,13 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     /* `pot` is the model of this evaluation inside the run: validation
      * predicts with it and the PC_LAMMPS potential (THREAD, and the
      * PROCESS workers through pc_pot_map) is built from it, so it keeps
-     * the run's settings, VERBOSE among them (a model built from a context
-     * without VERBOSE takes the blueprint default 1, and a kernel then
-     * prints its line for every evaluation). A potential records the
+     * the run's settings, VERBOSE among them. A model built from a context
+     * without VERBOSE takes the blueprint default 1: under THREAD the first
+     * PC_LAMMPS potential of a -v 0 run would print its kernel's settings
+     * line (once: hpo_run's KernelSettingsLineScope prints each kernel's
+     * line once per run); a PROCESS worker prints no kernel line at any
+     * VERBOSE (its Lines::None scope, pc_worker_main), but rebuilds the
+     * same context from the snapshot. A potential records the
      * model's settings and its fit, not the settings of the run that
      * mlip::remove_run_inputs lists: every file the host writes from it
      * (best_pot.tadah, the durable best, the BDUMP and DUMP archives)

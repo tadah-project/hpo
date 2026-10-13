@@ -200,13 +200,24 @@ GradientCost gradient_cost(const OptimizerSpec& spec);
  * started (MAXEVAL_REACHED). A start the run has evaluated -- a PRESTAGE
  * refinement's, an exploration candidate; the seed point of the run's
  * first search under NOISE_CALIBRATION -- is counted as the run spends it
- * on NLopt and DLIB:BFGS, which answer from the record: under `reuse` and
- * NUMERICAL its loss is the recorded one, "the PRESTAGE refinement
- * NLOPT:LD_LBFGS: MAXEVAL 4 takes no step: its gradient search takes the
- * loss at its starting point from the run's record (no evaluation) and
- * evaluates the gradient there (4 evaluations: ...) ..., which needs
- * MAXEVAL 5 or more"; otherwise "... evaluates the loss at its starting
- * point again (1 evaluation) ...". Over strategy_phase_specs():
+ * on NLopt and DLIB:BFGS, which answer from the record, when the search
+ * asks for its starting point first: under `reuse` and NUMERICAL its loss
+ * is the recorded one, "the PRESTAGE refinement NLOPT:LD_LBFGS: MAXEVAL 4
+ * takes no step: its gradient search takes the loss at its starting point
+ * from the run's record (no evaluation) and evaluates the gradient there
+ * (4 evaluations: ...) ..., which needs MAXEVAL 5 or more"; otherwise "...
+ * evaluates the loss at its starting point again (1 evaluation) ...".
+ * NLopt's StoGO (GD_STOGO, GD_STOGO_RAND; OptimizerCaps::starts_at_x0)
+ * does not start at the point it is given -- its first trial is the centre
+ * of its box -- and neither does an AUGLAG whose INNER search is StoGO:
+ * "... takes no step: its gradient search, which does not start at the
+ * point it is given, evaluates the loss at a point of its own (1
+ * evaluation) and the gradient there (...) ..., which needs MAXEVAL 6 or
+ * more", wherever the phase starts. Under NOISE_CALIBRATION the first of
+ * several MULTISTART starts begins at the seed point and the later ones
+ * elsewhere: where their budgets differ, "the first MULTISTART start ..."
+ * and "each MULTISTART start after the first ..." are warned apart.
+ * Over strategy_phase_specs():
  * every phase whose optimiser obtains gradients (obtains_gradients(): an
  * MLSL or AUGLAG through its local search) and has a MAXEVAL -- the
  * STRATEGY-level optimiser, each MULTISTART start (BUDGET_PER_START or its
@@ -234,11 +245,14 @@ GradientCost gradient_cost(const OptimizerSpec& spec);
  * gradient there (...) ..., which needs MAXEVAL 11 or more" under NUMERICAL
  * without `reuse`, "... (1 evaluation: one analytical gradient,
  * GRAD_STRATEGY ANALYTICAL) ..., which needs MAXEVAL 8 or more" under
- * ANALYTICAL. AUGLAG goes straight into its local search. And an INNER block whose local search
- * obtains gradients and whose own MAXEVAL, in NLopt's calls (each the loss
- * and the gradient at a point), is 1; an MLSL's local searches start at
- * points it evaluated, so a call costs the gradient alone where the run
- * answers the loss from the record. Not a refusal: a budget-limited probe
+ * ANALYTICAL; an INNER GD_STOGO starts at a point of its own, "... then
+ * its first local search, which does not start at the point MLSL gives
+ * it, evaluates the loss at a point of its own (1 evaluation) ...". AUGLAG
+ * goes straight into its local search. And an INNER block whose local
+ * search obtains gradients and whose own MAXEVAL, in NLopt's calls (each
+ * the loss and the gradient at a point), is 1; an MLSL's local searches
+ * start at points it evaluated, so a call costs the gradient alone where
+ * the run answers the loss from the record. Not a refusal: a budget-limited probe
  * of the start can be deliberate. validate_hpo_setup() journals each one
  * after the phase checks (the finite-difference settings are valid by
  * then). */
