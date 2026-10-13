@@ -48,7 +48,8 @@
 //   - [.tadah_cli_pc_lammps_verbose] (CTest entry
 //     hpo_tadah_cli_pc_lammps_verbose, the same harness): the potential a
 //     PC_LAMMPS script runs follows the run's VERBOSE (-v 0: a kernel
-//     model prints no line when it is built for the script).
+//     model prints no line when it is built for the script; the THREAD
+//     leg shows it, a PROCESS worker printing no kernel line at all).
 //   - [.tadah_cli_kernel_line_once] (CTest entry
 //     hpo_tadah_cli_kernel_line_once, the same harness): at -v 1 a kernel's
 //     settings line is printed once per run, not once per model the run
@@ -2484,20 +2485,37 @@ constexpr const char* kTaKernelModelKeys =
 }  // namespace
 
 /* Pins, through the built tadah: the potential a PC_LAMMPS script runs
- * (pair_coeff * * EXTERN Ta) is built at the run's VERBOSE, as the trainer
- * is. A Kern_RBF prints its line, "Kern_RBF | sigma: ... | gamma: ...",
- * when it is built at VERBOSE 1 or more. M_KRR Kern_RBF 1, RANDOM MAXEVAL
- * 3, a configuration without VERBOSE (kTaKernelModelKeys):
- *   - -v 0 under PC_ISOLATION THREAD and PROCESS (THREAD alone in the MPI
- *     build): exit 0, the journal names the mode, loss.tadah has the three
- *     evaluations, and tadah's stdout has no "Kern_RBF |" line;
+ * (pair_coeff * * EXTERN Ta) is built from the evaluation's context, which
+ * keeps the run's VERBOSE, as the trainer's does: under PC_ISOLATION
+ * THREAD from that context, under PROCESS from its storage snapshot
+ * (pc_pot_map), which each worker process rebuilds. A Kern_RBF prints its
+ * line, "Kern_RBF | sigma: ... | gamma: ...", when it is built at VERBOSE
+ * 1 or more: at most once per run (hpo_run's KernelSettingsLineScope), and
+ * never in a PC_ISOLATION PROCESS worker (its Lines::None scope, for the
+ * worker's life). M_KRR Kern_RBF 1, RANDOM MAXEVAL 3, a configuration
+ * without VERBOSE (kTaKernelModelKeys):
+ *   - -v 0 under PC_ISOLATION THREAD: exit 0, the journal names the mode,
+ *     loss.tadah has the three evaluations, and tadah's stdout has no
+ *     "Kern_RBF |" line. This leg pins the context both modes take: built
+ *     from one without VERBOSE, at the blueprint default 1, the first
+ *     PC_LAMMPS potential would print its line;
+ *   - -v 0 under PROCESS (not in the MPI build): the same. It shows that no
+ *     kernel line reaches tadah's stdout from the workers, but it cannot
+ *     tell whether the context a worker rebuilds has VERBOSE: a worker
+ *     prints no kernel line at any VERBOSE;
  *   - -v 1 under THREAD: exit 0, and tadah's stdout has "Kern_RBF |"
  *     lines (the line the -v 0 legs look for reaches tadah's stdout).
- * Before the fix: under -v 0 tadah's stdout had one "Kern_RBF |" line per
- * evaluation, 3, in both modes: the host took the run's inputs, VERBOSE
- * among them, out of the context the PC_LAMMPS potential is built from,
- * and a context without VERBOSE builds the kernel at the blueprint default
- * 1. The -v 1 leg passes as well (a pin). */
+ * Before the fix (HB2 review F1): under -v 0 tadah's stdout had one
+ * "Kern_RBF |" line per evaluation, 3, in both modes: the host took the
+ * run's inputs, VERBOSE among them, out of the context the PC_LAMMPS
+ * potential is built from, and a context without VERBOSE builds the kernel
+ * at the blueprint default 1. The -v 1 leg passes as well (a pin).
+ * Since the run's kernel-line scope and the workers' (fix/build-hygiene),
+ * a context without VERBOSE again prints 1 line under THREAD (the first
+ * VERBOSE-less build prints, the later ones are deduplicated) and none
+ * under PROCESS: the THREAD check fails and the PROCESS one passes
+ * (lanes/E/tmp/before_fix_pc_lammps_verbose.txt, VERBOSE stripped from the
+ * evaluation's context). */
 TEST_CASE("tadah hpo: the PC_LAMMPS potential is built at the run's VERBOSE",
           "[pc_lammps_verbose][tadah_cli][.tadah_cli_pc_lammps_verbose]") {
     const char* bin = std::getenv("TADAH_BINARY");
@@ -2519,6 +2537,8 @@ TEST_CASE("tadah hpo: the PC_LAMMPS potential is built at the run's VERBOSE",
 #else
     const std::vector<std::string> modes{"THREAD", "PROCESS"};
 #endif
+    /* THREAD first: it pins the context; PROCESS shows the workers' output
+     * only (the comment above). */
     for (const std::string& mode : modes) {
         INFO("-v 0, PC_ISOLATION " << mode);
         const fs::path dir = sd.dir / ("v0_" + mode);
