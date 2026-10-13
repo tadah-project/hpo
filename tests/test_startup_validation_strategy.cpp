@@ -1056,6 +1056,15 @@ TEST_CASE("startup validation: hpo_run rejects a strategy before it loads "
             "    THREADS 2\n  ENDSTRATEGY\nENDOPTIMIZER\n");
         CHECK_THAT(err, Catch::Contains("STRATEGY TYPE MULTISTART cannot run "
                                         "NLOPT:GN_DIRECT:"));
+#ifdef TADAH_HPO_MPI
+        /* Pins: the MPI build, which has no pool and refuses PC_ISOLATION
+         * PROCESS at startup, refuses the strategy first: the error is the
+         * strategy's, not "PC_ISOLATION PROCESS is not supported in the
+         * MPI build ...". Before the fix: passes as well (a pin of what the
+         * MPI build's suite showed; the case did not say it). */
+        CHECK_THAT(err, !Catch::Contains("PC_ISOLATION PROCESS is not "
+                                         "supported in the MPI build"));
+#endif
     }
 }
 

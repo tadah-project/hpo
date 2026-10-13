@@ -599,6 +599,100 @@ TEST_CASE("pc pool: repeated deaths throttle a channel, they do not retire it",
         PcTaskStatus::POT_BUILD_FAIL);
 }
 
+#ifndef TADAH_HPO_MPI
+namespace {
+/* `cmd` run by the shell: its exit status and what it wrote to its
+ * standard output (the command redirects its standard error there). */
+struct CommandRun {
+  int status = -1;
+  std::string out;
+};
+CommandRun run_command(const std::string& cmd) {
+  CommandRun r;
+  FILE* p = ::popen(cmd.c_str(), "r");
+  REQUIRE(p != nullptr);
+  char buf[256];
+  while (::fgets(buf, sizeof buf, p)) r.out += buf;
+  r.status = ::pclose(p);
+  return r;
+}
+/* This test binary's path: inside popen's shell /proc/self/exe would be
+ * the shell. */
+std::string this_executable() {
+  char exe[4096] = {0};
+  const ssize_t n = ::readlink("/proc/self/exe", exe, sizeof exe - 1);
+  REQUIRE(n > 0);
+  return exe;
+}
+const char* const kWorkerRefusal =
+    "test_hpo --tadah-pc-worker: refused: the test case that started this "
+    "PC_ISOLATION PROCESS worker did not call "
+    "SKIP_WITHOUT_PC_PROCESS_WORKERS() first (tests/pc_process_workers.h); "
+    "the MPI build (TADAH_HPO_MPI) has no such workers, and this worker "
+    "refuses to start as its worker does\n";
+}  // namespace
+
+/* The two halves of the next case's last check, run by it in one child
+ * test_hpo process in this order (hidden: CTest does not register them).
+ * The first calls SKIP_WITHOUT_PC_PROCESS_WORKERS() and builds a pool; the
+ * second, which does not, builds one too and has its worker refused. */
+TEST_CASE("pc pool gate: a case that calls SKIP_WITHOUT_PC_PROCESS_WORKERS() "
+          "starts its workers", "[.pc_pool_gate]") {
+  SKIP_WITHOUT_PC_PROCESS_WORKERS();
+  PcWorkerPool pool(1, specs_for(1, minimal_spec()), 0.0);
+  CHECK(pool.worker_pid(0) > 0);
+}
+
+TEST_CASE("pc pool gate: the next case, which does not call it, has its "
+          "workers refused", "[.pc_pool_gate]") {
+  CHECK_THROWS_WITH(PcWorkerPool(1, specs_for(1, minimal_spec()), 0.0),
+                    Catch::StartsWith("pc-worker 1: handshake failed: "));
+}
+
+/* Pins: in the serial build a PC_ISOLATION PROCESS worker of test_hpo that
+ * a test case starts without calling SKIP_WITHOUT_PC_PROCESS_WORKERS()
+ * first refuses to start, as every PROCESS worker of the MPI build does:
+ *   - `test_hpo --tadah-pc-worker`, started by this case (which does not
+ *     call it), exits with status 2 and writes exactly the refusal
+ *     "test_hpo --tadah-pc-worker: refused: the test case that started
+ *     this PC_ISOLATION PROCESS worker did not call ...";
+ *   - one child test_hpo running the two "pc pool gate:" cases above, in
+ *     that order, passes both: the pool of the case that calls the macro
+ *     starts its worker, and the next case's pool fails its handshake
+ *     ("pc-worker 1: handshake failed: ...") -- the call allows the workers
+ *     of its own case only -- and the child's output has the refusal.
+ * So a case that starts test_hpo PROCESS workers without the call -- a
+ * pool built in a helper, a copy-initialised or std::optional pool, an
+ * hpo_run whose PC_LAMMPS lines run under PROCESS by request or by the
+ * serial build's default -- fails in the serial build as in the MPI build.
+ * Before the fix: fails -- the worker started (pc_worker_main, exit status
+ * 3 without its channel: "tadah-pc-worker: handshake failed: pcwire: recv
+ * failed: Bad file descriptor"), and the second gate case's pool was built,
+ * so the child failed. Not in the MPI build, whose workers all refuse. */
+TEST_CASE("pc pool: in the serial build the worker of a case that did not "
+          "call SKIP_WITHOUT_PC_PROCESS_WORKERS() refuses to start",
+          "[pc_pool]") {
+  const std::string exe = this_executable();
+  {
+    /* Without its channel (fd 3 closed), as the pool would never start it:
+     * the refusal comes first. */
+    const CommandRun w =
+        run_command("'" + exe + "' --tadah-pc-worker 3<&- 2>&1");
+    INFO(w.out);
+    REQUIRE(WIFEXITED(w.status));
+    CHECK(WEXITSTATUS(w.status) == 2);
+    CHECK(w.out == kWorkerRefusal);
+  }
+  const CommandRun gate =
+      run_command("'" + exe + "' '[pc_pool_gate]' --order decl 2>&1");
+  INFO(gate.out);
+  REQUIRE(WIFEXITED(gate.status));
+  CHECK(WEXITSTATUS(gate.status) == 0);
+  CHECK_THAT(gate.out, Catch::Contains("in 2 test cases"));
+  CHECK_THAT(gate.out, Catch::Contains(kWorkerRefusal));
+}
+#endif
+
 #ifdef TADAH_HPO_MPI
 /* Pins: in the MPI build `test_hpo --tadah-pc-worker` (the worker entry
  * the pool re-execs, routed by test_main.cpp as tadah's main() routes it)
