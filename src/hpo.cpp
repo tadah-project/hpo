@@ -4,6 +4,7 @@
 #include <tadah/hpo/run_policy.h>
 #include <tadah/hpo/run_driver.h>
 #include <tadah/mlip/key_provenance.h>
+#include <tadah/mlip/training_record.h>  // ignore_configuration_dataset_keys
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/phase_specs.h>   // with_block_line
 #include <tadah/hpo/hpo_log.h>
@@ -16,6 +17,7 @@
 #include <tadah/hpo/warmstart_cache.h>
 #include <tadah/core/checkpoint.h>   // core::ShutdownRequested
 #include <tadah/core/context.h>
+#include <tadah/core/logger.h>
 #include <tadah/core/blueprint_parser.h>
 #include <tadah/core/signal_handler.h>
 #include <tadah/mlip/structure_db.h>
@@ -317,6 +319,20 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
      * run's: cleared before HPOTargets, whose WARM init strategy primes
      * this run's own. */
     warmstart::begin_run();
+
+    /* A -c configuration that is a potential (a seed with WEIGHTS) has none
+     * of the keys that prepared the data of its own fit applied to this run
+     * (MK's decision of 2026-10-14, option 2; a potential of an earlier
+     * version has them as key lines): removed before the record is taken,
+     * which then lists the run's own settings. */
+    {
+        const std::string ignored = mlip::ignore_configuration_dataset_keys(
+            ctx, provenance, "tadah hpo");
+        if (!ignored.empty()) {
+            core::Logger::instance().log(core::LogLevel::WARNING, ignored);
+            log.warning(ignored);
+        }
+    }
 
     /* Its training_record (the comment block of every potential file the
      * run writes) is taken from ctx before anything inserts a default; the

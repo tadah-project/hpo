@@ -83,11 +83,14 @@ public:
      * header: the run's training record @p record (HPOTargets::
      * training_record), the comment block right above the key lines, then
      * pot.write_potential(os, sig_digits) of a copy without the keys of
-     * mlip::training_record_keys (DBFILE, VALIDATION, HPOTARGET,
-     * UNCERTAINTY, VERBOSE, NUMERIC, OUTFILE, AUDIT, AUDIT_SAMPLE,
-     * HEALTH_LOG): mlip::write_potential_with_record. Every other key is
-     * written. The context itself keeps them, so the PC_LAMMPS potential
-     * built from it is built at the run's VERBOSE. best_pot.tadah (its
+     * mlip::training_record_keys (DBFILE, the keys that prepared the
+     * training data -- EFILTER, FFILTER, ESHIFT_ATOM, ESHIFT_DBATOM,
+     * EWEIGHT_TEMP, ZERO_COM_FORCE, WDBFILE, WDBFILE_AUTO --, VALIDATION,
+     * HPOTARGET, UNCERTAINTY, VERBOSE, NUMERIC, OUTFILE, AUDIT,
+     * AUDIT_SAMPLE, HEALTH_LOG): mlip::write_potential_with_record. Every
+     * other key is written (the resolved ESHIFT and LSCALE among them). The
+     * context itself keeps them, so the PC_LAMMPS potential built from it is
+     * built at the run's VERBOSE. best_pot.tadah (its
      * rank-local mirrors have its bytes), the durable best and the BDUMP
      * and DUMP archives are written through it. */
     static void write_potential_body(std::ostream&                 os,
