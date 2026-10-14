@@ -320,15 +320,17 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
      * this run's own. */
     warmstart::begin_run();
 
-    /* A potential's lines of the keys that prepared the data of its own fit,
-     * and its UNCERTAINTY line (a -c seed with WEIGHTS, or a potential a
-     * configuration or TASK hpo section includes with CONFIG) are not read
-     * for this run (MK's decision of 2026-10-14, option 2; a potential of
-     * an earlier version has them as key lines): TaskFactory's parse
-     * skipped them and the WARNING names those of the hpo task's keys (no
-     * UNCERTAINTY); a ctx without a provenance is taken as one file and
-     * they are removed here, before the record is taken, which then lists
-     * the run's own settings. */
+    /* A potential's lines of the keys of its training record but DBFILE (a
+     * -c seed with WEIGHTS, or a potential a configuration or TASK hpo
+     * section includes with CONFIG; a potential of an earlier version has
+     * them as key lines: a 1.5.x best_pot.tadah has HPOTARGET, VERBOSE and
+     * NUMERIC, and VALIDATION when its run had a validation file) are not
+     * read for this run (MK's decisions of
+     * 2026-10-14): TaskFactory's parse skipped them and the WARNING names
+     * those this run reads (no UNCERTAINTY, no OUTFILE); a ctx without a
+     * provenance is taken as one file and the dataset keys and UNCERTAINTY
+     * are removed here (no parse stores a potential's run settings), before
+     * the record is taken, which then lists the run's own settings. */
     {
         const std::string ignored =
             mlip::ignore_configuration_potential_lines(ctx, provenance, "hpo");
@@ -337,6 +339,15 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
             log.warning(ignored);
         }
     }
+    /* The hpotarget file is the run's own: --hpotarget (tadah hpo -c
+     * requires it) or an HPOTARGET line of the task file. A TASK hpo
+     * section whose only HPOTARGET line was that of the potential it
+     * includes has none: the refusal names where the run's own goes, by
+     * where its keys came from (a run of a task file takes no
+     * command-line option), and the potential's line that was not read. */
+    if (!ctx.has_stored("HPOTARGET"))
+        throw std::runtime_error(mlip::missing_run_setting(
+            "hpo", "HPOTARGET", "the hpotarget file", provenance));
 
     /* Its training_record (the comment block of every potential file the
      * run writes) is taken from ctx before anything inserts a default; the
