@@ -320,11 +320,14 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
      * this run's own. */
     warmstart::begin_run();
 
-    /* A -c configuration that is a potential (a seed with WEIGHTS) has none
-     * of the keys that prepared the data of its own fit applied to this run
-     * (MK's decision of 2026-10-14, option 2; a potential of an earlier
-     * version has them as key lines): removed before the record is taken,
-     * which then lists the run's own settings. */
+    /* A potential's lines of the keys that prepared the data of its own fit
+     * (a -c seed with WEIGHTS, or a potential a configuration or TASK hpo
+     * section includes with CONFIG) are not read for this run (MK's
+     * decision of 2026-10-14, option 2; a potential of an earlier version
+     * has them as key lines): TaskFactory's parse skipped them and the
+     * WARNING names them; a ctx without a provenance is taken as one file
+     * and they are removed here, before the record is taken, which then
+     * lists the run's own settings. */
     {
         const std::string ignored = mlip::ignore_configuration_dataset_keys(
             ctx, provenance, "tadah hpo");
