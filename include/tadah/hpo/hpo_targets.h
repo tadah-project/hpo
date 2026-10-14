@@ -10,6 +10,7 @@
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/validation_metric.h>
 #include <tadah/models/descriptors/dm/rhoform.h>
+#include <tadah/mlip/training_record.h>
 
 #include <memory>
 #include <vector>
@@ -92,7 +93,12 @@ private:
     std::optional<models::RhoForm> rho_form_;
 
 public:
-    HPOTargets(core::Context &c, std::string fn);
+    /** The targets of the run whose configuration is @p c and whose
+     * hpotarget file is @p fn. @p provenance: where the keys of @p c came
+     * from (the task's KeyProvenance, hpo_run passes it), for
+     * training_record; none: every stored key is the configuration's. */
+    HPOTargets(core::Context &c, std::string fn,
+               const mlip::KeyProvenance *provenance = nullptr);
     void read(const std::string &fn);
     std::map<std::string, Opti> optimap;  // used by HPO_Host
     std::vector<LammpsSim> LS;
@@ -285,6 +291,15 @@ public:
      * pot_digits_explicit is true iff the configuration carried NUMERIC. */
     int    pot_digits = core::kPotDigitsDefault;
     bool   pot_digits_explicit = false;
+    /* The training record of every potential file HPO writes (the same
+     * files): the keys a potential does not use (DBFILE, VALIDATION,
+     * HPOTARGET, VERBOSE, ...: mlip::training_record_keys) as the run's
+     * configuration and command line gave them, taken first thing in the
+     * constructor, before anything inserts a default; with the
+     * constructor's provenance, the blueprint defaults no one wrote are
+     * left out. A comment block above the key lines, which no reader of a
+     * potential reads (MK's decision of 2026-10-14). */
+    mlip::TrainingRecord training_record;
     size_t outputEvery = 1;
     /* Cadence over NEW BESTS (not over evaluations): best_*.tadah rows are
      * written every Nth improvement, keyed by best_iter. Was parsed as a

@@ -4,7 +4,7 @@
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/core/periodic_table.h>
-#include <tadah/mlip/training_datasets.h>
+#include <tadah/mlip/training_record.h>
 
 #include <algorithm>
 #include <chrono>
@@ -23,11 +23,10 @@ namespace tadah::hpo {
 
 void PotHeaderWriter::write_potential_body(std::ostream& os,
                                            const core::Context& pot,
+                                           const mlip::TrainingRecord& record,
                                            int sig_digits)
 {
-    core::Context written = pot;
-    mlip::remove_run_inputs(written);
-    written.write_potential(os, sig_digits);
+    mlip::write_potential_with_record(os, pot, record, sig_digits);
 }
 
 /* =====================================================================
@@ -136,7 +135,8 @@ void PotHeaderWriter::write_data_section(std::ostream& os,
     /* helper: per-dataset stats with DBFILE paths */
     auto dataset_stats = [&](const mlip::StructureDB& db,
                              const core::Context& ctx,
-                             const std::string& label)
+                             const std::string& label,
+                             bool names_paths)
     {
         std::size_t n_ds = db.dbidx.size() > 0 ? db.dbidx.size() - 1 : 0;
         std::size_t total_structs = db.size();
@@ -165,11 +165,14 @@ void PotHeaderWriter::write_data_section(std::ostream& os,
             double var  = (ns > 1) ? (sum2 - sum * sum / ns) / (ns - 1) : 0.0;
             double sd   = std::sqrt(std::max(var, 0.0));
 
-            /* DBFILE path for this dataset, as written in config.tadah
-             * (relative paths preserved -- absolute paths would leak the
-             * user's filesystem layout into shipped best_pot.tadah files). */
+            /* The dataset: a validation dataset by its DBFILE path, as
+             * written in the validation file (relative paths preserved --
+             * absolute paths would leak the user's filesystem layout into
+             * shipped best_pot.tadah files); a training dataset by its
+             * entry of the DBFILE line of the file's training record, which
+             * names the training datasets (one block names them, not two). */
             std::string dbpath;
-            if (ctx.contains("DBFILE") && d < ctx.size("DBFILE")) {
+            if (names_paths && ctx.contains("DBFILE") && d < ctx.size("DBFILE")) {
                 dbpath = ctx.get<std::string>("DBFILE", d);
             }
 
@@ -178,12 +181,14 @@ void PotHeaderWriter::write_data_section(std::ostream& os,
                << ", atoms/struct: " << std::fixed << std::setprecision(1)
                << mean << " +/- " << sd;
             if (!dbpath.empty()) ds << "  " << dbpath;
+            if (!names_paths)
+                ds << "  (DBFILE " << (d + 1) << " of the training record)";
             line(os, ds.str());
         }
     };
 
-    dataset_stats(train, train_ctx, "Training");
-    dataset_stats(val,   val_ctx,   "Validation");
+    dataset_stats(train, train_ctx, "Training",   /*names_paths=*/false);
+    dataset_stats(val,   val_ctx,   "Validation", /*names_paths=*/true);
 
     /* elements: from the training data when present, otherwise from the
      * explicit ATOM key (mandatory in no-training-DBFILE runs). The

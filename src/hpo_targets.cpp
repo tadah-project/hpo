@@ -206,7 +206,12 @@ void HPOTargets::Opti::resize(size_t s) {
   highbound.resize(s, 0);
 }
 
-HPOTargets::HPOTargets(core::Context &c, std::string fn) : context(c) {
+HPOTargets::HPOTargets(core::Context &c, std::string fn,
+                       const mlip::KeyProvenance *provenance)
+    : context(c) {
+  /* The training record of the potential files, taken before anything
+   * below can insert a default into the context. */
+  training_record = mlip::training_record(context, provenance);
   /* Potential-file precision. Resolved first, before anything
    * below can default-insert NUMERIC into the context: only a NUMERIC the
    * configuration really carries counts as explicit. */

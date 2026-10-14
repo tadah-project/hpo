@@ -14,6 +14,7 @@
 #include <tadah/core/context.h>
 #include <tadah/mlip/load_transforms.h>
 #include <tadah/mlip/structure_db.h>
+#include <tadah/mlip/training_record.h>
 #include <cstddef>
 #include <ostream>
 #include <string>
@@ -79,16 +80,20 @@ public:
      *  The potential below the header (every file above)
      * ------------------------------------------------------------------ */
     /** Writes the potential @p pot, the context of an evaluation, after its
-     * header: pot.write_potential(os, sig_digits) of a copy without the
-     * settings of the run that mlip::remove_run_inputs removes (VERBOSE,
-     * NUMERIC, OUTFILE, AUDIT, AUDIT_SAMPLE, HEALTH_LOG, HPOTARGET,
-     * VALIDATION, UNCERTAINTY); every other key is written. The context itself keeps
-     * them, so the PC_LAMMPS potential built from it is built at the run's
-     * VERBOSE. best_pot.tadah, the durable best and the BDUMP and DUMP
-     * archives are written through it. */
-    static void write_potential_body(std::ostream&         os,
-                                     const core::Context&  pot,
-                                     int                   sig_digits);
+     * header: the run's training record @p record (HPOTargets::
+     * training_record), the comment block right above the key lines, then
+     * pot.write_potential(os, sig_digits) of a copy without the keys of
+     * mlip::training_record_keys (DBFILE, VALIDATION, HPOTARGET,
+     * UNCERTAINTY, VERBOSE, NUMERIC, OUTFILE, AUDIT, AUDIT_SAMPLE,
+     * HEALTH_LOG): mlip::write_potential_with_record. Every other key is
+     * written. The context itself keeps them, so the PC_LAMMPS potential
+     * built from it is built at the run's VERBOSE. best_pot.tadah (its
+     * rank-local mirrors have its bytes), the durable best and the BDUMP
+     * and DUMP archives are written through it. */
+    static void write_potential_body(std::ostream&                 os,
+                                     const core::Context&          pot,
+                                     const mlip::TrainingRecord&   record,
+                                     int                           sig_digits);
 
 private:
     static constexpr int W  = 78;   // target line width (inside "# ")
