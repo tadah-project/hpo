@@ -734,18 +734,33 @@ TEST_CASE("The host refuses a validation DBFILE that lists one dataset twice",
 }
 
 /* Pins: the potentials one evaluation writes -- best_pot.tadah, the BDUMP
- * archive (best_pots/) and the DUMP archive (pots/), one file each --
- * record no input of the run: no HPOTARGET and no VALIDATION line (the -c
- * context has both, as `tadah hpo --hpotarget ... --validation ...` puts
- * them there), no VERBOSE (0 in the context, as -v gives it), and no AUDIT
- * or HEALTH_LOG ("off" in the context), for MODEL M_BLR BF_Linear and
- * M_KRR Kern_Linear; each keeps the model's settings and fit (its MODEL,
- * LAMBDA, the D2_BP TYPE2B line and two WEIGHTS) and has no DBFILE.
- * Before the fix: each of the three files had the lines "HPOTARGET
- * <config.hpo>", "VALIDATION <config.val>" and "VERBOSE 0"; AUDIT,
- * HEALTH_LOG and DBFILE were not written (a pin of those). */
-TEST_CASE("The potentials of an evaluation record no input of the run",
-          "[pc_dataset][host][potential_content]") {
+ * archive (best_pots/) and the DUMP archive (pots/), one file each -- have
+ * no key line of an input of the run: no HPOTARGET and no VALIDATION line
+ * (the -c context has both, as `tadah hpo --hpotarget ... --validation
+ * ...` puts them there), no VERBOSE (0 in the context, as -v gives it), no
+ * AUDIT or HEALTH_LOG ("off" in the context) and no DBFILE, for MODEL
+ * M_BLR BF_Linear and M_KRR Kern_Linear; each keeps the model's settings
+ * and fit (its MODEL, LAMBDA, the D2_BP TYPE2B line and two WEIGHTS); and
+ * each has, as the comment block right above its first key line, the
+ * training record of the run: "DBFILE <train.db>", "VALIDATION
+ * <config.val>", "HPOTARGET <config.hpo>", "VERBOSE 0", "AUDIT off",
+ * "HEALTH_LOG off" (the context's values, in that order; the HPOTargets
+ * here is built without the KeyProvenance of a command line, so every
+ * stored key counts). The DATA section of best_pot.tadah's header gives the
+ * training dataset's statistics without its path: the one line of each
+ * file that names train.db is the record's DBFILE line.
+ * Before the fix: no file had a training record (config.hpo and
+ * config.val appeared nowhere in it), and the DATA section's training line
+ * ended with the path of train.db.
+ * Before the training record (MK's decision of 2026-10-14): the case was
+ * named "The potentials of an evaluation record no input of the run", and
+ * it checked that the paths of config.hpo and config.val appear nowhere in
+ * the files. Before the potential-content fix: each of the three files had
+ * the key lines "HPOTARGET <config.hpo>", "VALIDATION <config.val>" and
+ * "VERBOSE 0". */
+TEST_CASE("The potentials of an evaluation keep the inputs of the run in "
+          "their training record, not as key lines",
+          "[pc_dataset][host][potential_content][training_record]") {
     DatasetHostGuard guard;
     ScratchDir sd;
     const auto train = sd.dir / "train.db", vdb = sd.dir / "val.db";
@@ -815,8 +830,55 @@ TEST_CASE("The potentials of an evaluation record no input of the run",
             INFO("key " << key);
             CHECK(lines.count(key) == 0u);
         }
-        CHECK(text.find(hpo.string()) == std::string::npos);
-        CHECK(text.find(val.string()) == std::string::npos);
+        /* The training record: the lines between its opening and end
+         * lines, right above the first key line. */
+        std::vector<std::string> record;
+        bool opened = false, closed = false;
+        std::size_t end_at = 0, first_key = 0;
+        {
+            std::istringstream in(text);
+            std::size_t n = 0;
+            for (std::string l; std::getline(in, l); ++n) {
+                if (!opened) {
+                    opened = l == "# --- training record (not read by "
+                                  "tadah) ---";
+                    continue;
+                }
+                if (closed) {
+                    std::istringstream ls(l);
+                    std::string key;
+                    if ((ls >> key) && key[0] != '#') { first_key = n; break; }
+                    continue;
+                }
+                if (l == "# --- end of training record ---") {
+                    closed = true;
+                    end_at = n;
+                    continue;
+                }
+                record.push_back(l.rfind("# ", 0) == 0 ? l.substr(2) : l);
+            }
+        }
+        REQUIRE(opened);
+        REQUIRE(closed);
+        CHECK(first_key == end_at + 1);
+        CHECK(record == std::vector<std::string>{
+                            "DBFILE " + train.string(),
+                            "VALIDATION " + val.string(),
+                            "HPOTARGET " + hpo.string(), "VERBOSE 0",
+                            "AUDIT off", "HEALTH_LOG off"});
+        /* train.db is named by the record only (best_pot.tadah's DATA
+         * section gives its statistics without the path). */
+        {
+            std::istringstream in(text);
+            std::size_t naming = 0;
+            for (std::string l; std::getline(in, l);) {
+                if (l.find(train.string()) == std::string::npos) continue;
+                ++naming;
+                INFO("line naming train.db: " << l);
+                CHECK(l.rfind("# DBFILE ", 0) == 0);
+            }
+            CHECK(naming == 1u);
+        }
         REQUIRE(lines.count("MODEL") == 1u);
         CHECK(lines.at("MODEL") == model);
         CHECK(lines.count("LAMBDA") == 1u);
