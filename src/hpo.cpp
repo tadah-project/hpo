@@ -172,7 +172,8 @@ FitSwitchSources fit_switch_sources(const core::Context& ctx,
 }
 
 int hpo_run_journaled(core::Context& ctx, HPOLog& log,
-                      const FitSwitchSources& fit_sources);
+                      const FitSwitchSources& fit_sources,
+                      const mlip::KeyProvenance* provenance);
 
 /* The worker pools of one run: the script executor -- THREADS workers that
  * run the PC_LAMMPS fan-out and, through MLIP's parallel backend, the
@@ -263,7 +264,7 @@ int hpo_run(core::Context& ctx, const mlip::KeyProvenance* provenance)
      * error of the run itself arrives after drive_run() has written the
      * trailer and closed the journal, and then nothing more is written. */
     try {
-        return hpo_run_journaled(ctx, log, fit_sources);
+        return hpo_run_journaled(ctx, log, fit_sources, provenance);
     } catch (const std::exception& e) {
         log.event("ERROR", std::string("startup: ") + e.what());
         throw;
@@ -272,9 +273,11 @@ int hpo_run(core::Context& ctx, const mlip::KeyProvenance* provenance)
 
 namespace {
 
-/* hpo_run() once the journal is open. */
+/* hpo_run() once the journal is open. @p provenance: where the keys of
+ * ctx came from (for the training record of the potential files). */
 int hpo_run_journaled(core::Context& ctx, HPOLog& log,
-                      const FitSwitchSources& fit_sources)
+                      const FitSwitchSources& fit_sources,
+                      const mlip::KeyProvenance* provenance)
 {
 #ifdef TADAH_ENABLE_OPENMP
     {
@@ -315,7 +318,10 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
      * this run's own. */
     warmstart::begin_run();
 
-    HPOTargets trg(ctx, ctx.get<std::string>("HPOTARGET"));
+    /* Its training_record (the comment block of every potential file the
+     * run writes) is taken from ctx before anything inserts a default; the
+     * provenance leaves out the blueprint defaults no one wrote. */
+    HPOTargets trg(ctx, ctx.get<std::string>("HPOTARGET"), provenance);
 
     /* This is more than a dispatch convenience: HPO_Host's live best/HOT
      * state is intentionally rank-local while best_pot.tadah is the global

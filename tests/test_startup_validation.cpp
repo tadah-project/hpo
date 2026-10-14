@@ -729,12 +729,16 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs the settings "
    * (classify_weight_source refuses the others, ending with the potential
    * advice) -- is refused under ANALYTICAL for "there is no training
    * DBFILE", advising GRAD_STRATEGY HYBRID, and its message has no
-   * potential advice ("A potential records no DBFILE"): with the DBFILE
-   * line that advice would add, the same setup is refused for "FIXINDEX
-   * pins model weights", so a DBFILE line does not make the analytical
-   * gradient formable there; under HYBRID it passes.
+   * potential advice ("A potential has no DBFILE line", and not its
+   * wording before the training record, "A potential records no
+   * DBFILE"): with the DBFILE line that advice would add, the same setup
+   * is refused for "FIXINDEX pins model weights", so a DBFILE line does
+   * not make the analytical gradient formable there; under HYBRID it
+   * passes.
    * Before the fix: passes as well (a pin of why this no-DBFILE refusal,
-   * unlike the others of tadah hpo, does not end with the advice). */
+   * unlike the others of tadah hpo, does not end with the advice; the
+   * check of the advice's wording since the training record, MK's decision
+   * of 2026-10-14, is added beside the old one). */
   SECTION("no training DBFILE with every weight pinned: HYBRID, not a "
           "DBFILE line") {
     Context pinned = good_ctx();
@@ -747,6 +751,7 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs the settings "
     CHECK_THAT(what, Catch::Contains("there is no training DBFILE") &&
                      Catch::Contains("GRAD_STRATEGY HYBRID"));
     CHECK_THAT(what, !Catch::Contains("A potential records no DBFILE"));
+    CHECK_THAT(what, !Catch::Contains("A potential has no DBFILE line"));
     Context with_db = pinned;
     with_db.add("DBFILE", "dummy.db");
     CHECK_THAT(rejected(with_db, target(analytical, ermse)),

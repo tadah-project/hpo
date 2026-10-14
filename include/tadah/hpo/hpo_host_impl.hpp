@@ -2868,7 +2868,7 @@ void HPO_Host<P,R>::persist_durable_best(const Result& r, bool& journalled) cons
         PotHeaderWriter::write_candidate_hot(payload, r);
         /* NUMERIC significant digits (default 18: exact); never writes
          * NUMERIC itself. The header lines above keep their own formats. */
-        PotHeaderWriter::write_potential_body(payload, r.pot_ctx, trg_.pot_digits);
+        PotHeaderWriter::write_potential_body(payload, r.pot_ctx, trg_.training_record, trg_.pot_digits);
         if (!payload.good())
             throw durable_best::Error("failed to render best-potential payload");
 
@@ -3294,11 +3294,12 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * line (once: hpo_run's KernelSettingsLineScope prints each kernel's
      * line once per run); a PROCESS worker prints no kernel line at any
      * VERBOSE (its Lines::None scope, pc_worker_main), but rebuilds the
-     * same context from the snapshot. A potential records the
-     * model's settings and its fit, not the settings of the run that
-     * mlip::remove_run_inputs lists: every file the host writes from it
+     * same context from the snapshot. The key lines of a potential file are
+     * the model's settings and its fit: every file the host writes from it
      * (best_pot.tadah, the durable best, the BDUMP and DUMP archives)
-     * leaves them out (PotHeaderWriter::write_potential_body;
+     * leaves out the keys of mlip::training_record_keys and has the run's
+     * values of them in its training record, trg_.training_record, a
+     * comment block (PotHeaderWriter::write_potential_body;
      * get_param_file() leaves out DBFILE). */
     if (has_validation_) {
         /* The one-time lists (or this candidate's rebuilt ones) cover the
@@ -4034,7 +4035,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
 
             PotHeaderWriter::write_candidate_hot(bpa, e);
 
-            PotHeaderWriter::write_potential_body(bpa, e.pot_ctx, trg.pot_digits);
+            PotHeaderWriter::write_potential_body(bpa, e.pot_ctx, trg.training_record, trg.pot_digits);
             write_archive(wf, std::string(trg.dumpBestPotDir)
                 +"/best_pot_" + std::to_string(e.best_iter) + ".tadah"
                 + trg.potArchiveSuffix, bpa.str());
@@ -4049,7 +4050,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
 
             PotHeaderWriter::write_candidate_hot(pa, e);
 
-            PotHeaderWriter::write_potential_body(pa, e.pot_ctx, trg.pot_digits);
+            PotHeaderWriter::write_potential_body(pa, e.pot_ctx, trg.training_record, trg.pot_digits);
             write_archive(wf, std::string(trg.dumpPotDir)
                 +"/pot_"+std::to_string(e.iter)+".tadah"
                 + trg.potArchiveSuffix, pa.str());
@@ -4180,7 +4181,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                                     std::ostringstream bpa;
                                     PotHeaderWriter::write_best_archive_header(bpa, e, trg, cw, prec);
                                     PotHeaderWriter::write_candidate_hot(bpa, e);
-                                    PotHeaderWriter::write_potential_body(bpa, e.pot_ctx, trg.pot_digits);
+                                    PotHeaderWriter::write_potential_body(bpa, e.pot_ctx, trg.training_record, trg.pot_digits);
                                     write_archive(wf, std::string(trg.dumpBestPotDir)
                                         +"/best_pot_" + std::to_string(e.best_iter) + ".tadah"
                                         + trg.potArchiveSuffix, bpa.str());
@@ -4190,7 +4191,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                                 std::ostringstream pa;
                                 PotHeaderWriter::write_archive_header(pa, e, cw, prec);
                                 PotHeaderWriter::write_candidate_hot(pa, e);
-                                PotHeaderWriter::write_potential_body(pa, e.pot_ctx, trg.pot_digits);
+                                PotHeaderWriter::write_potential_body(pa, e.pot_ctx, trg.training_record, trg.pot_digits);
                                 write_archive(wf, std::string(trg.dumpPotDir)
                                     +"/pot_"+std::to_string(e.iter)+".tadah"
                                     + trg.potArchiveSuffix, pa.str());
@@ -4759,7 +4760,7 @@ void HPO_Host<P,R>::flush_remaining(bool retry_io) const
 
                 PotHeaderWriter::write_candidate_hot(bpa, e);
 
-                PotHeaderWriter::write_potential_body(bpa, e.pot_ctx, trg_.pot_digits);
+                PotHeaderWriter::write_potential_body(bpa, e.pot_ctx, trg_.training_record, trg_.pot_digits);
                 write_archive(wf, std::string(trg_.dumpBestPotDir)
                     + "/best_pot_" + std::to_string(e.best_iter) + ".tadah"
                     + trg_.potArchiveSuffix, bpa.str());
@@ -4773,7 +4774,7 @@ void HPO_Host<P,R>::flush_remaining(bool retry_io) const
 
             PotHeaderWriter::write_candidate_hot(pa, e);
 
-            PotHeaderWriter::write_potential_body(pa, e.pot_ctx, trg_.pot_digits);
+            PotHeaderWriter::write_potential_body(pa, e.pot_ctx, trg_.training_record, trg_.pot_digits);
             write_archive(wf, std::string(trg_.dumpPotDir)
                 + "/pot_" + std::to_string(e.iter) + ".tadah"
                 + trg_.potArchiveSuffix, pa.str());
