@@ -8552,3 +8552,37 @@ TEST_CASE("PRESTAGE: an exploration whose every candidate the bump gate "
           "MAXEVAL_REACHED -- maximum evaluations exhausted");
     check_run_files();
 }
+
+/* Pins: hpo_run of a configuration without HPOTARGET -- a TASK hpo section
+ * whose one HPOTARGET line was that of the potential it includes with
+ * CONFIG, which a run does not read (a best_pot.tadah of an earlier version
+ * has one) -- is refused at startup with "tadah hpo: no HPOTARGET: name the
+ * hpotarget file with --hpotarget, or with an HPOTARGET line in the task
+ * file (a potential's own HPOTARGET line names the target of the run that
+ * wrote it and is not read).", which the journal records ("startup: ..."),
+ * and nothing is evaluated (no loss.tadah).
+ * Before the fix: Context::get threw "Key not found in the Context object:
+ * HPOTARGET": the message checks fail. */
+TEST_CASE("hpo_run without HPOTARGET is refused, naming --hpotarget and the "
+          "task file",
+          "[hpo][startup][run_settings]")
+{
+    TaRun run(plain_block(
+        "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n    MAXEVAL 1\n"));
+    run.ctx.remove("HPOTARGET");
+    const std::string message =
+        "tadah hpo: no HPOTARGET: name the hpotarget file with --hpotarget, "
+        "or with an HPOTARGET line in the task file (a potential's own "
+        "HPOTARGET line names the target of the run that wrote it and is "
+        "not read).";
+    std::string what;
+    try {
+        (void)tadah::hpo::hpo_run(run.ctx);
+    } catch (const std::exception& e) {
+        what = e.what();
+    }
+    CHECK(what == message);
+    CHECK(read_file("hpo_run.log").find("startup: " + message) !=
+          std::string::npos);
+    CHECK_FALSE(fs::exists("loss.tadah"));
+}

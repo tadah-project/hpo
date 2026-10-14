@@ -7,10 +7,10 @@
 // cutoffs and radial grids (RCUT2B, RCUTMB, CGRID2B, CGRIDMB, SGRID2B,
 // SGRIDMB), which are written exactly whatever pot_digits is, since a load
 // checks them exactly. Absent -> 18, an exact round trip. An explicit
-// NUMERIC below 17 -- notably the 'NUMERIC 12' line every tadah 1.5.0 hpo
-// best_pot.tadah carries, which reaches the next run when such a pot is
-// used as its configuration -- is honoured but warned about in
-// hpo_run.log, naming the line to delete.
+// NUMERIC below 17 of the run's configuration is honoured but warned about
+// in hpo_run.log, naming the line to delete. (The 'NUMERIC 12' line every
+// tadah 1.5.0 hpo best_pot.tadah carries does not reach a run seeded with
+// such a potential: no parse stores a potential's NUMERIC.)
 
 #include "catch2/catch.hpp"
 
@@ -101,13 +101,22 @@ TEST_CASE("HPOTargets: NUMERIC absent -> 18 significant digits, nothing "
 /* Pins: NUMERIC 12 gives pot_digits 12, and hpo_run.log has a WARNING that
  * NUMERIC 12 limits every non-integer number of the potential's key/value
  * lines, that integers are written exactly and so are the numbers of
- * CGRID2B, CGRIDMB, RCUT2B, RCUTMB, SGRID2B and SGRIDMB, and that a 1.5.0
- * best_pot.tadah carries the line to delete.
+ * CGRID2B, CGRIDMB, RCUT2B, RCUTMB, SGRID2B and SGRIDMB, and that the line
+ * to delete is the configuration's ("delete the NUMERIC line from the
+ * configuration that set it"), with no word of a 1.5.0 tadah hpo
+ * potential ("tadah 1.5.0 hpo", "auto-inserted").
  * Before the fix: the WARNING said only that integers are written exactly
  * ('(integers are written exactly): values do not round-trip ...'), naming
- * no key; the other checks pass as well (a pin). */
-TEST_CASE("HPOTargets: the legacy 'NUMERIC 12' is honoured with a WARNING "
-          "naming the fix", "[HPO][numeric][lossless]")
+ * no key.
+ * Before the fix that reads no run setting of a potential: the advice was
+ * "delete the NUMERIC line from the configuration or potential that set
+ * it", followed by "Potential files written by tadah 1.5.0 hpo carry an
+ * auto-inserted 'NUMERIC 12' line; if this configuration is (or was copied
+ * from) such a best_pot.tadah, delete that line." (this case pinned that
+ * sentence, as "the legacy 'NUMERIC 12' is honoured with a WARNING naming
+ * the fix"): the advice checks fail. */
+TEST_CASE("HPOTargets: a NUMERIC 12 of the configuration is honoured with a "
+          "WARNING naming the fix", "[HPO][numeric][lossless]")
 {
   ScopedJournal journal;
   ScopedTempFile in(kTarget);
@@ -124,9 +133,11 @@ TEST_CASE("HPOTargets: the legacy 'NUMERIC 12' is honoured with a WARNING "
   CHECK(body.find("and so are the numbers of CGRID2B, CGRIDMB, RCUT2B, "
                   "RCUTMB, SGRID2B and SGRIDMB, which a load checks "
                   "exactly") != std::string::npos);
-  CHECK(body.find("best_pot.tadah") != std::string::npos);
-  CHECK(body.find("tadah 1.5.0 hpo") != std::string::npos);
-  CHECK(body.find("delete that line") != std::string::npos);
+  CHECK(body.find("delete the NUMERIC line from the configuration that set "
+                  "it") != std::string::npos);
+  CHECK(body.find("tadah 1.5.0 hpo") == std::string::npos);
+  CHECK(body.find("auto-inserted") == std::string::npos);
+  CHECK(body.find("potential that set it") == std::string::npos);
 }
 
 TEST_CASE("HPOTargets: an explicit NUMERIC >= 17 is exact and silent",
