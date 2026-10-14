@@ -222,10 +222,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
     const std::string w = core::pot_digits_warning(pd);
     if (!w.empty()) {
       const std::string msg =
-          "HPO potential files (best_pot.tadah, BDUMP/DUMP archives): " + w +
-          " Potential files written by tadah 1.5.0 hpo carry an "
-          "auto-inserted 'NUMERIC 12' line; if this configuration is (or "
-          "was copied from) such a best_pot.tadah, delete that line.";
+          "HPO potential files (best_pot.tadah, BDUMP/DUMP archives): " + w;
       std::cerr << "[HPO] WARNING: " << msg << "\n";
       HPOLog::instance().warning(msg);
     }
