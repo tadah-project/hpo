@@ -4,7 +4,7 @@
 #include <tadah/hpo/run_policy.h>
 #include <tadah/hpo/run_driver.h>
 #include <tadah/mlip/key_provenance.h>
-#include <tadah/mlip/training_record.h>  // ignore_configuration_dataset_keys
+#include <tadah/mlip/training_record.h>  // ignore_configuration_potential_lines
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/phase_specs.h>   // with_block_line
 #include <tadah/hpo/hpo_log.h>
@@ -320,17 +320,18 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
      * this run's own. */
     warmstart::begin_run();
 
-    /* A potential's lines of the keys that prepared the data of its own fit
-     * (a -c seed with WEIGHTS, or a potential a configuration or TASK hpo
-     * section includes with CONFIG) are not read for this run (MK's
-     * decision of 2026-10-14, option 2; a potential of an earlier version
-     * has them as key lines): TaskFactory's parse skipped them and the
-     * WARNING names them; a ctx without a provenance is taken as one file
-     * and they are removed here, before the record is taken, which then
-     * lists the run's own settings. */
+    /* A potential's lines of the keys that prepared the data of its own fit,
+     * and its UNCERTAINTY line (a -c seed with WEIGHTS, or a potential a
+     * configuration or TASK hpo section includes with CONFIG) are not read
+     * for this run (MK's decision of 2026-10-14, option 2; a potential of
+     * an earlier version has them as key lines): TaskFactory's parse
+     * skipped them and the WARNING names those of the hpo task's keys (no
+     * UNCERTAINTY); a ctx without a provenance is taken as one file and
+     * they are removed here, before the record is taken, which then lists
+     * the run's own settings. */
     {
-        const std::string ignored = mlip::ignore_configuration_dataset_keys(
-            ctx, provenance, "tadah hpo");
+        const std::string ignored =
+            mlip::ignore_configuration_potential_lines(ctx, provenance, "hpo");
         if (!ignored.empty()) {
             core::Logger::instance().log(core::LogLevel::WARNING, ignored);
             log.warning(ignored);
