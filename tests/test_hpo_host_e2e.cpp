@@ -733,6 +733,66 @@ TEST_CASE("The host refuses a validation DBFILE that lists one dataset twice",
                           Catch::Matchers::Contains("PC_ERMSE (i)"));
 }
 
+namespace {
+
+/* The opening and end lines of the training record of a potential file.
+ * The opening line said "(not read by tadah)" before MK's decision of
+ * 2026-10-14 (option 2): refit --edit reads the block, to copy it. */
+const std::string kRecordOpen =
+    "# --- training record (no key is read from it) ---";
+const std::string kRecordEnd = "# --- end of training record ---";
+
+/* The training record of the potential text @p text: its lines without
+ * their leading "# ", whether its opening and end lines were found, and
+ * the indices of the end line and of the first key line after it. */
+struct PotRecord {
+    bool opened = false, closed = false;
+    std::size_t end_at = 0, first_key = 0;
+    std::vector<std::string> lines;
+};
+PotRecord pot_record(const std::string& text) {
+    PotRecord r;
+    std::istringstream in(text);
+    std::size_t n = 0;
+    for (std::string l; std::getline(in, l); ++n) {
+        if (!r.opened) {
+            r.opened = l == kRecordOpen;
+            continue;
+        }
+        if (r.closed) {
+            std::istringstream ls(l);
+            std::string key;
+            if ((ls >> key) && key[0] != '#') { r.first_key = n; break; }
+            continue;
+        }
+        if (l == kRecordEnd) {
+            r.closed = true;
+            r.end_at = n;
+            continue;
+        }
+        r.lines.push_back(l.rfind("# ", 0) == 0 ? l.substr(2) : l);
+    }
+    return r;
+}
+
+/* The tokens of each key line of the potential text @p text (comment
+ * lines skipped; not the parser's reading). */
+std::map<std::string, std::vector<std::string>> key_lines(const std::string& text) {
+    std::map<std::string, std::vector<std::string>> lines;
+    std::istringstream in(text);
+    for (std::string l; std::getline(in, l);) {
+        std::istringstream ls(l);
+        std::string key;
+        if (!(ls >> key) || key[0] == '#') continue;
+        std::vector<std::string> tok;
+        for (std::string t; ls >> t;) tok.push_back(t);
+        lines[key] = tok;
+    }
+    return lines;
+}
+
+}  // namespace
+
 /* Pins: the potentials one evaluation writes -- best_pot.tadah, the BDUMP
  * archive (best_pots/) and the DUMP archive (pots/), one file each -- have
  * no key line of an input of the run: no HPOTARGET and no VALIDATION line
@@ -757,7 +817,10 @@ TEST_CASE("The host refuses a validation DBFILE that lists one dataset twice",
  * it checked that the paths of config.hpo and config.val appear nowhere in
  * the files. Before the potential-content fix: each of the three files had
  * the key lines "HPOTARGET <config.hpo>", "VALIDATION <config.val>" and
- * "VERBOSE 0". */
+ * "VERBOSE 0".
+ * Before the opening line was corrected (MK, 2026-10-14, option 2): it read
+ * "# --- training record (not read by tadah) ---": REQUIRE(opened) stops
+ * the case. */
 TEST_CASE("The potentials of an evaluation keep the inputs of the run in "
           "their training record, not as key lines",
           "[pc_dataset][host][potential_content][training_record]") {
@@ -840,8 +903,7 @@ TEST_CASE("The potentials of an evaluation keep the inputs of the run in "
             std::size_t n = 0;
             for (std::string l; std::getline(in, l); ++n) {
                 if (!opened) {
-                    opened = l == "# --- training record (not read by "
-                                  "tadah) ---";
+                    opened = l == kRecordOpen;
                     continue;
                 }
                 if (closed) {
@@ -850,7 +912,7 @@ TEST_CASE("The potentials of an evaluation keep the inputs of the run in "
                     if ((ls >> key) && key[0] != '#') { first_key = n; break; }
                     continue;
                 }
-                if (l == "# --- end of training record ---") {
+                if (l == kRecordEnd) {
                     closed = true;
                     end_at = n;
                     continue;
@@ -886,6 +948,97 @@ TEST_CASE("The potentials of an evaluation keep the inputs of the run in "
         CHECK(lines.at("TYPE2B").front() == "D2_BP");
         REQUIRE(lines.count("WEIGHTS") == 1u);
         CHECK(lines.at("WEIGHTS").size() == 2u);
+    }
+}
+
+/* Pins (MK's decision of 2026-10-14, option 2): the potentials one
+ * evaluation writes -- best_pot.tadah, the BDUMP archive and the DUMP
+ * archive -- keep the keys that prepared the training data in their
+ * training record, not as key lines: with EFILTER -1 1, FFILTER 100,
+ * ESHIFT_DBATOM true, EWEIGHT_TEMP 300, ZERO_COM_FORCE true, WDBFILE 1 and
+ * WDBFILE_AUTO 0.5 in the -c context (they keep the one training structure:
+ * E/N is -0.00025 eV), each file has no key line of the seven, the record
+ * "DBFILE <train.db>", "EFILTER -1 1", "FFILTER 100", "ESHIFT_DBATOM true",
+ * "EWEIGHT_TEMP 300", "ZERO_COM_FORCE true", "WDBFILE 1", "WDBFILE_AUTO
+ * 0.5", "VALIDATION <config.val>", "HPOTARGET <config.hpo>", "VERBOSE 0"
+ * (the context's values, the order of the record), and the ESHIFT key line
+ * that ESHIFT_DBATOM resolved on the training data (one value, not 0), the
+ * model's energy reference.
+ * Before the fix: the seven were key lines of every file, and the record
+ * listed DBFILE, VALIDATION, HPOTARGET and VERBOSE alone; the opening line
+ * read "# --- training record (not read by tadah) ---", so REQUIRE(opened)
+ * stops the case. */
+TEST_CASE("The potentials of an evaluation keep the keys that prepared the "
+          "training data in their training record",
+          "[pc_dataset][host][potential_content][training_record]"
+          "[dataset_keys]") {
+    DatasetHostGuard guard;
+    ScratchDir sd;
+    const auto train = sd.dir / "train.db", vdb = sd.dir / "val.db";
+    const auto val = sd.dir / "config.val", hpo = sd.dir / "config.hpo";
+    write_minimal_ta_dbfile(train, 0);
+    write_minimal_ta_dbfile(vdb, 0.07, -0.04);
+    std::ofstream(val) << "DBFILE " << vdb.string() << "\n";
+    std::ofstream(hpo) << dataset_host_head << "PC_ERMSE 0 1\n"
+                       << "DUMP 1 " << (sd.dir / "pots").string() << "\n"
+                       << "BDUMP 1 " << (sd.dir / "best_pots").string()
+                       << "\n";
+    auto ctx = make_ta_master_context(train, hpo, val);
+    const std::vector<std::pair<std::string, std::string>> dataset_keys = {
+        {"EFILTER", "-1 1"},        {"FFILTER", "100"},
+        {"ESHIFT_DBATOM", "true"},  {"EWEIGHT_TEMP", "300"},
+        {"ZERO_COM_FORCE", "true"}, {"WDBFILE", "1"},
+        {"WDBFILE_AUTO", "0.5"}};
+    for (const auto& [key, values] : dataset_keys) {
+        std::istringstream vs(values);
+        for (std::string v; vs >> v;) ctx.add(key, v);
+    }
+    tadah::hpo::HPOTargets trg(ctx, hpo.string());
+    {
+        Host host(ctx, trg, val.string());
+        auto& log = tadah::hpo::HPOLog::instance();
+        log.open((sd.dir / "journal.log").string(), "test",
+                 sd.dir.string(), 1);
+        log.write_loss_section(trg);
+        host.prepare_best_publication();
+        ParamVec p(1); p(0) = 0.5;
+        const double total = host(p);
+        host.flush_remaining();
+        log.finish("TEST");
+        REQUIRE(std::isfinite(total));
+    }
+    std::vector<fs::path> files = {sd.dir / "best_pot.tadah"};
+    for (const char* dir : {"best_pots", "pots"}) {
+        std::vector<fs::path> in_dir;
+        for (const auto& e : fs::directory_iterator(sd.dir / dir))
+            in_dir.push_back(e.path());
+        INFO("directory " << dir);
+        REQUIRE(in_dir.size() == 1u);
+        files.push_back(in_dir.front());
+    }
+    for (const fs::path& f : files) {
+        const std::string text = read_dataset_file(f);
+        INFO(f.string() << ":\n" << text);
+        REQUIRE_FALSE(text.empty());
+        const auto lines = key_lines(text);
+        for (const auto& kv : dataset_keys) {
+            INFO("key " << kv.first);
+            CHECK(lines.count(kv.first) == 0u);
+        }
+        const PotRecord r = pot_record(text);
+        REQUIRE(r.opened);
+        REQUIRE(r.closed);
+        CHECK(r.first_key == r.end_at + 1);
+        CHECK(r.lines == std::vector<std::string>{
+                             "DBFILE " + train.string(), "EFILTER -1 1",
+                             "FFILTER 100", "ESHIFT_DBATOM true",
+                             "EWEIGHT_TEMP 300", "ZERO_COM_FORCE true",
+                             "WDBFILE 1", "WDBFILE_AUTO 0.5",
+                             "VALIDATION " + val.string(),
+                             "HPOTARGET " + hpo.string(), "VERBOSE 0"});
+        REQUIRE(lines.count("ESHIFT") == 1u);
+        REQUIRE(lines.at("ESHIFT").size() == 1u);
+        CHECK(std::stod(lines.at("ESHIFT").front()) != 0.0);
     }
 }
 
