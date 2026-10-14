@@ -297,7 +297,7 @@ public:
      * configuration and command line gave them, taken first thing in the
      * constructor, before anything inserts a default; with the
      * constructor's provenance, the blueprint defaults no one wrote are
-     * left out. A comment block above the key lines, which no reader of a
+     * left out. A comment block above the key lines, which no loader of a
      * potential reads (MK's decision of 2026-10-14). */
     mlip::TrainingRecord training_record;
     size_t outputEvery = 1;
