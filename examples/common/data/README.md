@@ -21,9 +21,8 @@ The labels keep the source paths (`examples/data/...`).
   are the lattice vectors.
 
 **History.**
-- Every earlier version of these files, the 1.6.0 development snapshots
-  included, held the energy without entropy and VASP's pressure-signed
-  stress.
+- Every earlier version of these files held the energy without entropy
+  and VASP's pressure-signed stress.
 - They were re-converted on 2026-10-01 from the same OUTCARs with the 1.6.0
   readers.
 - Cells, positions and forces are unchanged. The stress is negated, and each

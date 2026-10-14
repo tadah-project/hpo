@@ -28,10 +28,9 @@ new best of the run ends it (eval 9), short of the bound; restart 2, from
 5.422967, reaches the bound at eval 12 and stagnates there. The third
 stagnation ends the run after 15 evaluations, `STOPPED -- stagnation: no
 new best in 3 evals after 2 restart(s)`, with the best at `RCUT2B` = 6.
-The run repeats bit for bit. (Until 2026-10-12 the example ran DLIB:BFGS without a SEED,
-so its restart points came from `std::random_device` and differed from
-run to run; with the repeat points of 2026-10-12 that search converged
-before the window passed, and no restart fired.) Useful for unattended
+The run repeats bit for bit. (In 1.5.0 the example ran DLIB:BFGS, whose
+restart points came from `std::random_device` and differed from run to
+run.) Useful for unattended
 overnight runs where a search that keeps evaluating without progress (a
 local search held at a bound, a stochastic or global optimiser on a
 plateau) shouldn't waste the whole job.
