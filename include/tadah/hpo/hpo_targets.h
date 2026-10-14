@@ -292,8 +292,9 @@ public:
     int    pot_digits = core::kPotDigitsDefault;
     bool   pot_digits_explicit = false;
     /* The training record of every potential file HPO writes (the same
-     * files): the keys a potential does not use (DBFILE, VALIDATION,
-     * HPOTARGET, VERBOSE, ...: mlip::training_record_keys) as the run's
+     * files): the keys a potential does not use (DBFILE, WDBFILE,
+     * VALIDATION, HPOTARGET, VERBOSE, ...: mlip::training_record_keys) as
+     * the run's
      * configuration and command line gave them, taken first thing in the
      * constructor, before anything inserts a default; with the
      * constructor's provenance, the blueprint defaults no one wrote are
