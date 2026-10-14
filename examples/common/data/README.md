@@ -21,13 +21,15 @@ The labels keep the source paths (`examples/data/...`).
   are the lattice vectors.
 
 **History.**
-- Every earlier version of these files, the 1.6.0 development snapshots
-  included, held the energy without entropy and VASP's pressure-signed
-  stress.
+- Every earlier version of these files held the energy without entropy
+  and VASP's pressure-signed stress, and the 1.5.0 `elastic.tadahdb` held
+  the cells of its 12 sheared structures (14-25) transposed: the lattice
+  vectors down the columns of the cell block (the positions were right).
 - They were re-converted on 2026-10-01 from the same OUTCARs with the 1.6.0
   readers.
-- Cells, positions and forces are unchanged. The stress is negated, and each
-  energy moved by its F - E_wo (-2.9 to +1.5 meV/atom).
+- Positions and forces are those of 1.5.0, and so are the other cells. The
+  stress is negated, and each energy moved by its F - E_wo (-2.9 to +1.5
+  meV/atom).
 
 To re-convert, with the OUTCARs under `$SRC`:
 
