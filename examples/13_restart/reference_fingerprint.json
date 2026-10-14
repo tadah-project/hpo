@@ -34,16 +34,16 @@
   "evaluations": {
     "value": 15,
     "tol": 0,
-    "note": "15 (2026-10-12, 3 repeated runs identical): LN_SBPLX with RESTART SEED 13 -- round 0 evals 1-6 (the bound RCUT2B = 6 at eval 3), restart 1 from RCUT2B = 4.541125 evals 7-9, restart 2 from 5.422967 evals 10-15, each round ended by the stagnation window (AFTER_STAGNATION 3). Before the re-pointing the example ran DLIB:BFGS: 9 evaluations from fix/hpo-repeat-points (its search converged before the window), 16 before it (10 + 3 + 3, with restart points from std::random_device)."
+    "note": "15: LN_SBPLX with RESTART SEED 13 -- round 0 evals 1-6 (the bound RCUT2B = 6 at eval 3), restart 1 from RCUT2B = 4.541125 evals 7-9, restart 2 from 5.422967 evals 10-15, each round ended by the stagnation window (AFTER_STAGNATION 3). In 1.5.0 the example ran DLIB:BFGS with a RESTART block without SEED, its restart points drawn from std::random_device: 23 evaluations."
   },
   "best_ermse_meV_per_atom": 4.79,
   "status_accepted": [
     "STOPPED -- stagnation: no new best in 3 evals after 2 restart(s)"
   ],
-  "status_note": "\"DLIB:BFGS: FTOL_ABS reached\" from fix/hpo-repeat-points until the example was re-pointed at LN_SBPLX with a RESTART SEED (2026-10-12): BFGS converged before the stagnation window passed, and no restart fired; before that, \"STOPPED -- stagnation: no new best in 3 evals after 2 restart(s)\" as now (COMPLETED until RestartPolicy recorded why the run stopped).",
+  "status_note": "The third stagnation ends the run, and the journal trailer says why: \"STOPPED -- stagnation: no new best in 3 evals after 2 restart(s)\". 1.5.0's trailer was COMPLETED.",
   "nan_clampings_max": 0,
   "threw_max": 0,
   "walltime_hint": "0.4s",
   "fast": true,
-  "tolerance_rationale": "The run is deterministic, and every value is pinned at the default tolerances: LN_SBPLX climbs to the upper bound RCUT2B = 6 (eval 3) and stagnates there (the window of 3 evaluations without a new best fires at eval 6); RESTART relaunches it twice from RANDOM points drawn with RESTART SEED 13 + r: restart 1, from RCUT2B = 4.541125, is ended after 3 evaluations (eval 9, RCUT2B = 5.541125) while its loss still falls, none of them a new best of the run (the window counts from the run's best), and restart 2, from 5.422967, reaches the bound at eval 12 and stagnates there; the third stagnation ends the run after 15 evaluations, \"STOPPED -- stagnation: no new best in 3 evals after 2 restart(s)\". The bound's evaluations differ in the last digits (each PC_LAMMPS --hotvar relaxation starts from the best value so far), so the best is one of them (eval 12), the same loss and RCUT2B to the pinned digits. Until 2026-10-12 the example ran DLIB:BFGS with RESTART points drawn from std::random_device, and only the values that did not depend on the restarts were pinned; from fix/hpo-repeat-points until this re-pointing its BFGS search converged before the window passed, and no restart fired."
+  "tolerance_rationale": "The run is deterministic, and every value is pinned at the default tolerances: LN_SBPLX climbs to the upper bound RCUT2B = 6 (eval 3) and stagnates there (the window of 3 evaluations without a new best fires at eval 6); RESTART relaunches it twice from RANDOM points drawn with RESTART SEED 13 + r: restart 1, from RCUT2B = 4.541125, is ended after 3 evaluations (eval 9, RCUT2B = 5.541125) while its loss still falls, none of them a new best of the run (the window counts from the run's best), and restart 2, from 5.422967, reaches the bound at eval 12 and stagnates there; the third stagnation ends the run after 15 evaluations, \"STOPPED -- stagnation: no new best in 3 evals after 2 restart(s)\". The bound's evaluations differ in the last digits (each PC_LAMMPS --hotvar relaxation starts from the best value so far), so the best is one of them (eval 12), the same loss and RCUT2B to the pinned digits."
 }

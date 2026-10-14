@@ -1581,10 +1581,10 @@ void HPOTargets::read(const std::string& fn)
         }
     }
 
-    /* PC_LAMMPS: gradient-support dropped 2026-05-13.
+    /* PC_LAMMPS: no gradients.
      *
      * The HPO-side analytical-gradient wiring for PC_LAMMPS (Phase 3
-     * IFT-adjoint chain) is no longer engaged. PC_LAMMPS configs must
+     * IFT-adjoint chain) is not engaged. PC_LAMMPS configs must
      * use gradient-free optimisers -- NLOPT GN_* / LN_*, TADAH built-ins
      * (RANDOM/GRID/ANNEAL). The single accepted gradient-based exception
      * is DLIB:BFGS, which performs its own per-theta-per-iter finite-
@@ -1604,15 +1604,15 @@ void HPOTargets::read(const std::string& fn)
      *
      * Also reject any explicit GRAD_STRATEGY={NUMERICAL,HYBRID,
      * ANALYTICAL} when PC_LAMMPS is present -- these tags only make
-     * sense in the PC_OBSERVABLE world post-2026-05-13. */
+     * sense with PC_OBSERVABLE. */
     auto reject_pc_lammps_grad =
         [&](const OptimizerSpec& sp, const char* tag) {
             if (sp.grad_strategy) {
                 throw std::runtime_error(with_block_line(sp,
                     std::string("--hpotarget defines PC_LAMMPS but ") + tag
-                    + " GRAD_STRATEGY is set. PC_LAMMPS no longer "
-                    "supports analytical/numerical/hybrid gradients "
-                    "(2026-05-13). Drop the GRAD_STRATEGY line."));
+                    + " GRAD_STRATEGY is set. PC_LAMMPS does not "
+                    "support analytical/numerical/hybrid gradients. "
+                    "Drop the GRAD_STRATEGY line."));
             }
             /* read() has required LIB and ALGO of every block by now, the
              * EXPLORE and INNER blocks included (require_driver,

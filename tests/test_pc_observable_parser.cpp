@@ -357,6 +357,15 @@ PC_OBSERVABLE cohesive_energy --species Ta --target 8.100 --weight 1000 --hotvar
     }
 }
 
+/* Pins (among the refusals of this case): GRAD_STRATEGY NUMERICAL, HYBRID
+ * or ANALYTICAL beside PC_LAMMPS is refused with a message that names
+ * PC_LAMMPS and GRAD_STRATEGY and says "PC_LAMMPS does not support
+ * analytical/numerical/hybrid gradients. Drop the GRAD_STRATEGY line.",
+ * with no date ("2026") in it: no release supported these gradients with
+ * PC_LAMMPS (v1.3.0-beta.1 and 1.5.0 refused them as now).
+ * Before the fix: the message said "PC_LAMMPS no longer supports
+ * analytical/numerical/hybrid gradients (2026-05-13). Drop the
+ * GRAD_STRATEGY line.": the check of the sentence fails. */
 TEST_CASE("HPOTargets rejects PC_LAMMPS with gradient-based optimisers",
           "[hpo][pc_observable_parser][hpotargets][pc_lammps_grad_drop]")
 {
@@ -385,6 +394,13 @@ TEST_CASE("HPOTargets rejects PC_LAMMPS with gradient-based optimisers",
             tadah::hpo::HPOTargets(ctx, cfg.string()),
             Catch::Matchers::Contains("PC_LAMMPS")
             && Catch::Matchers::Contains("GRAD_STRATEGY"));
+        CHECK_THROWS_WITH(
+            tadah::hpo::HPOTargets(ctx, cfg.string()),
+            Catch::Matchers::Contains(
+                "GRAD_STRATEGY is set. PC_LAMMPS does not support "
+                "analytical/numerical/hybrid gradients. Drop the "
+                "GRAD_STRATEGY line.")
+            && !Catch::Matchers::Contains("2026"));
         std::filesystem::remove(cfg);
     }
 
