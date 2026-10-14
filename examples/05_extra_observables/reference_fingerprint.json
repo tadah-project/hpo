@@ -34,7 +34,7 @@
   "evaluations": {
     "value": 9,
     "tol": 0,
-    "note": "9 on the reference machine (2026-10-12, 3 repeated runs identical): example 01's search with the parametric cohesive-energy script. BFGS reaches the upper bound RCUT2B = 6.0 at eval 7 (the best, 1.015561e-01), takes the one-sided gradient there (evals 8-9), and its next step cannot move the point: the line search is not run, and the objective-delta test ends the search (\"DLIB:BFGS: FTOL_ABS reached\"). Until 2026-10-12 the line search re-evaluated the clamped bound from eval 10 on, its decrease test failing on the ~1e-13 relative noise of the warm-started lattice relaxation, until MAXEVAL = 30 (\"DLIB:BFGS: MAXEVAL reached\"; 3 repeated runs identical), while example 01 ended after 12."
+    "note": "9 on the reference machine: example 01's search with the parametric cohesive-energy script. BFGS reaches the upper bound RCUT2B = 6.0 at eval 7 (the best, 1.015561e-01), takes the one-sided gradient there (evals 8-9), and its next step cannot move the point: the line search is not run, and the objective-delta test ends the search (\"DLIB:BFGS: FTOL_ABS reached\"). 1.5.0's fingerprint had 16 evaluations."
   },
   "best_ermse_meV_per_atom": 4.79,
   "status_accepted": [
@@ -44,5 +44,5 @@
   "threw_max": 0,
   "walltime_hint": "0.3s",
   "fast": true,
-  "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances, and the evaluation count exactly: as in example 01, the optimum is on the upper bound RCUT2B = 6.0 (eval 7), BFGS takes the one-sided gradient there (evals 8-9), and its next step cannot move the point, so its line search is not run and the objective-delta test ends the search, \"DLIB:BFGS: FTOL_ABS reached\", after 9 evaluations. Until 2026-10-12 the line search evaluated the bound again and, its decrease test failing on the ~1e-13 relative drift of the warm-started lattice relaxation, went on to MAXEVAL = 30 on the reference machine, \"DLIB:BFGS: MAXEVAL reached\", or stopped after 12, as example 01 did; a 1-ulp change of the hot_a0 start or of one training energy flipped it, so evals_tol 18 (12..30) and both statuses were accepted."
+  "tolerance_rationale": "Best loss, components and RCUT2B are pinned at the default tolerances, and the evaluation count exactly: as in example 01, the optimum is on the upper bound RCUT2B = 6.0 (eval 7), BFGS takes the one-sided gradient there (evals 8-9), and its next step cannot move the point, so its line search is not run and the objective-delta test ends the search, \"DLIB:BFGS: FTOL_ABS reached\", after 9 evaluations. As in example 01, no point is evaluated twice, so no decision of the search compares two relaxations of one point."
 }

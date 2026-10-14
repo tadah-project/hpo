@@ -34,7 +34,7 @@
   "evaluations": {
     "value": 9,
     "tol": 0,
-    "note": "9 (2026-10-12): BFGS reaches the upper bound RCUT2B = 6 at eval 7 and takes the one-sided gradient there (evals 8-9); its next step cannot move the point, so the line search is not run and the objective-delta test ends the search. The loss has no PC_LAMMPS line, so a point asked for again would be answered from its evaluation; none is. Until 2026-10-12 the line search evaluated the bound again and BFGS took its gradient again: 12."
+    "note": "9: BFGS reaches the upper bound RCUT2B = 6 at eval 7 and takes the one-sided gradient there (evals 8-9); its next step cannot move the point, so the line search is not run and the objective-delta test ends the search. The loss has no PC_LAMMPS line, so a point asked for again would be answered from its evaluation; none is."
   },
   "best_ermse_meV_per_atom": 3.26,
   "status_accepted": [
