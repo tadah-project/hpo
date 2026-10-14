@@ -709,7 +709,9 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
         /* EMBF0 ZERO fixes the DM_REAM isolated-atom energy at 0: fitting
          * absolute reference energies then needs another per-atom constant.
          * n_intercept_columns > 0, from stored values (no BIAS default
-         * inserted). */
+         * inserted). The toggles are named with their options: a -c seed
+         * is a potential, whose own toggle line is not read
+         * (mlip::potential_line_not_read). */
         const auto bias = ctx.stored_value("BIAS");
         const bool intercepts =
             bias && *bias == "true" && ctx.stored_value("ATOM").has_value();
@@ -725,10 +727,12 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
             log.hint("EMBF0 ZERO fixes the DM_REAM isolated-atom energy at 0 "
                      "and the model has no other per-atom constant (BIAS "
                      "false, no ESHIFT). If reference energies are absolute "
-                     "(e.g. DFT totals), set ESHIFT_ATOM, ESHIFT_DBATOM or "
-                     "ESHIFT (compatible with EAMFAST). BIAS true also adds "
-                     "a per-atom constant, but its intercept columns, one "
-                     "per ATOM species, precede the descriptor weights "
+                     "(e.g. DFT totals), set ESHIFT or give the run "
+                     "ESHIFT_ATOM or ESHIFT_DBATOM (--eshift-atom, "
+                     "--eshift-dbatom: a potential's own line of them is not "
+                     "read), all compatible with EAMFAST. BIAS true also "
+                     "adds a per-atom constant, but its intercept columns, "
+                     "one per ATOM species, precede the descriptor weights "
                      "(FIXINDEX/FIXWEIGHT indices shift) and it disables "
                      "EAMFAST.");
     }
