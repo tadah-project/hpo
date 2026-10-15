@@ -11,6 +11,7 @@
 #include <tadah/models/cutoffs.h>
 #include <tadah/models/descriptors/d_base.h>
 #include <tadah/models/descriptors/dm/ream_density.h>
+#include <tadah/models/descriptors/dm/embed_kernel.h>
 #include <tadah/models/descriptors/dm/rhoform.h>
 #include <tadah/models/eam/pot_curve_edit.h>
 
@@ -36,6 +37,41 @@ namespace hpo {
 namespace detail {
 
 namespace {
+
+struct CandidateDensity {
+  models::ReamDensity legacy;
+  std::unique_ptr<models::EmbedEvaluator> component;
+  models::RhoForm form=models::RhoForm::Signed;
+  models::DensityScan scan_grid(double lo,double hi,std::size_t n,models::Cut_Base &fc,
+      std::vector<double> *values=nullptr,std::vector<double> *terms=nullptr) const {
+    if(!component)return legacy.scan_grid(lo,hi,n,fc,values,terms);
+    auto grid=models::ReamDensity::linspace(lo,hi,n);
+    std::vector<double> rho(n),absolute(n);
+    models::DensityScan result;
+    for(std::size_t i=0;i<n;++i) {
+      rho[i]=component->density(grid[i]).value;
+      const auto &c=component->spec().density;
+      for(std::size_t j=0;j<c.amplitudes.size();++j)
+        absolute[i]+=std::abs(c.amplitudes[j]*component->density(grid[i],'a',j).value);
+      if(!std::isfinite(rho[i]))result.finite=false;
+      if(i==0 || rho[i]<result.rho_min){result.rho_min=rho[i];result.i_min=i;}
+      if(i==0 || rho[i]>result.rho_max){result.rho_max=rho[i];result.i_max=i;}
+    }
+    result.r_at_min=grid[result.i_min];result.r_at_max=grid[result.i_max];
+    if(values)*values=std::move(rho);if(terms)*terms=std::move(absolute);return result;
+  }
+  models::RhoBarScan rhobar_scan(const std::vector<models::eam_lattice::Shell> &shells,
+      const std::vector<double> &a,models::Cut_Base &fc) const {
+    if(!component)return legacy.rhobar_scan(shells,a,fc);
+    models::RhoBarScan result;result.rhobar.assign(a.size(),0);
+    for(std::size_t i=0;i<a.size();++i) {
+      for(const auto &sh:shells) result.rhobar[i]+=sh.m*component->density(sh.d*a[i]).value;
+      if(!std::isfinite(result.rhobar[i]))result.finite=false;
+      if(i && result.rhobar[i]>=result.rhobar[i-1]){if(result.rises==0)result.first_rise=i-1;++result.rises;}
+    }
+    return result;
+  }
+};
 
 /* A genuine violation measure is capped here; a saturated one is DBL_MAX,
  * which fail_sigma maps to the top of band D, above every genuine value. */
@@ -74,6 +110,12 @@ std::optional<double> stored_double(const core::Context &c, const char *key,
  * absent or not a number, or the class unknown. */
 std::unique_ptr<models::Cut_Base> candidate_cutoff(const core::Context &c,
                                                    double &r_hi) {
+  const auto specs=models::embed_specs(c);
+  if(!specs.empty()) {
+    if(specs.size()!=1)throw std::runtime_error("Density gates require one scalar component");
+    r_hi=specs[0].radius;
+    return std::make_unique<models::Cut_Dummy>(r_hi);
+  }
   const auto label = c.stored_value("RCTYPEMB");
   const auto rc = stored_double(c, "RCUTMBMAX");
   if (!label || !rc)
@@ -86,10 +128,14 @@ std::unique_ptr<models::Cut_Base> candidate_cutoff(const core::Context &c,
 }
 
 /* The candidate's density as DM_REAM builds and validates it. Throws. */
-models::ReamDensity candidate_density(const core::Context &c,
+CandidateDensity candidate_density(const core::Context &c,
                                       models::Cut_Base *fc) {
-  models::ReamDensity d = models::ReamDensity::from_context(c);
-  d.validate(fc);
+  CandidateDensity d;
+  auto specs=models::embed_specs(c);
+  if(!specs.empty()) {
+    if(specs.size()!=1)throw std::runtime_error("Density gates require one scalar component");
+    d.component=std::make_unique<models::EmbedEvaluator>(specs[0]);d.form=specs[0].form;
+  } else {d.legacy=models::ReamDensity::from_context(c);d.legacy.validate(fc);d.form=d.legacy.form;}
   return d;
 }
 
@@ -192,7 +238,7 @@ std::vector<std::string> arming_dims(const HPOTargets &trg) {
   const std::vector<std::string> &labels = trg.spec.parameter_labels;
   const auto &keys = HPOTargets::density_gate_keys();
   for (const ParamRef &r : make_param_ref_table(trg))
-    if (std::find(keys.begin(), keys.end(), r.theta_name) != keys.end())
+    if (std::find(keys.begin(), keys.end(), r.theta_name) != keys.end() || r.theta_name.find(".DENSITY.")!=std::string::npos)
       dims.push_back(r.flat_idx < labels.size()
                          ? labels[r.flat_idx]
                          : r.theta_name + "[" + std::to_string(r.arg_pos) + "]");
@@ -232,6 +278,7 @@ std::string rhobar_fail_detail(const RhoBarGateResult &r, const RhoBarGateSpec &
 }  // namespace
 
 bool context_is_bare_ream(const core::Context &ctx) {
+  if(!ctx.blocks("DESCRIPTOR").empty()) return models::embed_contexts(ctx).size()==1;
   const auto label = ctx.stored_value("TYPEMB", 0);
   return label && *label == "DM_REAM" && models::context_has_ream(ctx);
 }
@@ -241,6 +288,13 @@ ReachableRcut knot_aware_reachable_rcut(const core::Context &ctx,
   // A copy: get_grid / get below may materialise defaults.
   core::Context c = ctx;
   ReachableRcut out;
+  auto specs=models::embed_specs(c);
+  if(specs.size()==1) {
+    out.min_reachable=out.max_reachable=specs[0].radius;
+    const auto *o=find_optim(trg,core::to_upper(specs[0].id+".density.cutoff.radius"));
+    if(o && !o->opt.empty() && o->opt[0]) {out.min_reachable=o->lowbound[0];out.max_reachable=o->highbound[0];}
+    return out;
+  }
   if (!models::potedit::derived_knot_rcut(c, "MB")) {
     // a bump channel: the BUMPGATE's range (-inf without RCUTMB)
     const BindingRcut b = derive_binding_rcut(c, trg, "MB");
@@ -320,7 +374,7 @@ RhoGateResult eval_rho_gate(const RhoGateTable &t, const core::Context &cand,
   RhoGateResult r;
   r.npts = t.spec.npts;
   std::unique_ptr<models::Cut_Base> fc;
-  models::ReamDensity d;
+  CandidateDensity d;
   try {
     fc = candidate_cutoff(cand, r.r_hi);
     d = candidate_density(cand, fc.get());
@@ -346,7 +400,7 @@ RhoBarGateResult eval_rhobar_gate(const RhoBarGateTable &t,
                                   bool check_weights) {
   RhoBarGateResult r;
   std::unique_ptr<models::Cut_Base> fc;
-  models::ReamDensity d;
+  CandidateDensity d;
   try {
     fc = candidate_cutoff(cand, r.r_hi);
     d = candidate_density(cand, fc.get());
@@ -511,7 +565,8 @@ void validate_density_gates(const core::Context &train_ctx,
                              "many-body term, but " + have + ". Remove the " +
                              keys + " line(s).");
   }
-  const models::RhoForm form = models::require_rhoform(train_ctx, "tadah hpo");
+  const auto specs=models::embed_specs(train_ctx);
+  const models::RhoForm form = specs.empty()?models::require_rhoform(train_ctx, "tadah hpo"):specs.at(0).form;
   if (trg.RHOGATE && form != models::RhoForm::Signed)
     throw std::runtime_error(
         std::string("RHOGATE: RHOFORM ") + models::rhoform_name(form) +
@@ -652,7 +707,7 @@ DensitySummary summarise_density(const DensityGates &g,
   try {
     double r_hi = 0.0;
     const std::unique_ptr<models::Cut_Base> fc = candidate_cutoff(cand, r_hi);
-    const models::ReamDensity d = candidate_density(cand, fc.get());
+    const CandidateDensity d = candidate_density(cand, fc.get());
     s.form = models::rhoform_name(d.form);
     {
       // tadah hpo always has WATOM here (it inserts WATOM = Z when the

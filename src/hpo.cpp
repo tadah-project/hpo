@@ -679,11 +679,11 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
     log.set_eval_base(HPO_Host<V,R>::g_iter_value());
     /* EMBF0 (DM_REAM only): the -c potential's raw F(0) for POTENTIAL SETUP,
      * and the RESULT line's start/best values. Reads stored values only. */
-    const bool has_ream = models::context_has_ream(ctx);
-    const bool embf0_zero =
-        has_ream &&
-        models::stored_embf0(ctx).value_or(models::EmbF0Mode::Zero) ==
-            models::EmbF0Mode::Zero;
+    core::Context reference_context=ctx;
+    models::DC_Selector reference_selector(reference_context);
+    const auto reference_mode=reference_selector.dmb->embf0_mode();
+    const bool has_ream=reference_mode.has_value();
+    const bool embf0_zero=reference_mode==models::EmbF0Mode::Zero;
     std::optional<RawEmbeddingF0> embf0_seed;
     if (has_ream) embf0_seed = derive_raw_embedding_f0(ctx);
     log.write_potential_section(ctx, host.train_size(), host.val_size(), elem_str,
@@ -735,7 +735,7 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
         if ((has_train_db || !val.empty()) && has_ream && embf0_zero &&
             !intercepts && !eshift_keys && tr.eshift.empty() &&
             vr.eshift.empty())
-            log.hint("EMBF0 ZERO fixes the DM_REAM isolated-atom energy at 0 "
+            log.hint(std::string(ctx.blocks("DESCRIPTOR").empty()?"EMBF0 ZERO":"REFERENCE ZERO")+" fixes the "+reference_selector.dmb->label()+" isolated-atom energy at 0 "
                      "and the model has no other per-atom constant (BIAS "
                      "false, no ESHIFT). If reference energies are absolute "
                      "(e.g. DFT totals), set ESHIFT or give the run "
