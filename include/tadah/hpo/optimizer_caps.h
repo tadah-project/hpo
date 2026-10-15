@@ -155,10 +155,10 @@ struct OptimizerCaps {
      * evaluated only when its first call is there. The other backends
      * evaluate every point they ask for and keep the default. A search on
      * one of these never uses the point it is given, so a PRESTAGE
-     * refinement on one, and an AUGLAG whose INNER search is one under
-     * MULTISTART or as the refinement, is refused at startup
-     * (require_prestage_refinement(), require_inner_start_used(),
-     * strategy_rules.h). */
+     * refinement on one is refused at startup (require_prestage_
+     * refinement(), strategy_rules.h); each is global, so it is refused as
+     * an INNER search too (require_inner_backend(), whose refusal names
+     * start_note). */
     bool        starts_at_x0 = true;
 
     /* Where the first call of a backend whose starts_at_x0 is false is
