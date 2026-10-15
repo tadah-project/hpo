@@ -277,6 +277,18 @@ bool runs_from_each_start(const OptimizerCaps& caps)
     return !caps.is_global || caps.accepts_multi_seed;
 }
 
+std::string nlopt_inner_searches_without_gradient()
+{
+    const auto caps = filter_optimizer_caps([](const OptimizerCaps& c) {
+        if (c.lib != "NLOPT" || !starts_where_given(c)) return false;
+        OptimizerSpec sp;
+        sp.lib = c.lib;
+        sp.algo = c.algo;
+        return !obtains_gradients(sp);
+    });
+    return format_caps_list(caps, caps.size());
+}
+
 void require_multistart_backend(const OptimizerSpec& spec)
 {
     require_driver(spec, DriverPhase::Run);

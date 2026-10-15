@@ -99,6 +99,16 @@ void require_inner_backend(const OptimizerSpec& parent,
  * both need this. */
 bool runs_from_each_start(const OptimizerCaps& caps);
 
+/* The NLopt algorithms an INNER block can name (require_inner_backend():
+ * local, and running no INNER block of their own) whose run takes no
+ * gradient (obtains_gradients(), phase_specs.h, of the algorithm with no
+ * INNER block: LN_AUGLAG and LN_AUGLAG_EQ run NLopt's default LN_COBYLA),
+ * every one, sorted, from the registry: "NLOPT:LN_AUGLAG, ...,
+ * NLOPT:LN_SBPLX". The INNER searches a run with PC_LAMMPS, which takes no
+ * gradient, can name: HPOTargets::read() names them when it refuses a
+ * gradient-based one. */
+std::string nlopt_inner_searches_without_gradient();
+
 /* STRATEGY TYPE MULTISTART: `spec` names an optimiser, and one that
  * runs_from_each_start() accepts, for any N_STARTS. A multi-seed backend
  * (OptimizerCaps::accepts_multi_seed: DLIB:GFS) runs every start in one
