@@ -3928,9 +3928,10 @@ double recording_quadratic(unsigned n, const double* x, double*, void* data)
     return (x[0] - 0.3) * (x[0] - 0.3) + (x[1] - 0.6) * (x[1] - 0.6);
 }
 
-/* The points `opt` (GN_CRS2_LM) evaluates in [0, 1]^2 from the NLopt
- * random state as it stands: its start point, then a population drawn from
- * NLopt's random number generator. */
+/* The points `opt` evaluates in [0, 1]^2 from (0.5, 0.5) and the NLopt
+ * random state as it stands: for GN_CRS2_LM its start point, then a
+ * population drawn from NLopt's random number generator; for GN_MLSL its
+ * start point, its random samples and its local searches. */
 std::vector<std::vector<double>> crs2_draws(nlopt::opt opt)
 {
     std::vector<std::vector<double>> xs;
@@ -4064,37 +4065,54 @@ TEST_CASE("Termination: a restarted NLopt run with an INIT SEED draws from "
 
 namespace {
 
-/* A MULTISTART of NLOPT AUGLAG with a GN_CRS2_LM INNER over three LHS
- * start points: `init_seed` is the INIT block's SEED line (or ""),
- * `seed` the STRATEGY block's and `inner_seed` the INNER block's.
- * MULTISTART takes only local NLopt algorithms; AUGLAG with a GN_CRS2_LM
- * INNER draws a CRS2 population from NLopt's random number generator from
- * its second evaluation on (LN_PRAXIS, the local algorithm that draws,
- * does so only once it stalls). */
-constexpr std::size_t kAuglagBudget = 25;
-static_assert(kAuglagBudget <= kCrs2Population,
-              "every evaluation of a start is part of CRS2's population");
+/* A MULTISTART of NLOPT AUGLAG with an LN_PRAXIS INNER over three LHS
+ * start points: `init_seed` is the INIT block's SEED line (or ""), `seed`
+ * the STRATEGY block's and `inner_seed` the INNER block's. MULTISTART
+ * takes only local optimisers, and an INNER block only a local search (no
+ * nested global search, owner decision, MK, 2026-10-15); of the local
+ * NLopt algorithms LN_PRAXIS alone draws from NLopt's random number
+ * generator, for its random steps once it stalls: on this loss a PLAIN run
+ * from the configuration's point under SEED 10 and SEED 20 evaluates the
+ * same 32 points first and differs from the 33rd; of the three starts
+ * below (BUDGET_PER_START 150), the second and the third reach their random
+ * steps, the first, on a flat part of the loss, does not. (These runs were an
+ * AUGLAG with an INNER GN_CRS2_LM, a global search, which an INNER block
+ * no longer takes; its population did not depend on the start point, so
+ * each start's 25 points were compared with a PLAIN CRS2 run of SEED + i.
+ * LN_PRAXIS's points depend on the start point: the checks below compare
+ * the starts of two runs that share their start points, and the test case
+ * "NLopt: MULTISTART start i draws from SEED + i" compares one start with
+ * the NLopt run of SEED + i.) */
+constexpr std::size_t kAuglagBudget = 150;
 
-std::string auglag_crs2_multistart(const std::string& init_seed,
-                                   const std::string& seed,
-                                   const std::string& inner_seed)
+std::string auglag_praxis_multistart(const std::string& init_seed,
+                                     const std::string& seed,
+                                     const std::string& inner_seed)
 {
     return "OPTIMIZER\n"
            "  INIT\n    METHOD LHS 3\n" + init_seed + "  ENDINIT\n"
            "  STRATEGY\n"
            "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO AUGLAG\n"
-           "    N_STARTS 3\n    BUDGET_PER_START 25\n" + seed +
-           "    INNER\n      LIB NLOPT\n      ALGO GN_CRS2_LM\n" + inner_seed +
+           "    N_STARTS 3\n    BUDGET_PER_START " +
+           std::to_string(kAuglagBudget) + "\n" + seed +
+           "    INNER\n      LIB NLOPT\n      ALGO LN_PRAXIS\n" + inner_seed +
            "    ENDINNER\n"
            "  ENDSTRATEGY\n"
            "ENDOPTIMIZER\n";
 }
 
-/* Checks the finished auglag_crs2_multistart() run in the current
- * directory: start i ran with seed base + i and drew the CRS2 population
- * of SEED base + i, and no two starts share a point. */
-void check_auglag_crs2_starts(std::uint64_t base)
+/* Runs auglag_praxis_multistart(init_seed, seed) and returns the evaluated
+ * points of each start, after checking that start i ran with seed base +
+ * i, that its evaluations are the run's, in order, and that no two starts
+ * share a point. */
+std::vector<std::vector<Point>> auglag_praxis_starts(
+    const std::string& init_seed, std::uint64_t base)
 {
+    TaRun run(auglag_praxis_multistart(
+        init_seed, "    SEED " + std::to_string(base) + "\n", ""));
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    REQUIRE(status == 0);
     const std::string journal = read_file("hpo_run.log");
     check_start_seeds(journal, base, 3, 1);
 
@@ -4112,38 +4130,102 @@ void check_auglag_crs2_starts(std::uint64_t base)
     const auto pts = evaluated_points();
     std::size_t first = 1;
     std::set<Point> earlier;
+    std::vector<std::vector<Point>> starts;
     for (std::uint64_t i = 0; i < evals.size(); ++i) {
         INFO("start " << (i + 1) << ": " << evals[i] << " evaluation(s)");
-        /* The CRS2 run takes the start's whole budget; AUGLAG then
-         * evaluates the best point CRS2 found once more. */
-        REQUIRE(evals[i] >= kAuglagBudget);
+        REQUIRE(evals[i] >= 1u);
         const auto start = evals_between(pts, first, first + evals[i] - 1);
         first += evals[i];
-        const auto ours = drawn(first_points(start, kAuglagBudget));
-        CHECK(ours ==
-              drawn(reference_points(crs2_block(kAuglagBudget, base + i))));
-        for (const auto& p : ours) {
+        for (const auto& p : start) {
             INFO("point " << ::Catch::Detail::stringify(p));
             CHECK(earlier.count(p) == 0u);
         }
         earlier.insert(start.begin(), start.end());
+        starts.push_back(start);
     }
     CHECK(first == pts.size() + 1);
+    return starts;
 }
 
 }  // namespace
 
+/* Pins: MULTISTART runs start i with SEED + i, and the INIT block's SEED 99
+ * draws the LHS start points only: two runs under INIT SEED 99, with
+ * STRATEGY SEED 10 and 20, start each of their three starts at the same
+ * point (its first evaluation), and the runs evaluate different points,
+ * since NLopt draws LN_PRAXIS's random steps from SEED 10 + i and 20 + i
+ * (the starts that take a random step). The INIT SEED used to seed NLopt
+ * in place of SEED + i, so every start drew SEED 99's numbers: both runs
+ * would then evaluate the same points.
+ * Before the fix: passes as well (a pin; the runs were an AUGLAG with an
+ * INNER GN_CRS2_LM, whose populations were compared with those of PLAIN
+ * CRS2 runs of SEED 10 + i). */
 TEST_CASE("Termination: NLopt MULTISTART starts with an INIT SEED each draw "
-          "a population of their own", "[HPO][termination][seed][nlopt]")
+          "from a seed of their own", "[HPO][termination][seed][nlopt]")
 {
-    /* MULTISTART runs start i with SEED + i. The INIT block's SEED 99
-     * draws the LHS start points. It used to seed NLopt in place of
-     * SEED + i, so every start drew SEED 99's population. */
-    TaRun run(auglag_crs2_multistart("    SEED 99\n", "    SEED 10\n", ""));
-    int status = -1;
-    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
-    CHECK(status == 0);
-    check_auglag_crs2_starts(10);
+    const auto a = auglag_praxis_starts("    SEED 99\n", 10);
+    const auto b = auglag_praxis_starts("    SEED 99\n", 20);
+    REQUIRE(a.size() == 3u);
+    REQUIRE(b.size() == 3u);
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        INFO("start " << (i + 1));
+        CHECK(a[i].front() == b[i].front());
+    }
+    CHECK(a != b);
+}
+
+/* Pins: MULTISTART start i's NLopt search draws from SEED + i: the spec of
+ * start i (multistart_start_spec(), which MultiStartPolicy runs) of an
+ * AUGLAG with an INNER LN_PRAXIS and SEED 10 draws, from a fixed start in
+ * [0, 1]^2, the points of the same run without a SEED whose NLopt
+ * generator is seeded with 10 + i by hand, and the three starts draw
+ * three different sets. This is the check
+ * the runs of an AUGLAG with an INNER GN_CRS2_LM made end to end (start i
+ * drew the CRS2 population of SEED + i); an INNER block no longer takes a
+ * global search (owner decision, MK, 2026-10-15), and LN_PRAXIS's points
+ * depend on the start point, which MULTISTART takes from the INIT chain.
+ * Before the fix: passes as well (a pin). */
+TEST_CASE("NLopt: MULTISTART start i draws from SEED + i",
+          "[HPO][seed][nlopt][multistart]")
+{
+    tadah::hpo::OptimizerSpec sp;
+    sp.lib = "NLOPT";
+    sp.algo = "AUGLAG";
+    sp.stop.maxeval = 200;
+    sp.seed = 10;
+    sp.optim_init = {{0.5, 0.5}, {0.5, 0.5}, {0.5, 0.5}};
+    sp.inner = std::make_unique<tadah::hpo::OptimizerSpec>();
+    sp.inner->lib = "NLOPT";
+    sp.inner->algo = "LN_PRAXIS";
+    const tadah::hpo::MultiStartPlan plan =
+        tadah::hpo::plan_multistart(sp, 3, std::nullopt);
+    REQUIRE(plan.starts == 3u);
+    /* The same NLopt run without a SEED, whose generator is seeded by
+     * hand. */
+    const auto reference = [&](unsigned long seed) {
+        tadah::hpo::OptimizerSpec unseeded =
+            tadah::hpo::multistart_start_spec(sp, plan, 0);
+        unseeded.seed.reset();
+        nlopt::opt opt = tadah::hpo::make_nlopt(unseeded, 2,
+                                                tadah::hpo::RestartStop::Off);
+        nlopt::srand(seed);
+        return crs2_draws(opt);
+    };
+    REQUIRE(reference(10) != reference(11));
+    std::vector<std::vector<std::vector<double>>> drew;
+    for (std::size_t i = 0; i < plan.starts; ++i) {
+        INFO("start " << (i + 1));
+        const tadah::hpo::OptimizerSpec start =
+            tadah::hpo::multistart_start_spec(sp, plan, i);
+        REQUIRE(start.seed);
+        CHECK(*start.seed == 10u + i);
+        drew.push_back(crs2_draws(
+            tadah::hpo::make_nlopt(start, 2, tadah::hpo::RestartStop::Off)));
+        CHECK(drew.back() == reference(10 + i));
+    }
+    CHECK(drew[0] != drew[1]);
+    CHECK(drew[1] != drew[2]);
+    CHECK(drew[0] != drew[2]);
 }
 
 TEST_CASE("NLopt: an unused INIT SEED is reported as NLopt's seed only "
@@ -4249,7 +4331,10 @@ std::size_t line_number(const std::string& text, const std::string& line)
 /* An NLopt block with an INNER, in each block the grammar allows an INNER
  * in. config(seed, inner) places the line(s) `seed` in the block that runs
  * NLopt and `inner` in its INNER block; `indent` is that block's
- * indentation, the INNER block's lines have two spaces more. */
+ * indentation, the INNER block's lines have two spaces more. Each INNER
+ * search is LN_PRAXIS, a local one (the REFINE block's was GN_CRS2_LM, a
+ * global search, which an INNER block no longer takes: owner decision, MK,
+ * 2026-10-15; the cases only parse the configuration). */
 struct InnerContext {
     std::string enclosing;
     std::string indent;
@@ -4296,7 +4381,7 @@ std::vector<InnerContext> inner_contexts()
                  "      MAXEVAL 20\n    ENDEXPLORE\n"
                  "    REFINE\n      LIB NLOPT\n      ALGO AUGLAG\n"
                  "      MAXEVAL 60\n" + seed +
-                 "      INNER\n        LIB NLOPT\n        ALGO GN_CRS2_LM\n" +
+                 "      INNER\n        LIB NLOPT\n        ALGO LN_PRAXIS\n" +
                  inner + "      ENDINNER\n"
                  "    ENDREFINE\n");
          },
@@ -4485,23 +4570,27 @@ TEST_CASE("NLopt: an INIT block inside INNER is rejected at startup, so no "
     }
 }
 
+/* The run is NLopt's GN_MLSL, whose samples come from NLopt's random number
+ * generator, with an INNER LN_BOBYQA. It was an AUGLAG with an INNER
+ * GN_CRS2_LM, a global search, which an INNER block no longer takes (owner
+ * decision, MK, 2026-10-15). Before that fix: passes as well (a pin). */
 TEST_CASE("NLopt: make_nlopt seeds a run with an INNER once, from the block "
           "that runs it, and refuses an INNER seed", "[HPO][seed][nlopt]")
 {
     tadah::hpo::OptimizerSpec sp;
     sp.lib = "NLOPT";
-    sp.algo = "AUGLAG";
+    sp.algo = "GN_MLSL";
     sp.stop.maxeval = 12;
     sp.seed = 1717;
     sp.inner = std::make_unique<tadah::hpo::OptimizerSpec>();
     sp.inner->lib = "NLOPT";
-    sp.inner->algo = "GN_CRS2_LM";
+    sp.inner->algo = "LN_BOBYQA";
 
-    /* The same AUGLAG run with the stream seeded by hand. */
+    /* The same MLSL run with the stream seeded by hand. */
     const auto reference = [](unsigned long seed) {
-        nlopt::opt opt("AUGLAG", 2);
+        nlopt::opt opt("GN_MLSL", 2);
         opt.set_maxeval(12);
-        opt.set_local_optimizer(nlopt::opt("GN_CRS2_LM", 2));
+        opt.set_local_optimizer(nlopt::opt("LN_BOBYQA", 2));
         nlopt::srand(seed);
         return crs2_draws(opt);
     };
@@ -4558,6 +4647,9 @@ TEST_CASE("NLopt: make_nlopt refuses an INNER spec with a GRAD_STRATEGY",
      * the enclosing run hands its INNER search the gradient its own
      * GRAD_STRATEGY obtains. */
     using tadah::hpo::GradStrategy;
+    /* The INNER search is LN_BOBYQA, a local one (it was GN_CRS2_LM, a
+     * global search, which an INNER block no longer takes: owner decision,
+     * MK, 2026-10-15; before that fix: passes as well, a pin). */
     tadah::hpo::OptimizerSpec sp;
     sp.lib = "NLOPT";
     sp.algo = "AUGLAG";
@@ -4565,7 +4657,7 @@ TEST_CASE("NLopt: make_nlopt refuses an INNER spec with a GRAD_STRATEGY",
     sp.grad_strategy = GradStrategy::Hybrid;
     sp.inner = std::make_unique<tadah::hpo::OptimizerSpec>();
     sp.inner->lib = "NLOPT";
-    sp.inner->algo = "GN_CRS2_LM";
+    sp.inner->algo = "LN_BOBYQA";
     REQUIRE_NOTHROW(
         tadah::hpo::make_nlopt(sp, 2, tadah::hpo::RestartStop::Off));
 
@@ -4588,22 +4680,22 @@ TEST_CASE("Termination: NLopt MULTISTART starts draw from the STRATEGY "
 {
     /* The owner's example: SEED 10 on the STRATEGY block and SEED 20 on the
      * INNER. The INNER SEED used to seed NLopt in place of SEED + i, so all
-     * three starts drew SEED 20's population. */
+     * three starts drew SEED 20's numbers. The INNER search is LN_PRAXIS
+     * (it was GN_CRS2_LM, a global search, which an INNER block no longer
+     * takes: owner decision, MK, 2026-10-15; before that fix the test
+     * passes as well, a pin). */
     const std::string inner_seed = "      SEED 20";
     const std::string rejected =
-        auglag_crs2_multistart("", "    SEED 10\n", inner_seed + "\n");
+        auglag_praxis_multistart("", "    SEED 10\n", inner_seed + "\n");
     CHECK_THAT(startup_error(rejected), Catch::StartsWith(
         "Error on line " + std::to_string(line_number(rejected, inner_seed)) +
         ": " + inner_seed_error("STRATEGY")));
 
-    /* With the SEED on the STRATEGY block only, start i draws the CRS2
-     * population of SEED 10 + i: 10, 11 and 12, three distinct
-     * populations. */
-    TaRun run(auglag_crs2_multistart("", "    SEED 10\n", ""));
-    int status = -1;
-    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
-    CHECK(status == 0);
-    check_auglag_crs2_starts(10);
+    /* With the SEED on the STRATEGY block only, start i runs with SEED 10
+     * + i: 10, 11 and 12, and no two starts evaluate one point; that NLopt
+     * draws from that seed is the test case "NLopt: MULTISTART start i
+     * draws from SEED + i". */
+    CHECK(auglag_praxis_starts("", 10).size() == 3u);
 }
 
 /* ======================================================================
@@ -5896,9 +5988,13 @@ TEST_CASE("Termination: the RESTART stagnation stop ends a search that has "
               "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
               "    SEED 3\n",
               true},
-             {"NLOPT:AUGLAG over an INNER NLOPT:GN_DIRECT_L",
+             /* LD_MMA, a local search whose only convergence test is the
+              * tolerances (it was GN_DIRECT_L, a global search, which an
+              * INNER block no longer takes: owner decision, MK,
+              * 2026-10-15; before that fix: passes as well, a pin). */
+             {"NLOPT:AUGLAG over an INNER NLOPT:LD_MMA",
               "    TYPE PLAIN\n    LIB NLOPT\n    ALGO AUGLAG\n"
-              "    INNER\n      LIB NLOPT\n      ALGO GN_DIRECT_L\n"
+              "    INNER\n      LIB NLOPT\n      ALGO LD_MMA\n"
               "    ENDINNER\n",
               true},
              /* The exploration ends at its first stagnation and hands its
