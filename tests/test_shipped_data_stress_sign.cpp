@@ -29,9 +29,7 @@
 //
 // Before the fix both files hold what the 1.0.0-1.6.0 OUTCAR reader stored:
 // VASP's stress as printed ("in kB" times 6.241509074e-4, positive under
-// compression, i.e. -sigma) and the energy without entropy E_wo instead of F
-// (RELEASE-1.6.0-FOLLOWUPS.md, known-issues decisions, D;
-// tmp/known-issues/report_stress.md section 4, report_readers.md A.6).
+// compression, i.e. -sigma) and the energy without entropy E_wo instead of F.
 
 #include "catch2/catch.hpp"
 

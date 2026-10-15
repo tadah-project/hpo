@@ -87,7 +87,7 @@ void HPOEngine::validate(const tadah::mlip::Task &task) {
         "HPOEngine requires INIT2B or/and INITMB parameters to be set");
   }
 
-  // Phase 5 -- early "critical-fixed-not-optimised" preview. The
+  // Early "critical-fixed-not-optimised" preview. The
   // canonical, HPOTargets-aware audit runs inside hpo_run() once the
   // HPOTARGET file has been parsed. Here we do a lightweight scan of
   // the raw HPOTARGET file for `OPTIM <KEY>` tokens -- enough to flag

@@ -1,7 +1,6 @@
 // test_cohesive_energy_observable.cpp
 //
-// Phase D3 (PC_OBSERVABLE redesign): coverage for
-// CohesiveEnergyObservable.
+// Coverage for CohesiveEnergyObservable.
 //
 // What these tests check:
 //   1. Construction validation (bad args throw cleanly).
@@ -14,7 +13,7 @@
 //      byte (modulo float noise).
 //   4. Hot-var updates: with relax enabled, a0_current changes after
 //      evaluate.
-//   5. Neighbour lists (workstream C): the E_coh of a relaxation whose cell
+//   5. Neighbour lists: the E_coh of a relaxation whose cell
 //      changed equals a fresh neighbour-list evaluation of the relaxed bulk
 //      (the relaxer's cached list must carry the image displacements of
 //      the current cell); and --supercell 1 1 1 gives the E_coh of 4 4 4.
@@ -412,7 +411,7 @@ TEST_CASE("CohesiveEnergyObservable: relaxed E_coh equals a fresh "
  * At rcut 6 and a0 3.3 (rcut/a0 = 1.82) a list built at the model's cutoff
  * would miss images of the 2-atom cell before the fix, but the relaxer
  * builds its list at rcut + skin (2 A), wide enough that no pair inside
- * rcut is lost (DESIGN-nnfinder-exact-images.md, section 0 item 8). */
+ * rcut is lost. */
 TEST_CASE("CohesiveEnergyObservable: supercell 1 1 1 and 4 4 4 give the "
           "same E_coh",
           "[hpo][observable][cohesive_energy][nn][supercell]")

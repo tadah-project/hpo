@@ -76,7 +76,7 @@ hpo_examples_fast:
     - if [ -x examples/run_reference_suite.sh ]; then
         bash examples/run_reference_suite.sh --fast;
       else
-        echo "examples/run_reference_suite.sh not present yet (Session C will populate)";
+        echo "examples/run_reference_suite.sh not present yet";
         exit 0;
       fi
 
@@ -89,7 +89,7 @@ hpo_examples_full:
     - if [ -x examples/run_reference_suite.sh ]; then
         bash examples/run_reference_suite.sh --full;
       else
-        echo "examples/run_reference_suite.sh not present (Session C will populate)";
+        echo "examples/run_reference_suite.sh not present";
         exit 0;
       fi
 

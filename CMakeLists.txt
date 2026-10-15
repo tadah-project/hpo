@@ -206,7 +206,7 @@ if(NOT EXISTS ${TADAH_LAMMPS_DIR})
 endif()
 
 # we need to know which LAMMPS to use
-# note that LAMMPS lib must by compiles with tadah.lammps
+# LAMMPS lib must be compiled with tadah.lammps
 if(NOT TADAH_LAMMPS_LIB)
   message( FATAL_ERROR 
     "

@@ -1,7 +1,6 @@
 // test_nn_lammps_oracle.cpp
 //
-// pair_style tadah as an oracle for the MLIP neighbour lists (workstream C,
-// DESIGN-nnfinder-exact-images.md, section 5.3 (b)).
+// pair_style tadah as an oracle for the MLIP neighbour lists.
 //
 // LAMMPS builds its own ghost atoms and neighbour lists for any triclinic
 // box (a lower-triangular cell: rows (lx,0,0), (xy,ly,0), (xz,yz,lz), the
@@ -29,7 +28,7 @@
 //
 // A second case pins the stress sign shared by the two sides: LAMMPS'
 // virial pressure tensor is minus the stress the MLIP model predicts
-// (the Cauchy stress a Tadah dataset stores; workstream D).
+// (the Cauchy stress a Tadah dataset stores).
 
 #include "catch2/catch.hpp"
 

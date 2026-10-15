@@ -7,7 +7,7 @@
 under the unit-box transform, but reannealing rescales the per-dim temperatures by
 `max_tangent / tangent_i` with `tangent_i = (C(x_i(1+Δ)) − C_best) / (Δ·x_i + 1e-18)` — a raw-unit
 derivative whose offset is multiplicative in `x_i`. A coordinate at 0 (every lower bound of the unit box)
-gets no tangent (phase 3 journals this), and the reannealed temperature is capped at the initial one, so
+gets no tangent (the journal says so), and the reannealed temperature is capped at the initial one, so
 reannealing re-heats insensitive dims rather than cooling sensitive ones.
 
 **Proposal:** decide the `Reanneal_Parameters` default for HPO (0 keeps the width-invariant kernel

@@ -19,7 +19,7 @@
  * the point decides now: failed, the gradient fails at once -- unless it is a
  * graded failure under FAILSCORE_GRADING ON, whose differences are its
  * direction out of the failure region, unless every one is 0. And a
- * difference never mixes the kinds (owner decision, MK, 2026-10-15): each
+ * difference never mixes the kinds: each
  * component takes the side of its stencil whose points are of the kind of
  * the loss at the point -- usable at a usable point, graded failures at a
  * graded one --, one-sided into that side as a bound there would make it,
@@ -299,10 +299,9 @@ TEST_CASE("GradientProvider: FORWARD differences: a forward point of another "
      * Before the fix: passes as well (a pin of fd_component's FORWARD rule,
      * which no test reached: the one FORWARD failure case fails at the
      * point; a mutant whose forward step of another kind fails the gradient
-     * at once, as before the same-kind rule, fails it,
-     * tmp/before_fix_box_and_slopes_review_pins.txt). Before the same-kind
-     * rule (owner decision, MK, 2026-10-15) the failed forward point failed
-     * the gradient after two evaluations, naming 0.3. */
+     * at once, as before the same-kind rule, fails it). Before the
+     * same-kind rule the failed forward point failed the gradient after two
+     * evaluations, naming 0.3. */
     auto sp = inhouse_spec();
     sp.param["diff_method"] = 1;
     std::vector<std::pair<double, double>> asked;
@@ -368,10 +367,9 @@ TEST_CASE("GradientProvider: under FAILSCORE_GRADING a graded failure without "
      * into that side.
      * Before the fix: passes as well (a pin of StencilReport::no_side at a
      * graded failure, which no test reached; a mutant giving it the usable
-     * point's cause fails it, tmp/before_fix_box_and_slopes_review_pins.txt).
-     * Before the same-kind rule (owner decision, MK, 2026-10-15) the
-     * gradient was the central difference (0.7 - 1e9) / 0.4, the jump
-     * between the two sides, not a slope. */
+     * point's cause fails it).
+     * Before the same-kind rule the gradient was the central difference
+     * (0.7 - 1e9) / 0.4, the jump between the two sides, not a slope. */
     auto sp = inhouse_spec();
     sp.failscore = 1e9;
     sp.failscore_grading = true;

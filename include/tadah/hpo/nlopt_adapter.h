@@ -526,7 +526,7 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                 /* The loss counts against MAXEVAL, in the counter the
                  * GradientProvider counts the gradient's evaluations in.
                  * Compute f first so the trainer cache is populated at
-                 * this x; host.analytical_gradient (Phase 2A.4 wiring)
+                 * this x; host.analytical_gradient
                  * consumes the cached fit state. */
                 u->evals->fetch_add(1);
                 f = (*u->host)( u->sp->out(v) );

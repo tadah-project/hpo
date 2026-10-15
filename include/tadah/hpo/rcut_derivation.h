@@ -1,7 +1,7 @@
 #ifndef TADAH_HPO_RCUT_DERIVATION_H
 #define TADAH_HPO_RCUT_DERIVATION_H
 
-// F2 support for knot-family refit potentials inside the HPO loop.
+// Cutoff support for knot-family refit potentials inside the HPO loop.
 //
 // A knot channel's basis vanishes C^4-smoothly at its largest knot, so its
 // effective cutoff IS max(knot centre) and the RCUT2B/RCUTMB keys are

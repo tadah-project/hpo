@@ -1,4 +1,4 @@
-// Catch2 v2 unit tests for the per-iter health monitor (Phase 6).
+// Catch2 v2 unit tests for the per-iter health monitor.
 //
 // Verifies:
 //   * parse_health_log_mode handles full / summary / off (case-insensitive)

@@ -1,7 +1,6 @@
 #pragma once
 /*
- * box_penalty.h -- points outside the OPTIM box (owner decision, MK,
- * 2026-10-15).
+ * box_penalty.h -- points outside the OPTIM box.
  *
  * The OPTIM box is the configuration's contract: no point outside it is
  * evaluated, and none can be the run's best. A point an optimiser proposes
@@ -14,9 +13,9 @@
  * Both decide with outside_box() on the same REAL point, so they agree.
  *
  * The rule (outside_box). A coordinate within rounding outside its box is
- * evaluated on the bound (SearchSpace::snapped_onto_box, owner decision
- * D10) and is not outside; a NaN coordinate is not outside either (its
- * evaluation fails as such). Any other coordinate below lo or above hi is.
+ * evaluated on the bound (SearchSpace::snapped_onto_box) and is not
+ * outside; a NaN coordinate is not outside either (its evaluation fails
+ * as such). Any other coordinate below lo or above hi is.
  *
  * The distance is taken in the search's own coordinates
  * (SearchSpace::to_internal): under OPTIM_SCALE AUTO a fraction of each

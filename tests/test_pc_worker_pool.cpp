@@ -10,9 +10,7 @@
  * POT_BUILD_FAIL round-trips; bad invar => CREATE_FAIL) -- no valid trained
  * potential is required. Full valid-pot execution parity and the
  * deadline-kill of a genuinely hung LAMMPS run live in
- * test_pc_task_exec_parity.cpp (fixture-dependent).
- *
- * Design: INVESTIGATIONS/PC_ISOLATION_process_pool.md sections 3-5, 7. */
+ * test_pc_task_exec_parity.cpp (fixture-dependent). */
 
 #include "pc_process_workers.h"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
@@ -563,7 +561,7 @@ TEST_CASE("pc pool: workers ignore exactly the stop signals the parent "
 TEST_CASE("pc pool: repeated deaths throttle a channel, they do not retire it",
           "[pc_pool][kill][backoff]") {
   SKIP_WITHOUT_PC_PROCESS_WORKERS();
-  /* D1. spawn_locked used to THROW once a channel reached
+  /* spawn_locked used to THROW once a channel reached
    * PC_MAX_CONSEC_DEATHS. Because execute() only respawns when fd < 0 --
    * exactly the state a dead channel is left in -- and consec_deaths is
    * reset only after a complete RESULT round trip, that throw was permanent:

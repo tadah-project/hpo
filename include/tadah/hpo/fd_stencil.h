@@ -65,14 +65,12 @@
  * A point outside the box is not differenced: a gradient search that
  * ignores the bounds (OptimizerCaps::ignores_bounds: the CERES drivers)
  * gets the slope of its out-of-box score there (box_penalty.h,
- * GradientProvider; owner decision, MK, 2026-10-15, which retires D4, the
- * difference towards the box from outside it), and a coordinate within
- * rounding outside its box is differenced on the bound, where it is
- * evaluated (D10). fd_plan refuses a centre outside the box.
+ * GradientProvider; this replaces an earlier rule, the difference towards
+ * the box from outside it), and a coordinate within rounding outside its
+ * box is differenced on the bound, where it is evaluated. fd_plan refuses a centre outside the box.
  *
  * Kinds. A difference never mixes a usable loss with a failure, nor a graded
- * failure with a usable loss or an ungraded failure (owner decision, MK,
- * 2026-10-15): GradientProvider takes, per component, the side of the
+ * failure with a usable loss or an ungraded failure: GradientProvider takes, per component, the side of the
  * stencil whose losses are of the kind of the loss at the point, the
  * stencil a bound there would give (gradient_provider.h, fd_component).
  *

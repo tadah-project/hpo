@@ -1170,7 +1170,7 @@ TEST_CASE("anneal::pinned_dims tolerance is the dim's actual proposal scale",
         CHECK(pins[0].dim == 0);
         CHECK_FALSE(pins[0].hi);
         CHECK(pins[0].gap == Approx(0.05));
-        CHECK(pins[0].tol == Approx(0.1));      /* D22: the actual sigma */
+        CHECK(pins[0].tol == Approx(0.1));      /* the actual sigma */
 
         c.V = {0.04, 0.1};   /* gap 0.05 > sigma 0.04: one step clears it */
         CHECK(anneal::pinned_dims(c, sp, kb).empty());
@@ -1190,7 +1190,7 @@ TEST_CASE("anneal::pinned_dims tolerance is the dim's actual proposal scale",
         CHECK(pins[0].dim == 0);
         CHECK(pins[0].hi);
         CHECK(pins[0].gap == Approx(0.005));
-        CHECK(pins[0].tol == Approx(0.01));     /* D22: the V floor */
+        CHECK(pins[0].tol == Approx(0.01));     /* the V floor */
 
         /* V above the floor: adaptive shrinkage is not exhausted, so the
          * dim is not reported even at the same near-bound occupancy. */

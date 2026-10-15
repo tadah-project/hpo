@@ -1,8 +1,8 @@
 #pragma once
 /* Shared fixtures for the annealing test suites: journal capture, a
  * thread-safe counting stub host, a recording ChainObserver, and spec
- * builders. Header-only; used by the P2 lock tests and the statistical
- * validation suites. */
+ * builders. Header-only; used by the lock tests (test_anneal_p2_locks.cpp)
+ * and the statistical validation suites. */
 
 #include <tadah/hpo/anneal_core.h>
 #include <tadah/hpo/hpo_log.h>

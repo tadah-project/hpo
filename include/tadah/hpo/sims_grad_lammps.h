@@ -12,11 +12,11 @@ namespace LAMMPS_NS { class LAMMPS; class PairTadah; }
 
 namespace tadah::hpo {
 
-/* Phase 3.6 -- LAMMPS-side adapter.
+/* LAMMPS-side adapter.
  *
  * Wraps a LAMMPS instance at the relaxed state x* and a `LammpsSim`
  * metadata block into a fully-populated `SimsGradScriptInput`. This is
- * the seam that lets the Phase 3.5 chain core run against a real
+ * the seam that lets the chain core (sims_grad.h) run against a real
  * LAMMPS evaluation without `dloss_dtheta.h:800` having to know about
  * the LAMMPS plumbing directly.
  *
@@ -66,7 +66,7 @@ bool populate_sims_grad_input_from_lammps(
     double                      fail_score,
     SimsGradScriptInput&        out);
 
-/* Phase 3.7B-orchestrator -- script-side helpers for HPO_Host. Both are
+/* Orchestrator -- script-side helpers for HPO_Host. Both are
  * pure string utilities, no LAMMPS dependency, unit-tested under
  * `[sims_grad]`. The orchestrator's lambda calls them once per script
  * per gradient evaluation. */
@@ -84,9 +84,7 @@ bool populate_sims_grad_input_from_lammps(
  * `fix relax all box/relax iso 0.0 vmax 0.001` resolves to 1.
  *
  * Unrecognised box/relax modes (e.g. `x`, `y`, `z`, `xy`, ...) currently
- * fall back to 6 (treated as aniso); this is a conservative choice that
- * matches Phase 3.7.5's note that aniso falls back to atom-only on the
- * snapshot side. */
+ * fall back to 6 (treated as aniso), a conservative choice. */
 int detect_box_dofs_from_script(const std::vector<std::string>& script_lines);
 
 /* For each k in [0, lsim.i_varloss.size()) extract the LAMMPS variable

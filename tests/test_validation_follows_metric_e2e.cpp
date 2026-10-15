@@ -1,7 +1,6 @@
 // test_validation_follows_metric_e2e.cpp
 //
-// Validation follows the metric (known-issues workstream 1, branch
-// fix/pc-frmse-force-off; tmp/known-issues/report_frmse.md):
+// Validation follows the metric (branch fix/pc-frmse-force-off):
 //
 //   * FORCE and STRESS -- written in the configuration, left at their
 //     default, or set by `tadah hpo -F/-S` -- decide only what training
@@ -30,7 +29,7 @@
 //   - the journal never said what training fitted or what validation
 //     measured.
 //
-// Weight 0 (branch fix/weight0-metrics, MK 2026-10-05/06): PC_FRMSE leaves
+// Weight 0 (branch fix/weight0-metrics): PC_FRMSE leaves
 // out the validation structures stored with force weight 0 (fweight) and
 // PC_SRMSE those stored with stress weight 0 (sweight), per dataset; a
 // validation dataset in which every structure has that weight 0 is not
@@ -51,7 +50,7 @@
 // on neighbour lists of its own. The RMSEs are computed here, not by
 // mlip::Analytics. All data are synthetic (rattled bcc Ta cells with
 // made-up energies, forces and stresses): no shipped DFT dataset, so a
-// change of the stored stress convention (workstream D) cannot move a
+// change of the stored stress convention cannot move a
 // reference value.
 //
 // Hidden [valmetric_e2e][.] like the other HPO_Host end-to-end groups:
@@ -1275,7 +1274,7 @@ TEST_CASE("valmetric e2e: PC_FRMSE and PC_SRMSE leave out validation "
                         .epsilon(1e-12));
 }
 
-/* Case 2b. Pins (MK, 2026-10-06): a validation dataset in which every
+/* Case 2b. Pins: a validation dataset in which every
  * structure has force weight 0 has no PC_FRMSE ("not measured"), and one
  * in which every structure has stress weight 0 no PC_SRMSE. On the fixed
  * potential of case 2, through hpo_run():

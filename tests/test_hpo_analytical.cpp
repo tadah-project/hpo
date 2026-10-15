@@ -1,6 +1,6 @@
 // test_hpo_analytical.cpp
 //
-// Phase 2A.4 tests for the HPO analytical-gradient orchestration. Three
+// Tests for the HPO analytical-gradient orchestration. Three
 // thrusts:
 //
 //   1. LossFunction::loss_prime parity vs. central-difference for every
@@ -17,7 +17,7 @@
 //      θ index matches what the optimiser sees.
 //
 // The Layer-3 end-to-end ANALYTICAL-vs-NUMERICAL parity through a
-// running HPO_Host is staged behind 2A.4 wiring; the descriptor-side
+// running HPO_Host is staged behind this wiring; the descriptor-side
 // dPhi_train/dθ + dPhi_val/dθ assembly is not yet wired into the host's
 // forward eval. Until then, HYBRID + HPO_Host::analytical_gradient is
 // equivalent to NUMERICAL by construction (the orchestrator pushes
@@ -785,7 +785,7 @@ TEST_CASE("analytics_grad multi-segment: empty segment is skipped safely",
 /* ====================================================================
  * 3. compute_dloss_dtheta orchestrator routes everything to needs_fd.
  *
- * Phase 2A.4 deliverable; the actual analytical evaluation is staged
+ * The actual analytical evaluation is staged
  * behind the descriptor-side dPhi assembly. This test pins the
  * contract so a future implementer who fills the orchestrator must
  * also update the test.
@@ -1247,7 +1247,7 @@ struct ScopedTempFileLocal {
 
 /* Build a tiny truth StructureDB with N H-atom structures. Energies and
  * positions are filled deterministically; FORCE / STRESS are not used
- * (Phase 2A first cut: energy-only). natoms is fixed at 1 to make
+ * (energy-only). natoms is fixed at 1 to make
  * EMAE math trivial: emae = mean(|E_truth - E_pred|) * 1000. */
 StructureDB make_synthetic_truth(std::size_t N) {
     using namespace tadah::mlip;
@@ -1540,7 +1540,7 @@ PC_EMAE 0 1
                  << " dy_pred/dtheta=" << dyp);
         }
     }
-    /* Layer-3 tolerance per the plan: 1e-4 relative. */
+    /* Layer-3 tolerance: 1e-4 relative. */
     const double rel = std::abs(g(0) - dl_fd)
                      / std::max({std::abs(g(0)), std::abs(dl_fd), 1e-12});
     CHECK(rel < 1e-4);
@@ -1815,7 +1815,7 @@ namespace {
  * when kernel.get_label() == "Kern_Linear", so the train-side math is
  * byte-identical to M_BLR/BF_Linear; only the model-factory branch and
  * the predict-side `kernel.epredict` wrapper change. The HPO analytical
- * gate accepts both labels equivalently (Phase 2B B-HPO lift). */
+ * gate accepts both labels equivalently. */
 Context make_minimal_trainer_context_kern_linear(
     const std::vector<double>& cgrid,
     const std::vector<double>& sgrid,
@@ -1833,7 +1833,7 @@ Context make_minimal_trainer_context_kern_linear(
 }  // namespace
 
 TEST_CASE("compute_analytical_gradient_from_trainer matches FD on live trainer "
-          "(D2_BP + Kern_Linear + EMAE/L2) — Phase 2B (B-HPO)",
+          "(D2_BP + Kern_Linear + EMAE/L2)",
           "[HPO][analytical_gradient][live_trainer][parity][kern_linear]")
 {
     using tadah::mlip::memory::MLIPWorkspaceManager;
@@ -1924,7 +1924,7 @@ OPTIM CGRID2B (1) 0.0 4.0
 }
 
 TEST_CASE("compute_analytical_gradient_from_trainer falls back for non-linear kernel "
-          "(MODEL Kern_RBF) — Phase 2B (B-HPO) gate",
+          "(MODEL Kern_RBF)",
           "[HPO][analytical_gradient][live_trainer][kern_rbf][routing]")
 {
     using tadah::mlip::memory::MLIPWorkspaceManager;
@@ -1932,7 +1932,7 @@ TEST_CASE("compute_analytical_gradient_from_trainer falls back for non-linear ke
 
     /* Smoke test of the gate routing: with MODEL[1] = "Kern_RBF" the
      * helper must route every θ index onto needs_fd (no analytical
-     * support yet — EKM projection differentiation lands in Phase 2C).
+     * support yet — EKM projection is not differentiated).
      * This documents the current restriction and catches regressions
      * where someone forgets to add the new kernel to the gate. */
     const std::vector<double> cgrid_0 = {0.5, 1.4};
@@ -1989,7 +1989,7 @@ OPTIM CGRID2B (1) 0.0 4.0
 }
 
 /* ------------------------------------------------------------------------
- * Phase 2C (C-step) — FORCE=true live-trainer parity for the analytical
+ * FORCE=true live-trainer parity for the analytical
  * gradient. With FORCE=true the trainer fits W* against both energy and
  * force targets via the augmented Phi_train (1 energy + 3·natoms force
  * rows per struct, then ridge). The validation side stays energy-only
@@ -2049,7 +2049,7 @@ StructureDB make_h3_force_stdb(std::size_t N, double rcut, double force_scale) {
 }  // namespace
 
 TEST_CASE("compute_analytical_gradient_from_trainer matches FD on live trainer "
-          "(D2_BP + BF_Linear + FORCE=true + EMAE/L2) — Phase 2C (C-step)",
+          "(D2_BP + BF_Linear + FORCE=true + EMAE/L2)",
           "[HPO][analytical_gradient][live_trainer][parity][force]")
 {
     using tadah::mlip::memory::MLIPWorkspaceManager;
@@ -2135,7 +2135,7 @@ OPTIM CGRID2B (1) 0.0 4.0
 }
 
 /* ------------------------------------------------------------------------
- * Phase 2B (C-val) — use_frmse live-trainer parity for the analytical
+ * use_frmse live-trainer parity for the analytical
  * gradient. FORCE=true on the trainer (joint energy+force LSQ), AND
  * use_frmse=true on the validation side so the loss aggregates a force
  * RMSE term in addition to EMAE. The validation Phi gains 3·natoms
@@ -2182,7 +2182,7 @@ StructureDB predict_full(Trainer& host, const StructureDB& db) {
 }  // namespace
 
 TEST_CASE("compute_analytical_gradient_from_trainer matches FD on live trainer "
-          "(D2_BP + BF_Linear + FORCE=true + EMAE+FRMSE/L2) — Phase 2B (C-val)",
+          "(D2_BP + BF_Linear + FORCE=true + EMAE+FRMSE/L2)",
           "[HPO][analytical_gradient][live_trainer][parity][force][frmse]")
 {
     using tadah::mlip::memory::MLIPWorkspaceManager;
@@ -2509,17 +2509,17 @@ TEST_CASE("compute_analytical_gradient_from_trainer matches FD on an "
 }
 
 /* ------------------------------------------------------------------------
- * P2 (PROMPT_NEXT_NLOPT_LBFGS.md / Option A) — PC_LAMMPS falls back to FD
+ * PC_LAMMPS falls back to FD
  *
  * sims_loss from LAMMPS scripts is not differentiable analytically (LAMMPS
  * is opaque to the chain rule). The orchestrator's gate detects
  * !trg.LS.empty() and routes every theta index to needs_fd so HYBRID's
  * masked FD pass picks up both fit_loss and sims_loss components
- * consistently. Documented as Option A — partial-analytical (Option B,
- * Phase 2C) is the natural follow-up.
+ * consistently: the whole gradient falls back; there is no partial
+ * analytical path.
  * ------------------------------------------------------------------------ */
 TEST_CASE("compute_analytical_gradient_from_trainer falls back when "
-          "trg.LS is non-empty (PC_LAMMPS Option A)",
+          "trg.LS is non-empty (the whole gradient to finite differences)",
           "[HPO][analytical_gradient][live_trainer][lammps_fallback]")
 {
     using tadah::mlip::memory::MLIPWorkspaceManager;
@@ -2694,10 +2694,10 @@ OPTIM CGRID2B (1) 0.0 4.0
 }
 
 /* ------------------------------------------------------------------------
- * Phase 3.7B — `compute_analytical_gradient_from_trainer` accepts a
+ * `compute_analytical_gradient_from_trainer` accepts a
  * SimsGradProvider callback and folds sims_loss into the analytical
  * gradient when one is supplied. The null-provider path remains the
- * pre-3.7B fall_back_all_fd (covered by the Option A test above);
+ * earlier fall_back_all_fd (covered by the full-fallback test above);
  * here we verify both halves of the new branch:
  *
  *  (1) provider supplied + zero-observable input ⇒ behaves like the
@@ -2724,13 +2724,13 @@ OPTIM CGRID2B (1) 0.0 4.0
  *  asserted that); the case does not compile (the fields do not exist).
  * ------------------------------------------------------------------------ */
 TEST_CASE("compute_analytical_gradient_from_trainer wires the "
-          "SimsGradProvider into compute_sims_grad_dWchain (Phase 3.7B)",
+          "SimsGradProvider into compute_sims_grad_dWchain",
           "[HPO][analytical_gradient][live_trainer][sims_grad_provider]")
 {
     using tadah::mlip::memory::MLIPWorkspaceManager;
     tadah::core::PeriodicTable::initialize();
 
-    /* Same trainer scaffolding as the Option A test. */
+    /* Same trainer scaffolding as the full-fallback test. */
     const std::vector<double> cgrid_0 = {0.5, 1.4};
     const std::vector<double> sgrid_0 = {3.0, 5.0};
     const double rcut = 3.0;
@@ -2826,7 +2826,7 @@ OPTIM CGRID2B (1) 0.0 4.0
         return in;
     };
 
-    /* Case 1: null provider — Option A behaviour preserved. */
+    /* Case 1: null provider — the whole gradient still falls back. */
     std::vector<double> g_null;
     std::vector<int>    nfd_null;
     REQUIRE(tadah::hpo::compute_analytical_gradient_from_trainer(
@@ -2908,7 +2908,7 @@ OPTIM CGRID2B (1) 0.0 4.0
     CHECK(g_unknown[0] == 0.0);
 
     /* Case 4: provider reports failure ⇒ all-or-nothing fall back to
-     * FD (matches Phase 3.5's all-or-nothing contract). */
+     * FD (matches the sims_grad all-or-nothing contract). */
     int provider_calls_fail = 0;
     auto provider_fail =
         [&](std::vector<tadah::hpo::SimsGradScriptInput>& out) {
@@ -2927,18 +2927,18 @@ OPTIM CGRID2B (1) 0.0 4.0
 }
 
 /* ------------------------------------------------------------------------
- * P3 (PROMPT_NEXT_NLOPT_LBFGS.md) — composite-stack smoke test
+ * Composite-stack smoke test
  *
  * D2_Blip + DM_Blip + Cut_Poly + BF_Linear + energy-only (FORCE=false,
- * STRESS=false). Mirrors the user's first-run config (minus PC_LAMMPS,
- * which routes through the P2 fallback gate). Exercises:
+ * STRESS=false). Mirrors a first-run config (minus PC_LAMMPS,
+ * which routes through the PC_LAMMPS fallback gate). Exercises:
  *   - Cross-arm theta ownership: CGRID2B[1] is owned by D2_Blip only,
  *     CGRIDMB[1] is owned by DM_Blip only. The walker iterates both
  *     arms; only the owning arm writes per theta.
  *   - Cut_Poly fully analytical for both RCUT2B and RCUTMB chains
- *     (calc_drcut family complete after Phase 2B C-step).
+ *     (calc_drcut family complete).
  *   - Composite descriptor stack composes correctly end-to-end —
- *     pre-validates the Q4 risk (single dmb pointer in walker).
+ *     pre-validates the risk of a single dmb pointer in the walker.
  *
  * Asserts the gate accepts (needs_fd.empty()) and parity vs FD within
  * 1e-3 relative for one theta from each arm.
@@ -3076,8 +3076,8 @@ TEST_CASE("compute_analytical_gradient_from_trainer matches FD on live trainer "
     REQUIRE_FALSE(host.context.template get<bool>("FORCE"));
 
     /* Optimise two thetas — one from each arm. Both have closed forms:
-     * D2_Blip owns CGRID2B (Phase 2B-A1); DM_Blip owns CGRIDMB
-     * (Phase 2B-A3). The walker iterates both arms; only the owning
+     * D2_Blip owns CGRID2B; DM_Blip owns CGRIDMB.
+     * The walker iterates both arms; only the owning
      * arm should write per theta. */
     ScopedTempFileLocal cfg(R"(OPTIMIZER
 LIB DLIB
@@ -3164,7 +3164,7 @@ OPTIM CGRIDMB (1) 0.0 4.0
 }
 
 /* ------------------------------------------------------------------------
- * Phase 2C-DM — Layer-3 end-to-end FORCE parity on composite DM_mBlip
+ * Layer-3 end-to-end FORCE parity on composite DM_mBlip
  * stack. Mirrors a production blip6 configuration's shape (DM_mBlip
  * with F_Blip embedding, D2_Blip + Cut_Cos, BF_Linear) but reduced to
  * tiny grids for test cost. PC_EMAE+PC_FRMSE drive both energy- and
@@ -3274,7 +3274,7 @@ Context make_composite_mblip_force_context(const std::vector<double>& cgrid_2b,
 }  // namespace
 
 TEST_CASE("compute_analytical_gradient_from_trainer matches FD on live trainer "
-          "(D2_Blip + DM_mBlip + FORCE=true + EMAE+FRMSE/L2) — Phase 2C-DM",
+          "(D2_Blip + DM_mBlip + FORCE=true + EMAE+FRMSE/L2)",
           "[HPO][analytical_gradient][live_trainer][parity][composite][force][mblip]")
 {
     using tadah::mlip::memory::MLIPWorkspaceManager;
@@ -3402,8 +3402,8 @@ OPTIM CGRIDMB (1) 0.0 4.0
 }
 
 /* ------------------------------------------------------------------------
- * Phase 2C-WATOM — Layer-3 end-to-end parity with WATOM[1] in OPTIM.
- * Mirrors the Phase 2C-DM composite test but adds WATOM[1] alongside
+ * Layer-3 end-to-end parity with WATOM[1] in OPTIM.
+ * Mirrors the DM_mBlip composite test but adds WATOM[1] alongside
  * CGRID2B[1] and CGRIDMB[1]. The gate must accept WATOM (no FD fallback)
  * and the analytical gradient must match FD within 1e-3 relative.
  * Asserts a production blip6 config shape (D2_Blip + DM_mBlip +
@@ -3487,7 +3487,7 @@ Context make_composite_mblip_force_context_with_watom(
 }  // namespace
 
 TEST_CASE("compute_analytical_gradient_from_trainer matches FD on live trainer "
-          "(D2_Blip + DM_mBlip + WATOM + FORCE=true + EMAE+FRMSE) — Phase 2C-WATOM",
+          "(D2_Blip + DM_mBlip + WATOM + FORCE=true + EMAE+FRMSE)",
           "[HPO][analytical_gradient][live_trainer][parity][composite][force][mblip][watom]")
 {
     using tadah::mlip::memory::MLIPWorkspaceManager;
@@ -3627,7 +3627,7 @@ OPTIM WATOM   (1) 0.2 10.0
     }
 }
 
-/* Phase 2D reproducibility: the per-θ loop in
+/* Reproducibility: the per-θ loop in
  * compute_analytical_gradient_from_trainer is wrapped in
  * `#pragma omp parallel for schedule(dynamic)`. Each iteration owns its
  * dphi_train_buf[i] / dphi_val_buf[i] / per_theta[i] slot and a
@@ -3635,12 +3635,12 @@ OPTIM WATOM   (1) 0.2 10.0
  * shared state. No reductions happen across threads in the loop, so the
  * gradient values must be byte-identical regardless of OMP_NUM_THREADS.
  *
- * The composite [force][mblip][watom] case from Phase 2C-WATOM is the
+ * The composite [force][mblip][watom] case of the WATOM test is the
  * stress-test target: it exercises both arms (D2 + DM), both walker
  * pairs (energy + force, train + val), and both per-pair and per-atom
  * scratch usage. */
 TEST_CASE("compute_analytical_gradient_from_trainer reproducibility under "
-          "varying OMP thread counts (Phase 2D)",
+          "varying OMP thread counts",
           "[HPO][analytical_gradient][live_trainer][reproducibility][composite][force][mblip][watom][omp]")
 {
     using tadah::mlip::memory::MLIPWorkspaceManager;
@@ -3728,7 +3728,7 @@ OPTIM WATOM   (1) 0.2 10.0
         CHECK(g_serial[i] == g_parallel[i]);
     }
 
-    /* Phase 2F: cost-descending sort over prefs reorders OMP dispatch
+    /* The cost-descending sort over prefs reorders OMP dispatch
      * but writes go to dphi_*_buf[i] / per_theta[i] in descriptor-side
      * indexing, so the orchestrator's chain-rule reduction is identical.
      * The compute_analytical_gradient_from_trainer body keeps a static

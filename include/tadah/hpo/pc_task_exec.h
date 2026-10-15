@@ -2,14 +2,14 @@
 #ifndef TADAH_HPO_PC_TASK_EXEC_H
 #define TADAH_HPO_PC_TASK_EXEC_H
 
-/* PC_LAMMPS single-task execution core (PC_ISOLATION design, Phase 2).
+/* PC_LAMMPS single-task execution core (PC_ISOLATION).
  *
  * This is the LAMMPS-touching heart of HPO_Host::run_lammps's per-script
  * runner (`run_one`), extracted verbatim so that EXACTLY ONE implementation
  * is shared by:
  *   - the in-process THREAD path (today's behaviour; a ScriptExecutor worker
  *     calls execute_script_task directly), and
- *   - the PC_ISOLATION worker-process main loop (Phase 3; a re-exec'd child
+ *   - the PC_ISOLATION worker-process main loop (a re-exec'd child
  *     calls it on deserialized inputs),
  * making THREAD vs PROCESS numerical identity structural rather than hoped
  * for. See INVESTIGATIONS/PC_ISOLATION_process_pool.md.
@@ -38,7 +38,7 @@
  *     search). Recreation is ~free (create_ms is ~0.02% of run_ms).
  *     A TIMEOUT_CLEAN failure keeps the healthy instance, as before;
  *   - one LammpsTadah per (slot, iter), adopted by every EXTERN pair_coeff of
- *     every script this slot runs within the eval (O1a); a throwing ctor is
+ *     every script this slot runs within the eval; a throwing ctor is
  *     negative-cached for the remainder of the iter on this slot;
  *   - create_ms brackets only the cache lookup/create; run_ms brackets
  *     inject + potential build + run_script (NOT the variable readback);
@@ -173,7 +173,7 @@ struct PcTaskResult {
 /* Per-slot persistent execution state. In THREAD mode this lives in a
  * function-local `static thread_local` (one per ScriptExecutor worker), which
  * is exactly the lifetime of the pre-extraction `tls_lmp_cache` / `tls_lt` /
- * `tls_lt_iter` thread-locals. In PROCESS mode (Phase 3) one instance lives in
+ * `tls_lt_iter` thread-locals. In PROCESS mode one instance lives in
  * each worker process. */
 template <class R>
 struct PcSlotState {
@@ -329,7 +329,7 @@ PcTaskResult execute_script_task_unguarded(
     }
   }
 
-  /* --- Trial potential: one LammpsTadah per (slot, iter) (O1a) ---------- */
+  /* --- Trial potential: one LammpsTadah per (slot, iter) ---------------- */
   if (st.pot_iter != static_cast<long long>(iter)) {
     st.pot_failed = false;
     try {

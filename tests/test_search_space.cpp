@@ -549,9 +549,8 @@ TEST_CASE("SearchSpace: the ends of the internal box map to exactly the ends "
     /* T^-1 rounds (exp, sinh, the affine map of the unit box): LOG and
      * ASINH ends came back one ulp outside the box -- LOG [0.01, 10] at
      * u = 1 gave 10.000000000000002, an evaluation outside the box that was
-     * recorded as the best when an optimiser pressed against the bound
-     * (owner decision D6, 2026-09-29). A u outside the internal box still
-     * maps through T^-1, unclamped. */
+     * recorded as the best when an optimiser pressed against the bound. A
+     * u outside the internal box still maps through T^-1, unclamped. */
     for (const bool normalise : {true, false}) {
         CAPTURE(normalise);
         ScalePolicy pol;

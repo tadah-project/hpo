@@ -863,7 +863,7 @@ struct CompactFitHook : tadah::hpo::engines::HPORefitEngine {
  * No `tadah refit` run reaches it: run()'s crystal gate refuses a table
  * whose crystal's nearest neighbours at REFIT_REACH_SMIN are less than dr
  * apart (the next test), so only a caller of the hook can hand it one
- * (owner decision, MK, 2026-10-15: an internal error, not a fallback).
+ * (an internal error, not a fallback).
  * Before the fix: the internal error said "the reachable pair-distance
  * window is empty (r_reach = 0.0000 A, from REFIT_REACH_SMIN 0.0000 and the
  * fcc lattice of a0 = 3.6000 A), although the crystal gate (a known
@@ -986,8 +986,7 @@ TEST_CASE_METHOD(PTFixture,
  * started its windows at 0.8 x r_reach = 153 A, above rcut, ran its phi
  * ladder and failed inside the fitter: "compact_fitter
  * clamp_bump_support_params: radial bump 1 (mu 153.159329) has width eta
- * -0.006749 <= 0; every radial bump width must be > 0"
- * (tmp/rg_probe/a0pm). */
+ * -0.006749 <= 0; every radial bump width must be > 0". */
 TEST_CASE_METHOD(PTFixture,
                  "tadah refit compact: a lattice constant whose nearest "
                  "neighbours are beyond the cutoff is refused by the crystal "

@@ -1,11 +1,11 @@
-// Phase 3.5 — sims_grad chain-rule tests.
+// sims_grad chain-rule tests.
 //
 // LAMMPS-free: synthetic Hessian + synthetic aeds + synthetic dF/dW
 // snapshot. The kernels are pure linear algebra so we can FD against
 // closed-form ground truths to high precision (1e-6 .. 1e-12) without
-// touching the LAMMPS dtor blocker that gates Phase 3.6's pilot.
+// touching the LAMMPS dtor blocker that gates the end-to-end pilot.
 //
-// Phase 3.7B-orchestrator (additions at end of file): also covers the
+// Additions at the end of the file also cover the
 // two pure-string helpers `detect_box_dofs_from_script` and
 // `extract_varloss_expressions` from sims_grad_lammps.h. They are the
 // script-side glue the SimsGradProvider lambda uses inside HPO_Host.
@@ -91,7 +91,7 @@ void theta_only_through_w(SimsGradScriptInput& in, std::size_t n_theta)
 }  // namespace
 
 TEST_CASE("sims_grad — IFT kernel: λ=0 ⇒ dO/dW == dg/dW",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     Synth s;
     Eigen::VectorXd dg_dW(s.n_desc);
@@ -106,7 +106,7 @@ TEST_CASE("sims_grad — IFT kernel: λ=0 ⇒ dO/dW == dg/dW",
 }
 
 TEST_CASE("sims_grad — IFT kernel: λ·dF_dW added per (atom,axis,c)",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     Synth s;
     Eigen::VectorXd dg_dW = Eigen::VectorXd::Zero(s.n_desc);
@@ -131,7 +131,7 @@ TEST_CASE("sims_grad — IFT kernel: λ·dF_dW added per (atom,axis,c)",
 }
 
 TEST_CASE("sims_grad — loss_grad_wrt_observed sign + magnitudes for L2",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     LossFunction l2(LossFunction::Type::L2);
     /* L = w * r²;   dL/dv = 2*w*(v - t). */
@@ -147,7 +147,7 @@ TEST_CASE("sims_grad — loss_grad_wrt_observed sign + magnitudes for L2",
 }
 
 TEST_CASE("sims_grad — loss_grad_wrt_observed dispatch coverage",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     /* Residual-based losses → supported. */
     for (auto t : {LossFunction::Type::L1, LossFunction::Type::L2,
@@ -168,7 +168,7 @@ TEST_CASE("sims_grad — loss_grad_wrt_observed dispatch coverage",
 }
 
 TEST_CASE("sims_grad — apply_loss_fold accumulates correctly",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     LossFunction l2(LossFunction::Type::L2);
     Eigen::VectorXd dO_dW(3);  dO_dW << 1.0, 2.0, 3.0;
@@ -191,7 +191,7 @@ TEST_CASE("sims_grad — apply_loss_fold accumulates correctly",
 }
 
 TEST_CASE("sims_grad — apply_loss_fold rejects MAPE without writing dL_dW",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     LossFunction mape(LossFunction::Type::MAPE);
     Eigen::VectorXd dO_dW(2);  dO_dW << 1.0, 2.0;
@@ -203,7 +203,7 @@ TEST_CASE("sims_grad — apply_loss_fold rejects MAPE without writing dL_dW",
 }
 
 TEST_CASE("sims_grad — apply_dWdtheta_chain: g_out[i] += Σ_c dL_dW · dWdθ[i,c]",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     Eigen::VectorXd dL_dW(3);  dL_dW << 1.0, -2.0, 3.0;
     /* dWdtheta layout: row-major, 4 θ rows × 3 cols. */
@@ -236,7 +236,7 @@ TEST_CASE("sims_grad — apply_dWdtheta_chain: g_out[i] += Σ_c dL_dW · dWdθ[i
 }
 
 TEST_CASE("sims_grad — apply_dWdtheta_chain skips row when g_idx is -1",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     Eigen::VectorXd dL_dW(2);  dL_dW << 1.0, 1.0;
     std::vector<double> dWdtheta = {1.0, 1.0, 9.0, 9.0};
@@ -249,7 +249,7 @@ TEST_CASE("sims_grad — apply_dWdtheta_chain skips row when g_idx is -1",
 
 TEST_CASE("sims_grad — compute_sims_grad_for_script (pilot path: cohesive E "
           "per atom, λ=0 fast path)",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     Synth s;
     SimsGradScriptInput in;
@@ -281,7 +281,7 @@ TEST_CASE("sims_grad — compute_sims_grad_for_script (pilot path: cohesive E "
 
 TEST_CASE("sims_grad — compute_sims_grad_for_script returns false on "
           "unrecognised expression (host falls back to FD)",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     Synth s;
     SimsGradScriptInput in;
@@ -304,7 +304,7 @@ TEST_CASE("sims_grad — compute_sims_grad_for_script returns false on "
 
 TEST_CASE("sims_grad — compute_sims_grad_dWchain end-to-end on pilot-shaped "
           "input matches FD over W",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     Synth s;
     SimsGradScriptInput in;
@@ -360,8 +360,8 @@ TEST_CASE("sims_grad — compute_sims_grad_dWchain end-to-end on pilot-shaped "
 }
 
 TEST_CASE("sims_grad — compute_sims_grad_dWchain routes ALL θ to needs_fd "
-          "on first unrecognised observable (3.5 all-or-nothing policy)",
-          "[sims_grad][phase3]")
+          "on first unrecognised observable (all-or-nothing policy)",
+          "[sims_grad][adjoint]")
 {
     Synth s;
     SimsGradScriptInput in;
@@ -393,7 +393,7 @@ TEST_CASE("sims_grad — compute_sims_grad_dWchain routes ALL θ to needs_fd "
 }
 
 /* ---------------------------------------------------------------- *
- * Phase A masking: SimsGradScriptInput::failed = true is silently
+ * Masking: SimsGradScriptInput::failed = true is silently
  * skipped (zero contribution to the chain). Surviving entries still
  * fold their analytical contributions. This is the load-bearing
  * behaviour for HPO configs that mix PC_LAMMPS scripts with random-
@@ -401,8 +401,8 @@ TEST_CASE("sims_grad — compute_sims_grad_dWchain routes ALL θ to needs_fd "
  * PC_OBSERVABLE chain gradients.
  * ---------------------------------------------------------------- */
 TEST_CASE("sims_grad — compute_sims_grad_dWchain skips failed=true entries "
-          "and still folds the surviving scripts (Phase A masking)",
-          "[sims_grad][phase_a][phase3]")
+          "and still folds the surviving scripts (failed-entry masking)",
+          "[sims_grad][failed_masking][adjoint]")
 {
     Synth s;
 
@@ -445,7 +445,7 @@ TEST_CASE("sims_grad — compute_sims_grad_dWchain skips failed=true entries "
         CHECK(nf.empty());
     }
 
-    /* Phase A: bad before good, after good, and sandwiched — order
+    /* Bad before good, after good, and sandwiched — order
      * must not matter, the bad entry contributes zero in all cases. */
     for (auto order : std::vector<std::vector<SimsGradScriptInput>>{
             {bad, good}, {good, bad}, {bad, good, bad}}) {
@@ -463,7 +463,7 @@ TEST_CASE("sims_grad — compute_sims_grad_dWchain skips failed=true entries "
 
 TEST_CASE("sims_grad — compute_sims_grad_dWchain on all-failed list returns "
           "true with empty needs_fd (no-op gradient contribution)",
-          "[sims_grad][phase_a][phase3]")
+          "[sims_grad][failed_masking][adjoint]")
 {
     SimsGradScriptInput failed_a; failed_a.failed = true;
     SimsGradScriptInput failed_b; failed_b.failed = true;
@@ -486,8 +486,8 @@ TEST_CASE("sims_grad — compute_sims_grad_dWchain on all-failed list returns "
 }
 
 TEST_CASE("sims_grad — compute_observables_grad_dWchain skips failed=true "
-          "entries (Phase A masking, mirrors sims branch)",
-          "[sims_grad][phase_a][phase3]")
+          "entries (failed-entry masking, mirrors sims branch)",
+          "[sims_grad][failed_masking][adjoint]")
 {
     /* Good observable: cohesive-energy-shaped, L2 loss, fold (v-t)·dO/dW
      * into the chain over a 2-θ dW/dθ matrix. */
@@ -717,7 +717,7 @@ TEST_CASE("sims_grad — compute_observables_grad_dWchain rejects an explicit "
 
 TEST_CASE("sims_grad — IFT chain rule cross-check via central diff on W "
           "for a non-trivial λ (lattice-constant-style)",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     /* Use box_dofs=1 + a synthetic lattice-constant rhs. This is the
      * λ≠0 path. We compare analytical dO/dW against an FD of a
@@ -778,17 +778,17 @@ TEST_CASE("sims_grad — IFT chain rule cross-check via central diff on W "
     }
 }
 
-// ---------------------------------------------------------------- Phase 3.7.5
+// ----------------------------------------------------------------
 // Box-DOF extension: apply_ift_chain_kernel now optionally consumes
 // dvirial_dW + box_dofs to fold λ_box rows into dO/dW. Verify the new
 // path against hand-computed expectations and confirm the old (atom-
 // only) signature still works byte-for-byte unchanged.
 
 TEST_CASE("sims_grad — IFT kernel box-DOF: λ_box · dvirial_dW accumulates",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     Synth s;
-    constexpr int box_dofs = 1;       // iso strain only (Phase 3.7.5 scope)
+    constexpr int box_dofs = 1;       // iso strain only
     Eigen::VectorXd dg_dW = Eigen::VectorXd::Zero(s.n_desc);
     Eigen::VectorXd lambda(3 * s.nlocal + box_dofs);
     lambda.setZero();
@@ -811,7 +811,7 @@ TEST_CASE("sims_grad — IFT kernel box-DOF: λ_box · dvirial_dW accumulates",
 }
 
 TEST_CASE("sims_grad — IFT kernel box-DOF: atom + box blocks sum",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     Synth s;
     constexpr int box_dofs = 1;
@@ -841,7 +841,7 @@ TEST_CASE("sims_grad — IFT kernel box-DOF: atom + box blocks sum",
 }
 
 TEST_CASE("sims_grad — IFT kernel box-DOF: nullptr/0 preserves atom-only path",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     Synth s;
     Eigen::VectorXd dg_dW = Eigen::VectorXd::Zero(s.n_desc);
@@ -874,7 +874,7 @@ TEST_CASE("sims_grad — IFT kernel box-DOF: nullptr/0 preserves atom-only path"
 }
 
 TEST_CASE("sims_grad — IFT kernel box-DOF: lambda size + box_dofs validation",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     Synth s;
     Eigen::VectorXd dg_dW = Eigen::VectorXd::Zero(s.n_desc);
@@ -897,7 +897,7 @@ TEST_CASE("sims_grad — IFT kernel box-DOF: lambda size + box_dofs validation",
 }
 
 TEST_CASE("sims_grad — compute_sims_grad_for_script propagates dvirial_dW",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     /* Verify the aggregator forwards dvirial_dW + box_dofs into the kernel.
      * Use a lattice-constant-style observable (dg_dx_is_zero=false) so the
@@ -1147,7 +1147,7 @@ struct DirectThetaStub {
 TEST_CASE("sims_grad — compute_sims_grad_dWchain adds the direct theta term "
           "and matches central differences of the loss where theta enters the "
           "energy and the forces at fixed weights",
-          "[sims_grad][phase3][direct_theta]")
+          "[sims_grad][adjoint][direct_theta]")
 {
     /* Pins: for the cohesive energy alone (lambda = 0: its direct term is
      * dE/dtheta / N at fixed W), the lattice constant alone (lambda != 0:
@@ -1160,7 +1160,7 @@ TEST_CASE("sims_grad — compute_sims_grad_dWchain adds the direct theta term "
      * Before the fix: SimsGradScriptInput has no direct term (dg_dtheta,
      * dF_dtheta, direct_theta): the case does not compile; the chain gave
      * the W path only, which misses the central differences by the
-     * direct term (tmp/before_fix_hc3_chain_fd.txt). */
+     * direct term. */
     using Term = DirectThetaStub::Term;
     const std::vector<std::pair<std::string, std::vector<Term>>> sets = {
         {"cohesive energy", {{"c_eatoms/atoms", -1.5, 1.0}}},
@@ -1205,7 +1205,7 @@ TEST_CASE("sims_grad — compute_sims_grad_dWchain adds the direct theta term "
 
 TEST_CASE("sims_grad — compute_sims_grad_dWchain routes every theta to "
           "finite differences for a script without the direct theta term",
-          "[sims_grad][phase3][direct_theta]")
+          "[sims_grad][adjoint][direct_theta]")
 {
     /* The provider must say what theta does at fixed W (direct_theta); a
      * script with observables that does not is a structural failure, like
@@ -1244,7 +1244,7 @@ TEST_CASE("sims_grad — compute_sims_grad_dWchain routes every theta to "
 TEST_CASE("sims_grad — compute_sims_grad_dWchain rejects a direct theta term "
           "that does not match the observables, the theta rows or the "
           "generalised coordinates",
-          "[sims_grad][phase3][direct_theta]")
+          "[sims_grad][adjoint][direct_theta]")
 {
     /* Pins: a dg_dtheta of other than k x n_theta values or a dF_dtheta of
      * other than n_theta x (3 nlocal + box_dofs) throws, naming the field.
@@ -1270,7 +1270,7 @@ TEST_CASE("sims_grad — compute_sims_grad_dWchain rejects a direct theta term "
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3.7B-orchestrator — script-side helpers
+// Script-side helpers
 // ---------------------------------------------------------------------------
 //
 // Two pure-string utilities used inside HPO_Host::analytical_gradient's
@@ -1278,7 +1278,7 @@ TEST_CASE("sims_grad — compute_sims_grad_dWchain rejects a direct theta term "
 
 TEST_CASE("sims_grad_lammps — detect_box_dofs_from_script picks iso vs aniso "
           "from `fix box/relax` lines",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     using tadah::hpo::detect_box_dofs_from_script;
 
@@ -1337,7 +1337,7 @@ TEST_CASE("sims_grad_lammps — detect_box_dofs_from_script picks iso vs aniso "
 
 TEST_CASE("sims_grad_lammps — extract_varloss_expressions reads "
           "`variable <name> equal <expr>` and slots them by i_varloss",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     using tadah::hpo::extract_varloss_expressions;
     using tadah::hpo::LammpsSim;
@@ -1365,7 +1365,7 @@ TEST_CASE("sims_grad_lammps — extract_varloss_expressions reads "
 
 TEST_CASE("sims_grad_lammps — extract_varloss_expressions: last "
           "definition wins (LAMMPS redefinition semantics)",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     using tadah::hpo::extract_varloss_expressions;
     using tadah::hpo::LammpsSim;
@@ -1389,7 +1389,7 @@ TEST_CASE("sims_grad_lammps — extract_varloss_expressions: last "
 
 TEST_CASE("sims_grad_lammps — extract_varloss_expressions: missing "
           "variable definitions yield empty slots",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     using tadah::hpo::extract_varloss_expressions;
     using tadah::hpo::LammpsSim;
@@ -1412,7 +1412,7 @@ TEST_CASE("sims_grad_lammps — extract_varloss_expressions: missing "
 
 TEST_CASE("sims_grad_lammps — extract_varloss_expressions: comments and "
           "unsupported styles ignored",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     using tadah::hpo::extract_varloss_expressions;
     using tadah::hpo::LammpsSim;
@@ -1447,7 +1447,7 @@ TEST_CASE("sims_grad_lammps — extract_varloss_expressions: comments and "
  * stay on the analytical path. */
 TEST_CASE("sims_grad_lammps — extract_varloss_expressions: "
           "`string $(...)` immediate-eval honoured",
-          "[sims_grad][phase3]")
+          "[sims_grad][adjoint]")
 {
     using tadah::hpo::extract_varloss_expressions;
     using tadah::hpo::LammpsSim;

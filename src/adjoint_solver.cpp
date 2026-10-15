@@ -48,7 +48,7 @@ void DenseAdjointSolver::solve(const Eigen::VectorXd& rhs,
     }
 
     /* Fast-path: identically-zero rhs => lambda = 0. Pairs with
-     * `ObservableHandle::dg_dx_is_zero` from Phase 3.3 so caller can
+     * `ObservableHandle::dg_dx_is_zero` so the caller can
      * skip the call entirely; this catch is the defensive belt. */
     if (rhs.cwiseAbs().maxCoeff() == 0.0) {
         lambda = Eigen::VectorXd::Zero(n_total_);

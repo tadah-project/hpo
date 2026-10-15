@@ -907,7 +907,7 @@ TEST_CASE("ANNEAL: AUTO CHAIN_LENGTH/NT are derived from MAXEVAL and journaled",
     }
 }
 
-/* ---- Phase-0 fixes: validation, T0 estimator, REANNEAL ------------ */
+/* ---- Fixes: validation, T0 estimator, REANNEAL -------------------- */
 
 TEST_CASE("ANNEAL: dead knobs are hard errors, not silent no-ops",
           "[HPO][anneal][validation]")
@@ -931,7 +931,7 @@ TEST_CASE("ANNEAL: dead knobs are hard errors, not silent no-ops",
         REQUIRE_THROWS_WITH(run_anneal_impl<Vec>(sp, stub),
                             Catch::Contains("XTOL"));
     }
-    SECTION("THREADS on the serial annealer (Option A: sizes the fan-out pool)") {
+    SECTION("THREADS on the serial annealer (sizes the fan-out pool)") {
         // Under the shared-pool model THREADS is the total worker-pool width and
         // is honoured by EVERY family: serial ANNEAL runs ONE chain, but its
         // within-eval pc_lammps fan-out runs on that pool, so THREADS is valid

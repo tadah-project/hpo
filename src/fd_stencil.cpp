@@ -337,9 +337,9 @@ std::optional<FdStencil> fd_plan(double u, double a, double b, FdRule rule,
     }
     if (u < a || u > b)
         /* The gradient provider gives a point outside the box the slope of
-         * its out-of-box score (box_penalty.h; owner decision, MK,
-         * 2026-10-15), and differences a coordinate within rounding outside
-         * its box on the bound (D10): no stencil is planned outside. */
+         * its out-of-box score (box_penalty.h), and differences a coordinate
+         * within rounding outside its box on the bound: no stencil is planned
+         * outside. */
         throw std::logic_error(
             "fd_plan: u = " + num(u) + " lies outside the box [" + num(a) +
             ", " + num(b) + "]: a point outside the OPTIM box is not "
@@ -553,8 +553,7 @@ std::string fd_box_error(const OptimizerSpec& sp, const FdSettings& s)
         ") inside it; the step is not shrunk:" + bad + "\n  ";
     std::vector<std::string> fixes;
     if (smallest_fit) {
-        /* NOISE AUTO is refused beside a PARAM fd_step (owner decision
-         * D8) */
+        /* NOISE AUTO is refused beside a PARAM fd_step. */
         fixes.push_back(std::string(s.source == FdStepSource::NoiseAuto
                                         ? "remove AUTO from the NOISE block "
                                           "and set"

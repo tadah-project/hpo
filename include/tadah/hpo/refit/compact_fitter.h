@@ -548,7 +548,7 @@ double joint_refine(BlipFit &phi, BlipFit &rho, BlipFit &F,
 
 /** The FUSE stage budget of compact refit: FUSE MAXEVAL (Ceres iterations)
  *  bounds the whole stage -- the joint solve and the held re-run passes
- *  after it draw from it (owner decision 2026-09-29). */
+ *  after it draw from it. */
 struct FuseBudget {
   int maxeval = 0;  ///< the stage's MAXEVAL
   int spent = 0;    ///< iterations used so far
@@ -588,7 +588,7 @@ CompactConfig fuse_curve_config(const CompactConfig &cfg);
  *  configured Ceres refine of @p ff's curve (cfg.refine_algo; @p ff is
  *  built with fuse_curve_config), in the edge
  *  parametrisation (refine_edges) on a bump family under a hard cutoff --
- *  the owner's compact-mode FUSE rule, so the bump-support projection after
+ *  the compact-mode FUSE rule, so the bump-support projection after
  *  it cannot undo the fit -- else refine_with_cfg; ALGO NONE re-solves the
  *  coefficients only. Then clamp_bump_support (with its coefficient
  *  re-solve), which guards a pinned bump; returns the bumps it moved. */

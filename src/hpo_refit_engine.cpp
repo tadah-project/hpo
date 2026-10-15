@@ -177,9 +177,8 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
   // here, and a crystal whose nearest neighbours at a0 are at or beyond
   // rcut: so dr <= r_reach < rcut for every run that reaches this hook. A
   // smaller one is a bug in what reached it (the compact fit's windows start
-  // from it), not a table the fitter declines: an internal error (owner
-  // decision, MK, 2026-10-15; the hook has no other outcome than a fit or
-  // an exception).
+  // from it), not a table the fitter declines: an internal error (the hook
+  // has no other outcome than a fit or an exception).
   EAMRefit probe(eam, cfg);
   probe.analyze_reachability();
   if (!(probe.r_reach() >= eam.dr()))
@@ -700,8 +699,7 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
     const double w_rad = tadah::models::bump_halfwidth(
         blip5 ? tadah::models::BasisKind::Blip5 : tadah::models::BasisKind::Blip);
     const double tol = tadah::models::bump_rcut_tol(rcut);
-    // A radial bump needs a width eta > 0 in every form (owner decision
-    // 2026-09-29): it spans [mu - w/eta, mu + w/eta], so eta <= 0 has no
+    // A radial bump needs a width eta > 0 in every form: it spans [mu - w/eta, mu + w/eta], so eta <= 0 has no
     // support edge (the bump is even in eta and was fitted as its mirror),
     // and a MONOTONE step with eta <= 0 is not non-increasing. Only a
     // MANUAL placement states a width; the others take eta_def > 0. The
@@ -955,8 +953,8 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
     // under NONNEG / MONOTONE it bounds the amplitudes at 0 and the bump
     // widths at the ladder's floor.
     // FUSE MAXEVAL (Ceres iterations) bounds the whole stage: the joint
-    // solve and the held re-run passes below draw from one budget (owner
-    // decision 2026-09-29). run_joint(cap) returns the iterations it used.
+    // solve and the held re-run passes below draw from one budget.
+    // run_joint(cap) returns the iterations it used.
     FuseBudget fuse_budget{lcfg.joint_max_iter};
     auto run_joint = [&](int max_iter) {
       int used = 0;

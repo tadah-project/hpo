@@ -1,9 +1,7 @@
 // test_metric_unit_labels.cpp
 //
 // The units HPO prints for the relative energy RMSE (PC_ErRMSE) and the
-// stress RMSE (PC_SRMSE) (known-issues workstream 1, branch
-// fix/pc-frmse-force-off; tmp/known-issues/ws1_review.json, "New
-// metric-unit table").
+// stress RMSE (PC_SRMSE) (branch fix/pc-frmse-force-off).
 //
 //   * ErRMSE is sqrt(mean(((E_ref - E_pred) / E_ref)^2)) x 1000
 //     (Analytics::calc_e_rrmse, scaled by HPO_Host::fill_validation): a

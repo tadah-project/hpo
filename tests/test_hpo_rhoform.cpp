@@ -317,7 +317,7 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: explicit boxes that reach an invalid "
     CHECK_THAT(err("MONOTONE", "OPTIM SGRIDMB (2) -1 4\n"),
                Catch::Contains("requires every SGRIDMB width > 0"));
     CHECK(err("MONOTONE", "OPTIM SGRIDMB (2) 1 4\n").empty());
-    // Owner decision (2026-09-29, C8): every radial bump width > 0 in every
+    // Every radial bump width > 0 in every
     // form, so the Blip5 density's box that passed under NONNEG is refused
     CHECK_THAT(err("NONNEG", "OPTIM SGRIDMB (2) 0 4\n"),
                Catch::Contains("the DM_REAM Blip5 density basis requires "
@@ -607,7 +607,7 @@ const std::string kOutsideBox = "can evaluate AMPGRIDMB amplitudes outside "
                                 "the non-negative OPTIM box";
 /* The warning named the Ceres finite-difference kernel too (the first
  * attempt at a bounded stencil): Ceres' step rule is now evaluated by
- * Tadah and keeps to the box (owner decision D2(a), 2026-09-29), so only
+ * Tadah and keeps to the box, so only
  * optimisers that ignore the bounds are named, and the sentence about the
  * kernel is gone. */
 const std::string kKernelWords = "finite-difference step";
@@ -615,7 +615,7 @@ const std::string kKernelWords = "finite-difference step";
 }  // namespace
 
 /* A point an optimiser proposes outside the OPTIM box is not evaluated
- * (box_penalty.h; owner decision, MK, 2026-10-15), so no AMPGRIDMB amplitude
+ * (box_penalty.h), so no AMPGRIDMB amplitude
  * below 0 is evaluated, and there is no projection to warn about.
  * Pins: with CERES:STEEPEST_DESCENT (which ignores the bounds) as the
  * STRATEGY-level optimiser and as the PRESTAGE refinement, the journal has
@@ -677,8 +677,8 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: no box WARNING when every phase keeps to "
           "named") {
     /* One-sided within a step of a bound (fd_stencil.h): the in-house rule,
      * the default under OPTIM_SCALE AUTO; Ceres' rule, the default under
-     * NONE and PARAM fd_kernel ceres (named until D2(a)); HYBRID; an MLSL
-     * whose local search takes gradients. */
+     * NONE and PARAM fd_kernel ceres (named until Tadah evaluated it);
+     * HYBRID; an MLSL whose local search takes gradients. */
     CHECK(box_warning_journal("NONNEG", kOptimizer).find(kOutsideBox) ==
           std::string::npos);
     for (const std::string& opt :
@@ -710,7 +710,7 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: no box WARNING when every phase keeps to "
     /* NLopt hands the INNER search the gradient of the MLSL objective,
      * which the MLSL block's settings take. The INNER block's own PARAM
      * fd_kernel ceres was named in this warning, and then accepted and
-     * ignored; it is refused at startup now (owner decision D5(a)). */
+     * ignored; it is refused at startup now. */
     CHECK_THROWS_WITH(box_warning_journal(
         "NONNEG", "OPTIMIZER\nSTRATEGY\nTYPE PLAIN\nLIB NLOPT\nALGO G_MLSL_LDS\n"
                   "MAXEVAL 50\nINNER\nLIB NLOPT\nALGO LD_LBFGS\nMAXEVAL 10\n"
@@ -827,9 +827,9 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates outside the box are not "
 
   SECTION("an out-of-box probe is not evaluated: it is scored by its "
           "distance to the box") {
-    /* A point outside the OPTIM box (box_penalty.h; owner decision, MK,
-     * 2026-10-15): -1e-6 below the box [0, 0.5] lies 2e-6 of its width
-     * outside it (OPTIM_SCALE AUTO), beyond the 8-ulp snap.
+    /* A point outside the OPTIM box (box_penalty.h): -1e-6 below the box
+     * [0, 0.5] lies 2e-6 of its width outside it (OPTIM_SCALE AUTO), beyond
+     * the 8-ulp snap.
      * Pins: its loss is graded_failscore(1e9, D, 2e-6, 1) (band D's range,
      * FAILSCORE_GRADING OFF), the WARNING says it is not evaluated and names
      * the score, DIAGNOSTICS counts it ("Out-of-box points       : 1"); its
@@ -932,10 +932,10 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates outside the box are not "
      * stencil probed -5e-7 (u = -1e-6 of the width 0.5), which was
      * projected and recorded at 0, and its derivative was half the
      * one-sided slope; the stencil is now one-sided into the box
-     * (fd_stencil.h, owner decision 2026-09-29, C4): the loss at the seed,
-     * then 5e-7 and 1e-6, and nothing is projected. The journal names the
-     * one-sided difference and DIAGNOSTICS counts it (D4, design 2026-09-29),
-     * and no warning names a finite-difference kernel.
+     * (fd_stencil.h): the loss at the seed, then 5e-7 and 1e-6, and nothing
+     * is projected. The journal names the one-sided difference and
+     * DIAGNOSTICS counts it, and no warning names a finite-difference
+     * kernel.
      * Pins: the seed 0, then its stencil 5e-7 and 1e-6: the gradient takes
      * the loss dlib has just evaluated at the seed as its centre.
      * Before the fix: the seed twice (0, 0, 5e-7, 1e-6): the gradient
@@ -990,7 +990,7 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates outside the box are not "
     /* Ceres' rule, the default under NONE: its central stencil at 0 probed
      * -2^-26, which was projected onto 0 and took half the slope (the
      * Ceres library could not be bounded); Tadah evaluates the rule now,
-     * one-sided into the box: 2^-26 and 2^-25 (owner decision D2(a)).
+     * one-sided into the box: 2^-26 and 2^-25.
      * Pins: the seed 0, then its stencil 2^-26 and 2^-25 (the gradient
      * takes the loss at the seed as its centre).
      * Before the fix: the seed twice (0, 0, 2^-26, 2^-25). */
@@ -1054,13 +1054,13 @@ TEST_CASE("HPO_Host: the all-weights-fixed probe rethrows DensityFormError",
 
 TEST_CASE("HPO_Host: a point proposed within rounding outside its box is "
           "evaluated on the bound", "[rhoform_e2e][snap_e2e][.]") {
-  /* Owner decision D10 (2026-09-29): a coordinate the optimiser proposes
+  /* A coordinate the optimiser proposes
    * outside its OPTIM box by no more than rounding -- 8 units in the last
    * place of the box's scale, in the real or the optimiser's coordinates --
    * is evaluated on the bound, recorded there and counted in DIAGNOSTICS
    * ("Snapped onto the box"), with no WARNING; one further out is not
-   * evaluated: it is scored by its distance to the box (box_penalty.h;
-   * owner decision, MK, 2026-10-15), recorded where it was proposed,
+   * evaluated: it is scored by its distance to the box (box_penalty.h),
+   * recorded where it was proposed,
    * counted and warned about. NLopt rounds points on a bound up to 2 ulps
    * past it under OPTIM_SCALE NONE (LN_COBYLA, LN_PRAXIS, LN_BOBYQA, the
    * unscaled DIRECT variants): each was evaluated outside the box, warned

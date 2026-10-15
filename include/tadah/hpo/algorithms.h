@@ -284,7 +284,7 @@ template<typename Vec, typename Runner>
  * no-ops: STEP, XTOL_REL/XTOL_ABS, VECTOR_ARR, GRAD_STRATEGY, and
  * POPULATION (use TADAH:ANNEAL_PA), unknown PARAM keys, and retired
  * key names (registry rename hints).
- * THREADS IS accepted here under the shared-pool model (Option A): it
+ * THREADS IS accepted here under the shared-pool model: it
  * sizes the per-rank worker pool that runs the within-eval pc_lammps
  * fan-out -- serial ANNEAL still drives ONE chain, only the fan-out is
  * parallel. See anneal::Knobs::parse.

@@ -170,9 +170,8 @@ TEST_CASE("explain_optimiser: one optimiser, a library, and the names it "
  * refused, and so is one that needs an INNER block of its own.", then
  * "Without one NLopt runs its default LN_COBYLA." (LD_MMA for the GD_ and
  * LD_ forms) or, for AUGLAG, AUGLAG_EQ, G_MLSL and G_MLSL_LDS, "The block
- * is required: NLopt has no default local optimiser for it." (owner
- * decision, MK, 2026-10-15: no nested global search). No other optimiser's
- * help has the entry.
+ * is required: NLopt has no default local optimiser for it." (no nested
+ * global search). No other optimiser's help has the entry.
  * Before the fix: no ALGO help says what an INNER block takes (the entry is
  * missing from all twelve): the checks of the twelve fail. */
 TEST_CASE("explain_optimiser: the ALGO help of MLSL and AUGLAG says that "

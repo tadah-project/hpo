@@ -24,7 +24,7 @@ unreported, and meant something different per backend.
 - AUTO boxes from the CONFIG seed (`OPTIM KEY (i) AUTO ...`), positive-only keys from the refit writer's
   table (`mlip::engines::hpotarget_group_specs()`).
 
-## [0,1] guards (user chose [0,1] over [1,2])
+## [0,1] guards (the unit box is [0,1], not [1,2])
 in-house FD kernel under AUTO (Ceres' delta collapses to sqrt(eps) at u~0); per-dim `xtol_abs` vector +
 XTOL_REL-only HINT for SBPLX/NM; ANNEAL `resolvable_coordinate_scale` floored at eps*width; ASA u=0
 reanneal note; DLIB:GFS hidden-ln WARNING (NONE only).
@@ -33,7 +33,7 @@ reanneal note; DLIB:GFS hidden-ln WARNING (NONE only).
 `TADAH_OPTIM_SCALE=NONE`: 21/21 example fingerprints byte-identical. `AUTO`: 14/21 identical; 03/07/08
 within 0.2 %, 06/12/21 better, 04 (DLIB:BFGS, 30 evals) 5.6 % worse = basin selection (at 4x budget NONE
 finds the SGRIDMB~0.34 basin at 0.0643, AUTO the 0.24 basin at 0.0739 that example 03 also finds).
-Default flipped to `AUTO` on 2026-09-08 (user decision); `NONE` remains the escape hatch.
+Default flipped to `AUTO` on 2026-09-08; `NONE` remains the escape hatch.
 
 ## Not built
 BOUND_ADAPT (`docs/issues/bound_adapt_design.md`, evidence-gated), CENTER WARM for AUTO boxes, the

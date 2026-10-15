@@ -1,6 +1,6 @@
 build
 
-# --- Beta-prep additions (Session E) ---
+# --- Beta-prep additions ---
 build_*/
 cmake-build-*/
 _build/
@@ -12,7 +12,6 @@ install_manifest.txt
 .vscode/
 .idea/
 .cache/
-.claude/
 __pycache__/
 *.pyc
 .pytest_cache/

@@ -100,7 +100,7 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
     throw std::runtime_error("DLIB:BFGS does not support POPULATION");
   if (sp.seed)
     throw std::runtime_error("DLIB:BFGS does not support SEED");
-  /* Option A: THREADS sizes the shared fan-out pool (pc_lammps + MLIP
+  /* THREADS sizes the shared fan-out pool (pc_lammps + MLIP
    * train/predict), not any DLIB-internal parallelism -- BFGS itself runs ONE
    * serial trajectory, but its per-eval fan-out uses the pool. Accept
    * THREADS >= 1 (reject only 0), consistent with ANNEAL and NLOPT GN_/LN_. */

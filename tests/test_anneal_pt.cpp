@@ -142,7 +142,7 @@ struct StepScaleRow {
     std::string parameter;
     double sigma = 0.0;
     double fraction = 0.0;
-    /* D9: the coordinate phase's own sigma, alongside the production one --
+    /* The coordinate phase's own sigma, alongside the production one --
      * every column from `acceptance` on was measured at THIS scale. */
     double coord_sigma = 0.0;
     double coord_fraction = 0.0;
@@ -153,7 +153,7 @@ struct StepScaleRow {
     std::size_t backoffs = 0;
     std::size_t unusable = 0;
     double pilot_multiplier = 1.0;
-    int pilot_multiplier_moved = 0;   /* D12 */
+    int pilot_multiplier_moved = 0;   /* whether the pilot moved it */
     double pilot_acceptance = 0.0;
     double pilot_mean_alpha = 0.0;
     std::size_t pilot_attempts = 0;
@@ -552,7 +552,7 @@ TEST_CASE("ANNEAL_PT warm-up accepts a tight bracket as calibrated",
     /* A 0/1 acceptance cliff defeats the two-consecutive-in-band rule at
      * 2 batches per dim (STEP_WARMUP_SWEEPS 4 -> attempt cap 8), while a
      * miss-low followed by a miss-high builds a two-sided x2 bracket
-     * that D28 accepts as calibrated.  The batch outcomes are 4-sample
+     * that the calibration accepts as calibrated.  The batch outcomes are 4-sample
      * Bernoulli draws, so a fixed deterministic seed list is scanned and
      * at least one run must certify via the bracket; each individual run
      * remains fully deterministic. */
@@ -729,7 +729,7 @@ TEST_CASE("ANNEAL_PT calibrates a 174-D objective with 12 decades of "
           std::string::npos);
 
     /* The per-slot journal line and hpo_step_scales.tsv are two readers of
-     * one gathered record. They drifted once: D9 inserted a field at offset
+     * one gathered record. They drifted once: a field was inserted at offset
      * 1, the TSV reader was updated and the journal reader was not, so every
      * a slot line once printed pilot_attempts=0, pilot_multiplier=0,
      * pilot_status=ok while the TSV showed 200 / 13.19 / unconverged.
@@ -783,7 +783,7 @@ TEST_CASE("ANNEAL_PT calibrates a 174-D objective with 12 decades of "
               Approx(100.0 * any->pilot_acceptance).margin(0.05));
         CHECK(std::stod(field(line, "pilot_alpha")) ==
               Approx(100.0 * any->pilot_mean_alpha).margin(0.05));
-        /* D12: the journal must say which 1.0 this is. */
+        /* The journal must say which 1.0 this is. */
         CHECK(line.find(any->pilot_multiplier_moved ? "(moved)"
                                                     : "(never moved)")
               != std::string::npos);
@@ -1814,11 +1814,11 @@ TEST_CASE("ANNEAL_PT: journal carries the banner, epoch lines and the "
           != std::string::npos);
 }
 
-/* --- D25: semantic coverage for the ladder-flow traversal counter --------
+/* --- semantic coverage for the ladder-flow traversal counter -------------
  * The pre-existing journal test above only asserts that the ladder-flow
  * STRING appears. That would stay green if the counter tagged slots instead
  * of walkers, or if the world==1 guard were dropped, or if the counts were
- * simply wrong -- and D6 makes these counts the headline PT-effectiveness
+ * simply wrong -- and these counts are the headline PT-effectiveness
  * metric, so they need pinning to arithmetic, not to a substring. */
 
 namespace {
@@ -2106,7 +2106,7 @@ TEST_CASE("ANNEAL_PT: epoch line reports the ladder endpoints of the epoch",
     MtStubHost stub{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
     run_anneal_pt_impl<Vec>(sp, stub);
 
-    /* D29: the epoch line snapshots T BEFORE any in-epoch ladder mutation;
+    /* The epoch line snapshots T BEFORE any in-epoch ladder mutation;
      * with a static ladder it is exactly [T_COLD, T_HOT] on every report. */
     const std::string log = lr.read();
     CHECK(log.find("T=[1.000e+00, 8.000e+00]") != std::string::npos);
@@ -2155,7 +2155,7 @@ TEST_CASE("HPOLog: best-origin tag (slot/T + probe) and per-slot histograms",
     REQUIRE(tot.size() == 1);
     CHECK(tot[0].first == 3);
     CHECK(tot[0].second == 1);
-    /* D29: the slot-3 best above landed at eval 2; the rejected
+    /* The slot-3 best above landed at eval 2; the rejected
      * non-best at eval 3 must not have moved it. */
     auto last = log.best_slot_last_evals();
     REQUIRE(last.size() == 1);
@@ -2165,7 +2165,7 @@ TEST_CASE("HPOLog: best-origin tag (slot/T + probe) and per-slot histograms",
     CHECK(log.best_slot_last_evals().empty());
 }
 
-TEST_CASE("ANNEAL_PT: D29 table formatters render grids and dashes",
+TEST_CASE("ANNEAL_PT: table formatters render grids and dashes",
           "[HPO][anneal_pt][log]")
 {
     using namespace tadah::hpo::pt_detail;

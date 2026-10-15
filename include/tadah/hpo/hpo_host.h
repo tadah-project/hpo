@@ -163,9 +163,9 @@ struct EvalResult
 
     /* The point lies outside the OPTIM box (box_penalty.h): it was not
      * evaluated, and its loss is out_of_box_score() of its distance to the
-     * box (owner decision, MK, 2026-10-15). Its rows go to loss.tadah and
-     * params.tadah like any evaluation's; the writer writes no DUMP
-     * archive for it, and it is never a best. */
+     * box. Its rows go to loss.tadah and params.tadah like any
+     * evaluation's; the writer writes no DUMP archive for it, and it is
+     * never a best. */
     bool out_of_box = false;
 
     /* PC_OBSERVABLE (Tier 1/2) results, one entry per
@@ -226,10 +226,10 @@ public:
      *  Signature matches `AnalyticalGradFn<ParamVec>`:
      *    bool(const ParamVec& x, ParamVec& g, std::vector<int>& needs_fd)
      *
-     *  Phase 2A.4: does not run a forward eval itself; it builds a
+     *  Does not run a forward eval itself; it builds a
      *  param-ref table and consults the orchestrator
      *  (compute_dloss_dtheta). Until the per-theta analytical evaluation
-     *  is wired (sub-task), every index is reported in needs_fd, which
+     *  is wired, every index is reported in needs_fd, which
      *  HYBRID then handles via masked central differences.
      *
      *  ANALYTICAL strict mode is therefore a no-op for production
@@ -326,7 +326,7 @@ public:
     std::size_t train_size() const;   // number of training structures
     std::size_t val_size()   const;   // number of validation structures
 
-    /** Read-only view of the training StructureDB. The audit (Phase 5)
+    /** Read-only view of the training StructureDB. The pre-flight audit
      *  passes this to `run_preflight_from_db` for cheap dataset stats. */
     const mlip::StructureDB& train_stdb() const { return train_stdb_; }
     /** Mutable view of the training StructureDB. compute_data_stats()
@@ -506,8 +506,8 @@ private:
      *  rounding (SearchSpace::snapped_onto_box) moved onto the bound: @p p
      *  itself when there is none, else @p buf. Counts such an evaluation
      *  in HPOLog (record_snap), with no warning: NLopt's own arithmetic
-     *  rounds a point on a bound past it under OPTIM_SCALE NONE (owner
-     *  decision D10). Before the out-of-box rule (box_penalty.h).
+     *  rounds a point on a bound past it under OPTIM_SCALE NONE. Before the
+     *  out-of-box rule (box_penalty.h).
      *  Never throws. */
     const ParamVec& snap_onto_box(const ParamVec& p, ParamVec& buf) const;
     /** Journals point @p iter, the REAL point @p p outside its OPTIM box
@@ -568,7 +568,7 @@ private:
     durable_best::Options        dbopts_mirror_;
     durable_best::Options        dbopts_mirror_single_;
     mutable bool                 mirror_degraded_ = false;
-    /* PC_OBSERVABLE (D4c) loss aggregation: evaluates every entry of
+    /* PC_OBSERVABLE loss aggregation: evaluates every entry of
      * trg_.observables at the current trained model, populates
      * r.v_obs_value / r.v_obs_loss, and folds the per-observable loss
      * into r.loss_sum / r.loss_count. A term that cannot be computed (a
@@ -743,7 +743,7 @@ private:
     /* formatting -- fixed geometry */
     static constexpr std::size_t iter_cw_   = 12;  // #ITERATION(10) + 2; holds up to 10^6
     static constexpr std::size_t ittime_cw_ = 12;  // IT-TIME/ms(10)  + 2
-    // D19: replica/slot column (Result::chain_id). "SLOT"(4) + 2, wide
+    // Replica/slot column (Result::chain_id). "SLOT"(4) + 2, wide
     // enough for any REPLICAS a shared-memory pool can drive.
     static constexpr std::size_t slot_cw_   = 6;
 
@@ -757,7 +757,7 @@ private:
     void init_outvar (const std::string& fn) const;
     void init_params (const std::string& fn) const;
     void init_stats  (const std::string& fn) const;
-    /* D18: false when no per-structure metric is active (a run with no
+    /* False when no per-structure metric is active (a run with no
      * training/validation DB), in which case stats.tadah has no columns
      * beyond #ITERATION and its rows are suppressed. */
     bool stats_have_columns() const;

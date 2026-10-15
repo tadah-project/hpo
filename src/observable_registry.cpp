@@ -150,7 +150,8 @@ ObservableHandle make_cohesive_e_per_atom()
     ObservableHandle h;
     h.kind = "cohesive_e_per_atom";
     /* At the relaxed state x*, dE/dx = -F = 0 to minimiser tolerance;
-     * skip the Hessian solve. Phase 3.4 routes lambda_k = 0 in that case. */
+     * skip the Hessian solve. The adjoint solve routes lambda_k = 0 in that
+     * case. */
     h.dg_dx_is_zero = true;
     h.dg_dx = [](const ObservableContext& ctx, Eigen::VectorXd& out) {
         out = Eigen::VectorXd::Zero(3 * ctx.nlocal + ctx.box_dofs);

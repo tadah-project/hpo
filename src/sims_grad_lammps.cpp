@@ -54,11 +54,10 @@ int detect_box_dofs_from_script(const std::vector<std::string>& script_lines)
         if (tk[0] != "fix" || tk[3] != "box/relax") continue;
         const std::string& mode = tk[4];
         if (mode == "iso") return 1;
-        /* aniso, tri, xyz subset modes -- Voigt-6 block (atom-only on the
-         * snapshot side per Phase 3.7.5; explicit aniso accumulation is
-         * the deferred 3.7D work). Any non-iso mode reports 6 so the
-         * orchestrator surfaces it; populate_sims_grad_input_from_lammps
-         * collapses 6->0 for the snapshot until 3.7D lands. */
+        /* aniso, tri, xyz subset modes -- Voigt-6 block. Any non-iso mode
+         * reports 6 so the orchestrator surfaces it;
+         * populate_sims_grad_input_from_lammps captures the Voigt-6 block
+         * of the snapshot. */
         return 6;
     }
     return 0;
@@ -160,7 +159,7 @@ bool populate_sims_grad_input_from_lammps(
     auto* lt = pair->lammps_tadah();
     if (!lt) return false;
 
-    /* Phase 3.7.5 / 3.7D: pair_tadah accumulates iso (box_dofs == 1)
+    /* pair_tadah accumulates iso (box_dofs == 1)
      * and Voigt-6 (box_dofs == 6). Other values leave dvirial_dW empty
      * (atom-only chain). */
     const int snapshot_box_dofs =
@@ -202,7 +201,7 @@ bool populate_sims_grad_input_from_lammps(
     /* Hessian assembly. For pilot's cohesive-E-only path every handle
      * carries `dg_dx_is_zero=true` so this is never actually solved
      * against -- but the chain-core expects `out.H` to be present, and
-     * 3.7+ observables (lattice constant) will need it. */
+     * observables with box DOFs (lattice constant) will need it. */
     {
         LammpsHessianAssembler asm_;
         /* Disable the post-assembly snapshot refresh: we already
@@ -230,7 +229,7 @@ bool populate_sims_grad_input_from_lammps(
     /* Per-observable arrays. lsim.i_varloss[k] indexes into v_outvar;
      * lsim's t/w/lossFn align with k. Expressions come from the caller
      * (resolved from the LAMMPS variable table, which we don't peek at
-     * directly here -- see test_hpo_phase3_pilot.cpp for the pattern). */
+     * directly here -- see test_hpo_adjoint_pilot.cpp for the pattern). */
     const std::size_t k_count = lsim.i_varloss.size();
     if (expressions.size() != k_count) {
         throw std::runtime_error(

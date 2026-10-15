@@ -108,7 +108,7 @@ void write_minimal_ta_dbfile(const fs::path& path, double offset_x) {
        << "\n";
 }
 
-/* Ta D2_BP[5,5] + BF_Linear master context (K = 5 weights — the user
+/* Ta D2_BP[5,5] + BF_Linear master context (K = 5 weights — the mixed
  * scenario: 5 weights, 1-3 LS, 4 pinned, 5 OPTIM'd). DBFILE / VALIDATION /
  * FIXINDEX / FIXWEIGHT are added by the individual tests. */
 tadah::core::Context make_ta_base_context(const fs::path& hpo_cfg)
@@ -243,7 +243,7 @@ bool prints_not_finite(double v) {
 
 }  // namespace
 
-/* Case 2 (the user scenario, K=4 variant): weights 1..K-2 LS-fitted,
+/* Case 2 (the mixed scenario, K=4 variant): weights 1..K-2 LS-fitted,
  * weight K-1 pinned at a constant, weight K searched by the optimiser. */
 TEST_CASE("fixweight mixed mode: LS + pinned + OPTIM'd weights",
           "[fixweight_e2e][.]")

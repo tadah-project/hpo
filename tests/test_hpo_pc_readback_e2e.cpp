@@ -1259,13 +1259,13 @@ TEST_CASE("every hot and fail value without a number is journalled, the "
  * order: the line's variables (--varloss), then the --hotvar, then the
  * --failvar variables, each group in its line's order, joined with "; ":
  *   - --varloss E 'abc', --failvar F1 = 1.0/(pe-pe) (a divide by zero),
- *     --failvar F2 'xyz' (tmp/review/readback_mix): "PC_LAMMPS task failed
+ *     --failvar F2 'xyz': "PC_LAMMPS task failed
  *     (<dir>/rb.in, occurrence 1): reading --varloss E after the script:
  *     its value 'abc' is not a number; reading --failvar F1 after the
  *     script: <LAMMPS divide by 0>; reading --failvar F2 after the script:
  *     its value 'xyz' is not a number";
  *   - a hot script whose --varloss E and --hotvar hot_a0 read `press` and
- *     whose --hotvar hot_b is 'xyz' (tmp/review/readback_mixed2): "reading
+ *     whose --hotvar hot_b is 'xyz': "reading
  *     --varloss E after the script: <press error>; reading --hotvar hot_a0
  *     after the script: <press error>; reading --hotvar hot_b after the
  *     script: its value 'xyz' is not a number", the cold script not run;
@@ -2514,8 +2514,7 @@ constexpr const char* kTaKernelModelKeys =
  * a context without VERBOSE again prints 1 line under THREAD (the first
  * VERBOSE-less build prints, the later ones are deduplicated) and none
  * under PROCESS: the THREAD check fails and the PROCESS one passes
- * (lanes/E/tmp/before_fix_pc_lammps_verbose.txt, VERBOSE stripped from the
- * evaluation's context). */
+ * (VERBOSE stripped from the evaluation's context). */
 TEST_CASE("tadah hpo: the PC_LAMMPS potential is built at the run's VERBOSE",
           "[pc_lammps_verbose][tadah_cli][.tadah_cli_pc_lammps_verbose]") {
     const char* bin = std::getenv("TADAH_BINARY");

@@ -296,8 +296,7 @@ TEST_CASE("NLopt MAXEVAL: a derivative-free search, and AUGLAG, make no "
 /* Pins: LD_LBFGS under GRAD_STRATEGY ANALYTICAL on the valley at MAXEVAL
  * 30 makes 15 losses and 15 analytical gradients, 30 evaluations, and
  * ends MAXEVAL_REACHED: each analytical gradient counts as one evaluation,
- * as it does under DLIB:BFGS and the CERES drivers (owner decision,
- * 2026-10-07).
+ * as it does under DLIB:BFGS and the CERES drivers.
  * Before the fix: 28 losses and 28 analytical gradients, 56
  * evaluations, ending "SUCCESS -- generic success": NLopt counted its 28
  * calls. */
@@ -318,8 +317,7 @@ TEST_CASE("NLopt MAXEVAL: an analytical gradient counts as one evaluation, "
 
 /* Pins: a loss at or below STOPVAL that the objective evaluated but did not
  * give NLopt -- NLopt tests STOPVAL first -- ends the search
- * STOPVAL_REACHED, with no evaluation after it (owner decision,
- * 2026-10-07):
+ * STOPVAL_REACHED, with no evaluation after it:
  *   - the budget: LD_LBFGS at MAXEVAL 1 and STOPVAL 100 evaluates the start
  *     (24.2), whose gradient MAXEVAL cuts short;
  *   - a failed stencil evaluation: LD_LBFGS (NUMERICAL) at STOPVAL 100
@@ -328,7 +326,7 @@ TEST_CASE("NLopt MAXEVAL: an analytical gradient counts as one evaluation, "
  *     journal line names the cause. With only (-1.2, 1 - 1e-6) failed the
  *     gradient is the forward difference with (-1.2, 1 + 1e-6) and
  *     (-1.2, 1 + 2e-6), a difference never mixing a usable loss with a
- *     failure (owner decision, MK, 2026-10-15): NLopt is given 24.2 and
+ *     failure: NLopt is given 24.2 and
  *     ends on its own STOPVAL test, STOPVAL_REACHED with no withheld-loss
  *     line, its last evaluation (-1.2, 1 + 2e-6);
  *   - a gradient that is not finite at a later point: LD_LBFGS under
@@ -531,8 +529,8 @@ TEST_CASE("NLopt MAXEVAL: the masked-diagnostic warning counts evaluations",
 /* Pins: the journal's "Inner stop criteria" of a block whose INNER search
  * is gradient-based (G_MLSL_LDS, INNER LD_LBFGS with MAXEVAL 10) says that
  * the INNER MAXEVAL counts each local search's NLopt calls, and that the
- * enclosing block's MAXEVAL counts every evaluation of the run (owner
- * decision, 2026-10-07); a derivative-free INNER search (LN_BOBYQA), whose
+ * enclosing block's MAXEVAL counts every evaluation of the run; a
+ * derivative-free INNER search (LN_BOBYQA), whose
  * calls are its evaluations, gets no such line.
  * Before the fix: the block listed "Max evaluations : 10" alone. */
 TEST_CASE("NLopt MAXEVAL: the journal says what an INNER MAXEVAL counts",
@@ -697,8 +695,7 @@ namespace {
 /* The valley, with failed losses just below and just above x(1) = 0: the
  * stencil points (0, 1e-6) and (0, -1e-6) of GD_STOGO's first gradient, at
  * the centre of [-2, 2]^2 (loss 1), fail, and the gradient has no side of
- * usable losses (a difference never mixes a usable loss with a failure;
- * owner decision, MK, 2026-10-15). */
+ * usable losses (a difference never mixes a usable loss with a failure). */
 struct CentreRidge : Valley {
     double operator()(const Vec& x) {
         asked.push_back(x);
@@ -912,8 +909,7 @@ void check_budget_warning_follows_run(const BudgetCase& c)
  * Before the fix: does not compile (gradient_budget_warnings takes the
  * run's reuse permission since fix/budget-reuse); with the old call
  * (gradient_budget_warnings(sp)) it passes, as it did when the MLSL rule
- * was added (lanes/D/tmp/before_fix_budget_reuse.txt). The StoGO cases
- * (cross-lane review 2) pass before their fix as well: on this untracked
+ * was added. The StoGO cases pass before their fix as well: on this untracked
  * host no start is recorded, and the warning counted 1 + 4 + 1. */
 TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget that "
           "takes no step is given exactly when the run takes none",
@@ -966,10 +962,9 @@ TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget that "
  * run's reuse permission since fix/budget-reuse). With the old call
  * (gradient_budget_warnings(sp), which counted the local start's loss
  * whatever the run) the ReusingValley GD_MLSL checks at MAXEVAL 10 and the
- * G_MLSL_LDS ones at 9 fail -- a warning at the budget whose run steps
- * (lanes/D/tmp/before_fix_budget_reuse.txt); the other cases pass as well
- * (pins).
- * Before StoGO's own start was counted (cross-lane review 2): the GD_MLSL
+ * G_MLSL_LDS ones at 9 fail -- a warning at the budget whose run steps;
+ * the other cases pass as well (pins).
+ * Before StoGO's own start was counted: the GD_MLSL
  * with INNER GD_STOGO case fails at MAXEVAL 10, which was not warned (the
  * warning took the local search's start from the record, needing 10) and
  * takes no step; GD_STOGO passes as well (no start of its own is recorded

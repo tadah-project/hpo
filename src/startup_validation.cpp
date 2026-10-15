@@ -292,7 +292,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * ctx)) holds for the seed too. A bump spans [c - w/eta, c + w/eta]: a
    * width <= 0 has no support edge (the bump is even in eta and evaluates
    * as its mirror), and the bump-support gate below cannot keep it inside
-   * the cutoff. Owner decision 2026-09-29. */
+   * the cutoff. */
   {
     std::vector<std::string> bad;
     for (const char *key : {"SGRID2B", "SGRIDMB"}) {
@@ -361,7 +361,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * refuses a GRAD_STRATEGY too; the
    * STRATEGY-level phase refuses the NOISE block's AUTO likewise, which
    * derives fd_step for that phase's finite differences (HPOTargets) and
-   * has no effect without them (owner decision D7). ASA's
+   * has no effect without them. ASA's
    * finite-difference probes must fit its boxes too (asa_probe_box_error).
    * Refused here, before any data is loaded, rather than by the first
    * gradient. */
@@ -376,7 +376,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
       try {
         const FdSettings fs = fd_settings_of(s);
         /* The NOISE block's AUTO beside a PARAM fd_step written in the
-         * block: the written step is the one taken (owner decision D8). */
+         * block: the written step is the one taken. */
         if (!phase.inner && s.noise.autodetect &&
             fs.source == FdStepSource::Param) {
           std::ostringstream os;

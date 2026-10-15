@@ -230,13 +230,13 @@ struct LadderAdaptation {
  * expand and low-acceptance gaps contract, after which all positive gaps are
  * renormalized to the fixed endpoint span.
  *
- * D26: min_gap_frac > 0 additionally floors every interior log-gap at
+ * min_gap_frac > 0 additionally floors every interior log-gap at
  * min_gap_frac * (span / (K-1)).  Without it the controller keeps
  * contracting any pair whose acceptance is persistently below the mean, and
  * a pair whose low acceptance is caused by a basin offset rather than by
  * temperature spacing (acceptance gap-INSENSITIVE) is driven towards the
  * 1-ULP representability guard: an adapted ladder can reach adjacent-rung ratios of
- * 1.006-1.010 this way, en route to the D21 degenerate-pair failure (equal
+ * 1.006-1.010 this way, en route to the degenerate-pair failure (equal
  * rungs exchange unconditionally, reporting 100% acceptance with zero
  * tempering).  The floor bounds that contraction; the pairs it holds are
  * reported in at_floor.  See docs/annealing_implementation_audit_2026-08-09.md. */
@@ -348,7 +348,7 @@ inline LadderAdaptation adapt_temperature_ladder(
   return out;
 }
 
-/* D26 (revised after review): pooled evidence for the equalization freeze.
+/* Pooled evidence for the equalization freeze.
  *
  * The original per-window streak test had two confirmed defects: a
  * zero-information window (every pair exactly 0% or 100% -- e.g. an
@@ -498,7 +498,7 @@ inline bool accept_exchange(double cold_temperature, double hot_temperature,
   return log_m < log_threshold;
 }
 
-/* D21: hard diagnostic thresholds, named in one place and stated once in
+/* Hard diagnostic thresholds, named in one place and stated once in
  * the journal's startup diagnostics block. They shape WARNINGs only --
  * never the sampling or adaptation itself (with one exception: degenerate
  * equal-loss exchanges are excluded from ladder-adaptation evidence). */
@@ -511,7 +511,7 @@ constexpr std::size_t kLadderFreezeMinAttempts = 100; /* pooled/pair */
  * (almost) no tempering information; warn above this fraction. */
 constexpr double      kDegenerateWarnFrac   = 0.5;
 
-/* D29: render a per-slot count grid on the standard [lo-hi] rows-of-8
+/* Render a per-slot count grid on the standard [lo-hi] rows-of-8
  * layout (slots absent from `entries` print 0). */
 inline std::string format_slot_count_table(
     const std::string& header, std::size_t K,
@@ -525,7 +525,7 @@ inline std::string format_slot_count_table(
   });
 }
 
-/* D29: render the att/acc per-pair percentage table ("-" = pair not yet
+/* Render the att/acc per-pair percentage table ("-" = pair not yet
  * attempted), rows of 8, att/pair resolution stated in the header. */
 inline std::string format_pair_table(
     std::size_t K, const std::string& label,
@@ -560,7 +560,7 @@ enum StepStatus : unsigned {
   StepSupportCapped  = 1u << 1,
   StepUnconverged    = 1u << 2,
   StepInterrupted    = 1u << 3,
-  /* D28: appended bits only -- the values cross the MPI gather as doubles
+  /* Appended bits only -- the values cross the MPI gather as doubles
    * and appear in hpo_step_scales.tsv, so existing bits stay stable.
    * BracketOk: the two-consecutive-batches rule never certified the dim,
    * but the bisection bracket had tightened enough that the in-band scale
@@ -602,7 +602,7 @@ struct DimCalibration {
   double best_scale = 0.0;
   double best_score = std::numeric_limits<double>::infinity();
   bool finished = false;
-  /* D9: the sigma the COORDINATE phase settled on, kept because the pilot
+  /* The sigma the COORDINATE phase settled on, kept because the pilot
    * immediately overwrites c.V[i] with pilot_base*multiplier. Every other
    * column the diagnostics file reports for this dimension (acceptance,
    * status, mean_alpha, attempts, backoffs, unusable) was measured at THIS
@@ -648,7 +648,7 @@ struct SlotCalibration {
   bool pilot_have_best = false;
   double pilot_best_multiplier = 1.0;
   double pilot_best_score = std::numeric_limits<double>::infinity();
-  /* D12: did the pilot ever actually move the multiplier off its 1.0
+  /* Did the pilot ever actually move the multiplier off its 1.0
    * start? On a flat or noisy score surface the strict `score <
    * pilot_best_score` comparison lets window 1 win outright, so an
    * `unconverged` pilot restores 1.0 -- the initial value -- and the log
@@ -694,7 +694,7 @@ void coordinate_warmup(
   constexpr double target = anneal::kTargetAcceptCoord;
   constexpr double target_lo = target - 0.15;
   constexpr double target_hi = target + 0.15;
-  /* Gross-miss thresholds (also the D28 sensitivity-classification
+  /* Gross-miss thresholds (also the sensitivity-classification
    * boundaries) and the bracket-acceptance factor: a two-sided bracket
    * with upper <= 4x lower puts the in-band scale within 2x of either
    * edge, each of which measured on the wrong side of the band. */
@@ -760,7 +760,7 @@ void coordinate_warmup(
         dc.finished = true;
         dc.status = StepOk;
         c.V[i] = scale;
-        dc.coordinate_scale = scale;   /* D9 */
+        dc.coordinate_scale = scale;
         select_batch(dc, scale, dc.batch_attempts, dc.batch_accepted,
                      mean_alpha);
       }
@@ -772,7 +772,7 @@ void coordinate_warmup(
         dc.finished = true;
         dc.status = StepNumericalFloor;
         c.V[i] = scale;
-        dc.coordinate_scale = scale;   /* D9 */
+        dc.coordinate_scale = scale;
         select_batch(dc, scale, dc.batch_attempts, dc.batch_accepted,
                      mean_alpha);
       } else if (usable && mean_alpha > target_hi && at_cap &&
@@ -780,7 +780,7 @@ void coordinate_warmup(
         dc.finished = true;
         dc.status = StepSupportCapped;
         c.V[i] = scale;
-        dc.coordinate_scale = scale;   /* D9 */
+        dc.coordinate_scale = scale;
         select_batch(dc, scale, dc.batch_attempts, dc.batch_accepted,
                      mean_alpha);
       } else {
@@ -808,7 +808,7 @@ void coordinate_warmup(
       if (dc.have_lower_scale && dc.have_upper_scale &&
           dc.lower_scale < dc.upper_scale &&
           dc.upper_scale <= bracket_ok_factor * dc.lower_scale) {
-        /* D28 bracket-ok: the noisy 4-sample in-band test never fired
+        /* Bracket-ok: the noisy 4-sample in-band test never fired
          * twice in a row, but the bisection bracket is tight -- the
          * geometric mean is within sqrt(bracket_ok_factor) of both
          * edges, each of which measured on the wrong side of the band.
@@ -819,14 +819,14 @@ void coordinate_warmup(
             std::sqrt(dc.lower_scale * dc.upper_scale),
             c.x(i), sp.low[i], sp.high[i], clamp_status);
         dc.status = StepBracketOk | clamp_status;
-        /* D9 contract: the TSV's coord_sigma column is the scale the
+        /* Contract: the TSV's coord_sigma column is the scale the
          * row's acceptance/alpha measurements were taken at.  Those
          * came from the best tested batch, not from the (never
          * sampled) bracket midpoint that seeds production in c.V[i]. */
         dc.coordinate_scale = dc.have_best ? dc.best_scale : c.V[i];
       } else {
         dc.status = StepUnconverged;
-        /* D28: name the cause when the best tested batch pins it. */
+        /* Name the cause when the best tested batch pins it. */
         if (dc.have_best) {
           if (dc.validation_mean_alpha > gross_high_alpha)
             dc.status |= StepInsensitive;
@@ -834,7 +834,7 @@ void coordinate_warmup(
             dc.status |= StepHypersensitive;
           c.V[i] = dc.best_scale;
         }
-        dc.coordinate_scale = c.V[i];   /* D9: best tested, or the last */
+        dc.coordinate_scale = c.V[i];   /* best tested, or the last */
       }
     } else if (!dc.finished && change_scale) {
       double next_scale = scale;
@@ -850,7 +850,7 @@ void coordinate_warmup(
       const double clamped_scale = clamp_coordinate_scale(
           next_scale, c.x(i), sp.low[i], sp.high[i], clamp_status);
       if (clamped_scale < scale) ++dc.backoffs;
-      /* D8: keep the reason the scale was clamped. It used to be computed
+      /* Keep the reason the scale was clamped. It used to be computed
        * here and dropped, so an interim floor/cap saturation left no trace:
        * a dim that spent the whole search pressed against the resolvable
        * floor still finished labelled a bare "unconverged", and
@@ -948,7 +948,7 @@ void coordinate_warmup(
     if (out.stop != anneal::RungStop::Completed &&
         !dc.finished && dc.attempts < maximum) {
       dc.status |= StepInterrupted;
-      /* D11: an interruption can land between batches, leaving V[i] at
+      /* An interruption can land between batches, leaving V[i] at
        * the last PROBE scale -- possibly a /10 gross-miss backoff that
        * was never scored -- rather than anything tested. Continue at the
        * best tested scale instead, and keep the diagnostics column
@@ -983,7 +983,7 @@ void full_vector_pilot(anneal::ChainState<Vec>& c, double T,
       const double floor = anneal::resolvable_coordinate_scale(
           c.x(i), sp.low[i], sp.high[i]);
       out.pilot_base[i] = c.V[i] * inv_sqrt_dim;
-      /* D22: a coordinate whose base has been raised TO the floor must not
+      /* A coordinate whose base has been raised TO the floor must not
        * veto shrinkage for every other dimension.
        *
        * pilot_multiplier_min is a max over floor/base across all dims. When
@@ -998,7 +998,7 @@ void full_vector_pilot(anneal::ChainState<Vec>& c, double T,
       bool at_floor = false;
       if (!(out.pilot_base[i] >= floor)) {
         out.pilot_base[i] = floor;
-        /* D9: this is a PILOT-phase fact, so it belongs to pilot_status.
+        /* This is a PILOT-phase fact, so it belongs to pilot_status.
          * It used to be ORed into dims[i].status, which is the COORDINATE
          * phase's status column -- so a dim that converged cleanly in the
          * coordinate phase was retroactively relabelled numerical-floor,
@@ -1151,7 +1151,7 @@ void full_vector_pilot(anneal::ChainState<Vec>& c, double T,
             out.pilot_multiplier_max);
         if (next_multiplier < old_multiplier) ++out.pilot_backoffs;
         if (next_multiplier != old_multiplier)
-          out.pilot_multiplier_moved = true;   /* D12 */
+          out.pilot_multiplier_moved = true;
         out.pilot_multiplier = next_multiplier;
       }
 
@@ -1360,7 +1360,7 @@ template<typename Vec, typename HostT>
         oss << "  LADDER_POWER=" << kb.ladder_power
             << "  LADDER_ADAPT=" << (kb.ladder_adapt ? "ON" : "OFF");
       if (kb.ladder_adapt) {
-        /* D15: LADDER_ADAPT_EVERY counts ATTEMPTS PER PAIR, while its
+        /* LADDER_ADAPT_EVERY counts ATTEMPTS PER PAIR, while its
          * neighbours SWAP_EVERY and SWAP_WINDOW count EPOCHS -- and DEO
          * parity attempts each pair only every other exchange round, so the
          * two scales differ by 2x. Printed side by side with no units this
@@ -1432,7 +1432,7 @@ template<typename Vec, typename HostT>
       HPOLog::instance().info(oss.str());
     }
 
-    /* D20: an adapting ladder with a frozen step.
+    /* An adapting ladder with a frozen step.
      *
      * STEP_MODE FROZEN calibrates each slot's step once and freezes it.
      * That is the right default for a STATIC ladder -- the step was
@@ -1486,7 +1486,7 @@ template<typename Vec, typename HostT>
             static_cast<std::size_t>(epoch_cost), "epoch",
             max_eval_global == HUGE_UNSIGNED ? 0 : max_eval_global);
     }
-    /* D21: state the fixed diagnostic thresholds once, so every later
+    /* State the fixed diagnostic thresholds once, so every later
      * WARNING/HINT that fires from them can be read against its rule. */
     if (rank == 0) {
       std::ostringstream d;
@@ -1655,7 +1655,7 @@ template<typename Vec, typename HostT>
     if (proceed) {
       log_t_cold = std::log(static_cast<long double>(T_cold));
       log_t_hot  = std::log(static_cast<long double>(T_hot));
-      /* D21: one ladder constructor, always.
+      /* One ladder constructor, always.
        *
        * This used to fork on the mere PRESENCE of LADDER_POWER/LADDER_ADAPT,
        * and the legacy branch was an open-coded geometric loop with neither
@@ -2151,10 +2151,10 @@ template<typename Vec, typename HostT>
 
       /* Gather the slot-contiguous records so rank 0 can emit one canonical
        * file even when the ladder is split across MPI ranks. */
-      /* 17 -> 19: + coordinate_scale (D9) and pilot_multiplier_moved (D12).
+      /* 17 -> 19: + coordinate_scale and pilot_multiplier_moved.
        *
-       * The layout is named rather than indexed by literal. D9 inserted
-       * `rc_coord_sigma` at offset 1, shifting everything after it; the
+       * The layout is named rather than indexed by literal. coordinate_scale
+       * inserted `rc_coord_sigma` at offset 1, shifting everything after it; the
        * per-dim TSV reader below was updated and the per-slot journal
        * summary was not, so slot lines printed `pilot_attempts=0`
        * (coordinate `unusable`), `pilot_multiplier=0` (pilot `backoffs`)
@@ -2179,7 +2179,7 @@ template<typename Vec, typename HostT>
           const auto& dc = sc.dims[i];
           double rec[fields];
           rec[rc_sigma]            = chains[li].V[i];
-          rec[rc_coord_sigma]      = dc.coordinate_scale;            /* D9 */
+          rec[rc_coord_sigma]      = dc.coordinate_scale;
           rec[rc_accepted]         = static_cast<double>(dc.validation_accepted);
           rec[rc_attempts_val]     = static_cast<double>(dc.validation_attempts);
           rec[rc_attempts]         = static_cast<double>(dc.attempts);
@@ -2198,7 +2198,7 @@ template<typename Vec, typename HostT>
           rec[rc_pilot_val_mean_alpha] = sc.pilot_validation_mean_alpha;
           rec[rc_pilot_unusable]   = static_cast<double>(sc.pilot_unusable);
           rec[rc_pilot_status]     = static_cast<double>(sc.pilot_status);
-          rec[rc_pilot_moved]      = sc.pilot_multiplier_moved ? 1.0 : 0.0; /* D12 */
+          rec[rc_pilot_moved]      = sc.pilot_multiplier_moved ? 1.0 : 0.0;
           local_records.insert(local_records.end(), rec, rec + fields);
         }
       }
@@ -2239,7 +2239,7 @@ template<typename Vec, typename HostT>
           HPOLog::instance().warning(
               "ANNEAL_PT: cannot open hpo_step_scales.tsv for writing");
         } else {
-          /* D9: `sigma`/`sigma/width` are the PRODUCTION step actually
+          /* `sigma`/`sigma/width` are the PRODUCTION step actually
            * used by the run (post-pilot). Everything from `acceptance` to
            * `unusable` was measured during the COORDINATE phase, at
            * `coord_sigma` -- larger by sqrt(dim)/pilot_multiplier, ~26x for
@@ -2361,7 +2361,7 @@ template<typename Vec, typename HostT>
             if (status & pt_detail::StepInsensitive) ++status_insensitive;
             if (status & pt_detail::StepHypersensitive)
               ++status_hypersensitive;
-            /* D28: "unexplained" = unconverged with nothing naming the
+            /* "unexplained" = unconverged with nothing naming the
              * cause -- neither an interim floor/cap saturation nor a
              * sensitivity classification. */
             if ((status & pt_detail::StepUnconverged) &&
@@ -2422,7 +2422,7 @@ template<typename Vec, typename HostT>
                << "  pilot_backoffs=" << pilot_backoffs
                << "  pilot_multiplier=" << std::scientific
                << std::setprecision(3) << pilot_multiplier
-               /* D12: 1.0 from "the controller converged there" reads the
+               /* 1.0 from "the controller converged there" reads the
                 * same as 1.0 from "the controller never moved". Only the
                 * TSV carried the distinction; the journal does now too. */
                << (pilot_moved ? " (moved)" : " (never moved)")
@@ -2479,7 +2479,7 @@ template<typename Vec, typename HostT>
       }
     }
 
-    /* D27: record each slot's calibrated sigma as the diagonal-RAM trust
+    /* Record each slot's calibrated sigma as the diagonal-RAM trust
      * anchor.  The post-warm-up V encodes the legitimate per-dim
      * sensitivity profile (including deliberately tiny sigmas on
      * hypersensitive wide-box dims); production adaptation may move
@@ -2490,7 +2490,7 @@ template<typename Vec, typename HostT>
         kb.step_mode == anneal_enums::STEP_MODE::ADAPTIVE)
       for (auto& c : chains) c.V_baseline = c.V;
 
-    /* D12: second calibration pass.
+    /* Second calibration pass.
      *
      * Pass 1 estimated T0 with the generic STEP_FRAC-width kernel -- its
      * only job was to give the warm-up a ladder to calibrate against.
@@ -2608,7 +2608,7 @@ template<typename Vec, typename HostT>
      * (exp(0) = 1), but they carry NO tempering information, so they are
      * counted separately -- a pair whose acceptance is dominated by
      * degenerate exchanges (e.g. both replicas pinned at FAILSCORE)
-     * must not read as healthy (D16). */
+     * must not read as healthy. */
     std::vector<std::size_t> swap_attempt(K > 1 ? K - 1 : 0, 0);
     std::vector<std::size_t> swap_accept (K > 1 ? K - 1 : 0, 0);
     std::vector<std::size_t> swap_degenerate(K > 1 ? K - 1 : 0, 0);
@@ -2622,7 +2622,7 @@ template<typename Vec, typename HostT>
     std::vector<std::size_t> ladder_accept_global(K > 1 ? K - 1 : 0, 0);
     std::size_t ladder_update_count = 0;
     bool ladder_adaptation_active = kb.ladder_adapt;
-    /* D26 convergence freeze: pooled per-pair acceptance evidence (see
+    /* Convergence freeze: pooled per-pair acceptance evidence (see
      * pt_detail::ladder_freeze_step).  100 pooled attempts/pair = 5
      * default windows; the pooled 2-sigma test then resolves ~+/-9
      * acceptance points. */
@@ -2632,7 +2632,7 @@ template<typename Vec, typename HostT>
      * averages away. */
     std::vector<std::size_t> swap_attempt_win(K > 1 ? K - 1 : 0, 0);
     std::vector<std::size_t> swap_accept_win (K > 1 ? K - 1 : 0, 0);
-    /* D29: last COMPLETED window, kept for the final summary. */
+    /* Last COMPLETED window, kept for the final summary. */
     std::vector<std::size_t> swap_attempt_last(K > 1 ? K - 1 : 0, 0);
     std::vector<std::size_t> swap_accept_last (K > 1 ? K - 1 : 0, 0);
     std::size_t swap_last_end_epoch = 0;
@@ -2733,7 +2733,7 @@ template<typename Vec, typename HostT>
     }
     /* Rank-0 snapshots. `census_at_window` is the table as it stood at the
      * last report, `census_window` the delta of the last COMPLETED
-     * SWAP_WINDOW window -- the same bookkeeping as the D29 swap tables,
+     * SWAP_WINDOW window -- the same bookkeeping as the PT swap tables,
      * for the same reason: a whole-run cumulative average hides late
      * drift, which for Corana is exactly the thing that goes wrong. */
     std::vector<double> census_at_window, census_window;
@@ -2899,7 +2899,7 @@ template<typename Vec, typename HostT>
         std::vector<double> f_start(n_local);
         for (std::size_t li = 0; li < n_local; ++li)
           f_start[li] = chains[li].f;
-        /* D29: ladder adaptation and RT cooling mutate T later in this
+        /* Ladder adaptation and RT cooling mutate T later in this
          * same iteration; the epoch line must report the T this epoch's
          * rungs actually RAN at. */
         const double epoch_T_cold = T[0];
@@ -3059,7 +3059,7 @@ template<typename Vec, typename HostT>
                     epoch_count, i, accepted, degenerate,
                     T[i], T[i + 1], f_lo, f_hi);
             } else {
-              /* Boundary pair: I own exactly one side; my peer owns the
+              /* Boundary pair: this rank owns exactly one side; its peer owns the
                * other. Both sides use the SAME pair coin stream when the
                * decision is probabilistic and compute the SAME result -- only f (and x
                * on accept) travel. */
@@ -3145,7 +3145,7 @@ template<typename Vec, typename HostT>
                 T = update.temperature;
                 ++ladder_update_count;
 
-                /* D26: pooled-evidence freeze decision.  A pair is settled
+                /* Pooled-evidence freeze decision.  A pair is settled
                  * when its POOLED acceptance is within 2 binomial sigma of
                  * the pooled mean, or when the LADDER_MIN_GAP floor holds
                  * it open against a below-mean acceptance (gap-insensitive
@@ -3409,7 +3409,7 @@ template<typename Vec, typename HostT>
             };
             pair_table("cumulative", swap_attempt, swap_accept);
             {
-              /* D16: equal-loss exchanges accept with probability 1 by
+              /* Equal-loss exchanges accept with probability 1 by
                * exact Metropolis but move no tempering information; a
                * pair whose traffic is dominated by them must not read
                * as healthy from the acceptance table alone. */
@@ -3444,7 +3444,7 @@ template<typename Vec, typename HostT>
                        "health; they are excluded from ladder adaptation.";
                   HPOLog::instance().warning(w.str());
                 }
-                /* D29: keep the completed window for the final summary,
+                /* Keep the completed window for the final summary,
                  * where the cumulative table averages late drift away. */
                 swap_attempt_last = swap_attempt_win;
                 swap_accept_last = swap_accept_win;
@@ -3698,7 +3698,7 @@ template<typename Vec, typename HostT>
                    vcell(v_mx));
               if (kb.step_trust_factor > 1.0 &&
                   !chains.empty() && chains[0].V_baseline.size() == dim) {
-                /* D27: dims pinned against the trust region, per slot. */
+                /* Dims pinned against the trust region, per slot. */
                 std::vector<std::size_t> n_lo(K, 0), n_hi(K, 0);
                 for (std::size_t s = 0; s < K; ++s) {
                   for (std::size_t i = 0; i < dim; ++i) {
@@ -3876,7 +3876,7 @@ template<typename Vec, typename HostT>
                << r << "%";
         }
         HPOLog::instance().info(ossp.str());
-        /* D16: cumulative degenerate share next to the acceptance it
+        /* Cumulative degenerate share next to the acceptance it
          * inflates, plus the dominance warning when most of the run's
          * exchange traffic carried no tempering information. */
         std::size_t att_tot = 0, deg_tot = 0;
@@ -3905,7 +3905,7 @@ template<typename Vec, typename HostT>
           }
         }
       }
-      /* D29: the cumulative table alone averages late drift away (observed:
+      /* The cumulative table alone averages late drift away (observed:
        * bottleneck pairs at 1-3% in the final windows while the
        * cumulative row still read 11-22%).  Repeat the last completed
        * SWAP_WINDOW table next to it; fall back to the labelled partial
@@ -3940,7 +3940,7 @@ template<typename Vec, typename HostT>
        * [lo-hi] grid (and column widths) as the startup ladder table so
        * counts map onto temperatures by eye -- the direct answer to
        * "did the hot rungs ever contribute?". Single-process only: the
-       * counts come from this rank's journal.  D29: the counts are
+       * counts come from this rank's journal.  The counts are
        * cumulative since process start (init/warm-up/transient included),
        * so the last-new-best row distinguishes "still contributing" from
        * "fossil of the initial transient" -- a long run's hot-slot counts all

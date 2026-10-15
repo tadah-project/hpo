@@ -224,7 +224,7 @@ TEST_CASE("NLopt adapter: a MAXEVAL above the int NLopt counts in is refused, "
     }
 }
 
-TEST_CASE("StepPlan: review fixes -- BOBYQA-only near-bound rule, 0.5 cap, coverage at validation",
+TEST_CASE("StepPlan: BOBYQA-only near-bound rule, 0.5 cap, coverage at validation",
           "[HPO][step_plan][review]")
 {
     /* LN_PRAXIS is the bounded MinCollapsed algorithm here; this section

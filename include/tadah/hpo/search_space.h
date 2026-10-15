@@ -195,8 +195,8 @@ std::size_t len(const V& v) { return static_cast<std::size_t>(v.size()); }
 class SearchSpace final {
 public:
     /* A coordinate proposed outside its box by no more than this many
-     * units in the last place is evaluated on the bound (snapped_onto_box;
-     * owner decision D10). The survey of every NLopt algorithm pressed
+     * units in the last place is evaluated on the bound (snapped_onto_box).
+     * The survey of every NLopt algorithm pressed
      * against a bound under OPTIM_SCALE NONE (13 of them round a point on a
      * bound past it: LN_COBYLA, LN_PRAXIS, LN_BOBYQA, the unscaled DIRECT
      * variants, MLSL and AUGLAG with such a local search; 1 to 4 dimensions,
@@ -231,8 +231,7 @@ public:
      * kSnapUlps units in the last place from the bound, either in real
      * coordinates -- of max(|lo|, |hi|) on a linear dimension, of the bound
      * itself on a LOG or ASINH one, which can span decades -- or in the
-     * optimiser's (to_internal), of max(|internal lo|, |internal hi|).
-     * Owner decision D10, 2026-09-29. */
+     * optimiser's (to_internal), of max(|internal lo|, |internal hi|). */
     std::optional<double> snapped_onto_box(std::size_t i, double x) const;
     double dreal_dinternal(std::size_t i, double u) const;   // dx/du at u
     double internal_lo    (std::size_t i) const;

@@ -253,12 +253,12 @@ static std::string caps_help(const std::string& lib, const std::string& algo)
  * the box, and the best potential, at RCUT2B 8.11 for a [4, 6] box, was one
  * of them (docs/issues/nlopt_newuoa_ignores_bounds.md); in 1-D NLopt refuses
  * it once the run has started ("dimension 1 must be >= 2").
- * Pins: HPO refuses it as it refuses LN_NEWUOA_BOUND (owner decision taken
- * under MK's mandate, as the brief recommends: the OPTIM box is a contract):
- * backend_refusal() says why -- NLopt runs it without the box, so the best
- * potential can lie outside the bounds; it needs two OPTIM dimensions --
- * and names NLOPT:LN_BOBYQA; the caps lookup throws "NLOPT:LN_NEWUOA is
- * refused: <reason>"; no caps list offers it; the ALGO help says REFUSED.
+ * Pins: HPO refuses it as it refuses LN_NEWUOA_BOUND (the OPTIM box is a
+ * contract): backend_refusal() says why -- NLopt runs it without the box,
+ * so the best potential can lie outside the bounds; it needs two OPTIM
+ * dimensions -- and names NLOPT:LN_BOBYQA; the caps lookup throws
+ * "NLOPT:LN_NEWUOA is refused: <reason>"; no caps list offers it; the ALGO
+ * help says REFUSED.
  * Before the fix: registered (ignores_bounds, a startup WARNING), with no
  * refusal: backend_refusal() was nullptr and the REQUIRE fails. */
 TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA, which ignores the OPTIM box, is "

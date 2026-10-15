@@ -5,9 +5,9 @@
 
 namespace tadah::hpo {
 
-/* Dense LDLT solver for the Phase 3 IFT-adjoint system  H . lambda = rhs.
+/* Dense LDLT solver for the IFT-adjoint system  H . lambda = rhs.
  *
- * H is assembled by `LammpsHessianAssembler` (Phase 3.2) at the
+ * H is assembled by `LammpsHessianAssembler` at the
  * relaxed atomic state x*. It is symmetric by construction, with a
  * null-space of (at most) 3 acoustic translation modes on the
  * atom block; box DOFs sit at the tail of the vector and are not
@@ -25,7 +25,7 @@ namespace tadah::hpo {
  *   pivot drops below `kPivotThreshold` (or the factor fails outright),
  *   `kTikhonovBump` is added to the diagonal once and the system
  *   re-factored; `regularised()` reflects this.
- * - **Zero-rhs fast path.** Phase 3.3's `dg_dx_is_zero` flag promises
+ * - **Zero-rhs fast path.** The observable's `dg_dx_is_zero` flag promises
  *   the rhs is identically zero (e.g. cohesive E per atom at x*).
  *   The solver short-circuits to `lambda = 0` without touching the LDLT.
  */

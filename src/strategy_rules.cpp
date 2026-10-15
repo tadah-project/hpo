@@ -252,7 +252,7 @@ void require_inner_backend(const OptimizerSpec& parent,
             " names " + backend_name(inner) + ", which needs an INNER block "
             "of its own; INNER blocks do not nest: pick a local algorithm "
             "such as LN_BOBYQA");
-    /* No nested global search (owner decision, MK, 2026-10-15): an INNER
+    /* No nested global search: an INNER
      * search is the local search MLSL starts at the points it samples, and
      * AUGLAG (HPO sets it no constraint, auglag.c) once at its own starting
      * point; a global optimiser there searches the whole box from each of

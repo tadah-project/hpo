@@ -1,8 +1,7 @@
 // test_fit_switch_guard.cpp
 //
 // detail::ScopedFitSwitches and detail::validation_switches()
-// (include/tadah/hpo/fit_switch_guard.h; known-issues workstream 1, branch
-// fix/pc-frmse-force-off).
+// (include/tadah/hpo/fit_switch_guard.h; branch fix/pc-frmse-force-off).
 //
 // HPO validation predicts what its metrics measure: forces whenever
 // PC_FRMSE is set, stresses whenever PC_SRMSE is set, and only then,

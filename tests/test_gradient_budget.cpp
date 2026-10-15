@@ -227,13 +227,12 @@ std::string record_central2(const std::string& budget, const std::string& needs)
  * NUMERICAL) before it evaluates a point it steps to, which needs MAXEVAL 6
  * or more", for NLOPT:LD_LBFGS, DLIB:BFGS and CERES:STEEPEST_DESCENT (it
  * was CERES:LBFGS, refused since: that row a pin); MAXEVAL 6 gets
- * none (tmp/repro lbfgs6, dlib6, ceres6: the sixth evaluation is the first
- * step). The CERES row runs in a build with Ceres only: without it
- * (TADAH_ENABLE_CERES OFF) startup refuses LIB CERES ("CERES support is not
- * built"), which failed the case there
- * (tmp/before_fix_box_and_slopes_review_noceres_suite.txt).
+ * none (the sixth evaluation is the first step). The CERES row runs in a
+ * build with Ceres only: without it (TADAH_ENABLE_CERES OFF) startup
+ * refuses LIB CERES ("CERES support is not built"), which failed the case
+ * there.
  * Before the fix: no WARNING for any of them (the search ended
- * MAXEVAL_REACHED at its starting point: tmp/repro a2_lbfgs3, a2_dlib3). */
+ * MAXEVAL_REACHED at its starting point). */
 TEST_CASE("startup validation: a gradient search whose MAXEVAL cannot pay for "
           "one step is warned about",
           "[startup_validation][gradient_budget]")
@@ -551,9 +550,9 @@ const std::string kInnerLbfgs =
  * that loss is the centre of the finite differences (repeat_use,
  * RepeatUse::Centre, repeat_points.h): in 2-D under central differences 1 +
  * 4 + 4 evaluations, so MAXEVAL 9 or less lets no local search take a step
- * (lanes/D/tmp/br/runs_before/m9_plain: the start, 4 samples, the 4-point
- * stencil of the local start, "Repeated points reused : 1"; m10_plain: the
- * 10th evaluation is the first step). The WARNING says so:
+ * (a run before the fix at MAXEVAL 9: the start, 4 samples, the 4-point
+ * stencil of the local start, "Repeated points reused : 1"; at MAXEVAL 10
+ * the 10th evaluation is the first step). The WARNING says so:
  *   - GD_MLSL with INNER LD_LBFGS, MAXEVAL 5 and 9: "the STRATEGY-level
  *     optimiser NLOPT:GD_MLSL: MAXEVAL 9 takes no step of a local search:
  *     MLSL evaluates its starting point and its first 4 samples without a
@@ -652,8 +651,8 @@ TEST_CASE("startup validation: the gradient budget warning of an MLSL counts "
  *     there (4 evaluations: central differences in 2 dimensions,
  *     GRAD_STRATEGY NUMERICAL) before it evaluates a point it steps to,
  *     which needs MAXEVAL 11 or more"; MAXEVAL 11 gets none
- *     (lanes/D/tmp/br/runs_before/m10_skiprel: the local start is evaluated
- *     again, eval 6, then its stencil; m11_skiprel: the 11th evaluation is
+ *     (a run before the fix at MAXEVAL 10: the local start is evaluated
+ *     again, eval 6, then its stencil; at MAXEVAL 11 the 11th evaluation is
  *     the first step); with POPULATION 3, MAXEVAL 9 warns needing 10;
  *   - GRAD_STRATEGY ANALYTICAL differentiates the last evaluation, so its
  *     gradient follows an evaluation of the point: MAXEVAL 7 warns, "...
@@ -886,7 +885,7 @@ const std::string kLbfgs = "    LIB NLOPT\n    ALGO LD_LBFGS\n";
  * AUGLAG INNER text was "(1 + 4 evaluations: ...), so each local search
  * evaluates its starting point", and the calibrated PLAIN run MAXEVAL 4 and
  * 5 needed 6: those checks fail; the CALIBRATION 0 check passes as well.
- * Before the first MULTISTART start was named apart (cross-lane review 2):
+ * Before the first MULTISTART start was named apart:
  * the MULTISTART check fails, its WARNING being "each MULTISTART start
  * NLOPT:LD_LBFGS: BUDGET_PER_START 5 ...", which claimed the first start,
  * which steps. */
@@ -1014,7 +1013,7 @@ std::string own_central2(const std::string& budget, const std::string& needs)
  *     TYPE PRESTAGE cannot refine with NLOPT:GD_STOGO: it does not start at
  *     the point it is given ...";
  *   - StoGO is a global optimiser, so an INNER block does not take it (no
- *     nested global search, owner decision, MK, 2026-10-15): the PLAIN
+ *     nested global search): the PLAIN
  *     NLOPT:AUGLAG with an INNER GD_STOGO under NOISE CALIBRATION 3, the
  *     same AUGLAG as the PRESTAGE refinement and GD_MLSL with an INNER
  *     GD_STOGO are refused at startup, at the ENDINNER line: "the INNER
@@ -1036,7 +1035,7 @@ std::string own_central2(const std::string& budget, const std::string& needs)
  * "the INNER block of the PRESTAGE refinement: NLOPT:AUGLAG runs its INNER
  * search NLOPT:GD_STOGO from the point it is given ...": the three refusal
  * checks fail.
- * Until the refinement was refused (owner decision, MK, 2026-10-15) the
+ * Until the refinement was refused the
  * PRESTAGE refinement legs pinned the warning ("the PRESTAGE refinement
  * NLOPT:GD_STOGO: MAXEVAL 5 takes no step: ...", "the PRESTAGE refinement
  * NLOPT:AUGLAG ...", "the INNER block of the PRESTAGE refinement
@@ -1047,10 +1046,10 @@ std::string own_central2(const std::string& budget, const std::string& needs)
  * Before the fix of the warning: start_is_recorded took every NLopt
  * search's start as its first call, so the refinement and the calibrated
  * PLAIN run at MAXEVAL 5, which take no step, were not warned (they "took
- * the loss at its starting point from the run's record", needing 5;
- * lanes/D/tmp/review/xl2-search stogo2, stogo3, stogo: the box centre and
- * its stencil, no step), the uncalibrated PLAIN text said "evaluates the
- * loss at a starting point", the AUGLAG INNER text said its local search
+ * the loss at its starting point from the run's record", needing 5; the
+ * runs evaluated the box centre and its stencil, no step), the
+ * uncalibrated PLAIN text said "evaluates the loss at a starting point",
+ * the AUGLAG INNER text said its local search
  * starts at a point the run has evaluated, and the GD_MLSL one at MAXEVAL
  * 10 was not warned (needing 10) and its INNER text said MLSL's local
  * searches start at points it evaluated. */
@@ -1162,7 +1161,7 @@ std::string calibrated_multistart(const std::string& n,
  * MULTISTART that is a single run, so every start was warned at
  * BUDGET_PER_START 5 ("each MULTISTART start NLOPT:LD_LBFGS:
  * BUDGET_PER_START 5 takes no step ..., which needs BUDGET_PER_START 6"),
- * although the first one steps (lanes/D/tmp/review/xl2-search/msn: its
+ * although the first one steps (a run before the fix: its
  * stencil, then a step, "start 1/2 done: 3 eval(s) consumed, improved
  * global best" in 1-D): the checks of the CALIBRATION 3 LD_LBFGS and
  * DLIB:BFGS cases at 5 and 4 fail; the others pass as well (pins). */

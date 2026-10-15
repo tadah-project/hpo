@@ -1,6 +1,6 @@
 // test_pc_observable_parser.cpp
 //
-// Phase D4a (PC_OBSERVABLE redesign): the .hpotarget parser exposes
+// The .hpotarget parser exposes
 // PC_OBSERVABLE entries via the typed Observable interface. Verifies
 // that a config line containing a cohesive_energy directive is parsed
 // into an Observable with the expected fields, and that error cases

@@ -1,6 +1,6 @@
 // test_bump_width.cpp
 //
-// Owner decision (2026-09-29, C8): a radial bump -- SGRID2B of a
+// A radial bump -- SGRID2B of a
 // D2_Blip/D2_Blip5 pair term, SGRIDMB of a DM_REAM Blip/Blip5 density --
 // needs a width eta > 0 in every RHOFORM. A bump spans
 // [c - w/eta, c + w/eta]: at eta <= 0 it has no support edge (the bump is

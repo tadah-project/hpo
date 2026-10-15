@@ -1,4 +1,4 @@
-// Phase 3.2 — LammpsHessianAssembler tests.
+// LammpsHessianAssembler tests.
 //
 // These tests instantiate a real LAMMPS+pair_tadah on a 4-atom BCC Ta
 // cell, minimise to the equilibrium configuration, then assemble H via
@@ -16,7 +16,7 @@
 // `test_hpo "[lammps_hessian][.]"`, one process for the eight cases. They
 // were hidden because of a crash when LAMMPS with pair_style tadah was
 // destroyed; that crash is gone (the eight cases, and the eight of
-// test_hpo_phase3_pilot.cpp, create and destroy their LAMMPS instances in one
+// test_hpo_adjoint_pilot.cpp, create and destroy their LAMMPS instances in one
 // process). The two LAMMPS-free cases at the end are discovered as usual.
 //
 // To run the hidden cases by hand:
@@ -119,7 +119,7 @@ struct LammpsFixture {
 
 TEST_CASE("LammpsHessianAssembler — atom-only block is symmetric and "
           "has 3 near-zero acoustic modes (4-atom BCC Ta)",
-          "[lammps_hessian][phase3][.][!benchmark]")
+          "[lammps_hessian][adjoint][.][!benchmark]")
 {
     LammpsFixture fx(hpo_test::bench_pot_path());
 
@@ -163,7 +163,7 @@ TEST_CASE("LammpsHessianAssembler — atom-only block is symmetric and "
 
 TEST_CASE("LammpsHessianAssembler — Hessian-vector probe matches force "
           "central diff along a non-trivial direction",
-          "[lammps_hessian][phase3][.][!benchmark]")
+          "[lammps_hessian][adjoint][.][!benchmark]")
 {
     LammpsFixture fx(hpo_test::bench_pot_path());
     const int nlocal = fx.lmp->atom->nlocal;
@@ -267,7 +267,7 @@ TEST_CASE("LammpsHessianAssembler — Hessian-vector probe matches force "
 
 TEST_CASE("LammpsHessianAssembler — iso box DOF is positive and "
           "consistent with energy curvature",
-          "[lammps_hessian][phase3][.][!benchmark]")
+          "[lammps_hessian][adjoint][.][!benchmark]")
 {
     LammpsFixture fx(hpo_test::bench_pot_path());
     const int nlocal = fx.lmp->atom->nlocal;
@@ -336,7 +336,7 @@ double strain_derivative_from_pressure(LammpsRunner& runner,
 
 TEST_CASE("LammpsHessianAssembler — the box block is the strain derivative "
           "of the virial, within 1e-7 relative of LAMMPS' pressure",
-          "[lammps_hessian][phase3][.][!benchmark]")
+          "[lammps_hessian][adjoint][.][!benchmark]")
 {
     /* The box block of H (iso, and the Voigt-6 normal strains) against
      * the central difference, at the assembler's h_strain 1e-5, of dE/de
@@ -391,8 +391,8 @@ TEST_CASE("LammpsHessianAssembler — the box block is the strain derivative "
     CHECK(rel(H6(box0, box0 + 1), xy_ref) < 1e-7);
 }
 
-// Phase 3.7E regression: box-box off-diagonal block must be populated
-// for box_dofs=6 (was missing pre-3.7E — the assembler only computed
+// Regression: box-box off-diagonal block must be populated
+// for box_dofs=6 (was missing before — the assembler only computed
 // diagonal H[α,α] entries via the energy stencil and left H[α,β] = 0
 // for α ≠ β). On a cubic crystal in equilibrium the (xx,yy)/(xx,zz)/
 // (yy,zz) off-diagonals are V·C12 (Poisson coupling) and must be
@@ -401,8 +401,8 @@ TEST_CASE("LammpsHessianAssembler — the box block is the strain derivative "
 // examples' energies-only model, C12 = -103 GPa, fails it). Symmetric
 // across the box-box block.
 TEST_CASE("LammpsHessianAssembler — box-box off-diagonals are populated "
-          "for box_dofs=6 on a cubic crystal (Phase 3.7E)",
-          "[lammps_hessian][phase3][.][!benchmark]")
+          "for box_dofs=6 on a cubic crystal",
+          "[lammps_hessian][adjoint][.][!benchmark]")
 {
     LammpsFixture fx(hpo_test::bench_pot_path());
     const int nlocal = fx.lmp->atom->nlocal;
@@ -427,12 +427,10 @@ TEST_CASE("LammpsHessianAssembler — box-box off-diagonals are populated "
      * LAMMPS ignores the tilt factors of an orthogonal box: the assembler's
      * shear strains (apply_strain sets xy, xz, yz) move nothing, and their
      * rows of the box block are 0 (the strained boxes are the saved one and
-     * the virial does not change). This is the recorded box-convention
-     * issue of the analytic-gradient path (RELEASE-1.6.0-FOLLOWUPS.md, "HPO
-     * LAMMPS analytic-gradient box conventions": the shears are no-ops on
-     * an orthogonal box), recorded and not fixed by the owner's decision of
-     * 2026-09-30, as that path is unreachable with PC_LAMMPS. Fixing it
-     * changes this check.
+     * the virial does not change). This is a known box-convention issue of
+     * the analytic-gradient path (the shears are no-ops on an orthogonal
+     * box), left unfixed as that path is unreachable with PC_LAMMPS.
+     * Fixing it changes this check.
      * Pins: the box is orthogonal, and |H(shear, shear)| < 1e-2. Measured
      * with the shipped potential: exactly 0 (9.95e-4 while the diagonal was
      * the energy's second difference: about 1e-13 eV of energy round-off
@@ -452,8 +450,8 @@ TEST_CASE("LammpsHessianAssembler — box-box off-diagonals are populated "
     }
 
     /* Box-box off-diagonal block must be populated (the regression
-     * gate). Pre-3.7E these were silently 0; with the virial-derivative
-     * fix they pick up V·C12 > 0 for Ta. */
+     * gate). Before the virial-derivative fix these were silently 0;
+     * with it they pick up V·C12 > 0 for Ta. */
     const double xy_sym_diag_off = H(box0 + 0, box0 + 1);
     const double xz_sym_diag_off = H(box0 + 0, box0 + 2);
     const double yz_sym_diag_off = H(box0 + 1, box0 + 2);
@@ -505,7 +503,7 @@ TEST_CASE("LammpsHessianAssembler — box-box off-diagonals are populated "
 
 TEST_CASE("LammpsHessianAssembler — Tikhonov shifts diagonal by exactly "
           "the configured magnitude",
-          "[lammps_hessian][phase3][.][!benchmark]")
+          "[lammps_hessian][adjoint][.][!benchmark]")
 {
     LammpsFixture fx(hpo_test::bench_pot_path());
     const int nlocal = fx.lmp->atom->nlocal;
@@ -531,7 +529,7 @@ TEST_CASE("LammpsHessianAssembler — Tikhonov shifts diagonal by exactly "
 
 TEST_CASE("LammpsHessianAssembler — refreshes capture_adjoint_state "
           "snapshot at x* after the central-diff sweep destroys it",
-          "[lammps_hessian][phase3][.][!benchmark]")
+          "[lammps_hessian][adjoint][.][!benchmark]")
 {
     LammpsFixture fx(hpo_test::bench_pot_path());
     auto* lt = fx.pair->lammps_tadah();
@@ -563,7 +561,7 @@ TEST_CASE("LammpsHessianAssembler — refreshes capture_adjoint_state "
  * (discovered, not hidden). */
 TEST_CASE("LammpsHessianAssembler — header + class symbol present "
           "without LAMMPS instance",
-          "[lammps_hessian][phase3]")
+          "[lammps_hessian][adjoint]")
 {
     tadah::hpo::LammpsHessianAssembler asm_;
     asm_.set_tikhonov(1.0e-7);
@@ -576,7 +574,7 @@ TEST_CASE("LammpsHessianAssembler — header + class symbol present "
  * `box_dofs ∈ {0,1,6}` precondition fires before any pointer
  * dereference. Catches accidental changes to the public API. */
 TEST_CASE("LammpsHessianAssembler — rejects out-of-range box_dofs",
-          "[lammps_hessian][phase3]")
+          "[lammps_hessian][adjoint]")
 {
     tadah::hpo::LammpsHessianAssembler asm_;
     /* Null lmp would trip require_pair_tadah after the box_dofs check —
@@ -587,8 +585,8 @@ TEST_CASE("LammpsHessianAssembler — rejects out-of-range box_dofs",
     CHECK_THROWS_AS(asm_.assemble(nullptr, 7),  std::runtime_error);
 }
 
-/* Phase 3.7E follow-up: profile the vflag=1 overhead added to
- * LammpsHessianAssembler's box-DOF sweep. 3.7E flipped vflag from 0 to 1
+/* Profile the vflag=1 overhead added to LammpsHessianAssembler's box-DOF
+ * sweep. The box-box off-diagonal fix flipped vflag from 0 to 1
  * on the 12 strain perturbations so pair->virial gets populated and the
  * off-diagonal box-box block can be assembled from -∂virial[α]/∂ε_β
  * (reusing the same 12 LAMMPS computes). The added cost per compute is
@@ -596,19 +594,18 @@ TEST_CASE("LammpsHessianAssembler — rejects out-of-range box_dofs",
  * compute virial[] copy is 6 doubles and negligible by inspection.
  *
  * The bench runs two BENCHMARK blocks side by side on the same relaxed
- * BCC Ta state: vflag=0 (pre-3.7E) and vflag=1 (post-3.7E). Their ratio
- * = per-compute overhead of 3.7E's change. The total assembler cost
+ * BCC Ta state: vflag=0 (before that fix) and vflag=1 (after it). Their
+ * ratio = per-compute overhead of that change. The total assembler cost
  * picks this up on 12 of the 12 + 6·nlocal compute calls (atom-block
  * sweep keeps vflag=0). For the production HPO workload (~16-atom
  * cells, box_dofs=1 or 6) the box-DOF computes are O(12); atom-DOF
  * computes are O(6·16)=96; vflag overhead applies to ~11% of computes.
  *
- * Memory predicts <1% total assembler overhead. The bench measures the
+ * The estimate predicts <1% total assembler overhead. The bench measures the
  * per-compute multiplier directly so future regressions show up
  * immediately. */
-TEST_CASE("LammpsHessianAssembler — vflag=1 overhead microbench "
-          "(Phase 3.7E follow-up)",
-          "[lammps_hessian_perf][lammps_hessian][phase3][.][!benchmark]")
+TEST_CASE("LammpsHessianAssembler — vflag=1 overhead microbench",
+          "[lammps_hessian_perf][lammps_hessian][adjoint][.][!benchmark]")
 {
     LammpsFixture fx(hpo_test::bench_pot_path());
 
@@ -633,13 +630,13 @@ TEST_CASE("LammpsHessianAssembler — vflag=1 overhead microbench "
      * timing loop kicks in. */
     clear_and_compute(/*eflag=*/1, /*vflag=*/0);
 
-    BENCHMARK("pair_tadah::compute(eflag=1, vflag=0) — pre-3.7E baseline")
+    BENCHMARK("pair_tadah::compute(eflag=1, vflag=0) — without the virial")
     {
         clear_and_compute(1, 0);
         return pair->eng_vdwl;
     };
 
-    BENCHMARK("pair_tadah::compute(eflag=1, vflag=1) — 3.7E current")
+    BENCHMARK("pair_tadah::compute(eflag=1, vflag=1) — with the virial")
     {
         clear_and_compute(1, 1);
         return pair->eng_vdwl + pair->virial[0];

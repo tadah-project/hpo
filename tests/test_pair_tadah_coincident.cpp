@@ -1,15 +1,15 @@
 // test_pair_tadah_coincident.cpp
 //
-// pair_style tadah refuses two atoms at one position (report_leftovers.md
-// section 3; MK's decision: option A in NNFinder plus the same check in
-// pair_tadah). LAMMPS builds its own neighbour lists, so NNFinder never sees
-// a LAMMPS run. Every pair_tadah kernel divides the pair force by the
-// distance, so a pair at distance 0 gave NaN forces and pressure while `run
-// 0` completed (and, under MD, atoms with NaN positions that dropped out of
-// the interactions; report section 3.3). The check raises error->one naming
-// the LAMMPS atom IDs of the two atoms; in this in-process instance it
-// arrives as a LAMMPSAbortException, a std::exception whose message the
-// cases read. A pair 1e-12 A apart is not refused.
+// pair_style tadah refuses two atoms at one position (NNFinder refuses them,
+// and pair_tadah makes the same check). LAMMPS builds its own neighbour
+// lists, so NNFinder never sees a LAMMPS run. Every pair_tadah kernel
+// divides the pair force by the distance, so a pair at distance 0 gave NaN
+// forces and pressure while `run 0` completed (and, under MD, atoms with
+// NaN positions that dropped out of the interactions). The check raises
+// error->one naming the LAMMPS atom IDs of the two atoms; in this
+// in-process instance it arrives as a LAMMPSAbortException, a
+// std::exception whose message the cases read. A pair 1e-12 A apart is not
+// refused.
 //
 // The kernels compute() dispatches to, one potential each (the first four
 // as in test_pair2b_fastpath.cpp, which shows that they take these paths):

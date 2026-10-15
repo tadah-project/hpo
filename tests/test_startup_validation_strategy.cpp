@@ -2097,7 +2097,7 @@ TEST_CASE("startup validation: the backend checks reject no valid "
               * one is LD_MMA, a local search without a convergence test of
               * its own (Before the fix: passes as well, a pin; the INNER
               * search was GN_DIRECT_L, a global optimiser, which an INNER
-              * block no longer takes: owner decision, MK, 2026-10-15). */
+              * block no longer takes). */
              "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_AUGLAG\n",
              "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_AUGLAG\n"
              "    FTOL_REL 1e-8\n",
@@ -2378,7 +2378,7 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
      * LD_MMA, a local search whose only convergence test is the
      * tolerances. Before the fix: passes as well (a pin); the INNER search
      * was GN_DIRECT_L, a global optimiser, which an INNER block no longer
-     * takes (owner decision, MK, 2026-10-15), and the message ended with
+     * takes, and the message ended with
      * DIRECT's XTOL note. The case of an INNER GN_ESCH, which tests no
      * tolerance ("; set MAXEVAL or MAXTIME in the INNER block, or ..."), is
      * refused for its INNER search now: no local search lacks a
@@ -2434,7 +2434,7 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
      * block's, and the run was refused as "the INNER search of NLOPT:AUGLAG
      * (NLOPT:GN_DIRECT_L) needs a stop: ..." (its INNER search is LN_BOBYQA
      * now: GN_DIRECT_L is a global optimiser, which an INNER block no
-     * longer takes; owner decision, MK, 2026-10-15). The cases whose INNER
+     * longer takes). The cases whose INNER
      * search, a global one, did not test the tolerance either ("...; the
      * INNER block's NLOPT:GN_ESCH does not test it either: ...", and so
      * GD_STOGO and GN_ORIG_DIRECT under GN_MLSL_LDS) are refused for that
@@ -2965,14 +2965,13 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
      * one-sided and needs two steps inside the box, a FORWARD one steps
      * back. A box in which some point has no stencil is refused at startup
      * on each phase that takes finite-difference gradients with its own
-     * settings, naming the step's source and the largest fd_step that fits
-     * (owner decision D1(a)); the step is not shrunk. PARAM fd_step,
-     * fd_kernel and diff_method must be valid there (diff_method 2,
-     * RIDDERS, is refused: D3(a)), and a phase that takes no
-     * finite-difference gradients refuses them: they never took effect
-     * (D5(a)). The first attempt named only the in-house stencil and its
-     * three steps of the largest step anywhere in the box; the owner's
-     * decisions D1-D5 change the messages and the cases below. */
+     * settings, naming the step's source and the largest fd_step that fits;
+     * the step is not shrunk. PARAM fd_step, fd_kernel and diff_method must
+     * be valid there (diff_method 2, RIDDERS, is refused), and a phase that
+     * takes no finite-difference gradients refuses them: they never took
+     * effect. The first attempt named only the in-house stencil and its
+     * three steps of the largest step anywhere in the box; the rules above
+     * change the messages and the cases below. */
     const std::string bfgs =
         "    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 20\n";
     const std::string auto_refusal =
@@ -3008,13 +3007,12 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
         CHECK(judge(strategy_config(bfgs + "    GRAD_STRATEGY HYBRID\n"
                                     "    PARAM fd_step 0.4\n")).startup ==
               "the STRATEGY-level optimiser DLIB:BFGS: " + auto_refusal);
-        /* Ceres' rule is bounded too (D2(a)); in the unit box its step,
+        /* Ceres' rule is bounded too; in the unit box its step,
          * fd_step x |u|, is largest at the upper bound, where the one-sided
          * stencil needs 1 - 2 fd_step >= 0: up to 1/2, and 1/2 itself -- the
          * step 0.5 u is exact, and 1 - 2 (0.5 x 1) = 0 lies on the bound.
          * The check refused 0.5, with a margin of an ulp or two on every
-         * step, and named 0.499999 as the largest fd_step that fits
-         * (review 2, finding 3). */
+         * step, and named 0.499999 as the largest fd_step that fits. */
         CHECK_THAT(judge(strategy_config(bfgs + "    PARAM fd_kernel ceres\n"
                                          "    PARAM fd_step 0.51\n")).startup,
                    Catch::Contains("h = max(2^-26, 0.51 x |u|) in the unit box "
@@ -3135,7 +3133,7 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
                        Catch::Contains("\n  - CGRID2B[1]: OPTIM box [1, 1.001]; "
                                        "no stencil fits at CGRID2B[1] = ") &&
                        /* not "set PARAM fd_step", which NOISE AUTO now
-                        * refuses beside it (owner decision D8) */
+                        * refuses beside it */
                        Catch::Contains("\n  Remove AUTO from the NOISE block "
                                        "and set PARAM fd_step to at most ") &&
                        Catch::Contains("; or use OPTIM_SCALE AUTO") &&
@@ -3147,7 +3145,7 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
                   .startup ==
               "the STRATEGY-level optimiser DLIB:BFGS: PARAM fd_kernel must "
               "be inhouse or ceres (got 'fast')");
-        /* HYBRID ignored an invalid fd_kernel (review item 5) */
+        /* HYBRID ignored an invalid fd_kernel */
         CHECK(judge(strategy_config(bfgs + "    GRAD_STRATEGY HYBRID\n"
                                     "    PARAM fd_kernel fast\n")).startup ==
               "the STRATEGY-level optimiser DLIB:BFGS: PARAM fd_kernel must "
@@ -3163,9 +3161,9 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
               "be a positive finite number (got 0)");
         /* a number for fd_kernel: the same message on every backend. DLIB:BFGS
          * said it "does not support PARAM fd_kernel" while listing it as
-         * supported, and the CERES drivers left it out of their list (review
-         * 2, finding 2; CERES:STEEPEST_DESCENT stands in for CERES:LBFGS,
-         * refused since). A build without Ceres refuses
+         * supported, and the CERES drivers left it out of their list
+         * (CERES:STEEPEST_DESCENT stands in for CERES:LBFGS, refused since).
+         * A build without Ceres refuses
          * CERES:STEEPEST_DESCENT as not built first (ceres_build.h; a pin of that refusal; before this
          * test change such a build failed here, expecting the fd_kernel
          * message). */
@@ -3252,8 +3250,8 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
               "4.99999e-07 fits it\n  Lower the Delta; or use OPTIM_SCALE "
               "AUTO, where every box is the unit box (the tangents fit for "
               "Delta <= 1).");
-        /* the message said "PARAM Delta_X 0.001" of the default too (review
-         * 2, finding 9); a written one is a PARAM */
+        /* the message said "PARAM Delta_X 0.001" of the default too; a
+         * written one is a PARAM */
         CHECK_THAT(judge("OPTIM_SCALE NONE\nOPTIM WATOM (1) 1 1.000001\n"
                          "PC_ERMSE 0 1\nOPTIMIZER\n  STRATEGY\n" + asa +
                          "    PARAM Delta_X 0.002\n  ENDSTRATEGY\n"
@@ -3412,15 +3410,15 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
     /* The NOISE block's AUTO derives PARAM fd_step for the finite
      * differences of the STRATEGY-level phase (each MULTISTART start, the
      * PRESTAGE refinement). It follows the rule of the finite-difference
-     * PARAMs (owner decision D5(a)): used where that phase takes
+     * PARAMs: used where that phase takes
      * finite-difference gradients -- an MLSL or AUGLAG whose local search
      * takes gradients included, which were left without it -- and refused
      * at startup where it measures no slopes: a derivative-free optimiser,
      * or GRAD_STRATEGY ANALYTICAL, written or resolved. A derivative-free
      * optimiser printed "NOISE_AUTO derives PARAM fd_step for
-     * gradient-based optimisers only ...; ignored" to stderr and ran (owner
-     * decision D7, 2026-09-29). Beside an explicit PARAM fd_step it has no
-     * effect either, and is refused too (owner decision D8). */
+     * gradient-based optimisers only ...; ignored" to stderr and ran.
+     * Beside an explicit PARAM fd_step it has no effect either, and is
+     * refused too. */
     struct Run {
         std::unique_ptr<HPOTargets> trg;
         std::string startup;
@@ -3544,8 +3542,8 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
     }
     SECTION("refused beside an explicit PARAM fd_step") {
         /* The explicit step won, with "[HPO] NOISE_AUTO: PARAM fd_step
-         * already set explicitly; user value retained" on stderr (owner
-         * decision D8, 2026-09-29: refused on the phase concerned). */
+         * already set explicitly; user value retained" on stderr; it is now
+         * refused on the phase concerned. */
         const Run plain = run(noise("    TYPE PLAIN\n    LIB DLIB\n"
                                     "    ALGO BFGS\n    MAXEVAL 20\n"
                                     "    PARAM fd_step 1e-4\n"));
@@ -3600,13 +3598,13 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
  * given never uses them: NLopt's StoGO, DIRECT and AGS (OptimizerCaps::
  * starts_at_x0 false: stogo.cc, cdirect.c, DIRect.c and ags.cc never read
  * x0), and an AUGLAG, which runs its INNER search from its starting point,
- * with such an INNER search (owner decision, MK, 2026-10-15).
+ * with such an INNER search.
  * ==================================================================== */
 
 namespace {
 
 /* Where a backend that does not start at the point it is given starts
- * instead, as the refusal says it (lanes/F/tmp/sr_probe: the refinement's
+ * instead, as the refusal says it (a run before the fix: the refinement's
  * first points in [4, 6] x [0.1, 0.4] were (5, 0.25) and its stencil for
  * GD_STOGO, (5, 0.25), (4.33, 0.25), (5.67, 0.25) for GN_DIRECT_L, (5.0002,
  * 0.2500), (4.0002, 0.25), (5.9998, 0.25) for GN_AGS). */
@@ -3724,8 +3722,8 @@ std::string global_inner_refusal(const std::string& phase,
  * not in them.
  * Before the fix: the TOPK 1 refinements and the AUGLAG cases were
  * accepted (startup and policy ""; the refinement ran over the whole box
- * and never evaluated its candidate, lanes/F/tmp/sr_probe/run_direct,
- * run_stogo, run_ags), and the TOPK 3 ones were refused with the TOPK
+ * and never evaluated its candidate: runs of DIRECT, StoGO and AGS), and
+ * the TOPK 3 ones were refused with the TOPK
  * message ("STRATEGY TYPE PRESTAGE with TOPK 3 cannot refine with ... or
  * TOPK 1 to refine the best candidate once."): every refusal check fails;
  * the passing cases pass as well (pins). The checks of the refused CERES
@@ -3733,7 +3731,7 @@ std::string global_inner_refusal(const std::string& phase,
  * v1-dev 8a3f95a, which registered the three, the list began "CERES:LBFGS,
  * CERES:NLCG, CERES:STEEPEST_DESCENT, CERES:WOLFE, DLIB:BFGS", and the
  * documentation quoted it).
- * Before the no-nested-global fix (owner decision, MK, 2026-10-15): the
+ * Before the no-nested-global fix: the
  * AUGLAG cases were refused by a rule of MULTISTART and PRESTAGE alone,
  * require_inner_start_used(), with "the INNER block of the PRESTAGE
  * refinement: NLOPT:AUGLAG runs its INNER search NLOPT:GD_STOGO from the
@@ -3893,7 +3891,7 @@ TEST_CASE("startup validation: a PRESTAGE refinement or MULTISTART whose "
 }
 
 /* ======================================================================
- * No nested global search (owner decision, MK, 2026-10-15): the search an
+ * No nested global search: the search an
  * INNER block names is the local search NLopt's MLSL starts at the points
  * it samples and AUGLAG at its own starting point, in every phase and
  * STRATEGY TYPE; a global optimiser there is refused at startup, at the
