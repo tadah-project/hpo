@@ -336,7 +336,13 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
                       kAnew) == 1);
     }
 
-    SECTION("an AUGLAG whose INNER search is such a search")
+    /* An AUGLAG whose INNER search is such a search: refused at startup
+     * since no INNER search is a global one (no nested global search: owner
+     * decision, MK, 2026-10-15; require_inner_backend), so the RESTART
+     * warning start_point_warnings() would give for it (the AUGLAG recursion
+     * of search_ignoring_start) is never given. The configuration this
+     * section warned about is refused at its ENDINNER line instead. */
+    SECTION("an AUGLAG whose INNER search is such a search is refused")
     {
         const std::string config =
             kRoot +
@@ -357,21 +363,12 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
             "    ENDRESTART\n"
             "  ENDSTRATEGY\n"
             "ENDOPTIMIZER\n";
-        const Startup s = startup(config);
-        INFO("journal:\n" << s.journal);
-        CHECK(count_of(
-                  s.journal,
-                  "the RESTART block on line 15: the STRATEGY-level optimiser "
-                  "NLOPT:LN_AUGLAG runs its INNER search NLOPT:GN_DIRECT_L "
-                  "from the point it is given, and NLOPT:GN_DIRECT_L does not "
-                  "start at the point it is given (" + note("GN_DIRECT_L") +
-                      ") and draws no random numbers, so every RESTART "
-                      "round, whatever points it starts from, asks for round "
-                      "0's points again, which the run's record answers: no "
-                      "round after round 0 evaluates a new point, and the "
-                      "RESTART block's only effect is to end the run once "
-                      "round 0 has had no new best in AFTER_STAGNATION 3 "
-                      "evaluations." + kAnew) == 1);
+        CHECK_THROWS_WITH(
+            startup(config),
+            Catch::Contains("Error on line 14: the INNER block of the "
+                            "STRATEGY-level optimiser: NLOPT:LN_AUGLAG cannot "
+                            "run NLOPT:GN_DIRECT_L as its INNER search: an "
+                            "INNER search is a local search"));
     }
 
     SECTION("a PRESTAGE exploration")
